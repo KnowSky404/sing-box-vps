@@ -34,3 +34,5 @@ reality协议的默认使用的域名是 apple.com
 更新安装方式为单脚本 curl 方式 (install.sh)
 
 添加展示二维码功能 (qrencode)
+
+规范安装路径：创建 sing-box-vps 目录并进入后再下载 install.sh
