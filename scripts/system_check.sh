@@ -7,10 +7,10 @@ install_dependencies() {
   case "${OS_NAME}" in
     debian|ubuntu)
       apt-get update -y
-      apt-get install -y curl wget jq tar openssl uuid-runtime
+      apt-get install -y curl wget jq tar openssl uuid-runtime qrencode
       ;;
     centos|almalinux|rocky)
-      yum install -y curl wget jq tar openssl util-linux
+      yum install -y curl wget jq tar openssl util-linux qrencode
       ;;
     *)
       log_error "Unsupported OS: ${OS_NAME}. Please install dependencies manually."

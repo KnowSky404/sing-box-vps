@@ -32,3 +32,5 @@ reality协议的默认使用的域名是 apple.com
 修正 README.md 中的协议声明为 AGPL-3.0
 
 更新安装方式为单脚本 curl 方式 (install.sh)
+
+添加展示二维码功能 (qrencode)

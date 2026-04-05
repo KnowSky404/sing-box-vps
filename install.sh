@@ -74,10 +74,10 @@ install_dependencies() {
   case "${OS_NAME}" in
     debian|ubuntu)
       apt-get update -y
-      apt-get install -y curl wget jq tar openssl uuid-runtime
+      apt-get install -y curl wget jq tar openssl uuid-runtime qrencode
       ;;
     centos|almalinux|rocky)
-      yum install -y curl wget jq tar openssl util-linux
+      yum install -y curl wget jq tar openssl util-linux qrencode
       ;;
   esac
   log_success "基础依赖安装完成。"
@@ -218,6 +218,10 @@ display_info() {
   echo -e "SID:  ${SB_SHORT_ID_1}"
   echo "-------------------------------------------------------------"
   echo -e "${YELLOW}VLESS 链接:${NC}\n${vless_link}\n"
+  
+  echo -e "${YELLOW}节点二维码 (扫描二维码以导入):${NC}"
+  qrencode -t ansiutf8 "${vless_link}"
+  echo "-------------------------------------------------------------"
 }
 
 main() {
