@@ -3,12 +3,24 @@
 # Fetch latest version of sing-box if version is 'latest'
 get_latest_version() {
   if [[ "${SB_VERSION}" == "latest" ]]; then
-    log_info "正在获取 sing-box 最新版本号..."
-    SB_VERSION=$(curl -s "https://api.github.com/repos/SagerNet/sing-box/releases/latest" | jq -r .tag_name | sed 's/^v//')
-    if [[ -z "${SB_VERSION}" ]]; then
-      log_error "无法获取最新版本号，请手动指定版本。"
+    log_info "正在从 GitHub 获取 sing-box 最新版本号..."
+    local latest_tag
+    latest_tag=$(curl -s "https://api.github.com/repos/SagerNet/sing-box/releases/latest" | jq -r .tag_name | sed 's/^v//')
+    
+    if [[ -z "${latest_tag}" || "${latest_tag}" == "null" ]]; then
+      log_warn "无法获取最新版本号，将回退到适配版本: ${SB_SUPPORT_MAX_VERSION}"
+      SB_VERSION="${SB_SUPPORT_MAX_VERSION}"
+    else
+      SB_VERSION="${latest_tag}"
+      log_success "最新版本为: ${SB_VERSION}"
+      
+      # Compatibility check
+      if [[ "${SB_VERSION}" != "${SB_SUPPORT_MAX_VERSION}" ]]; then
+        log_warn "注意：当前最新版本 (${SB_VERSION}) 高于脚本适配版本 (${SB_SUPPORT_MAX_VERSION})。"
+        log_warn "安装可能存在兼容性风险，建议使用适配版本。"
+        sleep 2
+      fi
     fi
-    log_success "最新版本为: ${SB_VERSION}"
   fi
 }
 
