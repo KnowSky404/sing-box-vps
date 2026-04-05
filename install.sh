@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040510"
+readonly SCRIPT_VERSION="2026040511"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
@@ -423,11 +423,12 @@ update_config_only() {
   [[ -n "${in_route}" ]] && SB_ADVANCED_ROUTE="${in_route}"
 
   generate_config
-
   check_config_valid
+  setup_service
   open_firewall_port "${SB_PORT}"
   systemctl restart sing-box
-  log_success "配置已更新并重启服务。"
+  log_success "配置及服务文件已更新并重启服务。"
+
 
   # Final display
   display_info
