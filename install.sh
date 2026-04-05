@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040515"
+readonly SCRIPT_VERSION="2026040516"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
@@ -234,6 +234,9 @@ install_binary() {
   local download_url="https://github.com/SagerNet/sing-box/releases/download/v${SB_VERSION}/sing-box-${SB_VERSION}-linux-${ARCH}.tar.gz"
   local temp_dir="/tmp/sing-box-install"
   
+  # Ensure we are in a valid directory before cleanup/extraction
+  cd /tmp
+  
   # Cleanup before start
   rm -rf "${temp_dir}"
   mkdir -p "${temp_dir}"
@@ -244,7 +247,9 @@ install_binary() {
   fi
   
   log_info "正在解压并安装..."
-  tar -xzf "${temp_dir}/sb.tar.gz" -C "${temp_dir}"
+  if ! tar -xzf "${temp_dir}/sb.tar.gz" -C "${temp_dir}"; then
+    log_error "解压失败。"
+  fi
   
   local bin_path=$(find "${temp_dir}" -name "sing-box" -type f)
   if [[ -z "${bin_path}" ]]; then

@@ -80,3 +80,5 @@ Bug修复：修复检测脚本更新时由于管道提前关闭导致的 curl: (
 Bug修复：修复 bash <(curl ...) 管道模式下 cp 命令因无法 stat 管道描述符导致的报错。改为检测到非 sbv 运行环境下，通过 curl 直接从远程安装 sbv 命令。
 
 Bug修复：补全在代码合并中丢失的 view_status_and_info 函数，修复选项 8 报错问题。
+
+Bug修复：修复解压 sing-box 时由于当前工作目录不存在导致的 tar: Cannot getcwd 错误。通过在解压前强制切换至 /tmp 解决。
