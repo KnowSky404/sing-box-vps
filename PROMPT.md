@@ -50,3 +50,5 @@ reality协议的默认使用的域名是 apple.com
 Bug修复：移除入站配置中不支持的 utls 字段，修复配置文件解析失败的问题。
 
 版本规范：调整 SCRIPT_VERSION 格式为 YYYYMMDDXX，支持每日多次迭代对比。
+
+配置修正：适配 sing-box 1.13.0+ 规范，将 sniff 逻辑从 inbound 迁移至 route 规则中。

@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040501"
+readonly SCRIPT_VERSION="2026040502"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
 readonly SINGBOX_CONFIG_DIR="/etc/sing-box"
@@ -221,17 +221,17 @@ EOF
 
 # --- Config Generator ---
 generate_config() {
-  log_info "正在生成 VLESS+REALITY 配置..."
+  log_info "正在生成 VLESS+REALITY 配置 (适配 sing-box 1.13.0+)..."
   mkdir -p "${SINGBOX_CONFIG_DIR}"
-  
+
   # UUID
   [[ -z "${SB_UUID}" ]] && SB_UUID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
-  
+
   # Keys
   local keypair=$("${SINGBOX_BIN_PATH}" generate reality-keypair)
   SB_PRIVATE_KEY=$(echo "${keypair}" | grep "PrivateKey" | awk '{print $2}')
   SB_PUBLIC_KEY=$(echo "${keypair}" | grep "PublicKey" | awk '{print $2}')
-  
+
   # ShortIDs
   SB_SHORT_ID_1=$(openssl rand -hex 8)
   SB_SHORT_ID_2=$(openssl rand -hex 8)
@@ -245,29 +245,29 @@ generate_config() {
       "tag": "vless-in",
       "listen": "::",
       "listen_port": ${SB_PORT},
-      "sniff": true,
-      "sniff_override_destination": true,
       "users": [ { "uuid": "${SB_UUID}", "flow": "xtls-rprx-vision" } ],
       "tls": {
         "enabled": true,
         "server_name": "${SB_SNI}",
         "reality": {
           "enabled": true,
-          "handshake": {
-            "server": "${SB_SNI}",
-            "server_port": 443
-          },
+          "handshake": { "server": "${SB_SNI}", "server_port": 443 },
           "private_key": "${SB_PRIVATE_KEY}",
           "short_id": [ "${SB_SHORT_ID_1}", "${SB_SHORT_ID_2}" ]
         }
       }
-
     }
   ],
-  "outbounds": [ { "type": "direct", "tag": "direct" }, { "type": "block", "tag": "block" } ]
+  "outbounds": [ { "type": "direct", "tag": "direct" }, { "type": "block", "tag": "block" } ],
+  "route": {
+    "rules": [
+      { "inbound": "vless-in", "action": "sniff" }
+    ]
+  }
 }
 EOF
 }
+
 
 # --- Uninstaller ---
 uninstall_singbox() {
