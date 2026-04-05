@@ -27,11 +27,12 @@ generate_keypair() {
   log_success "密钥对生成成功。"
 }
 
-# Generate random ShortID (8 bytes hex)
+# Generate random ShortIDs (two 8-byte hex values)
 generate_short_id() {
-  log_info "正在生成 ShortID..."
-  SB_SHORT_ID=$(openssl rand -hex 8)
-  log_success "ShortID: ${SB_SHORT_ID}"
+  log_info "正在生成 ShortIDs..."
+  SB_SHORT_ID_1=$(openssl rand -hex 8)
+  SB_SHORT_ID_2=$(openssl rand -hex 8)
+  log_success "ShortID 1: ${SB_SHORT_ID_1}, ShortID 2: ${SB_SHORT_ID_2}"
 }
 
 # Generate JSON configuration
@@ -51,6 +52,8 @@ generate_config() {
       "tag": "vless-in",
       "listen": "::",
       "listen_port": ${SB_PORT},
+      "sniff": true,
+      "sniff_override_destination": true,
       "users": [
         {
           "uuid": "${SB_UUID}",
@@ -60,6 +63,10 @@ generate_config() {
       "tls": {
         "enabled": true,
         "server_name": "${SB_SNI}",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
         "reality": {
           "enabled": true,
           "handshake": {
@@ -68,7 +75,8 @@ generate_config() {
           },
           "private_key": "${SB_PRIVATE_KEY}",
           "short_id": [
-            "${SB_SHORT_ID}"
+            "${SB_SHORT_ID_1}",
+            "${SB_SHORT_ID_2}"
           ]
         }
       }
