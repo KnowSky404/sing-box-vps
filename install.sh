@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040505"
+readonly SCRIPT_VERSION="2026040506"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
 readonly SINGBOX_CONFIG_DIR="/etc/sing-box"
@@ -295,9 +295,12 @@ show_banner() {
   clear
   echo -e "${BLUE}#############################################################${NC}"
   echo -e "${BLUE}#                                                           #${NC}"
-  echo -e "${BLUE}#           sing-box-vps 一键安装管理脚本                   #${NC}"
-  echo -e "${BLUE}#           脚本版本: ${SCRIPT_VERSION}                              #${NC}"
-  echo -e "${BLUE}#           适配版本: ${SB_SUPPORT_MAX_VERSION} (sing-box)               #${NC}"
+  echo -e "${BLUE}#           ${GREEN}sing-box-vps 一键安装管理脚本${BLUE}                   #${NC}"
+  echo -e "${BLUE}#           ${NC}可能是最简单的 VPS 一键安装脚本，专为稳定与安全设计 ${BLUE} #${NC}"
+  echo -e "${BLUE}#                                                           #${NC}"
+  echo -e "${BLUE}#  ${NC}作者: ${YELLOW}KnowSky404${NC}                                         ${BLUE}#${NC}"
+  echo -e "${BLUE}#  ${NC}项目: ${NC}https://github.com/KnowSky404/sing-box-vps          ${BLUE}#${NC}"
+  echo -e "${BLUE}#  ${NC}版本: ${GREEN}${SCRIPT_VERSION}${NC}                                       ${BLUE}#${NC}"
   echo -e "${BLUE}#                                                           #${NC}"
   echo -e "${BLUE}#############################################################${NC}"
   echo ""
