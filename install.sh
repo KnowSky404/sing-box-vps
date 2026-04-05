@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040508"
+readonly SCRIPT_VERSION="2026040509"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
 readonly SINGBOX_CONFIG_DIR="/etc/sing-box"
@@ -354,7 +354,7 @@ show_banner() {
   echo -e "${BLUE}#############################################################${NC}"
   echo -e "${BLUE}#                                                           #${NC}"
   echo -e "${BLUE}#           ${GREEN}sing-box-vps 一键安装管理脚本${BLUE}                   #${NC}"
-  echo -e "${BLUE}#           ${NC}可能是最简单的 VPS 一键安装脚本，专为稳定与安全设计 ${BLUE} #${NC}"
+  echo -e "${BLUE}#  ${NC}可能是最简单的 VPS 一键安装脚本，专为稳定与安全设计 ${BLUE}   #${NC}"
   echo -e "${BLUE}#                                                           #${NC}"
   echo -e "${BLUE}#  ${NC}作者: ${YELLOW}KnowSky404${NC}                                         ${BLUE}#${NC}"
   echo -e "${BLUE}#  ${NC}项目: ${NC}https://github.com/KnowSky404/sing-box-vps          ${BLUE}#${NC}"
@@ -475,6 +475,17 @@ main() {
 
   case "$choice" in
     1)
+      if [[ -f "${SINGBOX_BIN_PATH}" ]]; then
+        local installed_ver=$("${SINGBOX_BIN_PATH}" version | head -n1 | awk '{print $3}')
+        if [[ "${installed_ver}" == "${SB_SUPPORT_MAX_VERSION}" ]]; then
+          log_info "检测到已安装适配的最佳版本: ${installed_ver}"
+          read -rp "是否需要重新安装? [y/N]: " reinstall_choice
+          if [[ ! "${reinstall_choice}" =~ ^[Yy]$ ]]; then
+            continue
+          fi
+        fi
+      fi
+
       get_os_info && get_arch
       read -rp "版本 (默认 ${SB_SUPPORT_MAX_VERSION}): " in_v
       SB_VERSION=${in_v:-$SB_SUPPORT_MAX_VERSION}
