@@ -63,10 +63,6 @@ generate_config() {
       "tls": {
         "enabled": true,
         "server_name": "${SB_SNI}",
-        "utls": {
-          "enabled": true,
-          "fingerprint": "chrome"
-        },
         "reality": {
           "enabled": true,
           "handshake": {

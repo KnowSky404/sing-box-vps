@@ -251,14 +251,17 @@ generate_config() {
       "tls": {
         "enabled": true,
         "server_name": "${SB_SNI}",
-        "utls": { "enabled": true, "fingerprint": "chrome" },
         "reality": {
           "enabled": true,
-          "handshake": { "server": "${SB_SNI}", "server_port": 443 },
+          "handshake": {
+            "server": "${SB_SNI}",
+            "server_port": 443
+          },
           "private_key": "${SB_PRIVATE_KEY}",
           "short_id": [ "${SB_SHORT_ID_1}", "${SB_SHORT_ID_2}" ]
         }
       }
+
     }
   ],
   "outbounds": [ { "type": "direct", "tag": "direct" }, { "type": "block", "tag": "block" } ]
