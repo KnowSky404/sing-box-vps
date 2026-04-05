@@ -74,7 +74,7 @@ display_info() {
   local public_ip
   public_ip=$(curl -s https://api.ip.sb/ip || curl -s https://ifconfig.me)
   
-  local vless_link="vless://${SB_UUID}@${public_ip}:${SB_PORT}?security=reality&sni=${SB_SNI}&fp=chrome&pbk=${SB_PUBLIC_KEY}&sid=${SB_SHORT_ID}&flow=xtls-rprx-vision#${SB_NODE_NAME}"
+  local vless_link="vless://${SB_UUID}@${public_ip}:${SB_PORT}?security=reality&sni=${SB_SNI}&fp=chrome&pbk=${SB_PUBLIC_KEY}&sid=${SB_SHORT_ID_1}&flow=xtls-rprx-vision#${SB_NODE_NAME}"
 
   echo ""
   log_success "sing-box 安装与配置已完成！"
@@ -85,8 +85,9 @@ display_info() {
   echo -e "${BLUE}监听端口:${NC} ${SB_PORT}"
   echo -e "${BLUE}UUID:${NC}     ${SB_UUID}"
   echo -e "${BLUE}SNI:${NC}      ${SB_SNI}"
+  echo -e "${BLUE}TLS Fingerprint:${NC} chrome"
   echo -e "${BLUE}Public Key:${NC} ${SB_PUBLIC_KEY}"
-  echo -e "${BLUE}Short ID:${NC}   ${SB_SHORT_ID}"
+  echo -e "${BLUE}Short IDs:${NC}  ${SB_SHORT_ID_1}, ${SB_SHORT_ID_2}"
   echo -e "${BLUE}配置文件:${NC} ${SINGBOX_CONFIG_FILE}"
   echo -e "${BLUE}日志查看:${NC} journalctl -u sing-box -f"
   echo "-------------------------------------------------------------"
@@ -97,27 +98,53 @@ display_info() {
 
 # Entry point logic
 main() {
+  # Handle command line arguments
+  if [[ $# -gt 0 ]]; then
+    case "$1" in
+      uninstall)
+        check_root
+        source "${SCRIPT_DIR}/scripts/uninstaller.sh"
+        exit 0
+        ;;
+      *)
+        log_error "Unknown argument: $1"
+        ;;
+    esac
+  fi
+
   show_banner
   check_root
-  get_os_info
-  get_arch
 
-  log_info "检测到系统: ${OS_NAME} ${OS_VERSION}, 架构: ${ARCH}"
+  echo "1. 安装 sing-box (VLESS+REALITY)"
+  echo "2. 卸载 sing-box"
+  echo "0. 退出"
+  echo ""
+  read -rp "请选择操作 [0-2]: " main_choice
 
-  interactive_config
+  case "${main_choice}" in
+    1)
+      get_os_info
+      get_arch
+      log_info "检测到系统: ${OS_NAME} ${OS_VERSION}, 架构: ${ARCH}"
+      interactive_config
+      log_info "当前选择配置: 版本=${SB_VERSION}, 节点=${SB_NODE_NAME}, 端口=${SB_PORT}"
+      
+      source "${SCRIPT_DIR}/scripts/system_check.sh"
+      source "${SCRIPT_DIR}/scripts/singbox_manager.sh"
+      source "${SCRIPT_DIR}/scripts/config_generator.sh"
 
-  log_info "当前选择配置: 版本=${SB_VERSION}, 节点=${SB_NODE_NAME}, 端口=${SB_PORT}"
-  
-  # Execute sub-modules
-  source "${SCRIPT_DIR}/scripts/system_check.sh"
-  source "${SCRIPT_DIR}/scripts/singbox_manager.sh"
-  source "${SCRIPT_DIR}/scripts/config_generator.sh"
-
-  # Restart service
-  log_info "正在启动 sing-box 服务..."
-  systemctl restart sing-box
-  
-  display_info
+      log_info "正在启动 sing-box 服务..."
+      systemctl restart sing-box
+      display_info
+      ;;
+    2)
+      source "${SCRIPT_DIR}/scripts/uninstaller.sh"
+      ;;
+    *)
+      log_info "退出脚本。"
+      exit 0
+      ;;
+  esac
 }
 
 main "$@"
