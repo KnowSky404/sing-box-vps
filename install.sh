@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040503"
+readonly SCRIPT_VERSION="2026040504"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
 readonly SINGBOX_CONFIG_DIR="/etc/sing-box"
@@ -219,10 +219,13 @@ EOF
   systemctl enable sing-box >/dev/null 2>&1
   
   # Install self as 'sbv' command
-  log_info "正在将脚本安装为全局命令: sbv..."
-  cp -f "$0" "/usr/local/bin/sbv"
-  chmod +x "/usr/local/bin/sbv"
-  log_success "全局命令 sbv 安装成功。"
+  local current_script=$(realpath "$0")
+  if [[ "${current_script}" != "/usr/local/bin/sbv" ]]; then
+    log_info "正在将脚本安装为全局命令: sbv..."
+    cp -f "${current_script}" "/usr/local/bin/sbv"
+    chmod +x "/usr/local/bin/sbv"
+    log_success "全局命令 sbv 安装成功。"
+  fi
 }
 
 # --- Config Generator ---
