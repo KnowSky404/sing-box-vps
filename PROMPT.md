@@ -78,3 +78,5 @@ Bug修复：修复检测脚本更新时由于管道提前关闭导致的 curl: (
 文档优化：简化 README.md 中的一键安装命令为 curl 管道方式，并强调 sbv 命令的便捷性。
 
 Bug修复：修复 bash <(curl ...) 管道模式下 cp 命令因无法 stat 管道描述符导致的报错。改为检测到非 sbv 运行环境下，通过 curl 直接从远程安装 sbv 命令。
+
+Bug修复：补全在代码合并中丢失的 view_status_and_info 函数，修复选项 8 报错问题。

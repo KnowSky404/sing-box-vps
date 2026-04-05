@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040514"
+readonly SCRIPT_VERSION="2026040515"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
@@ -401,6 +401,26 @@ check_bbr_status() {
   else
     BBR_STATUS="${YELLOW}(未开启 BBR)${NC}"
   fi
+}
+
+# Helper to extract config values and display info
+view_status_and_info() {
+  if [[ ! -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    log_error "未找到配置文件，请先安装。"
+  fi
+
+  log_info "正在从配置文件中读取信息..."
+  SB_UUID=$(jq -r '.inbounds[0].users[0].uuid' "${SINGBOX_CONFIG_FILE}")
+  SB_PORT=$(jq -r '.inbounds[0].listen_port' "${SINGBOX_CONFIG_FILE}")
+  SB_SNI=$(jq -r '.inbounds[0].tls.server_name' "${SINGBOX_CONFIG_FILE}")
+  SB_PRIVATE_KEY=$(jq -r '.inbounds[0].tls.reality.private_key' "${SINGBOX_CONFIG_FILE}")
+  SB_SHORT_ID_1=$(jq -r '.inbounds[0].tls.reality.short_id[0]' "${SINGBOX_CONFIG_FILE}")
+  SB_SHORT_ID_2=$(jq -r '.inbounds[0].tls.reality.short_id[1]' "${SINGBOX_CONFIG_FILE}")
+  
+  # Note: Sing-box doesn't store Public Key in config, but we can generate it from Private Key
+  SB_PUBLIC_KEY=$("${SINGBOX_BIN_PATH}" generate reality-keypair <<< "${SB_PRIVATE_KEY}" | grep "PublicKey" | awk '{print $2}')
+
+  display_info
 }
 
 # New function: Update config only
