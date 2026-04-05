@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040507"
+readonly SCRIPT_VERSION="2026040508"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
 readonly SINGBOX_CONFIG_DIR="/etc/sing-box"
@@ -26,6 +26,7 @@ SB_PRIVATE_KEY=""
 SB_SHORT_ID_1=""
 SB_SHORT_ID_2=""
 SB_SNI="apple.com"
+SB_ADVANCED_ROUTE="y"
 
 # --- Common Utilities ---
 RED='\033[0;31m'
@@ -280,7 +281,7 @@ EOF
 
 # --- Config Generator ---
 generate_config() {
-  log_info "正在生成 VLESS+REALITY 配置 (适配 sing-box 1.13.0+ & 加入基础分流)..."
+  log_info "正在生成 VLESS+REALITY 配置 (适配 sing-box 1.13.0+)..."
   mkdir -p "${SINGBOX_CONFIG_DIR}"
 
   # UUID
@@ -294,6 +295,13 @@ generate_config() {
   # ShortIDs
   SB_SHORT_ID_1=$(openssl rand -hex 8)
   SB_SHORT_ID_2=$(openssl rand -hex 8)
+
+  # Route rules logic
+  local route_rules='[ { "inbound": "vless-in", "action": "sniff" }'
+  if [[ "${SB_ADVANCED_ROUTE}" == "y" ]]; then
+    route_rules+=', { "geosite": "category-ads-all", "action": "reject" }, { "geoip": "private", "action": "reject" }'
+  fi
+  route_rules+=' ]'
 
   cat > "${SINGBOX_CONFIG_FILE}" <<EOF
 {
@@ -322,16 +330,11 @@ generate_config() {
     { "type": "block", "tag": "block" }
   ],
   "route": {
-    "rules": [
-      { "inbound": "vless-in", "action": "sniff" },
-      { "geosite": "category-ads-all", "action": "reject" },
-      { "geoip": "private", "action": "reject" }
-    ]
+    "rules": ${route_rules}
   }
 }
 EOF
 }
-
 # --- Uninstaller ---
 uninstall_singbox() {
   log_info "正在卸载 sing-box..."
@@ -388,6 +391,13 @@ update_config_only() {
   # Generate PBK from Private Key
   SB_PUBLIC_KEY=$("${SINGBOX_BIN_PATH}" generate reality-keypair <<< "${SB_PRIVATE_KEY}" | grep "PublicKey" | awk '{print $2}')
 
+  # Parse current route rules
+  if jq -e '.route.rules[] | select(.geosite == "category-ads-all")' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+    SB_ADVANCED_ROUTE="y"
+  else
+    SB_ADVANCED_ROUTE="n"
+  fi
+
   echo -e "\n${BLUE}--- 进入配置修改模式 ---${NC}"
 
   # 1. Update Port
@@ -402,7 +412,12 @@ update_config_only() {
   read -rp "新 REALITY 域名 (当前: ${SB_SNI}, 留空保持): " in_sni
   [[ -n "${in_sni}" ]] && SB_SNI="${in_sni}"
 
+  # 4. Update Route
+  read -rp "是否开启高级路由规则 (广告拦截/局域网绕行) [y/n] (当前: ${SB_ADVANCED_ROUTE}): " in_route
+  [[ -n "${in_route}" ]] && SB_ADVANCED_ROUTE="${in_route}"
+
   generate_config
+
   check_config_valid
   open_firewall_port "${SB_PORT}"
   systemctl restart sing-box
@@ -468,8 +483,11 @@ main() {
       check_port_conflict "${SB_PORT}"
       read -rp "REALITY 域名 (默认 apple.com): " in_sni
       SB_SNI=${in_sni:-"apple.com"}
+      read -rp "是否开启高级路由规则 (广告拦截/局域网绕行) [y/n] (默认 y): " in_route
+      SB_ADVANCED_ROUTE=${in_route:-"y"}
 
       install_dependencies
+
       get_latest_version
       install_binary
       generate_config
