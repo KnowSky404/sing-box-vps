@@ -7,7 +7,13 @@
 在您的 VPS 上运行以下命令即可开始安装：
 
 ```bash
-git clone https://github.com/KnowSky404/sing-box-vps.git && cd sing-box-vps && chmod +x main.sh && ./main.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh)
+```
+
+或使用分步方式：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh -o install.sh && chmod +x install.sh && sudo ./install.sh
 ```
 
 ## ✨ 项目特性
