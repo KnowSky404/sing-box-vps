@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040513"
+readonly SCRIPT_VERSION="2026040514"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
@@ -278,13 +278,16 @@ EOF
   systemctl daemon-reload
   systemctl enable sing-box >/dev/null 2>&1
   
-  # Install self as 'sbv' command
-  local current_script=$(realpath "$0")
-  if [[ "${current_script}" != "/usr/local/bin/sbv" ]]; then
+  # Install/Update 'sbv' command
+  if [[ "$0" != "/usr/local/bin/sbv" && "$0" != "sbv" ]]; then
     log_info "正在将脚本安装为全局命令: sbv..."
-    cp -f "${current_script}" "/usr/local/bin/sbv"
-    chmod +x "/usr/local/bin/sbv"
-    log_success "全局命令 sbv 安装成功。"
+    if curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh -o "/usr/local/bin/sbv"; then
+      chmod +x "/usr/local/bin/sbv"
+      log_success "全局命令 sbv 安装/更新成功。"
+    else
+      log_warn "无法从远程下载脚本，尝试使用本地备份..."
+      [[ -f "$0" ]] && cp -f "$0" "/usr/local/bin/sbv" && chmod +x "/usr/local/bin/sbv"
+    fi
   fi
 }
 
