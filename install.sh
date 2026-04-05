@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040511"
+readonly SCRIPT_VERSION="2026040512"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
@@ -50,11 +50,18 @@ check_root() {
 
 # Check for script update status
 check_script_status() {
-  local remote_version=$(curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh | grep -m1 "readonly SCRIPT_VERSION" | cut -d'"' -f2)
+  local remote_content
+  remote_content=$(curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh 2>/dev/null) || true
   
-  if [[ -z "${remote_version}" ]]; then
+  if [[ -z "${remote_content}" ]]; then
     SCRIPT_VER_STATUS="${RED}(无法检测更新)${NC}"
-  elif [[ "${remote_version}" -gt "${SCRIPT_VERSION}" ]]; then
+    return
+  fi
+
+  local remote_version
+  remote_version=$(echo "${remote_content}" | grep -m1 "readonly SCRIPT_VERSION" | cut -d'"' -f2)
+  
+  if [[ "${remote_version}" -gt "${SCRIPT_VERSION}" ]]; then
     SCRIPT_VER_STATUS="${YELLOW}(有新版本: ${remote_version})${NC}"
   else
     SCRIPT_VER_STATUS="${GREEN}(已是最新)${NC}"
