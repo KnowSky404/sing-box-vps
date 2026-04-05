@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040502"
+readonly SCRIPT_VERSION="2026040503"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
 readonly SINGBOX_CONFIG_DIR="/etc/sing-box"
@@ -45,22 +45,28 @@ check_root() {
   fi
 }
 
-# Check for script update
-check_script_update() {
-  log_info "正在检测脚本更新..."
+# Check for script update status
+check_script_status() {
   local remote_version=$(curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh | grep -m1 "readonly SCRIPT_VERSION" | cut -d'"' -f2)
   
-  if [[ -n "${remote_version}" && "${remote_version}" -gt "${SCRIPT_VERSION}" ]]; then
-    log_warn "检测到新版本脚本: ${remote_version} (当前版本: ${SCRIPT_VERSION})"
-    read -rp "是否立即更新脚本? [y/n]: " update_choice
-    if [[ "${update_choice}" == "y" ]]; then
-      curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh -o "/usr/local/bin/sbv"
-      chmod +x "/usr/local/bin/sbv"
-      log_success "脚本已更新，请重新运行。"
-      exit 0
-    fi
+  if [[ -z "${remote_version}" ]]; then
+    SCRIPT_VER_STATUS="${RED}(无法检测更新)${NC}"
+  elif [[ "${remote_version}" -gt "${SCRIPT_VERSION}" ]]; then
+    SCRIPT_VER_STATUS="${YELLOW}(有新版本: ${remote_version})${NC}"
   else
-    log_success "当前脚本已是最新版本。"
+    SCRIPT_VER_STATUS="${GREEN}(已是最新)${NC}"
+  fi
+}
+
+# Manual update script
+manual_update_script() {
+  log_info "正在从 GitHub 获取最新脚本..."
+  if curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh -o "/usr/local/bin/sbv"; then
+    chmod +x "/usr/local/bin/sbv"
+    log_success "脚本已更新到最新版本，请重新运行 sbv。"
+    exit 0
+  else
+    log_error "脚本更新失败，请检查网络。"
   fi
 }
 
@@ -367,8 +373,8 @@ main() {
   show_banner
   check_root
   
-  # New: Check for script update
-  check_script_update
+  # New: Check for script update status
+  check_script_status
   
   # New: Check sing-box version
   check_sb_version
@@ -383,8 +389,9 @@ main() {
   echo "7. 查看状态与节点信息"
   echo "8. 查看实时日志"
   echo "--------------------------------"
+  echo -e "9. 更新管理脚本 (sbv) ${SCRIPT_VER_STATUS}"
   echo "0. 退出"
-  read -rp "请选择 [0-8]: " choice
+  read -rp "请选择 [0-9]: " choice
 
   case "$choice" in
     1)
@@ -412,6 +419,7 @@ main() {
     6) systemctl restart sing-box && log_success "服务已重启。" ;;
     7) view_status_and_info ;;
     8) journalctl -u sing-box -f ;;
+    9) manual_update_script ;;
     *) exit 0 ;;
   esac
 }
