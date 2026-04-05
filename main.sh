@@ -27,7 +27,7 @@ SB_UUID=""
 SB_PUBLIC_KEY=""
 SB_PRIVATE_KEY=""
 SB_SHORT_ID=""
-SB_SNI="www.google.com"
+SB_SNI="apple.com"
 
 # --- Main Functions ---
 
