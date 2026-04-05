@@ -40,4 +40,4 @@ git clone https://github.com/KnowSky404/sing-box-vps.git && cd sing-box-vps && c
 
 ## 开源协议
 
-基于 [MIT License](LICENSE) 开源。
+基于 [GNU Affero General Public License v3.0](LICENSE) 开源。

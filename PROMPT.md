@@ -28,3 +28,5 @@ reality协议的默认使用的域名是 apple.com
 @PROMPT.md 这个在改动完成之后也帮我同步提交吧,这个就是记录我每次发给你的提示词内容
 
 当前项目的地址是 https://github.com/KnowSky404/sing-box-vps 帮我先更新一下 @README.md 文件,主要重点加入一键安装的脚本
+
+修正 README.md 中的协议声明为 AGPL-3.0
