@@ -45,6 +45,70 @@ check_root() {
   fi
 }
 
+# Check for script update
+check_script_update() {
+  log_info "正在检测脚本更新..."
+  local remote_version=$(curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh | grep -m1 "readonly SCRIPT_VERSION" | cut -d'"' -f2)
+  
+  if [[ -n "${remote_version}" && "${remote_version}" -gt "${SCRIPT_VERSION}" ]]; then
+    log_warn "检测到新版本脚本: ${remote_version} (当前版本: ${SCRIPT_VERSION})"
+    read -rp "是否立即更新脚本? [y/n]: " update_choice
+    if [[ "${update_choice}" == "y" ]]; then
+      curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh -o "/usr/local/bin/sbv"
+      chmod +x "/usr/local/bin/sbv"
+      log_success "脚本已更新，请重新运行。"
+      exit 0
+    fi
+  else
+    log_success "当前脚本已是最新版本。"
+  fi
+}
+
+# Check for sing-box version
+check_sb_version() {
+  if [[ -f "${SINGBOX_BIN_PATH}" ]]; then
+    CURRENT_SB_VER=$("${SINGBOX_BIN_PATH}" version | head -n1 | awk '{print $3}')
+    if [[ "${CURRENT_SB_VER}" != "${SB_SUPPORT_MAX_VERSION}" ]]; then
+      SB_VER_STATUS="${YELLOW}(当前版本: ${CURRENT_SB_VER}, 建议更新到: ${SB_SUPPORT_MAX_VERSION})${NC}"
+    else
+      SB_VER_STATUS="${GREEN}(已是适配的最佳版本: ${CURRENT_SB_VER})${NC}"
+    fi
+  else
+    SB_VER_STATUS="${RED}(未安装)${NC}"
+  fi
+}
+
+# Check for port conflict
+check_port_conflict() {
+  local port=$1
+  if ss -tunlp | grep -q ":${port} "; then
+    local process=$(ss -tunlp | grep ":${port} " | awk '{print $7}' | cut -d'"' -f2 | head -n1)
+    log_warn "端口 ${port} 已被进程 [${process}] 占用。"
+    echo "1. 尝试自动停止该进程"
+    echo "2. 使用随机端口"
+    echo "3. 手动输入新端口"
+    read -rp "请选择操作 [1-3]: " port_choice
+    
+    case "${port_choice}" in
+      1)
+        local pid=$(ss -tunlp | grep ":${port} " | awk '{print $7}' | cut -d',' -f2 | cut -d'=' -f2 | head -n1)
+        kill -9 "${pid}" && log_success "进程已终止。"
+        ;;
+      2)
+        while true; do
+          SB_PORT=$((RANDOM % 55535 + 10000))
+          ss -tunlp | grep -q ":${SB_PORT} " || break
+        done
+        log_success "已自动切换到随机端口: ${SB_PORT}"
+        ;;
+      3)
+        read -rp "请输入新端口: " SB_PORT
+        check_port_conflict "${SB_PORT}"
+        ;;
+    esac
+  fi
+}
+
 get_os_info() {
   if [[ -f /etc/os-release ]]; then
     source /etc/os-release
@@ -237,15 +301,40 @@ view_status_and_info() {
   SB_UUID=$(jq -r '.inbounds[0].users[0].uuid' "${SINGBOX_CONFIG_FILE}")
   SB_PORT=$(jq -r '.inbounds[0].listen_port' "${SINGBOX_CONFIG_FILE}")
   SB_SNI=$(jq -r '.inbounds[0].tls.server_name' "${SINGBOX_CONFIG_FILE}")
-  SB_PUBLIC_KEY=$(jq -r '.inbounds[0].tls.reality.handshake.server' "${SINGBOX_CONFIG_FILE}") # Just a placeholder in this script's logic
-  # In reality, we need to store PBK/SID or get from config. 
-  # Let's adjust generate_config to make it easier to parse or just parse current ones.
   SB_PRIVATE_KEY=$(jq -r '.inbounds[0].tls.reality.private_key' "${SINGBOX_CONFIG_FILE}")
   SB_SHORT_ID_1=$(jq -r '.inbounds[0].tls.reality.short_id[0]' "${SINGBOX_CONFIG_FILE}")
+  SB_SHORT_ID_2=$(jq -r '.inbounds[0].tls.reality.short_id[1]' "${SINGBOX_CONFIG_FILE}")
   
   # Note: Sing-box doesn't store Public Key in config, but we can generate it from Private Key
   SB_PUBLIC_KEY=$("${SINGBOX_BIN_PATH}" generate reality-keypair <<< "${SB_PRIVATE_KEY}" | grep "PublicKey" | awk '{print $2}')
 
+  display_info
+}
+
+# New function: Update config only
+update_config_only() {
+  if [[ ! -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    log_error "未找到配置文件，请先执行安装流程。"
+  fi
+  
+  log_info "进入配置修改模式..."
+  view_status_and_info
+  
+  # 1. Update Port
+  read -rp "新端口 (当前: ${SB_PORT}, 留空保持): " in_p
+  [[ -n "${in_p}" ]] && SB_PORT="${in_p}" && check_port_conflict "${SB_PORT}"
+  
+  # 2. Update UUID
+  read -rp "新 UUID (当前: ${SB_UUID}, 留空保持): " in_uuid
+  [[ -n "${in_uuid}" ]] && SB_UUID="${in_uuid}"
+  
+  # 3. Update SNI
+  read -rp "新 REALITY 域名 (当前: ${SB_SNI}, 留空保持): " in_sni
+  [[ -n "${in_sni}" ]] && SB_SNI="${in_sni}"
+  
+  generate_config
+  systemctl restart sing-box
+  log_success "配置已成功更新并重启服务。"
   display_info
 }
 
@@ -260,7 +349,7 @@ display_info() {
   echo -e "UUID: ${SB_UUID}"
   echo -e "SNI:  ${SB_SNI} (REALITY)"
   echo -e "PBK:  ${SB_PUBLIC_KEY}"
-  echo -e "SID:  ${SB_SHORT_ID_1}"
+  echo -e "SID:  ${SB_SHORT_ID_1}, ${SB_SHORT_ID_2}"
   echo "-------------------------------------------------------------"
   echo -e "${YELLOW}VLESS 链接:${NC}\n${vless_link}\n"
   
@@ -275,17 +364,24 @@ main() {
   show_banner
   check_root
   
-  echo "1. 安装/更新 sing-box (VLESS+REALITY)"
+  # New: Check for script update
+  check_script_update
+  
+  # New: Check sing-box version
+  check_sb_version
+
+  echo -e "1. 安装/更新 sing-box (VLESS+REALITY) ${SB_VER_STATUS}"
   echo "2. 卸载 sing-box"
+  echo "3. 修改当前协议配置 (端口/UUID/域名)"
   echo "--------------------------------"
-  echo "3. 启动 sing-box"
-  echo "4. 停止 sing-box"
-  echo "5. 重启 sing-box"
-  echo "6. 查看状态与节点信息"
-  echo "7. 查看实时日志"
+  echo "4. 启动 sing-box"
+  echo "5. 停止 sing-box"
+  echo "6. 重启 sing-box"
+  echo "7. 查看状态与节点信息"
+  echo "8. 查看实时日志"
   echo "--------------------------------"
   echo "0. 退出"
-  read -rp "请选择 [0-7]: " choice
+  read -rp "请选择 [0-8]: " choice
 
   case "$choice" in
     1)
@@ -294,6 +390,7 @@ main() {
       SB_VERSION=${in_v:-$SB_SUPPORT_MAX_VERSION}
       read -rp "端口 (默认 443): " in_p
       SB_PORT=${in_p:-443}
+      check_port_conflict "${SB_PORT}"
       read -rp "REALITY 域名 (默认 apple.com): " in_sni
       SB_SNI=${in_sni:-"apple.com"}
       
@@ -306,11 +403,12 @@ main() {
       display_info
       ;;
     2) uninstall_singbox ;;
-    3) systemctl start sing-box && log_success "服务已启动。" ;;
-    4) systemctl stop sing-box && log_success "服务已停止。" ;;
-    5) systemctl restart sing-box && log_success "服务已重启。" ;;
-    6) view_status_and_info ;;
-    7) journalctl -u sing-box -f ;;
+    3) update_config_only ;;
+    4) systemctl start sing-box && log_success "服务已启动。" ;;
+    5) systemctl stop sing-box && log_success "服务已停止。" ;;
+    6) systemctl restart sing-box && log_success "服务已重启。" ;;
+    7) view_status_and_info ;;
+    8) journalctl -u sing-box -f ;;
     *) exit 0 ;;
   esac
 }
