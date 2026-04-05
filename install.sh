@@ -8,11 +8,13 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040509"
+readonly SCRIPT_VERSION="2026040510"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
+readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
-readonly SINGBOX_CONFIG_DIR="/etc/sing-box"
-readonly SINGBOX_CONFIG_FILE="/etc/sing-box/config.json"
+readonly SINGBOX_CONFIG_DIR="${SB_PROJECT_DIR}"
+readonly SINGBOX_CONFIG_FILE="${SB_PROJECT_DIR}/config.json"
+readonly SINGBOX_LOG_FILE="${SB_PROJECT_DIR}/sing-box.log"
 readonly SINGBOX_SERVICE_FILE="/etc/systemd/system/sing-box.service"
 
 # --- Global Variables ---
@@ -305,7 +307,11 @@ generate_config() {
 
   cat > "${SINGBOX_CONFIG_FILE}" <<EOF
 {
-  "log": { "level": "info", "timestamp": true },
+  "log": {
+    "level": "info",
+    "timestamp": true,
+    "output": "${SINGBOX_LOG_FILE}"
+  },
   "inbounds": [
     {
       "type": "vless",
@@ -439,6 +445,9 @@ display_info() {
   echo -e "SNI:  ${SB_SNI} (REALITY)"
   echo -e "PBK:  ${SB_PUBLIC_KEY}"
   echo -e "SID:  ${SB_SHORT_ID_1}, ${SB_SHORT_ID_2}"
+  echo "--------------------------------"
+  echo -e "配置文件: ${SINGBOX_CONFIG_FILE}"
+  echo -e "日志文件: ${SINGBOX_LOG_FILE}"
   echo "-------------------------------------------------------------"
   echo -e "${YELLOW}VLESS 链接:${NC}\n${vless_link}\n"
 
