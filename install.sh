@@ -259,6 +259,8 @@ main() {
       SB_VERSION=${in_v:-$SB_SUPPORT_MAX_VERSION}
       read -rp "端口 (默认 443): " in_p
       SB_PORT=${in_p:-443}
+      read -rp "REALITY 域名 (默认 apple.com): " in_sni
+      SB_SNI=${in_sni:-"apple.com"}
       
       install_dependencies
       get_latest_version

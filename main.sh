@@ -63,6 +63,9 @@ interactive_config() {
   SB_PORT=${input_port:-$SB_PORT}
 
   # 4. UUID (Auto-generated if empty)
+  read -rp "请输入 REALITY 域名 (默认: ${SB_SNI}): " input_sni
+  SB_SNI=${input_sni:-$SB_SNI}
+
   read -rp "请输入 UUID (留空则自动生成): " input_uuid
   SB_UUID=${input_uuid}
 

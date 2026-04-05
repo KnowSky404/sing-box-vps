@@ -38,3 +38,5 @@ reality协议的默认使用的域名是 apple.com
 规范安装路径：创建 sing-box-vps 目录并进入后再下载 install.sh
 
 安装逻辑：增加下载清理步骤，确保每次安装环境纯净。
+
+交互增强：增加 REALITY SNI 域名的交互式选择，默认 apple.com
