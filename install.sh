@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040504"
+readonly SCRIPT_VERSION="2026040505"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
 readonly SINGBOX_CONFIG_DIR="/etc/sing-box"
@@ -329,8 +329,18 @@ update_config_only() {
     log_error "未找到配置文件，请先执行安装流程。"
   fi
   
-  log_info "进入配置修改模式..."
-  view_status_and_info
+  log_info "正在读取当前配置..."
+  SB_UUID=$(jq -r '.inbounds[0].users[0].uuid' "${SINGBOX_CONFIG_FILE}")
+  SB_PORT=$(jq -r '.inbounds[0].listen_port' "${SINGBOX_CONFIG_FILE}")
+  SB_SNI=$(jq -r '.inbounds[0].tls.server_name' "${SINGBOX_CONFIG_FILE}")
+  SB_PRIVATE_KEY=$(jq -r '.inbounds[0].tls.reality.private_key' "${SINGBOX_CONFIG_FILE}")
+  SB_SHORT_ID_1=$(jq -r '.inbounds[0].tls.reality.short_id[0]' "${SINGBOX_CONFIG_FILE}")
+  SB_SHORT_ID_2=$(jq -r '.inbounds[0].tls.reality.short_id[1]' "${SINGBOX_CONFIG_FILE}")
+  
+  # Generate PBK from Private Key
+  SB_PUBLIC_KEY=$("${SINGBOX_BIN_PATH}" generate reality-keypair <<< "${SB_PRIVATE_KEY}" | grep "PublicKey" | awk '{print $2}')
+  
+  echo -e "\n${BLUE}--- 进入配置修改模式 ---${NC}"
   
   # 1. Update Port
   read -rp "新端口 (当前: ${SB_PORT}, 留空保持): " in_p
@@ -346,7 +356,9 @@ update_config_only() {
   
   generate_config
   systemctl restart sing-box
-  log_success "配置已成功更新并重启服务。"
+  log_success "配置已更新并重启服务。"
+  
+  # Final display
   display_info
 }
 
