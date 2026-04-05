@@ -8,6 +8,8 @@ set -euo pipefail
 
 # Constants and File Paths
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_VERSION="1.0.0"
+readonly SB_SUPPORT_MAX_VERSION="1.8.11"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
 readonly SINGBOX_CONFIG_DIR="/etc/sing-box"
 readonly SINGBOX_CONFIG_FILE="/etc/sing-box/config.json"
@@ -17,7 +19,7 @@ readonly SINGBOX_SERVICE_FILE="/etc/systemd/system/sing-box.service"
 source "${SCRIPT_DIR}/utils/common.sh"
 
 # Global Variables
-SB_VERSION="latest"
+SB_VERSION="${SB_SUPPORT_MAX_VERSION}"
 SB_PROTOCOL="vless+reality"
 SB_NODE_NAME="vless_reality_$(hostname)"
 SB_PORT="443"
@@ -35,6 +37,8 @@ show_banner() {
   echo "#############################################################"
   echo "#                                                           #"
   echo "#           sing-box-vps 一键安装管理脚本                   #"
+  echo "#           脚本版本: ${SCRIPT_VERSION}                             #"
+  echo "#           适配版本: ${SB_SUPPORT_MAX_VERSION} (sing-box)              #"
   echo "#           协议支持: VLESS + REALITY                       #"
   echo "#                                                           #"
   echo "#############################################################"
@@ -46,8 +50,9 @@ interactive_config() {
   log_info "进入交互式配置阶段..."
 
   # 1. Version Info
-  read -rp "请输入要安装的 sing-box 版本 (默认: ${SB_VERSION}): " input_version
-  SB_VERSION=${input_version:-$SB_VERSION}
+  echo -e "当前脚本完美适配的 sing-box 版本为: ${GREEN}${SB_SUPPORT_MAX_VERSION}${NC}"
+  read -rp "请输入要安装的版本 (默认: ${SB_SUPPORT_MAX_VERSION}, 输入 'latest' 获取最新): " input_version
+  SB_VERSION=${input_version:-$SB_SUPPORT_MAX_VERSION}
 
   # 2. Node Name
   read -rp "请输入节点名称 (默认: ${SB_NODE_NAME}): " input_name
