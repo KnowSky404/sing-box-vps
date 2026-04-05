@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040506"
+readonly SCRIPT_VERSION="2026040507"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
 readonly SINGBOX_CONFIG_DIR="/etc/sing-box"
@@ -82,6 +82,56 @@ check_sb_version() {
   else
     SB_VER_STATUS="${RED}(未安装)${NC}"
   fi
+}
+
+# Check and Enable BBR
+enable_bbr() {
+  local current_cc=$(sysctl net.ipv4.tcp_congestion_control | awk '{print $3}')
+  if [[ "${current_cc}" == "bbr" ]]; then
+    log_success "BBR 拥塞控制已开启。"
+  else
+    log_warn "BBR 拥塞控制未开启，正在尝试开启..."
+    echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
+    sysctl -p
+    log_success "BBR 开启成功。"
+  fi
+}
+
+# Open firewall port
+open_firewall_port() {
+  local port=$1
+  log_info "正在尝试放行端口 ${port}..."
+  
+  # UFW
+  if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
+    ufw allow "${port}/tcp" &>/dev/null
+    ufw allow "${port}/udp" &>/dev/null
+  fi
+  
+  # Firewalld
+  if command -v firewall-cmd &>/dev/null && firewall-cmd --state &>/dev/null; then
+    firewall-cmd --permanent --add-port="${port}/tcp" &>/dev/null
+    firewall-cmd --permanent --add-port="${port}/udp" &>/dev/null
+    firewall-cmd --reload &>/dev/null
+  fi
+  
+  # Iptables
+  if command -v iptables &>/dev/null; then
+    iptables -I INPUT -p tcp --dport "${port}" -j ACCEPT &>/dev/null
+    iptables -I INPUT -p udp --dport "${port}" -j ACCEPT &>/dev/null
+  fi
+  
+  log_success "端口 ${port} 防火墙配置尝试完成。"
+}
+
+# Verify configuration file
+check_config_valid() {
+  log_info "正在校验配置文件有效性..."
+  if ! "${SINGBOX_BIN_PATH}" check -c "${SINGBOX_CONFIG_FILE}"; then
+    log_error "配置文件校验失败，请检查配置细节。"
+  fi
+  log_success "配置文件校验成功。"
 }
 
 # Check for port conflict
@@ -230,7 +280,7 @@ EOF
 
 # --- Config Generator ---
 generate_config() {
-  log_info "正在生成 VLESS+REALITY 配置 (适配 sing-box 1.13.0+)..."
+  log_info "正在生成 VLESS+REALITY 配置 (适配 sing-box 1.13.0+ & 加入基础分流)..."
   mkdir -p "${SINGBOX_CONFIG_DIR}"
 
   # UUID
@@ -267,16 +317,20 @@ generate_config() {
       }
     }
   ],
-  "outbounds": [ { "type": "direct", "tag": "direct" }, { "type": "block", "tag": "block" } ],
+  "outbounds": [
+    { "type": "direct", "tag": "direct" },
+    { "type": "block", "tag": "block" }
+  ],
   "route": {
     "rules": [
-      { "inbound": "vless-in", "action": "sniff" }
+      { "inbound": "vless-in", "action": "sniff" },
+      { "geosite": "category-ads-all", "action": "reject" },
+      { "geoip": "private", "action": "reject" }
     ]
   }
 }
 EOF
 }
-
 
 # --- Uninstaller ---
 uninstall_singbox() {
@@ -286,6 +340,7 @@ uninstall_singbox() {
   rm -f "${SINGBOX_BIN_PATH}"
   rm -rf "${SINGBOX_CONFIG_DIR}"
   rm -f "${SINGBOX_SERVICE_FILE}"
+  # Note: we don't remove /usr/local/bin/sbv to allow future reinstalls via same cmd
   systemctl daemon-reload
   log_success "卸载完成。"
 }
@@ -306,24 +361,14 @@ show_banner() {
   echo ""
 }
 
-# Helper to extract config values and display info
-view_status_and_info() {
-  if [[ ! -f "${SINGBOX_CONFIG_FILE}" ]]; then
-    log_error "未找到配置文件，请先安装。"
+# Helper: Check BBR Status
+check_bbr_status() {
+  local cc=$(sysctl net.ipv4.tcp_congestion_control | awk '{print $3}')
+  if [[ "${cc}" == "bbr" ]]; then
+    BBR_STATUS="${GREEN}(已开启 BBR)${NC}"
+  else
+    BBR_STATUS="${YELLOW}(未开启 BBR)${NC}"
   fi
-
-  log_info "正在从配置文件中读取信息..."
-  SB_UUID=$(jq -r '.inbounds[0].users[0].uuid' "${SINGBOX_CONFIG_FILE}")
-  SB_PORT=$(jq -r '.inbounds[0].listen_port' "${SINGBOX_CONFIG_FILE}")
-  SB_SNI=$(jq -r '.inbounds[0].tls.server_name' "${SINGBOX_CONFIG_FILE}")
-  SB_PRIVATE_KEY=$(jq -r '.inbounds[0].tls.reality.private_key' "${SINGBOX_CONFIG_FILE}")
-  SB_SHORT_ID_1=$(jq -r '.inbounds[0].tls.reality.short_id[0]' "${SINGBOX_CONFIG_FILE}")
-  SB_SHORT_ID_2=$(jq -r '.inbounds[0].tls.reality.short_id[1]' "${SINGBOX_CONFIG_FILE}")
-  
-  # Note: Sing-box doesn't store Public Key in config, but we can generate it from Private Key
-  SB_PUBLIC_KEY=$("${SINGBOX_BIN_PATH}" generate reality-keypair <<< "${SB_PRIVATE_KEY}" | grep "PublicKey" | awk '{print $2}')
-
-  display_info
 }
 
 # New function: Update config only
@@ -331,7 +376,7 @@ update_config_only() {
   if [[ ! -f "${SINGBOX_CONFIG_FILE}" ]]; then
     log_error "未找到配置文件，请先执行安装流程。"
   fi
-  
+
   log_info "正在读取当前配置..."
   SB_UUID=$(jq -r '.inbounds[0].users[0].uuid' "${SINGBOX_CONFIG_FILE}")
   SB_PORT=$(jq -r '.inbounds[0].listen_port' "${SINGBOX_CONFIG_FILE}")
@@ -339,28 +384,30 @@ update_config_only() {
   SB_PRIVATE_KEY=$(jq -r '.inbounds[0].tls.reality.private_key' "${SINGBOX_CONFIG_FILE}")
   SB_SHORT_ID_1=$(jq -r '.inbounds[0].tls.reality.short_id[0]' "${SINGBOX_CONFIG_FILE}")
   SB_SHORT_ID_2=$(jq -r '.inbounds[0].tls.reality.short_id[1]' "${SINGBOX_CONFIG_FILE}")
-  
+
   # Generate PBK from Private Key
   SB_PUBLIC_KEY=$("${SINGBOX_BIN_PATH}" generate reality-keypair <<< "${SB_PRIVATE_KEY}" | grep "PublicKey" | awk '{print $2}')
-  
+
   echo -e "\n${BLUE}--- 进入配置修改模式 ---${NC}"
-  
+
   # 1. Update Port
   read -rp "新端口 (当前: ${SB_PORT}, 留空保持): " in_p
   [[ -n "${in_p}" ]] && SB_PORT="${in_p}" && check_port_conflict "${SB_PORT}"
-  
+
   # 2. Update UUID
   read -rp "新 UUID (当前: ${SB_UUID}, 留空保持): " in_uuid
   [[ -n "${in_uuid}" ]] && SB_UUID="${in_uuid}"
-  
+
   # 3. Update SNI
   read -rp "新 REALITY 域名 (当前: ${SB_SNI}, 留空保持): " in_sni
   [[ -n "${in_sni}" ]] && SB_SNI="${in_sni}"
-  
+
   generate_config
+  check_config_valid
+  open_firewall_port "${SB_PORT}"
   systemctl restart sing-box
   log_success "配置已更新并重启服务。"
-  
+
   # Final display
   display_info
 }
@@ -368,7 +415,7 @@ update_config_only() {
 display_info() {
   local public_ip=$(curl -s https://api.ip.sb/ip || curl -s https://ifconfig.me)
   local vless_link="vless://${SB_UUID}@${public_ip}:${SB_PORT}?security=reality&sni=${SB_SNI}&fp=chrome&pbk=${SB_PUBLIC_KEY}&sid=${SB_SHORT_ID_1}&flow=xtls-rprx-vision#${SB_NODE_NAME}"
-  
+
   echo -e "\n${GREEN}服务状态与节点信息：${NC}"
   echo "-------------------------------------------------------------"
   echo -e "进程状态: $(systemctl is-active sing-box)"
@@ -379,7 +426,7 @@ display_info() {
   echo -e "SID:  ${SB_SHORT_ID_1}, ${SB_SHORT_ID_2}"
   echo "-------------------------------------------------------------"
   echo -e "${YELLOW}VLESS 链接:${NC}\n${vless_link}\n"
-  
+
   echo -e "${YELLOW}节点二维码:${NC}"
   qrencode -t ansiutf8 "${vless_link}"
   echo "-------------------------------------------------------------"
@@ -390,26 +437,26 @@ main() {
 
   show_banner
   check_root
-  
-  # New: Check for script update status
+
+  # Status checks
   check_script_status
-  
-  # New: Check sing-box version
   check_sb_version
+  check_bbr_status
 
   echo -e "1. 安装/更新 sing-box (VLESS+REALITY) ${SB_VER_STATUS}"
   echo "2. 卸载 sing-box"
   echo "3. 修改当前协议配置 (端口/UUID/域名)"
+  echo -e "4. 开启 BBR 拥塞控制算法 ${BBR_STATUS}"
   echo "--------------------------------"
-  echo "4. 启动 sing-box"
-  echo "5. 停止 sing-box"
-  echo "6. 重启 sing-box"
-  echo "7. 查看状态与节点信息"
-  echo "8. 查看实时日志"
+  echo "5. 启动 sing-box"
+  echo "6. 停止 sing-box"
+  echo "7. 重启 sing-box"
+  echo "8. 查看状态与节点信息"
+  echo "9. 查看实时日志"
   echo "--------------------------------"
-  echo -e "9. 更新管理脚本 (sbv) ${SCRIPT_VER_STATUS}"
+  echo -e "10. 更新管理脚本 (sbv) ${SCRIPT_VER_STATUS}"
   echo "0. 退出"
-  read -rp "请选择 [0-9]: " choice
+  read -rp "请选择 [0-10]: " choice
 
   case "$choice" in
     1)
@@ -421,25 +468,29 @@ main() {
       check_port_conflict "${SB_PORT}"
       read -rp "REALITY 域名 (默认 apple.com): " in_sni
       SB_SNI=${in_sni:-"apple.com"}
-      
+
       install_dependencies
       get_latest_version
       install_binary
       generate_config
+      check_config_valid
       setup_service
+      open_firewall_port "${SB_PORT}"
       systemctl restart sing-box
       display_info
       ;;
     2) uninstall_singbox ;;
     3) update_config_only ;;
-    4) systemctl start sing-box && log_success "服务已启动。" ;;
-    5) systemctl stop sing-box && log_success "服务已停止。" ;;
-    6) systemctl restart sing-box && log_success "服务已重启。" ;;
-    7) view_status_and_info ;;
-    8) journalctl -u sing-box -f ;;
-    9) manual_update_script ;;
+    4) enable_bbr ;;
+    5) systemctl start sing-box && log_success "服务已启动。" ;;
+    6) systemctl stop sing-box && log_success "服务已停止。" ;;
+    7) systemctl restart sing-box && log_success "服务已重启。" ;;
+    8) view_status_and_info ;;
+    9) journalctl -u sing-box -f ;;
+    10) manual_update_script ;;
     *) exit 0 ;;
   esac
 }
+
 
 main "$@"
