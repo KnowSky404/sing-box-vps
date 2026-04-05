@@ -8,9 +8,10 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040516"
+readonly SCRIPT_VERSION="2026040517"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
+readonly SB_KEY_FILE="${SB_PROJECT_DIR}/reality.key"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
 readonly SINGBOX_CONFIG_DIR="${SB_PROJECT_DIR}"
 readonly SINGBOX_CONFIG_FILE="${SB_PROJECT_DIR}/config.json"
@@ -305,9 +306,18 @@ generate_config() {
   [[ -z "${SB_UUID}" ]] && SB_UUID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
 
   # Keys
-  local keypair=$("${SINGBOX_BIN_PATH}" generate reality-keypair)
-  SB_PRIVATE_KEY=$(echo "${keypair}" | grep "PrivateKey" | awk '{print $2}')
-  SB_PUBLIC_KEY=$(echo "${keypair}" | grep "PublicKey" | awk '{print $2}')
+  if [[ ! -f "${SB_KEY_FILE}" ]]; then
+    log_info "正在生成新的 REALITY 密钥对..."
+    local keypair=$("${SINGBOX_BIN_PATH}" generate reality-keypair)
+    SB_PRIVATE_KEY=$(echo "${keypair}" | grep "PrivateKey" | awk '{print $2}')
+    SB_PUBLIC_KEY=$(echo "${keypair}" | grep "PublicKey" | awk '{print $2}')
+    echo "PRIVATE_KEY=${SB_PRIVATE_KEY}" > "${SB_KEY_FILE}"
+    echo "PUBLIC_KEY=${SB_PUBLIC_KEY}" >> "${SB_KEY_FILE}"
+  else
+    log_info "使用现有密钥对..."
+    SB_PRIVATE_KEY=$(grep "PRIVATE_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2)
+    SB_PUBLIC_KEY=$(grep "PUBLIC_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2)
+  fi
 
   # ShortIDs
   SB_SHORT_ID_1=$(openssl rand -hex 8)
@@ -323,7 +333,7 @@ generate_config() {
   cat > "${SINGBOX_CONFIG_FILE}" <<EOF
 {
   "log": {
-    "level": "info",
+    "level": "debug",
     "timestamp": true,
     "output": "${SINGBOX_LOG_FILE}"
   },
@@ -356,6 +366,7 @@ generate_config() {
 }
 EOF
 }
+
 # --- Uninstaller ---
 uninstall_singbox() {
   log_info "正在卸载 sing-box..."
@@ -418,12 +429,18 @@ view_status_and_info() {
   SB_UUID=$(jq -r '.inbounds[0].users[0].uuid' "${SINGBOX_CONFIG_FILE}")
   SB_PORT=$(jq -r '.inbounds[0].listen_port' "${SINGBOX_CONFIG_FILE}")
   SB_SNI=$(jq -r '.inbounds[0].tls.server_name' "${SINGBOX_CONFIG_FILE}")
-  SB_PRIVATE_KEY=$(jq -r '.inbounds[0].tls.reality.private_key' "${SINGBOX_CONFIG_FILE}")
   SB_SHORT_ID_1=$(jq -r '.inbounds[0].tls.reality.short_id[0]' "${SINGBOX_CONFIG_FILE}")
   SB_SHORT_ID_2=$(jq -r '.inbounds[0].tls.reality.short_id[1]' "${SINGBOX_CONFIG_FILE}")
   
-  # Note: Sing-box doesn't store Public Key in config, but we can generate it from Private Key
-  SB_PUBLIC_KEY=$("${SINGBOX_BIN_PATH}" generate reality-keypair <<< "${SB_PRIVATE_KEY}" | grep "PublicKey" | awk '{print $2}')
+  # Read Public Key from file
+  if [[ -f "${SB_KEY_FILE}" ]]; then
+    SB_PUBLIC_KEY=$(grep "PUBLIC_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2)
+  else
+    # Fallback (though unlikely)
+    log_warn "未找到密钥文件，请重新安装或更新配置以生成密钥文件。"
+    SB_PRIVATE_KEY=$(jq -r '.inbounds[0].tls.reality.private_key' "${SINGBOX_CONFIG_FILE}")
+    SB_PUBLIC_KEY="[密钥丢失，请更新配置]"
+  fi
 
   display_info
 }
