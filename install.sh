@@ -8,14 +8,13 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040518"
+readonly SCRIPT_VERSION="2026040519"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SB_KEY_FILE="${SB_PROJECT_DIR}/reality.key"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
 readonly SINGBOX_CONFIG_DIR="${SB_PROJECT_DIR}"
 readonly SINGBOX_CONFIG_FILE="${SB_PROJECT_DIR}/config.json"
-readonly SINGBOX_LOG_FILE="${SB_PROJECT_DIR}/sing-box.log"
 readonly SINGBOX_SERVICE_FILE="/etc/systemd/system/sing-box.service"
 
 # --- Global Variables ---
@@ -333,9 +332,8 @@ generate_config() {
   cat > "${SINGBOX_CONFIG_FILE}" <<EOF
 {
   "log": {
-    "level": "debug",
-    "timestamp": true,
-    "output": "${SINGBOX_LOG_FILE}"
+    "level": "info",
+    "timestamp": true
   },
   "inbounds": [
     {
@@ -513,7 +511,6 @@ display_info() {
   echo -e "SID:  ${SB_SHORT_ID_1}, ${SB_SHORT_ID_2}"
   echo "--------------------------------"
   echo -e "配置文件: ${SINGBOX_CONFIG_FILE}"
-  echo -e "日志文件: ${SINGBOX_LOG_FILE}"
   echo "-------------------------------------------------------------"
   echo -e "${YELLOW}VLESS 链接:${NC}\n${vless_link}\n"
 
@@ -590,7 +587,7 @@ main() {
     6) systemctl stop sing-box && log_success "服务已停止。" ;;
     7) systemctl restart sing-box && log_success "服务已重启。" ;;
     8) view_status_and_info ;;
-    9) tail -f "${SINGBOX_LOG_FILE}" ;;
+    9) journalctl -u sing-box -f ;;
     10) manual_update_script ;;
     11) uninstall_script ;;
     *) exit 0 ;;
