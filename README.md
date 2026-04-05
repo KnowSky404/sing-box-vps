@@ -12,6 +12,14 @@ mkdir -p sing-box-vps && cd sing-box-vps && curl -fsSL https://raw.githubusercon
 
 该命令会自动在当前目录下创建 `sing-box-vps` 文件夹，下载脚本并开始执行。
 
+## 🎮 快速管理
+
+安装完成后，您可以在任何目录下直接输入 `sbv` 来打开管理菜单：
+
+```bash
+sbv
+```
+
 ## ✨ 项目特性
 
 - **模块化设计**：代码结构清晰，易于维护和扩展。

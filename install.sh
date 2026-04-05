@@ -147,6 +147,12 @@ WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
   systemctl enable sing-box >/dev/null 2>&1
+  
+  # Install self as 'sbv' command
+  log_info "正在将脚本安装为全局命令: sbv..."
+  cp -f "$0" "/usr/local/bin/sbv"
+  chmod +x "/usr/local/bin/sbv"
+  log_success "全局命令 sbv 安装成功。"
 }
 
 # --- Config Generator ---
