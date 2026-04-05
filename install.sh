@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040512"
+readonly SCRIPT_VERSION="2026040513"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
@@ -356,9 +356,22 @@ uninstall_singbox() {
   rm -f "${SINGBOX_BIN_PATH}"
   rm -rf "${SINGBOX_CONFIG_DIR}"
   rm -f "${SINGBOX_SERVICE_FILE}"
-  # Note: we don't remove /usr/local/bin/sbv to allow future reinstalls via same cmd
   systemctl daemon-reload
-  log_success "卸载完成。"
+  log_success "sing-box 软件卸载完成。"
+}
+
+# Uninstall script itself
+uninstall_script() {
+  read -rp "是否同时删除项目配置文件目录 (/root/sing-box-vps)? [y/N]: " del_cfg
+  if [[ "${del_cfg}" =~ ^[Yy]$ ]]; then
+    rm -rf "${SB_PROJECT_DIR}"
+    log_info "配置文件目录已删除。"
+  fi
+  
+  log_info "正在删除全局命令 sbv..."
+  rm -f "/usr/local/bin/sbv"
+  log_success "管理脚本已卸载。"
+  exit 0
 }
 
 # --- UI & Main ---
@@ -487,8 +500,9 @@ main() {
   echo "9. 查看实时日志"
   echo "--------------------------------"
   echo -e "10. 更新管理脚本 (sbv) ${SCRIPT_VER_STATUS}"
+  echo "11. 卸载管理脚本 (sbv)"
   echo "0. 退出"
-  read -rp "请选择 [0-10]: " choice
+  read -rp "请选择 [0-11]: " choice
 
   case "$choice" in
     1)
@@ -515,7 +529,6 @@ main() {
       SB_ADVANCED_ROUTE=${in_route:-"y"}
 
       install_dependencies
-
       get_latest_version
       install_binary
       generate_config
@@ -534,9 +547,11 @@ main() {
     8) view_status_and_info ;;
     9) journalctl -u sing-box -f ;;
     10) manual_update_script ;;
+    11) uninstall_script ;;
     *) exit 0 ;;
   esac
-}
+  }
+
 
 
 main "$@"
