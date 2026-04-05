@@ -30,6 +30,7 @@ install_binary() {
   local temp_dir="/tmp/sing-box-install"
   local temp_file="${temp_dir}/sing-box.tar.gz"
 
+  rm -rf "${temp_dir}"
   mkdir -p "${temp_dir}"
   log_info "开始下载 sing-box ${SB_VERSION} (${ARCH})..."
   if ! wget -O "${temp_file}" "${download_url}"; then

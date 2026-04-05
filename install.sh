@@ -103,14 +103,30 @@ get_latest_version() {
 install_binary() {
   local download_url="https://github.com/SagerNet/sing-box/releases/download/v${SB_VERSION}/sing-box-${SB_VERSION}-linux-${ARCH}.tar.gz"
   local temp_dir="/tmp/sing-box-install"
-  mkdir -p "${temp_dir}"
-  log_info "开始下载 sing-box ${SB_VERSION}..."
-  wget -O "${temp_dir}/sb.tar.gz" "${download_url}"
-  tar -xzf "${temp_dir}/sb.tar.gz" -C "${temp_dir}"
-  mv -f "$(find "${temp_dir}" -name "sing-box" -type f)" "${SINGBOX_BIN_PATH}"
-  chmod +x "${SINGBOX_BIN_PATH}"
+  
+  # Cleanup before start
   rm -rf "${temp_dir}"
-  log_success "二进制文件安装成功。"
+  mkdir -p "${temp_dir}"
+  
+  log_info "开始下载 sing-box ${SB_VERSION}..."
+  if ! wget -O "${temp_dir}/sb.tar.gz" "${download_url}"; then
+    log_error "下载 sing-box 失败。"
+  fi
+  
+  log_info "正在解压并安装..."
+  tar -xzf "${temp_dir}/sb.tar.gz" -C "${temp_dir}"
+  
+  local bin_path=$(find "${temp_dir}" -name "sing-box" -type f)
+  if [[ -z "${bin_path}" ]]; then
+    log_error "找不到 sing-box 二进制文件。"
+  fi
+  
+  mv -f "${bin_path}" "${SINGBOX_BIN_PATH}"
+  chmod +x "${SINGBOX_BIN_PATH}"
+  
+  # Final Cleanup
+  rm -rf "${temp_dir}"
+  log_success "二进制文件安装成功并已清理临时文件。"
 }
 
 setup_service() {
