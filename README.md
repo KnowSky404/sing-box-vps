@@ -7,10 +7,16 @@
 在您的 VPS 上运行以下命令即可开始安装：
 
 ```bash
-mkdir -p sing-box-vps && cd sing-box-vps && curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh -o install.sh && chmod +x install.sh && ./install.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh)
 ```
 
-该命令会自动在当前目录下创建 `sing-box-vps` 文件夹，下载脚本并开始执行。
+脚本会自动：
+1. 安装所有必要依赖。
+2. 下载并配置适配的 `sing-box` (1.13.5)。
+3. 生成安全的 **VLESS + REALITY** 配置。
+4. 将自己安装为全局命令 **`sbv`**，方便您随时管理。
+
+---
 
 ## 🎮 快速管理
 
