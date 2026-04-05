@@ -42,3 +42,5 @@ reality协议的默认使用的域名是 apple.com
 交互增强：增加 REALITY SNI 域名的交互式选择，默认 apple.com
 
 功能增强：将 install.sh 安装为全局命令 sbv，方便用户在任意目录执行交互菜单。
+
+功能扩展：完善 sbv 菜单，增加服务管理、配置解析找回及日志查看选项。

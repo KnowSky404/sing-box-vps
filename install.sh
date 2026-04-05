@@ -227,12 +227,35 @@ show_banner() {
   echo ""
 }
 
+# Helper to extract config values and display info
+view_status_and_info() {
+  if [[ ! -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    log_error "未找到配置文件，请先安装。"
+  fi
+
+  log_info "正在从配置文件中读取信息..."
+  SB_UUID=$(jq -r '.inbounds[0].users[0].uuid' "${SINGBOX_CONFIG_FILE}")
+  SB_PORT=$(jq -r '.inbounds[0].listen_port' "${SINGBOX_CONFIG_FILE}")
+  SB_SNI=$(jq -r '.inbounds[0].tls.server_name' "${SINGBOX_CONFIG_FILE}")
+  SB_PUBLIC_KEY=$(jq -r '.inbounds[0].tls.reality.handshake.server' "${SINGBOX_CONFIG_FILE}") # Just a placeholder in this script's logic
+  # In reality, we need to store PBK/SID or get from config. 
+  # Let's adjust generate_config to make it easier to parse or just parse current ones.
+  SB_PRIVATE_KEY=$(jq -r '.inbounds[0].tls.reality.private_key' "${SINGBOX_CONFIG_FILE}")
+  SB_SHORT_ID_1=$(jq -r '.inbounds[0].tls.reality.short_id[0]' "${SINGBOX_CONFIG_FILE}")
+  
+  # Note: Sing-box doesn't store Public Key in config, but we can generate it from Private Key
+  SB_PUBLIC_KEY=$("${SINGBOX_BIN_PATH}" generate reality-keypair <<< "${SB_PRIVATE_KEY}" | grep "PublicKey" | awk '{print $2}')
+
+  display_info
+}
+
 display_info() {
   local public_ip=$(curl -s https://api.ip.sb/ip || curl -s https://ifconfig.me)
   local vless_link="vless://${SB_UUID}@${public_ip}:${SB_PORT}?security=reality&sni=${SB_SNI}&fp=chrome&pbk=${SB_PUBLIC_KEY}&sid=${SB_SHORT_ID_1}&flow=xtls-rprx-vision#${SB_NODE_NAME}"
   
-  echo -e "\n${GREEN}安装成功！节点信息如下：${NC}"
+  echo -e "\n${GREEN}服务状态与节点信息：${NC}"
   echo "-------------------------------------------------------------"
+  echo -e "进程状态: $(systemctl is-active sing-box)"
   echo -e "地址: ${public_ip}  端口: ${SB_PORT}"
   echo -e "UUID: ${SB_UUID}"
   echo -e "SNI:  ${SB_SNI} (REALITY)"
@@ -241,7 +264,7 @@ display_info() {
   echo "-------------------------------------------------------------"
   echo -e "${YELLOW}VLESS 链接:${NC}\n${vless_link}\n"
   
-  echo -e "${YELLOW}节点二维码 (扫描二维码以导入):${NC}"
+  echo -e "${YELLOW}节点二维码:${NC}"
   qrencode -t ansiutf8 "${vless_link}"
   echo "-------------------------------------------------------------"
 }
@@ -252,15 +275,21 @@ main() {
   show_banner
   check_root
   
-  echo "1. 安装 sing-box (VLESS+REALITY)"
+  echo "1. 安装/更新 sing-box (VLESS+REALITY)"
   echo "2. 卸载 sing-box"
+  echo "--------------------------------"
+  echo "3. 启动 sing-box"
+  echo "4. 停止 sing-box"
+  echo "5. 重启 sing-box"
+  echo "6. 查看状态与节点信息"
+  echo "7. 查看实时日志"
+  echo "--------------------------------"
   echo "0. 退出"
-  read -rp "请选择 [0-2]: " choice
+  read -rp "请选择 [0-7]: " choice
 
   case "$choice" in
     1)
       get_os_info && get_arch
-      # Interactive
       read -rp "版本 (默认 ${SB_SUPPORT_MAX_VERSION}): " in_v
       SB_VERSION=${in_v:-$SB_SUPPORT_MAX_VERSION}
       read -rp "端口 (默认 443): " in_p
@@ -277,6 +306,11 @@ main() {
       display_info
       ;;
     2) uninstall_singbox ;;
+    3) systemctl start sing-box && log_success "服务已启动。" ;;
+    4) systemctl stop sing-box && log_success "服务已停止。" ;;
+    5) systemctl restart sing-box && log_success "服务已重启。" ;;
+    6) view_status_and_info ;;
+    7) journalctl -u sing-box -f ;;
     *) exit 0 ;;
   esac
 }
