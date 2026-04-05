@@ -26,3 +26,5 @@ reality协议的默认使用的域名是 apple.com
 继续做1和2吧 (1. 添加 uninstall 逻辑; 2. 增强配置生成的安全性)
 
 @PROMPT.md 这个在改动完成之后也帮我同步提交吧,这个就是记录我每次发给你的提示词内容
+
+当前项目的地址是 https://github.com/KnowSky404/sing-box-vps 帮我先更新一下 @README.md 文件,主要重点加入一键安装的脚本
