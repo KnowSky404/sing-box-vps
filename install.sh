@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040517"
+readonly SCRIPT_VERSION="2026040518"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SB_KEY_FILE="${SB_PROJECT_DIR}/reality.key"
@@ -590,7 +590,7 @@ main() {
     6) systemctl stop sing-box && log_success "服务已停止。" ;;
     7) systemctl restart sing-box && log_success "服务已重启。" ;;
     8) view_status_and_info ;;
-    9) journalctl -u sing-box -f ;;
+    9) tail -f "${SINGBOX_LOG_FILE}" ;;
     10) manual_update_script ;;
     11) uninstall_script ;;
     *) exit 0 ;;
