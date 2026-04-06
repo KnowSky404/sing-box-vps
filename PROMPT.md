@@ -94,3 +94,5 @@ Bug修复：修复解压 sing-box 时由于当前工作目录不存在导致的 
 功能大升级：增加 Cloudflare Warp 可选功能支持。通过 sing-box 内置 WireGuard 出站实现自动注册和路由分流，有效解决 IP 送中及流媒体解锁问题。
 
 Bug修复：删除 install.sh 中残留的代码占位符 ...，修复脚本启动失败的问题。
+
+功能补全：增加主菜单选项 12，提供专门的 Cloudflare Warp 管理子菜单，支持一键开关及重新注册。

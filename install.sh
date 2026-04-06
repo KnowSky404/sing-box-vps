@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040521"
+readonly SCRIPT_VERSION="2026040522"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SB_KEY_FILE="${SB_PROJECT_DIR}/reality.key"
@@ -479,6 +479,63 @@ check_bbr_status() {
   fi
 }
 
+# Cloudflare Warp Management
+warp_management() {
+  if [[ ! -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    log_error "未找到配置文件，请先安装。"
+  fi
+
+  # Parse current Warp status
+  if jq -e '.outbounds[] | select(.tag == "warp")' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+    SB_ENABLE_WARP="y"
+    local status="${GREEN}已开启${NC}"
+  else
+    SB_ENABLE_WARP="n"
+    local status="${YELLOW}未开启${NC}"
+  fi
+
+  echo -e "\n${BLUE}--- Cloudflare Warp 管理 ---${NC}"
+  echo -e "当前状态: ${status}"
+  echo "1. 开启 Warp"
+  echo "2. 关闭 Warp"
+  echo "3. 重新注册 Warp 账户 (获取新密钥和 IP)"
+  echo "0. 返回主菜单"
+  read -rp "请选择 [0-3]: " w_choice
+
+  case "${w_choice}" in
+    1)
+      SB_ENABLE_WARP="y"
+      log_info "正在开启 Warp..."
+      ;;
+    2)
+      SB_ENABLE_WARP="n"
+      log_info "正在关闭 Warp..."
+      ;;
+    3)
+      rm -f "${SB_WARP_KEY_FILE}"
+      SB_ENABLE_WARP="y"
+      log_info "正在重新注册 Warp..."
+      ;;
+    *) return ;;
+  esac
+
+  # Reload current config values to ensure no data loss
+  SB_UUID=$(jq -r '.inbounds[0].users[0].uuid' "${SINGBOX_CONFIG_FILE}")
+  SB_PORT=$(jq -r '.inbounds[0].listen_port' "${SINGBOX_CONFIG_FILE}")
+  SB_SNI=$(jq -r '.inbounds[0].tls.server_name' "${SINGBOX_CONFIG_FILE}")
+  if jq -e '.route.rules[] | select(.geosite == "category-ads-all")' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+    SB_ADVANCED_ROUTE="y"
+  else
+    SB_ADVANCED_ROUTE="n"
+  fi
+
+  generate_config
+  check_config_valid
+  setup_service
+  systemctl restart sing-box
+  log_success "Warp 配置已更新并重启服务。"
+}
+
 # Helper to extract config values and display info
 view_status_and_info() {
   if [[ ! -f "${SINGBOX_CONFIG_FILE}" ]]; then
@@ -616,8 +673,9 @@ main() {
   echo "--------------------------------"
   echo -e "10. 更新管理脚本 (sbv) ${SCRIPT_VER_STATUS}"
   echo "11. 卸载管理脚本 (sbv)"
+  echo "12. 配置 Cloudflare Warp (解锁/防送中)"
   echo "0. 退出"
-  read -rp "请选择 [0-11]: " choice
+  read -rp "请选择 [0-12]: " choice
 
   case "$choice" in
     1)
@@ -665,10 +723,10 @@ main() {
     9) journalctl -u sing-box -f ;;
     10) manual_update_script ;;
     11) uninstall_script ;;
+    12) warp_management ;;
     *) exit 0 ;;
   esac
   }
-
 
 
 main "$@"
