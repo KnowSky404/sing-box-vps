@@ -108,3 +108,5 @@ Bug修复：修复 Warp 注册时无法正确提取 WireGuard 密钥导致 Inval
 Bug修复：修复 Warp 注册时由于 sing-box 命令写错 (应为 wg-keypair 而非 wireguard-keypair) 导致无法生成密钥的问题。
 
 Bug修复：修复 Warp 注册成功但脚本解析报错的问题。适配 Cloudflare v0a2445 接口的返回结构，改用 id 字段作为成功标识并修正 JSON 提取路径。
+
+Bug修复：修复 WireGuard 出站配置语法错误。在 sing-box 中，server、server_port 和 public_key 必须嵌套在 peers 数组中。
