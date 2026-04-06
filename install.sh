@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040527"
+readonly SCRIPT_VERSION="2026040528"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -71,20 +71,17 @@ register_warp() {
     log_error "Cloudflare API 无响应，请查看 ${SBV_LOG_FILE}"
   fi
 
-  if ! echo "${response}" | jq -e '.success' &>/dev/null; then
-    log_warn "收到非预期响应，详情请查看日志: ${SBV_LOG_FILE}"
-    log_error "Warp 注册失败，API 未返回 success 状态。"
-  fi
-
-  if [[ $(echo "${response}" | jq -r '.success') != "true" ]]; then
+  # Check success by existence of "id" field
+  local warp_id=$(echo "${response}" | jq -r '.id // empty')
+  if [[ -z "${warp_id}" || "${warp_id}" == "null" ]]; then
     local err_msg=$(echo "${response}" | jq -r '.errors[0].message // "未知错误"')
+    log_warn "收到非预期响应，详情请查看日志: ${SBV_LOG_FILE}"
     log_error "Warp 注册失败: ${err_msg}"
   fi
 
-  local warp_id=$(echo "${response}" | jq -r '.result.id')
-  local warp_token=$(echo "${response}" | jq -r '.result.token')
-  local warp_v4=$(echo "${response}" | jq -r '.result.config.interface.addresses.v4')
-  local warp_v6=$(echo "${response}" | jq -r '.result.config.interface.addresses.v6')
+  local warp_token=$(echo "${response}" | jq -r '.token')
+  local warp_v4=$(echo "${response}" | jq -r '.config.interface.addresses.v4')
+  local warp_v6=$(echo "${response}" | jq -r '.config.interface.addresses.v6')
 
   cat > "${SB_WARP_KEY_FILE}" <<EOF
 WARP_ID=${warp_id}
