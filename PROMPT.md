@@ -110,3 +110,5 @@ Bug修复：修复 Warp 注册时由于 sing-box 命令写错 (应为 wg-keypair
 Bug修复：修复 Warp 注册成功但脚本解析报错的问题。适配 Cloudflare v0a2445 接口的返回结构，改用 id 字段作为成功标识并修正 JSON 提取路径。
 
 Bug修复：修复 WireGuard 出站配置语法错误。在 sing-box 中，server、server_port 和 public_key 必须嵌套在 peers 数组中。
+
+Bug修复：根据 sing-box 1.13.5 官方文档彻底修正 WireGuard 出站语法。1. 修正本地地址字段为 address 且补全 CIDR；2. 修正对端字段为 address 和 port；3. 补全 allowed_ips。

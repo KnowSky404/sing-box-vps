@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040529"
+readonly SCRIPT_VERSION="2026040530"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -424,13 +424,14 @@ generate_config() {
     outbounds+=', {
       "type": "wireguard",
       "tag": "warp",
-      "local_address": [ "'"${w_v4}"'", "'"${w_v6}"'" ],
+      "address": [ "'"${w_v4}"'/32", "'"${w_v6}"'/128" ],
       "private_key": "'"${w_key}"'",
       "peers": [
         {
-          "server": "engage.cloudflareclient.com",
-          "server_port": 2408,
-          "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo="
+          "address": "engage.cloudflareclient.com",
+          "port": 2408,
+          "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+          "allowed_ips": [ "0.0.0.0/0", "::/0" ]
         }
       ],
       "mtu": 1280
