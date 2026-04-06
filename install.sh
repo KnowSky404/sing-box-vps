@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040525"
+readonly SCRIPT_VERSION="2026040526"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -42,17 +42,23 @@ register_warp() {
   fi
 
   log_info "正在注册 Cloudflare Warp 免费账户..."
-  local keypair=$("${SINGBOX_BIN_PATH}" generate wireguard-keypair)
-  local priv_key=$(echo "${keypair}" | grep "PrivateKey" | awk '{print $2}')
-  local pub_key=$(echo "${keypair}" | grep "PublicKey" | awk '{print $2}')
+  local keypair=$("${SINGBOX_BIN_PATH}" generate wireguard-keypair | tr -d '\r')
+  local priv_key=$(echo "${keypair}" | grep -i "PrivateKey" | awk -F': ' '{print $2}' | tr -d ' ')
+  local pub_key=$(echo "${keypair}" | grep -i "PublicKey" | awk -F': ' '{print $2}' | tr -d ' ')
+  
+  if [[ -z "${priv_key}" || -z "${pub_key}" ]]; then
+    log_info "无法从 sing-box 提取密钥。原始输出: ${keypair}" >> "${SBV_LOG_FILE}"
+    log_error "WireGuard 密钥生成失败，请查看 ${SBV_LOG_FILE}"
+  fi
+
   local install_id=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
   local tos_date=$(date -u +%FT%T.000Z)
   
   local url="https://api.cloudflareclient.com/v0a2445/reg"
   local payload="{\"key\":\"${pub_key}\",\"install_id\":\"${install_id}\",\"fcm_token\":\"\",\"referrer\":\"\",\"warp_enabled\":false,\"tos\":\"${tos_date}\",\"type\":\"Linux\",\"locale\":\"en_US\"}"
   
-  log_info "Warp 注册请求 URL: ${url}" >> "${SBV_LOG_FILE}"
-  log_info "Warp 注册请求 Data: ${payload}" >> "${SBV_LOG_FILE}"
+  log_info "Warp 注册请求 URL: ${url}"
+  log_info "Warp 注册请求 Data (已脱敏): {\"install_id\":\"${install_id}\", ...}" >> "${SBV_LOG_FILE}"
 
   local response=$(curl -sX POST "${url}" \
     -H "User-Agent: okhttp/4.12.0" \
