@@ -104,3 +104,5 @@ Bug修复：调整 Warp 注册 Payload 参数（固定 TOS 时间、增加随机
 功能大升级：1. 增加脚本专用运行日志 /root/sing-box-vps/sbv.log，用于记录详细的运行轨迹和 API 交互明细；2. 再次尝试更新 Warp 注册 API 路径及参数，解决 Invalid registration request 问题。
 
 Bug修复：修复 Warp 注册时无法正确提取 WireGuard 密钥导致 Invalid registration request 的问题。优化提取正则并增加失败拦截逻辑。
+
+Bug修复：修复 Warp 注册时由于 sing-box 命令写错 (应为 wg-keypair 而非 wireguard-keypair) 导致无法生成密钥的问题。

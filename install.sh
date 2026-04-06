@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040526"
+readonly SCRIPT_VERSION="2026040527"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -42,7 +42,7 @@ register_warp() {
   fi
 
   log_info "正在注册 Cloudflare Warp 免费账户..."
-  local keypair=$("${SINGBOX_BIN_PATH}" generate wireguard-keypair | tr -d '\r')
+  local keypair=$("${SINGBOX_BIN_PATH}" generate wg-keypair | tr -d '\r')
   local priv_key=$(echo "${keypair}" | grep -i "PrivateKey" | awk -F': ' '{print $2}' | tr -d ' ')
   local pub_key=$(echo "${keypair}" | grep -i "PublicKey" | awk -F': ' '{print $2}' | tr -d ' ')
   
