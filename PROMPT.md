@@ -112,3 +112,5 @@ Bug修复：修复 Warp 注册成功但脚本解析报错的问题。适配 Clou
 Bug修复：修复 WireGuard 出站配置语法错误。在 sing-box 中，server、server_port 和 public_key 必须嵌套在 peers 数组中。
 
 Bug修复：根据 sing-box 1.13.5 官方文档彻底修正 WireGuard 出站语法。1. 修正本地地址字段为 address 且补全 CIDR；2. 修正对端字段为 address 和 port；3. 补全 allowed_ips。
+
+Bug修复：回归 sing-box 标准 Outbound WireGuard 结构。1. 使用 local_address 并补全 CIDR；2. 移除 peers 嵌套，将 server、server_port、peer_public_key 放回顶级字段。适配 1.13.5。
