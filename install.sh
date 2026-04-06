@@ -8,9 +8,10 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040524"
+readonly SCRIPT_VERSION="2026040525"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
+readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
 readonly SB_KEY_FILE="${SB_PROJECT_DIR}/reality.key"
 readonly SB_WARP_KEY_FILE="${SB_PROJECT_DIR}/warp.key"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
@@ -45,27 +46,27 @@ register_warp() {
   local priv_key=$(echo "${keypair}" | grep "PrivateKey" | awk '{print $2}')
   local pub_key=$(echo "${keypair}" | grep "PublicKey" | awk '{print $2}')
   local install_id=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
+  local tos_date=$(date -u +%FT%T.000Z)
   
-  local response=$(curl -sX POST "https://api.cloudflareclient.com/v0a1922/reg" \
+  local url="https://api.cloudflareclient.com/v0a2445/reg"
+  local payload="{\"key\":\"${pub_key}\",\"install_id\":\"${install_id}\",\"fcm_token\":\"\",\"referrer\":\"\",\"warp_enabled\":false,\"tos\":\"${tos_date}\",\"type\":\"Linux\",\"locale\":\"en_US\"}"
+  
+  log_info "Warp 注册请求 URL: ${url}" >> "${SBV_LOG_FILE}"
+  log_info "Warp 注册请求 Data: ${payload}" >> "${SBV_LOG_FILE}"
+
+  local response=$(curl -sX POST "${url}" \
     -H "User-Agent: okhttp/4.12.0" \
     -H "Content-Type: application/json" \
-    -d "{
-      \"key\": \"${pub_key}\",
-      \"install_id\": \"${install_id}\",
-      \"fcm_token\": \"\",
-      \"referrer\": \"\",
-      \"warp_enabled\": false,
-      \"tos\": \"2024-09-03T00:00:00Z\",
-      \"type\": \"Android\",
-      \"locale\": \"en_US\"
-    }")
+    -d "${payload}")
+
+  log_info "Warp 注册原始响应: ${response}" >> "${SBV_LOG_FILE}"
 
   if [[ -z "${response}" ]]; then
-    log_error "Cloudflare API 无响应，请检查 VPS 是否能访问 api.cloudflareclient.com"
+    log_error "Cloudflare API 无响应，请查看 ${SBV_LOG_FILE}"
   fi
 
   if ! echo "${response}" | jq -e '.success' &>/dev/null; then
-    log_warn "收到非预期响应: ${response}"
+    log_warn "收到非预期响应，详情请查看日志: ${SBV_LOG_FILE}"
     log_error "Warp 注册失败，API 未返回 success 状态。"
   fi
 
@@ -95,10 +96,27 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+log_info() { 
+  echo -e "${BLUE}[INFO]${NC} $1"
+  mkdir -p "${SB_PROJECT_DIR}"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $1" >> "${SBV_LOG_FILE}"
+}
+log_success() { 
+  echo -e "${GREEN}[SUCCESS]${NC} $1"
+  mkdir -p "${SB_PROJECT_DIR}"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUCCESS] $1" >> "${SBV_LOG_FILE}"
+}
+log_warn() { 
+  echo -e "${YELLOW}[WARN]${NC} $1"
+  mkdir -p "${SB_PROJECT_DIR}"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARN] $1" >> "${SBV_LOG_FILE}"
+}
+log_error() { 
+  echo -e "${RED}[ERROR]${NC} $1"
+  mkdir -p "${SB_PROJECT_DIR}"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $1" >> "${SBV_LOG_FILE}"
+  exit 1
+}
 
 check_root() {
   if [[ $EUID -ne 0 ]]; then
