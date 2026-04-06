@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040522"
+readonly SCRIPT_VERSION="2026040523"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SB_KEY_FILE="${SB_PROJECT_DIR}/reality.key"
@@ -50,8 +50,18 @@ register_warp() {
     -H "Content-Type: application/json" \
     -d "{\"key\":\"${pub_key}\",\"install_id\":\"\",\"fcm_token\":\"\",\"referrer\":\"\",\"warp_enabled\":false,\"tos\":\"$(date -u +%FT%T.000Z)\",\"type\":\"Android\",\"locale\":\"en_US\"}")
 
+  if [[ -z "${response}" ]]; then
+    log_error "Cloudflare API 无响应，请检查 VPS 是否能访问 api.cloudflareclient.com"
+  fi
+
+  if ! echo "${response}" | jq -e '.success' &>/dev/null; then
+    log_warn "收到非预期响应: ${response}"
+    log_error "Warp 注册失败，API 未返回 success 状态。"
+  fi
+
   if [[ $(echo "${response}" | jq -r '.success') != "true" ]]; then
-    log_error "Warp 注册失败: $(echo "${response}" | jq -r '.errors[0].message')"
+    local err_msg=$(echo "${response}" | jq -r '.errors[0].message // "未知错误"')
+    log_error "Warp 注册失败: ${err_msg}"
   fi
 
   local warp_id=$(echo "${response}" | jq -r '.result.id')
