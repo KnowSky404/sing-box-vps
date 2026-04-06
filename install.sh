@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040520"
+readonly SCRIPT_VERSION="2026040521"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SB_KEY_FILE="${SB_PROJECT_DIR}/reality.key"
@@ -33,7 +33,6 @@ SB_ADVANCED_ROUTE="y"
 SB_ENABLE_WARP="n"
 
 # --- Common Utilities ---
-...
 # Register Cloudflare Warp account
 register_warp() {
   if [[ -f "${SB_WARP_KEY_FILE}" ]]; then
