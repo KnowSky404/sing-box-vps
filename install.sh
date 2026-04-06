@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040523"
+readonly SCRIPT_VERSION="2026040524"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SB_KEY_FILE="${SB_PROJECT_DIR}/reality.key"
@@ -44,11 +44,21 @@ register_warp() {
   local keypair=$("${SINGBOX_BIN_PATH}" generate wireguard-keypair)
   local priv_key=$(echo "${keypair}" | grep "PrivateKey" | awk '{print $2}')
   local pub_key=$(echo "${keypair}" | grep "PublicKey" | awk '{print $2}')
+  local install_id=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
   
   local response=$(curl -sX POST "https://api.cloudflareclient.com/v0a1922/reg" \
-    -H "User-Agent: okhttp/3.12.1" \
+    -H "User-Agent: okhttp/4.12.0" \
     -H "Content-Type: application/json" \
-    -d "{\"key\":\"${pub_key}\",\"install_id\":\"\",\"fcm_token\":\"\",\"referrer\":\"\",\"warp_enabled\":false,\"tos\":\"$(date -u +%FT%T.000Z)\",\"type\":\"Android\",\"locale\":\"en_US\"}")
+    -d "{
+      \"key\": \"${pub_key}\",
+      \"install_id\": \"${install_id}\",
+      \"fcm_token\": \"\",
+      \"referrer\": \"\",
+      \"warp_enabled\": false,
+      \"tos\": \"2024-09-03T00:00:00Z\",
+      \"type\": \"Android\",
+      \"locale\": \"en_US\"
+    }")
 
   if [[ -z "${response}" ]]; then
     log_error "Cloudflare API 无响应，请检查 VPS 是否能访问 api.cloudflareclient.com"
