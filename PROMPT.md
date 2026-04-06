@@ -90,3 +90,5 @@ Bug修复：修复解压 sing-box 时由于当前工作目录不存在导致的 
 功能调整：由于配置文件指定了日志输出到文件，将选项 9 的查看方式从 journalctl 切换为 tail -f。
 
 功能回退：移除配置文件中的 output 日志文件输出，将选项 9 恢复为 journalctl 查看方式，并将日志级别调回 info。
+
+功能大升级：增加 Cloudflare Warp 可选功能支持。通过 sing-box 内置 WireGuard 出站实现自动注册和路由分流，有效解决 IP 送中及流媒体解锁问题。

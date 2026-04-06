@@ -8,10 +8,11 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040519"
+readonly SCRIPT_VERSION="2026040520"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SB_KEY_FILE="${SB_PROJECT_DIR}/reality.key"
+readonly SB_WARP_KEY_FILE="${SB_PROJECT_DIR}/warp.key"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
 readonly SINGBOX_CONFIG_DIR="${SB_PROJECT_DIR}"
 readonly SINGBOX_CONFIG_FILE="${SB_PROJECT_DIR}/config.json"
@@ -29,8 +30,46 @@ SB_SHORT_ID_1=""
 SB_SHORT_ID_2=""
 SB_SNI="apple.com"
 SB_ADVANCED_ROUTE="y"
+SB_ENABLE_WARP="n"
 
 # --- Common Utilities ---
+...
+# Register Cloudflare Warp account
+register_warp() {
+  if [[ -f "${SB_WARP_KEY_FILE}" ]]; then
+    log_info "发现现有 Warp 账户信息，正在加载..."
+    return 0
+  fi
+
+  log_info "正在注册 Cloudflare Warp 免费账户..."
+  local keypair=$("${SINGBOX_BIN_PATH}" generate wireguard-keypair)
+  local priv_key=$(echo "${keypair}" | grep "PrivateKey" | awk '{print $2}')
+  local pub_key=$(echo "${keypair}" | grep "PublicKey" | awk '{print $2}')
+  
+  local response=$(curl -sX POST "https://api.cloudflareclient.com/v0a1922/reg" \
+    -H "User-Agent: okhttp/3.12.1" \
+    -H "Content-Type: application/json" \
+    -d "{\"key\":\"${pub_key}\",\"install_id\":\"\",\"fcm_token\":\"\",\"referrer\":\"\",\"warp_enabled\":false,\"tos\":\"$(date -u +%FT%T.000Z)\",\"type\":\"Android\",\"locale\":\"en_US\"}")
+
+  if [[ $(echo "${response}" | jq -r '.success') != "true" ]]; then
+    log_error "Warp 注册失败: $(echo "${response}" | jq -r '.errors[0].message')"
+  fi
+
+  local warp_id=$(echo "${response}" | jq -r '.result.id')
+  local warp_token=$(echo "${response}" | jq -r '.result.token')
+  local warp_v4=$(echo "${response}" | jq -r '.result.config.interface.addresses.v4')
+  local warp_v6=$(echo "${response}" | jq -r '.result.config.interface.addresses.v6')
+
+  cat > "${SB_WARP_KEY_FILE}" <<EOF
+WARP_ID=${warp_id}
+WARP_TOKEN=${warp_token}
+WARP_PRIV_KEY=${priv_key}
+WARP_PUB_KEY=${pub_key}
+WARP_V4=${warp_v4}
+WARP_V6=${warp_v6}
+EOF
+  log_success "Warp 账户注册成功。"
+}
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -324,10 +363,37 @@ generate_config() {
 
   # Route rules logic
   local route_rules='[ { "inbound": "vless-in", "action": "sniff" }'
+  # Exception for REALITY SNI (must be direct)
+  route_rules+=', { "domain": ["'"${SB_SNI}"'"], "action": "direct" }'
+
   if [[ "${SB_ADVANCED_ROUTE}" == "y" ]]; then
     route_rules+=', { "geosite": "category-ads-all", "action": "reject" }, { "geoip": "private", "action": "reject" }'
   fi
   route_rules+=' ]'
+
+  # Outbounds and Final logic
+  local outbounds='[ { "type": "direct", "tag": "direct" }'
+  local final_outbound="direct"
+
+  if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
+    register_warp
+    local w_key=$(grep "WARP_PRIV_KEY" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2)
+    local w_v4=$(grep "WARP_V4" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2)
+    local w_v6=$(grep "WARP_V6" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2)
+
+    outbounds+=', {
+      "type": "wireguard",
+      "tag": "warp",
+      "server": "engage.cloudflareclient.com",
+      "server_port": 2408,
+      "local_address": [ "'"${w_v4}"'", "'"${w_v6}"'" ],
+      "private_key": "'"${w_key}"'",
+      "peer_public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+      "mtu": 1280
+    }'
+    final_outbound="warp"
+  fi
+  outbounds+=', { "type": "block", "tag": "block" } ]'
 
   cat > "${SINGBOX_CONFIG_FILE}" <<EOF
 {
@@ -354,17 +420,14 @@ generate_config() {
       }
     }
   ],
-  "outbounds": [
-    { "type": "direct", "tag": "direct" },
-    { "type": "block", "tag": "block" }
-  ],
+  "outbounds": ${outbounds},
   "route": {
-    "rules": ${route_rules}
+    "rules": ${route_rules},
+    "final": "${final_outbound}"
   }
 }
 EOF
 }
-
 # --- Uninstaller ---
 uninstall_singbox() {
   log_info "正在卸载 sing-box..."
@@ -467,6 +530,13 @@ update_config_only() {
     SB_ADVANCED_ROUTE="n"
   fi
 
+  # Parse current Warp status
+  if jq -e '.outbounds[] | select(.tag == "warp")' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+    SB_ENABLE_WARP="y"
+  else
+    SB_ENABLE_WARP="n"
+  fi
+
   echo -e "\n${BLUE}--- 进入配置修改模式 ---${NC}"
 
   # 1. Update Port
@@ -484,6 +554,10 @@ update_config_only() {
   # 4. Update Route
   read -rp "是否开启高级路由规则 (广告拦截/局域网绕行) [y/n] (当前: ${SB_ADVANCED_ROUTE}): " in_route
   [[ -n "${in_route}" ]] && SB_ADVANCED_ROUTE="${in_route}"
+
+  # 5. Update Warp
+  read -rp "是否开启 Cloudflare Warp (用于解锁/防送中) [y/n] (当前: ${SB_ENABLE_WARP}): " in_warp
+  [[ -n "${in_warp}" ]] && SB_ENABLE_WARP="${in_warp}"
 
   generate_config
   check_config_valid
@@ -569,6 +643,8 @@ main() {
       SB_SNI=${in_sni:-"apple.com"}
       read -rp "是否开启高级路由规则 (广告拦截/局域网绕行) [y/n] (默认 y): " in_route
       SB_ADVANCED_ROUTE=${in_route:-"y"}
+      read -rp "是否开启 Cloudflare Warp (用于解锁/防送中) [y/n] (默认 n): " in_warp
+      SB_ENABLE_WARP=${in_warp:-"n"}
 
       install_dependencies
       get_latest_version
