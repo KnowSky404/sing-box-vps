@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040539"
+readonly SCRIPT_VERSION="2026040540"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -377,6 +377,12 @@ EOF
 
 # --- Config Generator ---
 generate_config() {
+  # Force ensure jq is installed
+  if ! command -v jq &>/dev/null; then
+    log_warn "未检测到 jq，正在尝试自动安装以确保配置生成安全..."
+    get_os_info && install_dependencies
+  fi
+
   log_info "正在生成配置 (适配 1.13.x Endpoint 架构 & 安全注入)..."
   mkdir -p "${SINGBOX_CONFIG_DIR}"
   
