@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040537"
+readonly SCRIPT_VERSION="2026040538"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -43,12 +43,12 @@ register_warp() {
 
   log_info "正在注册 Cloudflare Warp 免费账户..."
   local keypair=$("${SINGBOX_BIN_PATH}" generate wg-keypair)
-  local priv_key=$(echo "${keypair}" | grep -i "PrivateKey" | grep -oE "[A-Za-z0-9+/]{42,44}=*")
-  local pub_key=$(echo "${keypair}" | grep -i "PublicKey" | grep -oE "[A-Za-z0-9+/]{42,44}=*")
+  local priv_key=$(echo "${keypair}" | grep -i "PrivateKey" | awk '{print $2}' | tr -d '\r\n ')
+  local pub_key=$(echo "${keypair}" | grep -i "PublicKey" | awk '{print $2}' | tr -d '\r\n ')
   
-  if [[ -z "${priv_key}" || -z "${pub_key}" ]]; then
-    log_info "无法从 sing-box 提取密钥。原始输出: ${keypair}" >> "${SBV_LOG_FILE}"
-    log_error "WireGuard 密钥生成失败，请查看 ${SBV_LOG_FILE}"
+  if [[ -z "${priv_key}" || -z "${pub_key}" || ${#priv_key} -lt 40 ]]; then
+    log_info "无法从 sing-box 提取合法密钥。原始输出: ${keypair}" >> "${SBV_LOG_FILE}"
+    log_error "WireGuard 密钥生成失败（格式非法），请查看 ${SBV_LOG_FILE}"
   fi
 
   local install_id=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
