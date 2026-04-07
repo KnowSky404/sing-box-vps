@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040541"
+readonly SCRIPT_VERSION="2026040542"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -404,8 +404,8 @@ generate_config() {
   fi
   
   # ShortIDs
-  SB_SHORT_ID_1=$(openssl rand -hex 8)
-  SB_SHORT_ID_2=$(openssl rand -hex 8)
+  [[ -z "${SB_SHORT_ID_1}" ]] && SB_SHORT_ID_1=$(openssl rand -hex 8)
+  [[ -z "${SB_SHORT_ID_2}" ]] && SB_SHORT_ID_2=$(openssl rand -hex 8)
 
   # Endpoints Logic
   local w_key="" w_v4="" w_v6=""
@@ -577,6 +577,8 @@ warp_management() {
   SB_UUID=$(jq -r '.inbounds[0].users[0].uuid' "${SINGBOX_CONFIG_FILE}")
   SB_PORT=$(jq -r '.inbounds[0].listen_port' "${SINGBOX_CONFIG_FILE}")
   SB_SNI=$(jq -r '.inbounds[0].tls.server_name' "${SINGBOX_CONFIG_FILE}")
+  SB_SHORT_ID_1=$(jq -r '.inbounds[0].tls.reality.short_id[0]' "${SINGBOX_CONFIG_FILE}")
+  SB_SHORT_ID_2=$(jq -r '.inbounds[0].tls.reality.short_id[1]' "${SINGBOX_CONFIG_FILE}")
   if jq -e '.route.rules[] | select(.geosite == "category-ads-all")' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
     SB_ADVANCED_ROUTE="y"
   else
@@ -588,6 +590,10 @@ warp_management() {
   setup_service
   systemctl restart sing-box
   log_success "Warp 配置已更新并重启服务。"
+  
+  # Re-read Public Key for display_info
+  SB_PUBLIC_KEY=$(grep "PUBLIC_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
+  display_info
 }
 
 # Helper to extract config values and display info
