@@ -120,3 +120,5 @@ Bug修复：终极修复 WireGuard 1.13.5 语法。1. 顶级字段为 address；
 Bug修复：根据 1.13.5 官方文档最终确认 WireGuard Outbound 语法组合。顶级必须为 local_address，且 peers 内部必须使用 address 和 port。彻底解决 unknown field 报错。
 
 架构升级：根据 sing-box 1.13.x 官方规范，将 WireGuard 从 Outbound 模式重构为 Endpoint 架构。1. 增加 endpoints 块存放配置；2. route.final 直接引用 endpoint 标签。彻底解决 1.13.x 版本中 WireGuard 出站字段不被识别的问题。
+
+功能大修复：1. 经本地校验，确定 sing-box 1.13.x 的 WireGuard 配置必须使用 endpoints 架构；2. 移除已废弃的 geosite/geoip 路由规则，解决 1.12.0+ 版本中的报错问题。

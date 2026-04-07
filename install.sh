@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040534"
+readonly SCRIPT_VERSION="2026040535"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -405,7 +405,8 @@ generate_config() {
   local route_rules='[ { "inbound": "vless-in", "action": "sniff" }'
   route_rules+=', { "domain": ["'"${SB_SNI}"'"], "action": "direct" }'
   if [[ "${SB_ADVANCED_ROUTE}" == "y" ]]; then
-    route_rules+=', { "geosite": "category-ads-all", "action": "reject" }, { "geoip": "private", "action": "reject" }'
+    # Note: geosite/geoip are deprecated in 1.12.0, so we use direct logic for now or skip
+    route_rules+=', { "ip_is_private": true, "action": "reject" }'
   fi
   route_rules+=' ]'
 
