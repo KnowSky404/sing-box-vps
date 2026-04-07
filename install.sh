@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040535"
+readonly SCRIPT_VERSION="2026040536"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -86,7 +86,7 @@ register_warp() {
   cat > "${SB_WARP_KEY_FILE}" <<EOF
 WARP_ID=${warp_id}
 WARP_TOKEN=${warp_token}
-WARP_PRIV_KEY=${priv_key}
+WARP_PRIV_KEY=$(echo ${priv_key} | tr -d '\r\n ')
 WARP_PUB_KEY=${pub_key}
 WARP_V4=${warp_v4}
 WARP_V6=${warp_v6}
@@ -416,11 +416,12 @@ generate_config() {
 
   if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
     register_warp
-    local w_key=$(grep "WARP_PRIV_KEY" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2)
-    local w_v4=$(grep "WARP_V4" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2)
-    local w_v6=$(grep "WARP_V6" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2)
+    local w_key=$(grep "WARP_PRIV_KEY" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2 | tr -d '\r\n ')
+    local w_v4=$(grep "WARP_V4" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2 | tr -d '\r\n ')
+    local w_v6=$(grep "WARP_V6" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2 | tr -d '\r\n ')
 
     endpoints='[
+
       {
         "type": "wireguard",
         "tag": "warp-ep",
