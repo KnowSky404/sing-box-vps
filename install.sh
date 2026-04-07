@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040538"
+readonly SCRIPT_VERSION="2026040539"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -377,12 +377,12 @@ EOF
 
 # --- Config Generator ---
 generate_config() {
-  log_info "正在生成 VLESS+REALITY 配置 (适配 sing-box 1.13.0+ Endpoint 架构)..."
+  log_info "正在生成配置 (适配 1.13.x Endpoint 架构 & 安全注入)..."
   mkdir -p "${SINGBOX_CONFIG_DIR}"
-
+  
   # UUID
   [[ -z "${SB_UUID}" ]] && SB_UUID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
-
+  
   # Keys
   if [[ ! -f "${SB_KEY_FILE}" ]]; then
     log_info "正在生成新的 REALITY 密钥对..."
@@ -393,90 +393,86 @@ generate_config() {
     echo "PUBLIC_KEY=${SB_PUBLIC_KEY}" >> "${SB_KEY_FILE}"
   else
     log_info "使用现有密钥对..."
-    SB_PRIVATE_KEY=$(grep "PRIVATE_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2)
-    SB_PUBLIC_KEY=$(grep "PUBLIC_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2)
+    SB_PRIVATE_KEY=$(grep "PRIVATE_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2 | tr -d '\r\n ')
+    SB_PUBLIC_KEY=$(grep "PUBLIC_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2 | tr -d '\r\n ')
   fi
-
+  
   # ShortIDs
   SB_SHORT_ID_1=$(openssl rand -hex 8)
   SB_SHORT_ID_2=$(openssl rand -hex 8)
 
-  # Route rules logic
-  local route_rules='[ { "inbound": "vless-in", "action": "sniff" }'
-  route_rules+=', { "domain": ["'"${SB_SNI}"'"], "action": "direct" }'
-  if [[ "${SB_ADVANCED_ROUTE}" == "y" ]]; then
-    # Note: geosite/geoip are deprecated in 1.12.0, so we use direct logic for now or skip
-    route_rules+=', { "ip_is_private": true, "action": "reject" }'
-  fi
-  route_rules+=' ]'
-
-  # Endpoints and Final logic
-  local endpoints="[]"
-  local final_outbound="direct"
-
+  # Endpoints Logic
+  local w_key="" w_v4="" w_v6=""
   if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
     register_warp
-    local w_key=$(grep "WARP_PRIV_KEY" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2 | tr -d '\r\n ')
-    local w_v4=$(grep "WARP_V4" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2 | tr -d '\r\n ')
-    local w_v6=$(grep "WARP_V6" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2 | tr -d '\r\n ')
-
-    endpoints='[
-
-      {
-        "type": "wireguard",
-        "tag": "warp-ep",
-        "address": [ "'"${w_v4}"'/32", "'"${w_v6}"'/128" ],
-        "private_key": "'"${w_key}"'",
-        "peers": [
-          {
-            "address": "engage.cloudflareclient.com",
-            "port": 2408,
-            "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
-            "allowed_ips": [ "0.0.0.0/0", "::/0" ]
-          }
-        ],
-        "mtu": 1280
-      }
-    ]'
-    final_outbound="warp-ep"
+    w_key=$(grep "WARP_PRIV_KEY" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2 | tr -d '\r\n ')
+    w_v4=$(grep "WARP_V4" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2 | tr -d '\r\n ')
+    w_v6=$(grep "WARP_V6" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2 | tr -d '\r\n ')
   fi
 
-  cat > "${SINGBOX_CONFIG_FILE}" <<EOF
-{
-  "log": {
-    "level": "info",
-    "timestamp": true
-  },
-  "endpoints": ${endpoints},
-  "inbounds": [
-    {
-      "type": "vless",
-      "tag": "vless-in",
-      "listen": "::",
-      "listen_port": ${SB_PORT},
-      "users": [ { "uuid": "${SB_UUID}", "flow": "xtls-rprx-vision" } ],
-      "tls": {
-        "enabled": true,
-        "server_name": "${SB_SNI}",
-        "reality": {
-          "enabled": true,
-          "handshake": { "server": "${SB_SNI}", "server_port": 443 },
-          "private_key": "${SB_PRIVATE_KEY}",
-          "short_id": [ "${SB_SHORT_ID_1}", "${SB_SHORT_ID_2}" ]
+  # Build JSON with jq
+  jq -n \
+    --arg uuid "${SB_UUID}" \
+    --arg port "${SB_PORT}" \
+    --arg sni "${SB_SNI}" \
+    --arg priv_key "${SB_PRIVATE_KEY}" \
+    --arg sid1 "${SB_SHORT_ID_1}" \
+    --arg sid2 "${SB_SHORT_ID_2}" \
+    --arg adv_route "${SB_ADVANCED_ROUTE}" \
+    --arg enable_warp "${SB_ENABLE_WARP}" \
+    --arg w_key "${w_key}" \
+    --arg w_v4 "${w_v4}/32" \
+    --arg w_v6 "${w_v6}/128" \
+    '{
+      "log": { "level": "info", "timestamp": true },
+      "endpoints": (if $enable_warp == "y" then [
+        {
+          "type": "wireguard",
+          "tag": "warp-ep",
+          "address": [ $w_v4, $w_v6 ],
+          "private_key": $w_key,
+          "peers": [
+            {
+              "address": "engage.cloudflareclient.com",
+              "port": 2408,
+              "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+              "allowed_ips": [ "0.0.0.0/0", "::/0" ]
+            }
+          ],
+          "mtu": 1280
         }
+      ] else [] end),
+      "inbounds": [
+        {
+          "type": "vless",
+          "tag": "vless-in",
+          "listen": "::",
+          "listen_port": ($port | tonumber),
+          "users": [ { "uuid": $uuid, "flow": "xtls-rprx-vision" } ],
+          "tls": {
+            "enabled": true,
+            "server_name": $sni,
+            "reality": {
+              "enabled": true,
+              "handshake": { "server": $sni, "server_port": 443 },
+              "private_key": $priv_key,
+              "short_id": [ $sid1, $sid2 ]
+            }
+          }
+        }
+      ],
+      "outbounds": [
+        { "type": "direct", "tag": "direct" },
+        { "type": "block", "tag": "block" }
+      ],
+      "route": {
+        "rules": (
+          [ { "inbound": "vless-in", "action": "sniff" }, { "domain": [$sni], "action": "direct" } ] +
+          (if $adv_route == "y" then [ { "ip_is_private": true, "action": "reject" } ] else [] end)
+        ),
+        "final": (if $enable_warp == "y" then "warp-ep" else "direct" end)
       }
-    }
-  ],
-  "outbounds": [
-    { "type": "direct", "tag": "direct" },
-    { "type": "block", "tag": "block" }
-  ],
-  "route": {
-    "rules": ${route_rules},
-    "final": "${final_outbound}"
-  }
-}
-EOF
+    }' > "${SINGBOX_CONFIG_FILE}"
 }
 
 # --- Uninstaller ---
