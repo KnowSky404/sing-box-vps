@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040533"
+readonly SCRIPT_VERSION="2026040534"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -377,7 +377,7 @@ EOF
 
 # --- Config Generator ---
 generate_config() {
-  log_info "正在生成 VLESS+REALITY 配置 (适配 sing-box 1.13.0+)..."
+  log_info "正在生成 VLESS+REALITY 配置 (适配 sing-box 1.13.0+ Endpoint 架构)..."
   mkdir -p "${SINGBOX_CONFIG_DIR}"
 
   # UUID
@@ -403,16 +403,14 @@ generate_config() {
 
   # Route rules logic
   local route_rules='[ { "inbound": "vless-in", "action": "sniff" }'
-  # Exception for REALITY SNI (must be direct)
   route_rules+=', { "domain": ["'"${SB_SNI}"'"], "action": "direct" }'
-
   if [[ "${SB_ADVANCED_ROUTE}" == "y" ]]; then
     route_rules+=', { "geosite": "category-ads-all", "action": "reject" }, { "geoip": "private", "action": "reject" }'
   fi
   route_rules+=' ]'
 
-  # Outbounds and Final logic
-  local outbounds='[ { "type": "direct", "tag": "direct" }'
+  # Endpoints and Final logic
+  local endpoints="[]"
   local final_outbound="direct"
 
   if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
@@ -421,24 +419,25 @@ generate_config() {
     local w_v4=$(grep "WARP_V4" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2)
     local w_v6=$(grep "WARP_V6" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2)
 
-    outbounds+=', {
-      "type": "wireguard",
-      "tag": "warp",
-      "local_address": [ "'"${w_v4}"'/32", "'"${w_v6}"'/128" ],
-      "private_key": "'"${w_key}"'",
-      "peers": [
-        {
-          "address": "engage.cloudflareclient.com",
-          "port": 2408,
-          "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
-          "allowed_ips": [ "0.0.0.0/0", "::/0" ]
-        }
-      ],
-      "mtu": 1280
-    }'
-    final_outbound="warp"
+    endpoints='[
+      {
+        "type": "wireguard",
+        "tag": "warp-ep",
+        "address": [ "'"${w_v4}"'/32", "'"${w_v6}"'/128" ],
+        "private_key": "'"${w_key}"'",
+        "peers": [
+          {
+            "address": "engage.cloudflareclient.com",
+            "port": 2408,
+            "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+            "allowed_ips": [ "0.0.0.0/0", "::/0" ]
+          }
+        ],
+        "mtu": 1280
+      }
+    ]'
+    final_outbound="warp-ep"
   fi
-  outbounds+=', { "type": "block", "tag": "block" } ]'
 
   cat > "${SINGBOX_CONFIG_FILE}" <<EOF
 {
@@ -446,6 +445,7 @@ generate_config() {
     "level": "info",
     "timestamp": true
   },
+  "endpoints": ${endpoints},
   "inbounds": [
     {
       "type": "vless",
@@ -465,7 +465,10 @@ generate_config() {
       }
     }
   ],
-  "outbounds": ${outbounds},
+  "outbounds": [
+    { "type": "direct", "tag": "direct" },
+    { "type": "block", "tag": "block" }
+  ],
   "route": {
     "rules": ${route_rules},
     "final": "${final_outbound}"
@@ -473,6 +476,7 @@ generate_config() {
 }
 EOF
 }
+
 # --- Uninstaller ---
 uninstall_singbox() {
   log_info "正在卸载 sing-box..."
