@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040540"
+readonly SCRIPT_VERSION="2026040541"
 readonly SB_SUPPORT_MAX_VERSION="1.13.5"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -399,8 +399,8 @@ generate_config() {
     echo "PUBLIC_KEY=${SB_PUBLIC_KEY}" >> "${SB_KEY_FILE}"
   else
     log_info "使用现有密钥对..."
-    SB_PRIVATE_KEY=$(grep "PRIVATE_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2 | tr -d '\r\n ')
-    SB_PUBLIC_KEY=$(grep "PUBLIC_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2 | tr -d '\r\n ')
+    SB_PRIVATE_KEY=$(grep "PRIVATE_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
+    SB_PUBLIC_KEY=$(grep "PUBLIC_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
   fi
   
   # ShortIDs
@@ -411,9 +411,9 @@ generate_config() {
   local w_key="" w_v4="" w_v6=""
   if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
     register_warp
-    w_key=$(grep "WARP_PRIV_KEY" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2 | tr -d '\r\n ')
-    w_v4=$(grep "WARP_V4" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2 | tr -d '\r\n ')
-    w_v6=$(grep "WARP_V6" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2 | tr -d '\r\n ')
+    w_key=$(grep "WARP_PRIV_KEY" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
+    w_v4=$(grep "WARP_V4" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
+    w_v6=$(grep "WARP_V6" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
   fi
 
   # Build JSON with jq
@@ -605,7 +605,7 @@ view_status_and_info() {
   
   # Read Public Key from file
   if [[ -f "${SB_KEY_FILE}" ]]; then
-    SB_PUBLIC_KEY=$(grep "PUBLIC_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2)
+    SB_PUBLIC_KEY=$(grep "PUBLIC_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
   else
     # Fallback (though unlikely)
     log_warn "未找到密钥文件，请重新安装或更新配置以生成密钥文件。"
