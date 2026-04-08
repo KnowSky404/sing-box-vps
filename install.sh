@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026040808
+# Version: 2026040809
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040808"
+readonly SCRIPT_VERSION="2026040809"
 readonly SB_SUPPORT_MAX_VERSION="1.13.6"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -396,26 +396,29 @@ run_media_check_via_warp() {
 }
 
 media_check_menu() {
-  echo -e "\n${BLUE}--- 流媒体验证检测 ---${NC}"
-  show_media_check_backend_info
-  echo "1. 本机直出检测"
-  echo "2. Warp 出口检测"
-  echo "0. 返回主菜单"
-  read -rp "请选择 [0-2]: " media_choice
+  while true; do
+    echo -e "\n${BLUE}--- 流媒体验证检测 ---${NC}"
+    show_media_check_backend_info
+    echo "1. 本机直出检测"
+    echo "2. Warp 出口检测"
+    echo "0. 返回主菜单"
+    read -rp "请选择 [0-2]: " media_choice
 
-  case "${media_choice}" in
-    1)
-      if ! run_media_check_backend; then
-        log_warn "流媒体验证脚本执行失败，请检查网络或稍后重试。"
-      fi
-      ;;
-    2)
-      if ! run_media_check_via_warp; then
-        log_warn "通过 Warp 执行流媒体验证失败，请检查 Warp 配置或稍后重试。"
-      fi
-      ;;
-    *) return ;;
-  esac
+    case "${media_choice}" in
+      1)
+        if ! run_media_check_backend; then
+          log_warn "流媒体验证脚本执行失败，请检查网络或稍后重试。"
+        fi
+        ;;
+      2)
+        if ! run_media_check_via_warp; then
+          log_warn "通过 Warp 执行流媒体验证失败，请检查 Warp 配置或稍后重试。"
+        fi
+        ;;
+      0) return ;;
+      *) log_warn "无效选项，请重新选择。" ;;
+    esac
+  done
 }
 
 sanitize_ruleset_tag() {
@@ -1401,111 +1404,114 @@ load_current_config_state() {
 
 # Cloudflare Warp Management
 warp_management() {
-  local apply_change="n"
-  local should_reload="n"
-  local status
-  local warp_was_enabled
+  local apply_change should_reload status warp_was_enabled
 
-  load_current_config_state
-  ensure_warp_routing_assets
-  warp_was_enabled="${SB_ENABLE_WARP}"
+  while true; do
+    apply_change="n"
+    should_reload="n"
 
-  if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
-    status="${GREEN}已开启${NC}"
-  else
-    status="${YELLOW}未开启${NC}"
-  fi
+    load_current_config_state
+    ensure_warp_routing_assets
+    warp_was_enabled="${SB_ENABLE_WARP}"
 
-  echo -e "\n${BLUE}--- Cloudflare Warp 管理 ---${NC}"
-  echo -e "当前状态: ${status}"
-  echo -e "当前路由模式: ${SB_WARP_ROUTE_MODE}"
-  echo "1. 开启 Warp"
-  echo "2. 关闭 Warp"
-  echo "3. 重新注册 Warp 账户 (获取新密钥和 IP)"
-  echo "4. 切换 Warp 路由模式"
-  echo "5. 添加自定义 Warp 域名"
-  echo "6. 添加远程 Warp 规则集"
-  echo "7. 查看 Warp 分流文件路径"
-  echo "8. 查看当前生效的 Warp 分流来源"
-  echo "9. 导入推荐 Warp 规则源"
-  echo "0. 返回主菜单"
-  read -rp "请选择 [0-9]: " w_choice
+    if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
+      status="${GREEN}已开启${NC}"
+    else
+      status="${YELLOW}未开启${NC}"
+    fi
 
-  case "${w_choice}" in
-    1)
-      SB_ENABLE_WARP="y"
-      log_info "正在开启 Warp..."
-      apply_change="y"
-      should_reload="y"
-      ;;
-    2)
-      SB_ENABLE_WARP="n"
-      log_info "正在关闭 Warp..."
-      apply_change="y"
-      should_reload="y"
-      ;;
-    3)
-      rm -f "${SB_WARP_KEY_FILE}"
-      SB_ENABLE_WARP="y"
-      log_info "正在重新注册 Warp..."
-      apply_change="y"
-      should_reload="y"
-      ;;
-    4)
-      if set_warp_route_mode_interactive; then
-        log_success "Warp 路由模式已更新为: ${SB_WARP_ROUTE_MODE}"
+    echo -e "\n${BLUE}--- Cloudflare Warp 管理 ---${NC}"
+    echo -e "当前状态: ${status}"
+    echo -e "当前路由模式: ${SB_WARP_ROUTE_MODE}"
+    echo "1. 开启 Warp"
+    echo "2. 关闭 Warp"
+    echo "3. 重新注册 Warp 账户 (获取新密钥和 IP)"
+    echo "4. 切换 Warp 路由模式"
+    echo "5. 添加自定义 Warp 域名"
+    echo "6. 添加远程 Warp 规则集"
+    echo "7. 查看 Warp 分流文件路径"
+    echo "8. 查看当前生效的 Warp 分流来源"
+    echo "9. 导入推荐 Warp 规则源"
+    echo "0. 返回主菜单"
+    read -rp "请选择 [0-9]: " w_choice
+
+    case "${w_choice}" in
+      1)
+        SB_ENABLE_WARP="y"
+        log_info "正在开启 Warp..."
         apply_change="y"
-        [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
-      fi
-      ;;
-    5)
-      if add_warp_domain_entry; then
+        should_reload="y"
+        ;;
+      2)
+        SB_ENABLE_WARP="n"
+        log_info "正在关闭 Warp..."
         apply_change="y"
-        [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
-      fi
-      ;;
-    6)
-      if add_remote_warp_rule_set; then
+        should_reload="y"
+        ;;
+      3)
+        rm -f "${SB_WARP_KEY_FILE}"
+        SB_ENABLE_WARP="y"
+        log_info "正在重新注册 Warp..."
         apply_change="y"
-        [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
-      fi
-      ;;
-    7)
-      show_warp_route_assets
-      return
-      ;;
-    8)
-      show_effective_warp_route_sources
-      return
-      ;;
-    9)
-      if import_recommended_warp_rule_sets; then
-        apply_change="y"
-        [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
-      fi
-      ;;
-    *) return ;;
-  esac
+        should_reload="y"
+        ;;
+      4)
+        if set_warp_route_mode_interactive; then
+          log_success "Warp 路由模式已更新为: ${SB_WARP_ROUTE_MODE}"
+          apply_change="y"
+          [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
+        fi
+        ;;
+      5)
+        if add_warp_domain_entry; then
+          apply_change="y"
+          [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
+        fi
+        ;;
+      6)
+        if add_remote_warp_rule_set; then
+          apply_change="y"
+          [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
+        fi
+        ;;
+      7)
+        show_warp_route_assets
+        continue
+        ;;
+      8)
+        show_effective_warp_route_sources
+        continue
+        ;;
+      9)
+        if import_recommended_warp_rule_sets; then
+          apply_change="y"
+          [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
+        fi
+        ;;
+      0) return ;;
+      *) log_warn "无效选项，请重新选择。"; continue ;;
+    esac
 
-  if [[ "${apply_change}" == "n" ]]; then
-    return
-  fi
+    if [[ "${apply_change}" == "n" ]]; then
+      continue
+    fi
 
-  save_warp_route_settings
+    save_warp_route_settings
 
-  if [[ "${should_reload}" != "y" ]]; then
-    log_success "Warp 分流资产已更新，待下次开启 Warp 或重载配置时生效。"
-    return
-  fi
+    if [[ "${should_reload}" != "y" ]]; then
+      log_success "Warp 分流资产已更新，待下次开启 Warp 或重载配置时生效。"
+      continue
+    fi
 
-  generate_config
-  check_config_valid
-  setup_service
-  systemctl restart sing-box
-  log_success "Warp 配置已更新并重启服务。"
+    generate_config
+    check_config_valid
+    setup_service
+    systemctl restart sing-box
+    log_success "Warp 配置已更新并重启服务。"
 
-  load_current_config_state
-  display_info
+    load_current_config_state
+    display_info
+  done
 }
 
 # Helper to extract config values and display info
@@ -1649,117 +1655,120 @@ main() {
 
   show_banner
   check_root
+  while true; do
+    # Status checks
+    check_script_status
+    check_sb_version
+    check_bbr_status
 
-  # Status checks
-  check_script_status
-  check_sb_version
-  check_bbr_status
+    echo ""
+    echo -e "1. 安装/更新 sing-box (VLESS+REALITY / Mixed) ${SB_VER_STATUS}"
+    echo "2. 卸载 sing-box"
+    echo "3. 修改当前协议配置"
+    echo -e "4. 开启 BBR 拥塞控制算法 ${BBR_STATUS}"
+    echo "--------------------------------"
+    echo "5. 启动 sing-box"
+    echo "6. 停止 sing-box"
+    echo "7. 重启 sing-box"
+    echo "8. 查看状态与节点信息"
+    echo "9. 查看实时日志"
+    echo "--------------------------------"
+    echo -e "10. 更新管理脚本 (sbv) ${SCRIPT_VER_STATUS}"
+    echo "11. 卸载管理脚本 (sbv)"
+    echo "12. 配置 Cloudflare Warp (解锁/防送中)"
+    echo "13. 流媒体验证检测"
+    echo "0. 退出"
+    read -rp "请选择 [0-13]: " choice
 
-  echo -e "1. 安装/更新 sing-box (VLESS+REALITY / Mixed) ${SB_VER_STATUS}"
-  echo "2. 卸载 sing-box"
-  echo "3. 修改当前协议配置"
-  echo -e "4. 开启 BBR 拥塞控制算法 ${BBR_STATUS}"
-  echo "--------------------------------"
-  echo "5. 启动 sing-box"
-  echo "6. 停止 sing-box"
-  echo "7. 重启 sing-box"
-  echo "8. 查看状态与节点信息"
-  echo "9. 查看实时日志"
-  echo "--------------------------------"
-  echo -e "10. 更新管理脚本 (sbv) ${SCRIPT_VER_STATUS}"
-  echo "11. 卸载管理脚本 (sbv)"
-  echo "12. 配置 Cloudflare Warp (解锁/防送中)"
-  echo "13. 流媒体验证检测"
-  echo "0. 退出"
-  read -rp "请选择 [0-13]: " choice
-
-  case "$choice" in
-    1)
-      if [[ -f "${SINGBOX_BIN_PATH}" ]]; then
-        local installed_ver=$("${SINGBOX_BIN_PATH}" version | head -n1 | awk '{print $3}')
-        if [[ "${installed_ver}" == "${SB_SUPPORT_MAX_VERSION}" ]]; then
-          log_info "检测到已安装适配的最佳版本: ${installed_ver}"
-          read -rp "是否需要重新安装? [y/N]: " reinstall_choice
-          if [[ ! "${reinstall_choice}" =~ ^[Yy]$ ]]; then
-            continue
+    case "$choice" in
+      1)
+        if [[ -f "${SINGBOX_BIN_PATH}" ]]; then
+          local installed_ver=$("${SINGBOX_BIN_PATH}" version | head -n1 | awk '{print $3}')
+          if [[ "${installed_ver}" == "${SB_SUPPORT_MAX_VERSION}" ]]; then
+            log_info "检测到已安装适配的最佳版本: ${installed_ver}"
+            read -rp "是否需要重新安装? [y/N]: " reinstall_choice
+            if [[ ! "${reinstall_choice}" =~ ^[Yy]$ ]]; then
+              continue
+            fi
           fi
         fi
-      fi
 
-      get_os_info && get_arch
-      read -rp "版本 (默认 ${SB_SUPPORT_MAX_VERSION}): " in_v
-      SB_VERSION=${in_v:-$SB_SUPPORT_MAX_VERSION}
-      echo "协议类型:"
-      echo "1. VLESS + REALITY"
-      echo "2. Mixed (HTTP/HTTPS/SOCKS)"
-      read -rp "请选择 [1-2] (默认 1): " in_protocol
-      case "${in_protocol}" in
-        2) set_protocol_defaults "mixed" ;;
-        *) set_protocol_defaults "vless+reality" ;;
-      esac
-
-      read -rp "端口 (默认 ${SB_PORT}): " in_p
-      SB_PORT=${in_p:-$SB_PORT}
-      check_port_conflict "${SB_PORT}"
-
-      if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
-        read -rp "REALITY 域名 (默认 apple.com): " in_sni
-        SB_SNI=${in_sni:-"apple.com"}
-      else
-        read -rp "是否启用用户名密码认证 [y/n] (默认 y，强烈建议开启): " in_auth
-        SB_MIXED_AUTH_ENABLED=${in_auth:-"y"}
-        if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
-          read -rp "用户名 (留空自动生成): " in_user
-          SB_MIXED_USERNAME="${in_user}"
-          read -rp "密码 (留空自动生成): " in_pass
-          SB_MIXED_PASSWORD="${in_pass}"
-        else
-          log_warn "你选择了关闭认证。开放的 HTTP/SOCKS 代理存在明显安全风险，请确认防火墙与访问源限制。"
-        fi
-      fi
-
-      read -rp "是否开启高级路由规则 (广告拦截/局域网绕行) [y/n] (默认 y): " in_route
-      SB_ADVANCED_ROUTE=${in_route:-"y"}
-      read -rp "是否开启 Cloudflare Warp (用于解锁/防送中) [y/n] (默认 n): " in_warp
-      SB_ENABLE_WARP=${in_warp:-"n"}
-      if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
-        SB_WARP_ROUTE_MODE="all"
-        echo "Warp 路由模式:"
-        echo "1. 全量流量走 Warp"
-        echo "2. 仅 AI/流媒体及自定义规则走 Warp"
-        read -rp "请选择 [1-2] (默认 1): " in_warp_mode
-        case "${in_warp_mode}" in
-          2) SB_WARP_ROUTE_MODE="selective" ;;
-          *) SB_WARP_ROUTE_MODE="all" ;;
+        get_os_info && get_arch
+        read -rp "版本 (默认 ${SB_SUPPORT_MAX_VERSION}): " in_v
+        SB_VERSION=${in_v:-$SB_SUPPORT_MAX_VERSION}
+        echo "协议类型:"
+        echo "1. VLESS + REALITY"
+        echo "2. Mixed (HTTP/HTTPS/SOCKS)"
+        read -rp "请选择 [1-2] (默认 1): " in_protocol
+        case "${in_protocol}" in
+          2) set_protocol_defaults "mixed" ;;
+          *) set_protocol_defaults "vless+reality" ;;
         esac
-      fi
 
-      install_dependencies
-      get_latest_version
-      save_warp_route_settings
-      install_binary
-      generate_config
-      check_config_valid
-      setup_service
-      open_firewall_port "${SB_PORT}"
-      systemctl restart sing-box
-      display_info
-      ;;
-    2) uninstall_singbox ;;
-    3) update_config_only ;;
-    4) enable_bbr ;;
-    5) systemctl start sing-box && log_success "服务已启动。" ;;
-    6) systemctl stop sing-box && log_success "服务已停止。" ;;
-    7) systemctl restart sing-box && log_success "服务已重启。" ;;
-    8) view_status_and_info ;;
-    9) journalctl -u sing-box -f ;;
-    10) manual_update_script ;;
-    11) uninstall_script ;;
-    12) warp_management ;;
-    13) media_check_menu ;;
-    *) exit 0 ;;
-  esac
-  }
+        read -rp "端口 (默认 ${SB_PORT}): " in_p
+        SB_PORT=${in_p:-$SB_PORT}
+        check_port_conflict "${SB_PORT}"
+
+        if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
+          read -rp "REALITY 域名 (默认 apple.com): " in_sni
+          SB_SNI=${in_sni:-"apple.com"}
+        else
+          read -rp "是否启用用户名密码认证 [y/n] (默认 y，强烈建议开启): " in_auth
+          SB_MIXED_AUTH_ENABLED=${in_auth:-"y"}
+          if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
+            read -rp "用户名 (留空自动生成): " in_user
+            SB_MIXED_USERNAME="${in_user}"
+            read -rp "密码 (留空自动生成): " in_pass
+            SB_MIXED_PASSWORD="${in_pass}"
+          else
+            log_warn "你选择了关闭认证。开放的 HTTP/SOCKS 代理存在明显安全风险，请确认防火墙与访问源限制。"
+          fi
+        fi
+
+        read -rp "是否开启高级路由规则 (广告拦截/局域网绕行) [y/n] (默认 y): " in_route
+        SB_ADVANCED_ROUTE=${in_route:-"y"}
+        read -rp "是否开启 Cloudflare Warp (用于解锁/防送中) [y/n] (默认 n): " in_warp
+        SB_ENABLE_WARP=${in_warp:-"n"}
+        if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
+          SB_WARP_ROUTE_MODE="all"
+          echo "Warp 路由模式:"
+          echo "1. 全量流量走 Warp"
+          echo "2. 仅 AI/流媒体及自定义规则走 Warp"
+          read -rp "请选择 [1-2] (默认 1): " in_warp_mode
+          case "${in_warp_mode}" in
+            2) SB_WARP_ROUTE_MODE="selective" ;;
+            *) SB_WARP_ROUTE_MODE="all" ;;
+          esac
+        fi
+
+        install_dependencies
+        get_latest_version
+        save_warp_route_settings
+        install_binary
+        generate_config
+        check_config_valid
+        setup_service
+        open_firewall_port "${SB_PORT}"
+        systemctl restart sing-box
+        display_info
+        ;;
+      2) uninstall_singbox ;;
+      3) update_config_only ;;
+      4) enable_bbr ;;
+      5) systemctl start sing-box && log_success "服务已启动。" ;;
+      6) systemctl stop sing-box && log_success "服务已停止。" ;;
+      7) systemctl restart sing-box && log_success "服务已重启。" ;;
+      8) view_status_and_info ;;
+      9) journalctl -u sing-box -f || true ;;
+      10) manual_update_script ;;
+      11) uninstall_script ;;
+      12) warp_management ;;
+      13) media_check_menu ;;
+      0) exit 0 ;;
+      *) log_warn "无效选项，请重新选择。" ;;
+    esac
+  done
+}
 
 
 main "$@"
