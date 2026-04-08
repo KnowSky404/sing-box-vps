@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026040807
+# Version: 2026040808
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040807"
+readonly SCRIPT_VERSION="2026040808"
 readonly SB_SUPPORT_MAX_VERSION="1.13.6"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -18,6 +18,8 @@ readonly SB_WARP_ROUTE_SETTINGS_FILE="${SB_PROJECT_DIR}/warp-routing.env"
 readonly SB_WARP_DOMAINS_FILE="${SB_PROJECT_DIR}/warp-domains.txt"
 readonly SB_WARP_REMOTE_RULESETS_FILE="${SB_PROJECT_DIR}/warp-remote-rule-sets.txt"
 readonly SB_WARP_LOCAL_RULESET_DIR="${SB_PROJECT_DIR}/rule-set/warp"
+readonly SB_MEDIA_CHECK_DIR="${SB_PROJECT_DIR}/media-check"
+readonly SB_MEDIA_CHECK_SCRIPT="${SB_MEDIA_CHECK_DIR}/region_restriction_check.sh"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
 readonly SINGBOX_CONFIG_DIR="${SB_PROJECT_DIR}"
 readonly SINGBOX_CONFIG_FILE="${SB_PROJECT_DIR}/config.json"
@@ -33,6 +35,12 @@ readonly WARP_RECOMMENDED_RULESETS=(
   "googlefcm|https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/sing/geo/geosite/googlefcm.srs|1d"
   "google-ip|https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/sing/geo/geoip/google.srs|1d"
 )
+readonly MEDIA_CHECK_BACKEND_NAME="RegionRestrictionCheck"
+readonly MEDIA_CHECK_BACKEND_AUTHOR="1-stream"
+readonly MEDIA_CHECK_BACKEND_REPO_URL="https://github.com/1-stream/RegionRestrictionCheck"
+readonly MEDIA_CHECK_BACKEND_SCRIPT_URL="https://raw.githubusercontent.com/1-stream/RegionRestrictionCheck/main/check.sh"
+readonly MEDIA_CHECK_BACKEND_UPSTREAM_AUTHOR="lmc999"
+readonly MEDIA_CHECK_BACKEND_UPSTREAM_REPO_URL="https://github.com/lmc999/RegionRestrictionCheck"
 
 # --- Global Variables ---
 SB_VERSION="${SB_SUPPORT_MAX_VERSION}"
@@ -228,6 +236,189 @@ ensure_mixed_auth_credentials() {
 
   [[ -z "${SB_MIXED_USERNAME}" ]] && SB_MIXED_USERNAME=$(generate_random_token "proxy_" 3)
   [[ -z "${SB_MIXED_PASSWORD}" ]] && SB_MIXED_PASSWORD=$(generate_random_token "" 8)
+}
+
+show_media_check_backend_info() {
+  echo -e "${BLUE}检测后端:${NC} ${MEDIA_CHECK_BACKEND_NAME}"
+  echo -e "${BLUE}作者:${NC} ${MEDIA_CHECK_BACKEND_AUTHOR}"
+  echo -e "${BLUE}项目地址:${NC} ${MEDIA_CHECK_BACKEND_REPO_URL}"
+  echo -e "${BLUE}上游来源:${NC} ${MEDIA_CHECK_BACKEND_UPSTREAM_AUTHOR} (${MEDIA_CHECK_BACKEND_UPSTREAM_REPO_URL})"
+}
+
+ensure_media_check_backend() {
+  mkdir -p "${SB_MEDIA_CHECK_DIR}"
+
+  if [[ -x "${SB_MEDIA_CHECK_SCRIPT}" ]]; then
+    return 0
+  fi
+
+  log_info "正在下载流媒体验证脚本..."
+  if ! curl -fsSL "${MEDIA_CHECK_BACKEND_SCRIPT_URL}" -o "${SB_MEDIA_CHECK_SCRIPT}"; then
+    log_error "下载流媒体验证脚本失败，请检查网络。"
+  fi
+
+  chmod +x "${SB_MEDIA_CHECK_SCRIPT}"
+  log_success "流媒体验证脚本已准备完成。"
+}
+
+pick_free_local_port() {
+  local port
+
+  for port in $(seq 20080 20120); do
+    if ! ss -ltn 2>/dev/null | grep -q ":${port} "; then
+      printf '%s' "${port}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+create_media_check_warp_proxy_config() {
+  local output_file=$1
+  local proxy_port=$2
+  local w_key w_v4 w_v6
+
+  if [[ ! -f "${SB_WARP_KEY_FILE}" ]]; then
+    log_error "未找到 Warp 账户信息，请先在菜单中启用或注册 Warp。"
+  fi
+
+  w_key=$(grep "WARP_PRIV_KEY" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
+  w_v4=$(grep "WARP_V4" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
+  w_v6=$(grep "WARP_V6" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
+
+  if [[ -z "${w_key}" || -z "${w_v4}" || -z "${w_v6}" ]]; then
+    log_error "Warp 账户信息不完整，请尝试重新注册 Warp。"
+  fi
+
+  jq -n \
+    --arg proxy_port "${proxy_port}" \
+    --arg w_key "${w_key}" \
+    --arg w_v4 "${w_v4}/32" \
+    --arg w_v6 "${w_v6}/128" \
+    '{
+      "log": { "level": "warn", "timestamp": true },
+      "endpoints": [
+        {
+          "type": "wireguard",
+          "tag": "warp-ep",
+          "address": [ $w_v4, $w_v6 ],
+          "private_key": $w_key,
+          "peers": [
+            {
+              "address": "engage.cloudflareclient.com",
+              "port": 2408,
+              "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+              "allowed_ips": [ "0.0.0.0/0", "::/0" ]
+            }
+          ],
+          "mtu": 1280
+        }
+      ],
+      "inbounds": [
+        {
+          "type": "socks",
+          "tag": "media-check-socks",
+          "listen": "127.0.0.1",
+          "listen_port": ($proxy_port | tonumber)
+        }
+      ],
+      "outbounds": [
+        { "type": "direct", "tag": "direct" }
+      ],
+      "route": {
+        "rules": [
+          { "inbound": "media-check-socks", "action": "sniff" }
+        ],
+        "final": "warp-ep"
+      }
+    }' > "${output_file}"
+}
+
+run_media_check_backend() {
+  local proxy_url=${1:-}
+
+  ensure_media_check_backend
+  show_media_check_backend_info
+
+  if [[ -n "${proxy_url}" ]]; then
+    log_info "正在通过代理执行流媒体验证: ${proxy_url}"
+    bash "${SB_MEDIA_CHECK_SCRIPT}" -P "${proxy_url}"
+  else
+    log_info "正在使用本机直出执行流媒体验证..."
+    bash "${SB_MEDIA_CHECK_SCRIPT}"
+  fi
+}
+
+run_media_check_via_warp() {
+  local temp_dir proxy_config proxy_log proxy_port proxy_pid proxy_url ready="n"
+
+  if ! command -v jq &>/dev/null; then
+    log_warn "未检测到 jq，正在尝试自动安装以支持流媒体验证..."
+    get_os_info && install_dependencies
+  fi
+
+  proxy_port=$(pick_free_local_port) || log_error "未找到可用的本地临时代理端口。"
+  temp_dir=$(mktemp -d)
+  proxy_config="${temp_dir}/media-check-warp.json"
+  proxy_log="${temp_dir}/media-check-warp.log"
+  proxy_url="socks5h://127.0.0.1:${proxy_port}"
+
+  create_media_check_warp_proxy_config "${proxy_config}" "${proxy_port}"
+
+  "${SINGBOX_BIN_PATH}" run -c "${proxy_config}" > "${proxy_log}" 2>&1 &
+  proxy_pid=$!
+
+  for _ in $(seq 1 20); do
+    if ss -ltn 2>/dev/null | grep -q ":${proxy_port} "; then
+      ready="y"
+      break
+    fi
+    sleep 0.3
+  done
+
+  if [[ "${ready}" != "y" ]]; then
+    kill "${proxy_pid}" 2>/dev/null || true
+    wait "${proxy_pid}" 2>/dev/null || true
+    cat "${proxy_log}" >&2 || true
+    rm -rf "${temp_dir}"
+    log_error "Warp 临时代理启动失败，请检查 Warp 配置。"
+  fi
+
+  run_media_check_backend "${proxy_url}" || {
+    local exit_code=$?
+    kill "${proxy_pid}" 2>/dev/null || true
+    wait "${proxy_pid}" 2>/dev/null || true
+    rm -rf "${temp_dir}"
+    return "${exit_code}"
+  }
+
+  kill "${proxy_pid}" 2>/dev/null || true
+  wait "${proxy_pid}" 2>/dev/null || true
+  rm -rf "${temp_dir}"
+}
+
+media_check_menu() {
+  echo -e "\n${BLUE}--- 流媒体验证检测 ---${NC}"
+  show_media_check_backend_info
+  echo "1. 本机直出检测"
+  echo "2. Warp 出口检测"
+  echo "0. 返回主菜单"
+  read -rp "请选择 [0-2]: " media_choice
+
+  case "${media_choice}" in
+    1)
+      if ! run_media_check_backend; then
+        log_warn "流媒体验证脚本执行失败，请检查网络或稍后重试。"
+      fi
+      ;;
+    2)
+      if ! run_media_check_via_warp; then
+        log_warn "通过 Warp 执行流媒体验证失败，请检查 Warp 配置或稍后重试。"
+      fi
+      ;;
+    *) return ;;
+  esac
 }
 
 sanitize_ruleset_tag() {
@@ -1481,8 +1672,9 @@ main() {
   echo -e "10. 更新管理脚本 (sbv) ${SCRIPT_VER_STATUS}"
   echo "11. 卸载管理脚本 (sbv)"
   echo "12. 配置 Cloudflare Warp (解锁/防送中)"
+  echo "13. 流媒体验证检测"
   echo "0. 退出"
-  read -rp "请选择 [0-12]: " choice
+  read -rp "请选择 [0-13]: " choice
 
   case "$choice" in
     1)
@@ -1567,6 +1759,7 @@ main() {
     10) manual_update_script ;;
     11) uninstall_script ;;
     12) warp_management ;;
+    13) media_check_menu ;;
     *) exit 0 ;;
   esac
   }

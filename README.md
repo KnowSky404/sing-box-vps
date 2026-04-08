@@ -52,6 +52,7 @@ sbv
 7.  **状态与节点信息**：随时找回分享链接及二维码。
 8.  **实时日志**：直接查看服务运行详情。
 9.  **脚本管理**：支持脚本版本自更新及彻底卸载。
+10. **流媒体验证检测**：支持本机直出与 Warp 出口两种检测模式。
 
 ## 📂 关键路径
 
@@ -62,6 +63,7 @@ sbv
 - **Warp 分流域名**: `/root/sing-box-vps/warp-domains.txt`
 - **Warp 本地规则集目录**: `/root/sing-box-vps/rule-set/warp/`
 - **Warp 远程规则集列表**: `/root/sing-box-vps/warp-remote-rule-sets.txt`
+- **流媒体验证脚本缓存**: `/root/sing-box-vps/media-check/region_restriction_check.sh`
 - **全局命令**: `/usr/local/bin/sbv`
 
 ## ⚠️ 注意事项
@@ -69,6 +71,7 @@ sbv
 - 本脚本必须以 `root` 用户身份运行。
 - 脚本默认适配最佳稳定性版本，手动选择 `latest` 可能存在不兼容风险。
 - `Mixed` 代理默认建议启用用户名密码认证；若关闭认证，请务必确认防火墙和来源访问控制策略。
+- 流媒体验证功能当前接入第三方项目 `1-stream/RegionRestrictionCheck`，脚本内已注明作者与仓库地址，并保留上游 `lmc999/RegionRestrictionCheck` 来源信息。
 
 ---
 
