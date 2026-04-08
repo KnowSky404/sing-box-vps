@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026040805
+# Version: 2026040806
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040805"
+readonly SCRIPT_VERSION="2026040806"
 readonly SB_SUPPORT_MAX_VERSION="1.13.6"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -26,6 +26,13 @@ readonly WARP_AI_ROUTE_DOMAINS_JSON='["gemini.google.com","aistudio.google.com",
 readonly WARP_AI_ROUTE_DOMAIN_SUFFIXES_JSON='["openai.com","chatgpt.com","oaistatic.com","oaiusercontent.com","anthropic.com","claude.ai","perplexity.ai","x.ai","cursor.com","cursor.sh","google.com","googleapis.com","gstatic.com","googleusercontent.com","gvt1.com","recaptcha.net"]'
 readonly WARP_STREAM_ROUTE_DOMAINS_JSON='[]'
 readonly WARP_STREAM_ROUTE_DOMAIN_SUFFIXES_JSON='["netflix.com","nflxvideo.net","nflximg.net","nflxext.com","nflxso.net","disneyplus.com","disney-plus.net","dssott.com","bamgrid.com","hulu.com","huluim.com","hulustream.com","max.com","primevideo.com","amazonvideo.com","media-amazon.com"]'
+readonly WARP_RECOMMENDED_RULESETS=(
+  "openai|https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/sing/geo/geosite/openai.srs|1d"
+  "google-gemini|https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/sing/geo/geosite/google-gemini.srs|1d"
+  "google|https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/sing/geo/geosite/google.srs|1d"
+  "googlefcm|https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/sing/geo/geosite/googlefcm.srs|1d"
+  "google-ip|https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/sing/geo/geoip/google.srs|1d"
+)
 
 # --- Global Variables ---
 SB_VERSION="${SB_SUPPORT_MAX_VERSION}"
@@ -452,6 +459,32 @@ add_remote_warp_rule_set() {
   printf '%s|%s|%s\n' "${tag}" "${url}" "${update_interval:-1d}" >> "${SB_WARP_REMOTE_RULESETS_FILE}"
   log_success "已写入远程 Warp 规则集: ${tag}"
   return 0
+}
+
+import_recommended_warp_rule_sets() {
+  ensure_warp_routing_assets
+
+  local entry imported_count=0 skipped_count=0
+
+  for entry in "${WARP_RECOMMENDED_RULESETS[@]}"; do
+    if grep -Fxq "${entry}" "${SB_WARP_REMOTE_RULESETS_FILE}" 2>/dev/null; then
+      skipped_count=$((skipped_count + 1))
+      continue
+    fi
+
+    printf '%s\n' "${entry}" >> "${SB_WARP_REMOTE_RULESETS_FILE}"
+    imported_count=$((imported_count + 1))
+  done
+
+  if [[ ${imported_count} -gt 0 ]]; then
+    log_success "已导入 ${imported_count} 条推荐 Warp 规则源。"
+  fi
+
+  if [[ ${skipped_count} -gt 0 ]]; then
+    log_info "已跳过 ${skipped_count} 条已存在的推荐 Warp 规则源。"
+  fi
+
+  [[ ${imported_count} -gt 0 ]]
 }
 
 check_root() {
@@ -1040,8 +1073,9 @@ warp_management() {
   echo "6. 添加远程 Warp 规则集"
   echo "7. 查看 Warp 分流文件路径"
   echo "8. 查看当前生效的 Warp 分流来源"
+  echo "9. 导入推荐 Warp 规则源"
   echo "0. 返回主菜单"
-  read -rp "请选择 [0-8]: " w_choice
+  read -rp "请选择 [0-9]: " w_choice
 
   case "${w_choice}" in
     1)
@@ -1089,6 +1123,12 @@ warp_management() {
     8)
       show_effective_warp_route_sources
       return
+      ;;
+    9)
+      if import_recommended_warp_rule_sets; then
+        apply_change="y"
+        [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
+      fi
       ;;
     *) return ;;
   esac
