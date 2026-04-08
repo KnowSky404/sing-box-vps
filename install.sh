@@ -533,6 +533,32 @@ check_bbr_status() {
   fi
 }
 
+# Detect whether the current config enables Warp.
+# Prefer the current endpoint-based schema, but keep compatibility with older configs.
+config_has_warp_enabled() {
+  local config_file=$1
+
+  jq -e '
+    (
+      (.route.final // "") == "warp-ep" and
+      any(.endpoints[]?; .tag == "warp-ep")
+    ) or any(.outbounds[]?; .tag == "warp")
+  ' "${config_file}" &>/dev/null
+}
+
+# Detect whether advanced route rules are enabled in either the current or legacy schema.
+config_has_advanced_route() {
+  local config_file=$1
+
+  jq -e '
+    any(
+      .route.rules[]?;
+      (.ip_is_private == true and .action == "reject") or
+      (.geosite == "category-ads-all")
+    )
+  ' "${config_file}" &>/dev/null
+}
+
 # Cloudflare Warp Management
 warp_management() {
   if [[ ! -f "${SINGBOX_CONFIG_FILE}" ]]; then
@@ -540,7 +566,7 @@ warp_management() {
   fi
 
   # Parse current Warp status
-  if jq -e '.outbounds[] | select(.tag == "warp")' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+  if config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; then
     SB_ENABLE_WARP="y"
     local status="${GREEN}已开启${NC}"
   else
@@ -579,7 +605,7 @@ warp_management() {
   SB_SNI=$(jq -r '.inbounds[0].tls.server_name' "${SINGBOX_CONFIG_FILE}")
   SB_SHORT_ID_1=$(jq -r '.inbounds[0].tls.reality.short_id[0]' "${SINGBOX_CONFIG_FILE}")
   SB_SHORT_ID_2=$(jq -r '.inbounds[0].tls.reality.short_id[1]' "${SINGBOX_CONFIG_FILE}")
-  if jq -e '.route.rules[] | select(.geosite == "category-ads-all")' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+  if config_has_advanced_route "${SINGBOX_CONFIG_FILE}"; then
     SB_ADVANCED_ROUTE="y"
   else
     SB_ADVANCED_ROUTE="n"
@@ -640,14 +666,14 @@ update_config_only() {
   SB_PUBLIC_KEY=$("${SINGBOX_BIN_PATH}" generate reality-keypair <<< "${SB_PRIVATE_KEY}" | grep "PublicKey" | awk '{print $2}')
 
   # Parse current route rules
-  if jq -e '.route.rules[] | select(.geosite == "category-ads-all")' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+  if config_has_advanced_route "${SINGBOX_CONFIG_FILE}"; then
     SB_ADVANCED_ROUTE="y"
   else
     SB_ADVANCED_ROUTE="n"
   fi
 
   # Parse current Warp status
-  if jq -e '.outbounds[] | select(.tag == "warp")' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+  if config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; then
     SB_ENABLE_WARP="y"
   else
     SB_ENABLE_WARP="n"
