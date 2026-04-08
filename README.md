@@ -30,6 +30,7 @@ sbv
 
 - **1.13.x 深度适配**：全面采用最新的 **Endpoint (端点化)** 架构，确保 WireGuard 及路由规则的最高效性能与稳定性。
 - **Cloudflare Warp 集成**：支持一键开启/关闭 Warp 出站，自动注册免费账户，完美解决 VPS **“送中”** 问题并解锁 Netflix/Disney+ 等流媒体。
+- **Warp 路由分层**：支持 `全量走 Warp` 与 `选择性分流` 两种模式，内置主流 AI / 流媒体域名规则，并支持用户追加自定义域名、本地规则集和远程规则集。
 - **模块化与单脚本兼顾**：开发时模块化，用户端提供全集成 `install.sh`。
 - **环境自适应**：支持架构探测（amd64/arm64）及主流发行版（Debian, Ubuntu, CentOS, AlmaLinux, Rocky Linux）。
 - **极简且安全**：默认开启流量嗅探、uTLS 指纹、多 ShortID 随机化及持久化密钥管理。
@@ -44,7 +45,7 @@ sbv
 1.  **安装/更新 sing-box**：自动化部署流程。
 2.  **卸载 sing-box**：彻底清理软件及服务。
 3.  **修改当前协议配置**：交互式修改端口、UUID、伪装域名及高级路由开关。
-4.  **配置 Cloudflare Warp**：一键开启/关闭/重新注册 Warp，解决 IP 限制。
+4.  **配置 Cloudflare Warp**：一键开启/关闭/重新注册 Warp，并支持切换全量/选择性分流模式。
 5.  **开启 BBR 拥塞控制**：一键提升网络性能。
 6.  **服务管理**：启动、停止、重启 sing-box。
 7.  **状态与节点信息**：随时找回分享链接及二维码。
@@ -56,6 +57,9 @@ sbv
 - **工作目录**: `/root/sing-box-vps/`
 - **配置文件**: `/root/sing-box-vps/config.json`
 - **密钥文件**: `/root/sing-box-vps/reality.key` (REALITY) / `warp.key` (Warp)
+- **Warp 分流域名**: `/root/sing-box-vps/warp-domains.txt`
+- **Warp 本地规则集目录**: `/root/sing-box-vps/rule-set/warp/`
+- **Warp 远程规则集列表**: `/root/sing-box-vps/warp-remote-rule-sets.txt`
 - **全局命令**: `/usr/local/bin/sbv`
 
 ## ⚠️ 注意事项

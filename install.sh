@@ -1,23 +1,31 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026040802
+# Version: 2026040803
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040802"
+readonly SCRIPT_VERSION="2026040803"
 readonly SB_SUPPORT_MAX_VERSION="1.13.6"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
 readonly SB_KEY_FILE="${SB_PROJECT_DIR}/reality.key"
 readonly SB_WARP_KEY_FILE="${SB_PROJECT_DIR}/warp.key"
+readonly SB_WARP_ROUTE_SETTINGS_FILE="${SB_PROJECT_DIR}/warp-routing.env"
+readonly SB_WARP_DOMAINS_FILE="${SB_PROJECT_DIR}/warp-domains.txt"
+readonly SB_WARP_REMOTE_RULESETS_FILE="${SB_PROJECT_DIR}/warp-remote-rule-sets.txt"
+readonly SB_WARP_LOCAL_RULESET_DIR="${SB_PROJECT_DIR}/rule-set/warp"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
 readonly SINGBOX_CONFIG_DIR="${SB_PROJECT_DIR}"
 readonly SINGBOX_CONFIG_FILE="${SB_PROJECT_DIR}/config.json"
 readonly SINGBOX_SERVICE_FILE="/etc/systemd/system/sing-box.service"
+readonly WARP_AI_ROUTE_DOMAINS_JSON='["gemini.google.com","aistudio.google.com","generativelanguage.googleapis.com","copilot.microsoft.com"]'
+readonly WARP_AI_ROUTE_DOMAIN_SUFFIXES_JSON='["openai.com","chatgpt.com","oaistatic.com","oaiusercontent.com","anthropic.com","claude.ai","perplexity.ai","x.ai","cursor.com","cursor.sh"]'
+readonly WARP_STREAM_ROUTE_DOMAINS_JSON='[]'
+readonly WARP_STREAM_ROUTE_DOMAIN_SUFFIXES_JSON='["netflix.com","nflxvideo.net","nflximg.net","nflxext.com","nflxso.net","disneyplus.com","disney-plus.net","dssott.com","bamgrid.com","hulu.com","huluim.com","hulustream.com","max.com","primevideo.com","amazonvideo.com","media-amazon.com"]'
 
 # --- Global Variables ---
 SB_VERSION="${SB_SUPPORT_MAX_VERSION}"
@@ -32,6 +40,12 @@ SB_SHORT_ID_2=""
 SB_SNI="apple.com"
 SB_ADVANCED_ROUTE="y"
 SB_ENABLE_WARP="n"
+SB_WARP_ROUTE_MODE="all"
+SB_WARP_CUSTOM_DOMAINS_JSON='[]'
+SB_WARP_CUSTOM_DOMAIN_SUFFIXES_JSON='[]'
+SB_WARP_LOCAL_RULE_SETS_JSON='[]'
+SB_WARP_REMOTE_RULE_SETS_JSON='[]'
+SB_WARP_RULE_SET_TAGS_JSON='[]'
 
 # --- Common Utilities ---
 # Register Cloudflare Warp account
@@ -119,6 +133,276 @@ log_error() {
   mkdir -p "${SB_PROJECT_DIR}"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $1" >> "${SBV_LOG_FILE}"
   exit 1
+}
+
+trim_whitespace() {
+  local value=$1
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "${value}"
+}
+
+validate_warp_route_mode() {
+  case "$1" in
+    all|selective) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+sanitize_ruleset_tag() {
+  local value=$1
+  value=$(echo "${value}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]/-/g; s/-\{2,\}/-/g; s/^-//; s/-$//')
+  printf '%s' "${value:-warp}"
+}
+
+detect_ruleset_format() {
+  case "$1" in
+    *.srs) printf 'binary' ;;
+    *) printf 'source' ;;
+  esac
+}
+
+save_warp_route_settings() {
+  mkdir -p "${SB_PROJECT_DIR}"
+  cat > "${SB_WARP_ROUTE_SETTINGS_FILE}" <<EOF
+WARP_ROUTE_MODE=${SB_WARP_ROUTE_MODE}
+EOF
+}
+
+ensure_warp_routing_assets() {
+  mkdir -p "${SB_WARP_LOCAL_RULESET_DIR}"
+
+  if [[ ! -f "${SB_WARP_DOMAINS_FILE}" ]]; then
+    cat > "${SB_WARP_DOMAINS_FILE}" <<'EOF'
+# 自定义走 Warp 的域名列表
+# 以 = 开头表示精确匹配；其他行默认按 domain_suffix 匹配
+# openai.com
+# =gemini.google.com
+EOF
+  fi
+
+  if [[ ! -f "${SB_WARP_REMOTE_RULESETS_FILE}" ]]; then
+    cat > "${SB_WARP_REMOTE_RULESETS_FILE}" <<'EOF'
+# 远程规则集列表：tag|url|update_interval
+# 例如：
+# openai|https://example.com/openai.json|1d
+EOF
+  fi
+
+  if [[ ! -f "${SB_WARP_ROUTE_SETTINGS_FILE}" ]]; then
+    save_warp_route_settings
+  fi
+}
+
+load_warp_route_settings() {
+  SB_WARP_ROUTE_MODE="all"
+
+  if [[ -f "${SB_WARP_ROUTE_SETTINGS_FILE}" ]]; then
+    local saved_mode
+    saved_mode=$(grep '^WARP_ROUTE_MODE=' "${SB_WARP_ROUTE_SETTINGS_FILE}" 2>/dev/null | cut -d'=' -f2- | tr -d '\r\n ')
+    if validate_warp_route_mode "${saved_mode}"; then
+      SB_WARP_ROUTE_MODE="${saved_mode}"
+      return 0
+    fi
+  fi
+
+  if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    SB_WARP_ROUTE_MODE=$(config_detect_warp_route_mode "${SINGBOX_CONFIG_FILE}")
+  fi
+}
+
+build_custom_warp_domain_json() {
+  local exact_file suffix_file raw_line line
+  exact_file=$(mktemp)
+  suffix_file=$(mktemp)
+
+  if [[ -f "${SB_WARP_DOMAINS_FILE}" ]]; then
+    while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
+      line=${raw_line%%#*}
+      line=$(trim_whitespace "${line}")
+      [[ -z "${line}" ]] && continue
+
+      if [[ "${line}" == =* ]]; then
+        line=$(trim_whitespace "${line#=}")
+        [[ -n "${line}" ]] && printf '%s\n' "${line}" >> "${exact_file}"
+      else
+        printf '%s\n' "${line}" >> "${suffix_file}"
+      fi
+    done < "${SB_WARP_DOMAINS_FILE}"
+  fi
+
+  if [[ -s "${exact_file}" ]]; then
+    SB_WARP_CUSTOM_DOMAINS_JSON=$(jq -Rsc 'split("\n") | map(select(length > 0))' "${exact_file}")
+  else
+    SB_WARP_CUSTOM_DOMAINS_JSON='[]'
+  fi
+
+  if [[ -s "${suffix_file}" ]]; then
+    SB_WARP_CUSTOM_DOMAIN_SUFFIXES_JSON=$(jq -Rsc 'split("\n") | map(select(length > 0))' "${suffix_file}")
+  else
+    SB_WARP_CUSTOM_DOMAIN_SUFFIXES_JSON='[]'
+  fi
+
+  rm -f "${exact_file}" "${suffix_file}"
+}
+
+build_local_warp_rule_sets_json() {
+  local object_file file base_name tag format
+  object_file=$(mktemp)
+  SB_WARP_LOCAL_RULE_SETS_JSON='[]'
+
+  if [[ -d "${SB_WARP_LOCAL_RULESET_DIR}" ]]; then
+    while IFS= read -r -d '' file; do
+      base_name=$(basename "${file}")
+      tag="warp-local-$(sanitize_ruleset_tag "${base_name%.*}")"
+      format=$(detect_ruleset_format "${file}")
+      jq -n \
+        --arg tag "${tag}" \
+        --arg path "${file}" \
+        --arg format "${format}" \
+        '{type: "local", tag: $tag, path: $path, format: $format}' >> "${object_file}"
+    done < <(find "${SB_WARP_LOCAL_RULESET_DIR}" -maxdepth 1 -type f \( -name '*.json' -o -name '*.srs' \) -print0 | sort -z)
+  fi
+
+  if [[ -s "${object_file}" ]]; then
+    SB_WARP_LOCAL_RULE_SETS_JSON=$(jq -s . "${object_file}")
+  fi
+
+  rm -f "${object_file}"
+}
+
+build_remote_warp_rule_sets_json() {
+  local object_file raw_line line raw_tag raw_url raw_interval tag url update_interval format
+  object_file=$(mktemp)
+  SB_WARP_REMOTE_RULE_SETS_JSON='[]'
+
+  if [[ -f "${SB_WARP_REMOTE_RULESETS_FILE}" ]]; then
+    while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
+      line=${raw_line%%#*}
+      line=$(trim_whitespace "${line}")
+      [[ -z "${line}" ]] && continue
+
+      IFS='|' read -r raw_tag raw_url raw_interval <<< "${line}"
+      tag=$(sanitize_ruleset_tag "$(trim_whitespace "${raw_tag}")")
+      url=$(trim_whitespace "${raw_url:-}")
+      update_interval=$(trim_whitespace "${raw_interval:-1d}")
+
+      if [[ -z "${url}" ]]; then
+        log_warn "跳过无效的远程规则集配置: ${line}"
+        continue
+      fi
+
+      format=$(detect_ruleset_format "${url}")
+      jq -n \
+        --arg tag "warp-remote-${tag}" \
+        --arg url "${url}" \
+        --arg format "${format}" \
+        --arg update_interval "${update_interval:-1d}" \
+        '{type: "remote", tag: $tag, url: $url, format: $format, download_detour: "direct", update_interval: $update_interval}' >> "${object_file}"
+    done < "${SB_WARP_REMOTE_RULESETS_FILE}"
+  fi
+
+  if [[ -s "${object_file}" ]]; then
+    SB_WARP_REMOTE_RULE_SETS_JSON=$(jq -s . "${object_file}")
+  fi
+
+  rm -f "${object_file}"
+}
+
+build_warp_rule_set_tags_json() {
+  SB_WARP_RULE_SET_TAGS_JSON=$(jq -n \
+    --argjson local_rule_sets "${SB_WARP_LOCAL_RULE_SETS_JSON}" \
+    --argjson remote_rule_sets "${SB_WARP_REMOTE_RULE_SETS_JSON}" \
+    '$local_rule_sets + $remote_rule_sets | map(.tag)')
+}
+
+refresh_warp_route_assets() {
+  ensure_warp_routing_assets
+  build_custom_warp_domain_json
+  build_local_warp_rule_sets_json
+  build_remote_warp_rule_sets_json
+  build_warp_rule_set_tags_json
+}
+
+show_warp_route_assets() {
+  ensure_warp_routing_assets
+  load_warp_route_settings
+
+  echo -e "\n${BLUE}--- Warp 分流资产 ---${NC}"
+  echo -e "当前模式: ${SB_WARP_ROUTE_MODE}"
+  echo -e "自定义域名: ${SB_WARP_DOMAINS_FILE}"
+  echo -e "本地规则集目录: ${SB_WARP_LOCAL_RULESET_DIR}"
+  echo -e "远程规则集列表: ${SB_WARP_REMOTE_RULESETS_FILE}"
+}
+
+set_warp_route_mode_interactive() {
+  echo -e "\n${BLUE}--- Warp 路由模式 ---${NC}"
+  echo "1. 全量流量走 Warp"
+  echo "2. 仅 AI/流媒体及自定义规则走 Warp"
+  read -rp "请选择 [1-2] (当前: ${SB_WARP_ROUTE_MODE}): " mode_choice
+
+  case "${mode_choice}" in
+    1) SB_WARP_ROUTE_MODE="all" ;;
+    2) SB_WARP_ROUTE_MODE="selective" ;;
+    *) log_warn "未修改 Warp 路由模式。"; return 1 ;;
+  esac
+
+  save_warp_route_settings
+  return 0
+}
+
+add_warp_domain_entry() {
+  ensure_warp_routing_assets
+
+  local domain_entry
+  read -rp "请输入域名（= 前缀表示精确匹配，其余默认 suffix 匹配）: " domain_entry
+  domain_entry=$(trim_whitespace "${domain_entry}")
+
+  if [[ -z "${domain_entry}" ]]; then
+    log_warn "域名为空，未写入。"
+    return 1
+  fi
+
+  if ! [[ "${domain_entry}" =~ ^=?[A-Za-z0-9._-]+$ ]]; then
+    log_warn "域名格式无效，未写入。"
+    return 1
+  fi
+
+  if grep -Fxq "${domain_entry}" "${SB_WARP_DOMAINS_FILE}" 2>/dev/null; then
+    log_warn "域名已存在于 Warp 分流列表。"
+    return 1
+  fi
+
+  printf '%s\n' "${domain_entry}" >> "${SB_WARP_DOMAINS_FILE}"
+  log_success "已写入 Warp 分流域名: ${domain_entry}"
+  return 0
+}
+
+add_remote_warp_rule_set() {
+  ensure_warp_routing_assets
+
+  local tag url update_interval
+  read -rp "请输入远程规则集标签: " tag
+  read -rp "请输入远程规则集 URL: " url
+  read -rp "请输入更新周期 (默认 1d): " update_interval
+
+  tag=$(sanitize_ruleset_tag "$(trim_whitespace "${tag}")")
+  url=$(trim_whitespace "${url}")
+  update_interval=$(trim_whitespace "${update_interval:-1d}")
+
+  if [[ -z "${tag}" || -z "${url}" ]]; then
+    log_warn "标签或 URL 为空，未写入。"
+    return 1
+  fi
+
+  if ! [[ "${url}" =~ ^https?:// ]]; then
+    log_warn "远程规则集 URL 必须以 http:// 或 https:// 开头。"
+    return 1
+  fi
+
+  printf '%s|%s|%s\n' "${tag}" "${url}" "${update_interval:-1d}" >> "${SB_WARP_REMOTE_RULESETS_FILE}"
+  log_success "已写入远程 Warp 规则集: ${tag}"
+  return 0
 }
 
 check_root() {
@@ -385,6 +669,8 @@ generate_config() {
 
   log_info "正在生成配置 (适配 1.13.x Endpoint 架构 & 安全注入)..."
   mkdir -p "${SINGBOX_CONFIG_DIR}"
+  ensure_warp_routing_assets
+  load_warp_route_settings
   
   # UUID
   [[ -z "${SB_UUID}" ]] && SB_UUID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
@@ -416,6 +702,8 @@ generate_config() {
     w_v6=$(grep "WARP_V6" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
   fi
 
+  refresh_warp_route_assets
+
   # Build JSON with jq
   jq -n \
     --arg uuid "${SB_UUID}" \
@@ -426,9 +714,19 @@ generate_config() {
     --arg sid2 "${SB_SHORT_ID_2}" \
     --arg adv_route "${SB_ADVANCED_ROUTE}" \
     --arg enable_warp "${SB_ENABLE_WARP}" \
+    --arg warp_mode "${SB_WARP_ROUTE_MODE}" \
     --arg w_key "${w_key}" \
     --arg w_v4 "${w_v4}/32" \
     --arg w_v6 "${w_v6}/128" \
+    --argjson ai_domains "${WARP_AI_ROUTE_DOMAINS_JSON}" \
+    --argjson ai_domain_suffixes "${WARP_AI_ROUTE_DOMAIN_SUFFIXES_JSON}" \
+    --argjson stream_domains "${WARP_STREAM_ROUTE_DOMAINS_JSON}" \
+    --argjson stream_domain_suffixes "${WARP_STREAM_ROUTE_DOMAIN_SUFFIXES_JSON}" \
+    --argjson custom_domains "${SB_WARP_CUSTOM_DOMAINS_JSON}" \
+    --argjson custom_domain_suffixes "${SB_WARP_CUSTOM_DOMAIN_SUFFIXES_JSON}" \
+    --argjson local_rule_sets "${SB_WARP_LOCAL_RULE_SETS_JSON}" \
+    --argjson remote_rule_sets "${SB_WARP_REMOTE_RULE_SETS_JSON}" \
+    --argjson warp_rule_set_tags "${SB_WARP_RULE_SET_TAGS_JSON}" \
     '{
       "log": { "level": "info", "timestamp": true },
       "endpoints": (if $enable_warp == "y" then [
@@ -472,11 +770,65 @@ generate_config() {
         { "type": "block", "tag": "block" }
       ],
       "route": {
+        "rule_set": (
+          if $enable_warp == "y" and $warp_mode == "selective" then
+            $local_rule_sets + $remote_rule_sets
+          else
+            []
+          end
+        ),
         "rules": (
           [ { "inbound": "vless-in", "action": "sniff" }, { "domain": [$sni], "action": "direct" } ] +
-          (if $adv_route == "y" then [ { "ip_is_private": true, "action": "reject" } ] else [] end)
+          (if $adv_route == "y" then [ { "ip_is_private": true, "action": "reject" } ] else [] end) +
+          (
+            if $enable_warp == "y" and $warp_mode == "selective" then
+              [
+                {
+                  "domain": $ai_domains,
+                  "domain_suffix": $ai_domain_suffixes,
+                  "action": "route",
+                  "outbound": "warp-ep"
+                },
+                {
+                  "domain": $stream_domains,
+                  "domain_suffix": $stream_domain_suffixes,
+                  "action": "route",
+                  "outbound": "warp-ep"
+                }
+              ] +
+              (
+                if ($custom_domains | length) > 0 or ($custom_domain_suffixes | length) > 0 then
+                  [
+                    {
+                      "domain": $custom_domains,
+                      "domain_suffix": $custom_domain_suffixes,
+                      "action": "route",
+                      "outbound": "warp-ep"
+                    }
+                  ]
+                else
+                  []
+                end
+              ) +
+              (
+                if ($warp_rule_set_tags | length) > 0 then
+                  [
+                    {
+                      "rule_set": $warp_rule_set_tags,
+                      "action": "route",
+                      "outbound": "warp-ep"
+                    }
+                  ]
+                else
+                  []
+                end
+              )
+            else
+              []
+            end
+          )
         ),
-        "final": (if $enable_warp == "y" then "warp-ep" else "direct" end)
+        "final": (if $enable_warp == "y" and $warp_mode == "all" then "warp-ep" else "direct" end)
       }
     }' > "${SINGBOX_CONFIG_FILE}"
 }
@@ -540,10 +892,29 @@ config_has_warp_enabled() {
 
   jq -e '
     (
-      (.route.final // "") == "warp-ep" and
-      any(.endpoints[]?; .tag == "warp-ep")
+      any(.endpoints[]?; .tag == "warp-ep") and
+      (
+        (.route.final // "") == "warp-ep" or
+        any(.route.rules[]?; (.outbound // "") == "warp-ep")
+      )
     ) or any(.outbounds[]?; .tag == "warp")
   ' "${config_file}" &>/dev/null
+}
+
+config_detect_warp_route_mode() {
+  local config_file=$1
+
+  if jq -e '(.route.final // "") == "warp-ep"' "${config_file}" &>/dev/null; then
+    printf 'all'
+    return 0
+  fi
+
+  if jq -e 'any(.route.rules[]?; (.outbound // "") == "warp-ep")' "${config_file}" &>/dev/null; then
+    printf 'selective'
+    return 0
+  fi
+
+  printf 'all'
 }
 
 # Detect whether advanced route rules are enabled in either the current or legacy schema.
@@ -559,56 +930,124 @@ config_has_advanced_route() {
   ' "${config_file}" &>/dev/null
 }
 
-# Cloudflare Warp Management
-warp_management() {
+load_current_config_state() {
   if [[ ! -f "${SINGBOX_CONFIG_FILE}" ]]; then
     log_error "未找到配置文件，请先安装。"
   fi
 
-  # Parse current Warp status
+  SB_UUID=$(jq -r '.inbounds[0].users[0].uuid' "${SINGBOX_CONFIG_FILE}")
+  SB_PORT=$(jq -r '.inbounds[0].listen_port' "${SINGBOX_CONFIG_FILE}")
+  SB_SNI=$(jq -r '.inbounds[0].tls.server_name' "${SINGBOX_CONFIG_FILE}")
+  SB_PRIVATE_KEY=$(jq -r '.inbounds[0].tls.reality.private_key' "${SINGBOX_CONFIG_FILE}")
+  SB_SHORT_ID_1=$(jq -r '.inbounds[0].tls.reality.short_id[0]' "${SINGBOX_CONFIG_FILE}")
+  SB_SHORT_ID_2=$(jq -r '.inbounds[0].tls.reality.short_id[1]' "${SINGBOX_CONFIG_FILE}")
+
+  if config_has_advanced_route "${SINGBOX_CONFIG_FILE}"; then
+    SB_ADVANCED_ROUTE="y"
+  else
+    SB_ADVANCED_ROUTE="n"
+  fi
+
   if config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; then
     SB_ENABLE_WARP="y"
-    local status="${GREEN}已开启${NC}"
   else
     SB_ENABLE_WARP="n"
-    local status="${YELLOW}未开启${NC}"
+  fi
+
+  load_warp_route_settings
+
+  if [[ -f "${SB_KEY_FILE}" ]]; then
+    SB_PUBLIC_KEY=$(grep "PUBLIC_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
+  else
+    SB_PUBLIC_KEY="[密钥丢失，请更新配置]"
+  fi
+}
+
+# Cloudflare Warp Management
+warp_management() {
+  local apply_change="n"
+  local should_reload="n"
+  local status
+  local warp_was_enabled
+
+  load_current_config_state
+  ensure_warp_routing_assets
+  warp_was_enabled="${SB_ENABLE_WARP}"
+
+  if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
+    status="${GREEN}已开启${NC}"
+  else
+    status="${YELLOW}未开启${NC}"
   fi
 
   echo -e "\n${BLUE}--- Cloudflare Warp 管理 ---${NC}"
   echo -e "当前状态: ${status}"
+  echo -e "当前路由模式: ${SB_WARP_ROUTE_MODE}"
   echo "1. 开启 Warp"
   echo "2. 关闭 Warp"
   echo "3. 重新注册 Warp 账户 (获取新密钥和 IP)"
+  echo "4. 切换 Warp 路由模式"
+  echo "5. 添加自定义 Warp 域名"
+  echo "6. 添加远程 Warp 规则集"
+  echo "7. 查看 Warp 分流文件路径"
   echo "0. 返回主菜单"
-  read -rp "请选择 [0-3]: " w_choice
+  read -rp "请选择 [0-7]: " w_choice
 
   case "${w_choice}" in
     1)
       SB_ENABLE_WARP="y"
       log_info "正在开启 Warp..."
+      apply_change="y"
+      should_reload="y"
       ;;
     2)
       SB_ENABLE_WARP="n"
       log_info "正在关闭 Warp..."
+      apply_change="y"
+      should_reload="y"
       ;;
     3)
       rm -f "${SB_WARP_KEY_FILE}"
       SB_ENABLE_WARP="y"
       log_info "正在重新注册 Warp..."
+      apply_change="y"
+      should_reload="y"
+      ;;
+    4)
+      if set_warp_route_mode_interactive; then
+        log_success "Warp 路由模式已更新为: ${SB_WARP_ROUTE_MODE}"
+        apply_change="y"
+        [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
+      fi
+      ;;
+    5)
+      if add_warp_domain_entry; then
+        apply_change="y"
+        [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
+      fi
+      ;;
+    6)
+      if add_remote_warp_rule_set; then
+        apply_change="y"
+        [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
+      fi
+      ;;
+    7)
+      show_warp_route_assets
+      return
       ;;
     *) return ;;
   esac
 
-  # Reload current config values to ensure no data loss
-  SB_UUID=$(jq -r '.inbounds[0].users[0].uuid' "${SINGBOX_CONFIG_FILE}")
-  SB_PORT=$(jq -r '.inbounds[0].listen_port' "${SINGBOX_CONFIG_FILE}")
-  SB_SNI=$(jq -r '.inbounds[0].tls.server_name' "${SINGBOX_CONFIG_FILE}")
-  SB_SHORT_ID_1=$(jq -r '.inbounds[0].tls.reality.short_id[0]' "${SINGBOX_CONFIG_FILE}")
-  SB_SHORT_ID_2=$(jq -r '.inbounds[0].tls.reality.short_id[1]' "${SINGBOX_CONFIG_FILE}")
-  if config_has_advanced_route "${SINGBOX_CONFIG_FILE}"; then
-    SB_ADVANCED_ROUTE="y"
-  else
-    SB_ADVANCED_ROUTE="n"
+  if [[ "${apply_change}" == "n" ]]; then
+    return
+  fi
+
+  save_warp_route_settings
+
+  if [[ "${should_reload}" != "y" ]]; then
+    log_success "Warp 分流资产已更新，待下次开启 Warp 或重载配置时生效。"
+    return
   fi
 
   generate_config
@@ -616,35 +1055,15 @@ warp_management() {
   setup_service
   systemctl restart sing-box
   log_success "Warp 配置已更新并重启服务。"
-  
-  # Re-read Public Key for display_info
-  SB_PUBLIC_KEY=$(grep "PUBLIC_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
+
+  load_current_config_state
   display_info
 }
 
 # Helper to extract config values and display info
 view_status_and_info() {
-  if [[ ! -f "${SINGBOX_CONFIG_FILE}" ]]; then
-    log_error "未找到配置文件，请先安装。"
-  fi
-
   log_info "正在从配置文件中读取信息..."
-  SB_UUID=$(jq -r '.inbounds[0].users[0].uuid' "${SINGBOX_CONFIG_FILE}")
-  SB_PORT=$(jq -r '.inbounds[0].listen_port' "${SINGBOX_CONFIG_FILE}")
-  SB_SNI=$(jq -r '.inbounds[0].tls.server_name' "${SINGBOX_CONFIG_FILE}")
-  SB_SHORT_ID_1=$(jq -r '.inbounds[0].tls.reality.short_id[0]' "${SINGBOX_CONFIG_FILE}")
-  SB_SHORT_ID_2=$(jq -r '.inbounds[0].tls.reality.short_id[1]' "${SINGBOX_CONFIG_FILE}")
-  
-  # Read Public Key from file
-  if [[ -f "${SB_KEY_FILE}" ]]; then
-    SB_PUBLIC_KEY=$(grep "PUBLIC_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
-  else
-    # Fallback (though unlikely)
-    log_warn "未找到密钥文件，请重新安装或更新配置以生成密钥文件。"
-    SB_PRIVATE_KEY=$(jq -r '.inbounds[0].tls.reality.private_key' "${SINGBOX_CONFIG_FILE}")
-    SB_PUBLIC_KEY="[密钥丢失，请更新配置]"
-  fi
-
+  load_current_config_state
   display_info
 }
 
@@ -655,29 +1074,7 @@ update_config_only() {
   fi
 
   log_info "正在读取当前配置..."
-  SB_UUID=$(jq -r '.inbounds[0].users[0].uuid' "${SINGBOX_CONFIG_FILE}")
-  SB_PORT=$(jq -r '.inbounds[0].listen_port' "${SINGBOX_CONFIG_FILE}")
-  SB_SNI=$(jq -r '.inbounds[0].tls.server_name' "${SINGBOX_CONFIG_FILE}")
-  SB_PRIVATE_KEY=$(jq -r '.inbounds[0].tls.reality.private_key' "${SINGBOX_CONFIG_FILE}")
-  SB_SHORT_ID_1=$(jq -r '.inbounds[0].tls.reality.short_id[0]' "${SINGBOX_CONFIG_FILE}")
-  SB_SHORT_ID_2=$(jq -r '.inbounds[0].tls.reality.short_id[1]' "${SINGBOX_CONFIG_FILE}")
-
-  # Generate PBK from Private Key
-  SB_PUBLIC_KEY=$("${SINGBOX_BIN_PATH}" generate reality-keypair <<< "${SB_PRIVATE_KEY}" | grep "PublicKey" | awk '{print $2}')
-
-  # Parse current route rules
-  if config_has_advanced_route "${SINGBOX_CONFIG_FILE}"; then
-    SB_ADVANCED_ROUTE="y"
-  else
-    SB_ADVANCED_ROUTE="n"
-  fi
-
-  # Parse current Warp status
-  if config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; then
-    SB_ENABLE_WARP="y"
-  else
-    SB_ENABLE_WARP="n"
-  fi
+  load_current_config_state
 
   echo -e "\n${BLUE}--- 进入配置修改模式 ---${NC}"
 
@@ -701,6 +1098,20 @@ update_config_only() {
   read -rp "是否开启 Cloudflare Warp (用于解锁/防送中) [y/n] (当前: ${SB_ENABLE_WARP}): " in_warp
   [[ -n "${in_warp}" ]] && SB_ENABLE_WARP="${in_warp}"
 
+  if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
+    echo "Warp 路由模式:"
+    echo "1. 全量流量走 Warp"
+    echo "2. 仅 AI/流媒体及自定义规则走 Warp"
+    read -rp "请选择 [1-2] (当前: ${SB_WARP_ROUTE_MODE}): " in_warp_mode
+    case "${in_warp_mode}" in
+      1) SB_WARP_ROUTE_MODE="all" ;;
+      2) SB_WARP_ROUTE_MODE="selective" ;;
+      "") ;;
+      *) log_warn "保留当前 Warp 路由模式: ${SB_WARP_ROUTE_MODE}" ;;
+    esac
+  fi
+
+  save_warp_route_settings
   generate_config
   check_config_valid
   setup_service
@@ -725,6 +1136,11 @@ display_info() {
   echo -e "SNI:  ${SB_SNI} (REALITY)"
   echo -e "PBK:  ${SB_PUBLIC_KEY}"
   echo -e "SID:  ${SB_SHORT_ID_1}, ${SB_SHORT_ID_2}"
+  if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
+    echo -e "Warp: 已开启 (${SB_WARP_ROUTE_MODE})"
+  else
+    echo -e "Warp: 未开启"
+  fi
   echo "--------------------------------"
   echo -e "配置文件: ${SINGBOX_CONFIG_FILE}"
   echo "-------------------------------------------------------------"
@@ -788,9 +1204,21 @@ main() {
       SB_ADVANCED_ROUTE=${in_route:-"y"}
       read -rp "是否开启 Cloudflare Warp (用于解锁/防送中) [y/n] (默认 n): " in_warp
       SB_ENABLE_WARP=${in_warp:-"n"}
+      if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
+        SB_WARP_ROUTE_MODE="all"
+        echo "Warp 路由模式:"
+        echo "1. 全量流量走 Warp"
+        echo "2. 仅 AI/流媒体及自定义规则走 Warp"
+        read -rp "请选择 [1-2] (默认 1): " in_warp_mode
+        case "${in_warp_mode}" in
+          2) SB_WARP_ROUTE_MODE="selective" ;;
+          *) SB_WARP_ROUTE_MODE="all" ;;
+        esac
+      fi
 
       install_dependencies
       get_latest_version
+      save_warp_route_settings
       install_binary
       generate_config
       check_config_valid
