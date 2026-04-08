@@ -39,8 +39,6 @@ readonly MEDIA_CHECK_BACKEND_NAME="RegionRestrictionCheck"
 readonly MEDIA_CHECK_BACKEND_AUTHOR="1-stream"
 readonly MEDIA_CHECK_BACKEND_REPO_URL="https://github.com/1-stream/RegionRestrictionCheck"
 readonly MEDIA_CHECK_BACKEND_SCRIPT_URL="https://raw.githubusercontent.com/1-stream/RegionRestrictionCheck/main/check.sh"
-readonly MEDIA_CHECK_BACKEND_UPSTREAM_AUTHOR="lmc999"
-readonly MEDIA_CHECK_BACKEND_UPSTREAM_REPO_URL="https://github.com/lmc999/RegionRestrictionCheck"
 
 # --- Global Variables ---
 SB_VERSION="${SB_SUPPORT_MAX_VERSION}"
@@ -242,7 +240,6 @@ show_media_check_backend_info() {
   echo -e "${BLUE}检测后端:${NC} ${MEDIA_CHECK_BACKEND_NAME}"
   echo -e "${BLUE}作者:${NC} ${MEDIA_CHECK_BACKEND_AUTHOR}"
   echo -e "${BLUE}项目地址:${NC} ${MEDIA_CHECK_BACKEND_REPO_URL}"
-  echo -e "${BLUE}上游来源:${NC} ${MEDIA_CHECK_BACKEND_UPSTREAM_AUTHOR} (${MEDIA_CHECK_BACKEND_UPSTREAM_REPO_URL})"
 }
 
 ensure_media_check_backend() {

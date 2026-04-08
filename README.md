@@ -71,7 +71,7 @@ sbv
 - 本脚本必须以 `root` 用户身份运行。
 - 脚本默认适配最佳稳定性版本，手动选择 `latest` 可能存在不兼容风险。
 - `Mixed` 代理默认建议启用用户名密码认证；若关闭认证，请务必确认防火墙和来源访问控制策略。
-- 流媒体验证功能当前接入第三方项目 `1-stream/RegionRestrictionCheck`，脚本内已注明作者与仓库地址，并保留上游 `lmc999/RegionRestrictionCheck` 来源信息。
+- 流媒体验证功能当前接入第三方项目 `1-stream/RegionRestrictionCheck`，脚本内已注明作者与仓库地址，后续可替换为自定义检测后端。
 
 ---
 
