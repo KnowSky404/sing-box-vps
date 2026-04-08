@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026040804
+# Version: 2026040805
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040804"
+readonly SCRIPT_VERSION="2026040805"
 readonly SB_SUPPORT_MAX_VERSION="1.13.6"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -333,6 +333,55 @@ show_warp_route_assets() {
   echo -e "自定义域名: ${SB_WARP_DOMAINS_FILE}"
   echo -e "本地规则集目录: ${SB_WARP_LOCAL_RULESET_DIR}"
   echo -e "远程规则集列表: ${SB_WARP_REMOTE_RULESETS_FILE}"
+}
+
+print_json_string_array() {
+  local title=$1
+  local json=$2
+
+  echo "${title}:"
+  if jq -e 'length > 0' >/dev/null <<< "${json}"; then
+    jq -r '.[] | "  - " + .' <<< "${json}"
+  else
+    echo "  - 无"
+  fi
+}
+
+print_json_rule_set_array() {
+  local title=$1
+  local json=$2
+
+  echo "${title}:"
+  if jq -e 'length > 0' >/dev/null <<< "${json}"; then
+    jq -r '.[] | "  - [" + .tag + "] " + (.path // .url)' <<< "${json}"
+  else
+    echo "  - 无"
+  fi
+}
+
+show_effective_warp_route_sources() {
+  ensure_warp_routing_assets
+  load_warp_route_settings
+  refresh_warp_route_assets
+
+  echo -e "\n${BLUE}--- 当前生效的 Warp 分流来源 ---${NC}"
+  echo -e "当前模式: ${SB_WARP_ROUTE_MODE}"
+
+  if [[ "${SB_WARP_ROUTE_MODE}" == "all" ]]; then
+    echo "说明: 当前为全量 Warp 模式，默认所有代理流量走 Warp。"
+    echo "例外: REALITY 握手域名仍直连；私网地址按高级路由规则处理。"
+  else
+    echo "说明: 当前为选择性 Warp 模式，仅命中以下来源的流量走 Warp。"
+  fi
+
+  print_json_string_array "内置 AI 精确域名" "${WARP_AI_ROUTE_DOMAINS_JSON}"
+  print_json_string_array "内置 AI 域名后缀" "${WARP_AI_ROUTE_DOMAIN_SUFFIXES_JSON}"
+  print_json_string_array "内置流媒体精确域名" "${WARP_STREAM_ROUTE_DOMAINS_JSON}"
+  print_json_string_array "内置流媒体域名后缀" "${WARP_STREAM_ROUTE_DOMAIN_SUFFIXES_JSON}"
+  print_json_string_array "自定义精确域名" "${SB_WARP_CUSTOM_DOMAINS_JSON}"
+  print_json_string_array "自定义域名后缀" "${SB_WARP_CUSTOM_DOMAIN_SUFFIXES_JSON}"
+  print_json_rule_set_array "本地规则集" "${SB_WARP_LOCAL_RULE_SETS_JSON}"
+  print_json_rule_set_array "远程规则集" "${SB_WARP_REMOTE_RULE_SETS_JSON}"
 }
 
 set_warp_route_mode_interactive() {
@@ -990,8 +1039,9 @@ warp_management() {
   echo "5. 添加自定义 Warp 域名"
   echo "6. 添加远程 Warp 规则集"
   echo "7. 查看 Warp 分流文件路径"
+  echo "8. 查看当前生效的 Warp 分流来源"
   echo "0. 返回主菜单"
-  read -rp "请选择 [0-7]: " w_choice
+  read -rp "请选择 [0-8]: " w_choice
 
   case "${w_choice}" in
     1)
@@ -1034,6 +1084,10 @@ warp_management() {
       ;;
     7)
       show_warp_route_assets
+      return
+      ;;
+    8)
+      show_effective_warp_route_sources
       return
       ;;
     *) return ;;
