@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026040806
+# Version: 2026040807
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040806"
+readonly SCRIPT_VERSION="2026040807"
 readonly SB_SUPPORT_MAX_VERSION="1.13.6"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -45,6 +45,9 @@ SB_PRIVATE_KEY=""
 SB_SHORT_ID_1=""
 SB_SHORT_ID_2=""
 SB_SNI="apple.com"
+SB_MIXED_AUTH_ENABLED="y"
+SB_MIXED_USERNAME=""
+SB_MIXED_PASSWORD=""
 SB_ADVANCED_ROUTE="y"
 SB_ENABLE_WARP="n"
 SB_WARP_ROUTE_MODE="all"
@@ -154,6 +157,77 @@ validate_warp_route_mode() {
     all|selective) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+validate_protocol() {
+  case "$1" in
+    vless+reality|mixed) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+protocol_display_name() {
+  case "$1" in
+    vless+reality) printf 'VLESS + REALITY' ;;
+    mixed) printf 'Mixed (HTTP/HTTPS/SOCKS)' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+protocol_inbound_tag() {
+  case "$1" in
+    mixed) printf 'mixed-in' ;;
+    *) printf 'vless-in' ;;
+  esac
+}
+
+set_protocol_defaults() {
+  case "$1" in
+    mixed)
+      SB_PROTOCOL="mixed"
+      SB_NODE_NAME="mixed_$(hostname)"
+      SB_PORT="1080"
+      SB_SNI=""
+      SB_UUID=""
+      SB_PUBLIC_KEY=""
+      SB_PRIVATE_KEY=""
+      SB_SHORT_ID_1=""
+      SB_SHORT_ID_2=""
+      SB_MIXED_AUTH_ENABLED="y"
+      SB_MIXED_USERNAME=""
+      SB_MIXED_PASSWORD=""
+      ;;
+    *)
+      SB_PROTOCOL="vless+reality"
+      SB_NODE_NAME="vless_reality_$(hostname)"
+      SB_PORT="443"
+      SB_SNI="apple.com"
+      SB_MIXED_AUTH_ENABLED="y"
+      SB_MIXED_USERNAME=""
+      SB_MIXED_PASSWORD=""
+      ;;
+  esac
+}
+
+generate_random_token() {
+  local prefix=$1
+  local length=$2
+  local token
+
+  token=$(openssl rand -hex "${length}" 2>/dev/null || true)
+  token=${token:-$(date +%s)}
+  printf '%s%s' "${prefix}" "${token}"
+}
+
+ensure_mixed_auth_credentials() {
+  if [[ "${SB_MIXED_AUTH_ENABLED}" != "y" ]]; then
+    SB_MIXED_USERNAME=""
+    SB_MIXED_PASSWORD=""
+    return 0
+  fi
+
+  [[ -z "${SB_MIXED_USERNAME}" ]] && SB_MIXED_USERNAME=$(generate_random_token "proxy_" 3)
+  [[ -z "${SB_MIXED_PASSWORD}" ]] && SB_MIXED_PASSWORD=$(generate_random_token "" 8)
 }
 
 sanitize_ruleset_tag() {
@@ -368,6 +442,7 @@ print_json_rule_set_array() {
 
 show_effective_warp_route_sources() {
   ensure_warp_routing_assets
+  load_current_config_state
   load_warp_route_settings
   refresh_warp_route_assets
 
@@ -376,7 +451,11 @@ show_effective_warp_route_sources() {
 
   if [[ "${SB_WARP_ROUTE_MODE}" == "all" ]]; then
     echo "说明: 当前为全量 Warp 模式，默认所有代理流量走 Warp。"
-    echo "例外: REALITY 握手域名仍直连；私网地址按高级路由规则处理。"
+    if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
+      echo "例外: REALITY 握手域名仍直连；私网地址按高级路由规则处理。"
+    else
+      echo "例外: 私网地址按高级路由规则处理。"
+    fi
   else
     echo "说明: 当前为选择性 Warp 模式，仅命中以下来源的流量走 Warp。"
   fi
@@ -753,27 +832,46 @@ generate_config() {
   mkdir -p "${SINGBOX_CONFIG_DIR}"
   ensure_warp_routing_assets
   load_warp_route_settings
+
+  if ! validate_protocol "${SB_PROTOCOL}"; then
+    log_error "不支持的协议类型: ${SB_PROTOCOL}"
+  fi
   
   # UUID
-  [[ -z "${SB_UUID}" ]] && SB_UUID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
+  if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
+    [[ -z "${SB_UUID}" ]] && SB_UUID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
+  else
+    ensure_mixed_auth_credentials
+  fi
   
   # Keys
-  if [[ ! -f "${SB_KEY_FILE}" ]]; then
-    log_info "正在生成新的 REALITY 密钥对..."
-    local keypair=$("${SINGBOX_BIN_PATH}" generate reality-keypair)
-    SB_PRIVATE_KEY=$(echo "${keypair}" | grep "PrivateKey" | awk '{print $2}')
-    SB_PUBLIC_KEY=$(echo "${keypair}" | grep "PublicKey" | awk '{print $2}')
-    echo "PRIVATE_KEY=${SB_PRIVATE_KEY}" > "${SB_KEY_FILE}"
-    echo "PUBLIC_KEY=${SB_PUBLIC_KEY}" >> "${SB_KEY_FILE}"
+  if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
+    if [[ ! -f "${SB_KEY_FILE}" ]]; then
+      log_info "正在生成新的 REALITY 密钥对..."
+      local keypair=$("${SINGBOX_BIN_PATH}" generate reality-keypair)
+      SB_PRIVATE_KEY=$(echo "${keypair}" | grep "PrivateKey" | awk '{print $2}')
+      SB_PUBLIC_KEY=$(echo "${keypair}" | grep "PublicKey" | awk '{print $2}')
+      echo "PRIVATE_KEY=${SB_PRIVATE_KEY}" > "${SB_KEY_FILE}"
+      echo "PUBLIC_KEY=${SB_PUBLIC_KEY}" >> "${SB_KEY_FILE}"
+    else
+      log_info "使用现有密钥对..."
+      SB_PRIVATE_KEY=$(grep "PRIVATE_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
+      SB_PUBLIC_KEY=$(grep "PUBLIC_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
+    fi
   else
-    log_info "使用现有密钥对..."
-    SB_PRIVATE_KEY=$(grep "PRIVATE_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
-    SB_PUBLIC_KEY=$(grep "PUBLIC_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
+    SB_UUID=""
+    SB_PUBLIC_KEY=""
+    SB_PRIVATE_KEY=""
   fi
   
   # ShortIDs
-  [[ -z "${SB_SHORT_ID_1}" ]] && SB_SHORT_ID_1=$(openssl rand -hex 8)
-  [[ -z "${SB_SHORT_ID_2}" ]] && SB_SHORT_ID_2=$(openssl rand -hex 8)
+  if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
+    [[ -z "${SB_SHORT_ID_1}" ]] && SB_SHORT_ID_1=$(openssl rand -hex 8)
+    [[ -z "${SB_SHORT_ID_2}" ]] && SB_SHORT_ID_2=$(openssl rand -hex 8)
+  else
+    SB_SHORT_ID_1=""
+    SB_SHORT_ID_2=""
+  fi
 
   # Endpoints Logic
   local w_key="" w_v4="" w_v6=""
@@ -788,12 +886,17 @@ generate_config() {
 
   # Build JSON with jq
   jq -n \
+    --arg protocol "${SB_PROTOCOL}" \
+    --arg inbound_tag "$(protocol_inbound_tag "${SB_PROTOCOL}")" \
     --arg uuid "${SB_UUID}" \
     --arg port "${SB_PORT}" \
     --arg sni "${SB_SNI}" \
     --arg priv_key "${SB_PRIVATE_KEY}" \
     --arg sid1 "${SB_SHORT_ID_1}" \
     --arg sid2 "${SB_SHORT_ID_2}" \
+    --arg mixed_auth_enabled "${SB_MIXED_AUTH_ENABLED}" \
+    --arg mixed_username "${SB_MIXED_USERNAME}" \
+    --arg mixed_password "${SB_MIXED_PASSWORD}" \
     --arg adv_route "${SB_ADVANCED_ROUTE}" \
     --arg enable_warp "${SB_ENABLE_WARP}" \
     --arg warp_mode "${SB_WARP_ROUTE_MODE}" \
@@ -829,23 +932,47 @@ generate_config() {
         }
       ] else [] end),
       "inbounds": [
-        {
-          "type": "vless",
-          "tag": "vless-in",
-          "listen": "::",
-          "listen_port": ($port | tonumber),
-          "users": [ { "uuid": $uuid, "flow": "xtls-rprx-vision" } ],
-          "tls": {
-            "enabled": true,
-            "server_name": $sni,
-            "reality": {
-              "enabled": true,
-              "handshake": { "server": $sni, "server_port": 443 },
-              "private_key": $priv_key,
-              "short_id": [ $sid1, $sid2 ]
+        (
+          if $protocol == "mixed" then
+            {
+              "type": "mixed",
+              "tag": $inbound_tag,
+              "listen": "::",
+              "listen_port": ($port | tonumber)
+            } + (
+              if $mixed_auth_enabled == "y" then
+                {
+                  "users": [
+                    {
+                      "username": $mixed_username,
+                      "password": $mixed_password
+                    }
+                  ]
+                }
+              else
+                {}
+              end
+            )
+          else
+            {
+              "type": "vless",
+              "tag": $inbound_tag,
+              "listen": "::",
+              "listen_port": ($port | tonumber),
+              "users": [ { "uuid": $uuid, "flow": "xtls-rprx-vision" } ],
+              "tls": {
+                "enabled": true,
+                "server_name": $sni,
+                "reality": {
+                  "enabled": true,
+                  "handshake": { "server": $sni, "server_port": 443 },
+                  "private_key": $priv_key,
+                  "short_id": [ $sid1, $sid2 ]
+                }
+              }
             }
-          }
-        }
+          end
+        )
       ],
       "outbounds": [
         { "type": "direct", "tag": "direct" },
@@ -860,7 +987,14 @@ generate_config() {
           end
         ),
         "rules": (
-          [ { "inbound": "vless-in", "action": "sniff" }, { "domain": [$sni], "action": "direct" } ] +
+          [ { "inbound": $inbound_tag, "action": "sniff" } ] +
+          (
+            if $protocol == "vless+reality" then
+              [ { "domain": [$sni], "action": "direct" } ]
+            else
+              []
+            end
+          ) +
           (if $adv_route == "y" then [ { "ip_is_private": true, "action": "reject" } ] else [] end) +
           (
             if $enable_warp == "y" and $warp_mode == "selective" then
@@ -1017,12 +1151,42 @@ load_current_config_state() {
     log_error "未找到配置文件，请先安装。"
   fi
 
-  SB_UUID=$(jq -r '.inbounds[0].users[0].uuid' "${SINGBOX_CONFIG_FILE}")
+  SB_PROTOCOL=$(jq -r '.inbounds[0].type' "${SINGBOX_CONFIG_FILE}")
+  case "${SB_PROTOCOL}" in
+    vless) SB_PROTOCOL="vless+reality" ;;
+    mixed) SB_PROTOCOL="mixed" ;;
+    *) log_error "当前配置中的协议类型不受脚本支持: ${SB_PROTOCOL}" ;;
+  esac
+
   SB_PORT=$(jq -r '.inbounds[0].listen_port' "${SINGBOX_CONFIG_FILE}")
-  SB_SNI=$(jq -r '.inbounds[0].tls.server_name' "${SINGBOX_CONFIG_FILE}")
-  SB_PRIVATE_KEY=$(jq -r '.inbounds[0].tls.reality.private_key' "${SINGBOX_CONFIG_FILE}")
-  SB_SHORT_ID_1=$(jq -r '.inbounds[0].tls.reality.short_id[0]' "${SINGBOX_CONFIG_FILE}")
-  SB_SHORT_ID_2=$(jq -r '.inbounds[0].tls.reality.short_id[1]' "${SINGBOX_CONFIG_FILE}")
+
+  if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
+    SB_NODE_NAME="vless_reality_$(hostname)"
+    SB_UUID=$(jq -r '.inbounds[0].users[0].uuid' "${SINGBOX_CONFIG_FILE}")
+    SB_SNI=$(jq -r '.inbounds[0].tls.server_name' "${SINGBOX_CONFIG_FILE}")
+    SB_PRIVATE_KEY=$(jq -r '.inbounds[0].tls.reality.private_key' "${SINGBOX_CONFIG_FILE}")
+    SB_SHORT_ID_1=$(jq -r '.inbounds[0].tls.reality.short_id[0]' "${SINGBOX_CONFIG_FILE}")
+    SB_SHORT_ID_2=$(jq -r '.inbounds[0].tls.reality.short_id[1]' "${SINGBOX_CONFIG_FILE}")
+    SB_MIXED_AUTH_ENABLED="y"
+    SB_MIXED_USERNAME=""
+    SB_MIXED_PASSWORD=""
+  else
+    SB_NODE_NAME="mixed_$(hostname)"
+    SB_UUID=""
+    SB_SNI=""
+    SB_PRIVATE_KEY=""
+    SB_SHORT_ID_1=""
+    SB_SHORT_ID_2=""
+    if jq -e '(.inbounds[0].users // []) | length > 0' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+      SB_MIXED_AUTH_ENABLED="y"
+      SB_MIXED_USERNAME=$(jq -r '.inbounds[0].users[0].username // ""' "${SINGBOX_CONFIG_FILE}")
+      SB_MIXED_PASSWORD=$(jq -r '.inbounds[0].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
+    else
+      SB_MIXED_AUTH_ENABLED="n"
+      SB_MIXED_USERNAME=""
+      SB_MIXED_PASSWORD=""
+    fi
+  fi
 
   if config_has_advanced_route "${SINGBOX_CONFIG_FILE}"; then
     SB_ADVANCED_ROUTE="y"
@@ -1038,10 +1202,12 @@ load_current_config_state() {
 
   load_warp_route_settings
 
-  if [[ -f "${SB_KEY_FILE}" ]]; then
+  if [[ "${SB_PROTOCOL}" == "vless+reality" && -f "${SB_KEY_FILE}" ]]; then
     SB_PUBLIC_KEY=$(grep "PUBLIC_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
-  else
+  elif [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
     SB_PUBLIC_KEY="[密钥丢失，请更新配置]"
+  else
+    SB_PUBLIC_KEY=""
   fi
 }
 
@@ -1176,13 +1342,31 @@ update_config_only() {
   read -rp "新端口 (当前: ${SB_PORT}, 留空保持): " in_p
   [[ -n "${in_p}" ]] && SB_PORT="${in_p}" && check_port_conflict "${SB_PORT}"
 
-  # 2. Update UUID
-  read -rp "新 UUID (当前: ${SB_UUID}, 留空保持): " in_uuid
-  [[ -n "${in_uuid}" ]] && SB_UUID="${in_uuid}"
+  if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
+    # 2. Update UUID
+    read -rp "新 UUID (当前: ${SB_UUID}, 留空保持): " in_uuid
+    [[ -n "${in_uuid}" ]] && SB_UUID="${in_uuid}"
 
-  # 3. Update SNI
-  read -rp "新 REALITY 域名 (当前: ${SB_SNI}, 留空保持): " in_sni
-  [[ -n "${in_sni}" ]] && SB_SNI="${in_sni}"
+    # 3. Update SNI
+    read -rp "新 REALITY 域名 (当前: ${SB_SNI}, 留空保持): " in_sni
+    [[ -n "${in_sni}" ]] && SB_SNI="${in_sni}"
+  else
+    read -rp "是否启用用户名密码认证 [y/n] (当前: ${SB_MIXED_AUTH_ENABLED}, 默认建议 y): " in_auth
+    if [[ -n "${in_auth}" ]]; then
+      SB_MIXED_AUTH_ENABLED="${in_auth}"
+    fi
+
+    if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
+      read -rp "新用户名 (当前: ${SB_MIXED_USERNAME}, 留空保持/自动生成): " in_user
+      [[ -n "${in_user}" ]] && SB_MIXED_USERNAME="${in_user}"
+      read -rp "新密码 (当前: 留空隐藏, 留空保持/自动生成): " in_pass
+      [[ -n "${in_pass}" ]] && SB_MIXED_PASSWORD="${in_pass}"
+    else
+      log_warn "关闭 Mixed 认证会暴露开放代理，存在明显安全风险。"
+      SB_MIXED_USERNAME=""
+      SB_MIXED_PASSWORD=""
+    fi
+  fi
 
   # 4. Update Route
   read -rp "是否开启高级路由规则 (广告拦截/局域网绕行) [y/n] (当前: ${SB_ADVANCED_ROUTE}): " in_route
@@ -1220,28 +1404,55 @@ update_config_only() {
 
 display_info() {
   local public_ip=$(curl -s https://api.ip.sb/ip || curl -s https://ifconfig.me)
-  local vless_link="vless://${SB_UUID}@${public_ip}:${SB_PORT}?security=reality&sni=${SB_SNI}&fp=chrome&pbk=${SB_PUBLIC_KEY}&sid=${SB_SHORT_ID_1}&flow=xtls-rprx-vision#${SB_NODE_NAME}"
+  local protocol_name
+  protocol_name=$(protocol_display_name "${SB_PROTOCOL}")
 
   echo -e "\n${GREEN}服务状态与节点信息：${NC}"
   echo "-------------------------------------------------------------"
   echo -e "进程状态: $(systemctl is-active sing-box)"
+  echo -e "协议: ${protocol_name}"
   echo -e "地址: ${public_ip}  端口: ${SB_PORT}"
-  echo -e "UUID: ${SB_UUID}"
-  echo -e "SNI:  ${SB_SNI} (REALITY)"
-  echo -e "PBK:  ${SB_PUBLIC_KEY}"
-  echo -e "SID:  ${SB_SHORT_ID_1}, ${SB_SHORT_ID_2}"
-  if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
-    echo -e "Warp: 已开启 (${SB_WARP_ROUTE_MODE})"
+
+  if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
+    local vless_link="vless://${SB_UUID}@${public_ip}:${SB_PORT}?security=reality&sni=${SB_SNI}&fp=chrome&pbk=${SB_PUBLIC_KEY}&sid=${SB_SHORT_ID_1}&flow=xtls-rprx-vision#${SB_NODE_NAME}"
+    echo -e "UUID: ${SB_UUID}"
+    echo -e "SNI:  ${SB_SNI} (REALITY)"
+    echo -e "PBK:  ${SB_PUBLIC_KEY:-[密钥丢失，请更新配置]}"
+    echo -e "SID:  ${SB_SHORT_ID_1}, ${SB_SHORT_ID_2}"
+
+    if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
+      echo -e "Warp: 已开启 (${SB_WARP_ROUTE_MODE})"
+    else
+      echo -e "Warp: 未开启"
+    fi
+    echo -e "${YELLOW}VLESS 链接:${NC}\n${vless_link}\n"
+
+    echo -e "${YELLOW}节点二维码:${NC}"
+    qrencode -t ansiutf8 "${vless_link}"
   else
-    echo -e "Warp: 未开启"
+    if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
+      echo -e "认证: 已启用"
+      echo -e "用户名: ${SB_MIXED_USERNAME}"
+      echo -e "密码: ${SB_MIXED_PASSWORD}"
+      echo -e "HTTP 代理: http://${SB_MIXED_USERNAME}:${SB_MIXED_PASSWORD}@${public_ip}:${SB_PORT}"
+      echo -e "SOCKS5 代理: socks5://${SB_MIXED_USERNAME}:${SB_MIXED_PASSWORD}@${public_ip}:${SB_PORT}"
+    else
+      echo -e "认证: 未启用"
+      log_warn "当前 Mixed 代理未启用认证，请尽快确认防火墙限制或开启认证。"
+      echo -e "HTTP 代理: http://${public_ip}:${SB_PORT}"
+      echo -e "SOCKS5 代理: socks5://${public_ip}:${SB_PORT}"
+    fi
+
+    if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
+      echo -e "Warp: 已开启 (${SB_WARP_ROUTE_MODE})"
+    else
+      echo -e "Warp: 未开启"
+    fi
+    echo -e "说明: HTTPS 网站通过 HTTP 代理的 CONNECT 模式转发。"
   fi
+
   echo "--------------------------------"
   echo -e "配置文件: ${SINGBOX_CONFIG_FILE}"
-  echo "-------------------------------------------------------------"
-  echo -e "${YELLOW}VLESS 链接:${NC}\n${vless_link}\n"
-
-  echo -e "${YELLOW}节点二维码:${NC}"
-  qrencode -t ansiutf8 "${vless_link}"
   echo "-------------------------------------------------------------"
 }
 
@@ -1256,9 +1467,9 @@ main() {
   check_sb_version
   check_bbr_status
 
-  echo -e "1. 安装/更新 sing-box (VLESS+REALITY) ${SB_VER_STATUS}"
+  echo -e "1. 安装/更新 sing-box (VLESS+REALITY / Mixed) ${SB_VER_STATUS}"
   echo "2. 卸载 sing-box"
-  echo "3. 修改当前协议配置 (端口/UUID/域名)"
+  echo "3. 修改当前协议配置"
   echo -e "4. 开启 BBR 拥塞控制算法 ${BBR_STATUS}"
   echo "--------------------------------"
   echo "5. 启动 sing-box"
@@ -1289,11 +1500,35 @@ main() {
       get_os_info && get_arch
       read -rp "版本 (默认 ${SB_SUPPORT_MAX_VERSION}): " in_v
       SB_VERSION=${in_v:-$SB_SUPPORT_MAX_VERSION}
-      read -rp "端口 (默认 443): " in_p
-      SB_PORT=${in_p:-443}
+      echo "协议类型:"
+      echo "1. VLESS + REALITY"
+      echo "2. Mixed (HTTP/HTTPS/SOCKS)"
+      read -rp "请选择 [1-2] (默认 1): " in_protocol
+      case "${in_protocol}" in
+        2) set_protocol_defaults "mixed" ;;
+        *) set_protocol_defaults "vless+reality" ;;
+      esac
+
+      read -rp "端口 (默认 ${SB_PORT}): " in_p
+      SB_PORT=${in_p:-$SB_PORT}
       check_port_conflict "${SB_PORT}"
-      read -rp "REALITY 域名 (默认 apple.com): " in_sni
-      SB_SNI=${in_sni:-"apple.com"}
+
+      if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
+        read -rp "REALITY 域名 (默认 apple.com): " in_sni
+        SB_SNI=${in_sni:-"apple.com"}
+      else
+        read -rp "是否启用用户名密码认证 [y/n] (默认 y，强烈建议开启): " in_auth
+        SB_MIXED_AUTH_ENABLED=${in_auth:-"y"}
+        if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
+          read -rp "用户名 (留空自动生成): " in_user
+          SB_MIXED_USERNAME="${in_user}"
+          read -rp "密码 (留空自动生成): " in_pass
+          SB_MIXED_PASSWORD="${in_pass}"
+        else
+          log_warn "你选择了关闭认证。开放的 HTTP/SOCKS 代理存在明显安全风险，请确认防火墙与访问源限制。"
+        fi
+      fi
+
       read -rp "是否开启高级路由规则 (广告拦截/局域网绕行) [y/n] (默认 y): " in_route
       SB_ADVANCED_ROUTE=${in_route:-"y"}
       read -rp "是否开启 Cloudflare Warp (用于解锁/防送中) [y/n] (默认 n): " in_warp

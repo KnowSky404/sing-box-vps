@@ -13,7 +13,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main
 脚本会自动：
 1. 安装所有必要依赖（curl, wget, jq, qrencode 等）。
 2. 下载并配置适配的 `sing-box` (当前适配：1.13.6)。
-3. 生成安全的 **VLESS + REALITY** 配置。
+3. 生成安全的 **VLESS + REALITY** 或 **Mixed (HTTP/HTTPS/SOCKS)** 配置。
 4. 将自己安装为全局命令 **`sbv`**，方便您随时管理。
 
 ---
@@ -29,6 +29,7 @@ sbv
 ## ✨ 项目特性
 
 - **1.13.x 深度适配**：全面采用最新的 **Endpoint (端点化)** 架构，确保 WireGuard 及路由规则的最高效性能与稳定性。
+- **双协议支持**：支持 **VLESS + REALITY** 与 **Mixed (HTTP/HTTPS/SOCKS)** 两种入站模式，适配节点分享与传统代理两类使用场景。
 - **Cloudflare Warp 集成**：支持一键开启/关闭 Warp 出站，自动注册免费账户，完美解决 VPS **“送中”** 问题并解锁 Netflix/Disney+ 等流媒体。
 - **Warp 路由分层**：支持 `全量走 Warp` 与 `选择性分流` 两种模式，内置主流 AI / 流媒体域名规则，并支持用户追加自定义域名、本地规则集和远程规则集。
 - **模块化与单脚本兼顾**：开发时模块化，用户端提供全集成 `install.sh`。
@@ -44,7 +45,7 @@ sbv
 
 1.  **安装/更新 sing-box**：自动化部署流程。
 2.  **卸载 sing-box**：彻底清理软件及服务。
-3.  **修改当前协议配置**：交互式修改端口、UUID、伪装域名及高级路由开关。
+3.  **修改当前协议配置**：交互式修改端口、VLESS 参数或 Mixed 用户认证信息及高级路由开关。
 4.  **配置 Cloudflare Warp**：一键开启/关闭/重新注册 Warp，并支持切换全量/选择性分流模式。
 5.  **开启 BBR 拥塞控制**：一键提升网络性能。
 6.  **服务管理**：启动、停止、重启 sing-box。
@@ -57,6 +58,7 @@ sbv
 - **工作目录**: `/root/sing-box-vps/`
 - **配置文件**: `/root/sing-box-vps/config.json`
 - **密钥文件**: `/root/sing-box-vps/reality.key` (REALITY) / `warp.key` (Warp)
+- **Mixed 认证信息**: 存储于 `/root/sing-box-vps/config.json`
 - **Warp 分流域名**: `/root/sing-box-vps/warp-domains.txt`
 - **Warp 本地规则集目录**: `/root/sing-box-vps/rule-set/warp/`
 - **Warp 远程规则集列表**: `/root/sing-box-vps/warp-remote-rule-sets.txt`
@@ -66,6 +68,7 @@ sbv
 
 - 本脚本必须以 `root` 用户身份运行。
 - 脚本默认适配最佳稳定性版本，手动选择 `latest` 可能存在不兼容风险。
+- `Mixed` 代理默认建议启用用户名密码认证；若关闭认证，请务必确认防火墙和来源访问控制策略。
 
 ---
 
