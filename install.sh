@@ -1156,6 +1156,398 @@ EOF
   fi
 }
 
+# --- Protocol State Helpers ---
+list_effective_protocols() {
+  local installed
+  installed=$(extract_protocols_from_index)
+
+  if [[ -n "${installed}" ]]; then
+    list_installed_protocols
+    return 0
+  fi
+
+  runtime_protocol_to_state "${SB_PROTOCOL}"
+}
+
+load_protocol_state() {
+  local protocol state_file
+  protocol=$(normalize_protocol_id "$1")
+  state_file=$(protocol_state_file "${protocol}")
+
+  if [[ ! -f "${state_file}" ]]; then
+    if [[ "$(runtime_protocol_to_state "${SB_PROTOCOL}")" == "${protocol}" ]]; then
+      return 0
+    fi
+    log_error "未找到协议状态文件: ${state_file}"
+  fi
+
+  # shellcheck disable=SC1090
+  source "${state_file}"
+
+  case "${protocol}" in
+    vless-reality)
+      SB_PROTOCOL="vless+reality"
+      SB_NODE_NAME="${NODE_NAME:-vless_reality_$(hostname)}"
+      SB_PORT="${PORT:-443}"
+      SB_UUID="${UUID:-}"
+      SB_SNI="${SNI:-apple.com}"
+      SB_PRIVATE_KEY="${REALITY_PRIVATE_KEY:-}"
+      SB_PUBLIC_KEY="${REALITY_PUBLIC_KEY:-}"
+      SB_SHORT_ID_1="${SHORT_ID_1:-}"
+      SB_SHORT_ID_2="${SHORT_ID_2:-}"
+      SB_MIXED_AUTH_ENABLED="y"
+      SB_MIXED_USERNAME=""
+      SB_MIXED_PASSWORD=""
+      SB_HY2_DOMAIN=""
+      SB_HY2_PASSWORD=""
+      SB_HY2_USER_NAME=""
+      SB_HY2_UP_MBPS="100"
+      SB_HY2_DOWN_MBPS="100"
+      SB_HY2_OBFS_ENABLED="n"
+      SB_HY2_OBFS_TYPE=""
+      SB_HY2_OBFS_PASSWORD=""
+      SB_HY2_TLS_MODE="acme"
+      SB_HY2_ACME_MODE="http"
+      SB_HY2_ACME_EMAIL=""
+      SB_HY2_ACME_DOMAIN=""
+      SB_HY2_DNS_PROVIDER="cloudflare"
+      SB_HY2_CF_API_TOKEN=""
+      SB_HY2_CERT_PATH=""
+      SB_HY2_KEY_PATH=""
+      SB_HY2_MASQUERADE=""
+      ;;
+    mixed)
+      SB_PROTOCOL="mixed"
+      SB_NODE_NAME="${NODE_NAME:-mixed_$(hostname)}"
+      SB_PORT="${PORT:-1080}"
+      SB_UUID=""
+      SB_SNI=""
+      SB_PRIVATE_KEY=""
+      SB_PUBLIC_KEY=""
+      SB_SHORT_ID_1=""
+      SB_SHORT_ID_2=""
+      SB_MIXED_AUTH_ENABLED="${AUTH_ENABLED:-y}"
+      SB_MIXED_USERNAME="${USERNAME:-}"
+      SB_MIXED_PASSWORD="${PASSWORD:-}"
+      SB_HY2_DOMAIN=""
+      SB_HY2_PASSWORD=""
+      SB_HY2_USER_NAME=""
+      SB_HY2_UP_MBPS="100"
+      SB_HY2_DOWN_MBPS="100"
+      SB_HY2_OBFS_ENABLED="n"
+      SB_HY2_OBFS_TYPE=""
+      SB_HY2_OBFS_PASSWORD=""
+      SB_HY2_TLS_MODE="acme"
+      SB_HY2_ACME_MODE="http"
+      SB_HY2_ACME_EMAIL=""
+      SB_HY2_ACME_DOMAIN=""
+      SB_HY2_DNS_PROVIDER="cloudflare"
+      SB_HY2_CF_API_TOKEN=""
+      SB_HY2_CERT_PATH=""
+      SB_HY2_KEY_PATH=""
+      SB_HY2_MASQUERADE=""
+      ;;
+    hy2)
+      SB_PROTOCOL="hy2"
+      SB_NODE_NAME="${NODE_NAME:-hy2_$(hostname)}"
+      SB_PORT="${PORT:-8443}"
+      SB_UUID=""
+      SB_SNI=""
+      SB_PRIVATE_KEY=""
+      SB_PUBLIC_KEY=""
+      SB_SHORT_ID_1=""
+      SB_SHORT_ID_2=""
+      SB_MIXED_AUTH_ENABLED="y"
+      SB_MIXED_USERNAME=""
+      SB_MIXED_PASSWORD=""
+      SB_HY2_DOMAIN="${DOMAIN:-}"
+      SB_HY2_PASSWORD="${PASSWORD:-}"
+      SB_HY2_USER_NAME="${USER_NAME:-}"
+      SB_HY2_UP_MBPS="${UP_MBPS:-100}"
+      SB_HY2_DOWN_MBPS="${DOWN_MBPS:-100}"
+      SB_HY2_OBFS_ENABLED="${OBFS_ENABLED:-n}"
+      SB_HY2_OBFS_TYPE="${OBFS_TYPE:-}"
+      SB_HY2_OBFS_PASSWORD="${OBFS_PASSWORD:-}"
+      SB_HY2_TLS_MODE="${TLS_MODE:-acme}"
+      SB_HY2_ACME_MODE="${ACME_MODE:-http}"
+      SB_HY2_ACME_EMAIL="${ACME_EMAIL:-}"
+      SB_HY2_ACME_DOMAIN="${ACME_DOMAIN:-}"
+      SB_HY2_DNS_PROVIDER="${DNS_PROVIDER:-cloudflare}"
+      SB_HY2_CF_API_TOKEN="${CF_API_TOKEN:-}"
+      SB_HY2_CERT_PATH="${CERT_PATH:-}"
+      SB_HY2_KEY_PATH="${KEY_PATH:-}"
+      SB_HY2_MASQUERADE="${MASQUERADE:-}"
+      ;;
+  esac
+}
+
+ensure_vless_reality_materials() {
+  if [[ -z "${SB_UUID}" ]]; then
+    SB_UUID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
+  fi
+
+  if [[ -z "${SB_PRIVATE_KEY}" || -z "${SB_PUBLIC_KEY}" ]]; then
+    if [[ -f "${SB_KEY_FILE}" ]]; then
+      log_info "使用现有密钥对..."
+      [[ -z "${SB_PRIVATE_KEY}" ]] && SB_PRIVATE_KEY=$(grep '^PRIVATE_KEY=' "${SB_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
+      [[ -z "${SB_PUBLIC_KEY}" ]] && SB_PUBLIC_KEY=$(grep '^PUBLIC_KEY=' "${SB_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
+    fi
+  fi
+
+  if [[ -z "${SB_PRIVATE_KEY}" || -z "${SB_PUBLIC_KEY}" ]]; then
+    log_info "正在生成新的 REALITY 密钥对..."
+    local keypair
+    keypair=$("${SINGBOX_BIN_PATH}" generate reality-keypair)
+    SB_PRIVATE_KEY=$(echo "${keypair}" | grep "PrivateKey" | awk '{print $2}')
+    SB_PUBLIC_KEY=$(echo "${keypair}" | grep "PublicKey" | awk '{print $2}')
+    {
+      echo "PRIVATE_KEY=${SB_PRIVATE_KEY}"
+      echo "PUBLIC_KEY=${SB_PUBLIC_KEY}"
+    } > "${SB_KEY_FILE}"
+  fi
+
+  if [[ -z "${SB_SHORT_ID_1}" ]]; then
+    SB_SHORT_ID_1=$(openssl rand -hex 8)
+  fi
+
+  if [[ -z "${SB_SHORT_ID_2}" ]]; then
+    SB_SHORT_ID_2=$(openssl rand -hex 8)
+  fi
+
+  return 0
+}
+
+ensure_hy2_materials() {
+  if [[ -z "${SB_HY2_USER_NAME}" ]]; then
+    SB_HY2_USER_NAME="hy2-user"
+  fi
+
+  if [[ -z "${SB_HY2_PASSWORD}" ]]; then
+    SB_HY2_PASSWORD=$(generate_random_token "" 8)
+  fi
+
+  if [[ -z "${SB_HY2_ACME_DOMAIN}" ]]; then
+    SB_HY2_ACME_DOMAIN="${SB_HY2_DOMAIN}"
+  fi
+
+  if [[ "${SB_HY2_OBFS_ENABLED}" != "y" ]]; then
+    SB_HY2_OBFS_TYPE=""
+    SB_HY2_OBFS_PASSWORD=""
+  elif [[ -z "${SB_HY2_OBFS_TYPE}" ]]; then
+    SB_HY2_OBFS_TYPE="salamander"
+  fi
+
+  return 0
+}
+
+build_vless_inbound_json() {
+  ensure_vless_reality_materials
+
+  jq -n \
+    --arg tag "vless-in" \
+    --arg port "${SB_PORT}" \
+    --arg uuid "${SB_UUID}" \
+    --arg sni "${SB_SNI}" \
+    --arg priv_key "${SB_PRIVATE_KEY}" \
+    --arg sid1 "${SB_SHORT_ID_1}" \
+    --arg sid2 "${SB_SHORT_ID_2}" \
+    '{
+      "type": "vless",
+      "tag": $tag,
+      "listen": "::",
+      "listen_port": ($port | tonumber),
+      "users": [ { "uuid": $uuid, "flow": "xtls-rprx-vision" } ],
+      "tls": {
+        "enabled": true,
+        "server_name": $sni,
+        "reality": {
+          "enabled": true,
+          "handshake": { "server": $sni, "server_port": 443 },
+          "private_key": $priv_key,
+          "short_id": [ $sid1, $sid2 ]
+        }
+      }
+    }'
+}
+
+build_mixed_inbound_json() {
+  ensure_mixed_auth_credentials
+
+  jq -n \
+    --arg tag "mixed-in" \
+    --arg port "${SB_PORT}" \
+    --arg mixed_auth_enabled "${SB_MIXED_AUTH_ENABLED}" \
+    --arg mixed_username "${SB_MIXED_USERNAME}" \
+    --arg mixed_password "${SB_MIXED_PASSWORD}" \
+    '{
+      "type": "mixed",
+      "tag": $tag,
+      "listen": "::",
+      "listen_port": ($port | tonumber)
+    } + (
+      if $mixed_auth_enabled == "y" then
+        {
+          "users": [
+            {
+              "username": $mixed_username,
+              "password": $mixed_password
+            }
+          ]
+        }
+      else
+        {}
+      end
+    )'
+}
+
+hy2_certificate_provider_tag() {
+  printf 'hy2-cert-provider'
+}
+
+build_hy2_certificate_provider_json() {
+  ensure_hy2_materials
+  [[ "${SB_HY2_TLS_MODE}" == "manual" ]] && return 0
+
+  jq -n \
+    --arg tag "$(hy2_certificate_provider_tag)" \
+    --arg domain "${SB_HY2_ACME_DOMAIN}" \
+    --arg email "${SB_HY2_ACME_EMAIL}" \
+    --arg acme_mode "${SB_HY2_ACME_MODE}" \
+    --arg dns_provider "${SB_HY2_DNS_PROVIDER}" \
+    --arg cf_api_token "${SB_HY2_CF_API_TOKEN}" \
+    '{
+      "type": "acme",
+      "tag": $tag,
+      "domain": [ $domain ],
+      "email": $email
+    } + (
+      if $acme_mode == "dns" then
+        {
+          "dns01_challenge": {
+            "provider": $dns_provider,
+            "api_token": $cf_api_token
+          }
+        }
+      else
+        {}
+      end
+    )'
+}
+
+build_hy2_inbound_json() {
+  ensure_hy2_materials
+
+  jq -n \
+    --arg tag "hy2-in" \
+    --arg port "${SB_PORT}" \
+    --arg user_name "${SB_HY2_USER_NAME}" \
+    --arg password "${SB_HY2_PASSWORD}" \
+    --arg up_mbps "${SB_HY2_UP_MBPS}" \
+    --arg down_mbps "${SB_HY2_DOWN_MBPS}" \
+    --arg domain "${SB_HY2_DOMAIN}" \
+    --arg tls_mode "${SB_HY2_TLS_MODE}" \
+    --arg cert_path "${SB_HY2_CERT_PATH}" \
+    --arg key_path "${SB_HY2_KEY_PATH}" \
+    --arg obfs_enabled "${SB_HY2_OBFS_ENABLED}" \
+    --arg obfs_type "${SB_HY2_OBFS_TYPE}" \
+    --arg obfs_password "${SB_HY2_OBFS_PASSWORD}" \
+    --arg masquerade "${SB_HY2_MASQUERADE}" \
+    --arg cert_provider_tag "$(hy2_certificate_provider_tag)" \
+    '{
+      "type": "hysteria2",
+      "tag": $tag,
+      "listen": "::",
+      "listen_port": ($port | tonumber),
+      "users": [
+        {
+          "name": $user_name,
+          "password": $password
+        }
+      ],
+      "up_mbps": ($up_mbps | tonumber),
+      "down_mbps": ($down_mbps | tonumber),
+      "tls": (
+        {
+          "enabled": true,
+          "server_name": $domain
+        } + (
+          if $tls_mode == "manual" then
+            {
+              "certificate_path": $cert_path,
+              "key_path": $key_path
+            }
+          else
+            {
+              "certificate_provider": $cert_provider_tag
+            }
+          end
+        )
+      )
+    } + (
+      if $obfs_enabled == "y" then
+        {
+          "obfs": {
+            "type": $obfs_type,
+            "password": $obfs_password
+          }
+        }
+      else
+        {}
+      end
+    ) + (
+      if ($masquerade | length) > 0 then
+        {
+          "masquerade": $masquerade
+        }
+      else
+        {}
+      end
+    )'
+}
+
+build_certificate_provider_for_protocol() {
+  local protocol
+  protocol=$(normalize_protocol_id "$1")
+
+  case "${protocol}" in
+    hy2) build_hy2_certificate_provider_json ;;
+  esac
+}
+
+build_inbound_for_protocol() {
+  local protocol
+  protocol=$(normalize_protocol_id "$1")
+
+  case "${protocol}" in
+    vless-reality) build_vless_inbound_json ;;
+    mixed) build_mixed_inbound_json ;;
+    hy2) build_hy2_inbound_json ;;
+  esac
+}
+
+build_protocol_route_rules() {
+  local protocol
+  protocol=$(normalize_protocol_id "$1")
+
+  case "${protocol}" in
+    vless-reality)
+      jq -n \
+        --arg inbound_tag "vless-in" \
+        --arg sni "${SB_SNI}" \
+        '[
+          { "inbound": $inbound_tag, "action": "sniff" },
+          { "domain": [ $sni ], "action": "direct" }
+        ]'
+      ;;
+    mixed)
+      jq -n '[{ "inbound": "mixed-in", "action": "sniff" }]'
+      ;;
+    hy2)
+      jq -n '[{ "inbound": "hy2-in", "action": "sniff" }]'
+      ;;
+  esac
+}
+
 # --- Config Generator ---
 generate_config() {
   # Force ensure jq is installed
@@ -1169,46 +1561,6 @@ generate_config() {
   ensure_warp_routing_assets
   load_warp_route_settings
 
-  if ! validate_protocol "${SB_PROTOCOL}"; then
-    log_error "不支持的协议类型: ${SB_PROTOCOL}"
-  fi
-  
-  # UUID
-  if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
-    [[ -z "${SB_UUID}" ]] && SB_UUID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
-  else
-    ensure_mixed_auth_credentials
-  fi
-  
-  # Keys
-  if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
-    if [[ ! -f "${SB_KEY_FILE}" ]]; then
-      log_info "正在生成新的 REALITY 密钥对..."
-      local keypair=$("${SINGBOX_BIN_PATH}" generate reality-keypair)
-      SB_PRIVATE_KEY=$(echo "${keypair}" | grep "PrivateKey" | awk '{print $2}')
-      SB_PUBLIC_KEY=$(echo "${keypair}" | grep "PublicKey" | awk '{print $2}')
-      echo "PRIVATE_KEY=${SB_PRIVATE_KEY}" > "${SB_KEY_FILE}"
-      echo "PUBLIC_KEY=${SB_PUBLIC_KEY}" >> "${SB_KEY_FILE}"
-    else
-      log_info "使用现有密钥对..."
-      SB_PRIVATE_KEY=$(grep "PRIVATE_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
-      SB_PUBLIC_KEY=$(grep "PUBLIC_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
-    fi
-  else
-    SB_UUID=""
-    SB_PUBLIC_KEY=""
-    SB_PRIVATE_KEY=""
-  fi
-  
-  # ShortIDs
-  if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
-    [[ -z "${SB_SHORT_ID_1}" ]] && SB_SHORT_ID_1=$(openssl rand -hex 8)
-    [[ -z "${SB_SHORT_ID_2}" ]] && SB_SHORT_ID_2=$(openssl rand -hex 8)
-  else
-    SB_SHORT_ID_1=""
-    SB_SHORT_ID_2=""
-  fi
-
   # Endpoints Logic
   local w_key="" w_v4="" w_v6=""
   if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
@@ -1219,26 +1571,35 @@ generate_config() {
   fi
 
   refresh_warp_route_assets
+  local inbound_file provider_file protocol_rule_file protocol
+  local inbounds_json certificate_providers_json protocol_rules_json
 
-  # Build JSON with jq
+  inbound_file=$(mktemp)
+  provider_file=$(mktemp)
+  protocol_rule_file=$(mktemp)
+
+  while IFS= read -r protocol; do
+    [[ -z "${protocol}" ]] && continue
+    load_protocol_state "${protocol}"
+    build_inbound_for_protocol "${protocol}" >> "${inbound_file}"
+    build_certificate_provider_for_protocol "${protocol}" >> "${provider_file}" 2>/dev/null || true
+    build_protocol_route_rules "${protocol}" >> "${protocol_rule_file}"
+  done < <(list_effective_protocols)
+
+  inbounds_json=$(jq -s . "${inbound_file}")
+  certificate_providers_json=$(jq -s . "${provider_file}")
+  protocol_rules_json=$(jq -s 'add // []' "${protocol_rule_file}")
+
   jq -n \
-    --arg protocol "${SB_PROTOCOL}" \
-    --arg inbound_tag "$(protocol_inbound_tag "${SB_PROTOCOL}")" \
-    --arg uuid "${SB_UUID}" \
-    --arg port "${SB_PORT}" \
-    --arg sni "${SB_SNI}" \
-    --arg priv_key "${SB_PRIVATE_KEY}" \
-    --arg sid1 "${SB_SHORT_ID_1}" \
-    --arg sid2 "${SB_SHORT_ID_2}" \
-    --arg mixed_auth_enabled "${SB_MIXED_AUTH_ENABLED}" \
-    --arg mixed_username "${SB_MIXED_USERNAME}" \
-    --arg mixed_password "${SB_MIXED_PASSWORD}" \
     --arg adv_route "${SB_ADVANCED_ROUTE}" \
     --arg enable_warp "${SB_ENABLE_WARP}" \
     --arg warp_mode "${SB_WARP_ROUTE_MODE}" \
     --arg w_key "${w_key}" \
     --arg w_v4 "${w_v4}/32" \
     --arg w_v6 "${w_v6}/128" \
+    --argjson inbounds "${inbounds_json}" \
+    --argjson certificate_providers "${certificate_providers_json}" \
+    --argjson protocol_rules "${protocol_rules_json}" \
     --argjson ai_domains "${WARP_AI_ROUTE_DOMAINS_JSON}" \
     --argjson ai_domain_suffixes "${WARP_AI_ROUTE_DOMAIN_SUFFIXES_JSON}" \
     --argjson stream_domains "${WARP_STREAM_ROUTE_DOMAINS_JSON}" \
@@ -1267,49 +1628,7 @@ generate_config() {
           "mtu": 1280
         }
       ] else [] end),
-      "inbounds": [
-        (
-          if $protocol == "mixed" then
-            {
-              "type": "mixed",
-              "tag": $inbound_tag,
-              "listen": "::",
-              "listen_port": ($port | tonumber)
-            } + (
-              if $mixed_auth_enabled == "y" then
-                {
-                  "users": [
-                    {
-                      "username": $mixed_username,
-                      "password": $mixed_password
-                    }
-                  ]
-                }
-              else
-                {}
-              end
-            )
-          else
-            {
-              "type": "vless",
-              "tag": $inbound_tag,
-              "listen": "::",
-              "listen_port": ($port | tonumber),
-              "users": [ { "uuid": $uuid, "flow": "xtls-rprx-vision" } ],
-              "tls": {
-                "enabled": true,
-                "server_name": $sni,
-                "reality": {
-                  "enabled": true,
-                  "handshake": { "server": $sni, "server_port": 443 },
-                  "private_key": $priv_key,
-                  "short_id": [ $sid1, $sid2 ]
-                }
-              }
-            }
-          end
-        )
-      ],
+      "inbounds": $inbounds,
       "outbounds": [
         { "type": "direct", "tag": "direct" },
         { "type": "block", "tag": "block" }
@@ -1323,14 +1642,7 @@ generate_config() {
           end
         ),
         "rules": (
-          [ { "inbound": $inbound_tag, "action": "sniff" } ] +
-          (
-            if $protocol == "vless+reality" then
-              [ { "domain": [$sni], "action": "direct" } ]
-            else
-              []
-            end
-          ) +
+          $protocol_rules +
           (if $adv_route == "y" then [ { "ip_is_private": true, "action": "reject" } ] else [] end) +
           (
             if $enable_warp == "y" and $warp_mode == "selective" then
@@ -1382,7 +1694,15 @@ generate_config() {
         ),
         "final": (if $enable_warp == "y" and $warp_mode == "all" then "warp-ep" else "direct" end)
       }
-    }' > "${SINGBOX_CONFIG_FILE}"
+    } + (
+      if ($certificate_providers | length) > 0 then
+        { "certificate_providers": $certificate_providers }
+      else
+        {}
+      end
+    )' > "${SINGBOX_CONFIG_FILE}"
+
+  rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}"
 }
 
 # --- Uninstaller ---
