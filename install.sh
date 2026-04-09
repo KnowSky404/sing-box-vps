@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026040903
+# Version: 2026040904
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040903"
+readonly SCRIPT_VERSION="2026040904"
 readonly SB_SUPPORT_MAX_VERSION="1.13.6"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -1461,6 +1461,7 @@ check_root() {
 # Check for script update status
 check_script_status() {
   local remote_content
+  local remote_version
   remote_content=$(curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh 2>/dev/null) || true
   
   if [[ -z "${remote_content}" ]]; then
@@ -1468,8 +1469,12 @@ check_script_status() {
     return
   fi
 
-  local remote_version
-  remote_version=$(echo "${remote_content}" | grep -m1 "readonly SCRIPT_VERSION" | cut -d'"' -f2)
+  remote_version=$(echo "${remote_content}" | grep -m1 "readonly SCRIPT_VERSION" | cut -d'"' -f2 || true)
+
+  if [[ -z "${remote_version}" || ! "${remote_version}" =~ ^[0-9]{10}$ ]]; then
+    SCRIPT_VER_STATUS="${RED}(无法检测更新)${NC}"
+    return
+  fi
   
   if [[ "${remote_version}" -gt "${SCRIPT_VERSION}" ]]; then
     SCRIPT_VER_STATUS="${YELLOW}(有新版本: ${remote_version})${NC}"
