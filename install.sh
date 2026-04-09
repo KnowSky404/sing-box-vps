@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026040904
+# Version: 2026040905
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040904"
+readonly SCRIPT_VERSION="2026040905"
 readonly SB_SUPPORT_MAX_VERSION="1.13.6"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -251,8 +251,8 @@ write_env_assignment() {
 write_protocol_index() {
   ensure_protocol_state_dir
   {
-    write_env_assignment "INSTALLED_PROTOCOLS" "$1"
-    write_env_assignment "PROTOCOL_STATE_VERSION" "1"
+    printf 'INSTALLED_PROTOCOLS=%s\n' "$1"
+    printf 'PROTOCOL_STATE_VERSION=1\n'
   } > "${SB_PROTOCOL_INDEX_FILE}"
 }
 
@@ -262,10 +262,11 @@ extract_protocols_from_index() {
   installed=$(grep '^INSTALLED_PROTOCOLS=' "${SB_PROTOCOL_INDEX_FILE}" 2>/dev/null | cut -d'=' -f2- || true)
   installed=${installed//\"/}
   installed=${installed//\'/}
+  installed=${installed//\\,/,}
   printf '%s' "${installed}"
 }
 
-list_installed_protocols() {
+list_indexed_protocols_raw() {
   local installed protocol
   installed=$(extract_protocols_from_index)
   [[ -z "${installed}" ]] && return 0
@@ -275,6 +276,52 @@ list_installed_protocols() {
     protocol=$(trim_whitespace "${protocol}")
     [[ -n "${protocol}" ]] && printf '%s\n' "${protocol}"
   done
+}
+
+protocol_state_exists() {
+  local protocol
+  protocol=$(normalize_protocol_id "$1")
+  [[ -f "$(protocol_state_file "${protocol}")" ]]
+}
+
+reconcile_protocol_index_if_needed() {
+  local indexed_protocols=() valid_protocols=()
+  local protocol joined_protocols current_protocols
+
+  [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]] || return 0
+
+  mapfile -t indexed_protocols < <(list_indexed_protocols_raw)
+  current_protocols=$(extract_protocols_from_index)
+
+  for protocol in "${indexed_protocols[@]}"; do
+    protocol=$(normalize_protocol_id "${protocol}" 2>/dev/null || true)
+    [[ -z "${protocol}" ]] && continue
+    if protocol_state_exists "${protocol}"; then
+      if ! protocol_array_contains "${protocol}" "${valid_protocols[@]}"; then
+        valid_protocols+=("${protocol}")
+      fi
+    else
+      log_warn "协议状态文件缺失，已从索引移除: ${protocol}" >&2
+    fi
+  done
+
+  if [[ ${#valid_protocols[@]} -eq 0 ]]; then
+    if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
+      rm -f "${SB_PROTOCOL_INDEX_FILE}"
+      migrate_legacy_single_protocol_state_if_needed
+    fi
+    return 0
+  fi
+
+  joined_protocols=$(IFS=,; printf '%s' "${valid_protocols[*]}")
+  if [[ "${joined_protocols}" != "${current_protocols}" ]]; then
+    write_protocol_index "${joined_protocols}"
+  fi
+}
+
+list_installed_protocols() {
+  reconcile_protocol_index_if_needed
+  list_indexed_protocols_raw
 }
 
 save_vless_reality_state() {
@@ -2371,6 +2418,7 @@ config_has_advanced_route() {
 
 load_current_config_state() {
   local first_protocol
+  local installed_protocols=()
 
   migrate_legacy_single_protocol_state_if_needed
 
@@ -2395,7 +2443,8 @@ load_current_config_state() {
   fi
 
   if [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
-    first_protocol=$(list_installed_protocols | head -n1)
+    mapfile -t installed_protocols < <(list_installed_protocols)
+    first_protocol="${installed_protocols[0]:-}"
     if [[ -n "${first_protocol}" ]]; then
       load_protocol_state "${first_protocol}"
       return 0
