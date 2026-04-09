@@ -125,6 +125,7 @@ EOF
   main <<'EOF'
 1
 
+
 0
 EOF
 )

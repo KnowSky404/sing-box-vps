@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026040901
+# Version: 2026040902
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040901"
+readonly SCRIPT_VERSION="2026040902"
 readonly SB_SUPPORT_MAX_VERSION="1.13.6"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -575,6 +575,282 @@ open_all_protocol_ports() {
   fi
 }
 
+protocol_array_contains() {
+  local target=$1
+  shift || true
+
+  local item
+  for item in "$@"; do
+    [[ "${item}" == "${target}" ]] && return 0
+  done
+
+  return 1
+}
+
+protocol_option_to_id() {
+  case "$1" in
+    1) printf 'vless-reality' ;;
+    2) printf 'mixed' ;;
+    3) printf 'hy2' ;;
+    *) return 1 ;;
+  esac
+}
+
+prompt_protocol_install_selection() {
+  local installed_protocols=() selected_protocols=()
+  local choice raw_choice protocol index
+
+  mapfile -t installed_protocols < <(list_installed_protocols)
+
+  echo -e "\n${BLUE}--- 协议安装 ---${NC}"
+  if [[ ${#installed_protocols[@]} -gt 0 ]]; then
+    echo "当前已安装协议:"
+    for protocol in "${installed_protocols[@]}"; do
+      echo "- $(protocol_display_name "$(state_protocol_to_runtime "${protocol}")")"
+    done
+  else
+    echo "当前已安装协议: 无"
+  fi
+
+  echo "可安装协议:"
+  for index in 1 2 3; do
+    protocol=$(protocol_option_to_id "${index}") || continue
+    if protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
+      continue
+    fi
+    echo "${index}. $(protocol_display_name "$(state_protocol_to_runtime "${protocol}")")"
+  done
+
+  read -rp "请选择一个或多个协议 [1-3]，逗号分隔: " choice
+  IFS=',' read -r -a raw_choices <<< "${choice}"
+
+  for raw_choice in "${raw_choices[@]}"; do
+    raw_choice=$(trim_whitespace "${raw_choice}")
+    [[ -z "${raw_choice}" ]] && continue
+
+    protocol=$(protocol_option_to_id "${raw_choice}") || {
+      log_warn "跳过无效协议选项: ${raw_choice}"
+      continue
+    }
+
+    if protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
+      log_warn "协议已安装，跳过: $(protocol_display_name "$(state_protocol_to_runtime "${protocol}")")"
+      continue
+    fi
+
+    if ! protocol_array_contains "${protocol}" "${selected_protocols[@]}"; then
+      selected_protocols+=("${protocol}")
+    fi
+  done
+
+  if [[ ${#selected_protocols[@]} -eq 0 ]]; then
+    log_error "未选择任何可安装协议。"
+  fi
+
+  SELECTED_PROTOCOLS_CSV=$(IFS=,; printf '%s' "${selected_protocols[*]}")
+}
+
+prompt_vless_reality_install() {
+  local in_p in_sni
+
+  set_protocol_defaults "vless+reality"
+  read -rp "端口 (默认 ${SB_PORT}): " in_p
+  SB_PORT=${in_p:-$SB_PORT}
+  check_port_conflict "${SB_PORT}"
+
+  read -rp "REALITY 域名 (默认 ${SB_SNI}): " in_sni
+  SB_SNI=${in_sni:-$SB_SNI}
+}
+
+prompt_mixed_install() {
+  local in_p in_auth in_user in_pass
+
+  set_protocol_defaults "mixed"
+  read -rp "端口 (默认 ${SB_PORT}): " in_p
+  SB_PORT=${in_p:-$SB_PORT}
+  check_port_conflict "${SB_PORT}"
+
+  read -rp "是否启用用户名密码认证 [y/n] (默认 y，强烈建议开启): " in_auth
+  SB_MIXED_AUTH_ENABLED=${in_auth:-"y"}
+  if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
+    read -rp "用户名 (留空自动生成): " in_user
+    SB_MIXED_USERNAME="${in_user}"
+    read -rp "密码 (留空自动生成): " in_pass
+    SB_MIXED_PASSWORD="${in_pass}"
+    ensure_mixed_auth_credentials
+  else
+    log_warn "你选择了关闭认证。开放的 HTTP/SOCKS 代理存在明显安全风险，请确认防火墙与访问源限制。"
+  fi
+}
+
+prompt_hy2_install() {
+  local in_domain in_p in_password in_user_name in_up in_down in_obfs in_obfs_password in_tls_mode in_acme_mode in_acme_email in_acme_domain in_cf_api_token in_cert_path in_key_path in_masquerade
+
+  set_protocol_defaults "hy2"
+
+  while [[ -z "${SB_HY2_DOMAIN}" ]]; do
+    read -rp "Hysteria2 域名: " in_domain
+    SB_HY2_DOMAIN=$(trim_whitespace "${in_domain}")
+    [[ -z "${SB_HY2_DOMAIN}" ]] && log_warn "域名不能为空。"
+  done
+
+  read -rp "端口 (默认 ${SB_PORT}): " in_p
+  SB_PORT=${in_p:-$SB_PORT}
+  check_port_conflict "${SB_PORT}"
+
+  read -rp "认证密码 (留空自动生成): " in_password
+  [[ -n "${in_password}" ]] && SB_HY2_PASSWORD="${in_password}"
+  read -rp "用户名标识 (默认 ${SB_HY2_USER_NAME}): " in_user_name
+  SB_HY2_USER_NAME=${in_user_name:-$SB_HY2_USER_NAME}
+
+  read -rp "上行带宽 Mbps (默认 ${SB_HY2_UP_MBPS}): " in_up
+  SB_HY2_UP_MBPS=${in_up:-$SB_HY2_UP_MBPS}
+  read -rp "下行带宽 Mbps (默认 ${SB_HY2_DOWN_MBPS}): " in_down
+  SB_HY2_DOWN_MBPS=${in_down:-$SB_HY2_DOWN_MBPS}
+
+  read -rp "是否启用 Salamander 混淆 [y/n] (默认 n): " in_obfs
+  SB_HY2_OBFS_ENABLED=${in_obfs:-"n"}
+  if [[ "${SB_HY2_OBFS_ENABLED}" == "y" ]]; then
+    SB_HY2_OBFS_TYPE="salamander"
+    read -rp "混淆密码 (留空自动生成): " in_obfs_password
+    [[ -n "${in_obfs_password}" ]] && SB_HY2_OBFS_PASSWORD="${in_obfs_password}"
+  fi
+
+  echo "TLS 模式:"
+  echo "1. ACME 自动签发"
+  echo "2. 手动证书路径"
+  read -rp "请选择 [1-2] (默认 1): " in_tls_mode
+  case "${in_tls_mode}" in
+    2) SB_HY2_TLS_MODE="manual" ;;
+    *) SB_HY2_TLS_MODE="acme" ;;
+  esac
+
+  if [[ "${SB_HY2_TLS_MODE}" == "acme" ]]; then
+    echo "ACME 验证方式:"
+    echo "1. HTTP-01"
+    echo "2. DNS-01 (Cloudflare)"
+    read -rp "请选择 [1-2] (默认 1): " in_acme_mode
+    case "${in_acme_mode}" in
+      2) SB_HY2_ACME_MODE="dns" ;;
+      *) SB_HY2_ACME_MODE="http" ;;
+    esac
+
+    read -rp "ACME 邮箱: " in_acme_email
+    SB_HY2_ACME_EMAIL="${in_acme_email}"
+    read -rp "ACME 域名 (默认 ${SB_HY2_DOMAIN}): " in_acme_domain
+    SB_HY2_ACME_DOMAIN=${in_acme_domain:-$SB_HY2_DOMAIN}
+
+    if [[ "${SB_HY2_ACME_MODE}" == "dns" ]]; then
+      read -rp "Cloudflare API Token: " in_cf_api_token
+      SB_HY2_CF_API_TOKEN="${in_cf_api_token}"
+    fi
+  else
+    while [[ -z "${SB_HY2_CERT_PATH}" ]]; do
+      read -rp "证书路径: " in_cert_path
+      SB_HY2_CERT_PATH=$(trim_whitespace "${in_cert_path}")
+      [[ -z "${SB_HY2_CERT_PATH}" ]] && log_warn "证书路径不能为空。"
+    done
+
+    while [[ -z "${SB_HY2_KEY_PATH}" ]]; do
+      read -rp "私钥路径: " in_key_path
+      SB_HY2_KEY_PATH=$(trim_whitespace "${in_key_path}")
+      [[ -z "${SB_HY2_KEY_PATH}" ]] && log_warn "私钥路径不能为空。"
+    done
+  fi
+
+  read -rp "伪装地址 (留空跳过): " in_masquerade
+  [[ -n "${in_masquerade}" ]] && SB_HY2_MASQUERADE="${in_masquerade}"
+
+  ensure_hy2_materials
+}
+
+prompt_protocol_install_fields() {
+  local protocol
+  protocol=$(normalize_protocol_id "$1")
+
+  case "${protocol}" in
+    vless-reality) prompt_vless_reality_install ;;
+    mixed) prompt_mixed_install ;;
+    hy2) prompt_hy2_install ;;
+    *) log_error "不支持的协议安装类型: ${protocol}" ;;
+  esac
+}
+
+prompt_global_instance_options() {
+  local in_route in_warp in_warp_mode
+
+  read -rp "是否开启高级路由规则 (广告拦截/局域网绕行) [y/n] (默认 y): " in_route
+  SB_ADVANCED_ROUTE=${in_route:-"y"}
+  read -rp "是否开启 Cloudflare Warp (用于解锁/防送中) [y/n] (默认 n): " in_warp
+  SB_ENABLE_WARP=${in_warp:-"n"}
+
+  if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
+    SB_WARP_ROUTE_MODE="all"
+    echo "Warp 路由模式:"
+    echo "1. 全量流量走 Warp"
+    echo "2. 仅 AI/流媒体及自定义规则走 Warp"
+    read -rp "请选择 [1-2] (默认 1): " in_warp_mode
+    case "${in_warp_mode}" in
+      2) SB_WARP_ROUTE_MODE="selective" ;;
+      *) SB_WARP_ROUTE_MODE="all" ;;
+    esac
+  fi
+}
+
+install_protocols_interactive() {
+  local install_mode=$1
+  local installed_protocols=() selected_protocols=()
+  local protocol first_selected_protocol
+
+  if [[ "${install_mode}" == "fresh" ]]; then
+    get_os_info
+    get_arch
+    prompt_singbox_version
+    prompt_protocol_install_selection
+    IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
+
+    for protocol in "${selected_protocols[@]}"; do
+      prompt_protocol_install_fields "${protocol}"
+      save_protocol_state "${protocol}"
+    done
+
+    prompt_global_instance_options
+    write_protocol_index "${SELECTED_PROTOCOLS_CSV}"
+    install_dependencies
+    get_latest_version
+    install_binary
+  else
+    migrate_legacy_single_protocol_state_if_needed
+    load_current_config_state
+    mapfile -t installed_protocols < <(list_installed_protocols)
+    prompt_protocol_install_selection
+    IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
+
+    for protocol in "${selected_protocols[@]}"; do
+      prompt_protocol_install_fields "${protocol}"
+      save_protocol_state "${protocol}"
+      if ! protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
+        installed_protocols+=("${protocol}")
+      fi
+    done
+
+    write_protocol_index "$(IFS=,; printf '%s' "${installed_protocols[*]}")"
+  fi
+
+  save_warp_route_settings
+  generate_config
+  check_config_valid
+  setup_service
+  first_selected_protocol="${selected_protocols[0]}"
+  if [[ -n "${first_selected_protocol:-}" ]]; then
+    load_protocol_state "${first_selected_protocol}"
+  fi
+  open_all_protocol_ports
+  systemctl restart sing-box
+  display_status_summary
+  show_post_config_connection_info
+}
+
 set_protocol_defaults() {
   case "$1" in
     mixed)
@@ -590,6 +866,37 @@ set_protocol_defaults() {
       SB_MIXED_AUTH_ENABLED="y"
       SB_MIXED_USERNAME=""
       SB_MIXED_PASSWORD=""
+      ;;
+    hy2)
+      SB_PROTOCOL="hy2"
+      SB_NODE_NAME="hy2_$(hostname)"
+      SB_PORT="8443"
+      SB_SNI=""
+      SB_UUID=""
+      SB_PUBLIC_KEY=""
+      SB_PRIVATE_KEY=""
+      SB_SHORT_ID_1=""
+      SB_SHORT_ID_2=""
+      SB_MIXED_AUTH_ENABLED="y"
+      SB_MIXED_USERNAME=""
+      SB_MIXED_PASSWORD=""
+      SB_HY2_DOMAIN=""
+      SB_HY2_PASSWORD=""
+      SB_HY2_USER_NAME="hy2-user"
+      SB_HY2_UP_MBPS="100"
+      SB_HY2_DOWN_MBPS="100"
+      SB_HY2_OBFS_ENABLED="n"
+      SB_HY2_OBFS_TYPE=""
+      SB_HY2_OBFS_PASSWORD=""
+      SB_HY2_TLS_MODE="acme"
+      SB_HY2_ACME_MODE="http"
+      SB_HY2_ACME_EMAIL=""
+      SB_HY2_ACME_DOMAIN=""
+      SB_HY2_DNS_PROVIDER="cloudflare"
+      SB_HY2_CF_API_TOKEN=""
+      SB_HY2_CERT_PATH=""
+      SB_HY2_KEY_PATH=""
+      SB_HY2_MASQUERADE=""
       ;;
     *)
       SB_PROTOCOL="vless+reality"
@@ -2050,6 +2357,38 @@ config_has_advanced_route() {
 }
 
 load_current_config_state() {
+  local first_protocol
+
+  migrate_legacy_single_protocol_state_if_needed
+
+  if [[ ! -f "${SINGBOX_CONFIG_FILE}" && ! -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
+    log_error "未找到配置文件，请先安装。"
+  fi
+
+  if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    if config_has_advanced_route "${SINGBOX_CONFIG_FILE}"; then
+      SB_ADVANCED_ROUTE="y"
+    else
+      SB_ADVANCED_ROUTE="n"
+    fi
+
+    if config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; then
+      SB_ENABLE_WARP="y"
+    else
+      SB_ENABLE_WARP="n"
+    fi
+
+    load_warp_route_settings
+  fi
+
+  if [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
+    first_protocol=$(list_installed_protocols | head -n1)
+    if [[ -n "${first_protocol}" ]]; then
+      load_protocol_state "${first_protocol}"
+      return 0
+    fi
+  fi
+
   if [[ ! -f "${SINGBOX_CONFIG_FILE}" ]]; then
     log_error "未找到配置文件，请先安装。"
   fi
@@ -2058,6 +2397,7 @@ load_current_config_state() {
   case "${SB_PROTOCOL}" in
     vless) SB_PROTOCOL="vless+reality" ;;
     mixed) SB_PROTOCOL="mixed" ;;
+    hysteria2) SB_PROTOCOL="hy2" ;;
     *) log_error "当前配置中的协议类型不受脚本支持: ${SB_PROTOCOL}" ;;
   esac
 
@@ -2073,7 +2413,7 @@ load_current_config_state() {
     SB_MIXED_AUTH_ENABLED="y"
     SB_MIXED_USERNAME=""
     SB_MIXED_PASSWORD=""
-  else
+  elif [[ "${SB_PROTOCOL}" == "mixed" ]]; then
     SB_NODE_NAME="mixed_$(hostname)"
     SB_UUID=""
     SB_SNI=""
@@ -2089,21 +2429,31 @@ load_current_config_state() {
       SB_MIXED_USERNAME=""
       SB_MIXED_PASSWORD=""
     fi
-  fi
-
-  if config_has_advanced_route "${SINGBOX_CONFIG_FILE}"; then
-    SB_ADVANCED_ROUTE="y"
   else
-    SB_ADVANCED_ROUTE="n"
+    SB_NODE_NAME="hy2_$(hostname)"
+    SB_HY2_DOMAIN=$(jq -r '.inbounds[0].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
+    SB_HY2_PASSWORD=$(jq -r '.inbounds[0].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
+    SB_HY2_USER_NAME=$(jq -r '.inbounds[0].users[0].name // ""' "${SINGBOX_CONFIG_FILE}")
+    SB_HY2_UP_MBPS=$(jq -r '.inbounds[0].up_mbps // "100"' "${SINGBOX_CONFIG_FILE}")
+    SB_HY2_DOWN_MBPS=$(jq -r '.inbounds[0].down_mbps // "100"' "${SINGBOX_CONFIG_FILE}")
+    if jq -e '.inbounds[0].obfs.type == "salamander"' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+      SB_HY2_OBFS_ENABLED="y"
+      SB_HY2_OBFS_TYPE="salamander"
+      SB_HY2_OBFS_PASSWORD=$(jq -r '.inbounds[0].obfs.password // ""' "${SINGBOX_CONFIG_FILE}")
+    else
+      SB_HY2_OBFS_ENABLED="n"
+      SB_HY2_OBFS_TYPE=""
+      SB_HY2_OBFS_PASSWORD=""
+    fi
+    if jq -e '.inbounds[0].tls.certificate_provider? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+      SB_HY2_TLS_MODE="acme"
+    else
+      SB_HY2_TLS_MODE="manual"
+      SB_HY2_CERT_PATH=$(jq -r '.inbounds[0].tls.certificate_path // ""' "${SINGBOX_CONFIG_FILE}")
+      SB_HY2_KEY_PATH=$(jq -r '.inbounds[0].tls.key_path // ""' "${SINGBOX_CONFIG_FILE}")
+    fi
+    SB_HY2_MASQUERADE=$(jq -r '.inbounds[0].masquerade // ""' "${SINGBOX_CONFIG_FILE}")
   fi
-
-  if config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; then
-    SB_ENABLE_WARP="y"
-  else
-    SB_ENABLE_WARP="n"
-  fi
-
-  load_warp_route_settings
 
   if [[ "${SB_PROTOCOL}" == "vless+reality" && -f "${SB_KEY_FILE}" ]]; then
     SB_PUBLIC_KEY=$(grep "PUBLIC_KEY" "${SB_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
@@ -2229,9 +2579,18 @@ warp_management() {
 
 # Helper to extract config values and display info
 view_status_and_info() {
+  local selected_protocol
+
   log_info "正在从配置文件中读取信息..."
   load_current_config_state
   display_status_summary
+
+  SELECTED_PROTOCOL=""
+  if ! prompt_installed_protocol_selection; then
+    return 0
+  fi
+  selected_protocol="${SELECTED_PROTOCOL}"
+  load_protocol_state "${selected_protocol}"
   show_connection_info_menu
 }
 
@@ -2465,66 +2824,7 @@ prompt_singbox_version() {
 }
 
 install_or_reconfigure_singbox() {
-  get_os_info
-  get_arch
-  prompt_singbox_version
-
-  echo "协议类型:"
-  echo "1. VLESS + REALITY"
-  echo "2. Mixed (HTTP/HTTPS/SOCKS)"
-  read -rp "请选择 [1-2] (默认 1): " in_protocol
-  case "${in_protocol}" in
-    2) set_protocol_defaults "mixed" ;;
-    *) set_protocol_defaults "vless+reality" ;;
-  esac
-
-  read -rp "端口 (默认 ${SB_PORT}): " in_p
-  SB_PORT=${in_p:-$SB_PORT}
-  check_port_conflict "${SB_PORT}"
-
-  if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
-    read -rp "REALITY 域名 (默认 apple.com): " in_sni
-    SB_SNI=${in_sni:-"apple.com"}
-  else
-    read -rp "是否启用用户名密码认证 [y/n] (默认 y，强烈建议开启): " in_auth
-    SB_MIXED_AUTH_ENABLED=${in_auth:-"y"}
-    if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
-      read -rp "用户名 (留空自动生成): " in_user
-      SB_MIXED_USERNAME="${in_user}"
-      read -rp "密码 (留空自动生成): " in_pass
-      SB_MIXED_PASSWORD="${in_pass}"
-    else
-      log_warn "你选择了关闭认证。开放的 HTTP/SOCKS 代理存在明显安全风险，请确认防火墙与访问源限制。"
-    fi
-  fi
-
-  read -rp "是否开启高级路由规则 (广告拦截/局域网绕行) [y/n] (默认 y): " in_route
-  SB_ADVANCED_ROUTE=${in_route:-"y"}
-  read -rp "是否开启 Cloudflare Warp (用于解锁/防送中) [y/n] (默认 n): " in_warp
-  SB_ENABLE_WARP=${in_warp:-"n"}
-  if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
-    SB_WARP_ROUTE_MODE="all"
-    echo "Warp 路由模式:"
-    echo "1. 全量流量走 Warp"
-    echo "2. 仅 AI/流媒体及自定义规则走 Warp"
-    read -rp "请选择 [1-2] (默认 1): " in_warp_mode
-    case "${in_warp_mode}" in
-      2) SB_WARP_ROUTE_MODE="selective" ;;
-      *) SB_WARP_ROUTE_MODE="all" ;;
-    esac
-  fi
-
-  install_dependencies
-  get_latest_version
-  save_warp_route_settings
-  install_binary
-  generate_config
-  check_config_valid
-  setup_service
-  open_firewall_port "${SB_PORT}"
-  systemctl restart sing-box
-  display_status_summary
-  show_post_config_connection_info
+  install_protocols_interactive "fresh"
 }
 
 update_singbox_binary_preserving_config() {
@@ -2569,7 +2869,17 @@ update_singbox_binary_preserving_config() {
 
 install_or_update_singbox() {
   if [[ -f "${SINGBOX_BIN_PATH}" && -f "${SINGBOX_CONFIG_FILE}" ]]; then
-    update_singbox_binary_preserving_config
+    echo -e "\n${BLUE}--- sing-box 管理 ---${NC}"
+    echo "1. 更新 sing-box 二进制并保留当前配置"
+    echo "2. 安装新增协议"
+    echo "0. 返回"
+    read -rp "请选择 [0-2] (默认 1): " install_choice
+
+    case "${install_choice:-1}" in
+      2) install_protocols_interactive "additional" ;;
+      0) return 0 ;;
+      *) update_singbox_binary_preserving_config ;;
+    esac
     return
   fi
 
@@ -2588,7 +2898,7 @@ main() {
     check_bbr_status
 
     echo ""
-    echo -e "1. 安装/更新 sing-box (VLESS+REALITY / Mixed) ${SB_VER_STATUS}"
+    echo -e "1. 安装协议 / 更新 sing-box ${SB_VER_STATUS}"
     echo "2. 卸载 sing-box"
     echo "3. 修改当前协议配置"
     echo -e "4. 开启 BBR 拥塞控制算法 ${BBR_STATUS}"
