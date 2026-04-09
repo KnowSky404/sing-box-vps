@@ -295,6 +295,63 @@ save_vless_reality_state() {
   } > "${state_file}"
 }
 
+save_mixed_state() {
+  local state_file
+  state_file=$(protocol_state_file "mixed")
+
+  {
+    write_env_assignment "INSTALLED" "1"
+    write_env_assignment "CONFIG_SCHEMA_VERSION" "1"
+    write_env_assignment "NODE_NAME" "${SB_NODE_NAME}"
+    write_env_assignment "PORT" "${SB_PORT}"
+    write_env_assignment "AUTH_ENABLED" "${SB_MIXED_AUTH_ENABLED}"
+    write_env_assignment "USERNAME" "${SB_MIXED_USERNAME}"
+    write_env_assignment "PASSWORD" "${SB_MIXED_PASSWORD}"
+  } > "${state_file}"
+}
+
+save_hy2_state() {
+  local state_file
+  state_file=$(protocol_state_file "hy2")
+
+  {
+    write_env_assignment "INSTALLED" "1"
+    write_env_assignment "CONFIG_SCHEMA_VERSION" "1"
+    write_env_assignment "NODE_NAME" "${SB_NODE_NAME}"
+    write_env_assignment "PORT" "${SB_PORT}"
+    write_env_assignment "DOMAIN" "${SB_HY2_DOMAIN}"
+    write_env_assignment "PASSWORD" "${SB_HY2_PASSWORD}"
+    write_env_assignment "USER_NAME" "${SB_HY2_USER_NAME}"
+    write_env_assignment "UP_MBPS" "${SB_HY2_UP_MBPS}"
+    write_env_assignment "DOWN_MBPS" "${SB_HY2_DOWN_MBPS}"
+    write_env_assignment "OBFS_ENABLED" "${SB_HY2_OBFS_ENABLED}"
+    write_env_assignment "OBFS_TYPE" "${SB_HY2_OBFS_TYPE}"
+    write_env_assignment "OBFS_PASSWORD" "${SB_HY2_OBFS_PASSWORD}"
+    write_env_assignment "TLS_MODE" "${SB_HY2_TLS_MODE}"
+    write_env_assignment "ACME_MODE" "${SB_HY2_ACME_MODE}"
+    write_env_assignment "ACME_EMAIL" "${SB_HY2_ACME_EMAIL}"
+    write_env_assignment "ACME_DOMAIN" "${SB_HY2_ACME_DOMAIN}"
+    write_env_assignment "DNS_PROVIDER" "${SB_HY2_DNS_PROVIDER}"
+    write_env_assignment "CF_API_TOKEN" "${SB_HY2_CF_API_TOKEN}"
+    write_env_assignment "CERT_PATH" "${SB_HY2_CERT_PATH}"
+    write_env_assignment "KEY_PATH" "${SB_HY2_KEY_PATH}"
+    write_env_assignment "MASQUERADE" "${SB_HY2_MASQUERADE}"
+  } > "${state_file}"
+}
+
+save_protocol_state() {
+  local protocol
+  protocol=$(normalize_protocol_id "$1")
+  ensure_protocol_state_dir
+
+  case "${protocol}" in
+    vless-reality) save_vless_reality_state ;;
+    mixed) save_mixed_state ;;
+    hy2) save_hy2_state ;;
+    *) log_error "不支持的协议状态保存类型: ${protocol}" ;;
+  esac
+}
+
 migrate_legacy_single_protocol_state_if_needed() {
   [[ -f "${SB_PROTOCOL_INDEX_FILE}" || ! -f "${SINGBOX_CONFIG_FILE}" ]] && return 0
 
@@ -325,6 +382,196 @@ migrate_legacy_single_protocol_state_if_needed() {
       SB_PUBLIC_KEY=""
     fi
     save_vless_reality_state
+  fi
+}
+
+prompt_installed_protocol_selection() {
+  local protocols=() choice selected_protocol index
+  mapfile -t protocols < <(list_installed_protocols)
+
+  if [[ ${#protocols[@]} -eq 0 ]]; then
+    log_error "当前未检测到已安装协议。"
+  fi
+
+  while true; do
+    echo -e "\n${BLUE}--- 已安装协议 ---${NC}"
+    for index in "${!protocols[@]}"; do
+      selected_protocol=$(state_protocol_to_runtime "${protocols[$index]}")
+      echo "$((index + 1)). $(protocol_display_name "${selected_protocol}")"
+    done
+    echo "0. 返回"
+    read -rp "请选择 [0-${#protocols[@]}]: " choice
+
+    if [[ "${choice}" == "0" ]]; then
+      return 1
+    fi
+
+    if [[ "${choice}" =~ ^[1-9][0-9]*$ ]] && (( choice >= 1 && choice <= ${#protocols[@]} )); then
+      SELECTED_PROTOCOL="${protocols[$((choice - 1))]}"
+      return 0
+    fi
+
+    log_warn "无效选项，请重新选择。"
+  done
+}
+
+prompt_vless_reality_update() {
+  local in_p in_uuid in_sni
+
+  read -rp "新端口 (当前: ${SB_PORT}, 留空保持): " in_p
+  if [[ -n "${in_p}" ]]; then
+    SB_PORT="${in_p}"
+    check_port_conflict "${SB_PORT}"
+  fi
+
+  read -rp "新 UUID (当前: ${SB_UUID}, 留空保持): " in_uuid
+  [[ -n "${in_uuid}" ]] && SB_UUID="${in_uuid}"
+
+  read -rp "新 REALITY 域名 (当前: ${SB_SNI}, 留空保持): " in_sni
+  [[ -n "${in_sni}" ]] && SB_SNI="${in_sni}"
+}
+
+prompt_mixed_update() {
+  local in_p in_auth in_user in_pass
+
+  read -rp "新端口 (当前: ${SB_PORT}, 留空保持): " in_p
+  if [[ -n "${in_p}" ]]; then
+    SB_PORT="${in_p}"
+    check_port_conflict "${SB_PORT}"
+  fi
+
+  read -rp "是否启用用户名密码认证 [y/n] (当前: ${SB_MIXED_AUTH_ENABLED}, 留空保持): " in_auth
+  [[ -n "${in_auth}" ]] && SB_MIXED_AUTH_ENABLED="${in_auth}"
+
+  if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
+    read -rp "新用户名 (当前: ${SB_MIXED_USERNAME}, 留空保持/自动生成): " in_user
+    [[ -n "${in_user}" ]] && SB_MIXED_USERNAME="${in_user}"
+    read -rp "新密码 (当前: 留空隐藏, 留空保持/自动生成): " in_pass
+    [[ -n "${in_pass}" ]] && SB_MIXED_PASSWORD="${in_pass}"
+    ensure_mixed_auth_credentials
+  else
+    log_warn "关闭 Mixed 认证会暴露开放代理，存在明显安全风险。"
+    SB_MIXED_USERNAME=""
+    SB_MIXED_PASSWORD=""
+  fi
+}
+
+prompt_hy2_update() {
+  local in_p in_domain in_password in_user_name in_up in_down in_obfs in_obfs_password in_tls_mode in_acme_mode in_acme_email in_acme_domain in_cf_api_token in_cert_path in_key_path in_masquerade
+
+  read -rp "新端口 (当前: ${SB_PORT}, 留空保持): " in_p
+  if [[ -n "${in_p}" ]]; then
+    SB_PORT="${in_p}"
+    check_port_conflict "${SB_PORT}"
+  fi
+
+  read -rp "新域名 (当前: ${SB_HY2_DOMAIN}, 留空保持): " in_domain
+  [[ -n "${in_domain}" ]] && SB_HY2_DOMAIN="${in_domain}"
+
+  read -rp "新认证密码 (当前: 留空隐藏, 留空保持): " in_password
+  [[ -n "${in_password}" ]] && SB_HY2_PASSWORD="${in_password}"
+
+  read -rp "新用户名标识 (当前: ${SB_HY2_USER_NAME}, 留空保持): " in_user_name
+  [[ -n "${in_user_name}" ]] && SB_HY2_USER_NAME="${in_user_name}"
+
+  read -rp "上行带宽 Mbps (当前: ${SB_HY2_UP_MBPS}, 留空保持): " in_up
+  [[ -n "${in_up}" ]] && SB_HY2_UP_MBPS="${in_up}"
+
+  read -rp "下行带宽 Mbps (当前: ${SB_HY2_DOWN_MBPS}, 留空保持): " in_down
+  [[ -n "${in_down}" ]] && SB_HY2_DOWN_MBPS="${in_down}"
+
+  read -rp "是否启用 Salamander 混淆 [y/n] (当前: ${SB_HY2_OBFS_ENABLED}, 留空保持): " in_obfs
+  if [[ -n "${in_obfs}" ]]; then
+    SB_HY2_OBFS_ENABLED="${in_obfs}"
+  fi
+
+  if [[ "${SB_HY2_OBFS_ENABLED}" == "y" ]]; then
+    read -rp "混淆密码 (当前: 留空隐藏, 留空保持): " in_obfs_password
+    [[ -n "${in_obfs_password}" ]] && SB_HY2_OBFS_PASSWORD="${in_obfs_password}"
+    [[ -z "${SB_HY2_OBFS_TYPE}" ]] && SB_HY2_OBFS_TYPE="salamander"
+  else
+    SB_HY2_OBFS_TYPE=""
+    SB_HY2_OBFS_PASSWORD=""
+  fi
+
+  echo "TLS 模式:"
+  echo "1. ACME 自动签发"
+  echo "2. 手动证书路径"
+  read -rp "请选择 [1-2] (当前: ${SB_HY2_TLS_MODE}, 留空保持): " in_tls_mode
+  case "${in_tls_mode}" in
+    1) SB_HY2_TLS_MODE="acme" ;;
+    2) SB_HY2_TLS_MODE="manual" ;;
+    "") ;;
+    *) log_warn "保留当前 TLS 模式: ${SB_HY2_TLS_MODE}" ;;
+  esac
+
+  if [[ "${SB_HY2_TLS_MODE}" == "acme" ]]; then
+    echo "ACME 验证方式:"
+    echo "1. HTTP-01"
+    echo "2. DNS-01 (Cloudflare)"
+    read -rp "请选择 [1-2] (当前: ${SB_HY2_ACME_MODE}, 留空保持): " in_acme_mode
+    case "${in_acme_mode}" in
+      1) SB_HY2_ACME_MODE="http" ;;
+      2) SB_HY2_ACME_MODE="dns" ;;
+      "") ;;
+      *) log_warn "保留当前 ACME 模式: ${SB_HY2_ACME_MODE}" ;;
+    esac
+
+    read -rp "ACME 邮箱 (当前: ${SB_HY2_ACME_EMAIL}, 留空保持): " in_acme_email
+    [[ -n "${in_acme_email}" ]] && SB_HY2_ACME_EMAIL="${in_acme_email}"
+    read -rp "ACME 域名 (当前: ${SB_HY2_ACME_DOMAIN:-${SB_HY2_DOMAIN}}, 留空保持): " in_acme_domain
+    [[ -n "${in_acme_domain}" ]] && SB_HY2_ACME_DOMAIN="${in_acme_domain}"
+
+    if [[ "${SB_HY2_ACME_MODE}" == "dns" ]]; then
+      read -rp "Cloudflare API Token (当前: 留空隐藏, 留空保持): " in_cf_api_token
+      [[ -n "${in_cf_api_token}" ]] && SB_HY2_CF_API_TOKEN="${in_cf_api_token}"
+    else
+      SB_HY2_CF_API_TOKEN=""
+    fi
+
+    SB_HY2_CERT_PATH=""
+    SB_HY2_KEY_PATH=""
+  else
+    read -rp "证书路径 (当前: ${SB_HY2_CERT_PATH}, 留空保持): " in_cert_path
+    [[ -n "${in_cert_path}" ]] && SB_HY2_CERT_PATH="${in_cert_path}"
+    read -rp "私钥路径 (当前: ${SB_HY2_KEY_PATH}, 留空保持): " in_key_path
+    [[ -n "${in_key_path}" ]] && SB_HY2_KEY_PATH="${in_key_path}"
+    SB_HY2_ACME_MODE="http"
+    SB_HY2_ACME_EMAIL=""
+    SB_HY2_ACME_DOMAIN=""
+    SB_HY2_CF_API_TOKEN=""
+  fi
+
+  read -rp "伪装地址 (当前: ${SB_HY2_MASQUERADE}, 留空保持): " in_masquerade
+  [[ -n "${in_masquerade}" ]] && SB_HY2_MASQUERADE="${in_masquerade}"
+
+  ensure_hy2_materials
+}
+
+prompt_protocol_update_fields() {
+  local protocol
+  protocol=$(normalize_protocol_id "$1")
+
+  case "${protocol}" in
+    vless-reality) prompt_vless_reality_update ;;
+    mixed) prompt_mixed_update ;;
+    hy2) prompt_hy2_update ;;
+    *) log_error "不支持的协议修改类型: ${protocol}" ;;
+  esac
+}
+
+open_all_protocol_ports() {
+  local protocol current_protocol_state
+  current_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
+
+  while IFS= read -r protocol; do
+    [[ -z "${protocol}" ]] && continue
+    load_protocol_state "${protocol}"
+    open_firewall_port "${SB_PORT}"
+  done < <(list_effective_protocols)
+
+  if [[ -n "${current_protocol_state}" ]]; then
+    load_protocol_state "${current_protocol_state}"
   fi
 }
 
@@ -1990,76 +2237,36 @@ view_status_and_info() {
 
 # New function: Update config only
 update_config_only() {
-  if [[ ! -f "${SINGBOX_CONFIG_FILE}" ]]; then
-    log_error "未找到配置文件，请先执行安装流程。"
+  local selected_protocol
+
+  if [[ ! -f "${SINGBOX_CONFIG_FILE}" && ! -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
+    log_error "未找到配置文件或协议状态，请先执行安装流程。"
   fi
+
+  migrate_legacy_single_protocol_state_if_needed
 
   log_info "正在读取当前配置..."
   load_current_config_state
 
   echo -e "\n${BLUE}--- 进入配置修改模式 ---${NC}"
-
-  # 1. Update Port
-  read -rp "新端口 (当前: ${SB_PORT}, 留空保持): " in_p
-  [[ -n "${in_p}" ]] && SB_PORT="${in_p}" && check_port_conflict "${SB_PORT}"
-
-  if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
-    # 2. Update UUID
-    read -rp "新 UUID (当前: ${SB_UUID}, 留空保持): " in_uuid
-    [[ -n "${in_uuid}" ]] && SB_UUID="${in_uuid}"
-
-    # 3. Update SNI
-    read -rp "新 REALITY 域名 (当前: ${SB_SNI}, 留空保持): " in_sni
-    [[ -n "${in_sni}" ]] && SB_SNI="${in_sni}"
-  else
-    read -rp "是否启用用户名密码认证 [y/n] (当前: ${SB_MIXED_AUTH_ENABLED}, 默认建议 y): " in_auth
-    if [[ -n "${in_auth}" ]]; then
-      SB_MIXED_AUTH_ENABLED="${in_auth}"
-    fi
-
-    if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
-      read -rp "新用户名 (当前: ${SB_MIXED_USERNAME}, 留空保持/自动生成): " in_user
-      [[ -n "${in_user}" ]] && SB_MIXED_USERNAME="${in_user}"
-      read -rp "新密码 (当前: 留空隐藏, 留空保持/自动生成): " in_pass
-      [[ -n "${in_pass}" ]] && SB_MIXED_PASSWORD="${in_pass}"
-    else
-      log_warn "关闭 Mixed 认证会暴露开放代理，存在明显安全风险。"
-      SB_MIXED_USERNAME=""
-      SB_MIXED_PASSWORD=""
-    fi
+  SELECTED_PROTOCOL=""
+  if ! prompt_installed_protocol_selection; then
+    return 0
   fi
+  selected_protocol="${SELECTED_PROTOCOL}"
 
-  # 4. Update Route
-  read -rp "是否开启高级路由规则 (广告拦截/局域网绕行) [y/n] (当前: ${SB_ADVANCED_ROUTE}): " in_route
-  [[ -n "${in_route}" ]] && SB_ADVANCED_ROUTE="${in_route}"
+  load_protocol_state "${selected_protocol}"
+  echo -e "当前正在修改: $(protocol_display_name "${SB_PROTOCOL}")"
+  prompt_protocol_update_fields "${selected_protocol}"
+  save_protocol_state "${selected_protocol}"
 
-  # 5. Update Warp
-  read -rp "是否开启 Cloudflare Warp (用于解锁/防送中) [y/n] (当前: ${SB_ENABLE_WARP}): " in_warp
-  [[ -n "${in_warp}" ]] && SB_ENABLE_WARP="${in_warp}"
-
-  if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
-    echo "Warp 路由模式:"
-    echo "1. 全量流量走 Warp"
-    echo "2. 仅 AI/流媒体及自定义规则走 Warp"
-    read -rp "请选择 [1-2] (当前: ${SB_WARP_ROUTE_MODE}): " in_warp_mode
-    case "${in_warp_mode}" in
-      1) SB_WARP_ROUTE_MODE="all" ;;
-      2) SB_WARP_ROUTE_MODE="selective" ;;
-      "") ;;
-      *) log_warn "保留当前 Warp 路由模式: ${SB_WARP_ROUTE_MODE}" ;;
-    esac
-  fi
-
-  save_warp_route_settings
   generate_config
   check_config_valid
   setup_service
-  open_firewall_port "${SB_PORT}"
+  open_all_protocol_ports
+  load_protocol_state "${selected_protocol}"
   systemctl restart sing-box
   log_success "配置及服务文件已更新并重启服务。"
-
-
-  # Final display
   display_status_summary
   show_post_config_connection_info
 }
@@ -2094,6 +2301,37 @@ build_mixed_socks5_link() {
   fi
 }
 
+build_hy2_link() {
+  local public_ip=$1
+  local server_host query
+  server_host=${SB_HY2_DOMAIN:-${public_ip}}
+  query="sni=${SB_HY2_DOMAIN:-${server_host}}"
+
+  if [[ "${SB_HY2_OBFS_ENABLED}" == "y" ]]; then
+    query="${query}&obfs=${SB_HY2_OBFS_TYPE:-salamander}&obfs-password=${SB_HY2_OBFS_PASSWORD}"
+  fi
+
+  printf 'hy2://%s@%s:%s?%s#%s' \
+    "${SB_HY2_PASSWORD}" \
+    "${server_host}" \
+    "${SB_PORT}" \
+    "${query}" \
+    "${SB_NODE_NAME}"
+}
+
+show_hy2_connection_summary() {
+  echo -e "\n${YELLOW}Hysteria2 参数摘要：${NC}"
+  echo "域名: ${SB_HY2_DOMAIN}"
+  echo "端口: ${SB_PORT}"
+  echo "TLS 模式: ${SB_HY2_TLS_MODE}"
+  if [[ "${SB_HY2_OBFS_ENABLED}" == "y" ]]; then
+    echo "混淆: ${SB_HY2_OBFS_TYPE:-salamander}"
+  else
+    echo "混淆: 未启用"
+  fi
+  echo "带宽: ${SB_HY2_UP_MBPS} / ${SB_HY2_DOWN_MBPS} Mbps"
+}
+
 display_status_summary() {
   local public_ip protocol_name
   public_ip=${1:-$(get_public_ip)}
@@ -2125,6 +2363,13 @@ show_link_info() {
     return 0
   fi
 
+  if [[ "${SB_PROTOCOL}" == "hy2" ]]; then
+    echo "1. Hysteria2 协议链接"
+    build_hy2_link "${public_ip}"
+    echo ""
+    return 0
+  fi
+
   echo "1. Mixed HTTP 代理链接"
   build_mixed_http_link "${public_ip}"
   echo ""
@@ -2145,6 +2390,12 @@ show_qr_info() {
     return 0
   fi
 
+  if [[ "${SB_PROTOCOL}" == "hy2" ]]; then
+    echo "1. Hysteria2 协议二维码"
+    qrencode -t ansiutf8 "$(build_hy2_link "${public_ip}")"
+    return 0
+  fi
+
   echo "1. REALITY 协议二维码"
   qrencode -t ansiutf8 "$(build_vless_link "${public_ip}")"
 }
@@ -2152,6 +2403,10 @@ show_qr_info() {
 show_connection_details() {
   local mode=$1
   local public_ip=${2:-$(get_public_ip)}
+
+  if [[ "${SB_PROTOCOL}" == "hy2" ]]; then
+    show_hy2_connection_summary
+  fi
 
   case "${mode}" in
     link)
