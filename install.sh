@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026040902
+# Version: 2026040903
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040902"
+readonly SCRIPT_VERSION="2026040903"
 readonly SB_SUPPORT_MAX_VERSION="1.13.6"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -1492,12 +1492,16 @@ manual_update_script() {
 
 # Check for sing-box version
 check_sb_version() {
+  local current_sb_ver
+
   if [[ -f "${SINGBOX_BIN_PATH}" ]]; then
-    CURRENT_SB_VER=$("${SINGBOX_BIN_PATH}" version | head -n1 | awk '{print $3}')
-    if [[ "${CURRENT_SB_VER}" != "${SB_SUPPORT_MAX_VERSION}" ]]; then
-      SB_VER_STATUS="${YELLOW}(当前版本: ${CURRENT_SB_VER}, 建议更新到: ${SB_SUPPORT_MAX_VERSION})${NC}"
+    current_sb_ver=$("${SINGBOX_BIN_PATH}" version 2>/dev/null | head -n1 | awk '{print $3}' || true)
+    if [[ -z "${current_sb_ver}" ]]; then
+      SB_VER_STATUS="${YELLOW}(版本检测失败)${NC}"
+    elif [[ "${current_sb_ver}" != "${SB_SUPPORT_MAX_VERSION}" ]]; then
+      SB_VER_STATUS="${YELLOW}(当前版本: ${current_sb_ver}, 建议更新到: ${SB_SUPPORT_MAX_VERSION})${NC}"
     else
-      SB_VER_STATUS="${GREEN}(已是适配的最佳版本: ${CURRENT_SB_VER})${NC}"
+      SB_VER_STATUS="${GREEN}(已是适配的最佳版本: ${current_sb_ver})${NC}"
     fi
   else
     SB_VER_STATUS="${RED}(未安装)${NC}"
@@ -2303,8 +2307,12 @@ show_banner() {
 
 # Helper: Check BBR Status
 check_bbr_status() {
-  local cc=$(sysctl net.ipv4.tcp_congestion_control | awk '{print $3}')
-  if [[ "${cc}" == "bbr" ]]; then
+  local cc
+  cc=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}' || true)
+
+  if [[ -z "${cc}" ]]; then
+    BBR_STATUS="${YELLOW}(状态未知)${NC}"
+  elif [[ "${cc}" == "bbr" ]]; then
     BBR_STATUS="${GREEN}(已开启 BBR)${NC}"
   else
     BBR_STATUS="${YELLOW}(未开启 BBR)${NC}"
