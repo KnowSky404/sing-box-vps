@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026040809
+# Version: 2026040901
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040809"
+readonly SCRIPT_VERSION="2026040901"
 readonly SB_SUPPORT_MAX_VERSION="1.13.6"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -853,10 +853,14 @@ open_firewall_port() {
 # Verify configuration file
 check_config_valid() {
   log_info "正在校验配置文件有效性..."
-  if ! "${SINGBOX_BIN_PATH}" check -c "${SINGBOX_CONFIG_FILE}"; then
+  if ! validate_config_file; then
     log_error "配置文件校验失败，请检查配置细节。"
   fi
   log_success "配置文件校验成功。"
+}
+
+validate_config_file() {
+  "${SINGBOX_BIN_PATH}" check -c "${SINGBOX_CONFIG_FILE}"
 }
 
 # Check for port conflict
@@ -1650,6 +1654,123 @@ display_info() {
   echo "-------------------------------------------------------------"
 }
 
+prompt_singbox_version() {
+  local input_version
+
+  read -rp "版本 (默认 ${SB_SUPPORT_MAX_VERSION}): " input_version
+  SB_VERSION=${input_version:-$SB_SUPPORT_MAX_VERSION}
+}
+
+install_or_reconfigure_singbox() {
+  get_os_info
+  get_arch
+  prompt_singbox_version
+
+  echo "协议类型:"
+  echo "1. VLESS + REALITY"
+  echo "2. Mixed (HTTP/HTTPS/SOCKS)"
+  read -rp "请选择 [1-2] (默认 1): " in_protocol
+  case "${in_protocol}" in
+    2) set_protocol_defaults "mixed" ;;
+    *) set_protocol_defaults "vless+reality" ;;
+  esac
+
+  read -rp "端口 (默认 ${SB_PORT}): " in_p
+  SB_PORT=${in_p:-$SB_PORT}
+  check_port_conflict "${SB_PORT}"
+
+  if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
+    read -rp "REALITY 域名 (默认 apple.com): " in_sni
+    SB_SNI=${in_sni:-"apple.com"}
+  else
+    read -rp "是否启用用户名密码认证 [y/n] (默认 y，强烈建议开启): " in_auth
+    SB_MIXED_AUTH_ENABLED=${in_auth:-"y"}
+    if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
+      read -rp "用户名 (留空自动生成): " in_user
+      SB_MIXED_USERNAME="${in_user}"
+      read -rp "密码 (留空自动生成): " in_pass
+      SB_MIXED_PASSWORD="${in_pass}"
+    else
+      log_warn "你选择了关闭认证。开放的 HTTP/SOCKS 代理存在明显安全风险，请确认防火墙与访问源限制。"
+    fi
+  fi
+
+  read -rp "是否开启高级路由规则 (广告拦截/局域网绕行) [y/n] (默认 y): " in_route
+  SB_ADVANCED_ROUTE=${in_route:-"y"}
+  read -rp "是否开启 Cloudflare Warp (用于解锁/防送中) [y/n] (默认 n): " in_warp
+  SB_ENABLE_WARP=${in_warp:-"n"}
+  if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
+    SB_WARP_ROUTE_MODE="all"
+    echo "Warp 路由模式:"
+    echo "1. 全量流量走 Warp"
+    echo "2. 仅 AI/流媒体及自定义规则走 Warp"
+    read -rp "请选择 [1-2] (默认 1): " in_warp_mode
+    case "${in_warp_mode}" in
+      2) SB_WARP_ROUTE_MODE="selective" ;;
+      *) SB_WARP_ROUTE_MODE="all" ;;
+    esac
+  fi
+
+  install_dependencies
+  get_latest_version
+  save_warp_route_settings
+  install_binary
+  generate_config
+  check_config_valid
+  setup_service
+  open_firewall_port "${SB_PORT}"
+  systemctl restart sing-box
+  display_info
+}
+
+update_singbox_binary_preserving_config() {
+  local installed_ver
+  local reinstall_choice
+
+  installed_ver=$("${SINGBOX_BIN_PATH}" version | head -n1 | awk '{print $3}')
+  install_dependencies
+  load_current_config_state
+
+  log_info "检测到现有安装，默认仅更新 sing-box 二进制并保留当前配置。"
+  echo -e "当前版本: ${installed_ver}"
+  echo -e "当前协议: $(protocol_display_name "${SB_PROTOCOL}")"
+  echo -e "当前端口: ${SB_PORT}"
+
+  prompt_singbox_version
+  get_latest_version
+
+  if [[ "${SB_VERSION}" == "${installed_ver}" ]]; then
+    read -rp "目标版本与当前版本一致 (${installed_ver})，是否仍重新安装二进制? [y/N]: " reinstall_choice
+    if [[ ! "${reinstall_choice}" =~ ^[Yy]$ ]]; then
+      return 0
+    fi
+  fi
+
+  install_binary
+
+  log_info "正在使用 sing-box ${SB_VERSION} 校验现有配置..."
+  if ! validate_config_file; then
+    log_warn "现有配置未通过 sing-box ${SB_VERSION} 校验。配置已保留，服务未重启。"
+    log_warn "这通常意味着新版本存在 breaking changes，请按 sing-box migration 文档迁移配置后再重载服务。"
+    return 0
+  fi
+
+  log_success "现有配置通过 sing-box ${SB_VERSION} 校验。"
+  setup_service
+  systemctl restart sing-box
+  log_success "sing-box 已更新到 ${SB_VERSION}，当前配置已保留。"
+  display_info
+}
+
+install_or_update_singbox() {
+  if [[ -f "${SINGBOX_BIN_PATH}" && -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    update_singbox_binary_preserving_config
+    return
+  fi
+
+  install_or_reconfigure_singbox
+}
+
 main() {
   [[ $# -gt 0 && "$1" == "uninstall" ]] && check_root && uninstall_singbox && exit 0
 
@@ -1681,77 +1802,7 @@ main() {
     read -rp "请选择 [0-13]: " choice
 
     case "$choice" in
-      1)
-        if [[ -f "${SINGBOX_BIN_PATH}" ]]; then
-          local installed_ver=$("${SINGBOX_BIN_PATH}" version | head -n1 | awk '{print $3}')
-          if [[ "${installed_ver}" == "${SB_SUPPORT_MAX_VERSION}" ]]; then
-            log_info "检测到已安装适配的最佳版本: ${installed_ver}"
-            read -rp "是否需要重新安装? [y/N]: " reinstall_choice
-            if [[ ! "${reinstall_choice}" =~ ^[Yy]$ ]]; then
-              continue
-            fi
-          fi
-        fi
-
-        get_os_info && get_arch
-        read -rp "版本 (默认 ${SB_SUPPORT_MAX_VERSION}): " in_v
-        SB_VERSION=${in_v:-$SB_SUPPORT_MAX_VERSION}
-        echo "协议类型:"
-        echo "1. VLESS + REALITY"
-        echo "2. Mixed (HTTP/HTTPS/SOCKS)"
-        read -rp "请选择 [1-2] (默认 1): " in_protocol
-        case "${in_protocol}" in
-          2) set_protocol_defaults "mixed" ;;
-          *) set_protocol_defaults "vless+reality" ;;
-        esac
-
-        read -rp "端口 (默认 ${SB_PORT}): " in_p
-        SB_PORT=${in_p:-$SB_PORT}
-        check_port_conflict "${SB_PORT}"
-
-        if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
-          read -rp "REALITY 域名 (默认 apple.com): " in_sni
-          SB_SNI=${in_sni:-"apple.com"}
-        else
-          read -rp "是否启用用户名密码认证 [y/n] (默认 y，强烈建议开启): " in_auth
-          SB_MIXED_AUTH_ENABLED=${in_auth:-"y"}
-          if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
-            read -rp "用户名 (留空自动生成): " in_user
-            SB_MIXED_USERNAME="${in_user}"
-            read -rp "密码 (留空自动生成): " in_pass
-            SB_MIXED_PASSWORD="${in_pass}"
-          else
-            log_warn "你选择了关闭认证。开放的 HTTP/SOCKS 代理存在明显安全风险，请确认防火墙与访问源限制。"
-          fi
-        fi
-
-        read -rp "是否开启高级路由规则 (广告拦截/局域网绕行) [y/n] (默认 y): " in_route
-        SB_ADVANCED_ROUTE=${in_route:-"y"}
-        read -rp "是否开启 Cloudflare Warp (用于解锁/防送中) [y/n] (默认 n): " in_warp
-        SB_ENABLE_WARP=${in_warp:-"n"}
-        if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
-          SB_WARP_ROUTE_MODE="all"
-          echo "Warp 路由模式:"
-          echo "1. 全量流量走 Warp"
-          echo "2. 仅 AI/流媒体及自定义规则走 Warp"
-          read -rp "请选择 [1-2] (默认 1): " in_warp_mode
-          case "${in_warp_mode}" in
-            2) SB_WARP_ROUTE_MODE="selective" ;;
-            *) SB_WARP_ROUTE_MODE="all" ;;
-          esac
-        fi
-
-        install_dependencies
-        get_latest_version
-        save_warp_route_settings
-        install_binary
-        generate_config
-        check_config_valid
-        setup_service
-        open_firewall_port "${SB_PORT}"
-        systemctl restart sing-box
-        display_info
-        ;;
+      1) install_or_update_singbox ;;
       2) uninstall_singbox ;;
       3) update_config_only ;;
       4) enable_bbr ;;
