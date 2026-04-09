@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026040905
+# Version: 2026040906
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040905"
+readonly SCRIPT_VERSION="2026040906"
 readonly SB_SUPPORT_MAX_VERSION="1.13.6"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -408,28 +408,96 @@ migrate_legacy_single_protocol_state_if_needed() {
   case "${legacy_type}" in
     vless) legacy_protocol="vless-reality" ;;
     mixed) legacy_protocol="mixed" ;;
+    hysteria2) legacy_protocol="hy2" ;;
     *) return 0 ;;
   esac
 
   ensure_protocol_state_dir
   write_protocol_index "${legacy_protocol}"
 
-  if [[ "${legacy_protocol}" == "vless-reality" ]]; then
-    SB_PROTOCOL="vless+reality"
-    SB_NODE_NAME="vless_reality_$(hostname)"
-    SB_PORT=$(jq -r '.inbounds[0].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")
-    SB_UUID=$(jq -r '.inbounds[0].users[0].uuid // ""' "${SINGBOX_CONFIG_FILE}")
-    SB_SNI=$(jq -r '.inbounds[0].tls.server_name // "apple.com"' "${SINGBOX_CONFIG_FILE}")
-    SB_PRIVATE_KEY=$(jq -r '.inbounds[0].tls.reality.private_key // ""' "${SINGBOX_CONFIG_FILE}")
-    SB_SHORT_ID_1=$(jq -r '.inbounds[0].tls.reality.short_id[0] // ""' "${SINGBOX_CONFIG_FILE}")
-    SB_SHORT_ID_2=$(jq -r '.inbounds[0].tls.reality.short_id[1] // ""' "${SINGBOX_CONFIG_FILE}")
-    if [[ -f "${SB_KEY_FILE}" ]]; then
-      SB_PUBLIC_KEY=$(grep '^PUBLIC_KEY=' "${SB_KEY_FILE}" 2>/dev/null | cut -d'=' -f2- | tr -d '\r\n ' || true)
-    else
-      SB_PUBLIC_KEY=""
-    fi
-    save_vless_reality_state
-  fi
+  case "${legacy_protocol}" in
+    vless-reality)
+      SB_PROTOCOL="vless+reality"
+      SB_NODE_NAME="vless_reality_$(hostname)"
+      SB_PORT=$(jq -r '.inbounds[0].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")
+      SB_UUID=$(jq -r '.inbounds[0].users[0].uuid // ""' "${SINGBOX_CONFIG_FILE}")
+      SB_SNI=$(jq -r '.inbounds[0].tls.server_name // "apple.com"' "${SINGBOX_CONFIG_FILE}")
+      SB_PRIVATE_KEY=$(jq -r '.inbounds[0].tls.reality.private_key // ""' "${SINGBOX_CONFIG_FILE}")
+      SB_SHORT_ID_1=$(jq -r '.inbounds[0].tls.reality.short_id[0] // ""' "${SINGBOX_CONFIG_FILE}")
+      SB_SHORT_ID_2=$(jq -r '.inbounds[0].tls.reality.short_id[1] // ""' "${SINGBOX_CONFIG_FILE}")
+      if [[ -f "${SB_KEY_FILE}" ]]; then
+        SB_PUBLIC_KEY=$(grep '^PUBLIC_KEY=' "${SB_KEY_FILE}" 2>/dev/null | cut -d'=' -f2- | tr -d '\r\n ' || true)
+      else
+        SB_PUBLIC_KEY=""
+      fi
+      save_vless_reality_state
+      ;;
+    mixed)
+      SB_PROTOCOL="mixed"
+      SB_NODE_NAME="mixed_$(hostname)"
+      SB_PORT=$(jq -r '.inbounds[0].listen_port // "1080"' "${SINGBOX_CONFIG_FILE}")
+      if jq -e '(.inbounds[0].users // []) | length > 0' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+        SB_MIXED_AUTH_ENABLED="y"
+        SB_MIXED_USERNAME=$(jq -r '.inbounds[0].users[0].username // ""' "${SINGBOX_CONFIG_FILE}")
+        SB_MIXED_PASSWORD=$(jq -r '.inbounds[0].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
+      else
+        SB_MIXED_AUTH_ENABLED="n"
+        SB_MIXED_USERNAME=""
+        SB_MIXED_PASSWORD=""
+      fi
+      save_mixed_state
+      ;;
+    hy2)
+      local cert_provider_tag
+
+      SB_PROTOCOL="hy2"
+      SB_NODE_NAME="hy2_$(hostname)"
+      SB_PORT=$(jq -r '.inbounds[0].listen_port // "8443"' "${SINGBOX_CONFIG_FILE}")
+      SB_HY2_DOMAIN=$(jq -r '.inbounds[0].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
+      SB_HY2_PASSWORD=$(jq -r '.inbounds[0].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
+      SB_HY2_USER_NAME=$(jq -r '.inbounds[0].users[0].name // ""' "${SINGBOX_CONFIG_FILE}")
+      SB_HY2_UP_MBPS=$(jq -r '.inbounds[0].up_mbps // "100"' "${SINGBOX_CONFIG_FILE}")
+      SB_HY2_DOWN_MBPS=$(jq -r '.inbounds[0].down_mbps // "100"' "${SINGBOX_CONFIG_FILE}")
+      if jq -e '.inbounds[0].obfs.type == "salamander"' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+        SB_HY2_OBFS_ENABLED="y"
+        SB_HY2_OBFS_TYPE="salamander"
+        SB_HY2_OBFS_PASSWORD=$(jq -r '.inbounds[0].obfs.password // ""' "${SINGBOX_CONFIG_FILE}")
+      else
+        SB_HY2_OBFS_ENABLED="n"
+        SB_HY2_OBFS_TYPE=""
+        SB_HY2_OBFS_PASSWORD=""
+      fi
+
+      cert_provider_tag=$(jq -r '.inbounds[0].tls.certificate_provider // ""' "${SINGBOX_CONFIG_FILE}")
+      if [[ -n "${cert_provider_tag}" ]]; then
+        SB_HY2_TLS_MODE="acme"
+        SB_HY2_ACME_DOMAIN=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .domain[0]) // .inbounds[0].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
+        SB_HY2_ACME_EMAIL=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .email) // ""' "${SINGBOX_CONFIG_FILE}")
+        if jq -e --arg tag "${cert_provider_tag}" 'any(.certificate_providers[]?; .tag == $tag and .dns01_challenge? != null)' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+          SB_HY2_ACME_MODE="dns"
+          SB_HY2_DNS_PROVIDER=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .dns01_challenge.provider) // "cloudflare"' "${SINGBOX_CONFIG_FILE}")
+          SB_HY2_CF_API_TOKEN=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .dns01_challenge.api_token) // ""' "${SINGBOX_CONFIG_FILE}")
+        else
+          SB_HY2_ACME_MODE="http"
+          SB_HY2_DNS_PROVIDER="cloudflare"
+          SB_HY2_CF_API_TOKEN=""
+        fi
+        SB_HY2_CERT_PATH=""
+        SB_HY2_KEY_PATH=""
+      else
+        SB_HY2_TLS_MODE="manual"
+        SB_HY2_ACME_MODE="http"
+        SB_HY2_ACME_EMAIL=""
+        SB_HY2_ACME_DOMAIN="${SB_HY2_DOMAIN}"
+        SB_HY2_DNS_PROVIDER="cloudflare"
+        SB_HY2_CF_API_TOKEN=""
+        SB_HY2_CERT_PATH=$(jq -r '.inbounds[0].tls.certificate_path // ""' "${SINGBOX_CONFIG_FILE}")
+        SB_HY2_KEY_PATH=$(jq -r '.inbounds[0].tls.key_path // ""' "${SINGBOX_CONFIG_FILE}")
+      fi
+      SB_HY2_MASQUERADE=$(jq -r '.inbounds[0].masquerade // ""' "${SINGBOX_CONFIG_FILE}")
+      save_hy2_state
+      ;;
+  esac
 }
 
 prompt_installed_protocol_selection() {
