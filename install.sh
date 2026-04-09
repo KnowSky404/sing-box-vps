@@ -20,6 +20,8 @@ readonly SB_WARP_REMOTE_RULESETS_FILE="${SB_PROJECT_DIR}/warp-remote-rule-sets.t
 readonly SB_WARP_LOCAL_RULESET_DIR="${SB_PROJECT_DIR}/rule-set/warp"
 readonly SB_MEDIA_CHECK_DIR="${SB_PROJECT_DIR}/media-check"
 readonly SB_MEDIA_CHECK_SCRIPT="${SB_MEDIA_CHECK_DIR}/region_restriction_check.sh"
+readonly SB_PROTOCOL_STATE_DIR="${SB_PROJECT_DIR}/protocols"
+readonly SB_PROTOCOL_INDEX_FILE="${SB_PROTOCOL_STATE_DIR}/index.env"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
 readonly SINGBOX_CONFIG_DIR="${SB_PROJECT_DIR}"
 readonly SINGBOX_CONFIG_FILE="${SB_PROJECT_DIR}/config.json"
@@ -54,6 +56,23 @@ SB_SNI="apple.com"
 SB_MIXED_AUTH_ENABLED="y"
 SB_MIXED_USERNAME=""
 SB_MIXED_PASSWORD=""
+SB_HY2_DOMAIN=""
+SB_HY2_PASSWORD=""
+SB_HY2_USER_NAME=""
+SB_HY2_UP_MBPS="100"
+SB_HY2_DOWN_MBPS="100"
+SB_HY2_OBFS_ENABLED="n"
+SB_HY2_OBFS_TYPE=""
+SB_HY2_OBFS_PASSWORD=""
+SB_HY2_TLS_MODE="acme"
+SB_HY2_ACME_MODE="http"
+SB_HY2_ACME_EMAIL=""
+SB_HY2_ACME_DOMAIN=""
+SB_HY2_DNS_PROVIDER="cloudflare"
+SB_HY2_CF_API_TOKEN=""
+SB_HY2_CERT_PATH=""
+SB_HY2_KEY_PATH=""
+SB_HY2_MASQUERADE=""
 SB_ADVANCED_ROUTE="y"
 SB_ENABLE_WARP="n"
 SB_WARP_ROUTE_MODE="all"
@@ -167,7 +186,7 @@ validate_warp_route_mode() {
 
 validate_protocol() {
   case "$1" in
-    vless+reality|mixed) return 0 ;;
+    vless+reality|mixed|hy2) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -176,6 +195,7 @@ protocol_display_name() {
   case "$1" in
     vless+reality) printf 'VLESS + REALITY' ;;
     mixed) printf 'Mixed (HTTP/HTTPS/SOCKS)' ;;
+    hy2) printf 'Hysteria2' ;;
     *) printf '%s' "$1" ;;
   esac
 }
@@ -183,8 +203,129 @@ protocol_display_name() {
 protocol_inbound_tag() {
   case "$1" in
     mixed) printf 'mixed-in' ;;
+    hy2) printf 'hy2-in' ;;
     *) printf 'vless-in' ;;
   esac
+}
+
+normalize_protocol_id() {
+  case "$1" in
+    vless|vless+reality|vless-reality) printf 'vless-reality' ;;
+    mixed) printf 'mixed' ;;
+    hy2|hysteria2) printf 'hy2' ;;
+    *) return 1 ;;
+  esac
+}
+
+state_protocol_to_runtime() {
+  case "$1" in
+    vless-reality) printf 'vless+reality' ;;
+    mixed) printf 'mixed' ;;
+    hy2) printf 'hy2' ;;
+    *) return 1 ;;
+  esac
+}
+
+runtime_protocol_to_state() {
+  normalize_protocol_id "$1"
+}
+
+protocol_state_file() {
+  local protocol
+  protocol=$(normalize_protocol_id "$1")
+  printf '%s/%s.env' "${SB_PROTOCOL_STATE_DIR}" "${protocol}"
+}
+
+ensure_protocol_state_dir() {
+  mkdir -p "${SB_PROTOCOL_STATE_DIR}"
+}
+
+write_env_assignment() {
+  local key=$1
+  local value=${2-}
+  local escaped
+  printf -v escaped '%q' "${value}"
+  printf '%s=%s\n' "${key}" "${escaped}"
+}
+
+write_protocol_index() {
+  ensure_protocol_state_dir
+  {
+    write_env_assignment "INSTALLED_PROTOCOLS" "$1"
+    write_env_assignment "PROTOCOL_STATE_VERSION" "1"
+  } > "${SB_PROTOCOL_INDEX_FILE}"
+}
+
+extract_protocols_from_index() {
+  [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]] || return 0
+  local installed
+  installed=$(grep '^INSTALLED_PROTOCOLS=' "${SB_PROTOCOL_INDEX_FILE}" 2>/dev/null | cut -d'=' -f2- || true)
+  installed=${installed//\"/}
+  installed=${installed//\'/}
+  printf '%s' "${installed}"
+}
+
+list_installed_protocols() {
+  local installed protocol
+  installed=$(extract_protocols_from_index)
+  [[ -z "${installed}" ]] && return 0
+
+  IFS=',' read -r -a protocols <<< "${installed}"
+  for protocol in "${protocols[@]}"; do
+    protocol=$(trim_whitespace "${protocol}")
+    [[ -n "${protocol}" ]] && printf '%s\n' "${protocol}"
+  done
+}
+
+save_vless_reality_state() {
+  local state_file
+  state_file=$(protocol_state_file "vless-reality")
+
+  {
+    write_env_assignment "INSTALLED" "1"
+    write_env_assignment "CONFIG_SCHEMA_VERSION" "1"
+    write_env_assignment "NODE_NAME" "${SB_NODE_NAME}"
+    write_env_assignment "PORT" "${SB_PORT}"
+    write_env_assignment "UUID" "${SB_UUID}"
+    write_env_assignment "SNI" "${SB_SNI}"
+    write_env_assignment "REALITY_PRIVATE_KEY" "${SB_PRIVATE_KEY}"
+    write_env_assignment "REALITY_PUBLIC_KEY" "${SB_PUBLIC_KEY}"
+    write_env_assignment "SHORT_ID_1" "${SB_SHORT_ID_1}"
+    write_env_assignment "SHORT_ID_2" "${SB_SHORT_ID_2}"
+  } > "${state_file}"
+}
+
+migrate_legacy_single_protocol_state_if_needed() {
+  [[ -f "${SB_PROTOCOL_INDEX_FILE}" || ! -f "${SINGBOX_CONFIG_FILE}" ]] && return 0
+
+  local legacy_type legacy_protocol
+  legacy_type=$(jq -r '.inbounds[0].type // empty' "${SINGBOX_CONFIG_FILE}")
+
+  case "${legacy_type}" in
+    vless) legacy_protocol="vless-reality" ;;
+    mixed) legacy_protocol="mixed" ;;
+    *) return 0 ;;
+  esac
+
+  ensure_protocol_state_dir
+  write_protocol_index "${legacy_protocol}"
+
+  if [[ "${legacy_protocol}" == "vless-reality" ]]; then
+    SB_PROTOCOL="vless+reality"
+    SB_NODE_NAME="vless_reality_$(hostname)"
+    SB_PORT=$(jq -r '.inbounds[0].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")
+    SB_UUID=$(jq -r '.inbounds[0].users[0].uuid // ""' "${SINGBOX_CONFIG_FILE}")
+    SB_SNI=$(jq -r '.inbounds[0].tls.server_name // "apple.com"' "${SINGBOX_CONFIG_FILE}")
+    SB_PRIVATE_KEY=$(jq -r '.inbounds[0].tls.reality.private_key // ""' "${SINGBOX_CONFIG_FILE}")
+    SB_SHORT_ID_1=$(jq -r '.inbounds[0].tls.reality.short_id[0] // ""' "${SINGBOX_CONFIG_FILE}")
+    SB_SHORT_ID_2=$(jq -r '.inbounds[0].tls.reality.short_id[1] // ""' "${SINGBOX_CONFIG_FILE}")
+    if [[ -f "${SB_KEY_FILE}" ]]; then
+      SB_PUBLIC_KEY=$(grep '^PUBLIC_KEY=' "${SB_KEY_FILE}" 2>/dev/null | cut -d'=' -f2- | tr -d '\r\n ' || true)
+    else
+      SB_PUBLIC_KEY=""
+    fi
+    save_vless_reality_state
+  fi
 }
 
 set_protocol_defaults() {
