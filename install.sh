@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026040906
+# Version: 2026040907
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026040906"
+readonly SCRIPT_VERSION="2026040907"
 readonly SB_SUPPORT_MAX_VERSION="1.13.6"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -632,7 +632,7 @@ prompt_hy2_update() {
       *) log_warn "保留当前 ACME 模式: ${SB_HY2_ACME_MODE}" ;;
     esac
 
-    read -rp "ACME 邮箱 (当前: ${SB_HY2_ACME_EMAIL}, 留空保持): " in_acme_email
+    read -rp "ACME 邮箱 (当前: ${SB_HY2_ACME_EMAIL}, 留空保持，用于证书通知): " in_acme_email
     [[ -n "${in_acme_email}" ]] && SB_HY2_ACME_EMAIL="${in_acme_email}"
     read -rp "ACME 域名 (当前: ${SB_HY2_ACME_DOMAIN:-${SB_HY2_DOMAIN}}, 留空保持): " in_acme_domain
     [[ -n "${in_acme_domain}" ]] && SB_HY2_ACME_DOMAIN="${in_acme_domain}"
@@ -850,7 +850,7 @@ prompt_hy2_install() {
       *) SB_HY2_ACME_MODE="http" ;;
     esac
 
-    read -rp "ACME 邮箱: " in_acme_email
+    read -rp "ACME 邮箱 (可留空，用于证书通知): " in_acme_email
     SB_HY2_ACME_EMAIL="${in_acme_email}"
     read -rp "ACME 域名 (默认 ${SB_HY2_DOMAIN}): " in_acme_domain
     SB_HY2_ACME_DOMAIN=${in_acme_domain:-$SB_HY2_DOMAIN}
@@ -2096,9 +2096,14 @@ build_hy2_certificate_provider_json() {
     '{
       "type": "acme",
       "tag": $tag,
-      "domain": [ $domain ],
-      "email": $email
+      "domain": [ $domain ]
     } + (
+      if $email != "" then
+        { "email": $email }
+      else
+        {}
+      end
+    ) + (
       if $acme_mode == "dns" then
         {
           "dns01_challenge": {
