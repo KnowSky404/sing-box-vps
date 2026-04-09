@@ -72,6 +72,7 @@ setup_service() { :; }
 open_firewall_port() { :; }
 display_info() { :; }
 check_port_conflict() { :; }
+display_status_summary() { :; }
 systemctl() {
   if [[ "${1:-}" == "restart" && "${2:-}" == "sing-box" ]]; then
     local current_count

@@ -42,7 +42,9 @@ export PATH="${TMP_DIR}/bin:${PATH}"
 source "${TESTABLE_INSTALL}"
 
 GENERATE_CONFIG_COUNT_FILE="${TMP_DIR}/generate_config.count"
+POST_CONFIG_COUNT_FILE="${TMP_DIR}/post_config.count"
 printf '0\n' > "${GENERATE_CONFIG_COUNT_FILE}"
+printf '0\n' > "${POST_CONFIG_COUNT_FILE}"
 
 show_banner() { :; }
 check_root() { :; }
@@ -65,6 +67,12 @@ open_firewall_port() { :; }
 display_info() { :; }
 check_port_conflict() { :; }
 systemctl() { :; }
+display_status_summary() { :; }
+show_post_config_connection_info() {
+  local current_count
+  current_count=$(cat "${POST_CONFIG_COUNT_FILE}")
+  printf '%s\n' "$((current_count + 1))" > "${POST_CONFIG_COUNT_FILE}"
+}
 load_current_config_state() {
   SB_PROTOCOL="vless+reality"
   SB_PORT="443"
@@ -122,8 +130,14 @@ EOF
 )
 
 generate_config_calls=$(cat "${GENERATE_CONFIG_COUNT_FILE}")
+post_config_calls=$(cat "${POST_CONFIG_COUNT_FILE}")
 
 if (( generate_config_calls != 0 )); then
   printf 'expected update path to preserve existing config, but generate_config ran %s time(s)\n' "${generate_config_calls}" >&2
+  exit 1
+fi
+
+if (( post_config_calls != 0 )); then
+  printf 'expected update path to avoid auto-showing connection info, but post-config display ran %s time(s)\n' "${post_config_calls}" >&2
   exit 1
 fi

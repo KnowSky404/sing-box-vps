@@ -1514,7 +1514,8 @@ warp_management() {
     log_success "Warp 配置已更新并重启服务。"
 
     load_current_config_state
-    display_info
+    display_status_summary
+    log_info "连接信息未自动展示，如需查看请进入菜单 8。"
   done
 }
 
@@ -1522,7 +1523,8 @@ warp_management() {
 view_status_and_info() {
   log_info "正在从配置文件中读取信息..."
   load_current_config_state
-  display_info
+  display_status_summary
+  show_connection_info_menu
 }
 
 # New function: Update config only
@@ -1597,61 +1599,146 @@ update_config_only() {
 
 
   # Final display
-  display_info
+  display_status_summary
+  show_post_config_connection_info
 }
 
-display_info() {
-  local public_ip=$(curl -s https://api.ip.sb/ip || curl -s https://ifconfig.me)
-  local protocol_name
+get_public_ip() {
+  curl -s https://api.ip.sb/ip || curl -s https://ifconfig.me
+}
+
+build_vless_link() {
+  local public_ip=$1
+  printf 'vless://%s@%s:%s?security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&flow=xtls-rprx-vision#%s' \
+    "${SB_UUID}" "${public_ip}" "${SB_PORT}" "${SB_SNI}" "${SB_PUBLIC_KEY:-[密钥丢失，请更新配置]}" "${SB_SHORT_ID_1}" "${SB_NODE_NAME}"
+}
+
+build_mixed_http_link() {
+  local public_ip=$1
+
+  if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
+    printf 'http://%s:%s@%s:%s' "${SB_MIXED_USERNAME}" "${SB_MIXED_PASSWORD}" "${public_ip}" "${SB_PORT}"
+  else
+    printf 'http://%s:%s' "${public_ip}" "${SB_PORT}"
+  fi
+}
+
+build_mixed_socks5_link() {
+  local public_ip=$1
+
+  if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
+    printf 'socks5://%s:%s@%s:%s' "${SB_MIXED_USERNAME}" "${SB_MIXED_PASSWORD}" "${public_ip}" "${SB_PORT}"
+  else
+    printf 'socks5://%s:%s' "${public_ip}" "${SB_PORT}"
+  fi
+}
+
+display_status_summary() {
+  local public_ip protocol_name
+  public_ip=${1:-$(get_public_ip)}
   protocol_name=$(protocol_display_name "${SB_PROTOCOL}")
 
-  echo -e "\n${GREEN}服务状态与节点信息：${NC}"
+  echo -e "\n${GREEN}服务状态摘要：${NC}"
   echo "-------------------------------------------------------------"
   echo -e "进程状态: $(systemctl is-active sing-box)"
   echo -e "协议: ${protocol_name}"
-  echo -e "地址: ${public_ip}  端口: ${SB_PORT}"
-
-  if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
-    local vless_link="vless://${SB_UUID}@${public_ip}:${SB_PORT}?security=reality&sni=${SB_SNI}&fp=chrome&pbk=${SB_PUBLIC_KEY}&sid=${SB_SHORT_ID_1}&flow=xtls-rprx-vision#${SB_NODE_NAME}"
-    echo -e "UUID: ${SB_UUID}"
-    echo -e "SNI:  ${SB_SNI} (REALITY)"
-    echo -e "PBK:  ${SB_PUBLIC_KEY:-[密钥丢失，请更新配置]}"
-    echo -e "SID:  ${SB_SHORT_ID_1}, ${SB_SHORT_ID_2}"
-
-    if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
-      echo -e "Warp: 已开启 (${SB_WARP_ROUTE_MODE})"
-    else
-      echo -e "Warp: 未开启"
-    fi
-    echo -e "${YELLOW}VLESS 链接:${NC}\n${vless_link}\n"
-
-    echo -e "${YELLOW}节点二维码:${NC}"
-    qrencode -t ansiutf8 "${vless_link}"
+  echo -e "地址: ${public_ip}"
+  echo -e "端口: ${SB_PORT}"
+  if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
+    echo -e "Warp: 已开启 (${SB_WARP_ROUTE_MODE})"
   else
-    if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
-      echo -e "认证: 已启用"
-      echo -e "用户名: ${SB_MIXED_USERNAME}"
-      echo -e "密码: ${SB_MIXED_PASSWORD}"
-      echo -e "HTTP 代理: http://${SB_MIXED_USERNAME}:${SB_MIXED_PASSWORD}@${public_ip}:${SB_PORT}"
-      echo -e "SOCKS5 代理: socks5://${SB_MIXED_USERNAME}:${SB_MIXED_PASSWORD}@${public_ip}:${SB_PORT}"
-    else
-      echo -e "认证: 未启用"
-      log_warn "当前 Mixed 代理未启用认证，请尽快确认防火墙限制或开启认证。"
-      echo -e "HTTP 代理: http://${public_ip}:${SB_PORT}"
-      echo -e "SOCKS5 代理: socks5://${public_ip}:${SB_PORT}"
-    fi
-
-    if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
-      echo -e "Warp: 已开启 (${SB_WARP_ROUTE_MODE})"
-    else
-      echo -e "Warp: 未开启"
-    fi
-    echo -e "说明: HTTPS 网站通过 HTTP 代理的 CONNECT 模式转发。"
+    echo -e "Warp: 未开启"
   fi
-
-  echo "--------------------------------"
   echo -e "配置文件: ${SINGBOX_CONFIG_FILE}"
   echo "-------------------------------------------------------------"
+}
+
+show_link_info() {
+  local public_ip=$1
+
+  echo -e "\n${YELLOW}连接链接：${NC}"
+  if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
+    echo "1. REALITY 协议链接"
+    build_vless_link "${public_ip}"
+    echo ""
+    return 0
+  fi
+
+  echo "1. Mixed HTTP 代理链接"
+  build_mixed_http_link "${public_ip}"
+  echo ""
+  echo "2. Mixed SOCKS5 代理链接"
+  build_mixed_socks5_link "${public_ip}"
+  echo ""
+  if [[ "${SB_MIXED_AUTH_ENABLED}" != "y" ]]; then
+    log_warn "当前 Mixed 代理未启用认证，请尽快确认防火墙限制或开启认证。"
+  fi
+}
+
+show_qr_info() {
+  local public_ip=$1
+
+  echo -e "\n${YELLOW}连接二维码：${NC}"
+  if [[ "${SB_PROTOCOL}" == "mixed" ]]; then
+    log_info "Mixed 协议当前不提供二维码，请使用链接方式手动配置客户端。"
+    return 0
+  fi
+
+  echo "1. REALITY 协议二维码"
+  qrencode -t ansiutf8 "$(build_vless_link "${public_ip}")"
+}
+
+show_connection_details() {
+  local mode=$1
+  local public_ip=${2:-$(get_public_ip)}
+
+  case "${mode}" in
+    link)
+      show_link_info "${public_ip}"
+      ;;
+    qr)
+      show_qr_info "${public_ip}"
+      ;;
+    both)
+      show_link_info "${public_ip}"
+      show_qr_info "${public_ip}"
+      ;;
+    *)
+      log_warn "未知的连接信息展示模式: ${mode}"
+      return 1
+      ;;
+  esac
+}
+
+show_connection_info_menu() {
+  local public_ip
+  public_ip=$(get_public_ip)
+
+  while true; do
+    echo -e "\n${BLUE}--- 连接信息查看 ---${NC}"
+    echo "1. 仅链接"
+    echo "2. 仅二维码"
+    echo "3. 链接 + 二维码"
+    echo "0. 返回"
+    read -rp "请选择 [0-3]: " info_choice
+
+    case "${info_choice}" in
+      1) show_connection_details "link" "${public_ip}" ;;
+      2) show_connection_details "qr" "${public_ip}" ;;
+      3) show_connection_details "both" "${public_ip}" ;;
+      0) return ;;
+      *) log_warn "无效选项，请重新选择。" ;;
+    esac
+  done
+}
+
+show_post_config_connection_info() {
+  local public_ip
+  public_ip=$(get_public_ip)
+
+  echo -e "\n${GREEN}连接信息：${NC}"
+  echo "已按当前配置生成以下连接信息。后续如需再次查看，可进入菜单 8。"
+  show_connection_details "both" "${public_ip}"
 }
 
 prompt_singbox_version() {
@@ -1720,7 +1807,8 @@ install_or_reconfigure_singbox() {
   setup_service
   open_firewall_port "${SB_PORT}"
   systemctl restart sing-box
-  display_info
+  display_status_summary
+  show_post_config_connection_info
 }
 
 update_singbox_binary_preserving_config() {
@@ -1759,7 +1847,8 @@ update_singbox_binary_preserving_config() {
   setup_service
   systemctl restart sing-box
   log_success "sing-box 已更新到 ${SB_VERSION}，当前配置已保留。"
-  display_info
+  display_status_summary
+  log_info "连接信息未自动展示，如需查看请进入菜单 8。"
 }
 
 install_or_update_singbox() {
