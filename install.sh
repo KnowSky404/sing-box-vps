@@ -2040,6 +2040,7 @@ list_effective_protocols() {
   fi
 
   runtime_protocol_to_state "${SB_PROTOCOL}"
+  printf '\n'
 }
 
 load_protocol_state() {
@@ -2161,14 +2162,14 @@ ensure_vless_reality_materials() {
 
   if [[ -z "${SB_PRIVATE_KEY}" || -z "${SB_PUBLIC_KEY}" ]]; then
     if [[ -f "${SB_KEY_FILE}" ]]; then
-      log_info "使用现有密钥对..."
+      log_info "使用现有密钥对..." >&2
       [[ -z "${SB_PRIVATE_KEY}" ]] && SB_PRIVATE_KEY=$(grep '^PRIVATE_KEY=' "${SB_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
       [[ -z "${SB_PUBLIC_KEY}" ]] && SB_PUBLIC_KEY=$(grep '^PUBLIC_KEY=' "${SB_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
     fi
   fi
 
   if [[ -z "${SB_PRIVATE_KEY}" || -z "${SB_PUBLIC_KEY}" ]]; then
-    log_info "正在生成新的 REALITY 密钥对..."
+    log_info "正在生成新的 REALITY 密钥对..." >&2
     local keypair
     keypair=$("${SINGBOX_BIN_PATH}" generate reality-keypair)
     SB_PRIVATE_KEY=$(echo "${keypair}" | grep "PrivateKey" | awk '{print $2}')
@@ -2671,6 +2672,16 @@ check_bbr_status() {
 }
 
 apply_stack_mode_changes() {
+  local selected_inbound selected_outbound
+  selected_inbound="${SB_INBOUND_STACK_MODE}"
+  selected_outbound="${SB_OUTBOUND_STACK_MODE}"
+
+  if [[ -f "${SINGBOX_CONFIG_FILE}" || -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
+    load_current_config_state
+    SB_INBOUND_STACK_MODE="${selected_inbound}"
+    SB_OUTBOUND_STACK_MODE="${selected_outbound}"
+  fi
+
   save_stack_mode_state
 
   if [[ ! -f "${SINGBOX_CONFIG_FILE}" && ! -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
@@ -2768,9 +2779,14 @@ configure_outbound_stack_mode() {
 stack_management_menu() {
   local host_stack
 
-  ensure_stack_mode_state_loaded
-
   while true; do
+    if [[ -f "${SINGBOX_CONFIG_FILE}" || -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
+      load_current_config_state
+    else
+      ensure_stack_mode_state_loaded
+      SB_ENABLE_WARP="n"
+    fi
+
     host_stack=$(detect_host_ip_stack)
 
     echo -e "\n${BLUE}--- 协议栈管理 ---${NC}"
