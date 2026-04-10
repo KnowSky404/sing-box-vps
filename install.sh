@@ -18,6 +18,7 @@ readonly SB_WARP_ROUTE_SETTINGS_FILE="${SB_PROJECT_DIR}/warp-routing.env"
 readonly SB_WARP_DOMAINS_FILE="${SB_PROJECT_DIR}/warp-domains.txt"
 readonly SB_WARP_REMOTE_RULESETS_FILE="${SB_PROJECT_DIR}/warp-remote-rule-sets.txt"
 readonly SB_WARP_LOCAL_RULESET_DIR="${SB_PROJECT_DIR}/rule-set/warp"
+readonly SB_STACK_STATE_FILE="${SB_PROJECT_DIR}/stack-mode.env"
 readonly SB_MEDIA_CHECK_DIR="${SB_PROJECT_DIR}/media-check"
 readonly SB_MEDIA_CHECK_SCRIPT="${SB_MEDIA_CHECK_DIR}/region_restriction_check.sh"
 readonly SB_PROTOCOL_STATE_DIR="${SB_PROJECT_DIR}/protocols"
@@ -76,6 +77,8 @@ SB_HY2_MASQUERADE=""
 SB_ADVANCED_ROUTE="y"
 SB_ENABLE_WARP="n"
 SB_WARP_ROUTE_MODE="all"
+SB_INBOUND_STACK_MODE=""
+SB_OUTBOUND_STACK_MODE=""
 SB_WARP_CUSTOM_DOMAINS_JSON='[]'
 SB_WARP_CUSTOM_DOMAIN_SUFFIXES_JSON='[]'
 SB_WARP_LOCAL_RULE_SETS_JSON='[]'
@@ -182,6 +185,196 @@ validate_warp_route_mode() {
     all|selective) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+validate_inbound_stack_mode() {
+  case "$1" in
+    ipv4_only|ipv6_only|dual_stack) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_outbound_stack_mode() {
+  case "$1" in
+    ipv4_only|ipv6_only|prefer_ipv4|prefer_ipv6) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+inbound_stack_mode_display_name() {
+  case "$1" in
+    ipv4_only) printf '仅 IPv4' ;;
+    ipv6_only) printf '仅 IPv6' ;;
+    dual_stack) printf '双栈' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+outbound_stack_mode_display_name() {
+  case "$1" in
+    ipv4_only) printf '仅 IPv4' ;;
+    ipv6_only) printf '仅 IPv6' ;;
+    prefer_ipv4) printf 'IPv4 优先' ;;
+    prefer_ipv6) printf 'IPv6 优先' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+host_ip_stack_display_name() {
+  case "$1" in
+    dual) printf 'IPv4 / IPv6 双栈' ;;
+    ipv6) printf '仅 IPv6' ;;
+    *) printf '仅 IPv4' ;;
+  esac
+}
+
+detect_host_ip_stack() {
+  local has_ipv4="n"
+  local has_ipv6="n"
+
+  if command -v ip &>/dev/null; then
+    if ip -o -4 addr show scope global 2>/dev/null | grep -q .; then
+      has_ipv4="y"
+    fi
+
+    if ip -o -6 addr show scope global 2>/dev/null | grep -q .; then
+      has_ipv6="y"
+    fi
+  fi
+
+  if [[ "${has_ipv4}" == "y" && "${has_ipv6}" == "y" ]]; then
+    printf 'dual'
+  elif [[ "${has_ipv6}" == "y" ]]; then
+    printf 'ipv6'
+  else
+    printf 'ipv4'
+  fi
+}
+
+default_inbound_stack_mode() {
+  case "$1" in
+    dual) printf 'dual_stack' ;;
+    ipv6) printf 'ipv6_only' ;;
+    *) printf 'ipv4_only' ;;
+  esac
+}
+
+default_outbound_stack_mode() {
+  printf 'prefer_ipv4'
+}
+
+host_supports_inbound_stack_mode() {
+  local host_stack=$1
+  local inbound_stack_mode=$2
+
+  case "${host_stack}:${inbound_stack_mode}" in
+    dual:ipv4_only|dual:ipv6_only|dual:dual_stack|ipv4:ipv4_only|ipv6:ipv6_only) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+infer_inbound_stack_mode_from_config() {
+  local config_file=$1
+  local host_stack=$2
+  local listen_address
+
+  listen_address=$(jq -r '.inbounds[0].listen // empty' "${config_file}" 2>/dev/null || true)
+  case "${listen_address}" in
+    0.0.0.0) printf 'ipv4_only' ;;
+    ::)
+      if [[ "${host_stack}" == "ipv6" ]]; then
+        printf 'ipv6_only'
+      else
+        printf 'dual_stack'
+      fi
+      ;;
+    *)
+      default_inbound_stack_mode "${host_stack}"
+      ;;
+  esac
+}
+
+infer_outbound_stack_mode_from_config() {
+  local config_file=$1
+  local outbound_stack_mode
+
+  outbound_stack_mode=$(jq -r '.dns.strategy // first(.outbounds[]? | select(.tag == "direct") | .domain_resolver.strategy) // empty' "${config_file}" 2>/dev/null || true)
+  if validate_outbound_stack_mode "${outbound_stack_mode}"; then
+    printf '%s' "${outbound_stack_mode}"
+    return 0
+  fi
+
+  default_outbound_stack_mode
+}
+
+save_stack_mode_state() {
+  mkdir -p "${SB_PROJECT_DIR}"
+  cat > "${SB_STACK_STATE_FILE}" <<EOF
+STACK_STATE_VERSION=1
+INBOUND_STACK_MODE=${SB_INBOUND_STACK_MODE}
+OUTBOUND_STACK_MODE=${SB_OUTBOUND_STACK_MODE}
+EOF
+}
+
+load_stack_mode_state() {
+  local host_stack saved_inbound saved_outbound
+
+  host_stack=$(detect_host_ip_stack)
+  SB_INBOUND_STACK_MODE=$(default_inbound_stack_mode "${host_stack}")
+  SB_OUTBOUND_STACK_MODE=$(default_outbound_stack_mode)
+
+  if [[ -f "${SB_STACK_STATE_FILE}" ]]; then
+    # shellcheck disable=SC1090
+    source "${SB_STACK_STATE_FILE}"
+    saved_inbound=${INBOUND_STACK_MODE:-}
+    saved_outbound=${OUTBOUND_STACK_MODE:-}
+
+    if validate_inbound_stack_mode "${saved_inbound}" && host_supports_inbound_stack_mode "${host_stack}" "${saved_inbound}"; then
+      SB_INBOUND_STACK_MODE="${saved_inbound}"
+    fi
+
+    if validate_outbound_stack_mode "${saved_outbound}"; then
+      SB_OUTBOUND_STACK_MODE="${saved_outbound}"
+    fi
+    return 0
+  fi
+
+  if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    SB_INBOUND_STACK_MODE=$(infer_inbound_stack_mode_from_config "${SINGBOX_CONFIG_FILE}" "${host_stack}")
+    SB_OUTBOUND_STACK_MODE=$(infer_outbound_stack_mode_from_config "${SINGBOX_CONFIG_FILE}")
+  fi
+}
+
+ensure_stack_mode_state_loaded() {
+  local inbound_valid="n"
+  local outbound_valid="n"
+  local current_inbound=${SB_INBOUND_STACK_MODE:-}
+  local current_outbound=${SB_OUTBOUND_STACK_MODE:-}
+  local host_stack
+
+  host_stack=$(detect_host_ip_stack)
+
+  if validate_inbound_stack_mode "${current_inbound}" && host_supports_inbound_stack_mode "${host_stack}" "${current_inbound}"; then
+    inbound_valid="y"
+  fi
+
+  if validate_outbound_stack_mode "${current_outbound}"; then
+    outbound_valid="y"
+  fi
+
+  if [[ "${inbound_valid}" == "y" && "${outbound_valid}" == "y" ]]; then
+    return 0
+  fi
+
+  load_stack_mode_state
+
+  if [[ "${inbound_valid}" == "y" ]]; then
+    SB_INBOUND_STACK_MODE="${current_inbound}"
+  fi
+
+  if [[ "${outbound_valid}" == "y" ]]; then
+    SB_OUTBOUND_STACK_MODE="${current_outbound}"
+  fi
 }
 
 validate_protocol() {
@@ -518,7 +711,7 @@ prompt_installed_protocol_selection() {
     read -rp "请选择 [0-${#protocols[@]}]: " choice
 
     if [[ "${choice}" == "0" ]]; then
-      return 1
+      return 0
     fi
 
     if [[ "${choice}" =~ ^[1-9][0-9]*$ ]] && (( choice >= 1 && choice <= ${#protocols[@]} )); then
@@ -916,6 +1109,8 @@ install_protocols_interactive() {
   local install_mode=$1
   local installed_protocols=() selected_protocols=()
   local protocol first_selected_protocol
+
+  load_stack_mode_state
 
   if [[ "${install_mode}" == "fresh" ]]; then
     get_os_info
@@ -2018,11 +2213,21 @@ ensure_hy2_materials() {
   return 0
 }
 
+stack_inbound_listen_address() {
+  ensure_stack_mode_state_loaded
+
+  case "${SB_INBOUND_STACK_MODE}" in
+    ipv4_only) printf '0.0.0.0' ;;
+    *) printf '::' ;;
+  esac
+}
+
 build_vless_inbound_json() {
   ensure_vless_reality_materials
 
   jq -n \
     --arg tag "vless-in" \
+    --arg listen "$(stack_inbound_listen_address)" \
     --arg port "${SB_PORT}" \
     --arg uuid "${SB_UUID}" \
     --arg sni "${SB_SNI}" \
@@ -2032,7 +2237,7 @@ build_vless_inbound_json() {
     '{
       "type": "vless",
       "tag": $tag,
-      "listen": "::",
+      "listen": $listen,
       "listen_port": ($port | tonumber),
       "users": [ { "uuid": $uuid, "flow": "xtls-rprx-vision" } ],
       "tls": {
@@ -2053,6 +2258,7 @@ build_mixed_inbound_json() {
 
   jq -n \
     --arg tag "mixed-in" \
+    --arg listen "$(stack_inbound_listen_address)" \
     --arg port "${SB_PORT}" \
     --arg mixed_auth_enabled "${SB_MIXED_AUTH_ENABLED}" \
     --arg mixed_username "${SB_MIXED_USERNAME}" \
@@ -2060,7 +2266,7 @@ build_mixed_inbound_json() {
     '{
       "type": "mixed",
       "tag": $tag,
-      "listen": "::",
+      "listen": $listen,
       "listen_port": ($port | tonumber)
     } + (
       if $mixed_auth_enabled == "y" then
@@ -2122,6 +2328,7 @@ build_hy2_inbound_json() {
 
   jq -n \
     --arg tag "hy2-in" \
+    --arg listen "$(stack_inbound_listen_address)" \
     --arg port "${SB_PORT}" \
     --arg user_name "${SB_HY2_USER_NAME}" \
     --arg password "${SB_HY2_PASSWORD}" \
@@ -2139,7 +2346,7 @@ build_hy2_inbound_json() {
     '{
       "type": "hysteria2",
       "tag": $tag,
-      "listen": "::",
+      "listen": $listen,
       "listen_port": ($port | tonumber),
       "users": [
         {
@@ -2257,6 +2464,8 @@ generate_config() {
   local inbound_file provider_file protocol_rule_file protocol
   local inbounds_json certificate_providers_json protocol_rules_json
 
+  ensure_stack_mode_state_loaded
+
   inbound_file=$(mktemp)
   provider_file=$(mktemp)
   protocol_rule_file=$(mktemp)
@@ -2280,6 +2489,7 @@ generate_config() {
     --arg w_key "${w_key}" \
     --arg w_v4 "${w_v4}/32" \
     --arg w_v6 "${w_v6}/128" \
+    --arg outbound_stack_mode "${SB_OUTBOUND_STACK_MODE}" \
     --argjson inbounds "${inbounds_json}" \
     --argjson certificate_providers "${certificate_providers_json}" \
     --argjson protocol_rules "${protocol_rules_json}" \
@@ -2294,6 +2504,15 @@ generate_config() {
     --argjson warp_rule_set_tags "${SB_WARP_RULE_SET_TAGS_JSON}" \
     '{
       "log": { "level": "info", "timestamp": true },
+      "dns": {
+        "servers": [
+          {
+            "type": "local",
+            "tag": "local-dns"
+          }
+        ],
+        "strategy": $outbound_stack_mode
+      },
       "endpoints": (if $enable_warp == "y" then [
         {
           "type": "wireguard",
@@ -2313,7 +2532,14 @@ generate_config() {
       ] else [] end),
       "inbounds": $inbounds,
       "outbounds": [
-        { "type": "direct", "tag": "direct" },
+        {
+          "type": "direct",
+          "tag": "direct",
+          "domain_resolver": {
+            "server": "local-dns",
+            "strategy": $outbound_stack_mode
+          }
+        },
         { "type": "block", "tag": "block" }
       ],
       "route": {
@@ -2444,6 +2670,150 @@ check_bbr_status() {
   fi
 }
 
+apply_stack_mode_changes() {
+  save_stack_mode_state
+
+  if [[ ! -f "${SINGBOX_CONFIG_FILE}" && ! -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
+    log_success "协议栈设置已保存，将在首次安装或下次生成配置时生效。"
+    return 0
+  fi
+
+  generate_config
+  check_config_valid
+  setup_service
+  open_all_protocol_ports
+  systemctl restart sing-box
+  log_success "协议栈设置已保存并重启服务。"
+}
+
+configure_inbound_stack_mode() {
+  local host_stack choice selected_mode
+  local available_modes=()
+  local index
+
+  ensure_stack_mode_state_loaded
+  host_stack=$(detect_host_ip_stack)
+
+  case "${host_stack}" in
+    dual) available_modes=(ipv4_only ipv6_only dual_stack) ;;
+    ipv6) available_modes=(ipv6_only) ;;
+    *) available_modes=(ipv4_only) ;;
+  esac
+
+  while true; do
+    echo -e "\n${BLUE}--- 入站协议栈 ---${NC}"
+    echo "系统网络能力: $(host_ip_stack_display_name "${host_stack}")"
+    echo "当前入站协议栈: $(inbound_stack_mode_display_name "${SB_INBOUND_STACK_MODE}")"
+
+    for index in "${!available_modes[@]}"; do
+      echo "$((index + 1)). $(inbound_stack_mode_display_name "${available_modes[$index]}")"
+    done
+    echo "0. 返回"
+    read -rp "请选择 [0-${#available_modes[@]}]: " choice
+
+    if [[ "${choice}" == "0" ]]; then
+      return 0
+    fi
+
+    if [[ "${choice}" =~ ^[1-9][0-9]*$ ]] && (( choice >= 1 && choice <= ${#available_modes[@]} )); then
+      selected_mode="${available_modes[$((choice - 1))]}"
+      [[ "${selected_mode}" == "${SB_INBOUND_STACK_MODE}" ]] && return 0
+      SB_INBOUND_STACK_MODE="${selected_mode}"
+      apply_stack_mode_changes
+      return 0
+    fi
+
+    log_warn "无效选项，请重新选择。"
+  done
+}
+
+configure_outbound_stack_mode() {
+  local choice selected_mode
+  local available_modes=(ipv4_only ipv6_only prefer_ipv4 prefer_ipv6)
+  local index
+
+  ensure_stack_mode_state_loaded
+
+  if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
+    log_warn "当前已开启 Warp，出站协议栈设置不生效，已禁止修改。"
+    return 0
+  fi
+
+  while true; do
+    echo -e "\n${BLUE}--- 出站协议栈 ---${NC}"
+    echo "当前出站协议栈: $(outbound_stack_mode_display_name "${SB_OUTBOUND_STACK_MODE}")"
+
+    for index in "${!available_modes[@]}"; do
+      echo "$((index + 1)). $(outbound_stack_mode_display_name "${available_modes[$index]}")"
+    done
+    echo "0. 返回"
+    read -rp "请选择 [0-${#available_modes[@]}]: " choice
+
+    if [[ "${choice}" == "0" ]]; then
+      return 0
+    fi
+
+    if [[ "${choice}" =~ ^[1-9][0-9]*$ ]] && (( choice >= 1 && choice <= ${#available_modes[@]} )); then
+      selected_mode="${available_modes[$((choice - 1))]}"
+      [[ "${selected_mode}" == "${SB_OUTBOUND_STACK_MODE}" ]] && return 0
+      SB_OUTBOUND_STACK_MODE="${selected_mode}"
+      apply_stack_mode_changes
+      return 0
+    fi
+
+    log_warn "无效选项，请重新选择。"
+  done
+}
+
+stack_management_menu() {
+  local host_stack
+
+  ensure_stack_mode_state_loaded
+
+  while true; do
+    host_stack=$(detect_host_ip_stack)
+
+    echo -e "\n${BLUE}--- 协议栈管理 ---${NC}"
+    echo "系统网络能力: $(host_ip_stack_display_name "${host_stack}")"
+    echo "当前入站协议栈: $(inbound_stack_mode_display_name "${SB_INBOUND_STACK_MODE}")"
+    echo "当前出站协议栈: $(outbound_stack_mode_display_name "${SB_OUTBOUND_STACK_MODE}")"
+    if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
+      echo "Warp 状态: 已开启 (出站协议栈当前不生效)"
+    else
+      echo "Warp 状态: 未开启"
+    fi
+    echo "1. 修改入站协议栈"
+    echo "2. 修改出站协议栈"
+    echo "0. 返回上一级"
+    read -rp "请选择 [0-2]: " stack_choice
+
+    case "${stack_choice}" in
+      1) configure_inbound_stack_mode || true ;;
+      2) configure_outbound_stack_mode || true ;;
+      0) return ;;
+      *) log_warn "无效选项，请重新选择。" ;;
+    esac
+  done
+}
+
+system_management_menu() {
+  while true; do
+    check_bbr_status
+    echo -e "\n${BLUE}--- 系统管理 ---${NC}"
+    echo -e "1. 开启 BBR ${BBR_STATUS}"
+    echo "2. 协议栈管理"
+    echo "0. 返回主菜单"
+    read -rp "请选择 [0-2]: " system_choice
+
+    case "${system_choice}" in
+      1) enable_bbr ;;
+      2) stack_management_menu ;;
+      0) return ;;
+      *) log_warn "无效选项，请重新选择。" ;;
+    esac
+  done
+}
+
 # Detect whether the current config enables Warp.
 # Prefer the current endpoint-based schema, but keep compatibility with older configs.
 config_has_warp_enabled() {
@@ -2514,6 +2884,8 @@ load_current_config_state() {
 
     load_warp_route_settings
   fi
+
+  load_stack_mode_state
 
   if [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
     mapfile -t installed_protocols < <(list_installed_protocols)
@@ -2756,32 +3128,57 @@ update_config_only() {
 }
 
 get_public_ip() {
-  curl -s https://api.ip.sb/ip || curl -s https://ifconfig.me
+  get_public_ipv4 || get_public_ipv6
+}
+
+get_public_ipv4() {
+  curl -4 -s https://api.ip.sb/ip 2>/dev/null || curl -4 -s https://ifconfig.me 2>/dev/null || true
+}
+
+get_public_ipv6() {
+  curl -6 -s https://api.ip.sb/ip 2>/dev/null || curl -6 -s https://ifconfig.me 2>/dev/null || true
+}
+
+format_share_host() {
+  local host=$1
+
+  if [[ "${host}" == *:* && "${host}" != \[*\] ]]; then
+    printf '[%s]' "${host}"
+  else
+    printf '%s' "${host}"
+  fi
 }
 
 build_vless_link() {
   local public_ip=$1
+  local share_host
+  share_host=$(format_share_host "${public_ip}")
+
   printf 'vless://%s@%s:%s?security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&flow=xtls-rprx-vision#%s' \
-    "${SB_UUID}" "${public_ip}" "${SB_PORT}" "${SB_SNI}" "${SB_PUBLIC_KEY:-[密钥丢失，请更新配置]}" "${SB_SHORT_ID_1}" "${SB_NODE_NAME}"
+    "${SB_UUID}" "${share_host}" "${SB_PORT}" "${SB_SNI}" "${SB_PUBLIC_KEY:-[密钥丢失，请更新配置]}" "${SB_SHORT_ID_1}" "${SB_NODE_NAME}"
 }
 
 build_mixed_http_link() {
   local public_ip=$1
+  local share_host
+  share_host=$(format_share_host "${public_ip}")
 
   if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
-    printf 'http://%s:%s@%s:%s' "${SB_MIXED_USERNAME}" "${SB_MIXED_PASSWORD}" "${public_ip}" "${SB_PORT}"
+    printf 'http://%s:%s@%s:%s' "${SB_MIXED_USERNAME}" "${SB_MIXED_PASSWORD}" "${share_host}" "${SB_PORT}"
   else
-    printf 'http://%s:%s' "${public_ip}" "${SB_PORT}"
+    printf 'http://%s:%s' "${share_host}" "${SB_PORT}"
   fi
 }
 
 build_mixed_socks5_link() {
   local public_ip=$1
+  local share_host
+  share_host=$(format_share_host "${public_ip}")
 
   if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
-    printf 'socks5://%s:%s@%s:%s' "${SB_MIXED_USERNAME}" "${SB_MIXED_PASSWORD}" "${public_ip}" "${SB_PORT}"
+    printf 'socks5://%s:%s@%s:%s' "${SB_MIXED_USERNAME}" "${SB_MIXED_PASSWORD}" "${share_host}" "${SB_PORT}"
   else
-    printf 'socks5://%s:%s' "${public_ip}" "${SB_PORT}"
+    printf 'socks5://%s:%s' "${share_host}" "${SB_PORT}"
   fi
 }
 
@@ -2797,7 +3194,7 @@ build_hy2_link() {
 
   printf 'hy2://%s@%s:%s?%s#%s' \
     "${SB_HY2_PASSWORD}" \
-    "${server_host}" \
+    "$(format_share_host "${server_host}")" \
     "${SB_PORT}" \
     "${query}" \
     "${SB_NODE_NAME}"
@@ -2910,9 +3307,56 @@ show_connection_details() {
   esac
 }
 
+list_public_addresses_for_current_stack() {
+  local ipv4_address ipv6_address fallback_address
+
+  ensure_stack_mode_state_loaded
+
+  case "${SB_INBOUND_STACK_MODE}" in
+    ipv4_only)
+      ipv4_address=$(get_public_ipv4)
+      [[ -n "${ipv4_address}" ]] && printf 'IPv4 地址|%s\n' "${ipv4_address}"
+      ;;
+    ipv6_only)
+      ipv6_address=$(get_public_ipv6)
+      [[ -n "${ipv6_address}" ]] && printf 'IPv6 地址|%s\n' "${ipv6_address}"
+      ;;
+    *)
+      ipv4_address=$(get_public_ipv4)
+      ipv6_address=$(get_public_ipv6)
+      [[ -n "${ipv4_address}" ]] && printf 'IPv4 地址|%s\n' "${ipv4_address}"
+      [[ -n "${ipv6_address}" ]] && printf 'IPv6 地址|%s\n' "${ipv6_address}"
+      ;;
+  esac
+
+  if [[ -z "${ipv4_address:-}" && -z "${ipv6_address:-}" ]]; then
+    fallback_address=$(get_public_ip)
+    [[ -n "${fallback_address}" ]] && printf '地址|%s\n' "${fallback_address}"
+  fi
+}
+
+show_connection_details_for_detected_addresses() {
+  local mode=$1
+  local address_entries=()
+  local entry label address
+
+  mapfile -t address_entries < <(list_public_addresses_for_current_stack)
+
+  if [[ ${#address_entries[@]} -eq 0 ]]; then
+    show_connection_details "${mode}"
+    return 0
+  fi
+
+  for entry in "${address_entries[@]}"; do
+    label=${entry%%|*}
+    address=${entry#*|}
+    echo -e "\n${BLUE}${label}:${NC} ${address}"
+    show_connection_details "${mode}" "${address}"
+  done
+}
+
 show_all_connection_details() {
   local mode=$1
-  local public_ip=${2:-$(get_public_ip)}
   local installed_protocols=()
   local protocol original_protocol_state
 
@@ -2920,14 +3364,14 @@ show_all_connection_details() {
   mapfile -t installed_protocols < <(list_installed_protocols)
 
   if [[ ${#installed_protocols[@]} -eq 0 ]]; then
-    show_connection_details "${mode}" "${public_ip}"
+    show_connection_details_for_detected_addresses "${mode}"
     return 0
   fi
 
   for protocol in "${installed_protocols[@]}"; do
     load_protocol_state "${protocol}"
     echo -e "\n${BLUE}--- $(protocol_display_name "${SB_PROTOCOL}") ---${NC}"
-    show_connection_details "${mode}" "${public_ip}"
+    show_connection_details_for_detected_addresses "${mode}"
   done
 
   if [[ -n "${original_protocol_state}" ]] && protocol_state_exists "${original_protocol_state}"; then
@@ -3057,7 +3501,7 @@ main() {
     echo -e "1. 安装协议 / 更新 sing-box ${SB_VER_STATUS}"
     echo "2. 卸载 sing-box"
     echo "3. 修改当前协议配置"
-    echo -e "4. 开启 BBR 拥塞控制算法 ${BBR_STATUS}"
+    echo "4. 系统管理"
     echo "--------------------------------"
     echo "5. 启动 sing-box"
     echo "6. 停止 sing-box"
@@ -3077,7 +3521,7 @@ main() {
       1) install_or_update_singbox ;;
       2) uninstall_singbox ;;
       3) update_config_only ;;
-      4) enable_bbr ;;
+      4) system_management_menu ;;
       5) systemctl start sing-box && log_success "服务已启动。" ;;
       6) systemctl stop sing-box && log_success "服务已停止。" ;;
       7) systemctl restart sing-box && log_success "服务已重启。" ;;

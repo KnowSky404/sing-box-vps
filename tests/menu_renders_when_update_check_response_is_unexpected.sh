@@ -54,6 +54,16 @@ if [[ "${output}" != *"1. 安装协议 / 更新 sing-box"* ]]; then
   exit 1
 fi
 
+if [[ "${output}" != *"4. 系统管理"* ]]; then
+  printf 'expected system management menu entry to render, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${output}" == *"开启 BBR 拥塞控制算法"* ]]; then
+  printf 'expected BBR entry to move out of the main menu, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
 if [[ "${output}" != *"8. 查看状态"* ]]; then
   printf 'expected status menu entry to render, got:\n%s\n' "${output}" >&2
   exit 1
