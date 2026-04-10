@@ -2708,25 +2708,15 @@ warp_management() {
 
     load_current_config_state
     display_status_summary
-    log_info "连接信息未自动展示，如需查看请进入菜单 8。"
+    log_info "连接信息未自动展示，如需查看请进入菜单 9。"
   done
 }
 
 # Helper to extract config values and display info
-view_status_and_info() {
-  local selected_protocol
-
+view_status() {
   log_info "正在从配置文件中读取信息..."
   load_current_config_state
   display_status_summary
-
-  SELECTED_PROTOCOL=""
-  if ! prompt_installed_protocol_selection; then
-    return 0
-  fi
-  selected_protocol="${SELECTED_PROTOCOL}"
-  load_protocol_state "${selected_protocol}"
-  show_connection_info_menu
 }
 
 # New function: Update config only
@@ -2920,12 +2910,37 @@ show_connection_details() {
   esac
 }
 
+show_all_connection_details() {
+  local mode=$1
+  local public_ip=${2:-$(get_public_ip)}
+  local installed_protocols=()
+  local protocol original_protocol_state
+
+  original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
+  mapfile -t installed_protocols < <(list_installed_protocols)
+
+  if [[ ${#installed_protocols[@]} -eq 0 ]]; then
+    show_connection_details "${mode}" "${public_ip}"
+    return 0
+  fi
+
+  for protocol in "${installed_protocols[@]}"; do
+    load_protocol_state "${protocol}"
+    echo -e "\n${BLUE}--- $(protocol_display_name "${SB_PROTOCOL}") ---${NC}"
+    show_connection_details "${mode}" "${public_ip}"
+  done
+
+  if [[ -n "${original_protocol_state}" ]] && protocol_state_exists "${original_protocol_state}"; then
+    load_protocol_state "${original_protocol_state}"
+  fi
+}
+
 show_connection_info_menu() {
   local public_ip
   public_ip=$(get_public_ip)
 
   while true; do
-    echo -e "\n${BLUE}--- 连接信息查看 ---${NC}"
+    echo -e "\n${BLUE}--- 节点信息查看 ---${NC}"
     echo "1. 仅链接"
     echo "2. 仅二维码"
     echo "3. 链接 + 二维码"
@@ -2933,13 +2948,19 @@ show_connection_info_menu() {
     read -rp "请选择 [0-3]: " info_choice
 
     case "${info_choice}" in
-      1) show_connection_details "link" "${public_ip}" ;;
-      2) show_connection_details "qr" "${public_ip}" ;;
-      3) show_connection_details "both" "${public_ip}" ;;
+      1) show_all_connection_details "link" "${public_ip}" ;;
+      2) show_all_connection_details "qr" "${public_ip}" ;;
+      3) show_all_connection_details "both" "${public_ip}" ;;
       0) return ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac
   done
+}
+
+view_node_info() {
+  log_info "正在从配置文件中读取节点信息..."
+  load_current_config_state
+  show_connection_info_menu
 }
 
 show_post_config_connection_info() {
@@ -2947,7 +2968,7 @@ show_post_config_connection_info() {
   public_ip=$(get_public_ip)
 
   echo -e "\n${GREEN}连接信息：${NC}"
-  echo "已按当前配置生成以下连接信息。后续如需再次查看，可进入菜单 8。"
+  echo "已按当前配置生成以下连接信息。后续如需再次查看，可进入菜单 9。"
   show_connection_details "both" "${public_ip}"
 }
 
@@ -2999,7 +3020,7 @@ update_singbox_binary_preserving_config() {
   systemctl restart sing-box
   log_success "sing-box 已更新到 ${SB_VERSION}，当前配置已保留。"
   display_status_summary
-  log_info "连接信息未自动展示，如需查看请进入菜单 8。"
+  log_info "连接信息未自动展示，如需查看请进入菜单 9。"
 }
 
 install_or_update_singbox() {
@@ -3041,15 +3062,16 @@ main() {
     echo "5. 启动 sing-box"
     echo "6. 停止 sing-box"
     echo "7. 重启 sing-box"
-    echo "8. 查看状态与节点信息"
-    echo "9. 查看实时日志"
+    echo "8. 查看状态"
+    echo "9. 查看节点信息"
+    echo "10. 查看实时日志"
     echo "--------------------------------"
-    echo -e "10. 更新管理脚本 (sbv) ${SCRIPT_VER_STATUS}"
-    echo "11. 卸载管理脚本 (sbv)"
-    echo "12. 配置 Cloudflare Warp (解锁/防送中)"
-    echo "13. 流媒体验证检测"
+    echo -e "11. 更新管理脚本 (sbv) ${SCRIPT_VER_STATUS}"
+    echo "12. 卸载管理脚本 (sbv)"
+    echo "13. 配置 Cloudflare Warp (解锁/防送中)"
+    echo "14. 流媒体验证检测"
     echo "0. 退出"
-    read -rp "请选择 [0-13]: " choice
+    read -rp "请选择 [0-14]: " choice
 
     case "$choice" in
       1) install_or_update_singbox ;;
@@ -3059,12 +3081,13 @@ main() {
       5) systemctl start sing-box && log_success "服务已启动。" ;;
       6) systemctl stop sing-box && log_success "服务已停止。" ;;
       7) systemctl restart sing-box && log_success "服务已重启。" ;;
-      8) view_status_and_info ;;
-      9) journalctl -u sing-box -f || true ;;
-      10) manual_update_script ;;
-      11) uninstall_script ;;
-      12) warp_management ;;
-      13) media_check_menu ;;
+      8) view_status ;;
+      9) view_node_info ;;
+      10) journalctl -u sing-box -f || true ;;
+      11) manual_update_script ;;
+      12) uninstall_script ;;
+      13) warp_management ;;
+      14) media_check_menu ;;
       0) exit 0 ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac

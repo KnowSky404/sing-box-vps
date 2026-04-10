@@ -53,3 +53,18 @@ if [[ "${output}" != *"1. 安装协议 / 更新 sing-box"* ]]; then
   printf 'expected main menu to render when update check returns unexpected content, got:\n%s\n' "${output}" >&2
   exit 1
 fi
+
+if [[ "${output}" != *"8. 查看状态"* ]]; then
+  printf 'expected status menu entry to render, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${output}" != *"9. 查看节点信息"* ]]; then
+  printf 'expected node info menu entry to render, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${output}" != *"14. 流媒体验证检测"* ]]; then
+  printf 'expected media check menu entry to shift to 14, got:\n%s\n' "${output}" >&2
+  exit 1
+fi

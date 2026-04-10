@@ -15,7 +15,7 @@ sed \
   -e 's|main \"\$@\"|:|' \
   "${REPO_ROOT}/install.sh" > "${TESTABLE_INSTALL}"
 
-mkdir -p "${TMP_DIR}/project/protocols" "${TMP_DIR}/bin"
+mkdir -p "${TMP_DIR}/project" "${TMP_DIR}/bin"
 
 cat > "${TMP_DIR}/bin/hostname" <<'EOF'
 #!/usr/bin/env bash
@@ -30,8 +30,11 @@ export PATH="${TMP_DIR}/bin:${PATH}"
 source "${TESTABLE_INSTALL}"
 
 SUMMARY_COUNT_FILE="${TMP_DIR}/summary.count"
-SHOW_INFO_PROTOCOL_FILE="${TMP_DIR}/show_info.protocol"
+PROMPT_COUNT_FILE="${TMP_DIR}/prompt.count"
+INFO_COUNT_FILE="${TMP_DIR}/info.count"
 printf '0\n' > "${SUMMARY_COUNT_FILE}"
+printf '0\n' > "${PROMPT_COUNT_FILE}"
+printf '0\n' > "${INFO_COUNT_FILE}"
 
 display_status_summary() {
   local current_count
@@ -39,8 +42,16 @@ display_status_summary() {
   printf '%s\n' "$((current_count + 1))" > "${SUMMARY_COUNT_FILE}"
 }
 
+prompt_installed_protocol_selection() {
+  local current_count
+  current_count=$(cat "${PROMPT_COUNT_FILE}")
+  printf '%s\n' "$((current_count + 1))" > "${PROMPT_COUNT_FILE}"
+}
+
 show_connection_info_menu() {
-  printf '%s\n' "${SB_PROTOCOL}" > "${SHOW_INFO_PROTOCOL_FILE}"
+  local current_count
+  current_count=$(cat "${INFO_COUNT_FILE}")
+  printf '%s\n' "$((current_count + 1))" > "${INFO_COUNT_FILE}"
 }
 
 load_current_config_state() {
@@ -49,63 +60,19 @@ load_current_config_state() {
   SB_WARP_ROUTE_MODE="all"
 }
 
-cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
-INSTALLED_PROTOCOLS=vless-reality,hy2
-PROTOCOL_STATE_VERSION=1
-EOF
-
-cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.env" <<'EOF'
-INSTALLED=1
-CONFIG_SCHEMA_VERSION=1
-NODE_NAME=vless_reality_test-host
-PORT=443
-UUID=11111111-1111-1111-1111-111111111111
-SNI=apple.com
-REALITY_PRIVATE_KEY=private-key
-REALITY_PUBLIC_KEY=public-key
-SHORT_ID_1=aaaaaaaaaaaaaaaa
-SHORT_ID_2=bbbbbbbbbbbbbbbb
-EOF
-
-cat > "${SB_PROTOCOL_STATE_DIR}/hy2.env" <<'EOF'
-INSTALLED=1
-CONFIG_SCHEMA_VERSION=1
-NODE_NAME=hy2_test-host
-PORT=8443
-DOMAIN=hy2.example.com
-PASSWORD=hy2-pass
-USER_NAME=hy2-user
-UP_MBPS=100
-DOWN_MBPS=50
-OBFS_ENABLED=n
-OBFS_TYPE=
-OBFS_PASSWORD=
-TLS_MODE=manual
-ACME_MODE=http
-ACME_EMAIL=
-ACME_DOMAIN=
-DNS_PROVIDER=cloudflare
-CF_API_TOKEN=
-CERT_PATH=/etc/ssl/certs/hy2.pem
-KEY_PATH=/etc/ssl/private/hy2.key
-MASQUERADE=
-EOF
-
-view_status_and_info <<'EOF'
-2
-EOF
+view_status
 
 if [[ "$(cat "${SUMMARY_COUNT_FILE}")" != "1" ]]; then
   printf 'expected status summary to render once, got %s\n' "$(cat "${SUMMARY_COUNT_FILE}")" >&2
   exit 1
 fi
 
-if [[ ! -f "${SHOW_INFO_PROTOCOL_FILE}" ]]; then
-  printf 'expected connection info menu to be shown for the selected protocol\n' >&2
+if [[ "$(cat "${PROMPT_COUNT_FILE}")" != "0" ]]; then
+  printf 'expected status view to skip protocol selection, got %s prompts\n' "$(cat "${PROMPT_COUNT_FILE}")" >&2
   exit 1
 fi
 
-if [[ "$(cat "${SHOW_INFO_PROTOCOL_FILE}")" != "hy2" ]]; then
-  printf 'expected selected protocol to be hy2, got %s\n' "$(cat "${SHOW_INFO_PROTOCOL_FILE}")" >&2
+if [[ "$(cat "${INFO_COUNT_FILE}")" != "0" ]]; then
+  printf 'expected status view to skip node info menu, got %s calls\n' "$(cat "${INFO_COUNT_FILE}")" >&2
   exit 1
 fi
