@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026041304
+# Version: 2026041305
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026041304"
+readonly SCRIPT_VERSION="2026041305"
 readonly SB_SUPPORT_MAX_VERSION="1.13.7"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -930,7 +930,19 @@ prompt_protocol_install_selection() {
     echo "${index}. $(protocol_display_name "$(state_protocol_to_runtime "${protocol}")")"
   done
 
+  echo "留空则安装全部可用协议。"
   read -rp "请选择一个或多个协议 [1-3]，逗号分隔: " choice
+
+  if [[ -z "$(trim_whitespace "${choice}")" ]]; then
+    for index in 1 2 3; do
+      protocol=$(protocol_option_to_id "${index}") || continue
+      if protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
+        continue
+      fi
+      selected_protocols+=("${protocol}")
+    done
+  fi
+
   IFS=',' read -r -a raw_choices <<< "${choice}"
 
   for raw_choice in "${raw_choices[@]}"; do
@@ -963,11 +975,13 @@ prompt_vless_reality_install() {
   local in_p in_sni
 
   set_protocol_defaults "vless+reality"
-  read -rp "端口 (默认 ${SB_PORT}): " in_p
+  echo -e "\n${BLUE}--- 配置 VLESS + REALITY ---${NC}"
+  printf '[VLESS + REALITY] 端口 (默认 %s): ' "${SB_PORT}"
+  read -r in_p
   SB_PORT=${in_p:-$SB_PORT}
   check_port_conflict "${SB_PORT}"
 
-  read -rp "REALITY 域名 (默认 ${SB_SNI}): " in_sni
+  read -rp "[VLESS + REALITY] REALITY 域名 (默认 ${SB_SNI}): " in_sni
   SB_SNI=${in_sni:-$SB_SNI}
 }
 
@@ -975,16 +989,18 @@ prompt_mixed_install() {
   local in_p in_auth in_user in_pass
 
   set_protocol_defaults "mixed"
-  read -rp "端口 (默认 ${SB_PORT}): " in_p
+  echo -e "\n${BLUE}--- 配置 Mixed ---${NC}"
+  printf '[Mixed] 端口 (默认 %s): ' "${SB_PORT}"
+  read -r in_p
   SB_PORT=${in_p:-$SB_PORT}
   check_port_conflict "${SB_PORT}"
 
-  read -rp "是否启用用户名密码认证 [y/n] (默认 y，强烈建议开启): " in_auth
+  read -rp "[Mixed] 是否启用用户名密码认证 [y/n] (默认 y，强烈建议开启): " in_auth
   SB_MIXED_AUTH_ENABLED=${in_auth:-"y"}
   if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
-    read -rp "用户名 (留空自动生成): " in_user
+    read -rp "[Mixed] 用户名 (留空自动生成): " in_user
     SB_MIXED_USERNAME="${in_user}"
-    read -rp "密码 (留空自动生成): " in_pass
+    read -rp "[Mixed] 密码 (留空自动生成): " in_pass
     SB_MIXED_PASSWORD="${in_pass}"
     ensure_mixed_auth_credentials
   else
@@ -996,39 +1012,41 @@ prompt_hy2_install() {
   local in_domain in_p in_password in_user_name in_up in_down in_obfs in_obfs_password in_tls_mode in_acme_mode in_acme_email in_acme_domain in_cf_api_token in_cert_path in_key_path in_masquerade
 
   set_protocol_defaults "hy2"
+  echo -e "\n${BLUE}--- 配置 Hysteria2 ---${NC}"
 
   while [[ -z "${SB_HY2_DOMAIN}" ]]; do
-    read -rp "Hysteria2 域名: " in_domain
+    read -rp "[Hysteria2] 域名: " in_domain
     SB_HY2_DOMAIN=$(trim_whitespace "${in_domain}")
     [[ -z "${SB_HY2_DOMAIN}" ]] && log_warn "域名不能为空。"
   done
 
-  read -rp "端口 (默认 ${SB_PORT}): " in_p
+  printf '[Hysteria2] 端口 (默认 %s): ' "${SB_PORT}"
+  read -r in_p
   SB_PORT=${in_p:-$SB_PORT}
   check_port_conflict "${SB_PORT}"
 
-  read -rp "认证密码 (留空自动生成): " in_password
+  read -rp "[Hysteria2] 认证密码 (留空自动生成): " in_password
   [[ -n "${in_password}" ]] && SB_HY2_PASSWORD="${in_password}"
-  read -rp "用户名标识 (默认 ${SB_HY2_USER_NAME}): " in_user_name
+  read -rp "[Hysteria2] 用户名标识 (默认 ${SB_HY2_USER_NAME}): " in_user_name
   SB_HY2_USER_NAME=${in_user_name:-$SB_HY2_USER_NAME}
 
-  read -rp "上行带宽 Mbps (默认 ${SB_HY2_UP_MBPS}): " in_up
+  read -rp "[Hysteria2] 上行带宽 Mbps (默认 ${SB_HY2_UP_MBPS}): " in_up
   SB_HY2_UP_MBPS=${in_up:-$SB_HY2_UP_MBPS}
-  read -rp "下行带宽 Mbps (默认 ${SB_HY2_DOWN_MBPS}): " in_down
+  read -rp "[Hysteria2] 下行带宽 Mbps (默认 ${SB_HY2_DOWN_MBPS}): " in_down
   SB_HY2_DOWN_MBPS=${in_down:-$SB_HY2_DOWN_MBPS}
 
-  read -rp "是否启用 Salamander 混淆 [y/n] (默认 n): " in_obfs
+  read -rp "[Hysteria2] 是否启用 Salamander 混淆 [y/n] (默认 n): " in_obfs
   SB_HY2_OBFS_ENABLED=${in_obfs:-"n"}
   if [[ "${SB_HY2_OBFS_ENABLED}" == "y" ]]; then
     SB_HY2_OBFS_TYPE="salamander"
-    read -rp "混淆密码 (留空自动生成): " in_obfs_password
+    read -rp "[Hysteria2] 混淆密码 (留空自动生成): " in_obfs_password
     [[ -n "${in_obfs_password}" ]] && SB_HY2_OBFS_PASSWORD="${in_obfs_password}"
   fi
 
   echo "TLS 模式:"
   echo "1. ACME 自动签发"
   echo "2. 手动证书路径"
-  read -rp "请选择 [1-2] (默认 1): " in_tls_mode
+  read -rp "[Hysteria2] 请选择 [1-2] (默认 1): " in_tls_mode
   case "${in_tls_mode}" in
     2) SB_HY2_TLS_MODE="manual" ;;
     *) SB_HY2_TLS_MODE="acme" ;;
@@ -1038,36 +1056,36 @@ prompt_hy2_install() {
     echo "ACME 验证方式:"
     echo "1. HTTP-01"
     echo "2. DNS-01 (Cloudflare)"
-    read -rp "请选择 [1-2] (默认 1): " in_acme_mode
+    read -rp "[Hysteria2] 请选择 [1-2] (默认 1): " in_acme_mode
     case "${in_acme_mode}" in
       2) SB_HY2_ACME_MODE="dns" ;;
       *) SB_HY2_ACME_MODE="http" ;;
     esac
 
-    read -rp "ACME 邮箱 (可留空，用于证书通知): " in_acme_email
+    read -rp "[Hysteria2] ACME 邮箱 (可留空，用于证书通知): " in_acme_email
     SB_HY2_ACME_EMAIL="${in_acme_email}"
-    read -rp "ACME 域名 (默认 ${SB_HY2_DOMAIN}): " in_acme_domain
+    read -rp "[Hysteria2] ACME 域名 (默认 ${SB_HY2_DOMAIN}): " in_acme_domain
     SB_HY2_ACME_DOMAIN=${in_acme_domain:-$SB_HY2_DOMAIN}
 
     if [[ "${SB_HY2_ACME_MODE}" == "dns" ]]; then
-      read -rp "Cloudflare API Token: " in_cf_api_token
+      read -rp "[Hysteria2] Cloudflare API Token: " in_cf_api_token
       SB_HY2_CF_API_TOKEN="${in_cf_api_token}"
     fi
   else
     while [[ -z "${SB_HY2_CERT_PATH}" ]]; do
-      read -rp "证书路径: " in_cert_path
+      read -rp "[Hysteria2] 证书路径: " in_cert_path
       SB_HY2_CERT_PATH=$(trim_whitespace "${in_cert_path}")
       [[ -z "${SB_HY2_CERT_PATH}" ]] && log_warn "证书路径不能为空。"
     done
 
     while [[ -z "${SB_HY2_KEY_PATH}" ]]; do
-      read -rp "私钥路径: " in_key_path
+      read -rp "[Hysteria2] 私钥路径: " in_key_path
       SB_HY2_KEY_PATH=$(trim_whitespace "${in_key_path}")
       [[ -z "${SB_HY2_KEY_PATH}" ]] && log_warn "私钥路径不能为空。"
     done
   fi
 
-  read -rp "伪装地址 (留空跳过): " in_masquerade
+  read -rp "[Hysteria2] 伪装地址 (留空跳过): " in_masquerade
   [[ -n "${in_masquerade}" ]] && SB_HY2_MASQUERADE="${in_masquerade}"
 
   ensure_hy2_materials
