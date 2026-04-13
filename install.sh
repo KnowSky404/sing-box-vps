@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026041302
+# Version: 2026041303
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026041302"
+readonly SCRIPT_VERSION="2026041303"
 readonly SB_SUPPORT_MAX_VERSION="1.13.7"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -24,6 +24,7 @@ readonly SB_MEDIA_CHECK_SCRIPT="${SB_MEDIA_CHECK_DIR}/region_restriction_check.s
 readonly SB_PROTOCOL_STATE_DIR="${SB_PROJECT_DIR}/protocols"
 readonly SB_PROTOCOL_INDEX_FILE="${SB_PROTOCOL_STATE_DIR}/index.env"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
+readonly SBV_BIN_PATH="/usr/local/bin/sbv"
 readonly SINGBOX_CONFIG_DIR="${SB_PROJECT_DIR}"
 readonly SINGBOX_CONFIG_FILE="${SB_PROJECT_DIR}/config.json"
 readonly SINGBOX_SERVICE_FILE="/etc/systemd/system/sing-box.service"
@@ -1796,13 +1797,51 @@ check_script_status() {
 # Manual update script
 manual_update_script() {
   log_info "正在从 GitHub 获取最新脚本..."
-  if curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh -o "/usr/local/bin/sbv"; then
-    chmod +x "/usr/local/bin/sbv"
+  if curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh -o "${SBV_BIN_PATH}" \
+    && [[ -s "${SBV_BIN_PATH}" ]]; then
+    chmod +x "${SBV_BIN_PATH}"
     log_success "脚本已更新到最新版本，请重新运行 sbv。"
     exit 0
   else
     log_error "脚本更新失败，请检查网络。"
   fi
+}
+
+ensure_sbv_command_installed() {
+  if [[ "$0" == "${SBV_BIN_PATH}" || "$0" == "sbv" ]]; then
+    return 0
+  fi
+
+  if [[ -x "${SBV_BIN_PATH}" ]]; then
+    return 0
+  fi
+
+  log_info "正在安装全局命令: sbv..."
+  if curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh -o "${SBV_BIN_PATH}" \
+    && [[ -s "${SBV_BIN_PATH}" ]]; then
+    chmod +x "${SBV_BIN_PATH}"
+    log_success "全局命令 sbv 安装成功。"
+    return 0
+  fi
+
+  log_warn "无法从远程下载脚本，尝试使用当前脚本安装 sbv..."
+  if [[ -f "$0" ]] && cp -f "$0" "${SBV_BIN_PATH}" 2>/dev/null; then
+    chmod +x "${SBV_BIN_PATH}"
+    log_success "已使用当前脚本安装全局命令 sbv。"
+    return 0
+  fi
+
+  if [[ -f "$0" ]]; then
+    log_warn "当前环境无法写入 ${SBV_BIN_PATH}，后续可手动安装 sbv。"
+  else
+    log_warn "全局命令 sbv 安装失败，后续可重新运行一键安装命令。"
+  fi
+}
+
+exit_script() {
+  echo ""
+  log_info "已退出脚本。后续可运行 sbv 再次进入管理菜单。"
+  exit 0
 }
 
 # Check for sing-box version
@@ -2016,17 +2055,7 @@ EOF
   systemctl daemon-reload
   systemctl enable sing-box >/dev/null 2>&1
   
-  # Install/Update 'sbv' command
-  if [[ "$0" != "/usr/local/bin/sbv" && "$0" != "sbv" ]]; then
-    log_info "正在将脚本安装为全局命令: sbv..."
-    if curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh -o "/usr/local/bin/sbv"; then
-      chmod +x "/usr/local/bin/sbv"
-      log_success "全局命令 sbv 安装/更新成功。"
-    else
-      log_warn "无法从远程下载脚本，尝试使用本地备份..."
-      [[ -f "$0" ]] && cp -f "$0" "/usr/local/bin/sbv" && chmod +x "/usr/local/bin/sbv"
-    fi
-  fi
+  ensure_sbv_command_installed
 }
 
 # --- Protocol State Helpers ---
@@ -2636,7 +2665,7 @@ uninstall_script() {
   fi
   
   log_info "正在删除全局命令 sbv..."
-  rm -f "/usr/local/bin/sbv"
+  rm -f "${SBV_BIN_PATH}"
   log_success "管理脚本已卸载。"
   exit 0
 }
@@ -3507,6 +3536,7 @@ main() {
 
   show_banner
   check_root
+  ensure_sbv_command_installed
   while true; do
     # Status checks
     check_script_status
@@ -3548,7 +3578,7 @@ main() {
       12) uninstall_script ;;
       13) warp_management ;;
       14) media_check_menu ;;
-      0) exit 0 ;;
+      0) exit_script ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac
   done
