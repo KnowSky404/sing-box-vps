@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026041305
+# Version: 2026041306
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026041305"
+readonly SCRIPT_VERSION="2026041306"
 readonly SB_SUPPORT_MAX_VERSION="1.13.7"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -95,9 +95,10 @@ register_warp() {
   fi
 
   log_info "正在注册 Cloudflare Warp 免费账户..."
-  local keypair=$("${SINGBOX_BIN_PATH}" generate wg-keypair)
-  local priv_key=$(echo "${keypair}" | grep -i "PrivateKey" | awk '{print $2}' | tr -d '\r\n ')
-  local pub_key=$(echo "${keypair}" | grep -i "PublicKey" | awk '{print $2}' | tr -d '\r\n ')
+  local keypair priv_key pub_key
+  keypair=$(run_singbox_generate_command "wg-keypair" "WireGuard 密钥") || exit 1
+  priv_key=$(extract_generated_key_value "${keypair}" "private")
+  pub_key=$(extract_generated_key_value "${keypair}" "public")
   
   if [[ -z "${priv_key}" || -z "${pub_key}" || ${#priv_key} -lt 40 ]]; then
     log_info "无法从 sing-box 提取合法密钥。原始输出: ${keypair}" >> "${SBV_LOG_FILE}"
@@ -179,6 +180,35 @@ trim_whitespace() {
   value="${value#"${value%%[![:space:]]*}"}"
   value="${value%"${value##*[![:space:]]}"}"
   printf '%s' "${value}"
+}
+
+extract_generated_key_value() {
+  local output=$1
+  local key_kind=$2
+  local key_label
+
+  if [[ "${key_kind}" == "private" ]]; then
+    key_label='[Pp]rivate'
+  else
+    key_label='[Pp]ublic'
+  fi
+
+  printf '%s\n' "${output}" | sed -nE \
+    "s/^[[:space:]]*${key_label}([[:space:]]+|)[Kk]ey[[:space:]]*:?[[:space:]]*([^[:space:]]+)[[:space:]]*$/\\2/p" \
+    | head -n 1
+}
+
+run_singbox_generate_command() {
+  local subcommand=$1
+  local label=$2
+  local output
+
+  if ! output=$("${SINGBOX_BIN_PATH}" generate "${subcommand}" 2>&1); then
+    log_info "${label}生成原始输出: ${output}" >> "${SBV_LOG_FILE}"
+    log_error "${label}生成失败，请查看 ${SBV_LOG_FILE}" >&2
+  fi
+
+  printf '%s' "${output}"
 }
 
 validate_warp_route_mode() {
@@ -2218,9 +2248,13 @@ ensure_vless_reality_materials() {
   if [[ -z "${SB_PRIVATE_KEY}" || -z "${SB_PUBLIC_KEY}" ]]; then
     log_info "正在生成新的 REALITY 密钥对..." >&2
     local keypair
-    keypair=$("${SINGBOX_BIN_PATH}" generate reality-keypair)
-    SB_PRIVATE_KEY=$(echo "${keypair}" | grep "PrivateKey" | awk '{print $2}')
-    SB_PUBLIC_KEY=$(echo "${keypair}" | grep "PublicKey" | awk '{print $2}')
+    keypair=$(run_singbox_generate_command "reality-keypair" "REALITY 密钥") || exit 1
+    SB_PRIVATE_KEY=$(extract_generated_key_value "${keypair}" "private")
+    SB_PUBLIC_KEY=$(extract_generated_key_value "${keypair}" "public")
+    if [[ -z "${SB_PRIVATE_KEY}" || -z "${SB_PUBLIC_KEY}" ]]; then
+      log_info "REALITY 密钥生成原始输出: ${keypair}" >> "${SBV_LOG_FILE}"
+      log_error "REALITY 密钥生成失败（输出格式非法），请查看 ${SBV_LOG_FILE}"
+    fi
     {
       echo "PRIVATE_KEY=${SB_PRIVATE_KEY}"
       echo "PUBLIC_KEY=${SB_PUBLIC_KEY}"
