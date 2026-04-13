@@ -8,7 +8,7 @@ set -euo pipefail
 
 # Constants and File Paths
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly SCRIPT_VERSION="2026041301"
+readonly SCRIPT_VERSION="2026041302"
 readonly SB_SUPPORT_MAX_VERSION="1.13.7"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
 readonly SINGBOX_CONFIG_DIR="/etc/sing-box"
