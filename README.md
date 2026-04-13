@@ -12,7 +12,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main
 
 脚本会自动：
 1. 安装所有必要依赖（curl, wget, jq, qrencode 等）。
-2. 下载并配置适配的 `sing-box` (当前适配：1.13.6)。
+2. 下载并配置适配的 `sing-box` (当前适配：1.13.7)。
 3. 生成安全的 **VLESS + REALITY**、**Mixed (HTTP/HTTPS/SOCKS)** 或 **Hysteria2** 配置，并支持多协议共存。
 4. 将自己安装为全局命令 **`sbv`**，方便您随时管理。
 
