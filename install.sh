@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026041303
+# Version: 2026041304
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026041303"
+readonly SCRIPT_VERSION="2026041304"
 readonly SB_SUPPORT_MAX_VERSION="1.13.7"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -3313,6 +3313,11 @@ show_qr_info() {
   echo -e "\n${YELLOW}连接二维码：${NC}"
   if [[ "${SB_PROTOCOL}" == "mixed" ]]; then
     log_info "Mixed 协议当前不提供二维码，请使用链接方式手动配置客户端。"
+    return 0
+  fi
+
+  if ! command -v qrencode >/dev/null 2>&1; then
+    log_warn "未安装 qrencode，已跳过二维码展示。可安装后重新进入菜单 9 查看。"
     return 0
   fi
 
