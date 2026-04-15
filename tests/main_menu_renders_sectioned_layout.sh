@@ -89,9 +89,23 @@ deployment_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "部署管理
 service_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "服务控制") { print NR; exit }')
 diagnostics_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "连接与诊断") { print NR; exit }')
 maintenance_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "脚本维护") { print NR; exit }')
+exit_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "0. 退出") { print NR; exit }')
+author_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "作者: KnowSky404") { print NR; exit }')
+project_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "项目: https://github.com/KnowSky404/sing-box-vps") { print NR; exit }')
 
 if ! (( deployment_line < service_line && service_line < diagnostics_line && diagnostics_line < maintenance_line )); then
   printf 'expected future section labels to appear in grouped order, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if printf '%s\n' "${plain_output}" | awk '
+  index($0, "sing-box-vps 一键安装管理脚本") { seen=1; next }
+  seen && index($0, "作者: KnowSky404") { exit 0 }
+  seen && index($0, "项目: https://github.com/KnowSky404/sing-box-vps") { exit 0 }
+  seen && index($0, "部署管理") { exit 1 }
+  END { exit 1 }
+'; then
+  printf 'expected compact main header to omit author/project lines before the deployment section, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
@@ -122,5 +136,15 @@ if ! printf '%s\n' "${plain_output}" | awk '
   END { exit(found ? 0 : 1) }
 '; then
   printf 'expected media check option to stay within the diagnostics section, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ -z "${author_line}" || -z "${project_line}" ]]; then
+  printf 'expected compact main menu to keep author/project info near the footer, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if ! (( exit_line < author_line && author_line < project_line )); then
+  printf 'expected compact main menu to move author/project info below the final section, got:\n%s\n' "${output}" >&2
   exit 1
 fi

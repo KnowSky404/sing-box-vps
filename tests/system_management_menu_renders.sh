@@ -40,6 +40,16 @@ if [[ "${plain_output}" != *"2. 协议栈管理"* ]]; then
   exit 1
 fi
 
+if [[ "${plain_output}" == *"作者: KnowSky404"* ]]; then
+  printf 'expected compact submenu header to omit author info, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${plain_output}" == *"项目: https://github.com/KnowSky404/sing-box-vps"* ]]; then
+  printf 'expected compact submenu header to omit project info, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
 title_text_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "系统管理") { print; exit }')
 if [[ -z "${title_text_line}" || ! "${title_text_line}" =~ ^[[:space:]]+[^[:space:]] ]]; then
   printf 'expected system management header title to render with left padding instead of flush-left text, got:\n%s\n' "${output}" >&2
