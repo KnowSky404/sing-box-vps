@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026041503
+# Version: 2026041504
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026041503"
+readonly SCRIPT_VERSION="2026041504"
 readonly SB_SUPPORT_MAX_VERSION="1.13.7"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -1451,10 +1451,15 @@ run_media_check_via_warp() {
 
 media_check_menu() {
   while true; do
-    echo -e "\n${BLUE}--- 流媒体验证检测 ---${NC}"
-    show_media_check_backend_info
-    echo "1. 本机直出检测"
-    echo "2. Warp 出口检测"
+    echo
+    render_page_header "流媒体验证检测" "验证流媒体与区域解锁情况"
+    render_section_title "检测摘要"
+    render_summary_item "检测后端" "${MEDIA_CHECK_BACKEND_NAME}"
+    render_summary_item "作者" "${MEDIA_CHECK_BACKEND_AUTHOR}"
+    render_summary_item "项目地址" "${MEDIA_CHECK_BACKEND_REPO_URL}"
+    render_section_title "操作选项"
+    render_menu_item "1" "本机直出检测"
+    render_menu_item "2" "Warp 出口检测"
     echo "0. 返回主菜单"
     read -rp "请选择 [0-2]: " media_choice
 
@@ -1716,9 +1721,13 @@ show_effective_warp_route_sources() {
 }
 
 set_warp_route_mode_interactive() {
-  echo -e "\n${BLUE}--- Warp 路由模式 ---${NC}"
-  echo "1. 全量流量走 Warp"
-  echo "2. 仅 AI/流媒体及自定义规则走 Warp"
+  echo
+  render_page_header "Warp 路由模式" "调整 Cloudflare Warp 的流量接管策略"
+  render_section_title "当前设置"
+  render_summary_item "当前模式" "${SB_WARP_ROUTE_MODE}"
+  render_section_title "操作选项"
+  render_menu_item "1" "全量流量走 Warp"
+  render_menu_item "2" "仅 AI/流媒体及自定义规则走 Warp"
   read -rp "请选择 [1-2] (当前: ${SB_WARP_ROUTE_MODE}): " mode_choice
 
   case "${mode_choice}" in
@@ -2871,6 +2880,19 @@ render_menu_item() {
   echo "${line}"
 }
 
+render_summary_item() {
+  local label=$1
+  local value=${2:-}
+  local width
+
+  width=$(term_columns)
+  if (( width >= 72 )); then
+    printf '%s: %s\n' "${label}" "${value}"
+  else
+    echo "${label}: ${value}"
+  fi
+}
+
 show_banner() {
   safe_clear_screen
   render_page_header "sing-box-vps 一键安装管理脚本" "专为 VPS 稳定部署与安全运维设计"
@@ -2935,12 +2957,15 @@ configure_inbound_stack_mode() {
   esac
 
   while true; do
-    echo -e "\n${BLUE}--- 入站协议栈 ---${NC}"
-    echo "系统网络能力: $(host_ip_stack_display_name "${host_stack}")"
-    echo "当前入站协议栈: $(inbound_stack_mode_display_name "${SB_INBOUND_STACK_MODE}")"
+    echo
+    render_page_header "入站协议栈" "按主机能力选择监听栈"
+    render_section_title "当前设置"
+    render_summary_item "系统网络能力" "$(host_ip_stack_display_name "${host_stack}")"
+    render_summary_item "当前入站协议栈" "$(inbound_stack_mode_display_name "${SB_INBOUND_STACK_MODE}")"
+    render_section_title "可选模式"
 
     for index in "${!available_modes[@]}"; do
-      echo "$((index + 1)). $(inbound_stack_mode_display_name "${available_modes[$index]}")"
+      render_menu_item "$((index + 1))" "$(inbound_stack_mode_display_name "${available_modes[$index]}")"
     done
     echo "0. 返回"
     read -rp "请选择 [0-${#available_modes[@]}]: " choice
@@ -2974,11 +2999,14 @@ configure_outbound_stack_mode() {
   fi
 
   while true; do
-    echo -e "\n${BLUE}--- 出站协议栈 ---${NC}"
-    echo "当前出站协议栈: $(outbound_stack_mode_display_name "${SB_OUTBOUND_STACK_MODE}")"
+    echo
+    render_page_header "出站协议栈" "调整 sing-box 的 DNS 与直连出站策略"
+    render_section_title "当前设置"
+    render_summary_item "当前出站协议栈" "$(outbound_stack_mode_display_name "${SB_OUTBOUND_STACK_MODE}")"
+    render_section_title "可选模式"
 
     for index in "${!available_modes[@]}"; do
-      echo "$((index + 1)). $(outbound_stack_mode_display_name "${available_modes[$index]}")"
+      render_menu_item "$((index + 1))" "$(outbound_stack_mode_display_name "${available_modes[$index]}")"
     done
     echo "0. 返回"
     read -rp "请选择 [0-${#available_modes[@]}]: " choice
@@ -3001,6 +3029,7 @@ configure_outbound_stack_mode() {
 
 stack_management_menu() {
   local host_stack
+  local warp_status
 
   while true; do
     if [[ -f "${SINGBOX_CONFIG_FILE}" || -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
@@ -3011,18 +3040,22 @@ stack_management_menu() {
     fi
 
     host_stack=$(detect_host_ip_stack)
-
-    echo -e "\n${BLUE}--- 协议栈管理 ---${NC}"
-    echo "系统网络能力: $(host_ip_stack_display_name "${host_stack}")"
-    echo "当前入站协议栈: $(inbound_stack_mode_display_name "${SB_INBOUND_STACK_MODE}")"
-    echo "当前出站协议栈: $(outbound_stack_mode_display_name "${SB_OUTBOUND_STACK_MODE}")"
     if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
-      echo "Warp 状态: 已开启 (出站协议栈当前不生效)"
+      warp_status="已开启 (出站协议栈当前不生效)"
     else
-      echo "Warp 状态: 未开启"
+      warp_status="未开启"
     fi
-    echo "1. 修改入站协议栈"
-    echo "2. 修改出站协议栈"
+
+    echo
+    render_page_header "协议栈管理" "统一调整入站 / 出站网络栈策略"
+    render_section_title "协议栈摘要"
+    render_summary_item "系统网络能力" "$(host_ip_stack_display_name "${host_stack}")"
+    render_summary_item "当前入站协议栈" "$(inbound_stack_mode_display_name "${SB_INBOUND_STACK_MODE}")"
+    render_summary_item "当前出站协议栈" "$(outbound_stack_mode_display_name "${SB_OUTBOUND_STACK_MODE}")"
+    render_summary_item "Warp 状态" "${warp_status}"
+    render_section_title "操作选项"
+    render_menu_item "1" "修改入站协议栈"
+    render_menu_item "2" "修改出站协议栈"
     echo "0. 返回上一级"
     read -rp "请选择 [0-2]: " stack_choice
 
@@ -3038,9 +3071,13 @@ stack_management_menu() {
 system_management_menu() {
   while true; do
     check_bbr_status
-    echo -e "\n${BLUE}--- 系统管理 ---${NC}"
-    echo -e "1. 开启 BBR ${BBR_STATUS}"
-    echo "2. 协议栈管理"
+    echo
+    render_page_header "系统管理" "维护内核优化与网络协议栈设置"
+    render_section_title "系统摘要"
+    render_summary_item "BBR 状态" "${BBR_STATUS}"
+    render_section_title "操作选项"
+    render_menu_item "1" "开启 BBR"
+    render_menu_item "2" "协议栈管理"
     echo "0. 返回主菜单"
     read -rp "请选择 [0-2]: " system_choice
 
@@ -3228,18 +3265,22 @@ warp_management() {
       status="${YELLOW}未开启${NC}"
     fi
 
-    echo -e "\n${BLUE}--- Cloudflare Warp 管理 ---${NC}"
-    echo -e "当前状态: ${status}"
-    echo -e "当前路由模式: ${SB_WARP_ROUTE_MODE}"
-    echo "1. 开启 Warp"
-    echo "2. 关闭 Warp"
-    echo "3. 重新注册 Warp 账户 (获取新密钥和 IP)"
-    echo "4. 切换 Warp 路由模式"
-    echo "5. 添加自定义 Warp 域名"
-    echo "6. 添加远程 Warp 规则集"
-    echo "7. 查看 Warp 分流文件路径"
-    echo "8. 查看当前生效的 Warp 分流来源"
-    echo "9. 导入推荐 Warp 规则源"
+    echo
+    render_page_header "Cloudflare Warp 管理" "调整 Warp 出口与分流资产"
+    render_section_title "Warp 摘要"
+    render_summary_item "当前状态" "${status}"
+    render_summary_item "当前路由模式" "${SB_WARP_ROUTE_MODE}"
+    render_summary_item "域名列表文件" "${SB_WARP_DOMAINS_FILE}"
+    render_section_title "操作选项"
+    render_menu_item "1" "开启 Warp"
+    render_menu_item "2" "关闭 Warp"
+    render_menu_item "3" "重新注册 Warp 账户" "(获取新密钥和 IP)"
+    render_menu_item "4" "切换 Warp 路由模式"
+    render_menu_item "5" "添加自定义 Warp 域名"
+    render_menu_item "6" "添加远程 Warp 规则集"
+    render_menu_item "7" "查看 Warp 分流文件路径"
+    render_menu_item "8" "查看当前生效的 Warp 分流来源"
+    render_menu_item "9" "导入推荐 Warp 规则源"
     echo "0. 返回主菜单"
     read -rp "请选择 [0-9]: " w_choice
 
@@ -3628,10 +3669,16 @@ show_connection_info_menu() {
   public_ip=$(get_public_ip)
 
   while true; do
-    echo -e "\n${BLUE}--- 节点信息查看 ---${NC}"
-    echo "1. 仅链接"
-    echo "2. 仅二维码"
-    echo "3. 链接 + 二维码"
+    echo
+    render_page_header "节点信息查看" "按当前配置展示客户端连接信息"
+    render_section_title "信息摘要"
+    render_summary_item "当前协议" "$(protocol_display_name "${SB_PROTOCOL}")"
+    render_summary_item "当前端口" "${SB_PORT}"
+    render_summary_item "当前出口地址" "${public_ip:-未检测到}"
+    render_section_title "展示方式"
+    render_menu_item "1" "仅链接"
+    render_menu_item "2" "仅二维码"
+    render_menu_item "3" "链接 + 二维码"
     echo "0. 返回"
     read -rp "请选择 [0-3]: " info_choice
 
@@ -3712,10 +3759,21 @@ update_singbox_binary_preserving_config() {
 }
 
 install_or_update_singbox() {
+  local installed_ver
+
   if [[ -f "${SINGBOX_BIN_PATH}" && -f "${SINGBOX_CONFIG_FILE}" ]]; then
-    echo -e "\n${BLUE}--- sing-box 管理 ---${NC}"
-    echo "1. 更新 sing-box 二进制并保留当前配置"
-    echo "2. 安装新增协议"
+    installed_ver=$("${SINGBOX_BIN_PATH}" version | head -n1 | awk '{print $3}')
+    load_current_config_state
+
+    echo
+    render_page_header "sing-box 管理" "更新核心或为现有实例补充协议"
+    render_section_title "安装摘要"
+    render_summary_item "当前版本" "${installed_ver}"
+    render_summary_item "当前协议" "$(protocol_display_name "${SB_PROTOCOL}")"
+    render_summary_item "当前端口" "${SB_PORT}"
+    render_section_title "操作选项"
+    render_menu_item "1" "更新 sing-box 二进制并保留当前配置"
+    render_menu_item "2" "安装新增协议"
     echo "0. 返回"
     read -rp "请选择 [0-2] (默认 1): " install_choice
 
