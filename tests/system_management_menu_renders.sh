@@ -2,32 +2,12 @@
 
 set -euo pipefail
 
-REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-TMP_DIR=$(mktemp -d)
-trap 'rm -rf "${TMP_DIR}"' EXIT
+TESTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC1091
+source "${TESTS_DIR}/menu_test_helper.sh"
 
-TESTABLE_INSTALL="${TMP_DIR}/install-testable.sh"
-
-sed \
-  -e "s|readonly SB_PROJECT_DIR=\"/root/sing-box-vps\"|readonly SB_PROJECT_DIR=\"${TMP_DIR}/project\"|" \
-  -e "s|readonly SINGBOX_BIN_PATH=\"/usr/local/bin/sing-box\"|readonly SINGBOX_BIN_PATH=\"${TMP_DIR}/bin/sing-box\"|" \
-  -e "s|readonly SINGBOX_SERVICE_FILE=\"/etc/systemd/system/sing-box.service\"|readonly SINGBOX_SERVICE_FILE=\"${TMP_DIR}/sing-box.service\"|" \
-  -e 's|main \"\$@\"|:|' \
-  "${REPO_ROOT}/install.sh" > "${TESTABLE_INSTALL}"
-
-mkdir -p "${TMP_DIR}/project" "${TMP_DIR}/bin"
-
-cat > "${TMP_DIR}/bin/hostname" <<'EOF'
-#!/usr/bin/env bash
-
-printf 'test-host\n'
-EOF
-chmod +x "${TMP_DIR}/bin/hostname"
-
-export PATH="${TMP_DIR}/bin:${PATH}"
-
-# shellcheck disable=SC1090
-source "${TESTABLE_INSTALL}"
+setup_menu_test_env 120
+source_testable_install
 
 check_bbr_status() {
   BBR_STATUS="(已开启 BBR)"
@@ -38,12 +18,34 @@ output=$(system_management_menu <<'EOF'
 EOF
 )
 
-if [[ "${output}" != *"1. 开启 BBR"* ]]; then
+plain_output=$(strip_ansi "${output}")
+
+if [[ "${plain_output}" != *"系统摘要"* ]]; then
+  printf 'expected future system summary heading inside system management, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${plain_output}" != *"系统管理"* ]]; then
+  printf 'expected system management title to render, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${plain_output}" != *"1. 开启 BBR"* ]]; then
   printf 'expected BBR option inside system management, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
-if [[ "${output}" != *"2. 协议栈管理"* ]]; then
+if [[ "${plain_output}" != *"2. 协议栈管理"* ]]; then
   printf 'expected stack management option inside system management, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+title_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "系统管理") { print NR; exit }')
+summary_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "系统摘要") { print NR; exit }')
+bbr_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "1. 开启 BBR") { print NR; exit }')
+stack_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "2. 协议栈管理") { print NR; exit }')
+
+if ! (( title_line < summary_line && summary_line < bbr_line && bbr_line < stack_line )); then
+  printf 'expected future summary block to appear between the title and menu body, got:\n%s\n' "${output}" >&2
   exit 1
 fi
