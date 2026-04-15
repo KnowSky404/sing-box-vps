@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026041501
+# Version: 2026041503
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026041501"
+readonly SCRIPT_VERSION="2026041503"
 readonly SB_SUPPORT_MAX_VERSION="1.13.7"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
@@ -2723,19 +2723,161 @@ uninstall_script() {
 }
 
 # --- UI & Main ---
+term_columns() {
+  local cols=${COLUMNS:-}
+
+  if [[ "${cols}" =~ ^[0-9]+$ ]] && (( cols > 0 )); then
+    printf '%s' "${cols}"
+    return 0
+  fi
+
+  if command -v tput >/dev/null 2>&1; then
+    cols=$(tput cols 2>/dev/null || true)
+    if [[ "${cols}" =~ ^[0-9]+$ ]] && (( cols > 0 )); then
+      printf '%s' "${cols}"
+      return 0
+    fi
+  fi
+
+  cols=$(stty size 2>/dev/null | awk '{print $2}' || true)
+  if [[ "${cols}" =~ ^[0-9]+$ ]] && (( cols > 0 )); then
+    printf '%s' "${cols}"
+    return 0
+  fi
+
+  printf '80'
+}
+
+repeat_char() {
+  local char=$1
+  local count=$2
+  local output=""
+  local i
+
+  for ((i = 0; i < count; i++)); do
+    output+="${char}"
+  done
+
+  printf '%s' "${output}"
+}
+
+safe_clear_screen() {
+  if [[ -z "${TERM:-}" ]] || [[ "${TERM}" == "dumb" ]]; then
+    return 0
+  fi
+
+  if [[ ! -t 1 ]]; then
+    return 0
+  fi
+
+  if command -v clear >/dev/null 2>&1; then
+    clear 2>/dev/null || true
+  fi
+}
+
+is_ascii_text() {
+  LC_ALL=C grep -q '^[ -~]*$' <<< "${1}"
+}
+
+print_centered_text() {
+  local text=$1
+  local color=${2:-}
+  local width text_length padding
+
+  width=$(term_columns)
+  padding=0
+
+  if is_ascii_text "${text}"; then
+    text_length=${#text}
+  else
+    text_length=${width}
+  fi
+
+  if (( width > text_length )); then
+    padding=$(((width - text_length) / 2))
+  fi
+
+  printf '%*s' "${padding}" ''
+  if [[ -n "${color}" ]]; then
+    printf '%b%s%b\n' "${color}" "${text}" "${NC}"
+  else
+    printf '%s\n' "${text}"
+  fi
+}
+
+render_page_header() {
+  local title=$1
+  local subtitle=${2:-}
+  local width divider
+
+  width=$(term_columns)
+  if (( width < 1 )); then
+    width=1
+  fi
+  divider=$(repeat_char "═" "${width}")
+
+  echo -e "${BLUE}${divider}${NC}"
+  print_centered_text "${title}" "${GREEN}"
+  if [[ -n "${subtitle}" ]]; then
+    print_centered_text "${subtitle}" "${BLUE}"
+  fi
+  echo -e "${BLUE}${divider}${NC}"
+}
+
+render_section_title() {
+  local title=$1
+  local width divider
+
+  width=$(term_columns)
+  if (( width < 56 )); then
+    echo -e "\n${BLUE}${title}${NC}"
+    return 0
+  fi
+
+  divider=$(repeat_char "·" 8)
+  echo -e "\n${BLUE}${divider} ${title} ${divider}${NC}"
+}
+
+render_menu_item() {
+  local number=$1
+  local label=$2
+  local hint=${3:-}
+  local status=${4:-}
+  local width line
+
+  width=$(term_columns)
+  line="${number}. ${label}"
+
+  if [[ -n "${status}" ]]; then
+    if (( width >= 72 )); then
+      echo -e "${line} ${GREEN}${status}${NC}"
+    else
+      echo "${line}"
+      echo -e "   ${GREEN}${status}${NC}"
+    fi
+    return 0
+  fi
+
+  if [[ -n "${hint}" ]]; then
+    if (( width >= 72 )); then
+      echo -e "${line} ${BLUE}${hint}${NC}"
+    else
+      echo "${line}"
+      echo -e "   ${BLUE}${hint}${NC}"
+    fi
+    return 0
+  fi
+
+  echo "${line}"
+}
+
 show_banner() {
-  clear
-  echo -e "${BLUE}#############################################################${NC}"
-  echo -e "${BLUE}#                                                           #${NC}"
-  echo -e "${BLUE}#           ${GREEN}sing-box-vps 一键安装管理脚本${BLUE}                   #${NC}"
-  echo -e "${BLUE}#  ${NC}可能是最简单的 VPS 一键安装脚本，专为稳定与安全设计 ${BLUE}   #${NC}"
-  echo -e "${BLUE}#                                                           #${NC}"
-  echo -e "${BLUE}#  ${NC}作者: ${YELLOW}KnowSky404${NC}                                         ${BLUE}#${NC}"
-  echo -e "${BLUE}#  ${NC}项目: ${NC}https://github.com/KnowSky404/sing-box-vps          ${BLUE}#${NC}"
-  echo -e "${BLUE}#  ${NC}版本: ${GREEN}${SCRIPT_VERSION}${NC}                                       ${BLUE}#${NC}"
-  echo -e "${BLUE}#                                                           #${NC}"
-  echo -e "${BLUE}#############################################################${NC}"
-  echo ""
+  safe_clear_screen
+  render_page_header "sing-box-vps 一键安装管理脚本" "专为 VPS 稳定部署与安全运维设计"
+  print_centered_text "作者: KnowSky404" "${YELLOW}"
+  print_centered_text "项目: https://github.com/KnowSky404/sing-box-vps"
+  print_centered_text "版本: ${SCRIPT_VERSION}" "${GREEN}"
+  echo
 }
 
 # Helper: Check BBR Status
@@ -3600,23 +3742,27 @@ main() {
     check_sb_version
     check_bbr_status
 
-    echo ""
-    echo -e "1. 安装协议 / 更新 sing-box ${SB_VER_STATUS}"
-    echo "2. 卸载 sing-box"
-    echo "3. 修改当前协议配置"
-    echo "4. 系统管理"
-    echo "--------------------------------"
-    echo "5. 启动 sing-box"
-    echo "6. 停止 sing-box"
-    echo "7. 重启 sing-box"
-    echo "8. 查看状态"
-    echo "9. 查看节点信息"
-    echo "10. 查看实时日志"
-    echo "--------------------------------"
-    echo -e "11. 更新管理脚本 (sbv) ${SCRIPT_VER_STATUS}"
-    echo "12. 卸载管理脚本 (sbv)"
-    echo "13. 配置 Cloudflare Warp (解锁/防送中)"
-    echo "14. 流媒体验证检测"
+    render_section_title "部署管理"
+    render_menu_item "1" "安装协议 / 更新 sing-box" "" "${SB_VER_STATUS}"
+    render_menu_item "2" "卸载 sing-box"
+    render_menu_item "3" "修改当前协议配置"
+    render_menu_item "4" "系统管理"
+
+    render_section_title "服务控制"
+    render_menu_item "5" "启动 sing-box"
+    render_menu_item "6" "停止 sing-box"
+    render_menu_item "7" "重启 sing-box"
+    render_menu_item "8" "查看状态"
+
+    render_section_title "连接与诊断"
+    render_menu_item "9" "查看节点信息"
+    render_menu_item "10" "查看实时日志"
+    render_menu_item "14" "流媒体验证检测"
+
+    render_section_title "脚本维护"
+    render_menu_item "11" "更新管理脚本 (sbv)" "" "${SCRIPT_VER_STATUS}"
+    render_menu_item "12" "卸载管理脚本 (sbv)"
+    render_menu_item "13" "配置 Cloudflare Warp" "(解锁/防送中)"
     echo "0. 退出"
     read -rp "请选择 [0-14]: " choice
 
