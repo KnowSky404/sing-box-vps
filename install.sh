@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026041504
+# Version: 2026041505
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026041504"
+readonly SCRIPT_VERSION="2026041505"
 readonly SB_SUPPORT_MAX_VERSION="1.13.7"
+readonly PROJECT_AUTHOR="KnowSky404"
+readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
 readonly SB_KEY_FILE="${SB_PROJECT_DIR}/reality.key"
@@ -2912,10 +2914,14 @@ render_summary_item() {
 show_banner() {
   safe_clear_screen
   render_page_header "sing-box-vps 一键安装管理脚本" "专为 VPS 稳定部署与安全运维设计"
-  print_centered_text "作者: KnowSky404" "${YELLOW}"
-  print_centered_text "项目: https://github.com/KnowSky404/sing-box-vps"
   print_centered_text "版本: ${SCRIPT_VERSION}" "${GREEN}"
   echo
+}
+
+render_main_menu_footer() {
+  echo
+  print_centered_text "作者: ${PROJECT_AUTHOR}" "${YELLOW}"
+  print_centered_text "项目: ${PROJECT_URL}"
 }
 
 # Helper: Check BBR Status
@@ -3838,6 +3844,7 @@ main() {
     render_menu_item "12" "卸载管理脚本 (sbv)"
     render_menu_item "13" "配置 Cloudflare Warp" "(解锁/防送中)"
     echo "0. 退出"
+    render_main_menu_footer
     read -rp "请选择 [0-14]: " choice
 
     case "$choice" in
