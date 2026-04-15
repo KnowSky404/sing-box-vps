@@ -2788,6 +2788,27 @@ is_ascii_text() {
   LC_ALL=C grep -q '^[ -~]*$' <<< "${1}"
 }
 
+estimate_text_width() {
+  local text=$1
+  local char_count byte_count extra_bytes
+
+  if is_ascii_text "${text}"; then
+    printf '%s' "${#text}"
+    return 0
+  fi
+
+  char_count=$(printf '%s' "${text}" | wc -m | tr -d '[:space:]')
+  byte_count=$(printf '%s' "${text}" | wc -c | tr -d '[:space:]')
+
+  if [[ ! "${char_count}" =~ ^[0-9]+$ ]] || [[ ! "${byte_count}" =~ ^[0-9]+$ ]]; then
+    printf '%s' "${#text}"
+    return 0
+  fi
+
+  extra_bytes=$((byte_count - char_count))
+  printf '%s' "$((char_count + (extra_bytes / 2)))"
+}
+
 print_centered_text() {
   local text=$1
   local color=${2:-}
@@ -2795,12 +2816,7 @@ print_centered_text() {
 
   width=$(term_columns)
   padding=0
-
-  if is_ascii_text "${text}"; then
-    text_length=${#text}
-  else
-    text_length=${width}
-  fi
+  text_length=$(estimate_text_width "${text}")
 
   if (( width > text_length )); then
     padding=$(((width - text_length) / 2))

@@ -9,10 +9,6 @@ source "${TESTS_DIR}/menu_test_helper.sh"
 setup_menu_test_env 120
 source_testable_install
 
-show_banner() {
-  :
-}
-
 check_root() {
   :
 }
@@ -75,6 +71,12 @@ fi
 
 if [[ "${plain_output}" != *"14. 流媒体验证检测"* ]]; then
   printf 'expected media check option in sectioned main menu, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+banner_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "sing-box-vps 一键安装管理脚本") { print; exit }')
+if [[ -z "${banner_line}" || ! "${banner_line}" =~ ^[[:space:]]+[^[:space:]] ]]; then
+  printf 'expected main banner title to render with left padding instead of flush-left text, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 

@@ -40,6 +40,12 @@ if [[ "${plain_output}" != *"2. 协议栈管理"* ]]; then
   exit 1
 fi
 
+title_text_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "系统管理") { print; exit }')
+if [[ -z "${title_text_line}" || ! "${title_text_line}" =~ ^[[:space:]]+[^[:space:]] ]]; then
+  printf 'expected system management header title to render with left padding instead of flush-left text, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
 title_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "系统管理") { print NR; exit }')
 summary_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "系统摘要") { print NR; exit }')
 bbr_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "1. 开启 BBR") { print NR; exit }')
