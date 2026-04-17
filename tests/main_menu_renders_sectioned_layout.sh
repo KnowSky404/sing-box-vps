@@ -74,9 +74,34 @@ if [[ "${plain_output}" != *"14. 流媒体验证检测"* ]]; then
   exit 1
 fi
 
-banner_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "sing-box-vps 一键安装管理脚本") { print; exit }')
-if [[ -z "${banner_line}" || ! "${banner_line}" =~ ^[[:space:]]+[^[:space:]] ]]; then
-  printf 'expected main banner title to render with left padding instead of flush-left text, got:\n%s\n' "${output}" >&2
+banner_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "sing-box-vps 一键安装管理脚本") { print NR; exit }')
+brand_info_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "作者: KnowSky404 · 项目: https://github.com/KnowSky404/sing-box-vps") { print NR; exit }')
+brand_meta_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "专为 VPS 稳定部署与安全运维设计 · 版本: ") { print NR; exit }')
+deployment_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "部署管理") { print NR; exit }')
+exit_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "0. 退出") { print NR; exit }')
+
+banner_text=$(printf '%s\n' "${plain_output}" | awk 'index($0, "sing-box-vps 一键安装管理脚本") { print; exit }')
+if [[ -z "${banner_text}" || ! "${banner_text}" =~ ^[^[:space:]] ]]; then
+  printf 'expected main banner title to render flush-left, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ -z "${brand_info_line}" || -z "${brand_meta_line}" ]]; then
+  printf 'expected compact brand info block at the top of the main menu, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if ! (( banner_line < brand_info_line && brand_info_line < brand_meta_line && brand_meta_line < deployment_line )); then
+  printf 'expected title, author/project, and subtitle/version to appear before the deployment section, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if printf '%s\n' "${plain_output}" | awk '
+  NR > '"${exit_line}"' && index($0, "作者: KnowSky404") { exit 0 }
+  NR > '"${exit_line}"' && index($0, "项目: https://github.com/KnowSky404/sing-box-vps") { exit 0 }
+  END { exit 1 }
+'; then
+  printf 'expected main menu footer to stop repeating author/project info, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
@@ -85,27 +110,12 @@ if [[ "${plain_output}" == *"--------------------------------"* ]]; then
   exit 1
 fi
 
-deployment_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "部署管理") { print NR; exit }')
 service_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "服务控制") { print NR; exit }')
 diagnostics_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "连接与诊断") { print NR; exit }')
 maintenance_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "脚本维护") { print NR; exit }')
-exit_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "0. 退出") { print NR; exit }')
-author_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "作者: KnowSky404") { print NR; exit }')
-project_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "项目: https://github.com/KnowSky404/sing-box-vps") { print NR; exit }')
 
 if ! (( deployment_line < service_line && service_line < diagnostics_line && diagnostics_line < maintenance_line )); then
   printf 'expected future section labels to appear in grouped order, got:\n%s\n' "${output}" >&2
-  exit 1
-fi
-
-if printf '%s\n' "${plain_output}" | awk '
-  index($0, "sing-box-vps 一键安装管理脚本") { seen=1; next }
-  seen && index($0, "作者: KnowSky404") { exit 0 }
-  seen && index($0, "项目: https://github.com/KnowSky404/sing-box-vps") { exit 0 }
-  seen && index($0, "部署管理") { exit 1 }
-  END { exit 1 }
-'; then
-  printf 'expected compact main header to omit author/project lines before the deployment section, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
@@ -136,15 +146,5 @@ if ! printf '%s\n' "${plain_output}" | awk '
   END { exit(found ? 0 : 1) }
 '; then
   printf 'expected media check option to stay within the diagnostics section, got:\n%s\n' "${output}" >&2
-  exit 1
-fi
-
-if [[ -z "${author_line}" || -z "${project_line}" ]]; then
-  printf 'expected compact main menu to keep author/project info near the footer, got:\n%s\n' "${output}" >&2
-  exit 1
-fi
-
-if ! (( exit_line < author_line && author_line < project_line )); then
-  printf 'expected compact main menu to move author/project info below the final section, got:\n%s\n' "${output}" >&2
   exit 1
 fi

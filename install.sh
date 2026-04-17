@@ -2911,17 +2911,30 @@ render_summary_item() {
   fi
 }
 
+render_main_menu_brand_block() {
+  local width divider
+
+  width=$(term_columns)
+  if (( width < 1 )); then
+    width=1
+  fi
+  divider=$(repeat_char "═" "${width}")
+
+  echo -e "${BLUE}${divider}${NC}"
+  echo -e "${GREEN}sing-box-vps 一键安装管理脚本${NC}"
+  echo -e "${YELLOW}作者: ${PROJECT_AUTHOR} · 项目: ${PROJECT_URL}${NC}"
+  echo -e "${BLUE}专为 VPS 稳定部署与安全运维设计 · 版本: ${SCRIPT_VERSION}${NC}"
+  echo -e "${BLUE}${divider}${NC}"
+}
+
 show_banner() {
   safe_clear_screen
-  render_page_header "sing-box-vps 一键安装管理脚本" "专为 VPS 稳定部署与安全运维设计"
-  print_centered_text "版本: ${SCRIPT_VERSION}" "${GREEN}"
+  render_main_menu_brand_block
   echo
 }
 
 render_main_menu_footer() {
-  echo
-  print_centered_text "作者: ${PROJECT_AUTHOR}" "${YELLOW}"
-  print_centered_text "项目: ${PROJECT_URL}"
+  :
 }
 
 # Helper: Check BBR Status
