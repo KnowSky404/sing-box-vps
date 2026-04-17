@@ -2913,6 +2913,9 @@ render_summary_item() {
 
 render_main_menu_brand_block() {
   local width divider brand_info brand_meta brand_info_width brand_meta_width
+  local project_url_without_scheme project_url_base project_url_path
+  local current_path_line path_segment candidate
+  local -a project_path_segments
 
   width=$(term_columns)
   if (( width < 1 )); then
@@ -2932,7 +2935,39 @@ render_main_menu_brand_block() {
     echo -e "${BLUE}${brand_meta}${NC}"
   else
     echo -e "${YELLOW}作者: ${PROJECT_AUTHOR}${NC}"
-    echo -e "${YELLOW}项目: ${PROJECT_URL}${NC}"
+    echo -e "${YELLOW}项目:${NC}"
+    project_url_without_scheme=${PROJECT_URL#*://}
+    project_url_base="${PROJECT_URL%%://*}://${project_url_without_scheme%%/*}/"
+    if [[ "${project_url_without_scheme}" == */* ]]; then
+      project_url_path=${project_url_without_scheme#*/}
+    else
+      project_url_path=""
+    fi
+
+    echo -e "${YELLOW}${project_url_base}${NC}"
+
+    if [[ -n "${project_url_path}" ]]; then
+      IFS='/' read -r -a project_path_segments <<< "${project_url_path}"
+      current_path_line=""
+
+      for path_segment in "${project_path_segments[@]}"; do
+        if [[ -z "${current_path_line}" ]]; then
+          candidate="${path_segment}"
+        else
+          candidate="${current_path_line}/${path_segment}"
+        fi
+
+        if (( $(estimate_text_width "${candidate}") <= width )); then
+          current_path_line="${candidate}"
+        else
+          [[ -n "${current_path_line}" ]] && echo -e "${YELLOW}${current_path_line}${NC}"
+          current_path_line="${path_segment}"
+        fi
+      done
+
+      [[ -n "${current_path_line}" ]] && echo -e "${YELLOW}${current_path_line}${NC}"
+    fi
+
     echo -e "${BLUE}专为 VPS 稳定部署与安全运维设计${NC}"
     echo -e "${BLUE}版本: ${SCRIPT_VERSION}${NC}"
   fi
