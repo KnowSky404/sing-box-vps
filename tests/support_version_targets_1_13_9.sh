@@ -5,7 +5,7 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 INSTALL_FILE="${REPO_ROOT}/install.sh"
 README_FILE="${REPO_ROOT}/README.md"
-EXPECTED_VERSION="1.13.7"
+EXPECTED_VERSION="1.13.9"
 
 install_support_version=$(sed -n 's/^readonly SB_SUPPORT_MAX_VERSION="\([^"]\+\)"$/\1/p' "${INSTALL_FILE}")
 

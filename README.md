@@ -4,8 +4,8 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026041701`
-- sing-box 适配版本：`1.13.7`
+- 脚本版本：`2026042001`
+- sing-box 适配版本：`1.13.9`
 
 ## 🚀 一键安装
 
@@ -17,7 +17,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main
 
 脚本会自动：
 1. 安装所有必要依赖（curl, wget, jq, qrencode 等）。
-2. 下载并配置适配的 `sing-box` (当前适配：1.13.7)。
+2. 下载并配置适配的 `sing-box` (当前适配：1.13.9)。
 3. 生成安全的 **VLESS + REALITY**、**Mixed (HTTP/HTTPS/SOCKS)** 或 **Hysteria2** 配置，并支持多协议共存。
 4. 以 **`install.sh`** 作为唯一安装与维护真源，并将自己安装为全局命令 **`sbv`**，方便您随时管理。
 
