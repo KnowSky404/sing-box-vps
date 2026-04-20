@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042001"
+readonly SCRIPT_VERSION="2026042002"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -2279,6 +2279,9 @@ ensure_vless_reality_materials() {
   if [[ -z "${SB_SHORT_ID_2}" ]]; then
     SB_SHORT_ID_2=$(openssl rand -hex 8)
   fi
+
+  # Persist generated REALITY materials so later info views reuse the active link data.
+  save_vless_reality_state
 
   return 0
 }
