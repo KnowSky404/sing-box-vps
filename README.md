@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026042101`
+- 脚本版本：`2026042102`
 - sing-box 适配版本：`1.13.9`
 
 ## 🚀 一键安装
@@ -13,6 +13,12 @@
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh)
+```
+
+如需独立执行彻底卸载，可运行：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/uninstall.sh)
 ```
 
 脚本会自动：

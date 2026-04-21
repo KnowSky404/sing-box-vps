@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042101
+# Version: 2026042102
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042101"
+readonly SCRIPT_VERSION="2026042102"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -186,6 +186,18 @@ log_error() {
   mkdir -p "${SB_PROJECT_DIR}"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $1" >> "${SBV_LOG_FILE}"
   exit 1
+}
+
+print_info() {
+  echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+print_success() {
+  echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
+
+print_warn() {
+  echo -e "${YELLOW}[WARN]${NC} $1"
 }
 
 trim_whitespace() {
@@ -3143,28 +3155,52 @@ generate_config() {
 }
 
 # --- Uninstaller ---
-uninstall_singbox() {
-  log_info "正在卸载 sing-box..."
+perform_full_uninstall() {
+  log_info "正在彻底卸载 sing-box 环境..."
   systemctl stop sing-box &>/dev/null || true
   systemctl disable sing-box &>/dev/null || true
-  rm -f "${SINGBOX_BIN_PATH}"
-  rm -rf "${SINGBOX_CONFIG_DIR}"
   rm -f "${SINGBOX_SERVICE_FILE}"
   systemctl daemon-reload
-  log_success "sing-box 软件卸载完成。"
+  rm -f "${SINGBOX_BIN_PATH}"
+  rm -f "${SBV_BIN_PATH}"
+  rm -rf "${SINGBOX_CONFIG_DIR}"
+  print_success "sing-box、配置目录和全局命令 sbv 已彻底删除。"
+}
+
+uninstall_singbox() {
+  echo ""
+  print_warn "该操作会彻底删除 sing-box 服务、配置目录、密钥和全局命令 sbv。"
+  read -rp "确认继续吗？[y/N]: " confirm
+  if [[ ! "${confirm}" =~ ^[Yy]$ ]]; then
+    log_info "已取消卸载。"
+    return 0
+  fi
+
+  perform_full_uninstall
+  exit 0
 }
 
 # Uninstall script itself
 uninstall_script() {
+  local deleted_cfg="n"
   read -rp "是否同时删除项目配置文件目录 (/root/sing-box-vps)? [y/N]: " del_cfg
   if [[ "${del_cfg}" =~ ^[Yy]$ ]]; then
     rm -rf "${SB_PROJECT_DIR}"
-    log_info "配置文件目录已删除。"
+    deleted_cfg="y"
+    print_info "配置文件目录已删除。"
   fi
   
-  log_info "正在删除全局命令 sbv..."
+  if [[ "${deleted_cfg}" == "y" ]]; then
+    print_info "正在删除全局命令 sbv..."
+  else
+    log_info "正在删除全局命令 sbv..."
+  fi
   rm -f "${SBV_BIN_PATH}"
-  log_success "管理脚本已卸载。"
+  if [[ "${deleted_cfg}" == "y" ]]; then
+    print_success "管理脚本已卸载。"
+  else
+    log_success "管理脚本已卸载。"
+  fi
   exit 0
 }
 
@@ -4385,7 +4421,24 @@ install_or_update_singbox() {
 }
 
 main() {
-  [[ $# -gt 0 && "$1" == "uninstall" ]] && check_root && uninstall_singbox && exit 0
+  if [[ $# -gt 0 ]]; then
+    case "$1" in
+      uninstall)
+        check_root
+        uninstall_singbox
+        exit 0
+        ;;
+      --internal-uninstall-purge)
+        check_root
+        if [[ "${2:-}" == "--yes" ]]; then
+          perform_full_uninstall
+        else
+          uninstall_singbox
+        fi
+        exit 0
+        ;;
+    esac
+  fi
 
   show_banner
   check_root
