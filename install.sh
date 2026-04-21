@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042103
+# Version: 2026042104
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042103"
+readonly SCRIPT_VERSION="2026042104"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -205,6 +205,29 @@ trim_whitespace() {
   value="${value#"${value%%[![:space:]]*}"}"
   value="${value%"${value##*[![:space:]]}"}"
   printf '%s' "${value}"
+}
+
+normalize_singbox_version_input() {
+  local input_version
+  input_version=$(trim_whitespace "${1:-}")
+
+  if [[ -z "${input_version}" ]]; then
+    printf '%s' "${SB_SUPPORT_MAX_VERSION}"
+    return 0
+  fi
+
+  if [[ "${input_version}" == "latest" ]]; then
+    printf '%s' "${input_version}"
+    return 0
+  fi
+
+  input_version="${input_version#v}"
+  if [[ "${input_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    printf '%s' "${input_version}"
+    return 0
+  fi
+
+  return 1
 }
 
 extract_generated_key_value() {
@@ -4249,10 +4272,16 @@ show_post_config_connection_info() {
 }
 
 prompt_singbox_version() {
-  local input_version
+  local input_version normalized_version
 
-  read -rp "版本 (默认 ${SB_SUPPORT_MAX_VERSION}): " input_version
-  SB_VERSION=${input_version:-$SB_SUPPORT_MAX_VERSION}
+  while true; do
+    read -rp "版本 (默认 ${SB_SUPPORT_MAX_VERSION}，可输入 latest 或 x.y.z): " input_version
+    if normalized_version=$(normalize_singbox_version_input "${input_version}"); then
+      SB_VERSION="${normalized_version}"
+      return 0
+    fi
+    log_warn "无效版本号: ${input_version}。请输入 latest、${SB_SUPPORT_MAX_VERSION} 或完整版本号，例如 1.13.9。"
+  done
 }
 
 list_config_protocols() {
