@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042102
+# Version: 2026042103
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042102"
+readonly SCRIPT_VERSION="2026042103"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -502,10 +502,15 @@ write_env_assignment() {
 }
 
 write_protocol_index() {
+  local recorded_version
+  recorded_version=$(resolve_protocol_index_singbox_version)
   ensure_protocol_state_dir
   {
     printf 'INSTALLED_PROTOCOLS=%s\n' "$1"
     printf 'PROTOCOL_STATE_VERSION=1\n'
+    if [[ -n "${recorded_version}" ]]; then
+      printf 'INSTALLED_SINGBOX_VERSION=%s\n' "${recorded_version}"
+    fi
   } > "${SB_PROTOCOL_INDEX_FILE}"
 }
 
@@ -517,6 +522,41 @@ extract_protocols_from_index() {
   installed=${installed//\'/}
   installed=${installed//\\,/,}
   printf '%s' "${installed}"
+}
+
+extract_recorded_singbox_version_from_index() {
+  [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]] || return 0
+
+  local recorded_version
+  recorded_version=$(grep '^INSTALLED_SINGBOX_VERSION=' "${SB_PROTOCOL_INDEX_FILE}" 2>/dev/null | cut -d'=' -f2- || true)
+  recorded_version=${recorded_version//\"/}
+  recorded_version=${recorded_version//\'/}
+  recorded_version=$(trim_whitespace "${recorded_version}")
+  printf '%s' "${recorded_version}"
+}
+
+detect_installed_singbox_version() {
+  [[ -x "${SINGBOX_BIN_PATH}" ]] || return 0
+
+  local installed_version
+  installed_version=$("${SINGBOX_BIN_PATH}" version 2>/dev/null | head -n1 | awk '{print $3}' || true)
+  installed_version=$(trim_whitespace "${installed_version}")
+  printf '%s' "${installed_version}"
+}
+
+resolve_protocol_index_singbox_version() {
+  local installed_version recorded_version
+
+  installed_version=$(detect_installed_singbox_version)
+  if [[ -n "${installed_version}" ]]; then
+    printf '%s' "${installed_version}"
+    return 0
+  fi
+
+  recorded_version=$(extract_recorded_singbox_version_from_index)
+  if [[ -n "${recorded_version}" ]]; then
+    printf '%s' "${recorded_version}"
+  fi
 }
 
 list_indexed_protocols_raw() {
@@ -678,138 +718,7 @@ save_protocol_state() {
 
 migrate_legacy_single_protocol_state_if_needed() {
   [[ -f "${SB_PROTOCOL_INDEX_FILE}" || ! -f "${SINGBOX_CONFIG_FILE}" ]] && return 0
-
-  local legacy_type legacy_protocol
-  legacy_type=$(jq -r '.inbounds[0].type // empty' "${SINGBOX_CONFIG_FILE}")
-
-  case "${legacy_type}" in
-    vless) legacy_protocol="vless-reality" ;;
-    mixed) legacy_protocol="mixed" ;;
-    hysteria2) legacy_protocol="hy2" ;;
-    anytls) legacy_protocol="anytls" ;;
-    *) return 0 ;;
-  esac
-
-  ensure_protocol_state_dir
-  write_protocol_index "${legacy_protocol}"
-
-  case "${legacy_protocol}" in
-    vless-reality)
-      SB_PROTOCOL="vless+reality"
-      SB_NODE_NAME="vless_reality_$(hostname)"
-      SB_PORT=$(jq -r '.inbounds[0].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")
-      SB_UUID=$(jq -r '.inbounds[0].users[0].uuid // ""' "${SINGBOX_CONFIG_FILE}")
-      SB_SNI=$(jq -r '.inbounds[0].tls.server_name // "apple.com"' "${SINGBOX_CONFIG_FILE}")
-      SB_PRIVATE_KEY=$(jq -r '.inbounds[0].tls.reality.private_key // ""' "${SINGBOX_CONFIG_FILE}")
-      SB_SHORT_ID_1=$(jq -r '.inbounds[0].tls.reality.short_id[0] // ""' "${SINGBOX_CONFIG_FILE}")
-      SB_SHORT_ID_2=$(jq -r '.inbounds[0].tls.reality.short_id[1] // ""' "${SINGBOX_CONFIG_FILE}")
-      if [[ -f "${SB_KEY_FILE}" ]]; then
-        SB_PUBLIC_KEY=$(grep '^PUBLIC_KEY=' "${SB_KEY_FILE}" 2>/dev/null | cut -d'=' -f2- | tr -d '\r\n ' || true)
-      else
-        SB_PUBLIC_KEY=""
-      fi
-      save_vless_reality_state
-      ;;
-    mixed)
-      SB_PROTOCOL="mixed"
-      SB_NODE_NAME="mixed_$(hostname)"
-      SB_PORT=$(jq -r '.inbounds[0].listen_port // "1080"' "${SINGBOX_CONFIG_FILE}")
-      if jq -e '(.inbounds[0].users // []) | length > 0' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
-        SB_MIXED_AUTH_ENABLED="y"
-        SB_MIXED_USERNAME=$(jq -r '.inbounds[0].users[0].username // ""' "${SINGBOX_CONFIG_FILE}")
-        SB_MIXED_PASSWORD=$(jq -r '.inbounds[0].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
-      else
-        SB_MIXED_AUTH_ENABLED="n"
-        SB_MIXED_USERNAME=""
-        SB_MIXED_PASSWORD=""
-      fi
-      save_mixed_state
-      ;;
-    hy2)
-      local cert_provider_tag
-
-      SB_PROTOCOL="hy2"
-      SB_NODE_NAME="hy2_$(hostname)"
-      SB_PORT=$(jq -r '.inbounds[0].listen_port // "8443"' "${SINGBOX_CONFIG_FILE}")
-      SB_HY2_DOMAIN=$(jq -r '.inbounds[0].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
-      SB_HY2_PASSWORD=$(jq -r '.inbounds[0].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
-      SB_HY2_USER_NAME=$(jq -r '.inbounds[0].users[0].name // ""' "${SINGBOX_CONFIG_FILE}")
-      SB_HY2_UP_MBPS=$(jq -r '.inbounds[0].up_mbps // "100"' "${SINGBOX_CONFIG_FILE}")
-      SB_HY2_DOWN_MBPS=$(jq -r '.inbounds[0].down_mbps // "100"' "${SINGBOX_CONFIG_FILE}")
-      if jq -e '.inbounds[0].obfs.type == "salamander"' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
-        SB_HY2_OBFS_ENABLED="y"
-        SB_HY2_OBFS_TYPE="salamander"
-        SB_HY2_OBFS_PASSWORD=$(jq -r '.inbounds[0].obfs.password // ""' "${SINGBOX_CONFIG_FILE}")
-      else
-        SB_HY2_OBFS_ENABLED="n"
-        SB_HY2_OBFS_TYPE=""
-        SB_HY2_OBFS_PASSWORD=""
-      fi
-
-      cert_provider_tag=$(jq -r '.inbounds[0].tls.certificate_provider // ""' "${SINGBOX_CONFIG_FILE}")
-      if [[ -n "${cert_provider_tag}" ]]; then
-        SB_HY2_TLS_MODE="acme"
-        SB_HY2_ACME_DOMAIN=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .domain[0]) // .inbounds[0].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
-        SB_HY2_ACME_EMAIL=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .email) // ""' "${SINGBOX_CONFIG_FILE}")
-        if jq -e --arg tag "${cert_provider_tag}" 'any(.certificate_providers[]?; .tag == $tag and .dns01_challenge? != null)' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
-          SB_HY2_ACME_MODE="dns"
-          SB_HY2_DNS_PROVIDER=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .dns01_challenge.provider) // "cloudflare"' "${SINGBOX_CONFIG_FILE}")
-          SB_HY2_CF_API_TOKEN=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .dns01_challenge.api_token) // ""' "${SINGBOX_CONFIG_FILE}")
-        else
-          SB_HY2_ACME_MODE="http"
-          SB_HY2_DNS_PROVIDER="cloudflare"
-          SB_HY2_CF_API_TOKEN=""
-        fi
-        SB_HY2_CERT_PATH=""
-        SB_HY2_KEY_PATH=""
-      else
-        SB_HY2_TLS_MODE="manual"
-        SB_HY2_ACME_MODE="http"
-        SB_HY2_ACME_EMAIL=""
-        SB_HY2_ACME_DOMAIN="${SB_HY2_DOMAIN}"
-        SB_HY2_DNS_PROVIDER="cloudflare"
-        SB_HY2_CF_API_TOKEN=""
-        SB_HY2_CERT_PATH=$(jq -r '.inbounds[0].tls.certificate_path // ""' "${SINGBOX_CONFIG_FILE}")
-        SB_HY2_KEY_PATH=$(jq -r '.inbounds[0].tls.key_path // ""' "${SINGBOX_CONFIG_FILE}")
-      fi
-      SB_HY2_MASQUERADE=$(jq -r '.inbounds[0].masquerade // ""' "${SINGBOX_CONFIG_FILE}")
-      save_hy2_state
-      ;;
-    anytls)
-      SB_PROTOCOL="anytls"
-      SB_NODE_NAME="anytls_$(hostname)"
-      SB_PORT=$(jq -r '.inbounds[0].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")
-      SB_ANYTLS_DOMAIN=$(jq -r '.inbounds[0].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
-      SB_ANYTLS_PASSWORD=$(jq -r '.inbounds[0].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
-      SB_ANYTLS_USER_NAME=$(jq -r '.inbounds[0].users[0].name // ""' "${SINGBOX_CONFIG_FILE}")
-      if jq -e '.inbounds[0].tls.acme? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
-        SB_ANYTLS_TLS_MODE="acme"
-        if jq -e '.inbounds[0].tls.acme.dns01_challenge? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
-          SB_ANYTLS_ACME_MODE="dns"
-          SB_ANYTLS_DNS_PROVIDER=$(jq -r '.inbounds[0].tls.acme.dns01_challenge.provider // "cloudflare"' "${SINGBOX_CONFIG_FILE}")
-          SB_ANYTLS_CF_API_TOKEN=$(jq -r '.inbounds[0].tls.acme.dns01_challenge.api_token // ""' "${SINGBOX_CONFIG_FILE}")
-        else
-          SB_ANYTLS_ACME_MODE="http"
-          SB_ANYTLS_DNS_PROVIDER="cloudflare"
-          SB_ANYTLS_CF_API_TOKEN=""
-        fi
-        SB_ANYTLS_ACME_EMAIL=$(jq -r '.inbounds[0].tls.acme.email // ""' "${SINGBOX_CONFIG_FILE}")
-        SB_ANYTLS_ACME_DOMAIN=$(jq -r '.inbounds[0].tls.acme.domain[0] // .inbounds[0].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
-        SB_ANYTLS_CERT_PATH=""
-        SB_ANYTLS_KEY_PATH=""
-      else
-        SB_ANYTLS_TLS_MODE="manual"
-        SB_ANYTLS_ACME_MODE="http"
-        SB_ANYTLS_ACME_EMAIL=""
-        SB_ANYTLS_ACME_DOMAIN="${SB_ANYTLS_DOMAIN}"
-        SB_ANYTLS_DNS_PROVIDER="cloudflare"
-        SB_ANYTLS_CF_API_TOKEN=""
-        SB_ANYTLS_CERT_PATH=$(jq -r '.inbounds[0].tls.certificate_path // ""' "${SINGBOX_CONFIG_FILE}")
-        SB_ANYTLS_KEY_PATH=$(jq -r '.inbounds[0].tls.key_path // ""' "${SINGBOX_CONFIG_FILE}")
-      fi
-      save_anytls_state
-      ;;
-  esac
+  rebuild_protocol_state_from_config
 }
 
 prompt_installed_protocol_selection() {
@@ -4346,6 +4255,503 @@ prompt_singbox_version() {
   SB_VERSION=${input_version:-$SB_SUPPORT_MAX_VERSION}
 }
 
+list_config_protocols() {
+  [[ -f "${SINGBOX_CONFIG_FILE}" ]] || return 0
+
+  local protocols=()
+  local inbound_count inbound_index inbound_type protocol
+
+  inbound_count=$(jq -r '(.inbounds // []) | length' "${SINGBOX_CONFIG_FILE}")
+  [[ "${inbound_count}" =~ ^[0-9]+$ ]] || return 0
+
+  for ((inbound_index = 0; inbound_index < inbound_count; inbound_index++)); do
+    inbound_type=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].type // empty' "${SINGBOX_CONFIG_FILE}")
+    protocol=$(normalize_protocol_id "${inbound_type}" 2>/dev/null || true)
+    [[ -n "${protocol}" ]] || continue
+
+    if ! protocol_array_contains "${protocol}" "${protocols[@]}"; then
+      protocols+=("${protocol}")
+    fi
+  done
+
+  printf '%s\n' "${protocols[@]}"
+}
+
+find_config_inbound_index_by_protocol() {
+  [[ -f "${SINGBOX_CONFIG_FILE}" ]] || return 1
+
+  local target_protocol inbound_count inbound_index inbound_type protocol
+  target_protocol=$(normalize_protocol_id "$1")
+
+  inbound_count=$(jq -r '(.inbounds // []) | length' "${SINGBOX_CONFIG_FILE}")
+  [[ "${inbound_count}" =~ ^[0-9]+$ ]] || return 1
+
+  for ((inbound_index = 0; inbound_index < inbound_count; inbound_index++)); do
+    inbound_type=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].type // empty' "${SINGBOX_CONFIG_FILE}")
+    protocol=$(normalize_protocol_id "${inbound_type}" 2>/dev/null || true)
+    if [[ "${protocol}" == "${target_protocol}" ]]; then
+      printf '%s' "${inbound_index}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+render_expected_protocol_state_snapshot() {
+  [[ -f "${SINGBOX_CONFIG_FILE}" ]] || return 1
+
+  local protocol inbound_index cert_provider_tag
+  protocol=$(normalize_protocol_id "$1")
+  inbound_index=$(find_config_inbound_index_by_protocol "${protocol}") || return 1
+
+  case "${protocol}" in
+    vless-reality)
+      printf 'PORT=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")"
+      printf 'UUID=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].uuid // ""' "${SINGBOX_CONFIG_FILE}")"
+      printf 'SNI=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // "apple.com"' "${SINGBOX_CONFIG_FILE}")"
+      printf 'REALITY_PRIVATE_KEY=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.private_key // ""' "${SINGBOX_CONFIG_FILE}")"
+      printf 'SHORT_ID_1=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[0] // ""' "${SINGBOX_CONFIG_FILE}")"
+      printf 'SHORT_ID_2=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[1] // ""' "${SINGBOX_CONFIG_FILE}")"
+      ;;
+    mixed)
+      printf 'PORT=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "1080"' "${SINGBOX_CONFIG_FILE}")"
+      if jq -e --argjson idx "${inbound_index}" '(.inbounds[$idx].users // []) | length > 0' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+        printf 'AUTH_ENABLED=y\n'
+        printf 'USERNAME=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].username // ""' "${SINGBOX_CONFIG_FILE}")"
+        printf 'PASSWORD=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")"
+      else
+        printf 'AUTH_ENABLED=n\n'
+        printf 'USERNAME=\n'
+        printf 'PASSWORD=\n'
+      fi
+      ;;
+    hy2)
+      printf 'PORT=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "8443"' "${SINGBOX_CONFIG_FILE}")"
+      printf 'DOMAIN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")"
+      printf 'PASSWORD=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")"
+      printf 'USER_NAME=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].name // ""' "${SINGBOX_CONFIG_FILE}")"
+      printf 'UP_MBPS=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].up_mbps // "100"' "${SINGBOX_CONFIG_FILE}")"
+      printf 'DOWN_MBPS=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].down_mbps // "100"' "${SINGBOX_CONFIG_FILE}")"
+      if jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].obfs.type == "salamander"' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+        printf 'OBFS_ENABLED=y\n'
+        printf 'OBFS_TYPE=salamander\n'
+        printf 'OBFS_PASSWORD=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].obfs.password // ""' "${SINGBOX_CONFIG_FILE}")"
+      else
+        printf 'OBFS_ENABLED=n\n'
+        printf 'OBFS_TYPE=\n'
+        printf 'OBFS_PASSWORD=\n'
+      fi
+
+      cert_provider_tag=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider // ""' "${SINGBOX_CONFIG_FILE}")
+      if [[ -n "${cert_provider_tag}" ]]; then
+        printf 'TLS_MODE=acme\n'
+        printf 'ACME_DOMAIN=%s\n' "$(jq -r --argjson idx "${inbound_index}" --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .domain[0]) // .inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")"
+        printf 'ACME_EMAIL=%s\n' "$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .email) // ""' "${SINGBOX_CONFIG_FILE}")"
+        if jq -e --arg tag "${cert_provider_tag}" 'any(.certificate_providers[]?; .tag == $tag and .dns01_challenge? != null)' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+          printf 'ACME_MODE=dns\n'
+          printf 'DNS_PROVIDER=%s\n' "$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .dns01_challenge.provider) // "cloudflare"' "${SINGBOX_CONFIG_FILE}")"
+          printf 'CF_API_TOKEN=%s\n' "$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .dns01_challenge.api_token) // ""' "${SINGBOX_CONFIG_FILE}")"
+        else
+          printf 'ACME_MODE=http\n'
+          printf 'DNS_PROVIDER=cloudflare\n'
+          printf 'CF_API_TOKEN=\n'
+        fi
+        printf 'CERT_PATH=\n'
+        printf 'KEY_PATH=\n'
+      else
+        printf 'TLS_MODE=manual\n'
+        printf 'ACME_MODE=http\n'
+        printf 'ACME_EMAIL=\n'
+        printf 'ACME_DOMAIN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")"
+        printf 'DNS_PROVIDER=cloudflare\n'
+        printf 'CF_API_TOKEN=\n'
+        printf 'CERT_PATH=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_path // ""' "${SINGBOX_CONFIG_FILE}")"
+        printf 'KEY_PATH=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.key_path // ""' "${SINGBOX_CONFIG_FILE}")"
+      fi
+      printf 'MASQUERADE=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].masquerade // ""' "${SINGBOX_CONFIG_FILE}")"
+      ;;
+    anytls)
+      printf 'PORT=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")"
+      printf 'DOMAIN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")"
+      printf 'PASSWORD=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")"
+      printf 'USER_NAME=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].name // ""' "${SINGBOX_CONFIG_FILE}")"
+      if jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+        printf 'TLS_MODE=acme\n'
+        if jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+          printf 'ACME_MODE=dns\n'
+          printf 'DNS_PROVIDER=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge.provider // "cloudflare"' "${SINGBOX_CONFIG_FILE}")"
+          printf 'CF_API_TOKEN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge.api_token // ""' "${SINGBOX_CONFIG_FILE}")"
+        else
+          printf 'ACME_MODE=http\n'
+          printf 'DNS_PROVIDER=cloudflare\n'
+          printf 'CF_API_TOKEN=\n'
+        fi
+        printf 'ACME_EMAIL=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.email // ""' "${SINGBOX_CONFIG_FILE}")"
+        printf 'ACME_DOMAIN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.domain[0] // .inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")"
+        printf 'CERT_PATH=\n'
+        printf 'KEY_PATH=\n'
+      else
+        printf 'TLS_MODE=manual\n'
+        printf 'ACME_MODE=http\n'
+        printf 'ACME_EMAIL=\n'
+        printf 'ACME_DOMAIN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")"
+        printf 'DNS_PROVIDER=cloudflare\n'
+        printf 'CF_API_TOKEN=\n'
+        printf 'CERT_PATH=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_path // ""' "${SINGBOX_CONFIG_FILE}")"
+        printf 'KEY_PATH=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.key_path // ""' "${SINGBOX_CONFIG_FILE}")"
+      fi
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+render_saved_protocol_state_snapshot() {
+  local protocol state_file
+  protocol=$(normalize_protocol_id "$1")
+  state_file=$(protocol_state_file "${protocol}")
+  [[ -f "${state_file}" ]] || return 1
+
+  case "${protocol}" in
+    vless-reality)
+      # shellcheck disable=SC1090
+      (
+        source "${state_file}"
+        printf 'PORT=%s\n' "${PORT:-}"
+        printf 'UUID=%s\n' "${UUID:-}"
+        printf 'SNI=%s\n' "${SNI:-}"
+        printf 'REALITY_PRIVATE_KEY=%s\n' "${REALITY_PRIVATE_KEY:-}"
+        printf 'SHORT_ID_1=%s\n' "${SHORT_ID_1:-}"
+        printf 'SHORT_ID_2=%s\n' "${SHORT_ID_2:-}"
+      )
+      ;;
+    mixed)
+      # shellcheck disable=SC1090
+      (
+        source "${state_file}"
+        printf 'PORT=%s\n' "${PORT:-}"
+        printf 'AUTH_ENABLED=%s\n' "${AUTH_ENABLED:-}"
+        printf 'USERNAME=%s\n' "${USERNAME:-}"
+        printf 'PASSWORD=%s\n' "${PASSWORD:-}"
+      )
+      ;;
+    hy2)
+      # shellcheck disable=SC1090
+      (
+        source "${state_file}"
+        printf 'PORT=%s\n' "${PORT:-}"
+        printf 'DOMAIN=%s\n' "${DOMAIN:-}"
+        printf 'PASSWORD=%s\n' "${PASSWORD:-}"
+        printf 'USER_NAME=%s\n' "${USER_NAME:-}"
+        printf 'UP_MBPS=%s\n' "${UP_MBPS:-}"
+        printf 'DOWN_MBPS=%s\n' "${DOWN_MBPS:-}"
+        printf 'OBFS_ENABLED=%s\n' "${OBFS_ENABLED:-}"
+        printf 'OBFS_TYPE=%s\n' "${OBFS_TYPE:-}"
+        printf 'OBFS_PASSWORD=%s\n' "${OBFS_PASSWORD:-}"
+        printf 'TLS_MODE=%s\n' "${TLS_MODE:-}"
+        printf 'ACME_MODE=%s\n' "${ACME_MODE:-}"
+        printf 'ACME_EMAIL=%s\n' "${ACME_EMAIL:-}"
+        printf 'ACME_DOMAIN=%s\n' "${ACME_DOMAIN:-}"
+        printf 'DNS_PROVIDER=%s\n' "${DNS_PROVIDER:-}"
+        printf 'CF_API_TOKEN=%s\n' "${CF_API_TOKEN:-}"
+        printf 'CERT_PATH=%s\n' "${CERT_PATH:-}"
+        printf 'KEY_PATH=%s\n' "${KEY_PATH:-}"
+        printf 'MASQUERADE=%s\n' "${MASQUERADE:-}"
+      )
+      ;;
+    anytls)
+      # shellcheck disable=SC1090
+      (
+        source "${state_file}"
+        printf 'PORT=%s\n' "${PORT:-}"
+        printf 'DOMAIN=%s\n' "${DOMAIN:-}"
+        printf 'PASSWORD=%s\n' "${PASSWORD:-}"
+        printf 'USER_NAME=%s\n' "${USER_NAME:-}"
+        printf 'TLS_MODE=%s\n' "${TLS_MODE:-}"
+        printf 'ACME_MODE=%s\n' "${ACME_MODE:-}"
+        printf 'ACME_EMAIL=%s\n' "${ACME_EMAIL:-}"
+        printf 'ACME_DOMAIN=%s\n' "${ACME_DOMAIN:-}"
+        printf 'DNS_PROVIDER=%s\n' "${DNS_PROVIDER:-}"
+        printf 'CF_API_TOKEN=%s\n' "${CF_API_TOKEN:-}"
+        printf 'CERT_PATH=%s\n' "${CERT_PATH:-}"
+        printf 'KEY_PATH=%s\n' "${KEY_PATH:-}"
+      )
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+protocol_state_matches_config() {
+  local protocol expected_snapshot saved_snapshot
+  protocol=$(normalize_protocol_id "$1")
+
+  expected_snapshot=$(render_expected_protocol_state_snapshot "${protocol}") || return 1
+  saved_snapshot=$(render_saved_protocol_state_snapshot "${protocol}") || return 1
+
+  [[ "${saved_snapshot}" == "${expected_snapshot}" ]]
+}
+
+protocol_state_layer_matches_config() {
+  [[ -f "${SINGBOX_CONFIG_FILE}" && -f "${SB_PROTOCOL_INDEX_FILE}" ]] || return 1
+
+  local config_protocols=()
+  local indexed_protocols=()
+  local normalized_indexed_protocols=()
+  local protocol joined_config joined_index
+
+  mapfile -t config_protocols < <(list_config_protocols)
+  [[ ${#config_protocols[@]} -gt 0 ]] || return 1
+
+  mapfile -t indexed_protocols < <(list_indexed_protocols_raw)
+  [[ ${#indexed_protocols[@]} -eq ${#config_protocols[@]} ]] || return 1
+
+  for protocol in "${indexed_protocols[@]}"; do
+    protocol=$(normalize_protocol_id "${protocol}" 2>/dev/null || true)
+    [[ -n "${protocol}" ]] || return 1
+    normalized_indexed_protocols+=("${protocol}")
+  done
+
+  joined_config=$(IFS=,; printf '%s' "${config_protocols[*]}")
+  joined_index=$(IFS=,; printf '%s' "${normalized_indexed_protocols[*]}")
+  [[ "${joined_config}" == "${joined_index}" ]] || return 1
+
+  for protocol in "${config_protocols[@]}"; do
+    protocol_state_exists "${protocol}" || return 1
+    protocol_state_matches_config "${protocol}" || return 1
+  done
+
+  return 0
+}
+
+detect_existing_instance_state() {
+  local has_bin="n"
+  local has_service="n"
+  local has_config="n"
+  local has_index="n"
+  local has_state="n"
+  local has_sbv="n"
+  local state_file
+
+  [[ -x "${SINGBOX_BIN_PATH}" ]] && has_bin="y"
+  [[ -f "${SINGBOX_SERVICE_FILE}" ]] && has_service="y"
+  [[ -f "${SINGBOX_CONFIG_FILE}" ]] && has_config="y"
+  [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]] && has_index="y"
+  [[ -x "${SBV_BIN_PATH}" ]] && has_sbv="y"
+
+  if [[ -d "${SB_PROTOCOL_STATE_DIR}" ]]; then
+    for state_file in "${SB_PROTOCOL_STATE_DIR}"/*.env; do
+      [[ -e "${state_file}" ]] || continue
+      [[ "${state_file}" == "${SB_PROTOCOL_INDEX_FILE}" ]] && continue
+      has_state="y"
+      break
+    done
+  fi
+
+  if [[ "${has_bin}" == "n" && "${has_service}" == "n" && "${has_config}" == "n" && "${has_index}" == "n" && "${has_state}" == "n" ]]; then
+    printf '%s' "fresh"
+    return 0
+  fi
+
+  if [[ "${has_bin}" == "y" && "${has_service}" == "y" && "${has_config}" == "y" && "${has_sbv}" == "y" ]]; then
+    if protocol_state_layer_matches_config; then
+      printf '%s' "healthy"
+    else
+      printf '%s' "incomplete"
+    fi
+    return 0
+  fi
+
+  printf '%s' "incomplete"
+}
+
+rebuild_protocol_state_from_config() {
+  [[ -f "${SINGBOX_CONFIG_FILE}" ]] || return 0
+
+  local rebuilt_protocols=()
+  local inbound_count inbound_index inbound_type protocol cert_provider_tag
+
+  inbound_count=$(jq -r '(.inbounds // []) | length' "${SINGBOX_CONFIG_FILE}")
+  [[ "${inbound_count}" =~ ^[0-9]+$ ]] || return 0
+
+  ensure_protocol_state_dir
+
+  for ((inbound_index = 0; inbound_index < inbound_count; inbound_index++)); do
+    inbound_type=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].type // empty' "${SINGBOX_CONFIG_FILE}")
+    protocol=$(normalize_protocol_id "${inbound_type}" 2>/dev/null || true)
+    [[ -n "${protocol}" ]] || continue
+
+    case "${protocol}" in
+      vless-reality)
+        SB_PROTOCOL="vless+reality"
+        SB_NODE_NAME="vless_reality_$(hostname)"
+        SB_PORT=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")
+        SB_UUID=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].uuid // ""' "${SINGBOX_CONFIG_FILE}")
+        SB_SNI=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // "apple.com"' "${SINGBOX_CONFIG_FILE}")
+        SB_PRIVATE_KEY=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.private_key // ""' "${SINGBOX_CONFIG_FILE}")
+        SB_SHORT_ID_1=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[0] // ""' "${SINGBOX_CONFIG_FILE}")
+        SB_SHORT_ID_2=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[1] // ""' "${SINGBOX_CONFIG_FILE}")
+        if [[ -f "${SB_KEY_FILE}" ]]; then
+          SB_PUBLIC_KEY=$(grep '^PUBLIC_KEY=' "${SB_KEY_FILE}" 2>/dev/null | cut -d'=' -f2- | tr -d '\r\n ' || true)
+        else
+          SB_PUBLIC_KEY=""
+        fi
+        save_vless_reality_state
+        ;;
+      mixed)
+        SB_PROTOCOL="mixed"
+        SB_NODE_NAME="mixed_$(hostname)"
+        SB_PORT=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "1080"' "${SINGBOX_CONFIG_FILE}")
+        if jq -e --argjson idx "${inbound_index}" '(.inbounds[$idx].users // []) | length > 0' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+          SB_MIXED_AUTH_ENABLED="y"
+          SB_MIXED_USERNAME=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].username // ""' "${SINGBOX_CONFIG_FILE}")
+          SB_MIXED_PASSWORD=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
+        else
+          SB_MIXED_AUTH_ENABLED="n"
+          SB_MIXED_USERNAME=""
+          SB_MIXED_PASSWORD=""
+        fi
+        save_mixed_state
+        ;;
+      hy2)
+        SB_PROTOCOL="hy2"
+        SB_NODE_NAME="hy2_$(hostname)"
+        SB_PORT=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "8443"' "${SINGBOX_CONFIG_FILE}")
+        SB_HY2_DOMAIN=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
+        SB_HY2_PASSWORD=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
+        SB_HY2_USER_NAME=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].name // ""' "${SINGBOX_CONFIG_FILE}")
+        SB_HY2_UP_MBPS=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].up_mbps // "100"' "${SINGBOX_CONFIG_FILE}")
+        SB_HY2_DOWN_MBPS=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].down_mbps // "100"' "${SINGBOX_CONFIG_FILE}")
+        if jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].obfs.type == "salamander"' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+          SB_HY2_OBFS_ENABLED="y"
+          SB_HY2_OBFS_TYPE="salamander"
+          SB_HY2_OBFS_PASSWORD=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].obfs.password // ""' "${SINGBOX_CONFIG_FILE}")
+        else
+          SB_HY2_OBFS_ENABLED="n"
+          SB_HY2_OBFS_TYPE=""
+          SB_HY2_OBFS_PASSWORD=""
+        fi
+
+        cert_provider_tag=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider // ""' "${SINGBOX_CONFIG_FILE}")
+        if [[ -n "${cert_provider_tag}" ]]; then
+          SB_HY2_TLS_MODE="acme"
+          SB_HY2_ACME_DOMAIN=$(jq -r --argjson idx "${inbound_index}" --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .domain[0]) // .inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
+          SB_HY2_ACME_EMAIL=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .email) // ""' "${SINGBOX_CONFIG_FILE}")
+          if jq -e --arg tag "${cert_provider_tag}" 'any(.certificate_providers[]?; .tag == $tag and .dns01_challenge? != null)' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+            SB_HY2_ACME_MODE="dns"
+            SB_HY2_DNS_PROVIDER=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .dns01_challenge.provider) // "cloudflare"' "${SINGBOX_CONFIG_FILE}")
+            SB_HY2_CF_API_TOKEN=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .dns01_challenge.api_token) // ""' "${SINGBOX_CONFIG_FILE}")
+          else
+            SB_HY2_ACME_MODE="http"
+            SB_HY2_DNS_PROVIDER="cloudflare"
+            SB_HY2_CF_API_TOKEN=""
+          fi
+          SB_HY2_CERT_PATH=""
+          SB_HY2_KEY_PATH=""
+        else
+          SB_HY2_TLS_MODE="manual"
+          SB_HY2_ACME_MODE="http"
+          SB_HY2_ACME_EMAIL=""
+          SB_HY2_ACME_DOMAIN="${SB_HY2_DOMAIN}"
+          SB_HY2_DNS_PROVIDER="cloudflare"
+          SB_HY2_CF_API_TOKEN=""
+          SB_HY2_CERT_PATH=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_path // ""' "${SINGBOX_CONFIG_FILE}")
+          SB_HY2_KEY_PATH=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.key_path // ""' "${SINGBOX_CONFIG_FILE}")
+        fi
+        SB_HY2_MASQUERADE=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].masquerade // ""' "${SINGBOX_CONFIG_FILE}")
+        save_hy2_state
+        ;;
+      anytls)
+        SB_PROTOCOL="anytls"
+        SB_NODE_NAME="anytls_$(hostname)"
+        SB_PORT=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")
+        SB_ANYTLS_DOMAIN=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
+        SB_ANYTLS_PASSWORD=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
+        SB_ANYTLS_USER_NAME=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].name // ""' "${SINGBOX_CONFIG_FILE}")
+        if jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+          SB_ANYTLS_TLS_MODE="acme"
+          if jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+            SB_ANYTLS_ACME_MODE="dns"
+            SB_ANYTLS_DNS_PROVIDER=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge.provider // "cloudflare"' "${SINGBOX_CONFIG_FILE}")
+            SB_ANYTLS_CF_API_TOKEN=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge.api_token // ""' "${SINGBOX_CONFIG_FILE}")
+          else
+            SB_ANYTLS_ACME_MODE="http"
+            SB_ANYTLS_DNS_PROVIDER="cloudflare"
+            SB_ANYTLS_CF_API_TOKEN=""
+          fi
+          SB_ANYTLS_ACME_EMAIL=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.email // ""' "${SINGBOX_CONFIG_FILE}")
+          SB_ANYTLS_ACME_DOMAIN=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.domain[0] // .inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
+          SB_ANYTLS_CERT_PATH=""
+          SB_ANYTLS_KEY_PATH=""
+        else
+          SB_ANYTLS_TLS_MODE="manual"
+          SB_ANYTLS_ACME_MODE="http"
+          SB_ANYTLS_ACME_EMAIL=""
+          SB_ANYTLS_ACME_DOMAIN="${SB_ANYTLS_DOMAIN}"
+          SB_ANYTLS_DNS_PROVIDER="cloudflare"
+          SB_ANYTLS_CF_API_TOKEN=""
+          SB_ANYTLS_CERT_PATH=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_path // ""' "${SINGBOX_CONFIG_FILE}")
+          SB_ANYTLS_KEY_PATH=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.key_path // ""' "${SINGBOX_CONFIG_FILE}")
+        fi
+        save_anytls_state
+        ;;
+    esac
+
+    if ! protocol_array_contains "${protocol}" "${rebuilt_protocols[@]}"; then
+      rebuilt_protocols+=("${protocol}")
+    fi
+  done
+
+  if [[ ${#rebuilt_protocols[@]} -gt 0 ]]; then
+    write_protocol_index "$(IFS=,; printf '%s' "${rebuilt_protocols[*]}")"
+  fi
+}
+
+take_over_existing_instance() {
+  [[ -f "${SINGBOX_CONFIG_FILE}" ]] || log_error "未找到配置文件，无法接管现有实例。请先按全新安装处理。"
+  ensure_takeover_validation_binary
+  check_config_valid
+  rebuild_protocol_state_from_config
+  restore_runtime_artifacts_for_takeover
+}
+
+resolve_takeover_binary_repair_version() {
+  local recorded_version
+  recorded_version=$(extract_recorded_singbox_version_from_index)
+
+  if [[ -n "${recorded_version}" ]]; then
+    SB_VERSION="${recorded_version}"
+    log_info "接管修复将按本地记录的 sing-box 版本恢复二进制: ${SB_VERSION}"
+    return 0
+  fi
+
+  SB_VERSION="${SB_SUPPORT_MAX_VERSION}"
+  log_warn "未找到本地记录的 sing-box 版本；将回退到当前适配版本 ${SB_VERSION} 进行二进制修复。"
+}
+
+ensure_takeover_validation_binary() {
+  if [[ ! -x "${SINGBOX_BIN_PATH}" ]]; then
+    resolve_takeover_binary_repair_version
+    get_os_info
+    get_arch
+    install_dependencies
+    install_binary
+  fi
+}
+
+restore_runtime_artifacts_for_takeover() {
+  if [[ ! -f "${SINGBOX_SERVICE_FILE}" ]]; then
+    setup_service
+  fi
+
+  if [[ ! -x "${SBV_BIN_PATH}" ]]; then
+    ensure_sbv_command_installed
+  fi
+}
+
 install_or_reconfigure_singbox() {
   install_protocols_interactive "fresh"
 }
@@ -4391,9 +4797,13 @@ update_singbox_binary_preserving_config() {
 }
 
 install_or_update_singbox() {
+  local existing_instance_state
+  local install_choice
   local installed_ver
 
-  if [[ -f "${SINGBOX_BIN_PATH}" && -f "${SINGBOX_CONFIG_FILE}" ]]; then
+  existing_instance_state=$(detect_existing_instance_state)
+
+  if [[ "${existing_instance_state}" == "healthy" ]]; then
     installed_ver=$("${SINGBOX_BIN_PATH}" version | head -n1 | awk '{print $3}')
     load_current_config_state
 
@@ -4413,6 +4823,26 @@ install_or_update_singbox() {
       2) install_protocols_interactive "additional" ;;
       0) return 0 ;;
       *) update_singbox_binary_preserving_config ;;
+    esac
+    return
+  fi
+
+  if [[ "${existing_instance_state}" == "incomplete" ]]; then
+    echo
+    render_page_header "sing-box 管理" "发现现有实例缺少关键组件"
+    render_section_title "实例检测"
+    echo "检测到残缺的现有实例。"
+    render_section_title "操作选项"
+    render_menu_item "1" "接管现有实例"
+    render_menu_item "2" "按全新安装处理"
+    echo "0. 返回"
+    read -rp "请选择 [0-2]: " install_choice
+
+    case "${install_choice}" in
+      1) take_over_existing_instance ;;
+      2) install_or_reconfigure_singbox ;;
+      0) return 0 ;;
+      *) log_warn "无效选项，请重新选择。" ;;
     esac
     return
   fi
