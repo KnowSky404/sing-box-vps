@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042001
+# Version: 2026042101
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042002"
+readonly SCRIPT_VERSION="2026042101"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -77,6 +77,17 @@ SB_HY2_CF_API_TOKEN=""
 SB_HY2_CERT_PATH=""
 SB_HY2_KEY_PATH=""
 SB_HY2_MASQUERADE=""
+SB_ANYTLS_DOMAIN=""
+SB_ANYTLS_PASSWORD=""
+SB_ANYTLS_USER_NAME=""
+SB_ANYTLS_TLS_MODE="acme"
+SB_ANYTLS_ACME_MODE="http"
+SB_ANYTLS_ACME_EMAIL=""
+SB_ANYTLS_ACME_DOMAIN=""
+SB_ANYTLS_DNS_PROVIDER="cloudflare"
+SB_ANYTLS_CF_API_TOKEN=""
+SB_ANYTLS_CERT_PATH=""
+SB_ANYTLS_KEY_PATH=""
 SB_ADVANCED_ROUTE="y"
 SB_ENABLE_WARP="n"
 SB_WARP_ROUTE_MODE="all"
@@ -412,7 +423,7 @@ ensure_stack_mode_state_loaded() {
 
 validate_protocol() {
   case "$1" in
-    vless+reality|mixed|hy2) return 0 ;;
+    vless+reality|mixed|hy2|anytls) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -422,6 +433,7 @@ protocol_display_name() {
     vless+reality) printf 'VLESS + REALITY' ;;
     mixed) printf 'Mixed (HTTP/HTTPS/SOCKS)' ;;
     hy2) printf 'Hysteria2' ;;
+    anytls) printf 'AnyTLS' ;;
     *) printf '%s' "$1" ;;
   esac
 }
@@ -430,6 +442,7 @@ protocol_inbound_tag() {
   case "$1" in
     mixed) printf 'mixed-in' ;;
     hy2) printf 'hy2-in' ;;
+    anytls) printf 'anytls-in' ;;
     *) printf 'vless-in' ;;
   esac
 }
@@ -439,6 +452,7 @@ normalize_protocol_id() {
     vless|vless+reality|vless-reality) printf 'vless-reality' ;;
     mixed) printf 'mixed' ;;
     hy2|hysteria2) printf 'hy2' ;;
+    anytls) printf 'anytls' ;;
     *) return 1 ;;
   esac
 }
@@ -448,6 +462,7 @@ state_protocol_to_runtime() {
     vless-reality) printf 'vless+reality' ;;
     mixed) printf 'mixed' ;;
     hy2) printf 'hy2' ;;
+    anytls) printf 'anytls' ;;
     *) return 1 ;;
   esac
 }
@@ -612,6 +627,29 @@ save_hy2_state() {
   } > "${state_file}"
 }
 
+save_anytls_state() {
+  local state_file
+  state_file=$(protocol_state_file "anytls")
+
+  {
+    write_env_assignment "INSTALLED" "1"
+    write_env_assignment "CONFIG_SCHEMA_VERSION" "1"
+    write_env_assignment "NODE_NAME" "${SB_NODE_NAME}"
+    write_env_assignment "PORT" "${SB_PORT}"
+    write_env_assignment "DOMAIN" "${SB_ANYTLS_DOMAIN}"
+    write_env_assignment "PASSWORD" "${SB_ANYTLS_PASSWORD}"
+    write_env_assignment "USER_NAME" "${SB_ANYTLS_USER_NAME}"
+    write_env_assignment "TLS_MODE" "${SB_ANYTLS_TLS_MODE}"
+    write_env_assignment "ACME_MODE" "${SB_ANYTLS_ACME_MODE}"
+    write_env_assignment "ACME_EMAIL" "${SB_ANYTLS_ACME_EMAIL}"
+    write_env_assignment "ACME_DOMAIN" "${SB_ANYTLS_ACME_DOMAIN}"
+    write_env_assignment "DNS_PROVIDER" "${SB_ANYTLS_DNS_PROVIDER}"
+    write_env_assignment "CF_API_TOKEN" "${SB_ANYTLS_CF_API_TOKEN}"
+    write_env_assignment "CERT_PATH" "${SB_ANYTLS_CERT_PATH}"
+    write_env_assignment "KEY_PATH" "${SB_ANYTLS_KEY_PATH}"
+  } > "${state_file}"
+}
+
 save_protocol_state() {
   local protocol
   protocol=$(normalize_protocol_id "$1")
@@ -621,6 +659,7 @@ save_protocol_state() {
     vless-reality) save_vless_reality_state ;;
     mixed) save_mixed_state ;;
     hy2) save_hy2_state ;;
+    anytls) save_anytls_state ;;
     *) log_error "不支持的协议状态保存类型: ${protocol}" ;;
   esac
 }
@@ -635,6 +674,7 @@ migrate_legacy_single_protocol_state_if_needed() {
     vless) legacy_protocol="vless-reality" ;;
     mixed) legacy_protocol="mixed" ;;
     hysteria2) legacy_protocol="hy2" ;;
+    anytls) legacy_protocol="anytls" ;;
     *) return 0 ;;
   esac
 
@@ -722,6 +762,40 @@ migrate_legacy_single_protocol_state_if_needed() {
       fi
       SB_HY2_MASQUERADE=$(jq -r '.inbounds[0].masquerade // ""' "${SINGBOX_CONFIG_FILE}")
       save_hy2_state
+      ;;
+    anytls)
+      SB_PROTOCOL="anytls"
+      SB_NODE_NAME="anytls_$(hostname)"
+      SB_PORT=$(jq -r '.inbounds[0].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")
+      SB_ANYTLS_DOMAIN=$(jq -r '.inbounds[0].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
+      SB_ANYTLS_PASSWORD=$(jq -r '.inbounds[0].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
+      SB_ANYTLS_USER_NAME=$(jq -r '.inbounds[0].users[0].name // ""' "${SINGBOX_CONFIG_FILE}")
+      if jq -e '.inbounds[0].tls.acme? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+        SB_ANYTLS_TLS_MODE="acme"
+        if jq -e '.inbounds[0].tls.acme.dns01_challenge? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+          SB_ANYTLS_ACME_MODE="dns"
+          SB_ANYTLS_DNS_PROVIDER=$(jq -r '.inbounds[0].tls.acme.dns01_challenge.provider // "cloudflare"' "${SINGBOX_CONFIG_FILE}")
+          SB_ANYTLS_CF_API_TOKEN=$(jq -r '.inbounds[0].tls.acme.dns01_challenge.api_token // ""' "${SINGBOX_CONFIG_FILE}")
+        else
+          SB_ANYTLS_ACME_MODE="http"
+          SB_ANYTLS_DNS_PROVIDER="cloudflare"
+          SB_ANYTLS_CF_API_TOKEN=""
+        fi
+        SB_ANYTLS_ACME_EMAIL=$(jq -r '.inbounds[0].tls.acme.email // ""' "${SINGBOX_CONFIG_FILE}")
+        SB_ANYTLS_ACME_DOMAIN=$(jq -r '.inbounds[0].tls.acme.domain[0] // .inbounds[0].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
+        SB_ANYTLS_CERT_PATH=""
+        SB_ANYTLS_KEY_PATH=""
+      else
+        SB_ANYTLS_TLS_MODE="manual"
+        SB_ANYTLS_ACME_MODE="http"
+        SB_ANYTLS_ACME_EMAIL=""
+        SB_ANYTLS_ACME_DOMAIN="${SB_ANYTLS_DOMAIN}"
+        SB_ANYTLS_DNS_PROVIDER="cloudflare"
+        SB_ANYTLS_CF_API_TOKEN=""
+        SB_ANYTLS_CERT_PATH=$(jq -r '.inbounds[0].tls.certificate_path // ""' "${SINGBOX_CONFIG_FILE}")
+        SB_ANYTLS_KEY_PATH=$(jq -r '.inbounds[0].tls.key_path // ""' "${SINGBOX_CONFIG_FILE}")
+      fi
+      save_anytls_state
       ;;
   esac
 }
@@ -889,6 +963,75 @@ prompt_hy2_update() {
   ensure_hy2_materials
 }
 
+prompt_anytls_update() {
+  local in_p in_domain in_password in_user_name in_tls_mode in_acme_mode in_acme_email in_acme_domain in_cf_api_token in_cert_path in_key_path
+
+  read -rp "新端口 (当前: ${SB_PORT}, 留空保持): " in_p
+  if [[ -n "${in_p}" ]]; then
+    SB_PORT="${in_p}"
+    check_port_conflict "${SB_PORT}"
+  fi
+
+  read -rp "新域名 (当前: ${SB_ANYTLS_DOMAIN}, 留空保持): " in_domain
+  [[ -n "${in_domain}" ]] && SB_ANYTLS_DOMAIN="${in_domain}"
+
+  read -rp "新认证密码 (当前: 留空隐藏, 留空保持): " in_password
+  [[ -n "${in_password}" ]] && SB_ANYTLS_PASSWORD="${in_password}"
+
+  read -rp "新用户名标识 (当前: ${SB_ANYTLS_USER_NAME}, 留空保持): " in_user_name
+  [[ -n "${in_user_name}" ]] && SB_ANYTLS_USER_NAME="${in_user_name}"
+
+  echo "TLS 模式:"
+  echo "1. ACME 自动签发"
+  echo "2. 手动证书路径"
+  read -rp "请选择 [1-2] (当前: ${SB_ANYTLS_TLS_MODE}, 留空保持): " in_tls_mode
+  case "${in_tls_mode}" in
+    1) SB_ANYTLS_TLS_MODE="acme" ;;
+    2) SB_ANYTLS_TLS_MODE="manual" ;;
+    "") ;;
+    *) log_warn "保留当前 TLS 模式: ${SB_ANYTLS_TLS_MODE}" ;;
+  esac
+
+  if [[ "${SB_ANYTLS_TLS_MODE}" == "acme" ]]; then
+    echo "ACME 验证方式:"
+    echo "1. HTTP-01"
+    echo "2. DNS-01 (Cloudflare)"
+    read -rp "请选择 [1-2] (当前: ${SB_ANYTLS_ACME_MODE}, 留空保持): " in_acme_mode
+    case "${in_acme_mode}" in
+      1) SB_ANYTLS_ACME_MODE="http" ;;
+      2) SB_ANYTLS_ACME_MODE="dns" ;;
+      "") ;;
+      *) log_warn "保留当前 ACME 模式: ${SB_ANYTLS_ACME_MODE}" ;;
+    esac
+
+    read -rp "ACME 邮箱 (当前: ${SB_ANYTLS_ACME_EMAIL}, 留空保持，用于证书通知): " in_acme_email
+    [[ -n "${in_acme_email}" ]] && SB_ANYTLS_ACME_EMAIL="${in_acme_email}"
+    read -rp "ACME 域名 (当前: ${SB_ANYTLS_ACME_DOMAIN:-${SB_ANYTLS_DOMAIN}}, 留空保持): " in_acme_domain
+    [[ -n "${in_acme_domain}" ]] && SB_ANYTLS_ACME_DOMAIN="${in_acme_domain}"
+
+    if [[ "${SB_ANYTLS_ACME_MODE}" == "dns" ]]; then
+      read -rp "Cloudflare API Token (当前: 留空隐藏, 留空保持): " in_cf_api_token
+      [[ -n "${in_cf_api_token}" ]] && SB_ANYTLS_CF_API_TOKEN="${in_cf_api_token}"
+    else
+      SB_ANYTLS_CF_API_TOKEN=""
+    fi
+
+    SB_ANYTLS_CERT_PATH=""
+    SB_ANYTLS_KEY_PATH=""
+  else
+    read -rp "证书路径 (当前: ${SB_ANYTLS_CERT_PATH}, 留空保持): " in_cert_path
+    [[ -n "${in_cert_path}" ]] && SB_ANYTLS_CERT_PATH="${in_cert_path}"
+    read -rp "私钥路径 (当前: ${SB_ANYTLS_KEY_PATH}, 留空保持): " in_key_path
+    [[ -n "${in_key_path}" ]] && SB_ANYTLS_KEY_PATH="${in_key_path}"
+    SB_ANYTLS_ACME_MODE="http"
+    SB_ANYTLS_ACME_EMAIL=""
+    SB_ANYTLS_ACME_DOMAIN=""
+    SB_ANYTLS_CF_API_TOKEN=""
+  fi
+
+  ensure_anytls_materials
+}
+
 prompt_protocol_update_fields() {
   local protocol
   protocol=$(normalize_protocol_id "$1")
@@ -897,6 +1040,7 @@ prompt_protocol_update_fields() {
     vless-reality) prompt_vless_reality_update ;;
     mixed) prompt_mixed_update ;;
     hy2) prompt_hy2_update ;;
+    anytls) prompt_anytls_update ;;
     *) log_error "不支持的协议修改类型: ${protocol}" ;;
   esac
 }
@@ -933,6 +1077,7 @@ protocol_option_to_id() {
     1) printf 'vless-reality' ;;
     2) printf 'mixed' ;;
     3) printf 'hy2' ;;
+    4) printf 'anytls' ;;
     *) return 1 ;;
   esac
 }
@@ -954,7 +1099,7 @@ prompt_protocol_install_selection() {
   fi
 
   echo "可安装协议:"
-  for index in 1 2 3; do
+  for index in 1 2 3 4; do
     protocol=$(protocol_option_to_id "${index}") || continue
     if protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
       continue
@@ -963,10 +1108,10 @@ prompt_protocol_install_selection() {
   done
 
   echo "留空则安装全部可用协议。"
-  read -rp "请选择一个或多个协议 [1-3]，逗号分隔: " choice
+  read -rp "请选择一个或多个协议 [1-4]，逗号分隔: " choice
 
   if [[ -z "$(trim_whitespace "${choice}")" ]]; then
-    for index in 1 2 3; do
+    for index in 1 2 3 4; do
       protocol=$(protocol_option_to_id "${index}") || continue
       if protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
         continue
@@ -1123,6 +1268,74 @@ prompt_hy2_install() {
   ensure_hy2_materials
 }
 
+prompt_anytls_install() {
+  local in_domain in_p in_password in_user_name in_tls_mode in_acme_mode in_acme_email in_acme_domain in_cf_api_token in_cert_path in_key_path
+
+  set_protocol_defaults "anytls"
+  echo -e "\n${BLUE}--- 配置 AnyTLS ---${NC}"
+
+  while [[ -z "${SB_ANYTLS_DOMAIN}" ]]; do
+    read -rp "[AnyTLS] 域名: " in_domain
+    SB_ANYTLS_DOMAIN=$(trim_whitespace "${in_domain}")
+    [[ -z "${SB_ANYTLS_DOMAIN}" ]] && log_warn "域名不能为空。"
+  done
+
+  printf '[AnyTLS] 端口 (默认 %s): ' "${SB_PORT}"
+  read -r in_p
+  SB_PORT=${in_p:-$SB_PORT}
+  check_port_conflict "${SB_PORT}"
+
+  read -rp "[AnyTLS] 用户名标识 (默认 ${SB_ANYTLS_USER_NAME}): " in_user_name
+  SB_ANYTLS_USER_NAME=${in_user_name:-$SB_ANYTLS_USER_NAME}
+
+  read -rp "[AnyTLS] 认证密码 (留空自动生成): " in_password
+  [[ -n "${in_password}" ]] && SB_ANYTLS_PASSWORD="${in_password}"
+
+  echo "TLS 模式:"
+  echo "1. ACME 自动签发"
+  echo "2. 手动证书路径"
+  read -rp "[AnyTLS] 请选择 [1-2] (默认 1): " in_tls_mode
+  case "${in_tls_mode}" in
+    2) SB_ANYTLS_TLS_MODE="manual" ;;
+    *) SB_ANYTLS_TLS_MODE="acme" ;;
+  esac
+
+  if [[ "${SB_ANYTLS_TLS_MODE}" == "acme" ]]; then
+    echo "ACME 验证方式:"
+    echo "1. HTTP-01"
+    echo "2. DNS-01 (Cloudflare)"
+    read -rp "[AnyTLS] 请选择 [1-2] (默认 1): " in_acme_mode
+    case "${in_acme_mode}" in
+      2) SB_ANYTLS_ACME_MODE="dns" ;;
+      *) SB_ANYTLS_ACME_MODE="http" ;;
+    esac
+
+    read -rp "[AnyTLS] ACME 邮箱 (可留空，用于证书通知): " in_acme_email
+    SB_ANYTLS_ACME_EMAIL="${in_acme_email}"
+    read -rp "[AnyTLS] ACME 域名 (默认 ${SB_ANYTLS_DOMAIN}): " in_acme_domain
+    SB_ANYTLS_ACME_DOMAIN=${in_acme_domain:-$SB_ANYTLS_DOMAIN}
+
+    if [[ "${SB_ANYTLS_ACME_MODE}" == "dns" ]]; then
+      read -rp "[AnyTLS] Cloudflare API Token: " in_cf_api_token
+      SB_ANYTLS_CF_API_TOKEN="${in_cf_api_token}"
+    fi
+  else
+    while [[ -z "${SB_ANYTLS_CERT_PATH}" ]]; do
+      read -rp "[AnyTLS] 证书路径: " in_cert_path
+      SB_ANYTLS_CERT_PATH=$(trim_whitespace "${in_cert_path}")
+      [[ -z "${SB_ANYTLS_CERT_PATH}" ]] && log_warn "证书路径不能为空。"
+    done
+
+    while [[ -z "${SB_ANYTLS_KEY_PATH}" ]]; do
+      read -rp "[AnyTLS] 私钥路径: " in_key_path
+      SB_ANYTLS_KEY_PATH=$(trim_whitespace "${in_key_path}")
+      [[ -z "${SB_ANYTLS_KEY_PATH}" ]] && log_warn "私钥路径不能为空。"
+    done
+  fi
+
+  ensure_anytls_materials
+}
+
 prompt_protocol_install_fields() {
   local protocol
   protocol=$(normalize_protocol_id "$1")
@@ -1131,6 +1344,7 @@ prompt_protocol_install_fields() {
     vless-reality) prompt_vless_reality_install ;;
     mixed) prompt_mixed_install ;;
     hy2) prompt_hy2_install ;;
+    anytls) prompt_anytls_install ;;
     *) log_error "不支持的协议安装类型: ${protocol}" ;;
   esac
 }
@@ -1259,6 +1473,48 @@ set_protocol_defaults() {
       SB_HY2_KEY_PATH=""
       SB_HY2_MASQUERADE=""
       ;;
+    anytls)
+      SB_PROTOCOL="anytls"
+      SB_NODE_NAME="anytls_$(hostname)"
+      SB_PORT="443"
+      SB_SNI=""
+      SB_UUID=""
+      SB_PUBLIC_KEY=""
+      SB_PRIVATE_KEY=""
+      SB_SHORT_ID_1=""
+      SB_SHORT_ID_2=""
+      SB_MIXED_AUTH_ENABLED="y"
+      SB_MIXED_USERNAME=""
+      SB_MIXED_PASSWORD=""
+      SB_HY2_DOMAIN=""
+      SB_HY2_PASSWORD=""
+      SB_HY2_USER_NAME=""
+      SB_HY2_UP_MBPS="100"
+      SB_HY2_DOWN_MBPS="100"
+      SB_HY2_OBFS_ENABLED="n"
+      SB_HY2_OBFS_TYPE=""
+      SB_HY2_OBFS_PASSWORD=""
+      SB_HY2_TLS_MODE="acme"
+      SB_HY2_ACME_MODE="http"
+      SB_HY2_ACME_EMAIL=""
+      SB_HY2_ACME_DOMAIN=""
+      SB_HY2_DNS_PROVIDER="cloudflare"
+      SB_HY2_CF_API_TOKEN=""
+      SB_HY2_CERT_PATH=""
+      SB_HY2_KEY_PATH=""
+      SB_HY2_MASQUERADE=""
+      SB_ANYTLS_DOMAIN=""
+      SB_ANYTLS_PASSWORD=""
+      SB_ANYTLS_USER_NAME="anytls-user"
+      SB_ANYTLS_TLS_MODE="acme"
+      SB_ANYTLS_ACME_MODE="http"
+      SB_ANYTLS_ACME_EMAIL=""
+      SB_ANYTLS_ACME_DOMAIN=""
+      SB_ANYTLS_DNS_PROVIDER="cloudflare"
+      SB_ANYTLS_CF_API_TOKEN=""
+      SB_ANYTLS_CERT_PATH=""
+      SB_ANYTLS_KEY_PATH=""
+      ;;
     *)
       SB_PROTOCOL="vless+reality"
       SB_NODE_NAME="vless_reality_$(hostname)"
@@ -1267,6 +1523,17 @@ set_protocol_defaults() {
       SB_MIXED_AUTH_ENABLED="y"
       SB_MIXED_USERNAME=""
       SB_MIXED_PASSWORD=""
+      SB_ANYTLS_DOMAIN=""
+      SB_ANYTLS_PASSWORD=""
+      SB_ANYTLS_USER_NAME=""
+      SB_ANYTLS_TLS_MODE="acme"
+      SB_ANYTLS_ACME_MODE="http"
+      SB_ANYTLS_ACME_EMAIL=""
+      SB_ANYTLS_ACME_DOMAIN=""
+      SB_ANYTLS_DNS_PROVIDER="cloudflare"
+      SB_ANYTLS_CF_API_TOKEN=""
+      SB_ANYTLS_CERT_PATH=""
+      SB_ANYTLS_KEY_PATH=""
       ;;
   esac
 }
@@ -2177,6 +2444,17 @@ load_protocol_state() {
       SB_HY2_CERT_PATH=""
       SB_HY2_KEY_PATH=""
       SB_HY2_MASQUERADE=""
+      SB_ANYTLS_DOMAIN=""
+      SB_ANYTLS_PASSWORD=""
+      SB_ANYTLS_USER_NAME=""
+      SB_ANYTLS_TLS_MODE="acme"
+      SB_ANYTLS_ACME_MODE="http"
+      SB_ANYTLS_ACME_EMAIL=""
+      SB_ANYTLS_ACME_DOMAIN=""
+      SB_ANYTLS_DNS_PROVIDER="cloudflare"
+      SB_ANYTLS_CF_API_TOKEN=""
+      SB_ANYTLS_CERT_PATH=""
+      SB_ANYTLS_KEY_PATH=""
       ;;
     mixed)
       SB_PROTOCOL="mixed"
@@ -2208,6 +2486,17 @@ load_protocol_state() {
       SB_HY2_CERT_PATH=""
       SB_HY2_KEY_PATH=""
       SB_HY2_MASQUERADE=""
+      SB_ANYTLS_DOMAIN=""
+      SB_ANYTLS_PASSWORD=""
+      SB_ANYTLS_USER_NAME=""
+      SB_ANYTLS_TLS_MODE="acme"
+      SB_ANYTLS_ACME_MODE="http"
+      SB_ANYTLS_ACME_EMAIL=""
+      SB_ANYTLS_ACME_DOMAIN=""
+      SB_ANYTLS_DNS_PROVIDER="cloudflare"
+      SB_ANYTLS_CF_API_TOKEN=""
+      SB_ANYTLS_CERT_PATH=""
+      SB_ANYTLS_KEY_PATH=""
       ;;
     hy2)
       SB_PROTOCOL="hy2"
@@ -2239,6 +2528,59 @@ load_protocol_state() {
       SB_HY2_CERT_PATH="${CERT_PATH:-}"
       SB_HY2_KEY_PATH="${KEY_PATH:-}"
       SB_HY2_MASQUERADE="${MASQUERADE:-}"
+      SB_ANYTLS_DOMAIN=""
+      SB_ANYTLS_PASSWORD=""
+      SB_ANYTLS_USER_NAME=""
+      SB_ANYTLS_TLS_MODE="acme"
+      SB_ANYTLS_ACME_MODE="http"
+      SB_ANYTLS_ACME_EMAIL=""
+      SB_ANYTLS_ACME_DOMAIN=""
+      SB_ANYTLS_DNS_PROVIDER="cloudflare"
+      SB_ANYTLS_CF_API_TOKEN=""
+      SB_ANYTLS_CERT_PATH=""
+      SB_ANYTLS_KEY_PATH=""
+      ;;
+    anytls)
+      SB_PROTOCOL="anytls"
+      SB_NODE_NAME="${NODE_NAME:-anytls_$(hostname)}"
+      SB_PORT="${PORT:-443}"
+      SB_UUID=""
+      SB_SNI=""
+      SB_PRIVATE_KEY=""
+      SB_PUBLIC_KEY=""
+      SB_SHORT_ID_1=""
+      SB_SHORT_ID_2=""
+      SB_MIXED_AUTH_ENABLED="y"
+      SB_MIXED_USERNAME=""
+      SB_MIXED_PASSWORD=""
+      SB_HY2_DOMAIN=""
+      SB_HY2_PASSWORD=""
+      SB_HY2_USER_NAME=""
+      SB_HY2_UP_MBPS="100"
+      SB_HY2_DOWN_MBPS="100"
+      SB_HY2_OBFS_ENABLED="n"
+      SB_HY2_OBFS_TYPE=""
+      SB_HY2_OBFS_PASSWORD=""
+      SB_HY2_TLS_MODE="acme"
+      SB_HY2_ACME_MODE="http"
+      SB_HY2_ACME_EMAIL=""
+      SB_HY2_ACME_DOMAIN=""
+      SB_HY2_DNS_PROVIDER="cloudflare"
+      SB_HY2_CF_API_TOKEN=""
+      SB_HY2_CERT_PATH=""
+      SB_HY2_KEY_PATH=""
+      SB_HY2_MASQUERADE=""
+      SB_ANYTLS_DOMAIN="${DOMAIN:-}"
+      SB_ANYTLS_PASSWORD="${PASSWORD:-}"
+      SB_ANYTLS_USER_NAME="${USER_NAME:-}"
+      SB_ANYTLS_TLS_MODE="${TLS_MODE:-acme}"
+      SB_ANYTLS_ACME_MODE="${ACME_MODE:-http}"
+      SB_ANYTLS_ACME_EMAIL="${ACME_EMAIL:-}"
+      SB_ANYTLS_ACME_DOMAIN="${ACME_DOMAIN:-}"
+      SB_ANYTLS_DNS_PROVIDER="${DNS_PROVIDER:-cloudflare}"
+      SB_ANYTLS_CF_API_TOKEN="${CF_API_TOKEN:-}"
+      SB_ANYTLS_CERT_PATH="${CERT_PATH:-}"
+      SB_ANYTLS_KEY_PATH="${KEY_PATH:-}"
       ;;
   esac
 }
@@ -2304,6 +2646,22 @@ ensure_hy2_materials() {
     SB_HY2_OBFS_PASSWORD=""
   elif [[ -z "${SB_HY2_OBFS_TYPE}" ]]; then
     SB_HY2_OBFS_TYPE="salamander"
+  fi
+
+  return 0
+}
+
+ensure_anytls_materials() {
+  if [[ -z "${SB_ANYTLS_USER_NAME}" ]]; then
+    SB_ANYTLS_USER_NAME="anytls-user"
+  fi
+
+  if [[ -z "${SB_ANYTLS_PASSWORD}" ]]; then
+    SB_ANYTLS_PASSWORD=$(generate_random_token "" 8)
+  fi
+
+  if [[ -z "${SB_ANYTLS_ACME_DOMAIN}" ]]; then
+    SB_ANYTLS_ACME_DOMAIN="${SB_ANYTLS_DOMAIN}"
   fi
 
   return 0
@@ -2491,6 +2849,76 @@ build_hy2_inbound_json() {
     )'
 }
 
+build_anytls_inbound_json() {
+  ensure_anytls_materials
+
+  jq -n \
+    --arg tag "anytls-in" \
+    --arg listen "$(stack_inbound_listen_address)" \
+    --arg port "${SB_PORT}" \
+    --arg user_name "${SB_ANYTLS_USER_NAME}" \
+    --arg password "${SB_ANYTLS_PASSWORD}" \
+    --arg domain "${SB_ANYTLS_DOMAIN}" \
+    --arg tls_mode "${SB_ANYTLS_TLS_MODE}" \
+    --arg cert_path "${SB_ANYTLS_CERT_PATH}" \
+    --arg key_path "${SB_ANYTLS_KEY_PATH}" \
+    --arg acme_mode "${SB_ANYTLS_ACME_MODE}" \
+    --arg acme_email "${SB_ANYTLS_ACME_EMAIL}" \
+    --arg acme_domain "${SB_ANYTLS_ACME_DOMAIN}" \
+    --arg dns_provider "${SB_ANYTLS_DNS_PROVIDER}" \
+    --arg cf_api_token "${SB_ANYTLS_CF_API_TOKEN}" \
+    '{
+      "type": "anytls",
+      "tag": $tag,
+      "listen": $listen,
+      "listen_port": ($port | tonumber),
+      "users": [
+        {
+          "name": $user_name,
+          "password": $password
+        }
+      ],
+      "tls": (
+        {
+          "enabled": true,
+          "server_name": $domain
+        } + (
+          if $tls_mode == "manual" then
+            {
+              "certificate_path": $cert_path,
+              "key_path": $key_path
+            }
+          else
+            {
+              "acme": (
+                {
+                  "domain": [ $acme_domain ]
+                } + (
+                  if $acme_email != "" then
+                    { "email": $acme_email }
+                  else
+                    {}
+                  end
+                ) + (
+                  if $acme_mode == "dns" then
+                    {
+                      "dns01_challenge": {
+                        "provider": $dns_provider,
+                        "api_token": $cf_api_token
+                      }
+                    }
+                  else
+                    {}
+                  end
+                )
+              )
+            }
+          end
+        )
+      )
+    }'
+}
+
 build_certificate_provider_for_protocol() {
   local protocol
   protocol=$(normalize_protocol_id "$1")
@@ -2508,6 +2936,7 @@ build_inbound_for_protocol() {
     vless-reality) build_vless_inbound_json ;;
     mixed) build_mixed_inbound_json ;;
     hy2) build_hy2_inbound_json ;;
+    anytls) build_anytls_inbound_json ;;
   esac
 }
 
@@ -2530,6 +2959,9 @@ build_protocol_route_rules() {
       ;;
     hy2)
       jq -n '[{ "inbound": "hy2-in", "action": "sniff" }]'
+      ;;
+    anytls)
+      jq -n '[{ "inbound": "anytls-in", "action": "sniff" }]'
       ;;
   esac
 }
@@ -3267,6 +3699,7 @@ load_current_config_state() {
     vless) SB_PROTOCOL="vless+reality" ;;
     mixed) SB_PROTOCOL="mixed" ;;
     hysteria2) SB_PROTOCOL="hy2" ;;
+    anytls) SB_PROTOCOL="anytls" ;;
     *) log_error "当前配置中的协议类型不受脚本支持: ${SB_PROTOCOL}" ;;
   esac
 
@@ -3298,7 +3731,7 @@ load_current_config_state() {
       SB_MIXED_USERNAME=""
       SB_MIXED_PASSWORD=""
     fi
-  else
+  elif [[ "${SB_PROTOCOL}" == "hy2" ]]; then
     SB_NODE_NAME="hy2_$(hostname)"
     SB_HY2_DOMAIN=$(jq -r '.inbounds[0].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
     SB_HY2_PASSWORD=$(jq -r '.inbounds[0].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
@@ -3322,6 +3755,39 @@ load_current_config_state() {
       SB_HY2_KEY_PATH=$(jq -r '.inbounds[0].tls.key_path // ""' "${SINGBOX_CONFIG_FILE}")
     fi
     SB_HY2_MASQUERADE=$(jq -r '.inbounds[0].masquerade // ""' "${SINGBOX_CONFIG_FILE}")
+    SB_ANYTLS_DOMAIN=""
+    SB_ANYTLS_PASSWORD=""
+    SB_ANYTLS_USER_NAME=""
+  else
+    SB_NODE_NAME="anytls_$(hostname)"
+    SB_ANYTLS_DOMAIN=$(jq -r '.inbounds[0].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
+    SB_ANYTLS_PASSWORD=$(jq -r '.inbounds[0].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
+    SB_ANYTLS_USER_NAME=$(jq -r '.inbounds[0].users[0].name // ""' "${SINGBOX_CONFIG_FILE}")
+    if jq -e '.inbounds[0].tls.acme? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+      SB_ANYTLS_TLS_MODE="acme"
+      SB_ANYTLS_ACME_EMAIL=$(jq -r '.inbounds[0].tls.acme.email // ""' "${SINGBOX_CONFIG_FILE}")
+      SB_ANYTLS_ACME_DOMAIN=$(jq -r '.inbounds[0].tls.acme.domain[0] // .inbounds[0].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
+      if jq -e '.inbounds[0].tls.acme.dns01_challenge? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+        SB_ANYTLS_ACME_MODE="dns"
+        SB_ANYTLS_DNS_PROVIDER=$(jq -r '.inbounds[0].tls.acme.dns01_challenge.provider // "cloudflare"' "${SINGBOX_CONFIG_FILE}")
+        SB_ANYTLS_CF_API_TOKEN=$(jq -r '.inbounds[0].tls.acme.dns01_challenge.api_token // ""' "${SINGBOX_CONFIG_FILE}")
+      else
+        SB_ANYTLS_ACME_MODE="http"
+        SB_ANYTLS_DNS_PROVIDER="cloudflare"
+        SB_ANYTLS_CF_API_TOKEN=""
+      fi
+      SB_ANYTLS_CERT_PATH=""
+      SB_ANYTLS_KEY_PATH=""
+    else
+      SB_ANYTLS_TLS_MODE="manual"
+      SB_ANYTLS_ACME_MODE="http"
+      SB_ANYTLS_ACME_EMAIL=""
+      SB_ANYTLS_ACME_DOMAIN="${SB_ANYTLS_DOMAIN}"
+      SB_ANYTLS_DNS_PROVIDER="cloudflare"
+      SB_ANYTLS_CF_API_TOKEN=""
+      SB_ANYTLS_CERT_PATH=$(jq -r '.inbounds[0].tls.certificate_path // ""' "${SINGBOX_CONFIG_FILE}")
+      SB_ANYTLS_KEY_PATH=$(jq -r '.inbounds[0].tls.key_path // ""' "${SINGBOX_CONFIG_FILE}")
+    fi
   fi
 
   if [[ "${SB_PROTOCOL}" == "vless+reality" && -f "${SB_KEY_FILE}" ]]; then
@@ -3566,6 +4032,28 @@ build_hy2_link() {
     "${SB_NODE_NAME}"
 }
 
+build_anytls_outbound_example() {
+  local public_ip=$1
+  local server_host
+  server_host=${SB_ANYTLS_DOMAIN:-${public_ip}}
+
+  jq -n \
+    --arg server "${server_host}" \
+    --arg port "${SB_PORT}" \
+    --arg password "${SB_ANYTLS_PASSWORD}" \
+    --arg sni "${SB_ANYTLS_DOMAIN:-${server_host}}" \
+    '{
+      "type": "anytls",
+      "server": $server,
+      "server_port": ($port | tonumber),
+      "password": $password,
+      "tls": {
+        "enabled": true,
+        "server_name": $sni
+      }
+    }'
+}
+
 show_hy2_connection_summary() {
   echo -e "\n${YELLOW}Hysteria2 参数摘要：${NC}"
   echo "域名: ${SB_HY2_DOMAIN}"
@@ -3577,6 +4065,14 @@ show_hy2_connection_summary() {
     echo "混淆: 未启用"
   fi
   echo "带宽: ${SB_HY2_UP_MBPS} / ${SB_HY2_DOWN_MBPS} Mbps"
+}
+
+show_anytls_connection_summary() {
+  echo -e "\n${YELLOW}AnyTLS 参数摘要：${NC}"
+  echo "域名: ${SB_ANYTLS_DOMAIN}"
+  echo "端口: ${SB_PORT}"
+  echo "用户名标识: ${SB_ANYTLS_USER_NAME}"
+  echo "TLS 模式: ${SB_ANYTLS_TLS_MODE}"
 }
 
 display_status_summary() {
@@ -3617,6 +4113,13 @@ show_link_info() {
     return 0
   fi
 
+  if [[ "${SB_PROTOCOL}" == "anytls" ]]; then
+    echo "1. AnyTLS 客户端 outbound JSON 示例"
+    build_anytls_outbound_example "${public_ip}"
+    echo ""
+    return 0
+  fi
+
   echo "1. Mixed HTTP 代理链接"
   build_mixed_http_link "${public_ip}"
   echo ""
@@ -3634,6 +4137,11 @@ show_qr_info() {
   echo -e "\n${YELLOW}连接二维码：${NC}"
   if [[ "${SB_PROTOCOL}" == "mixed" ]]; then
     log_info "Mixed 协议当前不提供二维码，请使用链接方式手动配置客户端。"
+    return 0
+  fi
+
+  if [[ "${SB_PROTOCOL}" == "anytls" ]]; then
+    log_info "AnyTLS 当前不展示二维码，请使用参数摘要与 outbound JSON 示例手动导入客户端。"
     return 0
   fi
 
@@ -3658,6 +4166,8 @@ show_connection_details() {
 
   if [[ "${SB_PROTOCOL}" == "hy2" ]]; then
     show_hy2_connection_summary
+  elif [[ "${SB_PROTOCOL}" == "anytls" ]]; then
+    show_anytls_connection_summary
   fi
 
   case "${mode}" in

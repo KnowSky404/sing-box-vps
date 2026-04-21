@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026042001`
+- 脚本版本：`2026042101`
 - sing-box 适配版本：`1.13.9`
 
 ## 🚀 一键安装
@@ -18,7 +18,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main
 脚本会自动：
 1. 安装所有必要依赖（curl, wget, jq, qrencode 等）。
 2. 下载并配置适配的 `sing-box` (当前适配：1.13.9)。
-3. 生成安全的 **VLESS + REALITY**、**Mixed (HTTP/HTTPS/SOCKS)** 或 **Hysteria2** 配置，并支持多协议共存。
+3. 生成安全的 **VLESS + REALITY**、**Mixed (HTTP/HTTPS/SOCKS)**、**Hysteria2** 或 **AnyTLS** 配置，并支持多协议共存。
 4. 以 **`install.sh`** 作为唯一安装与维护真源，并将自己安装为全局命令 **`sbv`**，方便您随时管理。
 
 ---
@@ -34,7 +34,7 @@ sbv
 ## ✨ 项目特性
 
 - **1.13.x 深度适配**：全面采用最新的 **Endpoint (端点化)** 架构，确保 WireGuard 及路由规则的最高效性能与稳定性。
-- **多协议支持**：支持 **VLESS + REALITY**、**Mixed (HTTP/HTTPS/SOCKS)** 与 **Hysteria2** 三种入站模式，并支持多协议同时安装。
+- **多协议支持**：支持 **VLESS + REALITY**、**Mixed (HTTP/HTTPS/SOCKS)**、**Hysteria2** 与 **AnyTLS** 四种入站模式，并支持多协议同时安装。
 - **Cloudflare Warp 集成**：支持一键开启/关闭 Warp 出站，自动注册免费账户，完美解决 VPS **“送中”** 问题并解锁 Netflix/Disney+ 等流媒体。
 - **Warp 路由分层**：支持 `全量走 Warp` 与 `选择性分流` 两种模式，内置主流 AI / 流媒体域名规则，并支持用户追加自定义域名、本地规则集和远程规则集。
 - **单一真源**：统一以 `install.sh` 作为安装与维护入口，避免历史旧入口与当前实现漂移。
@@ -43,7 +43,7 @@ sbv
 - **性能增强**：集成 **BBR** 一键开启功能，显著提升网络吞吐。
 - **防火墙自动化**：安装或修改端口时，自动尝试在 `UFW`, `Firewalld` 或 `Iptables` 中放行。
 - **工业级配置生成**：采用 **`jq` 安全注入** 模式生成 JSON，彻底规避特殊字符导致的转义错误。
-- **协议级展示**：终端可按协议查看节点信息，支持 `VLESS` 与 `Hysteria2` 链接/ANSI 二维码展示，并为 `Mixed` 输出代理链接与二维码提示。
+- **协议级展示**：终端可按协议查看节点信息，支持 `VLESS` 与 `Hysteria2` 链接/ANSI 二维码展示，为 `Mixed` 输出代理链接与二维码提示，并为 `AnyTLS` 输出参数摘要和 sing-box outbound JSON 示例。
 - **规范存储**：统一使用 `/root/sing-box-vps/` 存放配置、密钥及持久化参数。
 
 ## 🛠️ 功能菜单
@@ -65,7 +65,7 @@ sbv
 - **配置文件**: `/root/sing-box-vps/config.json`
 - **协议状态目录**: `/root/sing-box-vps/protocols/`
 - **密钥文件**: `/root/sing-box-vps/reality.key` (REALITY) / `warp.key` (Warp)
-- **协议状态文件**: `vless-reality.env` / `mixed.env` / `hy2.env`
+- **协议状态文件**: `vless-reality.env` / `mixed.env` / `hy2.env` / `anytls.env`
 - **Warp 分流域名**: `/root/sing-box-vps/warp-domains.txt`
 - **Warp 本地规则集目录**: `/root/sing-box-vps/rule-set/warp/`
 - **Warp 远程规则集列表**: `/root/sing-box-vps/warp-remote-rule-sets.txt`
@@ -78,6 +78,7 @@ sbv
 - 脚本默认适配最佳稳定性版本，手动选择 `latest` 可能存在不兼容风险。
 - `Mixed` 代理默认建议启用用户名密码认证；若关闭认证，请务必确认防火墙和来源访问控制策略。
 - `Hysteria2` 首版支持 ACME 自动签发与手动证书路径两种 TLS 模式；使用 ACME `DNS-01` 时当前仅支持 Cloudflare。
+- `AnyTLS` 当前同样支持 ACME 自动签发与手动证书路径两种 TLS 模式；由于官方文档未定义标准分享 URI，脚本默认输出参数摘要与 sing-box outbound JSON 示例。
 - 流媒体验证功能当前接入第三方项目 `1-stream/RegionRestrictionCheck`，脚本内已注明作者与仓库地址，后续可替换为自定义检测后端。
 
 ---

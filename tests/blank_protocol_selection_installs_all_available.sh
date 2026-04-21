@@ -38,7 +38,7 @@ EOF
 
 output=$(cat "${OUTPUT_FILE}")
 
-if [[ "${SELECTED_PROTOCOLS_CSV}" != "vless-reality,mixed,hy2" ]]; then
+if [[ "${SELECTED_PROTOCOLS_CSV}" != "vless-reality,mixed,hy2,anytls" ]]; then
   printf 'expected blank selection to install all available protocols, got %s\n' "${SELECTED_PROTOCOLS_CSV}" >&2
   exit 1
 fi
