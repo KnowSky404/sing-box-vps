@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042219
+# Version: 2026042220
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042219"
+readonly SCRIPT_VERSION="2026042220"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -2739,7 +2739,8 @@ build_hy2_inbound_json() {
       "tls": (
         {
           "enabled": true,
-          "server_name": $domain
+          "server_name": $domain,
+          "alpn": ["h3"]
         } + (
           if $tls_mode == "manual" then
             {
