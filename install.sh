@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042217
+# Version: 2026042218
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042217"
+readonly SCRIPT_VERSION="2026042218"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -63,8 +63,8 @@ SB_MIXED_PASSWORD=""
 SB_HY2_DOMAIN=""
 SB_HY2_PASSWORD=""
 SB_HY2_USER_NAME=""
-SB_HY2_UP_MBPS="100"
-SB_HY2_DOWN_MBPS="100"
+SB_HY2_UP_MBPS=""
+SB_HY2_DOWN_MBPS=""
 SB_HY2_OBFS_ENABLED="n"
 SB_HY2_OBFS_TYPE=""
 SB_HY2_OBFS_PASSWORD=""
@@ -833,10 +833,10 @@ prompt_hy2_update() {
   read -rp "新用户名标识 (当前: ${SB_HY2_USER_NAME}, 留空保持): " in_user_name
   [[ -n "${in_user_name}" ]] && SB_HY2_USER_NAME="${in_user_name}"
 
-  read -rp "上行带宽 Mbps (当前: ${SB_HY2_UP_MBPS}, 留空保持): " in_up
+  read -rp "上行带宽 Mbps (当前: ${SB_HY2_UP_MBPS:-未限制}, 留空保持): " in_up
   [[ -n "${in_up}" ]] && SB_HY2_UP_MBPS="${in_up}"
 
-  read -rp "下行带宽 Mbps (当前: ${SB_HY2_DOWN_MBPS}, 留空保持): " in_down
+  read -rp "下行带宽 Mbps (当前: ${SB_HY2_DOWN_MBPS:-未限制}, 留空保持): " in_down
   [[ -n "${in_down}" ]] && SB_HY2_DOWN_MBPS="${in_down}"
 
   read -rp "是否启用 Salamander 混淆 [y/n] (当前: ${SB_HY2_OBFS_ENABLED}, 留空保持): " in_obfs
@@ -1151,10 +1151,10 @@ prompt_hy2_install() {
   read -rp "[Hysteria2] 用户名标识 (默认 ${SB_HY2_USER_NAME}): " in_user_name
   SB_HY2_USER_NAME=${in_user_name:-$SB_HY2_USER_NAME}
 
-  read -rp "[Hysteria2] 上行带宽 Mbps (默认 ${SB_HY2_UP_MBPS}): " in_up
-  SB_HY2_UP_MBPS=${in_up:-$SB_HY2_UP_MBPS}
-  read -rp "[Hysteria2] 下行带宽 Mbps (默认 ${SB_HY2_DOWN_MBPS}): " in_down
-  SB_HY2_DOWN_MBPS=${in_down:-$SB_HY2_DOWN_MBPS}
+  read -rp "[Hysteria2] 上行带宽 Mbps (留空表示不限制): " in_up
+  SB_HY2_UP_MBPS="${in_up}"
+  read -rp "[Hysteria2] 下行带宽 Mbps (留空表示不限制): " in_down
+  SB_HY2_DOWN_MBPS="${in_down}"
 
   read -rp "[Hysteria2] 是否启用 Salamander 混淆 [y/n] (默认 n): " in_obfs
   SB_HY2_OBFS_ENABLED=${in_obfs:-"n"}
@@ -1389,7 +1389,7 @@ set_protocol_defaults() {
     hy2)
       SB_PROTOCOL="hy2"
       SB_NODE_NAME="hy2_$(hostname)"
-      SB_PORT="8443"
+      SB_PORT="443"
       SB_SNI=""
       SB_UUID=""
       SB_PUBLIC_KEY=""
@@ -1402,8 +1402,8 @@ set_protocol_defaults() {
       SB_HY2_DOMAIN=""
       SB_HY2_PASSWORD=""
       SB_HY2_USER_NAME="hy2-user"
-      SB_HY2_UP_MBPS="100"
-      SB_HY2_DOWN_MBPS="100"
+      SB_HY2_UP_MBPS=""
+      SB_HY2_DOWN_MBPS=""
       SB_HY2_OBFS_ENABLED="n"
       SB_HY2_OBFS_TYPE=""
       SB_HY2_OBFS_PASSWORD=""
@@ -1433,8 +1433,8 @@ set_protocol_defaults() {
       SB_HY2_DOMAIN=""
       SB_HY2_PASSWORD=""
       SB_HY2_USER_NAME=""
-      SB_HY2_UP_MBPS="100"
-      SB_HY2_DOWN_MBPS="100"
+      SB_HY2_UP_MBPS=""
+      SB_HY2_DOWN_MBPS=""
       SB_HY2_OBFS_ENABLED="n"
       SB_HY2_OBFS_TYPE=""
       SB_HY2_OBFS_PASSWORD=""
@@ -2383,8 +2383,8 @@ load_protocol_state() {
       SB_HY2_DOMAIN=""
       SB_HY2_PASSWORD=""
       SB_HY2_USER_NAME=""
-      SB_HY2_UP_MBPS="100"
-      SB_HY2_DOWN_MBPS="100"
+      SB_HY2_UP_MBPS=""
+      SB_HY2_DOWN_MBPS=""
       SB_HY2_OBFS_ENABLED="n"
       SB_HY2_OBFS_TYPE=""
       SB_HY2_OBFS_PASSWORD=""
@@ -2425,8 +2425,8 @@ load_protocol_state() {
       SB_HY2_DOMAIN=""
       SB_HY2_PASSWORD=""
       SB_HY2_USER_NAME=""
-      SB_HY2_UP_MBPS="100"
-      SB_HY2_DOWN_MBPS="100"
+      SB_HY2_UP_MBPS=""
+      SB_HY2_DOWN_MBPS=""
       SB_HY2_OBFS_ENABLED="n"
       SB_HY2_OBFS_TYPE=""
       SB_HY2_OBFS_PASSWORD=""
@@ -2454,7 +2454,7 @@ load_protocol_state() {
     hy2)
       SB_PROTOCOL="hy2"
       SB_NODE_NAME="${NODE_NAME:-hy2_$(hostname)}"
-      SB_PORT="${PORT:-8443}"
+      SB_PORT="${PORT:-443}"
       SB_UUID=""
       SB_SNI=""
       SB_PRIVATE_KEY=""
@@ -2467,8 +2467,8 @@ load_protocol_state() {
       SB_HY2_DOMAIN="${DOMAIN:-}"
       SB_HY2_PASSWORD="${PASSWORD:-}"
       SB_HY2_USER_NAME="${USER_NAME:-}"
-      SB_HY2_UP_MBPS="${UP_MBPS:-100}"
-      SB_HY2_DOWN_MBPS="${DOWN_MBPS:-100}"
+      SB_HY2_UP_MBPS="${UP_MBPS:-}"
+      SB_HY2_DOWN_MBPS="${DOWN_MBPS:-}"
       SB_HY2_OBFS_ENABLED="${OBFS_ENABLED:-n}"
       SB_HY2_OBFS_TYPE="${OBFS_TYPE:-}"
       SB_HY2_OBFS_PASSWORD="${OBFS_PASSWORD:-}"
@@ -2509,8 +2509,8 @@ load_protocol_state() {
       SB_HY2_DOMAIN=""
       SB_HY2_PASSWORD=""
       SB_HY2_USER_NAME=""
-      SB_HY2_UP_MBPS="100"
-      SB_HY2_DOWN_MBPS="100"
+      SB_HY2_UP_MBPS=""
+      SB_HY2_DOWN_MBPS=""
       SB_HY2_OBFS_ENABLED="n"
       SB_HY2_OBFS_TYPE=""
       SB_HY2_OBFS_PASSWORD=""
@@ -2734,8 +2734,6 @@ build_hy2_inbound_json() {
           "password": $password
         }
       ],
-      "up_mbps": ($up_mbps | tonumber),
-      "down_mbps": ($down_mbps | tonumber),
       "tls": (
         {
           "enabled": true,
@@ -2775,6 +2773,15 @@ build_hy2_inbound_json() {
         )
       )
     } + (
+      if ($up_mbps | length) > 0 and ($down_mbps | length) > 0 then
+        {
+          "up_mbps": ($up_mbps | tonumber),
+          "down_mbps": ($down_mbps | tonumber)
+        }
+      else
+        {}
+      end
+    ) + (
       if $obfs_enabled == "y" then
         {
           "obfs": {
@@ -3707,8 +3714,8 @@ load_current_config_state() {
     SB_HY2_DOMAIN=$(jq -r '.inbounds[0].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
     SB_HY2_PASSWORD=$(jq -r '.inbounds[0].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
     SB_HY2_USER_NAME=$(jq -r '.inbounds[0].users[0].name // ""' "${SINGBOX_CONFIG_FILE}")
-    SB_HY2_UP_MBPS=$(jq -r '.inbounds[0].up_mbps // "100"' "${SINGBOX_CONFIG_FILE}")
-    SB_HY2_DOWN_MBPS=$(jq -r '.inbounds[0].down_mbps // "100"' "${SINGBOX_CONFIG_FILE}")
+    SB_HY2_UP_MBPS=$(jq -r '.inbounds[0].up_mbps // ""' "${SINGBOX_CONFIG_FILE}")
+    SB_HY2_DOWN_MBPS=$(jq -r '.inbounds[0].down_mbps // ""' "${SINGBOX_CONFIG_FILE}")
     if jq -e '.inbounds[0].obfs.type == "salamander"' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
       SB_HY2_OBFS_ENABLED="y"
       SB_HY2_OBFS_TYPE="salamander"
@@ -4069,7 +4076,11 @@ show_hy2_connection_summary() {
   else
     echo "混淆: 未启用"
   fi
-  echo "带宽: ${SB_HY2_UP_MBPS} / ${SB_HY2_DOWN_MBPS} Mbps"
+  if [[ -n "${SB_HY2_UP_MBPS}" && -n "${SB_HY2_DOWN_MBPS}" ]]; then
+    echo "带宽: ${SB_HY2_UP_MBPS} / ${SB_HY2_DOWN_MBPS} Mbps"
+  else
+    echo "带宽: 不限制（由客户端协商）"
+  fi
 }
 
 show_anytls_connection_summary() {
@@ -4394,12 +4405,12 @@ render_expected_protocol_state_snapshot() {
       ;;
     hy2)
       cert_provider_tag=""
-      printf 'PORT=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "8443"' "${SINGBOX_CONFIG_FILE}")"
+      printf 'PORT=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")"
       printf 'DOMAIN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")"
       printf 'PASSWORD=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")"
       printf 'USER_NAME=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].name // ""' "${SINGBOX_CONFIG_FILE}")"
-      printf 'UP_MBPS=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].up_mbps // "100"' "${SINGBOX_CONFIG_FILE}")"
-      printf 'DOWN_MBPS=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].down_mbps // "100"' "${SINGBOX_CONFIG_FILE}")"
+      printf 'UP_MBPS=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].up_mbps // ""' "${SINGBOX_CONFIG_FILE}")"
+      printf 'DOWN_MBPS=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].down_mbps // ""' "${SINGBOX_CONFIG_FILE}")"
       if jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].obfs.type == "salamander"' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
         printf 'OBFS_ENABLED=y\n'
         printf 'OBFS_TYPE=salamander\n'
@@ -4702,12 +4713,12 @@ rebuild_protocol_state_from_config() {
         SB_PROTOCOL="hy2"
         SB_NODE_NAME="hy2_$(hostname)"
         cert_provider_tag=""
-        SB_PORT=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "8443"' "${SINGBOX_CONFIG_FILE}")
+        SB_PORT=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")
         SB_HY2_DOMAIN=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
         SB_HY2_PASSWORD=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
         SB_HY2_USER_NAME=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].name // ""' "${SINGBOX_CONFIG_FILE}")
-        SB_HY2_UP_MBPS=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].up_mbps // "100"' "${SINGBOX_CONFIG_FILE}")
-        SB_HY2_DOWN_MBPS=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].down_mbps // "100"' "${SINGBOX_CONFIG_FILE}")
+        SB_HY2_UP_MBPS=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].up_mbps // ""' "${SINGBOX_CONFIG_FILE}")
+        SB_HY2_DOWN_MBPS=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].down_mbps // ""' "${SINGBOX_CONFIG_FILE}")
         if jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].obfs.type == "salamander"' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
           SB_HY2_OBFS_ENABLED="y"
           SB_HY2_OBFS_TYPE="salamander"
