@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042216
+# Version: 2026042217
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042216"
+readonly SCRIPT_VERSION="2026042217"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -2082,8 +2082,17 @@ ensure_sbv_command_installed() {
     return 0
   fi
 
-  if [[ -x "${SBV_BIN_PATH}" ]]; then
-    return 0
+  if [[ -f "$0" ]]; then
+    if [[ ! -x "${SBV_BIN_PATH}" ]] || ! cmp -s "$0" "${SBV_BIN_PATH}" 2>/dev/null; then
+      log_info "正在同步全局命令: sbv..."
+      if cp -f "$0" "${SBV_BIN_PATH}" 2>/dev/null; then
+        chmod +x "${SBV_BIN_PATH}"
+        log_success "全局命令 sbv 已同步为当前脚本版本。"
+        return 0
+      fi
+    else
+      return 0
+    fi
   fi
 
   log_info "正在安装全局命令: sbv..."
