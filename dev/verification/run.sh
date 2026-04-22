@@ -55,6 +55,8 @@ main() {
   local mode
   local run_dir
   local changed_files=()
+  local scenarios=()
+  local status=0
 
   mapfile -t changed_files < <(resolve_changed_files "$@")
   mode=$(determine_verification_mode "${changed_files[@]}")
@@ -71,7 +73,18 @@ main() {
   if [[ "${mode}" == "remote" ]]; then
     require_remote_env
     resolve_remote_scenarios "${changed_files[@]}" > "${run_dir}/scenarios.txt"
-    run_remote_entrypoint "${run_dir}"
+    mapfile -t scenarios < "${run_dir}/scenarios.txt"
+    if ssh "${VERIFY_REMOTE_USER}@${VERIFY_REMOTE_HOST}" 'bash -s -- '"${scenarios[*]}" \
+      < "${REPO_ROOT}/dev/verification/remote/entrypoint.sh" \
+      > "${run_dir}/remote.stdout.log" \
+      2> "${run_dir}/remote.stderr.log"; then
+      return 0
+    else
+      status=$?
+    fi
+
+    cat "${run_dir}/remote.stderr.log" >&2
+    return "${status}"
   fi
 }
 
