@@ -104,6 +104,31 @@ if ! jq -e '
   exit 1
 fi
 
+cat > "${REMOTE_ROOT}/root/sing-box-vps/protocols/hy2.env" <<'EOF'
+DOMAIN=hy2.example.com
+PASSWORD=hy2-password-from-state
+OBFS_PASSWORD=
+EOF
+
+printf 'stale-client\n' > "${EXPECTED_CONFIG_PATH}"
+
+if bash "${TMP_DIR}/run-hy2-generate.sh" \
+  > "${TMP_DIR}/stdout-hy2-missing-obfs-password.txt" \
+  2> "${TMP_DIR}/stderr-hy2-missing-obfs-password.txt"; then
+  printf 'expected hy2 probe client generation to fail when obfs password is blank\n' >&2
+  exit 1
+fi
+
+grep -Fq 'missing required hy2 probe field: obfs_password' \
+  "${TMP_DIR}/stderr-hy2-missing-obfs-password.txt"
+grep -Fqx 'stale-client' "${EXPECTED_CONFIG_PATH}"
+
+cat > "${REMOTE_ROOT}/root/sing-box-vps/protocols/hy2.env" <<'EOF'
+DOMAIN=hy2.example.com
+PASSWORD=hy2-password-from-state
+OBFS_PASSWORD=obfs-password-from-state
+EOF
+
 rm -rf "${ARTIFACT_DIR}"
 
 cat > "${TMP_DIR}/run-hy2-execute.sh" <<EOF

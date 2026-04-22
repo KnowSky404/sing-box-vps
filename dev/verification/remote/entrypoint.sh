@@ -357,6 +357,9 @@ verification_generate_protocol_probe_client_config() {
       obfs_password=$(sed -n 's/^OBFS_PASSWORD=//p' "${state_file}" | head -n 1)
       verification_require_protocol_probe_field "${protocol}" password "${password}" || return 1
       verification_require_protocol_probe_field "${protocol}" domain "${domain}" || return 1
+      if [[ -n "${obfs_type}" ]]; then
+        verification_require_protocol_probe_field "${protocol}" obfs_password "${obfs_password}" || return 1
+      fi
 
       if jq -n \
         --arg server_port "${server_port}" \
