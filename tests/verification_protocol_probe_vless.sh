@@ -129,6 +129,8 @@ verification_generate_protocol_probe_client_config \
 EOF
 chmod +x "${TMP_DIR}/run-blank-public-key.sh"
 
+printf 'stale-client\n' > "${EXPECTED_CONFIG_PATH}"
+
 if bash "${TMP_DIR}/run-blank-public-key.sh" > "${TMP_DIR}/stdout-blank-public-key.txt" 2> "${TMP_DIR}/stderr-blank-public-key.txt"; then
   printf 'expected blank REALITY_PUBLIC_KEY to fail probe client generation\n' >&2
   exit 1
@@ -136,6 +138,7 @@ fi
 
 grep -Fq 'missing REALITY_PUBLIC_KEY for protocol generator: vless-reality' \
   "${TMP_DIR}/stderr-blank-public-key.txt"
+[[ ! -f "${EXPECTED_CONFIG_PATH}" ]]
 
 cat > "${TMP_DIR}/run-missing-public-key.sh" <<EOF
 #!/usr/bin/env bash
@@ -157,6 +160,8 @@ verification_generate_protocol_probe_client_config \
 EOF
 chmod +x "${TMP_DIR}/run-missing-public-key.sh"
 
+printf 'stale-client\n' > "${EXPECTED_CONFIG_PATH}"
+
 if bash "${TMP_DIR}/run-missing-public-key.sh" > "${TMP_DIR}/stdout-missing-public-key.txt" 2> "${TMP_DIR}/stderr-missing-public-key.txt"; then
   printf 'expected missing REALITY_PUBLIC_KEY to fail probe client generation\n' >&2
   exit 1
@@ -164,6 +169,36 @@ fi
 
 grep -Fq 'missing REALITY_PUBLIC_KEY for protocol generator: vless-reality' \
   "${TMP_DIR}/stderr-missing-public-key.txt"
+[[ ! -f "${EXPECTED_CONFIG_PATH}" ]]
+
+cat > "${TMP_DIR}/run-missing-state-file.sh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+rm -f "${REMOTE_ROOT}/root/sing-box-vps/protocols/vless-reality.env"
+
+source "${TESTABLE_ENTRYPOINT}"
+
+VERIFY_ARTIFACT_DIR="${ARTIFACT_DIR}"
+VERIFY_CURRENT_SCENARIO="runtime_smoke"
+VERIFY_CURRENT_SCENARIO_DIR="scenarios/\${VERIFY_CURRENT_SCENARIO}"
+
+verification_generate_protocol_probe_client_config \
+  vless-reality \
+  "${REMOTE_ROOT}/root/sing-box-vps/config.json"
+EOF
+chmod +x "${TMP_DIR}/run-missing-state-file.sh"
+
+printf 'stale-client\n' > "${EXPECTED_CONFIG_PATH}"
+
+if bash "${TMP_DIR}/run-missing-state-file.sh" > "${TMP_DIR}/stdout-missing-state-file.txt" 2> "${TMP_DIR}/stderr-missing-state-file.txt"; then
+  printf 'expected missing vless state file to fail probe client generation\n' >&2
+  exit 1
+fi
+
+grep -Fq 'missing protocol state file for protocol generator: vless-reality' \
+  "${TMP_DIR}/stderr-missing-state-file.txt"
+[[ ! -f "${EXPECTED_CONFIG_PATH}" ]]
 
 cat > "${TMP_DIR}/run-unsupported.sh" <<EOF
 #!/usr/bin/env bash

@@ -237,21 +237,28 @@ verification_generate_protocol_probe_client_config() {
   local public_key=''
   local short_id=''
   local flow=''
+  local state_file=/root/sing-box-vps/protocols/vless-reality.env
 
   case "${protocol}" in
     vless-reality)
+      output_path=$(verification_artifact_path \
+        "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
+      rm -f "${output_path}"
+
       inbound_index=$(verification_find_config_inbound_index_by_type "${config_file}" vless) || {
         printf 'missing inbound for protocol generator: %s\n' "${protocol}" >&2
         return 1
       }
-      output_path=$(verification_artifact_path \
-        "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
       server_port=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // empty' "${config_file}")
       uuid=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].uuid // empty' "${config_file}")
       server_name=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // empty' "${config_file}")
       short_id=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[0] // empty' "${config_file}")
       flow=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].flow // empty' "${config_file}")
-      public_key=$(sed -n 's/^REALITY_PUBLIC_KEY=//p' /root/sing-box-vps/protocols/vless-reality.env | head -n 1)
+      if [[ ! -f "${state_file}" ]]; then
+        printf 'missing protocol state file for protocol generator: %s\n' "${protocol}" >&2
+        return 1
+      fi
+      public_key=$(sed -n 's/^REALITY_PUBLIC_KEY=//p' "${state_file}" | head -n 1)
       if [[ -z "${public_key}" ]]; then
         printf 'missing REALITY_PUBLIC_KEY for protocol generator: %s\n' "${protocol}" >&2
         return 1
