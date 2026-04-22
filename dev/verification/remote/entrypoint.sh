@@ -243,6 +243,7 @@ verification_generate_protocol_probe_client_config() {
   local protocol=$1
   local config_file=$2
   local output_path=''
+  local temp_output_path=''
   local inbound_index=''
   local server_port=''
   local uuid=''
@@ -256,7 +257,9 @@ verification_generate_protocol_probe_client_config() {
     vless-reality)
       output_path=$(verification_artifact_path \
         "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
+      temp_output_path="${output_path}.tmp.$$"
       rm -f "${output_path}"
+      rm -f "${temp_output_path}"
 
       inbound_index=$(verification_find_config_inbound_index_by_type "${config_file}" vless) || {
         printf 'missing inbound for protocol generator: %s\n' "${protocol}" >&2
@@ -282,7 +285,7 @@ verification_generate_protocol_probe_client_config() {
         return 1
       fi
 
-      jq -n \
+      if jq -n \
         --arg server_port "${server_port}" \
         --arg uuid "${uuid}" \
         --arg server_name "${server_name}" \
@@ -320,7 +323,12 @@ verification_generate_protocol_probe_client_config() {
               }
             }
           ]
-        }' > "${output_path}"
+        }' > "${temp_output_path}"; then
+        mv "${temp_output_path}" "${output_path}"
+      else
+        rm -f "${temp_output_path}"
+        return 1
+      fi
       ;;
     *)
       printf 'unsupported protocol generator: %s\n' "${protocol}" >&2

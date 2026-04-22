@@ -5,6 +5,7 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "${TMP_DIR}"' EXIT
+REAL_JQ=$(command -v jq)
 
 ARTIFACT_DIR="${TMP_DIR}/artifacts"
 REMOTE_ROOT="${TMP_DIR}/remote-root"
@@ -258,6 +259,48 @@ fi
 
 grep -Fq 'missing required vless-reality probe field: short_id' \
   "${TMP_DIR}/stderr-missing-short-id.txt"
+[[ ! -f "${EXPECTED_CONFIG_PATH}" ]]
+
+mkdir -p "${TMP_DIR}/render-failure-bin"
+cat > "${TMP_DIR}/render-failure-bin/jq" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "\${1:-}" == "-n" ]]; then
+  printf '{ "partial": true'
+  printf 'simulated render failure\n' >&2
+  exit 9
+fi
+
+exec "${REAL_JQ}" "\$@"
+EOF
+chmod +x "${TMP_DIR}/render-failure-bin/jq"
+
+cat > "${TMP_DIR}/run-render-failure.sh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+export PATH="${TMP_DIR}/render-failure-bin:\${PATH}"
+
+source "${TESTABLE_ENTRYPOINT}"
+
+VERIFY_ARTIFACT_DIR="${ARTIFACT_DIR}"
+VERIFY_CURRENT_SCENARIO="runtime_smoke"
+VERIFY_CURRENT_SCENARIO_DIR="scenarios/\${VERIFY_CURRENT_SCENARIO}"
+
+verification_generate_protocol_probe_client_config \
+  vless-reality \
+  "${REMOTE_ROOT}/root/sing-box-vps/config.json"
+EOF
+chmod +x "${TMP_DIR}/run-render-failure.sh"
+
+printf 'stale-client\n' > "${EXPECTED_CONFIG_PATH}"
+
+if bash "${TMP_DIR}/run-render-failure.sh" > "${TMP_DIR}/stdout-render-failure.txt" 2> "${TMP_DIR}/stderr-render-failure.txt"; then
+  printf 'expected render-time jq failure to fail probe client generation\n' >&2
+  exit 1
+fi
+
 [[ ! -f "${EXPECTED_CONFIG_PATH}" ]]
 
 cat > "${TMP_DIR}/run-unsupported.sh" <<EOF
