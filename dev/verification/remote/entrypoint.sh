@@ -425,6 +425,17 @@ verification_execute_single_protocol_probe() {
   local protocol=$1
   local config_file=$2
   local client_config_path=''
+  local stdout_artifact=''
+  local result_artifact=''
+  local client_path_artifact=''
+
+  stdout_artifact=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/probe.stdout.txt")
+  result_artifact=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/result.env")
+  client_path_artifact=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.path.txt")
+  rm -f "${stdout_artifact}" "${result_artifact}" "${client_path_artifact}"
 
   client_config_path=$(verification_generate_protocol_probe_client_config "${protocol}" "${config_file}")
   verification_write_artifact \

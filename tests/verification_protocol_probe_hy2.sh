@@ -161,3 +161,27 @@ grep -Fqx "${EXPECTED_CONFIG_PATH}" "${EXPECTED_CLIENT_PATH_ARTIFACT}"
 grep -Fqx 'PROTOCOL=hy2' "${EXPECTED_RESULT_PATH}"
 grep -Fqx 'RESULT=success' "${EXPECTED_RESULT_PATH}"
 grep -Fqx 'sing-box-vps-loopback-ok' "${EXPECTED_STDOUT_PATH}"
+
+cat > "${REMOTE_ROOT}/root/sing-box-vps/protocols/hy2.env" <<'EOF'
+DOMAIN=hy2.example.com
+PASSWORD=hy2-password-from-state
+OBFS_PASSWORD=
+EOF
+
+if bash "${TMP_DIR}/run-hy2-execute.sh" \
+  > "${TMP_DIR}/stdout-hy2-execute-failure.txt" \
+  2> "${TMP_DIR}/stderr-hy2-execute-failure.txt"; then
+  printf 'expected hy2 probe execution to fail when obfs password is blank\n' >&2
+  exit 1
+fi
+
+grep -Fq 'missing required hy2 probe field: obfs_password' \
+  "${TMP_DIR}/stderr-hy2-execute-failure.txt"
+[[ ! -f "${EXPECTED_STDOUT_PATH}" ]]
+[[ ! -f "${EXPECTED_CLIENT_PATH_ARTIFACT}" ]]
+if [[ -f "${EXPECTED_RESULT_PATH}" ]]; then
+  if grep -Fqx 'RESULT=success' "${EXPECTED_RESULT_PATH}"; then
+    printf 'expected failed hy2 probe execution to clear stale success result\n' >&2
+    exit 1
+  fi
+fi
