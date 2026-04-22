@@ -6,9 +6,19 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TMP_DIR=$(mktemp -d)
 REAL_BASH=$(command -v bash)
 trap 'rm -rf "${TMP_DIR}"' EXIT
+REMOTE_PORT_FILE="${TMP_DIR}/remote-port"
+REMOTE_CONFIG_PRESENT_FILE="${TMP_DIR}/remote-config-present"
+REMOTE_SERVICE_ACTIVE_FILE="${TMP_DIR}/remote-service-active"
+
+printf '443\n' > "${REMOTE_PORT_FILE}"
+printf '0\n' > "${REMOTE_CONFIG_PRESENT_FILE}"
+printf '0\n' > "${REMOTE_SERVICE_ACTIVE_FILE}"
 
 cat > "${TMP_DIR}/systemctl" <<'EOF'
 #!/usr/bin/env bash
+if [[ "${1:-}" == "is-active" && "${2:-}" == "--quiet" && "${3:-}" == "sing-box" ]]; then
+  exit 0
+fi
 if [[ "${1:-}" == "is-active" && "${2:-}" == "sing-box" ]]; then
   printf 'active\n'
   exit 0
@@ -49,8 +59,51 @@ cat > "${TMP_DIR}/ssh" <<EOF
 remote_host=\${1:-}
 shift
 script_file="${TMP_DIR}/remote-script.sh"
-cat > "\${script_file}"
+cat <<'PAYLOAD_PRELUDE' > "\${script_file}"
+bash() {
+  local target=\${1:-}
+  shift || true
+
+  case "\${target}" in
+    /root/Clouds/sing-box-vps/install.sh)
+      printf '1\n' > "\${REMOTE_CONFIG_PRESENT_FILE}"
+      printf '1\n' > "\${REMOTE_SERVICE_ACTIVE_FILE}"
+      printf '443\n' > "\${REMOTE_PORT_FILE}"
+      return 0
+      ;;
+    /usr/local/bin/sbv)
+      printf '8443\n' > "\${REMOTE_PORT_FILE}"
+      return 0
+      ;;
+  esac
+
+  command bash "\${target}" "\$@"
+}
+
+test() {
+  if [[ "\${1:-}" == "-f" && "\${2:-}" == "/root/sing-box-vps/config.json" ]]; then
+    [[ \$(cat "\${REMOTE_CONFIG_PRESENT_FILE}") == "1" ]]
+    return
+  fi
+
+  builtin test "\$@"
+}
+
+jq() {
+  if [[ "\${1:-}" == "-r" && "\${2:-}" == ".inbounds[0].listen_port // empty" ]]; then
+    cat "\${REMOTE_PORT_FILE}"
+    return 0
+  fi
+
+  printf 'unexpected jq call: %s\n' "\$*" >&2
+  return 1
+}
+PAYLOAD_PRELUDE
+cat >> "\${script_file}"
 printf 'REMOTE_HOST=%s\n' "\${remote_host}"
+REMOTE_CONFIG_PRESENT_FILE="${REMOTE_CONFIG_PRESENT_FILE}" \
+REMOTE_PORT_FILE="${REMOTE_PORT_FILE}" \
+REMOTE_SERVICE_ACTIVE_FILE="${REMOTE_SERVICE_ACTIVE_FILE}" \
 PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" -lc "\${1:-}" < "\${script_file}"
 EOF
 chmod +x "${TMP_DIR}/ssh"

@@ -14,24 +14,30 @@ cleanup() {
 }
 trap cleanup EXIT
 
-verification_scenario_fresh_install_vless() {
-  :
-}
+run_verification_scenario() {
+  local function_name=$1
 
-verification_scenario_reconfigure_existing_install() {
-  :
+  if ! declare -F "${function_name}" >/dev/null; then
+    printf 'missing scenario function: %s\n' "${function_name}" >&2
+    exit 2
+  fi
+
+  "${function_name}"
 }
 
 for scenario in "$@"; do
   case "${scenario}" in
     fresh_install_vless)
-      verification_scenario_fresh_install_vless
+      run_verification_scenario verification_scenario_fresh_install_vless
       ;;
     reconfigure_existing_install)
-      verification_scenario_reconfigure_existing_install
+      run_verification_scenario verification_scenario_reconfigure_existing_install
+      ;;
+    uninstall_and_reinstall)
+      run_verification_scenario verification_scenario_uninstall_and_reinstall
       ;;
     runtime_smoke)
-      verification_scenario_runtime_smoke
+      run_verification_scenario verification_scenario_runtime_smoke
       ;;
     *)
       printf 'unknown scenario: %s\n' "${scenario}" >&2
