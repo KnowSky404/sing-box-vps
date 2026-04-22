@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042220
+# Version: 2026042221
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042220"
+readonly SCRIPT_VERSION="2026042221"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -1493,6 +1493,28 @@ generate_random_token() {
   printf '%s%s' "${prefix}" "${token}"
 }
 
+generate_hy2_secret() {
+  generate_random_token "" 16
+}
+
+ensure_hy2_password() {
+  if [[ -z "${SB_HY2_PASSWORD}" ]]; then
+    SB_HY2_PASSWORD=$(generate_hy2_secret)
+  fi
+}
+
+ensure_hy2_obfs_settings() {
+  if [[ "${SB_HY2_OBFS_ENABLED}" != "y" ]]; then
+    SB_HY2_OBFS_TYPE=""
+    SB_HY2_OBFS_PASSWORD=""
+    return 0
+  fi
+
+  [[ -z "${SB_HY2_OBFS_TYPE}" ]] && SB_HY2_OBFS_TYPE="salamander"
+  [[ -z "${SB_HY2_OBFS_PASSWORD}" ]] && SB_HY2_OBFS_PASSWORD=$(generate_hy2_secret)
+  return 0
+}
+
 ensure_mixed_auth_credentials() {
   if [[ "${SB_MIXED_AUTH_ENABLED}" != "y" ]]; then
     SB_MIXED_USERNAME=""
@@ -2587,20 +2609,13 @@ ensure_hy2_materials() {
     SB_HY2_USER_NAME="hy2-user"
   fi
 
-  if [[ -z "${SB_HY2_PASSWORD}" ]]; then
-    SB_HY2_PASSWORD=$(generate_random_token "" 8)
-  fi
+  ensure_hy2_password
 
   if [[ -z "${SB_HY2_ACME_DOMAIN}" ]]; then
     SB_HY2_ACME_DOMAIN="${SB_HY2_DOMAIN}"
   fi
 
-  if [[ "${SB_HY2_OBFS_ENABLED}" != "y" ]]; then
-    SB_HY2_OBFS_TYPE=""
-    SB_HY2_OBFS_PASSWORD=""
-  elif [[ -z "${SB_HY2_OBFS_TYPE}" ]]; then
-    SB_HY2_OBFS_TYPE="salamander"
-  fi
+  ensure_hy2_obfs_settings
 
   return 0
 }
