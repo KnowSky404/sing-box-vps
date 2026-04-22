@@ -252,6 +252,10 @@ verification_generate_protocol_probe_client_config() {
       short_id=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[0] // empty' "${config_file}")
       flow=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].flow // empty' "${config_file}")
       public_key=$(sed -n 's/^REALITY_PUBLIC_KEY=//p' /root/sing-box-vps/protocols/vless-reality.env | head -n 1)
+      if [[ -z "${public_key}" ]]; then
+        printf 'missing REALITY_PUBLIC_KEY for protocol generator: %s\n' "${protocol}" >&2
+        return 1
+      fi
 
       jq -n \
         --arg server_port "${server_port}" \

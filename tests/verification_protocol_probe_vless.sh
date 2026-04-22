@@ -109,6 +109,62 @@ if ! jq -e '
   exit 1
 fi
 
+cat > "${TMP_DIR}/run-blank-public-key.sh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+cat > "${REMOTE_ROOT}/root/sing-box-vps/protocols/vless-reality.env" <<'STATE_EOF'
+REALITY_PUBLIC_KEY=
+STATE_EOF
+
+source "${TESTABLE_ENTRYPOINT}"
+
+VERIFY_ARTIFACT_DIR="${ARTIFACT_DIR}"
+VERIFY_CURRENT_SCENARIO="runtime_smoke"
+VERIFY_CURRENT_SCENARIO_DIR="scenarios/\${VERIFY_CURRENT_SCENARIO}"
+
+verification_generate_protocol_probe_client_config \
+  vless-reality \
+  "${REMOTE_ROOT}/root/sing-box-vps/config.json"
+EOF
+chmod +x "${TMP_DIR}/run-blank-public-key.sh"
+
+if bash "${TMP_DIR}/run-blank-public-key.sh" > "${TMP_DIR}/stdout-blank-public-key.txt" 2> "${TMP_DIR}/stderr-blank-public-key.txt"; then
+  printf 'expected blank REALITY_PUBLIC_KEY to fail probe client generation\n' >&2
+  exit 1
+fi
+
+grep -Fq 'missing REALITY_PUBLIC_KEY for protocol generator: vless-reality' \
+  "${TMP_DIR}/stderr-blank-public-key.txt"
+
+cat > "${TMP_DIR}/run-missing-public-key.sh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+cat > "${REMOTE_ROOT}/root/sing-box-vps/protocols/vless-reality.env" <<'STATE_EOF'
+UUID=unused
+STATE_EOF
+
+source "${TESTABLE_ENTRYPOINT}"
+
+VERIFY_ARTIFACT_DIR="${ARTIFACT_DIR}"
+VERIFY_CURRENT_SCENARIO="runtime_smoke"
+VERIFY_CURRENT_SCENARIO_DIR="scenarios/\${VERIFY_CURRENT_SCENARIO}"
+
+verification_generate_protocol_probe_client_config \
+  vless-reality \
+  "${REMOTE_ROOT}/root/sing-box-vps/config.json"
+EOF
+chmod +x "${TMP_DIR}/run-missing-public-key.sh"
+
+if bash "${TMP_DIR}/run-missing-public-key.sh" > "${TMP_DIR}/stdout-missing-public-key.txt" 2> "${TMP_DIR}/stderr-missing-public-key.txt"; then
+  printf 'expected missing REALITY_PUBLIC_KEY to fail probe client generation\n' >&2
+  exit 1
+fi
+
+grep -Fq 'missing REALITY_PUBLIC_KEY for protocol generator: vless-reality' \
+  "${TMP_DIR}/stderr-missing-public-key.txt"
+
 cat > "${TMP_DIR}/run-unsupported.sh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
