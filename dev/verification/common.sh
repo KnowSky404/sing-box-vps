@@ -9,7 +9,7 @@ determine_verification_mode() {
   local file
   for file in "$@"; do
     case "${file}" in
-      install.sh | utils/*)
+      install.sh | utils/common.sh)
         printf 'remote\n'
         return 0
         ;;
