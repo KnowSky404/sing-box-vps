@@ -139,7 +139,7 @@ fi
 
 grep -Fq 'missing REALITY_PUBLIC_KEY for protocol generator: vless-reality' \
   "${TMP_DIR}/stderr-blank-public-key.txt"
-[[ ! -f "${EXPECTED_CONFIG_PATH}" ]]
+grep -Fqx 'stale-client' "${EXPECTED_CONFIG_PATH}"
 
 cat > "${TMP_DIR}/run-missing-public-key.sh" <<EOF
 #!/usr/bin/env bash
@@ -170,7 +170,7 @@ fi
 
 grep -Fq 'missing REALITY_PUBLIC_KEY for protocol generator: vless-reality' \
   "${TMP_DIR}/stderr-missing-public-key.txt"
-[[ ! -f "${EXPECTED_CONFIG_PATH}" ]]
+grep -Fqx 'stale-client' "${EXPECTED_CONFIG_PATH}"
 
 cat > "${TMP_DIR}/run-missing-state-file.sh" <<EOF
 #!/usr/bin/env bash
@@ -199,7 +199,7 @@ fi
 
 grep -Fq 'missing protocol state file for protocol generator: vless-reality' \
   "${TMP_DIR}/stderr-missing-state-file.txt"
-[[ ! -f "${EXPECTED_CONFIG_PATH}" ]]
+grep -Fqx 'stale-client' "${EXPECTED_CONFIG_PATH}"
 
 cat > "${TMP_DIR}/missing-short-id-config.json" <<'EOF'
 {
@@ -259,7 +259,7 @@ fi
 
 grep -Fq 'missing required vless-reality probe field: short_id' \
   "${TMP_DIR}/stderr-missing-short-id.txt"
-[[ ! -f "${EXPECTED_CONFIG_PATH}" ]]
+grep -Fqx 'stale-client' "${EXPECTED_CONFIG_PATH}"
 
 mkdir -p "${TMP_DIR}/render-failure-bin"
 cat > "${TMP_DIR}/render-failure-bin/jq" <<EOF
@@ -301,7 +301,11 @@ if bash "${TMP_DIR}/run-render-failure.sh" > "${TMP_DIR}/stdout-render-failure.t
   exit 1
 fi
 
-[[ ! -f "${EXPECTED_CONFIG_PATH}" ]]
+grep -Fqx 'stale-client' "${EXPECTED_CONFIG_PATH}"
+if compgen -G "${EXPECTED_CONFIG_PATH}.tmp.*" > /dev/null; then
+  printf 'expected render failure to clean up temp client artifact\n' >&2
+  exit 1
+fi
 
 cat > "${TMP_DIR}/run-unsupported.sh" <<EOF
 #!/usr/bin/env bash

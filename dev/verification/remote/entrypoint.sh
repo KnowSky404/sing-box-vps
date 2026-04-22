@@ -258,7 +258,6 @@ verification_generate_protocol_probe_client_config() {
       output_path=$(verification_artifact_path \
         "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
       temp_output_path="${output_path}.tmp.$$"
-      rm -f "${output_path}"
       rm -f "${temp_output_path}"
 
       inbound_index=$(verification_find_config_inbound_index_by_type "${config_file}" vless) || {
