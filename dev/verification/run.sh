@@ -108,6 +108,7 @@ main() {
   local changed_files=()
   local scenarios=()
   local status=0
+  local artifact_status=1
 
   mapfile -t changed_files < <(resolve_changed_files "$@")
   mode=$(determine_verification_mode "${changed_files[@]}")
@@ -134,10 +135,28 @@ main() {
     if emit_remote_payload | ssh "${VERIFY_REMOTE_USER}@${VERIFY_REMOTE_HOST}" 'bash -s -- '"${scenarios[*]}" \
       > "${run_dir}/remote.stdout.log" \
       2> "${run_dir}/remote.stderr.log"; then
-      printf 'remote_status=success\n' >> "${run_dir}/summary.log"
-      return 0
+      status=0
     else
       status=$?
+    fi
+
+    if extract_remote_artifacts "${run_dir}/remote.stdout.log" "${run_dir}"; then
+      artifact_status=0
+      printf 'remote_artifacts=extracted\n' >> "${run_dir}/summary.log"
+    else
+      artifact_status=$?
+      printf 'remote_artifacts=%s\n' "${artifact_status}" >> "${run_dir}/summary.log"
+    fi
+
+    if [[ "${status}" == "0" && "${artifact_status}" != "0" ]]; then
+      printf 'remote_status=failure\n' >> "${run_dir}/summary.log"
+      printf 'remote artifact bundle missing or invalid\n' >&2
+      return 24
+    fi
+
+    if [[ "${status}" == "0" ]]; then
+      printf 'remote_status=success\n' >> "${run_dir}/summary.log"
+      return 0
     fi
 
     printf 'remote_status=failure\n' >> "${run_dir}/summary.log"

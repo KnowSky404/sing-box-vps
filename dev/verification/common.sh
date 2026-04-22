@@ -4,6 +4,8 @@ set -euo pipefail
 
 readonly VERIFICATION_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 readonly REPO_ROOT=$(cd "${VERIFICATION_ROOT}/../.." && pwd)
+readonly REMOTE_ARTIFACT_BUNDLE_BEGIN='__SING_BOX_VPS_REMOTE_ARTIFACT_BUNDLE_BEGIN__'
+readonly REMOTE_ARTIFACT_BUNDLE_END='__SING_BOX_VPS_REMOTE_ARTIFACT_BUNDLE_END__'
 
 determine_verification_mode() {
   local file
@@ -62,18 +64,39 @@ require_remote_env() {
   : "${VERIFY_REMOTE_USER:?VERIFY_REMOTE_USER is required}"
 }
 
-run_remote_entrypoint() {
-  local run_dir=$1
-  local status=0
+extract_remote_artifacts() {
+  local stdout_file=$1
+  local run_dir=$2
+  local artifact_dir=${3:-"${run_dir}/remote-artifacts"}
+  local encoded_bundle_file="${run_dir}/remote.artifacts.b64"
 
-  if ssh "${VERIFY_REMOTE_USER}@${VERIFY_REMOTE_HOST}" 'bash -s' < "${REPO_ROOT}/dev/verification/remote/entrypoint.sh" \
-    > "${run_dir}/remote.stdout.log" \
-    2> "${run_dir}/remote.stderr.log"; then
-    return 0
-  else
-    status=$?
+  awk -v begin="${REMOTE_ARTIFACT_BUNDLE_BEGIN}" -v end="${REMOTE_ARTIFACT_BUNDLE_END}" '
+    $0 == begin {
+      capture = 1
+      next
+    }
+    $0 == end {
+      capture = 0
+      exit
+    }
+    capture {
+      print
+    }
+  ' "${stdout_file}" > "${encoded_bundle_file}"
+
+  if [[ ! -s "${encoded_bundle_file}" ]]; then
+    rm -f "${encoded_bundle_file}"
+    return 1
   fi
 
-  cat "${run_dir}/remote.stderr.log" >&2
-  return "${status}"
+  rm -rf "${artifact_dir}"
+  mkdir -p "${artifact_dir}"
+  if base64 -d "${encoded_bundle_file}" | tar -xzf - -C "${artifact_dir}"; then
+    rm -f "${encoded_bundle_file}"
+    return 0
+  fi
+
+  rm -f "${encoded_bundle_file}"
+  rm -rf "${artifact_dir}"
+  return 2
 }

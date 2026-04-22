@@ -9,11 +9,15 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 REMOTE_PORT_FILE="${TMP_DIR}/remote-port"
 REMOTE_UUID_FILE="${TMP_DIR}/remote-uuid"
 REMOTE_SNI_FILE="${TMP_DIR}/remote-sni"
+REMOTE_ROOT_DIR="${TMP_DIR}/remote-root"
+REMOTE_CONFIG_FILE="${REMOTE_ROOT_DIR}/root/sing-box-vps/config.json"
+REMOTE_PROTOCOLS_DIR="${REMOTE_ROOT_DIR}/root/sing-box-vps/protocols"
 REMOTE_CONFIG_PRESENT_FILE="${TMP_DIR}/remote-config-present"
 REMOTE_SERVICE_FILE_PRESENT_FILE="${TMP_DIR}/remote-service-file-present"
 REMOTE_SBV_PRESENT_FILE="${TMP_DIR}/remote-sbv-present"
 REMOTE_SERVICE_ACTIVE_FILE="${TMP_DIR}/remote-service-active"
-REMOTE_STATE_FILE="${TMP_DIR}/remote-vless-reality.env"
+REMOTE_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/vless-reality.env"
+REMOTE_INDEX_FILE="${REMOTE_PROTOCOLS_DIR}/index.env"
 REMOTE_ASSERT_LOG_FILE="${TMP_DIR}/remote-assert.log"
 INSTALL_COUNT_FILE="${TMP_DIR}/install-count"
 INSTALL_VERSION_LINE=$(sed -n 's/^readonly SCRIPT_VERSION=\"[^\"]*\"$/&/p' "${REPO_ROOT}/install.sh" | head -n 1)
@@ -28,10 +32,31 @@ printf '1\n' > "${REMOTE_SBV_PRESENT_FILE}"
 printf '1\n' > "${REMOTE_SERVICE_ACTIVE_FILE}"
 : > "${REMOTE_ASSERT_LOG_FILE}"
 printf '0\n' > "${INSTALL_COUNT_FILE}"
+mkdir -p "${REMOTE_PROTOCOLS_DIR}"
 cat > "${REMOTE_STATE_FILE}" <<'EOF'
 PORT=9443
 UUID=11111111-1111-4111-8111-111111111111
 SNI=stale.example.com
+EOF
+cat > "${REMOTE_INDEX_FILE}" <<'EOF'
+INSTALLED_PROTOCOLS=vless-reality
+EOF
+cat > "${REMOTE_CONFIG_FILE}" <<'EOF'
+{
+  "inbounds": [
+    {
+      "listen_port": 9443,
+      "users": [
+        {
+          "uuid": "11111111-1111-4111-8111-111111111111"
+        }
+      ],
+      "tls": {
+        "server_name": "stale.example.com"
+      }
+    }
+  ]
+}
 EOF
 
 cat > "${TMP_DIR}/git" <<EOF
@@ -107,7 +132,7 @@ chmod +x "${TMP_DIR}/sing-box"
 
 cat > "${TMP_DIR}/ss" <<'EOF'
 #!/usr/bin/env bash
-printf 'LISTEN 0 0 127.0.0.1:443 0.0.0.0:*\n'
+printf 'LISTEN 0 0 127.0.0.1:%s 0.0.0.0:*\n' "$(cat "${REMOTE_PORT_FILE}")"
 EOF
 chmod +x "${TMP_DIR}/ss"
 
@@ -118,11 +143,29 @@ shift
 script_file="${TMP_DIR}/remote-script.sh"
 cat <<'PAYLOAD_PRELUDE' > "\${script_file}"
 write_vless_state() {
+  mkdir -p "\$(dirname "\${REMOTE_STATE_FILE}")"
   cat > "\${REMOTE_STATE_FILE}" <<STATE_EOF
 PORT=\$(cat "\${REMOTE_PORT_FILE}")
 UUID=\$(cat "\${REMOTE_UUID_FILE}")
 SNI=\$(cat "\${REMOTE_SNI_FILE}")
 STATE_EOF
+  cat > "\${REMOTE_CONFIG_FILE}" <<CONFIG_EOF
+{
+  "inbounds": [
+    {
+      "listen_port": \$(cat "\${REMOTE_PORT_FILE}"),
+      "users": [
+        {
+          "uuid": "\$(cat "\${REMOTE_UUID_FILE}")"
+        }
+      ],
+      "tls": {
+        "server_name": "\$(cat "\${REMOTE_SNI_FILE}")"
+      }
+    }
+  ]
+}
+CONFIG_EOF
 }
 
 reset_runtime_artifacts() {
@@ -130,7 +173,8 @@ reset_runtime_artifacts() {
   printf '0\n' > "\${REMOTE_SERVICE_FILE_PRESENT_FILE}"
   printf '0\n' > "\${REMOTE_SBV_PRESENT_FILE}"
   printf '0\n' > "\${REMOTE_SERVICE_ACTIVE_FILE}"
-  rm -f "\${REMOTE_STATE_FILE}"
+  rm -f "\${REMOTE_CONFIG_FILE}"
+  rm -rf "\${REMOTE_PROTOCOLS_DIR}"
 }
 
 install_runtime_artifacts() {
@@ -139,6 +183,9 @@ install_runtime_artifacts() {
   printf '1\n' > "\${REMOTE_SBV_PRESENT_FILE}"
   printf '1\n' > "\${REMOTE_SERVICE_ACTIVE_FILE}"
   write_vless_state
+  cat > "\${REMOTE_INDEX_FILE}" <<'INDEX_EOF'
+INSTALLED_PROTOCOLS=vless-reality
+INDEX_EOF
 }
 
 next_install_uuid() {
@@ -207,13 +254,28 @@ bash() {
       return 1
       ;;
     /usr/local/bin/sbv)
-      assert_input_sequence "\${target}" \
-        "3" "1" "8443" "22222222-2222-4222-8222-222222222222" "cdn.cloudflare.com" "0"
-      printf '8443\n' > "\${REMOTE_PORT_FILE}"
-      printf '22222222-2222-4222-8222-222222222222\n' > "\${REMOTE_UUID_FILE}"
-      printf 'cdn.cloudflare.com\n' > "\${REMOTE_SNI_FILE}"
-      write_vless_state
-      return 0
+      mapfile -t actual_lines
+      if [[ "\${actual_lines[0]:-}" == "3" ]]; then
+        [[ "\${#actual_lines[@]}" -eq 6 ]]
+        [[ "\${actual_lines[1]}" == "1" ]]
+        [[ "\${actual_lines[2]}" == "8443" ]]
+        [[ "\${actual_lines[3]}" == "22222222-2222-4222-8222-222222222222" ]]
+        [[ "\${actual_lines[4]}" == "cdn.cloudflare.com" ]]
+        [[ "\${actual_lines[5]}" == "0" ]]
+        printf '8443\n' > "\${REMOTE_PORT_FILE}"
+        printf '22222222-2222-4222-8222-222222222222\n' > "\${REMOTE_UUID_FILE}"
+        printf 'cdn.cloudflare.com\n' > "\${REMOTE_SNI_FILE}"
+        write_vless_state
+        return 0
+      fi
+
+      if [[ "\${actual_lines[0]:-}" == "8" && "\${actual_lines[1]:-}" == "0" ]]; then
+        printf '服务状态摘要：\n端口: %s\n配置文件: /root/sing-box-vps/config.json\n' "\$(cat "\${REMOTE_PORT_FILE}")"
+        return 0
+      fi
+
+      printf 'unexpected sbv input: %s\n' "\${actual_lines[*]:-}" >&2
+      return 1
       ;;
     "\${VERIFY_REMOTE_UNINSTALL_SCRIPT:-__missing_uninstall__}")
       reset_runtime_artifacts
@@ -243,6 +305,16 @@ test() {
 
   if [[ "\${1:-}" == "-f" && "\${2:-}" == "/root/sing-box-vps/protocols/vless-reality.env" ]]; then
     [[ -f "\${REMOTE_STATE_FILE}" ]]
+    return
+  fi
+
+  if [[ "\${1:-}" == "-f" && "\${2:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
+    [[ -f "\${REMOTE_INDEX_FILE}" ]]
+    return
+  fi
+
+  if [[ "\${1:-}" == "-d" && "\${2:-}" == "/root/sing-box-vps/protocols" ]]; then
+    [[ -d "\${REMOTE_PROTOCOLS_DIR}" ]]
     return
   fi
 
@@ -291,6 +363,21 @@ jq() {
   return 1
 }
 
+cp() {
+  local args=("\$@")
+  local source_index=\$(( \${#args[@]} - 2 ))
+
+  if [[ "\${args[\$source_index]}" == "/root/sing-box-vps/config.json" ]]; then
+    args[\$source_index]="\${REMOTE_CONFIG_FILE}"
+  fi
+
+  if [[ "\${args[\$source_index]}" == "/root/sing-box-vps/protocols/." ]]; then
+    args[\$source_index]="\${REMOTE_PROTOCOLS_DIR}/."
+  fi
+
+  command cp "\${args[@]}"
+}
+
 grep() {
   local args=("\$@")
   local last_index=\$(( \$# - 1 ))
@@ -299,6 +386,10 @@ grep() {
 
   if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/vless-reality.env" ]]; then
     args[\$last_index]="\${REMOTE_STATE_FILE}"
+  fi
+
+  if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/index.env" ]]; then
+    args[\$last_index]="\${REMOTE_INDEX_FILE}"
   fi
 
   command grep "\${args[@]}"
@@ -313,7 +404,10 @@ REMOTE_SNI_FILE="${REMOTE_SNI_FILE}" \
 REMOTE_SERVICE_FILE_PRESENT_FILE="${REMOTE_SERVICE_FILE_PRESENT_FILE}" \
 REMOTE_SBV_PRESENT_FILE="${REMOTE_SBV_PRESENT_FILE}" \
 REMOTE_SERVICE_ACTIVE_FILE="${REMOTE_SERVICE_ACTIVE_FILE}" \
+REMOTE_CONFIG_FILE="${REMOTE_CONFIG_FILE}" \
+REMOTE_PROTOCOLS_DIR="${REMOTE_PROTOCOLS_DIR}" \
 REMOTE_STATE_FILE="${REMOTE_STATE_FILE}" \
+REMOTE_INDEX_FILE="${REMOTE_INDEX_FILE}" \
 REMOTE_ASSERT_LOG_FILE="${REMOTE_ASSERT_LOG_FILE}" \
 INSTALL_COUNT_FILE="${INSTALL_COUNT_FILE}" \
 PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" -lc "\${1:-}" < "\${script_file}"
@@ -334,8 +428,14 @@ scenarios=$(paste -sd, "${run_dir}/scenarios.txt")
 }
 grep -Fq 'SCENARIO=runtime_smoke' "${run_dir}/remote.stdout.log"
 grep -Fq 'REMOTE_HOST=root@test.example' "${run_dir}/remote.stdout.log"
+[[ -d "${run_dir}/remote-artifacts/scenarios/fresh_install_vless" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless/protocols/index.env" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless/listeners.ss-lntp.txt" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/reconfigure_existing_install/config.diff.txt" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/sing-box-check.txt" ]]
 grep -Fq "${INSTALL_VERSION_LINE}" "${TMP_DIR}/remote-script.sh"
 grep -Fq "${UNINSTALL_HELPER_LINE}" "${TMP_DIR}/remote-script.sh"
+grep -Fq 'remote_artifacts=extracted' "${run_dir}/summary.log"
 grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.env' "${REMOTE_ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.env' "${REMOTE_ASSERT_LOG_FILE}"
 grep -Fqx 'UUID=22222222-2222-4222-8222-222222222222' "${REMOTE_STATE_FILE}"

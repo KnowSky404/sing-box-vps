@@ -2,42 +2,240 @@
 
 set -euo pipefail
 
-LOCK_DIR=/tmp/sing-box-vps-verification.lock
+readonly LOCK_DIR=/tmp/sing-box-vps-verification.lock
+readonly VERIFY_ARTIFACT_BUNDLE_BEGIN='__SING_BOX_VPS_REMOTE_ARTIFACT_BUNDLE_BEGIN__'
+readonly VERIFY_ARTIFACT_BUNDLE_END='__SING_BOX_VPS_REMOTE_ARTIFACT_BUNDLE_END__'
+
+VERIFY_ARTIFACT_DIR=$(mktemp -d /tmp/sing-box-vps-verification-artifacts.XXXXXX)
+VERIFY_LOCK_HELD=0
+VERIFY_CURRENT_SCENARIO=''
+VERIFY_CURRENT_SCENARIO_DIR=''
+
+verification_artifact_path() {
+  local relative_path=$1
+  local target_path="${VERIFY_ARTIFACT_DIR}/${relative_path}"
+  mkdir -p "$(dirname "${target_path}")"
+  printf '%s\n' "${target_path}"
+}
+
+verification_write_artifact() {
+  local relative_path=$1
+  shift || true
+  printf '%s\n' "$@" > "$(verification_artifact_path "${relative_path}")"
+}
+
+verification_capture_file_if_present() {
+  local source_path=$1
+  local relative_path=$2
+  local target_path
+
+  test -f "${source_path}" || return 0
+  target_path=$(verification_artifact_path "${relative_path}")
+  cp "${source_path}" "${target_path}"
+}
+
+verification_capture_tree_if_present() {
+  local source_path=$1
+  local relative_path=$2
+  local target_path="${VERIFY_ARTIFACT_DIR}/${relative_path}"
+
+  test -d "${source_path}" || return 0
+  rm -rf "${target_path}"
+  mkdir -p "${target_path}"
+  cp -a "${source_path}/." "${target_path}/"
+}
+
+verification_capture_command() {
+  local relative_path=$1
+  shift
+  local target_path
+  local status=0
+
+  target_path=$(verification_artifact_path "${relative_path}")
+  set +e
+  "$@" > "${target_path}" 2>&1
+  status=$?
+  set -e
+  if [[ "${status}" == "0" ]]; then
+    return 0
+  fi
+
+  printf '\n[command_exit_status=%s]\n' "${status}" >> "${target_path}"
+  return "${status}"
+}
+
+verification_capture_best_effort_command() {
+  verification_capture_command "$@" || true
+}
+
+verification_ss_output() {
+  ss -lntp 2>/dev/null || ss -lnt 2>/dev/null
+}
+
+verification_capture_listener_snapshot() {
+  local relative_path=${1:-meta/listeners.ss-lntp.txt}
+  verification_capture_best_effort_command "${relative_path}" verification_ss_output
+}
+
+verification_port_is_listening() {
+  local port=$1
+
+  verification_ss_output | awk -v port=":${port}" '
+    $1 == "LISTEN" && index($4, port) {
+      found = 1
+    }
+    END {
+      exit(found ? 0 : 1)
+    }
+  '
+}
+
+verification_assert_port_listening() {
+  local port=$1
+  local relative_path=$2
+
+  verification_capture_listener_snapshot "${relative_path}"
+  verification_port_is_listening "${port}"
+}
+
+verification_assert_port_not_listening() {
+  local port=$1
+  local relative_path=$2
+
+  verification_capture_listener_snapshot "${relative_path}"
+  ! verification_port_is_listening "${port}"
+}
+
+verification_capture_status_menu() {
+  local relative_path=$1
+  local target_path
+  local status=0
+
+  test -x /usr/local/bin/sbv || return 1
+
+  target_path=$(verification_artifact_path "${relative_path}")
+  set +e
+  bash /usr/local/bin/sbv > "${target_path}" 2>&1 <<'EOF'
+8
+0
+EOF
+  status=$?
+  set -e
+  if [[ "${status}" == "0" ]]; then
+    return 0
+  fi
+
+  printf '\n[command_exit_status=%s]\n' "${status}" >> "${target_path}"
+  return "${status}"
+}
+
+verification_capture_common_artifacts() {
+  local base_dir=$1
+
+  verification_capture_file_if_present /root/sing-box-vps/config.json "${base_dir}/config.json"
+  verification_capture_tree_if_present /root/sing-box-vps/protocols "${base_dir}/protocols"
+  verification_capture_best_effort_command "${base_dir}/systemctl.status.txt" systemctl status sing-box --no-pager
+  verification_capture_best_effort_command "${base_dir}/journalctl.txt" journalctl -u sing-box -n 100 --no-pager
+  verification_capture_listener_snapshot "${base_dir}/listeners.ss-lntp.txt"
+}
+
+verification_initialize_run_artifacts() {
+  local scenario
+
+  mkdir -p "${VERIFY_ARTIFACT_DIR}/meta" "${VERIFY_ARTIFACT_DIR}/scenarios"
+  verification_write_artifact "meta/started-at.txt" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  {
+    for scenario in "$@"; do
+      printf '%s\n' "${scenario}"
+    done
+  } > "$(verification_artifact_path meta/scenarios.txt)"
+  verification_capture_best_effort_command "meta/uname.txt" uname -a
+}
+
+verification_start_scenario() {
+  VERIFY_CURRENT_SCENARIO=$1
+  VERIFY_CURRENT_SCENARIO_DIR="scenarios/${VERIFY_CURRENT_SCENARIO}"
+  mkdir -p "${VERIFY_ARTIFACT_DIR}/${VERIFY_CURRENT_SCENARIO_DIR}"
+  verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/scenario.txt" "${VERIFY_CURRENT_SCENARIO}"
+}
+
+verification_finalize_scenario() {
+  local status=$1
+
+  verification_capture_common_artifacts "${VERIFY_CURRENT_SCENARIO_DIR}"
+  verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/result.env" \
+    "SCENARIO=${VERIFY_CURRENT_SCENARIO}" \
+    "STATUS=$([[ "${status}" == "0" ]] && printf 'success' || printf 'failure')" \
+    "EXIT_STATUS=${status}"
+}
+
+verification_emit_artifact_bundle() {
+  printf '%s\n' "${VERIFY_ARTIFACT_BUNDLE_BEGIN}"
+  tar -C "${VERIFY_ARTIFACT_DIR}" -czf - . | base64
+  printf '%s\n' "${VERIFY_ARTIFACT_BUNDLE_END}"
+}
+
+verification_cleanup() {
+  local status=$1
+
+  verification_write_artifact "meta/exit-status.txt" "${status}"
+  verification_capture_best_effort_command "meta/final-systemctl.status.txt" systemctl status sing-box --no-pager
+  verification_capture_best_effort_command "meta/final-journalctl.txt" journalctl -u sing-box -n 100 --no-pager
+  verification_capture_listener_snapshot "meta/final-listeners.ss-lntp.txt"
+  verification_emit_artifact_bundle || true
+  if [[ "${VERIFY_LOCK_HELD}" == "1" ]]; then
+    rmdir "${LOCK_DIR}" || true
+  fi
+  rm -rf "${VERIFY_ARTIFACT_DIR}"
+}
+
+run_verification_scenario() {
+  local scenario_name=$1
+  local function_name=$2
+  local status=0
+
+  verification_start_scenario "${scenario_name}"
+  if ! declare -F "${function_name}" >/dev/null; then
+    printf 'missing scenario function: %s\n' "${function_name}" >&2
+    status=2
+    verification_finalize_scenario "${status}"
+    return "${status}"
+  fi
+
+  set +e
+  (
+    set -e
+    "${function_name}"
+  )
+  status=$?
+  set -e
+
+  verification_finalize_scenario "${status}"
+  return "${status}"
+}
 
 if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
+  rm -rf "${VERIFY_ARTIFACT_DIR}"
   printf 'verification host is busy\n' >&2
   exit 32
 fi
-
-cleanup() {
-  rmdir "${LOCK_DIR}"
-}
-trap cleanup EXIT
-
-run_verification_scenario() {
-  local function_name=$1
-
-  if ! declare -F "${function_name}" >/dev/null; then
-    printf 'missing scenario function: %s\n' "${function_name}" >&2
-    exit 2
-  fi
-
-  "${function_name}"
-}
+VERIFY_LOCK_HELD=1
+verification_initialize_run_artifacts "$@"
+trap 'verification_cleanup "$?"' EXIT
 
 for scenario in "$@"; do
   case "${scenario}" in
     fresh_install_vless)
-      run_verification_scenario verification_scenario_fresh_install_vless
+      run_verification_scenario fresh_install_vless verification_scenario_fresh_install_vless
       ;;
     reconfigure_existing_install)
-      run_verification_scenario verification_scenario_reconfigure_existing_install
+      run_verification_scenario reconfigure_existing_install verification_scenario_reconfigure_existing_install
       ;;
     uninstall_and_reinstall)
-      run_verification_scenario verification_scenario_uninstall_and_reinstall
+      run_verification_scenario uninstall_and_reinstall verification_scenario_uninstall_and_reinstall
       ;;
     runtime_smoke)
-      run_verification_scenario verification_scenario_runtime_smoke
+      run_verification_scenario runtime_smoke verification_scenario_runtime_smoke
       ;;
     *)
       printf 'unknown scenario: %s\n' "${scenario}" >&2
