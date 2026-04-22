@@ -44,7 +44,14 @@ exec "${REAL_BASH}" "\$@"
 EOF
 chmod +x "${TMP_DIR}/bash"
 
-PATH="${TMP_DIR}:${PATH}" \
+cat > "${TMP_DIR}/ssh" <<EOF
+#!${REAL_BASH}
+cat >/dev/null
+printf 'fake-remote-host\n'
+EOF
+chmod +x "${TMP_DIR}/ssh"
+
+PATH="${TMP_DIR}:${PATH}" VERIFY_REMOTE_HOST=test.example VERIFY_REMOTE_USER=root \
   bash "${REPO_ROOT}/dev/verification/run.sh" > "${TMP_DIR}/stdout.txt"
 
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout.txt")
@@ -60,13 +67,15 @@ grep -Fqx 'tests/verification_trigger_rules.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_artifact_dir_layout.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_run_writes_changed_files.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_scenario_mapping.sh|1' "${TMP_DIR}/local-tests.log"
-[[ $(wc -l < "${TMP_DIR}/local-tests.log") -eq 4 ]] || {
+grep -Fqx 'tests/verification_requires_remote_env.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_stops_on_remote_failure.sh|1' "${TMP_DIR}/local-tests.log"
+[[ $(wc -l < "${TMP_DIR}/local-tests.log") -eq 6 ]] || {
   printf 'expected only verification workflow tests to run locally\n' >&2
   exit 1
 }
 default_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
 
-PATH="${TMP_DIR}:${PATH}" VERIFY_SKIP_LOCAL_TESTS=1 \
+PATH="${TMP_DIR}:${PATH}" VERIFY_REMOTE_HOST=test.example VERIFY_REMOTE_USER=root VERIFY_SKIP_LOCAL_TESTS=1 \
   bash "${REPO_ROOT}/dev/verification/run.sh" > "${TMP_DIR}/stdout-skip.txt"
 
 run_dir_skip=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout-skip.txt")
