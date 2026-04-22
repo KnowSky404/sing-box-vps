@@ -35,6 +35,7 @@ run_local_tests() {
   fi
 
   for test_file in tests/verification_*.sh; do
+    [[ "${test_file}" == "tests/verification_tests_only_stays_local.sh" ]] && continue
     VERIFY_SKIP_LOCAL_TESTS=1 bash "${test_file}"
   done
 }
@@ -78,9 +79,15 @@ main() {
   else
     : > "${run_dir}/changed-files.txt"
   fi
+  printf 'mode=%s\n' "${mode}" > "${run_dir}/summary.log"
 
   printf 'mode=%s\nrun_dir=%s\n' "${mode}" "${run_dir}"
   run_local_tests
+
+  if [[ "${VERIFY_SKIP_REMOTE:-0}" == "1" ]]; then
+    printf 'remote execution skipped by VERIFY_SKIP_REMOTE\n' >> "${run_dir}/summary.log"
+    exit 0
+  fi
 
   if [[ "${mode}" == "remote" ]]; then
     require_remote_env
@@ -89,14 +96,18 @@ main() {
     if emit_remote_payload | ssh "${VERIFY_REMOTE_USER}@${VERIFY_REMOTE_HOST}" 'bash -s -- '"${scenarios[*]}" \
       > "${run_dir}/remote.stdout.log" \
       2> "${run_dir}/remote.stderr.log"; then
+      printf 'remote_status=success\n' >> "${run_dir}/summary.log"
       return 0
     else
       status=$?
     fi
 
+    printf 'remote_status=failure\n' >> "${run_dir}/summary.log"
     cat "${run_dir}/remote.stderr.log" >&2
     return "${status}"
   fi
+
+  printf 'remote_status=not_required\n' >> "${run_dir}/summary.log"
 }
 
 main "$@"

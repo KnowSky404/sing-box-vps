@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026042212`
+- 脚本版本：`2026042213`
 - sing-box 适配版本：`1.13.9`
 
 ## 🚀 一键安装
@@ -20,6 +20,16 @@ bash <(curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/uninstall.sh)
 ```
+
+## 开发验证工作流
+
+配置 `VERIFY_REMOTE_HOST` 与 `VERIFY_REMOTE_USER` 后运行：
+
+```bash
+bash dev/verification/run.sh
+```
+
+核心脚本改动会自动触发远程验证；仅修改 `tests/`、`docs/`、`README.md` 不会占用测试机。
 
 脚本会自动：
 1. 安装所有必要依赖（curl, wget, jq, qrencode 等）。

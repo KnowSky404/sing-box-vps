@@ -1,3 +1,4 @@
-# Keep the dev directory in git, but ignore all local test artifacts.
+# Keep the dev directory in git, but ignore all local verification artifacts.
 *
 !.gitignore
+verification-runs/
