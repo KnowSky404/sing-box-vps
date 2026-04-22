@@ -51,6 +51,18 @@ resolve_changed_files() {
   list_changed_files
 }
 
+emit_remote_payload() {
+  local scenario_file
+
+  for scenario_file in "${REPO_ROOT}"/dev/verification/remote/scenarios/*.sh; do
+    [[ -f "${scenario_file}" ]] || continue
+    cat "${scenario_file}"
+    printf '\n'
+  done
+
+  cat "${REPO_ROOT}/dev/verification/remote/entrypoint.sh"
+}
+
 main() {
   local mode
   local run_dir
@@ -74,8 +86,7 @@ main() {
     require_remote_env
     resolve_remote_scenarios "${changed_files[@]}" > "${run_dir}/scenarios.txt"
     mapfile -t scenarios < "${run_dir}/scenarios.txt"
-    if ssh "${VERIFY_REMOTE_USER}@${VERIFY_REMOTE_HOST}" 'bash -s -- '"${scenarios[*]}" \
-      < "${REPO_ROOT}/dev/verification/remote/entrypoint.sh" \
+    if emit_remote_payload | ssh "${VERIFY_REMOTE_USER}@${VERIFY_REMOTE_HOST}" 'bash -s -- '"${scenarios[*]}" \
       > "${run_dir}/remote.stdout.log" \
       2> "${run_dir}/remote.stderr.log"; then
       return 0

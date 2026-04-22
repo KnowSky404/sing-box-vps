@@ -44,10 +44,51 @@ exec "${REAL_BASH}" "\$@"
 EOF
 chmod +x "${TMP_DIR}/bash"
 
+cat > "${TMP_DIR}/systemctl" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "is-active" && "${2:-}" == "sing-box" ]]; then
+  printf 'active\n'
+  exit 0
+fi
+if [[ "${1:-}" == "status" && "${2:-}" == "sing-box" ]]; then
+  printf 'status ok\n'
+  exit 0
+fi
+exit 0
+EOF
+chmod +x "${TMP_DIR}/systemctl"
+
+cat > "${TMP_DIR}/journalctl" <<'EOF'
+#!/usr/bin/env bash
+printf 'journal ok\n'
+EOF
+chmod +x "${TMP_DIR}/journalctl"
+
+cat > "${TMP_DIR}/sing-box" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "check" && "${2:-}" == "-c" && "${3:-}" == "/root/sing-box-vps/config.json" ]]; then
+  printf 'config ok\n'
+  exit 0
+fi
+printf 'unexpected sing-box call: %s\n' "$*" >&2
+exit 1
+EOF
+chmod +x "${TMP_DIR}/sing-box"
+
+cat > "${TMP_DIR}/ss" <<'EOF'
+#!/usr/bin/env bash
+printf 'LISTEN 0 0 127.0.0.1:443 0.0.0.0:*\n'
+EOF
+chmod +x "${TMP_DIR}/ss"
+
 cat > "${TMP_DIR}/ssh" <<EOF
 #!${REAL_BASH}
-cat >/dev/null
-printf 'fake-remote-host\n'
+remote_host="\${1:-}"
+shift
+script_file="${TMP_DIR}/remote-script.sh"
+cat > "\${script_file}"
+printf 'REMOTE_HOST=%s\n' "\${remote_host}"
+PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" -lc "\${1:-}" < "\${script_file}"
 EOF
 chmod +x "${TMP_DIR}/ssh"
 
@@ -63,6 +104,8 @@ scenarios=$(paste -sd, "${run_dir}/scenarios.txt")
   printf 'unexpected scenarios: %s\n' "${scenarios}" >&2
   exit 1
 }
+grep -Fq 'SCENARIO=runtime_smoke' "${run_dir}/remote.stdout.log"
+grep -Fq 'REMOTE_HOST=root@test.example' "${run_dir}/remote.stdout.log"
 grep -Fqx 'tests/verification_trigger_rules.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_artifact_dir_layout.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_run_writes_changed_files.sh|1' "${TMP_DIR}/local-tests.log"

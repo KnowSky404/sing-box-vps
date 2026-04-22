@@ -4,10 +4,14 @@ set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TMP_DIR=$(mktemp -d)
+REAL_BASH=$(command -v bash)
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-cat > "${TMP_DIR}/ssh" <<'EOF'
-#!/usr/bin/env bash
+cat > "${TMP_DIR}/ssh" <<EOF
+#!${REAL_BASH}
+shift
+script_file="${TMP_DIR}/remote-script.sh"
+cat > "\${script_file}"
 printf 'simulated remote failure\n' >&2
 exit 23
 EOF
