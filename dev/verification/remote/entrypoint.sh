@@ -251,10 +251,15 @@ verification_generate_protocol_probe_client_config() {
   local public_key=''
   local short_id=''
   local flow=''
-  local state_file=/root/sing-box-vps/protocols/vless-reality.env
+  local state_file=''
+  local password=''
+  local domain=''
+  local obfs_password=''
+  local obfs_type=''
 
   case "${protocol}" in
     vless-reality)
+      state_file=/root/sing-box-vps/protocols/vless-reality.env
       output_path=$(verification_artifact_path \
         "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
       temp_output_path="${output_path}.tmp.$$"
@@ -329,6 +334,81 @@ verification_generate_protocol_probe_client_config() {
         return 1
       fi
       ;;
+    hy2)
+      state_file=/root/sing-box-vps/protocols/hy2.env
+      output_path=$(verification_artifact_path \
+        "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
+      temp_output_path="${output_path}.tmp.$$"
+      rm -f "${temp_output_path}"
+
+      inbound_index=$(verification_find_config_inbound_index_by_type "${config_file}" hysteria2) || {
+        printf 'missing inbound for protocol generator: %s\n' "${protocol}" >&2
+        return 1
+      }
+      server_port=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // empty' "${config_file}")
+      obfs_type=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].obfs.type // empty' "${config_file}")
+      verification_require_protocol_probe_field "${protocol}" server_port "${server_port}" || return 1
+      if [[ ! -f "${state_file}" ]]; then
+        printf 'missing protocol state file for protocol generator: %s\n' "${protocol}" >&2
+        return 1
+      fi
+      password=$(sed -n 's/^PASSWORD=//p' "${state_file}" | head -n 1)
+      domain=$(sed -n 's/^DOMAIN=//p' "${state_file}" | head -n 1)
+      obfs_password=$(sed -n 's/^OBFS_PASSWORD=//p' "${state_file}" | head -n 1)
+      verification_require_protocol_probe_field "${protocol}" password "${password}" || return 1
+      verification_require_protocol_probe_field "${protocol}" domain "${domain}" || return 1
+
+      if jq -n \
+        --arg server_port "${server_port}" \
+        --arg password "${password}" \
+        --arg domain "${domain}" \
+        --arg obfs_type "${obfs_type}" \
+        --arg obfs_password "${obfs_password}" \
+        '{
+          log: {
+            disabled: true
+          },
+          inbounds: [
+            {
+              type: "socks",
+              tag: "local-socks",
+              listen: "127.0.0.1",
+              listen_port: 19080
+            }
+          ],
+          outbounds: [
+            (
+              {
+                type: "hysteria2",
+                tag: "proxy",
+                server: "127.0.0.1",
+                server_port: ($server_port | tonumber),
+                password: $password,
+                tls: {
+                  enabled: true,
+                  server_name: $domain
+                }
+              } + (
+                if $obfs_type != "" and $obfs_password != "" then
+                  {
+                    obfs: {
+                      type: $obfs_type,
+                      password: $obfs_password
+                    }
+                  }
+                else
+                  {}
+                end
+              )
+            )
+          ]
+        }' > "${temp_output_path}"; then
+        mv "${temp_output_path}" "${output_path}"
+      else
+        rm -f "${temp_output_path}"
+        return 1
+      fi
+      ;;
     *)
       printf 'unsupported protocol generator: %s\n' "${protocol}" >&2
       return 1
@@ -336,6 +416,21 @@ verification_generate_protocol_probe_client_config() {
   esac
 
   printf '%s\n' "${output_path}"
+}
+
+verification_execute_single_protocol_probe() {
+  local protocol=$1
+  local config_file=$2
+  local client_config_path=''
+
+  client_config_path=$(verification_generate_protocol_probe_client_config "${protocol}" "${config_file}")
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/probe.stdout.txt" \
+    "sing-box-vps-loopback-ok"
+  verification_record_protocol_probe_result "${protocol}" success
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.path.txt" \
+    "${client_config_path}"
 }
 
 verification_run_protocol_probes() {
