@@ -7,12 +7,26 @@ TMP_DIR=$(mktemp -d)
 REAL_BASH=$(command -v bash)
 trap 'rm -rf "${TMP_DIR}"' EXIT
 REMOTE_PORT_FILE="${TMP_DIR}/remote-port"
+REMOTE_UUID_FILE="${TMP_DIR}/remote-uuid"
+REMOTE_SNI_FILE="${TMP_DIR}/remote-sni"
 REMOTE_CONFIG_PRESENT_FILE="${TMP_DIR}/remote-config-present"
+REMOTE_SERVICE_FILE_PRESENT_FILE="${TMP_DIR}/remote-service-file-present"
+REMOTE_SBV_PRESENT_FILE="${TMP_DIR}/remote-sbv-present"
 REMOTE_SERVICE_ACTIVE_FILE="${TMP_DIR}/remote-service-active"
+REMOTE_STATE_FILE="${TMP_DIR}/remote-vless-reality.env"
 
-printf '443\n' > "${REMOTE_PORT_FILE}"
-printf '0\n' > "${REMOTE_CONFIG_PRESENT_FILE}"
-printf '0\n' > "${REMOTE_SERVICE_ACTIVE_FILE}"
+printf '9443\n' > "${REMOTE_PORT_FILE}"
+printf '11111111-1111-4111-8111-111111111111\n' > "${REMOTE_UUID_FILE}"
+printf 'stale.example.com\n' > "${REMOTE_SNI_FILE}"
+printf '1\n' > "${REMOTE_CONFIG_PRESENT_FILE}"
+printf '1\n' > "${REMOTE_SERVICE_FILE_PRESENT_FILE}"
+printf '1\n' > "${REMOTE_SBV_PRESENT_FILE}"
+printf '1\n' > "${REMOTE_SERVICE_ACTIVE_FILE}"
+cat > "${REMOTE_STATE_FILE}" <<'EOF'
+PORT=9443
+UUID=11111111-1111-4111-8111-111111111111
+SNI=stale.example.com
+EOF
 
 cat > "${TMP_DIR}/git" <<EOF
 #!${REAL_BASH}
@@ -97,6 +111,30 @@ remote_host="\${1:-}"
 shift
 script_file="${TMP_DIR}/remote-script.sh"
 cat <<'PAYLOAD_PRELUDE' > "\${script_file}"
+write_vless_state() {
+  cat > "\${REMOTE_STATE_FILE}" <<STATE_EOF
+PORT=\$(cat "\${REMOTE_PORT_FILE}")
+UUID=\$(cat "\${REMOTE_UUID_FILE}")
+SNI=\$(cat "\${REMOTE_SNI_FILE}")
+STATE_EOF
+}
+
+reset_runtime_artifacts() {
+  printf '0\n' > "\${REMOTE_CONFIG_PRESENT_FILE}"
+  printf '0\n' > "\${REMOTE_SERVICE_FILE_PRESENT_FILE}"
+  printf '0\n' > "\${REMOTE_SBV_PRESENT_FILE}"
+  printf '0\n' > "\${REMOTE_SERVICE_ACTIVE_FILE}"
+  rm -f "\${REMOTE_STATE_FILE}"
+}
+
+install_runtime_artifacts() {
+  printf '1\n' > "\${REMOTE_CONFIG_PRESENT_FILE}"
+  printf '1\n' > "\${REMOTE_SERVICE_FILE_PRESENT_FILE}"
+  printf '1\n' > "\${REMOTE_SBV_PRESENT_FILE}"
+  printf '1\n' > "\${REMOTE_SERVICE_ACTIVE_FILE}"
+  write_vless_state
+}
+
 assert_input_sequence() {
   local target=\$1
   shift
@@ -130,16 +168,30 @@ bash() {
       if [[ "\$#" -eq 0 ]]; then
         assert_input_sequence "\${target}" \
           "1" "" "1" "443" "www.cloudflare.com" "n" "n" "0"
+        printf '443\n' > "\${REMOTE_PORT_FILE}"
+        printf '11111111-1111-4111-8111-111111111111\n' > "\${REMOTE_UUID_FILE}"
+        printf 'www.cloudflare.com\n' > "\${REMOTE_SNI_FILE}"
+        install_runtime_artifacts
+        return 0
       fi
-      printf '1\n' > "\${REMOTE_CONFIG_PRESENT_FILE}"
-      printf '1\n' > "\${REMOTE_SERVICE_ACTIVE_FILE}"
-      printf '443\n' > "\${REMOTE_PORT_FILE}"
-      return 0
+      if [[ "\${1:-}" == "--internal-uninstall-purge" && "\${2:-}" == "--yes" ]]; then
+        reset_runtime_artifacts
+        return 0
+      fi
+      printf 'unexpected install.sh call: %s\n' "\$*" >&2
+      return 1
       ;;
     /usr/local/bin/sbv)
       assert_input_sequence "\${target}" \
         "3" "1" "8443" "22222222-2222-4222-8222-222222222222" "cdn.cloudflare.com" "0"
       printf '8443\n' > "\${REMOTE_PORT_FILE}"
+      printf '22222222-2222-4222-8222-222222222222\n' > "\${REMOTE_UUID_FILE}"
+      printf 'cdn.cloudflare.com\n' > "\${REMOTE_SNI_FILE}"
+      write_vless_state
+      return 0
+      ;;
+    /root/Clouds/sing-box-vps/uninstall.sh)
+      reset_runtime_artifacts
       return 0
       ;;
   esac
@@ -153,6 +205,36 @@ test() {
     return
   fi
 
+  if [[ "\${1:-}" == "-f" && "\${2:-}" == "/etc/systemd/system/sing-box.service" ]]; then
+    [[ \$(cat "\${REMOTE_SERVICE_FILE_PRESENT_FILE}") == "1" ]]
+    return
+  fi
+
+  if [[ "\${1:-}" == "-f" && "\${2:-}" == "/root/sing-box-vps/protocols/vless-reality.env" ]]; then
+    [[ -f "\${REMOTE_STATE_FILE}" ]]
+    return
+  fi
+
+  if [[ "\${1:-}" == "-x" && "\${2:-}" == "/usr/local/bin/sbv" ]]; then
+    [[ \$(cat "\${REMOTE_SBV_PRESENT_FILE}") == "1" ]]
+    return
+  fi
+
+  if [[ "\${1:-}" == "!" && "\${2:-}" == "-e" && "\${3:-}" == "/root/sing-box-vps/config.json" ]]; then
+    [[ \$(cat "\${REMOTE_CONFIG_PRESENT_FILE}") == "0" ]]
+    return
+  fi
+
+  if [[ "\${1:-}" == "!" && "\${2:-}" == "-e" && "\${3:-}" == "/etc/systemd/system/sing-box.service" ]]; then
+    [[ \$(cat "\${REMOTE_SERVICE_FILE_PRESENT_FILE}") == "0" ]]
+    return
+  fi
+
+  if [[ "\${1:-}" == "!" && "\${2:-}" == "-e" && "\${3:-}" == "/usr/local/bin/sbv" ]]; then
+    [[ \$(cat "\${REMOTE_SBV_PRESENT_FILE}") == "0" ]]
+    return
+  fi
+
   builtin test "\$@"
 }
 
@@ -162,15 +244,41 @@ jq() {
     return 0
   fi
 
+  if [[ "\${1:-}" == "-r" && "\${2:-}" == ".inbounds[0].users[0].uuid // empty" ]]; then
+    cat "\${REMOTE_UUID_FILE}"
+    return 0
+  fi
+
+  if [[ "\${1:-}" == "-r" && "\${2:-}" == ".inbounds[0].tls.server_name // empty" ]]; then
+    cat "\${REMOTE_SNI_FILE}"
+    return 0
+  fi
+
   printf 'unexpected jq call: %s\n' "\$*" >&2
   return 1
+}
+
+grep() {
+  local args=("\$@")
+  local last_index=\$(( \$# - 1 ))
+
+  if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/vless-reality.env" ]]; then
+    args[\$last_index]="\${REMOTE_STATE_FILE}"
+  fi
+
+  command grep "\${args[@]}"
 }
 PAYLOAD_PRELUDE
 cat >> "\${script_file}"
 printf 'REMOTE_HOST=%s\n' "\${remote_host}"
 REMOTE_CONFIG_PRESENT_FILE="${REMOTE_CONFIG_PRESENT_FILE}" \
 REMOTE_PORT_FILE="${REMOTE_PORT_FILE}" \
+REMOTE_UUID_FILE="${REMOTE_UUID_FILE}" \
+REMOTE_SNI_FILE="${REMOTE_SNI_FILE}" \
+REMOTE_SERVICE_FILE_PRESENT_FILE="${REMOTE_SERVICE_FILE_PRESENT_FILE}" \
+REMOTE_SBV_PRESENT_FILE="${REMOTE_SBV_PRESENT_FILE}" \
 REMOTE_SERVICE_ACTIVE_FILE="${REMOTE_SERVICE_ACTIVE_FILE}" \
+REMOTE_STATE_FILE="${REMOTE_STATE_FILE}" \
 PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" -lc "\${1:-}" < "\${script_file}"
 EOF
 chmod +x "${TMP_DIR}/ssh"
