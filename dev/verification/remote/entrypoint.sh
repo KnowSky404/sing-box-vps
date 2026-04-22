@@ -169,6 +169,62 @@ verification_finalize_scenario() {
     "EXIT_STATUS=${status}"
 }
 
+read_installed_protocols() {
+  local index_file=/root/sing-box-vps/protocols/index.env
+  local protocols=''
+  local protocol
+
+  test -f "${index_file}" || return 0
+  protocols=$(sed -n 's/^INSTALLED_PROTOCOLS=//p' "${index_file}" | head -n 1)
+  protocols=${protocols//,/ }
+
+  for protocol in ${protocols}; do
+    [[ -n "${protocol}" ]] || continue
+    printf '%s\n' "${protocol}"
+  done
+}
+
+verification_protocol_probe_support_status() {
+  case "${1}" in
+    vless-reality|hy2)
+      printf 'supported\n'
+      ;;
+    *)
+      printf 'unsupported\n'
+      ;;
+  esac
+}
+
+verification_record_protocol_probe_result() {
+  local protocol=$1
+  local result=$2
+
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/result.env" \
+    "PROTOCOL=${protocol}" \
+    "RESULT=${result}"
+}
+
+verification_run_protocol_probes() {
+  local protocol
+  local support_status
+  local overall_status=0
+
+  while IFS= read -r protocol; do
+    [[ -n "${protocol}" ]] || continue
+    support_status=$(verification_protocol_probe_support_status "${protocol}")
+    if [[ "${support_status}" == "unsupported" ]]; then
+      verification_record_protocol_probe_result "${protocol}" unsupported
+      continue
+    fi
+
+    verification_record_protocol_probe_result "${protocol}" failure
+    overall_status=1
+  done < <(read_installed_protocols)
+
+  return "${overall_status}"
+}
+
 verification_emit_artifact_bundle() {
   printf '%s\n' "${VERIFY_ARTIFACT_BUNDLE_BEGIN}"
   tar -C "${VERIFY_ARTIFACT_DIR}" -czf - . | base64
