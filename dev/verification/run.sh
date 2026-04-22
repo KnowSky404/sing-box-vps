@@ -36,7 +36,7 @@ run_local_tests() {
 
   for test_file in tests/verification_*.sh; do
     [[ "${test_file}" == "tests/verification_tests_only_stays_local.sh" ]] && continue
-    VERIFY_SKIP_LOCAL_TESTS=1 bash "${test_file}"
+    env -u VERIFY_SKIP_REMOTE VERIFY_SKIP_LOCAL_TESTS=1 bash "${test_file}"
   done
 }
 

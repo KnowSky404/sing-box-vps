@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026042213`
+- 脚本版本：`2026042214`
 - sing-box 适配版本：`1.13.9`
 
 ## 🚀 一键安装
@@ -27,6 +27,12 @@ bash <(curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main
 
 ```bash
 bash dev/verification/run.sh
+```
+
+只想验证本地调度与触发规则时，可运行：
+
+```bash
+VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh
 ```
 
 核心脚本改动会自动触发远程验证；仅修改 `tests/`、`docs/`、`README.md` 不会占用测试机。
