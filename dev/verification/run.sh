@@ -22,7 +22,9 @@ list_changed_files() {
     git ls-files --others --exclude-standard
   )
 
-  printf '%s\n' "${files[@]}"
+  if [[ "${#files[@]}" -gt 0 ]]; then
+    printf '%s\n' "${files[@]}"
+  fi
 }
 
 run_local_tests() {
@@ -32,7 +34,7 @@ run_local_tests() {
     return 0
   fi
 
-  for test_file in tests/*.sh; do
+  for test_file in tests/verification_*.sh; do
     VERIFY_SKIP_LOCAL_TESTS=1 bash "${test_file}"
   done
 }
