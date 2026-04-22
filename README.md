@@ -35,6 +35,8 @@ cp configs/verification-target.env.example dev/verification-target.env
 VERIFY_REMOTE_HOST_ALIAS=sing-box-test
 ```
 
+当前仓库默认约定的测试机 SSH 别名也是 `sing-box-test`。新开开发会话时，优先复用这套目标配置，不再临时改回纯环境变量模式。
+
 随后运行：
 
 ```bash
