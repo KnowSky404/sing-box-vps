@@ -14,6 +14,7 @@ SERVICE_FILE_PRESENT_FILE="${TMP_DIR}/service-file-present"
 SBV_PRESENT_FILE="${TMP_DIR}/sbv-present"
 SERVICE_ACTIVE_FILE="${TMP_DIR}/service-active"
 STATE_FILE="${TMP_DIR}/vless-reality.env"
+ASSERT_LOG_FILE="${TMP_DIR}/assert.log"
 CALLS_FILE="${TMP_DIR}/calls.log"
 PAYLOAD_FILE="${TMP_DIR}/remote-payload.sh"
 STDOUT_FILE="${TMP_DIR}/stdout.log"
@@ -26,6 +27,7 @@ printf '1\n' > "${CONFIG_PRESENT_FILE}"
 printf '1\n' > "${SERVICE_FILE_PRESENT_FILE}"
 printf '1\n' > "${SBV_PRESENT_FILE}"
 printf '1\n' > "${SERVICE_ACTIVE_FILE}"
+: > "${ASSERT_LOG_FILE}"
 : > "${CALLS_FILE}"
 cat > "${STATE_FILE}" <<'EOF'
 PORT=9443
@@ -127,6 +129,8 @@ bash() {
 }
 
 test() {
+  printf 'test:%s|%s|%s\n' "${1:-}" "${2:-}" "${3:-}" >> "${ASSERT_LOG_FILE}"
+
   if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/config.json" ]]; then
     [[ $(cat "${CONFIG_PRESENT_FILE}") == "1" ]]
     return
@@ -166,6 +170,8 @@ test() {
 }
 
 jq() {
+  printf 'jq:%s|%s|%s\n' "${1:-}" "${2:-}" "${3:-}" >> "${ASSERT_LOG_FILE}"
+
   if [[ "${1:-}" == "-r" && "${2:-}" == ".inbounds[0].listen_port // empty" ]]; then
     cat "${PORT_FILE}"
     return 0
@@ -188,6 +194,8 @@ jq() {
 grep() {
   local args=("$@")
   local last_index=$(( $# - 1 ))
+
+  printf 'grep:%s\n' "$*" >> "${ASSERT_LOG_FILE}"
 
   if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/vless-reality.env" ]]; then
     args[$last_index]="${STATE_FILE}"
@@ -252,6 +260,7 @@ SERVICE_FILE_PRESENT_FILE="${SERVICE_FILE_PRESENT_FILE}" \
 SBV_PRESENT_FILE="${SBV_PRESENT_FILE}" \
 SERVICE_ACTIVE_FILE="${SERVICE_ACTIVE_FILE}" \
 STATE_FILE="${STATE_FILE}" \
+ASSERT_LOG_FILE="${ASSERT_LOG_FILE}" \
   bash "${PAYLOAD_FILE}" \
     fresh_install_vless \
     reconfigure_existing_install \
@@ -264,6 +273,16 @@ grep -Fqx 'SCENARIO=fresh_install_vless' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=reconfigure_existing_install' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=uninstall_and_reinstall' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=runtime_smoke' "${STDOUT_FILE}"
+grep -Fqx 'test:-f|/root/sing-box-vps/protocols/vless-reality.env|' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fq stale.example.com /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx UUID=11111111-1111-4111-8111-111111111111 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'jq:-r|.inbounds[0].users[0].uuid // empty|/root/sing-box-vps/config.json' "${ASSERT_LOG_FILE}"
+grep -Fqx 'jq:-r|.inbounds[0].tls.server_name // empty|/root/sing-box-vps/config.json' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx PORT=8443 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx UUID=22222222-2222-4222-8222-222222222222 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx SNI=cdn.cloudflare.com /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
 grep -Fq 'bash:/root/Clouds/sing-box-vps/install.sh ' "${CALLS_FILE}"
 grep -Fq 'bash:/usr/local/bin/sbv ' "${CALLS_FILE}"
 grep -Fq 'bash:/root/Clouds/sing-box-vps/uninstall.sh --yes' "${CALLS_FILE}"
