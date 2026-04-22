@@ -8,6 +8,8 @@ verification_scenario_reconfigure_existing_install() {
 3
 1
 8443
+22222222-2222-4222-8222-222222222222
+cdn.cloudflare.com
 0
 EOF
   after_port=$(jq -r '.inbounds[0].listen_port // empty' /root/sing-box-vps/config.json)
