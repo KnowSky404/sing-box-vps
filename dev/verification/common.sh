@@ -19,10 +19,40 @@ determine_verification_mode() {
   printf 'local\n'
 }
 
+resolve_remote_scenarios() {
+  local needs_reinstall=0
+  local file
+
+  printf '%s\n' fresh_install_vless reconfigure_existing_install runtime_smoke
+
+  for file in "$@"; do
+    case "${file}" in
+      *uninstall* | *takeover* | *reinstall* | *incomplete* | *residual* | *legacy*)
+        needs_reinstall=1
+        ;;
+    esac
+  done
+
+  if [[ "${needs_reinstall}" == "1" ]]; then
+    printf '%s\n' uninstall_and_reinstall
+  fi
+}
+
 create_run_dir() {
   local root=${1:-"${REPO_ROOT}/dev/verification-runs"}
+  local base_epoch
+  local offset=0
   local stamp
-  stamp=$(date '+%Y%m%d%H%M%S')
-  mkdir -p "${root}/${stamp}"
-  printf '%s\n' "${root}/${stamp}"
+
+  mkdir -p "${root}"
+  base_epoch=$(date '+%s')
+
+  while true; do
+    stamp=$(date -d "@$((base_epoch + offset))" '+%Y%m%d%H%M%S')
+    if mkdir "${root}/${stamp}" 2>/dev/null; then
+      printf '%s\n' "${root}/${stamp}"
+      return 0
+    fi
+    offset=$((offset + 1))
+  done
 }
