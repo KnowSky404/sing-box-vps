@@ -207,8 +207,18 @@ verification_record_protocol_probe_result() {
 
 verification_run_protocol_probes() {
   local protocol
+  local protocols_output=''
+  local discovery_status=0
   local support_status
   local overall_status=0
+
+  set +e
+  protocols_output=$(read_installed_protocols)
+  discovery_status=$?
+  set -e
+  if [[ "${discovery_status}" != "0" ]]; then
+    return "${discovery_status}"
+  fi
 
   while IFS= read -r protocol; do
     [[ -n "${protocol}" ]] || continue
@@ -220,7 +230,7 @@ verification_run_protocol_probes() {
 
     verification_record_protocol_probe_result "${protocol}" failure
     overall_status=1
-  done < <(read_installed_protocols)
+  done <<< "${protocols_output}"
 
   return "${overall_status}"
 }
