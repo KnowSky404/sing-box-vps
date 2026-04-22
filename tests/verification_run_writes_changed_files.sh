@@ -31,7 +31,7 @@ if [[ "\${1:-}" == "${REPO_ROOT}/dev/verification/run.sh" ]]; then
   exec "${REAL_BASH}" "\$@"
 fi
 if [[ "\${1:-}" == tests/*.sh ]]; then
-  printf '%s\n' "\$1" >> "${TMP_DIR}/local-tests.log"
+  printf '%s|%s\n' "\$1" "\${VERIFY_SKIP_LOCAL_TESTS:-unset}" >> "${TMP_DIR}/local-tests.log"
   exit 0
 fi
 exec "${REAL_BASH}" "\$@"
@@ -50,4 +50,27 @@ scenarios=$(paste -sd, "${run_dir}/scenarios.txt")
   printf 'unexpected scenarios: %s\n' "${scenarios}" >&2
   exit 1
 }
-grep -Fqx 'tests/verification_trigger_rules.sh' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_trigger_rules.sh|1' "${TMP_DIR}/local-tests.log"
+default_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
+
+PATH="${TMP_DIR}:${PATH}" VERIFY_SKIP_LOCAL_TESTS=1 \
+  bash "${REPO_ROOT}/dev/verification/run.sh" > "${TMP_DIR}/stdout-skip.txt"
+
+run_dir_skip=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout-skip.txt")
+grep -Fqx 'install.sh' "${run_dir_skip}/changed-files.txt"
+grep -Fqx 'README.md' "${run_dir_skip}/changed-files.txt"
+grep -Fqx 'tests/new_untracked_case.sh' "${run_dir_skip}/changed-files.txt"
+scenarios_skip=$(paste -sd, "${run_dir_skip}/scenarios.txt")
+[[ "${scenarios_skip}" == "fresh_install_vless,reconfigure_existing_install,runtime_smoke" ]] || {
+  printf 'unexpected scenarios for skip run: %s\n' "${scenarios_skip}" >&2
+  exit 1
+}
+[[ "${default_local_test_count}" -gt 0 ]] || {
+  printf 'expected default run to execute local tests\n' >&2
+  exit 1
+}
+skip_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
+[[ "${skip_local_test_count}" -eq "${default_local_test_count}" ]] || {
+  printf 'expected skip run to avoid local tests: before=%s after=%s\n' "${default_local_test_count}" "${skip_local_test_count}" >&2
+  exit 1
+}

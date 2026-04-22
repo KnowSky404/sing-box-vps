@@ -33,7 +33,7 @@ run_local_tests() {
   fi
 
   for test_file in tests/*.sh; do
-    bash "${test_file}"
+    VERIFY_SKIP_LOCAL_TESTS=1 bash "${test_file}"
   done
 }
 
