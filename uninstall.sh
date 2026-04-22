@@ -3,7 +3,7 @@
 set -euo pipefail
 
 readonly SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-readonly INSTALL_SCRIPT="${SCRIPT_DIR}/install.sh"
+readonly SB_PROJECT_DIR="${SB_PROJECT_DIR:-/root/sing-box-vps}"
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[0;33m'
@@ -33,15 +33,27 @@ check_root() {
   fi
 }
 
+resolve_install_script() {
+  local candidate
+
+  for candidate in \
+    "${SCRIPT_DIR}/install.sh" \
+    "${SB_PROJECT_DIR}/install.sh"; do
+    if [[ -f "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 main() {
   check_root
 
-  if [[ ! -f "${INSTALL_SCRIPT}" ]]; then
-    print_error "未找到 install.sh，无法继续卸载。"
-  fi
-
   local mode="purge"
   local assume_yes="n"
+  local install_script=""
 
   while (($# > 0)); do
     case "$1" in
@@ -60,6 +72,10 @@ main() {
     esac
     shift
   done
+
+  if ! install_script=$(resolve_install_script); then
+    print_error "未找到 install.sh，无法继续卸载。请确认已安装 sing-box-vps，或改用 install.sh 菜单卸载。"
+  fi
 
   if [[ "${assume_yes}" != "y" ]]; then
     echo "卸载模式:"
@@ -88,7 +104,7 @@ main() {
   fi
 
   print_info "正在调用 install.sh 内置彻底卸载逻辑..."
-  exec bash "${INSTALL_SCRIPT}" --internal-uninstall-purge --yes
+  exec bash "${install_script}" --internal-uninstall-purge --yes
 }
 
 main "$@"
