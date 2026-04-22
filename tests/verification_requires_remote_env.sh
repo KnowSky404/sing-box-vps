@@ -9,4 +9,4 @@ if VERIFY_SKIP_LOCAL_TESTS=1 bash "${REPO_ROOT}/dev/verification/run.sh" --chang
   exit 1
 fi
 
-grep -Fq 'VERIFY_REMOTE_HOST is required' /tmp/verification.err
+grep -Fq 'VERIFY_REMOTE_HOST_ALIAS or VERIFY_REMOTE_HOST is required' /tmp/verification.err

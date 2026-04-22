@@ -428,6 +428,7 @@ scenarios=$(paste -sd, "${run_dir}/scenarios.txt")
 }
 grep -Fq 'SCENARIO=runtime_smoke' "${run_dir}/remote.stdout.log"
 grep -Fq 'REMOTE_HOST=root@test.example' "${run_dir}/remote.stdout.log"
+grep -Fq 'remote_target=root@test.example' "${run_dir}/summary.log"
 [[ -d "${run_dir}/remote-artifacts/scenarios/fresh_install_vless" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless/protocols/index.env" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless/listeners.ss-lntp.txt" ]]
@@ -442,12 +443,13 @@ grep -Fqx 'UUID=22222222-2222-4222-8222-222222222222' "${REMOTE_STATE_FILE}"
 grep -Fqx 'tests/verification_trigger_rules.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_artifact_dir_layout.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_remote_scenario_dispatch.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_remote_target_file_alias.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_run_writes_changed_files.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_scenario_mapping.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_requires_remote_env.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_runtime_smoke_artifacts.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_stops_on_remote_failure.sh|1' "${TMP_DIR}/local-tests.log"
-[[ $(wc -l < "${TMP_DIR}/local-tests.log") -eq 8 ]] || {
+[[ $(wc -l < "${TMP_DIR}/local-tests.log") -eq 9 ]] || {
   printf 'expected only verification workflow tests to run locally\n' >&2
   exit 1
 }

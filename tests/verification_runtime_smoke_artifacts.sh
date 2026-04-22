@@ -387,6 +387,7 @@ PATH="${TMP_DIR}:${PATH}" VERIFY_REMOTE_HOST=test.example VERIFY_REMOTE_USER=roo
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout.txt")
 grep -Fq 'runtime_smoke' "${run_dir}/scenarios.txt"
 grep -Fq 'REMOTE_HOST=root@test.example' "${run_dir}/remote.stdout.log"
+grep -Fq 'remote_target=root@test.example' "${run_dir}/summary.log"
 grep -Fq 'SCENARIO=runtime_smoke' "${run_dir}/remote.stdout.log"
 grep -Fq 'SERVICE_ACTIVE=active' "${run_dir}/remote.stdout.log"
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/sing-box-check.txt" ]]

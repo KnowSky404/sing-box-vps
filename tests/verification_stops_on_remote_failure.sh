@@ -26,3 +26,4 @@ fi
 grep -Fq 'simulated remote failure' "${TMP_DIR}/stderr.txt"
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout.txt")
 [[ -f "${run_dir}/remote.stderr.log" ]]
+grep -Fq 'remote_target=root@test.example' "${run_dir}/summary.log"

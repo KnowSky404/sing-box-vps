@@ -6,6 +6,7 @@ readonly VERIFICATION_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 readonly REPO_ROOT=$(cd "${VERIFICATION_ROOT}/../.." && pwd)
 readonly REMOTE_ARTIFACT_BUNDLE_BEGIN='__SING_BOX_VPS_REMOTE_ARTIFACT_BUNDLE_BEGIN__'
 readonly REMOTE_ARTIFACT_BUNDLE_END='__SING_BOX_VPS_REMOTE_ARTIFACT_BUNDLE_END__'
+readonly DEFAULT_REMOTE_TARGET_FILE="${REPO_ROOT}/dev/verification-target.env"
 
 determine_verification_mode() {
   local file
@@ -60,8 +61,26 @@ create_run_dir() {
 }
 
 require_remote_env() {
-  : "${VERIFY_REMOTE_HOST:?VERIFY_REMOTE_HOST is required}"
-  : "${VERIFY_REMOTE_USER:?VERIFY_REMOTE_USER is required}"
+  local target_file=${VERIFY_REMOTE_TARGET_FILE:-"${DEFAULT_REMOTE_TARGET_FILE}"}
+
+  if [[ -f "${target_file}" ]]; then
+    # shellcheck disable=SC1090
+    source "${target_file}"
+    export VERIFY_REMOTE_TARGET_FILE="${target_file}"
+  fi
+
+  if [[ -n "${VERIFY_REMOTE_HOST_ALIAS:-}" ]]; then
+    VERIFY_REMOTE_SSH_TARGET="${VERIFY_REMOTE_HOST_ALIAS}"
+    VERIFY_REMOTE_TARGET_LABEL="${VERIFY_REMOTE_HOST_ALIAS}"
+    export VERIFY_REMOTE_SSH_TARGET VERIFY_REMOTE_TARGET_LABEL
+    return 0
+  fi
+
+  : "${VERIFY_REMOTE_HOST:?VERIFY_REMOTE_HOST_ALIAS or VERIFY_REMOTE_HOST is required}"
+  : "${VERIFY_REMOTE_USER:?VERIFY_REMOTE_USER is required when VERIFY_REMOTE_HOST_ALIAS is not set}"
+  VERIFY_REMOTE_SSH_TARGET="${VERIFY_REMOTE_USER}@${VERIFY_REMOTE_HOST}"
+  VERIFY_REMOTE_TARGET_LABEL="${VERIFY_REMOTE_SSH_TARGET}"
+  export VERIFY_REMOTE_SSH_TARGET VERIFY_REMOTE_TARGET_LABEL
 }
 
 extract_remote_artifacts() {

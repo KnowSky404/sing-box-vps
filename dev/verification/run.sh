@@ -130,9 +130,10 @@ main() {
 
   if [[ "${mode}" == "remote" ]]; then
     require_remote_env
+    printf 'remote_target=%s\n' "${VERIFY_REMOTE_TARGET_LABEL}" >> "${run_dir}/summary.log"
     resolve_remote_scenarios "${changed_files[@]}" > "${run_dir}/scenarios.txt"
     mapfile -t scenarios < "${run_dir}/scenarios.txt"
-    if emit_remote_payload | ssh "${VERIFY_REMOTE_USER}@${VERIFY_REMOTE_HOST}" 'bash -s -- '"${scenarios[*]}" \
+    if emit_remote_payload | ssh "${VERIFY_REMOTE_SSH_TARGET}" 'bash -s -- '"${scenarios[*]}" \
       > "${run_dir}/remote.stdout.log" \
       2> "${run_dir}/remote.stderr.log"; then
       status=0
