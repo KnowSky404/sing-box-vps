@@ -200,6 +200,66 @@ grep -Fq 'missing protocol state file for protocol generator: vless-reality' \
   "${TMP_DIR}/stderr-missing-state-file.txt"
 [[ ! -f "${EXPECTED_CONFIG_PATH}" ]]
 
+cat > "${TMP_DIR}/missing-short-id-config.json" <<'EOF'
+{
+  "inbounds": [
+    {
+      "type": "mixed",
+      "listen_port": 2080,
+      "users": [
+        {
+          "username": "mixed-user",
+          "password": "mixed-pass"
+        }
+      ]
+    },
+    {
+      "type": "vless",
+      "listen_port": 443,
+      "users": [
+        {
+          "uuid": "11111111-1111-4111-8111-111111111111",
+          "flow": "xtls-rprx-vision"
+        }
+      ],
+      "tls": {
+        "server_name": "www.cloudflare.com",
+        "reality": {
+          "short_id": []
+        }
+      }
+    }
+  ]
+}
+EOF
+
+cat > "${TMP_DIR}/run-missing-short-id.sh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "${TESTABLE_ENTRYPOINT}"
+
+VERIFY_ARTIFACT_DIR="${ARTIFACT_DIR}"
+VERIFY_CURRENT_SCENARIO="runtime_smoke"
+VERIFY_CURRENT_SCENARIO_DIR="scenarios/\${VERIFY_CURRENT_SCENARIO}"
+
+verification_generate_protocol_probe_client_config \
+  vless-reality \
+  "${TMP_DIR}/missing-short-id-config.json"
+EOF
+chmod +x "${TMP_DIR}/run-missing-short-id.sh"
+
+printf 'stale-client\n' > "${EXPECTED_CONFIG_PATH}"
+
+if bash "${TMP_DIR}/run-missing-short-id.sh" > "${TMP_DIR}/stdout-missing-short-id.txt" 2> "${TMP_DIR}/stderr-missing-short-id.txt"; then
+  printf 'expected missing short_id to fail probe client generation\n' >&2
+  exit 1
+fi
+
+grep -Fq 'missing required vless-reality probe field: short_id' \
+  "${TMP_DIR}/stderr-missing-short-id.txt"
+[[ ! -f "${EXPECTED_CONFIG_PATH}" ]]
+
 cat > "${TMP_DIR}/run-unsupported.sh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail

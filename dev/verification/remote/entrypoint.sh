@@ -226,6 +226,19 @@ verification_find_config_inbound_index_by_type() {
   return 1
 }
 
+verification_require_protocol_probe_field() {
+  local protocol=$1
+  local field_name=$2
+  local field_value=$3
+
+  if [[ -n "${field_value}" ]]; then
+    return 0
+  fi
+
+  printf 'missing required %s probe field: %s\n' "${protocol}" "${field_name}" >&2
+  return 1
+}
+
 verification_generate_protocol_probe_client_config() {
   local protocol=$1
   local config_file=$2
@@ -254,6 +267,11 @@ verification_generate_protocol_probe_client_config() {
       server_name=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // empty' "${config_file}")
       short_id=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[0] // empty' "${config_file}")
       flow=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].flow // empty' "${config_file}")
+      verification_require_protocol_probe_field "${protocol}" server_port "${server_port}" || return 1
+      verification_require_protocol_probe_field "${protocol}" uuid "${uuid}" || return 1
+      verification_require_protocol_probe_field "${protocol}" server_name "${server_name}" || return 1
+      verification_require_protocol_probe_field "${protocol}" short_id "${short_id}" || return 1
+      verification_require_protocol_probe_field "${protocol}" flow "${flow}" || return 1
       if [[ ! -f "${state_file}" ]]; then
         printf 'missing protocol state file for protocol generator: %s\n' "${protocol}" >&2
         return 1
