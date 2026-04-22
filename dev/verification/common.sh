@@ -56,3 +56,24 @@ create_run_dir() {
     offset=$((offset + 1))
   done
 }
+
+require_remote_env() {
+  : "${VERIFY_REMOTE_HOST:?VERIFY_REMOTE_HOST is required}"
+  : "${VERIFY_REMOTE_USER:?VERIFY_REMOTE_USER is required}"
+}
+
+run_remote_entrypoint() {
+  local run_dir=$1
+  local status=0
+
+  if ssh "${VERIFY_REMOTE_USER}@${VERIFY_REMOTE_HOST}" 'bash -s' < "${REPO_ROOT}/dev/verification/remote/entrypoint.sh" \
+    > "${run_dir}/remote.stdout.log" \
+    2> "${run_dir}/remote.stderr.log"; then
+    return 0
+  else
+    status=$?
+  fi
+
+  cat "${run_dir}/remote.stderr.log" >&2
+  return "${status}"
+}

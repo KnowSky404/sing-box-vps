@@ -39,12 +39,24 @@ run_local_tests() {
   done
 }
 
+resolve_changed_files() {
+  if [[ "${1:-}" == "--changed-file" ]]; then
+    shift
+    if [[ "$#" -gt 0 ]]; then
+      printf '%s\n' "$@"
+    fi
+    return 0
+  fi
+
+  list_changed_files
+}
+
 main() {
   local mode
   local run_dir
   local changed_files=()
 
-  mapfile -t changed_files < <(list_changed_files)
+  mapfile -t changed_files < <(resolve_changed_files "$@")
   mode=$(determine_verification_mode "${changed_files[@]}")
   run_dir=$(create_run_dir)
   if [[ "${#changed_files[@]}" -gt 0 ]]; then
@@ -57,7 +69,9 @@ main() {
   run_local_tests
 
   if [[ "${mode}" == "remote" ]]; then
+    require_remote_env
     resolve_remote_scenarios "${changed_files[@]}" > "${run_dir}/scenarios.txt"
+    run_remote_entrypoint "${run_dir}"
   fi
 }
 
