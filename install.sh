@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042202
+# Version: 2026042203
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042202"
+readonly SCRIPT_VERSION="2026042203"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -2687,38 +2687,7 @@ hy2_certificate_provider_tag() {
 }
 
 build_hy2_certificate_provider_json() {
-  ensure_hy2_materials
-  [[ "${SB_HY2_TLS_MODE}" == "manual" ]] && return 0
-
-  jq -n \
-    --arg tag "$(hy2_certificate_provider_tag)" \
-    --arg domain "${SB_HY2_ACME_DOMAIN}" \
-    --arg email "${SB_HY2_ACME_EMAIL}" \
-    --arg acme_mode "${SB_HY2_ACME_MODE}" \
-    --arg dns_provider "${SB_HY2_DNS_PROVIDER}" \
-    --arg cf_api_token "${SB_HY2_CF_API_TOKEN}" \
-    '{
-      "type": "acme",
-      "tag": $tag,
-      "domain": [ $domain ]
-    } + (
-      if $email != "" then
-        { "email": $email }
-      else
-        {}
-      end
-    ) + (
-      if $acme_mode == "dns" then
-        {
-          "dns01_challenge": {
-            "provider": $dns_provider,
-            "api_token": $cf_api_token
-          }
-        }
-      else
-        {}
-      end
-    )'
+  return 0
 }
 
 build_hy2_inbound_json() {
@@ -2736,11 +2705,15 @@ build_hy2_inbound_json() {
     --arg tls_mode "${SB_HY2_TLS_MODE}" \
     --arg cert_path "${SB_HY2_CERT_PATH}" \
     --arg key_path "${SB_HY2_KEY_PATH}" \
+    --arg acme_mode "${SB_HY2_ACME_MODE}" \
+    --arg acme_email "${SB_HY2_ACME_EMAIL}" \
+    --arg acme_domain "${SB_HY2_ACME_DOMAIN}" \
+    --arg dns_provider "${SB_HY2_DNS_PROVIDER}" \
+    --arg cf_api_token "${SB_HY2_CF_API_TOKEN}" \
     --arg obfs_enabled "${SB_HY2_OBFS_ENABLED}" \
     --arg obfs_type "${SB_HY2_OBFS_TYPE}" \
     --arg obfs_password "${SB_HY2_OBFS_PASSWORD}" \
     --arg masquerade "${SB_HY2_MASQUERADE}" \
-    --arg cert_provider_tag "$(hy2_certificate_provider_tag)" \
     '{
       "type": "hysteria2",
       "tag": $tag,
@@ -2766,7 +2739,28 @@ build_hy2_inbound_json() {
             }
           else
             {
-              "certificate_provider": $cert_provider_tag
+              "acme": (
+                {
+                  "domain": [ $acme_domain ]
+                } + (
+                  if $acme_email != "" then
+                    { "email": $acme_email }
+                  else
+                    {}
+                  end
+                ) + (
+                  if $acme_mode == "dns" then
+                    {
+                      "dns01_challenge": {
+                        "provider": $dns_provider,
+                        "api_token": $cf_api_token
+                      }
+                    }
+                  else
+                    {}
+                  end
+                )
+              )
             }
           end
         )
@@ -3715,10 +3709,44 @@ load_current_config_state() {
       SB_HY2_OBFS_TYPE=""
       SB_HY2_OBFS_PASSWORD=""
     fi
-    if jq -e '.inbounds[0].tls.certificate_provider? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+    if jq -e '.inbounds[0].tls.acme? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
       SB_HY2_TLS_MODE="acme"
+      SB_HY2_ACME_EMAIL=$(jq -r '.inbounds[0].tls.acme.email // ""' "${SINGBOX_CONFIG_FILE}")
+      SB_HY2_ACME_DOMAIN=$(jq -r '.inbounds[0].tls.acme.domain[0] // .inbounds[0].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
+      if jq -e '.inbounds[0].tls.acme.dns01_challenge? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+        SB_HY2_ACME_MODE="dns"
+        SB_HY2_DNS_PROVIDER=$(jq -r '.inbounds[0].tls.acme.dns01_challenge.provider // "cloudflare"' "${SINGBOX_CONFIG_FILE}")
+        SB_HY2_CF_API_TOKEN=$(jq -r '.inbounds[0].tls.acme.dns01_challenge.api_token // ""' "${SINGBOX_CONFIG_FILE}")
+      else
+        SB_HY2_ACME_MODE="http"
+        SB_HY2_DNS_PROVIDER="cloudflare"
+        SB_HY2_CF_API_TOKEN=""
+      fi
+      SB_HY2_CERT_PATH=""
+      SB_HY2_KEY_PATH=""
+    elif jq -e '.inbounds[0].tls.certificate_provider? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+      SB_HY2_TLS_MODE="acme"
+      cert_provider_tag=$(jq -r '.inbounds[0].tls.certificate_provider // ""' "${SINGBOX_CONFIG_FILE}")
+      SB_HY2_ACME_EMAIL=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .email) // ""' "${SINGBOX_CONFIG_FILE}")
+      SB_HY2_ACME_DOMAIN=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .domain[0]) // .inbounds[0].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
+      if jq -e --arg tag "${cert_provider_tag}" 'any(.certificate_providers[]?; .tag == $tag and .dns01_challenge? != null)' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+        SB_HY2_ACME_MODE="dns"
+        SB_HY2_DNS_PROVIDER=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .dns01_challenge.provider) // "cloudflare"' "${SINGBOX_CONFIG_FILE}")
+        SB_HY2_CF_API_TOKEN=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .dns01_challenge.api_token) // ""' "${SINGBOX_CONFIG_FILE}")
+      else
+        SB_HY2_ACME_MODE="http"
+        SB_HY2_DNS_PROVIDER="cloudflare"
+        SB_HY2_CF_API_TOKEN=""
+      fi
+      SB_HY2_CERT_PATH=""
+      SB_HY2_KEY_PATH=""
     else
       SB_HY2_TLS_MODE="manual"
+      SB_HY2_ACME_MODE="http"
+      SB_HY2_ACME_EMAIL=""
+      SB_HY2_ACME_DOMAIN="${SB_HY2_DOMAIN}"
+      SB_HY2_DNS_PROVIDER="cloudflare"
+      SB_HY2_CF_API_TOKEN=""
       SB_HY2_CERT_PATH=$(jq -r '.inbounds[0].tls.certificate_path // ""' "${SINGBOX_CONFIG_FILE}")
       SB_HY2_KEY_PATH=$(jq -r '.inbounds[0].tls.key_path // ""' "${SINGBOX_CONFIG_FILE}")
     fi
@@ -4356,6 +4384,7 @@ render_expected_protocol_state_snapshot() {
       fi
       ;;
     hy2)
+      cert_provider_tag=""
       printf 'PORT=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "8443"' "${SINGBOX_CONFIG_FILE}")"
       printf 'DOMAIN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")"
       printf 'PASSWORD=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")"
@@ -4372,8 +4401,22 @@ render_expected_protocol_state_snapshot() {
         printf 'OBFS_PASSWORD=\n'
       fi
 
-      cert_provider_tag=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider // ""' "${SINGBOX_CONFIG_FILE}")
-      if [[ -n "${cert_provider_tag}" ]]; then
+      if jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+        printf 'TLS_MODE=acme\n'
+        printf 'ACME_DOMAIN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.domain[0] // .inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")"
+        printf 'ACME_EMAIL=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.email // ""' "${SINGBOX_CONFIG_FILE}")"
+        if jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+          printf 'ACME_MODE=dns\n'
+          printf 'DNS_PROVIDER=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge.provider // "cloudflare"' "${SINGBOX_CONFIG_FILE}")"
+          printf 'CF_API_TOKEN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge.api_token // ""' "${SINGBOX_CONFIG_FILE}")"
+        else
+          printf 'ACME_MODE=http\n'
+          printf 'DNS_PROVIDER=cloudflare\n'
+          printf 'CF_API_TOKEN=\n'
+        fi
+        printf 'CERT_PATH=\n'
+        printf 'KEY_PATH=\n'
+      elif cert_provider_tag=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider // ""' "${SINGBOX_CONFIG_FILE}"); [[ -n "${cert_provider_tag}" ]]; then
         printf 'TLS_MODE=acme\n'
         printf 'ACME_DOMAIN=%s\n' "$(jq -r --argjson idx "${inbound_index}" --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .domain[0]) // .inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")"
         printf 'ACME_EMAIL=%s\n' "$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .email) // ""' "${SINGBOX_CONFIG_FILE}")"
@@ -4389,6 +4432,7 @@ render_expected_protocol_state_snapshot() {
         printf 'CERT_PATH=\n'
         printf 'KEY_PATH=\n'
       else
+        cert_provider_tag=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider // ""' "${SINGBOX_CONFIG_FILE}")
         printf 'TLS_MODE=manual\n'
         printf 'ACME_MODE=http\n'
         printf 'ACME_EMAIL=\n'
@@ -4648,6 +4692,7 @@ rebuild_protocol_state_from_config() {
       hy2)
         SB_PROTOCOL="hy2"
         SB_NODE_NAME="hy2_$(hostname)"
+        cert_provider_tag=""
         SB_PORT=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "8443"' "${SINGBOX_CONFIG_FILE}")
         SB_HY2_DOMAIN=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
         SB_HY2_PASSWORD=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
@@ -4664,8 +4709,22 @@ rebuild_protocol_state_from_config() {
           SB_HY2_OBFS_PASSWORD=""
         fi
 
-        cert_provider_tag=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider // ""' "${SINGBOX_CONFIG_FILE}")
-        if [[ -n "${cert_provider_tag}" ]]; then
+        if jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+          SB_HY2_TLS_MODE="acme"
+          SB_HY2_ACME_DOMAIN=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.domain[0] // .inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
+          SB_HY2_ACME_EMAIL=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.email // ""' "${SINGBOX_CONFIG_FILE}")
+          if jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+            SB_HY2_ACME_MODE="dns"
+            SB_HY2_DNS_PROVIDER=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge.provider // "cloudflare"' "${SINGBOX_CONFIG_FILE}")
+            SB_HY2_CF_API_TOKEN=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge.api_token // ""' "${SINGBOX_CONFIG_FILE}")
+          else
+            SB_HY2_ACME_MODE="http"
+            SB_HY2_DNS_PROVIDER="cloudflare"
+            SB_HY2_CF_API_TOKEN=""
+          fi
+          SB_HY2_CERT_PATH=""
+          SB_HY2_KEY_PATH=""
+        elif cert_provider_tag=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider // ""' "${SINGBOX_CONFIG_FILE}"); [[ -n "${cert_provider_tag}" ]]; then
           SB_HY2_TLS_MODE="acme"
           SB_HY2_ACME_DOMAIN=$(jq -r --argjson idx "${inbound_index}" --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .domain[0]) // .inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
           SB_HY2_ACME_EMAIL=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .email) // ""' "${SINGBOX_CONFIG_FILE}")
