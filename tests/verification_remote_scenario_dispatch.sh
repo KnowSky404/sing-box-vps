@@ -19,6 +19,9 @@ CALLS_FILE="${TMP_DIR}/calls.log"
 PAYLOAD_FILE="${TMP_DIR}/remote-payload.sh"
 STDOUT_FILE="${TMP_DIR}/stdout.log"
 STDERR_FILE="${TMP_DIR}/stderr.log"
+INSTALL_COUNT_FILE="${TMP_DIR}/install-count"
+EMBEDDED_INSTALL_SCRIPT="${TMP_DIR}/embedded/install.sh"
+EMBEDDED_UNINSTALL_SCRIPT="${TMP_DIR}/embedded/uninstall.sh"
 
 printf '9443\n' > "${PORT_FILE}"
 printf '11111111-1111-4111-8111-111111111111\n' > "${UUID_FILE}"
@@ -29,6 +32,7 @@ printf '1\n' > "${SBV_PRESENT_FILE}"
 printf '1\n' > "${SERVICE_ACTIVE_FILE}"
 : > "${ASSERT_LOG_FILE}"
 : > "${CALLS_FILE}"
+printf '0\n' > "${INSTALL_COUNT_FILE}"
 cat > "${STATE_FILE}" <<'EOF'
 PORT=9443
 UUID=11111111-1111-4111-8111-111111111111
@@ -62,6 +66,34 @@ install_runtime_artifacts() {
   write_vless_state
 }
 
+verification_prepare_remote_local_tree() {
+  : "${VERIFY_REMOTE_INSTALL_SCRIPT:?VERIFY_REMOTE_INSTALL_SCRIPT is required}"
+  : "${VERIFY_REMOTE_UNINSTALL_SCRIPT:?VERIFY_REMOTE_UNINSTALL_SCRIPT is required}"
+}
+
+verification_cleanup_remote_local_tree() {
+  :
+}
+
+next_install_uuid() {
+  local install_count
+  install_count=$(cat "${INSTALL_COUNT_FILE}")
+  install_count=$((install_count + 1))
+  printf '%s\n' "${install_count}" > "${INSTALL_COUNT_FILE}"
+
+  case "${install_count}" in
+    1)
+      printf '33333333-3333-4333-8333-333333333333\n'
+      ;;
+    2)
+      printf '44444444-4444-4444-8444-444444444444\n'
+      ;;
+    *)
+      printf '55555555-5555-4555-8555-555555555555\n'
+      ;;
+  esac
+}
+
 assert_input_sequence() {
   local target=$1
   shift
@@ -93,12 +125,12 @@ bash() {
   printf 'bash:%s %s\n' "${target}" "$*" >> "${CALLS_FILE}"
 
   case "${target}" in
-    /root/Clouds/sing-box-vps/install.sh)
+    "${VERIFY_REMOTE_INSTALL_SCRIPT:-__missing_install__}")
       if [[ "$#" -eq 0 ]]; then
         assert_input_sequence "${target}" \
           "1" "" "1" "443" "www.cloudflare.com" "n" "n" "0"
         printf '443\n' > "${PORT_FILE}"
-        printf '11111111-1111-4111-8111-111111111111\n' > "${UUID_FILE}"
+        next_install_uuid > "${UUID_FILE}"
         printf 'www.cloudflare.com\n' > "${SNI_FILE}"
         install_runtime_artifacts
         return 0
@@ -119,9 +151,13 @@ bash() {
       write_vless_state
       return 0
       ;;
-    /root/Clouds/sing-box-vps/uninstall.sh)
+    "${VERIFY_REMOTE_UNINSTALL_SCRIPT:-__missing_uninstall__}")
       reset_runtime_artifacts
       return 0
+      ;;
+    /root/Clouds/sing-box-vps/install.sh|/root/Clouds/sing-box-vps/uninstall.sh)
+      printf 'unexpected stale remote checkout path: %s\n' "${target}" >&2
+      return 1
       ;;
   esac
 
@@ -261,6 +297,9 @@ SBV_PRESENT_FILE="${SBV_PRESENT_FILE}" \
 SERVICE_ACTIVE_FILE="${SERVICE_ACTIVE_FILE}" \
 STATE_FILE="${STATE_FILE}" \
 ASSERT_LOG_FILE="${ASSERT_LOG_FILE}" \
+INSTALL_COUNT_FILE="${INSTALL_COUNT_FILE}" \
+VERIFY_REMOTE_INSTALL_SCRIPT="${EMBEDDED_INSTALL_SCRIPT}" \
+VERIFY_REMOTE_UNINSTALL_SCRIPT="${EMBEDDED_UNINSTALL_SCRIPT}" \
   bash "${PAYLOAD_FILE}" \
     fresh_install_vless \
     reconfigure_existing_install \
@@ -277,12 +316,14 @@ grep -Fqx 'test:-f|/root/sing-box-vps/protocols/vless-reality.env|' "${ASSERT_LO
 grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fq stale.example.com /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx UUID=11111111-1111-4111-8111-111111111111 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'jq:-r|.inbounds[0].users[0].uuid // empty|/root/sing-box-vps/config.json' "${ASSERT_LOG_FILE}"
 grep -Fqx 'jq:-r|.inbounds[0].tls.server_name // empty|/root/sing-box-vps/config.json' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx PORT=8443 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx UUID=22222222-2222-4222-8222-222222222222 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx SNI=cdn.cloudflare.com /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
-grep -Fq 'bash:/root/Clouds/sing-box-vps/install.sh ' "${CALLS_FILE}"
+grep -Fqx 'UUID=44444444-4444-4444-8444-444444444444' "${STATE_FILE}"
+grep -Fq "bash:${EMBEDDED_INSTALL_SCRIPT} " "${CALLS_FILE}"
 grep -Fq 'bash:/usr/local/bin/sbv ' "${CALLS_FILE}"
-grep -Fq 'bash:/root/Clouds/sing-box-vps/uninstall.sh --yes' "${CALLS_FILE}"
+grep -Fq "bash:${EMBEDDED_UNINSTALL_SCRIPT} --yes" "${CALLS_FILE}"
+! grep -Fq '/root/Clouds/sing-box-vps/install.sh' "${CALLS_FILE}"
+! grep -Fq '/root/Clouds/sing-box-vps/uninstall.sh' "${CALLS_FILE}"

@@ -15,6 +15,9 @@ REMOTE_SBV_PRESENT_FILE="${TMP_DIR}/remote-sbv-present"
 REMOTE_SERVICE_ACTIVE_FILE="${TMP_DIR}/remote-service-active"
 REMOTE_STATE_FILE="${TMP_DIR}/remote-vless-reality.env"
 REMOTE_ASSERT_LOG_FILE="${TMP_DIR}/remote-assert.log"
+INSTALL_COUNT_FILE="${TMP_DIR}/install-count"
+INSTALL_VERSION_LINE=$(sed -n 's/^readonly SCRIPT_VERSION=\"[^\"]*\"$/&/p' "${REPO_ROOT}/install.sh" | head -n 1)
+UNINSTALL_HELPER_LINE=$(sed -n 's/^resolve_install_script() {$/&/p' "${REPO_ROOT}/uninstall.sh" | head -n 1)
 
 printf '9443\n' > "${REMOTE_PORT_FILE}"
 printf '11111111-1111-4111-8111-111111111111\n' > "${REMOTE_UUID_FILE}"
@@ -24,6 +27,7 @@ printf '1\n' > "${REMOTE_SERVICE_FILE_PRESENT_FILE}"
 printf '1\n' > "${REMOTE_SBV_PRESENT_FILE}"
 printf '1\n' > "${REMOTE_SERVICE_ACTIVE_FILE}"
 : > "${REMOTE_ASSERT_LOG_FILE}"
+printf '0\n' > "${INSTALL_COUNT_FILE}"
 cat > "${REMOTE_STATE_FILE}" <<'EOF'
 PORT=9443
 UUID=11111111-1111-4111-8111-111111111111
@@ -137,6 +141,25 @@ install_runtime_artifacts() {
   write_vless_state
 }
 
+next_install_uuid() {
+  local install_count
+  install_count=\$(cat "\${INSTALL_COUNT_FILE}")
+  install_count=\$((install_count + 1))
+  printf '%s\n' "\${install_count}" > "\${INSTALL_COUNT_FILE}"
+
+  case "\${install_count}" in
+    1)
+      printf '33333333-3333-4333-8333-333333333333\n'
+      ;;
+    2)
+      printf '44444444-4444-4444-8444-444444444444\n'
+      ;;
+    *)
+      printf '55555555-5555-4555-8555-555555555555\n'
+      ;;
+  esac
+}
+
 assert_input_sequence() {
   local target=\$1
   shift
@@ -166,12 +189,12 @@ bash() {
   shift || true
 
   case "\${target}" in
-    /root/Clouds/sing-box-vps/install.sh)
+    "\${VERIFY_REMOTE_INSTALL_SCRIPT:-__missing_install__}")
       if [[ "\$#" -eq 0 ]]; then
         assert_input_sequence "\${target}" \
           "1" "" "1" "443" "www.cloudflare.com" "n" "n" "0"
         printf '443\n' > "\${REMOTE_PORT_FILE}"
-        printf '11111111-1111-4111-8111-111111111111\n' > "\${REMOTE_UUID_FILE}"
+        next_install_uuid > "\${REMOTE_UUID_FILE}"
         printf 'www.cloudflare.com\n' > "\${REMOTE_SNI_FILE}"
         install_runtime_artifacts
         return 0
@@ -192,9 +215,13 @@ bash() {
       write_vless_state
       return 0
       ;;
-    /root/Clouds/sing-box-vps/uninstall.sh)
+    "\${VERIFY_REMOTE_UNINSTALL_SCRIPT:-__missing_uninstall__}")
       reset_runtime_artifacts
       return 0
+      ;;
+    /root/Clouds/sing-box-vps/install.sh|/root/Clouds/sing-box-vps/uninstall.sh)
+      printf 'unexpected stale remote checkout path: %s\n' "\${target}" >&2
+      return 1
       ;;
   esac
 
@@ -288,6 +315,7 @@ REMOTE_SBV_PRESENT_FILE="${REMOTE_SBV_PRESENT_FILE}" \
 REMOTE_SERVICE_ACTIVE_FILE="${REMOTE_SERVICE_ACTIVE_FILE}" \
 REMOTE_STATE_FILE="${REMOTE_STATE_FILE}" \
 REMOTE_ASSERT_LOG_FILE="${REMOTE_ASSERT_LOG_FILE}" \
+INSTALL_COUNT_FILE="${INSTALL_COUNT_FILE}" \
 PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" -lc "\${1:-}" < "\${script_file}"
 EOF
 chmod +x "${TMP_DIR}/ssh"
@@ -306,9 +334,11 @@ scenarios=$(paste -sd, "${run_dir}/scenarios.txt")
 }
 grep -Fq 'SCENARIO=runtime_smoke' "${run_dir}/remote.stdout.log"
 grep -Fq 'REMOTE_HOST=root@test.example' "${run_dir}/remote.stdout.log"
+grep -Fq "${INSTALL_VERSION_LINE}" "${TMP_DIR}/remote-script.sh"
+grep -Fq "${UNINSTALL_HELPER_LINE}" "${TMP_DIR}/remote-script.sh"
 grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.env' "${REMOTE_ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.env' "${REMOTE_ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx UUID=11111111-1111-4111-8111-111111111111 /root/sing-box-vps/protocols/vless-reality.env' "${REMOTE_ASSERT_LOG_FILE}"
+grep -Fqx 'UUID=22222222-2222-4222-8222-222222222222' "${REMOTE_STATE_FILE}"
 grep -Fqx 'tests/verification_trigger_rules.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_artifact_dir_layout.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_remote_scenario_dispatch.sh|1' "${TMP_DIR}/local-tests.log"

@@ -55,6 +55,44 @@ resolve_changed_files() {
 emit_remote_payload() {
   local scenario_file
 
+  cat <<'EOF'
+verification_prepare_remote_local_tree() {
+  if [[ -n "${VERIFY_REMOTE_INSTALL_SCRIPT:-}" && -f "${VERIFY_REMOTE_INSTALL_SCRIPT}" ]] && \
+    [[ -n "${VERIFY_REMOTE_UNINSTALL_SCRIPT:-}" && -f "${VERIFY_REMOTE_UNINSTALL_SCRIPT}" ]]; then
+    return 0
+  fi
+
+  verification_cleanup_remote_local_tree
+
+  VERIFY_REMOTE_LOCAL_TREE_DIR=$(mktemp -d /tmp/sing-box-vps-verification.XXXXXX)
+  VERIFY_REMOTE_INSTALL_SCRIPT="${VERIFY_REMOTE_LOCAL_TREE_DIR}/install.sh"
+  VERIFY_REMOTE_UNINSTALL_SCRIPT="${VERIFY_REMOTE_LOCAL_TREE_DIR}/uninstall.sh"
+
+  cat > "${VERIFY_REMOTE_INSTALL_SCRIPT}" <<'VERIFY_REMOTE_INSTALL_SH'
+EOF
+  cat "${REPO_ROOT}/install.sh"
+  cat <<'EOF'
+VERIFY_REMOTE_INSTALL_SH
+
+  cat > "${VERIFY_REMOTE_UNINSTALL_SCRIPT}" <<'VERIFY_REMOTE_UNINSTALL_SH'
+EOF
+  cat "${REPO_ROOT}/uninstall.sh"
+  cat <<'EOF'
+VERIFY_REMOTE_UNINSTALL_SH
+
+  chmod +x "${VERIFY_REMOTE_INSTALL_SCRIPT}" "${VERIFY_REMOTE_UNINSTALL_SCRIPT}"
+  export VERIFY_REMOTE_LOCAL_TREE_DIR VERIFY_REMOTE_INSTALL_SCRIPT VERIFY_REMOTE_UNINSTALL_SCRIPT
+}
+
+verification_cleanup_remote_local_tree() {
+  if [[ -n "${VERIFY_REMOTE_LOCAL_TREE_DIR:-}" && -d "${VERIFY_REMOTE_LOCAL_TREE_DIR}" ]]; then
+    rm -rf "${VERIFY_REMOTE_LOCAL_TREE_DIR}"
+    unset VERIFY_REMOTE_LOCAL_TREE_DIR VERIFY_REMOTE_INSTALL_SCRIPT VERIFY_REMOTE_UNINSTALL_SCRIPT
+  fi
+}
+
+EOF
+
   for scenario_file in "${REPO_ROOT}"/dev/verification/remote/scenarios/*.sh; do
     [[ -f "${scenario_file}" ]] || continue
     cat "${scenario_file}"
