@@ -4,6 +4,7 @@ set -euo pipefail
 
 readonly SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 readonly SB_PROJECT_DIR="${SB_PROJECT_DIR:-/root/sing-box-vps}"
+readonly SBV_BIN_PATH="${SBV_BIN_PATH:-/usr/local/bin/sbv}"
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[0;33m'
@@ -38,7 +39,8 @@ resolve_install_script() {
 
   for candidate in \
     "${SCRIPT_DIR}/install.sh" \
-    "${SB_PROJECT_DIR}/install.sh"; do
+    "${SB_PROJECT_DIR}/install.sh" \
+    "${SBV_BIN_PATH}"; do
     if [[ -f "${candidate}" ]]; then
       printf '%s\n' "${candidate}"
       return 0
@@ -74,7 +76,7 @@ main() {
   done
 
   if ! install_script=$(resolve_install_script); then
-    print_error "未找到 install.sh，无法继续卸载。请确认已安装 sing-box-vps，或改用 install.sh 菜单卸载。"
+    print_error "未找到可用的管理脚本，无法继续卸载。请确认已安装 sing-box-vps，或改用 sbv 菜单卸载。"
   fi
 
   if [[ "${assume_yes}" != "y" ]]; then
@@ -103,7 +105,7 @@ main() {
     fi
   fi
 
-  print_info "正在调用 install.sh 内置彻底卸载逻辑..."
+  print_info "正在调用已安装管理脚本的内置彻底卸载逻辑..."
   exec bash "${install_script}" --internal-uninstall-purge --yes
 }
 
