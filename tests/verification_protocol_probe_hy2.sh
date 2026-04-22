@@ -177,6 +177,7 @@ fi
 
 grep -Fq 'missing required hy2 probe field: obfs_password' \
   "${TMP_DIR}/stderr-hy2-execute-failure.txt"
+[[ ! -f "${EXPECTED_CONFIG_PATH}" ]]
 [[ ! -f "${EXPECTED_STDOUT_PATH}" ]]
 [[ ! -f "${EXPECTED_CLIENT_PATH_ARTIFACT}" ]]
 if [[ -f "${EXPECTED_RESULT_PATH}" ]]; then
