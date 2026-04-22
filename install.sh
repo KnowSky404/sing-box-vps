@@ -1206,7 +1206,7 @@ prompt_hy2_install() {
     done
   fi
 
-  read -rp "[Hysteria2] 伪装地址 (留空跳过): " in_masquerade
+  read -rp "[Hysteria2] 伪装地址 (默认 ${SB_HY2_MASQUERADE}，留空使用默认): " in_masquerade
   [[ -n "${in_masquerade}" ]] && SB_HY2_MASQUERADE="${in_masquerade}"
 
   ensure_hy2_materials
@@ -1415,7 +1415,7 @@ set_protocol_defaults() {
       SB_HY2_CF_API_TOKEN=""
       SB_HY2_CERT_PATH=""
       SB_HY2_KEY_PATH=""
-      SB_HY2_MASQUERADE=""
+      SB_HY2_MASQUERADE="https://www.cloudflare.com"
       ;;
     anytls)
       SB_PROTOCOL="anytls"
@@ -4071,6 +4071,7 @@ show_hy2_connection_summary() {
   echo "域名: ${SB_HY2_DOMAIN}"
   echo "端口: ${SB_PORT}"
   echo "TLS 模式: ${SB_HY2_TLS_MODE}"
+  echo "伪装: ${SB_HY2_MASQUERADE:-未配置}"
   if [[ "${SB_HY2_OBFS_ENABLED}" == "y" ]]; then
     echo "混淆: ${SB_HY2_OBFS_TYPE:-salamander}"
   else
