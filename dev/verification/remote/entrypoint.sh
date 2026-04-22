@@ -205,6 +205,74 @@ verification_record_protocol_probe_result() {
     "RESULT=${result}"
 }
 
+verification_generate_protocol_probe_client_config() {
+  local protocol=$1
+  local config_file=$2
+  local output_path=''
+  local server_port=''
+  local uuid=''
+  local server_name=''
+  local public_key=''
+  local short_id=''
+
+  case "${protocol}" in
+    vless-reality)
+      output_path=$(verification_artifact_path \
+        "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
+      server_port=$(jq -r '.inbounds[0].listen_port // empty' "${config_file}")
+      uuid=$(jq -r '.inbounds[0].users[0].uuid // empty' "${config_file}")
+      server_name=$(jq -r '.inbounds[0].tls.server_name // empty' "${config_file}")
+      public_key=$(jq -r '.inbounds[0].tls.reality.public_key // empty' "${config_file}")
+      short_id=$(jq -r '.inbounds[0].tls.reality.short_id[0] // empty' "${config_file}")
+
+      jq -n \
+        --arg server_port "${server_port}" \
+        --arg uuid "${uuid}" \
+        --arg server_name "${server_name}" \
+        --arg public_key "${public_key}" \
+        --arg short_id "${short_id}" \
+        '{
+          log: {
+            disabled: true
+          },
+          inbounds: [
+            {
+              type: "socks",
+              tag: "local-socks",
+              listen: "127.0.0.1",
+              listen_port: 19080
+            }
+          ],
+          outbounds: [
+            {
+              type: "vless",
+              tag: "proxy",
+              server: "127.0.0.1",
+              server_port: ($server_port | tonumber),
+              uuid: $uuid,
+              flow: "",
+              tls: {
+                enabled: true,
+                server_name: $server_name,
+                reality: {
+                  enabled: true,
+                  public_key: $public_key,
+                  short_id: $short_id
+                }
+              }
+            }
+          ]
+        }' > "${output_path}"
+      ;;
+    *)
+      printf 'unsupported protocol generator: %s\n' "${protocol}" >&2
+      return 1
+      ;;
+  esac
+
+  printf '%s\n' "${output_path}"
+}
+
 verification_run_protocol_probes() {
   local protocol
   local protocols_output=''
