@@ -11,29 +11,46 @@ REMOTE_ROOT="${TMP_DIR}/remote-root"
 TESTABLE_ENTRYPOINT="${TMP_DIR}/entrypoint-testable.sh"
 EXPECTED_CONFIG_PATH="${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/vless-reality/client.json"
 
-mkdir -p "${REMOTE_ROOT}/root/sing-box-vps"
+mkdir -p "${REMOTE_ROOT}/root/sing-box-vps/protocols"
 
 awk '
   /^if ! mkdir "\$\{LOCK_DIR\}" 2>\/dev\/null; then$/ {
     exit
   }
   { print }
-' "${REPO_ROOT}/dev/verification/remote/entrypoint.sh" > "${TESTABLE_ENTRYPOINT}"
+' "${REPO_ROOT}/dev/verification/remote/entrypoint.sh" \
+  | perl -0pe 's|/root/sing-box-vps/protocols/vless-reality.env|'"${REMOTE_ROOT}"'/root/sing-box-vps/protocols/vless-reality.env|g' \
+  > "${TESTABLE_ENTRYPOINT}"
+
+cat > "${REMOTE_ROOT}/root/sing-box-vps/protocols/vless-reality.env" <<'EOF'
+REALITY_PUBLIC_KEY=public-key-from-state
+EOF
 
 cat > "${REMOTE_ROOT}/root/sing-box-vps/config.json" <<'EOF'
 {
   "inbounds": [
     {
+      "type": "mixed",
+      "listen_port": 2080,
+      "users": [
+        {
+          "username": "mixed-user",
+          "password": "mixed-pass"
+        }
+      ]
+    },
+    {
+      "type": "vless",
       "listen_port": 443,
       "users": [
         {
-          "uuid": "11111111-1111-4111-8111-111111111111"
+          "uuid": "11111111-1111-4111-8111-111111111111",
+          "flow": "xtls-rprx-vision"
         }
       ],
       "tls": {
         "server_name": "www.cloudflare.com",
         "reality": {
-          "public_key": "pubkey123",
           "short_id": [
             "abcd1234"
           ]
@@ -81,11 +98,11 @@ if ! jq -e '
   .outbounds[0].server == "127.0.0.1" and
   .outbounds[0].server_port == 443 and
   .outbounds[0].uuid == "11111111-1111-4111-8111-111111111111" and
-  .outbounds[0].flow == "" and
+  .outbounds[0].flow == "xtls-rprx-vision" and
   .outbounds[0].tls.enabled == true and
   .outbounds[0].tls.server_name == "www.cloudflare.com" and
   .outbounds[0].tls.reality.enabled == true and
-  .outbounds[0].tls.reality.public_key == "pubkey123" and
+  .outbounds[0].tls.reality.public_key == "public-key-from-state" and
   .outbounds[0].tls.reality.short_id == "abcd1234"
 ' "${config_path}" >/dev/null; then
   printf 'generated vless probe client config did not match expected fields\n' >&2

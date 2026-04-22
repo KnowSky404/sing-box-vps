@@ -205,25 +205,53 @@ verification_record_protocol_probe_result() {
     "RESULT=${result}"
 }
 
+verification_find_config_inbound_index_by_type() {
+  local config_file=$1
+  local target_type=$2
+  local inbound_count=0
+  local inbound_index=0
+  local inbound_type=''
+
+  inbound_count=$(jq -r '(.inbounds // []) | length' "${config_file}")
+  [[ "${inbound_count}" =~ ^[0-9]+$ ]] || return 1
+
+  for ((inbound_index = 0; inbound_index < inbound_count; inbound_index++)); do
+    inbound_type=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].type // empty' "${config_file}")
+    if [[ "${inbound_type}" == "${target_type}" ]]; then
+      printf '%s\n' "${inbound_index}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 verification_generate_protocol_probe_client_config() {
   local protocol=$1
   local config_file=$2
   local output_path=''
+  local inbound_index=''
   local server_port=''
   local uuid=''
   local server_name=''
   local public_key=''
   local short_id=''
+  local flow=''
 
   case "${protocol}" in
     vless-reality)
+      inbound_index=$(verification_find_config_inbound_index_by_type "${config_file}" vless) || {
+        printf 'missing inbound for protocol generator: %s\n' "${protocol}" >&2
+        return 1
+      }
       output_path=$(verification_artifact_path \
         "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
-      server_port=$(jq -r '.inbounds[0].listen_port // empty' "${config_file}")
-      uuid=$(jq -r '.inbounds[0].users[0].uuid // empty' "${config_file}")
-      server_name=$(jq -r '.inbounds[0].tls.server_name // empty' "${config_file}")
-      public_key=$(jq -r '.inbounds[0].tls.reality.public_key // empty' "${config_file}")
-      short_id=$(jq -r '.inbounds[0].tls.reality.short_id[0] // empty' "${config_file}")
+      server_port=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // empty' "${config_file}")
+      uuid=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].uuid // empty' "${config_file}")
+      server_name=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // empty' "${config_file}")
+      short_id=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[0] // empty' "${config_file}")
+      flow=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].flow // empty' "${config_file}")
+      public_key=$(sed -n 's/^REALITY_PUBLIC_KEY=//p' /root/sing-box-vps/protocols/vless-reality.env | head -n 1)
 
       jq -n \
         --arg server_port "${server_port}" \
@@ -231,6 +259,7 @@ verification_generate_protocol_probe_client_config() {
         --arg server_name "${server_name}" \
         --arg public_key "${public_key}" \
         --arg short_id "${short_id}" \
+        --arg flow "${flow}" \
         '{
           log: {
             disabled: true
@@ -250,7 +279,7 @@ verification_generate_protocol_probe_client_config() {
               server: "127.0.0.1",
               server_port: ($server_port | tonumber),
               uuid: $uuid,
-              flow: "",
+              flow: $flow,
               tls: {
                 enabled: true,
                 server_name: $server_name,
