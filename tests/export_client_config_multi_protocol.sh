@@ -195,8 +195,8 @@ if ! jq -e '(.route.rule_set // [])[] | select(.tag == "geoip-cn" and .type == "
   exit 1
 fi
 
-if ! jq -e '(.route.rule_set // [])[] | select(.tag == "geosite-cn")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
-  printf 'expected route.rule_set geosite-cn, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+if ! jq -e '(.route.rule_set // [])[] | select(.tag == "geosite-cn" and .type == "remote" and .format == "binary" and .url == "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.rule_set geosite-cn with sing-geosite geosite-cn.srs URL, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
