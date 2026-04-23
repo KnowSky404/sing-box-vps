@@ -1703,7 +1703,7 @@ media_check_menu() {
     render_summary_item "检测后端" "${MEDIA_CHECK_BACKEND_NAME}"
     render_summary_item "作者" "${MEDIA_CHECK_BACKEND_AUTHOR}"
     render_summary_item "项目地址" "${MEDIA_CHECK_BACKEND_REPO_URL}"
-    render_section_title "操作选项"
+    render_menu_group_start "操作选项"
     render_menu_item "1" "本机直出检测"
     render_menu_item "2" "Warp 出口检测"
     echo "0. 返回主菜单"
@@ -1968,10 +1968,10 @@ show_effective_warp_route_sources() {
 
 set_warp_route_mode_interactive() {
   echo
-  render_page_header "Warp 路由模式" "调整 Cloudflare Warp 的流量接管策略"
+  render_left_aligned_page_header "Warp 路由模式" "选择当前实例的 Warp 出口策略"
   render_section_title "当前设置"
   render_summary_item "当前模式" "${SB_WARP_ROUTE_MODE}"
-  render_section_title "操作选项"
+  render_menu_group_start "模式选项"
   render_menu_item "1" "全量流量走 Warp"
   render_menu_item "2" "仅 AI/流媒体及自定义规则走 Warp"
   read -rp "请选择 [1-2] (当前: ${SB_WARP_ROUTE_MODE}): " mode_choice
@@ -4515,7 +4515,7 @@ show_connection_info_menu() {
     render_summary_item "当前协议" "$(protocol_display_name "${SB_PROTOCOL}")"
     render_summary_item "当前端口" "${SB_PORT}"
     render_summary_item "当前出口地址" "${public_ip:-未检测到}"
-    render_section_title "展示方式"
+    render_menu_group_start "展示方式"
     render_menu_item "1" "仅链接"
     render_menu_item "2" "仅二维码"
     render_menu_item "3" "链接 + 二维码"
@@ -4779,8 +4779,8 @@ export_singbox_client_config() {
 show_node_info_action_menu() {
   while true; do
     echo
-    render_page_header "节点信息查看" "选择要执行的节点信息操作"
-    render_section_title "操作选项"
+    render_left_aligned_page_header "节点信息查看" "选择要执行的节点信息操作"
+    render_menu_group_start "操作选项"
     render_menu_item "1" "查看连接链接 / 二维码"
     render_menu_item "2" "导出 sing-box 裸核客户端配置"
     echo "0. 返回"
@@ -5407,7 +5407,7 @@ install_or_update_singbox() {
     load_current_config_state
 
     echo
-    render_page_header "sing-box 管理" "更新核心或为现有实例补充协议"
+    render_left_aligned_page_header "sing-box 管理" "更新核心或为现有实例补充协议"
     render_section_title "安装摘要"
     render_summary_item "当前版本" "${installed_ver}"
     render_summary_item "当前协议" "$(protocol_display_name "${SB_PROTOCOL}")"
@@ -5428,7 +5428,7 @@ install_or_update_singbox() {
 
   if [[ "${existing_instance_state}" == "incomplete" ]]; then
     echo
-    render_page_header "sing-box 管理" "发现现有实例缺少关键组件"
+    render_left_aligned_page_header "sing-box 管理" "发现现有实例缺少关键组件"
     render_section_title "实例检测"
     echo "检测到残缺的现有实例。"
     render_section_title "操作选项"
