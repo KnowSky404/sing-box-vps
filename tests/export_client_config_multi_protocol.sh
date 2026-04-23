@@ -108,51 +108,61 @@ EOF
 load_protocol_state "vless-reality"
 
 EXPORT_STDOUT="${TMP_DIR}/stdout.txt"
-EXPORT_PATH="${SB_PROJECT_DIR}/client/sing-box-client.json"
+EXPECTED_EXPORT_PATH="${SB_PROJECT_DIR}/client/sing-box-client.json"
+CLIENT_DIR="${SB_PROJECT_DIR}/client"
+declare -a client_files=()
 
 export_singbox_client_config > "${EXPORT_STDOUT}"
 
-if [[ "${EXPORT_PATH}" != "${SB_PROJECT_DIR}/client/sing-box-client.json" ]]; then
-  printf 'expected export path %s, got %s\n' "${SB_PROJECT_DIR}/client/sing-box-client.json" "${EXPORT_PATH}" >&2
+mapfile -t client_files < <(find "${CLIENT_DIR}" -maxdepth 1 -type f 2>/dev/null | sort)
+
+if [[ ${#client_files[@]} -ne 1 || "${client_files[0]:-}" != "${EXPECTED_EXPORT_PATH}" ]]; then
+  printf 'expected first export to create only %s, actual files:\n' "${EXPECTED_EXPORT_PATH}" >&2
+  if [[ ${#client_files[@]} -eq 0 ]]; then
+    printf '(none)\n' >&2
+  else
+    printf '%s\n' "${client_files[@]}" >&2
+  fi
+  printf 'stdout was:\n%s\n' "$(cat "${EXPORT_STDOUT}")" >&2
   exit 1
 fi
 
-if [[ ! -f "${EXPORT_PATH}" ]]; then
-  printf 'expected exported config file at %s, stdout was:\n%s\n' "${EXPORT_PATH}" "$(cat "${EXPORT_STDOUT}")" >&2
+if [[ ! -f "${EXPECTED_EXPORT_PATH}" ]]; then
+  printf 'expected exported config file at %s, stdout was:\n%s\n' "${EXPECTED_EXPORT_PATH}" "$(cat "${EXPORT_STDOUT}")" >&2
   exit 1
 fi
 
-if ! jq -e '.inbounds[] | select(.type == "mixed") | .listen == "127.0.0.1" and .listen_port == 2080' "${EXPORT_PATH}" >/dev/null; then
-  printf 'expected local mixed inbound 127.0.0.1:2080, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+if ! jq -e '.inbounds[] | select(.type == "mixed") | .listen == "127.0.0.1" and .listen_port == 2080' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected local mixed inbound 127.0.0.1:2080, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
-if ! jq -e '.outbounds[] | select(.type == "selector" and .tag == "proxy") | .default == "auto"' "${EXPORT_PATH}" >/dev/null; then
-  printf 'expected selector outbound proxy default auto, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+if ! jq -e '.outbounds[] | select(.type == "selector" and .tag == "proxy") | .default == "auto"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected selector outbound proxy default auto, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
-if ! jq -e '.outbounds[] | select(.type == "urltest" and .tag == "auto")' "${EXPORT_PATH}" >/dev/null; then
-  printf 'expected urltest outbound auto, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+if ! jq -e '.outbounds[] | select(.type == "urltest" and .tag == "auto")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected urltest outbound auto, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
-if ! jq -e '.outbounds[] | select(.type == "vless" and .tag == "vless-reality-443")' "${EXPORT_PATH}" >/dev/null; then
-  printf 'expected vless outbound tag vless-reality-443, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+if ! jq -e '.outbounds[] | select(.type == "vless" and .tag == "vless-reality-443")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected vless outbound tag vless-reality-443, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
-if ! jq -e '.outbounds[] | select(.type == "hysteria2" and .tag == "hy2-8443") | .obfs.type == "salamander"' "${EXPORT_PATH}" >/dev/null; then
-  printf 'expected hysteria2 outbound hy2-8443 with salamander obfs, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+if ! jq -e '.outbounds[] | select(.type == "hysteria2" and .tag == "hy2-8443") | .obfs.type == "salamander"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected hysteria2 outbound hy2-8443 with salamander obfs, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
-if ! jq -e '.outbounds[] | select(.type == "anytls" and .tag == "anytls-9443")' "${EXPORT_PATH}" >/dev/null; then
-  printf 'expected anytls outbound tag anytls-9443, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+if ! jq -e '.outbounds[] | select(.type == "anytls" and .tag == "anytls-9443")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected anytls outbound tag anytls-9443, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
-if ! jq -e '.experimental.clash_api.external_controller == "127.0.0.1:9090"' "${EXPORT_PATH}" >/dev/null; then
-  printf 'expected clash_api external_controller 127.0.0.1:9090, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+if ! jq -e '.experimental.clash_api.external_controller == "127.0.0.1:9090"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected clash_api external_controller 127.0.0.1:9090, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
