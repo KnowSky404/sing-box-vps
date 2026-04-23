@@ -32,6 +32,7 @@ source "${TESTABLE_INSTALL}"
 SUMMARY_COUNT_FILE="${TMP_DIR}/summary.count"
 PROMPT_COUNT_FILE="${TMP_DIR}/prompt.count"
 DETAIL_CALLS_FILE="${TMP_DIR}/detail.calls"
+EXPORT_OUTPUT_FILE="${TMP_DIR}/export.output"
 printf '0\n' > "${SUMMARY_COUNT_FILE}"
 printf '0\n' > "${PROMPT_COUNT_FILE}"
 : > "${DETAIL_CALLS_FILE}"
@@ -127,5 +128,20 @@ fi
 
 if ! grep -Fxq 'link:hy2' "${DETAIL_CALLS_FILE}"; then
   printf 'expected node info view to include hy2 link output, got:\n%s\n' "$(cat "${DETAIL_CALLS_FILE}")" >&2
+  exit 1
+fi
+
+view_node_info <<'EOF' > "${EXPORT_OUTPUT_FILE}" 2>&1
+2
+0
+EOF
+
+if grep -Fq 'command not found' "${EXPORT_OUTPUT_FILE}"; then
+  printf 'expected node info export action to avoid shell errors, got:\n%s\n' "$(cat "${EXPORT_OUTPUT_FILE}")" >&2
+  exit 1
+fi
+
+if ! grep -Fq '导出功能将在后续任务中实现' "${EXPORT_OUTPUT_FILE}"; then
+  printf 'expected node info export action to show placeholder message, got:\n%s\n' "$(cat "${EXPORT_OUTPUT_FILE}")" >&2
   exit 1
 fi

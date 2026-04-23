@@ -4326,6 +4326,11 @@ show_connection_info_menu() {
   done
 }
 
+export_singbox_client_config() {
+  print_info "导出功能将在后续任务中实现。"
+  return 0
+}
+
 show_node_info_action_menu() {
   while true; do
     echo
