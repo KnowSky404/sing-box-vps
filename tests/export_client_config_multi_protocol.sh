@@ -189,3 +189,28 @@ if ! jq -e '.experimental.clash_api.external_controller == "127.0.0.1:9090"' "${
   printf 'expected clash_api external_controller 127.0.0.1:9090, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
+
+if ! jq -e '(.route.rule_set // [])[] | select(.tag == "geoip-cn" and .type == "remote" and .format == "binary" and .url == "https://cdn.jsdelivr.net/gh/Loyalsoldier/geoip@release/srs/cn.srs")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.rule_set geoip-cn with jsdelivr cn.srs URL, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+  exit 1
+fi
+
+if ! jq -e '(.route.rule_set // [])[] | select(.tag == "geosite-cn")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.rule_set geosite-cn, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+  exit 1
+fi
+
+if ! jq -e '(.route.rules // [])[] | select(.rule_set? == "geosite-cn" and .outbound == "direct" and .action == "route")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.rules geosite-cn -> direct with action route, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+  exit 1
+fi
+
+if ! jq -e '(.route.rules // [])[] | select(.rule_set? == "geoip-cn" and .outbound == "direct" and .action == "route")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.rules geoip-cn -> direct with action route, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+  exit 1
+fi
+
+if ! jq -e '(.dns.rules // [])[] | select(.rule_set? == "geosite-cn" and .server == "cn-dns")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected dns.rules geosite-cn -> cn-dns, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+  exit 1
+fi
