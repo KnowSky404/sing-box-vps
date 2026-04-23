@@ -100,6 +100,8 @@ EOF
 
 view_node_info <<'EOF'
 1
+1
+0
 0
 EOF
 

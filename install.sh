@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042303
+# Version: 2026042304
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042303"
+readonly SCRIPT_VERSION="2026042304"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -4326,10 +4326,29 @@ show_connection_info_menu() {
   done
 }
 
+show_node_info_action_menu() {
+  while true; do
+    echo
+    render_page_header "节点信息查看" "选择要执行的节点信息操作"
+    render_section_title "操作选项"
+    render_menu_item "1" "查看连接链接 / 二维码"
+    render_menu_item "2" "导出 sing-box 裸核客户端配置"
+    echo "0. 返回"
+    read -rp "请选择 [0-2]: " node_info_choice
+
+    case "${node_info_choice}" in
+      1) show_connection_info_menu ;;
+      2) export_singbox_client_config || true ;;
+      0) return ;;
+      *) log_warn "无效选项，请重新选择。" ;;
+    esac
+  done
+}
+
 view_node_info() {
   log_info "正在从配置文件中读取节点信息..."
   load_current_config_state
-  show_connection_info_menu
+  show_node_info_action_menu
 }
 
 show_post_config_connection_info() {
