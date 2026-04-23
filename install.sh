@@ -3419,6 +3419,35 @@ render_main_menu_brand_block() {
   echo -e "${BLUE}${divider}${NC}"
 }
 
+render_left_aligned_page_header() {
+  local title=$1
+  local subtitle=${2:-}
+  local width divider
+
+  width=$(term_columns)
+  if (( width < 1 )); then
+    width=1
+  fi
+  divider=$(repeat_char "═" "${width}")
+
+  echo -e "${BLUE}${divider}${NC}"
+  echo -e "${GREEN}${title}${NC}"
+  if [[ -n "${subtitle}" ]]; then
+    echo -e "${BLUE}${subtitle}${NC}"
+  fi
+  echo -e "${BLUE}${divider}${NC}"
+}
+
+render_menu_group_start() {
+  local title=${1:-}
+
+  if [[ -n "${title}" ]]; then
+    render_section_title "${title}"
+  else
+    echo
+  fi
+}
+
 show_banner() {
   safe_clear_screen
   render_main_menu_brand_block
