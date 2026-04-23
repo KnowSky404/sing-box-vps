@@ -1698,7 +1698,7 @@ run_media_check_via_warp() {
 media_check_menu() {
   while true; do
     echo
-    render_page_header "流媒体验证检测" "验证流媒体与区域解锁情况"
+    render_left_aligned_page_header "流媒体验证检测" "验证流媒体与区域解锁情况"
     render_section_title "检测摘要"
     render_summary_item "检测后端" "${MEDIA_CHECK_BACKEND_NAME}"
     render_summary_item "作者" "${MEDIA_CHECK_BACKEND_AUTHOR}"
@@ -3514,7 +3514,7 @@ configure_inbound_stack_mode() {
 
   while true; do
     echo
-    render_page_header "入站协议栈" "按主机能力选择监听栈"
+    render_left_aligned_page_header "入站协议栈" "按主机能力选择监听栈"
     render_section_title "当前设置"
     render_summary_item "系统网络能力" "$(host_ip_stack_display_name "${host_stack}")"
     render_summary_item "当前入站协议栈" "$(inbound_stack_mode_display_name "${SB_INBOUND_STACK_MODE}")"
@@ -3556,7 +3556,7 @@ configure_outbound_stack_mode() {
 
   while true; do
     echo
-    render_page_header "出站协议栈" "调整 sing-box 的 DNS 与直连出站策略"
+    render_left_aligned_page_header "出站协议栈" "调整 sing-box 的 DNS 与直连出站策略"
     render_section_title "当前设置"
     render_summary_item "当前出站协议栈" "$(outbound_stack_mode_display_name "${SB_OUTBOUND_STACK_MODE}")"
     render_section_title "可选模式"
@@ -3603,7 +3603,7 @@ stack_management_menu() {
     fi
 
     echo
-    render_page_header "协议栈管理" "统一调整入站 / 出站网络栈策略"
+    render_left_aligned_page_header "协议栈管理" "统一调整入站 / 出站网络栈策略"
     render_section_title "协议栈摘要"
     render_summary_item "系统网络能力" "$(host_ip_stack_display_name "${host_stack}")"
     render_summary_item "当前入站协议栈" "$(inbound_stack_mode_display_name "${SB_INBOUND_STACK_MODE}")"
@@ -3628,7 +3628,7 @@ system_management_menu() {
   while true; do
     check_bbr_status
     echo
-    render_page_header "系统管理" "维护内核优化与网络协议栈设置"
+    render_left_aligned_page_header "系统管理" "维护内核优化与网络协议栈设置"
     render_section_title "系统摘要"
     render_summary_item "BBR 状态" "${BBR_STATUS}"
     render_section_title "操作选项"
@@ -3890,7 +3890,7 @@ warp_management() {
     fi
 
     echo
-    render_page_header "Cloudflare Warp 管理" "调整 Warp 出口与分流资产"
+    render_left_aligned_page_header "Cloudflare Warp 管理" "调整 Warp 出口与分流资产"
     render_section_title "Warp 摘要"
     render_summary_item "当前状态" "${status}"
     render_summary_item "当前路由模式" "${SB_WARP_ROUTE_MODE}"
@@ -4510,7 +4510,7 @@ show_connection_info_menu() {
 
   while true; do
     echo
-    render_page_header "节点信息查看" "按当前配置展示客户端连接信息"
+    render_left_aligned_page_header "节点信息查看" "按当前配置展示客户端连接信息"
     render_section_title "信息摘要"
     render_summary_item "当前协议" "$(protocol_display_name "${SB_PROTOCOL}")"
     render_summary_item "当前端口" "${SB_PORT}"
