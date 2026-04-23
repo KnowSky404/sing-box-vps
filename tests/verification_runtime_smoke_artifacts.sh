@@ -386,6 +386,7 @@ grep() {
 }
 PAYLOAD_PRELUDE
 cat >> "\${script_file}"
+perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/vless-reality.env|state_file='"${REMOTE_STATE_FILE}"'|g' "\${script_file}"
 printf 'REMOTE_HOST=%s\n' "\${remote_host}"
 REMOTE_CONFIG_PRESENT_FILE="${REMOTE_CONFIG_PRESENT_FILE}" \
 REMOTE_PORT_FILE="${REMOTE_PORT_FILE}" \

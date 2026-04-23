@@ -56,5 +56,5 @@ EOF
   verification_capture_status_menu "${VERIFY_CURRENT_SCENARIO_DIR}/sbv-status.txt"
   status_output_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/sbv-status.txt")
   grep -Fq "端口: ${expected_port}" "${status_output_path}"
-  verification_capture_vless_protocol_probe /root/sing-box-vps/config.json
+  verification_execute_single_protocol_probe vless-reality /root/sing-box-vps/config.json
 }

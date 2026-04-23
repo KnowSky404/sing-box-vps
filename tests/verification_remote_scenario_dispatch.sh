@@ -404,6 +404,7 @@ for scenario_file in "${REPO_ROOT}"/dev/verification/remote/scenarios/*.sh; do
 done
 
 cat "${REPO_ROOT}/dev/verification/remote/entrypoint.sh" >> "${PAYLOAD_FILE}"
+perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/vless-reality.env|state_file='"${STATE_FILE}"'|g' "${PAYLOAD_FILE}"
 
 CALLS_FILE="${CALLS_FILE}" \
 CONFIG_PRESENT_FILE="${CONFIG_PRESENT_FILE}" \
