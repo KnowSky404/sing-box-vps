@@ -18,8 +18,10 @@ REMOTE_SERVICE_FILE_PRESENT_FILE="${TMP_DIR}/remote-service-file-present"
 REMOTE_SBV_PRESENT_FILE="${TMP_DIR}/remote-sbv-present"
 REMOTE_SERVICE_ACTIVE_FILE="${TMP_DIR}/remote-service-active"
 REMOTE_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/vless-reality.env"
+REMOTE_HY2_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/hy2.env"
 REMOTE_INDEX_FILE="${REMOTE_PROTOCOLS_DIR}/index.env"
 REMOTE_ASSERT_LOG_FILE="${TMP_DIR}/remote-assert.log"
+REMOTE_DISPATCH_LOG_FILE="${TMP_DIR}/remote-dispatch.log"
 INSTALL_COUNT_FILE="${TMP_DIR}/install-count"
 INSTALL_VERSION_LINE=$(sed -n 's/^readonly SCRIPT_VERSION=\"[^\"]*\"$/&/p' "${REPO_ROOT}/install.sh" | head -n 1)
 UNINSTALL_HELPER_LINE=$(sed -n 's/^resolve_install_script() {$/&/p' "${REPO_ROOT}/uninstall.sh" | head -n 1)
@@ -32,6 +34,7 @@ printf '1\n' > "${REMOTE_SERVICE_FILE_PRESENT_FILE}"
 printf '1\n' > "${REMOTE_SBV_PRESENT_FILE}"
 printf '1\n' > "${REMOTE_SERVICE_ACTIVE_FILE}"
 : > "${REMOTE_ASSERT_LOG_FILE}"
+: > "${REMOTE_DISPATCH_LOG_FILE}"
 printf '0\n' > "${INSTALL_COUNT_FILE}"
 mkdir -p "${REMOTE_PROTOCOLS_DIR}"
 cat > "${REMOTE_STATE_FILE}" <<'EOF'
@@ -39,6 +42,11 @@ PORT=9443
 UUID=11111111-1111-4111-8111-111111111111
 SNI=stale.example.com
 REALITY_PUBLIC_KEY=public-key-from-state
+EOF
+cat > "${REMOTE_HY2_STATE_FILE}" <<'EOF'
+DOMAIN=hy2.example.com
+PASSWORD=hy2-password
+OBFS_PASSWORD=hy2-obfs-password
 EOF
 cat > "${REMOTE_INDEX_FILE}" <<'EOF'
 INSTALLED_PROTOCOLS=vless-reality
@@ -118,6 +126,68 @@ remote_host=\${1:-}
 shift
 script_file="${TMP_DIR}/remote-script.sh"
 cat <<'PAYLOAD_PRELUDE' > "\${script_file}"
+write_hy2_state() {
+  mkdir -p "\$(dirname "\${REMOTE_HY2_STATE_FILE}")"
+  cat > "\${REMOTE_HY2_STATE_FILE}" <<'STATE_EOF'
+DOMAIN=hy2.example.com
+PASSWORD=hy2-password
+OBFS_PASSWORD=hy2-obfs-password
+STATE_EOF
+}
+
+write_runtime_config() {
+  cat > "\${REMOTE_CONFIG_FILE}" <<CONFIG_EOF
+{
+  "inbounds": [
+    {
+      "type": "vless",
+      "listen_port": \$(cat "\${REMOTE_PORT_FILE}"),
+      "users": [
+        {
+          "uuid": "\$(cat "\${REMOTE_UUID_FILE}")",
+          "flow": "xtls-rprx-vision"
+        }
+      ],
+      "tls": {
+        "server_name": "\$(cat "\${REMOTE_SNI_FILE}")",
+        "reality": {
+          "short_id": [
+            "abcd1234"
+          ]
+        }
+      }
+    },
+    {
+      "type": "hysteria2",
+      "listen_port": 9444,
+      "users": [
+        {
+          "name": "hy2-user",
+          "password": "config-password-should-not-be-used"
+        }
+      ],
+      "tls": {
+        "server_name": "config-domain-should-not-be-used"
+      },
+      "obfs": {
+        "type": "salamander",
+        "password": "config-obfs-should-not-be-used"
+      }
+    }
+  ]
+}
+CONFIG_EOF
+}
+
+enable_multi_protocol_probe_fixture() {
+  write_vless_state
+  write_hy2_state
+  cat > "\${REMOTE_INDEX_FILE}" <<'INDEX_EOF'
+INSTALLED_PROTOCOLS=vless-reality,hy2,mystery-protocol
+INDEX_EOF
+  write_runtime_config
+}
+
 write_vless_state() {
   mkdir -p "\$(dirname "\${REMOTE_STATE_FILE}")"
   cat > "\${REMOTE_STATE_FILE}" <<STATE_EOF
@@ -387,6 +457,34 @@ grep() {
 PAYLOAD_PRELUDE
 cat >> "\${script_file}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/vless-reality.env|state_file='"${REMOTE_STATE_FILE}"'|g' "\${script_file}"
+perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/hy2.env|state_file='"${REMOTE_HY2_STATE_FILE}"'|g' "\${script_file}"
+cat > "\${script_file}.wrapper" <<'WRAP_EOF'
+eval "\$(declare -f verification_run_protocol_probes | sed '1s/verification_run_protocol_probes/verification_run_protocol_probes__original/')"
+verification_run_protocol_probes() {
+  local status=0
+  enable_multi_protocol_probe_fixture
+  printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
+  set +e
+  verification_run_protocol_probes__original "\$@"
+  status=\$?
+  set -e
+  write_vless_state
+  cat > "\${REMOTE_INDEX_FILE}" <<'INDEX_EOF'
+INSTALLED_PROTOCOLS=vless-reality
+INDEX_EOF
+  return "\${status}"
+}
+WRAP_EOF
+awk -v wrapper_file="\${script_file}.wrapper" '
+  \$0 == "if ! mkdir \"\${LOCK_DIR}\" 2>/dev/null; then" {
+    while ((getline line < wrapper_file) > 0) {
+      print line
+    }
+    close(wrapper_file)
+  }
+  { print }
+' "\${script_file}" > "\${script_file}.tmp"
+mv "\${script_file}.tmp" "\${script_file}"
 printf 'REMOTE_HOST=%s\n' "\${remote_host}"
 REMOTE_CONFIG_PRESENT_FILE="${REMOTE_CONFIG_PRESENT_FILE}" \
 REMOTE_PORT_FILE="${REMOTE_PORT_FILE}" \
@@ -398,8 +496,10 @@ REMOTE_SERVICE_ACTIVE_FILE="${REMOTE_SERVICE_ACTIVE_FILE}" \
 REMOTE_CONFIG_FILE="${REMOTE_CONFIG_FILE}" \
 REMOTE_PROTOCOLS_DIR="${REMOTE_PROTOCOLS_DIR}" \
 REMOTE_STATE_FILE="${REMOTE_STATE_FILE}" \
+REMOTE_HY2_STATE_FILE="${REMOTE_HY2_STATE_FILE}" \
 REMOTE_INDEX_FILE="${REMOTE_INDEX_FILE}" \
 REMOTE_ASSERT_LOG_FILE="${REMOTE_ASSERT_LOG_FILE}" \
+REMOTE_DISPATCH_LOG_FILE="${REMOTE_DISPATCH_LOG_FILE}" \
 INSTALL_COUNT_FILE="${INSTALL_COUNT_FILE}" \
 REAL_JQ="${REAL_JQ}" \
 PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" -lc "\${1:-}" < "\${script_file}"
@@ -420,11 +520,18 @@ grep -Fq 'SERVICE_ACTIVE=active' "${run_dir}/remote.stdout.log"
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/client.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/probe.stdout.txt" ]]
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/result.env"
+[[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/hy2/client.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/hy2/probe.stdout.txt" ]]
+grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/hy2/result.env"
+grep -Fqx 'RESULT=unsupported' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/mystery-protocol/result.env"
 grep -Fq 'remote_artifacts=extracted' "${run_dir}/summary.log"
 grep -Fq "${INSTALL_VERSION_LINE}" "${TMP_DIR}/remote-script.sh"
 grep -Fq "${UNINSTALL_HELPER_LINE}" "${TMP_DIR}/remote-script.sh"
 grep -Fq 'verification_run_protocol_probes' "${TMP_DIR}/remote-script.sh"
 ! grep -Fq 'verification_execute_single_protocol_probe vless-reality /root/sing-box-vps/config.json' "${TMP_DIR}/remote-script.sh"
+grep -Fqx 'fresh_install_vless' "${REMOTE_DISPATCH_LOG_FILE}"
+grep -Fqx 'reconfigure_existing_install' "${REMOTE_DISPATCH_LOG_FILE}"
+grep -Fqx 'runtime_smoke' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.env' "${REMOTE_ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.env' "${REMOTE_ASSERT_LOG_FILE}"
 grep -Fqx 'jq:-r|.inbounds[0].listen_port // empty|/root/sing-box-vps/config.json' "${REMOTE_ASSERT_LOG_FILE}"
