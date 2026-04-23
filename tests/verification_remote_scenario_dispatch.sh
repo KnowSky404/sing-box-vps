@@ -18,6 +18,7 @@ SERVICE_FILE_PRESENT_FILE="${TMP_DIR}/service-file-present"
 SBV_PRESENT_FILE="${TMP_DIR}/sbv-present"
 SERVICE_ACTIVE_FILE="${TMP_DIR}/service-active"
 STATE_FILE="${PROTOCOLS_DIR}/vless-reality.env"
+ANYTLS_STATE_FILE="${PROTOCOLS_DIR}/anytls.env"
 INDEX_FILE="${PROTOCOLS_DIR}/index.env"
 ASSERT_LOG_FILE="${TMP_DIR}/assert.log"
 CALLS_FILE="${TMP_DIR}/calls.log"
@@ -111,6 +112,36 @@ STATE_EOF
 CONFIG_EOF
 }
 
+write_anytls_state() {
+  mkdir -p "$(dirname "${ANYTLS_STATE_FILE}")"
+  cat > "${ANYTLS_STATE_FILE}" <<'STATE_EOF'
+PORT=9443
+DOMAIN=anytls.example.com
+PASSWORD=anytls-pass
+USER_NAME=anytls-user
+TLS_MODE=manual
+STATE_EOF
+  cat > "${CONFIG_FILE}" <<'CONFIG_EOF'
+{
+  "inbounds": [
+    {
+      "type": "anytls",
+      "listen_port": 9443,
+      "users": [
+        {
+          "name": "anytls-user",
+          "password": "anytls-pass"
+        }
+      ],
+      "tls": {
+        "server_name": "anytls.example.com"
+      }
+    }
+  ]
+}
+CONFIG_EOF
+}
+
 reset_runtime_artifacts() {
   printf '0\n' > "${CONFIG_PRESENT_FILE}"
   printf '0\n' > "${SERVICE_FILE_PRESENT_FILE}"
@@ -134,10 +165,14 @@ INDEX_EOF
 verification_prepare_remote_local_tree() {
   : "${VERIFY_REMOTE_INSTALL_SCRIPT:?VERIFY_REMOTE_INSTALL_SCRIPT is required}"
   : "${VERIFY_REMOTE_UNINSTALL_SCRIPT:?VERIFY_REMOTE_UNINSTALL_SCRIPT is required}"
+  VERIFY_REMOTE_LOCAL_TREE_DIR="$(dirname "${CALLS_FILE}")/remote-local-tree"
+  mkdir -p "${VERIFY_REMOTE_LOCAL_TREE_DIR}"
+  export VERIFY_REMOTE_LOCAL_TREE_DIR
 }
 
 verification_cleanup_remote_local_tree() {
-  :
+  rm -rf "${VERIFY_REMOTE_LOCAL_TREE_DIR:-}"
+  unset VERIFY_REMOTE_LOCAL_TREE_DIR
 }
 
 next_install_uuid() {
@@ -192,13 +227,58 @@ bash() {
   case "${target}" in
     "${VERIFY_REMOTE_INSTALL_SCRIPT:-__missing_install__}")
       if [[ "$#" -eq 0 ]]; then
-        assert_input_sequence "${target}" \
-          "1" "" "1" "443" "www.cloudflare.com" "n" "n" "0"
-        printf '443\n' > "${PORT_FILE}"
-        next_install_uuid > "${UUID_FILE}"
-        printf 'www.cloudflare.com\n' > "${SNI_FILE}"
-        install_runtime_artifacts
-        return 0
+        mapfile -t actual_lines
+        if [[ "${actual_lines[2]:-}" == "1" ]]; then
+          if [[ "${#actual_lines[@]}" -ne 8 ]]; then
+            printf 'unexpected vless install input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
+            return 1
+          fi
+          [[ "${actual_lines[0]}" == "1" ]]
+          [[ "${actual_lines[2]}" == "1" ]]
+          [[ "${actual_lines[3]}" == "443" ]]
+          [[ "${actual_lines[4]}" == "www.cloudflare.com" ]]
+          [[ "${actual_lines[5]}" == "n" ]]
+          [[ "${actual_lines[6]}" == "n" ]]
+          [[ "${actual_lines[7]}" == "0" ]]
+          printf '443\n' > "${PORT_FILE}"
+          next_install_uuid > "${UUID_FILE}"
+          printf 'www.cloudflare.com\n' > "${SNI_FILE}"
+          install_runtime_artifacts
+          return 0
+        fi
+
+        if [[ "${actual_lines[2]:-}" == "4" ]]; then
+          if [[ "${#actual_lines[@]}" -ne 13 ]]; then
+            printf 'unexpected anytls install input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
+            return 1
+          fi
+          [[ "${actual_lines[0]}" == "1" ]]
+          [[ "${actual_lines[1]}" == "" ]]
+          [[ "${actual_lines[2]}" == "4" ]]
+          [[ "${actual_lines[3]}" == "anytls.example.com" ]]
+          [[ "${actual_lines[4]}" == "9443" ]]
+          [[ "${actual_lines[5]}" == "anytls-user" ]]
+          [[ "${actual_lines[6]}" == "anytls-pass" ]]
+          [[ "${actual_lines[7]}" == "2" ]]
+          [[ -n "${actual_lines[8]}" ]]
+          [[ -n "${actual_lines[9]}" ]]
+          [[ "${actual_lines[10]}" == "n" ]]
+          [[ "${actual_lines[11]}" == "n" ]]
+          [[ "${actual_lines[12]}" == "0" ]]
+          printf '9443\n' > "${PORT_FILE}"
+          printf '1\n' > "${CONFIG_PRESENT_FILE}"
+          printf '1\n' > "${SERVICE_FILE_PRESENT_FILE}"
+          printf '1\n' > "${SBV_PRESENT_FILE}"
+          printf '1\n' > "${SERVICE_ACTIVE_FILE}"
+          write_anytls_state
+          cat > "${INDEX_FILE}" <<'INDEX_EOF'
+INSTALLED_PROTOCOLS=anytls
+INDEX_EOF
+          return 0
+        fi
+
+        printf 'unexpected install input: %s\n' "${actual_lines[*]:-}" >&2
+        return 1
       fi
       if [[ "${1:-}" == "--internal-uninstall-purge" && "${2:-}" == "--yes" ]]; then
         reset_runtime_artifacts
@@ -265,6 +345,11 @@ test() {
     return
   fi
 
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/anytls.env" ]]; then
+    [[ -f "${ANYTLS_STATE_FILE}" ]]
+    return
+  fi
+
   if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
     [[ -f "${INDEX_FILE}" ]]
     return
@@ -319,6 +404,10 @@ sed() {
     args[$last_index]="${STATE_FILE}"
   fi
 
+  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/anytls.env" ]]; then
+    args[$last_index]="${ANYTLS_STATE_FILE}"
+  fi
+
   if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
     args[$last_index]="${INDEX_FILE}"
   fi
@@ -349,6 +438,10 @@ grep() {
 
   if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/vless-reality.env" ]]; then
     args[$last_index]="${STATE_FILE}"
+  fi
+
+  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/anytls.env" ]]; then
+    args[$last_index]="${ANYTLS_STATE_FILE}"
   fi
 
   if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/index.env" ]]; then
@@ -405,6 +498,7 @@ done
 
 cat "${REPO_ROOT}/dev/verification/remote/entrypoint.sh" >> "${PAYLOAD_FILE}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/vless-reality.env|state_file='"${STATE_FILE}"'|g' "${PAYLOAD_FILE}"
+perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/anytls.env|state_file='"${ANYTLS_STATE_FILE}"'|g' "${PAYLOAD_FILE}"
 
 CALLS_FILE="${CALLS_FILE}" \
 CONFIG_PRESENT_FILE="${CONFIG_PRESENT_FILE}" \
@@ -417,6 +511,7 @@ SERVICE_FILE_PRESENT_FILE="${SERVICE_FILE_PRESENT_FILE}" \
 SBV_PRESENT_FILE="${SBV_PRESENT_FILE}" \
 SERVICE_ACTIVE_FILE="${SERVICE_ACTIVE_FILE}" \
 STATE_FILE="${STATE_FILE}" \
+ANYTLS_STATE_FILE="${ANYTLS_STATE_FILE}" \
 INDEX_FILE="${INDEX_FILE}" \
 ASSERT_LOG_FILE="${ASSERT_LOG_FILE}" \
 INSTALL_COUNT_FILE="${INSTALL_COUNT_FILE}" \
@@ -426,13 +521,15 @@ REAL_JQ="${REAL_JQ}" \
   bash "${PAYLOAD_FILE}" \
     fresh_install_vless \
     reconfigure_existing_install \
-    uninstall_and_reinstall \
+    fresh_install_anytls \
     runtime_smoke \
+    uninstall_and_reinstall \
     > "${STDOUT_FILE}" \
     2> "${STDERR_FILE}"
 
 grep -Fqx 'SCENARIO=fresh_install_vless' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=reconfigure_existing_install' "${STDOUT_FILE}"
+grep -Fqx 'SCENARIO=fresh_install_anytls' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=uninstall_and_reinstall' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=runtime_smoke' "${STDOUT_FILE}"
 grep -Fq '__SING_BOX_VPS_REMOTE_ARTIFACT_BUNDLE_BEGIN__' "${STDOUT_FILE}"
@@ -450,15 +547,17 @@ awk '
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_vless/protocol-probes/vless-reality/result.env"
 [[ -f "${ARTIFACT_DIR}/scenarios/reconfigure_existing_install/config.diff.txt" ]]
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/reconfigure_existing_install/protocol-probes/vless-reality/result.env"
+grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_anytls/protocol-probes/anytls/result.env"
 [[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/sing-box-check.txt" ]]
 grep -Fqx 'STATUS=success' "${ARTIFACT_DIR}/scenarios/runtime_smoke/result.env"
-grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/vless-reality/result.env"
+grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/anytls/result.env"
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/uninstall_and_reinstall/protocol-probes/vless-reality/result.env"
-[[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/vless-reality/client.json" ]]
-[[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/vless-reality/probe.stdout.txt" ]]
+[[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/anytls/client.json" ]]
+[[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/anytls/probe.stdout.txt" ]]
 grep -Fq 'verification_run_protocol_probes' "${PAYLOAD_FILE}"
 ! grep -Fq 'verification_execute_single_protocol_probe vless-reality /root/sing-box-vps/config.json' "${PAYLOAD_FILE}"
 grep -Fqx 'test:-f|/root/sing-box-vps/protocols/vless-reality.env|' "${ASSERT_LOG_FILE}"
+grep -Fqx 'test:-f|/root/sing-box-vps/protocols/anytls.env|' "${ASSERT_LOG_FILE}"
 grep -Fqx 'test:-f|/root/sing-box-vps/protocols/index.env|' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
@@ -469,6 +568,9 @@ grep -Fqx 'jq:-r|.inbounds[0].listen_port // empty|/root/sing-box-vps/config.jso
 grep -Fqx 'grep:-Fqx PORT=8443 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx UUID=22222222-2222-4222-8222-222222222222 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx SNI=cdn.cloudflare.com /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx PORT=9443 /root/sing-box-vps/protocols/anytls.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx DOMAIN=anytls.example.com /root/sing-box-vps/protocols/anytls.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx PASSWORD=anytls-pass /root/sing-box-vps/protocols/anytls.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'UUID=44444444-4444-4444-8444-444444444444' "${STATE_FILE}"
 grep -Fq "bash:${EMBEDDED_INSTALL_SCRIPT} " "${CALLS_FILE}"
 grep -Fq 'bash:/usr/local/bin/sbv ' "${CALLS_FILE}"

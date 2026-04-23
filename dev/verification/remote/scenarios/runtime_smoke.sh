@@ -1,5 +1,6 @@
 verification_scenario_runtime_smoke() {
   local current_port
+  local current_protocols
   local status_output_path
 
   printf 'SCENARIO=runtime_smoke\n'
@@ -7,8 +8,9 @@ verification_scenario_runtime_smoke() {
   test -f /root/sing-box-vps/protocols/index.env
   test -x /usr/local/bin/sbv
   current_port=$(jq -r '.inbounds[0].listen_port // empty' /root/sing-box-vps/config.json)
+  current_protocols=$(sed -n 's/^INSTALLED_PROTOCOLS=//p' /root/sing-box-vps/protocols/index.env | head -n 1)
   [[ -n "${current_port}" ]]
-  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality' /root/sing-box-vps/protocols/index.env
+  [[ -n "${current_protocols}" ]]
   systemctl is-active --quiet sing-box
   printf 'SERVICE_ACTIVE=%s\n' "$(systemctl is-active sing-box)"
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/systemctl.status.txt" systemctl status sing-box --no-pager

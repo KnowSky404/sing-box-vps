@@ -62,7 +62,7 @@ PROBE_CALLS_FILE="${calls_file}"
 ${setup_snippet}
 
 cat > "${INDEX_FILE}" <<'INDEX_EOF'
-INSTALLED_PROTOCOLS=vless-reality,hy2,mystery-protocol
+INSTALLED_PROTOCOLS=vless-reality,hy2,anytls,mystery-protocol
 INDEX_EOF
 
 verification_run_protocol_probes
@@ -119,10 +119,13 @@ fi
 
 grep -Fqx 'vless-reality|/root/sing-box-vps/config.json' "${FAILURE_CALLS_FILE}"
 grep -Fqx 'hy2|/root/sing-box-vps/config.json' "${FAILURE_CALLS_FILE}"
+grep -Fqx 'anytls|/root/sing-box-vps/config.json' "${FAILURE_CALLS_FILE}"
 grep -Fqx 'RESULT=success' \
   "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/vless-reality/result.env"
 grep -Fqx 'RESULT=failure' \
   "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/hy2/result.env"
+grep -Fqx 'RESULT=failure' \
+  "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/anytls/result.env"
 grep -Fqx 'RESULT=unsupported' \
   "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/mystery-protocol/result.env"
 
@@ -142,9 +145,12 @@ bash "${TMP_DIR}/probe-harness-green.sh" \
 
 grep -Fqx 'vless-reality|/root/sing-box-vps/config.json' "${GREEN_CALLS_FILE}"
 grep -Fqx 'hy2|/root/sing-box-vps/config.json' "${GREEN_CALLS_FILE}"
+grep -Fqx 'anytls|/root/sing-box-vps/config.json' "${GREEN_CALLS_FILE}"
 grep -Fqx 'RESULT=success' \
   "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/vless-reality/result.env"
 grep -Fqx 'RESULT=success' \
   "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/hy2/result.env"
+grep -Fqx 'RESULT=success' \
+  "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/anytls/result.env"
 grep -Fqx 'RESULT=unsupported' \
   "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/mystery-protocol/result.env"

@@ -17,6 +17,7 @@ REMOTE_SERVICE_FILE_PRESENT_FILE="${TMP_DIR}/remote-service-file-present"
 REMOTE_SBV_PRESENT_FILE="${TMP_DIR}/remote-sbv-present"
 REMOTE_SERVICE_ACTIVE_FILE="${TMP_DIR}/remote-service-active"
 REMOTE_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/vless-reality.env"
+REMOTE_ANYTLS_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/anytls.env"
 REMOTE_INDEX_FILE="${REMOTE_PROTOCOLS_DIR}/index.env"
 REMOTE_ASSERT_LOG_FILE="${TMP_DIR}/remote-assert.log"
 INSTALL_COUNT_FILE="${TMP_DIR}/install-count"
@@ -37,6 +38,7 @@ cat > "${REMOTE_STATE_FILE}" <<'EOF'
 PORT=9443
 UUID=11111111-1111-4111-8111-111111111111
 SNI=stale.example.com
+REALITY_PUBLIC_KEY=public-key-from-state
 EOF
 cat > "${REMOTE_INDEX_FILE}" <<'EOF'
 INSTALLED_PROTOCOLS=vless-reality
@@ -45,14 +47,21 @@ cat > "${REMOTE_CONFIG_FILE}" <<'EOF'
 {
   "inbounds": [
     {
+      "type": "vless",
       "listen_port": 9443,
       "users": [
         {
-          "uuid": "11111111-1111-4111-8111-111111111111"
+          "uuid": "11111111-1111-4111-8111-111111111111",
+          "flow": "xtls-rprx-vision"
         }
       ],
       "tls": {
-        "server_name": "stale.example.com"
+        "server_name": "stale.example.com",
+        "reality": {
+          "short_id": [
+            "abcd1234"
+          ]
+        }
       }
     }
   ]
@@ -148,19 +157,57 @@ write_vless_state() {
 PORT=\$(cat "\${REMOTE_PORT_FILE}")
 UUID=\$(cat "\${REMOTE_UUID_FILE}")
 SNI=\$(cat "\${REMOTE_SNI_FILE}")
+REALITY_PUBLIC_KEY=public-key-from-state
 STATE_EOF
   cat > "\${REMOTE_CONFIG_FILE}" <<CONFIG_EOF
 {
   "inbounds": [
     {
+      "type": "vless",
       "listen_port": \$(cat "\${REMOTE_PORT_FILE}"),
       "users": [
         {
-          "uuid": "\$(cat "\${REMOTE_UUID_FILE}")"
+          "uuid": "\$(cat "\${REMOTE_UUID_FILE}")",
+          "flow": "xtls-rprx-vision"
         }
       ],
       "tls": {
-        "server_name": "\$(cat "\${REMOTE_SNI_FILE}")"
+        "server_name": "\$(cat "\${REMOTE_SNI_FILE}")",
+        "reality": {
+          "short_id": [
+            "abcd1234"
+          ]
+        }
+      }
+    }
+  ]
+}
+CONFIG_EOF
+}
+
+write_anytls_state() {
+  mkdir -p "\$(dirname "\${REMOTE_ANYTLS_STATE_FILE}")"
+  cat > "\${REMOTE_ANYTLS_STATE_FILE}" <<'STATE_EOF'
+PORT=9443
+DOMAIN=anytls.example.com
+PASSWORD=anytls-pass
+USER_NAME=anytls-user
+TLS_MODE=manual
+STATE_EOF
+  cat > "\${REMOTE_CONFIG_FILE}" <<'CONFIG_EOF'
+{
+  "inbounds": [
+    {
+      "type": "anytls",
+      "listen_port": 9443,
+      "users": [
+        {
+          "name": "anytls-user",
+          "password": "anytls-pass"
+        }
+      ],
+      "tls": {
+        "server_name": "anytls.example.com"
       }
     }
   ]
@@ -238,13 +285,53 @@ bash() {
   case "\${target}" in
     "\${VERIFY_REMOTE_INSTALL_SCRIPT:-__missing_install__}")
       if [[ "\$#" -eq 0 ]]; then
-        assert_input_sequence "\${target}" \
-          "1" "" "1" "443" "www.cloudflare.com" "n" "n" "0"
-        printf '443\n' > "\${REMOTE_PORT_FILE}"
-        next_install_uuid > "\${REMOTE_UUID_FILE}"
-        printf 'www.cloudflare.com\n' > "\${REMOTE_SNI_FILE}"
-        install_runtime_artifacts
-        return 0
+        mapfile -t actual_lines
+        if [[ "\${actual_lines[2]:-}" == "1" ]]; then
+          [[ "\${#actual_lines[@]}" -eq 8 ]]
+          [[ "\${actual_lines[0]}" == "1" ]]
+          [[ "\${actual_lines[1]}" == "" ]]
+          [[ "\${actual_lines[2]}" == "1" ]]
+          [[ "\${actual_lines[3]}" == "443" ]]
+          [[ "\${actual_lines[4]}" == "www.cloudflare.com" ]]
+          [[ "\${actual_lines[5]}" == "n" ]]
+          [[ "\${actual_lines[6]}" == "n" ]]
+          [[ "\${actual_lines[7]}" == "0" ]]
+          printf '443\n' > "\${REMOTE_PORT_FILE}"
+          next_install_uuid > "\${REMOTE_UUID_FILE}"
+          printf 'www.cloudflare.com\n' > "\${REMOTE_SNI_FILE}"
+          install_runtime_artifacts
+          return 0
+        fi
+
+        if [[ "\${actual_lines[2]:-}" == "4" ]]; then
+          [[ "\${#actual_lines[@]}" -eq 13 ]]
+          [[ "\${actual_lines[0]}" == "1" ]]
+          [[ "\${actual_lines[1]}" == "" ]]
+          [[ "\${actual_lines[2]}" == "4" ]]
+          [[ "\${actual_lines[3]}" == "anytls.example.com" ]]
+          [[ "\${actual_lines[4]}" == "9443" ]]
+          [[ "\${actual_lines[5]}" == "anytls-user" ]]
+          [[ "\${actual_lines[6]}" == "anytls-pass" ]]
+          [[ "\${actual_lines[7]}" == "2" ]]
+          [[ -n "\${actual_lines[8]}" ]]
+          [[ -n "\${actual_lines[9]}" ]]
+          [[ "\${actual_lines[10]}" == "n" ]]
+          [[ "\${actual_lines[11]}" == "n" ]]
+          [[ "\${actual_lines[12]}" == "0" ]]
+          printf '9443\n' > "\${REMOTE_PORT_FILE}"
+          printf '1\n' > "\${REMOTE_CONFIG_PRESENT_FILE}"
+          printf '1\n' > "\${REMOTE_SERVICE_FILE_PRESENT_FILE}"
+          printf '1\n' > "\${REMOTE_SBV_PRESENT_FILE}"
+          printf '1\n' > "\${REMOTE_SERVICE_ACTIVE_FILE}"
+          write_anytls_state
+          cat > "\${REMOTE_INDEX_FILE}" <<'INDEX_EOF'
+INSTALLED_PROTOCOLS=anytls
+INDEX_EOF
+          return 0
+        fi
+
+        printf 'unexpected install input: %s\n' "\${actual_lines[*]:-}" >&2
+        return 1
       fi
       if [[ "\${1:-}" == "--internal-uninstall-purge" && "\${2:-}" == "--yes" ]]; then
         reset_runtime_artifacts
@@ -308,6 +395,11 @@ test() {
     return
   fi
 
+  if [[ "\${1:-}" == "-f" && "\${2:-}" == "/root/sing-box-vps/protocols/anytls.env" ]]; then
+    [[ -f "\${REMOTE_ANYTLS_STATE_FILE}" ]]
+    return
+  fi
+
   if [[ "\${1:-}" == "-f" && "\${2:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
     [[ -f "\${REMOTE_INDEX_FILE}" ]]
     return
@@ -342,25 +434,16 @@ test() {
 }
 
 jq() {
+  local args=("\$@")
+  local last_index=\$(( \$# - 1 ))
+
   printf 'jq:%s|%s|%s\n' "\${1:-}" "\${2:-}" "\${3:-}" >> "\${REMOTE_ASSERT_LOG_FILE}"
 
-  if [[ "\${1:-}" == "-r" && "\${2:-}" == ".inbounds[0].listen_port // empty" ]]; then
-    cat "\${REMOTE_PORT_FILE}"
-    return 0
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/config.json" ]]; then
+    args[\$last_index]="\${REMOTE_CONFIG_FILE}"
   fi
 
-  if [[ "\${1:-}" == "-r" && "\${2:-}" == ".inbounds[0].users[0].uuid // empty" ]]; then
-    cat "\${REMOTE_UUID_FILE}"
-    return 0
-  fi
-
-  if [[ "\${1:-}" == "-r" && "\${2:-}" == ".inbounds[0].tls.server_name // empty" ]]; then
-    cat "\${REMOTE_SNI_FILE}"
-    return 0
-  fi
-
-  printf 'unexpected jq call: %s\n' "\$*" >&2
-  return 1
+  command jq "\${args[@]}"
 }
 
 cp() {
@@ -378,6 +461,25 @@ cp() {
   command cp "\${args[@]}"
 }
 
+sed() {
+  local args=("\$@")
+  local last_index=\$(( \$# - 1 ))
+
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/vless-reality.env" ]]; then
+    args[\$last_index]="\${REMOTE_STATE_FILE}"
+  fi
+
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/anytls.env" ]]; then
+    args[\$last_index]="\${REMOTE_ANYTLS_STATE_FILE}"
+  fi
+
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
+    args[\$last_index]="\${REMOTE_INDEX_FILE}"
+  fi
+
+  command sed "\${args[@]}"
+}
+
 grep() {
   local args=("\$@")
   local last_index=\$(( \$# - 1 ))
@@ -388,6 +490,10 @@ grep() {
     args[\$last_index]="\${REMOTE_STATE_FILE}"
   fi
 
+  if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/anytls.env" ]]; then
+    args[\$last_index]="\${REMOTE_ANYTLS_STATE_FILE}"
+  fi
+
   if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/index.env" ]]; then
     args[\$last_index]="\${REMOTE_INDEX_FILE}"
   fi
@@ -396,6 +502,8 @@ grep() {
 }
 PAYLOAD_PRELUDE
 cat >> "\${script_file}"
+perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/vless-reality.env|state_file='"${REMOTE_STATE_FILE}"'|g' "\${script_file}"
+perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/anytls.env|state_file='"${REMOTE_ANYTLS_STATE_FILE}"'|g' "\${script_file}"
 printf 'REMOTE_HOST=%s\n' "\${remote_host}"
 REMOTE_CONFIG_PRESENT_FILE="${REMOTE_CONFIG_PRESENT_FILE}" \
 REMOTE_PORT_FILE="${REMOTE_PORT_FILE}" \
@@ -407,6 +515,7 @@ REMOTE_SERVICE_ACTIVE_FILE="${REMOTE_SERVICE_ACTIVE_FILE}" \
 REMOTE_CONFIG_FILE="${REMOTE_CONFIG_FILE}" \
 REMOTE_PROTOCOLS_DIR="${REMOTE_PROTOCOLS_DIR}" \
 REMOTE_STATE_FILE="${REMOTE_STATE_FILE}" \
+REMOTE_ANYTLS_STATE_FILE="${REMOTE_ANYTLS_STATE_FILE}" \
 REMOTE_INDEX_FILE="${REMOTE_INDEX_FILE}" \
 REMOTE_ASSERT_LOG_FILE="${REMOTE_ASSERT_LOG_FILE}" \
 INSTALL_COUNT_FILE="${INSTALL_COUNT_FILE}" \
@@ -414,7 +523,8 @@ PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" -lc "\${1:-}" < "\${script_file}"
 EOF
 chmod +x "${TMP_DIR}/ssh"
 
-PATH="${TMP_DIR}:${PATH}" VERIFY_REMOTE_TARGET_FILE="${TMP_DIR}/missing-target.env" VERIFY_REMOTE_HOST=test.example VERIFY_REMOTE_USER=root \
+env -u VERIFY_SKIP_LOCAL_TESTS \
+  PATH="${TMP_DIR}:${PATH}" VERIFY_REMOTE_TARGET_FILE="${TMP_DIR}/missing-target.env" VERIFY_REMOTE_HOST=test.example VERIFY_REMOTE_USER=root \
   bash "${REPO_ROOT}/dev/verification/run.sh" > "${TMP_DIR}/stdout.txt"
 
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout.txt")
@@ -422,7 +532,7 @@ grep -Fqx 'install.sh' "${run_dir}/changed-files.txt"
 grep -Fqx 'README.md' "${run_dir}/changed-files.txt"
 grep -Fqx 'tests/new_untracked_case.sh' "${run_dir}/changed-files.txt"
 scenarios=$(paste -sd, "${run_dir}/scenarios.txt")
-[[ "${scenarios}" == "fresh_install_vless,reconfigure_existing_install,runtime_smoke" ]] || {
+[[ "${scenarios}" == "fresh_install_vless,reconfigure_existing_install,fresh_install_anytls,runtime_smoke" ]] || {
   printf 'unexpected scenarios: %s\n' "${scenarios}" >&2
   exit 1
 }
@@ -433,17 +543,20 @@ grep -Fq 'remote_target=root@test.example' "${run_dir}/summary.log"
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless/protocols/index.env" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless/listeners.ss-lntp.txt" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/reconfigure_existing_install/config.diff.txt" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_anytls/sing-box-check.txt" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/sing-box-check.txt" ]]
 grep -Fq "${INSTALL_VERSION_LINE}" "${TMP_DIR}/remote-script.sh"
 grep -Fq "${UNINSTALL_HELPER_LINE}" "${TMP_DIR}/remote-script.sh"
 grep -Fq 'remote_artifacts=extracted' "${run_dir}/summary.log"
 grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.env' "${REMOTE_ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.env' "${REMOTE_ASSERT_LOG_FILE}"
-grep -Fqx 'UUID=22222222-2222-4222-8222-222222222222' "${REMOTE_STATE_FILE}"
+grep -Fqx 'grep:-Fqx DOMAIN=anytls.example.com /root/sing-box-vps/protocols/anytls.env' "${REMOTE_ASSERT_LOG_FILE}"
+grep -Fqx 'PASSWORD=anytls-pass' "${REMOTE_ANYTLS_STATE_FILE}"
 grep -Fqx 'tests/verification_protocol_probe_matrix.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_vless.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_hy2.sh|1' "${TMP_DIR}/local-tests.log"
-[[ $(wc -l < "${TMP_DIR}/local-tests.log") -eq 3 ]] || {
+grep -Fqx 'tests/verification_protocol_probe_anytls.sh|1' "${TMP_DIR}/local-tests.log"
+[[ $(wc -l < "${TMP_DIR}/local-tests.log") -eq 4 ]] || {
   printf 'expected only fast protocol probe tests for install changes\n' >&2
   exit 1
 }
@@ -457,7 +570,7 @@ grep -Fqx 'install.sh' "${run_dir_skip}/changed-files.txt"
 grep -Fqx 'README.md' "${run_dir_skip}/changed-files.txt"
 grep -Fqx 'tests/new_untracked_case.sh' "${run_dir_skip}/changed-files.txt"
 scenarios_skip=$(paste -sd, "${run_dir_skip}/scenarios.txt")
-[[ "${scenarios_skip}" == "fresh_install_vless,reconfigure_existing_install,runtime_smoke" ]] || {
+[[ "${scenarios_skip}" == "fresh_install_vless,reconfigure_existing_install,fresh_install_anytls,runtime_smoke" ]] || {
   printf 'unexpected scenarios for skip run: %s\n' "${scenarios_skip}" >&2
   exit 1
 }
@@ -471,7 +584,8 @@ skip_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
   exit 1
 }
 
-PATH="${TMP_DIR}:${PATH}" VERIFY_REMOTE_TARGET_FILE="${TMP_DIR}/missing-target.env" VERIFY_SKIP_REMOTE=1 \
+env -u VERIFY_SKIP_LOCAL_TESTS \
+  PATH="${TMP_DIR}:${PATH}" VERIFY_REMOTE_TARGET_FILE="${TMP_DIR}/missing-target.env" VERIFY_SKIP_REMOTE=1 \
   bash "${REPO_ROOT}/dev/verification/run.sh" \
   --changed-file dev/verification/remote/entrypoint.sh > "${TMP_DIR}/stdout-remote-framework.txt"
 
@@ -484,6 +598,7 @@ scenarios_remote_framework=$(paste -sd, "${run_dir_remote_framework}/scenarios.t
 grep -Fqx 'tests/verification_protocol_probe_matrix.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_vless.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_hy2.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_protocol_probe_anytls.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_artifact_dir_layout.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_trigger_rules.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_scenario_mapping.sh|1' "${TMP_DIR}/local-tests.log"

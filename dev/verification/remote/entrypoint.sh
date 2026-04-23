@@ -186,7 +186,7 @@ read_installed_protocols() {
 
 verification_protocol_probe_support_status() {
   case "${1}" in
-    vless-reality|hy2)
+    vless-reality|hy2|anytls)
       printf 'supported\n'
       ;;
     *)
@@ -265,6 +265,30 @@ verification_load_hy2_probe_state() {
   printf -v "${password_var}" '%s' "${PASSWORD-}"
   printf -v "${domain_var}" '%s' "${DOMAIN-}"
   printf -v "${obfs_password_var}" '%s' "${OBFS_PASSWORD-}"
+}
+
+verification_load_anytls_probe_state() {
+  local state_file=$1
+  local password_var=$2
+  local domain_var=$3
+  local decoded_assignments=''
+  local PASSWORD=''
+  local DOMAIN=''
+
+  decoded_assignments="$(
+    # Decode the full state file in a subshell so unrelated assignments cannot
+    # pollute the caller shell, then re-emit only the fields this probe needs.
+    # shellcheck disable=SC1090
+    source "${state_file}"
+    printf 'PASSWORD=%q\n' "${PASSWORD-}"
+    printf 'DOMAIN=%q\n' "${DOMAIN-}"
+  )"
+
+  # shellcheck disable=SC1091
+  source /dev/stdin <<<"${decoded_assignments}"
+
+  printf -v "${password_var}" '%s' "${PASSWORD-}"
+  printf -v "${domain_var}" '%s' "${DOMAIN-}"
 }
 
 verification_generate_protocol_probe_client_config() {
@@ -442,6 +466,66 @@ verification_generate_protocol_probe_client_config() {
         return 1
       fi
       ;;
+    anytls)
+      state_file=/root/sing-box-vps/protocols/anytls.env
+      output_path=$(verification_artifact_path \
+        "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
+      temp_output_path="${output_path}.tmp.$$"
+      rm -f "${temp_output_path}"
+
+      inbound_index=$(verification_find_config_inbound_index_by_type "${config_file}" anytls) || {
+        printf 'missing inbound for protocol generator: %s\n' "${protocol}" >&2
+        return 1
+      }
+      server_port=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // empty' "${config_file}")
+      verification_require_protocol_probe_field "${protocol}" server_port "${server_port}" || return 1
+      if [[ ! -f "${state_file}" ]]; then
+        printf 'missing protocol state file for protocol generator: %s\n' "${protocol}" >&2
+        return 1
+      fi
+      verification_load_anytls_probe_state \
+        "${state_file}" \
+        password \
+        domain
+      verification_require_protocol_probe_field "${protocol}" password "${password}" || return 1
+      verification_require_protocol_probe_field "${protocol}" domain "${domain}" || return 1
+
+      if jq -n \
+        --arg server_port "${server_port}" \
+        --arg password "${password}" \
+        --arg domain "${domain}" \
+        '{
+          log: {
+            disabled: true
+          },
+          inbounds: [
+            {
+              type: "socks",
+              tag: "local-socks",
+              listen: "127.0.0.1",
+              listen_port: 19080
+            }
+          ],
+          outbounds: [
+            {
+              type: "anytls",
+              tag: "proxy",
+              server: "127.0.0.1",
+              server_port: ($server_port | tonumber),
+              password: $password,
+              tls: {
+                enabled: true,
+                server_name: $domain
+              }
+            }
+          ]
+        }' > "${temp_output_path}"; then
+        mv "${temp_output_path}" "${output_path}"
+      else
+        rm -f "${temp_output_path}"
+        return 1
+      fi
+      ;;
     *)
       printf 'unsupported protocol generator: %s\n' "${protocol}" >&2
       return 1
@@ -535,6 +619,9 @@ verification_cleanup() {
   verification_capture_best_effort_command "meta/final-journalctl.txt" journalctl -u sing-box -n 100 --no-pager
   verification_capture_listener_snapshot "meta/final-listeners.ss-lntp.txt"
   verification_emit_artifact_bundle || true
+  if declare -F verification_cleanup_remote_local_tree >/dev/null; then
+    verification_cleanup_remote_local_tree || true
+  fi
   if [[ "${VERIFY_LOCK_HELD}" == "1" ]]; then
     rmdir "${LOCK_DIR}" || true
   fi
@@ -582,6 +669,9 @@ for scenario in "$@"; do
       ;;
     reconfigure_existing_install)
       run_verification_scenario reconfigure_existing_install verification_scenario_reconfigure_existing_install
+      ;;
+    fresh_install_anytls)
+      run_verification_scenario fresh_install_anytls verification_scenario_fresh_install_anytls
       ;;
     uninstall_and_reinstall)
       run_verification_scenario uninstall_and_reinstall verification_scenario_uninstall_and_reinstall

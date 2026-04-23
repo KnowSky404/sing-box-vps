@@ -67,7 +67,8 @@ resolve_local_tests() {
     append_unique_lines \
       tests/verification_protocol_probe_matrix.sh \
       tests/verification_protocol_probe_vless.sh \
-      tests/verification_protocol_probe_hy2.sh
+      tests/verification_protocol_probe_hy2.sh \
+      tests/verification_protocol_probe_anytls.sh
   fi
 
   if [[ "${needs_runner_tests}" == "1" ]]; then
@@ -106,7 +107,7 @@ resolve_remote_scenarios() {
   done
 
   if [[ "${needs_install_flow}" == "1" ]]; then
-    printf '%s\n' fresh_install_vless reconfigure_existing_install
+    printf '%s\n' fresh_install_vless reconfigure_existing_install fresh_install_anytls
   fi
 
   printf '%s\n' runtime_smoke

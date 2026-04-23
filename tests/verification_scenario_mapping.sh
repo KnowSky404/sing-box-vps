@@ -20,11 +20,11 @@ assert_scenarios() {
   fi
 }
 
-assert_scenarios "fresh_install_vless,reconfigure_existing_install,runtime_smoke" install.sh
-assert_scenarios "fresh_install_vless,reconfigure_existing_install,runtime_smoke" configs/example.json
+assert_scenarios "fresh_install_vless,reconfigure_existing_install,fresh_install_anytls,runtime_smoke" install.sh
+assert_scenarios "fresh_install_vless,reconfigure_existing_install,fresh_install_anytls,runtime_smoke" configs/example.json
 assert_scenarios "runtime_smoke" utils/common.sh
 assert_scenarios "runtime_smoke,uninstall_and_reinstall" uninstall.sh
-assert_scenarios "fresh_install_vless,reconfigure_existing_install,runtime_smoke,uninstall_and_reinstall" install.sh tests/uninstall_purge_removes_runtime_artifacts.sh
+assert_scenarios "fresh_install_vless,reconfigure_existing_install,fresh_install_anytls,runtime_smoke,uninstall_and_reinstall" install.sh tests/uninstall_purge_removes_runtime_artifacts.sh
 
 date() {
   if [[ "${1:-}" == "+%s" ]]; then
