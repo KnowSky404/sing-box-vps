@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042306"
+readonly SCRIPT_VERSION="2026042307"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -4511,11 +4511,12 @@ build_singbox_client_config() {
   local original_protocol_state clash_api_secret public_ip tmpdir
   local exportable_protocols=()
   local remote_outbounds_json remote_tags_json
-  local protocol outbound_json
+  local protocol outbound_json usable_protocol_count
+  local status=0
 
   mapfile -t exportable_protocols < <(list_exportable_client_protocols)
   if [[ ${#exportable_protocols[@]} -eq 0 ]]; then
-    print_warn "未检测到可导出的远程协议，当前仅支持导出 vless-reality、hy2、anytls。"
+    log_warn "未检测到可导出的远程协议，当前仅支持导出 vless-reality、hy2、anytls。" >&2
     return 1
   fi
 
@@ -4523,144 +4524,170 @@ build_singbox_client_config() {
   clash_api_secret=$(generate_random_token "clash-" 16)
   public_ip=$(get_public_ip)
   tmpdir=$(mktemp -d)
+  usable_protocol_count=0
 
   for protocol in "${exportable_protocols[@]}"; do
+    if ! protocol_state_exists "${protocol}"; then
+      log_warn "协议状态文件缺失，已跳过客户端导出协议: ${protocol}" >&2
+      continue
+    fi
+
     if ! outbound_json=$(build_client_outbound_json_for_protocol "${protocol}" "${public_ip}"); then
-      rm -rf "${tmpdir}"
-      return 1
+      log_warn "生成客户端导出协议失败，已跳过: ${protocol}" >&2
+      continue
     fi
 
     printf '%s\n' "${outbound_json}" >> "${tmpdir}/outbounds.jsonl"
     printf '%s\n' "$(jq -r '.tag' <<< "${outbound_json}")" >> "${tmpdir}/tags.txt"
+    usable_protocol_count=$((usable_protocol_count + 1))
   done
 
   if [[ -n "${original_protocol_state}" ]] && protocol_state_exists "${original_protocol_state}"; then
     load_protocol_state "${original_protocol_state}"
   fi
 
-  remote_outbounds_json=$(jq -s '.' "${tmpdir}/outbounds.jsonl")
-  remote_tags_json=$(jq -Rsc 'split("\n") | map(select(length > 0))' "${tmpdir}/tags.txt")
+  if (( usable_protocol_count == 0 )); then
+    log_warn "未找到可用的远程协议可供导出，请检查协议状态文件是否完整。" >&2
+    status=1
+  else
+    remote_outbounds_json=$(jq -s '.' "${tmpdir}/outbounds.jsonl")
+    remote_tags_json=$(jq -Rsc 'split("\n") | map(select(length > 0))' "${tmpdir}/tags.txt")
 
-  jq -n \
-    --argjson remote_outbounds "${remote_outbounds_json}" \
-    --argjson remote_tags "${remote_tags_json}" \
-    --arg clash_api_secret "${clash_api_secret}" \
-    '{
-      "log": {
-        "level": "info",
-        "timestamp": true
-      },
-      "dns": {
-        "servers": [
-          {
-            "type": "https",
-            "tag": "remote-dns",
-            "server": "1.1.1.1",
-            "server_port": 443,
-            "path": "/dns-query"
-          },
-          {
-            "type": "local",
-            "tag": "local-dns"
-          }
-        ],
-        "rules": [
-          {
-            "outbound": "any",
-            "server": "local-dns"
-          }
-        ],
-        "final": "remote-dns",
-        "strategy": "prefer_ipv4"
-      },
-      "inbounds": [
-        {
-          "type": "mixed",
-          "tag": "mixed-in",
-          "listen": "127.0.0.1",
-          "listen_port": 2080
-        }
-      ],
-      "outbounds": (
-        [
-          {
-            "type": "selector",
-            "tag": "proxy",
-            "outbounds": (["auto"] + $remote_tags),
-            "default": "auto"
-          },
-          {
-            "type": "urltest",
-            "tag": "auto",
-            "outbounds": $remote_tags,
-            "url": "https://www.gstatic.com/generate_204",
-            "interval": "3m"
-          }
-        ] + $remote_outbounds + [
-          {
-            "type": "direct",
-            "tag": "direct"
-          },
-          {
-            "type": "block",
-            "tag": "block"
-          },
-          {
-            "type": "dns",
-            "tag": "dns"
-          }
-        ]
-      ),
-      "route": {
-        "rules": [
-          {
-            "action": "sniff"
-          },
-          {
-            "protocol": "dns",
-            "action": "hijack-dns"
-          },
-          {
-            "ip_is_private": true,
-            "outbound": "direct"
-          }
-        ],
-        "final": "proxy",
-        "auto_detect_interface": true
-      },
-      "experimental": {
-        "cache_file": {
-          "enabled": true,
-          "path": "cache.db"
+    jq -n \
+      --argjson remote_outbounds "${remote_outbounds_json}" \
+      --argjson remote_tags "${remote_tags_json}" \
+      --arg clash_api_secret "${clash_api_secret}" \
+      '{
+        "log": {
+          "level": "info",
+          "timestamp": true
         },
-        "clash_api": {
-          "external_controller": "127.0.0.1:9090",
-          "secret": $clash_api_secret
+        "dns": {
+          "servers": [
+            {
+              "type": "https",
+              "tag": "remote-dns",
+              "server": "1.1.1.1",
+              "server_port": 443,
+              "path": "/dns-query"
+            },
+            {
+              "type": "local",
+              "tag": "local-dns"
+            }
+          ],
+          "rules": [
+            {
+              "outbound": "any",
+              "server": "local-dns"
+            }
+          ],
+          "final": "remote-dns",
+          "strategy": "prefer_ipv4"
+        },
+        "inbounds": [
+          {
+            "type": "mixed",
+            "tag": "mixed-in",
+            "listen": "127.0.0.1",
+            "listen_port": 2080
+          }
+        ],
+        "outbounds": (
+          [
+            {
+              "type": "selector",
+              "tag": "proxy",
+              "outbounds": (["auto"] + $remote_tags),
+              "default": "auto"
+            },
+            {
+              "type": "urltest",
+              "tag": "auto",
+              "outbounds": $remote_tags,
+              "url": "https://www.gstatic.com/generate_204",
+              "interval": "3m"
+            }
+          ] + $remote_outbounds + [
+            {
+              "type": "direct",
+              "tag": "direct"
+            },
+            {
+              "type": "block",
+              "tag": "block"
+            },
+            {
+              "type": "dns",
+              "tag": "dns"
+            }
+          ]
+        ),
+        "route": {
+          "rules": [
+            {
+              "action": "sniff"
+            },
+            {
+              "protocol": "dns",
+              "action": "hijack-dns"
+            },
+            {
+              "ip_is_private": true,
+              "outbound": "direct"
+            }
+          ],
+          "final": "proxy",
+          "auto_detect_interface": true
+        },
+        "experimental": {
+          "cache_file": {
+            "enabled": true,
+            "path": "cache.db"
+          },
+          "clash_api": {
+            "external_controller": "127.0.0.1:9090",
+            "secret": $clash_api_secret
+          }
         }
-      }
-    }' 
+      }' || status=$?
+  fi
 
   rm -rf "${tmpdir}"
+  return "${status}"
 }
 
 write_client_config_export() {
   local config_json=$1
-  local export_path
+  local export_path export_dir tmp_file
 
   export_path=$(client_export_file_path)
-  mkdir -p "$(dirname "${export_path}")"
-  printf '%s\n' "${config_json}" | jq '.' > "${export_path}"
+  export_dir=$(dirname "${export_path}")
+  mkdir -p "${export_dir}"
+  tmp_file=$(mktemp "${export_dir}/.sing-box-client.json.tmp.XXXXXX")
+  if ! printf '%s\n' "${config_json}" | jq '.' > "${tmp_file}"; then
+    rm -f "${tmp_file}"
+    return 1
+  fi
+  if ! mv "${tmp_file}" "${export_path}"; then
+    rm -f "${tmp_file}"
+    return 1
+  fi
 }
 
 export_singbox_client_config() {
   local config_json export_path
 
   if ! config_json=$(build_singbox_client_config); then
+    log_warn "导出 sing-box 裸核客户端配置失败。" >&2
     return 1
   fi
 
   export_path=$(client_export_file_path)
-  write_client_config_export "${config_json}"
+  if ! write_client_config_export "${config_json}"; then
+    log_warn "写入客户端配置文件失败: ${export_path}" >&2
+    return 1
+  fi
 
   print_success "sing-box 裸核客户端配置导出成功。"
   printf '文件路径: %s\n' "${export_path}"
