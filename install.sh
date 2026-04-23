@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042303"
+readonly SCRIPT_VERSION="2026042304"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -639,6 +639,16 @@ reconcile_protocol_index_if_needed() {
 list_installed_protocols() {
   reconcile_protocol_index_if_needed
   list_indexed_protocols_raw
+}
+
+list_exportable_client_protocols() {
+  local protocol
+
+  while IFS= read -r protocol; do
+    case "${protocol}" in
+      vless-reality|hy2|anytls) printf '%s\n' "${protocol}" ;;
+    esac
+  done < <(list_installed_protocols)
 }
 
 save_vless_reality_state() {
@@ -4085,6 +4095,146 @@ build_anytls_outbound_example() {
         "server_name": $sni
       }
     }'
+}
+
+client_outbound_tag_for_protocol() {
+  local protocol
+  protocol=$(normalize_protocol_id "$1")
+  printf '%s-%s' "${protocol}" "${SB_PORT}"
+}
+
+build_client_vless_reality_outbound() {
+  local public_ip=${1:-$(get_public_ip)}
+
+  jq -n \
+    --arg tag "$(client_outbound_tag_for_protocol "vless-reality")" \
+    --arg server "${public_ip}" \
+    --arg port "${SB_PORT}" \
+    --arg uuid "${SB_UUID}" \
+    --arg server_name "${SB_SNI}" \
+    --arg public_key "${SB_PUBLIC_KEY}" \
+    --arg short_id "${SB_SHORT_ID_1}" \
+    '{
+      "type": "vless",
+      "tag": $tag,
+      "server": $server,
+      "server_port": ($port | tonumber),
+      "uuid": $uuid,
+      "tls": {
+        "enabled": true,
+        "server_name": $server_name,
+        "reality": {
+          "enabled": true,
+          "public_key": $public_key,
+          "short_id": $short_id
+        }
+      }
+    }'
+}
+
+build_client_hy2_outbound() {
+  local public_ip=${1:-$(get_public_ip)}
+  local server_host
+  server_host=${SB_HY2_DOMAIN:-${public_ip}}
+
+  jq -n \
+    --arg tag "$(client_outbound_tag_for_protocol "hy2")" \
+    --arg server "${server_host}" \
+    --arg port "${SB_PORT}" \
+    --arg password "${SB_HY2_PASSWORD}" \
+    --arg server_name "${SB_HY2_DOMAIN:-${server_host}}" \
+    --arg up_mbps "${SB_HY2_UP_MBPS}" \
+    --arg down_mbps "${SB_HY2_DOWN_MBPS}" \
+    --arg obfs_enabled "${SB_HY2_OBFS_ENABLED}" \
+    --arg obfs_type "${SB_HY2_OBFS_TYPE}" \
+    --arg obfs_password "${SB_HY2_OBFS_PASSWORD}" \
+    '{
+      "type": "hysteria2",
+      "tag": $tag,
+      "server": $server,
+      "server_port": ($port | tonumber),
+      "password": $password,
+      "tls": {
+        "enabled": true,
+        "server_name": $server_name
+      }
+    } + (
+      if ($up_mbps | length) > 0 then
+        { "up_mbps": ($up_mbps | tonumber) }
+      else
+        {}
+      end
+    ) + (
+      if ($down_mbps | length) > 0 then
+        { "down_mbps": ($down_mbps | tonumber) }
+      else
+        {}
+      end
+    ) + (
+      if $obfs_enabled == "y" then
+        {
+          "obfs": {
+            "type": $obfs_type,
+            "password": $obfs_password
+          }
+        }
+      else
+        {}
+      end
+    )'
+}
+
+build_client_anytls_outbound() {
+  local public_ip=${1:-$(get_public_ip)}
+  local server_host
+  server_host=${SB_ANYTLS_DOMAIN:-${public_ip}}
+
+  jq -n \
+    --arg tag "$(client_outbound_tag_for_protocol "anytls")" \
+    --arg server "${server_host}" \
+    --arg port "${SB_PORT}" \
+    --arg password "${SB_ANYTLS_PASSWORD}" \
+    --arg server_name "${SB_ANYTLS_DOMAIN:-${server_host}}" \
+    '{
+      "type": "anytls",
+      "tag": $tag,
+      "server": $server,
+      "server_port": ($port | tonumber),
+      "password": $password,
+      "tls": {
+        "enabled": true,
+        "server_name": $server_name
+      }
+    }'
+}
+
+build_client_outbound_json_for_protocol() {
+  local protocol original_protocol_state outbound_json
+  protocol=$(normalize_protocol_id "$1")
+  original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
+
+  load_protocol_state "${protocol}"
+
+  case "${protocol}" in
+    vless-reality)
+      outbound_json=$(build_client_vless_reality_outbound)
+      ;;
+    hy2)
+      outbound_json=$(build_client_hy2_outbound)
+      ;;
+    anytls)
+      outbound_json=$(build_client_anytls_outbound)
+      ;;
+    *)
+      log_error "不支持的客户端导出协议: ${protocol}"
+      ;;
+  esac
+
+  if [[ -n "${original_protocol_state}" && "${original_protocol_state}" != "${protocol}" ]] && protocol_state_exists "${original_protocol_state}"; then
+    load_protocol_state "${original_protocol_state}"
+  fi
+
+  printf '%s\n' "${outbound_json}"
 }
 
 show_hy2_connection_summary() {
