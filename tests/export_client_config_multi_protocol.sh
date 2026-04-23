@@ -210,6 +210,11 @@ if ! jq -e '((.dns.rules // []) | map(select(.server == "local-dns")) | length) 
   exit 1
 fi
 
+if ! jq -e '((.dns.rules // []) | all(if .server == "cn-dns" then ((.rule_set? == "geosite-cn") or (((.rule_set? | type) == "array") and ((.rule_set | index("geosite-cn")) != null))) else true end))' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected dns.rules cn-dns entries to require geosite-cn rule_set constraints, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+  exit 1
+fi
+
 if ! jq -e '.route.final == "proxy"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
   printf 'expected route.final proxy, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
@@ -245,8 +250,8 @@ if ! jq -e '(.route.rules // [])[] | select((((.rule_set? == "geoip-cn") or (((.
   exit 1
 fi
 
-if ! jq -e '((.route.rules // []) | map(select(.outbound == "direct" and (.action? | not) and (.rule_set? | not) and (.protocol? | not) and (.ip_is_private? | not) and (.domain? | not) and (.domain_suffix? | not) and (.domain_keyword? | not) and (.domain_regex? | not) and (.ip_cidr? | not) and (.source_ip_cidr? | not) and (.source_ip_is_private? | not) and (.network? | not) and (.port? | not) and (.port_range? | not) and (.process_name? | not) and (.process_path? | not) and (.package_name? | not) and (.user? | not) and (.user_id? | not) and (.clash_mode? | not))) | length) == 0' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
-  printf 'expected route.rules to have no unconditional direct catch-all rules, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+if ! jq -e '((.route.rules // []) | all(if .outbound == "direct" then ((.protocol? == "dns") or (.ip_is_private? == true) or (.rule_set? == "geosite-cn") or (((.rule_set? | type) == "array") and ((.rule_set | index("geosite-cn")) != null)) or (.rule_set? == "geoip-cn") or (((.rule_set? | type) == "array") and ((.rule_set | index("geoip-cn")) != null))) else true end))' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.rules direct entries to require protocol/ip_is_private/geosite-cn/geoip-cn constraints, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
