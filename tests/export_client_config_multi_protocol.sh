@@ -200,17 +200,17 @@ if ! jq -e '(.route.rule_set // [])[] | select(.tag == "geosite-cn")' "${EXPECTE
   exit 1
 fi
 
-if ! jq -e '(.route.rules // [])[] | select(.rule_set? == "geosite-cn" and .outbound == "direct" and .action == "route")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+if ! jq -e '(.route.rules // [])[] | select((((.rule_set? == "geosite-cn") or (((.rule_set? | type) == "array") and ((.rule_set | index("geosite-cn")) != null))) and .outbound == "direct" and .action == "route"))' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
   printf 'expected route.rules geosite-cn -> direct with action route, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
-if ! jq -e '(.route.rules // [])[] | select(.rule_set? == "geoip-cn" and .outbound == "direct" and .action == "route")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+if ! jq -e '(.route.rules // [])[] | select((((.rule_set? == "geoip-cn") or (((.rule_set? | type) == "array") and ((.rule_set | index("geoip-cn")) != null))) and .outbound == "direct" and .action == "route"))' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
   printf 'expected route.rules geoip-cn -> direct with action route, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
-if ! jq -e '(.dns.rules // [])[] | select(.rule_set? == "geosite-cn" and .server == "cn-dns")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+if ! jq -e '(.dns.rules // [])[] | select((((.rule_set? == "geosite-cn") or (((.rule_set? | type) == "array") and ((.rule_set | index("geosite-cn")) != null))) and .server == "cn-dns"))' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
   printf 'expected dns.rules geosite-cn -> cn-dns, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
