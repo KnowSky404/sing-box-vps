@@ -15,6 +15,21 @@ sed \
   -e 's|main \"\$@\"|:|' \
   "${REPO_ROOT}/install.sh" > "${TESTABLE_INSTALL}"
 
+if ! grep -Fq "readonly SB_PROJECT_DIR=\"${TMP_DIR}/project\"" "${TESTABLE_INSTALL}"; then
+  printf 'failed to rewrite SB_PROJECT_DIR in %s\n' "${TESTABLE_INSTALL}" >&2
+  exit 1
+fi
+
+if ! grep -Fq "readonly SINGBOX_BIN_PATH=\"${TMP_DIR}/bin/sing-box\"" "${TESTABLE_INSTALL}"; then
+  printf 'failed to rewrite SINGBOX_BIN_PATH in %s\n' "${TESTABLE_INSTALL}" >&2
+  exit 1
+fi
+
+if ! grep -Fq "readonly SINGBOX_SERVICE_FILE=\"${TMP_DIR}/sing-box.service\"" "${TESTABLE_INSTALL}"; then
+  printf 'failed to rewrite SINGBOX_SERVICE_FILE in %s\n' "${TESTABLE_INSTALL}" >&2
+  exit 1
+fi
+
 mkdir -p "${TMP_DIR}/project/protocols" "${TMP_DIR}/bin"
 
 cat > "${TMP_DIR}/bin/hostname" <<'EOF'
