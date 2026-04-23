@@ -5,6 +5,7 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TMP_DIR=$(mktemp -d)
 REAL_BASH=$(command -v bash)
+REAL_JQ=$(command -v jq)
 trap 'rm -rf "${TMP_DIR}"' EXIT
 REMOTE_PORT_FILE="${TMP_DIR}/remote-port"
 REMOTE_UUID_FILE="${TMP_DIR}/remote-uuid"
@@ -37,6 +38,7 @@ cat > "${REMOTE_STATE_FILE}" <<'EOF'
 PORT=9443
 UUID=11111111-1111-4111-8111-111111111111
 SNI=stale.example.com
+REALITY_PUBLIC_KEY=public-key-from-state
 EOF
 cat > "${REMOTE_INDEX_FILE}" <<'EOF'
 INSTALLED_PROTOCOLS=vless-reality
@@ -45,14 +47,21 @@ cat > "${REMOTE_CONFIG_FILE}" <<'EOF'
 {
   "inbounds": [
     {
+      "type": "vless",
       "listen_port": 9443,
       "users": [
         {
-          "uuid": "11111111-1111-4111-8111-111111111111"
+          "uuid": "11111111-1111-4111-8111-111111111111",
+          "flow": "xtls-rprx-vision"
         }
       ],
       "tls": {
-        "server_name": "stale.example.com"
+        "server_name": "stale.example.com",
+        "reality": {
+          "short_id": [
+            "abcd1234"
+          ]
+        }
       }
     }
   ]
@@ -115,19 +124,27 @@ write_vless_state() {
 PORT=\$(cat "\${REMOTE_PORT_FILE}")
 UUID=\$(cat "\${REMOTE_UUID_FILE}")
 SNI=\$(cat "\${REMOTE_SNI_FILE}")
+REALITY_PUBLIC_KEY=public-key-from-state
 STATE_EOF
   cat > "\${REMOTE_CONFIG_FILE}" <<CONFIG_EOF
 {
   "inbounds": [
     {
+      "type": "vless",
       "listen_port": \$(cat "\${REMOTE_PORT_FILE}"),
       "users": [
         {
-          "uuid": "\$(cat "\${REMOTE_UUID_FILE}")"
+          "uuid": "\$(cat "\${REMOTE_UUID_FILE}")",
+          "flow": "xtls-rprx-vision"
         }
       ],
       "tls": {
-        "server_name": "\$(cat "\${REMOTE_SNI_FILE}")"
+        "server_name": "\$(cat "\${REMOTE_SNI_FILE}")",
+        "reality": {
+          "short_id": [
+            "abcd1234"
+          ]
+        }
       }
     }
   ]
@@ -309,25 +326,31 @@ test() {
 }
 
 jq() {
+  local args=("\$@")
+  local last_index=\$(( \$# - 1 ))
+
   printf 'jq:%s|%s|%s\n' "\${1:-}" "\${2:-}" "\${3:-}" >> "\${REMOTE_ASSERT_LOG_FILE}"
 
-  if [[ "\${1:-}" == "-r" && "\${2:-}" == ".inbounds[0].listen_port // empty" ]]; then
-    cat "\${REMOTE_PORT_FILE}"
-    return 0
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/config.json" ]]; then
+    args[\$last_index]="\${REMOTE_CONFIG_FILE}"
   fi
 
-  if [[ "\${1:-}" == "-r" && "\${2:-}" == ".inbounds[0].users[0].uuid // empty" ]]; then
-    cat "\${REMOTE_UUID_FILE}"
-    return 0
+  command "\${REAL_JQ}" "\${args[@]}"
+}
+
+sed() {
+  local args=("\$@")
+  local last_index=\$(( \$# - 1 ))
+
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/vless-reality.env" ]]; then
+    args[\$last_index]="\${REMOTE_STATE_FILE}"
   fi
 
-  if [[ "\${1:-}" == "-r" && "\${2:-}" == ".inbounds[0].tls.server_name // empty" ]]; then
-    cat "\${REMOTE_SNI_FILE}"
-    return 0
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
+    args[\$last_index]="\${REMOTE_INDEX_FILE}"
   fi
 
-  printf 'unexpected jq call: %s\n' "\$*" >&2
-  return 1
+  command sed "\${args[@]}"
 }
 
 cp() {
@@ -377,11 +400,12 @@ REMOTE_STATE_FILE="${REMOTE_STATE_FILE}" \
 REMOTE_INDEX_FILE="${REMOTE_INDEX_FILE}" \
 REMOTE_ASSERT_LOG_FILE="${REMOTE_ASSERT_LOG_FILE}" \
 INSTALL_COUNT_FILE="${INSTALL_COUNT_FILE}" \
+REAL_JQ="${REAL_JQ}" \
 PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" -lc "\${1:-}" < "\${script_file}"
 EOF
 chmod +x "${TMP_DIR}/ssh"
 
-PATH="${TMP_DIR}:${PATH}" VERIFY_REMOTE_HOST=test.example VERIFY_REMOTE_USER=root VERIFY_SKIP_LOCAL_TESTS=1 \
+PATH="${TMP_DIR}:${PATH}" VERIFY_REMOTE_TARGET_FILE="${TMP_DIR}/missing-target.env" VERIFY_REMOTE_HOST=test.example VERIFY_REMOTE_USER=root VERIFY_SKIP_LOCAL_TESTS=1 \
   bash "${REPO_ROOT}/dev/verification/run.sh" --changed-file install.sh > "${TMP_DIR}/stdout.txt"
 
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout.txt")
@@ -392,20 +416,24 @@ grep -Fq 'SCENARIO=runtime_smoke' "${run_dir}/remote.stdout.log"
 grep -Fq 'SERVICE_ACTIVE=active' "${run_dir}/remote.stdout.log"
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/sing-box-check.txt" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/listeners.ss-lntp.txt" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/client.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/probe.stdout.txt" ]]
+grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/result.env"
 grep -Fq 'remote_artifacts=extracted' "${run_dir}/summary.log"
 grep -Fq "${INSTALL_VERSION_LINE}" "${TMP_DIR}/remote-script.sh"
 grep -Fq "${UNINSTALL_HELPER_LINE}" "${TMP_DIR}/remote-script.sh"
 grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.env' "${REMOTE_ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.env' "${REMOTE_ASSERT_LOG_FILE}"
+grep -Fqx 'jq:-r|.inbounds[0].listen_port // empty|/root/sing-box-vps/config.json' "${REMOTE_ASSERT_LOG_FILE}"
 grep -Fqx 'UUID=22222222-2222-4222-8222-222222222222' "${REMOTE_STATE_FILE}"
 
-if PATH="${TMP_DIR}:${PATH}" VERIFY_REMOTE_HOST=test.example VERIFY_REMOTE_USER=root VERIFY_SKIP_LOCAL_TESTS=1 VERIFY_FAIL_SINGBOX_CHECK=1 \
+if PATH="${TMP_DIR}:${PATH}" VERIFY_REMOTE_TARGET_FILE="${TMP_DIR}/missing-target.env" VERIFY_REMOTE_HOST=test.example VERIFY_REMOTE_USER=root VERIFY_SKIP_LOCAL_TESTS=1 VERIFY_FAIL_SINGBOX_CHECK=1 \
   bash "${REPO_ROOT}/dev/verification/run.sh" --changed-file install.sh > "${TMP_DIR}/stdout-fail.txt" 2> "${TMP_DIR}/stderr-fail.txt"; then
   printf 'expected runtime smoke to fail when sing-box check fails\n' >&2
   exit 1
 fi
 
 run_dir_fail=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout-fail.txt")
-[[ -f "${run_dir_fail}/remote-artifacts/scenarios/runtime_smoke/sing-box-check.txt" ]]
-grep -Fq 'config broken' "${run_dir_fail}/remote-artifacts/scenarios/runtime_smoke/sing-box-check.txt"
+[[ -f "${run_dir_fail}/remote-artifacts/scenarios/fresh_install_vless/sing-box-check.txt" ]]
+grep -Fq 'config broken' "${run_dir_fail}/remote-artifacts/scenarios/fresh_install_vless/sing-box-check.txt"
 grep -Fq 'remote_status=failure' "${run_dir_fail}/summary.log"

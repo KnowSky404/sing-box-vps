@@ -5,6 +5,7 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "${TMP_DIR}"' EXIT
+REAL_JQ=$(command -v jq)
 
 PORT_FILE="${TMP_DIR}/port"
 UUID_FILE="${TMP_DIR}/uuid"
@@ -43,6 +44,7 @@ cat > "${STATE_FILE}" <<'EOF'
 PORT=9443
 UUID=11111111-1111-4111-8111-111111111111
 SNI=stale.example.com
+REALITY_PUBLIC_KEY=public-key-from-state
 EOF
 cat > "${INDEX_FILE}" <<'EOF'
 INSTALLED_PROTOCOLS=vless-reality
@@ -51,14 +53,21 @@ cat > "${CONFIG_FILE}" <<'EOF'
 {
   "inbounds": [
     {
+      "type": "vless",
       "listen_port": 9443,
       "users": [
         {
-          "uuid": "11111111-1111-4111-8111-111111111111"
+          "uuid": "11111111-1111-4111-8111-111111111111",
+          "flow": "xtls-rprx-vision"
         }
       ],
       "tls": {
-        "server_name": "stale.example.com"
+        "server_name": "stale.example.com",
+        "reality": {
+          "short_id": [
+            "abcd1234"
+          ]
+        }
       }
     }
   ]
@@ -74,19 +83,27 @@ write_vless_state() {
 PORT=$(cat "${PORT_FILE}")
 UUID=$(cat "${UUID_FILE}")
 SNI=$(cat "${SNI_FILE}")
+REALITY_PUBLIC_KEY=public-key-from-state
 STATE_EOF
   cat > "${CONFIG_FILE}" <<CONFIG_EOF
 {
   "inbounds": [
     {
+      "type": "vless",
       "listen_port": $(cat "${PORT_FILE}"),
       "users": [
         {
-          "uuid": "$(cat "${UUID_FILE}")"
+          "uuid": "$(cat "${UUID_FILE}")",
+          "flow": "xtls-rprx-vision"
         }
       ],
       "tls": {
-        "server_name": "$(cat "${SNI_FILE}")"
+        "server_name": "$(cat "${SNI_FILE}")",
+        "reality": {
+          "short_id": [
+            "abcd1234"
+          ]
+        }
       }
     }
   ]
@@ -282,25 +299,31 @@ test() {
 }
 
 jq() {
+  local args=("$@")
+  local last_index=$(( $# - 1 ))
+
   printf 'jq:%s|%s|%s\n' "${1:-}" "${2:-}" "${3:-}" >> "${ASSERT_LOG_FILE}"
 
-  if [[ "${1:-}" == "-r" && "${2:-}" == ".inbounds[0].listen_port // empty" ]]; then
-    cat "${PORT_FILE}"
-    return 0
+  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/config.json" ]]; then
+    args[$last_index]="${CONFIG_FILE}"
   fi
 
-  if [[ "${1:-}" == "-r" && "${2:-}" == ".inbounds[0].users[0].uuid // empty" ]]; then
-    cat "${UUID_FILE}"
-    return 0
+  command "${REAL_JQ}" "${args[@]}"
+}
+
+sed() {
+  local args=("$@")
+  local last_index=$(( $# - 1 ))
+
+  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/vless-reality.env" ]]; then
+    args[$last_index]="${STATE_FILE}"
   fi
 
-  if [[ "${1:-}" == "-r" && "${2:-}" == ".inbounds[0].tls.server_name // empty" ]]; then
-    cat "${SNI_FILE}"
-    return 0
+  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
+    args[$last_index]="${INDEX_FILE}"
   fi
 
-  printf 'unexpected jq call: %s\n' "$*" >&2
-  return 1
+  command sed "${args[@]}"
 }
 
 cp() {
@@ -398,6 +421,7 @@ ASSERT_LOG_FILE="${ASSERT_LOG_FILE}" \
 INSTALL_COUNT_FILE="${INSTALL_COUNT_FILE}" \
 VERIFY_REMOTE_INSTALL_SCRIPT="${EMBEDDED_INSTALL_SCRIPT}" \
 VERIFY_REMOTE_UNINSTALL_SCRIPT="${EMBEDDED_UNINSTALL_SCRIPT}" \
+REAL_JQ="${REAL_JQ}" \
   bash "${PAYLOAD_FILE}" \
     fresh_install_vless \
     reconfigure_existing_install \
@@ -422,9 +446,15 @@ awk '
 [[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_vless/protocols/index.env" ]]
 [[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_vless/listeners.ss-lntp.txt" ]]
 [[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_vless/sbv-status.txt" ]]
+grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_vless/protocol-probes/vless-reality/result.env"
 [[ -f "${ARTIFACT_DIR}/scenarios/reconfigure_existing_install/config.diff.txt" ]]
+grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/reconfigure_existing_install/protocol-probes/vless-reality/result.env"
 [[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/sing-box-check.txt" ]]
 grep -Fqx 'STATUS=success' "${ARTIFACT_DIR}/scenarios/runtime_smoke/result.env"
+grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/vless-reality/result.env"
+grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/uninstall_and_reinstall/protocol-probes/vless-reality/result.env"
+[[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/vless-reality/client.json" ]]
+[[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/vless-reality/probe.stdout.txt" ]]
 grep -Fqx 'test:-f|/root/sing-box-vps/protocols/vless-reality.env|' "${ASSERT_LOG_FILE}"
 grep -Fqx 'test:-f|/root/sing-box-vps/protocols/index.env|' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
@@ -432,6 +462,7 @@ grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-r
 grep -Fqx 'grep:-Fq stale.example.com /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'jq:-r|.inbounds[0].users[0].uuid // empty|/root/sing-box-vps/config.json' "${ASSERT_LOG_FILE}"
 grep -Fqx 'jq:-r|.inbounds[0].tls.server_name // empty|/root/sing-box-vps/config.json' "${ASSERT_LOG_FILE}"
+grep -Fqx 'jq:-r|.inbounds[0].listen_port // empty|/root/sing-box-vps/config.json' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx PORT=8443 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx UUID=22222222-2222-4222-8222-222222222222 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx SNI=cdn.cloudflare.com /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
