@@ -51,8 +51,8 @@ if [[ "${plain_output}" == *"项目: https://github.com/KnowSky404/sing-box-vps"
 fi
 
 title_text_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "系统管理") { print; exit }')
-if [[ -z "${title_text_line}" || ! "${title_text_line}" =~ ^[[:space:]]+[^[:space:]] ]]; then
-  printf 'expected system management header title to render with left padding instead of flush-left text, got:\n%s\n' "${output}" >&2
+if [[ -z "${title_text_line}" || ! "${title_text_line}" =~ ^[^[:space:]] ]]; then
+  printf 'expected system management header title to render flush-left, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
@@ -62,6 +62,6 @@ bbr_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "1. 开启 BBR") { p
 stack_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "2. 协议栈管理") { print NR; exit }')
 
 if ! (( title_line < summary_line && summary_line < bbr_line && bbr_line < stack_line )); then
-  printf 'expected future summary block to appear between the title and menu body, got:\n%s\n' "${output}" >&2
+  printf 'expected summary block to remain between submenu title and options, got:\n%s\n' "${output}" >&2
   exit 1
 fi
