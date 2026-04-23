@@ -47,5 +47,5 @@ EOF
   status_output_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/sbv-status.txt")
   grep -Fq "端口: ${expected_port}" "${status_output_path}"
   grep -Fq '配置文件: /root/sing-box-vps/config.json' "${status_output_path}"
-  verification_execute_single_protocol_probe vless-reality /root/sing-box-vps/config.json
+  verification_run_protocol_probes
 }

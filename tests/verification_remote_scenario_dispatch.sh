@@ -456,6 +456,8 @@ grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-pro
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/uninstall_and_reinstall/protocol-probes/vless-reality/result.env"
 [[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/vless-reality/client.json" ]]
 [[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/vless-reality/probe.stdout.txt" ]]
+grep -Fq 'verification_run_protocol_probes' "${PAYLOAD_FILE}"
+! grep -Fq 'verification_execute_single_protocol_probe vless-reality /root/sing-box-vps/config.json' "${PAYLOAD_FILE}"
 grep -Fqx 'test:-f|/root/sing-box-vps/protocols/vless-reality.env|' "${ASSERT_LOG_FILE}"
 grep -Fqx 'test:-f|/root/sing-box-vps/protocols/index.env|' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"

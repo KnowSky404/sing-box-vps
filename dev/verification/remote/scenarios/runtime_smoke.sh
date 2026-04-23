@@ -21,5 +21,5 @@ verification_scenario_runtime_smoke() {
   verification_capture_status_menu "${VERIFY_CURRENT_SCENARIO_DIR}/sbv-status.txt"
   status_output_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/sbv-status.txt")
   grep -Fq "端口: ${current_port}" "${status_output_path}"
-  verification_execute_single_protocol_probe vless-reality /root/sing-box-vps/config.json
+  verification_run_protocol_probes
 }

@@ -485,6 +485,7 @@ verification_run_protocol_probes() {
   local protocols_output=''
   local discovery_status=0
   local support_status
+  local probe_status=0
   local overall_status=0
 
   set +e
@@ -504,7 +505,17 @@ verification_run_protocol_probes() {
     fi
 
     verification_record_protocol_probe_result "${protocol}" failure
-    overall_status=1
+    set +e
+    (
+      set -e
+      verification_execute_single_protocol_probe "${protocol}" /root/sing-box-vps/config.json
+    )
+    probe_status=$?
+    set -e
+    if [[ "${probe_status}" != "0" ]]; then
+      verification_record_protocol_probe_result "${protocol}" failure
+      overall_status=1
+    fi
   done <<< "${protocols_output}"
 
   return "${overall_status}"
