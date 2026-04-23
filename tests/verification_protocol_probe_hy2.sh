@@ -31,6 +31,13 @@ write_hy2_state() {
   } > "${REMOTE_ROOT}/root/sing-box-vps/protocols/hy2.env"
 }
 
+append_hy2_state_assignment() {
+  local key=$1
+  local value=${2-}
+
+  printf '%s=%q\n' "${key}" "${value}" >> "${REMOTE_ROOT}/root/sing-box-vps/protocols/hy2.env"
+}
+
 awk '
   /^if ! mkdir "\$\{LOCK_DIR\}" 2>\/dev\/null; then$/ {
     exit
@@ -44,6 +51,7 @@ write_hy2_state \
   "${ESCAPED_DOMAIN}" \
   "${ESCAPED_PASSWORD}" \
   "${ESCAPED_OBFS_PASSWORD}"
+append_hy2_state_assignment 'UNRELATED_STATE_KEY' 'state value that must not leak'
 
 cat > "${REMOTE_ROOT}/root/sing-box-vps/config.json" <<'EOF'
 {
@@ -88,6 +96,39 @@ verification_generate_protocol_probe_client_config \
   "${REMOTE_ROOT}/root/sing-box-vps/config.json"
 EOF
 chmod +x "${TMP_DIR}/run-hy2-generate.sh"
+
+cat > "${TMP_DIR}/run-hy2-load-state.sh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "${TESTABLE_ENTRYPOINT}"
+
+EXPECTED_PASSWORD=$(printf '%q' "${ESCAPED_PASSWORD}")
+EXPECTED_DOMAIN=$(printf '%q' "${ESCAPED_DOMAIN}")
+EXPECTED_OBFS_PASSWORD=$(printf '%q' "${ESCAPED_OBFS_PASSWORD}")
+
+password=''
+domain=''
+obfs_password=''
+unset UNRELATED_STATE_KEY || true
+
+verification_load_hy2_probe_state \
+  "${REMOTE_ROOT}/root/sing-box-vps/protocols/hy2.env" \
+  password \
+  domain \
+  obfs_password
+
+[[ "\${password}" == "\${EXPECTED_PASSWORD}" ]]
+[[ "\${domain}" == "\${EXPECTED_DOMAIN}" ]]
+[[ "\${obfs_password}" == "\${EXPECTED_OBFS_PASSWORD}" ]]
+[[ -z "\${UNRELATED_STATE_KEY+x}" ]]
+EOF
+chmod +x "${TMP_DIR}/run-hy2-load-state.sh"
+
+if ! bash "${TMP_DIR}/run-hy2-load-state.sh" 2> "${TMP_DIR}/stderr-hy2-load-state.txt"; then
+  cat "${TMP_DIR}/stderr-hy2-load-state.txt" >&2
+  exit 1
+fi
 
 if ! config_path=$(bash "${TMP_DIR}/run-hy2-generate.sh" 2> "${TMP_DIR}/stderr-hy2-generate.txt"); then
   cat "${TMP_DIR}/stderr-hy2-generate.txt" >&2

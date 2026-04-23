@@ -244,13 +244,23 @@ verification_load_hy2_probe_state() {
   local password_var=$2
   local domain_var=$3
   local obfs_password_var=$4
+  local decoded_assignments=''
   local PASSWORD=''
   local DOMAIN=''
   local OBFS_PASSWORD=''
 
-  # Source into function-local variables so %q-escaped state values decode correctly.
-  # shellcheck disable=SC1090
-  source "${state_file}"
+  decoded_assignments="$(
+    # Decode the full state file in a subshell so unrelated assignments cannot
+    # pollute the caller shell, then re-emit only the fields this probe needs.
+    # shellcheck disable=SC1090
+    source "${state_file}"
+    printf 'PASSWORD=%q\n' "${PASSWORD-}"
+    printf 'DOMAIN=%q\n' "${DOMAIN-}"
+    printf 'OBFS_PASSWORD=%q\n' "${OBFS_PASSWORD-}"
+  )"
+
+  # shellcheck disable=SC1091
+  source /dev/stdin <<<"${decoded_assignments}"
 
   printf -v "${password_var}" '%s' "${PASSWORD-}"
   printf -v "${domain_var}" '%s' "${DOMAIN-}"
