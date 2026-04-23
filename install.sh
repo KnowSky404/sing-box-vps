@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042303
+# Version: 2026042309
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042308"
+readonly SCRIPT_VERSION="2026042309"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -4509,14 +4509,19 @@ client_export_file_path() {
 
 build_singbox_client_config() {
   local original_protocol_state clash_api_secret public_ip tmpdir
-  local exportable_protocols=()
+  local installed_protocols=() exportable_protocols=()
   local remote_outbounds_json remote_tags_json
   local protocol outbound_json usable_protocol_count
   local status=0
 
+  mapfile -t installed_protocols < <(list_installed_protocols)
   mapfile -t exportable_protocols < <(list_exportable_client_protocols)
   if [[ ${#exportable_protocols[@]} -eq 0 ]]; then
-    log_warn "未检测到可导出的远程协议，当前仅支持导出 vless-reality、hy2、anytls。" >&2
+    if [[ ${#installed_protocols[@]} -gt 0 ]]; then
+      log_warn "当前无可导出的 sing-box 裸核客户端节点；已安装协议中仅 vless-reality、hy2、anytls 支持导出，mixed 不支持导出。" >&2
+    else
+      log_warn "当前无可导出的 sing-box 裸核客户端节点；请先安装 vless-reality、hy2 或 anytls 后再导出。" >&2
+    fi
     return 1
   fi
 
@@ -4665,7 +4670,7 @@ build_singbox_client_config() {
 
 write_client_config_export() {
   local config_json=$1
-  local export_path export_dir tmp_file
+  local export_path export_dir tmp_file backup_path backup_tmp
 
   export_path=$(client_export_file_path)
   export_dir=$(dirname "${export_path}")
@@ -4674,6 +4679,18 @@ write_client_config_export() {
   if ! printf '%s\n' "${config_json}" | jq '.' > "${tmp_file}"; then
     rm -f "${tmp_file}"
     return 1
+  fi
+  if [[ -f "${export_path}" ]]; then
+    backup_path="${export_path}.bak"
+    backup_tmp=$(mktemp "${export_dir}/.sing-box-client.json.bak.tmp.XXXXXX")
+    if ! cp "${export_path}" "${backup_tmp}"; then
+      rm -f "${tmp_file}" "${backup_tmp}"
+      return 1
+    fi
+    if ! mv "${backup_tmp}" "${backup_path}"; then
+      rm -f "${tmp_file}" "${backup_tmp}"
+      return 1
+    fi
   fi
   if ! mv "${tmp_file}" "${export_path}"; then
     rm -f "${tmp_file}"
