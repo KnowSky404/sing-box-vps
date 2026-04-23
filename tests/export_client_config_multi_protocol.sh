@@ -109,19 +109,18 @@ load_protocol_state "vless-reality"
 
 EXPORT_STDOUT="${TMP_DIR}/stdout.txt"
 EXPECTED_EXPORT_PATH="${SB_PROJECT_DIR}/client/sing-box-client.json"
-CLIENT_DIR="${SB_PROJECT_DIR}/client"
-declare -a client_files=()
+declare -a matching_files=()
 
 export_singbox_client_config > "${EXPORT_STDOUT}"
 
-mapfile -t client_files < <(find "${CLIENT_DIR}" -maxdepth 1 -type f 2>/dev/null | sort)
+mapfile -t matching_files < <(find "${SB_PROJECT_DIR}" -type f -name 'sing-box-client.json' 2>/dev/null | sort)
 
-if [[ ${#client_files[@]} -ne 1 || "${client_files[0]:-}" != "${EXPECTED_EXPORT_PATH}" ]]; then
-  printf 'expected first export to create only %s, actual files:\n' "${EXPECTED_EXPORT_PATH}" >&2
-  if [[ ${#client_files[@]} -eq 0 ]]; then
+if [[ ${#matching_files[@]} -ne 1 || "${matching_files[0]:-}" != "${EXPECTED_EXPORT_PATH}" ]]; then
+  printf 'expected exported sing-box-client.json path %s, actual matches:\n' "${EXPECTED_EXPORT_PATH}" >&2
+  if [[ ${#matching_files[@]} -eq 0 ]]; then
     printf '(none)\n' >&2
   else
-    printf '%s\n' "${client_files[@]}" >&2
+    printf '%s\n' "${matching_files[@]}" >&2
   fi
   printf 'stdout was:\n%s\n' "$(cat "${EXPORT_STDOUT}")" >&2
   exit 1
