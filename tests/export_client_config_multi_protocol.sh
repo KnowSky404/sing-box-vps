@@ -185,18 +185,23 @@ if ! jq -e '.outbounds[] | select(.type == "anytls" and .tag == "anytls-9443")' 
   exit 1
 fi
 
-if ! jq -e '(.dns.servers // [])[] | select(.tag == "cn-dns" and .type == "https" and .server == "223.5.5.5" and .path == "/dns-query")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
-  printf 'expected dns.servers cn-dns https 223.5.5.5 /dns-query, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+if ! jq -e '(.dns.servers // [])[] | select(.tag == "cn-dns" and .type == "https" and .server == "223.5.5.5" and .server_port == 443 and .path == "/dns-query")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected dns.servers cn-dns https 223.5.5.5:443 /dns-query, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
-if ! jq -e '(.dns.servers // [])[] | select(.tag == "remote-dns" and .type == "https" and .server == "1.1.1.1" and .path == "/dns-query")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
-  printf 'expected dns.servers remote-dns https 1.1.1.1 /dns-query, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+if ! jq -e '(.dns.servers // [])[] | select(.tag == "remote-dns" and .type == "https" and .server == "1.1.1.1" and .server_port == 443 and .path == "/dns-query")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected dns.servers remote-dns https 1.1.1.1:443 /dns-query, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
 if ! jq -e '.dns.final == "remote-dns"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
   printf 'expected dns.final remote-dns, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+  exit 1
+fi
+
+if ! jq -e '((.dns.rules // []) | map(select(.server == "local-dns")) | length) == 0' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected dns.rules to have no local-dns catch-all fallback rules, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
