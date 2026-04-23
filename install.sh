@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042310
+# Version: 2026042311
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042310"
+readonly SCRIPT_VERSION="2026042311"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -4573,20 +4573,23 @@ build_singbox_client_config() {
           "servers": [
             {
               "type": "https",
-              "tag": "remote-dns",
-              "server": "1.1.1.1",
+              "tag": "cn-dns",
+              "server": "223.5.5.5",
               "server_port": 443,
               "path": "/dns-query"
             },
             {
-              "type": "local",
-              "tag": "local-dns"
+              "type": "https",
+              "tag": "remote-dns",
+              "server": "1.1.1.1",
+              "server_port": 443,
+              "path": "/dns-query"
             }
           ],
           "rules": [
             {
-              "outbound": "any",
-              "server": "local-dns"
+              "rule_set": "geosite-cn",
+              "server": "cn-dns"
             }
           ],
           "final": "remote-dns",
@@ -4631,6 +4634,20 @@ build_singbox_client_config() {
           ]
         ),
         "route": {
+          "rule_set": [
+            {
+              "tag": "geoip-cn",
+              "type": "remote",
+              "format": "binary",
+              "url": "https://cdn.jsdelivr.net/gh/Loyalsoldier/geoip@release/srs/cn.srs"
+            },
+            {
+              "tag": "geosite-cn",
+              "type": "remote",
+              "format": "binary",
+              "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs"
+            }
+          ],
           "rules": [
             {
               "action": "sniff"
@@ -4641,6 +4658,17 @@ build_singbox_client_config() {
             },
             {
               "ip_is_private": true,
+              "action": "route",
+              "outbound": "direct"
+            },
+            {
+              "rule_set": "geosite-cn",
+              "action": "route",
+              "outbound": "direct"
+            },
+            {
+              "rule_set": "geoip-cn",
+              "action": "route",
               "outbound": "direct"
             }
           ],
