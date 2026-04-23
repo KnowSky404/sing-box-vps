@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042304"
+readonly SCRIPT_VERSION="2026042305"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -4120,6 +4120,7 @@ build_client_vless_reality_outbound() {
       "server": $server,
       "server_port": ($port | tonumber),
       "uuid": $uuid,
+      "flow": "xtls-rprx-vision",
       "tls": {
         "enabled": true,
         "server_name": $server_name,
@@ -4209,29 +4210,55 @@ build_client_anytls_outbound() {
 }
 
 build_client_outbound_json_for_protocol() {
-  local protocol original_protocol_state outbound_json
+  local protocol original_protocol_state outbound_json build_status restore_original_state
   protocol=$(normalize_protocol_id "$1")
   original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
-
-  load_protocol_state "${protocol}"
+  build_status=0
+  restore_original_state="n"
 
   case "${protocol}" in
-    vless-reality)
-      outbound_json=$(build_client_vless_reality_outbound)
-      ;;
-    hy2)
-      outbound_json=$(build_client_hy2_outbound)
-      ;;
-    anytls)
-      outbound_json=$(build_client_anytls_outbound)
-      ;;
+    vless-reality|hy2|anytls) ;;
     *)
       log_error "不支持的客户端导出协议: ${protocol}"
       ;;
   esac
 
   if [[ -n "${original_protocol_state}" && "${original_protocol_state}" != "${protocol}" ]] && protocol_state_exists "${original_protocol_state}"; then
+    restore_original_state="y"
+  fi
+
+  load_protocol_state "${protocol}"
+
+  case "${protocol}" in
+    vless-reality)
+      if outbound_json=$(build_client_vless_reality_outbound); then
+        :
+      else
+        build_status=$?
+      fi
+      ;;
+    hy2)
+      if outbound_json=$(build_client_hy2_outbound); then
+        :
+      else
+        build_status=$?
+      fi
+      ;;
+    anytls)
+      if outbound_json=$(build_client_anytls_outbound); then
+        :
+      else
+        build_status=$?
+      fi
+      ;;
+  esac
+
+  if [[ "${restore_original_state}" == "y" ]]; then
     load_protocol_state "${original_protocol_state}"
+  fi
+
+  if (( build_status != 0 )); then
+    return "${build_status}"
   fi
 
   printf '%s\n' "${outbound_json}"
