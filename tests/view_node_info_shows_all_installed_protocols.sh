@@ -33,6 +33,7 @@ SUMMARY_COUNT_FILE="${TMP_DIR}/summary.count"
 PROMPT_COUNT_FILE="${TMP_DIR}/prompt.count"
 DETAIL_CALLS_FILE="${TMP_DIR}/detail.calls"
 EXPORT_OUTPUT_FILE="${TMP_DIR}/export.output"
+EXPECTED_EXPORT_PATH="${SB_PROJECT_DIR}/client/sing-box-client.json"
 printf '0\n' > "${SUMMARY_COUNT_FILE}"
 printf '0\n' > "${PROMPT_COUNT_FILE}"
 : > "${DETAIL_CALLS_FILE}"
@@ -141,7 +142,17 @@ if grep -Fq 'command not found' "${EXPORT_OUTPUT_FILE}"; then
   exit 1
 fi
 
-if ! grep -Fq '导出功能将在后续任务中实现' "${EXPORT_OUTPUT_FILE}"; then
-  printf 'expected node info export action to show placeholder message, got:\n%s\n' "$(cat "${EXPORT_OUTPUT_FILE}")" >&2
+if ! grep -Fq 'sing-box 裸核客户端配置导出成功。' "${EXPORT_OUTPUT_FILE}"; then
+  printf 'expected node info export action to export client config successfully, got:\n%s\n' "$(cat "${EXPORT_OUTPUT_FILE}")" >&2
+  exit 1
+fi
+
+if ! grep -Fq "文件路径: ${EXPECTED_EXPORT_PATH}" "${EXPORT_OUTPUT_FILE}"; then
+  printf 'expected node info export action to print export path %s, got:\n%s\n' "${EXPECTED_EXPORT_PATH}" "$(cat "${EXPORT_OUTPUT_FILE}")" >&2
+  exit 1
+fi
+
+if [[ ! -f "${EXPECTED_EXPORT_PATH}" ]]; then
+  printf 'expected node info export action to create %s, got:\n%s\n' "${EXPECTED_EXPORT_PATH}" "$(cat "${EXPORT_OUTPUT_FILE}")" >&2
   exit 1
 fi
