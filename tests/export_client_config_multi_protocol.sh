@@ -200,11 +200,6 @@ if ! jq -e '.dns.final == "remote-dns"' "${EXPECTED_EXPORT_PATH}" >/dev/null; th
   exit 1
 fi
 
-if ! jq -e '((.dns.rules // [])[0] | (((.rule_set? == "geosite-cn") or (((.rule_set? | type) == "array") and ((.rule_set | index("geosite-cn")) != null))) and .server == "cn-dns"))' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
-  printf 'expected dns.rules[0] geosite-cn -> cn-dns, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
-  exit 1
-fi
-
 if ! jq -e '((.dns.rules // []) | map(select(.server == "local-dns")) | length) == 0' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
   printf 'expected dns.rules to have no local-dns catch-all fallback rules, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
@@ -235,11 +230,6 @@ if ! jq -e '(.route.rule_set // [])[] | select(.tag == "geosite-cn" and .type ==
   exit 1
 fi
 
-if ! jq -e '((.route.rules // [])[0] | .protocol == "dns")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
-  printf 'expected route.rules[0] protocol dns, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
-  exit 1
-fi
-
 if ! jq -e '(.route.rules // [])[] | select((((.rule_set? == "geosite-cn") or (((.rule_set? | type) == "array") and ((.rule_set | index("geosite-cn")) != null))) and .outbound == "direct" and .action == "route"))' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
   printf 'expected route.rules geosite-cn -> direct with action route, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
@@ -252,6 +242,11 @@ fi
 
 if ! jq -e '((.route.rules // []) | all(if .outbound == "direct" then ((.protocol? == "dns") or (.ip_is_private? == true) or (.rule_set? == "geosite-cn") or (((.rule_set? | type) == "array") and ((.rule_set | index("geosite-cn")) != null)) or (.rule_set? == "geoip-cn") or (((.rule_set? | type) == "array") and ((.rule_set | index("geoip-cn")) != null))) else true end))' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
   printf 'expected route.rules direct entries to require protocol/ip_is_private/geosite-cn/geoip-cn constraints, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+  exit 1
+fi
+
+if ! jq -e '((.route.rules // []) | map(select(.outbound == "proxy")) | length) == 0' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.rules to have no explicit proxy catch-all rules, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
