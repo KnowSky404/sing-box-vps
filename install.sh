@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042305"
+readonly SCRIPT_VERSION="2026042306"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -4503,9 +4503,170 @@ show_connection_info_menu() {
   done
 }
 
+client_export_file_path() {
+  printf '%s/client/sing-box-client.json' "${SB_PROJECT_DIR}"
+}
+
+build_singbox_client_config() {
+  local original_protocol_state clash_api_secret public_ip tmpdir
+  local exportable_protocols=()
+  local remote_outbounds_json remote_tags_json
+  local protocol outbound_json
+
+  mapfile -t exportable_protocols < <(list_exportable_client_protocols)
+  if [[ ${#exportable_protocols[@]} -eq 0 ]]; then
+    print_warn "未检测到可导出的远程协议，当前仅支持导出 vless-reality、hy2、anytls。"
+    return 1
+  fi
+
+  original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
+  clash_api_secret=$(generate_random_token "clash-" 16)
+  public_ip=$(get_public_ip)
+  tmpdir=$(mktemp -d)
+
+  for protocol in "${exportable_protocols[@]}"; do
+    if ! outbound_json=$(build_client_outbound_json_for_protocol "${protocol}" "${public_ip}"); then
+      rm -rf "${tmpdir}"
+      return 1
+    fi
+
+    printf '%s\n' "${outbound_json}" >> "${tmpdir}/outbounds.jsonl"
+    printf '%s\n' "$(jq -r '.tag' <<< "${outbound_json}")" >> "${tmpdir}/tags.txt"
+  done
+
+  if [[ -n "${original_protocol_state}" ]] && protocol_state_exists "${original_protocol_state}"; then
+    load_protocol_state "${original_protocol_state}"
+  fi
+
+  remote_outbounds_json=$(jq -s '.' "${tmpdir}/outbounds.jsonl")
+  remote_tags_json=$(jq -Rsc 'split("\n") | map(select(length > 0))' "${tmpdir}/tags.txt")
+
+  jq -n \
+    --argjson remote_outbounds "${remote_outbounds_json}" \
+    --argjson remote_tags "${remote_tags_json}" \
+    --arg clash_api_secret "${clash_api_secret}" \
+    '{
+      "log": {
+        "level": "info",
+        "timestamp": true
+      },
+      "dns": {
+        "servers": [
+          {
+            "type": "https",
+            "tag": "remote-dns",
+            "server": "1.1.1.1",
+            "server_port": 443,
+            "path": "/dns-query"
+          },
+          {
+            "type": "local",
+            "tag": "local-dns"
+          }
+        ],
+        "rules": [
+          {
+            "outbound": "any",
+            "server": "local-dns"
+          }
+        ],
+        "final": "remote-dns",
+        "strategy": "prefer_ipv4"
+      },
+      "inbounds": [
+        {
+          "type": "mixed",
+          "tag": "mixed-in",
+          "listen": "127.0.0.1",
+          "listen_port": 2080
+        }
+      ],
+      "outbounds": (
+        [
+          {
+            "type": "selector",
+            "tag": "proxy",
+            "outbounds": (["auto"] + $remote_tags),
+            "default": "auto"
+          },
+          {
+            "type": "urltest",
+            "tag": "auto",
+            "outbounds": $remote_tags,
+            "url": "https://www.gstatic.com/generate_204",
+            "interval": "3m"
+          }
+        ] + $remote_outbounds + [
+          {
+            "type": "direct",
+            "tag": "direct"
+          },
+          {
+            "type": "block",
+            "tag": "block"
+          },
+          {
+            "type": "dns",
+            "tag": "dns"
+          }
+        ]
+      ),
+      "route": {
+        "rules": [
+          {
+            "action": "sniff"
+          },
+          {
+            "protocol": "dns",
+            "action": "hijack-dns"
+          },
+          {
+            "ip_is_private": true,
+            "outbound": "direct"
+          }
+        ],
+        "final": "proxy",
+        "auto_detect_interface": true
+      },
+      "experimental": {
+        "cache_file": {
+          "enabled": true,
+          "path": "cache.db"
+        },
+        "clash_api": {
+          "external_controller": "127.0.0.1:9090",
+          "secret": $clash_api_secret
+        }
+      }
+    }' 
+
+  rm -rf "${tmpdir}"
+}
+
+write_client_config_export() {
+  local config_json=$1
+  local export_path
+
+  export_path=$(client_export_file_path)
+  mkdir -p "$(dirname "${export_path}")"
+  printf '%s\n' "${config_json}" | jq '.' > "${export_path}"
+}
+
 export_singbox_client_config() {
-  print_info "导出功能将在后续任务中实现。"
-  return 0
+  local config_json export_path
+
+  if ! config_json=$(build_singbox_client_config); then
+    return 1
+  fi
+
+  export_path=$(client_export_file_path)
+  write_client_config_export "${config_json}"
+
+  print_success "sing-box 裸核客户端配置导出成功。"
+  printf '文件路径: %s\n' "${export_path}"
+  printf '本地 Mixed 入口: 127.0.0.1:2080\n'
+  printf 'Clash API 地址: 127.0.0.1:9090\n'
+  printf '%s\n' "${config_json}"
 }
 
 show_node_info_action_menu() {
