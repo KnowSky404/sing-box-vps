@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042307"
+readonly SCRIPT_VERSION="2026042308"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -4525,6 +4525,12 @@ build_singbox_client_config() {
   public_ip=$(get_public_ip)
   tmpdir=$(mktemp -d)
   usable_protocol_count=0
+  trap '
+    if [[ -n "${original_protocol_state:-}" ]] && protocol_state_exists "${original_protocol_state}"; then
+      load_protocol_state "${original_protocol_state}"
+    fi
+    rm -rf "${tmpdir:-}"
+  ' RETURN
 
   for protocol in "${exportable_protocols[@]}"; do
     if ! protocol_state_exists "${protocol}"; then
@@ -4541,10 +4547,6 @@ build_singbox_client_config() {
     printf '%s\n' "$(jq -r '.tag' <<< "${outbound_json}")" >> "${tmpdir}/tags.txt"
     usable_protocol_count=$((usable_protocol_count + 1))
   done
-
-  if [[ -n "${original_protocol_state}" ]] && protocol_state_exists "${original_protocol_state}"; then
-    load_protocol_state "${original_protocol_state}"
-  fi
 
   if (( usable_protocol_count == 0 )); then
     log_warn "未找到可用的远程协议可供导出，请检查协议状态文件是否完整。" >&2
@@ -4653,6 +4655,10 @@ build_singbox_client_config() {
       }' || status=$?
   fi
 
+  trap - RETURN
+  if [[ -n "${original_protocol_state}" ]] && protocol_state_exists "${original_protocol_state}"; then
+    load_protocol_state "${original_protocol_state}"
+  fi
   rm -rf "${tmpdir}"
   return "${status}"
 }
