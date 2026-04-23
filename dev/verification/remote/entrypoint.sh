@@ -239,6 +239,24 @@ verification_require_protocol_probe_field() {
   return 1
 }
 
+verification_load_hy2_probe_state() {
+  local state_file=$1
+  local password_var=$2
+  local domain_var=$3
+  local obfs_password_var=$4
+  local PASSWORD=''
+  local DOMAIN=''
+  local OBFS_PASSWORD=''
+
+  # Source into function-local variables so %q-escaped state values decode correctly.
+  # shellcheck disable=SC1090
+  source "${state_file}"
+
+  printf -v "${password_var}" '%s' "${PASSWORD-}"
+  printf -v "${domain_var}" '%s' "${DOMAIN-}"
+  printf -v "${obfs_password_var}" '%s' "${OBFS_PASSWORD-}"
+}
+
 verification_generate_protocol_probe_client_config() {
   local protocol=$1
   local config_file=$2
@@ -352,9 +370,11 @@ verification_generate_protocol_probe_client_config() {
         printf 'missing protocol state file for protocol generator: %s\n' "${protocol}" >&2
         return 1
       fi
-      password=$(sed -n 's/^PASSWORD=//p' "${state_file}" | head -n 1)
-      domain=$(sed -n 's/^DOMAIN=//p' "${state_file}" | head -n 1)
-      obfs_password=$(sed -n 's/^OBFS_PASSWORD=//p' "${state_file}" | head -n 1)
+      verification_load_hy2_probe_state \
+        "${state_file}" \
+        password \
+        domain \
+        obfs_password
       verification_require_protocol_probe_field "${protocol}" password "${password}" || return 1
       verification_require_protocol_probe_field "${protocol}" domain "${domain}" || return 1
       if [[ -n "${obfs_type}" ]]; then

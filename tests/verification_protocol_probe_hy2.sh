@@ -13,8 +13,23 @@ EXPECTED_CONFIG_PATH="${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/hy
 EXPECTED_RESULT_PATH="${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/hy2/result.env"
 EXPECTED_STDOUT_PATH="${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/hy2/probe.stdout.txt"
 EXPECTED_CLIENT_PATH_ARTIFACT="${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/hy2/client.path.txt"
+ESCAPED_DOMAIN='hy2.example.com ${EDGE_HOST}'
+ESCAPED_PASSWORD='hy2 password with spaces & $? []'
+ESCAPED_OBFS_PASSWORD='obfs password $(echo no) ;|#'
 
 mkdir -p "${REMOTE_ROOT}/root/sing-box-vps/protocols"
+
+write_hy2_state() {
+  local domain=$1
+  local password=$2
+  local obfs_password=${3-}
+
+  {
+    printf 'DOMAIN=%q\n' "${domain}"
+    printf 'PASSWORD=%q\n' "${password}"
+    printf 'OBFS_PASSWORD=%q\n' "${obfs_password}"
+  } > "${REMOTE_ROOT}/root/sing-box-vps/protocols/hy2.env"
+}
 
 awk '
   /^if ! mkdir "\$\{LOCK_DIR\}" 2>\/dev\/null; then$/ {
@@ -25,11 +40,10 @@ awk '
   | perl -0pe 's|/root/sing-box-vps/protocols/hy2.env|'"${REMOTE_ROOT}"'/root/sing-box-vps/protocols/hy2.env|g' \
   > "${TESTABLE_ENTRYPOINT}"
 
-cat > "${REMOTE_ROOT}/root/sing-box-vps/protocols/hy2.env" <<'EOF'
-DOMAIN=hy2.example.com
-PASSWORD=hy2-password-from-state
-OBFS_PASSWORD=obfs-password-from-state
-EOF
+write_hy2_state \
+  "${ESCAPED_DOMAIN}" \
+  "${ESCAPED_PASSWORD}" \
+  "${ESCAPED_OBFS_PASSWORD}"
 
 cat > "${REMOTE_ROOT}/root/sing-box-vps/config.json" <<'EOF'
 {
@@ -94,21 +108,23 @@ if ! jq -e '
   .outbounds[0].tag == "proxy" and
   .outbounds[0].server == "127.0.0.1" and
   .outbounds[0].server_port == 8443 and
-  .outbounds[0].password == "hy2-password-from-state" and
+  .outbounds[0].password == $password and
   .outbounds[0].tls.enabled == true and
-  .outbounds[0].tls.server_name == "hy2.example.com" and
+  .outbounds[0].tls.server_name == $domain and
   .outbounds[0].obfs.type == "salamander" and
-  .outbounds[0].obfs.password == "obfs-password-from-state"
-' "${EXPECTED_CONFIG_PATH}" >/dev/null; then
+  .outbounds[0].obfs.password == $obfs_password
+' --arg domain "${ESCAPED_DOMAIN}" \
+  --arg password "${ESCAPED_PASSWORD}" \
+  --arg obfs_password "${ESCAPED_OBFS_PASSWORD}" \
+  "${EXPECTED_CONFIG_PATH}" >/dev/null; then
   printf 'generated hy2 probe client config did not match expected fields\n' >&2
   exit 1
 fi
 
-cat > "${REMOTE_ROOT}/root/sing-box-vps/protocols/hy2.env" <<'EOF'
-DOMAIN=hy2.example.com
-PASSWORD=hy2-password-from-state
-OBFS_PASSWORD=
-EOF
+write_hy2_state \
+  "${ESCAPED_DOMAIN}" \
+  "${ESCAPED_PASSWORD}" \
+  ''
 
 printf 'stale-client\n' > "${EXPECTED_CONFIG_PATH}"
 
@@ -123,11 +139,10 @@ grep -Fq 'missing required hy2 probe field: obfs_password' \
   "${TMP_DIR}/stderr-hy2-missing-obfs-password.txt"
 grep -Fqx 'stale-client' "${EXPECTED_CONFIG_PATH}"
 
-cat > "${REMOTE_ROOT}/root/sing-box-vps/protocols/hy2.env" <<'EOF'
-DOMAIN=hy2.example.com
-PASSWORD=hy2-password-from-state
-OBFS_PASSWORD=obfs-password-from-state
-EOF
+write_hy2_state \
+  "${ESCAPED_DOMAIN}" \
+  "${ESCAPED_PASSWORD}" \
+  "${ESCAPED_OBFS_PASSWORD}"
 
 rm -rf "${ARTIFACT_DIR}"
 
@@ -162,11 +177,10 @@ grep -Fqx 'PROTOCOL=hy2' "${EXPECTED_RESULT_PATH}"
 grep -Fqx 'RESULT=success' "${EXPECTED_RESULT_PATH}"
 grep -Fqx 'sing-box-vps-loopback-ok' "${EXPECTED_STDOUT_PATH}"
 
-cat > "${REMOTE_ROOT}/root/sing-box-vps/protocols/hy2.env" <<'EOF'
-DOMAIN=hy2.example.com
-PASSWORD=hy2-password-from-state
-OBFS_PASSWORD=
-EOF
+write_hy2_state \
+  "${ESCAPED_DOMAIN}" \
+  "${ESCAPED_PASSWORD}" \
+  ''
 
 if bash "${TMP_DIR}/run-hy2-execute.sh" \
   > "${TMP_DIR}/stdout-hy2-execute-failure.txt" \
