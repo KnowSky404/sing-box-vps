@@ -30,5 +30,7 @@ output=$(
 )
 
 grep -Fq 'mode=local' <<<"${output}"
-grep -Fqx 'tests/verification_trigger_rules.sh|1|unset' "${TMP_DIR}/local-tests.log"
-grep -Fqx 'tests/verification_runtime_smoke_artifacts.sh|1|unset' "${TMP_DIR}/local-tests.log"
+[[ ! -e "${TMP_DIR}/local-tests.log" ]] || {
+  printf 'did not expect local verification tests for tests-only changes\n' >&2
+  exit 1
+}

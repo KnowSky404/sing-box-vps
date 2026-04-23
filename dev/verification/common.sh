@@ -12,7 +12,7 @@ determine_verification_mode() {
   local file
   for file in "$@"; do
     case "${file}" in
-      install.sh | uninstall.sh | utils/* | configs/*)
+      install.sh | uninstall.sh | utils/* | configs/* | dev/verification/*)
         printf 'remote\n'
         return 0
         ;;
@@ -22,19 +22,94 @@ determine_verification_mode() {
   printf 'local\n'
 }
 
+append_unique_lines() {
+  local line
+  local existing=${APPEND_UNIQUE_LINES_SEEN:-}
+
+  for line in "$@"; do
+    [[ -n "${line}" ]] || continue
+    if [[ ",${existing}," == *",${line},"* ]]; then
+      continue
+    fi
+    printf '%s\n' "${line}"
+    existing="${existing},${line}"
+  done
+
+  APPEND_UNIQUE_LINES_SEEN="${existing}"
+}
+
+resolve_local_tests() {
+  local changed_files=("$@")
+  local file
+  local needs_runner_tests=0
+  local needs_remote_harness_tests=0
+  local needs_protocol_probe_tests=0
+
+  APPEND_UNIQUE_LINES_SEEN=''
+
+  for file in "${changed_files[@]}"; do
+    case "${file}" in
+      install.sh | uninstall.sh | utils/* | configs/*)
+        needs_protocol_probe_tests=1
+        ;;
+      dev/verification/run.sh | dev/verification/common.sh)
+        needs_runner_tests=1
+        ;;
+      dev/verification/remote/*)
+        needs_protocol_probe_tests=1
+        needs_runner_tests=1
+        needs_remote_harness_tests=1
+        ;;
+    esac
+  done
+
+  if [[ "${needs_protocol_probe_tests}" == "1" ]]; then
+    append_unique_lines \
+      tests/verification_protocol_probe_matrix.sh \
+      tests/verification_protocol_probe_vless.sh \
+      tests/verification_protocol_probe_hy2.sh
+  fi
+
+  if [[ "${needs_runner_tests}" == "1" ]]; then
+    append_unique_lines \
+      tests/verification_artifact_dir_layout.sh \
+      tests/verification_trigger_rules.sh \
+      tests/verification_scenario_mapping.sh \
+      tests/verification_requires_remote_env.sh \
+      tests/verification_remote_target_file_alias.sh \
+      tests/verification_stops_on_remote_failure.sh \
+      tests/verification_run_writes_changed_files.sh \
+      tests/verification_tests_only_stays_local.sh
+  fi
+
+  if [[ "${needs_remote_harness_tests}" == "1" ]]; then
+    append_unique_lines \
+      tests/verification_runtime_smoke_artifacts.sh \
+      tests/verification_remote_scenario_dispatch.sh
+  fi
+}
+
 resolve_remote_scenarios() {
   local needs_reinstall=0
+  local needs_install_flow=0
   local file
-
-  printf '%s\n' fresh_install_vless reconfigure_existing_install runtime_smoke
 
   for file in "$@"; do
     case "${file}" in
+      install.sh | configs/*)
+        needs_install_flow=1
+        ;;
       *uninstall* | *takeover* | *reinstall* | *incomplete* | *residual* | *legacy*)
         needs_reinstall=1
         ;;
     esac
   done
+
+  if [[ "${needs_install_flow}" == "1" ]]; then
+    printf '%s\n' fresh_install_vless reconfigure_existing_install
+  fi
+
+  printf '%s\n' runtime_smoke
 
   if [[ "${needs_reinstall}" == "1" ]]; then
     printf '%s\n' uninstall_and_reinstall

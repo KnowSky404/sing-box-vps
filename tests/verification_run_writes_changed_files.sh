@@ -414,7 +414,7 @@ PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" -lc "\${1:-}" < "\${script_file}"
 EOF
 chmod +x "${TMP_DIR}/ssh"
 
-PATH="${TMP_DIR}:${PATH}" VERIFY_REMOTE_HOST=test.example VERIFY_REMOTE_USER=root \
+PATH="${TMP_DIR}:${PATH}" VERIFY_REMOTE_TARGET_FILE="${TMP_DIR}/missing-target.env" VERIFY_REMOTE_HOST=test.example VERIFY_REMOTE_USER=root \
   bash "${REPO_ROOT}/dev/verification/run.sh" > "${TMP_DIR}/stdout.txt"
 
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout.txt")
@@ -440,22 +440,16 @@ grep -Fq 'remote_artifacts=extracted' "${run_dir}/summary.log"
 grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.env' "${REMOTE_ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.env' "${REMOTE_ASSERT_LOG_FILE}"
 grep -Fqx 'UUID=22222222-2222-4222-8222-222222222222' "${REMOTE_STATE_FILE}"
-grep -Fqx 'tests/verification_trigger_rules.sh|1' "${TMP_DIR}/local-tests.log"
-grep -Fqx 'tests/verification_artifact_dir_layout.sh|1' "${TMP_DIR}/local-tests.log"
-grep -Fqx 'tests/verification_remote_scenario_dispatch.sh|1' "${TMP_DIR}/local-tests.log"
-grep -Fqx 'tests/verification_remote_target_file_alias.sh|1' "${TMP_DIR}/local-tests.log"
-grep -Fqx 'tests/verification_run_writes_changed_files.sh|1' "${TMP_DIR}/local-tests.log"
-grep -Fqx 'tests/verification_scenario_mapping.sh|1' "${TMP_DIR}/local-tests.log"
-grep -Fqx 'tests/verification_requires_remote_env.sh|1' "${TMP_DIR}/local-tests.log"
-grep -Fqx 'tests/verification_runtime_smoke_artifacts.sh|1' "${TMP_DIR}/local-tests.log"
-grep -Fqx 'tests/verification_stops_on_remote_failure.sh|1' "${TMP_DIR}/local-tests.log"
-[[ $(wc -l < "${TMP_DIR}/local-tests.log") -eq 9 ]] || {
-  printf 'expected only verification workflow tests to run locally\n' >&2
+grep -Fqx 'tests/verification_protocol_probe_matrix.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_protocol_probe_vless.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_protocol_probe_hy2.sh|1' "${TMP_DIR}/local-tests.log"
+[[ $(wc -l < "${TMP_DIR}/local-tests.log") -eq 3 ]] || {
+  printf 'expected only fast protocol probe tests for install changes\n' >&2
   exit 1
 }
 default_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
 
-PATH="${TMP_DIR}:${PATH}" VERIFY_REMOTE_HOST=test.example VERIFY_REMOTE_USER=root VERIFY_SKIP_LOCAL_TESTS=1 \
+PATH="${TMP_DIR}:${PATH}" VERIFY_REMOTE_TARGET_FILE="${TMP_DIR}/missing-target.env" VERIFY_REMOTE_HOST=test.example VERIFY_REMOTE_USER=root VERIFY_SKIP_LOCAL_TESTS=1 \
   bash "${REPO_ROOT}/dev/verification/run.sh" > "${TMP_DIR}/stdout-skip.txt"
 
 run_dir_skip=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout-skip.txt")
@@ -476,6 +470,30 @@ skip_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
   printf 'expected skip run to avoid local tests: before=%s after=%s\n' "${default_local_test_count}" "${skip_local_test_count}" >&2
   exit 1
 }
+
+PATH="${TMP_DIR}:${PATH}" VERIFY_REMOTE_TARGET_FILE="${TMP_DIR}/missing-target.env" VERIFY_SKIP_REMOTE=1 \
+  bash "${REPO_ROOT}/dev/verification/run.sh" \
+  --changed-file dev/verification/remote/entrypoint.sh > "${TMP_DIR}/stdout-remote-framework.txt"
+
+run_dir_remote_framework=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout-remote-framework.txt")
+scenarios_remote_framework=$(paste -sd, "${run_dir_remote_framework}/scenarios.txt")
+[[ "${scenarios_remote_framework}" == "runtime_smoke" ]] || {
+  printf 'unexpected scenarios for remote framework change: %s\n' "${scenarios_remote_framework}" >&2
+  exit 1
+}
+grep -Fqx 'tests/verification_protocol_probe_matrix.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_protocol_probe_vless.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_protocol_probe_hy2.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_artifact_dir_layout.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_trigger_rules.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_scenario_mapping.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_requires_remote_env.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_remote_target_file_alias.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_stops_on_remote_failure.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_run_writes_changed_files.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_tests_only_stays_local.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_runtime_smoke_artifacts.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_remote_scenario_dispatch.sh|1' "${TMP_DIR}/local-tests.log"
 
 PATH="${TMP_DIR}:${PATH}" VERIFY_SKIP_LOCAL_TESTS=1 VERIFY_EMPTY_CHANGES=1 \
   bash "${REPO_ROOT}/dev/verification/run.sh" > "${TMP_DIR}/stdout-empty.txt"

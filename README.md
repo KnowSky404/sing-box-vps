@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026042301`
+- 脚本版本：`2026042302`
 - sing-box 适配版本：`1.13.9`
 
 ## 🚀 一键安装
@@ -50,6 +50,11 @@ VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh
 ```
 
 核心脚本改动会自动触发远程验证；仅修改 `tests/`、`docs/`、`README.md` 不会占用测试机。
+
+默认工作流已做分层优化：
+- 核心脚本改动默认只跑协议探测快测
+- 仅在改动 `dev/verification/run.sh`、`dev/verification/common.sh` 或 `dev/verification/remote/` 时，才追加远程调度与远程框架回归
+- 远程验证默认优先收敛到 `runtime_smoke`；只有安装/重配相关改动才扩到 `fresh_install_vless` 与 `reconfigure_existing_install`
 
 命中远程验证时，测试机会额外执行协议级闭环探测：在测试机本机启动临时客户端，连接测试机本机的服务端入站，再通过该客户端代理访问测试机本机 HTTP 探针服务。当前优先支持 `vless-reality` 与 `hy2`；未覆盖协议会在产物中标记为 `unsupported`。
 

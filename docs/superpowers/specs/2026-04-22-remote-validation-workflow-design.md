@@ -72,6 +72,7 @@
 - `uninstall.sh`
 - `utils/`
 - `configs/`
+- `dev/verification/`
 
 ### 5.3 默认不触发远程验证的路径
 
@@ -93,7 +94,7 @@
 调度逻辑固定为：
 
 1. 识别本次改动文件列表
-2. 运行本地快速测试
+2. 按改动范围选择本地快速测试
 3. 若命中远程触发规则，则自动执行远程验证
 4. 收集远程验证产物并汇总结果
 5. 任一关键步骤失败则终止，并输出失败原因与产物目录
@@ -101,6 +102,7 @@
 行为约束：
 
 - 本地快速测试失败时，不进入远程验证
+- 本地快速测试默认优先运行协议探测快测，只有改动远程调度或远程框架时才追加工作流类回归
 - 远程验证执行前必须输出目标主机信息，防止误连非测试机
 - 远程验证期间必须持有测试机占用锁，避免并发污染
 
@@ -167,10 +169,12 @@
 
 默认映射规则如下：
 
-- 改动 `install.sh`、`uninstall.sh`、`utils/`、`configs/`
+- 改动 `install.sh` 或 `configs/`
   - 执行 `fresh_install_vless`
   - 执行 `reconfigure_existing_install`
   - 执行 `runtime_smoke`
+- 改动 `uninstall.sh`、`utils/` 或 `dev/verification/`
+  - 默认执行 `runtime_smoke`
 - 若改动明确涉及卸载、接管、幂等、残留恢复
   - 额外执行 `uninstall_and_reinstall`
 - 仅改动 `tests/`

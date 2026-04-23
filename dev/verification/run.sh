@@ -28,14 +28,17 @@ list_changed_files() {
 }
 
 run_local_tests() {
+  local changed_files=("$@")
   local test_file
+  local tests_to_run=()
 
   if [[ "${VERIFY_SKIP_LOCAL_TESTS:-0}" == "1" ]]; then
     return 0
   fi
 
-  for test_file in tests/verification_*.sh; do
-    [[ "${test_file}" == "tests/verification_tests_only_stays_local.sh" ]] && continue
+  mapfile -t tests_to_run < <(resolve_local_tests "${changed_files[@]}")
+
+  for test_file in "${tests_to_run[@]}"; do
     env -u VERIFY_SKIP_REMOTE VERIFY_SKIP_LOCAL_TESTS=1 bash "${test_file}"
   done
 }
@@ -121,7 +124,12 @@ main() {
   printf 'mode=%s\n' "${mode}" > "${run_dir}/summary.log"
 
   printf 'mode=%s\nrun_dir=%s\n' "${mode}" "${run_dir}"
-  run_local_tests
+  run_local_tests "${changed_files[@]}"
+
+  if [[ "${mode}" == "remote" ]]; then
+    resolve_remote_scenarios "${changed_files[@]}" > "${run_dir}/scenarios.txt"
+    mapfile -t scenarios < "${run_dir}/scenarios.txt"
+  fi
 
   if [[ "${VERIFY_SKIP_REMOTE:-0}" == "1" ]]; then
     printf 'remote execution skipped by VERIFY_SKIP_REMOTE\n' >> "${run_dir}/summary.log"
@@ -131,8 +139,6 @@ main() {
   if [[ "${mode}" == "remote" ]]; then
     require_remote_env
     printf 'remote_target=%s\n' "${VERIFY_REMOTE_TARGET_LABEL}" >> "${run_dir}/summary.log"
-    resolve_remote_scenarios "${changed_files[@]}" > "${run_dir}/scenarios.txt"
-    mapfile -t scenarios < "${run_dir}/scenarios.txt"
     if emit_remote_payload | ssh "${VERIFY_REMOTE_SSH_TARGET}" 'bash -s -- '"${scenarios[*]}" \
       > "${run_dir}/remote.stdout.log" \
       2> "${run_dir}/remote.stderr.log"; then
