@@ -116,7 +116,7 @@ verification_capture_status_menu() {
   target_path=$(verification_artifact_path "${relative_path}")
   set +e
   bash /usr/local/bin/sbv > "${target_path}" 2>&1 <<'EOF'
-8
+9
 0
 EOF
   status=$?

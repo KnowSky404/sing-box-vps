@@ -60,7 +60,12 @@ if (( status != 0 )); then
   exit 1
 fi
 
-if [[ "${output}" != *"1. 安装协议 / 更新 sing-box"* ]]; then
-  printf 'expected main menu to render even when status checks fail, got:\n%s\n' "${output}" >&2
+if [[ "${output}" != *"1. 安装新协议"* ]]; then
+  printf 'expected top-level install protocol menu entry to render even when status checks fail, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${output}" != *"2. 更新 sing-box 版本"* ]]; then
+  printf 'expected top-level update menu entry to render even when status checks fail, got:\n%s\n' "${output}" >&2
   exit 1
 fi

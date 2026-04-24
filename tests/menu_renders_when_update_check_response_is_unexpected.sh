@@ -49,12 +49,17 @@ if (( status != 0 )); then
   exit 1
 fi
 
-if [[ "${output}" != *"1. 安装协议 / 更新 sing-box"* ]]; then
-  printf 'expected main menu to render when update check returns unexpected content, got:\n%s\n' "${output}" >&2
+if [[ "${output}" != *"1. 安装新协议"* ]]; then
+  printf 'expected top-level install protocol menu entry to render when update check returns unexpected content, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
-if [[ "${output}" != *"4. 系统管理"* ]]; then
+if [[ "${output}" != *"2. 更新 sing-box 版本"* ]]; then
+  printf 'expected top-level update menu entry to render when update check returns unexpected content, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${output}" != *"5. 系统管理"* ]]; then
   printf 'expected system management menu entry to render, got:\n%s\n' "${output}" >&2
   exit 1
 fi
@@ -64,17 +69,17 @@ if [[ "${output}" == *"开启 BBR 拥塞控制算法"* ]]; then
   exit 1
 fi
 
-if [[ "${output}" != *"8. 查看状态"* ]]; then
+if [[ "${output}" != *"9. 查看状态"* ]]; then
   printf 'expected status menu entry to render, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
-if [[ "${output}" != *"9. 查看节点信息"* ]]; then
+if [[ "${output}" != *"10. 查看节点信息"* ]]; then
   printf 'expected node info menu entry to render, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
-if [[ "${output}" != *"14. 流媒体验证检测"* ]]; then
-  printf 'expected media check menu entry to shift to 14, got:\n%s\n' "${output}" >&2
+if [[ "${output}" != *"15. 流媒体验证检测"* ]]; then
+  printf 'expected media check menu entry to shift to 15, got:\n%s\n' "${output}" >&2
   exit 1
 fi

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042408
+# Version: 2026042409
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042408"
+readonly SCRIPT_VERSION="2026042409"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -4011,7 +4011,7 @@ warp_management() {
 
     load_current_config_state
     display_status_summary
-    log_info "连接信息未自动展示，如需查看请进入菜单 9。"
+    log_info "连接信息未自动展示，如需查看请进入菜单 10。"
   done
 }
 
@@ -4417,7 +4417,7 @@ show_qr_info() {
   fi
 
   if ! command -v qrencode >/dev/null 2>&1; then
-    log_warn "未安装 qrencode，已跳过二维码展示。可安装后重新进入菜单 9 查看。"
+    log_warn "未安装 qrencode，已跳过二维码展示。可安装后重新进入菜单 10 查看。"
     return 0
   fi
 
@@ -4851,7 +4851,7 @@ show_post_config_connection_info() {
   public_ip=$(get_public_ip)
 
   echo -e "\n${GREEN}连接信息：${NC}"
-  echo "已按当前配置生成以下连接信息。后续如需再次查看，可进入菜单 9。"
+  echo "已按当前配置生成以下连接信息。后续如需再次查看，可进入菜单 10。"
   show_connection_details "both" "${public_ip}"
 }
 
@@ -5525,7 +5525,66 @@ update_singbox_binary_preserving_config() {
   systemctl restart sing-box
   log_success "sing-box 已更新到 ${SB_VERSION}，当前配置已保留。"
   display_status_summary
-  log_info "连接信息未自动展示，如需查看请进入菜单 9。"
+  log_info "连接信息未自动展示，如需查看请进入菜单 10。"
+}
+
+prompt_incomplete_instance_action() {
+  local existing_instance_state
+  local install_choice
+
+  echo
+  render_left_aligned_page_header "sing-box 管理" "发现现有实例缺少关键组件"
+  render_section_title "实例检测"
+  echo "检测到残缺的现有实例。"
+  render_section_title "操作选项"
+  render_menu_item "1" "接管现有实例"
+  render_menu_item "2" "按全新安装处理"
+  echo "0. 返回"
+  read -rp "请选择 [0-2]: " install_choice
+
+  case "${install_choice}" in
+    1) take_over_existing_instance ;;
+    2) install_or_reconfigure_singbox ;;
+    0) return 0 ;;
+    *) log_warn "无效选项，请重新选择。" ;;
+  esac
+}
+
+install_new_protocols_menu() {
+  local existing_instance_state
+
+  existing_instance_state=$(detect_existing_instance_state)
+
+  case "${existing_instance_state}" in
+    healthy)
+      install_protocols_interactive "additional"
+      ;;
+    incomplete)
+      prompt_incomplete_instance_action
+      ;;
+    *)
+      install_or_reconfigure_singbox
+      ;;
+  esac
+}
+
+update_singbox_version_menu() {
+  local existing_instance_state
+
+  existing_instance_state=$(detect_existing_instance_state)
+
+  case "${existing_instance_state}" in
+    healthy)
+      update_singbox_binary_preserving_config
+      ;;
+    incomplete)
+      prompt_incomplete_instance_action
+      ;;
+    *)
+      log_warn "未检测到已安装的 sing-box 实例，将进入安装流程。"
+      install_or_reconfigure_singbox
+      ;;
+  esac
 }
 
 install_or_update_singbox() {
@@ -5552,30 +5611,15 @@ install_or_update_singbox() {
     read -rp "请选择 [0-2] (默认 1): " install_choice
 
     case "${install_choice:-1}" in
-      2) install_protocols_interactive "additional" ;;
+      2) install_new_protocols_menu ;;
       0) return 0 ;;
-      *) update_singbox_binary_preserving_config ;;
+      *) update_singbox_version_menu ;;
     esac
     return
   fi
 
   if [[ "${existing_instance_state}" == "incomplete" ]]; then
-    echo
-    render_left_aligned_page_header "sing-box 管理" "发现现有实例缺少关键组件"
-    render_section_title "实例检测"
-    echo "检测到残缺的现有实例。"
-    render_section_title "操作选项"
-    render_menu_item "1" "接管现有实例"
-    render_menu_item "2" "按全新安装处理"
-    echo "0. 返回"
-    read -rp "请选择 [0-2]: " install_choice
-
-    case "${install_choice}" in
-      1) take_over_existing_instance ;;
-      2) install_or_reconfigure_singbox ;;
-      0) return 0 ;;
-      *) log_warn "无效选项，请重新选择。" ;;
-    esac
+    prompt_incomplete_instance_action
     return
   fi
 
@@ -5612,45 +5656,47 @@ main() {
     check_bbr_status
 
     render_section_title "部署管理"
-    render_menu_item "1" "安装协议 / 更新 sing-box" "" "${SB_VER_STATUS}"
-    render_menu_item "2" "卸载 sing-box"
-    render_menu_item "3" "修改当前协议配置"
-    render_menu_item "4" "系统管理"
+    render_menu_item "1" "安装新协议"
+    render_menu_item "2" "更新 sing-box 版本" "" "${SB_VER_STATUS}"
+    render_menu_item "3" "卸载 sing-box"
+    render_menu_item "4" "修改当前协议配置"
+    render_menu_item "5" "系统管理"
 
     render_section_title "服务控制"
-    render_menu_item "5" "启动 sing-box"
-    render_menu_item "6" "停止 sing-box"
-    render_menu_item "7" "重启 sing-box"
-    render_menu_item "8" "查看状态"
+    render_menu_item "6" "启动 sing-box"
+    render_menu_item "7" "停止 sing-box"
+    render_menu_item "8" "重启 sing-box"
+    render_menu_item "9" "查看状态"
 
     render_section_title "连接与诊断"
-    render_menu_item "9" "查看节点信息"
-    render_menu_item "10" "查看实时日志"
-    render_menu_item "14" "流媒体验证检测"
+    render_menu_item "10" "查看节点信息"
+    render_menu_item "11" "查看实时日志"
+    render_menu_item "15" "流媒体验证检测"
 
     render_section_title "脚本维护"
-    render_menu_item "11" "更新管理脚本 (sbv)" "" "${SCRIPT_VER_STATUS}"
-    render_menu_item "12" "卸载管理脚本 (sbv)"
-    render_menu_item "13" "配置 Cloudflare Warp" "(解锁/防送中)"
+    render_menu_item "12" "更新管理脚本 (sbv)" "" "${SCRIPT_VER_STATUS}"
+    render_menu_item "13" "卸载管理脚本 (sbv)"
+    render_menu_item "14" "配置 Cloudflare Warp" "(解锁/防送中)"
     echo "0. 退出"
     render_main_menu_footer
-    read -rp "请选择 [0-14]: " choice
+    read -rp "请选择 [0-15]: " choice
 
     case "$choice" in
-      1) install_or_update_singbox ;;
-      2) uninstall_singbox ;;
-      3) update_config_only ;;
-      4) system_management_menu ;;
-      5) systemctl start sing-box && log_success "服务已启动。" ;;
-      6) systemctl stop sing-box && log_success "服务已停止。" ;;
-      7) systemctl restart sing-box && log_success "服务已重启。" ;;
-      8) view_status ;;
-      9) view_node_info ;;
-      10) journalctl -u sing-box -f || true ;;
-      11) manual_update_script ;;
-      12) uninstall_script ;;
-      13) warp_management ;;
-      14) media_check_menu ;;
+      1) install_new_protocols_menu ;;
+      2) update_singbox_version_menu ;;
+      3) uninstall_singbox ;;
+      4) update_config_only ;;
+      5) system_management_menu ;;
+      6) systemctl start sing-box && log_success "服务已启动。" ;;
+      7) systemctl stop sing-box && log_success "服务已停止。" ;;
+      8) systemctl restart sing-box && log_success "服务已重启。" ;;
+      9) view_status ;;
+      10) view_node_info ;;
+      11) journalctl -u sing-box -f || true ;;
+      12) manual_update_script ;;
+      13) uninstall_script ;;
+      14) warp_management ;;
+      15) media_check_menu ;;
       0) exit_script ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac

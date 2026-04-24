@@ -289,7 +289,7 @@ INDEX_EOF
       ;;
     /usr/local/bin/sbv)
       mapfile -t actual_lines
-      if [[ "${actual_lines[0]:-}" == "3" ]]; then
+      if [[ "${actual_lines[0]:-}" == "4" ]]; then
         if [[ "${#actual_lines[@]}" -ne 6 ]]; then
           printf 'unexpected update input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
           return 1
@@ -306,7 +306,7 @@ INDEX_EOF
         return 0
       fi
 
-      if [[ "${actual_lines[0]:-}" == "8" && "${actual_lines[1]:-}" == "0" ]]; then
+      if [[ "${actual_lines[0]:-}" == "9" && "${actual_lines[1]:-}" == "0" ]]; then
         printf '服务状态摘要：\n端口: %s\n配置文件: /root/sing-box-vps/config.json\n' "$(cat "${PORT_FILE}")"
         return 0
       fi

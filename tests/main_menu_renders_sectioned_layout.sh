@@ -64,12 +64,17 @@ if [[ "${plain_output}" != *"脚本维护"* ]]; then
   exit 1
 fi
 
-if [[ "${plain_output}" != *"1. 安装协议 / 更新 sing-box"* ]]; then
-  printf 'expected main install/update option in sectioned main menu, got:\n%s\n' "${output}" >&2
+if [[ "${plain_output}" != *"1. 安装新协议"* ]]; then
+  printf 'expected top-level install protocol option in sectioned main menu, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
-if [[ "${plain_output}" != *"14. 流媒体验证检测"* ]]; then
+if [[ "${plain_output}" != *"2. 更新 sing-box 版本"* ]]; then
+  printf 'expected top-level update sing-box option in sectioned main menu, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${plain_output}" != *"15. 流媒体验证检测"* ]]; then
   printf 'expected media check option in sectioned main menu, got:\n%s\n' "${output}" >&2
   exit 1
 fi
@@ -121,17 +126,18 @@ fi
 
 if ! printf '%s\n' "${plain_output}" | awk '
   index($0, "部署管理") { seen=1; next }
-  seen && index($0, "1. 安装协议 / 更新 sing-box") { found=1; exit }
+  seen && index($0, "1. 安装新协议") { found_install=1; next }
+  seen && index($0, "2. 更新 sing-box 版本") { found_update=1; exit }
   seen && index($0, "服务控制") { exit }
-  END { exit(found ? 0 : 1) }
+  END { exit(found_install && found_update ? 0 : 1) }
 '; then
-  printf 'expected install/update option to stay within the deployment section, got:\n%s\n' "${output}" >&2
+  printf 'expected install and update options to stay within the deployment section, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
 if ! printf '%s\n' "${plain_output}" | awk '
   index($0, "服务控制") { seen=1; next }
-  seen && index($0, "8. 查看状态") { found=1; exit }
+  seen && index($0, "9. 查看状态") { found=1; exit }
   seen && index($0, "连接与诊断") { exit }
   END { exit(found ? 0 : 1) }
 '; then
@@ -141,7 +147,7 @@ fi
 
 if ! printf '%s\n' "${plain_output}" | awk '
   index($0, "连接与诊断") { seen=1; next }
-  seen && index($0, "14. 流媒体验证检测") { found=1; exit }
+  seen && index($0, "15. 流媒体验证检测") { found=1; exit }
   seen && index($0, "脚本维护") { exit }
   END { exit(found ? 0 : 1) }
 '; then
