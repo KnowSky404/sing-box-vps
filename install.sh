@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042405"
+readonly SCRIPT_VERSION="2026042406"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -5173,6 +5173,8 @@ log_takeover_state_diagnostics() {
   local config_protocols=()
   local indexed_protocols=()
   local protocol
+  local expected_snapshot
+  local saved_snapshot
 
   [[ -x "${SINGBOX_BIN_PATH}" ]] || log_warn "接管诊断: 缺少 sing-box 二进制 ${SINGBOX_BIN_PATH}"
   [[ -f "${SINGBOX_SERVICE_FILE}" ]] || log_warn "接管诊断: 缺少 systemd 服务文件 ${SINGBOX_SERVICE_FILE}"
@@ -5198,9 +5200,28 @@ log_takeover_state_diagnostics() {
   fi
 
   for protocol in "${config_protocols[@]}"; do
-    protocol_state_exists "${protocol}" || log_warn "接管诊断: 缺少协议状态文件 $(protocol_state_file "${protocol}")"
+    if ! protocol_state_exists "${protocol}"; then
+      log_warn "接管诊断: 缺少协议状态文件 $(protocol_state_file "${protocol}")"
+      continue
+    fi
     if ! protocol_state_matches_config "${protocol}"; then
       log_warn "接管诊断: 协议状态与配置不一致: ${protocol}"
+      expected_snapshot=$(render_expected_protocol_state_snapshot "${protocol}" 2>/dev/null || true)
+      saved_snapshot=$(render_saved_protocol_state_snapshot "${protocol}" 2>/dev/null || true)
+
+      if [[ -n "${expected_snapshot}" ]]; then
+        log_warn "接管诊断: ${protocol} 配置期望快照:"
+        while IFS= read -r line; do
+          log_warn "  ${line}"
+        done <<< "${expected_snapshot}"
+      fi
+
+      if [[ -n "${saved_snapshot}" ]]; then
+        log_warn "接管诊断: ${protocol} 当前状态快照:"
+        while IFS= read -r line; do
+          log_warn "  ${line}"
+        done <<< "${saved_snapshot}"
+      fi
     fi
   done
 }
