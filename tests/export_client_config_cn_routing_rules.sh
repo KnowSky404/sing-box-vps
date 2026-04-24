@@ -96,8 +96,8 @@ if ! jq -e '.dns.servers[] | select(.tag == "cn-dns" and .type == "https" and .s
   exit 1
 fi
 
-if ! jq -e '.dns.servers[] | select(.tag == "remote-dns" and .type == "https" and .server == "1.1.1.1" and .server_port == 443 and .path == "/dns-query")' "${EXPORT_PATH}" >/dev/null; then
-  printf 'expected remote-dns https://1.1.1.1:443/dns-query, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+if ! jq -e '.dns.servers[] | select(.tag == "remote-dns" and .type == "https" and .server == "1.1.1.1" and .server_port == 443 and .path == "/dns-query" and .detour == "proxy")' "${EXPORT_PATH}" >/dev/null; then
+  printf 'expected remote-dns https://1.1.1.1:443/dns-query detour=proxy, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
   exit 1
 fi
 
@@ -131,8 +131,8 @@ if ! jq -e '.route.rules[] | select(.rule_set == "geosite-geolocation-cn" and .o
   exit 1
 fi
 
-if ! jq -e '.route.default_domain_resolver == "remote-dns"' "${EXPORT_PATH}" >/dev/null; then
-  printf 'expected route.default_domain_resolver remote-dns, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+if ! jq -e '.route.default_domain_resolver == "cn-dns"' "${EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.default_domain_resolver cn-dns, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
   exit 1
 fi
 

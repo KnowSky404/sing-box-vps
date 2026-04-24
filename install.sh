@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042411
+# Version: 2026042412
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042411"
+readonly SCRIPT_VERSION="2026042412"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -4650,7 +4650,8 @@ build_singbox_client_config() {
               "tag": "remote-dns",
               "server": "1.1.1.1",
               "server_port": 443,
-              "path": "/dns-query"
+              "path": "/dns-query",
+              "detour": "proxy"
             }
           ],
           "rules": [
@@ -4734,7 +4735,7 @@ build_singbox_client_config() {
           ],
           "final": "proxy",
           "auto_detect_interface": true,
-          "default_domain_resolver": "remote-dns"
+          "default_domain_resolver": "cn-dns"
         },
         "experimental": {
           "cache_file": {
