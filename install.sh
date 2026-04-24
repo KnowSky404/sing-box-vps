@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042404"
+readonly SCRIPT_VERSION="2026042405"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -5156,6 +5156,55 @@ protocol_state_layer_matches_config() {
   return 0
 }
 
+clear_protocol_state_cache() {
+  local state_file
+
+  rm -f "${SB_PROTOCOL_INDEX_FILE}"
+
+  if [[ -d "${SB_PROTOCOL_STATE_DIR}" ]]; then
+    for state_file in "${SB_PROTOCOL_STATE_DIR}"/*.env; do
+      [[ -e "${state_file}" ]] || continue
+      rm -f "${state_file}"
+    done
+  fi
+}
+
+log_takeover_state_diagnostics() {
+  local config_protocols=()
+  local indexed_protocols=()
+  local protocol
+
+  [[ -x "${SINGBOX_BIN_PATH}" ]] || log_warn "接管诊断: 缺少 sing-box 二进制 ${SINGBOX_BIN_PATH}"
+  [[ -f "${SINGBOX_SERVICE_FILE}" ]] || log_warn "接管诊断: 缺少 systemd 服务文件 ${SINGBOX_SERVICE_FILE}"
+  [[ -f "${SINGBOX_CONFIG_FILE}" ]] || log_warn "接管诊断: 缺少配置文件 ${SINGBOX_CONFIG_FILE}"
+  [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]] || log_warn "接管诊断: 缺少协议索引 ${SB_PROTOCOL_INDEX_FILE}"
+
+  if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    mapfile -t config_protocols < <(list_config_protocols)
+    if [[ ${#config_protocols[@]} -gt 0 ]]; then
+      log_warn "接管诊断: 配置文件识别到的协议: $(IFS=,; printf '%s' "${config_protocols[*]}")"
+    else
+      log_warn "接管诊断: 配置文件中未识别到受支持协议。"
+    fi
+  fi
+
+  if [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
+    mapfile -t indexed_protocols < <(list_indexed_protocols_raw)
+    if [[ ${#indexed_protocols[@]} -gt 0 ]]; then
+      log_warn "接管诊断: 协议索引记录的协议: $(IFS=,; printf '%s' "${indexed_protocols[*]}")"
+    else
+      log_warn "接管诊断: 协议索引为空。"
+    fi
+  fi
+
+  for protocol in "${config_protocols[@]}"; do
+    protocol_state_exists "${protocol}" || log_warn "接管诊断: 缺少协议状态文件 $(protocol_state_file "${protocol}")"
+    if ! protocol_state_matches_config "${protocol}"; then
+      log_warn "接管诊断: 协议状态与配置不一致: ${protocol}"
+    fi
+  done
+}
+
 detect_existing_instance_state() {
   local has_bin="n"
   local has_service="n"
@@ -5206,6 +5255,7 @@ rebuild_protocol_state_from_config() {
   inbound_count=$(jq -r '(.inbounds // []) | length' "${SINGBOX_CONFIG_FILE}")
   [[ "${inbound_count}" =~ ^[0-9]+$ ]] || return 0
 
+  clear_protocol_state_cache
   ensure_protocol_state_dir
 
   for ((inbound_index = 0; inbound_index < inbound_count; inbound_index++)); do
@@ -5349,17 +5399,23 @@ rebuild_protocol_state_from_config() {
     fi
   done
 
-  if [[ ${#rebuilt_protocols[@]} -gt 0 ]]; then
-    write_protocol_index "$(IFS=,; printf '%s' "${rebuilt_protocols[*]}")"
-  fi
+  [[ ${#rebuilt_protocols[@]} -gt 0 ]] || return 1
+
+  write_protocol_index "$(IFS=,; printf '%s' "${rebuilt_protocols[*]}")"
+  return 0
 }
 
 take_over_existing_instance() {
   [[ -f "${SINGBOX_CONFIG_FILE}" ]] || log_error "未找到配置文件，无法接管现有实例。请先按全新安装处理。"
   ensure_takeover_validation_binary
   check_config_valid
-  rebuild_protocol_state_from_config
+  rebuild_protocol_state_from_config || log_error "当前配置未识别到可接管的受支持协议。"
   restore_runtime_artifacts_for_takeover
+  if [[ "$(detect_existing_instance_state)" != "healthy" ]]; then
+    log_takeover_state_diagnostics
+    log_error "接管后实例状态仍不完整，请根据以上诊断信息检查现场。"
+  fi
+  log_success "现有实例接管完成。"
 }
 
 resolve_takeover_binary_repair_version() {
