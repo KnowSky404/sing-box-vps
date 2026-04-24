@@ -155,7 +155,7 @@ if [[ ! -f "${EXPECTED_EXPORT_PATH}" ]]; then
   exit 1
 fi
 
-if ! jq -e '.inbounds[] | select(.type == "mixed") | .listen == "127.0.0.1" and .listen_port == 2080' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+if ! jq -e '.inbounds[] | select(.type == "mixed") | .listen == "127.0.0.1" and .listen_port == 2080 and .set_system_proxy == false' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
   printf 'expected local mixed inbound 127.0.0.1:2080, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
@@ -210,13 +210,18 @@ if ! jq -e '((.dns.rules // []) | map(select(.server == "local-dns")) | length) 
   exit 1
 fi
 
-if ! jq -e '((.dns.rules // []) | all(if .server == "cn-dns" then ((.rule_set? == "geosite-cn") or (((.rule_set? | type) == "array") and ((.rule_set | index("geosite-cn")) != null))) else true end))' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
-  printf 'expected dns.rules cn-dns entries to require geosite-cn rule_set constraints, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+if ! jq -e '((.dns.rules // []) | all(if .server == "cn-dns" then ((.rule_set? == "geosite-geolocation-cn") or (((.rule_set? | type) == "array") and ((.rule_set | index("geosite-geolocation-cn")) != null))) else true end))' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected dns.rules cn-dns entries to require geosite-geolocation-cn rule_set constraints, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
 if ! jq -e '.route.final == "proxy"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
   printf 'expected route.final proxy, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+  exit 1
+fi
+
+if ! jq -e '.route.default_domain_resolver == "local"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.default_domain_resolver local, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
@@ -230,13 +235,13 @@ if ! jq -e '(.route.rule_set // [])[] | select(.tag == "geoip-cn" and .type == "
   exit 1
 fi
 
-if ! jq -e '(.route.rule_set // [])[] | select(.tag == "geosite-cn" and .type == "remote" and .format == "binary" and .url == "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
-  printf 'expected route.rule_set geosite-cn with sing-geosite geosite-cn.srs URL, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+if ! jq -e '(.route.rule_set // [])[] | select(.tag == "geosite-geolocation-cn" and .type == "remote" and .format == "binary" and .url == "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-cn.srs")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.rule_set geosite-geolocation-cn with sing-geosite geosite-geolocation-cn.srs URL, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
-if ! jq -e '(.route.rules // [])[] | select((((.rule_set? == "geosite-cn") or (((.rule_set? | type) == "array") and ((.rule_set | index("geosite-cn")) != null))) and .outbound == "direct" and .action == "route"))' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
-  printf 'expected route.rules geosite-cn -> direct with action route, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+if ! jq -e '(.route.rules // [])[] | select((((.rule_set? == "geosite-geolocation-cn") or (((.rule_set? | type) == "array") and ((.rule_set | index("geosite-geolocation-cn")) != null))) and .outbound == "direct" and .action == "route"))' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.rules geosite-geolocation-cn -> direct with action route, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
@@ -245,8 +250,8 @@ if ! jq -e '(.route.rules // [])[] | select((((.rule_set? == "geoip-cn") or (((.
   exit 1
 fi
 
-if ! jq -e '((.route.rules // []) | all(if .outbound == "direct" then ((.protocol? == "dns") or (.ip_is_private? == true) or (.rule_set? == "geosite-cn") or (((.rule_set? | type) == "array") and ((.rule_set | index("geosite-cn")) != null)) or (.rule_set? == "geoip-cn") or (((.rule_set? | type) == "array") and ((.rule_set | index("geoip-cn")) != null))) else true end))' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
-  printf 'expected route.rules direct entries to require protocol/ip_is_private/geosite-cn/geoip-cn constraints, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+if ! jq -e '((.route.rules // []) | all(if .outbound == "direct" then ((.protocol? == "dns") or (.ip_is_private? == true) or (.rule_set? == "geosite-geolocation-cn") or (((.rule_set? | type) == "array") and ((.rule_set | index("geosite-geolocation-cn")) != null)) or (.rule_set? == "geoip-cn") or (((.rule_set? | type) == "array") and ((.rule_set | index("geoip-cn")) != null))) else true end))' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.rules direct entries to require protocol/ip_is_private/geosite-geolocation-cn/geoip-cn constraints, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
@@ -255,7 +260,7 @@ if ! jq -e '((.route.rules // []) | map(select(.outbound == "proxy")) | length) 
   exit 1
 fi
 
-if ! jq -e '(.dns.rules // [])[] | select((((.rule_set? == "geosite-cn") or (((.rule_set? | type) == "array") and ((.rule_set | index("geosite-cn")) != null))) and .server == "cn-dns"))' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
-  printf 'expected dns.rules geosite-cn -> cn-dns, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+if ! jq -e '(.dns.rules // [])[] | select((((.rule_set? == "geosite-geolocation-cn") or (((.rule_set? | type) == "array") and ((.rule_set | index("geosite-geolocation-cn")) != null))) and .server == "cn-dns"))' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected dns.rules geosite-geolocation-cn -> cn-dns, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi

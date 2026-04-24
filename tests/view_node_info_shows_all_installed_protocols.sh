@@ -39,6 +39,13 @@ printf 'test-host\n'
 EOF
 chmod +x "${TMP_DIR}/bin/hostname"
 
+cat > "${TMP_DIR}/bin/sing-box" <<'EOF'
+#!/usr/bin/env bash
+
+exit 0
+EOF
+chmod +x "${TMP_DIR}/bin/sing-box"
+
 export PATH="${TMP_DIR}/bin:${PATH}"
 
 # shellcheck disable=SC1090
@@ -164,6 +171,16 @@ fi
 
 if ! grep -Fq "文件路径: ${EXPECTED_EXPORT_PATH}" "${EXPORT_OUTPUT_FILE}"; then
   printf 'expected node info export action to print export path %s, got:\n%s\n' "${EXPECTED_EXPORT_PATH}" "$(cat "${EXPORT_OUTPUT_FILE}")" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'WSL2 使用方式: 请将应用代理手动指向 127.0.0.1:2080' "${EXPORT_OUTPUT_FILE}"; then
+  printf 'expected node info export action to print WSL2 manual proxy guidance, got:\n%s\n' "$(cat "${EXPORT_OUTPUT_FILE}")" >&2
+  exit 1
+fi
+
+if ! grep -Fq '系统代理: 未启用（set_system_proxy=false）' "${EXPORT_OUTPUT_FILE}"; then
+  printf 'expected node info export action to print system proxy disabled guidance, got:\n%s\n' "$(cat "${EXPORT_OUTPUT_FILE}")" >&2
   exit 1
 fi
 

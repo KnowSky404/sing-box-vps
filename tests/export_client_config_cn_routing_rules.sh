@@ -116,7 +116,27 @@ if ! jq -e '.route.rule_set[] | select(.tag == "geoip-cn")' "${EXPORT_PATH}" >/d
   exit 1
 fi
 
-if ! jq -e '.route.rule_set[] | select(.tag == "geosite-cn")' "${EXPORT_PATH}" >/dev/null; then
-  printf 'expected route.rule_set geosite-cn, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+if ! jq -e '.route.rule_set[] | select(.tag == "geosite-geolocation-cn")' "${EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.rule_set geosite-geolocation-cn, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+  exit 1
+fi
+
+if ! jq -e '.dns.rules[] | select(.rule_set == "geosite-geolocation-cn" and .server == "cn-dns")' "${EXPORT_PATH}" >/dev/null; then
+  printf 'expected dns.rules geosite-geolocation-cn -> cn-dns, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+  exit 1
+fi
+
+if ! jq -e '.route.rules[] | select(.rule_set == "geosite-geolocation-cn" and .outbound == "direct" and .action == "route")' "${EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.rules geosite-geolocation-cn -> direct, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+  exit 1
+fi
+
+if ! jq -e '.route.default_domain_resolver == "local"' "${EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.default_domain_resolver local, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+  exit 1
+fi
+
+if ! jq -e '.inbounds[] | select(.type == "mixed" and .set_system_proxy == false)' "${EXPORT_PATH}" >/dev/null; then
+  printf 'expected mixed inbound set_system_proxy false, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
   exit 1
 fi

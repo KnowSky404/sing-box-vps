@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042401
+# Version: 2026042404
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042403"
+readonly SCRIPT_VERSION="2026042404"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -4644,7 +4644,7 @@ build_singbox_client_config() {
           ],
           "rules": [
             {
-              "rule_set": "geosite-cn",
+              "rule_set": "geosite-geolocation-cn",
               "server": "cn-dns"
             }
           ],
@@ -4656,7 +4656,8 @@ build_singbox_client_config() {
             "type": "mixed",
             "tag": "mixed-in",
             "listen": "127.0.0.1",
-            "listen_port": 2080
+            "listen_port": 2080,
+            "set_system_proxy": false
           }
         ],
         "outbounds": (
@@ -4690,10 +4691,10 @@ build_singbox_client_config() {
               "url": "https://cdn.jsdelivr.net/gh/Loyalsoldier/geoip@release/srs/cn.srs"
             },
             {
-              "tag": "geosite-cn",
+              "tag": "geosite-geolocation-cn",
               "type": "remote",
               "format": "binary",
-              "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs"
+              "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-cn.srs"
             }
           ],
           "rules": [
@@ -4710,7 +4711,7 @@ build_singbox_client_config() {
               "outbound": "direct"
             },
             {
-              "rule_set": "geosite-cn",
+              "rule_set": "geosite-geolocation-cn",
               "action": "route",
               "outbound": "direct"
             },
@@ -4721,7 +4722,8 @@ build_singbox_client_config() {
             }
           ],
           "final": "proxy",
-          "auto_detect_interface": true
+          "auto_detect_interface": true,
+          "default_domain_resolver": "local"
         },
         "experimental": {
           "cache_file": {
@@ -4813,7 +4815,8 @@ export_singbox_client_config() {
 
   print_success "sing-box 裸核客户端配置导出成功。"
   printf '文件路径: %s\n' "${export_path}"
-  printf '本地 Mixed 入口: 127.0.0.1:2080\n'
+  printf 'WSL2 使用方式: 请将应用代理手动指向 127.0.0.1:2080\n'
+  printf '系统代理: 未启用（set_system_proxy=false）\n'
   printf 'Clash API 地址: 127.0.0.1:9090\n'
   printf '%s\n' "${config_json}"
 }
