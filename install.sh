@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042409
+# Version: 2026042411
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042410"
+readonly SCRIPT_VERSION="2026042411"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -4201,15 +4201,16 @@ build_client_vless_reality_outbound() {
 
 build_client_hy2_outbound() {
   local public_ip=${1:-$(get_public_ip)}
-  local server_host
-  server_host=${SB_HY2_DOMAIN:-${public_ip}}
+  local server_host tls_server_name
+  server_host=${public_ip}
+  tls_server_name=${SB_HY2_DOMAIN:-${public_ip}}
 
   jq -n \
     --arg tag "$(client_outbound_tag_for_protocol "hy2")" \
     --arg server "${server_host}" \
     --arg port "${SB_PORT}" \
     --arg password "${SB_HY2_PASSWORD}" \
-    --arg server_name "${SB_HY2_DOMAIN:-${server_host}}" \
+    --arg server_name "${tls_server_name}" \
     --arg up_mbps "${SB_HY2_UP_MBPS}" \
     --arg down_mbps "${SB_HY2_DOWN_MBPS}" \
     --arg obfs_enabled "${SB_HY2_OBFS_ENABLED}" \
