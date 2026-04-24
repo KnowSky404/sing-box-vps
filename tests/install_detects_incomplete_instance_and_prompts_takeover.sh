@@ -177,18 +177,18 @@ EOF
 missing_sbv_output=$(run_install_flow '0')
 missing_sbv_plain_output=$(strip_ansi "${missing_sbv_output}")
 
-if [[ "${missing_sbv_plain_output}" != *"检测到残缺的现有实例"* ]]; then
-  printf 'expected installed instance missing only sbv to be treated as incomplete, got:\n%s\n' "${missing_sbv_output}" >&2
+if [[ "${missing_sbv_plain_output}" == *"检测到残缺的现有实例"* ]]; then
+  printf 'expected installed instance missing only sbv to avoid incomplete-instance menu, got:\n%s\n' "${missing_sbv_output}" >&2
   exit 1
 fi
 
-if [[ "${missing_sbv_plain_output}" != *"接管现有实例"* ]]; then
-  printf 'expected installed instance missing only sbv to offer takeover, got:\n%s\n' "${missing_sbv_output}" >&2
+if [[ "${missing_sbv_plain_output}" != *"更新 sing-box 二进制并保留当前配置"* ]]; then
+  printf 'expected installed instance missing only sbv to stay on healthy-instance menu, got:\n%s\n' "${missing_sbv_output}" >&2
   exit 1
 fi
 
-if [[ "${missing_sbv_plain_output}" == *"更新 sing-box 二进制并保留当前配置"* ]]; then
-  printf 'expected installed instance missing only sbv to avoid healthy-instance update menu, got:\n%s\n' "${missing_sbv_output}" >&2
+if [[ "${missing_sbv_plain_output}" == *"接管现有实例"* ]]; then
+  printf 'expected installed instance missing only sbv to avoid takeover prompt, got:\n%s\n' "${missing_sbv_output}" >&2
   exit 1
 fi
 

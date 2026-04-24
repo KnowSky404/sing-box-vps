@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042401"
+readonly SCRIPT_VERSION="2026042402"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -5167,7 +5167,7 @@ detect_existing_instance_state() {
     return 0
   fi
 
-  if [[ "${has_bin}" == "y" && "${has_service}" == "y" && "${has_config}" == "y" && "${has_sbv}" == "y" ]]; then
+  if [[ "${has_bin}" == "y" && "${has_service}" == "y" && "${has_config}" == "y" ]]; then
     if protocol_state_layer_matches_config; then
       printf '%s' "healthy"
     else

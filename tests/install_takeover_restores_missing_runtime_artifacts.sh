@@ -344,7 +344,7 @@ scenario_missing_service_and_sbv_restores_sbv_explicitly() {
   assert_counter_equals "${TMP_DIR}/ensure-sbv-calls" "1" "missing-service-and-sbv"
 }
 
-scenario_missing_only_sbv_restores_command() {
+scenario_missing_only_sbv_stays_on_healthy_menu() {
   reset_instance_artifacts
   reset_runtime_stub_counters
   write_config
@@ -352,11 +352,26 @@ scenario_missing_only_sbv_restores_command() {
   write_service_file
   write_protocol_state "1.13.5"
 
-  run_takeover_from_incomplete_menu
-  assert_runtime_artifacts_restored "missing-only-sbv"
+  if ! TAKEOVER_OUTPUT=$(printf '0\n' | install_or_update_singbox 2>&1); then
+    printf 'expected healthy-instance flow without sbv to succeed, got:\n%s\n' "${TAKEOVER_OUTPUT}" >&2
+    exit 1
+  fi
+
+  TAKEOVER_OUTPUT=$(strip_ansi "${TAKEOVER_OUTPUT}")
+
+  if [[ "${TAKEOVER_OUTPUT}" == *"检测到残缺的现有实例"* ]]; then
+    printf 'expected installed instance missing only sbv to avoid incomplete-instance menu, got:\n%s\n' "${TAKEOVER_OUTPUT}" >&2
+    exit 1
+  fi
+
+  if [[ "${TAKEOVER_OUTPUT}" != *"更新 sing-box 二进制并保留当前配置"* ]]; then
+    printf 'expected installed instance missing only sbv to land on healthy-instance menu, got:\n%s\n' "${TAKEOVER_OUTPUT}" >&2
+    exit 1
+  fi
+
   assert_counter_equals "${TMP_DIR}/install-binary-calls" "" "missing-only-sbv"
   assert_counter_equals "${TMP_DIR}/setup-service-calls" "" "missing-only-sbv"
-  assert_counter_equals "${TMP_DIR}/ensure-sbv-calls" "1" "missing-only-sbv"
+  assert_counter_equals "${TMP_DIR}/ensure-sbv-calls" "" "missing-only-sbv"
 }
 
 scenario_missing_config_stops_before_runtime_repair() {
@@ -392,5 +407,5 @@ scenario_missing_config_stops_before_runtime_repair() {
 scenario_missing_binary_uses_recorded_version
 scenario_missing_binary_without_recorded_version_warns
 scenario_missing_service_and_sbv_restores_sbv_explicitly
-scenario_missing_only_sbv_restores_command
+scenario_missing_only_sbv_stays_on_healthy_menu
 scenario_missing_config_stops_before_runtime_repair
