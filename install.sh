@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042406"
+readonly SCRIPT_VERSION="2026042407"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -4959,14 +4959,17 @@ render_expected_protocol_state_snapshot() {
 
       if jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
         printf 'TLS_MODE=acme\n'
-        printf 'ACME_DOMAIN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.domain[0] // .inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")"
-        printf 'ACME_EMAIL=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.email // ""' "${SINGBOX_CONFIG_FILE}")"
         if jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
           printf 'ACME_MODE=dns\n'
+        else
+          printf 'ACME_MODE=http\n'
+        fi
+        printf 'ACME_EMAIL=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.email // ""' "${SINGBOX_CONFIG_FILE}")"
+        printf 'ACME_DOMAIN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.domain[0] // .inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")"
+        if jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
           printf 'DNS_PROVIDER=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge.provider // "cloudflare"' "${SINGBOX_CONFIG_FILE}")"
           printf 'CF_API_TOKEN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge.api_token // ""' "${SINGBOX_CONFIG_FILE}")"
         else
-          printf 'ACME_MODE=http\n'
           printf 'DNS_PROVIDER=cloudflare\n'
           printf 'CF_API_TOKEN=\n'
         fi
@@ -4974,14 +4977,17 @@ render_expected_protocol_state_snapshot() {
         printf 'KEY_PATH=\n'
       elif cert_provider_tag=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider // ""' "${SINGBOX_CONFIG_FILE}"); [[ -n "${cert_provider_tag}" ]]; then
         printf 'TLS_MODE=acme\n'
-        printf 'ACME_DOMAIN=%s\n' "$(jq -r --argjson idx "${inbound_index}" --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .domain[0]) // .inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")"
-        printf 'ACME_EMAIL=%s\n' "$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .email) // ""' "${SINGBOX_CONFIG_FILE}")"
         if jq -e --arg tag "${cert_provider_tag}" 'any(.certificate_providers[]?; .tag == $tag and .dns01_challenge? != null)' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
           printf 'ACME_MODE=dns\n'
+        else
+          printf 'ACME_MODE=http\n'
+        fi
+        printf 'ACME_EMAIL=%s\n' "$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .email) // ""' "${SINGBOX_CONFIG_FILE}")"
+        printf 'ACME_DOMAIN=%s\n' "$(jq -r --argjson idx "${inbound_index}" --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .domain[0]) // .inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")"
+        if jq -e --arg tag "${cert_provider_tag}" 'any(.certificate_providers[]?; .tag == $tag and .dns01_challenge? != null)' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
           printf 'DNS_PROVIDER=%s\n' "$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .dns01_challenge.provider) // "cloudflare"' "${SINGBOX_CONFIG_FILE}")"
           printf 'CF_API_TOKEN=%s\n' "$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .dns01_challenge.api_token) // ""' "${SINGBOX_CONFIG_FILE}")"
         else
-          printf 'ACME_MODE=http\n'
           printf 'DNS_PROVIDER=cloudflare\n'
           printf 'CF_API_TOKEN=\n'
         fi
@@ -5009,15 +5015,18 @@ render_expected_protocol_state_snapshot() {
         printf 'TLS_MODE=acme\n'
         if jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
           printf 'ACME_MODE=dns\n'
-          printf 'DNS_PROVIDER=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge.provider // "cloudflare"' "${SINGBOX_CONFIG_FILE}")"
-          printf 'CF_API_TOKEN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge.api_token // ""' "${SINGBOX_CONFIG_FILE}")"
         else
           printf 'ACME_MODE=http\n'
-          printf 'DNS_PROVIDER=cloudflare\n'
-          printf 'CF_API_TOKEN=\n'
         fi
         printf 'ACME_EMAIL=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.email // ""' "${SINGBOX_CONFIG_FILE}")"
         printf 'ACME_DOMAIN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.domain[0] // .inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")"
+        if jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+          printf 'DNS_PROVIDER=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge.provider // "cloudflare"' "${SINGBOX_CONFIG_FILE}")"
+          printf 'CF_API_TOKEN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge.api_token // ""' "${SINGBOX_CONFIG_FILE}")"
+        else
+          printf 'DNS_PROVIDER=cloudflare\n'
+          printf 'CF_API_TOKEN=\n'
+        fi
         printf 'CERT_PATH=\n'
         printf 'KEY_PATH=\n'
       else
