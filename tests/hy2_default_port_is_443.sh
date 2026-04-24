@@ -17,7 +17,7 @@ source "${TESTABLE_INSTALL}"
 
 set_protocol_defaults "hy2"
 
-if [[ "${SB_PORT}" != "443" ]]; then
-  printf 'expected hy2 default port to be 443, got %s\n' "${SB_PORT}" >&2
+if (( SB_PORT < 60000 || SB_PORT > 65535 )); then
+  printf 'expected hy2 default port to be within 60000-65535, got %s\n' "${SB_PORT}" >&2
   exit 1
 fi

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042312
+# Version: 2026042401
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042312"
+readonly SCRIPT_VERSION="2026042401"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -46,6 +46,8 @@ readonly MEDIA_CHECK_BACKEND_NAME="RegionRestrictionCheck"
 readonly MEDIA_CHECK_BACKEND_AUTHOR="1-stream"
 readonly MEDIA_CHECK_BACKEND_REPO_URL="https://github.com/1-stream/RegionRestrictionCheck"
 readonly MEDIA_CHECK_BACKEND_SCRIPT_URL="https://raw.githubusercontent.com/1-stream/RegionRestrictionCheck/main/check.sh"
+readonly SB_HIGH_PORT_MIN="60000"
+readonly SB_HIGH_PORT_MAX="65535"
 
 # --- Global Variables ---
 SB_VERSION="${SB_SUPPORT_MAX_VERSION}"
@@ -329,6 +331,33 @@ detect_host_ip_stack() {
   else
     printf 'ipv4'
   fi
+}
+
+port_is_in_use() {
+  local port=$1
+
+  ss -H -tunlp 2>/dev/null | grep -Eq ":${port}[[:space:]]"
+}
+
+pick_random_high_port() {
+  local port attempt
+
+  for attempt in $(seq 1 128); do
+    port=$((RANDOM % (SB_HIGH_PORT_MAX - SB_HIGH_PORT_MIN + 1) + SB_HIGH_PORT_MIN))
+    if ! port_is_in_use "${port}"; then
+      printf '%s' "${port}"
+      return 0
+    fi
+  done
+
+  for port in $(seq "${SB_HIGH_PORT_MIN}" "${SB_HIGH_PORT_MAX}"); do
+    if ! port_is_in_use "${port}"; then
+      printf '%s' "${port}"
+      return 0
+    fi
+  done
+
+  log_error "未找到 ${SB_HIGH_PORT_MIN}-${SB_HIGH_PORT_MAX} 范围内的可用端口。"
 }
 
 default_inbound_stack_mode() {
@@ -1386,7 +1415,7 @@ set_protocol_defaults() {
     mixed)
       SB_PROTOCOL="mixed"
       SB_NODE_NAME="mixed_$(hostname)"
-      SB_PORT="1080"
+      SB_PORT="$(pick_random_high_port)"
       SB_SNI=""
       SB_UUID=""
       SB_PUBLIC_KEY=""
@@ -1400,7 +1429,7 @@ set_protocol_defaults() {
     hy2)
       SB_PROTOCOL="hy2"
       SB_NODE_NAME="hy2_$(hostname)"
-      SB_PORT="443"
+      SB_PORT="$(pick_random_high_port)"
       SB_SNI=""
       SB_UUID=""
       SB_PUBLIC_KEY=""
@@ -1431,7 +1460,7 @@ set_protocol_defaults() {
     anytls)
       SB_PROTOCOL="anytls"
       SB_NODE_NAME="anytls_$(hostname)"
-      SB_PORT="443"
+      SB_PORT="$(pick_random_high_port)"
       SB_SNI=""
       SB_UUID=""
       SB_PUBLIC_KEY=""
@@ -1473,7 +1502,7 @@ set_protocol_defaults() {
     *)
       SB_PROTOCOL="vless+reality"
       SB_NODE_NAME="vless_reality_$(hostname)"
-      SB_PORT="443"
+      SB_PORT="$(pick_random_high_port)"
       SB_SNI="apple.com"
       SB_MIXED_AUTH_ENABLED="y"
       SB_MIXED_USERNAME=""
@@ -2231,8 +2260,9 @@ validate_config_file() {
 # Check for port conflict
 check_port_conflict() {
   local port=$1
-  if ss -tunlp | grep -q ":${port} "; then
-    local process=$(ss -tunlp | grep ":${port} " | awk '{print $7}' | cut -d'"' -f2 | head -n1)
+  if port_is_in_use "${port}"; then
+    local process
+    process=$(ss -tunlp | grep ":${port} " | awk '{print $7}' | cut -d'"' -f2 | head -n1)
     log_warn "端口 ${port} 已被进程 [${process}] 占用。"
     echo "1. 尝试自动停止该进程"
     echo "2. 使用随机端口"
@@ -2245,10 +2275,7 @@ check_port_conflict() {
         kill -9 "${pid}" && log_success "进程已终止。"
         ;;
       2)
-        while true; do
-          SB_PORT=$((RANDOM % 55535 + 10000))
-          ss -tunlp | grep -q ":${SB_PORT} " || break
-        done
+        SB_PORT="$(pick_random_high_port)"
         log_success "已自动切换到随机端口: ${SB_PORT}"
         ;;
       3)
