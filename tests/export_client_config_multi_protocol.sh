@@ -185,6 +185,11 @@ if ! jq -e '.outbounds[] | select(.type == "anytls" and .tag == "anytls-9443")' 
   exit 1
 fi
 
+if ! jq -e 'any(.outbounds[]?; .type == "dns" or .type == "block") | not' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected exported config to avoid deprecated dns/block outbounds, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+  exit 1
+fi
+
 if ! jq -e '(.dns.servers // [])[] | select(.tag == "cn-dns" and .type == "https" and .server == "223.5.5.5" and .server_port == 443 and .path == "/dns-query")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
   printf 'expected dns.servers cn-dns https 223.5.5.5:443 /dns-query, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1

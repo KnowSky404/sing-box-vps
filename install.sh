@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042402"
+readonly SCRIPT_VERSION="2026042403"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -4678,14 +4678,6 @@ build_singbox_client_config() {
             {
               "type": "direct",
               "tag": "direct"
-            },
-            {
-              "type": "block",
-              "tag": "block"
-            },
-            {
-              "type": "dns",
-              "tag": "dns"
             }
           ]
         ),
@@ -4782,11 +4774,34 @@ write_client_config_export() {
   fi
 }
 
+validate_client_config_json() {
+  local config_json=$1
+  local tmp_file
+
+  tmp_file=$(mktemp)
+  if ! printf '%s\n' "${config_json}" | jq '.' > "${tmp_file}"; then
+    rm -f "${tmp_file}"
+    return 1
+  fi
+
+  if ! "${SINGBOX_BIN_PATH}" check -c "${tmp_file}"; then
+    rm -f "${tmp_file}"
+    return 1
+  fi
+
+  rm -f "${tmp_file}"
+}
+
 export_singbox_client_config() {
   local config_json export_path
 
   if ! config_json=$(build_singbox_client_config); then
     log_warn "导出 sing-box 裸核客户端配置失败。" >&2
+    return 1
+  fi
+
+  if ! validate_client_config_json "${config_json}"; then
+    log_warn "导出的 sing-box 裸核客户端配置未通过 sing-box check 校验。" >&2
     return 1
   fi
 
