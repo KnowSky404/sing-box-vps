@@ -107,7 +107,7 @@ resolve_remote_scenarios() {
   done
 
   if [[ "${needs_install_flow}" == "1" ]]; then
-    printf '%s\n' fresh_install_vless reconfigure_existing_install fresh_install_anytls
+    printf '%s\n' fresh_install_vless reconfigure_existing_install legacy_takeover_export fresh_install_anytls
   fi
 
   printf '%s\n' runtime_smoke

@@ -9,6 +9,10 @@ source "${TESTS_DIR}/menu_test_helper.sh"
 setup_menu_test_env 120
 source_testable_install
 
+restart_service_after_takeover() {
+  :
+}
+
 INSTALL_BINARY_CALLS=0
 INSTALL_DEPENDENCIES_CALLS=0
 SETUP_SERVICE_CALLS=0

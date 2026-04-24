@@ -9,6 +9,10 @@ source "${TESTS_DIR}/menu_test_helper.sh"
 setup_menu_test_env 120
 source_testable_install
 
+restart_service_after_takeover() {
+  :
+}
+
 write_validating_binary() {
   mkdir -p "$(dirname "${SINGBOX_BIN_PATH}")"
 

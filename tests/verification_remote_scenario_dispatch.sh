@@ -6,12 +6,17 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "${TMP_DIR}"' EXIT
 REAL_JQ=$(command -v jq)
+VALID_REALITY_PRIVATE_KEY="IEwVBb_qLcYr1L_CTI5exTWbT7qRgZnr43xP8nC0dkM"
+VALID_REALITY_PUBLIC_KEY="u9nRBiDRTmyxLQLkiVq-kYFPhRyeZkSo8p9c7s8Dfjo"
 
 PORT_FILE="${TMP_DIR}/port"
 UUID_FILE="${TMP_DIR}/uuid"
 SNI_FILE="${TMP_DIR}/sni"
 REMOTE_ROOT_DIR="${TMP_DIR}/remote-root"
 CONFIG_FILE="${REMOTE_ROOT_DIR}/root/sing-box-vps/config.json"
+LEGACY_KEY_FILE="${REMOTE_ROOT_DIR}/root/sing-box-vps/reality.key"
+EXPORT_FILE="${REMOTE_ROOT_DIR}/root/sing-box-vps/client/sing-box-client.json"
+LEGACY_SERVICE_FILE="${TMP_DIR}/legacy-sing-box.service"
 PROTOCOLS_DIR="${REMOTE_ROOT_DIR}/root/sing-box-vps/protocols"
 CONFIG_PRESENT_FILE="${TMP_DIR}/config-present"
 SERVICE_FILE_PRESENT_FILE="${TMP_DIR}/service-file-present"
@@ -78,6 +83,9 @@ EOF
 cat <<'EOF' > "${PAYLOAD_FILE}"
 #!/usr/bin/env bash
 
+VALID_REALITY_PRIVATE_KEY="IEwVBb_qLcYr1L_CTI5exTWbT7qRgZnr43xP8nC0dkM"
+VALID_REALITY_PUBLIC_KEY="u9nRBiDRTmyxLQLkiVq-kYFPhRyeZkSo8p9c7s8Dfjo"
+
 write_vless_state() {
   mkdir -p "$(dirname "${STATE_FILE}")"
   cat > "${STATE_FILE}" <<STATE_EOF
@@ -108,6 +116,48 @@ STATE_EOF
       }
     }
   ]
+}
+CONFIG_EOF
+}
+
+write_legacy_vless_state() {
+  mkdir -p "$(dirname "${STATE_FILE}")" "$(dirname "${EXPORT_FILE}")"
+  cat > "${STATE_FILE}" <<STATE_EOF
+PORT=$(cat "${PORT_FILE}")
+UUID=$(cat "${UUID_FILE}")
+SNI=$(cat "${SNI_FILE}")
+REALITY_PRIVATE_KEY=${VALID_REALITY_PRIVATE_KEY}
+REALITY_PUBLIC_KEY=${VALID_REALITY_PUBLIC_KEY}
+STATE_EOF
+  cat > "${INDEX_FILE}" <<'INDEX_EOF'
+INSTALLED_PROTOCOLS=vless-reality
+INDEX_EOF
+  cat > "${CONFIG_FILE}" <<CONFIG_EOF
+{
+  "inbounds": [
+    {
+      "type": "vless",
+      "listen_port": $(cat "${PORT_FILE}"),
+      "users": [
+        {
+          "uuid": "$(cat "${UUID_FILE}")"
+        }
+      ],
+      "tls": {
+        "server_name": "$(cat "${SNI_FILE}")",
+        "reality": {
+          "private_key": "${VALID_REALITY_PRIVATE_KEY}",
+          "short_id": [
+            "aaaaaaaaaaaaaaaa",
+            "bbbbbbbbbbbbbbbb"
+          ]
+        }
+      }
+    }
+  ],
+  "route": {
+    "rules": []
+  }
 }
 CONFIG_EOF
 }
@@ -228,6 +278,26 @@ bash() {
     "${VERIFY_REMOTE_INSTALL_SCRIPT:-__missing_install__}")
       if [[ "$#" -eq 0 ]]; then
         mapfile -t actual_lines
+        if [[ "${actual_lines[0]:-}" == "1" && "${actual_lines[1]:-}" == "1" ]]; then
+          if [[ "${#actual_lines[@]}" -ne 2 && "${#actual_lines[@]}" -ne 3 ]]; then
+            printf 'unexpected takeover input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
+            return 1
+          fi
+          if [[ "${#actual_lines[@]}" -eq 3 && "${actual_lines[2]}" != "0" ]]; then
+            printf 'unexpected takeover trailing input for %s: %s\n' "${target}" "${actual_lines[2]}" >&2
+            return 1
+          fi
+          printf '443\n' > "${PORT_FILE}"
+          printf '11111111-1111-1111-1111-111111111111\n' > "${UUID_FILE}"
+          printf 'www.cloudflare.com\n' > "${SNI_FILE}"
+          printf '1\n' > "${CONFIG_PRESENT_FILE}"
+          printf '1\n' > "${SERVICE_FILE_PRESENT_FILE}"
+          printf '1\n' > "${SBV_PRESENT_FILE}"
+          printf '1\n' > "${SERVICE_ACTIVE_FILE}"
+          write_legacy_vless_state
+          return 0
+        fi
+
         if [[ "${actual_lines[2]:-}" == "1" ]]; then
           if [[ "${#actual_lines[@]}" -ne 8 ]]; then
             printf 'unexpected vless install input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
@@ -289,6 +359,29 @@ INDEX_EOF
       ;;
     /usr/local/bin/sbv)
       mapfile -t actual_lines
+      if [[ "${actual_lines[0]:-}" == "10" && "${actual_lines[1]:-}" == "2" ]]; then
+        mkdir -p "$(dirname "${EXPORT_FILE}")"
+        cat > "${EXPORT_FILE}" <<'EXPORT_EOF'
+{
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "vless-reality-443",
+      "tls": {
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      }
+    }
+  ]
+}
+EXPORT_EOF
+        printf 'sing-box 裸核客户端配置导出成功。\n'
+        printf '文件路径: /root/sing-box-vps/client/sing-box-client.json\n'
+        return 0
+      fi
+
       if [[ "${actual_lines[0]:-}" == "4" ]]; then
         if [[ "${#actual_lines[@]}" -ne 6 ]]; then
           printf 'unexpected update input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
@@ -355,6 +448,11 @@ test() {
     return
   fi
 
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/client/sing-box-client.json" ]]; then
+    [[ -f "${EXPORT_FILE}" ]]
+    return
+  fi
+
   if [[ "${1:-}" == "-d" && "${2:-}" == "/root/sing-box-vps/protocols" ]]; then
     [[ -d "${PROTOCOLS_DIR}" ]]
     return
@@ -380,6 +478,11 @@ test() {
     return
   fi
 
+  if [[ "${1:-}" == "!" && "${2:-}" == "-f" && "${3:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
+    [[ ! -f "${INDEX_FILE}" ]]
+    return
+  fi
+
   builtin test "$@"
 }
 
@@ -391,6 +494,10 @@ jq() {
 
   if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/config.json" ]]; then
     args[$last_index]="${CONFIG_FILE}"
+  fi
+
+  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/client/sing-box-client.json" ]]; then
+    args[$last_index]="${EXPORT_FILE}"
   fi
 
   command "${REAL_JQ}" "${args[@]}"
@@ -425,6 +532,10 @@ cp() {
 
   if [[ "${args[$source_index]}" == "/root/sing-box-vps/protocols/." ]]; then
     args[$source_index]="${PROTOCOLS_DIR}/."
+  fi
+
+  if [[ "${args[$source_index]}" == "/root/sing-box-vps/client/sing-box-client.json" ]]; then
+    args[$source_index]="${EXPORT_FILE}"
   fi
 
   command cp "${args[@]}"
@@ -506,6 +617,10 @@ PORT_FILE="${PORT_FILE}" \
 UUID_FILE="${UUID_FILE}" \
 SNI_FILE="${SNI_FILE}" \
 CONFIG_FILE="${CONFIG_FILE}" \
+VERIFY_LEGACY_CONFIG_FILE="${CONFIG_FILE}" \
+VERIFY_LEGACY_KEY_FILE="${LEGACY_KEY_FILE}" \
+VERIFY_LEGACY_SERVICE_FILE="${LEGACY_SERVICE_FILE}" \
+EXPORT_FILE="${EXPORT_FILE}" \
 PROTOCOLS_DIR="${PROTOCOLS_DIR}" \
 SERVICE_FILE_PRESENT_FILE="${SERVICE_FILE_PRESENT_FILE}" \
 SBV_PRESENT_FILE="${SBV_PRESENT_FILE}" \
@@ -521,6 +636,7 @@ REAL_JQ="${REAL_JQ}" \
   bash "${PAYLOAD_FILE}" \
     fresh_install_vless \
     reconfigure_existing_install \
+    legacy_takeover_export \
     fresh_install_anytls \
     runtime_smoke \
     uninstall_and_reinstall \
@@ -529,6 +645,7 @@ REAL_JQ="${REAL_JQ}" \
 
 grep -Fqx 'SCENARIO=fresh_install_vless' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=reconfigure_existing_install' "${STDOUT_FILE}"
+grep -Fqx 'SCENARIO=legacy_takeover_export' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=fresh_install_anytls' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=uninstall_and_reinstall' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=runtime_smoke' "${STDOUT_FILE}"
@@ -547,6 +664,8 @@ awk '
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_vless/protocol-probes/vless-reality/result.env"
 [[ -f "${ARTIFACT_DIR}/scenarios/reconfigure_existing_install/config.diff.txt" ]]
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/reconfigure_existing_install/protocol-probes/vless-reality/result.env"
+[[ -f "${ARTIFACT_DIR}/scenarios/legacy_takeover_export/client/sing-box-client.json" ]]
+grep -Fq '"fingerprint": "chrome"' "${ARTIFACT_DIR}/scenarios/legacy_takeover_export/client/sing-box-client.json"
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_anytls/protocol-probes/anytls/result.env"
 [[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/sing-box-check.txt" ]]
 grep -Fqx 'STATUS=success' "${ARTIFACT_DIR}/scenarios/runtime_smoke/result.env"
@@ -568,6 +687,8 @@ grep -Fqx 'jq:-r|.inbounds[0].listen_port // empty|/root/sing-box-vps/config.jso
 grep -Fqx 'grep:-Fqx PORT=8443 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx UUID=22222222-2222-4222-8222-222222222222 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx SNI=cdn.cloudflare.com /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
+grep -Fqx "grep:-Fqx REALITY_PRIVATE_KEY=${VALID_REALITY_PRIVATE_KEY} /root/sing-box-vps/protocols/vless-reality.env" "${ASSERT_LOG_FILE}"
+grep -Fqx "grep:-Fqx REALITY_PUBLIC_KEY=${VALID_REALITY_PUBLIC_KEY} /root/sing-box-vps/protocols/vless-reality.env" "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx PORT=9443 /root/sing-box-vps/protocols/anytls.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx DOMAIN=anytls.example.com /root/sing-box-vps/protocols/anytls.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx PASSWORD=anytls-pass /root/sing-box-vps/protocols/anytls.env' "${ASSERT_LOG_FILE}"

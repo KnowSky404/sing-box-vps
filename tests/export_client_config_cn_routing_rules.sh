@@ -131,8 +131,8 @@ if ! jq -e '.route.rules[] | select(.rule_set == "geosite-geolocation-cn" and .o
   exit 1
 fi
 
-if ! jq -e '.route.default_domain_resolver == "local"' "${EXPORT_PATH}" >/dev/null; then
-  printf 'expected route.default_domain_resolver local, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+if ! jq -e '.route.default_domain_resolver == "remote-dns"' "${EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.default_domain_resolver remote-dns, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
   exit 1
 fi
 

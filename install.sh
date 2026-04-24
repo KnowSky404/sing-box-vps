@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042409"
+readonly SCRIPT_VERSION="2026042410"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -2393,8 +2393,14 @@ WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
   systemctl enable sing-box >/dev/null 2>&1
-  
+
   ensure_sbv_command_installed
+}
+
+service_file_needs_repair() {
+  [[ -f "${SINGBOX_SERVICE_FILE}" ]] || return 0
+  grep -Fqx "ExecStart=${SINGBOX_BIN_PATH} run -c ${SINGBOX_CONFIG_FILE}" "${SINGBOX_SERVICE_FILE}" || return 0
+  return 1
 }
 
 # --- Protocol State Helpers ---
@@ -4180,6 +4186,10 @@ build_client_vless_reality_outbound() {
       "tls": {
         "enabled": true,
         "server_name": $server_name,
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
         "reality": {
           "enabled": true,
           "public_key": $public_key,
@@ -4723,7 +4733,7 @@ build_singbox_client_config() {
           ],
           "final": "proxy",
           "auto_detect_interface": true,
-          "default_domain_resolver": "local"
+          "default_domain_resolver": "remote-dns"
         },
         "experimental": {
           "cache_file": {
@@ -5445,6 +5455,7 @@ take_over_existing_instance() {
     log_takeover_state_diagnostics
     log_error "接管后实例状态仍不完整，请根据以上诊断信息检查现场。"
   fi
+  restart_service_after_takeover
   log_success "现有实例接管完成。"
 }
 
@@ -5473,13 +5484,17 @@ ensure_takeover_validation_binary() {
 }
 
 restore_runtime_artifacts_for_takeover() {
-  if [[ ! -f "${SINGBOX_SERVICE_FILE}" ]]; then
+  if service_file_needs_repair; then
     setup_service
   fi
 
   if [[ ! -x "${SBV_BIN_PATH}" ]]; then
     ensure_sbv_command_installed
   fi
+}
+
+restart_service_after_takeover() {
+  systemctl restart sing-box
 }
 
 install_or_reconfigure_singbox() {

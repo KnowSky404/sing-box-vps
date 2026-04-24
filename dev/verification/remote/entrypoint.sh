@@ -670,6 +670,9 @@ for scenario in "$@"; do
     reconfigure_existing_install)
       run_verification_scenario reconfigure_existing_install verification_scenario_reconfigure_existing_install
       ;;
+    legacy_takeover_export)
+      run_verification_scenario legacy_takeover_export verification_scenario_legacy_takeover_export
+      ;;
     fresh_install_anytls)
       run_verification_scenario fresh_install_anytls verification_scenario_fresh_install_anytls
       ;;

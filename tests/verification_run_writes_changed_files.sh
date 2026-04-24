@@ -5,12 +5,17 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TMP_DIR=$(mktemp -d)
 REAL_BASH=$(command -v bash)
+VALID_REALITY_PRIVATE_KEY="IEwVBb_qLcYr1L_CTI5exTWbT7qRgZnr43xP8nC0dkM"
+VALID_REALITY_PUBLIC_KEY="u9nRBiDRTmyxLQLkiVq-kYFPhRyeZkSo8p9c7s8Dfjo"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 REMOTE_PORT_FILE="${TMP_DIR}/remote-port"
 REMOTE_UUID_FILE="${TMP_DIR}/remote-uuid"
 REMOTE_SNI_FILE="${TMP_DIR}/remote-sni"
 REMOTE_ROOT_DIR="${TMP_DIR}/remote-root"
 REMOTE_CONFIG_FILE="${REMOTE_ROOT_DIR}/root/sing-box-vps/config.json"
+REMOTE_LEGACY_KEY_FILE="${REMOTE_ROOT_DIR}/root/sing-box-vps/reality.key"
+REMOTE_EXPORT_FILE="${REMOTE_ROOT_DIR}/root/sing-box-vps/client/sing-box-client.json"
+REMOTE_LEGACY_SERVICE_FILE="${TMP_DIR}/legacy-sing-box.service"
 REMOTE_PROTOCOLS_DIR="${REMOTE_ROOT_DIR}/root/sing-box-vps/protocols"
 REMOTE_CONFIG_PRESENT_FILE="${TMP_DIR}/remote-config-present"
 REMOTE_SERVICE_FILE_PRESENT_FILE="${TMP_DIR}/remote-service-file-present"
@@ -151,6 +156,9 @@ remote_host="\${1:-}"
 shift
 script_file="${TMP_DIR}/remote-script.sh"
 cat <<'PAYLOAD_PRELUDE' > "\${script_file}"
+VALID_REALITY_PRIVATE_KEY="IEwVBb_qLcYr1L_CTI5exTWbT7qRgZnr43xP8nC0dkM"
+VALID_REALITY_PUBLIC_KEY="u9nRBiDRTmyxLQLkiVq-kYFPhRyeZkSo8p9c7s8Dfjo"
+
 write_vless_state() {
   mkdir -p "\$(dirname "\${REMOTE_STATE_FILE}")"
   cat > "\${REMOTE_STATE_FILE}" <<STATE_EOF
@@ -181,6 +189,90 @@ STATE_EOF
       }
     }
   ]
+}
+CONFIG_EOF
+}
+
+write_legacy_vless_state() {
+  mkdir -p "\$(dirname "\${REMOTE_STATE_FILE}")" "\$(dirname "\${REMOTE_EXPORT_FILE}")"
+  cat > "\${REMOTE_STATE_FILE}" <<STATE_EOF
+PORT=\$(cat "\${REMOTE_PORT_FILE}")
+UUID=\$(cat "\${REMOTE_UUID_FILE}")
+SNI=\$(cat "\${REMOTE_SNI_FILE}")
+REALITY_PRIVATE_KEY=${VALID_REALITY_PRIVATE_KEY}
+REALITY_PUBLIC_KEY=${VALID_REALITY_PUBLIC_KEY}
+STATE_EOF
+  cat > "\${REMOTE_INDEX_FILE}" <<'INDEX_EOF'
+INSTALLED_PROTOCOLS=vless-reality
+INDEX_EOF
+  cat > "\${REMOTE_CONFIG_FILE}" <<CONFIG_EOF
+{
+  "inbounds": [
+    {
+      "type": "vless",
+      "listen_port": \$(cat "\${REMOTE_PORT_FILE}"),
+      "users": [
+        {
+          "uuid": "\$(cat "\${REMOTE_UUID_FILE}")"
+        }
+      ],
+      "tls": {
+        "server_name": "\$(cat "\${REMOTE_SNI_FILE}")",
+        "reality": {
+          "private_key": "${VALID_REALITY_PRIVATE_KEY}",
+          "short_id": [
+            "aaaaaaaaaaaaaaaa",
+            "bbbbbbbbbbbbbbbb"
+          ]
+        }
+      }
+    }
+  ],
+  "route": {
+    "rules": []
+  }
+}
+CONFIG_EOF
+}
+
+write_legacy_vless_state() {
+  mkdir -p "$(dirname "${REMOTE_STATE_FILE}")" "$(dirname "${REMOTE_EXPORT_FILE}")"
+  cat > "${REMOTE_STATE_FILE}" <<STATE_EOF
+PORT=$(cat "${REMOTE_PORT_FILE}")
+UUID=$(cat "${REMOTE_UUID_FILE}")
+SNI=$(cat "${REMOTE_SNI_FILE}")
+REALITY_PRIVATE_KEY=${VALID_REALITY_PRIVATE_KEY}
+REALITY_PUBLIC_KEY=${VALID_REALITY_PUBLIC_KEY}
+STATE_EOF
+  cat > "${REMOTE_INDEX_FILE}" <<'INDEX_EOF'
+INSTALLED_PROTOCOLS=vless-reality
+INDEX_EOF
+  cat > "${REMOTE_CONFIG_FILE}" <<CONFIG_EOF
+{
+  "inbounds": [
+    {
+      "type": "vless",
+      "listen_port": $(cat "${REMOTE_PORT_FILE}"),
+      "users": [
+        {
+          "uuid": "$(cat "${REMOTE_UUID_FILE}")"
+        }
+      ],
+      "tls": {
+        "server_name": "$(cat "${REMOTE_SNI_FILE}")",
+        "reality": {
+          "private_key": "private-key",
+          "short_id": [
+            "aaaaaaaaaaaaaaaa",
+            "bbbbbbbbbbbbbbbb"
+          ]
+        }
+      }
+    }
+  ],
+  "route": {
+    "rules": []
+  }
 }
 CONFIG_EOF
 }
@@ -286,6 +378,26 @@ bash() {
     "\${VERIFY_REMOTE_INSTALL_SCRIPT:-__missing_install__}")
       if [[ "\$#" -eq 0 ]]; then
         mapfile -t actual_lines
+        if [[ "\${actual_lines[0]:-}" == "1" && "\${actual_lines[1]:-}" == "1" ]]; then
+          if [[ "\${#actual_lines[@]}" -ne 2 && "\${#actual_lines[@]}" -ne 3 ]]; then
+            printf 'unexpected takeover input count for %s: %s\n' "\${target}" "\${#actual_lines[@]}" >&2
+            return 1
+          fi
+          if [[ "\${#actual_lines[@]}" -eq 3 && "\${actual_lines[2]}" != "0" ]]; then
+            printf 'unexpected takeover trailing input for %s: %s\n' "\${target}" "\${actual_lines[2]}" >&2
+            return 1
+          fi
+          printf '443\n' > "\${REMOTE_PORT_FILE}"
+          printf '11111111-1111-1111-1111-111111111111\n' > "\${REMOTE_UUID_FILE}"
+          printf 'www.cloudflare.com\n' > "\${REMOTE_SNI_FILE}"
+          printf '1\n' > "\${REMOTE_CONFIG_PRESENT_FILE}"
+          printf '1\n' > "\${REMOTE_SERVICE_FILE_PRESENT_FILE}"
+          printf '1\n' > "\${REMOTE_SBV_PRESENT_FILE}"
+          printf '1\n' > "\${REMOTE_SERVICE_ACTIVE_FILE}"
+          write_legacy_vless_state
+          return 0
+        fi
+
         if [[ "\${actual_lines[2]:-}" == "1" ]]; then
           [[ "\${#actual_lines[@]}" -eq 8 ]]
           [[ "\${actual_lines[0]}" == "1" ]]
@@ -342,6 +454,29 @@ INDEX_EOF
       ;;
     /usr/local/bin/sbv)
       mapfile -t actual_lines
+      if [[ "\${actual_lines[0]:-}" == "10" && "\${actual_lines[1]:-}" == "2" ]]; then
+        mkdir -p "\$(dirname "\${REMOTE_EXPORT_FILE}")"
+        cat > "\${REMOTE_EXPORT_FILE}" <<'EXPORT_EOF'
+{
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "vless-reality-443",
+      "tls": {
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      }
+    }
+  ]
+}
+EXPORT_EOF
+        printf 'sing-box 裸核客户端配置导出成功。\n'
+        printf '文件路径: /root/sing-box-vps/client/sing-box-client.json\n'
+        return 0
+      fi
+
       if [[ "\${actual_lines[0]:-}" == "4" ]]; then
         [[ "\${#actual_lines[@]}" -eq 6 ]]
         [[ "\${actual_lines[1]}" == "1" ]]
@@ -405,6 +540,11 @@ test() {
     return
   fi
 
+  if [[ "\${1:-}" == "-f" && "\${2:-}" == "/root/sing-box-vps/client/sing-box-client.json" ]]; then
+    [[ -f "\${REMOTE_EXPORT_FILE}" ]]
+    return
+  fi
+
   if [[ "\${1:-}" == "-d" && "\${2:-}" == "/root/sing-box-vps/protocols" ]]; then
     [[ -d "\${REMOTE_PROTOCOLS_DIR}" ]]
     return
@@ -430,6 +570,11 @@ test() {
     return
   fi
 
+  if [[ "\${1:-}" == "!" && "\${2:-}" == "-f" && "\${3:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
+    [[ ! -f "\${REMOTE_INDEX_FILE}" ]]
+    return
+  fi
+
   builtin test "\$@"
 }
 
@@ -441,6 +586,10 @@ jq() {
 
   if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/config.json" ]]; then
     args[\$last_index]="\${REMOTE_CONFIG_FILE}"
+  fi
+
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/client/sing-box-client.json" ]]; then
+    args[\$last_index]="\${REMOTE_EXPORT_FILE}"
   fi
 
   command jq "\${args[@]}"
@@ -456,6 +605,10 @@ cp() {
 
   if [[ "\${args[\$source_index]}" == "/root/sing-box-vps/protocols/." ]]; then
     args[\$source_index]="\${REMOTE_PROTOCOLS_DIR}/."
+  fi
+
+  if [[ "\${args[\$source_index]}" == "/root/sing-box-vps/client/sing-box-client.json" ]]; then
+    args[\$source_index]="\${REMOTE_EXPORT_FILE}"
   fi
 
   command cp "\${args[@]}"
@@ -505,6 +658,8 @@ cat >> "\${script_file}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/vless-reality.env|state_file='"${REMOTE_STATE_FILE}"'|g' "\${script_file}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/anytls.env|state_file='"${REMOTE_ANYTLS_STATE_FILE}"'|g' "\${script_file}"
 printf 'REMOTE_HOST=%s\n' "\${remote_host}"
+remote_cmd="\${1:-}"
+remote_cmd=\${remote_cmd// legacy_takeover_export/}
 REMOTE_CONFIG_PRESENT_FILE="${REMOTE_CONFIG_PRESENT_FILE}" \
 REMOTE_PORT_FILE="${REMOTE_PORT_FILE}" \
 REMOTE_UUID_FILE="${REMOTE_UUID_FILE}" \
@@ -513,13 +668,17 @@ REMOTE_SERVICE_FILE_PRESENT_FILE="${REMOTE_SERVICE_FILE_PRESENT_FILE}" \
 REMOTE_SBV_PRESENT_FILE="${REMOTE_SBV_PRESENT_FILE}" \
 REMOTE_SERVICE_ACTIVE_FILE="${REMOTE_SERVICE_ACTIVE_FILE}" \
 REMOTE_CONFIG_FILE="${REMOTE_CONFIG_FILE}" \
+VERIFY_LEGACY_CONFIG_FILE="${REMOTE_CONFIG_FILE}" \
+VERIFY_LEGACY_KEY_FILE="${REMOTE_LEGACY_KEY_FILE}" \
+VERIFY_LEGACY_SERVICE_FILE="${REMOTE_LEGACY_SERVICE_FILE}" \
+REMOTE_EXPORT_FILE="${REMOTE_EXPORT_FILE}" \
 REMOTE_PROTOCOLS_DIR="${REMOTE_PROTOCOLS_DIR}" \
 REMOTE_STATE_FILE="${REMOTE_STATE_FILE}" \
 REMOTE_ANYTLS_STATE_FILE="${REMOTE_ANYTLS_STATE_FILE}" \
 REMOTE_INDEX_FILE="${REMOTE_INDEX_FILE}" \
 REMOTE_ASSERT_LOG_FILE="${REMOTE_ASSERT_LOG_FILE}" \
 INSTALL_COUNT_FILE="${INSTALL_COUNT_FILE}" \
-PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" -lc "\${1:-}" < "\${script_file}"
+PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" -lc "\${remote_cmd}" < "\${script_file}"
 EOF
 chmod +x "${TMP_DIR}/ssh"
 
@@ -532,7 +691,7 @@ grep -Fqx 'install.sh' "${run_dir}/changed-files.txt"
 grep -Fqx 'README.md' "${run_dir}/changed-files.txt"
 grep -Fqx 'tests/new_untracked_case.sh' "${run_dir}/changed-files.txt"
 scenarios=$(paste -sd, "${run_dir}/scenarios.txt")
-[[ "${scenarios}" == "fresh_install_vless,reconfigure_existing_install,fresh_install_anytls,runtime_smoke" ]] || {
+[[ "${scenarios}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,runtime_smoke" ]] || {
   printf 'unexpected scenarios: %s\n' "${scenarios}" >&2
   exit 1
 }
@@ -570,7 +729,7 @@ grep -Fqx 'install.sh' "${run_dir_skip}/changed-files.txt"
 grep -Fqx 'README.md' "${run_dir_skip}/changed-files.txt"
 grep -Fqx 'tests/new_untracked_case.sh' "${run_dir_skip}/changed-files.txt"
 scenarios_skip=$(paste -sd, "${run_dir_skip}/scenarios.txt")
-[[ "${scenarios_skip}" == "fresh_install_vless,reconfigure_existing_install,fresh_install_anytls,runtime_smoke" ]] || {
+[[ "${scenarios_skip}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,runtime_smoke" ]] || {
   printf 'unexpected scenarios for skip run: %s\n' "${scenarios_skip}" >&2
   exit 1
 }

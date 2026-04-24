@@ -13,6 +13,7 @@ INSTALL_BINARY_CALLS=0
 INSTALL_DEPENDENCIES_CALLS=0
 SETUP_SERVICE_CALLS=0
 ENSURE_SBV_CALLS=0
+RESTART_SERVICE_CALLS=0
 TAKEOVER_OUTPUT=""
 
 get_os_info() {
@@ -69,6 +70,11 @@ Description=sing-box service
 [Service]
 ExecStart=${SINGBOX_BIN_PATH} run -c ${SINGBOX_CONFIG_FILE}
 EOF
+}
+
+restart_service_after_takeover() {
+  RESTART_SERVICE_CALLS=$((RESTART_SERVICE_CALLS + 1))
+  printf '%s\n' "${RESTART_SERVICE_CALLS}" > "${TMP_DIR}/restart-service-calls"
 }
 
 write_singbox_binary() {
@@ -177,7 +183,9 @@ reset_runtime_stub_counters() {
     "${TMP_DIR}/install-dependencies-calls" \
     "${TMP_DIR}/ensure-sbv-calls" \
     "${TMP_DIR}/repair-call-order" \
+    "${TMP_DIR}/restart-service-calls" \
     "${TMP_DIR}/setup-service-calls"
+  RESTART_SERVICE_CALLS=0
 }
 
 run_takeover_from_incomplete_menu() {
@@ -312,6 +320,7 @@ scenario_missing_binary_uses_recorded_version() {
   assert_runtime_artifacts_restored "missing-binary-recorded-version"
   assert_binary_restored_with_version "1.13.5" "missing-binary-recorded-version"
   assert_counter_equals "${TMP_DIR}/install-dependencies-calls" "1" "missing-binary-recorded-version"
+  assert_counter_equals "${TMP_DIR}/restart-service-calls" "1" "missing-binary-recorded-version"
   assert_repair_call_order $'install_dependencies\ninstall_binary' "missing-binary-recorded-version"
 }
 
@@ -328,6 +337,7 @@ scenario_missing_binary_without_recorded_version_warns() {
   assert_binary_restored_with_version "${SB_SUPPORT_MAX_VERSION}" "missing-binary-without-record"
   assert_output_contains "未找到本地记录的 sing-box 版本" "missing-binary-without-record"
   assert_counter_equals "${TMP_DIR}/install-dependencies-calls" "1" "missing-binary-without-record"
+  assert_counter_equals "${TMP_DIR}/restart-service-calls" "1" "missing-binary-without-record"
   assert_repair_call_order $'install_dependencies\ninstall_binary' "missing-binary-without-record"
 }
 
@@ -342,6 +352,26 @@ scenario_missing_service_and_sbv_restores_sbv_explicitly() {
   assert_runtime_artifacts_restored "missing-service-and-sbv"
   assert_counter_equals "${TMP_DIR}/setup-service-calls" "1" "missing-service-and-sbv"
   assert_counter_equals "${TMP_DIR}/ensure-sbv-calls" "1" "missing-service-and-sbv"
+  assert_counter_equals "${TMP_DIR}/restart-service-calls" "1" "missing-service-and-sbv"
+}
+
+scenario_invalid_existing_service_is_repaired() {
+  reset_instance_artifacts
+  reset_runtime_stub_counters
+  write_config
+  write_singbox_binary
+  write_service_file
+  write_sbv_binary
+
+  run_takeover_from_incomplete_menu
+  assert_runtime_artifacts_restored "invalid-existing-service"
+  assert_counter_equals "${TMP_DIR}/setup-service-calls" "1" "invalid-existing-service"
+  assert_counter_equals "${TMP_DIR}/restart-service-calls" "1" "invalid-existing-service"
+
+  if ! grep -Fqx "ExecStart=${SINGBOX_BIN_PATH} run -c ${SINGBOX_CONFIG_FILE}" "${SINGBOX_SERVICE_FILE}"; then
+    printf 'expected takeover to rewrite invalid service file, got:\n%s\n' "$(cat "${SINGBOX_SERVICE_FILE}")" >&2
+    exit 1
+  fi
 }
 
 scenario_missing_only_sbv_stays_on_healthy_menu() {
@@ -407,5 +437,6 @@ scenario_missing_config_stops_before_runtime_repair() {
 scenario_missing_binary_uses_recorded_version
 scenario_missing_binary_without_recorded_version_warns
 scenario_missing_service_and_sbv_restores_sbv_explicitly
+scenario_invalid_existing_service_is_repaired
 scenario_missing_only_sbv_stays_on_healthy_menu
 scenario_missing_config_stops_before_runtime_repair

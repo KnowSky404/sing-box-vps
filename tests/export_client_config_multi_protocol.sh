@@ -175,6 +175,11 @@ if ! jq -e '.outbounds[] | select(.type == "vless" and .tag == "vless-reality-44
   exit 1
 fi
 
+if ! jq -e '.outbounds[] | select(.type == "vless" and .tag == "vless-reality-443") | .tls.utls.enabled == true and .tls.utls.fingerprint == "chrome"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected vless outbound vless-reality-443 to enable tls.utls with chrome fingerprint, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+  exit 1
+fi
+
 if ! jq -e '.outbounds[] | select(.type == "hysteria2" and .tag == "hy2-8443") | .obfs.type == "salamander"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
   printf 'expected hysteria2 outbound hy2-8443 with salamander obfs, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
@@ -220,8 +225,8 @@ if ! jq -e '.route.final == "proxy"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
   exit 1
 fi
 
-if ! jq -e '.route.default_domain_resolver == "local"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
-  printf 'expected route.default_domain_resolver local, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+if ! jq -e '.route.default_domain_resolver == "remote-dns"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.default_domain_resolver remote-dns, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
