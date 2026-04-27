@@ -116,18 +116,33 @@ if ! jq -e '.route.rule_set[] | select(.tag == "geoip-cn")' "${EXPORT_PATH}" >/d
   exit 1
 fi
 
-if ! jq -e '.route.rule_set[] | select(.tag == "geosite-geolocation-cn")' "${EXPORT_PATH}" >/dev/null; then
-  printf 'expected route.rule_set geosite-geolocation-cn, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+if ! jq -e '.route.rule_set[] | select(.tag == "geosite-cn" and .url == "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/cn.srs")' "${EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.rule_set geosite-cn from MetaCubeX, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
   exit 1
 fi
 
-if ! jq -e '.dns.rules[] | select(.rule_set == "geosite-geolocation-cn" and .server == "cn-dns")' "${EXPORT_PATH}" >/dev/null; then
-  printf 'expected dns.rules geosite-geolocation-cn -> cn-dns, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+if ! jq -e '.route.rule_set[] | select(.tag == "geosite-geolocation-!cn" and .url == "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/geolocation-!cn.srs")' "${EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.rule_set geosite-geolocation-!cn from MetaCubeX, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
   exit 1
 fi
 
-if ! jq -e '.route.rules[] | select(.rule_set == "geosite-geolocation-cn" and .outbound == "direct" and .action == "route")' "${EXPORT_PATH}" >/dev/null; then
-  printf 'expected route.rules geosite-geolocation-cn -> direct, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+if ! jq -e '.dns.rules[] | select(.rule_set == "geosite-cn" and .server == "cn-dns")' "${EXPORT_PATH}" >/dev/null; then
+  printf 'expected dns.rules geosite-cn -> cn-dns, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+  exit 1
+fi
+
+if ! jq -e '.dns.rules[] | select(.rule_set == "geosite-geolocation-!cn" and .server == "remote-dns")' "${EXPORT_PATH}" >/dev/null; then
+  printf 'expected dns.rules geosite-geolocation-!cn -> remote-dns, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+  exit 1
+fi
+
+if ! jq -e '.route.rules[] | select(.rule_set == "geosite-cn" and .outbound == "direct" and .action == "route")' "${EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.rules geosite-cn -> direct, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
+  exit 1
+fi
+
+if ! jq -e '.route.rules[] | select(.rule_set == "geosite-geolocation-!cn" and .outbound == "proxy" and .action == "route")' "${EXPORT_PATH}" >/dev/null; then
+  printf 'expected route.rules geosite-geolocation-!cn -> proxy, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
   exit 1
 fi
 

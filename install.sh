@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042702"
+readonly SCRIPT_VERSION="2026042703"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -4677,8 +4677,12 @@ build_singbox_client_config() {
           ],
           "rules": [
             {
-              "rule_set": "geosite-geolocation-cn",
+              "rule_set": "geosite-cn",
               "server": "cn-dns"
+            },
+            {
+              "rule_set": "geosite-geolocation-!cn",
+              "server": "remote-dns"
             }
           ],
           "final": "remote-dns",
@@ -4721,13 +4725,19 @@ build_singbox_client_config() {
               "tag": "geoip-cn",
               "type": "remote",
               "format": "binary",
-              "url": "https://cdn.jsdelivr.net/gh/Loyalsoldier/geoip@release/srs/cn.srs"
+              "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.srs"
             },
             {
-              "tag": "geosite-geolocation-cn",
+              "tag": "geosite-cn",
               "type": "remote",
               "format": "binary",
-              "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-cn.srs"
+              "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/cn.srs"
+            },
+            {
+              "tag": "geosite-geolocation-!cn",
+              "type": "remote",
+              "format": "binary",
+              "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/geolocation-!cn.srs"
             }
           ],
           "rules": [
@@ -4744,7 +4754,7 @@ build_singbox_client_config() {
               "outbound": "direct"
             },
             {
-              "rule_set": "geosite-geolocation-cn",
+              "rule_set": "geosite-cn",
               "action": "route",
               "outbound": "direct"
             },
@@ -4752,6 +4762,11 @@ build_singbox_client_config() {
               "rule_set": "geoip-cn",
               "action": "route",
               "outbound": "direct"
+            },
+            {
+              "rule_set": "geosite-geolocation-!cn",
+              "action": "route",
+              "outbound": "proxy"
             }
           ],
           "final": "proxy",
