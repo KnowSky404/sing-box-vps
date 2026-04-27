@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042701
+# Version: 2026042702
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042701"
+readonly SCRIPT_VERSION="2026042702"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -93,7 +93,7 @@ SB_ANYTLS_CERT_PATH=""
 SB_ANYTLS_KEY_PATH=""
 SB_ADVANCED_ROUTE="y"
 SB_ENABLE_WARP="n"
-SB_WARP_ROUTE_MODE="all"
+SB_WARP_ROUTE_MODE="selective"
 SB_INBOUND_STACK_MODE=""
 SB_OUTBOUND_STACK_MODE=""
 SB_WARP_CUSTOM_DOMAINS_JSON='[]'
@@ -1357,14 +1357,14 @@ prompt_global_instance_options() {
   SB_ENABLE_WARP=${in_warp:-"n"}
 
   if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
-    SB_WARP_ROUTE_MODE="all"
+    SB_WARP_ROUTE_MODE="selective"
     echo "Warp 路由模式:"
     echo "1. 全量流量走 Warp"
     echo "2. 仅 AI/流媒体及自定义规则走 Warp"
-    read -rp "请选择 [1-2] (默认 1): " in_warp_mode
+    read -rp "请选择 [1-2] (默认 2): " in_warp_mode
     case "${in_warp_mode}" in
-      2) SB_WARP_ROUTE_MODE="selective" ;;
-      *) SB_WARP_ROUTE_MODE="all" ;;
+      1) SB_WARP_ROUTE_MODE="all" ;;
+      *) SB_WARP_ROUTE_MODE="selective" ;;
     esac
   fi
 }
@@ -1578,6 +1578,7 @@ ensure_mixed_auth_credentials() {
 
   [[ -z "${SB_MIXED_USERNAME}" ]] && SB_MIXED_USERNAME=$(generate_random_token "proxy_" 3)
   [[ -z "${SB_MIXED_PASSWORD}" ]] && SB_MIXED_PASSWORD=$(generate_random_token "" 8)
+  return 0
 }
 
 show_media_check_backend_info() {
@@ -1816,7 +1817,7 @@ EOF
 }
 
 load_warp_route_settings() {
-  SB_WARP_ROUTE_MODE="all"
+  SB_WARP_ROUTE_MODE="selective"
 
   if [[ -f "${SB_WARP_ROUTE_SETTINGS_FILE}" ]]; then
     local saved_mode
@@ -3723,7 +3724,7 @@ config_detect_warp_route_mode() {
     return 0
   fi
 
-  printf 'all'
+  printf 'selective'
 }
 
 # Detect whether advanced route rules are enabled in either the current or legacy schema.
@@ -5267,6 +5268,52 @@ log_takeover_state_diagnostics() {
   done
 }
 
+attempt_managed_instance_auto_heal() {
+  local indexed_protocols=()
+  local protocol
+  local config_backup=""
+
+  [[ -x "${SINGBOX_BIN_PATH}" && -f "${SINGBOX_SERVICE_FILE}" && -f "${SINGBOX_CONFIG_FILE}" && -f "${SB_PROTOCOL_INDEX_FILE}" ]] || return 1
+
+  mapfile -t indexed_protocols < <(list_installed_protocols)
+  [[ ${#indexed_protocols[@]} -gt 0 ]] || return 1
+
+  for protocol in "${indexed_protocols[@]}"; do
+    protocol_state_exists "${protocol}" || return 1
+  done
+
+  protocol_state_layer_matches_config && return 0
+
+  log_warn "检测到托管实例配置与协议状态不一致，正在尝试按协议状态自动重建运行配置。"
+
+  if config_has_advanced_route "${SINGBOX_CONFIG_FILE}"; then
+    SB_ADVANCED_ROUTE="y"
+  else
+    SB_ADVANCED_ROUTE="n"
+  fi
+
+  if config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; then
+    SB_ENABLE_WARP="y"
+  else
+    SB_ENABLE_WARP="n"
+  fi
+
+  load_warp_route_settings
+  load_stack_mode_state
+
+  config_backup=$(mktemp)
+  cp "${SINGBOX_CONFIG_FILE}" "${config_backup}"
+
+  if ! generate_config || ! validate_config_file; then
+    cp "${config_backup}" "${SINGBOX_CONFIG_FILE}"
+    rm -f "${config_backup}"
+    return 1
+  fi
+
+  rm -f "${config_backup}"
+  return 0
+}
+
 detect_existing_instance_state() {
   local has_bin="n"
   local has_service="n"
@@ -5298,6 +5345,8 @@ detect_existing_instance_state() {
 
   if [[ "${has_bin}" == "y" && "${has_service}" == "y" && "${has_config}" == "y" ]]; then
     if protocol_state_layer_matches_config; then
+      printf '%s' "healthy"
+    elif attempt_managed_instance_auto_heal && protocol_state_layer_matches_config; then
       printf '%s' "healthy"
     else
       printf '%s' "incomplete"
