@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042412
+# Version: 2026042701
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042412"
+readonly SCRIPT_VERSION="2026042701"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -52,7 +52,7 @@ readonly SB_HIGH_PORT_MAX="65535"
 # --- Global Variables ---
 SB_VERSION="${SB_SUPPORT_MAX_VERSION}"
 SB_PROTOCOL="vless+reality"
-SB_NODE_NAME="vless_reality_$(hostname)"
+SB_NODE_NAME="$(hostname)+vless"
 SB_PORT="443"
 SB_UUID=""
 SB_PUBLIC_KEY=""
@@ -501,6 +501,21 @@ protocol_display_name() {
     anytls) printf 'AnyTLS' ;;
     *) printf '%s' "$1" ;;
   esac
+}
+
+default_node_name_for_protocol() {
+  local protocol suffix
+
+  protocol=${1:-vless+reality}
+  case "${protocol}" in
+    vless+reality) suffix="vless" ;;
+    hy2) suffix="hys" ;;
+    anytls) suffix="anytls" ;;
+    mixed) suffix="mixed" ;;
+    *) suffix="${protocol}" ;;
+  esac
+
+  printf '%s+%s' "$(hostname)" "${suffix}"
 }
 
 protocol_inbound_tag() {
@@ -1414,7 +1429,7 @@ set_protocol_defaults() {
   case "$1" in
     mixed)
       SB_PROTOCOL="mixed"
-      SB_NODE_NAME="mixed_$(hostname)"
+      SB_NODE_NAME="$(default_node_name_for_protocol "mixed")"
       SB_PORT="$(pick_random_high_port)"
       SB_SNI=""
       SB_UUID=""
@@ -1428,7 +1443,7 @@ set_protocol_defaults() {
       ;;
     hy2)
       SB_PROTOCOL="hy2"
-      SB_NODE_NAME="hy2_$(hostname)"
+      SB_NODE_NAME="$(default_node_name_for_protocol "hy2")"
       SB_PORT="$(pick_random_high_port)"
       SB_SNI=""
       SB_UUID=""
@@ -1459,7 +1474,7 @@ set_protocol_defaults() {
       ;;
     anytls)
       SB_PROTOCOL="anytls"
-      SB_NODE_NAME="anytls_$(hostname)"
+      SB_NODE_NAME="$(default_node_name_for_protocol "anytls")"
       SB_PORT="$(pick_random_high_port)"
       SB_SNI=""
       SB_UUID=""
@@ -1501,7 +1516,7 @@ set_protocol_defaults() {
       ;;
     *)
       SB_PROTOCOL="vless+reality"
-      SB_NODE_NAME="vless_reality_$(hostname)"
+      SB_NODE_NAME="$(default_node_name_for_protocol "vless+reality")"
       SB_PORT="$(pick_random_high_port)"
       SB_SNI="apple.com"
       SB_MIXED_AUTH_ENABLED="y"
@@ -2435,7 +2450,7 @@ load_protocol_state() {
   case "${protocol}" in
     vless-reality)
       SB_PROTOCOL="vless+reality"
-      SB_NODE_NAME="${NODE_NAME:-vless_reality_$(hostname)}"
+      SB_NODE_NAME="${NODE_NAME:-$(default_node_name_for_protocol "vless+reality")}"
       SB_PORT="${PORT:-443}"
       SB_UUID="${UUID:-}"
       SB_SNI="${SNI:-apple.com}"
@@ -2477,7 +2492,7 @@ load_protocol_state() {
       ;;
     mixed)
       SB_PROTOCOL="mixed"
-      SB_NODE_NAME="${NODE_NAME:-mixed_$(hostname)}"
+      SB_NODE_NAME="${NODE_NAME:-$(default_node_name_for_protocol "mixed")}"
       SB_PORT="${PORT:-1080}"
       SB_UUID=""
       SB_SNI=""
@@ -2519,7 +2534,7 @@ load_protocol_state() {
       ;;
     hy2)
       SB_PROTOCOL="hy2"
-      SB_NODE_NAME="${NODE_NAME:-hy2_$(hostname)}"
+      SB_NODE_NAME="${NODE_NAME:-$(default_node_name_for_protocol "hy2")}"
       SB_PORT="${PORT:-443}"
       SB_UUID=""
       SB_SNI=""
@@ -2561,7 +2576,7 @@ load_protocol_state() {
       ;;
     anytls)
       SB_PROTOCOL="anytls"
-      SB_NODE_NAME="${NODE_NAME:-anytls_$(hostname)}"
+      SB_NODE_NAME="${NODE_NAME:-$(default_node_name_for_protocol "anytls")}"
       SB_PORT="${PORT:-443}"
       SB_UUID=""
       SB_SNI=""
@@ -3777,7 +3792,7 @@ load_current_config_state() {
   SB_PORT=$(jq -r '.inbounds[0].listen_port' "${SINGBOX_CONFIG_FILE}")
 
   if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
-    SB_NODE_NAME="vless_reality_$(hostname)"
+    SB_NODE_NAME="$(default_node_name_for_protocol "vless+reality")"
     SB_UUID=$(jq -r '.inbounds[0].users[0].uuid' "${SINGBOX_CONFIG_FILE}")
     SB_SNI=$(jq -r '.inbounds[0].tls.server_name' "${SINGBOX_CONFIG_FILE}")
     SB_PRIVATE_KEY=$(jq -r '.inbounds[0].tls.reality.private_key' "${SINGBOX_CONFIG_FILE}")
@@ -3787,7 +3802,7 @@ load_current_config_state() {
     SB_MIXED_USERNAME=""
     SB_MIXED_PASSWORD=""
   elif [[ "${SB_PROTOCOL}" == "mixed" ]]; then
-    SB_NODE_NAME="mixed_$(hostname)"
+    SB_NODE_NAME="$(default_node_name_for_protocol "mixed")"
     SB_UUID=""
     SB_SNI=""
     SB_PRIVATE_KEY=""
@@ -3803,7 +3818,7 @@ load_current_config_state() {
       SB_MIXED_PASSWORD=""
     fi
   elif [[ "${SB_PROTOCOL}" == "hy2" ]]; then
-    SB_NODE_NAME="hy2_$(hostname)"
+    SB_NODE_NAME="$(default_node_name_for_protocol "hy2")"
     SB_HY2_DOMAIN=$(jq -r '.inbounds[0].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
     SB_HY2_PASSWORD=$(jq -r '.inbounds[0].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
     SB_HY2_USER_NAME=$(jq -r '.inbounds[0].users[0].name // ""' "${SINGBOX_CONFIG_FILE}")
@@ -3864,7 +3879,7 @@ load_current_config_state() {
     SB_ANYTLS_PASSWORD=""
     SB_ANYTLS_USER_NAME=""
   else
-    SB_NODE_NAME="anytls_$(hostname)"
+    SB_NODE_NAME="$(default_node_name_for_protocol "anytls")"
     SB_ANYTLS_DOMAIN=$(jq -r '.inbounds[0].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
     SB_ANYTLS_PASSWORD=$(jq -r '.inbounds[0].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
     SB_ANYTLS_USER_NAME=$(jq -r '.inbounds[0].users[0].name // ""' "${SINGBOX_CONFIG_FILE}")
@@ -5308,7 +5323,7 @@ rebuild_protocol_state_from_config() {
     case "${protocol}" in
       vless-reality)
         SB_PROTOCOL="vless+reality"
-        SB_NODE_NAME="vless_reality_$(hostname)"
+        SB_NODE_NAME="$(default_node_name_for_protocol "vless+reality")"
         SB_PORT=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")
         SB_UUID=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].uuid // ""' "${SINGBOX_CONFIG_FILE}")
         SB_SNI=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // "apple.com"' "${SINGBOX_CONFIG_FILE}")
@@ -5324,7 +5339,7 @@ rebuild_protocol_state_from_config() {
         ;;
       mixed)
         SB_PROTOCOL="mixed"
-        SB_NODE_NAME="mixed_$(hostname)"
+        SB_NODE_NAME="$(default_node_name_for_protocol "mixed")"
         SB_PORT=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "1080"' "${SINGBOX_CONFIG_FILE}")
         if jq -e --argjson idx "${inbound_index}" '(.inbounds[$idx].users // []) | length > 0' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
           SB_MIXED_AUTH_ENABLED="y"
@@ -5339,7 +5354,7 @@ rebuild_protocol_state_from_config() {
         ;;
       hy2)
         SB_PROTOCOL="hy2"
-        SB_NODE_NAME="hy2_$(hostname)"
+        SB_NODE_NAME="$(default_node_name_for_protocol "hy2")"
         cert_provider_tag=""
         SB_PORT=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")
         SB_HY2_DOMAIN=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
@@ -5402,7 +5417,7 @@ rebuild_protocol_state_from_config() {
         ;;
       anytls)
         SB_PROTOCOL="anytls"
-        SB_NODE_NAME="anytls_$(hostname)"
+        SB_NODE_NAME="$(default_node_name_for_protocol "anytls")"
         SB_PORT=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")
         SB_ANYTLS_DOMAIN=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
         SB_ANYTLS_PASSWORD=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
