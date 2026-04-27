@@ -32,10 +32,10 @@ cp configs/verification-target.env.example dev/verification-target.env
 默认优先读取 `dev/verification-target.env`。若使用 SSH 主机别名，只需配置：
 
 ```bash
-VERIFY_REMOTE_HOST_ALIAS=sing-box-test
+VERIFY_REMOTE_HOST_ALIAS=sing-box-test-0
 ```
 
-当前仓库默认约定的测试机 SSH 别名也是 `sing-box-test`。新开开发会话时，优先复用这套目标配置，不再临时改回纯环境变量模式。
+当前仓库默认约定优先使用 `sing-box-test-0` 作为远程验证目标；如需切到第二台测试机，可改成 `sing-box-test-1`。新开开发会话时，优先复用这套目标配置，不再临时改回纯环境变量模式。
 
 随后运行：
 

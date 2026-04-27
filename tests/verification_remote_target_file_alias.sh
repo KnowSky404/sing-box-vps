@@ -21,13 +21,13 @@ EOF
 chmod +x "${TMP_DIR}/ssh"
 
 cat > "${TMP_DIR}/target.env" <<'EOF'
-VERIFY_REMOTE_HOST_ALIAS=sing-box-test
+VERIFY_REMOTE_HOST_ALIAS=sing-box-test-0
 EOF
 
 PATH="${TMP_DIR}:${PATH}" VERIFY_REMOTE_TARGET_FILE="${TMP_DIR}/target.env" VERIFY_SKIP_LOCAL_TESTS=1 \
   bash "${REPO_ROOT}/dev/verification/run.sh" --changed-file install.sh > "${TMP_DIR}/stdout.txt"
 
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout.txt")
-grep -Fqx 'sing-box-test' "${TMP_DIR}/ssh-target.txt"
-grep -Fq 'remote_target=sing-box-test' "${run_dir}/summary.log"
-grep -Fq 'REMOTE_HOST=sing-box-test' "${run_dir}/remote.stdout.log"
+grep -Fqx 'sing-box-test-0' "${TMP_DIR}/ssh-target.txt"
+grep -Fq 'remote_target=sing-box-test-0' "${run_dir}/summary.log"
+grep -Fq 'REMOTE_HOST=sing-box-test-0' "${run_dir}/remote.stdout.log"
