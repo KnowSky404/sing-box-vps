@@ -106,7 +106,7 @@ if [[ ! -f "${EXPORT_PATH}" ]]; then
   exit 1
 fi
 
-if ! jq -e '.outbounds[] | select(.type == "vless" and .tag == "vless-reality-443") | .tls.utls.enabled == true and .tls.utls.fingerprint == "chrome"' "${EXPORT_PATH}" >/dev/null; then
+if ! jq -e '.outbounds[] | select(.type == "vless" and .tag == "legacy-host+vless") | .tls.utls.enabled == true and .tls.utls.fingerprint == "chrome"' "${EXPORT_PATH}" >/dev/null; then
   printf 'expected migrated legacy export to include tls.utls chrome fingerprint, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
   exit 1
 fi

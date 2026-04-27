@@ -4177,7 +4177,12 @@ build_anytls_outbound_example() {
 client_outbound_tag_for_protocol() {
   local protocol
   protocol=$(normalize_protocol_id "$1")
-  printf '%s-%s' "${protocol}" "${SB_PORT}"
+  if [[ -n "${SB_NODE_NAME:-}" ]]; then
+    printf '%s' "${SB_NODE_NAME}"
+    return 0
+  fi
+
+  printf '%s' "$(default_node_name_for_protocol "$(state_protocol_to_runtime "${protocol}")")"
 }
 
 build_client_vless_reality_outbound() {

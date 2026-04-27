@@ -88,5 +88,5 @@ EOF
   grep -Fq "文件路径: ${export_path}" "${export_stdout_path}"
   test -f "${export_path}"
   verification_capture_file_if_present "${export_path}" "${VERIFY_CURRENT_SCENARIO_DIR}/client/sing-box-client.json"
-  jq -e '.outbounds[] | select(.type == "vless" and .tag == "vless-reality-443") | .tls.utls.enabled == true and .tls.utls.fingerprint == "chrome"' "${export_path}" >/dev/null
+  jq -e '.outbounds[] | select(.type == "vless" and .tag == "rn-us-lax+vless") | .tls.utls.enabled == true and .tls.utls.fingerprint == "chrome"' "${export_path}" >/dev/null
 }

@@ -461,7 +461,7 @@ INDEX_EOF
   "outbounds": [
     {
       "type": "vless",
-      "tag": "vless-reality-443",
+      "tag": "rn-us-lax+vless",
       "tls": {
         "utls": {
           "enabled": true,

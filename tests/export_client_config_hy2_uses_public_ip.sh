@@ -77,12 +77,12 @@ export_singbox_client_config >/dev/null
 
 EXPORT_PATH="${SB_PROJECT_DIR}/client/sing-box-client.json"
 
-if ! jq -e '.outbounds[] | select(.type == "hysteria2" and .tag == "hy2-65123") | .server == "203.0.113.10"' "${EXPORT_PATH}" >/dev/null; then
+if ! jq -e '.outbounds[] | select(.type == "hysteria2" and .tag == "hy2_test-host") | .server == "203.0.113.10"' "${EXPORT_PATH}" >/dev/null; then
   printf 'expected exported hy2 outbound server to use detected public IP, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
   exit 1
 fi
 
-if ! jq -e '.outbounds[] | select(.type == "hysteria2" and .tag == "hy2-65123") | .tls.server_name == "hy2.example.com"' "${EXPORT_PATH}" >/dev/null; then
+if ! jq -e '.outbounds[] | select(.type == "hysteria2" and .tag == "hy2_test-host") | .tls.server_name == "hy2.example.com"' "${EXPORT_PATH}" >/dev/null; then
   printf 'expected exported hy2 outbound tls.server_name to keep configured domain, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
   exit 1
 fi

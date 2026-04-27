@@ -170,23 +170,23 @@ if ! jq -e '.outbounds[] | select(.type == "urltest" and .tag == "auto")' "${EXP
   exit 1
 fi
 
-if ! jq -e '.outbounds[] | select(.type == "vless" and .tag == "vless-reality-443")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
-  printf 'expected vless outbound tag vless-reality-443, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+if ! jq -e '.outbounds[] | select(.type == "vless" and .tag == "vless_reality_test-host")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected vless outbound tag vless_reality_test-host, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
-if ! jq -e '.outbounds[] | select(.type == "vless" and .tag == "vless-reality-443") | .tls.utls.enabled == true and .tls.utls.fingerprint == "chrome"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
-  printf 'expected vless outbound vless-reality-443 to enable tls.utls with chrome fingerprint, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+if ! jq -e '.outbounds[] | select(.type == "vless" and .tag == "vless_reality_test-host") | .tls.utls.enabled == true and .tls.utls.fingerprint == "chrome"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected vless outbound vless_reality_test-host to enable tls.utls with chrome fingerprint, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
-if ! jq -e '.outbounds[] | select(.type == "hysteria2" and .tag == "hy2-8443") | .obfs.type == "salamander"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
-  printf 'expected hysteria2 outbound hy2-8443 with salamander obfs, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+if ! jq -e '.outbounds[] | select(.type == "hysteria2" and .tag == "hy2_test-host") | .obfs.type == "salamander"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected hysteria2 outbound hy2_test-host with salamander obfs, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
-if ! jq -e '.outbounds[] | select(.type == "anytls" and .tag == "anytls-9443")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
-  printf 'expected anytls outbound tag anytls-9443, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+if ! jq -e '.outbounds[] | select(.type == "anytls" and .tag == "anytls_test-host")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected anytls outbound tag anytls_test-host, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 

@@ -105,7 +105,7 @@ if ! grep -Fq '"legacy":true' "${BACKUP_PATH}"; then
   exit 1
 fi
 
-if ! jq -e '.outbounds[] | select(.type == "anytls" and .tag == "anytls-9443")' "${EXPORT_PATH}" >/dev/null; then
+if ! jq -e '.outbounds[] | select(.type == "anytls" and .tag == "anytls_test-host")' "${EXPORT_PATH}" >/dev/null; then
   printf 'expected new export to contain anytls outbound, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
   exit 1
 fi
