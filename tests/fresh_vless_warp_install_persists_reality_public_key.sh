@@ -44,6 +44,7 @@ register_warp() {
 WARP_PRIV_KEY=warp-private-key
 WARP_V4=172.16.0.2
 WARP_V6=2606:4700:110:8cde:1234:5678:90ab:cdef
+WARP_CLIENT_ID=hCaJ
 EOF
 }
 refresh_warp_route_assets() {
@@ -93,5 +94,11 @@ fi
 
 if [[ "${link}" == *'[密钥丢失，请更新配置]'* ]]; then
   printf 'expected built VLESS link to avoid missing-key placeholder, got:\n%s\n' "${link}" >&2
+  exit 1
+fi
+
+if ! jq -e '.endpoints[0].peers[0].reserved == [132, 38, 137]' "${SINGBOX_CONFIG_FILE}" >/dev/null; then
+  printf 'expected generated warp endpoint reserved bytes [132,38,137], got:\n%s\n' \
+    "$(jq '.endpoints[0].peers[0]' "${SINGBOX_CONFIG_FILE}")" >&2
   exit 1
 fi

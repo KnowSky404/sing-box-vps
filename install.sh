@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042702
+# Version: 2026042704
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042703"
+readonly SCRIPT_VERSION="2026042704"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -103,11 +103,39 @@ SB_WARP_REMOTE_RULE_SETS_JSON='[]'
 SB_WARP_RULE_SET_TAGS_JSON='[]'
 
 # --- Common Utilities ---
+warp_client_id_to_reserved_json() {
+  local client_id decoded_bytes reserved_json
+  client_id=$(trim_whitespace "${1:-}")
+
+  if [[ -z "${client_id}" ]]; then
+    printf '[]'
+    return 0
+  fi
+
+  if ! decoded_bytes=$(printf '%s' "${client_id}" | base64 -d 2>/dev/null | od -An -t u1 -v 2>/dev/null); then
+    log_error "Warp client_id 解码失败，请尝试重新注册 Warp。"
+  fi
+
+  reserved_json=$(printf '%s\n' "${decoded_bytes}" | tr -s '[:space:]' '\n' | sed '/^$/d' | jq -Rsc \
+    'split("\n") | map(select(length > 0) | tonumber)')
+
+  if ! jq -e 'length == 3' >/dev/null 2>&1 <<< "${reserved_json}"; then
+    log_error "Warp client_id 长度异常，请尝试重新注册 Warp。"
+  fi
+
+  printf '%s' "${reserved_json}"
+}
+
 # Register Cloudflare Warp account
 register_warp() {
   if [[ -f "${SB_WARP_KEY_FILE}" ]]; then
-    log_info "发现现有 Warp 账户信息，正在加载..."
-    return 0
+    if grep -q '^WARP_CLIENT_ID=' "${SB_WARP_KEY_FILE}"; then
+      log_info "发现现有 Warp 账户信息，正在加载..."
+      return 0
+    fi
+
+    log_warn "发现旧版 Warp 账户信息缺少 client_id，正在自动重新注册..."
+    rm -f "${SB_WARP_KEY_FILE}"
   fi
 
   log_info "正在注册 Cloudflare Warp 免费账户..."
@@ -149,9 +177,15 @@ register_warp() {
     log_error "Warp 注册失败: ${err_msg}"
   fi
 
-  local warp_token=$(echo "${response}" | jq -r '.token')
-  local warp_v4=$(echo "${response}" | jq -r '.config.interface.addresses.v4')
-  local warp_v6=$(echo "${response}" | jq -r '.config.interface.addresses.v6')
+  local warp_token warp_v4 warp_v6 warp_client_id
+  warp_token=$(echo "${response}" | jq -r '.token')
+  warp_v4=$(echo "${response}" | jq -r '.config.interface.addresses.v4')
+  warp_v6=$(echo "${response}" | jq -r '.config.interface.addresses.v6')
+  warp_client_id=$(echo "${response}" | jq -r '.config.client_id // empty')
+
+  if [[ -z "${warp_client_id}" || "${warp_client_id}" == "null" ]]; then
+    log_error "Warp 注册响应缺少 client_id，请查看 ${SBV_LOG_FILE}"
+  fi
 
   cat > "${SB_WARP_KEY_FILE}" <<EOF
 WARP_ID=${warp_id}
@@ -160,6 +194,7 @@ WARP_PRIV_KEY=${priv_key}
 WARP_PUB_KEY=${pub_key}
 WARP_V4=${warp_v4}
 WARP_V6=${warp_v6}
+WARP_CLIENT_ID=${warp_client_id}
 EOF
   log_success "Warp 账户注册成功。"
 }
@@ -1619,15 +1654,15 @@ pick_free_local_port() {
 create_media_check_warp_proxy_config() {
   local output_file=$1
   local proxy_port=$2
-  local w_key w_v4 w_v6
+  local w_key w_v4 w_v6 w_client_id w_reserved='[]'
 
-  if [[ ! -f "${SB_WARP_KEY_FILE}" ]]; then
-    log_error "未找到 Warp 账户信息，请先在菜单中启用或注册 Warp。"
-  fi
+  register_warp
 
   w_key=$(grep "WARP_PRIV_KEY" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
   w_v4=$(grep "WARP_V4" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
   w_v6=$(grep "WARP_V6" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
+  w_client_id=$(grep "WARP_CLIENT_ID" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
+  w_reserved=$(warp_client_id_to_reserved_json "${w_client_id}")
 
   if [[ -z "${w_key}" || -z "${w_v4}" || -z "${w_v6}" ]]; then
     log_error "Warp 账户信息不完整，请尝试重新注册 Warp。"
@@ -1638,6 +1673,7 @@ create_media_check_warp_proxy_config() {
     --arg w_key "${w_key}" \
     --arg w_v4 "${w_v4}/32" \
     --arg w_v6 "${w_v6}/128" \
+    --argjson w_reserved "${w_reserved}" \
     '{
       "log": { "level": "warn", "timestamp": true },
       "endpoints": [
@@ -1651,6 +1687,7 @@ create_media_check_warp_proxy_config() {
               "address": "engage.cloudflareclient.com",
               "port": 2408,
               "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+              "reserved": $w_reserved,
               "allowed_ips": [ "0.0.0.0/0", "::/0" ]
             }
           ],
@@ -3014,12 +3051,14 @@ generate_config() {
   load_warp_route_settings
 
   # Endpoints Logic
-  local w_key="" w_v4="" w_v6=""
+  local w_key="" w_v4="" w_v6="" w_client_id="" w_reserved='[]'
   if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
     register_warp
     w_key=$(grep "WARP_PRIV_KEY" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
     w_v4=$(grep "WARP_V4" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
     w_v6=$(grep "WARP_V6" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
+    w_client_id=$(grep "WARP_CLIENT_ID" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
+    w_reserved=$(warp_client_id_to_reserved_json "${w_client_id}")
   fi
 
   refresh_warp_route_assets
@@ -3051,6 +3090,7 @@ generate_config() {
     --arg w_key "${w_key}" \
     --arg w_v4 "${w_v4}/32" \
     --arg w_v6 "${w_v6}/128" \
+    --argjson w_reserved "${w_reserved}" \
     --arg outbound_stack_mode "${SB_OUTBOUND_STACK_MODE}" \
     --argjson inbounds "${inbounds_json}" \
     --argjson certificate_providers "${certificate_providers_json}" \
@@ -3086,6 +3126,7 @@ generate_config() {
               "address": "engage.cloudflareclient.com",
               "port": 2408,
               "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+              "reserved": $w_reserved,
               "allowed_ips": [ "0.0.0.0/0", "::/0" ]
             }
           ],
