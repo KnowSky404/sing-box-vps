@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042704
+# Version: 2026042801
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042704"
+readonly SCRIPT_VERSION="2026042801"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -3435,14 +3435,7 @@ render_menu_item() {
 render_summary_item() {
   local label=$1
   local value=${2:-}
-  local width
-
-  width=$(term_columns)
-  if (( width >= 72 )); then
-    printf '%s: %s\n' "${label}" "${value}"
-  else
-    echo "${label}: ${value}"
-  fi
+  printf '%s: %b\n' "${label}" "${value}"
 }
 
 render_main_menu_brand_block() {
