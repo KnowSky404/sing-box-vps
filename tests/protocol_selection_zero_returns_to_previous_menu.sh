@@ -29,21 +29,23 @@ export PATH="${TMP_DIR}/bin:${PATH}"
 # shellcheck disable=SC1090
 source "${TESTABLE_INSTALL}"
 
-list_installed_protocols() { :; }
-
 OUTPUT_FILE="${TMP_DIR}/selection.output"
-prompt_protocol_install_selection "additional" >"${OUTPUT_FILE}" 2>&1 <<'EOF'
-
+if prompt_protocol_install_selection "additional" >"${OUTPUT_FILE}" 2>&1 <<'EOF'
+0
 EOF
-
-output=$(cat "${OUTPUT_FILE}")
-
-if [[ "${SELECTED_PROTOCOLS_CSV}" != "vless-reality,mixed,hy2,anytls" ]]; then
-  printf 'expected blank selection to install all available protocols, got %s\n' "${SELECTED_PROTOCOLS_CSV}" >&2
+then
+  printf 'expected selecting 0 to return non-zero from prompt_protocol_install_selection\n' >&2
   exit 1
 fi
 
-if [[ "${output}" != *"留空则安装全部可用协议"* ]]; then
-  printf 'expected prompt to mention blank selection installs all, got:\n%s\n' "${output}" >&2
+if [[ -n "${SELECTED_PROTOCOLS_CSV:-}" ]]; then
+  printf 'expected selecting 0 to leave SELECTED_PROTOCOLS_CSV empty, got %s\n' "${SELECTED_PROTOCOLS_CSV}" >&2
+  exit 1
+fi
+
+output=$(cat "${OUTPUT_FILE}")
+
+if [[ "${output}" != *"0. 返回上一级"* ]]; then
+  printf 'expected prompt to show return option, got:\n%s\n' "${output}" >&2
   exit 1
 fi

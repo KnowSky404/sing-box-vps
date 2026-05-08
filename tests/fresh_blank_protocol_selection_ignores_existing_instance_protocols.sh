@@ -29,21 +29,16 @@ export PATH="${TMP_DIR}/bin:${PATH}"
 # shellcheck disable=SC1090
 source "${TESTABLE_INSTALL}"
 
-list_installed_protocols() { :; }
+list_installed_protocols() {
+  printf '%s\n' vless-reality mixed hy2 anytls
+}
 
 OUTPUT_FILE="${TMP_DIR}/selection.output"
-prompt_protocol_install_selection "additional" >"${OUTPUT_FILE}" 2>&1 <<'EOF'
+prompt_protocol_install_selection "fresh" >"${OUTPUT_FILE}" 2>&1 <<'EOF'
 
 EOF
 
-output=$(cat "${OUTPUT_FILE}")
-
 if [[ "${SELECTED_PROTOCOLS_CSV}" != "vless-reality,mixed,hy2,anytls" ]]; then
-  printf 'expected blank selection to install all available protocols, got %s\n' "${SELECTED_PROTOCOLS_CSV}" >&2
-  exit 1
-fi
-
-if [[ "${output}" != *"留空则安装全部可用协议"* ]]; then
-  printf 'expected prompt to mention blank selection installs all, got:\n%s\n' "${output}" >&2
+  printf 'expected fresh blank selection to ignore existing instance protocols, got %s\n' "${SELECTED_PROTOCOLS_CSV}" >&2
   exit 1
 fi

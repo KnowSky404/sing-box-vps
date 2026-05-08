@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042801
+# Version: 2026042802
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042801"
+readonly SCRIPT_VERSION="2026042802"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -1117,10 +1117,15 @@ protocol_option_to_id() {
 }
 
 prompt_protocol_install_selection() {
+  local install_mode=${1:-additional}
   local installed_protocols=() selected_protocols=()
   local choice raw_choice protocol index
 
-  mapfile -t installed_protocols < <(list_installed_protocols)
+  SELECTED_PROTOCOLS_CSV=""
+
+  if [[ "${install_mode}" != "fresh" ]]; then
+    mapfile -t installed_protocols < <(list_installed_protocols)
+  fi
 
   echo -e "\n${BLUE}--- 协议安装 ---${NC}"
   if [[ ${#installed_protocols[@]} -gt 0 ]]; then
@@ -1141,6 +1146,7 @@ prompt_protocol_install_selection() {
     echo "${index}. $(protocol_display_name "$(state_protocol_to_runtime "${protocol}")")"
   done
 
+  echo "0. 返回上一级"
   echo "留空则安装全部可用协议。"
   read -rp "请选择一个或多个协议 [1-4]，逗号分隔: " choice
 
@@ -1152,6 +1158,10 @@ prompt_protocol_install_selection() {
       fi
       selected_protocols+=("${protocol}")
     done
+  fi
+
+  if [[ "$(trim_whitespace "${choice}")" == "0" ]]; then
+    return 1
   fi
 
   IFS=',' read -r -a raw_choices <<< "${choice}"
@@ -1180,6 +1190,7 @@ prompt_protocol_install_selection() {
   fi
 
   SELECTED_PROTOCOLS_CSV=$(IFS=,; printf '%s' "${selected_protocols[*]}")
+  return 0
 }
 
 prompt_vless_reality_install() {
@@ -1415,7 +1426,7 @@ install_protocols_interactive() {
     get_os_info
     get_arch
     prompt_singbox_version
-    prompt_protocol_install_selection
+    prompt_protocol_install_selection "fresh" || return 0
     IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
 
     for protocol in "${selected_protocols[@]}"; do
@@ -1432,7 +1443,7 @@ install_protocols_interactive() {
     migrate_legacy_single_protocol_state_if_needed
     load_current_config_state
     mapfile -t installed_protocols < <(list_installed_protocols)
-    prompt_protocol_install_selection
+    prompt_protocol_install_selection "additional" || return 0
     IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
 
     for protocol in "${selected_protocols[@]}"; do
