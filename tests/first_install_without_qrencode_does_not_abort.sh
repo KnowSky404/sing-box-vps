@@ -59,12 +59,17 @@ display_status_summary() { :; }
 
 output=$(install_protocols_interactive "fresh" 2>&1)
 
-if [[ "${output}" != *"REALITY 协议链接"* ]]; then
-  printf 'expected first install flow to continue and show link output, got:\n%s\n' "${output}" >&2
+if [[ "${output}" == *"REALITY 协议链接"* || "${output}" == *"vless://"* ]]; then
+  printf 'expected first install flow to avoid automatic node link output, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
-if [[ "${output}" != *"未安装 qrencode"* ]]; then
-  printf 'expected first install flow to warn about missing qrencode, got:\n%s\n' "${output}" >&2
+if [[ "${output}" == *"未安装 qrencode"* ]]; then
+  printf 'expected first install flow to avoid automatic QR handling, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${output}" != *"连接信息未自动展示，如需查看请进入菜单 10。"* ]]; then
+  printf 'expected first install flow to tell user to use menu 10, got:\n%s\n' "${output}" >&2
   exit 1
 fi

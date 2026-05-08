@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026042802
+# Version: 2026050801
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026042802"
+readonly SCRIPT_VERSION="2026050801"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -1468,7 +1468,7 @@ install_protocols_interactive() {
   open_all_protocol_ports
   systemctl restart sing-box
   display_status_summary
-  show_post_config_connection_info
+  log_info "连接信息未自动展示，如需查看请进入菜单 10。"
 }
 
 set_protocol_defaults() {
@@ -4122,7 +4122,7 @@ update_config_only() {
   systemctl restart sing-box
   log_success "配置及服务文件已更新并重启服务。"
   display_status_summary
-  show_post_config_connection_info
+  log_info "连接信息未自动展示，如需查看请进入菜单 10。"
 }
 
 get_public_ip() {
@@ -4937,15 +4937,6 @@ view_node_info() {
   log_info "正在从配置文件中读取节点信息..."
   load_current_config_state
   show_node_info_action_menu
-}
-
-show_post_config_connection_info() {
-  local public_ip
-  public_ip=$(get_public_ip)
-
-  echo -e "\n${GREEN}连接信息：${NC}"
-  echo "已按当前配置生成以下连接信息。后续如需再次查看，可进入菜单 10。"
-  show_connection_details "both" "${public_ip}"
 }
 
 prompt_singbox_version() {

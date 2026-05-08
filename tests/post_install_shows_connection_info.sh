@@ -84,7 +84,7 @@ if (( summary_calls != 1 )); then
   exit 1
 fi
 
-if (( post_config_calls != 1 )); then
-  printf 'expected first install to show connection info once, got %s\n' "${post_config_calls}" >&2
+if (( post_config_calls != 0 )); then
+  printf 'expected first install to leave connection info hidden until menu 10, got %s automatic calls\n' "${post_config_calls}" >&2
   exit 1
 fi
