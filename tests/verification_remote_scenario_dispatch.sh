@@ -47,6 +47,7 @@ printf '1\n' > "${SERVICE_ACTIVE_FILE}"
 printf '0\n' > "${INSTALL_COUNT_FILE}"
 mkdir -p "${PROTOCOLS_DIR}"
 cat > "${STATE_FILE}" <<'EOF'
+NODE_NAME=cc-us-stl+vless
 PORT=9443
 UUID=11111111-1111-4111-8111-111111111111
 SNI=stale.example.com
@@ -89,6 +90,7 @@ VALID_REALITY_PUBLIC_KEY="u9nRBiDRTmyxLQLkiVq-kYFPhRyeZkSo8p9c7s8Dfjo"
 write_vless_state() {
   mkdir -p "$(dirname "${STATE_FILE}")"
   cat > "${STATE_FILE}" <<STATE_EOF
+NODE_NAME=cc-us-stl+vless
 PORT=$(cat "${PORT_FILE}")
 UUID=$(cat "${UUID_FILE}")
 SNI=$(cat "${SNI_FILE}")
@@ -123,6 +125,7 @@ CONFIG_EOF
 write_legacy_vless_state() {
   mkdir -p "$(dirname "${STATE_FILE}")" "$(dirname "${EXPORT_FILE}")"
   cat > "${STATE_FILE}" <<STATE_EOF
+NODE_NAME=cc-us-stl+vless
 PORT=$(cat "${PORT_FILE}")
 UUID=$(cat "${UUID_FILE}")
 SNI=$(cat "${SNI_FILE}")
@@ -366,7 +369,7 @@ INDEX_EOF
   "outbounds": [
     {
       "type": "vless",
-      "tag": "rn-us-lax+vless",
+      "tag": "cc-us-stl+vless",
       "tls": {
         "utls": {
           "enabled": true,

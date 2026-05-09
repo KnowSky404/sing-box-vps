@@ -266,6 +266,7 @@ CONFIG_EOF
 write_legacy_vless_state() {
   mkdir -p "\$(dirname "\${REMOTE_STATE_FILE}")" "\$(dirname "\${REMOTE_EXPORT_FILE}")"
   cat > "\${REMOTE_STATE_FILE}" <<STATE_EOF
+NODE_NAME=cc-us-stl+vless
 PORT=\$(cat "\${REMOTE_PORT_FILE}")
 UUID=\$(cat "\${REMOTE_UUID_FILE}")
 SNI=\$(cat "\${REMOTE_SNI_FILE}")
@@ -478,7 +479,7 @@ INDEX_EOF
   "outbounds": [
     {
       "type": "vless",
-      "tag": "rn-us-lax+vless",
+      "tag": "cc-us-stl+vless",
       "tls": {
         "utls": {
           "enabled": true,

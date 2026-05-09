@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026050801
+# Version: 2026050901
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026050801"
+readonly SCRIPT_VERSION="2026050901"
 readonly SB_SUPPORT_MAX_VERSION="1.13.9"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -1237,10 +1237,16 @@ prompt_hy2_install() {
   echo -e "\n${BLUE}--- 配置 Hysteria2 ---${NC}"
 
   while [[ -z "${SB_HY2_DOMAIN}" ]]; do
-    read -rp "[Hysteria2] 域名: " in_domain
+    if [[ -n "${SB_SHARED_TLS_DOMAIN:-}" ]]; then
+      read -rp "[Hysteria2] 域名 (默认 ${SB_SHARED_TLS_DOMAIN}): " in_domain
+      in_domain=${in_domain:-$SB_SHARED_TLS_DOMAIN}
+    else
+      read -rp "[Hysteria2] 域名: " in_domain
+    fi
     SB_HY2_DOMAIN=$(trim_whitespace "${in_domain}")
     [[ -z "${SB_HY2_DOMAIN}" ]] && log_warn "域名不能为空。"
   done
+  SB_SHARED_TLS_DOMAIN="${SB_HY2_DOMAIN}"
 
   printf '[Hysteria2] 端口 (默认 %s): ' "${SB_PORT}"
   read -r in_p
@@ -1320,10 +1326,16 @@ prompt_anytls_install() {
   echo -e "\n${BLUE}--- 配置 AnyTLS ---${NC}"
 
   while [[ -z "${SB_ANYTLS_DOMAIN}" ]]; do
-    read -rp "[AnyTLS] 域名: " in_domain
+    if [[ -n "${SB_SHARED_TLS_DOMAIN:-}" ]]; then
+      read -rp "[AnyTLS] 域名 (默认 ${SB_SHARED_TLS_DOMAIN}): " in_domain
+      in_domain=${in_domain:-$SB_SHARED_TLS_DOMAIN}
+    else
+      read -rp "[AnyTLS] 域名: " in_domain
+    fi
     SB_ANYTLS_DOMAIN=$(trim_whitespace "${in_domain}")
     [[ -z "${SB_ANYTLS_DOMAIN}" ]] && log_warn "域名不能为空。"
   done
+  SB_SHARED_TLS_DOMAIN="${SB_ANYTLS_DOMAIN}"
 
   printf '[AnyTLS] 端口 (默认 %s): ' "${SB_PORT}"
   read -r in_p

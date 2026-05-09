@@ -9,6 +9,7 @@ verification_scenario_legacy_takeover_export() {
   local expected_uuid="11111111-1111-1111-1111-111111111111"
   local expected_private_key="IEwVBb_qLcYr1L_CTI5exTWbT7qRgZnr43xP8nC0dkM"
   local expected_public_key="u9nRBiDRTmyxLQLkiVq-kYFPhRyeZkSo8p9c7s8Dfjo"
+  local exported_node_name
 
   verification_prepare_remote_local_tree
   trap 'verification_cleanup_remote_local_tree; trap - RETURN' RETURN
@@ -88,5 +89,7 @@ EOF
   grep -Fq "文件路径: ${export_path}" "${export_stdout_path}"
   test -f "${export_path}"
   verification_capture_file_if_present "${export_path}" "${VERIFY_CURRENT_SCENARIO_DIR}/client/sing-box-client.json"
-  jq -e '.outbounds[] | select(.type == "vless" and .tag == "rn-us-lax+vless") | .tls.utls.enabled == true and .tls.utls.fingerprint == "chrome"' "${export_path}" >/dev/null
+  exported_node_name=$(grep -m1 '^NODE_NAME=' /root/sing-box-vps/protocols/vless-reality.env | cut -d= -f2-)
+  test -n "${exported_node_name}"
+  jq -e --arg tag "${exported_node_name}" '.outbounds[] | select(.type == "vless" and .tag == $tag) | .tls.utls.enabled == true and .tls.utls.fingerprint == "chrome"' "${export_path}" >/dev/null
 }
