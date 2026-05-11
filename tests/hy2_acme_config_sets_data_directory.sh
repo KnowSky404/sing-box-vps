@@ -40,7 +40,19 @@ SB_HY2_ACME_EMAIL=""
 
 build_hy2_inbound_json > "${TMP_DIR}/hy2.json"
 
-if ! jq -e --arg dir "${TMP_DIR}/project/acme" '.tls.acme.data_directory == $dir' "${TMP_DIR}/hy2.json" >/dev/null; then
-  printf 'expected hy2 acme config to set data_directory, got:\n%s\n' "$(cat "${TMP_DIR}/hy2.json")" >&2
+if ! jq -e '.tls.certificate_provider == "hy2-cert-provider"' "${TMP_DIR}/hy2.json" >/dev/null; then
+  printf 'expected hy2 inbound to reference the acme certificate provider, got:\n%s\n' "$(cat "${TMP_DIR}/hy2.json")" >&2
+  exit 1
+fi
+
+if jq -e '.tls.acme? != null' "${TMP_DIR}/hy2.json" >/dev/null; then
+  printf 'expected hy2 inbound to avoid deprecated inline tls.acme, got:\n%s\n' "$(cat "${TMP_DIR}/hy2.json")" >&2
+  exit 1
+fi
+
+build_hy2_certificate_provider_json > "${TMP_DIR}/hy2-provider.json"
+
+if ! jq -e --arg dir "${TMP_DIR}/project/acme" '.type == "acme" and .tag == "hy2-cert-provider" and .data_directory == $dir' "${TMP_DIR}/hy2-provider.json" >/dev/null; then
+  printf 'expected hy2 acme certificate provider to set data_directory, got:\n%s\n' "$(cat "${TMP_DIR}/hy2-provider.json")" >&2
   exit 1
 fi

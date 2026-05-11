@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026050901
+# Version: 2026051101
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026050901"
-readonly SB_SUPPORT_MAX_VERSION="1.13.9"
+readonly SCRIPT_VERSION="2026051101"
+readonly SB_SUPPORT_MAX_VERSION="1.13.11"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
@@ -2831,7 +2831,41 @@ hy2_certificate_provider_tag() {
 }
 
 build_hy2_certificate_provider_json() {
-  return 0
+  if [[ "${SB_HY2_TLS_MODE}" != "acme" ]]; then
+    return 0
+  fi
+
+  jq -n \
+    --arg tag "$(hy2_certificate_provider_tag)" \
+    --arg acme_email "${SB_HY2_ACME_EMAIL}" \
+    --arg acme_domain "${SB_HY2_ACME_DOMAIN}" \
+    --arg acme_data_directory "${SB_ACME_DATA_DIR}" \
+    --arg acme_mode "${SB_HY2_ACME_MODE}" \
+    --arg dns_provider "${SB_HY2_DNS_PROVIDER}" \
+    --arg cf_api_token "${SB_HY2_CF_API_TOKEN}" \
+    '{
+      "type": "acme",
+      "tag": $tag,
+      "domain": [ $acme_domain ],
+      "data_directory": $acme_data_directory
+    } + (
+      if $acme_email != "" then
+        { "email": $acme_email }
+      else
+        {}
+      end
+    ) + (
+      if $acme_mode == "dns" then
+        {
+          "dns01_challenge": {
+            "provider": $dns_provider,
+            "api_token": $cf_api_token
+          }
+        }
+      else
+        {}
+      end
+    )'
 }
 
 build_hy2_inbound_json() {
@@ -2849,12 +2883,7 @@ build_hy2_inbound_json() {
     --arg tls_mode "${SB_HY2_TLS_MODE}" \
     --arg cert_path "${SB_HY2_CERT_PATH}" \
     --arg key_path "${SB_HY2_KEY_PATH}" \
-    --arg acme_mode "${SB_HY2_ACME_MODE}" \
-    --arg acme_email "${SB_HY2_ACME_EMAIL}" \
-    --arg acme_domain "${SB_HY2_ACME_DOMAIN}" \
-    --arg acme_data_directory "${SB_ACME_DATA_DIR}" \
-    --arg dns_provider "${SB_HY2_DNS_PROVIDER}" \
-    --arg cf_api_token "${SB_HY2_CF_API_TOKEN}" \
+    --arg certificate_provider "$(hy2_certificate_provider_tag)" \
     --arg obfs_enabled "${SB_HY2_OBFS_ENABLED}" \
     --arg obfs_type "${SB_HY2_OBFS_TYPE}" \
     --arg obfs_password "${SB_HY2_OBFS_PASSWORD}" \
@@ -2883,29 +2912,7 @@ build_hy2_inbound_json() {
             }
           else
             {
-              "acme": (
-                {
-                  "domain": [ $acme_domain ],
-                  "data_directory": $acme_data_directory
-                } + (
-                  if $acme_email != "" then
-                    { "email": $acme_email }
-                  else
-                    {}
-                  end
-                ) + (
-                  if $acme_mode == "dns" then
-                    {
-                      "dns01_challenge": {
-                        "provider": $dns_provider,
-                        "api_token": $cf_api_token
-                      }
-                    }
-                  else
-                    {}
-                  end
-                )
-              )
+              "certificate_provider": $certificate_provider
             }
           end
         )
@@ -2941,6 +2948,48 @@ build_hy2_inbound_json() {
     )'
 }
 
+anytls_certificate_provider_tag() {
+  printf 'anytls-cert-provider'
+}
+
+build_anytls_certificate_provider_json() {
+  if [[ "${SB_ANYTLS_TLS_MODE}" != "acme" ]]; then
+    return 0
+  fi
+
+  jq -n \
+    --arg tag "$(anytls_certificate_provider_tag)" \
+    --arg acme_email "${SB_ANYTLS_ACME_EMAIL}" \
+    --arg acme_domain "${SB_ANYTLS_ACME_DOMAIN}" \
+    --arg acme_data_directory "${SB_ACME_DATA_DIR}" \
+    --arg acme_mode "${SB_ANYTLS_ACME_MODE}" \
+    --arg dns_provider "${SB_ANYTLS_DNS_PROVIDER}" \
+    --arg cf_api_token "${SB_ANYTLS_CF_API_TOKEN}" \
+    '{
+      "type": "acme",
+      "tag": $tag,
+      "domain": [ $acme_domain ],
+      "data_directory": $acme_data_directory
+    } + (
+      if $acme_email != "" then
+        { "email": $acme_email }
+      else
+        {}
+      end
+    ) + (
+      if $acme_mode == "dns" then
+        {
+          "dns01_challenge": {
+            "provider": $dns_provider,
+            "api_token": $cf_api_token
+          }
+        }
+      else
+        {}
+      end
+    )'
+}
+
 build_anytls_inbound_json() {
   ensure_anytls_materials
 
@@ -2954,12 +3003,7 @@ build_anytls_inbound_json() {
     --arg tls_mode "${SB_ANYTLS_TLS_MODE}" \
     --arg cert_path "${SB_ANYTLS_CERT_PATH}" \
     --arg key_path "${SB_ANYTLS_KEY_PATH}" \
-    --arg acme_mode "${SB_ANYTLS_ACME_MODE}" \
-    --arg acme_email "${SB_ANYTLS_ACME_EMAIL}" \
-    --arg acme_domain "${SB_ANYTLS_ACME_DOMAIN}" \
-    --arg acme_data_directory "${SB_ACME_DATA_DIR}" \
-    --arg dns_provider "${SB_ANYTLS_DNS_PROVIDER}" \
-    --arg cf_api_token "${SB_ANYTLS_CF_API_TOKEN}" \
+    --arg certificate_provider "$(anytls_certificate_provider_tag)" \
     '{
       "type": "anytls",
       "tag": $tag,
@@ -2983,29 +3027,7 @@ build_anytls_inbound_json() {
             }
           else
             {
-              "acme": (
-                {
-                  "domain": [ $acme_domain ],
-                  "data_directory": $acme_data_directory
-                } + (
-                  if $acme_email != "" then
-                    { "email": $acme_email }
-                  else
-                    {}
-                  end
-                ) + (
-                  if $acme_mode == "dns" then
-                    {
-                      "dns01_challenge": {
-                        "provider": $dns_provider,
-                        "api_token": $cf_api_token
-                      }
-                    }
-                  else
-                    {}
-                  end
-                )
-              )
+              "certificate_provider": $certificate_provider
             }
           end
         )
@@ -3019,6 +3041,7 @@ build_certificate_provider_for_protocol() {
 
   case "${protocol}" in
     hy2) build_hy2_certificate_provider_json ;;
+    anytls) build_anytls_certificate_provider_json ;;
   esac
 }
 
@@ -4960,7 +4983,7 @@ prompt_singbox_version() {
       SB_VERSION="${normalized_version}"
       return 0
     fi
-    log_warn "无效版本号: ${input_version}。请输入 latest、${SB_SUPPORT_MAX_VERSION} 或完整版本号，例如 1.13.9。"
+    log_warn "无效版本号: ${input_version}。请输入 latest、${SB_SUPPORT_MAX_VERSION} 或完整版本号，例如 ${SB_SUPPORT_MAX_VERSION}。"
   done
 }
 
