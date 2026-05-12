@@ -42,29 +42,29 @@ SB_ANYTLS_CF_API_TOKEN="cf-token"
 
 build_anytls_inbound_json > "${TMP_DIR}/anytls.json"
 
-if ! jq -e '.tls.certificate_provider == "anytls-cert-provider"' "${TMP_DIR}/anytls.json" >/dev/null; then
-  printf 'expected anytls inbound to reference the acme certificate provider, got:\n%s\n' "$(cat "${TMP_DIR}/anytls.json")" >&2
+if ! jq -e --arg dir "${TMP_DIR}/project/acme" '.tls.acme.domain == ["anytls.example.com"] and .tls.acme.data_directory == $dir' "${TMP_DIR}/anytls.json" >/dev/null; then
+  printf 'expected anytls inbound to embed acme settings compatible with sing-box 1.13.x, got:\n%s\n' "$(cat "${TMP_DIR}/anytls.json")" >&2
   exit 1
 fi
 
-if jq -e '.tls.acme? != null' "${TMP_DIR}/anytls.json" >/dev/null; then
-  printf 'expected anytls inbound to avoid deprecated inline tls.acme, got:\n%s\n' "$(cat "${TMP_DIR}/anytls.json")" >&2
+if jq -e '.tls.certificate_provider? != null' "${TMP_DIR}/anytls.json" >/dev/null; then
+  printf 'expected anytls inbound to avoid certificate_provider rejected by sing-box 1.13.x, got:\n%s\n' "$(cat "${TMP_DIR}/anytls.json")" >&2
   exit 1
 fi
 
 build_anytls_certificate_provider_json > "${TMP_DIR}/anytls-provider.json"
 
-if ! jq -e --arg dir "${TMP_DIR}/project/acme" '.type == "acme" and .tag == "anytls-cert-provider" and .domain == ["anytls.example.com"] and .data_directory == $dir' "${TMP_DIR}/anytls-provider.json" >/dev/null; then
-  printf 'expected anytls acme certificate provider to set domain and data_directory, got:\n%s\n' "$(cat "${TMP_DIR}/anytls-provider.json")" >&2
+if [[ -s "${TMP_DIR}/anytls-provider.json" ]]; then
+  printf 'expected anytls acme provider builder to emit no root certificate provider, got:\n%s\n' "$(cat "${TMP_DIR}/anytls-provider.json")" >&2
   exit 1
 fi
 
-if ! jq -e '.dns01_challenge.provider == "cloudflare" and .dns01_challenge.api_token == "cf-token"' "${TMP_DIR}/anytls-provider.json" >/dev/null; then
-  printf 'expected anytls dns acme provider credentials, got:\n%s\n' "$(cat "${TMP_DIR}/anytls-provider.json")" >&2
+if ! jq -e '.tls.acme.dns01_challenge.provider == "cloudflare" and .tls.acme.dns01_challenge.api_token == "cf-token"' "${TMP_DIR}/anytls.json" >/dev/null; then
+  printf 'expected anytls inline dns acme credentials, got:\n%s\n' "$(cat "${TMP_DIR}/anytls.json")" >&2
   exit 1
 fi
 
-if jq -e '.email? != null' "${TMP_DIR}/anytls-provider.json" >/dev/null; then
-  printf 'expected anytls acme certificate provider to omit empty email, got:\n%s\n' "$(cat "${TMP_DIR}/anytls-provider.json")" >&2
+if jq -e '.tls.acme.email? != null' "${TMP_DIR}/anytls.json" >/dev/null; then
+  printf 'expected anytls inline acme settings to omit empty email, got:\n%s\n' "$(cat "${TMP_DIR}/anytls.json")" >&2
   exit 1
 fi

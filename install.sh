@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026051101
+# Version: 2026051201
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026051101"
+readonly SCRIPT_VERSION="2026051201"
 readonly SB_SUPPORT_MAX_VERSION="1.13.11"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -2830,13 +2830,12 @@ hy2_certificate_provider_tag() {
   printf 'hy2-cert-provider'
 }
 
-build_hy2_certificate_provider_json() {
+build_hy2_acme_json() {
   if [[ "${SB_HY2_TLS_MODE}" != "acme" ]]; then
     return 0
   fi
 
   jq -n \
-    --arg tag "$(hy2_certificate_provider_tag)" \
     --arg acme_email "${SB_HY2_ACME_EMAIL}" \
     --arg acme_domain "${SB_HY2_ACME_DOMAIN}" \
     --arg acme_data_directory "${SB_ACME_DATA_DIR}" \
@@ -2844,8 +2843,6 @@ build_hy2_certificate_provider_json() {
     --arg dns_provider "${SB_HY2_DNS_PROVIDER}" \
     --arg cf_api_token "${SB_HY2_CF_API_TOKEN}" \
     '{
-      "type": "acme",
-      "tag": $tag,
       "domain": [ $acme_domain ],
       "data_directory": $acme_data_directory
     } + (
@@ -2868,8 +2865,14 @@ build_hy2_certificate_provider_json() {
     )'
 }
 
+build_hy2_certificate_provider_json() {
+  return 0
+}
+
 build_hy2_inbound_json() {
   ensure_hy2_materials
+  local acme_json
+  acme_json=$(build_hy2_acme_json)
 
   jq -n \
     --arg tag "hy2-in" \
@@ -2883,7 +2886,7 @@ build_hy2_inbound_json() {
     --arg tls_mode "${SB_HY2_TLS_MODE}" \
     --arg cert_path "${SB_HY2_CERT_PATH}" \
     --arg key_path "${SB_HY2_KEY_PATH}" \
-    --arg certificate_provider "$(hy2_certificate_provider_tag)" \
+    --argjson acme "${acme_json:-null}" \
     --arg obfs_enabled "${SB_HY2_OBFS_ENABLED}" \
     --arg obfs_type "${SB_HY2_OBFS_TYPE}" \
     --arg obfs_password "${SB_HY2_OBFS_PASSWORD}" \
@@ -2912,7 +2915,7 @@ build_hy2_inbound_json() {
             }
           else
             {
-              "certificate_provider": $certificate_provider
+              "acme": $acme
             }
           end
         )
@@ -2952,13 +2955,12 @@ anytls_certificate_provider_tag() {
   printf 'anytls-cert-provider'
 }
 
-build_anytls_certificate_provider_json() {
+build_anytls_acme_json() {
   if [[ "${SB_ANYTLS_TLS_MODE}" != "acme" ]]; then
     return 0
   fi
 
   jq -n \
-    --arg tag "$(anytls_certificate_provider_tag)" \
     --arg acme_email "${SB_ANYTLS_ACME_EMAIL}" \
     --arg acme_domain "${SB_ANYTLS_ACME_DOMAIN}" \
     --arg acme_data_directory "${SB_ACME_DATA_DIR}" \
@@ -2966,8 +2968,6 @@ build_anytls_certificate_provider_json() {
     --arg dns_provider "${SB_ANYTLS_DNS_PROVIDER}" \
     --arg cf_api_token "${SB_ANYTLS_CF_API_TOKEN}" \
     '{
-      "type": "acme",
-      "tag": $tag,
       "domain": [ $acme_domain ],
       "data_directory": $acme_data_directory
     } + (
@@ -2990,8 +2990,14 @@ build_anytls_certificate_provider_json() {
     )'
 }
 
+build_anytls_certificate_provider_json() {
+  return 0
+}
+
 build_anytls_inbound_json() {
   ensure_anytls_materials
+  local acme_json
+  acme_json=$(build_anytls_acme_json)
 
   jq -n \
     --arg tag "anytls-in" \
@@ -3003,7 +3009,7 @@ build_anytls_inbound_json() {
     --arg tls_mode "${SB_ANYTLS_TLS_MODE}" \
     --arg cert_path "${SB_ANYTLS_CERT_PATH}" \
     --arg key_path "${SB_ANYTLS_KEY_PATH}" \
-    --arg certificate_provider "$(anytls_certificate_provider_tag)" \
+    --argjson acme "${acme_json:-null}" \
     '{
       "type": "anytls",
       "tag": $tag,
@@ -3027,7 +3033,7 @@ build_anytls_inbound_json() {
             }
           else
             {
-              "certificate_provider": $certificate_provider
+              "acme": $acme
             }
           end
         )

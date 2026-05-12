@@ -46,9 +46,9 @@ SB_HY2_ACME_EMAIL=""
 SB_HY2_DNS_PROVIDER="cloudflare"
 SB_HY2_CF_API_TOKEN=""
 
-build_hy2_certificate_provider_json > "${TMP_DIR}/provider.json"
+build_hy2_acme_json > "${TMP_DIR}/acme.json"
 
-if jq -e '.email? != null' "${TMP_DIR}/provider.json" >/dev/null; then
-  printf 'expected hy2 acme certificate provider to omit empty email, got:\n%s\n' "$(cat "${TMP_DIR}/provider.json")" >&2
+if jq -e '.email? != null' "${TMP_DIR}/acme.json" >/dev/null; then
+  printf 'expected hy2 inline acme settings to omit empty email, got:\n%s\n' "$(cat "${TMP_DIR}/acme.json")" >&2
   exit 1
 fi
