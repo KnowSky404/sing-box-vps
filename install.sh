@@ -4429,6 +4429,68 @@ build_hy2_link() {
     "${SB_NODE_NAME}"
 }
 
+subman_node_prefix() {
+  local prefix
+  prefix=$(trim_whitespace "${SUBMAN_NODE_PREFIX:-}")
+  [[ -z "${prefix}" ]] && prefix=$(hostname)
+  printf '%s' "${prefix}"
+}
+
+subman_type_for_protocol() {
+  local protocol
+  protocol=$(normalize_protocol_id "$1")
+
+  case "${protocol}" in
+    vless-reality) printf 'vless' ;;
+    hy2) printf 'hysteria2' ;;
+    *) return 1 ;;
+  esac
+}
+
+subman_external_key_for_protocol() {
+  local protocol prefix
+  protocol=$(normalize_protocol_id "$1")
+  prefix=$(subman_node_prefix)
+  printf 'sing-box-vps:%s:%s' "${prefix}" "${protocol}"
+}
+
+build_subman_raw_for_protocol() {
+  local protocol public_ip
+  protocol=$(normalize_protocol_id "$1")
+  public_ip=$2
+
+  case "${protocol}" in
+    vless-reality) build_vless_link "${public_ip}" ;;
+    hy2) build_hy2_link "${public_ip}" ;;
+    *) return 1 ;;
+  esac
+}
+
+build_subman_node_payload() {
+  local protocol public_ip node_type raw_link node_name prefix
+  protocol=$(normalize_protocol_id "$1")
+  public_ip=$2
+  node_type=$(subman_type_for_protocol "${protocol}") || return 1
+  raw_link=$(build_subman_raw_for_protocol "${protocol}" "${public_ip}") || return 1
+  prefix=$(subman_node_prefix)
+  node_name=$(trim_whitespace "${SB_NODE_NAME:-}")
+  [[ -z "${node_name}" ]] && node_name="${prefix} ${protocol}"
+
+  jq -n \
+    --arg name "${node_name}" \
+    --arg type "${node_type}" \
+    --arg raw "${raw_link}" \
+    --arg prefix "${prefix}" \
+    '{
+      "name": $name,
+      "type": $type,
+      "raw": $raw,
+      "enabled": true,
+      "tags": ["sing-box-vps", $prefix],
+      "source": "single"
+    }'
+}
+
 build_anytls_outbound_example() {
   local public_ip=$1
   local server_host
