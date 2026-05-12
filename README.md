@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026051202`
+- 脚本版本：`2026051203`
 - sing-box 适配版本：`1.13.11`
 
 ## 🚀 一键安装
@@ -88,6 +88,7 @@ sbv
 - **防火墙自动化**：安装或修改端口时，自动尝试在 `UFW`, `Firewalld` 或 `Iptables` 中放行。
 - **工业级配置生成**：采用 **`jq` 安全注入** 模式生成 JSON，彻底规避特殊字符导致的转义错误。
 - **协议级展示**：终端可按协议查看节点信息，支持 `VLESS` 与 `Hysteria2` 链接/ANSI 二维码展示，为 `Mixed` 输出代理链接与二维码提示，并为 `AnyTLS` 输出参数摘要和 sing-box outbound JSON 示例。
+- **SubMan 同步**：可将当前 VPS 的 VLESS / Hysteria2 节点通过已部署的 SubMan API 幂等推送到 SubMan 节点库，便于后续聚合与发布订阅。
 - **规范存储**：统一使用 `/root/sing-box-vps/` 存放配置、密钥及持久化参数。
 
 ## 🛠️ 功能菜单
@@ -98,7 +99,7 @@ sbv
 4.  **配置 Cloudflare Warp**：一键开启/关闭/重新注册 Warp，并支持切换全量/选择性分流模式。
 5.  **开启 BBR 拥塞控制**：一键提升网络性能。
 6.  **服务管理**：启动、停止、重启 sing-box。
-7.  **状态与节点信息**：先查看服务摘要，再选择已安装协议查看对应链接或二维码。
+7.  **状态与节点信息**：先查看服务摘要，再选择查看链接/二维码、导出 sing-box 裸核客户端配置，或推送节点到 SubMan。
 8.  **实时日志**：直接查看服务运行详情。
 9.  **脚本管理**：支持脚本版本自更新及彻底卸载。
 10. **流媒体验证检测**：支持本机直出与 Warp 出口两种检测模式。
@@ -114,6 +115,7 @@ sbv
 - **Warp 本地规则集目录**: `/root/sing-box-vps/rule-set/warp/`
 - **Warp 远程规则集列表**: `/root/sing-box-vps/warp-remote-rule-sets.txt`
 - **流媒体验证脚本缓存**: `/root/sing-box-vps/media-check/region_restriction_check.sh`
+- **SubMan API 配置**: `/root/sing-box-vps/subman.env`
 - **全局命令**: `/usr/local/bin/sbv`
 
 ## ⚠️ 注意事项
