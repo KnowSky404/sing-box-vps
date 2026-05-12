@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026051201
+# Version: 2026051202
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026051201"
+readonly SCRIPT_VERSION="2026051202"
 readonly SB_SUPPORT_MAX_VERSION="1.13.11"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -915,7 +915,14 @@ prompt_hy2_update() {
   fi
 
   read -rp "新域名 (当前: ${SB_HY2_DOMAIN}, 留空保持): " in_domain
-  [[ -n "${in_domain}" ]] && SB_HY2_DOMAIN="${in_domain}"
+  if [[ -n "${in_domain}" ]]; then
+    in_domain=$(trim_whitespace "${in_domain}")
+    if validate_tls_domain_points_to_server "Hysteria2" "${in_domain}"; then
+      SB_HY2_DOMAIN="${in_domain}"
+    else
+      log_warn "已保留当前 Hysteria2 域名: ${SB_HY2_DOMAIN}"
+    fi
+  fi
 
   read -rp "新认证密码 (当前: 留空隐藏, 留空保持): " in_password
   [[ -n "${in_password}" ]] && SB_HY2_PASSWORD="${in_password}"
@@ -1007,7 +1014,14 @@ prompt_anytls_update() {
   fi
 
   read -rp "新域名 (当前: ${SB_ANYTLS_DOMAIN}, 留空保持): " in_domain
-  [[ -n "${in_domain}" ]] && SB_ANYTLS_DOMAIN="${in_domain}"
+  if [[ -n "${in_domain}" ]]; then
+    in_domain=$(trim_whitespace "${in_domain}")
+    if validate_tls_domain_points_to_server "AnyTLS" "${in_domain}"; then
+      SB_ANYTLS_DOMAIN="${in_domain}"
+    else
+      log_warn "已保留当前 AnyTLS 域名: ${SB_ANYTLS_DOMAIN}"
+    fi
+  fi
 
   read -rp "新认证密码 (当前: 留空隐藏, 留空保持): " in_password
   [[ -n "${in_password}" ]] && SB_ANYTLS_PASSWORD="${in_password}"
@@ -1245,6 +1259,9 @@ prompt_hy2_install() {
     fi
     SB_HY2_DOMAIN=$(trim_whitespace "${in_domain}")
     [[ -z "${SB_HY2_DOMAIN}" ]] && log_warn "域名不能为空。"
+    if [[ -n "${SB_HY2_DOMAIN}" ]] && ! validate_tls_domain_points_to_server "Hysteria2" "${SB_HY2_DOMAIN}"; then
+      SB_HY2_DOMAIN=""
+    fi
   done
   SB_SHARED_TLS_DOMAIN="${SB_HY2_DOMAIN}"
 
@@ -1334,6 +1351,9 @@ prompt_anytls_install() {
     fi
     SB_ANYTLS_DOMAIN=$(trim_whitespace "${in_domain}")
     [[ -z "${SB_ANYTLS_DOMAIN}" ]] && log_warn "域名不能为空。"
+    if [[ -n "${SB_ANYTLS_DOMAIN}" ]] && ! validate_tls_domain_points_to_server "AnyTLS" "${SB_ANYTLS_DOMAIN}"; then
+      SB_ANYTLS_DOMAIN=""
+    fi
   done
   SB_SHARED_TLS_DOMAIN="${SB_ANYTLS_DOMAIN}"
 
@@ -4176,6 +4196,101 @@ get_public_ipv4() {
 
 get_public_ipv6() {
   curl -6 -s https://api.ip.sb/ip 2>/dev/null || curl -6 -s https://ifconfig.me 2>/dev/null || true
+}
+
+normalize_ip_list() {
+  sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' | sed '/^$/d' | sort -u
+}
+
+get_public_ip_candidates() {
+  local ipv4_address ipv6_address
+
+  ipv4_address=$(get_public_ipv4 || true)
+  ipv6_address=$(get_public_ipv6 || true)
+
+  {
+    printf '%s\n' "${ipv4_address}"
+    printf '%s\n' "${ipv6_address}"
+  } | normalize_ip_list
+}
+
+resolve_domain_ip_candidates() {
+  local domain=$1
+  local resolved_any="n"
+
+  if command -v getent >/dev/null 2>&1; then
+    getent ahosts "${domain}" 2>/dev/null | awk '{print $1}' | normalize_ip_list || true
+    resolved_any="y"
+  fi
+
+  if command -v dig >/dev/null 2>&1; then
+    {
+      dig +short A "${domain}" 2>/dev/null || true
+      dig +short AAAA "${domain}" 2>/dev/null || true
+    } | normalize_ip_list
+    resolved_any="y"
+  fi
+
+  if [[ "${resolved_any}" == "n" ]] && command -v nslookup >/dev/null 2>&1; then
+    nslookup "${domain}" 2>/dev/null | awk '/^Address: / {print $2}' | normalize_ip_list || true
+  fi
+}
+
+ip_lists_have_match() {
+  local public_ips=$1
+  local domain_ips=$2
+  local public_ip domain_ip
+
+  while IFS= read -r public_ip; do
+    [[ -z "${public_ip}" ]] && continue
+    while IFS= read -r domain_ip; do
+      [[ -z "${domain_ip}" ]] && continue
+      [[ "${public_ip}" == "${domain_ip}" ]] && return 0
+    done <<< "${domain_ips}"
+  done <<< "${public_ips}"
+
+  return 1
+}
+
+confirm_domain_ip_mismatch() {
+  local protocol_name=$1
+  local domain=$2
+  local public_ips=$3
+  local domain_ips=$4
+  local answer
+
+  log_warn "${protocol_name} 域名解析结果与本机公网出口 IP 不匹配。"
+  echo "域名: ${domain}"
+  echo "本机公网出口 IP:"
+  if [[ -n "${public_ips}" ]]; then
+    printf '  - %s\n' ${public_ips}
+  else
+    echo "  - 未获取到"
+  fi
+  echo "域名解析 IP:"
+  if [[ -n "${domain_ips}" ]]; then
+    printf '  - %s\n' ${domain_ips}
+  else
+    echo "  - 未解析到"
+  fi
+  log_warn "如果继续，ACME HTTP-01 签发或客户端连接可能失败。CDN、反代、DNS-01 或手动证书场景可确认继续。"
+  read -rp "仍要继续使用该域名吗？[y/N]: " answer
+  [[ "${answer}" == "y" || "${answer}" == "Y" ]]
+}
+
+validate_tls_domain_points_to_server() {
+  local protocol_name=$1
+  local domain=$2
+  local public_ips domain_ips
+
+  public_ips=$(get_public_ip_candidates | normalize_ip_list || true)
+  domain_ips=$(resolve_domain_ip_candidates "${domain}" | normalize_ip_list || true)
+
+  if [[ -n "${public_ips}" && -n "${domain_ips}" ]] && ip_lists_have_match "${public_ips}" "${domain_ips}"; then
+    return 0
+  fi
+
+  confirm_domain_ip_mismatch "${protocol_name}" "${domain}" "${public_ips}" "${domain_ips}"
 }
 
 format_share_host() {

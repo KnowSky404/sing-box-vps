@@ -321,7 +321,7 @@ bash() {
         fi
 
         if [[ "${actual_lines[2]:-}" == "4" ]]; then
-          if [[ "${#actual_lines[@]}" -ne 13 ]]; then
+          if [[ "${#actual_lines[@]}" -ne 14 ]]; then
             printf 'unexpected anytls install input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
             return 1
           fi
@@ -329,15 +329,16 @@ bash() {
           [[ "${actual_lines[1]}" == "" ]]
           [[ "${actual_lines[2]}" == "4" ]]
           [[ "${actual_lines[3]}" == "anytls.example.com" ]]
-          [[ "${actual_lines[4]}" == "9443" ]]
-          [[ "${actual_lines[5]}" == "anytls-user" ]]
-          [[ "${actual_lines[6]}" == "anytls-pass" ]]
-          [[ "${actual_lines[7]}" == "2" ]]
-          [[ -n "${actual_lines[8]}" ]]
+          [[ "${actual_lines[4]}" == "y" ]]
+          [[ "${actual_lines[5]}" == "9443" ]]
+          [[ "${actual_lines[6]}" == "anytls-user" ]]
+          [[ "${actual_lines[7]}" == "anytls-pass" ]]
+          [[ "${actual_lines[8]}" == "2" ]]
           [[ -n "${actual_lines[9]}" ]]
-          [[ "${actual_lines[10]}" == "n" ]]
+          [[ -n "${actual_lines[10]}" ]]
           [[ "${actual_lines[11]}" == "n" ]]
-          [[ "${actual_lines[12]}" == "0" ]]
+          [[ "${actual_lines[12]}" == "n" ]]
+          [[ "${actual_lines[13]}" == "0" ]]
           printf '9443\n' > "${PORT_FILE}"
           printf '1\n' > "${CONFIG_PRESENT_FILE}"
           printf '1\n' > "${SERVICE_FILE_PRESENT_FILE}"
