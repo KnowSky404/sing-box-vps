@@ -4494,7 +4494,7 @@ build_subman_node_payload() {
 push_subman_node() {
   local external_key=$1
   local payload_json=$2
-  local api_url response http_status response_body endpoint
+  local api_url encoded_key response http_status response_body endpoint
 
   api_url=$(normalize_subman_api_url "${SUBMAN_API_URL:-}")
   if [[ -z "${api_url}" ]]; then
@@ -4506,12 +4506,17 @@ push_subman_node() {
     return 1
   fi
 
-  endpoint="${api_url}/api/nodes/by-key/${external_key}"
-  response=$(curl -sS -X PUT "${endpoint}" \
+  encoded_key=$(jq -rn --arg value "${external_key}" '$value | @uri')
+  endpoint="${api_url}/api/nodes/by-key/${encoded_key}"
+  if ! response=$(curl -sS -X PUT "${endpoint}" \
     -H "Authorization: Bearer ${SUBMAN_API_TOKEN}" \
     -H "Content-Type: application/json" \
     --data "${payload_json}" \
-    -w 'HTTP_STATUS:%{http_code}')
+    -w 'HTTP_STATUS:%{http_code}' 2>&1); then
+    print_warn "SubMan 节点推送失败: curl 请求异常。"
+    [[ -n "${response}" ]] && printf '%s\n' "${response}"
+    return 1
+  fi
 
   http_status=${response##*HTTP_STATUS:}
   response_body=${response%"HTTP_STATUS:${http_status}"}
