@@ -4491,6 +4491,41 @@ build_subman_node_payload() {
     }'
 }
 
+push_subman_node() {
+  local external_key=$1
+  local payload_json=$2
+  local api_url response http_status response_body endpoint
+
+  api_url=$(normalize_subman_api_url "${SUBMAN_API_URL:-}")
+  if [[ -z "${api_url}" ]]; then
+    print_warn "SubMan API 地址为空，无法推送节点。"
+    return 1
+  fi
+  if [[ -z "${SUBMAN_API_TOKEN:-}" ]]; then
+    print_warn "SubMan API Token 为空，无法推送节点。"
+    return 1
+  fi
+
+  endpoint="${api_url}/api/nodes/by-key/${external_key}"
+  response=$(curl -sS -X PUT "${endpoint}" \
+    -H "Authorization: Bearer ${SUBMAN_API_TOKEN}" \
+    -H "Content-Type: application/json" \
+    --data "${payload_json}" \
+    -w 'HTTP_STATUS:%{http_code}')
+
+  http_status=${response##*HTTP_STATUS:}
+  response_body=${response%"HTTP_STATUS:${http_status}"}
+
+  if [[ ! "${http_status}" =~ ^2[0-9][0-9]$ ]]; then
+    print_warn "SubMan 节点推送失败: HTTP ${http_status}"
+    [[ -n "${response_body}" ]] && printf '%s\n' "${response_body}"
+    return 1
+  fi
+
+  print_success "SubMan 节点推送成功: HTTP ${http_status}"
+  [[ -n "${response_body}" ]] && printf '%s\n' "${response_body}"
+}
+
 build_anytls_outbound_example() {
   local public_ip=$1
   local server_host
