@@ -140,3 +140,32 @@ if [[ "${SB_PROTOCOL}" != "mixed" || "${SB_NODE_NAME}" != "edge-mixed" ]]; then
   printf 'expected original protocol state to be restored, got protocol=%s node=%s\n' "${SB_PROTOCOL}" "${SB_NODE_NAME}" >&2
   exit 1
 fi
+
+get_public_ip() {
+  printf ''
+}
+
+push_subman_node() {
+  printf 'push_subman_node should not be called when public IP is empty\n' >&2
+  return 99
+}
+
+set +e
+empty_ip_output=$(push_nodes_to_subman 2>&1)
+empty_ip_status=$?
+set -e
+
+if [[ "${empty_ip_status}" -eq 0 ]]; then
+  printf 'expected SubMan sync without public IP to fail\n' >&2
+  exit 1
+fi
+
+if [[ "${empty_ip_output}" != *"未获取到公网 IP"* && "${empty_ip_output}" != *"无法生成 SubMan 节点链接"* ]]; then
+  printf 'expected empty public IP output to explain links cannot be generated, got:\n%s\n' "${empty_ip_output}" >&2
+  exit 1
+fi
+
+if [[ "${empty_ip_output}" == *"push_subman_node should not be called"* ]]; then
+  printf 'expected no SubMan push call when public IP is empty, got:\n%s\n' "${empty_ip_output}" >&2
+  exit 1
+fi

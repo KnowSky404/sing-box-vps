@@ -5254,6 +5254,10 @@ push_nodes_to_subman() {
 
   prompt_subman_config_if_needed
   public_ip=$(get_public_ip)
+  if [[ -z "${public_ip}" ]]; then
+    log_warn "未获取到公网 IP，无法生成 SubMan 节点链接。"
+    return 1
+  fi
   original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
   synced_count=0
   skipped_count=0
