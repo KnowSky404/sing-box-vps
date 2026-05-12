@@ -5070,6 +5070,11 @@ export_singbox_client_config() {
   printf '%s\n' "${config_json}"
 }
 
+push_nodes_to_subman() {
+  log_warn "SubMan 节点推送功能尚未完成。"
+  return 1
+}
+
 show_node_info_action_menu() {
   while true; do
     echo
@@ -5077,12 +5082,14 @@ show_node_info_action_menu() {
     render_menu_group_start "操作选项"
     render_menu_item "1" "查看连接链接 / 二维码"
     render_menu_item "2" "导出 sing-box 裸核客户端配置"
+    render_menu_item "3" "推送节点到 SubMan"
     echo "0. 返回"
-    read -rp "请选择 [0-2]: " node_info_choice
+    read -rp "请选择 [0-3]: " node_info_choice
 
     case "${node_info_choice}" in
       1) show_connection_info_menu ;;
       2) export_singbox_client_config || true ;;
+      3) push_nodes_to_subman || true ;;
       0) return ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac
