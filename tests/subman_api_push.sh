@@ -10,6 +10,8 @@ setup_menu_test_env 120
 source_testable_install
 
 CURL_ARGS_FILE="${TMP_DIR}/curl-args.txt"
+CURL_CONFIG_FILE="${TMP_DIR}/curl-config.txt"
+CURL_CONFIG_MODE_FILE="${TMP_DIR}/curl-config-mode.txt"
 CURL_RESPONSE_BODY="${TMP_DIR}/curl-response-body.txt"
 CURL_RESPONSE_STATUS="${TMP_DIR}/curl-response-status.txt"
 CURL_RESPONSE_STDERR="${TMP_DIR}/curl-response-stderr.txt"
@@ -19,6 +21,37 @@ cat > "${TMP_DIR}/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 
 printf '%s\n' "$*" > "${CURL_ARGS_FILE}"
+if [[ "$*" == *"secret-token"* ]]; then
+  printf 'curl argv leaked token: %s\n' "$*" >&2
+  exit 90
+fi
+
+config_file=""
+while (($# > 0)); do
+  case "$1" in
+    --config)
+      shift
+      config_file=${1:-}
+      ;;
+  esac
+  shift || true
+done
+
+if [[ -z "${config_file}" || ! -f "${config_file}" ]]; then
+  printf 'expected curl --config file\n' >&2
+  exit 91
+fi
+printf '%s\n' "${config_file}" > "${CURL_CONFIG_FILE}"
+stat -c '%a' "${config_file}" > "${CURL_CONFIG_MODE_FILE}"
+if ! grep -Fxq 'header = "Authorization: Bearer secret-token"' "${config_file}"; then
+  printf 'expected Authorization header in curl config\n' >&2
+  exit 92
+fi
+if ! grep -Fxq 'header = "Content-Type: application/json"' "${config_file}"; then
+  printf 'expected Content-Type header in curl config\n' >&2
+  exit 93
+fi
+
 if [[ -s "${CURL_RESPONSE_STDERR}" ]]; then
   cat "${CURL_RESPONSE_STDERR}" >&2
 fi
@@ -27,7 +60,7 @@ printf 'HTTP_STATUS:%s' "$(cat "${CURL_RESPONSE_STATUS}")"
 exit "$(cat "${CURL_EXIT_STATUS}")"
 EOF
 chmod +x "${TMP_DIR}/bin/curl"
-export CURL_ARGS_FILE CURL_RESPONSE_BODY CURL_RESPONSE_STATUS CURL_RESPONSE_STDERR CURL_EXIT_STATUS
+export CURL_ARGS_FILE CURL_CONFIG_FILE CURL_CONFIG_MODE_FILE CURL_RESPONSE_BODY CURL_RESPONSE_STATUS CURL_RESPONSE_STDERR CURL_EXIT_STATUS
 
 SUBMAN_API_URL=" https://subman.example.com/// "
 SUBMAN_API_TOKEN="secret-token"
@@ -53,12 +86,25 @@ if [[ "${curl_args}" != *"-X PUT"* ]]; then
   printf 'expected curl to use PUT, got:\n%s\n' "${curl_args}" >&2
   exit 1
 fi
-if [[ "${curl_args}" != *"Authorization: Bearer secret-token"* ]]; then
-  printf 'expected curl to pass bearer token header, got:\n%s\n' "${curl_args}" >&2
+if [[ "${curl_args}" != *"--config "* ]]; then
+  printf 'expected curl to use config file, got:\n%s\n' "${curl_args}" >&2
+  exit 1
+fi
+if [[ "${curl_args}" == *"secret-token"* ]]; then
+  printf 'expected curl args not to leak token, got:\n%s\n' "${curl_args}" >&2
   exit 1
 fi
 if [[ "${curl_args}" != *"${payload_json}"* ]]; then
   printf 'expected curl to pass JSON payload, got:\n%s\n' "${curl_args}" >&2
+  exit 1
+fi
+if [[ "$(cat "${CURL_CONFIG_MODE_FILE}")" != "600" ]]; then
+  printf 'expected curl config mode 600, got %s\n' "$(cat "${CURL_CONFIG_MODE_FILE}")" >&2
+  exit 1
+fi
+config_path=$(cat "${CURL_CONFIG_FILE}")
+if [[ -e "${config_path}" ]]; then
+  printf 'expected curl config to be removed after request: %s\n' "${config_path}" >&2
   exit 1
 fi
 

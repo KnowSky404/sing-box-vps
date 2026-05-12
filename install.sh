@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026051203"
+readonly SCRIPT_VERSION="2026051204"
 readonly SB_SUPPORT_MAX_VERSION="1.13.11"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -4494,7 +4494,8 @@ build_subman_node_payload() {
 push_subman_node() {
   local external_key=$1
   local payload_json=$2
-  local api_url encoded_key response http_status response_body endpoint
+  local api_url encoded_key response http_status response_body endpoint config_file tmp_dir
+  local escaped_token
 
   api_url=$(normalize_subman_api_url "${SUBMAN_API_URL:-}")
   if [[ -z "${api_url}" ]]; then
@@ -4508,18 +4509,41 @@ push_subman_node() {
 
   encoded_key=$(jq -rn --arg value "${external_key}" '$value | @uri')
   endpoint="${api_url}/api/nodes/by-key/${encoded_key}"
-  if ! response=$(curl -sS -X PUT "${endpoint}" \
-    -H "Authorization: Bearer ${SUBMAN_API_TOKEN}" \
-    -H "Content-Type: application/json" \
+  tmp_dir=${TMPDIR:-/tmp}
+  if ! config_file=$(mktemp "${tmp_dir%/}/subman-curl.XXXXXX"); then
+    print_warn "SubMan 节点推送失败: 无法创建临时 curl 配置。"
+    return 1
+  fi
+  if ! chmod 600 "${config_file}"; then
+    rm -f "${config_file}"
+    print_warn "SubMan 节点推送失败: 无法保护临时 curl 配置。"
+    return 1
+  fi
+  escaped_token=${SUBMAN_API_TOKEN//\\/\\\\}
+  escaped_token=${escaped_token//\"/\\\"}
+  if ! {
+    printf 'header = "Authorization: Bearer %s"\n' "${escaped_token}"
+    printf 'header = "Content-Type: application/json"\n'
+  } > "${config_file}"; then
+    rm -f "${config_file}"
+    print_warn "SubMan 节点推送失败: 无法写入临时 curl 配置。"
+    return 1
+  fi
+
+  if ! response=$(curl -sS --config "${config_file}" -X PUT "${endpoint}" \
     --data "${payload_json}" \
     -w 'HTTP_STATUS:%{http_code}' 2>&1); then
+    rm -f "${config_file}"
+    response=${response//${SUBMAN_API_TOKEN}/[REDACTED]}
     print_warn "SubMan 节点推送失败: curl 请求异常。"
     [[ -n "${response}" ]] && printf '%s\n' "${response}"
     return 1
   fi
+  rm -f "${config_file}"
 
   http_status=${response##*HTTP_STATUS:}
   response_body=${response%"HTTP_STATUS:${http_status}"}
+  response_body=${response_body//${SUBMAN_API_TOKEN}/[REDACTED]}
 
   if [[ ! "${http_status}" =~ ^2[0-9][0-9]$ ]]; then
     print_warn "SubMan 节点推送失败: HTTP ${http_status}"
