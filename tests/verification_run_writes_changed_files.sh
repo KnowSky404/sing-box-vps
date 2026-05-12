@@ -716,8 +716,12 @@ grep -Fqx 'tests/verification_protocol_probe_matrix.sh|1' "${TMP_DIR}/local-test
 grep -Fqx 'tests/verification_protocol_probe_vless.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_hy2.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_anytls.sh|1' "${TMP_DIR}/local-tests.log"
-[[ $(wc -l < "${TMP_DIR}/local-tests.log") -eq 4 ]] || {
-  printf 'expected only fast protocol probe tests for install changes\n' >&2
+grep -Fqx 'tests/subman_config_helpers.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/subman_payload_generation.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/subman_api_push.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/subman_sync_orchestration.sh|1' "${TMP_DIR}/local-tests.log"
+[[ $(wc -l < "${TMP_DIR}/local-tests.log") -eq 8 ]] || {
+  printf 'expected protocol probe and SubMan focused tests for install changes\n' >&2
   exit 1
 }
 default_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")

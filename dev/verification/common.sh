@@ -68,7 +68,11 @@ resolve_local_tests() {
       tests/verification_protocol_probe_matrix.sh \
       tests/verification_protocol_probe_vless.sh \
       tests/verification_protocol_probe_hy2.sh \
-      tests/verification_protocol_probe_anytls.sh
+      tests/verification_protocol_probe_anytls.sh \
+      tests/subman_config_helpers.sh \
+      tests/subman_payload_generation.sh \
+      tests/subman_api_push.sh \
+      tests/subman_sync_orchestration.sh
   fi
 
   if [[ "${needs_runner_tests}" == "1" ]]; then
