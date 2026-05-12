@@ -5248,8 +5248,77 @@ export_singbox_client_config() {
 }
 
 push_nodes_to_subman() {
-  log_warn "SubMan 节点推送功能尚未完成。"
-  return 1
+  local public_ip original_protocol_state protocol external_key payload_json
+  local synced_count skipped_count failed_count
+  local installed_protocols=()
+
+  prompt_subman_config_if_needed
+  public_ip=$(get_public_ip)
+  original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
+  synced_count=0
+  skipped_count=0
+  failed_count=0
+
+  mapfile -t installed_protocols < <(list_installed_protocols)
+  if [[ ${#installed_protocols[@]} -eq 0 ]]; then
+    print_warn "未发现已安装协议，无法推送 SubMan 节点。"
+    printf 'SubMan 推送完成：已同步: 0，已跳过: 0，失败: 0\n'
+    return 1
+  fi
+
+  for protocol in "${installed_protocols[@]}"; do
+    protocol=$(normalize_protocol_id "${protocol}" 2>/dev/null || true)
+    if [[ -z "${protocol}" ]]; then
+      skipped_count=$((skipped_count + 1))
+      continue
+    fi
+
+    if ! subman_type_for_protocol "${protocol}" >/dev/null; then
+      print_warn "SubMan 暂不支持协议，已跳过: ${protocol}"
+      skipped_count=$((skipped_count + 1))
+      continue
+    fi
+
+    if ! protocol_state_exists "${protocol}"; then
+      print_warn "协议状态文件缺失，已跳过 SubMan 推送: ${protocol}"
+      skipped_count=$((skipped_count + 1))
+      continue
+    fi
+
+    if ! load_protocol_state "${protocol}"; then
+      print_warn "加载协议状态失败，已跳过 SubMan 推送: ${protocol}"
+      failed_count=$((failed_count + 1))
+      continue
+    fi
+
+    if ! external_key=$(subman_external_key_for_protocol "${protocol}"); then
+      print_warn "生成 SubMan 外部键失败: ${protocol}"
+      failed_count=$((failed_count + 1))
+      continue
+    fi
+
+    if ! payload_json=$(build_subman_node_payload "${protocol}" "${public_ip}"); then
+      print_warn "生成 SubMan 节点载荷失败: ${protocol}"
+      failed_count=$((failed_count + 1))
+      continue
+    fi
+
+    if push_subman_node "${external_key}" "${payload_json}"; then
+      synced_count=$((synced_count + 1))
+    else
+      failed_count=$((failed_count + 1))
+    fi
+  done
+
+  if [[ -n "${original_protocol_state}" ]] && protocol_state_exists "${original_protocol_state}"; then
+    load_protocol_state "${original_protocol_state}"
+  fi
+
+  printf 'SubMan 推送完成：已同步: %s，已跳过: %s，失败: %s\n' "${synced_count}" "${skipped_count}" "${failed_count}"
+
+  if (( synced_count == 0 || failed_count > 0 )); then
+    return 1
+  fi
 }
 
 show_node_info_action_menu() {
