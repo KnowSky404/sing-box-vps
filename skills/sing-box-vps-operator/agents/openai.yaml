@@ -1,0 +1,7 @@
+interface:
+  display_name: "sing-box-vps Operator"
+  short_description: "Maintain and operate sing-box-vps hosts"
+  default_prompt: "Use $sing-box-vps-operator to prepare a safe install, upgrade, verification, or troubleshooting workflow for sing-box-vps."
+
+policy:
+  allow_implicit_invocation: true

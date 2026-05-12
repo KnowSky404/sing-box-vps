@@ -1,0 +1,44 @@
+# sing-box-vps Agent Index
+
+Project: sing-box-vps
+Purpose: one-script install and management tool for deploying sing-box on Linux VPS hosts.
+Primary language: Bash.
+Runtime source of truth: install.sh.
+
+Canonical documents:
+- AGENTS.md: repository rules, validation requirements, SSH alias conventions, version rules.
+- README.md: user-facing install, features, versions, runtime paths.
+- docs/agents/sing-box-vps-agent-runbook.md: AI agent operations manual for repository maintenance, test VPS validation, production plans, install, upgrade, troubleshooting, and rollback.
+- skills/sing-box-vps-operator/SKILL.md: AgentSkills-style triggerable skill for Hermes, OpenClaw, Codex, and similar agents.
+- dev/verification/run.sh: local and remote verification entrypoint.
+- configs/verification-target.env.example: example remote verification target configuration.
+
+Key runtime paths:
+- /root/sing-box-vps/
+- /root/sing-box-vps/config.json
+- /root/sing-box-vps/protocols/
+- /usr/local/bin/sbv
+- systemd service: sing-box
+
+SSH aliases:
+- sing-box-test: test VPS for validation.
+- sing-box-prod: production VPS. Production-changing commands require a plan and explicit approval first.
+
+Important requirements:
+- Run sing-box check after modifying or generating sing-box server or client configs.
+- Back up existing runtime configuration before changing production state.
+- Use dev/verification-target.env when present.
+- Run bash dev/verification/run.sh after changes to install.sh, uninstall.sh, configs/, utils/, or dev/verification/.
+- Do not reveal secrets, private keys, passwords, tokens, full node links, or QR payloads unless explicitly requested and safe.
+- Do not run production install, upgrade, restart, stop, uninstall, purge, firewall mutation, or config overwrite without an approved production operation plan.
+
+Common task routing:
+- Fresh install on new VPS: read README.md and docs/agents/sing-box-vps-agent-runbook.md.
+- Upgrade existing VPS: read docs/agents/sing-box-vps-agent-runbook.md, then prepare a production operation plan for sing-box-prod.
+- Test remote verification: read dev/verification/run.sh, configs/verification-target.env.example, and AGENTS.md.
+- Production troubleshooting: use read-only checks first, then prepare a production operation plan for changes.
+- Repository maintenance: read AGENTS.md, affected scripts, and run verification as required.
+- sing-box config syntax or migration: use Context7 first; fall back to official sing-box docs or repository only when needed.
+
+Search keywords:
+install, upgrade, production, test VPS, remote verification, rollback, recovery, sbv, sing-box check, sing-box-prod, sing-box-test, dev/verification/run.sh, config.json, protocols, Warp, VLESS REALITY, Hysteria2, AnyTLS, Mixed proxy, systemctl sing-box.
