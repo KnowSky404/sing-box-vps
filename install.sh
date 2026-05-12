@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026051202
+# Version: 2026051203
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026051202"
+readonly SCRIPT_VERSION="2026051203"
 readonly SB_SUPPORT_MAX_VERSION="1.13.11"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -101,6 +101,9 @@ SB_WARP_CUSTOM_DOMAIN_SUFFIXES_JSON='[]'
 SB_WARP_LOCAL_RULE_SETS_JSON='[]'
 SB_WARP_REMOTE_RULE_SETS_JSON='[]'
 SB_WARP_RULE_SET_TAGS_JSON='[]'
+SUBMAN_API_URL=""
+SUBMAN_API_TOKEN=""
+SUBMAN_NODE_PREFIX=""
 
 # --- Common Utilities ---
 warp_client_id_to_reserved_json() {
@@ -602,6 +605,78 @@ write_env_assignment() {
   local escaped
   printf -v escaped '%q' "${value}"
   printf '%s=%s\n' "${key}" "${escaped}"
+}
+
+subman_config_file_path() {
+  printf '%s/subman.env' "${SB_PROJECT_DIR}"
+}
+
+normalize_subman_api_url() {
+  local url
+  url=$(trim_whitespace "${1:-}")
+  while [[ "${url}" == */ ]]; do
+    url=${url%/}
+  done
+  printf '%s' "${url}"
+}
+
+load_subman_config() {
+  local config_file
+  config_file=$(subman_config_file_path)
+
+  SUBMAN_API_URL=""
+  SUBMAN_API_TOKEN=""
+  SUBMAN_NODE_PREFIX=""
+
+  [[ -f "${config_file}" ]] || return 0
+
+  # shellcheck disable=SC1090
+  source "${config_file}"
+  SUBMAN_API_URL=$(normalize_subman_api_url "${SUBMAN_API_URL:-}")
+  SUBMAN_API_TOKEN=${SUBMAN_API_TOKEN:-}
+  SUBMAN_NODE_PREFIX=$(trim_whitespace "${SUBMAN_NODE_PREFIX:-}")
+}
+
+write_subman_config() {
+  local config_file config_dir tmp_file
+  config_file=$(subman_config_file_path)
+  config_dir=$(dirname "${config_file}")
+  mkdir -p "${config_dir}"
+  tmp_file=$(mktemp "${config_dir}/.subman.env.tmp.XXXXXX")
+  chmod 600 "${tmp_file}"
+  {
+    write_env_assignment "SUBMAN_API_URL" "${SUBMAN_API_URL}"
+    write_env_assignment "SUBMAN_API_TOKEN" "${SUBMAN_API_TOKEN}"
+    write_env_assignment "SUBMAN_NODE_PREFIX" "${SUBMAN_NODE_PREFIX}"
+  } > "${tmp_file}"
+  mv "${tmp_file}" "${config_file}"
+  chmod 600 "${config_file}"
+}
+
+prompt_subman_config_if_needed() {
+  local input_url input_token input_prefix
+
+  load_subman_config
+
+  while [[ -z "${SUBMAN_API_URL}" ]]; do
+    read -rp "SubMan API 地址: " input_url
+    SUBMAN_API_URL=$(normalize_subman_api_url "${input_url}")
+    [[ -z "${SUBMAN_API_URL}" ]] && log_warn "SubMan API 地址不能为空。"
+  done
+
+  while [[ -z "${SUBMAN_API_TOKEN}" ]]; do
+    read -rp "SubMan API Token: " input_token
+    SUBMAN_API_TOKEN=$(trim_whitespace "${input_token}")
+    [[ -z "${SUBMAN_API_TOKEN}" ]] && log_warn "SubMan API Token 不能为空。"
+  done
+
+  if [[ -z "${SUBMAN_NODE_PREFIX}" ]]; then
+    read -rp "SubMan 节点前缀 (默认: $(hostname)): " input_prefix
+    SUBMAN_NODE_PREFIX=$(trim_whitespace "${input_prefix}")
+    [[ -z "${SUBMAN_NODE_PREFIX}" ]] && SUBMAN_NODE_PREFIX=$(hostname)
+  fi
+
+  write_subman_config
 }
 
 write_protocol_index() {
