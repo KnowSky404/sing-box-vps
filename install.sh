@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026051203
+# Version: 2026051204
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
