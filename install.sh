@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026051401
+# Version: 2026051402
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026051401"
+readonly SCRIPT_VERSION="2026051402"
 readonly SB_SUPPORT_MAX_VERSION="1.13.11"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -48,6 +48,17 @@ readonly MEDIA_CHECK_BACKEND_REPO_URL="https://github.com/1-stream/RegionRestric
 readonly MEDIA_CHECK_BACKEND_SCRIPT_URL="https://raw.githubusercontent.com/1-stream/RegionRestrictionCheck/main/check.sh"
 readonly SB_HIGH_PORT_MIN="60000"
 readonly SB_HIGH_PORT_MAX="65535"
+readonly SB_REALITY_SNI_FALLBACK="www.apple.com"
+SB_REALITY_SNI_CANDIDATES=(
+  "www.apple.com"
+  "www.microsoft.com"
+  "www.cloudflare.com"
+  "www.amazon.com"
+  "www.bing.com"
+  "www.github.com"
+  "www.ubuntu.com"
+  "www.debian.org"
+)
 
 # --- Global Variables ---
 SB_VERSION="${SB_SUPPORT_MAX_VERSION}"
@@ -59,7 +70,7 @@ SB_PUBLIC_KEY=""
 SB_PRIVATE_KEY=""
 SB_SHORT_ID_1=""
 SB_SHORT_ID_2=""
-SB_SNI="apple.com"
+SB_SNI="${SB_REALITY_SNI_FALLBACK}"
 SB_MIXED_AUTH_ENABLED="y"
 SB_MIXED_USERNAME=""
 SB_MIXED_PASSWORD=""
@@ -955,6 +966,75 @@ prompt_vless_reality_update() {
   [[ -n "${in_sni}" ]] && SB_SNI="${in_sni}"
 }
 
+probe_reality_sni_candidate() {
+  local domain=$1
+  local time_total
+
+  time_total=$(curl -o /dev/null -sS -L \
+    --connect-timeout 3 \
+    --max-time 6 \
+    --retry 0 \
+    --write-out '%{time_appconnect}' \
+    "https://${domain}/" 2>/dev/null) || return 1
+
+  awk -v value="${time_total}" 'BEGIN {
+    if (value <= 0) {
+      exit 1
+    }
+    printf "%d\n", value * 1000
+  }'
+}
+
+select_reality_sni_candidate() {
+  local domain latency best_domain best_latency
+
+  best_domain=""
+  best_latency=""
+
+  for domain in "${SB_REALITY_SNI_CANDIDATES[@]}"; do
+    if latency=$(probe_reality_sni_candidate "${domain}"); then
+      log_info "Reality SNI 探测可用: ${domain} (${latency}ms)" >&2
+      if [[ -z "${best_latency}" || "${latency}" -lt "${best_latency}" ]]; then
+        best_domain="${domain}"
+        best_latency="${latency}"
+      fi
+    else
+      log_warn "Reality SNI 探测失败: ${domain}" >&2
+    fi
+  done
+
+  if [[ -n "${best_domain}" ]]; then
+    printf '%s' "${best_domain}"
+    return 0
+  fi
+
+  log_warn "所有候选 Reality SNI 探测失败，回退到 ${SB_REALITY_SNI_FALLBACK}。" >&2
+  printf '%s' "${SB_REALITY_SNI_FALLBACK}"
+}
+
+prompt_reality_sni_install() {
+  local choice manual_sni selected_sni
+
+  echo "[VLESS + REALITY] REALITY 域名选择:"
+  echo "1. 自动探测推荐 SNI (默认)"
+  echo "2. 手动输入"
+  read -rp "请选择 [1-2]: " choice
+  choice=${choice:-1}
+
+  case "${choice}" in
+    2)
+      read -rp "[VLESS + REALITY] REALITY 域名 (默认 ${SB_REALITY_SNI_FALLBACK}): " manual_sni
+      manual_sni=$(trim_whitespace "${manual_sni:-}")
+      SB_SNI=${manual_sni:-$SB_REALITY_SNI_FALLBACK}
+      ;;
+    *)
+      selected_sni=$(select_reality_sni_candidate)
+      SB_SNI="${selected_sni}"
+      log_success "已选择 Reality SNI: ${SB_SNI}"
+      ;;
+  esac
+}
+
 prompt_mixed_update() {
   local in_p in_auth in_user in_pass
 
@@ -1283,7 +1363,7 @@ prompt_protocol_install_selection() {
 }
 
 prompt_vless_reality_install() {
-  local in_p in_sni
+  local in_p
 
   set_protocol_defaults "vless+reality"
   echo -e "\n${BLUE}--- 配置 VLESS + REALITY ---${NC}"
@@ -1292,8 +1372,7 @@ prompt_vless_reality_install() {
   SB_PORT=${in_p:-$SB_PORT}
   check_port_conflict "${SB_PORT}"
 
-  read -rp "[VLESS + REALITY] REALITY 域名 (默认 ${SB_SNI}): " in_sni
-  SB_SNI=${in_sni:-$SB_SNI}
+  prompt_reality_sni_install
 }
 
 prompt_mixed_install() {
@@ -1671,7 +1750,7 @@ set_protocol_defaults() {
       SB_PROTOCOL="vless+reality"
       SB_NODE_NAME="$(default_node_name_for_protocol "vless+reality")"
       SB_PORT="443"
-      SB_SNI="apple.com"
+      SB_SNI="${SB_REALITY_SNI_FALLBACK}"
       SB_MIXED_AUTH_ENABLED="y"
       SB_MIXED_USERNAME=""
       SB_MIXED_PASSWORD=""
@@ -2609,7 +2688,7 @@ load_protocol_state() {
       SB_NODE_NAME="${NODE_NAME:-$(default_node_name_for_protocol "vless+reality")}"
       SB_PORT="${PORT:-443}"
       SB_UUID="${UUID:-}"
-      SB_SNI="${SNI:-apple.com}"
+      SB_SNI="${SNI:-$SB_REALITY_SNI_FALLBACK}"
       SB_PRIVATE_KEY="${REALITY_PRIVATE_KEY:-}"
       SB_PUBLIC_KEY="${REALITY_PUBLIC_KEY:-}"
       SB_SHORT_ID_1="${SHORT_ID_1:-}"
@@ -2776,6 +2855,8 @@ load_protocol_state() {
 }
 
 ensure_vless_reality_materials() {
+  ensure_protocol_state_dir
+
   if [[ -z "${SB_UUID}" ]]; then
     SB_UUID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
   fi
@@ -5443,7 +5524,7 @@ render_expected_protocol_state_snapshot() {
     vless-reality)
       printf 'PORT=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")"
       printf 'UUID=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].uuid // ""' "${SINGBOX_CONFIG_FILE}")"
-      printf 'SNI=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // "apple.com"' "${SINGBOX_CONFIG_FILE}")"
+      printf 'SNI=%s\n' "$(jq -r --argjson idx "${inbound_index}" --arg fallback "${SB_REALITY_SNI_FALLBACK}" '.inbounds[$idx].tls.server_name // $fallback' "${SINGBOX_CONFIG_FILE}")"
       printf 'REALITY_PRIVATE_KEY=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.private_key // ""' "${SINGBOX_CONFIG_FILE}")"
       printf 'SHORT_ID_1=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[0] // ""' "${SINGBOX_CONFIG_FILE}")"
       printf 'SHORT_ID_2=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[1] // ""' "${SINGBOX_CONFIG_FILE}")"
@@ -5868,7 +5949,7 @@ rebuild_protocol_state_from_config() {
         SB_NODE_NAME="$(default_node_name_for_protocol "vless+reality")"
         SB_PORT=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")
         SB_UUID=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].uuid // ""' "${SINGBOX_CONFIG_FILE}")
-        SB_SNI=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // "apple.com"' "${SINGBOX_CONFIG_FILE}")
+        SB_SNI=$(jq -r --argjson idx "${inbound_index}" --arg fallback "${SB_REALITY_SNI_FALLBACK}" '.inbounds[$idx].tls.server_name // $fallback' "${SINGBOX_CONFIG_FILE}")
         SB_PRIVATE_KEY=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.private_key // ""' "${SINGBOX_CONFIG_FILE}")
         SB_SHORT_ID_1=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[0] // ""' "${SINGBOX_CONFIG_FILE}")
         SB_SHORT_ID_2=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[1] // ""' "${SINGBOX_CONFIG_FILE}")

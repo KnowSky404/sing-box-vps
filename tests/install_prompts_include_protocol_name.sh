@@ -32,6 +32,10 @@ source "${TESTABLE_INSTALL}"
 check_port_conflict() { :; }
 ensure_mixed_auth_credentials() { :; }
 ensure_hy2_materials() { :; }
+validate_tls_domain_points_to_server() { return 0; }
+select_reality_sni_candidate() {
+  printf 'www.example.com'
+}
 
 vless_output=$(prompt_vless_reality_install 2>&1 <<'EOF'
 
