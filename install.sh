@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026051204
+# Version: 2026051401
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026051204"
+readonly SCRIPT_VERSION="2026051401"
 readonly SB_SUPPORT_MAX_VERSION="1.13.11"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -1670,7 +1670,7 @@ set_protocol_defaults() {
     *)
       SB_PROTOCOL="vless+reality"
       SB_NODE_NAME="$(default_node_name_for_protocol "vless+reality")"
-      SB_PORT="$(pick_random_high_port)"
+      SB_PORT="443"
       SB_SNI="apple.com"
       SB_MIXED_AUTH_ENABLED="y"
       SB_MIXED_USERNAME=""

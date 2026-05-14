@@ -43,7 +43,10 @@ assert_high_port() {
 
 RANDOM=1
 set_protocol_defaults "vless+reality"
-assert_high_port "vless+reality" "${SB_PORT}"
+if [[ "${SB_PORT}" != "443" ]]; then
+  printf 'expected vless+reality default port to be 443, got %s\n' "${SB_PORT}" >&2
+  exit 1
+fi
 
 RANDOM=1
 set_protocol_defaults "mixed"
