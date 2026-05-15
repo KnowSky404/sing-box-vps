@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026051504
+# Version: 2026051505
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026051504"
+readonly SCRIPT_VERSION="2026051505"
 readonly SB_SUPPORT_MAX_VERSION="1.13.11"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -952,7 +952,7 @@ prompt_installed_protocol_selection() {
 }
 
 prompt_vless_reality_update() {
-  local in_p in_uuid in_sni
+  local in_p in_uuid
 
   read -rp "新端口 (当前: ${SB_PORT}, 留空保持): " in_p
   if [[ -n "${in_p}" ]]; then
@@ -963,8 +963,7 @@ prompt_vless_reality_update() {
   read -rp "新 UUID (当前: ${SB_UUID}, 留空保持): " in_uuid
   [[ -n "${in_uuid}" ]] && SB_UUID="${in_uuid}"
 
-  read -rp "新 REALITY 域名 (当前: ${SB_SNI}, 留空保持): " in_sni
-  [[ -n "${in_sni}" ]] && SB_SNI="${in_sni}"
+  prompt_reality_sni_update
 }
 
 probe_reality_sni_candidate() {
@@ -1032,6 +1031,33 @@ prompt_reality_sni_install() {
       selected_sni=$(select_reality_sni_candidate)
       SB_SNI="${selected_sni}"
       log_success "已选择 Reality SNI: ${SB_SNI}"
+      ;;
+  esac
+}
+
+prompt_reality_sni_update() {
+  local choice manual_sni selected_sni
+
+  echo "[VLESS + REALITY] REALITY SNI 更新方式:"
+  echo "1. 保留当前 SNI: ${SB_SNI} (默认)"
+  echo "2. 自动探测推荐 SNI"
+  echo "3. 手动输入"
+  read -rp "请选择 [1-3] (默认 1): " choice
+  choice=${choice:-1}
+
+  case "${choice}" in
+    2)
+      selected_sni=$(select_reality_sni_candidate)
+      SB_SNI="${selected_sni}"
+      log_success "已选择 Reality SNI: ${SB_SNI}"
+      ;;
+    3)
+      read -rp "[VLESS + REALITY] 新 REALITY SNI (当前: ${SB_SNI}, 留空保持): " manual_sni
+      manual_sni=$(trim_whitespace "${manual_sni:-}")
+      [[ -n "${manual_sni}" ]] && SB_SNI="${manual_sni}"
+      ;;
+    *)
+      log_info "保留当前 Reality SNI: ${SB_SNI}"
       ;;
   esac
 }

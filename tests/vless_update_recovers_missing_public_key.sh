@@ -106,6 +106,7 @@ update_config_only <<'EOF'
 1
 
 
+3
 cloudflare.com
 EOF
 
