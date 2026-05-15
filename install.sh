@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026051402
+# Version: 2026051501
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026051402"
+readonly SCRIPT_VERSION="2026051501"
 readonly SB_SUPPORT_MAX_VERSION="1.13.11"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -4342,6 +4342,83 @@ update_config_only() {
   log_info "连接信息未自动展示，如需查看请进入菜单 10。"
 }
 
+remove_protocol_menu() {
+  local protocols=() remaining_protocols=()
+  local selected_protocol selected_display confirm state_file backup_state_file
+  local index_backup_file config_backup_file joined_protocols first_remaining protocol
+
+  if [[ ! -f "${SINGBOX_CONFIG_FILE}" && ! -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
+    log_error "未找到配置文件或协议状态，请先执行安装流程。"
+  fi
+
+  migrate_legacy_single_protocol_state_if_needed
+  load_current_config_state
+  mapfile -t protocols < <(list_installed_protocols)
+
+  if [[ ${#protocols[@]} -eq 0 ]]; then
+    log_error "当前未检测到已安装协议。"
+  fi
+
+  if [[ ${#protocols[@]} -le 1 ]]; then
+    log_warn "当前至少保留一个协议，不能删除最后一个已安装协议。"
+    return 0
+  fi
+
+  echo -e "\n${BLUE}--- 移除已安装协议 ---${NC}"
+  SELECTED_PROTOCOL=""
+  if ! prompt_installed_protocol_selection; then
+    return 0
+  fi
+  selected_protocol="${SELECTED_PROTOCOL}"
+  [[ -n "${selected_protocol}" ]] || return 0
+
+  selected_display=$(protocol_display_name "$(state_protocol_to_runtime "${selected_protocol}")")
+  read -rp "确认移除 ${selected_display}? [y/N]: " confirm
+  if [[ "${confirm}" != "y" && "${confirm}" != "Y" ]]; then
+    log_info "已取消移除协议。"
+    return 0
+  fi
+
+  state_file=$(protocol_state_file "${selected_protocol}")
+  if [[ ! -f "${state_file}" ]]; then
+    log_error "未找到协议状态文件: ${state_file}"
+  fi
+
+  backup_state_file="${state_file}.bak.$(date +%Y%m%d%H%M%S)"
+  index_backup_file=$(mktemp)
+  config_backup_file=$(mktemp)
+
+  cp "${SB_PROTOCOL_INDEX_FILE}" "${index_backup_file}"
+  cp "${SINGBOX_CONFIG_FILE}" "${config_backup_file}"
+  mv "${state_file}" "${backup_state_file}"
+
+  for protocol in "${protocols[@]}"; do
+    [[ "${protocol}" == "${selected_protocol}" ]] && continue
+    remaining_protocols+=("${protocol}")
+  done
+
+  joined_protocols=$(IFS=,; printf '%s' "${remaining_protocols[*]}")
+  write_protocol_index "${joined_protocols}"
+
+  if ! generate_config || ! validate_config_file; then
+    mv "${backup_state_file}" "${state_file}" 2>/dev/null || true
+    cp "${index_backup_file}" "${SB_PROTOCOL_INDEX_FILE}"
+    cp "${config_backup_file}" "${SINGBOX_CONFIG_FILE}"
+    rm -f "${index_backup_file}" "${config_backup_file}"
+    log_error "移除协议后配置校验失败，已恢复原配置。"
+  fi
+
+  rm -f "${index_backup_file}" "${config_backup_file}"
+  setup_service
+  first_remaining="${remaining_protocols[0]}"
+  load_protocol_state "${first_remaining}"
+  open_all_protocol_ports
+  systemctl restart sing-box
+  log_success "已移除协议: ${selected_display}。原状态已备份到: ${backup_state_file}"
+  display_status_summary
+  log_info "连接信息未自动展示，如需查看请进入菜单 10。"
+}
+
 get_public_ip() {
   get_public_ipv4 || get_public_ipv6
 }
@@ -6262,11 +6339,13 @@ install_or_update_singbox() {
     render_section_title "操作选项"
     render_menu_item "1" "更新 sing-box 二进制并保留当前配置"
     render_menu_item "2" "安装新增协议"
+    render_menu_item "3" "移除已安装协议"
     echo "0. 返回"
-    read -rp "请选择 [0-2] (默认 1): " install_choice
+    read -rp "请选择 [0-3] (默认 1): " install_choice
 
     case "${install_choice:-1}" in
       2) install_new_protocols_menu ;;
+      3) remove_protocol_menu ;;
       0) return 0 ;;
       *) update_singbox_version_menu ;;
     esac
@@ -6332,9 +6411,10 @@ main() {
     render_menu_item "12" "更新管理脚本 (sbv)" "" "${SCRIPT_VER_STATUS}"
     render_menu_item "13" "卸载管理脚本 (sbv)"
     render_menu_item "14" "配置 Cloudflare Warp" "(解锁/防送中)"
+    render_menu_item "16" "移除已安装协议"
     echo "0. 退出"
     render_main_menu_footer
-    read -rp "请选择 [0-15]: " choice
+    read -rp "请选择 [0-16]: " choice
 
     case "$choice" in
       1) install_new_protocols_menu ;;
@@ -6352,6 +6432,7 @@ main() {
       13) uninstall_script ;;
       14) warp_management ;;
       15) media_check_menu ;;
+      16) remove_protocol_menu ;;
       0) exit_script ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac
