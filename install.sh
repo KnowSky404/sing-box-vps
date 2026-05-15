@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026051501
+# Version: 2026051502
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026051501"
+readonly SCRIPT_VERSION="2026051502"
 readonly SB_SUPPORT_MAX_VERSION="1.13.11"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
+readonly UI_COMPACT_MAX_WIDTH=72
 readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
 readonly SB_KEY_FILE="${SB_PROJECT_DIR}/reality.key"
@@ -3521,6 +3522,19 @@ term_columns() {
   printf '80'
 }
 
+compact_ui_width() {
+  local width
+
+  width=$(term_columns)
+  if (( width < 1 )); then
+    width=1
+  elif (( width > UI_COMPACT_MAX_WIDTH )); then
+    width=${UI_COMPACT_MAX_WIDTH}
+  fi
+
+  printf '%s' "${width}"
+}
+
 repeat_char() {
   local char=$1
   local count=$2
@@ -3599,16 +3613,13 @@ render_page_header() {
   local subtitle=${2:-}
   local width divider
 
-  width=$(term_columns)
-  if (( width < 1 )); then
-    width=1
-  fi
+  width=$(compact_ui_width)
   divider=$(repeat_char "═" "${width}")
 
   echo -e "${BLUE}${divider}${NC}"
-  print_centered_text "${title}" "${GREEN}"
+  echo -e "${GREEN}${title}${NC}"
   if [[ -n "${subtitle}" ]]; then
-    print_centered_text "${subtitle}" "${BLUE}"
+    echo -e "${BLUE}${subtitle}${NC}"
   fi
   echo -e "${BLUE}${divider}${NC}"
 }
@@ -3672,10 +3683,7 @@ render_main_menu_brand_block() {
   local current_path_line path_segment candidate
   local -a project_path_segments
 
-  width=$(term_columns)
-  if (( width < 1 )); then
-    width=1
-  fi
+  width=$(compact_ui_width)
   divider=$(repeat_char "═" "${width}")
   brand_info="作者: ${PROJECT_AUTHOR} · 项目: ${PROJECT_URL}"
   brand_meta="专为 VPS 稳定部署与安全运维设计 · 版本: ${SCRIPT_VERSION}"
@@ -3735,10 +3743,7 @@ render_left_aligned_page_header() {
   local subtitle=${2:-}
   local width divider
 
-  width=$(term_columns)
-  if (( width < 1 )); then
-    width=1
-  fi
+  width=$(compact_ui_width)
   divider=$(repeat_char "═" "${width}")
 
   echo -e "${BLUE}${divider}${NC}"
