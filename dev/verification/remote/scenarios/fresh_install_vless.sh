@@ -17,6 +17,7 @@ verification_scenario_fresh_install_vless() {
 
 1
 443
+2
 www.cloudflare.com
 n
 n

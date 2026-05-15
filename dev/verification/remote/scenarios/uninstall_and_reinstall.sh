@@ -21,6 +21,7 @@ verification_scenario_uninstall_and_reinstall() {
 
 1
 443
+2
 www.cloudflare.com
 n
 n

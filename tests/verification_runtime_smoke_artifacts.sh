@@ -398,15 +398,16 @@ bash() {
         fi
 
         if [[ "\${actual_lines[2]:-}" == "1" ]]; then
-          [[ "\${#actual_lines[@]}" -eq 8 ]]
+          [[ "\${#actual_lines[@]}" -eq 9 ]]
           [[ "\${actual_lines[0]}" == "1" ]]
           [[ "\${actual_lines[1]}" == "" ]]
           [[ "\${actual_lines[2]}" == "1" ]]
           [[ "\${actual_lines[3]}" == "443" ]]
-          [[ "\${actual_lines[4]}" == "www.cloudflare.com" ]]
-          [[ "\${actual_lines[5]}" == "n" ]]
+          [[ "\${actual_lines[4]}" == "2" ]]
+          [[ "\${actual_lines[5]}" == "www.cloudflare.com" ]]
           [[ "\${actual_lines[6]}" == "n" ]]
-          [[ "\${actual_lines[7]}" == "0" ]]
+          [[ "\${actual_lines[7]}" == "n" ]]
+          [[ "\${actual_lines[8]}" == "0" ]]
           printf '443\n' > "\${REMOTE_PORT_FILE}"
           next_install_uuid > "\${REMOTE_UUID_FILE}"
           printf 'www.cloudflare.com\n' > "\${REMOTE_SNI_FILE}"
