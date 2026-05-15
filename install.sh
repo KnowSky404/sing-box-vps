@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026051502
+# Version: 2026051503
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026051502"
+readonly SCRIPT_VERSION="2026051503"
 readonly SB_SUPPORT_MAX_VERSION="1.13.11"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -3447,28 +3447,33 @@ generate_config() {
 }
 
 # --- Uninstaller ---
-perform_full_uninstall() {
+perform_singbox_runtime_uninstall() {
   log_info "正在彻底卸载 sing-box 环境..."
   systemctl stop sing-box &>/dev/null || true
   systemctl disable sing-box &>/dev/null || true
   rm -f "${SINGBOX_SERVICE_FILE}"
   systemctl daemon-reload
   rm -f "${SINGBOX_BIN_PATH}"
-  rm -f "${SBV_BIN_PATH}"
   rm -rf "${SINGBOX_CONFIG_DIR}"
-  print_success "sing-box、配置目录和全局命令 sbv 已彻底删除。"
+  print_success "sing-box 服务、二进制和配置目录已彻底删除。"
+}
+
+perform_full_uninstall() {
+  perform_singbox_runtime_uninstall
+  rm -f "${SBV_BIN_PATH}"
+  print_success "全局命令 sbv 已删除。"
 }
 
 uninstall_singbox() {
   echo ""
-  print_warn "该操作会彻底删除 sing-box 服务、配置目录、密钥和全局命令 sbv。"
+  print_warn "该操作会彻底删除 sing-box 服务、配置目录和密钥，但会保留全局命令 sbv。"
   read -rp "确认继续吗？[y/N]: " confirm
   if [[ ! "${confirm}" =~ ^[Yy]$ ]]; then
     log_info "已取消卸载。"
     return 0
   fi
 
-  perform_full_uninstall
+  perform_singbox_runtime_uninstall
   exit 0
 }
 
