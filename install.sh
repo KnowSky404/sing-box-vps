@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026051505
+# Version: 2026051506
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026051505"
+readonly SCRIPT_VERSION="2026051506"
 readonly SB_SUPPORT_MAX_VERSION="1.13.11"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -80,7 +80,7 @@ SB_HY2_PASSWORD=""
 SB_HY2_USER_NAME=""
 SB_HY2_UP_MBPS=""
 SB_HY2_DOWN_MBPS=""
-SB_HY2_OBFS_ENABLED="n"
+SB_HY2_OBFS_ENABLED="y"
 SB_HY2_OBFS_TYPE=""
 SB_HY2_OBFS_PASSWORD=""
 SB_HY2_TLS_MODE="acme"
@@ -1118,13 +1118,13 @@ prompt_hy2_update() {
   read -rp "下行带宽 Mbps (当前: ${SB_HY2_DOWN_MBPS:-未限制}, 留空保持): " in_down
   [[ -n "${in_down}" ]] && SB_HY2_DOWN_MBPS="${in_down}"
 
-  read -rp "是否启用 Salamander 混淆 [y/n] (当前: ${SB_HY2_OBFS_ENABLED}, 留空保持): " in_obfs
+  read -rp "是否启用 obfs / Salamander 混淆 [y/n] (当前: ${SB_HY2_OBFS_ENABLED}, 留空保持): " in_obfs
   if [[ -n "${in_obfs}" ]]; then
     SB_HY2_OBFS_ENABLED="${in_obfs}"
   fi
 
   if [[ "${SB_HY2_OBFS_ENABLED}" == "y" ]]; then
-    read -rp "混淆密码 (当前: 留空隐藏, 留空保持): " in_obfs_password
+    read -rp "obfs / Salamander 混淆密码 (当前: 留空隐藏, 留空保持): " in_obfs_password
     [[ -n "${in_obfs_password}" ]] && SB_HY2_OBFS_PASSWORD="${in_obfs_password}"
     [[ -z "${SB_HY2_OBFS_TYPE}" ]] && SB_HY2_OBFS_TYPE="salamander"
   else
@@ -1461,11 +1461,11 @@ prompt_hy2_install() {
   read -rp "[Hysteria2] 下行带宽 Mbps (留空表示不限制): " in_down
   SB_HY2_DOWN_MBPS="${in_down}"
 
-  read -rp "[Hysteria2] 是否启用 Salamander 混淆 [y/n] (默认 n): " in_obfs
-  SB_HY2_OBFS_ENABLED=${in_obfs:-"n"}
+  read -rp "[Hysteria2] 是否启用 obfs / Salamander 混淆 [y/n] (默认 y): " in_obfs
+  SB_HY2_OBFS_ENABLED=${in_obfs:-"y"}
   if [[ "${SB_HY2_OBFS_ENABLED}" == "y" ]]; then
     SB_HY2_OBFS_TYPE="salamander"
-    read -rp "[Hysteria2] 混淆密码 (留空自动生成): " in_obfs_password
+    read -rp "[Hysteria2] obfs / Salamander 混淆密码 (留空自动生成): " in_obfs_password
     [[ -n "${in_obfs_password}" ]] && SB_HY2_OBFS_PASSWORD="${in_obfs_password}"
   fi
 
@@ -1718,7 +1718,7 @@ set_protocol_defaults() {
       SB_HY2_USER_NAME="hy2-user"
       SB_HY2_UP_MBPS=""
       SB_HY2_DOWN_MBPS=""
-      SB_HY2_OBFS_ENABLED="n"
+      SB_HY2_OBFS_ENABLED="y"
       SB_HY2_OBFS_TYPE=""
       SB_HY2_OBFS_PASSWORD=""
       SB_HY2_TLS_MODE="acme"

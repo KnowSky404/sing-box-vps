@@ -77,3 +77,13 @@ if [[ "${hy2_output}" != *"[Hysteria2] 端口"* ]]; then
   printf 'expected Hysteria2 install prompt to include protocol name, got:\n%s\n' "${hy2_output}" >&2
   exit 1
 fi
+
+if ! grep -Fq '[Hysteria2] 是否启用 obfs / Salamander 混淆' "${REPO_ROOT}/install.sh"; then
+  printf 'expected Hysteria2 install prompt to mention obfs / Salamander\n' >&2
+  exit 1
+fi
+
+if ! grep -Fq 'obfs / Salamander 混淆密码' "${REPO_ROOT}/install.sh"; then
+  printf 'expected Hysteria2 obfs password prompt to mention obfs / Salamander\n' >&2
+  exit 1
+fi

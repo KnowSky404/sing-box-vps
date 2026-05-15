@@ -49,6 +49,7 @@ display_status_summary() { :; }
 show_post_config_connection_info() { :; }
 systemctl() { :; }
 check_port_conflict() { :; }
+validate_tls_domain_points_to_server() { return 0; }
 save_warp_route_settings() { :; }
 
 install_protocols_interactive "fresh" <<'EOF'
