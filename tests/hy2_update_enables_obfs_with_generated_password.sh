@@ -96,8 +96,8 @@ KEY_PATH=/etc/ssl/private/hy2.key
 MASQUERADE=
 EOF
 
-if ! grep -Fq 'obfs / Salamander 混淆密码 (当前: 留空隐藏, 留空保持/自动生成)' "${REPO_ROOT}/install.sh"; then
-  printf 'expected hy2 update obfs password prompt to mention auto generation\n' >&2
+if ! grep -Fq 'obfs / Salamander 混淆密码 (当前: 未设置，留空自动生成；输入新值则使用输入值):' "${REPO_ROOT}/install.sh"; then
+  printf 'expected hy2 update obfs password prompt to mention unset state and auto generation\n' >&2
   exit 1
 fi
 
