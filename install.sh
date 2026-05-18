@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026051801
+# Version: 2026051802
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026051801"
+readonly SCRIPT_VERSION="2026051802"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -5465,6 +5465,271 @@ export_singbox_client_config() {
   printf '%s\n' "${config_json}"
 }
 
+agent_print_help() {
+  cat <<'EOF'
+用法:
+  sbv agent help
+  sbv agent status --json
+  sbv agent nodes --json
+  sbv agent links --json
+  sbv agent export-client --json
+
+说明:
+  status        输出服务、版本、路径和已安装协议。
+  nodes         输出节点摘要，不包含完整分享链接或密码。
+  links         输出完整连接材料，适合受信任 Agent 获取节点信息。
+  export-client 生成并校验 sing-box 裸核客户端配置，写入固定路径并输出 JSON。
+EOF
+}
+
+agent_require_json_flag() {
+  if [[ "${1:-}" != "--json" ]]; then
+    log_warn "agent 子命令当前仅支持 --json 输出。" >&2
+    return 1
+  fi
+}
+
+agent_installed_protocols_json() {
+  list_installed_protocols | jq -Rsc 'split("\n") | map(select(length > 0))'
+}
+
+agent_status_json() {
+  local installed_protocols_json active_state installed_version
+
+  installed_protocols_json=$(agent_installed_protocols_json)
+  active_state=$(systemctl is-active sing-box 2>/dev/null || true)
+  installed_version=$("${SINGBOX_BIN_PATH}" version 2>/dev/null | head -n1 | awk '{print $3}' || true)
+
+  jq -n \
+    --arg script_version "${SCRIPT_VERSION}" \
+    --arg supported_version "${SB_SUPPORT_MAX_VERSION}" \
+    --arg active_state "${active_state:-unknown}" \
+    --arg sing_box_version "${installed_version}" \
+    --arg project_dir "${SB_PROJECT_DIR}" \
+    --arg config_file "${SINGBOX_CONFIG_FILE}" \
+    --arg protocol_state_dir "${SB_PROTOCOL_STATE_DIR}" \
+    --arg client_export_path "$(client_export_file_path)" \
+    --argjson protocols "${installed_protocols_json}" \
+    '{
+      "script_version": $script_version,
+      "supported_sing_box_version": $supported_version,
+      "service": {
+        "name": "sing-box",
+        "active_state": $active_state
+      },
+      "sing_box": {
+        "binary": "sing-box",
+        "version": $sing_box_version
+      },
+      "paths": {
+        "project": $project_dir,
+        "config": $config_file,
+        "protocol_state_dir": $protocol_state_dir,
+        "client_export": $client_export_path
+      },
+      "protocols": $protocols
+    }'
+}
+
+agent_node_summary_json_for_current_protocol() {
+  local protocol public_ip shareable="true" client_exportable="false"
+  local auth_enabled="false" server_name=""
+
+  protocol=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
+  public_ip=${1:-$(get_public_ip)}
+
+  case "${protocol}" in
+    vless-reality)
+      client_exportable="true"
+      server_name="${SB_SNI}"
+      ;;
+    mixed)
+      [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]] && auth_enabled="true"
+      ;;
+    hy2)
+      client_exportable="true"
+      server_name="${SB_HY2_DOMAIN:-${public_ip}}"
+      ;;
+    anytls)
+      client_exportable="true"
+      server_name="${SB_ANYTLS_DOMAIN:-${public_ip}}"
+      ;;
+    *)
+      shareable="false"
+      ;;
+  esac
+
+  jq -n \
+    --arg protocol "${protocol}" \
+    --arg name "${SB_NODE_NAME}" \
+    --arg port "${SB_PORT}" \
+    --arg server_name "${server_name}" \
+    --argjson shareable "${shareable}" \
+    --argjson client_exportable "${client_exportable}" \
+    --argjson auth_enabled "${auth_enabled}" \
+    '{
+      "protocol": $protocol,
+      "name": $name,
+      "port": ($port | tonumber),
+      "shareable": $shareable,
+      "client_exportable": $client_exportable
+    }
+    + (if $server_name != "" then {"server_name": $server_name} else {} end)
+    + (if $protocol == "mixed" then {"auth_enabled": $auth_enabled} else {} end)'
+}
+
+agent_link_json_for_current_protocol() {
+  local protocol public_ip link_json outbound_json
+
+  protocol=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
+  public_ip=${1:-$(get_public_ip)}
+
+  case "${protocol}" in
+    vless-reality)
+      link_json=$(jq -n --arg vless "$(build_vless_link "${public_ip}")" '{"vless": $vless}')
+      ;;
+    mixed)
+      link_json=$(jq -n \
+        --arg http "$(build_mixed_http_link "${public_ip}")" \
+        --arg socks5 "$(build_mixed_socks5_link "${public_ip}")" \
+        '{"http": $http, "socks5": $socks5}')
+      ;;
+    hy2)
+      link_json=$(jq -n --arg hy2 "$(build_hy2_link "${public_ip}")" '{"hy2": $hy2}')
+      ;;
+    anytls)
+      outbound_json=$(build_anytls_outbound_example "${public_ip}")
+      link_json='{}'
+      ;;
+    *)
+      link_json='{}'
+      ;;
+  esac
+
+  jq -n \
+    --arg protocol "${protocol}" \
+    --arg name "${SB_NODE_NAME}" \
+    --arg port "${SB_PORT}" \
+    --argjson links "${link_json}" \
+    --argjson outbound "${outbound_json:-null}" \
+    '{
+      "protocol": $protocol,
+      "name": $name,
+      "port": ($port | tonumber),
+      "links": $links
+    }
+    + (if $outbound != null then {"outbound": $outbound} else {} end)'
+}
+
+agent_collect_nodes_json() {
+  local mode=$1
+  local public_ip original_protocol_state protocol node_json
+  local installed_protocols=()
+  local tmpdir status=0
+
+  public_ip=$(get_public_ip)
+  original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
+  mapfile -t installed_protocols < <(list_installed_protocols)
+  tmpdir=$(mktemp -d)
+
+  trap '
+    if [[ -n "${original_protocol_state:-}" ]] && protocol_state_exists "${original_protocol_state}"; then
+      load_protocol_state "${original_protocol_state}"
+    fi
+    rm -rf "${tmpdir:-}"
+  ' RETURN
+
+  for protocol in "${installed_protocols[@]}"; do
+    if ! load_protocol_state "${protocol}"; then
+      status=1
+      continue
+    fi
+
+    case "${mode}" in
+      summary) node_json=$(agent_node_summary_json_for_current_protocol "${public_ip}") || status=1 ;;
+      links) node_json=$(agent_link_json_for_current_protocol "${public_ip}") || status=1 ;;
+      *) status=1; continue ;;
+    esac
+
+    [[ -n "${node_json:-}" ]] && printf '%s\n' "${node_json}" >> "${tmpdir}/nodes.jsonl"
+  done
+
+  jq -n \
+    --arg public_address "${public_ip}" \
+    --argjson nodes "$(if [[ -s "${tmpdir}/nodes.jsonl" ]]; then jq -s '.' "${tmpdir}/nodes.jsonl"; else jq -n '[]'; fi)" \
+    '{
+      "public_address": $public_address,
+      "nodes": $nodes
+    }'
+
+  trap - RETURN
+  if [[ -n "${original_protocol_state}" ]] && protocol_state_exists "${original_protocol_state}"; then
+    load_protocol_state "${original_protocol_state}"
+  fi
+  rm -rf "${tmpdir}"
+  return "${status}"
+}
+
+agent_export_client_json() {
+  local config_json export_path
+
+  if ! config_json=$(build_singbox_client_config); then
+    log_warn "agent export-client 生成配置失败。" >&2
+    return 1
+  fi
+
+  if ! validate_client_config_json "${config_json}"; then
+    log_warn "agent export-client 配置未通过 sing-box check 校验。" >&2
+    return 1
+  fi
+
+  export_path=$(client_export_file_path)
+  if ! write_client_config_export "${config_json}"; then
+    log_warn "agent export-client 写入失败: ${export_path}" >&2
+    return 1
+  fi
+
+  jq -n \
+    --arg path "${export_path}" \
+    --argjson config "${config_json}" \
+    '{
+      "path": $path,
+      "config": $config
+    }'
+}
+
+agent_cli() {
+  local command=${1:-help}
+  shift || true
+
+  case "${command}" in
+    help|-h|--help)
+      agent_print_help
+      ;;
+    status)
+      agent_require_json_flag "${1:-}" || return 1
+      agent_status_json
+      ;;
+    nodes)
+      agent_require_json_flag "${1:-}" || return 1
+      agent_collect_nodes_json "summary"
+      ;;
+    links)
+      agent_require_json_flag "${1:-}" || return 1
+      agent_collect_nodes_json "links"
+      ;;
+    export-client)
+      agent_require_json_flag "${1:-}" || return 1
+      agent_export_client_json
+      ;;
+    *)
+      log_warn "未知 agent 子命令: ${command}" >&2
+      agent_print_help >&2
+      return 1
+      ;;
+  esac
+}
+
 push_nodes_to_subman() {
   local public_ip original_protocol_state protocol external_key payload_json
   local synced_count skipped_count failed_count
@@ -6399,6 +6664,12 @@ install_or_update_singbox() {
 main() {
   if [[ $# -gt 0 ]]; then
     case "$1" in
+      agent)
+        shift
+        check_root
+        agent_cli "$@"
+        exit $?
+        ;;
       uninstall)
         check_root
         uninstall_singbox

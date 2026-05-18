@@ -185,11 +185,27 @@ Useful read-only checks:
 
 ```bash
 sbv
+sbv agent status --json
+sbv agent nodes --json
 systemctl status sing-box --no-pager
 journalctl -u sing-box --no-pager -n 200
 sing-box check -c /root/sing-box-vps/config.json
 ls -la /root/sing-box-vps /root/sing-box-vps/protocols
 ```
+
+Use the non-interactive Agent interface when automation needs stable output:
+
+```bash
+sbv agent status --json
+sbv agent nodes --json
+sbv agent links --json
+sbv agent export-client --json
+```
+
+- `status --json` is safe for routine diagnostics. It reports script version, supported sing-box version, installed sing-box version, service state, paths, and installed protocols.
+- `nodes --json` is safe for ordinary logs. It reports node names, ports, server names, and exportability without full share links or passwords.
+- `links --json` returns full connection material. Treat its output as sensitive and avoid pasting it into public logs.
+- `export-client --json` generates `/root/sing-box-vps/client/sing-box-client.json`, validates it with `sing-box check`, and returns the path plus config JSON. It writes the client export file but does not change the running server config or restart services.
 
 Common paths:
 
