@@ -56,6 +56,7 @@ get_arch() { ARCH="amd64"; }
 install_dependencies() { :; }
 save_warp_route_settings() { :; }
 install_binary() { :; }
+get_latest_version() { :; }
 generate_config() {
   local current_count
   current_count=$(cat "${GENERATE_CONFIG_COUNT_FILE}")
@@ -121,12 +122,8 @@ PRIVATE_KEY=private-key
 PUBLIC_KEY=public-key
 EOF
 
-(
-  main <<'EOF'
-1
+output=$(update_singbox_binary_preserving_config <<'EOF'
 
-
-0
 EOF
 )
 
@@ -140,5 +137,10 @@ fi
 
 if (( post_config_calls != 0 )); then
   printf 'expected update path to avoid auto-showing connection info, but post-config display ran %s time(s)\n' "${post_config_calls}" >&2
+  exit 1
+fi
+
+if grep -Fq '当前协议:' <<<"${output}" || grep -Fq '当前端口:' <<<"${output}"; then
+  printf 'expected binary update prompt to omit stale single-protocol summary, got:\n%s\n' "${output}" >&2
   exit 1
 fi

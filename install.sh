@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026051803
+# Version: 2026051804
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026051803"
+readonly SCRIPT_VERSION="2026051804"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -6535,8 +6535,6 @@ update_singbox_binary_preserving_config() {
 
   log_info "检测到现有安装，默认仅更新 sing-box 二进制并保留当前配置。"
   echo -e "当前版本: ${installed_ver}"
-  echo -e "当前协议: $(protocol_display_name "${SB_PROTOCOL}")"
-  echo -e "当前端口: ${SB_PORT}"
 
   prompt_singbox_version
   get_latest_version
