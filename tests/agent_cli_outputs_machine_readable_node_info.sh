@@ -36,6 +36,7 @@ chmod +x "${TMP_DIR}/bin/systemctl"
 
 source_testable_install
 export SINGBOX_CONFIG_FILE SB_PROJECT_DIR
+export SCRIPT_VERSION
 
 get_public_ip() {
   printf '203.0.113.10\n'
@@ -124,7 +125,7 @@ EOF
 
 status_json=$(agent_cli status --json)
 jq -e '
-  .script_version == "2026051802"
+  .script_version == env.SCRIPT_VERSION
   and .supported_sing_box_version == "1.13.12"
   and .service.active_state == "active"
   and .sing_box.version == "1.13.12"
@@ -149,7 +150,7 @@ fi
 links_json=$(agent_cli links --json)
 jq -e '
   .public_address == "203.0.113.10"
-  and any(.nodes[]; .protocol == "vless-reality" and .links.vless == "vless://11111111-1111-1111-1111-111111111111@203.0.113.10:443?security=reality&sni=www.cloudflare.com&fp=chrome&pbk=public-key&sid=aaaaaaaaaaaaaaaa&flow=xtls-rprx-vision#vless_test-host")
+  and any(.nodes[]; .protocol == "vless-reality" and .links.vless == "vless://11111111-1111-1111-1111-111111111111@203.0.113.10:443?security=reality&sni=www.cloudflare.com&fp=chrome&pbk=public-key&sid=aaaaaaaaaaaaaaaa&flow=xtls-rprx-vision#vless_test-host-v4")
   and any(.nodes[]; .protocol == "mixed" and .links.http == "http://mixed-user:mixed-pass@203.0.113.10:2080" and .links.socks5 == "socks5://mixed-user:mixed-pass@203.0.113.10:2080")
   and any(.nodes[]; .protocol == "hy2" and (.links.hy2 | startswith("hy2://hy2-password@hy2.example.com:8443?")))
   and any(.nodes[]; .protocol == "anytls" and .outbound.type == "anytls" and .outbound.server == "anytls.example.com")

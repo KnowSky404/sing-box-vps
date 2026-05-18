@@ -20,19 +20,22 @@ assert_equals() {
   fi
 }
 
-assert_equals "test-host+vless" "$(default_node_name_for_protocol "vless+reality")" "vless default node name"
-assert_equals "test-host+hys" "$(default_node_name_for_protocol "hy2")" "hy2 default node name"
-assert_equals "test-host+anytls" "$(default_node_name_for_protocol "anytls")" "anytls default node name"
-assert_equals "test-host+mixed" "$(default_node_name_for_protocol "mixed")" "mixed default node name"
+assert_equals "test-host-vless" "$(default_node_name_for_protocol "vless+reality")" "vless default node name"
+assert_equals "test-host-hy2" "$(default_node_name_for_protocol "hy2")" "hy2 default node name"
+assert_equals "test-host-anytls" "$(default_node_name_for_protocol "anytls")" "anytls default node name"
+assert_equals "test-host-mixed" "$(default_node_name_for_protocol "mixed")" "mixed default node name"
+
+assert_equals "test-host-vless-v4" "$(node_name_for_network_stack "test-host-vless" "IPv4")" "vless IPv4 node name"
+assert_equals "test-host-vless-v6" "$(node_name_for_network_stack "test-host-vless" "IPv6")" "vless IPv6 node name"
 
 set_protocol_defaults "vless+reality"
-assert_equals "test-host+vless" "${SB_NODE_NAME}" "set_protocol_defaults vless node name"
+assert_equals "test-host-vless" "${SB_NODE_NAME}" "set_protocol_defaults vless node name"
 
 set_protocol_defaults "hy2"
-assert_equals "test-host+hys" "${SB_NODE_NAME}" "set_protocol_defaults hy2 node name"
+assert_equals "test-host-hy2" "${SB_NODE_NAME}" "set_protocol_defaults hy2 node name"
 
 set_protocol_defaults "anytls"
-assert_equals "test-host+anytls" "${SB_NODE_NAME}" "set_protocol_defaults anytls node name"
+assert_equals "test-host-anytls" "${SB_NODE_NAME}" "set_protocol_defaults anytls node name"
 
 set_protocol_defaults "mixed"
-assert_equals "test-host+mixed" "${SB_NODE_NAME}" "set_protocol_defaults mixed node name"
+assert_equals "test-host-mixed" "${SB_NODE_NAME}" "set_protocol_defaults mixed node name"

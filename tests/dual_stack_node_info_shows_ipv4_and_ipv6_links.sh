@@ -76,3 +76,13 @@ if [[ "${output}" != *"2001:db8::10"* ]]; then
   printf 'expected IPv6 address in output, got:\n%s\n' "${output}" >&2
   exit 1
 fi
+
+if [[ "${output}" != *"#vless_reality_test-host-v4"* ]]; then
+  printf 'expected IPv4 link to use v4-suffixed node name, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${output}" != *"#vless_reality_test-host-v6"* ]]; then
+  printf 'expected IPv6 link to use v6-suffixed node name, got:\n%s\n' "${output}" >&2
+  exit 1
+fi

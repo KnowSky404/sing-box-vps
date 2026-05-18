@@ -43,3 +43,8 @@ if [[ "${output}" != *"@[2001:db8::1]:443"* ]]; then
   printf 'expected IPv6 host to be wrapped in brackets inside share link, got:\n%s\n' "${output}" >&2
   exit 1
 fi
+
+if [[ "${output}" != *"#vless_reality_test-host-v6"* ]]; then
+  printf 'expected IPv6 share link to use v6-suffixed node name, got:\n%s\n' "${output}" >&2
+  exit 1
+fi

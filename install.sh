@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026051805
+# Version: 2026051806
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026051805"
+readonly SCRIPT_VERSION="2026051806"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -64,7 +64,7 @@ SB_REALITY_SNI_CANDIDATES=(
 # --- Global Variables ---
 SB_VERSION="${SB_SUPPORT_MAX_VERSION}"
 SB_PROTOCOL="vless+reality"
-SB_NODE_NAME="$(hostname)+vless"
+SB_NODE_NAME="$(hostname)-vless"
 SB_PORT="443"
 SB_UUID=""
 SB_PUBLIC_KEY=""
@@ -559,13 +559,34 @@ default_node_name_for_protocol() {
   protocol=${1:-vless+reality}
   case "${protocol}" in
     vless+reality) suffix="vless" ;;
-    hy2) suffix="hys" ;;
+    hy2) suffix="hy2" ;;
     anytls) suffix="anytls" ;;
     mixed) suffix="mixed" ;;
     *) suffix="${protocol}" ;;
   esac
 
-  printf '%s+%s' "$(hostname)" "${suffix}"
+  printf '%s-%s' "$(hostname)" "${suffix}"
+}
+
+network_stack_suffix_from_label() {
+  case "$1" in
+    IPv4|ipv4|v4) printf 'v4' ;;
+    IPv6|ipv6|v6) printf 'v6' ;;
+    *) printf '' ;;
+  esac
+}
+
+node_name_for_network_stack() {
+  local base_name=$1
+  local address_label=${2:-}
+  local stack_suffix
+
+  stack_suffix=$(network_stack_suffix_from_label "${address_label}")
+  if [[ -n "${stack_suffix}" ]]; then
+    printf '%s-%s' "${base_name}" "${stack_suffix}"
+  else
+    printf '%s' "${base_name}"
+  fi
 }
 
 protocol_inbound_tag() {
@@ -4578,11 +4599,13 @@ format_share_host() {
 
 build_vless_link() {
   local public_ip=$1
-  local share_host
+  local address_label=${2:-}
+  local share_host node_name
   share_host=$(format_share_host "${public_ip}")
+  node_name=$(node_name_for_network_stack "${SB_NODE_NAME}" "${address_label}")
 
   printf 'vless://%s@%s:%s?security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&flow=xtls-rprx-vision#%s' \
-    "${SB_UUID}" "${share_host}" "${SB_PORT}" "${SB_SNI}" "${SB_PUBLIC_KEY:-[密钥丢失，请更新配置]}" "${SB_SHORT_ID_1}" "${SB_NODE_NAME}"
+    "${SB_UUID}" "${share_host}" "${SB_PORT}" "${SB_SNI}" "${SB_PUBLIC_KEY:-[密钥丢失，请更新配置]}" "${SB_SHORT_ID_1}" "${node_name}"
 }
 
 build_mixed_http_link() {
@@ -4611,8 +4634,10 @@ build_mixed_socks5_link() {
 
 build_hy2_link() {
   local public_ip=$1
-  local server_host query
+  local address_label=${2:-}
+  local server_host query node_name
   server_host=${SB_HY2_DOMAIN:-${public_ip}}
+  node_name=$(node_name_for_network_stack "${SB_NODE_NAME}" "${address_label}")
   query="sni=${SB_HY2_DOMAIN:-${server_host}}"
 
   if [[ "${SB_HY2_OBFS_ENABLED}" == "y" ]]; then
@@ -4624,7 +4649,7 @@ build_hy2_link() {
     "$(format_share_host "${server_host}")" \
     "${SB_PORT}" \
     "${query}" \
-    "${SB_NODE_NAME}"
+    "${node_name}"
 }
 
 subman_node_prefix() {
@@ -4653,25 +4678,27 @@ subman_external_key_for_protocol() {
 }
 
 build_subman_raw_for_protocol() {
-  local protocol public_ip
+  local protocol public_ip address_label
   protocol=$(normalize_protocol_id "$1")
   public_ip=$2
+  address_label=${3:-}
 
   case "${protocol}" in
-    vless-reality) build_vless_link "${public_ip}" ;;
-    hy2) build_hy2_link "${public_ip}" ;;
+    vless-reality) build_vless_link "${public_ip}" "${address_label}" ;;
+    hy2) build_hy2_link "${public_ip}" "${address_label}" ;;
     *) return 1 ;;
   esac
 }
 
 build_subman_node_payload() {
-  local protocol public_ip node_type raw_link node_name prefix
+  local protocol public_ip address_label node_type raw_link node_name prefix
   protocol=$(normalize_protocol_id "$1")
   public_ip=$2
+  address_label=${3:-}
   node_type=$(subman_type_for_protocol "${protocol}") || return 1
-  raw_link=$(build_subman_raw_for_protocol "${protocol}" "${public_ip}") || return 1
+  raw_link=$(build_subman_raw_for_protocol "${protocol}" "${public_ip}" "${address_label}") || return 1
   prefix=$(subman_node_prefix)
-  node_name=$(trim_whitespace "${SB_NODE_NAME:-}")
+  node_name=$(trim_whitespace "$(node_name_for_network_stack "${SB_NODE_NAME:-}" "${address_label}")")
   [[ -z "${node_name}" ]] && node_name="${prefix} ${protocol}"
 
   jq -n \
@@ -4984,14 +5011,14 @@ show_link_info() {
 
   if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
     echo "1. REALITY 协议链接"
-    build_vless_link "${public_ip}"
+    build_vless_link "${public_ip}" "${address_label}"
     echo ""
     return 0
   fi
 
   if [[ "${SB_PROTOCOL}" == "hy2" ]]; then
     echo "1. Hysteria2 协议链接"
-    build_hy2_link "${public_ip}"
+    build_hy2_link "${public_ip}" "${address_label}"
     echo ""
     return 0
   fi
@@ -5041,18 +5068,26 @@ show_qr_info() {
 
   if [[ "${SB_PROTOCOL}" == "hy2" ]]; then
     echo "1. Hysteria2 协议二维码"
-    qrencode -t ansiutf8 "$(build_hy2_link "${public_ip}")"
+    qrencode -t ansiutf8 "$(build_hy2_link "${public_ip}" "${address_label}")"
     return 0
   fi
 
   echo "1. REALITY 协议二维码"
-  qrencode -t ansiutf8 "$(build_vless_link "${public_ip}")"
+  qrencode -t ansiutf8 "$(build_vless_link "${public_ip}" "${address_label}")"
 }
 
 show_connection_details() {
   local mode=$1
   local public_ip=${2:-$(get_public_ip)}
   local address_label=${3:-}
+
+  if [[ -z "${address_label}" ]]; then
+    if [[ "${public_ip}" == *:* ]]; then
+      address_label="IPv6"
+    elif [[ "${public_ip}" == *.* ]]; then
+      address_label="IPv4"
+    fi
+  fi
 
   case "${mode}" in
     link)
@@ -5569,13 +5604,21 @@ agent_node_summary_json_for_current_protocol() {
 
 agent_link_json_for_current_protocol() {
   local protocol public_ip link_json outbound_json
+  local address_label
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
   public_ip=${1:-$(get_public_ip)}
+  if [[ "${public_ip}" == *:* ]]; then
+    address_label="IPv6"
+  elif [[ "${public_ip}" == *.* ]]; then
+    address_label="IPv4"
+  else
+    address_label=""
+  fi
 
   case "${protocol}" in
     vless-reality)
-      link_json=$(jq -n --arg vless "$(build_vless_link "${public_ip}")" '{"vless": $vless}')
+      link_json=$(jq -n --arg vless "$(build_vless_link "${public_ip}" "${address_label}")" '{"vless": $vless}')
       ;;
     mixed)
       link_json=$(jq -n \
@@ -5584,7 +5627,7 @@ agent_link_json_for_current_protocol() {
         '{"http": $http, "socks5": $socks5}')
       ;;
     hy2)
-      link_json=$(jq -n --arg hy2 "$(build_hy2_link "${public_ip}")" '{"hy2": $hy2}')
+      link_json=$(jq -n --arg hy2 "$(build_hy2_link "${public_ip}" "${address_label}")" '{"hy2": $hy2}')
       ;;
     anytls)
       outbound_json=$(build_anytls_outbound_example "${public_ip}")
