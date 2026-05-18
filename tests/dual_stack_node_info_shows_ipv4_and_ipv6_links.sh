@@ -52,13 +52,18 @@ detect_host_ip_stack() {
 
 output=$(show_connection_details_for_detected_addresses "link" 2>&1)
 
-if [[ "${output}" != *"IPv4 地址"* ]]; then
-  printf 'expected IPv4 node info label in dual-stack output, got:\n%s\n' "${output}" >&2
+if [[ "${output}" != *"连接链接 IPv4："* ]]; then
+  printf 'expected IPv4 connection link section in dual-stack output, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
-if [[ "${output}" != *"IPv6 地址"* ]]; then
-  printf 'expected IPv6 node info label in dual-stack output, got:\n%s\n' "${output}" >&2
+if [[ "${output}" != *"连接链接 IPv6："* ]]; then
+  printf 'expected IPv6 connection link section in dual-stack output, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${output}" == *"IPv4 地址"* || "${output}" == *"IPv6 地址"* ]]; then
+  printf 'expected dual-stack output to omit standalone IP address sections, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 

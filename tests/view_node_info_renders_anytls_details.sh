@@ -35,6 +35,18 @@ get_public_ip() {
   printf '203.0.113.10\n'
 }
 
+get_public_ipv4() {
+  printf '203.0.113.10\n'
+}
+
+get_public_ipv6() {
+  printf '2001:db8::10\n'
+}
+
+detect_host_ip_stack() {
+  printf 'dual\n'
+}
+
 cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
 INSTALLED_PROTOCOLS=anytls
 PROTOCOL_STATE_VERSION=1
@@ -59,11 +71,12 @@ KEY_PATH=/etc/ssl/private/anytls.key
 EOF
 
 load_protocol_state "anytls"
-show_connection_details "link" "203.0.113.10" > "${OUTPUT_FILE}"
+SB_INBOUND_STACK_MODE="dual_stack"
+show_connection_details_for_detected_addresses "link" > "${OUTPUT_FILE}"
 output=$(cat "${OUTPUT_FILE}")
 
-if [[ "${output}" != *"AnyTLS 参数摘要"* ]]; then
-  printf 'expected anytls summary in output, got:\n%s\n' "${output}" >&2
+if [[ "${output}" == *"AnyTLS 参数摘要"* ]]; then
+  printf 'expected anytls connection info to omit parameter summary, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
@@ -74,5 +87,10 @@ fi
 
 if [[ "${output}" != *'"server": "anytls.example.com"'* ]]; then
   printf 'expected anytls outbound JSON to use domain, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${output}" == *"连接链接 IPv4："* || "${output}" == *"连接链接 IPv6："* ]]; then
+  printf 'expected anytls connection info to render one domain-based JSON example instead of IP sections, got:\n%s\n' "${output}" >&2
   exit 1
 fi

@@ -33,6 +33,7 @@ QRENCODE_COUNT_FILE="${TMP_DIR}/qrencode.count"
 printf '0\n' > "${QRENCODE_COUNT_FILE}"
 
 SB_PROTOCOL="hy2"
+SB_INBOUND_STACK_MODE="dual_stack"
 SB_NODE_NAME="hy2_test-host"
 SB_PORT="8443"
 SB_HY2_DOMAIN="hy2.example.com"
@@ -51,20 +52,37 @@ qrencode() {
   printf '%s\n' "$((current_count + 1))" > "${QRENCODE_COUNT_FILE}"
 }
 
-output=$(show_connection_details "both" "203.0.113.10" 2>&1)
+get_public_ipv4() {
+  printf '203.0.113.10\n'
+}
+
+get_public_ipv6() {
+  printf '2001:db8::10\n'
+}
+
+detect_host_ip_stack() {
+  printf 'dual\n'
+}
+
+output=$(show_connection_details_for_detected_addresses "both" 2>&1)
 
 if [[ "${output}" != *"Hysteria2 协议链接"* ]]; then
   printf 'expected hy2 link title in output, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
-if [[ "${output}" != *"域名: hy2.example.com"* ]]; then
-  printf 'expected hy2 summary to include domain, got:\n%s\n' "${output}" >&2
+if [[ "${output}" == *"Hysteria2 参数摘要"* || "${output}" == *"域名: hy2.example.com"* ]]; then
+  printf 'expected hy2 connection info to omit parameter summary, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
-if [[ "${output}" != *"hy2://"* ]]; then
-  printf 'expected hy2 share link in output, got:\n%s\n' "${output}" >&2
+if [[ "${output}" != *"hy2://hy2-password@hy2.example.com:8443"* ]]; then
+  printf 'expected hy2 share link to use configured domain, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${output}" == *"连接链接 IPv4："* || "${output}" == *"连接链接 IPv6："* ]]; then
+  printf 'expected hy2 connection info to render one domain-based link instead of IP sections, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 

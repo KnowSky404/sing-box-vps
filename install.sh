@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026051804
+# Version: 2026051805
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026051804"
+readonly SCRIPT_VERSION="2026051805"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -4952,32 +4952,6 @@ build_client_outbound_json_for_protocol() {
   printf '%s\n' "${outbound_json}"
 }
 
-show_hy2_connection_summary() {
-  echo -e "\n${YELLOW}Hysteria2 参数摘要：${NC}"
-  echo "域名: ${SB_HY2_DOMAIN}"
-  echo "端口: ${SB_PORT}"
-  echo "TLS 模式: ${SB_HY2_TLS_MODE}"
-  echo "伪装: ${SB_HY2_MASQUERADE:-未配置}"
-  if [[ "${SB_HY2_OBFS_ENABLED}" == "y" ]]; then
-    echo "混淆: ${SB_HY2_OBFS_TYPE:-salamander}"
-  else
-    echo "混淆: 未启用"
-  fi
-  if [[ -n "${SB_HY2_UP_MBPS}" && -n "${SB_HY2_DOWN_MBPS}" ]]; then
-    echo "带宽: ${SB_HY2_UP_MBPS} / ${SB_HY2_DOWN_MBPS} Mbps"
-  else
-    echo "带宽: 不限制（由客户端协商）"
-  fi
-}
-
-show_anytls_connection_summary() {
-  echo -e "\n${YELLOW}AnyTLS 参数摘要：${NC}"
-  echo "域名: ${SB_ANYTLS_DOMAIN}"
-  echo "端口: ${SB_PORT}"
-  echo "用户名标识: ${SB_ANYTLS_USER_NAME}"
-  echo "TLS 模式: ${SB_ANYTLS_TLS_MODE}"
-}
-
 display_status_summary() {
   local public_ip protocol_name
   public_ip=${1:-$(get_public_ip)}
@@ -5000,8 +4974,14 @@ display_status_summary() {
 
 show_link_info() {
   local public_ip=$1
+  local address_label=${2:-}
 
-  echo -e "\n${YELLOW}连接链接：${NC}"
+  if [[ -n "${address_label}" ]]; then
+    echo -e "\n${YELLOW}连接链接 ${address_label}：${NC}"
+  else
+    echo -e "\n${YELLOW}连接链接：${NC}"
+  fi
+
   if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
     echo "1. REALITY 协议链接"
     build_vless_link "${public_ip}"
@@ -5036,8 +5016,14 @@ show_link_info() {
 
 show_qr_info() {
   local public_ip=$1
+  local address_label=${2:-}
 
-  echo -e "\n${YELLOW}连接二维码：${NC}"
+  if [[ -n "${address_label}" ]]; then
+    echo -e "\n${YELLOW}连接二维码 ${address_label}：${NC}"
+  else
+    echo -e "\n${YELLOW}连接二维码：${NC}"
+  fi
+
   if [[ "${SB_PROTOCOL}" == "mixed" ]]; then
     log_info "Mixed 协议当前不提供二维码，请使用链接方式手动配置客户端。"
     return 0
@@ -5066,23 +5052,18 @@ show_qr_info() {
 show_connection_details() {
   local mode=$1
   local public_ip=${2:-$(get_public_ip)}
-
-  if [[ "${SB_PROTOCOL}" == "hy2" ]]; then
-    show_hy2_connection_summary
-  elif [[ "${SB_PROTOCOL}" == "anytls" ]]; then
-    show_anytls_connection_summary
-  fi
+  local address_label=${3:-}
 
   case "${mode}" in
     link)
-      show_link_info "${public_ip}"
+      show_link_info "${public_ip}" "${address_label}"
       ;;
     qr)
-      show_qr_info "${public_ip}"
+      show_qr_info "${public_ip}" "${address_label}"
       ;;
     both)
-      show_link_info "${public_ip}"
-      show_qr_info "${public_ip}"
+      show_link_info "${public_ip}" "${address_label}"
+      show_qr_info "${public_ip}" "${address_label}"
       ;;
     *)
       log_warn "未知的连接信息展示模式: ${mode}"
@@ -5099,17 +5080,17 @@ list_public_addresses_for_current_stack() {
   case "${SB_INBOUND_STACK_MODE}" in
     ipv4_only)
       ipv4_address=$(get_public_ipv4)
-      [[ -n "${ipv4_address}" ]] && printf 'IPv4 地址|%s\n' "${ipv4_address}"
+      [[ -n "${ipv4_address}" ]] && printf 'IPv4|%s\n' "${ipv4_address}"
       ;;
     ipv6_only)
       ipv6_address=$(get_public_ipv6)
-      [[ -n "${ipv6_address}" ]] && printf 'IPv6 地址|%s\n' "${ipv6_address}"
+      [[ -n "${ipv6_address}" ]] && printf 'IPv6|%s\n' "${ipv6_address}"
       ;;
     *)
       ipv4_address=$(get_public_ipv4)
       ipv6_address=$(get_public_ipv6)
-      [[ -n "${ipv4_address}" ]] && printf 'IPv4 地址|%s\n' "${ipv4_address}"
-      [[ -n "${ipv6_address}" ]] && printf 'IPv6 地址|%s\n' "${ipv6_address}"
+      [[ -n "${ipv4_address}" ]] && printf 'IPv4|%s\n' "${ipv4_address}"
+      [[ -n "${ipv6_address}" ]] && printf 'IPv6|%s\n' "${ipv6_address}"
       ;;
   esac
 
@@ -5119,10 +5100,22 @@ list_public_addresses_for_current_stack() {
   fi
 }
 
+protocol_uses_domain_connection_material() {
+  case "$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)" in
+    hy2|anytls) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 show_connection_details_for_detected_addresses() {
   local mode=$1
   local address_entries=()
   local entry label address
+
+  if protocol_uses_domain_connection_material; then
+    show_connection_details "${mode}" "$(get_public_ip)"
+    return 0
+  fi
 
   mapfile -t address_entries < <(list_public_addresses_for_current_stack)
 
@@ -5134,8 +5127,7 @@ show_connection_details_for_detected_addresses() {
   for entry in "${address_entries[@]}"; do
     label=${entry%%|*}
     address=${entry#*|}
-    echo -e "\n${BLUE}${label}:${NC} ${address}"
-    show_connection_details "${mode}" "${address}"
+    show_connection_details "${mode}" "${address}" "${label}"
   done
 }
 
@@ -5164,16 +5156,9 @@ show_all_connection_details() {
 }
 
 show_connection_info_menu() {
-  local public_ip
-  public_ip=$(get_public_ip)
-
   while true; do
     echo
     render_left_aligned_page_header "节点信息查看" "按当前配置展示客户端连接信息"
-    render_section_title "信息摘要"
-    render_summary_item "当前协议" "$(protocol_display_name "${SB_PROTOCOL}")"
-    render_summary_item "当前端口" "${SB_PORT}"
-    render_summary_item "当前出口地址" "${public_ip:-未检测到}"
     render_menu_group_start "展示方式"
     render_menu_item "1" "仅链接"
     render_menu_item "2" "仅二维码"
@@ -5182,9 +5167,9 @@ show_connection_info_menu() {
     read -rp "请选择 [0-3]: " info_choice
 
     case "${info_choice}" in
-      1) show_all_connection_details "link" "${public_ip}" ;;
-      2) show_all_connection_details "qr" "${public_ip}" ;;
-      3) show_all_connection_details "both" "${public_ip}" ;;
+      1) show_all_connection_details "link" ;;
+      2) show_all_connection_details "qr" ;;
+      3) show_all_connection_details "both" ;;
       0) return ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac
