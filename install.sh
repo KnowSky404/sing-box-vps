@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026051806
+# Version: 2026051807
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026051806"
+readonly SCRIPT_VERSION="2026051807"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -281,6 +281,27 @@ normalize_singbox_version_input() {
   fi
 
   return 1
+}
+
+print_cli_help() {
+  cat <<'EOF'
+用法:
+  sbv
+  sbv --help
+  sbv update sbv
+  sbv update sing-box [latest|x.y.z]
+  sbv update-sbv
+  sbv update-sing-box [latest|x.y.z]
+  sbv agent help
+  sbv uninstall
+
+说明:
+  不带参数时打开交互式管理菜单。
+  update sbv                 更新管理脚本 /usr/local/bin/sbv。
+  update sing-box            更新 sing-box 二进制并保留现有配置。
+  update-sing-box [version]  update sing-box 的短别名，版本可为 latest 或 x.y.z。
+  agent                      输出适合自动化读取的 JSON 状态、节点和导出配置。
+EOF
 }
 
 extract_generated_key_value() {
@@ -6564,7 +6585,9 @@ update_singbox_binary_preserving_config() {
   log_info "检测到现有安装，默认仅更新 sing-box 二进制并保留当前配置。"
   echo -e "当前版本: ${installed_ver}"
 
-  prompt_singbox_version
+  if [[ -z "${SB_VERSION:-}" ]]; then
+    prompt_singbox_version
+  fi
   get_latest_version
 
   if [[ "${SB_VERSION}" == "${installed_ver}" ]]; then
@@ -6589,6 +6612,34 @@ update_singbox_binary_preserving_config() {
   log_success "sing-box 已更新到 ${SB_VERSION}，当前配置已保留。"
   display_status_summary
   log_info "连接信息未自动展示，如需查看请进入菜单 10。"
+}
+
+cli_update_singbox() {
+  local version_arg=${1:-}
+  local normalized_version
+  local existing_instance_state
+
+  if ! normalized_version=$(normalize_singbox_version_input "${version_arg}"); then
+    log_warn "无效版本号: ${version_arg}。请输入 latest、${SB_SUPPORT_MAX_VERSION} 或完整版本号，例如 ${SB_SUPPORT_MAX_VERSION}。" >&2
+    return 1
+  fi
+
+  existing_instance_state=$(detect_existing_instance_state)
+  case "${existing_instance_state}" in
+    healthy)
+      ;;
+    incomplete)
+      log_warn "检测到残缺的 sing-box 实例；请先运行 sbv 交互菜单完成接管或修复后再更新。" >&2
+      return 1
+      ;;
+    *)
+      log_warn "未检测到已安装的 sing-box 实例；请先运行 sbv 完成安装。" >&2
+      return 1
+      ;;
+  esac
+
+  SB_VERSION="${normalized_version}"
+  update_singbox_binary_preserving_config
 }
 
 prompt_incomplete_instance_action() {
@@ -6694,10 +6745,46 @@ install_or_update_singbox() {
 main() {
   if [[ $# -gt 0 ]]; then
     case "$1" in
+      -h|--help|help)
+        print_cli_help
+        exit 0
+        ;;
       agent)
         shift
         check_root
         agent_cli "$@"
+        exit $?
+        ;;
+      update)
+        shift
+        case "${1:-}" in
+          sbv|script)
+            check_root
+            manual_update_script
+            exit 0
+            ;;
+          sing-box|singbox)
+            shift || true
+            check_root
+            cli_update_singbox "${1:-}"
+            exit $?
+            ;;
+          *)
+            log_warn "未知 update 子命令: ${1:-}" >&2
+            print_cli_help >&2
+            exit 1
+            ;;
+        esac
+        ;;
+      update-sbv|update-script)
+        check_root
+        manual_update_script
+        exit 0
+        ;;
+      update-sing-box|update-singbox)
+        shift
+        check_root
+        cli_update_singbox "${1:-}"
         exit $?
         ;;
       uninstall)

@@ -165,7 +165,16 @@ sing-box check -c /root/sing-box-vps/config.json
 systemctl status sing-box --no-pager
 ```
 
-Upgrade using the script's supported menu or update path. After upgrade:
+Upgrade using the script's supported menu or the non-interactive CLI:
+
+```bash
+sbv update sbv
+sbv update sing-box latest
+# or pin the core:
+sbv update sing-box 1.13.12
+```
+
+`sbv update sing-box [latest|x.y.z]` only updates a healthy managed instance. If the instance is incomplete or missing, enter the interactive `sbv` menu first to repair, take over, or install it. After upgrade:
 
 ```bash
 sing-box version
@@ -200,12 +209,16 @@ sbv agent status --json
 sbv agent nodes --json
 sbv agent links --json
 sbv agent export-client --json
+sbv update sbv
+sbv update sing-box latest
 ```
 
 - `status --json` is safe for routine diagnostics. It reports script version, supported sing-box version, installed sing-box version, service state, paths, and installed protocols.
 - `nodes --json` is safe for ordinary logs. It reports node names, ports, server names, and exportability without full share links or passwords.
 - `links --json` returns full connection material. Treat its output as sensitive and avoid pasting it into public logs.
 - `export-client --json` generates `/root/sing-box-vps/client/sing-box-client.json`, validates it with `sing-box check`, and returns the path plus config JSON. It writes the client export file but does not change the running server config or restart services.
+- `update sbv` updates `/usr/local/bin/sbv` from the project main branch.
+- `update sing-box [latest|x.y.z]` updates the sing-box binary, preserves the current server config, validates it with `sing-box check`, and restarts the service only after validation passes. The aliases are `sbv update-sbv` and `sbv update-sing-box [latest|x.y.z]`.
 
 Common paths:
 

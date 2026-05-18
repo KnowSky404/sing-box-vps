@@ -81,12 +81,17 @@ sbv agent status --json
 sbv agent nodes --json
 sbv agent links --json
 sbv agent export-client --json
+sbv update sbv
+sbv update sing-box latest
 ```
 
 - Use `status --json` for version, service, path, and installed protocol diagnostics.
 - Use `nodes --json` for log-safe node summaries. It intentionally omits full links and passwords.
 - Use `links --json` only in trusted contexts; it returns full connection material.
 - Use `export-client --json` to generate and validate the sing-box bare-core client config. It writes the client export file but does not mutate the running server config or restart service.
+- Use `update sbv` to refresh `/usr/local/bin/sbv`; alias: `sbv update-sbv`.
+- Use `update sing-box [latest|x.y.z]` to update a healthy managed sing-box instance non-interactively. It preserves config, runs `sing-box check`, and restarts only after validation passes. Alias: `sbv update-sing-box [latest|x.y.z]`.
+- If `update sing-box` reports an incomplete or missing instance, switch to the interactive `sbv` menu for repair, takeover, or fresh install.
 
 ## Repository Rules
 

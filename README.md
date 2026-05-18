@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026051806`
+- 脚本版本：`2026051807`
 - sing-box 适配版本：`1.13.12`
 
 ## 🚀 一键安装
@@ -76,7 +76,7 @@ sbv
 
 ## ✨ 项目特性
 
-- **Agent 友好命令行**：提供 `sbv agent ... --json` 非交互命令，方便 Hermes、OpenClaw、Codex 等 AI Agent 获取状态、节点摘要、完整连接信息与 sing-box 裸核客户端配置。
+- **Agent 友好命令行**：提供 `sbv agent ... --json` 非交互命令，方便 Hermes、OpenClaw、Codex 等 AI Agent 获取状态、节点摘要、完整连接信息与 sing-box 裸核客户端配置；同时支持通过 CLI 更新 `sbv` 管理脚本和 `sing-box` 二进制。
 - **1.13.x 深度适配**：全面采用最新的 **Endpoint (端点化)** 架构，确保 WireGuard 及路由规则的最高效性能与稳定性。
 - **多协议支持**：支持 **VLESS + REALITY**、**Mixed (HTTP/HTTPS/SOCKS)**、**Hysteria2** 与 **AnyTLS** 四种入站模式，并支持多协议同时安装。
 - **Cloudflare Warp 集成**：支持一键开启/关闭 Warp 出站，自动注册免费账户，完美解决 VPS **“送中”** 问题并解锁 Netflix/Disney+ 等流媒体。
@@ -101,12 +101,17 @@ sbv agent status --json
 sbv agent nodes --json
 sbv agent links --json
 sbv agent export-client --json
+sbv update sbv
+sbv update sing-box latest
+sbv update sing-box 1.13.12
 ```
 
 - `status`：输出脚本版本、sing-box 版本、服务状态、配置路径和已安装协议。
 - `nodes`：输出节点摘要，不包含完整分享链接或密码，适合写入普通诊断日志。
 - `links`：输出完整连接材料，包括 VLESS/Hysteria2 分享链接、Mixed HTTP/SOCKS 链接，以及 AnyTLS outbound JSON；仅在受信任上下文使用。
 - `export-client`：生成并通过 `sing-box check` 校验裸核客户端配置，写入 `/root/sing-box-vps/client/sing-box-client.json`，同时以 JSON 返回路径和配置内容。
+- `update sbv`：从 GitHub 更新 `/usr/local/bin/sbv` 管理脚本；别名为 `sbv update-sbv`。
+- `update sing-box [latest|x.y.z]`：非交互更新 sing-box 二进制并保留现有配置，更新后会执行 `sing-box check`，通过后才重启服务；别名为 `sbv update-sing-box [latest|x.y.z]`。
 
 ## 🛠️ 功能菜单
 
