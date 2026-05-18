@@ -1,6 +1,6 @@
 ---
 name: sing-box-vps-operator
-description: Operate and maintain the sing-box-vps project and VPS deployments. Use when installing or upgrading sing-box-vps, running local or remote verification, operating test VPS host sing-box-test, preparing production operations for sing-box-prod, troubleshooting sbv or sing-box service issues, modifying repository scripts or docs, validating sing-box configs, or creating rollback/recovery steps for this project.
+description: Use when installing or upgrading sing-box-vps, running local or remote verification, operating sing-box-test or sing-box-prod, troubleshooting sbv or sing-box service issues, retrieving node info for AI agents, modifying repository scripts or docs, validating sing-box configs, or creating rollback/recovery steps for this project.
 ---
 
 # sing-box-vps Operator
@@ -71,6 +71,22 @@ No production-changing commands will be executed until approved.
 - Run `bash dev/verification/run.sh` when changes touch `install.sh`, `uninstall.sh`, `configs/`, `utils/`, or `dev/verification/`.
 - Prefer `dev/verification-target.env` for remote verification.
 - Use `sing-box-test` for test validation and `sing-box-prod` only after the production gate.
+
+## Agent-Friendly CLI
+
+Prefer non-interactive JSON commands for AI automation:
+
+```bash
+sbv agent status --json
+sbv agent nodes --json
+sbv agent links --json
+sbv agent export-client --json
+```
+
+- Use `status --json` for version, service, path, and installed protocol diagnostics.
+- Use `nodes --json` for log-safe node summaries. It intentionally omits full links and passwords.
+- Use `links --json` only in trusted contexts; it returns full connection material.
+- Use `export-client --json` to generate and validate the sing-box bare-core client config. It writes the client export file but does not mutate the running server config or restart service.
 
 ## Repository Rules
 

@@ -20,6 +20,12 @@ Key runtime paths:
 - /usr/local/bin/sbv
 - systemd service: sing-box
 
+Agent CLI:
+- sbv agent status --json: service, version, paths, installed protocols.
+- sbv agent nodes --json: log-safe node summaries without full links or passwords.
+- sbv agent links --json: full connection material; treat output as sensitive.
+- sbv agent export-client --json: generate and validate /root/sing-box-vps/client/sing-box-client.json without changing the running server config.
+
 SSH aliases:
 - sing-box-test: test VPS for validation.
 - sing-box-prod: production VPS. Production-changing commands require a plan and explicit approval first.
@@ -37,8 +43,9 @@ Common task routing:
 - Upgrade existing VPS: read docs/agents/sing-box-vps-agent-runbook.md, then prepare a production operation plan for sing-box-prod.
 - Test remote verification: read dev/verification/run.sh, configs/verification-target.env.example, and AGENTS.md.
 - Production troubleshooting: use read-only checks first, then prepare a production operation plan for changes.
+- AI agent node info retrieval: prefer sbv agent nodes --json for summaries and sbv agent links --json only in trusted contexts.
 - Repository maintenance: read AGENTS.md, affected scripts, and run verification as required.
 - sing-box config syntax or migration: use Context7 first; fall back to official sing-box docs or repository only when needed.
 
 Search keywords:
-install, upgrade, production, test VPS, remote verification, rollback, recovery, sbv, sing-box check, sing-box-prod, sing-box-test, dev/verification/run.sh, config.json, protocols, Warp, VLESS REALITY, Hysteria2, AnyTLS, Mixed proxy, systemctl sing-box.
+install, upgrade, production, test VPS, remote verification, rollback, recovery, sbv agent, node info, connection links, sing-box check, sing-box-prod, sing-box-test, dev/verification/run.sh, config.json, protocols, Warp, VLESS REALITY, Hysteria2, AnyTLS, Mixed proxy, systemctl sing-box.
