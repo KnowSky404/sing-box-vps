@@ -22,7 +22,9 @@ check_config_valid() { :; }
 validate_config_file() { :; }
 setup_service() { :; }
 open_all_protocol_ports() { :; }
-display_status_summary() { :; }
+display_status_summary() {
+  printf 'unexpected status summary after protocol removal\n'
+}
 systemctl() { :; }
 load_current_config_state() {
   SB_PROTOCOL="vless+reality"
@@ -113,6 +115,17 @@ fi
 
 if [[ "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" != "1" ]]; then
   printf 'expected remove flow to regenerate config exactly once, got %s\n' "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" >&2
+  exit 1
+fi
+
+REMOVE_PLAIN_OUTPUT=$(strip_ansi "${REMOVE_OUTPUT}")
+if [[ "${REMOVE_PLAIN_OUTPUT}" == *"unexpected status summary after protocol removal"* ]]; then
+  printf 'expected remove flow not to display service summary, got:\n%s\n' "${REMOVE_OUTPUT}" >&2
+  exit 1
+fi
+
+if [[ "${REMOVE_PLAIN_OUTPUT}" == *"连接信息未自动展示"* ]]; then
+  printf 'expected remove flow not to display connection info hint, got:\n%s\n' "${REMOVE_OUTPUT}" >&2
   exit 1
 fi
 

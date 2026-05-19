@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026051807
+# Version: 2026051901
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026051807"
+readonly SCRIPT_VERSION="2026051901"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -4497,8 +4497,6 @@ remove_protocol_menu() {
   open_all_protocol_ports
   systemctl restart sing-box
   log_success "已移除协议: ${selected_display}。原状态已备份到: ${backup_state_file}"
-  display_status_summary
-  log_info "连接信息未自动展示，如需查看请进入菜单 10。"
 }
 
 get_public_ip() {
