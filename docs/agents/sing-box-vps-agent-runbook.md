@@ -196,6 +196,8 @@ Useful read-only checks:
 sbv
 sbv agent status --json
 sbv agent nodes --json
+sbv agent check --json
+sbv agent doctor --json
 systemctl status sing-box --no-pager
 journalctl -u sing-box --no-pager -n 200
 sing-box check -c /root/sing-box-vps/config.json
@@ -209,6 +211,10 @@ sbv agent status --json
 sbv agent nodes --json
 sbv agent links --json
 sbv agent export-client --json
+sbv agent check --json
+sbv agent doctor --json
+sbv agent service restart --json --yes
+sbv agent subman-sync --json
 sbv update sbv
 sbv update sing-box latest
 ```
@@ -217,6 +223,10 @@ sbv update sing-box latest
 - `nodes --json` is safe for ordinary logs. It reports node names, ports, server names, and exportability without full share links or passwords.
 - `links --json` returns full connection material. Treat its output as sensitive and avoid pasting it into public logs.
 - `export-client --json` generates `/root/sing-box-vps/client/sing-box-client.json`, validates it with `sing-box check`, and returns the path plus config JSON. It writes the client export file but does not change the running server config or restart services.
+- `check --json` validates the server config with `sing-box check` and returns stdout, stderr, exit code, and pass/fail state.
+- `doctor --json` is read-only. It returns status, path existence checks, protocol state, and embedded config-check output for first-pass agent diagnostics.
+- `service restart --json --yes` is a guarded mutation. It validates config first and skips restart when validation fails.
+- `subman-sync --json` pushes nodes to SubMan without prompting. Missing SubMan config is reported as structured JSON.
 - `update sbv` updates `/usr/local/bin/sbv` from the project main branch.
 - `update sing-box [latest|x.y.z]` updates the sing-box binary, preserves the current server config, validates it with `sing-box check`, and restarts the service only after validation passes. The aliases are `sbv update-sbv` and `sbv update-sing-box [latest|x.y.z]`.
 

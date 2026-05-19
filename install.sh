@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026051901
+# Version: 2026051902
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026051901"
+readonly SCRIPT_VERSION="2026051902"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -5516,12 +5516,20 @@ agent_print_help() {
   sbv agent nodes --json
   sbv agent links --json
   sbv agent export-client --json
+  sbv agent check --json
+  sbv agent doctor --json
+  sbv agent service restart --json --yes
+  sbv agent subman-sync --json
 
 说明:
   status        输出服务、版本、路径和已安装协议。
   nodes         输出节点摘要，不包含完整分享链接或密码。
   links         输出完整连接材料，适合受信任 Agent 获取节点信息。
   export-client 生成并校验 sing-box 裸核客户端配置，写入固定路径并输出 JSON。
+  check         执行 sing-box check 并输出结构化结果。
+  doctor        输出只读诊断信息和配置校验结果。
+  service       执行带 --yes 保护的服务操作，目前支持 restart。
+  subman-sync   非交互推送节点到 SubMan，缺少配置时返回结构化错误。
 EOF
 }
 
@@ -5530,6 +5538,45 @@ agent_require_json_flag() {
     log_warn "agent 子命令当前仅支持 --json 输出。" >&2
     return 1
   fi
+}
+
+agent_json_error() {
+  local error=$1
+  local message=$2
+
+  jq -n \
+    --arg error "${error}" \
+    --arg message "${message}" \
+    '{ok: false, error: $error, message: $message}'
+}
+
+agent_singbox_check_json() {
+  local stdout_file stderr_file exit_code
+
+  stdout_file=$(mktemp)
+  stderr_file=$(mktemp)
+
+  if "${SINGBOX_BIN_PATH}" check -c "${SINGBOX_CONFIG_FILE}" > "${stdout_file}" 2> "${stderr_file}"; then
+    exit_code=0
+  else
+    exit_code=$?
+  fi
+
+  jq -n \
+    --arg config_file "${SINGBOX_CONFIG_FILE}" \
+    --arg stdout "$(cat "${stdout_file}")" \
+    --arg stderr "$(cat "${stderr_file}")" \
+    --argjson exit_code "${exit_code}" \
+    '{
+      ok: ($exit_code == 0),
+      exit_code: $exit_code,
+      config_file: $config_file,
+      stdout: $stdout,
+      stderr: $stderr
+    }'
+
+  rm -f "${stdout_file}" "${stderr_file}"
+  return "${exit_code}"
 }
 
 agent_installed_protocols_json() {
@@ -5571,6 +5618,45 @@ agent_status_json() {
         "client_export": $client_export_path
       },
       "protocols": $protocols
+    }'
+}
+
+agent_doctor_json() {
+  local status_json check_json check_status
+  local config_exists index_exists state_dir_exists service_file_exists
+
+  check_status=0
+  config_exists=false
+  index_exists=false
+  state_dir_exists=false
+  service_file_exists=false
+
+  [[ -f "${SINGBOX_CONFIG_FILE}" ]] && config_exists=true
+  [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]] && index_exists=true
+  [[ -d "${SB_PROTOCOL_STATE_DIR}" ]] && state_dir_exists=true
+  [[ -f "${SINGBOX_SERVICE_FILE}" ]] && service_file_exists=true
+
+  status_json=$(agent_status_json)
+  check_json=$(agent_singbox_check_json) || check_status=$?
+
+  jq -n \
+    --argjson status "${status_json}" \
+    --argjson check "${check_json}" \
+    --argjson config_exists "${config_exists}" \
+    --argjson index_exists "${index_exists}" \
+    --argjson state_dir_exists "${state_dir_exists}" \
+    --argjson service_file_exists "${service_file_exists}" \
+    --argjson check_status "${check_status}" \
+    '{
+      status: $status,
+      diagnostics: {
+        config_file_exists: $config_exists,
+        protocol_index_exists: $index_exists,
+        protocol_state_dir_exists: $state_dir_exists,
+        service_file_exists: $service_file_exists,
+        check_exit_code: $check_status,
+        check: $check
+      }
     }'
 }
 
@@ -5749,6 +5835,167 @@ agent_export_client_json() {
     }'
 }
 
+agent_service_cli() {
+  local command=${1:-}
+  local json_flag=${2:-}
+  local yes_flag=${3:-}
+  local before_state after_state check_json
+
+  if [[ "${command}" != "restart" ]]; then
+    agent_json_error "unknown_service_command" "未知 service 子命令: ${command}"
+    return 1
+  fi
+
+  agent_require_json_flag "${json_flag}" || return 1
+
+  if [[ "${yes_flag}" != "--yes" ]]; then
+    agent_json_error "confirmation_required" "service restart 需要 --yes 确认。"
+    return 1
+  fi
+
+  before_state=$(systemctl is-active sing-box 2>/dev/null || true)
+  if ! check_json=$(agent_singbox_check_json); then
+    after_state=$(systemctl is-active sing-box 2>/dev/null || true)
+    jq -n \
+      --arg before "${before_state:-unknown}" \
+      --arg after "${after_state:-unknown}" \
+      --argjson check "${check_json}" \
+      '{
+        ok: false,
+        action: "service_restart",
+        skipped: true,
+        reason: "config_check_failed",
+        service: {
+          before: $before,
+          after: $after
+        },
+        check: $check
+      }'
+    return 1
+  fi
+
+  systemctl restart sing-box
+  after_state=$(systemctl is-active sing-box 2>/dev/null || true)
+  jq -n \
+    --arg before "${before_state:-unknown}" \
+    --arg after "${after_state:-unknown}" \
+    --argjson check "${check_json}" \
+    '{
+      ok: true,
+      action: "service_restart",
+      service: {
+        before: $before,
+        after: $after
+      },
+      check: $check
+    }'
+}
+
+agent_push_nodes_to_subman_json() {
+  local public_ip original_protocol_state protocol external_key payload_json
+  local synced_count skipped_count failed_count ok_json
+  local installed_protocols=()
+
+  public_ip=$(get_public_ip)
+  if [[ -z "${public_ip}" ]]; then
+    agent_json_error "public_ip_unavailable" "未获取到公网 IP，无法生成 SubMan 节点链接。"
+    return 1
+  fi
+
+  original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
+  synced_count=0
+  skipped_count=0
+  failed_count=0
+
+  mapfile -t installed_protocols < <(list_installed_protocols)
+  if [[ ${#installed_protocols[@]} -eq 0 ]]; then
+    jq -n '{ok: false, synced: 0, skipped: 0, failed: 0, error: "no_installed_protocols"}'
+    return 1
+  fi
+
+  for protocol in "${installed_protocols[@]}"; do
+    protocol=$(normalize_protocol_id "${protocol}" 2>/dev/null || true)
+    if [[ -z "${protocol}" ]]; then
+      skipped_count=$((skipped_count + 1))
+      continue
+    fi
+
+    if ! subman_type_for_protocol "${protocol}" >/dev/null; then
+      skipped_count=$((skipped_count + 1))
+      continue
+    fi
+
+    if ! protocol_state_exists "${protocol}"; then
+      skipped_count=$((skipped_count + 1))
+      continue
+    fi
+
+    if ! load_protocol_state "${protocol}"; then
+      failed_count=$((failed_count + 1))
+      continue
+    fi
+
+    if ! external_key=$(subman_external_key_for_protocol "${protocol}"); then
+      failed_count=$((failed_count + 1))
+      continue
+    fi
+
+    if ! payload_json=$(build_subman_node_payload "${protocol}" "${public_ip}"); then
+      failed_count=$((failed_count + 1))
+      continue
+    fi
+
+    if push_subman_node "${external_key}" "${payload_json}" >/dev/null; then
+      synced_count=$((synced_count + 1))
+    else
+      failed_count=$((failed_count + 1))
+    fi
+  done
+
+  if [[ -n "${original_protocol_state}" ]] && protocol_state_exists "${original_protocol_state}"; then
+    load_protocol_state "${original_protocol_state}"
+  fi
+
+  ok_json=false
+  if (( synced_count > 0 && failed_count == 0 )); then
+    ok_json=true
+  fi
+
+  jq -n \
+    --argjson ok "${ok_json}" \
+    --argjson synced "${synced_count}" \
+    --argjson skipped "${skipped_count}" \
+    --argjson failed "${failed_count}" \
+    '{
+      ok: $ok,
+      synced: $synced,
+      skipped: $skipped,
+      failed: $failed
+    }'
+
+  if [[ "${ok_json}" != "true" ]]; then
+    return 1
+  fi
+}
+
+agent_subman_sync_json() {
+  local config_file
+
+  config_file=$(subman_config_file_path)
+  if [[ ! -f "${config_file}" ]]; then
+    agent_json_error "subman_config_missing" "未找到 SubMan 配置，请先在交互菜单中配置 SubMan。"
+    return 1
+  fi
+
+  load_subman_config
+  if [[ -z "${SUBMAN_API_URL}" || -z "${SUBMAN_API_TOKEN}" ]]; then
+    agent_json_error "subman_config_missing" "SubMan API URL 或 Token 为空。"
+    return 1
+  fi
+
+  agent_push_nodes_to_subman_json
+}
+
 agent_cli() {
   local command=${1:-help}
   shift || true
@@ -5772,6 +6019,21 @@ agent_cli() {
     export-client)
       agent_require_json_flag "${1:-}" || return 1
       agent_export_client_json
+      ;;
+    check)
+      agent_require_json_flag "${1:-}" || return 1
+      agent_singbox_check_json
+      ;;
+    doctor)
+      agent_require_json_flag "${1:-}" || return 1
+      agent_doctor_json
+      ;;
+    service)
+      agent_service_cli "$@"
+      ;;
+    subman-sync)
+      agent_require_json_flag "${1:-}" || return 1
+      agent_subman_sync_json
       ;;
     *)
       log_warn "未知 agent 子命令: ${command}" >&2

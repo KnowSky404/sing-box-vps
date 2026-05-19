@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026051901`
+- 脚本版本：`2026051902`
 - sing-box 适配版本：`1.13.12`
 
 ## 🚀 一键安装
@@ -101,6 +101,10 @@ sbv agent status --json
 sbv agent nodes --json
 sbv agent links --json
 sbv agent export-client --json
+sbv agent check --json
+sbv agent doctor --json
+sbv agent service restart --json --yes
+sbv agent subman-sync --json
 sbv update sbv
 sbv update sing-box latest
 sbv update sing-box 1.13.12
@@ -110,6 +114,10 @@ sbv update sing-box 1.13.12
 - `nodes`：输出节点摘要，不包含完整分享链接或密码，适合写入普通诊断日志。
 - `links`：输出完整连接材料，包括 VLESS/Hysteria2 分享链接、Mixed HTTP/SOCKS 链接，以及 AnyTLS outbound JSON；仅在受信任上下文使用。
 - `export-client`：生成并通过 `sing-box check` 校验裸核客户端配置，写入 `/root/sing-box-vps/client/sing-box-client.json`，同时以 JSON 返回路径和配置内容。
+- `check`：执行 `sing-box check` 校验服务端配置，并返回 stdout、stderr、退出码和是否通过。
+- `doctor`：输出只读诊断报告，包含服务状态、路径存在性、协议状态和嵌入的配置校验结果。
+- `service restart`：必须显式传入 `--yes`，先校验配置，通过后才重启服务，并返回重启前后的服务状态。
+- `subman-sync`：非交互推送节点到 SubMan；配置缺失时返回结构化错误，不进入交互提示。
 - `update sbv`：从 GitHub 更新 `/usr/local/bin/sbv` 管理脚本；别名为 `sbv update-sbv`。
 - `update sing-box [latest|x.y.z]`：非交互更新 sing-box 二进制并保留现有配置，更新后会执行 `sing-box check`，通过后才重启服务；别名为 `sbv update-sing-box [latest|x.y.z]`。
 
