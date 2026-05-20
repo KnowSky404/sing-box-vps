@@ -5083,6 +5083,43 @@ build_vless_link() {
     "${SB_UUID}" "${share_host}" "${SB_PORT}" "${SB_SNI}" "${SB_PUBLIC_KEY:-[密钥丢失，请更新配置]}" "${SB_SHORT_ID_1}" "${node_name}"
 }
 
+vless_reality_rate_limit_summary() {
+  local up_mbps=${1:-}
+  local down_mbps=${2:-}
+  local up_text down_text
+
+  if [[ -n "${up_mbps}" ]]; then
+    up_text="上行 ${up_mbps} Mbps"
+  else
+    up_text="上行不限"
+  fi
+
+  if [[ -n "${down_mbps}" ]]; then
+    down_text="下行 ${down_mbps} Mbps"
+  else
+    down_text="下行不限"
+  fi
+
+  printf '%s / %s' "${up_text}" "${down_text}"
+}
+
+build_vless_link_for_instance() {
+  local instance_id=$1
+  local public_ip=$2
+  local address_label=${3:-}
+  local link_output status=0
+
+  load_vless_reality_protocol_state
+  load_vless_reality_instance_state "${instance_id}" || return 1
+  link_output=$(build_vless_link "${public_ip}" "${address_label}") || status=$?
+  load_vless_reality_instance_state "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}" >/dev/null 2>&1 || true
+
+  if (( status != 0 )); then
+    return "${status}"
+  fi
+  printf '%s' "${link_output}"
+}
+
 build_mixed_http_link() {
   local public_ip=$1
   local share_host
@@ -5146,32 +5183,54 @@ subman_type_for_protocol() {
 }
 
 subman_external_key_for_protocol() {
-  local protocol prefix
+  local protocol prefix instance_id
   protocol=$(normalize_protocol_id "$1")
+  instance_id=${2:-}
   prefix=$(subman_node_prefix)
-  printf 'sing-box-vps:%s:%s' "${prefix}" "${protocol}"
+
+  if [[ "${protocol}" == "vless-reality" && -n "${instance_id}" && "${instance_id}" != "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}" ]]; then
+    printf 'sing-box-vps:%s:%s:%s' "${prefix}" "${protocol}" "${instance_id}"
+  else
+    printf 'sing-box-vps:%s:%s' "${prefix}" "${protocol}"
+  fi
 }
 
 build_subman_raw_for_protocol() {
-  local protocol public_ip address_label
+  local protocol public_ip address_label instance_id
   protocol=$(normalize_protocol_id "$1")
   public_ip=$2
   address_label=${3:-}
+  instance_id=${4:-}
 
   case "${protocol}" in
-    vless-reality) build_vless_link "${public_ip}" "${address_label}" ;;
+    vless-reality)
+      if [[ -n "${instance_id}" ]]; then
+        build_vless_link_for_instance "${instance_id}" "${public_ip}" "${address_label}"
+      else
+        build_vless_link "${public_ip}" "${address_label}"
+      fi
+      ;;
     hy2) build_hy2_link "${public_ip}" "${address_label}" ;;
     *) return 1 ;;
   esac
 }
 
 build_subman_node_payload() {
-  local protocol public_ip address_label node_type raw_link node_name prefix
+  local protocol public_ip address_label instance_id node_type raw_link node_name prefix
   protocol=$(normalize_protocol_id "$1")
   public_ip=$2
   address_label=${3:-}
+  instance_id=${4:-}
+  if [[ "${protocol}" == "vless-reality" && -n "${instance_id}" ]]; then
+    load_vless_reality_protocol_state
+    load_vless_reality_instance_state "${instance_id}" || return 1
+  fi
   node_type=$(subman_type_for_protocol "${protocol}") || return 1
-  raw_link=$(build_subman_raw_for_protocol "${protocol}" "${public_ip}" "${address_label}") || return 1
+  raw_link=$(build_subman_raw_for_protocol "${protocol}" "${public_ip}" "${address_label}" "${instance_id}") || return 1
+  if [[ "${protocol}" == "vless-reality" && -n "${instance_id}" ]]; then
+    load_vless_reality_protocol_state
+    load_vless_reality_instance_state "${instance_id}" || return 1
+  fi
   prefix=$(subman_node_prefix)
   node_name=$(trim_whitespace "$(node_name_for_network_stack "${SB_NODE_NAME:-}" "${address_label}")")
   [[ -z "${node_name}" ]] && node_name="${prefix} ${protocol}"
@@ -5189,6 +5248,30 @@ build_subman_node_payload() {
       "tags": ["sing-box-vps", $prefix],
       "source": "single"
     }'
+}
+
+push_subman_protocol_instance() {
+  local protocol=$1
+  local public_ip=$2
+  local instance_id=${3:-}
+  local quiet=${4:-n}
+  local external_key payload_json
+
+  if ! external_key=$(subman_external_key_for_protocol "${protocol}" "${instance_id}"); then
+    [[ "${quiet}" == "y" ]] || print_warn "生成 SubMan 外部键失败: ${protocol}"
+    return 1
+  fi
+
+  if ! payload_json=$(build_subman_node_payload "${protocol}" "${public_ip}" "" "${instance_id}"); then
+    [[ "${quiet}" == "y" ]] || print_warn "生成 SubMan 节点载荷失败: ${protocol}"
+    return 1
+  fi
+
+  if [[ "${quiet}" == "y" ]]; then
+    push_subman_node "${external_key}" "${payload_json}" >/dev/null
+  else
+    push_subman_node "${external_key}" "${payload_json}"
+  fi
 }
 
 push_subman_node() {
@@ -5290,9 +5373,10 @@ client_outbound_tag_for_protocol() {
 
 build_client_vless_reality_outbound() {
   local public_ip=${1:-$(get_public_ip)}
+  local outbound_tag=${2:-$(client_outbound_tag_for_protocol "vless-reality")}
 
   jq -n \
-    --arg tag "$(client_outbound_tag_for_protocol "vless-reality")" \
+    --arg tag "${outbound_tag}" \
     --arg server "${public_ip}" \
     --arg port "${SB_PORT}" \
     --arg uuid "${SB_UUID}" \
@@ -5320,6 +5404,100 @@ build_client_vless_reality_outbound() {
         }
       }
     }'
+}
+
+build_client_vless_reality_outbound_for_instance() {
+  local instance_id=$1
+  local public_ip=${2:-$(get_public_ip)}
+  local outbound_tag=${3:-}
+
+  load_vless_reality_protocol_state
+  load_vless_reality_instance_state "${instance_id}" || return 1
+  build_client_vless_reality_outbound "${public_ip}" "${outbound_tag:-$(client_outbound_tag_for_protocol "vless-reality")}"
+}
+
+vless_reality_client_tag_is_used() {
+  local candidate=$1
+  shift || true
+  local used
+
+  for used in "$@"; do
+    [[ "${used}" == "${candidate}" ]] && return 0
+  done
+
+  return 1
+}
+
+unique_vless_reality_client_tag() {
+  local base_tag=$1
+  local instance_id=$2
+  local port=$3
+  shift 3 || true
+  local candidate counter
+
+  candidate=${base_tag}
+  if ! vless_reality_client_tag_is_used "${candidate}" "$@"; then
+    printf '%s' "${candidate}"
+    return 0
+  fi
+
+  candidate="${base_tag}-${instance_id}"
+  if ! vless_reality_client_tag_is_used "${candidate}" "$@"; then
+    printf '%s' "${candidate}"
+    return 0
+  fi
+
+  candidate="${base_tag}-${port}"
+  if ! vless_reality_client_tag_is_used "${candidate}" "$@"; then
+    printf '%s' "${candidate}"
+    return 0
+  fi
+
+  counter=2
+  while true; do
+    candidate="${base_tag}-${instance_id}-${counter}"
+    if ! vless_reality_client_tag_is_used "${candidate}" "$@"; then
+      printf '%s' "${candidate}"
+      return 0
+    fi
+    counter=$((counter + 1))
+  done
+}
+
+build_client_vless_reality_outbounds() {
+  local public_ip=${1:-$(get_public_ip)}
+  local instance_id outbound_json base_tag outbound_tag
+  local status=0 count=0
+  local used_tags=()
+
+  migrate_vless_reality_state_to_instances_if_needed
+  while IFS= read -r instance_id; do
+    [[ -z "${instance_id}" ]] && continue
+    load_vless_reality_protocol_state
+    if ! load_vless_reality_instance_state "${instance_id}"; then
+      status=1
+      continue
+    fi
+    base_tag=$(client_outbound_tag_for_protocol "vless-reality")
+    outbound_tag=$(unique_vless_reality_client_tag "${base_tag}" "${instance_id}" "${SB_PORT}" "${used_tags[@]}")
+    if outbound_json=$(build_client_vless_reality_outbound "${public_ip}" "${outbound_tag}"); then
+      printf '%s\n' "${outbound_json}"
+      used_tags+=("${outbound_tag}")
+      count=$((count + 1))
+    else
+      status=$?
+    fi
+  done < <(list_vless_reality_instance_ids)
+
+  load_vless_reality_protocol_state
+  load_vless_reality_instance_state "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}" >/dev/null 2>&1 || true
+
+  if (( count == 0 )); then
+    log_warn "未找到可用的 VLESS + REALITY 实例，已跳过客户端导出协议: vless-reality" >&2
+    return 1
+  fi
+
+  return "${status}"
 }
 
 build_client_hy2_outbound() {
@@ -5400,8 +5578,9 @@ build_client_anytls_outbound() {
 }
 
 build_client_outbound_json_for_protocol() {
-  local protocol original_protocol_state outbound_json build_status restore_original_state
+  local protocol original_protocol_state outbound_json build_status restore_original_state public_ip
   protocol=$(normalize_protocol_id "$1")
+  public_ip=${2:-$(get_public_ip)}
   original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
   build_status=0
   restore_original_state="n"
@@ -5421,7 +5600,7 @@ build_client_outbound_json_for_protocol() {
 
   case "${protocol}" in
     vless-reality)
-      if outbound_json=$(build_client_vless_reality_outbound); then
+      if outbound_json=$(build_client_vless_reality_outbounds "${public_ip}"); then
         :
       else
         build_status=$?
@@ -5477,6 +5656,7 @@ display_status_summary() {
 show_link_info() {
   local public_ip=$1
   local address_label=${2:-}
+  local instance_id rate_summary
 
   if [[ -n "${address_label}" ]]; then
     echo -e "\n${YELLOW}连接链接 ${address_label}：${NC}"
@@ -5485,9 +5665,21 @@ show_link_info() {
   fi
 
   if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
-    echo "1. REALITY 协议链接"
-    build_vless_link "${public_ip}" "${address_label}"
-    echo ""
+    migrate_vless_reality_state_to_instances_if_needed
+    while IFS= read -r instance_id; do
+      [[ -z "${instance_id}" ]] && continue
+      load_vless_reality_protocol_state
+      load_vless_reality_instance_state "${instance_id}" || continue
+      rate_summary=$(vless_reality_rate_limit_summary "${SB_VLESS_RATE_LIMIT_UP_MBPS}" "${SB_VLESS_RATE_LIMIT_DOWN_MBPS}")
+      echo "REALITY 实例"
+      echo "实例 ID: ${SB_VLESS_INSTANCE_ID}"
+      echo "端口: ${SB_PORT}"
+      echo "限速: ${rate_summary}"
+      build_vless_link "${public_ip}" "${address_label}"
+      echo ""
+    done < <(list_vless_reality_instance_ids)
+    load_vless_reality_protocol_state
+    load_vless_reality_instance_state "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}" >/dev/null 2>&1 || true
     return 0
   fi
 
@@ -5519,6 +5711,7 @@ show_link_info() {
 show_qr_info() {
   local public_ip=$1
   local address_label=${2:-}
+  local instance_id
 
   if [[ -n "${address_label}" ]]; then
     echo -e "\n${YELLOW}连接二维码 ${address_label}：${NC}"
@@ -5547,8 +5740,20 @@ show_qr_info() {
     return 0
   fi
 
-  echo "1. REALITY 协议二维码"
-  qrencode -t ansiutf8 "$(build_vless_link "${public_ip}" "${address_label}")"
+  if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
+    migrate_vless_reality_state_to_instances_if_needed
+    while IFS= read -r instance_id; do
+      [[ -z "${instance_id}" ]] && continue
+      load_vless_reality_protocol_state
+      load_vless_reality_instance_state "${instance_id}" || continue
+      echo "REALITY 实例二维码"
+      echo "实例 ID: ${SB_VLESS_INSTANCE_ID}"
+      qrencode -t ansiutf8 "$(build_vless_link "${public_ip}" "${address_label}")"
+    done < <(list_vless_reality_instance_ids)
+    load_vless_reality_protocol_state
+    load_vless_reality_instance_state "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}" >/dev/null 2>&1 || true
+    return 0
+  fi
 }
 
 show_connection_details() {
@@ -6348,7 +6553,7 @@ agent_service_cli() {
 }
 
 agent_push_nodes_to_subman_json() {
-  local public_ip original_protocol_state protocol external_key payload_json
+  local public_ip original_protocol_state protocol instance_id
   local synced_count skipped_count failed_count ok_json
   local installed_protocols=()
 
@@ -6391,17 +6596,19 @@ agent_push_nodes_to_subman_json() {
       continue
     fi
 
-    if ! external_key=$(subman_external_key_for_protocol "${protocol}"); then
-      failed_count=$((failed_count + 1))
+    if [[ "${protocol}" == "vless-reality" ]]; then
+      while IFS= read -r instance_id; do
+        [[ -z "${instance_id}" ]] && continue
+        if push_subman_protocol_instance "${protocol}" "${public_ip}" "${instance_id}" "y"; then
+          synced_count=$((synced_count + 1))
+        else
+          failed_count=$((failed_count + 1))
+        fi
+      done < <(list_vless_reality_instance_ids)
       continue
     fi
 
-    if ! payload_json=$(build_subman_node_payload "${protocol}" "${public_ip}"); then
-      failed_count=$((failed_count + 1))
-      continue
-    fi
-
-    if push_subman_node "${external_key}" "${payload_json}" >/dev/null; then
+    if push_subman_protocol_instance "${protocol}" "${public_ip}" "" "y"; then
       synced_count=$((synced_count + 1))
     else
       failed_count=$((failed_count + 1))
@@ -6500,7 +6707,7 @@ agent_cli() {
 }
 
 push_nodes_to_subman() {
-  local public_ip original_protocol_state protocol external_key payload_json
+  local public_ip original_protocol_state protocol instance_id
   local synced_count skipped_count failed_count
   local installed_protocols=()
 
@@ -6547,19 +6754,19 @@ push_nodes_to_subman() {
       continue
     fi
 
-    if ! external_key=$(subman_external_key_for_protocol "${protocol}"); then
-      print_warn "生成 SubMan 外部键失败: ${protocol}"
-      failed_count=$((failed_count + 1))
+    if [[ "${protocol}" == "vless-reality" ]]; then
+      while IFS= read -r instance_id; do
+        [[ -z "${instance_id}" ]] && continue
+        if push_subman_protocol_instance "${protocol}" "${public_ip}" "${instance_id}"; then
+          synced_count=$((synced_count + 1))
+        else
+          failed_count=$((failed_count + 1))
+        fi
+      done < <(list_vless_reality_instance_ids)
       continue
     fi
 
-    if ! payload_json=$(build_subman_node_payload "${protocol}" "${public_ip}"); then
-      print_warn "生成 SubMan 节点载荷失败: ${protocol}"
-      failed_count=$((failed_count + 1))
-      continue
-    fi
-
-    if push_subman_node "${external_key}" "${payload_json}"; then
+    if push_subman_protocol_instance "${protocol}" "${public_ip}"; then
       synced_count=$((synced_count + 1))
     else
       failed_count=$((failed_count + 1))
