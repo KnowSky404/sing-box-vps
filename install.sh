@@ -866,6 +866,40 @@ append_vless_reality_instance_id() {
   VLESS_REALITY_INSTANCE_IDS=$(IFS=,; printf '%s' "${ids[*]}")
 }
 
+prompt_vless_reality_instance_selection() {
+  local instances=() instance_id index choice rate_summary
+  mapfile -t instances < <(list_vless_reality_instance_ids)
+  if [[ ${#instances[@]} -eq 0 ]]; then
+    log_error "当前未检测到 REALITY 实例。"
+  fi
+
+  echo -e "\n${BLUE}--- REALITY 实例 ---${NC}"
+  index=1
+  for instance_id in "${instances[@]}"; do
+    load_vless_reality_instance_state "${instance_id}" || continue
+    rate_summary=$(vless_reality_rate_limit_summary "${SB_VLESS_RATE_LIMIT_UP_MBPS}" "${SB_VLESS_RATE_LIMIT_DOWN_MBPS}")
+    echo "${index}. ${SB_NODE_NAME} | ${instance_id} | ${SB_PORT} | ${rate_summary}"
+    index=$((index + 1))
+  done
+  echo "0. 返回"
+  read -rp "请选择 REALITY 实例: " choice
+  [[ "${choice}" == "0" ]] && return 1
+  [[ "${choice}" =~ ^[0-9]+$ && "${choice}" -ge 1 && "${choice}" -le ${#instances[@]} ]] || {
+    log_warn "无效选项。"
+    return 1
+  }
+  SELECTED_VLESS_INSTANCE_ID="${instances[$((choice - 1))]}"
+}
+
+remove_vless_reality_instance_id_from_list() {
+  local remove_id=$1 ids=() instance_id
+  while IFS= read -r instance_id; do
+    [[ -z "${instance_id}" || "${instance_id}" == "${remove_id}" ]] && continue
+    ids+=("${instance_id}")
+  done < <(list_vless_reality_instance_ids)
+  VLESS_REALITY_INSTANCE_IDS=$(IFS=,; printf '%s' "${ids[*]}")
+}
+
 port_in_configured_protocol_state() {
   local target_port=$1 protocol state_file instance_id port
 
@@ -4884,6 +4918,8 @@ remove_protocol_menu() {
   local protocols=() remaining_protocols=()
   local selected_protocol selected_display confirm state_file backup_state_file
   local index_backup_file config_backup_file joined_protocols first_remaining protocol
+  local reality_instances=() selected_instance instance_state_file backup_instance_state_file
+  local protocol_state_backup_file first_remaining_instance
 
   if [[ ! -f "${SINGBOX_CONFIG_FILE}" && ! -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
     log_error "未找到配置文件或协议状态，请先执行安装流程。"
@@ -4898,8 +4934,17 @@ remove_protocol_menu() {
   fi
 
   if [[ ${#protocols[@]} -le 1 ]]; then
-    log_warn "当前至少保留一个协议，不能删除最后一个已安装协议。"
-    return 0
+    if [[ "${protocols[0]:-}" == "vless-reality" ]]; then
+      migrate_vless_reality_state_to_instances_if_needed
+      mapfile -t reality_instances < <(list_vless_reality_instance_ids)
+      if [[ ${#reality_instances[@]} -le 1 ]]; then
+        log_warn "当前至少保留一个协议，不能删除最后一个已安装协议。"
+        return 0
+      fi
+    else
+      log_warn "当前至少保留一个协议，不能删除最后一个已安装协议。"
+      return 0
+    fi
   fi
 
   echo -e "\n${BLUE}--- 移除已安装协议 ---${NC}"
@@ -4909,6 +4954,68 @@ remove_protocol_menu() {
   fi
   selected_protocol="${SELECTED_PROTOCOL}"
   [[ -n "${selected_protocol}" ]] || return 0
+
+  if [[ "${selected_protocol}" == "vless-reality" ]]; then
+    migrate_vless_reality_state_to_instances_if_needed
+    mapfile -t reality_instances < <(list_vless_reality_instance_ids)
+    if [[ ${#reality_instances[@]} -gt 1 ]]; then
+      if ! prompt_vless_reality_instance_selection; then
+        return 0
+      fi
+      selected_instance="${SELECTED_VLESS_INSTANCE_ID}"
+      load_vless_reality_instance_state "${selected_instance}" || log_error "未找到 REALITY 实例状态: ${selected_instance}"
+      read -rp "确认移除 REALITY 实例 ${SB_NODE_NAME} (${selected_instance})? [y/N]: " confirm
+      if [[ "${confirm}" != "y" && "${confirm}" != "Y" ]]; then
+        log_info "已取消移除 REALITY 实例。"
+        return 0
+      fi
+
+      instance_state_file=$(vless_reality_instance_state_file "${selected_instance}") || log_error "REALITY 实例 ID 非法: ${selected_instance}"
+      if [[ ! -f "${instance_state_file}" ]]; then
+        log_error "未找到 REALITY 实例状态文件: ${instance_state_file}"
+      fi
+
+      state_file=$(protocol_state_file "vless-reality")
+      if [[ ! -f "${state_file}" ]]; then
+        log_error "未找到协议状态文件: ${state_file}"
+      fi
+
+      backup_instance_state_file="${instance_state_file}.bak.$(date +%Y%m%d%H%M%S)"
+      protocol_state_backup_file=$(mktemp)
+      config_backup_file=$(mktemp)
+
+      cp "${state_file}" "${protocol_state_backup_file}"
+      cp "${SINGBOX_CONFIG_FILE}" "${config_backup_file}"
+      mv "${instance_state_file}" "${backup_instance_state_file}"
+
+      load_vless_reality_protocol_state
+      remove_vless_reality_instance_id_from_list "${selected_instance}"
+      first_remaining_instance="${VLESS_REALITY_INSTANCE_IDS%%,*}"
+      if [[ "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}" == "${selected_instance}" ]]; then
+        VLESS_REALITY_DEFAULT_INSTANCE_ID="${first_remaining_instance}"
+      fi
+      save_vless_reality_protocol_state
+
+      if ! generate_config || ! validate_config_file; then
+        mv "${backup_instance_state_file}" "${instance_state_file}" 2>/dev/null || true
+        cp "${protocol_state_backup_file}" "${state_file}"
+        cp "${config_backup_file}" "${SINGBOX_CONFIG_FILE}"
+        rm -f "${protocol_state_backup_file}" "${config_backup_file}"
+        log_error "移除 REALITY 实例后配置校验失败，已恢复原配置。"
+      fi
+
+      rm -f "${protocol_state_backup_file}" "${config_backup_file}"
+      setup_service
+      load_protocol_state "vless-reality"
+      open_all_protocol_ports
+      if declare -F refresh_vless_reality_qos_rules >/dev/null; then
+        refresh_vless_reality_qos_rules
+      fi
+      systemctl restart sing-box
+      log_success "已移除 REALITY 实例: ${selected_instance}。原状态已备份到: ${backup_instance_state_file}"
+      return 0
+    fi
+  fi
 
   selected_display=$(protocol_display_name "$(state_protocol_to_runtime "${selected_protocol}")")
   read -rp "确认移除 ${selected_display}? [y/N]: " confirm

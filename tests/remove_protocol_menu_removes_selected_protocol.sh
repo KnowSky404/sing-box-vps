@@ -140,6 +140,11 @@ if [[ "${REMOVE_LAST_PLAIN_OUTPUT}" != *"至少保留一个协议"* ]]; then
   exit 1
 fi
 
+if [[ "${REMOVE_LAST_PLAIN_OUTPUT}" == *"移除已安装协议"* ]]; then
+  printf 'expected last-protocol removal to warn before showing selection UI, got:\n%s\n' "${REMOVE_LAST_OUTPUT}" >&2
+  exit 1
+fi
+
 if ! grep -Fq 'INSTALLED_PROTOCOLS=vless-reality' "${SB_PROTOCOL_INDEX_FILE}"; then
   printf 'expected protocol index to remain unchanged after rejected last-protocol removal, got:\n%s\n' "$(cat "${SB_PROTOCOL_INDEX_FILE}")" >&2
   exit 1
