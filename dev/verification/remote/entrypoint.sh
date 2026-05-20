@@ -24,6 +24,19 @@ verification_write_artifact() {
   printf '%s\n' "$@" > "$(verification_artifact_path "${relative_path}")"
 }
 
+verification_append_artifact() {
+  local relative_path=$1
+  shift || true
+  printf '%s\n' "$@" >> "$(verification_artifact_path "${relative_path}")"
+}
+
+verification_mark_step() {
+  local step_name=$1
+
+  [[ -n "${VERIFY_CURRENT_SCENARIO_DIR}" ]] || return 0
+  verification_append_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/steps.txt" "${step_name}"
+}
+
 verification_capture_file_if_present() {
   local source_path=$1
   local relative_path=$2
@@ -104,6 +117,23 @@ verification_assert_port_not_listening() {
 
   verification_capture_listener_snapshot "${relative_path}"
   ! verification_port_is_listening "${port}"
+}
+
+verification_wait_for_service_active() {
+  local service_name=${1:-sing-box}
+  local attempts=${2:-20}
+  local delay_seconds=${3:-1}
+  local attempt=0
+
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if systemctl is-active --quiet "${service_name}"; then
+      return 0
+    fi
+    sleep "${delay_seconds}"
+  done
+
+  systemctl status "${service_name}" --no-pager >&2 || true
+  return 1
 }
 
 verification_capture_status_menu() {

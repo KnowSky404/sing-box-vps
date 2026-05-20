@@ -42,6 +42,53 @@ if ! jq -e '.tags | index("sing-box-vps") and index("edge-1")' <<< "${vless_payl
   exit 1
 fi
 
+mkdir -p "${SB_PROTOCOL_STATE_DIR}/vless-reality.d"
+cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.env" <<'EOF'
+INSTALLED=1
+CONFIG_SCHEMA_VERSION=2
+DEFAULT_INSTANCE_ID=main
+INSTANCE_IDS=main,reality-2
+REALITY_PRIVATE_KEY=private-key
+REALITY_PUBLIC_KEY=public-key
+EOF
+
+cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env" <<'EOF'
+INSTANCE_ID=main
+ENABLED=1
+NODE_NAME='edge-1 vless main'
+PORT=443
+UUID=11111111-1111-1111-1111-111111111111
+SNI=www.cloudflare.com
+SHORT_ID_1=abcd1234
+SHORT_ID_2=bbbbbbbbbbbbbbbb
+RATE_LIMIT_UP_MBPS=
+RATE_LIMIT_DOWN_MBPS=
+EOF
+
+cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/reality-2.env" <<'EOF'
+INSTANCE_ID=reality-2
+ENABLED=1
+NODE_NAME='edge-1 vless second'
+PORT=8443
+UUID=22222222-2222-2222-2222-222222222222
+SNI=apple.com
+SHORT_ID_1=cccccccc
+SHORT_ID_2=dddddddddddddddd
+RATE_LIMIT_UP_MBPS=
+RATE_LIMIT_DOWN_MBPS=
+EOF
+
+load_protocol_state "vless-reality"
+vless_second_payload=$(build_subman_node_payload "vless-reality" "203.0.113.10" "" "reality-2")
+if [[ "$(jq -r '.name' <<< "${vless_second_payload}")" != "edge-1 vless second" ]]; then
+  printf 'expected non-default REALITY SubMan payload name from that instance\n%s\n' "${vless_second_payload}" >&2
+  exit 1
+fi
+if [[ "$(jq -r '.raw' <<< "${vless_second_payload}")" != *"22222222-2222-2222-2222-222222222222@203.0.113.10:8443"* ]]; then
+  printf 'expected non-default REALITY SubMan raw link from that instance\n%s\n' "${vless_second_payload}" >&2
+  exit 1
+fi
+
 SB_PROTOCOL="hy2"
 SB_NODE_NAME="edge-1 hy2"
 SB_PORT="8443"

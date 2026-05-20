@@ -23,6 +23,7 @@ SERVICE_FILE_PRESENT_FILE="${TMP_DIR}/service-file-present"
 SBV_PRESENT_FILE="${TMP_DIR}/sbv-present"
 SERVICE_ACTIVE_FILE="${TMP_DIR}/service-active"
 STATE_FILE="${PROTOCOLS_DIR}/vless-reality.env"
+INSTANCE_STATE_FILE="${PROTOCOLS_DIR}/vless-reality.d/main.env"
 ANYTLS_STATE_FILE="${PROTOCOLS_DIR}/anytls.env"
 INDEX_FILE="${PROTOCOLS_DIR}/index.env"
 ASSERT_LOG_FILE="${TMP_DIR}/assert.log"
@@ -45,13 +46,19 @@ printf '1\n' > "${SERVICE_ACTIVE_FILE}"
 : > "${ASSERT_LOG_FILE}"
 : > "${CALLS_FILE}"
 printf '0\n' > "${INSTALL_COUNT_FILE}"
-mkdir -p "${PROTOCOLS_DIR}"
+mkdir -p "$(dirname "${INSTANCE_STATE_FILE}")"
 cat > "${STATE_FILE}" <<'EOF'
+CONFIG_SCHEMA_VERSION=2
+DEFAULT_INSTANCE_ID=main
+INSTANCE_IDS=main
+REALITY_PUBLIC_KEY=public-key-from-state
+EOF
+cat > "${INSTANCE_STATE_FILE}" <<'EOF'
+INSTANCE_ID=main
 NODE_NAME=cc-us-stl+vless
 PORT=9443
 UUID=11111111-1111-4111-8111-111111111111
 SNI=stale.example.com
-REALITY_PUBLIC_KEY=public-key-from-state
 EOF
 cat > "${INDEX_FILE}" <<'EOF'
 INSTALLED_PROTOCOLS=vless-reality
@@ -88,13 +95,19 @@ VALID_REALITY_PRIVATE_KEY="IEwVBb_qLcYr1L_CTI5exTWbT7qRgZnr43xP8nC0dkM"
 VALID_REALITY_PUBLIC_KEY="u9nRBiDRTmyxLQLkiVq-kYFPhRyeZkSo8p9c7s8Dfjo"
 
 write_vless_state() {
-  mkdir -p "$(dirname "${STATE_FILE}")"
+  mkdir -p "$(dirname "${INSTANCE_STATE_FILE}")"
   cat > "${STATE_FILE}" <<STATE_EOF
+CONFIG_SCHEMA_VERSION=2
+DEFAULT_INSTANCE_ID=main
+INSTANCE_IDS=main
+REALITY_PUBLIC_KEY=public-key-from-state
+STATE_EOF
+  cat > "${INSTANCE_STATE_FILE}" <<STATE_EOF
+INSTANCE_ID=main
 NODE_NAME=cc-us-stl+vless
 PORT=$(cat "${PORT_FILE}")
 UUID=$(cat "${UUID_FILE}")
 SNI=$(cat "${SNI_FILE}")
-REALITY_PUBLIC_KEY=public-key-from-state
 STATE_EOF
   cat > "${CONFIG_FILE}" <<CONFIG_EOF
 {
@@ -123,14 +136,20 @@ CONFIG_EOF
 }
 
 write_legacy_vless_state() {
-  mkdir -p "$(dirname "${STATE_FILE}")" "$(dirname "${EXPORT_FILE}")"
+  mkdir -p "$(dirname "${INSTANCE_STATE_FILE}")" "$(dirname "${EXPORT_FILE}")"
   cat > "${STATE_FILE}" <<STATE_EOF
+CONFIG_SCHEMA_VERSION=2
+DEFAULT_INSTANCE_ID=main
+INSTANCE_IDS=main
+REALITY_PRIVATE_KEY=${VALID_REALITY_PRIVATE_KEY}
+REALITY_PUBLIC_KEY=${VALID_REALITY_PUBLIC_KEY}
+STATE_EOF
+  cat > "${INSTANCE_STATE_FILE}" <<STATE_EOF
+INSTANCE_ID=main
 NODE_NAME=cc-us-stl+vless
 PORT=$(cat "${PORT_FILE}")
 UUID=$(cat "${UUID_FILE}")
 SNI=$(cat "${SNI_FILE}")
-REALITY_PRIVATE_KEY=${VALID_REALITY_PRIVATE_KEY}
-REALITY_PUBLIC_KEY=${VALID_REALITY_PUBLIC_KEY}
 STATE_EOF
   cat > "${INDEX_FILE}" <<'INDEX_EOF'
 INSTALLED_PROTOCOLS=vless-reality
@@ -302,7 +321,7 @@ bash() {
         fi
 
         if [[ "${actual_lines[2]:-}" == "1" ]]; then
-          if [[ "${#actual_lines[@]}" -ne 9 ]]; then
+          if [[ "${#actual_lines[@]}" -ne 10 ]]; then
             printf 'unexpected vless install input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
             return 1
           fi
@@ -313,7 +332,8 @@ bash() {
           [[ "${actual_lines[5]}" == "www.cloudflare.com" ]]
           [[ "${actual_lines[6]}" == "n" ]]
           [[ "${actual_lines[7]}" == "n" ]]
-          [[ "${actual_lines[8]}" == "0" ]]
+          [[ "${actual_lines[8]}" == "n" ]]
+          [[ "${actual_lines[9]}" == "0" ]]
           printf '443\n' > "${PORT_FILE}"
           next_install_uuid > "${UUID_FILE}"
           printf 'www.cloudflare.com\n' > "${SNI_FILE}"
@@ -444,6 +464,11 @@ test() {
     return
   fi
 
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" ]]; then
+    [[ -f "${INSTANCE_STATE_FILE}" ]]
+    return
+  fi
+
   if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/anytls.env" ]]; then
     [[ -f "${ANYTLS_STATE_FILE}" ]]
     return
@@ -517,6 +542,10 @@ sed() {
     args[$last_index]="${STATE_FILE}"
   fi
 
+  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" ]]; then
+    args[$last_index]="${INSTANCE_STATE_FILE}"
+  fi
+
   if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/anytls.env" ]]; then
     args[$last_index]="${ANYTLS_STATE_FILE}"
   fi
@@ -555,6 +584,10 @@ grep() {
 
   if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/vless-reality.env" ]]; then
     args[$last_index]="${STATE_FILE}"
+  fi
+
+  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" ]]; then
+    args[$last_index]="${INSTANCE_STATE_FILE}"
   fi
 
   if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/anytls.env" ]]; then
@@ -632,6 +665,7 @@ SERVICE_FILE_PRESENT_FILE="${SERVICE_FILE_PRESENT_FILE}" \
 SBV_PRESENT_FILE="${SBV_PRESENT_FILE}" \
 SERVICE_ACTIVE_FILE="${SERVICE_ACTIVE_FILE}" \
 STATE_FILE="${STATE_FILE}" \
+INSTANCE_STATE_FILE="${INSTANCE_STATE_FILE}" \
 ANYTLS_STATE_FILE="${ANYTLS_STATE_FILE}" \
 INDEX_FILE="${INDEX_FILE}" \
 ASSERT_LOG_FILE="${ASSERT_LOG_FILE}" \
@@ -682,23 +716,27 @@ grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/uninstall_and_reinstall/pr
 grep -Fq 'verification_run_protocol_probes' "${PAYLOAD_FILE}"
 ! grep -Fq 'verification_execute_single_protocol_probe vless-reality /root/sing-box-vps/config.json' "${PAYLOAD_FILE}"
 grep -Fqx 'test:-f|/root/sing-box-vps/protocols/vless-reality.env|' "${ASSERT_LOG_FILE}"
+grep -Fqx 'test:-f|/root/sing-box-vps/protocols/vless-reality.d/main.env|' "${ASSERT_LOG_FILE}"
 grep -Fqx 'test:-f|/root/sing-box-vps/protocols/anytls.env|' "${ASSERT_LOG_FILE}"
 grep -Fqx 'test:-f|/root/sing-box-vps/protocols/index.env|' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fq stale.example.com /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx CONFIG_SCHEMA_VERSION=2 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx DEFAULT_INSTANCE_ID=main /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx INSTANCE_IDS=main /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fq stale.example.com /root/sing-box-vps/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'jq:-r|.inbounds[0].users[0].uuid // empty|/root/sing-box-vps/config.json' "${ASSERT_LOG_FILE}"
 grep -Fqx 'jq:-r|.inbounds[0].tls.server_name // empty|/root/sing-box-vps/config.json' "${ASSERT_LOG_FILE}"
 grep -Fqx 'jq:-r|.inbounds[0].listen_port // empty|/root/sing-box-vps/config.json' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx PORT=8443 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx UUID=22222222-2222-4222-8222-222222222222 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx SNI=cdn.cloudflare.com /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx PORT=8443 /root/sing-box-vps/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx UUID=22222222-2222-4222-8222-222222222222 /root/sing-box-vps/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx SNI=cdn.cloudflare.com /root/sing-box-vps/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
 grep -Fqx "grep:-Fqx REALITY_PRIVATE_KEY=${VALID_REALITY_PRIVATE_KEY} /root/sing-box-vps/protocols/vless-reality.env" "${ASSERT_LOG_FILE}"
 grep -Fqx "grep:-Fqx REALITY_PUBLIC_KEY=${VALID_REALITY_PUBLIC_KEY} /root/sing-box-vps/protocols/vless-reality.env" "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx PORT=9443 /root/sing-box-vps/protocols/anytls.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx DOMAIN=anytls.example.com /root/sing-box-vps/protocols/anytls.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx PASSWORD=anytls-pass /root/sing-box-vps/protocols/anytls.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'UUID=44444444-4444-4444-8444-444444444444' "${STATE_FILE}"
+grep -Fqx 'UUID=44444444-4444-4444-8444-444444444444' "${INSTANCE_STATE_FILE}"
 grep -Fq "bash:${EMBEDDED_INSTALL_SCRIPT} " "${CALLS_FILE}"
 grep -Fq 'bash:/usr/local/bin/sbv ' "${CALLS_FILE}"
 grep -Fq "bash:${EMBEDDED_UNINSTALL_SCRIPT} --yes" "${CALLS_FILE}"

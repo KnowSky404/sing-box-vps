@@ -6,6 +6,7 @@ verification_scenario_reconfigure_existing_install() {
   local before_config_path
   local after_config_path
   local diff_path
+  local instance_state_file=/root/sing-box-vps/protocols/vless-reality.d/main.env
   local status_output_path
   local diff_status=0
   local expected_port=8443
@@ -39,11 +40,15 @@ EOF
   [[ "${after_sni}" == "${expected_sni}" ]]
   test -f /root/sing-box-vps/protocols/index.env
   test -f /root/sing-box-vps/protocols/vless-reality.env
+  test -f "${instance_state_file}"
   grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality' /root/sing-box-vps/protocols/index.env
-  grep -Fqx "PORT=${expected_port}" /root/sing-box-vps/protocols/vless-reality.env
-  grep -Fqx "UUID=${expected_uuid}" /root/sing-box-vps/protocols/vless-reality.env
-  grep -Fqx "SNI=${expected_sni}" /root/sing-box-vps/protocols/vless-reality.env
-  systemctl is-active --quiet sing-box
+  grep -Fqx 'CONFIG_SCHEMA_VERSION=2' /root/sing-box-vps/protocols/vless-reality.env
+  grep -Fqx 'DEFAULT_INSTANCE_ID=main' /root/sing-box-vps/protocols/vless-reality.env
+  grep -Fqx 'INSTANCE_IDS=main' /root/sing-box-vps/protocols/vless-reality.env
+  grep -Fqx "PORT=${expected_port}" "${instance_state_file}"
+  grep -Fqx "UUID=${expected_uuid}" "${instance_state_file}"
+  grep -Fqx "SNI=${expected_sni}" "${instance_state_file}"
+  verification_wait_for_service_active sing-box
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" sing-box check -c /root/sing-box-vps/config.json
   verification_assert_port_listening "${expected_port}" "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.ss-lntp.txt"
   verification_assert_port_not_listening "${before_port}" "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.old-port.ss-lntp.txt"
