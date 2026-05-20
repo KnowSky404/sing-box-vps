@@ -669,6 +669,12 @@ validate_vless_reality_instance_id() {
   [[ "$1" =~ ^[a-z0-9][a-z0-9-]*$ ]]
 }
 
+validate_port_number() {
+  local port=$1
+  [[ "${port}" =~ ^[0-9]+$ ]] || return 1
+  (( port >= 1 && port <= 65535 ))
+}
+
 vless_reality_instance_state_file() {
   local instance_id=$1
   validate_vless_reality_instance_id "${instance_id}" || return 1
@@ -711,7 +717,7 @@ save_vless_reality_protocol_state() {
     write_env_assignment "INSTALLED" "1"
     write_env_assignment "CONFIG_SCHEMA_VERSION" "2"
     write_env_assignment "DEFAULT_INSTANCE_ID" "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}"
-    write_env_assignment "INSTANCE_IDS" "${VLESS_REALITY_INSTANCE_IDS:-main}"
+    printf 'INSTANCE_IDS=%s\n' "${VLESS_REALITY_INSTANCE_IDS:-main}"
     write_env_assignment "REALITY_PRIVATE_KEY" "${SB_PRIVATE_KEY}"
     write_env_assignment "REALITY_PUBLIC_KEY" "${SB_PUBLIC_KEY}"
   } > "${state_file}"
@@ -835,6 +841,67 @@ list_vless_reality_instance_ids() {
   find "${instance_dir}" -maxdepth 1 -type f -name '*.env' \
     | sed 's|.*/||; s|\.env$||' \
     | sort
+}
+
+vless_reality_instance_id_exists() {
+  local target=$1 instance_id
+  while IFS= read -r instance_id; do
+    [[ "${instance_id}" == "${target}" ]] && return 0
+  done < <(list_vless_reality_instance_ids)
+  return 1
+}
+
+append_vless_reality_instance_id() {
+  local instance_id=$1 ids=()
+  local existing
+
+  while IFS= read -r existing; do
+    [[ -n "${existing}" ]] && ids+=("${existing}")
+  done < <(list_vless_reality_instance_ids)
+
+  if ! protocol_array_contains "${instance_id}" "${ids[@]}"; then
+    ids+=("${instance_id}")
+  fi
+
+  VLESS_REALITY_INSTANCE_IDS=$(IFS=,; printf '%s' "${ids[*]}")
+}
+
+port_in_configured_protocol_state() {
+  local target_port=$1 protocol state_file instance_id port
+
+  validate_port_number "${target_port}" || return 1
+
+  while IFS= read -r protocol; do
+    [[ -z "${protocol}" ]] && continue
+    if [[ "${protocol}" == "vless-reality" ]]; then
+      while IFS= read -r instance_id; do
+        [[ -z "${instance_id}" ]] && continue
+        port=""
+        state_file=$(vless_reality_instance_state_file "${instance_id}") || continue
+        if [[ -f "${state_file}" ]]; then
+          port=$(grep -E '^PORT=' "${state_file}" | tail -n1 | cut -d= -f2- || true)
+          port=${port#\'}
+          port=${port%\'}
+          port=${port#\"}
+          port=${port%\"}
+          [[ "${port}" == "${target_port}" ]] && return 0
+        fi
+      done < <(list_vless_reality_instance_ids)
+      continue
+    fi
+
+    state_file=$(protocol_state_file "${protocol}")
+    if [[ -f "${state_file}" ]]; then
+      port=$(grep -E '^PORT=' "${state_file}" | tail -n1 | cut -d= -f2- || true)
+      port=${port#\'}
+      port=${port%\'}
+      port=${port#\"}
+      port=${port%\"}
+      [[ "${port}" == "${target_port}" ]] && return 0
+    fi
+  done < <(list_installed_protocols)
+
+  return 1
 }
 
 vless_reality_inbound_tag_for_instance() {
@@ -1600,6 +1667,9 @@ prompt_protocol_install_selection() {
   for index in 1 2 3 4; do
     protocol=$(protocol_option_to_id "${index}") || continue
     if protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
+      if [[ "${install_mode}" == "additional" && "${protocol}" == "vless-reality" ]]; then
+        echo "${index}. 新增 VLESS + REALITY 节点"
+      fi
       continue
     fi
     echo "${index}. $(protocol_display_name "$(state_protocol_to_runtime "${protocol}")")"
@@ -1613,6 +1683,9 @@ prompt_protocol_install_selection() {
     for index in 1 2 3 4; do
       protocol=$(protocol_option_to_id "${index}") || continue
       if protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
+        if [[ "${install_mode}" == "additional" && "${protocol}" == "vless-reality" ]]; then
+          selected_protocols+=("${protocol}")
+        fi
         continue
       fi
       selected_protocols+=("${protocol}")
@@ -1635,6 +1708,12 @@ prompt_protocol_install_selection() {
     }
 
     if protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
+      if [[ "${install_mode}" == "additional" && "${protocol}" == "vless-reality" ]]; then
+        if ! protocol_array_contains "${protocol}" "${selected_protocols[@]}"; then
+          selected_protocols+=("${protocol}")
+        fi
+        continue
+      fi
       log_warn "协议已安装，跳过: $(protocol_display_name "$(state_protocol_to_runtime "${protocol}")")"
       continue
     fi
@@ -1666,6 +1745,65 @@ prompt_vless_reality_install() {
 
   prompt_reality_sni_install
   prompt_vless_reality_rate_limit_fields
+}
+
+prompt_vless_reality_instance_create() {
+  local in_id in_node in_port in_sni default_id default_sni selected_id selected_node selected_port
+
+  migrate_vless_reality_state_to_instances_if_needed
+  load_vless_reality_protocol_state
+  default_id="reality-$(date +%H%M%S)"
+
+  while true; do
+    read -rp "[VLESS + REALITY] 新实例 ID (默认 ${default_id}): " in_id
+    SB_VLESS_INSTANCE_ID=$(trim_whitespace "${in_id:-${default_id}}")
+    if ! validate_vless_reality_instance_id "${SB_VLESS_INSTANCE_ID}"; then
+      log_warn "实例 ID 只能包含小写字母、数字和短横线。"
+      continue
+    fi
+    if vless_reality_instance_id_exists "${SB_VLESS_INSTANCE_ID}"; then
+      log_warn "实例 ID 已存在: ${SB_VLESS_INSTANCE_ID}"
+      continue
+    fi
+    break
+  done
+  selected_id="${SB_VLESS_INSTANCE_ID}"
+
+  read -rp "[VLESS + REALITY] 节点名称 (默认 ${SB_VLESS_INSTANCE_ID}): " in_node
+  SB_NODE_NAME=$(trim_whitespace "${in_node:-${SB_VLESS_INSTANCE_ID}}")
+  selected_node="${SB_NODE_NAME}"
+
+  while true; do
+    read -rp "[VLESS + REALITY] 端口: " in_port
+    SB_PORT=$(trim_whitespace "${in_port}")
+    [[ -n "${SB_PORT}" ]] || { log_warn "端口不能为空。"; continue; }
+    validate_port_number "${SB_PORT}" || { log_warn "端口必须为 1-65535 的数字。"; continue; }
+    port_in_configured_protocol_state "${SB_PORT}" && { log_warn "端口已被现有协议配置占用: ${SB_PORT}"; continue; }
+    check_port_conflict "${SB_PORT}"
+    break
+  done
+  selected_port="${SB_PORT}"
+
+  default_sni=""
+  if load_vless_reality_instance_state "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}" 2>/dev/null; then
+    default_sni="${SB_SNI}"
+  fi
+  SB_VLESS_INSTANCE_ID="${selected_id}"
+  SB_NODE_NAME="${selected_node}"
+  SB_PORT="${selected_port}"
+  read -rp "[VLESS + REALITY] REALITY SNI (默认复用 ${default_sni:-${SB_REALITY_SNI_FALLBACK}}): " in_sni
+  SB_SNI=$(trim_whitespace "${in_sni:-${default_sni:-${SB_REALITY_SNI_FALLBACK}}}")
+
+  SB_UUID=""
+  SB_SHORT_ID_1=""
+  SB_SHORT_ID_2=""
+  SB_VLESS_RATE_LIMIT_UP_MBPS=""
+  SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
+  prompt_vless_reality_rate_limit_fields
+  ensure_vless_reality_materials
+  append_vless_reality_instance_id "${SB_VLESS_INSTANCE_ID}"
+  save_vless_reality_protocol_state
+  save_vless_reality_instance_state
 }
 
 prompt_mixed_install() {
@@ -1926,8 +2064,12 @@ install_protocols_interactive() {
     IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
 
     for protocol in "${selected_protocols[@]}"; do
-      prompt_protocol_install_fields "${protocol}"
-      save_protocol_state "${protocol}"
+      if [[ "${protocol}" == "vless-reality" ]] && protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
+        prompt_vless_reality_instance_create
+      else
+        prompt_protocol_install_fields "${protocol}"
+        save_protocol_state "${protocol}"
+      fi
       if ! protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
         installed_protocols+=("${protocol}")
       fi
@@ -1938,6 +2080,9 @@ install_protocols_interactive() {
 
   save_warp_route_settings
   generate_config
+  if declare -F refresh_vless_reality_qos_rules >/dev/null; then
+    refresh_vless_reality_qos_rules
+  fi
   check_config_valid
   setup_service
   first_selected_protocol="${selected_protocols[0]}"
