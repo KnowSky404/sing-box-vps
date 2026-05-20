@@ -51,6 +51,7 @@ setup_service() { :; }
 open_firewall_port() { :; }
 check_port_conflict() { :; }
 systemctl() { :; }
+prompt_reality_sni_install() { SB_SNI="${SB_SNI:-apple.com}"; }
 display_status_summary() {
   local current_count
   current_count=$(cat "${SUMMARY_COUNT_FILE}")
@@ -63,24 +64,20 @@ show_post_config_connection_info() {
 }
 display_info() { :; }
 
-(
-  main <<'EOF'
-1
+install_protocols_interactive "fresh" <<'EOF'
 
 1
 
 
 
 
-0
 EOF
-)
 
 post_config_calls=$(cat "${POST_CONFIG_COUNT_FILE}")
 summary_calls=$(cat "${SUMMARY_COUNT_FILE}")
 
-if (( summary_calls != 1 )); then
-  printf 'expected first install to show status summary once, got %s\n' "${summary_calls}" >&2
+if (( summary_calls != 0 )); then
+  printf 'expected first install to keep status summary hidden until status menu, got %s automatic calls\n' "${summary_calls}" >&2
   exit 1
 fi
 

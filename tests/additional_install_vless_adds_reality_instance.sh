@@ -16,6 +16,7 @@ sed \
   "${REPO_ROOT}/install.sh" > "${TESTABLE_INSTALL}"
 
 mkdir -p "${TMP_DIR}/project/protocols/vless-reality.d" "${TMP_DIR}/bin"
+OPEN_PORTS_FILE="${TMP_DIR}/open-ports.log"
 
 cat > "${TMP_DIR}/bin/hostname" <<'EOF'
 #!/usr/bin/env bash
@@ -52,7 +53,7 @@ get_latest_version() { :; }
 install_binary() { :; }
 check_config_valid() { :; }
 setup_service() { :; }
-open_firewall_port() { :; }
+open_firewall_port() { printf '%s\n' "$1" >> "${OPEN_PORTS_FILE}"; }
 display_status_summary() { :; }
 show_post_config_connection_info() { :; }
 systemctl() { :; }
@@ -126,3 +127,5 @@ fi
 
 jq -e 'any(.inbounds[]; .tag == "vless-reality-limited-10m" and .listen_port == 8443)' "${SINGBOX_CONFIG_FILE}" >/dev/null
 test -f "${TMP_DIR}/qos.called"
+grep -Fqx '443' "${OPEN_PORTS_FILE}"
+grep -Fqx '8443' "${OPEN_PORTS_FILE}"

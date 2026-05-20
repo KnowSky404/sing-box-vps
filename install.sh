@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052001
+# Version: 2026052002
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052001"
+readonly SCRIPT_VERSION="2026052002"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -1717,13 +1717,23 @@ prompt_protocol_update_fields() {
 }
 
 open_all_protocol_ports() {
-  local protocol current_protocol_state
+  local protocol current_protocol_state instance_id
   current_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
 
   while IFS= read -r protocol; do
     [[ -z "${protocol}" ]] && continue
-    load_protocol_state "${protocol}"
-    open_firewall_port "${SB_PORT}"
+    if [[ "${protocol}" == "vless-reality" ]]; then
+      load_vless_reality_protocol_state
+      migrate_vless_reality_state_to_instances_if_needed
+      while IFS= read -r instance_id; do
+        [[ -z "${instance_id}" ]] && continue
+        load_vless_reality_instance_state "${instance_id}" || continue
+        open_firewall_port "${SB_PORT}"
+      done < <(list_vless_reality_instance_ids)
+    else
+      load_protocol_state "${protocol}"
+      open_firewall_port "${SB_PORT}"
+    fi
   done < <(list_effective_protocols)
 
   if [[ -n "${current_protocol_state}" ]]; then
@@ -2202,7 +2212,6 @@ install_protocols_interactive() {
   fi
   open_all_protocol_ports
   systemctl restart sing-box
-  display_status_summary
   log_info "连接信息未自动展示，如需查看请进入菜单 10。"
 }
 
@@ -4994,7 +5003,6 @@ update_config_only() {
   load_protocol_state "${selected_protocol}"
   systemctl restart sing-box
   log_success "配置及服务文件已更新并重启服务。"
-  display_status_summary
   log_info "连接信息未自动展示，如需查看请进入菜单 10。"
 }
 
