@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052002
+# Version: 2026052003
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052002"
+readonly SCRIPT_VERSION="2026052003"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -589,6 +589,20 @@ default_node_name_for_protocol() {
   printf '%s-%s' "$(hostname)" "${suffix}"
 }
 
+normalize_node_name() {
+  local node_name=$1
+
+  node_name=$(trim_whitespace "${node_name}")
+  case "${node_name}" in
+    *+vless) node_name="${node_name%+vless}-vless" ;;
+    *+hy2) node_name="${node_name%+hy2}-hy2" ;;
+    *+anytls) node_name="${node_name%+anytls}-anytls" ;;
+    *+mixed) node_name="${node_name%+mixed}-mixed" ;;
+  esac
+
+  printf '%s' "${node_name}"
+}
+
 network_stack_suffix_from_label() {
   case "$1" in
     IPv4|ipv4|v4) printf 'v4' ;;
@@ -602,6 +616,7 @@ node_name_for_network_stack() {
   local address_label=${2:-}
   local stack_suffix
 
+  base_name=$(normalize_node_name "${base_name}")
   stack_suffix=$(network_stack_suffix_from_label "${address_label}")
   if [[ -n "${stack_suffix}" ]]; then
     printf '%s-%s' "${base_name}" "${stack_suffix}"
@@ -743,7 +758,7 @@ load_vless_reality_instance_state() {
   # shellcheck disable=SC1090
   source "${state_file}"
   SB_VLESS_INSTANCE_ID="${INSTANCE_ID:-${instance_id}}"
-  SB_NODE_NAME="${NODE_NAME:-}"
+  SB_NODE_NAME=$(normalize_node_name "${NODE_NAME:-}")
   SB_PORT="${PORT:-}"
   SB_UUID="${UUID:-}"
   SB_SNI="${SNI:-}"
@@ -815,7 +830,7 @@ migrate_vless_reality_state_to_instances_if_needed() {
   save_vless_reality_protocol_state
 
   SB_VLESS_INSTANCE_ID="main"
-  SB_NODE_NAME="${NODE_NAME:-$(default_node_name_for_protocol "vless+reality")}"
+  SB_NODE_NAME=$(normalize_node_name "${NODE_NAME:-$(default_node_name_for_protocol "vless+reality")}")
   SB_PORT="${PORT:-443}"
   SB_UUID="${UUID:-}"
   SB_SNI="${SNI:-}"
@@ -3293,7 +3308,7 @@ load_protocol_state() {
       ;;
     mixed)
       SB_PROTOCOL="mixed"
-      SB_NODE_NAME="${NODE_NAME:-$(default_node_name_for_protocol "mixed")}"
+      SB_NODE_NAME=$(normalize_node_name "${NODE_NAME:-$(default_node_name_for_protocol "mixed")}")
       SB_PORT="${PORT:-1080}"
       SB_UUID=""
       SB_SNI=""
@@ -3335,7 +3350,7 @@ load_protocol_state() {
       ;;
     hy2)
       SB_PROTOCOL="hy2"
-      SB_NODE_NAME="${NODE_NAME:-$(default_node_name_for_protocol "hy2")}"
+      SB_NODE_NAME=$(normalize_node_name "${NODE_NAME:-$(default_node_name_for_protocol "hy2")}")
       SB_PORT="${PORT:-443}"
       SB_UUID=""
       SB_SNI=""
@@ -3377,7 +3392,7 @@ load_protocol_state() {
       ;;
     anytls)
       SB_PROTOCOL="anytls"
-      SB_NODE_NAME="${NODE_NAME:-$(default_node_name_for_protocol "anytls")}"
+      SB_NODE_NAME=$(normalize_node_name "${NODE_NAME:-$(default_node_name_for_protocol "anytls")}")
       SB_PORT="${PORT:-443}"
       SB_UUID=""
       SB_SNI=""

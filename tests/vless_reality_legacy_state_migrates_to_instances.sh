@@ -38,7 +38,7 @@ EOF
 cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.env" <<'EOF'
 INSTALLED=1
 CONFIG_SCHEMA_VERSION=1
-NODE_NAME=vless_reality_test-host
+NODE_NAME=gl-gb-lon+vless
 PORT=443
 UUID=11111111-1111-1111-1111-111111111111
 SNI=apple.com
@@ -64,7 +64,7 @@ grep -Fq 'REALITY_PRIVATE_KEY=private-key' "${SB_PROTOCOL_STATE_DIR}/vless-reali
 grep -Fq 'REALITY_PUBLIC_KEY=public-key' "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"
 
 grep -Fq 'INSTANCE_ID=main' "${main_state}"
-grep -Fq 'NODE_NAME=vless_reality_test-host' "${main_state}"
+grep -Fq 'NODE_NAME=gl-gb-lon-vless' "${main_state}"
 grep -Fq 'PORT=443' "${main_state}"
 grep -Fq 'UUID=11111111-1111-1111-1111-111111111111' "${main_state}"
 grep -Fq 'SNI=apple.com' "${main_state}"

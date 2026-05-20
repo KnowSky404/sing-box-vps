@@ -15,7 +15,7 @@ sed \
   -e 's|main \"\$@\"|:|' \
   "${REPO_ROOT}/install.sh" > "${TESTABLE_INSTALL}"
 
-mkdir -p "${TMP_DIR}/project" "${TMP_DIR}/bin"
+mkdir -p "${TMP_DIR}/project/protocols/vless-reality.d" "${TMP_DIR}/bin"
 
 cat > "${TMP_DIR}/bin/hostname" <<'EOF'
 #!/usr/bin/env bash
@@ -37,6 +37,33 @@ SB_SNI="apple.com"
 SB_PUBLIC_KEY="public-key"
 SB_SHORT_ID_1="aaaaaaaaaaaaaaaa"
 SB_NODE_NAME="vless_reality_test-host"
+
+cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
+INSTALLED_PROTOCOLS=vless-reality
+PROTOCOL_STATE_VERSION=1
+EOF
+
+cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.env" <<'EOF'
+INSTALLED=1
+CONFIG_SCHEMA_VERSION=2
+DEFAULT_INSTANCE_ID=main
+INSTANCE_IDS=main
+REALITY_PRIVATE_KEY=private-key
+REALITY_PUBLIC_KEY=public-key
+EOF
+
+cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env" <<'EOF'
+INSTANCE_ID=main
+ENABLED=1
+NODE_NAME=vless_reality_test-host
+PORT=443
+UUID=11111111-1111-1111-1111-111111111111
+SNI=apple.com
+SHORT_ID_1=aaaaaaaaaaaaaaaa
+SHORT_ID_2=bbbbbbbbbbbbbbbb
+RATE_LIMIT_UP_MBPS=
+RATE_LIMIT_DOWN_MBPS=
+EOF
 
 get_public_ipv4() {
   printf '203.0.113.10\n'

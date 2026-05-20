@@ -27,6 +27,8 @@ assert_equals "test-host-mixed" "$(default_node_name_for_protocol "mixed")" "mix
 
 assert_equals "test-host-vless-v4" "$(node_name_for_network_stack "test-host-vless" "IPv4")" "vless IPv4 node name"
 assert_equals "test-host-vless-v6" "$(node_name_for_network_stack "test-host-vless" "IPv6")" "vless IPv6 node name"
+assert_equals "gl-gb-lon-vless-v4" "$(node_name_for_network_stack "gl-gb-lon+vless" "IPv4")" "legacy plus vless IPv4 node name"
+assert_equals "gl-gb-lon-hy2" "$(normalize_node_name "gl-gb-lon+hy2")" "legacy plus hy2 node name"
 
 set_protocol_defaults "vless+reality"
 assert_equals "test-host-vless" "${SB_NODE_NAME}" "set_protocol_defaults vless node name"
