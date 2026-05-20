@@ -768,6 +768,21 @@ save_vless_reality_instance_state() {
   } > "${state_file}"
 }
 
+save_vless_reality_protocol_material_state_if_v2() {
+  local state_file current_private_key current_public_key
+  state_file=$(protocol_state_file "vless-reality")
+
+  [[ -f "${state_file}" ]] || return 0
+  grep -Eq '^CONFIG_SCHEMA_VERSION=(2|'"'2'"'|'\''2'\'')$' "${state_file}" || return 0
+
+  current_private_key="${SB_PRIVATE_KEY}"
+  current_public_key="${SB_PUBLIC_KEY}"
+  load_vless_reality_protocol_state
+  SB_PRIVATE_KEY="${current_private_key}"
+  SB_PUBLIC_KEY="${current_public_key}"
+  save_vless_reality_protocol_state
+}
+
 migrate_vless_reality_state_to_instances_if_needed() {
   local state_file instance_dir main_state backup_state_file
   state_file=$(protocol_state_file "vless-reality")
@@ -1030,37 +1045,11 @@ list_exportable_client_protocols() {
 }
 
 save_vless_reality_state() {
-  local state_file current_private_key current_public_key current_instance_id
-  state_file=$(protocol_state_file "vless-reality")
-
-  if [[ -f "$(vless_reality_instance_state_file "main")" ]]; then
-    current_private_key="${SB_PRIVATE_KEY}"
-    current_public_key="${SB_PUBLIC_KEY}"
-    current_instance_id="${SB_VLESS_INSTANCE_ID:-}"
-    load_vless_reality_protocol_state
-    VLESS_REALITY_DEFAULT_INSTANCE_ID="${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}"
-    VLESS_REALITY_INSTANCE_IDS="${VLESS_REALITY_INSTANCE_IDS:-main}"
-    SB_PRIVATE_KEY="${current_private_key:-${SB_PRIVATE_KEY}}"
-    SB_PUBLIC_KEY="${current_public_key:-${SB_PUBLIC_KEY}}"
-    save_vless_reality_protocol_state
-
-    SB_VLESS_INSTANCE_ID="${current_instance_id:-${VLESS_REALITY_DEFAULT_INSTANCE_ID}}"
-    save_vless_reality_instance_state
-    return 0
-  fi
-
-  {
-    write_env_assignment "INSTALLED" "1"
-    write_env_assignment "CONFIG_SCHEMA_VERSION" "1"
-    write_env_assignment "NODE_NAME" "${SB_NODE_NAME}"
-    write_env_assignment "PORT" "${SB_PORT}"
-    write_env_assignment "UUID" "${SB_UUID}"
-    write_env_assignment "SNI" "${SB_SNI}"
-    write_env_assignment "REALITY_PRIVATE_KEY" "${SB_PRIVATE_KEY}"
-    write_env_assignment "REALITY_PUBLIC_KEY" "${SB_PUBLIC_KEY}"
-    write_env_assignment "SHORT_ID_1" "${SB_SHORT_ID_1}"
-    write_env_assignment "SHORT_ID_2" "${SB_SHORT_ID_2}"
-  } > "${state_file}"
+  ensure_vless_reality_materials
+  VLESS_REALITY_DEFAULT_INSTANCE_ID="${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}"
+  VLESS_REALITY_INSTANCE_IDS="${VLESS_REALITY_INSTANCE_IDS:-${SB_VLESS_INSTANCE_ID:-main}}"
+  save_vless_reality_protocol_state
+  save_vless_reality_instance_state
 }
 
 save_mixed_state() {
@@ -1289,6 +1278,47 @@ prompt_reality_sni_update() {
       log_info "保留当前 Reality SNI: ${SB_SNI}"
       ;;
   esac
+}
+
+validate_optional_positive_integer() {
+  local value=$1
+  [[ -z "${value}" || "${value}" =~ ^[1-9][0-9]*$ ]]
+}
+
+prompt_vless_reality_rate_limit_fields() {
+  local in_limit in_up in_down
+
+  SB_VLESS_RATE_LIMIT_UP_MBPS="${SB_VLESS_RATE_LIMIT_UP_MBPS:-}"
+  SB_VLESS_RATE_LIMIT_DOWN_MBPS="${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}"
+
+  read -rp "[VLESS + REALITY] 是否配置限速 [y/n] (默认 n): " in_limit
+  in_limit=${in_limit:-n}
+  if [[ "${in_limit}" != "y" && "${in_limit}" != "Y" ]]; then
+    SB_VLESS_RATE_LIMIT_UP_MBPS=""
+    SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
+    return 0
+  fi
+
+  while true; do
+    read -rp "[VLESS + REALITY] 上行带宽 Mbps (留空表示上行不限速): " in_up
+    in_up=$(trim_whitespace "${in_up}")
+    validate_optional_positive_integer "${in_up}" && break
+    log_warn "上行带宽必须为空或正整数。"
+  done
+
+  while true; do
+    read -rp "[VLESS + REALITY] 下行带宽 Mbps (留空表示下行不限速): " in_down
+    in_down=$(trim_whitespace "${in_down}")
+    validate_optional_positive_integer "${in_down}" && break
+    log_warn "下行带宽必须为空或正整数。"
+  done
+
+  SB_VLESS_RATE_LIMIT_UP_MBPS="${in_up}"
+  SB_VLESS_RATE_LIMIT_DOWN_MBPS="${in_down}"
+
+  if [[ -z "${SB_VLESS_RATE_LIMIT_UP_MBPS}" && -z "${SB_VLESS_RATE_LIMIT_DOWN_MBPS}" ]]; then
+    log_warn "上下行均为空，将按不限速保存。"
+  fi
 }
 
 prompt_mixed_update() {
@@ -1626,6 +1656,8 @@ prompt_vless_reality_install() {
   local in_p
 
   set_protocol_defaults "vless+reality"
+  SB_VLESS_INSTANCE_ID="main"
+  SB_NODE_NAME="$(default_node_name_for_protocol "vless+reality")"
   echo -e "\n${BLUE}--- 配置 VLESS + REALITY ---${NC}"
   printf '[VLESS + REALITY] 端口 (默认 %s): ' "${SB_PORT}"
   read -r in_p
@@ -1633,6 +1665,7 @@ prompt_vless_reality_install() {
   check_port_conflict "${SB_PORT}"
 
   prompt_reality_sni_install
+  prompt_vless_reality_rate_limit_fields
 }
 
 prompt_mixed_install() {
@@ -3161,8 +3194,7 @@ ensure_vless_reality_materials() {
     SB_SHORT_ID_2=$(openssl rand -hex 8)
   fi
 
-  # Persist generated REALITY materials so later info views reuse the active link data.
-  save_vless_reality_state
+  save_vless_reality_protocol_material_state_if_v2
 
   return 0
 }
