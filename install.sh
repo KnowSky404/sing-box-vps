@@ -805,6 +805,32 @@ migrate_vless_reality_state_to_instances_if_needed() {
   save_vless_reality_instance_state
 }
 
+list_vless_reality_instance_ids() {
+  local instance_dir
+  load_vless_reality_protocol_state
+
+  if [[ -n "${VLESS_REALITY_INSTANCE_IDS}" ]]; then
+    tr ',' '\n' <<< "${VLESS_REALITY_INSTANCE_IDS}" | sed '/^$/d'
+    return 0
+  fi
+
+  instance_dir=$(vless_reality_instance_dir)
+  [[ -d "${instance_dir}" ]] || return 0
+
+  find "${instance_dir}" -maxdepth 1 -type f -name '*.env' \
+    | sed 's|.*/||; s|\.env$||' \
+    | sort
+}
+
+vless_reality_inbound_tag_for_instance() {
+  local instance_id=$1
+  if [[ "${instance_id}" == "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}" ]]; then
+    printf 'vless-in'
+  else
+    printf 'vless-reality-%s' "${instance_id}"
+  fi
+}
+
 subman_config_file_path() {
   printf '%s/subman.env' "${SB_PROJECT_DIR}"
 }
@@ -3182,11 +3208,17 @@ stack_inbound_listen_address() {
   esac
 }
 
-build_vless_inbound_json() {
+build_vless_inbound_json_for_instance() {
+  local instance_id=$1 tag
+
+  load_vless_reality_protocol_state
+  load_vless_reality_instance_state "${instance_id}" || return 1
   ensure_vless_reality_materials
+  tag=$(vless_reality_inbound_tag_for_instance "${instance_id}")
 
   jq -n \
-    --arg tag "vless-in" \
+    --arg tag "${tag}" \
+    --arg instance_id "${instance_id}" \
     --arg listen "$(stack_inbound_listen_address)" \
     --arg port "${SB_PORT}" \
     --arg uuid "${SB_UUID}" \
@@ -3199,7 +3231,7 @@ build_vless_inbound_json() {
       "tag": $tag,
       "listen": $listen,
       "listen_port": ($port | tonumber),
-      "users": [ { "uuid": $uuid, "flow": "xtls-rprx-vision" } ],
+      "users": [ { "name": $instance_id, "uuid": $uuid, "flow": "xtls-rprx-vision" } ],
       "tls": {
         "enabled": true,
         "server_name": $sni,
@@ -3211,6 +3243,60 @@ build_vless_inbound_json() {
         }
       }
     }'
+}
+
+build_vless_inbound_json_from_current_state() {
+  ensure_vless_reality_materials
+
+  VLESS_REALITY_DEFAULT_INSTANCE_ID="main"
+  VLESS_REALITY_INSTANCE_IDS="main"
+  SB_VLESS_INSTANCE_ID="main"
+  save_vless_reality_protocol_state
+  save_vless_reality_instance_state
+
+  jq -n \
+    --arg tag "vless-in" \
+    --arg instance_id "main" \
+    --arg listen "$(stack_inbound_listen_address)" \
+    --arg port "${SB_PORT}" \
+    --arg uuid "${SB_UUID}" \
+    --arg sni "${SB_SNI}" \
+    --arg priv_key "${SB_PRIVATE_KEY}" \
+    --arg sid1 "${SB_SHORT_ID_1}" \
+    --arg sid2 "${SB_SHORT_ID_2}" \
+    '{
+      "type": "vless",
+      "tag": $tag,
+      "listen": $listen,
+      "listen_port": ($port | tonumber),
+      "users": [ { "name": $instance_id, "uuid": $uuid, "flow": "xtls-rprx-vision" } ],
+      "tls": {
+        "enabled": true,
+        "server_name": $sni,
+        "reality": {
+          "enabled": true,
+          "handshake": { "server": $sni, "server_port": 443 },
+          "private_key": $priv_key,
+          "short_id": [ $sid1, $sid2 ]
+        }
+      }
+    }'
+}
+
+build_vless_inbound_json() {
+  local instance_id instance_ids=()
+
+  migrate_vless_reality_state_to_instances_if_needed
+  mapfile -t instance_ids < <(list_vless_reality_instance_ids)
+
+  if [[ ${#instance_ids[@]} -eq 0 ]]; then
+    build_vless_inbound_json_from_current_state
+    return 0
+  fi
+
+  for instance_id in "${instance_ids[@]}"; do
+    build_vless_inbound_json_for_instance "${instance_id}"
+  done
 }
 
 build_mixed_inbound_json() {
@@ -3481,19 +3567,43 @@ build_inbound_for_protocol() {
   esac
 }
 
+build_vless_reality_route_rules_json() {
+  local tmp_rules tmp_snis instance_id inbound_tag sni status
+  tmp_rules=$(mktemp)
+  tmp_snis=$(mktemp)
+
+  {
+    load_vless_reality_protocol_state
+    while IFS= read -r instance_id; do
+      [[ -z "${instance_id}" ]] && continue
+      load_vless_reality_instance_state "${instance_id}" || continue
+      inbound_tag=$(vless_reality_inbound_tag_for_instance "${instance_id}")
+      jq -n --arg inbound_tag "${inbound_tag}" '{ "inbound": $inbound_tag, "action": "sniff" }' >> "${tmp_rules}"
+      [[ -n "${SB_SNI}" ]] && printf '%s\n' "${SB_SNI}" >> "${tmp_snis}"
+    done < <(list_vless_reality_instance_ids)
+
+    while IFS= read -r sni; do
+      [[ -z "${sni}" ]] && continue
+      jq -n --arg sni "${sni}" '{ "domain": [ $sni ], "action": "direct" }' >> "${tmp_rules}"
+    done < <(sort -u "${tmp_snis}")
+
+    jq -s '.' "${tmp_rules}"
+  } || {
+    status=$?
+    rm -f "${tmp_rules}" "${tmp_snis}"
+    return "${status}"
+  }
+
+  rm -f "${tmp_rules}" "${tmp_snis}"
+}
+
 build_protocol_route_rules() {
   local protocol
   protocol=$(normalize_protocol_id "$1")
 
   case "${protocol}" in
     vless-reality)
-      jq -n \
-        --arg inbound_tag "vless-in" \
-        --arg sni "${SB_SNI}" \
-        '[
-          { "inbound": $inbound_tag, "action": "sniff" },
-          { "domain": [ $sni ], "action": "direct" }
-        ]'
+      build_vless_reality_route_rules_json
       ;;
     mixed)
       jq -n '[{ "inbound": "mixed-in", "action": "sniff" }]'
