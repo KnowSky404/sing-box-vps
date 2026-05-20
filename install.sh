@@ -661,6 +661,150 @@ write_env_assignment() {
   printf '%s=%s\n' "${key}" "${escaped}"
 }
 
+vless_reality_instance_dir() {
+  printf '%s/vless-reality.d' "${SB_PROTOCOL_STATE_DIR}"
+}
+
+validate_vless_reality_instance_id() {
+  [[ "$1" =~ ^[a-z0-9][a-z0-9-]*$ ]]
+}
+
+vless_reality_instance_state_file() {
+  local instance_id=$1
+  validate_vless_reality_instance_id "${instance_id}" || return 1
+  printf '%s/%s.env' "$(vless_reality_instance_dir)" "${instance_id}"
+}
+
+normalize_csv_list() {
+  local value=$1
+  value=${value//\"/}
+  value=${value//\'/}
+  value=${value//\\,/,}
+  printf '%s' "${value}"
+}
+
+load_vless_reality_protocol_state() {
+  local state_file
+  state_file=$(protocol_state_file "vless-reality")
+
+  VLESS_REALITY_DEFAULT_INSTANCE_ID="main"
+  VLESS_REALITY_INSTANCE_IDS=""
+  SB_PRIVATE_KEY=""
+  SB_PUBLIC_KEY=""
+
+  [[ -f "${state_file}" ]] || return 0
+
+  # shellcheck disable=SC1090
+  source "${state_file}"
+  VLESS_REALITY_DEFAULT_INSTANCE_ID="${DEFAULT_INSTANCE_ID:-main}"
+  VLESS_REALITY_INSTANCE_IDS=$(normalize_csv_list "${INSTANCE_IDS:-}")
+  SB_PRIVATE_KEY="${REALITY_PRIVATE_KEY:-${SB_PRIVATE_KEY:-}}"
+  SB_PUBLIC_KEY="${REALITY_PUBLIC_KEY:-${SB_PUBLIC_KEY:-}}"
+}
+
+save_vless_reality_protocol_state() {
+  local state_file
+  state_file=$(protocol_state_file "vless-reality")
+  ensure_protocol_state_dir
+
+  {
+    write_env_assignment "INSTALLED" "1"
+    write_env_assignment "CONFIG_SCHEMA_VERSION" "2"
+    write_env_assignment "DEFAULT_INSTANCE_ID" "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}"
+    write_env_assignment "INSTANCE_IDS" "${VLESS_REALITY_INSTANCE_IDS:-main}"
+    write_env_assignment "REALITY_PRIVATE_KEY" "${SB_PRIVATE_KEY}"
+    write_env_assignment "REALITY_PUBLIC_KEY" "${SB_PUBLIC_KEY}"
+  } > "${state_file}"
+}
+
+load_vless_reality_instance_state() {
+  local instance_id=$1
+  local state_file
+  state_file=$(vless_reality_instance_state_file "${instance_id}") || return 1
+
+  SB_VLESS_INSTANCE_ID="${instance_id}"
+  SB_NODE_NAME=""
+  SB_PORT=""
+  SB_UUID=""
+  SB_SNI=""
+  SB_SHORT_ID_1=""
+  SB_SHORT_ID_2=""
+  SB_VLESS_RATE_LIMIT_UP_MBPS=""
+  SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
+
+  [[ -f "${state_file}" ]] || return 1
+
+  # shellcheck disable=SC1090
+  source "${state_file}"
+  SB_VLESS_INSTANCE_ID="${INSTANCE_ID:-${instance_id}}"
+  SB_NODE_NAME="${NODE_NAME:-}"
+  SB_PORT="${PORT:-}"
+  SB_UUID="${UUID:-}"
+  SB_SNI="${SNI:-}"
+  SB_SHORT_ID_1="${SHORT_ID_1:-}"
+  SB_SHORT_ID_2="${SHORT_ID_2:-}"
+  SB_VLESS_RATE_LIMIT_UP_MBPS="${RATE_LIMIT_UP_MBPS:-}"
+  SB_VLESS_RATE_LIMIT_DOWN_MBPS="${RATE_LIMIT_DOWN_MBPS:-}"
+}
+
+save_vless_reality_instance_state() {
+  local instance_id=${SB_VLESS_INSTANCE_ID:-main}
+  local state_file
+  validate_vless_reality_instance_id "${instance_id}" || log_error "REALITY 实例 ID 非法: ${instance_id}"
+  mkdir -p "$(vless_reality_instance_dir)"
+  state_file=$(vless_reality_instance_state_file "${instance_id}") || return 1
+
+  {
+    write_env_assignment "INSTANCE_ID" "${instance_id}"
+    write_env_assignment "ENABLED" "1"
+    write_env_assignment "NODE_NAME" "${SB_NODE_NAME}"
+    write_env_assignment "PORT" "${SB_PORT}"
+    write_env_assignment "UUID" "${SB_UUID}"
+    write_env_assignment "SNI" "${SB_SNI}"
+    write_env_assignment "SHORT_ID_1" "${SB_SHORT_ID_1}"
+    write_env_assignment "SHORT_ID_2" "${SB_SHORT_ID_2}"
+    printf 'RATE_LIMIT_UP_MBPS=%s\n' "${SB_VLESS_RATE_LIMIT_UP_MBPS:-}"
+    printf 'RATE_LIMIT_DOWN_MBPS=%s\n' "${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}"
+  } > "${state_file}"
+}
+
+migrate_vless_reality_state_to_instances_if_needed() {
+  local state_file instance_dir main_state backup_state_file
+  state_file=$(protocol_state_file "vless-reality")
+  instance_dir=$(vless_reality_instance_dir)
+  main_state="${instance_dir}/main.env"
+
+  [[ -f "${state_file}" ]] || return 0
+  [[ ! -f "${main_state}" ]] || return 0
+
+  # shellcheck disable=SC1090
+  source "${state_file}"
+
+  if [[ "${CONFIG_SCHEMA_VERSION:-1}" != "1" || -z "${PORT:-}" || -z "${UUID:-}" ]]; then
+    return 0
+  fi
+
+  backup_state_file="${state_file}.bak.$(date +%Y%m%d%H%M%S)"
+  cp "${state_file}" "${backup_state_file}"
+
+  SB_PRIVATE_KEY="${REALITY_PRIVATE_KEY:-}"
+  SB_PUBLIC_KEY="${REALITY_PUBLIC_KEY:-}"
+  VLESS_REALITY_DEFAULT_INSTANCE_ID="main"
+  VLESS_REALITY_INSTANCE_IDS="main"
+  save_vless_reality_protocol_state
+
+  SB_VLESS_INSTANCE_ID="main"
+  SB_NODE_NAME="${NODE_NAME:-$(default_node_name_for_protocol "vless+reality")}"
+  SB_PORT="${PORT:-443}"
+  SB_UUID="${UUID:-}"
+  SB_SNI="${SNI:-}"
+  SB_SHORT_ID_1="${SHORT_ID_1:-}"
+  SB_SHORT_ID_2="${SHORT_ID_2:-}"
+  SB_VLESS_RATE_LIMIT_UP_MBPS=""
+  SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
+  save_vless_reality_instance_state
+}
+
 subman_config_file_path() {
   printf '%s/subman.env' "${SB_PROJECT_DIR}"
 }
@@ -860,8 +1004,24 @@ list_exportable_client_protocols() {
 }
 
 save_vless_reality_state() {
-  local state_file
+  local state_file current_private_key current_public_key current_instance_id
   state_file=$(protocol_state_file "vless-reality")
+
+  if [[ -f "$(vless_reality_instance_state_file "main")" ]]; then
+    current_private_key="${SB_PRIVATE_KEY}"
+    current_public_key="${SB_PUBLIC_KEY}"
+    current_instance_id="${SB_VLESS_INSTANCE_ID:-}"
+    load_vless_reality_protocol_state
+    VLESS_REALITY_DEFAULT_INSTANCE_ID="${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}"
+    VLESS_REALITY_INSTANCE_IDS="${VLESS_REALITY_INSTANCE_IDS:-main}"
+    SB_PRIVATE_KEY="${current_private_key:-${SB_PRIVATE_KEY}}"
+    SB_PUBLIC_KEY="${current_public_key:-${SB_PUBLIC_KEY}}"
+    save_vless_reality_protocol_state
+
+    SB_VLESS_INSTANCE_ID="${current_instance_id:-${VLESS_REALITY_DEFAULT_INSTANCE_ID}}"
+    save_vless_reality_instance_state
+    return 0
+  fi
 
   {
     write_env_assignment "INSTALLED" "1"
@@ -961,6 +1121,7 @@ save_protocol_state() {
 migrate_legacy_single_protocol_state_if_needed() {
   [[ -f "${SB_PROTOCOL_INDEX_FILE}" || ! -f "${SINGBOX_CONFIG_FILE}" ]] && return 0
   rebuild_protocol_state_from_config
+  migrate_vless_reality_state_to_instances_if_needed
 }
 
 prompt_installed_protocol_selection() {
@@ -2743,6 +2904,9 @@ list_effective_protocols() {
 load_protocol_state() {
   local protocol state_file
   protocol=$(normalize_protocol_id "$1")
+  if [[ "${protocol}" == "vless-reality" ]]; then
+    migrate_vless_reality_state_to_instances_if_needed
+  fi
   state_file=$(protocol_state_file "${protocol}")
 
   if [[ ! -f "${state_file}" ]]; then
@@ -2757,15 +2921,20 @@ load_protocol_state() {
 
   case "${protocol}" in
     vless-reality)
+      if [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]]; then
+        load_vless_reality_protocol_state
+        load_vless_reality_instance_state "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}" || true
+        unset NODE_NAME PORT UUID SNI SHORT_ID_1 SHORT_ID_2
+      fi
       SB_PROTOCOL="vless+reality"
-      SB_NODE_NAME="${NODE_NAME:-$(default_node_name_for_protocol "vless+reality")}"
-      SB_PORT="${PORT:-443}"
-      SB_UUID="${UUID:-}"
-      SB_SNI="${SNI:-$SB_REALITY_SNI_FALLBACK}"
-      SB_PRIVATE_KEY="${REALITY_PRIVATE_KEY:-}"
-      SB_PUBLIC_KEY="${REALITY_PUBLIC_KEY:-}"
-      SB_SHORT_ID_1="${SHORT_ID_1:-}"
-      SB_SHORT_ID_2="${SHORT_ID_2:-}"
+      SB_NODE_NAME="${NODE_NAME:-${SB_NODE_NAME:-$(default_node_name_for_protocol "vless+reality")}}"
+      SB_PORT="${PORT:-${SB_PORT:-443}}"
+      SB_UUID="${UUID:-${SB_UUID:-}}"
+      SB_SNI="${SNI:-${SB_SNI:-$SB_REALITY_SNI_FALLBACK}}"
+      SB_PRIVATE_KEY="${REALITY_PRIVATE_KEY:-${SB_PRIVATE_KEY:-}}"
+      SB_PUBLIC_KEY="${REALITY_PUBLIC_KEY:-${SB_PUBLIC_KEY:-}}"
+      SB_SHORT_ID_1="${SHORT_ID_1:-${SB_SHORT_ID_1:-}}"
+      SB_SHORT_ID_2="${SHORT_ID_2:-${SB_SHORT_ID_2:-}}"
       SB_MIXED_AUTH_ENABLED="y"
       SB_MIXED_USERNAME=""
       SB_MIXED_PASSWORD=""
