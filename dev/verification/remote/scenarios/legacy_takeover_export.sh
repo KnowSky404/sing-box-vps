@@ -9,6 +9,7 @@ verification_scenario_legacy_takeover_export() {
   local expected_uuid="11111111-1111-1111-1111-111111111111"
   local expected_private_key="IEwVBb_qLcYr1L_CTI5exTWbT7qRgZnr43xP8nC0dkM"
   local expected_public_key="u9nRBiDRTmyxLQLkiVq-kYFPhRyeZkSo8p9c7s8Dfjo"
+  local instance_state_file=/root/sing-box-vps/protocols/vless-reality.d/main.env
   local exported_node_name
 
   verification_prepare_remote_local_tree
@@ -68,13 +69,17 @@ EOF
 
   test -f /root/sing-box-vps/protocols/index.env
   test -f /root/sing-box-vps/protocols/vless-reality.env
+  test -f "${instance_state_file}"
   grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality' /root/sing-box-vps/protocols/index.env
-  grep -Fqx "PORT=${expected_port}" /root/sing-box-vps/protocols/vless-reality.env
-  grep -Fqx "UUID=${expected_uuid}" /root/sing-box-vps/protocols/vless-reality.env
-  grep -Fqx "SNI=${expected_sni}" /root/sing-box-vps/protocols/vless-reality.env
+  grep -Fqx 'CONFIG_SCHEMA_VERSION=2' /root/sing-box-vps/protocols/vless-reality.env
+  grep -Fqx 'DEFAULT_INSTANCE_ID=main' /root/sing-box-vps/protocols/vless-reality.env
+  grep -Fqx 'INSTANCE_IDS=main' /root/sing-box-vps/protocols/vless-reality.env
+  grep -Fqx "PORT=${expected_port}" "${instance_state_file}"
+  grep -Fqx "UUID=${expected_uuid}" "${instance_state_file}"
+  grep -Fqx "SNI=${expected_sni}" "${instance_state_file}"
   grep -Fqx "REALITY_PRIVATE_KEY=${expected_private_key}" /root/sing-box-vps/protocols/vless-reality.env
   grep -Fqx "REALITY_PUBLIC_KEY=${expected_public_key}" /root/sing-box-vps/protocols/vless-reality.env
-  systemctl is-active --quiet sing-box
+  verification_wait_for_service_active sing-box
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" sing-box check -c /root/sing-box-vps/config.json
 
   export_stdout_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/sbv-export.txt")
@@ -89,7 +94,7 @@ EOF
   grep -Fq "文件路径: ${export_path}" "${export_stdout_path}"
   test -f "${export_path}"
   verification_capture_file_if_present "${export_path}" "${VERIFY_CURRENT_SCENARIO_DIR}/client/sing-box-client.json"
-  exported_node_name=$(grep -m1 '^NODE_NAME=' /root/sing-box-vps/protocols/vless-reality.env | cut -d= -f2-)
+  exported_node_name=$(grep -m1 '^NODE_NAME=' "${instance_state_file}" | cut -d= -f2-)
   test -n "${exported_node_name}"
   jq -e --arg tag "${exported_node_name}" '.outbounds[] | select(.type == "vless" and .tag == $tag) | .tls.utls.enabled == true and .tls.utls.fingerprint == "chrome"' "${export_path}" >/dev/null
 }

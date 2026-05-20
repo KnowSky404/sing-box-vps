@@ -65,7 +65,7 @@ EOF
   grep -Fqx "PASSWORD=${expected_password}" /root/sing-box-vps/protocols/anytls.env
   grep -Fqx "USER_NAME=${expected_user_name}" /root/sing-box-vps/protocols/anytls.env
   grep -Fqx 'TLS_MODE=manual' /root/sing-box-vps/protocols/anytls.env
-  systemctl is-active --quiet sing-box
+  verification_wait_for_service_active sing-box
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" sing-box check -c /root/sing-box-vps/config.json
   verification_assert_port_listening "${expected_port}" "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.ss-lntp.txt"
   verification_capture_status_menu "${VERIFY_CURRENT_SCENARIO_DIR}/sbv-status.txt"

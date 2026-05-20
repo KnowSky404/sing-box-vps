@@ -11,7 +11,7 @@ verification_scenario_runtime_smoke() {
   current_protocols=$(sed -n 's/^INSTALLED_PROTOCOLS=//p' /root/sing-box-vps/protocols/index.env | head -n 1)
   [[ -n "${current_port}" ]]
   [[ -n "${current_protocols}" ]]
-  systemctl is-active --quiet sing-box
+  verification_wait_for_service_active sing-box
   printf 'SERVICE_ACTIVE=%s\n' "$(systemctl is-active sing-box)"
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/systemctl.status.txt" systemctl status sing-box --no-pager
   cat "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/systemctl.status.txt")"

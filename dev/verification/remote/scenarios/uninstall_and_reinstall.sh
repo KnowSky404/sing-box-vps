@@ -4,6 +4,7 @@ verification_scenario_uninstall_and_reinstall() {
   local after_uuid
   local after_sni
   local env_uuid
+  local instance_state_file=/root/sing-box-vps/protocols/vless-reality.d/main.env
   local status_output_path
   local expected_port=443
   local expected_sni="www.cloudflare.com"
@@ -25,6 +26,7 @@ verification_scenario_uninstall_and_reinstall() {
 www.cloudflare.com
 n
 n
+n
 0
 EOF
   test -f /root/sing-box-vps/config.json
@@ -34,24 +36,28 @@ EOF
   after_port=$(jq -r '.inbounds[0].listen_port // empty' /root/sing-box-vps/config.json)
   after_uuid=$(jq -r '.inbounds[0].users[0].uuid // empty' /root/sing-box-vps/config.json)
   after_sni=$(jq -r '.inbounds[0].tls.server_name // empty' /root/sing-box-vps/config.json)
-  env_uuid=$(grep '^UUID=' /root/sing-box-vps/protocols/vless-reality.env | cut -d'=' -f2- || true)
+  env_uuid=$(grep '^UUID=' "${instance_state_file}" | cut -d'=' -f2- || true)
   [[ "${after_port}" == "${expected_port}" ]]
   [[ -n "${after_uuid}" ]]
   [[ "${after_uuid}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]
   [[ "${after_sni}" == "${expected_sni}" ]]
   test -f /root/sing-box-vps/protocols/vless-reality.env
+  test -f "${instance_state_file}"
   [[ -n "${env_uuid}" ]]
   [[ "${env_uuid}" == "${after_uuid}" ]]
   grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality' /root/sing-box-vps/protocols/index.env
-  grep -Fqx "PORT=${expected_port}" /root/sing-box-vps/protocols/vless-reality.env
-  grep -Fqx "SNI=${expected_sni}" /root/sing-box-vps/protocols/vless-reality.env
-  ! grep -Fqx 'PORT=8443' /root/sing-box-vps/protocols/vless-reality.env
-  ! grep -Fqx 'SNI=cdn.cloudflare.com' /root/sing-box-vps/protocols/vless-reality.env
+  grep -Fqx 'CONFIG_SCHEMA_VERSION=2' /root/sing-box-vps/protocols/vless-reality.env
+  grep -Fqx 'DEFAULT_INSTANCE_ID=main' /root/sing-box-vps/protocols/vless-reality.env
+  grep -Fqx 'INSTANCE_IDS=main' /root/sing-box-vps/protocols/vless-reality.env
+  grep -Fqx "PORT=${expected_port}" "${instance_state_file}"
+  grep -Fqx "SNI=${expected_sni}" "${instance_state_file}"
+  ! grep -Fqx 'PORT=8443' "${instance_state_file}"
+  ! grep -Fqx 'SNI=cdn.cloudflare.com' "${instance_state_file}"
   if [[ -n "${before_uuid}" ]]; then
     [[ "${after_uuid}" != "${before_uuid}" ]]
-    ! grep -Fqx "UUID=${before_uuid}" /root/sing-box-vps/protocols/vless-reality.env
+    ! grep -Fqx "UUID=${before_uuid}" "${instance_state_file}"
   fi
-  systemctl is-active --quiet sing-box
+  verification_wait_for_service_active sing-box
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" sing-box check -c /root/sing-box-vps/config.json
   verification_assert_port_listening "${expected_port}" "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.ss-lntp.txt"
   verification_capture_status_menu "${VERIFY_CURRENT_SCENARIO_DIR}/sbv-status.txt"

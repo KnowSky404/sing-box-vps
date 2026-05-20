@@ -123,3 +123,10 @@ if ! protocol_state_matches_config hy2; then
     "$(render_saved_protocol_state_snapshot hy2)" >&2
   exit 1
 fi
+
+if ! protocol_state_matches_config vless-reality; then
+  printf 'expected rebuilt vless reality state to match config snapshot\nexpected:\n%s\nsaved:\n%s\n' \
+    "$(render_expected_protocol_state_snapshot vless-reality)" \
+    "$(render_saved_protocol_state_snapshot vless-reality)" >&2
+  exit 1
+fi

@@ -23,6 +23,7 @@ REMOTE_SERVICE_FILE_PRESENT_FILE="${TMP_DIR}/remote-service-file-present"
 REMOTE_SBV_PRESENT_FILE="${TMP_DIR}/remote-sbv-present"
 REMOTE_SERVICE_ACTIVE_FILE="${TMP_DIR}/remote-service-active"
 REMOTE_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/vless-reality.env"
+REMOTE_INSTANCE_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/vless-reality.d/main.env"
 REMOTE_HY2_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/hy2.env"
 REMOTE_ANYTLS_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/anytls.env"
 REMOTE_INDEX_FILE="${REMOTE_PROTOCOLS_DIR}/index.env"
@@ -42,12 +43,18 @@ printf '1\n' > "${REMOTE_SERVICE_ACTIVE_FILE}"
 : > "${REMOTE_ASSERT_LOG_FILE}"
 : > "${REMOTE_DISPATCH_LOG_FILE}"
 printf '0\n' > "${INSTALL_COUNT_FILE}"
-mkdir -p "${REMOTE_PROTOCOLS_DIR}"
+mkdir -p "$(dirname "${REMOTE_INSTANCE_STATE_FILE}")"
 cat > "${REMOTE_STATE_FILE}" <<'EOF'
+CONFIG_SCHEMA_VERSION=2
+DEFAULT_INSTANCE_ID=main
+INSTANCE_IDS=main
+REALITY_PUBLIC_KEY=public-key-from-state
+EOF
+cat > "${REMOTE_INSTANCE_STATE_FILE}" <<'EOF'
+INSTANCE_ID=main
 PORT=9443
 UUID=11111111-1111-4111-8111-111111111111
 SNI=stale.example.com
-REALITY_PUBLIC_KEY=public-key-from-state
 EOF
 cat > "${REMOTE_HY2_STATE_FILE}" <<'EOF'
 DOMAIN=hy2.example.com
@@ -230,12 +237,18 @@ INDEX_EOF
 }
 
 write_vless_state() {
-  mkdir -p "\$(dirname "\${REMOTE_STATE_FILE}")"
+  mkdir -p "\$(dirname "\${REMOTE_INSTANCE_STATE_FILE}")"
   cat > "\${REMOTE_STATE_FILE}" <<STATE_EOF
+CONFIG_SCHEMA_VERSION=2
+DEFAULT_INSTANCE_ID=main
+INSTANCE_IDS=main
+REALITY_PUBLIC_KEY=public-key-from-state
+STATE_EOF
+  cat > "\${REMOTE_INSTANCE_STATE_FILE}" <<STATE_EOF
+INSTANCE_ID=main
 PORT=\$(cat "\${REMOTE_PORT_FILE}")
 UUID=\$(cat "\${REMOTE_UUID_FILE}")
 SNI=\$(cat "\${REMOTE_SNI_FILE}")
-REALITY_PUBLIC_KEY=public-key-from-state
 STATE_EOF
   cat > "\${REMOTE_CONFIG_FILE}" <<CONFIG_EOF
 {
@@ -264,14 +277,20 @@ CONFIG_EOF
 }
 
 write_legacy_vless_state() {
-  mkdir -p "\$(dirname "\${REMOTE_STATE_FILE}")" "\$(dirname "\${REMOTE_EXPORT_FILE}")"
+  mkdir -p "\$(dirname "\${REMOTE_INSTANCE_STATE_FILE}")" "\$(dirname "\${REMOTE_EXPORT_FILE}")"
   cat > "\${REMOTE_STATE_FILE}" <<STATE_EOF
+CONFIG_SCHEMA_VERSION=2
+DEFAULT_INSTANCE_ID=main
+INSTANCE_IDS=main
+REALITY_PRIVATE_KEY=${VALID_REALITY_PRIVATE_KEY}
+REALITY_PUBLIC_KEY=${VALID_REALITY_PUBLIC_KEY}
+STATE_EOF
+  cat > "\${REMOTE_INSTANCE_STATE_FILE}" <<STATE_EOF
+INSTANCE_ID=main
 NODE_NAME=cc-us-stl+vless
 PORT=\$(cat "\${REMOTE_PORT_FILE}")
 UUID=\$(cat "\${REMOTE_UUID_FILE}")
 SNI=\$(cat "\${REMOTE_SNI_FILE}")
-REALITY_PRIVATE_KEY=${VALID_REALITY_PRIVATE_KEY}
-REALITY_PUBLIC_KEY=${VALID_REALITY_PUBLIC_KEY}
 STATE_EOF
   cat > "\${REMOTE_INDEX_FILE}" <<'INDEX_EOF'
 INSTALLED_PROTOCOLS=vless-reality
@@ -398,7 +417,7 @@ bash() {
         fi
 
         if [[ "\${actual_lines[2]:-}" == "1" ]]; then
-          [[ "\${#actual_lines[@]}" -eq 9 ]]
+          [[ "\${#actual_lines[@]}" -eq 10 ]]
           [[ "\${actual_lines[0]}" == "1" ]]
           [[ "\${actual_lines[1]}" == "" ]]
           [[ "\${actual_lines[2]}" == "1" ]]
@@ -407,7 +426,8 @@ bash() {
           [[ "\${actual_lines[5]}" == "www.cloudflare.com" ]]
           [[ "\${actual_lines[6]}" == "n" ]]
           [[ "\${actual_lines[7]}" == "n" ]]
-          [[ "\${actual_lines[8]}" == "0" ]]
+          [[ "\${actual_lines[8]}" == "n" ]]
+          [[ "\${actual_lines[9]}" == "0" ]]
           printf '443\n' > "\${REMOTE_PORT_FILE}"
           next_install_uuid > "\${REMOTE_UUID_FILE}"
           printf 'www.cloudflare.com\n' > "\${REMOTE_SNI_FILE}"
@@ -551,6 +571,11 @@ test() {
     return
   fi
 
+  if [[ "\${1:-}" == "-f" && "\${2:-}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" ]]; then
+    [[ -f "\${REMOTE_INSTANCE_STATE_FILE}" ]]
+    return
+  fi
+
   if [[ "\${1:-}" == "-f" && "\${2:-}" == "/root/sing-box-vps/protocols/anytls.env" ]]; then
     [[ -f "\${REMOTE_ANYTLS_STATE_FILE}" ]]
     return
@@ -653,6 +678,10 @@ sed() {
     args[\$last_index]="\${REMOTE_STATE_FILE}"
   fi
 
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" ]]; then
+    args[\$last_index]="\${REMOTE_INSTANCE_STATE_FILE}"
+  fi
+
   if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
     args[\$last_index]="\${REMOTE_INDEX_FILE}"
   fi
@@ -687,6 +716,10 @@ grep() {
 
   if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/vless-reality.env" ]]; then
     args[\$last_index]="\${REMOTE_STATE_FILE}"
+  fi
+
+  if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" ]]; then
+    args[\$last_index]="\${REMOTE_INSTANCE_STATE_FILE}"
   fi
 
   if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/anytls.env" ]]; then
@@ -736,6 +769,7 @@ REMOTE_CONFIG_PRESENT_FILE="${REMOTE_CONFIG_PRESENT_FILE}" \
 REMOTE_PORT_FILE="${REMOTE_PORT_FILE}" \
 REMOTE_UUID_FILE="${REMOTE_UUID_FILE}" \
 REMOTE_SNI_FILE="${REMOTE_SNI_FILE}" \
+REMOTE_INSTANCE_STATE_FILE="${REMOTE_INSTANCE_STATE_FILE}" \
 REMOTE_SERVICE_FILE_PRESENT_FILE="${REMOTE_SERVICE_FILE_PRESENT_FILE}" \
 REMOTE_SBV_PRESENT_FILE="${REMOTE_SBV_PRESENT_FILE}" \
 REMOTE_SERVICE_ACTIVE_FILE="${REMOTE_SERVICE_ACTIVE_FILE}" \
@@ -787,10 +821,10 @@ grep -Fqx 'fresh_install_vless' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'reconfigure_existing_install' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'fresh_install_anytls' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'runtime_smoke' "${REMOTE_DISPATCH_LOG_FILE}"
-grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.env' "${REMOTE_ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.env' "${REMOTE_ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.d/main.env' "${REMOTE_ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.d/main.env' "${REMOTE_ASSERT_LOG_FILE}"
 grep -Fqx 'jq:-r|.inbounds[0].listen_port // empty|/root/sing-box-vps/config.json' "${REMOTE_ASSERT_LOG_FILE}"
-grep -Fqx 'UUID=11111111-1111-1111-1111-111111111111' "${REMOTE_STATE_FILE}"
+grep -Fqx 'UUID=11111111-1111-1111-1111-111111111111' "${REMOTE_INSTANCE_STATE_FILE}"
 
 if PATH="${TMP_DIR}:${PATH}" VERIFY_REMOTE_TARGET_FILE="${TMP_DIR}/missing-target.env" VERIFY_REMOTE_HOST=test.example VERIFY_REMOTE_USER=root VERIFY_SKIP_LOCAL_TESTS=1 VERIFY_FAIL_SINGBOX_CHECK=1 \
   bash "${REPO_ROOT}/dev/verification/run.sh" --changed-file install.sh > "${TMP_DIR}/stdout-fail.txt" 2> "${TMP_DIR}/stderr-fail.txt"; then

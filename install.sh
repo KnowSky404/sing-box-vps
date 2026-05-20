@@ -1220,7 +1220,7 @@ save_vless_reality_state() {
     SB_SHORT_ID_1=$(openssl rand -hex 8)
   fi
 
-  if [[ -z "${SB_SHORT_ID_2}" ]]; then
+  if [[ -z "${SB_SHORT_ID_2}" && "${SB_VLESS_PRESERVE_SINGLE_SHORT_ID:-n}" != "y" ]]; then
     SB_SHORT_ID_2=$(openssl rand -hex 8)
   fi
 
@@ -7203,6 +7203,10 @@ render_saved_protocol_state_snapshot() {
       # shellcheck disable=SC1090
       (
         source "${state_file}"
+        if [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]]; then
+          VLESS_REALITY_DEFAULT_INSTANCE_ID="${DEFAULT_INSTANCE_ID:-main}"
+          load_vless_reality_instance_state "${VLESS_REALITY_DEFAULT_INSTANCE_ID}" || exit 1
+        fi
         printf 'PORT=%s\n' "${PORT:-}"
         printf 'UUID=%s\n' "${UUID:-}"
         printf 'SNI=%s\n' "${SNI:-}"
@@ -7489,6 +7493,7 @@ rebuild_protocol_state_from_config() {
 
     case "${protocol}" in
       vless-reality)
+        local saved_vless_preserve_single_short_id="${SB_VLESS_PRESERVE_SINGLE_SHORT_ID:-}"
         SB_PROTOCOL="vless+reality"
         SB_NODE_NAME="$(default_node_name_for_protocol "vless+reality")"
         SB_PORT=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")
@@ -7502,7 +7507,9 @@ rebuild_protocol_state_from_config() {
         else
           SB_PUBLIC_KEY=""
         fi
+        SB_VLESS_PRESERVE_SINGLE_SHORT_ID="y"
         save_vless_reality_state
+        SB_VLESS_PRESERVE_SINGLE_SHORT_ID="${saved_vless_preserve_single_short_id}"
         ;;
       mixed)
         SB_PROTOCOL="mixed"
