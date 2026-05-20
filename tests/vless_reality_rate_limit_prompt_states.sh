@@ -76,3 +76,15 @@ run_case "unlimited" $'443\nn\n' "" ""
 run_case "down-only" $'443\ny\n\n20\n' "" "20"
 run_case "up-only" $'443\ny\n5\n\n' "5" ""
 run_case "both" $'443\ny\n5\n20\n' "5" "20"
+
+rm -f "${TMP_DIR}/bin/sing-box"
+rm -rf "${SB_PROTOCOL_STATE_DIR}"
+mkdir -p "${SB_PROTOCOL_STATE_DIR}"
+
+prompt_vless_reality_install <<< $'443\nn\n'
+save_protocol_state "vless-reality"
+
+if [[ ! -f "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env" ]]; then
+  printf 'expected fresh VLESS state save to work before sing-box binary installation\n' >&2
+  exit 1
+fi

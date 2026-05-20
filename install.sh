@@ -1212,7 +1212,18 @@ list_exportable_client_protocols() {
 }
 
 save_vless_reality_state() {
-  ensure_vless_reality_materials
+  if [[ -z "${SB_UUID}" ]]; then
+    SB_UUID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
+  fi
+
+  if [[ -z "${SB_SHORT_ID_1}" ]]; then
+    SB_SHORT_ID_1=$(openssl rand -hex 8)
+  fi
+
+  if [[ -z "${SB_SHORT_ID_2}" ]]; then
+    SB_SHORT_ID_2=$(openssl rand -hex 8)
+  fi
+
   VLESS_REALITY_DEFAULT_INSTANCE_ID="${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}"
   VLESS_REALITY_INSTANCE_IDS="${VLESS_REALITY_INSTANCE_IDS:-${SB_VLESS_INSTANCE_ID:-main}}"
   save_vless_reality_protocol_state
@@ -3440,6 +3451,9 @@ ensure_vless_reality_materials() {
   fi
 
   save_vless_reality_protocol_material_state_if_v2
+  if [[ -n "${SB_VLESS_INSTANCE_ID:-}" ]] && [[ -f "$(vless_reality_instance_state_file "${SB_VLESS_INSTANCE_ID}")" ]]; then
+    save_vless_reality_instance_state
+  fi
 
   return 0
 }
