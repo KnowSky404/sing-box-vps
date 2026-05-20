@@ -851,6 +851,72 @@ vless_reality_instance_id_exists() {
   return 1
 }
 
+build_vless_reality_qos_plan() {
+  local state_file instance_id up down direction
+  local saved_instance_id saved_node_name saved_port saved_uuid saved_sni
+  local saved_short_id_1 saved_short_id_2 saved_rate_limit_up saved_rate_limit_down
+  state_file=$(protocol_state_file "vless-reality")
+  [[ -f "${state_file}" ]] || return 0
+
+  saved_instance_id="${SB_VLESS_INSTANCE_ID:-}"
+  saved_node_name="${SB_NODE_NAME:-}"
+  saved_port="${SB_PORT:-}"
+  saved_uuid="${SB_UUID:-}"
+  saved_sni="${SB_SNI:-}"
+  saved_short_id_1="${SB_SHORT_ID_1:-}"
+  saved_short_id_2="${SB_SHORT_ID_2:-}"
+  saved_rate_limit_up="${SB_VLESS_RATE_LIMIT_UP_MBPS:-}"
+  saved_rate_limit_down="${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}"
+
+  migrate_vless_reality_state_to_instances_if_needed
+
+  while IFS= read -r instance_id; do
+    [[ -z "${instance_id}" ]] && continue
+    load_vless_reality_instance_state "${instance_id}" || continue
+    up="${SB_VLESS_RATE_LIMIT_UP_MBPS:-}"
+    down="${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}"
+    [[ -z "${up}" && -z "${down}" ]] && continue
+
+    if [[ -n "${up}" && -n "${down}" ]]; then
+      direction="both"
+    elif [[ -n "${up}" ]]; then
+      direction="up"
+    else
+      direction="down"
+    fi
+
+    printf '%s|%s|%s|%s\n' "${SB_PORT}" "${direction}" "${up}" "${down}"
+  done < <(list_vless_reality_instance_ids)
+
+  SB_VLESS_INSTANCE_ID="${saved_instance_id}"
+  SB_NODE_NAME="${saved_node_name}"
+  SB_PORT="${saved_port}"
+  SB_UUID="${saved_uuid}"
+  SB_SNI="${saved_sni}"
+  SB_SHORT_ID_1="${saved_short_id_1}"
+  SB_SHORT_ID_2="${saved_short_id_2}"
+  SB_VLESS_RATE_LIMIT_UP_MBPS="${saved_rate_limit_up}"
+  SB_VLESS_RATE_LIMIT_DOWN_MBPS="${saved_rate_limit_down}"
+}
+
+refresh_vless_reality_qos_rules() {
+  local plan
+  plan=$(build_vless_reality_qos_plan)
+
+  if [[ -z "${plan}" ]]; then
+    log_info "REALITY 未配置限速，跳过 QoS 规则。"
+    return 0
+  fi
+
+  if ! command -v tc >/dev/null 2>&1; then
+    log_warn "未检测到 tc，REALITY 限速规则未应用。"
+    return 0
+  fi
+
+  log_warn "REALITY 限速计划已生成，但当前版本仅完成规则规划；真实 tc/nftables 应用将在后续任务接入。"
+  log_info "${plan}"
+}
+
 append_vless_reality_instance_id() {
   local instance_id=$1 ids=()
   local existing
@@ -2114,10 +2180,10 @@ install_protocols_interactive() {
 
   save_warp_route_settings
   generate_config
-  if declare -F refresh_vless_reality_qos_rules >/dev/null; then
+  check_config_valid
+  if protocol_array_contains "vless-reality" "${selected_protocols[@]}"; then
     refresh_vless_reality_qos_rules
   fi
-  check_config_valid
   setup_service
   first_selected_protocol="${selected_protocols[0]}"
   if [[ -n "${first_selected_protocol:-}" ]]; then
@@ -4375,6 +4441,7 @@ apply_stack_mode_changes() {
 
   generate_config
   check_config_valid
+  refresh_vless_reality_qos_rules
   setup_service
   open_all_protocol_ports
   systemctl restart sing-box
@@ -4905,6 +4972,9 @@ update_config_only() {
 
   generate_config
   check_config_valid
+  if [[ "${selected_protocol}" == "vless-reality" ]]; then
+    refresh_vless_reality_qos_rules
+  fi
   setup_service
   open_all_protocol_ports
   load_protocol_state "${selected_protocol}"
@@ -5008,9 +5078,7 @@ remove_protocol_menu() {
       setup_service
       load_protocol_state "vless-reality"
       open_all_protocol_ports
-      if declare -F refresh_vless_reality_qos_rules >/dev/null; then
-        refresh_vless_reality_qos_rules
-      fi
+      refresh_vless_reality_qos_rules
       systemctl restart sing-box
       log_success "已移除 REALITY 实例: ${selected_instance}。原状态已备份到: ${backup_instance_state_file}"
       return 0
@@ -5058,6 +5126,7 @@ remove_protocol_menu() {
   first_remaining="${remaining_protocols[0]}"
   load_protocol_state "${first_remaining}"
   open_all_protocol_ports
+  refresh_vless_reality_qos_rules
   systemctl restart sing-box
   log_success "已移除协议: ${selected_display}。原状态已备份到: ${backup_state_file}"
 }
