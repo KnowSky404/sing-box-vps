@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052003
+# Version: 2026052004
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052003"
+readonly SCRIPT_VERSION="2026052004"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -26,6 +26,9 @@ readonly SB_MEDIA_CHECK_DIR="${SB_PROJECT_DIR}/media-check"
 readonly SB_MEDIA_CHECK_SCRIPT="${SB_MEDIA_CHECK_DIR}/region_restriction_check.sh"
 readonly SB_PROTOCOL_STATE_DIR="${SB_PROJECT_DIR}/protocols"
 readonly SB_PROTOCOL_INDEX_FILE="${SB_PROTOCOL_STATE_DIR}/index.env"
+readonly SB_REALITY_QOS_FILTER_STATE_FILE="${SB_PROJECT_DIR}/reality-qos.filters"
+readonly SB_REALITY_QOS_FILTER_PREF_START="32001"
+readonly SB_REALITY_QOS_BURST="512k"
 readonly SB_ACME_DATA_DIR="${SB_PROJECT_DIR}/acme"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
 readonly SBV_BIN_PATH="/usr/local/bin/sbv"
@@ -914,11 +917,145 @@ build_vless_reality_qos_plan() {
   SB_VLESS_RATE_LIMIT_DOWN_MBPS="${saved_rate_limit_down}"
 }
 
+detect_default_network_interface() {
+  local iface
+
+  if ! command -v ip >/dev/null 2>&1; then
+    return 1
+  fi
+
+  iface=$(ip route show default 2>/dev/null | awk '
+    {
+      for (i = 1; i <= NF; i++) {
+        if ($i == "dev" && (i + 1) <= NF) {
+          print $(i + 1)
+          exit
+        }
+      }
+    }
+  ')
+  [[ -n "${iface}" ]] || return 1
+  printf '%s\n' "${iface}"
+}
+
+vless_reality_qos_hook_for_direction() {
+  local direction=$1
+
+  case "${direction}" in
+    up) printf 'ingress' ;;
+    down) printf 'egress' ;;
+    *) return 1 ;;
+  esac
+}
+
+clear_vless_reality_qos_rules() {
+  local iface direction protocol pref port rate hook
+
+  [[ -f "${SB_REALITY_QOS_FILTER_STATE_FILE}" ]] || return 0
+
+  while IFS='|' read -r iface direction protocol pref port rate; do
+    [[ -z "${iface}" || -z "${direction}" || -z "${protocol}" || -z "${pref}" ]] && continue
+    hook=$(vless_reality_qos_hook_for_direction "${direction}") || continue
+    tc filter del dev "${iface}" "${hook}" pref "${pref}" protocol "${protocol}" >/dev/null 2>&1 || true
+  done < "${SB_REALITY_QOS_FILTER_STATE_FILE}"
+
+  rm -f "${SB_REALITY_QOS_FILTER_STATE_FILE}"
+}
+
+ensure_vless_reality_qos_clsact() {
+  local iface=$1
+
+  if tc qdisc show dev "${iface}" 2>/dev/null | grep -qw 'clsact'; then
+    return 0
+  fi
+
+  if ! tc qdisc add dev "${iface}" clsact >/dev/null 2>&1; then
+    log_warn "REALITY 限速规则未应用：无法在网卡 ${iface} 上创建 clsact qdisc。"
+    return 1
+  fi
+}
+
+apply_vless_reality_qos_filter() {
+  local iface=$1 direction=$2 port=$3 rate=$4 protocol=$5 pref=$6 state_file=$7
+  local hook port_match
+
+  hook=$(vless_reality_qos_hook_for_direction "${direction}") || return 1
+  case "${direction}" in
+    up) port_match="dst_port" ;;
+    down) port_match="src_port" ;;
+    *) return 1 ;;
+  esac
+
+  if tc filter add dev "${iface}" "${hook}" protocol "${protocol}" pref "${pref}" \
+    flower ip_proto tcp "${port_match}" "${port}" \
+    action police rate "${rate}mbit" burst "${SB_REALITY_QOS_BURST}" conform-exceed drop >/dev/null 2>&1; then
+    printf '%s|%s|%s|%s|%s|%s\n' "${iface}" "${direction}" "${protocol}" "${pref}" "${port}" "${rate}" >> "${state_file}"
+    return 0
+  fi
+
+  log_warn "REALITY 限速规则应用失败：${iface} ${direction} ${protocol} port ${port} rate ${rate}Mbps。"
+  return 1
+}
+
+apply_vless_reality_qos_plan() {
+  local plan=$1 iface tmp_state line port direction up down protocol pref failures
+
+  clear_vless_reality_qos_rules
+
+  [[ -n "${plan}" ]] || return 0
+
+  iface=$(detect_default_network_interface) || {
+    log_warn "REALITY 限速规则未应用：未能识别默认出口网卡。"
+    return 0
+  }
+
+  ensure_vless_reality_qos_clsact "${iface}" || return 0
+
+  mkdir -p "$(dirname "${SB_REALITY_QOS_FILTER_STATE_FILE}")"
+  tmp_state=$(mktemp)
+  pref="${SB_REALITY_QOS_FILTER_PREF_START}"
+  failures=0
+
+  while IFS= read -r line; do
+    [[ -z "${line}" ]] && continue
+    IFS='|' read -r port direction up down <<< "${line}"
+
+    if [[ "${direction}" == "up" || "${direction}" == "both" ]]; then
+      for protocol in ip ipv6; do
+        apply_vless_reality_qos_filter "${iface}" "up" "${port}" "${up}" "${protocol}" "${pref}" "${tmp_state}" || failures=$((failures + 1))
+        pref=$((pref + 1))
+      done
+    fi
+
+    if [[ "${direction}" == "down" || "${direction}" == "both" ]]; then
+      for protocol in ip ipv6; do
+        apply_vless_reality_qos_filter "${iface}" "down" "${port}" "${down}" "${protocol}" "${pref}" "${tmp_state}" || failures=$((failures + 1))
+        pref=$((pref + 1))
+      done
+    fi
+  done <<< "${plan}"
+
+  if [[ -s "${tmp_state}" ]]; then
+    mv "${tmp_state}" "${SB_REALITY_QOS_FILTER_STATE_FILE}"
+  else
+    rm -f "${tmp_state}"
+  fi
+
+  if (( failures > 0 )); then
+    log_warn "REALITY 限速规则部分应用失败，请确认系统 iproute2/tc 支持 flower police。"
+  else
+    log_success "REALITY 端口限速规则已应用。"
+  fi
+}
+
 refresh_vless_reality_qos_rules() {
   local plan
   plan=$(build_vless_reality_qos_plan)
 
   if [[ -z "${plan}" ]]; then
+    if command -v tc >/dev/null 2>&1; then
+      clear_vless_reality_qos_rules
+    fi
     log_info "REALITY 未配置限速，跳过 QoS 规则。"
     return 0
   fi
@@ -928,8 +1065,7 @@ refresh_vless_reality_qos_rules() {
     return 0
   fi
 
-  log_warn "REALITY 限速计划已生成，但当前版本仅完成规则规划；真实 tc/nftables 应用将在后续任务接入。"
-  log_info "${plan}"
+  apply_vless_reality_qos_plan "${plan}"
 }
 
 append_vless_reality_instance_id() {
@@ -3138,10 +3274,10 @@ install_dependencies() {
   case "${OS_NAME}" in
     debian|ubuntu)
       apt-get update -y
-      apt-get install -y curl wget jq tar openssl uuid-runtime qrencode
+      apt-get install -y curl wget jq tar openssl uuid-runtime qrencode iproute2
       ;;
     centos|almalinux|rocky)
-      yum install -y curl wget jq tar openssl util-linux qrencode
+      yum install -y curl wget jq tar openssl util-linux qrencode iproute
       ;;
   esac
   log_success "基础依赖安装完成。"
