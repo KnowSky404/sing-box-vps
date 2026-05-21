@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052101
+# Version: 2026052102
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052101"
+readonly SCRIPT_VERSION="2026052102"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -3205,15 +3205,34 @@ check_sb_version() {
 
 # Check and Enable BBR
 enable_bbr() {
-  local current_cc=$(sysctl net.ipv4.tcp_congestion_control | awk '{print $3}')
+  local current_cc
+  current_cc=$(sysctl net.ipv4.tcp_congestion_control | awk '{print $3}')
   if [[ "${current_cc}" == "bbr" ]]; then
     log_success "BBR 拥塞控制已开启。"
   else
     log_warn "BBR 拥塞控制未开启，正在尝试开启..."
-    echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
-    sysctl -p
+    set_sysctl_conf_value "net.core.default_qdisc" "fq" "/etc/sysctl.conf"
+    set_sysctl_conf_value "net.ipv4.tcp_congestion_control" "bbr" "/etc/sysctl.conf"
+    sysctl -p /etc/sysctl.conf
     log_success "BBR 开启成功。"
+  fi
+}
+
+set_sysctl_conf_value() {
+  local key=$1
+  local value=$2
+  local config_file=${3:-/etc/sysctl.conf}
+  local escaped_key
+  local escaped_value
+
+  escaped_key=$(printf '%s' "${key}" | sed 's/[][\/.^$*]/\\&/g')
+  escaped_value=$(printf '%s' "${value}" | sed 's/[\/&]/\\&/g')
+
+  touch "${config_file}"
+  if grep -qE "^[[:space:]]*${escaped_key}[[:space:]]*=" "${config_file}"; then
+    sed -i -E "s|^[[:space:]]*${escaped_key}[[:space:]]*=.*|${key}=${escaped_value}|" "${config_file}"
+  else
+    printf '%s=%s\n' "${key}" "${value}" >> "${config_file}"
   fi
 }
 
@@ -3237,8 +3256,13 @@ open_firewall_port() {
   
   # Iptables
   if command -v iptables &>/dev/null; then
-    iptables -I INPUT -p tcp --dport "${port}" -j ACCEPT &>/dev/null
-    iptables -I INPUT -p udp --dport "${port}" -j ACCEPT &>/dev/null
+    if ! iptables -C INPUT -p tcp --dport "${port}" -j ACCEPT &>/dev/null; then
+      iptables -I INPUT -p tcp --dport "${port}" -j ACCEPT &>/dev/null
+    fi
+    if ! iptables -C INPUT -p udp --dport "${port}" -j ACCEPT &>/dev/null; then
+      iptables -I INPUT -p udp --dport "${port}" -j ACCEPT &>/dev/null
+    fi
+    log_warn "裸 iptables 规则通常只对当前运行时生效；如需持久化，请确认系统已配置规则保存机制。"
   fi
   
   log_success "端口 ${port} 防火墙配置尝试完成。"
@@ -3264,19 +3288,15 @@ check_port_conflict() {
     local process
     process=$(ss -tunlp | grep ":${port} " | awk '{print $7}' | cut -d'"' -f2 | head -n1)
     log_warn "端口 ${port} 已被进程 [${process}] 占用。"
-    echo "1. 尝试自动停止该进程"
+    echo "1. 保留占用进程并改用随机端口"
     echo "2. 使用随机端口"
     echo "3. 手动输入新端口"
     read -rp "请选择操作 [1-3]: " port_choice
     
     case "${port_choice}" in
-      1)
-        local pid=$(ss -tunlp | grep ":${port} " | awk '{print $7}' | cut -d',' -f2 | cut -d'=' -f2 | head -n1)
-        kill -9 "${pid}" && log_success "进程已终止。"
-        ;;
-      2)
+      1|2)
         SB_PORT="$(pick_random_high_port)"
-        log_success "已自动切换到随机端口: ${SB_PORT}"
+        log_success "已保留占用进程，并自动切换到随机端口: ${SB_PORT}"
         ;;
       3)
         read -rp "请输入新端口: " SB_PORT
@@ -4146,16 +4166,31 @@ generate_config() {
   while IFS= read -r protocol; do
     [[ -z "${protocol}" ]] && continue
     load_protocol_state "${protocol}"
-    build_inbound_for_protocol "${protocol}" >> "${inbound_file}"
+    if ! build_inbound_for_protocol "${protocol}" >> "${inbound_file}"; then
+      rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}"
+      return 1
+    fi
     build_certificate_provider_for_protocol "${protocol}" >> "${provider_file}" 2>/dev/null || true
-    build_protocol_route_rules "${protocol}" >> "${protocol_rule_file}"
+    if ! build_protocol_route_rules "${protocol}" >> "${protocol_rule_file}"; then
+      rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}"
+      return 1
+    fi
   done < <(list_effective_protocols)
 
-  inbounds_json=$(jq -s . "${inbound_file}")
-  certificate_providers_json=$(jq -s . "${provider_file}")
-  protocol_rules_json=$(jq -s 'add // []' "${protocol_rule_file}")
+  if ! inbounds_json=$(jq -s . "${inbound_file}"); then
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}"
+    return 1
+  fi
+  if ! certificate_providers_json=$(jq -s . "${provider_file}"); then
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}"
+    return 1
+  fi
+  if ! protocol_rules_json=$(jq -s 'add // []' "${protocol_rule_file}"); then
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}"
+    return 1
+  fi
 
-  jq -n \
+  if ! jq -n \
     --arg adv_route "${SB_ADVANCED_ROUTE}" \
     --arg enable_warp "${SB_ENABLE_WARP}" \
     --arg warp_mode "${SB_WARP_ROUTE_MODE}" \
@@ -4284,7 +4319,10 @@ generate_config() {
       else
         {}
       end
-    )' > "${SINGBOX_CONFIG_FILE}"
+    )' > "${SINGBOX_CONFIG_FILE}"; then
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}"
+    return 1
+  fi
 
   rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}"
 }
@@ -7898,6 +7936,7 @@ install_or_reconfigure_singbox() {
 update_singbox_binary_preserving_config() {
   local installed_ver
   local reinstall_choice
+  local binary_backup=""
 
   installed_ver=$("${SINGBOX_BIN_PATH}" version | head -n1 | awk '{print $3}')
   get_os_info
@@ -7920,14 +7959,29 @@ update_singbox_binary_preserving_config() {
     fi
   fi
 
+  binary_backup=$(mktemp)
+  if ! cp -p "${SINGBOX_BIN_PATH}" "${binary_backup}"; then
+    rm -f "${binary_backup}"
+    log_error "备份现有 sing-box 二进制失败，已取消更新。"
+  fi
+
   install_binary
 
   log_info "正在使用 sing-box ${SB_VERSION} 校验现有配置..."
   if ! validate_config_file; then
     log_warn "现有配置未通过 sing-box ${SB_VERSION} 校验。配置已保留，服务未重启。"
     log_warn "这通常意味着新版本存在 breaking changes，请按 sing-box migration 文档迁移配置后再重载服务。"
+    if cp -p "${binary_backup}" "${SINGBOX_BIN_PATH}" 2>/dev/null; then
+      chmod +x "${SINGBOX_BIN_PATH}"
+      log_warn "已自动恢复更新前的 sing-box 二进制。"
+    else
+      log_warn "自动恢复旧 sing-box 二进制失败，请从备份 ${binary_backup} 手动恢复。"
+      return 0
+    fi
+    rm -f "${binary_backup}"
     return 0
   fi
+  rm -f "${binary_backup}"
 
   log_success "现有配置通过 sing-box ${SB_VERSION} 校验。"
   setup_service

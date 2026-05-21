@@ -753,11 +753,14 @@ grep -Fqx 'tests/verification_protocol_probe_matrix.sh|1' "${TMP_DIR}/local-test
 grep -Fqx 'tests/verification_protocol_probe_vless.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_hy2.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_anytls.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/generate_config_cleans_temp_files_on_failure.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/system_safety_guards.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/update_rolls_back_binary_when_config_invalid.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_config_helpers.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_payload_generation.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_api_push.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_sync_orchestration.sh|1' "${TMP_DIR}/local-tests.log"
-[[ $(wc -l < "${TMP_DIR}/local-tests.log") -eq 8 ]] || {
+[[ $(wc -l < "${TMP_DIR}/local-tests.log") -eq 11 ]] || {
   printf 'expected protocol probe and SubMan focused tests for install changes\n' >&2
   exit 1
 }
