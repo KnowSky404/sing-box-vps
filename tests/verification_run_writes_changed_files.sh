@@ -419,17 +419,18 @@ bash() {
         fi
 
         if [[ "\${actual_lines[2]:-}" == "1" ]]; then
-          [[ "\${#actual_lines[@]}" -eq 10 ]]
+          [[ "\${#actual_lines[@]}" -eq 11 ]]
           [[ "\${actual_lines[0]}" == "1" ]]
           [[ "\${actual_lines[1]}" == "" ]]
           [[ "\${actual_lines[2]}" == "1" ]]
-          [[ "\${actual_lines[3]}" == "443" ]]
-          [[ "\${actual_lines[4]}" == "2" ]]
-          [[ "\${actual_lines[5]}" == "www.cloudflare.com" ]]
-          [[ "\${actual_lines[6]}" == "n" ]]
+          [[ "\${actual_lines[3]}" == "" ]]
+          [[ "\${actual_lines[4]}" == "443" ]]
+          [[ "\${actual_lines[5]}" == "2" ]]
+          [[ "\${actual_lines[6]}" == "www.cloudflare.com" ]]
           [[ "\${actual_lines[7]}" == "n" ]]
           [[ "\${actual_lines[8]}" == "n" ]]
-          [[ "\${actual_lines[9]}" == "0" ]]
+          [[ "\${actual_lines[9]}" == "n" ]]
+          [[ "\${actual_lines[10]}" == "0" ]]
           printf '443\n' > "\${REMOTE_PORT_FILE}"
           next_install_uuid > "\${REMOTE_UUID_FILE}"
           printf 'www.cloudflare.com\n' > "\${REMOTE_SNI_FILE}"
@@ -501,14 +502,16 @@ EXPORT_EOF
       fi
 
       if [[ "\${actual_lines[0]:-}" == "4" ]]; then
-        [[ "\${#actual_lines[@]}" -eq 8 ]]
+        [[ "\${#actual_lines[@]}" -eq 10 ]]
         [[ "\${actual_lines[1]}" == "1" ]]
         [[ "\${actual_lines[2]}" == "1" ]]
-        [[ "\${actual_lines[3]}" == "8443" ]]
-        [[ "\${actual_lines[4]}" == "22222222-2222-4222-8222-222222222222" ]]
-        [[ "\${actual_lines[5]}" == "3" ]]
-        [[ "\${actual_lines[6]}" == "cdn.cloudflare.com" ]]
-        [[ "\${actual_lines[7]}" == "0" ]]
+        [[ "\${actual_lines[3]}" == "" ]]
+        [[ "\${actual_lines[4]}" == "8443" ]]
+        [[ "\${actual_lines[5]}" == "22222222-2222-4222-8222-222222222222" ]]
+        [[ "\${actual_lines[6]}" == "3" ]]
+        [[ "\${actual_lines[7]}" == "cdn.cloudflare.com" ]]
+        [[ "\${actual_lines[8]}" == "" ]]
+        [[ "\${actual_lines[9]}" == "0" ]]
         printf '8443\n' > "\${REMOTE_PORT_FILE}"
         printf '22222222-2222-4222-8222-222222222222\n' > "\${REMOTE_UUID_FILE}"
         printf 'cdn.cloudflare.com\n' > "\${REMOTE_SNI_FILE}"

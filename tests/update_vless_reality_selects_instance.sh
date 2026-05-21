@@ -100,13 +100,32 @@ EOF
 update_config_only <<'EOF'
 1
 2
+renamed-second
 9443
 
 1
+2
+5
+20
 EOF
 
 if ! grep -Fq 'PORT=9443' "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/second.env"; then
   printf 'expected selected second REALITY instance to update, got:\n%s\n' "$(cat "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/second.env")" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'NODE_NAME=renamed-second' "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/second.env"; then
+  printf 'expected selected second REALITY instance node name to update, got:\n%s\n' "$(cat "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/second.env")" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'RATE_LIMIT_UP_MBPS=5' "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/second.env"; then
+  printf 'expected selected second REALITY instance upload rate to update, got:\n%s\n' "$(cat "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/second.env")" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'RATE_LIMIT_DOWN_MBPS=20' "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/second.env"; then
+  printf 'expected selected second REALITY instance download rate to update, got:\n%s\n' "$(cat "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/second.env")" >&2
   exit 1
 fi
 

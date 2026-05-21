@@ -107,8 +107,10 @@ update_config_only <<'EOF'
 1
 
 
+
 3
 cloudflare.com
+
 EOF
 
 if ! grep -Fq 'SNI=cloudflare.com' "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env"; then

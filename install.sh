@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052106
+# Version: 2026052107
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052106"
+readonly SCRIPT_VERSION="2026052107"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -1573,18 +1573,30 @@ prompt_installed_protocol_selection() {
 }
 
 prompt_vless_reality_update() {
-  local in_p in_uuid
+  local in_node in_p in_uuid current_port
 
+  read -rp "新节点名称 (当前: ${SB_NODE_NAME}, 留空保持): " in_node
+  in_node=$(trim_whitespace "${in_node:-}")
+  [[ -n "${in_node}" ]] && SB_NODE_NAME="${in_node}"
+
+  current_port="${SB_PORT}"
   read -rp "新端口 (当前: ${SB_PORT}, 留空保持): " in_p
+  in_p=$(trim_whitespace "${in_p:-}")
   if [[ -n "${in_p}" ]]; then
+    validate_port_number "${in_p}" || log_error "端口必须为 1-65535 的数字。"
+    if [[ "${in_p}" != "${current_port}" ]] && port_in_configured_protocol_state "${in_p}"; then
+      log_error "端口已被现有协议配置占用: ${in_p}"
+    fi
     SB_PORT="${in_p}"
     check_port_conflict "${SB_PORT}"
   fi
 
   read -rp "新 UUID (当前: ${SB_UUID}, 留空保持): " in_uuid
+  in_uuid=$(trim_whitespace "${in_uuid:-}")
   [[ -n "${in_uuid}" ]] && SB_UUID="${in_uuid}"
 
   prompt_reality_sni_update
+  prompt_vless_reality_rate_limit_update_fields
 }
 
 probe_reality_sni_candidate() {
@@ -1753,6 +1765,51 @@ prompt_vless_reality_rate_limit_fields() {
   if [[ -z "${SB_VLESS_RATE_LIMIT_UP_MBPS}" && -z "${SB_VLESS_RATE_LIMIT_DOWN_MBPS}" ]]; then
     log_warn "上下行均为空，将按不限速保存。"
   fi
+}
+
+prompt_vless_reality_rate_limit_update_fields() {
+  local choice in_up in_down current_summary
+
+  SB_VLESS_RATE_LIMIT_UP_MBPS="${SB_VLESS_RATE_LIMIT_UP_MBPS:-}"
+  SB_VLESS_RATE_LIMIT_DOWN_MBPS="${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}"
+  current_summary=$(vless_reality_rate_limit_summary \
+    "${SB_VLESS_RATE_LIMIT_UP_MBPS}" \
+    "${SB_VLESS_RATE_LIMIT_DOWN_MBPS}")
+
+  echo "[VLESS + REALITY] 当前限速: ${current_summary}"
+  echo "1. 保留当前限速 (默认)"
+  echo "2. 重新设置限速"
+  echo "3. 清空限速"
+  read -rp "请选择 [1-3] (默认 1): " choice
+  choice=${choice:-1}
+
+  case "${choice}" in
+    2)
+      while true; do
+        read -rp "[VLESS + REALITY] 上行带宽 Mbps (留空表示上行不限速): " in_up
+        in_up=$(trim_whitespace "${in_up}")
+        validate_optional_positive_integer "${in_up}" && break
+        log_warn "上行带宽必须为空或正整数。"
+      done
+
+      while true; do
+        read -rp "[VLESS + REALITY] 下行带宽 Mbps (留空表示下行不限速): " in_down
+        in_down=$(trim_whitespace "${in_down}")
+        validate_optional_positive_integer "${in_down}" && break
+        log_warn "下行带宽必须为空或正整数。"
+      done
+
+      SB_VLESS_RATE_LIMIT_UP_MBPS="${in_up}"
+      SB_VLESS_RATE_LIMIT_DOWN_MBPS="${in_down}"
+      ;;
+    3)
+      SB_VLESS_RATE_LIMIT_UP_MBPS=""
+      SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
+      ;;
+    *)
+      log_info "保留当前 REALITY 限速: ${current_summary}"
+      ;;
+  esac
 }
 
 prompt_mixed_update() {
@@ -2109,12 +2166,16 @@ prompt_protocol_install_selection() {
 }
 
 prompt_vless_reality_install() {
-  local in_p
+  local in_node in_p
 
   set_protocol_defaults "vless+reality"
   SB_VLESS_INSTANCE_ID="main"
   SB_NODE_NAME="$(default_node_name_for_protocol "vless+reality")"
   echo -e "\n${BLUE}--- 配置 VLESS + REALITY ---${NC}"
+  read -rp "[VLESS + REALITY] 节点名称 (默认 ${SB_NODE_NAME}): " in_node
+  in_node=$(trim_whitespace "${in_node:-}")
+  [[ -n "${in_node}" ]] && SB_NODE_NAME="${in_node}"
+
   printf '[VLESS + REALITY] 端口 (默认 %s): ' "${SB_PORT}"
   read -r in_p
   SB_PORT=${in_p:-$SB_PORT}

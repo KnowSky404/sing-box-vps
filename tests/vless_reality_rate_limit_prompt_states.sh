@@ -47,7 +47,7 @@ prompt_reality_sni_install() { SB_SNI="apple.com"; }
 prompt_reality_sni_update() { SB_SNI="${SB_SNI:-apple.com}"; }
 
 run_case() {
-  local case_name=$1 input=$2 expected_up=$3 expected_down=$4
+  local case_name=$1 input=$2 expected_node=$3 expected_up=$4 expected_down=$5
   local state_file
   rm -rf "${SB_PROTOCOL_STATE_DIR}"
   mkdir -p "${SB_PROTOCOL_STATE_DIR}"
@@ -66,22 +66,27 @@ run_case() {
     exit 1
   fi
 
+  if ! grep -Fq "NODE_NAME=${expected_node}" "${state_file}"; then
+    printf '[%s] expected node=%s, got:\n%s\n' "${case_name}" "${expected_node}" "$(cat "${state_file}")" >&2
+    exit 1
+  fi
+
   if ! grep -Eq "^RATE_LIMIT_DOWN_MBPS=${expected_down}$" "${state_file}"; then
     printf '[%s] expected down=%s, got:\n%s\n' "${case_name}" "${expected_down}" "$(cat "${state_file}")" >&2
     exit 1
   fi
 }
 
-run_case "unlimited" $'443\nn\n' "" ""
-run_case "down-only" $'443\ny\n\n20\n' "" "20"
-run_case "up-only" $'443\ny\n5\n\n' "5" ""
-run_case "both" $'443\ny\n5\n20\n' "5" "20"
+run_case "unlimited" $'custom-unlimited\n443\nn\n' "custom-unlimited" "" ""
+run_case "down-only" $'custom-down\n443\ny\n\n20\n' "custom-down" "" "20"
+run_case "up-only" $'custom-up\n443\ny\n5\n\n' "custom-up" "5" ""
+run_case "both" $'custom-both\n443\ny\n5\n20\n' "custom-both" "5" "20"
 
 rm -f "${TMP_DIR}/bin/sing-box"
 rm -rf "${SB_PROTOCOL_STATE_DIR}"
 mkdir -p "${SB_PROTOCOL_STATE_DIR}"
 
-prompt_vless_reality_install <<< $'443\nn\n'
+prompt_vless_reality_install <<< $'fallback-node\n443\nn\n'
 save_protocol_state "vless-reality"
 
 if [[ ! -f "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env" ]]; then
