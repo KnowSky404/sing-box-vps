@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052102
+# Version: 2026052103
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052102"
+readonly SCRIPT_VERSION="2026052103"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -3807,7 +3807,7 @@ build_vless_inbound_json() {
   fi
 
   for instance_id in "${instance_ids[@]}"; do
-    build_vless_inbound_json_for_instance "${instance_id}"
+    build_vless_inbound_json_for_instance "${instance_id}" || return 1
   done
 }
 
