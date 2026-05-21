@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052004
+# Version: 2026052101
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052004"
+readonly SCRIPT_VERSION="2026052101"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -934,6 +934,18 @@ detect_default_network_interface() {
       }
     }
   ')
+  if [[ -z "${iface}" ]]; then
+    iface=$(ip -6 route show default 2>/dev/null | awk '
+      {
+        for (i = 1; i <= NF; i++) {
+          if ($i == "dev" && (i + 1) <= NF) {
+            print $(i + 1)
+            exit
+          }
+        }
+      }
+    ')
+  fi
   [[ -n "${iface}" ]] || return 1
   printf '%s\n' "${iface}"
 }
@@ -977,6 +989,7 @@ ensure_vless_reality_qos_clsact() {
 
 apply_vless_reality_qos_filter() {
   local iface=$1 direction=$2 port=$3 rate=$4 protocol=$5 pref=$6 state_file=$7
+  local quiet=${8:-n}
   local hook port_match
 
   hook=$(vless_reality_qos_hook_for_direction "${direction}") || return 1
@@ -993,12 +1006,32 @@ apply_vless_reality_qos_filter() {
     return 0
   fi
 
-  log_warn "REALITY 限速规则应用失败：${iface} ${direction} ${protocol} port ${port} rate ${rate}Mbps。"
+  if [[ "${quiet}" != "y" ]]; then
+    log_warn "REALITY 限速规则应用失败：${iface} ${direction} ${protocol} port ${port} rate ${rate}Mbps。"
+  fi
+  return 1
+}
+
+apply_vless_reality_qos_filter_with_retry() {
+  local iface=$1 direction=$2 port=$3 rate=$4 protocol=$5 start_pref=$6 state_file=$7
+  local pref attempt max_attempts
+
+  pref="${start_pref}"
+  max_attempts=100
+  for ((attempt = 0; attempt < max_attempts; attempt++)); do
+    if apply_vless_reality_qos_filter "${iface}" "${direction}" "${port}" "${rate}" "${protocol}" "${pref}" "${state_file}" "y"; then
+      printf '%s\n' "${pref}"
+      return 0
+    fi
+    pref=$((pref + 1))
+  done
+
+  log_warn "REALITY 限速规则应用失败：${iface} ${direction} ${protocol} port ${port} rate ${rate}Mbps，已重试 ${max_attempts} 个 pref。"
   return 1
 }
 
 apply_vless_reality_qos_plan() {
-  local plan=$1 iface tmp_state line port direction up down protocol pref failures
+  local plan=$1 iface tmp_state line port direction up down protocol pref used_pref failures
 
   clear_vless_reality_qos_rules
 
@@ -1022,15 +1055,23 @@ apply_vless_reality_qos_plan() {
 
     if [[ "${direction}" == "up" || "${direction}" == "both" ]]; then
       for protocol in ip ipv6; do
-        apply_vless_reality_qos_filter "${iface}" "up" "${port}" "${up}" "${protocol}" "${pref}" "${tmp_state}" || failures=$((failures + 1))
-        pref=$((pref + 1))
+        if used_pref=$(apply_vless_reality_qos_filter_with_retry "${iface}" "up" "${port}" "${up}" "${protocol}" "${pref}" "${tmp_state}"); then
+          pref=$((used_pref + 1))
+        else
+          pref=$((pref + 100))
+          failures=$((failures + 1))
+        fi
       done
     fi
 
     if [[ "${direction}" == "down" || "${direction}" == "both" ]]; then
       for protocol in ip ipv6; do
-        apply_vless_reality_qos_filter "${iface}" "down" "${port}" "${down}" "${protocol}" "${pref}" "${tmp_state}" || failures=$((failures + 1))
-        pref=$((pref + 1))
+        if used_pref=$(apply_vless_reality_qos_filter_with_retry "${iface}" "down" "${port}" "${down}" "${protocol}" "${pref}" "${tmp_state}"); then
+          pref=$((used_pref + 1))
+        else
+          pref=$((pref + 100))
+          failures=$((failures + 1))
+        fi
       done
     fi
   done <<< "${plan}"
@@ -4251,6 +4292,9 @@ generate_config() {
 # --- Uninstaller ---
 perform_singbox_runtime_uninstall() {
   log_info "正在彻底卸载 sing-box 环境..."
+  if command -v tc >/dev/null 2>&1; then
+    clear_vless_reality_qos_rules
+  fi
   systemctl stop sing-box &>/dev/null || true
   systemctl disable sing-box &>/dev/null || true
   rm -f "${SINGBOX_SERVICE_FILE}"

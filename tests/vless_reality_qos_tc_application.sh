@@ -114,3 +114,67 @@ if ! grep -Fqx 'eth0|down|ipv6|32008|10443|20' "${TMP_DIR}/project/reality-qos.f
     "${tc_log}" "$(cat "${TMP_DIR}/project/reality-qos.filters")" >&2
   exit 1
 fi
+
+: > "${TC_LOG}"
+cat > "${TMP_DIR}/bin/tc" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "${TC_LOG}"
+if [[ "\$*" == filter\ add*pref\ 32001* ]]; then
+  exit 1
+fi
+exit 0
+EOF
+chmod +x "${TMP_DIR}/bin/tc"
+rm -f "${TMP_DIR}/project/reality-qos.filters"
+
+retry_output=$(refresh_vless_reality_qos_rules 2>&1)
+if [[ "${retry_output}" == *"部分应用失败"* ]]; then
+  printf 'expected QoS refresh to retry after a pref collision, got:\n%s\n' "${retry_output}" >&2
+  exit 1
+fi
+if ! grep -Fqx 'eth0|down|ip|32002|8443|20' "${TMP_DIR}/project/reality-qos.filters"; then
+  printf 'expected QoS state to skip collided pref 32001 and persist pref 32002, got:\n%s\n' \
+    "$(cat "${TMP_DIR}/project/reality-qos.filters")" >&2
+  exit 1
+fi
+
+cat > "${TMP_DIR}/bin/ip" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "route" && "${2:-}" == "show" && "${3:-}" == "default" ]]; then
+  exit 1
+fi
+if [[ "${1:-}" == "-6" && "${2:-}" == "route" && "${3:-}" == "show" && "${4:-}" == "default" ]]; then
+  printf 'default via 2001:db8::1 dev eth1 proto static\n'
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "${TMP_DIR}/bin/ip"
+
+if [[ "$(detect_default_network_interface)" != "eth1" ]]; then
+  printf 'expected IPv6 default route fallback to detect eth1\n' >&2
+  exit 1
+fi
+
+cat > "${TMP_DIR}/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "${TMP_DIR}/bin/systemctl"
+
+cat > "${TMP_DIR}/bin/tc" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "${TC_LOG}"
+exit 0
+EOF
+chmod +x "${TMP_DIR}/bin/tc"
+
+cat > "${TMP_DIR}/project/reality-qos.filters" <<'EOF'
+eth1|down|ip|32001|8443|20
+EOF
+
+perform_singbox_runtime_uninstall >/dev/null 2>&1 || true
+if ! grep -Fqx 'filter del dev eth1 egress pref 32001 protocol ip' "${TC_LOG}"; then
+  printf 'expected uninstall to clear managed QoS filters before deleting project dir, got:\n%s\n' "$(cat "${TC_LOG}")" >&2
+  exit 1
+fi
