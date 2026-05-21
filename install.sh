@@ -5742,7 +5742,7 @@ build_hy2_link() {
   local address_label=${2:-}
   local server_host query node_name
   server_host=${SB_HY2_DOMAIN:-${public_ip}}
-  node_name=$(node_name_for_network_stack "${SB_NODE_NAME}" "${address_label}")
+  node_name=$(display_node_name_for_protocol "hy2" "${SB_NODE_NAME}" "${address_label}")
   query="sni=${SB_HY2_DOMAIN:-${server_host}}"
 
   if [[ "${SB_HY2_OBFS_ENABLED}" == "y" ]]; then
@@ -5825,11 +5825,7 @@ build_subman_node_payload() {
     load_vless_reality_instance_state "${instance_id}" || return 1
   fi
   prefix=$(subman_node_prefix)
-  if [[ "${protocol}" == "vless-reality" ]]; then
-    node_name=$(trim_whitespace "$(vless_reality_display_node_name "${SB_NODE_NAME:-}" "${address_label}")")
-  else
-    node_name=$(trim_whitespace "$(node_name_for_network_stack "${SB_NODE_NAME:-}" "${address_label}")")
-  fi
+  node_name=$(trim_whitespace "$(display_node_name_for_protocol "${protocol}" "${SB_NODE_NAME:-}" "${address_label}")")
   [[ -z "${node_name}" ]] && node_name="${prefix} ${protocol}"
 
   jq -n \
@@ -5958,14 +5954,10 @@ build_anytls_outbound_example() {
 }
 
 client_outbound_tag_for_protocol() {
-  local protocol
+  local protocol address_label=${2:-}
   protocol=$(normalize_protocol_id "$1")
   if [[ -n "${SB_NODE_NAME:-}" ]]; then
-    if [[ "${protocol}" == "vless-reality" ]]; then
-      vless_reality_display_node_name "${SB_NODE_NAME}" ""
-      return 0
-    fi
-    printf '%s' "${SB_NODE_NAME}"
+    display_node_name_for_protocol "${protocol}" "${SB_NODE_NAME}" "${address_label}"
     return 0
   fi
 
@@ -6929,13 +6921,12 @@ agent_node_summary_json_for_current_protocol() {
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
   public_ip=${1:-$(get_public_ip)}
-  node_name="${SB_NODE_NAME}"
+  node_name=$(display_node_name_for_protocol "${protocol}" "${SB_NODE_NAME}" "")
 
   case "${protocol}" in
     vless-reality)
       client_exportable="true"
       server_name="${SB_SNI}"
-      node_name=$(vless_reality_display_node_name "${SB_NODE_NAME}" "")
       ;;
     mixed)
       [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]] && auth_enabled="true"
@@ -6979,7 +6970,6 @@ agent_link_json_for_current_protocol() {
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
   public_ip=${1:-$(get_public_ip)}
-  node_name="${SB_NODE_NAME}"
   if [[ "${public_ip}" == *:* ]]; then
     address_label="IPv6"
   elif [[ "${public_ip}" == *.* ]]; then
@@ -6987,11 +6977,11 @@ agent_link_json_for_current_protocol() {
   else
     address_label=""
   fi
+  node_name=$(display_node_name_for_protocol "${protocol}" "${SB_NODE_NAME}" "${address_label}")
 
   case "${protocol}" in
     vless-reality)
       link_json=$(jq -n --arg vless "$(build_vless_link "${public_ip}" "${address_label}")" '{"vless": $vless}')
-      node_name=$(vless_reality_display_node_name "${SB_NODE_NAME}" "${address_label}")
       ;;
     mixed)
       link_json=$(jq -n \
