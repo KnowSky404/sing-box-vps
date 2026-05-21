@@ -628,37 +628,64 @@ node_name_for_network_stack() {
   fi
 }
 
-vless_reality_rate_limit_name_suffix() {
+bandwidth_limit_name_suffix() {
   local up_mbps=${1:-}
   local down_mbps=${2:-}
-  local suffix=""
+  local parts=()
 
   if [[ -n "${up_mbps}" ]]; then
-    suffix="${suffix}-up${up_mbps}m"
+    parts+=("U${up_mbps}M")
   fi
   if [[ -n "${down_mbps}" ]]; then
-    suffix="${suffix}-down${down_mbps}m"
+    parts+=("D${down_mbps}M")
   fi
 
-  printf '%s' "${suffix}"
+  if [[ ${#parts[@]} -eq 0 ]]; then
+    printf ''
+  else
+    local IFS='-'
+    printf '%s' "${parts[*]}"
+  fi
 }
 
-vless_reality_display_node_name() {
-  local base_name=$1
-  local address_label=${2:-}
-  local rate_suffix
+display_node_name_for_protocol() {
+  local protocol=$1
+  local base_name=${2:-}
+  local address_label=${3:-}
+  local up_mbps="" down_mbps="" bandwidth_suffix="" node_name
 
+  protocol=$(normalize_protocol_id "${protocol}" 2>/dev/null || printf '%s' "${protocol}")
   base_name=$(normalize_node_name "${base_name}")
   if [[ -z "${base_name}" ]]; then
     printf ''
     return 0
   fi
 
-  rate_suffix=$(vless_reality_rate_limit_name_suffix \
-    "${SB_VLESS_RATE_LIMIT_UP_MBPS:-}" \
-    "${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}")
+  case "${protocol}" in
+    vless-reality)
+      up_mbps="${SB_VLESS_RATE_LIMIT_UP_MBPS:-}"
+      down_mbps="${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}"
+      ;;
+    hy2)
+      up_mbps="${SB_HY2_UP_MBPS:-}"
+      down_mbps="${SB_HY2_DOWN_MBPS:-}"
+      ;;
+  esac
 
-  node_name_for_network_stack "${base_name}${rate_suffix}" "${address_label}"
+  bandwidth_suffix=$(bandwidth_limit_name_suffix "${up_mbps}" "${down_mbps}")
+  node_name="${base_name}"
+  if [[ -n "${bandwidth_suffix}" ]]; then
+    node_name="${node_name}-${bandwidth_suffix}"
+  fi
+
+  node_name_for_network_stack "${node_name}" "${address_label}"
+}
+
+vless_reality_display_node_name() {
+  local base_name=$1
+  local address_label=${2:-}
+
+  display_node_name_for_protocol "vless-reality" "${base_name}" "${address_label}"
 }
 
 protocol_inbound_tag() {
@@ -8390,4 +8417,6 @@ main() {
 }
 
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
