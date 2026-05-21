@@ -929,6 +929,55 @@ vless_reality_instance_id_exists() {
   return 1
 }
 
+vless_reality_bandwidth_profile_exists() {
+  local target_up=${1:-}
+  local target_down=${2:-}
+  local exclude_instance_id=${3:-}
+  local instance_id
+  local saved_instance_id saved_node_name saved_port saved_uuid saved_sni
+  local saved_short_id_1 saved_short_id_2 saved_rate_limit_up saved_rate_limit_down
+
+  saved_instance_id="${SB_VLESS_INSTANCE_ID:-}"
+  saved_node_name="${SB_NODE_NAME:-}"
+  saved_port="${SB_PORT:-}"
+  saved_uuid="${SB_UUID:-}"
+  saved_sni="${SB_SNI:-}"
+  saved_short_id_1="${SB_SHORT_ID_1:-}"
+  saved_short_id_2="${SB_SHORT_ID_2:-}"
+  saved_rate_limit_up="${SB_VLESS_RATE_LIMIT_UP_MBPS:-}"
+  saved_rate_limit_down="${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}"
+
+  migrate_vless_reality_state_to_instances_if_needed
+  while IFS= read -r instance_id; do
+    [[ -z "${instance_id}" ]] && continue
+    [[ -n "${exclude_instance_id}" && "${instance_id}" == "${exclude_instance_id}" ]] && continue
+    load_vless_reality_instance_state "${instance_id}" || continue
+    if [[ "${SB_VLESS_RATE_LIMIT_UP_MBPS:-}" == "${target_up}" && "${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}" == "${target_down}" ]]; then
+      SB_VLESS_INSTANCE_ID="${saved_instance_id}"
+      SB_NODE_NAME="${saved_node_name}"
+      SB_PORT="${saved_port}"
+      SB_UUID="${saved_uuid}"
+      SB_SNI="${saved_sni}"
+      SB_SHORT_ID_1="${saved_short_id_1}"
+      SB_SHORT_ID_2="${saved_short_id_2}"
+      SB_VLESS_RATE_LIMIT_UP_MBPS="${saved_rate_limit_up}"
+      SB_VLESS_RATE_LIMIT_DOWN_MBPS="${saved_rate_limit_down}"
+      return 0
+    fi
+  done < <(list_vless_reality_instance_ids)
+
+  SB_VLESS_INSTANCE_ID="${saved_instance_id}"
+  SB_NODE_NAME="${saved_node_name}"
+  SB_PORT="${saved_port}"
+  SB_UUID="${saved_uuid}"
+  SB_SNI="${saved_sni}"
+  SB_SHORT_ID_1="${saved_short_id_1}"
+  SB_SHORT_ID_2="${saved_short_id_2}"
+  SB_VLESS_RATE_LIMIT_UP_MBPS="${saved_rate_limit_up}"
+  SB_VLESS_RATE_LIMIT_DOWN_MBPS="${saved_rate_limit_down}"
+  return 1
+}
+
 build_vless_reality_qos_plan() {
   local state_file instance_id up down direction
   local saved_instance_id saved_node_name saved_port saved_uuid saved_sni
@@ -2264,6 +2313,10 @@ prompt_vless_reality_instance_create() {
   SB_VLESS_RATE_LIMIT_UP_MBPS=""
   SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
   prompt_vless_reality_rate_limit_fields
+  if vless_reality_bandwidth_profile_exists "${SB_VLESS_RATE_LIMIT_UP_MBPS}" "${SB_VLESS_RATE_LIMIT_DOWN_MBPS}" "${SB_VLESS_INSTANCE_ID}"; then
+    log_warn "已存在相同类型且带宽配置完全相同的 VLESS + REALITY 节点，已取消创建。"
+    return 0
+  fi
   ensure_vless_reality_materials
   append_vless_reality_instance_id "${SB_VLESS_INSTANCE_ID}"
   save_vless_reality_protocol_state
