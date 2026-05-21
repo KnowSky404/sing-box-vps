@@ -8460,6 +8460,4 @@ main() {
 }
 
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  main "$@"
-fi
+[[ "${BASH_SOURCE[0]}" != "$0" ]] || main "$@"

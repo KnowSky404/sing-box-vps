@@ -80,7 +80,7 @@ EOF
 
 load_protocol_state "vless-reality"
 vless_second_payload=$(build_subman_node_payload "vless-reality" "203.0.113.10" "" "reality-2")
-if [[ "$(jq -r '.name' <<< "${vless_second_payload}")" != "edge-1 vless second-up20m-down200m" ]]; then
+if [[ "$(jq -r '.name' <<< "${vless_second_payload}")" != "edge-1 vless second-U20M-D200M" ]]; then
   printf 'expected non-default REALITY SubMan payload name from that instance\n%s\n' "${vless_second_payload}" >&2
   exit 1
 fi
@@ -88,7 +88,7 @@ if [[ "$(jq -r '.raw' <<< "${vless_second_payload}")" != *"22222222-2222-2222-22
   printf 'expected non-default REALITY SubMan raw link from that instance\n%s\n' "${vless_second_payload}" >&2
   exit 1
 fi
-if [[ "$(jq -r '.raw' <<< "${vless_second_payload}")" != *"#edge-1 vless second-up20m-down200m" ]]; then
+if [[ "$(jq -r '.raw' <<< "${vless_second_payload}")" != *"#edge-1 vless second-U20M-D200M" ]]; then
   printf 'expected non-default REALITY SubMan raw link fragment to include rate limit suffix\n%s\n' "${vless_second_payload}" >&2
   exit 1
 fi
