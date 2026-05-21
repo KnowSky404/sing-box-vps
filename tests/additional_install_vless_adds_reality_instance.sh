@@ -102,7 +102,8 @@ limited-node
 not-a-port
 443
 8443
-
+3
+manual.example.com
 y
 
 10
@@ -117,6 +118,7 @@ fi
 grep -Fq 'INSTANCE_IDS=main,limited-10m' "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"
 grep -Fq 'NODE_NAME=limited-node' "${limited_state}"
 grep -Fq 'PORT=8443' "${limited_state}"
+grep -Fq 'SNI=manual.example.com' "${limited_state}"
 grep -Eq '^RATE_LIMIT_UP_MBPS=$' "${limited_state}"
 grep -Fq 'RATE_LIMIT_DOWN_MBPS=10' "${limited_state}"
 

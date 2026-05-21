@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052104"
+readonly SCRIPT_VERSION="2026052105"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -1683,6 +1683,37 @@ prompt_reality_sni_update() {
   esac
 }
 
+prompt_reality_sni_for_new_instance() {
+  local default_sni=$1
+  local choice manual_sni selected_sni
+
+  default_sni=${default_sni:-${SB_REALITY_SNI_FALLBACK}}
+
+  echo "[VLESS + REALITY] REALITY SNI 选择:"
+  echo "1. 复用现有 SNI: ${default_sni} (默认)"
+  echo "2. 自动探测推荐 SNI"
+  echo "3. 手动输入"
+  read -rp "请选择 [1-3] (默认 1): " choice
+  choice=${choice:-1}
+
+  case "${choice}" in
+    2)
+      selected_sni=$(select_reality_sni_candidate)
+      SB_SNI="${selected_sni}"
+      log_success "已选择 Reality SNI: ${SB_SNI}"
+      ;;
+    3)
+      read -rp "[VLESS + REALITY] REALITY SNI (默认 ${default_sni}): " manual_sni
+      manual_sni=$(trim_whitespace "${manual_sni:-}")
+      SB_SNI="${manual_sni:-${default_sni}}"
+      ;;
+    *)
+      SB_SNI="${default_sni}"
+      log_info "复用 Reality SNI: ${SB_SNI}"
+      ;;
+  esac
+}
+
 validate_optional_positive_integer() {
   local value=$1
   [[ -z "${value}" || "${value}" =~ ^[1-9][0-9]*$ ]]
@@ -2094,7 +2125,7 @@ prompt_vless_reality_install() {
 }
 
 prompt_vless_reality_instance_create() {
-  local in_id in_node in_port in_sni default_id default_sni selected_id selected_node selected_port
+  local in_id in_node in_port default_id default_sni selected_id selected_node selected_port
 
   migrate_vless_reality_state_to_instances_if_needed
   load_vless_reality_protocol_state
@@ -2137,8 +2168,7 @@ prompt_vless_reality_instance_create() {
   SB_VLESS_INSTANCE_ID="${selected_id}"
   SB_NODE_NAME="${selected_node}"
   SB_PORT="${selected_port}"
-  read -rp "[VLESS + REALITY] REALITY SNI (默认复用 ${default_sni:-${SB_REALITY_SNI_FALLBACK}}): " in_sni
-  SB_SNI=$(trim_whitespace "${in_sni:-${default_sni:-${SB_REALITY_SNI_FALLBACK}}}")
+  prompt_reality_sni_for_new_instance "${default_sni:-${SB_REALITY_SNI_FALLBACK}}"
 
   SB_UUID=""
   SB_SHORT_ID_1=""
