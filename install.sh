@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052103
+# Version: 2026052104
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052103"
+readonly SCRIPT_VERSION="2026052104"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -626,6 +626,39 @@ node_name_for_network_stack() {
   else
     printf '%s' "${base_name}"
   fi
+}
+
+vless_reality_rate_limit_name_suffix() {
+  local up_mbps=${1:-}
+  local down_mbps=${2:-}
+  local suffix=""
+
+  if [[ -n "${up_mbps}" ]]; then
+    suffix="${suffix}-up${up_mbps}m"
+  fi
+  if [[ -n "${down_mbps}" ]]; then
+    suffix="${suffix}-down${down_mbps}m"
+  fi
+
+  printf '%s' "${suffix}"
+}
+
+vless_reality_display_node_name() {
+  local base_name=$1
+  local address_label=${2:-}
+  local rate_suffix
+
+  base_name=$(normalize_node_name "${base_name}")
+  if [[ -z "${base_name}" ]]; then
+    printf ''
+    return 0
+  fi
+
+  rate_suffix=$(vless_reality_rate_limit_name_suffix \
+    "${SB_VLESS_RATE_LIMIT_UP_MBPS:-}" \
+    "${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}")
+
+  node_name_for_network_stack "${base_name}${rate_suffix}" "${address_label}"
 }
 
 protocol_inbound_tag() {
@@ -5508,7 +5541,7 @@ build_vless_link() {
   local address_label=${2:-}
   local share_host node_name
   share_host=$(format_share_host "${public_ip}")
-  node_name=$(node_name_for_network_stack "${SB_NODE_NAME}" "${address_label}")
+  node_name=$(vless_reality_display_node_name "${SB_NODE_NAME}" "${address_label}")
 
   printf 'vless://%s@%s:%s?security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&flow=xtls-rprx-vision#%s' \
     "${SB_UUID}" "${share_host}" "${SB_PORT}" "${SB_SNI}" "${SB_PUBLIC_KEY:-[密钥丢失，请更新配置]}" "${SB_SHORT_ID_1}" "${node_name}"
@@ -5663,7 +5696,11 @@ build_subman_node_payload() {
     load_vless_reality_instance_state "${instance_id}" || return 1
   fi
   prefix=$(subman_node_prefix)
-  node_name=$(trim_whitespace "$(node_name_for_network_stack "${SB_NODE_NAME:-}" "${address_label}")")
+  if [[ "${protocol}" == "vless-reality" ]]; then
+    node_name=$(trim_whitespace "$(vless_reality_display_node_name "${SB_NODE_NAME:-}" "${address_label}")")
+  else
+    node_name=$(trim_whitespace "$(node_name_for_network_stack "${SB_NODE_NAME:-}" "${address_label}")")
+  fi
   [[ -z "${node_name}" ]] && node_name="${prefix} ${protocol}"
 
   jq -n \
@@ -5795,6 +5832,10 @@ client_outbound_tag_for_protocol() {
   local protocol
   protocol=$(normalize_protocol_id "$1")
   if [[ -n "${SB_NODE_NAME:-}" ]]; then
+    if [[ "${protocol}" == "vless-reality" ]]; then
+      vless_reality_display_node_name "${SB_NODE_NAME}" ""
+      return 0
+    fi
     printf '%s' "${SB_NODE_NAME}"
     return 0
   fi
@@ -6755,14 +6796,17 @@ agent_doctor_json() {
 agent_node_summary_json_for_current_protocol() {
   local protocol public_ip shareable="true" client_exportable="false"
   local auth_enabled="false" server_name=""
+  local node_name
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
   public_ip=${1:-$(get_public_ip)}
+  node_name="${SB_NODE_NAME}"
 
   case "${protocol}" in
     vless-reality)
       client_exportable="true"
       server_name="${SB_SNI}"
+      node_name=$(vless_reality_display_node_name "${SB_NODE_NAME}" "")
       ;;
     mixed)
       [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]] && auth_enabled="true"
@@ -6782,7 +6826,7 @@ agent_node_summary_json_for_current_protocol() {
 
   jq -n \
     --arg protocol "${protocol}" \
-    --arg name "${SB_NODE_NAME}" \
+    --arg name "${node_name}" \
     --arg port "${SB_PORT}" \
     --arg server_name "${server_name}" \
     --argjson shareable "${shareable}" \
@@ -6802,9 +6846,11 @@ agent_node_summary_json_for_current_protocol() {
 agent_link_json_for_current_protocol() {
   local protocol public_ip link_json outbound_json
   local address_label
+  local node_name
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
   public_ip=${1:-$(get_public_ip)}
+  node_name="${SB_NODE_NAME}"
   if [[ "${public_ip}" == *:* ]]; then
     address_label="IPv6"
   elif [[ "${public_ip}" == *.* ]]; then
@@ -6816,6 +6862,7 @@ agent_link_json_for_current_protocol() {
   case "${protocol}" in
     vless-reality)
       link_json=$(jq -n --arg vless "$(build_vless_link "${public_ip}" "${address_label}")" '{"vless": $vless}')
+      node_name=$(vless_reality_display_node_name "${SB_NODE_NAME}" "${address_label}")
       ;;
     mixed)
       link_json=$(jq -n \
@@ -6837,7 +6884,7 @@ agent_link_json_for_current_protocol() {
 
   jq -n \
     --arg protocol "${protocol}" \
-    --arg name "${SB_NODE_NAME}" \
+    --arg name "${node_name}" \
     --arg port "${SB_PORT}" \
     --argjson links "${link_json}" \
     --argjson outbound "${outbound_json:-null}" \

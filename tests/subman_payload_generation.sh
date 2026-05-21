@@ -74,18 +74,22 @@ UUID=22222222-2222-2222-2222-222222222222
 SNI=apple.com
 SHORT_ID_1=cccccccc
 SHORT_ID_2=dddddddddddddddd
-RATE_LIMIT_UP_MBPS=
-RATE_LIMIT_DOWN_MBPS=
+RATE_LIMIT_UP_MBPS=20
+RATE_LIMIT_DOWN_MBPS=200
 EOF
 
 load_protocol_state "vless-reality"
 vless_second_payload=$(build_subman_node_payload "vless-reality" "203.0.113.10" "" "reality-2")
-if [[ "$(jq -r '.name' <<< "${vless_second_payload}")" != "edge-1 vless second" ]]; then
+if [[ "$(jq -r '.name' <<< "${vless_second_payload}")" != "edge-1 vless second-up20m-down200m" ]]; then
   printf 'expected non-default REALITY SubMan payload name from that instance\n%s\n' "${vless_second_payload}" >&2
   exit 1
 fi
 if [[ "$(jq -r '.raw' <<< "${vless_second_payload}")" != *"22222222-2222-2222-2222-222222222222@203.0.113.10:8443"* ]]; then
   printf 'expected non-default REALITY SubMan raw link from that instance\n%s\n' "${vless_second_payload}" >&2
+  exit 1
+fi
+if [[ "$(jq -r '.raw' <<< "${vless_second_payload}")" != *"#edge-1 vless second-up20m-down200m" ]]; then
+  printf 'expected non-default REALITY SubMan raw link fragment to include rate limit suffix\n%s\n' "${vless_second_payload}" >&2
   exit 1
 fi
 
