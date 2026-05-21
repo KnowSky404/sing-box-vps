@@ -15,7 +15,7 @@ sed \
   -e 's|main \"\$@\"|:|' \
   "${REPO_ROOT}/install.sh" > "${TESTABLE_INSTALL}"
 
-mkdir -p "${TMP_DIR}/project" "${TMP_DIR}/project/protocols" "${TMP_DIR}/bin"
+mkdir -p "${TMP_DIR}/project" "${TMP_DIR}/project/protocols/vless-reality.d" "${TMP_DIR}/bin"
 
 cat > "${TMP_DIR}/bin/hostname" <<'EOF'
 #!/usr/bin/env bash
@@ -73,15 +73,24 @@ EOF
 
 cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.env" <<'EOF'
 INSTALLED=1
-CONFIG_SCHEMA_VERSION=1
+CONFIG_SCHEMA_VERSION=2
+DEFAULT_INSTANCE_ID=main
+INSTANCE_IDS=main
+REALITY_PRIVATE_KEY=private-key
+REALITY_PUBLIC_KEY=public-key
+EOF
+
+cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env" <<'EOF'
+INSTANCE_ID=main
+ENABLED=1
 NODE_NAME=vless_reality_test-host
 PORT=443
 UUID=11111111-1111-1111-1111-111111111111
 SNI=apple.com
-REALITY_PRIVATE_KEY=private-key
-REALITY_PUBLIC_KEY=public-key
 SHORT_ID_1=aaaaaaaaaaaaaaaa
 SHORT_ID_2=bbbbbbbbbbbbbbbb
+RATE_LIMIT_UP_MBPS=
+RATE_LIMIT_DOWN_MBPS=
 EOF
 
 cat > "${SB_PROTOCOL_STATE_DIR}/hy2.env" <<'EOF'
@@ -133,8 +142,8 @@ if ! grep -Fq 'PASSWORD=new-pass' "${SB_PROTOCOL_STATE_DIR}/hy2.env"; then
   exit 1
 fi
 
-if ! grep -Fq 'PORT=443' "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"; then
-  printf 'expected vless state file to remain unchanged, got:\n%s\n' "$(cat "${SB_PROTOCOL_STATE_DIR}/vless-reality.env")" >&2
+if ! grep -Fq 'PORT=443' "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env"; then
+  printf 'expected vless instance state file to remain unchanged, got:\n%s\n' "$(cat "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env")" >&2
   exit 1
 fi
 

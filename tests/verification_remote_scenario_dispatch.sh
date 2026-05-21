@@ -408,16 +408,17 @@ EXPORT_EOF
       fi
 
       if [[ "${actual_lines[0]:-}" == "4" ]]; then
-        if [[ "${#actual_lines[@]}" -ne 7 ]]; then
+        if [[ "${#actual_lines[@]}" -ne 8 ]]; then
           printf 'unexpected update input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
           return 1
         fi
         [[ "${actual_lines[1]}" == "1" ]]
-        [[ "${actual_lines[2]}" == "8443" ]]
-        [[ "${actual_lines[3]}" == "22222222-2222-4222-8222-222222222222" ]]
-        [[ "${actual_lines[4]}" == "3" ]]
-        [[ "${actual_lines[5]}" == "cdn.cloudflare.com" ]]
-        [[ "${actual_lines[6]}" == "0" ]]
+        [[ "${actual_lines[2]}" == "1" ]]
+        [[ "${actual_lines[3]}" == "8443" ]]
+        [[ "${actual_lines[4]}" == "22222222-2222-4222-8222-222222222222" ]]
+        [[ "${actual_lines[5]}" == "3" ]]
+        [[ "${actual_lines[6]}" == "cdn.cloudflare.com" ]]
+        [[ "${actual_lines[7]}" == "0" ]]
         printf '8443\n' > "${PORT_FILE}"
         printf '22222222-2222-4222-8222-222222222222\n' > "${UUID_FILE}"
         printf 'cdn.cloudflare.com\n' > "${SNI_FILE}"

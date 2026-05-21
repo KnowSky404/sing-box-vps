@@ -22,6 +22,7 @@ verification_scenario_reconfigure_existing_install() {
   bash /usr/local/bin/sbv <<'EOF'
 4
 1
+1
 8443
 22222222-2222-4222-8222-222222222222
 3

@@ -104,14 +104,15 @@ ensure_warp_routing_assets() { :; }
 
 update_config_only <<'EOF'
 1
+1
 
 
 3
 cloudflare.com
 EOF
 
-if ! grep -Fq 'SNI=cloudflare.com' "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"; then
-  printf 'expected vless update to persist new SNI, got:\n%s\n' "$(cat "${SB_PROTOCOL_STATE_DIR}/vless-reality.env")" >&2
+if ! grep -Fq 'SNI=cloudflare.com' "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env"; then
+  printf 'expected vless update to persist new SNI, got:\n%s\n' "$(cat "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env")" >&2
   exit 1
 fi
 

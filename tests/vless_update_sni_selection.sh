@@ -46,6 +46,7 @@ select_reality_sni_candidate() {
 }
 
 write_base_state() {
+  rm -rf "${SB_PROTOCOL_STATE_DIR}"
   mkdir -p "${SB_PROTOCOL_STATE_DIR}"
   cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
 {
@@ -83,14 +84,16 @@ EOF
 
 assert_state_sni() {
   local expected=$1
-  if ! grep -Fqx "SNI=${expected}" "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"; then
-    printf 'expected SNI=%s, got:\n%s\n' "${expected}" "$(cat "${SB_PROTOCOL_STATE_DIR}/vless-reality.env")" >&2
+  local instance_state="${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env"
+  if ! grep -Fqx "SNI=${expected}" "${instance_state}"; then
+    printf 'expected SNI=%s, got:\n%s\n' "${expected}" "$(cat "${instance_state}")" >&2
     exit 1
   fi
 }
 
 write_base_state
 update_config_only <<'EOF'
+1
 1
 
 
@@ -101,6 +104,7 @@ assert_state_sni "apple.com"
 write_base_state
 update_config_only <<'EOF'
 1
+1
 
 
 2
@@ -109,6 +113,7 @@ assert_state_sni "speed.example.com"
 
 write_base_state
 update_config_only <<'EOF'
+1
 1
 
 

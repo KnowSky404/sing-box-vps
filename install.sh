@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052104
+# Version: 2026052106
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052105"
+readonly SCRIPT_VERSION="2026052106"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -5266,7 +5266,7 @@ view_status() {
 
 # New function: Update config only
 update_config_only() {
-  local selected_protocol
+  local selected_protocol selected_instance
 
   if [[ ! -f "${SINGBOX_CONFIG_FILE}" && ! -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
     log_error "未找到配置文件或协议状态，请先执行安装流程。"
@@ -5285,7 +5285,18 @@ update_config_only() {
   selected_protocol="${SELECTED_PROTOCOL}"
 
   load_protocol_state "${selected_protocol}"
-  echo -e "当前正在修改: $(protocol_display_name "${SB_PROTOCOL}")"
+  if [[ "${selected_protocol}" == "vless-reality" ]]; then
+    SELECTED_VLESS_INSTANCE_ID=""
+    if ! prompt_vless_reality_instance_selection; then
+      return 0
+    fi
+    selected_instance="${SELECTED_VLESS_INSTANCE_ID}"
+    load_vless_reality_protocol_state
+    load_vless_reality_instance_state "${selected_instance}" || log_error "加载 REALITY 实例失败: ${selected_instance}"
+    echo -e "当前正在修改: $(protocol_display_name "${SB_PROTOCOL}") / ${SB_NODE_NAME} (${SB_VLESS_INSTANCE_ID})"
+  else
+    echo -e "当前正在修改: $(protocol_display_name "${SB_PROTOCOL}")"
+  fi
   prompt_protocol_update_fields "${selected_protocol}"
   save_protocol_state "${selected_protocol}"
 
