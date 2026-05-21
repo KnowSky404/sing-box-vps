@@ -61,7 +61,7 @@ VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh
 脚本会自动：
 1. 安装所有必要依赖（curl, wget, jq, qrencode 等）。
 2. 下载并配置适配的 `sing-box` (当前适配：1.13.12)。
-3. 生成安全的 **VLESS + REALITY**、**Mixed (HTTP/HTTPS/SOCKS)**、**Hysteria2** 或 **AnyTLS** 配置，并支持多协议共存。
+3. 生成安全的 **VLESS + REALITY**、**Mixed (HTTP/HTTPS/SOCKS)**、**Hysteria2** 或 **AnyTLS** 配置，并支持多协议共存；其中 VLESS REALITY 支持多实例、独立端口和可选上下行限速。
 4. 以 **`install.sh`** 作为唯一安装与维护真源，并将自己安装为全局命令 **`sbv`**，方便您随时管理。
 
 ---
@@ -79,6 +79,8 @@ sbv
 - **Agent 友好命令行**：提供 `sbv agent ... --json` 非交互命令，方便 Hermes、OpenClaw、Codex 等 AI Agent 获取状态、节点摘要、完整连接信息与 sing-box 裸核客户端配置；同时支持通过 CLI 更新 `sbv` 管理脚本和 `sing-box` 二进制。
 - **1.13.x 深度适配**：全面采用最新的 **Endpoint (端点化)** 架构，确保 WireGuard 及路由规则的最高效性能与稳定性。
 - **多协议支持**：支持 **VLESS + REALITY**、**Mixed (HTTP/HTTPS/SOCKS)**、**Hysteria2** 与 **AnyTLS** 四种入站模式，并支持多协议同时安装。
+- **VLESS REALITY 多实例**：可在安装菜单追加多个 REALITY 实例，每个实例拥有独立端口、ShortID、节点名称和可选上下行限速；节点展示和 SubMan 同步会逐实例输出。
+- **REALITY QoS 限速**：为设置了上下行 Mbps 的 REALITY 实例自动规划并应用 `tc` 端口级限速规则，重建配置、更新协议或移除实例时会同步刷新规则，避免遗留过滤器影响新配置。
 - **Cloudflare Warp 集成**：支持一键开启/关闭 Warp 出站，自动注册免费账户，完美解决 VPS **“送中”** 问题并解锁 Netflix/Disney+ 等流媒体。
 - **Warp 路由分层**：支持 `全量走 Warp` 与 `选择性分流` 两种模式，默认采用更稳妥的 `选择性分流`，内置主流 AI / 流媒体域名规则，并支持用户追加自定义域名、本地规则集和远程规则集。
 - **单一真源**：统一以 `install.sh` 作为安装与维护入口，避免历史旧入口与当前实现漂移。
@@ -88,7 +90,8 @@ sbv
 - **性能增强**：集成 **BBR** 一键开启功能，显著提升网络吞吐。
 - **防火墙自动化**：安装或修改端口时，自动尝试在 `UFW`, `Firewalld` 或 `Iptables` 中放行。
 - **工业级配置生成**：采用 **`jq` 安全注入** 模式生成 JSON，彻底规避特殊字符导致的转义错误。
-- **协议级展示**：终端可按协议查看节点信息，支持 `VLESS` 与 `Hysteria2` 链接/ANSI 二维码展示，为 `Mixed` 输出代理链接与二维码提示，并为 `AnyTLS` 输出参数摘要和 sing-box outbound JSON 示例。
+- **协议级展示**：终端可按协议查看节点信息，支持 `VLESS` 与 `Hysteria2` 链接/ANSI 二维码展示，为 `Mixed` 输出代理链接与二维码提示，并为 `AnyTLS` 输出参数摘要和 sing-box outbound JSON 示例；多 REALITY 实例会显示实例 ID、端口和限速摘要。
+- **裸核客户端导出**：可从交互菜单或 `sbv agent export-client --json` 生成 `/root/sing-box-vps/client/sing-box-client.json`，覆盖前自动备份，并在输出前执行 `sing-box check`。
 - **SubMan 同步**：可将当前 VPS 的 VLESS / Hysteria2 节点通过已部署的 SubMan API 幂等推送到 SubMan 节点库，便于后续聚合与发布订阅。
 - **规范存储**：统一使用 `/root/sing-box-vps/` 存放配置、密钥及持久化参数。
 
@@ -113,7 +116,7 @@ sbv update sing-box 1.13.12
 - `status`：输出脚本版本、sing-box 版本、服务状态、配置路径和已安装协议。
 - `nodes`：输出节点摘要，不包含完整分享链接或密码，适合写入普通诊断日志。
 - `links`：输出完整连接材料，包括 VLESS/Hysteria2 分享链接、Mixed HTTP/SOCKS 链接，以及 AnyTLS outbound JSON；仅在受信任上下文使用。
-- `export-client`：生成并通过 `sing-box check` 校验裸核客户端配置，写入 `/root/sing-box-vps/client/sing-box-client.json`，同时以 JSON 返回路径和配置内容。
+- `export-client`：生成并通过 `sing-box check` 校验裸核客户端配置，写入 `/root/sing-box-vps/client/sing-box-client.json`，覆盖前创建 `.bak` 备份，同时以 JSON 返回路径和配置内容。
 - `check`：执行 `sing-box check` 校验服务端配置，并返回 stdout、stderr、退出码和是否通过。
 - `doctor`：输出只读诊断报告，包含服务状态、路径存在性、协议状态和嵌入的配置校验结果。
 - `service restart`：必须显式传入 `--yes`，先校验配置，通过后才重启服务，并返回重启前后的服务状态。
@@ -123,7 +126,7 @@ sbv update sing-box 1.13.12
 
 ## 🛠️ 功能菜单
 
-1.  **安装协议 / 更新 sing-box**：首次安装时可选择一个或多个协议；已有安装时可选择更新二进制、继续追加新协议或移除已安装协议。
+1.  **安装协议 / 更新 sing-box**：首次安装时可选择一个或多个协议；已有安装时可选择更新二进制、继续追加新协议或移除已安装协议。VLESS REALITY 支持继续追加实例，也支持移除指定实例。
 2.  **卸载 sing-box**：彻底清理 sing-box 服务、二进制、配置和密钥，保留管理命令 `sbv`。
 3.  **修改当前协议配置**：先选择已安装协议，再进入该协议自己的修改向导，仅更新目标协议状态。
 4.  **配置 Cloudflare Warp**：一键开启/关闭/重新注册 Warp，并支持切换全量/选择性分流模式。
@@ -140,7 +143,8 @@ sbv update sing-box 1.13.12
 - **配置文件**: `/root/sing-box-vps/config.json`
 - **协议状态目录**: `/root/sing-box-vps/protocols/`
 - **密钥文件**: `/root/sing-box-vps/reality.key` (REALITY) / `warp.key` (Warp)
-- **协议状态文件**: `vless-reality.env` / `mixed.env` / `hy2.env` / `anytls.env`
+- **协议状态文件**: `vless-reality.env` / `vless-reality.d/` / `mixed.env` / `hy2.env` / `anytls.env`
+- **REALITY QoS 状态**: `/root/sing-box-vps/reality-qos.filters`
 - **Warp 分流域名**: `/root/sing-box-vps/warp-domains.txt`
 - **Warp 本地规则集目录**: `/root/sing-box-vps/rule-set/warp/`
 - **Warp 远程规则集列表**: `/root/sing-box-vps/warp-remote-rule-sets.txt`

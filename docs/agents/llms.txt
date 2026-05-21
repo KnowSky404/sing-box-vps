@@ -25,6 +25,10 @@ Agent CLI:
 - sbv agent nodes --json: log-safe node summaries without full links or passwords.
 - sbv agent links --json: full connection material; treat output as sensitive.
 - sbv agent export-client --json: generate and validate /root/sing-box-vps/client/sing-box-client.json without changing the running server config.
+- sbv agent check --json: run sing-box check against the server config and return structured stdout/stderr/status.
+- sbv agent doctor --json: read-only diagnostics with service, paths, protocols, and embedded config check.
+- sbv agent service restart --json --yes: guarded restart after config validation; production use requires approval.
+- sbv agent subman-sync --json: non-interactive SubMan node push; treat as sensitive and require configured /root/sing-box-vps/subman.env.
 
 SSH aliases:
 - sing-box-test: test VPS for validation.
@@ -36,6 +40,7 @@ Important requirements:
 - Use dev/verification-target.env when present.
 - Run bash dev/verification/run.sh after changes to install.sh, uninstall.sh, configs/, utils/, or dev/verification/.
 - Do not reveal secrets, private keys, passwords, tokens, full node links, or QR payloads unless explicitly requested and safe.
+- Treat sbv agent links --json, export-client --json, and subman-sync --json as sensitive connection-material commands.
 - Do not run production install, upgrade, restart, stop, uninstall, purge, firewall mutation, or config overwrite without an approved production operation plan.
 
 Common task routing:
@@ -44,8 +49,11 @@ Common task routing:
 - Test remote verification: read dev/verification/run.sh, configs/verification-target.env.example, and AGENTS.md.
 - Production troubleshooting: use read-only checks first, then prepare a production operation plan for changes.
 - AI agent node info retrieval: prefer sbv agent nodes --json for summaries and sbv agent links --json only in trusted contexts.
+- VLESS REALITY multi-instance or rate-limit work: use script-managed state under /root/sing-box-vps/protocols/vless-reality.d/ and /root/sing-box-vps/reality-qos.filters; do not hand-edit generated config.json.
+- Client export: use sbv agent export-client --json and remember it writes /root/sing-box-vps/client/sing-box-client.json with backup/validation.
+- SubMan sync: use sbv agent subman-sync --json only when SubMan config exists and the target context is trusted.
 - Repository maintenance: read AGENTS.md, affected scripts, and run verification as required.
 - sing-box config syntax or migration: use Context7 first; fall back to official sing-box docs or repository only when needed.
 
 Search keywords:
-install, upgrade, production, test VPS, remote verification, rollback, recovery, sbv agent, node info, connection links, sing-box check, sing-box-prod, sing-box-test, dev/verification/run.sh, config.json, protocols, Warp, VLESS REALITY, Hysteria2, AnyTLS, Mixed proxy, systemctl sing-box.
+install, upgrade, production, test VPS, remote verification, rollback, recovery, sbv agent, node info, connection links, client export, SubMan sync, sing-box check, sing-box-prod, sing-box-test, dev/verification/run.sh, config.json, protocols, Warp, VLESS REALITY, REALITY multi-instance, rate limits, QoS, Hysteria2, AnyTLS, Mixed proxy, systemctl sing-box.

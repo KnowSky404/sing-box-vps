@@ -12,6 +12,7 @@ This runbook is for AI agents operating the `sing-box-vps` repository and remote
 - Preserve secrets. Do not print private keys, passwords, tokens, full proxy links, or QR payloads unless the user explicitly requests them and the context is safe.
 - Back up runtime config before changing it.
 - Run `sing-box check` after generating or modifying any sing-box server or client config.
+- Treat client exports, full link JSON, and SubMan sync payloads as sensitive connection material.
 
 ## Environment Classification
 
@@ -235,11 +236,48 @@ Common paths:
 - Runtime directory: `/root/sing-box-vps/`
 - Main config: `/root/sing-box-vps/config.json`
 - Protocol state: `/root/sing-box-vps/protocols/`
+- VLESS REALITY instance state: `/root/sing-box-vps/protocols/vless-reality.d/`
+- VLESS REALITY QoS state: `/root/sing-box-vps/reality-qos.filters`
+- Client export: `/root/sing-box-vps/client/sing-box-client.json`
+- SubMan config: `/root/sing-box-vps/subman.env`
 - Warp domains: `/root/sing-box-vps/warp-domains.txt`
 - Global command: `/usr/local/bin/sbv`
 - systemd service: `sing-box`
 
 For config problems, do not guess from symptoms alone. Run `sing-box check`, inspect the generated JSON, and compare protocol state files to the runtime config.
+
+## VLESS REALITY Multi-Instance Notes
+
+VLESS REALITY can be installed as multiple managed instances. Each instance may have a distinct port, ShortID, node name, and optional upload/download Mbps limit. Instance state is authoritative; do not hand-edit generated `config.json` to add or remove REALITY inbounds.
+
+When diagnosing REALITY:
+
+```bash
+sbv agent nodes --json
+ls -la /root/sing-box-vps/protocols/vless-reality.d 2>/dev/null || true
+cat /root/sing-box-vps/reality-qos.filters 2>/dev/null || true
+sing-box check -c /root/sing-box-vps/config.json
+```
+
+Use `nodes --json` for log-safe summaries. Use `links --json` only in trusted contexts because it includes full share links. If QoS or instance membership changes on production, use the production gate before running the interactive menu or guarded service mutations.
+
+## Client Export And SubMan
+
+Use client export when an agent or client needs a full sing-box bare-core config:
+
+```bash
+sbv agent export-client --json
+```
+
+The command writes `/root/sing-box-vps/client/sing-box-client.json`, creates a `.bak` when replacing an existing export, and validates the generated config before returning success. Treat the returned JSON as sensitive because it contains usable connection credentials.
+
+Use SubMan sync only when `/root/sing-box-vps/subman.env` is configured and the output context is trusted:
+
+```bash
+sbv agent subman-sync --json
+```
+
+SubMan sync is non-interactive for agents and pushes VLESS REALITY and Hysteria2 nodes idempotently. Missing API configuration is reported as structured JSON rather than prompting.
 
 ## Rollback And Recovery
 
