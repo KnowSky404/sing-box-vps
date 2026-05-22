@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052108
+# Version: 2026052201
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052108"
+readonly SCRIPT_VERSION="2026052201"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -2283,8 +2283,9 @@ prompt_vless_reality_instance_create() {
   done
   selected_id="${SB_VLESS_INSTANCE_ID}"
 
-  read -rp "[VLESS + REALITY] 节点名称 (默认 ${SB_VLESS_INSTANCE_ID}): " in_node
-  SB_NODE_NAME=$(trim_whitespace "${in_node:-${SB_VLESS_INSTANCE_ID}}")
+  SB_NODE_NAME="$(default_node_name_for_protocol "vless+reality")"
+  read -rp "[VLESS + REALITY] 节点名称 (默认 ${SB_NODE_NAME}): " in_node
+  SB_NODE_NAME=$(trim_whitespace "${in_node:-${SB_NODE_NAME}}")
   selected_node="${SB_NODE_NAME}"
 
   while true; do
