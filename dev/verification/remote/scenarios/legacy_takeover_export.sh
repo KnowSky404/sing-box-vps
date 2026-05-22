@@ -84,7 +84,7 @@ EOF
 
   export_stdout_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/sbv-export.txt")
   bash /usr/local/bin/sbv > "${export_stdout_path}" 2>&1 <<'EOF'
-10
+11
 2
 0
 0

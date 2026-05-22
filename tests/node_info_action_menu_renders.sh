@@ -15,7 +15,7 @@ EOF
 )
 
 plain_output=$(strip_ansi "${output}")
-title_text_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "节点信息查看") { print; exit }')
+title_text_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "节点与订阅") { print; exit }')
 section_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "操作选项") { print NR; exit }')
 view_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "1. 查看连接链接 / 二维码") { print NR; exit }')
 export_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "2. 导出 sing-box 裸核客户端配置") { print NR; exit }')

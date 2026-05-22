@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052201
+# Version: 2026052202
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052201"
+readonly SCRIPT_VERSION="2026052202"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -7438,7 +7438,7 @@ push_nodes_to_subman() {
 show_node_info_action_menu() {
   while true; do
     echo
-    render_left_aligned_page_header "节点信息查看" "选择要执行的节点信息操作"
+    render_left_aligned_page_header "节点与订阅" "选择要执行的节点信息操作"
     render_menu_group_start "操作选项"
     render_menu_item "1" "查看连接链接 / 二维码"
     render_menu_item "2" "导出 sing-box 裸核客户端配置"
@@ -8310,7 +8310,7 @@ install_or_update_singbox() {
     load_current_config_state
 
     echo
-    render_left_aligned_page_header "sing-box 管理" "更新核心或为现有实例补充协议"
+    render_left_aligned_page_header "部署管理" "维护 sing-box 核心与已安装协议"
     render_section_title "安装摘要"
     render_summary_item "当前版本" "${installed_ver}"
     render_summary_item "当前协议" "$(protocol_display_name "${SB_PROTOCOL}")"
@@ -8318,13 +8318,17 @@ install_or_update_singbox() {
     render_section_title "操作选项"
     render_menu_item "1" "更新 sing-box 二进制并保留当前配置"
     render_menu_item "2" "安装新增协议"
-    render_menu_item "3" "移除已安装协议"
+    render_menu_item "3" "修改已安装协议配置"
+    render_menu_item "4" "移除已安装协议"
+    render_menu_item "5" "卸载 sing-box"
     echo "0. 返回"
-    read -rp "请选择 [0-3] (默认 1): " install_choice
+    read -rp "请选择 [0-5] (默认 1): " install_choice
 
     case "${install_choice:-1}" in
       2) install_new_protocols_menu ;;
-      3) remove_protocol_menu ;;
+      3) update_config_only ;;
+      4) remove_protocol_menu ;;
+      5) uninstall_singbox ;;
       0) return 0 ;;
       *) update_singbox_version_menu ;;
     esac
@@ -8412,48 +8416,50 @@ main() {
 
     render_section_title "部署管理"
     render_menu_item "1" "安装新协议"
-    render_menu_item "2" "更新 sing-box 版本" "" "${SB_VER_STATUS}"
-    render_menu_item "3" "卸载 sing-box"
-    render_menu_item "4" "修改当前协议配置"
-    render_menu_item "5" "系统管理"
+    render_menu_item "2" "修改已安装协议配置"
+    render_menu_item "3" "移除已安装协议"
+    render_menu_item "4" "更新 sing-box 版本" "" "${SB_VER_STATUS}"
+    render_menu_item "5" "卸载 sing-box"
 
     render_section_title "服务控制"
     render_menu_item "6" "启动 sing-box"
     render_menu_item "7" "停止 sing-box"
     render_menu_item "8" "重启 sing-box"
-    render_menu_item "9" "查看状态"
+    render_menu_item "9" "查看服务状态"
+    render_menu_item "10" "查看实时日志"
 
-    render_section_title "连接与诊断"
-    render_menu_item "10" "查看节点信息"
-    render_menu_item "11" "查看实时日志"
-    render_menu_item "15" "流媒体验证检测"
+    render_section_title "节点与诊断"
+    render_menu_item "11" "查看节点信息"
+    render_menu_item "12" "流媒体验证检测"
+
+    render_section_title "网络与系统"
+    render_menu_item "13" "配置 Cloudflare Warp" "(解锁/防送中)"
+    render_menu_item "14" "系统管理"
 
     render_section_title "脚本维护"
-    render_menu_item "12" "更新管理脚本 (sbv)" "" "${SCRIPT_VER_STATUS}"
-    render_menu_item "13" "卸载管理脚本 (sbv)"
-    render_menu_item "14" "配置 Cloudflare Warp" "(解锁/防送中)"
-    render_menu_item "16" "移除已安装协议"
+    render_menu_item "15" "更新管理脚本 (sbv)" "" "${SCRIPT_VER_STATUS}"
+    render_menu_item "16" "卸载管理脚本 (sbv)"
     echo "0. 退出"
     render_main_menu_footer
     read -rp "请选择 [0-16]: " choice
 
     case "$choice" in
       1) install_new_protocols_menu ;;
-      2) update_singbox_version_menu ;;
-      3) uninstall_singbox ;;
-      4) update_config_only ;;
-      5) system_management_menu ;;
+      2) update_config_only ;;
+      3) remove_protocol_menu ;;
+      4) update_singbox_version_menu ;;
+      5) uninstall_singbox ;;
       6) systemctl start sing-box && log_success "服务已启动。" ;;
       7) systemctl stop sing-box && log_success "服务已停止。" ;;
       8) systemctl restart sing-box && log_success "服务已重启。" ;;
       9) view_status ;;
-      10) view_node_info ;;
-      11) journalctl -u sing-box -f || true ;;
-      12) manual_update_script ;;
-      13) uninstall_script ;;
-      14) warp_management ;;
-      15) media_check_menu ;;
-      16) remove_protocol_menu ;;
+      10) journalctl -u sing-box -f || true ;;
+      11) view_node_info ;;
+      12) media_check_menu ;;
+      13) warp_management ;;
+      14) system_management_menu ;;
+      15) manual_update_script ;;
+      16) uninstall_script ;;
       0) exit_script ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac

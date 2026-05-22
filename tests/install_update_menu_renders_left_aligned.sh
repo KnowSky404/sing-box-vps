@@ -25,14 +25,50 @@ EOF
 )
 
 plain_output=$(strip_ansi "${output}")
-title_text_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "sing-box 管理") { print; exit }')
+title_text_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "部署管理") { print; exit }')
 
 if [[ -z "${title_text_line}" || ! "${title_text_line}" =~ ^[^[:space:]] ]]; then
   printf 'expected install/update menu title to render flush-left, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
+if [[ "${plain_output}" != *"部署管理"* ]]; then
+  printf 'expected install/update submenu to use deployment management title, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
 if [[ "${plain_output}" != *"1. 更新 sing-box 二进制并保留当前配置"* ]]; then
   printf 'expected update option inside install/update menu, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${plain_output}" != *"2. 安装新增协议"* ]]; then
+  printf 'expected add protocol option inside deployment submenu, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${plain_output}" != *"3. 修改已安装协议配置"* ]]; then
+  printf 'expected protocol config option inside deployment submenu, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${plain_output}" != *"4. 移除已安装协议"* ]]; then
+  printf 'expected remove protocol option inside deployment submenu, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${plain_output}" != *"5. 卸载 sing-box"* ]]; then
+  printf 'expected uninstall sing-box option inside deployment submenu, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+update_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "1. 更新 sing-box 二进制并保留当前配置") { print NR; exit }')
+add_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "2. 安装新增协议") { print NR; exit }')
+config_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "3. 修改已安装协议配置") { print NR; exit }')
+remove_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "4. 移除已安装协议") { print NR; exit }')
+uninstall_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "5. 卸载 sing-box") { print NR; exit }')
+
+if ! (( update_line < add_line && add_line < config_line && config_line < remove_line && remove_line < uninstall_line )); then
+  printf 'expected deployment submenu options to follow lifecycle order, got:\n%s\n' "${output}" >&2
   exit 1
 fi

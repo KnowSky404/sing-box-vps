@@ -478,7 +478,7 @@ INDEX_EOF
       ;;
     /usr/local/bin/sbv)
       mapfile -t actual_lines
-      if [[ "\${actual_lines[0]:-}" == "10" && "\${actual_lines[1]:-}" == "2" ]]; then
+      if [[ "\${actual_lines[0]:-}" == "11" && "\${actual_lines[1]:-}" == "2" ]]; then
         mkdir -p "\$(dirname "\${REMOTE_EXPORT_FILE}")"
         cat > "\${REMOTE_EXPORT_FILE}" <<'EXPORT_EOF'
 {
@@ -501,7 +501,7 @@ EXPORT_EOF
         return 0
       fi
 
-      if [[ "\${actual_lines[0]:-}" == "4" ]]; then
+      if [[ "\${actual_lines[0]:-}" == "2" ]]; then
         [[ "\${#actual_lines[@]}" -eq 10 ]]
         [[ "\${actual_lines[1]}" == "1" ]]
         [[ "\${actual_lines[2]}" == "1" ]]

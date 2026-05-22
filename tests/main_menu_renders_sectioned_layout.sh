@@ -54,13 +54,18 @@ if [[ "${plain_output}" != *"服务控制"* ]]; then
   exit 1
 fi
 
-if [[ "${plain_output}" != *"连接与诊断"* ]]; then
-  printf 'expected future connectivity and diagnostics section label in main menu, got:\n%s\n' "${output}" >&2
+if [[ "${plain_output}" != *"节点与诊断"* ]]; then
+  printf 'expected node and diagnostics section label in main menu, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${plain_output}" != *"网络与系统"* ]]; then
+  printf 'expected network and system section label in main menu, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
 if [[ "${plain_output}" != *"脚本维护"* ]]; then
-  printf 'expected future maintenance section label in main menu, got:\n%s\n' "${output}" >&2
+  printf 'expected maintenance section label in main menu, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
@@ -69,13 +74,28 @@ if [[ "${plain_output}" != *"1. 安装新协议"* ]]; then
   exit 1
 fi
 
-if [[ "${plain_output}" != *"2. 更新 sing-box 版本"* ]]; then
-  printf 'expected top-level update sing-box option in sectioned main menu, got:\n%s\n' "${output}" >&2
+if [[ "${plain_output}" != *"2. 修改已安装协议配置"* ]]; then
+  printf 'expected top-level protocol update option in deployment section, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
-if [[ "${plain_output}" != *"15. 流媒体验证检测"* ]]; then
+if [[ "${plain_output}" != *"3. 移除已安装协议"* ]]; then
+  printf 'expected top-level protocol removal option in deployment section, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${plain_output}" != *"4. 更新 sing-box 版本"* ]]; then
+  printf 'expected top-level update sing-box option in deployment section, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${plain_output}" != *"12. 流媒体验证检测"* ]]; then
   printf 'expected media check option in sectioned main menu, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${plain_output}" == *"16. 移除已安装协议"* ]]; then
+  printf 'expected protocol removal to be consolidated into deployment section, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
@@ -116,10 +136,11 @@ if [[ "${plain_output}" == *"--------------------------------"* ]]; then
 fi
 
 service_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "服务控制") { print NR; exit }')
-diagnostics_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "连接与诊断") { print NR; exit }')
+diagnostics_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "节点与诊断") { print NR; exit }')
+network_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "网络与系统") { print NR; exit }')
 maintenance_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "脚本维护") { print NR; exit }')
 
-if ! (( deployment_line < service_line && service_line < diagnostics_line && diagnostics_line < maintenance_line )); then
+if ! (( deployment_line < service_line && service_line < diagnostics_line && diagnostics_line < network_line && network_line < maintenance_line )); then
   printf 'expected future section labels to appear in grouped order, got:\n%s\n' "${output}" >&2
   exit 1
 fi
@@ -127,30 +148,43 @@ fi
 if ! printf '%s\n' "${plain_output}" | awk '
   index($0, "部署管理") { seen=1; next }
   seen && index($0, "1. 安装新协议") { found_install=1; next }
-  seen && index($0, "2. 更新 sing-box 版本") { found_update=1; exit }
+  seen && index($0, "2. 修改已安装协议配置") { found_config=1; next }
+  seen && index($0, "3. 移除已安装协议") { found_remove=1; next }
+  seen && index($0, "4. 更新 sing-box 版本") { found_update=1; exit }
   seen && index($0, "服务控制") { exit }
-  END { exit(found_install && found_update ? 0 : 1) }
+  END { exit(found_install && found_config && found_remove && found_update ? 0 : 1) }
 '; then
-  printf 'expected install and update options to stay within the deployment section, got:\n%s\n' "${output}" >&2
+  printf 'expected protocol lifecycle options to stay within the deployment section, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
 if ! printf '%s\n' "${plain_output}" | awk '
   index($0, "服务控制") { seen=1; next }
-  seen && index($0, "9. 查看状态") { found=1; exit }
-  seen && index($0, "连接与诊断") { exit }
+  seen && index($0, "10. 查看实时日志") { found=1; exit }
+  seen && index($0, "节点与诊断") { exit }
   END { exit(found ? 0 : 1) }
 '; then
-  printf 'expected status option to stay within the service control section, got:\n%s\n' "${output}" >&2
+  printf 'expected log option to stay within the service control section, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
 if ! printf '%s\n' "${plain_output}" | awk '
-  index($0, "连接与诊断") { seen=1; next }
-  seen && index($0, "15. 流媒体验证检测") { found=1; exit }
-  seen && index($0, "脚本维护") { exit }
+  index($0, "节点与诊断") { seen=1; next }
+  seen && index($0, "12. 流媒体验证检测") { found=1; exit }
+  seen && index($0, "网络与系统") { exit }
   END { exit(found ? 0 : 1) }
 '; then
   printf 'expected media check option to stay within the diagnostics section, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if ! printf '%s\n' "${plain_output}" | awk '
+  index($0, "网络与系统") { seen=1; next }
+  seen && index($0, "13. 配置 Cloudflare Warp") { found_warp=1; next }
+  seen && index($0, "14. 系统管理") { found_system=1; exit }
+  seen && index($0, "脚本维护") { exit }
+  END { exit(found_warp && found_system ? 0 : 1) }
+'; then
+  printf 'expected Warp and system options to stay within the network/system section, got:\n%s\n' "${output}" >&2
   exit 1
 fi

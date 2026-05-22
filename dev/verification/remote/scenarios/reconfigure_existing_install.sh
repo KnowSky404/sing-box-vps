@@ -20,7 +20,7 @@ verification_scenario_reconfigure_existing_install() {
   diff_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/config.diff.txt")
   cp /root/sing-box-vps/config.json "${before_config_path}"
   bash /usr/local/bin/sbv <<'EOF'
-4
+2
 1
 1
 
