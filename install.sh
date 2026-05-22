@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052206
+# Version: 2026052208
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052206"
+readonly SCRIPT_VERSION="2026052208"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -6401,16 +6401,9 @@ build_client_outbound_json_for_protocol() {
 }
 
 display_status_summary() {
-  local public_ip protocol_name
-  public_ip=${1:-$(get_public_ip)}
-  protocol_name=$(protocol_display_name "${SB_PROTOCOL}")
-
   echo -e "\n${GREEN}运行状态摘要：${NC}"
   echo "-------------------------------------------------------------"
   echo -e "sing-box: $(systemctl is-active sing-box)"
-  echo -e "协议: ${protocol_name}"
-  echo -e "地址: ${public_ip}"
-  echo -e "监听端口: ${SB_PORT}"
   if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
     echo -e "Warp: 已开启 (${SB_WARP_ROUTE_MODE})"
   else
@@ -6421,18 +6414,12 @@ display_status_summary() {
 }
 
 main_menu_service_status_summary() {
-  local active_state first_protocol protocol_name warp_state
+  local active_state warp_state
 
   active_state=$(systemctl is-active sing-box 2>/dev/null || true)
   [[ -n "${active_state}" ]] || active_state="unknown"
 
-  first_protocol=$(list_indexed_protocols_raw | head -n1 || true)
-  if [[ -n "${first_protocol}" ]]; then
-    protocol_name=$(protocol_display_name "$(state_protocol_to_runtime "${first_protocol}" 2>/dev/null || printf '%s' "${first_protocol}")")
-  elif [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
-    first_protocol=$(list_config_protocols | head -n1 || true)
-    protocol_name=$(protocol_display_name "$(state_protocol_to_runtime "${first_protocol}" 2>/dev/null || printf '%s' "${first_protocol:-未知协议}")")
-  else
+  if [[ ! -f "${SINGBOX_CONFIG_FILE}" && ! -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
     printf '%s / 未读取到配置' "${active_state}"
     return 0
   fi
@@ -6442,7 +6429,7 @@ main_menu_service_status_summary() {
   else
     warp_state="Warp 未开启"
   fi
-  printf '%s / %s / %s' "${active_state}" "${protocol_name}" "${warp_state}"
+  printf '%s / %s' "${active_state}" "${warp_state}"
 }
 
 show_link_info() {

@@ -537,7 +537,11 @@ EXPORT_EOF
       fi
 
       if [[ "\${actual_lines[0]:-}" == "9" && "\${actual_lines[1]:-}" == "0" ]]; then
-        printf '服务状态摘要：\n端口: %s\n配置文件: /root/sing-box-vps/config.json\n' "\$(cat "\${REMOTE_PORT_FILE}")"
+        if [[ "\${VERIFY_CURRENT_SCENARIO:-}" == "runtime_smoke" ]]; then
+          printf '运行状态摘要：\nsing-box: active\nWarp: 已开启 (selective)\n配置文件: /root/sing-box-vps/config.json\n'
+        else
+          printf '运行状态摘要：\nsing-box: active\nWarp: 未开启\n配置文件: /root/sing-box-vps/config.json\n'
+        fi
         return 0
       fi
 

@@ -61,8 +61,13 @@ EOF
   verification_mark_step fresh_install_vless_port_listening
   verification_capture_status_menu "${VERIFY_CURRENT_SCENARIO_DIR}/sbv-status.txt"
   status_output_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/sbv-status.txt")
-  grep -Fq "端口: ${expected_port}" "${status_output_path}"
+  grep -Fq '运行状态摘要' "${status_output_path}"
+  grep -Fq 'sing-box: active' "${status_output_path}"
+  grep -Fq 'Warp: 未开启' "${status_output_path}"
   grep -Fq '配置文件: /root/sing-box-vps/config.json' "${status_output_path}"
+  ! grep -Fq '协议:' "${status_output_path}"
+  ! grep -Fq '地址:' "${status_output_path}"
+  ! grep -Fq '端口:' "${status_output_path}"
   verification_mark_step fresh_install_vless_status_menu
   verification_run_protocol_probes
   verification_mark_step fresh_install_vless_protocol_probes

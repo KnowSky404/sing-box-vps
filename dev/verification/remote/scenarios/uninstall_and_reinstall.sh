@@ -63,6 +63,12 @@ EOF
   verification_assert_port_listening "${expected_port}" "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.ss-lntp.txt"
   verification_capture_status_menu "${VERIFY_CURRENT_SCENARIO_DIR}/sbv-status.txt"
   status_output_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/sbv-status.txt")
-  grep -Fq "端口: ${expected_port}" "${status_output_path}"
+  grep -Fq '运行状态摘要' "${status_output_path}"
+  grep -Fq 'sing-box: active' "${status_output_path}"
+  grep -Fq 'Warp: 未开启' "${status_output_path}"
+  grep -Fq '配置文件: /root/sing-box-vps/config.json' "${status_output_path}"
+  ! grep -Fq '协议:' "${status_output_path}"
+  ! grep -Fq '地址:' "${status_output_path}"
+  ! grep -Fq '端口:' "${status_output_path}"
   verification_run_protocol_probes
 }
