@@ -32,9 +32,11 @@ source "${TESTABLE_INSTALL}"
 SUMMARY_COUNT_FILE="${TMP_DIR}/summary.count"
 PROMPT_COUNT_FILE="${TMP_DIR}/prompt.count"
 INFO_COUNT_FILE="${TMP_DIR}/info.count"
+LOG_INFO_COUNT_FILE="${TMP_DIR}/log_info.count"
 printf '0\n' > "${SUMMARY_COUNT_FILE}"
 printf '0\n' > "${PROMPT_COUNT_FILE}"
 printf '0\n' > "${INFO_COUNT_FILE}"
+printf '0\n' > "${LOG_INFO_COUNT_FILE}"
 
 display_status_summary() {
   local current_count
@@ -52,6 +54,12 @@ show_connection_info_menu() {
   local current_count
   current_count=$(cat "${INFO_COUNT_FILE}")
   printf '%s\n' "$((current_count + 1))" > "${INFO_COUNT_FILE}"
+}
+
+log_info() {
+  local current_count
+  current_count=$(cat "${LOG_INFO_COUNT_FILE}")
+  printf '%s\n' "$((current_count + 1))" > "${LOG_INFO_COUNT_FILE}"
 }
 
 load_current_config_state() {
@@ -74,5 +82,10 @@ fi
 
 if [[ "$(cat "${INFO_COUNT_FILE}")" != "0" ]]; then
   printf 'expected status view to skip node info menu, got %s calls\n' "$(cat "${INFO_COUNT_FILE}")" >&2
+  exit 1
+fi
+
+if [[ "$(cat "${LOG_INFO_COUNT_FILE}")" != "0" ]]; then
+  printf 'expected status view to render without legacy loading hint, got %s info logs\n' "$(cat "${LOG_INFO_COUNT_FILE}")" >&2
   exit 1
 fi

@@ -69,7 +69,7 @@ if [[ "${output}" == *"开启 BBR 拥塞控制算法"* ]]; then
   exit 1
 fi
 
-if [[ "${output}" != *"9. 查看服务状态"* ]]; then
+if [[ "${output}" != *"9. 运行状态摘要"* ]]; then
   printf 'expected status menu entry to render, got:\n%s\n' "${output}" >&2
   exit 1
 fi

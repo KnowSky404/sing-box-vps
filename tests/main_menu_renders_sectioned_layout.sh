@@ -29,6 +29,15 @@ check_bbr_status() {
   BBR_STATUS="(已开启 BBR)"
 }
 
+main_menu_service_status_summary() {
+  printf 'active / VLESS + REALITY / Warp 未开启'
+}
+
+load_current_config_state() {
+  printf 'main menu should not load full config state while rendering\n' >&2
+  exit 1
+}
+
 clear() {
   :
 }
@@ -160,11 +169,12 @@ fi
 
 if ! printf '%s\n' "${plain_output}" | awk '
   index($0, "服务控制") { seen=1; next }
-  seen && index($0, "10. 查看实时日志") { found=1; exit }
+  seen && index($0, "9. 运行状态摘要 active / VLESS + REALITY / Warp 未开启") { found_status=1; next }
+  seen && index($0, "10. 查看实时日志") { found_log=1; exit }
   seen && index($0, "节点与诊断") { exit }
-  END { exit(found ? 0 : 1) }
+  END { exit(found_status && found_log ? 0 : 1) }
 '; then
-  printf 'expected log option to stay within the service control section, got:\n%s\n' "${output}" >&2
+  printf 'expected status summary and log options to stay within the service control section, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 

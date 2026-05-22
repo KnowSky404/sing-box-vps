@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052205
+# Version: 2026052206
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052205"
+readonly SCRIPT_VERSION="2026052206"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -5522,7 +5522,6 @@ warp_management() {
 
 # Helper to extract config values and display info
 view_status() {
-  log_info "正在从配置文件中读取信息..."
   load_current_config_state
   display_status_summary
 }
@@ -6406,12 +6405,12 @@ display_status_summary() {
   public_ip=${1:-$(get_public_ip)}
   protocol_name=$(protocol_display_name "${SB_PROTOCOL}")
 
-  echo -e "\n${GREEN}服务状态摘要：${NC}"
+  echo -e "\n${GREEN}运行状态摘要：${NC}"
   echo "-------------------------------------------------------------"
-  echo -e "进程状态: $(systemctl is-active sing-box)"
+  echo -e "sing-box: $(systemctl is-active sing-box)"
   echo -e "协议: ${protocol_name}"
   echo -e "地址: ${public_ip}"
-  echo -e "端口: ${SB_PORT}"
+  echo -e "监听端口: ${SB_PORT}"
   if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
     echo -e "Warp: 已开启 (${SB_WARP_ROUTE_MODE})"
   else
@@ -6419,6 +6418,31 @@ display_status_summary() {
   fi
   echo -e "配置文件: ${SINGBOX_CONFIG_FILE}"
   echo "-------------------------------------------------------------"
+}
+
+main_menu_service_status_summary() {
+  local active_state first_protocol protocol_name warp_state
+
+  active_state=$(systemctl is-active sing-box 2>/dev/null || true)
+  [[ -n "${active_state}" ]] || active_state="unknown"
+
+  first_protocol=$(list_indexed_protocols_raw | head -n1 || true)
+  if [[ -n "${first_protocol}" ]]; then
+    protocol_name=$(protocol_display_name "$(state_protocol_to_runtime "${first_protocol}" 2>/dev/null || printf '%s' "${first_protocol}")")
+  elif [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    first_protocol=$(list_config_protocols | head -n1 || true)
+    protocol_name=$(protocol_display_name "$(state_protocol_to_runtime "${first_protocol}" 2>/dev/null || printf '%s' "${first_protocol:-未知协议}")")
+  else
+    printf '%s / 未读取到配置' "${active_state}"
+    return 0
+  fi
+
+  if [[ -f "${SINGBOX_CONFIG_FILE}" ]] && config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; then
+    warp_state="Warp 已开启"
+  else
+    warp_state="Warp 未开启"
+  fi
+  printf '%s / %s / %s' "${active_state}" "${protocol_name}" "${warp_state}"
 }
 
 show_link_info() {
@@ -8546,7 +8570,7 @@ main() {
     render_menu_item "6" "启动 sing-box"
     render_menu_item "7" "停止 sing-box"
     render_menu_item "8" "重启 sing-box"
-    render_menu_item "9" "查看服务状态"
+    render_menu_item "9" "运行状态摘要" "" "$(main_menu_service_status_summary)"
     render_menu_item "10" "查看实时日志"
 
     render_section_title "节点与诊断"
