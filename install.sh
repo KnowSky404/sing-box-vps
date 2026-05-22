@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052202
+# Version: 2026052203
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052202"
+readonly SCRIPT_VERSION="2026052203"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -2609,7 +2609,7 @@ install_protocols_interactive() {
   fi
   open_all_protocol_ports
   systemctl restart sing-box
-  log_info "连接信息未自动展示，如需查看请进入菜单 10。"
+  log_info "连接信息未自动展示，如需查看请进入菜单 11。"
 }
 
 set_protocol_defaults() {
@@ -5395,7 +5395,7 @@ warp_management() {
 
     load_current_config_state
     display_status_summary
-    log_info "连接信息未自动展示，如需查看请进入菜单 10。"
+    log_info "连接信息未自动展示，如需查看请进入菜单 11。"
   done
 }
 
@@ -5452,7 +5452,7 @@ update_config_only() {
   load_protocol_state "${selected_protocol}"
   systemctl restart sing-box
   log_success "配置及服务文件已更新并重启服务。"
-  log_info "连接信息未自动展示，如需查看请进入菜单 10。"
+  log_info "连接信息未自动展示，如需查看请进入菜单 11。"
 }
 
 remove_protocol_menu() {
@@ -6377,7 +6377,7 @@ show_qr_info() {
   fi
 
   if ! command -v qrencode >/dev/null 2>&1; then
-    log_warn "未安装 qrencode，已跳过二维码展示。可安装后重新进入菜单 10 查看。"
+    log_warn "未安装 qrencode，已跳过二维码展示。可安装后重新进入菜单 11 查看。"
     return 0
   fi
 
@@ -8208,7 +8208,7 @@ update_singbox_binary_preserving_config() {
   systemctl restart sing-box
   log_success "sing-box 已更新到 ${SB_VERSION}，当前配置已保留。"
   display_status_summary
-  log_info "连接信息未自动展示，如需查看请进入菜单 10。"
+  log_info "连接信息未自动展示，如需查看请进入菜单 11。"
 }
 
 cli_update_singbox() {

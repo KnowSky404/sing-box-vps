@@ -69,7 +69,7 @@ if [[ "${output}" == *"未安装 qrencode"* ]]; then
   exit 1
 fi
 
-if [[ "${output}" != *"连接信息未自动展示，如需查看请进入菜单 10。"* ]]; then
-  printf 'expected first install flow to tell user to use menu 10, got:\n%s\n' "${output}" >&2
+if [[ "${output}" != *"连接信息未自动展示，如需查看请进入菜单 11。"* ]]; then
+  printf 'expected first install flow to tell user to use menu 11, got:\n%s\n' "${output}" >&2
   exit 1
 fi
