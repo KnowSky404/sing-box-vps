@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052204
+# Version: 2026052205
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052204"
+readonly SCRIPT_VERSION="2026052205"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -850,6 +850,40 @@ prompt_optional_positive_integer() {
       return 0
     fi
     log_warn "${label}必须为空或正整数。" >&2
+  done
+}
+
+prompt_update_optional_positive_integer() {
+  local prompt=$1 label=${2:-数值}
+  local value
+
+  while true; do
+    read -rp "${prompt}" value || return 1
+    value=$(trim_whitespace "${value}")
+    if validate_optional_positive_integer "${value}"; then
+      printf '%s' "${value}"
+      return 0
+    fi
+    log_warn "${label}必须为空或正整数。" >&2
+  done
+}
+
+prompt_optional_choice() {
+  local prompt=$1 min=$2 max=$3
+  local value
+
+  while true; do
+    read -rp "${prompt}" value || return 1
+    value=$(trim_whitespace "${value}")
+    if [[ -z "${value}" ]]; then
+      printf ''
+      return 0
+    fi
+    if [[ "${value}" =~ ^[0-9]+$ && "${value}" -ge "${min}" && "${value}" -le "${max}" ]]; then
+      printf '%s' "${value}"
+      return 0
+    fi
+    log_warn "请输入 ${min}-${max} 范围内的数字，或留空保持当前设置。" >&2
   done
 }
 
@@ -2049,10 +2083,10 @@ prompt_hy2_update() {
   read -rp "新用户名标识 (当前: ${SB_HY2_USER_NAME}, 留空保持): " in_user_name
   [[ -n "${in_user_name}" ]] && SB_HY2_USER_NAME="${in_user_name}"
 
-  in_up=$(prompt_optional_positive_integer "上行带宽 Mbps (当前: ${SB_HY2_UP_MBPS:-未限制}, 留空保持): " "${SB_HY2_UP_MBPS:-}" "上行带宽")
+  in_up=$(prompt_update_optional_positive_integer "上行带宽 Mbps (当前: ${SB_HY2_UP_MBPS:-未限制}, 留空清空限制): " "上行带宽")
   SB_HY2_UP_MBPS="${in_up}"
 
-  in_down=$(prompt_optional_positive_integer "下行带宽 Mbps (当前: ${SB_HY2_DOWN_MBPS:-未限制}, 留空保持): " "${SB_HY2_DOWN_MBPS:-}" "下行带宽")
+  in_down=$(prompt_update_optional_positive_integer "下行带宽 Mbps (当前: ${SB_HY2_DOWN_MBPS:-未限制}, 留空清空限制): " "下行带宽")
   SB_HY2_DOWN_MBPS="${in_down}"
 
   in_obfs=$(prompt_yes_no "是否启用 obfs / Salamander 混淆 [y/n] (当前: ${SB_HY2_OBFS_ENABLED}, 留空保持): " "${SB_HY2_OBFS_ENABLED}")
@@ -2074,28 +2108,24 @@ prompt_hy2_update() {
   echo "TLS 模式:"
   echo "1. ACME 自动签发"
   echo "2. 手动证书路径"
-  if [[ "${SB_HY2_TLS_MODE}" == "manual" ]]; then
-    in_tls_mode=$(prompt_choice "请选择 [1-2] (当前: ${SB_HY2_TLS_MODE}, 留空保持): " 1 2 2)
-  else
-    in_tls_mode=$(prompt_choice "请选择 [1-2] (当前: ${SB_HY2_TLS_MODE}, 留空保持): " 1 2 1)
-  fi
+  in_tls_mode=$(prompt_optional_choice "请选择 [1-2] (当前: ${SB_HY2_TLS_MODE}, 留空保持): " 1 2)
   case "${in_tls_mode}" in
     1) SB_HY2_TLS_MODE="acme" ;;
     2) SB_HY2_TLS_MODE="manual" ;;
+    "") ;;
   esac
 
-  if [[ "${SB_HY2_TLS_MODE}" == "acme" ]]; then
+  if [[ -z "${in_tls_mode}" ]]; then
+    :
+  elif [[ "${SB_HY2_TLS_MODE}" == "acme" ]]; then
     echo "ACME 验证方式:"
     echo "1. HTTP-01"
     echo "2. DNS-01 (Cloudflare)"
-    if [[ "${SB_HY2_ACME_MODE}" == "dns" ]]; then
-      in_acme_mode=$(prompt_choice "请选择 [1-2] (当前: ${SB_HY2_ACME_MODE}, 留空保持): " 1 2 2)
-    else
-      in_acme_mode=$(prompt_choice "请选择 [1-2] (当前: ${SB_HY2_ACME_MODE}, 留空保持): " 1 2 1)
-    fi
+    in_acme_mode=$(prompt_optional_choice "请选择 [1-2] (当前: ${SB_HY2_ACME_MODE}, 留空保持): " 1 2)
     case "${in_acme_mode}" in
       1) SB_HY2_ACME_MODE="http" ;;
       2) SB_HY2_ACME_MODE="dns" ;;
+      "") ;;
     esac
 
     in_acme_email=$(prompt_optional_email "ACME 邮箱 (当前: ${SB_HY2_ACME_EMAIL}, 留空保持，用于证书通知): " "${SB_HY2_ACME_EMAIL}")
@@ -2157,28 +2187,24 @@ prompt_anytls_update() {
   echo "TLS 模式:"
   echo "1. ACME 自动签发"
   echo "2. 手动证书路径"
-  if [[ "${SB_ANYTLS_TLS_MODE}" == "manual" ]]; then
-    in_tls_mode=$(prompt_choice "请选择 [1-2] (当前: ${SB_ANYTLS_TLS_MODE}, 留空保持): " 1 2 2)
-  else
-    in_tls_mode=$(prompt_choice "请选择 [1-2] (当前: ${SB_ANYTLS_TLS_MODE}, 留空保持): " 1 2 1)
-  fi
+  in_tls_mode=$(prompt_optional_choice "请选择 [1-2] (当前: ${SB_ANYTLS_TLS_MODE}, 留空保持): " 1 2)
   case "${in_tls_mode}" in
     1) SB_ANYTLS_TLS_MODE="acme" ;;
     2) SB_ANYTLS_TLS_MODE="manual" ;;
+    "") ;;
   esac
 
-  if [[ "${SB_ANYTLS_TLS_MODE}" == "acme" ]]; then
+  if [[ -z "${in_tls_mode}" ]]; then
+    :
+  elif [[ "${SB_ANYTLS_TLS_MODE}" == "acme" ]]; then
     echo "ACME 验证方式:"
     echo "1. HTTP-01"
     echo "2. DNS-01 (Cloudflare)"
-    if [[ "${SB_ANYTLS_ACME_MODE}" == "dns" ]]; then
-      in_acme_mode=$(prompt_choice "请选择 [1-2] (当前: ${SB_ANYTLS_ACME_MODE}, 留空保持): " 1 2 2)
-    else
-      in_acme_mode=$(prompt_choice "请选择 [1-2] (当前: ${SB_ANYTLS_ACME_MODE}, 留空保持): " 1 2 1)
-    fi
+    in_acme_mode=$(prompt_optional_choice "请选择 [1-2] (当前: ${SB_ANYTLS_ACME_MODE}, 留空保持): " 1 2)
     case "${in_acme_mode}" in
       1) SB_ANYTLS_ACME_MODE="http" ;;
       2) SB_ANYTLS_ACME_MODE="dns" ;;
+      "") ;;
     esac
 
     in_acme_email=$(prompt_optional_email "ACME 邮箱 (当前: ${SB_ANYTLS_ACME_EMAIL}, 留空保持，用于证书通知): " "${SB_ANYTLS_ACME_EMAIL}")
