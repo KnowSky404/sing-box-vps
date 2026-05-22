@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052203
+# Version: 2026052204
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052203"
+readonly SCRIPT_VERSION="2026052204"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -753,6 +753,155 @@ validate_port_number() {
   (( port >= 1 && port <= 65535 ))
 }
 
+validate_optional_positive_integer() {
+  local value=$1
+  [[ -z "${value}" || "${value}" =~ ^[1-9][0-9]*$ ]]
+}
+
+validate_optional_email() {
+  local value=$1
+  [[ -z "${value}" || "${value}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]
+}
+
+validate_non_empty_path() {
+  local value=$1
+  [[ -n "${value}" && "${value}" != *$'\n'* && "${value}" == /* ]]
+}
+
+validate_http_url() {
+  local value=$1
+  [[ "${value}" =~ ^https?://[^[:space:]/$.?#][^[:space:]]*$ ]]
+}
+
+validate_update_interval() {
+  local value=$1
+  [[ "${value}" =~ ^[1-9][0-9]*[smhd]$ ]]
+}
+
+prompt_choice() {
+  local prompt=$1 min=$2 max=$3 default=${4:-}
+  local value
+
+  while true; do
+    read -rp "${prompt}" value || return 1
+    value=$(trim_whitespace "${value}")
+    if [[ -z "${value}" && -n "${default}" ]]; then
+      printf '%s' "${default}"
+      return 0
+    fi
+    if [[ "${value}" =~ ^[0-9]+$ && "${value}" -ge "${min}" && "${value}" -le "${max}" ]]; then
+      printf '%s' "${value}"
+      return 0
+    fi
+    log_warn "请输入 ${min}-${max} 范围内的数字。" >&2
+  done
+}
+
+prompt_yes_no() {
+  local prompt=$1 default=${2:-}
+  local value
+
+  while true; do
+    read -rp "${prompt}" value || return 1
+    value=$(trim_whitespace "${value}")
+    value=${value,,}
+    if [[ -z "${value}" && -n "${default}" ]]; then
+      printf '%s' "${default}"
+      return 0
+    fi
+    case "${value}" in
+      y|n)
+        printf '%s' "${value}"
+        return 0
+        ;;
+      *)
+        log_warn "请输入 y 或 n。" >&2
+        ;;
+    esac
+  done
+}
+
+prompt_port() {
+  local prompt=$1 default=${2:-}
+  local value
+
+  while true; do
+    read -rp "${prompt}" value || return 1
+    value=$(trim_whitespace "${value}")
+    [[ -z "${value}" && -n "${default}" ]] && value="${default}"
+    if validate_port_number "${value}"; then
+      printf '%s' "${value}"
+      return 0
+    fi
+    log_warn "端口必须为 1-65535 的数字。" >&2
+  done
+}
+
+prompt_optional_positive_integer() {
+  local prompt=$1 default=${2:-} label=${3:-数值}
+  local value
+
+  while true; do
+    read -rp "${prompt}" value || return 1
+    value=$(trim_whitespace "${value}")
+    [[ -z "${value}" && -n "${default}" ]] && value="${default}"
+    if validate_optional_positive_integer "${value}"; then
+      printf '%s' "${value}"
+      return 0
+    fi
+    log_warn "${label}必须为空或正整数。" >&2
+  done
+}
+
+prompt_optional_email() {
+  local prompt=$1 default=${2:-}
+  local value
+
+  while true; do
+    read -rp "${prompt}" value || return 1
+    value=$(trim_whitespace "${value}")
+    [[ -z "${value}" && -n "${default}" ]] && value="${default}"
+    if validate_optional_email "${value}"; then
+      printf '%s' "${value}"
+      return 0
+    fi
+    log_warn "邮箱格式不正确，请输入 user@example.com 或留空。" >&2
+  done
+}
+
+prompt_required_path() {
+  local prompt=$1
+  local default=${2:-}
+  local value
+
+  while true; do
+    read -rp "${prompt}" value || return 1
+    value=$(trim_whitespace "${value}")
+    [[ -z "${value}" && -n "${default}" ]] && value="${default}"
+    if validate_non_empty_path "${value}"; then
+      printf '%s' "${value}"
+      return 0
+    fi
+    log_warn "路径必须为绝对路径，例如 /etc/ssl/certs/fullchain.pem。" >&2
+  done
+}
+
+prompt_optional_domain() {
+  local prompt=$1 default=${2:-}
+  local value
+
+  while true; do
+    read -rp "${prompt}" value || return 1
+    value=$(trim_whitespace "${value}")
+    [[ -z "${value}" && -n "${default}" ]] && value="${default}"
+    if [[ -z "${value}" || "${value}" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]]; then
+      printf '%s' "${value}"
+      return 0
+    fi
+    log_warn "域名格式不正确，例如 example.com。" >&2
+  done
+}
+
 vless_reality_instance_state_file() {
   local instance_id=$1
   validate_vless_reality_instance_id "${instance_id}" || return 1
@@ -1249,12 +1398,8 @@ prompt_vless_reality_instance_selection() {
     index=$((index + 1))
   done
   echo "0. 返回"
-  read -rp "请选择 REALITY 实例: " choice
+  choice=$(prompt_choice "请选择 REALITY 实例: " 0 "${#instances[@]}" "")
   [[ "${choice}" == "0" ]] && return 1
-  [[ "${choice}" =~ ^[0-9]+$ && "${choice}" -ge 1 && "${choice}" -le ${#instances[@]} ]] || {
-    log_warn "无效选项。"
-    return 1
-  }
   SELECTED_VLESS_INSTANCE_ID="${instances[$((choice - 1))]}"
 }
 
@@ -1633,7 +1778,7 @@ prompt_installed_protocol_selection() {
       echo "$((index + 1)). $(protocol_display_name "${selected_protocol}")"
     done
     echo "0. 返回"
-    read -rp "请选择 [0-${#protocols[@]}]: " choice
+    choice=$(prompt_choice "请选择 [0-${#protocols[@]}]: " 0 "${#protocols[@]}" "")
 
     if [[ "${choice}" == "0" ]]; then
       return 0
@@ -1656,10 +1801,8 @@ prompt_vless_reality_update() {
   [[ -n "${in_node}" ]] && SB_NODE_NAME="${in_node}"
 
   current_port="${SB_PORT}"
-  read -rp "新端口 (当前: ${SB_PORT}, 留空保持): " in_p
-  in_p=$(trim_whitespace "${in_p:-}")
-  if [[ -n "${in_p}" ]]; then
-    validate_port_number "${in_p}" || log_error "端口必须为 1-65535 的数字。"
+  in_p=$(prompt_port "新端口 (当前: ${SB_PORT}, 留空保持): " "${SB_PORT}")
+  if [[ "${in_p}" != "${current_port}" ]]; then
     if [[ "${in_p}" != "${current_port}" ]] && port_in_configured_protocol_state "${in_p}"; then
       log_error "端口已被现有协议配置占用: ${in_p}"
     fi
@@ -1727,8 +1870,7 @@ prompt_reality_sni_install() {
   echo "[VLESS + REALITY] REALITY 域名选择:"
   echo "1. 自动探测推荐 SNI (默认)"
   echo "2. 手动输入"
-  read -rp "请选择 [1-2]: " choice
-  choice=${choice:-1}
+  choice=$(prompt_choice "请选择 [1-2] (默认 1): " 1 2 1)
 
   case "${choice}" in
     2)
@@ -1751,8 +1893,7 @@ prompt_reality_sni_update() {
   echo "1. 保留当前 SNI: ${SB_SNI} (默认)"
   echo "2. 自动探测推荐 SNI"
   echo "3. 手动输入"
-  read -rp "请选择 [1-3] (默认 1): " choice
-  choice=${choice:-1}
+  choice=$(prompt_choice "请选择 [1-3] (默认 1): " 1 3 1)
 
   case "${choice}" in
     2)
@@ -1781,8 +1922,7 @@ prompt_reality_sni_for_new_instance() {
   echo "1. 复用现有 SNI: ${default_sni} (默认)"
   echo "2. 自动探测推荐 SNI"
   echo "3. 手动输入"
-  read -rp "请选择 [1-3] (默认 1): " choice
-  choice=${choice:-1}
+  choice=$(prompt_choice "请选择 [1-3] (默认 1): " 1 3 1)
 
   case "${choice}" in
     2)
@@ -1802,38 +1942,21 @@ prompt_reality_sni_for_new_instance() {
   esac
 }
 
-validate_optional_positive_integer() {
-  local value=$1
-  [[ -z "${value}" || "${value}" =~ ^[1-9][0-9]*$ ]]
-}
-
 prompt_vless_reality_rate_limit_fields() {
   local in_limit in_up in_down
 
   SB_VLESS_RATE_LIMIT_UP_MBPS="${SB_VLESS_RATE_LIMIT_UP_MBPS:-}"
   SB_VLESS_RATE_LIMIT_DOWN_MBPS="${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}"
 
-  read -rp "[VLESS + REALITY] 是否配置限速 [y/n] (默认 n): " in_limit
-  in_limit=${in_limit:-n}
-  if [[ "${in_limit}" != "y" && "${in_limit}" != "Y" ]]; then
+  in_limit=$(prompt_yes_no "[VLESS + REALITY] 是否配置限速 [y/n] (默认 n): " "n")
+  if [[ "${in_limit}" != "y" ]]; then
     SB_VLESS_RATE_LIMIT_UP_MBPS=""
     SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
     return 0
   fi
 
-  while true; do
-    read -rp "[VLESS + REALITY] 上行带宽 Mbps (留空表示上行不限速): " in_up
-    in_up=$(trim_whitespace "${in_up}")
-    validate_optional_positive_integer "${in_up}" && break
-    log_warn "上行带宽必须为空或正整数。"
-  done
-
-  while true; do
-    read -rp "[VLESS + REALITY] 下行带宽 Mbps (留空表示下行不限速): " in_down
-    in_down=$(trim_whitespace "${in_down}")
-    validate_optional_positive_integer "${in_down}" && break
-    log_warn "下行带宽必须为空或正整数。"
-  done
+  in_up=$(prompt_optional_positive_integer "[VLESS + REALITY] 上行带宽 Mbps (留空表示上行不限速): " "" "上行带宽")
+  in_down=$(prompt_optional_positive_integer "[VLESS + REALITY] 下行带宽 Mbps (留空表示下行不限速): " "" "下行带宽")
 
   SB_VLESS_RATE_LIMIT_UP_MBPS="${in_up}"
   SB_VLESS_RATE_LIMIT_DOWN_MBPS="${in_down}"
@@ -1856,24 +1979,12 @@ prompt_vless_reality_rate_limit_update_fields() {
   echo "1. 保留当前限速 (默认)"
   echo "2. 重新设置限速"
   echo "3. 清空限速"
-  read -rp "请选择 [1-3] (默认 1): " choice
-  choice=${choice:-1}
+  choice=$(prompt_choice "请选择 [1-3] (默认 1): " 1 3 1)
 
   case "${choice}" in
     2)
-      while true; do
-        read -rp "[VLESS + REALITY] 上行带宽 Mbps (留空表示上行不限速): " in_up
-        in_up=$(trim_whitespace "${in_up}")
-        validate_optional_positive_integer "${in_up}" && break
-        log_warn "上行带宽必须为空或正整数。"
-      done
-
-      while true; do
-        read -rp "[VLESS + REALITY] 下行带宽 Mbps (留空表示下行不限速): " in_down
-        in_down=$(trim_whitespace "${in_down}")
-        validate_optional_positive_integer "${in_down}" && break
-        log_warn "下行带宽必须为空或正整数。"
-      done
+      in_up=$(prompt_optional_positive_integer "[VLESS + REALITY] 上行带宽 Mbps (留空表示上行不限速): " "" "上行带宽")
+      in_down=$(prompt_optional_positive_integer "[VLESS + REALITY] 下行带宽 Mbps (留空表示下行不限速): " "" "下行带宽")
 
       SB_VLESS_RATE_LIMIT_UP_MBPS="${in_up}"
       SB_VLESS_RATE_LIMIT_DOWN_MBPS="${in_down}"
@@ -1891,14 +2002,14 @@ prompt_vless_reality_rate_limit_update_fields() {
 prompt_mixed_update() {
   local in_p in_auth in_user in_pass
 
-  read -rp "新端口 (当前: ${SB_PORT}, 留空保持): " in_p
-  if [[ -n "${in_p}" ]]; then
+  in_p=$(prompt_port "新端口 (当前: ${SB_PORT}, 留空保持): " "${SB_PORT}")
+  if [[ "${in_p}" != "${SB_PORT}" ]]; then
     SB_PORT="${in_p}"
     check_port_conflict "${SB_PORT}"
   fi
 
-  read -rp "是否启用用户名密码认证 [y/n] (当前: ${SB_MIXED_AUTH_ENABLED}, 留空保持): " in_auth
-  [[ -n "${in_auth}" ]] && SB_MIXED_AUTH_ENABLED="${in_auth}"
+  in_auth=$(prompt_yes_no "是否启用用户名密码认证 [y/n] (当前: ${SB_MIXED_AUTH_ENABLED}, 留空保持): " "${SB_MIXED_AUTH_ENABLED}")
+  SB_MIXED_AUTH_ENABLED="${in_auth}"
 
   if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
     read -rp "新用户名 (当前: ${SB_MIXED_USERNAME}, 留空保持/自动生成): " in_user
@@ -1916,8 +2027,8 @@ prompt_mixed_update() {
 prompt_hy2_update() {
   local in_p in_domain in_password in_user_name in_up in_down in_obfs in_obfs_password in_tls_mode in_acme_mode in_acme_email in_acme_domain in_cf_api_token in_cert_path in_key_path in_masquerade
 
-  read -rp "新端口 (当前: ${SB_PORT}, 留空保持): " in_p
-  if [[ -n "${in_p}" ]]; then
+  in_p=$(prompt_port "新端口 (当前: ${SB_PORT}, 留空保持): " "${SB_PORT}")
+  if [[ "${in_p}" != "${SB_PORT}" ]]; then
     SB_PORT="${in_p}"
     check_port_conflict "${SB_PORT}"
   fi
@@ -1938,16 +2049,14 @@ prompt_hy2_update() {
   read -rp "新用户名标识 (当前: ${SB_HY2_USER_NAME}, 留空保持): " in_user_name
   [[ -n "${in_user_name}" ]] && SB_HY2_USER_NAME="${in_user_name}"
 
-  read -rp "上行带宽 Mbps (当前: ${SB_HY2_UP_MBPS:-未限制}, 留空保持): " in_up
-  [[ -n "${in_up}" ]] && SB_HY2_UP_MBPS="${in_up}"
+  in_up=$(prompt_optional_positive_integer "上行带宽 Mbps (当前: ${SB_HY2_UP_MBPS:-未限制}, 留空保持): " "${SB_HY2_UP_MBPS:-}" "上行带宽")
+  SB_HY2_UP_MBPS="${in_up}"
 
-  read -rp "下行带宽 Mbps (当前: ${SB_HY2_DOWN_MBPS:-未限制}, 留空保持): " in_down
-  [[ -n "${in_down}" ]] && SB_HY2_DOWN_MBPS="${in_down}"
+  in_down=$(prompt_optional_positive_integer "下行带宽 Mbps (当前: ${SB_HY2_DOWN_MBPS:-未限制}, 留空保持): " "${SB_HY2_DOWN_MBPS:-}" "下行带宽")
+  SB_HY2_DOWN_MBPS="${in_down}"
 
-  read -rp "是否启用 obfs / Salamander 混淆 [y/n] (当前: ${SB_HY2_OBFS_ENABLED}, 留空保持): " in_obfs
-  if [[ -n "${in_obfs}" ]]; then
-    SB_HY2_OBFS_ENABLED="${in_obfs}"
-  fi
+  in_obfs=$(prompt_yes_no "是否启用 obfs / Salamander 混淆 [y/n] (当前: ${SB_HY2_OBFS_ENABLED}, 留空保持): " "${SB_HY2_OBFS_ENABLED}")
+  SB_HY2_OBFS_ENABLED="${in_obfs}"
 
   if [[ "${SB_HY2_OBFS_ENABLED}" == "y" ]]; then
     if [[ -n "${SB_HY2_OBFS_PASSWORD}" ]]; then
@@ -1965,30 +2074,34 @@ prompt_hy2_update() {
   echo "TLS 模式:"
   echo "1. ACME 自动签发"
   echo "2. 手动证书路径"
-  read -rp "请选择 [1-2] (当前: ${SB_HY2_TLS_MODE}, 留空保持): " in_tls_mode
+  if [[ "${SB_HY2_TLS_MODE}" == "manual" ]]; then
+    in_tls_mode=$(prompt_choice "请选择 [1-2] (当前: ${SB_HY2_TLS_MODE}, 留空保持): " 1 2 2)
+  else
+    in_tls_mode=$(prompt_choice "请选择 [1-2] (当前: ${SB_HY2_TLS_MODE}, 留空保持): " 1 2 1)
+  fi
   case "${in_tls_mode}" in
     1) SB_HY2_TLS_MODE="acme" ;;
     2) SB_HY2_TLS_MODE="manual" ;;
-    "") ;;
-    *) log_warn "保留当前 TLS 模式: ${SB_HY2_TLS_MODE}" ;;
   esac
 
   if [[ "${SB_HY2_TLS_MODE}" == "acme" ]]; then
     echo "ACME 验证方式:"
     echo "1. HTTP-01"
     echo "2. DNS-01 (Cloudflare)"
-    read -rp "请选择 [1-2] (当前: ${SB_HY2_ACME_MODE}, 留空保持): " in_acme_mode
+    if [[ "${SB_HY2_ACME_MODE}" == "dns" ]]; then
+      in_acme_mode=$(prompt_choice "请选择 [1-2] (当前: ${SB_HY2_ACME_MODE}, 留空保持): " 1 2 2)
+    else
+      in_acme_mode=$(prompt_choice "请选择 [1-2] (当前: ${SB_HY2_ACME_MODE}, 留空保持): " 1 2 1)
+    fi
     case "${in_acme_mode}" in
       1) SB_HY2_ACME_MODE="http" ;;
       2) SB_HY2_ACME_MODE="dns" ;;
-      "") ;;
-      *) log_warn "保留当前 ACME 模式: ${SB_HY2_ACME_MODE}" ;;
     esac
 
-    read -rp "ACME 邮箱 (当前: ${SB_HY2_ACME_EMAIL}, 留空保持，用于证书通知): " in_acme_email
-    [[ -n "${in_acme_email}" ]] && SB_HY2_ACME_EMAIL="${in_acme_email}"
-    read -rp "ACME 域名 (当前: ${SB_HY2_ACME_DOMAIN:-${SB_HY2_DOMAIN}}, 留空保持): " in_acme_domain
-    [[ -n "${in_acme_domain}" ]] && SB_HY2_ACME_DOMAIN="${in_acme_domain}"
+    in_acme_email=$(prompt_optional_email "ACME 邮箱 (当前: ${SB_HY2_ACME_EMAIL}, 留空保持，用于证书通知): " "${SB_HY2_ACME_EMAIL}")
+    SB_HY2_ACME_EMAIL="${in_acme_email}"
+    in_acme_domain=$(prompt_optional_domain "ACME 域名 (当前: ${SB_HY2_ACME_DOMAIN:-${SB_HY2_DOMAIN}}, 留空保持): " "${SB_HY2_ACME_DOMAIN:-${SB_HY2_DOMAIN}}")
+    SB_HY2_ACME_DOMAIN="${in_acme_domain}"
 
     if [[ "${SB_HY2_ACME_MODE}" == "dns" ]]; then
       read -rp "Cloudflare API Token (当前: 留空隐藏, 留空保持): " in_cf_api_token
@@ -2000,10 +2113,10 @@ prompt_hy2_update() {
     SB_HY2_CERT_PATH=""
     SB_HY2_KEY_PATH=""
   else
-    read -rp "证书路径 (当前: ${SB_HY2_CERT_PATH}, 留空保持): " in_cert_path
-    [[ -n "${in_cert_path}" ]] && SB_HY2_CERT_PATH="${in_cert_path}"
-    read -rp "私钥路径 (当前: ${SB_HY2_KEY_PATH}, 留空保持): " in_key_path
-    [[ -n "${in_key_path}" ]] && SB_HY2_KEY_PATH="${in_key_path}"
+    in_cert_path=$(prompt_required_path "证书路径 (当前: ${SB_HY2_CERT_PATH}, 留空保持): " "${SB_HY2_CERT_PATH}")
+    SB_HY2_CERT_PATH="${in_cert_path}"
+    in_key_path=$(prompt_required_path "私钥路径 (当前: ${SB_HY2_KEY_PATH}, 留空保持): " "${SB_HY2_KEY_PATH}")
+    SB_HY2_KEY_PATH="${in_key_path}"
     SB_HY2_ACME_MODE="http"
     SB_HY2_ACME_EMAIL=""
     SB_HY2_ACME_DOMAIN=""
@@ -2019,8 +2132,8 @@ prompt_hy2_update() {
 prompt_anytls_update() {
   local in_p in_domain in_password in_user_name in_tls_mode in_acme_mode in_acme_email in_acme_domain in_cf_api_token in_cert_path in_key_path
 
-  read -rp "新端口 (当前: ${SB_PORT}, 留空保持): " in_p
-  if [[ -n "${in_p}" ]]; then
+  in_p=$(prompt_port "新端口 (当前: ${SB_PORT}, 留空保持): " "${SB_PORT}")
+  if [[ "${in_p}" != "${SB_PORT}" ]]; then
     SB_PORT="${in_p}"
     check_port_conflict "${SB_PORT}"
   fi
@@ -2044,30 +2157,34 @@ prompt_anytls_update() {
   echo "TLS 模式:"
   echo "1. ACME 自动签发"
   echo "2. 手动证书路径"
-  read -rp "请选择 [1-2] (当前: ${SB_ANYTLS_TLS_MODE}, 留空保持): " in_tls_mode
+  if [[ "${SB_ANYTLS_TLS_MODE}" == "manual" ]]; then
+    in_tls_mode=$(prompt_choice "请选择 [1-2] (当前: ${SB_ANYTLS_TLS_MODE}, 留空保持): " 1 2 2)
+  else
+    in_tls_mode=$(prompt_choice "请选择 [1-2] (当前: ${SB_ANYTLS_TLS_MODE}, 留空保持): " 1 2 1)
+  fi
   case "${in_tls_mode}" in
     1) SB_ANYTLS_TLS_MODE="acme" ;;
     2) SB_ANYTLS_TLS_MODE="manual" ;;
-    "") ;;
-    *) log_warn "保留当前 TLS 模式: ${SB_ANYTLS_TLS_MODE}" ;;
   esac
 
   if [[ "${SB_ANYTLS_TLS_MODE}" == "acme" ]]; then
     echo "ACME 验证方式:"
     echo "1. HTTP-01"
     echo "2. DNS-01 (Cloudflare)"
-    read -rp "请选择 [1-2] (当前: ${SB_ANYTLS_ACME_MODE}, 留空保持): " in_acme_mode
+    if [[ "${SB_ANYTLS_ACME_MODE}" == "dns" ]]; then
+      in_acme_mode=$(prompt_choice "请选择 [1-2] (当前: ${SB_ANYTLS_ACME_MODE}, 留空保持): " 1 2 2)
+    else
+      in_acme_mode=$(prompt_choice "请选择 [1-2] (当前: ${SB_ANYTLS_ACME_MODE}, 留空保持): " 1 2 1)
+    fi
     case "${in_acme_mode}" in
       1) SB_ANYTLS_ACME_MODE="http" ;;
       2) SB_ANYTLS_ACME_MODE="dns" ;;
-      "") ;;
-      *) log_warn "保留当前 ACME 模式: ${SB_ANYTLS_ACME_MODE}" ;;
     esac
 
-    read -rp "ACME 邮箱 (当前: ${SB_ANYTLS_ACME_EMAIL}, 留空保持，用于证书通知): " in_acme_email
-    [[ -n "${in_acme_email}" ]] && SB_ANYTLS_ACME_EMAIL="${in_acme_email}"
-    read -rp "ACME 域名 (当前: ${SB_ANYTLS_ACME_DOMAIN:-${SB_ANYTLS_DOMAIN}}, 留空保持): " in_acme_domain
-    [[ -n "${in_acme_domain}" ]] && SB_ANYTLS_ACME_DOMAIN="${in_acme_domain}"
+    in_acme_email=$(prompt_optional_email "ACME 邮箱 (当前: ${SB_ANYTLS_ACME_EMAIL}, 留空保持，用于证书通知): " "${SB_ANYTLS_ACME_EMAIL}")
+    SB_ANYTLS_ACME_EMAIL="${in_acme_email}"
+    in_acme_domain=$(prompt_optional_domain "ACME 域名 (当前: ${SB_ANYTLS_ACME_DOMAIN:-${SB_ANYTLS_DOMAIN}}, 留空保持): " "${SB_ANYTLS_ACME_DOMAIN:-${SB_ANYTLS_DOMAIN}}")
+    SB_ANYTLS_ACME_DOMAIN="${in_acme_domain}"
 
     if [[ "${SB_ANYTLS_ACME_MODE}" == "dns" ]]; then
       read -rp "Cloudflare API Token (当前: 留空隐藏, 留空保持): " in_cf_api_token
@@ -2079,10 +2196,10 @@ prompt_anytls_update() {
     SB_ANYTLS_CERT_PATH=""
     SB_ANYTLS_KEY_PATH=""
   else
-    read -rp "证书路径 (当前: ${SB_ANYTLS_CERT_PATH}, 留空保持): " in_cert_path
-    [[ -n "${in_cert_path}" ]] && SB_ANYTLS_CERT_PATH="${in_cert_path}"
-    read -rp "私钥路径 (当前: ${SB_ANYTLS_KEY_PATH}, 留空保持): " in_key_path
-    [[ -n "${in_key_path}" ]] && SB_ANYTLS_KEY_PATH="${in_key_path}"
+    in_cert_path=$(prompt_required_path "证书路径 (当前: ${SB_ANYTLS_CERT_PATH}, 留空保持): " "${SB_ANYTLS_CERT_PATH}")
+    SB_ANYTLS_CERT_PATH="${in_cert_path}"
+    in_key_path=$(prompt_required_path "私钥路径 (当前: ${SB_ANYTLS_KEY_PATH}, 留空保持): " "${SB_ANYTLS_KEY_PATH}")
+    SB_ANYTLS_KEY_PATH="${in_key_path}"
     SB_ANYTLS_ACME_MODE="http"
     SB_ANYTLS_ACME_EMAIL=""
     SB_ANYTLS_ACME_DOMAIN=""
@@ -2252,9 +2369,7 @@ prompt_vless_reality_install() {
   in_node=$(trim_whitespace "${in_node:-}")
   [[ -n "${in_node}" ]] && SB_NODE_NAME="${in_node}"
 
-  printf '[VLESS + REALITY] 端口 (默认 %s): ' "${SB_PORT}"
-  read -r in_p
-  SB_PORT=${in_p:-$SB_PORT}
+  SB_PORT=$(prompt_port "[VLESS + REALITY] 端口 (默认 ${SB_PORT}): " "${SB_PORT}")
   check_port_conflict "${SB_PORT}"
 
   prompt_reality_sni_install
@@ -2289,10 +2404,7 @@ prompt_vless_reality_instance_create() {
   selected_node="${SB_NODE_NAME}"
 
   while true; do
-    read -rp "[VLESS + REALITY] 端口: " in_port
-    SB_PORT=$(trim_whitespace "${in_port}")
-    [[ -n "${SB_PORT}" ]] || { log_warn "端口不能为空。"; continue; }
-    validate_port_number "${SB_PORT}" || { log_warn "端口必须为 1-65535 的数字。"; continue; }
+    SB_PORT=$(prompt_port "[VLESS + REALITY] 端口: " "")
     port_in_configured_protocol_state "${SB_PORT}" && { log_warn "端口已被现有协议配置占用: ${SB_PORT}"; continue; }
     check_port_conflict "${SB_PORT}"
     break
@@ -2329,13 +2441,10 @@ prompt_mixed_install() {
 
   set_protocol_defaults "mixed"
   echo -e "\n${BLUE}--- 配置 Mixed ---${NC}"
-  printf '[Mixed] 端口 (默认 %s): ' "${SB_PORT}"
-  read -r in_p
-  SB_PORT=${in_p:-$SB_PORT}
+  SB_PORT=$(prompt_port "[Mixed] 端口 (默认 ${SB_PORT}): " "${SB_PORT}")
   check_port_conflict "${SB_PORT}"
 
-  read -rp "[Mixed] 是否启用用户名密码认证 [y/n] (默认 y，强烈建议开启): " in_auth
-  SB_MIXED_AUTH_ENABLED=${in_auth:-"y"}
+  SB_MIXED_AUTH_ENABLED=$(prompt_yes_no "[Mixed] 是否启用用户名密码认证 [y/n] (默认 y，强烈建议开启): " "y")
   if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
     read -rp "[Mixed] 用户名 (留空自动生成): " in_user
     SB_MIXED_USERNAME="${in_user}"
@@ -2368,9 +2477,7 @@ prompt_hy2_install() {
   done
   SB_SHARED_TLS_DOMAIN="${SB_HY2_DOMAIN}"
 
-  printf '[Hysteria2] 端口 (默认 %s): ' "${SB_PORT}"
-  read -r in_p
-  SB_PORT=${in_p:-$SB_PORT}
+  SB_PORT=$(prompt_port "[Hysteria2] 端口 (默认 ${SB_PORT}): " "${SB_PORT}")
   check_port_conflict "${SB_PORT}"
 
   read -rp "[Hysteria2] 认证密码 (留空自动生成): " in_password
@@ -2378,13 +2485,10 @@ prompt_hy2_install() {
   read -rp "[Hysteria2] 用户名标识 (默认 ${SB_HY2_USER_NAME}): " in_user_name
   SB_HY2_USER_NAME=${in_user_name:-$SB_HY2_USER_NAME}
 
-  read -rp "[Hysteria2] 上行带宽 Mbps (留空表示不限制): " in_up
-  SB_HY2_UP_MBPS="${in_up}"
-  read -rp "[Hysteria2] 下行带宽 Mbps (留空表示不限制): " in_down
-  SB_HY2_DOWN_MBPS="${in_down}"
+  SB_HY2_UP_MBPS=$(prompt_optional_positive_integer "[Hysteria2] 上行带宽 Mbps (留空表示不限制): " "" "上行带宽")
+  SB_HY2_DOWN_MBPS=$(prompt_optional_positive_integer "[Hysteria2] 下行带宽 Mbps (留空表示不限制): " "" "下行带宽")
 
-  read -rp "[Hysteria2] 是否启用 obfs / Salamander 混淆 [y/n] (默认 y): " in_obfs
-  SB_HY2_OBFS_ENABLED=${in_obfs:-"y"}
+  SB_HY2_OBFS_ENABLED=$(prompt_yes_no "[Hysteria2] 是否启用 obfs / Salamander 混淆 [y/n] (默认 y): " "y")
   if [[ "${SB_HY2_OBFS_ENABLED}" == "y" ]]; then
     SB_HY2_OBFS_TYPE="salamander"
     read -rp "[Hysteria2] obfs / Salamander 混淆密码 (留空自动生成): " in_obfs_password
@@ -2394,7 +2498,7 @@ prompt_hy2_install() {
   echo "TLS 模式:"
   echo "1. ACME 自动签发"
   echo "2. 手动证书路径"
-  read -rp "[Hysteria2] 请选择 [1-2] (默认 1): " in_tls_mode
+  in_tls_mode=$(prompt_choice "[Hysteria2] 请选择 [1-2] (默认 1): " 1 2 1)
   case "${in_tls_mode}" in
     2) SB_HY2_TLS_MODE="manual" ;;
     *) SB_HY2_TLS_MODE="acme" ;;
@@ -2404,16 +2508,14 @@ prompt_hy2_install() {
     echo "ACME 验证方式:"
     echo "1. HTTP-01"
     echo "2. DNS-01 (Cloudflare)"
-    read -rp "[Hysteria2] 请选择 [1-2] (默认 1): " in_acme_mode
+    in_acme_mode=$(prompt_choice "[Hysteria2] 请选择 [1-2] (默认 1): " 1 2 1)
     case "${in_acme_mode}" in
       2) SB_HY2_ACME_MODE="dns" ;;
       *) SB_HY2_ACME_MODE="http" ;;
     esac
 
-    read -rp "[Hysteria2] ACME 邮箱 (可留空，用于证书通知): " in_acme_email
-    SB_HY2_ACME_EMAIL="${in_acme_email}"
-    read -rp "[Hysteria2] ACME 域名 (默认 ${SB_HY2_DOMAIN}): " in_acme_domain
-    SB_HY2_ACME_DOMAIN=${in_acme_domain:-$SB_HY2_DOMAIN}
+    SB_HY2_ACME_EMAIL=$(prompt_optional_email "[Hysteria2] ACME 邮箱 (可留空，用于证书通知): " "")
+    SB_HY2_ACME_DOMAIN=$(prompt_optional_domain "[Hysteria2] ACME 域名 (默认 ${SB_HY2_DOMAIN}): " "${SB_HY2_DOMAIN}")
 
     if [[ "${SB_HY2_ACME_MODE}" == "dns" ]]; then
       read -rp "[Hysteria2] Cloudflare API Token: " in_cf_api_token
@@ -2421,15 +2523,11 @@ prompt_hy2_install() {
     fi
   else
     while [[ -z "${SB_HY2_CERT_PATH}" ]]; do
-      read -rp "[Hysteria2] 证书路径: " in_cert_path
-      SB_HY2_CERT_PATH=$(trim_whitespace "${in_cert_path}")
-      [[ -z "${SB_HY2_CERT_PATH}" ]] && log_warn "证书路径不能为空。"
+      SB_HY2_CERT_PATH=$(prompt_required_path "[Hysteria2] 证书路径: ")
     done
 
     while [[ -z "${SB_HY2_KEY_PATH}" ]]; do
-      read -rp "[Hysteria2] 私钥路径: " in_key_path
-      SB_HY2_KEY_PATH=$(trim_whitespace "${in_key_path}")
-      [[ -z "${SB_HY2_KEY_PATH}" ]] && log_warn "私钥路径不能为空。"
+      SB_HY2_KEY_PATH=$(prompt_required_path "[Hysteria2] 私钥路径: ")
     done
   fi
 
@@ -2460,9 +2558,7 @@ prompt_anytls_install() {
   done
   SB_SHARED_TLS_DOMAIN="${SB_ANYTLS_DOMAIN}"
 
-  printf '[AnyTLS] 端口 (默认 %s): ' "${SB_PORT}"
-  read -r in_p
-  SB_PORT=${in_p:-$SB_PORT}
+  SB_PORT=$(prompt_port "[AnyTLS] 端口 (默认 ${SB_PORT}): " "${SB_PORT}")
   check_port_conflict "${SB_PORT}"
 
   read -rp "[AnyTLS] 用户名标识 (默认 ${SB_ANYTLS_USER_NAME}): " in_user_name
@@ -2474,7 +2570,7 @@ prompt_anytls_install() {
   echo "TLS 模式:"
   echo "1. ACME 自动签发"
   echo "2. 手动证书路径"
-  read -rp "[AnyTLS] 请选择 [1-2] (默认 1): " in_tls_mode
+  in_tls_mode=$(prompt_choice "[AnyTLS] 请选择 [1-2] (默认 1): " 1 2 1)
   case "${in_tls_mode}" in
     2) SB_ANYTLS_TLS_MODE="manual" ;;
     *) SB_ANYTLS_TLS_MODE="acme" ;;
@@ -2484,16 +2580,14 @@ prompt_anytls_install() {
     echo "ACME 验证方式:"
     echo "1. HTTP-01"
     echo "2. DNS-01 (Cloudflare)"
-    read -rp "[AnyTLS] 请选择 [1-2] (默认 1): " in_acme_mode
+    in_acme_mode=$(prompt_choice "[AnyTLS] 请选择 [1-2] (默认 1): " 1 2 1)
     case "${in_acme_mode}" in
       2) SB_ANYTLS_ACME_MODE="dns" ;;
       *) SB_ANYTLS_ACME_MODE="http" ;;
     esac
 
-    read -rp "[AnyTLS] ACME 邮箱 (可留空，用于证书通知): " in_acme_email
-    SB_ANYTLS_ACME_EMAIL="${in_acme_email}"
-    read -rp "[AnyTLS] ACME 域名 (默认 ${SB_ANYTLS_DOMAIN}): " in_acme_domain
-    SB_ANYTLS_ACME_DOMAIN=${in_acme_domain:-$SB_ANYTLS_DOMAIN}
+    SB_ANYTLS_ACME_EMAIL=$(prompt_optional_email "[AnyTLS] ACME 邮箱 (可留空，用于证书通知): " "")
+    SB_ANYTLS_ACME_DOMAIN=$(prompt_optional_domain "[AnyTLS] ACME 域名 (默认 ${SB_ANYTLS_DOMAIN}): " "${SB_ANYTLS_DOMAIN}")
 
     if [[ "${SB_ANYTLS_ACME_MODE}" == "dns" ]]; then
       read -rp "[AnyTLS] Cloudflare API Token: " in_cf_api_token
@@ -2501,15 +2595,11 @@ prompt_anytls_install() {
     fi
   else
     while [[ -z "${SB_ANYTLS_CERT_PATH}" ]]; do
-      read -rp "[AnyTLS] 证书路径: " in_cert_path
-      SB_ANYTLS_CERT_PATH=$(trim_whitespace "${in_cert_path}")
-      [[ -z "${SB_ANYTLS_CERT_PATH}" ]] && log_warn "证书路径不能为空。"
+      SB_ANYTLS_CERT_PATH=$(prompt_required_path "[AnyTLS] 证书路径: ")
     done
 
     while [[ -z "${SB_ANYTLS_KEY_PATH}" ]]; do
-      read -rp "[AnyTLS] 私钥路径: " in_key_path
-      SB_ANYTLS_KEY_PATH=$(trim_whitespace "${in_key_path}")
-      [[ -z "${SB_ANYTLS_KEY_PATH}" ]] && log_warn "私钥路径不能为空。"
+      SB_ANYTLS_KEY_PATH=$(prompt_required_path "[AnyTLS] 私钥路径: ")
     done
   fi
 
@@ -2532,17 +2622,15 @@ prompt_protocol_install_fields() {
 prompt_global_instance_options() {
   local in_route in_warp in_warp_mode
 
-  read -rp "是否开启高级路由规则 (广告拦截/局域网绕行) [y/n] (默认 y): " in_route
-  SB_ADVANCED_ROUTE=${in_route:-"y"}
-  read -rp "是否开启 Cloudflare Warp (用于解锁/防送中) [y/n] (默认 n): " in_warp
-  SB_ENABLE_WARP=${in_warp:-"n"}
+  SB_ADVANCED_ROUTE=$(prompt_yes_no "是否开启高级路由规则 (广告拦截/局域网绕行) [y/n] (默认 y): " "y")
+  SB_ENABLE_WARP=$(prompt_yes_no "是否开启 Cloudflare Warp (用于解锁/防送中) [y/n] (默认 n): " "n")
 
   if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
     SB_WARP_ROUTE_MODE="selective"
     echo "Warp 路由模式:"
     echo "1. 全量流量走 Warp"
     echo "2. 仅 AI/流媒体及自定义规则走 Warp"
-    read -rp "请选择 [1-2] (默认 2): " in_warp_mode
+    in_warp_mode=$(prompt_choice "请选择 [1-2] (默认 2): " 1 2 2)
     case "${in_warp_mode}" in
       1) SB_WARP_ROUTE_MODE="all" ;;
       *) SB_WARP_ROUTE_MODE="selective" ;;
@@ -2941,7 +3029,7 @@ media_check_menu() {
     render_menu_item "1" "本机直出检测"
     render_menu_item "2" "Warp 出口检测"
     echo "0. 返回主菜单"
-    read -rp "请选择 [0-2]: " media_choice
+    media_choice=$(prompt_choice "请选择 [0-2]: " 0 2 "")
 
     case "${media_choice}" in
       1)
@@ -3208,12 +3296,15 @@ set_warp_route_mode_interactive() {
   render_menu_group_start "模式选项"
   render_menu_item "1" "全量流量走 Warp"
   render_menu_item "2" "仅 AI/流媒体及自定义规则走 Warp"
-  read -rp "请选择 [1-2] (当前: ${SB_WARP_ROUTE_MODE}): " mode_choice
+  if [[ "${SB_WARP_ROUTE_MODE}" == "all" ]]; then
+    mode_choice=$(prompt_choice "请选择 [1-2] (当前: ${SB_WARP_ROUTE_MODE}): " 1 2 1)
+  else
+    mode_choice=$(prompt_choice "请选择 [1-2] (当前: ${SB_WARP_ROUTE_MODE}): " 1 2 2)
+  fi
 
   case "${mode_choice}" in
     1) SB_WARP_ROUTE_MODE="all" ;;
     2) SB_WARP_ROUTE_MODE="selective" ;;
-    *) log_warn "未修改 Warp 路由模式。"; return 1 ;;
   esac
 
   save_warp_route_settings
@@ -3252,22 +3343,26 @@ add_remote_warp_rule_set() {
 
   local tag url update_interval
   read -rp "请输入远程规则集标签: " tag
-  read -rp "请输入远程规则集 URL: " url
-  read -rp "请输入更新周期 (默认 1d): " update_interval
-
   tag=$(sanitize_ruleset_tag "$(trim_whitespace "${tag}")")
-  url=$(trim_whitespace "${url}")
-  update_interval=$(trim_whitespace "${update_interval:-1d}")
 
-  if [[ -z "${tag}" || -z "${url}" ]]; then
-    log_warn "标签或 URL 为空，未写入。"
+  if [[ -z "${tag}" ]]; then
+    log_warn "标签为空，未写入。"
     return 1
   fi
 
-  if ! [[ "${url}" =~ ^https?:// ]]; then
+  while true; do
+    read -rp "请输入远程规则集 URL: " url
+    url=$(trim_whitespace "${url}")
+    validate_http_url "${url}" && break
     log_warn "远程规则集 URL 必须以 http:// 或 https:// 开头。"
-    return 1
-  fi
+  done
+
+  while true; do
+    read -rp "请输入更新周期 (默认 1d): " update_interval
+    update_interval=$(trim_whitespace "${update_interval:-1d}")
+    validate_update_interval "${update_interval}" && break
+    log_warn "更新周期格式必须为正整数加单位 s/m/h/d，例如 1d。"
+  done
 
   printf '%s|%s|%s\n' "${tag}" "${url}" "${update_interval:-1d}" >> "${SB_WARP_REMOTE_RULESETS_FILE}"
   log_success "已写入远程 Warp 规则集: ${tag}"
@@ -3496,7 +3591,7 @@ check_port_conflict() {
     echo "1. 保留占用进程并改用随机端口"
     echo "2. 使用随机端口"
     echo "3. 手动输入新端口"
-    read -rp "请选择操作 [1-3]: " port_choice
+    port_choice=$(prompt_choice "请选择操作 [1-3]: " 1 3 "")
     
     case "${port_choice}" in
       1|2)
@@ -3504,7 +3599,7 @@ check_port_conflict() {
         log_success "已保留占用进程，并自动切换到随机端口: ${SB_PORT}"
         ;;
       3)
-        read -rp "请输入新端口: " SB_PORT
+        SB_PORT=$(prompt_port "请输入新端口: " "")
         check_port_conflict "${SB_PORT}"
         ;;
     esac
@@ -4935,7 +5030,7 @@ configure_inbound_stack_mode() {
       render_menu_item "$((index + 1))" "$(inbound_stack_mode_display_name "${available_modes[$index]}")"
     done
     echo "0. 返回"
-    read -rp "请选择 [0-${#available_modes[@]}]: " choice
+    choice=$(prompt_choice "请选择 [0-${#available_modes[@]}]: " 0 "${#available_modes[@]}" "")
 
     if [[ "${choice}" == "0" ]]; then
       return 0
@@ -4976,7 +5071,7 @@ configure_outbound_stack_mode() {
       render_menu_item "$((index + 1))" "$(outbound_stack_mode_display_name "${available_modes[$index]}")"
     done
     echo "0. 返回"
-    read -rp "请选择 [0-${#available_modes[@]}]: " choice
+    choice=$(prompt_choice "请选择 [0-${#available_modes[@]}]: " 0 "${#available_modes[@]}" "")
 
     if [[ "${choice}" == "0" ]]; then
       return 0
@@ -5024,7 +5119,7 @@ stack_management_menu() {
     render_menu_item "1" "修改入站协议栈"
     render_menu_item "2" "修改出站协议栈"
     echo "0. 返回上一级"
-    read -rp "请选择 [0-2]: " stack_choice
+    stack_choice=$(prompt_choice "请选择 [0-2]: " 0 2 "")
 
     case "${stack_choice}" in
       1) configure_inbound_stack_mode || true ;;
@@ -5046,7 +5141,7 @@ system_management_menu() {
     render_menu_item "1" "开启 BBR"
     render_menu_item "2" "协议栈管理"
     echo "0. 返回主菜单"
-    read -rp "请选择 [0-2]: " system_choice
+    system_choice=$(prompt_choice "请选择 [0-2]: " 0 2 "")
 
     case "${system_choice}" in
       1) enable_bbr ;;
@@ -5317,7 +5412,7 @@ warp_management() {
     render_menu_item "8" "查看当前生效的 Warp 分流来源"
     render_menu_item "9" "导入推荐 Warp 规则源"
     echo "0. 返回主菜单"
-    read -rp "请选择 [0-9]: " w_choice
+    w_choice=$(prompt_choice "请选择 [0-9]: " 0 9 "")
 
     case "${w_choice}" in
       1)
@@ -6526,7 +6621,7 @@ show_connection_info_menu() {
     render_menu_item "2" "仅二维码"
     render_menu_item "3" "链接 + 二维码"
     echo "0. 返回"
-    read -rp "请选择 [0-3]: " info_choice
+    info_choice=$(prompt_choice "请选择 [0-3]: " 0 3 "")
 
     case "${info_choice}" in
       1) show_all_connection_details "link" ;;
@@ -7444,7 +7539,7 @@ show_node_info_action_menu() {
     render_menu_item "2" "导出 sing-box 裸核客户端配置"
     render_menu_item "3" "推送节点到 SubMan"
     echo "0. 返回"
-    read -rp "请选择 [0-3]: " node_info_choice
+    node_info_choice=$(prompt_choice "请选择 [0-3]: " 0 3 "")
 
     case "${node_info_choice}" in
       1) show_connection_info_menu ;;
@@ -8251,7 +8346,7 @@ prompt_incomplete_instance_action() {
   render_menu_item "1" "接管现有实例"
   render_menu_item "2" "按全新安装处理"
   echo "0. 返回"
-  read -rp "请选择 [0-2]: " install_choice
+  install_choice=$(prompt_choice "请选择 [0-2]: " 0 2 "")
 
   case "${install_choice}" in
     1) take_over_existing_instance ;;
@@ -8322,9 +8417,9 @@ install_or_update_singbox() {
     render_menu_item "4" "移除已安装协议"
     render_menu_item "5" "卸载 sing-box"
     echo "0. 返回"
-    read -rp "请选择 [0-5] (默认 1): " install_choice
+    install_choice=$(prompt_choice "请选择 [0-5] (默认 1): " 0 5 1)
 
-    case "${install_choice:-1}" in
+    case "${install_choice}" in
       2) install_new_protocols_menu ;;
       3) update_config_only ;;
       4) remove_protocol_menu ;;
@@ -8441,7 +8536,7 @@ main() {
     render_menu_item "16" "卸载管理脚本 (sbv)"
     echo "0. 退出"
     render_main_menu_footer
-    read -rp "请选择 [0-16]: " choice
+    choice=$(prompt_choice "请选择 [0-16]: " 0 16 "")
 
     case "$choice" in
       1) install_new_protocols_menu ;;
