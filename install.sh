@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052503
+# Version: 2026052504
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052503"
+readonly SCRIPT_VERSION="2026052504"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -6161,6 +6161,29 @@ build_subman_node_payload() {
     }'
 }
 
+build_subman_disabled_node_payload() {
+  local protocol base_name node_type prefix
+  protocol=$(normalize_protocol_id "$1")
+  base_name=${2:-}
+  node_type=$(subman_type_for_protocol "${protocol}") || return 1
+  prefix=$(subman_node_prefix)
+  base_name=$(trim_whitespace "$(display_node_name_for_protocol "${protocol}" "${base_name}" "")")
+  [[ -z "${base_name}" ]] && base_name="${prefix} ${protocol}"
+
+  jq -n \
+    --arg name "${base_name}" \
+    --arg type "${node_type}" \
+    --arg prefix "${prefix}" \
+    '{
+      "name": $name,
+      "type": $type,
+      "raw": "",
+      "enabled": false,
+      "tags": ["sing-box-vps", $prefix, "legacy-disabled"],
+      "source": "single"
+    }'
+}
+
 push_subman_protocol_instance() {
   local protocol=$1
   local public_ip=$2
@@ -6176,6 +6199,29 @@ push_subman_protocol_instance() {
 
   if ! payload_json=$(build_subman_node_payload "${protocol}" "${public_ip}" "${address_label}" "${instance_id}"); then
     [[ "${quiet}" == "y" ]] || print_warn "生成 SubMan 节点载荷失败: ${protocol}"
+    return 1
+  fi
+
+  if [[ "${quiet}" == "y" ]]; then
+    push_subman_node "${external_key}" "${payload_json}" >/dev/null
+  else
+    push_subman_node "${external_key}" "${payload_json}"
+  fi
+}
+
+push_subman_legacy_protocol_key_cleanup() {
+  local protocol=$1
+  local instance_id=${2:-}
+  local quiet=${3:-n}
+  local external_key payload_json
+
+  if ! external_key=$(subman_external_key_for_protocol "${protocol}" "${instance_id}" ""); then
+    [[ "${quiet}" == "y" ]] || print_warn "生成 SubMan 旧节点清理键失败: ${protocol}"
+    return 1
+  fi
+
+  if ! payload_json=$(build_subman_disabled_node_payload "${protocol}" "${SB_NODE_NAME:-}"); then
+    [[ "${quiet}" == "y" ]] || print_warn "生成 SubMan 旧节点清理载荷失败: ${protocol}"
     return 1
   fi
 
@@ -7506,6 +7552,7 @@ agent_service_cli() {
 agent_push_nodes_to_subman_json() {
   local original_protocol_state protocol instance_id
   local address_entry address_label public_ip
+  local instance_synced
   local synced_count skipped_count failed_count ok_json
   local installed_protocols=()
 
@@ -7545,16 +7592,23 @@ agent_push_nodes_to_subman_json() {
     if [[ "${protocol}" == "vless-reality" ]]; then
       while IFS= read -r instance_id; do
         [[ -z "${instance_id}" ]] && continue
+        instance_synced=0
         while IFS= read -r address_entry; do
           [[ -z "${address_entry}" ]] && continue
           address_label=${address_entry%%|*}
           public_ip=${address_entry#*|}
           if push_subman_protocol_instance "${protocol}" "${public_ip}" "${instance_id}" "y" "${address_label}"; then
             synced_count=$((synced_count + 1))
+            instance_synced=$((instance_synced + 1))
           else
             failed_count=$((failed_count + 1))
           fi
         done < <(list_subman_addresses_for_current_protocol)
+        if (( instance_synced > 0 )) && push_subman_legacy_protocol_key_cleanup "${protocol}" "${instance_id}" "y"; then
+          :
+        elif (( instance_synced > 0 )); then
+          failed_count=$((failed_count + 1))
+        fi
       done < <(list_vless_reality_instance_ids)
       continue
     fi
@@ -7670,6 +7724,7 @@ agent_cli() {
 push_nodes_to_subman() {
   local original_protocol_state protocol instance_id
   local address_entry address_label public_ip
+  local instance_synced
   local synced_count skipped_count failed_count
   local installed_protocols=()
 
@@ -7714,16 +7769,23 @@ push_nodes_to_subman() {
     if [[ "${protocol}" == "vless-reality" ]]; then
       while IFS= read -r instance_id; do
         [[ -z "${instance_id}" ]] && continue
+        instance_synced=0
         while IFS= read -r address_entry; do
           [[ -z "${address_entry}" ]] && continue
           address_label=${address_entry%%|*}
           public_ip=${address_entry#*|}
           if push_subman_protocol_instance "${protocol}" "${public_ip}" "${instance_id}" "n" "${address_label}"; then
             synced_count=$((synced_count + 1))
+            instance_synced=$((instance_synced + 1))
           else
             failed_count=$((failed_count + 1))
           fi
         done < <(list_subman_addresses_for_current_protocol)
+        if (( instance_synced > 0 )) && push_subman_legacy_protocol_key_cleanup "${protocol}" "${instance_id}" "n"; then
+          :
+        elif (( instance_synced > 0 )); then
+          failed_count=$((failed_count + 1))
+        fi
       done < <(list_vless_reality_instance_ids)
       continue
     fi
