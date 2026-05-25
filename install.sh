@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052504
+# Version: 2026052505
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052504"
+readonly SCRIPT_VERSION="2026052505"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -7552,7 +7552,7 @@ agent_service_cli() {
 agent_push_nodes_to_subman_json() {
   local original_protocol_state protocol instance_id
   local address_entry address_label public_ip
-  local instance_synced
+  local instance_synced instance_stacked_synced
   local synced_count skipped_count failed_count ok_json
   local installed_protocols=()
 
@@ -7593,6 +7593,7 @@ agent_push_nodes_to_subman_json() {
       while IFS= read -r instance_id; do
         [[ -z "${instance_id}" ]] && continue
         instance_synced=0
+        instance_stacked_synced=0
         while IFS= read -r address_entry; do
           [[ -z "${address_entry}" ]] && continue
           address_label=${address_entry%%|*}
@@ -7600,13 +7601,16 @@ agent_push_nodes_to_subman_json() {
           if push_subman_protocol_instance "${protocol}" "${public_ip}" "${instance_id}" "y" "${address_label}"; then
             synced_count=$((synced_count + 1))
             instance_synced=$((instance_synced + 1))
+            if [[ -n "$(network_stack_suffix_from_label "${address_label}")" ]]; then
+              instance_stacked_synced=$((instance_stacked_synced + 1))
+            fi
           else
             failed_count=$((failed_count + 1))
           fi
         done < <(list_subman_addresses_for_current_protocol)
-        if (( instance_synced > 0 )) && push_subman_legacy_protocol_key_cleanup "${protocol}" "${instance_id}" "y"; then
+        if (( instance_stacked_synced > 0 )) && push_subman_legacy_protocol_key_cleanup "${protocol}" "${instance_id}" "y"; then
           :
-        elif (( instance_synced > 0 )); then
+        elif (( instance_stacked_synced > 0 )); then
           failed_count=$((failed_count + 1))
         fi
       done < <(list_vless_reality_instance_ids)
@@ -7724,7 +7728,7 @@ agent_cli() {
 push_nodes_to_subman() {
   local original_protocol_state protocol instance_id
   local address_entry address_label public_ip
-  local instance_synced
+  local instance_synced instance_stacked_synced
   local synced_count skipped_count failed_count
   local installed_protocols=()
 
@@ -7770,6 +7774,7 @@ push_nodes_to_subman() {
       while IFS= read -r instance_id; do
         [[ -z "${instance_id}" ]] && continue
         instance_synced=0
+        instance_stacked_synced=0
         while IFS= read -r address_entry; do
           [[ -z "${address_entry}" ]] && continue
           address_label=${address_entry%%|*}
@@ -7777,13 +7782,16 @@ push_nodes_to_subman() {
           if push_subman_protocol_instance "${protocol}" "${public_ip}" "${instance_id}" "n" "${address_label}"; then
             synced_count=$((synced_count + 1))
             instance_synced=$((instance_synced + 1))
+            if [[ -n "$(network_stack_suffix_from_label "${address_label}")" ]]; then
+              instance_stacked_synced=$((instance_stacked_synced + 1))
+            fi
           else
             failed_count=$((failed_count + 1))
           fi
         done < <(list_subman_addresses_for_current_protocol)
-        if (( instance_synced > 0 )) && push_subman_legacy_protocol_key_cleanup "${protocol}" "${instance_id}" "n"; then
+        if (( instance_stacked_synced > 0 )) && push_subman_legacy_protocol_key_cleanup "${protocol}" "${instance_id}" "n"; then
           :
-        elif (( instance_synced > 0 )); then
+        elif (( instance_stacked_synced > 0 )); then
           failed_count=$((failed_count + 1))
         fi
       done < <(list_vless_reality_instance_ids)

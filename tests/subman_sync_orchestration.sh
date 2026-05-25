@@ -174,6 +174,39 @@ if [[ "${SB_PROTOCOL}" != "mixed" || "${SB_NODE_NAME}" != "edge-mixed" ]]; then
   exit 1
 fi
 
+printf '' > "${PUSH_KEYS_FILE}"
+printf '' > "${PUSH_PAYLOADS_FILE}"
+
+get_public_ip() {
+  printf '198.51.100.20\n'
+}
+
+get_public_ipv4() {
+  printf ''
+}
+
+get_public_ipv6() {
+  printf ''
+}
+
+load_protocol_state "mixed"
+fallback_output=$(push_nodes_to_subman 2>&1)
+
+if [[ "${fallback_output}" != *"SubMan 推送完成：已同步: 2，已跳过: 2，失败: 0"* ]]; then
+  printf 'expected fallback push summary for 2 synced, 2 skipped, 0 failed, got:\n%s\n' "${fallback_output}" >&2
+  exit 1
+fi
+
+if [[ "$(grep -Fxc "sing-box-vps:edge-1:vless-reality" "${PUSH_KEYS_FILE}")" -ne 1 ]]; then
+  printf 'expected fallback vless key to be pushed exactly once, got keys:\n%s\n' "$(cat "${PUSH_KEYS_FILE}")" >&2
+  exit 1
+fi
+
+if jq -e 'select(.type == "vless" and .enabled == false)' "${PUSH_PAYLOADS_FILE}" >/dev/null; then
+  printf 'expected fallback vless sync not to disable the same legacy key, got:\n%s\n' "$(cat "${PUSH_PAYLOADS_FILE}")" >&2
+  exit 1
+fi
+
 get_public_ip() {
   printf ''
 }
