@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052501
+# Version: 2026052502
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052501"
+readonly SCRIPT_VERSION="2026052502"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -5324,7 +5324,7 @@ config_has_warp_enabled() {
       any(.endpoints[]?; .tag == "warp-ep") and
       (
         (.route.final // "") == "warp-ep" or
-        any(.route.rules[]?; (.outbound // "") == "warp-ep")
+        any(.route.rules[]?; (.outbound // "") == "warp-ep" and (has("inbound") | not))
       )
     ) or any(.outbounds[]?; .tag == "warp")
   ' "${config_file}" &>/dev/null

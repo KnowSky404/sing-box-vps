@@ -141,3 +141,19 @@ jq -e '
   any(.route.rules[]; .inbound == "vless-reality-limited-10m" and .action == "route" and .outbound == "warp-ep") and
   ((.route.rules // []) | map(select(.domain_suffix? != null and .outbound == "warp-ep")) | length) == 0
 ' "${SINGBOX_CONFIG_FILE}" >/dev/null
+
+load_current_config_state
+
+if [[ "${SB_ENABLE_WARP}" != "n" ]]; then
+  printf 'expected instance-only Warp route to preserve global SB_ENABLE_WARP=n after reload, got %s\n' "${SB_ENABLE_WARP}" >&2
+  exit 1
+fi
+
+generate_config
+
+jq -e '
+  .route.final == "direct" and
+  any(.endpoints[]; .tag == "warp-ep") and
+  any(.route.rules[]; .inbound == "vless-reality-limited-10m" and .action == "route" and .outbound == "warp-ep") and
+  ((.route.rules // []) | map(select(.domain_suffix? != null and .outbound == "warp-ep")) | length) == 0
+' "${SINGBOX_CONFIG_FILE}" >/dev/null
