@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052502
+# Version: 2026052503
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052502"
+readonly SCRIPT_VERSION="2026052503"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -6086,16 +6086,24 @@ subman_type_for_protocol() {
 }
 
 subman_external_key_for_protocol() {
-  local protocol prefix instance_id
+  local protocol prefix instance_id address_label stack_suffix key
   protocol=$(normalize_protocol_id "$1")
   instance_id=${2:-}
+  address_label=${3:-}
   prefix=$(subman_node_prefix)
 
   if [[ "${protocol}" == "vless-reality" && -n "${instance_id}" && "${instance_id}" != "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}" ]]; then
-    printf 'sing-box-vps:%s:%s:%s' "${prefix}" "${protocol}" "${instance_id}"
+    key=$(printf 'sing-box-vps:%s:%s:%s' "${prefix}" "${protocol}" "${instance_id}")
   else
-    printf 'sing-box-vps:%s:%s' "${prefix}" "${protocol}"
+    key=$(printf 'sing-box-vps:%s:%s' "${prefix}" "${protocol}")
   fi
+
+  stack_suffix=$(network_stack_suffix_from_label "${address_label}")
+  if [[ -n "${stack_suffix}" ]]; then
+    key="${key}:${stack_suffix}"
+  fi
+
+  printf '%s' "${key}"
 }
 
 build_subman_raw_for_protocol() {
@@ -6158,14 +6166,15 @@ push_subman_protocol_instance() {
   local public_ip=$2
   local instance_id=${3:-}
   local quiet=${4:-n}
+  local address_label=${5:-}
   local external_key payload_json
 
-  if ! external_key=$(subman_external_key_for_protocol "${protocol}" "${instance_id}"); then
+  if ! external_key=$(subman_external_key_for_protocol "${protocol}" "${instance_id}" "${address_label}"); then
     [[ "${quiet}" == "y" ]] || print_warn "生成 SubMan 外部键失败: ${protocol}"
     return 1
   fi
 
-  if ! payload_json=$(build_subman_node_payload "${protocol}" "${public_ip}" "" "${instance_id}"); then
+  if ! payload_json=$(build_subman_node_payload "${protocol}" "${public_ip}" "${address_label}" "${instance_id}"); then
     [[ "${quiet}" == "y" ]] || print_warn "生成 SubMan 节点载荷失败: ${protocol}"
     return 1
   fi
@@ -6674,9 +6683,9 @@ show_qr_info() {
 show_connection_details() {
   local mode=$1
   local public_ip=${2:-$(get_public_ip)}
-  local address_label=${3:-}
+  local address_label=${3-}
 
-  if [[ -z "${address_label}" ]]; then
+  if [[ $# -lt 3 && -z "${address_label}" ]]; then
     if [[ "${public_ip}" == *:* ]]; then
       address_label="IPv6"
     elif [[ "${public_ip}" == *.* ]]; then
@@ -6737,13 +6746,36 @@ protocol_uses_domain_connection_material() {
   esac
 }
 
+list_subman_addresses_for_current_protocol() {
+  local public_ip address_entries=()
+
+  if protocol_uses_domain_connection_material; then
+    public_ip=$(get_public_ip)
+    if [[ -n "${public_ip}" ]]; then
+      printf '地址|%s\n' "${public_ip}"
+    fi
+    return 0
+  fi
+
+  mapfile -t address_entries < <(list_public_addresses_for_current_stack)
+  if [[ ${#address_entries[@]} -eq 0 ]]; then
+    public_ip=$(get_public_ip)
+    if [[ -n "${public_ip}" ]]; then
+      printf '地址|%s\n' "${public_ip}"
+    fi
+    return 0
+  fi
+
+  printf '%s\n' "${address_entries[@]}"
+}
+
 show_connection_details_for_detected_addresses() {
   local mode=$1
   local address_entries=()
   local entry label address
 
   if protocol_uses_domain_connection_material; then
-    show_connection_details "${mode}" "$(get_public_ip)"
+    show_connection_details "${mode}" "$(get_public_ip)" ""
     return 0
   fi
 
@@ -7472,15 +7504,10 @@ agent_service_cli() {
 }
 
 agent_push_nodes_to_subman_json() {
-  local public_ip original_protocol_state protocol instance_id
+  local original_protocol_state protocol instance_id
+  local address_entry address_label public_ip
   local synced_count skipped_count failed_count ok_json
   local installed_protocols=()
-
-  public_ip=$(get_public_ip)
-  if [[ -z "${public_ip}" ]]; then
-    agent_json_error "public_ip_unavailable" "未获取到公网 IP，无法生成 SubMan 节点链接。"
-    return 1
-  fi
 
   original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
   synced_count=0
@@ -7518,24 +7545,39 @@ agent_push_nodes_to_subman_json() {
     if [[ "${protocol}" == "vless-reality" ]]; then
       while IFS= read -r instance_id; do
         [[ -z "${instance_id}" ]] && continue
-        if push_subman_protocol_instance "${protocol}" "${public_ip}" "${instance_id}" "y"; then
-          synced_count=$((synced_count + 1))
-        else
-          failed_count=$((failed_count + 1))
-        fi
+        while IFS= read -r address_entry; do
+          [[ -z "${address_entry}" ]] && continue
+          address_label=${address_entry%%|*}
+          public_ip=${address_entry#*|}
+          if push_subman_protocol_instance "${protocol}" "${public_ip}" "${instance_id}" "y" "${address_label}"; then
+            synced_count=$((synced_count + 1))
+          else
+            failed_count=$((failed_count + 1))
+          fi
+        done < <(list_subman_addresses_for_current_protocol)
       done < <(list_vless_reality_instance_ids)
       continue
     fi
 
-    if push_subman_protocol_instance "${protocol}" "${public_ip}" "" "y"; then
-      synced_count=$((synced_count + 1))
-    else
-      failed_count=$((failed_count + 1))
-    fi
+    while IFS= read -r address_entry; do
+      [[ -z "${address_entry}" ]] && continue
+      address_label=${address_entry%%|*}
+      public_ip=${address_entry#*|}
+      if push_subman_protocol_instance "${protocol}" "${public_ip}" "" "y" "${address_label}"; then
+        synced_count=$((synced_count + 1))
+      else
+        failed_count=$((failed_count + 1))
+      fi
+    done < <(list_subman_addresses_for_current_protocol)
   done
 
   if [[ -n "${original_protocol_state}" ]] && protocol_state_exists "${original_protocol_state}"; then
     load_protocol_state "${original_protocol_state}"
+  fi
+
+  if (( synced_count == 0 && failed_count == 0 )); then
+    agent_json_error "public_ip_unavailable" "未获取到公网 IP，无法生成 SubMan 节点链接。"
+    return 1
   fi
 
   ok_json=false
@@ -7626,16 +7668,12 @@ agent_cli() {
 }
 
 push_nodes_to_subman() {
-  local public_ip original_protocol_state protocol instance_id
+  local original_protocol_state protocol instance_id
+  local address_entry address_label public_ip
   local synced_count skipped_count failed_count
   local installed_protocols=()
 
   prompt_subman_config_if_needed
-  public_ip=$(get_public_ip)
-  if [[ -z "${public_ip}" ]]; then
-    log_warn "未获取到公网 IP，无法生成 SubMan 节点链接。"
-    return 1
-  fi
   original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
   synced_count=0
   skipped_count=0
@@ -7676,24 +7714,39 @@ push_nodes_to_subman() {
     if [[ "${protocol}" == "vless-reality" ]]; then
       while IFS= read -r instance_id; do
         [[ -z "${instance_id}" ]] && continue
-        if push_subman_protocol_instance "${protocol}" "${public_ip}" "${instance_id}"; then
-          synced_count=$((synced_count + 1))
-        else
-          failed_count=$((failed_count + 1))
-        fi
+        while IFS= read -r address_entry; do
+          [[ -z "${address_entry}" ]] && continue
+          address_label=${address_entry%%|*}
+          public_ip=${address_entry#*|}
+          if push_subman_protocol_instance "${protocol}" "${public_ip}" "${instance_id}" "n" "${address_label}"; then
+            synced_count=$((synced_count + 1))
+          else
+            failed_count=$((failed_count + 1))
+          fi
+        done < <(list_subman_addresses_for_current_protocol)
       done < <(list_vless_reality_instance_ids)
       continue
     fi
 
-    if push_subman_protocol_instance "${protocol}" "${public_ip}"; then
-      synced_count=$((synced_count + 1))
-    else
-      failed_count=$((failed_count + 1))
-    fi
+    while IFS= read -r address_entry; do
+      [[ -z "${address_entry}" ]] && continue
+      address_label=${address_entry%%|*}
+      public_ip=${address_entry#*|}
+      if push_subman_protocol_instance "${protocol}" "${public_ip}" "" "n" "${address_label}"; then
+        synced_count=$((synced_count + 1))
+      else
+        failed_count=$((failed_count + 1))
+      fi
+    done < <(list_subman_addresses_for_current_protocol)
   done
 
   if [[ -n "${original_protocol_state}" ]] && protocol_state_exists "${original_protocol_state}"; then
     load_protocol_state "${original_protocol_state}"
+  fi
+
+  if (( synced_count == 0 && failed_count == 0 )); then
+    log_warn "未获取到公网 IP，无法生成 SubMan 节点链接。"
+    return 1
   fi
 
   printf 'SubMan 推送完成：已同步: %s，已跳过: %s，失败: %s\n' "${synced_count}" "${skipped_count}" "${failed_count}"

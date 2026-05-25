@@ -32,6 +32,9 @@ SB_HY2_UP_MBPS="20"
 SB_HY2_DOWN_MBPS="80"
 assert_eq "$(display_node_name_for_protocol "hy2" "${SB_NODE_NAME}" "IPv4")" "hk-vps-hy2-U20M-D80M-v4" "hy2 bandwidth name"
 
+SB_NODE_NAME="hk-vps+hy2"
+assert_eq "$(display_node_name_for_protocol "hy2" "${SB_NODE_NAME}" "IPv4")" "hk-vps-hy2-U20M-D80M-v4" "legacy hy2 plus name normalized"
+
 SB_NODE_NAME="hk-vps-anytls"
 assert_eq "$(display_node_name_for_protocol "anytls" "${SB_NODE_NAME}" "IPv6")" "hk-vps-anytls-v6" "anytls stack name"
 

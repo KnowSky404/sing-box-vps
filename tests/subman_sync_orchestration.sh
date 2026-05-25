@@ -89,6 +89,18 @@ get_public_ip() {
   printf '203.0.113.10\n'
 }
 
+get_public_ipv4() {
+  printf '203.0.113.10\n'
+}
+
+get_public_ipv6() {
+  printf '2001:db8::10\n'
+}
+
+detect_host_ip_stack() {
+  printf 'dual\n'
+}
+
 PUSH_KEYS_FILE="${TMP_DIR}/subman-push-keys.txt"
 PUSH_PAYLOADS_FILE="${TMP_DIR}/subman-push-payloads.jsonl"
 push_subman_node() {
@@ -99,20 +111,26 @@ push_subman_node() {
   printf '%s\n' "${payload_json}" >> "${PUSH_PAYLOADS_FILE}"
 }
 
+SB_INBOUND_STACK_MODE="dual_stack"
 output=$(push_nodes_to_subman 2>&1)
 
-if [[ "${output}" != *"SubMan 推送完成：已同步: 2，已跳过: 2，失败: 0"* ]]; then
-  printf 'expected push summary for 2 synced, 2 skipped, 0 failed, got:\n%s\n' "${output}" >&2
+if [[ "${output}" != *"SubMan 推送完成：已同步: 3，已跳过: 2，失败: 0"* ]]; then
+  printf 'expected push summary for 3 synced, 2 skipped, 0 failed, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
-if [[ "$(wc -l < "${PUSH_KEYS_FILE}")" -ne 2 ]]; then
-  printf 'expected exactly 2 pushed nodes, got keys:\n%s\n' "$(cat "${PUSH_KEYS_FILE}")" >&2
+if [[ "$(wc -l < "${PUSH_KEYS_FILE}")" -ne 3 ]]; then
+  printf 'expected exactly 3 pushed nodes, got keys:\n%s\n' "$(cat "${PUSH_KEYS_FILE}")" >&2
   exit 1
 fi
 
-if ! grep -Fxq "sing-box-vps:edge-1:vless-reality" "${PUSH_KEYS_FILE}"; then
-  printf 'expected vless-reality external key, got:\n%s\n' "$(cat "${PUSH_KEYS_FILE}")" >&2
+if ! grep -Fxq "sing-box-vps:edge-1:vless-reality:v4" "${PUSH_KEYS_FILE}"; then
+  printf 'expected vless-reality IPv4 external key, got:\n%s\n' "$(cat "${PUSH_KEYS_FILE}")" >&2
+  exit 1
+fi
+
+if ! grep -Fxq "sing-box-vps:edge-1:vless-reality:v6" "${PUSH_KEYS_FILE}"; then
+  printf 'expected vless-reality IPv6 external key, got:\n%s\n' "$(cat "${PUSH_KEYS_FILE}")" >&2
   exit 1
 fi
 
@@ -126,8 +144,13 @@ if grep -Eq "mixed|anytls" "${PUSH_KEYS_FILE}"; then
   exit 1
 fi
 
-if [[ "$(jq -r 'select(.type == "vless") | .raw' "${PUSH_PAYLOADS_FILE}")" != vless://* ]]; then
+if [[ "$(jq -r 'select(.type == "vless" and .name == "edge-vless-v4") | .raw' "${PUSH_PAYLOADS_FILE}")" != vless://*203.0.113.10*"#edge-vless-v4" ]]; then
   printf 'expected vless payload raw link, got:\n%s\n' "$(cat "${PUSH_PAYLOADS_FILE}")" >&2
+  exit 1
+fi
+
+if [[ "$(jq -r 'select(.type == "vless" and .name == "edge-vless-v6") | .raw' "${PUSH_PAYLOADS_FILE}")" != vless://*"2001:db8::10"*"#edge-vless-v6" ]]; then
+  printf 'expected vless IPv6 payload raw link, got:\n%s\n' "$(cat "${PUSH_PAYLOADS_FILE}")" >&2
   exit 1
 fi
 
@@ -142,6 +165,14 @@ if [[ "${SB_PROTOCOL}" != "mixed" || "${SB_NODE_NAME}" != "edge-mixed" ]]; then
 fi
 
 get_public_ip() {
+  printf ''
+}
+
+get_public_ipv4() {
+  printf ''
+}
+
+get_public_ipv6() {
   printf ''
 }
 

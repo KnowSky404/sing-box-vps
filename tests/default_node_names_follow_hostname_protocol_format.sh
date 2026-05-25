@@ -36,15 +36,15 @@ assert_equals "test-host-vless" "$(vless_reality_display_node_name "test-host-vl
 
 SB_VLESS_RATE_LIMIT_UP_MBPS="10"
 SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
-assert_equals "test-host-vless-up10m" "$(vless_reality_display_node_name "test-host-vless" "")" "up limited vless display node name"
+assert_equals "test-host-vless-U10M" "$(vless_reality_display_node_name "test-host-vless" "")" "up limited vless display node name"
 
 SB_VLESS_RATE_LIMIT_UP_MBPS=""
 SB_VLESS_RATE_LIMIT_DOWN_MBPS="100"
-assert_equals "test-host-vless-down100m" "$(vless_reality_display_node_name "test-host-vless" "")" "down limited vless display node name"
+assert_equals "test-host-vless-D100M" "$(vless_reality_display_node_name "test-host-vless" "")" "down limited vless display node name"
 
 SB_VLESS_RATE_LIMIT_UP_MBPS="10"
 SB_VLESS_RATE_LIMIT_DOWN_MBPS="100"
-assert_equals "test-host-vless-up10m-down100m-v4" "$(vless_reality_display_node_name "test-host-vless" "IPv4")" "limited vless IPv4 display node name"
+assert_equals "test-host-vless-U10M-D100M-v4" "$(vless_reality_display_node_name "test-host-vless" "IPv4")" "limited vless IPv4 display node name"
 
 set_protocol_defaults "vless+reality"
 assert_equals "test-host-vless" "${SB_NODE_NAME}" "set_protocol_defaults vless node name"
