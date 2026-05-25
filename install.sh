@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052208
+# Version: 2026052501
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052208"
+readonly SCRIPT_VERSION="2026052501"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -109,6 +109,7 @@ SB_ANYTLS_KEY_PATH=""
 SB_ADVANCED_ROUTE="y"
 SB_ENABLE_WARP="n"
 SB_WARP_ROUTE_MODE="selective"
+SB_OUTBOUND_POLICY="default"
 SB_INBOUND_STACK_MODE=""
 SB_OUTBOUND_STACK_MODE=""
 SB_WARP_CUSTOM_DOMAINS_JSON='[]'
@@ -340,6 +341,50 @@ validate_warp_route_mode() {
   case "$1" in
     all|selective) return 0 ;;
     *) return 1 ;;
+  esac
+}
+
+validate_instance_outbound_policy() {
+  case "$1" in
+    default|direct|warp) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+outbound_policy_display_name() {
+  case "$1" in
+    direct) printf '强制 direct 出口' ;;
+    warp) printf '强制 Warp 出口' ;;
+    *) printf '跟随全局路由' ;;
+  esac
+}
+
+prompt_instance_outbound_policy() {
+  local prompt=${1:-"请选择出站策略"}
+  local current=${2:-default}
+  local default_choice choice
+
+  validate_instance_outbound_policy "${current}" || current="default"
+  if [[ ! -t 0 ]]; then
+    printf '%s' "${current}"
+    return 0
+  fi
+
+  case "${current}" in
+    direct) default_choice=2 ;;
+    warp) default_choice=3 ;;
+    *) default_choice=1 ;;
+  esac
+
+  echo "实例出站策略:" >&2
+  echo "1. 跟随全局路由" >&2
+  echo "2. 强制 direct 出口" >&2
+  echo "3. 强制 Warp 出口" >&2
+  choice=$(prompt_choice "${prompt} [1-3] (当前: $(outbound_policy_display_name "${current}")): " 1 3 "${default_choice}")
+  case "${choice}" in
+    2) printf 'direct' ;;
+    3) printf 'warp' ;;
+    *) printf 'default' ;;
   esac
 }
 
@@ -998,6 +1043,7 @@ load_vless_reality_instance_state() {
   SB_SHORT_ID_2=""
   SB_VLESS_RATE_LIMIT_UP_MBPS=""
   SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
+  SB_OUTBOUND_POLICY="default"
 
   [[ -f "${state_file}" ]] || return 1
 
@@ -1012,6 +1058,11 @@ load_vless_reality_instance_state() {
   SB_SHORT_ID_2="${SHORT_ID_2:-}"
   SB_VLESS_RATE_LIMIT_UP_MBPS="${RATE_LIMIT_UP_MBPS:-}"
   SB_VLESS_RATE_LIMIT_DOWN_MBPS="${RATE_LIMIT_DOWN_MBPS:-}"
+  if validate_instance_outbound_policy "${OUTBOUND_POLICY:-default}"; then
+    SB_OUTBOUND_POLICY="${OUTBOUND_POLICY:-default}"
+  else
+    SB_OUTBOUND_POLICY="default"
+  fi
 }
 
 save_vless_reality_instance_state() {
@@ -1032,6 +1083,7 @@ save_vless_reality_instance_state() {
     write_env_assignment "SHORT_ID_2" "${SB_SHORT_ID_2}"
     printf 'RATE_LIMIT_UP_MBPS=%s\n' "${SB_VLESS_RATE_LIMIT_UP_MBPS:-}"
     printf 'RATE_LIMIT_DOWN_MBPS=%s\n' "${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}"
+    write_env_assignment "OUTBOUND_POLICY" "${SB_OUTBOUND_POLICY:-default}"
   } > "${state_file}"
 }
 
@@ -1084,6 +1136,7 @@ migrate_vless_reality_state_to_instances_if_needed() {
   SB_SHORT_ID_2="${SHORT_ID_2:-}"
   SB_VLESS_RATE_LIMIT_UP_MBPS=""
   SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
+  SB_OUTBOUND_POLICY="default"
   save_vless_reality_instance_state
 }
 
@@ -1850,6 +1903,7 @@ prompt_vless_reality_update() {
 
   prompt_reality_sni_update
   prompt_vless_reality_rate_limit_update_fields
+  SB_OUTBOUND_POLICY=$(prompt_instance_outbound_policy "新出站策略" "${SB_OUTBOUND_POLICY:-default}")
 }
 
 probe_reality_sni_candidate() {
@@ -2400,6 +2454,7 @@ prompt_vless_reality_install() {
 
   prompt_reality_sni_install
   prompt_vless_reality_rate_limit_fields
+  SB_OUTBOUND_POLICY=$(prompt_instance_outbound_policy "[VLESS + REALITY] 出站策略" "${SB_OUTBOUND_POLICY:-default}")
 }
 
 prompt_vless_reality_instance_create() {
@@ -2452,6 +2507,7 @@ prompt_vless_reality_instance_create() {
   SB_VLESS_RATE_LIMIT_UP_MBPS=""
   SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
   prompt_vless_reality_rate_limit_fields
+  SB_OUTBOUND_POLICY=$(prompt_instance_outbound_policy "[VLESS + REALITY] 出站策略" "${SB_OUTBOUND_POLICY:-default}")
   if vless_reality_bandwidth_profile_exists "${SB_VLESS_RATE_LIMIT_UP_MBPS}" "${SB_VLESS_RATE_LIMIT_DOWN_MBPS}" "${SB_VLESS_INSTANCE_ID}"; then
     log_warn "已存在相同类型且带宽配置完全相同的 VLESS + REALITY 节点，已取消创建。"
     return 0
@@ -4435,6 +4491,67 @@ build_vless_reality_route_rules_json() {
   rm -f "${tmp_rules}" "${tmp_snis}"
 }
 
+build_vless_reality_instance_outbound_rules_json() {
+  local tmp_rules instance_id inbound_tag outbound status
+  tmp_rules=$(mktemp)
+
+  {
+    load_vless_reality_protocol_state
+    while IFS= read -r instance_id; do
+      [[ -z "${instance_id}" ]] && continue
+      load_vless_reality_instance_state "${instance_id}" || continue
+      case "${SB_OUTBOUND_POLICY:-default}" in
+        direct) outbound="direct" ;;
+        warp)
+          outbound="warp-ep"
+          ;;
+        *) continue ;;
+      esac
+      inbound_tag=$(vless_reality_inbound_tag_for_instance "${instance_id}")
+      jq -n \
+        --arg inbound_tag "${inbound_tag}" \
+        --arg outbound "${outbound}" \
+        '{ "inbound": $inbound_tag, "action": "route", "outbound": $outbound }' >> "${tmp_rules}"
+    done < <(list_vless_reality_instance_ids)
+
+    jq -s '.' "${tmp_rules}"
+  } || {
+    status=$?
+    rm -f "${tmp_rules}"
+    return "${status}"
+  }
+
+  rm -f "${tmp_rules}"
+}
+
+vless_reality_has_warp_outbound_policy() {
+  local instance_id
+
+  load_vless_reality_protocol_state
+  while IFS= read -r instance_id; do
+    [[ -z "${instance_id}" ]] && continue
+    load_vless_reality_instance_state "${instance_id}" || continue
+    [[ "${SB_OUTBOUND_POLICY:-default}" == "warp" ]] && return 0
+  done < <(list_vless_reality_instance_ids)
+
+  return 1
+}
+
+instance_outbound_requires_warp() {
+  local protocol
+
+  while IFS= read -r protocol; do
+    [[ -z "${protocol}" ]] && continue
+    case "${protocol}" in
+      vless-reality)
+        vless_reality_has_warp_outbound_policy && return 0
+        ;;
+    esac
+  done < <(list_effective_protocols)
+
+  return 1
+}
+
 build_protocol_route_rules() {
   local protocol
   protocol=$(normalize_protocol_id "$1")
@@ -4469,8 +4586,13 @@ generate_config() {
   load_warp_route_settings
 
   # Endpoints Logic
-  local w_key="" w_v4="" w_v6="" w_client_id="" w_reserved='[]'
-  if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
+  local w_key="" w_v4="" w_v6="" w_client_id="" w_reserved='[]' enable_warp_endpoint
+  enable_warp_endpoint="${SB_ENABLE_WARP}"
+  if [[ "${enable_warp_endpoint}" != "y" ]] && instance_outbound_requires_warp; then
+    enable_warp_endpoint="y"
+  fi
+
+  if [[ "${enable_warp_endpoint}" == "y" ]]; then
     register_warp
     w_key=$(grep "WARP_PRIV_KEY" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
     w_v4=$(grep "WARP_V4" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
@@ -4480,45 +4602,57 @@ generate_config() {
   fi
 
   refresh_warp_route_assets
-  local inbound_file provider_file protocol_rule_file protocol
-  local inbounds_json certificate_providers_json protocol_rules_json
+  local inbound_file provider_file protocol_rule_file instance_outbound_rule_file protocol
+  local inbounds_json certificate_providers_json protocol_rules_json instance_outbound_rules_json
 
   ensure_stack_mode_state_loaded
 
   inbound_file=$(mktemp)
   provider_file=$(mktemp)
   protocol_rule_file=$(mktemp)
+  instance_outbound_rule_file=$(mktemp)
 
   while IFS= read -r protocol; do
     [[ -z "${protocol}" ]] && continue
     load_protocol_state "${protocol}"
     if ! build_inbound_for_protocol "${protocol}" >> "${inbound_file}"; then
-      rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}"
+      rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
       return 1
     fi
     build_certificate_provider_for_protocol "${protocol}" >> "${provider_file}" 2>/dev/null || true
     if ! build_protocol_route_rules "${protocol}" >> "${protocol_rule_file}"; then
-      rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}"
+      rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
       return 1
+    fi
+    if [[ "${protocol}" == "vless-reality" ]]; then
+      if ! build_vless_reality_instance_outbound_rules_json >> "${instance_outbound_rule_file}"; then
+        rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
+        return 1
+      fi
     fi
   done < <(list_effective_protocols)
 
   if ! inbounds_json=$(jq -s . "${inbound_file}"); then
-    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}"
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
     return 1
   fi
   if ! certificate_providers_json=$(jq -s . "${provider_file}"); then
-    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}"
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
     return 1
   fi
   if ! protocol_rules_json=$(jq -s 'add // []' "${protocol_rule_file}"); then
-    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}"
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
+    return 1
+  fi
+  if ! instance_outbound_rules_json=$(jq -s 'add // []' "${instance_outbound_rule_file}"); then
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
     return 1
   fi
 
   if ! jq -n \
     --arg adv_route "${SB_ADVANCED_ROUTE}" \
     --arg enable_warp "${SB_ENABLE_WARP}" \
+    --arg enable_warp_endpoint "${enable_warp_endpoint}" \
     --arg warp_mode "${SB_WARP_ROUTE_MODE}" \
     --arg w_key "${w_key}" \
     --arg w_v4 "${w_v4}/32" \
@@ -4528,6 +4662,7 @@ generate_config() {
     --argjson inbounds "${inbounds_json}" \
     --argjson certificate_providers "${certificate_providers_json}" \
     --argjson protocol_rules "${protocol_rules_json}" \
+    --argjson instance_outbound_rules "${instance_outbound_rules_json}" \
     --argjson ai_domains "${WARP_AI_ROUTE_DOMAINS_JSON}" \
     --argjson ai_domain_suffixes "${WARP_AI_ROUTE_DOMAIN_SUFFIXES_JSON}" \
     --argjson stream_domains "${WARP_STREAM_ROUTE_DOMAINS_JSON}" \
@@ -4548,7 +4683,7 @@ generate_config() {
         ],
         "strategy": $outbound_stack_mode
       },
-      "endpoints": (if $enable_warp == "y" then [
+      "endpoints": (if $enable_warp_endpoint == "y" then [
         {
           "type": "wireguard",
           "tag": "warp-ep",
@@ -4587,6 +4722,7 @@ generate_config() {
           end
         ),
         "rules": (
+          $instance_outbound_rules +
           $protocol_rules +
           (if $adv_route == "y" then [ { "ip_is_private": true, "action": "reject" } ] else [] end) +
           (
@@ -4646,11 +4782,11 @@ generate_config() {
         {}
       end
     )' > "${SINGBOX_CONFIG_FILE}"; then
-    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}"
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
     return 1
   fi
 
-  rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}"
+  rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
 }
 
 # --- Uninstaller ---
