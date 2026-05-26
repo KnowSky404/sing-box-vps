@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052601
+# Version: 2026052602
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052601"
+readonly SCRIPT_VERSION="2026052602"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -6641,6 +6641,17 @@ show_link_info() {
   fi
 
   if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
+    local rendered_count=0
+    local fallback_instance_id="${SB_VLESS_INSTANCE_ID:-main}"
+    local fallback_node_name="${SB_NODE_NAME:-}"
+    local fallback_port="${SB_PORT:-}"
+    local fallback_uuid="${SB_UUID:-}"
+    local fallback_sni="${SB_SNI:-}"
+    local fallback_short_id_1="${SB_SHORT_ID_1:-}"
+    local fallback_short_id_2="${SB_SHORT_ID_2:-}"
+    local fallback_rate_up="${SB_VLESS_RATE_LIMIT_UP_MBPS:-}"
+    local fallback_rate_down="${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}"
+    local fallback_outbound_policy="${SB_OUTBOUND_POLICY:-default}"
     migrate_vless_reality_state_to_instances_if_needed
     while IFS= read -r instance_id; do
       [[ -z "${instance_id}" ]] && continue
@@ -6653,9 +6664,28 @@ show_link_info() {
       echo "限速: ${rate_summary}"
       build_vless_link "${public_ip}" "${address_label}"
       echo ""
+      rendered_count=$((rendered_count + 1))
     done < <(list_vless_reality_instance_ids)
     load_vless_reality_protocol_state
-    load_vless_reality_instance_state "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}" >/dev/null 2>&1 || true
+    if ! load_vless_reality_instance_state "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}" >/dev/null 2>&1 && (( rendered_count == 0 )) && [[ -n "${fallback_node_name}" && -n "${fallback_uuid}" ]]; then
+      SB_VLESS_INSTANCE_ID="${fallback_instance_id}"
+      SB_NODE_NAME="${fallback_node_name}"
+      SB_PORT="${fallback_port}"
+      SB_UUID="${fallback_uuid}"
+      SB_SNI="${fallback_sni}"
+      SB_SHORT_ID_1="${fallback_short_id_1}"
+      SB_SHORT_ID_2="${fallback_short_id_2}"
+      SB_VLESS_RATE_LIMIT_UP_MBPS="${fallback_rate_up}"
+      SB_VLESS_RATE_LIMIT_DOWN_MBPS="${fallback_rate_down}"
+      SB_OUTBOUND_POLICY="${fallback_outbound_policy}"
+      rate_summary=$(vless_reality_rate_limit_summary "${SB_VLESS_RATE_LIMIT_UP_MBPS:-}" "${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}")
+      echo "REALITY 实例"
+      echo "实例 ID: ${SB_VLESS_INSTANCE_ID:-main}"
+      echo "端口: ${SB_PORT}"
+      echo "限速: ${rate_summary}"
+      build_vless_link "${public_ip}" "${address_label}"
+      echo ""
+    fi
     return 0
   fi
 
@@ -6723,6 +6753,17 @@ show_qr_info() {
   fi
 
   if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
+    local rendered_count=0
+    local fallback_instance_id="${SB_VLESS_INSTANCE_ID:-main}"
+    local fallback_node_name="${SB_NODE_NAME:-}"
+    local fallback_port="${SB_PORT:-}"
+    local fallback_uuid="${SB_UUID:-}"
+    local fallback_sni="${SB_SNI:-}"
+    local fallback_short_id_1="${SB_SHORT_ID_1:-}"
+    local fallback_short_id_2="${SB_SHORT_ID_2:-}"
+    local fallback_rate_up="${SB_VLESS_RATE_LIMIT_UP_MBPS:-}"
+    local fallback_rate_down="${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}"
+    local fallback_outbound_policy="${SB_OUTBOUND_POLICY:-default}"
     migrate_vless_reality_state_to_instances_if_needed
     while IFS= read -r instance_id; do
       [[ -z "${instance_id}" ]] && continue
@@ -6731,9 +6772,24 @@ show_qr_info() {
       echo "REALITY 实例二维码"
       echo "实例 ID: ${SB_VLESS_INSTANCE_ID}"
       qrencode -t ansiutf8 "$(build_vless_link "${public_ip}" "${address_label}")"
+      rendered_count=$((rendered_count + 1))
     done < <(list_vless_reality_instance_ids)
     load_vless_reality_protocol_state
-    load_vless_reality_instance_state "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}" >/dev/null 2>&1 || true
+    if ! load_vless_reality_instance_state "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}" >/dev/null 2>&1 && (( rendered_count == 0 )) && [[ -n "${fallback_node_name}" && -n "${fallback_uuid}" ]]; then
+      SB_VLESS_INSTANCE_ID="${fallback_instance_id}"
+      SB_NODE_NAME="${fallback_node_name}"
+      SB_PORT="${fallback_port}"
+      SB_UUID="${fallback_uuid}"
+      SB_SNI="${fallback_sni}"
+      SB_SHORT_ID_1="${fallback_short_id_1}"
+      SB_SHORT_ID_2="${fallback_short_id_2}"
+      SB_VLESS_RATE_LIMIT_UP_MBPS="${fallback_rate_up}"
+      SB_VLESS_RATE_LIMIT_DOWN_MBPS="${fallback_rate_down}"
+      SB_OUTBOUND_POLICY="${fallback_outbound_policy}"
+      echo "REALITY 实例二维码"
+      echo "实例 ID: ${SB_VLESS_INSTANCE_ID:-main}"
+      qrencode -t ansiutf8 "$(build_vless_link "${public_ip}" "${address_label}")"
+    fi
     return 0
   fi
 }

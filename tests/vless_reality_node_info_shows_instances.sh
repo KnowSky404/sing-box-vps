@@ -124,12 +124,12 @@ if ! grep -Fq '限速: 上行不限 / 下行 50 Mbps' "${OUTPUT_FILE}"; then
   exit 1
 fi
 
-if ! grep -Fq 'vless://11111111-1111-1111-1111-111111111111@203.0.113.10:443?security=reality&sni=apple.com&fp=chrome&pbk=public-key&sid=aaaaaaaaaaaaaaaa&flow=xtls-rprx-vision#vless_main_test-host-v4' "${OUTPUT_FILE}"; then
+if ! grep -Fq 'vless://11111111-1111-1111-1111-111111111111@203.0.113.10:443?security=reality&sni=apple.com&fp=chrome&pbk=public-key&sid=aaaaaaaaaaaaaaaa&flow=xtls-rprx-vision#vless_main_test-host-U20M-D100M-v4' "${OUTPUT_FILE}"; then
   printf 'expected node info to include main REALITY link, got:\n%s\n' "$(cat "${OUTPUT_FILE}")" >&2
   exit 1
 fi
 
-if ! grep -Fq 'vless://22222222-2222-2222-2222-222222222222@203.0.113.10:8443?security=reality&sni=www.cloudflare.com&fp=chrome&pbk=public-key&sid=cccccccccccccccc&flow=xtls-rprx-vision#vless_second_test-host-v4' "${OUTPUT_FILE}"; then
+if ! grep -Fq 'vless://22222222-2222-2222-2222-222222222222@203.0.113.10:8443?security=reality&sni=www.cloudflare.com&fp=chrome&pbk=public-key&sid=cccccccccccccccc&flow=xtls-rprx-vision#vless_second_test-host-D50M-v4' "${OUTPUT_FILE}"; then
   printf 'expected node info to include second REALITY link, got:\n%s\n' "$(cat "${OUTPUT_FILE}")" >&2
   exit 1
 fi
