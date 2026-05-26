@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052505
+# Version: 2026052601
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052505"
+readonly SCRIPT_VERSION="2026052601"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -6627,9 +6627,15 @@ show_link_info() {
   local public_ip=$1
   local address_label=${2:-}
   local instance_id rate_summary
+  local header_label
 
-  if [[ -n "${address_label}" ]]; then
-    echo -e "\n${YELLOW}连接链接 ${address_label}：${NC}"
+  header_label="${address_label}"
+  if protocol_uses_domain_connection_material; then
+    header_label=""
+  fi
+
+  if [[ -n "${header_label}" ]]; then
+    echo -e "\n${YELLOW}连接链接 ${header_label}：${NC}"
   else
     echo -e "\n${YELLOW}连接链接：${NC}"
   fi
@@ -6682,9 +6688,15 @@ show_qr_info() {
   local public_ip=$1
   local address_label=${2:-}
   local instance_id
+  local header_label
 
-  if [[ -n "${address_label}" ]]; then
-    echo -e "\n${YELLOW}连接二维码 ${address_label}：${NC}"
+  header_label="${address_label}"
+  if protocol_uses_domain_connection_material; then
+    header_label=""
+  fi
+
+  if [[ -n "${header_label}" ]]; then
+    echo -e "\n${YELLOW}连接二维码 ${header_label}：${NC}"
   else
     echo -e "\n${YELLOW}连接二维码：${NC}"
   fi
@@ -6818,10 +6830,18 @@ list_subman_addresses_for_current_protocol() {
 show_connection_details_for_detected_addresses() {
   local mode=$1
   local address_entries=()
-  local entry label address
+  local entry label address public_ip
 
   if protocol_uses_domain_connection_material; then
-    show_connection_details "${mode}" "$(get_public_ip)" ""
+    public_ip=$(get_public_ip)
+    if [[ "${public_ip}" == *:* ]]; then
+      label="IPv6"
+    elif [[ "${public_ip}" == *.* ]]; then
+      label="IPv4"
+    else
+      label=""
+    fi
+    show_connection_details "${mode}" "${public_ip}" "${label}"
     return 0
   fi
 

@@ -34,7 +34,7 @@ printf '0\n' > "${QRENCODE_COUNT_FILE}"
 
 SB_PROTOCOL="hy2"
 SB_INBOUND_STACK_MODE="dual_stack"
-SB_NODE_NAME="hy2_test-host"
+SB_NODE_NAME="hy2_test-host+hy2"
 SB_PORT="8443"
 SB_HY2_DOMAIN="hy2.example.com"
 SB_HY2_PASSWORD="hy2-password"
@@ -78,6 +78,11 @@ fi
 
 if [[ "${output}" != *"hy2://hy2-password@hy2.example.com:8443"* ]]; then
   printf 'expected hy2 share link to use configured domain, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${output}" != *"#hy2_test-host-hy2-U100M-D50M-v4"* ]]; then
+  printf 'expected hy2 share link name to normalize plus suffix and include stack marker, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
