@@ -86,6 +86,8 @@ SHORT_ID_1=cccccccccccccccc
 SHORT_ID_2=dddddddddddddddd
 RATE_LIMIT_UP_MBPS=
 RATE_LIMIT_DOWN_MBPS=50
+ALPN_MODE=h2_http1
+TCP_FAST_OPEN=y
 EOF
 
 load_protocol_state "vless-reality"
@@ -129,7 +131,7 @@ if ! grep -Fq 'vless://11111111-1111-1111-1111-111111111111@203.0.113.10:443?sec
   exit 1
 fi
 
-if ! grep -Fq 'vless://22222222-2222-2222-2222-222222222222@203.0.113.10:8443?security=reality&sni=www.cloudflare.com&fp=chrome&pbk=public-key&sid=cccccccccccccccc&flow=xtls-rprx-vision#vless_second_test-host-D50M-v4' "${OUTPUT_FILE}"; then
+if ! grep -Fq 'vless://22222222-2222-2222-2222-222222222222@203.0.113.10:8443?security=reality&sni=www.cloudflare.com&fp=chrome&pbk=public-key&sid=cccccccccccccccc&alpn=h2,http/1.1&tfo=1&flow=xtls-rprx-vision#vless_second_test-host-D50M-v4' "${OUTPUT_FILE}"; then
   printf 'expected node info to include second REALITY link, got:\n%s\n' "$(cat "${OUTPUT_FILE}")" >&2
   exit 1
 fi

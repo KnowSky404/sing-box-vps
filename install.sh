@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026060302
+# Version: 2026060303
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026060302"
+readonly SCRIPT_VERSION="2026060303"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -825,6 +825,14 @@ vless_reality_alpn_mode_display_name() {
     h2_http1) printf 'h2 + http/1.1' ;;
     http1) printf 'http/1.1' ;;
     *) printf '关闭' ;;
+  esac
+}
+
+vless_reality_alpn_link_value_for_mode() {
+  case "${1:-off}" in
+    h2_http1) printf 'h2,http/1.1' ;;
+    http1) printf 'http/1.1' ;;
+    *) printf '' ;;
   esac
 }
 
@@ -6082,12 +6090,16 @@ format_share_host() {
 build_vless_link() {
   local public_ip=$1
   local address_label=${2:-}
-  local share_host node_name
+  local share_host node_name advanced_query alpn_value
   share_host=$(format_share_host "${public_ip}")
   node_name=$(vless_reality_display_node_name "${SB_NODE_NAME}" "${address_label}")
+  advanced_query=""
+  alpn_value=$(vless_reality_alpn_link_value_for_mode "${SB_VLESS_ALPN_MODE:-off}")
+  [[ -n "${alpn_value}" ]] && advanced_query="${advanced_query}&alpn=${alpn_value}"
+  [[ "${SB_VLESS_TCP_FAST_OPEN:-n}" == "y" ]] && advanced_query="${advanced_query}&tfo=1"
 
-  printf 'vless://%s@%s:%s?security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&flow=xtls-rprx-vision#%s' \
-    "${SB_UUID}" "${share_host}" "${SB_PORT}" "${SB_SNI}" "${SB_PUBLIC_KEY:-[密钥丢失，请更新配置]}" "${SB_SHORT_ID_1}" "${node_name}"
+  printf 'vless://%s@%s:%s?security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s%s&flow=xtls-rprx-vision#%s' \
+    "${SB_UUID}" "${share_host}" "${SB_PORT}" "${SB_SNI}" "${SB_PUBLIC_KEY:-[密钥丢失，请更新配置]}" "${SB_SHORT_ID_1}" "${advanced_query}" "${node_name}"
 }
 
 vless_reality_rate_limit_summary() {
