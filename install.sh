@@ -2145,17 +2145,19 @@ prompt_vless_reality_advanced_update_fields() {
   echo "- 当前 ALPN: ${current_alpn}"
   echo "- 当前 TCP Fast Open: ${current_tfo}"
   echo "ALPN 预设:"
-  echo "1. 关闭 (默认)"
-  echo "2. h2 + http/1.1"
-  echo "3. http/1.1"
-  choice=$(prompt_choice "请选择 ALPN [1-3] (默认 1): " 1 3 1)
+  echo "1. 保留当前 ALPN (默认)"
+  echo "2. 关闭"
+  echo "3. h2 + http/1.1"
+  echo "4. http/1.1"
+  choice=$(prompt_choice "请选择 ALPN [1-4] (默认 1): " 1 4 1)
   case "${choice}" in
-    2) SB_VLESS_ALPN_MODE="h2_http1" ;;
-    3) SB_VLESS_ALPN_MODE="http1" ;;
-    *) SB_VLESS_ALPN_MODE="off" ;;
+    2) SB_VLESS_ALPN_MODE="off" ;;
+    3) SB_VLESS_ALPN_MODE="h2_http1" ;;
+    4) SB_VLESS_ALPN_MODE="http1" ;;
+    *) ;;
   esac
 
-  tfo_choice=$(prompt_yes_no "是否启用 TCP Fast Open [y/n] (默认 n): " "n")
+  tfo_choice=$(prompt_yes_no "是否启用 TCP Fast Open [y/n] (当前: ${SB_VLESS_TCP_FAST_OPEN}, 留空保持): " "${SB_VLESS_TCP_FAST_OPEN}")
   SB_VLESS_TCP_FAST_OPEN="${tfo_choice}"
 }
 
