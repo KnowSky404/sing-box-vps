@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026060304
+# Version: 2026060305
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026060304"
+readonly SCRIPT_VERSION="2026060305"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -2130,7 +2130,10 @@ validate_current_reality_sni_alpn_or_warn() {
     return 0
   fi
 
-  confirm_reality_sni_warning_continue "${reason}" || true
+  if ! confirm_reality_sni_warning_continue "${reason}"; then
+    log_warn "已关闭 ALPN 预设以避免继续使用不兼容的 SNI/ALPN 组合。"
+    SB_VLESS_ALPN_MODE="off"
+  fi
 }
 
 probe_reality_sni_candidate() {

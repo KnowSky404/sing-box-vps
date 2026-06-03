@@ -89,6 +89,20 @@ if [[ "${alpn_probe_seen}" != "alpn.example.com:http1" ]]; then
   exit 1
 fi
 
+SB_VLESS_ALPN_MODE="h2_http1"
+probe_reality_sni_alpn() {
+  printf 'stubbed ALPN failure'
+  return 1
+}
+validate_current_reality_sni_alpn_or_warn <<'EOF' >/dev/null
+n
+EOF
+
+if [[ "${SB_VLESS_ALPN_MODE}" != "off" ]]; then
+  printf 'expected ALPN rejection to reset mode to off, got %s\n' "${SB_VLESS_ALPN_MODE}" >&2
+  exit 1
+fi
+
 mkdir -p "${TMP_DIR}/bin"
 cat > "${TMP_DIR}/bin/curl" <<'EOF'
 #!/usr/bin/env bash
