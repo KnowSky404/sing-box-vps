@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026060301
+# Version: 2026060302
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026060301"
+readonly SCRIPT_VERSION="2026060302"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -1213,6 +1213,7 @@ vless_reality_bandwidth_profile_exists() {
   local instance_id
   local saved_instance_id saved_node_name saved_port saved_uuid saved_sni
   local saved_short_id_1 saved_short_id_2 saved_rate_limit_up saved_rate_limit_down
+  local saved_alpn_mode saved_tcp_fast_open
 
   saved_instance_id="${SB_VLESS_INSTANCE_ID:-}"
   saved_node_name="${SB_NODE_NAME:-}"
@@ -1223,6 +1224,8 @@ vless_reality_bandwidth_profile_exists() {
   saved_short_id_2="${SB_SHORT_ID_2:-}"
   saved_rate_limit_up="${SB_VLESS_RATE_LIMIT_UP_MBPS:-}"
   saved_rate_limit_down="${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}"
+  saved_alpn_mode="${SB_VLESS_ALPN_MODE:-off}"
+  saved_tcp_fast_open="${SB_VLESS_TCP_FAST_OPEN:-n}"
 
   migrate_vless_reality_state_to_instances_if_needed
   while IFS= read -r instance_id; do
@@ -1239,6 +1242,8 @@ vless_reality_bandwidth_profile_exists() {
       SB_SHORT_ID_2="${saved_short_id_2}"
       SB_VLESS_RATE_LIMIT_UP_MBPS="${saved_rate_limit_up}"
       SB_VLESS_RATE_LIMIT_DOWN_MBPS="${saved_rate_limit_down}"
+      SB_VLESS_ALPN_MODE="${saved_alpn_mode}"
+      SB_VLESS_TCP_FAST_OPEN="${saved_tcp_fast_open}"
       return 0
     fi
   done < <(list_vless_reality_instance_ids)
@@ -1252,6 +1257,8 @@ vless_reality_bandwidth_profile_exists() {
   SB_SHORT_ID_2="${saved_short_id_2}"
   SB_VLESS_RATE_LIMIT_UP_MBPS="${saved_rate_limit_up}"
   SB_VLESS_RATE_LIMIT_DOWN_MBPS="${saved_rate_limit_down}"
+  SB_VLESS_ALPN_MODE="${saved_alpn_mode}"
+  SB_VLESS_TCP_FAST_OPEN="${saved_tcp_fast_open}"
   return 1
 }
 
@@ -1259,6 +1266,7 @@ build_vless_reality_qos_plan() {
   local state_file instance_id up down direction
   local saved_instance_id saved_node_name saved_port saved_uuid saved_sni
   local saved_short_id_1 saved_short_id_2 saved_rate_limit_up saved_rate_limit_down
+  local saved_alpn_mode saved_tcp_fast_open
   state_file=$(protocol_state_file "vless-reality")
   [[ -f "${state_file}" ]] || return 0
 
@@ -1271,6 +1279,8 @@ build_vless_reality_qos_plan() {
   saved_short_id_2="${SB_SHORT_ID_2:-}"
   saved_rate_limit_up="${SB_VLESS_RATE_LIMIT_UP_MBPS:-}"
   saved_rate_limit_down="${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}"
+  saved_alpn_mode="${SB_VLESS_ALPN_MODE:-off}"
+  saved_tcp_fast_open="${SB_VLESS_TCP_FAST_OPEN:-n}"
 
   migrate_vless_reality_state_to_instances_if_needed
 
@@ -1301,6 +1311,8 @@ build_vless_reality_qos_plan() {
   SB_SHORT_ID_2="${saved_short_id_2}"
   SB_VLESS_RATE_LIMIT_UP_MBPS="${saved_rate_limit_up}"
   SB_VLESS_RATE_LIMIT_DOWN_MBPS="${saved_rate_limit_down}"
+  SB_VLESS_ALPN_MODE="${saved_alpn_mode}"
+  SB_VLESS_TCP_FAST_OPEN="${saved_tcp_fast_open}"
 }
 
 detect_default_network_interface() {
