@@ -69,6 +69,7 @@ resolve_local_tests() {
       tests/verification_protocol_probe_vless.sh \
       tests/verification_protocol_probe_hy2.sh \
       tests/verification_protocol_probe_anytls.sh \
+      tests/reality_sni_validation.sh \
       tests/generate_config_cleans_temp_files_on_failure.sh \
       tests/system_safety_guards.sh \
       tests/update_rolls_back_binary_when_config_invalid.sh \

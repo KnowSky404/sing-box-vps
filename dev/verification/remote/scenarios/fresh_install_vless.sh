@@ -13,7 +13,7 @@ verification_scenario_fresh_install_vless() {
   test ! -e /root/sing-box-vps/config.json
   test ! -e /etc/systemd/system/sing-box.service
   test ! -e /usr/local/bin/sbv
-  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" <<'EOF'
+  SB_REALITY_SNI_VALIDATION_ASSUME_YES=1 bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" <<'EOF'
 1
 
 1
@@ -21,6 +21,8 @@ verification_scenario_fresh_install_vless() {
 443
 2
 www.cloudflare.com
+n
+1
 n
 n
 n

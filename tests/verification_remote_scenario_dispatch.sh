@@ -325,7 +325,7 @@ bash() {
         fi
 
         if [[ "${actual_lines[2]:-}" == "1" ]]; then
-          if [[ "${#actual_lines[@]}" -ne 11 ]]; then
+          if [[ "${#actual_lines[@]}" -ne 13 ]]; then
             printf 'unexpected vless install input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
             return 1
           fi
@@ -336,9 +336,11 @@ bash() {
           [[ "${actual_lines[5]}" == "2" ]]
           [[ "${actual_lines[6]}" == "www.cloudflare.com" ]]
           [[ "${actual_lines[7]}" == "n" ]]
-          [[ "${actual_lines[8]}" == "n" ]]
+          [[ "${actual_lines[8]}" == "1" ]]
           [[ "${actual_lines[9]}" == "n" ]]
-          [[ "${actual_lines[10]}" == "0" ]]
+          [[ "${actual_lines[10]}" == "n" ]]
+          [[ "${actual_lines[11]}" == "n" ]]
+          [[ "${actual_lines[12]}" == "0" ]]
           printf '443\n' > "${PORT_FILE}"
           next_install_uuid > "${UUID_FILE}"
           printf 'www.cloudflare.com\n' > "${SNI_FILE}"

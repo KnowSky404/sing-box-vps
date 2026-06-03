@@ -423,7 +423,7 @@ bash() {
         fi
 
         if [[ "\${actual_lines[2]:-}" == "1" ]]; then
-          [[ "\${#actual_lines[@]}" -eq 11 ]]
+          [[ "\${#actual_lines[@]}" -eq 13 ]]
           [[ "\${actual_lines[0]}" == "1" ]]
           [[ "\${actual_lines[1]}" == "" ]]
           [[ "\${actual_lines[2]}" == "1" ]]
@@ -432,9 +432,11 @@ bash() {
           [[ "\${actual_lines[5]}" == "2" ]]
           [[ "\${actual_lines[6]}" == "www.cloudflare.com" ]]
           [[ "\${actual_lines[7]}" == "n" ]]
-          [[ "\${actual_lines[8]}" == "n" ]]
+          [[ "\${actual_lines[8]}" == "1" ]]
           [[ "\${actual_lines[9]}" == "n" ]]
-          [[ "\${actual_lines[10]}" == "0" ]]
+          [[ "\${actual_lines[10]}" == "n" ]]
+          [[ "\${actual_lines[11]}" == "n" ]]
+          [[ "\${actual_lines[12]}" == "0" ]]
           printf '443\n' > "\${REMOTE_PORT_FILE}"
           next_install_uuid > "\${REMOTE_UUID_FILE}"
           printf 'www.cloudflare.com\n' > "\${REMOTE_SNI_FILE}"
@@ -763,6 +765,7 @@ grep -Fqx 'tests/verification_protocol_probe_matrix.sh|1' "${TMP_DIR}/local-test
 grep -Fqx 'tests/verification_protocol_probe_vless.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_hy2.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_anytls.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/reality_sni_validation.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/generate_config_cleans_temp_files_on_failure.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/system_safety_guards.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/update_rolls_back_binary_when_config_invalid.sh|1' "${TMP_DIR}/local-tests.log"
@@ -770,7 +773,7 @@ grep -Fqx 'tests/subman_config_helpers.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_payload_generation.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_api_push.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_sync_orchestration.sh|1' "${TMP_DIR}/local-tests.log"
-[[ $(wc -l < "${TMP_DIR}/local-tests.log") -eq 11 ]] || {
+[[ $(wc -l < "${TMP_DIR}/local-tests.log") -eq 12 ]] || {
   printf 'expected protocol probe and SubMan focused tests for install changes\n' >&2
   exit 1
 }

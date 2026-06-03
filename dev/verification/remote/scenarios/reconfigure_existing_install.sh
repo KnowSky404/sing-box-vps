@@ -19,7 +19,7 @@ verification_scenario_reconfigure_existing_install() {
   after_config_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/config.after.json")
   diff_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/config.diff.txt")
   cp /root/sing-box-vps/config.json "${before_config_path}"
-  bash /usr/local/bin/sbv <<'EOF'
+  SB_REALITY_SNI_VALIDATION_ASSUME_YES=1 bash /usr/local/bin/sbv <<'EOF'
 2
 1
 1

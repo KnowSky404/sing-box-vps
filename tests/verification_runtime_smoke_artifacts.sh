@@ -421,7 +421,7 @@ bash() {
         fi
 
         if [[ "\${actual_lines[2]:-}" == "1" ]]; then
-          [[ "\${#actual_lines[@]}" -eq 11 ]]
+          [[ "\${#actual_lines[@]}" -eq 13 ]]
           [[ "\${actual_lines[0]}" == "1" ]]
           [[ "\${actual_lines[1]}" == "" ]]
           [[ "\${actual_lines[2]}" == "1" ]]
@@ -430,9 +430,11 @@ bash() {
           [[ "\${actual_lines[5]}" == "2" ]]
           [[ "\${actual_lines[6]}" == "www.cloudflare.com" ]]
           [[ "\${actual_lines[7]}" == "n" ]]
-          [[ "\${actual_lines[8]}" == "n" ]]
+          [[ "\${actual_lines[8]}" == "1" ]]
           [[ "\${actual_lines[9]}" == "n" ]]
-          [[ "\${actual_lines[10]}" == "0" ]]
+          [[ "\${actual_lines[10]}" == "n" ]]
+          [[ "\${actual_lines[11]}" == "n" ]]
+          [[ "\${actual_lines[12]}" == "0" ]]
           printf '443\n' > "\${REMOTE_PORT_FILE}"
           next_install_uuid > "\${REMOTE_UUID_FILE}"
           printf 'www.cloudflare.com\n' > "\${REMOTE_SNI_FILE}"

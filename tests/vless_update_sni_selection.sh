@@ -100,6 +100,8 @@ update_config_only <<'EOF'
 
 
 
+
+
 EOF
 assert_state_sni "apple.com"
 
@@ -111,6 +113,8 @@ update_config_only <<'EOF'
 
 
 2
+
+
 
 EOF
 assert_state_sni "speed.example.com"
@@ -124,6 +128,9 @@ update_config_only <<'EOF'
 
 3
 custom.example.com
+y
+
+
 
 EOF
 assert_state_sni "custom.example.com"

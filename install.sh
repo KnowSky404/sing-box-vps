@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026060303
+# Version: 2026060304
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026060303"
+readonly SCRIPT_VERSION="2026060304"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -1965,12 +1965,182 @@ prompt_vless_reality_update() {
   prompt_reality_sni_update
   prompt_vless_reality_rate_limit_update_fields
   prompt_vless_reality_advanced_update_fields
+  validate_current_reality_sni_alpn_or_warn
   SB_OUTBOUND_POLICY=$(prompt_instance_outbound_policy "新出站策略" "${SB_OUTBOUND_POLICY:-default}")
+}
+
+validate_reality_sni_syntax() {
+  local domain=${1:-}
+
+  [[ -n "${domain}" ]] || return 1
+  [[ "${domain}" != *"://"* ]] || return 1
+  [[ "${domain}" != *"/"* ]] || return 1
+  [[ "${domain}" != *":"* ]] || return 1
+  [[ "${domain}" != *[[:space:]]* ]] || return 1
+  [[ "${domain}" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]]
+}
+
+probe_reality_sni_tls() {
+  local domain=$1
+  local output timeout_cmd=()
+
+  if ! validate_reality_sni_syntax "${domain}"; then
+    printf 'SNI 必须是纯域名，例如 www.example.com'
+    return 1
+  fi
+
+  if ! command -v openssl >/dev/null 2>&1; then
+    printf '未检测到 openssl，无法执行 TLS 1.3/证书校验'
+    return 1
+  fi
+
+  if command -v timeout >/dev/null 2>&1; then
+    timeout_cmd=(timeout 7)
+  fi
+
+  if ! output=$(printf '' | "${timeout_cmd[@]}" openssl s_client \
+    -connect "${domain}:443" \
+    -servername "${domain}" \
+    -verify_hostname "${domain}" \
+    -verify_return_error \
+    -tls1_3 \
+    -brief 2>&1); then
+    if grep -qi 'certificate verify failed\|hostname mismatch\|verify error' <<< "${output}"; then
+      printf 'TLS 证书校验失败或证书主机名不匹配'
+    elif grep -qi 'wrong version number\|protocol version\|tlsv1 alert protocol version\|no protocols available' <<< "${output}"; then
+      printf '目标站点未成功协商 TLS 1.3'
+    elif grep -qi 'timed out\|timeout' <<< "${output}"; then
+      printf '连接 443/TLS 超时'
+    else
+      printf '无法完成 443/TLS 1.3 握手'
+    fi
+    return 1
+  fi
+
+  if ! grep -Eqi 'Protocol version: TLSv1\.3|Protocol[[:space:]]*:[[:space:]]*TLSv1\.3' <<< "${output}"; then
+    printf '目标站点未成功协商 TLS 1.3'
+    return 1
+  fi
+
+  return 0
+}
+
+probe_reality_sni_alpn() {
+  local domain=$1
+  local mode=${2:-off}
+  local alpn_value output timeout_cmd=()
+
+  case "${mode}" in
+    h2_http1) alpn_value="h2,http/1.1" ;;
+    http1) alpn_value="http/1.1" ;;
+    off|"") return 0 ;;
+    *)
+      printf '未知 ALPN 预设: %s' "${mode}"
+      return 1
+      ;;
+  esac
+
+  if ! validate_reality_sni_syntax "${domain}"; then
+    printf 'SNI 必须是纯域名，例如 www.example.com'
+    return 1
+  fi
+
+  if ! command -v openssl >/dev/null 2>&1; then
+    printf '未检测到 openssl，无法执行 ALPN 校验'
+    return 1
+  fi
+
+  if command -v timeout >/dev/null 2>&1; then
+    timeout_cmd=(timeout 7)
+  fi
+
+  if ! output=$(printf '' | "${timeout_cmd[@]}" openssl s_client \
+    -connect "${domain}:443" \
+    -servername "${domain}" \
+    -tls1_3 \
+    -alpn "${alpn_value}" 2>&1); then
+    printf '无法完成 ALPN/TLS 1.3 握手'
+    return 1
+  fi
+
+  case "${mode}" in
+    h2_http1)
+      grep -Eq 'ALPN protocol: (h2|http/1\.1)' <<< "${output}" || {
+        printf '目标站点未协商 h2 或 http/1.1'
+        return 1
+      }
+      ;;
+    http1)
+      grep -Eq 'ALPN protocol: http/1\.1' <<< "${output}" || {
+        printf '目标站点未协商 http/1.1'
+        return 1
+      }
+      ;;
+  esac
+}
+
+confirm_reality_sni_warning_continue() {
+  local reason=$1
+  local choice
+
+  log_warn "Reality SNI 校验未通过：${reason}" >&2
+  if [[ "${SB_REALITY_SNI_VALIDATION_ASSUME_YES:-0}" == "1" ]]; then
+    log_warn "当前为非交互输入，已继续使用该 SNI。" >&2
+    return 0
+  fi
+
+  choice=$(prompt_yes_no "是否仍然继续使用该 SNI [y/n] (默认 n): " "n")
+  [[ "${choice}" == "y" ]]
+}
+
+read_manual_reality_sni_with_validation() {
+  local default_sni=$1
+  local prompt=$2
+  local manual_sni reason
+
+  while true; do
+    read -rp "${prompt}" manual_sni
+    manual_sni=$(trim_whitespace "${manual_sni:-}")
+    manual_sni=${manual_sni:-${default_sni}}
+
+    if reason=$(probe_reality_sni_tls "${manual_sni}"); then
+      SB_SNI="${manual_sni}"
+      return 0
+    fi
+
+    if confirm_reality_sni_warning_continue "${reason}"; then
+      SB_SNI="${manual_sni}"
+      return 0
+    fi
+  done
+}
+
+validate_current_reality_sni_alpn_or_warn() {
+  local reason
+
+  SB_VLESS_ALPN_MODE="${SB_VLESS_ALPN_MODE:-off}"
+  validate_vless_reality_alpn_mode "${SB_VLESS_ALPN_MODE}" || SB_VLESS_ALPN_MODE="off"
+
+  if [[ "${SB_VLESS_ALPN_MODE}" == "off" ]]; then
+    return 0
+  fi
+
+  if reason=$(probe_reality_sni_alpn "${SB_SNI}" "${SB_VLESS_ALPN_MODE}"); then
+    log_success "Reality SNI ALPN 校验通过: ${SB_SNI} ($(vless_reality_alpn_mode_display_name "${SB_VLESS_ALPN_MODE}"))"
+    return 0
+  fi
+
+  confirm_reality_sni_warning_continue "${reason}" || true
 }
 
 probe_reality_sni_candidate() {
   local domain=$1
-  local time_total
+  local time_total reason
+
+  if ! reason=$(probe_reality_sni_tls "${domain}"); then
+    log_warn "Reality SNI TLS 校验失败: ${domain} (${reason})" >&2
+    return 1
+  fi
 
   time_total=$(curl -o /dev/null -sS -L \
     --connect-timeout 3 \
@@ -2015,7 +2185,7 @@ select_reality_sni_candidate() {
 }
 
 prompt_reality_sni_install() {
-  local choice manual_sni selected_sni
+  local choice selected_sni
 
   echo "[VLESS + REALITY] REALITY 域名选择:"
   echo "1. 自动探测推荐 SNI (默认)"
@@ -2024,9 +2194,8 @@ prompt_reality_sni_install() {
 
   case "${choice}" in
     2)
-      read -rp "[VLESS + REALITY] REALITY 域名 (默认 ${SB_REALITY_SNI_FALLBACK}): " manual_sni
-      manual_sni=$(trim_whitespace "${manual_sni:-}")
-      SB_SNI=${manual_sni:-$SB_REALITY_SNI_FALLBACK}
+      read_manual_reality_sni_with_validation "${SB_REALITY_SNI_FALLBACK}" \
+        "[VLESS + REALITY] REALITY 域名 (默认 ${SB_REALITY_SNI_FALLBACK}): "
       ;;
     *)
       selected_sni=$(select_reality_sni_candidate)
@@ -2037,7 +2206,7 @@ prompt_reality_sni_install() {
 }
 
 prompt_reality_sni_update() {
-  local choice manual_sni selected_sni
+  local choice selected_sni
 
   echo "[VLESS + REALITY] REALITY SNI 更新方式:"
   echo "1. 保留当前 SNI: ${SB_SNI} (默认)"
@@ -2052,9 +2221,8 @@ prompt_reality_sni_update() {
       log_success "已选择 Reality SNI: ${SB_SNI}"
       ;;
     3)
-      read -rp "[VLESS + REALITY] 新 REALITY SNI (当前: ${SB_SNI}, 留空保持): " manual_sni
-      manual_sni=$(trim_whitespace "${manual_sni:-}")
-      [[ -n "${manual_sni}" ]] && SB_SNI="${manual_sni}"
+      read_manual_reality_sni_with_validation "${SB_SNI}" \
+        "[VLESS + REALITY] 新 REALITY SNI (当前: ${SB_SNI}, 留空保持): "
       ;;
     *)
       log_info "保留当前 Reality SNI: ${SB_SNI}"
@@ -2064,7 +2232,7 @@ prompt_reality_sni_update() {
 
 prompt_reality_sni_for_new_instance() {
   local default_sni=$1
-  local choice manual_sni selected_sni
+  local choice selected_sni
 
   default_sni=${default_sni:-${SB_REALITY_SNI_FALLBACK}}
 
@@ -2081,9 +2249,8 @@ prompt_reality_sni_for_new_instance() {
       log_success "已选择 Reality SNI: ${SB_SNI}"
       ;;
     3)
-      read -rp "[VLESS + REALITY] REALITY SNI (默认 ${default_sni}): " manual_sni
-      manual_sni=$(trim_whitespace "${manual_sni:-}")
-      SB_SNI="${manual_sni:-${default_sni}}"
+      read_manual_reality_sni_with_validation "${default_sni}" \
+        "[VLESS + REALITY] REALITY SNI (默认 ${default_sni}): "
       ;;
     *)
       SB_SNI="${default_sni}"
@@ -2548,6 +2715,8 @@ prompt_vless_reality_install() {
 
   prompt_reality_sni_install
   prompt_vless_reality_rate_limit_fields
+  prompt_vless_reality_advanced_update_fields
+  validate_current_reality_sni_alpn_or_warn
   SB_OUTBOUND_POLICY=$(prompt_instance_outbound_policy "[VLESS + REALITY] 出站策略" "${SB_OUTBOUND_POLICY:-default}")
 }
 
@@ -2603,6 +2772,8 @@ prompt_vless_reality_instance_create() {
   SB_VLESS_ALPN_MODE="off"
   SB_VLESS_TCP_FAST_OPEN="n"
   prompt_vless_reality_rate_limit_fields
+  prompt_vless_reality_advanced_update_fields
+  validate_current_reality_sni_alpn_or_warn
   SB_OUTBOUND_POLICY=$(prompt_instance_outbound_policy "[VLESS + REALITY] 出站策略" "${SB_OUTBOUND_POLICY:-default}")
   if vless_reality_bandwidth_profile_exists "${SB_VLESS_RATE_LIMIT_UP_MBPS}" "${SB_VLESS_RATE_LIMIT_DOWN_MBPS}" "${SB_VLESS_INSTANCE_ID}"; then
     log_warn "已存在相同类型且带宽配置完全相同的 VLESS + REALITY 节点，已取消创建。"
