@@ -179,6 +179,8 @@ INSTANCE_ID=main
 PORT=\$(cat "\${REMOTE_PORT_FILE}")
 UUID=\$(cat "\${REMOTE_UUID_FILE}")
 SNI=\$(cat "\${REMOTE_SNI_FILE}")
+ALPN_MODE=off
+TCP_FAST_OPEN=n
 STATE_EOF
   cat > "\${REMOTE_CONFIG_FILE}" <<CONFIG_EOF
 {
@@ -221,6 +223,8 @@ NODE_NAME=cc-us-stl+vless
 PORT=\$(cat "\${REMOTE_PORT_FILE}")
 UUID=\$(cat "\${REMOTE_UUID_FILE}")
 SNI=\$(cat "\${REMOTE_SNI_FILE}")
+ALPN_MODE=off
+TCP_FAST_OPEN=n
 STATE_EOF
   cat > "\${REMOTE_INDEX_FILE}" <<'INDEX_EOF'
 INSTALLED_PROTOCOLS=vless-reality
@@ -502,7 +506,7 @@ EXPORT_EOF
       fi
 
       if [[ "\${actual_lines[0]:-}" == "2" ]]; then
-        [[ "\${#actual_lines[@]}" -eq 10 ]]
+        [[ "\${#actual_lines[@]}" -eq 12 ]]
         [[ "\${actual_lines[1]}" == "1" ]]
         [[ "\${actual_lines[2]}" == "1" ]]
         [[ "\${actual_lines[3]}" == "" ]]
@@ -511,7 +515,9 @@ EXPORT_EOF
         [[ "\${actual_lines[6]}" == "3" ]]
         [[ "\${actual_lines[7]}" == "cdn.cloudflare.com" ]]
         [[ "\${actual_lines[8]}" == "" ]]
-        [[ "\${actual_lines[9]}" == "0" ]]
+        [[ "\${actual_lines[9]}" == "1" ]]
+        [[ "\${actual_lines[10]}" == "n" ]]
+        [[ "\${actual_lines[11]}" == "0" ]]
         printf '8443\n' > "\${REMOTE_PORT_FILE}"
         printf '22222222-2222-4222-8222-222222222222\n' > "\${REMOTE_UUID_FILE}"
         printf 'cdn.cloudflare.com\n' > "\${REMOTE_SNI_FILE}"

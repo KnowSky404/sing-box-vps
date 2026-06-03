@@ -108,6 +108,8 @@ NODE_NAME=cc-us-stl+vless
 PORT=$(cat "${PORT_FILE}")
 UUID=$(cat "${UUID_FILE}")
 SNI=$(cat "${SNI_FILE}")
+ALPN_MODE=off
+TCP_FAST_OPEN=n
 STATE_EOF
   cat > "${CONFIG_FILE}" <<CONFIG_EOF
 {
@@ -150,6 +152,8 @@ NODE_NAME=cc-us-stl+vless
 PORT=$(cat "${PORT_FILE}")
 UUID=$(cat "${UUID_FILE}")
 SNI=$(cat "${SNI_FILE}")
+ALPN_MODE=off
+TCP_FAST_OPEN=n
 STATE_EOF
   cat > "${INDEX_FILE}" <<'INDEX_EOF'
 INSTALLED_PROTOCOLS=vless-reality
@@ -409,7 +413,7 @@ EXPORT_EOF
       fi
 
       if [[ "${actual_lines[0]:-}" == "2" ]]; then
-        if [[ "${#actual_lines[@]}" -ne 10 ]]; then
+        if [[ "${#actual_lines[@]}" -ne 12 ]]; then
           printf 'unexpected update input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
           return 1
         fi
@@ -421,7 +425,9 @@ EXPORT_EOF
         [[ "${actual_lines[6]}" == "3" ]]
         [[ "${actual_lines[7]}" == "cdn.cloudflare.com" ]]
         [[ "${actual_lines[8]}" == "" ]]
-        [[ "${actual_lines[9]}" == "0" ]]
+        [[ "${actual_lines[9]}" == "1" ]]
+        [[ "${actual_lines[10]}" == "n" ]]
+        [[ "${actual_lines[11]}" == "0" ]]
         printf '8443\n' > "${PORT_FILE}"
         printf '22222222-2222-4222-8222-222222222222\n' > "${UUID_FILE}"
         printf 'cdn.cloudflare.com\n' > "${SNI_FILE}"

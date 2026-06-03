@@ -29,6 +29,8 @@ verification_scenario_reconfigure_existing_install() {
 3
 cdn.cloudflare.com
 
+1
+n
 0
 EOF
   after_port=$(jq -r '.inbounds[0].listen_port // empty' /root/sing-box-vps/config.json)
@@ -51,6 +53,8 @@ EOF
   grep -Fqx "PORT=${expected_port}" "${instance_state_file}"
   grep -Fqx "UUID=${expected_uuid}" "${instance_state_file}"
   grep -Fqx "SNI=${expected_sni}" "${instance_state_file}"
+  grep -Fqx 'ALPN_MODE=off' "${instance_state_file}"
+  grep -Fqx 'TCP_FAST_OPEN=n' "${instance_state_file}"
   verification_wait_for_service_active sing-box
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" sing-box check -c /root/sing-box-vps/config.json
   verification_assert_port_listening "${expected_port}" "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.ss-lntp.txt"

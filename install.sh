@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026052602
+# Version: 2026060301
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026052602"
+readonly SCRIPT_VERSION="2026060301"
 readonly SB_SUPPORT_MAX_VERSION="1.13.12"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -803,6 +803,31 @@ validate_optional_positive_integer() {
   [[ -z "${value}" || "${value}" =~ ^[1-9][0-9]*$ ]]
 }
 
+validate_vless_reality_alpn_mode() {
+  case "${1:-off}" in
+    off|h2_http1|http1) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+vless_reality_alpn_json_for_mode() {
+  local mode=${1:-off}
+
+  case "${mode}" in
+    h2_http1) jq -n '["h2", "http/1.1"]' ;;
+    http1) jq -n '["http/1.1"]' ;;
+    *) jq -n 'null' ;;
+  esac
+}
+
+vless_reality_alpn_mode_display_name() {
+  case "${1:-off}" in
+    h2_http1) printf 'h2 + http/1.1' ;;
+    http1) printf 'http/1.1' ;;
+    *) printf '关闭' ;;
+  esac
+}
+
 validate_optional_email() {
   local value=$1
   [[ -z "${value}" || "${value}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]
@@ -1044,8 +1069,13 @@ load_vless_reality_instance_state() {
   SB_VLESS_RATE_LIMIT_UP_MBPS=""
   SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
   SB_OUTBOUND_POLICY="default"
+  SB_VLESS_ALPN_MODE="off"
+  SB_VLESS_TCP_FAST_OPEN="n"
 
   [[ -f "${state_file}" ]] || return 1
+
+  unset INSTANCE_ID ENABLED NODE_NAME PORT UUID SNI SHORT_ID_1 SHORT_ID_2
+  unset RATE_LIMIT_UP_MBPS RATE_LIMIT_DOWN_MBPS ALPN_MODE TCP_FAST_OPEN OUTBOUND_POLICY
 
   # shellcheck disable=SC1090
   source "${state_file}"
@@ -1058,6 +1088,15 @@ load_vless_reality_instance_state() {
   SB_SHORT_ID_2="${SHORT_ID_2:-}"
   SB_VLESS_RATE_LIMIT_UP_MBPS="${RATE_LIMIT_UP_MBPS:-}"
   SB_VLESS_RATE_LIMIT_DOWN_MBPS="${RATE_LIMIT_DOWN_MBPS:-}"
+  if validate_vless_reality_alpn_mode "${ALPN_MODE:-off}"; then
+    SB_VLESS_ALPN_MODE="${ALPN_MODE:-off}"
+  else
+    SB_VLESS_ALPN_MODE="off"
+  fi
+  case "${TCP_FAST_OPEN:-n}" in
+    y|n) SB_VLESS_TCP_FAST_OPEN="${TCP_FAST_OPEN:-n}" ;;
+    *) SB_VLESS_TCP_FAST_OPEN="n" ;;
+  esac
   if validate_instance_outbound_policy "${OUTBOUND_POLICY:-default}"; then
     SB_OUTBOUND_POLICY="${OUTBOUND_POLICY:-default}"
   else
@@ -1083,6 +1122,8 @@ save_vless_reality_instance_state() {
     write_env_assignment "SHORT_ID_2" "${SB_SHORT_ID_2}"
     printf 'RATE_LIMIT_UP_MBPS=%s\n' "${SB_VLESS_RATE_LIMIT_UP_MBPS:-}"
     printf 'RATE_LIMIT_DOWN_MBPS=%s\n' "${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}"
+    write_env_assignment "ALPN_MODE" "${SB_VLESS_ALPN_MODE:-off}"
+    write_env_assignment "TCP_FAST_OPEN" "${SB_VLESS_TCP_FAST_OPEN:-n}"
     write_env_assignment "OUTBOUND_POLICY" "${SB_OUTBOUND_POLICY:-default}"
   } > "${state_file}"
 }
@@ -1903,6 +1944,7 @@ prompt_vless_reality_update() {
 
   prompt_reality_sni_update
   prompt_vless_reality_rate_limit_update_fields
+  prompt_vless_reality_advanced_update_fields
   SB_OUTBOUND_POLICY=$(prompt_instance_outbound_policy "新出站策略" "${SB_OUTBOUND_POLICY:-default}")
 }
 
@@ -2085,6 +2127,36 @@ prompt_vless_reality_rate_limit_update_fields() {
       log_info "保留当前 REALITY 限速: ${current_summary}"
       ;;
   esac
+}
+
+prompt_vless_reality_advanced_update_fields() {
+  local choice tfo_choice current_alpn current_tfo
+
+  SB_VLESS_ALPN_MODE="${SB_VLESS_ALPN_MODE:-off}"
+  validate_vless_reality_alpn_mode "${SB_VLESS_ALPN_MODE}" || SB_VLESS_ALPN_MODE="off"
+  SB_VLESS_TCP_FAST_OPEN="${SB_VLESS_TCP_FAST_OPEN:-n}"
+  [[ "${SB_VLESS_TCP_FAST_OPEN}" == "y" || "${SB_VLESS_TCP_FAST_OPEN}" == "n" ]] || SB_VLESS_TCP_FAST_OPEN="n"
+
+  current_alpn=$(vless_reality_alpn_mode_display_name "${SB_VLESS_ALPN_MODE}")
+  current_tfo="关闭"
+  [[ "${SB_VLESS_TCP_FAST_OPEN}" == "y" ]] && current_tfo="开启"
+
+  echo "[VLESS + REALITY] 高级配置:"
+  echo "- 当前 ALPN: ${current_alpn}"
+  echo "- 当前 TCP Fast Open: ${current_tfo}"
+  echo "ALPN 预设:"
+  echo "1. 关闭 (默认)"
+  echo "2. h2 + http/1.1"
+  echo "3. http/1.1"
+  choice=$(prompt_choice "请选择 ALPN [1-3] (默认 1): " 1 3 1)
+  case "${choice}" in
+    2) SB_VLESS_ALPN_MODE="h2_http1" ;;
+    3) SB_VLESS_ALPN_MODE="http1" ;;
+    *) SB_VLESS_ALPN_MODE="off" ;;
+  esac
+
+  tfo_choice=$(prompt_yes_no "是否启用 TCP Fast Open [y/n] (默认 n): " "n")
+  SB_VLESS_TCP_FAST_OPEN="${tfo_choice}"
 }
 
 prompt_mixed_update() {
@@ -2506,6 +2578,8 @@ prompt_vless_reality_instance_create() {
   SB_SHORT_ID_2=""
   SB_VLESS_RATE_LIMIT_UP_MBPS=""
   SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
+  SB_VLESS_ALPN_MODE="off"
+  SB_VLESS_TCP_FAST_OPEN="n"
   prompt_vless_reality_rate_limit_fields
   SB_OUTBOUND_POLICY=$(prompt_instance_outbound_policy "[VLESS + REALITY] 出站策略" "${SB_OUTBOUND_POLICY:-default}")
   if vless_reality_bandwidth_profile_exists "${SB_VLESS_RATE_LIMIT_UP_MBPS}" "${SB_VLESS_RATE_LIMIT_DOWN_MBPS}" "${SB_VLESS_INSTANCE_ID}"; then
@@ -2876,6 +2950,8 @@ set_protocol_defaults() {
       SB_NODE_NAME="$(default_node_name_for_protocol "vless+reality")"
       SB_PORT="443"
       SB_SNI="${SB_REALITY_SNI_FALLBACK}"
+      SB_VLESS_ALPN_MODE="off"
+      SB_VLESS_TCP_FAST_OPEN="n"
       SB_MIXED_AUTH_ENABLED="y"
       SB_MIXED_USERNAME=""
       SB_MIXED_PASSWORD=""
@@ -4103,12 +4179,13 @@ stack_inbound_listen_address() {
 }
 
 build_vless_inbound_json_for_instance() {
-  local instance_id=$1 tag
+  local instance_id=$1 tag alpn_json
 
   load_vless_reality_protocol_state
   load_vless_reality_instance_state "${instance_id}" || return 1
   ensure_vless_reality_materials
   tag=$(vless_reality_inbound_tag_for_instance "${instance_id}")
+  alpn_json=$(vless_reality_alpn_json_for_mode "${SB_VLESS_ALPN_MODE:-off}")
 
   jq -n \
     --arg tag "${tag}" \
@@ -4120,6 +4197,8 @@ build_vless_inbound_json_for_instance() {
     --arg priv_key "${SB_PRIVATE_KEY}" \
     --arg sid1 "${SB_SHORT_ID_1}" \
     --arg sid2 "${SB_SHORT_ID_2}" \
+    --arg tcp_fast_open "${SB_VLESS_TCP_FAST_OPEN:-n}" \
+    --argjson alpn "${alpn_json}" \
     '{
       "type": "vless",
       "tag": $tag,
@@ -4136,11 +4215,18 @@ build_vless_inbound_json_for_instance() {
           "short_id": [ $sid1, $sid2 ]
         }
       }
-    }'
+    }
+    | if $tcp_fast_open == "y" then . + { "tcp_fast_open": true } else . end
+    | if $alpn == null then . else .tls += { "alpn": $alpn } end'
 }
 
 build_vless_inbound_json_from_current_state() {
+  local alpn_json
+
   ensure_vless_reality_materials
+  SB_VLESS_ALPN_MODE="${SB_VLESS_ALPN_MODE:-off}"
+  SB_VLESS_TCP_FAST_OPEN="${SB_VLESS_TCP_FAST_OPEN:-n}"
+  alpn_json=$(vless_reality_alpn_json_for_mode "${SB_VLESS_ALPN_MODE}")
 
   VLESS_REALITY_DEFAULT_INSTANCE_ID="main"
   VLESS_REALITY_INSTANCE_IDS="main"
@@ -4158,6 +4244,8 @@ build_vless_inbound_json_from_current_state() {
     --arg priv_key "${SB_PRIVATE_KEY}" \
     --arg sid1 "${SB_SHORT_ID_1}" \
     --arg sid2 "${SB_SHORT_ID_2}" \
+    --arg tcp_fast_open "${SB_VLESS_TCP_FAST_OPEN:-n}" \
+    --argjson alpn "${alpn_json}" \
     '{
       "type": "vless",
       "tag": $tag,
@@ -4174,7 +4262,9 @@ build_vless_inbound_json_from_current_state() {
           "short_id": [ $sid1, $sid2 ]
         }
       }
-    }'
+    }
+    | if $tcp_fast_open == "y" then . + { "tcp_fast_open": true } else . end
+    | if $alpn == null then . else .tls += { "alpn": $alpn } end'
 }
 
 build_vless_inbound_json() {
@@ -6332,6 +6422,9 @@ client_outbound_tag_for_protocol() {
 build_client_vless_reality_outbound() {
   local public_ip=${1:-$(get_public_ip)}
   local outbound_tag=${2:-$(client_outbound_tag_for_protocol "vless-reality")}
+  local alpn_json
+
+  alpn_json=$(vless_reality_alpn_json_for_mode "${SB_VLESS_ALPN_MODE:-off}")
 
   jq -n \
     --arg tag "${outbound_tag}" \
@@ -6341,6 +6434,8 @@ build_client_vless_reality_outbound() {
     --arg server_name "${SB_SNI}" \
     --arg public_key "${SB_PUBLIC_KEY}" \
     --arg short_id "${SB_SHORT_ID_1}" \
+    --arg tcp_fast_open "${SB_VLESS_TCP_FAST_OPEN:-n}" \
+    --argjson alpn "${alpn_json}" \
     '{
       "type": "vless",
       "tag": $tag,
@@ -6361,7 +6456,9 @@ build_client_vless_reality_outbound() {
           "short_id": $short_id
         }
       }
-    }'
+    }
+    | if $tcp_fast_open == "y" then . + { "tcp_fast_open": true } else . end
+    | if $alpn == null then . else .tls += { "alpn": $alpn } end'
 }
 
 build_client_vless_reality_outbound_for_instance() {

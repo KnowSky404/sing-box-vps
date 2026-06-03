@@ -83,6 +83,8 @@ SHORT_ID_1=cccccccccccccccc
 SHORT_ID_2=dddddddddddddddd
 RATE_LIMIT_UP_MBPS=
 RATE_LIMIT_DOWN_MBPS=50
+ALPN_MODE=http1
+TCP_FAST_OPEN=y
 EOF
 
 load_protocol_state "vless-reality"
@@ -108,23 +110,28 @@ if [[ "$(jq '[.outbounds[] | select(.type == "vless")] | length' "${EXPECTED_EXP
   exit 1
 fi
 
-if ! jq -e '.outbounds[] | select(.type == "selector" and .tag == "proxy") | (.outbounds | index("vless_main_test-host") != null and index("vless_main_test-host-reality-2") != null)' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+if ! jq -e '.outbounds[] | select(.type == "selector" and .tag == "proxy") | (.outbounds | index("vless_main_test-host-U20M-D100M") != null and index("vless_main_test-host-D50M") != null)' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
   printf 'expected selector to include both REALITY outbound tags, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
-if ! jq -e '.outbounds[] | select(.type == "urltest" and .tag == "auto") | (.outbounds | index("vless_main_test-host") != null and index("vless_main_test-host-reality-2") != null)' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+if ! jq -e '.outbounds[] | select(.type == "urltest" and .tag == "auto") | (.outbounds | index("vless_main_test-host-U20M-D100M") != null and index("vless_main_test-host-D50M") != null)' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
   printf 'expected urltest to include both REALITY outbound tags, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
-if ! jq -e '.outbounds[] | select(.type == "vless" and .tag == "vless_main_test-host") | .server == "203.0.113.10" and .server_port == 443 and .uuid == "11111111-1111-1111-1111-111111111111" and .tls.server_name == "apple.com" and .tls.reality.public_key == "public-key" and .tls.reality.short_id == "aaaaaaaaaaaaaaaa"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+if ! jq -e '.outbounds[] | select(.type == "vless" and .tag == "vless_main_test-host-U20M-D100M") | .server == "203.0.113.10" and .server_port == 443 and .uuid == "11111111-1111-1111-1111-111111111111" and .tls.server_name == "apple.com" and .tls.reality.public_key == "public-key" and .tls.reality.short_id == "aaaaaaaaaaaaaaaa"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
   printf 'expected main REALITY outbound fields, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
-if ! jq -e '.outbounds[] | select(.type == "vless" and .tag == "vless_main_test-host-reality-2") | .server == "203.0.113.10" and .server_port == 8443 and .uuid == "22222222-2222-2222-2222-222222222222" and .tls.server_name == "www.cloudflare.com" and .tls.reality.public_key == "public-key" and .tls.reality.short_id == "cccccccccccccccc"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+if ! jq -e '.outbounds[] | select(.type == "vless" and .tag == "vless_main_test-host-D50M") | .server == "203.0.113.10" and .server_port == 8443 and .uuid == "22222222-2222-2222-2222-222222222222" and .tls.server_name == "www.cloudflare.com" and .tls.reality.public_key == "public-key" and .tls.reality.short_id == "cccccccccccccccc" and .tls.alpn == ["http/1.1"] and .tcp_fast_open == true' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
   printf 'expected second REALITY outbound fields, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+  exit 1
+fi
+
+if ! jq -e '.outbounds[] | select(.type == "vless" and .tag == "vless_main_test-host-U20M-D100M") | (.tcp_fast_open | not) and (.tls | has("alpn") | not)' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected default REALITY outbound to omit advanced fields, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 

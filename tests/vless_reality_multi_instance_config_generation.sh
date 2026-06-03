@@ -91,6 +91,8 @@ SHORT_ID_1=cccccccccccccccc
 SHORT_ID_2=dddddddddddddddd
 RATE_LIMIT_UP_MBPS=
 RATE_LIMIT_DOWN_MBPS=10
+ALPN_MODE=h2_http1
+TCP_FAST_OPEN=y
 EOF
 
 generate_config
@@ -99,6 +101,8 @@ jq -e '
   (.inbounds | length) == 2 and
   any(.inbounds[]; .type == "vless" and .tag == "vless-in" and .listen_port == 443 and .users[0].uuid == "11111111-1111-1111-1111-111111111111") and
   any(.inbounds[]; .type == "vless" and .tag == "vless-reality-limited-10m" and .listen_port == 8443 and .users[0].name == "limited-10m" and .tls.server_name == "www.cloudflare.com") and
+  any(.inbounds[]; .tag == "vless-reality-limited-10m" and .tcp_fast_open == true and .tls.alpn == ["h2", "http/1.1"]) and
+  any(.inbounds[]; .tag == "vless-in" and (.tcp_fast_open | not) and (.tls | has("alpn") | not)) and
   ([.route.rules[] | select(.action == "sniff") | .inbound] | sort) == ["vless-in", "vless-reality-limited-10m"] and
   ([.route.rules[] | select(.action == "direct") | .domain[0]] | sort) == ["apple.com", "www.cloudflare.com"]
 ' "${SINGBOX_CONFIG_FILE}" >/dev/null
