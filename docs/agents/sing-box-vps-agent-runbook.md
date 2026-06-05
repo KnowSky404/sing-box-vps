@@ -172,7 +172,7 @@ Upgrade using the script's supported menu or the non-interactive CLI:
 sbv update sbv
 sbv update sing-box latest
 # or pin the core:
-sbv update sing-box 1.13.12
+sbv update sing-box 1.13.13
 ```
 
 `sbv update sing-box [latest|x.y.z]` only updates a healthy managed instance. If the instance is incomplete or missing, enter the interactive `sbv` menu first to repair, take over, or install it. After upgrade:

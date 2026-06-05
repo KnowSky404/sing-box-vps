@@ -63,7 +63,7 @@ install_binary() {
 
 case "${1:-}" in
   version)
-    printf 'sing-box version 1.13.12\n'
+    printf 'sing-box version 1.13.13\n'
     ;;
   check)
     exit 1
@@ -76,7 +76,7 @@ EOF
   chmod +x "${SINGBOX_BIN_PATH}"
 }
 
-SB_VERSION="1.13.12"
+SB_VERSION="1.13.13"
 update_singbox_binary_preserving_config >/dev/null
 
 if [[ "$("${SINGBOX_BIN_PATH}" marker)" != "old" ]]; then

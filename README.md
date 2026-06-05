@@ -4,8 +4,8 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026060305`
-- sing-box 适配版本：`1.13.12`
+- 脚本版本：`2026060501`
+- sing-box 适配版本：`1.13.13`
 
 ## 🚀 一键安装
 
@@ -60,7 +60,7 @@ VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh
 
 脚本会自动：
 1. 安装所有必要依赖（curl, wget, jq, qrencode 等）。
-2. 下载并配置适配的 `sing-box` (当前适配：1.13.12)。
+2. 下载并配置适配的 `sing-box` (当前适配：1.13.13)。
 3. 生成安全的 **VLESS + REALITY**、**Mixed (HTTP/HTTPS/SOCKS)**、**Hysteria2** 或 **AnyTLS** 配置，并支持多协议共存；其中 VLESS REALITY 支持多实例、独立端口和可选上下行限速。
 4. 以 **`install.sh`** 作为唯一安装与维护真源，并将自己安装为全局命令 **`sbv`**，方便您随时管理。
 
@@ -110,7 +110,7 @@ sbv agent service restart --json --yes
 sbv agent subman-sync --json
 sbv update sbv
 sbv update sing-box latest
-sbv update sing-box 1.13.12
+sbv update sing-box 1.13.13
 ```
 
 - `status`：输出脚本版本、sing-box 版本、服务状态、配置路径和已安装协议。

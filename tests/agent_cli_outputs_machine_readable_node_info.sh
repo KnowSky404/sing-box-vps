@@ -13,7 +13,7 @@ cat > "${TMP_DIR}/bin/sing-box" <<'EOF'
 
 case "${1:-}" in
   version)
-    printf 'sing-box version 1.13.12\n'
+    printf 'sing-box version 1.13.13\n'
     ;;
   check)
     exit 0
@@ -126,9 +126,9 @@ EOF
 status_json=$(agent_cli status --json)
 jq -e '
   .script_version == env.SCRIPT_VERSION
-  and .supported_sing_box_version == "1.13.12"
+  and .supported_sing_box_version == "1.13.13"
   and .service.active_state == "active"
-  and .sing_box.version == "1.13.12"
+  and .sing_box.version == "1.13.13"
   and .paths.config == env.SINGBOX_CONFIG_FILE
   and .protocols == ["vless-reality", "mixed", "hy2", "anytls"]
 ' <<< "${status_json}" >/dev/null

@@ -54,10 +54,10 @@ output=$(timeout 5 bash -c "
   update_singbox_binary_preserving_config() {
     printf '%s\n' \"update_singbox_version=\${SB_VERSION}\"
   }
-  main update-sing-box 1.13.12
+  main update-sing-box 1.13.13
 " 2>&1)
-if [[ "${output}" != *"update_singbox_version=1.13.12"* ]]; then
-  printf 'expected "update-sing-box" to pass SB_VERSION=1.13.12, got:\n%s\n' "${output}" >&2
+if [[ "${output}" != *"update_singbox_version=1.13.13"* ]]; then
+  printf 'expected "update-sing-box" to pass SB_VERSION=1.13.13, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
@@ -85,7 +85,7 @@ if ! grep -Fq '无效版本号' /tmp/sbv-cli-update-invalid.out; then
   exit 1
 fi
 
-if timeout 5 bash -c "source '${TESTABLE_INSTALL}'; check_root() { :; }; detect_existing_instance_state() { printf '%s\n' incomplete; }; main update sing-box 1.13.12" >/tmp/sbv-cli-update-incomplete.out 2>&1; then
+if timeout 5 bash -c "source '${TESTABLE_INSTALL}'; check_root() { :; }; detect_existing_instance_state() { printf '%s\n' incomplete; }; main update sing-box 1.13.13" >/tmp/sbv-cli-update-incomplete.out 2>&1; then
   printf 'expected incomplete sing-box instance update to fail\n' >&2
   exit 1
 fi
