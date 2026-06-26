@@ -140,10 +140,16 @@ printf 'LISTEN 0 0 127.0.0.1:%s 0.0.0.0:*\n' "$(cat "${REMOTE_PORT_FILE}")"
 EOF
 chmod +x "${TMP_DIR}/ss"
 
-cat > "${TMP_DIR}/ssh" <<EOF
+cat > "${TMP_DIR}/docker" <<DOCKER_EOF
 #!${REAL_BASH}
-remote_host=\${1:-}
-shift
+if [[ "\${1:-}" == "image" && "\${2:-}" == "inspect" ]]; then
+  exit 0
+fi
+if [[ "\${1:-}" == "run" && "\${2:-}" == "-d" && "\${3:-}" == "--privileged" ]]; then
+  printf 'test-container\n'
+  exit 0
+fi
+if [[ "\${1:-}" == "exec" && "\${2:-}" == "-i" ]]; then
 script_file="${TMP_DIR}/remote-script.sh"
 cat <<'PAYLOAD_PRELUDE' > "\${script_file}"
 VALID_REALITY_PRIVATE_KEY="IEwVBb_qLcYr1L_CTI5exTWbT7qRgZnr43xP8nC0dkM"
@@ -803,17 +809,24 @@ REMOTE_ASSERT_LOG_FILE="${REMOTE_ASSERT_LOG_FILE}" \
 REMOTE_DISPATCH_LOG_FILE="${REMOTE_DISPATCH_LOG_FILE}" \
 INSTALL_COUNT_FILE="${INSTALL_COUNT_FILE}" \
 REAL_JQ="${REAL_JQ}" \
-PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" -lc "\${1:-}" < "\${script_file}"
-EOF
-chmod +x "${TMP_DIR}/ssh"
+PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" -lc "\${3:-}" < "\${script_file}"
+  exit $?
+fi
+if [[ "\${1:-}" == "rm" && "\${2:-}" == "-f" ]]; then
+  exit 0
+fi
+printf 'unexpected docker call: %s\n' "$*" >&2
+exit 1
+DOCKER_EOF
+chmod +x "${TMP_DIR}/docker"
 
-PATH="${TMP_DIR}:${PATH}" VERIFY_REMOTE_TARGET_FILE="${TMP_DIR}/missing-target.env" VERIFY_REMOTE_HOST=test.example VERIFY_REMOTE_USER=root VERIFY_SKIP_LOCAL_TESTS=1 \
+PATH="${TMP_DIR}:${PATH}" VERIFY_SKIP_LOCAL_TESTS=1 \
   bash "${REPO_ROOT}/dev/verification/run.sh" --changed-file install.sh > "${TMP_DIR}/stdout.txt"
 
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout.txt")
 grep -Fq 'runtime_smoke' "${run_dir}/scenarios.txt"
-grep -Fq 'REMOTE_HOST=root@test.example' "${run_dir}/remote.stdout.log"
-grep -Fq 'remote_target=root@test.example' "${run_dir}/summary.log"
+grep -Fq 'remote_target=docker:test-container' "${run_dir}/summary.log"
+grep -Fq 'remote_target=docker:test-container' "${TMP_DIR}/stdout.txt"
 grep -Fq 'SCENARIO=runtime_smoke' "${run_dir}/remote.stdout.log"
 grep -Fq 'SERVICE_ACTIVE=active' "${run_dir}/remote.stdout.log"
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/sing-box-check.txt" ]]
@@ -842,7 +855,7 @@ grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-r
 grep -Fqx 'jq:-r|.inbounds[0].listen_port // empty|/root/sing-box-vps/config.json' "${REMOTE_ASSERT_LOG_FILE}"
 grep -Fqx 'UUID=11111111-1111-1111-1111-111111111111' "${REMOTE_INSTANCE_STATE_FILE}"
 
-if PATH="${TMP_DIR}:${PATH}" VERIFY_REMOTE_TARGET_FILE="${TMP_DIR}/missing-target.env" VERIFY_REMOTE_HOST=test.example VERIFY_REMOTE_USER=root VERIFY_SKIP_LOCAL_TESTS=1 VERIFY_FAIL_SINGBOX_CHECK=1 \
+if PATH="${TMP_DIR}:${PATH}" VERIFY_SKIP_LOCAL_TESTS=1 VERIFY_FAIL_SINGBOX_CHECK=1 \
   bash "${REPO_ROOT}/dev/verification/run.sh" --changed-file install.sh > "${TMP_DIR}/stdout-fail.txt" 2> "${TMP_DIR}/stderr-fail.txt"; then
   printf 'expected runtime smoke to fail when sing-box check fails\n' >&2
   exit 1

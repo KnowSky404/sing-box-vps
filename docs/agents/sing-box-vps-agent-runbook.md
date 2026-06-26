@@ -8,7 +8,7 @@ This runbook is for AI agents operating the `sing-box-vps` repository and remote
 - Read `AGENTS.md` and `README.md` before changing repository behavior.
 - Use `sing-box-test` for test VPS validation.
 - Use `sing-box-prod` for production VPS operations.
-- Prefer `dev/verification-target.env` for remote verification target configuration when the file exists.
+- Remote verification runs in Docker locally, auto-building the sing-box-vps-verify image. No external SSH target required.
 - Preserve secrets. Do not print private keys, passwords, tokens, full proxy links, or QR payloads unless the user explicitly requests them and the context is safe.
 - Back up runtime config before changing it.
 - Run `sing-box check` after generating or modifying any sing-box server or client config.
@@ -111,11 +111,7 @@ Documentation-only changes do not require `SCRIPT_VERSION` updates.
 
 Use the repository workflow unless the user asks for a direct manual test.
 
-The preferred target is declared in `dev/verification-target.env`:
-
-```bash
-VERIFY_REMOTE_HOST_ALIAS=sing-box-test
-```
+Remote verification runs via Docker locally.
 
 Run:
 

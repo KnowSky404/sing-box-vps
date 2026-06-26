@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026062601`
+- 脚本版本：`2026062602`
 - sing-box 适配版本：`1.13.14`
 
 ## 🚀 一键安装
@@ -23,21 +23,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main
 
 ## 开发验证工作流
 
-推荐先复制一份声明式目标配置：
-
-```bash
-cp configs/verification-target.env.example dev/verification-target.env
-```
-
-默认优先读取 `dev/verification-target.env`。若使用 SSH 主机别名，只需配置：
-
-```bash
-VERIFY_REMOTE_HOST_ALIAS=sing-box-test
-```
-
-当前仓库默认约定使用 `sing-box-test` 作为远程验证目标。新开开发会话时，优先复用这套目标配置，不再临时改回纯环境变量模式。
-
-随后运行：
+Docker 验证镜像自动管理，无需额外配置。
 
 ```bash
 bash dev/verification/run.sh

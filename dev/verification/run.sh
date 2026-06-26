@@ -137,9 +137,11 @@ main() {
   fi
 
   if [[ "${mode}" == "remote" ]]; then
-    require_remote_env
-    printf 'remote_target=%s\n' "${VERIFY_REMOTE_TARGET_LABEL}" >> "${run_dir}/summary.log"
-    if emit_remote_payload | ssh "${VERIFY_REMOTE_SSH_TARGET}" 'bash -s -- '"${scenarios[*]}" \
+    require_docker_env
+    printf 'remote_target=docker:%s\n' "${VERIFY_DOCKER_CONTAINER}" >> "${run_dir}/summary.log"
+    # Trap cleanup even on failure
+    trap 'require_docker_cleanup' EXIT
+    if emit_remote_payload | docker exec -i "${VERIFY_DOCKER_CONTAINER}" bash -s -- "${scenarios[@]}" \
       > "${run_dir}/remote.stdout.log" \
       2> "${run_dir}/remote.stderr.log"; then
       status=0

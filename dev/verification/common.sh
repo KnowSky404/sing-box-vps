@@ -6,7 +6,7 @@ readonly VERIFICATION_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 readonly REPO_ROOT=$(cd "${VERIFICATION_ROOT}/../.." && pwd)
 readonly REMOTE_ARTIFACT_BUNDLE_BEGIN='__SING_BOX_VPS_REMOTE_ARTIFACT_BUNDLE_BEGIN__'
 readonly REMOTE_ARTIFACT_BUNDLE_END='__SING_BOX_VPS_REMOTE_ARTIFACT_BUNDLE_END__'
-readonly DEFAULT_REMOTE_TARGET_FILE="${REPO_ROOT}/dev/verification-target.env"
+readonly DEFAULT_DOCKER_IMAGE="sing-box-vps-verify"
 
 determine_verification_mode() {
   local file
@@ -144,27 +144,28 @@ create_run_dir() {
   done
 }
 
-require_remote_env() {
-  local target_file=${VERIFY_REMOTE_TARGET_FILE:-"${DEFAULT_REMOTE_TARGET_FILE}"}
+require_docker_env() {
+  local image=${VERIFY_DOCKER_IMAGE:-"${DEFAULT_DOCKER_IMAGE}"}
 
-  if [[ -f "${target_file}" ]]; then
-    # shellcheck disable=SC1090
-    source "${target_file}"
-    export VERIFY_REMOTE_TARGET_FILE="${target_file}"
+  if ! command -v docker &>/dev/null; then
+    printf 'ERROR: docker 不可用，请先安装 Docker。\n' >&2
+    return 1
   fi
 
-  if [[ -n "${VERIFY_REMOTE_HOST_ALIAS:-}" ]]; then
-    VERIFY_REMOTE_SSH_TARGET="${VERIFY_REMOTE_HOST_ALIAS}"
-    VERIFY_REMOTE_TARGET_LABEL="${VERIFY_REMOTE_HOST_ALIAS}"
-    export VERIFY_REMOTE_SSH_TARGET VERIFY_REMOTE_TARGET_LABEL
-    return 0
+  if ! docker image inspect "${image}" &>/dev/null; then
+    printf 'INFO: 正在构建 Docker 验证镜像 %s...\n' "${image}"
+    docker build -t "${image}" -f "${REPO_ROOT}/dev/verification/docker/Dockerfile" "${REPO_ROOT}"
   fi
 
-  : "${VERIFY_REMOTE_HOST:?VERIFY_REMOTE_HOST_ALIAS or VERIFY_REMOTE_HOST is required}"
-  : "${VERIFY_REMOTE_USER:?VERIFY_REMOTE_USER is required when VERIFY_REMOTE_HOST_ALIAS is not set}"
-  VERIFY_REMOTE_SSH_TARGET="${VERIFY_REMOTE_USER}@${VERIFY_REMOTE_HOST}"
-  VERIFY_REMOTE_TARGET_LABEL="${VERIFY_REMOTE_SSH_TARGET}"
-  export VERIFY_REMOTE_SSH_TARGET VERIFY_REMOTE_TARGET_LABEL
+  VERIFY_DOCKER_CONTAINER=$(docker run -d --privileged "${image}")
+  export VERIFY_DOCKER_CONTAINER
+}
+
+require_docker_cleanup() {
+  if [[ -n "${VERIFY_DOCKER_CONTAINER:-}" ]]; then
+    docker rm -f "${VERIFY_DOCKER_CONTAINER}" &>/dev/null || true
+    unset VERIFY_DOCKER_CONTAINER
+  fi
 }
 
 extract_remote_artifacts() {

@@ -41,7 +41,7 @@
 - **配置校验**：凡涉及 `sing-box` 服务端或客户端配置文件的生成、导出、重建或任何内容变动，必须执行 `sing-box check` 校验并确认通过后，才可视为完成。
 - **备份机制**：修改关键系统文件或已有配置前，必须进行 `.bak` 备份。
 - **开发验证工作流**：涉及 `install.sh`、`uninstall.sh`、`configs/`、`utils/` 或远程验证框架本身的改动时，默认先运行 `bash dev/verification/run.sh`，命中远程规则时必须执行真实远程验证，不得只停留在本地静态检查。
-- **远程验证目标配置**：远程验证默认优先读取 `dev/verification-target.env`；若该文件存在，后续开发与修复应直接复用，不要在新对话里重新设计另一套入口。兼容的回退方式才是 `VERIFY_REMOTE_HOST_ALIAS` 或 `VERIFY_REMOTE_HOST`/`VERIFY_REMOTE_USER`。
+- **Docker 本地验证**：远程验证基于 Docker 在本地运行，不再依赖外部 SSH 测试机。验证框架自动构建 `sing-box-vps-verify` 镜像并启动特权容器，安装脚本通过 `docker exec -i` 推送执行，结果以 artifact bundle 形式提取。
 - **环境 SSH 别名约定**：本仓库当前固定使用 `sing-box-test` 作为测试环境 SSH 别名，使用 `sing-box-prod` 作为生产环境 SSH 别名；远程验证、生产排查和运维操作必须按环境语义选择对应别名，不得沿用旧的 `sing-box-test-0`/`sing-box-test-1` 测试机约定。
 - **版本规范**：`install.sh` 中的 `SCRIPT_VERSION` 必须使用 `YYYYMMDDXX` 格式，其中前 8 位为日期，后 2 位为当日迭代序号；同步展示给用户的脚本版本信息时也必须保持一致。
 - **版本递增时机**：当一次完整的对话轮次结束且该轮次实际产生了代码或脚本文件修改时，必须同步递增一次脚本版本号；同一轮对话内即使拆分为多个 commit，也只能递增一次版本号，不按 commit 数量递增；若该轮对话未产生代码修改，则不更新版本号。

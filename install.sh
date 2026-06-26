@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026062601"
+readonly SCRIPT_VERSION="2026062602"
 readonly SB_SUPPORT_MAX_VERSION="1.13.14"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -3922,6 +3922,34 @@ open_firewall_port() {
   log_success "端口 ${port} 防火墙配置尝试完成。"
 }
 
+# Close firewall port (reverse of open_firewall_port)
+close_firewall_port() {
+  local port=$1
+  log_info "正在尝试关闭端口 ${port}..."
+
+  # UFW
+  if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
+    ufw delete allow "${port}/tcp" &>/dev/null || true
+    ufw delete allow "${port}/udp" &>/dev/null || true
+  fi
+
+  # Firewalld
+  if command -v firewall-cmd &>/dev/null && firewall-cmd --state &>/dev/null; then
+    firewall-cmd --permanent --remove-port="${port}/tcp" &>/dev/null || true
+    firewall-cmd --permanent --remove-port="${port}/udp" &>/dev/null || true
+    firewall-cmd --reload &>/dev/null || true
+  fi
+
+  # Iptables
+  if command -v iptables &>/dev/null; then
+    iptables -D INPUT -p tcp --dport "${port}" -j ACCEPT &>/dev/null || true
+    iptables -D INPUT -p udp --dport "${port}" -j ACCEPT &>/dev/null || true
+  fi
+
+  log_info "端口 ${port} 防火墙规则清理尝试完成。"
+}
+
+
 # Verify configuration file
 check_config_valid() {
   log_info "正在校验配置文件有效性..."
@@ -5998,11 +6026,12 @@ update_config_only() {
 }
 
 remove_protocol_menu() {
-  local protocols=() remaining_protocols=()
-  local selected_protocol selected_display confirm state_file backup_state_file
-  local index_backup_file config_backup_file joined_protocols first_remaining protocol
-  local reality_instances=() selected_instance instance_state_file backup_instance_state_file
-  local protocol_state_backup_file first_remaining_instance
+  local protocols=() selected_protocols=() remaining_protocols=()
+  local selected_protocol display_str confirm
+  local state_file backup_state_file index_backup_file config_backup_file
+  local joined_protocols first_remaining protocol
+  local reality_instances=() instance_state_file backup_instance_state_file
+  local all_backup_files=() removed_ports=() idx raw_choice raw_choices chosen_protocol display_list
 
   if [[ ! -f "${SINGBOX_CONFIG_FILE}" && ! -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
     log_error "未找到配置文件或协议状态，请先执行安装流程。"
@@ -6016,118 +6045,129 @@ remove_protocol_menu() {
     log_error "当前未检测到已安装协议。"
   fi
 
-  if [[ ${#protocols[@]} -le 1 ]]; then
-    if [[ "${protocols[0]:-}" == "vless-reality" ]]; then
-      migrate_vless_reality_state_to_instances_if_needed
-      mapfile -t reality_instances < <(list_vless_reality_instance_ids)
-      if [[ ${#reality_instances[@]} -le 1 ]]; then
-        log_warn "当前至少保留一个协议，不能删除最后一个已安装协议。"
-        return 0
+  echo -e "\n${BLUE}--- 移除已安装协议 ---${NC}"
+  echo "可用协议:"
+  for idx in "${!protocols[@]}"; do
+    echo "$((idx + 1)). $(protocol_display_name "$(state_protocol_to_runtime "${protocols[$idx]}")")"
+  done
+  echo "0. 返回"
+  echo "留空则移除所有已安装协议。"
+  read -rp "请选择一个或多个协议 [0-${#protocols[@]}]，逗号分隔: " choice
+
+  if [[ -z "$(trim_whitespace "${choice}")" ]]; then
+    selected_protocols=("${protocols[@]}")
+  elif [[ "$(trim_whitespace "${choice}")" == "0" ]]; then
+    return 0
+  else
+    IFS="," read -r -a raw_choices <<< "${choice}"
+    for raw_choice in "${raw_choices[@]}"; do
+      raw_choice=$(trim_whitespace "${raw_choice}")
+      [[ -z "${raw_choice}" ]] && continue
+      if [[ "${raw_choice}" =~ ^[1-9][0-9]*$ ]] && (( raw_choice >= 1 && raw_choice <= ${#protocols[@]} )); then
+        chosen_protocol="${protocols[$((raw_choice - 1))]}"
+        if ! protocol_array_contains "${chosen_protocol}" "${selected_protocols[@]}"; then
+          selected_protocols+=("${chosen_protocol}")
+        fi
+      else
+        log_warn "跳过无效选项: ${raw_choice}"
       fi
-    else
-      log_warn "当前至少保留一个协议，不能删除最后一个已安装协议。"
-      return 0
-    fi
+    done
   fi
 
-  echo -e "\n${BLUE}--- 移除已安装协议 ---${NC}"
-  SELECTED_PROTOCOL=""
-  if ! prompt_installed_protocol_selection; then
+  if [[ ${#selected_protocols[@]} -eq 0 ]]; then
+    log_info "未选择任何协议。"
     return 0
   fi
-  selected_protocol="${SELECTED_PROTOCOL}"
-  [[ -n "${selected_protocol}" ]] || return 0
 
-  if [[ "${selected_protocol}" == "vless-reality" ]]; then
-    migrate_vless_reality_state_to_instances_if_needed
-    mapfile -t reality_instances < <(list_vless_reality_instance_ids)
-    if [[ ${#reality_instances[@]} -gt 1 ]]; then
-      if ! prompt_vless_reality_instance_selection; then
-        return 0
-      fi
-      selected_instance="${SELECTED_VLESS_INSTANCE_ID}"
-      load_vless_reality_instance_state "${selected_instance}" || log_error "未找到 REALITY 实例状态: ${selected_instance}"
-      read -rp "确认移除 REALITY 实例 ${SB_NODE_NAME} (${selected_instance})? [y/N]: " confirm
-      if [[ "${confirm}" != "y" && "${confirm}" != "Y" ]]; then
-        log_info "已取消移除 REALITY 实例。"
-        return 0
-      fi
-
-      instance_state_file=$(vless_reality_instance_state_file "${selected_instance}") || log_error "REALITY 实例 ID 非法: ${selected_instance}"
-      if [[ ! -f "${instance_state_file}" ]]; then
-        log_error "未找到 REALITY 实例状态文件: ${instance_state_file}"
-      fi
-
-      state_file=$(protocol_state_file "vless-reality")
-      if [[ ! -f "${state_file}" ]]; then
-        log_error "未找到协议状态文件: ${state_file}"
-      fi
-
-      backup_instance_state_file="${instance_state_file}.bak.$(date +%Y%m%d%H%M%S)"
-      protocol_state_backup_file=$(mktemp)
-      config_backup_file=$(mktemp)
-
-      cp "${state_file}" "${protocol_state_backup_file}"
-      cp "${SINGBOX_CONFIG_FILE}" "${config_backup_file}"
-      mv "${instance_state_file}" "${backup_instance_state_file}"
-
-      load_vless_reality_protocol_state
-      remove_vless_reality_instance_id_from_list "${selected_instance}"
-      first_remaining_instance="${VLESS_REALITY_INSTANCE_IDS%%,*}"
-      if [[ "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}" == "${selected_instance}" ]]; then
-        VLESS_REALITY_DEFAULT_INSTANCE_ID="${first_remaining_instance}"
-      fi
-      save_vless_reality_protocol_state
-
-      if ! generate_config || ! validate_config_file; then
-        mv "${backup_instance_state_file}" "${instance_state_file}" 2>/dev/null || true
-        cp "${protocol_state_backup_file}" "${state_file}"
-        cp "${config_backup_file}" "${SINGBOX_CONFIG_FILE}"
-        rm -f "${protocol_state_backup_file}" "${config_backup_file}"
-        log_error "移除 REALITY 实例后配置校验失败，已恢复原配置。"
-      fi
-
-      rm -f "${protocol_state_backup_file}" "${config_backup_file}"
-      setup_service
-      load_protocol_state "vless-reality"
-      open_all_protocol_ports
-      refresh_vless_reality_qos_rules
-      systemctl restart sing-box
-      log_success "已移除 REALITY 实例: ${selected_instance}。原状态已备份到: ${backup_instance_state_file}"
-      return 0
-    fi
-  fi
-
-  selected_display=$(protocol_display_name "$(state_protocol_to_runtime "${selected_protocol}")")
-  read -rp "确认移除 ${selected_display}? [y/N]: " confirm
+  display_list=()
+  for selected_protocol in "${selected_protocols[@]}"; do
+    display_list+=("$(protocol_display_name "$(state_protocol_to_runtime "${selected_protocol}")")")
+  done
+  display_str=$(IFS=", "; printf "%s" "${display_list[*]}")
+  read -rp "确认移除下列协议: ${display_str}? [y/N]: " confirm
   if [[ "${confirm}" != "y" && "${confirm}" != "Y" ]]; then
     log_info "已取消移除协议。"
     return 0
   fi
 
-  state_file=$(protocol_state_file "${selected_protocol}")
-  if [[ ! -f "${state_file}" ]]; then
-    log_error "未找到协议状态文件: ${state_file}"
-  fi
-
-  backup_state_file="${state_file}.bak.$(date +%Y%m%d%H%M%S)"
   index_backup_file=$(mktemp)
   config_backup_file=$(mktemp)
-
   cp "${SB_PROTOCOL_INDEX_FILE}" "${index_backup_file}"
   cp "${SINGBOX_CONFIG_FILE}" "${config_backup_file}"
-  mv "${state_file}" "${backup_state_file}"
+
+  for selected_protocol in "${selected_protocols[@]}"; do
+    if [[ "${selected_protocol}" == "vless-reality" ]]; then
+      migrate_vless_reality_state_to_instances_if_needed
+      mapfile -t reality_instances < <(list_vless_reality_instance_ids)
+      if [[ ${#reality_instances[@]} -gt 0 ]]; then
+        for instance_id in "${reality_instances[@]}"; do
+          instance_state_file=$(vless_reality_instance_state_file "${instance_id}") || continue
+          [[ -f "${instance_state_file}" ]] || continue
+          backup_instance_state_file="${instance_state_file}.bak.$(date +%Y%m%d%H%M%S)"
+          mv "${instance_state_file}" "${backup_instance_state_file}"
+          all_backup_files+=("inst:${instance_state_file}:${backup_instance_state_file}")
+          # Capture removed instance port for firewall cleanup
+          removed_ports+=("$(sed -n 's/^PORT=//p' "${backup_instance_state_file}" 2>/dev/null || true)")
+        done
+        state_file=$(protocol_state_file "vless-reality")
+        if [[ -f "${state_file}" ]]; then
+          backup_state_file="${state_file}.bak.$(date +%Y%m%d%H%M%S)"
+          cp "${state_file}" "${backup_state_file}"
+          all_backup_files+=("pstate:${state_file}:${backup_state_file}")
+          VLESS_REALITY_INSTANCE_IDS=""
+          VLESS_REALITY_DEFAULT_INSTANCE_ID=""
+          save_vless_reality_protocol_state
+        fi
+      fi
+    else
+      state_file=$(protocol_state_file "${selected_protocol}")
+      if [[ -f "${state_file}" ]]; then
+        backup_state_file="${state_file}.bak.$(date +%Y%m%d%H%M%S)"
+        mv "${state_file}" "${backup_state_file}"
+        all_backup_files+=("state:${state_file}:${backup_state_file}")
+        # Capture removed protocol port for firewall cleanup
+        removed_ports+=("$(sed -n 's/^PORT=//p' "${backup_state_file}" 2>/dev/null || true)")
+      fi
+    fi
+  done
 
   for protocol in "${protocols[@]}"; do
-    [[ "${protocol}" == "${selected_protocol}" ]] && continue
+    if protocol_array_contains "${protocol}" "${selected_protocols[@]}"; then
+      continue
+    fi
     remaining_protocols+=("${protocol}")
   done
 
-  joined_protocols=$(IFS=,; printf '%s' "${remaining_protocols[*]}")
-  write_protocol_index "${joined_protocols}"
+  if [[ ${#remaining_protocols[@]} -gt 0 ]]; then
+    joined_protocols=$(IFS=,; printf "%s" "${remaining_protocols[*]}")
+    write_protocol_index "${joined_protocols}"
+  else
+    rm -f "${SB_PROTOCOL_INDEX_FILE}"
+    rm -f "${SINGBOX_CONFIG_FILE}"
+    if command -v tc >/dev/null 2>&1; then
+      clear_vless_reality_qos_rules
+    fi
+    systemctl stop sing-box &>/dev/null || true
+    systemctl disable sing-box &>/dev/null || true
+    local removed_port
+    for removed_port in "${removed_ports[@]}"; do
+      [[ -n "${removed_port}" ]] && close_firewall_port "${removed_port}"
+    done
+    log_info "所有协议已移除，sing-box 服务已停止。"
+    return 0
+  fi
 
   if ! generate_config || ! validate_config_file; then
-    mv "${backup_state_file}" "${state_file}" 2>/dev/null || true
+    local fp_entry ftype orig_file backup_file rest
+    for fp_entry in "${all_backup_files[@]}"; do
+      ftype="${fp_entry%%:*}"
+      rest="${fp_entry#*:}"
+      orig_file="${rest%%:*}"
+      backup_file="${rest#*:}"
+      if [[ "${ftype}" == "inst" || "${ftype}" == "state" || "${ftype}" == "pstate" ]]; then
+        mv "${backup_file}" "${orig_file}" 2>/dev/null || true
+      fi
+    done
     cp "${index_backup_file}" "${SB_PROTOCOL_INDEX_FILE}"
     cp "${config_backup_file}" "${SINGBOX_CONFIG_FILE}"
     rm -f "${index_backup_file}" "${config_backup_file}"
@@ -6141,7 +6181,7 @@ remove_protocol_menu() {
   open_all_protocol_ports
   refresh_vless_reality_qos_rules
   systemctl restart sing-box
-  log_success "已移除协议: ${selected_display}。原状态已备份到: ${backup_state_file}"
+  log_success "已移除协议: ${display_str}。"
 }
 
 get_public_ip() {

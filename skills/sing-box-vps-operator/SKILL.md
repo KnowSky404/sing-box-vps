@@ -69,7 +69,7 @@ No production-changing commands will be executed until approved.
 
 - Run `sing-box check` after any generated or modified sing-box server or client configuration.
 - Run `bash dev/verification/run.sh` when changes touch `install.sh`, `uninstall.sh`, `configs/`, `utils/`, or `dev/verification/`.
-- Prefer `dev/verification-target.env` for remote verification.
+- Remote verification runs in Docker locally, auto-building sing-box-vps-verify image. No external SSH target required.
 - Use `sing-box-test` for test validation and `sing-box-prod` only after the production gate.
 
 ## Agent-Friendly CLI
