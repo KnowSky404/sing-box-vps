@@ -8,8 +8,8 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026060501"
-readonly SB_SUPPORT_MAX_VERSION="1.13.13"
+readonly SCRIPT_VERSION="2026062601"
+readonly SB_SUPPORT_MAX_VERSION="1.13.14"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
 readonly UI_COMPACT_MAX_WIDTH=72
