@@ -7595,7 +7595,6 @@ agent_print_help() {
   links         输出完整连接材料，适合受信任 Agent 获取节点信息。
   export-client 生成并校验 sing-box 裸核客户端配置，写入固定路径并输出 JSON。
   warp          输出 Cloudflare Warp 状态，包括启用/路由模式/账户/规则统计。
-  warp          输出 Cloudflare Warp 状态，包括启用/路由模式/账户/规则统计。
   check         执行 sing-box check 并输出结构化结果。
   doctor        输出只读诊断信息和配置校验结果。
   service       执行带 --yes 保护的服务操作，目前支持 restart。
@@ -7639,7 +7638,6 @@ agent_warp_json() {
   elif [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
     warp_route_mode=$(config_detect_warp_route_mode "${SINGBOX_CONFIG_FILE}")
   fi
-  refresh_warp_route_assets
 
   account_registered=false
   has_client_id=false
@@ -7787,6 +7785,8 @@ agent_status_json() {
     if validate_warp_route_mode "${saved_mode}"; then
       warload_mode="${saved_mode}"
     fi
+  elif [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    warload_mode=$(config_detect_warp_route_mode "${SINGBOX_CONFIG_FILE}")
   fi
   active_state=$(systemctl is-active sing-box 2>/dev/null || true)
   installed_version=$("${SINGBOX_BIN_PATH}" version 2>/dev/null | head -n1 | awk '{print $3}' || true)
