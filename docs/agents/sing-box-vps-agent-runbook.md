@@ -211,6 +211,7 @@ sbv agent export-client --json
 sbv agent check --json
 sbv agent doctor --json
 sbv agent service restart --json --yes
+sbv agent warp --json
 sbv agent subman-sync --json
 sbv update sbv
 sbv update sing-box latest
@@ -223,6 +224,7 @@ sbv update sing-box latest
 - `check --json` validates the server config with `sing-box check` and returns stdout, stderr, exit code, and pass/fail state.
 - `doctor --json` is read-only. It returns status, path existence checks, protocol state, and embedded config-check output for first-pass agent diagnostics.
 - `service restart --json --yes` is a guarded mutation. It validates config first and skips restart when validation fails.
+- `warp --json` reports Cloudflare Warp state: enabled/disabled, route mode (`all` or `selective`), account registration health, and counts for custom domains, local rule sets, remote rule sets, and builtin AI/streaming domain rules. Safe for routine diagnostics.
 - `subman-sync --json` pushes nodes to SubMan without prompting. Missing SubMan config is reported as structured JSON.
 - `update sbv` updates `/usr/local/bin/sbv` from the project main branch.
 - `update sing-box [latest|x.y.z]` updates the sing-box binary, preserves the current server config, validates it with `sing-box check`, and restarts the service only after validation passes. The aliases are `sbv update-sbv` and `sbv update-sing-box [latest|x.y.z]`.
@@ -256,6 +258,27 @@ sing-box check -c /root/sing-box-vps/config.json
 ```
 
 Use `nodes --json` for log-safe summaries. Use `links --json` only in trusted contexts because it includes full share links. If QoS or instance membership changes on production, use the production gate before running the interactive menu or guarded service mutations.
+
+## WARP Operations
+
+WARP state can be inspected non-interactively:
+
+```bash
+sbv agent warp --json
+```
+
+This returns `enabled`, `route_mode`, account registration health, and routing asset counts (custom domains, local/remote rule sets, builtin AI/streaming rules) plus related file paths.
+
+`status --json` also includes a `warp` block with `enabled` and `route_mode`.
+
+To change WARP state (enable/disable, mode switch, re-register, add domains or rule sets), use the interactive menu:
+
+```bash
+sbv
+# Navigate: 13 -> Cloudflare Warp
+```
+
+On production, WARP mutations are production-changing operations. Use the production gate first.
 
 ## Client Export And SubMan
 

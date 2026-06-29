@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026062602"
+readonly SCRIPT_VERSION="2026062901"
 readonly SB_SUPPORT_MAX_VERSION="1.13.14"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -7587,12 +7587,15 @@ agent_print_help() {
   sbv agent doctor --json
   sbv agent service restart --json --yes
   sbv agent subman-sync --json
+  sbv agent warp --json
 
 说明:
   status        输出服务、版本、路径和已安装协议。
   nodes         输出节点摘要，不包含完整分享链接或密码。
   links         输出完整连接材料，适合受信任 Agent 获取节点信息。
   export-client 生成并校验 sing-box 裸核客户端配置，写入固定路径并输出 JSON。
+  warp          输出 Cloudflare Warp 状态，包括启用/路由模式/账户/规则统计。
+  warp          输出 Cloudflare Warp 状态，包括启用/路由模式/账户/规则统计。
   check         执行 sing-box check 并输出结构化结果。
   doctor        输出只读诊断信息和配置校验结果。
   service       执行带 --yes 保护的服务操作，目前支持 restart。
@@ -7615,6 +7618,125 @@ agent_json_error() {
     --arg error "${error}" \
     --arg message "${message}" \
     '{ok: false, error: $error, message: $message}'
+}
+
+agent_warp_json() {
+  local warp_enabled warp_route_mode account_registered has_client_id
+  local domains_count exact_count suffix_count local_rules_count remote_rules_count
+  local ai_domains_count ai_suffixes_count stream_domains_count stream_suffixes_count
+  local saved_route_mode raw_line line
+
+  warp_enabled="n"
+  if [[ -f "${SINGBOX_CONFIG_FILE}" ]] && config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; then
+    warp_enabled="y"
+  fi
+  warp_route_mode="selective"
+  if [[ -f "${SB_WARP_ROUTE_SETTINGS_FILE}" ]]; then
+    saved_route_mode=$(grep '^WARP_ROUTE_MODE=' "${SB_WARP_ROUTE_SETTINGS_FILE}" 2>/dev/null | cut -d'=' -f2- | tr -d '\r\n ')
+    if validate_warp_route_mode "${saved_route_mode}"; then
+      warp_route_mode="${saved_route_mode}"
+    fi
+  elif [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    warp_route_mode=$(config_detect_warp_route_mode "${SINGBOX_CONFIG_FILE}")
+  fi
+  refresh_warp_route_assets
+
+  account_registered=false
+  has_client_id=false
+
+  if [[ -f "${SB_WARP_KEY_FILE}" ]]; then
+    account_registered=true
+    if grep -q '^WARP_CLIENT_ID=' "${SB_WARP_KEY_FILE}" 2>/dev/null; then
+      has_client_id=true
+    fi
+  fi
+
+  domains_count=0
+  exact_count=0
+  suffix_count=0
+  if [[ -f "${SB_WARP_DOMAINS_FILE}" ]]; then
+    while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
+      line=${raw_line%%#*}
+      line=$(trim_whitespace "${line}")
+      [[ -z "${line}" ]] && continue
+      domains_count=$((domains_count + 1))
+      if [[ "${line}" == =* ]]; then
+        exact_count=$((exact_count + 1))
+      else
+        suffix_count=$((suffix_count + 1))
+      fi
+    done < "${SB_WARP_DOMAINS_FILE}"
+  fi
+
+  local_rules_count=0
+  if [[ -d "${SB_WARP_LOCAL_RULESET_DIR}" ]]; then
+    local_rules_count=$(find "${SB_WARP_LOCAL_RULESET_DIR}" -maxdepth 1 -type f \( -name '*.json' -o -name '*.srs' \) | wc -l)
+  fi
+
+  remote_rules_count=0
+  if [[ -f "${SB_WARP_REMOTE_RULESETS_FILE}" ]]; then
+    while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
+      line=${raw_line%%#*}
+      line=$(trim_whitespace "${line}")
+      [[ -z "${line}" ]] && continue
+      remote_rules_count=$((remote_rules_count + 1))
+    done < "${SB_WARP_REMOTE_RULESETS_FILE}"
+  fi
+
+  ai_domains_count=$(echo "${WARP_AI_ROUTE_DOMAINS_JSON}" | jq 'length')
+  ai_suffixes_count=$(echo "${WARP_AI_ROUTE_DOMAIN_SUFFIXES_JSON}" | jq 'length')
+  stream_domains_count=$(echo "${WARP_STREAM_ROUTE_DOMAINS_JSON}" | jq 'length')
+  stream_suffixes_count=$(echo "${WARP_STREAM_ROUTE_DOMAIN_SUFFIXES_JSON}" | jq 'length')
+
+  jq -n \
+    --argjson enabled "$([[ "${warp_enabled}" == "y" ]] && printf 'true' || printf 'false')" \
+    --arg route_mode "${warp_route_mode}" \
+    --argjson account_registered "${account_registered}" \
+    --argjson has_client_id "${has_client_id}" \
+    --argjson domains_count "${domains_count}" \
+    --argjson exact_count "${exact_count}" \
+    --argjson suffix_count "${suffix_count}" \
+    --argjson local_rule_sets_count "${local_rules_count}" \
+    --argjson remote_rule_sets_count "${remote_rules_count}" \
+    --argjson ai_domains_count "${ai_domains_count}" \
+    --argjson ai_suffixes_count "${ai_suffixes_count}" \
+    --argjson stream_domains_count "${stream_domains_count}" \
+    --argjson stream_suffixes_count "${stream_suffixes_count}" \
+    --arg key_file "${SB_WARP_KEY_FILE}" \
+    --arg route_settings_file "${SB_WARP_ROUTE_SETTINGS_FILE}" \
+    --arg domains_file "${SB_WARP_DOMAINS_FILE}" \
+    --arg remote_rule_sets_file "${SB_WARP_REMOTE_RULESETS_FILE}" \
+    --arg local_rule_set_dir "${SB_WARP_LOCAL_RULESET_DIR}" \
+    '{
+      "enabled": $enabled,
+      "route_mode": $route_mode,
+      "account": {
+        "registered": $account_registered,
+        "has_client_id": $has_client_id
+      },
+      "routing": {
+        "custom_domains": {
+          "total": $domains_count,
+          "exact": $exact_count,
+          "suffix": $suffix_count
+        },
+        "local_rule_sets_count": $local_rule_sets_count,
+        "remote_rule_sets_count": $remote_rule_sets_count,
+        "builtin": {
+          "ai_domains": $ai_domains_count,
+          "ai_suffixes": $ai_suffixes_count,
+          "stream_domains": $stream_domains_count,
+          "stream_suffixes": $stream_suffixes_count
+        }
+      },
+      "paths": {
+        "key_file": $key_file,
+        "route_settings": $route_settings_file,
+        "domains": $domains_file,
+        "remote_rule_sets": $remote_rule_sets_file,
+        "local_rule_set_dir": $local_rule_set_dir
+      }
+    }'
 }
 
 agent_singbox_check_json() {
@@ -7651,9 +7773,21 @@ agent_installed_protocols_json() {
 }
 
 agent_status_json() {
-  local installed_protocols_json active_state installed_version
+  local installed_protocols_json active_state installed_version warload_mode warload_enabled
 
   installed_protocols_json=$(agent_installed_protocols_json)
+  warload_mode="selective"
+  warload_enabled=false
+  if [[ -f "${SINGBOX_CONFIG_FILE}" ]] && config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; then
+    warload_enabled=true
+  fi
+  if [[ -f "${SB_WARP_ROUTE_SETTINGS_FILE}" ]]; then
+    local saved_mode
+    saved_mode=$(grep '^WARP_ROUTE_MODE=' "${SB_WARP_ROUTE_SETTINGS_FILE}" 2>/dev/null | cut -d'=' -f2- | tr -d '\r\n ')
+    if validate_warp_route_mode "${saved_mode}"; then
+      warload_mode="${saved_mode}"
+    fi
+  fi
   active_state=$(systemctl is-active sing-box 2>/dev/null || true)
   installed_version=$("${SINGBOX_BIN_PATH}" version 2>/dev/null | head -n1 | awk '{print $3}' || true)
 
@@ -7667,6 +7801,8 @@ agent_status_json() {
     --arg protocol_state_dir "${SB_PROTOCOL_STATE_DIR}" \
     --arg client_export_path "$(client_export_file_path)" \
     --argjson protocols "${installed_protocols_json}" \
+    --argjson warp_enabled "$([[ "${warload_enabled}" == true ]] && printf 'true' || printf 'false')" \
+    --arg warp_route_mode "${warload_mode}" \
     '{
       "script_version": $script_version,
       "supported_sing_box_version": $supported_version,
@@ -7684,7 +7820,11 @@ agent_status_json() {
         "protocol_state_dir": $protocol_state_dir,
         "client_export": $client_export_path
       },
-      "protocols": $protocols
+      "protocols": $protocols,
+      "warp": {
+        "enabled": $warp_enabled,
+        "route_mode": $warp_route_mode
+      }
     }'
 }
 
@@ -8114,6 +8254,10 @@ agent_cli() {
     export-client)
       agent_require_json_flag "${1:-}" || return 1
       agent_export_client_json
+      ;;
+    warp)
+      agent_require_json_flag "${1:-}" || return 1
+      agent_warp_json
       ;;
     check)
       agent_require_json_flag "${1:-}" || return 1

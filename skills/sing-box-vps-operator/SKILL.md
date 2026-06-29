@@ -84,6 +84,7 @@ sbv agent export-client --json
 sbv agent check --json
 sbv agent doctor --json
 sbv agent service restart --json --yes
+sbv agent warp --json
 sbv agent subman-sync --json
 sbv update sbv
 sbv update sing-box latest
@@ -95,6 +96,7 @@ sbv update sing-box latest
 - Use `export-client --json` to generate and validate the sing-box bare-core client config. It writes the client export file but does not mutate the running server config or restart service.
 - Use `check --json` and `doctor --json` for non-mutating service/config diagnostics.
 - Use `service restart --json --yes` only after confirming the target is safe to mutate. It validates config before restart.
+- Use `warp --json` to inspect Cloudflare Warp status: enabled state, route mode, account health, custom domain counts, rule-set counts, and builtin AI/streaming rule tallies. Safe for routine diagnostics.
 - Use `subman-sync --json` only in trusted contexts with configured SubMan credentials; it pushes VLESS REALITY and Hysteria2 node material.
 - Use `update sbv` to refresh `/usr/local/bin/sbv`; alias: `sbv update-sbv`.
 - Use `update sing-box [latest|x.y.z]` to update a healthy managed sing-box instance non-interactively. It preserves config, runs `sing-box check`, and restarts only after validation passes. Alias: `sbv update-sing-box [latest|x.y.z]`.

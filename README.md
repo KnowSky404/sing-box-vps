@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026062602`
+- 脚本版本：`2026062901`
 - sing-box 适配版本：`1.13.14`
 
 ## 🚀 一键安装
@@ -93,6 +93,7 @@ sbv agent export-client --json
 sbv agent check --json
 sbv agent doctor --json
 sbv agent service restart --json --yes
+sbv agent warp --json
 sbv agent subman-sync --json
 sbv update sbv
 sbv update sing-box latest
@@ -102,6 +103,7 @@ sbv update sing-box 1.13.14
 - `status`：输出脚本版本、sing-box 版本、服务状态、配置路径和已安装协议。
 - `nodes`：输出节点摘要，不包含完整分享链接或密码，适合写入普通诊断日志。
 - `links`：输出完整连接材料，包括 VLESS/Hysteria2 分享链接、Mixed HTTP/SOCKS 链接，以及 AnyTLS outbound JSON；仅在受信任上下文使用。
+- `warp`：输出 Cloudflare Warp 状态（启用/路由模式/账户/自定义域名规则集统计），安全用于日常诊断。
 - `export-client`：生成并通过 `sing-box check` 校验裸核客户端配置，写入 `/root/sing-box-vps/client/sing-box-client.json`，覆盖前创建 `.bak` 备份，同时以 JSON 返回路径和配置内容。
 - `check`：执行 `sing-box check` 校验服务端配置，并返回 stdout、stderr、退出码和是否通过。
 - `doctor`：输出只读诊断报告，包含服务状态、路径存在性、协议状态和嵌入的配置校验结果。
