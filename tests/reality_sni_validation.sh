@@ -18,6 +18,13 @@ mkdir -p "${TMP_DIR}/project"
 # shellcheck disable=SC1090
 source "${TESTABLE_INSTALL}"
 
+for candidate in "${SB_REALITY_SNI_CANDIDATES[@]}"; do
+  if [[ "${candidate,,}" == *microsoft* ]]; then
+    printf 'default SNI candidate contains Microsoft domain: %s\n' "${candidate}" >&2
+    exit 1
+  fi
+done
+
 if ! validate_reality_sni_syntax "www.example.com"; then
   printf 'expected valid domain syntax to pass\n' >&2
   exit 1

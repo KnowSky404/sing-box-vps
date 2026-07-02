@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026060501
+# Version: 2026070201
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026062901"
+readonly SCRIPT_VERSION="2026070201"
 readonly SB_SUPPORT_MAX_VERSION="1.13.14"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -55,7 +55,6 @@ readonly SB_HIGH_PORT_MAX="65535"
 readonly SB_REALITY_SNI_FALLBACK="www.apple.com"
 SB_REALITY_SNI_CANDIDATES=(
   "www.apple.com"
-  "www.microsoft.com"
   "www.cloudflare.com"
   "www.amazon.com"
   "www.bing.com"
