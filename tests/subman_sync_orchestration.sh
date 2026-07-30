@@ -103,12 +103,17 @@ detect_host_ip_stack() {
 
 PUSH_KEYS_FILE="${TMP_DIR}/subman-push-keys.txt"
 PUSH_PAYLOADS_FILE="${TMP_DIR}/subman-push-payloads.jsonl"
+CLEANUP_KEYS_FILE="${TMP_DIR}/subman-cleanup-keys.txt"
 push_subman_node() {
   local external_key=$1
   local payload_json=$2
 
   printf '%s\n' "${external_key}" >> "${PUSH_KEYS_FILE}"
   printf '%s\n' "${payload_json}" >> "${PUSH_PAYLOADS_FILE}"
+}
+
+delete_subman_node_by_external_key() {
+  printf '%s\n' "$1" >> "${CLEANUP_KEYS_FILE}"
 }
 
 SB_INBOUND_STACK_MODE="dual_stack"
@@ -119,8 +124,8 @@ if [[ "${output}" != *"SubMan 推送完成：已同步: 3，已跳过: 2，失�
   exit 1
 fi
 
-if [[ "$(wc -l < "${PUSH_KEYS_FILE}")" -ne 4 ]]; then
-  printf 'expected exactly 4 pushed nodes including legacy cleanup, got keys:\n%s\n' "$(cat "${PUSH_KEYS_FILE}")" >&2
+if [[ "$(wc -l < "${PUSH_KEYS_FILE}")" -ne 3 ]]; then
+  printf 'expected exactly 3 node upserts, got keys:\n%s\n' "$(cat "${PUSH_KEYS_FILE}")" >&2
   exit 1
 fi
 
@@ -134,8 +139,8 @@ if ! grep -Fxq "sing-box-vps:edge-1:vless-reality:v6" "${PUSH_KEYS_FILE}"; then
   exit 1
 fi
 
-if ! grep -Fxq "sing-box-vps:edge-1:vless-reality" "${PUSH_KEYS_FILE}"; then
-  printf 'expected legacy vless-reality external key cleanup, got:\n%s\n' "$(cat "${PUSH_KEYS_FILE}")" >&2
+if ! grep -Fxq "sing-box-vps:edge-1:vless-reality" "${CLEANUP_KEYS_FILE}"; then
+  printf 'expected legacy vless-reality external key deletion, got:\n%s\n' "$(cat "${CLEANUP_KEYS_FILE}")" >&2
   exit 1
 fi
 
@@ -159,8 +164,8 @@ if [[ "$(jq -r 'select(.type == "vless" and .name == "edge-vless-v6") | .raw' "$
   exit 1
 fi
 
-if [[ "$(jq -r 'select(.type == "vless" and .enabled == false) | .name' "${PUSH_PAYLOADS_FILE}")" != "edge-vless" ]]; then
-  printf 'expected legacy vless payload to be disabled, got:\n%s\n' "$(cat "${PUSH_PAYLOADS_FILE}")" >&2
+if jq -e 'select(.raw == "")' "${PUSH_PAYLOADS_FILE}" >/dev/null; then
+  printf 'expected every SubMan upsert payload to keep a non-empty raw value, got:\n%s\n' "$(cat "${PUSH_PAYLOADS_FILE}")" >&2
   exit 1
 fi
 
@@ -176,6 +181,65 @@ fi
 
 printf '' > "${PUSH_KEYS_FILE}"
 printf '' > "${PUSH_PAYLOADS_FILE}"
+printf '' > "${CLEANUP_KEYS_FILE}"
+
+push_subman_node() {
+  local external_key=$1
+  local payload_json=$2
+
+  if [[ "${external_key}" == *":v6" ]]; then
+    SUBMAN_LAST_ERROR_CODE="gist_write_failed"
+    SUBMAN_LAST_ERROR_DISPOSITION="retryable-upstream"
+    SUBMAN_LAST_HTTP_STATUS="502"
+    return 1
+  fi
+  printf '%s\n' "${external_key}" >> "${PUSH_KEYS_FILE}"
+  printf '%s\n' "${payload_json}" >> "${PUSH_PAYLOADS_FILE}"
+}
+
+set +e
+partial_output=$(push_nodes_to_subman 2>&1)
+partial_status=$?
+set -e
+if [[ "${partial_status}" -eq 0 || "${partial_output}" != *"已同步: 2，已跳过: 2，失败: 1"* ]]; then
+  printf 'expected partial dual-stack failure to be reported, got status=%s output:\n%s\n' "${partial_status}" "${partial_output}" >&2
+  exit 1
+fi
+if [[ -s "${CLEANUP_KEYS_FILE}" ]]; then
+  printf 'expected partial dual-stack sync to preserve the legacy fallback key, got:\n%s\n' "$(cat "${CLEANUP_KEYS_FILE}")" >&2
+  exit 1
+fi
+
+set +e
+partial_agent_json=$(agent_push_nodes_to_subman_json)
+partial_agent_status=$?
+set -e
+if [[ "${partial_agent_status}" -eq 0 ]]; then
+  printf 'expected agent SubMan sync to fail for the partial dual-stack write\n' >&2
+  exit 1
+fi
+if ! jq -e '
+  .ok == false
+  and .failed == 1
+  and .last_error.code == "gist_write_failed"
+  and .last_error.disposition == "retryable-upstream"
+  and .last_error.http_status == "502"
+' >/dev/null <<< "${partial_agent_json}"; then
+  printf 'expected agent JSON to retain the stable SubMan failure, got:\n%s\n' "${partial_agent_json}" >&2
+  exit 1
+fi
+
+push_subman_node() {
+  local external_key=$1
+  local payload_json=$2
+
+  printf '%s\n' "${external_key}" >> "${PUSH_KEYS_FILE}"
+  printf '%s\n' "${payload_json}" >> "${PUSH_PAYLOADS_FILE}"
+}
+
+printf '' > "${PUSH_KEYS_FILE}"
+printf '' > "${PUSH_PAYLOADS_FILE}"
+printf '' > "${CLEANUP_KEYS_FILE}"
 
 get_public_ip() {
   printf '198.51.100.20\n'
@@ -204,6 +268,11 @@ fi
 
 if jq -e 'select(.type == "vless" and .enabled == false)' "${PUSH_PAYLOADS_FILE}" >/dev/null; then
   printf 'expected fallback vless sync not to disable the same legacy key, got:\n%s\n' "$(cat "${PUSH_PAYLOADS_FILE}")" >&2
+  exit 1
+fi
+
+if [[ -s "${CLEANUP_KEYS_FILE}" ]]; then
+  printf 'expected single-address fallback not to delete its active legacy key, got:\n%s\n' "$(cat "${CLEANUP_KEYS_FILE}")" >&2
   exit 1
 fi
 

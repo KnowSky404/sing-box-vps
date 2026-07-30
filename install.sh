@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026073001
+# Version: 2026073002
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026073001"
+readonly SCRIPT_VERSION="2026073002"
 readonly SB_SUPPORT_MAX_VERSION="1.13.15"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
@@ -119,6 +119,12 @@ SB_WARP_RULE_SET_TAGS_JSON='[]'
 SUBMAN_API_URL=""
 SUBMAN_API_TOKEN=""
 SUBMAN_NODE_PREFIX=""
+SUBMAN_LAST_HTTP_STATUS=""
+SUBMAN_LAST_ERROR_CODE=""
+SUBMAN_LAST_ERROR_DISPOSITION=""
+SUBMAN_LAST_RETRY_AFTER=""
+SUBMAN_LAST_REVISION=""
+SUBMAN_LAST_NODE_ID=""
 
 # --- Common Utilities ---
 warp_client_id_to_reserved_json() {
@@ -6490,29 +6496,6 @@ build_subman_node_payload() {
     }'
 }
 
-build_subman_disabled_node_payload() {
-  local protocol base_name node_type prefix
-  protocol=$(normalize_protocol_id "$1")
-  base_name=${2:-}
-  node_type=$(subman_type_for_protocol "${protocol}") || return 1
-  prefix=$(subman_node_prefix)
-  base_name=$(trim_whitespace "$(display_node_name_for_protocol "${protocol}" "${base_name}" "")")
-  [[ -z "${base_name}" ]] && base_name="${prefix} ${protocol}"
-
-  jq -n \
-    --arg name "${base_name}" \
-    --arg type "${node_type}" \
-    --arg prefix "${prefix}" \
-    '{
-      "name": $name,
-      "type": $type,
-      "raw": "",
-      "enabled": false,
-      "tags": ["sing-box-vps", $prefix, "legacy-disabled"],
-      "source": "single"
-    }'
-}
-
 push_subman_protocol_instance() {
   local protocol=$1
   local public_ip=$2
@@ -6538,91 +6521,353 @@ push_subman_protocol_instance() {
   fi
 }
 
-push_subman_legacy_protocol_key_cleanup() {
-  local protocol=$1
-  local instance_id=${2:-}
-  local quiet=${3:-n}
-  local external_key payload_json
+reset_subman_api_result() {
+  SUBMAN_LAST_HTTP_STATUS=""
+  SUBMAN_LAST_ERROR_CODE=""
+  SUBMAN_LAST_ERROR_DISPOSITION=""
+  SUBMAN_LAST_RETRY_AFTER=""
+  SUBMAN_LAST_REVISION=""
+  SUBMAN_LAST_NODE_ID=""
+  SUBMAN_LAST_RESPONSE_BODY=""
+  SUBMAN_LAST_RESPONSE_ETAG=""
+  SUBMAN_LAST_RESPONSE_REVISION=""
+}
 
-  if ! external_key=$(subman_external_key_for_protocol "${protocol}" "${instance_id}" ""); then
-    [[ "${quiet}" == "y" ]] || print_warn "生成 SubMan 旧节点清理键失败: ${protocol}"
+subman_set_client_error() {
+  SUBMAN_LAST_ERROR_CODE=$1
+  SUBMAN_LAST_ERROR_DISPOSITION=$2
+}
+
+validate_subman_node_request() {
+  local external_key=$1
+  local payload_json=$2
+  local external_key_bytes
+
+  external_key_bytes=$(printf '%s' "${external_key}" | wc -c | tr -d '[:space:]')
+  if [[ -z "${external_key}" || "${external_key_bytes}" -gt 256 ]]; then
+    subman_set_client_error "invalid_external_key" "invalid-request"
     return 1
   fi
 
-  if ! payload_json=$(build_subman_disabled_node_payload "${protocol}" "${SB_NODE_NAME:-}"); then
-    [[ "${quiet}" == "y" ]] || print_warn "生成 SubMan 旧节点清理载荷失败: ${protocol}"
+  if ! jq -e '
+    type == "object"
+    and (.name | type == "string" and utf8bytelength > 0 and utf8bytelength <= 256)
+    and (.type | type == "string" and IN("vless", "vmess", "trojan", "ss", "ssr", "hysteria2", "tuic", "anytls", "other"))
+    and (.raw | type == "string" and utf8bytelength > 0 and utf8bytelength <= 16384)
+    and ((.enabled // true) | type == "boolean")
+    and ((.source // "single") | IN("single", "subscription"))
+    and ((.tags // []) | type == "array" and length <= 64)
+    and all((.tags // [])[];
+      if type == "string" then
+        utf8bytelength > 0 and utf8bytelength <= 128 and (ascii_downcase | startswith("external:") | not)
+      elif type == "object" then
+        (.label | type == "string" and utf8bytelength > 0 and utf8bytelength <= 128 and (ascii_downcase | startswith("external:") | not))
+      else
+        false
+      end
+    )
+  ' >/dev/null 2>&1 <<< "${payload_json}"; then
+    subman_set_client_error "invalid_node_payload" "invalid-request"
+    return 1
+  fi
+}
+
+subman_api_request() {
+  local method=$1
+  local path=$2
+  local payload_json=${3:-}
+  local if_match=${4:-}
+  local api_url endpoint tmp_dir request_dir config_file payload_file headers_file body_file stderr_file
+  local escaped_token escaped_if_match http_status curl_status
+
+  reset_subman_api_result
+  api_url=$(normalize_subman_api_url "${SUBMAN_API_URL:-}")
+  if [[ -z "${api_url}" ]]; then
+    subman_set_client_error "api_url_missing" "invalid-request"
+    return 1
+  fi
+  if [[ -z "${SUBMAN_API_TOKEN:-}" ]]; then
+    subman_set_client_error "api_token_missing" "auth-required"
     return 1
   fi
 
-  if [[ "${quiet}" == "y" ]]; then
-    push_subman_node "${external_key}" "${payload_json}" >/dev/null
+  endpoint="${api_url}${path}"
+  tmp_dir=${TMPDIR:-/tmp}
+  if ! request_dir=$(mktemp -d "${tmp_dir%/}/subman-api.XXXXXX"); then
+    subman_set_client_error "temporary_file_failed" "operator-repair"
+    return 1
+  fi
+  if ! chmod 700 "${request_dir}"; then
+    rm -rf -- "${request_dir}" || true
+    subman_set_client_error "temporary_file_failed" "operator-repair"
+    return 1
+  fi
+  config_file="${request_dir}/curl.conf"
+  payload_file="${request_dir}/payload.json"
+  headers_file="${request_dir}/headers.txt"
+  body_file="${request_dir}/body.json"
+  stderr_file="${request_dir}/curl.stderr"
+  if ! {
+    : > "${headers_file}"
+    : > "${body_file}"
+    : > "${stderr_file}"
+    chmod 600 "${headers_file}" "${body_file}" "${stderr_file}"
+  }; then
+    rm -rf -- "${request_dir}" || true
+    subman_set_client_error "temporary_file_failed" "operator-repair"
+    return 1
+  fi
+
+  escaped_token=${SUBMAN_API_TOKEN//\\/\\\\}
+  escaped_token=${escaped_token//\"/\\\"}
+  if ! {
+    printf 'header = "Authorization: Bearer %s"\n' "${escaped_token}"
+    if [[ -n "${payload_json}" ]]; then
+      printf 'header = "Content-Type: application/json"\n'
+    fi
+    if [[ -n "${if_match}" ]]; then
+      escaped_if_match=${if_match//\\/\\\\}
+      escaped_if_match=${escaped_if_match//\"/\\\"}
+      printf 'header = "If-Match: %s"\n' "${escaped_if_match}"
+    fi
+  } > "${config_file}" || ! chmod 600 "${config_file}"; then
+    rm -rf -- "${request_dir}" || true
+    subman_set_client_error "temporary_file_failed" "operator-repair"
+    return 1
+  fi
+
+  if [[ -n "${payload_json}" ]]; then
+    if ! printf '%s' "${payload_json}" > "${payload_file}" || ! chmod 600 "${payload_file}"; then
+      rm -rf -- "${request_dir}" || true
+      subman_set_client_error "temporary_file_failed" "operator-repair"
+      return 1
+    fi
+  fi
+
+  if [[ -n "${payload_json}" ]]; then
+    if http_status=$(curl -sS --config "${config_file}" -X "${method}" "${endpoint}" \
+      --data-binary "@${payload_file}" -D "${headers_file}" -o "${body_file}" \
+      -w '%{http_code}' 2> "${stderr_file}"); then
+      curl_status=0
+    else
+      curl_status=$?
+    fi
   else
-    push_subman_node "${external_key}" "${payload_json}"
+    if http_status=$(curl -sS --config "${config_file}" -X "${method}" "${endpoint}" \
+      -D "${headers_file}" -o "${body_file}" -w '%{http_code}' 2> "${stderr_file}"); then
+      curl_status=0
+    else
+      curl_status=$?
+    fi
+  fi
+
+  SUBMAN_LAST_HTTP_STATUS=${http_status:-000}
+  SUBMAN_LAST_RESPONSE_BODY=$(cat "${body_file}")
+  SUBMAN_LAST_RESPONSE_ETAG=$(awk 'BEGIN { IGNORECASE=1 } /^ETag:/ { sub(/\r$/, ""); sub(/^[^:]*:[[:space:]]*/, ""); value=$0 } END { print value }' "${headers_file}")
+  SUBMAN_LAST_RESPONSE_REVISION=$(awk 'BEGIN { IGNORECASE=1 } /^X-SubMan-Revision:/ { sub(/\r$/, ""); sub(/^[^:]*:[[:space:]]*/, ""); value=$0 } END { print value }' "${headers_file}")
+  SUBMAN_LAST_RETRY_AFTER=$(awk 'BEGIN { IGNORECASE=1 } /^Retry-After:/ { sub(/\r$/, ""); sub(/^[^:]*:[[:space:]]*/, ""); value=$0 } END { print value }' "${headers_file}")
+  [[ "${SUBMAN_LAST_RETRY_AFTER}" =~ ^[0-9]+$ ]] || SUBMAN_LAST_RETRY_AFTER=""
+  if ! rm -rf -- "${request_dir}"; then
+    subman_set_client_error "temporary_cleanup_failed" "operator-repair"
+    return 1
+  fi
+
+  if [[ "${curl_status}" -ne 0 ]]; then
+    subman_set_client_error "transport_error" "unknown-outcome"
+    return 1
+  fi
+}
+
+capture_subman_api_error() {
+  local error_code error_disposition
+  error_code=$(jq -r 'if (.error.code | type) == "string" then .error.code else empty end' 2>/dev/null <<< "${SUBMAN_LAST_RESPONSE_BODY}" || true)
+  error_disposition=$(jq -r 'if (.error.disposition | type) == "string" then .error.disposition else empty end' 2>/dev/null <<< "${SUBMAN_LAST_RESPONSE_BODY}" || true)
+  SUBMAN_LAST_ERROR_CODE=${error_code:-unexpected_response}
+  SUBMAN_LAST_ERROR_DISPOSITION=${error_disposition:-operator-repair}
+}
+
+report_subman_api_failure() {
+  local action=$1
+  local detail="HTTP ${SUBMAN_LAST_HTTP_STATUS:-000}"
+
+  [[ -n "${SUBMAN_LAST_ERROR_CODE}" ]] && detail="${detail}, ${SUBMAN_LAST_ERROR_CODE}"
+  [[ -n "${SUBMAN_LAST_ERROR_DISPOSITION}" ]] && detail="${detail}/${SUBMAN_LAST_ERROR_DISPOSITION}"
+  if [[ -n "${SUBMAN_LAST_RETRY_AFTER}" ]]; then
+    detail="${detail}, Retry-After ${SUBMAN_LAST_RETRY_AFTER}s"
+  fi
+  print_warn "SubMan ${action}失败: ${detail}"
+  if [[ "${SUBMAN_LAST_ERROR_DISPOSITION}" == "unknown-outcome" ]]; then
+    print_warn "请求结果不确定；请先在 SubMan 查询节点状态，不要直接盲目重试。"
+  fi
+}
+
+validate_subman_workspace_response() {
+  local response_kind=$1
+  local expected_external_key=${2:-}
+  local body_revision expected_etag external_label
+  local jq_filter
+
+  case "${response_kind}" in
+    node)
+      jq_filter='(.data.id | type == "string" and length > 0) and (.data.tags | type == "array")'
+      ;;
+    list)
+      jq_filter='(.data | type == "array")'
+      ;;
+    delete)
+      jq_filter='(.data.deleted == true)'
+      ;;
+    *)
+      subman_set_client_error "unexpected_response" "operator-repair"
+      return 1
+      ;;
+  esac
+
+  if ! jq -e "${jq_filter} and (.workspace.file == \"subman.json\") and (.workspace.revision | type == \"number\" and . >= 0 and floor == .)" \
+    >/dev/null 2>&1 <<< "${SUBMAN_LAST_RESPONSE_BODY}"; then
+    subman_set_client_error "unexpected_response" "operator-repair"
+    return 1
+  fi
+
+  body_revision=$(jq -r '.workspace.revision' <<< "${SUBMAN_LAST_RESPONSE_BODY}")
+  expected_etag="\"subman-revision-${body_revision}\""
+  if [[ "${SUBMAN_LAST_RESPONSE_REVISION}" != "${body_revision}" || "${SUBMAN_LAST_RESPONSE_ETAG}" != "${expected_etag}" ]]; then
+    subman_set_client_error "revision_contract_mismatch" "operator-repair"
+    return 1
+  fi
+
+  if [[ "${response_kind}" == "node" && -n "${expected_external_key}" ]]; then
+    external_label="external:${expected_external_key}"
+    if ! jq -e --arg label "${external_label}" '
+      any(.data.tags[]?; (if type == "string" then . else .label end) == $label)
+    ' >/dev/null 2>&1 <<< "${SUBMAN_LAST_RESPONSE_BODY}"; then
+      subman_set_client_error "external_key_contract_mismatch" "operator-repair"
+      return 1
+    fi
+  fi
+
+  SUBMAN_LAST_REVISION=${body_revision}
+  if [[ "${response_kind}" == "node" ]]; then
+    SUBMAN_LAST_NODE_ID=$(jq -r '.data.id' <<< "${SUBMAN_LAST_RESPONSE_BODY}")
   fi
 }
 
 push_subman_node() {
   local external_key=$1
   local payload_json=$2
-  local api_url encoded_key response http_status response_body endpoint config_file tmp_dir
-  local escaped_token
+  local encoded_key
 
-  api_url=$(normalize_subman_api_url "${SUBMAN_API_URL:-}")
-  if [[ -z "${api_url}" ]]; then
-    print_warn "SubMan API 地址为空，无法推送节点。"
-    return 1
-  fi
-  if [[ -z "${SUBMAN_API_TOKEN:-}" ]]; then
-    print_warn "SubMan API Token 为空，无法推送节点。"
+  reset_subman_api_result
+  if ! validate_subman_node_request "${external_key}" "${payload_json}"; then
+    report_subman_api_failure "节点推送"
     return 1
   fi
 
   encoded_key=$(jq -rn --arg value "${external_key}" '$value | @uri')
-  endpoint="${api_url}/api/nodes/by-key/${encoded_key}"
-  tmp_dir=${TMPDIR:-/tmp}
-  if ! config_file=$(mktemp "${tmp_dir%/}/subman-curl.XXXXXX"); then
-    print_warn "SubMan 节点推送失败: 无法创建临时 curl 配置。"
+  if ! subman_api_request "PUT" "/api/nodes/by-key/${encoded_key}" "${payload_json}"; then
+    report_subman_api_failure "节点推送"
     return 1
   fi
-  if ! chmod 600 "${config_file}"; then
-    rm -f "${config_file}"
-    print_warn "SubMan 节点推送失败: 无法保护临时 curl 配置。"
+  if [[ "${SUBMAN_LAST_HTTP_STATUS}" != "200" ]]; then
+    capture_subman_api_error
+    report_subman_api_failure "节点推送"
     return 1
   fi
-  escaped_token=${SUBMAN_API_TOKEN//\\/\\\\}
-  escaped_token=${escaped_token//\"/\\\"}
-  if ! {
-    printf 'header = "Authorization: Bearer %s"\n' "${escaped_token}"
-    printf 'header = "Content-Type: application/json"\n'
-  } > "${config_file}"; then
-    rm -f "${config_file}"
-    print_warn "SubMan 节点推送失败: 无法写入临时 curl 配置。"
+  if ! validate_subman_workspace_response "node" "${external_key}"; then
+    report_subman_api_failure "节点推送"
     return 1
   fi
 
-  if ! response=$(curl -sS --config "${config_file}" -X PUT "${endpoint}" \
-    --data "${payload_json}" \
-    -w 'HTTP_STATUS:%{http_code}' 2>&1); then
-    rm -f "${config_file}"
-    response=${response//${SUBMAN_API_TOKEN}/[REDACTED]}
-    print_warn "SubMan 节点推送失败: curl 请求异常。"
-    [[ -n "${response}" ]] && printf '%s\n' "${response}"
+  print_success "SubMan 节点推送成功: HTTP 200, Workspace revision ${SUBMAN_LAST_REVISION}"
+}
+
+delete_subman_node_by_external_key() {
+  local external_key=$1
+  local quiet=${2:-n}
+  local external_label node_id node_count encoded_node_id attempt if_match
+
+  external_label="external:${external_key}"
+  for attempt in 1 2; do
+    if ! subman_api_request "GET" "/api/nodes"; then
+      [[ "${quiet}" == "y" ]] || report_subman_api_failure "旧节点查询"
+      return 1
+    fi
+    if [[ "${SUBMAN_LAST_HTTP_STATUS}" != "200" ]]; then
+      capture_subman_api_error
+      [[ "${quiet}" == "y" ]] || report_subman_api_failure "旧节点查询"
+      return 1
+    fi
+    if ! validate_subman_workspace_response "list"; then
+      [[ "${quiet}" == "y" ]] || report_subman_api_failure "旧节点查询"
+      return 1
+    fi
+
+    node_count=$(jq -r --arg label "${external_label}" '[
+      .data[]
+      | select(any(.tags[]?; (if type == "string" then . else .label end) == $label))
+      | .id
+    ] | unique | length' <<< "${SUBMAN_LAST_RESPONSE_BODY}")
+    if [[ "${node_count}" -eq 0 ]]; then
+      [[ "${quiet}" == "y" ]] || print_info "SubMan 旧节点无需清理: ${external_key}"
+      return 0
+    fi
+    if [[ "${node_count}" -ne 1 ]]; then
+      subman_set_client_error "external_key_ambiguous" "operator-repair"
+      [[ "${quiet}" == "y" ]] || report_subman_api_failure "旧节点清理"
+      return 1
+    fi
+
+    node_id=$(jq -r --arg label "${external_label}" '
+      [.data[] | select(any(.tags[]?; (if type == "string" then . else .label end) == $label)) | .id]
+      | unique[0]
+    ' <<< "${SUBMAN_LAST_RESPONSE_BODY}")
+    if_match=${SUBMAN_LAST_RESPONSE_ETAG}
+    encoded_node_id=$(jq -rn --arg value "${node_id}" '$value | @uri')
+    if ! subman_api_request "DELETE" "/api/nodes/${encoded_node_id}" "" "${if_match}"; then
+      [[ "${quiet}" == "y" ]] || report_subman_api_failure "旧节点清理"
+      return 1
+    fi
+    if [[ "${SUBMAN_LAST_HTTP_STATUS}" == "200" ]]; then
+      if validate_subman_workspace_response "delete"; then
+        [[ "${quiet}" == "y" ]] || print_success "SubMan 旧节点已删除: ${external_key}, Workspace revision ${SUBMAN_LAST_REVISION}"
+        return 0
+      fi
+      [[ "${quiet}" == "y" ]] || report_subman_api_failure "旧节点清理"
+      return 1
+    fi
+
+    capture_subman_api_error
+    if [[ "${attempt}" -eq 1 && "${SUBMAN_LAST_ERROR_DISPOSITION}" == "state-conflict" ]]; then
+      continue
+    fi
+    if [[ "${SUBMAN_LAST_ERROR_CODE}" == "entity_not_found" || "${SUBMAN_LAST_ERROR_CODE}" == "entity_deleted" || "${SUBMAN_LAST_ERROR_CODE}" == "not_found" ]]; then
+      return 0
+    fi
+    [[ "${quiet}" == "y" ]] || report_subman_api_failure "旧节点清理"
+    return 1
+  done
+}
+
+push_subman_legacy_protocol_key_cleanup() {
+  local protocol=$1
+  local instance_id=${2:-}
+  local quiet=${3:-n}
+  local external_key
+
+  if ! external_key=$(subman_external_key_for_protocol "${protocol}" "${instance_id}" ""); then
+    [[ "${quiet}" == "y" ]] || print_warn "生成 SubMan 旧节点清理键失败: ${protocol}"
     return 1
   fi
-  rm -f "${config_file}"
 
-  http_status=${response##*HTTP_STATUS:}
-  response_body=${response%"HTTP_STATUS:${http_status}"}
-  response_body=${response_body//${SUBMAN_API_TOKEN}/[REDACTED]}
+  delete_subman_node_by_external_key "${external_key}" "${quiet}"
+}
 
-  if [[ ! "${http_status}" =~ ^2[0-9][0-9]$ ]]; then
-    print_warn "SubMan 节点推送失败: HTTP ${http_status}"
-    [[ -n "${response_body}" ]] && printf '%s\n' "${response_body}"
-    return 1
-  fi
+subman_instance_ready_for_legacy_cleanup() {
+  local attempted=$1
+  local synced=$2
+  local stacked_synced=$3
 
-  print_success "SubMan 节点推送成功: HTTP ${http_status}"
-  [[ -n "${response_body}" ]] && printf '%s\n' "${response_body}"
+  (( attempted > 0 && synced == attempted && stacked_synced == attempted ))
 }
 
 build_anytls_outbound_example() {
@@ -8104,14 +8349,19 @@ agent_service_cli() {
 agent_push_nodes_to_subman_json() {
   local original_protocol_state protocol instance_id
   local address_entry address_label public_ip
-  local instance_synced instance_stacked_synced
+  local instance_attempted instance_synced instance_stacked_synced
   local synced_count skipped_count failed_count ok_json
+  local last_error_code last_error_disposition last_http_status last_retry_after
   local installed_protocols=()
 
   original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
   synced_count=0
   skipped_count=0
   failed_count=0
+  last_error_code=""
+  last_error_disposition=""
+  last_http_status=""
+  last_retry_after=""
 
   mapfile -t installed_protocols < <(list_installed_protocols)
   if [[ ${#installed_protocols[@]} -eq 0 ]]; then
@@ -8144,12 +8394,14 @@ agent_push_nodes_to_subman_json() {
     if [[ "${protocol}" == "vless-reality" ]]; then
       while IFS= read -r instance_id; do
         [[ -z "${instance_id}" ]] && continue
+        instance_attempted=0
         instance_synced=0
         instance_stacked_synced=0
         while IFS= read -r address_entry; do
           [[ -z "${address_entry}" ]] && continue
           address_label=${address_entry%%|*}
           public_ip=${address_entry#*|}
+          instance_attempted=$((instance_attempted + 1))
           if push_subman_protocol_instance "${protocol}" "${public_ip}" "${instance_id}" "y" "${address_label}"; then
             synced_count=$((synced_count + 1))
             instance_synced=$((instance_synced + 1))
@@ -8158,12 +8410,21 @@ agent_push_nodes_to_subman_json() {
             fi
           else
             failed_count=$((failed_count + 1))
+            last_error_code=${SUBMAN_LAST_ERROR_CODE:-unknown_error}
+            last_error_disposition=${SUBMAN_LAST_ERROR_DISPOSITION:-operator-repair}
+            last_http_status=${SUBMAN_LAST_HTTP_STATUS:-}
+            last_retry_after=${SUBMAN_LAST_RETRY_AFTER:-}
           fi
         done < <(list_subman_addresses_for_current_protocol)
-        if (( instance_stacked_synced > 0 )) && push_subman_legacy_protocol_key_cleanup "${protocol}" "${instance_id}" "y"; then
+        if subman_instance_ready_for_legacy_cleanup "${instance_attempted}" "${instance_synced}" "${instance_stacked_synced}" && \
+          push_subman_legacy_protocol_key_cleanup "${protocol}" "${instance_id}" "y"; then
           :
-        elif (( instance_stacked_synced > 0 )); then
+        elif subman_instance_ready_for_legacy_cleanup "${instance_attempted}" "${instance_synced}" "${instance_stacked_synced}"; then
           failed_count=$((failed_count + 1))
+          last_error_code=${SUBMAN_LAST_ERROR_CODE:-unknown_error}
+          last_error_disposition=${SUBMAN_LAST_ERROR_DISPOSITION:-operator-repair}
+          last_http_status=${SUBMAN_LAST_HTTP_STATUS:-}
+          last_retry_after=${SUBMAN_LAST_RETRY_AFTER:-}
         fi
       done < <(list_vless_reality_instance_ids)
       continue
@@ -8177,6 +8438,10 @@ agent_push_nodes_to_subman_json() {
         synced_count=$((synced_count + 1))
       else
         failed_count=$((failed_count + 1))
+        last_error_code=${SUBMAN_LAST_ERROR_CODE:-unknown_error}
+        last_error_disposition=${SUBMAN_LAST_ERROR_DISPOSITION:-operator-repair}
+        last_http_status=${SUBMAN_LAST_HTTP_STATUS:-}
+        last_retry_after=${SUBMAN_LAST_RETRY_AFTER:-}
       fi
     done < <(list_subman_addresses_for_current_protocol)
   done
@@ -8200,12 +8465,24 @@ agent_push_nodes_to_subman_json() {
     --argjson synced "${synced_count}" \
     --argjson skipped "${skipped_count}" \
     --argjson failed "${failed_count}" \
+    --arg error_code "${last_error_code}" \
+    --arg error_disposition "${last_error_disposition}" \
+    --arg http_status "${last_http_status}" \
+    --arg retry_after "${last_retry_after}" \
     '{
       ok: $ok,
       synced: $synced,
       skipped: $skipped,
       failed: $failed
-    }'
+    }
+    + if $failed > 0 and $error_code != "" then {
+        last_error: {
+          code: $error_code,
+          disposition: $error_disposition,
+          http_status: (if $http_status == "" then null else $http_status end),
+          retry_after: (if $retry_after == "" then null else $retry_after end)
+        }
+      } else {} end'
 
   if [[ "${ok_json}" != "true" ]]; then
     return 1
@@ -8284,7 +8561,7 @@ agent_cli() {
 push_nodes_to_subman() {
   local original_protocol_state protocol instance_id
   local address_entry address_label public_ip
-  local instance_synced instance_stacked_synced
+  local instance_attempted instance_synced instance_stacked_synced
   local synced_count skipped_count failed_count
   local installed_protocols=()
 
@@ -8329,12 +8606,14 @@ push_nodes_to_subman() {
     if [[ "${protocol}" == "vless-reality" ]]; then
       while IFS= read -r instance_id; do
         [[ -z "${instance_id}" ]] && continue
+        instance_attempted=0
         instance_synced=0
         instance_stacked_synced=0
         while IFS= read -r address_entry; do
           [[ -z "${address_entry}" ]] && continue
           address_label=${address_entry%%|*}
           public_ip=${address_entry#*|}
+          instance_attempted=$((instance_attempted + 1))
           if push_subman_protocol_instance "${protocol}" "${public_ip}" "${instance_id}" "n" "${address_label}"; then
             synced_count=$((synced_count + 1))
             instance_synced=$((instance_synced + 1))
@@ -8345,9 +8624,10 @@ push_nodes_to_subman() {
             failed_count=$((failed_count + 1))
           fi
         done < <(list_subman_addresses_for_current_protocol)
-        if (( instance_stacked_synced > 0 )) && push_subman_legacy_protocol_key_cleanup "${protocol}" "${instance_id}" "n"; then
+        if subman_instance_ready_for_legacy_cleanup "${instance_attempted}" "${instance_synced}" "${instance_stacked_synced}" && \
+          push_subman_legacy_protocol_key_cleanup "${protocol}" "${instance_id}" "n"; then
           :
-        elif (( instance_stacked_synced > 0 )); then
+        elif subman_instance_ready_for_legacy_cleanup "${instance_attempted}" "${instance_synced}" "${instance_stacked_synced}"; then
           failed_count=$((failed_count + 1))
         fi
       done < <(list_vless_reality_instance_ids)

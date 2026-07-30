@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026073001`
+- 脚本版本：`2026073002`
 - sing-box 适配版本：`1.13.15`
 
 ## 🚀 一键安装
@@ -78,7 +78,7 @@ sbv
 - **工业级配置生成**：采用 **`jq` 安全注入** 模式生成 JSON，彻底规避特殊字符导致的转义错误。
 - **协议级展示**：终端可按协议查看节点信息，支持 `VLESS` 与 `Hysteria2` 链接/ANSI 二维码展示，为 `Mixed` 输出代理链接与二维码提示，并为 `AnyTLS` 输出参数摘要和 sing-box outbound JSON 示例；多 REALITY 实例会显示实例 ID、端口和限速摘要。
 - **裸核客户端导出**：可从交互菜单或 `sbv agent export-client --json` 生成 `/root/sing-box-vps/client/sing-box-client.json`，覆盖前自动备份，并在输出前执行 `sing-box check`。
-- **SubMan 同步**：可将当前 VPS 的 VLESS / Hysteria2 节点通过已部署的 SubMan API 幂等推送到 SubMan 节点库，便于后续聚合与发布订阅。
+- **SubMan 同步**：按 SubMan OpenAPI 1.0.0 契约将当前 VPS 的 VLESS / Hysteria2 节点幂等推送到节点库；仅在 Workspace 已远端提交并回读验证后报告成功，并识别 revision、稳定错误分类和安全重试提示。
 - **规范存储**：统一使用 `/root/sing-box-vps/` 存放配置、密钥及持久化参数。
 
 ## Agent 非交互命令
@@ -108,7 +108,7 @@ sbv update sing-box 1.13.15
 - `check`：执行 `sing-box check` 校验服务端配置，并返回 stdout、stderr、退出码和是否通过。
 - `doctor`：输出只读诊断报告，包含服务状态、路径存在性、协议状态和嵌入的配置校验结果。
 - `service restart`：必须显式传入 `--yes`，先校验配置，通过后才重启服务，并返回重启前后的服务状态。
-- `subman-sync`：非交互推送节点到 SubMan；配置缺失时返回结构化错误，不进入交互提示。
+- `subman-sync`：非交互推送节点到 SubMan；配置缺失时返回结构化错误，不进入交互提示。API 失败时会在 `last_error` 返回稳定的 `code`、`disposition`、HTTP 状态与可用的 `Retry-After`，传输结果不确定时不会盲目重放写请求。
 - `update sbv`：从 GitHub 更新 `/usr/local/bin/sbv` 管理脚本；别名为 `sbv update-sbv`。
 - `update sing-box [latest|x.y.z]`：非交互更新 sing-box 二进制并保留现有配置，更新后会执行 `sing-box check`，通过后才重启服务；别名为 `sbv update-sing-box [latest|x.y.z]`。
 
@@ -147,6 +147,7 @@ sbv update sing-box 1.13.15
 - `Mixed` 代理默认建议启用用户名密码认证；若关闭认证，请务必确认防火墙和来源访问控制策略。
 - `Hysteria2` 首版支持 ACME 自动签发与手动证书路径两种 TLS 模式；使用 ACME `DNS-01` 时当前仅支持 Cloudflare。
 - `AnyTLS` 当前同样支持 ACME 自动签发与手动证书路径两种 TLS 模式；由于官方文档未定义标准分享 URI，脚本默认输出参数摘要与 sing-box outbound JSON 示例。
+- SubMan 同步使用公开的 `PUT /api/nodes/by-key/:externalKey` 契约；双栈迁移清理旧 key 时会先读取 Workspace revision，再通过公开节点删除接口提交，避免空 `raw` 或直接修改 Gist。
 - 流媒体验证功能当前接入第三方项目 `1-stream/RegionRestrictionCheck`，脚本内已注明作者与仓库地址，后续可替换为自定义检测后端。
 
 ---
