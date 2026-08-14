@@ -13,7 +13,7 @@ cat > "${TMP_DIR}/bin/sing-box" <<'EOF'
 
 case "${1:-}" in
   version)
-    printf 'sing-box version 1.13.15\n'
+    printf 'sing-box version 1.13.18\n'
     ;;
   check)
     exit 0
@@ -126,9 +126,9 @@ EOF
 status_json=$(agent_cli status --json)
 jq -e '
   .script_version == env.SCRIPT_VERSION
-  and .supported_sing_box_version == "1.13.15"
+  and .supported_sing_box_version == "1.13.18"
   and .service.active_state == "active"
-  and .sing_box.version == "1.13.15"
+  and .sing_box.version == "1.13.18"
   and .paths.config == env.SINGBOX_CONFIG_FILE
   and .protocols == ["vless-reality", "mixed", "hy2", "anytls"]
 ' <<< "${status_json}" >/dev/null
@@ -153,7 +153,7 @@ jq -e '
   and any(.nodes[]; .protocol == "vless-reality" and .links.vless == "vless://11111111-1111-1111-1111-111111111111@203.0.113.10:443?security=reality&sni=www.cloudflare.com&fp=chrome&pbk=public-key&sid=aaaaaaaaaaaaaaaa&flow=xtls-rprx-vision#vless_test-host-v4")
   and any(.nodes[]; .protocol == "mixed" and .links.http == "http://mixed-user:mixed-pass@203.0.113.10:2080" and .links.socks5 == "socks5://mixed-user:mixed-pass@203.0.113.10:2080")
   and any(.nodes[]; .protocol == "hy2" and (.links.hy2 | startswith("hy2://hy2-password@hy2.example.com:8443?")))
-  and any(.nodes[]; .protocol == "anytls" and .outbound.type == "anytls" and .outbound.server == "anytls.example.com")
+  and any(.nodes[]; .protocol == "anytls" and .outbound.type == "anytls" and .outbound.server == "anytls.example.com" and .outbound.client_metadata == "")
 ' <<< "${links_json}" >/dev/null
 
 export_json=$(agent_cli export-client --json)
