@@ -8544,6 +8544,7 @@ create_agent_upgrade_backup() {
   local backup_dir
   local manifest_file
   local relative_path
+  local runtime_file_list
 
   if ! mkdir -p "${SB_UPGRADE_BACKUP_ROOT}" || ! chmod 700 "${SB_UPGRADE_BACKUP_ROOT}"; then
     return 1
@@ -8593,17 +8594,31 @@ create_agent_upgrade_backup() {
   fi
 
   manifest_file="${backup_dir}/SHA256SUMS"
+  runtime_file_list="${backup_dir}/.runtime-files"
+  if ! : > "${runtime_file_list}"; then
+    rm -rf -- "${backup_dir}"
+    return 1
+  fi
+  if [[ -d "${backup_dir}/runtime" ]] && \
+    ! (cd "${backup_dir}" && find runtime -type f -print0) > "${runtime_file_list}"; then
+    rm -rf -- "${backup_dir}"
+    return 1
+  fi
   if ! (
-    cd "${backup_dir}"
-    if [[ -d runtime ]]; then
-      while IFS= read -r -d '' relative_path; do
-        sha256sum "${relative_path}"
-      done < <(find runtime -type f -print0)
-    fi
+    cd "${backup_dir}" || exit 1
+    while IFS= read -r -d '' relative_path; do
+      sha256sum "${relative_path}" || exit 1
+    done < .runtime-files
     for relative_path in sing-box sbv sing-box.service metadata.json; do
-      [[ -f "${relative_path}" ]] && sha256sum "${relative_path}"
+      if [[ -f "${relative_path}" ]]; then
+        sha256sum "${relative_path}" || exit 1
+      fi
     done
   ) > "${manifest_file}"; then
+    rm -rf -- "${backup_dir}"
+    return 1
+  fi
+  if ! rm -f "${runtime_file_list}"; then
     rm -rf -- "${backup_dir}"
     return 1
   fi

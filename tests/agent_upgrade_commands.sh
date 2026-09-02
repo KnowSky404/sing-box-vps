@@ -265,4 +265,18 @@ if restore_agent_upgrade_backup "${backup_dir}" "n" "n"; then
   exit 1
 fi
 
+backup_count_before=$(find "${SB_UPGRADE_BACKUP_ROOT}" -mindepth 1 -maxdepth 1 -type d | wc -l)
+sha256sum() {
+  if [[ "${1:-}" == "runtime/protocols/hy2.env" ]]; then
+    return 74
+  fi
+  command sha256sum "$@"
+}
+if create_agent_upgrade_backup "1.13.18" "1.14.0" >/dev/null; then
+  printf 'expected a runtime file hash failure to cancel backup creation\n' >&2
+  exit 1
+fi
+backup_count_after=$(find "${SB_UPGRADE_BACKUP_ROOT}" -mindepth 1 -maxdepth 1 -type d | wc -l)
+[[ "${backup_count_after}" == "${backup_count_before}" ]]
+
 printf '%s\n' 'agent upgrade command checks passed'
