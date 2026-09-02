@@ -52,6 +52,14 @@ open_firewall_port() { :; }
 check_port_conflict() { :; }
 systemctl() { :; }
 prompt_reality_sni_install() { SB_SNI="${SB_SNI:-apple.com}"; }
+prompt_vless_reality_rate_limit_fields() {
+  SB_VLESS_RATE_LIMIT_UP_MBPS=""
+  SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
+}
+prompt_vless_reality_advanced_update_fields() {
+  SB_VLESS_ALPN_MODE="off"
+  SB_VLESS_TCP_FAST_OPEN="n"
+}
 display_status_summary() {
   local current_count
   current_count=$(cat "${SUMMARY_COUNT_FILE}")

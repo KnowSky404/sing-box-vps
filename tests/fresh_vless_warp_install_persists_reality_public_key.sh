@@ -39,6 +39,11 @@ setup_service() { :; }
 open_firewall_port() { :; }
 systemctl() { :; }
 check_port_conflict() { :; }
+prompt_reality_sni_install() { SB_SNI="www.apple.com"; }
+prompt_vless_reality_advanced_update_fields() {
+  SB_VLESS_ALPN_MODE="off"
+  SB_VLESS_TCP_FAST_OPEN="n"
+}
 register_warp() {
   cat > "${SB_WARP_KEY_FILE}" <<'EOF'
 WARP_PRIV_KEY=warp-private-key
@@ -74,6 +79,7 @@ install_protocols_interactive "fresh" <<'EOF'
 1
 
 
+n
 n
 y
 1

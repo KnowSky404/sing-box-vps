@@ -105,14 +105,11 @@ cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
 }
 EOF
 
-(
-  main <<'EOF'
-1
-
-
-0
-EOF
-)
+SB_VERSION="1.13.18"
+if update_singbox_binary_preserving_config >/dev/null; then
+  printf 'expected invalid config update to return non-zero\n' >&2
+  exit 1
+fi
 
 generate_config_calls=$(cat "${GENERATE_CONFIG_COUNT_FILE}")
 restart_calls=$(cat "${SYSTEMCTL_RESTART_COUNT_FILE}")

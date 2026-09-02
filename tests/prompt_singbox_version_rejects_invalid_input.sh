@@ -18,11 +18,12 @@ mkdir -p "${TMP_DIR}/project"
 # shellcheck disable=SC1090
 source "${TESTABLE_INSTALL}"
 
-output=$(prompt_singbox_version <<'EOF' 2>&1
+output_file="${TMP_DIR}/prompt.output"
+prompt_singbox_version > "${output_file}" 2>&1 <<'EOF'
 1
 v1.13.9
 EOF
-)
+output=$(< "${output_file}")
 
 if [[ "${SB_VERSION}" != "1.13.9" ]]; then
   printf 'expected SB_VERSION to normalize to 1.13.9, got: %s\n' "${SB_VERSION}" >&2

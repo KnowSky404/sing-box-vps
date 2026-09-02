@@ -237,6 +237,12 @@ SHORT_ID_1=aaaaaaaaaaaaaaaa
 SHORT_ID_2=bbbbbbbbbbbbbbbb
 EOF
 
+# Recoverable managed drift is auto-healed. Force this final fixture to model
+# drift that cannot be repaired so the incomplete-instance menu remains tested.
+attempt_managed_instance_auto_heal() {
+  return 1
+}
+
 stale_state_output=$(run_install_flow '0')
 stale_state_plain_output=$(strip_ansi "${stale_state_output}")
 

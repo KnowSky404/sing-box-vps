@@ -43,8 +43,12 @@ source "${TESTABLE_INSTALL}"
 
 GENERATE_CONFIG_COUNT_FILE="${TMP_DIR}/generate_config.count"
 POST_CONFIG_COUNT_FILE="${TMP_DIR}/post_config.count"
+SETUP_SERVICE_COUNT_FILE="${TMP_DIR}/setup_service.count"
+LOAD_STATE_COUNT_FILE="${TMP_DIR}/load_state.count"
 printf '0\n' > "${GENERATE_CONFIG_COUNT_FILE}"
 printf '0\n' > "${POST_CONFIG_COUNT_FILE}"
+printf '0\n' > "${SETUP_SERVICE_COUNT_FILE}"
+printf '0\n' > "${LOAD_STATE_COUNT_FILE}"
 
 show_banner() { :; }
 check_root() { :; }
@@ -63,7 +67,11 @@ generate_config() {
   printf '%s\n' "$((current_count + 1))" > "${GENERATE_CONFIG_COUNT_FILE}"
 }
 check_config_valid() { :; }
-setup_service() { :; }
+setup_service() {
+  local current_count
+  current_count=$(cat "${SETUP_SERVICE_COUNT_FILE}")
+  printf '%s\n' "$((current_count + 1))" > "${SETUP_SERVICE_COUNT_FILE}"
+}
 open_firewall_port() { :; }
 display_info() { :; }
 check_port_conflict() { :; }
@@ -75,17 +83,9 @@ show_post_config_connection_info() {
   printf '%s\n' "$((current_count + 1))" > "${POST_CONFIG_COUNT_FILE}"
 }
 load_current_config_state() {
-  SB_PROTOCOL="vless+reality"
-  SB_PORT="443"
-  SB_UUID="11111111-1111-1111-1111-111111111111"
-  SB_SNI="apple.com"
-  SB_PRIVATE_KEY="private-key"
-  SB_PUBLIC_KEY="public-key"
-  SB_SHORT_ID_1="aaaaaaaaaaaaaaaa"
-  SB_SHORT_ID_2="bbbbbbbbbbbbbbbb"
-  SB_ADVANCED_ROUTE="n"
-  SB_ENABLE_WARP="n"
-  SB_WARP_ROUTE_MODE="all"
+  local current_count
+  current_count=$(cat "${LOAD_STATE_COUNT_FILE}")
+  printf '%s\n' "$((current_count + 1))" > "${LOAD_STATE_COUNT_FILE}"
 }
 
 cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
@@ -130,6 +130,8 @@ EOF
 
 generate_config_calls=$(cat "${GENERATE_CONFIG_COUNT_FILE}")
 post_config_calls=$(cat "${POST_CONFIG_COUNT_FILE}")
+setup_service_calls=$(cat "${SETUP_SERVICE_COUNT_FILE}")
+load_state_calls=$(cat "${LOAD_STATE_COUNT_FILE}")
 
 if ! cmp -s "${TMP_DIR}/config.before-update.json" "${SINGBOX_CONFIG_FILE}"; then
   printf 'expected binary-only update to preserve config byte-for-byte\n' >&2
@@ -143,6 +145,16 @@ fi
 
 if (( post_config_calls != 0 )); then
   printf 'expected update path to avoid auto-showing connection info, but post-config display ran %s time(s)\n' "${post_config_calls}" >&2
+  exit 1
+fi
+
+if (( setup_service_calls != 0 )); then
+  printf 'expected binary-only update to preserve the existing service unit, but setup_service ran %s time(s)\n' "${setup_service_calls}" >&2
+  exit 1
+fi
+
+if (( load_state_calls != 0 )); then
+  printf 'expected binary-only update not to migrate or rewrite protocol state, but load_current_config_state ran %s time(s)\n' "${load_state_calls}" >&2
   exit 1
 fi
 

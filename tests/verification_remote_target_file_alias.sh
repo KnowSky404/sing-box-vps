@@ -25,6 +25,10 @@ if [[ "\${1:-}" == "run" && "\${2:-}" == "-d" && "\${3:-}" == "--privileged" ]];
   printf 'test-container-built\n'
   exit 0
 fi
+if [[ "\${1:-}" == "exec" && "\${3:-}" == "systemctl" && "\${4:-}" == "is-system-running" ]]; then
+  printf 'degraded\n'
+  exit 1
+fi
 if [[ "\${1:-}" == "exec" && "\${2:-}" == "-i" ]]; then
   cat > /dev/null
   printf 'SERVICE_ACTIVE=active\n'

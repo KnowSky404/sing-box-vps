@@ -149,6 +149,10 @@ if [[ "\${1:-}" == "run" && "\${2:-}" == "-d" && "\${3:-}" == "--privileged" ]];
   printf 'test-container\n'
   exit 0
 fi
+if [[ "\${1:-}" == "exec" && "\${3:-}" == "systemctl" && "\${4:-}" == "is-system-running" ]]; then
+  printf 'running\n'
+  exit 0
+fi
 if [[ "\${1:-}" == "exec" && "\${2:-}" == "-i" ]]; then
 script_file="${TMP_DIR}/remote-script.sh"
 cat <<'PAYLOAD_PRELUDE' > "\${script_file}"
@@ -775,6 +779,11 @@ INSTALLED_PROTOCOLS=vless-reality
 INDEX_EOF
   return "\${status}"
 }
+
+verification_scenario_upgrade_1_13_to_1_14() {
+  printf 'SCENARIO=upgrade_1_13_to_1_14\n'
+  printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
+}
 WRAP_EOF
 awk -v wrapper_file="\${script_file}.wrapper" '
   \$0 == "if ! mkdir \"\${LOCK_DIR}\" 2>/dev/null; then" {
@@ -809,8 +818,8 @@ REMOTE_ASSERT_LOG_FILE="${REMOTE_ASSERT_LOG_FILE}" \
 REMOTE_DISPATCH_LOG_FILE="${REMOTE_DISPATCH_LOG_FILE}" \
 INSTALL_COUNT_FILE="${INSTALL_COUNT_FILE}" \
 REAL_JQ="${REAL_JQ}" \
-PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" -lc "\${3:-}" < "\${script_file}"
-  exit $?
+PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" "\${script_file}" "\${@:7}"
+  exit \$?
 fi
 if [[ "\${1:-}" == "rm" && "\${2:-}" == "-f" ]]; then
   exit 0
@@ -849,6 +858,7 @@ grep -Fq 'verification_run_protocol_probes' "${TMP_DIR}/remote-script.sh"
 grep -Fqx 'fresh_install_vless' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'reconfigure_existing_install' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'fresh_install_anytls' "${REMOTE_DISPATCH_LOG_FILE}"
+grep -Fqx 'upgrade_1_13_to_1_14' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'runtime_smoke' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.d/main.env' "${REMOTE_ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.d/main.env' "${REMOTE_ASSERT_LOG_FILE}"

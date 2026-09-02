@@ -10,6 +10,7 @@ Canonical documents:
 - AGENTS.md: repository rules, validation requirements, SSH alias conventions, version rules.
 - README.md: user-facing install, features, versions, runtime paths.
 - docs/agents/sing-box-vps-agent-runbook.md: AI agent operations manual for repository maintenance, test VPS validation, production plans, install, upgrade, troubleshooting, and rollback.
+- docs/agents/sing-box-1.13-to-1.14-upgrade-test.md: Hermes single-host fixed-version rehearsal with evidence and stop gates.
 - skills/sing-box-vps-operator/SKILL.md: AgentSkills-style triggerable skill for Hermes, OpenClaw, Codex, and similar agents.
 - dev/verification/run.sh: local and remote verification entrypoint.
 - dev/verification/docker/Dockerfile: Docker verification image definition.
@@ -18,18 +19,36 @@ Key runtime paths:
 - /root/sing-box-vps/
 - /root/sing-box-vps/config.json
 - /root/sing-box-vps/protocols/
+- /root/sing-box-vps-backups/ (root-only Agent upgrade backups; sensitive)
 - /usr/local/bin/sbv
 - systemd service: sing-box
 
 Agent CLI:
-- sbv agent status --json: service, version, paths, installed protocols.
-- sbv agent nodes --json: log-safe node summaries without full links or passwords.
-- sbv agent links --json: full connection material; treat output as sensitive.
+- sbv agent capabilities --json: machine-readable capability matrix; read-only, no secrets.
+- sbv agent upgrade-check --json 1.14.0: read-only eligibility preflight; inspect ready, blockers, config hash/schema, legacy fields, and warnings. It does not download the target binary.
+- sbv agent upgrade --json 1.14.0 --yes: guarded binary upgrade; mutating and service-impacting, with automatic backup under /root/sing-box-vps-backups/.
+- sbv agent status --json: service/version/paths/protocols plus network stacks, BBR, REALITY/QoS counts, and integration presence.
+- sbv agent nodes --json: log-safe summaries for every protocol and every REALITY instance, including rate limits/outbound policy without credentials.
+- sbv agent links --json: full per-protocol and per-REALITY-instance connection material; treat output as sensitive.
 - sbv agent export-client --json: generate and validate /root/sing-box-vps/client/sing-box-client.json without changing the running server config.
 - sbv agent check --json: run sing-box check against the server config and return structured stdout/stderr/status.
 - sbv agent doctor --json: read-only diagnostics with service, paths, protocols, and embedded config check.
+- sbv agent warp --json: read-only Warp/account/routing summary.
 - sbv agent service restart --json --yes: guarded restart after config validation; production use requires approval.
 - sbv agent subman-sync --json: non-interactive SubMan node push; treat as sensitive and require configured /root/sing-box-vps/subman.env.
+
+Capability safety labels:
+- read-only: status, capabilities, upgrade-check, check, doctor, nodes, warp.
+- mutating: upgrade, service restart, export-client, subman-sync.
+- sensitive: links, export-client, subman-sync; these may expose usable credentials or external node data.
+- interactive-only: fresh install, protocol changes, REALITY instance/QoS changes, Warp changes, BBR/system changes, media checks, takeover/repair, uninstall.
+
+Capability domains to preserve in documentation and tests:
+- protocols: VLESS REALITY, Mixed HTTP/SOCKS, Hysteria2, AnyTLS, coexistence.
+- REALITY: multi-instance, per-instance port/ShortID/name/outbound, upload/download QoS.
+- TLS: ACME HTTP-01, Cloudflare DNS-01, manual certificates, Hysteria2 Ed25519 client warning.
+- routing/system: Warp all/selective routing, custom and local/remote rule sets, IPv4/IPv6/dual stack, DNS/outbound strategy, BBR.
+- operations: service lifecycle/logs, node/link/QR output, client export, SubMan, takeover/repair, core/script upgrade, core/script uninstall.
 
 SSH aliases:
 - sing-box-test: test VPS for validation.
@@ -42,11 +61,13 @@ Important requirements:
 - Run bash dev/verification/run.sh after changes to install.sh, uninstall.sh, configs/, utils/, or dev/verification/.
 - Do not reveal secrets, private keys, passwords, tokens, full node links, or QR payloads unless explicitly requested and safe.
 - Treat sbv agent links --json, export-client --json, and subman-sync --json as sensitive connection-material commands.
+- Upgrade backups contain the full runtime state and must never be copied into shared logs or artifacts.
 - Do not run production install, upgrade, restart, stop, uninstall, purge, firewall mutation, or config overwrite without an approved production operation plan.
 
 Common task routing:
 - Fresh install on new VPS: read README.md and docs/agents/sing-box-vps-agent-runbook.md.
 - Upgrade existing VPS: read docs/agents/sing-box-vps-agent-runbook.md, then prepare a production operation plan for sing-box-prod.
+- Hermes 1.13 to 1.14 rehearsal: first update sbv, then read docs/agents/sing-box-1.13-to-1.14-upgrade-test.md and run its preflight/evidence gates before any core mutation.
 - Test remote verification: read dev/verification/run.sh, dev/verification/common.sh, and AGENTS.md.
 - Production troubleshooting: use read-only checks first, then prepare a production operation plan for changes.
 - AI agent node info retrieval: prefer sbv agent nodes --json for summaries and sbv agent links --json only in trusted contexts.

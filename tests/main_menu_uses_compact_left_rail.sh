@@ -43,7 +43,7 @@ EOF
 )
 
 plain_output=$(strip_ansi "${output}")
-first_divider=$(printf '%s\n' "${plain_output}" | awk '/^═+$/ { print; exit }')
+first_divider=$(printf '%s\n' "${plain_output}" | awk 'index($0, "═") == 1 { print; exit }')
 deployment_title=$(printf '%s\n' "${plain_output}" | awk 'index($0, "部署管理") { print; exit }')
 first_divider_chars=$(printf '%s' "${first_divider}" | wc -m | tr -d '[:space:]')
 

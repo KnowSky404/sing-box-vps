@@ -45,6 +45,10 @@ source "${TESTABLE_INSTALL}"
 check_port_conflict() { :; }
 prompt_reality_sni_install() { SB_SNI="apple.com"; }
 prompt_reality_sni_update() { SB_SNI="${SB_SNI:-apple.com}"; }
+prompt_vless_reality_advanced_update_fields() {
+  SB_VLESS_ALPN_MODE="off"
+  SB_VLESS_TCP_FAST_OPEN="n"
+}
 
 run_case() {
   local case_name=$1 input=$2 expected_node=$3 expected_up=$4 expected_down=$5

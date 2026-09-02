@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026090201`
+- 脚本版本：`2026090202`
 - sing-box 适配版本：`1.14.0`
 
 ## 🚀 一键安装
@@ -40,7 +40,7 @@ VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh
 默认工作流已做分层优化：
 - 核心脚本改动默认只跑协议探测快测
 - 仅在改动 `dev/verification/run.sh`、`dev/verification/common.sh` 或 `dev/verification/remote/` 时，才追加远程调度与远程框架回归
-- 远程验证默认优先收敛到 `runtime_smoke`；只有安装/重配相关改动才扩到 `fresh_install_vless` 与 `reconfigure_existing_install`
+- 远程验证默认优先收敛到 `runtime_smoke`；安装/重配相关改动会扩到全新安装、接管、重配，以及真实的 `upgrade_1_13_to_1_14` 固定版本升级场景
 
 命中远程验证时，测试机会额外执行协议级闭环探测：在测试机本机启动临时客户端，连接测试机本机的服务端入站，再通过该客户端代理访问测试机本机 HTTP 探针服务。当前优先支持 `vless-reality` 与 `hy2`；未覆盖协议会在产物中标记为 `unsupported`。
 
@@ -62,9 +62,10 @@ sbv
 
 ## ✨ 项目特性
 
-- **Agent 友好命令行**：提供 `sbv agent ... --json` 非交互命令，方便 Hermes、OpenClaw、Codex 等 AI Agent 获取状态、节点摘要、完整连接信息与 sing-box 裸核客户端配置；同时支持通过 CLI 更新 `sbv` 管理脚本和 `sing-box` 二进制。
+- **Agent 友好命令行**：提供 `sbv agent ... --json` 非交互命令，方便 Hermes、OpenClaw、Codex 等 AI Agent 发现完整能力、获取状态与节点信息、导出客户端配置，并执行带预检、确认、持久备份和自动回滚的固定版本升级。
 - **1.14.x 深度适配**：继续采用 **Endpoint（端点化）** 架构，并适配顶层 ACME `certificate_providers`、远程规则集 `http_client` 与 Hysteria2 `disable_chrome_parrot`。
 - **跨版本配置生成**：目标核心为 1.14+ 时生成新版配置结构；显式固定或运行 1.13.x 时继续生成内联 `tls.acme` 与旧版远程规则集结构。仅更新二进制时不会重写现有配置。
+- **可审计升级**：`upgrade-check` 会报告实例健康度、当前配置校验、配置 SHA-256、1.14 已知弃用项和阻断原因；`upgrade` 只接受固定版本与 `--yes`，先在 `/root/sing-box-vps-backups/` 创建 root-only 备份，目标核心校验失败时尝试恢复旧二进制并返回非零；若恢复未通过最终校验，会明确返回 `rollback_failed` 和人工介入标记。
 - **多协议支持**：支持 **VLESS + REALITY**、**Mixed (HTTP/HTTPS/SOCKS)**、**Hysteria2** 与 **AnyTLS** 四种入站模式，并支持多协议同时安装。
 - **VLESS REALITY 多实例**：可在安装菜单追加多个 REALITY 实例，每个实例拥有独立端口、ShortID、节点名称、可选上下行限速和实例级出站策略；节点展示和 SubMan 同步会逐实例输出。
 - **REALITY QoS 限速**：为设置了上下行 Mbps 的 REALITY 实例自动规划并应用 `tc` 端口级限速规则，重建配置、更新协议或移除实例时会同步刷新规则，避免遗留过滤器影响新配置。
@@ -87,6 +88,9 @@ sbv
 适合 Hermes、OpenClaw、Codex 等 Agent 在 SSH 会话中直接调用：
 
 ```bash
+sbv agent capabilities --json
+sbv agent upgrade-check --json 1.14.0
+sbv agent upgrade --json 1.14.0 --yes
 sbv agent status --json
 sbv agent nodes --json
 sbv agent links --json
@@ -101,9 +105,12 @@ sbv update sing-box latest
 sbv update sing-box 1.14.0
 ```
 
-- `status`：输出脚本版本、sing-box 版本、服务状态、配置路径和已安装协议。
-- `nodes`：输出节点摘要，不包含完整分享链接或密码，适合写入普通诊断日志。
-- `links`：输出完整连接材料，包括 VLESS/Hysteria2 分享链接、Mixed HTTP/SOCKS 链接，以及 AnyTLS outbound JSON；仅在受信任上下文使用。Hysteria2 手动 Ed25519 证书会附带稳定的 `warnings[].code`，提示分享链接无法表达 1.14+ 客户端兼容开关。
+- `capabilities`：输出四种协议、历史功能入口与 `mutation` / `sensitive` / 确认要求，Agent 应先据此选择操作。
+- `upgrade-check`：只读检查固定目标版本的升级资格，返回 `ready`、`blockers[]`、当前核心校验、配置 hash、已知弃用项和兼容性 warning；它不下载目标二进制，真正的目标版本 `sing-box check` 在 `upgrade` 替换服务进程前执行。
+- `upgrade`：必须使用完整版本号和 `--yes`。创建持久备份后只替换核心二进制，逐字节保留服务端配置；目标校验、版本、配置 hash 或服务状态不符合预期时尝试自动恢复旧二进制（配置若意外变化也一并恢复），返回非零与结构化回滚结果。仅当 `rolled_back=true` 且 `rollback_ok=true` 时才可视为自动恢复完成；`error=rollback_failed` 时必须停止并人工处理。
+- `status`：输出脚本/核心/服务/路径/已安装协议，并包含入站与出站栈、BBR、REALITY 实例与 QoS 计数，以及客户端导出/SubMan 是否已配置；不返回凭据。
+- `nodes`：输出所有协议的安全摘要；REALITY 会逐实例返回端口、上下行限速与出站策略，不包含 UUID、密钥、完整分享链接或密码，适合写入普通诊断日志。
+- `links`：逐协议、逐 REALITY 实例输出完整连接材料，包括 VLESS/Hysteria2 分享链接、Mixed HTTP/SOCKS 链接，以及 AnyTLS outbound JSON；仅在受信任上下文使用。Hysteria2 手动 Ed25519 证书会附带稳定的 `warnings[].code`，提示分享链接无法表达 1.14+ 客户端兼容开关。
 - `warp`：输出 Cloudflare Warp 状态（启用/路由模式/账户/自定义域名规则集统计），安全用于日常诊断。
 - `export-client`：生成并通过 `sing-box check` 校验裸核客户端配置，写入 `/root/sing-box-vps/client/sing-box-client.json`，覆盖前创建 `.bak` 备份，同时以 JSON 返回路径和配置内容。对 1.14+ Hysteria2 Ed25519 节点会自动设置顶层 `disable_chrome_parrot: true` 并返回结构化 warning。
 - `check`：执行 `sing-box check` 校验服务端配置，并返回 stdout、stderr、退出码和是否通过。
@@ -111,20 +118,37 @@ sbv update sing-box 1.14.0
 - `service restart`：必须显式传入 `--yes`，先校验配置，通过后才重启服务，并返回重启前后的服务状态。
 - `subman-sync`：非交互推送节点到 SubMan；配置缺失时返回结构化错误，不进入交互提示。API 失败时会在 `last_error` 返回稳定的 `code`、`disposition`、HTTP 状态与可用的 `Retry-After`，传输结果不确定时不会盲目重放写请求。
 - `update sbv`：从 GitHub 更新 `/usr/local/bin/sbv` 管理脚本；别名为 `sbv update-sbv`。
-- `update sing-box [latest|x.y.z]`：非交互更新 sing-box 二进制并逐字节保留现有配置，更新后会执行 `sing-box check`，通过后才重启服务；别名为 `sbv update-sing-box [latest|x.y.z]`。
+- `update sing-box [latest|x.y.z]`：普通运维更新入口，逐字节保留现有配置，目标核心校验通过后才重启服务，失败明确返回非零；别名为 `sbv update-sing-box [latest|x.y.z]`。自动化升级优先使用上面的固定版本 `agent upgrade`。
+
+已有 1.13.x 主机应先运行 `sbv update sbv` 更新管理脚本，再调用 `capabilities` 与 `upgrade-check`。1.14 对旧版 inline `tls.acme` 和远程规则集 `download_detour` 会给出弃用 warning，但两者到 1.16 才移除，因此 warning 本身不会阻止 1.13→1.14；其他真实不兼容会在目标 1.14 二进制的 `sing-box check` 阶段阻止重启并触发回滚。
+
+Agent/Hermes 文档入口：
+
+- [Agent 快速上下文](docs/agents/llms.txt)
+- [完整 Agent 运维手册](docs/agents/sing-box-vps-agent-runbook.md)
+- [Hermes 单主机 1.13→1.14 演练](docs/agents/sing-box-1.13-to-1.14-upgrade-test.md)
+- [可安装 Operator Skill](skills/sing-box-vps-operator/SKILL.md)
 
 ## 🛠️ 功能菜单
 
-1.  **安装协议 / 更新 sing-box**：首次安装时可选择一个或多个协议；已有安装时可选择更新二进制、继续追加新协议或移除已安装协议。VLESS REALITY 支持继续追加实例，也支持移除指定实例。
-2.  **卸载 sing-box**：彻底清理 sing-box 服务、二进制、配置和密钥，保留管理命令 `sbv`。
-3.  **修改当前协议配置**：先选择已安装协议，再进入该协议自己的修改向导，仅更新目标协议状态；VLESS REALITY 实例可在修改向导中调整实例级出站策略。
-4.  **配置 Cloudflare Warp**：一键开启/关闭/重新注册 Warp，并支持切换全量/选择性分流模式。
-5.  **开启 BBR 拥塞控制**：一键提升网络性能。
-6.  **服务管理**：启动、停止、重启 sing-box。
-7.  **状态与节点信息**：先查看服务摘要，再选择查看链接/二维码、导出 sing-box 裸核客户端配置，或推送节点到 SubMan。
-8.  **实时日志**：直接查看服务运行详情。
-9.  **脚本管理**：支持脚本版本自更新及卸载管理命令 `sbv`。
-10. **流媒体验证检测**：支持本机直出与 Warp 出口两种检测模式。
+1. **安装新协议**：首次安装或向现有实例追加 VLESS REALITY、Mixed、Hysteria2、AnyTLS；REALITY 可继续追加独立实例。
+2. **修改已安装协议配置**：只修改选中的协议/REALITY 实例，并重建、校验整体配置。
+3. **移除已安装协议**：移除指定协议或 REALITY 实例；存在多个 REALITY 实例时会明确询问“单实例”或“整个 VLESS 协议”，并同步清理 QoS 与已移除端口的防火墙放行。
+4. **更新 sing-box 版本**：保留配置的核心更新；目标 `sing-box check` 通过才重启。
+5. **卸载 sing-box**：清理核心、服务与运行配置，保留管理命令 `sbv`。
+6. **启动 sing-box**。
+7. **停止 sing-box**。
+8. **重启 sing-box**。
+9. **运行状态摘要**。
+10. **查看实时日志**。
+11. **查看节点信息**：链接/二维码、裸核客户端导出与 SubMan 同步。
+12. **流媒体验证检测**：本机直出或 Warp 出口。
+13. **配置 Cloudflare Warp**：账户、开关、全量/选择性路由、自定义域名及规则集。
+14. **系统管理**：BBR，以及入站监听栈和出站/DNS 策略。
+15. **更新管理脚本 `sbv`**。
+16. **卸载管理脚本 `sbv`**。
+
+当脚本发现二进制、service、配置或协议状态层不完整时，会进入接管/修复流程，而不是把残缺实例直接当作全新安装覆盖。
 
 ## 📂 关键路径
 
@@ -139,6 +163,7 @@ sbv update sing-box 1.14.0
 - **Warp 远程规则集列表**: `/root/sing-box-vps/warp-remote-rule-sets.txt`
 - **流媒体验证脚本缓存**: `/root/sing-box-vps/media-check/region_restriction_check.sh`
 - **SubMan API 配置**: `/root/sing-box-vps/subman.env`
+- **Agent 升级备份**: `/root/sing-box-vps-backups/`（包含敏感运行材料，仅 root 可读）
 - **全局命令**: `/usr/local/bin/sbv`
 
 ## ⚠️ 注意事项

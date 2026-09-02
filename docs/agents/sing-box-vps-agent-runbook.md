@@ -150,28 +150,47 @@ sing-box check -c /root/sing-box-vps/config.json
 
 If the install generates or displays credentials, summarize that credentials were generated without pasting secrets into logs.
 
+## Complete Capability Map
+
+Keep historical functions in scope when planning or documenting a change:
+
+| Area | Current capability | Agent route |
+|---|---|---|
+| Protocols | VLESS REALITY, Mixed HTTP/SOCKS, Hysteria2, AnyTLS; protocols can coexist | Discover with `capabilities`; summaries with `nodes`; install/edit/remove remain interactive |
+| REALITY | Multiple instances, independent ports/ShortID/names, per-instance outbound policy and optional upload/download QoS | Read with `nodes`; mutate through the interactive protocol menu |
+| TLS | Hysteria2/AnyTLS ACME HTTP-01, Cloudflare DNS-01, or manual certificate paths | Read warnings/check output; mutate interactively |
+| Warp | Account registration, enable/disable, all/selective routing, built-in/custom domains, local/remote rule sets | Read with `warp`; mutate through menu 13 |
+| Network/system | IPv4/IPv6/dual inbound stack, outbound/DNS strategy, BBR | Read config/doctor; mutate through menu 14 |
+| Node material | Links/QR, bare-core client export, dual-stack labels | `nodes` is log-safe; `links` and `export-client` are sensitive |
+| SubMan | Idempotent VLESS/Hysteria2 sync, revision/error/retry semantics | `subman-sync` is sensitive and externally mutating |
+| Lifecycle | start/stop/restart/status/logs, managed-instance takeover/repair, core/script upgrade, two uninstall scopes | Status/check/doctor are read-only; only restart and fixed core upgrade have guarded Agent mutations |
+| Verification | Config check, protocol probes, Docker fresh install/reconfigure/takeover/uninstall and 1.13→1.14 upgrade scenarios | Use `bash dev/verification/run.sh` |
+
+Do not invent non-interactive mutations for features marked interactive-only. Use the menu after the appropriate safety gate or stop and ask for operator approval.
+
 ## Upgrade Existing VPS
 
 For production, use the plan gate first.
 
-Before upgrade:
-
-```bash
-cp -a /root/sing-box-vps "/root/sing-box-vps.bak.$(date +%Y%m%d%H%M%S)"
-sing-box check -c /root/sing-box-vps/config.json
-systemctl status sing-box --no-pager
-```
-
-Upgrade using the script's supported menu or the non-interactive CLI:
+First update only the management command, start a new invocation, and verify the new Agent surface:
 
 ```bash
 sbv update sbv
-sbv update sing-box latest
-# or pin the core:
-sbv update sing-box 1.14.0
+sbv agent capabilities --json
 ```
 
-`sbv update sing-box [latest|x.y.z]` only updates a healthy managed instance. If the instance is incomplete or missing, enter the interactive `sbv` menu first to repair, take over, or install it. After upgrade:
+For automation, use a fixed target and preserve the preflight JSON:
+
+```bash
+sbv agent upgrade-check --json 1.14.0
+sbv agent upgrade --json 1.14.0 --yes
+```
+
+Require `ready=true` and an empty `blockers` array. The read-only preflight validates the currently installed core and reports known schema warnings, but intentionally does not download the target binary. The guarded upgrade creates a root-only persistent backup, installs the target, runs the target core's `sing-box check` before restart, verifies the exact version/config hash/service, and attempts to restore the old binary on any failed invariant. It never rewrites the server config for migration.
+
+The ordinary operator path `sbv update sing-box [latest|x.y.z]` remains available, but Agent automation should use the fixed-version guarded command. Both paths only operate on a healthy managed instance and return nonzero when the target rejects the config. If the instance is incomplete or missing, enter the interactive `sbv` menu for repair/takeover instead of forcing an upgrade.
+
+After upgrade:
 
 ```bash
 sing-box version
@@ -204,6 +223,9 @@ ls -la /root/sing-box-vps /root/sing-box-vps/protocols
 Use the non-interactive Agent interface when automation needs stable output:
 
 ```bash
+sbv agent capabilities --json
+sbv agent upgrade-check --json 1.14.0
+sbv agent upgrade --json 1.14.0 --yes
 sbv agent status --json
 sbv agent nodes --json
 sbv agent links --json
@@ -217,9 +239,10 @@ sbv update sbv
 sbv update sing-box latest
 ```
 
-- `status --json` is safe for routine diagnostics. It reports script version, supported sing-box version, installed sing-box version, service state, paths, and installed protocols.
-- `nodes --json` is safe for ordinary logs. It reports node names, ports, server names, and exportability without full share links or passwords.
-- `links --json` returns full connection material. Treat its output as sensitive and avoid pasting it into public logs. Hysteria2 nodes using a manual Ed25519 certificate include `warnings[].code=hy2_ed25519_share_link_requires_client_override` because the share URI cannot carry the required 1.14+ client option.
+- `status --json` is safe for routine diagnostics. It reports script/core/service/path/protocol state plus inbound/outbound stack modes, BBR, REALITY instance/QoS counts, and whether client export/SubMan files exist; it does not return credentials.
+- `capabilities --json` is read-only and returns the supported protocol/feature matrix plus safety labels. `upgrade-check --json 1.14.0` is read-only and must precede an upgrade; require `ready=true` and `blockers=[]`. Its `target_binary_validation.performed=false` means target validation is deferred to the guarded apply transaction, not that compatibility was already proven.
+- `nodes --json` is safe for ordinary logs. It reports every protocol and every REALITY instance, including names, ports, server names, rate limits, outbound policy, and exportability without UUIDs, keys, full share links, or passwords.
+- `links --json` returns full connection material for every protocol and every REALITY instance. Treat its output as sensitive and avoid pasting it into public logs. Hysteria2 nodes using a manual Ed25519 certificate include `warnings[].code=hy2_ed25519_share_link_requires_client_override` because the share URI cannot carry the required 1.14+ client option.
 - `export-client --json` generates `/root/sing-box-vps/client/sing-box-client.json`, validates it with `sing-box check`, and returns the path plus config JSON. It writes the client export file but does not change the running server config or restart services. For a 1.14+ Hysteria2 Ed25519 target it sets top-level `disable_chrome_parrot: true` and returns `warnings[].code=hy2_ed25519_chrome_parrot_disabled`.
 - `check --json` validates the server config with `sing-box check` and returns stdout, stderr, exit code, and pass/fail state.
 - `doctor --json` is read-only. It returns status, path existence checks, protocol state, and embedded config-check output for first-pass agent diagnostics.
@@ -228,6 +251,7 @@ sbv update sing-box latest
 - `subman-sync --json` pushes nodes to SubMan without prompting. Missing SubMan config is reported as structured JSON. Hysteria2 manual Ed25519 nodes carry the same share-link compatibility warning as `links --json`.
 - `update sbv` updates `/usr/local/bin/sbv` from the project main branch.
 - `update sing-box [latest|x.y.z]` updates only the sing-box binary, preserves the current server config byte-for-byte, validates it with `sing-box check`, and restarts the service only after validation passes. The aliases are `sbv update-sbv` and `sbv update-sing-box [latest|x.y.z]`.
+- `upgrade --json 1.14.0 --yes` is the auditable Hermes path: it is mutating and service-impacting, persists a backup under `/root/sing-box-vps-backups/`, preserves `config.json` byte-for-byte, validates before restart, and attempts automatic binary recovery on failure. Recovery is complete only when both `rolled_back` and `rollback_ok` are true; `error=rollback_failed` plus `manual_intervention_required=true` is a hard stop. It never silently rewrites configuration for migration. `export-client` and `subman-sync` are also mutating; `links`, export, and SubMan output are sensitive. Installation, protocol edits, REALITY/QoS, Warp, BBR, media checks, takeover/repair, and uninstall remain interactive-only.
 
 ## sing-box 1.14 Compatibility
 
@@ -236,6 +260,9 @@ sbv update sing-box latest
 - A binary-only update never migrates or rewrites the server config. The target binary must accept the existing file via `sing-box check` before the service is restarted.
 - Hysteria2 manual Ed25519 certificates are detected with OpenSSL. Generated 1.14+ client outbounds receive top-level `disable_chrome_parrot: true`; share links cannot encode this field, so human and Agent interfaces emit a warning.
 - If the manual certificate algorithm cannot be inspected, Agent output uses `warnings[].code=hy2_certificate_algorithm_unknown`; operators should verify the certificate and client compatibility manually.
+- Inline `tls.acme` and legacy `download_detour` are deprecated in 1.14 but remain accepted for compatibility; both are scheduled for removal in 1.16. A binary-only upgrade does not migrate them.
+
+For the complete single-host rehearsal, including stop conditions, evidence requirements, and rollback assertions, use `docs/agents/sing-box-1.13-to-1.14-upgrade-test.md`.
 
 Common paths:
 
@@ -248,6 +275,7 @@ Common paths:
 - SubMan config: `/root/sing-box-vps/subman.env`
 - Warp domains: `/root/sing-box-vps/warp-domains.txt`
 - Global command: `/usr/local/bin/sbv`
+- Agent upgrade backups: `/root/sing-box-vps-backups/` (sensitive, root-only)
 - systemd service: `sing-box`
 
 For config problems, do not guess from symptoms alone. Run `sing-box check`, inspect the generated JSON, and compare protocol state files to the runtime config.
@@ -255,6 +283,8 @@ For config problems, do not guess from symptoms alone. Run `sing-box check`, ins
 ## VLESS REALITY Multi-Instance Notes
 
 VLESS REALITY can be installed as multiple managed instances. Each instance may have a distinct port, ShortID, node name, and optional upload/download Mbps limit. Instance state is authoritative; do not hand-edit generated `config.json` to add or remove REALITY inbounds.
+
+When more than one REALITY instance exists, the interactive removal flow asks whether to remove one instance or the entire VLESS REALITY protocol. Confirm the scope explicitly; successful removal regenerates and validates the config, refreshes QoS, restarts the service when protocols remain, and closes ports that are no longer managed.
 
 When diagnosing REALITY:
 
@@ -308,17 +338,23 @@ SubMan sync is non-interactive for agents and pushes VLESS REALITY and Hysteria2
 
 ## Rollback And Recovery
 
-Use backups before restoring production files. A typical recovery path is:
+The guarded Agent upgrade attempts to restore the old binary automatically when its target validation or postconditions fail. First inspect `error`, `failure_reason`, `rollback_attempted`, `rolled_back`, `rollback_ok`, `manual_intervention_required`, `installed`, `config_preserved`, `service`, and the exact `backup` path in its JSON result.
+
+Manual recovery is only for `rollback_ok=false`. Validate the returned path prefix and its manifest before copying anything; on production, present these exact commands in a new plan and wait for approval:
 
 ```bash
 systemctl stop sing-box
-cp -a /root/sing-box-vps.bak.YYYYMMDDHHMMSS /root/sing-box-vps
-sing-box check -c /root/sing-box-vps/config.json
+backup=/root/sing-box-vps-backups/upgrade-EXACT-DIRECTORY-FROM-JSON
+case "${backup}" in /root/sing-box-vps-backups/upgrade-*) ;; *) exit 1 ;; esac
+(cd "${backup}" && sha256sum -c SHA256SUMS)
+install -m 0755 "${backup}/sing-box" /usr/local/bin/sing-box
+install -m 0644 "${backup}/sing-box.service" /etc/systemd/system/sing-box.service
+install -m 0600 "${backup}/runtime/config.json" /root/sing-box-vps/config.json
+systemctl daemon-reload
+/usr/local/bin/sing-box check -c /root/sing-box-vps/config.json
 systemctl start sing-box
 systemctl status sing-box --no-pager
 ```
-
-For production, present the rollback commands in a plan and wait for approval before execution unless the user has already approved emergency recovery.
 
 ## External Documentation
 

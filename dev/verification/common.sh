@@ -72,6 +72,14 @@ resolve_local_tests() {
       tests/reality_sni_validation.sh \
       tests/generate_config_cleans_temp_files_on_failure.sh \
       tests/system_safety_guards.sh \
+      tests/agent_upgrade_commands.sh \
+      tests/agent_cli_multi_instance_status.sh \
+      tests/agent_docs_cover_capabilities.sh \
+      tests/version_metadata_is_consistent.sh \
+      tests/vless_reality_instance_removal.sh \
+      tests/install_takeover_rebuilds_protocol_state_from_config.sh \
+      tests/detect_existing_instance_auto_heals_managed_config_drift.sh \
+      tests/update_keeps_existing_config.sh \
       tests/update_rolls_back_binary_when_config_invalid.sh \
       tests/subman_config_helpers.sh \
       tests/subman_payload_generation.sh \
@@ -115,7 +123,7 @@ resolve_remote_scenarios() {
   done
 
   if [[ "${needs_install_flow}" == "1" ]]; then
-    printf '%s\n' fresh_install_vless reconfigure_existing_install legacy_takeover_export fresh_install_anytls
+    printf '%s\n' fresh_install_vless reconfigure_existing_install legacy_takeover_export fresh_install_anytls upgrade_1_13_to_1_14
   fi
 
   printf '%s\n' runtime_smoke
@@ -145,7 +153,9 @@ create_run_dir() {
 }
 
 require_docker_env() {
+  local attempt
   local image=${VERIFY_DOCKER_IMAGE:-"${DEFAULT_DOCKER_IMAGE}"}
+  local systemd_state=''
 
   if ! command -v docker &>/dev/null; then
     printf 'ERROR: docker 不可用，请先安装 Docker。\n' >&2
@@ -159,6 +169,20 @@ require_docker_env() {
 
   VERIFY_DOCKER_CONTAINER=$(docker run -d --privileged "${image}")
   export VERIFY_DOCKER_CONTAINER
+
+  for ((attempt = 1; attempt <= 100; attempt++)); do
+    systemd_state=$(docker exec "${VERIFY_DOCKER_CONTAINER}" systemctl is-system-running 2>/dev/null || true)
+    case "${systemd_state}" in
+      running|degraded)
+        return 0
+        ;;
+    esac
+    sleep 0.2
+  done
+
+  printf 'ERROR: Docker 验证容器中的 systemd 未能完成启动（state=%s）。\n' "${systemd_state:-unknown}" >&2
+  require_docker_cleanup
+  return 1
 }
 
 require_docker_cleanup() {

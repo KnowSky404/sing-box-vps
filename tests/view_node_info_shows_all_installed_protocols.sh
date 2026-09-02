@@ -76,6 +76,14 @@ get_public_ip() {
   printf '203.0.113.10\n'
 }
 
+get_public_ipv4() {
+  printf '203.0.113.10\n'
+}
+
+get_public_ipv6() {
+  :
+}
+
 show_connection_details() {
   printf '%s:%s\n' "$1" "${SB_PROTOCOL}" >> "${DETAIL_CALLS_FILE}"
 }

@@ -17,6 +17,10 @@ if [[ "\${1:-}" == "run" && "\${2:-}" == "-d" && "\${3:-}" == "--privileged" ]];
   printf 'test-container-fails\n'
   exit 0
 fi
+if [[ "\${1:-}" == "exec" && "\${3:-}" == "systemctl" && "\${4:-}" == "is-system-running" ]]; then
+  printf 'running\n'
+  exit 0
+fi
 if [[ "\${1:-}" == "exec" && "\${2:-}" == "-i" ]]; then
   printf 'simulated remote failure\n' >&2
   exit 23

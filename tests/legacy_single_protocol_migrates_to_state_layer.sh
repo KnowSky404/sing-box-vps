@@ -81,7 +81,7 @@ if ! grep -Fq 'INSTALLED_PROTOCOLS=vless-reality' "${SB_PROTOCOL_INDEX_FILE}"; t
   exit 1
 fi
 
-if ! grep -Fq 'UUID=11111111-1111-1111-1111-111111111111' "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"; then
+if ! grep -Fq 'UUID=11111111-1111-1111-1111-111111111111' "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env"; then
   printf 'expected vless protocol state to persist UUID, got:\n%s\n' "$(cat "${SB_PROTOCOL_STATE_DIR}/vless-reality.env")" >&2
   exit 1
 fi

@@ -55,6 +55,11 @@ prompt_vless_reality_rate_limit_fields() {
   SB_VLESS_RATE_LIMIT_DOWN_MBPS="100"
 }
 
+prompt_vless_reality_advanced_update_fields() {
+  SB_VLESS_ALPN_MODE="off"
+  SB_VLESS_TCP_FAST_OPEN="n"
+}
+
 duplicate_check_seen="n"
 
 vless_reality_bandwidth_profile_exists() {

@@ -101,6 +101,10 @@ check_port_conflict() { :; }
 load_warp_route_settings() { :; }
 refresh_warp_route_assets() { :; }
 ensure_warp_routing_assets() { :; }
+prompt_vless_reality_advanced_update_fields() {
+  SB_VLESS_ALPN_MODE="off"
+  SB_VLESS_TCP_FAST_OPEN="n"
+}
 
 update_config_only <<'EOF'
 1

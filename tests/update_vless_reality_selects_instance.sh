@@ -43,6 +43,10 @@ load_current_config_state() {
 refresh_vless_reality_qos_rules() {
   printf 'qos refreshed\n' > "${TMP_DIR}/qos.called"
 }
+prompt_vless_reality_advanced_update_fields() {
+  SB_VLESS_ALPN_MODE="off"
+  SB_VLESS_TCP_FAST_OPEN="n"
+}
 select_reality_sni_candidate() {
   printf 'auto.example.com'
 }

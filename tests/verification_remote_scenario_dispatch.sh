@@ -726,6 +726,8 @@ grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/uninstall_and_reinstall/pr
 [[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/anytls/client.json" ]]
 [[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/anytls/probe.stdout.txt" ]]
 grep -Fq 'verification_run_protocol_probes' "${PAYLOAD_FILE}"
+grep -Fq 'verification_scenario_upgrade_1_13_to_1_14' "${PAYLOAD_FILE}"
+grep -Fq 'run_verification_scenario upgrade_1_13_to_1_14 verification_scenario_upgrade_1_13_to_1_14' "${PAYLOAD_FILE}"
 ! grep -Fq 'verification_execute_single_protocol_probe vless-reality /root/sing-box-vps/config.json' "${PAYLOAD_FILE}"
 grep -Fqx 'test:-f|/root/sing-box-vps/protocols/vless-reality.env|' "${ASSERT_LOG_FILE}"
 grep -Fqx 'test:-f|/root/sing-box-vps/protocols/vless-reality.d/main.env|' "${ASSERT_LOG_FILE}"

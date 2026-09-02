@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090201
+# Version: 2026090202
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090201"
+readonly SCRIPT_VERSION="2026090202"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
+readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
 readonly UI_COMPACT_MAX_WIDTH=72
@@ -36,6 +37,7 @@ readonly SBV_BIN_PATH="/usr/local/bin/sbv"
 readonly SINGBOX_CONFIG_DIR="${SB_PROJECT_DIR}"
 readonly SINGBOX_CONFIG_FILE="${SB_PROJECT_DIR}/config.json"
 readonly SINGBOX_SERVICE_FILE="/etc/systemd/system/sing-box.service"
+readonly SB_UPGRADE_BACKUP_ROOT="/root/sing-box-vps-backups"
 readonly WARP_AI_ROUTE_DOMAINS_JSON='["gemini.google.com","aistudio.google.com","generativelanguage.googleapis.com","copilot.microsoft.com"]'
 readonly WARP_AI_ROUTE_DOMAIN_SUFFIXES_JSON='["openai.com","chatgpt.com","oaistatic.com","oaiusercontent.com","anthropic.com","claude.ai","perplexity.ai","x.ai","cursor.com","cursor.sh","google.com","googleapis.com","gstatic.com","googleusercontent.com","gvt1.com","recaptcha.net"]'
 readonly WARP_STREAM_ROUTE_DOMAINS_JSON='[]'
@@ -353,6 +355,9 @@ print_cli_help() {
   sbv update-sbv
   sbv update-sing-box [latest|x.y.z]
   sbv agent help
+  sbv agent capabilities --json
+  sbv agent upgrade-check --json x.y.z
+  sbv agent upgrade --json x.y.z --yes
   sbv uninstall
 
 说明:
@@ -360,7 +365,7 @@ print_cli_help() {
   update sbv                 更新管理脚本 /usr/local/bin/sbv。
   update sing-box            更新 sing-box 二进制并保留现有配置。
   update-sing-box [version]  update sing-box 的短别名，版本可为 latest 或 x.y.z。
-  agent                      输出适合自动化读取的 JSON 状态、节点和导出配置。
+  agent                      输出适合自动化读取的 JSON 状态、节点、能力和受保护升级结果。
 EOF
 }
 
@@ -4194,9 +4199,9 @@ list_effective_protocols() {
 }
 
 load_protocol_state() {
-  local protocol state_file
+  local protocol state_file state_mode=${2:-mutable}
   protocol=$(normalize_protocol_id "$1")
-  if [[ "${protocol}" == "vless-reality" ]]; then
+  if [[ "${protocol}" == "vless-reality" && "${state_mode}" != "read-only" ]]; then
     migrate_vless_reality_state_to_instances_if_needed
   fi
   state_file=$(protocol_state_file "${protocol}")
@@ -6143,6 +6148,8 @@ remove_protocol_menu() {
   local state_file backup_state_file index_backup_file config_backup_file
   local joined_protocols first_remaining protocol
   local reality_instances=() instance_state_file backup_instance_state_file
+  local selected_instance protocol_state_backup_file first_remaining_instance removed_instance_port
+  local reality_remove_mode="instance" choice removed_port fp_entry ftype orig_file backup_file rest
   local all_backup_files=() removed_ports=() idx raw_choice raw_choices chosen_protocol display_list
 
   if [[ ! -f "${SINGBOX_CONFIG_FILE}" && ! -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
@@ -6191,6 +6198,86 @@ remove_protocol_menu() {
     return 0
   fi
 
+  # Selecting only VLESS + REALITY keeps the historical per-instance removal
+  # flow when more than one managed instance exists, while still exposing an
+  # explicit whole-protocol option. Multi-select and blank keep their newer
+  # whole-protocol semantics.
+  if [[ ${#selected_protocols[@]} -eq 1 && "${selected_protocols[0]}" == "vless-reality" ]]; then
+    migrate_vless_reality_state_to_instances_if_needed
+    mapfile -t reality_instances < <(list_vless_reality_instance_ids)
+    if [[ ${#reality_instances[@]} -gt 1 ]]; then
+      echo "检测到多个 REALITY 实例:"
+      echo "1. 移除单个 REALITY 实例 (默认)"
+      echo "2. 移除整个 VLESS + REALITY 协议"
+      echo "0. 返回"
+      read -rp "请选择移除范围 [1]: " reality_remove_mode
+      reality_remove_mode=$(trim_whitespace "${reality_remove_mode}")
+      case "${reality_remove_mode}" in
+        ""|1) reality_remove_mode="instance" ;;
+        2) reality_remove_mode="protocol" ;;
+        0) return 0 ;;
+        *)
+          log_warn "无效选项，已取消移除。"
+          return 0
+          ;;
+      esac
+    fi
+    if [[ ${#reality_instances[@]} -gt 1 && "${reality_remove_mode}" == "instance" ]]; then
+      SELECTED_VLESS_INSTANCE_ID=""
+      if ! prompt_vless_reality_instance_selection; then
+        return 0
+      fi
+      selected_instance="${SELECTED_VLESS_INSTANCE_ID}"
+      load_vless_reality_instance_state "${selected_instance}" || \
+        log_error "未找到 REALITY 实例状态: ${selected_instance}"
+      removed_instance_port="${SB_PORT}"
+      read -rp "确认移除 REALITY 实例 ${SB_NODE_NAME} (${selected_instance})? [y/N]: " confirm
+      if [[ "${confirm}" != "y" && "${confirm}" != "Y" ]]; then
+        log_info "已取消移除 REALITY 实例。"
+        return 0
+      fi
+
+      instance_state_file=$(vless_reality_instance_state_file "${selected_instance}") || \
+        log_error "REALITY 实例 ID 非法: ${selected_instance}"
+      state_file=$(protocol_state_file "vless-reality")
+      [[ -f "${instance_state_file}" ]] || log_error "未找到 REALITY 实例状态文件: ${instance_state_file}"
+      [[ -f "${state_file}" ]] || log_error "未找到协议状态文件: ${state_file}"
+
+      backup_instance_state_file="${instance_state_file}.bak.$(date +%Y%m%d%H%M%S)"
+      protocol_state_backup_file=$(mktemp)
+      config_backup_file=$(mktemp)
+      cp "${state_file}" "${protocol_state_backup_file}"
+      cp "${SINGBOX_CONFIG_FILE}" "${config_backup_file}"
+      mv "${instance_state_file}" "${backup_instance_state_file}"
+
+      load_vless_reality_protocol_state
+      remove_vless_reality_instance_id_from_list "${selected_instance}"
+      first_remaining_instance="${VLESS_REALITY_INSTANCE_IDS%%,*}"
+      if [[ "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}" == "${selected_instance}" ]]; then
+        VLESS_REALITY_DEFAULT_INSTANCE_ID="${first_remaining_instance}"
+      fi
+      save_vless_reality_protocol_state
+
+      if ! generate_config || ! validate_config_file; then
+        mv "${backup_instance_state_file}" "${instance_state_file}" 2>/dev/null || true
+        cp "${protocol_state_backup_file}" "${state_file}"
+        cp "${config_backup_file}" "${SINGBOX_CONFIG_FILE}"
+        rm -f "${protocol_state_backup_file}" "${config_backup_file}"
+        log_error "移除 REALITY 实例后配置校验失败，已恢复原配置。"
+      fi
+
+      rm -f "${protocol_state_backup_file}" "${config_backup_file}"
+      setup_service
+      load_protocol_state "vless-reality"
+      open_all_protocol_ports
+      refresh_vless_reality_qos_rules
+      systemctl restart sing-box
+      close_firewall_port "${removed_instance_port}"
+      log_success "已移除 REALITY 实例: ${selected_instance}。原状态已备份到: ${backup_instance_state_file}"
+      return 0
+    fi
+  fi
+
   display_list=()
   for selected_protocol in "${selected_protocols[@]}"; do
     display_list+=("$(protocol_display_name "$(state_protocol_to_runtime "${selected_protocol}")")")
@@ -6224,11 +6311,10 @@ remove_protocol_menu() {
         state_file=$(protocol_state_file "vless-reality")
         if [[ -f "${state_file}" ]]; then
           backup_state_file="${state_file}.bak.$(date +%Y%m%d%H%M%S)"
-          cp "${state_file}" "${backup_state_file}"
+          mv "${state_file}" "${backup_state_file}"
           all_backup_files+=("pstate:${state_file}:${backup_state_file}")
           VLESS_REALITY_INSTANCE_IDS=""
           VLESS_REALITY_DEFAULT_INSTANCE_ID=""
-          save_vless_reality_protocol_state
         fi
       fi
     else
@@ -6261,16 +6347,15 @@ remove_protocol_menu() {
     fi
     systemctl stop sing-box &>/dev/null || true
     systemctl disable sing-box &>/dev/null || true
-    local removed_port
     for removed_port in "${removed_ports[@]}"; do
       [[ -n "${removed_port}" ]] && close_firewall_port "${removed_port}"
     done
+    rm -f "${index_backup_file}" "${config_backup_file}"
     log_info "所有协议已移除，sing-box 服务已停止。"
     return 0
   fi
 
   if ! generate_config || ! validate_config_file; then
-    local fp_entry ftype orig_file backup_file rest
     for fp_entry in "${all_backup_files[@]}"; do
       ftype="${fp_entry%%:*}"
       rest="${fp_entry#*:}"
@@ -6293,6 +6378,9 @@ remove_protocol_menu() {
   open_all_protocol_ports
   refresh_vless_reality_qos_rules
   systemctl restart sing-box
+  for removed_port in "${removed_ports[@]}"; do
+    [[ -n "${removed_port}" ]] && close_firewall_port "${removed_port}"
+  done
   log_success "已移除协议: ${display_str}。"
 }
 
@@ -8045,6 +8133,9 @@ agent_print_help() {
   cat <<'EOF'
 用法:
   sbv agent help
+  sbv agent capabilities --json
+  sbv agent upgrade-check --json x.y.z
+  sbv agent upgrade --json x.y.z --yes
   sbv agent status --json
   sbv agent nodes --json
   sbv agent links --json
@@ -8056,6 +8147,9 @@ agent_print_help() {
   sbv agent warp --json
 
 说明:
+  capabilities  输出协议、功能入口以及只读/变更/敏感分类。
+  upgrade-check 只读评估固定目标版本的升级就绪状态，不下载或替换二进制。
+  upgrade       创建持久备份并执行受 --yes 保护的二进制升级，输出结构化结果。
   status        输出服务、版本、路径和已安装协议。
   nodes         输出节点摘要，不包含完整分享链接或密码。
   links         输出完整连接材料，适合受信任 Agent 获取节点信息。
@@ -8080,9 +8174,724 @@ agent_json_error() {
   local message=$2
 
   jq -n \
+    --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
     --arg error "${error}" \
     --arg message "${message}" \
-    '{ok: false, error: $error, message: $message}'
+    '{schema: $schema, ok: false, error: $error, message: $message}'
+}
+
+agent_file_sha256() {
+  local file=$1
+
+  if [[ ! -f "${file}" ]]; then
+    printf ''
+    return 0
+  fi
+
+  sha256sum "${file}" | awk '{print $1}'
+}
+
+detect_existing_instance_state_read_only() {
+  local has_bin="n"
+  local has_service="n"
+  local has_config="n"
+  local has_index="n"
+  local has_state="n"
+  local state_file
+
+  [[ -x "${SINGBOX_BIN_PATH}" ]] && has_bin="y"
+  [[ -f "${SINGBOX_SERVICE_FILE}" ]] && has_service="y"
+  [[ -f "${SINGBOX_CONFIG_FILE}" ]] && has_config="y"
+  [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]] && has_index="y"
+
+  if [[ -d "${SB_PROTOCOL_STATE_DIR}" ]]; then
+    for state_file in "${SB_PROTOCOL_STATE_DIR}"/*.env; do
+      [[ -e "${state_file}" ]] || continue
+      [[ "${state_file}" == "${SB_PROTOCOL_INDEX_FILE}" ]] && continue
+      has_state="y"
+      break
+    done
+  fi
+
+  if [[ "${has_bin}" == "n" && "${has_service}" == "n" && "${has_config}" == "n" && "${has_index}" == "n" && "${has_state}" == "n" ]]; then
+    printf 'fresh'
+    return 0
+  fi
+
+  if [[ "${has_bin}" == "y" && "${has_service}" == "y" && "${has_config}" == "y" && "${has_index}" == "y" && "${has_state}" == "y" ]] && \
+    protocol_state_layer_matches_config; then
+    printf 'healthy'
+    return 0
+  fi
+
+  printf 'incomplete'
+}
+
+agent_capabilities_json() {
+  jq -n \
+    --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
+    --arg script_version "${SCRIPT_VERSION}" \
+    --arg supported_version "${SB_SUPPORT_MAX_VERSION}" \
+    --arg backup_root "${SB_UPGRADE_BACKUP_ROOT}" \
+    '{
+      schema: $schema,
+      ok: true,
+      action: "capabilities",
+      script_version: $script_version,
+      supported_sing_box_version: $supported_version,
+      multi_protocol_coexistence: true,
+      protocols: {
+        "vless-reality": {
+          multi_instance: true,
+          per_instance_outbound: ["default", "direct", "warp"],
+          qos: {upload_mbps: true, download_mbps: true},
+          share_link: true,
+          qr: true,
+          client_export: true,
+          subman_sync: true
+        },
+        mixed: {
+          http: true,
+          socks5: true,
+          authentication: true,
+          share_links: ["http", "socks5"],
+          qr: false,
+          client_export: false,
+          subman_sync: false
+        },
+        hysteria2: {
+          tls_modes: ["acme_http01", "acme_cloudflare_dns01", "manual"],
+          bandwidth: true,
+          obfs: true,
+          share_link: true,
+          qr: true,
+          client_export: true,
+          subman_sync: true
+        },
+        anytls: {
+          tls_modes: ["acme_http01", "acme_cloudflare_dns01", "manual"],
+          standard_share_uri: false,
+          outbound_example: true,
+          qr: false,
+          client_export: true,
+          subman_sync: false
+        }
+      },
+      features: {
+        warp: {
+          route_modes: ["all", "selective"],
+          account_registration: true,
+          custom_domains: true,
+          local_rule_sets: true,
+          remote_rule_sets: true
+        },
+        network_stack: {
+          inbound: ["ipv4_only", "ipv6_only", "dual_stack"],
+          outbound: ["ipv4_only", "ipv6_only", "prefer_ipv4", "prefer_ipv6"]
+        },
+        system: {bbr: true, firewall_port_management: true},
+        connection_material: {links: true, ansi_qr: true, bare_core_client_export: true},
+        lifecycle: {
+          service_start_stop_restart_status_logs: true,
+          managed_instance_takeover_repair: true,
+          core_upgrade_and_uninstall: true,
+          script_self_update_and_uninstall: true
+        },
+        diagnostics: {config_check: true, doctor: true, media_check: true},
+        subman: {supported_protocols: ["vless-reality", "hysteria2"], idempotent_sync: true}
+      },
+      commands: {
+        capabilities: {mutation: false, sensitive: false},
+        status: {mutation: false, sensitive: false},
+        nodes: {mutation: false, sensitive: false},
+        links: {mutation: false, sensitive: true},
+        warp: {mutation: false, sensitive: false},
+        check: {mutation: false, sensitive: false},
+        doctor: {mutation: false, sensitive: false},
+        "upgrade-check": {mutation: false, sensitive: false},
+        upgrade: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart"},
+        "export-client": {mutation: true, sensitive: true},
+        "service restart": {mutation: true, sensitive: false, confirmation: "--yes"},
+        "subman-sync": {mutation: true, sensitive: true, external_write: true}
+      },
+      interactive_features: {
+        protocol_install_update_remove: true,
+        managed_instance_takeover_repair: true,
+        reality_multi_instance_and_qos: true,
+        warp_mutation: true,
+        inbound_outbound_stack_management: true,
+        bbr: true,
+        media_check: true,
+        service_start_stop_and_logs: true,
+        script_self_update_and_uninstall: true,
+        sing_box_uninstall: true
+      },
+      upgrade: {
+        backup_root: $backup_root,
+        rewrites_server_config: false,
+        target_binary_check_before_restart: true,
+        automatic_binary_rollback_on_failure: true
+      }
+    }'
+}
+
+agent_config_compatibility_json() {
+  local target_version=$1
+  local inline_acme_count=0
+  local download_detour_count=0
+  local certificate_provider_count=0
+  local http_client_count=0
+  local classification="neutral"
+  local warnings_json='[]'
+  local hy2_warnings_json='[]'
+
+  if [[ ! -f "${SINGBOX_CONFIG_FILE}" ]] || ! jq -e '.' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+    jq -n \
+      --arg classification "unreadable" \
+      '{
+        schema: {classification: $classification, legacy: false, modern_1_14: false},
+        legacy: {tls_acme_count: 0, download_detour_count: 0},
+        modern: {certificate_provider_count: 0, http_client_count: 0},
+        warnings: [{code: "config_json_unreadable", message: "配置文件不存在或不是有效 JSON。"}]
+      }'
+    return 0
+  fi
+
+  inline_acme_count=$(jq -r '[(.inbounds // [])[] | select(.tls.acme? != null)] | length' "${SINGBOX_CONFIG_FILE}")
+  download_detour_count=$(jq -r '[(.route.rule_set // [])[] | select(.download_detour? != null)] | length' "${SINGBOX_CONFIG_FILE}")
+  certificate_provider_count=$(jq -r '(.certificate_providers // []) | length' "${SINGBOX_CONFIG_FILE}")
+  http_client_count=$(jq -r '[(.route.rule_set // [])[] | select(.http_client? != null)] | length' "${SINGBOX_CONFIG_FILE}")
+
+  if (( inline_acme_count > 0 || download_detour_count > 0 )); then
+    classification="legacy_1_13"
+  fi
+  if (( certificate_provider_count > 0 || http_client_count > 0 )); then
+    if [[ "${classification}" == "legacy_1_13" ]]; then
+      classification="mixed"
+    else
+      classification="modern_1_14"
+    fi
+  fi
+
+  if singbox_version_at_least "${target_version}" "${SB_CONFIG_SCHEMA_1_14_MIN_VERSION}"; then
+    if (( inline_acme_count > 0 )); then
+      warnings_json=$(jq -n --argjson warnings "${warnings_json}" '
+        $warnings + [{
+          code: "inline_acme_deprecated",
+          message: "tls.acme 在 sing-box 1.14 中仍兼容但已弃用，计划在 1.16 移除。",
+          removal_version: "1.16.0"
+        }]')
+    fi
+    if (( download_detour_count > 0 )); then
+      warnings_json=$(jq -n --argjson warnings "${warnings_json}" '
+        $warnings + [{
+          code: "download_detour_deprecated",
+          message: "远程规则集 download_detour 在 sing-box 1.14 中仍兼容但已弃用，计划在 1.16 移除。",
+          removal_version: "1.16.0"
+        }]')
+    fi
+    hy2_warnings_json=$(collect_hy2_compatibility_warnings_json "share" 2>/dev/null || printf '[]')
+    warnings_json=$(jq -n \
+      --argjson warnings "${warnings_json}" \
+      --argjson hy2_warnings "${hy2_warnings_json}" \
+      '$warnings + $hy2_warnings')
+  fi
+
+  jq -n \
+    --arg classification "${classification}" \
+    --argjson inline_acme_count "${inline_acme_count}" \
+    --argjson download_detour_count "${download_detour_count}" \
+    --argjson certificate_provider_count "${certificate_provider_count}" \
+    --argjson http_client_count "${http_client_count}" \
+    --argjson warnings "${warnings_json}" \
+    '{
+      schema: {
+        classification: $classification,
+        legacy: ($classification == "legacy_1_13" or $classification == "mixed"),
+        modern_1_14: ($classification == "modern_1_14" or $classification == "mixed")
+      },
+      legacy: {
+        tls_acme_count: $inline_acme_count,
+        download_detour_count: $download_detour_count
+      },
+      modern: {
+        certificate_provider_count: $certificate_provider_count,
+        http_client_count: $http_client_count
+      },
+      warnings: $warnings
+    }'
+}
+
+agent_upgrade_check_json() {
+  local target_input=$1
+  local target_version
+  local current_version
+  local active_state
+  local managed_instance_state
+  local check_json
+  local check_status=0
+  local compatibility_json
+  local config_sha256
+  local blockers_json
+  local direction="unknown"
+  local target_supported=false
+  local ready=false
+
+  if ! target_version=$(normalize_singbox_version_input "${target_input}") || [[ "${target_version}" == "latest" ]]; then
+    agent_json_error "invalid_version" "upgrade-check 需要完整版本号，例如 ${SB_SUPPORT_MAX_VERSION}。"
+    return 1
+  fi
+
+  current_version=$(detect_installed_singbox_version)
+  current_version=${current_version#v}
+  active_state=$(systemctl is-active sing-box 2>/dev/null || true)
+  managed_instance_state=$(detect_existing_instance_state_read_only)
+  config_sha256=$(agent_file_sha256 "${SINGBOX_CONFIG_FILE}")
+  compatibility_json=$(agent_config_compatibility_json "${target_version}")
+
+  if check_json=$(agent_singbox_check_json); then
+    check_status=0
+  else
+    check_status=$?
+  fi
+
+  if singbox_version_at_least "${SB_SUPPORT_MAX_VERSION}" "${target_version}"; then
+    target_supported=true
+  fi
+
+  if [[ "${current_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if [[ "${current_version}" == "${target_version}" ]]; then
+      direction="same"
+    elif singbox_version_at_least "${target_version}" "${current_version}"; then
+      direction="upgrade"
+    else
+      direction="downgrade"
+    fi
+  fi
+
+  blockers_json=$(jq -n \
+    --arg current "${current_version}" \
+    --arg direction "${direction}" \
+    --arg managed_instance_state "${managed_instance_state}" \
+    --arg active_state "${active_state:-unknown}" \
+    --argjson target_supported "${target_supported}" \
+    --argjson current_check_ok "$([[ "${check_status}" == "0" ]] && printf 'true' || printf 'false')" \
+    '[
+      if $target_supported != true then "target_unsupported" else empty end,
+      if ($current | test("^[0-9]+\\.[0-9]+\\.[0-9]+$") | not) then "current_version_unknown" else empty end,
+      if $direction == "downgrade" then "downgrade_not_allowed" else empty end,
+      if $managed_instance_state != "healthy" then "managed_instance_not_healthy" else empty end,
+      if $active_state != "active" then "service_not_active" else empty end,
+      if $current_check_ok != true then "current_config_check_failed" else empty end
+    ]')
+
+  if [[ "$(jq 'length' <<< "${blockers_json}")" == "0" ]]; then
+    ready=true
+  fi
+
+  jq -n \
+    --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
+    --arg current "${current_version}" \
+    --arg target "${target_version}" \
+    --arg direction "${direction}" \
+    --arg active_state "${active_state:-unknown}" \
+    --arg managed_instance_state "${managed_instance_state}" \
+    --arg config_path "${SINGBOX_CONFIG_FILE}" \
+    --arg config_sha256 "${config_sha256}" \
+    --argjson target_supported "${target_supported}" \
+    --argjson ready "${ready}" \
+    --argjson current_check "${check_json}" \
+    --argjson compatibility "${compatibility_json}" \
+    --argjson blockers "${blockers_json}" \
+    '{
+      schema: $schema,
+      ok: $ready,
+      ready: $ready,
+      action: "sing_box_upgrade_check",
+      apply: false,
+      current: $current,
+      target: $target,
+      direction: $direction,
+      target_supported: $target_supported,
+      blockers: $blockers,
+      managed_instance_state: $managed_instance_state,
+      service: {active_state: $active_state},
+      config: {
+        path: $config_path,
+        sha256: $config_sha256,
+        schema: $compatibility.schema,
+        will_be_rewritten: false
+      },
+      legacy: $compatibility.legacy,
+      modern: $compatibility.modern,
+      current_check: $current_check,
+      target_binary_validation: {
+        performed: false,
+        stage: "upgrade_before_restart"
+      },
+      migration_required: false,
+      warnings: $compatibility.warnings
+    }'
+
+  [[ "${ready}" == "true" ]]
+}
+
+create_agent_upgrade_backup() {
+  local current_version=$1
+  local target_version=$2
+  local backup_dir
+  local manifest_file
+  local relative_path
+  local backup_file
+  local hash
+
+  if ! mkdir -p "${SB_UPGRADE_BACKUP_ROOT}" || ! chmod 700 "${SB_UPGRADE_BACKUP_ROOT}"; then
+    return 1
+  fi
+  backup_dir=$(mktemp -d "${SB_UPGRADE_BACKUP_ROOT}/upgrade-${current_version}-to-${target_version}.XXXXXXXX") || return 1
+  if ! chmod 700 "${backup_dir}"; then
+    rm -rf -- "${backup_dir}"
+    return 1
+  fi
+
+  if [[ -d "${SB_PROJECT_DIR}" ]]; then
+    if ! cp -a "${SB_PROJECT_DIR}" "${backup_dir}/runtime"; then
+      rm -rf -- "${backup_dir}"
+      return 1
+    fi
+  fi
+  if [[ -f "${SINGBOX_BIN_PATH}" ]] && ! cp -p "${SINGBOX_BIN_PATH}" "${backup_dir}/sing-box"; then
+    rm -rf -- "${backup_dir}"
+    return 1
+  fi
+  if [[ -f "${SBV_BIN_PATH}" ]] && ! cp -p "${SBV_BIN_PATH}" "${backup_dir}/sbv"; then
+    rm -rf -- "${backup_dir}"
+    return 1
+  fi
+  if [[ -f "${SINGBOX_SERVICE_FILE}" ]] && ! cp -p "${SINGBOX_SERVICE_FILE}" "${backup_dir}/sing-box.service"; then
+    rm -rf -- "${backup_dir}"
+    return 1
+  fi
+
+  manifest_file="${backup_dir}/SHA256SUMS"
+  if ! : > "${manifest_file}"; then
+    rm -rf -- "${backup_dir}"
+    return 1
+  fi
+  for relative_path in runtime/config.json sing-box sbv sing-box.service; do
+    backup_file="${backup_dir}/${relative_path}"
+    [[ -f "${backup_file}" ]] || continue
+    if ! hash=$(agent_file_sha256 "${backup_file}") || \
+      ! printf '%s  %s\n' "${hash}" "${relative_path}" >> "${manifest_file}"; then
+      rm -rf -- "${backup_dir}"
+      return 1
+    fi
+  done
+
+  if ! jq -n \
+    --arg created_at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    --arg script_version "${SCRIPT_VERSION}" \
+    --arg current_version "${current_version}" \
+    --arg target_version "${target_version}" \
+    --arg source_config "${SINGBOX_CONFIG_FILE}" \
+    '{
+      created_at: $created_at,
+      script_version: $script_version,
+      current_version: $current_version,
+      target_version: $target_version,
+      source_config: $source_config,
+      contains_sensitive_runtime_material: true
+    }' > "${backup_dir}/metadata.json"; then
+    rm -rf -- "${backup_dir}"
+    return 1
+  fi
+  if ! chmod 600 "${manifest_file}" "${backup_dir}/metadata.json" || ! chmod -R go-rwx "${backup_dir}"; then
+    rm -rf -- "${backup_dir}"
+    return 1
+  fi
+
+  printf '%s' "${backup_dir}"
+}
+
+restore_agent_upgrade_backup() {
+  local backup_dir=$1
+  local restore_config=${2:-n}
+  local service_was_active=${3:-n}
+  local status=0
+
+  case "${backup_dir}" in
+    "${SB_UPGRADE_BACKUP_ROOT}"/upgrade-*) ;;
+    *) return 1 ;;
+  esac
+
+  [[ -f "${backup_dir}/sing-box" && -f "${backup_dir}/SHA256SUMS" ]] || return 1
+  (cd "${backup_dir}" && sha256sum -c SHA256SUMS >/dev/null 2>&1) || return 1
+  cp -p "${backup_dir}/sing-box" "${SINGBOX_BIN_PATH}" || status=1
+
+  if [[ -f "${backup_dir}/sing-box.service" ]]; then
+    cp -p "${backup_dir}/sing-box.service" "${SINGBOX_SERVICE_FILE}" || status=1
+  fi
+  if [[ "${restore_config}" == "y" && -f "${backup_dir}/runtime/config.json" ]]; then
+    cp -p "${backup_dir}/runtime/config.json" "${SINGBOX_CONFIG_FILE}" || status=1
+  fi
+
+  systemctl daemon-reload >/dev/null 2>&1 || status=1
+  if [[ "${service_was_active}" == "y" ]]; then
+    systemctl restart sing-box >/dev/null 2>&1 || status=1
+  fi
+
+  return "${status}"
+}
+
+agent_upgrade_cli() {
+  local json_flag=${1:-}
+  local target_input=${2:-}
+  local yes_flag=${3:-}
+  local target_version
+  local preflight_json
+  local current_version
+  local before_hash
+  local before_service_state
+  local backup_dir
+  local operation_log
+  local operation_excerpt
+  local operation_status=0
+  local after_version
+  local after_hash
+  local after_service_state
+  local after_check_json
+  local after_check_status=0
+  local config_preserved=false
+  local changed=false
+  local rollback_ok=false
+  local final_changed=false
+  local manual_intervention_required=false
+  local restore_config="n"
+  local failure_reason="upgrade_failed"
+  local output_error
+
+  if [[ "${json_flag}" != "--json" ]]; then
+    agent_json_error "json_required" "upgrade 当前仅支持 --json 输出。"
+    return 1
+  fi
+  if [[ "${yes_flag}" != "--yes" ]]; then
+    agent_json_error "confirmation_required" "upgrade 会备份、替换二进制并重启服务，需要 --yes 确认。"
+    return 1
+  fi
+  if ! target_version=$(normalize_singbox_version_input "${target_input}") || [[ "${target_version}" == "latest" ]]; then
+    agent_json_error "invalid_version" "upgrade 需要完整版本号，例如 ${SB_SUPPORT_MAX_VERSION}。"
+    return 1
+  fi
+  if ! singbox_version_at_least "${SB_SUPPORT_MAX_VERSION}" "${target_version}"; then
+    agent_json_error "unsupported_version" "目标版本 ${target_version} 高于当前脚本适配上限 ${SB_SUPPORT_MAX_VERSION}。"
+    return 1
+  fi
+
+  if ! preflight_json=$(agent_upgrade_check_json "${target_version}"); then
+    if jq -e '.managed_instance_state == "healthy" and .current_check.ok != true' >/dev/null 2>&1 <<< "${preflight_json}"; then
+      jq -n \
+        --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
+        --argjson preflight "${preflight_json}" \
+        '{schema: $schema, ok: false, error: "config_check_failed", reason: "config_check_failed", preflight: $preflight}'
+    else
+      jq -n \
+        --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
+        --argjson preflight "${preflight_json}" \
+        '{schema: $schema, ok: false, error: "preflight_failed", reason: "preflight_failed", preflight: $preflight}'
+    fi
+    return 1
+  fi
+
+  current_version=$(jq -r '.current' <<< "${preflight_json}")
+  before_hash=$(jq -r '.config.sha256' <<< "${preflight_json}")
+  before_service_state=$(jq -r '.service.active_state' <<< "${preflight_json}")
+
+  if [[ "${current_version}" == "${target_version}" ]]; then
+    jq -n \
+      --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
+      --arg current "${current_version}" \
+      --arg target "${target_version}" \
+      --arg config_hash "${before_hash}" \
+      --argjson check "$(jq -c '.current_check' <<< "${preflight_json}")" \
+      --argjson warnings "$(jq -c '.warnings' <<< "${preflight_json}")" \
+      '{
+        schema: $schema,
+        ok: true,
+        action: "sing_box_upgrade",
+        changed: false,
+        restarted: false,
+        rolled_back: false,
+        current: $current,
+        target: $target,
+        installed: $current,
+        backup: null,
+        config_preserved: true,
+        config: {sha256_before: $config_hash, sha256_after: $config_hash},
+        check: $check,
+        warnings: $warnings
+      }'
+    return 0
+  fi
+
+  if ! backup_dir=$(create_agent_upgrade_backup "${current_version}" "${target_version}"); then
+    agent_json_error "backup_failed" "无法创建升级备份，已取消升级。"
+    return 1
+  fi
+
+  if ! operation_log=$(mktemp); then
+    jq -n \
+      --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
+      --arg backup "${backup_dir}" \
+      '{schema: $schema, ok: false, error: "temporary_log_failed", backup: $backup}'
+    return 1
+  fi
+  set +e
+  (
+    set -e
+    SB_VERSION="${target_version}"
+    update_singbox_binary_preserving_config
+  ) > "${operation_log}" 2>&1
+  operation_status=$?
+  set -e
+
+  after_version=$(detect_installed_singbox_version)
+  after_version=${after_version#v}
+  after_hash=$(agent_file_sha256 "${SINGBOX_CONFIG_FILE}")
+  after_service_state=$(systemctl is-active sing-box 2>/dev/null || true)
+  if after_check_json=$(agent_singbox_check_json); then
+    after_check_status=0
+  else
+    after_check_status=$?
+  fi
+
+  [[ -n "${before_hash}" && "${before_hash}" == "${after_hash}" ]] && config_preserved=true
+  [[ "${after_version}" == "${target_version}" ]] && changed=true
+  operation_excerpt=$(sed -E $'s/\x1B\\[[0-9;]*[[:alpha:]]//g' "${operation_log}" | tail -n 80)
+
+  if [[ "${operation_status}" == "0" && "${changed}" == "true" && "${config_preserved}" == "true" && "${after_check_status}" == "0" && "${after_service_state}" == "active" ]]; then
+    rm -f "${operation_log}"
+    jq -n \
+      --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
+      --arg current "${current_version}" \
+      --arg target "${target_version}" \
+      --arg installed "${after_version}" \
+      --arg backup "${backup_dir}" \
+      --arg before_hash "${before_hash}" \
+      --arg after_hash "${after_hash}" \
+      --arg before_service "${before_service_state}" \
+      --arg after_service "${after_service_state}" \
+      --arg operation_log "${operation_excerpt}" \
+      --argjson check "${after_check_json}" \
+      --argjson warnings "$(jq -c '.warnings' <<< "${preflight_json}")" \
+      '{
+        schema: $schema,
+        ok: true,
+        action: "sing_box_upgrade",
+        changed: true,
+        restarted: true,
+        rolled_back: false,
+        current: $current,
+        target: $target,
+        installed: $installed,
+        backup: $backup,
+        config_preserved: true,
+        config: {sha256_before: $before_hash, sha256_after: $after_hash},
+        service: {before: $before_service, after: $after_service},
+        check: $check,
+        warnings: $warnings,
+        operation_log: $operation_log
+      }'
+    return 0
+  fi
+
+  if [[ "${config_preserved}" != "true" ]]; then
+    restore_config="y"
+    failure_reason="config_changed"
+  elif grep -Fq "现有配置未通过 sing-box" "${operation_log}"; then
+    failure_reason="config_check_failed"
+  elif [[ "${after_check_status}" != "0" ]]; then
+    failure_reason="config_check_failed"
+  elif [[ "${after_service_state}" != "active" ]]; then
+    failure_reason="service_not_active"
+  elif [[ "${after_version}" != "${target_version}" ]]; then
+    failure_reason="target_version_not_installed"
+  fi
+
+  if restore_agent_upgrade_backup \
+    "${backup_dir}" \
+    "${restore_config}" \
+    "$([[ "${before_service_state}" == "active" ]] && printf 'y' || printf 'n')"; then
+    rollback_ok=true
+  fi
+
+  after_version=$(detect_installed_singbox_version)
+  after_version=${after_version#v}
+  after_hash=$(agent_file_sha256 "${SINGBOX_CONFIG_FILE}")
+  after_service_state=$(systemctl is-active sing-box 2>/dev/null || true)
+  if after_check_json=$(agent_singbox_check_json); then
+    after_check_status=0
+  else
+    after_check_status=$?
+  fi
+  [[ -n "${before_hash}" && "${before_hash}" == "${after_hash}" ]] && config_preserved=true || config_preserved=false
+  if [[ "${after_version}" != "${current_version}" || "${config_preserved}" != "true" || "${after_check_status}" != "0" ]] || \
+    [[ "${after_service_state}" != "${before_service_state}" ]]; then
+    rollback_ok=false
+    final_changed=true
+  fi
+  output_error="${failure_reason}"
+  if [[ "${rollback_ok}" != "true" ]]; then
+    output_error="rollback_failed"
+    manual_intervention_required=true
+  fi
+  rm -f "${operation_log}"
+
+  jq -n \
+    --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
+    --arg error "${output_error}" \
+    --arg failure_reason "${failure_reason}" \
+    --arg current "${current_version}" \
+    --arg target "${target_version}" \
+    --arg installed "${after_version}" \
+    --arg backup "${backup_dir}" \
+    --arg before_hash "${before_hash}" \
+    --arg after_hash "${after_hash}" \
+    --arg before_service "${before_service_state}" \
+    --arg after_service "${after_service_state}" \
+    --arg operation_log "${operation_excerpt}" \
+    --argjson operation_exit_code "${operation_status}" \
+    --argjson changed "${final_changed}" \
+    --argjson config_preserved "${config_preserved}" \
+    --argjson rollback_ok "${rollback_ok}" \
+    --argjson manual_intervention_required "${manual_intervention_required}" \
+    --argjson check "${after_check_json}" \
+    --argjson warnings "$(jq -c '.warnings' <<< "${preflight_json}")" \
+    '{
+      schema: $schema,
+      ok: false,
+      error: $error,
+      reason: $error,
+      failure_reason: $failure_reason,
+      action: "sing_box_upgrade",
+      changed: $changed,
+      restarted: false,
+      rollback_attempted: true,
+      rolled_back: $rollback_ok,
+      rollback_ok: $rollback_ok,
+      manual_intervention_required: $manual_intervention_required,
+      current: $current,
+      target: $target,
+      installed: $installed,
+      backup: $backup,
+      config_preserved: $config_preserved,
+      config: {sha256_before: $before_hash, sha256_after: $after_hash},
+      service: {before: $before_service, after: $after_service},
+      check: $check,
+      warnings: $warnings,
+      operation_exit_code: $operation_exit_code,
+      operation_log: $operation_log
+    }'
+  return 1
 }
 
 agent_warp_json() {
@@ -8204,7 +9013,7 @@ agent_warp_json() {
 }
 
 agent_singbox_check_json() {
-  local stdout_file stderr_file exit_code
+  local stdout_file stderr_file exit_code binary_version
 
   stdout_file=$(mktemp)
   stderr_file=$(mktemp)
@@ -8214,15 +9023,20 @@ agent_singbox_check_json() {
   else
     exit_code=$?
   fi
+  binary_version=$(detect_installed_singbox_version)
 
   jq -n \
+    --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
+    --arg binary_version "${binary_version}" \
     --arg config_file "${SINGBOX_CONFIG_FILE}" \
     --arg stdout "$(cat "${stdout_file}")" \
     --arg stderr "$(cat "${stderr_file}")" \
     --argjson exit_code "${exit_code}" \
     '{
+      schema: $schema,
       ok: ($exit_code == 0),
       exit_code: $exit_code,
+      binary_version: $binary_version,
       config_file: $config_file,
       stdout: $stdout,
       stderr: $stderr
@@ -8238,6 +9052,8 @@ agent_installed_protocols_json() {
 
 agent_status_json() {
   local installed_protocols_json active_state installed_version warload_mode warload_enabled
+  local host_stack bbr_algorithm bbr_enabled inbound_stack_mode outbound_stack_mode
+  local reality_instance_count qos_filter_count subman_configured client_export_exists
 
   installed_protocols_json=$(agent_installed_protocols_json)
   warload_mode="selective"
@@ -8256,8 +9072,26 @@ agent_status_json() {
   fi
   active_state=$(systemctl is-active sing-box 2>/dev/null || true)
   installed_version=$("${SINGBOX_BIN_PATH}" version 2>/dev/null | head -n1 | awk '{print $3}' || true)
+  host_stack=$(detect_host_ip_stack)
+  load_stack_mode_state
+  inbound_stack_mode="${SB_INBOUND_STACK_MODE}"
+  outbound_stack_mode="${SB_OUTBOUND_STACK_MODE}"
+  bbr_algorithm=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || true)
+  bbr_enabled=false
+  [[ "${bbr_algorithm}" == "bbr" ]] && bbr_enabled=true
+  reality_instance_count=$(jq -r '[.inbounds[]? | select(.type == "vless" and .tls.reality? != null)] | length' "${SINGBOX_CONFIG_FILE}" 2>/dev/null || printf '0')
+  [[ "${reality_instance_count}" =~ ^[0-9]+$ ]] || reality_instance_count=0
+  qos_filter_count=0
+  if [[ -f "${SB_REALITY_QOS_FILTER_STATE_FILE}" ]]; then
+    qos_filter_count=$(awk 'NF { count++ } END { print count + 0 }' "${SB_REALITY_QOS_FILTER_STATE_FILE}")
+  fi
+  subman_configured=false
+  [[ -f "$(subman_config_file_path)" ]] && subman_configured=true
+  client_export_exists=false
+  [[ -f "$(client_export_file_path)" ]] && client_export_exists=true
 
   jq -n \
+    --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
     --arg script_version "${SCRIPT_VERSION}" \
     --arg supported_version "${SB_SUPPORT_MAX_VERSION}" \
     --arg active_state "${active_state:-unknown}" \
@@ -8266,10 +9100,24 @@ agent_status_json() {
     --arg config_file "${SINGBOX_CONFIG_FILE}" \
     --arg protocol_state_dir "${SB_PROTOCOL_STATE_DIR}" \
     --arg client_export_path "$(client_export_file_path)" \
+    --arg upgrade_backup_root "${SB_UPGRADE_BACKUP_ROOT}" \
+    --arg stack_state_file "${SB_STACK_STATE_FILE}" \
+    --arg qos_state_file "${SB_REALITY_QOS_FILTER_STATE_FILE}" \
+    --arg subman_config_file "$(subman_config_file_path)" \
+    --arg host_stack "${host_stack}" \
+    --arg inbound_stack_mode "${inbound_stack_mode}" \
+    --arg outbound_stack_mode "${outbound_stack_mode}" \
+    --arg bbr_algorithm "${bbr_algorithm}" \
+    --argjson bbr_enabled "${bbr_enabled}" \
+    --argjson reality_instance_count "${reality_instance_count}" \
+    --argjson qos_filter_count "${qos_filter_count}" \
+    --argjson subman_configured "${subman_configured}" \
+    --argjson client_export_exists "${client_export_exists}" \
     --argjson protocols "${installed_protocols_json}" \
     --argjson warp_enabled "$([[ "${warload_enabled}" == true ]] && printf 'true' || printf 'false')" \
     --arg warp_route_mode "${warload_mode}" \
     '{
+      "schema": $schema,
       "script_version": $script_version,
       "supported_sing_box_version": $supported_version,
       "service": {
@@ -8284,9 +9132,30 @@ agent_status_json() {
         "project": $project_dir,
         "config": $config_file,
         "protocol_state_dir": $protocol_state_dir,
-        "client_export": $client_export_path
+        "client_export": $client_export_path,
+        "upgrade_backups": $upgrade_backup_root,
+        "stack_state": $stack_state_file,
+        "reality_qos_state": $qos_state_file,
+        "subman_config": $subman_config_file
       },
       "protocols": $protocols,
+      "network_stack": {
+        "host": $host_stack,
+        "inbound": $inbound_stack_mode,
+        "outbound": $outbound_stack_mode
+      },
+      "system": {
+        "tcp_congestion_control": $bbr_algorithm,
+        "bbr_enabled": $bbr_enabled
+      },
+      "reality": {
+        "instances": $reality_instance_count,
+        "qos_filters": $qos_filter_count
+      },
+      "integrations": {
+        "subman_configured": $subman_configured,
+        "client_export_exists": $client_export_exists
+      },
       "warp": {
         "enabled": $warp_enabled,
         "route_mode": $warp_route_mode
@@ -8295,7 +9164,7 @@ agent_status_json() {
 }
 
 agent_doctor_json() {
-  local status_json check_json check_status
+  local status_json check_json check_status compatibility_json managed_instance_state
   local config_exists index_exists state_dir_exists service_file_exists
 
   check_status=0
@@ -8311,24 +9180,32 @@ agent_doctor_json() {
 
   status_json=$(agent_status_json)
   check_json=$(agent_singbox_check_json) || check_status=$?
+  compatibility_json=$(agent_config_compatibility_json "${SB_SUPPORT_MAX_VERSION}")
+  managed_instance_state=$(detect_existing_instance_state_read_only)
 
   jq -n \
+    --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
     --argjson status "${status_json}" \
     --argjson check "${check_json}" \
+    --argjson compatibility "${compatibility_json}" \
+    --arg managed_instance_state "${managed_instance_state}" \
     --argjson config_exists "${config_exists}" \
     --argjson index_exists "${index_exists}" \
     --argjson state_dir_exists "${state_dir_exists}" \
     --argjson service_file_exists "${service_file_exists}" \
     --argjson check_status "${check_status}" \
     '{
+      schema: $schema,
       status: $status,
       diagnostics: {
+        managed_instance_state: $managed_instance_state,
         config_file_exists: $config_exists,
         protocol_index_exists: $index_exists,
         protocol_state_dir_exists: $state_dir_exists,
         service_file_exists: $service_file_exists,
         check_exit_code: $check_status,
-        check: $check
+        check: $check,
+        compatibility: $compatibility
       }
     }'
 }
@@ -8336,7 +9213,8 @@ agent_doctor_json() {
 agent_node_summary_json_for_current_protocol() {
   local protocol public_ip shareable="true" client_exportable="false"
   local auth_enabled="false" server_name=""
-  local node_name
+  local node_name instance_id="" rate_up="" rate_down="" outbound_policy=""
+  local tls_mode="" acme_mode="" obfs_enabled="false"
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
   public_ip=${1:-$(get_public_ip)}
@@ -8346,6 +9224,10 @@ agent_node_summary_json_for_current_protocol() {
     vless-reality)
       client_exportable="true"
       server_name="${SB_SNI}"
+      instance_id="${SB_VLESS_INSTANCE_ID:-main}"
+      rate_up="${SB_VLESS_RATE_LIMIT_UP_MBPS:-}"
+      rate_down="${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}"
+      outbound_policy="${SB_OUTBOUND_POLICY:-default}"
       ;;
     mixed)
       [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]] && auth_enabled="true"
@@ -8353,10 +9235,17 @@ agent_node_summary_json_for_current_protocol() {
     hy2)
       client_exportable="true"
       server_name="${SB_HY2_DOMAIN:-${public_ip}}"
+      rate_up="${SB_HY2_UP_MBPS:-}"
+      rate_down="${SB_HY2_DOWN_MBPS:-}"
+      tls_mode="${SB_HY2_TLS_MODE:-}"
+      acme_mode="${SB_HY2_ACME_MODE:-}"
+      [[ "${SB_HY2_OBFS_ENABLED:-n}" == "y" ]] && obfs_enabled="true"
       ;;
     anytls)
       client_exportable="true"
       server_name="${SB_ANYTLS_DOMAIN:-${public_ip}}"
+      tls_mode="${SB_ANYTLS_TLS_MODE:-}"
+      acme_mode="${SB_ANYTLS_ACME_MODE:-}"
       ;;
     *)
       shareable="false"
@@ -8368,6 +9257,13 @@ agent_node_summary_json_for_current_protocol() {
     --arg name "${node_name}" \
     --arg port "${SB_PORT}" \
     --arg server_name "${server_name}" \
+    --arg instance_id "${instance_id}" \
+    --arg rate_up "${rate_up}" \
+    --arg rate_down "${rate_down}" \
+    --arg outbound_policy "${outbound_policy}" \
+    --arg tls_mode "${tls_mode}" \
+    --arg acme_mode "${acme_mode}" \
+    --argjson obfs_enabled "${obfs_enabled}" \
     --argjson shareable "${shareable}" \
     --argjson client_exportable "${client_exportable}" \
     --argjson auth_enabled "${auth_enabled}" \
@@ -8379,13 +9275,34 @@ agent_node_summary_json_for_current_protocol() {
       "client_exportable": $client_exportable
     }
     + (if $server_name != "" then {"server_name": $server_name} else {} end)
-    + (if $protocol == "mixed" then {"auth_enabled": $auth_enabled} else {} end)'
+    + (if $protocol == "mixed" then {"auth_enabled": $auth_enabled} else {} end)
+    + (if $protocol == "vless-reality" then {
+        "instance_id": $instance_id,
+        "rate_limit": {
+          "up_mbps": (if $rate_up == "" then null else (try ($rate_up | tonumber) catch null) end),
+          "down_mbps": (if $rate_down == "" then null else (try ($rate_down | tonumber) catch null) end)
+        },
+        "outbound_policy": $outbound_policy
+      } else {} end)
+    + (if $protocol == "hy2" then {
+        "rate_limit": {
+          "up_mbps": (if $rate_up == "" then null else (try ($rate_up | tonumber) catch null) end),
+          "down_mbps": (if $rate_down == "" then null else (try ($rate_down | tonumber) catch null) end)
+        },
+        "tls_mode": $tls_mode,
+        "acme_mode": (if $tls_mode == "acme" then $acme_mode else null end),
+        "obfs_enabled": $obfs_enabled
+      } else {} end)
+    + (if $protocol == "anytls" then {
+        "tls_mode": $tls_mode,
+        "acme_mode": (if $tls_mode == "acme" then $acme_mode else null end)
+      } else {} end)'
 }
 
 agent_link_json_for_current_protocol() {
   local protocol public_ip link_json outbound_json
   local address_label
-  local node_name
+  local node_name instance_id="" rate_up="" rate_down="" outbound_policy=""
   local compatibility_warnings_json='[]'
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
@@ -8401,6 +9318,10 @@ agent_link_json_for_current_protocol() {
 
   case "${protocol}" in
     vless-reality)
+      instance_id="${SB_VLESS_INSTANCE_ID:-main}"
+      rate_up="${SB_VLESS_RATE_LIMIT_UP_MBPS:-}"
+      rate_down="${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}"
+      outbound_policy="${SB_OUTBOUND_POLICY:-default}"
       link_json=$(jq -n --arg vless "$(build_vless_link "${public_ip}" "${address_label}")" '{"vless": $vless}')
       ;;
     mixed)
@@ -8426,6 +9347,10 @@ agent_link_json_for_current_protocol() {
     --arg protocol "${protocol}" \
     --arg name "${node_name}" \
     --arg port "${SB_PORT}" \
+    --arg instance_id "${instance_id}" \
+    --arg rate_up "${rate_up}" \
+    --arg rate_down "${rate_down}" \
+    --arg outbound_policy "${outbound_policy}" \
     --argjson links "${link_json}" \
     --argjson outbound "${outbound_json:-null}" \
     --argjson warnings "${compatibility_warnings_json}" \
@@ -8435,15 +9360,23 @@ agent_link_json_for_current_protocol() {
       "port": ($port | tonumber),
       "links": $links
     }
+    + (if $protocol == "vless-reality" then {
+        "instance_id": $instance_id,
+        "rate_limit": {
+          "up_mbps": (if $rate_up == "" then null else (try ($rate_up | tonumber) catch null) end),
+          "down_mbps": (if $rate_down == "" then null else (try ($rate_down | tonumber) catch null) end)
+        },
+        "outbound_policy": $outbound_policy
+      } else {} end)
     + (if $outbound != null then {"outbound": $outbound} else {} end)
     + (if ($warnings | length) > 0 then {"warnings": $warnings} else {} end)'
 }
 
 agent_collect_nodes_json() {
   local mode=$1
-  local public_ip original_protocol_state protocol node_json
+  local public_ip original_protocol_state protocol node_json instance_id
   local installed_protocols=()
-  local tmpdir status=0
+  local tmpdir status=0 rendered_instances=0
 
   public_ip=$(get_public_ip)
   original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
@@ -8452,14 +9385,53 @@ agent_collect_nodes_json() {
 
   trap '
     if [[ -n "${original_protocol_state:-}" ]] && protocol_state_exists "${original_protocol_state}"; then
-      load_protocol_state "${original_protocol_state}"
+      load_protocol_state "${original_protocol_state}" "read-only"
     fi
     rm -rf "${tmpdir:-}"
   ' RETURN
 
   for protocol in "${installed_protocols[@]}"; do
-    if ! load_protocol_state "${protocol}"; then
+    if ! load_protocol_state "${protocol}" "read-only"; then
       status=1
+      continue
+    fi
+
+    if [[ "${protocol}" == "vless-reality" ]]; then
+      rendered_instances=0
+      while IFS= read -r instance_id; do
+        [[ -n "${instance_id}" ]] || continue
+        if ! load_vless_reality_instance_state "${instance_id}"; then
+          status=1
+          continue
+        fi
+        node_json=""
+        case "${mode}" in
+          summary) node_json=$(agent_node_summary_json_for_current_protocol "${public_ip}") || status=1 ;;
+          links) node_json=$(agent_link_json_for_current_protocol "${public_ip}") || status=1 ;;
+          *) status=1; continue ;;
+        esac
+        if [[ -n "${node_json}" ]]; then
+          printf '%s\n' "${node_json}" >> "${tmpdir}/nodes.jsonl"
+          rendered_instances=$((rendered_instances + 1))
+        fi
+      done < <(list_vless_reality_instance_ids)
+      if (( rendered_instances == 0 )); then
+        SB_VLESS_INSTANCE_ID="main"
+        SB_VLESS_RATE_LIMIT_UP_MBPS=""
+        SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
+        SB_OUTBOUND_POLICY="default"
+        case "${mode}" in
+          summary) node_json=$(agent_node_summary_json_for_current_protocol "${public_ip}") || status=1 ;;
+          links) node_json=$(agent_link_json_for_current_protocol "${public_ip}") || status=1 ;;
+          *) status=1; node_json="" ;;
+        esac
+        if [[ -n "${node_json}" ]]; then
+          printf '%s\n' "${node_json}" >> "${tmpdir}/nodes.jsonl"
+          rendered_instances=1
+        fi
+      fi
+      (( rendered_instances > 0 )) || status=1
+      load_protocol_state "vless-reality" "read-only" || status=1
       continue
     fi
 
@@ -8473,16 +9445,22 @@ agent_collect_nodes_json() {
   done
 
   jq -n \
+    --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
+    --arg action "$([[ "${mode}" == "summary" ]] && printf 'nodes' || printf 'links')" \
+    --argjson sensitive "$([[ "${mode}" == "links" ]] && printf 'true' || printf 'false')" \
     --arg public_address "${public_ip}" \
     --argjson nodes "$(if [[ -s "${tmpdir}/nodes.jsonl" ]]; then jq -s '.' "${tmpdir}/nodes.jsonl"; else jq -n '[]'; fi)" \
     '{
+      "schema": $schema,
+      "action": $action,
+      "sensitive": $sensitive,
       "public_address": $public_address,
       "nodes": $nodes
     }'
 
   trap - RETURN
   if [[ -n "${original_protocol_state}" ]] && protocol_state_exists "${original_protocol_state}"; then
-    load_protocol_state "${original_protocol_state}"
+    load_protocol_state "${original_protocol_state}" "read-only"
   fi
   rm -rf "${tmpdir}"
   return "${status}"
@@ -8750,6 +9728,27 @@ agent_cli() {
   case "${command}" in
     help|-h|--help)
       agent_print_help
+      ;;
+    capabilities)
+      if [[ $# -ne 1 || "${1:-}" != "--json" ]]; then
+        agent_json_error "invalid_arguments" "用法: sbv agent capabilities --json"
+        return 1
+      fi
+      agent_capabilities_json
+      ;;
+    upgrade-check)
+      if [[ $# -ne 2 || "${1:-}" != "--json" ]]; then
+        agent_json_error "invalid_arguments" "用法: sbv agent upgrade-check --json x.y.z"
+        return 1
+      fi
+      agent_upgrade_check_json "${2}"
+      ;;
+    upgrade)
+      if [[ $# -lt 2 || $# -gt 3 || "${1:-}" != "--json" ]]; then
+        agent_json_error "invalid_arguments" "用法: sbv agent upgrade --json x.y.z --yes"
+        return 1
+      fi
+      agent_upgrade_cli "$@"
       ;;
     status)
       agent_require_json_flag "${1:-}" || return 1
@@ -9320,7 +10319,10 @@ attempt_managed_instance_auto_heal() {
 
   [[ -x "${SINGBOX_BIN_PATH}" && -f "${SINGBOX_SERVICE_FILE}" && -f "${SINGBOX_CONFIG_FILE}" && -f "${SB_PROTOCOL_INDEX_FILE}" ]] || return 1
 
-  mapfile -t indexed_protocols < <(list_installed_protocols)
+  # Detection must not reconcile away an indexed protocol whose state file is
+  # missing. That is an incomplete instance requiring takeover, not safe drift
+  # that can be regenerated from the remaining state files.
+  mapfile -t indexed_protocols < <(list_indexed_protocols_raw)
   [[ ${#indexed_protocols[@]} -gt 0 ]] || return 1
 
   for protocol in "${indexed_protocols[@]}"; do
@@ -9629,7 +10631,12 @@ update_singbox_binary_preserving_config() {
   get_os_info
   get_arch
   install_dependencies
-  load_current_config_state
+  if config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; then
+    SB_ENABLE_WARP="y"
+  else
+    SB_ENABLE_WARP="n"
+  fi
+  load_warp_route_settings
 
   log_info "检测到现有安装，默认仅更新 sing-box 二进制并保留当前配置。"
   echo -e "当前版本: ${installed_ver}"
@@ -9646,7 +10653,9 @@ update_singbox_binary_preserving_config() {
     fi
   fi
 
-  binary_backup=$(mktemp)
+  if ! binary_backup=$(mktemp); then
+    log_error "创建 sing-box 二进制临时备份失败，已取消更新。"
+  fi
   if ! cp -p "${SINGBOX_BIN_PATH}" "${binary_backup}"; then
     rm -f "${binary_backup}"
     log_error "备份现有 sing-box 二进制失败，已取消更新。"
@@ -9663,16 +10672,18 @@ update_singbox_binary_preserving_config() {
       log_warn "已自动恢复更新前的 sing-box 二进制。"
     else
       log_warn "自动恢复旧 sing-box 二进制失败，请从备份 ${binary_backup} 手动恢复。"
-      return 0
+      return 1
     fi
     rm -f "${binary_backup}"
-    return 0
+    return 1
   fi
   rm -f "${binary_backup}"
 
   log_success "现有配置通过 sing-box ${SB_VERSION} 校验。"
-  setup_service
-  systemctl restart sing-box
+  if ! systemctl restart sing-box; then
+    log_warn "sing-box 服务重启失败。"
+    return 1
+  fi
   log_success "sing-box 已更新到 ${SB_VERSION}，当前配置已保留。"
   display_status_summary
   log_info "连接信息未自动展示，如需查看请进入菜单 11。"

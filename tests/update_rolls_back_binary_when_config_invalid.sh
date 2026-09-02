@@ -77,7 +77,10 @@ EOF
 }
 
 SB_VERSION="1.13.18"
-update_singbox_binary_preserving_config >/dev/null
+if update_singbox_binary_preserving_config >/dev/null; then
+  printf 'expected invalid target config to return non-zero\n' >&2
+  exit 1
+fi
 
 if [[ "$("${SINGBOX_BIN_PATH}" marker)" != "old" ]]; then
   printf 'expected old sing-box binary to be restored when new binary rejects config\n' >&2

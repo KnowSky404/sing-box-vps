@@ -712,6 +712,9 @@ for scenario in "$@"; do
     runtime_smoke)
       run_verification_scenario runtime_smoke verification_scenario_runtime_smoke
       ;;
+    upgrade_1_13_to_1_14)
+      run_verification_scenario upgrade_1_13_to_1_14 verification_scenario_upgrade_1_13_to_1_14
+      ;;
     *)
       printf 'unknown scenario: %s\n' "${scenario}" >&2
       exit 2

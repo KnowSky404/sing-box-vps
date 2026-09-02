@@ -22,6 +22,7 @@ check_config_valid() { :; }
 validate_config_file() { :; }
 setup_service() { :; }
 open_all_protocol_ports() { :; }
+close_firewall_port() { :; }
 display_status_summary() {
   printf 'unexpected status summary after protocol removal\n'
 }
@@ -135,17 +136,17 @@ if ! REMOVE_LAST_OUTPUT=$(printf '1\ny\n' | remove_protocol_menu 2>&1); then
 fi
 
 REMOVE_LAST_PLAIN_OUTPUT=$(strip_ansi "${REMOVE_LAST_OUTPUT}")
-if [[ "${REMOVE_LAST_PLAIN_OUTPUT}" != *"至少保留一个协议"* ]]; then
-  printf 'expected last-protocol removal to be rejected, got:\n%s\n' "${REMOVE_LAST_OUTPUT}" >&2
+if [[ "${REMOVE_LAST_PLAIN_OUTPUT}" != *"所有协议已移除"* ]]; then
+  printf 'expected last-protocol removal to stop the service and clear the install, got:\n%s\n' "${REMOVE_LAST_OUTPUT}" >&2
   exit 1
 fi
 
-if [[ "${REMOVE_LAST_PLAIN_OUTPUT}" == *"移除已安装协议"* ]]; then
-  printf 'expected last-protocol removal to warn before showing selection UI, got:\n%s\n' "${REMOVE_LAST_OUTPUT}" >&2
+if [[ -f "${SB_PROTOCOL_INDEX_FILE}" || -f "${SINGBOX_CONFIG_FILE}" ]]; then
+  printf 'expected last-protocol removal to clear the protocol index and runtime config\n' >&2
   exit 1
 fi
 
-if ! grep -Fq 'INSTALLED_PROTOCOLS=vless-reality' "${SB_PROTOCOL_INDEX_FILE}"; then
-  printf 'expected protocol index to remain unchanged after rejected last-protocol removal, got:\n%s\n' "$(cat "${SB_PROTOCOL_INDEX_FILE}")" >&2
+if [[ -f "$(protocol_state_file vless-reality)" ]]; then
+  printf 'expected last-protocol removal to clear the active VLESS protocol state\n' >&2
   exit 1
 fi

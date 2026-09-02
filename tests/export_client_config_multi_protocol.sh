@@ -180,8 +180,8 @@ if ! jq -e '.outbounds[] | select(.type == "vless" and .tag == "vless_reality_te
   exit 1
 fi
 
-if ! jq -e '.outbounds[] | select(.type == "hysteria2" and .tag == "hy2_test-host") | .obfs.type == "salamander"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
-  printf 'expected hysteria2 outbound hy2_test-host with salamander obfs, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+if ! jq -e '.outbounds[] | select(.type == "hysteria2" and .tag == "hy2_test-host-U100M-D50M") | .obfs.type == "salamander"' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected bandwidth-labelled hysteria2 outbound with salamander obfs, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 

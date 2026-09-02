@@ -65,7 +65,7 @@ if [[ "${output}" != *"1. 安装新协议"* ]]; then
   exit 1
 fi
 
-if [[ "${output}" != *"2. 更新 sing-box 版本"* ]]; then
+if [[ "${output}" != *"4. 更新 sing-box 版本"* ]]; then
   printf 'expected top-level update menu entry to render even when status checks fail, got:\n%s\n' "${output}" >&2
   exit 1
 fi

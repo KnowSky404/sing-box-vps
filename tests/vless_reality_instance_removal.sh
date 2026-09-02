@@ -24,6 +24,7 @@ systemctl() { :; }
 validate_config_file() { return 0; }
 check_config_valid() { :; }
 refresh_vless_reality_qos_rules() { printf 'qos refreshed\n' > "${TMP_DIR}/qos.called"; }
+close_firewall_port() { printf '%s\n' "$1" >> "${TMP_DIR}/closed-ports"; }
 register_warp() { :; }
 refresh_warp_route_assets() {
   SB_WARP_CUSTOM_DOMAINS_JSON='[]'
@@ -120,6 +121,7 @@ EOF
 
 if ! REMOVE_OUTPUT=$(remove_protocol_menu 2>&1 <<'EOF'
 1
+1
 2
 y
 EOF
@@ -147,11 +149,45 @@ grep -Fq 'INSTANCE_IDS=main' "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"
 grep -Fq 'DEFAULT_INSTANCE_ID=main' "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"
 grep -Fq 'INSTALLED_PROTOCOLS=vless-reality,hy2' "${SB_PROTOCOL_INDEX_FILE}"
 test -f "${TMP_DIR}/qos.called"
+grep -Fqx '8443' "${TMP_DIR}/closed-ports"
 
 if [[ "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" != "1" ]]; then
   printf 'expected remove flow to regenerate config exactly once, got %s\n' "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" >&2
   exit 1
 fi
+
+# A single VLESS protocol selection must still offer whole-protocol removal
+# when multiple REALITY instances exist.
+limited_backup=$(compgen -G "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/limited-10m.env.bak.*" | head -n1)
+mv "${limited_backup}" "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/limited-10m.env"
+cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.env" <<'EOF'
+INSTALLED=1
+CONFIG_SCHEMA_VERSION=2
+DEFAULT_INSTANCE_ID=main
+INSTANCE_IDS=main,limited-10m
+REALITY_PRIVATE_KEY=private-key
+REALITY_PUBLIC_KEY=public-key
+EOF
+
+if ! REMOVE_PROTOCOL_OUTPUT=$(remove_protocol_menu 2>&1 <<'EOF'
+1
+2
+y
+EOF
+); then
+  printf 'expected whole VLESS protocol removal to succeed, got:\n%s\n' "${REMOVE_PROTOCOL_OUTPUT}" >&2
+  exit 1
+fi
+
+if [[ -f "${SB_PROTOCOL_STATE_DIR}/vless-reality.env" ]] || \
+  [[ -f "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env" ]] || \
+  [[ -f "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/limited-10m.env" ]]; then
+  printf 'expected whole VLESS protocol removal to clear all active VLESS state\n' >&2
+  exit 1
+fi
+grep -Fq 'INSTALLED_PROTOCOLS=hy2' "${SB_PROTOCOL_INDEX_FILE}"
+test -f "${SB_PROTOCOL_STATE_DIR}/hy2.env"
+[[ "$(grep -Ec '^(443|8443)$' "${TMP_DIR}/closed-ports")" -ge 3 ]]
 
 cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
 INSTALLED_PROTOCOLS=vless-reality
@@ -166,6 +202,19 @@ DEFAULT_INSTANCE_ID=main
 INSTANCE_IDS=main,backup-node
 REALITY_PRIVATE_KEY=private-key
 REALITY_PUBLIC_KEY=public-key
+EOF
+
+cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env" <<'EOF'
+INSTANCE_ID=main
+ENABLED=1
+NODE_NAME=main-node
+PORT=443
+UUID=11111111-1111-1111-1111-111111111111
+SNI=apple.com
+SHORT_ID_1=aaaaaaaaaaaaaaaa
+SHORT_ID_2=bbbbbbbbbbbbbbbb
+RATE_LIMIT_UP_MBPS=
+RATE_LIMIT_DOWN_MBPS=
 EOF
 
 cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/backup-node.env" <<'EOF'
@@ -185,6 +234,7 @@ rm -f "${TMP_DIR}/qos.called"
 
 if ! REMOVE_ONLY_REALITY_OUTPUT=$(remove_protocol_menu 2>&1 <<'EOF'
 1
+1
 2
 y
 EOF
@@ -201,3 +251,8 @@ fi
 grep -Fq 'INSTANCE_IDS=main' "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"
 grep -Fq 'INSTALLED_PROTOCOLS=vless-reality' "${SB_PROTOCOL_INDEX_FILE}"
 test -f "${TMP_DIR}/qos.called"
+
+if [[ "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" != "3" ]]; then
+  printf 'expected all removal flows to regenerate config exactly once, got %s total\n' "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" >&2
+  exit 1
+fi

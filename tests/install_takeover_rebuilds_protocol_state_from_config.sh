@@ -13,6 +13,10 @@ restart_service_after_takeover() {
   :
 }
 
+ensure_sbv_command_installed() {
+  :
+}
+
 write_installed_runtime_artifacts() {
   mkdir -p "$(dirname "${SINGBOX_BIN_PATH}")"
 

@@ -138,10 +138,11 @@ main() {
 
   if [[ "${mode}" == "remote" ]]; then
     require_docker_env
+    printf 'remote_target=docker:%s\n' "${VERIFY_DOCKER_CONTAINER}"
     printf 'remote_target=docker:%s\n' "${VERIFY_DOCKER_CONTAINER}" >> "${run_dir}/summary.log"
     # Trap cleanup even on failure
     trap 'require_docker_cleanup' EXIT
-    if emit_remote_payload | docker exec -i "${VERIFY_DOCKER_CONTAINER}" bash -s -- "${scenarios[@]}" \
+    if { trap - EXIT; emit_remote_payload; } | docker exec -i "${VERIFY_DOCKER_CONTAINER}" bash -s -- "${scenarios[@]}" \
       > "${run_dir}/remote.stdout.log" \
       2> "${run_dir}/remote.stderr.log"; then
       status=0

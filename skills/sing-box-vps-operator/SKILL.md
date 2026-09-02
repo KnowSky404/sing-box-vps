@@ -77,6 +77,9 @@ No production-changing commands will be executed until approved.
 Prefer non-interactive JSON commands for AI automation:
 
 ```bash
+sbv agent capabilities --json
+sbv agent upgrade-check --json 1.14.0
+sbv agent upgrade --json 1.14.0 --yes
 sbv agent status --json
 sbv agent nodes --json
 sbv agent links --json
@@ -90,17 +93,24 @@ sbv update sbv
 sbv update sing-box latest
 ```
 
-- Use `status --json` for version, service, path, and installed protocol diagnostics.
-- Use `nodes --json` for log-safe node summaries. It intentionally omits full links and passwords.
-- Use `links --json` only in trusted contexts; it returns full connection material.
+- Use `status --json` for version/service/path/protocol diagnostics plus network stack, BBR, REALITY/QoS, and integration presence.
+- Use `capabilities --json` to discover supported protocols/features and operation safety labels before choosing an action.
+- On an existing 1.13 host, run `sbv update sbv` first and start a new invocation before expecting the new Agent commands.
+- Use `upgrade-check --json 1.14.0` as a read-only eligibility preflight. Require `ready=true` and `blockers=[]`. It validates the current core and known schema risks but does not download the target; `target_binary_validation.performed=false` is expected.
+- Use `upgrade --json 1.14.0 --yes` only after approval. It is mutating, creates an automatic root-only backup under `/root/sing-box-vps-backups/`, preserves the server config byte-for-byte, validates the target core before restart, and automatically restores the old binary on failure. It does not silently migrate or rewrite config. Treat the backup contents as sensitive.
+- Use `nodes --json` for log-safe summaries of every protocol and every REALITY instance, including rate limits and outbound policy. It intentionally omits UUIDs, keys, full links, and passwords.
+- Use `links --json` only in trusted contexts; it returns full connection material for every protocol and REALITY instance.
 - Use `export-client --json` to generate and validate the sing-box bare-core client config. It writes the client export file but does not mutate the running server config or restart service.
 - Use `check --json` and `doctor --json` for non-mutating service/config diagnostics.
 - Use `service restart --json --yes` only after confirming the target is safe to mutate. It validates config before restart.
 - Use `warp --json` to inspect Cloudflare Warp status: enabled state, route mode, account health, custom domain counts, rule-set counts, and builtin AI/streaming rule tallies. Safe for routine diagnostics.
 - Use `subman-sync --json` only in trusted contexts with configured SubMan credentials; it pushes VLESS REALITY and Hysteria2 node material.
+- Safety labels: `status`, `capabilities`, `upgrade-check`, `check`, `doctor`, `nodes`, and `warp` are read-only; `upgrade`, service restart, export, and SubMan sync are mutating; `links`, export, and SubMan sync are sensitive; installation, protocol edits, Warp/BBR/media changes, takeover/repair, and uninstall remain interactive-only.
 - Use `update sbv` to refresh `/usr/local/bin/sbv`; alias: `sbv update-sbv`.
 - Use `update sing-box [latest|x.y.z]` to update a healthy managed sing-box instance non-interactively. It preserves config, runs `sing-box check`, and restarts only after validation passes. Alias: `sbv update-sing-box [latest|x.y.z]`.
 - If `update sing-box` reports an incomplete or missing instance, switch to the interactive `sbv` menu for repair, takeover, or fresh install.
+
+For a 1.13 to 1.14 rehearsal, follow `docs/agents/sing-box-1.13-to-1.14-upgrade-test.md`. Inline `tls.acme` and legacy `download_detour` are deprecated in 1.14 but remain accepted for compatibility; they are scheduled for removal in 1.16. Hysteria2 Ed25519 handling is a client-side compatibility boundary: share links cannot carry the required Chrome QUIC override, while generated 1.14 client exports can.
 
 ## VLESS REALITY Operations
 
@@ -109,6 +119,7 @@ sbv update sing-box latest
 - Node names may include rate-limit suffixes; keep them intact when diagnosing or syncing nodes.
 - When rate limits are configured, runtime QoS state is tracked in `/root/sing-box-vps/reality-qos.filters`.
 - Removing or adding REALITY instances is a runtime config mutation. On production, use the production gate first.
+- With multiple REALITY instances, the removal menu has separate single-instance and whole-VLESS scopes. Select the intended scope explicitly and verify that removed ports and QoS filters are gone.
 - After any REALITY instance or rate-limit change, require config validation and service/QoS refresh through the script rather than hand-editing files.
 
 ## Repository Rules

@@ -30,6 +30,14 @@ REMOTE_ASSERT_LOG_FILE="${TMP_DIR}/remote-assert.log"
 INSTALL_COUNT_FILE="${TMP_DIR}/install-count"
 INSTALL_VERSION_LINE=$(sed -n 's/^readonly SCRIPT_VERSION="[^"]*"$/&/p' "${REPO_ROOT}/install.sh" | head -n 1)
 
+export REPO_ROOT TMP_DIR REAL_BASH
+export REMOTE_PORT_FILE REMOTE_UUID_FILE REMOTE_SNI_FILE REMOTE_CONFIG_FILE
+export REMOTE_LEGACY_KEY_FILE REMOTE_EXPORT_FILE REMOTE_LEGACY_SERVICE_FILE
+export REMOTE_PROTOCOLS_DIR REMOTE_CONFIG_PRESENT_FILE REMOTE_SERVICE_FILE_PRESENT_FILE
+export REMOTE_SBV_PRESENT_FILE REMOTE_SERVICE_ACTIVE_FILE REMOTE_STATE_FILE
+export REMOTE_INSTANCE_STATE_FILE REMOTE_ANYTLS_STATE_FILE REMOTE_INDEX_FILE
+export REMOTE_ASSERT_LOG_FILE INSTALL_COUNT_FILE
+
 # Setup remote state files
 printf '9443\n' > "${REMOTE_PORT_FILE}"
 printf '11111111-1111-4111-8111-111111111111\n' > "${REMOTE_UUID_FILE}"
@@ -73,8 +81,8 @@ cat > "${REMOTE_CONFIG_FILE}" <<'CONFIG_EOF'
 }
 CONFIG_EOF
 
-cat > "${TMP_DIR}/git" <<GIT_EOF
-#!${REAL_BASH}
+printf '#!%s\n' "${REAL_BASH}" > "${TMP_DIR}/git"
+cat >> "${TMP_DIR}/git" <<'GIT_EOF'
 if [[ "$#" -eq 0 ]]; then exit 0; fi
 if [[ "${1:-}" == "diff" && "${2:-}" == "--name-only" ]]; then
   if [[ -n "${VERIFY_EMPTY_CHANGES:-}" ]]; then exit 0; fi
@@ -90,8 +98,8 @@ printf 'unexpected git call: %s\n' "$*" >&2; exit 1
 GIT_EOF
 chmod +x "${TMP_DIR}/git"
 
-cat > "${TMP_DIR}/bash" <<BASH_EOF
-#!${REAL_BASH}
+printf '#!%s\n' "${REAL_BASH}" > "${TMP_DIR}/bash"
+cat >> "${TMP_DIR}/bash" <<'BASH_EOF'
 if [[ "${1:-}" == "${REPO_ROOT}/dev/verification/run.sh" ]]; then
   exec "${REAL_BASH}" "$@"
 fi
@@ -103,8 +111,8 @@ exec "${REAL_BASH}" "$@"
 BASH_EOF
 chmod +x "${TMP_DIR}/bash"
 
-cat > "${TMP_DIR}/systemctl" <<SYS_EOF
-#!/usr/bin/env bash
+printf '#!%s\n' "${REAL_BASH}" > "${TMP_DIR}/systemctl"
+cat >> "${TMP_DIR}/systemctl" <<'SYS_EOF'
 if [[ "${1:-}" == "is-active" && "${2:-}" == "--quiet" && "${3:-}" == "sing-box" ]]; then exit 0; fi
 if [[ "${1:-}" == "is-active" && "${2:-}" == "sing-box" ]]; then printf 'active\n'; exit 0; fi
 if [[ "${1:-}" == "status" && "${2:-}" == "sing-box" ]]; then printf 'status ok\n'; exit 0; fi
@@ -112,14 +120,14 @@ exit 0
 SYS_EOF
 chmod +x "${TMP_DIR}/systemctl"
 
-cat > "${TMP_DIR}/journalctl" <<'JRN_EOF'
-#!/usr/bin/env bash
+printf '#!%s\n' "${REAL_BASH}" > "${TMP_DIR}/journalctl"
+cat >> "${TMP_DIR}/journalctl" <<'JRN_EOF'
 printf 'journal ok\n'
 JRN_EOF
 chmod +x "${TMP_DIR}/journalctl"
 
-cat > "${TMP_DIR}/sing-box" <<SB_EOF
-#!/usr/bin/env bash
+printf '#!%s\n' "${REAL_BASH}" > "${TMP_DIR}/sing-box"
+cat >> "${TMP_DIR}/sing-box" <<'SB_EOF'
 if [[ "${1:-}" == "check" && "${2:-}" == "-c" ]]; then
   printf 'config ok\n'; exit 0
 fi
@@ -127,27 +135,32 @@ printf 'unexpected sing-box call: %s\n' "$*" >&2; exit 1
 SB_EOF
 chmod +x "${TMP_DIR}/sing-box"
 
-cat > "${TMP_DIR}/ss" <<SS_EOF
-#!/usr/bin/env bash
+printf '#!%s\n' "${REAL_BASH}" > "${TMP_DIR}/ss"
+cat >> "${TMP_DIR}/ss" <<'SS_EOF'
 printf 'LISTEN 0 0 127.0.0.1:%s 0.0.0.0:*\n' "$(cat "${REMOTE_PORT_FILE}")"
 SS_EOF
 chmod +x "${TMP_DIR}/ss"
 
 ### Mock docker: exec -i receives payload from stdin, runs it locally with path interception ###
-cat > "${TMP_DIR}/docker" <<DOCKER_EOF
-#!${REAL_BASH}
+printf '#!%s\n' "${REAL_BASH}" > "${TMP_DIR}/docker"
+cat >> "${TMP_DIR}/docker" <<'DOCKER_EOF'
 
 # docker image inspect
-if [[ "\${1:-}" == "image" && "\${2:-}" == "inspect" ]]; then exit 0; fi
+if [[ "${1:-}" == "image" && "${2:-}" == "inspect" ]]; then exit 0; fi
 
 # docker run -d --privileged IMAGE
-if [[ "\${1:-}" == "run" && "\${2:-}" == "-d" && "\${3:-}" == "--privileged" ]]; then
+if [[ "${1:-}" == "run" && "${2:-}" == "-d" && "${3:-}" == "--privileged" ]]; then
   printf 'test-container\n'
   exit 0
 fi
 
+if [[ "${1:-}" == "exec" && "${3:-}" == "systemctl" && "${4:-}" == "is-system-running" ]]; then
+  printf 'running\n'
+  exit 0
+fi
+
 # docker exec -i CONTAINER bash -s -- SCENARIOS...
-if [[ "\${1:-}" == "exec" && "\${2:-}" == "-i" ]]; then
+if [[ "${1:-}" == "exec" && "${2:-}" == "-i" ]]; then
   scenario_file="${TMP_DIR}/remote-script.sh"
   cat <<'PAYLOAD_PRELUDE' > "${scenario_file}"
 VALID_REALITY_PRIVATE_KEY="IEwVBb_qLcYr1L_CTI5exTWbT7qRgZnr43xP8nC0dkM"
@@ -303,6 +316,58 @@ grep() {
 }
 PAYLOAD_PRELUDE
   cat >> "${scenario_file}"
+  cat > "${scenario_file}.wrapper" <<'WRAP_EOF'
+verification_fixture_write_file() {
+  local path
+  path=$(verification_artifact_path "$1")
+  mkdir -p "$(dirname "${path}")"
+  printf '%s\n' "$2" > "${path}"
+}
+
+verification_scenario_fresh_install_vless() {
+  printf 'SCENARIO=fresh_install_vless\n'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/index.env" 'INSTALLED_PROTOCOLS=vless-reality'
+  printf '%s\n' \
+    'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.d/main.env' \
+    'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.d/main.env' \
+    >> "${REMOTE_ASSERT_LOG_FILE}"
+}
+
+verification_scenario_reconfigure_existing_install() {
+  printf 'SCENARIO=reconfigure_existing_install\n'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/config.diff.txt" 'fixture diff'
+}
+
+verification_scenario_legacy_takeover_export() {
+  printf 'SCENARIO=legacy_takeover_export\n'
+}
+
+verification_scenario_fresh_install_anytls() {
+  printf 'SCENARIO=fresh_install_anytls\n'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" 'config ok'
+  printf '%s\n' 'grep:-Fqx DOMAIN=anytls.example.com /root/sing-box-vps/protocols/anytls.env' >> "${REMOTE_ASSERT_LOG_FILE}"
+  printf '%s\n' 'PASSWORD=anytls-pass' > "${REMOTE_ANYTLS_STATE_FILE}"
+}
+
+verification_scenario_upgrade_1_13_to_1_14() {
+  printf 'SCENARIO=upgrade_1_13_to_1_14\n'
+}
+
+verification_scenario_runtime_smoke() {
+  printf 'SCENARIO=runtime_smoke\n'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" 'config ok'
+}
+WRAP_EOF
+  awk -v wrapper_file="${scenario_file}.wrapper" '
+    $0 == "if ! mkdir \"${LOCK_DIR}\" 2>/dev/null; then" {
+      while ((getline line < wrapper_file) > 0) {
+        print line
+      }
+      close(wrapper_file)
+    }
+    { print }
+  ' "${scenario_file}" > "${scenario_file}.tmp"
+  mv "${scenario_file}.tmp" "${scenario_file}"
   REMOTE_CONFIG_PRESENT_FILE="${REMOTE_CONFIG_PRESENT_FILE}" \
   REMOTE_PORT_FILE="${REMOTE_PORT_FILE}" \
   REMOTE_UUID_FILE="${REMOTE_UUID_FILE}" \
@@ -322,7 +387,7 @@ PAYLOAD_PRELUDE
   REMOTE_INDEX_FILE="${REMOTE_INDEX_FILE}" \
   REMOTE_ASSERT_LOG_FILE="${REMOTE_ASSERT_LOG_FILE}" \
   INSTALL_COUNT_FILE="${INSTALL_COUNT_FILE}" \
-  PATH="${TMP_DIR}:$PATH" "${REAL_BASH}" -lc "${4:-}" < "${scenario_file}"
+  PATH="${TMP_DIR}:$PATH" "${REAL_BASH}" "${scenario_file}" "${@:7}"
   exit $?
 fi
 
@@ -345,7 +410,7 @@ grep -Fqx 'tests/new_untracked_case.sh' "${run_dir}/changed-files.txt"
 
 # Check scenarios
 scenarios=$(paste -sd, "${run_dir}/scenarios.txt")
-[[ "${scenarios}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,runtime_smoke" ]] || {
+[[ "${scenarios}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,upgrade_1_13_to_1_14,runtime_smoke" ]] || {
   printf 'unexpected scenarios: %s\n' "${scenarios}" >&2; exit 1
 }
 
@@ -360,6 +425,7 @@ grep -Fq 'remote_target=docker:test-container' "${TMP_DIR}/stdout.txt"
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless/listeners.ss-lntp.txt" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/reconfigure_existing_install/config.diff.txt" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_anytls/sing-box-check.txt" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/result.env" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/sing-box-check.txt" ]]
 
 # Check payload content (script vars are in emitted payload)
@@ -381,6 +447,14 @@ grep -Fqx 'tests/verification_protocol_probe_anytls.sh|1' "${TMP_DIR}/local-test
 grep -Fqx 'tests/reality_sni_validation.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/generate_config_cleans_temp_files_on_failure.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/system_safety_guards.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/agent_upgrade_commands.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/agent_cli_multi_instance_status.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/agent_docs_cover_capabilities.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/version_metadata_is_consistent.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/vless_reality_instance_removal.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/install_takeover_rebuilds_protocol_state_from_config.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/detect_existing_instance_auto_heals_managed_config_drift.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/update_keeps_existing_config.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/update_rolls_back_binary_when_config_invalid.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_config_helpers.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_payload_generation.sh|1' "${TMP_DIR}/local-tests.log"
@@ -388,8 +462,8 @@ grep -Fqx 'tests/subman_api_push.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_sync_orchestration.sh|1' "${TMP_DIR}/local-tests.log"
 
 default_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
-[[ "${default_local_test_count}" -eq 12 ]] || {
-  printf 'expected 12 local tests, got %d\n' "${default_local_test_count}" >&2; exit 1
+[[ "${default_local_test_count}" -eq 20 ]] || {
+  printf 'expected 20 local tests, got %d\n' "${default_local_test_count}" >&2; exit 1
 }
 
 # Test VERIFY_SKIP_LOCAL_TESTS=1 — still runs remote
@@ -401,7 +475,7 @@ grep -Fqx 'install.sh' "${run_dir_skip}/changed-files.txt"
 grep -Fqx 'README.md' "${run_dir_skip}/changed-files.txt"
 grep -Fqx 'tests/new_untracked_case.sh' "${run_dir_skip}/changed-files.txt"
 scenarios_skip=$(paste -sd, "${run_dir_skip}/scenarios.txt")
-[[ "${scenarios_skip}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,runtime_smoke" ]] || {
+[[ "${scenarios_skip}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,upgrade_1_13_to_1_14,runtime_smoke" ]] || {
   printf 'unexpected scenarios for skip run: %s\n' "${scenarios_skip}" >&2; exit 1
 }
 skip_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")

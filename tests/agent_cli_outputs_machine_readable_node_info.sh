@@ -142,6 +142,11 @@ jq -e '
   and any(.nodes[]; .protocol == "anytls" and .shareable == true and .client_exportable == true and .server_name == "anytls.example.com")
 ' <<< "${nodes_json}" >/dev/null
 
+if [[ -d "${SB_PROTOCOL_STATE_DIR}/vless-reality.d" ]]; then
+  printf 'read-only agent nodes must not migrate legacy REALITY state\n' >&2
+  exit 1
+fi
+
 if grep -Fq 'vless://' <<< "${nodes_json}" || grep -Fq 'hy2://' <<< "${nodes_json}" || grep -Fq 'mixed-pass' <<< "${nodes_json}"; then
   printf 'agent nodes should not include full share links or passwords:\n%s\n' "${nodes_json}" >&2
   exit 1

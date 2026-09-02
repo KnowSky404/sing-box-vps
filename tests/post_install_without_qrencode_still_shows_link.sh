@@ -39,7 +39,7 @@ SB_NODE_NAME="vless_reality_test-host"
 
 output=$(show_connection_details "both" "203.0.113.10" 2>&1)
 
-if [[ "${output}" != *"REALITY 协议链接"* ]]; then
+if [[ "${output}" != *"连接链接 IPv4"* ]]; then
   printf 'expected link output when qrencode is unavailable, got:\n%s\n' "${output}" >&2
   exit 1
 fi

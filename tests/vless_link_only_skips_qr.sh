@@ -54,7 +54,7 @@ if (( qrencode_calls != 0 )); then
   exit 1
 fi
 
-if [[ "${output}" != *"REALITY 协议链接"* ]]; then
+if [[ "${output}" != *"连接链接 IPv4"* ]]; then
   printf 'expected REALITY link title in output, got: %s\n' "${output}" >&2
   exit 1
 fi
