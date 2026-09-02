@@ -13,7 +13,7 @@ cat > "${TMP_DIR}/bin/sing-box" <<'STUB'
 
 case "${1:-}" in
   version)
-    printf 'sing-box version 1.13.18\n'
+    printf 'sing-box version 1.14.0\n'
     ;;
   check)
     if [[ -f "${SINGBOX_CHECK_FAIL_FILE:-}" ]]; then

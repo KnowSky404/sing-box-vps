@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026081401
+# Version: 2026090201
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026081401"
-readonly SB_SUPPORT_MAX_VERSION="1.13.18"
+readonly SCRIPT_VERSION="2026090201"
+readonly SB_SUPPORT_MAX_VERSION="1.14.0"
+readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
 readonly UI_COMPACT_MAX_WIDTH=72
@@ -290,6 +291,56 @@ normalize_singbox_version_input() {
   fi
 
   return 1
+}
+
+singbox_version_at_least() {
+  local version=${1#v}
+  local minimum=${2#v}
+  local version_major version_minor version_patch
+  local minimum_major minimum_minor minimum_patch
+
+  [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  [[ "${minimum}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+
+  IFS='.' read -r version_major version_minor version_patch <<< "${version}"
+  IFS='.' read -r minimum_major minimum_minor minimum_patch <<< "${minimum}"
+
+  if (( 10#${version_major} != 10#${minimum_major} )); then
+    (( 10#${version_major} > 10#${minimum_major} ))
+    return
+  fi
+
+  if (( 10#${version_minor} != 10#${minimum_minor} )); then
+    (( 10#${version_minor} > 10#${minimum_minor} ))
+    return
+  fi
+
+  (( 10#${version_patch} >= 10#${minimum_patch} ))
+}
+
+resolve_config_target_singbox_version() {
+  local installed_version candidate
+
+  installed_version=$(detect_installed_singbox_version)
+  candidate=${installed_version#v}
+  if [[ ! "${candidate}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    candidate=${SB_VERSION:-}
+  fi
+  candidate=${candidate#v}
+
+  if [[ "${candidate}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    printf '%s' "${candidate}"
+    return 0
+  fi
+
+  printf '%s' "${SB_SUPPORT_MAX_VERSION}"
+}
+
+singbox_config_supports_1_14() {
+  local target_version
+
+  target_version=$(resolve_config_target_singbox_version)
+  singbox_version_at_least "${target_version}" "${SB_CONFIG_SCHEMA_1_14_MIN_VERSION}"
 }
 
 print_cli_help() {
@@ -3531,8 +3582,13 @@ build_local_warp_rule_sets_json() {
 
 build_remote_warp_rule_sets_json() {
   local object_file raw_line line raw_tag raw_url raw_interval tag url update_interval format
+  local use_http_client="n"
   object_file=$(mktemp)
   SB_WARP_REMOTE_RULE_SETS_JSON='[]'
+
+  if singbox_config_supports_1_14; then
+    use_http_client="y"
+  fi
 
   if [[ -f "${SB_WARP_REMOTE_RULESETS_FILE}" ]]; then
     while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
@@ -3556,7 +3612,20 @@ build_remote_warp_rule_sets_json() {
         --arg url "${url}" \
         --arg format "${format}" \
         --arg update_interval "${update_interval:-1d}" \
-        '{type: "remote", tag: $tag, url: $url, format: $format, download_detour: "direct", update_interval: $update_interval}' >> "${object_file}"
+        --arg use_http_client "${use_http_client}" \
+        '{
+          type: "remote",
+          tag: $tag,
+          url: $url,
+          format: $format,
+          update_interval: $update_interval
+        } + (
+          if $use_http_client == "y" then
+            {http_client: {detour: "direct"}}
+          else
+            {download_detour: "direct"}
+          end
+        )' >> "${object_file}"
     done < "${SB_WARP_REMOTE_RULESETS_FILE}"
   fi
 
@@ -4583,13 +4652,26 @@ build_hy2_acme_json() {
 }
 
 build_hy2_certificate_provider_json() {
-  return 0
+  local acme_json
+
+  if [[ "${SB_HY2_TLS_MODE}" != "acme" ]] || ! singbox_config_supports_1_14; then
+    return 0
+  fi
+
+  acme_json=$(build_hy2_acme_json)
+  jq -n \
+    --arg tag "$(hy2_certificate_provider_tag)" \
+    --argjson acme "${acme_json}" \
+    '$acme + { "type": "acme", "tag": $tag }'
 }
 
 build_hy2_inbound_json() {
   ensure_hy2_materials
-  local acme_json
+  local acme_json use_certificate_provider="n"
   acme_json=$(build_hy2_acme_json)
+  if singbox_config_supports_1_14; then
+    use_certificate_provider="y"
+  fi
 
   jq -n \
     --arg tag "hy2-in" \
@@ -4603,6 +4685,8 @@ build_hy2_inbound_json() {
     --arg tls_mode "${SB_HY2_TLS_MODE}" \
     --arg cert_path "${SB_HY2_CERT_PATH}" \
     --arg key_path "${SB_HY2_KEY_PATH}" \
+    --arg certificate_provider "$(hy2_certificate_provider_tag)" \
+    --arg use_certificate_provider "${use_certificate_provider}" \
     --argjson acme "${acme_json:-null}" \
     --arg obfs_enabled "${SB_HY2_OBFS_ENABLED}" \
     --arg obfs_type "${SB_HY2_OBFS_TYPE}" \
@@ -4629,6 +4713,10 @@ build_hy2_inbound_json() {
             {
               "certificate_path": $cert_path,
               "key_path": $key_path
+            }
+          elif $use_certificate_provider == "y" then
+            {
+              "certificate_provider": $certificate_provider
             }
           else
             {
@@ -4708,13 +4796,26 @@ build_anytls_acme_json() {
 }
 
 build_anytls_certificate_provider_json() {
-  return 0
+  local acme_json
+
+  if [[ "${SB_ANYTLS_TLS_MODE}" != "acme" ]] || ! singbox_config_supports_1_14; then
+    return 0
+  fi
+
+  acme_json=$(build_anytls_acme_json)
+  jq -n \
+    --arg tag "$(anytls_certificate_provider_tag)" \
+    --argjson acme "${acme_json}" \
+    '$acme + { "type": "acme", "tag": $tag }'
 }
 
 build_anytls_inbound_json() {
   ensure_anytls_materials
-  local acme_json
+  local acme_json use_certificate_provider="n"
   acme_json=$(build_anytls_acme_json)
+  if singbox_config_supports_1_14; then
+    use_certificate_provider="y"
+  fi
 
   jq -n \
     --arg tag "anytls-in" \
@@ -4726,6 +4827,8 @@ build_anytls_inbound_json() {
     --arg tls_mode "${SB_ANYTLS_TLS_MODE}" \
     --arg cert_path "${SB_ANYTLS_CERT_PATH}" \
     --arg key_path "${SB_ANYTLS_KEY_PATH}" \
+    --arg certificate_provider "$(anytls_certificate_provider_tag)" \
+    --arg use_certificate_provider "${use_certificate_provider}" \
     --argjson acme "${acme_json:-null}" \
     '{
       "type": "anytls",
@@ -4747,6 +4850,10 @@ build_anytls_inbound_json() {
             {
               "certificate_path": $cert_path,
               "key_path": $key_path
+            }
+          elif $use_certificate_provider == "y" then
+            {
+              "certificate_provider": $certificate_provider
             }
           else
             {
@@ -4899,7 +5006,7 @@ generate_config() {
     get_os_info && install_dependencies
   fi
 
-  log_info "正在生成配置 (适配 1.13.x Endpoint 架构 & 安全注入)..."
+  log_info "正在生成配置 (目标 sing-box $(resolve_config_target_singbox_version)，Endpoint 架构 & 安全注入)..."
   mkdir -p "${SINGBOX_CONFIG_DIR}"
   ensure_warp_routing_assets
   load_warp_route_settings
@@ -6382,6 +6489,93 @@ build_mixed_socks5_link() {
   fi
 }
 
+hy2_manual_certificate_algorithm() {
+  local algorithm
+
+  [[ "${SB_HY2_TLS_MODE:-}" == "manual" ]] || return 1
+  [[ -n "${SB_HY2_CERT_PATH:-}" && -r "${SB_HY2_CERT_PATH}" ]] || return 1
+  command -v openssl >/dev/null 2>&1 || return 1
+
+  algorithm=$(LC_ALL=C openssl x509 -in "${SB_HY2_CERT_PATH}" -noout -text 2>/dev/null \
+    | awk -F': ' '/Public Key Algorithm:/ {print $2; exit}' || true)
+  algorithm=$(trim_whitespace "${algorithm}")
+  [[ -n "${algorithm}" ]] || return 1
+
+  printf '%s' "${algorithm}"
+}
+
+hy2_manual_certificate_uses_ed25519() {
+  local algorithm
+
+  algorithm=$(hy2_manual_certificate_algorithm) || return 1
+  [[ "${algorithm^^}" == "ED25519" ]]
+}
+
+hy2_client_needs_chrome_parrot_disabled() {
+  singbox_config_supports_1_14 && hy2_manual_certificate_uses_ed25519
+}
+
+build_hy2_compatibility_warnings_json() {
+  local context=${1:-share}
+  local algorithm code message
+
+  if [[ "${SB_HY2_TLS_MODE:-}" != "manual" ]]; then
+    printf '[]'
+    return 0
+  fi
+
+  if ! algorithm=$(hy2_manual_certificate_algorithm); then
+    jq -n '[{
+      code: "hy2_certificate_algorithm_unknown",
+      message: "无法识别 Hysteria2 手动证书的公钥算法；请确认 1.14+ 客户端与证书算法兼容。"
+    }]'
+    return 0
+  fi
+
+  if [[ "${algorithm^^}" != "ED25519" ]]; then
+    printf '[]'
+    return 0
+  fi
+
+  if [[ "${context}" == "export" ]]; then
+    if ! singbox_config_supports_1_14; then
+      printf '[]'
+      return 0
+    fi
+    code="hy2_ed25519_chrome_parrot_disabled"
+    message="检测到 Hysteria2 手动 Ed25519 证书；导出的 1.14+ 客户端配置已设置 disable_chrome_parrot=true。"
+  else
+    code="hy2_ed25519_share_link_requires_client_override"
+    message="检测到 Hysteria2 手动 Ed25519 证书；分享链接无法携带 disable_chrome_parrot，1.14+ 客户端必须手动启用该选项。"
+  fi
+
+  jq -n \
+    --arg code "${code}" \
+    --arg message "${message}" \
+    '[{code: $code, message: $message}]'
+}
+
+collect_hy2_compatibility_warnings_json() (
+  local context=${1:-share}
+
+  if ! protocol_state_exists "hy2" || ! load_protocol_state "hy2"; then
+    printf '[]'
+    return 0
+  fi
+
+  build_hy2_compatibility_warnings_json "${context}"
+)
+
+print_hy2_compatibility_warnings() {
+  local context=${1:-share}
+  local warnings_json warning_message
+
+  warnings_json=$(collect_hy2_compatibility_warnings_json "${context}")
+  while IFS= read -r warning_message; do
+    [[ -n "${warning_message}" ]] && log_warn "${warning_message}"
+  done < <(jq -r '.[]?.message' <<< "${warnings_json}")
+}
+
 build_hy2_link() {
   local public_ip=$1
   local address_label=${2:-}
@@ -7042,9 +7236,12 @@ build_client_vless_reality_outbounds() {
 
 build_client_hy2_outbound() {
   local public_ip=${1:-$(get_public_ip)}
-  local server_host tls_server_name
+  local server_host tls_server_name disable_chrome_parrot="n"
   server_host=${public_ip}
   tls_server_name=${SB_HY2_DOMAIN:-${public_ip}}
+  if hy2_client_needs_chrome_parrot_disabled; then
+    disable_chrome_parrot="y"
+  fi
 
   jq -n \
     --arg tag "$(client_outbound_tag_for_protocol "hy2")" \
@@ -7057,6 +7254,7 @@ build_client_hy2_outbound() {
     --arg obfs_enabled "${SB_HY2_OBFS_ENABLED}" \
     --arg obfs_type "${SB_HY2_OBFS_TYPE}" \
     --arg obfs_password "${SB_HY2_OBFS_PASSWORD}" \
+    --arg disable_chrome_parrot "${disable_chrome_parrot}" \
     '{
       "type": "hysteria2",
       "tag": $tag,
@@ -7068,6 +7266,12 @@ build_client_hy2_outbound() {
         "server_name": $server_name
       }
     } + (
+      if $disable_chrome_parrot == "y" then
+        { "disable_chrome_parrot": true }
+      else
+        {}
+      end
+    ) + (
       if ($up_mbps | length) > 0 then
         { "up_mbps": ($up_mbps | tonumber) }
       else
@@ -7275,6 +7479,7 @@ show_link_info() {
     echo "1. Hysteria2 协议链接"
     build_hy2_link "${public_ip}" "${address_label}"
     echo ""
+    print_hy2_compatibility_warnings "share"
     return 0
   fi
 
@@ -7551,7 +7756,12 @@ build_singbox_client_config() {
   local installed_protocols=() exportable_protocols=()
   local remote_outbounds_json remote_tags_json
   local protocol outbound_json usable_protocol_count
+  local use_rule_set_http_client="n"
   local status=0
+
+  if singbox_config_supports_1_14; then
+    use_rule_set_http_client="y"
+  fi
 
   mapfile -t installed_protocols < <(list_installed_protocols)
   mapfile -t exportable_protocols < <(list_exportable_client_protocols)
@@ -7603,6 +7813,7 @@ build_singbox_client_config() {
       --argjson remote_outbounds "${remote_outbounds_json}" \
       --argjson remote_tags "${remote_tags_json}" \
       --arg clash_api_secret "${clash_api_secret}" \
+      --arg use_rule_set_http_client "${use_rule_set_http_client}" \
       '{
         "log": {
           "level": "info",
@@ -7671,26 +7882,35 @@ build_singbox_client_config() {
           ]
         ),
         "route": {
-          "rule_set": [
-            {
-              "tag": "geoip-cn",
-              "type": "remote",
-              "format": "binary",
-              "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.srs"
-            },
-            {
-              "tag": "geosite-cn",
-              "type": "remote",
-              "format": "binary",
-              "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/cn.srs"
-            },
-            {
-              "tag": "geosite-geolocation-!cn",
-              "type": "remote",
-              "format": "binary",
-              "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/geolocation-!cn.srs"
-            }
-          ],
+          "rule_set": (
+            [
+              {
+                "tag": "geoip-cn",
+                "type": "remote",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.srs"
+              },
+              {
+                "tag": "geosite-cn",
+                "type": "remote",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/cn.srs"
+              },
+              {
+                "tag": "geosite-geolocation-!cn",
+                "type": "remote",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/geolocation-!cn.srs"
+              }
+            ]
+            | map(
+                if $use_rule_set_http_client == "y" then
+                  . + {"http_client": {"detour": "proxy"}}
+                else
+                  .
+                end
+              )
+          ),
           "rules": [
             {
               "action": "sniff"
@@ -7813,6 +8033,7 @@ export_singbox_client_config() {
   fi
 
   print_success "sing-box 裸核客户端配置导出成功。"
+  print_hy2_compatibility_warnings "export"
   printf '文件路径: %s\n' "${export_path}"
   printf 'WSL2 使用方式: 请将应用代理手动指向 127.0.0.1:2080\n'
   printf '系统代理: 未启用（set_system_proxy=false）\n'
@@ -8165,6 +8386,7 @@ agent_link_json_for_current_protocol() {
   local protocol public_ip link_json outbound_json
   local address_label
   local node_name
+  local compatibility_warnings_json='[]'
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
   public_ip=${1:-$(get_public_ip)}
@@ -8189,6 +8411,7 @@ agent_link_json_for_current_protocol() {
       ;;
     hy2)
       link_json=$(jq -n --arg hy2 "$(build_hy2_link "${public_ip}" "${address_label}")" '{"hy2": $hy2}')
+      compatibility_warnings_json=$(build_hy2_compatibility_warnings_json "share")
       ;;
     anytls)
       outbound_json=$(build_anytls_outbound_example "${public_ip}")
@@ -8205,13 +8428,15 @@ agent_link_json_for_current_protocol() {
     --arg port "${SB_PORT}" \
     --argjson links "${link_json}" \
     --argjson outbound "${outbound_json:-null}" \
+    --argjson warnings "${compatibility_warnings_json}" \
     '{
       "protocol": $protocol,
       "name": $name,
       "port": ($port | tonumber),
       "links": $links
     }
-    + (if $outbound != null then {"outbound": $outbound} else {} end)'
+    + (if $outbound != null then {"outbound": $outbound} else {} end)
+    + (if ($warnings | length) > 0 then {"warnings": $warnings} else {} end)'
 }
 
 agent_collect_nodes_json() {
@@ -8264,7 +8489,7 @@ agent_collect_nodes_json() {
 }
 
 agent_export_client_json() {
-  local config_json export_path
+  local config_json export_path compatibility_warnings_json
 
   if ! config_json=$(build_singbox_client_config); then
     log_warn "agent export-client 生成配置失败。" >&2
@@ -8282,13 +8507,17 @@ agent_export_client_json() {
     return 1
   fi
 
+  compatibility_warnings_json=$(collect_hy2_compatibility_warnings_json "export")
+
   jq -n \
     --arg path "${export_path}" \
     --argjson config "${config_json}" \
+    --argjson warnings "${compatibility_warnings_json}" \
     '{
       "path": $path,
       "config": $config
-    }'
+    }
+    + (if ($warnings | length) > 0 then {"warnings": $warnings} else {} end)'
 }
 
 agent_service_cli() {
@@ -8353,6 +8582,7 @@ agent_push_nodes_to_subman_json() {
   local instance_attempted instance_synced instance_stacked_synced
   local synced_count skipped_count failed_count ok_json
   local last_error_code last_error_disposition last_http_status last_retry_after
+  local compatibility_warnings_json
   local installed_protocols=()
 
   original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
@@ -8363,6 +8593,7 @@ agent_push_nodes_to_subman_json() {
   last_error_disposition=""
   last_http_status=""
   last_retry_after=""
+  compatibility_warnings_json=$(collect_hy2_compatibility_warnings_json "share")
 
   mapfile -t installed_protocols < <(list_installed_protocols)
   if [[ ${#installed_protocols[@]} -eq 0 ]]; then
@@ -8470,20 +8701,24 @@ agent_push_nodes_to_subman_json() {
     --arg error_disposition "${last_error_disposition}" \
     --arg http_status "${last_http_status}" \
     --arg retry_after "${last_retry_after}" \
+    --argjson warnings "${compatibility_warnings_json}" \
     '{
       ok: $ok,
       synced: $synced,
       skipped: $skipped,
       failed: $failed
     }
-    + if $failed > 0 and $error_code != "" then {
+    + (if ($warnings | length) > 0 then {
+        warnings: $warnings
+      } else {} end)
+    + (if $failed > 0 and $error_code != "" then {
         last_error: {
           code: $error_code,
           disposition: $error_disposition,
           http_status: (if $http_status == "" then null else $http_status end),
           retry_after: (if $retry_after == "" then null else $retry_after end)
         }
-      } else {} end'
+      } else {} end)'
 
   if [[ "${ok_json}" != "true" ]]; then
     return 1
@@ -8602,6 +8837,10 @@ push_nodes_to_subman() {
       print_warn "加载协议状态失败，已跳过 SubMan 推送: ${protocol}"
       failed_count=$((failed_count + 1))
       continue
+    fi
+
+    if [[ "${protocol}" == "hy2" ]]; then
+      print_hy2_compatibility_warnings "share"
     fi
 
     if [[ "${protocol}" == "vless-reality" ]]; then

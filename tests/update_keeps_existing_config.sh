@@ -116,6 +116,7 @@ cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
   }
 }
 EOF
+cp "${SINGBOX_CONFIG_FILE}" "${TMP_DIR}/config.before-update.json"
 
 cat > "${SB_KEY_FILE}" <<'EOF'
 PRIVATE_KEY=private-key
@@ -129,6 +130,11 @@ EOF
 
 generate_config_calls=$(cat "${GENERATE_CONFIG_COUNT_FILE}")
 post_config_calls=$(cat "${POST_CONFIG_COUNT_FILE}")
+
+if ! cmp -s "${TMP_DIR}/config.before-update.json" "${SINGBOX_CONFIG_FILE}"; then
+  printf 'expected binary-only update to preserve config byte-for-byte\n' >&2
+  exit 1
+fi
 
 if (( generate_config_calls != 0 )); then
   printf 'expected update path to preserve existing config, but generate_config ran %s time(s)\n' "${generate_config_calls}" >&2

@@ -28,6 +28,7 @@ export PATH="${TMP_DIR}/bin:${PATH}"
 
 # shellcheck disable=SC1090
 source "${TESTABLE_INSTALL}"
+SB_VERSION="1.13.18"
 
 set_protocol_defaults "anytls"
 SB_ANYTLS_DOMAIN="anytls.example.com"

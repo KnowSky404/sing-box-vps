@@ -168,7 +168,7 @@ Upgrade using the script's supported menu or the non-interactive CLI:
 sbv update sbv
 sbv update sing-box latest
 # or pin the core:
-sbv update sing-box 1.13.18
+sbv update sing-box 1.14.0
 ```
 
 `sbv update sing-box [latest|x.y.z]` only updates a healthy managed instance. If the instance is incomplete or missing, enter the interactive `sbv` menu first to repair, take over, or install it. After upgrade:
@@ -219,15 +219,23 @@ sbv update sing-box latest
 
 - `status --json` is safe for routine diagnostics. It reports script version, supported sing-box version, installed sing-box version, service state, paths, and installed protocols.
 - `nodes --json` is safe for ordinary logs. It reports node names, ports, server names, and exportability without full share links or passwords.
-- `links --json` returns full connection material. Treat its output as sensitive and avoid pasting it into public logs.
-- `export-client --json` generates `/root/sing-box-vps/client/sing-box-client.json`, validates it with `sing-box check`, and returns the path plus config JSON. It writes the client export file but does not change the running server config or restart services.
+- `links --json` returns full connection material. Treat its output as sensitive and avoid pasting it into public logs. Hysteria2 nodes using a manual Ed25519 certificate include `warnings[].code=hy2_ed25519_share_link_requires_client_override` because the share URI cannot carry the required 1.14+ client option.
+- `export-client --json` generates `/root/sing-box-vps/client/sing-box-client.json`, validates it with `sing-box check`, and returns the path plus config JSON. It writes the client export file but does not change the running server config or restart services. For a 1.14+ Hysteria2 Ed25519 target it sets top-level `disable_chrome_parrot: true` and returns `warnings[].code=hy2_ed25519_chrome_parrot_disabled`.
 - `check --json` validates the server config with `sing-box check` and returns stdout, stderr, exit code, and pass/fail state.
 - `doctor --json` is read-only. It returns status, path existence checks, protocol state, and embedded config-check output for first-pass agent diagnostics.
 - `service restart --json --yes` is a guarded mutation. It validates config first and skips restart when validation fails.
 - `warp --json` reports Cloudflare Warp state: enabled/disabled, route mode (`all` or `selective`), account registration health, and counts for custom domains, local rule sets, remote rule sets, and builtin AI/streaming domain rules. Safe for routine diagnostics.
-- `subman-sync --json` pushes nodes to SubMan without prompting. Missing SubMan config is reported as structured JSON.
+- `subman-sync --json` pushes nodes to SubMan without prompting. Missing SubMan config is reported as structured JSON. Hysteria2 manual Ed25519 nodes carry the same share-link compatibility warning as `links --json`.
 - `update sbv` updates `/usr/local/bin/sbv` from the project main branch.
-- `update sing-box [latest|x.y.z]` updates the sing-box binary, preserves the current server config, validates it with `sing-box check`, and restarts the service only after validation passes. The aliases are `sbv update-sbv` and `sbv update-sing-box [latest|x.y.z]`.
+- `update sing-box [latest|x.y.z]` updates only the sing-box binary, preserves the current server config byte-for-byte, validates it with `sing-box check`, and restarts the service only after validation passes. The aliases are `sbv update-sbv` and `sbv update-sing-box [latest|x.y.z]`.
+
+## sing-box 1.14 Compatibility
+
+- Fresh installs and regenerated configs targeting 1.14+ use top-level ACME `certificate_providers`; Hysteria2 and AnyTLS inbounds reference them through `tls.certificate_provider`.
+- Remote rule sets targeting 1.14+ use `http_client.detour`. Explicitly pinned or installed 1.13.x targets retain the legacy inline `tls.acme` and rule-set layout.
+- A binary-only update never migrates or rewrites the server config. The target binary must accept the existing file via `sing-box check` before the service is restarted.
+- Hysteria2 manual Ed25519 certificates are detected with OpenSSL. Generated 1.14+ client outbounds receive top-level `disable_chrome_parrot: true`; share links cannot encode this field, so human and Agent interfaces emit a warning.
+- If the manual certificate algorithm cannot be inspected, Agent output uses `warnings[].code=hy2_certificate_algorithm_unknown`; operators should verify the certificate and client compatibility manually.
 
 Common paths:
 

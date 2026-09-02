@@ -1,11 +1,11 @@
 # sing-box-vps
 
-可能是最简单的 sing-box VPS 一键安装脚本，专为稳定性和安全性设计。完美适配 **sing-box 1.13.x** 最新架构。
+可能是最简单的 sing-box VPS 一键安装脚本，专为稳定性和安全性设计。当前适配 **sing-box 1.14.x**，并保留显式固定 1.13.x 时的配置兼容能力。
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026081401`
-- sing-box 适配版本：`1.13.18`
+- 脚本版本：`2026090201`
+- sing-box 适配版本：`1.14.0`
 
 ## 🚀 一键安装
 
@@ -46,7 +46,7 @@ VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh
 
 脚本会自动：
 1. 安装所有必要依赖（curl, wget, jq, qrencode 等）。
-2. 下载并配置适配的 `sing-box` (当前适配：1.13.18)。
+2. 下载并配置适配的 `sing-box` (当前适配：1.14.0)。
 3. 生成安全的 **VLESS + REALITY**、**Mixed (HTTP/HTTPS/SOCKS)**、**Hysteria2** 或 **AnyTLS** 配置，并支持多协议共存；其中 VLESS REALITY 支持多实例、独立端口和可选上下行限速。
 4. 以 **`install.sh`** 作为唯一安装与维护真源，并将自己安装为全局命令 **`sbv`**，方便您随时管理。
 
@@ -63,7 +63,8 @@ sbv
 ## ✨ 项目特性
 
 - **Agent 友好命令行**：提供 `sbv agent ... --json` 非交互命令，方便 Hermes、OpenClaw、Codex 等 AI Agent 获取状态、节点摘要、完整连接信息与 sing-box 裸核客户端配置；同时支持通过 CLI 更新 `sbv` 管理脚本和 `sing-box` 二进制。
-- **1.13.x 深度适配**：全面采用最新的 **Endpoint (端点化)** 架构，确保 WireGuard 及路由规则的最高效性能与稳定性。
+- **1.14.x 深度适配**：继续采用 **Endpoint（端点化）** 架构，并适配顶层 ACME `certificate_providers`、远程规则集 `http_client` 与 Hysteria2 `disable_chrome_parrot`。
+- **跨版本配置生成**：目标核心为 1.14+ 时生成新版配置结构；显式固定或运行 1.13.x 时继续生成内联 `tls.acme` 与旧版远程规则集结构。仅更新二进制时不会重写现有配置。
 - **多协议支持**：支持 **VLESS + REALITY**、**Mixed (HTTP/HTTPS/SOCKS)**、**Hysteria2** 与 **AnyTLS** 四种入站模式，并支持多协议同时安装。
 - **VLESS REALITY 多实例**：可在安装菜单追加多个 REALITY 实例，每个实例拥有独立端口、ShortID、节点名称、可选上下行限速和实例级出站策略；节点展示和 SubMan 同步会逐实例输出。
 - **REALITY QoS 限速**：为设置了上下行 Mbps 的 REALITY 实例自动规划并应用 `tc` 端口级限速规则，重建配置、更新协议或移除实例时会同步刷新规则，避免遗留过滤器影响新配置。
@@ -97,20 +98,20 @@ sbv agent warp --json
 sbv agent subman-sync --json
 sbv update sbv
 sbv update sing-box latest
-sbv update sing-box 1.13.18
+sbv update sing-box 1.14.0
 ```
 
 - `status`：输出脚本版本、sing-box 版本、服务状态、配置路径和已安装协议。
 - `nodes`：输出节点摘要，不包含完整分享链接或密码，适合写入普通诊断日志。
-- `links`：输出完整连接材料，包括 VLESS/Hysteria2 分享链接、Mixed HTTP/SOCKS 链接，以及 AnyTLS outbound JSON；仅在受信任上下文使用。
+- `links`：输出完整连接材料，包括 VLESS/Hysteria2 分享链接、Mixed HTTP/SOCKS 链接，以及 AnyTLS outbound JSON；仅在受信任上下文使用。Hysteria2 手动 Ed25519 证书会附带稳定的 `warnings[].code`，提示分享链接无法表达 1.14+ 客户端兼容开关。
 - `warp`：输出 Cloudflare Warp 状态（启用/路由模式/账户/自定义域名规则集统计），安全用于日常诊断。
-- `export-client`：生成并通过 `sing-box check` 校验裸核客户端配置，写入 `/root/sing-box-vps/client/sing-box-client.json`，覆盖前创建 `.bak` 备份，同时以 JSON 返回路径和配置内容。
+- `export-client`：生成并通过 `sing-box check` 校验裸核客户端配置，写入 `/root/sing-box-vps/client/sing-box-client.json`，覆盖前创建 `.bak` 备份，同时以 JSON 返回路径和配置内容。对 1.14+ Hysteria2 Ed25519 节点会自动设置顶层 `disable_chrome_parrot: true` 并返回结构化 warning。
 - `check`：执行 `sing-box check` 校验服务端配置，并返回 stdout、stderr、退出码和是否通过。
 - `doctor`：输出只读诊断报告，包含服务状态、路径存在性、协议状态和嵌入的配置校验结果。
 - `service restart`：必须显式传入 `--yes`，先校验配置，通过后才重启服务，并返回重启前后的服务状态。
 - `subman-sync`：非交互推送节点到 SubMan；配置缺失时返回结构化错误，不进入交互提示。API 失败时会在 `last_error` 返回稳定的 `code`、`disposition`、HTTP 状态与可用的 `Retry-After`，传输结果不确定时不会盲目重放写请求。
 - `update sbv`：从 GitHub 更新 `/usr/local/bin/sbv` 管理脚本；别名为 `sbv update-sbv`。
-- `update sing-box [latest|x.y.z]`：非交互更新 sing-box 二进制并保留现有配置，更新后会执行 `sing-box check`，通过后才重启服务；别名为 `sbv update-sing-box [latest|x.y.z]`。
+- `update sing-box [latest|x.y.z]`：非交互更新 sing-box 二进制并逐字节保留现有配置，更新后会执行 `sing-box check`，通过后才重启服务；别名为 `sbv update-sing-box [latest|x.y.z]`。
 
 ## 🛠️ 功能菜单
 
@@ -145,7 +146,7 @@ sbv update sing-box 1.13.18
 - 本脚本必须以 `root` 用户身份运行。
 - 脚本默认适配最佳稳定性版本，手动选择 `latest` 可能存在不兼容风险。
 - `Mixed` 代理默认建议启用用户名密码认证；若关闭认证，请务必确认防火墙和来源访问控制策略。
-- `Hysteria2` 首版支持 ACME 自动签发与手动证书路径两种 TLS 模式；使用 ACME `DNS-01` 时当前仅支持 Cloudflare。
+- `Hysteria2` 支持 ACME 自动签发与手动证书路径两种 TLS 模式；使用 ACME `DNS-01` 时当前仅支持 Cloudflare。sing-box 1.14+ 客户端连接使用 Ed25519 手动证书的节点时必须禁用 Chrome QUIC 模拟；裸核配置导出会自动处理，分享链接和 SubMan 同步则会输出显式警告。
 - `AnyTLS` 当前同样支持 ACME 自动签发与手动证书路径两种 TLS 模式；由于官方文档未定义标准分享 URI，脚本默认输出参数摘要与 sing-box outbound JSON 示例，并显式将 `client_metadata` 设为空。
 - SubMan 同步使用公开的 `PUT /api/nodes/by-key/:externalKey` 契约；双栈迁移清理旧 key 时会先读取 Workspace revision，再通过公开节点删除接口提交，避免空 `raw` 或直接修改 Gist。
 - 流媒体验证功能当前接入第三方项目 `1-stream/RegionRestrictionCheck`，脚本内已注明作者与仓库地址，后续可替换为自定义检测后端。
