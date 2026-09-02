@@ -98,6 +98,9 @@ EOF
   test -f "${backup_path}/runtime/config.json"
   test -f "${backup_path}/sing-box"
   test -f "${backup_path}/sing-box.service"
+  grep -Fq '  runtime/protocols/index.env' "${backup_path}/SHA256SUMS"
+  grep -Fq '  runtime/protocols/vless-reality.env' "${backup_path}/SHA256SUMS"
+  grep -Fq '  metadata.json' "${backup_path}/SHA256SUMS"
   (cd "${backup_path}" && sha256sum -c SHA256SUMS >/dev/null)
   [[ "$(sha256sum "${backup_path}/runtime/config.json" | awk '{print $1}')" == "${before_hash}" ]]
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/after.status.json" sbv agent status --json

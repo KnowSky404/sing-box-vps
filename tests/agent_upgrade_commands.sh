@@ -12,7 +12,9 @@ source_testable_install
 
 CURRENT_CHECK_FAIL_FILE="${TMP_DIR}/current-check-fails"
 TARGET_CHECK_FAIL_FILE="${TMP_DIR}/target-check-fails"
-export CURRENT_CHECK_FAIL_FILE
+SYSTEMCTL_CALLS_FILE="${TMP_DIR}/systemctl.calls"
+: > "${SYSTEMCTL_CALLS_FILE}"
+export CURRENT_CHECK_FAIL_FILE SYSTEMCTL_CALLS_FILE
 
 write_singbox_stub() {
   local version=$1
@@ -45,6 +47,7 @@ EOF_SINGBOX
 
 cat > "${TMP_DIR}/bin/systemctl" <<'EOF_SYSTEMCTL'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >> "${SYSTEMCTL_CALLS_FILE}"
 case "${1:-} ${2:-}" in
   "is-active sing-box") printf 'active\n' ;;
   "is-enabled sing-box") printf 'enabled\n' ;;
@@ -103,6 +106,10 @@ ExecStart=${SINGBOX_BIN_PATH} run -c ${SINGBOX_CONFIG_FILE}
 EOF_SERVICE
 write_singbox_stub "1.13.18"
 
+protocol_state_tree_hash() {
+  find "${SB_PROTOCOL_STATE_DIR}" -type f -exec sha256sum {} \; | sort | sha256sum | awk '{print $1}'
+}
+
 capabilities_json=$(agent_cli capabilities --json)
 jq -e '
   .ok == true
@@ -120,9 +127,17 @@ jq -e '
   and (.commands.nodes.sensitive == false)
   and (.commands["export-client"].mutation == true)
   and (.commands["subman-sync"].sensitive == true)
+  and .upgrade.manifest_scope == "all_regular_runtime_files_and_control_files"
+  and .upgrade.restores_previous_service_activity == true
 ' <<< "${capabilities_json}" >/dev/null
 
+state_hash_before=$(protocol_state_tree_hash)
+state_files_before=$(find "${SB_PROTOCOL_STATE_DIR}" -type f -printf '%P\n' | sort)
 check_json=$(agent_cli upgrade-check --json 1.14.0)
+state_hash_after=$(protocol_state_tree_hash)
+state_files_after=$(find "${SB_PROTOCOL_STATE_DIR}" -type f -printf '%P\n' | sort)
+[[ "${state_hash_after}" == "${state_hash_before}" ]]
+[[ "${state_files_after}" == "${state_files_before}" ]]
 jq -e '
   .ready == true
   and .blockers == []
@@ -225,6 +240,9 @@ backup_dir=$(jq -r '.backup' <<< "${upgrade_json}")
 [[ -f "${backup_dir}/sing-box.service" ]]
 [[ -f "${backup_dir}/SHA256SUMS" ]]
 [[ -f "${backup_dir}/metadata.json" ]]
+grep -Fq '  runtime/protocols/hy2.env' "${backup_dir}/SHA256SUMS"
+grep -Fq '  runtime/protocols/index.env' "${backup_dir}/SHA256SUMS"
+grep -Fq '  metadata.json' "${backup_dir}/SHA256SUMS"
 [[ "$(stat -c '%a' "${backup_dir}")" == "700" ]]
 [[ "$(stat -c '%a' "${backup_dir}/metadata.json")" == "600" ]]
 (cd "${backup_dir}" && sha256sum -c SHA256SUMS >/dev/null)
@@ -235,5 +253,16 @@ if upgrade_json=$(agent_cli upgrade --json 1.14.0 --yes 2>/dev/null); then
   exit 1
 fi
 jq -e '.ok == false and .error == "config_check_failed" and .preflight.current_check.exit_code == 23' <<< "${upgrade_json}" >/dev/null
+
+rm -f "${CURRENT_CHECK_FAIL_FILE}"
+: > "${SYSTEMCTL_CALLS_FILE}"
+restore_agent_upgrade_backup "${backup_dir}" "n" "n"
+grep -Fqx 'stop sing-box' "${SYSTEMCTL_CALLS_FILE}"
+
+printf 'tampered\n' >> "${backup_dir}/runtime/protocols/hy2.env"
+if restore_agent_upgrade_backup "${backup_dir}" "n" "n"; then
+  printf 'expected recursive backup manifest to reject a modified runtime state file\n' >&2
+  exit 1
+fi
 
 printf '%s\n' 'agent upgrade command checks passed'

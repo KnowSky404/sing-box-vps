@@ -186,7 +186,7 @@ sbv agent upgrade-check --json 1.14.0
 sbv agent upgrade --json 1.14.0 --yes
 ```
 
-Require `ready=true` and an empty `blockers` array. The read-only preflight validates the currently installed core and reports known schema warnings, but intentionally does not download the target binary. The guarded upgrade creates a root-only persistent backup, installs the target, runs the target core's `sing-box check` before restart, verifies the exact version/config hash/service, and attempts to restore the old binary on any failed invariant. It never rewrites the server config for migration.
+Require `ready=true` and an empty `blockers` array. The read-only preflight validates the currently installed core and reports known schema warnings without reconciling or migrating protocol state, but intentionally does not download the target binary. The guarded upgrade creates a root-only persistent backup, installs the target, runs the target core's `sing-box check` before restart, verifies the exact version/config hash/service, and attempts to restore the old binary and previous service activity on any failed invariant. `SHA256SUMS` covers every regular file in the copied runtime tree plus the binary, `sbv`, service unit, and metadata. It never rewrites the server config for migration.
 
 The ordinary operator path `sbv update sing-box [latest|x.y.z]` remains available, but Agent automation should use the fixed-version guarded command. Both paths only operate on a healthy managed instance and return nonzero when the target rejects the config. If the instance is incomplete or missing, enter the interactive `sbv` menu for repair/takeover instead of forcing an upgrade.
 

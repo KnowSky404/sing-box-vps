@@ -143,4 +143,26 @@ jq -e '
   and .integrations.client_export_exists == true
 ' <<< "${status_json}" >/dev/null
 
+# Read-only Agent commands must report stale indexed state without reconciling
+# or rewriting it. Doctor is responsible for flagging the inconsistency.
+cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF_STALE_INDEX'
+INSTALLED_PROTOCOLS=vless-reality,hy2
+PROTOCOL_STATE_VERSION=1
+EOF_STALE_INDEX
+stale_index_hash=$(sha256sum "${SB_PROTOCOL_INDEX_FILE}" | awk '{print $1}')
+
+status_json=$(agent_cli status --json)
+jq -e '.protocols == ["vless-reality", "hy2"]' <<< "${status_json}" >/dev/null
+[[ "$(sha256sum "${SB_PROTOCOL_INDEX_FILE}" | awk '{print $1}')" == "${stale_index_hash}" ]]
+
+doctor_json=$(agent_cli doctor --json)
+jq -e '.diagnostics.managed_instance_state == "incomplete"' <<< "${doctor_json}" >/dev/null
+[[ "$(sha256sum "${SB_PROTOCOL_INDEX_FILE}" | awk '{print $1}')" == "${stale_index_hash}" ]]
+
+if (agent_cli nodes --json >/dev/null 2>&1); then
+  printf 'expected nodes to reject an indexed protocol with missing state\n' >&2
+  exit 1
+fi
+[[ "$(sha256sum "${SB_PROTOCOL_INDEX_FILE}" | awk '{print $1}')" == "${stale_index_hash}" ]]
+
 printf '%s\n' 'agent multi-instance and status checks passed'

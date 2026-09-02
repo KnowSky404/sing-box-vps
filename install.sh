@@ -6646,7 +6646,7 @@ build_hy2_compatibility_warnings_json() {
 collect_hy2_compatibility_warnings_json() (
   local context=${1:-share}
 
-  if ! protocol_state_exists "hy2" || ! load_protocol_state "hy2"; then
+  if ! protocol_state_exists "hy2" || ! load_protocol_state "hy2" "read-only"; then
     printf '[]'
     return 0
   fi
@@ -8328,9 +8328,11 @@ agent_capabilities_json() {
       },
       upgrade: {
         backup_root: $backup_root,
+        manifest_scope: "all_regular_runtime_files_and_control_files",
         rewrites_server_config: false,
         target_binary_check_before_restart: true,
-        automatic_binary_rollback_on_failure: true
+        automatic_binary_rollback_on_failure: true,
+        restores_previous_service_activity: true
       }
     }'
 }
@@ -8542,8 +8544,6 @@ create_agent_upgrade_backup() {
   local backup_dir
   local manifest_file
   local relative_path
-  local backup_file
-  local hash
 
   if ! mkdir -p "${SB_UPGRADE_BACKUP_ROOT}" || ! chmod 700 "${SB_UPGRADE_BACKUP_ROOT}"; then
     return 1
@@ -8573,21 +8573,6 @@ create_agent_upgrade_backup() {
     return 1
   fi
 
-  manifest_file="${backup_dir}/SHA256SUMS"
-  if ! : > "${manifest_file}"; then
-    rm -rf -- "${backup_dir}"
-    return 1
-  fi
-  for relative_path in runtime/config.json sing-box sbv sing-box.service; do
-    backup_file="${backup_dir}/${relative_path}"
-    [[ -f "${backup_file}" ]] || continue
-    if ! hash=$(agent_file_sha256 "${backup_file}") || \
-      ! printf '%s  %s\n' "${hash}" "${relative_path}" >> "${manifest_file}"; then
-      rm -rf -- "${backup_dir}"
-      return 1
-    fi
-  done
-
   if ! jq -n \
     --arg created_at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
     --arg script_version "${SCRIPT_VERSION}" \
@@ -8600,8 +8585,25 @@ create_agent_upgrade_backup() {
       current_version: $current_version,
       target_version: $target_version,
       source_config: $source_config,
+      manifest_scope: "all_regular_runtime_files_and_control_files",
       contains_sensitive_runtime_material: true
     }' > "${backup_dir}/metadata.json"; then
+    rm -rf -- "${backup_dir}"
+    return 1
+  fi
+
+  manifest_file="${backup_dir}/SHA256SUMS"
+  if ! (
+    cd "${backup_dir}"
+    if [[ -d runtime ]]; then
+      while IFS= read -r -d '' relative_path; do
+        sha256sum "${relative_path}"
+      done < <(find runtime -type f -print0)
+    fi
+    for relative_path in sing-box sbv sing-box.service metadata.json; do
+      [[ -f "${relative_path}" ]] && sha256sum "${relative_path}"
+    done
+  ) > "${manifest_file}"; then
     rm -rf -- "${backup_dir}"
     return 1
   fi
@@ -8638,6 +8640,8 @@ restore_agent_upgrade_backup() {
   systemctl daemon-reload >/dev/null 2>&1 || status=1
   if [[ "${service_was_active}" == "y" ]]; then
     systemctl restart sing-box >/dev/null 2>&1 || status=1
+  else
+    systemctl stop sing-box >/dev/null 2>&1 || status=1
   fi
 
   return "${status}"
@@ -9047,7 +9051,7 @@ agent_singbox_check_json() {
 }
 
 agent_installed_protocols_json() {
-  list_installed_protocols | jq -Rsc 'split("\n") | map(select(length > 0))'
+  list_indexed_protocols_raw | jq -Rsc 'split("\n") | map(select(length > 0))'
 }
 
 agent_status_json() {
@@ -9380,7 +9384,7 @@ agent_collect_nodes_json() {
 
   public_ip=$(get_public_ip)
   original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
-  mapfile -t installed_protocols < <(list_installed_protocols)
+  mapfile -t installed_protocols < <(list_indexed_protocols_raw)
   tmpdir=$(mktemp -d)
 
   trap '
