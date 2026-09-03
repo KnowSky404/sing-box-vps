@@ -425,14 +425,14 @@ EXPORT_EOF
         [[ "${actual_lines[4]}" == "8443" ]]
         [[ "${actual_lines[5]}" == "22222222-2222-4222-8222-222222222222" ]]
         [[ "${actual_lines[6]}" == "3" ]]
-        [[ "${actual_lines[7]}" == "cdn.cloudflare.com" ]]
+        [[ "${actual_lines[7]}" == "www.apple.com" ]]
         [[ "${actual_lines[8]}" == "" ]]
         [[ "${actual_lines[9]}" == "1" ]]
         [[ "${actual_lines[10]}" == "n" ]]
         [[ "${actual_lines[11]}" == "0" ]]
         printf '8443\n' > "${PORT_FILE}"
         printf '22222222-2222-4222-8222-222222222222\n' > "${UUID_FILE}"
-        printf 'cdn.cloudflare.com\n' > "${SNI_FILE}"
+        printf 'www.apple.com\n' > "${SNI_FILE}"
         write_vless_state
         return 0
       fi
@@ -766,7 +766,7 @@ grep -Fqx 'jq:-r|.inbounds[0].tls.server_name // empty|/root/sing-box-vps/config
 grep -Fqx 'jq:-r|.inbounds[0].listen_port // empty|/root/sing-box-vps/config.json' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx PORT=8443 /root/sing-box-vps/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx UUID=22222222-2222-4222-8222-222222222222 /root/sing-box-vps/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx SNI=cdn.cloudflare.com /root/sing-box-vps/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx SNI=www.apple.com /root/sing-box-vps/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
 grep -Fqx "grep:-Fqx REALITY_PRIVATE_KEY=${VALID_REALITY_PRIVATE_KEY} /root/sing-box-vps/protocols/vless-reality.env" "${ASSERT_LOG_FILE}"
 grep -Fqx "grep:-Fqx REALITY_PUBLIC_KEY=${VALID_REALITY_PUBLIC_KEY} /root/sing-box-vps/protocols/vless-reality.env" "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx PORT=9443 /root/sing-box-vps/protocols/anytls.env' "${ASSERT_LOG_FILE}"

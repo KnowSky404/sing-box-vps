@@ -587,14 +587,14 @@ EXPORT_EOF
         [[ "\${actual_lines[4]}" == "8443" ]]
         [[ "\${actual_lines[5]}" == "22222222-2222-4222-8222-222222222222" ]]
         [[ "\${actual_lines[6]}" == "3" ]]
-        [[ "\${actual_lines[7]}" == "cdn.cloudflare.com" ]]
+        [[ "\${actual_lines[7]}" == "www.apple.com" ]]
         [[ "\${actual_lines[8]}" == "" ]]
         [[ "\${actual_lines[9]}" == "1" ]]
         [[ "\${actual_lines[10]}" == "n" ]]
         [[ "\${actual_lines[11]}" == "0" ]]
         printf '8443\n' > "\${REMOTE_PORT_FILE}"
         printf '22222222-2222-4222-8222-222222222222\n' > "\${REMOTE_UUID_FILE}"
-        printf 'cdn.cloudflare.com\n' > "\${REMOTE_SNI_FILE}"
+        printf 'www.apple.com\n' > "\${REMOTE_SNI_FILE}"
         write_vless_state
         return 0
       fi

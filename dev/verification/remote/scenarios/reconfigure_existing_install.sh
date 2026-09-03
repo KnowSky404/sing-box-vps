@@ -11,7 +11,7 @@ verification_scenario_reconfigure_existing_install() {
   local diff_status=0
   local expected_port=8443
   local expected_uuid="22222222-2222-4222-8222-222222222222"
-  local expected_sni="cdn.cloudflare.com"
+  local expected_sni="www.apple.com"
 
   printf 'SCENARIO=reconfigure_existing_install\n'
   before_port=$(jq -r '.inbounds[0].listen_port // empty' /root/sing-box-vps/config.json)
@@ -27,7 +27,7 @@ verification_scenario_reconfigure_existing_install() {
 8443
 22222222-2222-4222-8222-222222222222
 3
-cdn.cloudflare.com
+www.apple.com
 
 1
 n
