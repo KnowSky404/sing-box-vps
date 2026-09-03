@@ -141,13 +141,13 @@ write_legacy_vless_state() {
   mkdir -p "$(dirname "${INSTANCE_STATE_FILE}")" "$(dirname "${EXPORT_FILE}")"
   cat > "${STATE_FILE}" <<STATE_EOF
 CONFIG_SCHEMA_VERSION=2
-DEFAULT_INSTANCE_ID=main
-INSTANCE_IDS=main
+DEFAULT_INSTANCE_ID=imported-1
+INSTANCE_IDS=imported-1
 REALITY_PRIVATE_KEY=${VALID_REALITY_PRIVATE_KEY}
 REALITY_PUBLIC_KEY=${VALID_REALITY_PUBLIC_KEY}
 STATE_EOF
   cat > "${INSTANCE_STATE_FILE}" <<STATE_EOF
-INSTANCE_ID=main
+INSTANCE_ID=imported-1
 NODE_NAME=cc-us-stl+vless
 PORT=$(cat "${PORT_FILE}")
 UUID=$(cat "${UUID_FILE}")
@@ -476,7 +476,7 @@ test() {
     return
   fi
 
-  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" ]]; then
+  if [[ "${1:-}" == "-f" && ( "${2:-}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" || "${2:-}" == "/root/sing-box-vps/protocols/vless-reality.d/imported-1.env" ) ]]; then
     [[ -f "${INSTANCE_STATE_FILE}" ]]
     return
   fi
@@ -554,7 +554,7 @@ sed() {
     args[$last_index]="${STATE_FILE}"
   fi
 
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" || "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/vless-reality.d/imported-1.env" ]]; then
     args[$last_index]="${INSTANCE_STATE_FILE}"
   fi
 
@@ -598,7 +598,7 @@ grep() {
     args[$last_index]="${STATE_FILE}"
   fi
 
-  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" ]]; then
+  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" || "${args[$last_index]}" == "/root/sing-box-vps/protocols/vless-reality.d/imported-1.env" ]]; then
     args[$last_index]="${INSTANCE_STATE_FILE}"
   fi
 
@@ -752,15 +752,15 @@ grep -Fq 'verification_scenario_multi_protocol_coexistence' "${PAYLOAD_FILE}"
 grep -Fq 'verification_scenario_upgrade_rollback_1_13_to_1_14' "${PAYLOAD_FILE}"
 ! grep -Fq 'verification_execute_single_protocol_probe vless-reality /root/sing-box-vps/config.json' "${PAYLOAD_FILE}"
 grep -Fqx 'test:-f|/root/sing-box-vps/protocols/vless-reality.env|' "${ASSERT_LOG_FILE}"
-grep -Fqx 'test:-f|/root/sing-box-vps/protocols/vless-reality.d/main.env|' "${ASSERT_LOG_FILE}"
+grep -Fqx 'test:-f|/root/sing-box-vps/protocols/vless-reality.d/imported-1.env|' "${ASSERT_LOG_FILE}"
 grep -Fqx 'test:-f|/root/sing-box-vps/protocols/anytls.env|' "${ASSERT_LOG_FILE}"
 grep -Fqx 'test:-f|/root/sing-box-vps/protocols/index.env|' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx CONFIG_SCHEMA_VERSION=2 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx DEFAULT_INSTANCE_ID=main /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx INSTANCE_IDS=main /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fq stale.example.com /root/sing-box-vps/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx DEFAULT_INSTANCE_ID=imported-1 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx INSTANCE_IDS=imported-1 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.d/imported-1.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.d/imported-1.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fq stale.example.com /root/sing-box-vps/protocols/vless-reality.d/imported-1.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'jq:-r|.inbounds[0].users[0].uuid // empty|/root/sing-box-vps/config.json' "${ASSERT_LOG_FILE}"
 grep -Fqx 'jq:-r|.inbounds[0].tls.server_name // empty|/root/sing-box-vps/config.json' "${ASSERT_LOG_FILE}"
 grep -Fqx 'jq:-r|.inbounds[0].listen_port // empty|/root/sing-box-vps/config.json' "${ASSERT_LOG_FILE}"

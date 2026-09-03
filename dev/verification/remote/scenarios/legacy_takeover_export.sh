@@ -9,7 +9,7 @@ verification_scenario_legacy_takeover_export() {
   local expected_uuid="11111111-1111-1111-1111-111111111111"
   local expected_private_key="IEwVBb_qLcYr1L_CTI5exTWbT7qRgZnr43xP8nC0dkM"
   local expected_public_key="u9nRBiDRTmyxLQLkiVq-kYFPhRyeZkSo8p9c7s8Dfjo"
-  local instance_state_file=/root/sing-box-vps/protocols/vless-reality.d/main.env
+  local instance_state_file=/root/sing-box-vps/protocols/vless-reality.d/imported-1.env
   local exported_node_name
 
   verification_prepare_remote_local_tree
@@ -72,8 +72,8 @@ EOF
   test -f "${instance_state_file}"
   grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality' /root/sing-box-vps/protocols/index.env
   grep -Fqx 'CONFIG_SCHEMA_VERSION=2' /root/sing-box-vps/protocols/vless-reality.env
-  grep -Fqx 'DEFAULT_INSTANCE_ID=main' /root/sing-box-vps/protocols/vless-reality.env
-  grep -Fqx 'INSTANCE_IDS=main' /root/sing-box-vps/protocols/vless-reality.env
+  grep -Fqx 'DEFAULT_INSTANCE_ID=imported-1' /root/sing-box-vps/protocols/vless-reality.env
+  grep -Fqx 'INSTANCE_IDS=imported-1' /root/sing-box-vps/protocols/vless-reality.env
   grep -Fqx "PORT=${expected_port}" "${instance_state_file}"
   grep -Fqx "UUID=${expected_uuid}" "${instance_state_file}"
   grep -Fqx "SNI=${expected_sni}" "${instance_state_file}"

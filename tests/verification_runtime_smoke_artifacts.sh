@@ -337,13 +337,13 @@ write_legacy_vless_state() {
   mkdir -p "\$(dirname "\${REMOTE_INSTANCE_STATE_FILE}")" "\$(dirname "\${REMOTE_EXPORT_FILE}")"
   cat > "\${REMOTE_STATE_FILE}" <<STATE_EOF
 CONFIG_SCHEMA_VERSION=2
-DEFAULT_INSTANCE_ID=main
-INSTANCE_IDS=main
+DEFAULT_INSTANCE_ID=imported-1
+INSTANCE_IDS=imported-1
 REALITY_PRIVATE_KEY=${VALID_REALITY_PRIVATE_KEY}
 REALITY_PUBLIC_KEY=${VALID_REALITY_PUBLIC_KEY}
 STATE_EOF
   cat > "\${REMOTE_INSTANCE_STATE_FILE}" <<STATE_EOF
-INSTANCE_ID=main
+INSTANCE_ID=imported-1
 NODE_NAME=cc-us-stl+vless
 PORT=\$(cat "\${REMOTE_PORT_FILE}")
 UUID=\$(cat "\${REMOTE_UUID_FILE}")
@@ -642,7 +642,7 @@ test() {
     return
   fi
 
-  if [[ "\${1:-}" == "-f" && "\${2:-}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" ]]; then
+  if [[ "\${1:-}" == "-f" && ( "\${2:-}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" || "\${2:-}" == "/root/sing-box-vps/protocols/vless-reality.d/imported-1.env" ) ]]; then
     [[ -f "\${REMOTE_INSTANCE_STATE_FILE}" ]]
     return
   fi
@@ -749,7 +749,7 @@ sed() {
     args[\$last_index]="\${REMOTE_STATE_FILE}"
   fi
 
-  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" ]]; then
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" || "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/vless-reality.d/imported-1.env" ]]; then
     args[\$last_index]="\${REMOTE_INSTANCE_STATE_FILE}"
   fi
 
@@ -789,7 +789,7 @@ grep() {
     args[\$last_index]="\${REMOTE_STATE_FILE}"
   fi
 
-  if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" ]]; then
+  if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" || "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/vless-reality.d/imported-1.env" ]]; then
     args[\$last_index]="\${REMOTE_INSTANCE_STATE_FILE}"
   fi
 
@@ -948,8 +948,8 @@ grep -Fqx 'upgrade_1_13_to_1_14' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'runtime_smoke' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'multi_protocol_coexistence' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'upgrade_rollback_1_13_to_1_14' "${REMOTE_DISPATCH_LOG_FILE}"
-grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.d/main.env' "${REMOTE_ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.d/main.env' "${REMOTE_ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.d/imported-1.env' "${REMOTE_ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.d/imported-1.env' "${REMOTE_ASSERT_LOG_FILE}"
 grep -Fqx 'jq:-r|.inbounds[0].listen_port // empty|/root/sing-box-vps/config.json' "${REMOTE_ASSERT_LOG_FILE}"
 grep -Fqx 'UUID=11111111-1111-1111-1111-111111111111' "${REMOTE_INSTANCE_STATE_FILE}"
 
