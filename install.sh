@@ -1129,6 +1129,7 @@ load_vless_reality_instance_state() {
   state_file=$(vless_reality_instance_state_file "${instance_id}") || return 1
 
   SB_VLESS_INSTANCE_ID="${instance_id}"
+  SB_VLESS_INBOUND_TAG=""
   SB_NODE_NAME=""
   SB_PORT=""
   SB_UUID=""
@@ -1149,6 +1150,7 @@ load_vless_reality_instance_state() {
   # shellcheck disable=SC1090
   source "${state_file}"
   SB_VLESS_INSTANCE_ID="${INSTANCE_ID:-${instance_id}}"
+  SB_VLESS_INBOUND_TAG="${INBOUND_TAG:-}"
   SB_NODE_NAME=$(normalize_node_name "${NODE_NAME:-}")
   SB_PORT="${PORT:-}"
   SB_UUID="${UUID:-}"
@@ -1182,6 +1184,7 @@ save_vless_reality_instance_state() {
 
   {
     write_env_assignment "INSTANCE_ID" "${instance_id}"
+    write_env_assignment "INBOUND_TAG" "${SB_VLESS_INBOUND_TAG:-}"
     write_env_assignment "ENABLED" "1"
     write_env_assignment "NODE_NAME" "${SB_NODE_NAME}"
     write_env_assignment "PORT" "${SB_PORT}"
@@ -1661,11 +1664,49 @@ port_in_configured_protocol_state() {
 
 vless_reality_inbound_tag_for_instance() {
   local instance_id=$1
+  if [[ -n "${SB_VLESS_INBOUND_TAG:-}" ]]; then
+    printf '%s' "${SB_VLESS_INBOUND_TAG}"
+    return 0
+  fi
   if [[ "${instance_id}" == "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}" ]]; then
     printf 'vless-in'
   else
     printf 'vless-reality-%s' "${instance_id}"
   fi
+}
+
+validate_vless_reality_instance_tags() {
+  local instance_id inbound_tag
+  local tags=()
+
+  load_vless_reality_protocol_state
+  while IFS= read -r instance_id; do
+    [[ -n "${instance_id}" ]] || continue
+    load_vless_reality_instance_state "${instance_id}" || return 1
+    inbound_tag=$(vless_reality_inbound_tag_for_instance "${instance_id}")
+    if protocol_array_contains "${inbound_tag}" "${tags[@]}"; then
+      return 1
+    fi
+    tags+=("${inbound_tag}")
+  done < <(list_vless_reality_instance_ids)
+}
+
+vless_reality_outbound_policy_from_config() {
+  local inbound_tag=$1
+  local route_count outbound
+
+  route_count=$(jq -r --arg tag "${inbound_tag}" '[.route.rules[]? | select(.inbound == $tag and .action == "route")] | length' "${SINGBOX_CONFIG_FILE}") || return 1
+  if [[ "${route_count}" == "0" ]]; then
+    printf 'default'
+    return 0
+  fi
+  [[ "${route_count}" == "1" ]] || return 1
+  outbound=$(jq -r --arg tag "${inbound_tag}" 'first(.route.rules[]? | select(.inbound == $tag and .action == "route") | .outbound) // ""' "${SINGBOX_CONFIG_FILE}") || return 1
+  case "${outbound}" in
+    direct) printf 'direct' ;;
+    warp|warp-ep) printf 'warp' ;;
+    *) return 1 ;;
+  esac
 }
 
 subman_config_file_path() {
@@ -2768,6 +2809,7 @@ prompt_vless_reality_install() {
 
   set_protocol_defaults "vless+reality"
   SB_VLESS_INSTANCE_ID="main"
+  SB_VLESS_INBOUND_TAG=""
   SB_NODE_NAME="$(default_node_name_for_protocol "vless+reality")"
   echo -e "\n${BLUE}--- 配置 VLESS + REALITY ---${NC}"
   read -rp "[VLESS + REALITY] 节点名称 (默认 ${SB_NODE_NAME}): " in_node
@@ -2824,6 +2866,7 @@ prompt_vless_reality_instance_create() {
     default_sni="${SB_SNI}"
   fi
   SB_VLESS_INSTANCE_ID="${selected_id}"
+  SB_VLESS_INBOUND_TAG=""
   SB_NODE_NAME="${selected_node}"
   SB_PORT="${selected_port}"
   prompt_reality_sni_for_new_instance "${default_sni:-${SB_REALITY_SNI_FALLBACK}}"
@@ -4534,6 +4577,7 @@ build_vless_inbound_json_from_current_state() {
   VLESS_REALITY_DEFAULT_INSTANCE_ID="main"
   VLESS_REALITY_INSTANCE_IDS="main"
   SB_VLESS_INSTANCE_ID="main"
+  SB_VLESS_INBOUND_TAG="vless-in"
   save_vless_reality_protocol_state
   save_vless_reality_instance_state
 
@@ -4574,6 +4618,7 @@ build_vless_inbound_json() {
   local instance_id instance_ids=()
 
   migrate_vless_reality_state_to_instances_if_needed
+  validate_vless_reality_instance_tags || return 1
   mapfile -t instance_ids < <(list_vless_reality_instance_ids)
 
   if [[ ${#instance_ids[@]} -eq 0 ]]; then
@@ -10478,21 +10523,152 @@ find_config_inbound_index_by_protocol() {
   return 1
 }
 
+vless_reality_config_id_exists() {
+  local target_id=$1
+  local existing_id
+  for existing_id in "${VLESS_CONFIG_INSTANCE_IDS[@]}"; do
+    [[ "${existing_id}" == "${target_id}" ]] && return 0
+  done
+  return 1
+}
+
+collect_vless_reality_config_instances() {
+  local inbound_count inbound_index inbound_type protocol tag user_name candidate private_key existing_tag tag_suffix
+  local fallback_number=1
+  local candidate_index resolved_ids=()
+
+  VLESS_CONFIG_INSTANCE_IDS=()
+  VLESS_CONFIG_INSTANCE_INDICES=()
+  VLESS_CONFIG_INSTANCE_TAGS=()
+  VLESS_CONFIG_INSTANCE_CANDIDATES=()
+  VLESS_CONFIG_PROTOCOLS=()
+  VLESS_CONFIG_REALITY_PRIVATE_KEY=""
+  VLESS_CONFIG_REALITY_PRIVATE_KEY_SET="n"
+  VLESS_CONFIG_DEFAULT_INSTANCE_ID=""
+
+  inbound_count=$(jq -r '(.inbounds // []) | length' "${SINGBOX_CONFIG_FILE}") || return 1
+  [[ "${inbound_count}" =~ ^[0-9]+$ ]] || return 1
+
+  for ((inbound_index = 0; inbound_index < inbound_count; inbound_index++)); do
+    inbound_type=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].type // empty' "${SINGBOX_CONFIG_FILE}") || return 1
+    if ! protocol=$(normalize_protocol_id "${inbound_type}" 2>/dev/null); then
+      return 1
+    fi
+    [[ -n "${protocol}" ]] || return 1
+    if ! protocol_array_contains "${protocol}" "${VLESS_CONFIG_PROTOCOLS[@]}"; then
+      VLESS_CONFIG_PROTOCOLS+=("${protocol}")
+    fi
+    [[ "${protocol}" == "vless-reality" ]] || continue
+
+    if ! jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality? | type == "object"' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+      return 1
+    fi
+
+    tag=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tag // ""' "${SINGBOX_CONFIG_FILE}") || return 1
+    user_name=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].name // ""' "${SINGBOX_CONFIG_FILE}") || return 1
+    candidate=""
+    if [[ "${tag}" == "vless-in" ]]; then
+      candidate="main"
+    elif [[ "${tag}" == vless-reality-* ]]; then
+      tag_suffix="${tag#vless-reality-}"
+      if validate_vless_reality_instance_id "${tag_suffix}"; then
+        candidate="${tag_suffix}"
+      fi
+    elif validate_vless_reality_instance_id "${user_name}"; then
+      candidate="${user_name}"
+    fi
+
+    if [[ -n "${candidate}" ]]; then
+      if vless_reality_config_id_exists "${candidate}"; then
+        return 1
+      fi
+      VLESS_CONFIG_INSTANCE_IDS+=("${candidate}")
+    fi
+    for existing_tag in "${VLESS_CONFIG_INSTANCE_TAGS[@]}"; do
+      if [[ -n "${tag}" && "${existing_tag}" == "${tag}" ]]; then
+        return 1
+      fi
+    done
+    VLESS_CONFIG_INSTANCE_INDICES+=("${inbound_index}")
+    VLESS_CONFIG_INSTANCE_TAGS+=("${tag}")
+    VLESS_CONFIG_INSTANCE_CANDIDATES+=("${candidate}")
+
+    private_key=$(jq -r --argjson idx "${inbound_index}" '(.inbounds[$idx].tls.reality.private_key // "") | if type == "string" then . else empty end' "${SINGBOX_CONFIG_FILE}") || return 1
+    if [[ "${VLESS_CONFIG_REALITY_PRIVATE_KEY_SET}" == "n" ]]; then
+      VLESS_CONFIG_REALITY_PRIVATE_KEY="${private_key}"
+      VLESS_CONFIG_REALITY_PRIVATE_KEY_SET="y"
+    elif [[ "${VLESS_CONFIG_REALITY_PRIVATE_KEY}" != "${private_key}" ]]; then
+      return 1
+    fi
+  done
+
+  for candidate_index in "${!VLESS_CONFIG_INSTANCE_CANDIDATES[@]}"; do
+    candidate="${VLESS_CONFIG_INSTANCE_CANDIDATES[${candidate_index}]}"
+    if [[ -z "${candidate}" ]]; then
+      while vless_reality_config_id_exists "imported-${fallback_number}"; do
+        fallback_number=$((fallback_number + 1))
+      done
+      candidate="imported-${fallback_number}"
+      fallback_number=$((fallback_number + 1))
+      VLESS_CONFIG_INSTANCE_IDS+=("${candidate}")
+    fi
+    VLESS_CONFIG_INSTANCE_CANDIDATES[${candidate_index}]="${candidate}"
+    resolved_ids+=("${candidate}")
+  done
+
+  VLESS_CONFIG_INSTANCE_IDS=("${resolved_ids[@]}")
+
+  if [[ ${#VLESS_CONFIG_INSTANCE_IDS[@]} -gt 0 ]]; then
+    VLESS_CONFIG_DEFAULT_INSTANCE_ID="${VLESS_CONFIG_INSTANCE_IDS[0]}"
+    if vless_reality_config_id_exists "main"; then
+      VLESS_CONFIG_DEFAULT_INSTANCE_ID="main"
+    fi
+    for candidate_index in "${!VLESS_CONFIG_INSTANCE_TAGS[@]}"; do
+      if [[ -z "${VLESS_CONFIG_INSTANCE_TAGS[${candidate_index}]}" ]]; then
+        if [[ "${VLESS_CONFIG_INSTANCE_CANDIDATES[${candidate_index}]}" == "${VLESS_CONFIG_DEFAULT_INSTANCE_ID}" ]]; then
+          VLESS_CONFIG_INSTANCE_TAGS[${candidate_index}]="vless-in"
+        else
+          VLESS_CONFIG_INSTANCE_TAGS[${candidate_index}]="vless-reality-${VLESS_CONFIG_INSTANCE_CANDIDATES[${candidate_index}]}"
+        fi
+      fi
+    done
+    for candidate_index in "${!VLESS_CONFIG_INSTANCE_TAGS[@]}"; do
+      for existing_tag in "${VLESS_CONFIG_INSTANCE_TAGS[@]:0:${candidate_index}}"; do
+        if [[ "${VLESS_CONFIG_INSTANCE_TAGS[${candidate_index}]}" == "${existing_tag}" ]]; then
+          return 1
+        fi
+      done
+    done
+  fi
+}
+
 render_expected_protocol_state_snapshot() {
   [[ -f "${SINGBOX_CONFIG_FILE}" ]] || return 1
 
-  local protocol inbound_index cert_provider_tag
+  local protocol inbound_index cert_provider_tag outbound_policy
   protocol=$(normalize_protocol_id "$1")
   inbound_index=$(find_config_inbound_index_by_protocol "${protocol}") || return 1
 
   case "${protocol}" in
     vless-reality)
-      printf 'PORT=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")"
-      printf 'UUID=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].uuid // ""' "${SINGBOX_CONFIG_FILE}")"
-      printf 'SNI=%s\n' "$(jq -r --argjson idx "${inbound_index}" --arg fallback "${SB_REALITY_SNI_FALLBACK}" '.inbounds[$idx].tls.server_name // $fallback' "${SINGBOX_CONFIG_FILE}")"
-      printf 'REALITY_PRIVATE_KEY=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.private_key // ""' "${SINGBOX_CONFIG_FILE}")"
-      printf 'SHORT_ID_1=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[0] // ""' "${SINGBOX_CONFIG_FILE}")"
-      printf 'SHORT_ID_2=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[1] // ""' "${SINGBOX_CONFIG_FILE}")"
+      collect_vless_reality_config_instances || return 1
+      printf 'DEFAULT_INSTANCE_ID=%s\n' "${VLESS_CONFIG_DEFAULT_INSTANCE_ID}"
+      printf 'INSTANCE_IDS=%s\n' "$(IFS=,; printf '%s' "${VLESS_CONFIG_INSTANCE_IDS[*]}")"
+      printf 'REALITY_PRIVATE_KEY=%s\n' "${VLESS_CONFIG_REALITY_PRIVATE_KEY}"
+      for instance_index in "${!VLESS_CONFIG_INSTANCE_INDICES[@]}"; do
+        inbound_index="${VLESS_CONFIG_INSTANCE_INDICES[${instance_index}]}"
+        printf 'INSTANCE_%s_ID=%s\n' "$((instance_index + 1))" "${VLESS_CONFIG_INSTANCE_CANDIDATES[${instance_index}]}"
+        printf 'INSTANCE_%s_TAG=%s\n' "$((instance_index + 1))" "${VLESS_CONFIG_INSTANCE_TAGS[${instance_index}]}"
+        printf 'INSTANCE_%s_PORT=%s\n' "$((instance_index + 1))" "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")"
+        printf 'INSTANCE_%s_UUID=%s\n' "$((instance_index + 1))" "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].uuid // ""' "${SINGBOX_CONFIG_FILE}")"
+        printf 'INSTANCE_%s_SNI=%s\n' "$((instance_index + 1))" "$(jq -r --argjson idx "${inbound_index}" --arg fallback "${SB_REALITY_SNI_FALLBACK}" '.inbounds[$idx].tls.server_name // $fallback' "${SINGBOX_CONFIG_FILE}")"
+        printf 'INSTANCE_%s_SHORT_ID_1=%s\n' "$((instance_index + 1))" "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[0] // ""' "${SINGBOX_CONFIG_FILE}")"
+        printf 'INSTANCE_%s_SHORT_ID_2=%s\n' "$((instance_index + 1))" "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[1] // ""' "${SINGBOX_CONFIG_FILE}")"
+        printf 'INSTANCE_%s_ALPN_MODE=%s\n' "$((instance_index + 1))" "$(jq -r --argjson idx "${inbound_index}" '(.inbounds[$idx].tls.alpn // []) | if . == ["h2", "http/1.1"] then "h2_http1" elif . == ["http/1.1"] then "http1" else "off" end' "${SINGBOX_CONFIG_FILE}")"
+        printf 'INSTANCE_%s_TCP_FAST_OPEN=%s\n' "$((instance_index + 1))" "$(jq -r --argjson idx "${inbound_index}" 'if .inbounds[$idx].tcp_fast_open == true then "y" else "n" end' "${SINGBOX_CONFIG_FILE}")"
+        outbound_policy=$(vless_reality_outbound_policy_from_config "${VLESS_CONFIG_INSTANCE_TAGS[${instance_index}]}") || return 1
+        printf 'INSTANCE_%s_OUTBOUND_POLICY=%s\n' "$((instance_index + 1))" "${outbound_policy}"
+      done
       ;;
     mixed)
       printf 'PORT=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "1080"' "${SINGBOX_CONFIG_FILE}")"
@@ -10625,16 +10801,43 @@ render_saved_protocol_state_snapshot() {
       # shellcheck disable=SC1090
       (
         source "${state_file}"
-        if [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]]; then
-          VLESS_REALITY_DEFAULT_INSTANCE_ID="${DEFAULT_INSTANCE_ID:-main}"
-          load_vless_reality_instance_state "${VLESS_REALITY_DEFAULT_INSTANCE_ID}" || exit 1
+        if [[ "${CONFIG_SCHEMA_VERSION:-1}" != "2" ]]; then
+          printf 'DEFAULT_INSTANCE_ID=main\n'
+          printf 'INSTANCE_IDS=main\n'
+          printf 'REALITY_PRIVATE_KEY=%s\n' "${REALITY_PRIVATE_KEY:-}"
+          printf 'INSTANCE_1_ID=main\n'
+          printf 'INSTANCE_1_TAG=vless-in\n'
+          printf 'INSTANCE_1_PORT=%s\n' "${PORT:-}"
+          printf 'INSTANCE_1_UUID=%s\n' "${UUID:-}"
+          printf 'INSTANCE_1_SNI=%s\n' "${SNI:-}"
+          printf 'INSTANCE_1_SHORT_ID_1=%s\n' "${SHORT_ID_1:-}"
+          printf 'INSTANCE_1_SHORT_ID_2=%s\n' "${SHORT_ID_2:-}"
+          printf 'INSTANCE_1_ALPN_MODE=off\n'
+          printf 'INSTANCE_1_TCP_FAST_OPEN=n\n'
+          printf 'INSTANCE_1_OUTBOUND_POLICY=default\n'
+          exit 0
         fi
-        printf 'PORT=%s\n' "${PORT:-}"
-        printf 'UUID=%s\n' "${UUID:-}"
-        printf 'SNI=%s\n' "${SNI:-}"
+        VLESS_REALITY_DEFAULT_INSTANCE_ID="${DEFAULT_INSTANCE_ID:-main}"
+        VLESS_REALITY_INSTANCE_IDS=$(normalize_csv_list "${INSTANCE_IDS:-}")
+        printf 'DEFAULT_INSTANCE_ID=%s\n' "${VLESS_REALITY_DEFAULT_INSTANCE_ID}"
+        printf 'INSTANCE_IDS=%s\n' "${VLESS_REALITY_INSTANCE_IDS}"
         printf 'REALITY_PRIVATE_KEY=%s\n' "${REALITY_PRIVATE_KEY:-}"
-        printf 'SHORT_ID_1=%s\n' "${SHORT_ID_1:-}"
-        printf 'SHORT_ID_2=%s\n' "${SHORT_ID_2:-}"
+        instance_index=0
+        while IFS= read -r instance_id; do
+          [[ -n "${instance_id}" ]] || continue
+          load_vless_reality_instance_state "${instance_id}" || exit 1
+          instance_index=$((instance_index + 1))
+          printf 'INSTANCE_%s_ID=%s\n' "${instance_index}" "${SB_VLESS_INSTANCE_ID}"
+          printf 'INSTANCE_%s_TAG=%s\n' "${instance_index}" "$(vless_reality_inbound_tag_for_instance "${instance_id}")"
+          printf 'INSTANCE_%s_PORT=%s\n' "${instance_index}" "${SB_PORT}"
+          printf 'INSTANCE_%s_UUID=%s\n' "${instance_index}" "${SB_UUID}"
+          printf 'INSTANCE_%s_SNI=%s\n' "${instance_index}" "${SB_SNI}"
+          printf 'INSTANCE_%s_SHORT_ID_1=%s\n' "${instance_index}" "${SB_SHORT_ID_1}"
+          printf 'INSTANCE_%s_SHORT_ID_2=%s\n' "${instance_index}" "${SB_SHORT_ID_2}"
+          printf 'INSTANCE_%s_ALPN_MODE=%s\n' "${instance_index}" "${SB_VLESS_ALPN_MODE}"
+          printf 'INSTANCE_%s_TCP_FAST_OPEN=%s\n' "${instance_index}" "${SB_VLESS_TCP_FAST_OPEN}"
+          printf 'INSTANCE_%s_OUTBOUND_POLICY=%s\n' "${instance_index}" "${SB_OUTBOUND_POLICY}"
+        done < <(tr ',' '\n' <<< "${VLESS_REALITY_INSTANCE_IDS}")
       )
       ;;
     mixed)
@@ -10899,17 +11102,87 @@ detect_existing_instance_state() {
   printf '%s' "incomplete"
 }
 
+restore_protocol_state_layer_from_backup() {
+  local backup_dir=$1
+  local state_dir_existed=$2
+  local restore_candidate restore_previous
+
+  restore_candidate=$(mktemp -d "${SB_PROJECT_DIR}/.protocol-state-restore.XXXXXX") || return 1
+  if [[ "${state_dir_existed}" == "y" ]]; then
+    if ! cp -a "${backup_dir}/." "${restore_candidate}/"; then
+      rm -rf "${restore_candidate}"
+      return 1
+    fi
+  fi
+
+  restore_previous="${SB_PROTOCOL_STATE_DIR}.restore-old.$$"
+  if [[ -e "${SB_PROTOCOL_STATE_DIR}" ]]; then
+    if ! mv "${SB_PROTOCOL_STATE_DIR}" "${restore_previous}"; then
+      rm -rf "${restore_candidate}"
+      return 1
+    fi
+  fi
+  if [[ "${state_dir_existed}" == "y" ]]; then
+    if ! mv "${restore_candidate}" "${SB_PROTOCOL_STATE_DIR}"; then
+      [[ -e "${restore_previous}" ]] && mv "${restore_previous}" "${SB_PROTOCOL_STATE_DIR}" || true
+      rm -rf "${restore_candidate}"
+      return 1
+    fi
+  else
+    rmdir "${restore_candidate}" || return 1
+  fi
+  if [[ -e "${restore_previous}" ]]; then
+    rm -rf "${restore_previous}" || return 1
+  fi
+}
+
+abort_protocol_state_rebuild() {
+  local backup_dir=$1
+  local state_dir_existed=$2
+
+  if ! restore_protocol_state_layer_from_backup "${backup_dir}" "${state_dir_existed}"; then
+    return 1
+  fi
+  rm -rf "${backup_dir}"
+  return 0
+}
+
 rebuild_protocol_state_from_config() {
   [[ -f "${SINGBOX_CONFIG_FILE}" ]] || return 0
 
   local rebuilt_protocols=()
-  local inbound_count inbound_index inbound_type protocol cert_provider_tag
+  local inbound_count inbound_index inbound_type protocol
+  local vless_instance_index=0 instance_id key_file_private
+  local backup_dir state_dir_existed="n"
 
-  inbound_count=$(jq -r '(.inbounds // []) | length' "${SINGBOX_CONFIG_FILE}")
-  [[ "${inbound_count}" =~ ^[0-9]+$ ]] || return 0
+  backup_dir=$(mktemp -d) || return 1
+  if [[ -d "${SB_PROTOCOL_STATE_DIR}" ]]; then
+    state_dir_existed="y"
+    if ! cp -a "${SB_PROTOCOL_STATE_DIR}/." "${backup_dir}/"; then
+      rm -rf "${backup_dir}"
+      return 1
+    fi
+  fi
+
+  if ! collect_vless_reality_config_instances; then
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+    return 1
+  fi
+  if ! inbound_count=$(jq -r '(.inbounds // []) | length' "${SINGBOX_CONFIG_FILE}"); then
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+    return 1
+  fi
+  if [[ ! "${inbound_count}" =~ ^[0-9]+$ ]]; then
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+    return 1
+  fi
 
   clear_protocol_state_cache
   ensure_protocol_state_dir
+  if ! rm -rf "${SB_PROTOCOL_STATE_DIR}/vless-reality.d"; then
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+    return 1
+  fi
 
   for ((inbound_index = 0; inbound_index < inbound_count; inbound_index++)); do
     inbound_type=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].type // empty' "${SINGBOX_CONFIG_FILE}")
@@ -10918,7 +11191,6 @@ rebuild_protocol_state_from_config() {
 
     case "${protocol}" in
       vless-reality)
-        local saved_vless_preserve_single_short_id="${SB_VLESS_PRESERVE_SINGLE_SHORT_ID:-}"
         SB_PROTOCOL="vless+reality"
         SB_NODE_NAME="$(default_node_name_for_protocol "vless+reality")"
         SB_PORT=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")
@@ -10927,14 +11199,47 @@ rebuild_protocol_state_from_config() {
         SB_PRIVATE_KEY=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.private_key // ""' "${SINGBOX_CONFIG_FILE}")
         SB_SHORT_ID_1=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[0] // ""' "${SINGBOX_CONFIG_FILE}")
         SB_SHORT_ID_2=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[1] // ""' "${SINGBOX_CONFIG_FILE}")
-        if [[ -f "${SB_KEY_FILE}" ]]; then
-          SB_PUBLIC_KEY=$(grep '^PUBLIC_KEY=' "${SB_KEY_FILE}" 2>/dev/null | cut -d'=' -f2- | tr -d '\r\n ' || true)
-        else
-          SB_PUBLIC_KEY=""
+        instance_id="${VLESS_CONFIG_INSTANCE_CANDIDATES[${vless_instance_index}]}"
+        SB_VLESS_INSTANCE_ID="${instance_id}"
+        SB_VLESS_INBOUND_TAG="${VLESS_CONFIG_INSTANCE_TAGS[${vless_instance_index}]}"
+        SB_VLESS_RATE_LIMIT_UP_MBPS=""
+        SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
+        SB_VLESS_ALPN_MODE=$(jq -r --argjson idx "${inbound_index}" '
+          (.inbounds[$idx].tls.alpn // []) |
+          if . == ["h2", "http/1.1"] then "h2_http1"
+          elif . == ["http/1.1"] then "http1"
+          else "off"
+          end
+        ' "${SINGBOX_CONFIG_FILE}")
+        SB_VLESS_TCP_FAST_OPEN=$(jq -r --argjson idx "${inbound_index}" 'if .inbounds[$idx].tcp_fast_open == true then "y" else "n" end' "${SINGBOX_CONFIG_FILE}")
+        if ! SB_OUTBOUND_POLICY=$(vless_reality_outbound_policy_from_config "${SB_VLESS_INBOUND_TAG}"); then
+          abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+          return 1
         fi
-        SB_VLESS_PRESERVE_SINGLE_SHORT_ID="y"
-        save_vless_reality_state
-        SB_VLESS_PRESERVE_SINGLE_SHORT_ID="${saved_vless_preserve_single_short_id}"
+        if (( vless_instance_index == 0 )); then
+          SB_PRIVATE_KEY="${VLESS_CONFIG_REALITY_PRIVATE_KEY}"
+          if [[ -f "${SB_KEY_FILE}" ]]; then
+            key_file_private=$(grep '^PRIVATE_KEY=' "${SB_KEY_FILE}" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d '\r\n ' || true)
+            if [[ -n "${SB_PRIVATE_KEY}" && "${key_file_private}" == "${SB_PRIVATE_KEY}" ]]; then
+              SB_PUBLIC_KEY=$(grep '^PUBLIC_KEY=' "${SB_KEY_FILE}" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d '\r\n ' || true)
+            else
+              SB_PUBLIC_KEY=""
+            fi
+          else
+            SB_PUBLIC_KEY=""
+          fi
+          VLESS_REALITY_DEFAULT_INSTANCE_ID="${VLESS_CONFIG_DEFAULT_INSTANCE_ID}"
+          VLESS_REALITY_INSTANCE_IDS="$(IFS=,; printf '%s' "${VLESS_CONFIG_INSTANCE_IDS[*]}")"
+          if ! save_vless_reality_protocol_state; then
+            abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+            return 1
+          fi
+        fi
+        if ! save_vless_reality_instance_state; then
+          abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+          return 1
+        fi
+        vless_instance_index=$((vless_instance_index + 1))
         ;;
       mixed)
         SB_PROTOCOL="mixed"
@@ -10949,12 +11254,14 @@ rebuild_protocol_state_from_config() {
           SB_MIXED_USERNAME=""
           SB_MIXED_PASSWORD=""
         fi
-        save_mixed_state
+        if ! save_mixed_state; then
+          abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+          return 1
+        fi
         ;;
       hy2)
         SB_PROTOCOL="hy2"
         SB_NODE_NAME="$(default_node_name_for_protocol "hy2")"
-        cert_provider_tag=""
         SB_PORT=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")
         SB_HY2_DOMAIN=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
         SB_HY2_PASSWORD=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
@@ -10987,7 +11294,10 @@ rebuild_protocol_state_from_config() {
           SB_HY2_CERT_PATH=""
           SB_HY2_KEY_PATH=""
         elif jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
-          load_certificate_provider_from_config "${SINGBOX_CONFIG_FILE}" "${inbound_index}" || return 1
+          if ! load_certificate_provider_from_config "${SINGBOX_CONFIG_FILE}" "${inbound_index}"; then
+            abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+            return 1
+          fi
           SB_HY2_TLS_MODE="acme"
           SB_HY2_ACME_DOMAIN="${CERT_PROVIDER_DOMAIN}"
           SB_HY2_ACME_EMAIL="${CERT_PROVIDER_EMAIL}"
@@ -11007,7 +11317,10 @@ rebuild_protocol_state_from_config() {
           SB_HY2_KEY_PATH=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.key_path // ""' "${SINGBOX_CONFIG_FILE}")
         fi
         SB_HY2_MASQUERADE=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].masquerade // ""' "${SINGBOX_CONFIG_FILE}")
-        save_hy2_state
+        if ! save_hy2_state; then
+          abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+          return 1
+        fi
         ;;
       anytls)
         SB_PROTOCOL="anytls"
@@ -11032,7 +11345,10 @@ rebuild_protocol_state_from_config() {
           SB_ANYTLS_CERT_PATH=""
           SB_ANYTLS_KEY_PATH=""
         elif jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
-          load_certificate_provider_from_config "${SINGBOX_CONFIG_FILE}" "${inbound_index}" || return 1
+          if ! load_certificate_provider_from_config "${SINGBOX_CONFIG_FILE}" "${inbound_index}"; then
+            abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+            return 1
+          fi
           SB_ANYTLS_TLS_MODE="acme"
           SB_ANYTLS_ACME_MODE="${CERT_PROVIDER_ACME_MODE}"
           SB_ANYTLS_DNS_PROVIDER="${CERT_PROVIDER_DNS_PROVIDER}"
@@ -11051,7 +11367,14 @@ rebuild_protocol_state_from_config() {
           SB_ANYTLS_CERT_PATH=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_path // ""' "${SINGBOX_CONFIG_FILE}")
           SB_ANYTLS_KEY_PATH=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.key_path // ""' "${SINGBOX_CONFIG_FILE}")
         fi
-        save_anytls_state
+        if ! save_anytls_state; then
+          abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+          return 1
+        fi
+        ;;
+      *)
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+        return 1
         ;;
     esac
 
@@ -11060,9 +11383,20 @@ rebuild_protocol_state_from_config() {
     fi
   done
 
-  [[ ${#rebuilt_protocols[@]} -gt 0 ]] || return 1
+  if [[ ${#rebuilt_protocols[@]} -eq 0 ]]; then
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+    return 1
+  fi
 
-  write_protocol_index "$(IFS=,; printf '%s' "${rebuilt_protocols[*]}")"
+  if ! write_protocol_index "$(IFS=,; printf '%s' "${rebuilt_protocols[*]}")"; then
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+    return 1
+  fi
+  if ! protocol_state_layer_matches_config; then
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+    return 1
+  fi
+  rm -rf "${backup_dir}"
   return 0
 }
 
