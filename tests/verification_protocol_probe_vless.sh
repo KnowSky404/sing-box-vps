@@ -133,6 +133,8 @@ if ! jq -e '
   .outbounds[0].flow == "xtls-rprx-vision" and
   .outbounds[0].tls.enabled == true and
   .outbounds[0].tls.server_name == "www.cloudflare.com" and
+  .outbounds[0].tls.utls.enabled == true and
+  .outbounds[0].tls.utls.fingerprint == "chrome" and
   .outbounds[0].tls.reality.enabled == true and
   .outbounds[0].tls.reality.public_key == "public-key-from-state" and
   .outbounds[0].tls.reality.short_id == "abcd1234"

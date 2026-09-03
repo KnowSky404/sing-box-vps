@@ -456,6 +456,10 @@ verification_generate_protocol_probe_client_config() {
               tls: {
                 enabled: true,
                 server_name: $server_name,
+                utls: {
+                  enabled: true,
+                  fingerprint: "chrome"
+                },
                 reality: {
                   enabled: true,
                   public_key: $public_key,
