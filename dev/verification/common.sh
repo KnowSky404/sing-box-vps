@@ -72,6 +72,7 @@ resolve_local_tests() {
       tests/reality_sni_validation.sh \
       tests/generate_config_cleans_temp_files_on_failure.sh \
       tests/generate_config_commits_validated_candidate.sh \
+      tests/managed_config_transactions.sh \
       tests/system_safety_guards.sh \
       tests/agent_upgrade_commands.sh \
       tests/agent_cli_multi_instance_status.sh \

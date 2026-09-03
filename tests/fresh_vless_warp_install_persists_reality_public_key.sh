@@ -33,7 +33,18 @@ get_os_info() { :; }
 get_arch() { ARCH="amd64"; }
 install_dependencies() { :; }
 get_latest_version() { :; }
-install_binary() { :; }
+install_binary() {
+  cat > "${SINGBOX_BIN_PATH}" <<'EOF'
+#!/usr/bin/env bash
+
+case "${1:-}" in
+  version) printf 'sing-box version 1.14.0\n' ;;
+  check) [[ "${2:-}" == "-c" && -f "${3:-}" ]] ;;
+  *) exit 1 ;;
+esac
+EOF
+  chmod +x "${SINGBOX_BIN_PATH}"
+}
 check_config_valid() { :; }
 setup_service() { :; }
 open_firewall_port() { :; }

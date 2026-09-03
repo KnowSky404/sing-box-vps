@@ -3097,7 +3097,7 @@ prompt_global_instance_options() {
 install_protocols_interactive() {
   local install_mode=$1
   local installed_protocols=() selected_protocols=()
-  local protocol first_selected_protocol
+  local protocol first_selected_protocol snapshot_dir
 
   load_stack_mode_state
 
@@ -3107,6 +3107,7 @@ install_protocols_interactive() {
     prompt_singbox_version
     prompt_protocol_install_selection "fresh" || return 0
     IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
+    snapshot_dir=$(create_managed_state_snapshot) || log_error "无法创建配置状态事务快照。"
 
     for protocol in "${selected_protocols[@]}"; do
       prompt_protocol_install_fields "${protocol}"
@@ -3124,6 +3125,7 @@ install_protocols_interactive() {
     mapfile -t installed_protocols < <(list_installed_protocols)
     prompt_protocol_install_selection "additional" || return 0
     IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
+    snapshot_dir=$(create_managed_state_snapshot) || log_error "无法创建配置状态事务快照。"
 
     for protocol in "${selected_protocols[@]}"; do
       if [[ "${protocol}" == "vless-reality" ]] && protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
@@ -3140,9 +3142,12 @@ install_protocols_interactive() {
     write_protocol_index "$(IFS=,; printf '%s' "${installed_protocols[*]}")"
   fi
 
-  save_warp_route_settings
-  generate_config
-  check_config_valid
+  if ! save_warp_route_settings || ! generate_config; then
+    abort_managed_state_transaction "${snapshot_dir}" "配置生成或校验失败"
+  fi
+  if ! discard_managed_state_snapshot "${snapshot_dir}"; then
+    log_warn "安装配置已提交，但临时事务快照未能删除: ${snapshot_dir}。"
+  fi
   if protocol_array_contains "vless-reality" "${selected_protocols[@]}"; then
     refresh_vless_reality_qos_rules
   fi
@@ -5074,10 +5079,156 @@ build_protocol_route_rules() {
   esac
 }
 
+managed_state_snapshot_is_valid() {
+  local snapshot_dir=$1
+
+  [[ "${snapshot_dir}" == /tmp/sing-box-vps-state.* ]] || return 1
+  [[ -d "${snapshot_dir}" && -f "${snapshot_dir}/snapshot.meta" ]] || return 1
+  grep -Fqx 'SNAPSHOT_VERSION=1' "${snapshot_dir}/snapshot.meta" || return 1
+  grep -Fqx "PROJECT_DIR=${SB_PROJECT_DIR}" "${snapshot_dir}/snapshot.meta" || return 1
+}
+
+persist_file_backup() {
+  local source_file=$1
+  local backup_file=$2
+  local backup_dir backup_name backup_candidate
+
+  [[ -f "${source_file}" ]] || return 1
+  backup_dir=$(dirname "${backup_file}")
+  backup_name=$(basename "${backup_file}")
+  mkdir -p "${backup_dir}" || return 1
+  backup_candidate=$(mktemp "${backup_dir}/.${backup_name}.candidate.XXXXXX") || return 1
+  if ! cp -p "${source_file}" "${backup_candidate}" ||
+     ! chmod 600 "${backup_candidate}" ||
+     ! mv -f "${backup_candidate}" "${backup_file}"; then
+    rm -f "${backup_candidate}"
+    return 1
+  fi
+}
+
+create_managed_state_snapshot() {
+  local snapshot_dir
+
+  snapshot_dir=$(mktemp -d /tmp/sing-box-vps-state.XXXXXX) || return 1
+  chmod 700 "${snapshot_dir}" || {
+    rm -rf "${snapshot_dir}"
+    return 1
+  }
+  if ! mkdir -p "${snapshot_dir}/project"; then
+    rm -rf "${snapshot_dir}"
+    return 1
+  fi
+  if [[ -d "${SB_PROJECT_DIR}" ]]; then
+    if ! cp -a "${SB_PROJECT_DIR}/." "${snapshot_dir}/project/"; then
+      rm -rf "${snapshot_dir}"
+      return 1
+    fi
+    : > "${snapshot_dir}/project.existed"
+  fi
+  if ! {
+    printf 'SNAPSHOT_VERSION=1\n'
+    printf 'PROJECT_DIR=%s\n' "${SB_PROJECT_DIR}"
+  } > "${snapshot_dir}/snapshot.meta"; then
+    rm -rf "${snapshot_dir}"
+    return 1
+  fi
+  chmod 600 "${snapshot_dir}/snapshot.meta" || {
+    rm -rf "${snapshot_dir}"
+    return 1
+  }
+
+  printf '%s' "${snapshot_dir}"
+}
+
+discard_managed_state_snapshot() {
+  local snapshot_dir=$1
+
+  managed_state_snapshot_is_valid "${snapshot_dir}" || return 1
+  rm -rf "${snapshot_dir}"
+}
+
+restore_managed_state_snapshot() {
+  local snapshot_dir=$1
+  local project_parent project_base restore_candidate restore_previous
+  local current_existed="n"
+
+  managed_state_snapshot_is_valid "${snapshot_dir}" || return 1
+  [[ -n "${SB_PROJECT_DIR}" && "${SB_PROJECT_DIR}" != "/" ]] || return 1
+  project_parent=$(dirname "${SB_PROJECT_DIR}")
+  project_base=$(basename "${SB_PROJECT_DIR}")
+  mkdir -p "${project_parent}" || return 1
+
+  restore_candidate=$(mktemp -d "${project_parent}/.${project_base}.restore.XXXXXX") || return 1
+  if [[ -f "${snapshot_dir}/project.existed" ]]; then
+    if ! cp -a "${snapshot_dir}/project/." "${restore_candidate}/"; then
+      rm -rf "${restore_candidate}"
+      return 1
+    fi
+  fi
+
+  restore_previous=$(mktemp -d "${project_parent}/.${project_base}.previous.XXXXXX") || {
+    rm -rf "${restore_candidate}"
+    return 1
+  }
+  rmdir "${restore_previous}" || {
+    rm -rf "${restore_candidate}" "${restore_previous}"
+    return 1
+  }
+
+  if [[ -e "${SB_PROJECT_DIR}" || -L "${SB_PROJECT_DIR}" ]]; then
+    if ! mv "${SB_PROJECT_DIR}" "${restore_previous}"; then
+      rm -rf "${restore_candidate}"
+      return 1
+    fi
+    current_existed="y"
+  fi
+
+  if [[ -f "${snapshot_dir}/project.existed" ]]; then
+    if ! mv "${restore_candidate}" "${SB_PROJECT_DIR}"; then
+      [[ "${current_existed}" == "y" ]] && mv "${restore_previous}" "${SB_PROJECT_DIR}" 2>/dev/null || true
+      rm -rf "${restore_candidate}"
+      return 1
+    fi
+  elif ! rmdir "${restore_candidate}"; then
+    [[ "${current_existed}" == "y" ]] && mv "${restore_previous}" "${SB_PROJECT_DIR}" 2>/dev/null || true
+    return 1
+  fi
+
+  if [[ "${current_existed}" == "y" ]] && ! rm -rf "${restore_previous}"; then
+    return 1
+  fi
+}
+
+rollback_managed_state_snapshot() {
+  local snapshot_dir=$1
+
+  if ! restore_managed_state_snapshot "${snapshot_dir}"; then
+    log_warn "配置状态回滚失败；事务快照保留在 ${snapshot_dir}。"
+    return 1
+  fi
+  if ! discard_managed_state_snapshot "${snapshot_dir}"; then
+    log_warn "配置状态已恢复，但临时事务快照未能删除: ${snapshot_dir}。"
+    return 1
+  fi
+}
+
+abort_managed_state_transaction() {
+  local snapshot_dir=$1
+  local failure_message=$2
+
+  if rollback_managed_state_snapshot "${snapshot_dir}"; then
+    log_error "${failure_message}，已恢复变更前的配置状态。"
+    return 1
+  fi
+  log_error "${failure_message}，且自动回滚失败；事务快照保留在 ${snapshot_dir}。"
+  return 1
+}
+
 # --- Config Generator ---
-generate_config() {
+generate_config_candidate() {
   local inbound_file="" provider_file="" protocol_rule_file="" instance_outbound_rule_file=""
   local config_candidate="" backup_candidate="" protocol
+  local exit_cleanup_command
   local inbounds_json certificate_providers_json protocol_rules_json instance_outbound_rules_json
 
   # Force ensure jq is installed
@@ -5132,6 +5283,10 @@ generate_config() {
     rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
     return 1
   fi
+  printf -v exit_cleanup_command 'rm -f -- %q %q %q %q %q' \
+    "${inbound_file}" "${provider_file}" "${protocol_rule_file}" \
+    "${instance_outbound_rule_file}" "${config_candidate}"
+  trap "${exit_cleanup_command}" EXIT
 
   while IFS= read -r protocol; do
     [[ -z "${protocol}" ]] && continue
@@ -5345,6 +5500,20 @@ generate_config() {
   fi
 
   rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
+  trap - EXIT
+}
+
+generate_config() {
+  local snapshot_dir
+
+  snapshot_dir=$(create_managed_state_snapshot) || return 1
+  if ! (generate_config_candidate); then
+    rollback_managed_state_snapshot "${snapshot_dir}" || true
+    return 1
+  fi
+  if ! discard_managed_state_snapshot "${snapshot_dir}"; then
+    log_warn "配置已发布，但临时事务快照未能删除: ${snapshot_dir}。"
+  fi
 }
 
 # --- Uninstaller ---
@@ -5698,7 +5867,7 @@ check_bbr_status() {
 }
 
 apply_stack_mode_changes() {
-  local selected_inbound selected_outbound
+  local selected_inbound selected_outbound snapshot_dir
   selected_inbound="${SB_INBOUND_STACK_MODE}"
   selected_outbound="${SB_OUTBOUND_STACK_MODE}"
 
@@ -5708,15 +5877,19 @@ apply_stack_mode_changes() {
     SB_OUTBOUND_STACK_MODE="${selected_outbound}"
   fi
 
-  save_stack_mode_state
-
   if [[ ! -f "${SINGBOX_CONFIG_FILE}" && ! -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
+    save_stack_mode_state
     log_success "协议栈设置已保存，将在首次安装或下次生成配置时生效。"
     return 0
   fi
 
-  generate_config
-  check_config_valid
+  snapshot_dir=$(create_managed_state_snapshot) || log_error "无法创建配置状态事务快照。"
+  if ! save_stack_mode_state || ! generate_config; then
+    abort_managed_state_transaction "${snapshot_dir}" "协议栈配置生成或校验失败"
+  fi
+  if ! discard_managed_state_snapshot "${snapshot_dir}"; then
+    log_warn "协议栈配置已提交，但临时事务快照未能删除: ${snapshot_dir}。"
+  fi
   refresh_vless_reality_qos_rules
   setup_service
   open_all_protocol_ports
@@ -6208,7 +6381,7 @@ load_current_config_state() {
 
 # Cloudflare Warp Management
 warp_management() {
-  local apply_change should_reload status warp_was_enabled
+  local apply_change should_reload status warp_was_enabled snapshot_dir
 
   while true; do
     apply_change="n"
@@ -6242,6 +6415,20 @@ warp_management() {
     render_menu_item "9" "导入推荐 Warp 规则源"
     echo "0. 返回主菜单"
     w_choice=$(prompt_choice "请选择 [0-9]: " 0 9 "")
+
+    case "${w_choice}" in
+      7)
+        show_warp_route_assets
+        continue
+        ;;
+      8)
+        show_effective_warp_route_sources
+        continue
+        ;;
+      0) return ;;
+    esac
+
+    snapshot_dir=$(create_managed_state_snapshot) || log_error "无法创建配置状态事务快照。"
 
     case "${w_choice}" in
       1)
@@ -6282,37 +6469,40 @@ warp_management() {
           [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
         fi
         ;;
-      7)
-        show_warp_route_assets
-        continue
-        ;;
-      8)
-        show_effective_warp_route_sources
-        continue
-        ;;
       9)
         if import_recommended_warp_rule_sets; then
           apply_change="y"
           [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
         fi
         ;;
-      0) return ;;
-      *) log_warn "无效选项，请重新选择。"; continue ;;
+      *) log_warn "无效选项，请重新选择。" ;;
     esac
 
     if [[ "${apply_change}" == "n" ]]; then
+      if ! rollback_managed_state_snapshot "${snapshot_dir}"; then
+        log_error "取消 Warp 变更时无法恢复配置状态；事务快照保留在 ${snapshot_dir}。"
+      fi
       continue
     fi
 
-    save_warp_route_settings
+    if ! save_warp_route_settings; then
+      abort_managed_state_transaction "${snapshot_dir}" "Warp 设置写入失败"
+    fi
 
     if [[ "${should_reload}" != "y" ]]; then
+      if ! discard_managed_state_snapshot "${snapshot_dir}"; then
+        log_warn "Warp 分流资产已保存，但临时事务快照未能删除: ${snapshot_dir}。"
+      fi
       log_success "Warp 分流资产已更新，待下次开启 Warp 或重载配置时生效。"
       continue
     fi
 
-    generate_config
-    check_config_valid
+    if ! generate_config; then
+      abort_managed_state_transaction "${snapshot_dir}" "Warp 配置生成或校验失败"
+    fi
+    if ! discard_managed_state_snapshot "${snapshot_dir}"; then
+      log_warn "Warp 配置已提交，但临时事务快照未能删除: ${snapshot_dir}。"
+    fi
     setup_service
     systemctl restart sing-box
     log_success "Warp 配置已更新并重启服务。"
@@ -6331,7 +6521,7 @@ view_status() {
 
 # New function: Update config only
 update_config_only() {
-  local selected_protocol selected_instance
+  local selected_protocol selected_instance snapshot_dir
 
   if [[ ! -f "${SINGBOX_CONFIG_FILE}" && ! -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
     log_error "未找到配置文件或协议状态，请先执行安装流程。"
@@ -6362,11 +6552,14 @@ update_config_only() {
   else
     echo -e "当前正在修改: $(protocol_display_name "${SB_PROTOCOL}")"
   fi
+  snapshot_dir=$(create_managed_state_snapshot) || log_error "无法创建配置状态事务快照。"
   prompt_protocol_update_fields "${selected_protocol}"
-  save_protocol_state "${selected_protocol}"
-
-  generate_config
-  check_config_valid
+  if ! save_protocol_state "${selected_protocol}" || ! generate_config; then
+    abort_managed_state_transaction "${snapshot_dir}" "协议配置生成或校验失败"
+  fi
+  if ! discard_managed_state_snapshot "${snapshot_dir}"; then
+    log_warn "协议配置已提交，但临时事务快照未能删除: ${snapshot_dir}。"
+  fi
   if [[ "${selected_protocol}" == "vless-reality" ]]; then
     refresh_vless_reality_qos_rules
   fi
@@ -6381,12 +6574,12 @@ update_config_only() {
 remove_protocol_menu() {
   local protocols=() selected_protocols=() remaining_protocols=()
   local selected_protocol display_str confirm
-  local state_file backup_state_file index_backup_file config_backup_file
+  local state_file backup_state_file transaction_dir
   local joined_protocols first_remaining protocol
   local reality_instances=() instance_state_file backup_instance_state_file
-  local selected_instance protocol_state_backup_file first_remaining_instance removed_instance_port
-  local reality_remove_mode="instance" choice removed_port fp_entry ftype orig_file backup_file rest
-  local all_backup_files=() removed_ports=() idx raw_choice raw_choices chosen_protocol display_list
+  local selected_instance first_remaining_instance removed_instance_port
+  local reality_remove_mode="instance" choice removed_port
+  local removed_ports=() idx raw_choice raw_choices chosen_protocol display_list
 
   if [[ ! -f "${SINGBOX_CONFIG_FILE}" && ! -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
     log_error "未找到配置文件或协议状态，请先执行安装流程。"
@@ -6479,12 +6672,11 @@ remove_protocol_menu() {
       [[ -f "${instance_state_file}" ]] || log_error "未找到 REALITY 实例状态文件: ${instance_state_file}"
       [[ -f "${state_file}" ]] || log_error "未找到协议状态文件: ${state_file}"
 
+      transaction_dir=$(create_managed_state_snapshot) || log_error "无法创建配置状态事务快照。"
       backup_instance_state_file="${instance_state_file}.bak.$(date +%Y%m%d%H%M%S)"
-      protocol_state_backup_file=$(mktemp)
-      config_backup_file=$(mktemp)
-      cp "${state_file}" "${protocol_state_backup_file}"
-      cp "${SINGBOX_CONFIG_FILE}" "${config_backup_file}"
-      mv "${instance_state_file}" "${backup_instance_state_file}"
+      if ! mv "${instance_state_file}" "${backup_instance_state_file}"; then
+        abort_managed_state_transaction "${transaction_dir}" "REALITY 实例状态备份失败"
+      fi
 
       load_vless_reality_protocol_state
       remove_vless_reality_instance_id_from_list "${selected_instance}"
@@ -6492,17 +6684,17 @@ remove_protocol_menu() {
       if [[ "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}" == "${selected_instance}" ]]; then
         VLESS_REALITY_DEFAULT_INSTANCE_ID="${first_remaining_instance}"
       fi
-      save_vless_reality_protocol_state
-
-      if ! generate_config || ! validate_config_file; then
-        mv "${backup_instance_state_file}" "${instance_state_file}" 2>/dev/null || true
-        cp "${protocol_state_backup_file}" "${state_file}"
-        cp "${config_backup_file}" "${SINGBOX_CONFIG_FILE}"
-        rm -f "${protocol_state_backup_file}" "${config_backup_file}"
-        log_error "移除 REALITY 实例后配置校验失败，已恢复原配置。"
+      if ! save_vless_reality_protocol_state; then
+        abort_managed_state_transaction "${transaction_dir}" "REALITY 协议状态写入失败"
       fi
 
-      rm -f "${protocol_state_backup_file}" "${config_backup_file}"
+      if ! generate_config; then
+        abort_managed_state_transaction "${transaction_dir}" "移除 REALITY 实例后配置生成或校验失败"
+      fi
+
+      if ! discard_managed_state_snapshot "${transaction_dir}"; then
+        log_warn "REALITY 实例移除已提交，但临时事务快照未能删除: ${transaction_dir}。"
+      fi
       setup_service
       load_protocol_state "vless-reality"
       open_all_protocol_ports
@@ -6525,10 +6717,13 @@ remove_protocol_menu() {
     return 0
   fi
 
-  index_backup_file=$(mktemp)
-  config_backup_file=$(mktemp)
-  cp "${SB_PROTOCOL_INDEX_FILE}" "${index_backup_file}"
-  cp "${SINGBOX_CONFIG_FILE}" "${config_backup_file}"
+  transaction_dir=$(create_managed_state_snapshot) || log_error "无法创建配置状态事务快照。"
+  if [[ ${#selected_protocols[@]} -eq ${#protocols[@]} ]]; then
+    if ! persist_file_backup "${SINGBOX_CONFIG_FILE}" "${SINGBOX_CONFIG_FILE}.bak" ||
+       ! persist_file_backup "${SB_PROTOCOL_INDEX_FILE}" "${SB_PROTOCOL_INDEX_FILE}.bak"; then
+      abort_managed_state_transaction "${transaction_dir}" "无法为当前配置和协议索引创建持久备份"
+    fi
+  fi
 
   for selected_protocol in "${selected_protocols[@]}"; do
     if [[ "${selected_protocol}" == "vless-reality" ]]; then
@@ -6536,31 +6731,44 @@ remove_protocol_menu() {
       mapfile -t reality_instances < <(list_vless_reality_instance_ids)
       if [[ ${#reality_instances[@]} -gt 0 ]]; then
         for instance_id in "${reality_instances[@]}"; do
-          instance_state_file=$(vless_reality_instance_state_file "${instance_id}") || continue
-          [[ -f "${instance_state_file}" ]] || continue
+          if ! instance_state_file=$(vless_reality_instance_state_file "${instance_id}"); then
+            abort_managed_state_transaction "${transaction_dir}" "REALITY 实例 ID 非法: ${instance_id}"
+          fi
+          if [[ ! -f "${instance_state_file}" ]]; then
+            abort_managed_state_transaction "${transaction_dir}" "未找到 REALITY 实例状态: ${instance_id}"
+          fi
           backup_instance_state_file="${instance_state_file}.bak.$(date +%Y%m%d%H%M%S)"
-          mv "${instance_state_file}" "${backup_instance_state_file}"
-          all_backup_files+=("inst:${instance_state_file}:${backup_instance_state_file}")
+          if ! mv "${instance_state_file}" "${backup_instance_state_file}"; then
+            abort_managed_state_transaction "${transaction_dir}" "REALITY 实例状态备份失败: ${instance_id}"
+          fi
           # Capture removed instance port for firewall cleanup
           removed_ports+=("$(sed -n 's/^PORT=//p' "${backup_instance_state_file}" 2>/dev/null || true)")
         done
         state_file=$(protocol_state_file "vless-reality")
         if [[ -f "${state_file}" ]]; then
           backup_state_file="${state_file}.bak.$(date +%Y%m%d%H%M%S)"
-          mv "${state_file}" "${backup_state_file}"
-          all_backup_files+=("pstate:${state_file}:${backup_state_file}")
+          if ! mv "${state_file}" "${backup_state_file}"; then
+            abort_managed_state_transaction "${transaction_dir}" "VLESS + REALITY 协议状态备份失败"
+          fi
           VLESS_REALITY_INSTANCE_IDS=""
           VLESS_REALITY_DEFAULT_INSTANCE_ID=""
+        else
+          abort_managed_state_transaction "${transaction_dir}" "未找到 VLESS + REALITY 协议状态"
         fi
+      else
+        abort_managed_state_transaction "${transaction_dir}" "未找到可移除的 REALITY 实例状态"
       fi
     else
       state_file=$(protocol_state_file "${selected_protocol}")
       if [[ -f "${state_file}" ]]; then
         backup_state_file="${state_file}.bak.$(date +%Y%m%d%H%M%S)"
-        mv "${state_file}" "${backup_state_file}"
-        all_backup_files+=("state:${state_file}:${backup_state_file}")
+        if ! mv "${state_file}" "${backup_state_file}"; then
+          abort_managed_state_transaction "${transaction_dir}" "协议状态备份失败: ${selected_protocol}"
+        fi
         # Capture removed protocol port for firewall cleanup
         removed_ports+=("$(sed -n 's/^PORT=//p' "${backup_state_file}" 2>/dev/null || true)")
+      else
+        abort_managed_state_transaction "${transaction_dir}" "未找到协议状态: ${selected_protocol}"
       fi
     fi
   done
@@ -6574,7 +6782,9 @@ remove_protocol_menu() {
 
   if [[ ${#remaining_protocols[@]} -gt 0 ]]; then
     joined_protocols=$(IFS=,; printf "%s" "${remaining_protocols[*]}")
-    write_protocol_index "${joined_protocols}"
+    if ! write_protocol_index "${joined_protocols}"; then
+      abort_managed_state_transaction "${transaction_dir}" "协议索引写入失败"
+    fi
   else
     rm -f "${SB_PROTOCOL_INDEX_FILE}"
     rm -f "${SINGBOX_CONFIG_FILE}"
@@ -6586,28 +6796,20 @@ remove_protocol_menu() {
     for removed_port in "${removed_ports[@]}"; do
       [[ -n "${removed_port}" ]] && close_firewall_port "${removed_port}"
     done
-    rm -f "${index_backup_file}" "${config_backup_file}"
+    if ! discard_managed_state_snapshot "${transaction_dir}"; then
+      log_warn "协议移除已提交，但临时事务快照未能删除: ${transaction_dir}。"
+    fi
     log_info "所有协议已移除，sing-box 服务已停止。"
     return 0
   fi
 
-  if ! generate_config || ! validate_config_file; then
-    for fp_entry in "${all_backup_files[@]}"; do
-      ftype="${fp_entry%%:*}"
-      rest="${fp_entry#*:}"
-      orig_file="${rest%%:*}"
-      backup_file="${rest#*:}"
-      if [[ "${ftype}" == "inst" || "${ftype}" == "state" || "${ftype}" == "pstate" ]]; then
-        mv "${backup_file}" "${orig_file}" 2>/dev/null || true
-      fi
-    done
-    cp "${index_backup_file}" "${SB_PROTOCOL_INDEX_FILE}"
-    cp "${config_backup_file}" "${SINGBOX_CONFIG_FILE}"
-    rm -f "${index_backup_file}" "${config_backup_file}"
-    log_error "移除协议后配置校验失败，已恢复原配置。"
+  if ! generate_config; then
+    abort_managed_state_transaction "${transaction_dir}" "移除协议后配置生成或校验失败"
   fi
 
-  rm -f "${index_backup_file}" "${config_backup_file}"
+  if ! discard_managed_state_snapshot "${transaction_dir}"; then
+    log_warn "协议移除已提交，但临时事务快照未能删除: ${transaction_dir}。"
+  fi
   setup_service
   first_remaining="${remaining_protocols[0]}"
   load_protocol_state "${first_remaining}"
@@ -11095,7 +11297,7 @@ log_takeover_state_diagnostics() {
 attempt_managed_instance_auto_heal() {
   local indexed_protocols=()
   local protocol
-  local config_backup=""
+  local snapshot_dir
 
   [[ -x "${SINGBOX_BIN_PATH}" && -f "${SINGBOX_SERVICE_FILE}" && -f "${SINGBOX_CONFIG_FILE}" && -f "${SB_PROTOCOL_INDEX_FILE}" ]] || return 1
 
@@ -11128,16 +11330,14 @@ attempt_managed_instance_auto_heal() {
   load_warp_route_settings
   load_stack_mode_state
 
-  config_backup=$(mktemp)
-  cp "${SINGBOX_CONFIG_FILE}" "${config_backup}"
+  snapshot_dir=$(create_managed_state_snapshot) || return 1
 
-  if ! generate_config || ! validate_config_file; then
-    cp "${config_backup}" "${SINGBOX_CONFIG_FILE}"
-    rm -f "${config_backup}"
+  if ! generate_config; then
+    rollback_managed_state_snapshot "${snapshot_dir}" || true
     return 1
   fi
 
-  rm -f "${config_backup}"
+  discard_managed_state_snapshot "${snapshot_dir}" || true
   return 0
 }
 

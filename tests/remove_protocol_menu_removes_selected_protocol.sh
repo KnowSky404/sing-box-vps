@@ -130,6 +130,11 @@ if [[ "${REMOVE_PLAIN_OUTPUT}" == *"连接信息未自动展示"* ]]; then
   exit 1
 fi
 
+LAST_CONFIG_BEFORE=$(mktemp)
+LAST_INDEX_BEFORE=$(mktemp)
+cp "${SINGBOX_CONFIG_FILE}" "${LAST_CONFIG_BEFORE}"
+cp "${SB_PROTOCOL_INDEX_FILE}" "${LAST_INDEX_BEFORE}"
+
 if ! REMOVE_LAST_OUTPUT=$(printf '1\ny\n' | remove_protocol_menu 2>&1); then
   printf 'expected last-protocol remove attempt to return without shell failure, got:\n%s\n' "${REMOVE_LAST_OUTPUT}" >&2
   exit 1
@@ -143,6 +148,21 @@ fi
 
 if [[ -f "${SB_PROTOCOL_INDEX_FILE}" || -f "${SINGBOX_CONFIG_FILE}" ]]; then
   printf 'expected last-protocol removal to clear the protocol index and runtime config\n' >&2
+  exit 1
+fi
+
+if ! cmp -s "${LAST_CONFIG_BEFORE}" "${SINGBOX_CONFIG_FILE}.bak"; then
+  printf 'expected last-protocol removal to preserve the live config in config.json.bak\n' >&2
+  exit 1
+fi
+
+if ! cmp -s "${LAST_INDEX_BEFORE}" "${SB_PROTOCOL_INDEX_FILE}.bak"; then
+  printf 'expected last-protocol removal to preserve the protocol index in index.env.bak\n' >&2
+  exit 1
+fi
+
+if [[ "$(stat -c '%a' "${SINGBOX_CONFIG_FILE}.bak")" != "600" || "$(stat -c '%a' "${SB_PROTOCOL_INDEX_FILE}.bak")" != "600" ]]; then
+  printf 'expected persistent removal backups to use mode 600\n' >&2
   exit 1
 fi
 

@@ -88,6 +88,24 @@ if compgen -G "${SINGBOX_CONFIG_DIR}/.config.json.candidate.*" >/dev/null; then
   exit 1
 fi
 
+printf '%s\n' '{"keep":"fatal-builder-exit"}' > "${SINGBOX_CONFIG_FILE}"
+build_inbound_for_protocol() {
+  printf 'must roll back\n' > "${SB_PROJECT_DIR}/fatal-builder.state"
+  exit 73
+}
+if generate_config >/dev/null 2>&1; then
+  printf 'expected a hard exit inside a config builder to abort generation\n' >&2
+  exit 1
+fi
+if [[ "$(cat "${SINGBOX_CONFIG_FILE}")" != '{"keep":"fatal-builder-exit"}' || -e "${SB_PROJECT_DIR}/fatal-builder.state" ]]; then
+  printf 'expected hard builder exit to restore the complete managed state\n' >&2
+  exit 1
+fi
+if find "${TMP_DIR}/mktemp" -type f | grep -q . || compgen -G "${SINGBOX_CONFIG_DIR}/.config.json.candidate.*" >/dev/null; then
+  printf 'expected hard builder exit to clean all generation temp files\n' >&2
+  exit 1
+fi
+
 rm -rf "${TMP_DIR}/mktemp" "${TMP_DIR}/project"
 mkdir -p "${TMP_DIR}/mktemp" "${TMP_DIR}/project/protocols/vless-reality.d"
 

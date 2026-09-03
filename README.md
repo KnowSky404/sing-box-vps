@@ -73,7 +73,7 @@ sbv
 - **Warp 路由分层**：支持 `全量走 Warp` 与 `选择性分流` 两种模式，默认采用更稳妥的 `选择性分流`，内置主流 AI / 流媒体域名规则，并支持用户追加自定义域名、本地规则集和远程规则集；VLESS REALITY 实例还可单独选择跟随全局、强制 direct 或强制 Warp 出口。
 - **单一真源**：统一以 `install.sh` 作为安装与维护入口，避免历史旧入口与当前实现漂移。
 - **托管实例自修复**：当协议状态层与运行中的 `config.json` 发生漂移时，会优先按协议状态自动重建运行配置，降低 `mixed` 等附加协议意外丢失的风险。
-- **配置事务发布**：服务端配置先写入同目录 candidate，并依次通过 `jq` 与当前 sing-box 核心的 `check`；仅在校验成功后保留上一版 `config.json.bak` 并原子替换 live config，生成器或 certificate provider 失败不会覆盖当前配置。
+- **配置事务发布**：交互式新增、修改、协议栈、Warp 与删除操作会先快照完整托管状态；服务端配置写入同目录 candidate，并依次通过 `jq` 与当前 sing-box 核心的 `check`，仅在校验成功后保留上一版 `config.json.bak` 并原子替换 live config。生成器、certificate provider 或状态写入失败会恢复配置与协议状态。
 - **环境自适应**：支持架构探测（amd64/arm64）及主流发行版（Debian, Ubuntu, CentOS, AlmaLinux, Rocky Linux）。
 - **极简且安全**：默认开启流量嗅探、uTLS 指纹、多 ShortID 随机化及持久化密钥管理。
 - **性能增强**：集成 **BBR** 一键开启功能，显著提升网络吞吐。
@@ -155,6 +155,8 @@ Agent/Hermes 文档入口：
 
 - **工作目录**: `/root/sing-box-vps/`
 - **配置文件**: `/root/sing-box-vps/config.json`
+- **上一版配置备份**: `/root/sing-box-vps/config.json.bak`
+- **最后协议删除前的索引备份**: `/root/sing-box-vps/protocols/index.env.bak`
 - **协议状态目录**: `/root/sing-box-vps/protocols/`
 - **密钥文件**: `/root/sing-box-vps/reality.key` (REALITY) / `warp.key` (Warp)
 - **协议状态文件**: `vless-reality.env` / `vless-reality.d/` / `mixed.env` / `hy2.env` / `anytls.env`

@@ -66,6 +66,9 @@ instance_outbound_requires_warp() { return 1; }
 list_effective_protocols() { printf 'mixed\n'; }
 load_protocol_state() { :; }
 build_inbound_for_protocol() {
+  if [[ "${MUTATE_DURING_BUILD:-n}" == "y" ]]; then
+    printf 'must roll back\n' > "${SB_PROJECT_DIR}/builder-mutated.state"
+  fi
   printf '%s\n' '{"type":"mixed","tag":"mixed-in","listen":"127.0.0.1","listen_port":1080}'
 }
 build_protocol_route_rules() {
@@ -104,13 +107,19 @@ fi
 printf '%s\n' '{"keep":"check-failure"}' > "${SINGBOX_CONFIG_FILE}"
 rm -f "${SINGBOX_CONFIG_FILE}.bak"
 touch "${CHECK_FAIL_FILE}"
+MUTATE_DURING_BUILD="y"
 if generate_config >/dev/null 2>&1; then
   printf 'expected candidate validation failure to abort generation\n' >&2
   exit 1
 fi
+MUTATE_DURING_BUILD="n"
 rm -f "${CHECK_FAIL_FILE}"
 if [[ "$(cat "${SINGBOX_CONFIG_FILE}")" != '{"keep":"check-failure"}' || -e "${SINGBOX_CONFIG_FILE}.bak" ]]; then
   printf 'expected validation failure to preserve live config without publishing a backup\n' >&2
+  exit 1
+fi
+if [[ -e "${SB_PROJECT_DIR}/builder-mutated.state" ]]; then
+  printf 'expected failed generation to restore builder-mutated managed state\n' >&2
   exit 1
 fi
 
