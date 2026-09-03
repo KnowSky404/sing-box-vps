@@ -8,6 +8,17 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 
 # shellcheck disable=SC1091
 source "${REPO_ROOT}/dev/verification/common.sh"
+# shellcheck disable=SC1091
+source "${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
+
+[[ $(verification_config_inbound_type_for_protocol vless-reality) == "vless" ]]
+[[ $(verification_config_inbound_type_for_protocol mixed) == "mixed" ]]
+[[ $(verification_config_inbound_type_for_protocol hy2) == "hysteria2" ]]
+[[ $(verification_config_inbound_type_for_protocol anytls) == "anytls" ]]
+if verification_config_inbound_type_for_protocol unsupported >/dev/null; then
+  printf 'expected unsupported protocol config type lookup to fail\n' >&2
+  exit 1
+fi
 
 assert_scenarios() {
   local expected=$1

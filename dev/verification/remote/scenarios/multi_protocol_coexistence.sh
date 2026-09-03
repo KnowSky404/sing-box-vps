@@ -1,6 +1,26 @@
+verification_config_inbound_type_for_protocol() {
+  local protocol=$1
+
+  case "${protocol}" in
+    vless-reality)
+      printf 'vless\n'
+      ;;
+    hy2)
+      printf 'hysteria2\n'
+      ;;
+    mixed|anytls)
+      printf '%s\n' "${protocol}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 verification_scenario_multi_protocol_coexistence() {
   local cert_dir
   local cert_path
+  local config_type
   local key_path
   local config_path
   local index_path
@@ -82,11 +102,10 @@ EOF
     "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" \
     sing-box check -c /root/sing-box-vps/config.json
   for protocol in vless-reality mixed hy2 anytls; do
-    if [[ "${protocol}" == "vless-reality" ]]; then
-      port=$(jq -r '.inbounds[] | select(.type == "vless") | .listen_port' /root/sing-box-vps/config.json)
-    else
-      port=$(jq -r --arg protocol "${protocol}" '.inbounds[] | select(.type == $protocol) | .listen_port' /root/sing-box-vps/config.json)
-    fi
+    config_type=$(verification_config_inbound_type_for_protocol "${protocol}")
+    port=$(jq -r --arg config_type "${config_type}" \
+      '.inbounds[] | select(.type == $config_type) | .listen_port' \
+      /root/sing-box-vps/config.json)
     if [[ "${protocol}" == "hy2" ]]; then
       verification_assert_udp_port_listening "${port}" \
         "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.${protocol}.ss-lunp.txt"
