@@ -59,7 +59,21 @@ get_os_info() { :; }
 get_arch() { ARCH="amd64"; }
 install_dependencies() { :; }
 save_warp_route_settings() { :; }
-install_binary() { :; }
+install_binary() {
+  cat > "${SINGBOX_BIN_PATH}" <<'EOF'
+#!/usr/bin/env bash
+
+case "${1:-}" in
+  version)
+    printf 'sing-box version 1.14.0\n'
+    ;;
+  check)
+    exit 0
+    ;;
+esac
+EOF
+  chmod +x "${SINGBOX_BIN_PATH}"
+}
 get_latest_version() { :; }
 generate_config() {
   local current_count
@@ -75,7 +89,11 @@ setup_service() {
 open_firewall_port() { :; }
 display_info() { :; }
 check_port_conflict() { :; }
-systemctl() { :; }
+systemctl() {
+  if [[ "${1:-}" == "is-active" ]]; then
+    printf 'active\n'
+  fi
+}
 display_status_summary() { :; }
 show_post_config_connection_info() {
   local current_count

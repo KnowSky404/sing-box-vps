@@ -61,7 +61,21 @@ get_os_info() { :; }
 get_arch() { ARCH="amd64"; }
 install_dependencies() { :; }
 save_warp_route_settings() { :; }
-install_binary() { :; }
+install_binary() {
+  cat > "${SINGBOX_BIN_PATH}" <<'EOF'
+#!/usr/bin/env bash
+
+case "${1:-}" in
+  version)
+    printf 'sing-box version 1.13.18\n'
+    ;;
+  check)
+    exit 1
+    ;;
+esac
+EOF
+  chmod +x "${SINGBOX_BIN_PATH}"
+}
 generate_config() {
   local current_count
   current_count=$(cat "${GENERATE_CONFIG_COUNT_FILE}")

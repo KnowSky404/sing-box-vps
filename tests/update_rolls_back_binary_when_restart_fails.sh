@@ -49,6 +49,7 @@ RESTART_COUNT=0
 SERVICE_STATE=active
 RECOVERY_RESTART_FAIL=n
 TARGET_RESTART_EXIT_ZERO=n
+INSTALL_BINARY_VERSION=1.14.0
 
 get_os_info() { OS_NAME=debian; }
 get_arch() { ARCH=amd64; }
@@ -84,12 +85,12 @@ systemctl() {
   fi
 }
 install_binary() {
-  cat > "${SINGBOX_BIN_PATH}" <<'EOF'
+  cat > "${SINGBOX_BIN_PATH}" <<EOF
 #!/usr/bin/env bash
 
-case "${1:-}" in
+case "\${1:-}" in
   version)
-    printf 'sing-box version 1.14.0\n'
+    printf 'sing-box version ${INSTALL_BINARY_VERSION}\n'
     ;;
   check)
     exit 0
@@ -171,5 +172,25 @@ if [[ "$(${SINGBOX_BIN_PATH} marker)" != "old" || "${SERVICE_STATE}" != "active"
 fi
 if (( RESTART_COUNT != 2 )); then
   printf 'expected target and recovery restart attempts after post-restart health failure\n' >&2
+  exit 1
+fi
+
+# A downloader/extractor that leaves the wrong binary in place must fail before
+# configuration validation or a service restart and restore the previous binary.
+SERVICE_STATE=active
+RECOVERY_RESTART_FAIL=n
+TARGET_RESTART_EXIT_ZERO=n
+INSTALL_BINARY_VERSION=1.13.18
+RESTART_COUNT=0
+if update_singbox_binary_preserving_config >/dev/null; then
+  printf 'expected target-version mismatch to return non-zero\n' >&2
+  exit 1
+fi
+if [[ "$("${SINGBOX_BIN_PATH}" marker)" != "old" || "${SERVICE_STATE}" != "active" ]]; then
+  printf 'expected target-version mismatch to restore old binary without changing service state\n' >&2
+  exit 1
+fi
+if (( RESTART_COUNT != 0 )); then
+  printf 'expected no restart when the installed binary version mismatches the target\n' >&2
   exit 1
 fi

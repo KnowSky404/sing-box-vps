@@ -101,11 +101,24 @@ load_current_config_state() {
 }
 prompt_singbox_version() { SB_VERSION="1.13.9"; }
 get_latest_version() { :; }
-install_binary() { :; }
+install_binary() {
+  cat > "${SINGBOX_BIN_PATH}" <<'EOF'
+#!/usr/bin/env bash
+
+if [[ "${1:-}" == "version" ]]; then
+  printf 'sing-box version 1.13.9\n'
+fi
+EOF
+  chmod +x "${SINGBOX_BIN_PATH}"
+}
 validate_config_file() { return 0; }
 setup_service() { :; }
 display_status_summary() { :; }
-systemctl() { :; }
+systemctl() {
+  if [[ "${1:-}" == "is-active" ]]; then
+    printf 'active\n'
+  fi
+}
 get_os_info() {
   GET_OS_INFO_CALLS=$((GET_OS_INFO_CALLS + 1))
   OS_NAME="debian"
@@ -115,6 +128,7 @@ install_dependencies() {
   INSTALL_DEPENDENCIES_SAW_OS_NAME="${OS_NAME}"
 }
 
+SB_VERSION="1.13.9"
 if ! update_singbox_binary_preserving_config >/dev/null 2>&1; then
   printf 'expected update binary flow to complete without crashing\n' >&2
   exit 1

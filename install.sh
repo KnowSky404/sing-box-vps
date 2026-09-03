@@ -11740,6 +11740,7 @@ install_or_reconfigure_singbox() {
 
 update_singbox_binary_preserving_config() {
   local installed_ver
+  local installed_target_ver
   local reinstall_choice
   local binary_backup=""
   local before_service_state
@@ -11782,6 +11783,19 @@ update_singbox_binary_preserving_config() {
   fi
 
   install_binary
+
+  installed_target_ver=$(detect_installed_singbox_version)
+  installed_target_ver=${installed_target_ver#v}
+  if [[ -z "${installed_target_ver}" || "${installed_target_ver}" != "${SB_VERSION#v}" ]]; then
+    log_warn "安装后的 sing-box 版本 (${installed_target_ver:-未知}) 与目标版本 ${SB_VERSION#v} 不一致，服务未重启。"
+    if cp -p "${binary_backup}" "${SINGBOX_BIN_PATH}" 2>/dev/null && chmod +x "${SINGBOX_BIN_PATH}"; then
+      rm -f "${binary_backup}"
+      log_warn "已自动恢复更新前的 sing-box 二进制。"
+    else
+      log_warn "自动恢复旧 sing-box 二进制失败，请从备份 ${binary_backup} 手动恢复。"
+    fi
+    return 1
+  fi
 
   log_info "正在使用 sing-box ${SB_VERSION} 校验现有配置..."
   if ! validate_config_file; then
