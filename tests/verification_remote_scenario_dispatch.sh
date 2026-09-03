@@ -175,6 +175,10 @@ INDEX_EOF
         "server_name": "$(cat "${SNI_FILE}")",
         "reality": {
           "enabled": true,
+          "handshake": {
+            "server": "$(cat "${SNI_FILE}")",
+            "server_port": 443
+          },
           "private_key": "${VALID_REALITY_PRIVATE_KEY}",
           "short_id": [
             "aaaaaaaaaaaaaaaa",
@@ -750,7 +754,7 @@ grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_vless/protoc
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/reconfigure_existing_install/protocol-probes/vless-reality/result.env"
 [[ -f "${ARTIFACT_DIR}/scenarios/legacy_takeover_export/client/sing-box-client.json" ]]
 grep -Fq '"fingerprint": "chrome"' "${ARTIFACT_DIR}/scenarios/legacy_takeover_export/client/sing-box-client.json"
-jq -e '.inbounds[] | select(.type == "vless" and .tag == "legacy-vless-in") | .tls.enabled == true and .tls.reality.enabled == true' \
+jq -e '.inbounds[] | select(.type == "vless" and .tag == "legacy-vless-in") | .tls.enabled == true and .tls.reality.enabled == true and .tls.reality.handshake.server == "www.cloudflare.com" and .tls.reality.handshake.server_port == 443' \
   "${ARTIFACT_DIR}/scenarios/legacy_takeover_export/config.json" >/dev/null
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/legacy_takeover_export/protocol-probes/vless-reality/result.env"
 jq -e '.outbounds[0] | has("flow") | not' \

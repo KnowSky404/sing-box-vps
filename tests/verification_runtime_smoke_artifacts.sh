@@ -375,6 +375,10 @@ INDEX_EOF
         "server_name": "\$(cat "\${REMOTE_SNI_FILE}")",
         "reality": {
           "enabled": true,
+          "handshake": {
+            "server": "\$(cat "\${REMOTE_SNI_FILE}")",
+            "server_port": 443
+          },
           "private_key": "${VALID_REALITY_PRIVATE_KEY}",
           "short_id": [
             "aaaaaaaaaaaaaaaa",
