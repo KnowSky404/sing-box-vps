@@ -363,6 +363,7 @@ INDEX_EOF
   "inbounds": [
     {
       "type": "vless",
+      "tag": "legacy-vless-in",
       "listen_port": \$(cat "\${REMOTE_PORT_FILE}"),
       "users": [
         {
