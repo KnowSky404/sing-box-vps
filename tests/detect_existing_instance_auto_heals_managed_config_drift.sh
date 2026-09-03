@@ -201,3 +201,72 @@ if ! jq -e '.inbounds[] | select(.type == "mixed" and .listen_port == 63681)' "$
   printf 'expected healed config to restore mixed inbound, got:\n%s\n' "$(cat "${SINGBOX_CONFIG_FILE}")" >&2
   exit 1
 fi
+
+cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
+{
+  "inbounds": [{
+    "type": "anytls",
+    "listen_port": 443,
+    "users": [{"name": "managed-user", "password": "managed-pass"}],
+    "tls": {
+      "server_name": "managed.example.com",
+      "certificate_provider": "managed-provider"
+    }
+  }],
+  "certificate_providers": [{
+    "type": "acme",
+    "tag": "managed-provider",
+    "domain": ["managed.example.com"],
+    "email": "managed@example.com",
+    "http_client": "managed-http"
+  }],
+  "http_clients": [{"tag": "managed-http", "engine": "go"}],
+  "route": {"rules": []}
+}
+EOF
+
+cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
+INSTALLED_PROTOCOLS=anytls
+PROTOCOL_STATE_VERSION=1
+INSTALLED_SINGBOX_VERSION=1.14.0
+EOF
+
+cat > "${SB_PROTOCOL_STATE_DIR}/anytls.env" <<'EOF'
+INSTALLED=1
+CONFIG_SCHEMA_VERSION=1
+NODE_NAME=anytls_test-host
+PORT=443
+DOMAIN=managed.example.com
+PASSWORD=managed-pass
+USER_NAME=managed-user
+TLS_MODE=acme
+ACME_MODE=http
+ACME_EMAIL=managed@example.com
+ACME_DOMAIN=managed.example.com
+DNS_PROVIDER=cloudflare
+CF_API_TOKEN=
+CERT_PATH=
+KEY_PATH=
+EOF
+rm -f "${SB_PROTOCOL_STATE_DIR}/vless-reality.env" "${SB_PROTOCOL_STATE_DIR}/mixed.env"
+
+printf '0\n' > "${GENERATE_CONFIG_COUNT_FILE}"
+protected_config_hash=$(sha256sum "${SINGBOX_CONFIG_FILE}" | awk '{print $1}')
+state=$(detect_existing_instance_state)
+
+if [[ "${state}" != "incomplete" ]]; then
+  printf 'expected unrepresentable shared ACME http_client to require takeover, got %s\n' "${state}" >&2
+  exit 1
+fi
+if [[ "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" != "0" ]]; then
+  printf 'shared ACME http_client must block automatic config regeneration\n' >&2
+  exit 1
+fi
+if [[ "$(sha256sum "${SINGBOX_CONFIG_FILE}" | awk '{print $1}')" != "${protected_config_hash}" ]]; then
+  printf 'shared ACME http_client config changed despite fail-closed auto-heal\n' >&2
+  exit 1
+fi
+jq -e '
+  .certificate_providers[0].http_client == "managed-http" and
+  .http_clients[0].tag == "managed-http"
+' "${SINGBOX_CONFIG_FILE}" >/dev/null

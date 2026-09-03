@@ -11501,6 +11501,41 @@ log_takeover_state_diagnostics() {
   done
 }
 
+managed_config_acme_is_state_representable() {
+  local config_file=$1
+  local inbound_count inbound_index inbound_type
+
+  # Invalid JSON is handled by the existing candidate generation transaction;
+  # this guard only prevents a valid config from losing ACME fields that the
+  # protocol state model cannot reproduce.
+  jq -e '.' "${config_file}" &>/dev/null || return 0
+  inbound_count=$(jq -r '(.inbounds // []) | length' "${config_file}") || return 1
+  [[ "${inbound_count}" =~ ^[0-9]+$ ]] || return 1
+
+  for ((inbound_index = 0; inbound_index < inbound_count; inbound_index++)); do
+    inbound_type=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].type // ""' "${config_file}") || return 1
+    case "${inbound_type}" in
+      hysteria2|anytls) ;;
+      *) continue ;;
+    esac
+
+    if jq -e --argjson idx "${inbound_index}" '
+      .inbounds[$idx].tls.acme? != null and
+      .inbounds[$idx].tls.certificate_provider? != null
+    ' "${config_file}" &>/dev/null; then
+      return 1
+    fi
+
+    if jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme? != null' "${config_file}" &>/dev/null; then
+      inline_acme_extra_json_from_config "${config_file}" "${inbound_index}" >/dev/null || return 1
+    elif jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider? != null' "${config_file}" &>/dev/null; then
+      (load_certificate_provider_from_config "${config_file}" "${inbound_index}") || return 1
+    fi
+  done
+
+  return 0
+}
+
 attempt_managed_instance_auto_heal() {
   local indexed_protocols=()
   local protocol
@@ -11519,6 +11554,11 @@ attempt_managed_instance_auto_heal() {
   done
 
   protocol_state_layer_matches_config && return 0
+
+  if ! managed_config_acme_is_state_representable "${SINGBOX_CONFIG_FILE}"; then
+    log_warn "当前配置包含协议状态无法无损表达的 ACME 字段，已跳过自动重建并转入接管流程。"
+    return 1
+  fi
 
   log_warn "检测到托管实例配置与协议状态不一致，正在尝试按协议状态自动重建运行配置。"
 
