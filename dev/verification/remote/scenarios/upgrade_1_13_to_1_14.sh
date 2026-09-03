@@ -3,6 +3,7 @@ verification_scenario_upgrade_1_13_to_1_14() {
   local before_hash after_hash before_service_hash after_service_hash
   local backup_path
   local preflight_path upgrade_path
+  local transaction_result_path transaction_manifest_path transaction_manifest_sha256
 
   verification_prepare_remote_local_tree
   trap 'verification_cleanup_remote_local_tree; trap - RETURN' RETURN
@@ -71,6 +72,8 @@ EOF
     and .changed == true
     and .restarted == true
     and .rolled_back == false
+    and .transaction.result_persisted == true
+    and .transaction.status == "success"
     and .config_preserved == true
     and .installed == "1.14.0"
     and (.backup | type == "string" and length > 0)
@@ -94,6 +97,27 @@ EOF
     /root/sing-box-vps-backups/upgrade-*) ;;
     *) return 1 ;;
   esac
+  transaction_result_path=$(jq -r '.transaction.result_path' "${upgrade_path}")
+  [[ "${transaction_result_path}" == "${backup_path}/transaction-result.json" ]]
+  [[ "$(stat -c '%a' "${transaction_result_path}")" == "600" ]]
+  jq -e '
+    .schema_version == "1.0" and
+    .status == "success" and
+    .old_version == "1.13.18" and
+    .new_version == "1.14.0" and
+    .rollback.attempted == false and
+    .rollback.result == "not_attempted"
+  ' "${transaction_result_path}" >/dev/null
+  transaction_manifest_path=$(jq -r '.manifest_path' "${transaction_result_path}")
+  transaction_manifest_sha256=$(jq -r '.manifest_sha256' "${transaction_result_path}")
+  [[ "${transaction_manifest_path}" == "${backup_path}/SHA256SUMS" ]]
+  [[ "${transaction_manifest_sha256}" == "$(sha256sum "${backup_path}/SHA256SUMS" | awk '{print $1}')" ]]
+  jq -e --arg path "${backup_path}/SHA256SUMS" --arg sha256 "${transaction_manifest_sha256}" \
+    '.manifest.path == $path and .manifest.sha256 == $sha256' \
+    "${transaction_result_path}" >/dev/null
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/transaction-result.json" \
+    cat "${transaction_result_path}"
   test -d "${backup_path}"
   test -f "${backup_path}/runtime/config.json"
   test -f "${backup_path}/sing-box"

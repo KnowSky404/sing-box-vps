@@ -52,6 +52,13 @@ EOF_CURL
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${1:-}" == "-lunp" || "${1:-}" == "-lun" ]]; then
+  if [[ -n "${PROBE_UDP_PORT:-}" ]]; then
+    printf 'UNCONN 0 0 127.0.0.1:%s 0.0.0.0:*\n' "${PROBE_UDP_PORT}"
+  fi
+  exit 0
+fi
+
 if [[ -s "${PROBE_CLIENT_PID_FILE:?}" ]] && kill -0 "$(cat "${PROBE_CLIENT_PID_FILE}")" 2>/dev/null; then
   printf 'LISTEN 0 0 127.0.0.1:19080 0.0.0.0:*\n'
 fi

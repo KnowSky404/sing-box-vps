@@ -164,7 +164,7 @@ Keep historical functions in scope when planning or documenting a change:
 | Node material | Links/QR, bare-core client export, dual-stack labels | `nodes` is log-safe; `links` and `export-client` are sensitive |
 | SubMan | Idempotent VLESS/Hysteria2 sync, revision/error/retry semantics | `subman-sync` is sensitive and externally mutating |
 | Lifecycle | start/stop/restart/status/logs, managed-instance takeover/repair, core/script upgrade, two uninstall scopes | Status/check/doctor are read-only; only restart and fixed core upgrade have guarded Agent mutations |
-| Verification | Config check, protocol probes, Docker fresh install/reconfigure/takeover/uninstall and 1.13→1.14 upgrade scenarios | Use `bash dev/verification/run.sh` |
+| Verification | Config check, live protocol probes, Docker fresh install/reconfigure/takeover/uninstall, four-protocol coexistence, and 1.13→1.14 success/rollback scenarios | Use `bash dev/verification/run.sh` |
 
 Do not invent non-interactive mutations for features marked interactive-only. Use the menu after the appropriate safety gate or stop and ask for operator approval.
 

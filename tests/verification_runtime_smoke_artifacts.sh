@@ -829,6 +829,27 @@ INDEX_EOF
 verification_scenario_upgrade_1_13_to_1_14() {
   printf 'SCENARIO=upgrade_1_13_to_1_14\n'
   printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/upgrade.json" '{"ok":true,"installed":"1.14.0","transaction":{"status":"success","result_persisted":true}}'
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/transaction-result.json" '{"schema_version":"1.0","status":"success"}'
+}
+
+verification_scenario_multi_protocol_coexistence() {
+  printf 'SCENARIO=multi_protocol_coexistence\n'
+  printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
+  verification_run_protocol_probes
+}
+
+verification_scenario_upgrade_rollback_1_13_to_1_14() {
+  printf 'SCENARIO=upgrade_rollback_1_13_to_1_14\n'
+  printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/config.before.sha256" 'before-config-hash'
+  verification_run_protocol_probes
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/config.after.sha256" 'before-config-hash'
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/service.before.sha256" 'before-service-hash'
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/service.after.sha256" 'before-service-hash'
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/after.version.txt" 'sing-box version 1.13.18'
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/systemctl.status.txt" 'active'
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/transaction-result.json" '{"schema_version":"1.0","status":"rolled_back","rollback":{"attempted":true,"result":"success"}}'
 }
 WRAP_EOF
 awk -v wrapper_file="\${script_file}.wrapper" '
@@ -883,6 +904,8 @@ PATH="${TMP_DIR}:${PATH}" VERIFY_SKIP_LOCAL_TESTS=1 \
 
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout.txt")
 grep -Fq 'runtime_smoke' "${run_dir}/scenarios.txt"
+grep -Fq 'multi_protocol_coexistence' "${run_dir}/scenarios.txt"
+grep -Fq 'upgrade_rollback_1_13_to_1_14' "${run_dir}/scenarios.txt"
 grep -Fq 'remote_target=docker:test-container' "${run_dir}/summary.log"
 grep -Fq 'remote_target=docker:test-container' "${TMP_DIR}/stdout.txt"
 grep -Fq 'SCENARIO=runtime_smoke' "${run_dir}/remote.stdout.log"
@@ -902,6 +925,17 @@ grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/anytls/probe.stdout.txt" ]]
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/anytls/result.env"
 grep -Fqx 'RESULT=unsupported' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/mystery-protocol/result.env"
+grep -Fqx 'STATUS=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/result.env"
+grep -Fqx 'STATUS=success' "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/result.env"
+[[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/upgrade.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/transaction-result.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/config.before.sha256" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/config.after.sha256" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/service.before.sha256" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/service.after.sha256" ]]
+grep -Fqx 'sing-box version 1.13.18' "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/after.version.txt"
+[[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/systemctl.status.txt" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/transaction-result.json" ]]
 grep -Fq 'remote_artifacts=extracted' "${run_dir}/summary.log"
 grep -Fq "${INSTALL_VERSION_LINE}" "${TMP_DIR}/remote-script.sh"
 grep -Fq "${UNINSTALL_HELPER_LINE}" "${TMP_DIR}/remote-script.sh"
@@ -912,6 +946,8 @@ grep -Fqx 'reconfigure_existing_install' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'fresh_install_anytls' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'upgrade_1_13_to_1_14' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'runtime_smoke' "${REMOTE_DISPATCH_LOG_FILE}"
+grep -Fqx 'multi_protocol_coexistence' "${REMOTE_DISPATCH_LOG_FILE}"
+grep -Fqx 'upgrade_rollback_1_13_to_1_14' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.d/main.env' "${REMOTE_ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.d/main.env' "${REMOTE_ASSERT_LOG_FILE}"
 grep -Fqx 'jq:-r|.inbounds[0].listen_port // empty|/root/sing-box-vps/config.json' "${REMOTE_ASSERT_LOG_FILE}"

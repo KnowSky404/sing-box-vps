@@ -351,6 +351,27 @@ verification_scenario_fresh_install_anytls() {
 
 verification_scenario_upgrade_1_13_to_1_14() {
   printf 'SCENARIO=upgrade_1_13_to_1_14\n'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/upgrade.json" '{"ok":true,"installed":"1.14.0","transaction":{"status":"success","result_persisted":true}}'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/transaction-result.json" '{"schema_version":"1.0","status":"success"}'
+}
+
+verification_scenario_multi_protocol_coexistence() {
+  printf 'SCENARIO=multi_protocol_coexistence\n'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/config.json" 'four protocol config fixture'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/index.env" 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls'
+}
+
+verification_scenario_upgrade_rollback_1_13_to_1_14() {
+  printf 'SCENARIO=upgrade_rollback_1_13_to_1_14\n'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/upgrade.json" '{"rolled_back":true,"installed":"1.13.18"}'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/config.before.sha256" 'before-config-hash'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/config.after.sha256" 'before-config-hash'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/service.before.sha256" 'before-service-hash'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/service.after.sha256" 'before-service-hash'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/after.version.txt" 'sing-box version 1.13.18'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/systemctl.status.txt" 'active'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/transaction-result.json" '{"schema_version":"1.0","status":"rolled_back"}'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/after-rollback.check.txt" 'config ok'
 }
 
 verification_scenario_runtime_smoke() {
@@ -410,7 +431,7 @@ grep -Fqx 'tests/new_untracked_case.sh' "${run_dir}/changed-files.txt"
 
 # Check scenarios
 scenarios=$(paste -sd, "${run_dir}/scenarios.txt")
-[[ "${scenarios}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,upgrade_1_13_to_1_14,runtime_smoke" ]] || {
+[[ "${scenarios}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" ]] || {
   printf 'unexpected scenarios: %s\n' "${scenarios}" >&2; exit 1
 }
 
@@ -426,6 +447,19 @@ grep -Fq 'remote_target=docker:test-container' "${TMP_DIR}/stdout.txt"
 [[ -f "${run_dir}/remote-artifacts/scenarios/reconfigure_existing_install/config.diff.txt" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_anytls/sing-box-check.txt" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/result.env" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/upgrade.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/transaction-result.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/config.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/protocols/index.env" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/upgrade.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/config.before.sha256" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/config.after.sha256" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/service.before.sha256" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/service.after.sha256" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/after.version.txt" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/systemctl.status.txt" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/transaction-result.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/after-rollback.check.txt" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/sing-box-check.txt" ]]
 
 # Check payload content (script vars are in emitted payload)
@@ -460,14 +494,15 @@ grep -Fqx 'tests/install_takeover_rebuilds_protocol_state_from_config.sh|1' "${T
 grep -Fqx 'tests/detect_existing_instance_auto_heals_managed_config_drift.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/update_keeps_existing_config.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/update_rolls_back_binary_when_config_invalid.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/update_rolls_back_binary_when_restart_fails.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_config_helpers.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_payload_generation.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_api_push.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_sync_orchestration.sh|1' "${TMP_DIR}/local-tests.log"
 
 default_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
-[[ "${default_local_test_count}" -eq 24 ]] || {
-  printf 'expected 24 local tests, got %d\n' "${default_local_test_count}" >&2; exit 1
+[[ "${default_local_test_count}" -eq 25 ]] || {
+  printf 'expected 25 local tests, got %d\n' "${default_local_test_count}" >&2; exit 1
 }
 
 # Test VERIFY_SKIP_LOCAL_TESTS=1 — still runs remote
@@ -479,7 +514,7 @@ grep -Fqx 'install.sh' "${run_dir_skip}/changed-files.txt"
 grep -Fqx 'README.md' "${run_dir_skip}/changed-files.txt"
 grep -Fqx 'tests/new_untracked_case.sh' "${run_dir_skip}/changed-files.txt"
 scenarios_skip=$(paste -sd, "${run_dir_skip}/scenarios.txt")
-[[ "${scenarios_skip}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,upgrade_1_13_to_1_14,runtime_smoke" ]] || {
+[[ "${scenarios_skip}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" ]] || {
   printf 'unexpected scenarios for skip run: %s\n' "${scenarios_skip}" >&2; exit 1
 }
 skip_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")

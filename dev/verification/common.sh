@@ -85,6 +85,7 @@ resolve_local_tests() {
       tests/detect_existing_instance_auto_heals_managed_config_drift.sh \
       tests/update_keeps_existing_config.sh \
       tests/update_rolls_back_binary_when_config_invalid.sh \
+      tests/update_rolls_back_binary_when_restart_fails.sh \
       tests/subman_config_helpers.sh \
       tests/subman_payload_generation.sh \
       tests/subman_api_push.sh \
@@ -127,7 +128,7 @@ resolve_remote_scenarios() {
   done
 
   if [[ "${needs_install_flow}" == "1" ]]; then
-    printf '%s\n' fresh_install_vless reconfigure_existing_install legacy_takeover_export fresh_install_anytls upgrade_1_13_to_1_14
+    printf '%s\n' fresh_install_vless reconfigure_existing_install legacy_takeover_export fresh_install_anytls multi_protocol_coexistence upgrade_1_13_to_1_14 upgrade_rollback_1_13_to_1_14
   fi
 
   printf '%s\n' runtime_smoke

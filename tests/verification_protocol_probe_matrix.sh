@@ -12,6 +12,7 @@ RED_ARTIFACT_DIR="${TMP_DIR}/artifacts-red"
 DISCOVERY_FAILURE_ARTIFACT_DIR="${TMP_DIR}/artifacts-discovery-failure"
 GREEN_ARTIFACT_DIR="${TMP_DIR}/artifacts-green"
 TESTABLE_ENTRYPOINT="${TMP_DIR}/entrypoint-testable.sh"
+LISTENER_HARNESS="${TMP_DIR}/listener-harness.sh"
 PROTOCOLS_DIR="${TMP_DIR}/protocols"
 INDEX_FILE="${PROTOCOLS_DIR}/index.env"
 MIXED_STATE_FILE="${PROTOCOLS_DIR}/mixed.env"
@@ -32,6 +33,34 @@ awk '
   | perl -0pe 's|/root/sing-box-vps/protocols/index.env|'"${INDEX_FILE}"'|g' \
   | perl -0pe 's|/root/sing-box-vps/protocols/mixed.env|'"${MIXED_STATE_FILE}"'|g' \
   > "${TESTABLE_ENTRYPOINT}"
+
+cat > "${LISTENER_HARNESS}" <<EOF_LISTENER
+#!/usr/bin/env bash
+set -euo pipefail
+
+verification_artifact_path() {
+  local relative_path=\$1
+  local target_path="\${VERIFY_ARTIFACT_DIR}/\${relative_path}"
+  mkdir -p "\$(dirname "\${target_path}")"
+  printf '%s\\n' "\${target_path}"
+}
+
+verification_write_artifact() {
+  local relative_path=\$1
+  shift || true
+  printf '%s\\n' "\$@" > "\$(verification_artifact_path "\${relative_path}")"
+}
+
+source "${TESTABLE_ENTRYPOINT}"
+VERIFY_ARTIFACT_DIR="${TMP_DIR}/listener-artifacts"
+export PROBE_UDP_PORT=8443
+verification_assert_udp_port_listening 8443 scenarios/runtime_smoke/listeners.hy2.ss-lunp.txt
+EOF_LISTENER
+chmod +x "${LISTENER_HARNESS}"
+rm -rf "${TMP_DIR}/listener-artifacts"
+bash "${LISTENER_HARNESS}"
+grep -Fq 'UNCONN 0 0 127.0.0.1:8443' \
+  "${TMP_DIR}/listener-artifacts/scenarios/runtime_smoke/listeners.hy2.ss-lunp.txt"
 
 write_probe_harness() {
   local harness_path=$1

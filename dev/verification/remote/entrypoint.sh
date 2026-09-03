@@ -85,6 +85,10 @@ verification_ss_output() {
   ss -lntp 2>/dev/null || ss -lnt 2>/dev/null
 }
 
+verification_ss_udp_output() {
+  ss -lunp 2>/dev/null || ss -lun 2>/dev/null
+}
+
 verification_capture_listener_snapshot() {
   local relative_path=${1:-meta/listeners.ss-lntp.txt}
   verification_capture_best_effort_command "${relative_path}" verification_ss_output
@@ -103,12 +107,33 @@ verification_port_is_listening() {
   '
 }
 
+verification_udp_port_is_listening() {
+  local port=$1
+
+  verification_ss_udp_output | awk -v port=":${port}" '
+    ($1 == "UNCONN" || $1 == "LISTEN") && index($4, port) {
+      found = 1
+    }
+    END {
+      exit(found ? 0 : 1)
+    }
+  '
+}
+
 verification_assert_port_listening() {
   local port=$1
   local relative_path=$2
 
   verification_capture_listener_snapshot "${relative_path}"
   verification_port_is_listening "${port}"
+}
+
+verification_assert_udp_port_listening() {
+  local port=$1
+  local relative_path=$2
+
+  verification_capture_best_effort_command "${relative_path}" verification_ss_udp_output
+  verification_udp_port_is_listening "${port}"
 }
 
 verification_assert_port_not_listening() {
@@ -955,6 +980,9 @@ for scenario in "$@"; do
     fresh_install_anytls)
       run_verification_scenario fresh_install_anytls verification_scenario_fresh_install_anytls
       ;;
+    multi_protocol_coexistence)
+      run_verification_scenario multi_protocol_coexistence verification_scenario_multi_protocol_coexistence
+      ;;
     uninstall_and_reinstall)
       run_verification_scenario uninstall_and_reinstall verification_scenario_uninstall_and_reinstall
       ;;
@@ -963,6 +991,9 @@ for scenario in "$@"; do
       ;;
     upgrade_1_13_to_1_14)
       run_verification_scenario upgrade_1_13_to_1_14 verification_scenario_upgrade_1_13_to_1_14
+      ;;
+    upgrade_rollback_1_13_to_1_14)
+      run_verification_scenario upgrade_rollback_1_13_to_1_14 verification_scenario_upgrade_rollback_1_13_to_1_14
       ;;
     *)
       printf 'unknown scenario: %s\n' "${scenario}" >&2
