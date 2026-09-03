@@ -9259,7 +9259,7 @@ restore_agent_upgrade_backup() {
   local restore_config=${2:-n}
   local service_was_active=${3:-n}
   local status=0
-  local binary_restored="n"
+  local artifacts_restored="y"
 
   case "${backup_dir}" in
     "${SB_UPGRADE_BACKUP_ROOT}"/upgrade-*) ;;
@@ -9269,20 +9269,30 @@ restore_agent_upgrade_backup() {
   [[ -f "${backup_dir}/sing-box" && -f "${backup_dir}/SHA256SUMS" ]] || return 1
   (cd "${backup_dir}" && sha256sum -c SHA256SUMS >/dev/null 2>&1) || return 1
   if replace_singbox_binary_atomically "${backup_dir}/sing-box"; then
-    binary_restored="y"
+    :
   else
     status=1
+    artifacts_restored="n"
   fi
 
   if [[ -f "${backup_dir}/sing-box.service" ]]; then
-    cp -p "${backup_dir}/sing-box.service" "${SINGBOX_SERVICE_FILE}" || status=1
+    if ! cp -p "${backup_dir}/sing-box.service" "${SINGBOX_SERVICE_FILE}"; then
+      status=1
+      artifacts_restored="n"
+    fi
   fi
   if [[ "${restore_config}" == "y" && -f "${backup_dir}/runtime/config.json" ]]; then
-    cp -p "${backup_dir}/runtime/config.json" "${SINGBOX_CONFIG_FILE}" || status=1
+    if ! cp -p "${backup_dir}/runtime/config.json" "${SINGBOX_CONFIG_FILE}"; then
+      status=1
+      artifacts_restored="n"
+    fi
   fi
 
-  systemctl daemon-reload >/dev/null 2>&1 || status=1
-  if [[ "${binary_restored}" != "y" ]]; then
+  if ! systemctl daemon-reload >/dev/null 2>&1; then
+    status=1
+    artifacts_restored="n"
+  fi
+  if [[ "${artifacts_restored}" != "y" ]]; then
     systemctl stop sing-box >/dev/null 2>&1 || status=1
     return 1
   fi

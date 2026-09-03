@@ -458,6 +458,24 @@ if grep -Fqx 'restart sing-box' "${SYSTEMCTL_CALLS_FILE}"; then
 fi
 grep -Fqx 'stop sing-box' "${SYSTEMCTL_CALLS_FILE}"
 
+cp() {
+  if [[ "${1:-}" == "-p" && "${2:-}" == "${backup_dir}/sing-box.service" ]]; then
+    return 27
+  fi
+  command cp "$@"
+}
+: > "${SYSTEMCTL_CALLS_FILE}"
+if restore_agent_upgrade_backup "${backup_dir}" "n" "y"; then
+  printf 'expected service artifact restore failure to return non-zero\n' >&2
+  exit 1
+fi
+unset -f cp
+if grep -Fqx 'restart sing-box' "${SYSTEMCTL_CALLS_FILE}"; then
+  printf 'partial artifact restore must not restart sing-box\n' >&2
+  exit 1
+fi
+grep -Fqx 'stop sing-box' "${SYSTEMCTL_CALLS_FILE}"
+
 printf 'tampered\n' >> "${backup_dir}/runtime/protocols/hy2.env"
 if restore_agent_upgrade_backup "${backup_dir}" "n" "n"; then
   printf 'expected recursive backup manifest to reject a modified runtime state file\n' >&2
