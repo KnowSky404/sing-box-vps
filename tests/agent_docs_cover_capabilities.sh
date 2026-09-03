@@ -45,4 +45,9 @@ grep -Fq 'manual_intervention_required=true' "${UPGRADE_DOC}"
 grep -Fq 'inline `tls.acme`' "${UPGRADE_DOC}"
 grep -Fq '`download_detour`' "${UPGRADE_DOC}"
 
+LLMS_DOC="${REPO_ROOT}/docs/agents/llms.txt"
+grep -Fq 'transaction.result_persisted=true' "${LLMS_DOC}"
+grep -Fq 'transaction.status=not_attempted' "${LLMS_DOC}"
+grep -Fq 'transaction.reason=already_installed' "${LLMS_DOC}"
+
 printf '%s\n' 'agent documentation capability coverage passed'

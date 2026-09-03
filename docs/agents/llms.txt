@@ -62,7 +62,7 @@ Important requirements:
 - Do not reveal secrets, private keys, passwords, tokens, full node links, or QR payloads unless explicitly requested and safe.
 - Treat sbv agent links --json, export-client --json, and subman-sync --json as sensitive connection-material commands.
 - Upgrade backups contain the full runtime state and must never be copied into shared logs or artifacts.
-- Agent JSON uses schema_version "1.0" with the legacy schema "1" retained. For upgrades, require transaction.result_persisted=true and inspect transaction.result_path, status, manifest hash, and rollback result.
+- Agent JSON uses schema_version "1.0" with the legacy schema "1" retained. For upgrades that change the installed version, require transaction.result_persisted=true and inspect transaction.result_path, status, manifest hash, and rollback result. If the target version is already installed, accept only changed=false with transaction.status=not_attempted and transaction.reason=already_installed; no backup or transaction result file is created.
 - Do not run production install, upgrade, restart, stop, uninstall, purge, firewall mutation, or config overwrite without an approved production operation plan.
 
 Common task routing:
