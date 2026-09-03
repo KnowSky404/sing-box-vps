@@ -57,6 +57,9 @@ EOF
       awk 'BEGIN { key_count = 0 } /"private_key": "shared-private-key"/ { key_count++; if (key_count == 2) sub("shared-private-key", "other-private-key") } { print }' \
         "${SINGBOX_CONFIG_FILE}.valid" > "${SINGBOX_CONFIG_FILE}"
       ;;
+    malformed-tag-valid-user)
+      sed 's/vless-reality-second/vless-reality-BAD_TAG/' "${SINGBOX_CONFIG_FILE}.valid" > "${SINGBOX_CONFIG_FILE}"
+      ;;
     provider-failure)
       cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
 {
@@ -169,6 +172,17 @@ grep -Fqx 'UUID=22222222-2222-4222-8222-222222222222' "${SB_PROTOCOL_STATE_DIR}/
 grep -Fqx 'ALPN_MODE=http1' "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/second.env"
 grep -Fqx 'TCP_FAST_OPEN=y' "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/second.env"
 [[ ! -e "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/stale.env" ]]
+protocol_state_layer_matches_config
+
+write_original_state_tree
+write_config malformed-tag-valid-user
+if ! rebuild_protocol_state_from_config; then
+  printf 'expected malformed VLESS tag to fall back to a valid user name\n' >&2
+  exit 1
+fi
+grep -Fqx 'INSTANCE_IDS=main,second' "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"
+grep -Fqx 'INSTANCE_ID=second' "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/second.env"
+grep -Fqx 'INBOUND_TAG=vless-reality-BAD_TAG' "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/second.env"
 protocol_state_layer_matches_config
 
 attempt_managed_instance_auto_heal() {

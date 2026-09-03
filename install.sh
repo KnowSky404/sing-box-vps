@@ -10955,6 +10955,8 @@ collect_vless_reality_config_instances() {
       tag_suffix="${tag#vless-reality-}"
       if validate_vless_reality_instance_id "${tag_suffix}"; then
         candidate="${tag_suffix}"
+      elif validate_vless_reality_instance_id "${user_name}"; then
+        candidate="${user_name}"
       fi
     elif validate_vless_reality_instance_id "${user_name}"; then
       candidate="${user_name}"
