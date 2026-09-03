@@ -74,6 +74,10 @@ resolve_local_tests() {
       tests/system_safety_guards.sh \
       tests/agent_upgrade_commands.sh \
       tests/agent_cli_multi_instance_status.sh \
+      tests/agent_cli_ops_commands.sh \
+      tests/agent_cli_outputs_machine_readable_node_info.sh \
+      tests/agent_json_regression.sh \
+      tests/export_client_config_1_14_compatibility.sh \
       tests/agent_docs_cover_capabilities.sh \
       tests/version_metadata_is_consistent.sh \
       tests/vless_reality_instance_removal.sh \

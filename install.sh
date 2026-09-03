@@ -8273,7 +8273,7 @@ EOF
 
 agent_require_json_flag() {
   if [[ "${1:-}" != "--json" ]]; then
-    log_warn "agent 子命令当前仅支持 --json 输出。" >&2
+    agent_json_error "json_required" "agent 子命令当前仅支持 --json 输出。"
     return 1
   fi
 }
@@ -8287,6 +8287,87 @@ agent_json_error() {
     --arg error "${error}" \
     --arg message "${message}" \
     '{schema: $schema, ok: false, error: $error, message: $message}'
+}
+
+agent_emit_json_envelope() {
+  local command=$1
+  local status=$2
+  local payload=${3:-}
+  local timestamp
+  local command_ok=false
+  local payload_ok
+  local effective_ok=false
+
+  [[ "${status}" == "0" ]] && command_ok=true
+  timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+  if [[ -z "${payload}" ]] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<< "${payload}"; then
+    jq -n \
+      --arg schema_version "1.0" \
+      --arg command "${command}" \
+      --arg timestamp "${timestamp}" \
+      '{
+        schema: "1",
+        schema_version: $schema_version,
+        command: $command,
+        timestamp: $timestamp,
+        ok: false,
+        data: {},
+        error: "internal_error",
+        message: "agent 命令未生成有效 JSON 对象。"
+      }'
+    [[ "${status}" == "0" ]] && return 1
+    return "${status}"
+  fi
+
+  payload_ok=$(jq -r 'if (.ok | type) == "boolean" then .ok else empty end' <<< "${payload}")
+  if [[ "${command_ok}" == "true" && "${payload_ok:-true}" == "true" ]]; then
+    effective_ok=true
+  fi
+
+  jq -n \
+    --arg schema_version "1.0" \
+    --arg command "${command}" \
+    --arg timestamp "${timestamp}" \
+    --argjson effective_ok "${effective_ok}" \
+    --argjson payload "${payload}" \
+    '(
+      $payload + {
+        schema: "1",
+        schema_version: $schema_version,
+        command: $command,
+        timestamp: $timestamp,
+        ok: $effective_ok,
+        data: $payload
+      }
+    )'
+  [[ "${effective_ok}" == "true" ]] && return 0
+  return 1
+}
+
+agent_cli_run() {
+  local command=$1
+  shift
+  local payload status
+
+  if payload=$("$@"); then
+    status=0
+  else
+    status=$?
+  fi
+  agent_emit_json_envelope "${command}" "${status}" "${payload}"
+  return $?
+}
+
+agent_cli_error() {
+  local command=$1
+  local error=$2
+  local message=$3
+  local payload
+
+  payload=$(agent_json_error "${error}" "${message}")
+  agent_emit_json_envelope "${command}" 1 "${payload}"
+  return 1
 }
 
 agent_file_sha256() {
@@ -9630,7 +9711,7 @@ agent_service_cli() {
   local command=${1:-}
   local json_flag=${2:-}
   local yes_flag=${3:-}
-  local before_state after_state check_json
+  local before_state after_state check_json restart_status
 
   if [[ "${command}" != "restart" ]]; then
     agent_json_error "unknown_service_command" "未知 service 子命令: ${command}"
@@ -9665,8 +9746,34 @@ agent_service_cli() {
     return 1
   fi
 
-  systemctl restart sing-box
+  if systemctl restart sing-box; then
+    restart_status=0
+  else
+    restart_status=$?
+  fi
   after_state=$(systemctl is-active sing-box 2>/dev/null || true)
+
+  if [[ "${restart_status}" != "0" || "${after_state}" != "active" ]]; then
+    jq -n \
+      --arg before "${before_state:-unknown}" \
+      --arg after "${after_state:-unknown}" \
+      --argjson exit_code "${restart_status}" \
+      --argjson check "${check_json}" \
+      '{
+        ok: false,
+        action: "service_restart",
+        error: "service_restart_failed",
+        skipped: false,
+        service: {
+          before: $before,
+          after: $after,
+          restart_exit_code: $exit_code
+        },
+        check: $check
+      }'
+    return 1
+  fi
+
   jq -n \
     --arg before "${before_state:-unknown}" \
     --arg after "${after_state:-unknown}" \
@@ -9852,71 +9959,104 @@ agent_subman_sync_json() {
 agent_cli() {
   local command=${1:-help}
   shift || true
+  local service_command
 
   case "${command}" in
     help|-h|--help)
+      if [[ $# -ne 0 ]]; then
+        agent_cli_error "help" "invalid_arguments" "用法: sbv agent help"
+        return $?
+      fi
       agent_print_help
       ;;
     capabilities)
       if [[ $# -ne 1 || "${1:-}" != "--json" ]]; then
-        agent_json_error "invalid_arguments" "用法: sbv agent capabilities --json"
-        return 1
+        agent_cli_error "capabilities" "invalid_arguments" "用法: sbv agent capabilities --json"
+        return $?
       fi
-      agent_capabilities_json
+      agent_cli_run "capabilities" agent_capabilities_json
       ;;
     upgrade-check)
       if [[ $# -ne 2 || "${1:-}" != "--json" ]]; then
-        agent_json_error "invalid_arguments" "用法: sbv agent upgrade-check --json x.y.z"
-        return 1
+        agent_cli_error "upgrade-check" "invalid_arguments" "用法: sbv agent upgrade-check --json x.y.z"
+        return $?
       fi
-      agent_upgrade_check_json "${2}"
+      agent_cli_run "upgrade-check" agent_upgrade_check_json "${2}"
       ;;
     upgrade)
       if [[ $# -lt 2 || $# -gt 3 || "${1:-}" != "--json" ]]; then
-        agent_json_error "invalid_arguments" "用法: sbv agent upgrade --json x.y.z --yes"
-        return 1
+        agent_cli_error "upgrade" "invalid_arguments" "用法: sbv agent upgrade --json x.y.z --yes"
+        return $?
       fi
-      agent_upgrade_cli "$@"
+      agent_cli_run "upgrade" agent_upgrade_cli "$@"
       ;;
     status)
-      agent_require_json_flag "${1:-}" || return 1
-      agent_status_json
+      if [[ $# -ne 1 || "${1:-}" != "--json" ]]; then
+        agent_cli_error "status" "invalid_arguments" "用法: sbv agent status --json"
+        return $?
+      fi
+      agent_cli_run "status" agent_status_json
       ;;
     nodes)
-      agent_require_json_flag "${1:-}" || return 1
-      agent_collect_nodes_json "summary"
+      if [[ $# -ne 1 || "${1:-}" != "--json" ]]; then
+        agent_cli_error "nodes" "invalid_arguments" "用法: sbv agent nodes --json"
+        return $?
+      fi
+      agent_cli_run "nodes" agent_collect_nodes_json "summary"
       ;;
     links)
-      agent_require_json_flag "${1:-}" || return 1
-      agent_collect_nodes_json "links"
+      if [[ $# -ne 1 || "${1:-}" != "--json" ]]; then
+        agent_cli_error "links" "invalid_arguments" "用法: sbv agent links --json"
+        return $?
+      fi
+      agent_cli_run "links" agent_collect_nodes_json "links"
       ;;
     export-client)
-      agent_require_json_flag "${1:-}" || return 1
-      agent_export_client_json
+      if [[ $# -ne 1 || "${1:-}" != "--json" ]]; then
+        agent_cli_error "export-client" "invalid_arguments" "用法: sbv agent export-client --json"
+        return $?
+      fi
+      agent_cli_run "export-client" agent_export_client_json
       ;;
     warp)
-      agent_require_json_flag "${1:-}" || return 1
-      agent_warp_json
+      if [[ $# -ne 1 || "${1:-}" != "--json" ]]; then
+        agent_cli_error "warp" "invalid_arguments" "用法: sbv agent warp --json"
+        return $?
+      fi
+      agent_cli_run "warp" agent_warp_json
       ;;
     check)
-      agent_require_json_flag "${1:-}" || return 1
-      agent_singbox_check_json
+      if [[ $# -ne 1 || "${1:-}" != "--json" ]]; then
+        agent_cli_error "check" "invalid_arguments" "用法: sbv agent check --json"
+        return $?
+      fi
+      agent_cli_run "check" agent_singbox_check_json
       ;;
     doctor)
-      agent_require_json_flag "${1:-}" || return 1
-      agent_doctor_json
+      if [[ $# -ne 1 || "${1:-}" != "--json" ]]; then
+        agent_cli_error "doctor" "invalid_arguments" "用法: sbv agent doctor --json"
+        return $?
+      fi
+      agent_cli_run "doctor" agent_doctor_json
       ;;
     service)
-      agent_service_cli "$@"
+      service_command=${1:-service}
+      if [[ $# -lt 1 || $# -gt 3 ]]; then
+        agent_cli_error "service ${service_command}" "invalid_arguments" "用法: sbv agent service restart --json --yes"
+        return $?
+      fi
+      agent_cli_run "service ${service_command}" agent_service_cli "$@"
       ;;
     subman-sync)
-      agent_require_json_flag "${1:-}" || return 1
-      agent_subman_sync_json
+      if [[ $# -ne 1 || "${1:-}" != "--json" ]]; then
+        agent_cli_error "subman-sync" "invalid_arguments" "用法: sbv agent subman-sync --json"
+        return $?
+      fi
+      agent_cli_run "subman-sync" agent_subman_sync_json
       ;;
     *)
-      log_warn "未知 agent 子命令: ${command}" >&2
-      agent_print_help >&2
-      return 1
+      agent_cli_error "${command}" "unknown_command" "未知 agent 子命令: ${command}"
+      return $?
       ;;
   esac
 }
