@@ -66,6 +66,32 @@ capabilities_json=$(agent_cli capabilities --json)
 assert_envelope capabilities true "${capabilities_json}"
 jq -e '.data.action == "capabilities" and .data.schema == "1"' <<< "${capabilities_json}" >/dev/null
 
+original_root_check=$(declare -f agent_current_user_is_root)
+agent_current_user_is_root() {
+  return 1
+}
+if root_json=$(agent_dispatch status --json); then
+  printf 'expected non-root agent dispatch to return non-zero\n' >&2
+  exit 1
+fi
+assert_envelope status false "${root_json}"
+jq -e '.error == "root_required" and .data.error == "root_required"' <<< "${root_json}" >/dev/null
+eval "${original_root_check}"
+
+if command -v setpriv >/dev/null 2>&1 &&
+   awk '$1 == 0 && $3 > 1 { found = 1 } END { exit(found ? 0 : 1) }' /proc/self/uid_map &&
+   awk '$1 == 0 && $3 > 1 { found = 1 } END { exit(found ? 0 : 1) }' /proc/self/gid_map; then
+  chmod 0755 "${TMP_DIR}" "${TMP_DIR}/bin"
+  chmod 0644 "${TESTABLE_INSTALL}"
+  if root_json=$(setpriv --reuid=1 --regid=1 --clear-groups \
+    bash -c 'source "$1"; main agent status --json' _ "${TESTABLE_INSTALL}"); then
+    printf 'expected real non-root agent process to return non-zero\n' >&2
+    exit 1
+  fi
+  assert_envelope status false "${root_json}"
+  jq -e '.error == "root_required" and .data.error == "root_required"' <<< "${root_json}" >/dev/null
+fi
+
 SINGBOX_CHECK_FAIL_FILE="${TMP_DIR}/check-fails"
 touch "${SINGBOX_CHECK_FAIL_FILE}"
 export SINGBOX_CHECK_FAIL_FILE
@@ -91,6 +117,20 @@ if extra_json=$(agent_cli warp --json extra); then
 fi
 assert_envelope warp false "${extra_json}"
 jq -e '.error == "invalid_arguments"' <<< "${extra_json}" >/dev/null
+
+if service_extra_json=$(agent_cli service restart --json --yes extra); then
+  printf 'expected extra service argument to return non-zero\n' >&2
+  exit 1
+fi
+assert_envelope 'service restart' false "${service_extra_json}"
+jq -e '.error == "invalid_arguments"' <<< "${service_extra_json}" >/dev/null
+
+if upgrade_extra_json=$(agent_cli upgrade --json 1.14.0 --yes extra); then
+  printf 'expected extra upgrade argument to return non-zero\n' >&2
+  exit 1
+fi
+assert_envelope upgrade false "${upgrade_extra_json}"
+jq -e '.error == "invalid_arguments"' <<< "${upgrade_extra_json}" >/dev/null
 
 if unknown_json=$(agent_cli unknown-command --json); then
   printf 'expected unknown command to return non-zero\n' >&2

@@ -152,7 +152,7 @@ EOF_STALE_INDEX
 stale_index_hash=$(sha256sum "${SB_PROTOCOL_INDEX_FILE}" | awk '{print $1}')
 
 status_json=$(agent_cli status --json)
-jq -e '.protocols == ["vless-reality", "hy2"]' <<< "${status_json}" >/dev/null
+jq -e '.protocols == ["vless-reality", "hysteria2"]' <<< "${status_json}" >/dev/null
 [[ "$(sha256sum "${SB_PROTOCOL_INDEX_FILE}" | awk '{print $1}')" == "${stale_index_hash}" ]]
 
 doctor_json=$(agent_cli doctor --json)

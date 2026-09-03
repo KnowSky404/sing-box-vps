@@ -139,7 +139,12 @@ state_files_after=$(find "${SB_PROTOCOL_STATE_DIR}" -type f -printf '%P\n' | sor
 [[ "${state_hash_after}" == "${state_hash_before}" ]]
 [[ "${state_files_after}" == "${state_files_before}" ]]
 jq -e '
-  .ready == true
+  .schema == "1"
+  and .schema_version == "1.0"
+  and .command == "upgrade-check"
+  and .ok == true
+  and (.data | type == "object")
+  and .ready == true
   and .blockers == []
   and .current == "1.13.18"
   and .target == "1.14.0"
@@ -354,7 +359,11 @@ write_singbox_stub "1.13.18"
 
 upgrade_json=$(agent_cli upgrade --json 1.14.0 --yes)
 jq -e '
-  .ok == true
+  .schema == "1"
+  and .schema_version == "1.0"
+  and .command == "upgrade"
+  and .ok == true
+  and (.data | type == "object")
   and .changed == true
   and .restarted == true
   and .rolled_back == false
@@ -400,6 +409,23 @@ grep -Fq '  metadata.json' "${backup_dir}/SHA256SUMS"
 [[ "$(stat -c '%a' "${backup_dir}/metadata.json")" == "600" ]]
 [[ "$(stat -c '%a' "${backup_dir}/transaction-result.json")" == "600" ]]
 (cd "${backup_dir}" && sha256sum -c SHA256SUMS >/dev/null)
+
+backup_count_before=$(find "${SB_UPGRADE_BACKUP_ROOT}" -mindepth 1 -maxdepth 1 -type d | wc -l)
+noop_json=$(agent_cli upgrade --json 1.14.0 --yes)
+backup_count_after=$(find "${SB_UPGRADE_BACKUP_ROOT}" -mindepth 1 -maxdepth 1 -type d | wc -l)
+jq -e '
+  .schema == "1"
+  and .schema_version == "1.0"
+  and .command == "upgrade"
+  and .ok == true
+  and .changed == false
+  and .backup == null
+  and .transaction.status == "not_attempted"
+  and .transaction.result_persisted == false
+  and .transaction.reason == "already_installed"
+  and .transaction.rollback.attempted == false
+' <<< "${noop_json}" >/dev/null
+[[ "${backup_count_after}" == "${backup_count_before}" ]]
 
 mv() {
   if [[ "${3:-}" == "${backup_dir}/transaction-result.json" ]]; then

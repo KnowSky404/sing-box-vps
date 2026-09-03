@@ -9397,7 +9397,16 @@ agent_upgrade_cli() {
         config_preserved: true,
         config: {sha256_before: $config_hash, sha256_after: $config_hash},
         check: $check,
-        warnings: $warnings
+        warnings: $warnings,
+        transaction: {
+          id: null,
+          result_path: null,
+          status: "not_attempted",
+          result_persisted: false,
+          reason: "already_installed",
+          manifest: {path: null, sha256: null},
+          rollback: {attempted: false, result: "not_attempted"}
+        }
       }'
     return 0
   fi
@@ -9848,8 +9857,24 @@ agent_singbox_check_json() {
   return "${exit_code}"
 }
 
+agent_protocol_id() {
+  local protocol
+  protocol=$(normalize_protocol_id "$1") || return 1
+
+  case "${protocol}" in
+    hy2) printf 'hysteria2' ;;
+    *) printf '%s' "${protocol}" ;;
+  esac
+}
+
 agent_installed_protocols_json() {
-  list_indexed_protocols_raw | jq -Rsc 'split("\n") | map(select(length > 0))'
+  local protocol
+
+  while IFS= read -r protocol; do
+    [[ -n "${protocol}" ]] || continue
+    agent_protocol_id "${protocol}" || return 1
+    printf '\n'
+  done < <(list_indexed_protocols_raw) | jq -Rsc 'split("\n") | map(select(length > 0))'
 }
 
 agent_status_json() {
@@ -10013,12 +10038,13 @@ agent_doctor_json() {
 }
 
 agent_node_summary_json_for_current_protocol() {
-  local protocol public_ip shareable="true" client_exportable="false"
+  local protocol api_protocol public_ip shareable="true" client_exportable="false"
   local auth_enabled="false" server_name=""
   local node_name instance_id="" rate_up="" rate_down="" outbound_policy=""
   local tls_mode="" acme_mode="" obfs_enabled="false"
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
+  api_protocol=$(agent_protocol_id "${protocol}" 2>/dev/null || printf '%s' "${protocol}")
   public_ip=${1:-$(get_public_ip)}
   node_name=$(display_node_name_for_protocol "${protocol}" "${SB_NODE_NAME}" "")
 
@@ -10055,7 +10081,7 @@ agent_node_summary_json_for_current_protocol() {
   esac
 
   jq -n \
-    --arg protocol "${protocol}" \
+    --arg protocol "${api_protocol}" \
     --arg name "${node_name}" \
     --arg port "${SB_PORT}" \
     --arg server_name "${server_name}" \
@@ -10086,7 +10112,7 @@ agent_node_summary_json_for_current_protocol() {
         },
         "outbound_policy": $outbound_policy
       } else {} end)
-    + (if $protocol == "hy2" then {
+    + (if $protocol == "hysteria2" then {
         "rate_limit": {
           "up_mbps": (if $rate_up == "" then null else (try ($rate_up | tonumber) catch null) end),
           "down_mbps": (if $rate_down == "" then null else (try ($rate_down | tonumber) catch null) end)
@@ -10102,12 +10128,13 @@ agent_node_summary_json_for_current_protocol() {
 }
 
 agent_link_json_for_current_protocol() {
-  local protocol public_ip link_json outbound_json
+  local protocol api_protocol public_ip link_json outbound_json
   local address_label
   local node_name instance_id="" rate_up="" rate_down="" outbound_policy=""
   local compatibility_warnings_json='[]'
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
+  api_protocol=$(agent_protocol_id "${protocol}" 2>/dev/null || printf '%s' "${protocol}")
   public_ip=${1:-$(get_public_ip)}
   if [[ "${public_ip}" == *:* ]]; then
     address_label="IPv6"
@@ -10146,7 +10173,7 @@ agent_link_json_for_current_protocol() {
   esac
 
   jq -n \
-    --arg protocol "${protocol}" \
+    --arg protocol "${api_protocol}" \
     --arg name "${node_name}" \
     --arg port "${SB_PORT}" \
     --arg instance_id "${instance_id}" \
@@ -10652,6 +10679,39 @@ agent_cli() {
       return $?
       ;;
   esac
+}
+
+agent_command_name_from_args() {
+  local command=${1:-help}
+
+  if [[ "${command}" == "service" && -n "${2:-}" ]]; then
+    printf 'service %s' "${2}"
+  else
+    printf '%s' "${command}"
+  fi
+}
+
+agent_current_user_is_root() {
+  [[ ${EUID} -eq 0 ]]
+}
+
+agent_dispatch() {
+  local command
+
+  case "${1:-help}" in
+    help|-h|--help)
+      agent_cli "$@"
+      return $?
+      ;;
+  esac
+
+  command=$(agent_command_name_from_args "$@")
+  if ! agent_current_user_is_root; then
+    agent_cli_error "${command}" "root_required" "Agent 命令必须以 root 用户执行。"
+    return $?
+  fi
+
+  agent_cli "$@"
 }
 
 push_nodes_to_subman() {
@@ -12021,8 +12081,7 @@ main() {
         ;;
       agent)
         shift
-        check_root
-        agent_cli "$@"
+        agent_dispatch "$@"
         exit $?
         ;;
       update)

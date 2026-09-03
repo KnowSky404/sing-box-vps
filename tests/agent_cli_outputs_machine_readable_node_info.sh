@@ -125,20 +125,31 @@ EOF
 
 status_json=$(agent_cli status --json)
 jq -e '
-  .script_version == env.SCRIPT_VERSION
+  .schema == "1"
+  and .schema_version == "1.0"
+  and .command == "status"
+  and .ok == true
+  and (.data | type == "object")
+  and .script_version == env.SCRIPT_VERSION
   and .supported_sing_box_version == "1.14.0"
   and .service.active_state == "active"
   and .sing_box.version == "1.14.0"
   and .paths.config == env.SINGBOX_CONFIG_FILE
-  and .protocols == ["vless-reality", "mixed", "hy2", "anytls"]
+  and .protocols == ["vless-reality", "mixed", "hysteria2", "anytls"]
 ' <<< "${status_json}" >/dev/null
 
 nodes_json=$(agent_cli nodes --json)
 jq -e '
-  .public_address == "203.0.113.10"
+  .schema == "1"
+  and .schema_version == "1.0"
+  and .command == "nodes"
+  and .ok == true
+  and (.data | type == "object")
+  and .public_address == "203.0.113.10"
   and (.nodes | length) == 4
   and any(.nodes[]; .protocol == "vless-reality" and .shareable == true and .client_exportable == true and .port == 443)
   and any(.nodes[]; .protocol == "mixed" and .shareable == true and .client_exportable == false and .auth_enabled == true)
+  and any(.nodes[]; .protocol == "hysteria2" and .shareable == true and .client_exportable == true)
   and any(.nodes[]; .protocol == "anytls" and .shareable == true and .client_exportable == true and .server_name == "anytls.example.com")
 ' <<< "${nodes_json}" >/dev/null
 
@@ -154,16 +165,26 @@ fi
 
 links_json=$(agent_cli links --json)
 jq -e '
-  .public_address == "203.0.113.10"
+  .schema == "1"
+  and .schema_version == "1.0"
+  and .command == "links"
+  and .ok == true
+  and (.data | type == "object")
+  and .public_address == "203.0.113.10"
   and any(.nodes[]; .protocol == "vless-reality" and .links.vless == "vless://11111111-1111-1111-1111-111111111111@203.0.113.10:443?security=reality&sni=www.cloudflare.com&fp=chrome&pbk=public-key&sid=aaaaaaaaaaaaaaaa&flow=xtls-rprx-vision#vless_test-host-v4")
   and any(.nodes[]; .protocol == "mixed" and .links.http == "http://mixed-user:mixed-pass@203.0.113.10:2080" and .links.socks5 == "socks5://mixed-user:mixed-pass@203.0.113.10:2080")
-  and any(.nodes[]; .protocol == "hy2" and (.links.hy2 | startswith("hy2://hy2-password@hy2.example.com:8443?")))
+  and any(.nodes[]; .protocol == "hysteria2" and (.links.hy2 | startswith("hy2://hy2-password@hy2.example.com:8443?")))
   and any(.nodes[]; .protocol == "anytls" and .outbound.type == "anytls" and .outbound.server == "anytls.example.com" and .outbound.client_metadata == "")
 ' <<< "${links_json}" >/dev/null
 
 export_json=$(agent_cli export-client --json)
 jq -e '
-  .path == (env.SB_PROJECT_DIR + "/client/sing-box-client.json")
+  .schema == "1"
+  and .schema_version == "1.0"
+  and .command == "export-client"
+  and .ok == true
+  and (.data | type == "object")
+  and .path == (env.SB_PROJECT_DIR + "/client/sing-box-client.json")
   and .config.inbounds[0].type == "mixed"
   and any(.config.outbounds[]; .type == "vless")
   and any(.config.outbounds[]; .type == "hysteria2")
