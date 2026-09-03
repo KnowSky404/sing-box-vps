@@ -156,6 +156,95 @@ EOF
 }
 EOF
       ;;
+    shared-hy2-advanced)
+      cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
+{
+  "inbounds": [{
+    "type": "hysteria2",
+    "listen_port": 8443,
+    "users": [{"name": "advanced-hy2-user", "password": "advanced-hy2-pass"}],
+    "tls": {
+      "server_name": "advanced-hy2.example.com",
+      "certificate_provider": "advanced-hy2-provider"
+    },
+    "masquerade": "https://www.cloudflare.com"
+  }],
+  "certificate_providers": [{
+    "type": "acme",
+    "tag": "advanced-hy2-provider",
+    "domain": ["advanced-hy2.example.com", "alt.advanced-hy2.example.com"],
+    "data_directory": "/var/lib/sing-box/custom-acme",
+    "default_server_name": "advanced-hy2.example.com",
+    "email": "advanced-hy2@example.com",
+    "provider": "letsencrypt",
+    "disable_http_challenge": true,
+    "alternative_tls_port": 10443,
+    "key_type": "p256",
+    "http_client": {"engine": "go"},
+    "dns01_challenge": {
+      "provider": "cloudflare",
+      "api_token": "advanced-hy2-token",
+      "zone_token": "advanced-zone-token",
+      "ttl": "120s",
+      "propagation_delay": "5s",
+      "propagation_timeout": "2m",
+      "resolvers": ["1.1.1.1"],
+      "override_domain": "_acme-challenge.advanced-hy2.example.com"
+    }
+  }],
+  "route": {"rules": []}
+}
+EOF
+      ;;
+    inline-legacy-anytls-advanced)
+      cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
+{
+  "inbounds": [{
+    "type": "anytls",
+    "listen_port": 443,
+    "users": [{"name": "legacy-anytls-user", "password": "legacy-anytls-pass"}],
+    "tls": {
+      "server_name": "legacy-anytls.example.com",
+      "acme": {
+        "domain": ["legacy-anytls.example.com", "alt.legacy-anytls.example.com"],
+        "data_directory": "/var/lib/sing-box/legacy-acme",
+        "default_server_name": "legacy-anytls.example.com",
+        "email": "legacy-anytls@example.com",
+        "provider": "letsencrypt",
+        "disable_tls_alpn_challenge": true,
+        "alternative_http_port": 10080,
+        "http_client": {"engine": "go"}
+      }
+    }
+  }],
+  "route": {"rules": []}
+}
+EOF
+      ;;
+    shared-http-client)
+      cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
+{
+  "inbounds": [{
+    "type": "anytls",
+    "listen_port": 443,
+    "users": [{"name": "shared-http-user", "password": "shared-http-pass"}],
+    "tls": {
+      "server_name": "shared-http.example.com",
+      "certificate_provider": "shared-http-provider"
+    }
+  }],
+  "certificate_providers": [{
+    "type": "acme",
+    "tag": "shared-http-provider",
+    "domain": ["shared-http.example.com"],
+    "email": "shared-http@example.com",
+    "http_client": "shared-acme-http"
+  }],
+  "http_clients": [{"tag": "shared-acme-http", "engine": "go"}],
+  "route": {"rules": []}
+}
+EOF
+      ;;
     invalid-inline-provider)
       cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
 {
@@ -290,6 +379,57 @@ assert_loaded_anytls_provider_state() {
   fi
 }
 
+assert_advanced_provider_extras() {
+  local protocol=$1
+  local expected_data_directory=$2
+  local expected_default_server_name=$3
+  local expected_additional_domain=$4
+  local state_file extra_json provider_json
+  state_file=$(protocol_state_file "${protocol}")
+  extra_json=$(
+    # shellcheck disable=SC1090
+    source "${state_file}"
+    printf '%s' "${ACME_EXTRA_JSON:-}"
+  )
+
+  if ! jq -e \
+    --arg data_directory "${expected_data_directory}" \
+    --arg default_server_name "${expected_default_server_name}" \
+    --arg additional_domain "${expected_additional_domain}" \
+    '.data_directory == $data_directory and
+      .default_server_name == $default_server_name and
+      .provider == "letsencrypt" and
+      .http_client.engine == "go" and
+      .domain == [$default_server_name, $additional_domain] and
+      (.email? == null) and (.tag? == null) and (.type? == null)' \
+    <<< "${extra_json}" >/dev/null; then
+    printf 'expected advanced ACME extras in %s state, got:\n%s\n' "${protocol}" "${extra_json}" >&2
+    exit 1
+  fi
+
+  load_protocol_state "${protocol}"
+  case "${protocol}" in
+    hy2) provider_json=$(build_hy2_acme_json) ;;
+    anytls) provider_json=$(build_anytls_acme_json) ;;
+    *) printf 'unsupported advanced provider assertion protocol: %s\n' "${protocol}" >&2; exit 1 ;;
+  esac
+
+  if ! jq -e \
+    --arg data_directory "${expected_data_directory}" \
+    --arg default_server_name "${expected_default_server_name}" \
+    --arg additional_domain "${expected_additional_domain}" \
+    '.data_directory == $data_directory and
+      .default_server_name == $default_server_name and
+      .provider == "letsencrypt" and
+      .http_client.engine == "go" and
+      .domain == [$default_server_name, $additional_domain] and
+      (.type? == null) and (.tag? == null)' \
+    <<< "${provider_json}" >/dev/null; then
+    printf 'expected rebuilt %s provider to preserve advanced ACME extras, got:\n%s\n' "${protocol}" "${provider_json}" >&2
+    exit 1
+  fi
+}
+
 write_multi_protocol_config
 write_installed_runtime_artifacts
 
@@ -313,7 +453,7 @@ EOF
 run_takeover_from_incomplete_menu
 assert_rebuilt_multi_protocol_state
 
-for provider_case in shared-anytls inline-anytls inline-hy2; do
+for provider_case in shared-anytls inline-anytls inline-hy2 shared-hy2-advanced inline-legacy-anytls-advanced; do
   reset_protocol_state_artifacts
   write_certificate_provider_config "${provider_case}"
 
@@ -333,6 +473,38 @@ for provider_case in shared-anytls inline-anytls inline-hy2; do
       ;;
     inline-hy2)
       assert_provider_state hy2 inline-hy2.example.com inline-hy2@example.com inline-hy2-token
+      ;;
+    shared-hy2-advanced)
+      assert_provider_state hy2 advanced-hy2.example.com advanced-hy2@example.com advanced-hy2-token
+      assert_advanced_provider_extras \
+        hy2 /var/lib/sing-box/custom-acme advanced-hy2.example.com alt.advanced-hy2.example.com
+      if ! jq -e \
+        '.disable_http_challenge == true and .alternative_tls_port == 10443 and
+          .key_type == "p256" and .dns01_challenge.zone_token == "advanced-zone-token" and
+          .dns01_challenge.ttl == "120s" and .dns01_challenge.propagation_delay == "5s" and
+          .dns01_challenge.propagation_timeout == "2m" and
+          .dns01_challenge.resolvers == ["1.1.1.1"] and
+          .dns01_challenge.override_domain == "_acme-challenge.advanced-hy2.example.com"' \
+        <<< "$(build_hy2_acme_json)" >/dev/null; then
+        printf 'expected advanced shared Hy2 ACME and DNS01 fields to survive rebuild\n' >&2
+        exit 1
+      fi
+      ;;
+    inline-legacy-anytls-advanced)
+      if ! protocol_state_matches_config anytls; then
+        printf 'expected legacy inline AnyTLS ACME state to match config snapshot\n' >&2
+        exit 1
+      fi
+      assert_advanced_provider_extras \
+        anytls /var/lib/sing-box/legacy-acme legacy-anytls.example.com alt.legacy-anytls.example.com
+      if ! jq -e \
+        '.disable_tls_alpn_challenge == true and .alternative_http_port == 10080 and
+          .domain == ["legacy-anytls.example.com", "alt.legacy-anytls.example.com"] and
+          .email == "legacy-anytls@example.com"' \
+        <<< "$(build_anytls_acme_json)" >/dev/null; then
+        printf 'expected legacy inline AnyTLS ACME fields to survive 1.14 provider rebuild\n' >&2
+        exit 1
+      fi
       ;;
   esac
 done
@@ -356,6 +528,17 @@ if rebuild_protocol_state_from_config; then
 fi
 if [[ -e "$(protocol_state_file anytls)" || -e "${SB_PROTOCOL_INDEX_FILE}" ]]; then
   printf 'unmapped shared provider must not leave rewritten protocol state\n' >&2
+  exit 1
+fi
+
+reset_protocol_state_artifacts
+write_certificate_provider_config shared-http-client
+if rebuild_protocol_state_from_config; then
+  printf 'expected provider referencing a shared http_client to fail closed during state rebuild\n' >&2
+  exit 1
+fi
+if [[ -e "$(protocol_state_file anytls)" || -e "${SB_PROTOCOL_INDEX_FILE}" ]]; then
+  printf 'shared http_client provider must not leave rewritten protocol state\n' >&2
   exit 1
 fi
 

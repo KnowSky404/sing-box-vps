@@ -92,6 +92,7 @@ SB_HY2_TLS_MODE="acme"
 SB_HY2_ACME_MODE="http"
 SB_HY2_ACME_EMAIL=""
 SB_HY2_ACME_DOMAIN=""
+SB_HY2_ACME_EXTRA_JSON='{}'
 SB_HY2_DNS_PROVIDER="cloudflare"
 SB_HY2_CF_API_TOKEN=""
 SB_HY2_CERT_PATH=""
@@ -104,6 +105,7 @@ SB_ANYTLS_TLS_MODE="acme"
 SB_ANYTLS_ACME_MODE="http"
 SB_ANYTLS_ACME_EMAIL=""
 SB_ANYTLS_ACME_DOMAIN=""
+SB_ANYTLS_ACME_EXTRA_JSON='{}'
 SB_ANYTLS_DNS_PROVIDER="cloudflare"
 SB_ANYTLS_CF_API_TOKEN=""
 SB_ANYTLS_CERT_PATH=""
@@ -843,6 +845,16 @@ write_env_assignment() {
   local escaped
   printf -v escaped '%q' "${value}"
   printf '%s=%s\n' "${key}" "${escaped}"
+}
+
+acme_extra_json_or_default() {
+  local value=${1:-}
+
+  if [[ -n "${value}" ]]; then
+    printf '%s' "${value}"
+  else
+    printf '{}'
+  fi
 }
 
 vless_reality_instance_dir() {
@@ -1962,6 +1974,7 @@ save_hy2_state() {
     write_env_assignment "ACME_MODE" "${SB_HY2_ACME_MODE}"
     write_env_assignment "ACME_EMAIL" "${SB_HY2_ACME_EMAIL}"
     write_env_assignment "ACME_DOMAIN" "${SB_HY2_ACME_DOMAIN}"
+    write_env_assignment "ACME_EXTRA_JSON" "$(acme_extra_json_or_default "${SB_HY2_ACME_EXTRA_JSON:-}")"
     write_env_assignment "DNS_PROVIDER" "${SB_HY2_DNS_PROVIDER}"
     write_env_assignment "CF_API_TOKEN" "${SB_HY2_CF_API_TOKEN}"
     write_env_assignment "CERT_PATH" "${SB_HY2_CERT_PATH}"
@@ -1986,6 +1999,7 @@ save_anytls_state() {
     write_env_assignment "ACME_MODE" "${SB_ANYTLS_ACME_MODE}"
     write_env_assignment "ACME_EMAIL" "${SB_ANYTLS_ACME_EMAIL}"
     write_env_assignment "ACME_DOMAIN" "${SB_ANYTLS_ACME_DOMAIN}"
+    write_env_assignment "ACME_EXTRA_JSON" "$(acme_extra_json_or_default "${SB_ANYTLS_ACME_EXTRA_JSON:-}")"
     write_env_assignment "DNS_PROVIDER" "${SB_ANYTLS_DNS_PROVIDER}"
     write_env_assignment "CF_API_TOKEN" "${SB_ANYTLS_CF_API_TOKEN}"
     write_env_assignment "CERT_PATH" "${SB_ANYTLS_CERT_PATH}"
@@ -3202,6 +3216,7 @@ set_protocol_defaults() {
       SB_HY2_ACME_MODE="http"
       SB_HY2_ACME_EMAIL=""
       SB_HY2_ACME_DOMAIN=""
+      SB_HY2_ACME_EXTRA_JSON='{}'
       SB_HY2_DNS_PROVIDER="cloudflare"
       SB_HY2_CF_API_TOKEN=""
       SB_HY2_CERT_PATH=""
@@ -3245,6 +3260,7 @@ set_protocol_defaults() {
       SB_ANYTLS_ACME_MODE="http"
       SB_ANYTLS_ACME_EMAIL=""
       SB_ANYTLS_ACME_DOMAIN=""
+      SB_ANYTLS_ACME_EXTRA_JSON='{}'
       SB_ANYTLS_DNS_PROVIDER="cloudflare"
       SB_ANYTLS_CF_API_TOKEN=""
       SB_ANYTLS_CERT_PATH=""
@@ -4280,6 +4296,7 @@ load_protocol_state() {
     log_error "未找到协议状态文件: ${state_file}"
   fi
 
+  unset ACME_EXTRA_JSON || true
   # shellcheck disable=SC1090
   source "${state_file}"
 
@@ -4314,6 +4331,7 @@ load_protocol_state() {
       SB_HY2_ACME_MODE="http"
       SB_HY2_ACME_EMAIL=""
       SB_HY2_ACME_DOMAIN=""
+      SB_HY2_ACME_EXTRA_JSON='{}'
       SB_HY2_DNS_PROVIDER="cloudflare"
       SB_HY2_CF_API_TOKEN=""
       SB_HY2_CERT_PATH=""
@@ -4326,6 +4344,7 @@ load_protocol_state() {
       SB_ANYTLS_ACME_MODE="http"
       SB_ANYTLS_ACME_EMAIL=""
       SB_ANYTLS_ACME_DOMAIN=""
+      SB_ANYTLS_ACME_EXTRA_JSON='{}'
       SB_ANYTLS_DNS_PROVIDER="cloudflare"
       SB_ANYTLS_CF_API_TOKEN=""
       SB_ANYTLS_CERT_PATH=""
@@ -4356,6 +4375,7 @@ load_protocol_state() {
       SB_HY2_ACME_MODE="http"
       SB_HY2_ACME_EMAIL=""
       SB_HY2_ACME_DOMAIN=""
+      SB_HY2_ACME_EXTRA_JSON='{}'
       SB_HY2_DNS_PROVIDER="cloudflare"
       SB_HY2_CF_API_TOKEN=""
       SB_HY2_CERT_PATH=""
@@ -4368,6 +4388,7 @@ load_protocol_state() {
       SB_ANYTLS_ACME_MODE="http"
       SB_ANYTLS_ACME_EMAIL=""
       SB_ANYTLS_ACME_DOMAIN=""
+      SB_ANYTLS_ACME_EXTRA_JSON='{}'
       SB_ANYTLS_DNS_PROVIDER="cloudflare"
       SB_ANYTLS_CF_API_TOKEN=""
       SB_ANYTLS_CERT_PATH=""
@@ -4398,6 +4419,7 @@ load_protocol_state() {
       SB_HY2_ACME_MODE="${ACME_MODE:-http}"
       SB_HY2_ACME_EMAIL="${ACME_EMAIL:-}"
       SB_HY2_ACME_DOMAIN="${ACME_DOMAIN:-}"
+      SB_HY2_ACME_EXTRA_JSON=$(acme_extra_json_or_default "${ACME_EXTRA_JSON:-}")
       SB_HY2_DNS_PROVIDER="${DNS_PROVIDER:-cloudflare}"
       SB_HY2_CF_API_TOKEN="${CF_API_TOKEN:-}"
       SB_HY2_CERT_PATH="${CERT_PATH:-}"
@@ -4410,6 +4432,7 @@ load_protocol_state() {
       SB_ANYTLS_ACME_MODE="http"
       SB_ANYTLS_ACME_EMAIL=""
       SB_ANYTLS_ACME_DOMAIN=""
+      SB_ANYTLS_ACME_EXTRA_JSON='{}'
       SB_ANYTLS_DNS_PROVIDER="cloudflare"
       SB_ANYTLS_CF_API_TOKEN=""
       SB_ANYTLS_CERT_PATH=""
@@ -4440,6 +4463,7 @@ load_protocol_state() {
       SB_HY2_ACME_MODE="http"
       SB_HY2_ACME_EMAIL=""
       SB_HY2_ACME_DOMAIN=""
+      SB_HY2_ACME_EXTRA_JSON='{}'
       SB_HY2_DNS_PROVIDER="cloudflare"
       SB_HY2_CF_API_TOKEN=""
       SB_HY2_CERT_PATH=""
@@ -4452,6 +4476,7 @@ load_protocol_state() {
       SB_ANYTLS_ACME_MODE="${ACME_MODE:-http}"
       SB_ANYTLS_ACME_EMAIL="${ACME_EMAIL:-}"
       SB_ANYTLS_ACME_DOMAIN="${ACME_DOMAIN:-}"
+      SB_ANYTLS_ACME_EXTRA_JSON=$(acme_extra_json_or_default "${ACME_EXTRA_JSON:-}")
       SB_ANYTLS_DNS_PROVIDER="${DNS_PROVIDER:-cloudflare}"
       SB_ANYTLS_CF_API_TOKEN="${CF_API_TOKEN:-}"
       SB_ANYTLS_CERT_PATH="${CERT_PATH:-}"
@@ -4690,39 +4715,53 @@ hy2_certificate_provider_tag() {
   printf 'hy2-cert-provider'
 }
 
+build_acme_json_from_state() {
+  local acme_email=$1
+  local acme_domain=$2
+  local acme_mode=$3
+  local dns_provider=$4
+  local api_token=$5
+  local extra_json=${6:-}
+
+  [[ -n "${extra_json}" ]] || extra_json='{}'
+  jq -e 'type == "object"' >/dev/null 2>&1 <<< "${extra_json}" || return 1
+  jq -n \
+    --arg acme_email "${acme_email}" \
+    --arg acme_domain "${acme_domain}" \
+    --arg acme_data_directory "${SB_ACME_DATA_DIR}" \
+    --arg acme_mode "${acme_mode}" \
+    --arg dns_provider "${dns_provider}" \
+    --arg api_token "${api_token}" \
+    --argjson extra "${extra_json}" \
+    '$extra
+    | ((.domain // []) | if type == "array" then .[1:] else error("invalid ACME domain extras") end) as $additional_domains
+    | del(.type, .tag, .domain, .email)
+    | .domain = ([$acme_domain] + $additional_domains)
+    | if has("data_directory") then . else .data_directory = $acme_data_directory end
+    | if $acme_email != "" then .email = $acme_email else del(.email) end
+    | if $acme_mode == "dns" then
+        .dns01_challenge = (
+          ((.dns01_challenge // {}) | if type == "object" then . else error("invalid dns01_challenge extras") end)
+          + {provider: $dns_provider}
+          + (if $api_token != "" then {api_token: $api_token} else {} end)
+        )
+      else
+        del(.dns01_challenge)
+      end'
+}
+
 build_hy2_acme_json() {
   if [[ "${SB_HY2_TLS_MODE}" != "acme" ]]; then
     return 0
   fi
 
-  jq -n \
-    --arg acme_email "${SB_HY2_ACME_EMAIL}" \
-    --arg acme_domain "${SB_HY2_ACME_DOMAIN}" \
-    --arg acme_data_directory "${SB_ACME_DATA_DIR}" \
-    --arg acme_mode "${SB_HY2_ACME_MODE}" \
-    --arg dns_provider "${SB_HY2_DNS_PROVIDER}" \
-    --arg cf_api_token "${SB_HY2_CF_API_TOKEN}" \
-    '{
-      "domain": [ $acme_domain ],
-      "data_directory": $acme_data_directory
-    } + (
-      if $acme_email != "" then
-        { "email": $acme_email }
-      else
-        {}
-      end
-    ) + (
-      if $acme_mode == "dns" then
-        {
-          "dns01_challenge": {
-            "provider": $dns_provider,
-            "api_token": $cf_api_token
-          }
-        }
-      else
-        {}
-      end
-    )'
+  build_acme_json_from_state \
+    "${SB_HY2_ACME_EMAIL}" \
+    "${SB_HY2_ACME_DOMAIN}" \
+    "${SB_HY2_ACME_MODE}" \
+    "${SB_HY2_DNS_PROVIDER}" \
+    "${SB_HY2_CF_API_TOKEN}" \
+    "$(acme_extra_json_or_default "${SB_HY2_ACME_EXTRA_JSON:-}")"
 }
 
 build_hy2_certificate_provider_json() {
@@ -4839,34 +4878,13 @@ build_anytls_acme_json() {
     return 0
   fi
 
-  jq -n \
-    --arg acme_email "${SB_ANYTLS_ACME_EMAIL}" \
-    --arg acme_domain "${SB_ANYTLS_ACME_DOMAIN}" \
-    --arg acme_data_directory "${SB_ACME_DATA_DIR}" \
-    --arg acme_mode "${SB_ANYTLS_ACME_MODE}" \
-    --arg dns_provider "${SB_ANYTLS_DNS_PROVIDER}" \
-    --arg cf_api_token "${SB_ANYTLS_CF_API_TOKEN}" \
-    '{
-      "domain": [ $acme_domain ],
-      "data_directory": $acme_data_directory
-    } + (
-      if $acme_email != "" then
-        { "email": $acme_email }
-      else
-        {}
-      end
-    ) + (
-      if $acme_mode == "dns" then
-        {
-          "dns01_challenge": {
-            "provider": $dns_provider,
-            "api_token": $cf_api_token
-          }
-        }
-      else
-        {}
-      end
-    )'
+  build_acme_json_from_state \
+    "${SB_ANYTLS_ACME_EMAIL}" \
+    "${SB_ANYTLS_ACME_DOMAIN}" \
+    "${SB_ANYTLS_ACME_MODE}" \
+    "${SB_ANYTLS_DNS_PROVIDER}" \
+    "${SB_ANYTLS_CF_API_TOKEN}" \
+    "$(acme_extra_json_or_default "${SB_ANYTLS_ACME_EXTRA_JSON:-}")"
 }
 
 build_anytls_certificate_provider_json() {
@@ -6109,6 +6127,50 @@ config_has_advanced_route() {
   ' "${config_file}" &>/dev/null
 }
 
+normalize_acme_extra_json() {
+  local acme_json=$1
+
+  if ! jq -n -e --argjson acme "${acme_json}" '$acme | type == "object"' >/dev/null 2>&1; then
+    return 1
+  fi
+  if jq -n -e --argjson acme "${acme_json}" '$acme.http_client? | type == "string"' >/dev/null 2>&1; then
+    return 1
+  fi
+
+  jq -cnS \
+    --argjson acme "${acme_json}" \
+    --arg default_data_directory "${SB_ACME_DATA_DIR}" \
+    '$acme
+    | if .domain == null then
+        del(.domain)
+      elif (.domain | type) != "array" or (.domain | length) == 0 then
+        error("invalid ACME domain")
+      elif (.domain | length) == 1 then
+        del(.domain)
+      else
+        .
+      end
+    | del(.type, .tag, .email)
+    | if .data_directory == $default_data_directory then del(.data_directory) else . end
+    | if .dns01_challenge == null then
+        del(.dns01_challenge)
+      elif (.dns01_challenge | type) == "object" then
+        .dns01_challenge |= del(.provider, .api_token)
+        | if .dns01_challenge == {} then del(.dns01_challenge) else . end
+      else
+        .
+      end'
+}
+
+inline_acme_extra_json_from_config() {
+  local config_file=$1
+  local inbound_index=$2
+  local acme_json
+
+  acme_json=$(jq -c --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme' "${config_file}") || return 1
+  normalize_acme_extra_json "${acme_json}"
+}
+
 # Resolve an inbound certificate provider into the state fields consumed by all
 # protocol readers.  A certificate_provider may be either a shared tag or an
 # inline object, but only an ACME provider can be represented by the script's
@@ -6123,6 +6185,7 @@ load_certificate_provider_from_config() {
   CERT_PROVIDER_TAG=""
   CERT_PROVIDER_EMAIL=""
   CERT_PROVIDER_DOMAIN=""
+  CERT_PROVIDER_EXTRA_JSON='{}'
   CERT_PROVIDER_ACME_MODE="http"
   CERT_PROVIDER_DNS_PROVIDER="cloudflare"
   CERT_PROVIDER_CF_API_TOKEN=""
@@ -6181,6 +6244,15 @@ load_certificate_provider_from_config() {
   }
   if [[ "${provider_type}" != "acme" ]]; then
     CERT_PROVIDER_ERROR="certificate_provider 不是 ACME provider"
+    return 1
+  fi
+
+  if ! CERT_PROVIDER_EXTRA_JSON=$(normalize_acme_extra_json "${provider_json}"); then
+    if jq -n -e --argjson provider "${provider_json}" '$provider.http_client? | type == "string"' >/dev/null 2>&1; then
+      CERT_PROVIDER_ERROR="暂不支持引用 shared http_client 的 ACME provider"
+    else
+      CERT_PROVIDER_ERROR="无法保留 ACME provider 的扩展字段"
+    fi
     return 1
   fi
 
@@ -6317,6 +6389,9 @@ load_current_config_state() {
         SB_HY2_DNS_PROVIDER="cloudflare"
         SB_HY2_CF_API_TOKEN=""
       fi
+      if ! SB_HY2_ACME_EXTRA_JSON=$(inline_acme_extra_json_from_config "${SINGBOX_CONFIG_FILE}" 0); then
+        log_error "当前 Hysteria2 tls.acme 扩展字段无法安全保留。"
+      fi
       SB_HY2_CERT_PATH=""
       SB_HY2_KEY_PATH=""
     elif jq -e '.inbounds[0].tls.certificate_provider? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
@@ -6327,6 +6402,7 @@ load_current_config_state() {
       SB_HY2_ACME_MODE="${CERT_PROVIDER_ACME_MODE}"
       SB_HY2_ACME_EMAIL="${CERT_PROVIDER_EMAIL}"
       SB_HY2_ACME_DOMAIN="${CERT_PROVIDER_DOMAIN}"
+      SB_HY2_ACME_EXTRA_JSON="${CERT_PROVIDER_EXTRA_JSON}"
       SB_HY2_DNS_PROVIDER="${CERT_PROVIDER_DNS_PROVIDER}"
       SB_HY2_CF_API_TOKEN="${CERT_PROVIDER_CF_API_TOKEN}"
       SB_HY2_CERT_PATH=""
@@ -6336,6 +6412,7 @@ load_current_config_state() {
       SB_HY2_ACME_MODE="http"
       SB_HY2_ACME_EMAIL=""
       SB_HY2_ACME_DOMAIN="${SB_HY2_DOMAIN}"
+      SB_HY2_ACME_EXTRA_JSON='{}'
       SB_HY2_DNS_PROVIDER="cloudflare"
       SB_HY2_CF_API_TOKEN=""
       SB_HY2_CERT_PATH=$(jq -r '.inbounds[0].tls.certificate_path // ""' "${SINGBOX_CONFIG_FILE}")
@@ -6363,6 +6440,9 @@ load_current_config_state() {
         SB_ANYTLS_DNS_PROVIDER="cloudflare"
         SB_ANYTLS_CF_API_TOKEN=""
       fi
+      if ! SB_ANYTLS_ACME_EXTRA_JSON=$(inline_acme_extra_json_from_config "${SINGBOX_CONFIG_FILE}" 0); then
+        log_error "当前 AnyTLS tls.acme 扩展字段无法安全保留。"
+      fi
       SB_ANYTLS_CERT_PATH=""
       SB_ANYTLS_KEY_PATH=""
     elif jq -e '.inbounds[0].tls.certificate_provider? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
@@ -6373,6 +6453,7 @@ load_current_config_state() {
       SB_ANYTLS_ACME_MODE="${CERT_PROVIDER_ACME_MODE}"
       SB_ANYTLS_ACME_EMAIL="${CERT_PROVIDER_EMAIL}"
       SB_ANYTLS_ACME_DOMAIN="${CERT_PROVIDER_DOMAIN}"
+      SB_ANYTLS_ACME_EXTRA_JSON="${CERT_PROVIDER_EXTRA_JSON}"
       SB_ANYTLS_DNS_PROVIDER="${CERT_PROVIDER_DNS_PROVIDER}"
       SB_ANYTLS_CF_API_TOKEN="${CERT_PROVIDER_CF_API_TOKEN}"
       SB_ANYTLS_CERT_PATH=""
@@ -6382,6 +6463,7 @@ load_current_config_state() {
       SB_ANYTLS_ACME_MODE="http"
       SB_ANYTLS_ACME_EMAIL=""
       SB_ANYTLS_ACME_DOMAIN="${SB_ANYTLS_DOMAIN}"
+      SB_ANYTLS_ACME_EXTRA_JSON='{}'
       SB_ANYTLS_DNS_PROVIDER="cloudflare"
       SB_ANYTLS_CF_API_TOKEN=""
       SB_ANYTLS_CERT_PATH=$(jq -r '.inbounds[0].tls.certificate_path // ""' "${SINGBOX_CONFIG_FILE}")
@@ -11029,7 +11111,7 @@ collect_vless_reality_config_instances() {
 render_expected_protocol_state_snapshot() {
   [[ -f "${SINGBOX_CONFIG_FILE}" ]] || return 1
 
-  local protocol inbound_index cert_provider_tag outbound_policy
+  local protocol inbound_index cert_provider_tag outbound_policy acme_extra_json
   protocol=$(normalize_protocol_id "$1")
   inbound_index=$(find_config_inbound_index_by_protocol "${protocol}") || return 1
 
@@ -11093,6 +11175,8 @@ render_expected_protocol_state_snapshot() {
         fi
         printf 'ACME_EMAIL=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.email // ""' "${SINGBOX_CONFIG_FILE}")"
         printf 'ACME_DOMAIN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.domain[0] // .inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")"
+        acme_extra_json=$(inline_acme_extra_json_from_config "${SINGBOX_CONFIG_FILE}" "${inbound_index}") || return 1
+        printf 'ACME_EXTRA_JSON=%s\n' "${acme_extra_json}"
         if jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
           printf 'DNS_PROVIDER=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge.provider // "cloudflare"' "${SINGBOX_CONFIG_FILE}")"
           printf 'CF_API_TOKEN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge.api_token // ""' "${SINGBOX_CONFIG_FILE}")"
@@ -11108,6 +11192,7 @@ render_expected_protocol_state_snapshot() {
         printf 'ACME_MODE=%s\n' "${CERT_PROVIDER_ACME_MODE}"
         printf 'ACME_EMAIL=%s\n' "${CERT_PROVIDER_EMAIL}"
         printf 'ACME_DOMAIN=%s\n' "${CERT_PROVIDER_DOMAIN}"
+        printf 'ACME_EXTRA_JSON=%s\n' "${CERT_PROVIDER_EXTRA_JSON}"
         printf 'DNS_PROVIDER=%s\n' "${CERT_PROVIDER_DNS_PROVIDER}"
         printf 'CF_API_TOKEN=%s\n' "${CERT_PROVIDER_CF_API_TOKEN}"
         printf 'CERT_PATH=\n'
@@ -11117,6 +11202,7 @@ render_expected_protocol_state_snapshot() {
         printf 'ACME_MODE=http\n'
         printf 'ACME_EMAIL=\n'
         printf 'ACME_DOMAIN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")"
+        printf 'ACME_EXTRA_JSON={}\n'
         printf 'DNS_PROVIDER=cloudflare\n'
         printf 'CF_API_TOKEN=\n'
         printf 'CERT_PATH=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_path // ""' "${SINGBOX_CONFIG_FILE}")"
@@ -11138,6 +11224,8 @@ render_expected_protocol_state_snapshot() {
         fi
         printf 'ACME_EMAIL=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.email // ""' "${SINGBOX_CONFIG_FILE}")"
         printf 'ACME_DOMAIN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.domain[0] // .inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")"
+        acme_extra_json=$(inline_acme_extra_json_from_config "${SINGBOX_CONFIG_FILE}" "${inbound_index}") || return 1
+        printf 'ACME_EXTRA_JSON=%s\n' "${acme_extra_json}"
         if jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
           printf 'DNS_PROVIDER=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge.provider // "cloudflare"' "${SINGBOX_CONFIG_FILE}")"
           printf 'CF_API_TOKEN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.dns01_challenge.api_token // ""' "${SINGBOX_CONFIG_FILE}")"
@@ -11153,6 +11241,7 @@ render_expected_protocol_state_snapshot() {
         printf 'ACME_MODE=%s\n' "${CERT_PROVIDER_ACME_MODE}"
         printf 'ACME_EMAIL=%s\n' "${CERT_PROVIDER_EMAIL}"
         printf 'ACME_DOMAIN=%s\n' "${CERT_PROVIDER_DOMAIN}"
+        printf 'ACME_EXTRA_JSON=%s\n' "${CERT_PROVIDER_EXTRA_JSON}"
         printf 'DNS_PROVIDER=%s\n' "${CERT_PROVIDER_DNS_PROVIDER}"
         printf 'CF_API_TOKEN=%s\n' "${CERT_PROVIDER_CF_API_TOKEN}"
         printf 'CERT_PATH=\n'
@@ -11162,6 +11251,7 @@ render_expected_protocol_state_snapshot() {
         printf 'ACME_MODE=http\n'
         printf 'ACME_EMAIL=\n'
         printf 'ACME_DOMAIN=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")"
+        printf 'ACME_EXTRA_JSON={}\n'
         printf 'DNS_PROVIDER=cloudflare\n'
         printf 'CF_API_TOKEN=\n'
         printf 'CERT_PATH=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_path // ""' "${SINGBOX_CONFIG_FILE}")"
@@ -11251,6 +11341,7 @@ render_saved_protocol_state_snapshot() {
         printf 'ACME_MODE=%s\n' "${ACME_MODE:-}"
         printf 'ACME_EMAIL=%s\n' "${ACME_EMAIL:-}"
         printf 'ACME_DOMAIN=%s\n' "${ACME_DOMAIN:-}"
+        printf 'ACME_EXTRA_JSON=%s\n' "$(acme_extra_json_or_default "${ACME_EXTRA_JSON:-}")"
         printf 'DNS_PROVIDER=%s\n' "${DNS_PROVIDER:-}"
         printf 'CF_API_TOKEN=%s\n' "${CF_API_TOKEN:-}"
         printf 'CERT_PATH=%s\n' "${CERT_PATH:-}"
@@ -11270,6 +11361,7 @@ render_saved_protocol_state_snapshot() {
         printf 'ACME_MODE=%s\n' "${ACME_MODE:-}"
         printf 'ACME_EMAIL=%s\n' "${ACME_EMAIL:-}"
         printf 'ACME_DOMAIN=%s\n' "${ACME_DOMAIN:-}"
+        printf 'ACME_EXTRA_JSON=%s\n' "$(acme_extra_json_or_default "${ACME_EXTRA_JSON:-}")"
         printf 'DNS_PROVIDER=%s\n' "${DNS_PROVIDER:-}"
         printf 'CF_API_TOKEN=%s\n' "${CF_API_TOKEN:-}"
         printf 'CERT_PATH=%s\n' "${CERT_PATH:-}"
@@ -11673,6 +11765,10 @@ rebuild_protocol_state_from_config() {
             SB_HY2_DNS_PROVIDER="cloudflare"
             SB_HY2_CF_API_TOKEN=""
           fi
+          if ! SB_HY2_ACME_EXTRA_JSON=$(inline_acme_extra_json_from_config "${SINGBOX_CONFIG_FILE}" "${inbound_index}"); then
+            abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+            return 1
+          fi
           SB_HY2_CERT_PATH=""
           SB_HY2_KEY_PATH=""
         elif jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
@@ -11686,6 +11782,7 @@ rebuild_protocol_state_from_config() {
           SB_HY2_ACME_MODE="${CERT_PROVIDER_ACME_MODE}"
           SB_HY2_DNS_PROVIDER="${CERT_PROVIDER_DNS_PROVIDER}"
           SB_HY2_CF_API_TOKEN="${CERT_PROVIDER_CF_API_TOKEN}"
+          SB_HY2_ACME_EXTRA_JSON="${CERT_PROVIDER_EXTRA_JSON}"
           SB_HY2_CERT_PATH=""
           SB_HY2_KEY_PATH=""
         else
@@ -11693,6 +11790,7 @@ rebuild_protocol_state_from_config() {
           SB_HY2_ACME_MODE="http"
           SB_HY2_ACME_EMAIL=""
           SB_HY2_ACME_DOMAIN="${SB_HY2_DOMAIN}"
+          SB_HY2_ACME_EXTRA_JSON='{}'
           SB_HY2_DNS_PROVIDER="cloudflare"
           SB_HY2_CF_API_TOKEN=""
           SB_HY2_CERT_PATH=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_path // ""' "${SINGBOX_CONFIG_FILE}")
@@ -11722,6 +11820,10 @@ rebuild_protocol_state_from_config() {
             SB_ANYTLS_DNS_PROVIDER="cloudflare"
             SB_ANYTLS_CF_API_TOKEN=""
           fi
+          if ! SB_ANYTLS_ACME_EXTRA_JSON=$(inline_acme_extra_json_from_config "${SINGBOX_CONFIG_FILE}" "${inbound_index}"); then
+            abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+            return 1
+          fi
           SB_ANYTLS_ACME_EMAIL=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.email // ""' "${SINGBOX_CONFIG_FILE}")
           SB_ANYTLS_ACME_DOMAIN=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.domain[0] // .inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
           SB_ANYTLS_CERT_PATH=""
@@ -11737,6 +11839,7 @@ rebuild_protocol_state_from_config() {
           SB_ANYTLS_CF_API_TOKEN="${CERT_PROVIDER_CF_API_TOKEN}"
           SB_ANYTLS_ACME_EMAIL="${CERT_PROVIDER_EMAIL}"
           SB_ANYTLS_ACME_DOMAIN="${CERT_PROVIDER_DOMAIN}"
+          SB_ANYTLS_ACME_EXTRA_JSON="${CERT_PROVIDER_EXTRA_JSON}"
           SB_ANYTLS_CERT_PATH=""
           SB_ANYTLS_KEY_PATH=""
         else
@@ -11744,6 +11847,7 @@ rebuild_protocol_state_from_config() {
           SB_ANYTLS_ACME_MODE="http"
           SB_ANYTLS_ACME_EMAIL=""
           SB_ANYTLS_ACME_DOMAIN="${SB_ANYTLS_DOMAIN}"
+          SB_ANYTLS_ACME_EXTRA_JSON='{}'
           SB_ANYTLS_DNS_PROVIDER="cloudflare"
           SB_ANYTLS_CF_API_TOKEN=""
           SB_ANYTLS_CERT_PATH=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_path // ""' "${SINGBOX_CONFIG_FILE}")
