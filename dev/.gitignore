@@ -1,4 +1,7 @@
 # Keep the dev directory in git, but ignore all local verification artifacts.
 *
 !.gitignore
+!verification/
+!verification/docker/
+!verification/docker/Dockerfile
 verification-runs/

@@ -5,6 +5,8 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "${TMP_DIR}"' EXIT
+# shellcheck disable=SC1091
+source "${REPO_ROOT}/tests/verification_protocol_probe_test_helper.sh"
 
 ARTIFACT_DIR="${TMP_DIR}/artifacts"
 REMOTE_ROOT="${TMP_DIR}/remote-root"
@@ -18,6 +20,7 @@ ESCAPED_PASSWORD='hy2 password with spaces & $? []'
 ESCAPED_OBFS_PASSWORD='obfs password $(echo no) ;|#'
 
 mkdir -p "${REMOTE_ROOT}/root/sing-box-vps/protocols"
+setup_protocol_probe_command_stubs
 
 write_hy2_state() {
   local domain=$1
@@ -216,7 +219,16 @@ fi
 grep -Fqx "${EXPECTED_CONFIG_PATH}" "${EXPECTED_CLIENT_PATH_ARTIFACT}"
 grep -Fqx 'PROTOCOL=hy2' "${EXPECTED_RESULT_PATH}"
 grep -Fqx 'RESULT=success' "${EXPECTED_RESULT_PATH}"
-grep -Fqx 'sing-box-vps-loopback-ok' "${EXPECTED_STDOUT_PATH}"
+grep -Fq 'sing-box-vps-loopback-ok-hy2-' "${EXPECTED_STDOUT_PATH}"
+grep -Fqx 'client-check-ok' "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/hy2/client.check.txt"
+[[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/hy2/client.stdout.txt" ]]
+[[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/hy2/client.stderr.txt" ]]
+grep -Fq 'sing-box run -c ' "${PROBE_CALL_LOG}"
+grep -Fq 'curl --fail --silent --show-error --noproxy ' "${PROBE_CALL_LOG}"
+grep -Fq 'python3 - ' "${PROBE_CALL_LOG}"
+cmp "${EXPECTED_STDOUT_PATH}" "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/hy2/http-response.txt"
+assert_protocol_probe_processes_cleaned "${PROBE_CLIENT_PID_FILE}"
+assert_protocol_probe_processes_cleaned "${PROBE_HTTP_PID_FILE}"
 
 write_hy2_state \
   "${ESCAPED_DOMAIN}" \

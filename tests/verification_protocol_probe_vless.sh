@@ -6,6 +6,8 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "${TMP_DIR}"' EXIT
 REAL_JQ=$(command -v jq)
+# shellcheck disable=SC1091
+source "${REPO_ROOT}/tests/verification_protocol_probe_test_helper.sh"
 
 ARTIFACT_DIR="${TMP_DIR}/artifacts"
 REMOTE_ROOT="${TMP_DIR}/remote-root"
@@ -13,6 +15,7 @@ TESTABLE_ENTRYPOINT="${TMP_DIR}/entrypoint-testable.sh"
 EXPECTED_CONFIG_PATH="${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/vless-reality/client.json"
 
 mkdir -p "${REMOTE_ROOT}/root/sing-box-vps/protocols"
+setup_protocol_probe_command_stubs
 
 awk '
   /^if ! mkdir "\$\{LOCK_DIR\}" 2>\/dev\/null; then$/ {
@@ -82,6 +85,34 @@ if ! config_path=$(bash "${TMP_DIR}/run-vless.sh" 2> "${TMP_DIR}/stderr-vless.tx
   cat "${TMP_DIR}/stderr-vless.txt" >&2
   exit 1
 fi
+
+rm -rf "${ARTIFACT_DIR}"
+if ! bash -c '
+  set -euo pipefail
+  source "'"${TESTABLE_ENTRYPOINT}"'"
+  VERIFY_ARTIFACT_DIR="'"${ARTIFACT_DIR}"'"
+  VERIFY_CURRENT_SCENARIO="runtime_smoke"
+  VERIFY_CURRENT_SCENARIO_DIR="scenarios/${VERIFY_CURRENT_SCENARIO}"
+  verification_execute_single_protocol_probe \
+    vless-reality \
+    "'"${REMOTE_ROOT}"'/root/sing-box-vps/config.json"
+'; then
+  printf 'expected vless probe execution to succeed with command stubs\n' >&2
+  exit 1
+fi
+
+VLESS_ARTIFACT_DIR="${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/vless-reality"
+grep -Fqx 'client-check-ok' "${VLESS_ARTIFACT_DIR}/client.check.txt"
+[[ -f "${VLESS_ARTIFACT_DIR}/client.stdout.txt" ]]
+[[ -f "${VLESS_ARTIFACT_DIR}/client.stderr.txt" ]]
+grep -Fq 'sing-box run -c ' "${PROBE_CALL_LOG}"
+grep -Fq 'curl --fail --silent --show-error --noproxy ' "${PROBE_CALL_LOG}"
+grep -Fq 'python3 - ' "${PROBE_CALL_LOG}"
+grep -Fq 'sing-box-vps-loopback-ok-vless-reality-' "${VLESS_ARTIFACT_DIR}/http-response.txt"
+cmp "${VLESS_ARTIFACT_DIR}/http-response.txt" "${VLESS_ARTIFACT_DIR}/probe.stdout.txt"
+grep -Fqx 'RESULT=success' "${VLESS_ARTIFACT_DIR}/result.env"
+assert_protocol_probe_processes_cleaned "${PROBE_CLIENT_PID_FILE}"
+assert_protocol_probe_processes_cleaned "${PROBE_HTTP_PID_FILE}"
 
 [[ "${config_path}" == "${EXPECTED_CONFIG_PATH}" ]]
 [[ -f "${config_path}" ]]

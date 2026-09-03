@@ -42,7 +42,7 @@ VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh
 - 仅在改动 `dev/verification/run.sh`、`dev/verification/common.sh` 或 `dev/verification/remote/` 时，才追加远程调度与远程框架回归
 - 远程验证默认优先收敛到 `runtime_smoke`；安装/重配相关改动会扩到全新安装、接管、重配，以及真实的 `upgrade_1_13_to_1_14` 固定版本升级场景
 
-命中远程验证时，测试机会额外执行协议级闭环探测：在测试机本机启动临时客户端，连接测试机本机的服务端入站，再通过该客户端代理访问测试机本机 HTTP 探针服务。当前优先支持 `vless-reality` 与 `hy2`；未覆盖协议会在产物中标记为 `unsupported`。
+命中远程验证时，测试机会额外执行协议级闭环探测：先用目标 `sing-box` 校验客户端配置，再启动临时客户端连接本机服务端入站，并通过客户端 SOCKS 代理访问本机 HTTP 标记服务。`vless-reality`、`mixed`、`hy2` 与 `anytls` 四种协议均执行真实连接；未知协议会在产物中标记为 `unsupported`。
 
 脚本会自动：
 1. 安装所有必要依赖（curl, wget, jq, qrencode 等）。

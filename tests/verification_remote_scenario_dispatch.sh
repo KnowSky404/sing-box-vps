@@ -634,13 +634,28 @@ systemctl() {
 }
 
 sing-box() {
-  if [[ "${1:-}" == "check" && "${2:-}" == "-c" && "${3:-}" == "/root/sing-box-vps/config.json" ]]; then
-    printf 'config ok\n'
-    return 0
-  fi
+  case "${1:-}" in
+    check)
+      printf 'config ok\n'
+      return 0
+      ;;
+    run)
+      printf '%s\n' "${BASHPID}" > "${PROBE_CLIENT_PID_FILE:?}"
+      exec tail -f /dev/null
+      ;;
+    *)
+      printf 'unexpected sing-box call: %s\n' "$*" >&2
+      return 1
+      ;;
+  esac
+}
 
-  printf 'unexpected sing-box call: %s\n' "$*" >&2
-  return 1
+curl() {
+  printf '%s\n' "${VERIFY_PROTOCOL_PROBE_EXPECTED_MARKER:?}"
+}
+
+python3() {
+  exec /usr/bin/python3 "$@"
 }
 
 journalctl() {
@@ -649,6 +664,9 @@ journalctl() {
 
 ss() {
   printf 'LISTEN 0 0 127.0.0.1:%s 0.0.0.0:*\n' "$(cat "${PORT_FILE}")"
+  if [[ -s "${PROBE_CLIENT_PID_FILE:?}" ]] && kill -0 "$(cat "${PROBE_CLIENT_PID_FILE}")" 2>/dev/null; then
+    printf 'LISTEN 0 0 127.0.0.1:19080 0.0.0.0:*\n'
+  fi
 }
 EOF
 
@@ -682,6 +700,8 @@ ANYTLS_STATE_FILE="${ANYTLS_STATE_FILE}" \
 INDEX_FILE="${INDEX_FILE}" \
 ASSERT_LOG_FILE="${ASSERT_LOG_FILE}" \
 INSTALL_COUNT_FILE="${INSTALL_COUNT_FILE}" \
+PROBE_CLIENT_PID_FILE="${TMP_DIR}/probe-client.pid" \
+PROBE_HTTP_PID_FILE="${TMP_DIR}/probe-http.pid" \
 VERIFY_REMOTE_INSTALL_SCRIPT="${EMBEDDED_INSTALL_SCRIPT}" \
 VERIFY_REMOTE_UNINSTALL_SCRIPT="${EMBEDDED_UNINSTALL_SCRIPT}" \
 REAL_JQ="${REAL_JQ}" \

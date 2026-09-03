@@ -449,6 +449,10 @@ grep -Fqx 'tests/generate_config_cleans_temp_files_on_failure.sh|1' "${TMP_DIR}/
 grep -Fqx 'tests/system_safety_guards.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/agent_upgrade_commands.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/agent_cli_multi_instance_status.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/agent_cli_ops_commands.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/agent_cli_outputs_machine_readable_node_info.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/agent_json_regression.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/export_client_config_1_14_compatibility.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/agent_docs_cover_capabilities.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/version_metadata_is_consistent.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/vless_reality_instance_removal.sh|1' "${TMP_DIR}/local-tests.log"
@@ -462,8 +466,8 @@ grep -Fqx 'tests/subman_api_push.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_sync_orchestration.sh|1' "${TMP_DIR}/local-tests.log"
 
 default_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
-[[ "${default_local_test_count}" -eq 20 ]] || {
-  printf 'expected 20 local tests, got %d\n' "${default_local_test_count}" >&2; exit 1
+[[ "${default_local_test_count}" -eq 24 ]] || {
+  printf 'expected 24 local tests, got %d\n' "${default_local_test_count}" >&2; exit 1
 }
 
 # Test VERIFY_SKIP_LOCAL_TESTS=1 — still runs remote

@@ -216,7 +216,7 @@ read_installed_protocols() {
 
 verification_protocol_probe_support_status() {
   case "${1}" in
-    vless-reality|hy2|anytls)
+    vless-reality|mixed|hy2|anytls)
       printf 'supported\n'
       ;;
     *)
@@ -321,6 +321,34 @@ verification_load_anytls_probe_state() {
   printf -v "${domain_var}" '%s' "${DOMAIN-}"
 }
 
+verification_load_mixed_probe_state() {
+  local state_file=$1
+  local auth_enabled_var=$2
+  local username_var=$3
+  local password_var=$4
+  local decoded_assignments=''
+  local AUTH_ENABLED=''
+  local USERNAME=''
+  local PASSWORD=''
+
+  decoded_assignments="$(
+    # Decode the full state file in a subshell so unrelated assignments cannot
+    # pollute the caller shell, then re-emit only the fields this probe needs.
+    # shellcheck disable=SC1090
+    source "${state_file}"
+    printf 'AUTH_ENABLED=%q\n' "${AUTH_ENABLED-}"
+    printf 'USERNAME=%q\n' "${USERNAME-}"
+    printf 'PASSWORD=%q\n' "${PASSWORD-}"
+  )"
+
+  # shellcheck disable=SC1091
+  source /dev/stdin <<<"${decoded_assignments}"
+
+  printf -v "${auth_enabled_var}" '%s' "${AUTH_ENABLED-}"
+  printf -v "${username_var}" '%s' "${USERNAME-}"
+  printf -v "${password_var}" '%s' "${PASSWORD-}"
+}
+
 verification_generate_protocol_probe_client_config() {
   local protocol=$1
   local config_file=$2
@@ -336,6 +364,8 @@ verification_generate_protocol_probe_client_config() {
   local state_file=''
   local password=''
   local domain=''
+  local auth_enabled=''
+  local username=''
   local obfs_password=''
   local obfs_type=''
 
@@ -473,7 +503,8 @@ verification_generate_protocol_probe_client_config() {
                 password: $password,
                 tls: {
                   enabled: true,
-                  server_name: $domain
+                  server_name: $domain,
+                  insecure: true
                 }
               } + (
                 if $obfs_type != "" and $obfs_password != "" then
@@ -482,6 +513,80 @@ verification_generate_protocol_probe_client_config() {
                       type: $obfs_type,
                       password: $obfs_password
                     }
+                  }
+                else
+                  {}
+                end
+              )
+            )
+          ]
+        }' > "${temp_output_path}"; then
+        mv "${temp_output_path}" "${output_path}"
+      else
+        rm -f "${temp_output_path}"
+        return 1
+      fi
+      ;;
+    mixed)
+      state_file=/root/sing-box-vps/protocols/mixed.env
+      output_path=$(verification_artifact_path \
+        "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
+      temp_output_path="${output_path}.tmp.$$"
+      rm -f "${temp_output_path}"
+
+      inbound_index=$(verification_find_config_inbound_index_by_type "${config_file}" mixed) || {
+        printf 'missing inbound for protocol generator: %s\n' "${protocol}" >&2
+        return 1
+      }
+      server_port=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // empty' "${config_file}")
+      verification_require_protocol_probe_field "${protocol}" server_port "${server_port}" || return 1
+      if [[ ! -f "${state_file}" ]]; then
+        printf 'missing protocol state file for protocol generator: %s\n' "${protocol}" >&2
+        return 1
+      fi
+      verification_load_mixed_probe_state \
+        "${state_file}" \
+        auth_enabled \
+        username \
+        password
+      if [[ "${auth_enabled}" == "y" ]]; then
+        verification_require_protocol_probe_field "${protocol}" username "${username}" || return 1
+        verification_require_protocol_probe_field "${protocol}" password "${password}" || return 1
+      elif [[ "${auth_enabled}" != "n" ]]; then
+        printf 'invalid mixed probe field: auth_enabled\n' >&2
+        return 1
+      fi
+
+      if jq -n \
+        --arg server_port "${server_port}" \
+        --arg auth_enabled "${auth_enabled}" \
+        --arg username "${username}" \
+        --arg password "${password}" \
+        '{
+          log: {
+            disabled: true
+          },
+          inbounds: [
+            {
+              type: "socks",
+              tag: "local-socks",
+              listen: "127.0.0.1",
+              listen_port: 19080
+            }
+          ],
+          outbounds: [
+            (
+              {
+                type: "socks",
+                version: "5",
+                tag: "proxy",
+                server: "127.0.0.1",
+                server_port: ($server_port | tonumber)
+              } + (
+                if $auth_enabled == "y" then
+                  {
+                    username: $username,
+                    password: $password
                   }
                 else
                   {}
@@ -545,7 +650,8 @@ verification_generate_protocol_probe_client_config() {
               password: $password,
               tls: {
                 enabled: true,
-                server_name: $domain
+                server_name: $domain,
+                insecure: true
               }
             }
           ]
@@ -568,30 +674,173 @@ verification_generate_protocol_probe_client_config() {
 verification_execute_single_protocol_probe() {
   local protocol=$1
   local config_file=$2
-  local client_config_path=''
-  local client_config_artifact=''
-  local stdout_artifact=''
-  local result_artifact=''
-  local client_path_artifact=''
 
-  client_config_artifact=$(verification_artifact_path \
-    "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
-  stdout_artifact=$(verification_artifact_path \
-    "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/probe.stdout.txt")
-  result_artifact=$(verification_artifact_path \
-    "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/result.env")
-  client_path_artifact=$(verification_artifact_path \
-    "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.path.txt")
-  rm -f "${client_config_artifact}" "${stdout_artifact}" "${result_artifact}" "${client_path_artifact}"
+  # Keep the process lifecycle in a subshell.  The EXIT trap only knows the
+  # PIDs started by this probe, so a failed probe cannot stop the service
+  # process managed by systemd.
+  (
+    set -e
+    local client_config_path=''
+    local client_config_artifact=''
+    local check_artifact=''
+    local client_stdout_artifact=''
+    local client_stderr_artifact=''
+    local stdout_artifact=''
+    local http_response_artifact=''
+    local http_server_stdout_artifact=''
+    local http_server_stderr_artifact=''
+    local result_artifact=''
+    local client_path_artifact=''
+    local http_tmp_dir=''
+    local http_port_file=''
+    local http_marker=''
+    local http_pid=''
+    local client_pid=''
+    local http_port=''
+    local check_status=0
+    local curl_status=0
+    local probe_status=1
 
-  client_config_path=$(verification_generate_protocol_probe_client_config "${protocol}" "${config_file}")
-  verification_write_artifact \
-    "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/probe.stdout.txt" \
-    "sing-box-vps-loopback-ok"
-  verification_record_protocol_probe_result "${protocol}" success
-  verification_write_artifact \
-    "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.path.txt" \
-    "${client_config_path}"
+    client_config_artifact=$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
+    check_artifact=$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.check.txt")
+    client_stdout_artifact=$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.stdout.txt")
+    client_stderr_artifact=$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.stderr.txt")
+    stdout_artifact=$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/probe.stdout.txt")
+    http_response_artifact=$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/http-response.txt")
+    http_server_stdout_artifact=$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/http-server.stdout.txt")
+    http_server_stderr_artifact=$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/http-server.stderr.txt")
+    result_artifact=$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/result.env")
+    client_path_artifact=$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.path.txt")
+    rm -f \
+      "${client_config_artifact}" \
+      "${check_artifact}" \
+      "${client_stdout_artifact}" \
+      "${client_stderr_artifact}" \
+      "${stdout_artifact}" \
+      "${http_response_artifact}" \
+      "${http_server_stdout_artifact}" \
+      "${http_server_stderr_artifact}" \
+      "${result_artifact}" \
+      "${client_path_artifact}"
+
+    cleanup_probe_processes() {
+      local pid
+
+      set +e
+      for pid in "${client_pid}" "${http_pid}"; do
+        [[ -n "${pid}" ]] || continue
+        if kill -0 "${pid}" 2>/dev/null; then
+          kill "${pid}" 2>/dev/null || true
+        fi
+        wait "${pid}" 2>/dev/null || true
+      done
+      [[ -n "${http_tmp_dir}" ]] && rm -rf "${http_tmp_dir}"
+    }
+
+    finalize_probe() {
+      local status=$?
+
+      cleanup_probe_processes
+      if [[ "${probe_status}" == "0" && "${status}" == "0" ]]; then
+        verification_record_protocol_probe_result "${protocol}" success
+      else
+        verification_record_protocol_probe_result "${protocol}" failure
+      fi
+      return "${status}"
+    }
+    trap 'finalize_probe; exit $?' EXIT
+
+    client_config_path=$(verification_generate_protocol_probe_client_config "${protocol}" "${config_file}")
+    verification_write_artifact \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.path.txt" \
+      "${client_config_path}"
+
+    set +e
+    sing-box check -c "${client_config_path}" > "${check_artifact}" 2>&1
+    check_status=$?
+    set -e
+    if [[ "${check_status}" != "0" ]]; then
+      return "${check_status}"
+    fi
+
+    http_tmp_dir=$(mktemp -d /tmp/sing-box-vps-probe.XXXXXX)
+    http_port_file="${http_tmp_dir}/port"
+    http_marker="sing-box-vps-loopback-ok-${protocol}-$(date +%s)-$$"
+    export VERIFY_PROTOCOL_PROBE_EXPECTED_MARKER="${http_marker}"
+    python3 - "${http_port_file}" "${http_marker}" \
+      > "${http_server_stdout_artifact}" \
+      2> "${http_server_stderr_artifact}" <<'PY' &
+import http.server
+import pathlib
+import socketserver
+import sys
+
+port_file, marker = sys.argv[1:]
+
+class MarkerHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = (marker + "\n").encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        return
+
+with socketserver.TCPServer(("127.0.0.1", 0), MarkerHandler) as server:
+    pathlib.Path(port_file).write_text(str(server.server_address[1]), encoding="ascii")
+    server.serve_forever()
+PY
+    http_pid=$!
+
+    for _ in {1..50}; do
+      [[ -s "${http_port_file}" ]] && break
+      kill -0 "${http_pid}" 2>/dev/null || return 1
+      sleep 0.1
+    done
+    [[ -s "${http_port_file}" ]]
+    http_port=$(cat "${http_port_file}")
+    [[ "${http_port}" =~ ^[0-9]+$ ]]
+
+    sing-box run -c "${client_config_path}" \
+      > "${client_stdout_artifact}" \
+      2> "${client_stderr_artifact}" &
+    client_pid=$!
+
+    for _ in {1..50}; do
+      if verification_ss_output | awk -v port=":19080" '$1 == "LISTEN" && index($4, port) { found = 1 } END { exit(found ? 0 : 1) }'; then
+        break
+      fi
+      kill -0 "${client_pid}" 2>/dev/null || return 1
+      sleep 0.1
+    done
+    verification_ss_output | awk -v port=":19080" '$1 == "LISTEN" && index($4, port) { found = 1 } END { exit(found ? 0 : 1) }'
+
+    set +e
+    curl --fail --silent --show-error --noproxy '' \
+      --proxy "socks5h://127.0.0.1:19080" \
+      "http://127.0.0.1:${http_port}/" \
+      > "${http_response_artifact}" 2>> "${client_stderr_artifact}"
+    curl_status=$?
+    set -e
+    cp "${http_response_artifact}" "${stdout_artifact}"
+    if [[ "${curl_status}" != "0" ]]; then
+      return "${curl_status}"
+    fi
+    grep -Fqx "${http_marker}" "${http_response_artifact}"
+    probe_status=0
+  )
 }
 
 verification_run_protocol_probes() {

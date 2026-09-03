@@ -24,6 +24,7 @@ REMOTE_SBV_PRESENT_FILE="${TMP_DIR}/remote-sbv-present"
 REMOTE_SERVICE_ACTIVE_FILE="${TMP_DIR}/remote-service-active"
 REMOTE_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/vless-reality.env"
 REMOTE_INSTANCE_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/vless-reality.d/main.env"
+REMOTE_MIXED_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/mixed.env"
 REMOTE_HY2_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/hy2.env"
 REMOTE_ANYTLS_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/anytls.env"
 REMOTE_INDEX_FILE="${REMOTE_PROTOCOLS_DIR}/index.env"
@@ -121,22 +122,46 @@ chmod +x "${TMP_DIR}/journalctl"
 
 cat > "${TMP_DIR}/sing-box" <<'EOF'
 #!/usr/bin/env bash
-if [[ "${1:-}" == "check" && "${2:-}" == "-c" && "${3:-}" == "/root/sing-box-vps/config.json" ]]; then
-  if [[ "${VERIFY_FAIL_SINGBOX_CHECK:-0}" == "1" ]]; then
-    printf 'config broken\n' >&2
-    exit 7
-  fi
-  printf 'config ok\n'
-  exit 0
-fi
-printf 'unexpected sing-box call: %s\n' "$*" >&2
-exit 1
+case "${1:-}" in
+  check)
+    if [[ "${VERIFY_FAIL_SINGBOX_CHECK:-0}" == "1" ]]; then
+      printf 'config broken\n' >&2
+      exit 7
+    fi
+    printf 'config ok\n'
+    exit 0
+    ;;
+  run)
+    printf '%s\n' "${BASHPID}" > "${REMOTE_PROBE_CLIENT_PID_FILE:?}"
+    exec tail -f /dev/null
+    ;;
+  *)
+    printf 'unexpected sing-box call: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
 EOF
 chmod +x "${TMP_DIR}/sing-box"
+
+cat > "${TMP_DIR}/curl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "${VERIFY_PROTOCOL_PROBE_EXPECTED_MARKER:?}"
+EOF
+chmod +x "${TMP_DIR}/curl"
+
+cat > "${TMP_DIR}/python3" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "${BASHPID}" > "${REMOTE_PROBE_HTTP_PID_FILE:?}"
+exec /usr/bin/python3 "$@"
+EOF
+chmod +x "${TMP_DIR}/python3"
 
 cat > "${TMP_DIR}/ss" <<'EOF'
 #!/usr/bin/env bash
 printf 'LISTEN 0 0 127.0.0.1:%s 0.0.0.0:*\n' "$(cat "${REMOTE_PORT_FILE}")"
+if [[ -s "${REMOTE_PROBE_CLIENT_PID_FILE:?}" ]] && kill -0 "$(cat "${REMOTE_PROBE_CLIENT_PID_FILE}")" 2>/dev/null; then
+  printf 'LISTEN 0 0 127.0.0.1:19080 0.0.0.0:*\n'
+fi
 EOF
 chmod +x "${TMP_DIR}/ss"
 
@@ -165,6 +190,15 @@ write_hy2_state() {
 DOMAIN=hy2.example.com
 PASSWORD=hy2-password
 OBFS_PASSWORD=hy2-obfs-password
+STATE_EOF
+}
+
+write_mixed_state() {
+  mkdir -p "\$(dirname "\${REMOTE_MIXED_STATE_FILE}")"
+  cat > "\${REMOTE_MIXED_STATE_FILE}" <<'STATE_EOF'
+AUTH_ENABLED=y
+USERNAME=mixed-user
+PASSWORD=mixed-pass
 STATE_EOF
 }
 
@@ -230,6 +264,16 @@ write_runtime_config() {
       "tls": {
         "server_name": "config-anytls-domain-should-not-be-used"
       }
+    },
+    {
+      "type": "mixed",
+      "listen_port": 9446,
+      "users": [
+        {
+          "username": "mixed-user",
+          "password": "mixed-pass"
+        }
+      ]
     }
   ]
 }
@@ -238,10 +282,11 @@ CONFIG_EOF
 
 enable_multi_protocol_probe_fixture() {
   write_vless_state
+  write_mixed_state
   write_hy2_state
   write_anytls_state
   cat > "\${REMOTE_INDEX_FILE}" <<'INDEX_EOF'
-INSTALLED_PROTOCOLS=vless-reality,hy2,anytls,mystery-protocol
+INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,mystery-protocol
 INDEX_EOF
   write_runtime_config
 }
@@ -761,6 +806,7 @@ grep() {
 PAYLOAD_PRELUDE
 cat >> "\${script_file}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/vless-reality.env|state_file='"${REMOTE_STATE_FILE}"'|g' "\${script_file}"
+perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/mixed.env|state_file='"${REMOTE_MIXED_STATE_FILE}"'|g' "\${script_file}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/hy2.env|state_file='"${REMOTE_HY2_STATE_FILE}"'|g' "\${script_file}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/anytls.env|state_file='"${REMOTE_ANYTLS_STATE_FILE}"'|g' "\${script_file}"
 cat > "\${script_file}.wrapper" <<'WRAP_EOF'
@@ -811,11 +857,14 @@ VERIFY_LEGACY_SERVICE_FILE="${REMOTE_LEGACY_SERVICE_FILE}" \
 REMOTE_EXPORT_FILE="${REMOTE_EXPORT_FILE}" \
 REMOTE_PROTOCOLS_DIR="${REMOTE_PROTOCOLS_DIR}" \
 REMOTE_STATE_FILE="${REMOTE_STATE_FILE}" \
+REMOTE_MIXED_STATE_FILE="${REMOTE_MIXED_STATE_FILE}" \
 REMOTE_HY2_STATE_FILE="${REMOTE_HY2_STATE_FILE}" \
 REMOTE_ANYTLS_STATE_FILE="${REMOTE_ANYTLS_STATE_FILE}" \
 REMOTE_INDEX_FILE="${REMOTE_INDEX_FILE}" \
 REMOTE_ASSERT_LOG_FILE="${REMOTE_ASSERT_LOG_FILE}" \
 REMOTE_DISPATCH_LOG_FILE="${REMOTE_DISPATCH_LOG_FILE}" \
+REMOTE_PROBE_CLIENT_PID_FILE="${TMP_DIR}/remote-probe-client.pid" \
+REMOTE_PROBE_HTTP_PID_FILE="${TMP_DIR}/remote-probe-http.pid" \
 INSTALL_COUNT_FILE="${INSTALL_COUNT_FILE}" \
 REAL_JQ="${REAL_JQ}" \
 PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" "\${script_file}" "\${@:7}"
@@ -843,6 +892,9 @@ grep -Fq 'SERVICE_ACTIVE=active' "${run_dir}/remote.stdout.log"
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/client.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/probe.stdout.txt" ]]
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/result.env"
+[[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/mixed/client.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/mixed/probe.stdout.txt" ]]
+grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/mixed/result.env"
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/hy2/client.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/hy2/probe.stdout.txt" ]]
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/hy2/result.env"
