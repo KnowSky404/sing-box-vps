@@ -12,6 +12,7 @@ source_testable_install
 
 CURRENT_CHECK_FAIL_FILE="${TMP_DIR}/current-check-fails"
 TARGET_CHECK_FAIL_FILE="${TMP_DIR}/target-check-fails"
+SERVICE_RESTART_FAIL_FILE="${TMP_DIR}/service-restart-fails"
 SYSTEMCTL_CALLS_FILE="${TMP_DIR}/systemctl.calls"
 : > "${SYSTEMCTL_CALLS_FILE}"
 export CURRENT_CHECK_FAIL_FILE SYSTEMCTL_CALLS_FILE
@@ -180,6 +181,13 @@ update_singbox_binary_preserving_config() {
     return 1
   fi
 
+  if [[ -f "${SERVICE_RESTART_FAIL_FILE}" ]]; then
+    write_singbox_stub "1.13.18"
+    printf 'sing-box 服务重启失败或未保持 active。\n'
+    printf '已恢复更新前的 sing-box 二进制及服务状态。\n'
+    return 1
+  fi
+
   write_singbox_stub "${SB_VERSION}"
   systemctl restart sing-box >/dev/null
 }
@@ -225,7 +233,12 @@ jq -e '
   and .transaction.result_persisted == true
 ' <<< "${upgrade_json}" >/dev/null
 operation_log_result_file=$(jq -r '.transaction.result_path' <<< "${upgrade_json}")
-jq -e '.status == "failed" and ([.status_history[].status] | . == ["backup_ready", "failed"])' "${operation_log_result_file}" >/dev/null
+jq -e '
+  .status == "failed"
+  and .failure_reason == "temporary_log_failed"
+  and .operation_exit_code == null
+  and ([.status_history[].status] | . == ["backup_ready", "failed"])
+' "${operation_log_result_file}" >/dev/null
 unset -f mktemp
 
 eval "$(printf '%s\n' "${original_transaction_result_function}" | sed '1s/^write_agent_upgrade_transaction_result /write_agent_upgrade_transaction_result_real /')"
@@ -289,6 +302,8 @@ jq -e '
   and .status == "rolled_back"
   and .rollback.attempted == true
   and .rollback.result == "success"
+  and .failure_reason == "config_check_failed"
+  and .operation_exit_code == 1
   and ([.status_history[].status] | . == ["backup_ready", "rolled_back"])
   and (.manifest.path | endswith("/SHA256SUMS"))
   and (.manifest.sha256 | length == 64)
@@ -296,6 +311,31 @@ jq -e '
 [[ "$(stat -c '%a' "${rollback_result_file}")" == "600" ]]
 (cd "${rollback_backup_dir}" && sha256sum -c SHA256SUMS >/dev/null)
 rm -f "${TARGET_CHECK_FAIL_FILE}"
+
+touch "${SERVICE_RESTART_FAIL_FILE}"
+if upgrade_json=$(agent_cli upgrade --json 1.14.0 --yes 2>/dev/null); then
+  printf 'service restart failure should return non-zero\n' >&2
+  exit 1
+fi
+jq -e '
+  .ok == false
+  and .error == "service_not_active"
+  and .failure_reason == "service_not_active"
+  and .rolled_back == true
+  and .rollback_ok == true
+  and .installed == "1.13.18"
+  and .service.after == "active"
+  and .operation_exit_code == 1
+  and (.operation_log | contains("服务重启失败或未保持 active"))
+' <<< "${upgrade_json}" >/dev/null
+rollback_result_file=$(jq -r '.transaction.result_path' <<< "${upgrade_json}")
+jq -e '
+  .status == "rolled_back"
+  and .rollback.result == "success"
+  and .failure_reason == "service_not_active"
+  and .operation_exit_code == 1
+' "${rollback_result_file}" >/dev/null
+rm -f "${SERVICE_RESTART_FAIL_FILE}"
 
 original_restore_function=$(declare -f restore_agent_upgrade_backup)
 restore_agent_upgrade_backup() {
@@ -401,6 +441,8 @@ jq -e '
   and (.manifest_sha256 | length == 64)
   and (.completed_at | type == "string")
   and (.manifest.sha256 | length == 64)
+  and .failure_reason == null
+  and .operation_exit_code == 0
 ' "${backup_dir}/transaction-result.json" >/dev/null
 grep -Fq '  runtime/protocols/hy2.env' "${backup_dir}/SHA256SUMS"
 grep -Fq '  runtime/protocols/index.env' "${backup_dir}/SHA256SUMS"

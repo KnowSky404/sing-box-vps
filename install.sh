@@ -9265,6 +9265,8 @@ write_agent_upgrade_transaction_result() {
   local rollback_attempted=$3
   local rollback_result=$4
   local completed_at=${5:-}
+  local failure_reason=${6:-}
+  local operation_exit_code=${7:-}
   local metadata_file="${backup_dir}/metadata.json"
   local result_file="${backup_dir}/transaction-result.json"
   local temp_file
@@ -9310,6 +9312,8 @@ write_agent_upgrade_transaction_result() {
     --arg manifest_path "${manifest_path}" \
     --arg manifest_sha256 "${manifest_sha256}" \
     --arg rollback_result "${rollback_result}" \
+    --arg failure_reason "${failure_reason}" \
+    --arg operation_exit_code "${operation_exit_code}" \
     --argjson status_history "${status_history_json}" \
     --argjson rollback_attempted "${rollback_attempted}" \
     '{
@@ -9325,7 +9329,9 @@ write_agent_upgrade_transaction_result() {
       manifest_sha256: $manifest_sha256,
       manifest: {path: $manifest_path, sha256: $manifest_sha256},
       status_history: $status_history,
-      rollback: {attempted: $rollback_attempted, result: $rollback_result}
+      rollback: {attempted: $rollback_attempted, result: $rollback_result},
+      failure_reason: (if $failure_reason == "" then null else $failure_reason end),
+      operation_exit_code: (if $operation_exit_code == "" then null else ($operation_exit_code | tonumber) end)
     }' > "${temp_file}"; then
     rm -f "${temp_file}"
     return 1
@@ -9541,7 +9547,8 @@ agent_upgrade_cli() {
       "${transaction_status}" \
       false \
       "${transaction_rollback_result}" \
-      "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; then
+      "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+      "temporary_log_failed"; then
       transaction_result_persisted=true
       output_error="temporary_log_failed"
     else
@@ -9607,7 +9614,9 @@ agent_upgrade_cli() {
       "${transaction_status}" \
       false \
       "${transaction_rollback_result}" \
-      "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; then
+      "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+      "" \
+      "${operation_status}"; then
       transaction_result_persisted=true
     fi
     rm -f "${operation_log}"
@@ -9668,6 +9677,10 @@ agent_upgrade_cli() {
     failure_reason="config_changed"
   elif grep -Fq "现有配置未通过 sing-box" "${operation_log}"; then
     failure_reason="config_check_failed"
+  elif grep -Fq "sing-box 服务重启失败或未保持 active" "${operation_log}"; then
+    failure_reason="service_not_active"
+  elif grep -Fq "安装后的 sing-box 版本" "${operation_log}"; then
+    failure_reason="target_version_not_installed"
   elif [[ "${after_check_status}" != "0" ]]; then
     failure_reason="config_check_failed"
   elif [[ "${after_service_state}" != "active" ]]; then
@@ -9715,7 +9728,9 @@ agent_upgrade_cli() {
     "${transaction_status}" \
     true \
     "${transaction_rollback_result}" \
-    "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; then
+    "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    "${failure_reason}" \
+    "${operation_status}"; then
     transaction_result_persisted=true
   else
     output_error="transaction_record_failed"
