@@ -128,7 +128,7 @@ resolve_remote_scenarios() {
       install.sh | configs/*)
         needs_install_flow=1
         ;;
-      dev/verification/remote/entrypoint.sh)
+      dev/verification/common.sh | dev/verification/remote/entrypoint.sh)
         needs_all_scenarios=1
         ;;
       dev/verification/remote/scenarios/*.sh)
