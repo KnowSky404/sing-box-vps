@@ -115,6 +115,7 @@ write_config() {
   "inbounds": [
     {
       "type": "vless",
+      "tag": "vless-in",
       "listen_port": 443,
       "users": [
         {

@@ -17,6 +17,20 @@ sed \
 
 mkdir -p "${TMP_DIR}/project" "${TMP_DIR}/project/protocols" "${TMP_DIR}/bin"
 
+cat > "${TMP_DIR}/bin/sing-box" <<'EOF'
+#!/usr/bin/env bash
+
+case "${1:-}" in
+  version)
+    printf 'sing-box version 1.14.0\n'
+    ;;
+  check)
+    exit 0
+    ;;
+esac
+EOF
+chmod +x "${TMP_DIR}/bin/sing-box"
+
 cat > "${TMP_DIR}/bin/hostname" <<'EOF'
 #!/usr/bin/env bash
 
