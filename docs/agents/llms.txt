@@ -26,7 +26,7 @@ Key runtime paths:
 Agent CLI:
 - sbv agent capabilities --json: machine-readable capability matrix; read-only, no secrets.
 - sbv agent upgrade-check --json 1.14.0: read-only eligibility preflight that does not reconcile or migrate state; inspect ready, blockers, config hash/schema, legacy fields, and warnings. It does not download the target binary.
-- sbv agent upgrade --json 1.14.0 --yes: guarded binary upgrade; mutating and service-impacting, with automatic backup under /root/sing-box-vps-backups/ and a manifest covering every regular runtime file plus control files.
+- sbv agent upgrade --json 1.14.0 --yes: guarded binary upgrade; mutating and service-impacting, with automatic backup under /root/sing-box-vps-backups/, a manifest covering every regular runtime file plus control files, and an atomic transaction-result.json audit record.
 - sbv agent status --json: service/version/paths/protocols plus network stacks, BBR, REALITY/QoS counts, and integration presence.
 - sbv agent nodes --json: log-safe summaries for every protocol and every REALITY instance, including rate limits/outbound policy without credentials.
 - sbv agent links --json: full per-protocol and per-REALITY-instance connection material; treat output as sensitive.
@@ -62,6 +62,7 @@ Important requirements:
 - Do not reveal secrets, private keys, passwords, tokens, full node links, or QR payloads unless explicitly requested and safe.
 - Treat sbv agent links --json, export-client --json, and subman-sync --json as sensitive connection-material commands.
 - Upgrade backups contain the full runtime state and must never be copied into shared logs or artifacts.
+- Agent JSON uses schema_version "1.0" with the legacy schema "1" retained. For upgrades, require transaction.result_persisted=true and inspect transaction.result_path, status, manifest hash, and rollback result.
 - Do not run production install, upgrade, restart, stop, uninstall, purge, firewall mutation, or config overwrite without an approved production operation plan.
 
 Common task routing:

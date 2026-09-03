@@ -179,6 +179,25 @@ update_singbox_binary_preserving_config() {
   systemctl restart sing-box >/dev/null
 }
 
+original_transaction_result_function=$(declare -f write_agent_upgrade_transaction_result)
+write_agent_upgrade_transaction_result() {
+  return 1
+}
+if upgrade_json=$(agent_cli upgrade --json 1.14.0 --yes 2>/dev/null); then
+  printf 'backup-ready transaction record failure should return non-zero\n' >&2
+  exit 1
+fi
+jq -e '
+  .ok == false
+  and .error == "transaction_record_failed"
+  and (.backup | length > 0)
+  and (.transaction.id | length > 0)
+  and .transaction.status == "backup_ready"
+  and .transaction.result_persisted == false
+  and .transaction.rollback.attempted == false
+' <<< "${upgrade_json}" >/dev/null
+eval "${original_transaction_result_function}"
+
 original_hash=$(agent_file_sha256 "${SINGBOX_CONFIG_FILE}")
 touch "${TARGET_CHECK_FAIL_FILE}"
 if upgrade_json=$(agent_cli upgrade --json 1.14.0 --yes 2>/dev/null); then
@@ -195,6 +214,29 @@ jq -e '
   and (.backup | length > 0)
 ' <<< "${upgrade_json}" >/dev/null
 [[ "$(agent_file_sha256 "${SINGBOX_CONFIG_FILE}")" == "${original_hash}" ]]
+rollback_backup_dir=$(jq -r '.backup' <<< "${upgrade_json}")
+rollback_result_file=$(jq -r '.transaction.result_path' <<< "${upgrade_json}")
+jq -e '
+  .transaction.id
+  and .transaction.status == "rolled_back"
+  and .transaction.rollback.attempted == true
+  and .transaction.rollback.result == "success"
+' <<< "${upgrade_json}" >/dev/null
+[[ -f "${rollback_result_file}" ]]
+jq -e '
+  .schema_version == "1.0"
+  and (.transaction_id | length > 0)
+  and .old_version == "1.13.18"
+  and .new_version == "1.14.0"
+  and .status == "rolled_back"
+  and .rollback.attempted == true
+  and .rollback.result == "success"
+  and ([.status_history[].status] | . == ["backup_ready", "rolled_back"])
+  and (.manifest.path | endswith("/SHA256SUMS"))
+  and (.manifest.sha256 | length == 64)
+' "${rollback_result_file}" >/dev/null
+[[ "$(stat -c '%a' "${rollback_result_file}")" == "600" ]]
+(cd "${rollback_backup_dir}" && sha256sum -c SHA256SUMS >/dev/null)
 rm -f "${TARGET_CHECK_FAIL_FILE}"
 
 original_restore_function=$(declare -f restore_agent_upgrade_backup)
@@ -218,8 +260,43 @@ jq -e '
   and .manual_intervention_required == true
   and .installed == "1.14.0"
 ' <<< "${upgrade_json}" >/dev/null
+rollback_result_file=$(jq -r '.transaction.result_path' <<< "${upgrade_json}")
+jq -e '
+  .transaction.status == "rollback_failed"
+  and .transaction.rollback.attempted == true
+  and .transaction.rollback.result == "failed"
+' <<< "${upgrade_json}" >/dev/null
+jq -e '.status == "rollback_failed" and .rollback.result == "failed"' "${rollback_result_file}" >/dev/null
+[[ "$(jq -r '[.status_history[].status] | join(",")' "${rollback_result_file}")" == "backup_ready,rollback_failed" ]]
+[[ "$(stat -c '%a' "${rollback_result_file}")" == "600" ]]
 eval "${original_restore_function}"
 rm -f "${TARGET_CHECK_FAIL_FILE}"
+write_singbox_stub "1.13.18"
+
+eval "$(printf '%s\n' "${original_transaction_result_function}" | sed '1s/^write_agent_upgrade_transaction_result /write_agent_upgrade_transaction_result_real /')"
+write_agent_upgrade_transaction_result() {
+  if [[ "${2:-}" == "success" ]]; then
+    return 75
+  fi
+  write_agent_upgrade_transaction_result_real "$@"
+}
+if upgrade_json=$(agent_cli upgrade --json 1.14.0 --yes 2>/dev/null); then
+  printf 'terminal transaction record failure should return non-zero\n' >&2
+  exit 1
+fi
+jq -e '
+  .ok == false
+  and .error == "transaction_record_failed"
+  and (.backup | length > 0)
+  and .transaction.status == "success"
+  and .transaction.result_persisted == false
+  and .installed == "1.14.0"
+  and .config_preserved == true
+' <<< "${upgrade_json}" >/dev/null
+failed_terminal_result_file=$(jq -r '.transaction.result_path' <<< "${upgrade_json}")
+jq -e '.status == "backup_ready" and ([.status_history[].status] | . == ["backup_ready"])' "${failed_terminal_result_file}" >/dev/null
+unset -f write_agent_upgrade_transaction_result_real
+eval "${original_transaction_result_function}"
 write_singbox_stub "1.13.18"
 
 upgrade_json=$(agent_cli upgrade --json 1.14.0 --yes)
@@ -231,6 +308,11 @@ jq -e '
   and .installed == "1.14.0"
   and .config_preserved == true
   and (.backup | length > 0)
+  and (.transaction.id | length > 0)
+  and (.transaction.result_path | endswith("/transaction-result.json"))
+  and .transaction.status == "success"
+  and .transaction.rollback.attempted == false
+  and .transaction.rollback.result == "not_attempted"
   and .check.ok == true
 ' <<< "${upgrade_json}" >/dev/null
 [[ "$(agent_file_sha256 "${SINGBOX_CONFIG_FILE}")" == "${original_hash}" ]]
@@ -240,12 +322,48 @@ backup_dir=$(jq -r '.backup' <<< "${upgrade_json}")
 [[ -f "${backup_dir}/sing-box.service" ]]
 [[ -f "${backup_dir}/SHA256SUMS" ]]
 [[ -f "${backup_dir}/metadata.json" ]]
+[[ -f "${backup_dir}/transaction-result.json" ]]
+jq -e '
+  (.transaction_id | length > 0)
+  and .old_version == "1.13.18"
+  and .new_version == "1.14.0"
+  and (.manifest_path | endswith("/SHA256SUMS"))
+' "${backup_dir}/metadata.json" >/dev/null
+jq -e '
+  .schema_version == "1.0"
+  and .status == "success"
+  and .rollback.attempted == false
+  and .rollback.result == "not_attempted"
+  and ([.status_history[].status] | . == ["backup_ready", "success"])
+  and (.manifest_path | endswith("/SHA256SUMS"))
+  and (.manifest_sha256 | length == 64)
+  and (.completed_at | type == "string")
+  and (.manifest.sha256 | length == 64)
+' "${backup_dir}/transaction-result.json" >/dev/null
 grep -Fq '  runtime/protocols/hy2.env' "${backup_dir}/SHA256SUMS"
 grep -Fq '  runtime/protocols/index.env' "${backup_dir}/SHA256SUMS"
 grep -Fq '  metadata.json' "${backup_dir}/SHA256SUMS"
 [[ "$(stat -c '%a' "${backup_dir}")" == "700" ]]
 [[ "$(stat -c '%a' "${backup_dir}/metadata.json")" == "600" ]]
+[[ "$(stat -c '%a' "${backup_dir}/transaction-result.json")" == "600" ]]
 (cd "${backup_dir}" && sha256sum -c SHA256SUMS >/dev/null)
+
+mv() {
+  if [[ "${3:-}" == "${backup_dir}/transaction-result.json" ]]; then
+    return 75
+  fi
+  command mv "$@"
+}
+if write_agent_upgrade_transaction_result \
+  "${backup_dir}" \
+  "success" \
+  false \
+  "not_attempted" \
+  "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; then
+  printf 'expected transaction result atomic rename failure\n' >&2
+  exit 1
+fi
+unset -f mv
 
 touch "${CURRENT_CHECK_FAIL_FILE}"
 if upgrade_json=$(agent_cli upgrade --json 1.14.0 --yes 2>/dev/null); then

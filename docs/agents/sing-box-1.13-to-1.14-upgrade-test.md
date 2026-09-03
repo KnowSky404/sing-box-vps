@@ -90,7 +90,7 @@ set -e
 jq . "${evidence_dir}/upgrade.json"
 ```
 
-成功条件：命令退出码为 0，JSON 合法，`ok=true`，目标版本为 `1.14.0`，`rolled_back=false`，`config_preserved=true`，配置 hash 与升级前一致，目标 binary check 通过，服务明确报告 active。JSON 中的 `backup` 必须位于 `/root/sing-box-vps-backups/upgrade-*`，且 `SHA256SUMS` 校验通过；该清单覆盖 runtime 中的全部普通文件，以及 binary、`sbv`、service unit 和备份元数据。
+成功条件：命令退出码为 0，JSON 合法，`schema_version="1.0"`、`ok=true`，目标版本为 `1.14.0`，`rolled_back=false`，`config_preserved=true`，配置 hash 与升级前一致，目标 binary check 通过，服务明确报告 active。`transaction.result_persisted` 必须为 true，`transaction.status` 必须为 `success`，其 `result_path` 应位于 JSON 返回的 `backup` 目录。`backup` 必须位于 `/root/sing-box-vps-backups/upgrade-*`，且 `SHA256SUMS` 校验通过；该清单覆盖 runtime 中的全部普通文件，以及 binary、`sbv`、service unit 和备份元数据。权限 `0600` 的 `transaction-result.json` 不纳入该静态清单，而是反向记录清单路径与 SHA-256，并保留 `backup_ready` 到终态的历史。
 
 该操作只更新 binary；不得自动重写或迁移 `config.json`。1.13 的 inline `tls.acme` 与 `download_detour` 在 1.14 仍是弃用但兼容字段，计划在 1.16 移除。需要迁移时必须另行评审、备份和执行，不得把迁移伪装成 binary upgrade。
 
@@ -110,6 +110,10 @@ case "${backup}" in
   *) printf 'unexpected backup path: %s\n' "${backup}" >&2; exit 1 ;;
 esac
 (cd "${backup}" && sha256sum -c SHA256SUMS)
+transaction_result=$(jq -r '.transaction.result_path' "${evidence_dir}/upgrade.json")
+case "${transaction_result}" in "${backup}"/transaction-result.json) ;; *) exit 1 ;; esac
+jq -e '.schema_version == "1.0" and .status == "success" and .rollback.attempted == false' "${transaction_result}"
+[[ "$(stat -c '%a' "${transaction_result}")" == "600" ]]
 ```
 
 根据已安装协议分别执行真实客户端闭环探测；VLESS REALITY、Mixed、Hysteria2、AnyTLS、Warp 路由和 REALITY QoS 不能因 `sing-box check` 成功就推定业务可用。只有被明确批准时才执行媒体检测或 SubMan 写入。
@@ -120,7 +124,7 @@ esac
 
 1. 不重复执行升级，不手工编辑运行配置。
 2. 保存 `upgrade.json`、stderr、journal、版本和 hash 证据。
-3. 只有 `rolled_back=true` 且 `rollback_ok=true` 时，才确认旧版本已恢复；同时核对旧 binary `sing-box check` 通过且服务回到升级前的 active/inactive 状态。
+3. 只有 `rolled_back=true`、`rollback_ok=true`、`transaction.result_persisted=true` 且事务记录的终态为 `rolled_back` 时，才确认旧版本已恢复；同时核对旧 binary `sing-box check` 通过且服务回到升级前的 active/inactive 状态。
 4. 确认服务仍使用旧 binary/旧配置，或保持 stopped 并报告人工介入。
 
 若返回 `error=rollback_failed`、`rolled_back=false`、`rollback_ok=false` 或 `manual_intervention_required=true` 中任一状态，立即停止自动化。只有再次获得明确批准后，才能从 JSON 指向的备份目录人工恢复。恢复前必须校验路径前缀与 `SHA256SUMS`；不得猜测“最新备份”，不得覆盖未确认的配置。

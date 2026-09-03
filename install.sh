@@ -8731,10 +8731,13 @@ agent_upgrade_check_json() {
 create_agent_upgrade_backup() {
   local current_version=$1
   local target_version=$2
+  local transaction_id
   local backup_dir
   local manifest_file
   local relative_path
   local runtime_file_list
+
+  transaction_id=$(printf 'tx-%s-%s-%s' "$(date -u '+%Y%m%dT%H%M%SZ')" "$$" "${RANDOM}")
 
   if ! mkdir -p "${SB_UPGRADE_BACKUP_ROOT}" || ! chmod 700 "${SB_UPGRADE_BACKUP_ROOT}"; then
     return 1
@@ -8767,15 +8770,21 @@ create_agent_upgrade_backup() {
   if ! jq -n \
     --arg created_at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
     --arg script_version "${SCRIPT_VERSION}" \
+    --arg transaction_id "${transaction_id}" \
     --arg current_version "${current_version}" \
     --arg target_version "${target_version}" \
     --arg source_config "${SINGBOX_CONFIG_FILE}" \
+    --arg manifest_path "${backup_dir}/SHA256SUMS" \
     '{
       created_at: $created_at,
       script_version: $script_version,
+      transaction_id: $transaction_id,
+      old_version: $current_version,
+      new_version: $target_version,
       current_version: $current_version,
       target_version: $target_version,
       source_config: $source_config,
+      manifest_path: $manifest_path,
       manifest_scope: "all_regular_runtime_files_and_control_files",
       contains_sensitive_runtime_material: true
     }' > "${backup_dir}/metadata.json"; then
@@ -8818,6 +8827,83 @@ create_agent_upgrade_backup() {
   fi
 
   printf '%s' "${backup_dir}"
+}
+
+write_agent_upgrade_transaction_result() {
+  local backup_dir=$1
+  local status=$2
+  local rollback_attempted=$3
+  local rollback_result=$4
+  local completed_at=${5:-}
+  local metadata_file="${backup_dir}/metadata.json"
+  local result_file="${backup_dir}/transaction-result.json"
+  local temp_file
+  local transaction_id
+  local old_version
+  local new_version
+  local started_at
+  local manifest_path
+  local manifest_sha256
+  local status_history_json
+  local status_event_at
+
+  [[ -f "${metadata_file}" && -f "${backup_dir}/SHA256SUMS" ]] || return 1
+  transaction_id=$(jq -r '.transaction_id // empty' "${metadata_file}")
+  old_version=$(jq -r '.old_version // .current_version // empty' "${metadata_file}")
+  new_version=$(jq -r '.new_version // .target_version // empty' "${metadata_file}")
+  started_at=$(jq -r '.created_at // empty' "${metadata_file}")
+  manifest_path=$(jq -r '.manifest_path // empty' "${metadata_file}")
+  manifest_sha256=$(agent_file_sha256 "${backup_dir}/SHA256SUMS")
+  [[ -n "${transaction_id}" && -n "${old_version}" && -n "${new_version}" && -n "${started_at}" && -n "${manifest_sha256}" ]] || return 1
+
+  status_event_at="${completed_at:-${started_at}}"
+  status_history_json='[]'
+  if [[ -f "${result_file}" ]]; then
+    status_history_json=$(jq -c '.status_history // []' "${result_file}" 2>/dev/null || printf '[]')
+  fi
+  status_history_json=$(jq -c \
+    --arg status "${status}" \
+    --arg at "${status_event_at}" \
+    --argjson history "${status_history_json}" \
+    '$history + [{status: $status, at: $at}]' <<< '{}') || return 1
+
+  temp_file=$(mktemp "${backup_dir}/.transaction-result.XXXXXXXX") || return 1
+  if ! jq -n \
+    --arg schema_version "1.0" \
+    --arg transaction_id "${transaction_id}" \
+    --arg old_version "${old_version}" \
+    --arg new_version "${new_version}" \
+    --arg started_at "${started_at}" \
+    --arg completed_at "${completed_at}" \
+    --arg status "${status}" \
+    --arg backup_path "${backup_dir}" \
+    --arg manifest_path "${manifest_path}" \
+    --arg manifest_sha256 "${manifest_sha256}" \
+    --arg rollback_result "${rollback_result}" \
+    --argjson status_history "${status_history_json}" \
+    --argjson rollback_attempted "${rollback_attempted}" \
+    '{
+      schema_version: $schema_version,
+      transaction_id: $transaction_id,
+      old_version: $old_version,
+      new_version: $new_version,
+      started_at: $started_at,
+      completed_at: (if $completed_at == "" then null else $completed_at end),
+      status: $status,
+      backup_path: $backup_path,
+      manifest_path: $manifest_path,
+      manifest_sha256: $manifest_sha256,
+      manifest: {path: $manifest_path, sha256: $manifest_sha256},
+      status_history: $status_history,
+      rollback: {attempted: $rollback_attempted, result: $rollback_result}
+    }' > "${temp_file}"; then
+    rm -f "${temp_file}"
+    return 1
+  fi
+  if ! chmod 600 "${temp_file}" || ! mv -f "${temp_file}" "${result_file}"; then
+    rm -f "${temp_file}"
+    return 1
+  fi
 }
 
 restore_agent_upgrade_backup() {
@@ -8878,6 +8964,13 @@ agent_upgrade_cli() {
   local restore_config="n"
   local failure_reason="upgrade_failed"
   local output_error
+  local transaction_id
+  local transaction_result_file
+  local transaction_manifest_path
+  local transaction_manifest_sha256
+  local transaction_status
+  local transaction_rollback_result
+  local transaction_result_persisted=false
 
   if [[ "${json_flag}" != "--json" ]]; then
     agent_json_error "json_required" "upgrade 当前仅支持 --json 输出。"
@@ -8947,11 +9040,77 @@ agent_upgrade_cli() {
     return 1
   fi
 
-  if ! operation_log=$(mktemp); then
+  transaction_id=$(jq -r '.transaction_id' "${backup_dir}/metadata.json")
+  transaction_result_file="${backup_dir}/transaction-result.json"
+  transaction_manifest_path=$(jq -r '.manifest_path' "${backup_dir}/metadata.json")
+  transaction_manifest_sha256=$(agent_file_sha256 "${backup_dir}/SHA256SUMS")
+  if ! write_agent_upgrade_transaction_result \
+    "${backup_dir}" \
+    "backup_ready" \
+    false \
+    "not_attempted"; then
     jq -n \
       --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
       --arg backup "${backup_dir}" \
-      '{schema: $schema, ok: false, error: "temporary_log_failed", backup: $backup}'
+      --arg transaction_id "${transaction_id}" \
+      --arg transaction_result_file "${transaction_result_file}" \
+      --arg transaction_manifest_path "${transaction_manifest_path}" \
+      --arg transaction_manifest_sha256 "${transaction_manifest_sha256}" \
+      '{
+        schema: $schema,
+        ok: false,
+        error: "transaction_record_failed",
+        backup: $backup,
+        transaction: {
+          id: $transaction_id,
+          result_path: $transaction_result_file,
+          status: "backup_ready",
+          result_persisted: false,
+          manifest_path: $transaction_manifest_path,
+          manifest_sha256: $transaction_manifest_sha256,
+          manifest: {path: $transaction_manifest_path, sha256: $transaction_manifest_sha256},
+          rollback: {attempted: false, result: "not_attempted"}
+        }
+      }'
+    return 1
+  fi
+
+  if ! operation_log=$(mktemp); then
+    transaction_status="failed"
+    transaction_rollback_result="not_attempted"
+    if write_agent_upgrade_transaction_result \
+      "${backup_dir}" \
+      "${transaction_status}" \
+      false \
+      "${transaction_rollback_result}" \
+      "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; then
+      transaction_result_persisted=true
+    fi
+    jq -n \
+      --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
+      --arg backup "${backup_dir}" \
+      --arg transaction_id "${transaction_id}" \
+      --arg transaction_result_file "${transaction_result_file}" \
+      --arg transaction_manifest_path "${transaction_manifest_path}" \
+      --arg transaction_manifest_sha256 "${transaction_manifest_sha256}" \
+      --arg transaction_status "${transaction_status}" \
+      --argjson transaction_result_persisted "${transaction_result_persisted}" \
+      '{
+        schema: $schema,
+        ok: false,
+        error: "temporary_log_failed",
+        backup: $backup,
+        transaction: {
+          id: $transaction_id,
+          result_path: $transaction_result_file,
+          status: $transaction_status,
+          result_persisted: $transaction_result_persisted,
+          manifest_path: $transaction_manifest_path,
+          manifest_sha256: $transaction_manifest_sha256,
+          manifest: {path: $transaction_manifest_path, sha256: $transaction_manifest_sha256},
+          rollback: {attempted: false, result: "not_attempted"}
+        }
+      }'
     return 1
   fi
   set +e
@@ -8978,6 +9137,16 @@ agent_upgrade_cli() {
   operation_excerpt=$(sed -E $'s/\x1B\\[[0-9;]*[[:alpha:]]//g' "${operation_log}" | tail -n 80)
 
   if [[ "${operation_status}" == "0" && "${changed}" == "true" && "${config_preserved}" == "true" && "${after_check_status}" == "0" && "${after_service_state}" == "active" ]]; then
+    transaction_status="success"
+    transaction_rollback_result="not_attempted"
+    if write_agent_upgrade_transaction_result \
+      "${backup_dir}" \
+      "${transaction_status}" \
+      false \
+      "${transaction_rollback_result}" \
+      "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; then
+      transaction_result_persisted=true
+    fi
     rm -f "${operation_log}"
     jq -n \
       --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
@@ -8985,6 +9154,11 @@ agent_upgrade_cli() {
       --arg target "${target_version}" \
       --arg installed "${after_version}" \
       --arg backup "${backup_dir}" \
+      --arg transaction_id "${transaction_id}" \
+      --arg transaction_result_file "${transaction_result_file}" \
+      --arg transaction_manifest_path "${transaction_manifest_path}" \
+      --arg transaction_manifest_sha256 "${transaction_manifest_sha256}" \
+      --argjson transaction_result_persisted "${transaction_result_persisted}" \
       --arg before_hash "${before_hash}" \
       --arg after_hash "${after_hash}" \
       --arg before_service "${before_service_state}" \
@@ -9003,13 +9177,26 @@ agent_upgrade_cli() {
         target: $target,
         installed: $installed,
         backup: $backup,
+        transaction: {
+          id: $transaction_id,
+          result_path: $transaction_result_file,
+          status: "success",
+          result_persisted: $transaction_result_persisted,
+          manifest_path: $transaction_manifest_path,
+          manifest_sha256: $transaction_manifest_sha256,
+          manifest: {path: $transaction_manifest_path, sha256: $transaction_manifest_sha256},
+          rollback: {attempted: false, result: "not_attempted"}
+        },
         config_preserved: true,
         config: {sha256_before: $before_hash, sha256_after: $after_hash},
         service: {before: $before_service, after: $after_service},
         check: $check,
         warnings: $warnings,
         operation_log: $operation_log
-      }'
+      } + (if $transaction_result_persisted then {} else {ok: false, error: "transaction_record_failed"} end)'
+    if [[ "${transaction_result_persisted}" != "true" ]]; then
+      return 1
+    fi
     return 0
   fi
 
@@ -9053,6 +9240,23 @@ agent_upgrade_cli() {
     output_error="rollback_failed"
     manual_intervention_required=true
   fi
+  if [[ "${rollback_ok}" == "true" ]]; then
+    transaction_status="rolled_back"
+    transaction_rollback_result="success"
+  else
+    transaction_status="rollback_failed"
+    transaction_rollback_result="failed"
+  fi
+  if write_agent_upgrade_transaction_result \
+    "${backup_dir}" \
+    "${transaction_status}" \
+    true \
+    "${transaction_rollback_result}" \
+    "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; then
+    transaction_result_persisted=true
+  else
+    output_error="transaction_record_failed"
+  fi
   rm -f "${operation_log}"
 
   jq -n \
@@ -9063,6 +9267,13 @@ agent_upgrade_cli() {
     --arg target "${target_version}" \
     --arg installed "${after_version}" \
     --arg backup "${backup_dir}" \
+    --arg transaction_id "${transaction_id}" \
+    --arg transaction_result_file "${transaction_result_file}" \
+    --arg transaction_manifest_path "${transaction_manifest_path}" \
+    --arg transaction_manifest_sha256 "${transaction_manifest_sha256}" \
+    --arg transaction_status "${transaction_status}" \
+    --arg transaction_rollback_result "${transaction_rollback_result}" \
+    --argjson transaction_result_persisted "${transaction_result_persisted}" \
     --arg before_hash "${before_hash}" \
     --arg after_hash "${after_hash}" \
     --arg before_service "${before_service_state}" \
@@ -9092,6 +9303,16 @@ agent_upgrade_cli() {
       target: $target,
       installed: $installed,
       backup: $backup,
+      transaction: {
+        id: $transaction_id,
+        result_path: $transaction_result_file,
+        status: $transaction_status,
+        result_persisted: $transaction_result_persisted,
+        manifest_path: $transaction_manifest_path,
+        manifest_sha256: $transaction_manifest_sha256,
+        manifest: {path: $transaction_manifest_path, sha256: $transaction_manifest_sha256},
+        rollback: {attempted: true, result: $transaction_rollback_result}
+      },
       config_preserved: $config_preserved,
       config: {sha256_before: $before_hash, sha256_after: $after_hash},
       service: {before: $before_service, after: $after_service},
@@ -10900,6 +11121,8 @@ update_singbox_binary_preserving_config() {
   local installed_ver
   local reinstall_choice
   local binary_backup=""
+  local before_service_state
+  local restore_status=0
 
   installed_ver=$("${SINGBOX_BIN_PATH}" version | head -n1 | awk '{print $3}')
   get_os_info
@@ -10927,6 +11150,8 @@ update_singbox_binary_preserving_config() {
     fi
   fi
 
+  before_service_state=$(systemctl is-active sing-box 2>/dev/null || true)
+
   if ! binary_backup=$(mktemp); then
     log_error "创建 sing-box 二进制临时备份失败，已取消更新。"
   fi
@@ -10951,13 +11176,28 @@ update_singbox_binary_preserving_config() {
     rm -f "${binary_backup}"
     return 1
   fi
-  rm -f "${binary_backup}"
-
   log_success "现有配置通过 sing-box ${SB_VERSION} 校验。"
-  if ! systemctl restart sing-box; then
-    log_warn "sing-box 服务重启失败。"
+  if ! systemctl restart sing-box || [[ "$(systemctl is-active sing-box 2>/dev/null || true)" != "active" ]]; then
+    log_warn "sing-box 服务重启失败或未保持 active。"
+    if ! cp -p "${binary_backup}" "${SINGBOX_BIN_PATH}" 2>/dev/null; then
+      log_warn "自动恢复旧 sing-box 二进制失败，请从备份 ${binary_backup} 手动恢复。"
+      return 1
+    fi
+    chmod +x "${SINGBOX_BIN_PATH}" || restore_status=1
+    if [[ "${before_service_state}" == "active" ]]; then
+      systemctl restart sing-box >/dev/null 2>&1 || restore_status=1
+    else
+      systemctl stop sing-box >/dev/null 2>&1 || restore_status=1
+    fi
+    if [[ "${restore_status}" != "0" ]]; then
+      log_warn "恢复更新前 sing-box 服务状态失败，请手动检查服务状态；旧二进制备份保留在 ${binary_backup}。"
+      return 1
+    fi
+    rm -f "${binary_backup}"
+    log_warn "已恢复更新前的 sing-box 二进制及服务状态。"
     return 1
   fi
+  rm -f "${binary_backup}"
   log_success "sing-box 已更新到 ${SB_VERSION}，当前配置已保留。"
   display_status_summary
   log_info "连接信息未自动展示，如需查看请进入菜单 11。"
