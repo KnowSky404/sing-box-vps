@@ -6,7 +6,7 @@ readonly VERIFICATION_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 readonly REPO_ROOT=$(cd "${VERIFICATION_ROOT}/../.." && pwd)
 readonly REMOTE_ARTIFACT_BUNDLE_BEGIN='__SING_BOX_VPS_REMOTE_ARTIFACT_BUNDLE_BEGIN__'
 readonly REMOTE_ARTIFACT_BUNDLE_END='__SING_BOX_VPS_REMOTE_ARTIFACT_BUNDLE_END__'
-readonly DEFAULT_DOCKER_IMAGE="sing-box-vps-verify:2026090301"
+readonly DEFAULT_DOCKER_IMAGE="sing-box-vps-verify:2026090301-1"
 
 determine_verification_mode() {
   local file

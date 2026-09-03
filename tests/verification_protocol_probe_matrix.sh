@@ -8,6 +8,12 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 # shellcheck disable=SC1091
 source "${REPO_ROOT}/tests/verification_protocol_probe_test_helper.sh"
 
+if grep -Fq 'python3-minimal' "${REPO_ROOT}/dev/verification/docker/Dockerfile" || \
+  ! grep -Eq '(^|[[:space:]])python3([[:space:]]|\\|$)' "${REPO_ROOT}/dev/verification/docker/Dockerfile"; then
+  printf 'verification image must install full python3 for the http.server probe\n' >&2
+  exit 1
+fi
+
 RED_ARTIFACT_DIR="${TMP_DIR}/artifacts-red"
 DISCOVERY_FAILURE_ARTIFACT_DIR="${TMP_DIR}/artifacts-discovery-failure"
 GREEN_ARTIFACT_DIR="${TMP_DIR}/artifacts-green"
