@@ -374,6 +374,7 @@ INDEX_EOF
         "enabled": true,
         "server_name": "\$(cat "\${REMOTE_SNI_FILE}")",
         "reality": {
+          "enabled": true,
           "private_key": "${VALID_REALITY_PRIVATE_KEY}",
           "short_id": [
             "aaaaaaaaaaaaaaaa",
