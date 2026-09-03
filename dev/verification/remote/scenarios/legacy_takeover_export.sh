@@ -31,6 +31,7 @@ verification_scenario_legacy_takeover_export() {
         }
       ],
       "tls": {
+        "enabled": true,
         "server_name": "www.cloudflare.com",
         "reality": {
           "private_key": "IEwVBb_qLcYr1L_CTI5exTWbT7qRgZnr43xP8nC0dkM",
@@ -79,6 +80,8 @@ EOF
   grep -Fqx "SNI=${expected_sni}" "${instance_state_file}"
   grep -Fqx "REALITY_PRIVATE_KEY=${expected_private_key}" /root/sing-box-vps/protocols/vless-reality.env
   grep -Fqx "REALITY_PUBLIC_KEY=${expected_public_key}" /root/sing-box-vps/protocols/vless-reality.env
+  jq -e '.inbounds[] | select(.type == "vless" and .tag == "legacy-vless-in") | .tls.enabled == true' \
+    "${legacy_config_path}" >/dev/null
   verification_wait_for_service_active sing-box
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" sing-box check -c /root/sing-box-vps/config.json
 

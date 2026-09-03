@@ -124,6 +124,7 @@ STATE_EOF
         }
       ],
       "tls": {
+        "enabled": true,
         "server_name": "$(cat "${SNI_FILE}")",
         "reality": {
           "short_id": [
@@ -747,6 +748,8 @@ grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_vless/protoc
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/reconfigure_existing_install/protocol-probes/vless-reality/result.env"
 [[ -f "${ARTIFACT_DIR}/scenarios/legacy_takeover_export/client/sing-box-client.json" ]]
 grep -Fq '"fingerprint": "chrome"' "${ARTIFACT_DIR}/scenarios/legacy_takeover_export/client/sing-box-client.json"
+jq -e '.inbounds[] | select(.type == "vless") | .tls.enabled == true' \
+  "${ARTIFACT_DIR}/scenarios/legacy_takeover_export/config.json" >/dev/null
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/legacy_takeover_export/protocol-probes/vless-reality/result.env"
 jq -e '.outbounds[0] | has("flow") | not' \
   "${ARTIFACT_DIR}/scenarios/legacy_takeover_export/protocol-probes/vless-reality/client.json" >/dev/null
