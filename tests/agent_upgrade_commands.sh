@@ -427,7 +427,19 @@ jq -e '.ok == false and .error == "config_check_failed" and .preflight.current_c
 
 rm -f "${CURRENT_CHECK_FAIL_FILE}"
 : > "${SYSTEMCTL_CALLS_FILE}"
+DIRECT_BINARY_COPY_FILE="${TMP_DIR}/direct-binary-copy"
+cp() {
+  local destination=${!#}
+
+  if [[ "${destination}" == "${SINGBOX_BIN_PATH}" ]]; then
+    : > "${DIRECT_BINARY_COPY_FILE}"
+    return 26
+  fi
+  command cp "$@"
+}
 restore_agent_upgrade_backup "${backup_dir}" "n" "n"
+unset -f cp
+[[ ! -e "${DIRECT_BINARY_COPY_FILE}" ]]
 grep -Fqx 'stop sing-box' "${SYSTEMCTL_CALLS_FILE}"
 
 printf 'tampered\n' >> "${backup_dir}/runtime/protocols/hy2.env"

@@ -4170,6 +4170,24 @@ get_latest_version() {
   fi
 }
 
+replace_singbox_binary_atomically() {
+  local source_file=$1
+  local target_dir
+  local staged_binary=""
+
+  [[ -f "${source_file}" ]] || return 1
+  target_dir=$(dirname "${SINGBOX_BIN_PATH}")
+  [[ -d "${target_dir}" ]] || return 1
+  staged_binary=$(mktemp "${target_dir}/.sing-box.restore.XXXXXXXX") || return 1
+
+  if ! cp -p -- "${source_file}" "${staged_binary}" ||
+     ! chmod 0755 "${staged_binary}" ||
+     ! mv -f -- "${staged_binary}" "${SINGBOX_BIN_PATH}"; then
+    rm -f -- "${staged_binary}"
+    return 1
+  fi
+}
+
 install_binary() {
   local download_url="https://github.com/SagerNet/sing-box/releases/download/v${SB_VERSION}/sing-box-${SB_VERSION}-linux-${ARCH}.tar.gz"
   local temp_dir="/tmp/sing-box-install"
@@ -9248,7 +9266,7 @@ restore_agent_upgrade_backup() {
 
   [[ -f "${backup_dir}/sing-box" && -f "${backup_dir}/SHA256SUMS" ]] || return 1
   (cd "${backup_dir}" && sha256sum -c SHA256SUMS >/dev/null 2>&1) || return 1
-  cp -p "${backup_dir}/sing-box" "${SINGBOX_BIN_PATH}" || status=1
+  replace_singbox_binary_atomically "${backup_dir}/sing-box" || status=1
 
   if [[ -f "${backup_dir}/sing-box.service" ]]; then
     cp -p "${backup_dir}/sing-box.service" "${SINGBOX_SERVICE_FILE}" || status=1
@@ -11788,7 +11806,7 @@ update_singbox_binary_preserving_config() {
   installed_target_ver=${installed_target_ver#v}
   if [[ -z "${installed_target_ver}" || "${installed_target_ver}" != "${SB_VERSION#v}" ]]; then
     log_warn "安装后的 sing-box 版本 (${installed_target_ver:-未知}) 与目标版本 ${SB_VERSION#v} 不一致，服务未重启。"
-    if cp -p "${binary_backup}" "${SINGBOX_BIN_PATH}" 2>/dev/null && chmod +x "${SINGBOX_BIN_PATH}"; then
+    if replace_singbox_binary_atomically "${binary_backup}" 2>/dev/null; then
       rm -f "${binary_backup}"
       log_warn "已自动恢复更新前的 sing-box 二进制。"
     else
@@ -11801,8 +11819,7 @@ update_singbox_binary_preserving_config() {
   if ! validate_config_file; then
     log_warn "现有配置未通过 sing-box ${SB_VERSION} 校验。配置已保留，服务未重启。"
     log_warn "这通常意味着新版本存在 breaking changes，请按 sing-box migration 文档迁移配置后再重载服务。"
-    if cp -p "${binary_backup}" "${SINGBOX_BIN_PATH}" 2>/dev/null; then
-      chmod +x "${SINGBOX_BIN_PATH}"
+    if replace_singbox_binary_atomically "${binary_backup}" 2>/dev/null; then
       log_warn "已自动恢复更新前的 sing-box 二进制。"
     else
       log_warn "自动恢复旧 sing-box 二进制失败，请从备份 ${binary_backup} 手动恢复。"
@@ -11814,11 +11831,10 @@ update_singbox_binary_preserving_config() {
   log_success "现有配置通过 sing-box ${SB_VERSION} 校验。"
   if ! systemctl restart sing-box || [[ "$(systemctl is-active sing-box 2>/dev/null || true)" != "active" ]]; then
     log_warn "sing-box 服务重启失败或未保持 active。"
-    if ! cp -p "${binary_backup}" "${SINGBOX_BIN_PATH}" 2>/dev/null; then
+    if ! replace_singbox_binary_atomically "${binary_backup}" 2>/dev/null; then
       log_warn "自动恢复旧 sing-box 二进制失败，请从备份 ${binary_backup} 手动恢复。"
       return 1
     fi
-    chmod +x "${SINGBOX_BIN_PATH}" || restore_status=1
     if [[ "${before_service_state}" == "active" ]]; then
       systemctl restart sing-box >/dev/null 2>&1 || restore_status=1
     else
