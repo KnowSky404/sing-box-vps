@@ -4214,8 +4214,9 @@ install_binary() {
     log_error "找不到 sing-box 二进制文件。"
   fi
   
-  mv -f "${bin_path}" "${SINGBOX_BIN_PATH}"
-  chmod +x "${SINGBOX_BIN_PATH}"
+  if ! replace_singbox_binary_atomically "${bin_path}"; then
+    log_error "安装 sing-box 二进制失败。"
+  fi
   
   # Final Cleanup
   rm -rf "${temp_dir}"
@@ -9258,6 +9259,7 @@ restore_agent_upgrade_backup() {
   local restore_config=${2:-n}
   local service_was_active=${3:-n}
   local status=0
+  local binary_restored="n"
 
   case "${backup_dir}" in
     "${SB_UPGRADE_BACKUP_ROOT}"/upgrade-*) ;;
@@ -9266,7 +9268,11 @@ restore_agent_upgrade_backup() {
 
   [[ -f "${backup_dir}/sing-box" && -f "${backup_dir}/SHA256SUMS" ]] || return 1
   (cd "${backup_dir}" && sha256sum -c SHA256SUMS >/dev/null 2>&1) || return 1
-  replace_singbox_binary_atomically "${backup_dir}/sing-box" || status=1
+  if replace_singbox_binary_atomically "${backup_dir}/sing-box"; then
+    binary_restored="y"
+  else
+    status=1
+  fi
 
   if [[ -f "${backup_dir}/sing-box.service" ]]; then
     cp -p "${backup_dir}/sing-box.service" "${SINGBOX_SERVICE_FILE}" || status=1
@@ -9276,6 +9282,10 @@ restore_agent_upgrade_backup() {
   fi
 
   systemctl daemon-reload >/dev/null 2>&1 || status=1
+  if [[ "${binary_restored}" != "y" ]]; then
+    systemctl stop sing-box >/dev/null 2>&1 || status=1
+    return 1
+  fi
   if [[ "${service_was_active}" == "y" ]]; then
     systemctl restart sing-box >/dev/null 2>&1 || status=1
   else
@@ -11836,9 +11846,15 @@ update_singbox_binary_preserving_config() {
       return 1
     fi
     if [[ "${before_service_state}" == "active" ]]; then
-      systemctl restart sing-box >/dev/null 2>&1 || restore_status=1
+      if ! systemctl restart sing-box >/dev/null 2>&1 ||
+         [[ "$(systemctl is-active sing-box 2>/dev/null || true)" != "active" ]]; then
+        restore_status=1
+      fi
     else
-      systemctl stop sing-box >/dev/null 2>&1 || restore_status=1
+      if ! systemctl stop sing-box >/dev/null 2>&1 ||
+         [[ "$(systemctl is-active sing-box 2>/dev/null || true)" == "active" ]]; then
+        restore_status=1
+      fi
     fi
     if [[ "${restore_status}" != "0" ]]; then
       log_warn "恢复更新前 sing-box 服务状态失败，请手动检查服务状态；旧二进制备份保留在 ${binary_backup}。"

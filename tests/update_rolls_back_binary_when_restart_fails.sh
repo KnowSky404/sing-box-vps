@@ -48,6 +48,7 @@ source "${TESTABLE_INSTALL}"
 RESTART_COUNT=0
 SERVICE_STATE=active
 RECOVERY_RESTART_FAIL=n
+RECOVERY_RESTART_EXIT_ZERO_INACTIVE=n
 TARGET_RESTART_EXIT_ZERO=n
 INSTALL_BINARY_VERSION=1.14.0
 
@@ -74,6 +75,10 @@ systemctl() {
     if [[ "${RECOVERY_RESTART_FAIL}" == "y" ]]; then
       SERVICE_STATE=inactive
       return 1
+    fi
+    if [[ "${RECOVERY_RESTART_EXIT_ZERO_INACTIVE}" == "y" ]]; then
+      SERVICE_STATE=inactive
+      return 0
     fi
     SERVICE_STATE=active
     return 0
@@ -157,9 +162,29 @@ if [[ "${SERVICE_STATE}" != "inactive" || "${RESTART_COUNT}" != "2" ]]; then
   exit 1
 fi
 
+# A successful recovery restart command must still restore the active state.
+SERVICE_STATE=active
+RECOVERY_RESTART_FAIL=n
+RECOVERY_RESTART_EXIT_ZERO_INACTIVE=y
+TARGET_RESTART_EXIT_ZERO=n
+RESTART_COUNT=0
+if update_singbox_binary_preserving_config >/dev/null; then
+  printf 'expected inactive recovery result to return non-zero\n' >&2
+  exit 1
+fi
+if [[ "$("${SINGBOX_BIN_PATH}" marker)" != "old" ]]; then
+  printf 'expected old sing-box binary after inactive recovery result\n' >&2
+  exit 1
+fi
+if [[ "${SERVICE_STATE}" != "inactive" || "${RESTART_COUNT}" != "2" ]]; then
+  printf 'expected inactive recovery result and two restart attempts\n' >&2
+  exit 1
+fi
+
 # A restart command that exits zero but never reaches active must also roll back.
 SERVICE_STATE=active
 RECOVERY_RESTART_FAIL=n
+RECOVERY_RESTART_EXIT_ZERO_INACTIVE=n
 TARGET_RESTART_EXIT_ZERO=y
 RESTART_COUNT=0
 if update_singbox_binary_preserving_config >/dev/null; then
@@ -179,6 +204,7 @@ fi
 # configuration validation or a service restart and restore the previous binary.
 SERVICE_STATE=active
 RECOVERY_RESTART_FAIL=n
+RECOVERY_RESTART_EXIT_ZERO_INACTIVE=n
 TARGET_RESTART_EXIT_ZERO=n
 INSTALL_BINARY_VERSION=1.13.18
 RESTART_COUNT=0

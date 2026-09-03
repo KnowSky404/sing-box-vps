@@ -7,7 +7,61 @@ TESTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${TESTS_DIR}/menu_test_helper.sh"
 
 setup_menu_test_env 120
+perl -0pi -e 's|local temp_dir="/tmp/sing-box-install"|local temp_dir="'"${TMP_DIR}"'/download"|' "${TESTABLE_INSTALL}"
 source_testable_install
+
+ATOMIC_RENAME_SOURCE=""
+ATOMIC_RENAME_MODE=""
+
+wget() {
+  [[ "${1:-}" == "-O" && -n "${2:-}" ]]
+  : > "${2}"
+}
+
+tar() {
+  local extracted_dir="${TMP_DIR}/download/extracted"
+
+  mkdir -p "${extracted_dir}"
+  cat > "${extracted_dir}/sing-box" <<'EOF'
+#!/usr/bin/env bash
+
+if [[ "${1:-}" == "marker" ]]; then
+  printf 'atomically-installed\n'
+fi
+EOF
+  chmod 0644 "${extracted_dir}/sing-box"
+}
+
+mv() {
+  local args=("$@")
+  local source_arg=${args[${#args[@]}-2]}
+  local destination_arg=${args[${#args[@]}-1]}
+
+  if [[ "${destination_arg}" == "${SINGBOX_BIN_PATH}" ]]; then
+    ATOMIC_RENAME_SOURCE=${source_arg}
+    ATOMIC_RENAME_MODE=$(stat -c '%a' "${source_arg}")
+  fi
+  command mv "$@"
+}
+
+SB_VERSION="1.14.0"
+ARCH="amd64"
+install_binary >/dev/null
+
+if [[ "${ATOMIC_RENAME_SOURCE}" != "${TMP_DIR}/bin/.sing-box.restore."* ]]; then
+  printf 'expected install to stage the binary in its target directory, got %s\n' "${ATOMIC_RENAME_SOURCE:-<none>}" >&2
+  exit 1
+fi
+if [[ "${ATOMIC_RENAME_MODE}" != "755" ]]; then
+  printf 'expected staged install binary mode 755 before rename, got %s\n' "${ATOMIC_RENAME_MODE:-<none>}" >&2
+  exit 1
+fi
+if [[ "$("${SINGBOX_BIN_PATH}" marker)" != "atomically-installed" ]]; then
+  printf 'expected atomically installed binary at the final path\n' >&2
+  exit 1
+fi
+
+unset -f wget tar mv
 
 write_singbox_binary() {
   cat > "${SINGBOX_BIN_PATH}" <<'EOF'

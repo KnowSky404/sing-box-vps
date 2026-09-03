@@ -442,6 +442,22 @@ unset -f cp
 [[ ! -e "${DIRECT_BINARY_COPY_FILE}" ]]
 grep -Fqx 'stop sing-box' "${SYSTEMCTL_CALLS_FILE}"
 
+original_replace_function=$(declare -f replace_singbox_binary_atomically)
+replace_singbox_binary_atomically() {
+  return 1
+}
+: > "${SYSTEMCTL_CALLS_FILE}"
+if restore_agent_upgrade_backup "${backup_dir}" "n" "y"; then
+  printf 'expected binary restore failure to return non-zero\n' >&2
+  exit 1
+fi
+eval "${original_replace_function}"
+if grep -Fqx 'restart sing-box' "${SYSTEMCTL_CALLS_FILE}"; then
+  printf 'binary restore failure must not restart sing-box\n' >&2
+  exit 1
+fi
+grep -Fqx 'stop sing-box' "${SYSTEMCTL_CALLS_FILE}"
+
 printf 'tampered\n' >> "${backup_dir}/runtime/protocols/hy2.env"
 if restore_agent_upgrade_backup "${backup_dir}" "n" "n"; then
   printf 'expected recursive backup manifest to reject a modified runtime state file\n' >&2
