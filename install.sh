@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090202
+# Version: 2026090301
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090202"
+readonly SCRIPT_VERSION="2026090301"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -5790,6 +5790,107 @@ config_has_advanced_route() {
   ' "${config_file}" &>/dev/null
 }
 
+# Resolve an inbound certificate provider into the state fields consumed by all
+# protocol readers.  A certificate_provider may be either a shared tag or an
+# inline object, but only an ACME provider can be represented by the script's
+# state model.  Returning an error for anything else prevents a later rewrite
+# from silently changing the certificate configuration.
+load_certificate_provider_from_config() {
+  local config_file=$1
+  local inbound_index=$2
+  local provider_kind provider_tag provider_count provider_json provider_type server_name
+
+  CERT_PROVIDER_MODE="none"
+  CERT_PROVIDER_TAG=""
+  CERT_PROVIDER_EMAIL=""
+  CERT_PROVIDER_DOMAIN=""
+  CERT_PROVIDER_ACME_MODE="http"
+  CERT_PROVIDER_DNS_PROVIDER="cloudflare"
+  CERT_PROVIDER_CF_API_TOKEN=""
+  CERT_PROVIDER_ERROR=""
+
+  if ! provider_kind=$(jq -r --argjson idx "${inbound_index}" '
+    .inbounds[$idx].tls.certificate_provider? |
+    if . == null then "none"
+    elif type == "string" then "shared"
+    elif type == "object" then "inline"
+    else "invalid"
+    end
+  ' "${config_file}"); then
+    CERT_PROVIDER_ERROR="无法读取 certificate_provider"
+    return 1
+  fi
+
+  case "${provider_kind}" in
+    none)
+      return 0
+      ;;
+    shared)
+      provider_tag=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider' "${config_file}") || {
+        CERT_PROVIDER_ERROR="无法读取 shared certificate_provider tag"
+        return 1
+      }
+      provider_count=$(jq -r --arg tag "${provider_tag}" '[.certificate_providers[]? | select(type == "object" and .tag == $tag)] | length' "${config_file}") || {
+        CERT_PROVIDER_ERROR="无法读取 shared certificate_provider 映射"
+        return 1
+      }
+      if [[ "${provider_count}" != "1" ]]; then
+        CERT_PROVIDER_ERROR="shared certificate_provider 未唯一映射"
+        return 1
+      fi
+      provider_json=$(jq -c --arg tag "${provider_tag}" 'first(.certificate_providers[]? | select(type == "object" and .tag == $tag)) // null' "${config_file}") || {
+        CERT_PROVIDER_ERROR="无法读取 shared certificate_provider"
+        return 1
+      }
+      CERT_PROVIDER_TAG="${provider_tag}"
+      ;;
+    inline)
+      provider_json=$(jq -c --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider' "${config_file}") || {
+        CERT_PROVIDER_ERROR="无法读取 inline certificate_provider"
+        return 1
+      }
+      ;;
+    *)
+      CERT_PROVIDER_ERROR="certificate_provider 类型不受支持"
+      return 1
+      ;;
+  esac
+
+  provider_type=$(jq -n -r --argjson provider "${provider_json}" '$provider.type // ""' 2>/dev/null) || {
+    CERT_PROVIDER_ERROR="无法读取 certificate_provider type"
+    return 1
+  }
+  if [[ "${provider_type}" != "acme" ]]; then
+    CERT_PROVIDER_ERROR="certificate_provider 不是 ACME provider"
+    return 1
+  fi
+
+  server_name=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.server_name // ""' "${config_file}") || {
+    CERT_PROVIDER_ERROR="无法读取 certificate_provider fallback domain"
+    return 1
+  }
+  CERT_PROVIDER_MODE="acme"
+  if ! CERT_PROVIDER_EMAIL=$(jq -n -r --argjson provider "${provider_json}" '$provider.email // ""' 2>/dev/null); then
+    CERT_PROVIDER_ERROR="无法读取 ACME provider email"
+    return 1
+  fi
+  if ! CERT_PROVIDER_DOMAIN=$(jq -n -r --argjson provider "${provider_json}" --arg fallback "${server_name}" '$provider.domain[0] // $fallback' 2>/dev/null); then
+    CERT_PROVIDER_ERROR="无法读取 ACME provider domain"
+    return 1
+  fi
+  if jq -n -e --argjson provider "${provider_json}" '$provider.dns01_challenge? != null' &>/dev/null; then
+    CERT_PROVIDER_ACME_MODE="dns"
+    if ! CERT_PROVIDER_DNS_PROVIDER=$(jq -n -r --argjson provider "${provider_json}" '$provider.dns01_challenge.provider // "cloudflare"' 2>/dev/null); then
+      CERT_PROVIDER_ERROR="无法读取 ACME DNS provider"
+      return 1
+    fi
+    if ! CERT_PROVIDER_CF_API_TOKEN=$(jq -n -r --argjson provider "${provider_json}" '$provider.dns01_challenge.api_token // ""' 2>/dev/null); then
+      CERT_PROVIDER_ERROR="无法读取 ACME DNS API token"
+      return 1
+    fi
+  fi
+}
+
 load_current_config_state() {
   local first_protocol
   local installed_protocols=()
@@ -5900,19 +6001,15 @@ load_current_config_state() {
       SB_HY2_CERT_PATH=""
       SB_HY2_KEY_PATH=""
     elif jq -e '.inbounds[0].tls.certificate_provider? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
-      SB_HY2_TLS_MODE="acme"
-      cert_provider_tag=$(jq -r '.inbounds[0].tls.certificate_provider // ""' "${SINGBOX_CONFIG_FILE}")
-      SB_HY2_ACME_EMAIL=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .email) // ""' "${SINGBOX_CONFIG_FILE}")
-      SB_HY2_ACME_DOMAIN=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .domain[0]) // .inbounds[0].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
-      if jq -e --arg tag "${cert_provider_tag}" 'any(.certificate_providers[]?; .tag == $tag and .dns01_challenge? != null)' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
-        SB_HY2_ACME_MODE="dns"
-        SB_HY2_DNS_PROVIDER=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .dns01_challenge.provider) // "cloudflare"' "${SINGBOX_CONFIG_FILE}")
-        SB_HY2_CF_API_TOKEN=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .dns01_challenge.api_token) // ""' "${SINGBOX_CONFIG_FILE}")
-      else
-        SB_HY2_ACME_MODE="http"
-        SB_HY2_DNS_PROVIDER="cloudflare"
-        SB_HY2_CF_API_TOKEN=""
+      if ! load_certificate_provider_from_config "${SINGBOX_CONFIG_FILE}" 0; then
+        log_error "当前 Hysteria2 certificate_provider 无法安全解析: ${CERT_PROVIDER_ERROR}"
       fi
+      SB_HY2_TLS_MODE="acme"
+      SB_HY2_ACME_MODE="${CERT_PROVIDER_ACME_MODE}"
+      SB_HY2_ACME_EMAIL="${CERT_PROVIDER_EMAIL}"
+      SB_HY2_ACME_DOMAIN="${CERT_PROVIDER_DOMAIN}"
+      SB_HY2_DNS_PROVIDER="${CERT_PROVIDER_DNS_PROVIDER}"
+      SB_HY2_CF_API_TOKEN="${CERT_PROVIDER_CF_API_TOKEN}"
       SB_HY2_CERT_PATH=""
       SB_HY2_KEY_PATH=""
     else
@@ -5947,6 +6044,18 @@ load_current_config_state() {
         SB_ANYTLS_DNS_PROVIDER="cloudflare"
         SB_ANYTLS_CF_API_TOKEN=""
       fi
+      SB_ANYTLS_CERT_PATH=""
+      SB_ANYTLS_KEY_PATH=""
+    elif jq -e '.inbounds[0].tls.certificate_provider? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+      if ! load_certificate_provider_from_config "${SINGBOX_CONFIG_FILE}" 0; then
+        log_error "当前 AnyTLS certificate_provider 无法安全解析: ${CERT_PROVIDER_ERROR}"
+      fi
+      SB_ANYTLS_TLS_MODE="acme"
+      SB_ANYTLS_ACME_MODE="${CERT_PROVIDER_ACME_MODE}"
+      SB_ANYTLS_ACME_EMAIL="${CERT_PROVIDER_EMAIL}"
+      SB_ANYTLS_ACME_DOMAIN="${CERT_PROVIDER_DOMAIN}"
+      SB_ANYTLS_DNS_PROVIDER="${CERT_PROVIDER_DNS_PROVIDER}"
+      SB_ANYTLS_CF_API_TOKEN="${CERT_PROVIDER_CF_API_TOKEN}"
       SB_ANYTLS_CERT_PATH=""
       SB_ANYTLS_KEY_PATH=""
     else
@@ -10067,26 +10176,17 @@ render_expected_protocol_state_snapshot() {
         fi
         printf 'CERT_PATH=\n'
         printf 'KEY_PATH=\n'
-      elif cert_provider_tag=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider // ""' "${SINGBOX_CONFIG_FILE}"); [[ -n "${cert_provider_tag}" ]]; then
+      elif jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+        load_certificate_provider_from_config "${SINGBOX_CONFIG_FILE}" "${inbound_index}" || return 1
         printf 'TLS_MODE=acme\n'
-        if jq -e --arg tag "${cert_provider_tag}" 'any(.certificate_providers[]?; .tag == $tag and .dns01_challenge? != null)' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
-          printf 'ACME_MODE=dns\n'
-        else
-          printf 'ACME_MODE=http\n'
-        fi
-        printf 'ACME_EMAIL=%s\n' "$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .email) // ""' "${SINGBOX_CONFIG_FILE}")"
-        printf 'ACME_DOMAIN=%s\n' "$(jq -r --argjson idx "${inbound_index}" --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .domain[0]) // .inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")"
-        if jq -e --arg tag "${cert_provider_tag}" 'any(.certificate_providers[]?; .tag == $tag and .dns01_challenge? != null)' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
-          printf 'DNS_PROVIDER=%s\n' "$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .dns01_challenge.provider) // "cloudflare"' "${SINGBOX_CONFIG_FILE}")"
-          printf 'CF_API_TOKEN=%s\n' "$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .dns01_challenge.api_token) // ""' "${SINGBOX_CONFIG_FILE}")"
-        else
-          printf 'DNS_PROVIDER=cloudflare\n'
-          printf 'CF_API_TOKEN=\n'
-        fi
+        printf 'ACME_MODE=%s\n' "${CERT_PROVIDER_ACME_MODE}"
+        printf 'ACME_EMAIL=%s\n' "${CERT_PROVIDER_EMAIL}"
+        printf 'ACME_DOMAIN=%s\n' "${CERT_PROVIDER_DOMAIN}"
+        printf 'DNS_PROVIDER=%s\n' "${CERT_PROVIDER_DNS_PROVIDER}"
+        printf 'CF_API_TOKEN=%s\n' "${CERT_PROVIDER_CF_API_TOKEN}"
         printf 'CERT_PATH=\n'
         printf 'KEY_PATH=\n'
       else
-        cert_provider_tag=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider // ""' "${SINGBOX_CONFIG_FILE}")
         printf 'TLS_MODE=manual\n'
         printf 'ACME_MODE=http\n'
         printf 'ACME_EMAIL=\n'
@@ -10119,6 +10219,16 @@ render_expected_protocol_state_snapshot() {
           printf 'DNS_PROVIDER=cloudflare\n'
           printf 'CF_API_TOKEN=\n'
         fi
+        printf 'CERT_PATH=\n'
+        printf 'KEY_PATH=\n'
+      elif jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+        load_certificate_provider_from_config "${SINGBOX_CONFIG_FILE}" "${inbound_index}" || return 1
+        printf 'TLS_MODE=acme\n'
+        printf 'ACME_MODE=%s\n' "${CERT_PROVIDER_ACME_MODE}"
+        printf 'ACME_EMAIL=%s\n' "${CERT_PROVIDER_EMAIL}"
+        printf 'ACME_DOMAIN=%s\n' "${CERT_PROVIDER_DOMAIN}"
+        printf 'DNS_PROVIDER=%s\n' "${CERT_PROVIDER_DNS_PROVIDER}"
+        printf 'CF_API_TOKEN=%s\n' "${CERT_PROVIDER_CF_API_TOKEN}"
         printf 'CERT_PATH=\n'
         printf 'KEY_PATH=\n'
       else
@@ -10510,19 +10620,14 @@ rebuild_protocol_state_from_config() {
           fi
           SB_HY2_CERT_PATH=""
           SB_HY2_KEY_PATH=""
-        elif cert_provider_tag=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider // ""' "${SINGBOX_CONFIG_FILE}"); [[ -n "${cert_provider_tag}" ]]; then
+        elif jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+          load_certificate_provider_from_config "${SINGBOX_CONFIG_FILE}" "${inbound_index}" || return 1
           SB_HY2_TLS_MODE="acme"
-          SB_HY2_ACME_DOMAIN=$(jq -r --argjson idx "${inbound_index}" --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .domain[0]) // .inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
-          SB_HY2_ACME_EMAIL=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .email) // ""' "${SINGBOX_CONFIG_FILE}")
-          if jq -e --arg tag "${cert_provider_tag}" 'any(.certificate_providers[]?; .tag == $tag and .dns01_challenge? != null)' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
-            SB_HY2_ACME_MODE="dns"
-            SB_HY2_DNS_PROVIDER=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .dns01_challenge.provider) // "cloudflare"' "${SINGBOX_CONFIG_FILE}")
-            SB_HY2_CF_API_TOKEN=$(jq -r --arg tag "${cert_provider_tag}" 'first(.certificate_providers[]? | select(.tag == $tag) | .dns01_challenge.api_token) // ""' "${SINGBOX_CONFIG_FILE}")
-          else
-            SB_HY2_ACME_MODE="http"
-            SB_HY2_DNS_PROVIDER="cloudflare"
-            SB_HY2_CF_API_TOKEN=""
-          fi
+          SB_HY2_ACME_DOMAIN="${CERT_PROVIDER_DOMAIN}"
+          SB_HY2_ACME_EMAIL="${CERT_PROVIDER_EMAIL}"
+          SB_HY2_ACME_MODE="${CERT_PROVIDER_ACME_MODE}"
+          SB_HY2_DNS_PROVIDER="${CERT_PROVIDER_DNS_PROVIDER}"
+          SB_HY2_CF_API_TOKEN="${CERT_PROVIDER_CF_API_TOKEN}"
           SB_HY2_CERT_PATH=""
           SB_HY2_KEY_PATH=""
         else
@@ -10558,6 +10663,16 @@ rebuild_protocol_state_from_config() {
           fi
           SB_ANYTLS_ACME_EMAIL=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.email // ""' "${SINGBOX_CONFIG_FILE}")
           SB_ANYTLS_ACME_DOMAIN=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.acme.domain[0] // .inbounds[$idx].tls.server_name // ""' "${SINGBOX_CONFIG_FILE}")
+          SB_ANYTLS_CERT_PATH=""
+          SB_ANYTLS_KEY_PATH=""
+        elif jq -e --argjson idx "${inbound_index}" '.inbounds[$idx].tls.certificate_provider? != null' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
+          load_certificate_provider_from_config "${SINGBOX_CONFIG_FILE}" "${inbound_index}" || return 1
+          SB_ANYTLS_TLS_MODE="acme"
+          SB_ANYTLS_ACME_MODE="${CERT_PROVIDER_ACME_MODE}"
+          SB_ANYTLS_DNS_PROVIDER="${CERT_PROVIDER_DNS_PROVIDER}"
+          SB_ANYTLS_CF_API_TOKEN="${CERT_PROVIDER_CF_API_TOKEN}"
+          SB_ANYTLS_ACME_EMAIL="${CERT_PROVIDER_EMAIL}"
+          SB_ANYTLS_ACME_DOMAIN="${CERT_PROVIDER_DOMAIN}"
           SB_ANYTLS_CERT_PATH=""
           SB_ANYTLS_KEY_PATH=""
         else

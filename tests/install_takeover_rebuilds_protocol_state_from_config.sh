@@ -77,6 +77,124 @@ write_multi_protocol_config() {
 EOF
 }
 
+write_certificate_provider_config() {
+  case "$1" in
+    shared-anytls)
+      cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
+{
+  "inbounds": [
+    {
+      "type": "anytls",
+      "listen_port": 443,
+      "users": [{"name": "shared-anytls-user", "password": "shared-anytls-pass"}],
+      "tls": {
+        "server_name": "shared-anytls.example.com",
+        "certificate_provider": "shared-anytls-provider"
+      }
+    }
+  ],
+  "certificate_providers": [{
+    "type": "acme",
+    "tag": "shared-anytls-provider",
+    "domain": ["shared-anytls.example.com"],
+    "email": "shared-anytls@example.com",
+    "dns01_challenge": {
+      "provider": "cloudflare",
+      "api_token": "shared-anytls-token"
+    }
+  }],
+  "route": {"rules": []}
+}
+EOF
+      ;;
+    inline-anytls)
+      cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
+{
+  "inbounds": [{
+    "type": "anytls",
+    "listen_port": 443,
+    "users": [{"name": "inline-anytls-user", "password": "inline-anytls-pass"}],
+    "tls": {
+      "server_name": "inline-anytls.example.com",
+      "certificate_provider": {
+        "type": "acme",
+        "domain": ["inline-anytls.example.com"],
+        "email": "inline-anytls@example.com",
+        "dns01_challenge": {
+          "provider": "cloudflare",
+          "api_token": "inline-anytls-token"
+        }
+      }
+    }
+  }],
+  "route": {"rules": []}
+}
+EOF
+      ;;
+    inline-hy2)
+      cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
+{
+  "inbounds": [{
+    "type": "hysteria2",
+    "listen_port": 8443,
+    "users": [{"name": "inline-hy2-user", "password": "inline-hy2-pass"}],
+    "tls": {
+      "server_name": "inline-hy2.example.com",
+      "certificate_provider": {
+        "type": "acme",
+        "domain": ["inline-hy2.example.com"],
+        "email": "inline-hy2@example.com",
+        "dns01_challenge": {
+          "provider": "cloudflare",
+          "api_token": "inline-hy2-token"
+        }
+      }
+    },
+    "masquerade": "https://www.cloudflare.com"
+  }],
+  "route": {"rules": []}
+}
+EOF
+      ;;
+    invalid-inline-provider)
+      cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
+{
+  "inbounds": [{
+    "type": "anytls",
+    "listen_port": 443,
+    "users": [{"name": "invalid-user", "password": "invalid-pass"}],
+    "tls": {
+      "server_name": "invalid.example.com",
+      "certificate_provider": {"type": "self_signed"}
+    }
+  }],
+  "route": {"rules": []}
+}
+EOF
+      ;;
+    invalid-shared-provider)
+      cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
+{
+  "inbounds": [{
+    "type": "anytls",
+    "listen_port": 443,
+    "users": [{"name": "unmapped-user", "password": "unmapped-pass"}],
+    "tls": {
+      "server_name": "unmapped.example.com",
+      "certificate_provider": "missing-provider"
+    }
+  }],
+  "route": {"rules": []}
+}
+EOF
+      ;;
+    *)
+      printf 'unknown certificate provider fixture: %s\n' "$1" >&2
+      exit 1
+      ;;
+  esac
+}
+
 reset_protocol_state_artifacts() {
   rm -f "${SB_PROTOCOL_INDEX_FILE}"
   rm -rf "${SB_PROTOCOL_STATE_DIR}"
@@ -127,6 +245,51 @@ assert_rebuilt_multi_protocol_state() {
   fi
 }
 
+assert_provider_state() {
+  local protocol=$1
+  local domain=$2
+  local email=$3
+  local token=$4
+  local state_file
+  state_file=$(protocol_state_file "${protocol}")
+
+  if ! protocol_state_matches_config "${protocol}"; then
+    printf 'expected rebuilt %s provider state to match config snapshot\nexpected:\n%s\nsaved:\n%s\n' \
+      "${protocol}" "$(render_expected_protocol_state_snapshot "${protocol}")" \
+      "$(render_saved_protocol_state_snapshot "${protocol}")" >&2
+    exit 1
+  fi
+
+  for expected_field in \
+    "TLS_MODE=acme" \
+    "ACME_MODE=dns" \
+    "ACME_DOMAIN=${domain}" \
+    "ACME_EMAIL=${email}" \
+    "DNS_PROVIDER=cloudflare" \
+    "CF_API_TOKEN=${token}"; do
+    if ! grep -Fq "${expected_field}" "${state_file}"; then
+      printf 'expected %s in %s, got:\n%s\n' "${expected_field}" "${state_file}" "$(cat "${state_file}")" >&2
+      exit 1
+    fi
+  done
+}
+
+assert_loaded_anytls_provider_state() {
+  local domain=$1
+  local email=$2
+  local token=$3
+
+  rm -f "${SB_PROTOCOL_INDEX_FILE}"
+  load_current_config_state
+  if [[ "${SB_PROTOCOL}" != "anytls" || "${SB_ANYTLS_TLS_MODE}" != "acme" || \
+    "${SB_ANYTLS_ACME_DOMAIN}" != "${domain}" || "${SB_ANYTLS_ACME_EMAIL}" != "${email}" || \
+    "${SB_ANYTLS_ACME_MODE}" != "dns" || "${SB_ANYTLS_DNS_PROVIDER}" != "cloudflare" || \
+    "${SB_ANYTLS_CF_API_TOKEN}" != "${token}" ]]; then
+    printf 'load_current_config_state lost AnyTLS certificate provider fields\n' >&2
+    exit 1
+  fi
+}
+
 write_multi_protocol_config
 write_installed_runtime_artifacts
 
@@ -149,6 +312,52 @@ EOF
 
 run_takeover_from_incomplete_menu
 assert_rebuilt_multi_protocol_state
+
+for provider_case in shared-anytls inline-anytls inline-hy2; do
+  reset_protocol_state_artifacts
+  write_certificate_provider_config "${provider_case}"
+
+  if ! rebuild_protocol_state_from_config; then
+    printf 'expected %s certificate provider state rebuild to succeed\n' "${provider_case}" >&2
+    exit 1
+  fi
+
+  case "${provider_case}" in
+    shared-anytls)
+      assert_provider_state anytls shared-anytls.example.com shared-anytls@example.com shared-anytls-token
+      assert_loaded_anytls_provider_state shared-anytls.example.com shared-anytls@example.com shared-anytls-token
+      ;;
+    inline-anytls)
+      assert_provider_state anytls inline-anytls.example.com inline-anytls@example.com inline-anytls-token
+      assert_loaded_anytls_provider_state inline-anytls.example.com inline-anytls@example.com inline-anytls-token
+      ;;
+    inline-hy2)
+      assert_provider_state hy2 inline-hy2.example.com inline-hy2@example.com inline-hy2-token
+      ;;
+  esac
+done
+
+reset_protocol_state_artifacts
+write_certificate_provider_config invalid-inline-provider
+if rebuild_protocol_state_from_config; then
+  printf 'expected non-ACME inline provider to fail closed during state rebuild\n' >&2
+  exit 1
+fi
+if [[ -e "$(protocol_state_file anytls)" || -e "${SB_PROTOCOL_INDEX_FILE}" ]]; then
+  printf 'non-ACME inline provider must not leave rewritten protocol state\n' >&2
+  exit 1
+fi
+
+reset_protocol_state_artifacts
+write_certificate_provider_config invalid-shared-provider
+if rebuild_protocol_state_from_config; then
+  printf 'expected unmapped shared provider to fail closed during state rebuild\n' >&2
+  exit 1
+fi
+if [[ -e "$(protocol_state_file anytls)" || -e "${SB_PROTOCOL_INDEX_FILE}" ]]; then
+  printf 'unmapped shared provider must not leave rewritten protocol state\n' >&2
+  exit 1
+fi
 
 reset_protocol_state_artifacts
 write_multi_protocol_config
