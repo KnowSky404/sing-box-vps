@@ -23,6 +23,17 @@ printf 'test-host\n'
 EOF
 chmod +x "${TMP_DIR}/bin/hostname"
 
+cat > "${TMP_DIR}/bin/sing-box" <<'EOF'
+#!/usr/bin/env bash
+
+case "${1:-}" in
+  version) printf 'sing-box version 1.14.0\n' ;;
+  check) [[ "${2:-}" == "-c" && -f "${3:-}" ]] ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "${TMP_DIR}/bin/sing-box"
+
 export PATH="${TMP_DIR}/bin:${PATH}"
 export TMPDIR="${TMP_DIR}/mktemp"
 
@@ -72,6 +83,10 @@ if find "${TMP_DIR}/mktemp" -type f | grep -q .; then
   find "${TMP_DIR}/mktemp" -type f >&2
   exit 1
 fi
+if compgen -G "${SINGBOX_CONFIG_DIR}/.config.json.candidate.*" >/dev/null; then
+  printf 'expected generate_config to remove same-directory candidate files after failure\n' >&2
+  exit 1
+fi
 
 rm -rf "${TMP_DIR}/mktemp" "${TMP_DIR}/project"
 mkdir -p "${TMP_DIR}/mktemp" "${TMP_DIR}/project/protocols/vless-reality.d"
@@ -119,6 +134,22 @@ EOF
 unset -f build_inbound_for_protocol
 unset -f list_effective_protocols
 list_effective_protocols() { printf 'vless-reality\n'; }
+list_vless_reality_instance_ids() {
+  load_vless_reality_protocol_state
+  tr ',' '\n' <<< "${VLESS_REALITY_INSTANCE_IDS}"
+}
+build_inbound_for_protocol() {
+  build_vless_inbound_json
+}
+
+if build_vless_reality_route_rules_json >/dev/null 2>&1; then
+  printf 'expected VLESS route rule generation to fail when an instance state file is missing\n' >&2
+  exit 1
+fi
+if build_vless_reality_instance_outbound_rules_json >/dev/null 2>&1; then
+  printf 'expected VLESS outbound rule generation to fail when an instance state file is missing\n' >&2
+  exit 1
+fi
 
 if generate_config >/dev/null 2>&1; then
   printf 'expected generate_config to fail when a listed VLESS Reality instance state file is missing\n' >&2
@@ -133,5 +164,9 @@ fi
 if find "${TMP_DIR}/mktemp" -type f | grep -q .; then
   printf 'expected generate_config to remove mktemp files after nested builder failure, found:\n' >&2
   find "${TMP_DIR}/mktemp" -type f >&2
+  exit 1
+fi
+if compgen -G "${SINGBOX_CONFIG_DIR}/.config.json.candidate.*" >/dev/null; then
+  printf 'expected generate_config to remove same-directory candidate files after nested failure\n' >&2
   exit 1
 fi

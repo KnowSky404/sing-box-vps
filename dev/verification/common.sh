@@ -71,6 +71,7 @@ resolve_local_tests() {
       tests/verification_protocol_probe_anytls.sh \
       tests/reality_sni_validation.sh \
       tests/generate_config_cleans_temp_files_on_failure.sh \
+      tests/generate_config_commits_validated_candidate.sh \
       tests/system_safety_guards.sh \
       tests/agent_upgrade_commands.sh \
       tests/agent_cli_multi_instance_status.sh \
@@ -82,6 +83,7 @@ resolve_local_tests() {
       tests/version_metadata_is_consistent.sh \
       tests/vless_reality_instance_removal.sh \
       tests/install_takeover_rebuilds_protocol_state_from_config.sh \
+      tests/install_takeover_rebuilds_vless_reality_instances.sh \
       tests/detect_existing_instance_auto_heals_managed_config_drift.sh \
       tests/update_keeps_existing_config.sh \
       tests/update_rolls_back_binary_when_config_invalid.sh \

@@ -24,6 +24,13 @@ printf 'test-host\n'
 EOF
 chmod +x "${TMP_DIR}/bin/hostname"
 
+cat > "${TMP_DIR}/bin/sing-box" <<'EOF'
+#!/usr/bin/env bash
+
+[[ "${1:-}" == "check" && "${2:-}" == "-c" && -f "${3:-}" ]]
+EOF
+chmod +x "${TMP_DIR}/bin/sing-box"
+
 export PATH="${TMP_DIR}/bin:${PATH}"
 
 # shellcheck disable=SC1090

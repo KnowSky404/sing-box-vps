@@ -4938,64 +4938,90 @@ build_inbound_for_protocol() {
 }
 
 build_vless_reality_route_rules_json() {
-  local tmp_rules tmp_snis instance_id inbound_tag sni status
-  tmp_rules=$(mktemp)
-  tmp_snis=$(mktemp)
+  local tmp_rules tmp_snis instance_id inbound_tag sni instance_ids
+  tmp_rules=$(mktemp) || return 1
+  if ! tmp_snis=$(mktemp); then
+    rm -f "${tmp_rules}"
+    return 1
+  fi
 
-  {
-    load_vless_reality_protocol_state
-    while IFS= read -r instance_id; do
-      [[ -z "${instance_id}" ]] && continue
-      load_vless_reality_instance_state "${instance_id}" || continue
-      inbound_tag=$(vless_reality_inbound_tag_for_instance "${instance_id}")
-      jq -n --arg inbound_tag "${inbound_tag}" '{ "inbound": $inbound_tag, "action": "sniff" }' >> "${tmp_rules}"
-      [[ -n "${SB_SNI}" ]] && printf '%s\n' "${SB_SNI}" >> "${tmp_snis}"
-    done < <(list_vless_reality_instance_ids)
-
-    while IFS= read -r sni; do
-      [[ -z "${sni}" ]] && continue
-      jq -n --arg sni "${sni}" '{ "domain": [ $sni ], "action": "direct" }' >> "${tmp_rules}"
-    done < <(sort -u "${tmp_snis}")
-
-    jq -s '.' "${tmp_rules}"
-  } || {
-    status=$?
+  if ! load_vless_reality_protocol_state; then
     rm -f "${tmp_rules}" "${tmp_snis}"
-    return "${status}"
-  }
+    return 1
+  fi
+  if ! instance_ids=$(list_vless_reality_instance_ids); then
+    rm -f "${tmp_rules}" "${tmp_snis}"
+    return 1
+  fi
+  while IFS= read -r instance_id; do
+    [[ -z "${instance_id}" ]] && continue
+    if ! load_vless_reality_instance_state "${instance_id}"; then
+      rm -f "${tmp_rules}" "${tmp_snis}"
+      return 1
+    fi
+    inbound_tag=$(vless_reality_inbound_tag_for_instance "${instance_id}")
+    if ! jq -n --arg inbound_tag "${inbound_tag}" '{ "inbound": $inbound_tag, "action": "sniff" }' >> "${tmp_rules}"; then
+      rm -f "${tmp_rules}" "${tmp_snis}"
+      return 1
+    fi
+    [[ -n "${SB_SNI}" ]] && printf '%s\n' "${SB_SNI}" >> "${tmp_snis}"
+  done <<< "${instance_ids}"
+
+  while IFS= read -r sni; do
+    [[ -z "${sni}" ]] && continue
+    if ! jq -n --arg sni "${sni}" '{ "domain": [ $sni ], "action": "direct" }' >> "${tmp_rules}"; then
+      rm -f "${tmp_rules}" "${tmp_snis}"
+      return 1
+    fi
+  done < <(sort -u "${tmp_snis}")
+
+  if ! jq -s '.' "${tmp_rules}"; then
+    rm -f "${tmp_rules}" "${tmp_snis}"
+    return 1
+  fi
 
   rm -f "${tmp_rules}" "${tmp_snis}"
 }
 
 build_vless_reality_instance_outbound_rules_json() {
-  local tmp_rules instance_id inbound_tag outbound status
-  tmp_rules=$(mktemp)
+  local tmp_rules instance_id inbound_tag outbound instance_ids
+  tmp_rules=$(mktemp) || return 1
 
-  {
-    load_vless_reality_protocol_state
-    while IFS= read -r instance_id; do
-      [[ -z "${instance_id}" ]] && continue
-      load_vless_reality_instance_state "${instance_id}" || continue
-      case "${SB_OUTBOUND_POLICY:-default}" in
-        direct) outbound="direct" ;;
-        warp)
-          outbound="warp-ep"
-          ;;
-        *) continue ;;
-      esac
-      inbound_tag=$(vless_reality_inbound_tag_for_instance "${instance_id}")
-      jq -n \
-        --arg inbound_tag "${inbound_tag}" \
-        --arg outbound "${outbound}" \
-        '{ "inbound": $inbound_tag, "action": "route", "outbound": $outbound }' >> "${tmp_rules}"
-    done < <(list_vless_reality_instance_ids)
-
-    jq -s '.' "${tmp_rules}"
-  } || {
-    status=$?
+  if ! load_vless_reality_protocol_state; then
     rm -f "${tmp_rules}"
-    return "${status}"
-  }
+    return 1
+  fi
+  if ! instance_ids=$(list_vless_reality_instance_ids); then
+    rm -f "${tmp_rules}"
+    return 1
+  fi
+  while IFS= read -r instance_id; do
+    [[ -z "${instance_id}" ]] && continue
+    if ! load_vless_reality_instance_state "${instance_id}"; then
+      rm -f "${tmp_rules}"
+      return 1
+    fi
+    case "${SB_OUTBOUND_POLICY:-default}" in
+      direct) outbound="direct" ;;
+      warp)
+        outbound="warp-ep"
+        ;;
+      *) continue ;;
+    esac
+    inbound_tag=$(vless_reality_inbound_tag_for_instance "${instance_id}")
+    if ! jq -n \
+      --arg inbound_tag "${inbound_tag}" \
+      --arg outbound "${outbound}" \
+      '{ "inbound": $inbound_tag, "action": "route", "outbound": $outbound }' >> "${tmp_rules}"; then
+      rm -f "${tmp_rules}"
+      return 1
+    fi
+  done <<< "${instance_ids}"
+
+  if ! jq -s '.' "${tmp_rules}"; then
+    rm -f "${tmp_rules}"
+    return 1
+  fi
 
   rm -f "${tmp_rules}"
 }
@@ -5050,16 +5076,25 @@ build_protocol_route_rules() {
 
 # --- Config Generator ---
 generate_config() {
+  local inbound_file="" provider_file="" protocol_rule_file="" instance_outbound_rule_file=""
+  local config_candidate="" backup_candidate="" protocol
+  local inbounds_json certificate_providers_json protocol_rules_json instance_outbound_rules_json
+
   # Force ensure jq is installed
   if ! command -v jq &>/dev/null; then
     log_warn "未检测到 jq，正在尝试自动安装以确保配置生成安全..."
     get_os_info && install_dependencies
   fi
 
+  if [[ ! -x "${SINGBOX_BIN_PATH}" ]]; then
+    log_warn "无法生成配置：缺少可执行的 sing-box 二进制 ${SINGBOX_BIN_PATH}。"
+    return 1
+  fi
+
   log_info "正在生成配置 (目标 sing-box $(resolve_config_target_singbox_version)，Endpoint 架构 & 安全注入)..."
-  mkdir -p "${SINGBOX_CONFIG_DIR}"
-  ensure_warp_routing_assets
-  load_warp_route_settings
+  mkdir -p "${SINGBOX_CONFIG_DIR}" || return 1
+  ensure_warp_routing_assets || return 1
+  load_warp_route_settings || return 1
 
   # Endpoints Logic
   local w_key="" w_v4="" w_v6="" w_client_id="" w_reserved='[]' enable_warp_endpoint
@@ -5069,7 +5104,7 @@ generate_config() {
   fi
 
   if [[ "${enable_warp_endpoint}" == "y" ]]; then
-    register_warp
+    register_warp || return 1
     w_key=$(grep "WARP_PRIV_KEY" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
     w_v4=$(grep "WARP_V4" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
     w_v6=$(grep "WARP_V6" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
@@ -5077,51 +5112,67 @@ generate_config() {
     w_reserved=$(warp_client_id_to_reserved_json "${w_client_id}")
   fi
 
-  refresh_warp_route_assets
-  local inbound_file provider_file protocol_rule_file instance_outbound_rule_file protocol
-  local inbounds_json certificate_providers_json protocol_rules_json instance_outbound_rules_json
+  refresh_warp_route_assets || return 1
+  ensure_stack_mode_state_loaded || return 1
 
-  ensure_stack_mode_state_loaded
-
-  inbound_file=$(mktemp)
-  provider_file=$(mktemp)
-  protocol_rule_file=$(mktemp)
-  instance_outbound_rule_file=$(mktemp)
+  inbound_file=$(mktemp) || return 1
+  if ! provider_file=$(mktemp); then
+    rm -f "${inbound_file}"
+    return 1
+  fi
+  if ! protocol_rule_file=$(mktemp); then
+    rm -f "${inbound_file}" "${provider_file}"
+    return 1
+  fi
+  if ! instance_outbound_rule_file=$(mktemp); then
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}"
+    return 1
+  fi
+  if ! config_candidate=$(mktemp "${SINGBOX_CONFIG_DIR}/.config.json.candidate.XXXXXX"); then
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
+    return 1
+  fi
 
   while IFS= read -r protocol; do
     [[ -z "${protocol}" ]] && continue
-    load_protocol_state "${protocol}"
-    if ! build_inbound_for_protocol "${protocol}" >> "${inbound_file}"; then
-      rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
+    if ! load_protocol_state "${protocol}"; then
+      rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
       return 1
     fi
-    build_certificate_provider_for_protocol "${protocol}" >> "${provider_file}" 2>/dev/null || true
+    if ! build_inbound_for_protocol "${protocol}" >> "${inbound_file}"; then
+      rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
+      return 1
+    fi
+    if ! build_certificate_provider_for_protocol "${protocol}" >> "${provider_file}"; then
+      rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
+      return 1
+    fi
     if ! build_protocol_route_rules "${protocol}" >> "${protocol_rule_file}"; then
-      rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
+      rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
       return 1
     fi
     if [[ "${protocol}" == "vless-reality" ]]; then
       if ! build_vless_reality_instance_outbound_rules_json >> "${instance_outbound_rule_file}"; then
-        rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
+        rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
         return 1
       fi
     fi
   done < <(list_effective_protocols)
 
   if ! inbounds_json=$(jq -s . "${inbound_file}"); then
-    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
     return 1
   fi
   if ! certificate_providers_json=$(jq -s . "${provider_file}"); then
-    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
     return 1
   fi
   if ! protocol_rules_json=$(jq -s 'add // []' "${protocol_rule_file}"); then
-    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
     return 1
   fi
   if ! instance_outbound_rules_json=$(jq -s 'add // []' "${instance_outbound_rule_file}"); then
-    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
     return 1
   fi
 
@@ -5257,8 +5308,39 @@ generate_config() {
       else
         {}
       end
-    )' > "${SINGBOX_CONFIG_FILE}"; then
-    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
+    )' > "${config_candidate}"; then
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
+    return 1
+  fi
+
+  if ! jq -e . "${config_candidate}" >/dev/null; then
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
+    return 1
+  fi
+  if ! "${SINGBOX_BIN_PATH}" check -c "${config_candidate}"; then
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
+    return 1
+  fi
+  if ! chmod 600 "${config_candidate}"; then
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
+    return 1
+  fi
+
+  if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    if ! backup_candidate=$(mktemp "${SINGBOX_CONFIG_DIR}/.config.json.backup.XXXXXX"); then
+      rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
+      return 1
+    fi
+    if ! cp -p "${SINGBOX_CONFIG_FILE}" "${backup_candidate}" ||
+       ! chmod 600 "${backup_candidate}" ||
+       ! mv -f "${backup_candidate}" "${SINGBOX_CONFIG_FILE}.bak"; then
+      rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}" "${backup_candidate}"
+      return 1
+    fi
+  fi
+
+  if ! mv -f "${config_candidate}" "${SINGBOX_CONFIG_FILE}"; then
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
     return 1
   fi
 
