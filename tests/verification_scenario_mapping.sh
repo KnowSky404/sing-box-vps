@@ -25,6 +25,10 @@ assert_scenarios "fresh_install_vless,reconfigure_existing_install,legacy_takeov
 assert_scenarios "runtime_smoke" utils/common.sh
 assert_scenarios "runtime_smoke,uninstall_and_reinstall" uninstall.sh
 assert_scenarios "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke,uninstall_and_reinstall" install.sh tests/uninstall_purge_removes_runtime_artifacts.sh
+assert_scenarios "multi_protocol_coexistence,runtime_smoke" dev/verification/remote/scenarios/multi_protocol_coexistence.sh
+assert_scenarios "upgrade_rollback_1_13_to_1_14,runtime_smoke" dev/verification/remote/scenarios/upgrade_rollback_1_13_to_1_14.sh
+assert_scenarios "legacy_takeover_export,runtime_smoke,uninstall_and_reinstall" dev/verification/remote/scenarios/legacy_takeover_export.sh
+assert_scenarios "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke,uninstall_and_reinstall" dev/verification/remote/entrypoint.sh
 
 date() {
   if [[ "${1:-}" == "+%s" ]]; then

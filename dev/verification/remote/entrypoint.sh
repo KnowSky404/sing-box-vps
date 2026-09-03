@@ -97,8 +97,8 @@ verification_capture_listener_snapshot() {
 verification_port_is_listening() {
   local port=$1
 
-  verification_ss_output | awk -v port=":${port}" '
-    $1 == "LISTEN" && index($4, port) {
+  verification_ss_output | awk -v port="${port}" '
+    $1 == "LISTEN" && $4 ~ (":" port "$") {
       found = 1
     }
     END {
@@ -110,8 +110,8 @@ verification_port_is_listening() {
 verification_udp_port_is_listening() {
   local port=$1
 
-  verification_ss_udp_output | awk -v port=":${port}" '
-    ($1 == "UNCONN" || $1 == "LISTEN") && index($4, port) {
+  verification_ss_udp_output | awk -v port="${port}" '
+    ($1 == "UNCONN" || $1 == "LISTEN") && $4 ~ (":" port "$") {
       found = 1
     }
     END {
@@ -415,7 +415,6 @@ verification_generate_protocol_probe_client_config() {
       verification_require_protocol_probe_field "${protocol}" uuid "${uuid}" || return 1
       verification_require_protocol_probe_field "${protocol}" server_name "${server_name}" || return 1
       verification_require_protocol_probe_field "${protocol}" short_id "${short_id}" || return 1
-      verification_require_protocol_probe_field "${protocol}" flow "${flow}" || return 1
       if [[ ! -f "${state_file}" ]]; then
         printf 'missing protocol state file for protocol generator: %s\n' "${protocol}" >&2
         return 1
@@ -452,7 +451,6 @@ verification_generate_protocol_probe_client_config() {
               server: "127.0.0.1",
               server_port: ($server_port | tonumber),
               uuid: $uuid,
-              flow: $flow,
               tls: {
                 enabled: true,
                 server_name: $server_name,
@@ -466,7 +464,7 @@ verification_generate_protocol_probe_client_config() {
                   short_id: $short_id
                 }
               }
-            }
+            } + (if $flow != "" then {flow: $flow} else {} end)
           ]
         }' > "${temp_output_path}"; then
         mv "${temp_output_path}" "${output_path}"
@@ -848,13 +846,13 @@ PY
     client_pid=$!
 
     for _ in {1..50}; do
-      if verification_ss_output | awk -v port=":19080" '$1 == "LISTEN" && index($4, port) { found = 1 } END { exit(found ? 0 : 1) }'; then
+      if verification_ss_output | awk '$1 == "LISTEN" && $4 ~ /:19080$/ { found = 1 } END { exit(found ? 0 : 1) }'; then
         break
       fi
       kill -0 "${client_pid}" 2>/dev/null || return 1
       sleep 0.1
     done
-    verification_ss_output | awk -v port=":19080" '$1 == "LISTEN" && index($4, port) { found = 1 } END { exit(found ? 0 : 1) }'
+    verification_ss_output | awk '$1 == "LISTEN" && $4 ~ /:19080$/ { found = 1 } END { exit(found ? 0 : 1) }'
 
     set +e
     curl --fail --silent --show-error --noproxy '' \

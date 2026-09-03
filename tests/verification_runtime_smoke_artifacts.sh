@@ -123,6 +123,10 @@ chmod +x "${TMP_DIR}/journalctl"
 cat > "${TMP_DIR}/sing-box" <<'EOF'
 #!/usr/bin/env bash
 case "${1:-}" in
+  version)
+    printf 'sing-box version 1.14.0\n'
+    exit 0
+    ;;
   check)
     if [[ "${VERIFY_FAIL_SINGBOX_CHECK:-0}" == "1" ]]; then
       printf 'config broken\n' >&2
@@ -911,6 +915,8 @@ grep -Fq 'remote_target=docker:test-container' "${TMP_DIR}/stdout.txt"
 grep -Fq 'SCENARIO=runtime_smoke' "${run_dir}/remote.stdout.log"
 grep -Fq 'SERVICE_ACTIVE=active' "${run_dir}/remote.stdout.log"
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/sing-box-check.txt" ]]
+grep -Fqx 'sing-box version 1.14.0' "${run_dir}/remote-artifacts/scenarios/fresh_install_vless/sing-box.version.txt"
+grep -Fqx 'sing-box version 1.14.0' "${run_dir}/remote-artifacts/scenarios/fresh_install_anytls/sing-box.version.txt"
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/listeners.ss-lntp.txt" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/client.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/probe.stdout.txt" ]]

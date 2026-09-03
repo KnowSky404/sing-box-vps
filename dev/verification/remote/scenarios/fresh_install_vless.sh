@@ -5,6 +5,7 @@ verification_scenario_fresh_install_vless() {
   local current_port
   local expected_port=443
   local status_output_path
+  local version_output_path
 
   verification_prepare_remote_local_tree
   trap 'verification_cleanup_remote_local_tree; trap - RETURN' RETURN
@@ -57,6 +58,10 @@ EOF
   verification_mark_step fresh_install_vless_uuid_asserts
   verification_wait_for_service_active sing-box
   verification_mark_step fresh_install_vless_service_active
+  version_output_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box.version.txt")
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box.version.txt" sing-box version
+  grep -Fqx 'sing-box version 1.14.0' "${version_output_path}"
+  verification_mark_step fresh_install_vless_version_checked
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" sing-box check -c /root/sing-box-vps/config.json
   verification_mark_step fresh_install_vless_config_checked
   verification_assert_port_listening "${expected_port}" "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.ss-lntp.txt"

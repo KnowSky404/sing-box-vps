@@ -61,6 +61,16 @@ source "${TESTABLE_ENTRYPOINT}"
 VERIFY_ARTIFACT_DIR="${TMP_DIR}/listener-artifacts"
 export PROBE_UDP_PORT=8443
 verification_assert_udp_port_listening 8443 scenarios/runtime_smoke/listeners.hy2.ss-lunp.txt
+verification_ss_output() {
+  printf 'LISTEN 0 0 127.0.0.1:18443 0.0.0.0:*\n'
+}
+verification_ss_udp_output() {
+  printf 'UNCONN 0 0 127.0.0.1:18443 0.0.0.0:*\n'
+}
+if verification_port_is_listening 8443 || verification_udp_port_is_listening 8443; then
+  printf 'listener matching accepted a port suffix false positive\n' >&2
+  exit 1
+fi
 EOF_LISTENER
 chmod +x "${LISTENER_HARNESS}"
 rm -rf "${TMP_DIR}/listener-artifacts"
@@ -273,24 +283,36 @@ grep -Fqx 'RESULT=success' "${MIXED_PROBE_DIR}/result.env"
 assert_protocol_probe_processes_cleaned "${PROBE_CLIENT_PID_FILE}"
 assert_protocol_probe_processes_cleaned "${PROBE_HTTP_PID_FILE}"
 
+: > "${PROBE_CLIENT_PID_FILE}"
+: > "${PROBE_HTTP_PID_FILE}"
 if PROBE_FAIL_CHECK=1 bash "${TMP_DIR}/run-actual-probe.sh"; then
   printf 'expected client check failure to fail the probe\n' >&2
   exit 1
 fi
 grep -Fqx 'RESULT=failure' "${ACTUAL_PROBE_DIR}/result.env"
 grep -Fq 'client-check-failed' "${ACTUAL_PROBE_DIR}/client.check.txt"
+[[ ! -s "${PROBE_CLIENT_PID_FILE}" ]]
+[[ ! -s "${PROBE_HTTP_PID_FILE}" ]]
 
+: > "${PROBE_CLIENT_PID_FILE}"
+: > "${PROBE_HTTP_PID_FILE}"
 if PROBE_FAIL_RUN=1 bash "${TMP_DIR}/run-actual-probe.sh"; then
   printf 'expected client run failure to fail the probe\n' >&2
   exit 1
 fi
 grep -Fqx 'RESULT=failure' "${ACTUAL_PROBE_DIR}/result.env"
+[[ ! -s "${PROBE_CLIENT_PID_FILE}" ]]
+assert_protocol_probe_processes_cleaned "${PROBE_HTTP_PID_FILE}"
 
+: > "${PROBE_CLIENT_PID_FILE}"
+: > "${PROBE_HTTP_PID_FILE}"
 if PROBE_CURL_RESPONSE=wrong-marker bash "${TMP_DIR}/run-actual-probe.sh"; then
   printf 'expected mismatched HTTP marker to fail the probe\n' >&2
   exit 1
 fi
 grep -Fqx 'RESULT=failure' "${ACTUAL_PROBE_DIR}/result.env"
+assert_protocol_probe_processes_cleaned "${PROBE_CLIENT_PID_FILE}"
+assert_protocol_probe_processes_cleaned "${PROBE_HTTP_PID_FILE}"
 
 rm -rf "${GREEN_ARTIFACT_DIR}"
 mkdir -p "${GREEN_ARTIFACT_DIR}/meta" "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke"

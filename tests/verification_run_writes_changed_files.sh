@@ -533,7 +533,7 @@ env -u VERIFY_SKIP_LOCAL_TESTS \
 
 run_dir_remote_framework=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout-remote-framework.txt")
 scenarios_remote_framework=$(paste -sd, "${run_dir_remote_framework}/scenarios.txt")
-[[ "${scenarios_remote_framework}" == "runtime_smoke" ]] || {
+[[ "${scenarios_remote_framework}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke,uninstall_and_reinstall" ]] || {
   printf 'unexpected scenarios for remote framework change: %s\n' "${scenarios_remote_framework}" >&2; exit 1
 }
 grep -Fqx 'tests/verification_artifact_dir_layout.sh|1' "${TMP_DIR}/local-tests.log"

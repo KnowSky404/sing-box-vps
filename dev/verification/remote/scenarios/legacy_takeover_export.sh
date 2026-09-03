@@ -97,4 +97,5 @@ EOF
   exported_node_name=$(grep -m1 '^NODE_NAME=' "${instance_state_file}" | cut -d= -f2-)
   test -n "${exported_node_name}"
   jq -e --arg tag "${exported_node_name}" '.outbounds[] | select(.type == "vless" and .tag == $tag) | .tls.utls.enabled == true and .tls.utls.fingerprint == "chrome"' "${export_path}" >/dev/null
+  verification_run_protocol_probes
 }

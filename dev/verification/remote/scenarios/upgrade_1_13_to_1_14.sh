@@ -106,7 +106,9 @@ EOF
     .old_version == "1.13.18" and
     .new_version == "1.14.0" and
     .rollback.attempted == false and
-    .rollback.result == "not_attempted"
+    .rollback.result == "not_attempted" and
+    .failure_reason == null and
+    .operation_exit_code == 0
   ' "${transaction_result_path}" >/dev/null
   transaction_manifest_path=$(jq -r '.manifest_path' "${transaction_result_path}")
   transaction_manifest_sha256=$(jq -r '.manifest_sha256' "${transaction_result_path}")

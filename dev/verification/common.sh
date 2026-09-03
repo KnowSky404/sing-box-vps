@@ -117,12 +117,27 @@ resolve_local_tests() {
 resolve_remote_scenarios() {
   local needs_reinstall=0
   local needs_install_flow=0
-  local file
+  local needs_all_scenarios=0
+  local file scenario
+  local targeted_scenarios=()
+  local selected_scenarios=()
+  local emitted=','
 
   for file in "$@"; do
     case "${file}" in
       install.sh | configs/*)
         needs_install_flow=1
+        ;;
+      dev/verification/remote/entrypoint.sh)
+        needs_all_scenarios=1
+        ;;
+      dev/verification/remote/scenarios/*.sh)
+        scenario=${file##*/}
+        scenario=${scenario%.sh}
+        targeted_scenarios+=("${scenario}")
+        case "${scenario}" in
+          *uninstall*|*takeover*|*reinstall*|*incomplete*|*residual*|*legacy*) needs_reinstall=1 ;;
+        esac
         ;;
       *uninstall* | *takeover* | *reinstall* | *incomplete* | *residual* | *legacy*)
         needs_reinstall=1
@@ -130,15 +145,38 @@ resolve_remote_scenarios() {
     esac
   done
 
-  if [[ "${needs_install_flow}" == "1" ]]; then
-    printf '%s\n' fresh_install_vless reconfigure_existing_install legacy_takeover_export fresh_install_anytls multi_protocol_coexistence upgrade_1_13_to_1_14 upgrade_rollback_1_13_to_1_14
+  if [[ "${needs_all_scenarios}" == "1" ]]; then
+    needs_install_flow=1
+    needs_reinstall=1
   fi
 
-  printf '%s\n' runtime_smoke
+  if [[ "${needs_install_flow}" == "1" ]]; then
+    selected_scenarios+=(
+      fresh_install_vless
+      reconfigure_existing_install
+      legacy_takeover_export
+      fresh_install_anytls
+      multi_protocol_coexistence
+      upgrade_1_13_to_1_14
+      upgrade_rollback_1_13_to_1_14
+    )
+  fi
+
+  selected_scenarios+=("${targeted_scenarios[@]}")
+  selected_scenarios+=(runtime_smoke)
 
   if [[ "${needs_reinstall}" == "1" ]]; then
-    printf '%s\n' uninstall_and_reinstall
+    selected_scenarios+=(uninstall_and_reinstall)
   fi
+
+  for scenario in "${selected_scenarios[@]}"; do
+    [[ -n "${scenario}" ]] || continue
+    if [[ "${emitted}" == *",${scenario},"* ]]; then
+      continue
+    fi
+    printf '%s\n' "${scenario}"
+    emitted+="${scenario},"
+  done
 }
 
 create_run_dir() {

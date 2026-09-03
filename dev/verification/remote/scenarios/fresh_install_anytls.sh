@@ -11,6 +11,7 @@ verification_scenario_fresh_install_anytls() {
   local cert_dir
   local cert_path
   local key_path
+  local version_output_path
 
   verification_prepare_remote_local_tree
   cert_dir="${VERIFY_REMOTE_LOCAL_TREE_DIR}/anytls-tls"
@@ -66,6 +67,9 @@ EOF
   grep -Fqx "USER_NAME=${expected_user_name}" /root/sing-box-vps/protocols/anytls.env
   grep -Fqx 'TLS_MODE=manual' /root/sing-box-vps/protocols/anytls.env
   verification_wait_for_service_active sing-box
+  version_output_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box.version.txt")
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box.version.txt" sing-box version
+  grep -Fqx 'sing-box version 1.14.0' "${version_output_path}"
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" sing-box check -c /root/sing-box-vps/config.json
   verification_assert_port_listening "${expected_port}" "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.ss-lntp.txt"
   verification_capture_status_menu "${VERIFY_CURRENT_SCENARIO_DIR}/sbv-status.txt"

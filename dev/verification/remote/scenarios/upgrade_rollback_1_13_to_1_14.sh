@@ -61,13 +61,16 @@ EOF_DROPIN
   jq -e '
     .schema_version == "1.0" and
     .ok == false and
+    .failure_reason == "service_not_active" and
     .rolled_back == true and
     .installed == "1.13.18" and
     .config_preserved == true and
     .service.after == "active" and
     .transaction.result_persisted == true and
     .transaction.status == "rolled_back" and
-    .check.ok == true
+    .check.ok == true and
+    .operation_exit_code == 1 and
+    (.operation_log | contains("服务重启失败或未保持 active"))
   ' "${upgrade_path}" >/dev/null
   transaction_result_path=$(jq -r '.transaction.result_path' "${upgrade_path}")
   [[ "${transaction_result_path}" == /root/sing-box-vps-backups/upgrade-*/transaction-result.json ]]
@@ -78,7 +81,9 @@ EOF_DROPIN
     .old_version == "1.13.18" and
     .new_version == "1.14.0" and
     .rollback.attempted == true and
-    .rollback.result == "success"
+    .rollback.result == "success" and
+    .failure_reason == "service_not_active" and
+    .operation_exit_code == 1
   ' "${transaction_result_path}" >/dev/null
   transaction_manifest_path=$(jq -r '.manifest_path' "${transaction_result_path}")
   transaction_manifest_sha256=$(jq -r '.manifest_sha256' "${transaction_result_path}")
@@ -93,6 +98,10 @@ EOF_DROPIN
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/transaction-result.json" \
     cat "${transaction_result_path}"
+  rm -f "${dropin_path}"
+  systemctl daemon-reload
+  test ! -e "${dropin_path}"
+  verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/failure-injection-cleanup.txt" "removed"
   grep -Fqx 'sing-box version 1.13.18' <(sing-box version)
   [[ "$(sha256sum /root/sing-box-vps/config.json | awk '{print $1}')" == "${before_hash}" ]]
   after_service_hash=$(sha256sum /etc/systemd/system/sing-box.service | awk '{print $1}')
