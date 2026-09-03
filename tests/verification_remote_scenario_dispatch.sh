@@ -760,7 +760,7 @@ grep -Fqx 'grep:-Fqx DEFAULT_INSTANCE_ID=imported-1 /root/sing-box-vps/protocols
 grep -Fqx 'grep:-Fqx INSTANCE_IDS=imported-1 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.d/imported-1.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.d/imported-1.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fq stale.example.com /root/sing-box-vps/protocols/vless-reality.d/imported-1.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fq stale.example.com /root/sing-box-vps/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'jq:-r|.inbounds[0].users[0].uuid // empty|/root/sing-box-vps/config.json' "${ASSERT_LOG_FILE}"
 grep -Fqx 'jq:-r|.inbounds[0].tls.server_name // empty|/root/sing-box-vps/config.json' "${ASSERT_LOG_FILE}"
 grep -Fqx 'jq:-r|.inbounds[0].listen_port // empty|/root/sing-box-vps/config.json' "${ASSERT_LOG_FILE}"
