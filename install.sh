@@ -9085,9 +9085,13 @@ agent_upgrade_cli() {
       "${transaction_rollback_result}" \
       "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; then
       transaction_result_persisted=true
+      output_error="temporary_log_failed"
+    else
+      output_error="transaction_record_failed"
     fi
     jq -n \
       --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
+      --arg error "${output_error}" \
       --arg backup "${backup_dir}" \
       --arg transaction_id "${transaction_id}" \
       --arg transaction_result_file "${transaction_result_file}" \
@@ -9098,7 +9102,8 @@ agent_upgrade_cli() {
       '{
         schema: $schema,
         ok: false,
-        error: "temporary_log_failed",
+        error: $error,
+        failure_reason: "temporary_log_failed",
         backup: $backup,
         transaction: {
           id: $transaction_id,

@@ -198,6 +198,59 @@ jq -e '
 ' <<< "${upgrade_json}" >/dev/null
 eval "${original_transaction_result_function}"
 
+original_upgrade_check_function=$(declare -f agent_upgrade_check_json)
+agent_upgrade_check_json() {
+  printf '%s\n' "${check_json}"
+}
+mktemp() {
+  if [[ $# -eq 0 ]]; then
+    return 73
+  fi
+  command mktemp "$@"
+}
+if upgrade_json=$(agent_cli upgrade --json 1.14.0 --yes 2>/dev/null); then
+  printf 'operation-log allocation failure should return non-zero\n' >&2
+  exit 1
+fi
+jq -e '
+  .ok == false
+  and .error == "temporary_log_failed"
+  and .failure_reason == "temporary_log_failed"
+  and .transaction.status == "failed"
+  and .transaction.result_persisted == true
+' <<< "${upgrade_json}" >/dev/null
+operation_log_result_file=$(jq -r '.transaction.result_path' <<< "${upgrade_json}")
+jq -e '.status == "failed" and ([.status_history[].status] | . == ["backup_ready", "failed"])' "${operation_log_result_file}" >/dev/null
+unset -f mktemp
+
+eval "$(printf '%s\n' "${original_transaction_result_function}" | sed '1s/^write_agent_upgrade_transaction_result /write_agent_upgrade_transaction_result_real /')"
+write_agent_upgrade_transaction_result() {
+  if [[ "${2:-}" == "failed" ]]; then
+    return 75
+  fi
+  write_agent_upgrade_transaction_result_real "$@"
+}
+mktemp() {
+  if [[ $# -eq 0 ]]; then
+    return 73
+  fi
+  command mktemp "$@"
+}
+if upgrade_json=$(agent_cli upgrade --json 1.14.0 --yes 2>/dev/null); then
+  printf 'operation-log and terminal record failure should return non-zero\n' >&2
+  exit 1
+fi
+jq -e '
+  .ok == false
+  and .error == "transaction_record_failed"
+  and .failure_reason == "temporary_log_failed"
+  and .transaction.status == "failed"
+  and .transaction.result_persisted == false
+' <<< "${upgrade_json}" >/dev/null
+unset -f mktemp write_agent_upgrade_transaction_result_real
+eval "${original_transaction_result_function}"
+eval "${original_upgrade_check_function}"
+
 original_hash=$(agent_file_sha256 "${SINGBOX_CONFIG_FILE}")
 touch "${TARGET_CHECK_FAIL_FILE}"
 if upgrade_json=$(agent_cli upgrade --json 1.14.0 --yes 2>/dev/null); then

@@ -48,6 +48,7 @@ source "${TESTABLE_INSTALL}"
 RESTART_COUNT=0
 SERVICE_STATE=active
 RECOVERY_RESTART_FAIL=n
+TARGET_RESTART_EXIT_ZERO=n
 
 get_os_info() { OS_NAME=debian; }
 get_arch() { ARCH=amd64; }
@@ -64,6 +65,9 @@ systemctl() {
     RESTART_COUNT=$((RESTART_COUNT + 1))
     if (( RESTART_COUNT == 1 )); then
       SERVICE_STATE=inactive
+      if [[ "${TARGET_RESTART_EXIT_ZERO}" == "y" ]]; then
+        return 0
+      fi
       return 1
     fi
     if [[ "${RECOVERY_RESTART_FAIL}" == "y" ]]; then
@@ -149,5 +153,23 @@ if [[ "$(${SINGBOX_BIN_PATH} marker)" != "old" ]]; then
 fi
 if [[ "${SERVICE_STATE}" != "inactive" || "${RESTART_COUNT}" != "2" ]]; then
   printf 'expected failed recovery to leave inactive service and two restart attempts\n' >&2
+  exit 1
+fi
+
+# A restart command that exits zero but never reaches active must also roll back.
+SERVICE_STATE=active
+RECOVERY_RESTART_FAIL=n
+TARGET_RESTART_EXIT_ZERO=y
+RESTART_COUNT=0
+if update_singbox_binary_preserving_config >/dev/null; then
+  printf 'expected non-active post-restart state to return non-zero\n' >&2
+  exit 1
+fi
+if [[ "$(${SINGBOX_BIN_PATH} marker)" != "old" || "${SERVICE_STATE}" != "active" ]]; then
+  printf 'expected post-restart health failure to restore old binary and active service\n' >&2
+  exit 1
+fi
+if (( RESTART_COUNT != 2 )); then
+  printf 'expected target and recovery restart attempts after post-restart health failure\n' >&2
   exit 1
 fi
