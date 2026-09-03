@@ -370,6 +370,7 @@ INDEX_EOF
         }
       ],
       "tls": {
+        "enabled": true,
         "server_name": "\$(cat "\${REMOTE_SNI_FILE}")",
         "reality": {
           "private_key": "${VALID_REALITY_PRIVATE_KEY}",
