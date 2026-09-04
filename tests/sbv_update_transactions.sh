@@ -709,6 +709,19 @@ assert_error_context "${media_lock_output}" 'media_check_backend' 'precheck' \
 rmdir "${media_lock_path}"
 assert_no_update_artifacts
 
+set +e
+media_lock_failure_output=$(FAKE_CURL_MODE=valid FAKE_CURL_SOURCE="${VALID_CANDIDATE}" \
+  bash -c "source '${TESTABLE_INSTALL}'; mkdir() { if [[ \"\${1:-}\" == '${media_lock_path}' ]]; then return 77; fi; command mkdir \"\$@\"; }; ensure_media_check_backend" 2>&1)
+media_lock_failure_status=$?
+set -e
+[[ "${media_lock_failure_status}" -eq 77 ]] || \
+  fail "media backend lock creation failure returned ${media_lock_failure_status}"
+[[ ! -e "${MEDIA_TARGET}" && ! -L "${MEDIA_TARGET}" ]] || \
+  fail 'media backend lock creation failure created a target'
+assert_error_context "${media_lock_failure_output}" 'media_check_backend' 'precheck' \
+  'lock_create_failed' '77' "${MEDIA_TARGET}"
+assert_no_update_artifacts
+
 for signal_mode in signal-int signal-term signal-hup; do
   rm -f "${MEDIA_TARGET}"
   case "${signal_mode}" in
@@ -748,6 +761,27 @@ rm -f "${MEDIA_TARGET}"
 cp "${OLD_SCRIPT}" "${MEDIA_TARGET}"
 chmod 0644 "${MEDIA_TARGET}"
 chown "${TEST_TARGET_UID}:${TEST_TARGET_GID}" "${MEDIA_TARGET}" || \
+  fail 'could not prepare the non-executable media target owner'
+media_repair_owner="$(stat -c '%u:%g' "${MEDIA_TARGET}")"
+set +e
+media_repair_output=$(FAKE_CURL_MODE=valid FAKE_CURL_SOURCE="${VALID_CANDIDATE}" \
+  bash -c "source '${TESTABLE_INSTALL}'; ensure_media_check_backend" 2>&1)
+media_repair_status=$?
+set -e
+[[ "${media_repair_status}" -eq 0 ]] || fail "media backend repair failed: ${media_repair_output}"
+[[ -f "${MEDIA_TARGET}" && ! -L "${MEDIA_TARGET}" && -x "${MEDIA_TARGET}" ]] || \
+  fail 'media backend repair did not create an executable regular file'
+cmp -s "${VALID_CANDIDATE}" "${MEDIA_TARGET}" || fail 'media backend repair has unexpected content'
+[[ "$(stat -c '%a' "${MEDIA_TARGET}")" == '755' ]] || \
+  fail 'media backend repair did not fix executable mode'
+[[ "$(stat -c '%u:%g' "${MEDIA_TARGET}")" == "${media_repair_owner}" ]] || \
+  fail 'media backend repair changed the target owner'
+assert_no_update_artifacts
+
+rm -f "${MEDIA_TARGET}"
+cp "${OLD_SCRIPT}" "${MEDIA_TARGET}"
+chmod 0644 "${MEDIA_TARGET}"
+chown "${TEST_TARGET_UID}:${TEST_TARGET_GID}" "${MEDIA_TARGET}" || \
   fail 'could not prepare the media target owner'
 media_inode=$(stat -c '%i' "${MEDIA_TARGET}")
 media_attributes=$(capture_file_attributes "${MEDIA_TARGET}")
@@ -762,6 +796,58 @@ assert_file_attributes "${MEDIA_TARGET}" "${media_attributes}"
 [[ "$(stat -c '%i' "${MEDIA_TARGET}")" == "${media_inode}" ]] || fail 'media backend failure replaced existing script'
 assert_error_context "${media_output}" 'media_check_backend' 'download' \
   'download_partial_transfer' '18' "${MEDIA_TARGET}"
+assert_no_update_artifacts
+
+rm -f "${MEDIA_TARGET}"
+cp "${OLD_SCRIPT}" "${MEDIA_TARGET}"
+chmod 0644 "${MEDIA_TARGET}"
+chown "${TEST_TARGET_UID}:${TEST_TARGET_GID}" "${MEDIA_TARGET}" || \
+  fail 'could not prepare the media rollback target owner'
+set +e
+media_rollback_output=$(FAKE_CURL_MODE=valid FAKE_CURL_SOURCE="${VALID_CANDIDATE}" \
+  bash -c "source '${TESTABLE_INSTALL}'; bash() { if [[ \"\${1:-}\" == '-n' && \"\${3:-}\" == '${MEDIA_TARGET}' ]]; then return 74; fi; command bash \"\$@\"; }; mv() { if [[ \"\$*\" == *'.rollback.'* ]]; then return 75; fi; command mv \"\$@\"; }; ensure_media_check_backend" 2>&1)
+media_rollback_status=$?
+set -e
+assert_status_nonzero "${media_rollback_status}"
+assert_contains "${media_rollback_output}" 'rollback_failed'
+assert_contains "${media_rollback_output}" 'manual_intervention_required: true'
+assert_error_context "${media_rollback_output}" 'media_check_backend' 'postcheck' \
+  'rollback_failed' '1' "${MEDIA_TARGET}"
+assert_contains "${media_rollback_output}" 'changed: true'
+assert_contains "${media_rollback_output}" 'rollback_attempted: true'
+assert_contains "${media_rollback_output}" 'rolled_back: false'
+assert_contains "${media_rollback_output}" 'rollback_ok: false'
+[[ -f "${MEDIA_TARGET}" && ! -L "${MEDIA_TARGET}" && -x "${MEDIA_TARGET}" ]] || \
+  fail 'media rollback failure changed the target into a non-executable file'
+cmp -s "${VALID_CANDIDATE}" "${MEDIA_TARGET}" || \
+  fail 'media rollback failure did not leave the submitted artifact in place'
+media_backup_artifact=$(find "${MEDIA_TARGET%/*}" -maxdepth 1 -type f \
+  -name ".${MEDIA_TARGET##*/}.backup.*" -print -quit)
+media_retained_candidate=$(find "${MEDIA_TARGET%/*}" -maxdepth 1 -type f \
+  -name ".${MEDIA_TARGET##*/}.candidate-retained.*" -print -quit)
+media_rollback_artifact=$(find "${MEDIA_TARGET%/*}" -maxdepth 1 -type f \
+  -name ".${MEDIA_TARGET##*/}.rollback.*" -print -quit)
+media_stderr_artifact=$(find "${MEDIA_TARGET%/*}" -maxdepth 1 -type f \
+  -name ".${MEDIA_TARGET##*/}.stderr.*" -print -quit)
+[[ -n "${media_backup_artifact}" && -f "${media_backup_artifact}" && ! -L "${media_backup_artifact}" ]] || \
+  fail 'media rollback failure did not preserve a regular backup'
+[[ -n "${media_retained_candidate}" && -f "${media_retained_candidate}" && ! -L "${media_retained_candidate}" ]] || \
+  fail 'media rollback failure did not preserve a regular candidate'
+[[ -n "${media_rollback_artifact}" && -f "${media_rollback_artifact}" && ! -L "${media_rollback_artifact}" ]] || \
+  fail 'media rollback failure did not preserve the rollback staging file'
+[[ -n "${media_stderr_artifact}" && -f "${media_stderr_artifact}" && ! -L "${media_stderr_artifact}" ]] || \
+  fail 'media rollback failure did not preserve diagnostics'
+[[ "$(stat -c '%a:%u:%g' "${media_backup_artifact}")" == '600:0:0' ]] || \
+  fail 'media rollback backup is not root-only'
+[[ "$(stat -c '%a:%u:%g' "${media_retained_candidate}")" == '600:0:0' ]] || \
+  fail 'media retained candidate is not root-only'
+cmp -s "${OLD_SCRIPT}" "${media_backup_artifact}" || fail 'media rollback backup has unexpected content'
+cmp -s "${VALID_CANDIDATE}" "${media_retained_candidate}" || \
+  fail 'media retained candidate has unexpected content'
+[[ ! -d "${MEDIA_TARGET%/*}/.${MEDIA_TARGET##*/}.update.lock" ]] || \
+  fail 'media rollback failure left its update lock'
+rm -f -- "${media_backup_artifact}" "${media_retained_candidate}" \
+  "${media_rollback_artifact}" "${media_stderr_artifact}" "${MEDIA_TARGET}"
 assert_no_update_artifacts
 
 for alias in 'update sbv' 'update-sbv'; do

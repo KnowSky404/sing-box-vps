@@ -4969,6 +4969,7 @@ download_shell_artifact_atomically() {
   local target_dir
   local target_name
   local lock_path
+  local lock_status=0
   local curl_status=0
   local detail=''
   local file_size
@@ -4985,6 +4986,7 @@ download_shell_artifact_atomically() {
   local restore_hash=''
   local retained_candidate=''
   local result_status=1
+  local expected_mode='755'
   local postcheck_failed='false'
   local postcheck_code='postcheck_failed'
 
@@ -5013,11 +5015,21 @@ download_shell_artifact_atomically() {
   fi
 
   install_sbv_update_traps
-  if ! mkdir "${lock_path}" 2>/dev/null; then
-    set_sbv_update_error "${operation}" 'precheck' 'update_in_progress' \
-      '已有另一个可执行 artifact 更新事务正在运行' "锁路径: ${lock_path}" 1 \
-      '等待现有更新结束后再重试；未取得锁时目标未发生变更'
-    finish_sbv_artifact_failure 1 || return $?
+  if mkdir "${lock_path}" 2>/dev/null; then
+    :
+  else
+    lock_status=$?
+    if [[ -e "${lock_path}" || -L "${lock_path}" ]]; then
+      set_sbv_update_error "${operation}" 'precheck' 'update_in_progress' \
+        '已有另一个可执行 artifact 更新事务正在运行' "锁路径: ${lock_path}" 1 \
+        '等待现有更新结束后再重试；未取得锁时目标未发生变更'
+      lock_status=1
+    else
+      set_sbv_update_error "${operation}" 'precheck' 'lock_create_failed' \
+        '无法创建可执行 artifact 更新锁' "锁路径: ${lock_path}" "${lock_status}" \
+        '检查目标目录的写权限、磁盘空间和文件系统状态；目标未发生变更'
+    fi
+    finish_sbv_artifact_failure "${lock_status}" || return $?
     return 0
   fi
   SBV_UPDATE_LOCK_HELD='true'
@@ -5193,7 +5205,11 @@ download_shell_artifact_atomically() {
     return 0
   fi
 
-  if ! chmod 0755 "${SBV_UPDATE_CANDIDATE_PATH}"; then
+  if [[ "${target_existed}" == 'true' && -x "${target}" ]]; then
+    expected_mode=${old_mode}
+  fi
+  SBV_UPDATE_EXPECTED_MODE=${expected_mode}
+  if ! chmod "${expected_mode}" "${SBV_UPDATE_CANDIDATE_PATH}"; then
     set_sbv_update_error "${operation}" 'commit' 'candidate_chmod_failed' \
       '无法设置 artifact 执行权限' "候选路径: ${SBV_UPDATE_CANDIDATE_PATH}" 1 \
       '原文件未发生变更'
@@ -5219,7 +5235,6 @@ download_shell_artifact_atomically() {
     return 0
   fi
   if [[ "${target_existed}" == 'true' ]]; then
-    SBV_UPDATE_EXPECTED_MODE=${old_mode}
     SBV_UPDATE_EXPECTED_UID=${old_uid}
     SBV_UPDATE_EXPECTED_GID=${old_gid}
   else
@@ -5266,12 +5281,12 @@ download_shell_artifact_atomically() {
       postcheck_code='postcheck_metadata_failed'
       detail="目标路径: ${target}"
       SBV_UPDATE_COMMAND_EXIT_CODE='1'
-    elif [[ "${actual_mode}" != "${old_mode}" || \
+    elif [[ "${actual_mode}" != "${SBV_UPDATE_EXPECTED_MODE}" || \
       "${actual_uid}" != "${old_uid}" || \
       "${actual_gid}" != "${old_gid}" ]]; then
       postcheck_failed='true'
       postcheck_code='postcheck_metadata_mismatch'
-      detail="实际: ${actual_mode}:${actual_uid}:${actual_gid}; 预期: ${old_mode}:${old_uid}:${old_gid}"
+      detail="实际: ${actual_mode}:${actual_uid}:${actual_gid}; 预期: ${SBV_UPDATE_EXPECTED_MODE}:${old_uid}:${old_gid}"
       SBV_UPDATE_COMMAND_EXIT_CODE='1'
     fi
   fi
@@ -5288,7 +5303,7 @@ download_shell_artifact_atomically() {
       chown "${old_uid}:${old_gid}" "${SBV_UPDATE_ROLLBACK_PATH}" && \
       mv -f -- "${SBV_UPDATE_ROLLBACK_PATH}" "${target}" && \
       [[ -f "${target}" && ! -L "${target}" ]] && \
-      bash -n -- "${target}" && [[ -x "${target}" ]] && \
+      bash -n -- "${target}" && \
       [[ "$(stat -c '%a' -- "${target}")" == "${old_mode}" ]] && \
       [[ "$(stat -c '%u' -- "${target}")" == "${old_uid}" ]] && \
       [[ "$(stat -c '%g' -- "${target}")" == "${old_gid}" ]] && \
@@ -5325,6 +5340,7 @@ download_shell_artifact_atomically() {
       rm -f -- "${retained_candidate}" 2>/dev/null || true
     fi
   fi
+  SBV_UPDATE_PRESERVE_ARTIFACTS='true'
   set_sbv_update_error "${operation}" 'postcheck' 'rollback_failed' \
     '提交后的 artifact 校验失败且自动恢复失败' "${detail}" \
     "${SBV_UPDATE_COMMAND_EXIT_CODE:-1}" \
