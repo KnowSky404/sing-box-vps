@@ -789,13 +789,15 @@ media_repair_rollback_output=$(FAKE_CURL_MODE=valid FAKE_CURL_SOURCE="${VALID_CA
   bash -c "source '${TESTABLE_INSTALL}'; postcheck_failures=0; bash() { if [[ \"\${1:-}\" == '-n' && \"\${3:-}\" == '${MEDIA_TARGET}' && \"\${postcheck_failures:-0}\" == '0' ]]; then postcheck_failures=1; return 74; fi; command bash \"\$@\"; }; ensure_media_check_backend" 2>&1)
 media_repair_rollback_status=$?
 set -e
-assert_status_nonzero "${media_repair_rollback_status}"
+[[ "${media_repair_rollback_status}" -eq 1 ]] || \
+  fail "media rollback success returned ${media_repair_rollback_status}, expected 1"
 assert_error_context "${media_repair_rollback_output}" 'media_check_backend' 'postcheck' \
   'postcheck_syntax_invalid' '1' "${MEDIA_TARGET}"
 assert_contains "${media_repair_rollback_output}" 'changed: true'
 assert_contains "${media_repair_rollback_output}" 'rollback_attempted: true'
 assert_contains "${media_repair_rollback_output}" 'rolled_back: true'
 assert_contains "${media_repair_rollback_output}" 'rollback_ok: true'
+assert_contains "${media_repair_rollback_output}" 'manual_intervention_required: false'
 cmp -s "${OLD_SCRIPT}" "${MEDIA_TARGET}" || \
   fail 'media rollback success did not restore the old content'
 assert_file_attributes "${MEDIA_TARGET}" "${media_repair_rollback_attributes}"
