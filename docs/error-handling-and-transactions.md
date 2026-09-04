@@ -59,6 +59,21 @@ PRECHECK
 
 只读 `check_script_status()` 可以 best-effort：网络或响应异常显示“无法检测更新”，而不是让菜单退出；它必须与变更型下载的错误策略区分开。API 读请求、API 写请求、软件包/二进制安装和配置生成也要在其各自事务中保留真实退出码。
 
+## `curl`/`wget` 调用清单
+
+本轮按调用用途盘点了 `install.sh`、`uninstall.sh`、`utils/` 和验证脚本：
+
+| 类型 | 当前调用 | 本轮边界 |
+| --- | --- | --- |
+| 可执行脚本或关键 artifact | README Bootstrap、`stage_sbv_candidate_from_url()`、`download_shell_artifact_atomically()` | 已迁移到同目录 staging、校验和原子替换；不直接写最终执行路径 |
+| 只读 best-effort 查询 | `check_script_status()`、`probe_reality_sni_candidate()`、`get_public_ipv4()`、`get_public_ipv6()` | 不应改变配置；失败分别降级为无法检测、探测失败或空结果 |
+| API 读请求 | `get_latest_version()`、`subman_api_request()` 的 GET | 保留为后续迁移项；应补充统一 timeout、HTTP/JSON 分类和 unavailable 语义 |
+| API 写请求 | `register_warp()`、`subman_api_request()` 的 PUT/DELETE | 保留为后续迁移项；必须继续保护凭据并区分传输结果不确定与服务端拒绝 |
+| 软件包或二进制安装 | `install_dependencies()` 的 apt/yum、`install_binary()` 的临时 `wget` | 不属于本轮 `sbv` 脚本修复；二进制下载不写脚本最终路径，但仍需后续统一 timeout、stderr 限长和回滚上下文 |
+| 验证探针 | `dev/verification/remote/entrypoint.sh` 的本地代理 `curl` | 仅用于 Docker 运行时探测，不是生产安装路径 |
+
+`uninstall.sh` 和 `utils/` 当前没有远程 `curl`/`wget` 调用。除上述已迁移的可执行 artifact 外，本轮不扩大到 API、软件包、二进制升级或配置写入事务。
+
 ## 变更操作检查清单
 
 提交涉及关键路径的改动前，确认：
