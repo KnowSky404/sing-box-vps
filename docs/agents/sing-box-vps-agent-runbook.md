@@ -136,9 +136,9 @@ For production or unknown hosts, use the production plan gate first.
 
 Canonical public install command:
 
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh)
-```
+Use the complete staged Bootstrap in `README.md`. It downloads to a `mktemp`
+file, validates the script before execution, and must not be replaced with
+`curl | bash` or process substitution.
 
 Post-install checks:
 

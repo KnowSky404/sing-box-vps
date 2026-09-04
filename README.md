@@ -4,22 +4,92 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026090301`
+- 脚本版本：`2026090401`
 - sing-box 适配版本：`1.14.0`
 
 ## 🚀 一键安装
 
-在您的 VPS 上运行以下命令即可开始安装：
+在您的 VPS 上运行以下安全 Bootstrap 即可开始安装。它会先完整下载到权限为 `0600` 的临时文件，再执行语法和项目身份校验；下载、校验或脚本执行的退出码会原样返回。整个流程运行在子 Shell 中，不会用 `exit` 关闭当前 SSH 登录 Shell。
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh)
+(
+  set -euo pipefail
+  umask 077
+  temp_file=$(mktemp "${TMPDIR:-/tmp}/sing-box-vps-bootstrap.XXXXXX")
+  trap 'rm -f "${temp_file}"' EXIT
+  curl_exit_code=0
+  if curl -fsSL \
+    --connect-timeout 10 \
+    --max-time 60 \
+    --retry 2 \
+    --retry-delay 1 \
+    -o "${temp_file}" \
+    https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh; then
+    curl_exit_code=0
+  else
+    curl_exit_code=$?
+  fi
+  if (( curl_exit_code != 0 )); then
+    printf '[ERROR] sing-box-vps Bootstrap 下载失败，curl 退出码: %s；脚本尚未执行，系统未发生变更。\n' \
+      "${curl_exit_code}" >&2
+    exit "${curl_exit_code}"
+  fi
+  if ! bash -n "${temp_file}"; then
+    printf '[ERROR] sing-box-vps Bootstrap 校验失败：Bash 语法无效；脚本尚未执行，系统未发生变更。\n' >&2
+    exit 2
+  fi
+  if ! grep -Fqx 'readonly PROJECT_AUTHOR="KnowSky404"' "${temp_file}" || \
+    ! grep -Fqx 'readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"' "${temp_file}"; then
+    printf '[ERROR] sing-box-vps Bootstrap 校验失败：项目身份不匹配；脚本尚未执行，系统未发生变更。\n' >&2
+    exit 2
+  fi
+  script_exit_code=0
+  bash "${temp_file}" || script_exit_code=$?
+  exit "${script_exit_code}"
+)
 ```
 
 如需独立执行彻底卸载，可运行：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/uninstall.sh)
+(
+  set -euo pipefail
+  umask 077
+  temp_file=$(mktemp "${TMPDIR:-/tmp}/sing-box-vps-bootstrap.XXXXXX")
+  trap 'rm -f "${temp_file}"' EXIT
+  curl_exit_code=0
+  if curl -fsSL \
+    --connect-timeout 10 \
+    --max-time 60 \
+    --retry 2 \
+    --retry-delay 1 \
+    -o "${temp_file}" \
+    https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/uninstall.sh; then
+    curl_exit_code=0
+  else
+    curl_exit_code=$?
+  fi
+  if (( curl_exit_code != 0 )); then
+    printf '[ERROR] sing-box-vps Bootstrap 下载失败，curl 退出码: %s；脚本尚未执行，系统未发生变更。\n' \
+      "${curl_exit_code}" >&2
+    exit "${curl_exit_code}"
+  fi
+  if ! bash -n "${temp_file}"; then
+    printf '[ERROR] sing-box-vps Bootstrap 校验失败：Bash 语法无效；脚本尚未执行，系统未发生变更。\n' >&2
+    exit 2
+  fi
+  if ! grep -Fqx 'readonly PROJECT_AUTHOR="KnowSky404"' "${temp_file}" || \
+    ! grep -Fqx 'readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"' "${temp_file}"; then
+    printf '[ERROR] sing-box-vps Bootstrap 校验失败：项目身份不匹配；脚本尚未执行，系统未发生变更。\n' >&2
+    exit 2
+  fi
+  script_exit_code=0
+  bash "${temp_file}" --yes || script_exit_code=$?
+  exit "${script_exit_code}"
+)
 ```
+
+Bootstrap 的临时文件在下载和校验阶段都不会执行；网络失败时尤其不会把空内容、部分传输或错误页交给 Bash。示例中的 `curl` 参数兼容 Debian 11、Ubuntu 20.04、CentOS 7 及其后续发行版，并继续尊重标准 `HTTPS_PROXY` 等环境变量。
 
 ## 开发验证工作流
 
@@ -122,6 +192,17 @@ sbv update sing-box 1.14.0
 - `update sing-box [latest|x.y.z]`：普通运维更新入口，逐字节保留现有配置，目标核心校验通过后才重启服务，失败明确返回非零；别名为 `sbv update-sing-box [latest|x.y.z]`。自动化升级优先使用上面的固定版本 `agent upgrade`。
 
 已有 1.13.x 主机应先运行 `sbv update sbv` 更新管理脚本，再调用 `capabilities` 与 `upgrade-check`。1.14 对旧版 inline `tls.acme` 和远程规则集 `download_detour` 会给出弃用 warning，但两者到 1.16 才移除，因此 warning 本身不会阻止 1.13→1.14；其他真实不兼容会在目标 1.14 二进制的 `sing-box check` 阶段阻止重启并触发回滚。
+
+### `sbv` 自更新的失败语义
+
+`sbv update sbv` 和 `sbv update-sbv` 使用同一套事务流程：`PRECHECK → STAGE → VALIDATE → BACKUP → COMMIT → POSTCHECK → CLEANUP`。远程内容只会写入 `/usr/local/bin` 同目录的候选文件，候选必须通过非空/最小大小、预期 shebang、`bash -n`、唯一 `SCRIPT_VERSION`、项目身份和版本单调性校验，之后才会使用同目录原子 `mv` 提交。候选 SHA-256 仅用于本地提交前后完整性核对，不代表远端签名或供应链认证。
+
+- 下载或校验失败：`changed=false`、`rollback_attempted=false`，原有 `sbv` 的内容、权限和所有者保持不变；CLI 返回非零，交互菜单展示错误摘要后继续运行。
+- 当前版本相同且目标健康：安全 `no-op`，不会创建备份或替换目标文件。
+- 提交后 postcheck 失败：自动恢复备份，并再次校验旧版本、SHA-256、Bash 语法和执行权限，报告 `rolled_back=true`。
+- `rollback_failed`：自动恢复未通过，报告 `manual_intervention_required=true`，并保留 root-only 备份和候选恢复文件。请先按错误提示人工恢复并重新执行 `bash -n`、版本、SHA-256 与执行权限校验，再运行 `sbv`。
+
+更新成功后当前进程仍运行旧代码，请按提示重新运行 `sbv`。错误摘要和脱敏诊断会写入 `/root/sing-box-vps/sbv.log`；日志写入失败不会覆盖原始更新错误。
 
 Agent/Hermes 文档入口：
 

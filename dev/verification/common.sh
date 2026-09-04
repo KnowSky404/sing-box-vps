@@ -6,7 +6,7 @@ readonly VERIFICATION_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 readonly REPO_ROOT=$(cd "${VERIFICATION_ROOT}/../.." && pwd)
 readonly REMOTE_ARTIFACT_BUNDLE_BEGIN='__SING_BOX_VPS_REMOTE_ARTIFACT_BUNDLE_BEGIN__'
 readonly REMOTE_ARTIFACT_BUNDLE_END='__SING_BOX_VPS_REMOTE_ARTIFACT_BUNDLE_END__'
-readonly DEFAULT_DOCKER_IMAGE="sing-box-vps-verify:2026090301-1"
+readonly DEFAULT_DOCKER_IMAGE="sing-box-vps-verify:2026090401-1"
 
 determine_verification_mode() {
   local file
@@ -65,6 +65,9 @@ resolve_local_tests() {
 
   if [[ "${needs_protocol_probe_tests}" == "1" ]]; then
     append_unique_lines \
+      tests/sbv_update_transactions.sh \
+      tests/bootstrap_download.sh \
+      tests/cli_update_commands.sh \
       tests/verification_protocol_probe_matrix.sh \
       tests/verification_protocol_probe_vless.sh \
       tests/verification_protocol_probe_hy2.sh \

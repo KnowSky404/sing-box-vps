@@ -5,6 +5,8 @@ set -euo pipefail
 readonly SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 readonly SB_PROJECT_DIR="${SB_PROJECT_DIR:-/root/sing-box-vps}"
 readonly SBV_BIN_PATH="${SBV_BIN_PATH:-/usr/local/bin/sbv}"
+readonly PROJECT_AUTHOR="KnowSky404"
+readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[0;33m'
