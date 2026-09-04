@@ -65,7 +65,8 @@ PRECHECK
 
 | 类型 | 当前调用 | 本轮边界 |
 | --- | --- | --- |
-| 可执行脚本或关键 artifact | README Bootstrap、`stage_sbv_candidate_from_url()`、`download_shell_artifact_atomically()` | 已迁移到同目录 staging、校验和原子替换；不直接写最终执行路径 |
+| README Bootstrap | 下载到受控临时文件，执行 `bash -n` 和项目身份校验，最后才执行临时文件；不直接写安装最终路径 |
+| 运行时可执行 artifact | `stage_sbv_candidate_from_url()`、`download_shell_artifact_atomically()` | 已迁移到同目录 staging、校验和原子替换；不直接写最终执行路径 |
 | 只读 best-effort 查询 | `check_script_status()`、`probe_reality_sni_candidate()`、`get_public_ipv4()`、`get_public_ipv6()` | 不应改变配置；失败分别降级为无法检测、探测失败或空结果 |
 | API 读请求 | `get_latest_version()`、`subman_api_request()` 的 GET | 保留为后续迁移项；应补充统一 timeout、HTTP/JSON 分类和 unavailable 语义 |
 | API 写请求 | `register_warp()`、`subman_api_request()` 的 PUT/DELETE | 保留为后续迁移项；必须继续保护凭据并区分传输结果不确定与服务端拒绝 |
@@ -94,7 +95,7 @@ PRECHECK
 本轮只迁移了 `sbv` 自更新、`ensure_sbv_command_installed()` 的脚本候选安装，以及媒体检测后端的远程 Shell artifact 下载。以下路径仍需按相同原则逐步迁移，避免扩大本轮回归面：
 
 - `install.sh:register_warp()`：Cloudflare API 写请求仍需独立的 timeout、错误分类和凭据安全日志策略。
-- `install.sh:measure_latency()`、`get_public_ipv4()`、`get_public_ipv6()`：只读 best-effort 查询应统一 unavailable 语义和 timeout。
+- `install.sh:probe_reality_sni_candidate()`、`get_public_ipv4()`、`get_public_ipv6()`：只读 best-effort 查询应统一 unavailable 语义和 timeout。
 - `install.sh:get_latest_version()`：GitHub API 读请求应明确 HTTP/JSON/网络失败分类。
 - `install.sh:install_binary()`：`wget` 软件包/二进制安装已有临时目录和二进制原子替换，但还需统一 timeout、stderr 限长和 return-based 错误上下文。
 - `install.sh:replace_singbox_binary_atomically()` 与 Agent upgrade：继续保持现有配置、服务活动状态和回滚契约，后续迁移时必须复用真实回归和 Docker 验证。
