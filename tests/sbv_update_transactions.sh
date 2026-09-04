@@ -348,7 +348,15 @@ assert_file_attributes() {
 
 assert_no_update_artifacts() {
   local artifacts
-  artifacts=$(find "${TMP_DIR}" -mindepth 1 \( -name '.sbv-*' -o -name '.sbv.*' \) -print)
+  artifacts=$(find "${TMP_DIR}" -mindepth 1 \( \
+    -name '.sbv-*' -o \
+    -name '.sbv.*' -o \
+    -name '.*.candidate.*' -o \
+    -name '.*.stderr.*' -o \
+    -name '.*.backup.*' -o \
+    -name '.*.rollback.*' -o \
+    -name '.*.update.lock' \
+  \) -print)
   [[ -z "${artifacts}" ]] || fail "unexpected update artifacts: ${artifacts}"
 }
 
@@ -669,6 +677,62 @@ assert_error_context "${media_missing_output}" 'media_check_backend' 'validate' 
   'artifact_too_small' '1' "${MEDIA_TARGET}"
 assert_no_update_artifacts
 
+rm -f "${MEDIA_TARGET}"
+ln -s "${OLD_SCRIPT}" "${MEDIA_TARGET}"
+set +e
+media_symlink_output=$(FAKE_CURL_MODE=valid FAKE_CURL_SOURCE="${VALID_CANDIDATE}" \
+  bash -c "source '${TESTABLE_INSTALL}'; ensure_media_check_backend" 2>&1)
+media_symlink_status=$?
+set -e
+assert_status_nonzero "${media_symlink_status}"
+[[ -L "${MEDIA_TARGET}" ]] || fail 'media backend symlink target was not preserved'
+[[ "$(readlink "${MEDIA_TARGET}")" == "${OLD_SCRIPT}" ]] || \
+  fail 'media backend symlink referent changed'
+assert_error_context "${media_symlink_output}" 'media_check_backend' 'precheck' \
+  'target_symlink_unsupported' '1' "${MEDIA_TARGET}"
+rm -f "${MEDIA_TARGET}"
+assert_no_update_artifacts
+
+media_lock_path="${MEDIA_TARGET%/*}/.${MEDIA_TARGET##*/}.update.lock"
+mkdir "${media_lock_path}"
+set +e
+media_lock_output=$(FAKE_CURL_MODE=valid FAKE_CURL_SOURCE="${VALID_CANDIDATE}" \
+  bash -c "source '${TESTABLE_INSTALL}'; ensure_media_check_backend" 2>&1)
+media_lock_status=$?
+set -e
+assert_status_nonzero "${media_lock_status}"
+[[ ! -e "${MEDIA_TARGET}" && ! -L "${MEDIA_TARGET}" ]] || \
+  fail 'media backend lock contention created a target'
+assert_error_context "${media_lock_output}" 'media_check_backend' 'precheck' \
+  'update_in_progress' '1' "${MEDIA_TARGET}"
+[[ -d "${media_lock_path}" ]] || fail 'media backend lock contention removed the lock'
+rmdir "${media_lock_path}"
+assert_no_update_artifacts
+
+for signal_mode in signal-int signal-term signal-hup; do
+  rm -f "${MEDIA_TARGET}"
+  case "${signal_mode}" in
+    signal-int) expected_signal_status=130 ;;
+    signal-term) expected_signal_status=143 ;;
+    signal-hup) expected_signal_status=129 ;;
+  esac
+  set +e
+  media_signal_output=$(FAKE_CURL_MODE="${signal_mode}" FAKE_CURL_SOURCE="${VALID_CANDIDATE}" \
+    bash -c "source '${TESTABLE_INSTALL}'; ensure_media_check_backend" 2>&1)
+  media_signal_status=$?
+  set -e
+  [[ "${media_signal_status}" -eq "${expected_signal_status}" ]] || \
+    fail "${signal_mode} media backend returned ${media_signal_status}, expected ${expected_signal_status}"
+  [[ ! -e "${MEDIA_TARGET}" && ! -L "${MEDIA_TARGET}" ]] || \
+    fail "${signal_mode} media backend created a target"
+  assert_contains "${media_signal_output}" 'operation: media_check_backend'
+  assert_contains "${media_signal_output}" 'code: signal_interrupted'
+  assert_contains "${media_signal_output}" "command_exit_code: ${expected_signal_status}"
+  assert_error_context "${media_signal_output}" 'media_check_backend' 'download' \
+    'signal_interrupted' "${expected_signal_status}" "${MEDIA_TARGET}"
+  assert_no_update_artifacts
+done
+
 set +e
 media_success_output=$(FAKE_CURL_MODE=valid FAKE_CURL_SOURCE="${VALID_CANDIDATE}" \
   bash -c "source '${TESTABLE_INSTALL}'; ensure_media_check_backend" 2>&1)
@@ -750,10 +814,10 @@ retained_candidate=$(find "${TARGET_DIR}" -maxdepth 1 -type f -name '.sbv-candid
   fail 'rollback failure did not preserve a regular candidate'
 [[ "$(stat -c '%a' "${backup_artifact}")" == '600' ]] || fail 'backup is not protected'
 [[ "$(stat -c '%a' "${retained_candidate}")" == '600' ]] || fail 'retained candidate is not protected'
-[[ "$(stat -c '%u:%g' "${backup_artifact}")" == "${TEST_TARGET_UID}:${TEST_TARGET_GID}" ]] || \
-  fail 'preserved backup owner changed'
-[[ "$(stat -c '%u:%g' "${retained_candidate}")" == "${TEST_TARGET_UID}:${TEST_TARGET_GID}" ]] || \
-  fail 'retained candidate owner changed'
+[[ "$(stat -c '%u:%g' "${backup_artifact}")" == '0:0' ]] || \
+  fail 'preserved backup is not root-owned'
+[[ "$(stat -c '%u:%g' "${retained_candidate}")" == '0:0' ]] || \
+  fail 'retained candidate is not root-owned'
 cmp -s "${OLD_SCRIPT}" "${backup_artifact}" || fail 'preserved backup does not contain the old script'
 cmp -s "${VALID_CANDIDATE}" "${retained_candidate}" || fail 'retained candidate is not the submitted script'
 [[ ! -d "${TARGET_DIR}/.sbv-update.lock" ]] || fail 'update lock survived rollback failure'

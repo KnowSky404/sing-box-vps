@@ -3414,6 +3414,14 @@ ensure_media_check_backend() {
     return 1
   fi
 
+  if [[ -L "${SB_MEDIA_CHECK_SCRIPT}" ]]; then
+    set_sbv_update_error 'media_check_backend' 'precheck' 'target_symlink_unsupported' \
+      '流媒体验证脚本目标是符号链接，已安全拒绝更新' \
+      "目标路径: ${SB_MEDIA_CHECK_SCRIPT}" 1 \
+      '请先将目标替换为受管普通文件后再重试'
+    report_sbv_update_error
+    return 1
+  fi
   if [[ -x "${SB_MEDIA_CHECK_SCRIPT}" ]]; then
     return 0
   fi
@@ -4564,6 +4572,13 @@ create_sbv_backup() {
       '检查文件系统权限；原脚本未发生变更'
     return 1
   fi
+  if ! chown 0:0 "${SBV_UPDATE_BACKUP_PATH}"; then
+    set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'backup' 'backup_protect_failed' \
+      '无法将 sbv 备份设置为 root 所有' \
+      "备份路径: ${SBV_UPDATE_BACKUP_PATH}" 1 \
+      '检查文件系统权限；原脚本未发生变更'
+    return 1
+  fi
   return 0
 }
 
@@ -4746,7 +4761,7 @@ preserve_sbv_recovery_artifacts() {
   if [[ -f "${SBV_BIN_PATH}" ]]; then
     if retained_candidate=$(mktemp "${target_dir}/.sbv-candidate-retained.XXXXXXXXXX"); then
       if cp -p -- "${SBV_BIN_PATH}" "${retained_candidate}" && \
-        chmod 0600 "${retained_candidate}"; then
+        chmod 0600 "${retained_candidate}" && chown 0:0 "${retained_candidate}"; then
         SBV_UPDATE_CANDIDATE_PATH=${retained_candidate}
       else
         rm -f -- "${retained_candidate}" || true
@@ -4932,29 +4947,44 @@ sbv_update_transaction() {
   finish_sbv_update_success
 }
 
+finish_sbv_artifact_failure() {
+  local result_status=${1:-1}
+
+  cleanup_sbv_update
+  restore_sbv_update_traps
+  report_sbv_update_error
+  return "${result_status}"
+}
+
+finish_sbv_artifact_success() {
+  cleanup_sbv_update
+  restore_sbv_update_traps
+  return 0
+}
+
 download_shell_artifact_atomically() {
   local operation=$1
   local url=$2
   local target=$3
   local target_dir
   local target_name
-  local candidate=''
-  local stderr_file=''
-  local backup=''
-  local restore_path=''
-  local old_mode='0755'
-  local old_uid=''
-  local old_gid=''
+  local lock_path
   local curl_status=0
   local detail=''
   local file_size
   local first_line=''
   local syntax_detail=''
   local target_existed='false'
+  local old_mode='0755'
+  local old_uid=''
+  local old_gid=''
+  local old_hash=''
   local actual_mode=''
   local actual_uid=''
   local actual_gid=''
+  local restore_hash=''
   local retained_candidate=''
+  local result_status=1
   local postcheck_failed='false'
   local postcheck_code='postcheck_failed'
 
@@ -4964,6 +4994,9 @@ download_shell_artifact_atomically() {
   SBV_UPDATE_LOG_FILE=${SBV_LOG_FILE}
   target_dir=$(dirname -- "${target}")
   target_name=${target##*/}
+  lock_path="${target_dir}/.${target_name}.update.lock"
+  SBV_UPDATE_LOCK_PATH=${lock_path}
+
   if [[ ! -d "${target_dir}" ]]; then
     set_sbv_update_error "${operation}" 'precheck' 'target_directory_missing' \
       '可执行 artifact 目标目录不存在' "目标目录: ${target_dir}" 1 \
@@ -4978,127 +5011,253 @@ download_shell_artifact_atomically() {
     report_sbv_update_error
     return 1
   fi
-  if ! candidate=$(mktemp "${target_dir}/.${target_name}.candidate.XXXXXXXXXX"); then
+
+  install_sbv_update_traps
+  if ! mkdir "${lock_path}" 2>/dev/null; then
+    set_sbv_update_error "${operation}" 'precheck' 'update_in_progress' \
+      '已有另一个可执行 artifact 更新事务正在运行' "锁路径: ${lock_path}" 1 \
+      '等待现有更新结束后再重试；未取得锁时目标未发生变更'
+    finish_sbv_artifact_failure 1 || return $?
+    return 0
+  fi
+  SBV_UPDATE_LOCK_HELD='true'
+  if [[ -n "${SBV_UPDATE_SIGNAL_NAME}" ]]; then
+    result_status=${SBV_UPDATE_SIGNAL_CODE}
+    set_sbv_update_error "${operation}" 'precheck' 'signal_interrupted' \
+      "更新过程中收到 ${SBV_UPDATE_SIGNAL_NAME}" \
+      "信号: ${SBV_UPDATE_SIGNAL_NAME}" "${result_status}" \
+      '重新运行更新；提交前目标 artifact 保持不变'
+    finish_sbv_artifact_failure "${result_status}" || return $?
+    return 0
+  fi
+  if [[ -L "${target}" || ( -e "${target}" && ! -f "${target}" ) ]]; then
+    set_sbv_update_error "${operation}" 'precheck' 'target_not_regular' \
+      '加锁后发现 artifact 目标不是普通文件' "目标路径: ${target}" 1 \
+      '检查目标路径后重试；目标未发生变更'
+    finish_sbv_artifact_failure 1 || return $?
+    return 0
+  fi
+
+  SBV_UPDATE_STAGE='stage'
+  if ! SBV_UPDATE_CANDIDATE_PATH=$(mktemp "${target_dir}/.${target_name}.candidate.XXXXXXXXXX"); then
     set_sbv_update_error "${operation}" 'stage' 'candidate_create_failed' \
       '无法创建可执行 artifact 候选文件' "候选目录: ${target_dir}" 1 \
       '检查目标目录的磁盘空间和权限'
-    report_sbv_update_error
-    return 1
+    finish_sbv_artifact_failure 1 || return $?
+    return 0
   fi
-  if ! stderr_file=$(mktemp "${target_dir}/.${target_name}.stderr.XXXXXXXXXX"); then
-    rm -f -- "${candidate}" || true
+  if ! SBV_UPDATE_CURL_STDERR_PATH=$(mktemp "${target_dir}/.${target_name}.stderr.XXXXXXXXXX"); then
     set_sbv_update_error "${operation}" 'stage' 'diagnostic_file_create_failed' \
       '无法创建下载诊断文件' "诊断目录: ${target_dir}" 1 \
       '检查目标目录的磁盘空间和权限'
-    report_sbv_update_error
-    return 1
+    finish_sbv_artifact_failure 1 || return $?
+    return 0
   fi
   if curl -fsSL \
     --connect-timeout "${SBV_CURL_CONNECT_TIMEOUT}" \
     --max-time "${SBV_CURL_MAX_TIME}" \
     --retry "${SBV_CURL_RETRY_COUNT}" \
     --retry-delay "${SBV_CURL_RETRY_DELAY}" \
-    -o "${candidate}" "${url}" 2>"${stderr_file}"; then
+    -o "${SBV_UPDATE_CANDIDATE_PATH}" "${url}" \
+    2>"${SBV_UPDATE_CURL_STDERR_PATH}"; then
     curl_status=0
   else
     curl_status=$?
   fi
+  SBV_UPDATE_COMMAND_EXIT_CODE=${curl_status}
+  if [[ "${SBV_UPDATE_SIGNAL_CODE}" != '0' ]]; then
+    result_status=${SBV_UPDATE_SIGNAL_CODE}
+    set_sbv_update_error "${operation}" 'download' 'signal_interrupted' \
+      "下载过程中收到 ${SBV_UPDATE_SIGNAL_NAME}，更新已中断" \
+      "信号: ${SBV_UPDATE_SIGNAL_NAME}" "${result_status}" \
+      '重新运行更新；提交前目标 artifact 保持不变'
+    finish_sbv_artifact_failure "${result_status}" || return $?
+    return 0
+  fi
   if [[ "${curl_status}" != '0' ]]; then
-    detail=$(read_sbv_detail_file "${stderr_file}")
+    detail=$(read_sbv_detail_file "${SBV_UPDATE_CURL_STDERR_PATH}")
     set_sbv_update_error "${operation}" 'download' "$(classify_sbv_download_error "${curl_status}")" \
       '下载可执行 artifact 失败' "${detail}" "${curl_status}" \
       '检查 DNS、IPv4/IPv6 出口、路由或 HTTPS_PROXY；原文件未发生变更'
-    rm -f -- "${candidate}" "${stderr_file}" || true
-    report_sbv_update_error
-    return "${curl_status}"
+    finish_sbv_artifact_failure "${curl_status}" || return $?
+    return 0
   fi
-  if ! file_size=$(wc -c < "${candidate}") || (( file_size < SBV_ARTIFACT_MIN_SIZE )); then
-    set_sbv_update_error "${operation}" 'validate' 'artifact_too_small' \
-      '下载的可执行 artifact 为空或过小' "文件大小: ${file_size:-unknown} 字节" 1 \
+
+  SBV_UPDATE_STAGE='validate'
+  if ! file_size=$(wc -c < "${SBV_UPDATE_CANDIDATE_PATH}"); then
+    set_sbv_update_error "${operation}" 'validate' 'artifact_size_check_failed' \
+      '无法读取下载的 artifact 大小' "候选路径: ${SBV_UPDATE_CANDIDATE_PATH}" 1 \
       '拒绝提交远程内容；原文件未发生变更'
-    rm -f -- "${candidate}" "${stderr_file}" || true
-    report_sbv_update_error
-    return 1
+    finish_sbv_artifact_failure 1 || return $?
+    return 0
   fi
-  IFS= read -r first_line < "${candidate}" || true
+  if (( file_size < SBV_ARTIFACT_MIN_SIZE )); then
+    set_sbv_update_error "${operation}" 'validate' 'artifact_too_small' \
+      '下载的可执行 artifact 为空或过小' "文件大小: ${file_size} 字节" 1 \
+      '拒绝提交远程内容；原文件未发生变更'
+    finish_sbv_artifact_failure 1 || return $?
+    return 0
+  fi
+  IFS= read -r first_line < "${SBV_UPDATE_CANDIDATE_PATH}" || true
   if [[ ! "${first_line}" =~ ^#!.*(bash|sh)([[:space:]]|$) ]]; then
     set_sbv_update_error "${operation}" 'validate' 'artifact_shebang_invalid' \
       '远程 artifact 缺少可识别的 Shell shebang' "首行: ${first_line}" 1 \
       '拒绝提交远程内容；原文件未发生变更'
-    rm -f -- "${candidate}" "${stderr_file}" || true
-    report_sbv_update_error
-    return 1
+    finish_sbv_artifact_failure 1 || return $?
+    return 0
   fi
   if LC_ALL=C grep -Eiq '^[[:space:]]*(<!doctype[[:space:]]+html|<html|<body)' \
-    "${candidate}"; then
+    "${SBV_UPDATE_CANDIDATE_PATH}"; then
     set_sbv_update_error "${operation}" 'validate' 'artifact_html' \
       '远程 artifact 看起来是 HTML 或网关错误页' 'HTML marker detected' 1 \
       '拒绝提交远程内容；原文件未发生变更'
-    rm -f -- "${candidate}" "${stderr_file}" || true
-    report_sbv_update_error
-    return 1
+    finish_sbv_artifact_failure 1 || return $?
+    return 0
   fi
-  if ! syntax_detail=$(bash -n -- "${candidate}" 2>&1); then
+  if ! syntax_detail=$(bash -n -- "${SBV_UPDATE_CANDIDATE_PATH}" 2>&1); then
     set_sbv_update_error "${operation}" 'validate' 'artifact_syntax_invalid' \
       '远程 artifact 未通过 Bash 语法校验' "${syntax_detail}" 1 \
       '拒绝提交远程内容；原文件未发生变更'
-    rm -f -- "${candidate}" "${stderr_file}" || true
-    report_sbv_update_error
-    return 1
+    finish_sbv_artifact_failure 1 || return $?
+    return 0
+  fi
+  if [[ -n "${SBV_UPDATE_SIGNAL_NAME}" ]]; then
+    result_status=${SBV_UPDATE_SIGNAL_CODE}
+    set_sbv_update_error "${operation}" 'validate' 'signal_interrupted' \
+      "校验过程中收到 ${SBV_UPDATE_SIGNAL_NAME}，更新已中断" \
+      "信号: ${SBV_UPDATE_SIGNAL_NAME}" "${result_status}" \
+      '重新运行更新；提交前目标 artifact 保持不变'
+    finish_sbv_artifact_failure "${result_status}" || return $?
+    return 0
   fi
 
   if [[ -f "${target}" ]]; then
     target_existed='true'
-    if ! old_mode=$(stat -c '%a' -- "${target}") || \
-      ! old_uid=$(stat -c '%u' -- "${target}") || \
-      ! old_gid=$(stat -c '%g' -- "${target}"); then
+    SBV_UPDATE_TARGET_EXISTS='true'
+    if ! get_sbv_file_metadata "${target}"; then
       set_sbv_update_error "${operation}" 'backup' 'target_metadata_failed' \
         '无法读取现有 artifact 的权限或所有者' "目标路径: ${target}" 1 \
         '检查目标文件权限；原文件未发生变更'
-      rm -f -- "${candidate}" "${stderr_file}" || true
-      report_sbv_update_error
-      return 1
+      finish_sbv_artifact_failure 1 || return $?
+      return 0
     fi
-    if ! backup=$(mktemp "${target_dir}/.${target_name}.backup.XXXXXXXXXX") || \
-      ! cp -p -- "${target}" "${backup}" || ! chmod 0600 "${backup}"; then
-      rm -f -- "${candidate}" "${stderr_file}" "${backup}" || true
-      set_sbv_update_error "${operation}" 'backup' 'backup_copy_failed' \
-        '无法创建现有 artifact 的受保护备份' "目标路径: ${target}" 1 \
+    old_mode=${SBV_UPDATE_TARGET_MODE}
+    old_uid=${SBV_UPDATE_TARGET_UID}
+    old_gid=${SBV_UPDATE_TARGET_GID}
+    if ! old_hash=$(calculate_sbv_sha256 "${target}"); then
+      set_sbv_update_error "${operation}" 'backup' 'target_hash_failed' \
+        '无法计算现有 artifact 的 SHA-256' "目标路径: ${target}" 1 \
+        '检查目标文件是否可读；原文件未发生变更'
+      finish_sbv_artifact_failure 1 || return $?
+      return 0
+    fi
+    SBV_UPDATE_TARGET_HASH=${old_hash}
+    if ! SBV_UPDATE_TARGET_VERSION=$(extract_sbv_script_version "${target}"); then
+      SBV_UPDATE_TARGET_VERSION='unknown'
+    fi
+    SBV_UPDATE_CURRENT_VERSION=${SBV_UPDATE_TARGET_VERSION}
+    if ! SBV_UPDATE_BACKUP_PATH=$(mktemp "${target_dir}/.${target_name}.backup.XXXXXXXXXX"); then
+      set_sbv_update_error "${operation}" 'backup' 'backup_create_failed' \
+        '无法创建现有 artifact 的受保护备份' "目标目录: ${target_dir}" 1 \
         '原文件未发生变更；检查目标目录的权限'
-      report_sbv_update_error
-      return 1
+      finish_sbv_artifact_failure 1 || return $?
+      return 0
     fi
+    if ! cp -p -- "${target}" "${SBV_UPDATE_BACKUP_PATH}"; then
+      set_sbv_update_error "${operation}" 'backup' 'backup_copy_failed' \
+        '无法复制现有 artifact 到受保护备份' "目标路径: ${target}" 1 \
+        '原文件未发生变更；检查目标目录的权限'
+      finish_sbv_artifact_failure 1 || return $?
+      return 0
+    fi
+    if ! chmod 0600 "${SBV_UPDATE_BACKUP_PATH}" || \
+      ! chown 0:0 "${SBV_UPDATE_BACKUP_PATH}"; then
+      set_sbv_update_error "${operation}" 'backup' 'backup_protect_failed' \
+        '无法将 artifact 备份设置为 root-only' \
+        "备份路径: ${SBV_UPDATE_BACKUP_PATH}" 1 \
+        '检查文件系统权限；原文件未发生变更'
+      finish_sbv_artifact_failure 1 || return $?
+      return 0
+    fi
+  else
+    SBV_UPDATE_CURRENT_VERSION='unknown'
   fi
-  if ! chmod 0755 "${candidate}"; then
-    rm -f -- "${candidate}" "${stderr_file}" "${backup}" || true
+
+  if [[ -n "${SBV_UPDATE_SIGNAL_NAME}" ]]; then
+    result_status=${SBV_UPDATE_SIGNAL_CODE}
+    set_sbv_update_error "${operation}" 'backup' 'signal_interrupted' \
+      "备份阶段收到 ${SBV_UPDATE_SIGNAL_NAME}，更新已中断" \
+      "信号: ${SBV_UPDATE_SIGNAL_NAME}" "${result_status}" \
+      '重新运行更新；提交前目标 artifact 保持不变'
+    finish_sbv_artifact_failure "${result_status}" || return $?
+    return 0
+  fi
+
+  if ! chmod 0755 "${SBV_UPDATE_CANDIDATE_PATH}"; then
     set_sbv_update_error "${operation}" 'commit' 'candidate_chmod_failed' \
-      '无法设置 artifact 执行权限' "候选路径: ${candidate}" 1 \
+      '无法设置 artifact 执行权限' "候选路径: ${SBV_UPDATE_CANDIDATE_PATH}" 1 \
       '原文件未发生变更'
-    report_sbv_update_error
-    return 1
+    finish_sbv_artifact_failure 1 || return $?
+    return 0
   fi
   if [[ "${target_existed}" == 'true' ]] && \
-    ! chown "${old_uid}:${old_gid}" "${candidate}"; then
-    rm -f -- "${candidate}" "${stderr_file}" "${backup}" || true
+    ! chown "${old_uid}:${old_gid}" "${SBV_UPDATE_CANDIDATE_PATH}"; then
     set_sbv_update_error "${operation}" 'commit' 'candidate_chown_failed' \
-      '无法保留 artifact 原有所有者' "候选路径: ${candidate}" 1 \
+      '无法保留 artifact 原有所有者' \
+      "候选路径: ${SBV_UPDATE_CANDIDATE_PATH}" 1 \
       '原文件未发生变更'
-    report_sbv_update_error
-    return 1
+    finish_sbv_artifact_failure 1 || return $?
+    return 0
   fi
-  if ! mv -f -- "${candidate}" "${target}"; then
-    rm -f -- "${candidate}" "${stderr_file}" "${backup}" || true
+  if [[ -n "${SBV_UPDATE_SIGNAL_NAME}" ]]; then
+    result_status=${SBV_UPDATE_SIGNAL_CODE}
+    set_sbv_update_error "${operation}" 'commit' 'signal_interrupted' \
+      "提交前收到 ${SBV_UPDATE_SIGNAL_NAME}，更新已中断" \
+      "信号: ${SBV_UPDATE_SIGNAL_NAME}" "${result_status}" \
+      '重新运行更新；提交前目标 artifact 保持不变'
+    finish_sbv_artifact_failure "${result_status}" || return $?
+    return 0
+  fi
+  if [[ "${target_existed}" == 'true' ]]; then
+    SBV_UPDATE_EXPECTED_MODE=${old_mode}
+    SBV_UPDATE_EXPECTED_UID=${old_uid}
+    SBV_UPDATE_EXPECTED_GID=${old_gid}
+  else
+    SBV_UPDATE_EXPECTED_MODE='755'
+  fi
+  SBV_UPDATE_STAGE='commit'
+  if ! mv -f -- "${SBV_UPDATE_CANDIDATE_PATH}" "${target}"; then
     set_sbv_update_error "${operation}" 'commit' 'atomic_replace_failed' \
       '无法原子替换可执行 artifact' "目标路径: ${target}" 1 \
       '原文件未发生变更'
-    report_sbv_update_error
-    return 1
+    finish_sbv_artifact_failure 1 || return $?
+    return 0
   fi
+  SBV_UPDATE_COMMITTED='true'
   SBV_UPDATE_CHANGED='true'
-  if ! bash -n -- "${target}" 2>"${stderr_file}" || [[ ! -x "${target}" ]]; then
+
+  SBV_UPDATE_STAGE='postcheck'
+  if [[ -n "${SBV_UPDATE_SIGNAL_NAME}" ]]; then
     postcheck_failed='true'
-    postcheck_code='postcheck_failed'
-    detail=$(read_sbv_detail_file "${stderr_file}")
+    postcheck_code='signal_interrupted'
+    result_status=${SBV_UPDATE_SIGNAL_CODE}
+    detail="信号: ${SBV_UPDATE_SIGNAL_NAME}"
+    SBV_UPDATE_COMMAND_EXIT_CODE=${result_status}
+  elif [[ ! -f "${target}" || -L "${target}" ]]; then
+    postcheck_failed='true'
+    postcheck_code='postcheck_target_invalid'
+    detail="目标路径: ${target}"
+    SBV_UPDATE_COMMAND_EXIT_CODE='1'
+  elif ! bash -n -- "${target}" 2>"${SBV_UPDATE_CURL_STDERR_PATH}"; then
+    postcheck_failed='true'
+    postcheck_code='postcheck_syntax_invalid'
+    detail=$(read_sbv_detail_file "${SBV_UPDATE_CURL_STDERR_PATH}")
+    SBV_UPDATE_COMMAND_EXIT_CODE='1'
+  elif [[ ! -x "${target}" ]]; then
+    postcheck_failed='true'
+    postcheck_code='postcheck_not_executable'
+    detail="目标路径: ${target}"
+    SBV_UPDATE_COMMAND_EXIT_CODE='1'
   elif [[ "${target_existed}" == 'true' ]]; then
     if ! actual_mode=$(stat -c '%a' -- "${target}") || \
       ! actual_uid=$(stat -c '%u' -- "${target}") || \
@@ -5106,63 +5265,72 @@ download_shell_artifact_atomically() {
       postcheck_failed='true'
       postcheck_code='postcheck_metadata_failed'
       detail="目标路径: ${target}"
+      SBV_UPDATE_COMMAND_EXIT_CODE='1'
     elif [[ "${actual_mode}" != "${old_mode}" || \
       "${actual_uid}" != "${old_uid}" || \
       "${actual_gid}" != "${old_gid}" ]]; then
       postcheck_failed='true'
       postcheck_code='postcheck_metadata_mismatch'
       detail="实际: ${actual_mode}:${actual_uid}:${actual_gid}; 预期: ${old_mode}:${old_uid}:${old_gid}"
+      SBV_UPDATE_COMMAND_EXIT_CODE='1'
     fi
   fi
-  if [[ "${postcheck_failed}" == 'true' ]]; then
-    SBV_UPDATE_ROLLBACK_ATTEMPTED='true'
-    if [[ "${target_existed}" == 'true' ]]; then
-      if restore_path=$(mktemp "${target_dir}/.${target_name}.rollback.XXXXXXXXXX") && \
-        cp -p -- "${backup}" "${restore_path}" && \
-        chmod "${old_mode}" "${restore_path}" && \
-        chown "${old_uid}:${old_gid}" "${restore_path}" && \
-        mv -f -- "${restore_path}" "${target}"; then
-        SBV_UPDATE_ROLLED_BACK='true'
-        SBV_UPDATE_ROLLBACK_OK='true'
-        rm -f -- "${backup}" "${stderr_file}" || true
-        set_sbv_update_error "${operation}" 'postcheck' "${postcheck_code}" \
-          '提交后的 artifact 校验失败，已恢复原文件' \
-          "${detail}" 1 \
-          '原文件已恢复，未保留无效远程内容'
-        report_sbv_update_error
-        return 1
-      fi
-      rm -f -- "${restore_path}" 2>/dev/null || true
+  if [[ "${postcheck_failed}" != 'true' ]]; then
+    finish_sbv_artifact_success
+    return 0
+  fi
+
+  SBV_UPDATE_ROLLBACK_ATTEMPTED='true'
+  if [[ "${target_existed}" == 'true' ]]; then
+    if SBV_UPDATE_ROLLBACK_PATH=$(mktemp "${target_dir}/.${target_name}.rollback.XXXXXXXXXX") && \
+      cp -p -- "${SBV_UPDATE_BACKUP_PATH}" "${SBV_UPDATE_ROLLBACK_PATH}" && \
+      chmod "${old_mode}" "${SBV_UPDATE_ROLLBACK_PATH}" && \
+      chown "${old_uid}:${old_gid}" "${SBV_UPDATE_ROLLBACK_PATH}" && \
+      mv -f -- "${SBV_UPDATE_ROLLBACK_PATH}" "${target}" && \
+      [[ -f "${target}" && ! -L "${target}" ]] && \
+      bash -n -- "${target}" && [[ -x "${target}" ]] && \
+      [[ "$(stat -c '%a' -- "${target}")" == "${old_mode}" ]] && \
+      [[ "$(stat -c '%u' -- "${target}")" == "${old_uid}" ]] && \
+      [[ "$(stat -c '%g' -- "${target}")" == "${old_gid}" ]] && \
+      restore_hash=$(calculate_sbv_sha256 "${target}") && [[ "${restore_hash}" == "${old_hash}" ]]; then
+      SBV_UPDATE_ROLLBACK_PATH=''
+      SBV_UPDATE_ROLLED_BACK='true'
+      SBV_UPDATE_ROLLBACK_OK='true'
+      set_sbv_update_error "${operation}" 'postcheck' "${postcheck_code}" \
+        '提交后的 artifact 校验失败，已恢复原文件' "${detail}" \
+        "${SBV_UPDATE_COMMAND_EXIT_CODE:-1}" \
+        '原文件已恢复，未保留无效远程内容'
+      result_status=${SBV_UPDATE_COMMAND_EXIT_CODE:-1}
+      finish_sbv_artifact_failure "${result_status}" || return $?
+      return 0
+    fi
+  elif rm -f -- "${target}" && [[ ! -e "${target}" && ! -L "${target}" ]]; then
+    SBV_UPDATE_ROLLED_BACK='true'
+    SBV_UPDATE_ROLLBACK_OK='true'
+    set_sbv_update_error "${operation}" 'postcheck' "${postcheck_code}" \
+      '提交后的 artifact 校验失败，已删除原本不存在的无效目标' "${detail}" \
+      "${SBV_UPDATE_COMMAND_EXIT_CODE:-1}" \
+      '原目标原本不存在；请重新运行下载'
+    result_status=${SBV_UPDATE_COMMAND_EXIT_CODE:-1}
+    finish_sbv_artifact_failure "${result_status}" || return $?
+    return 0
+  fi
+
+  if [[ -f "${target}" && ! -L "${target}" ]]; then
+    if retained_candidate=$(mktemp "${target_dir}/.${target_name}.candidate-retained.XXXXXXXXXX") && \
+      cp -p -- "${target}" "${retained_candidate}" && \
+      chmod 0600 "${retained_candidate}" && chown 0:0 "${retained_candidate}"; then
+      SBV_UPDATE_CANDIDATE_PATH=${retained_candidate}
     else
-      if rm -f -- "${target}" && [[ ! -e "${target}" && ! -L "${target}" ]]; then
-        SBV_UPDATE_ROLLED_BACK='true'
-        SBV_UPDATE_ROLLBACK_OK='true'
-        rm -f -- "${stderr_file}" || true
-        set_sbv_update_error "${operation}" 'postcheck' "${postcheck_code}" \
-          '提交后的 artifact 校验失败，已删除无原文件可恢复的无效目标' \
-          "${detail}" 1 \
-          '原目标原本不存在；请重新运行下载'
-        report_sbv_update_error
-        return 1
-      fi
+      rm -f -- "${retained_candidate}" 2>/dev/null || true
     fi
-    if [[ -f "${target}" ]]; then
-      if retained_candidate=$(mktemp "${target_dir}/.${target_name}.candidate-retained.XXXXXXXXXX") && \
-        cp -p -- "${target}" "${retained_candidate}" && \
-        chmod 0600 "${retained_candidate}"; then
-        SBV_UPDATE_CANDIDATE_PATH=${retained_candidate}
-      else
-        rm -f -- "${retained_candidate}" 2>/dev/null || true
-      fi
-    fi
-    set_sbv_update_error "${operation}" 'postcheck' 'rollback_failed' \
-      '提交后的 artifact 校验失败且自动恢复失败' \
-      "${detail}" 1 \
-      '保留的备份可能需要人工恢复'
-    report_sbv_update_error
-    return 1
   fi
-  rm -f -- "${backup}" "${stderr_file}" || true
+  set_sbv_update_error "${operation}" 'postcheck' 'rollback_failed' \
+    '提交后的 artifact 校验失败且自动恢复失败' "${detail}" \
+    "${SBV_UPDATE_COMMAND_EXIT_CODE:-1}" \
+    '保留的备份和候选文件可能需要人工恢复'
+  SBV_UPDATE_MANUAL_INTERVENTION_REQUIRED='true'
+  finish_sbv_artifact_failure 1 || return $?
   return 0
 }
 
