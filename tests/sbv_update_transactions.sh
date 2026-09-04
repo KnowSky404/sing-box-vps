@@ -537,6 +537,26 @@ assert_contains "$(<"${TMP_DIR}/success.output")" 'changed: true'
 assert_no_update_artifacts
 
 prepare_existing_target "${OLD_SCRIPT}"
+chmod 0644 "${TARGET_PATH}"
+chown "${TEST_TARGET_UID}:${TEST_TARGET_GID}" "${TARGET_PATH}" || \
+  fail 'could not prepare the non-executable sbv target owner'
+nonexec_update_owner=$(stat -c '%u:%g' "${TARGET_PATH}")
+set +e
+nonexec_update_output=$(FAKE_CURL_MODE=valid FAKE_CURL_SOURCE="${VALID_CANDIDATE}" \
+  bash -c "source '${TESTABLE_INSTALL}'; manual_update_script" 2>&1)
+nonexec_update_status=$?
+set -e
+[[ "${nonexec_update_status}" -eq 0 ]] || \
+  fail "non-executable sbv update failed: ${nonexec_update_output}"
+assert_target_matches "${VALID_CANDIDATE}"
+[[ "$(stat -c '%a' "${TARGET_PATH}")" == '755' ]] || \
+  fail 'non-executable sbv update did not repair executable mode'
+[[ "$(stat -c '%u:%g' "${TARGET_PATH}")" == "${nonexec_update_owner}" ]] || \
+  fail 'non-executable sbv update changed the target owner'
+assert_contains "${nonexec_update_output}" 'changed: true'
+assert_no_update_artifacts
+
+prepare_existing_target "${OLD_SCRIPT}"
 commit_old_hash=$(sha256sum "${TARGET_PATH}" | awk '{print $1}')
 commit_old_attributes=$(capture_file_attributes "${TARGET_PATH}")
 set +e
@@ -571,6 +591,30 @@ assert_contains "${postcheck_output}" 'rollback_attempted: true'
 assert_contains "${postcheck_output}" 'rollback_ok: true'
 assert_no_update_artifacts
 
+prepare_existing_target "${OLD_SCRIPT}"
+chmod 0644 "${TARGET_PATH}"
+chown "${TEST_TARGET_UID}:${TEST_TARGET_GID}" "${TARGET_PATH}" || \
+  fail 'could not prepare the non-executable sbv rollback owner'
+nonexec_rollback_attributes=$(capture_file_attributes "${TARGET_PATH}")
+set +e
+nonexec_rollback_output=$(FAKE_CURL_MODE=valid FAKE_CURL_SOURCE="${VALID_CANDIDATE}" \
+  bash -c "source '${TESTABLE_INSTALL}'; postcheck_sbv_update() { return 74; }; manual_update_script" 2>&1)
+nonexec_rollback_status=$?
+set -e
+[[ "${nonexec_rollback_status}" -eq 74 ]] || \
+  fail "non-executable sbv rollback returned ${nonexec_rollback_status}, expected 74"
+cmp -s "${OLD_SCRIPT}" "${TARGET_PATH}" || \
+  fail 'non-executable sbv rollback did not restore the old content'
+assert_file_attributes "${TARGET_PATH}" "${nonexec_rollback_attributes}"
+assert_error_context "${nonexec_rollback_output}" 'sbv_update' 'postcheck' \
+  'update_failed' '74' "${TARGET_PATH}"
+assert_contains "${nonexec_rollback_output}" 'changed: true'
+assert_contains "${nonexec_rollback_output}" 'rollback_attempted: true'
+assert_contains "${nonexec_rollback_output}" 'rolled_back: true'
+assert_contains "${nonexec_rollback_output}" 'rollback_ok: true'
+assert_contains "${nonexec_rollback_output}" 'manual_intervention_required: false'
+assert_no_update_artifacts
+
 rm -f "${TARGET_PATH}"
 set +e
 missing_postcheck_output=$(FAKE_CURL_MODE=valid FAKE_CURL_SOURCE="${VALID_CANDIDATE}" \
@@ -602,10 +646,33 @@ assert_error_context "${lock_output}" 'sbv_update' 'precheck' \
 rmdir "${TARGET_DIR}/.sbv-update.lock"
 assert_no_update_artifacts
 
+prepare_existing_target "${OLD_SCRIPT}"
+lock_failure_old_attributes=$(capture_file_attributes "${TARGET_PATH}")
+set +e
+lock_failure_output=$(FAKE_CURL_MODE=valid FAKE_CURL_SOURCE="${VALID_CANDIDATE}" \
+  bash -c "source '${TESTABLE_INSTALL}'; mkdir() { if [[ \"\${1:-}\" == '${TARGET_DIR}/.sbv-update.lock' ]]; then return 77; fi; command mkdir \"\$@\"; }; manual_update_script" 2>&1)
+lock_failure_status=$?
+set -e
+[[ "${lock_failure_status}" -eq 77 ]] || \
+  fail "sbv lock creation failure returned ${lock_failure_status}"
+assert_file_attributes "${TARGET_PATH}" "${lock_failure_old_attributes}"
+assert_error_context "${lock_failure_output}" 'sbv_update' 'precheck' \
+  'lock_create_failed' '77' "${TARGET_PATH}"
+assert_no_update_artifacts
+
 printf 'configuration\n' > "${PROJECT_DIR}/config.json"
 service_state_before='active'
 printf '%s\n' "${service_state_before}" > "${PROJECT_DIR}/service-state"
+mkdir -p "${PROJECT_DIR}/protocols"
+printf 'PROTOCOL_INDEX=stable\n' > "${PROJECT_DIR}/protocols/index.env"
+printf 'VLESS_STATE=stable\n' > "${PROJECT_DIR}/protocols/vless-reality.env"
+printf 'STACK_MODE=default\n' > "${PROJECT_DIR}/stack-mode.env"
+printf 'QOS_STATE=stable\n' > "${PROJECT_DIR}/reality-qos.filters"
 config_hash_before=$(sha256sum "${PROJECT_DIR}/config.json" | awk '{print $1}')
+protocol_index_hash_before=$(sha256sum "${PROJECT_DIR}/protocols/index.env" | awk '{print $1}')
+protocol_state_hash_before=$(sha256sum "${PROJECT_DIR}/protocols/vless-reality.env" | awk '{print $1}')
+stack_state_hash_before=$(sha256sum "${PROJECT_DIR}/stack-mode.env" | awk '{print $1}')
+qos_state_hash_before=$(sha256sum "${PROJECT_DIR}/reality-qos.filters" | awk '{print $1}')
 for signal_mode in signal-int signal-term signal-hup; do
   prepare_existing_target "${OLD_SCRIPT}"
   signal_old_attributes=$(capture_file_attributes "${TARGET_PATH}")
@@ -626,6 +693,14 @@ for signal_mode in signal-int signal-term signal-hup; do
   config_hash_after=$(sha256sum "${PROJECT_DIR}/config.json" | awk '{print $1}')
   [[ "${config_hash_before}" == "${config_hash_after}" ]] || fail "${signal_mode} changed configuration state"
   [[ "$(<"${PROJECT_DIR}/service-state")" == "${service_state_before}" ]] || fail "${signal_mode} changed service state"
+  [[ "${protocol_index_hash_before}" == "$(sha256sum "${PROJECT_DIR}/protocols/index.env" | awk '{print $1}')" ]] || \
+    fail "${signal_mode} changed protocol index state"
+  [[ "${protocol_state_hash_before}" == "$(sha256sum "${PROJECT_DIR}/protocols/vless-reality.env" | awk '{print $1}')" ]] || \
+    fail "${signal_mode} changed protocol state"
+  [[ "${stack_state_hash_before}" == "$(sha256sum "${PROJECT_DIR}/stack-mode.env" | awk '{print $1}')" ]] || \
+    fail "${signal_mode} changed stack state"
+  [[ "${qos_state_hash_before}" == "$(sha256sum "${PROJECT_DIR}/reality-qos.filters" | awk '{print $1}')" ]] || \
+    fail "${signal_mode} changed QoS state"
   assert_contains "${signal_output}" '信号'
   assert_contains "${signal_output}" 'code: signal_interrupted'
   assert_contains "${signal_output}" "command_exit_code: ${expected_signal_status}"

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090401
+# Version: 2026090402
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090401"
+readonly SCRIPT_VERSION="2026090402"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -157,6 +157,7 @@ SBV_UPDATE_CANDIDATE_VERSION=""
 SBV_UPDATE_TARGET_PATH="${SBV_BIN_PATH}"
 SBV_UPDATE_LOG_FILE="${SBV_LOG_FILE}"
 SBV_UPDATE_TARGET_EXISTS="false"
+SBV_UPDATE_TARGET_WAS_EXECUTABLE="false"
 SBV_UPDATE_TARGET_MODE=""
 SBV_UPDATE_TARGET_UID=""
 SBV_UPDATE_TARGET_GID=""
@@ -4046,6 +4047,7 @@ reset_sbv_update_context() {
   SBV_UPDATE_TARGET_PATH="${SBV_BIN_PATH}"
   SBV_UPDATE_LOG_FILE="${SBV_LOG_FILE}"
   SBV_UPDATE_TARGET_EXISTS='false'
+  SBV_UPDATE_TARGET_WAS_EXECUTABLE='false'
   SBV_UPDATE_TARGET_MODE=''
   SBV_UPDATE_TARGET_UID=''
   SBV_UPDATE_TARGET_GID=''
@@ -4341,6 +4343,7 @@ restore_sbv_update_traps() {
 prepare_sbv_update() {
   local target_dir
   local target_version=''
+  local lock_status=0
 
   SBV_UPDATE_STAGE='precheck'
   target_dir=$(dirname -- "${SBV_BIN_PATH}")
@@ -4376,16 +4379,29 @@ prepare_sbv_update() {
       '安装提供 sha256sum 的系统工具后重试'
     return 1
   fi
-  if ! mkdir "${SBV_UPDATE_LOCK_PATH}" 2>/dev/null; then
-    set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'precheck' 'update_in_progress' \
-      '已有另一个 sbv 更新事务正在运行' "锁路径: ${SBV_UPDATE_LOCK_PATH}" 1 \
-      '等待现有更新结束后再重试；未取得锁时目标未发生变更'
-    return 1
+  if mkdir "${SBV_UPDATE_LOCK_PATH}" 2>/dev/null; then
+    :
+  else
+    lock_status=$?
+    if [[ -e "${SBV_UPDATE_LOCK_PATH}" || -L "${SBV_UPDATE_LOCK_PATH}" ]]; then
+      set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'precheck' 'update_in_progress' \
+        '已有另一个 sbv 更新事务正在运行' "锁路径: ${SBV_UPDATE_LOCK_PATH}" 1 \
+        '等待现有更新结束后再重试；未取得锁时目标未发生变更'
+      lock_status=1
+    else
+      set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'precheck' 'lock_create_failed' \
+        '无法创建 sbv 更新锁' "锁路径: ${SBV_UPDATE_LOCK_PATH}" "${lock_status}" \
+        '检查目标目录的写权限、磁盘空间和文件系统状态；目标未发生变更'
+    fi
+    return "${lock_status}"
   fi
   SBV_UPDATE_LOCK_HELD='true'
 
   if [[ -f "${SBV_BIN_PATH}" ]]; then
     SBV_UPDATE_TARGET_EXISTS='true'
+    if [[ -x "${SBV_BIN_PATH}" ]]; then
+      SBV_UPDATE_TARGET_WAS_EXECUTABLE='true'
+    fi
     if ! get_sbv_file_metadata "${SBV_BIN_PATH}"; then
       set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'precheck' 'target_metadata_failed' \
         '无法读取现有 sbv 的权限或所有者' "目标路径: ${SBV_BIN_PATH}" 1 \
@@ -4583,10 +4599,10 @@ create_sbv_backup() {
 }
 
 prepare_sbv_candidate_for_commit() {
-  local candidate_mode='0755'
+  local candidate_mode='755'
 
   if [[ "${SBV_UPDATE_TARGET_EXISTS}" == 'true' && \
-    -x "${SBV_BIN_PATH}" ]]; then
+    "${SBV_UPDATE_TARGET_WAS_EXECUTABLE}" == 'true' ]]; then
     candidate_mode=${SBV_UPDATE_TARGET_MODE}
   fi
   SBV_UPDATE_EXPECTED_MODE=${candidate_mode}
@@ -4741,8 +4757,12 @@ verify_sbv_rollback() {
     [[ ! -e "${SBV_BIN_PATH}" && ! -L "${SBV_BIN_PATH}" ]] || return 1
     return 0
   fi
-  [[ -f "${SBV_BIN_PATH}" && -x "${SBV_BIN_PATH}" ]] || return 1
+  [[ -f "${SBV_BIN_PATH}" && ! -L "${SBV_BIN_PATH}" ]] || return 1
   validate_sbv_script_file "${SBV_BIN_PATH}" || return 1
+  if [[ "${SBV_UPDATE_TARGET_WAS_EXECUTABLE}" == 'true' && \
+    ! -x "${SBV_BIN_PATH}" ]]; then
+    return 1
+  fi
   [[ "${SBV_VALIDATED_SCRIPT_VERSION}" == "${SBV_UPDATE_TARGET_VERSION}" ]] || return 1
   restored_hash=$(calculate_sbv_sha256 "${SBV_BIN_PATH}") || return 1
   [[ "${restored_hash}" == "${SBV_UPDATE_TARGET_HASH}" ]] || return 1
