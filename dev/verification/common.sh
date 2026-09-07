@@ -69,6 +69,8 @@ resolve_local_tests() {
       tests/bootstrap_download.sh \
       tests/cli_update_commands.sh \
       tests/protocol_registry_contract.sh \
+      tests/managed_component_graph.sh \
+      tests/managed_component_graph_core_startup.sh \
       tests/verification_protocol_probe_matrix.sh \
       tests/verification_protocol_probe_vless.sh \
       tests/verification_protocol_probe_hy2.sh \
@@ -84,6 +86,7 @@ resolve_local_tests() {
       tests/agent_cli_outputs_machine_readable_node_info.sh \
       tests/agent_json_regression.sh \
       tests/export_client_config_1_14_compatibility.sh \
+      tests/export_client_config_validates_generated_config.sh \
       tests/agent_docs_cover_capabilities.sh \
       tests/version_metadata_is_consistent.sh \
       tests/vless_reality_instance_removal.sh \

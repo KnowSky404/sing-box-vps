@@ -64,3 +64,21 @@ DNS Server、证书服务、管理 API、USB/IP 独立服务不扩展为本轮�
 - 补充上游角色/版本交叉复核修正了覆盖矩阵：Bridge 从 1.14.0 才存在且只处理 L3；direct inbound 的目标覆盖字段仍然有效，移除仅适用于 direct outbound。证据为固定 tag 源码、1.13.18 对 Bridge type 的实际拒绝，以及两核心对受控 direct inbound 配置的 `check`。
 
 后续仍需完成阶段 2–5 的所有未勾选要求；本阶段的通过结果不作为新增协议或高级接入已实现的证据。
+
+## 2026-09-07：第二阶段候选配置图预检
+
+新增 `validate_managed_component_graph`，接入服务端 candidate 和交互/Agent 客户端候选的核心检查之前；同一 jq 解析完成组件 tag、typed reference 和显式依赖环检查。引用完整性与启动依赖区分，DNS/HTTP/provider 等按各自命名空间解析。错误输出不含配置内容、tag 或凭据。Agent 导出失败返回 `client_config_validation_failed`，不覆盖旧导出或备份。
+
+本轮版本同步为 `2026090701`，仅递增一次。再次查询官方 releases/latest，稳定版仍为 `v1.14.0`（非 draft/prerelease，发布时间 2026-08-31）；使用固定源码 `0b8995879f29a9b98ee027bc17b75e101445b238` 和 1.13.18/1.14.0 实际二进制交叉验证。Context7 只返回 testing 分支及不完整引用资料，因此补读 release tag 的 `option/`、dialer、DNS/HTTP manager 源码。
+
+已执行的新增针对性验证：
+
+- `tests/managed_component_graph.sh`：43 项图单元断言；传入 `SINGBOX_BINARY_113`/`SINGBOX_BINARY_114` 后，两份完整正例均通过两个实际核心 `check`。主机 jq 1.7 与只读、无网络的 Debian 12 验证镜像 jq 1.6 均通过图断言。两版核心路径沿用上文记录。
+- `tests/managed_component_graph_core_startup.sh`：在两版核心完成 8 次实际对照；悬空 route final、DNS final、DNS 缺失依赖和 DNS 环均可通过 `check`，但启动退出 1，而新预检已在发布前拒绝。使用无入站监听、无远程规则集及无外部账户的受控配置；不是协议业务数据面证明。
+- `tests/generate_config_commits_validated_candidate.sh` 和 `tests/export_client_config_validates_generated_config.sh`：在核心 mock 放行的情况下，真实图预检阻断重复 tag/悬空引用，验证 live 文件、旧 `.bak`、协议状态、导出文件保持，生成器副作用回滚，Agent stdout 仍为有效 envelope。
+- 官方 `bash:4.2` 无网络只读容器中 `bash -n /work/install.sh` 通过；此项仅为旧 Bash 语法检查，不是旧发行版的完整服务测试。
+- 默认门禁加入两个图测试及客户端发布测试，运行器调度断言从 32 项更新为 35 项；不依赖提交后空 diff，最终使用显式 `--changed-file install.sh dev/verification/common.sh`。
+- 最终完整门禁：在上述两个实际核心环境变量下运行 `bash dev/verification/run.sh --changed-file install.sh dev/verification/common.sh`，退出 0。证据 `dev/verification-runs/20260907033515`，9/9 Docker 场景、12/12 TCP 业务探针成功，包含 1.13.18 → 1.14.0 升级及注入重启失败后的回滚。Hysteria2 的 QUIC 传输不作为 UDP 业务已经验证的证据。
+- 全部 159 个非 helper 的 Shell 测试均退出 0，日志与逐项退出码位于 `/tmp/sing-box-vps-all-tests-20260907-graph-final/summary.tsv`；该次全量传入两核心路径，新增启动对照执行 8 次，没有跳过。单独无网络 jq 1.6 容器只执行图断言，不计为真实核心启动比较。
+
+边界不变：这只是阶段二的候选组合基础，不代表通用实例、所有协议、任意 live 配置无损接管或资源事务已经完成。下一步仍需先实现未知对象/字段的无损保护，再推广结构化实例、纯渲染、资源归属和完整生命周期。

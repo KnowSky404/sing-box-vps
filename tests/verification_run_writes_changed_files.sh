@@ -482,6 +482,9 @@ grep -Fqx 'tests/verification_protocol_probe_anytls.sh|1' "${TMP_DIR}/local-test
 grep -Fqx 'tests/reality_sni_validation.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/generate_config_cleans_temp_files_on_failure.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/generate_config_commits_validated_candidate.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/managed_component_graph.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/managed_component_graph_core_startup.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/export_client_config_validates_generated_config.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/managed_config_transactions.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/system_safety_guards.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/agent_upgrade_commands.sh|1' "${TMP_DIR}/local-tests.log"
@@ -505,8 +508,8 @@ grep -Fqx 'tests/subman_api_push.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_sync_orchestration.sh|1' "${TMP_DIR}/local-tests.log"
 
 default_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
-[[ "${default_local_test_count}" -eq 32 ]] || {
-  printf 'expected 32 local tests, got %d\n' "${default_local_test_count}" >&2; exit 1
+[[ "${default_local_test_count}" -eq 35 ]] || {
+  printf 'expected 35 local tests, got %d\n' "${default_local_test_count}" >&2; exit 1
 }
 
 # Test VERIFY_SKIP_LOCAL_TESTS=1 — still runs remote

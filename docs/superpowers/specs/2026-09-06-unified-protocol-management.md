@@ -30,6 +30,16 @@ Agent 保留原 `protocols` 对象，增加 `protocol_registry`。当前实例�
 - 未知索引条目、未知索引版本和未知旧协议状态版本阻断协调/重建，文件保留并提示恢复兼容脚本。
 - 索引存在但 live inbound 的状态文件缺失时，普通枚举不能删掉该索引条目。追加安装保留旧单 Mixed 自动恢复路径：仅当目录中只剩索引、默认 tag/监听及至多一个用户均可由旧格式表达时才重建状态；失败由既有重建事务恢复索引。自定义 tag/监听、多用户和新字段留待显式接管，不以丢字段方式迁移。
 
+## 第二阶段：候选配置引用预检
+
+`validate_managed_component_graph` 在服务端 candidate 完成后、目标核心 `check`、备份及发布之前运行；客户端交互和 Agent 导出在同一校验入口执行。失败由既有事务恢复生成器副作用，保留 live 配置、旧备份和导出文件。它只读一次候选 JSON，没有账户注册、凭据生成、状态写入或网络操作；错误只包含固定分类，不输出 tag、路径或 JSON 原文。
+
+组件 tag 在 inbounds/outbounds/endpoints 之间唯一，Endpoint 可以被对应入站/出站引用。这是项目生成约束，不是上游允许配置的完整定义；不会据此重命名或拒绝只读检查中的旧配置。DNS、证书 provider、HTTP client、rule-set 和网络命名空间使用独立 tag 空间，不能因同名而误判重复或成环。受管组件要求显式非空 tag；证书与 DNS 保留上游允许的旧位置编号引用。
+
+预检覆盖 detour、selector/urltest 成员及默认选择、route/DNS 的逻辑规则树、rule-set、证书与 inline/named HTTP client、显式 DNS resolver 和必要 Endpoint 引用。引用存在性与依赖边分开：普通路由匹配只检查引用，不当作启动环；普通出站的 resolver 仅在固定域名服务器等明确需要解析的位置产生依赖边，避免把 IP DNS 经 direct 的合法配置误判为循环。DNS transport 自身的显式 resolver 则按核心 manager 语义始终产生启动依赖，即使服务器为 IP。共享 selector DAG 使用邻接表和拓扑消除，不枚举全部路径。
+
+此处不是完整 sing-box schema 实现，也不是外部配置 allowlist 或新的 JSON 透传管理入口。目标版本字段、构建依赖及协议参数仍必须通过真实核心 `check`；动态路由/透明接入的数据面环路必须通过后续资源预检和隔离连接验证。未知 live 对象的无损接管保护、通用实例和删除引用保护仍在下节的待实现范围。
+
 ## 后续通用实例与组合设计（尚未实现）
 
 现有 `.env` 和 `vless-reality.d/*.env` 继续兼容读取，不做启动时全量迁移。新增实例采用同目录内可按实例备份的结构化数据状态；导入先经过字段 allowlist、类型和引用校验，不能 source 外部数据。状态需包含版本、稳定 ID、family/preset/role、名称、固定 tag、监听、认证、TLS/transport、出站策略及组件依赖。读、渲染、展示和导出不创建新的 UUID/密码/密钥。

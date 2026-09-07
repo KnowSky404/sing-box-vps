@@ -70,9 +70,16 @@ build_inbound_for_protocol() {
     printf 'must roll back\n' > "${SB_PROJECT_DIR}/builder-mutated.state"
   fi
   printf '%s\n' '{"type":"mixed","tag":"mixed-in","listen":"127.0.0.1","listen_port":1080}'
+  if [[ "${GRAPH_FAILURE:-}" == "duplicate" ]]; then
+    printf '%s\n' '{"type":"mixed","tag":"mixed-in","listen":"127.0.0.1","listen_port":1081}'
+  fi
 }
 build_protocol_route_rules() {
-  printf '%s\n' '[]'
+  if [[ "${GRAPH_FAILURE:-}" == "reference" ]]; then
+    printf '%s\n' '[{"inbound":"missing-private-tag","action":"route","outbound":"direct"}]'
+  else
+    printf '%s\n' '[]'
+  fi
 }
 build_certificate_provider_for_protocol() {
   [[ "${PROVIDER_FAIL:-n}" != "y" ]]
@@ -122,6 +129,30 @@ if [[ -e "${SB_PROJECT_DIR}/builder-mutated.state" ]]; then
   printf 'expected failed generation to restore builder-mutated managed state\n' >&2
   exit 1
 fi
+
+# The mock core accepts these candidates. The real graph preflight must reject
+# them before check/backup/publication and restore all builder side effects.
+for GRAPH_FAILURE in duplicate reference; do
+  printf '%s\n' '{"keep":"graph-failure"}' > "${SINGBOX_CONFIG_FILE}"
+  printf '%s\n' '{"keep":"previous-backup"}' > "${SINGBOX_CONFIG_FILE}.bak"
+  checked_before=$(wc -l < "${CHECK_LOG}")
+  MUTATE_DURING_BUILD="y"
+  if generate_config >"${TMP_DIR}/graph.out" 2>"${TMP_DIR}/graph.err"; then
+    printf 'expected graph failure to abort generation: %s\n' "${GRAPH_FAILURE}" >&2
+    exit 1
+  fi
+  MUTATE_DURING_BUILD="n"
+  [[ "$(<"${SINGBOX_CONFIG_FILE}")" == '{"keep":"graph-failure"}' ]]
+  [[ "$(<"${SINGBOX_CONFIG_FILE}.bak")" == '{"keep":"previous-backup"}' ]]
+  [[ ! -e "${SB_PROJECT_DIR}/builder-mutated.state" ]]
+  [[ "$(wc -l < "${CHECK_LOG}")" == "${checked_before}" ]]
+  grep -Fq 'component_graph:' "${TMP_DIR}/graph.err"
+  if grep -Fq 'missing-private-tag' "${TMP_DIR}/graph.err"; then
+    printf 'graph error leaked a user-controlled tag\n' >&2
+    exit 1
+  fi
+done
+unset GRAPH_FAILURE
 
 printf '%s\n' '{"keep":"provider-failure"}' > "${SINGBOX_CONFIG_FILE}"
 PROVIDER_FAIL="y"

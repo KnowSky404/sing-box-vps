@@ -82,6 +82,7 @@ Search keywords:
 install, upgrade, production, Docker verification, rollback, recovery, sbv agent, node info, connection links, client export, SubMan sync, sing-box check, sing-box-prod, dev/verification/run.sh, config.json, protocols, Warp, VLESS REALITY, REALITY multi-instance, rate limits, QoS, Hysteria2, AnyTLS, Mixed proxy, systemctl sing-box.
 
 Protocol registry:
+- Client export candidates pass reference validation and the target core check before publication. `client_config_validation_failed` preserves the previous export and backup; diagnostics remain on stderr.
 - `sbv agent capabilities --json` includes additive `protocol_registry` metadata from install.sh. Legacy `protocols` keys and envelope remain compatible.
 - Separate family/preset/role/state_id/agent_id; legacy `vless` still resolves to the REALITY preset, and Hysteria2 state ID remains `hy2`.
 - `implemented` describes the project adapter; `available=null` and `validated.status=not_assessed` do not certify the current environment or connection. Perform instance preflight/check and inspect real probe artifacts.

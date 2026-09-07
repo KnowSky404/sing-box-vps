@@ -98,3 +98,30 @@ if ! jq -e 'any(.outbounds[]?; .type == "dns" or .type == "block") | not' "${EXP
   printf 'expected exported config to avoid deprecated dns/block outbounds, got:\n%s\n' "$(cat "${EXPORT_PATH}")" >&2
   exit 1
 fi
+
+# Graph-invalid candidates must not reach even a permissive target check or
+# overwrite either the previous export or its backup. Both public entrypoints
+# share validate_client_config_json; Agent output must remain a JSON envelope.
+cp "${EXPORT_PATH}" "${TMP_DIR}/expected-export.json"
+printf '%s\n' '{"keep":"old-backup"}' > "${EXPORT_PATH}.bak"
+checked_before=$(wc -l < "${SINGBOX_CHECK_LOG_FILE}")
+build_singbox_client_config() {
+  printf '%s\n' '{"outbounds":[{"type":"selector","tag":"proxy","outbounds":["missing-private-tag"]}]}'
+}
+if export_singbox_client_config >"${TMP_DIR}/export.out" 2>"${TMP_DIR}/export.err"; then
+  printf 'expected dangling selector member to block interactive export\n' >&2
+  exit 1
+fi
+if agent_cli export-client --json >"${TMP_DIR}/agent.json" 2>"${TMP_DIR}/agent.err"; then
+  printf 'expected dangling selector member to block Agent export\n' >&2
+  exit 1
+fi
+jq -e '.ok == false and .error == "client_config_validation_failed" and .schema_version == "1.0"' "${TMP_DIR}/agent.json" >/dev/null
+[[ ! -s "${TMP_DIR}/export.out" ]]
+cmp "${TMP_DIR}/expected-export.json" "${EXPORT_PATH}"
+[[ "$(<"${EXPORT_PATH}.bak")" == '{"keep":"old-backup"}' ]]
+[[ "$(wc -l < "${SINGBOX_CHECK_LOG_FILE}")" == "${checked_before}" ]]
+if grep -Fq 'missing-private-tag' "${TMP_DIR}/agent.json" "${TMP_DIR}/agent.err" "${TMP_DIR}/export.err"; then
+  printf 'failed graph export leaked a user-controlled tag\n' >&2
+  exit 1
+fi

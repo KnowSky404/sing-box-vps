@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090601
+# Version: 2026090701
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090601"
+readonly SCRIPT_VERSION="2026090701"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -6966,6 +6966,234 @@ abort_managed_state_transaction() {
   return 1
 }
 
+# Validate only managed candidates, not arbitrary existing configurations on
+# read/upgrade. Explicit component identities are required; DNS, certificates,
+# HTTP clients and rule sets have separate upstream tag namespaces. This is a
+# reference preflight, never a substitute for the target core's `check`.
+validate_managed_component_graph() {
+  local config_file=${1:-} graph_status
+  if [[ $# -ne 1 || ! -f "${config_file}" || ! -r "${config_file}" ]]; then
+    printf '[ERROR] component_graph: invalid input\n' >&2
+    return 1
+  fi
+  # Read the candidate once. Errors are fixed classifications: neither jq
+  # diagnostics nor user-controlled tags, paths or credentials reach stderr.
+  if ! graph_status=$(jq -sr '
+    def bad: error("invalid field type");
+    def object: if type == "object" then . else bad end;
+    def array: if type == "array" then . else bad end;
+    def text: if type == "string" then . else bad end;
+    def name: text | if length > 0 then . else bad end;
+    def list: if type == "array" then map(name) else [name] end;
+    def field($key; $default): if has($key) then .[$key] else $default end;
+    def records($items; $space; $role; $typed; $explicit):
+      $items | array | to_entries[] | .key as $index | .value | object |
+      (if $typed then .type | name else (.type // "") end) as $type |
+      (if $explicit then .tag | name
+       else (field("tag"; "") | text) as $tag |
+         if $tag == "" then ($index | tostring) else $tag end end) as $tag |
+      {id: ($space + ":" + $tag), space: $space, role: $role, tag: $tag,
+       kind: $type, value: .};
+    def ref($owner; $space; $value; $dependency):
+      $value | text | select(length > 0) |
+      {from: $owner, space: $space, tag: ., dependency: $dependency};
+    def optional_ref($owner; $space; $key; $dependency):
+      if has($key) then ref($owner; $space; .[$key]; $dependency) else empty end;
+    def list_refs($owner; $space; $key):
+      if has($key) then .[$key] | list[] | ref($owner; $space; .; false)
+      else empty end;
+    def resolver_tag:
+      if type == "string" then text
+      elif type == "object" then .server | name else bad end;
+    def domain_host:
+      type == "string" and length > 0 and
+      (test("^[0-9.]+$") | not) and (contains(":") | not);
+    def dial_refs($owner; $dependency; $default_resolver):
+      object |
+      optional_ref($owner; "outbound"; "detour"; true),
+      optional_ref($owner; "netns"; "netns"; true),
+      (if has("domain_resolver") then
+         ref($owner; "dns"; (.domain_resolver | resolver_tag); $dependency)
+       elif $dependency and (.detour // "") == "" then
+         ref($owner; "dns"; $default_resolver; true)
+       else empty end);
+    def http_refs($owner; $default_resolver):
+      if type == "string" then ref($owner; "http"; .; true)
+      elif type == "object" then dial_refs($owner; true; $default_resolver)
+      else bad end;
+    def provider_refs($owner; $default_resolver):
+      object | (.type | name) as $type |
+      if $type == "acme" or $type == "cloudflare-origin-ca" then
+        if has("http_client") then .http_client | http_refs($owner; $default_resolver)
+        else empty end
+      elif $type == "tailscale" then
+        optional_ref($owner; "tailscale"; "endpoint"; true)
+      else empty end;
+    def tls_refs($owner; $default_resolver):
+      object |
+      (if has("certificate_provider") then
+         .certificate_provider |
+         if type == "string" then name | ref($owner; "cert"; .; true)
+         else provider_refs($owner; $default_resolver) end
+       else empty end),
+      (if has("acme") then .acme | object |
+         if has("http_client") then .http_client | http_refs($owner; $default_resolver)
+         else empty end
+       else empty end),
+      (if has("reality") then .reality | object |
+         if has("handshake") then .handshake |
+           dial_refs($owner; (.server | domain_host); $default_resolver)
+         else empty end
+       else empty end);
+    def rule_refs($owner; $dns):
+      array[] | object | . as $rule |
+      list_refs($owner; "inbound"; "inbound"),
+      list_refs($owner; "ruleset"; "rule_set"),
+      (if $dns then
+         (list_refs($owner; "outbound"; "outbound") | select(.tag != "any")),
+         optional_ref($owner; "dns"; "server"; false)
+       else
+         optional_ref($owner; "outbound"; "outbound"; false),
+         (if .action == "resolve" then optional_ref($owner; "dns"; "server"; false)
+          else empty end)
+       end),
+      (if $rule | has("rules") then $rule.rules | rule_refs($owner; $dns)
+       else empty end);
+    # Build adjacency once. Kahn elimination does not revisit all paths in a
+    # shared selector DAG and cannot recurse forever on a cycle.
+    def acyclic($edges):
+      (reduce $edges[] as $edge ({degree: {}, next: {}};
+        .degree[$edge.from] = (.degree[$edge.from] // 0) |
+        .degree[$edge.to] = ((.degree[$edge.to] // 0) + 1) |
+        .next[$edge.from] += [$edge.to])) as $graph |
+      ($graph + {queue: [$graph.degree | to_entries[] | select(.value == 0) | .key],
+                 cursor: 0}) |
+      until(.cursor == (.queue | length);
+        .queue[.cursor] as $node | .cursor += 1 |
+        reduce (.next[$node] // [])[] as $target (.;
+          .degree[$target] -= 1 |
+          if .degree[$target] == 0 then .queue += [$target] else . end)) |
+      .cursor == (.degree | length);
+    try (
+      if length == 1 and (.[0] | type == "object") then .[0]
+      else error("invalid config shape") end |
+      . as $root |
+      (field("route"; {}) | object) as $route |
+      (field("dns"; {}) | object) as $dns |
+      ($route | if has("default_domain_resolver") then
+         .default_domain_resolver | resolver_tag else "" end) as $default_resolver |
+      [records(field("inbounds"; []); "component"; "inbound"; true; true),
+       records(field("outbounds"; []); "component"; "outbound"; true; true),
+       records(field("endpoints"; []); "component"; "endpoint"; true; true),
+       records(field("certificate_providers"; []); "cert"; "cert"; true; false),
+       records(field("http_clients"; []); "http"; "http"; false; true),
+       records(field("services"; []); "service"; "service"; true; false),
+       records(field("network_namespaces"; []); "netns"; "netns"; false; true),
+       records(($dns | field("servers"; [])); "dns"; "dns"; false; false),
+       ($route | field("rule_set"; []) | array[] | object | . as $set |
+         (.tag | list | if length > 0 then .[] else bad end) |
+         {id: ("ruleset:" + .), space: "ruleset", role: "ruleset", tag: .,
+          kind: ($set.type // "inline"), value: $set})] as $nodes |
+      if ($nodes | group_by(.id) | any(.[]; length > 1)) then
+        error("duplicate tag") else . end |
+      # Aliases resolve to the same component node, not different graph nodes.
+      (reduce $nodes[] as $node ({};
+        .[$node.space][$node.tag] = $node.id |
+        if $node.role == "inbound" or $node.role == "endpoint" then
+          .inbound[$node.tag] = $node.id else . end |
+        if $node.role == "outbound" or $node.role == "endpoint" then
+          .outbound[$node.tag] = $node.id else . end |
+        if $node.role == "endpoint" and $node.kind == "tailscale" then
+          .tailscale[$node.tag] = $node.id else . end)) as $spaces |
+      [($nodes[] | . as $node | .value |
+        if $node.role == "inbound" or
+           ($node.role == "endpoint" and $node.kind == "openvpn-server") then
+          optional_ref($node.id; "inbound"; "detour"; true),
+          optional_ref($node.id; "netns"; "netns"; true)
+        elif $node.role == "outbound" or $node.role == "endpoint" or
+             $node.role == "http" or $node.role == "dns" then
+          dial_refs($node.id; (($node.role == "http") or (.server | domain_host)); $default_resolver)
+        else empty end),
+       ($nodes[] | select(.role == "outbound" and
+          (.kind == "selector" or .kind == "urltest")) | . as $node | .value |
+          (.outbounds | array | if length > 0 then map(name) else bad end) as $members |
+          (if has("default") then (.default | text) as $default |
+            if $default != "" and ($members | index($default)) == null then bad
+            else empty end else empty end),
+          ($members[] | ref($node.id; "outbound"; .; true))),
+       ($nodes[] | select(.role == "inbound" or .role == "service" or
+          (.role == "endpoint" and .kind == "openvpn-server")) |
+          . as $node | .value |
+          if has("tls") then .tls | tls_refs($node.id; $default_resolver) else empty end),
+       ($nodes[] | select(.role == "cert") | . as $node | .value |
+          provider_refs($node.id; $default_resolver)),
+       ($nodes[] | select((.role == "inbound" or .role == "outbound") and
+          .kind == "hysteria2") | . as $node | .value |
+          if has("realm") then .realm | object |
+            (if has("http_client") then .http_client | http_refs($node.id; $default_resolver)
+             else empty end),
+            (if $node.role == "inbound" and has("stun_domain_resolver") then
+               ref($node.id; "dns"; (.stun_domain_resolver | resolver_tag); true)
+             else empty end)
+          else empty end),
+       ($nodes[] | select(.role == "dns") | . as $node | .value |
+          # DNS transport managers register explicit resolver dependencies
+          # even for IP servers; unlike ordinary outbound dialers these must
+          # be checked for startup cycles independently of the target address.
+          (if has("domain_resolver") then
+             ref($node.id; "dns"; (.domain_resolver | resolver_tag); true)
+           else empty end),
+          optional_ref($node.id; "dns"; "address_resolver"; true),
+          (if $node.kind == "tailscale" then
+             optional_ref($node.id; "tailscale"; "endpoint"; true) else empty end)),
+       ($nodes[] | select(.role == "ruleset") | . as $node | .value |
+          optional_ref($node.id; "outbound"; "download_detour"; true),
+          (if has("http_client") then .http_client | http_refs($node.id; $default_resolver)
+           else empty end)),
+       ($nodes[] | select(.role == "service") | . as $node | .value |
+          optional_ref($node.id; (if $node.kind == "ocm" or $node.kind == "ccm"
+            then "outbound" else "inbound" end); "detour"; true),
+          optional_ref($node.id; "netns"; "netns"; true),
+          (if $node.kind == "api" and has("dashboard") then .dashboard | object |
+            if has("http_client") then .http_client | http_refs($node.id; $default_resolver)
+            else empty end else empty end),
+          (if $node.kind == "derp" then
+            (list_refs($node.id; "tailscale"; "verify_client_endpoint") | .dependency = true),
+            (field("verify_client_url"; []) |
+              if type == "array" then .[] else . end |
+              if type == "string" then empty else http_refs($node.id; $default_resolver) end),
+            (field("mesh_with"; []) | array[] | dial_refs($node.id; (.server | domain_host); $default_resolver))
+           else empty end)),
+       ($route | optional_ref("root:route"; "outbound"; "final"; false),
+          optional_ref("root:route"; "http"; "default_http_client"; false),
+          ref("root:route"; "dns"; $default_resolver; false),
+          (field("rules"; []) | rule_refs("root:route"; false)),
+          ((.geoip // {}), (.geosite // {}) | object |
+            optional_ref("root:route"; "outbound"; "download_detour"; false))),
+       ($dns | optional_ref("root:dns"; "dns"; "final"; false),
+          (field("rules"; []) | rule_refs("root:dns"; true))),
+       ($root | field("experimental"; {}) | object | field("clash_api"; {}) | object |
+          optional_ref("root:experimental"; "outbound"; "external_ui_download_detour"; false))
+      ] as $refs |
+      if any($refs[]; $spaces[.space][.tag] == null) then
+        error("unknown reference") else . end |
+      [$refs[] | select(.dependency) |
+        {from: .from, to: $spaces[.space][.tag]}] | unique as $edges |
+      if acyclic($edges) then "ok" else error("dependency cycle") end
+    ) catch (
+      if . == "invalid config shape" or . == "invalid field type" or
+         . == "duplicate tag" or . == "unknown reference" or . == "dependency cycle"
+      then . else "invalid field type" end
+    )
+  ' -- "${config_file}" 2>/dev/null); then
+    graph_status="invalid config shape"
+  fi
+  if [[ "${graph_status}" != "ok" ]]; then
+    printf '[ERROR] component_graph: %s; 配置未发布。\n' "${graph_status}" >&2
+    return 1
+  fi
+}
+
 # --- Config Generator ---
 generate_config_candidate() {
   local inbound_file="" provider_file="" protocol_rule_file="" instance_outbound_rule_file=""
@@ -7216,6 +7444,10 @@ generate_config_candidate() {
   fi
 
   if ! jq -e . "${config_candidate}" >/dev/null; then
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
+    return 1
+  fi
+  if ! validate_managed_component_graph "${config_candidate}"; then
     rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
     return 1
   fi
@@ -10310,6 +10542,7 @@ write_client_config_export() {
     rm -f "${tmp_file}"
     return 1
   fi
+
   if [[ -f "${export_path}" ]]; then
     backup_path="${export_path}.bak"
     backup_tmp=$(mktemp "${export_dir}/.sing-box-client.json.bak.tmp.XXXXXX")
@@ -10338,7 +10571,12 @@ validate_client_config_json() {
     return 1
   fi
 
-  if ! "${SINGBOX_BIN_PATH}" check -c "${tmp_file}"; then
+  if ! validate_managed_component_graph "${tmp_file}"; then
+    rm -f "${tmp_file}"
+    return 1
+  fi
+
+  if ! "${SINGBOX_BIN_PATH}" check -c "${tmp_file}" >&2; then
     rm -f "${tmp_file}"
     return 1
   fi
@@ -10355,7 +10593,7 @@ export_singbox_client_config() {
   fi
 
   if ! validate_client_config_json "${config_json}"; then
-    log_warn "导出的 sing-box 裸核客户端配置未通过 sing-box check 校验。" >&2
+    log_warn "导出的 sing-box 裸核客户端配置未通过引用或核心 check 校验。" >&2
     return 1
   fi
 
@@ -12069,7 +12307,7 @@ agent_export_client_json() {
   fi
 
   if ! validate_client_config_json "${config_json}"; then
-    log_warn "agent export-client 配置未通过 sing-box check 校验。" >&2
+    agent_json_error "client_config_validation_failed" "客户端配置未通过引用或核心 check 校验，未发布导出文件。"
     return 1
   fi
 
