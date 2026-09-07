@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090704
+# Version: 2026090705
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090704"
+readonly SCRIPT_VERSION="2026090705"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -13397,6 +13397,456 @@ vless_reality_existing_state_index_for_id() {
     return 0
   done
   return 1
+}
+
+# --- Structured instance store (typed Mixed foundation) ---
+#
+# This store is deliberately separate from the legacy .env state.  It is a
+# read/write file primitive for the next lifecycle layer; no caller here
+# migrates legacy state or passes arbitrary JSON through to sing-box.
+structured_instance_store_error() {
+  local operation=${1:-operation} code=${2:-invalid}
+  printf '[ERROR] structured instance store %s failed (%s).\n' "${operation}" "${code}" >&2
+}
+
+structured_instance_store_protocol() {
+  local protocol
+  protocol=$(normalize_protocol_id "${1:-}") || return 1
+  [[ "${protocol}" == "mixed" ]] || return 1
+  printf '%s' "${protocol}"
+}
+
+structured_instance_store_validate_id() {
+  [[ "${1:-}" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$ ]]
+}
+
+structured_instance_store_validate_address() {
+  local address=${1:-} part octet count left right
+  local parts=() octets=()
+  [[ -n "${address}" && "${address}" != *%* ]] || return 1
+
+  if [[ "${address}" =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then
+    IFS=. read -r -a octets <<< "${address}"
+    [[ ${#octets[@]} -eq 4 ]] || return 1
+    for octet in "${octets[@]}"; do
+      [[ "${octet}" =~ ^(0|[1-9][0-9]{0,2})$ ]] || return 1
+      (( octet <= 255 )) || return 1
+    done
+    return 0
+  fi
+
+  [[ "${address}" == *:* && "${address}" =~ ^[0-9A-Fa-f:]+$ ]] || return 1
+  [[ "${address}" != *:::* ]] || return 1
+  [[ "${address}" != :* || "${address}" == ::* ]] || return 1
+  [[ "${address}" != *: || "${address}" == *:: ]] || return 1
+  count=0
+  if [[ "${address}" == *::* ]]; then
+    left=${address%%::*}
+    right=${address#*::}
+    [[ "${right}" != *::* ]] || return 1
+    if [[ -n "${left}" ]]; then
+      IFS=: read -r -a parts <<< "${left}"
+      for part in "${parts[@]}"; do
+        [[ "${part}" =~ ^[0-9A-Fa-f]{1,4}$ ]] || return 1
+        count=$((count + 1))
+      done
+    fi
+    if [[ -n "${right}" ]]; then
+      IFS=: read -r -a parts <<< "${right}"
+      for part in "${parts[@]}"; do
+        [[ "${part}" =~ ^[0-9A-Fa-f]{1,4}$ ]] || return 1
+        count=$((count + 1))
+      done
+    fi
+    (( count < 8 )) || return 1
+    return 0
+  fi
+
+  IFS=: read -r -a parts <<< "${address}"
+  [[ ${#parts[@]} -eq 8 ]] || return 1
+  for part in "${parts[@]}"; do
+    [[ "${part}" =~ ^[0-9A-Fa-f]{1,4}$ ]] || return 1
+  done
+}
+
+structured_instance_store_validate_common_json() {
+  local file=${1:-} file_size
+  [[ -n "${file}" && -f "${file}" && ! -L "${file}" ]] || return 1
+  file_size=$(wc -c < "${file}") || return 1
+  [[ "${file_size}" =~ ^[0-9]+$ && ${file_size} -le 1048576 ]] || return 1
+  jq -e -s 'length == 1' "${file}" >/dev/null 2>&1 || return 1
+  jq -e '
+    type == "object" and
+    ((keys_unsorted | sort) == ["default_instance_id", "instances", "protocol", "revision", "schema_version"]) and
+    (.schema_version | type == "number" and . == 1) and
+    (.protocol | type == "string" and . == "mixed") and
+    (.revision | type == "number" and . == floor and . >= 0 and . <= 9007199254740991) and
+    (.default_instance_id | type == "string" and (test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$") or . == "")) and
+    (. as $root | if (.instances | length) == 0 then .default_instance_id == ""
+      else .default_instance_id != "" and any(.instances[]; .id == $root.default_instance_id) end) and
+    (.instances | type == "array" and length <= 128 and
+      all(.[];
+        type == "object" and
+        ((keys_unsorted | sort) == ["authentication", "dependencies", "id", "listen", "name", "outbound_policy", "tag"]) and
+        (.id | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and
+        (.name | type == "string" and length > 0 and (index("\u0000") == null)) and
+        (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
+        (.listen | type == "object" and ((keys_unsorted | sort) == ["address", "port"]) and
+          (.address | type == "string" and length > 0 and (test("[\u0000-\u0020\u007F]") | not))) and
+        (.listen.port | type == "number" and floor == . and . >= 1 and . <= 65535) and
+        (.authentication | type == "object" and ((keys_unsorted | sort) == ["enabled", "password", "username"]) and
+          (.enabled | type == "boolean") and
+          (.username | type == "string" and (index("\u0000") == null)) and
+          (.password | type == "string" and (index("\u0000") == null)) and
+          (.username | utf8bytelength <= 255) and
+          (.password | utf8bytelength <= 255) and
+          (if .enabled then (.username | length > 0) and (.password | length > 0) else (.username == "" and .password == "") end)) and
+        (.outbound_policy | type == "string" and (. == "default" or . == "direct" or . == "warp")) and
+        (.dependencies | type == "array" and length == 0)
+      ) and
+      ((map(.id) | unique | length) == length) and
+      ((map(.tag) | unique | length) == length) and
+      ((map([.listen.address, .listen.port] | @json) | unique | length) == length)
+    )
+  ' "${file}" >/dev/null 2>&1
+}
+
+validate_structured_instance_store() {
+  local protocol file addresses address
+  protocol=$(structured_instance_store_protocol "${1:-}") || {
+    structured_instance_store_error validate unsupported_protocol
+    return 1
+  }
+  file=${2:-}
+  structured_instance_store_validate_common_json "${file}" || {
+    structured_instance_store_error validate invalid_store
+    return 1
+  }
+  addresses=$(jq -r '.instances[].listen.address' "${file}" 2>/dev/null) || {
+    structured_instance_store_error validate invalid_address
+    return 1
+  }
+  while IFS= read -r address; do
+    [[ -n "${address}" ]] || continue
+    structured_instance_store_validate_address "${address}" || {
+      structured_instance_store_error validate invalid_address
+      return 1
+    }
+  done <<< "${addresses}"
+  : "${protocol}"
+}
+
+structured_instance_store_empty_json() {
+  jq -cn '{schema_version:1,protocol:"mixed",revision:0,default_instance_id:"",instances:[]}'
+}
+
+structured_instance_store_validate_instance_argument() {
+  local file=${1:-} file_size
+  [[ -n "${file}" && -f "${file}" && ! -L "${file}" ]] || return 1
+  file_size=$(wc -c < "${file}") || return 1
+  [[ "${file_size}" =~ ^[0-9]+$ && ${file_size} -le 1048576 ]] || return 1
+  jq -e -s 'length == 1' "${file}" >/dev/null 2>&1 || return 1
+  jq -e '
+    type == "object" and
+    ((keys_unsorted | sort) == ["authentication", "dependencies", "id", "listen", "name", "outbound_policy", "tag"]) and
+    (.id | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and
+    (.name | type == "string" and length > 0 and (index("\u0000") == null)) and
+    (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
+    (.listen | type == "object" and ((keys_unsorted | sort) == ["address", "port"]) and (.address | type == "string") and (.port | type == "number" and floor == . and . >= 1 and . <= 65535)) and
+    (.authentication | type == "object" and ((keys_unsorted | sort) == ["enabled", "password", "username"]) and (.enabled | type == "boolean") and (.username | type == "string" and (index("\u0000") == null) and utf8bytelength <= 255) and (.password | type == "string" and (index("\u0000") == null) and utf8bytelength <= 255) and (if .enabled then (.username | length > 0) and (.password | length > 0) else (.username == "" and .password == "") end)) and
+    (.outbound_policy | type == "string" and (. == "default" or . == "direct" or . == "warp")) and
+    (.dependencies | type == "array" and length == 0)
+  ' "${file}" >/dev/null 2>&1
+}
+
+structured_instance_store_revision() {
+  jq -r '.revision' "${1}" 2>/dev/null
+}
+
+structured_instance_store_revision_arg() {
+  [[ "${1:-}" =~ ^[0-9]+$ ]] || return 1
+  local value=${1#${1%%[!0]*}}
+  [[ -n "${value}" ]] || value=0
+  if (( ${#value} > 16 )); then
+    return 1
+  fi
+  if (( ${#value} == 16 )) && [[ "${value}" > "9007199254740991" ]]; then
+    return 1
+  fi
+  printf '%s' "${value}"
+}
+
+structured_instance_store_candidate() (
+  umask 077
+  local protocol current_file operation argument expected_revision temp_dir candidate_json status
+  protocol=$(structured_instance_store_protocol "${1:-}") || {
+    structured_instance_store_error candidate unsupported_protocol; return 1;
+  }
+  current_file=${2:-}
+  operation=${3:-}
+  argument=${4:-}
+  expected_revision=$(structured_instance_store_revision_arg "${5:-}") || {
+    structured_instance_store_error candidate invalid_revision; return 1;
+  }
+  temp_dir=$(mktemp -d) || return $?
+  trap 'if ! rm -rf -- "${temp_dir}"; then structured_instance_store_error candidate cleanup_failed; fi' EXIT
+  trap 'return 130' INT
+  trap 'return 143' TERM
+  trap 'return 129' HUP
+  if [[ -n "${current_file}" ]]; then
+    [[ -f "${current_file}" && ! -L "${current_file}" ]] || return 1
+    head -c 1048577 -- "${current_file}" > "${temp_dir}/current.json" || return $?
+  else
+    structured_instance_store_empty_json > "${temp_dir}/current.json" || return $?
+  fi
+  validate_structured_instance_store "${protocol}" "${temp_dir}/current.json" || return $?
+  [[ "$(structured_instance_store_revision "${temp_dir}/current.json")" == "${expected_revision}" ]] || {
+    structured_instance_store_error candidate revision_conflict; return 1;
+  }
+  case "${operation}" in
+    create|replace)
+      [[ -f "${argument}" && ! -L "${argument}" ]] || return 1
+      head -c 1048577 -- "${argument}" > "${temp_dir}/instance.json" || return $?
+      structured_instance_store_validate_instance_argument "${temp_dir}/instance.json" || {
+        structured_instance_store_error candidate invalid_instance; return 1;
+      }
+      ;;
+    delete|default)
+      structured_instance_store_validate_id "${argument}" || {
+        structured_instance_store_error candidate invalid_id; return 1;
+      }
+      printf 'null\n' > "${temp_dir}/instance.json" || return $?
+      ;;
+    *) structured_instance_store_error candidate invalid_operation; return 1 ;;
+  esac
+  if candidate_json=$(jq -cS --arg op "${operation}" --arg id "${argument}" \
+      --slurpfile record "${temp_dir}/instance.json" '
+    . as $old | $record[0] as $instance |
+    if $op == "create" then
+      if any(.instances[]; .id == $instance.id) then error("exists") else
+        .instances += [$instance] |
+        if .default_instance_id == "" then .default_instance_id=$instance.id else . end
+      end
+    elif $op == "replace" then
+      if any(.instances[]; .id == $instance.id and .tag == $instance.tag) then
+        .instances |= map(if .id == $instance.id then $instance else . end)
+      else error("missing instance or changed tag") end
+    elif $op == "delete" then
+      if any(.instances[]; .id == $id) then
+        .instances |= map(select(.id != $id)) |
+        if .default_instance_id == $id then .default_instance_id=(.instances[0].id // "") else . end
+      else error("missing") end
+    else
+      if any(.instances[]; .id == $id) then .default_instance_id=$id else error("missing") end
+    end |
+    if . == $old then .
+    elif $old.revision >= 9007199254740991 then error("revision exhausted")
+    else .revision=($old.revision+1) end
+  ' "${temp_dir}/current.json" 2>/dev/null); then :; else
+    status=$?
+    structured_instance_store_error candidate invalid_operation_or_revision
+    return "${status}"
+  fi
+  printf '%s\n' "${candidate_json}" > "${temp_dir}/candidate.json" || return $?
+  validate_structured_instance_store "${protocol}" "${temp_dir}/candidate.json" || return $?
+  rm -rf -- "${temp_dir}" || {
+    status=$?; structured_instance_store_error candidate cleanup_failed; return "${status}";
+  }
+  trap - EXIT INT TERM HUP
+  printf '%s\n' "${candidate_json}"
+)
+
+publish_structured_instance_store() (
+  # File primitive only: lifecycle callers still need managed state snapshots.
+  umask 077
+  [[ ${EUID} -eq 0 ]] || { structured_instance_store_error publish root_required; return 1; }
+  local protocol candidate_file expected_revision instance_dir target backup lock
+  local staged="" old_copy="" old_backup_copy="" backup_stage=""
+  local had_target=n had_backup=n commit_attempted=n backup_attempted=n
+  local current_json current_revision candidate_revision old_semantics new_semantics
+  local candidate_hash published_hash old_identities status=0 phase=precheck
+  local temporary_files=()
+  protocol=$(structured_instance_store_protocol "${1:-}") || {
+    structured_instance_store_error publish unsupported_protocol; return 1;
+  }
+  candidate_file=${2:-}
+  expected_revision=$(structured_instance_store_revision_arg "${3:-}") || {
+    structured_instance_store_error publish invalid_revision; return 1;
+  }
+  [[ -f "${candidate_file}" && ! -L "${candidate_file}" ]] || {
+    structured_instance_store_error publish invalid_candidate; return 1;
+  }
+  instance_dir="${SB_PROTOCOL_STATE_DIR}/instances"
+  target="${instance_dir}/${protocol}.json"
+  backup="${target}.bak"
+  lock="${instance_dir}/.${protocol}.write.lock"
+  [[ ! -L "${SB_PROTOCOL_STATE_DIR}" && ! -L "${instance_dir}" ]] || {
+    structured_instance_store_error publish symlink_rejected; return 1;
+  }
+  mkdir -p "${instance_dir}" || return $?
+  chmod 700 "${instance_dir}" || return $?
+  # Never steal an existing marker. SIGKILL/power loss requires inspection;
+  # a marker alone is not evidence that a process is still running.
+  if mkdir "${lock}" 2>/dev/null; then :; else
+    status=$?
+    structured_instance_store_error publish lock_unavailable
+    return "${status}"
+  fi
+
+  structured_write_finish() {
+    local initial_status=$1 cleanup_status=0 restore_failed=n file
+    if (( initial_status != 0 )); then
+      if [[ "${commit_attempted}" == y ]]; then
+        if [[ "${had_target}" == y ]]; then
+          if mv -f -- "${old_copy}" "${target}"; then :; else restore_failed=y; fi
+        else
+          if rm -f -- "${target}"; then :; else restore_failed=y; fi
+        fi
+      fi
+      if [[ "${backup_attempted}" == y ]]; then
+        if [[ "${had_backup}" == y ]]; then
+          if mv -f -- "${old_backup_copy}" "${backup}"; then :; else restore_failed=y; fi
+        else
+          if rm -f -- "${backup}"; then :; else restore_failed=y; fi
+        fi
+      fi
+      if [[ "${restore_failed}" == y ]]; then
+        structured_instance_store_error publish rollback_failed
+        printf '[ERROR] recovery artifacts retained; inspect %s before retrying.\n' "${lock}" >&2
+        return "${initial_status}"
+      fi
+      if [[ "${commit_attempted}" == y || "${backup_attempted}" == y ]]; then
+        structured_instance_store_error "${phase}" failed_rolled_back
+      else
+        structured_instance_store_error "${phase}" failed_unchanged
+      fi
+    fi
+    for file in ${temporary_files[@]+"${temporary_files[@]}"}; do
+      if rm -f -- "${file}"; then :; else cleanup_status=1; fi
+    done
+    if (( cleanup_status == 0 )); then
+      if rm -f -- "${lock}/recovery"; then :; else cleanup_status=1; fi
+      if rmdir "${lock}"; then :; else cleanup_status=1; fi
+    fi
+    if (( cleanup_status != 0 )); then
+      structured_instance_store_error publish cleanup_failed
+      printf '[ERROR] target_commit_attempted=%s; inspect %s before retrying.\n' "${commit_attempted}" "${lock}" >&2
+      (( initial_status != 0 )) || initial_status=1
+    fi
+    return "${initial_status}"
+  }
+  trap 'structured_write_finish "$?"' EXIT
+  trap 'return 130' INT
+  trap 'return 143' TERM
+  trap 'return 129' HUP
+
+  # CAS is checked under the lock. Capture external input once, bounded, then
+  # validate and publish only that private capture.
+  [[ ! -L "${target}" && ! -L "${backup}" ]] || {
+    structured_instance_store_error publish symlink_rejected; return 1;
+  }
+  [[ ! -e "${target}" || -f "${target}" ]] || return 1
+  [[ ! -e "${backup}" || -f "${backup}" ]] || return 1
+  phase=stage
+  staged=$(mktemp "${instance_dir}/.${protocol}.candidate.XXXXXX") || return $?
+  temporary_files+=("${staged}")
+  head -c 1048577 -- "${candidate_file}" > "${staged}" || return $?
+  [[ "$(stat -c %s "${staged}")" -le 1048576 ]] || return 1
+  validate_structured_instance_store "${protocol}" "${staged}" || return $?
+  if [[ -f "${target}" ]]; then
+    had_target=y
+    old_copy=$(mktemp "${instance_dir}/.${protocol}.previous.XXXXXX") || return $?
+    temporary_files+=("${old_copy}")
+    cp -p -- "${target}" "${old_copy}" || return $?
+    validate_structured_instance_store "${protocol}" "${old_copy}" || return $?
+    current_json=$(jq -cS . "${old_copy}") || return $?
+  else
+    current_json=$(structured_instance_store_empty_json) || return $?
+  fi
+  current_revision=$(jq -r '.revision' <<< "${current_json}") || return $?
+  [[ "${expected_revision}" == "${current_revision}" ]] || {
+    structured_instance_store_error publish revision_conflict; return 1;
+  }
+  candidate_revision=$(jq -r '.revision' "${staged}") || return $?
+  old_semantics=$(jq -cS '{default_instance_id,instances}' <<< "${current_json}") || return $?
+  new_semantics=$(jq -cS '{default_instance_id,instances}' "${staged}") || return $?
+  if [[ "${old_semantics}" == "${new_semantics}" ]]; then
+    [[ "${candidate_revision}" == "${current_revision}" ]] || return 1
+    structured_write_finish 0 || status=$?
+    trap - EXIT INT TERM HUP
+    return "${status}"
+  fi
+  jq -e --argjson old "${current_revision}" \
+    '$old < 9007199254740991 and .revision == ($old + 1)' "${staged}" >/dev/null || return $?
+  old_identities=$(jq -c '[.instances[] | {id,tag}]' <<< "${current_json}") || return $?
+  jq -e --argjson old "${old_identities}" '
+    .instances as $new | all($old[]; . as $previous |
+      all($new[] | select(.id == $previous.id); .tag == $previous.tag))
+  ' "${staged}" >/dev/null || {
+    structured_instance_store_error publish tag_immutable; return 1;
+  }
+  candidate_hash=$(sha256sum "${staged}") || return $?
+  candidate_hash=${candidate_hash%% *}
+  phase=backup
+  if [[ -f "${backup}" ]]; then
+    had_backup=y
+    old_backup_copy=$(mktemp "${instance_dir}/.${protocol}.previous-backup.XXXXXX") || return $?
+    temporary_files+=("${old_backup_copy}")
+    cp -p -- "${backup}" "${old_backup_copy}" || return $?
+  fi
+  printf 'target=%s\nprevious=%s\nprevious_backup=%s\n' \
+    "${target}" "${old_copy}" "${old_backup_copy}" > "${lock}/recovery" || return $?
+  if [[ "${had_target}" == y ]]; then
+    backup_stage=$(mktemp "${instance_dir}/.${protocol}.backup.XXXXXX") || return $?
+    temporary_files+=("${backup_stage}")
+    cp -- "${old_copy}" "${backup_stage}" || return $?
+    chmod 600 "${backup_stage}" || return $?
+    backup_attempted=y
+    mv -f -- "${backup_stage}" "${backup}" || return $?
+  fi
+  phase=commit
+  commit_attempted=y
+  mv -f -- "${staged}" "${target}" || return $?
+  phase=postcheck
+  validate_structured_instance_store "${protocol}" "${target}" || return $?
+  [[ "$(stat -c %a "${target}")" == 600 ]] || return 1
+  published_hash=$(sha256sum "${target}") || return $?
+  [[ "${published_hash%% *}" == "${candidate_hash}" ]] || return 1
+  printf 'state=committed\nsha256=%s\n' "${candidate_hash}" >> "${lock}/recovery" || return $?
+  structured_write_finish 0 || status=$?
+  trap - EXIT INT TERM HUP
+  return "${status}"
+)
+
+structured_instance_store_snapshot_json() (
+  umask 077
+  local protocol=${1:-} file=${2:-} staged snapshot status
+  [[ -f "${file}" && ! -L "${file}" ]] || return 1
+  staged=$(mktemp) || return $?
+  trap 'if ! rm -f -- "${staged}"; then structured_instance_store_error read cleanup_failed; fi' EXIT
+  trap 'return 130' INT
+  trap 'return 143' TERM
+  trap 'return 129' HUP
+  head -c 1048577 -- "${file}" > "${staged}" || return $?
+  validate_structured_instance_store "${protocol}" "${staged}" || return $?
+  snapshot=$(jq -cS . "${staged}") || return $?
+  rm -f -- "${staged}" || { status=$?; structured_instance_store_error read cleanup_failed; return "${status}"; }
+  trap - EXIT INT TERM HUP
+  printf '%s\n' "${snapshot}"
+)
+
+render_structured_instance_inbounds() {
+  local protocol snapshot
+  protocol=$(structured_instance_store_protocol "${1:-}") || { structured_instance_store_error render_inbounds unsupported_protocol; return 1; }
+  snapshot=$(structured_instance_store_snapshot_json "${protocol}" "${2:-}") || return $?
+  jq -c '.instances[] | {type:"mixed",tag:.tag,listen:.listen.address,listen_port:.listen.port,users:(if .authentication.enabled then [{username:.authentication.username,password:.authentication.password}] else [] end)}' <<< "${snapshot}" 2>/dev/null || { structured_instance_store_error render_inbounds render_failed; return 1; }
+}
+
+render_structured_instance_route_rules() {
+  local protocol snapshot
+  protocol=$(structured_instance_store_protocol "${1:-}") || { structured_instance_store_error render_routes unsupported_protocol; return 1; }
+  snapshot=$(structured_instance_store_snapshot_json "${protocol}" "${2:-}") || return $?
+  jq -c '[.instances[] | {inbound:.tag,action:"sniff"}, (if .outbound_policy == "default" then empty elif .outbound_policy == "direct" then {inbound:.tag,action:"route",outbound:"direct"} else {inbound:.tag,action:"route",outbound:"warp-ep"} end)]' <<< "${snapshot}" 2>/dev/null || { structured_instance_store_error render_routes render_failed; return 1; }
 }
 
 protocol_instance_state_schema() {

@@ -161,6 +161,8 @@ Release API 的 Linux tar 资产覆盖 amd64、arm64、386、armv5/6/7、mips/mi
 
 审计起点 `cc12c06` 的协议校验、保存和导出分别维护四协议白名单。第一阶段将 ID、菜单、导出候选、Agent 和验证元数据接入 `SB_PROTOCOL_REGISTRY`；状态和生命周期仍只有上述四种产品预设。`list_exportable_client_protocols` 当前只列出 VLESS REALITY、Hysteria2、AnyTLS，而 Mixed 的 HTTP/SOCKS 链接由 `links` 单独表达。原四协议已通过上述运行的 TCP 业务闭环；上游 type 识别探针不构成新增协议真实连接验证。上游没有独立的 mixed outbound，客户端须选择 SOCKS 或 HTTP outbound。
 
+结构化实例存储的首个 Mixed 类型化适配器已完成独立候选/条件文件写入/渲染测试，两个真实核心各以两个 Mixed 实例完成 HTTP/SOCKS TCP 请求。该基础尚未接入旧菜单、Agent 写命令和完整资源生命周期；上表 Mixed 产品能力仍按旧单实例实现理解，不据此宣称通用多实例已交付。具体证据与后续接入点见实施记录。
+
 TCP/UDP 的源码核对结果是：Mixed 与 SOCKS 的 listener 都固定为 `NetworkTCP`，UDP 是 SOCKS UDP associate/UoT 业务；Redirect 的 listener 也固定为 `NetworkTCP`，只读取原始目标；TProxy 才按 `option.Network` 同时建立 TCP/UDP 并处理 UDP NAT。Snell inbound 的 listener 固定 TCP，版本分支明确调用 `snellv5`/`snellv6` 服务，UDP 通过服务的 packet API 复用 TCP 会话；Snell outbound 的 option schema 只允许 version `4,6`，inbound schema 只允许 `5,6`，代码分别构造 `snellv4`/`snellv6` client 与 `snellv5`/`snellv6` server，因此不能把整数版本直接视为两端相同版本号。证据为固定 tag 的 `protocol/{mixed,socks,redirect,snell}/*.go`、`option/{redir,snell}.go`。
 
 Warp 是当前项目的 Cloudflare 专用注册与 WireGuard endpoint 路径，不等于已实现通用 WireGuard endpoint 管理。它应保持 `warp` 的旧状态、路由、凭据和回滚语义，并与未来通用 endpoint 分开。

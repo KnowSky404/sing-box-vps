@@ -12,6 +12,8 @@ Unknown state IDs or future schema versions block reconstruction while preservin
 
 Instance identity is scoped by protocol and instance ID. Shared read-only adapters expose legacy singleton files as `main` and retain REALITY's existing IDs/default. Agent nodes/links and REALITY client rendering use these adapters without migrating state or preparing credentials; non-REALITY multi-instance persistence is not implemented yet. Existing public Agent fields remain unchanged.
 
+The new internal structured-store primitive (`protocols/instances/<protocol>.json`) currently has a typed Mixed validator/renderer. It is not connected to public lifecycle commands, legacy health repair or takeover. Do not activate it by hand or treat its file-level rollback as a complete service/resource transaction; integration must use the existing managed-state snapshot and configuration publication boundaries.
+
 REALITY takeover matches live inbound tags to existing managed instance identities. It preserves their display names, upload/download QoS and default instance while rebuilding connection parameters from the live configuration. The saved public key is reusable only with a matching private key. Ambiguous identity mappings stop reconstruction; a state-write failure restores the previous protocol state tree. These metadata guarantees do not establish lossless handling of arbitrary custom sing-box fields or external system resources.
 
 - Treat `install.sh` as the single runtime source of truth.

@@ -60,6 +60,14 @@ Agent 节点/分享列表和 REALITY 客户端导出通过 `list_protocol_instan
 
 ### 后续持久化模型
 
+结构化存储基础使用 `protocols/instances/<protocol>.json`，包含 `schema_version`、`protocol`、`revision`、`default_instance_id` 和有序 `instances`。每个实例具有稳定 `id`、`name`、`tag`、`listen`、`authentication`、`outbound_policy` 和 `dependencies`；不是 sing-box JSON 透传。第一种字段适配器为 Mixed，其他协议必须实现明确的校验/渲染 handler 后才能使用。当前 Mixed 仅允许空依赖数组，TLS/transport 和组合引用留给适用协议的类型化适配器，不能伪造通用开关。
+
+`structured_instance_store_candidate` 对 create/replace/delete/default 执行完整旧/新文档校验及 revision 比较；replace 保留稳定 tag，默认实例删除后选择剩余首项，清空后默认 ID 为空。无变更请求不增加 revision。`publish_structured_instance_store` 是受管状态文件的原子写原语：固定路径、私有目录/文件、条件写锁、同目录 staging、备份、原子替换、postcheck/rollback；它不是配置/服务/防火墙事务的替代品。未来写入口仍须把它置于现有 managed snapshot 和配置发布流程中。
+
+`render_structured_instance_inbounds` 和 `render_structured_instance_route_rules` 是类型化纯渲染器，读取不产生认证材料，不修改旧 `.env`。当前存储尚未成为旧菜单、Agent、健康修复或接管的状态来源，也没有启动时自动迁移。完整启用 Mixed 多实例前必须同时完成全部实例匹配、写入口、端口资源归属、删除、导出与重建，不能只修改注册表的 `multi_instance` 标记。
+
+当前数据层只拒绝字面相同的地址/端口组合，不替代操作系统 TCP/UDP、通配监听、双栈重叠和资源归属预检。地址字段接受 IPv4 与纯十六进制 IPv6，不接受主机名、IPv4-mapped 文本或 zone。Mixed 新建明文入口的安全监听/公网风险确认必须由后续写入口处理；内部存储原语不更改旧实例监听行为。
+
 已实现的 REALITY 兼容基础：显式状态重建先读取旧受管实例元数据，再以有效 inbound tag 关联 live 入站。成功关联时保留稳定 ID、默认实例、节点名称及上下行 QoS；连接参数和可表示的路由策略按 live 配置恢复。私钥相同时复用旧公钥，歧义映射、无效 QoS 或未知状态版本拒绝重建。此机制同样用于期望状态比较，避免自定义 ID 在健康检查中被重命名；通用多协议实例模型仍待推广。
 
 现有 `.env` 和 `vless-reality.d/*.env` 继续兼容读取，不做启动时全量迁移。新增实例采用同目录内可按实例备份的结构化数据状态；导入先经过字段 allowlist、类型和引用校验，不能 source 外部数据。状态需包含版本、稳定 ID、family/preset/role、名称、固定 tag、监听、认证、TLS/transport、出站策略及组件依赖。读、渲染、展示和导出不创建新的 UUID/密码/密钥。

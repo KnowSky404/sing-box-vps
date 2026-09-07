@@ -136,3 +136,17 @@ REALITY 导出不再为读取 schema 1 自动执行迁移；完整枚举或任�
 提交 `bbf6a3d` 的精确范围等效 `/review` 发现跨协议客户端导出在目标实例加载失败时提前返回，跳过原运行态恢复。修复将目标解析/加载失败保存到统一状态码，跳过渲染但继续恢复原协议；初始失败码优先保留。新增回归从 Mixed 出发，逐项移除 REALITY 默认实例的 UUID、SNI、Short ID 和端口，断言失败无输出、原协议/实例/名称/端口/密码恢复、REALITY 字段清空，且后续 Hysteria2 导出成功。实际 Bash 4.2.53 两核心环境测试通过，修复沿用本轮 `2026090704`。
 
 该审查修复的完整门禁再次退出 0：`dev/verification-runs/20260907080539` 包含 45 项本地检查、9/9 Docker 场景及 12/12 TCP 探针成功，失败升级事务结果为 `rolled_back` 且 rollback `result=success`。已核对运行容器源码与待提交脚本 SHA-256 一致：`7d34399104d4a6aa967995a1423fc032cc83d2a42d9deeae842e66b06b9e84a6`。独立定向复核确认状态恢复 P2 已关闭；前述 161 项全量回归并未在这个小修复后重新执行，不混作最终完整重跑证据。
+
+## 2026-09-07：结构化实例存储基础与 Mixed 类型化适配器
+
+从 `bd8cd9f` 继续，基线门禁 `20260907081124` 为 local 模式退出 0，原有未跟踪文件 `1` 保持不动。只读追踪确认现有 Mixed 健康匹配只看第一个入站、重建循环最终只保留最后一个实例，生成器也固定 `mixed-in`；因此没有直接放开注册表多实例标记，而是先实现后续完整生命周期必需的结构化存储和纯渲染基础。本轮版本统一为 `2026090705`。
+
+新增内部数据 API 支持 create/replace/delete/default 候选、稳定 ID/tag、默认实例、有序清单和 revision 条件写入。第一种类型化 handler 为 Mixed；其他协议明确拒绝，旧 `.env` 和 REALITY 实例目录不会自动转换。数据必须是单一 JSON 文档，严格 allowlist、类型、大小、地址、端口、认证 UTF-8 字节长度和 revision 精确整数范围；不是原始 core 配置透传。凭据通过私有数据捕获及 stdin/文件传递，错误只返回固定阶段/分类。Context7 返回 testing 文档，随后核对固定 [1.14 Mixed 文档](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/inbound/mixed.md)及 [SOCKS 出站文档](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/socks.md)，最终以两个固定核心运行确认实际渲染行为。
+
+原子文件写入使用私有目录/文件、锁内 CAS、一次性有界输入捕获、同目录 staging、原子 `.bak` 与目标替换、内容/权限 postcheck 和回滚。no-op 保留 revision、目标 inode 和旧备份。TERM/INT/HUP 清理并恢复已尝试提交的文件；回滚失败保留原文件副本与恢复标记，不销毁恢复材料。不自动夺取遗留锁：不可捕获中断后需明确检查恢复记录，这不是完整服务资源事务或持久恢复管理器。未来启用写命令仍须复用既有 managed snapshot、完整配置候选、资源归属与服务发布流程。
+
+`tests/structured_instance_store.sh` 覆盖数据注入边界、未知字段/schema、非法 IPv4/IPv6、默认实例、稳定 tag、revision 上限、并发两个写者、备份/no-op、commit/postcheck/TERM 失败、rollback_failed 材料保留、目标/备份符号链接拒绝及旧状态字节保持。主审与独立复核发现并修复末尾单冒号 IPv6、换行地址、空默认实例、revision 末端递增和输入重复读取的问题。两核心各运行两个不同认证的 Mixed 实例，分别通过 HTTP/SOCKS 请求同一 loopback 标记服务，共 8 次真实 TCP 请求；这是新存储渲染的数据面证据，不是现有菜单的多实例生命周期验收，也不包含 UDP 业务验证。
+
+该存储尚未接入 Agent/菜单写命令、旧状态迁移、健康修复、接管、删除、防火墙归属或完整客户端导出，不把此项记作 Mixed 多实例完整支持。下一步必须将这些接入点成套实现，再调整能力注册表；全协议目标继续保持未完成。
+
+验证：162 项非 helper Shell 全回归全部通过，记录为 `/tmp/sbv-structured-store-all.xnwzKw/summary.tsv`。完整默认门禁 `20260907083458` 的 46 项本地检查和 Docker 均退出 0。最后仅调整新原语的失败阶段说明与避免把旧认证字段放入 jq 命令行，随后以 `VERIFY_SKIP_LOCAL_TESTS=1` 复跑 Docker，证据 `dev/verification-runs/20260907083903` 为 9/9 场景与 12/12 既有 TCP 探针成功；未把该次跳过的本地门禁计为重跑。最终源码 SHA-256 为 `2c7071fa87cfa95ca52f7811372d77dfe0381b8be6dc815e8916f2fef1708d80`。新增测试另在 GNU Bash 4.2.53 临时运行时上运行通过（主机工具链，不等于完整 CentOS 系统验证），两版真实核心检查和 8/8 HTTP/SOCKS TCP 请求均通过；最后还补验了正确凭据成功/错误凭据拒绝以及成功编辑保留 ID/tag。独立定向复核无新增 P1/P2。未执行生产、远程推送或真实 SubMan 同步。
