@@ -93,6 +93,8 @@ DNS Server、证书服务、管理 API、USB/IP 独立服务不扩展为本轮�
 
 继续收口既有索引/状态风险的提交经精确审查后发现五项缺口：VLESS 实例枚举仍使用会吞退出码的进程替换，索引 schema/重复项/配置集合不一致未检查，缺失 VLESS 根状态会回退到默认值，孤立未知状态被忽略，成功输出后的状态恢复失败未传播。最终实现改为先只读构建统一可信清单：规范化索引与 live 协议集合必须完全相等，索引和基础状态必须完整且没有重复/孤立项；REALITY 实例清单在公网读取前一次性捕获并验证。节点先写入临时集合，任何加载、实例枚举或最终恢复失败都会清理临时结果并返回固定结构化错误。新增负例逐项复现上述路径，并检查不泄漏已渲染的 Hysteria2 密码或连接材料。
 
-最终 160 个非 helper Shell 测试在两核心环境变量下全部通过，证据为 `/tmp/sing-box-vps-all-tests-20260907-agent-inventory-final.gq4Fad/summary.tsv`。最终 `bash dev/verification/run.sh --changed-file install.sh --changed-file dev/verification/common.sh` 退出 0，证据目录 `dev/verification-runs/20260907055839`：36 个本地门禁通过，Docker 9/9 场景和 12/12 TCP 业务探针成功，升级路径从 1.13.18 到 1.14.0，注入失败的回滚场景最终恢复为 1.13.18。Hysteria2 的 QUIC 仍不作为独立 UDP payload 验证证据。
+该修复的再次精确审查又复现两项 REALITY 特有缺口：只有 schema 标记的旧根状态仍会被默认节点名、端口和 SNI 补成伪节点；schema 2 只检查清单所列文件，没有核对实例目录、文件内部 ID 和 live VLESS tag 集合。最终收敛为 `status`、`nodes`、`links` 共用的只读 REALITY inventory 验证器：schema 1 直接检查原始连接字段且拒绝实例目录残留；schema 2 校验根密钥、默认实例、清单唯一性、每个完整且启用的实例、目录精确集合、文件名/内部 ID 一致性，以及实例 tag 与 live VLESS tag 的精确集合。负例覆盖空壳旧状态、孤立实例、内部 ID 错配、live tag 错配和凭据不泄漏，并保留两实例成功对照。提交前聚焦复核确认上述两项 P1 均已关闭，未发现新的 P1/P2；状态字段与 live 参数的完整语义往返、密钥数学一致性及既有 shell 状态文件信任边界仍明确保留为范围外风险。
+
+最终 160 个非 helper Shell 测试在两核心环境变量下全部通过，证据为 `/tmp/sing-box-vps-all-tests-20260907-vless-inventory-postreview.tKCE65/summary.tsv`。最终 `bash dev/verification/run.sh --changed-file install.sh --changed-file dev/verification/common.sh` 退出 0，证据目录 `dev/verification-runs/20260907063120`：44 个本地触发测试通过，Docker 9/9 场景和 12/12 TCP 业务探针成功。正常升级从 1.13.18 到 1.14.0，服务前后均为 active 且目标核心 `check` 通过；注入服务失败的场景返回非零，但事务结果持久化并以 `rolled_back=true`、`rollback_ok=true` 恢复 1.13.18、active 服务和通过的核心 `check`。Hysteria2 的 QUIC 仍不作为独立 UDP payload 验证证据。
 
 边界：本项只完成 live inbound inventory 层保护。额外用户/协议字段，以及未知 outbound、endpoint、DNS、证书和 route/rule 的语义往返保护仍未完成；已有 VLESS 状态的名称、QoS 与稳定 ID 在显式重建中的保留也仍需修复。它不代表新增 Shadowsocks 或其他协议已经实现。

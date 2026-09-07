@@ -11934,8 +11934,128 @@ agent_validate_indexed_protocol_states() {
     state_file=$(protocol_state_file "${protocol}") || return 1
     [[ -f "${state_file}" ]] || return 1
     validate_protocol_state_schema "${protocol}" "${state_file}" || return 1
+    if [[ "${protocol}" == "vless-reality" ]]; then
+      agent_validate_vless_state_inventory || return 1
+    fi
   done
 }
+
+agent_legacy_vless_state_is_complete() {
+  local state_file
+  state_file=$(protocol_state_file "vless-reality") || return 1
+  [[ -f "${state_file}" ]] || return 1
+
+  (
+    unset INSTALLED NODE_NAME PORT UUID SNI REALITY_PRIVATE_KEY REALITY_PUBLIC_KEY SHORT_ID_1
+    # shellcheck disable=SC1090
+    source "${state_file}"
+    [[ "${INSTALLED:-}" == "1" && -n "${NODE_NAME:-}" ]] || return 1
+    validate_port_number "${PORT:-}" || return 1
+    [[ "${UUID:-}" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]] || return 1
+    [[ -n "${SNI:-}" && -n "${REALITY_PRIVATE_KEY:-}" && -n "${REALITY_PUBLIC_KEY:-}" && -n "${SHORT_ID_1:-}" ]]
+  )
+}
+
+agent_vless_instance_tag_if_complete() {
+  local instance_id=$1
+
+  load_vless_reality_instance_state "${instance_id}" || return 1
+  [[ "${INSTANCE_ID:-}" == "${instance_id}" && "${ENABLED:-}" == "1" ]] || return 1
+  [[ -n "${SB_NODE_NAME}" ]] || return 1
+  validate_port_number "${SB_PORT}" || return 1
+  [[ "${SB_UUID}" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]] || return 1
+  [[ -n "${SB_SNI}" && -n "${SB_PRIVATE_KEY}" && -n "${SB_PUBLIC_KEY}" && -n "${SB_SHORT_ID_1}" ]] || return 1
+  vless_reality_inbound_tag_for_instance "${instance_id}"
+}
+
+agent_vless_multi_instance_root_is_complete() {
+  local state_file
+  state_file=$(protocol_state_file "vless-reality") || return 1
+  [[ -f "${state_file}" ]] || return 1
+
+  (
+    unset INSTALLED CONFIG_SCHEMA_VERSION DEFAULT_INSTANCE_ID INSTANCE_IDS REALITY_PRIVATE_KEY REALITY_PUBLIC_KEY
+    # shellcheck disable=SC1090
+    source "${state_file}"
+    [[ "${INSTALLED:-}" == "1" && "${CONFIG_SCHEMA_VERSION:-}" == "2" ]] || return 1
+    [[ -n "${DEFAULT_INSTANCE_ID:-}" && -n "${INSTANCE_IDS:-}" ]] || return 1
+    [[ -n "${REALITY_PRIVATE_KEY:-}" && -n "${REALITY_PUBLIC_KEY:-}" ]]
+  )
+}
+
+agent_validate_vless_state_inventory() (
+  local state_file schema instance_ids live_tags instance_id instance_state_file instance_state_id instance_tag live_tag
+  local default_instance_id live_count instance_file instance_file_count=0
+  local instance_id_list=() instance_tags=() live_tag_list=()
+
+  state_file=$(protocol_state_file "vless-reality") || return 1
+  [[ -f "${state_file}" ]] || return 1
+  schema=$(sed -n 's/^CONFIG_SCHEMA_VERSION=//p' "${state_file}") || return 1
+  schema=${schema//\"/}
+  schema=${schema//\'/}
+  live_count=$(jq -r '[.inbounds[]? | select(.type == "vless")] | length' "${SINGBOX_CONFIG_FILE}") || return 1
+  live_tags=$(jq -r '.inbounds[]? | select(.type == "vless") | .tag // empty' "${SINGBOX_CONFIG_FILE}") || return 1
+  [[ "${live_count}" =~ ^[0-9]+$ ]] || return 1
+  while IFS= read -r live_tag; do
+    [[ -n "${live_tag}" ]] && live_tag_list+=("${live_tag}")
+  done <<< "${live_tags}"
+  [[ ${#live_tag_list[@]} -eq ${live_count} ]] || return 1
+
+  case "${schema:-1}" in
+    1)
+      [[ "${live_count}" == "1" && "${live_tag_list[0]}" == "vless-in" ]] || return 1
+      agent_legacy_vless_state_is_complete || return 1
+      load_vless_reality_protocol_state || return 1
+      [[ -z "${VLESS_REALITY_INSTANCE_IDS}" ]] || return 1
+      for instance_file in "$(vless_reality_instance_dir)"/*.env; do
+        if [[ -e "${instance_file}" ]]; then
+          return 1
+        fi
+      done
+      return 0
+      ;;
+    2)
+      agent_vless_multi_instance_root_is_complete || return 1
+      load_vless_reality_protocol_state || return 1
+      [[ -n "${VLESS_REALITY_INSTANCE_IDS}" ]] || return 1
+      default_instance_id=${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}
+      validate_vless_reality_instance_id "${default_instance_id}" || return 1
+      if ! instance_ids=$(list_vless_reality_instance_ids); then
+        return 1
+      fi
+      [[ -n "${instance_ids}" ]] || return 1
+      while IFS= read -r instance_id; do
+        [[ -n "${instance_id}" ]] || continue
+        validate_vless_reality_instance_id "${instance_id}" || return 1
+        protocol_array_contains "${instance_id}" "${instance_id_list[@]}" && return 1
+        instance_state_file=$(vless_reality_instance_state_file "${instance_id}") || return 1
+        [[ -f "${instance_state_file}" ]] || return 1
+        instance_tag=$(agent_vless_instance_tag_if_complete "${instance_id}") || return 1
+        protocol_array_contains "${instance_tag}" "${instance_tags[@]}" && return 1
+        instance_id_list+=("${instance_id}")
+        instance_tags+=("${instance_tag}")
+      done <<< "${instance_ids}"
+      protocol_array_contains "${default_instance_id}" "${instance_id_list[@]}" || return 1
+
+      for instance_file in "$(vless_reality_instance_dir)"/*.env; do
+        [[ -e "${instance_file}" ]] || continue
+        instance_state_id=${instance_file##*/}
+        instance_state_id=${instance_state_id%.env}
+        validate_vless_reality_instance_id "${instance_state_id}" || return 1
+        protocol_array_contains "${instance_state_id}" "${instance_id_list[@]}" || return 1
+        instance_file_count=$((instance_file_count + 1))
+      done
+      [[ ${instance_file_count} -eq ${#instance_id_list[@]} ]] || return 1
+      [[ ${#instance_tags[@]} -eq ${live_count} ]] || return 1
+      for live_tag in "${live_tag_list[@]}"; do
+        protocol_array_contains "${live_tag}" "${instance_tags[@]}" || return 1
+      done
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+)
 
 agent_installed_protocols_json() {
   local indexed_protocols=$1 protocol
@@ -12287,8 +12407,7 @@ agent_collect_nodes_json() {
   local mode=$1
   local public_ip original_protocol_state original_state_file protocol node_json instance_id indexed_protocols
   local vless_instance_ids="" vless_state_schema="" nodes_json='[]'
-  local instance_state_file
-  local installed_protocols=() vless_instance_id_list=()
+  local installed_protocols=()
   local tmpdir status=0 rendered_instances=0
 
   if ! validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}"; then
@@ -12316,27 +12435,6 @@ agent_collect_nodes_json() {
     vless_state_schema=$(sed -n 's/^CONFIG_SCHEMA_VERSION=//p' "$(protocol_state_file "vless-reality")") || return 1
     vless_state_schema=${vless_state_schema//\"/}
     vless_state_schema=${vless_state_schema//\'/}
-    if [[ "${vless_state_schema:-1}" == "2" && -z "${vless_instance_ids}" ]]; then
-      agent_json_error "protocol_state_untrusted" "REALITY 实例清单为空；未返回部分节点。"
-      return 1
-    fi
-    while IFS= read -r instance_id; do
-      [[ -n "${instance_id}" ]] || continue
-      validate_vless_reality_instance_id "${instance_id}" || {
-        agent_json_error "protocol_state_untrusted" "REALITY 实例清单包含无效条目；未返回部分节点。"
-        return 1
-      }
-      if protocol_array_contains "${instance_id}" "${vless_instance_id_list[@]}"; then
-        agent_json_error "protocol_state_untrusted" "REALITY 实例清单包含重复条目；未返回部分节点。"
-        return 1
-      fi
-      instance_state_file=$(vless_reality_instance_state_file "${instance_id}") || return 1
-      [[ -f "${instance_state_file}" ]] || {
-        agent_json_error "protocol_state_untrusted" "REALITY 实例状态缺失；未返回部分节点。"
-        return 1
-      }
-      vless_instance_id_list+=("${instance_id}")
-    done <<< "${vless_instance_ids}"
   fi
 
   public_ip=$(get_public_ip)

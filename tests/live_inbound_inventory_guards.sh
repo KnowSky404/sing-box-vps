@@ -74,6 +74,12 @@ EOF
     managed-vless)
       printf '%s\n' '{"inbounds":[{"type":"vless","tag":"vless-in","tls":{"enabled":true,"reality":{"enabled":true}}}]}' > "${SINGBOX_CONFIG_FILE}"
       ;;
+    managed-vless-pair)
+      printf '%s\n' '{"inbounds":[{"type":"vless","tag":"vless-in","tls":{"enabled":true,"reality":{"enabled":true}}},{"type":"vless","tag":"vless-reality-edge","tls":{"enabled":true,"reality":{"enabled":true}}}]}' > "${SINGBOX_CONFIG_FILE}"
+      ;;
+    mismatched-vless-tags)
+      printf '%s\n' '{"inbounds":[{"type":"vless","tag":"vless-in","tls":{"enabled":true,"reality":{"enabled":true}}},{"type":"vless","tag":"vless-other","tls":{"enabled":true,"reality":{"enabled":true}}}]}' > "${SINGBOX_CONFIG_FILE}"
+      ;;
     managed-hy2)
       printf '%s\n' '{"inbounds":[{"type":"hysteria2","tag":"hy2-in"}]}' > "${SINGBOX_CONFIG_FILE}"
       ;;
@@ -193,7 +199,11 @@ assert_agent_inventory_error() {
       MDEyMzQ1Njc4OWFiY2RlZg== \
       CONFIG-PASSWORD-DO-NOT-LOG \
       STATE-PASSWORD-DO-NOT-LOG \
-      HY2-PASSWORD-DO-NOT-LOG; do
+      HY2-PASSWORD-DO-NOT-LOG \
+      11111111-1111-4111-8111-111111111111 \
+      22222222-2222-4222-8222-222222222222 \
+      private-key \
+      public-key; do
       if grep -Fq "${secret}" "${TMP_DIR}/agent-${label}-${agent_command}.json" "${TMP_DIR}/agent-${label}-${agent_command}.stderr"; then
         printf 'agent %s leaked credentials for %s\n' "${agent_command}" "${label}" >&2
         exit 1
@@ -303,6 +313,12 @@ rm -f "${SB_PROTOCOL_STATE_DIR}/mixed.env" "${SB_PROTOCOL_STATE_DIR}/hy2.env" "$
 get_public_ip() { mark_side_effect; }
 assert_agent_inventory_error protocol_state_untrusted missing-vless-state status nodes links
 
+cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.env" <<'EOF'
+INSTALLED=1
+CONFIG_SCHEMA_VERSION=1
+EOF
+assert_agent_inventory_error protocol_state_untrusted incomplete-legacy-vless status nodes links
+
 mkdir -p "${SB_PROTOCOL_STATE_DIR}/vless-reality.d"
 cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.env" <<'EOF'
 INSTALLED=1
@@ -325,11 +341,23 @@ OUTBOUND_POLICY=default
 EOF
 (
   list_vless_reality_instance_ids() { return 42; }
-  assert_agent_inventory_error protocol_state_untrusted vless-instance-enumeration nodes links
+  assert_agent_inventory_error protocol_state_untrusted vless-instance-enumeration status nodes links
 )
 
+sed -i 's/^REALITY_PUBLIC_KEY=.*/REALITY_PUBLIC_KEY=/' "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"
+assert_agent_inventory_error protocol_state_untrusted incomplete-vless-root status nodes links
+sed -i 's/^REALITY_PUBLIC_KEY=.*/REALITY_PUBLIC_KEY=public-key/' "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"
+
+sed -i 's/^DEFAULT_INSTANCE_ID=.*/DEFAULT_INSTANCE_ID=ghost/' "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"
+assert_agent_inventory_error protocol_state_untrusted missing-vless-default-instance status nodes links
+sed -i 's/^DEFAULT_INSTANCE_ID=.*/DEFAULT_INSTANCE_ID=main/' "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"
+
+sed -i 's/^SHORT_ID_1=.*/SHORT_ID_1=/' "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env"
+assert_agent_inventory_error protocol_state_untrusted incomplete-vless-instance status nodes links
+sed -i 's/^SHORT_ID_1=.*/SHORT_ID_1=aaaaaaaaaaaaaaaa/' "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env"
+
 rm -f "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env"
-assert_agent_inventory_error protocol_state_untrusted missing-vless-instance nodes links
+assert_agent_inventory_error protocol_state_untrusted missing-vless-instance status nodes links
 
 cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env" <<'EOF'
 INSTANCE_ID=main
@@ -343,7 +371,36 @@ SHORT_ID_2=bbbbbbbbbbbbbbbb
 OUTBOUND_POLICY=default
 EOF
 sed -i 's/^INSTANCE_IDS=.*/INSTANCE_IDS=main,main/' "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"
-assert_agent_inventory_error protocol_state_untrusted duplicate-vless-instance nodes links
+assert_agent_inventory_error protocol_state_untrusted duplicate-vless-instance status nodes links
+
+sed -i 's/^INSTANCE_IDS=.*/INSTANCE_IDS=main/' "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"
+sed -i 's/^INSTANCE_ID=.*/INSTANCE_ID=edge/' "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env"
+assert_agent_inventory_error protocol_state_untrusted mismatched-vless-instance-id status nodes links
+sed -i 's/^INSTANCE_ID=.*/INSTANCE_ID=main/' "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env"
+
+cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/edge.env" <<'EOF'
+INSTANCE_ID=edge
+ENABLED=1
+NODE_NAME=vless-edge-inventory-test
+PORT=8443
+UUID=22222222-2222-4222-8222-222222222222
+SNI=www.apple.com
+SHORT_ID_1=cccccccccccccccc
+SHORT_ID_2=dddddddddddddddd
+OUTBOUND_POLICY=default
+EOF
+assert_agent_inventory_error protocol_state_untrusted orphan-vless-instance status nodes links
+
+sed -i 's/^INSTANCE_IDS=.*/INSTANCE_IDS=main,edge/' "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"
+write_fixture mismatched-vless-tags
+assert_agent_inventory_error protocol_state_untrusted mismatched-vless-live-tags status nodes links
+
+write_fixture managed-vless-pair
+get_public_ip() { printf '192.0.2.1'; }
+for agent_command in status nodes links; do
+  agent_cli "${agent_command}" --json > "${TMP_DIR}/agent-complete-vless-${agent_command}.json"
+  jq -e '.ok == true' "${TMP_DIR}/agent-complete-vless-${agent_command}.json" >/dev/null
+done
 
 write_fixture managed-hy2
 cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'

@@ -84,8 +84,8 @@ EOF_EDGE
 cat > "${SINGBOX_CONFIG_FILE}" <<'EOF_CONFIG'
 {
   "inbounds": [
-    {"type": "vless", "listen_port": 443, "tls": {"enabled": true, "reality": {"enabled": true}}},
-    {"type": "vless", "listen_port": 8443, "tls": {"enabled": true, "reality": {"enabled": true}}}
+    {"type": "vless", "tag": "vless-in", "listen_port": 443, "tls": {"enabled": true, "reality": {"enabled": true}}},
+    {"type": "vless", "tag": "vless-reality-edge", "listen_port": 8443, "tls": {"enabled": true, "reality": {"enabled": true}}}
   ]
 }
 EOF_CONFIG
