@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090402
+# Version: 2026090601
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090402"
+readonly SCRIPT_VERSION="2026090601"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -64,6 +64,15 @@ readonly MEDIA_CHECK_BACKEND_SCRIPT_URL="https://raw.githubusercontent.com/1-str
 readonly SB_HIGH_PORT_MIN="60000"
 readonly SB_HIGH_PORT_MAX="65535"
 readonly SB_REALITY_SNI_FALLBACK="www.apple.com"
+# Runtime capability source of truth. Fields are decoded by protocol_registry_json.
+# IDs/aliases are data; dispatch below always calls explicit, literal handlers.
+# The legacy vless alias intentionally remains the REALITY preset.
+readonly SB_PROTOCOL_REGISTRY=(
+  'vless-reality|vless+reality|vless-reality|vless|reality|inbound|vless|VLESS + REALITY|vless-in|1|true|vless|tcp|tcp,udp|1.13.0|true|none|vless|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"qos":{"upload_mbps":true,"download_mbps":true},"share_link":true,"qr":true,"client_export":true,"subman_sync":true}|vless,vless+reality|build_vless_inbound_json,build_vless_reality_route_rules_json,build_client_vless_reality_outbounds,save_vless_reality_state,prompt_vless_reality_install,prompt_vless_reality_update'
+  'mixed|mixed|mixed|mixed|plain|inbound|mixed|Mixed (HTTP/HTTPS/SOCKS)|mixed-in|2|false||tcp|tcp,udp|1.13.0|false|none|http,socks5|tcp_loopback|{"http":true,"socks5":true,"authentication":true,"share_links":["http","socks5"],"qr":false,"client_export":false,"subman_sync":false}||build_mixed_inbound_json,save_mixed_state,prompt_mixed_install,prompt_mixed_update'
+  'hy2|hy2|hysteria2|hysteria2|tls|inbound|hysteria2|Hysteria2|hy2-in|3|true|hysteria2|udp|tcp,udp|1.13.0|false|optional|hysteria2|tcp_loopback|{"tls_modes":["acme_http01","acme_cloudflare_dns01","manual"],"bandwidth":true,"obfs":true,"share_link":true,"qr":true,"client_export":true,"subman_sync":true}|hysteria2|build_hy2_inbound_json,build_hy2_certificate_provider_json,build_client_hy2_outbound,save_hy2_state,prompt_hy2_install,prompt_hy2_update'
+  'anytls|anytls|anytls|anytls|tls|inbound|anytls|AnyTLS|anytls-in|4|true||tcp|tcp,udp|1.13.0|false|optional||tcp_loopback|{"tls_modes":["acme_http01","acme_cloudflare_dns01","manual"],"standard_share_uri":false,"outbound_example":true,"qr":false,"client_export":true,"subman_sync":false}||build_anytls_inbound_json,build_anytls_certificate_provider_json,build_client_anytls_outbound,save_anytls_state,prompt_anytls_install,prompt_anytls_update'
+)
 SB_REALITY_SNI_CANDIDATES=(
   "www.apple.com"
   "www.cloudflare.com"
@@ -726,20 +735,13 @@ ensure_stack_mode_state_loaded() {
 }
 
 validate_protocol() {
-  case "$1" in
-    vless+reality|mixed|hy2|anytls) return 0 ;;
-    *) return 1 ;;
-  esac
+  local runtime
+  runtime=$(protocol_registry_field "$1" runtime_id) || return 1
+  [[ "$1" == "${runtime}" ]]
 }
 
 protocol_display_name() {
-  case "$1" in
-    vless+reality) printf 'VLESS + REALITY' ;;
-    mixed) printf 'Mixed (HTTP/HTTPS/SOCKS)' ;;
-    hy2) printf 'Hysteria2' ;;
-    anytls) printf 'AnyTLS' ;;
-    *) printf '%s' "$1" ;;
-  esac
+  protocol_registry_field "$1" display_name || printf '%s' "$1"
 }
 
 default_node_name_for_protocol() {
@@ -854,32 +856,111 @@ vless_reality_display_node_name() {
 }
 
 protocol_inbound_tag() {
-  case "$1" in
-    mixed) printf 'mixed-in' ;;
-    hy2) printf 'hy2-in' ;;
-    anytls) printf 'anytls-in' ;;
-    *) printf 'vless-in' ;;
+  protocol_registry_field "$1" default_tag
+}
+
+protocol_registry_record() {
+  local requested=${1:-} record
+  local fields=() aliases=() alias
+  [[ -n "${requested}" ]] || return 1
+  for record in "${SB_PROTOCOL_REGISTRY[@]}"; do
+    IFS='|' read -r -a fields <<< "${record}"
+    if [[ "${requested}" == "${fields[0]}" ]]; then
+      printf '%s' "${record}"
+      return 0
+    fi
+    # Bash 4.2 (CentOS 7) treats an empty array as unset under nounset.
+    [[ -n "${fields[20]}" ]] || continue
+    IFS=',' read -r -a aliases <<< "${fields[20]}"
+    for alias in "${aliases[@]}"; do
+      if [[ "${requested}" == "${alias}" ]]; then
+        printf '%s' "${record}"
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+protocol_registry_field() {
+  local record index
+  local fields=()
+  record=$(protocol_registry_record "${1:-}") || return 1
+  IFS='|' read -r -a fields <<< "${record}"
+  case "${2:-}" in
+    state_id) index=0 ;;
+    runtime_id) index=1 ;;
+    agent_id) index=2 ;;
+    family) index=3 ;;
+    preset) index=4 ;;
+    role) index=5 ;;
+    type) index=6 ;;
+    display_name) index=7 ;;
+    default_tag) index=8 ;;
+    menu_order) index=9 ;;
+    client_export) index=10 ;;
+    subman_type) index=11 ;;
+    listen_networks) index=12 ;;
+    traffic_networks) index=13 ;;
+    minimum_project_core) index=14 ;;
+    multi_instance) index=15 ;;
+    certificate_contract) index=16 ;;
+    share_formats) index=17 ;;
+    probe) index=18 ;;
+    handlers) index=21 ;;
+    *) return 1 ;;
   esac
+  printf '%s' "${fields[index]}"
+}
+
+protocol_registry_json() {
+  printf '%s\n' "${SB_PROTOCOL_REGISTRY[@]}" | jq -Rn '
+    def csv: split(",") | map(select(length > 0));
+    [inputs | split("|") | {
+      state_id: .[0], runtime_id: .[1], agent_id: .[2], family: .[3],
+      preset: .[4], role: .[5], type: .[6], display_name: .[7],
+      default_tag: .[8], menu_order: (.[9] | tonumber),
+      minimum_project_core: .[14], aliases: (.[20] | csv),
+      core_supported: true, implemented: true,
+      available: null, availability_reason: "requires_instance_preflight",
+      validated: {status: "not_assessed", method: .[18]},
+      lifecycle: {deploy: true, takeover: true, edit: true, remove: true},
+      client_export: (.[10] == "true"), subman_type: .[11],
+      listen_networks: (.[12] | csv), traffic_networks: (.[13] | csv),
+      multi_instance: (.[15] == "true"), certificate_contract: .[16],
+      share_formats: (.[17] | csv), probe: .[18],
+      legacy_capabilities: (.[19] | fromjson), handlers: (.[21] | csv)
+    }]'
+}
+
+list_registered_protocols() {
+  local record state_id remainder
+  for record in "${SB_PROTOCOL_REGISTRY[@]}"; do
+    IFS='|' read -r state_id remainder <<< "${record}"
+    printf '%s\n' "${state_id}"
+  done
+}
+
+protocol_registry_require_handlers() {
+  local handler handler_list
+  local handlers=()
+  handler_list=$(protocol_registry_field "$1" handlers) || return 1
+  IFS=',' read -r -a handlers <<< "${handler_list}"
+  [[ ${#handlers[@]} -gt 0 ]] || return 1
+  for handler in "${handlers[@]}"; do
+    if ! declare -F "${handler}" >/dev/null; then
+      printf '[ERROR] 协议适配器缺失，未生成配置；请恢复完整的 install.sh。\n' >&2
+      return 1
+    fi
+  done
 }
 
 normalize_protocol_id() {
-  case "$1" in
-    vless|vless+reality|vless-reality) printf 'vless-reality' ;;
-    mixed) printf 'mixed' ;;
-    hy2|hysteria2) printf 'hy2' ;;
-    anytls) printf 'anytls' ;;
-    *) return 1 ;;
-  esac
+  protocol_registry_field "$1" state_id
 }
 
 state_protocol_to_runtime() {
-  case "$1" in
-    vless-reality) printf 'vless+reality' ;;
-    mixed) printf 'mixed' ;;
-    hy2) printf 'hy2' ;;
-    anytls) printf 'anytls' ;;
-    *) return 1 ;;
-  esac
+  protocol_registry_field "$1" runtime_id
 }
 
 runtime_protocol_to_state() {
@@ -888,7 +969,7 @@ runtime_protocol_to_state() {
 
 protocol_state_file() {
   local protocol
-  protocol=$(normalize_protocol_id "$1")
+  protocol=$(normalize_protocol_id "$1") || return 1
   printf '%s/%s.env' "${SB_PROTOCOL_STATE_DIR}" "${protocol}"
 }
 
@@ -1910,6 +1991,7 @@ resolve_protocol_index_singbox_version() {
 
 list_indexed_protocols_raw() {
   local installed protocol
+  local protocols=()
   installed=$(extract_protocols_from_index)
   [[ -z "${installed}" ]] && return 0
 
@@ -1922,8 +2004,55 @@ list_indexed_protocols_raw() {
 
 protocol_state_exists() {
   local protocol
-  protocol=$(normalize_protocol_id "$1")
+  protocol=$(normalize_protocol_id "$1") || return 1
   [[ -f "$(protocol_state_file "${protocol}")" ]]
+}
+
+validate_protocol_state_schema() {
+  local protocol=$1 state_file=$2 schema
+  [[ -f "${state_file}" ]] || return 0
+  schema=$(sed -n 's/^CONFIG_SCHEMA_VERSION=//p' "${state_file}") || return 1
+  schema=${schema//\"/}
+  schema=${schema//\'/}
+  case "${protocol}:${schema:-1}" in
+    vless-reality:1|vless-reality:2|mixed:1|hy2:1|anytls:1) return 0 ;;
+  esac
+  printf '[ERROR] 协议状态格式无法识别；已保留文件，请使用写入该状态的脚本版本恢复。\n' >&2
+  return 1
+}
+
+validate_protocol_index_for_rebuild() {
+  local schema indexed protocol protocols state_file state_id
+  # The rebuild clears legacy .env files, including ones not in the index.
+  # Validate their identity before permitting that operation.
+  for state_file in "${SB_PROTOCOL_STATE_DIR}"/*.env; do
+    [[ -e "${state_file}" ]] || continue
+    [[ "${state_file}" == "${SB_PROTOCOL_INDEX_FILE}" ]] && continue
+    state_id=${state_file##*/}
+    state_id=${state_id%.env}
+    if ! protocol=$(normalize_protocol_id "${state_id}") || [[ "${protocol}" != "${state_id}" ]]; then
+      printf '[ERROR] 发现未识别的协议状态文件；已保留文件，禁止有损重建，请恢复兼容脚本。\n' >&2
+      return 1
+    fi
+    validate_protocol_state_schema "${protocol}" "${state_file}" || return 1
+  done
+  [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]] || return 0
+  schema=$(sed -n 's/^PROTOCOL_STATE_VERSION=//p' "${SB_PROTOCOL_INDEX_FILE}") || return 1
+  schema=${schema//\"/}
+  schema=${schema//\'/}
+  if [[ "${schema:-1}" != "1" ]]; then
+    printf '[ERROR] 协议索引格式无法识别；已保留状态，禁止有损重建，请恢复兼容脚本。\n' >&2
+    return 1
+  fi
+  protocols=$(list_indexed_protocols_raw) || return 1
+  while IFS= read -r indexed; do
+    [[ -n "${indexed}" ]] || continue
+    if ! protocol=$(normalize_protocol_id "${indexed}"); then
+      printf '[ERROR] 索引包含未知协议；已保留全部条目，请使用支持该协议的脚本。\n' >&2
+      return 1
+    fi
+    validate_protocol_state_schema "${protocol}" "$(protocol_state_file "${protocol}")" || return 1
+  done <<< "${protocols}"
 }
 
 reconcile_protocol_index_if_needed() {
@@ -1931,18 +2060,29 @@ reconcile_protocol_index_if_needed() {
   local protocol joined_protocols current_protocols
 
   [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]] || return 0
+  validate_protocol_index_for_rebuild || return 1
 
   mapfile -t indexed_protocols < <(list_indexed_protocols_raw)
   current_protocols=$(extract_protocols_from_index)
 
   for protocol in "${indexed_protocols[@]}"; do
-    protocol=$(normalize_protocol_id "${protocol}" 2>/dev/null || true)
-    [[ -z "${protocol}" ]] && continue
+    protocol=$(normalize_protocol_id "${protocol}") || return 1
     if protocol_state_exists "${protocol}"; then
       if ! protocol_array_contains "${protocol}" "${valid_protocols[@]}"; then
         valid_protocols+=("${protocol}")
       fi
     else
+      # A stale index entry with no corresponding config is a supported legacy
+      # repair. If the live inbound still exists, dropping it would lose data;
+      # explicit takeover must reconstruct its state first.
+      if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
+        if ! jq -e 'type == "object"' "${SINGBOX_CONFIG_FILE}" >/dev/null 2>&1 ||
+           jq -e --arg type "$(protocol_registry_field "${protocol}" type)" \
+             'any(.inbounds[]?; .type == $type)' "${SINGBOX_CONFIG_FILE}" >/dev/null 2>&1; then
+          printf '[ERROR] 协议状态缺失但配置仍需保留；未修改索引，请执行接管以恢复状态。\n' >&2
+          return 1
+        fi
+      fi
       log_warn "协议状态文件缺失，已从索引移除: ${protocol}" >&2
     fi
   done
@@ -1962,18 +2102,20 @@ reconcile_protocol_index_if_needed() {
 }
 
 list_installed_protocols() {
-  reconcile_protocol_index_if_needed
+  reconcile_protocol_index_if_needed || return 1
   list_indexed_protocols_raw
 }
 
 list_exportable_client_protocols() {
-  local protocol
+  local protocol protocols
 
+  protocols=$(list_installed_protocols) || return 1
   while IFS= read -r protocol; do
-    case "${protocol}" in
-      vless-reality|hy2|anytls) printf '%s\n' "${protocol}" ;;
-    esac
-  done < <(list_installed_protocols)
+    [[ -n "${protocol}" ]] || continue
+    if [[ "$(protocol_registry_field "${protocol}" client_export)" == "true" ]]; then
+      printf '%s\n' "${protocol}"
+    fi
+  done <<< "${protocols}"
 }
 
 save_vless_reality_state() {
@@ -2066,8 +2208,8 @@ save_anytls_state() {
 
 save_protocol_state() {
   local protocol
-  protocol=$(normalize_protocol_id "$1")
-  ensure_protocol_state_dir
+  protocol=$(normalize_protocol_id "$1") || return 1
+  ensure_protocol_state_dir || return 1
 
   case "${protocol}" in
     vless-reality) save_vless_reality_state ;;
@@ -2079,8 +2221,37 @@ save_protocol_state() {
 }
 
 migrate_legacy_single_protocol_state_if_needed() {
-  [[ -f "${SB_PROTOCOL_INDEX_FILE}" || ! -f "${SINGBOX_CONFIG_FILE}" ]] && return 0
-  rebuild_protocol_state_from_config
+  [[ -f "${SINGBOX_CONFIG_FILE}" ]] || return 0
+  if [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
+    # Older single-Mixed installations can retain an index without mixed.env.
+    # Recover only in the explicit additional-install workflow, never as a
+    # side effect of protocol enumeration. Do not discard the index first:
+    # the existing rebuild transaction must restore it on any failure.
+    [[ "${1:-}" == "recover-incomplete-index" ]] || return 0
+    validate_protocol_index_for_rebuild || return 1
+    [[ "$(list_indexed_protocols_raw)" == "mixed" ]] || return 0
+    local state_entry
+    for state_entry in "${SB_PROTOCOL_STATE_DIR}"/* "${SB_PROTOCOL_STATE_DIR}"/.[!.]* "${SB_PROTOCOL_STATE_DIR}"/..?*; do
+      [[ -e "${state_entry}" || -L "${state_entry}" ]] || continue
+      [[ "${state_entry}" == "${SB_PROTOCOL_INDEX_FILE}" ]] || return 0
+    done
+    # Only the legacy single-user, default-tag/listener shape is losslessly
+    # represented by this old state format. Custom fields require takeover.
+    jq -e --arg listen "$(stack_inbound_listen_address)" '
+      (.inbounds | type == "array" and length == 1) and
+      (.inbounds[0] |
+        .type == "mixed" and .tag == "mixed-in" and
+        ((keys - ["type", "tag", "listen", "listen_port", "users"]) | length == 0) and
+        ((has("listen") | not) or .listen == $listen) and
+        (.listen_port | type == "number" and . == floor and . >= 1 and . <= 65535) and
+        ((.users // []) | type == "array" and length <= 1 and
+          all(.[]; type == "object" and
+            ((keys - ["username", "password"]) | length == 0) and
+            (.username | type == "string" and length > 0) and
+            (.password | type == "string" and length > 0))))
+    ' "${SINGBOX_CONFIG_FILE}" >/dev/null 2>&1 || return 0
+  fi
+  rebuild_protocol_state_from_config || return 1
   migrate_vless_reality_state_to_instances_if_needed
 }
 
@@ -2777,25 +2948,35 @@ protocol_array_contains() {
 }
 
 protocol_option_to_id() {
-  case "$1" in
-    1) printf 'vless-reality' ;;
-    2) printf 'mixed' ;;
-    3) printf 'hy2' ;;
-    4) printf 'anytls' ;;
-    *) return 1 ;;
-  esac
+  local record
+  local fields=()
+  for record in "${SB_PROTOCOL_REGISTRY[@]}"; do
+    IFS='|' read -r -a fields <<< "${record}"
+    if [[ "$1" == "${fields[9]}" ]]; then
+      printf '%s' "${fields[0]}"
+      return 0
+    fi
+  done
+  return 1
 }
 
 prompt_protocol_install_selection() {
   local install_mode=${1:-additional}
   local installed_protocols=() selected_protocols=()
-  local choice raw_choice protocol index
+  local choice raw_choice protocol index installed_list
+  local menu_indices=() raw_choices=()
 
   SELECTED_PROTOCOLS_CSV=""
 
   if [[ "${install_mode}" != "fresh" ]]; then
-    mapfile -t installed_protocols < <(list_installed_protocols)
+    installed_list=$(list_installed_protocols) || return 1
+    if [[ -n "${installed_list}" ]]; then
+      mapfile -t installed_protocols <<< "${installed_list}"
+    fi
   fi
+  while IFS= read -r protocol; do
+    menu_indices+=("$(protocol_registry_field "${protocol}" menu_order)")
+  done < <(list_registered_protocols)
 
   echo -e "\n${BLUE}--- 协议安装 ---${NC}"
   if [[ ${#installed_protocols[@]} -gt 0 ]]; then
@@ -2808,7 +2989,7 @@ prompt_protocol_install_selection() {
   fi
 
   echo "可安装协议:"
-  for index in 1 2 3 4; do
+  for index in "${menu_indices[@]}"; do
     protocol=$(protocol_option_to_id "${index}") || continue
     if protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
       if [[ "${install_mode}" == "additional" && "${protocol}" == "vless-reality" ]]; then
@@ -2821,10 +3002,10 @@ prompt_protocol_install_selection() {
 
   echo "0. 返回上一级"
   echo "留空则安装全部可用协议。"
-  read -rp "请选择一个或多个协议 [1-4]，逗号分隔: " choice
+  read -rp "请选择一个或多个协议 [1-${#menu_indices[@]}]，逗号分隔: " choice
 
   if [[ -z "$(trim_whitespace "${choice}")" ]]; then
-    for index in 1 2 3 4; do
+    for index in "${menu_indices[@]}"; do
       protocol=$(protocol_option_to_id "${index}") || continue
       if protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
         if [[ "${install_mode}" == "additional" && "${protocol}" == "vless-reality" ]]; then
@@ -3168,7 +3349,7 @@ prompt_global_instance_options() {
 install_protocols_interactive() {
   local install_mode=$1
   local installed_protocols=() selected_protocols=()
-  local protocol first_selected_protocol snapshot_dir
+  local protocol first_selected_protocol snapshot_dir installed_protocol_list
 
   load_stack_mode_state
 
@@ -3191,9 +3372,12 @@ install_protocols_interactive() {
     get_latest_version
     install_binary
   else
-    migrate_legacy_single_protocol_state_if_needed
+    migrate_legacy_single_protocol_state_if_needed recover-incomplete-index || return 1
     load_current_config_state
-    mapfile -t installed_protocols < <(list_installed_protocols)
+    installed_protocol_list=$(list_installed_protocols) || return 1
+    if [[ -n "${installed_protocol_list}" ]]; then
+      mapfile -t installed_protocols <<< "${installed_protocol_list}"
+    fi
     prompt_protocol_install_selection "additional" || return 0
     IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
     snapshot_dir=$(create_managed_state_snapshot) || log_error "无法创建配置状态事务快照。"
@@ -5758,16 +5942,19 @@ list_effective_protocols() {
 
   if [[ -n "${installed}" ]]; then
     list_installed_protocols
-    return 0
+    return $?
   fi
 
-  runtime_protocol_to_state "${SB_PROTOCOL}"
+  validate_protocol_index_for_rebuild || return 1
+  runtime_protocol_to_state "${SB_PROTOCOL}" || return 1
   printf '\n'
 }
 
 load_protocol_state() {
   local protocol state_file state_mode=${2:-mutable}
-  protocol=$(normalize_protocol_id "$1")
+  protocol=$(normalize_protocol_id "$1") || return 1
+  state_file=$(protocol_state_file "${protocol}") || return 1
+  validate_protocol_state_schema "${protocol}" "${state_file}" || return 1
   if [[ "${protocol}" == "vless-reality" && "${state_mode}" != "read-only" ]]; then
     migrate_vless_reality_state_to_instances_if_needed
   fi
@@ -6443,23 +6630,26 @@ build_anytls_inbound_json() {
 
 build_certificate_provider_for_protocol() {
   local protocol
-  protocol=$(normalize_protocol_id "$1")
+  protocol=$(normalize_protocol_id "$1") || return 1
 
   case "${protocol}" in
+    vless-reality|mixed) return 0 ;; # Explicit no-certificate-provider contract.
     hy2) build_hy2_certificate_provider_json ;;
     anytls) build_anytls_certificate_provider_json ;;
+    *) return 1 ;;
   esac
 }
 
 build_inbound_for_protocol() {
   local protocol
-  protocol=$(normalize_protocol_id "$1")
+  protocol=$(normalize_protocol_id "$1") || return 1
 
   case "${protocol}" in
     vless-reality) build_vless_inbound_json ;;
     mixed) build_mixed_inbound_json ;;
     hy2) build_hy2_inbound_json ;;
     anytls) build_anytls_inbound_json ;;
+    *) return 1 ;;
   esac
 }
 
@@ -6582,7 +6772,7 @@ instance_outbound_requires_warp() {
 
 build_protocol_route_rules() {
   local protocol
-  protocol=$(normalize_protocol_id "$1")
+  protocol=$(normalize_protocol_id "$1") || return 1
 
   case "${protocol}" in
     vless-reality)
@@ -6597,7 +6787,37 @@ build_protocol_route_rules() {
     anytls)
       jq -n '[{ "inbound": "anytls-in", "action": "sniff" }]'
       ;;
+    *) return 1 ;;
   esac
+}
+
+# A stream of inbound/provider objects, or exactly one route array. Empty output
+# is valid only for the explicit none/optional provider contract in the registry.
+append_protocol_fragment() {
+  local protocol=$1 kind=$2 destination=$3 fragment expected_type contract
+  protocol_registry_require_handlers "${protocol}" || return 1
+  expected_type=$(protocol_registry_field "${protocol}" type) || return 1
+  contract=$(protocol_registry_field "${protocol}" certificate_contract) || return 1
+  case "${kind}" in
+    inbound) fragment=$(build_inbound_for_protocol "${protocol}") || return $? ;;
+    certificate) fragment=$(build_certificate_provider_for_protocol "${protocol}") || return $? ;;
+    route) fragment=$(build_protocol_route_rules "${protocol}") || return $? ;;
+    *) return 1 ;;
+  esac
+  if ! jq -es --arg kind "${kind}" --arg expected_type "${expected_type}" --arg contract "${contract}" '
+    def tagged: type == "object" and (.tag | type == "string" and length > 0);
+    if $kind == "inbound" then
+      length > 0 and all(.[]; tagged and .type == $expected_type)
+    elif $kind == "certificate" then
+      if $contract == "none" then length == 0
+      elif $contract == "optional" then all(.[]; tagged and (.type | type == "string" and length > 0))
+      else false end
+    else length == 1 and (.[0] | type == "array" and all(.[]; type == "object")) end
+  ' >/dev/null 2>&1 <<< "${fragment}"; then
+    printf '[ERROR] 协议生成器返回无效片段，未发布配置。\n' >&2
+    return 1
+  fi
+  printf '%s\n' "${fragment}" >> "${destination}"
 }
 
 managed_state_snapshot_is_valid() {
@@ -6749,7 +6969,7 @@ abort_managed_state_transaction() {
 generate_config_candidate() {
   local inbound_file="" provider_file="" protocol_rule_file="" instance_outbound_rule_file=""
   local config_candidate="" backup_candidate="" protocol
-  local exit_cleanup_command
+  local exit_cleanup_command effective_protocols
   local inbounds_json certificate_providers_json protocol_rules_json instance_outbound_rules_json
 
   # Force ensure jq is installed
@@ -6762,6 +6982,11 @@ generate_config_candidate() {
     log_warn "无法生成配置：缺少可执行的 sing-box 二进制 ${SINGBOX_BIN_PATH}。"
     return 1
   fi
+
+  # Capture discovery before resource preparation; process substitution hides
+  # its failure status and could otherwise publish an empty/partial config.
+  effective_protocols=$(list_effective_protocols) || return 1
+  [[ -n "${effective_protocols}" ]] || return 1
 
   log_info "正在生成配置 (目标 sing-box $(resolve_config_target_singbox_version)，Endpoint 架构 & 安全注入)..."
   mkdir -p "${SINGBOX_CONFIG_DIR}" || return 1
@@ -6815,15 +7040,15 @@ generate_config_candidate() {
       rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
       return 1
     fi
-    if ! build_inbound_for_protocol "${protocol}" >> "${inbound_file}"; then
+    if ! append_protocol_fragment "${protocol}" inbound "${inbound_file}"; then
       rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
       return 1
     fi
-    if ! build_certificate_provider_for_protocol "${protocol}" >> "${provider_file}"; then
+    if ! append_protocol_fragment "${protocol}" certificate "${provider_file}"; then
       rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
       return 1
     fi
-    if ! build_protocol_route_rules "${protocol}" >> "${protocol_rule_file}"; then
+    if ! append_protocol_fragment "${protocol}" route "${protocol_rule_file}"; then
       rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
       return 1
     fi
@@ -6833,7 +7058,7 @@ generate_config_candidate() {
         return 1
       fi
     fi
-  done < <(list_effective_protocols)
+  done <<< "${effective_protocols}"
 
   if ! inbounds_json=$(jq -s . "${inbound_file}"); then
     rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
@@ -8715,14 +8940,10 @@ subman_node_prefix() {
 }
 
 subman_type_for_protocol() {
-  local protocol
-  protocol=$(normalize_protocol_id "$1")
-
-  case "${protocol}" in
-    vless-reality) printf 'vless' ;;
-    hy2) printf 'hysteria2' ;;
-    *) return 1 ;;
-  esac
+  local type
+  type=$(protocol_registry_field "$1" subman_type) || return 1
+  [[ -n "${type}" ]] || return 1
+  printf '%s' "${type}"
 }
 
 subman_external_key_for_protocol() {
@@ -10332,11 +10553,14 @@ detect_existing_instance_state_read_only() {
 }
 
 agent_capabilities_json() {
+  local registry
+  registry=$(protocol_registry_json) || return 1
   jq -n \
     --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
     --arg script_version "${SCRIPT_VERSION}" \
     --arg supported_version "${SB_SUPPORT_MAX_VERSION}" \
     --arg backup_root "${SB_UPGRADE_BACKUP_ROOT}" \
+    --argjson registry "${registry}" \
     '{
       schema: $schema,
       ok: true,
@@ -10344,43 +10568,8 @@ agent_capabilities_json() {
       script_version: $script_version,
       supported_sing_box_version: $supported_version,
       multi_protocol_coexistence: true,
-      protocols: {
-        "vless-reality": {
-          multi_instance: true,
-          per_instance_outbound: ["default", "direct", "warp"],
-          qos: {upload_mbps: true, download_mbps: true},
-          share_link: true,
-          qr: true,
-          client_export: true,
-          subman_sync: true
-        },
-        mixed: {
-          http: true,
-          socks5: true,
-          authentication: true,
-          share_links: ["http", "socks5"],
-          qr: false,
-          client_export: false,
-          subman_sync: false
-        },
-        hysteria2: {
-          tls_modes: ["acme_http01", "acme_cloudflare_dns01", "manual"],
-          bandwidth: true,
-          obfs: true,
-          share_link: true,
-          qr: true,
-          client_export: true,
-          subman_sync: true
-        },
-        anytls: {
-          tls_modes: ["acme_http01", "acme_cloudflare_dns01", "manual"],
-          standard_share_uri: false,
-          outbound_example: true,
-          qr: false,
-          client_export: true,
-          subman_sync: false
-        }
-      },
+      protocols: ($registry | map({key: .agent_id, value: .legacy_capabilities}) | from_entries),
+      protocol_registry: ($registry | map(. + {capabilities: .legacy_capabilities} | del(.legacy_capabilities, .handlers))),
       features: {
         warp: {
           route_modes: ["all", "selective"],
@@ -10402,7 +10591,7 @@ agent_capabilities_json() {
           script_self_update_and_uninstall: true
         },
         diagnostics: {config_check: true, doctor: true, media_check: true},
-        subman: {supported_protocols: ["vless-reality", "hysteria2"], idempotent_sync: true}
+        subman: {supported_protocols: ($registry | map(select(.subman_type != "") | .agent_id)), idempotent_sync: true}
       },
       commands: {
         capabilities: {mutation: false, sensitive: false},
@@ -11439,13 +11628,7 @@ agent_singbox_check_json() {
 }
 
 agent_protocol_id() {
-  local protocol
-  protocol=$(normalize_protocol_id "$1") || return 1
-
-  case "${protocol}" in
-    hy2) printf 'hysteria2' ;;
-    *) printf '%s' "${protocol}" ;;
-  esac
+  protocol_registry_field "$1" agent_id
 }
 
 agent_installed_protocols_json() {
@@ -12885,6 +13068,7 @@ protocol_state_matches_config() {
 
 protocol_state_layer_matches_config() {
   [[ -f "${SINGBOX_CONFIG_FILE}" && -f "${SB_PROTOCOL_INDEX_FILE}" ]] || return 1
+  validate_protocol_index_for_rebuild || return 1
 
   local config_protocols=()
   local indexed_protocols=()
@@ -13161,6 +13345,7 @@ abort_protocol_state_rebuild() {
 }
 
 rebuild_protocol_state_from_config() {
+  validate_protocol_index_for_rebuild || return 1
   [[ -f "${SINGBOX_CONFIG_FILE}" ]] || return 0
 
   local rebuilt_protocols=()

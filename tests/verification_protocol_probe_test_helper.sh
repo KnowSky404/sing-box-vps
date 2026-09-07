@@ -5,6 +5,9 @@ set -euo pipefail
 setup_protocol_probe_command_stubs() {
   local stub_dir="${TMP_DIR}/probe-bin"
 
+  VERIFY_PROTOCOL_REGISTRY_JSON=$(source "${REPO_ROOT}/install.sh"; protocol_registry_json)
+  export VERIFY_PROTOCOL_REGISTRY_JSON
+
   PROBE_CALL_LOG="${TMP_DIR}/probe-calls.log"
   PROBE_CLIENT_PID_FILE="${TMP_DIR}/probe-client.pid"
   PROBE_HTTP_PID_FILE="${TMP_DIR}/probe-http.pid"

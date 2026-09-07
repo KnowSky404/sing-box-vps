@@ -56,7 +56,12 @@ resolve_changed_files() {
 }
 
 emit_remote_payload() {
-  local scenario_file
+  local scenario_file registry_json
+
+  # Read metadata from the exact local runtime under test, before injecting it
+  # into the container. Sourcing is confined to a subshell and does not run main.
+  registry_json=$(source "${REPO_ROOT}/install.sh"; protocol_registry_json) || return 1
+  printf 'VERIFY_PROTOCOL_REGISTRY_JSON=%q\n' "${registry_json}"
 
   cat <<'EOF'
 verification_prepare_remote_local_tree() {

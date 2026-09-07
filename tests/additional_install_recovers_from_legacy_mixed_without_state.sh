@@ -71,6 +71,42 @@ INSTALLED_PROTOCOLS=mixed
 PROTOCOL_STATE_VERSION=1
 EOF
 
+cp "${SINGBOX_CONFIG_FILE}" "${TMP_DIR}/config.before"
+cp "${SB_PROTOCOL_INDEX_FILE}" "${TMP_DIR}/index.before"
+
+# Enumeration must preserve an incomplete index rather than erase it to
+# trigger recovery. Migration is allowed only by the explicit write workflow.
+if list_installed_protocols > "${TMP_DIR}/list.stdout" 2> "${TMP_DIR}/list.stderr"; then
+  printf 'expected ordinary enumeration to reject incomplete state\n' >&2
+  exit 1
+fi
+cmp "${SB_PROTOCOL_INDEX_FILE}" "${TMP_DIR}/index.before"
+[[ ! -s "${TMP_DIR}/list.stdout" && ! -f "${SB_PROTOCOL_STATE_DIR}/mixed.env" ]]
+
+# Partial recovery must restore the still-present index on state-write failure.
+if (
+  save_mixed_state() { return 37; }
+  migrate_legacy_single_protocol_state_if_needed recover-incomplete-index
+) > "${TMP_DIR}/failure.stdout" 2> "${TMP_DIR}/failure.stderr"; then
+  printf 'expected legacy recovery to propagate state-write failure\n' >&2
+  exit 1
+fi
+cmp "${SB_PROTOCOL_INDEX_FILE}" "${TMP_DIR}/index.before"
+[[ ! -f "${SB_PROTOCOL_STATE_DIR}/mixed.env" ]]
+
+# A different tag, listener, extra user or unrecognized option is not the
+# legacy shape. Leave it for explicit takeover rather than discard fields.
+for mutation in '.inbounds[0].tag="custom-mixed"' \
+  '.inbounds[0].listen="127.0.0.1"' \
+  '.inbounds[0].users += [{"username":"second","password":"second-pass"}]' \
+  '.inbounds[0].set_system_proxy=true'; do
+  jq "${mutation}" "${TMP_DIR}/config.before" > "${SINGBOX_CONFIG_FILE}"
+  migrate_legacy_single_protocol_state_if_needed recover-incomplete-index
+  cmp "${SB_PROTOCOL_INDEX_FILE}" "${TMP_DIR}/index.before"
+  [[ ! -f "${SB_PROTOCOL_STATE_DIR}/mixed.env" ]]
+done
+cp "${TMP_DIR}/config.before" "${SINGBOX_CONFIG_FILE}"
+
 install_protocols_interactive "additional" <<'EOF'
 3
 hy2.example.com
@@ -86,6 +122,8 @@ n
 
 EOF
 
+cmp "${SINGBOX_CONFIG_FILE}" "${TMP_DIR}/config.before"
+
 if [[ ! -f "${SB_PROTOCOL_STATE_DIR}/mixed.env" ]]; then
   printf 'expected mixed protocol state file to be recreated from legacy config\n' >&2
   exit 1
@@ -98,6 +136,11 @@ fi
 
 if ! grep -Fq 'USERNAME=legacy-user' "${SB_PROTOCOL_STATE_DIR}/mixed.env"; then
   printf 'expected mixed state to preserve username, got:\n%s\n' "$(cat "${SB_PROTOCOL_STATE_DIR}/mixed.env")" >&2
+  exit 1
+fi
+
+if ! grep -Fqx 'PASSWORD=legacy-pass' "${SB_PROTOCOL_STATE_DIR}/mixed.env"; then
+  printf 'expected legacy Mixed credentials to survive recovery\n' >&2
   exit 1
 fi
 

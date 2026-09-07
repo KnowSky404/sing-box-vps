@@ -227,27 +227,77 @@ verification_finalize_scenario() {
 read_installed_protocols() {
   local index_file=/root/sing-box-vps/protocols/index.env
   local protocols=''
-  local protocol
+  local raw_protocol protocol
+  local protocol_entries=()
+  local seen=','
 
   test -f "${index_file}" || return 0
-  protocols=$(sed -n 's/^INSTALLED_PROTOCOLS=//p' "${index_file}" | head -n 1)
-  protocols=${protocols//,/ }
+  protocols=$(sed -n 's/^INSTALLED_PROTOCOLS=//p' "${index_file}" | head -n 1) || return $?
+  IFS=',' read -r -a protocol_entries <<< "${protocols}"
 
-  for protocol in ${protocols}; do
+  for raw_protocol in "${protocol_entries[@]}"; do
+    protocol=$(printf '%s' "${raw_protocol}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//') || return $?
     [[ -n "${protocol}" ]] || continue
+    protocol=$(verification_protocol_canonical_id "${protocol}") || return $?
+    case "${seen}" in
+      *,"${protocol}",*) continue ;;
+    esac
     printf '%s\n' "${protocol}"
+    seen="${seen}${protocol},"
   done
 }
 
+verification_protocol_id_is_safe() {
+  [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9+._-]*$ ]]
+}
+
+verification_protocol_canonical_id() {
+  local protocol=${1:-}
+  local metadata canonical
+
+  if ! verification_protocol_id_is_safe "${protocol}"; then
+    printf 'invalid protocol id in verification index\n' >&2
+    return 1
+  fi
+  if metadata=$(verification_protocol_metadata "${protocol}"); then
+    canonical=$(jq -er '.state_id' <<< "${metadata}") || return 1
+    if ! verification_protocol_id_is_safe "${canonical}"; then
+      printf 'invalid protocol state id in verification registry\n' >&2
+      return 1
+    fi
+    printf '%s\n' "${canonical}"
+  else
+    # A syntactically valid, unknown ID remains observable as unsupported.
+    printf '%s\n' "${protocol}"
+  fi
+}
+
 verification_protocol_probe_support_status() {
-  case "${1}" in
-    vless-reality|mixed|hy2|anytls)
+  local metadata
+  [[ -n "${VERIFY_PROTOCOL_REGISTRY_JSON:-}" ]] || {
+    printf 'protocol registry unavailable for verification\n' >&2
+    return 1
+  }
+  if ! jq -e 'type == "array" and length > 0 and all(.[];
+    (.state_id | type == "string" and length > 0) and
+    (.probe | type == "string") and (.aliases | type == "array"))' \
+    >/dev/null 2>&1 <<< "${VERIFY_PROTOCOL_REGISTRY_JSON}"; then
+    printf 'invalid protocol registry for verification\n' >&2
+    return 1
+  fi
+  if metadata=$(verification_protocol_metadata "$1"); then
+    if [[ "$(jq -r '.probe' <<< "${metadata}")" == "tcp_loopback" ]]; then
       printf 'supported\n'
-      ;;
-    *)
-      printf 'unsupported\n'
-      ;;
-  esac
+      return 0
+    fi
+  fi
+  printf 'unsupported\n'
+}
+
+verification_protocol_metadata() {
+  jq -ce --arg protocol "$1" '
+    .[] | select(.state_id == $protocol or (.aliases | index($protocol) != null))
+  ' <<< "${VERIFY_PROTOCOL_REGISTRY_JSON:-null}"
 }
 
 verification_record_protocol_probe_result() {

@@ -68,6 +68,7 @@ resolve_local_tests() {
       tests/sbv_update_transactions.sh \
       tests/bootstrap_download.sh \
       tests/cli_update_commands.sh \
+      tests/protocol_registry_contract.sh \
       tests/verification_protocol_probe_matrix.sh \
       tests/verification_protocol_probe_vless.sh \
       tests/verification_protocol_probe_hy2.sh \

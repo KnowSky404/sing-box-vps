@@ -80,3 +80,10 @@ Common task routing:
 
 Search keywords:
 install, upgrade, production, Docker verification, rollback, recovery, sbv agent, node info, connection links, client export, SubMan sync, sing-box check, sing-box-prod, dev/verification/run.sh, config.json, protocols, Warp, VLESS REALITY, REALITY multi-instance, rate limits, QoS, Hysteria2, AnyTLS, Mixed proxy, systemctl sing-box.
+
+Protocol registry:
+- `sbv agent capabilities --json` includes additive `protocol_registry` metadata from install.sh. Legacy `protocols` keys and envelope remain compatible.
+- Separate family/preset/role/state_id/agent_id; legacy `vless` still resolves to the REALITY preset, and Hysteria2 state ID remains `hy2`.
+- `implemented` describes the project adapter; `available=null` and `validated.status=not_assessed` do not certify the current environment or connection. Perform instance preflight/check and inspect real probe artifacts.
+- Unknown state IDs/schema versions and invalid builder fragments block reconstruction without removing those entries. Use a compatible script or restore a reviewed backup; do not delete unknown state to bypass the guard.
+- Full-scope progress: docs/superpowers/plans/2026-09-06-unified-protocol-management.md; upstream evidence: docs/superpowers/specs/2026-09-06-protocol-coverage.md.

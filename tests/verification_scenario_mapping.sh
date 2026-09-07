@@ -10,6 +10,13 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 source "${REPO_ROOT}/dev/verification/common.sh"
 # shellcheck disable=SC1091
 source "${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
+VERIFY_PROTOCOL_REGISTRY_JSON=$(source "${REPO_ROOT}/install.sh"; protocol_registry_json)
+# Load the real metadata lookup without starting the remote entrypoint.
+source <(awk '
+  /^verification_protocol_metadata\(\)/ {printing=1}
+  printing {print}
+  /^}/ && printing {exit}
+' "${REPO_ROOT}/dev/verification/remote/entrypoint.sh")
 
 [[ $(verification_config_inbound_type_for_protocol vless-reality) == "vless" ]]
 [[ $(verification_config_inbound_type_for_protocol mixed) == "mixed" ]]

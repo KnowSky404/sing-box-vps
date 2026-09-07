@@ -84,6 +84,9 @@ write_probe_harness() {
   local artifact_dir=$3
   local calls_file=$4
   local setup_snippet=${5:-}
+  local index_contents=${6:-$'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,mystery-protocol'}
+  local index_contents_shell
+  printf -v index_contents_shell '%q' "${index_contents}"
 
   cat > "${harness_path}" <<EOF
 #!/usr/bin/env bash
@@ -111,9 +114,7 @@ PROBE_CALLS_FILE="${calls_file}"
 
 ${setup_snippet}
 
-cat > "${INDEX_FILE}" <<'INDEX_EOF'
-INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,mystery-protocol
-INDEX_EOF
+printf '%s\n' ${index_contents_shell} > "${INDEX_FILE}"
 
 verification_run_protocol_probes
 EOF
@@ -181,6 +182,40 @@ grep -Fqx 'RESULT=failure' \
   "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/anytls/result.env"
 grep -Fqx 'RESULT=unsupported' \
   "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/mystery-protocol/result.env"
+
+ALIAS_ARTIFACT_DIR="${TMP_DIR}/artifacts-alias"
+ALIAS_CALLS_FILE="${TMP_DIR}/calls-alias.log"
+write_probe_harness \
+  "${TMP_DIR}/probe-harness-alias.sh" \
+  "${TESTABLE_ENTRYPOINT}" \
+  "${ALIAS_ARTIFACT_DIR}" \
+  "${ALIAS_CALLS_FILE}" \
+  $'verification_execute_single_protocol_probe() {\n  printf \'%s\\n\' "$1" >> "${PROBE_CALLS_FILE}"\n}' \
+  $'INSTALLED_PROTOCOLS=vless,vless+reality,hysteria2,hy2,mixed,mixed'
+
+bash "${TMP_DIR}/probe-harness-alias.sh"
+printf '%s\n' vless-reality hy2 mixed > "${TMP_DIR}/calls-alias.expected"
+cmp "${TMP_DIR}/calls-alias.expected" "${ALIAS_CALLS_FILE}"
+
+INVALID_ARTIFACT_DIR="${TMP_DIR}/artifacts-invalid-id"
+INVALID_CALLS_FILE="${TMP_DIR}/calls-invalid-id.log"
+write_probe_harness \
+  "${TMP_DIR}/probe-harness-invalid-id.sh" \
+  "${TESTABLE_ENTRYPOINT}" \
+  "${INVALID_ARTIFACT_DIR}" \
+  "${INVALID_CALLS_FILE}" \
+  $'verification_execute_single_protocol_probe() {\n  printf \'%s\\n\' "$1" >> "${PROBE_CALLS_FILE}"\n}' \
+  $'INSTALLED_PROTOCOLS=mixed,../../escape'
+
+if bash "${TMP_DIR}/probe-harness-invalid-id.sh" \
+  > "${TMP_DIR}/stdout-invalid-id.txt" \
+  2> "${TMP_DIR}/stderr-invalid-id.txt"; then
+  printf 'expected invalid protocol ID to fail closed\n' >&2
+  exit 1
+fi
+grep -Fq 'invalid protocol id in verification index' "${TMP_DIR}/stderr-invalid-id.txt"
+[[ ! -s "${INVALID_CALLS_FILE}" ]]
+[[ ! -e "${TMP_DIR}/escape" ]]
 
 ACTUAL_ARTIFACT_DIR="${TMP_DIR}/artifacts-actual"
 ACTUAL_CONFIG_FILE="${TMP_DIR}/actual-client.json"

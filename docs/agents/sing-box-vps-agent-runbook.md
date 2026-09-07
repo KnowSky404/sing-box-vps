@@ -2,6 +2,10 @@
 
 This runbook is for AI agents operating the `sing-box-vps` repository and remote VPS hosts. It is written for Hermes, OpenClaw, Codex, Claude Code, and other automation agents.
 
+The additive `protocol_registry` in `sbv agent capabilities --json` describes each managed protocol family, preset, component role, state ID, public Agent ID and capability. The legacy `protocols` object and JSON envelopes retain their existing meanings. `available=null` and `validated.status=not_assessed` mean that the current environment and instance connection have not been verified; do not treat implemented adapters as deployment approval or successful runtime evidence. The legacy alias `vless` continues to mean VLESS REALITY, and the Hysteria2 state ID remains `hy2`.
+
+Unknown state IDs or future schema versions block reconstruction while preserving those entries. Restore a compatible script or reviewed backup to recover; do not remove unknown files to bypass the guard. Track the full protocol expansion and evidence in [the implementation record](../superpowers/plans/2026-09-06-unified-protocol-management.md) and [the upstream matrix](../superpowers/specs/2026-09-06-protocol-coverage.md).
+
 ## First Principles
 
 - Treat `install.sh` as the single runtime source of truth.
