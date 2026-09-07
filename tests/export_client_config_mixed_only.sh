@@ -103,6 +103,7 @@ jq -e '
   and .path == (env.SB_PROJECT_DIR + "/client/sing-box-client.json")
   and any(.config.outbounds[]?; .type == "socks" and .tag == "mixed_test-host" and .server_port == 2080)
   and any(.warnings[]?; .code == "mixed_plaintext_transport")
+  and all(.warnings[]?; .code != "socks_plaintext_transport")
 ' <<< "${agent_json}" >/dev/null
 
 printf 'mixed-only client export checks passed\n'

@@ -27,6 +27,8 @@ SERVICE_ACTIVE_FILE="${TMP_DIR}/service-active"
 STATE_FILE="${PROTOCOLS_DIR}/vless-reality.env"
 INSTANCE_STATE_FILE="${PROTOCOLS_DIR}/vless-reality.d/main.env"
 ANYTLS_STATE_FILE="${PROTOCOLS_DIR}/anytls.env"
+SOCKS_STATE_FILE="${PROTOCOLS_DIR}/socks.env"
+SOCKS_STORE_FILE="${PROTOCOLS_DIR}/instances/socks.json"
 INDEX_FILE="${PROTOCOLS_DIR}/index.env"
 ASSERT_LOG_FILE="${TMP_DIR}/assert.log"
 CALLS_FILE="${TMP_DIR}/calls.log"
@@ -224,6 +226,44 @@ STATE_EOF
     }
   ]
 }
+
+CONFIG_EOF
+}
+
+write_socks_state() {
+  mkdir -p "$(dirname "${SOCKS_STORE_FILE}")"
+  printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2\n' > "${SOCKS_STATE_FILE}"
+  cat > "${SOCKS_STORE_FILE}" <<'STATE_EOF'
+{
+  "schema_version": 1,
+  "protocol": "socks",
+  "revision": 1,
+  "default_instance_id": "main",
+  "instances": [
+    {
+      "id": "main",
+      "name": "SOCKS verification",
+      "tag": "socks-in",
+      "listen": {"address": "127.0.0.1", "port": 1081},
+      "authentication": {"enabled": true, "username": "socks-user", "password": "socks-pass"},
+      "outbound_policy": "default",
+      "dependencies": []
+    }
+  ]
+}
+STATE_EOF
+  cat > "${CONFIG_FILE}" <<'CONFIG_EOF'
+{
+  "inbounds": [
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "listen": "127.0.0.1",
+      "listen_port": 1081,
+      "users": [{"username": "socks-user", "password": "socks-pass"}]
+    }
+  ]
+}
 CONFIG_EOF
 }
 
@@ -388,6 +428,33 @@ INDEX_EOF
           return 0
         fi
 
+        if [[ "${actual_lines[2]:-}" == "5" ]]; then
+          if [[ "${#actual_lines[@]}" -ne 10 ]]; then
+            printf 'unexpected socks install input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
+            return 1
+          fi
+          [[ "${actual_lines[0]}" == "1" ]]
+          [[ "${actual_lines[1]}" == "" ]]
+          [[ "${actual_lines[2]}" == "5" ]]
+          [[ "${actual_lines[3]}" == "1081" ]]
+          [[ "${actual_lines[4]}" == "y" ]]
+          [[ "${actual_lines[5]}" == "socks-user" ]]
+          [[ "${actual_lines[6]}" == "socks-pass" ]]
+          [[ "${actual_lines[7]}" == "n" ]]
+          [[ "${actual_lines[8]}" == "n" ]]
+          [[ "${actual_lines[9]}" == "0" ]]
+          printf '1081\n' > "${PORT_FILE}"
+          printf '1\n' > "${CONFIG_PRESENT_FILE}"
+          printf '1\n' > "${SERVICE_FILE_PRESENT_FILE}"
+          printf '1\n' > "${SBV_PRESENT_FILE}"
+          printf '1\n' > "${SERVICE_ACTIVE_FILE}"
+          write_socks_state
+          cat > "${INDEX_FILE}" <<'INDEX_EOF'
+INSTALLED_PROTOCOLS=socks
+INDEX_EOF
+          return 0
+        fi
+
         printf 'unexpected install input: %s\n' "${actual_lines[*]:-}" >&2
         return 1
       fi
@@ -495,6 +562,16 @@ test() {
     return
   fi
 
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/socks.env" ]]; then
+    [[ -f "${SOCKS_STATE_FILE}" ]]
+    return
+  fi
+
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/instances/socks.json" ]]; then
+    [[ -f "${SOCKS_STORE_FILE}" ]]
+    return
+  fi
+
   if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
     [[ -f "${INDEX_FILE}" ]]
     return
@@ -552,6 +629,10 @@ jq() {
     args[$last_index]="${EXPORT_FILE}"
   fi
 
+  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/socks.json" ]]; then
+    args[$last_index]="${SOCKS_STORE_FILE}"
+  fi
+
   command "${REAL_JQ}" "${args[@]}"
 }
 
@@ -569,6 +650,14 @@ sed() {
 
   if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/anytls.env" ]]; then
     args[$last_index]="${ANYTLS_STATE_FILE}"
+  fi
+
+  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/socks.env" ]]; then
+    args[$last_index]="${SOCKS_STATE_FILE}"
+  fi
+
+  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/socks.json" ]]; then
+    args[$last_index]="${SOCKS_STORE_FILE}"
   fi
 
   if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
@@ -615,11 +704,29 @@ grep() {
     args[$last_index]="${ANYTLS_STATE_FILE}"
   fi
 
+  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/socks.env" ]]; then
+    args[$last_index]="${SOCKS_STATE_FILE}"
+  fi
+
+  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/instances/socks.json" ]]; then
+    args[$last_index]="${SOCKS_STORE_FILE}"
+  fi
+
   if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/index.env" ]]; then
     args[$last_index]="${INDEX_FILE}"
   fi
 
   command grep "${args[@]}"
+}
+
+stat() {
+  local args=("$@")
+  local last_index=$(( $# - 1 ))
+  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/socks.json" ]]; then
+    printf '600\n'
+    return 0
+  fi
+  command stat "$@"
 }
 
 systemctl() {
@@ -710,6 +817,8 @@ SERVICE_ACTIVE_FILE="${SERVICE_ACTIVE_FILE}" \
 STATE_FILE="${STATE_FILE}" \
 INSTANCE_STATE_FILE="${INSTANCE_STATE_FILE}" \
 ANYTLS_STATE_FILE="${ANYTLS_STATE_FILE}" \
+SOCKS_STATE_FILE="${SOCKS_STATE_FILE}" \
+SOCKS_STORE_FILE="${SOCKS_STORE_FILE}" \
 INDEX_FILE="${INDEX_FILE}" \
 ASSERT_LOG_FILE="${ASSERT_LOG_FILE}" \
 INSTALL_COUNT_FILE="${INSTALL_COUNT_FILE}" \
@@ -723,6 +832,7 @@ REAL_JQ="${REAL_JQ}" \
     reconfigure_existing_install \
     legacy_takeover_export \
     fresh_install_anytls \
+    fresh_install_socks \
     runtime_smoke \
     uninstall_and_reinstall \
     > "${STDOUT_FILE}" \
@@ -736,6 +846,7 @@ grep -Fqx 'SCENARIO=fresh_install_vless' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=reconfigure_existing_install' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=legacy_takeover_export' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=fresh_install_anytls' "${STDOUT_FILE}"
+grep -Fqx 'SCENARIO=fresh_install_socks' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=uninstall_and_reinstall' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=runtime_smoke' "${STDOUT_FILE}"
 grep -Fq '__SING_BOX_VPS_REMOTE_ARTIFACT_BUNDLE_BEGIN__' "${STDOUT_FILE}"
@@ -763,12 +874,15 @@ jq -e '.outbounds[0] | has("flow") | not' \
   "${ARTIFACT_DIR}/scenarios/legacy_takeover_export/protocol-probes/vless-reality/client.json" >/dev/null
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_anytls/protocol-probes/anytls/result.env"
 grep -Fqx 'sing-box version 1.14.0' "${ARTIFACT_DIR}/scenarios/fresh_install_anytls/sing-box.version.txt"
+[[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_socks/config.json" ]]
+[[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_socks/protocols/instances/socks.json" ]]
+grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_socks/protocol-probes/socks/result.env"
 [[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/sing-box-check.txt" ]]
 grep -Fqx 'STATUS=success' "${ARTIFACT_DIR}/scenarios/runtime_smoke/result.env"
-grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/anytls/result.env"
+grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/socks/result.env"
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/uninstall_and_reinstall/protocol-probes/vless-reality/result.env"
-[[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/anytls/client.json" ]]
-[[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/anytls/probe.stdout.txt" ]]
+[[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/socks/client.json" ]]
+[[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/socks/probe.stdout.txt" ]]
 grep -Fq 'verification_run_protocol_probes' "${PAYLOAD_FILE}"
 grep -Fq 'verification_scenario_upgrade_1_13_to_1_14' "${PAYLOAD_FILE}"
 grep -Fq 'run_verification_scenario upgrade_1_13_to_1_14 verification_scenario_upgrade_1_13_to_1_14' "${PAYLOAD_FILE}"

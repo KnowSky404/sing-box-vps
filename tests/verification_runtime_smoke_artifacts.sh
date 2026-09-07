@@ -27,6 +27,8 @@ REMOTE_INSTANCE_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/vless-reality.d/main.env"
 REMOTE_MIXED_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/mixed.env"
 REMOTE_HY2_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/hy2.env"
 REMOTE_ANYTLS_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/anytls.env"
+REMOTE_SOCKS_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/socks.env"
+REMOTE_SOCKS_STORE_FILE="${REMOTE_PROTOCOLS_DIR}/instances/socks.json"
 REMOTE_INDEX_FILE="${REMOTE_PROTOCOLS_DIR}/index.env"
 REMOTE_ASSERT_LOG_FILE="${TMP_DIR}/remote-assert.log"
 REMOTE_DISPATCH_LOG_FILE="${TMP_DIR}/remote-dispatch.log"
@@ -217,6 +219,31 @@ TLS_MODE=manual
 STATE_EOF
 }
 
+write_socks_state() {
+  mkdir -p "\$(dirname "\${REMOTE_SOCKS_STORE_FILE}")"
+  cat > "\${REMOTE_SOCKS_STATE_FILE}" <<'STATE_EOF'
+INSTALLED=1
+CONFIG_SCHEMA_VERSION=2
+STATE_EOF
+  cat > "\${REMOTE_SOCKS_STORE_FILE}" <<'STATE_EOF'
+{
+  "schema_version": 1,
+  "protocol": "socks",
+  "revision": 1,
+  "default_instance_id": "main",
+  "instances": [{
+    "id": "main",
+    "name": "SOCKS verification",
+    "tag": "socks-in",
+    "listen": {"address": "127.0.0.1", "port": 1081},
+    "authentication": {"enabled": true, "username": "socks-user", "password": "socks-pass"},
+    "outbound_policy": "default",
+    "dependencies": []
+  }]
+}
+STATE_EOF
+}
+
 write_runtime_config() {
   cat > "\${REMOTE_CONFIG_FILE}" <<CONFIG_EOF
 {
@@ -278,6 +305,13 @@ write_runtime_config() {
           "password": "mixed-pass"
         }
       ]
+    },
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "listen": "127.0.0.1",
+      "listen_port": 1081,
+      "users": [{"username": "socks-user", "password": "socks-pass"}]
     }
   ]
 }
@@ -289,8 +323,9 @@ enable_multi_protocol_probe_fixture() {
   write_mixed_state
   write_hy2_state
   write_anytls_state
+  write_socks_state
   cat > "\${REMOTE_INDEX_FILE}" <<'INDEX_EOF'
-INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,mystery-protocol
+INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,mystery-protocol
 INDEX_EOF
   write_runtime_config
 }
@@ -555,6 +590,41 @@ INDEX_EOF
           return 0
         fi
 
+        if [[ "\${actual_lines[2]:-}" == "5" ]]; then
+          [[ "\${#actual_lines[@]}" -eq 10 ]]
+          [[ "\${actual_lines[0]}" == "1" ]]
+          [[ "\${actual_lines[1]}" == "" ]]
+          [[ "\${actual_lines[2]}" == "5" ]]
+          [[ "\${actual_lines[3]}" == "1081" ]]
+          [[ "\${actual_lines[4]}" == "y" ]]
+          [[ "\${actual_lines[5]}" == "socks-user" ]]
+          [[ "\${actual_lines[6]}" == "socks-pass" ]]
+          [[ "\${actual_lines[7]}" == "n" ]]
+          [[ "\${actual_lines[8]}" == "n" ]]
+          [[ "\${actual_lines[9]}" == "0" ]]
+          printf '1081\n' > "\${REMOTE_PORT_FILE}"
+          printf '1\n' > "\${REMOTE_CONFIG_PRESENT_FILE}"
+          printf '1\n' > "\${REMOTE_SERVICE_FILE_PRESENT_FILE}"
+          printf '1\n' > "\${REMOTE_SBV_PRESENT_FILE}"
+          printf '1\n' > "\${REMOTE_SERVICE_ACTIVE_FILE}"
+          write_socks_state
+          cat > "\${REMOTE_CONFIG_FILE}" <<'CONFIG_EOF'
+{
+  "inbounds": [{
+    "type": "socks",
+    "tag": "socks-in",
+    "listen": "127.0.0.1",
+    "listen_port": 1081,
+    "users": [{"username": "socks-user", "password": "socks-pass"}]
+  }]
+}
+CONFIG_EOF
+          cat > "\${REMOTE_INDEX_FILE}" <<'INDEX_EOF'
+INSTALLED_PROTOCOLS=socks
+INDEX_EOF
+          return 0
+        fi
+
         printf 'unexpected install input: %s\n' "\${actual_lines[*]:-}" >&2
         return 1
       fi
@@ -663,6 +733,16 @@ test() {
     return
   fi
 
+  if [[ "\${1:-}" == "-f" && "\${2:-}" == "/root/sing-box-vps/protocols/socks.env" ]]; then
+    [[ -f "\${REMOTE_SOCKS_STATE_FILE}" ]]
+    return
+  fi
+
+  if [[ "\${1:-}" == "-f" && "\${2:-}" == "/root/sing-box-vps/protocols/instances/socks.json" ]]; then
+    [[ -f "\${REMOTE_SOCKS_STORE_FILE}" ]]
+    return
+  fi
+
   if [[ "\${1:-}" == "-f" && "\${2:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
     [[ -f "\${REMOTE_INDEX_FILE}" ]]
     return
@@ -749,6 +829,10 @@ jq() {
     args[\$last_index]="\${REMOTE_EXPORT_FILE}"
   fi
 
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/instances/socks.json" ]]; then
+    args[\$last_index]="\${REMOTE_SOCKS_STORE_FILE}"
+  fi
+
   command "\${REAL_JQ}" "\${args[@]}"
 }
 
@@ -766,6 +850,10 @@ sed() {
 
   if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
     args[\$last_index]="\${REMOTE_INDEX_FILE}"
+  fi
+
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/socks.env" ]]; then
+    args[\$last_index]="\${REMOTE_SOCKS_STATE_FILE}"
   fi
 
   command sed "\${args[@]}"
@@ -808,11 +896,29 @@ grep() {
     args[\$last_index]="\${REMOTE_ANYTLS_STATE_FILE}"
   fi
 
+  if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/socks.env" ]]; then
+    args[\$last_index]="\${REMOTE_SOCKS_STATE_FILE}"
+  fi
+
+  if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/instances/socks.json" ]]; then
+    args[\$last_index]="\${REMOTE_SOCKS_STORE_FILE}"
+  fi
+
   if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/index.env" ]]; then
     args[\$last_index]="\${REMOTE_INDEX_FILE}"
   fi
 
   command grep "\${args[@]}"
+}
+
+stat() {
+  local args=("\$@")
+  local last_index=\$(( \$# - 1 ))
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/instances/socks.json" ]]; then
+    printf '600\n'
+    return 0
+  fi
+  command stat "\$@"
 }
 PAYLOAD_PRELUDE
 cat >> "\${script_file}"
@@ -898,6 +1004,8 @@ REMOTE_DISPATCH_LOG_FILE="${REMOTE_DISPATCH_LOG_FILE}" \
 REMOTE_PROBE_CLIENT_PID_FILE="${TMP_DIR}/remote-probe-client.pid" \
 REMOTE_PROBE_HTTP_PID_FILE="${TMP_DIR}/remote-probe-http.pid" \
 INSTALL_COUNT_FILE="${INSTALL_COUNT_FILE}" \
+REMOTE_SOCKS_STATE_FILE="${REMOTE_SOCKS_STATE_FILE}" \
+REMOTE_SOCKS_STORE_FILE="${REMOTE_SOCKS_STORE_FILE}" \
 REAL_JQ="${REAL_JQ}" \
 PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" "\${script_file}" "\${@:7}"
   exit \$?

@@ -2,7 +2,7 @@
 
 This runbook is for AI agents operating the `sing-box-vps` repository and remote VPS hosts. It is written for Hermes, OpenClaw, Codex, Claude Code, and other automation agents.
 
-The additive `protocol_registry` in `sbv agent capabilities --json` describes each managed protocol family, preset, component role, state ID, public Agent ID and capability. The legacy `protocols` object and JSON envelopes retain their existing meanings. `available=null` and `validated.status=not_assessed` mean that the current environment and instance connection have not been verified; do not treat implemented adapters as deployment approval or successful runtime evidence. The legacy alias `vless` continues to mean VLESS REALITY, and the Hysteria2 state ID remains `hy2`.
+The additive `protocol_registry` in `sbv agent capabilities --json` describes each managed protocol family, preset, component role, state ID, public Agent ID and capability. The legacy `protocols` object and JSON envelopes retain their existing meanings. `available=null` and `validated.status=not_assessed` mean that the current environment and instance connection have not been verified; do not treat implemented adapters as deployment approval or successful runtime evidence. The legacy alias `vless` continues to mean VLESS REALITY, the Hysteria2 state ID remains `hy2`, and standalone SOCKS is registry/menu item 5 with state and Agent ID `socks`; its lifecycle passed the final verification gate. The full protocol goal remains unfinished.
 
 Client exports validate component references before the target core check and publication. A rejected candidate returns `client_config_validation_failed` with `ok=false`; the previous export and backup remain unchanged. Graph diagnostics go to stderr without config contents or user-controlled tags. This candidate preflight does not change the read-only `check`/upgrade behavior for existing configurations or imply support for additional managed protocols.
 
@@ -10,11 +10,11 @@ Unknown state IDs or future schema versions block reconstruction while preservin
 
 ## First Principles
 
-Instance identity is scoped by protocol and instance ID. Shared read-only adapters expose legacy singleton files as `main` and retain REALITY's existing IDs/default. Agent nodes/links and REALITY client rendering use these adapters without migrating state or preparing credentials; non-REALITY multi-instance persistence is not implemented yet. Existing public Agent fields remain unchanged.
+Instance identity is scoped by protocol and instance ID. Shared read-only adapters expose legacy singleton files as `main` and retain REALITY's existing IDs/default. Agent nodes/links and client rendering for Mixed and standalone SOCKS expose each structured instance and its revision without migrating legacy state or preparing credentials. Existing public Agent fields remain unchanged; standalone SOCKS lifecycle passed the final local/Docker/core verification gate.
 
-The new internal structured-store primitive (`protocols/instances/<protocol>.json`) currently has a typed Mixed validator/renderer. It is not connected to public lifecycle commands, legacy health repair or takeover. Do not activate it by hand or treat its file-level rollback as a complete service/resource transaction; integration must use the existing managed-state snapshot and configuration publication boundaries.
+The structured stores under `protocols/instances/<protocol>.json` have typed Mixed and standalone SOCKS validators/renderers and are connected to the guarded instance lifecycle. Use `sbv agent instance create|replace|delete|default|migrate|recover mixed --json --yes --expected-revision N` for Mixed; standalone SOCKS supports the same operations except `migrate`, which returns invalid arguments because it has no legacy `.env` migration path. Existing live SOCKS configuration uses takeover. Create/replace require a complete private `--file` record and delete/default require `--id`. Do not hand-edit stores or treat file rollback as a complete service/resource transaction; lifecycle writes use the managed-state snapshot, configuration publication, listener/resource checks and persistent recovery boundaries. Standalone SOCKS lifecycle verification passed the final gate; see the [implementation record](../superpowers/plans/2026-09-06-unified-protocol-management.md) for evidence and limits.
 
-Client export now includes the existing plain Mixed singleton as a SOCKS5 outbound with explicit UoT v2, including when Mixed is the only installed protocol. It preserves the stored authentication mode and credentials; missing or invalid port/authentication state aborts the whole export without rotating the existing file or backup. `nodes.client_exportable` and `capabilities` reflect this. Export responses include `warnings[].code=mixed_plaintext_transport`: SOCKS5 credentials and unencrypted application traffic are exposed on the proxy hop without TLS, so use a trusted network or protected tunnel. UoT encapsulates UDP over TCP, does not encrypt it, and requires no additional fixed server UDP listener. This does not add independent SOCKS server management, Mixed multi-instance lifecycle, or SubMan support.
+Client export includes Mixed and standalone SOCKS as SOCKS5 outbounds with explicit UoT v2, including when either is the only installed protocol. It preserves stored authentication mode and credentials; missing or invalid port/authentication state aborts the whole export without rotating the existing file or backup. `nodes.client_exportable` and `capabilities` reflect this. Export responses include a plaintext transport warning: SOCKS5 credentials and unencrypted application traffic are exposed on the proxy hop without TLS, so use a trusted network or protected tunnel. UoT encapsulates UDP over TCP, does not encrypt it, and requires no additional fixed server UDP listener. Standalone SOCKS has no HTTP/TLS surface or SubMan sync; its lifecycle/runtime/export paths passed the final gate, while public native UDP remains unverified.
 
 Managed server candidates and typed stores now check fixed listener conflicts by canonical address, address family, TCP/UDP, port and inbound tag. Cleanup of a removed listener uses the previous config backup and remaining listeners: it retains any transport/port still referenced and does not delete unrelated transports. An absent/unmodelled inventory blocks cleanup; a backend failure returns nonzero and explicitly reports possibly partial external changes. Do not infer a firewall ownership ledger, other-process port availability, dynamic SOCKS UDP/ACME resource coverage, or full service/resource rollback from this preflight. Existing `agent check` still means the core check, not a port reservation.
 
@@ -174,7 +174,7 @@ Keep historical functions in scope when planning or documenting a change:
 
 | Area | Current capability | Agent route |
 |---|---|---|
-| Protocols | VLESS REALITY, Mixed HTTP/SOCKS, Hysteria2, AnyTLS; protocols can coexist | Discover with `capabilities`; summaries with `nodes`; install/edit/remove remain interactive |
+| Protocols | VLESS REALITY, Mixed HTTP/SOCKS, standalone SOCKS, Hysteria2, AnyTLS; protocols can coexist | Discover with `capabilities`; summaries with `nodes`; install/edit/remove remain interactive; standalone SOCKS lifecycle passed the final gate |
 | REALITY | Multiple instances, independent ports/ShortID/names, per-instance outbound policy and optional upload/download QoS | Read with `nodes`; mutate through the interactive protocol menu |
 | TLS | Hysteria2/AnyTLS ACME HTTP-01, Cloudflare DNS-01, or manual certificate paths | Read warnings/check output; mutate interactively |
 | Warp | Account registration, enable/disable, all/selective routing, built-in/custom domains, local/remote rule sets | Read with `warp`; mutate through menu 13 |
@@ -182,7 +182,7 @@ Keep historical functions in scope when planning or documenting a change:
 | Node material | Links/QR, bare-core client export, dual-stack labels | `nodes` is log-safe; `links` and `export-client` are sensitive |
 | SubMan | Idempotent VLESS/Hysteria2 sync, revision/error/retry semantics | `subman-sync` is sensitive and externally mutating |
 | Lifecycle | start/stop/restart/status/logs, managed-instance takeover/repair, core/script upgrade, two uninstall scopes | Status/check/doctor are read-only; only restart and fixed core upgrade have guarded Agent mutations |
-| Verification | Config check, live protocol probes, Docker fresh install/reconfigure/takeover/uninstall, four-protocol coexistence, and 1.13→1.14 success/rollback scenarios | Use `bash dev/verification/run.sh` |
+| Verification | Config check, live protocol probes, Docker fresh install/reconfigure/takeover/uninstall, five-protocol coexistence, and 1.13→1.14 success/rollback scenarios; final gate passed 65 local checks, 10/10 Docker scenarios and 14/14 TCP probes | Use `bash dev/verification/run.sh`; evidence and boundaries are recorded in the implementation plan |
 
 Do not invent non-interactive mutations for features marked interactive-only. Use the menu after the appropriate safety gate or stop and ask for operator approval.
 
@@ -253,15 +253,21 @@ sbv agent doctor --json
 sbv agent service restart --json --yes
 sbv agent warp --json
 sbv agent subman-sync --json
+sbv agent instance create mixed|socks --json --yes --expected-revision N --file record.json
+sbv agent instance replace mixed|socks --json --yes --expected-revision N --file record.json
+sbv agent instance delete mixed|socks --json --yes --expected-revision N --id ID
+sbv agent instance default mixed|socks --json --yes --expected-revision N --id ID
+sbv agent instance migrate mixed --json --yes --expected-revision N
+sbv agent instance recover mixed|socks --json --yes --expected-revision N
 sbv update sbv
 sbv update sing-box latest
 ```
 
 - `status --json` is safe for routine diagnostics. It reports script/core/service/path/protocol state plus inbound/outbound stack modes, BBR, REALITY instance/QoS counts, and whether client export/SubMan files exist; it does not return credentials.
 - `capabilities --json` is read-only and returns the supported protocol/feature matrix plus safety labels. `upgrade-check --json 1.14.0` is read-only and must precede an upgrade; require `ready=true` and `blockers=[]`. Its `target_binary_validation.performed=false` means target validation is deferred to the guarded apply transaction, not that compatibility was already proven.
-- `nodes --json` is safe for ordinary logs. It reports every protocol and every REALITY instance, including names, ports, server names, rate limits, outbound policy, and exportability without UUIDs, keys, full share links, or passwords.
-- `links --json` returns full connection material for every protocol and every REALITY instance. Treat its output as sensitive and avoid pasting it into public logs. Hysteria2 nodes using a manual Ed25519 certificate include `warnings[].code=hy2_ed25519_share_link_requires_client_override` because the share URI cannot carry the required 1.14+ client option.
-- `export-client --json` generates `/root/sing-box-vps/client/sing-box-client.json`, validates it with `sing-box check`, and returns the path plus config JSON. It writes the client export file but does not change the running server config or restart services. For a 1.14+ Hysteria2 Ed25519 target it sets top-level `disable_chrome_parrot: true` and returns `warnings[].code=hy2_ed25519_chrome_parrot_disabled`.
+- `nodes --json` is safe for ordinary logs. It reports every protocol and every REALITY/Mixed/SOCKS instance, including names, ports, instance revisions, server names, rate limits, outbound policy, and exportability without UUIDs, keys, full share links, or passwords.
+- `links --json` returns full connection material for every protocol and every REALITY/Mixed/SOCKS instance. Treat its output as sensitive and avoid pasting it into public logs. Hysteria2 nodes using a manual Ed25519 certificate include `warnings[].code=hy2_ed25519_share_link_requires_client_override` because the share URI cannot carry the required 1.14+ client option.
+- `export-client --json` generates `/root/sing-box-vps/client/sing-box-client.json`, validates it with `sing-box check`, and returns the path plus config JSON. It writes the client export file but does not change the running server config or restart services. Mixed and standalone SOCKS export SOCKS5 + UoT v2 with preserved authentication and no TLS/HTTP surface; standalone SOCKS export passed the final verification gate. For a 1.14+ Hysteria2 Ed25519 target it sets top-level `disable_chrome_parrot: true` and returns `warnings[].code=hy2_ed25519_chrome_parrot_disabled`.
 - `check --json` validates the server config with `sing-box check` and returns stdout, stderr, exit code, and pass/fail state.
 - `doctor --json` is read-only. It returns status, path existence checks, protocol state, and embedded config-check output for first-pass agent diagnostics.
 - `service restart --json --yes` is a guarded mutation. It validates config first and skips restart when validation fails.
@@ -269,7 +275,7 @@ sbv update sing-box latest
 - `subman-sync --json` pushes nodes to SubMan without prompting. Missing SubMan config is reported as structured JSON. Hysteria2 manual Ed25519 nodes carry the same share-link compatibility warning as `links --json`.
 - `update sbv` updates `/usr/local/bin/sbv` from the project main branch.
 - `update sing-box [latest|x.y.z]` updates only the sing-box binary, preserves the current server config byte-for-byte, validates it with `sing-box check`, and restarts the service only after validation passes. The aliases are `sbv update-sbv` and `sbv update-sing-box [latest|x.y.z]`.
-- `upgrade --json 1.14.0 --yes` is the auditable Hermes path: it is mutating and service-impacting, persists a backup under `/root/sing-box-vps-backups/`, preserves `config.json` byte-for-byte, validates before restart, and attempts automatic binary recovery on failure. For an actual change, require `transaction.result_persisted=true`, then retain the referenced root-only `transaction-result.json`; it records `backup_ready` plus the terminal `success`, `rolled_back`, or `rollback_failed` state, and terminal records include `failure_reason` plus `operation_exit_code` when applicable. If the target is already installed, the no-op response instead has `changed=false`, `transaction.status=not_attempted`, `transaction.reason=already_installed`, and no backup or result file. Recovery is complete only when both `rolled_back` and `rollback_ok` are true; `error=rollback_failed` plus `manual_intervention_required=true` is a hard stop. It never silently rewrites configuration for migration. All public Agent protocol IDs use `vless-reality`, `mixed`, `hysteria2`, or `anytls`; the internal Hysteria2 state filename remains `hy2.env`. `export-client` and `subman-sync` are also mutating; `links`, export, and SubMan output are sensitive. Installation, protocol edits, REALITY/QoS, Warp, BBR, media checks, takeover/repair, and uninstall remain interactive-only.
+- `upgrade --json 1.14.0 --yes` is the auditable Hermes path: it is mutating and service-impacting, persists a backup under `/root/sing-box-vps-backups/`, preserves `config.json` byte-for-byte, validates before restart, and attempts automatic binary recovery on failure. For an actual change, require `transaction.result_persisted=true`, then retain the referenced root-only `transaction-result.json`; it records `backup_ready` plus the terminal `success`, `rolled_back`, or `rollback_failed` state, and terminal records include `failure_reason` plus `operation_exit_code` when applicable. If the target is already installed, the no-op response instead has `changed=false`, `transaction.status=not_attempted`, `transaction.reason=already_installed`, and no backup or result file. Recovery is complete only when both `rolled_back` and `rollback_ok` are true; `error=rollback_failed` plus `manual_intervention_required=true` is a hard stop. It never silently rewrites configuration for migration. All public Agent protocol IDs use `vless-reality`, `mixed`, `socks`, `hysteria2`, or `anytls`; the internal Hysteria2 state filename remains `hy2.env`. `instance` mutations for Mixed and standalone SOCKS require `--yes` and exact `--expected-revision`; `export-client` and `subman-sync` are also mutating; `links`, export, and SubMan output are sensitive. Installation, protocol edits, REALITY/QoS, Warp, BBR, media checks, takeover/repair, and uninstall remain interactive-only.
 
 ## sing-box 1.14 Compatibility
 
@@ -288,6 +294,8 @@ Common paths:
 - Main config: `/root/sing-box-vps/config.json`
 - Protocol state: `/root/sing-box-vps/protocols/`
 - VLESS REALITY instance state: `/root/sing-box-vps/protocols/vless-reality.d/`
+- Mixed instance state: `/root/sing-box-vps/protocols/instances/mixed.json`
+- Standalone SOCKS instance state: `/root/sing-box-vps/protocols/instances/socks.json` (active marker schema 2, JSON `schema_version: 1`; lifecycle/export/runtime passed the final verification gate)
 - VLESS REALITY QoS state: `/root/sing-box-vps/reality-qos.filters`
 - Client export: `/root/sing-box-vps/client/sing-box-client.json`
 - SubMan config: `/root/sing-box-vps/subman.env`
@@ -314,6 +322,24 @@ sing-box check -c /root/sing-box-vps/config.json
 ```
 
 Use `nodes --json` for log-safe summaries. Use `links --json` only in trusted contexts because it includes full share links. If QoS or instance membership changes on production, use the production gate before running the interactive menu or guarded service mutations.
+
+## Standalone SOCKS Inbound
+
+Standalone SOCKS is the fifth protocol-registry preset (`state_id=socks`, `agent_id=socks`, menu order 5). It is separate from the Mixed HTTP/SOCKS preset: the server record describes only a SOCKS4/4a/5 inbound, its listen address/port, authentication and outbound policy; it does not add HTTP or TLS. It has no legacy `.env` migration operation; a pre-existing live SOCKS configuration is handled through takeover.
+
+The shared plain-proxy adapter uses `build_socks_inbound_json`, `save_socks_state`, `load_plain_proxy_structured_instance`, and `apply_plain_proxy_instance_change`. Its active marker is schema 2 and its JSON store (`schema_version: 1`) is `/root/sing-box-vps/protocols/instances/socks.json`; there is no `migrate socks` operation. Public Agent mutations are:
+
+```bash
+sbv agent instance create socks --json --yes --expected-revision N --file record.json
+sbv agent instance replace socks --json --yes --expected-revision N --file record.json
+sbv agent instance delete socks --json --yes --expected-revision N --id ID
+sbv agent instance default socks --json --yes --expected-revision N --id ID
+sbv agent instance recover socks --json --yes --expected-revision N
+```
+
+Use `nodes --json` to discover `instance_id`, `tag`, listen fields and `instance_revision`; use `links --json` only in a trusted context. `create` and `replace` require a complete typed record through `--file`, while `delete` and `default` use `--id`; `recover` uses the original journal revision, not a guessed current revision. All writes use the shared file/config/listener/firewall/service transaction and persistent result/journal boundaries. Client export is SOCKS5 with UoT v2 and preserves authentication, but has no TLS and no HTTP surface.
+
+Standalone SOCKS integration passed the final local/runtime verification gate. The six focused tests (`plain_proxy_structured_store.sh`, `socks_instance_lifecycle.sh`, `socks_instance_lifecycle_runtime.sh`, `socks_instance_menu.sh`, `socks_structured_takeover.sh`, and `socks_export_client.sh`), two-core check/runtime coverage, menu 5 selection, and final Docker/TCP gate passed. The implementation record documents the remaining boundaries: no TLS/HTTP/SubMan, public native UDP unverified, and the full protocol goal unfinished.
 
 ## WARP Operations
 

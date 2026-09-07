@@ -93,6 +93,13 @@ mkdir -p "${SB_PROJECT_DIR}.instance-write.lock"
 jq -n '{schema_version:1,expected_revision:"4"}' > "${SB_PROJECT_DIR}.instance-write.lock/transaction.json"
 printf '%s\n' 1 y | mixed_instance_management_menu >/dev/null
 grep -Fq 'recover 4' "${calls}"
+jq -n '{schema_version:1,protocol:"socks",expected_revision:"4"}' > "${SB_PROJECT_DIR}.instance-write.lock/transaction.json"
+: > "${calls}"
+if printf '%s\n' 1 y | mixed_instance_management_menu >/dev/null 2>&1; then
+  printf 'Mixed menu accepted a SOCKS recovery journal\n' >&2
+  exit 1
+fi
+[[ ! -s "${calls}" ]]
 rm -rf -- "${SB_PROJECT_DIR}.instance-write.lock"
 
 # Legacy schema-1 values are shell-escaped by the existing writer and may
@@ -115,8 +122,8 @@ jq -e --arg user "${legacy_user}" --arg password "${legacy_password}" \
   "${legacy_snapshot}" >/dev/null
 
 # After deleting the last instance, an inactive empty store remains the CAS
-# source for the next create.  The first new tag is still safe because the
-# tombstone has no live identities.
+# source for the next create. A stale live tag must not be reused even when
+# the tombstone itself has no identities.
 rm -f -- "${SB_PROTOCOL_STATE_DIR}/mixed.env"
 mkdir -p "${SB_PROTOCOL_STATE_DIR}/instances"
 jq -n '{schema_version:1,protocol:"mixed",revision:9,default_instance_id:"",instances:[]}' \
@@ -124,7 +131,7 @@ jq -n '{schema_version:1,protocol:"mixed",revision:9,default_instance_id:"",inst
 source "${ORIGINAL_CAPTURE_FUNCTION_FILE}"
 : > "${calls}"
 printf '%s\n' 1 '' '' '' '' '' '' '' '' 0 | mixed_instance_management_menu >/dev/null
-grep -Eq '^create 9 n .*"id":"mixed-1".*"tag":"mixed-in"' "${calls}"
+grep -Eq '^create 9 n .*"id":"mixed-1".*"tag":"mixed-in-2"' "${calls}"
 
 # No Mixed state and no tombstone but a valid config is the first-instance
 # baseline: it must produce virtual revision zero rather than clobbering the

@@ -79,6 +79,12 @@ resolve_local_tests() {
       tests/mixed_structured_takeover.sh \
       tests/instance_firewall_ledger.sh \
       tests/mixed_instance_menu.sh \
+      tests/plain_proxy_structured_store.sh \
+      tests/socks_instance_lifecycle.sh \
+      tests/socks_instance_lifecycle_runtime.sh \
+      tests/socks_instance_menu.sh \
+      tests/socks_structured_takeover.sh \
+      tests/socks_export_client.sh \
       tests/managed_component_graph.sh \
       tests/managed_component_graph_core_startup.sh \
       tests/live_inbound_inventory_guards.sh \
@@ -177,6 +183,7 @@ resolve_remote_scenarios() {
       reconfigure_existing_install
       legacy_takeover_export
       fresh_install_anytls
+      fresh_install_socks
       multi_protocol_coexistence
       upgrade_1_13_to_1_14
       upgrade_rollback_1_13_to_1_14

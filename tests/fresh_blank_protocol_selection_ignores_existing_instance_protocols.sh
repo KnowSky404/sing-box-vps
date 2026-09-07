@@ -30,7 +30,7 @@ export PATH="${TMP_DIR}/bin:${PATH}"
 source "${TESTABLE_INSTALL}"
 
 list_installed_protocols() {
-  printf '%s\n' vless-reality mixed hy2 anytls
+  printf '%s\n' vless-reality mixed hy2 anytls socks
 }
 
 OUTPUT_FILE="${TMP_DIR}/selection.output"
@@ -38,7 +38,7 @@ prompt_protocol_install_selection "fresh" >"${OUTPUT_FILE}" 2>&1 <<'EOF'
 
 EOF
 
-if [[ "${SELECTED_PROTOCOLS_CSV}" != "vless-reality,mixed,hy2,anytls" ]]; then
+if [[ "${SELECTED_PROTOCOLS_CSV}" != "vless-reality,mixed,hy2,anytls,socks" ]]; then
   printf 'expected fresh blank selection to ignore existing instance protocols, got %s\n' "${SELECTED_PROTOCOLS_CSV}" >&2
   exit 1
 fi

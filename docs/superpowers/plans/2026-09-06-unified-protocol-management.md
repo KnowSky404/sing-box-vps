@@ -4,6 +4,24 @@
 起点为 `cc12c06`，工作区干净；保留参考基线 `0d0bdac` 之后的下载事务修复。
 本文记录完整目标的进展；阶段提交不代表全协议已交付。
 
+## 2026-09-07：独立 SOCKS 接入（当前阶段）
+
+脚本与 README 版本统一为 `2026090709`。本阶段新增独立 `socks` inbound 预设，共享 Mixed 的类型化实例记录、CAS 写入、配置候选校验、持久事务和防火墙归属账本，不复制一套协议专用事务。SOCKS 新装直接使用 schema 2 marker 与 `schema_version: 1` JSON store；没有 legacy SOCKS `.env` 格式，`instance migrate socks` 明确拒绝，既有 live 配置走接管重建。旧 Mixed 的 legacy 迁移及包装函数继续保留。
+
+实例提供创建、替换、删除、默认及恢复，默认回环监听并开启认证。非回环写入需要显式确认；恢复日志绑定协议，仅缺少 protocol 的历史日志按 Mixed 解释，显式 null/false/错误类型不作默认。SOCKS 与 Mixed 均参与 Warp 依赖判断；未索引 store 只接受合法、空且 revision 大于零的删除 tombstone。共享接管保留 ID/tag/名称/凭据/出站策略，省略 listen 时保持真实核心的回环默认，拒绝未建模字段；SOCKS 不接受 Mixed 专属的 `set_system_proxy` 字段。
+
+菜单新增 18「管理 SOCKS 实例」，首次安装协议编号为 5。SOCKS 只提供 SOCKS5 分享链接及带 UoT v2 的客户端 outbound，不提供 HTTP 入口、TLS 或 SubMan 同步。核心支持事实先查 Context7 `/sagernet/sing-box`；该结果只有 testing 文档，随后按固定 v1.14.0 的 `protocol/socks/inbound.go`、`option/simple.go` 和 inbound 文档核实，并用真实 1.13.18/1.14.0 验证。
+
+新增六项 Shell 回归覆盖共享 store、SOCKS 生命周期、真实核心运行、菜单、接管及导出。两版真实核心各通过 instances=2、exported=2、TCP=9、UDP=9、错误认证拒绝=1、失败候选保留旧服务=1；计数包含既有 Mixed 的流量保留检查，导出的两个 outbound 均生成并校验，其中一个用于实际客户端收发。这些是本机回环 SOCKS TCP/UDP 与导出 UoT v2 证据，不证明公网跨主机 UDP associate 或其他协议 UDP 数据路径。systemctl/firewall 在本地生命周期测试中仍为 mock；重启失败回滚另有 mock 故障注入（restarts=10）。
+
+最终源码 SHA-256 `d711688daae51d938a02e737be7e521df6b8ea198c1e93b4f33d24d1feaf947c` 下，实际 Bash 4.2 直接执行两版 runtime 的 `--run` 分支均退出 0，日志为 `/tmp/sbv-socks-bash42.HD1NEM/`（1.13.18）及 `/tmp/sbv-socks-bash42.ZoFg4h/`（1.14.0），每个目录保留命令、stdout/stderr、退出码及一致的起止源码哈希。Bash 4.2 接管、菜单及事务专项也通过；菜单兼容补修处理了空数组展开、单次操作失败退出、删除确认实例 ID 和单次 list 循环问题。父代理独立复跑最终 Mixed/SOCKS 菜单测试通过。
+
+冻结源码的 164 项普通 Shell 测试串行执行全部退出 0，逐项记录 `/tmp/sbv-socks-all.bpCBR9/results.tsv`，起止源码哈希一致；14 项验证框架测试也全部通过，日志 `/tmp/sing-box-vps-verification-suite.WadON6/`，合计 178/178。此前的并行运行、旧 capabilities 夹具及遗漏 SOCKS 的 runtime artifact 夹具曾失败，均不计作最终通过证据；对应夹具已补齐并重新执行。
+
+最终默认门禁 `SINGBOX_BINARY_113=… SINGBOX_BINARY_114=… bash dev/verification/run.sh --changed-file install.sh dev/verification/common.sh dev/verification/remote/entrypoint.sh` 在 `dev/verification-runs/20260907125254` 退出 0：65 项本地检查、10/10 Docker 场景、14/14 TCP 探针成功；新场景覆盖实际交互首次 SOCKS 安装与四协议安装后经 Agent 事务追加 SOCKS 的五协议共存。故障升级结果为 `status=rolled_back`、`rollback.result=success`。父代理在容器存活期间直接读取 `/tmp/sing-box-vps-verification.8yaSHN/install.sh` 哈希，与上述最终源码完全一致。此前 `20260907122042` 只有首次 SOCKS 安装与 runtime smoke 的局部 Docker 验证，不能代替本次完整门禁。
+
+独立预审关闭了 SOCKS Warp 依赖遗漏、orphan store 忽略、跨协议恢复、协议诊断及导出 warning 误归属问题。warning 识别保留 legacy Mixed 的任意持久化节点名，不把 `socks-mixed` 误认作 Mixed；SOCKS 链接警告不宣称 URI 已配置 UoT。冻结源码复核未发现新增确认的 P1/P2，提交后仍须对精确提交范围审查。全协议目标继续进行，其他协议族和外部系统资源边界尚未完成；未推送、部署、操作生产或执行真实 SubMan 同步，用户未跟踪文件 `1`、`2` 均保留。
+
 ## 验收范围
 
 - [ ] 核对 latest stable、目标 release 注册代码、移除 stub、构建标签、平台和运行库；固定版本与来源，保留 1.13.x 路径。

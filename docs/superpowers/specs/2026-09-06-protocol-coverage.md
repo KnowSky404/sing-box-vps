@@ -6,7 +6,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026090708`，`SB_SUPPORT_MAX_VERSION=1.14.0`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026090709`，`SB_SUPPORT_MAX_VERSION=1.14.0`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -64,9 +64,9 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 | ID | 官方 type / 角色 | 版本、构建和平台条件 | TCP/UDP/主要约束 | upstream | available（官方 ARM64 包） | implemented；D/T/E/R | 导出 / 分享 / SubMan | validated |
 |---|---|---|---|---|---|---|---|---|
 | direct-inbound | `direct` / inbound | 基础内建 | TCP 或 UDP，由 `network` 指定，留空为两者；仍支持 `override_address/override_port` 端口转发，不能与 direct outbound 的移除项混淆 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check；两核心 override 配置 check 通过 |
-| mixed | `mixed` / inbound | 基础内建 | TCP listen；同一入口提供 SOCKS4/4a/5 和 HTTP；UDP 业务经 SOCKS UDP/UoT，不开固定 UDP listen；schema 2 可管理多实例 | yes | yes（Linux） | 旧预设 + schema 2 实例链路；yes/yes/yes/yes（首次全新安装仍为 legacy schema 1，显式迁移后启用 schema 2） | SOCKS5 + UoT v2 裸核客户端（明文警告） / HTTP、SOCKS 链接 / no current SubMan | project-real-tcp；多实例生命周期证据待本轮门禁 |
+| mixed | `mixed` / inbound | 基础内建 | TCP listen；同一入口提供 SOCKS4/4a/5 和 HTTP；UDP 业务经 SOCKS UDP/UoT，不开固定 UDP listen；schema 2 可管理多实例 | yes | yes（Linux） | 旧预设 + schema 2 实例链路；yes/yes/yes/yes（首次全新安装仍为 legacy schema 1，显式迁移后启用 schema 2） | SOCKS5 + UoT v2 裸核客户端（明文警告） / HTTP、SOCKS 链接 / no current SubMan | project-real-tcp；多实例生命周期、导出及本轮五协议最终门禁通过 |
 | vless-reality（旧预设） | `vless` / inbound | 项目保留 1.13.x；REALITY、Vision 与 TCP 预设 | TCP listen，TCP/UDP 业务；已有多实例、固定 tag/UUID/ShortID、实例出站和 QoS | yes | yes（Linux；需握手目标） | 旧预设；yes/yes/yes/yes | 裸核客户端 / VLESS URI / VLESS 同步 | project-real-tcp |
-| socks | `socks` / inbound | 基础内建 | TCP listen；SOCKS4/4a/5 的 UDP associate/UDP 业务经该 TCP 会话处理；认证可选 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check |
+| socks（独立预设） | `socks` / inbound | 基础内建 | TCP listen；SOCKS4/4a/5；UDP associate/UoT 业务经该 TCP 会话处理；认证可选；无 HTTP/TLS | yes | yes（Linux） | active schema 2 marker + JSON store（`schema_version: 1`）与共享实例事务；yes/yes/yes/yes（实现范围，不等同全协议目标完成） | SOCKS5 + UoT v2 裸核客户端（明文警告） / SOCKS 链接 / no current SubMan | project-real-tcp；六项回归、两核心 check/runtime、菜单、Docker 10/10 与 TCP 14/14 通过；公网原生 UDP 未验证 |
 | http | `http` / inbound | 基础内建 | HTTP CONNECT 入口，TCP；入口 TLS 与代理 HTTPS 目标是两件事 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check |
 | shadowsocks | `shadowsocks` / inbound | 基础内建 | TCP/UDP；方法、密码、可选多用户/多路复用；2022 方法有密钥格式要求 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check（无 method 的最小配置按预期失败） |
 | vmess | `vmess` / inbound | 基础内建 | TCP 监听；TLS 和 V2Ray transport（HTTP/WS/gRPC/HTTPUpgrade 等）需合法组合；`alterId>0` 是兼容模式 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check |
@@ -163,7 +163,7 @@ Release API 的 Linux tar 资产覆盖 amd64、arm64、386、armv5/6/7、mips/mi
 
 ## 项目差异和后续实现门槛
 
-审计起点 `cc12c06` 的协议校验、保存和导出分别维护四协议白名单；当前四协议仍由 `SB_PROTOCOL_REGISTRY` 提供 ID、菜单、导出候选、Agent 和验证元数据。上游没有独立的 mixed outbound，客户端须选择 SOCKS 或 HTTP outbound。Mixed 现在额外提供 schema 2 类型化实例状态和生命周期入口，但这只改变项目的 Mixed 预设，不扩展上游协议类型。
+审计起点 `cc12c06` 的协议校验、保存和导出分别维护四协议白名单；当前五个入站预设由 `SB_PROTOCOL_REGISTRY` 提供 ID、菜单、导出候选、Agent 和验证元数据。上游没有独立的 mixed outbound，客户端须选择 SOCKS 或 HTTP outbound。Mixed 与独立 SOCKS 现在额外提供共享的 schema 2 类型化实例状态和生命周期入口，但这只改变项目预设，不扩展上游协议类型。
 
 Mixed schema 2 的完整管理链路包括：显式把 legacy schema 1 单实例迁移为 `protocols/instances/mixed.json`，并保留原有 ID/tag/监听地址/端口/认证；Agent 的 `create`、`replace`、`delete`、`default`、`migrate`、`recover` 使用 revision CAS 和 JSON envelope；交互菜单 17 提供逐实例创建/修改/删除/默认/迁移/恢复。首次全新安装仍沿用 legacy schema 1，不自动迁移。删除最后一个实例后保留空 JSON store（`schema_version: 1`）作为 revision tombstone；active marker 仍是 `CONFIG_SCHEMA_VERSION=2`，并移除 active Mixed 的 env/index/inbound，但下一次 `create` 必须以 tombstone revision 继续递增，不能清空 JSON 后把 CAS 重置为 0。非回环明文入口需要显式 `--allow-public`；活动 Mixed 与其他协议的批量删除会拒绝，要求逐个实例处理。上述是实现范围说明，运行门禁证据由实施记录补充，不能由源码存在替代。
 
@@ -177,6 +177,6 @@ Warp 是当前项目的 Cloudflare 专用注册与 WireGuard endpoint 路径，�
 
 对每个从 `none` 变成 `implemented` 的协议，至少需要：协议/预设/角色和实例 ID；状态读写迁移与未知配置保护；合法组合的 builder；依赖、端口、证书和路由归属；目标版本 `sing-box check`；部署/接管/编辑/删除事务；客户端配置和可表达性 warning；真实 TCP/UDP 或 endpoint 数据面探针；Agent、节点摘要、敏感输出和 SubMan 的明确 `unsupported/skipped/warning` 分支。组合协议必须连同内层代理或 endpoint 一起回滚，不能只保存一个孤立 JSON 片段。
 
-Mixed 的实现边界仍然明确：服务端及导出的 SOCKS5/UoT 链路没有 TLS；项目没有新增独立 SOCKS 服务端管理，也没有新增 Mixed SubMan 同步。除当前四个既有预设及本节明确的 Mixed schema 2 外，全协议目标仍未完成；不能把 Mixed 多实例的实现范围或 `sing-box check` 通过写成所有协议生命周期已完成。
+Mixed 与独立 SOCKS 的实现边界仍然明确：服务端及导出的 SOCKS5/UoT 链路没有 TLS，独立 SOCKS 也没有 HTTP surface；两者均没有当前 SubMan 同步。独立 SOCKS 的共享实例管理、客户端导出、两核心 check/runtime 与最终 Docker/TCP 门禁均已通过，证据见[实施记录](../plans/2026-09-06-unified-protocol-management.md)。这些结果不覆盖公网原生 UDP、TLS/HTTP/SubMan 或其他未实现协议；除当前五个既有预设及本节明确的 Mixed/独立 SOCKS schema 2 外，全协议目标仍未完成，不能把已有多实例实现范围或 `sing-box check` 通过写成所有协议生命周期已完成。
 
 本审阅没有访问生产 VPS、Cloudflare/Tailscale/OpenConnect/OpenVPN 账户，也没有执行真实外部控制面认证；因此这些条件性能力保持 `registry-check` 或未验证，不能在交付说明中写成已通过。后续实现应继续保留当前显式固定的 1.13.x 兼容路径，并在使用 1.14-only type（Snell、Cloudflared、Bridge、OpenConnect、OpenVPN）时以目标版本门控阻断，而不是只提高 `SB_SUPPORT_MAX_VERSION`。

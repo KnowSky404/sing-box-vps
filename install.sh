@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090708
+# Version: 2026090709
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090708"
+readonly SCRIPT_VERSION="2026090709"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -72,6 +72,7 @@ readonly SB_PROTOCOL_REGISTRY=(
   'mixed|mixed|mixed|mixed|plain|inbound|mixed|Mixed (HTTP/HTTPS/SOCKS)|mixed-in|2|true||tcp|tcp,udp|1.13.0|true|none|http,socks5|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"http":true,"socks5":true,"authentication":true,"share_links":["http","socks5"],"qr":false,"client_export":true,"subman_sync":false}||build_mixed_inbound_json,save_mixed_state,prompt_mixed_install,prompt_mixed_update,build_client_mixed_outbounds,load_mixed_structured_instance,apply_mixed_instance_change'
   'hy2|hy2|hysteria2|hysteria2|tls|inbound|hysteria2|Hysteria2|hy2-in|3|true|hysteria2|udp|tcp,udp|1.13.0|false|optional|hysteria2|tcp_loopback|{"tls_modes":["acme_http01","acme_cloudflare_dns01","manual"],"bandwidth":true,"obfs":true,"share_link":true,"qr":true,"client_export":true,"subman_sync":true}|hysteria2|build_hy2_inbound_json,build_hy2_certificate_provider_json,build_client_hy2_outbound,save_hy2_state,prompt_hy2_install,prompt_hy2_update'
   'anytls|anytls|anytls|anytls|tls|inbound|anytls|AnyTLS|anytls-in|4|true||tcp|tcp,udp|1.13.0|false|optional||tcp_loopback|{"tls_modes":["acme_http01","acme_cloudflare_dns01","manual"],"standard_share_uri":false,"outbound_example":true,"qr":false,"client_export":true,"subman_sync":false}||build_anytls_inbound_json,build_anytls_certificate_provider_json,build_client_anytls_outbound,save_anytls_state,prompt_anytls_install,prompt_anytls_update'
+  'socks|socks|socks|socks|plain|inbound|socks|SOCKS|socks-in|5|true||tcp|tcp,udp|1.13.0|true|none|socks5|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"socks5":true,"authentication":true,"share_links":["socks5"],"qr":false,"client_export":true,"subman_sync":false}||build_socks_inbound_json,save_socks_state,prompt_socks_install,prompt_socks_update,build_client_socks_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
 )
 SB_REALITY_SNI_CANDIDATES=(
   "www.apple.com"
@@ -2033,7 +2034,7 @@ validate_protocol_state_schema() {
   schema=${schema//\"/}
   schema=${schema//\'/}
   case "${protocol}:${schema:-1}" in
-    vless-reality:1|vless-reality:2|mixed:1|mixed:2|hy2:1|anytls:1) return 0 ;;
+    vless-reality:1|vless-reality:2|mixed:1|mixed:2|socks:2|hy2:1|anytls:1) return 0 ;;
   esac
   printf '[ERROR] 协议状态格式无法识别；已保留文件，请使用写入该状态的脚本版本恢复。\n' >&2
   return 1
@@ -2233,6 +2234,73 @@ save_mixed_state() {
   } > "${state_file}"
 }
 
+save_socks_state() {
+  local state_file store_file current_revision
+  local record_file candidate_file operation expected_revision
+  local listen_address=${SB_MIXED_LISTEN_ADDRESS:-} port=${SB_PORT:-}
+  local auth_enabled=${SB_MIXED_AUTH_ENABLED:-y} username=${SB_MIXED_USERNAME:-} password=${SB_MIXED_PASSWORD:-}
+  local tag=${SB_MIXED_INBOUND_TAG:-socks-in} name=${SB_NODE_NAME:-SOCKS} policy=${SB_OUTBOUND_POLICY:-default}
+
+  state_file=$(protocol_state_file socks) || return 1
+  if [[ -e "${state_file}" || -L "${state_file}" ]]; then
+    [[ -f "${state_file}" && ! -L "${state_file}" ]] || return 1
+    validate_protocol_state_schema socks "${state_file}" || return 1
+    plain_proxy_structured_marker_is_valid "${state_file}" || return 1
+  fi
+  store_file=$(plain_proxy_structured_store_file socks) || return 1
+  if [[ -f "${state_file}" ]]; then
+    [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  fi
+  [[ -n "${listen_address}" ]] || listen_address='127.0.0.1'
+  structured_instance_store_validate_id "${SB_INSTANCE_ID:-main}" || return 1
+  [[ -n "${tag}" ]] || return 1
+  validate_port_number "${port}" || return 1
+  structured_instance_store_validate_address "${listen_address}" || return 1
+  case "${auth_enabled}" in y|n) ;; *) return 1 ;; esac
+  validate_mixed_client_connection "${port}" "${auth_enabled}" "${username}" "${password}" || return 1
+  [[ "${policy}" == default || "${policy}" == direct || "${policy}" == warp ]] || return 1
+
+  record_file=$(mktemp) || return 1
+  candidate_file=$(mktemp) || { rm -f -- "${record_file}"; return 1; }
+  if ! jq -n -cS --arg id "${SB_INSTANCE_ID:-main}" --arg name "${name}" --arg tag "${tag}" \
+      --arg address "${listen_address}" --argjson port "${port}" \
+      --argjson enabled "$([[ "${auth_enabled}" == y ]] && printf true || printf false)" \
+      --arg username "${username}" --arg password "${password}" --arg policy "${policy}" \
+      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$enabled,username:(if $enabled then $username else "" end),password:(if $enabled then $password else "" end)},outbound_policy:$policy,dependencies:[]}' \
+      > "${record_file}"; then
+    rm -f -- "${record_file}" "${candidate_file}"
+    return 1
+  fi
+  structured_instance_store_validate_instance_argument "${record_file}" || {
+    rm -f -- "${record_file}" "${candidate_file}"; return 1;
+  }
+  if [[ -f "${store_file}" ]]; then
+    validate_structured_instance_store socks "${store_file}" || { rm -f -- "${record_file}" "${candidate_file}"; return 1; }
+    current_revision=$(structured_instance_store_revision "${store_file}") || { rm -f -- "${record_file}" "${candidate_file}"; return 1; }
+    expected_revision=${current_revision}
+    if jq -e --arg id "${SB_INSTANCE_ID:-main}" 'any(.instances[]; .id == $id)' "${store_file}" >/dev/null 2>&1; then
+      operation=replace
+    else
+      operation=create
+    fi
+    structured_instance_store_candidate socks "${store_file}" "${operation}" "${record_file}" "${expected_revision}" > "${candidate_file}" || {
+      rm -f -- "${record_file}" "${candidate_file}"; return 1;
+    }
+  else
+    structured_instance_store_candidate socks "" create "${record_file}" 0 > "${candidate_file}" || {
+      rm -f -- "${record_file}" "${candidate_file}"; return 1;
+    }
+    expected_revision=0
+  fi
+  if ! publish_structured_instance_store socks "${candidate_file}" "${expected_revision}" ||
+     ! save_plain_proxy_structured_marker socks; then
+    rm -f -- "${record_file}" "${candidate_file}"
+    return 1
+  fi
+  rm -f -- "${record_file}" "${candidate_file}"
+  load_plain_proxy_structured_instance socks "${SB_INSTANCE_ID:-main}"
+}
+
 save_hy2_state() {
   local state_file
   state_file=$(protocol_state_file "hy2")
@@ -2295,6 +2363,7 @@ save_protocol_state() {
   case "${protocol}" in
     vless-reality) save_vless_reality_state ;;
     mixed) save_mixed_state ;;
+    socks) save_socks_state ;;
     hy2) save_hy2_state ;;
     anytls) save_anytls_state ;;
     *) log_error "不支持的协议状态保存类型: ${protocol}" ;;
@@ -2985,10 +3054,48 @@ prompt_protocol_update_fields() {
   case "${protocol}" in
     vless-reality) prompt_vless_reality_update ;;
     mixed) prompt_mixed_update ;;
+    socks) prompt_socks_update ;;
     hy2) prompt_hy2_update ;;
     anytls) prompt_anytls_update ;;
     *) log_error "不支持的协议修改类型: ${protocol}" ;;
   esac
+}
+
+prompt_socks_install() {
+  local in_user in_pass
+  set_protocol_defaults socks
+  echo -e "\n${BLUE}--- 配置 SOCKS ---${NC}"
+  SB_PORT=$(prompt_port "[SOCKS] 端口 (默认 ${SB_PORT}): " "${SB_PORT}") || return 1
+  check_port_conflict "${SB_PORT}"
+  SB_MIXED_AUTH_ENABLED=$(prompt_yes_no "[SOCKS] 是否启用用户名密码认证 [y/n] (默认 y): " y) || return 1
+  if [[ "${SB_MIXED_AUTH_ENABLED}" == y ]]; then
+    read -rp "[SOCKS] 用户名 (留空自动生成): " in_user || return 1
+    read -rsp "[SOCKS] 密码 (留空自动生成): " in_pass || return 1
+    printf '\n' >&2
+    SB_MIXED_USERNAME=${in_user}; SB_MIXED_PASSWORD=${in_pass}
+    ensure_mixed_auth_credentials || return 1
+  else
+    SB_MIXED_USERNAME=""; SB_MIXED_PASSWORD=""
+    log_warn "你选择了关闭认证。开放的 SOCKS 代理存在明显安全风险，请确认防火墙与访问源限制。"
+  fi
+}
+
+prompt_socks_update() {
+  local in_p in_auth in_user in_pass
+  in_p=$(prompt_port "新端口 (当前: ${SB_PORT}, 留空保持): " "${SB_PORT}") || return 1
+  if [[ "${in_p}" != "${SB_PORT}" ]]; then SB_PORT=${in_p}; check_port_conflict "${SB_PORT}"; fi
+  in_auth=$(prompt_yes_no "是否启用用户名密码认证 [y/n] (当前: ${SB_MIXED_AUTH_ENABLED}, 留空保持): " "${SB_MIXED_AUTH_ENABLED}") || return 1
+  SB_MIXED_AUTH_ENABLED=${in_auth}
+  if [[ "${in_auth}" == y ]]; then
+    read -rp "新用户名 (留空保持/自动生成): " in_user || return 1
+    [[ -z "${in_user}" ]] || SB_MIXED_USERNAME=${in_user}
+    read -rsp "新密码 (留空保持/自动生成): " in_pass || return 1; printf '\n' >&2
+    [[ -z "${in_pass}" ]] || SB_MIXED_PASSWORD=${in_pass}
+    ensure_mixed_auth_credentials || return 1
+  else
+    SB_MIXED_USERNAME=""; SB_MIXED_PASSWORD=""
+    log_warn "关闭 SOCKS 认证会暴露开放代理，存在明显安全风险。"
+  fi
 }
 
 open_all_protocol_ports() {
@@ -3038,7 +3145,7 @@ prompt_protocol_install_selection() {
   local installed_protocols=() selected_protocols=()
   local choice raw_choice protocol index installed_list
   local menu_indices=() raw_choices=()
-  local mixed_tombstone=n
+  local mixed_tombstone=n socks_tombstone=n
 
   SELECTED_PROTOCOLS_CSV=""
 
@@ -3049,8 +3156,14 @@ prompt_protocol_install_selection() {
     fi
     if mixed_inactive_store_snapshot >/dev/null 2>&1; then
       mixed_tombstone=y
-      if ! protocol_array_contains mixed "${installed_protocols[@]}"; then
+      if ! protocol_array_contains mixed ${installed_protocols[@]+"${installed_protocols[@]}"}; then
         installed_protocols+=(mixed)
+      fi
+    fi
+    if plain_proxy_inactive_store_snapshot socks >/dev/null 2>&1; then
+      socks_tombstone=y
+      if ! protocol_array_contains socks ${installed_protocols[@]+"${installed_protocols[@]}"}; then
+        installed_protocols+=(socks)
       fi
     fi
   fi
@@ -3071,11 +3184,13 @@ prompt_protocol_install_selection() {
   echo "可安装协议:"
   for index in "${menu_indices[@]}"; do
     protocol=$(protocol_option_to_id "${index}") || continue
-    if protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
+    if protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
       if [[ "${install_mode}" == "additional" && "${protocol}" == "vless-reality" ]]; then
         echo "${index}. 新增 VLESS + REALITY 节点"
       elif [[ "${install_mode}" == "additional" && "${protocol}" == "mixed" && "${mixed_tombstone}" == y ]]; then
         echo "${index}. 新增 Mixed 实例"
+      elif [[ "${install_mode}" == "additional" && "${protocol}" == "socks" && "${socks_tombstone}" == y ]]; then
+        echo "${index}. 新增 SOCKS 实例"
       fi
       continue
     fi
@@ -3089,9 +3204,9 @@ prompt_protocol_install_selection() {
   if [[ -z "$(trim_whitespace "${choice}")" ]]; then
     for index in "${menu_indices[@]}"; do
       protocol=$(protocol_option_to_id "${index}") || continue
-      if protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
+      if protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
         if [[ "${install_mode}" == "additional" &&
-              ("${protocol}" == "vless-reality" || "${protocol}" == "mixed") ]]; then
+              ("${protocol}" == "vless-reality" || "${protocol}" == "mixed" || "${protocol}" == "socks") ]]; then
           selected_protocols+=("${protocol}")
         fi
         continue
@@ -3115,10 +3230,10 @@ prompt_protocol_install_selection() {
       continue
     }
 
-    if protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
+    if protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
       if [[ "${install_mode}" == "additional" &&
-            ("${protocol}" == "vless-reality" || "${protocol}" == "mixed") ]]; then
-        if ! protocol_array_contains "${protocol}" "${selected_protocols[@]}"; then
+            ("${protocol}" == "vless-reality" || "${protocol}" == "mixed" || "${protocol}" == "socks") ]]; then
+        if ! protocol_array_contains "${protocol}" ${selected_protocols[@]+"${selected_protocols[@]}"}; then
           selected_protocols+=("${protocol}")
         fi
         continue
@@ -3127,7 +3242,7 @@ prompt_protocol_install_selection() {
       continue
     fi
 
-    if ! protocol_array_contains "${protocol}" "${selected_protocols[@]}"; then
+    if ! protocol_array_contains "${protocol}" ${selected_protocols[@]+"${selected_protocols[@]}"}; then
       selected_protocols+=("${protocol}")
     fi
   done
@@ -3405,6 +3520,7 @@ prompt_protocol_install_fields() {
   case "${protocol}" in
     vless-reality) prompt_vless_reality_install ;;
     mixed) prompt_mixed_install ;;
+    socks) prompt_socks_install ;;
     hy2) prompt_hy2_install ;;
     anytls) prompt_anytls_install ;;
     *) log_error "不支持的协议安装类型: ${protocol}" ;;
@@ -3434,106 +3550,122 @@ prompt_global_instance_options() {
 # snapshot before prompting.  The revision from that snapshot is passed to
 # the lifecycle CAS operation after the user finishes, so a long prompt can
 # never accidentally overwrite a concurrent change.
-mixed_management_capture_snapshot() {
-  local destination=${1:-} store_file
+# Standalone SOCKS uses the same typed record shape and CAS UI as Mixed.  Keep
+# these helpers protocol-parameterized so the two menus cannot drift in their
+# validation, credential handling, or public-listener acknowledgement.
+plain_proxy_management_label() {
+  case "${1:-}" in
+    mixed) printf 'Mixed' ;;
+    socks) printf 'SOCKS' ;;
+    *) return 1 ;;
+  esac
+}
+
+plain_proxy_management_capture_snapshot() {
+  local protocol=${1:-} destination=${2:-} store_file
+  structured_instance_store_protocol "${protocol}" >/dev/null || return 1
   [[ -n "${destination}" && ! -L "${destination}" ]] || return 1
-  if mixed_structured_state_active >/dev/null 2>&1; then
-    store_file=$(mixed_structured_store_file) || return 1
-    structured_instance_store_snapshot_json mixed "${store_file}" > "${destination}" || return 1
-  elif protocol_state_exists mixed; then
-    # Legacy schema 1 is read as a virtual revision-zero store.  It is only
-    # activated by an explicit migrate/create/replace operation.
+  if plain_proxy_structured_state_active "${protocol}" >/dev/null 2>&1; then
+    store_file=$(plain_proxy_structured_store_file "${protocol}") || return 1
+    structured_instance_store_snapshot_json "${protocol}" "${store_file}" > "${destination}" || return 1
+  elif [[ "${protocol}" == mixed ]] && protocol_state_exists mixed; then
     mixed_config_store_candidate | jq -c '.revision=0' > "${destination}" || return 1
-  elif [[ -e "$(mixed_structured_store_file)" ]]; then
-    # Preserve the monotonic revision of a deleted-last-instance tombstone.
-    mixed_inactive_store_snapshot > "${destination}" || return 1
+  elif [[ -e "$(plain_proxy_structured_store_file "${protocol}")" ]]; then
+    plain_proxy_inactive_store_snapshot "${protocol}" > "${destination}" || return 1
   else
     [[ -f "${SINGBOX_CONFIG_FILE}" ]] || return 1
     validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" || return 1
-    jq -e 'all(.inbounds[]?; .type != "mixed")' "${SINGBOX_CONFIG_FILE}" >/dev/null || return 1
-    structured_instance_store_empty_json > "${destination}" || return 1
+    jq -e --arg protocol "${protocol}" 'all(.inbounds[]?; .type != $protocol)' \
+      "${SINGBOX_CONFIG_FILE}" >/dev/null || return 1
+    structured_instance_store_empty_json "${protocol}" > "${destination}" || return 1
   fi
-  validate_structured_instance_store mixed "${destination}"
+  validate_structured_instance_store "${protocol}" "${destination}"
 }
 
-mixed_management_prompt_target() {
-  local snapshot=${1:-} prompt=${2:-请选择实例} choice id index
+plain_proxy_management_prompt_target() {
+  local protocol=${1:-} snapshot=${2:-} prompt=${3:-请选择实例}
+  local choice id index count label
+  label=$(plain_proxy_management_label "${protocol}") || return 1
   [[ -f "${snapshot}" && ! -L "${snapshot}" ]] || return 1
   jq -e '.instances | length > 0' "${snapshot}" >/dev/null 2>&1 || return 1
-  echo "当前 Mixed 实例:" >&2
+  echo "当前 ${label} 实例:" >&2
   jq -r '.instances[] | "- \(.id): \(.name) (\(.listen.address):\(.listen.port))"' "${snapshot}" >&2 || return 1
-  read -rp "${prompt}（可输入实例 ID，留空使用默认）: " choice || return 1
+  read -rp "${prompt}（可输入实例 ID 或序号，留空使用默认）: " choice || return 1
   choice=$(trim_whitespace "${choice}")
   if [[ -z "${choice}" ]]; then
     id=$(jq -r '.default_instance_id' "${snapshot}") || return 1
   elif jq -e --arg id "${choice}" 'any(.instances[]; .id == $id)' "${snapshot}" >/dev/null 2>&1; then
     id=${choice}
   elif [[ "${choice}" =~ ^[1-9][0-9]{0,2}$ ]]; then
+    count=$(jq -r '.instances | length' "${snapshot}") || return 1
     index=$((choice - 1))
-    [[ "${index}" -lt "$(jq '.instances | length' "${snapshot}")" ]] || return 1
+    (( index < count )) || return 1
     id=$(jq -r --argjson index "${index}" '.instances[$index].id // empty' "${snapshot}") || return 1
   else
-    log_warn "未找到 Mixed 实例 ID: ${choice}" >&2
+    log_warn "未找到 ${label} 实例 ID: ${choice}" >&2
     return 1
   fi
   structured_instance_store_validate_id "${id}" || return 1
   printf '%s' "${id}"
 }
 
-mixed_management_next_id() {
-  local snapshot=${1:-} candidate=1
-  while jq -e --arg id "mixed-${candidate}" 'any(.instances[]; .id == $id)' "${snapshot}" >/dev/null 2>&1; do
+plain_proxy_management_next_id() {
+  local protocol=${1:-} snapshot=${2:-} prefix candidate=1
+  prefix=$(plain_proxy_management_label "${protocol}") || return 1
+  prefix=${prefix,,}
+  while jq -e --arg id "${prefix}-${candidate}" 'any(.instances[]; .id == $id)' "${snapshot}" >/dev/null 2>&1; do
     candidate=$((candidate + 1))
   done
-  printf 'mixed-%s' "${candidate}"
+  printf '%s-%s' "${prefix}" "${candidate}"
 }
 
-mixed_management_next_tag() {
-  local snapshot=${1:-} candidate=mixed-in suffix=2
-  while jq -e --arg tag "${candidate}" 'any(.instances[]; .tag == $tag)' "${snapshot}" >/dev/null 2>&1; do
-    candidate="mixed-in-${suffix}"
+plain_proxy_management_next_tag() {
+  local protocol=${1:-} snapshot=${2:-} label candidate suffix=2
+  label=$(plain_proxy_management_label "${protocol}") || return 1
+  label=${label,,}
+  candidate="${label}-in"
+  while jq -e --arg tag "${candidate}" 'any(.instances[]; .tag == $tag)' "${snapshot}" >/dev/null 2>&1 ||
+        jq -e --arg tag "${candidate}" 'any(.inbounds[]?; .tag == $tag)' "${SINGBOX_CONFIG_FILE}" >/dev/null 2>&1; do
+    candidate="${label}-in-${suffix}"
     suffix=$((suffix + 1))
   done
   printf '%s' "${candidate}"
 }
 
-mixed_management_prompt_public_consent() {
-  local address=${1:-}
+plain_proxy_management_prompt_public_consent() {
+  local protocol=${1:-} address=${2:-} label
+  label=$(plain_proxy_management_label "${protocol}") || return 1
   case "${address}" in
     127.*|::1) printf 'n'; return 0 ;;
   esac
-  prompt_yes_no "该 Mixed 入口将以明文暴露在非回环地址 ${address}；确认继续并承担公网暴露风险 [y/N]: " n
+  prompt_yes_no "该 ${label} 入口将以明文暴露在非回环地址 ${address}；确认继续并承担公网暴露风险 [y/N]: " n
 }
 
-mixed_management_build_record() {
-  local snapshot=${1:-} operation=${2:-create} target=${3:-} destination=${4:-}
-  local id name tag address port auth username password policy answer
+plain_proxy_management_build_record() {
+  local protocol=${1:-} snapshot=${2:-} operation=${3:-create} target=${4:-} destination=${5:-}
+  local id name tag address port auth username password policy answer label
   local name_changed=n address_changed=n port_changed=n username_changed=n password_changed=n
   local auth_changed=n policy_changed=n
+  structured_instance_store_protocol "${protocol}" >/dev/null || return 1
+  label=$(plain_proxy_management_label "${protocol}") || return 1
   [[ -f "${snapshot}" && ! -L "${snapshot}" && -n "${destination}" ]] || return 1
-  MIXED_MANAGEMENT_ALLOW_PUBLIC=n
+  PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC=n
 
   if [[ "${operation}" == replace ]]; then
     jq -e --arg id "${target}" 'any(.instances[]; .id == $id)' "${snapshot}" >/dev/null 2>&1 || return 1
-    id=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .id' "${snapshot}") || return 1
-    name=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .name' "${snapshot}") || return 1
-    tag=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .tag' "${snapshot}") || return 1
-    address=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .listen.address' "${snapshot}") || return 1
+    id=$(jq -j --arg id "${target}" '.instances[] | select(.id == $id) | .id, "\u0001"' "${snapshot}") || return 1; id=${id%$'\1'}
+    name=$(jq -j --arg id "${target}" '.instances[] | select(.id == $id) | .name, "\u0001"' "${snapshot}") || return 1; name=${name%$'\1'}
+    tag=$(jq -j --arg id "${target}" '.instances[] | select(.id == $id) | .tag, "\u0001"' "${snapshot}") || return 1; tag=${tag%$'\1'}
+    address=$(jq -j --arg id "${target}" '.instances[] | select(.id == $id) | .listen.address, "\u0001"' "${snapshot}") || return 1; address=${address%$'\1'}
     port=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .listen.port' "${snapshot}") || return 1
     auth=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | if .authentication.enabled then "y" else "n" end' "${snapshot}") || return 1
-    username=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .authentication.username' "${snapshot}") || return 1
-    password=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .authentication.password' "${snapshot}") || return 1
+    username=$(jq -j --arg id "${target}" '.instances[] | select(.id == $id) | .authentication.username, "\u0001"' "${snapshot}") || return 1; username=${username%$'\1'}
+    password=$(jq -j --arg id "${target}" '.instances[] | select(.id == $id) | .authentication.password, "\u0001"' "${snapshot}") || return 1; password=${password%$'\1'}
     policy=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .outbound_policy' "${snapshot}") || return 1
   else
-    id=$(mixed_management_next_id "${snapshot}") || return 1
-    name="Mixed ${id}"
-    tag=$(mixed_management_next_tag "${snapshot}") || return 1
-    address="127.0.0.1"
-    port="1080"
-    auth="y"
-    username=""
-    password=""
-    policy="default"
+    id=$(plain_proxy_management_next_id "${protocol}" "${snapshot}") || return 1
+    name="${label} ${id}"; tag=$(plain_proxy_management_next_tag "${protocol}" "${snapshot}") || return 1
+    address=127.0.0.1; port=1080; auth=y; username=""; password=""; policy=default
   fi
 
   read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1
@@ -3541,67 +3673,69 @@ mixed_management_build_record() {
   if [[ "${operation}" == create ]]; then
     read -rp "实例 ID（默认 ${id}）: " answer || return 1
     [[ -z "${answer}" ]] || id=$(trim_whitespace "${answer}")
-    structured_instance_store_validate_id "${id}" || { log_warn "实例 ID 格式无效。" >&2; return 1; }
+    structured_instance_store_validate_id "${id}" || return 1
     read -rp "入口 tag（默认 ${tag}）: " answer || return 1
     [[ -z "${answer}" ]] || tag=$(trim_whitespace "${answer}")
   fi
   read -rp "监听地址（默认 ${address}）: " answer || return 1
   if [[ -n "${answer}" ]]; then address=$(trim_whitespace "${answer}"); address_changed=y; fi
-  structured_instance_store_validate_address "${address}" || { log_warn "监听地址格式无效。" >&2; return 1; }
+  structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
   [[ "${operation}" == create || "${port}" != "$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .listen.port' "${snapshot}")" ]] && port_changed=y
   auth=$(prompt_yes_no "是否启用用户名密码认证 [y/n]（当前: ${auth}，默认 y）: " "${auth}") || return 1
   [[ "${operation}" == create || "${auth}" != "$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | if .authentication.enabled then "y" else "n" end' "${snapshot}")" ]] && auth_changed=y
   if [[ "${auth}" == y ]]; then
     read -rp "用户名（留空保持/自动生成）: " answer || return 1
-    if [[ -n "${answer}" ]]; then username=$(trim_whitespace "${answer}"); username_changed=y; fi
-    read -rsp "密码（留空保持/自动生成）: " answer || return 1
-    printf '\n' >&2
+    if [[ -n "${answer}" ]]; then username=${answer}; username_changed=y; fi
+    read -rsp "密码（留空保持/自动生成）: " answer || return 1; printf '\n' >&2
     if [[ -n "${answer}" ]]; then password=${answer}; password_changed=y; fi
-    SB_MIXED_AUTH_ENABLED=y
-    SB_MIXED_USERNAME=${username}
-    SB_MIXED_PASSWORD=${password}
+    SB_MIXED_AUTH_ENABLED=y; SB_MIXED_USERNAME=${username}; SB_MIXED_PASSWORD=${password}
     ensure_mixed_auth_credentials || return 1
-    username=${SB_MIXED_USERNAME}
-    password=${SB_MIXED_PASSWORD}
-  else
-    username=""
-    password=""
-  fi
+    username=${SB_MIXED_USERNAME}; password=${SB_MIXED_PASSWORD}
+  else username=""; password=""; fi
   policy=$(prompt_instance_outbound_policy "出站策略" "${policy}") || return 1
   [[ "${operation}" == create || "${policy}" != "$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .outbound_policy' "${snapshot}")" ]] && policy_changed=y
-  answer=$(mixed_management_prompt_public_consent "${address}") || return 1
+  answer=$(plain_proxy_management_prompt_public_consent "${protocol}" "${address}") || return 1
   if [[ "${address}" != 127.* && "${address}" != ::1 && "${answer}" != y ]]; then
-    log_info "未确认公网明文暴露，已取消 Mixed 实例变更。"
-    return 2
+    log_info "未确认公网明文暴露，已取消 ${label} 实例变更。"; return 2
   fi
+  PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC=${answer}
   MIXED_MANAGEMENT_ALLOW_PUBLIC=${answer}
   if [[ "${operation}" == replace ]]; then
     jq -cS --arg id "${id}" --arg name "${name}" --arg address "${address}" --argjson port "${port}" \
-      --argjson enabled "$([[ "${auth}" == y ]] && printf true || printf false)" \
-      --arg username "${username}" --arg password "${password}" --arg policy "${policy}" \
-      --argjson name_changed "$([[ "${name_changed}" == y ]] && printf true || printf false)" \
-      --argjson address_changed "$([[ "${address_changed}" == y ]] && printf true || printf false)" \
-      --argjson port_changed "$([[ "${port_changed}" == y ]] && printf true || printf false)" \
-      --argjson auth_changed "$([[ "${auth_changed}" == y ]] && printf true || printf false)" \
-      --argjson username_changed "$([[ "${username_changed}" == y ]] && printf true || printf false)" \
-      --argjson password_changed "$([[ "${password_changed}" == y ]] && printf true || printf false)" \
+      --argjson enabled "$([[ "${auth}" == y ]] && printf true || printf false)" --arg username "${username}" --arg password "${password}" --arg policy "${policy}" \
+      --argjson name_changed "$([[ "${name_changed}" == y ]] && printf true || printf false)" --argjson address_changed "$([[ "${address_changed}" == y ]] && printf true || printf false)" \
+      --argjson port_changed "$([[ "${port_changed}" == y ]] && printf true || printf false)" --argjson auth_changed "$([[ "${auth_changed}" == y ]] && printf true || printf false)" \
+      --argjson username_changed "$([[ "${username_changed}" == y ]] && printf true || printf false)" --argjson password_changed "$([[ "${password_changed}" == y ]] && printf true || printf false)" \
       --argjson policy_changed "$([[ "${policy_changed}" == y ]] && printf true || printf false)" \
-      'first(.instances[] | select(.id == $id) | .name = if $name_changed then $name else .name end |
-        .listen.address = if $address_changed then $address else .listen.address end |
-        .listen.port = if $port_changed then $port else .listen.port end |
-        .authentication = if $auth_changed and ($enabled | not) then {enabled:false,username:"",password:""}
-          elif $auth_changed or $username_changed or $password_changed then
-            {enabled:true,username:(if $username_changed then $username else .authentication.username end),password:(if $password_changed then $password else .authentication.password end)}
-          else .authentication end |
-        .outbound_policy = if $policy_changed then $policy else .outbound_policy end)' "${snapshot}" > "${destination}" || return 1
+      'first(.instances[] | select(.id == $id) | .name = if $name_changed then $name else .name end | .listen.address = if $address_changed then $address else .listen.address end | .listen.port = if $port_changed then $port else .listen.port end | .authentication = if $auth_changed and ($enabled | not) then {enabled:false,username:"",password:""} elif $auth_changed or $username_changed or $password_changed then {enabled:true,username:(if $username_changed then $username else .authentication.username end),password:(if $password_changed then $password else .authentication.password end)} else .authentication end | .outbound_policy = if $policy_changed then $policy else .outbound_policy end)' "${snapshot}" > "${destination}" || return 1
   else
-    jq -n -cS --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
-      --arg address "${address}" --argjson port "${port}" --argjson enabled "$([[ "${auth}" == y ]] && printf true || printf false)" \
-      --arg username "${username}" --arg password "${password}" --arg policy "${policy}" \
+    jq -n -cS --arg id "${id}" --arg name "${name}" --arg tag "${tag}" --arg address "${address}" --argjson port "${port}" \
+      --argjson enabled "$([[ "${auth}" == y ]] && printf true || printf false)" --arg username "${username}" --arg password "${password}" --arg policy "${policy}" \
       '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$enabled,username:$username,password:$password},outbound_policy:$policy,dependencies:[]}' > "${destination}" || return 1
   fi
   structured_instance_store_validate_instance_argument "${destination}"
+}
+
+# Compatibility surface for the existing Mixed menu/tests.  The old public
+# signatures stay intact while all new validation and record construction live
+# in the shared plain-proxy helpers above.
+mixed_management_capture_snapshot() { plain_proxy_management_capture_snapshot mixed "$@"; }
+mixed_management_prompt_target() { plain_proxy_management_prompt_target mixed "$@"; }
+mixed_management_next_id() { plain_proxy_management_next_id mixed "$@"; }
+mixed_management_next_tag() { plain_proxy_management_next_tag mixed "$@"; }
+mixed_management_prompt_public_consent() { plain_proxy_management_prompt_public_consent mixed "$@"; }
+mixed_management_build_record() { plain_proxy_management_build_record mixed "$@"; }
+
+plain_proxy_management_pending_revision() {
+  local protocol=${1:-} transaction_file="${SB_PROJECT_DIR}.instance-write.lock/transaction.json"
+  structured_instance_store_protocol "${protocol}" >/dev/null || return 1
+  [[ -f "${transaction_file}" && ! -L "${transaction_file}" ]] || return 1
+  jq -e --arg protocol "${protocol}" '
+    .schema_version == 1 and (if has("protocol") then .protocol else "mixed" end) == $protocol and
+    (.expected_revision | type == "string" and test("^(0|[1-9][0-9]{0,15})$"))
+  ' "${transaction_file}" >/dev/null 2>&1 || return 1
+  jq -er '.expected_revision' "${transaction_file}" 2>/dev/null
 }
 
 mixed_instance_replace_interactive() (
@@ -3647,13 +3781,7 @@ mixed_instance_create_interactive() (
 )
 
 mixed_management_pending_revision() {
-  local transaction_file="${SB_PROJECT_DIR}.instance-write.lock/transaction.json"
-  [[ -f "${transaction_file}" && ! -L "${transaction_file}" ]] || return 1
-  jq -e '
-    .schema_version == 1 and
-    (.expected_revision | type == "string" and test("^(0|[1-9][0-9]{0,15})$"))
-  ' "${transaction_file}" >/dev/null 2>&1 || return 1
-  jq -er '.expected_revision' "${transaction_file}" 2>/dev/null
+  plain_proxy_management_pending_revision mixed
 }
 
 mixed_management_confirm() {
@@ -3662,6 +3790,7 @@ mixed_management_confirm() {
 
 mixed_instance_management_menu() (
   local requested_operation=${1:-} temp_dir choice snapshot revision target record_file result status one_shot=n last_instance=n
+  local confirmation
   umask 077
   case "${requested_operation}" in
     "") ;;
@@ -3746,7 +3875,12 @@ mixed_instance_management_menu() (
           [[ "${one_shot}" == y ]] && return 0
           continue
         }
-        if [[ "$(mixed_management_confirm "$([[ "${choice}" == 3 ]] && printf '确认删除实例 %s' || printf '确认将 %s 设为默认实例' "${target}")")" != y ]]; then
+        if [[ "${choice}" == 3 ]]; then
+          confirmation="确认删除实例 ${target}"
+        else
+          confirmation="确认将 ${target} 设为默认实例"
+        fi
+        if [[ "$(mixed_management_confirm "${confirmation}")" != y ]]; then
           [[ "${one_shot}" == y ]] && return 0
           continue
         fi
@@ -3777,6 +3911,99 @@ mixed_instance_management_menu() (
   done
 )
 
+socks_instance_management_menu() (
+  local requested_operation=${1:-} temp_dir choice snapshot revision target result status one_shot=n
+  local record_file label confirmation
+  umask 077
+  label=$(plain_proxy_management_label socks) || return 1
+  case "${requested_operation}" in
+    "") ;;
+    create) choice=1; one_shot=y ;;
+    replace) choice=2; one_shot=y ;;
+    delete) choice=3; one_shot=y ;;
+    default) choice=4; one_shot=y ;;
+    migrate) log_warn "${label} 没有 legacy schema 1 可迁移。" >&2; return 1 ;;
+    recover) choice=6; one_shot=y ;;
+    list) choice=7; one_shot=y ;;
+    *) log_warn "不支持的 ${label} 管理操作: ${requested_operation}" >&2; return 1 ;;
+  esac
+  temp_dir=$(mktemp -d) || return 1
+  trap 'rm -rf -- "${temp_dir}"' EXIT
+  while true; do
+    if [[ -d "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
+      if revision=$(plain_proxy_management_pending_revision socks); then
+        echo "检测到未完成的 ${label} 实例事务（revision ${revision}）。" >&2
+        choice=$(prompt_choice "仅可恢复该事务；恢复 [1]，返回 [0]: " 0 1 0) || return 1
+        [[ "${choice}" == 1 ]] || return 0
+        [[ "$(mixed_management_confirm "确认执行事务恢复")" == y ]] || return 0
+        result=$(recover_plain_proxy_instance_transaction socks "${revision}") || {
+          status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; return "${status}"
+        }
+        [[ -n "${result}" ]] && printf '%s\n' "${result}"
+        return 0
+      fi
+      log_error "发现无法验证的 ${label} 实例事务日志；保留现场，未执行任何变更。"
+      return 1
+    fi
+    if [[ -z "${requested_operation}" ]]; then
+      echo -e "\n${BLUE}--- ${label} 实例管理 ---${NC}"
+      echo "1. 创建实例"; echo "2. 修改实例"; echo "3. 删除实例"; echo "4. 设置默认实例"
+      echo "5. 迁移 legacy schema 1（不适用）"; echo "6. 恢复未完成事务"; echo "7. 列出实例（含 ID）"; echo "0. 返回"
+      choice=$(prompt_choice "请选择 [0-7]: " 0 7 "") || return 1
+    fi
+    [[ "${choice}" == 0 ]] && return 0
+    if [[ "${choice}" == 6 ]]; then
+      revision=$(plain_proxy_management_pending_revision socks 2>/dev/null || true)
+      if [[ -n "${revision}" ]]; then
+        [[ "$(mixed_management_confirm "确认执行事务恢复")" == y ]] || { [[ "${one_shot}" == y ]] && return 0 || continue; }
+        result=$(recover_plain_proxy_instance_transaction socks "${revision}") || { status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; [[ "${one_shot}" == y ]] && return "${status}" || continue; }
+        [[ -n "${result}" ]] && printf '%s\n' "${result}"
+      else log_warn "当前没有可验证的待恢复事务。"; fi
+      [[ "${one_shot}" == y ]] && return 0
+      continue
+    fi
+    if ! plain_proxy_management_capture_snapshot socks "${temp_dir}/before.json"; then
+      log_error "${label} 状态缺失或格式不可信；未执行任何变更。"; return 1
+    fi
+    snapshot="${temp_dir}/before.json"; revision=$(jq -r '.revision' "${snapshot}") || return 1
+    case "${choice}" in
+      1|2)
+        record_file="${temp_dir}/record.json"
+        target=""
+        if [[ "${choice}" == 2 ]]; then
+          target=$(plain_proxy_management_prompt_target socks "${snapshot}" "请选择要修改的 ${label} 实例") || { [[ "${one_shot}" == y ]] && return 0 || continue; }
+        fi
+        plain_proxy_management_build_record socks "${snapshot}" "$([[ "${choice}" == 1 ]] && printf create || printf replace)" "${target}" "${record_file}" || {
+          status=$?
+          [[ "${one_shot}" == y ]] && return "${status}"
+          continue
+        }
+        result=$(apply_plain_proxy_instance_change socks "$([[ "${choice}" == 1 ]] && printf create || printf replace)" "${revision}" "${record_file}" "${PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC:-n}") || { status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; [[ "${one_shot}" == y ]] && return "${status}" || continue; }
+        [[ -n "${result}" ]] && printf '%s\n' "${result}"
+        [[ "${one_shot}" == y ]] && return 0
+        ;;
+      3|4)
+        target=$(plain_proxy_management_prompt_target socks "${snapshot}" "请选择实例") || { [[ "${one_shot}" == y ]] && return 0 || continue; }
+        if [[ "${choice}" == 3 ]]; then
+          confirmation="确认删除实例 ${target}"
+        else
+          confirmation="确认将 ${target} 设为默认实例"
+        fi
+        [[ "$(mixed_management_confirm "${confirmation}")" == y ]] || { [[ "${one_shot}" == y ]] && return 0 || continue; }
+        result=$(apply_plain_proxy_instance_change socks "$([[ "${choice}" == 3 ]] && printf delete || printf default)" "${revision}" "${target}" n) || { status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; [[ "${one_shot}" == y ]] && return "${status}" || continue; }
+        [[ -n "${result}" ]] && printf '%s\n' "${result}"
+        [[ "${one_shot}" == y ]] && return 0
+        ;;
+      5) log_warn "${label} 没有 legacy schema 1 可迁移。" ;;
+      7)
+        jq -r '.instances[] | "\(.id)\t\(.name)\t\(.listen.address):\(.listen.port)\tauth=\(.authentication.enabled)\tpolicy=\(.outbound_policy)"' "${snapshot}" || return $?
+        [[ "${one_shot}" == y ]] && return 0
+        ;;
+      *) log_warn "无效选项，请重新选择。" ;;
+    esac
+  done
+)
+
 install_protocols_interactive() {
   local install_mode=$1
   local installed_protocols=() selected_protocols=()
@@ -3792,6 +4019,10 @@ install_protocols_interactive() {
     IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
     if protocol_array_contains mixed "${selected_protocols[@]}" && mixed_inactive_store_snapshot >/dev/null 2>&1; then
       log_warn "Mixed 已保留 revision；请通过主菜单 17 创建 Mixed 实例，或本次仅选择其他协议。"
+      return 1
+    fi
+    if protocol_array_contains socks "${selected_protocols[@]}" && plain_proxy_inactive_store_snapshot socks >/dev/null 2>&1; then
+      log_warn "SOCKS 已保留 revision；请通过追加安装单独创建 SOCKS 实例，或本次仅选择其他协议。"
       return 1
     fi
     snapshot_dir=$(create_managed_state_snapshot) || {
@@ -3838,6 +4069,15 @@ install_protocols_interactive() {
         return 0
       fi
       log_warn "Mixed 实例不能与其他新增协议合并操作；请先单独管理 Mixed 实例。"
+      return 0
+    fi
+    if protocol_array_contains "socks" "${installed_protocols[@]}" &&
+       protocol_array_contains "socks" "${selected_protocols[@]}"; then
+      if [[ ${#selected_protocols[@]} -eq 1 ]]; then
+        socks_instance_management_menu create || return $?
+        return 0
+      fi
+      log_warn "SOCKS 实例不能与其他新增协议合并操作；请先单独管理 SOCKS 实例。"
       return 0
     fi
     snapshot_dir=$(create_managed_state_snapshot) || {
@@ -3889,6 +4129,26 @@ install_protocols_interactive() {
 
 set_protocol_defaults() {
   case "$1" in
+    socks)
+      SB_PROTOCOL="socks"
+      SB_NODE_NAME="$(default_node_name_for_protocol "socks")"
+      SB_PORT="$(pick_random_high_port)"
+      SB_SNI=""
+      SB_UUID=""
+      SB_PUBLIC_KEY=""
+      SB_PRIVATE_KEY=""
+      SB_SHORT_ID_1=""
+      SB_SHORT_ID_2=""
+      SB_MIXED_AUTH_ENABLED="y"
+      SB_MIXED_USERNAME=""
+      SB_MIXED_PASSWORD=""
+      SB_INSTANCE_ID=""
+      SB_MIXED_INSTANCE_ID=""
+      SB_MIXED_INBOUND_TAG="socks-in"
+      SB_MIXED_LISTEN_ADDRESS="127.0.0.1"
+      SB_MIXED_STORE_REVISION="0"
+      SB_OUTBOUND_POLICY="default"
+      ;;
     mixed)
       SB_PROTOCOL="mixed"
       SB_NODE_NAME="$(default_node_name_for_protocol "mixed")"
@@ -7333,10 +7593,11 @@ list_effective_protocols() {
 }
 
 load_protocol_state() {
-  local protocol state_file state_mode=${2:-mutable} mixed_schema
+  local protocol state_file state_mode=${2:-mutable} mixed_schema socks_schema
   protocol=$(normalize_protocol_id "$1") || return 1
   state_file=$(protocol_state_file "${protocol}") || return 1
   mixed_schema=""
+  socks_schema=""
   if [[ "${protocol}" == "mixed" && -f "${state_file}" ]]; then
     if grep -Eq "^[[:space:]]*CONFIG_SCHEMA_VERSION=(2|\"2\"|'2')[[:space:]]*$" "${state_file}"; then
       mixed_schema=2
@@ -7345,6 +7606,11 @@ load_protocol_state() {
       mixed_schema=${mixed_schema//\"/}
       mixed_schema=${mixed_schema//\'/}
     fi
+  fi
+  if [[ "${protocol}" == "socks" && -f "${state_file}" ]]; then
+    socks_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" | head -n1) || return 1
+    socks_schema=${socks_schema//\"/}
+    socks_schema=${socks_schema//\'/}
   fi
   validate_protocol_state_schema "${protocol}" "${state_file}" || return 1
   if [[ "${protocol}" == "vless-reality" && "${state_mode}" != "read-only" ]]; then
@@ -7381,6 +7647,16 @@ load_protocol_state() {
       mixed_schema=${mixed_schema//\'/}
     fi
     [[ "${mixed_schema}" == "2" ]] && return 1
+  fi
+
+  # SOCKS has no legacy .env representation.  Dispatch only a validated
+  # schema-2 marker to the typed store and reject every older/unknown shape
+  # before it can be sourced as shell code.
+  if [[ "${protocol}" == "socks" ]]; then
+    [[ "${socks_schema}" == "2" ]] || return 1
+    plain_proxy_structured_marker_is_valid "${state_file}" || return 1
+    load_plain_proxy_structured_instance socks || return 1
+    return 0
   fi
 
   unset ACME_EXTRA_JSON || true
@@ -7810,6 +8086,16 @@ build_mixed_inbound_json() {
     )'
 }
 
+build_socks_inbound_json() {
+  local state_file
+  state_file=$(protocol_state_file socks) || return 1
+  plain_proxy_structured_state_active socks || {
+    printf '[ERROR] SOCKS 结构化状态缺失或无效，未生成入站。\n' >&2
+    return 1
+  }
+  render_structured_instance_inbounds socks "$(plain_proxy_structured_store_file socks)"
+}
+
 hy2_certificate_provider_tag() {
   printf 'hy2-cert-provider'
 }
@@ -8061,7 +8347,7 @@ build_certificate_provider_for_protocol() {
   protocol=$(normalize_protocol_id "$1") || return 1
 
   case "${protocol}" in
-    vless-reality|mixed) return 0 ;; # Explicit no-certificate-provider contract.
+    vless-reality|mixed|socks) return 0 ;; # Explicit no-certificate-provider contract.
     hy2) build_hy2_certificate_provider_json ;;
     anytls) build_anytls_certificate_provider_json ;;
     *) return 1 ;;
@@ -8075,6 +8361,7 @@ build_inbound_for_protocol() {
   case "${protocol}" in
     vless-reality) build_vless_inbound_json ;;
     mixed) build_mixed_inbound_json ;;
+    socks) build_socks_inbound_json ;;
     hy2) build_hy2_inbound_json ;;
     anytls) build_anytls_inbound_json ;;
     *) return 1 ;;
@@ -8192,14 +8479,14 @@ instance_outbound_requires_warp() {
       vless-reality)
         vless_reality_has_warp_outbound_policy && return 0
         ;;
-      mixed)
-        state_file=$(protocol_state_file "mixed") || return 1
+      mixed|socks)
+        state_file=$(protocol_state_file "${protocol}") || return 1
         schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" 2>/dev/null || true)
         schema=${schema//\"/}
         schema=${schema//\'/}
         if [[ "${schema}" == "2" ]]; then
-          mixed_structured_state_active || return 1
-          store_file=$(mixed_structured_store_file) || return 1
+          plain_proxy_structured_state_active "${protocol}" || return 1
+          store_file=$(plain_proxy_structured_store_file "${protocol}") || return 1
           jq -e 'any(.instances[]; .outbound_policy == "warp")' "${store_file}" >/dev/null 2>&1 && return 0
         fi
         ;;
@@ -8229,6 +8516,12 @@ build_protocol_route_rules() {
       else
         jq -n '[{ "inbound": "mixed-in", "action": "sniff" }]'
       fi
+      ;;
+    socks)
+      local state_file
+      state_file=$(protocol_state_file socks) || return 1
+      plain_proxy_structured_state_active socks || return 1
+      render_structured_instance_route_rules socks "$(plain_proxy_structured_store_file socks)"
       ;;
     hy2)
       jq -n '[{ "inbound": "hy2-in", "action": "sniff" }]'
@@ -10052,6 +10345,10 @@ update_config_only() {
     mixed_instance_replace_interactive
     return $?
   fi
+  if [[ "${selected_protocol}" == socks ]]; then
+    socks_instance_management_menu replace
+    return $?
+  fi
 
   load_protocol_state "${selected_protocol}"
   if [[ "${selected_protocol}" == "vless-reality" ]]; then
@@ -10147,6 +10444,14 @@ remove_protocol_menu() {
       return $?
     fi
     log_warn "结构化 Mixed 实例需通过实例事务逐个移除；请先进入 Mixed 实例管理，再移除其他协议。本次未修改。"
+    return 1
+  fi
+  if plain_proxy_structured_state_active socks && protocol_array_contains socks "${selected_protocols[@]}"; then
+    if [[ ${#selected_protocols[@]} -eq 1 ]]; then
+      socks_instance_management_menu delete
+      return $?
+    fi
+    log_warn "结构化 SOCKS 实例需通过实例事务逐个移除；请先进入 SOCKS 实例管理，再移除其他协议。本次未修改。"
     return 1
   fi
 
@@ -10648,13 +10953,58 @@ print_hy2_compatibility_warnings() {
   done < <(jq -r '.[]?.message' <<< "${warnings_json}")
 }
 
+client_export_mixed_tags_json() (
+  local schema store_file instance_id
+
+  if ! protocol_state_exists "mixed"; then
+    printf '[]'
+    return 0
+  fi
+  schema=$(protocol_instance_state_schema "mixed" 2>/dev/null || true)
+  case "${schema}" in
+    2)
+      store_file=$(mixed_structured_store_file 2>/dev/null || true)
+      if [[ -f "${store_file}" && ! -L "${store_file}" ]]; then
+        jq -c '[.instances[]?.id | "mixed-" + .]' "${store_file}" 2>/dev/null || printf '[]'
+      else
+        printf '[]'
+      fi
+      ;;
+    1)
+      instance_id=$(protocol_default_instance_id "mixed" 2>/dev/null || true)
+      if [[ -n "${instance_id}" ]] && load_protocol_instance_state mixed "${instance_id}" >/dev/null 2>&1; then
+        jq -cn --arg tag "$(client_outbound_tag_for_protocol mixed)" '[ $tag ]'
+      else
+        printf '[]'
+      fi
+      ;;
+    *)
+      printf '[]'
+      ;;
+  esac
+)
+
 collect_client_export_warnings_json() {
-  local config_json=$1 hy2_warnings
+  local config_json=$1 hy2_warnings mixed_tags_json
   hy2_warnings=$(collect_hy2_compatibility_warnings_json "export") || return 1
-  jq --argjson warnings "${hy2_warnings}" '
-    $warnings + (if any(.outbounds[]?; .type == "socks") then [{
+  if ! mixed_tags_json=$(client_export_mixed_tags_json); then
+    mixed_tags_json='[]'
+  fi
+  jq --argjson warnings "${hy2_warnings}" --argjson mixed_tags "${mixed_tags_json}" '
+    def mixed_origin:
+      (.tag // "") as $tag |
+      (any($mixed_tags[]; . == $tag) or
+       (($tag | type) == "string" and ($tag | startswith("mixed-"))));
+    $warnings
+    + (if any(.outbounds[]?;
+        .type == "socks" and mixed_origin) then [{
       code: "mixed_plaintext_transport",
       message: "Mixed 导出使用明文 SOCKS5，代理链路未启用 TLS，认证信息与非加密业务可能被读取；仅用于可信网络或受保护隧道。UDP 经 UoT v2 承载，UoT 不提供加密。"
+    }] else [] end)
+    + (if any(.outbounds[]?;
+        .type == "socks" and (mixed_origin | not)) then [{
+      code: "socks_plaintext_transport",
+      message: "SOCKS5 导出使用明文代理链路，认证信息与非加密业务可能被读取；仅用于可信网络或受保护隧道。UoT 即使启用也不提供加密。"
     }] else [] end)
   ' <<< "${config_json}"
 }
@@ -11460,13 +11810,23 @@ mixed_loaded_state_is_exportable() {
   validate_mixed_client_connection "${PORT:-}" "${AUTH_ENABLED:-}" "${USERNAME:-}" "${PASSWORD:-}"
 }
 
-build_client_mixed_outbound() {
-  local public_ip=${1:-$(get_public_ip)}
-  local outbound_tag=${2:-$(client_outbound_tag_for_protocol "mixed")}
+build_client_plain_proxy_outbound() {
+  local protocol=${1:-}
+  local public_ip outbound_tag protocol_label
+
+  protocol=$(structured_instance_store_protocol "${protocol}") || return 1
+  public_ip=${2:-$(get_public_ip)}
+  outbound_tag=${3:-$(client_outbound_tag_for_protocol "${protocol}")}
+  if [[ "${protocol}" == "mixed" ]]; then
+    protocol_label="Mixed"
+  else
+    protocol_label="SOCKS"
+  fi
   if [[ -z "${public_ip}" || -z "${outbound_tag}" ]] ||
      ! validate_mixed_client_connection "${SB_PORT:-}" "${SB_MIXED_AUTH_ENABLED:-}" \
        "${SB_MIXED_USERNAME:-}" "${SB_MIXED_PASSWORD:-}"; then
-    printf '[ERROR] mixed_export_state_invalid: Mixed 端口或认证字段不完整或无效，未生成客户端连接材料。\n' >&2
+    printf '[ERROR] %s_export_state_invalid: %s 端口或认证字段不完整或无效，未生成客户端连接材料。\n' \
+      "${protocol}" "${protocol_label}" >&2
     return 1
   fi
 
@@ -11482,20 +11842,41 @@ build_client_mixed_outbound() {
     + (if $auth_enabled == "y" then {username:$username, password:$password} else {} end)'
 }
 
-build_client_mixed_outbounds() (
-  local public_ip=${1:-$(get_public_ip)}
-  local store_file instance_id listen_address server_address outbound_json tmpdir
+build_client_mixed_outbound() (
+  build_client_plain_proxy_outbound mixed "$@"
+)
+
+build_client_plain_proxy_outbounds() (
+  local protocol=${1:-}
+  local public_ip
+  local store_file instance_id listen_address server_address outbound_json tmpdir display_protocol
+  local instance_ids_raw
   local instance_ids=()
+
+  protocol=$(structured_instance_store_protocol "${protocol}") || return 1
+  public_ip=${2:-$(get_public_ip)}
+  if [[ "${protocol}" == "mixed" ]]; then
+    display_protocol="Mixed"
+  else
+    display_protocol="SOCKS"
+  fi
   [[ -n "${public_ip}" ]] || return 1
-  mixed_structured_state_active || return 1
-  store_file=$(mixed_structured_store_file) || return 1
-  mapfile -t instance_ids < <(jq -r '.instances[].id' "${store_file}")
+  plain_proxy_structured_state_active "${protocol}" || return 1
+  store_file=$(plain_proxy_structured_store_file "${protocol}") || return 1
+  if ! instance_ids_raw=$(jq -r '.instances[].id' "${store_file}"); then
+    return 1
+  fi
+  [[ -n "${instance_ids_raw}" ]] || return 1
+  mapfile -t instance_ids <<< "${instance_ids_raw}"
   [[ ${#instance_ids[@]} -gt 0 ]] || return 1
   tmpdir=$(mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
 
   for instance_id in "${instance_ids[@]}"; do
-    load_mixed_structured_instance "${instance_id}" || return 1
+    [[ -n "${instance_id}" ]] || return 1
+    load_plain_proxy_structured_instance "${protocol}" "${instance_id}" || return 1
+    [[ "${SB_PROTOCOL}" == "${protocol}" ]] || return 1
+    [[ "${SB_MIXED_STORE_REVISION}" =~ ^[0-9]+$ ]] || return 1
     listen_address=${SB_MIXED_LISTEN_ADDRESS}
     case "${listen_address}" in
       0.0.0.0|::)
@@ -11503,17 +11884,25 @@ build_client_mixed_outbounds() (
         ;;
       127.*|::1)
         server_address=${listen_address}
-        printf '[WARN] Mixed 实例 %s 绑定回环地址 %s；导出仅供本机使用，未宣称公网可达。\n' \
-          "${instance_id}" "${listen_address}" >&2
+        printf '[WARN] %s 实例 %s 绑定回环地址 %s；导出仅供本机使用，未宣称公网可达。\n' \
+          "${display_protocol}" "${instance_id}" "${listen_address}" >&2
         ;;
       *)
         server_address=${listen_address}
         ;;
     esac
-    outbound_json=$(build_client_mixed_outbound "${server_address}" "mixed-${instance_id}") || return 1
+    outbound_json=$(build_client_plain_proxy_outbound "${protocol}" "${server_address}" "${protocol}-${instance_id}") || return 1
     printf '%s\n' "${outbound_json}" >> "${tmpdir}/outbounds.jsonl" || return 1
   done
   jq -c '.' "${tmpdir}/outbounds.jsonl"
+)
+
+build_client_mixed_outbounds() (
+  build_client_plain_proxy_outbounds mixed "$@"
+)
+
+build_client_socks_outbounds() (
+  build_client_plain_proxy_outbounds socks "$@"
 )
 
 build_client_outbound_json_for_protocol() {
@@ -11535,7 +11924,7 @@ build_client_outbound_json_for_protocol() {
   restore_original_state="n"
 
   case "${protocol}" in
-    vless-reality|mixed|hy2|anytls) ;;
+    vless-reality|mixed|socks|hy2|anytls) ;;
     *)
       return 1
       ;;
@@ -11571,6 +11960,18 @@ build_client_outbound_json_for_protocol() {
           :
         else
           build_status=$?
+        fi
+        ;;
+      socks)
+        if [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]] && plain_proxy_structured_state_active socks; then
+          if outbound_json=$(build_client_socks_outbounds "${public_ip}"); then
+            :
+          else
+            build_status=$?
+          fi
+        else
+          printf '[ERROR] socks_export_state_invalid: SOCKS 结构化状态不完整或无效，未生成客户端连接材料。\n' >&2
+          build_status=1
         fi
         ;;
       vless-reality)
@@ -11727,6 +12128,14 @@ show_link_info() {
     return 0
   fi
 
+  if [[ "${SB_PROTOCOL}" == "socks" ]]; then
+    echo "1. SOCKS5 代理链接"
+    build_mixed_socks5_link "${public_ip}"
+    echo ""
+    log_warn "SOCKS5 代理链路未启用 TLS，认证信息与业务流量可能被读取；仅用于可信网络或受保护隧道。"
+    return 0
+  fi
+
   echo "1. Mixed HTTP 代理链接"
   build_mixed_http_link "${public_ip}"
   echo ""
@@ -11755,8 +12164,10 @@ show_qr_info() {
     echo -e "\n${YELLOW}连接二维码：${NC}"
   fi
 
-  if [[ "${SB_PROTOCOL}" == "mixed" ]]; then
-    log_info "Mixed 协议当前不提供二维码，请使用链接方式手动配置客户端。"
+  if [[ "${SB_PROTOCOL}" == "mixed" || "${SB_PROTOCOL}" == "socks" ]]; then
+    local plain_label="Mixed"
+    [[ "${SB_PROTOCOL}" != "socks" ]] || plain_label="SOCKS"
+    log_info "${plain_label} 协议当前不提供二维码，请使用链接方式手动配置客户端。"
     return 0
   fi
 
@@ -11912,7 +12323,7 @@ show_connection_details_for_detected_addresses() {
   local address_entries=()
   local entry label address public_ip
 
-  if [[ "${SB_PROTOCOL}" == mixed ]] && mixed_structured_state_active; then
+  if [[ ("${SB_PROTOCOL}" == mixed || "${SB_PROTOCOL}" == socks) ]] && plain_proxy_structured_state_active "${SB_PROTOCOL}"; then
     address=${SB_MIXED_LISTEN_ADDRESS:-}
     if [[ -n "${address}" && "${address}" != '::' && "${address}" != 0.0.0.0 ]]; then
       show_connection_details "${mode}" "${address}" "监听地址"
@@ -11962,12 +12373,12 @@ show_all_connection_details() {
 
   for protocol in "${installed_protocols[@]}"; do
     load_protocol_state "${protocol}" || return $?
-    if [[ "${protocol}" == mixed ]] && mixed_structured_state_active; then
-      instance_ids=$(list_protocol_instance_ids mixed) || return $?
+    if [[ ("${protocol}" == mixed || "${protocol}" == socks) ]] && plain_proxy_structured_state_active "${protocol}"; then
+      instance_ids=$(list_protocol_instance_ids "${protocol}") || return $?
       while IFS= read -r instance_id; do
         [[ -n "${instance_id}" ]] || continue
-        load_protocol_instance_state mixed "${instance_id}" || return $?
-        printf '\n--- Mixed 实例 %s ---\n' "${instance_id}"
+        load_plain_proxy_structured_instance "${protocol}" "${instance_id}" || return $?
+        printf '\n--- %s 实例 %s ---\n' "${protocol}" "${instance_id}"
         show_connection_details_for_detected_addresses "${mode}" || return $?
       done <<< "${instance_ids}"
       continue
@@ -12351,9 +12762,10 @@ agent_print_help() {
   sbv agent service restart --json --yes
   sbv agent subman-sync --json
   sbv agent warp --json
-  sbv agent instance create|replace mixed --json --yes --expected-revision N --file record.json [--allow-public]
-  sbv agent instance delete|default mixed --json --yes --expected-revision N --id ID
-  sbv agent instance migrate|recover mixed --json --yes --expected-revision N
+  sbv agent instance create|replace mixed|socks --json --yes --expected-revision N --file record.json [--allow-public]
+  sbv agent instance delete|default mixed|socks --json --yes --expected-revision N --id ID
+  sbv agent instance migrate mixed --json --yes --expected-revision N
+  sbv agent instance recover mixed|socks --json --yes --expected-revision N
 
 说明:
   capabilities  输出协议、功能入口以及只读/变更/敏感分类。
@@ -12368,7 +12780,7 @@ agent_print_help() {
   doctor        输出只读诊断信息和配置校验结果。
   service       执行带 --yes 保护的服务操作，目前支持 restart。
   subman-sync   非交互推送节点到 SubMan，缺少配置时返回结构化错误。
-  instance      Mixed 实例事务；legacy 首次写入 revision 为 0；recover 使用待恢复事务原 revision。
+  instance      Mixed/SOCKS 实例事务；legacy 首次写入 revision 为 0；recover 使用待恢复事务原 revision。
 EOF
 }
 
@@ -12571,6 +12983,17 @@ agent_capabilities_json() {
           firewalld: "external_rules_preflight_only",
           persistent_recovery_journal: true
         },
+        plain_proxy_instances: {
+          protocols: ["mixed", "socks"],
+          legacy_migration_protocols: ["mixed"],
+          state_schema: 2,
+          store_schema: 1,
+          operations: ["create", "replace", "delete", "default", "migrate", "recover"],
+          expected_revision_required: true,
+          plaintext_public_confirmation: "--allow-public",
+          default_new_listener: "127.0.0.1",
+          cross_protocol_bulk_delete: false
+        },
         diagnostics: {config_check: true, doctor: true, media_check: true},
         subman: {supported_protocols: ($registry | map(select(.subman_type != "") | .agent_id)), idempotent_sync: true}
       },
@@ -12584,7 +13007,7 @@ agent_capabilities_json() {
         doctor: {mutation: false, sensitive: false},
         "upgrade-check": {mutation: false, sensitive: false},
         upgrade: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart"},
-        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed"]},
+        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks"]},
         "export-client": {mutation: true, sensitive: true},
         "service restart": {mutation: true, sensitive: false, confirmation: "--yes"},
         "subman-sync": {mutation: true, sensitive: true, external_write: true}
@@ -12594,6 +13017,7 @@ agent_capabilities_json() {
         managed_instance_takeover_repair: true,
         reality_multi_instance_and_qos: true,
         mixed_multi_instance_management: true,
+        socks_multi_instance_management: true,
         warp_mutation: true,
         inbound_outbound_stack_management: true,
         bbr: true,
@@ -13654,24 +14078,27 @@ agent_trusted_indexed_protocols_raw() {
 
 agent_validate_indexed_protocol_states() {
   local indexed_protocols=$1 protocol state_file state_id normalized_state_id
-  local expected_protocols=() mixed_store_file mixed_store_count
+  local expected_protocols=() plain_protocol plain_store_file plain_store_count
 
   while IFS= read -r protocol; do
     [[ -n "${protocol}" ]] && expected_protocols+=("${protocol}")
   done <<< "${indexed_protocols}"
 
-  # A deleted Mixed protocol may leave a valid revisioned empty tombstone for
-  # CAS continuity.  It is safe when Mixed is absent from the index; a
+  # A deleted plain proxy may leave a valid revisioned empty tombstone for
+  # CAS continuity.  It is safe when its protocol is absent from the index; a
   # non-empty orphan would be an unowned inventory and must fail closed.
-  if ! protocol_array_contains "mixed" ${expected_protocols[@]+"${expected_protocols[@]}"}; then
-    mixed_store_file=$(mixed_structured_store_file 2>/dev/null || true)
-    if [[ -e "${mixed_store_file}" || -L "${mixed_store_file}" ]]; then
-      [[ -f "${mixed_store_file}" && ! -L "${mixed_store_file}" ]] || return 1
-      validate_structured_instance_store mixed "${mixed_store_file}" || return 1
-      mixed_store_count=$(jq -r '.instances | length' "${mixed_store_file}") || return 1
-      [[ "${mixed_store_count}" == "0" ]] || return 1
+  for plain_protocol in mixed socks; do
+    if ! protocol_array_contains "${plain_protocol}" ${expected_protocols[@]+"${expected_protocols[@]}"}; then
+      plain_store_file=$(plain_proxy_structured_store_file "${plain_protocol}") || return 1
+      if [[ -e "${plain_store_file}" || -L "${plain_store_file}" ]]; then
+        [[ -f "${plain_store_file}" && ! -L "${plain_store_file}" ]] || return 1
+        validate_structured_instance_store "${plain_protocol}" "${plain_store_file}" || return 1
+        plain_store_count=$(jq -r '.instances | length' "${plain_store_file}") || return 1
+        [[ "${plain_store_count}" == "0" ]] || return 1
+        jq -e '.revision > 0' "${plain_store_file}" >/dev/null 2>&1 || return 1
+      fi
     fi
-  fi
+  done
 
   for state_file in "${SB_PROTOCOL_STATE_DIR}"/*.env; do
     [[ -e "${state_file}" ]] || continue
@@ -13695,6 +14122,10 @@ agent_validate_indexed_protocol_states() {
       # partial first-node view would make Agent status/links appear healthy
       # while silently omitting listeners or credentials.
       mixed_validate_state_inventory || return 1
+    elif [[ "${protocol}" == "socks" ]]; then
+      # SOCKS is structured-only.  Validate the complete manifest and compare
+      # every live tag before reporting the protocol as installed.
+      plain_proxy_validate_state_inventory socks || return 1
     fi
   done
 }
@@ -14032,7 +14463,7 @@ agent_node_summary_json_for_current_protocol() {
       rate_down="${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}"
       outbound_policy="${SB_OUTBOUND_POLICY:-default}"
       ;;
-    mixed)
+    mixed|socks)
       client_exportable="true"
       [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]] && auth_enabled="true"
       instance_id="${SB_MIXED_INSTANCE_ID:-}"
@@ -14086,9 +14517,9 @@ agent_node_summary_json_for_current_protocol() {
       "client_exportable": $client_exportable
     }
     + (if $server_name != "" then {"server_name": $server_name} else {} end)
-    + (if $protocol == "mixed" then {"auth_enabled": $auth_enabled} else {} end)
-    + (if $protocol == "mixed" then {"instance_revision": ($instance_revision | tonumber)} else {} end)
-    + (if $protocol == "mixed" and $instance_id != "" then {
+    + (if ($protocol == "mixed" or $protocol == "socks") then {"auth_enabled": $auth_enabled} else {} end)
+    + (if ($protocol == "mixed" or $protocol == "socks") then {"instance_revision": ($instance_revision | tonumber)} else {} end)
+    + (if ($protocol == "mixed" or $protocol == "socks") and $instance_id != "" then {
         "instance_id": $instance_id,
         "tag": $inbound_tag,
         "listen": {"address": $listen_address, "port": ($port | tonumber)}
@@ -14158,6 +14589,25 @@ agent_link_json_for_current_protocol() {
         --arg socks5 "$(build_mixed_socks5_link "${mixed_link_address}")" \
         '{"http": $http, "socks5": $socks5}')
       ;;
+    socks)
+      instance_id="${SB_MIXED_INSTANCE_ID:-}"
+      inbound_tag="${SB_MIXED_INBOUND_TAG:-}"
+      listen_address="${SB_MIXED_LISTEN_ADDRESS:-}"
+      instance_revision="${SB_MIXED_STORE_REVISION:-0}"
+      mixed_link_address="${public_ip}"
+      case "${listen_address}" in
+        0.0.0.0|::) mixed_link_address="${public_ip}" ;;
+        "") ;;
+        *) mixed_link_address="${listen_address}" ;;
+      esac
+      link_json=$(jq -n \
+        --arg socks5 "$(build_mixed_socks5_link "${mixed_link_address}")" \
+        '{"socks5": $socks5}')
+      compatibility_warnings_json=$(jq -n '[{
+        code: "socks_plaintext_transport",
+        message: "SOCKS5 导出使用明文代理链路，认证信息与非加密业务可能被读取；仅用于可信网络或受保护隧道。UoT 即使启用也不提供加密。"
+      }]')
+      ;;
     hy2)
       link_json=$(jq -n --arg hy2 "$(build_hy2_link "${public_ip}" "${address_label}")" '{"hy2": $hy2}')
       compatibility_warnings_json=$(build_hy2_compatibility_warnings_json "share")
@@ -14199,12 +14649,12 @@ agent_link_json_for_current_protocol() {
         },
         "outbound_policy": $outbound_policy
       } else {} end)
-    + (if $protocol == "mixed" and $instance_id != "" then {
+    + (if ($protocol == "mixed" or $protocol == "socks") and $instance_id != "" then {
         "instance_id": $instance_id,
         "tag": $inbound_tag,
         "listen": {"address": $listen_address, "port": ($port | tonumber)}
       } else {} end)
-    + (if $protocol == "mixed" then {"instance_revision": ($instance_revision | tonumber)} else {} end)
+    + (if ($protocol == "mixed" or $protocol == "socks") then {"instance_revision": ($instance_revision | tonumber)} else {} end)
     + (if $outbound != null then {"outbound": $outbound} else {} end)
     + (if ($warnings | length) > 0 then {"warnings": $warnings} else {} end)'
 }
@@ -14603,18 +15053,27 @@ agent_subman_sync_json() {
 }
 
 mixed_inactive_store_snapshot() {
+  plain_proxy_inactive_store_snapshot mixed "$@"
+}
+
+plain_proxy_inactive_store_snapshot() {
+  local protocol=$1
   local snapshot
-  [[ ! -e "$(protocol_state_file mixed)" ]] || return 1
-  snapshot=$(structured_instance_store_snapshot_json mixed "$(mixed_structured_store_file)") || return $?
+  [[ ! -e "$(protocol_state_file "${protocol}")" ]] || return 1
+  snapshot=$(structured_instance_store_snapshot_json "${protocol}" "$(plain_proxy_structured_store_file "${protocol}")") || return $?
   jq -e '.instances==[] and .default_instance_id=="" and .revision>0' <<< "${snapshot}" >/dev/null || return 1
   printf '%s\n' "${snapshot}"
 }
 
 mixed_instance_config_candidate() {
-  local old_config=$1 old_store=$2 new_store=$3 inbounds rules
-  inbounds=$(render_structured_instance_inbounds mixed "${new_store}" | jq -s '.') || return $?
-  rules=$(render_structured_instance_route_rules mixed "${new_store}") || return $?
-  jq --slurpfile old "${old_store}" --argjson added "${inbounds}" --argjson rules "${rules}" '
+  plain_proxy_instance_config_candidate mixed "$@"
+}
+
+plain_proxy_instance_config_candidate() {
+  local protocol=$1 old_config=$2 old_store=$3 new_store=$4 inbounds rules
+  inbounds=$(render_structured_instance_inbounds "${protocol}" "${new_store}" | jq -s '.') || return $?
+  rules=$(render_structured_instance_route_rules "${protocol}" "${new_store}") || return $?
+  jq --arg protocol "${protocol}" --slurpfile old "${old_store}" --argjson added "${inbounds}" --argjson rules "${rules}" '
     ($old[0].instances | map(.tag)) as $old_tags |
     def owned_rule:
       (.inbound | type) == "string" and (.inbound as $tag | $old_tags | index($tag) != null) and
@@ -14622,8 +15081,8 @@ mixed_instance_config_candidate() {
        (.action == "route" and (.outbound == "direct" or .outbound == "warp-ep") and
         (keys | sort) == ["action","inbound","outbound"]));
     (.inbounds // []) as $previous |
-    ([$previous | to_entries[] | select(.value.type == "mixed") | .key][0] // ($previous|length)) as $at |
-    .inbounds = ($previous[:$at] + $added + [$previous[$at:][] | select(.type != "mixed")]) |
+    ([$previous | to_entries[] | select(.value.type == $protocol) | .key][0] // ($previous|length)) as $at |
+    .inbounds = ($previous[:$at] + $added + [$previous[$at:][] | select(.type != $protocol)]) |
     (.route.rules // []) as $prior_rules |
     ([$prior_rules[] | select(owned_rule) | [.inbound,.action]] | unique) as $positioned |
     # Keep existing managed rules in place: moving a direct/Warp rule ahead
@@ -14729,12 +15188,13 @@ instance_transaction_firewall_summary() {
 
 instance_transaction_report() {
   local state=$1 phase=$2 code=$3 changed=$4 manual=$5 revision=${6:-0}
+  local report_protocol=${SB_INSTANCE_TRANSACTION_PROTOCOL:-mixed}
   local firewall_summary='{"status":"not_attempted","backends":[],"diagnostics":[]}'
   [[ $# -le 6 ]] || firewall_summary=$7
-  jq -n --arg state "${state}" --arg phase "${phase}" --arg code "${code}" \
+  jq -n --arg protocol "${report_protocol}" --arg state "${state}" --arg phase "${phase}" --arg code "${code}" \
     --argjson changed "${changed}" --argjson manual "${manual}" --argjson revision "${revision}" \
     --argjson firewall "${firewall_summary}" '
-    {ok:($code==""),action:"instance",protocol:"mixed",changed:$changed,revision:$revision,
+    {ok:($code==""),action:"instance",protocol:$protocol,changed:$changed,revision:$revision,
      transaction:{status:$state,phase:$phase,manual_intervention_required:$manual,firewall:$firewall}}
     + (if $code=="" then {} else {error:$code,message:"实例操作未成功；检查 transaction 状态，必要时执行 instance recover。"} end)'
 }
@@ -14765,9 +15225,15 @@ instance_transaction_update_result() (
   mv -f -- "${stage}" "${result}"
 )
 
-recover_mixed_instance_transaction() (
-  local expected_revision=$1 lock_dir="${SB_PROJECT_DIR}.instance-write.lock"
+recover_mixed_instance_transaction() {
+  recover_plain_proxy_instance_transaction mixed "$@"
+}
+
+recover_plain_proxy_instance_transaction() (
+  local SB_INSTANCE_TRANSACTION_PROTOCOL=$1
+  local expected_revision=$2 lock_dir="${SB_PROJECT_DIR}.instance-write.lock"
   local phase owner_pid owner_start current_start="" result revision recovery_fd recovery_entries result_path firewall_summary
+  structured_instance_store_protocol "${SB_INSTANCE_TRANSACTION_PROTOCOL}" >/dev/null || return 1
   [[ ${EUID} -eq 0 ]] || { agent_json_error root_required "恢复必须以 root 执行。"; return 1; }
   acquire_managed_write_lock || {
     agent_json_error instance_write_busy "另一个管理进程正在执行；未开始恢复。"; return 1;
@@ -14794,8 +15260,8 @@ recover_mixed_instance_transaction() (
   [[ -f "${lock_dir}/transaction.json" && ! -L "${lock_dir}/transaction.json" ]] || {
     agent_json_error instance_recovery_untrusted "事务主日志不是可信普通文件；未修改。"; return 1;
   }
-  jq -e --arg revision "${expected_revision}" '
-    .schema_version==1 and (.owner_pid|type=="number" and floor==. and .>0) and
+  jq -e --arg revision "${expected_revision}" --arg protocol "${SB_INSTANCE_TRANSACTION_PROTOCOL}" '
+    .schema_version==1 and (if has("protocol") then .protocol else "mixed" end)==$protocol and (.owner_pid|type=="number" and floor==. and .>0) and
     (.owner_start|type=="string" and test("^[0-9]+$")) and
     (.before_active|type=="boolean") and .expected_revision==$revision and
     (.phase=="prepare" or .phase=="snapshot" or .phase=="publish" or .phase=="resources" or .phase=="service" or .phase=="committed")
@@ -14846,13 +15312,20 @@ recover_mixed_instance_transaction() (
   jq --arg path "${result_path}" '.transaction.result_path=$path | .transaction.result_persisted=true' <<< "${result}"
 )
 
-apply_mixed_instance_change() (
-  local operation=$1 expected_revision=$2 input=$3 allow_public=${4:-n}
+apply_mixed_instance_change() {
+  apply_plain_proxy_instance_change mixed "$@"
+}
+
+apply_plain_proxy_instance_change() (
+  local instance_protocol=$1 operation=$2 expected_revision=$3 input=$4 allow_public=${5:-n}
+  local SB_INSTANCE_TRANSACTION_PROTOCOL=${instance_protocol}
   local lock_dir="${SB_PROJECT_DIR}.instance-write.lock" touched=n completed=n noop=n
   local phase=prepare revision=0 before_active=false current_revision=0 schema count indexed protocol
   local owner_pid=${BASHPID:-$$} owner_start snapshot_file result_status
   local protocols=()
   umask 077
+  structured_instance_store_protocol "${instance_protocol}" >/dev/null || return 1
+  [[ "${operation}" != migrate || "${instance_protocol}" == mixed ]] || return 1
   [[ ${EUID} -eq 0 ]] || { agent_json_error root_required "实例写操作必须以 root 执行。"; return 1; }
   acquire_managed_write_lock || {
     agent_json_error instance_write_busy "另一个管理进程正在执行；未修改。"; return 1;
@@ -14926,31 +15399,31 @@ apply_mixed_instance_change() (
     inactive|failed) before_active=false ;;
     *) return 1 ;;
   esac
-  jq -n --arg operation "${operation}" --arg expected "${expected_revision}" --argjson pid "${owner_pid}" --arg start "${owner_start}" \
+  jq -n --arg protocol "${instance_protocol}" --arg operation "${operation}" --arg expected "${expected_revision}" --argjson pid "${owner_pid}" --arg start "${owner_start}" \
     --argjson before "${before_active}" \
-    '{schema_version:1,operation:$operation,expected_revision:$expected,owner_pid:$pid,owner_start:$start,before_active:$before,phase:"prepare"}' \
+    '{schema_version:1,protocol:$protocol,operation:$operation,expected_revision:$expected,owner_pid:$pid,owner_start:$start,before_active:$before,phase:"prepare"}' \
     > "${lock_dir}/transaction.next" || return $?
   mv -f -- "${lock_dir}/transaction.next" "${lock_dir}/transaction.json" || return $?
-  if mixed_structured_state_active; then
-    mixed_structured_state_matches_config || return 1
-    structured_instance_store_snapshot_json mixed "$(mixed_structured_store_file)" > "${lock_dir}/before.json" || return $?
+  if plain_proxy_structured_state_active "${instance_protocol}"; then
+    plain_proxy_structured_state_matches_config "${instance_protocol}" || return 1
+    structured_instance_store_snapshot_json "${instance_protocol}" "$(plain_proxy_structured_store_file "${instance_protocol}")" > "${lock_dir}/before.json" || return $?
     current_revision=$(jq -r .revision "${lock_dir}/before.json") || return $?
-  elif protocol_state_exists mixed; then
-    [[ ! -e "$(mixed_structured_store_file)" ]] || return 1
+  elif protocol_state_exists "${instance_protocol}"; then
+    [[ "${instance_protocol}" == mixed && ! -e "$(mixed_structured_store_file)" ]] || return 1
     mixed_config_store_candidate | jq '.revision=0' > "${lock_dir}/before.json" || return $?
   else
     [[ "${operation}" != migrate ]] || return 1
-    jq -e 'all(.inbounds[]?; .type != "mixed")' "${SINGBOX_CONFIG_FILE}" >/dev/null || return 1
-    if [[ -e "$(mixed_structured_store_file)" ]]; then
-      mixed_inactive_store_snapshot > "${lock_dir}/before.json" || return $?
+    jq -e --arg protocol "${instance_protocol}" 'all(.inbounds[]?; .type != $protocol)' "${SINGBOX_CONFIG_FILE}" >/dev/null || return 1
+    if [[ -e "$(plain_proxy_structured_store_file "${instance_protocol}")" ]]; then
+      plain_proxy_inactive_store_snapshot "${instance_protocol}" > "${lock_dir}/before.json" || return $?
       current_revision=$(jq -r .revision "${lock_dir}/before.json") || return $?
     else
-      structured_instance_store_empty_json mixed > "${lock_dir}/before.json" || return $?
+      structured_instance_store_empty_json "${instance_protocol}" > "${lock_dir}/before.json" || return $?
     fi
   fi
   [[ "${expected_revision}" == "${current_revision}" ]] || return 1
   if [[ "${operation}" == migrate ]]; then
-    if mixed_structured_state_active; then
+    if plain_proxy_structured_state_active "${instance_protocol}"; then
       revision=${current_revision}; noop=y; return 0
     fi
     jq '.revision=1' "${lock_dir}/before.json" > "${lock_dir}/after.json" || return $?
@@ -14966,15 +15439,15 @@ apply_mixed_instance_change() (
       fi
       input="${lock_dir}/record.json"
     fi
-    structured_instance_store_candidate mixed "${lock_dir}/before.json" "${operation}" "${input}" \
+    structured_instance_store_candidate "${instance_protocol}" "${lock_dir}/before.json" "${operation}" "${input}" \
       "${current_revision}" > "${lock_dir}/after.json" || return $?
   fi
-  validate_structured_instance_store mixed "${lock_dir}/after.json" || return $?
+  validate_structured_instance_store "${instance_protocol}" "${lock_dir}/after.json" || return $?
   revision=$(jq -r .revision "${lock_dir}/after.json") || return $?
   if [[ "${revision}" == "${current_revision}" ]]; then noop=y; return 0; fi
   jq --argjson revision "${revision}" '.new_revision=$revision' "${lock_dir}/transaction.json" > "${lock_dir}/transaction.next" || return $?
   mv -f "${lock_dir}/transaction.next" "${lock_dir}/transaction.json" || return $?
-  mixed_instance_config_candidate "${SINGBOX_CONFIG_FILE}" "${lock_dir}/before.json" "${lock_dir}/after.json" \
+  plain_proxy_instance_config_candidate "${instance_protocol}" "${SINGBOX_CONFIG_FILE}" "${lock_dir}/before.json" "${lock_dir}/after.json" \
     > "${lock_dir}/config.json" || return $?
   validate_managed_component_graph "${lock_dir}/config.json" || return $?
   validate_managed_listener_resources "${lock_dir}/config.json" || return $?
@@ -14990,12 +15463,12 @@ apply_mixed_instance_change() (
   if [[ "${count}" == 0 ]]; then
     # Preserve the empty, revisioned store as a tombstone. Recreating Mixed
     # must not reset CAS to zero and revive an older request (ABA).
-    publish_structured_instance_store mixed "${lock_dir}/after.json" "${current_revision}" legacy-empty-activation || return $?
-    persist_file_backup "$(protocol_state_file mixed)" "$(protocol_state_file mixed).bak" || return $?
-    rm -f -- "$(protocol_state_file mixed)" || return $?
+    publish_structured_instance_store "${instance_protocol}" "${lock_dir}/after.json" "${current_revision}" legacy-empty-activation || return $?
+    persist_file_backup "$(protocol_state_file "${instance_protocol}")" "$(protocol_state_file "${instance_protocol}").bak" || return $?
+    rm -f -- "$(protocol_state_file "${instance_protocol}")" || return $?
   else
-    publish_structured_instance_store mixed "${lock_dir}/after.json" "${current_revision}" || return $?
-    save_mixed_structured_marker || return $?
+    publish_structured_instance_store "${instance_protocol}" "${lock_dir}/after.json" "${current_revision}" || return $?
+    save_plain_proxy_structured_marker "${instance_protocol}" || return $?
   fi
   # Match the live config's protocol ordering, retaining every non-Mixed role.
   indexed=$(jq -r 'reduce .inbounds[]?.type as $type ([]; if index($type) then . else .+[$type] end) | .[]' "${lock_dir}/config.json") || return $?
@@ -15009,7 +15482,7 @@ apply_mixed_instance_change() (
   publish_managed_config_candidate "${lock_dir}/config.json" || return $?
   cmp -s -- "${lock_dir}/config.json" "${SINGBOX_CONFIG_FILE}" || return 1
   if [[ "${count}" != 0 ]]; then
-    mixed_structured_state_matches_config || return 1
+    plain_proxy_structured_state_matches_config "${instance_protocol}" || return 1
   fi
   phase=resources
   instance_transaction_checkpoint "${lock_dir}" "${phase}" || return $?
@@ -15028,7 +15501,7 @@ apply_mixed_instance_change() (
 
 agent_instance_cli() {
   local operation=${1:-} protocol=${2:-} expected="" input="" instance_id="" json=n confirmed=n allow_public=n
-  [[ $# -ge 2 ]] || { agent_json_error invalid_arguments "用法: instance 操作 mixed --json --yes --expected-revision N [--file 文件 | --id ID]"; return 1; }
+  [[ $# -ge 2 ]] || { agent_json_error invalid_arguments "用法: instance 操作 mixed|socks --json --yes --expected-revision N [--file 文件 | --id ID]"; return 1; }
   shift 2
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -15041,11 +15514,15 @@ agent_instance_cli() {
       *) break ;;
     esac
   done
-  if [[ $# -ne 0 || "${json}" != y || "${protocol}" != mixed || ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
+  if [[ $# -ne 0 || "${json}" != y || ("${protocol}" != mixed && "${protocol}" != socks) || ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
     agent_json_error invalid_arguments "实例参数、协议或 revision 无效；未修改。"; return 1
   fi
   if ! structured_instance_store_revision_arg "${expected}" >/dev/null; then
     agent_json_error invalid_arguments "revision 超出安全整数范围；未修改。"; return 1
+  fi
+  if [[ "${operation}" == migrate && "${protocol}" != mixed ]]; then
+    agent_json_error invalid_arguments "只有 Mixed 提供 legacy schema 1 迁移；SOCKS 使用 schema 2，已有 live 配置请使用接管入口。"
+    return 1
   fi
   [[ "${confirmed}" == y ]] || { agent_json_error confirmation_required "实例写操作需要 --yes；非回环明文入口另需 --allow-public。"; return 1; }
   case "${operation}" in
@@ -15055,9 +15532,9 @@ agent_instance_cli() {
     *) agent_json_error invalid_arguments "未知实例操作。"; return 1 ;;
   esac
   if [[ "${operation}" == recover ]]; then
-    recover_mixed_instance_transaction "${expected}"
+    recover_plain_proxy_instance_transaction "${protocol}" "${expected}"
   else
-    apply_mixed_instance_change "${operation}" "${expected}" "${input}" "${allow_public}"
+    apply_plain_proxy_instance_change "${protocol}" "${operation}" "${expected}" "${input}" "${allow_public}"
   fi
 }
 
@@ -15600,7 +16077,7 @@ vless_reality_existing_state_index_for_id() {
   return 1
 }
 
-# --- Structured instance store (typed Mixed foundation) ---
+# --- Structured instance store (typed plain-proxy foundation) ---
 #
 # This store is deliberately separate from the legacy .env state.  It is a
 # read/write file primitive for the next lifecycle layer; no caller here
@@ -15613,7 +16090,7 @@ structured_instance_store_error() {
 structured_instance_store_protocol() {
   local protocol
   protocol=$(normalize_protocol_id "${1:-}") || return 1
-  [[ "${protocol}" == "mixed" ]] || return 1
+  [[ "${protocol}" == "mixed" || "${protocol}" == "socks" ]] || return 1
   printf '%s' "${protocol}"
 }
 
@@ -15671,7 +16148,11 @@ structured_instance_store_validate_address() {
 }
 
 structured_instance_store_validate_common_json() {
-  local file=${1:-} file_size
+  local protocol=${1:-mixed} file=${2:-} file_size
+  if [[ $# -eq 1 ]]; then
+    file=${1:-}
+    protocol=mixed
+  fi
   [[ -n "${file}" && -f "${file}" && ! -L "${file}" ]] || return 1
   file_size=$(wc -c < "${file}") || return 1
   [[ "${file_size}" =~ ^[0-9]+$ && ${file_size} -le 1048576 ]] || return 1
@@ -15680,7 +16161,7 @@ structured_instance_store_validate_common_json() {
     type == "object" and
     ((keys_unsorted | sort) == ["default_instance_id", "instances", "protocol", "revision", "schema_version"]) and
     (.schema_version | type == "number" and . == 1) and
-    (.protocol | type == "string" and . == "mixed") and
+    (.protocol | type == "string" and . == $protocol) and
     (.revision | type == "number" and . == floor and . >= 0 and . <= 9007199254740991) and
     (.default_instance_id | type == "string" and (test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$") or . == "")) and
     (. as $root | if (.instances | length) == 0 then .default_instance_id == ""
@@ -15709,7 +16190,7 @@ structured_instance_store_validate_common_json() {
       ((map(.tag) | unique | length) == length) and
       ((map([.listen.address, .listen.port] | @json) | unique | length) == length)
     )
-  ' "${file}" >/dev/null 2>&1
+  ' --arg protocol "${protocol}" "${file}" >/dev/null 2>&1
 }
 
 validate_structured_instance_store() {
@@ -15719,7 +16200,7 @@ validate_structured_instance_store() {
     return 1
   }
   file=${2:-}
-  structured_instance_store_validate_common_json "${file}" || {
+  structured_instance_store_validate_common_json "${protocol}" "${file}" || {
     structured_instance_store_error validate invalid_store
     return 1
   }
@@ -15734,20 +16215,28 @@ validate_structured_instance_store() {
       return 1
     }
   done <<< "${addresses}"
-  listener_input=$(jq -c '{inbounds:[.instances[] | {type:"mixed",tag:.tag,listen:.listen.address,listen_port:.listen.port}]}' "${file}") || return 1
+  listener_input=$(jq -c --arg protocol "${protocol}" '{inbounds:[.instances[] | {type:$protocol,tag:.tag,listen:.listen.address,listen_port:.listen.port}]}' "${file}") || return 1
   listener_plan=$(managed_listener_plan_json <<< "${listener_input}") || return 1
   validate_listener_plan_json <<< "${listener_plan}" || return 1
   : "${protocol}"
 }
 
-# Build a complete typed Mixed inventory from the live configuration.  This is
+# Build a complete typed plain-proxy inventory from the live configuration.  This is
 # intentionally a read-only candidate builder: it never sources JSON as shell
 # state and it never writes the root .env or the instance store.  The takeover
 # transaction owns publication of the returned document.
-mixed_config_store_candidate() (
+plain_proxy_config_store_candidate() (
   umask 077
-  local config_file=${1:-${SINGBOX_CONFIG_FILE:-}}
-  local existing_file=${2:-}
+  local protocol config_file existing_file protocol_label
+  protocol=$(structured_instance_store_protocol "${1:-}") || return 1
+  if [[ "${protocol}" == "mixed" ]]; then
+    protocol_label="Mixed"
+  else
+    protocol_label="SOCKS"
+  fi
+  shift
+  config_file=${1:-${SINGBOX_CONFIG_FILE:-}}
+  existing_file=${2:-}
   local state_file state_schema legacy_name active_state store_file
   local temp_dir inbound_json inbound_count inbound_index tag address port
   local username password auth_enabled policy id name base digest suffix
@@ -15756,7 +16245,7 @@ mixed_config_store_candidate() (
   local marker_schema2=n store_instances=0
 
   [[ -n "${config_file}" && -f "${config_file}" && ! -L "${config_file}" ]] || {
-    printf '[ERROR] mixed_store_candidate: live configuration is unavailable.\n' >&2
+    printf '[ERROR] %s_store_candidate: live configuration is unavailable.\n' "${protocol}" >&2
     return 1
   }
 
@@ -15770,12 +16259,12 @@ mixed_config_store_candidate() (
   # This keeps a concurrently rewritten config from producing a mixed record
   # assembled from different generations, without truncating arbitrary JSON.
   if ! jq -cS . "${config_file}" > "${temp_dir}/live.json"; then
-    printf '[ERROR] mixed_store_candidate: live configuration is invalid.\n' >&2
+    printf '[ERROR] %s_store_candidate: live configuration is invalid.\n' "${protocol}" >&2
     return 1
   fi
   config_file="${temp_dir}/live.json"
   if ! validate_live_inbound_inventory "${config_file}"; then
-    printf '[ERROR] mixed_store_candidate: live inbound inventory is not trusted.\n' >&2
+    printf '[ERROR] %s_store_candidate: live inbound inventory is not trusted.\n' "${protocol}" >&2
     return 1
   fi
 
@@ -15783,15 +16272,15 @@ mixed_config_store_candidate() (
   # TLS, multiple users, and listen options must never disappear during a
   # takeover.  Missing users means unauthenticated Mixed; set_system_proxy is
   # accepted only in its generated/default false form.
-  if ! jq -e '
-    (.inbounds // []) | map(select(.type == "mixed")) | length > 0
+  if ! jq -e --arg protocol "${protocol}" '
+    (.inbounds // []) | map(select(.type == $protocol)) | length > 0
   ' "${config_file}" >/dev/null 2>&1; then
-    printf '[ERROR] mixed_store_candidate: no Mixed inbound found.\n' >&2
+    printf '[ERROR] %s_store_candidate: no plain-proxy inbound found.\n' "${protocol}" >&2
     return 1
   fi
   if ! jq -e '
     (.inbounds // []) | all(.[];
-      if .type != "mixed" then true
+      if .type != $protocol then true
       else
         ((keys_unsorted - ["type", "tag", "listen", "listen_port", "users", "set_system_proxy"] | length == 0))
         and (if has("tag") then (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) else true end)
@@ -15804,10 +16293,14 @@ mixed_config_store_candidate() (
                   (.username | type == "string" and length > 0 and index("\u0000") == null) and
                   (.password | type == "string" and length > 0 and index("\u0000") == null)) )
              else true end)
-        and (if has("set_system_proxy") then .set_system_proxy == false else true end)
+        and (if $protocol == "mixed" then
+              (if has("set_system_proxy") then .set_system_proxy == false else true end)
+             else
+              (has("set_system_proxy") | not)
+             end)
       end)
-  ' "${config_file}" >/dev/null 2>&1; then
-    printf '[ERROR] mixed_store_candidate: Mixed inbound contains unsupported or lossy fields.\n' >&2
+    ' --arg protocol "${protocol}" "${config_file}" >/dev/null 2>&1; then
+    printf '[ERROR] %s_store_candidate: plain-proxy inbound contains unsupported or lossy fields.\n' "${protocol}" >&2
     return 1
   fi
 
@@ -15816,13 +16309,17 @@ mixed_config_store_candidate() (
   # silently rename legacy nodes.  The helper is supplied by the structured
   # state layer; the raw schema check keeps this function usable during the
   # pre-publication phase of takeover.
-  state_file=$(protocol_state_file "mixed") || return 1
+  state_file=$(protocol_state_file "${protocol}") || return 1
   if [[ -f "${state_file}" ]] &&
      grep -Eq "^[[:space:]]*CONFIG_SCHEMA_VERSION=" "${state_file}"; then
-    validate_protocol_state_schema mixed "${state_file}" || return 1
+    if [[ "${protocol}" == "mixed" ]]; then
+      validate_protocol_state_schema "${protocol}" "${state_file}" || return 1
+    else
+      plain_proxy_structured_marker_is_valid "${state_file}" || return 1
+    fi
   fi
   active_state=n
-  if mixed_structured_state_active >/dev/null 2>&1; then
+  if plain_proxy_structured_state_active "${protocol}" >/dev/null 2>&1; then
     active_state=y
   fi
   state_schema="1"
@@ -15832,21 +16329,25 @@ mixed_config_store_candidate() (
     state_schema=${state_schema//\'/}
   fi
   if [[ -z "${existing_file}" ]]; then
-    if existing_file=$(mixed_structured_store_file 2>/dev/null); then :; else existing_file="${SB_PROTOCOL_STATE_DIR}/instances/mixed.json"; fi
+    if existing_file=$(plain_proxy_structured_store_file "${protocol}" 2>/dev/null); then :; else existing_file="${SB_PROTOCOL_STATE_DIR}/instances/${protocol}.json"; fi
   fi
   store_file="${existing_file}"
   if [[ "${state_schema}" == "2" ]]; then
     marker_schema2=y
   fi
+  if [[ "${protocol}" != "mixed" && -f "${state_file}" && "${state_schema}" != "2" ]]; then
+    printf '[ERROR] %s_store_candidate: legacy state migration is unsupported.\n' "${protocol}" >&2
+    return 1
+  fi
   if [[ "${marker_schema2}" == "y" || "${active_state}" == "y" ]]; then
     [[ -f "${store_file}" && ! -L "${store_file}" ]] || {
-      printf '[ERROR] mixed_store_candidate: active Mixed store is missing.\n' >&2
+      printf '[ERROR] %s_store_candidate: active %s store is missing.\n' "${protocol}" "${protocol_label}" >&2
       return 1
     }
-    validate_structured_instance_store mixed "${store_file}" || return 1
+    validate_structured_instance_store "${protocol}" "${store_file}" || return 1
     store_instances=$(jq -r '.instances | length' "${store_file}") || return 1
     [[ "${store_instances}" =~ ^[0-9]+$ && "${store_instances}" -gt 0 ]] || {
-      printf '[ERROR] mixed_store_candidate: empty or orphaned Mixed store cannot be reused.\n' >&2
+      printf '[ERROR] %s_store_candidate: empty or orphaned %s store cannot be reused.\n' "${protocol}" "${protocol_label}" >&2
       return 1
     }
     active_state=y
@@ -15854,7 +16355,7 @@ mixed_config_store_candidate() (
     # A tombstone belongs to the delete transaction and is not legacy
     # metadata.  Refuse both empty and non-empty orphan stores so a fresh
     # takeover cannot accidentally reuse stale identities.
-    printf '[ERROR] mixed_store_candidate: orphaned Mixed store requires explicit recovery.\n' >&2
+    printf '[ERROR] %s_store_candidate: orphaned %s store requires explicit recovery.\n' "${protocol}" "${protocol_label}" >&2
     return 1
   else
     store_file=""
@@ -15877,11 +16378,11 @@ mixed_config_store_candidate() (
     existing_store_json=$(jq -cS . "${store_file}") || return 1
     old_revision=$(jq -r '.revision' <<< "${existing_store_json}") || return 1
   else
-    existing_store_json=$(structured_instance_store_empty_json) || return 1
+    existing_store_json=$(structured_instance_store_empty_json "${protocol}") || return 1
     old_revision=0
   fi
 
-  inbound_count=$(jq -r '[.inbounds[]? | select(.type == "mixed")] | length' "${config_file}") || return 1
+  inbound_count=$(jq -r --arg protocol "${protocol}" '[.inbounds[]? | select(.type == $protocol)] | length' "${config_file}") || return 1
   [[ "${inbound_count}" =~ ^[0-9]+$ && "${inbound_count}" -gt 0 ]] || return 1
   : > "${temp_dir}/instances.jsonl" || return 1
 
@@ -15889,13 +16390,13 @@ mixed_config_store_candidate() (
   # previously unseen tag gets a deterministic, collision-free ID and keeps
   # the live tag verbatim.
   for ((inbound_index = 0; inbound_index < inbound_count; inbound_index++)); do
-    inbound_json=$(jq -c --argjson idx "${inbound_index}" '[.inbounds[]? | select(.type == "mixed")][$idx]' "${config_file}") || return 1
+    inbound_json=$(jq -c --arg protocol "${protocol}" --argjson idx "${inbound_index}" '[.inbounds[]? | select(.type == $protocol)][$idx]' "${config_file}") || return 1
     tag=$(jq -r '.tag // empty' <<< "${inbound_json}") || return 1
     if [[ -z "${tag}" ]]; then
       if [[ "${inbound_count}" == "1" && "${active_state}" != "y" ]]; then
-        tag="mixed-in"
+        tag="${protocol}-in"
       else
-        printf '[ERROR] mixed_store_candidate: Mixed inbound tag is required for stable identity.\n' >&2
+        printf '[ERROR] %s_store_candidate: %s inbound tag is required for stable identity.\n' "${protocol}" "${protocol_label}" >&2
         return 1
       fi
     fi
@@ -15904,7 +16405,7 @@ mixed_config_store_candidate() (
     # latter cannot be represented in typed state and must fail closed for
     # every migration path.
     jq -e 'has("listen_port")' <<< "${inbound_json}" >/dev/null 2>&1 || {
-      printf '[ERROR] mixed_store_candidate: Mixed listen_port must be explicit; ephemeral ports are not recoverable.\n' >&2
+      printf '[ERROR] %s_store_candidate: %s listen_port must be explicit; ephemeral ports are not recoverable.\n' "${protocol}" "${protocol_label}" >&2
       return 1
     }
     address=$(jq -r '.listen // empty' <<< "${inbound_json}") || return 1
@@ -15913,7 +16414,7 @@ mixed_config_store_candidate() (
     fi
     port=$(jq -r '.listen_port' <<< "${inbound_json}") || return 1
     structured_instance_store_validate_address "${address}" || {
-      printf '[ERROR] mixed_store_candidate: Mixed listen address is unsupported.\n' >&2
+      printf '[ERROR] %s_store_candidate: %s listen address is unsupported.\n' "${protocol}" "${protocol_label}" >&2
       return 1
     }
 
@@ -15930,7 +16431,7 @@ mixed_config_store_candidate() (
     # This extractor deliberately rejects more than one matching route.  A
     # route target unknown to the managed model is equally unsafe to flatten.
     if ! policy=$(vless_reality_outbound_policy_from_config "${tag}" "${config_file}"); then
-      printf '[ERROR] mixed_store_candidate: Mixed outbound policy is ambiguous or unsupported.\n' >&2
+      printf '[ERROR] %s_store_candidate: %s outbound policy is ambiguous or unsupported.\n' "${protocol}" "${protocol_label}" >&2
       return 1
     fi
 
@@ -15943,7 +16444,7 @@ mixed_config_store_candidate() (
         name=$(jq -j '.[0].name, "\u0001"' <<< "${existing_match}") || return 1
         name=${name%$'\1'}
       elif [[ "$(jq 'length' <<< "${existing_match}")" -gt 1 ]]; then
-        printf '[ERROR] mixed_store_candidate: duplicate stored Mixed identity.\n' >&2
+        printf '[ERROR] %s_store_candidate: duplicate stored %s identity.\n' "${protocol}" "${protocol_label}" >&2
         return 1
       fi
     elif [[ "${inbound_count}" == "1" && "${state_schema}" == "1" ]]; then
@@ -15956,7 +16457,7 @@ mixed_config_store_candidate() (
         base="${tag}"
       else
         digest=$(printf '%s' "${tag}" | sha256sum) || return 1
-        base="mixed-${digest%% *}"
+        base="${protocol}-${digest%% *}"
         base=${base:0:48}
       fi
       id="${base}"
@@ -15993,40 +16494,55 @@ mixed_config_store_candidate() (
   candidate_revision="${old_revision}"
   if [[ "${old_semantics}" != "${new_semantics}" ]]; then
     [[ "${old_revision}" -lt 9007199254740991 ]] || {
-      printf '[ERROR] mixed_store_candidate: revision exhausted.\n' >&2
+      printf '[ERROR] %s_store_candidate: revision exhausted.\n' "${protocol}" >&2
       return 1
     }
     candidate_revision=$((old_revision + 1))
   fi
-  candidate_json=$(jq -n -cS --argjson revision "${candidate_revision}" --argjson semantics "${new_semantics}" '{schema_version:1,protocol:"mixed",revision:$revision,default_instance_id:$semantics.default_instance_id,instances:$semantics.instances}') || return 1
+  candidate_json=$(jq -n -cS --arg protocol "${protocol}" --argjson revision "${candidate_revision}" --argjson semantics "${new_semantics}" '{schema_version:1,protocol:$protocol,revision:$revision,default_instance_id:$semantics.default_instance_id,instances:$semantics.instances}') || return 1
   printf '%s\n' "${candidate_json}" > "${temp_dir}/candidate.json" || return 1
-  validate_structured_instance_store mixed "${temp_dir}/candidate.json" || return 1
+  validate_structured_instance_store "${protocol}" "${temp_dir}/candidate.json" || return 1
   rm -rf -- "${temp_dir}" || { status=$?; trap - EXIT INT TERM HUP; return "${status}"; }
   trap - EXIT INT TERM HUP
   printf '%s\n' "${candidate_json}"
 )
 
-mixed_structured_state_matches_config() (
-  local config_file=${1:-${SINGBOX_CONFIG_FILE:-}} store_file current expected temp_dir
+mixed_config_store_candidate() {
+  plain_proxy_config_store_candidate mixed "$@"
+}
+
+plain_proxy_structured_state_matches_config() (
+  local protocol config_file store_file current expected temp_dir
+  protocol=$(structured_instance_store_protocol "${1:-}") || return 1
+  config_file=${2:-${SINGBOX_CONFIG_FILE:-}}
   [[ -n "${config_file}" ]] || return 1
-  mixed_structured_state_active >/dev/null 2>&1 || return 1
-  store_file=$(mixed_structured_store_file 2>/dev/null) || return 1
+  plain_proxy_structured_state_active "${protocol}" >/dev/null 2>&1 || return 1
+  store_file=$(plain_proxy_structured_store_file "${protocol}" 2>/dev/null) || return 1
   [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
-  validate_structured_instance_store mixed "${store_file}" || return 1
+  validate_structured_instance_store "${protocol}" "${store_file}" || return 1
   temp_dir=$(mktemp -d) || return $?
   trap 'rm -rf -- "${temp_dir}"' EXIT
   current=$(jq -cS '{default_instance_id,instances:(.instances | sort_by(.tag))}' "${store_file}") || return 1
-  expected=$(mixed_config_store_candidate "${config_file}" "${store_file}") || return 1
+  expected=$(plain_proxy_config_store_candidate "${protocol}" "${config_file}" "${store_file}") || return 1
   expected=$(jq -cS '{default_instance_id,instances:(.instances | sort_by(.tag))}' <<< "${expected}") || return 1
   [[ "${current}" == "${expected}" ]]
 )
 
-mixed_validate_state_inventory() (
-  local store_file config_count store_count config_tags store_tags state_file state_schema
-  state_file=$(protocol_state_file "mixed" 2>/dev/null || true)
+mixed_structured_state_matches_config() {
+  plain_proxy_structured_state_matches_config mixed "$@"
+}
+
+plain_proxy_validate_state_inventory() (
+  local protocol store_file config_count store_count config_tags store_tags state_file state_schema
+  protocol=$(structured_instance_store_protocol "${1:-}") || return 1
+  state_file=$(protocol_state_file "${protocol}" 2>/dev/null || true)
   if [[ -f "${state_file}" ]] &&
      grep -Eq "^[[:space:]]*CONFIG_SCHEMA_VERSION=" "${state_file}"; then
-    validate_protocol_state_schema mixed "${state_file}" || return 1
+    if [[ "${protocol}" == "mixed" ]]; then
+      validate_protocol_state_schema "${protocol}" "${state_file}" || return 1
+    else
+      plain_proxy_structured_marker_is_valid "${state_file}" || return 1
+    fi
   fi
   state_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" 2>/dev/null | head -n1 || true)
   state_schema=${state_schema//\"/}
@@ -16034,21 +16550,27 @@ mixed_validate_state_inventory() (
   if [[ "${state_schema}" != "2" ]]; then
     return 0
   fi
-  mixed_structured_state_active >/dev/null 2>&1 || return 1
-  store_file=$(mixed_structured_store_file 2>/dev/null) || return 1
+  plain_proxy_structured_state_active "${protocol}" >/dev/null 2>&1 || return 1
+  store_file=$(plain_proxy_structured_store_file "${protocol}" 2>/dev/null) || return 1
   [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
-  validate_structured_instance_store mixed "${store_file}" || return 1
-  mixed_structured_state_matches_config || return 1
-  config_count=$(jq -r '[.inbounds[]? | select(.type == "mixed")] | length' "${SINGBOX_CONFIG_FILE}") || return 1
+  validate_structured_instance_store "${protocol}" "${store_file}" || return 1
+  plain_proxy_structured_state_matches_config "${protocol}" || return 1
+  config_count=$(jq -r --arg protocol "${protocol}" '[.inbounds[]? | select(.type == $protocol)] | length' "${SINGBOX_CONFIG_FILE}") || return 1
   store_count=$(jq -r '.instances | length' "${store_file}") || return 1
   [[ "${config_count}" =~ ^[0-9]+$ && "${config_count}" == "${store_count}" ]] || return 1
-  config_tags=$(jq -c '[.inbounds[]? | select(.type == "mixed") | .tag] | sort' "${SINGBOX_CONFIG_FILE}") || return 1
+  config_tags=$(jq -c --arg protocol "${protocol}" '[.inbounds[]? | select(.type == $protocol) | .tag] | sort' "${SINGBOX_CONFIG_FILE}") || return 1
   store_tags=$(jq -c '[.instances[].tag] | sort' "${store_file}") || return 1
   [[ "${config_tags}" == "${store_tags}" ]]
 )
 
+mixed_validate_state_inventory() {
+  plain_proxy_validate_state_inventory mixed "$@"
+}
+
 structured_instance_store_empty_json() {
-  jq -cn '{schema_version:1,protocol:"mixed",revision:0,default_instance_id:"",instances:[]}'
+  local protocol=${1:-mixed}
+  structured_instance_store_protocol "${protocol}" >/dev/null || return 1
+  jq -cn --arg protocol "${protocol}" '{schema_version:1,protocol:$protocol,revision:0,default_instance_id:"",instances:[]}'
 }
 
 structured_instance_store_validate_instance_argument() {
@@ -16108,7 +16630,7 @@ structured_instance_store_candidate() (
     [[ -f "${current_file}" && ! -L "${current_file}" ]] || return 1
     head -c 1048577 -- "${current_file}" > "${temp_dir}/current.json" || return $?
   else
-    structured_instance_store_empty_json > "${temp_dir}/current.json" || return $?
+    structured_instance_store_empty_json "${protocol}" > "${temp_dir}/current.json" || return $?
   fi
   validate_structured_instance_store "${protocol}" "${temp_dir}/current.json" || return $?
   [[ "$(structured_instance_store_revision "${temp_dir}/current.json")" == "${expected_revision}" ]] || {
@@ -16272,7 +16794,7 @@ publish_structured_instance_store() (
     validate_structured_instance_store "${protocol}" "${old_copy}" || return $?
     current_json=$(jq -cS . "${old_copy}") || return $?
   else
-    current_json=$(structured_instance_store_empty_json) || return $?
+    current_json=$(structured_instance_store_empty_json "${protocol}") || return $?
   fi
   current_revision=$(jq -r '.revision' <<< "${current_json}") || return $?
   [[ "${expected_revision}" == "${current_revision}" ]] || {
@@ -16358,7 +16880,7 @@ render_structured_instance_inbounds() {
   local protocol snapshot
   protocol=$(structured_instance_store_protocol "${1:-}") || { structured_instance_store_error render_inbounds unsupported_protocol; return 1; }
   snapshot=$(structured_instance_store_snapshot_json "${protocol}" "${2:-}") || return $?
-  jq -c '.instances[] | {type:"mixed",tag:.tag,listen:.listen.address,listen_port:.listen.port,users:(if .authentication.enabled then [{username:.authentication.username,password:.authentication.password}] else [] end)}' <<< "${snapshot}" 2>/dev/null || { structured_instance_store_error render_inbounds render_failed; return 1; }
+  jq -c --arg protocol "${protocol}" '.instances[] | {type:$protocol,tag:.tag,listen:.listen.address,listen_port:.listen.port,users:(if .authentication.enabled then [{username:.authentication.username,password:.authentication.password}] else [] end)}' <<< "${snapshot}" 2>/dev/null || { structured_instance_store_error render_inbounds render_failed; return 1; }
 }
 
 render_structured_instance_route_rules() {
@@ -16371,11 +16893,17 @@ render_structured_instance_route_rules() {
 # Mixed schema-2 activation is explicit: the marker and the typed store must
 # both exist and validate.  Legacy mixed.env remains a separate read-only
 # schema-1 contract and is never migrated by a read/render operation.
-mixed_structured_store_file() {
-  printf '%s/instances/mixed.json' "${SB_PROTOCOL_STATE_DIR}"
+plain_proxy_structured_store_file() {
+  local protocol
+  protocol=$(structured_instance_store_protocol "${1:-}") || return 1
+  printf '%s/instances/%s.json' "${SB_PROTOCOL_STATE_DIR}" "${protocol}"
 }
 
-mixed_structured_marker_is_valid() {
+mixed_structured_store_file() {
+  plain_proxy_structured_store_file mixed
+}
+
+plain_proxy_structured_marker_is_valid() {
   local marker_file=${1:-} line trimmed installed_count=0 schema_count=0
 
   [[ -n "${marker_file}" && -f "${marker_file}" && ! -L "${marker_file}" ]] || return 1
@@ -16401,22 +16929,33 @@ mixed_structured_marker_is_valid() {
   [[ "${installed_count}" == "1" && "${schema_count}" == "1" ]]
 }
 
-mixed_structured_state_active() {
-  local state_file store_file
-  state_file=$(protocol_state_file "mixed") || return 1
-  mixed_structured_marker_is_valid "${state_file}" || return 1
-  store_file=$(mixed_structured_store_file) || return 1
+mixed_structured_marker_is_valid() {
+  plain_proxy_structured_marker_is_valid "${1:-}"
+}
+
+plain_proxy_structured_state_active() {
+  local protocol state_file store_file
+  protocol=$(structured_instance_store_protocol "${1:-}") || return 1
+  state_file=$(protocol_state_file "${protocol}") || return 1
+  plain_proxy_structured_marker_is_valid "${state_file}" || return 1
+  store_file=$(plain_proxy_structured_store_file "${protocol}") || return 1
   [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
-  validate_structured_instance_store mixed "${store_file}" || return 1
+  validate_structured_instance_store "${protocol}" "${store_file}" || return 1
   jq -e '.instances | length > 0' "${store_file}" >/dev/null 2>&1
 }
 
-save_mixed_structured_marker() {
-  local state_file staged backup_file
-  state_file=$(protocol_state_file "mixed") || return 1
+mixed_structured_state_active() {
+  plain_proxy_structured_state_active mixed
+}
+
+save_plain_proxy_structured_marker() {
+  local protocol state_file staged backup_file store_file
+  protocol=$(structured_instance_store_protocol "${1:-}") || return 1
+  state_file=$(protocol_state_file "${protocol}") || return 1
   [[ ! -L "${state_file}" && (! -e "${state_file}" || -f "${state_file}") ]] || return 1
-  [[ -f "$(mixed_structured_store_file)" ]] || return 1
-  validate_structured_instance_store mixed "$(mixed_structured_store_file)" || return 1
+  store_file=$(plain_proxy_structured_store_file "${protocol}") || return 1
+  [[ -f "${store_file}" ]] || return 1
+  validate_structured_instance_store "${protocol}" "${store_file}" || return 1
   staged=$(mktemp "${state_file}.candidate.XXXXXX") || return 1
   if ! {
     write_env_assignment "INSTALLED" "1"
@@ -16446,20 +16985,25 @@ save_mixed_structured_marker() {
   fi
 }
 
-load_mixed_structured_instance() {
-  local state_file store_file instance_id default_id stream_file field snapshot
+save_mixed_structured_marker() {
+  save_plain_proxy_structured_marker mixed
+}
+
+load_plain_proxy_structured_instance() {
+  local protocol state_file store_file instance_id default_id stream_file field snapshot
   local fields=()
-  state_file=$(protocol_state_file "mixed") || return 1
-  store_file=$(mixed_structured_store_file) || return 1
-  mixed_structured_marker_is_valid "${state_file}" || return 1
+  protocol=$(structured_instance_store_protocol "${1:-}") || return 1
+  state_file=$(protocol_state_file "${protocol}") || return 1
+  store_file=$(plain_proxy_structured_store_file "${protocol}") || return 1
+  plain_proxy_structured_marker_is_valid "${state_file}" || return 1
   [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
 
   # Capture and validate one private snapshot. All subsequent reads use that
   # snapshot so a concurrent store replacement cannot mix revisions.
-  snapshot=$(structured_instance_store_snapshot_json mixed "${store_file}") || return 1
+  snapshot=$(structured_instance_store_snapshot_json "${protocol}" "${store_file}") || return 1
   jq -e '.instances | length > 0' <<< "${snapshot}" >/dev/null 2>&1 || return 1
   default_id=$(jq -r '.default_instance_id' <<< "${snapshot}") || return 1
-  instance_id=${1:-${default_id}}
+  instance_id=${2:-${default_id}}
   structured_instance_store_validate_id "${instance_id}" || return 1
   jq -e --arg id "${instance_id}" 'any(.instances[]; .id == $id)' <<< "${snapshot}" >/dev/null 2>&1 || return 1
 
@@ -16493,7 +17037,7 @@ load_mixed_structured_instance() {
   AUTH_ENABLED=${fields[5]}
   USERNAME=${fields[6]}
   PASSWORD=${fields[7]}
-  SB_PROTOCOL="mixed"
+  SB_PROTOCOL="${protocol}"
   SB_INSTANCE_ID=${fields[0]}
   SB_MIXED_INSTANCE_ID=${fields[0]}
   SB_NODE_NAME=${fields[1]}
@@ -16504,6 +17048,14 @@ load_mixed_structured_instance() {
   SB_MIXED_USERNAME=${fields[6]}
   SB_MIXED_PASSWORD=${fields[7]}
   SB_OUTBOUND_POLICY=${fields[8]}
+}
+
+load_mixed_structured_instance() {
+  if [[ $# -gt 0 ]]; then
+    load_plain_proxy_structured_instance mixed "$1"
+  else
+    load_plain_proxy_structured_instance mixed
+  fi
 }
 
 protocol_instance_state_schema() {
@@ -16523,6 +17075,7 @@ protocol_instance_state_schema() {
   schema=${schema//\"/}
   schema=${schema//\'/}
   [[ "${schema}" =~ ^[0-9]+$ ]] || return 1
+  [[ "${protocol}" != "socks" || "${schema}" == "2" ]] || return 1
   printf '%s' "${schema}"
 }
 
@@ -16643,6 +17196,10 @@ list_protocol_instance_ids() {
       mixed_structured_state_active || return 1
       jq -r '.instances[].id' "$(mixed_structured_store_file)"
       ;;
+    socks:2)
+      plain_proxy_structured_state_active socks || return 1
+      jq -r '.instances[].id' "$(plain_proxy_structured_store_file socks)"
+      ;;
     *)
       return 1
       ;;
@@ -16697,6 +17254,10 @@ protocol_default_instance_id() {
       mixed_structured_state_active || return 1
       default_id=$(jq -r '.default_instance_id' "$(mixed_structured_store_file)") || return 1
       ;;
+    socks:2)
+      plain_proxy_structured_state_active socks || return 1
+      default_id=$(jq -r '.default_instance_id' "$(plain_proxy_structured_store_file socks)") || return 1
+      ;;
     *)
       return 1
       ;;
@@ -16716,7 +17277,7 @@ load_protocol_instance_state() {
   local schema instance_ids listed_instance_id legacy_inbound_tag
 
   protocol=$(normalize_protocol_id "${protocol}") || return 1
-  if [[ "${protocol}" == "mixed" ]]; then
+  if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" ]]; then
     structured_instance_store_validate_id "${instance_id}" || return 1
   else
     validate_vless_reality_instance_id "${instance_id}" || return 1
@@ -16762,6 +17323,9 @@ load_protocol_instance_state() {
       ;;
     mixed:2)
       load_mixed_structured_instance "${instance_id}" || return 1
+      ;;
+    socks:2)
+      load_plain_proxy_structured_instance socks "${instance_id}" || return 1
       ;;
     *)
       return 1
@@ -17228,6 +17792,12 @@ protocol_state_matches_config() {
       return $?
     fi
   fi
+  if [[ "${protocol}" == "socks" ]]; then
+    # SOCKS has no schema-1 fallback: compare the complete typed inventory,
+    # including every tag, listener, credential tuple, and route policy.
+    plain_proxy_structured_state_matches_config socks
+    return $?
+  fi
 
   expected_snapshot=$(render_expected_protocol_state_snapshot "${protocol}") || return 1
   saved_snapshot=$(render_saved_protocol_state_snapshot "${protocol}") || return 1
@@ -17531,6 +18101,7 @@ rebuild_protocol_state_from_config() {
   local mixed_inbound_count=0 mixed_rebuild_mode="legacy"
   local mixed_candidate_file="" mixed_candidate_revision=0 mixed_state_file mixed_state_schema
   local mixed_legacy_node_name mixed_legacy_tag mixed_legacy_listen mixed_legacy_policy mixed_stack_listen
+  local socks_inbound_count=0 socks_candidate_file="" socks_candidate_revision=0 socks_state_file socks_state_schema
   local backup_state_dir
 
   backup_dir=$(mktemp -d) || return 1
@@ -17654,6 +18225,54 @@ rebuild_protocol_state_from_config() {
     fi
   fi
 
+  # SOCKS is structured-only. Capture its complete typed candidate while the
+  # old metadata is still available; the clear below removes root env files.
+  socks_inbound_count=$(jq -r '[.inbounds[]? | select(.type == "socks")] | length' "${SINGBOX_CONFIG_FILE}") || {
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+    return 1
+  }
+  [[ "${socks_inbound_count}" =~ ^[0-9]+$ ]] || {
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+    return 1
+  }
+  if (( socks_inbound_count > 0 )); then
+    socks_state_file=$(protocol_state_file socks) || {
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+      return 1
+    }
+    socks_state_schema=""
+    if [[ -f "${socks_state_file}" ]]; then
+      validate_protocol_state_schema socks "${socks_state_file}" || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+        return 1
+      }
+      socks_state_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${socks_state_file}" | head -n1) || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+        return 1
+      }
+      socks_state_schema=${socks_state_schema//\"/}
+      socks_state_schema=${socks_state_schema//\'/}
+    fi
+    [[ -z "${socks_state_schema}" || "${socks_state_schema}" == "2" ]] || {
+      printf '[ERROR] socks_store_candidate: SOCKS legacy state is unsupported; 已保留原状态。\n' >&2
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+      return 1
+    }
+    socks_candidate_file="${backup_dir}/socks.candidate.json"
+    if ! plain_proxy_config_store_candidate socks > "${socks_candidate_file}"; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+      return 1
+    fi
+    if [[ -f "$(plain_proxy_structured_store_file socks 2>/dev/null || true)" ]]; then
+      socks_candidate_revision=$(jq -r '.revision' "$(plain_proxy_structured_store_file socks)") || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+        return 1
+      }
+    else
+      socks_candidate_revision=0
+    fi
+  fi
+
   clear_protocol_state_cache
   ensure_protocol_state_dir
   if ! rm -rf "${SB_PROTOCOL_STATE_DIR}/vless-reality.d"; then
@@ -17773,6 +18392,12 @@ rebuild_protocol_state_from_config() {
           abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
           return 1
         fi
+        ;;
+      socks)
+        if ! protocol_array_contains "socks" ${rebuilt_protocols[@]+"${rebuilt_protocols[@]}"}; then
+          rebuilt_protocols+=("socks")
+        fi
+        continue
         ;;
       hy2)
         SB_PROTOCOL="hy2"
@@ -17919,6 +18544,17 @@ rebuild_protocol_state_from_config() {
       return 1
     fi
     if ! save_mixed_structured_marker; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+      return 1
+    fi
+  fi
+
+  if (( socks_inbound_count > 0 )); then
+    if ! publish_structured_instance_store socks "${socks_candidate_file}" "${socks_candidate_revision}"; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+      return 1
+    fi
+    if ! save_plain_proxy_structured_marker socks; then
       abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
       return 1
     fi
@@ -18322,7 +18958,7 @@ main() {
   show_banner
   check_root
   if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
-    log_warn "存在待恢复的实例事务；仅开放只读诊断与菜单 17 恢复入口。"
+    log_warn "存在待恢复的实例事务；仅开放只读诊断与菜单 17/18 恢复入口。"
   elif ! ensure_sbv_command_installed; then
     log_warn "全局命令 sbv 未能完成同步；当前管理菜单继续运行，请稍后手动重试。"
   fi
@@ -18359,14 +18995,15 @@ main() {
     render_menu_item "16" "卸载管理脚本 (sbv)"
     render_section_title "实例与状态"
     render_menu_item "17" "管理 Mixed 实例"
+    render_menu_item "18" "管理 SOCKS 实例"
     echo "0. 退出"
     render_main_menu_footer
-    choice=$(prompt_choice "请选择 [0-17]: " 0 17 "")
+    choice=$(prompt_choice "请选择 [0-18]: " 0 18 "")
 
     if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
       case "${choice}" in
-        0|9|10|12|17) ;;
-        *) log_warn "请先通过菜单 17 恢复未完成的实例事务；本次未执行其他写操作。"; continue ;;
+        0|9|10|12|17|18) ;;
+        *) log_warn "请先通过菜单 17/18 恢复未完成的实例事务；本次未执行其他写操作。"; continue ;;
       esac
     fi
 
@@ -18395,6 +19032,7 @@ main() {
         ;;
       16) uninstall_script ;;
       17) mixed_instance_management_menu ;;
+      18) socks_instance_management_menu ;;
       0) exit_script ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac

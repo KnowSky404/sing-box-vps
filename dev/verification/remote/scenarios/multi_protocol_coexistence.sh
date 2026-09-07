@@ -30,7 +30,7 @@ verification_scenario_multi_protocol_coexistence() {
   SB_REALITY_SNI_VALIDATION_ASSUME_YES=1 bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" <<EOF
 1
 
-
+1,2,3,4
 
 443
 2
@@ -67,19 +67,33 @@ n
 0
 EOF
 
+  # Add SOCKS through the same public, confirmed instance transaction used
+  # by operators; the four existing protocols must remain untouched.
+  local socks_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-record.json"
+  (umask 077; jq -n '{id:"main",name:"SOCKS verification",tag:"socks-in",
+    listen:{address:"127.0.0.1",port:1081},
+    authentication:{enabled:true,username:"socks-user",password:"socks-pass"},
+    outbound_policy:"default",dependencies:[]}' > "${socks_record}")
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent instance create socks --json --yes \
+    --expected-revision 0 --file "${socks_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-create.json"
+  jq -e '.ok==true and .protocol=="socks" and .changed==true and .revision==1' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-create.json" >/dev/null
+
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/config.json")
   index_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/index.env")
   cp /root/sing-box-vps/config.json "${config_path}"
   cp /root/sing-box-vps/protocols/index.env "${index_path}"
-  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls' "${index_path}"
+  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks' "${index_path}"
   jq -e '
-    ([.inbounds[] | .type] | sort) == ["anytls", "hysteria2", "mixed", "vless"] and
+    ([.inbounds[] | .type] | sort) == ["anytls", "hysteria2", "mixed", "socks", "vless"] and
     ([.inbounds[] | select(.type == "vless") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "mixed") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "hysteria2") | .listen_port] | length == 1) and
-    ([.inbounds[] | select(.type == "anytls") | .listen_port] | length == 1)
+    ([.inbounds[] | select(.type == "anytls") | .listen_port] | length == 1) and
+    ([.inbounds[] | select(.type == "socks") | .listen_port] | length == 1)
   ' /root/sing-box-vps/config.json >/dev/null
   grep -Fqx 'sing-box version 1.14.0' <(sing-box version)
   verification_wait_for_service_active sing-box

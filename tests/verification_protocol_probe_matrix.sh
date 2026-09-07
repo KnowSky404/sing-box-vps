@@ -318,6 +318,31 @@ grep -Fqx 'RESULT=success' "${MIXED_PROBE_DIR}/result.env"
 assert_protocol_probe_processes_cleaned "${PROBE_CLIENT_PID_FILE}"
 assert_protocol_probe_processes_cleaned "${PROBE_HTTP_PID_FILE}"
 
+SOCKS_ARTIFACT_DIR="${TMP_DIR}/artifacts-socks"
+SOCKS_CONFIG_FILE="${TMP_DIR}/socks-server.json"
+jq '.inbounds[0].type="socks" |
+  .inbounds[0].users=[{username:"socks-user\n",password:"special:$`\\\"\n"}]' \
+  "${MIXED_CONFIG_FILE}" > "${SOCKS_CONFIG_FILE}"
+bash -s -- "${TESTABLE_ENTRYPOINT}" "${SOCKS_ARTIFACT_DIR}" "${SOCKS_CONFIG_FILE}" <<'EOF_SOCKS_RUN'
+set -euo pipefail
+source "$1"
+VERIFY_ARTIFACT_DIR=$2
+VERIFY_CURRENT_SCENARIO=runtime_smoke
+VERIFY_CURRENT_SCENARIO_DIR=scenarios/runtime_smoke
+verification_execute_single_protocol_probe socks "$3"
+EOF_SOCKS_RUN
+SOCKS_PROBE_DIR="${SOCKS_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/socks"
+jq -e --slurpfile server "${SOCKS_CONFIG_FILE}" '
+  .outbounds[0].type=="socks" and .outbounds[0].version=="5" and
+  .outbounds[0].udp_over_tcp=={enabled:true,version:2} and
+  .outbounds[0].username==$server[0].inbounds[0].users[0].username and
+  .outbounds[0].password==$server[0].inbounds[0].users[0].password
+' "${SOCKS_PROBE_DIR}/client.json" >/dev/null
+[[ "$(stat -c %a "${SOCKS_PROBE_DIR}/client.json")" == 600 ]]
+grep -Fqx 'RESULT=success' "${SOCKS_PROBE_DIR}/result.env"
+assert_protocol_probe_processes_cleaned "${PROBE_CLIENT_PID_FILE}"
+assert_protocol_probe_processes_cleaned "${PROBE_HTTP_PID_FILE}"
+
 : > "${PROBE_CLIENT_PID_FILE}"
 : > "${PROBE_HTTP_PID_FILE}"
 if PROBE_FAIL_CHECK=1 bash "${TMP_DIR}/run-actual-probe.sh"; then

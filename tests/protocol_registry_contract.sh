@@ -14,10 +14,10 @@ source "${TEST_DIR}/install.sh"
 
 registry=$(protocol_registry_json)
 jq -e '
-  length == 4 and
-  ([.[].state_id] | unique | length == 4) and
-  ([.[].agent_id] | unique | length == 4) and
-  ([.[].menu_order] | sort == [1,2,3,4]) and
+  length == 5 and
+  ([.[].state_id] | unique | length == 5) and
+  ([.[].agent_id] | unique | length == 5) and
+  ([.[].menu_order] | sort == [1,2,3,4,5]) and
   all(.[]; .implemented == true and .available == null and .validated.status == "not_assessed")
 ' >/dev/null <<< "${registry}"
 capabilities=$(agent_capabilities_json)
@@ -48,13 +48,43 @@ mkdir -p "${SB_PROTOCOL_STATE_DIR}"
 for protocol in $(list_registered_protocols); do
   protocol_registry_require_handlers "${protocol}"
   [[ "$(protocol_option_to_id "$(protocol_registry_field "${protocol}" menu_order)")" == "${protocol}" ]]
-  printf 'CONFIG_SCHEMA_VERSION=1\n' > "$(protocol_state_file "${protocol}")"
+  if [[ "${protocol}" == "socks" ]]; then
+    printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2\n' > "$(protocol_state_file "${protocol}")"
+    mkdir -p "${SB_PROTOCOL_STATE_DIR}/instances"
+    cat > "${SB_PROTOCOL_STATE_DIR}/instances/socks.json" <<'SOCKS_STORE_EOF'
+{
+  "schema_version": 1,
+  "protocol": "socks",
+  "revision": 1,
+  "default_instance_id": "main",
+  "instances": [
+    {
+      "id": "main",
+      "name": "SOCKS contract",
+      "tag": "socks-in",
+      "listen": {"address": "127.0.0.1", "port": 1081},
+      "authentication": {"enabled": false, "username": "", "password": ""},
+      "outbound_policy": "default",
+      "dependencies": []
+    }
+  ]
+}
+SOCKS_STORE_EOF
+  else
+    printf 'CONFIG_SCHEMA_VERSION=1\n' > "$(protocol_state_file "${protocol}")"
+  fi
 done
-printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
-[[ "$(list_exportable_client_protocols)" == $'vless-reality\nmixed\nhy2\nanytls' ]]
+printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
+[[ "$(list_exportable_client_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nsocks' ]]
 [[ "$(protocol_registry_field mixed client_export)" == true ]]
 [[ "$(protocol_registry_field mixed multi_instance)" == true ]]
 [[ -z "$(protocol_registry_field mixed subman_type)" ]]
+[[ "$(protocol_registry_field socks client_export)" == true ]]
+[[ "$(protocol_registry_field socks multi_instance)" == true ]]
+[[ "$(protocol_registry_field socks menu_order)" == 5 ]]
+[[ "$(protocol_registry_field socks default_tag)" == socks-in ]]
+[[ "$(protocol_registry_field socks handlers)" == *load_plain_proxy_structured_instance* ]]
+[[ "$(protocol_registry_field socks handlers)" == *apply_plain_proxy_instance_change* ]]
 
 # Unknown protocol and future schema must not disappear during reconciliation.
 for invalid in $'INSTALLED_PROTOCOLS=mixed,future-protocol\nPROTOCOL_STATE_VERSION=1' \

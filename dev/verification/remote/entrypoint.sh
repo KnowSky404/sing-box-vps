@@ -604,6 +604,29 @@ verification_generate_protocol_probe_client_config() {
         return 1
       fi
       ;;
+    socks)
+      output_path=$(verification_artifact_path \
+        "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
+      temp_output_path="${output_path}.tmp.$$"
+      inbound_index=$(verification_find_config_inbound_index_by_type "${config_file}" socks) || return 1
+      if jq --argjson idx "${inbound_index}" '
+        .inbounds[$idx] as $server |
+        if ($server.listen_port | type) != "number" or (($server.users // []) | length) > 1
+        then error("unrepresentable SOCKS probe input") else
+        {log:{disabled:true},
+         inbounds:[{type:"socks",tag:"local-socks",listen:"127.0.0.1",listen_port:19080}],
+         outbounds:[({type:"socks",version:"5",tag:"proxy",server:"127.0.0.1",
+          server_port:$server.listen_port,udp_over_tcp:{enabled:true,version:2}} +
+          (if (($server.users // [])|length)==1 then
+            {username:$server.users[0].username,password:$server.users[0].password} else {} end))]}
+        end
+      ' "${config_file}" > "${temp_output_path}"; then
+        chmod 600 "${temp_output_path}" && mv "${temp_output_path}" "${output_path}"
+      else
+        rm -f "${temp_output_path}"
+        return 1
+      fi
+      ;;
     mixed)
       state_file=/root/sing-box-vps/protocols/mixed.env
       output_path=$(verification_artifact_path \
@@ -1031,6 +1054,9 @@ for scenario in "$@"; do
       ;;
     fresh_install_anytls)
       run_verification_scenario fresh_install_anytls verification_scenario_fresh_install_anytls
+      ;;
+    fresh_install_socks)
+      run_verification_scenario fresh_install_socks verification_scenario_fresh_install_socks
       ;;
     multi_protocol_coexistence)
       run_verification_scenario multi_protocol_coexistence verification_scenario_multi_protocol_coexistence
