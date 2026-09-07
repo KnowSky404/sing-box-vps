@@ -172,3 +172,17 @@ Context7 查询仅提供 testing 概览，随后复核固定 [Mixed TCP listener
 最终修正枚举后的 164 项回归全部退出 0，两个核心环境变量均已传入，逐项证据 `/tmp/sbv-listener-final-all.JMX95i/summary.tsv`。最终 Bash 4.2.53 另重跑资源计划（两核心 check=4/start=2/TCP business=4/等价 IPv6 contrasts=2）、防火墙 mock 与真实删除入口的停止故障回归，全部通过；主机默认跳过通配启动对照，隔离 Docker 的额外双栈证据如上。预审发现的三项 P2 和两个旧 Bash 空数组问题均已修复，独立复核未发现新增 P1/P2。
 
 边界：尚未实现精确防火墙创建归属账本、跨进程端口预留、完整配置/服务/防火墙持久事务、动态 SOCKS UDP/ACME 临时监听、高级接入资源或通用实例完整写入口。旧 prompt 的整数字端口占用询问尚未替换为完整资源计划；新增候选预检不宣称解决该交互限制。全协议目标仍未完成，未推送、部署、访问生产或执行 SubMan 同步。
+
+### 2026-09-07 Mixed 客户端导出
+
+从 `ca7e5e4` 继续，基线 `bash dev/verification/run.sh` 为 `20260907092728` local 模式退出 0；保留用户原未跟踪文件 `1`。本轮版本只递增一次为 `2026090707`。为推进总目标中明确要求的 Mixed 导出，不再沿用历史设计的排除规则；不将本轮功能冒充完整通用多实例生命周期。
+
+注册表、Agent capabilities/nodes 与交互/Agent 导出现在一致支持旧 Mixed 单实例。SOCKS5 outbound 使用已保存的端口、认证标记及凭据，用户名/密码校验 1–255 字节；无认证时不输出 credential 字段。原始状态的必需字段缺失、无效或凭据超长会拒绝，不用 legacy loader 默认值补造，也不触发状态迁移或凭据生成。即使其他协议可用，无效 Mixed 也中止整份导出，原文件与备份保持不变。生成后依次执行组件图和目标核心 check，沿用私有临时文件、覆盖前备份及发布边界。Agent 候选生成失败返回稳定 `client_config_generation_failed` 错误 envelope。
+
+最终复核进一步要求校验与渲染使用实例适配器同一次加载的原始字段，不二次读取 `.env`：故障注入在缺少 PORT 的快照加载后立即替换为完整新文件，仍须拒绝旧快照默认值。此回归及用户名/密码 255/256 字节、UTF-8 字节数、陈旧凭据、stderr 脱敏、直接调用 dispatcher 的跨协议恢复均通过 Bash 5 与实际 Bash 4.2.53。该保护不是跨进程锁或完整持久事务的替代。
+
+显式开启 UoT v2，使 UDP payload 经现有 TCP 入口传输，不新增固定 UDP 防火墙开放；`network` 留空遵循上游 TCP/UDP 默认。Context7 查询之后按固定 1.13.18/1.14.0 文档及 Mixed `uot.NewRouter` 源码确认。交互输出及 Agent `warnings[].code=mixed_plaintext_transport` 明确提示凭据与非加密业务在代理链路上没有 TLS 保护；UoT 不提供加密。Mixed SubMan、独立 SOCKS 服务端管理和 Mixed 多实例的声明保持未支持。
+
+真实运行测试将实际导出的 SOCKS5 outbound 原样放入精简隔离客户端配置；完整导出仍另行 check。1.13.18/1.14.0 同版本与双向跨版本、认证/无认证共 8 组均有 TCP marker 与 UDP echo payload 成功，合计完整导出 check=8、精简核心 check=16、TCP=8、UDP=8、直接服务端错误认证拒绝=4；父代理已独立复跑。它不证明完整配置的公网规则集下载、原生跨主机 UDP associate 或其他协议 UDP 数据路径。原有 Docker 场景仍单独计为 TCP 证据，未操作生产或 SubMan 服务。
+
+回归证据：166 个实际 Shell 测试全部退出 0，逐项记录 `/tmp/sbv-mixed-export-all.0L4Qeo/summary.tsv`；最后同快照校验收紧后，11 个客户端导出专项再次全部通过，记录 `/tmp/sbv-mixed-export-final.2eT2cN/summary.tsv`。实际 Bash 4.2 另通过 Mixed-only、认证/失败回归和两个跨版本方向的 TCP/UDP 运行。最终默认门禁 `SINGBOX_BINARY_113=… SINGBOX_BINARY_114=… bash dev/verification/run.sh --changed-file install.sh dev/verification/common.sh` 在 `dev/verification-runs/20260907095126` 退出 0：51 项本地检查、9/9 Docker 场景、12/12 既有 TCP 探针通过，失败升级的持久事务为 `status=rolled_back`、`rollback.result=success`。直接从当次容器读取的脚本 SHA-256 为 `8f280f8576beb83648ea8eb7a44d25cb3591b1fcc4f198a957993c070e101a22`，与最终源码相同。独立预审及同快照收紧复核未发现新增 P1/P2。全协议目标仍在进行，尚未实现新协议族、完整多实例和系统资源事务；未推送或部署。

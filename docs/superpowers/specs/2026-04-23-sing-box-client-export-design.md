@@ -1,5 +1,7 @@
 # Sing-box Client Export Design
 
+> 历史设计：下文排除服务端 Mixed 的决定已由 2026-09-07 统一协议改造替代。当前支持 Mixed 的 SOCKS5/UoT v2 客户端导出，并附带明文链路警告；以 README 与 `2026-09-06-unified-protocol-management.md` 的实施记录为准。
+
 **Date:** 2026-04-23
 
 **Goal**

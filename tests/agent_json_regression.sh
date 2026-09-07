@@ -164,14 +164,23 @@ jq -e '
 rm -f "${SYSTEMCTL_RESTART_FAIL_FILE}"
 unset SYSTEMCTL_RESTART_FAIL_FILE
 
-# A helper that exits before producing JSON must still be represented by an envelope.
+# An export that cannot generate a candidate returns an actionable error envelope.
 rm -f "${SB_PROTOCOL_INDEX_FILE}"
 if export_json=$(agent_cli export-client --json); then
   printf 'expected export-client without protocols to return non-zero\n' >&2
   exit 1
 fi
 assert_envelope export-client false "${export_json}"
-jq -e '.error == "internal_error" and .data == {}' <<< "${export_json}" >/dev/null
+jq -e '.error == "client_config_generation_failed" and .data.error == "client_config_generation_failed"' <<< "${export_json}" >/dev/null
+
+# A helper that exits before producing JSON must still be represented by an envelope.
+empty_payload() { return 7; }
+if empty_json=$(agent_cli_run empty empty_payload); then
+  printf 'expected empty helper failure to return non-zero\n' >&2
+  exit 1
+fi
+assert_envelope empty false "${empty_json}"
+jq -e '.error == "internal_error" and .data == {}' <<< "${empty_json}" >/dev/null
 
 if inconsistent_success=$(agent_emit_json_envelope consistency 0 '{"ok":false,"schema":{}}'); then
   printf 'expected payload ok=false to force a non-zero result\n' >&2

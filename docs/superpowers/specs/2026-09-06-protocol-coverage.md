@@ -6,7 +6,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026090706`，`SB_SUPPORT_MAX_VERSION=1.14.0`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026090707`，`SB_SUPPORT_MAX_VERSION=1.14.0`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -53,7 +53,9 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 - `docs/configuration/{inbound,outbound,endpoint}/index.md`：官方导航清单；导航仍列出的 `wireguard` outbound 和 `dns` outbound 不能据此认定在 1.14 可用。
 - `docs/deprecated.md:69-124,181-191`、`docs/migration.md:776-1240`：DNS、特殊 outbound、legacy inbound fields、direct override、WireGuard outbound 和 ShadowsocksR 的迁移/移除事实。
 
-本轮还用上述 ARM64 官方二进制对所有下列 type 构造最小 JSON 做了 `sing-box check`：正常 type 进入自身必填字段或 TLS 初始化错误计为 `registry-check`；`wireguard` outbound、`dns` outbound、`shadowsocksr` 被二进制明确报告 removed；endpoint 的五个 type 被识别并进入 endpoint 初始化。该探针没有伪造凭据，也不代表真实 VPN、Cloudflare、OpenConnect 或 OpenVPN 控制面连接成功。第一阶段审查修复后的真实项目证据在 `dev/verification-runs/20260907031322/`：9 个场景、12 次协议 TCP 业务闭环成功，包含旧四协议共存、接管、升级和回滚。UDP 业务及新增协议数据路径仍待扩展。
+本轮还用上述 ARM64 官方二进制对所有下列 type 构造最小 JSON 做了 `sing-box check`：正常 type 进入自身必填字段或 TLS 初始化错误计为 `registry-check`；`wireguard` outbound、`dns` outbound、`shadowsocksr` 被二进制明确报告 removed；endpoint 的五个 type 被识别并进入 endpoint 初始化。该探针没有伪造凭据，也不代表真实 VPN、Cloudflare、OpenConnect 或 OpenVPN 控制面连接成功。第一阶段审查修复后的真实项目证据在 `dev/verification-runs/20260907031322/`：9 个场景、12 次协议 TCP 业务闭环成功，包含旧四协议共存、接管、升级和回滚。其余 UDP 业务及新增协议数据路径仍待扩展；Mixed 导出增量证据如下。
+
+2026-09-07 Mixed 导出增量：Context7 先解析 `/sagernet/sing-box`，结果仅覆盖 testing；随后复核固定 [1.13.18 SOCKS outbound](https://github.com/SagerNet/sing-box/blob/v1.13.18/docs/configuration/outbound/socks.md)、[1.14.0 SOCKS outbound](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/socks.md)、[UoT v2](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/shared/udp-over-tcp.md) 及两个版本 Mixed 的 `uot.NewRouter` 实现。生成器保留 SOCKS5 认证，省略 `network` 以启用 TCP/UDP，显式设置 `udp_over_tcp: {enabled:true, version:2}`。`tests/export_client_config_mixed_runtime.sh` 在 1.13.18/1.14.0 同版本及双向跨版本共四组、每组认证/无认证两种状态取得：8 次完整客户端配置 check、16 次精简客户端/服务端 check、8 次 TCP marker、8 次 UDP echo payload 成功，以及 4 次直接访问服务器的错误认证拒绝。业务测试保留实际导出的 SOCKS5 outbound，仅替换完整导出的公网规则集/路由为隔离直达测试路径；不声称公网规则集下载、原生远程 UDP associate 的防火墙可达性或其他协议 UDP 已验证。所有业务监听均为回环地址，无宿主防火墙变更。
 
 ## 入站矩阵
 
@@ -62,7 +64,7 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 | ID | 官方 type / 角色 | 版本、构建和平台条件 | TCP/UDP/主要约束 | upstream | available（官方 ARM64 包） | implemented；D/T/E/R | 导出 / 分享 / SubMan | validated |
 |---|---|---|---|---|---|---|---|---|
 | direct-inbound | `direct` / inbound | 基础内建 | TCP 或 UDP，由 `network` 指定，留空为两者；仍支持 `override_address/override_port` 端口转发，不能与 direct outbound 的移除项混淆 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check；两核心 override 配置 check 通过 |
-| mixed | `mixed` / inbound | 基础内建 | TCP listen；同一入口提供 SOCKS4/4a/5 和 HTTP；UDP 业务经 SOCKS UDP/UoT，不开 UDP listen | yes | yes（Linux） | 旧预设；yes/yes/yes/yes | 无独立裸核客户端 / HTTP、SOCKS 链接 / no current SubMan | project-real-tcp |
+| mixed | `mixed` / inbound | 基础内建 | TCP listen；同一入口提供 SOCKS4/4a/5 和 HTTP；UDP 业务经 SOCKS UDP/UoT，不开固定 UDP listen | yes | yes（Linux） | 旧预设；yes/yes/yes/yes | SOCKS5 + UoT v2 裸核客户端（明文警告） / HTTP、SOCKS 链接 / no current SubMan | project-real-tcp；本轮导出运行证据见下方 |
 | vless-reality（旧预设） | `vless` / inbound | 项目保留 1.13.x；REALITY、Vision 与 TCP 预设 | TCP listen，TCP/UDP 业务；已有多实例、固定 tag/UUID/ShortID、实例出站和 QoS | yes | yes（Linux；需握手目标） | 旧预设；yes/yes/yes/yes | 裸核客户端 / VLESS URI / VLESS 同步 | project-real-tcp |
 | socks | `socks` / inbound | 基础内建 | TCP listen；SOCKS4/4a/5 的 UDP associate/UDP 业务经该 TCP 会话处理；认证可选 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check |
 | http | `http` / inbound | 基础内建 | HTTP CONNECT 入口，TCP；入口 TLS 与代理 HTTPS 目标是两件事 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check |

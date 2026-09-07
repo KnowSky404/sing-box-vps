@@ -70,7 +70,7 @@ get_public_ip() {
 mkdir -p "${SB_PROTOCOL_STATE_DIR}"
 
 cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
-INSTALLED_PROTOCOLS=vless-reality,hy2,anytls
+INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls
 PROTOCOL_STATE_VERSION=1
 EOF
 
@@ -85,6 +85,16 @@ REALITY_PRIVATE_KEY=private-key
 REALITY_PUBLIC_KEY=public-key
 SHORT_ID_1=aaaaaaaaaaaaaaaa
 SHORT_ID_2=bbbbbbbbbbbbbbbb
+EOF
+
+cat > "${SB_PROTOCOL_STATE_DIR}/mixed.env" <<'EOF'
+INSTALLED=1
+CONFIG_SCHEMA_VERSION=1
+NODE_NAME=mixed_test-host
+PORT=2080
+AUTH_ENABLED=y
+USERNAME=mixed-user
+PASSWORD=mixed-pass
 EOF
 
 cat > "${SB_PROTOCOL_STATE_DIR}/hy2.env" <<'EOF'
@@ -172,6 +182,11 @@ fi
 
 if ! jq -e '.outbounds[] | select(.type == "vless" and .tag == "vless_reality_test-host")' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
   printf 'expected vless outbound tag vless_reality_test-host, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
+  exit 1
+fi
+
+if ! jq -e '.outbounds[] | select(.type == "socks" and .tag == "mixed_test-host") | .server == "203.0.113.10" and .server_port == 2080 and .version == "5" and .username == "mixed-user" and .password == "mixed-pass" and .udp_over_tcp.enabled == true and .udp_over_tcp.version == 2' "${EXPECTED_EXPORT_PATH}" >/dev/null; then
+  printf 'expected authenticated Mixed SOCKS5 outbound, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
 
@@ -279,3 +294,17 @@ if ! jq -e '(.dns.rules // [])[] | select((((.rule_set? == "geosite-geolocation-
   printf 'expected dns.rules geosite-geolocation-!cn -> remote-dns, got:\n%s\n' "$(cat "${EXPECTED_EXPORT_PATH}")" >&2
   exit 1
 fi
+
+# Mixed is fail-closed even when other exportable protocols are healthy: an
+# invalid persisted credential must not silently produce a partial export.
+cp "${EXPECTED_EXPORT_PATH}" "${TMP_DIR}/multi-export.before"
+printf '%s\n' '{"keep":"multi-backup"}' > "${EXPECTED_EXPORT_PATH}.bak"
+cp "${EXPECTED_EXPORT_PATH}.bak" "${TMP_DIR}/multi-backup.before"
+sed -i 's/^PASSWORD=.*/PASSWORD=/' "${SB_PROTOCOL_STATE_DIR}/mixed.env"
+if export_singbox_client_config >"${TMP_DIR}/multi-failed.stdout" 2>"${TMP_DIR}/multi-failed.stderr"; then
+  printf 'expected invalid Mixed state to block a multi-protocol export\n' >&2
+  exit 1
+fi
+[[ ! -s "${TMP_DIR}/multi-failed.stdout" ]]
+cmp "${TMP_DIR}/multi-export.before" "${EXPECTED_EXPORT_PATH}"
+cmp "${TMP_DIR}/multi-backup.before" "${EXPECTED_EXPORT_PATH}.bak"

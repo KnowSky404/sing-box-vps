@@ -1,5 +1,7 @@
 # Sing-box Client Export Implementation Plan
 
+> 历史计划：2026-09-07 已取消 Mixed 导出排除，旧 `export_client_config_mixed_only_rejected.sh` 由 `export_client_config_mixed_only.sh` 成功导出回归替代；当前行为见 README 与统一协议改造实施记录。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a menu-driven export that builds a complete sing-box bare-core client config from installed server protocol state, with a local `mixed` inbound plus `selector`, `urltest`, and `clash_api`.

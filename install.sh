@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090706
+# Version: 2026090707
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090706"
+readonly SCRIPT_VERSION="2026090707"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -69,7 +69,7 @@ readonly SB_REALITY_SNI_FALLBACK="www.apple.com"
 # The legacy vless alias intentionally remains the REALITY preset.
 readonly SB_PROTOCOL_REGISTRY=(
   'vless-reality|vless+reality|vless-reality|vless|reality|inbound|vless|VLESS + REALITY|vless-in|1|true|vless|tcp|tcp,udp|1.13.0|true|none|vless|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"qos":{"upload_mbps":true,"download_mbps":true},"share_link":true,"qr":true,"client_export":true,"subman_sync":true}|vless,vless+reality|build_vless_inbound_json,build_vless_reality_route_rules_json,build_client_vless_reality_outbounds,save_vless_reality_state,prompt_vless_reality_install,prompt_vless_reality_update'
-  'mixed|mixed|mixed|mixed|plain|inbound|mixed|Mixed (HTTP/HTTPS/SOCKS)|mixed-in|2|false||tcp|tcp,udp|1.13.0|false|none|http,socks5|tcp_loopback|{"http":true,"socks5":true,"authentication":true,"share_links":["http","socks5"],"qr":false,"client_export":false,"subman_sync":false}||build_mixed_inbound_json,save_mixed_state,prompt_mixed_install,prompt_mixed_update'
+  'mixed|mixed|mixed|mixed|plain|inbound|mixed|Mixed (HTTP/HTTPS/SOCKS)|mixed-in|2|true||tcp|tcp,udp|1.13.0|false|none|http,socks5|tcp_loopback|{"http":true,"socks5":true,"authentication":true,"share_links":["http","socks5"],"qr":false,"client_export":true,"subman_sync":false}||build_mixed_inbound_json,save_mixed_state,prompt_mixed_install,prompt_mixed_update,build_client_mixed_outbound'
   'hy2|hy2|hysteria2|hysteria2|tls|inbound|hysteria2|Hysteria2|hy2-in|3|true|hysteria2|udp|tcp,udp|1.13.0|false|optional|hysteria2|tcp_loopback|{"tls_modes":["acme_http01","acme_cloudflare_dns01","manual"],"bandwidth":true,"obfs":true,"share_link":true,"qr":true,"client_export":true,"subman_sync":true}|hysteria2|build_hy2_inbound_json,build_hy2_certificate_provider_json,build_client_hy2_outbound,save_hy2_state,prompt_hy2_install,prompt_hy2_update'
   'anytls|anytls|anytls|anytls|tls|inbound|anytls|AnyTLS|anytls-in|4|true||tcp|tcp,udp|1.13.0|false|optional||tcp_loopback|{"tls_modes":["acme_http01","acme_cloudflare_dns01","manual"],"standard_share_uri":false,"outbound_example":true,"qr":false,"client_export":true,"subman_sync":false}||build_anytls_inbound_json,build_anytls_certificate_provider_json,build_client_anytls_outbound,save_anytls_state,prompt_anytls_install,prompt_anytls_update'
 )
@@ -9358,6 +9358,17 @@ print_hy2_compatibility_warnings() {
   done < <(jq -r '.[]?.message' <<< "${warnings_json}")
 }
 
+collect_client_export_warnings_json() {
+  local config_json=$1 hy2_warnings
+  hy2_warnings=$(collect_hy2_compatibility_warnings_json "export") || return 1
+  jq --argjson warnings "${hy2_warnings}" '
+    $warnings + (if any(.outbounds[]?; .type == "socks") then [{
+      code: "mixed_plaintext_transport",
+      message: "Mixed 导出使用明文 SOCKS5，代理链路未启用 TLS，认证信息与非加密业务可能被读取；仅用于可信网络或受保护隧道。UDP 经 UoT v2 承载，UoT 不提供加密。"
+    }] else [] end)
+  ' <<< "${config_json}"
+}
+
 build_hy2_link() {
   local public_ip=$1
   local address_label=${2:-}
@@ -10128,6 +10139,53 @@ build_client_anytls_outbound() {
     }'
 }
 
+validate_mixed_client_connection() {
+  local port=${1:-} auth_enabled=${2:-} username=${3:-} password=${4:-}
+  local LC_ALL=C
+  # SOCKS5 credentials are length-prefixed in bytes, not Unicode characters.
+  [[ "${port}" =~ ^[0-9]{1,5}$ ]] || return 1
+  jq -en --arg port "${port}" '$port | tonumber | . >= 1 and . <= 65535' >/dev/null || return 1
+  case "${auth_enabled}" in
+    y)
+      [[ -n "${username}" && -n "${password}" && ${#username} -le 255 && ${#password} -le 255 ]]
+      ;;
+    n) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+mixed_loaded_state_is_exportable() {
+  # The read-only instance adapter clears source variables before loading.
+  # Validate that same raw snapshot, not a second read of a file that could
+  # change between validation and rendering. Loader defaults are not evidence
+  # that a required port/authentication field was actually persisted.
+  [[ "${SB_PROTOCOL}" == "mixed" && "${SB_INSTANCE_ID}" == "main" ]] || return 1
+  [[ "${INSTALLED:-}" == "1" ]] || return 1
+  validate_mixed_client_connection "${PORT:-}" "${AUTH_ENABLED:-}" "${USERNAME:-}" "${PASSWORD:-}"
+}
+
+build_client_mixed_outbound() {
+  local public_ip=${1:-$(get_public_ip)}
+  local outbound_tag=${2:-$(client_outbound_tag_for_protocol "mixed")}
+  if [[ -z "${public_ip}" || -z "${outbound_tag}" ]] ||
+     ! validate_mixed_client_connection "${SB_PORT:-}" "${SB_MIXED_AUTH_ENABLED:-}" \
+       "${SB_MIXED_USERNAME:-}" "${SB_MIXED_PASSWORD:-}"; then
+    printf '[ERROR] mixed_export_state_invalid: Mixed 端口或认证字段不完整或无效，未生成客户端连接材料。\n' >&2
+    return 1
+  fi
+
+  jq -n \
+    --arg tag "${outbound_tag}" \
+    --arg server "${public_ip}" \
+    --arg port "${SB_PORT}" \
+    --arg auth_enabled "${SB_MIXED_AUTH_ENABLED}" \
+    --arg username "${SB_MIXED_USERNAME:-}" \
+    --arg password "${SB_MIXED_PASSWORD:-}" \
+    '{type:"socks", tag:$tag, server:$server, server_port:($port|tonumber),
+      version:"5", udp_over_tcp:{enabled:true, version:2}}
+    + (if $auth_enabled == "y" then {username:$username, password:$password} else {} end)'
+}
+
 build_client_outbound_json_for_protocol() {
   local protocol original_protocol_state original_instance_id outbound_json build_status restore_original_state public_ip
   local default_instance_id adapter_status
@@ -10147,7 +10205,7 @@ build_client_outbound_json_for_protocol() {
   restore_original_state="n"
 
   case "${protocol}" in
-    vless-reality|hy2|anytls) ;;
+    vless-reality|mixed|hy2|anytls) ;;
     *)
       return 1
       ;;
@@ -10169,6 +10227,16 @@ build_client_outbound_json_for_protocol() {
 
   if (( build_status == 0 )); then
     case "${protocol}" in
+      mixed)
+        if ! mixed_loaded_state_is_exportable; then
+          printf '[ERROR] mixed_export_state_invalid: Mixed 原始状态不完整或无效，禁止以默认值生成客户端配置。\n' >&2
+          build_status=1
+        elif outbound_json=$(build_client_mixed_outbound "${public_ip}"); then
+          :
+        else
+          build_status=$?
+        fi
+        ;;
       vless-reality)
         if outbound_json=$(build_client_vless_reality_outbounds "${public_ip}"); then
           :
@@ -10618,9 +10686,9 @@ build_singbox_client_config() {
   fi
   if [[ ${#exportable_protocols[@]} -eq 0 ]]; then
     if [[ ${#installed_protocols[@]} -gt 0 ]]; then
-      log_warn "当前无可导出的 sing-box 裸核客户端节点；已安装协议中仅 vless-reality、hy2、anytls 支持导出，mixed 不支持导出。" >&2
+      log_warn "当前无可导出的 sing-box 裸核客户端节点；已安装协议没有注册客户端导出能力。" >&2
     else
-      log_warn "当前无可导出的 sing-box 裸核客户端节点；请先安装 vless-reality、hy2 或 anytls 后再导出。" >&2
+      log_warn "当前无可导出的 sing-box 裸核客户端节点；请先安装支持客户端导出的协议。" >&2
     fi
     return 1
   fi
@@ -10638,11 +10706,21 @@ build_singbox_client_config() {
 
   for protocol in "${exportable_protocols[@]}"; do
     if ! protocol_state_exists "${protocol}"; then
+      if [[ "${protocol}" == "mixed" ]]; then
+        log_warn "Mixed 状态缺失，已中止客户端导出；原导出文件保持不变。" >&2
+        status=1
+        break
+      fi
       log_warn "协议状态文件缺失，已跳过客户端导出协议: ${protocol}" >&2
       continue
     fi
 
     if ! outbound_json=$(build_client_outbound_json_for_protocol "${protocol}" "${public_ip}"); then
+      if [[ "${protocol}" == "mixed" ]]; then
+        log_warn "Mixed 客户端连接材料无效，已中止客户端导出；原导出文件保持不变。" >&2
+        status=1
+        break
+      fi
       log_warn "生成客户端导出协议失败，已跳过: ${protocol}" >&2
       continue
     fi
@@ -10652,7 +10730,9 @@ build_singbox_client_config() {
     usable_protocol_count=$((usable_protocol_count + 1))
   done
 
-  if (( usable_protocol_count == 0 )); then
+  if (( status != 0 )); then
+    :
+  elif (( usable_protocol_count == 0 )); then
     log_warn "未找到可用的远程协议可供导出，请检查协议状态文件是否完整。" >&2
     status=1
   else
@@ -10870,7 +10950,7 @@ validate_client_config_json() {
 }
 
 export_singbox_client_config() {
-  local config_json export_path
+  local config_json export_path warnings_json warning_message
 
   if ! config_json=$(build_singbox_client_config); then
     log_warn "导出 sing-box 裸核客户端配置失败。" >&2
@@ -10882,6 +10962,8 @@ export_singbox_client_config() {
     return 1
   fi
 
+  warnings_json=$(collect_client_export_warnings_json "${config_json}") || return 1
+
   export_path=$(client_export_file_path)
   if ! write_client_config_export "${config_json}"; then
     log_warn "写入客户端配置文件失败: ${export_path}" >&2
@@ -10889,7 +10971,9 @@ export_singbox_client_config() {
   fi
 
   print_success "sing-box 裸核客户端配置导出成功。"
-  print_hy2_compatibility_warnings "export"
+  while IFS= read -r warning_message; do
+    [[ -n "${warning_message}" ]] && log_warn "${warning_message}"
+  done < <(jq -r '.[]?.message' <<< "${warnings_json}")
   printf '文件路径: %s\n' "${export_path}"
   printf 'WSL2 使用方式: 请将应用代理手动指向 127.0.0.1:2080\n'
   printf '系统代理: 未启用（set_system_proxy=false）\n'
@@ -12554,6 +12638,7 @@ agent_node_summary_json_for_current_protocol() {
       outbound_policy="${SB_OUTBOUND_POLICY:-default}"
       ;;
     mixed)
+      client_exportable="true"
       [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]] && auth_enabled="true"
       ;;
     hy2)
@@ -12813,7 +12898,7 @@ agent_export_client_json() {
   local config_json export_path compatibility_warnings_json
 
   if ! config_json=$(build_singbox_client_config); then
-    log_warn "agent export-client 生成配置失败。" >&2
+    agent_json_error "client_config_generation_failed" "客户端配置生成失败；请检查已安装协议的状态、端口与认证字段，原导出文件和备份未改变。"
     return 1
   fi
 
@@ -12822,13 +12907,13 @@ agent_export_client_json() {
     return 1
   fi
 
+  compatibility_warnings_json=$(collect_client_export_warnings_json "${config_json}") || return 1
+
   export_path=$(client_export_file_path)
   if ! write_client_config_export "${config_json}"; then
     log_warn "agent export-client 写入失败: ${export_path}" >&2
     return 1
   fi
-
-  compatibility_warnings_json=$(collect_hy2_compatibility_warnings_json "export")
 
   jq -n \
     --arg path "${export_path}" \

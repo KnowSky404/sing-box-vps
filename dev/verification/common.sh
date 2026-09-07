@@ -91,6 +91,9 @@ resolve_local_tests() {
       tests/agent_cli_outputs_machine_readable_node_info.sh \
       tests/agent_json_regression.sh \
       tests/export_client_config_1_14_compatibility.sh \
+      tests/export_client_config_mixed_only.sh \
+      tests/export_client_config_mixed_auth.sh \
+      tests/export_client_config_mixed_runtime.sh \
       tests/export_client_config_validates_generated_config.sh \
       tests/agent_docs_cover_capabilities.sh \
       tests/version_metadata_is_consistent.sh \

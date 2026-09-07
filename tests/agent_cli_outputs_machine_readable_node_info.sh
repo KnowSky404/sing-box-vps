@@ -155,7 +155,7 @@ jq -e '
   and .public_address == "203.0.113.10"
   and (.nodes | length) == 4
   and any(.nodes[]; .protocol == "vless-reality" and .shareable == true and .client_exportable == true and .port == 443)
-  and any(.nodes[]; .protocol == "mixed" and .shareable == true and .client_exportable == false and .auth_enabled == true)
+  and any(.nodes[]; .protocol == "mixed" and .shareable == true and .client_exportable == true and .auth_enabled == true)
   and any(.nodes[]; .protocol == "hysteria2" and .shareable == true and .client_exportable == true)
   and any(.nodes[]; .protocol == "anytls" and .shareable == true and .client_exportable == true and .server_name == "anytls.example.com")
 ' <<< "${nodes_json}" >/dev/null
@@ -194,8 +194,10 @@ jq -e '
   and .path == (env.SB_PROJECT_DIR + "/client/sing-box-client.json")
   and .config.inbounds[0].type == "mixed"
   and any(.config.outbounds[]; .type == "vless")
+  and any(.config.outbounds[]; .type == "socks" and .tag == "mixed_test-host" and .server == "203.0.113.10" and .server_port == 2080 and .username == "mixed-user" and .password == "mixed-pass" and .udp_over_tcp.enabled == true and .udp_over_tcp.version == 2)
   and any(.config.outbounds[]; .type == "hysteria2")
   and any(.config.outbounds[]; .type == "anytls")
+  and any(.warnings[]?; .code == "mixed_plaintext_transport")
 ' <<< "${export_json}" >/dev/null
 
 if [[ ! -f "${SB_PROJECT_DIR}/client/sing-box-client.json" ]]; then
