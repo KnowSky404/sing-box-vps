@@ -103,6 +103,12 @@ if grep -Fqx -- '-I INPUT -p tcp --dport 443 -j ACCEPT' "${TMP_DIR}/iptables.log
   printf 'expected existing tcp iptables rule not to be inserted again\n' >&2
   exit 1
 fi
+if grep -Fqx -- '-I INPUT -p udp --dport 443 -j ACCEPT' "${TMP_DIR}/iptables.log"; then
+  printf 'expected default VLESS TCP-only firewall opening not to insert UDP\n' >&2
+  exit 1
+fi
+
+open_firewall_port 443 hy2 >/dev/null
 grep -Fqx -- '-I INPUT -p udp --dport 443 -j ACCEPT' "${TMP_DIR}/iptables.log"
 
 SB_PORT=443

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090705
+# Version: 2026090706
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090705"
+readonly SCRIPT_VERSION="2026090706"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -2073,7 +2073,7 @@ reconcile_protocol_index_if_needed() {
   for protocol in "${indexed_protocols[@]}"; do
     protocol=$(normalize_protocol_id "${protocol}") || return 1
     if protocol_state_exists "${protocol}"; then
-      if ! protocol_array_contains "${protocol}" "${valid_protocols[@]}"; then
+      if ! protocol_array_contains "${protocol}" ${valid_protocols[@]+"${valid_protocols[@]}"}; then
         valid_protocols+=("${protocol}")
       fi
     else
@@ -2917,28 +2917,20 @@ prompt_protocol_update_fields() {
 }
 
 open_all_protocol_ports() {
-  local protocol current_protocol_state instance_id
-  current_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
+  local plan entries protocol port
+  plan=$(managed_listener_plan "${SINGBOX_CONFIG_FILE}") || return $?
+  entries=$(jq -r 'unique_by([.protocol,.port])[] | [.protocol,.port] | @tsv' <<< "${plan}") || return $?
+  while IFS=$'\t' read -r protocol port; do
+    [[ -n "${protocol}" ]] || continue
+    open_firewall_port "${port}" "${protocol}" || return $?
+  done <<< "${entries}"
+}
 
-  while IFS= read -r protocol; do
-    [[ -z "${protocol}" ]] && continue
-    if [[ "${protocol}" == "vless-reality" ]]; then
-      load_vless_reality_protocol_state
-      migrate_vless_reality_state_to_instances_if_needed
-      while IFS= read -r instance_id; do
-        [[ -z "${instance_id}" ]] && continue
-        load_vless_reality_instance_state "${instance_id}" || continue
-        open_firewall_port "${SB_PORT}"
-      done < <(list_vless_reality_instance_ids)
-    else
-      load_protocol_state "${protocol}"
-      open_firewall_port "${SB_PORT}"
-    fi
-  done < <(list_effective_protocols)
-
-  if [[ -n "${current_protocol_state}" ]]; then
-    load_protocol_state "${current_protocol_state}"
-  fi
+open_committed_protocol_ports() {
+  local status
+  if open_all_protocol_ports; then return 0; else status=$?; fi
+  printf '[ERROR] protocol_apply: config_committed; firewall_may_be_partial; service_restart_not_attempted; inspect_service_manually\n' >&2
+  return "${status}"
 }
 
 protocol_array_contains() {
@@ -3417,7 +3409,7 @@ install_protocols_interactive() {
   if [[ -n "${first_selected_protocol:-}" ]]; then
     load_protocol_state "${first_selected_protocol}"
   fi
-  open_all_protocol_ports
+  open_committed_protocol_ports || return $?
   systemctl restart sing-box
   log_info "连接信息未自动展示，如需查看请进入菜单 11。"
 }
@@ -5707,60 +5699,243 @@ set_sysctl_conf_value() {
 
 # Open firewall port
 open_firewall_port() {
-  local port=$1
+  local port=${1:-} networks transport status
+  local transports=()
+  [[ "${port}" =~ ^[1-9][0-9]{0,4}$ && ${port} -le 65535 ]] || return 1
+  networks=$(protocol_registry_field "${2:-${SB_PROTOCOL}}" listen_networks) || return 1
+  IFS=, read -r -a transports <<< "${networks}"
+  [[ ${#transports[@]} -gt 0 ]] || return 1
+  for transport in "${transports[@]}"; do
+    [[ "${transport}" == tcp || "${transport}" == udp ]] || return 1
+  done
   log_info "正在尝试放行端口 ${port}..."
-  
-  # UFW
-  if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
-    ufw allow "${port}/tcp" &>/dev/null
-    ufw allow "${port}/udp" &>/dev/null
-  fi
-  
-  # Firewalld
-  if command -v firewall-cmd &>/dev/null && firewall-cmd --state &>/dev/null; then
-    firewall-cmd --permanent --add-port="${port}/tcp" &>/dev/null
-    firewall-cmd --permanent --add-port="${port}/udp" &>/dev/null
-    firewall-cmd --reload &>/dev/null
-  fi
-  
-  # Iptables
-  if command -v iptables &>/dev/null; then
-    if ! iptables -C INPUT -p tcp --dport "${port}" -j ACCEPT &>/dev/null; then
-      iptables -I INPUT -p tcp --dport "${port}" -j ACCEPT &>/dev/null
+  for transport in "${transports[@]}"; do
+    # UFW
+    if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
+      if ufw allow "${port}/${transport}" &>/dev/null; then :; else
+        status=$?; printf '[ERROR] firewall_open: ufw_failed; external_state_may_be_partial\n' >&2; return "${status}"
+      fi
     fi
-    if ! iptables -C INPUT -p udp --dport "${port}" -j ACCEPT &>/dev/null; then
-      iptables -I INPUT -p udp --dport "${port}" -j ACCEPT &>/dev/null
+
+    # Firewalld
+    if command -v firewall-cmd &>/dev/null && firewall-cmd --state &>/dev/null; then
+      if firewall-cmd --permanent --add-port="${port}/${transport}" &>/dev/null &&
+         firewall-cmd --reload &>/dev/null; then :; else
+        status=$?; printf '[ERROR] firewall_open: firewalld_failed; external_state_may_be_partial\n' >&2; return "${status}"
+      fi
     fi
-    log_warn "裸 iptables 规则通常只对当前运行时生效；如需持久化，请确认系统已配置规则保存机制。"
-  fi
-  
+
+    # Iptables
+    if command -v iptables &>/dev/null; then
+      if iptables -C INPUT -p "${transport}" --dport "${port}" -j ACCEPT &>/dev/null; then :; else
+        status=$?
+        if [[ ${status} -ne 1 ]]; then
+          printf '[ERROR] firewall_open: iptables_inspection_failed; external_state_may_be_partial\n' >&2; return "${status}"
+        fi
+        if iptables -I INPUT -p "${transport}" --dport "${port}" -j ACCEPT &>/dev/null; then :; else
+          status=$?; printf '[ERROR] firewall_open: iptables_insert_failed; external_state_may_be_partial\n' >&2; return "${status}"
+        fi
+      fi
+      log_warn "裸 iptables 规则通常只对当前运行时生效；如需持久化，请确认系统已配置规则保存机制。"
+    fi
+  done
   log_success "端口 ${port} 防火墙配置尝试完成。"
 }
 
+# A listener plan concerns fixed listening sockets, not tunneled traffic. In
+# particular Mixed reserves TCP here; its SOCKS UDP relays use dynamic sockets.
+# It deliberately refuses unmodelled binding scopes instead of guessing that a
+# resource is unused. Tags are owners in this projection, not new instance IDs.
+canonical_listener_address() {
+  local address=${1:-} left right part zeros result='' word
+  local groups=() tail_groups=()
+  # Accept dotted IPv4-mapped IPv6 without accepting arbitrary dotted suffixes.
+  if [[ "${address,,}" == ::ffff:*.* ]]; then
+    address=${address:7}
+  fi
+  structured_instance_store_validate_address "${address}" || return 1
+  if [[ "${address}" != *:* ]]; then printf '%s' "${address}"; return 0; fi
+  if [[ "${address}" == *::* ]]; then
+    left=${address%%::*}; right=${address#*::}
+    [[ -z "${left}" ]] || IFS=: read -r -a groups <<< "${left}"
+    [[ -z "${right}" ]] || IFS=: read -r -a tail_groups <<< "${right}"
+    zeros=$((8 - ${#groups[@]} - ${#tail_groups[@]}))
+    while (( zeros > 0 )); do groups+=(0); zeros=$((zeros - 1)); done
+    if [[ ${#tail_groups[@]} -gt 0 ]]; then groups+=("${tail_groups[@]}"); fi
+  else
+    IFS=: read -r -a groups <<< "${address}"
+  fi
+  for part in "${groups[@]}"; do
+    printf -v word '%04x' "$((16#${part}))"
+    result+="${result:+:}${word}"
+  done
+  if [[ "${result}" == 0000:0000:0000:0000:0000:ffff:* ]]; then
+    printf '%d.%d.%d.%d' "$((16#${groups[6]} >> 8))" "$((16#${groups[6]} & 255))" \
+      "$((16#${groups[7]} >> 8))" "$((16#${groups[7]} & 255))"
+  else
+    printf '%s' "${result}"
+  fi
+}
+
+managed_listener_plan_json() {
+  local registry projected addresses address canonical normalized='[]' result
+  registry=$(protocol_registry_json) || return 1
+  # Parse once, project only non-secret resource fields, and capture all output
+  # before emission. Input is bounded by the file wrapper or the typed store.
+  if ! projected=$(jq -cs --argjson registry "${registry}" '
+    def require($ok): if $ok then . else error("invalid_listener") end;
+    require(length == 1) | .[0] | require(type == "object") |
+    require((.inbounds | type) == "array") |
+    require((has("endpoints") | not) or (.endpoints | type) == "array") |
+    require(all((.endpoints // [])[]; (.listen_port // 0) == 0)) |
+    .inbounds | require(length <= 256) |
+    require(all(.[]; type == "object" and
+      (.tag | type == "string" and length > 0 and (test("[\u0000-\u001f\u007f]") | not)) and
+      (.type | type == "string") and
+      ((has("listen") | not) or (.listen | type == "string" and length > 0 and (test("[\u0000-\u0020\u007f]") | not))) and
+      (.listen_port | type == "number" and . == floor and . >= 1 and . <= 65535) and
+      ((.netns // "") == "") and ((.bind_interface // "") == "") and ((.reuse_addr // false) == false))) |
+    require((map(.tag) | unique | length) == length) |
+    map(. as $inbound | [$registry[] | select(.type == $inbound.type)] |
+      require(length == 1) | .[0] as $entry |
+      $entry.listen_networks[] | require(. == "tcp" or . == "udp") |
+      {owner:$inbound.tag, protocol:$entry.state_id, address:($inbound.listen // "127.0.0.1"),
+       transport:., port:$inbound.listen_port})
+  ' 2>/dev/null); then
+    printf '[ERROR] listener_resources: unmodelled_or_invalid_listener\n' >&2
+    return 1
+  fi
+  addresses=$(jq -r '[.[].address] | unique[]' <<< "${projected}") || return 1
+  while IFS= read -r address; do
+    [[ -n "${address}" ]] || continue
+    canonical=$(canonical_listener_address "${address}") || {
+      printf '[ERROR] listener_resources: invalid_address\n' >&2; return 1;
+    }
+    normalized=$(jq -c --arg original "${address}" --arg canonical "${canonical}" \
+      '. + [{original:$original,canonical:$canonical}]' <<< "${normalized}") || return 1
+  done <<< "${addresses}"
+  result=$(jq -c --argjson normalized "${normalized}" '
+    map(. as $item | ($normalized[] | select(.original == $item.address) | .canonical) as $address |
+      .address=$address | .family=(if $address | contains(":") then "ipv6" else "ipv4" end) |
+      .dual_stack=($address == "0000:0000:0000:0000:0000:0000:0000:0000"))
+  ' <<< "${projected}") || return 1
+  printf '%s\n' "${result}"
+}
+
+managed_listener_plan() (
+  umask 077
+  local file=${1:-} snapshot result
+  [[ -f "${file}" && ! -L "${file}" && -r "${file}" ]] || {
+    printf '[ERROR] listener_resources: unreadable_config\n' >&2; return 1;
+  }
+  # No credentials in argv, no unbounded reads and no reread after validation.
+  snapshot=$(mktemp /tmp/sbv-listener-plan.XXXXXX) || return 1
+  trap 'if ! rm -f -- "${snapshot}"; then printf "[ERROR] listener_resources: cleanup_failed\n" >&2; fi' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+  head -c 4194305 -- "${file}" > "${snapshot}" || return 1
+  if [[ $(wc -c < "${snapshot}") -gt 4194304 ]]; then
+    printf '[ERROR] listener_resources: oversized_config\n' >&2; return 1
+  fi
+  result=$(managed_listener_plan_json < "${snapshot}") || return $?
+  rm -f -- "${snapshot}" || return $?
+  trap - EXIT INT TERM HUP
+  printf '%s\n' "${result}"
+)
+
+validate_listener_plan_json() {
+  if ! jq -e '
+    def overlap($a; $b):
+      $a.dual_stack or $b.dual_stack or
+      ($a.family == $b.family and ($a.address == $b.address or
+        ($a.family == "ipv4" and ($a.address == "0.0.0.0" or $b.address == "0.0.0.0"))));
+    . as $items | all(range(0; length); . as $i |
+      all(range($i+1; $items|length); . as $j |
+        ($items[$i].transport != $items[$j].transport or
+         $items[$i].port != $items[$j].port or (overlap($items[$i]; $items[$j]) | not))))
+  ' >/dev/null 2>&1; then
+    printf '[ERROR] listener_resources: listener_conflict\n' >&2
+    return 1
+  fi
+}
+
+validate_managed_listener_resources() {
+  local plan
+  plan=$(managed_listener_plan "${1:-}") || return $?
+  validate_listener_plan_json <<< "${plan}"
+}
+
+# Close only fixed-port transports with no remaining owner. Legacy rules are
+# broad (all addresses/families), so any remaining address retains the rule.
+# This reference guard does not establish ownership of pre-existing user rules.
+# Missing live config is allowed only by the explicit all-protocol removal path.
 # Close firewall port (reverse of open_firewall_port)
+singbox_service_confirmed_stopped() {
+  local active_state
+  active_state=$(systemctl show sing-box --property=ActiveState --value 2>/dev/null) || {
+    printf '[ERROR] firewall_cleanup: service_state_unavailable; rules_unchanged\n' >&2; return 1;
+  }
+  [[ "${active_state}" == inactive ]] || {
+    printf '[ERROR] firewall_cleanup: service_not_stopped; rules_unchanged\n' >&2; return 1;
+  }
+}
+
 close_firewall_port() {
-  local port=$1
+  local port=${1:-} mode=${2:-remaining} plan old_plan transports transport status
+  [[ "${port}" =~ ^[1-9][0-9]{0,4}$ && ${port} -le 65535 ]] || return 1
+  if [[ "${mode}" == all_removed && ! -e "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" &&
+        ! -e "${SB_PROTOCOL_INDEX_FILE}" && ! -L "${SB_PROTOCOL_INDEX_FILE}" ]]; then
+    singbox_service_confirmed_stopped || return $?
+    plan='[]'
+  elif [[ "${mode}" == remaining ]]; then
+    plan=$(managed_listener_plan "${SINGBOX_CONFIG_FILE}") || {
+      printf '[ERROR] firewall_cleanup: inventory_unavailable; rules_unchanged\n' >&2
+      return 1
+    }
+  else
+    printf '[ERROR] firewall_cleanup: invalid_removal_state; rules_unchanged\n' >&2
+    return 1
+  fi
+  old_plan=$(managed_listener_plan "${SINGBOX_CONFIG_FILE}.bak") || {
+    printf '[ERROR] firewall_cleanup: previous_inventory_unavailable; rules_unchanged\n' >&2
+    return 1
+  }
+  transports=$(jq -r --argjson port "${port}" --argjson old "${old_plan}" '
+    . as $owners | [$old[] | select(.port == $port) | .transport] | unique[] | . as $transport |
+    select(any($owners[]; .port == $port and .transport == $transport) | not)
+  ' <<< "${plan}") || return 1
+  [[ -n "${transports}" ]] || {
+    log_info "端口 ${port} 仍有实例引用，保留防火墙规则。"
+    return 0
+  }
   log_info "正在尝试关闭端口 ${port}..."
-
-  # UFW
-  if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
-    ufw delete allow "${port}/tcp" &>/dev/null || true
-    ufw delete allow "${port}/udp" &>/dev/null || true
-  fi
-
-  # Firewalld
-  if command -v firewall-cmd &>/dev/null && firewall-cmd --state &>/dev/null; then
-    firewall-cmd --permanent --remove-port="${port}/tcp" &>/dev/null || true
-    firewall-cmd --permanent --remove-port="${port}/udp" &>/dev/null || true
-    firewall-cmd --reload &>/dev/null || true
-  fi
-
-  # Iptables
-  if command -v iptables &>/dev/null; then
-    iptables -D INPUT -p tcp --dport "${port}" -j ACCEPT &>/dev/null || true
-    iptables -D INPUT -p udp --dport "${port}" -j ACCEPT &>/dev/null || true
-  fi
-
+  while IFS= read -r transport; do
+    if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
+      if ufw delete allow "${port}/${transport}" &>/dev/null; then :; else
+        status=$?; printf '[ERROR] firewall_cleanup: ufw_failed; external_state_may_be_partial\n' >&2; return "${status}"
+      fi
+    fi
+    if command -v firewall-cmd &>/dev/null && firewall-cmd --state &>/dev/null; then
+      if firewall-cmd --permanent --remove-port="${port}/${transport}" &>/dev/null &&
+         firewall-cmd --reload &>/dev/null; then :; else
+        status=$?; printf '[ERROR] firewall_cleanup: firewalld_failed; external_state_may_be_partial\n' >&2; return "${status}"
+      fi
+    fi
+    if command -v iptables &>/dev/null; then
+      if iptables -C INPUT -p "${transport}" --dport "${port}" -j ACCEPT &>/dev/null; then
+        if iptables -D INPUT -p "${transport}" --dport "${port}" -j ACCEPT &>/dev/null; then :; else
+          status=$?; printf '[ERROR] firewall_cleanup: iptables_delete_failed; external_state_may_be_partial\n' >&2; return "${status}"
+        fi
+      else
+        status=$?
+        if [[ ${status} -ne 1 ]]; then
+          printf '[ERROR] firewall_cleanup: iptables_inspection_failed; external_state_may_be_partial\n' >&2
+          return "${status}"
+        fi
+      fi
+    fi
+  done <<< "${transports}"
   log_info "端口 ${port} 防火墙规则清理尝试完成。"
 }
 
@@ -7461,6 +7636,10 @@ generate_config_candidate() {
     rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
     return 1
   fi
+  if ! validate_managed_listener_resources "${config_candidate}"; then
+    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
+    return 1
+  fi
   if ! "${SINGBOX_BIN_PATH}" check -c "${config_candidate}"; then
     rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
     return 1
@@ -7882,7 +8061,7 @@ apply_stack_mode_changes() {
   fi
   refresh_vless_reality_qos_rules
   setup_service
-  open_all_protocol_ports
+  open_committed_protocol_ports || return $?
   systemctl restart sing-box
   log_success "协议栈设置已保存并重启服务。"
 }
@@ -8618,7 +8797,7 @@ update_config_only() {
     refresh_vless_reality_qos_rules
   fi
   setup_service
-  open_all_protocol_ports
+  open_committed_protocol_ports || return $?
   load_protocol_state "${selected_protocol}"
   systemctl restart sing-box
   log_success "配置及服务文件已更新并重启服务。"
@@ -8667,7 +8846,7 @@ remove_protocol_menu() {
       [[ -z "${raw_choice}" ]] && continue
       if [[ "${raw_choice}" =~ ^[1-9][0-9]*$ ]] && (( raw_choice >= 1 && raw_choice <= ${#protocols[@]} )); then
         chosen_protocol="${protocols[$((raw_choice - 1))]}"
-        if ! protocol_array_contains "${chosen_protocol}" "${selected_protocols[@]}"; then
+        if ! protocol_array_contains "${chosen_protocol}" ${selected_protocols[@]+"${selected_protocols[@]}"}; then
           selected_protocols+=("${chosen_protocol}")
         fi
       else
@@ -8751,10 +8930,10 @@ remove_protocol_menu() {
       fi
       setup_service
       load_protocol_state "vless-reality"
-      open_all_protocol_ports
+      open_committed_protocol_ports || return $?
       refresh_vless_reality_qos_rules
       systemctl restart sing-box
-      close_firewall_port "${removed_instance_port}"
+      close_firewall_port "${removed_instance_port}" || return $?
       log_success "已移除 REALITY 实例: ${selected_instance}。原状态已备份到: ${backup_instance_state_file}"
       return 0
     fi
@@ -8840,15 +9019,36 @@ remove_protocol_menu() {
       abort_managed_state_transaction "${transaction_dir}" "协议索引写入失败"
     fi
   else
+    # Stop before treating the new inventory as empty. A stop failure must not
+    # turn a still-running listener into an apparently unreferenced resource.
+    local stop_status
+    if systemctl stop sing-box >/dev/null 2>&1; then :; else
+      stop_status=$?
+      rollback_managed_state_snapshot "${transaction_dir}" || \
+        log_warn "服务停止失败且文件回滚失败；请检查事务快照。"
+      printf '[ERROR] protocol_remove: stop_failed; firewall_unchanged\n' >&2
+      return "${stop_status}"
+    fi
+    if ! singbox_service_confirmed_stopped; then
+      rollback_managed_state_snapshot "${transaction_dir}" || \
+        log_warn "服务状态无法确认且文件回滚失败；请检查事务快照。"
+      printf '[ERROR] protocol_remove: service_state_unconfirmed; inspect_service_manually\n' >&2
+      return 1
+    fi
     rm -f "${SB_PROTOCOL_INDEX_FILE}"
     rm -f "${SINGBOX_CONFIG_FILE}"
     if command -v tc >/dev/null 2>&1; then
       clear_vless_reality_qos_rules
     fi
-    systemctl stop sing-box &>/dev/null || true
-    systemctl disable sing-box &>/dev/null || true
+    if systemctl disable sing-box >/dev/null 2>&1; then :; else
+      stop_status=$?
+      printf '[ERROR] protocol_remove: disable_failed; service_stopped; firewall_unchanged; snapshot=%s\n' "${transaction_dir}" >&2
+      return "${stop_status}"
+    fi
     for removed_port in "${removed_ports[@]}"; do
-      [[ -n "${removed_port}" ]] && close_firewall_port "${removed_port}"
+      if [[ -n "${removed_port}" ]]; then
+        close_firewall_port "${removed_port}" all_removed || return $?
+      fi
     done
     if ! discard_managed_state_snapshot "${transaction_dir}"; then
       log_warn "协议移除已提交，但临时事务快照未能删除: ${transaction_dir}。"
@@ -8867,11 +9067,13 @@ remove_protocol_menu() {
   setup_service
   first_remaining="${remaining_protocols[0]}"
   load_protocol_state "${first_remaining}"
-  open_all_protocol_ports
+  open_committed_protocol_ports || return $?
   refresh_vless_reality_qos_rules
   systemctl restart sing-box
   for removed_port in "${removed_ports[@]}"; do
-    [[ -n "${removed_port}" ]] && close_firewall_port "${removed_port}"
+    if [[ -n "${removed_port}" ]]; then
+      close_firewall_port "${removed_port}" || return $?
+    fi
   done
   log_success "已移除协议: ${display_str}。"
 }
@@ -13512,7 +13714,7 @@ structured_instance_store_validate_common_json() {
 }
 
 validate_structured_instance_store() {
-  local protocol file addresses address
+  local protocol file addresses address listener_input listener_plan
   protocol=$(structured_instance_store_protocol "${1:-}") || {
     structured_instance_store_error validate unsupported_protocol
     return 1
@@ -13533,6 +13735,9 @@ validate_structured_instance_store() {
       return 1
     }
   done <<< "${addresses}"
+  listener_input=$(jq -c '{inbounds:[.instances[] | {type:"mixed",tag:.tag,listen:.listen.address,listen_port:.listen.port}]}' "${file}") || return 1
+  listener_plan=$(managed_listener_plan_json <<< "${listener_input}") || return 1
+  validate_listener_plan_json <<< "${listener_plan}" || return 1
   : "${protocol}"
 }
 

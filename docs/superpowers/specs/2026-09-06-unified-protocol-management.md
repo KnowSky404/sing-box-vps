@@ -66,7 +66,7 @@ Agent 节点/分享列表和 REALITY 客户端导出通过 `list_protocol_instan
 
 `render_structured_instance_inbounds` 和 `render_structured_instance_route_rules` 是类型化纯渲染器，读取不产生认证材料，不修改旧 `.env`。当前存储尚未成为旧菜单、Agent、健康修复或接管的状态来源，也没有启动时自动迁移。完整启用 Mixed 多实例前必须同时完成全部实例匹配、写入口、端口资源归属、删除、导出与重建，不能只修改注册表的 `multi_instance` 标记。
 
-当前数据层只拒绝字面相同的地址/端口组合，不替代操作系统 TCP/UDP、通配监听、双栈重叠和资源归属预检。地址字段接受 IPv4 与纯十六进制 IPv6，不接受主机名、IPv4-mapped 文本或 zone。Mixed 新建明文入口的安全监听/公网风险确认必须由后续写入口处理；内部存储原语不更改旧实例监听行为。
+当前数据层与服务端候选共用固定监听冲突预检，区分 TCP/UDP、IPv4 通配、IPv6 等价表示和 `::` 双栈重叠。地址字段接受 IPv4 与纯十六进制 IPv6，不接受主机名、含点 IPv4-mapped 文本或 zone；资源计划会把十六进制 mapped 地址归一为 IPv4。Mixed 新建明文入口的安全监听/公网风险确认必须由后续写入口处理；内部存储原语不更改旧实例监听行为。
 
 已实现的 REALITY 兼容基础：显式状态重建先读取旧受管实例元数据，再以有效 inbound tag 关联 live 入站。成功关联时保留稳定 ID、默认实例、节点名称及上下行 QoS；连接参数和可表示的路由策略按 live 配置恢复。私钥相同时复用旧公钥，歧义映射、无效 QoS 或未知状态版本拒绝重建。此机制同样用于期望状态比较，避免自定义 ID 在健康检查中被重命名；通用多协议实例模型仍待推广。
 
@@ -76,7 +76,15 @@ Agent 节点/分享列表和 REALITY 客户端导出通过 `list_protocol_instan
 
 组件构造按 role 分别输出 inbounds、outbounds、endpoints、route、certificate_providers、http_clients。依赖由稳定 ID 映射到固定 tag；检查全局 tag 唯一、引用存在、成员和 detour 环、依赖共享与删除保护。ShadowTLS 的内层/包装层作为一个受管组合准备、导出和回滚。通用 WireGuard 不调用 Warp 注册。
 
-## 资源与事务扩展（尚未实现）
+## 资源与事务扩展（监听预检与删除引用保护已接入，其余待实现）
+
+`managed_listener_plan <config_file>` 一次有界私有捕获后生成无认证字段的监听数组，字段为 `owner`（稳定 inbound tag）、`protocol`（内部状态 ID）、规范化 `address`、`family`、`transport`、`port`、`dual_stack`。监听传输取自注册表的 `listen_networks`，不是业务 `traffic_networks`；当前四协议由此共享声明。资源计划本身不是新的协议接管或配置透传入口，不为未实现协议开放能力。缺失 tag、未知类型、无效地址/端口、重复 tag、特殊 netns/bind_interface/reuse_addr 及未建模的固定 Endpoint 监听均拒绝，不输出部分清单或原配置诊断。
+
+`validate_managed_listener_resources` 在服务端核心 `check` 和原子发布前拦截固定监听重叠；结构化 Mixed 的 validate/candidate/publisher/renderer 同样经过此预检。IPv4/IPv6 特定地址可以按实际绑定范围共用端口，同一数字的 TCP/UDP 不算冲突。当前目标 Linux 核心的 `::` 作为双栈资源处理，不按可能与实际绑定不同的 UI 栈名称猜测 v6-only。此处不检查其他进程的 socket，不提供并发 OS 端口预留，也未覆盖动态 UDP relay、ACME 临时监听和高级网络命名空间。
+
+`close_firewall_port` 比较上一配置 `.bak` 与剩余配置，只处理旧监听实际拥有的 transport/port，且任何剩余地址或协议的同 transport/port 引用都会保留宽规则。清单缺失/不可信时不清理；全协议删除仅在明确 `all_removed` 且配置/索引均已移除时使用空新清单。后端写入/检查失败不再静默吞掉，保留错误码并报告外部状态可能部分变更。此保护尚不能区分早于脚本存在的同形用户规则与脚本创建的规则，未构成精确规则归属账本；不得宣称已经完成下述全部资源事务。
+
+预审后补齐对称性：`open_all_protocol_ports` 从完整已提交配置的资源计划遍历，不加载或迁移协议状态；`open_firewall_port` 只开放对应注册表的实际监听传输。历史无归属宽规则不追溯删除。全量移除在清空配置/索引前要求 `systemctl stop` 成功且 `ActiveState=inactive`；停止失败恢复文件并保留原始退出码，状态无法确认则保留规则并提示人工检查服务。发布后开放规则失败由统一 wrapper 报告 `config_committed`、`firewall_may_be_partial`、`service_restart_not_attempted`，不以成功日志掩盖部分外部变化。
 
 复用 `create_managed_state_snapshot`、配置 candidate 校验与原子发布边界，补上写锁、持久事务结果和受管资源清单。清单至少记录地址/地址族/传输/端口/实例归属、证书与组件引用、运行库、受管防火墙/QoS/路由规则及原服务活动状态。
 

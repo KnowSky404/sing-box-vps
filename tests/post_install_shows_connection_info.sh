@@ -48,7 +48,7 @@ install_binary() { :; }
 generate_config() { :; }
 check_config_valid() { :; }
 setup_service() { :; }
-open_firewall_port() { :; }
+open_all_protocol_ports() { :; }
 check_port_conflict() { :; }
 systemctl() { :; }
 prompt_reality_sni_install() { SB_SNI="${SB_SNI:-apple.com}"; }

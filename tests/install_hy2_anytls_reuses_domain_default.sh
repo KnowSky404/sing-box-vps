@@ -37,7 +37,7 @@ install_binary() { :; }
 generate_config() { :; }
 check_config_valid() { :; }
 setup_service() { :; }
-open_firewall_port() { :; }
+open_all_protocol_ports() { :; }
 display_status_summary() { :; }
 show_post_config_connection_info() { :; }
 systemctl() { :; }

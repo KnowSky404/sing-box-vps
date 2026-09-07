@@ -477,6 +477,8 @@ grep -Fqx 'PASSWORD=anytls-pass' "${REMOTE_ANYTLS_STATE_FILE}"
 grep -Fqx 'tests/protocol_registry_contract.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/protocol_instance_adapter.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/structured_instance_store.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/managed_listener_resources.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/firewall_listener_references.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_matrix.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_vless.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_hy2.sh|1' "${TMP_DIR}/local-tests.log"
@@ -511,8 +513,8 @@ grep -Fqx 'tests/subman_api_push.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_sync_orchestration.sh|1' "${TMP_DIR}/local-tests.log"
 
 default_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
-[[ "${default_local_test_count}" -eq 38 ]] || {
-  printf 'expected 38 local tests, got %d\n' "${default_local_test_count}" >&2; exit 1
+[[ "${default_local_test_count}" -eq 40 ]] || {
+  printf 'expected 40 local tests, got %d\n' "${default_local_test_count}" >&2; exit 1
 }
 
 # Test VERIFY_SKIP_LOCAL_TESTS=1 — still runs remote

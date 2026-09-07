@@ -7,7 +7,7 @@ TESTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${TESTS_DIR}/menu_test_helper.sh"
 
 setup_menu_test_env 120
-source_testable_install
+source "${TESTABLE_INSTALL}"
 
 GENERATE_CONFIG_COUNT_FILE="${TMP_DIR}/generate_config.count"
 printf '0\n' > "${GENERATE_CONFIG_COUNT_FILE}"
@@ -22,11 +22,34 @@ check_config_valid() { :; }
 validate_config_file() { :; }
 setup_service() { :; }
 open_all_protocol_ports() { :; }
-close_firewall_port() { :; }
 display_status_summary() {
   printf 'unexpected status summary after protocol removal\n'
 }
-systemctl() { :; }
+SYSTEMCTL_MODE='inactive'
+SYSTEMCTL_LOG="${TMP_DIR}/systemctl.log"
+CLOSE_FIREWALL_LOG="${TMP_DIR}/close-firewall.log"
+close_firewall_port() {
+  printf '%s\n' "$*" >> "${CLOSE_FIREWALL_LOG}"
+}
+systemctl() {
+  local action=${1:-}
+  printf '%s\n' "$*" >> "${SYSTEMCTL_LOG}"
+  case "${action}" in
+    stop)
+      if [[ "${SYSTEMCTL_MODE}" == stop-fail ]]; then return 47; fi
+      ;;
+    show)
+      if [[ "${SYSTEMCTL_MODE}" == active ]]; then
+        printf 'active\n'
+      else
+        printf 'inactive\n'
+      fi
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
 load_current_config_state() {
   SB_PROTOCOL="vless+reality"
   SB_PORT="443"
@@ -52,7 +75,7 @@ INSTALLED_PROTOCOLS=vless-reality,hy2
 PROTOCOL_STATE_VERSION=1
 EOF
 
-cat > "$(protocol_state_file vless-reality)" <<'EOF'
+cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.env" <<'EOF'
 INSTALLED=1
 CONFIG_SCHEMA_VERSION=1
 NODE_NAME=vless_reality_test-host
@@ -65,7 +88,7 @@ SHORT_ID_1=aaaaaaaaaaaaaaaa
 SHORT_ID_2=bbbbbbbbbbbbbbbb
 EOF
 
-cat > "$(protocol_state_file hy2)" <<'EOF'
+cat > "${SB_PROTOCOL_STATE_DIR}/hy2.env" <<'EOF'
 INSTALLED=1
 CONFIG_SCHEMA_VERSION=1
 NODE_NAME=hy2_test-host
@@ -170,3 +193,111 @@ if [[ -f "$(protocol_state_file vless-reality)" ]]; then
   printf 'expected last-protocol removal to clear the active VLESS protocol state\n' >&2
   exit 1
 fi
+
+restore_single_protocol_fixture() {
+  rm -rf -- "${SB_PROTOCOL_STATE_DIR}/vless-reality.d"
+  mkdir -p "${SB_PROTOCOL_STATE_DIR}/vless-reality.d"
+  cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
+{
+  "inbounds": [
+    { "type": "vless", "tag": "vless-in", "listen": "127.0.0.1", "listen_port": 443,
+      "tls": { "enabled": true, "reality": { "enabled": true } } }
+  ],
+  "route": { "rules": [] }
+}
+EOF
+  cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
+INSTALLED_PROTOCOLS=vless-reality
+PROTOCOL_STATE_VERSION=1
+EOF
+  cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.env" <<'EOF'
+INSTALLED=1
+CONFIG_SCHEMA_VERSION=2
+DEFAULT_INSTANCE_ID=main
+INSTANCE_IDS=main
+REALITY_PRIVATE_KEY=private-key
+REALITY_PUBLIC_KEY=public-key
+EOF
+  cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env" <<'EOF'
+INSTANCE_ID=main
+INBOUND_TAG=vless-in
+ENABLED=1
+NODE_NAME=vless_reality_test-host
+PORT=443
+UUID=11111111-1111-1111-1111-111111111111
+SNI=apple.com
+SHORT_ID_1=aaaaaaaaaaaaaaaa
+SHORT_ID_2=bbbbbbbbbbbbbbbb
+RATE_LIMIT_UP_MBPS=
+RATE_LIMIT_DOWN_MBPS=
+ALPN_MODE=off
+TCP_FAST_OPEN=n
+OUTBOUND_POLICY=default
+EOF
+  printf 'previous config backup\n' > "${SINGBOX_CONFIG_FILE}.bak"
+  printf 'previous index backup\n' > "${SB_PROTOCOL_INDEX_FILE}.bak"
+  chmod 600 "${SINGBOX_CONFIG_FILE}.bak" "${SB_PROTOCOL_INDEX_FILE}.bak"
+}
+
+capture_fixture_hashes() {
+  local destination=$1
+  sha256sum \
+    "${SINGBOX_CONFIG_FILE}" \
+    "${SB_PROTOCOL_INDEX_FILE}" \
+    "${SINGBOX_CONFIG_FILE}.bak" \
+    "${SB_PROTOCOL_INDEX_FILE}.bak" \
+    "$(protocol_state_file vless-reality)" \
+    "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env" > "${destination}"
+}
+
+assert_fixture_hashes_unchanged() {
+  local expected=$1
+  local actual="${TMP_DIR}/fixture-after.sha256"
+  capture_fixture_hashes "${actual}"
+  cmp -s "${expected}" "${actual}" || {
+    printf 'stop safety rollback changed managed state/config/index or persistent .bak\n' >&2
+    return 1
+  }
+}
+
+# A failed stop must restore every managed file and must not attempt firewall
+# cleanup while the service may still own its listeners.
+restore_single_protocol_fixture
+STOP_FAILURE_BEFORE="${TMP_DIR}/stop-failure-before.sha256"
+capture_fixture_hashes "${STOP_FAILURE_BEFORE}"
+: > "${CLOSE_FIREWALL_LOG}"
+SYSTEMCTL_MODE=stop-fail
+stop_failure_status=0
+STOP_FAILURE_OUTPUT=$(printf '\ny\n' | remove_protocol_menu 2>&1) || stop_failure_status=$?
+[[ "${stop_failure_status}" == 47 ]] || {
+  printf 'expected all-protocol removal to fail when systemctl stop fails\n' >&2
+  exit 1
+}
+grep -Fq 'stop_failed' <<< "${STOP_FAILURE_OUTPUT}"
+[[ ! -s "${CLOSE_FIREWALL_LOG}" ]] || {
+  printf 'expected stop failure not to invoke firewall cleanup\n' >&2
+  exit 1
+}
+assert_fixture_hashes_unchanged "${STOP_FAILURE_BEFORE}"
+
+# A successful stop call is still insufficient if systemd reports the unit as
+# active. The same rollback and firewall invariant must hold.
+restore_single_protocol_fixture
+ACTIVE_FAILURE_BEFORE="${TMP_DIR}/active-failure-before.sha256"
+capture_fixture_hashes "${ACTIVE_FAILURE_BEFORE}"
+: > "${CLOSE_FIREWALL_LOG}"
+SYSTEMCTL_MODE=active
+active_failure_status=0
+ACTIVE_FAILURE_OUTPUT=$(printf '\ny\n' | remove_protocol_menu 2>&1) || active_failure_status=$?
+[[ "${active_failure_status}" != 0 ]] || {
+  printf 'expected all-protocol removal to fail while systemctl reports active\n' >&2
+  exit 1
+}
+grep -Fq 'service_state_unconfirmed' <<< "${ACTIVE_FAILURE_OUTPUT}"
+[[ ! -s "${CLOSE_FIREWALL_LOG}" ]] || {
+  printf 'expected active-service protection not to invoke firewall cleanup\n' >&2
+  exit 1
+}
+assert_fixture_hashes_unchanged "${ACTIVE_FAILURE_BEFORE}"
+
+printf '%s\n' 'protocol removal safety checks passed'

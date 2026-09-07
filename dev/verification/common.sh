@@ -71,6 +71,8 @@ resolve_local_tests() {
       tests/protocol_registry_contract.sh \
       tests/protocol_instance_adapter.sh \
       tests/structured_instance_store.sh \
+      tests/managed_listener_resources.sh \
+      tests/firewall_listener_references.sh \
       tests/managed_component_graph.sh \
       tests/managed_component_graph_core_startup.sh \
       tests/live_inbound_inventory_guards.sh \

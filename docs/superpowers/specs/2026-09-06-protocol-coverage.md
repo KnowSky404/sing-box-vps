@@ -6,7 +6,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026090601`，`SB_SUPPORT_MAX_VERSION=1.14.0`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026090706`，`SB_SUPPORT_MAX_VERSION=1.14.0`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -22,6 +22,8 @@
 GitHub Releases API 在本轮返回的最近发布为 `v1.15.0-alpha.2`（`prerelease=true`，2026-09-05），因此排除预发布；最近的稳定发布为 `v1.14.0`（`prerelease=false`，2026-08-31）。官方地址：
 
 2026-09-07 再次读取 `releases/latest`，稳定版仍为 `v1.14.0`，`draft=false`、`prerelease=false`，未改变本轮固定目标。
+
+同日资源预检增量：原四协议的固定监听计划取自共享注册表，服务端候选与结构化 Mixed 状态新增地址/传输/端口冲突检查。真实 1.13.18/1.14.0 均验证同数字 TCP/UDP 可启动、不同 loopback IPv4 地址同端口的 TCP 标记请求，以及等价 IPv6 地址冲突；`::` 与 IPv4 重叠另在无网络只读 Docker 中验证。防火墙删除引用保护为 mock 后端调用证据，不是宿主机防火墙实测或完整资源归属事务；UDP 监听与启动不计作 UDP payload 已验证。没有因此新增任何协议的 implemented 声明。
 
 - Release：[v1.14.0](https://github.com/SagerNet/sing-box/releases/tag/v1.14.0)
 - Release API：[v1.14.0 JSON](https://api.github.com/repos/SagerNet/sing-box/releases/tags/v1.14.0)

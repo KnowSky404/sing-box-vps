@@ -150,3 +150,25 @@ REALITY 导出不再为读取 schema 1 自动执行迁移；完整枚举或任�
 该存储尚未接入 Agent/菜单写命令、旧状态迁移、健康修复、接管、删除、防火墙归属或完整客户端导出，不把此项记作 Mixed 多实例完整支持。下一步必须将这些接入点成套实现，再调整能力注册表；全协议目标继续保持未完成。
 
 验证：162 项非 helper Shell 全回归全部通过，记录为 `/tmp/sbv-structured-store-all.xnwzKw/summary.tsv`。完整默认门禁 `20260907083458` 的 46 项本地检查和 Docker 均退出 0。最后仅调整新原语的失败阶段说明与避免把旧认证字段放入 jq 命令行，随后以 `VERIFY_SKIP_LOCAL_TESTS=1` 复跑 Docker，证据 `dev/verification-runs/20260907083903` 为 9/9 场景与 12/12 既有 TCP 探针成功；未把该次跳过的本地门禁计为重跑。最终源码 SHA-256 为 `2c7071fa87cfa95ca52f7811372d77dfe0381b8be6dc815e8916f2fef1708d80`。新增测试另在 GNU Bash 4.2.53 临时运行时上运行通过（主机工具链，不等于完整 CentOS 系统验证），两版真实核心检查和 8/8 HTTP/SOCKS TCP 请求均通过；最后还补验了正确凭据成功/错误凭据拒绝以及成功编辑保留 ID/tag。独立定向复核无新增 P1/P2。未执行生产、远程推送或真实 SubMan 同步。
+
+## 2026-09-07：监听资源规划与删除引用保护
+
+从 `b650a91` 继续，基线 `bash dev/verification/run.sh` 为 `20260907084911` local 模式退出 0；保留原未跟踪文件 `1`。调用图再次确认 Mixed 多实例不能只接存储与生成器：健康匹配、接管、Agent、删除及系统资源都仍有单实例分支。本轮先完成已存在的资源误判/误删路径，作为通用多实例生命周期的必要接入，不改变注册表支持范围。版本本轮仅递增为 `2026090706`。
+
+新增 `managed_listener_plan` 与冲突校验，直接使用注册表 `listen_networks`，识别固定 socket 的 tag 归属、TCP/UDP、规范化地址、地址族和双栈重叠。候选配置发布前与结构化 Mixed validate/candidate/publisher/renderer 已共用；非法/未知字段范围不输出部分计划或凭据。删除时读取 `.bak` 和剩余配置，按旧监听拥有的 transport/port 求差并保护新引用，后端失败保留原错误码、报告可能部分外部变更，不用文件回滚冒充系统已恢复。
+
+Context7 查询仅提供 testing 概览，随后复核固定 [Mixed TCP listener](https://github.com/SagerNet/sing-box/blob/v1.14.0/protocol/mixed/inbound.go)、[TCP Listen](https://github.com/SagerNet/sing-box/blob/v1.14.0/common/listener/listener_tcp.go)、[UDP Listen](https://github.com/SagerNet/sing-box/blob/v1.14.0/common/listener/listener_udp.go) 及其固定依赖 [NetworkFromNetAddr](https://github.com/SagerNet/sing/blob/v0.9.0-beta.4/common/metadata/network.go)。1.13.18 的 TCP 路径也使用同一地址族选择方式。实际二进制仍为 1.13.18（revision `45ca32dcb966f07f97fc888fe8586e359dbe8405`）与 1.14.0（`0b8995879f29a9b98ee027bc17b75e101445b238`），本轮重新查询 latest stable 仍为 1.14.0。
+
+新增 `tests/managed_listener_resources.sh`、`tests/firewall_listener_references.sh`，并在候选发布测试增加核心 mock 放行、资源冲突阻断且旧配置/备份/状态保持的用例。默认门禁加入两项。首轮 163 项回归全部退出 0，证据 `/tmp/sbv-listener-all.HQkXLo/summary.tsv`（已包含资源测试）；该次文件名过滤还排除了实际上可执行的 `subman_config_helpers.sh`，最终枚举纠正为仅排除两项真实 helper，不以这个早期集合冒充最终 164 项全量。
+
+资源测试在 Bash 5 和实际 Bash 4.2.53 上使用两个核心各完成两地址同端口 TCP、同数字 UDP 的启动，4 次 TCP 标记请求，以及 IPv6 等价地址 check 成功但启动报 `address already in use` 的 2 次对照。主机默认不运行通配对照；在 `sing-box-vps-verify` 镜像（`6c1e402cdaa2`）、`--network none --read-only --tmpfs /tmp`、只读挂载仓库与核心的容器中设置 `SBV_TEST_ISOLATED_LISTENER_WILDCARD=1`，额外两次 `::`/IPv4 冲突对照通过。隔离执行总计 check=6、start=2、TCP business=4、等价 IPv6 contrasts=2、wildcard contrasts=2。该容器使用 jq 1.6；不操作宿主机防火墙，不把 UDP 监听当作 UDP 业务验证。Bash 4.2 的防火墙 mock 回归和原结构化实例测试（两核心、8 TCP 请求）也通过。
+
+首次完整门禁 `20260907090000` 在本地 mock harness 阶段因与全回归争用 `/tmp/sing-box-vps-verification.lock` 退出 32；确认原任务已终止、锁已由任务清理后串行重跑。首次隔离资源测试发现旧缓存验证镜像未含 Python，未记通过；按仓库现有 Dockerfile 重建后上述隔离测试通过。
+
+独立预审发现并关闭三项 P2：开放仍加反向传输规则导致新清理留下孤立规则、全量移除未确认 stop 成功、已提交后开放失败缺少阶段说明。现在开放与清理共用实际监听传输，全量 stop 失败恢复文件且保留原始 47 退出码，`ActiveState` 非 inactive 则拒绝清理；新 wrapper 明确报告已提交配置/防火墙可能部分变更/显式重启未执行。相应 mock 正反例、配置/索引/状态/旧备份 hash 保留断言已补齐。后续全回归发现 7 个安装 prompt/state 测试只 mock 配置生成计数，因此将其防火墙 mock 移到新的收集边界，不降低真实资源校验；另在 Bash 4.2 实跑删除入口修复索引协调和删除选择的初始空数组 `nounset`。测试 fixture 避免函数局部 readonly 及 here-doc 重定向的旧 Bash 作用域干扰，真实删除安全回归通过。
+
+完整默认门禁 `bash dev/verification/run.sh --changed-file install.sh dev/verification/common.sh` 在 `20260907090447` 退出 0，48 项本地检查及 9/9 Docker 场景、12/12 既有 TCP 探针通过。最后审查修复之后，另以 `VERIFY_SKIP_LOCAL_TESTS=1` 复跑 Docker，最终证据 `dev/verification-runs/20260907091817` 为 9/9 场景、12/12 探针成功，失败升级事务为 `status=rolled_back`、`rollback.result=success`；没有把该次跳过的本地门禁计为再次执行。在运行容器中直接取得的安装脚本 SHA-256 为 `4439061cd395f9d8ad159436a8104fdb7786d974c08a13218ffa2f253cde6f88`，与最终工作区源码一致。
+
+最终修正枚举后的 164 项回归全部退出 0，两个核心环境变量均已传入，逐项证据 `/tmp/sbv-listener-final-all.JMX95i/summary.tsv`。最终 Bash 4.2.53 另重跑资源计划（两核心 check=4/start=2/TCP business=4/等价 IPv6 contrasts=2）、防火墙 mock 与真实删除入口的停止故障回归，全部通过；主机默认跳过通配启动对照，隔离 Docker 的额外双栈证据如上。预审发现的三项 P2 和两个旧 Bash 空数组问题均已修复，独立复核未发现新增 P1/P2。
+
+边界：尚未实现精确防火墙创建归属账本、跨进程端口预留、完整配置/服务/防火墙持久事务、动态 SOCKS UDP/ACME 临时监听、高级接入资源或通用实例完整写入口。旧 prompt 的整数字端口占用询问尚未替换为完整资源计划；新增候选预检不宣称解决该交互限制。全协议目标仍未完成，未推送、部署、访问生产或执行 SubMan 同步。

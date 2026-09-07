@@ -72,6 +72,8 @@ build_inbound_for_protocol() {
   printf '%s\n' '{"type":"mixed","tag":"mixed-in","listen":"127.0.0.1","listen_port":1080}'
   if [[ "${GRAPH_FAILURE:-}" == "duplicate" ]]; then
     printf '%s\n' '{"type":"mixed","tag":"mixed-in","listen":"127.0.0.1","listen_port":1081}'
+  elif [[ "${GRAPH_FAILURE:-}" == "listener" ]]; then
+    printf '%s\n' '{"type":"mixed","tag":"private-listener-tag","listen":"0.0.0.0","listen_port":1080}'
   fi
 }
 build_protocol_route_rules() {
@@ -132,7 +134,7 @@ fi
 
 # The mock core accepts these candidates. The real graph preflight must reject
 # them before check/backup/publication and restore all builder side effects.
-for GRAPH_FAILURE in duplicate reference; do
+for GRAPH_FAILURE in duplicate reference listener; do
   printf '%s\n' '{"keep":"graph-failure"}' > "${SINGBOX_CONFIG_FILE}"
   printf '%s\n' '{"keep":"previous-backup"}' > "${SINGBOX_CONFIG_FILE}.bak"
   checked_before=$(wc -l < "${CHECK_LOG}")
@@ -146,7 +148,12 @@ for GRAPH_FAILURE in duplicate reference; do
   [[ "$(<"${SINGBOX_CONFIG_FILE}.bak")" == '{"keep":"previous-backup"}' ]]
   [[ ! -e "${SB_PROJECT_DIR}/builder-mutated.state" ]]
   [[ "$(wc -l < "${CHECK_LOG}")" == "${checked_before}" ]]
-  grep -Fq 'component_graph:' "${TMP_DIR}/graph.err"
+  if [[ "${GRAPH_FAILURE}" == listener ]]; then
+    grep -Fq 'listener_resources:' "${TMP_DIR}/graph.err"
+    ! grep -Fq 'private-listener-tag' "${TMP_DIR}/graph.err"
+  else
+    grep -Fq 'component_graph:' "${TMP_DIR}/graph.err"
+  fi
   if grep -Fq 'missing-private-tag' "${TMP_DIR}/graph.err"; then
     printf 'graph error leaked a user-controlled tag\n' >&2
     exit 1
