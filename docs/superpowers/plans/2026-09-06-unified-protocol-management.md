@@ -98,3 +98,15 @@ DNS Server、证书服务、管理 API、USB/IP 独立服务不扩展为本轮�
 最终 160 个非 helper Shell 测试在两核心环境变量下全部通过，证据为 `/tmp/sing-box-vps-all-tests-20260907-vless-inventory-postreview.tKCE65/summary.tsv`。最终 `bash dev/verification/run.sh --changed-file install.sh --changed-file dev/verification/common.sh` 退出 0，证据目录 `dev/verification-runs/20260907063120`：44 个本地触发测试通过，Docker 9/9 场景和 12/12 TCP 业务探针成功。正常升级从 1.13.18 到 1.14.0，服务前后均为 active 且目标核心 `check` 通过；注入服务失败的场景返回非零，但事务结果持久化并以 `rolled_back=true`、`rollback_ok=true` 恢复 1.13.18、active 服务和通过的核心 `check`。Hysteria2 的 QUIC 仍不作为独立 UDP payload 验证证据。
 
 边界：本项只完成 live inbound inventory 层保护。额外用户/协议字段，以及未知 outbound、endpoint、DNS、证书和 route/rule 的语义往返保护仍未完成；已有 VLESS 状态的名称、QoS 与稳定 ID 在显式重建中的保留也仍需修复。它不代表新增 Shadowsocks 或其他协议已经实现。
+
+## 2026-09-07：REALITY 重建保留既有实例元数据
+
+针对原目标第五节的兼容要求，修复显式重建清空实例目录后重置稳定 ID、节点名和 QoS 的问题。先读取旧受管状态元数据，通过 inbound tag 唯一关联 live VLESS，保留实例身份、默认实例、名称和限速；连接字段仍从 live 配置读取。旧 schema 1 仅为对应主实例保留名称，根状态中与 live 私钥匹配的公钥可直接复用。期望状态比较使用同样的关联与默认实例选择。加载器清除旧 raw env 变量，避免 manifest/tag 从前次读取串入。
+
+扩展既有 takeover 测试，覆盖自定义 ID/默认实例/含空格名称/QoS、二次重建幂等、tag 歧义拒绝、非法 QoS 拒绝、保存失败整树回滚及 schema 1 名称隔离。传入两核心路径时，临时真实 REALITY 密钥用于重建状态的服务端和客户端配置 `check`。本轮脚本与 README 统一为 `2026090703`。
+
+首轮全量回归发现两个无 tag 旧配置接管用例失败：重建后的自动 `imported-*` ID 在健康检查中发生漂移。修复后，单个旧实例可唯一复用既有身份，schema 1 的无 tag/无用户名主实例保留名称；多个无 tag 入站则需要用户名与既有 ID 唯一对应，否则在替换状态前拒绝。补充配置字节不变、二次重建状态树不变和多匿名入站拒绝断言。
+
+最终验证：160 个非 helper Shell 测试在 `SINGBOX_BINARY_113`/`SINGBOX_BINARY_114` 两个实际核心路径下全部退出 0，逐项记录为 `/tmp/sbv-reality-metadata-final.vtBj7I/summary.tsv`。`bash dev/verification/run.sh --changed-file install.sh dev/verification/common.sh` 退出 0，44 个本地门禁测试通过，证据目录 `dev/verification-runs/20260907065820` 包含 9/9 Docker 场景与 12/12 TCP 业务探针成功；包含 1.13.18 → 1.14.0 升级，以及失败注入后 `rolled_back=true`、`rollback_ok=true` 恢复 1.13.18。重建状态渲染的服务端与客户端配置均通过两个真实核心 `check`；Bash 4.2 只读无网络容器的语法检查也通过。Hysteria2 QUIC 仍不计作独立 UDP payload 验证，未操作生产 VPS 或执行 SubMan 同步。
+
+后续仍须实现未知字段和非入站组件的完整无损保护，以及通用实例、资源事务和新增协议全生命周期；本项没有将这些验收要求记为完成。

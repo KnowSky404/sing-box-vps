@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090702
+# Version: 2026090703
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090702"
+readonly SCRIPT_VERSION="2026090703"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -1250,6 +1250,8 @@ load_vless_reality_protocol_state() {
 
   [[ -f "${state_file}" ]] || return 0
 
+  unset INSTALLED CONFIG_SCHEMA_VERSION DEFAULT_INSTANCE_ID INSTANCE_IDS
+  unset REALITY_PRIVATE_KEY REALITY_PUBLIC_KEY
   # shellcheck disable=SC1090
   source "${state_file}"
   VLESS_REALITY_DEFAULT_INSTANCE_ID="${DEFAULT_INSTANCE_ID:-main}"
@@ -1294,7 +1296,7 @@ load_vless_reality_instance_state() {
 
   [[ -f "${state_file}" ]] || return 1
 
-  unset INSTANCE_ID ENABLED NODE_NAME PORT UUID SNI SHORT_ID_1 SHORT_ID_2
+  unset INSTANCE_ID INBOUND_TAG ENABLED NODE_NAME PORT UUID SNI SHORT_ID_1 SHORT_ID_2
   unset RATE_LIMIT_UP_MBPS RATE_LIMIT_DOWN_MBPS ALPN_MODE TCP_FAST_OPEN OUTBOUND_POLICY
 
   # shellcheck disable=SC1090
@@ -1374,6 +1376,7 @@ migrate_vless_reality_state_to_instances_if_needed() {
   [[ -f "${state_file}" ]] || return 0
   [[ ! -f "${main_state}" ]] || return 0
 
+  reset_vless_reality_state_source_variables
   # shellcheck disable=SC1090
   source "${state_file}"
 
@@ -13202,12 +13205,154 @@ vless_reality_config_id_exists() {
   return 1
 }
 
+reset_vless_reality_state_source_variables() {
+  unset INSTALLED CONFIG_SCHEMA_VERSION DEFAULT_INSTANCE_ID INSTANCE_IDS
+  unset REALITY_PRIVATE_KEY REALITY_PUBLIC_KEY PRIVATE_KEY PUBLIC_KEY
+  unset INSTANCE_ID INBOUND_TAG ENABLED NODE_NAME PORT UUID SNI SHORT_ID_1 SHORT_ID_2
+  unset RATE_LIMIT_UP_MBPS RATE_LIMIT_DOWN_MBPS ALPN_MODE TCP_FAST_OPEN OUTBOUND_POLICY
+}
+
+load_vless_reality_existing_metadata() {
+  local state_file instance_dir normalized_ids instance_id state_index tag existing_tag
+  local state_schema
+  local state_ids=()
+
+  VLESS_REBUILD_STATE_SCHEMA="none"
+  VLESS_REBUILD_STATE_DEFAULT_ID=""
+  VLESS_REBUILD_STATE_PRIVATE_KEY=""
+  VLESS_REBUILD_STATE_PUBLIC_KEY=""
+  VLESS_REBUILD_STATE_IDS=()
+  VLESS_REBUILD_STATE_TAGS=()
+  VLESS_REBUILD_STATE_NODE_NAMES=()
+  VLESS_REBUILD_STATE_RATE_UP=()
+  VLESS_REBUILD_STATE_RATE_DOWN=()
+
+  state_file=$(protocol_state_file "vless-reality") || return 1
+  [[ -f "${state_file}" ]] || return 0
+
+  reset_vless_reality_state_source_variables
+  # shellcheck disable=SC1090
+  source "${state_file}" || return 1
+  state_schema="${CONFIG_SCHEMA_VERSION:-1}"
+
+  case "${state_schema}" in
+    1) ;;
+    2) ;;
+    *) return 1 ;;
+  esac
+
+  if [[ "${state_schema}" == "1" ]]; then
+    VLESS_REBUILD_STATE_SCHEMA="1"
+    VLESS_REBUILD_STATE_DEFAULT_ID="main"
+    VLESS_REBUILD_STATE_PRIVATE_KEY="${REALITY_PRIVATE_KEY:-${PRIVATE_KEY:-}}"
+    VLESS_REBUILD_STATE_PUBLIC_KEY="${REALITY_PUBLIC_KEY:-${PUBLIC_KEY:-}}"
+    VLESS_REBUILD_STATE_NODE_NAMES=("$(normalize_node_name "${NODE_NAME:-}")")
+    return 0
+  fi
+
+  VLESS_REBUILD_STATE_SCHEMA="2"
+  VLESS_REBUILD_STATE_DEFAULT_ID="${DEFAULT_INSTANCE_ID:-}"
+  VLESS_REBUILD_STATE_PRIVATE_KEY="${REALITY_PRIVATE_KEY:-}"
+  VLESS_REBUILD_STATE_PUBLIC_KEY="${REALITY_PUBLIC_KEY:-}"
+  normalized_ids=$(normalize_csv_list "${INSTANCE_IDS:-}")
+  [[ -n "${normalized_ids}" ]] || return 1
+  IFS=',' read -r -a state_ids <<< "${normalized_ids}"
+  [[ ${#state_ids[@]} -gt 0 ]] || return 1
+  [[ -n "${VLESS_REBUILD_STATE_DEFAULT_ID}" ]] || return 1
+
+  instance_dir=$(vless_reality_instance_dir) || return 1
+  for instance_id in "${state_ids[@]}"; do
+    instance_id=$(trim_whitespace "${instance_id}")
+    validate_vless_reality_instance_id "${instance_id}" || return 1
+    if [[ ${#VLESS_REBUILD_STATE_IDS[@]} -gt 0 ]]; then
+      for existing_tag in "${VLESS_REBUILD_STATE_IDS[@]}"; do
+        [[ "${existing_tag}" == "${instance_id}" ]] && return 1
+      done
+    fi
+    state_file="${instance_dir}/${instance_id}.env"
+    [[ -f "${state_file}" ]] || return 1
+
+    reset_vless_reality_state_source_variables
+    # shellcheck disable=SC1090
+    source "${state_file}" || return 1
+    [[ "${INSTANCE_ID:-}" == "${instance_id}" && "${ENABLED:-}" == "1" ]] || return 1
+    validate_optional_positive_integer "${RATE_LIMIT_UP_MBPS:-}" || return 1
+    validate_optional_positive_integer "${RATE_LIMIT_DOWN_MBPS:-}" || return 1
+    tag="${INBOUND_TAG:-}"
+    if [[ -z "${tag}" ]]; then
+      if [[ "${instance_id}" == "${VLESS_REBUILD_STATE_DEFAULT_ID}" ]]; then
+        tag="vless-in"
+      else
+        tag="vless-reality-${instance_id}"
+      fi
+    fi
+    [[ -n "${tag}" && "${tag}" != *$'\n'* ]] || return 1
+    if [[ ${#VLESS_REBUILD_STATE_TAGS[@]} -gt 0 ]]; then
+      for existing_tag in "${VLESS_REBUILD_STATE_TAGS[@]}"; do
+        [[ "${existing_tag}" == "${tag}" ]] && return 1
+      done
+    fi
+
+    VLESS_REBUILD_STATE_IDS+=("${instance_id}")
+    VLESS_REBUILD_STATE_TAGS+=("${tag}")
+    VLESS_REBUILD_STATE_NODE_NAMES+=("$(normalize_node_name "${NODE_NAME:-}")")
+    VLESS_REBUILD_STATE_RATE_UP+=("${RATE_LIMIT_UP_MBPS:-}")
+    VLESS_REBUILD_STATE_RATE_DOWN+=("${RATE_LIMIT_DOWN_MBPS:-}")
+  done
+
+  for state_index in "${!VLESS_REBUILD_STATE_IDS[@]}"; do
+    [[ "${VLESS_REBUILD_STATE_IDS[${state_index}]}" == "${VLESS_REBUILD_STATE_DEFAULT_ID}" ]] && return 0
+  done
+  return 1
+}
+
+vless_reality_existing_state_index_for_tag() {
+  local target_tag=$1 state_index matched_index=""
+
+  [[ "${VLESS_REBUILD_STATE_SCHEMA:-none}" == "2" ]] || return 1
+  for state_index in "${!VLESS_REBUILD_STATE_TAGS[@]}"; do
+    if [[ "${VLESS_REBUILD_STATE_TAGS[${state_index}]}" == "${target_tag}" ]]; then
+      [[ -z "${matched_index}" ]] || return 1
+      matched_index="${state_index}"
+    fi
+  done
+  [[ -n "${matched_index}" ]] || return 1
+  printf '%s' "${matched_index}"
+}
+
+vless_reality_existing_state_index_for_id() {
+  local target_id=$1 state_index
+
+  [[ "${VLESS_REBUILD_STATE_SCHEMA:-none}" == "2" ]] || return 1
+  for state_index in "${!VLESS_REBUILD_STATE_IDS[@]}"; do
+    [[ "${VLESS_REBUILD_STATE_IDS[${state_index}]}" == "${target_id}" ]] || continue
+    printf '%s' "${state_index}"
+    return 0
+  done
+  return 1
+}
+
+vless_reality_config_id_in_use() {
+  local target_id=$1
+
+  vless_reality_config_id_exists "${target_id}" && return 0
+  if [[ "${VLESS_REBUILD_STATE_SCHEMA:-none}" == "2" ]] &&
+     vless_reality_existing_state_index_for_id "${target_id}" >/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
 collect_vless_reality_config_instances() {
-  local inbound_count inbound_index inbound_type protocol tag user_name candidate private_key existing_tag tag_suffix
-  local fallback_number=1
+  local inbound_count inbound_index inbound_type protocol tag raw_tag user_name candidate private_key existing_tag tag_suffix
+  local fallback_number=1 state_index tag_index vless_inbound_count=0
   local candidate_index resolved_ids=()
 
   validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" || return 1
+  if ! load_vless_reality_existing_metadata; then
+    printf '[ERROR] reality_metadata_untrusted: 受管 VLESS 实例元数据无效或关联不唯一；已保留原状态，禁止有损接管。\n' >&2
+    return 1
+  fi
   VLESS_CONFIG_INSTANCE_IDS=()
   VLESS_CONFIG_INSTANCE_INDICES=()
   VLESS_CONFIG_INSTANCE_TAGS=()
@@ -13219,6 +13364,8 @@ collect_vless_reality_config_instances() {
 
   inbound_count=$(jq -r '(.inbounds // []) | length' "${SINGBOX_CONFIG_FILE}") || return 1
   [[ "${inbound_count}" =~ ^[0-9]+$ ]] || return 1
+  vless_inbound_count=$(jq -r '[.inbounds[]? | select(.type == "vless")] | length' "${SINGBOX_CONFIG_FILE}") || return 1
+  [[ "${vless_inbound_count}" =~ ^[0-9]+$ ]] || return 1
 
   for ((inbound_index = 0; inbound_index < inbound_count; inbound_index++)); do
     inbound_type=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].type // empty' "${SINGBOX_CONFIG_FILE}") || return 1
@@ -13236,9 +13383,22 @@ collect_vless_reality_config_instances() {
     fi
 
     tag=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tag // ""' "${SINGBOX_CONFIG_FILE}") || return 1
+    raw_tag="${tag}"
     user_name=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].name // ""' "${SINGBOX_CONFIG_FILE}") || return 1
     candidate=""
-    if [[ "${tag}" == "vless-in" ]]; then
+    state_index=""
+    if [[ "${VLESS_REBUILD_STATE_SCHEMA:-none}" == "2" ]] &&
+       candidate_index=$(vless_reality_existing_state_index_for_tag "${tag}"); then
+      candidate="${VLESS_REBUILD_STATE_IDS[${candidate_index}]}"
+    elif [[ -z "${tag}" && "${VLESS_REBUILD_STATE_SCHEMA:-none}" == "2" &&
+            "${vless_inbound_count}" == "1" && ${#VLESS_REBUILD_STATE_IDS[@]} -eq 1 ]]; then
+      candidate="${VLESS_REBUILD_STATE_IDS[0]}"
+      tag="${VLESS_REBUILD_STATE_TAGS[0]}"
+    elif [[ -z "${tag}" && "${VLESS_REBUILD_STATE_SCHEMA:-none}" == "1" &&
+            "${vless_inbound_count}" == "1" ]]; then
+      candidate="main"
+      tag="vless-in"
+    elif [[ "${tag}" == "vless-in" ]]; then
       candidate="main"
     elif [[ "${tag}" == vless-reality-* ]]; then
       tag_suffix="${tag#vless-reality-}"
@@ -13249,6 +13409,26 @@ collect_vless_reality_config_instances() {
       fi
     elif validate_vless_reality_instance_id "${user_name}"; then
       candidate="${user_name}"
+    fi
+
+    if [[ "${VLESS_REBUILD_STATE_SCHEMA:-none}" == "2" && -n "${candidate}" ]]; then
+      state_index=$(vless_reality_existing_state_index_for_id "${candidate}" 2>/dev/null || true)
+      if [[ -n "${state_index}" ]]; then
+        if [[ -z "${tag}" ]]; then
+          tag="${VLESS_REBUILD_STATE_TAGS[${state_index}]}"
+        fi
+        tag_index=$(vless_reality_existing_state_index_for_tag "${tag}" 2>/dev/null || true)
+        [[ -n "${tag_index}" && "${tag_index}" == "${state_index}" ]] || {
+          printf '[ERROR] reality_metadata_untrusted: VLESS 实例 ID 与 live inbound tag 关联不一致；已保留原状态。\n' >&2
+          return 1
+        }
+      fi
+    fi
+
+    if [[ "${VLESS_REBUILD_STATE_SCHEMA:-none}" == "2" && -z "${raw_tag}" &&
+          ${#VLESS_REBUILD_STATE_IDS[@]} -gt 0 && -z "${state_index}" ]]; then
+      printf '[ERROR] reality_metadata_untrusted: 无 tag 的 VLESS 实例无法与现有受管实例唯一关联；已保留原状态。\n' >&2
+      return 1
     fi
 
     if [[ -n "${candidate}" ]]; then
@@ -13278,7 +13458,7 @@ collect_vless_reality_config_instances() {
   for candidate_index in "${!VLESS_CONFIG_INSTANCE_CANDIDATES[@]}"; do
     candidate="${VLESS_CONFIG_INSTANCE_CANDIDATES[${candidate_index}]}"
     if [[ -z "${candidate}" ]]; then
-      while vless_reality_config_id_exists "imported-${fallback_number}"; do
+      while vless_reality_config_id_in_use "imported-${fallback_number}"; do
         fallback_number=$((fallback_number + 1))
       done
       candidate="imported-${fallback_number}"
@@ -13293,7 +13473,10 @@ collect_vless_reality_config_instances() {
 
   if [[ ${#VLESS_CONFIG_INSTANCE_IDS[@]} -gt 0 ]]; then
     VLESS_CONFIG_DEFAULT_INSTANCE_ID="${VLESS_CONFIG_INSTANCE_IDS[0]}"
-    if vless_reality_config_id_exists "main"; then
+    if [[ "${VLESS_REBUILD_STATE_SCHEMA:-none}" == "2" ]] &&
+       vless_reality_config_id_exists "${VLESS_REBUILD_STATE_DEFAULT_ID}"; then
+      VLESS_CONFIG_DEFAULT_INSTANCE_ID="${VLESS_REBUILD_STATE_DEFAULT_ID}"
+    elif vless_reality_config_id_exists "main"; then
       VLESS_CONFIG_DEFAULT_INSTANCE_ID="main"
     fi
     for candidate_index in "${!VLESS_CONFIG_INSTANCE_TAGS[@]}"; do
@@ -13481,6 +13664,7 @@ render_saved_protocol_state_snapshot() {
     vless-reality)
       # shellcheck disable=SC1090
       (
+        reset_vless_reality_state_source_variables
         source "${state_file}"
         if [[ "${CONFIG_SCHEMA_VERSION:-1}" != "2" ]]; then
           printf 'DEFAULT_INSTANCE_ID=main\n'
@@ -13869,7 +14053,7 @@ rebuild_protocol_state_from_config() {
 
   local rebuilt_protocols=()
   local inbound_count inbound_index inbound_type protocol
-  local vless_instance_index=0 instance_id key_file_private
+  local vless_instance_index=0 instance_id key_file_private state_index=""
   local backup_dir state_dir_existed="n"
 
   backup_dir=$(mktemp -d) || return 1
@@ -13917,10 +14101,30 @@ rebuild_protocol_state_from_config() {
         SB_SHORT_ID_1=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[0] // ""' "${SINGBOX_CONFIG_FILE}")
         SB_SHORT_ID_2=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[1] // ""' "${SINGBOX_CONFIG_FILE}")
         instance_id="${VLESS_CONFIG_INSTANCE_CANDIDATES[${vless_instance_index}]}"
-        SB_VLESS_INSTANCE_ID="${instance_id}"
         SB_VLESS_INBOUND_TAG="${VLESS_CONFIG_INSTANCE_TAGS[${vless_instance_index}]}"
-        SB_VLESS_RATE_LIMIT_UP_MBPS=""
-        SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
+        state_index=""
+        if [[ "${VLESS_REBUILD_STATE_SCHEMA:-none}" == "2" ]]; then
+          state_index=$(vless_reality_existing_state_index_for_tag "${SB_VLESS_INBOUND_TAG}" 2>/dev/null || true)
+          if [[ -n "${state_index}" ]]; then
+            instance_id="${VLESS_REBUILD_STATE_IDS[${state_index}]}"
+          fi
+        fi
+        SB_VLESS_INSTANCE_ID="${instance_id}"
+        if [[ -n "${state_index}" ]]; then
+          SB_NODE_NAME="${VLESS_REBUILD_STATE_NODE_NAMES[${state_index}]}"
+          [[ -n "${SB_NODE_NAME}" ]] || SB_NODE_NAME="$(default_node_name_for_protocol "vless+reality")"
+          SB_VLESS_RATE_LIMIT_UP_MBPS="${VLESS_REBUILD_STATE_RATE_UP[${state_index}]}"
+          SB_VLESS_RATE_LIMIT_DOWN_MBPS="${VLESS_REBUILD_STATE_RATE_DOWN[${state_index}]}"
+        elif [[ "${VLESS_REBUILD_STATE_SCHEMA:-none}" == "1" &&
+                "${instance_id}" == "main" &&
+                -n "${VLESS_REBUILD_STATE_NODE_NAMES[0]:-}" ]]; then
+          SB_NODE_NAME="${VLESS_REBUILD_STATE_NODE_NAMES[0]}"
+          SB_VLESS_RATE_LIMIT_UP_MBPS=""
+          SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
+        else
+          SB_VLESS_RATE_LIMIT_UP_MBPS=""
+          SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
+        fi
         SB_VLESS_ALPN_MODE=$(jq -r --argjson idx "${inbound_index}" '
           (.inbounds[$idx].tls.alpn // []) |
           if . == ["h2", "http/1.1"] then "h2_http1"
@@ -13935,17 +14139,24 @@ rebuild_protocol_state_from_config() {
         fi
         if (( vless_instance_index == 0 )); then
           SB_PRIVATE_KEY="${VLESS_CONFIG_REALITY_PRIVATE_KEY}"
-          if [[ -f "${SB_KEY_FILE}" ]]; then
+          SB_PUBLIC_KEY=""
+          if [[ -n "${VLESS_REBUILD_STATE_PRIVATE_KEY:-}" &&
+                "${VLESS_REBUILD_STATE_PRIVATE_KEY}" == "${SB_PRIVATE_KEY}" ]]; then
+            SB_PUBLIC_KEY="${VLESS_REBUILD_STATE_PUBLIC_KEY:-}"
+          fi
+          if [[ -z "${SB_PUBLIC_KEY}" && -f "${SB_KEY_FILE}" ]]; then
             key_file_private=$(grep '^PRIVATE_KEY=' "${SB_KEY_FILE}" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d '\r\n ' || true)
             if [[ -n "${SB_PRIVATE_KEY}" && "${key_file_private}" == "${SB_PRIVATE_KEY}" ]]; then
               SB_PUBLIC_KEY=$(grep '^PUBLIC_KEY=' "${SB_KEY_FILE}" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d '\r\n ' || true)
             else
               SB_PUBLIC_KEY=""
             fi
-          else
-            SB_PUBLIC_KEY=""
           fi
           VLESS_REALITY_DEFAULT_INSTANCE_ID="${VLESS_CONFIG_DEFAULT_INSTANCE_ID}"
+          if [[ "${VLESS_REBUILD_STATE_SCHEMA:-none}" == "2" ]] &&
+             vless_reality_config_id_exists "${VLESS_REBUILD_STATE_DEFAULT_ID}"; then
+            VLESS_REALITY_DEFAULT_INSTANCE_ID="${VLESS_REBUILD_STATE_DEFAULT_ID}"
+          fi
           VLESS_REALITY_INSTANCE_IDS="$(IFS=,; printf '%s' "${VLESS_CONFIG_INSTANCE_IDS[*]}")"
           if ! save_vless_reality_protocol_state; then
             abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"

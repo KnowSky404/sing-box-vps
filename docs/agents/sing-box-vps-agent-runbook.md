@@ -10,6 +10,8 @@ Unknown state IDs or future schema versions block reconstruction while preservin
 
 ## First Principles
 
+REALITY takeover matches live inbound tags to existing managed instance identities. It preserves their display names, upload/download QoS and default instance while rebuilding connection parameters from the live configuration. The saved public key is reusable only with a matching private key. Ambiguous identity mappings stop reconstruction; a state-write failure restores the previous protocol state tree. These metadata guarantees do not establish lossless handling of arbitrary custom sing-box fields or external system resources.
+
 - Treat `install.sh` as the single runtime source of truth.
 - Read `AGENTS.md` and `README.md` before changing repository behavior.
 - Use `sing-box-test` for test VPS validation.
