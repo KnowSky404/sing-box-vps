@@ -68,6 +68,9 @@ EOF
 "users":[{"username":"config-user","password":"CONFIG-PASSWORD-DO-NOT-LOG"}]}]}
 EOF
       ;;
+    managed-mixed-hy2)
+      printf '%s\n' '{"inbounds":[{"type":"mixed","tag":"mixed-in"},{"type":"hysteria2","tag":"hy2-in"}]}' > "${SINGBOX_CONFIG_FILE}"
+      ;;
     *) return 1 ;;
   esac
 }
@@ -165,6 +168,76 @@ for agent_command in status nodes links; do
   fi
   [[ ! -e "${TMP_DIR}/side-effect" ]]
 done
+
+write_fixture diagnostic
+cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
+INSTALLED_PROTOCOLS=mixed,future-protocol
+PROTOCOL_STATE_VERSION=1
+EOF
+for agent_command in status nodes links; do
+  rm -f "${TMP_DIR}/side-effect"
+  agent_status=0
+  agent_cli "${agent_command}" --json > "${TMP_DIR}/agent-index-${agent_command}.json" 2> "${TMP_DIR}/agent-index-${agent_command}.stderr" || agent_status=$?
+  [[ "${agent_status}" -ne 0 ]]
+  jq -e '
+    .schema == "1" and .schema_version == "1.0" and .ok == false and
+    .error == "protocol_index_untrusted" and
+    .data.error == "protocol_index_untrusted" and
+    (.protocols? == null) and (.nodes? == null)
+  ' "${TMP_DIR}/agent-index-${agent_command}.json" >/dev/null
+  [[ ! -e "${TMP_DIR}/side-effect" ]]
+done
+
+write_fixture managed-mixed-hy2
+cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
+INSTALLED_PROTOCOLS=hy2,mixed
+PROTOCOL_STATE_VERSION=1
+EOF
+cat > "${SB_PROTOCOL_STATE_DIR}/hy2.env" <<'EOF'
+INSTALLED=1
+CONFIG_SCHEMA_VERSION=1
+NODE_NAME=hy2-inventory-test
+PORT=8443
+DOMAIN=hy2.example.com
+PASSWORD=HY2-PASSWORD-DO-NOT-LOG
+USER_NAME=hy2-user
+UP_MBPS=100
+DOWN_MBPS=50
+OBFS_ENABLED=n
+TLS_MODE=manual
+CERT_PATH=/etc/ssl/certs/hy2.pem
+KEY_PATH=/etc/ssl/private/hy2.key
+MASQUERADE=https://example.com/
+EOF
+cat > "${SB_PROTOCOL_STATE_DIR}/mixed.env" <<'EOF'
+INSTALLED=1
+CONFIG_SCHEMA_VERSION=99
+EOF
+get_public_ip() { printf '192.0.2.1'; }
+for agent_command in nodes links; do
+  agent_status=0
+  agent_cli "${agent_command}" --json > "${TMP_DIR}/agent-state-${agent_command}.json" 2> "${TMP_DIR}/agent-state-${agent_command}.stderr" || agent_status=$?
+  [[ "${agent_status}" -ne 0 ]]
+  jq -e '
+    .schema == "1" and .schema_version == "1.0" and .ok == false and
+    .error == "protocol_state_untrusted" and
+    .data.error == "protocol_state_untrusted" and
+    (.nodes? == null)
+  ' "${TMP_DIR}/agent-state-${agent_command}.json" >/dev/null
+done
+cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
+INSTALLED_PROTOCOLS=mixed
+PROTOCOL_STATE_VERSION=1
+EOF
+cat > "${SB_PROTOCOL_STATE_DIR}/mixed.env" <<'EOF'
+INSTALLED=1
+CONFIG_SCHEMA_VERSION=1
+NODE_NAME=inventory-test
+PORT=1080
+AUTH_ENABLED=y
+USERNAME=state-user
+PASSWORD=STATE-PASSWORD-DO-NOT-LOG
+EOF
 
 for fixture in plain-vless implicit-reality disabled-reality disabled-tls duplicate-mixed duplicate-hy2 duplicate-anytls duplicate-tag bad-structure invalid-json; do
   write_fixture "${fixture}"

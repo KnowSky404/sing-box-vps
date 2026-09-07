@@ -12222,7 +12222,7 @@ agent_link_json_for_current_protocol() {
 
 agent_collect_nodes_json() {
   local mode=$1
-  local public_ip original_protocol_state protocol node_json instance_id
+  local public_ip original_protocol_state protocol node_json instance_id indexed_protocols
   local installed_protocols=()
   local tmpdir status=0 rendered_instances=0
 
@@ -12230,10 +12230,21 @@ agent_collect_nodes_json() {
     agent_json_error "live_inbound_inventory_untrusted" "现有配置包含无法完整识别的入站；未返回部分节点。"
     return 1
   fi
+  if ! indexed_protocols=$(list_indexed_protocols_raw); then
+    agent_json_error "protocol_index_untrusted" "协议索引无法完整读取；未返回部分节点。"
+    return 1
+  fi
+  while IFS= read -r protocol; do
+    [[ -n "${protocol}" ]] || continue
+    if ! agent_protocol_id "${protocol}" >/dev/null; then
+      agent_json_error "protocol_index_untrusted" "协议索引包含无法识别的协议；未返回部分节点。"
+      return 1
+    fi
+    installed_protocols+=("${protocol}")
+  done <<< "${indexed_protocols}"
 
   public_ip=$(get_public_ip)
   original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
-  mapfile -t installed_protocols < <(list_indexed_protocols_raw)
   tmpdir=$(mktemp -d)
 
   trap '
@@ -12296,6 +12307,11 @@ agent_collect_nodes_json() {
 
     [[ -n "${node_json:-}" ]] && printf '%s\n' "${node_json}" >> "${tmpdir}/nodes.jsonl"
   done
+
+  if [[ "${status}" != "0" ]]; then
+    agent_json_error "protocol_state_untrusted" "协议状态无法完整读取；未返回部分节点。"
+    return 1
+  fi
 
   jq -n \
     --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
