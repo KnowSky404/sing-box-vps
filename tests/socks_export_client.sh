@@ -69,11 +69,12 @@ jq -e '
 links=$(agent_link_json_for_current_protocol 203.0.113.10)
 jq -e '
   .protocol == "socks" and (.links | keys) == ["socks5"] and
-  .links.socks5 == "socks5://user\n:pass\n@127.0.0.1:33101" and
+  .links.socks5 == "socks5://user%0A:pass%0A@127.0.0.1:33101" and
   .instance_revision == 7 and (has("http") | not) and
   any(.warnings[]?; .code == "socks_plaintext_transport") and
   all(.warnings[]?; .code != "mixed_plaintext_transport") and
-  all(.warnings[]?.message; contains("UoT v2") | not)
+  all(.warnings[]? | select(.code == "socks_plaintext_transport") | .message; contains("UoT v2") | not) and
+  any(.warnings[]?; .code == "socks5_uri_transport_options_omitted")
 ' <<< "${links}" >/dev/null
 
 mixed_warning=$(collect_client_export_warnings_json \
@@ -193,6 +194,11 @@ fi
 [[ "$(sha256sum "${export_path}" | awk '{print $1}')" == "${export_hash_before}" ]]
 [[ "$(sha256sum "${export_path}.bak" | awk '{print $1}')" == "${backup_hash_before}" ]]
 
+SB_PROTOCOL=socks
+SB_PORT=33101
+SB_MIXED_AUTH_ENABLED=n
+SB_MIXED_USERNAME=""
+SB_MIXED_PASSWORD=""
 display=$(show_link_info 127.0.0.1 2>&1)
 grep -Fq 'SOCKS5 代理链接' <<< "${display}"
 if grep -Fq 'HTTP 代理链接' <<< "${display}"; then

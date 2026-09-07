@@ -24,6 +24,8 @@ Key runtime paths:
 - systemd service: sing-box
 
 Agent CLI:
+
+- Mixed/SOCKS share URI userinfo is percent-encoded byte-for-byte. For Mixed credentials that HTTP Basic cannot represent (colon in username or ASCII control characters), links omits HTTP and returns mixed_http_auth_unrepresentable without changing credentials; SOCKS5 remains available. socks5_uri_transport_options_omitted warns that the URI does not carry UoT v2 options: use export-client JSON for full configuration. Encoding is not encryption.
 - sbv agent capabilities --json: machine-readable capability matrix; read-only, no secrets.
 - sbv agent upgrade-check --json 1.14.0: read-only eligibility preflight that does not reconcile or migrate state; inspect ready, blockers, config hash/schema, legacy fields, and warnings. It does not download the target binary.
 - sbv agent upgrade --json 1.14.0 --yes: guarded binary upgrade; mutating and service-impacting, with automatic backup under /root/sing-box-vps-backups/, a manifest covering every regular runtime file plus control files, and an atomic transaction-result.json audit record.

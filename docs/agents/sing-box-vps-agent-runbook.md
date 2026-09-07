@@ -325,6 +325,8 @@ Use `nodes --json` for log-safe summaries. Use `links --json` only in trusted co
 
 ## Standalone SOCKS Inbound
 
+Mixed/SOCKS URI userinfo is percent-encoded, preserving reserved characters and UTF-8 bytes without changing stored credentials. HTTP Basic excludes colon-containing usernames and ASCII control characters ([RFC 7617, section 2](https://www.rfc-editor.org/rfc/rfc7617#section-2)); for such Mixed credentials, `links.http` is absent and `warnings[].code=mixed_http_auth_unrepresentable`. SOCKS5 remains available. The additive `socks5_uri_transport_options_omitted` warning means a SOCKS5 URI does not carry UoT v2 client options; use `export-client` JSON instead of treating a URI as a full configuration. Percent encoding is not encryption, and links remain sensitive.
+
 Standalone SOCKS is the fifth protocol-registry preset (`state_id=socks`, `agent_id=socks`, menu order 5). It is separate from the Mixed HTTP/SOCKS preset: the server record describes only a SOCKS4/4a/5 inbound, its listen address/port, authentication and outbound policy; it does not add HTTP or TLS. It has no legacy `.env` migration operation; a pre-existing live SOCKS configuration is handled through takeover.
 
 The shared plain-proxy adapter uses `build_socks_inbound_json`, `save_socks_state`, `load_plain_proxy_structured_instance`, and `apply_plain_proxy_instance_change`. Its active marker is schema 2 and its JSON store (`schema_version: 1`) is `/root/sing-box-vps/protocols/instances/socks.json`; there is no `migrate socks` operation. Public Agent mutations are:

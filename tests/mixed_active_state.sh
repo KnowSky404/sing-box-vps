@@ -183,7 +183,9 @@ jq -e '
   .instance_revision == 0
 ' <<< "${summary_json}" >/dev/null
 links_json=$(agent_link_json_for_current_protocol 203.0.113.44)
-jq -e '(.instance_id == "Edge_A" and .tag == "mixed-edge-a" and .instance_revision == 0 and (.links.http | contains("203.0.113.44:32101")))' \
+jq -e '(.instance_id == "Edge_A" and .tag == "mixed-edge-a" and .instance_revision == 0 and
+  .links.socks5 == "socks5://user%0A:pass%0A@203.0.113.44:32101" and
+  (.links | has("http") | not) and any(.warnings[]; .code == "mixed_http_auth_unrepresentable"))' \
   <<< "${links_json}" >/dev/null
 
 # Active saves are CAS replacements: credentials are taken from the selected

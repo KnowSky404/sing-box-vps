@@ -4,6 +4,18 @@
 起点为 `cc12c06`，工作区干净；保留参考基线 `0d0bdac` 之后的下载事务修复。
 本文记录完整目标的进展；阶段提交不代表全协议已交付。
 
+## 2026-09-07：分享 URI 编码与可表达性
+
+对照原目标第八节，发现 Mixed/SOCKS builder 原样拼接 userinfo，甚至测试将原始换行视为有效 URI。版本 `2026090710` 引入共享字节级百分号编码；普通未保留 ASCII 字符的旧链接不变，保留认证内容及 IPv6 方括号语义。Agent 先完整构造链接对象再返回，编码/校验失败不会被嵌套命令替换吞掉为成功的空链接。
+
+Context7 `/sagernet/sing-box` 的结果仅覆盖 testing 配置，不定义代理 URI 编码；因此补查 [RFC 3986 userinfo/percent-encoding](https://www.rfc-editor.org/rfc/rfc3986#section-3.2.1) 和 [RFC 7617 Basic 字段约束](https://www.rfc-editor.org/rfc/rfc7617#section-2)。HTTP Basic 的用户名不能含冒号，认证字段不能含 ASCII 控制字符；此类 Mixed 记录保留 SOCKS5 链接和原始状态，但省略 HTTP 链接并返回 `mixed_http_auth_unrepresentable`。SOCKS5 URI 无法表达 UoT v2 选项，明确附带 `socks5_uri_transport_options_omitted` 并指向完整客户端 JSON；不把编码误称为加密，不声称所有客户端的导入策略一致。
+
+新增默认门禁测试 `plain_proxy_share_links.sh` 和 `plain_proxy_share_runtime.sh`。前者验证逐字节往返、无认证、IPv6、HTTP 字段拒绝、Agent/交互共用输出、编码失败传播及状态不变；后者用生成的 URI 驱动 curl，经真实 Mixed 核心读取本机 HTTP marker。1.13.18 和 1.14.0 均通过特殊认证 HTTP/SOCKS、无认证 HTTP/SOCKS、尾随 LF 的 SOCKS、冒号用户名 SOCKS 和 HTTP 拒绝检查。实际 Bash 4.2 直接运行两版 runtime 的 `--run` 分支也退出 0，证据在 `/tmp/sbv-plain-share-bash42.OruzBw` 和 `/tmp/sbv-plain-share-bash42.k86DFp`；起止源码哈希一致。这不证明所有客户端导入策略、公网连接或 URI 携带完整 UoT 配置。
+
+完整门禁 `SINGBOX_BINARY_113=… SINGBOX_BINARY_114=… bash dev/verification/run.sh --changed-file install.sh dev/verification/common.sh dev/verification/remote/entrypoint.sh` 在 `dev/verification-runs/20260907133621` 退出 0：67 项本地检查、10/10 Docker 场景及 14/14 TCP 探针成功，故障升级为 `status=rolled_back`、`rollback.result=success`。父代理直接读取运行容器内 `/tmp/sing-box-vps-verification.pcrr5Q/install.sh` 的 SHA-256 为 `ea3749aaed4d945de043a4672d3558cda2110dc1d9eed28ee74256bf88ec1865`，与当前源码一致。独立预审未发现确认的 P1/P2；父代理补强了控制字符密码独立负例，并在原生 Bash 与 Bash 4.2 复跑通过。
+
+全量普通 Shell 回归串行通过 166/166，日志 `/tmp/sbv-socks-all.u79hOa/results.tsv`；最终补强的链接负例另行复跑通过。14 项 verification 框架测试也串行全部退出 0，日志 `/tmp/sbv-verification-serial.3qATxO/results.tsv`，合计 180/180；两批起止 `install.sh` 哈希均与上述冻结源码相同。未推送、部署或执行真实 SubMan 同步，全协议目标仍未完成。
+
 ## 2026-09-07：独立 SOCKS 接入（当前阶段）
 
 脚本与 README 版本统一为 `2026090709`。本阶段新增独立 `socks` inbound 预设，共享 Mixed 的类型化实例记录、CAS 写入、配置候选校验、持久事务和防火墙归属账本，不复制一套协议专用事务。SOCKS 新装直接使用 schema 2 marker 与 `schema_version: 1` JSON store；没有 legacy SOCKS `.env` 格式，`instance migrate socks` 明确拒绝，既有 live 配置走接管重建。旧 Mixed 的 legacy 迁移及包装函数继续保留。

@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026090709`
+- 脚本版本：`2026090710`
 - sing-box 适配版本：`1.14.0`
 
 ## 🚀 一键安装
@@ -264,6 +264,8 @@ Agent/Hermes 文档入口：
 - [可安装 Operator Skill](skills/sing-box-vps-operator/SKILL.md)
 
 ## 🛠️ 功能菜单
+
+Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码，避免 `@`、`#`、`%`、空格或换行改变链接结构；服务端凭据保持不变。HTTP Basic 无法表达含冒号的用户名或含 ASCII 控制字符的认证：此时 Mixed 的 Agent `links` 只提供 SOCKS5，并返回 `mixed_http_auth_unrepresentable`，不生成不可用的 HTTP 链接。SOCKS5 URI 不携带 UoT v2 等客户端选项，返回 `socks5_uri_transport_options_omitted`；需要完整配置时使用 `export-client` JSON。百分号编码不是加密，链接仍是敏感材料。
 
 1. **安装新协议**：首次安装或向现有实例追加 VLESS REALITY、Mixed、独立 SOCKS、Hysteria2、AnyTLS；协议选择注册表第 5 项为 SOCKS，REALITY 可继续追加独立实例。
 2. **修改已安装协议配置**：只修改选中的协议/REALITY 实例，并重建、校验整体配置。

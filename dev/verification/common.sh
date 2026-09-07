@@ -85,6 +85,8 @@ resolve_local_tests() {
       tests/socks_instance_menu.sh \
       tests/socks_structured_takeover.sh \
       tests/socks_export_client.sh \
+      tests/plain_proxy_share_links.sh \
+      tests/plain_proxy_share_runtime.sh \
       tests/managed_component_graph.sh \
       tests/managed_component_graph_core_startup.sh \
       tests/live_inbound_inventory_guards.sh \

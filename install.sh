@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090709
+# Version: 2026090710
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090709"
+readonly SCRIPT_VERSION="2026090710"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -10846,28 +10846,68 @@ build_vless_link_for_instance() {
   printf '%s' "${link_output}"
 }
 
-build_mixed_http_link() {
-  local public_ip=$1
-  local share_host
-  share_host=$(format_share_host "${public_ip}")
+encode_uri_userinfo_component() {
+  local LC_ALL=C value=${1:-} result="" character encoded index
+  for ((index=0; index<${#value}; index++)); do
+    character=${value:index:1}
+    case "${character}" in
+      [a-zA-Z0-9.~_-]) result+="${character}" ;;
+      *) printf -v encoded '%%%02X' "'${character}" || return 1; result+="${encoded}" ;;
+    esac
+  done
+  printf '%s' "${result}"
+}
 
-  if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
-    printf 'http://%s:%s@%s:%s' "${SB_MIXED_USERNAME}" "${SB_MIXED_PASSWORD}" "${share_host}" "${SB_PORT}"
+plain_proxy_http_auth_representable() {
+  local LC_ALL=C
+  [[ "${SB_MIXED_AUTH_ENABLED:-}" == n ]] && return 0
+  [[ "${SB_MIXED_AUTH_ENABLED:-}" == y ]] || return 1
+  # RFC 7617: the first colon separates user/password; neither admits CTL.
+  [[ "${SB_MIXED_USERNAME:-}" != *:* &&
+     ! "${SB_MIXED_USERNAME:-}${SB_MIXED_PASSWORD:-}" =~ [[:cntrl:]] ]]
+}
+
+build_plain_proxy_link() {
+  local scheme=${1:-} public_ip=${2:-} share_host username password
+  [[ "${scheme}" == http || "${scheme}" == socks5 ]] || return 1
+  [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
+  validate_mixed_client_connection "${SB_PORT:-}" "${SB_MIXED_AUTH_ENABLED:-}" \
+    "${SB_MIXED_USERNAME:-}" "${SB_MIXED_PASSWORD:-}" || return 1
+  if [[ "${scheme}" == http ]] && ! plain_proxy_http_auth_representable; then
+    printf '[WARN] mixed_http_auth_unrepresentable: HTTP Basic 无法表达当前认证；请使用 SOCKS5 或客户端 JSON，原凭据未修改。\n' >&2
+    return 1
+  fi
+  share_host=$(format_share_host "${public_ip}") || return 1
+  if [[ "${SB_MIXED_AUTH_ENABLED}" == y ]]; then
+    username=$(encode_uri_userinfo_component "${SB_MIXED_USERNAME}") || return 1
+    password=$(encode_uri_userinfo_component "${SB_MIXED_PASSWORD}") || return 1
+    printf '%s://%s:%s@%s:%s' "${scheme}" "${username}" "${password}" "${share_host}" "${SB_PORT}"
   else
-    printf 'http://%s:%s' "${share_host}" "${SB_PORT}"
+    printf '%s://%s:%s' "${scheme}" "${share_host}" "${SB_PORT}"
   fi
 }
 
-build_mixed_socks5_link() {
-  local public_ip=$1
-  local share_host
-  share_host=$(format_share_host "${public_ip}")
+build_mixed_http_link() { build_plain_proxy_link http "$@"; }
+build_mixed_socks5_link() { build_plain_proxy_link socks5 "$@"; }
 
-  if [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]]; then
-    printf 'socks5://%s:%s@%s:%s' "${SB_MIXED_USERNAME}" "${SB_MIXED_PASSWORD}" "${share_host}" "${SB_PORT}"
-  else
-    printf 'socks5://%s:%s' "${share_host}" "${SB_PORT}"
+build_plain_proxy_links_json() {
+  local protocol=${1:-} address=${2:-} socks_link http_link=""
+  [[ "${protocol}" == mixed || "${protocol}" == socks ]] || return 1
+  socks_link=$(build_mixed_socks5_link "${address}") || return 1
+  if [[ "${protocol}" == mixed ]] && plain_proxy_http_auth_representable; then
+    http_link=$(build_mixed_http_link "${address}") || return 1
   fi
+  jq -cn --arg socks5 "${socks_link}" --arg http "${http_link}" \
+    '{socks5:$socks5} + (if $http == "" then {} else {http:$http} end)'
+}
+
+plain_proxy_share_warnings_json() {
+  local protocol=${1:-} unavailable=false
+  [[ "${protocol}" == mixed || "${protocol}" == socks ]] || return 1
+  if [[ "${protocol}" == mixed ]] && ! plain_proxy_http_auth_representable; then unavailable=true; fi
+  jq -cn --argjson unavailable "${unavailable}" '
+    [{code:"socks5_uri_transport_options_omitted",message:"SOCKS5 URI 只携带代理地址和认证，不携带 UoT v2 等客户端选项；完整连接配置请使用 export-client JSON。"}]
+    + (if $unavailable then [{code:"mixed_http_auth_unrepresentable",message:"当前认证不符合 HTTP Basic 字段约束，未提供 HTTP 链接；SOCKS5 和客户端 JSON 仍可使用，原凭据未修改。"}] else [] end)'
 }
 
 hy2_manual_certificate_algorithm() {
@@ -12132,20 +12172,26 @@ show_link_info() {
     return 0
   fi
 
-  if [[ "${SB_PROTOCOL}" == "socks" ]]; then
-    echo "1. SOCKS5 代理链接"
-    build_mixed_socks5_link "${public_ip}"
-    echo ""
+  local plain_links share_warnings http_link socks_link warning_message
+  plain_links=$(build_plain_proxy_links_json "${SB_PROTOCOL}" "${public_ip}") || return 1
+  share_warnings=$(plain_proxy_share_warnings_json "${SB_PROTOCOL}") || return 1
+  http_link=$(jq -r '.http // empty' <<< "${plain_links}") || return 1
+  socks_link=$(jq -er '.socks5' <<< "${plain_links}") || return 1
+  if [[ -n "${http_link}" ]]; then
+    printf '1. Mixed HTTP 代理链接\n%s\n' "${http_link}"
+  fi
+  if [[ "${SB_PROTOCOL}" == mixed ]]; then
+    printf '2. Mixed SOCKS5 代理链接\n%s\n' "${socks_link}"
+  else
+    printf '1. SOCKS5 代理链接\n%s\n' "${socks_link}"
+  fi
+  while IFS= read -r warning_message; do
+    [[ -n "${warning_message}" ]] && log_warn "${warning_message}"
+  done < <(jq -r '.[].message' <<< "${share_warnings}")
+  if [[ "${SB_PROTOCOL}" == socks ]]; then
     log_warn "SOCKS5 代理链路未启用 TLS，认证信息与业务流量可能被读取；仅用于可信网络或受保护隧道。"
     return 0
   fi
-
-  echo "1. Mixed HTTP 代理链接"
-  build_mixed_http_link "${public_ip}"
-  echo ""
-  echo "2. Mixed SOCKS5 代理链接"
-  build_mixed_socks5_link "${public_ip}"
-  echo ""
   if [[ "${SB_MIXED_AUTH_ENABLED}" != "y" ]]; then
     log_warn "当前 Mixed 代理未启用认证，请尽快确认防火墙限制或开启认证。"
   fi
@@ -14564,7 +14610,7 @@ agent_link_json_for_current_protocol() {
   local protocol api_protocol public_ip link_json outbound_json
   local address_label
   local node_name instance_id="" inbound_tag="" listen_address="" mixed_link_address="" instance_revision="0" rate_up="" rate_down="" outbound_policy=""
-  local compatibility_warnings_json='[]'
+  local compatibility_warnings_json='[]' share_warnings
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
   api_protocol=$(agent_protocol_id "${protocol}" 2>/dev/null || printf '%s' "${protocol}")
@@ -14597,10 +14643,7 @@ agent_link_json_for_current_protocol() {
         "") ;;
         *) mixed_link_address="${listen_address}" ;;
       esac
-      link_json=$(jq -n \
-        --arg http "$(build_mixed_http_link "${mixed_link_address}")" \
-        --arg socks5 "$(build_mixed_socks5_link "${mixed_link_address}")" \
-        '{"http": $http, "socks5": $socks5}')
+      link_json=$(build_plain_proxy_links_json mixed "${mixed_link_address}") || return 1
       ;;
     socks)
       instance_id="${SB_MIXED_INSTANCE_ID:-}"
@@ -14613,9 +14656,7 @@ agent_link_json_for_current_protocol() {
         "") ;;
         *) mixed_link_address="${listen_address}" ;;
       esac
-      link_json=$(jq -n \
-        --arg socks5 "$(build_mixed_socks5_link "${mixed_link_address}")" \
-        '{"socks5": $socks5}')
+      link_json=$(build_plain_proxy_links_json socks "${mixed_link_address}") || return 1
       compatibility_warnings_json=$(jq -n '[{
         code: "socks_plaintext_transport",
         message: "SOCKS5 导出使用明文代理链路，认证信息与非加密业务可能被读取；仅用于可信网络或受保护隧道。UoT 即使启用也不提供加密。"
@@ -14633,6 +14674,12 @@ agent_link_json_for_current_protocol() {
       link_json='{}'
       ;;
   esac
+
+  if [[ "${protocol}" == mixed || "${protocol}" == socks ]]; then
+    share_warnings=$(plain_proxy_share_warnings_json "${protocol}") || return 1
+    compatibility_warnings_json=$(jq -cn --argjson existing "${compatibility_warnings_json}" \
+      --argjson share "${share_warnings}" '$existing + $share') || return 1
+  fi
 
   jq -n \
     --arg protocol "${api_protocol}" \

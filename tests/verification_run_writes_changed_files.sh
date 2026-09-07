@@ -499,6 +499,8 @@ grep -Fqx 'tests/socks_instance_lifecycle_runtime.sh|1' "${TMP_DIR}/local-tests.
 grep -Fqx 'tests/socks_instance_menu.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/socks_structured_takeover.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/socks_export_client.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/plain_proxy_share_links.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/plain_proxy_share_runtime.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_matrix.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_vless.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_hy2.sh|1' "${TMP_DIR}/local-tests.log"
