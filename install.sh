@@ -2083,14 +2083,15 @@ reconcile_protocol_index_if_needed() {
           return 1
         fi
       fi
-      log_warn "协议状态文件缺失，已从索引移除: ${protocol}" >&2
+      log_warn "检测到无对应状态或运行配置的过期索引条目: ${protocol}" >&2
     fi
   done
 
   if [[ ${#valid_protocols[@]} -eq 0 ]]; then
     if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
-      rm -f "${SB_PROTOCOL_INDEX_FILE}"
-      migrate_legacy_single_protocol_state_if_needed
+      # Keep the original index in the rebuild snapshot. An empty/unrecognized
+      # config or a failed state write must not erase it, even in an if/|| call.
+      rebuild_protocol_state_from_config || return $?
     fi
     return 0
   fi
@@ -2102,7 +2103,7 @@ reconcile_protocol_index_if_needed() {
 }
 
 list_installed_protocols() {
-  reconcile_protocol_index_if_needed || return 1
+  reconcile_protocol_index_if_needed || return $?
   list_indexed_protocols_raw
 }
 

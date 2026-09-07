@@ -78,6 +78,27 @@ cmp "${SB_PROTOCOL_INDEX_FILE}" "${TEST_DIR}/index.before"
 [[ -f "${SB_PROTOCOL_STATE_DIR}/future.env" ]]
 rm "${SB_PROTOCOL_STATE_DIR}/future.env"
 
+printf '{"inbounds":[]}\n' > "${SINGBOX_CONFIG_FILE}"
+mv "${SB_PROTOCOL_STATE_DIR}/mixed.env" "${TEST_DIR}/mixed.saved"
+for handler in reconcile_protocol_index_if_needed list_installed_protocols; do
+  if "${handler}" > "${TEST_DIR}/unknown.stdout" 2> "${TEST_DIR}/unknown.stderr"; then
+    printf 'failed stale-index recovery was reported as success\n' >&2
+    exit 1
+  fi
+  cmp "${SB_PROTOCOL_INDEX_FILE}" "${TEST_DIR}/index.before"
+  [[ ! -s "${TEST_DIR}/unknown.stdout" ]]
+done
+for handler in reconcile_protocol_index_if_needed list_installed_protocols; do
+  status=0
+  (
+    rebuild_protocol_state_from_config() { return 47; }
+    "${handler}"
+  ) > "${TEST_DIR}/unknown.stdout" 2> "${TEST_DIR}/unknown.stderr" || status=$?
+  [[ "${status}" -eq 47 ]]
+  cmp "${SB_PROTOCOL_INDEX_FILE}" "${TEST_DIR}/index.before"
+done
+mv "${TEST_DIR}/mixed.saved" "${SB_PROTOCOL_STATE_DIR}/mixed.env"
+
 printf '{"inbounds":[{"type":"mixed","tag":"keep-mixed"}]}\n' > "${SINGBOX_CONFIG_FILE}"
 mv "${SB_PROTOCOL_STATE_DIR}/mixed.env" "${TEST_DIR}/mixed.saved"
 if reconcile_protocol_index_if_needed > /dev/null 2>&1; then

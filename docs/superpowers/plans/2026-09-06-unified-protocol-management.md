@@ -51,13 +51,14 @@ DNS Server、证书服务、管理 API、USB/IP 独立服务不扩展为本轮�
 第一阶段已接入原四协议注册表、公共 ID/菜单/导出/Agent/SubMan 类型/验证元数据，补上未知索引和状态版本、缺失 handler、空/错误片段与协议发现失败的阻断。配置对象识别、通用多实例、资源账本和完整协议实现仍属于后续阶段，未将它们记为完成。
 
 - 基线 `cc12c06`：155/155 Shell 回归，9/9 Docker 场景、12/12 TCP 业务探测；固定副本 `/tmp/sing-box-vps-baseline-cc12c06`，运行目录 `dev/verification-runs/20260906162844`（在该副本下）。
-- 第一阶段最终版：`bash dev/verification/run.sh --changed-file install.sh dev/verification/common.sh dev/verification/run.sh dev/verification/remote/entrypoint.sh`，退出 0；证据 `dev/verification-runs/20260907030237`，9/9 场景、12/12 TCP 业务探测成功，包含旧 Mixed 恢复和 Bash 4.2 修复后的代码。Hysteria2 使用 QUIC 传输承载该 TCP 业务；未因此声称 UDP 业务已验证。
-- 第一阶段最终版全部非 helper 的 `tests/*.sh`：157/157 通过；逐项退出码 `/tmp/sing-box-vps-final-tests-20260907-bash42fix/summary.tsv`。
+- 第一阶段审查修复后的版本：`bash dev/verification/run.sh --changed-file install.sh dev/verification/common.sh dev/verification/run.sh dev/verification/remote/entrypoint.sh`，退出 0；证据 `dev/verification-runs/20260907031322`，9/9 场景、12/12 TCP 业务探测成功，包含旧 Mixed 恢复、Bash 4.2 修复及过期索引恢复失败保护。Hysteria2 使用 QUIC 传输承载该 TCP 业务；未因此声称 UDP 业务已验证。
+- 第一阶段审查修复后的全部非 helper 的 `tests/*.sh`：157/157 通过；逐项退出码 `/tmp/sing-box-vps-post-reviewfix-tests-20260907/summary.tsv`。
 - `SINGBOX_BINARY_113=/tmp/sbv-real-schema-final.6rMcum/sing-box-1.13.18-linux-arm64/sing-box SINGBOX_BINARY_114=/tmp/sing-box-v1.14.0-cache/sing-box-1.14.0-linux-arm64/sing-box bash tests/export_client_config_1_14_compatibility.sh`：退出 0，两个实际核心均接受对应客户端配置。
 - 本轮版本统一递增为 `2026090601`；目标核心保持稳定 `1.14.0`。阶段内不重复递增。
 - 回归发现并修复验证 fixture 的独立 metadata 加载和原固定测试计数；没有改用跳过或 mock 替代真实 Docker 验证。
 - 预审期间的 Docker 复验 `dev/verification-runs/20260906170645` 为 9/9 场景、12/12 TCP 探测成功，但当时全量 Shell 为 155/156：发现旧单 Mixed 仅残留索引时不能追加安装的回归。实现现已恢复该明确写入口的无损旧状态恢复，补上索引/凭据保留、状态写入失败回滚和拒绝自定义字段测试，并通过上述最终全量复验。
 - 旧 Mixed 恢复还通过了两个实际核心的输入/重新渲染 `check`，同时断言原配置字节和用户名/密码不变；命令 `bash /tmp/sbv-legacy-mixed-real-check.sh`，退出 0。此项为受控配置恢复证据，不替代网络连接探针。
 - 2026-09-07 的额外兼容检查在官方 `bash:4.2` 容器复现空 alias 数组的 `nounset` 错误；已修复为空时不展开数组。`tests/protocol_registry_legacy_bash.sh` 在 Bash `4.2.53` 和主机 `5.2.21` 均通过，前者使用只读仓库、无网络容器及临时 `/tmp`。镜像 digest 为 `sha256:326c3fb7e7009e1aa6aad242056abc11c372ac0a2b57dcb29ca5bc8feedf5579`；这证明注册表的旧 Bash 语义兼容，不等于完整 CentOS 系统服务验证。
+- 原子提交 `380eedd`（`feat: centralize protocol capability contracts`）随后进行了实际提交范围的等效 `/review`（本工具面没有该命令入口）。审查发现旧过期索引分支先删除索引且吞掉恢复失败；已停止后续功能接入，改为直接复用保留原索引的重建事务，补上空 inbounds 和原始退出码 `47` 的回归测试。独立复核确认索引字节保留、错误传播及旧过期条目清理均通过，上述完整门禁也已复跑。
 
 后续仍需完成阶段 2–5 的所有未勾选要求；本阶段的通过结果不作为新增协议或高级接入已实现的证据。
