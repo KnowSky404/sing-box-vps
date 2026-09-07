@@ -186,3 +186,25 @@ Context7 查询仅提供 testing 概览，随后复核固定 [Mixed TCP listener
 真实运行测试将实际导出的 SOCKS5 outbound 原样放入精简隔离客户端配置；完整导出仍另行 check。1.13.18/1.14.0 同版本与双向跨版本、认证/无认证共 8 组均有 TCP marker 与 UDP echo payload 成功，合计完整导出 check=8、精简核心 check=16、TCP=8、UDP=8、直接服务端错误认证拒绝=4；父代理已独立复跑。它不证明完整配置的公网规则集下载、原生跨主机 UDP associate 或其他协议 UDP 数据路径。原有 Docker 场景仍单独计为 TCP 证据，未操作生产或 SubMan 服务。
 
 回归证据：166 个实际 Shell 测试全部退出 0，逐项记录 `/tmp/sbv-mixed-export-all.0L4Qeo/summary.tsv`；最后同快照校验收紧后，11 个客户端导出专项再次全部通过，记录 `/tmp/sbv-mixed-export-final.2eT2cN/summary.tsv`。实际 Bash 4.2 另通过 Mixed-only、认证/失败回归和两个跨版本方向的 TCP/UDP 运行。最终默认门禁 `SINGBOX_BINARY_113=… SINGBOX_BINARY_114=… bash dev/verification/run.sh --changed-file install.sh dev/verification/common.sh` 在 `dev/verification-runs/20260907095126` 退出 0：51 项本地检查、9/9 Docker 场景、12/12 既有 TCP 探针通过，失败升级的持久事务为 `status=rolled_back`、`rollback.result=success`。直接从当次容器读取的脚本 SHA-256 为 `8f280f8576beb83648ea8eb7a44d25cb3591b1fcc4f198a957993c070e101a22`，与最终源码相同。独立预审及同快照收紧复核未发现新增 P1/P2。全协议目标仍在进行，尚未实现新协议族、完整多实例和系统资源事务；未推送或部署。
+
+## 2026-09-07：Mixed 多实例生命周期接入与验收
+
+本阶段把前述结构化 Mixed 基础接入现有运行时，脚本版本统一为 `2026090708`。这不是全协议目标完成的标志；除当前四种既有预设外的协议族仍未实现，Mixed 也不提供 TLS、独立 SOCKS 服务端管理或新的 SubMan 同步能力。
+
+Mixed 的 schema 2 状态以 `protocols/instances/mixed.json` 为真源，实例拥有稳定 `id`、`tag`、名称、监听地址/端口、认证和出站策略，并保留默认实例与单调 revision。首次全新安装仍走 legacy schema 1 的 `mixed.env` 路径；只有显式 `migrate`、接管重建或后续实例写入才启用 schema 2。显式迁移把 legacy 的现有 ID（单实例为 `main`）、tag、监听地址/端口及用户名/密码带入结构化记录，不通过隐式读取或凭据生成改变旧实例。旧配置省略 `listen` 时按真实核心默认保留 `127.0.0.1`，不使用机器的全局公网监听地址；省略端口或含未建模字段时拒绝有损转换。schema 2 的根标记只按数据读取，拒绝重复元数据或命令内容，不再 `source` 执行。
+
+Agent 写接口覆盖 `create`、`replace`、`delete`、`default`、`migrate` 和 `recover`，返回稳定 JSON envelope，并通过 `--expected-revision` 进行 CAS。`replace` 保持既有 ID/tag；`delete` 删除单个实例并重新选择默认实例，删除最后一个实例时移除 active `mixed.env`、索引项和 Mixed inbound，但保留空 JSON store（`schema_version: 1`）作为 revision tombstone，active marker 仍为 `CONFIG_SCHEMA_VERSION=2`，后续 `create` 以 tombstone revision 继续递增而不重置为 0；`migrate` 使用虚拟 revision 0 迁移 legacy 状态；`recover` 只接受可验证的未完成事务和匹配 journal 原始 revision，缺少防火墙 journal 时失败并要求人工恢复。非回环地址的明文 Mixed 记录必须显式 `--allow-public`；没有该确认时请求在准备阶段拒绝。
+
+实例写入的事务顺序是 prepare → snapshot → publish → resources → service → committed：初次创建也先在目标同目录 staging，再通过原子发布建立文件；共享 `flock` 串行管理写入，`.instance-write.lock/transaction.json` 保存持久阶段和 before/after 信息，`.instance-transactions/` 保存原子 result。配置候选必须经过组件图、监听资源和目标核心 `check`；受管 UFW/iptables/ip6tables 防火墙由实例 ledger prepare/apply/rollback 参与。firewalld 仅作只读外部预检，事务禁止 add/delete/reload；缺少所需 allow 或既有归属账本时在 prepare 阶段失败并要求人工规则。`firewall-cmd` 的 reload 会影响运行时防火墙状态，命令语义以[官方手册](https://firewalld.org/documentation/man-pages/firewall-cmd.html)为准；UFW comment 不作为规则身份，地址语法以[Ubuntu ufw(8) 手册](https://manpages.ubuntu.com/manpages/noble/man8/ufw.8.html)为准。本记录不据此宣称 UFW runtime 已验证。配置、状态、受管防火墙或重启失败时使用原快照恢复，rollback 失败保留 journal 与恢复材料，并要求 `instance recover` 或人工检查；缺少防火墙 journal 时恢复本身失败并转人工处理。文件状态的 `.bak` 和回滚只覆盖文件原语，不能宣称其他进程端口、动态 relay、ACME 临时监听或系统防火墙具有完整事务。
+
+防火墙采用单一前端策略：UFW 活动时只通过 UFW 管理，firewalld 活动时只做外部预检，两者都不活动才直接管理 iptables/ip6tables。两个前端同时活动或已有账本归属于非选中后端时拒绝写入，不自动迁移、删除旧规则。这样避免同时向 UFW 及其底层重复登记归属；规则查询区分入站/出站、目标/来源及 IPv6 等价地址，回滚时若用户已修改 comment 则报告不确定并保留该规则。
+
+交互菜单新增 17「管理 Mixed 实例」，对 schema 2 提供逐实例创建、修改、删除、默认、迁移和恢复。旧的协议删除菜单在活动 Mixed 与其他协议同时选择时拒绝跨协议批量删除，并要求先通过 Mixed 实例入口逐个处理；单独选择 Mixed 才进入逐实例删除流程。该保护避免把其他协议或尚未确认的 Mixed 实例一起移除。
+
+新增六项本地回归覆盖 schema 2 生命周期、两版核心运行、显式迁移、状态匹配、失败恢复、菜单与防火墙归属。预审关闭了隐式监听扩大、候选混入回滚备份、schema 2 标记执行/降级、UFW 目标/来源及 comment 归属误判、双重防火墙管理、操作退出 0 却无实际效果、失败恢复缺少持久审计等问题。最后的恢复审计补修在 Bash 5 与实际 Bash 4.2 下再次通过；持久结果保留脱敏 `transaction.firewall`，即使恢复或审计写入失败，也明确报告失败并保留恢复材料。
+
+最终全量回归累计 172/172 通过：158 项普通测试的逐项记录为 `/tmp/sbv-mixed-lifecycle-ordinary.5S6CsR/summary.tsv`，14 项验证框架测试为 `/tmp/sbv-mixed-lifecycle-verification.Wlffu8/summary.tsv`。普通测试运行期间包含最后一次恢复审计小修，最新生命周期测试已覆盖该修复；不是把此前存在失败或源码漂移的运行直接记为最终成功。默认门禁 `SINGBOX_BINARY_113=… SINGBOX_BINARY_114=… bash dev/verification/run.sh --changed-file install.sh dev/verification/common.sh` 在 `dev/verification-runs/20260907113104` 退出 0：57 项本地检查、9/9 Docker 场景、12/12 既有 TCP 探针成功，失败升级结果为 `status=rolled_back`、`rollback.result=success`。直接从本次容器读取的安装脚本 SHA-256 为 `6a06a7c91f085faffc5370f881952e0e5bdfd6c46b68176e69dd3064838c57ef`，与最终源码一致。
+
+Mixed 生命周期的真实 1.13.18/1.14.0 各完成 migration=1、instances=2、TCP=7、UDP=7、错误认证拒绝=1、失败候选保留旧服务=1；省略 `listen` 的旧配置在全局 `::` 默认下迁移后仍为 `127.0.0.1`。实际 Bash 4.2 通过直接执行 runtime 测试的 `--run` 分支复验两版核心，日志 `/tmp/sbv-mixed-lifecycle-bash42.aocZVs/`；不是只用旧 Bash 启动随后切回新 Bash 的外层 runner。这些是本机回环 TCP/UoT UDP payload 证据，不证明公网原生 UDP associate 或其他协议的 UDP 数据路径。
+
+父代理另外以最终源码独立复跑 UFW 0.36.2：`/tmp/instance_firewall_ufw_runtime.sh`，证据 `/tmp/instance_firewall_ufw_runtime.final-source.log`，退出 0 且含 `REAL_UFW_INSTANCE_FIREWALL_OK`。实际覆盖 IPv4/IPv6 等价地址、创建/删除/回滚、保留不同目标的预存规则，以及外部 comment 替换和 marker 前后缀伪造时拒绝误删。镜像为 `sing-box-vps-verify:ufw-20260907`，容器使用 `--rm --network none --cap-add NET_ADMIN --cap-add NET_RAW`，仓库只读挂载；没有操作宿主防火墙。firewalld 仍只有只读预检及 mock 证据，不宣称真实运行验证。全协议目标继续进行；未推送、部署、操作生产或执行 SubMan 同步。

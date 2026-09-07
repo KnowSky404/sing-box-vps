@@ -23,4 +23,10 @@ assert_decision remote uninstall.sh
 assert_decision remote utils/common.sh
 assert_decision remote configs/example.json
 assert_decision local tests/install_hy2_protocol_creates_state.sh
+assert_decision local tests/mixed_active_state.sh
+assert_decision local tests/mixed_instance_lifecycle.sh
+assert_decision local tests/mixed_instance_lifecycle_runtime.sh
+assert_decision local tests/mixed_structured_takeover.sh
+assert_decision local tests/instance_firewall_ledger.sh
+assert_decision local tests/mixed_instance_menu.sh
 assert_decision local docs/superpowers/specs/2026-04-22-remote-validation-workflow-design.md

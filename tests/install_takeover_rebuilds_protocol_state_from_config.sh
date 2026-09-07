@@ -46,6 +46,7 @@ write_multi_protocol_config() {
   "inbounds": [
     {
       "type": "mixed",
+      "listen": "::",
       "listen_port": 1080,
       "users": [
         {

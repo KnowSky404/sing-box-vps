@@ -53,7 +53,7 @@ done
 printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
 [[ "$(list_exportable_client_protocols)" == $'vless-reality\nmixed\nhy2\nanytls' ]]
 [[ "$(protocol_registry_field mixed client_export)" == true ]]
-[[ "$(protocol_registry_field mixed multi_instance)" == false ]]
+[[ "$(protocol_registry_field mixed multi_instance)" == true ]]
 [[ -z "$(protocol_registry_field mixed subman_type)" ]]
 
 # Unknown protocol and future schema must not disappear during reconciliation.

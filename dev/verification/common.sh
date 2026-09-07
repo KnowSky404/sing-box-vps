@@ -73,6 +73,12 @@ resolve_local_tests() {
       tests/structured_instance_store.sh \
       tests/managed_listener_resources.sh \
       tests/firewall_listener_references.sh \
+      tests/mixed_active_state.sh \
+      tests/mixed_instance_lifecycle.sh \
+      tests/mixed_instance_lifecycle_runtime.sh \
+      tests/mixed_structured_takeover.sh \
+      tests/instance_firewall_ledger.sh \
+      tests/mixed_instance_menu.sh \
       tests/managed_component_graph.sh \
       tests/managed_component_graph_core_startup.sh \
       tests/live_inbound_inventory_guards.sh \

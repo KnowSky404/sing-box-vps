@@ -479,6 +479,12 @@ grep -Fqx 'tests/protocol_instance_adapter.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/structured_instance_store.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/managed_listener_resources.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/firewall_listener_references.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/mixed_active_state.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/mixed_instance_lifecycle.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/mixed_instance_lifecycle_runtime.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/mixed_structured_takeover.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/instance_firewall_ledger.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/mixed_instance_menu.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_matrix.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_vless.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_hy2.sh|1' "${TMP_DIR}/local-tests.log"
@@ -516,8 +522,8 @@ grep -Fqx 'tests/subman_api_push.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_sync_orchestration.sh|1' "${TMP_DIR}/local-tests.log"
 
 default_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
-[[ "${default_local_test_count}" -eq 43 ]] || {
-  printf 'expected 43 local tests, got %d\n' "${default_local_test_count}" >&2; exit 1
+[[ "${default_local_test_count}" -eq 49 ]] || {
+  printf 'expected 49 local tests, got %d\n' "${default_local_test_count}" >&2; exit 1
 }
 
 # Test VERIFY_SKIP_LOCAL_TESTS=1 — still runs remote

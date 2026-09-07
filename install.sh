@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090707
+# Version: 2026090708
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090707"
+readonly SCRIPT_VERSION="2026090708"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -69,7 +69,7 @@ readonly SB_REALITY_SNI_FALLBACK="www.apple.com"
 # The legacy vless alias intentionally remains the REALITY preset.
 readonly SB_PROTOCOL_REGISTRY=(
   'vless-reality|vless+reality|vless-reality|vless|reality|inbound|vless|VLESS + REALITY|vless-in|1|true|vless|tcp|tcp,udp|1.13.0|true|none|vless|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"qos":{"upload_mbps":true,"download_mbps":true},"share_link":true,"qr":true,"client_export":true,"subman_sync":true}|vless,vless+reality|build_vless_inbound_json,build_vless_reality_route_rules_json,build_client_vless_reality_outbounds,save_vless_reality_state,prompt_vless_reality_install,prompt_vless_reality_update'
-  'mixed|mixed|mixed|mixed|plain|inbound|mixed|Mixed (HTTP/HTTPS/SOCKS)|mixed-in|2|true||tcp|tcp,udp|1.13.0|false|none|http,socks5|tcp_loopback|{"http":true,"socks5":true,"authentication":true,"share_links":["http","socks5"],"qr":false,"client_export":true,"subman_sync":false}||build_mixed_inbound_json,save_mixed_state,prompt_mixed_install,prompt_mixed_update,build_client_mixed_outbound'
+  'mixed|mixed|mixed|mixed|plain|inbound|mixed|Mixed (HTTP/HTTPS/SOCKS)|mixed-in|2|true||tcp|tcp,udp|1.13.0|true|none|http,socks5|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"http":true,"socks5":true,"authentication":true,"share_links":["http","socks5"],"qr":false,"client_export":true,"subman_sync":false}||build_mixed_inbound_json,save_mixed_state,prompt_mixed_install,prompt_mixed_update,build_client_mixed_outbounds,load_mixed_structured_instance,apply_mixed_instance_change'
   'hy2|hy2|hysteria2|hysteria2|tls|inbound|hysteria2|Hysteria2|hy2-in|3|true|hysteria2|udp|tcp,udp|1.13.0|false|optional|hysteria2|tcp_loopback|{"tls_modes":["acme_http01","acme_cloudflare_dns01","manual"],"bandwidth":true,"obfs":true,"share_link":true,"qr":true,"client_export":true,"subman_sync":true}|hysteria2|build_hy2_inbound_json,build_hy2_certificate_provider_json,build_client_hy2_outbound,save_hy2_state,prompt_hy2_install,prompt_hy2_update'
   'anytls|anytls|anytls|anytls|tls|inbound|anytls|AnyTLS|anytls-in|4|true||tcp|tcp,udp|1.13.0|false|optional||tcp_loopback|{"tls_modes":["acme_http01","acme_cloudflare_dns01","manual"],"standard_share_uri":false,"outbound_example":true,"qr":false,"client_export":true,"subman_sync":false}||build_anytls_inbound_json,build_anytls_certificate_provider_json,build_client_anytls_outbound,save_anytls_state,prompt_anytls_install,prompt_anytls_update'
 )
@@ -98,6 +98,10 @@ SB_SNI="${SB_REALITY_SNI_FALLBACK}"
 SB_MIXED_AUTH_ENABLED="y"
 SB_MIXED_USERNAME=""
 SB_MIXED_PASSWORD=""
+SB_MIXED_INSTANCE_ID=""
+SB_MIXED_INBOUND_TAG=""
+SB_MIXED_LISTEN_ADDRESS=""
+SB_MIXED_STORE_REVISION="0"
 SB_HY2_DOMAIN=""
 SB_HY2_PASSWORD=""
 SB_HY2_USER_NAME=""
@@ -1847,15 +1851,16 @@ validate_vless_reality_instance_tags() {
 
 vless_reality_outbound_policy_from_config() {
   local inbound_tag=$1
+  local config_file=${2:-${SINGBOX_CONFIG_FILE}}
   local route_count outbound
 
-  route_count=$(jq -r --arg tag "${inbound_tag}" '[.route.rules[]? | select(.inbound == $tag and .action == "route")] | length' "${SINGBOX_CONFIG_FILE}") || return 1
+  route_count=$(jq -r --arg tag "${inbound_tag}" '[.route.rules[]? | select(.inbound == $tag and .action == "route")] | length' "${config_file}") || return 1
   if [[ "${route_count}" == "0" ]]; then
     printf 'default'
     return 0
   fi
   [[ "${route_count}" == "1" ]] || return 1
-  outbound=$(jq -r --arg tag "${inbound_tag}" 'first(.route.rules[]? | select(.inbound == $tag and .action == "route") | .outbound) // ""' "${SINGBOX_CONFIG_FILE}") || return 1
+  outbound=$(jq -r --arg tag "${inbound_tag}" 'first(.route.rules[]? | select(.inbound == $tag and .action == "route") | .outbound) // ""' "${config_file}") || return 1
   case "${outbound}" in
     direct) printf 'direct' ;;
     warp|warp-ep) printf 'warp' ;;
@@ -2015,11 +2020,20 @@ protocol_state_exists() {
 validate_protocol_state_schema() {
   local protocol=$1 state_file=$2 schema
   [[ -f "${state_file}" ]] || return 0
-  schema=$(sed -n 's/^CONFIG_SCHEMA_VERSION=//p' "${state_file}") || return 1
+  if [[ "${protocol}" == "mixed" ]]; then
+    if grep -Eq "^[[:space:]]*CONFIG_SCHEMA_VERSION=(2|\"2\"|'2')[[:space:]]*$" "${state_file}"; then
+      mixed_structured_marker_is_valid "${state_file}" || {
+        printf '[ERROR] Mixed schema 2 marker 格式无效；已保留文件，拒绝执行其内容。\n' >&2
+        return 1
+      }
+      return 0
+    fi
+  fi
+  schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}") || return 1
   schema=${schema//\"/}
   schema=${schema//\'/}
   case "${protocol}:${schema:-1}" in
-    vless-reality:1|vless-reality:2|mixed:1|hy2:1|anytls:1) return 0 ;;
+    vless-reality:1|vless-reality:2|mixed:1|mixed:2|hy2:1|anytls:1) return 0 ;;
   esac
   printf '[ERROR] 协议状态格式无法识别；已保留文件，请使用写入该状态的脚本版本恢复。\n' >&2
   return 1
@@ -2144,8 +2158,69 @@ save_vless_reality_state() {
 }
 
 save_mixed_state() {
-  local state_file
+  local state_file store_file instance_id current_revision record_file candidate_file state_schema
   state_file=$(protocol_state_file "mixed")
+
+  state_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" 2>/dev/null | head -n1 || true)
+  state_schema=${state_schema//\"/}
+  state_schema=${state_schema//\'/}
+  if [[ "${state_schema}" == "2" ]]; then
+    mixed_structured_state_active || {
+      printf '[ERROR] Mixed 结构化状态无效，未写入状态文件。\n' >&2
+      return 1
+    }
+    store_file=$(mixed_structured_store_file) || return 1
+    instance_id=${SB_MIXED_INSTANCE_ID:-${SB_INSTANCE_ID:-}}
+    if [[ -z "${instance_id}" ]]; then
+      instance_id=$(jq -r '.default_instance_id' "${store_file}") || return 1
+    fi
+    structured_instance_store_validate_id "${instance_id}" || return 1
+    current_revision=$(structured_instance_store_revision "${store_file}") || return 1
+    record_file=$(mktemp) || return 1
+    candidate_file=$(mktemp) || {
+      rm -f -- "${record_file}"
+      return 1
+    }
+    if ! jq -c --arg id "${instance_id}" \
+        --arg name "${SB_NODE_NAME:-}" \
+        --arg port "${SB_PORT:-}" \
+        --arg auth_enabled "${SB_MIXED_AUTH_ENABLED:-}" \
+        --arg username "${SB_MIXED_USERNAME:-}" \
+        --arg password "${SB_MIXED_PASSWORD:-}" \
+        --arg outbound_policy "${SB_OUTBOUND_POLICY:-default}" \
+        'first(.instances[] | select(.id == $id) |
+          .name = $name |
+          .listen.port = ($port | tonumber) |
+          .authentication = {
+            enabled: ($auth_enabled == "y"),
+            username: (if $auth_enabled == "y" then $username else "" end),
+            password: (if $auth_enabled == "y" then $password else "" end)
+          } |
+          .outbound_policy = $outbound_policy)' "${store_file}" > "${record_file}"; then
+      rm -f -- "${record_file}" "${candidate_file}"
+      return 1
+    fi
+    if [[ ! -s "${record_file}" ]] ||
+       ! structured_instance_store_validate_instance_argument "${record_file}"; then
+      rm -f -- "${record_file}" "${candidate_file}"
+      printf '[ERROR] Mixed 结构化实例记录无效，未写入状态文件。\n' >&2
+      return 1
+    fi
+    if ! structured_instance_store_candidate mixed "${store_file}" replace \
+        "${record_file}" "${current_revision}" > "${candidate_file}" ||
+       ! publish_structured_instance_store mixed "${candidate_file}" "${current_revision}"; then
+      rm -f -- "${record_file}" "${candidate_file}"
+      return 1
+    fi
+    rm -f -- "${record_file}" "${candidate_file}"
+    load_mixed_structured_instance "${instance_id}" || return 1
+    return 0
+  fi
+
+  if [[ -e "$(mixed_structured_store_file)" ]]; then
+    printf '[ERROR] 已有 Mixed 结构化状态或 revision 记录；请使用实例管理入口，未覆盖为 legacy 状态。\n' >&2
+    return 1
+  fi
 
   {
     write_env_assignment "INSTALLED" "1"
@@ -2963,6 +3038,7 @@ prompt_protocol_install_selection() {
   local installed_protocols=() selected_protocols=()
   local choice raw_choice protocol index installed_list
   local menu_indices=() raw_choices=()
+  local mixed_tombstone=n
 
   SELECTED_PROTOCOLS_CSV=""
 
@@ -2970,6 +3046,12 @@ prompt_protocol_install_selection() {
     installed_list=$(list_installed_protocols) || return 1
     if [[ -n "${installed_list}" ]]; then
       mapfile -t installed_protocols <<< "${installed_list}"
+    fi
+    if mixed_inactive_store_snapshot >/dev/null 2>&1; then
+      mixed_tombstone=y
+      if ! protocol_array_contains mixed "${installed_protocols[@]}"; then
+        installed_protocols+=(mixed)
+      fi
     fi
   fi
   while IFS= read -r protocol; do
@@ -2992,6 +3074,8 @@ prompt_protocol_install_selection() {
     if protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
       if [[ "${install_mode}" == "additional" && "${protocol}" == "vless-reality" ]]; then
         echo "${index}. 新增 VLESS + REALITY 节点"
+      elif [[ "${install_mode}" == "additional" && "${protocol}" == "mixed" && "${mixed_tombstone}" == y ]]; then
+        echo "${index}. 新增 Mixed 实例"
       fi
       continue
     fi
@@ -3006,7 +3090,8 @@ prompt_protocol_install_selection() {
     for index in "${menu_indices[@]}"; do
       protocol=$(protocol_option_to_id "${index}") || continue
       if protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
-        if [[ "${install_mode}" == "additional" && "${protocol}" == "vless-reality" ]]; then
+        if [[ "${install_mode}" == "additional" &&
+              ("${protocol}" == "vless-reality" || "${protocol}" == "mixed") ]]; then
           selected_protocols+=("${protocol}")
         fi
         continue
@@ -3031,7 +3116,8 @@ prompt_protocol_install_selection() {
     }
 
     if protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
-      if [[ "${install_mode}" == "additional" && "${protocol}" == "vless-reality" ]]; then
+      if [[ "${install_mode}" == "additional" &&
+            ("${protocol}" == "vless-reality" || "${protocol}" == "mixed") ]]; then
         if ! protocol_array_contains "${protocol}" "${selected_protocols[@]}"; then
           selected_protocols+=("${protocol}")
         fi
@@ -3344,6 +3430,353 @@ prompt_global_instance_options() {
   fi
 }
 
+# Interactive Mixed management deliberately captures one validated store
+# snapshot before prompting.  The revision from that snapshot is passed to
+# the lifecycle CAS operation after the user finishes, so a long prompt can
+# never accidentally overwrite a concurrent change.
+mixed_management_capture_snapshot() {
+  local destination=${1:-} store_file
+  [[ -n "${destination}" && ! -L "${destination}" ]] || return 1
+  if mixed_structured_state_active >/dev/null 2>&1; then
+    store_file=$(mixed_structured_store_file) || return 1
+    structured_instance_store_snapshot_json mixed "${store_file}" > "${destination}" || return 1
+  elif protocol_state_exists mixed; then
+    # Legacy schema 1 is read as a virtual revision-zero store.  It is only
+    # activated by an explicit migrate/create/replace operation.
+    mixed_config_store_candidate | jq -c '.revision=0' > "${destination}" || return 1
+  elif [[ -e "$(mixed_structured_store_file)" ]]; then
+    # Preserve the monotonic revision of a deleted-last-instance tombstone.
+    mixed_inactive_store_snapshot > "${destination}" || return 1
+  else
+    [[ -f "${SINGBOX_CONFIG_FILE}" ]] || return 1
+    validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" || return 1
+    jq -e 'all(.inbounds[]?; .type != "mixed")' "${SINGBOX_CONFIG_FILE}" >/dev/null || return 1
+    structured_instance_store_empty_json > "${destination}" || return 1
+  fi
+  validate_structured_instance_store mixed "${destination}"
+}
+
+mixed_management_prompt_target() {
+  local snapshot=${1:-} prompt=${2:-请选择实例} choice id index
+  [[ -f "${snapshot}" && ! -L "${snapshot}" ]] || return 1
+  jq -e '.instances | length > 0' "${snapshot}" >/dev/null 2>&1 || return 1
+  echo "当前 Mixed 实例:" >&2
+  jq -r '.instances[] | "- \(.id): \(.name) (\(.listen.address):\(.listen.port))"' "${snapshot}" >&2 || return 1
+  read -rp "${prompt}（可输入实例 ID，留空使用默认）: " choice || return 1
+  choice=$(trim_whitespace "${choice}")
+  if [[ -z "${choice}" ]]; then
+    id=$(jq -r '.default_instance_id' "${snapshot}") || return 1
+  elif jq -e --arg id "${choice}" 'any(.instances[]; .id == $id)' "${snapshot}" >/dev/null 2>&1; then
+    id=${choice}
+  elif [[ "${choice}" =~ ^[1-9][0-9]{0,2}$ ]]; then
+    index=$((choice - 1))
+    [[ "${index}" -lt "$(jq '.instances | length' "${snapshot}")" ]] || return 1
+    id=$(jq -r --argjson index "${index}" '.instances[$index].id // empty' "${snapshot}") || return 1
+  else
+    log_warn "未找到 Mixed 实例 ID: ${choice}" >&2
+    return 1
+  fi
+  structured_instance_store_validate_id "${id}" || return 1
+  printf '%s' "${id}"
+}
+
+mixed_management_next_id() {
+  local snapshot=${1:-} candidate=1
+  while jq -e --arg id "mixed-${candidate}" 'any(.instances[]; .id == $id)' "${snapshot}" >/dev/null 2>&1; do
+    candidate=$((candidate + 1))
+  done
+  printf 'mixed-%s' "${candidate}"
+}
+
+mixed_management_next_tag() {
+  local snapshot=${1:-} candidate=mixed-in suffix=2
+  while jq -e --arg tag "${candidate}" 'any(.instances[]; .tag == $tag)' "${snapshot}" >/dev/null 2>&1; do
+    candidate="mixed-in-${suffix}"
+    suffix=$((suffix + 1))
+  done
+  printf '%s' "${candidate}"
+}
+
+mixed_management_prompt_public_consent() {
+  local address=${1:-}
+  case "${address}" in
+    127.*|::1) printf 'n'; return 0 ;;
+  esac
+  prompt_yes_no "该 Mixed 入口将以明文暴露在非回环地址 ${address}；确认继续并承担公网暴露风险 [y/N]: " n
+}
+
+mixed_management_build_record() {
+  local snapshot=${1:-} operation=${2:-create} target=${3:-} destination=${4:-}
+  local id name tag address port auth username password policy answer
+  local name_changed=n address_changed=n port_changed=n username_changed=n password_changed=n
+  local auth_changed=n policy_changed=n
+  [[ -f "${snapshot}" && ! -L "${snapshot}" && -n "${destination}" ]] || return 1
+  MIXED_MANAGEMENT_ALLOW_PUBLIC=n
+
+  if [[ "${operation}" == replace ]]; then
+    jq -e --arg id "${target}" 'any(.instances[]; .id == $id)' "${snapshot}" >/dev/null 2>&1 || return 1
+    id=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .id' "${snapshot}") || return 1
+    name=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .name' "${snapshot}") || return 1
+    tag=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .tag' "${snapshot}") || return 1
+    address=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .listen.address' "${snapshot}") || return 1
+    port=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .listen.port' "${snapshot}") || return 1
+    auth=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | if .authentication.enabled then "y" else "n" end' "${snapshot}") || return 1
+    username=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .authentication.username' "${snapshot}") || return 1
+    password=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .authentication.password' "${snapshot}") || return 1
+    policy=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .outbound_policy' "${snapshot}") || return 1
+  else
+    id=$(mixed_management_next_id "${snapshot}") || return 1
+    name="Mixed ${id}"
+    tag=$(mixed_management_next_tag "${snapshot}") || return 1
+    address="127.0.0.1"
+    port="1080"
+    auth="y"
+    username=""
+    password=""
+    policy="default"
+  fi
+
+  read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1
+  if [[ -n "${answer}" ]]; then name=$(trim_whitespace "${answer}"); name_changed=y; fi
+  if [[ "${operation}" == create ]]; then
+    read -rp "实例 ID（默认 ${id}）: " answer || return 1
+    [[ -z "${answer}" ]] || id=$(trim_whitespace "${answer}")
+    structured_instance_store_validate_id "${id}" || { log_warn "实例 ID 格式无效。" >&2; return 1; }
+    read -rp "入口 tag（默认 ${tag}）: " answer || return 1
+    [[ -z "${answer}" ]] || tag=$(trim_whitespace "${answer}")
+  fi
+  read -rp "监听地址（默认 ${address}）: " answer || return 1
+  if [[ -n "${answer}" ]]; then address=$(trim_whitespace "${answer}"); address_changed=y; fi
+  structured_instance_store_validate_address "${address}" || { log_warn "监听地址格式无效。" >&2; return 1; }
+  port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
+  [[ "${operation}" == create || "${port}" != "$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .listen.port' "${snapshot}")" ]] && port_changed=y
+  auth=$(prompt_yes_no "是否启用用户名密码认证 [y/n]（当前: ${auth}，默认 y）: " "${auth}") || return 1
+  [[ "${operation}" == create || "${auth}" != "$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | if .authentication.enabled then "y" else "n" end' "${snapshot}")" ]] && auth_changed=y
+  if [[ "${auth}" == y ]]; then
+    read -rp "用户名（留空保持/自动生成）: " answer || return 1
+    if [[ -n "${answer}" ]]; then username=$(trim_whitespace "${answer}"); username_changed=y; fi
+    read -rsp "密码（留空保持/自动生成）: " answer || return 1
+    printf '\n' >&2
+    if [[ -n "${answer}" ]]; then password=${answer}; password_changed=y; fi
+    SB_MIXED_AUTH_ENABLED=y
+    SB_MIXED_USERNAME=${username}
+    SB_MIXED_PASSWORD=${password}
+    ensure_mixed_auth_credentials || return 1
+    username=${SB_MIXED_USERNAME}
+    password=${SB_MIXED_PASSWORD}
+  else
+    username=""
+    password=""
+  fi
+  policy=$(prompt_instance_outbound_policy "出站策略" "${policy}") || return 1
+  [[ "${operation}" == create || "${policy}" != "$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .outbound_policy' "${snapshot}")" ]] && policy_changed=y
+  answer=$(mixed_management_prompt_public_consent "${address}") || return 1
+  if [[ "${address}" != 127.* && "${address}" != ::1 && "${answer}" != y ]]; then
+    log_info "未确认公网明文暴露，已取消 Mixed 实例变更。"
+    return 2
+  fi
+  MIXED_MANAGEMENT_ALLOW_PUBLIC=${answer}
+  if [[ "${operation}" == replace ]]; then
+    jq -cS --arg id "${id}" --arg name "${name}" --arg address "${address}" --argjson port "${port}" \
+      --argjson enabled "$([[ "${auth}" == y ]] && printf true || printf false)" \
+      --arg username "${username}" --arg password "${password}" --arg policy "${policy}" \
+      --argjson name_changed "$([[ "${name_changed}" == y ]] && printf true || printf false)" \
+      --argjson address_changed "$([[ "${address_changed}" == y ]] && printf true || printf false)" \
+      --argjson port_changed "$([[ "${port_changed}" == y ]] && printf true || printf false)" \
+      --argjson auth_changed "$([[ "${auth_changed}" == y ]] && printf true || printf false)" \
+      --argjson username_changed "$([[ "${username_changed}" == y ]] && printf true || printf false)" \
+      --argjson password_changed "$([[ "${password_changed}" == y ]] && printf true || printf false)" \
+      --argjson policy_changed "$([[ "${policy_changed}" == y ]] && printf true || printf false)" \
+      'first(.instances[] | select(.id == $id) | .name = if $name_changed then $name else .name end |
+        .listen.address = if $address_changed then $address else .listen.address end |
+        .listen.port = if $port_changed then $port else .listen.port end |
+        .authentication = if $auth_changed and ($enabled | not) then {enabled:false,username:"",password:""}
+          elif $auth_changed or $username_changed or $password_changed then
+            {enabled:true,username:(if $username_changed then $username else .authentication.username end),password:(if $password_changed then $password else .authentication.password end)}
+          else .authentication end |
+        .outbound_policy = if $policy_changed then $policy else .outbound_policy end)' "${snapshot}" > "${destination}" || return 1
+  else
+    jq -n -cS --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
+      --arg address "${address}" --argjson port "${port}" --argjson enabled "$([[ "${auth}" == y ]] && printf true || printf false)" \
+      --arg username "${username}" --arg password "${password}" --arg policy "${policy}" \
+      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$enabled,username:$username,password:$password},outbound_policy:$policy,dependencies:[]}' > "${destination}" || return 1
+  fi
+  structured_instance_store_validate_instance_argument "${destination}"
+}
+
+mixed_instance_replace_interactive() (
+  local snapshot_dir snapshot revision target record_file result status allow_public=n
+  umask 077
+  snapshot_dir=$(mktemp -d) || return 1
+  trap 'rm -rf -- "${snapshot_dir}"' EXIT
+  mixed_management_capture_snapshot "${snapshot_dir}/before.json" || {
+    log_error "Mixed 状态无法安全读取，已取消修改。"
+    return 1
+  }
+  target=$(mixed_management_prompt_target "${snapshot_dir}/before.json" "请选择要修改的 Mixed 实例") || return 0
+  revision=$(jq -r '.revision' "${snapshot_dir}/before.json") || return 1
+  record_file="${snapshot_dir}/record.json"
+  mixed_management_build_record "${snapshot_dir}/before.json" replace "${target}" "${record_file}" || return $?
+  allow_public=${MIXED_MANAGEMENT_ALLOW_PUBLIC:-n}
+  result=$(apply_mixed_instance_change replace "${revision}" "${record_file}" "${allow_public}") || {
+    status=$?
+    [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2
+    return "${status}"
+  }
+  [[ -n "${result}" ]] && printf '%s\n' "${result}"
+)
+
+mixed_instance_create_interactive() (
+  local temp_dir revision result status allow_public=n
+  umask 077
+  temp_dir=$(mktemp -d) || return 1
+  trap 'rm -rf -- "${temp_dir}"' EXIT
+  mixed_management_capture_snapshot "${temp_dir}/before.json" || {
+    log_error "Mixed 状态无法安全读取，已取消创建。"
+    return 1
+  }
+  revision=$(jq -r '.revision' "${temp_dir}/before.json") || return 1
+  mixed_management_build_record "${temp_dir}/before.json" create "" "${temp_dir}/record.json" || return $?
+  allow_public=${MIXED_MANAGEMENT_ALLOW_PUBLIC:-n}
+  result=$(apply_mixed_instance_change create "${revision}" "${temp_dir}/record.json" "${allow_public}") || {
+    status=$?
+    [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2
+    return "${status}"
+  }
+  [[ -n "${result}" ]] && printf '%s\n' "${result}"
+)
+
+mixed_management_pending_revision() {
+  local transaction_file="${SB_PROJECT_DIR}.instance-write.lock/transaction.json"
+  [[ -f "${transaction_file}" && ! -L "${transaction_file}" ]] || return 1
+  jq -e '
+    .schema_version == 1 and
+    (.expected_revision | type == "string" and test("^(0|[1-9][0-9]{0,15})$"))
+  ' "${transaction_file}" >/dev/null 2>&1 || return 1
+  jq -er '.expected_revision' "${transaction_file}" 2>/dev/null
+}
+
+mixed_management_confirm() {
+  prompt_yes_no "$1 [y/N]: " n
+}
+
+mixed_instance_management_menu() (
+  local requested_operation=${1:-} temp_dir choice snapshot revision target record_file result status one_shot=n last_instance=n
+  umask 077
+  case "${requested_operation}" in
+    "") ;;
+    delete) one_shot=y ;;
+    *) log_warn "不支持的 Mixed 管理操作: ${requested_operation}" >&2; return 1 ;;
+  esac
+  temp_dir=$(mktemp -d) || return 1
+  trap 'rm -rf -- "${temp_dir}"' EXIT
+  while true; do
+    # Recovery is intentionally offered before reading live config/store: an
+    # interrupted transaction may leave those files at an untrusted phase.
+    if [[ -d "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
+      if revision=$(mixed_management_pending_revision); then
+        echo "检测到未完成的 Mixed 实例事务（revision ${revision}）。" >&2
+        choice=$(prompt_choice "仅可恢复该事务；恢复 [1]，返回 [0]: " 0 1 0) || return 1
+        [[ "${choice}" == 1 ]] || return 0
+        [[ "$(mixed_management_confirm "确认执行事务恢复")" == y ]] || return 0
+        result=$(recover_mixed_instance_transaction "${revision}") || {
+          status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; return "${status}"
+        }
+        [[ -n "${result}" ]] && printf '%s\n' "${result}"
+        return 0
+      fi
+      log_error "发现无法验证的 Mixed 实例事务日志；保留现场，未执行任何变更。"
+      return 1
+    fi
+    if [[ "${one_shot}" == y ]]; then
+      choice=3
+    else
+      echo -e "\n${BLUE}--- Mixed 实例管理 ---${NC}"
+      echo "1. 创建实例"
+      echo "2. 修改实例"
+      echo "3. 删除实例"
+      echo "4. 设置默认实例"
+      echo "5. 迁移 legacy schema 1"
+      echo "6. 恢复未完成事务"
+      echo "7. 列出实例（含 ID）"
+      echo "0. 返回"
+      choice=$(prompt_choice "请选择 [0-7]: " 0 7 "") || return 1
+    fi
+    if [[ "${choice}" == 0 ]]; then return 0; fi
+    if [[ "${choice}" == 6 ]]; then
+      if revision=$(mixed_management_pending_revision); then
+        [[ "$(mixed_management_confirm "确认执行事务恢复")" == y ]] || continue
+        result=$(recover_mixed_instance_transaction "${revision}") || {
+          status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; continue
+        }
+        [[ -n "${result}" ]] && printf '%s\n' "${result}"
+      else
+        log_warn "当前没有可验证的待恢复事务。"
+      fi
+      continue
+    fi
+    if ! mixed_management_capture_snapshot "${temp_dir}/before.json"; then
+      log_error "Mixed 状态缺失或格式不可信；未执行任何变更。"
+      return 1
+    fi
+    snapshot="${temp_dir}/before.json"
+    revision=$(jq -r '.revision' "${snapshot}") || return 1
+    case "${choice}" in
+      1)
+        record_file="${temp_dir}/record.json"
+        mixed_management_build_record "${snapshot}" create "" "${record_file}" || continue
+        result=$(apply_mixed_instance_change create "${revision}" "${record_file}" "${MIXED_MANAGEMENT_ALLOW_PUBLIC:-n}") || {
+          status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; continue;
+        }
+        [[ -n "${result}" ]] && printf '%s\n' "${result}"
+        ;;
+      2)
+        target=$(mixed_management_prompt_target "${snapshot}" "请选择要修改的 Mixed 实例") || continue
+        record_file="${temp_dir}/record.json"
+        mixed_management_build_record "${snapshot}" replace "${target}" "${record_file}" || continue
+        result=$(apply_mixed_instance_change replace "${revision}" "${record_file}" "${MIXED_MANAGEMENT_ALLOW_PUBLIC:-n}") || {
+          status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; continue;
+        }
+        [[ -n "${result}" ]] && printf '%s\n' "${result}"
+        ;;
+      3|4)
+        last_instance=n
+        [[ "${choice}" == 3 ]] && [[ "$(jq -r '.instances | length' "${snapshot}")" == 1 ]] && last_instance=y
+        target=$(mixed_management_prompt_target "${snapshot}" "请选择实例") || {
+          [[ "${one_shot}" == y ]] && return 0
+          continue
+        }
+        if [[ "$(mixed_management_confirm "$([[ "${choice}" == 3 ]] && printf '确认删除实例 %s' || printf '确认将 %s 设为默认实例' "${target}")")" != y ]]; then
+          [[ "${one_shot}" == y ]] && return 0
+          continue
+        fi
+        result=$(apply_mixed_instance_change "$([[ "${choice}" == 3 ]] && printf delete || printf default)" "${revision}" "${target}" n) || {
+          status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; continue;
+        }
+        [[ -n "${result}" ]] && printf '%s\n' "${result}"
+        [[ "${one_shot}" == y || "${last_instance}" == y ]] && return 0
+        ;;
+      5)
+        [[ "$(mixed_management_confirm "确认迁移 Mixed legacy schema 1")" == y ]] || continue
+        result=$(apply_mixed_instance_change migrate "${revision}" "" n) || {
+          status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; continue;
+        }
+        [[ -n "${result}" ]] && printf '%s\n' "${result}"
+        ;;
+      6)
+        result=$(recover_mixed_instance_transaction "${revision}") || {
+          status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; continue;
+        }
+        [[ -n "${result}" ]] && printf '%s\n' "${result}"
+        ;;
+      7)
+        jq -r '.instances[] | "\(.id)\t\(.name)\t\(.listen.address):\(.listen.port)\tauth=\(.authentication.enabled)\tpolicy=\(.outbound_policy)"' "${snapshot}"
+        ;;
+      0) return 0 ;;
+    esac
+  done
+)
+
 install_protocols_interactive() {
   local install_mode=$1
   local installed_protocols=() selected_protocols=()
@@ -3357,15 +3790,26 @@ install_protocols_interactive() {
     prompt_singbox_version
     prompt_protocol_install_selection "fresh" || return 0
     IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
-    snapshot_dir=$(create_managed_state_snapshot) || log_error "无法创建配置状态事务快照。"
+    if protocol_array_contains mixed "${selected_protocols[@]}" && mixed_inactive_store_snapshot >/dev/null 2>&1; then
+      log_warn "Mixed 已保留 revision；请通过主菜单 17 创建 Mixed 实例，或本次仅选择其他协议。"
+      return 1
+    fi
+    snapshot_dir=$(create_managed_state_snapshot) || {
+      log_error "无法创建配置状态事务快照。"
+      return 1
+    }
 
     for protocol in "${selected_protocols[@]}"; do
-      prompt_protocol_install_fields "${protocol}"
-      save_protocol_state "${protocol}"
+      if ! prompt_protocol_install_fields "${protocol}" || ! save_protocol_state "${protocol}"; then
+        abort_managed_state_transaction "${snapshot_dir}" "协议 ${protocol} 配置或状态保存失败"
+        return 1
+      fi
     done
 
-    prompt_global_instance_options
-    write_protocol_index "${SELECTED_PROTOCOLS_CSV}"
+    if ! prompt_global_instance_options || ! write_protocol_index "${SELECTED_PROTOCOLS_CSV}"; then
+      abort_managed_state_transaction "${snapshot_dir}" "全局选项或协议索引保存失败"
+      return 1
+    fi
     install_dependencies
     get_latest_version
     install_binary
@@ -3376,23 +3820,52 @@ install_protocols_interactive() {
     if [[ -n "${installed_protocol_list}" ]]; then
       mapfile -t installed_protocols <<< "${installed_protocol_list}"
     fi
+    if mixed_inactive_store_snapshot >/dev/null 2>&1 &&
+       ! protocol_array_contains mixed "${installed_protocols[@]}"; then
+      installed_protocols+=(mixed)
+    fi
     prompt_protocol_install_selection "additional" || return 0
     IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
-    snapshot_dir=$(create_managed_state_snapshot) || log_error "无法创建配置状态事务快照。"
+
+    # An already-installed Mixed protocol must enter the instance lifecycle
+    # before the old transaction takes a snapshot.  Mixed combined with a
+    # different protocol is rejected here because the legacy save path cannot
+    # safely publish a JSON inventory in the same transaction.
+    if protocol_array_contains "mixed" "${installed_protocols[@]}" &&
+       protocol_array_contains "mixed" "${selected_protocols[@]}"; then
+      if [[ ${#selected_protocols[@]} -eq 1 ]]; then
+        mixed_instance_create_interactive || return $?
+        return 0
+      fi
+      log_warn "Mixed 实例不能与其他新增协议合并操作；请先单独管理 Mixed 实例。"
+      return 0
+    fi
+    snapshot_dir=$(create_managed_state_snapshot) || {
+      log_error "无法创建配置状态事务快照。"
+      return 1
+    }
 
     for protocol in "${selected_protocols[@]}"; do
       if [[ "${protocol}" == "vless-reality" ]] && protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
-        prompt_vless_reality_instance_create
+        if ! prompt_vless_reality_instance_create; then
+          abort_managed_state_transaction "${snapshot_dir}" "REALITY 实例配置失败"
+          return 1
+        fi
       else
-        prompt_protocol_install_fields "${protocol}"
-        save_protocol_state "${protocol}"
+        if ! prompt_protocol_install_fields "${protocol}" || ! save_protocol_state "${protocol}"; then
+          abort_managed_state_transaction "${snapshot_dir}" "协议 ${protocol} 配置或状态保存失败"
+          return 1
+        fi
       fi
       if ! protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
         installed_protocols+=("${protocol}")
       fi
     done
 
-    write_protocol_index "$(IFS=,; printf '%s' "${installed_protocols[*]}")"
+    if ! write_protocol_index "$(IFS=,; printf '%s' "${installed_protocols[*]}")"; then
+      abort_managed_state_transaction "${snapshot_dir}" "协议索引保存失败"
+      return 1
+    fi
   fi
 
   if ! save_warp_route_settings || ! generate_config; then
@@ -5939,6 +6412,732 @@ close_firewall_port() {
   log_info "端口 ${port} 防火墙规则清理尝试完成。"
 }
 
+# Instance firewall transactions deliberately use a separate ownership ledger
+# from the legacy coarse port helpers above.  These functions are a narrow
+# transaction primitive for callers which already have a committed old/new
+# listener plan.  They never infer ownership from a port alone: a rule is
+# either positively observed before it is recorded, or it is created by this
+# transaction with a deterministic marker.
+readonly INSTANCE_FIREWALL_SCHEMA_VERSION="1"
+readonly INSTANCE_FIREWALL_LEDGER_FILE="${SB_PROJECT_DIR}/managed-firewall.json"
+
+instance_firewall_journal_path_valid() {
+  local journal_file=${1:-} journal_dir
+  [[ -n "${journal_file}" && "${journal_file}" != */ && "${journal_file}" != "${SB_PROJECT_DIR}"/* ]] || return 1
+  [[ "${journal_file}" != *$'\n'* && "${journal_file}" != *$'\r'* ]] || return 1
+  journal_dir=$(dirname -- "${journal_file}") || return 1
+  [[ -d "${journal_dir}" && ! -L "${journal_dir}" ]] || return 1
+  [[ ! -e "${journal_file}" || ! -L "${journal_file}" ]] || return 1
+}
+
+instance_firewall_write_json_atomic() {
+  local destination=$1 payload=$2 destination_dir candidate
+  destination_dir=$(dirname -- "${destination}") || return 1
+  [[ -d "${destination_dir}" && ! -L "${destination_dir}" ]] || return 1
+  [[ ! -e "${destination}" || ! -L "${destination}" ]] || return 1
+  jq -e . >/dev/null 2>&1 <<< "${payload}" || return 1
+  candidate=$(mktemp "${destination_dir}/.$(basename -- "${destination}").candidate.XXXXXX") || return 1
+  if ! printf '%s\n' "${payload}" > "${candidate}" ||
+     ! chmod 600 "${candidate}" ||
+     ! mv -f -- "${candidate}" "${destination}"; then
+    rm -f -- "${candidate}"
+    return 1
+  fi
+}
+
+instance_firewall_empty_ledger() {
+  printf '{"schema_version":%s,"rules":[]}\n' "${INSTANCE_FIREWALL_SCHEMA_VERSION}"
+}
+
+instance_firewall_ledger_validate() {
+  jq -ce --argjson version "${INSTANCE_FIREWALL_SCHEMA_VERSION}" '
+    def clean_string:
+      type == "string" and length > 0 and (test("[\u0000-\u001f\u007f]") | not);
+    def ref_valid:
+      type == "object" and
+      (.owner | clean_string) and
+      (.protocol | clean_string) and
+      (.address | clean_string) and
+      (.transport | type == "string" and test("^(tcp|udp)$")) and
+      (.port | type == "number" and . == floor and . >= 1 and . <= 65535);
+    def rule_valid:
+      type == "object" and
+      (.backend | type == "string" and test("^(ufw|firewalld|iptables|ip6tables)$")) and
+      (.family | type == "string" and test("^(any|ipv4|ipv6)$")) and
+      (.address | clean_string) and
+      (.transport | type == "string" and test("^(tcp|udp)$")) and
+      (.port | type == "number" and . == floor and . >= 1 and . <= 65535) and
+      (.comment | clean_string) and
+      (.refs | type == "array" and length <= 4096 and all(.[]; ref_valid));
+    def ledger_valid:
+      type == "object" and .schema_version == $version and
+      (.rules | type == "array" and length <= 4096 and all(.[]; rule_valid)) and
+      (([.rules[] | [.backend,.family,.address,.transport,.port] | @json] | unique | length) == (.rules | length));
+    select(type == "object" and ledger_valid)
+  '
+}
+
+instance_firewall_read_ledger() {
+  local ledger_file=${INSTANCE_FIREWALL_LEDGER_FILE}
+  if [[ ! -e "${ledger_file}" ]]; then
+    instance_firewall_empty_ledger
+    return 0
+  fi
+  [[ -f "${ledger_file}" && ! -L "${ledger_file}" && -r "${ledger_file}" ]] || return 1
+  [[ "$(stat -c '%a' "${ledger_file}")" == 600 ]] || return 1
+  instance_firewall_ledger_validate < "${ledger_file}"
+}
+
+instance_firewall_plan_file() {
+  local config_file=${1:-}
+  [[ -f "${config_file}" && ! -L "${config_file}" && -r "${config_file}" ]] || return 1
+  managed_listener_plan "${config_file}"
+}
+
+instance_firewall_targets_json() {
+  local plan_json=${1:-}
+  jq -ce '
+    def loopback:
+      (.family == "ipv4" and (.address | test("^127\\."))) or
+      (.family == "ipv6" and .address == "0000:0000:0000:0000:0000:0000:0000:0001");
+    def physical:
+      if .dual_stack then
+        [{family:"ipv4",address:"0.0.0.0"},{family:"ipv6",address:"::"}]
+      else [{family:.family,address:.address}]
+      end;
+    [ .[] as $listener |
+      ($listener | physical[]) as $physical |
+      {owner:$listener.owner,protocol:$listener.protocol,address:$physical.address,
+       family:$physical.family,transport:$listener.transport,port:$listener.port} |
+      select(loopback | not)
+    ] | unique_by([.owner,.protocol,.address,.family,.transport,.port])
+  ' <<< "${plan_json}"
+}
+
+instance_firewall_backend_state() {
+  local backend=${1:-} status
+  case "${backend}" in
+    ufw)
+      command -v ufw >/dev/null 2>&1 || return 2
+      LC_ALL=C ufw status >/dev/null 2>&1 || return 3
+      LC_ALL=C ufw status 2>/dev/null | grep -Fq 'Status: active' || return 2
+      ;;
+    firewalld)
+      command -v firewall-cmd >/dev/null 2>&1 || return 2
+      firewall-cmd --state >/dev/null 2>&1 || {
+        status=$?
+        [[ ${status} -eq 1 ]] && return 2
+        return "${status}"
+      }
+      ;;
+    iptables|ip6tables)
+      command -v "${backend}" >/dev/null 2>&1 || return 2
+      ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+
+instance_firewall_rule_comment() {
+  local backend=$1 family=$2 transport=$3 port=$4 address=$5
+  local digest
+  digest=$(printf '%s\0' "${backend}" "${family}" "${transport}" "${port}" "${address}" | sha256sum | awk '{print $1}') || return 1
+  [[ "${digest}" =~ ^[[:xdigit:]]{64}$ ]] || return 1
+  printf 'sbv-instance-%s' "${digest:0:24}"
+}
+
+instance_firewall_ufw_status_match() {
+  local family=$1 address=$2 transport=$3 port=$4 comment=${5:-} require_marker=${6:-0}
+  local line rule prefix first second target canonical_target target_family target_matched=0
+  rule="${port}/${transport}"
+  while IFS= read -r line; do
+    [[ "${line}" != *' ALLOW OUT '* ]] || continue
+    if [[ "${line}" == *' ALLOW IN '* ]]; then
+      prefix=${line%% ALLOW IN *}
+    elif [[ "${line}" == *' ALLOW '* ]]; then
+      prefix=${line%% ALLOW *}
+    else
+      continue
+    fi
+    [[ "${line}" =~ (^|[[:space:]])${rule}([[:space:]]|$) ]] || continue
+    target=''
+    if [[ "${prefix}" == *' on '* ]]; then
+      target=${prefix##* on }
+      target=${target%% *}
+    else
+      read -r first second _ <<< "${prefix}"
+      [[ "${first}" == "${rule}" || "${first}" == "${rule}"\ * ]] || target=${first}
+    fi
+    target=${target#\[}
+    target=${target%\]}
+    target=${target%/32}
+    target=${target%/128}
+    if [[ -z "${target}" || "${target}" == Anywhere ]]; then
+      [[ "${family}" == ipv4 && "${line}" != *'(v6)'* ||
+         "${family}" == ipv6 && "${line}" == *'(v6)'* ]] || continue
+    elif [[ "${target}" == "Anywhere (v6)" ]]; then
+      [[ "${family}" == ipv6 ]] || continue
+    else
+      canonical_target=$(canonical_listener_address "${target}") || return 3
+      target_family=ipv4
+      [[ "${canonical_target}" == *:* ]] && target_family=ipv6
+      [[ "${target_family}" == "${family}" && "${canonical_target}" == "${address}" ]] || continue
+    fi
+    target_matched=1
+    if [[ "${require_marker}" == 0 ]]; then
+      return 0
+    fi
+    # UFW's delete operation ignores comments, so ownership requires the
+    # complete comment field to match exactly.  A substring is not evidence
+    # of ownership (for example, an external suffix/prefix marker).
+    if [[ "${line}" == *' # '* ]]; then
+      local line_comment=${line#*' # '}
+      [[ "${line_comment}" == "${comment}" ]] && return 0
+    fi
+  done
+  [[ "${require_marker}" == 1 && ${target_matched} -eq 1 ]] && return 4
+  return 1
+}
+
+instance_firewall_rule_query() {
+  local backend=$1 family=$2 transport=$3 port=$4 address=$5 comment=${6:-} require_marker=${7:-0} status
+  case "${backend}" in
+    ufw)
+      [[ "${family}" == ipv4 || "${family}" == ipv6 ]] || return 3
+      [[ -n "${comment}" || "${require_marker}" == 0 ]] || return 3
+      LC_ALL=C ufw status 2>/dev/null | instance_firewall_ufw_status_match \
+        "${family}" "${address}" "${transport}" "${port}" "${comment}" "${require_marker}"
+      status=$?
+      [[ ${status} -eq 0 || ${status} -eq 1 || ${status} -eq 4 ]] || return "${status}"
+      return "${status}"
+      ;;
+    firewalld)
+      local runtime_status permanent_status
+      firewall-cmd --query-port="${port}/${transport}" >/dev/null 2>&1
+      runtime_status=$?
+      [[ ${runtime_status} -eq 0 || ${runtime_status} -eq 1 ]] || return "${runtime_status}"
+      firewall-cmd --permanent --query-port="${port}/${transport}" >/dev/null 2>&1
+      permanent_status=$?
+      [[ ${permanent_status} -eq 0 || ${permanent_status} -eq 1 ]] || return "${permanent_status}"
+      [[ ${runtime_status} -eq 0 && ${permanent_status} -eq 0 ]] && return 0
+      return 1
+      ;;
+    iptables|ip6tables)
+      local binary="${backend}" destination_args=()
+      [[ "${family}" == ipv4 && "${backend}" == iptables ||
+         "${family}" == ipv6 && "${backend}" == ip6tables ]] || return 3
+      if [[ "${address}" != 0.0.0.0 && "${address}" != :: ]]; then
+        destination_args=(-d "${address}")
+      fi
+      "${binary}" -C INPUT -p "${transport}" ${destination_args[@]+"${destination_args[@]}"} --dport "${port}" \
+        -m comment --comment "${comment}" -j ACCEPT >/dev/null 2>&1
+      status=$?
+      [[ ${status} -eq 0 || ${status} -eq 1 ]] || return "${status}"
+      return "${status}"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+instance_firewall_rule_command() {
+  local action=$1 backend=$2 family=$3 transport=$4 port=$5 address=$6 comment=$7
+  local operation binary=''
+  case "${action}" in create) operation=-I ;; delete) operation=-D ;; *) return 1 ;; esac
+  case "${backend}" in
+    iptables) binary=iptables; [[ "${family}" == ipv4 ]] || return 1 ;;
+    ip6tables) binary=ip6tables; [[ "${family}" == ipv6 ]] || return 1 ;;
+    ufw)
+      [[ "${family}" == ipv4 || "${family}" == ipv6 ]] || return 1
+      local ufw_address
+      if [[ "${family}" == ipv6 ]]; then
+        ufw_address=${address}
+        [[ "${ufw_address}" == :: ]] && ufw_address=::/0
+      else
+        ufw_address=${address}
+        [[ "${ufw_address}" == 0.0.0.0 ]] && ufw_address=0.0.0.0/0
+      fi
+      if [[ "${action}" == create ]]; then
+        ufw allow in proto "${transport}" to "${ufw_address}" port "${port}" comment "${comment}"
+      else
+        ufw delete allow in proto "${transport}" to "${ufw_address}" port "${port}" comment "${comment}"
+      fi
+      return $?
+      ;;
+    firewalld)
+      # firewalld has independent runtime/permanent rule sets and no portable
+      # ownership marker for a plain port rule.  Never mutate either set here:
+      # callers must provision both zones explicitly and then re-run prepare.
+      return 1
+      ;;
+    *) return 1 ;;
+  esac
+  local destination_args=()
+  if [[ "${address}" != 0.0.0.0 && "${address}" != :: ]]; then
+    destination_args=(-d "${address}")
+  fi
+  "${binary}" "${operation}" INPUT -p "${transport}" ${destination_args[@]+"${destination_args[@]}"} --dport "${port}" \
+    -m comment --comment "${comment}" -j ACCEPT
+}
+
+instance_firewall_targets_for_rule() {
+  local targets=$1 backend=$2 family=$3 address=$4 transport=$5 port=$6
+  jq -c --arg backend "${backend}" --arg family "${family}" --arg address "${address}" \
+    --arg transport "${transport}" --argjson port "${port}" '
+    map(select(.family == $family and .address == $address and .transport == $transport and .port == $port)) |
+    map({owner,protocol,address,transport,port})
+  ' <<< "${targets}"
+}
+
+instance_firewall_refs_for_rule() {
+  local targets=$1 backend=$2 family=$3 address=$4 transport=$5 port=$6
+  if [[ "${backend}" == firewalld ]]; then
+    jq -c --arg transport "${transport}" --argjson port "${port}" \
+      'map(select(.transport == $transport and .port == $port)) | map({owner,protocol,address,transport,port})' <<< "${targets}"
+  else
+    instance_firewall_targets_for_rule "${targets}" "${backend}" "${family}" "${address}" "${transport}" "${port}"
+  fi
+}
+
+instance_firewall_ledger_rule_json() {
+  local backend=$1 family=$2 address=$3 transport=$4 port=$5 comment=$6 refs=$7
+  jq -cn --arg backend "${backend}" --arg family "${family}" --arg address "${address}" \
+    --arg transport "${transport}" --argjson port "${port}" --arg comment "${comment}" \
+    --argjson refs "${refs}" \
+    '{backend:$backend,family:$family,address:$address,transport:$transport,port:$port,comment:$comment,refs:$refs}'
+}
+
+instance_firewall_journal_write() {
+  local journal_file=$1 payload=$2
+  instance_firewall_journal_path_valid "${journal_file}" || return 1
+  instance_firewall_write_json_atomic "${journal_file}" "${payload}"
+}
+
+instance_firewall_journal_update() {
+  local journal_file=$1 filter=$2
+  local current updated
+  [[ -f "${journal_file}" && ! -L "${journal_file}" ]] || return 1
+  current=$(jq -ce . "${journal_file}") || return 1
+  updated=$(jq -ce "${filter}" <<< "${current}") || return 1
+  instance_firewall_write_json_atomic "${journal_file}" "${updated}"
+}
+
+instance_firewall_journal_validate() {
+  local journal_file=${1:-}
+  [[ -f "${journal_file}" && ! -L "${journal_file}" && -r "${journal_file}" ]] || return 1
+  [[ "$(stat -c '%a' "${journal_file}")" == 600 ]] || return 1
+  jq -ce --argjson version "${INSTANCE_FIREWALL_SCHEMA_VERSION}" '
+    def clean_string:
+      type == "string" and length > 0 and (test("[\u0000-\u001f\u007f]") | not);
+    def ref_valid:
+      type == "object" and
+      (.owner | clean_string) and (.protocol | clean_string) and
+      (.address | clean_string) and
+      (.transport | type == "string" and test("^(tcp|udp)$")) and
+      (.port | type == "number" and . == floor and . >= 1 and . <= 65535);
+    def rule_valid:
+      type == "object" and
+      (.backend | type == "string" and test("^(ufw|firewalld|iptables|ip6tables)$")) and
+      (.family | type == "string" and test("^(any|ipv4|ipv6)$")) and
+      (.address | clean_string) and
+      (.transport | type == "string" and test("^(tcp|udp)$")) and
+      (.port | type == "number" and . == floor and . >= 1 and . <= 65535) and
+      (.comment | clean_string) and
+      (.refs | type == "array" and length <= 4096 and all(.[]; ref_valid));
+    def ledger_valid:
+      type == "object" and .schema_version == $version and
+      (.rules | type == "array" and length <= 4096 and all(.[]; rule_valid)) and
+      (([.rules[] | [.backend,.family,.address,.transport,.port] | @json] | unique | length) == (.rules | length));
+    def operation_valid:
+      type == "object" and
+      (.id | clean_string) and
+      (.backend | type == "string" and test("^(ufw|firewalld|iptables|ip6tables)$")) and
+      (.family | type == "string" and test("^(any|ipv4|ipv6)$")) and
+      (.address | clean_string) and
+      (.transport | type == "string" and test("^(tcp|udp)$")) and
+      (.port | type == "number" and . == floor and . >= 1 and . <= 65535) and
+      (.comment | clean_string) and
+      (.action | type == "string" and test("^(create|delete|preserve|unavailable)$")) and
+      (.ownership | type == "string" and test("^(owned|preexisting|unowned)$")) and
+      ((.action != "create" and .action != "delete") or .ownership == "owned") and
+      (.action != "unavailable" or .ownership == "unowned") and
+      (.refs_before | type == "array" and length <= 4096 and all(.[]; ref_valid)) and
+      (.refs_after | type == "array" and length <= 4096 and all(.[]; ref_valid)) and
+      (.state | type == "string" and test("^(planned|intent|applied|preserved|unavailable)$")) and
+      (.rollback_state | type == "string" and test("^(none|intent|applied|already_compensated|uncertain)$"));
+    def backend_status_valid:
+      type == "object" and
+      (.backend | type == "string" and test("^(ufw|firewalld|iptables|ip6tables)$")) and
+      (.state | type == "string" and test("^(available|unavailable|external-managed)$"));
+    def diagnostic_valid:
+      type == "object" and (.code | clean_string) and
+      (.severity | type == "string" and test("^(warning|error)$"));
+    . as $journal |
+    select(
+      ($journal.schema_version == $version) and
+      ($journal.status | type == "string" and test("^(prepared|applying|applied|committed|apply_failed|rolling_back|rolled_back|rollback_failed|rollback_uncertain)$")) and
+      ($journal.before_ledger_exists | type == "boolean") and
+      ($journal.before_ledger | ledger_valid) and
+      ($journal.after_ledger | ledger_valid) and
+      ($journal.operations | type == "array" and length <= 4096 and all(.[]; operation_valid) and ([.[] | .id] | unique | length) == length) and
+      ($journal.backend_statuses | type == "array" and length <= 4 and all(.[]; backend_status_valid) and ([.[] | .backend] | unique | length) == length) and
+      ($journal.diagnostics | type == "array" and length <= 4096 and all(.[]; diagnostic_valid))
+    )
+  ' "${journal_file}"
+}
+
+instance_firewall_prepare_failure() {
+  local journal_file=$1 code=$2 result_status=${3:-1}
+  local payload
+  payload=$(jq -cn --argjson version "${INSTANCE_FIREWALL_SCHEMA_VERSION}" --arg code "${code}" \
+    '{schema_version:$version,status:"prepare_failed",error_code:$code,before_ledger_exists:false,before_ledger:{schema_version:$version,rules:[]},after_ledger:{schema_version:$version,rules:[]},operations:[],diagnostics:[{code:$code,severity:"error"}]}') || return 1
+  instance_firewall_journal_write "${journal_file}" "${payload}" || return 1
+  return "${result_status}"
+}
+
+instance_firewall_prepare() {
+  local old_config=${1:-} new_config=${2:-} journal_file=${3:-}
+  local old_plan new_plan old_targets new_targets before_ledger
+  local backend state backend_statuses='[]' diagnostics='[]' candidates selected_frontend=raw
+  local ufw_state firewalld_state
+  local operations='[]' after_rules='[]' candidate_json candidate_count index
+  local rule_backend rule_family rule_address rule_transport rule_port comment
+  local local_rule_family local_rule_address
+  local refs_before refs_after ledger_rule query_status action ownership
+  local journal_payload processed_key existing_key already_processed before_ledger_exists=false
+  local processed_keys=()
+
+  instance_firewall_journal_path_valid "${journal_file}" || return 1
+  if [[ -n "${old_config}" && -e "${old_config}" ]]; then
+    old_plan=$(instance_firewall_plan_file "${old_config}") || {
+      instance_firewall_prepare_failure "${journal_file}" invalid_old_plan || :; return 1;
+    }
+  else
+    old_plan='[]'
+  fi
+  new_plan=$(instance_firewall_plan_file "${new_config}") || {
+    instance_firewall_prepare_failure "${journal_file}" invalid_new_plan || :; return 1;
+  }
+  old_targets=$(instance_firewall_targets_json "${old_plan}") || {
+    instance_firewall_prepare_failure "${journal_file}" invalid_old_targets || :; return 1;
+  }
+  new_targets=$(instance_firewall_targets_json "${new_plan}") || {
+    instance_firewall_prepare_failure "${journal_file}" invalid_new_targets || :; return 1
+  }
+  before_ledger=$(instance_firewall_read_ledger) || {
+    instance_firewall_prepare_failure "${journal_file}" invalid_ledger || :; return 1;
+  }
+  [[ -e "${INSTANCE_FIREWALL_LEDGER_FILE}" ]] && before_ledger_exists=true
+  candidates=$(jq -cn --argjson old "${old_targets}" --argjson new "${new_targets}" --argjson ledger "${before_ledger}" '
+    def families: ["ipv4","ipv6"];
+    def candidate($x):
+      if $x.family == "ipv4" then
+        [{family:"ipv4",address:(if $x.address == "0.0.0.0" then "0.0.0.0" else $x.address end),transport:$x.transport,port:$x.port}]
+      else [{family:"ipv6",address:(if $x.address == "::" then "::" else $x.address end),transport:$x.transport,port:$x.port}]
+      end;
+    ([ $old[], $new[] ] | map(candidate(.)) | (add // [])) as $physical |
+    ([$physical[]] + [$ledger.rules[] | {family:.family,address:.address,transport:.transport,port:.port}]) |
+    unique_by([.family,.address,.transport,.port])
+  ') || {
+    instance_firewall_prepare_failure "${journal_file}" invalid_candidates || :; return 1;
+  }
+  for backend in ufw firewalld iptables ip6tables; do
+    if instance_firewall_backend_state "${backend}"; then
+      backend_statuses=$(jq -c --arg backend "${backend}" '. + [{backend:$backend,state:"available"}]' <<< "${backend_statuses}") || return 1
+    else
+      state=$?
+      if [[ ${state} -eq 2 ]]; then
+        backend_statuses=$(jq -c --arg backend "${backend}" '. + [{backend:$backend,state:"unavailable"}]' <<< "${backend_statuses}") || return 1
+        diagnostics=$(jq -c --arg backend "${backend}" '. + [{code:"backend_unavailable",backend:$backend,severity:"warning"}]' <<< "${diagnostics}") || return 1
+      else
+        instance_firewall_prepare_failure "${journal_file}" backend_inspection_failed || :; return 1
+      fi
+    fi
+  done
+  ufw_state=$(jq -r '.[] | select(.backend == "ufw") | .state' <<< "${backend_statuses}") || return 1
+  firewalld_state=$(jq -r '.[] | select(.backend == "firewalld") | .state' <<< "${backend_statuses}") || return 1
+  if [[ "${ufw_state}" == available && "${firewalld_state}" == available ]]; then
+    instance_firewall_prepare_failure "${journal_file}" backend_conflict || :; return 1
+  elif [[ "${ufw_state}" == available ]]; then
+    selected_frontend=ufw
+  elif [[ "${firewalld_state}" == available ]]; then
+    selected_frontend=firewalld
+  fi
+  if [[ "${selected_frontend}" != raw ]]; then
+    backend_statuses=$(jq -c --arg frontend "${selected_frontend}" '
+      map(if (.backend == "iptables" or .backend == "ip6tables")
+          then .state = "external-managed" else . end)
+    ' <<< "${backend_statuses}") || return 1
+    diagnostics=$(jq -c --arg frontend "${selected_frontend}" '
+      . + [{code:"backend_external_managed",frontend:$frontend,backend:"iptables",severity:"warning"},
+           {code:"backend_external_managed",frontend:$frontend,backend:"ip6tables",severity:"warning"}]
+    ' <<< "${diagnostics}") || return 1
+  fi
+
+  candidate_count=$(jq -r 'length' <<< "${candidates}") || return 1
+  index=0
+  while [[ ${index} -lt ${candidate_count} ]]; do
+    candidate_json=$(jq -c ".[$index]" <<< "${candidates}") || return 1
+    rule_family=$(jq -r '.family' <<< "${candidate_json}") || return 1
+    rule_address=$(jq -r '.address' <<< "${candidate_json}") || return 1
+    rule_transport=$(jq -r '.transport' <<< "${candidate_json}") || return 1
+    rule_port=$(jq -r '.port' <<< "${candidate_json}") || return 1
+    for backend in ufw firewalld iptables ip6tables; do
+      if [[ "${backend}" == ufw || "${backend}" == firewalld ]]; then
+        [[ "${rule_family}" == ipv4 || "${rule_family}" == ipv6 || "${rule_family}" == any ]] || continue
+        if [[ "${backend}" == firewalld ]]; then
+          local_rule_family=any
+          local_rule_address='*'
+        else
+          local_rule_family=${rule_family}
+          local_rule_address=${rule_address}
+        fi
+      elif [[ "${backend}" == iptables && "${rule_family}" == ipv4 ]]; then
+        local_rule_family=ipv4; local_rule_address=${rule_address}
+      elif [[ "${backend}" == ip6tables && "${rule_family}" == ipv6 ]]; then
+        local_rule_family=ipv6; local_rule_address=${rule_address}
+      else
+        continue
+      fi
+      processed_key="${backend}|${local_rule_family}|${local_rule_address}|${rule_transport}|${rule_port}"
+      if [[ "${backend}" == ufw || "${backend}" == firewalld ]]; then
+        already_processed=0
+        for existing_key in ${processed_keys[@]+"${processed_keys[@]}"}; do
+          [[ "${existing_key}" == "${processed_key}" ]] && already_processed=1
+        done
+        [[ ${already_processed} -eq 0 ]] || continue
+        processed_keys+=("${processed_key}")
+      fi
+      state=$(jq -r --arg backend "${backend}" '.[] | select(.backend == $backend) | .state' <<< "${backend_statuses}") || return 1
+      refs_before=$(instance_firewall_refs_for_rule "${old_targets}" "${backend}" "${local_rule_family}" "${local_rule_address}" "${rule_transport}" "${rule_port}") || return 1
+      refs_after=$(instance_firewall_refs_for_rule "${new_targets}" "${backend}" "${local_rule_family}" "${local_rule_address}" "${rule_transport}" "${rule_port}") || return 1
+      ledger_rule=$(jq -c --arg backend "${backend}" --arg family "${local_rule_family}" --arg address "${local_rule_address}" \
+        --arg transport "${rule_transport}" --argjson port "${rule_port}" \
+        '[.rules[] | select(.backend == $backend and .family == $family and .address == $address and .transport == $transport and .port == $port)] | if length == 1 then .[0] else null end' <<< "${before_ledger}") || return 1
+      comment=$(instance_firewall_rule_comment "${backend}" "${local_rule_family}" "${rule_transport}" "${rule_port}" "${local_rule_address}") || return 1
+      action=preserve; ownership=preexisting
+      if [[ "${state}" != available ]]; then
+        if [[ "${ledger_rule}" != null ]]; then
+          instance_firewall_prepare_failure "${journal_file}" owned_backend_unavailable || :; return 1
+        fi
+        [[ "${refs_after}" == '[]' ]] && continue
+        action=unavailable; ownership=unowned
+      else
+        if [[ "${ledger_rule}" != null ]]; then
+          if [[ "${backend}" == firewalld ]]; then
+            instance_firewall_prepare_failure "${journal_file}" firewalld_owned_unsupported || :; return 1
+          fi
+          query_status=0
+          instance_firewall_rule_query "${backend}" "${local_rule_family}" "${rule_transport}" "${rule_port}" "${local_rule_address}" "${comment}" 1 || query_status=$?
+          if [[ ${query_status} -ne 0 ]]; then
+            instance_firewall_prepare_failure "${journal_file}" owned_rule_inspection_failed || :; return 1
+          fi
+          ownership=owned
+          [[ "${refs_after}" == '[]' ]] && action=delete
+        elif [[ "${refs_after}" != '[]' ]]; then
+          query_status=0
+          instance_firewall_rule_query "${backend}" "${local_rule_family}" "${rule_transport}" "${rule_port}" "${local_rule_address}" "${comment}" || query_status=$?
+          case ${query_status} in
+            0) action=preserve; ownership=preexisting ;;
+            1)
+              if [[ "${backend}" == firewalld ]]; then
+                instance_firewall_prepare_failure "${journal_file}" firewalld_requires_manual_setup || :; return 1
+              fi
+              action=create; ownership=owned
+              ;;
+            *) instance_firewall_prepare_failure "${journal_file}" rule_inspection_failed || :; return 1 ;;
+          esac
+        else
+          continue
+        fi
+      fi
+      if [[ "${action}" == preserve && "${ownership}" == preexisting && "${refs_after}" == '[]' ]]; then
+        continue
+      fi
+      if [[ "${ownership}" == owned && "${refs_after}" != '[]' ]]; then
+        after_rules=$(jq -c --arg backend "${backend}" --arg family "${local_rule_family}" --arg address "${local_rule_address}" \
+          --arg transport "${rule_transport}" --argjson port "${rule_port}" --arg comment "${comment}" --argjson refs "${refs_after}" \
+          '. + [{backend:$backend,family:$family,address:$address,transport:$transport,port:$port,comment:$comment,refs:$refs}]' <<< "${after_rules}") || return 1
+      fi
+      operations=$(jq -c --arg id "op-${index}-${backend}" --arg backend "${backend}" --arg family "${local_rule_family}" \
+        --arg address "${local_rule_address}" --arg transport "${rule_transport}" --argjson port "${rule_port}" \
+        --arg comment "${comment}" --arg action "${action}" --arg ownership "${ownership}" --argjson before "${refs_before}" --argjson after "${refs_after}" \
+        '. + [{id:$id,backend:$backend,family:$family,address:$address,transport:$transport,port:$port,comment:$comment,action:$action,ownership:$ownership,refs_before:$before,refs_after:$after,state:"planned",rollback_state:"none"}]' <<< "${operations}") || return 1
+    done
+    index=$((index + 1))
+  done
+  # UFW reloads its generated iptables chains when a rule is changed.  Apply
+  # UFW operations before direct iptables operations so UFW cannot flush rules
+  # that this transaction has just created; rollback traverses this order in
+  # reverse and remains equally safe.
+  operations=$(jq -c 'sort_by((if .backend == "ufw" then 0 elif .backend == "firewalld" then 1 elif .backend == "iptables" then 2 else 3 end), .id)' <<< "${operations}") || return 1
+  after_rules=$(jq -c 'unique_by([.backend,.family,.address,.transport,.port])' <<< "${after_rules}") || return 1
+  journal_payload=$(jq -cn --argjson version "${INSTANCE_FIREWALL_SCHEMA_VERSION}" --argjson before_exists "${before_ledger_exists}" \
+    --argjson before "${before_ledger}" \
+    --argjson rules "${after_rules}" --argjson operations "${operations}" --argjson backends "${backend_statuses}" --argjson diagnostics "${diagnostics}" \
+    '{schema_version:$version,status:"prepared",before_ledger_exists:$before_exists,before_ledger:$before,after_ledger:{schema_version:$version,rules:$rules},operations:$operations,backend_statuses:$backends,diagnostics:$diagnostics}') || return 1
+  instance_firewall_journal_write "${journal_file}" "${journal_payload}"
+}
+
+instance_firewall_apply() {
+  local journal_file=${1:-} journal status index count operation action backend family address transport port comment op_state
+  local verify_status
+  local mutation_status=0
+  instance_firewall_journal_path_valid "${journal_file}" || return 1
+  journal=$(instance_firewall_journal_validate "${journal_file}") || return 1
+  status=$(jq -r '.status' <<< "${journal}") || return 1
+  [[ "${status}" == prepared || "${status}" == applying || "${status}" == applied ||
+     "${status}" == apply_failed || "${status}" == committed ]] || return 1
+  [[ "${status}" == committed ]] && return 0
+  instance_firewall_journal_update "${journal_file}" '.status="applying"' || return 1
+  count=$(jq -r '.operations | length' <<< "${journal}") || return 1
+  index=0
+  while [[ ${index} -lt ${count} ]]; do
+    operation=$(jq -c ".operations[$index]" "${journal_file}") || return 1
+    op_state=$(jq -r '.state' <<< "${operation}") || return 1
+    [[ "${op_state}" == applied || "${op_state}" == unavailable || "${op_state}" == preserved ]] && { index=$((index + 1)); continue; }
+    [[ "${op_state}" == planned ]] || return 1
+    action=$(jq -r '.action' <<< "${operation}") || return 1
+    if [[ "${action}" == unavailable || "${action}" == preserve ]]; then
+      instance_firewall_journal_update "${journal_file}" ".operations[$index].state=\"preserved\"" || return 1
+      index=$((index + 1)); continue
+    fi
+    backend=$(jq -r '.backend' <<< "${operation}") || return 1
+    family=$(jq -r '.family' <<< "${operation}") || return 1
+    address=$(jq -r '.address' <<< "${operation}") || return 1
+    transport=$(jq -r '.transport' <<< "${operation}") || return 1
+    port=$(jq -r '.port' <<< "${operation}") || return 1
+    comment=$(jq -r '.comment' <<< "${operation}") || return 1
+    instance_firewall_journal_update "${journal_file}" ".operations[$index].state=\"intent\"" || return 1
+    if instance_firewall_rule_command "${action}" "${backend}" "${family}" "${transport}" "${port}" "${address}" "${comment}"; then
+      verify_status=0
+      instance_firewall_rule_query "${backend}" "${family}" "${transport}" "${port}" "${address}" "${comment}" 1 || verify_status=$?
+      if [[ ("${action}" == create && ${verify_status} -eq 0) ||
+            ("${action}" == delete && ${verify_status} -eq 1) ]]; then
+        instance_firewall_journal_update "${journal_file}" ".operations[$index].state=\"applied\"" || return 1
+      else
+        instance_firewall_journal_update "${journal_file}" ".status=\"apply_failed\" | .error_code=\"backend_mutation_unconfirmed\"" || return 1
+        return 1
+      fi
+    else
+      mutation_status=$?
+      instance_firewall_journal_update "${journal_file}" ".status=\"apply_failed\" | .error_code=\"backend_mutation_failed\"" || return "${mutation_status}"
+      return "${mutation_status}"
+    fi
+    index=$((index + 1))
+  done
+  if ! mkdir -p "${SB_PROJECT_DIR}" ||
+     ! instance_firewall_write_json_atomic "${INSTANCE_FIREWALL_LEDGER_FILE}" "$(jq -c '.after_ledger' "${journal_file}")"; then
+    instance_firewall_journal_update "${journal_file}" '.status="apply_failed" | .error_code="ledger_persist_failed"' || return 1
+    return 1
+  fi
+  instance_firewall_journal_update "${journal_file}" '.status="applied"' || return 1
+}
+
+instance_firewall_restore_ledger() {
+  local journal_file=$1 before_exists before_ledger
+  before_exists=false
+  if jq -e '.before_ledger_exists == true' "${journal_file}" >/dev/null 2>&1; then
+    before_exists=true
+  fi
+  before_ledger=$(jq -c '.before_ledger' "${journal_file}") || return 1
+  if [[ "${before_exists}" == true ]]; then
+    instance_firewall_write_json_atomic "${INSTANCE_FIREWALL_LEDGER_FILE}" "${before_ledger}"
+  else
+    [[ ! -L "${INSTANCE_FIREWALL_LEDGER_FILE}" ]] || return 1
+    if [[ -e "${INSTANCE_FIREWALL_LEDGER_FILE}" ]]; then
+      rm -f -- "${INSTANCE_FIREWALL_LEDGER_FILE}" || return $?
+    fi
+  fi
+}
+
+instance_firewall_rollback() {
+  local journal_file=${1:-} journal status count index operation action backend family address transport port comment op_state rollback_action
+  local query_status mutation_status result_status=0
+  instance_firewall_journal_path_valid "${journal_file}" || return 1
+  journal=$(instance_firewall_journal_validate "${journal_file}") || return 1
+  status=$(jq -r '.status' <<< "${journal}") || return 1
+  [[ "${status}" == prepared || "${status}" == applying || "${status}" == applied ||
+     "${status}" == apply_failed || "${status}" == rolling_back ||
+     "${status}" == rollback_failed || "${status}" == rollback_uncertain ||
+     "${status}" == rolled_back ]] || return 1
+  instance_firewall_journal_update "${journal_file}" '.status="rolling_back"' || return 1
+  count=$(jq -r '.operations | length' <<< "${journal}") || return 1
+  index=$((count - 1))
+  while [[ ${index} -ge 0 ]]; do
+    operation=$(jq -c ".operations[$index]" "${journal_file}") || return 1
+    action=$(jq -r '.action' <<< "${operation}") || return 1
+    op_state=$(jq -r '.state' <<< "${operation}") || return 1
+    [[ "${action}" == create || "${action}" == delete ]] || { index=$((index - 1)); continue; }
+    [[ "${op_state}" == applied || "${op_state}" == intent ]] || { index=$((index - 1)); continue; }
+    backend=$(jq -r '.backend' <<< "${operation}") || return 1
+    family=$(jq -r '.family' <<< "${operation}") || return 1
+    address=$(jq -r '.address' <<< "${operation}") || return 1
+    transport=$(jq -r '.transport' <<< "${operation}") || return 1
+    port=$(jq -r '.port' <<< "${operation}") || return 1
+    comment=$(jq -r '.comment' <<< "${operation}") || return 1
+    query_status=0
+    instance_firewall_rule_query "${backend}" "${family}" "${transport}" "${port}" "${address}" "${comment}" 1 || query_status=$?
+    if [[ "${op_state}" == intent ]]; then
+      if [[ ("${action}" == create && ${query_status} -eq 0) || ("${action}" == delete && ${query_status} -eq 1) ]]; then
+        instance_firewall_journal_update "${journal_file}" ".operations[$index].rollback_state=\"uncertain\"" || return 1
+        result_status=1
+      fi
+      if [[ ${query_status} -ne 0 && ${query_status} -ne 1 ]]; then
+        instance_firewall_journal_update "${journal_file}" ".operations[$index].rollback_state=\"uncertain\"" || return 1
+        result_status=1
+      fi
+      index=$((index - 1)); continue
+    fi
+    if [[ ${query_status} -eq 0 && "${action}" == create ]]; then
+      rollback_action=delete
+    elif [[ ${query_status} -eq 1 && "${action}" == delete ]]; then
+      rollback_action=create
+    elif [[ ${query_status} -eq 0 && "${action}" == delete || ${query_status} -eq 1 && "${action}" == create ]]; then
+      instance_firewall_journal_update "${journal_file}" ".operations[$index].rollback_state=\"already_compensated\"" || return 1
+      index=$((index - 1)); continue
+    else
+      instance_firewall_journal_update "${journal_file}" ".operations[$index].rollback_state=\"uncertain\"" || return 1
+      result_status=1; index=$((index - 1)); continue
+    fi
+    instance_firewall_journal_update "${journal_file}" ".operations[$index].rollback_state=\"intent\"" || return 1
+    if instance_firewall_rule_command "${rollback_action}" "${backend}" "${family}" "${transport}" "${port}" "${address}" "${comment}"; then
+      query_status=0
+      instance_firewall_rule_query "${backend}" "${family}" "${transport}" "${port}" "${address}" "${comment}" 1 || query_status=$?
+      if [[ ("${rollback_action}" == delete && ${query_status} -eq 1) ||
+            ("${rollback_action}" == create && ${query_status} -eq 0) ]]; then
+        instance_firewall_journal_update "${journal_file}" ".operations[$index].rollback_state=\"applied\"" || return 1
+      else
+        instance_firewall_journal_update "${journal_file}" ".operations[$index].rollback_state=\"uncertain\"" || return 1
+        result_status=1
+      fi
+    else
+      mutation_status=$?
+      instance_firewall_journal_update "${journal_file}" '.status="rollback_failed" | .error_code="compensation_failed"' || return 1
+      result_status=${mutation_status:-1}
+    fi
+    index=$((index - 1))
+  done
+  if ! instance_firewall_restore_ledger "${journal_file}"; then
+    instance_firewall_journal_update "${journal_file}" '.status="rollback_failed" | .error_code="ledger_restore_failed"' || return 1
+    return 1
+  fi
+  if [[ ${result_status} -eq 0 ]]; then
+    instance_firewall_journal_update "${journal_file}" '.status="rolled_back"' || return 1
+  else
+    instance_firewall_journal_update "${journal_file}" '.status="rollback_uncertain" | .error_code="external_state_uncertain"' || return 1
+  fi
+  return "${result_status}"
+}
+
+instance_firewall_commit() {
+  local journal_file=${1:-} status
+  instance_firewall_journal_path_valid "${journal_file}" || return 1
+  instance_firewall_journal_validate "${journal_file}" >/dev/null || return 1
+  status=$(jq -r '.status' "${journal_file}") || return 1
+  [[ "${status}" == applied || "${status}" == committed ]] || return 1
+  [[ "${status}" == committed ]] || instance_firewall_journal_update "${journal_file}" '.status="committed"'
+}
+
 
 # Verify configuration file
 check_config_valid() {
@@ -5964,7 +7163,7 @@ check_port_conflict() {
     echo "2. 使用随机端口"
     echo "3. 手动输入新端口"
     port_choice=$(prompt_choice "请选择操作 [1-3]: " 1 3 "")
-    
+
     case "${port_choice}" in
       1|2)
         SB_PORT="$(pick_random_high_port)"
@@ -6132,9 +7331,19 @@ list_effective_protocols() {
 }
 
 load_protocol_state() {
-  local protocol state_file state_mode=${2:-mutable}
+  local protocol state_file state_mode=${2:-mutable} mixed_schema
   protocol=$(normalize_protocol_id "$1") || return 1
   state_file=$(protocol_state_file "${protocol}") || return 1
+  mixed_schema=""
+  if [[ "${protocol}" == "mixed" && -f "${state_file}" ]]; then
+    if grep -Eq "^[[:space:]]*CONFIG_SCHEMA_VERSION=(2|\"2\"|'2')[[:space:]]*$" "${state_file}"; then
+      mixed_schema=2
+    else
+      mixed_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" | head -n1) || return 1
+      mixed_schema=${mixed_schema//\"/}
+      mixed_schema=${mixed_schema//\'/}
+    fi
+  fi
   validate_protocol_state_schema "${protocol}" "${state_file}" || return 1
   if [[ "${protocol}" == "vless-reality" && "${state_mode}" != "read-only" ]]; then
     migrate_vless_reality_state_to_instances_if_needed
@@ -6147,6 +7356,29 @@ load_protocol_state() {
       return 0
     fi
     log_error "未找到协议状态文件: ${state_file}"
+  fi
+
+  # Schema-2 Mixed markers are data-only metadata.  Dispatch before sourcing
+  # the file, and fail closed if a concurrent rewrite leaves a schema-2 marker
+  # malformed; schema-1 legacy loading below remains unchanged.
+  if [[ "${protocol}" == "mixed" && "${mixed_schema}" == "2" ]]; then
+    mixed_structured_marker_is_valid "${state_file}" || return 1
+    load_mixed_structured_instance || return 1
+    return 0
+  fi
+  if [[ "${protocol}" == "mixed" ]]; then
+    if mixed_structured_marker_is_valid "${state_file}"; then
+      load_mixed_structured_instance || return 1
+      return 0
+    fi
+    if grep -Eq "^[[:space:]]*CONFIG_SCHEMA_VERSION=(2|\"2\"|'2')[[:space:]]*$" "${state_file}"; then
+      mixed_schema=2
+    else
+      mixed_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" | head -n1) || return 1
+      mixed_schema=${mixed_schema//\"/}
+      mixed_schema=${mixed_schema//\'/}
+    fi
+    [[ "${mixed_schema}" == "2" ]] && return 1
   fi
 
   unset ACME_EXTRA_JSON || true
@@ -6204,6 +7436,10 @@ load_protocol_state() {
       SB_ANYTLS_KEY_PATH=""
       ;;
     mixed)
+      if [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]]; then
+        load_mixed_structured_instance || return 1
+        return 0
+      fi
       SB_PROTOCOL="mixed"
       SB_NODE_NAME=$(normalize_node_name "${NODE_NAME:-$(default_node_name_for_protocol "mixed")}")
       SB_PORT="${PORT:-1080}"
@@ -6534,6 +7770,14 @@ build_vless_inbound_json() {
 }
 
 build_mixed_inbound_json() {
+  local state_file
+  state_file=$(protocol_state_file "mixed") || return 1
+  if [[ -f "${state_file}" ]] &&
+     grep -Eq "^[[:space:]]*CONFIG_SCHEMA_VERSION=(2|\"2\"|'2')[[:space:]]*$" "${state_file}"; then
+    mixed_structured_state_active || return 1
+    render_structured_instance_inbounds mixed "$(mixed_structured_store_file)"
+    return $?
+  fi
   ensure_mixed_auth_credentials
 
   jq -n \
@@ -6938,13 +8182,24 @@ vless_reality_has_warp_outbound_policy() {
 }
 
 instance_outbound_requires_warp() {
-  local protocol
+  local protocol state_file schema store_file
 
   while IFS= read -r protocol; do
     [[ -z "${protocol}" ]] && continue
     case "${protocol}" in
       vless-reality)
         vless_reality_has_warp_outbound_policy && return 0
+        ;;
+      mixed)
+        state_file=$(protocol_state_file "mixed") || return 1
+        schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" 2>/dev/null || true)
+        schema=${schema//\"/}
+        schema=${schema//\'/}
+        if [[ "${schema}" == "2" ]]; then
+          mixed_structured_state_active || return 1
+          store_file=$(mixed_structured_store_file) || return 1
+          jq -e 'any(.instances[]; .outbound_policy == "warp")' "${store_file}" >/dev/null 2>&1 && return 0
+        fi
         ;;
     esac
   done < <(list_effective_protocols)
@@ -6961,7 +8216,17 @@ build_protocol_route_rules() {
       build_vless_reality_route_rules_json
       ;;
     mixed)
-      jq -n '[{ "inbound": "mixed-in", "action": "sniff" }]'
+      local state_file schema
+      state_file=$(protocol_state_file "mixed") || return 1
+      schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" 2>/dev/null || true)
+      schema=${schema//\"/}
+      schema=${schema//\'/}
+      if [[ "${schema}" == "2" ]]; then
+        mixed_structured_state_active || return 1
+        render_structured_instance_route_rules mixed "$(mixed_structured_store_file)"
+      else
+        jq -n '[{ "inbound": "mixed-in", "action": "sniff" }]'
+      fi
       ;;
     hy2)
       jq -n '[{ "inbound": "hy2-in", "action": "sniff" }]'
@@ -7005,7 +8270,9 @@ append_protocol_fragment() {
 managed_state_snapshot_is_valid() {
   local snapshot_dir=$1
 
-  [[ "${snapshot_dir}" == /tmp/sing-box-vps-state.* ]] || return 1
+  [[ "${snapshot_dir}" == /tmp/sing-box-vps-state.* ||
+     "${snapshot_dir}" == "${SB_PROJECT_DIR}.instance-write.lock/snapshot" ]] || return 1
+  [[ ! -L "${snapshot_dir}" ]] || return 1
   [[ -d "${snapshot_dir}" && -f "${snapshot_dir}/snapshot.meta" ]] || return 1
   grep -Fqx 'SNAPSHOT_VERSION=1' "${snapshot_dir}/snapshot.meta" || return 1
   grep -Fqx "PROJECT_DIR=${SB_PROJECT_DIR}" "${snapshot_dir}/snapshot.meta" || return 1
@@ -7032,7 +8299,18 @@ persist_file_backup() {
 create_managed_state_snapshot() {
   local snapshot_dir
 
-  snapshot_dir=$(mktemp -d /tmp/sing-box-vps-state.XXXXXX) || return 1
+  if [[ $# -gt 0 ]]; then
+    [[ "$1" == "${SB_PROJECT_DIR}.instance-write.lock/snapshot" &&
+       -d "${SB_PROJECT_DIR}.instance-write.lock" && ! -L "${SB_PROJECT_DIR}.instance-write.lock" ]] || return 1
+    snapshot_dir=$1
+    mkdir -m 700 "${snapshot_dir}" || return 1
+  else
+    if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
+      printf '[ERROR] 存在未完成的实例事务；先执行 instance recover，未开始其他写操作。\n' >&2
+      return 1
+    fi
+    snapshot_dir=$(mktemp -d /tmp/sing-box-vps-state.XXXXXX) || return 1
+  fi
   chmod 700 "${snapshot_dir}" || {
     rm -rf "${snapshot_dir}"
     return 1
@@ -7108,12 +8386,17 @@ restore_managed_state_snapshot() {
 
   if [[ -f "${snapshot_dir}/project.existed" ]]; then
     if ! mv "${restore_candidate}" "${SB_PROJECT_DIR}"; then
-      [[ "${current_existed}" == "y" ]] && mv "${restore_previous}" "${SB_PROJECT_DIR}" 2>/dev/null || true
-      rm -rf "${restore_candidate}"
+      if [[ "${current_existed}" == "y" ]] && ! mv "${restore_previous}" "${SB_PROJECT_DIR}"; then
+        printf '[ERROR] state_restore: previous_directory_restore_failed; recovery=%s\n' "${restore_previous}" >&2
+        return 1
+      fi
+      rm -rf "${restore_candidate}" || return 1
       return 1
     fi
   elif ! rmdir "${restore_candidate}"; then
-    [[ "${current_existed}" == "y" ]] && mv "${restore_previous}" "${SB_PROJECT_DIR}" 2>/dev/null || true
+    if [[ "${current_existed}" == "y" ]] && ! mv "${restore_previous}" "${SB_PROJECT_DIR}"; then
+      printf '[ERROR] state_restore: previous_directory_restore_failed; recovery=%s\n' "${restore_previous}" >&2
+    fi
     return 1
   fi
 
@@ -7376,6 +8659,28 @@ validate_managed_component_graph() {
 }
 
 # --- Config Generator ---
+publish_managed_config_candidate() (
+  local source_file=${1:-} candidate="" backup_candidate=""
+  umask 077
+  [[ -f "${source_file}" && ! -L "${source_file}" && -x "${SINGBOX_BIN_PATH}" ]] || return 1
+  candidate=$(mktemp "${SINGBOX_CONFIG_DIR}/.config.json.candidate.XXXXXX") || return $?
+  trap 'rm -f -- "${candidate}" "${backup_candidate}"' EXIT
+  head -c 4194305 -- "${source_file}" > "${candidate}" || return $?
+  [[ "$(wc -c < "${candidate}")" -le 4194304 ]] || return 1
+  jq -es 'length == 1 and (.[0] | type == "object")' "${candidate}" >/dev/null 2>&1 || return 1
+  validate_managed_component_graph "${candidate}" || return $?
+  validate_managed_listener_resources "${candidate}" || return $?
+  "${SINGBOX_BIN_PATH}" check -c "${candidate}" >&2 || return $?
+  chmod 600 "${candidate}" || return $?
+  if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    backup_candidate=$(mktemp "${SINGBOX_CONFIG_DIR}/.config.json.backup.XXXXXX") || return $?
+    cp -p "${SINGBOX_CONFIG_FILE}" "${backup_candidate}" || return $?
+    chmod 600 "${backup_candidate}" || return $?
+    mv -f "${backup_candidate}" "${SINGBOX_CONFIG_FILE}.bak" || return $?
+  fi
+  mv -f "${candidate}" "${SINGBOX_CONFIG_FILE}" || return $?
+)
+
 generate_config_candidate() {
   local inbound_file="" provider_file="" protocol_rule_file="" instance_outbound_rule_file=""
   local config_candidate="" backup_candidate="" protocol
@@ -7628,46 +8933,12 @@ generate_config_candidate() {
     return 1
   fi
 
-  if ! jq -e . "${config_candidate}" >/dev/null; then
-    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
-    return 1
-  fi
-  if ! validate_managed_component_graph "${config_candidate}"; then
-    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
-    return 1
-  fi
-  if ! validate_managed_listener_resources "${config_candidate}"; then
-    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
-    return 1
-  fi
-  if ! "${SINGBOX_BIN_PATH}" check -c "${config_candidate}"; then
-    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
-    return 1
-  fi
-  if ! chmod 600 "${config_candidate}"; then
+  if ! publish_managed_config_candidate "${config_candidate}"; then
     rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
     return 1
   fi
 
-  if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
-    if ! backup_candidate=$(mktemp "${SINGBOX_CONFIG_DIR}/.config.json.backup.XXXXXX"); then
-      rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
-      return 1
-    fi
-    if ! cp -p "${SINGBOX_CONFIG_FILE}" "${backup_candidate}" ||
-       ! chmod 600 "${backup_candidate}" ||
-       ! mv -f "${backup_candidate}" "${SINGBOX_CONFIG_FILE}.bak"; then
-      rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}" "${backup_candidate}"
-      return 1
-    fi
-  fi
-
-  if ! mv -f "${config_candidate}" "${SINGBOX_CONFIG_FILE}"; then
-    rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
-    return 1
-  fi
-
-  rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
+  rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
   trap - EXIT
 }
 
@@ -8772,6 +10043,14 @@ update_config_only() {
   fi
   selected_protocol="${SELECTED_PROTOCOL}"
 
+  # Mixed schema 2 (and an explicitly managed legacy singleton) uses the
+  # instance CAS lifecycle.  Return before the legacy save/generate path: that
+  # path writes mixed.env and would otherwise flatten the JSON inventory.
+  if [[ "${selected_protocol}" == mixed ]]; then
+    mixed_instance_replace_interactive
+    return $?
+  fi
+
   load_protocol_state "${selected_protocol}"
   if [[ "${selected_protocol}" == "vless-reality" ]]; then
     SELECTED_VLESS_INSTANCE_ID=""
@@ -8858,6 +10137,15 @@ remove_protocol_menu() {
   if [[ ${#selected_protocols[@]} -eq 0 ]]; then
     log_info "未选择任何协议。"
     return 0
+  fi
+
+  if mixed_structured_state_active && protocol_array_contains mixed "${selected_protocols[@]}"; then
+    if [[ ${#selected_protocols[@]} -eq 1 ]]; then
+      mixed_instance_management_menu delete
+      return $?
+    fi
+    log_warn "结构化 Mixed 实例需通过实例事务逐个移除；请先进入 Mixed 实例管理，再移除其他协议。本次未修改。"
+    return 1
   fi
 
   # Selecting only VLESS + REALITY keeps the historical per-instance removal
@@ -10155,6 +11443,12 @@ validate_mixed_client_connection() {
 }
 
 mixed_loaded_state_is_exportable() {
+  if [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]]; then
+    [[ "${SB_PROTOCOL}" == "mixed" && -n "${SB_MIXED_INSTANCE_ID}" ]] || return 1
+    validate_mixed_client_connection "${SB_PORT:-}" "${SB_MIXED_AUTH_ENABLED:-}" \
+      "${SB_MIXED_USERNAME:-}" "${SB_MIXED_PASSWORD:-}"
+    return $?
+  fi
   # The read-only instance adapter clears source variables before loading.
   # Validate that same raw snapshot, not a second read of a file that could
   # change between validation and rendering. Loader defaults are not evidence
@@ -10185,6 +11479,40 @@ build_client_mixed_outbound() {
       version:"5", udp_over_tcp:{enabled:true, version:2}}
     + (if $auth_enabled == "y" then {username:$username, password:$password} else {} end)'
 }
+
+build_client_mixed_outbounds() (
+  local public_ip=${1:-$(get_public_ip)}
+  local store_file instance_id listen_address server_address outbound_json tmpdir
+  local instance_ids=()
+  [[ -n "${public_ip}" ]] || return 1
+  mixed_structured_state_active || return 1
+  store_file=$(mixed_structured_store_file) || return 1
+  mapfile -t instance_ids < <(jq -r '.instances[].id' "${store_file}")
+  [[ ${#instance_ids[@]} -gt 0 ]] || return 1
+  tmpdir=$(mktemp -d) || return 1
+  trap 'rm -rf -- "${tmpdir}"' EXIT
+
+  for instance_id in "${instance_ids[@]}"; do
+    load_mixed_structured_instance "${instance_id}" || return 1
+    listen_address=${SB_MIXED_LISTEN_ADDRESS}
+    case "${listen_address}" in
+      0.0.0.0|::)
+        server_address=${public_ip}
+        ;;
+      127.*|::1)
+        server_address=${listen_address}
+        printf '[WARN] Mixed 实例 %s 绑定回环地址 %s；导出仅供本机使用，未宣称公网可达。\n' \
+          "${instance_id}" "${listen_address}" >&2
+        ;;
+      *)
+        server_address=${listen_address}
+        ;;
+    esac
+    outbound_json=$(build_client_mixed_outbound "${server_address}" "mixed-${instance_id}") || return 1
+    printf '%s\n' "${outbound_json}" >> "${tmpdir}/outbounds.jsonl" || return 1
+  done
+  jq -c '.' "${tmpdir}/outbounds.jsonl"
+)
 
 build_client_outbound_json_for_protocol() {
   local protocol original_protocol_state original_instance_id outbound_json build_status restore_original_state public_ip
@@ -10231,6 +11559,12 @@ build_client_outbound_json_for_protocol() {
         if ! mixed_loaded_state_is_exportable; then
           printf '[ERROR] mixed_export_state_invalid: Mixed 原始状态不完整或无效，禁止以默认值生成客户端配置。\n' >&2
           build_status=1
+        elif [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]]; then
+          if outbound_json=$(build_client_mixed_outbounds "${public_ip}"); then
+            :
+          else
+            build_status=$?
+          fi
         elif outbound_json=$(build_client_mixed_outbound "${public_ip}"); then
           :
         else
@@ -10576,6 +11910,14 @@ show_connection_details_for_detected_addresses() {
   local address_entries=()
   local entry label address public_ip
 
+  if [[ "${SB_PROTOCOL}" == mixed ]] && mixed_structured_state_active; then
+    address=${SB_MIXED_LISTEN_ADDRESS:-}
+    if [[ -n "${address}" && "${address}" != '::' && "${address}" != 0.0.0.0 ]]; then
+      show_connection_details "${mode}" "${address}" "监听地址"
+      return $?
+    fi
+  fi
+
   if protocol_uses_domain_connection_material; then
     public_ip=$(get_public_ip)
     if [[ "${public_ip}" == *:* ]]; then
@@ -10606,7 +11948,7 @@ show_connection_details_for_detected_addresses() {
 show_all_connection_details() {
   local mode=$1
   local installed_protocols=()
-  local protocol original_protocol_state
+  local protocol original_protocol_state instance_id instance_ids
 
   original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
   mapfile -t installed_protocols < <(list_installed_protocols)
@@ -10617,7 +11959,17 @@ show_all_connection_details() {
   fi
 
   for protocol in "${installed_protocols[@]}"; do
-    load_protocol_state "${protocol}"
+    load_protocol_state "${protocol}" || return $?
+    if [[ "${protocol}" == mixed ]] && mixed_structured_state_active; then
+      instance_ids=$(list_protocol_instance_ids mixed) || return $?
+      while IFS= read -r instance_id; do
+        [[ -n "${instance_id}" ]] || continue
+        load_protocol_instance_state mixed "${instance_id}" || return $?
+        printf '\n--- Mixed 实例 %s ---\n' "${instance_id}"
+        show_connection_details_for_detected_addresses "${mode}" || return $?
+      done <<< "${instance_ids}"
+      continue
+    fi
     echo -e "\n${BLUE}--- $(protocol_display_name "${SB_PROTOCOL}") ---${NC}"
     show_connection_details_for_detected_addresses "${mode}"
   done
@@ -10997,6 +12349,9 @@ agent_print_help() {
   sbv agent service restart --json --yes
   sbv agent subman-sync --json
   sbv agent warp --json
+  sbv agent instance create|replace mixed --json --yes --expected-revision N --file record.json [--allow-public]
+  sbv agent instance delete|default mixed --json --yes --expected-revision N --id ID
+  sbv agent instance migrate|recover mixed --json --yes --expected-revision N
 
 说明:
   capabilities  输出协议、功能入口以及只读/变更/敏感分类。
@@ -11011,6 +12366,7 @@ agent_print_help() {
   doctor        输出只读诊断信息和配置校验结果。
   service       执行带 --yes 保护的服务操作，目前支持 restart。
   subman-sync   非交互推送节点到 SubMan，缺少配置时返回结构化错误。
+  instance      Mixed 实例事务；legacy 首次写入 revision 为 0；recover 使用待恢复事务原 revision。
 EOF
 }
 
@@ -11198,6 +12554,21 @@ agent_capabilities_json() {
           core_upgrade_and_uninstall: true,
           script_self_update_and_uninstall: true
         },
+        mixed_instances: {
+          state_schema: 2,
+          store_schema: 1,
+          operations: ["create", "replace", "delete", "default", "migrate", "recover"],
+          expected_revision_required: true,
+          plaintext_public_confirmation: "--allow-public",
+          default_new_listener: "127.0.0.1",
+          cross_protocol_bulk_delete: false,
+          legacy_read_migration: false,
+          firewall_ownership_ledger: true,
+          firewall_managed_backends: ["ufw", "iptables", "ip6tables"],
+          firewall_backend_policy: "single_frontend",
+          firewalld: "external_rules_preflight_only",
+          persistent_recovery_journal: true
+        },
         diagnostics: {config_check: true, doctor: true, media_check: true},
         subman: {supported_protocols: ($registry | map(select(.subman_type != "") | .agent_id)), idempotent_sync: true}
       },
@@ -11211,6 +12582,7 @@ agent_capabilities_json() {
         doctor: {mutation: false, sensitive: false},
         "upgrade-check": {mutation: false, sensitive: false},
         upgrade: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart"},
+        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed"]},
         "export-client": {mutation: true, sensitive: true},
         "service restart": {mutation: true, sensitive: false, confirmation: "--yes"},
         "subman-sync": {mutation: true, sensitive: true, external_write: true}
@@ -11219,6 +12591,7 @@ agent_capabilities_json() {
         protocol_install_update_remove: true,
         managed_instance_takeover_repair: true,
         reality_multi_instance_and_qos: true,
+        mixed_multi_instance_management: true,
         warp_mutation: true,
         inbound_outbound_stack_management: true,
         bbr: true,
@@ -12243,6 +13616,8 @@ agent_trusted_indexed_protocols_raw() {
   local index_schema indexed_raw live_raw indexed protocol
   local indexed_protocols=() live_protocols=()
 
+  [[ ! -e "${SB_PROJECT_DIR}.instance-write.lock" ]] || return 1
+
   if [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
     index_schema=$(sed -n 's/^PROTOCOL_STATE_VERSION=//p' "${SB_PROTOCOL_INDEX_FILE}") || return 1
     index_schema=${index_schema//\"/}
@@ -12277,11 +13652,24 @@ agent_trusted_indexed_protocols_raw() {
 
 agent_validate_indexed_protocol_states() {
   local indexed_protocols=$1 protocol state_file state_id normalized_state_id
-  local expected_protocols=()
+  local expected_protocols=() mixed_store_file mixed_store_count
 
   while IFS= read -r protocol; do
     [[ -n "${protocol}" ]] && expected_protocols+=("${protocol}")
   done <<< "${indexed_protocols}"
+
+  # A deleted Mixed protocol may leave a valid revisioned empty tombstone for
+  # CAS continuity.  It is safe when Mixed is absent from the index; a
+  # non-empty orphan would be an unowned inventory and must fail closed.
+  if ! protocol_array_contains "mixed" ${expected_protocols[@]+"${expected_protocols[@]}"}; then
+    mixed_store_file=$(mixed_structured_store_file 2>/dev/null || true)
+    if [[ -e "${mixed_store_file}" || -L "${mixed_store_file}" ]]; then
+      [[ -f "${mixed_store_file}" && ! -L "${mixed_store_file}" ]] || return 1
+      validate_structured_instance_store mixed "${mixed_store_file}" || return 1
+      mixed_store_count=$(jq -r '.instances | length' "${mixed_store_file}") || return 1
+      [[ "${mixed_store_count}" == "0" ]] || return 1
+    fi
+  fi
 
   for state_file in "${SB_PROTOCOL_STATE_DIR}"/*.env; do
     [[ -e "${state_file}" ]] || continue
@@ -12300,6 +13688,11 @@ agent_validate_indexed_protocol_states() {
     validate_protocol_state_schema "${protocol}" "${state_file}" || return 1
     if [[ "${protocol}" == "vless-reality" ]]; then
       agent_validate_vless_state_inventory || return 1
+    elif [[ "${protocol}" == "mixed" ]]; then
+      # Schema-2 Mixed must expose the complete typed manifest.  Returning a
+      # partial first-node view would make Agent status/links appear healthy
+      # while silently omitting listeners or credentials.
+      mixed_validate_state_inventory || return 1
     fi
   done
 }
@@ -12620,7 +14013,7 @@ agent_doctor_json() {
 agent_node_summary_json_for_current_protocol() {
   local protocol api_protocol public_ip shareable="true" client_exportable="false"
   local auth_enabled="false" server_name=""
-  local node_name instance_id="" rate_up="" rate_down="" outbound_policy=""
+  local node_name instance_id="" inbound_tag="" listen_address="" instance_revision="0" rate_up="" rate_down="" outbound_policy=""
   local tls_mode="" acme_mode="" obfs_enabled="false"
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
@@ -12640,6 +14033,10 @@ agent_node_summary_json_for_current_protocol() {
     mixed)
       client_exportable="true"
       [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]] && auth_enabled="true"
+      instance_id="${SB_MIXED_INSTANCE_ID:-}"
+      inbound_tag="${SB_MIXED_INBOUND_TAG:-}"
+      listen_address="${SB_MIXED_LISTEN_ADDRESS:-}"
+      instance_revision="${SB_MIXED_STORE_REVISION:-0}"
       ;;
     hy2)
       client_exportable="true"
@@ -12667,6 +14064,9 @@ agent_node_summary_json_for_current_protocol() {
     --arg port "${SB_PORT}" \
     --arg server_name "${server_name}" \
     --arg instance_id "${instance_id}" \
+    --arg inbound_tag "${inbound_tag}" \
+    --arg listen_address "${listen_address}" \
+    --arg instance_revision "${instance_revision}" \
     --arg rate_up "${rate_up}" \
     --arg rate_down "${rate_down}" \
     --arg outbound_policy "${outbound_policy}" \
@@ -12685,6 +14085,12 @@ agent_node_summary_json_for_current_protocol() {
     }
     + (if $server_name != "" then {"server_name": $server_name} else {} end)
     + (if $protocol == "mixed" then {"auth_enabled": $auth_enabled} else {} end)
+    + (if $protocol == "mixed" then {"instance_revision": ($instance_revision | tonumber)} else {} end)
+    + (if $protocol == "mixed" and $instance_id != "" then {
+        "instance_id": $instance_id,
+        "tag": $inbound_tag,
+        "listen": {"address": $listen_address, "port": ($port | tonumber)}
+      } else {} end)
     + (if $protocol == "vless-reality" then {
         "instance_id": $instance_id,
         "rate_limit": {
@@ -12711,7 +14117,7 @@ agent_node_summary_json_for_current_protocol() {
 agent_link_json_for_current_protocol() {
   local protocol api_protocol public_ip link_json outbound_json
   local address_label
-  local node_name instance_id="" rate_up="" rate_down="" outbound_policy=""
+  local node_name instance_id="" inbound_tag="" listen_address="" mixed_link_address="" instance_revision="0" rate_up="" rate_down="" outbound_policy=""
   local compatibility_warnings_json='[]'
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
@@ -12735,9 +14141,19 @@ agent_link_json_for_current_protocol() {
       link_json=$(jq -n --arg vless "$(build_vless_link "${public_ip}" "${address_label}")" '{"vless": $vless}')
       ;;
     mixed)
+      instance_id="${SB_MIXED_INSTANCE_ID:-}"
+      inbound_tag="${SB_MIXED_INBOUND_TAG:-}"
+      listen_address="${SB_MIXED_LISTEN_ADDRESS:-}"
+      instance_revision="${SB_MIXED_STORE_REVISION:-0}"
+      mixed_link_address="${public_ip}"
+      case "${listen_address}" in
+        0.0.0.0|::) mixed_link_address="${public_ip}" ;;
+        "") ;;
+        *) mixed_link_address="${listen_address}" ;;
+      esac
       link_json=$(jq -n \
-        --arg http "$(build_mixed_http_link "${public_ip}")" \
-        --arg socks5 "$(build_mixed_socks5_link "${public_ip}")" \
+        --arg http "$(build_mixed_http_link "${mixed_link_address}")" \
+        --arg socks5 "$(build_mixed_socks5_link "${mixed_link_address}")" \
         '{"http": $http, "socks5": $socks5}')
       ;;
     hy2)
@@ -12758,6 +14174,9 @@ agent_link_json_for_current_protocol() {
     --arg name "${node_name}" \
     --arg port "${SB_PORT}" \
     --arg instance_id "${instance_id}" \
+    --arg inbound_tag "${inbound_tag}" \
+    --arg listen_address "${listen_address}" \
+    --arg instance_revision "${instance_revision}" \
     --arg rate_up "${rate_up}" \
     --arg rate_down "${rate_down}" \
     --arg outbound_policy "${outbound_policy}" \
@@ -12778,6 +14197,12 @@ agent_link_json_for_current_protocol() {
         },
         "outbound_policy": $outbound_policy
       } else {} end)
+    + (if $protocol == "mixed" and $instance_id != "" then {
+        "instance_id": $instance_id,
+        "tag": $inbound_tag,
+        "listen": {"address": $listen_address, "port": ($port | tonumber)}
+      } else {} end)
+    + (if $protocol == "mixed" then {"instance_revision": ($instance_revision | tonumber)} else {} end)
     + (if $outbound != null then {"outbound": $outbound} else {} end)
     + (if ($warnings | length) > 0 then {"warnings": $warnings} else {} end)'
 }
@@ -13175,6 +14600,465 @@ agent_subman_sync_json() {
   agent_push_nodes_to_subman_json
 }
 
+mixed_inactive_store_snapshot() {
+  local snapshot
+  [[ ! -e "$(protocol_state_file mixed)" ]] || return 1
+  snapshot=$(structured_instance_store_snapshot_json mixed "$(mixed_structured_store_file)") || return $?
+  jq -e '.instances==[] and .default_instance_id=="" and .revision>0' <<< "${snapshot}" >/dev/null || return 1
+  printf '%s\n' "${snapshot}"
+}
+
+mixed_instance_config_candidate() {
+  local old_config=$1 old_store=$2 new_store=$3 inbounds rules
+  inbounds=$(render_structured_instance_inbounds mixed "${new_store}" | jq -s '.') || return $?
+  rules=$(render_structured_instance_route_rules mixed "${new_store}") || return $?
+  jq --slurpfile old "${old_store}" --argjson added "${inbounds}" --argjson rules "${rules}" '
+    ($old[0].instances | map(.tag)) as $old_tags |
+    def owned_rule:
+      (.inbound | type) == "string" and (.inbound as $tag | $old_tags | index($tag) != null) and
+      ((.action == "sniff" and (keys | sort) == ["action","inbound"]) or
+       (.action == "route" and (.outbound == "direct" or .outbound == "warp-ep") and
+        (keys | sort) == ["action","inbound","outbound"]));
+    (.inbounds // []) as $previous |
+    ([$previous | to_entries[] | select(.value.type == "mixed") | .key][0] // ($previous|length)) as $at |
+    .inbounds = ($previous[:$at] + $added + [$previous[$at:][] | select(.type != "mixed")]) |
+    (.route.rules // []) as $prior_rules |
+    ([$prior_rules[] | select(owned_rule) | [.inbound,.action]] | unique) as $positioned |
+    # Keep existing managed rules in place: moving a direct/Warp rule ahead
+    # of a custom reject or routing condition would change existing traffic.
+    (reduce $prior_rules[] as $rule ({seen:[],rules:[]};
+      if ($rule | owned_rule) then
+        if (.seen | index([[$rule.inbound,$rule.action]])) != null then .
+        else .seen += [[$rule.inbound,$rule.action]] |
+          .rules += [$rules[] | select(.inbound == $rule.inbound and .action == $rule.action)] end
+      else .rules += [$rule] end)) as $retained |
+    .route.rules = ([$rules[] | select([.inbound,.action] as $key | $positioned | index([$key]) == null)] + $retained.rules)
+  ' "${old_config}"
+}
+
+# Public mutation entrypoints share a kernel lock. The persistent instance
+# journal is a separate crash-recovery barrier, not a substitute for this lock.
+acquire_managed_write_lock() {
+  local lock_file="${SB_PROJECT_DIR}.management.flock" descriptor_target lock_mode=${1:-exclusive}
+  local lock_option=-x
+  case "${lock_mode}" in exclusive) ;; shared) lock_option=-s ;; *) return 1 ;; esac
+  command -v flock >/dev/null 2>&1 || {
+    printf '[ERROR] 写操作需要系统 flock 工具。\n' >&2; return 1;
+  }
+  [[ ! -L "${lock_file}" ]] || return 1
+  if [[ "${SB_MANAGEMENT_LOCK_FD:-}" =~ ^[0-9]+$ ]]; then
+    descriptor_target=$(readlink "/proc/${BASHPID:-$$}/fd/${SB_MANAGEMENT_LOCK_FD}") || return 1
+    [[ "${descriptor_target}" == "${lock_file}" ]] || return 1
+    if [[ "${lock_mode}" == shared && "${SB_MANAGEMENT_LOCK_MODE:-}" == exclusive ]]; then
+      return 0
+    fi
+  else
+    (umask 077; touch -- "${lock_file}") || return $?
+    exec {SB_MANAGEMENT_LOCK_FD}>"${lock_file}" || return $?
+  fi
+  flock -n "${lock_option}" "${SB_MANAGEMENT_LOCK_FD}" || {
+    printf '[ERROR] 另一个管理进程正在执行；本次未修改。\n' >&2; return 1;
+  }
+  SB_MANAGEMENT_LOCK_MODE=${lock_mode}
+}
+
+instance_transaction_checkpoint() {
+  local lock_dir=$1 phase=$2
+  jq --arg phase "${phase}" '.phase=$phase' "${lock_dir}/transaction.json" > "${lock_dir}/transaction.next" || return $?
+  mv -f "${lock_dir}/transaction.next" "${lock_dir}/transaction.json"
+}
+
+instance_transaction_restore() {
+  local lock_dir=$1 before_active status=0
+  before_active=$(jq -r '.before_active' "${lock_dir}/transaction.json") || return $?
+  # Restore only owned external effects; never infer firewall recovery from a
+  # directory restore. Keep the persistent journal if either half fails.
+  if [[ -f "${lock_dir}/firewall.json" ]]; then
+    instance_firewall_rollback "${lock_dir}/firewall.json" || status=1
+  else
+    printf '[ERROR] 防火墙事务日志缺失；无法证明外部状态已恢复。\n' >&2
+    status=1
+  fi
+  if [[ -f "${lock_dir}/snapshot/snapshot.meta" ]]; then
+    if ! restore_managed_state_snapshot "${lock_dir}/snapshot"; then
+      printf '[ERROR] 状态快照恢复失败；未启动可能不一致的配置，请保留事务目录人工恢复。\n' >&2
+      return 1
+    fi
+    if [[ "${before_active}" == true ]]; then
+      if systemctl restart sing-box >/dev/null 2>&1 && systemctl is-active --quiet sing-box; then :; else status=1; fi
+    else
+      if systemctl stop sing-box >/dev/null 2>&1 && singbox_service_confirmed_stopped; then :; else status=1; fi
+    fi
+  else
+    printf '[ERROR] 事务恢复快照缺失；未报告回滚成功。\n' >&2
+    return 1
+  fi
+  return "${status}"
+}
+
+instance_transaction_firewall_summary() {
+  local journal_file=$1 summary
+  if [[ -f "${journal_file}" && ! -L "${journal_file}" ]] && summary=$(jq -ce '
+    def backend: IN("ufw","firewalld","iptables","ip6tables");
+    def code: IN("backend_unavailable","backend_external_managed","backend_conflict",
+      "backend_inspection_failed","backend_mutation_failed","backend_mutation_unconfirmed","owned_backend_unavailable",
+      "owned_rule_inspection_failed","rule_inspection_failed","firewalld_owned_unsupported",
+      "firewalld_requires_manual_setup","invalid_old_plan","invalid_new_plan",
+      "invalid_old_targets","invalid_new_targets","invalid_ledger","invalid_candidates",
+      "ledger_persist_failed","ledger_restore_failed","compensation_failed","external_state_uncertain");
+    select(type == "object") | . as $journal |
+    {status:(if (.status | IN("prepared","applying","applied","committed","prepare_failed",
+       "apply_failed","rolling_back","rolled_back","rollback_failed","rollback_uncertain"))
+       then .status else "unavailable" end),
+     backends:[.backend_statuses[]? | select(.backend | backend) |
+       {backend, state:(if (.state | IN("available","unavailable","external-managed")) then .state else "unavailable" end)}],
+     diagnostics:[.diagnostics[]? |
+       {code:(if (.code | code) then .code else "firewall_diagnostic_unrecognized" end),
+        severity:(if .severity == "error" then "error" else "warning" end),
+        backend:(if (.backend | backend) then .backend else "unavailable" end)}]}
+    + (if $journal.error_code == null then {} else
+       {error_code:(if ($journal.error_code | code) then $journal.error_code else "firewall_diagnostic_unrecognized" end)} end)
+  ' "${journal_file}" 2>/dev/null); then
+    printf '%s\n' "${summary}"
+  else
+    printf '%s\n' '{"status":"unavailable","backends":[],"diagnostics":[]}'
+  fi
+}
+
+instance_transaction_report() {
+  local state=$1 phase=$2 code=$3 changed=$4 manual=$5 revision=${6:-0}
+  local firewall_summary='{"status":"not_attempted","backends":[],"diagnostics":[]}'
+  [[ $# -le 6 ]] || firewall_summary=$7
+  jq -n --arg state "${state}" --arg phase "${phase}" --arg code "${code}" \
+    --argjson changed "${changed}" --argjson manual "${manual}" --argjson revision "${revision}" \
+    --argjson firewall "${firewall_summary}" '
+    {ok:($code==""),action:"instance",protocol:"mixed",changed:$changed,revision:$revision,
+     transaction:{status:$state,phase:$phase,manual_intervention_required:$manual,firewall:$firewall}}
+    + (if $code=="" then {} else {error:$code,message:"实例操作未成功；检查 transaction 状态，必要时执行 instance recover。"} end)'
+}
+
+instance_transaction_persist_result() (
+  local payload=$1 directory="${SB_PROJECT_DIR}.instance-transactions" result
+  umask 077
+  [[ ! -L "${directory}" ]] || return 1
+  mkdir -p "${directory}" && chmod 700 "${directory}" || return $?
+  result=$(mktemp "${directory}/result-$(date -u +%Y%m%dT%H%M%SZ).XXXXXX.json") || return $?
+  if ! instance_transaction_update_result "${result}" "${payload}"; then
+    rm -f -- "${result}" || return 1
+    return 1
+  fi
+  printf '%s' "${result}"
+)
+
+instance_transaction_update_result() (
+  local result=$1 payload=$2 stage
+  [[ "${result}" == "${SB_PROJECT_DIR}.instance-transactions/"result-*.json &&
+     -f "${result}" && ! -L "${result}" ]] || return 1
+  umask 077
+  stage=$(mktemp "${result}.candidate.XXXXXX") || return $?
+  trap 'rm -f -- "${stage}"' EXIT
+  jq --arg path "${result}" \
+    '.transaction.result_path=$path | .transaction.result_persisted=true' \
+    <<< "${payload}" > "${stage}" || return $?
+  mv -f -- "${stage}" "${result}"
+)
+
+recover_mixed_instance_transaction() (
+  local expected_revision=$1 lock_dir="${SB_PROJECT_DIR}.instance-write.lock"
+  local phase owner_pid owner_start current_start="" result revision recovery_fd recovery_entries result_path firewall_summary
+  [[ ${EUID} -eq 0 ]] || { agent_json_error root_required "恢复必须以 root 执行。"; return 1; }
+  acquire_managed_write_lock || {
+    agent_json_error instance_write_busy "另一个管理进程正在执行；未开始恢复。"; return 1;
+  }
+  [[ -d "${lock_dir}" && ! -L "${lock_dir}" ]] || {
+    agent_json_error instance_recovery_unavailable "未找到可验证的待恢复实例事务；未自动删除任何文件。"; return 1;
+  }
+  if [[ ! -e "${lock_dir}/transaction.json" ]]; then
+    # The shared kernel lock proves that no writer is still preparing this
+    # directory. Before atomic journal publication, only transaction.next can
+    # exist and no state/resource mutation is permitted. Anything else is an
+    # ambiguous damaged transaction and must remain for manual inspection.
+    recovery_entries=$(find "${lock_dir}" -mindepth 1 -maxdepth 1 -printf '%f\n') || return $?
+    if [[ -n "${recovery_entries}" && "${recovery_entries}" != transaction.next ]] ||
+       [[ -e "${lock_dir}/transaction.next" && (! -f "${lock_dir}/transaction.next" || -L "${lock_dir}/transaction.next") ]]; then
+      agent_json_error instance_recovery_untrusted "主日志缺失且发现已准备材料；无法证明未发生变更，已保留目录。"; return 1
+    fi
+    result=$(instance_transaction_report unchanged prepare '' false false "${expected_revision}") || return $?
+    result_path=$(instance_transaction_persist_result "${result}") || return $?
+    rm -rf -- "${lock_dir}" || return $?
+    jq --arg path "${result_path}" '.transaction.result_path=$path | .transaction.result_persisted=true' <<< "${result}"
+    return 0
+  fi
+  [[ -f "${lock_dir}/transaction.json" && ! -L "${lock_dir}/transaction.json" ]] || {
+    agent_json_error instance_recovery_untrusted "事务主日志不是可信普通文件；未修改。"; return 1;
+  }
+  jq -e --arg revision "${expected_revision}" '
+    .schema_version==1 and (.owner_pid|type=="number" and floor==. and .>0) and
+    (.owner_start|type=="string" and test("^[0-9]+$")) and
+    (.before_active|type=="boolean") and .expected_revision==$revision and
+    (.phase=="prepare" or .phase=="snapshot" or .phase=="publish" or .phase=="resources" or .phase=="service" or .phase=="committed")
+  ' "${lock_dir}/transaction.json" >/dev/null 2>&1 || {
+    agent_json_error instance_recovery_untrusted "事务日志无法验证或 revision 不匹配；请保留文件并人工检查。"; return 1;
+  }
+  owner_pid=$(jq -r .owner_pid "${lock_dir}/transaction.json") || return $?
+  owner_start=$(jq -r .owner_start "${lock_dir}/transaction.json") || return $?
+  if [[ -r "/proc/${owner_pid}/stat" ]]; then
+    current_start=$(awk '{print $22}' "/proc/${owner_pid}/stat") || return $?
+    if [[ "${current_start}" == "${owner_start}" ]]; then
+      agent_json_error instance_transaction_active "原实例写进程仍在运行；禁止并发恢复。"; return 1
+    fi
+  fi
+  # A kernel lock is released on uncatchable interruption; the durable write
+  # journal itself stays in place until recovery has actually succeeded.
+  command -v flock >/dev/null 2>&1 && [[ ! -L "${lock_dir}/recovery.flock" ]] || {
+    agent_json_error instance_recovery_unavailable "恢复需要 flock 且锁文件必须可信。"; return 1;
+  }
+  exec {recovery_fd}>"${lock_dir}/recovery.flock" || return $?
+  flock -n "${recovery_fd}" || {
+    agent_json_error instance_recovery_active "另一个恢复进程已取得恢复锁。"; return 1;
+  }
+  phase=$(jq -r .phase "${lock_dir}/transaction.json") || return $?
+  revision=$(jq -r '.new_revision // .expected_revision | tonumber' "${lock_dir}/transaction.json") || return $?
+  firewall_summary=$(instance_transaction_firewall_summary "${lock_dir}/firewall.json")
+  case "${phase}" in
+    publish|resources|service)
+      if ! instance_transaction_restore "${lock_dir}"; then
+        firewall_summary=$(instance_transaction_firewall_summary "${lock_dir}/firewall.json")
+        result=$(instance_transaction_report rollback_failed "${phase}" instance_rollback_failed false true "${expected_revision}" "${firewall_summary}") || return $?
+        if result_path=$(instance_transaction_persist_result "${result}"); then
+          jq --arg path "${result_path}" '.transaction.result_path=$path | .transaction.result_persisted=true' <<< "${result}"
+        else
+          jq '.transaction.result_path="" | .transaction.result_persisted=false |
+            .transaction.audit_error="instance_audit_failed"' <<< "${result}"
+        fi
+        return 1
+      fi
+      firewall_summary=$(instance_transaction_firewall_summary "${lock_dir}/firewall.json")
+      result=$(instance_transaction_report rolled_back "${phase}" '' false false "${expected_revision}" "${firewall_summary}") || return $?
+      ;;
+    committed) result=$(instance_transaction_report committed "${phase}" '' true false "${revision}" "${firewall_summary}") || return $? ;;
+    *) result=$(instance_transaction_report unchanged "${phase}" '' false false "${expected_revision}" "${firewall_summary}") || return $? ;;
+  esac
+  result_path=$(instance_transaction_persist_result "${result}") || return $?
+  rm -rf -- "${lock_dir}" || return $?
+  jq --arg path "${result_path}" '.transaction.result_path=$path | .transaction.result_persisted=true' <<< "${result}"
+)
+
+apply_mixed_instance_change() (
+  local operation=$1 expected_revision=$2 input=$3 allow_public=${4:-n}
+  local lock_dir="${SB_PROJECT_DIR}.instance-write.lock" touched=n completed=n noop=n
+  local phase=prepare revision=0 before_active=false current_revision=0 schema count indexed protocol
+  local owner_pid=${BASHPID:-$$} owner_start snapshot_file result_status
+  local protocols=()
+  umask 077
+  [[ ${EUID} -eq 0 ]] || { agent_json_error root_required "实例写操作必须以 root 执行。"; return 1; }
+  acquire_managed_write_lock || {
+    agent_json_error instance_write_busy "另一个管理进程正在执行；未修改。"; return 1;
+  }
+  [[ ${EUID} -eq 0 && -x "${SINGBOX_BIN_PATH}" && -f "${SINGBOX_CONFIG_FILE}" &&
+     ! -L "${SB_PROJECT_DIR}" && ! -L "${SB_PROTOCOL_STATE_DIR}" ]] || {
+    agent_json_error instance_precheck_failed "需要现有受管配置、可执行核心和 root 权限。"; return 1;
+  }
+  validate_protocol_index_for_rebuild >&2 && validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" >&2 || {
+    agent_json_error protocol_state_untrusted "现有配置或协议索引无法完整读取；未修改。"; return 1;
+  }
+  if ! mkdir -m 700 "${lock_dir}" 2>/dev/null; then
+    agent_json_error instance_transaction_pending "已有实例写事务或未完成恢复；请先检查并使用 instance recover。"
+    return 1
+  fi
+  instance_transaction_finish() {
+    local operation_status=$1 state=success code="" manual=false cleanup_status=0 result result_path="" firewall_summary
+    trap - EXIT INT TERM HUP
+    if [[ "${operation_status}" != 0 ]]; then
+      code=instance_apply_failed
+      if [[ "${touched}" == y ]]; then
+        if instance_transaction_restore "${lock_dir}"; then state=rolled_back; revision=${current_revision}; else
+          state=rollback_failed; code=instance_rollback_failed; manual=true
+        fi
+      else
+        state=unchanged
+      fi
+    elif [[ "${noop}" == y ]]; then
+      state=not_attempted
+    fi
+    if [[ "${noop}" == y ]]; then
+      firewall_summary='{"status":"not_attempted","backends":[],"diagnostics":[]}'
+    else
+      firewall_summary=$(instance_transaction_firewall_summary "${lock_dir}/firewall.json")
+    fi
+    result=$(instance_transaction_report "${state}" "${phase}" "${code}" \
+      "$([[ "${completed}" == y ]] && printf true || printf false)" "${manual}" "${revision}" "${firewall_summary}" |
+      jq --argjson status "${operation_status}" '.transaction.operation_exit_code=$status')
+    if [[ "${touched}" == y ]]; then
+      if result_path=$(instance_transaction_persist_result "${result}"); then :; else
+        cleanup_status=1; manual=true; code=instance_audit_failed
+      fi
+    fi
+    if [[ "${manual}" == false ]]; then
+      if ! rm -rf -- "${lock_dir}"; then
+        cleanup_status=1
+        state=cleanup_failed; code=instance_cleanup_failed; manual=true
+      fi
+    fi
+    [[ "${operation_status}" == 0 && "${cleanup_status}" != 0 ]] && operation_status=1
+    result=$(instance_transaction_report "${state}" "${phase}" "${code}" \
+      "$([[ "${completed}" == y ]] && printf true || printf false)" "${manual}" "${revision}" "${firewall_summary}" |
+      jq --arg path "${result_path}" --argjson exit_code "${operation_status}" \
+      '.transaction.result_path=$path | .transaction.result_persisted=($path!="") | .transaction.operation_exit_code=$exit_code')
+    if [[ -n "${result_path}" ]] && ! instance_transaction_update_result "${result_path}" "${result}"; then
+      operation_status=1
+      result=$(jq '.ok=false | .error="instance_audit_failed" |
+        .transaction.result_persisted=false | .transaction.manual_intervention_required=true |
+        .transaction.operation_exit_code=1' <<< "${result}")
+    fi
+    printf '%s\n' "${result}"
+    exit "${operation_status}"
+  }
+  trap 'instance_transaction_finish "$?"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+  owner_start=$(awk '{print $22}' "/proc/${owner_pid}/stat") || return $?
+  case "$(systemctl show -p ActiveState --value sing-box)" in
+    active) before_active=true ;;
+    inactive|failed) before_active=false ;;
+    *) return 1 ;;
+  esac
+  jq -n --arg operation "${operation}" --arg expected "${expected_revision}" --argjson pid "${owner_pid}" --arg start "${owner_start}" \
+    --argjson before "${before_active}" \
+    '{schema_version:1,operation:$operation,expected_revision:$expected,owner_pid:$pid,owner_start:$start,before_active:$before,phase:"prepare"}' \
+    > "${lock_dir}/transaction.next" || return $?
+  mv -f -- "${lock_dir}/transaction.next" "${lock_dir}/transaction.json" || return $?
+  if mixed_structured_state_active; then
+    mixed_structured_state_matches_config || return 1
+    structured_instance_store_snapshot_json mixed "$(mixed_structured_store_file)" > "${lock_dir}/before.json" || return $?
+    current_revision=$(jq -r .revision "${lock_dir}/before.json") || return $?
+  elif protocol_state_exists mixed; then
+    [[ ! -e "$(mixed_structured_store_file)" ]] || return 1
+    mixed_config_store_candidate | jq '.revision=0' > "${lock_dir}/before.json" || return $?
+  else
+    [[ "${operation}" != migrate ]] || return 1
+    jq -e 'all(.inbounds[]?; .type != "mixed")' "${SINGBOX_CONFIG_FILE}" >/dev/null || return 1
+    if [[ -e "$(mixed_structured_store_file)" ]]; then
+      mixed_inactive_store_snapshot > "${lock_dir}/before.json" || return $?
+      current_revision=$(jq -r .revision "${lock_dir}/before.json") || return $?
+    else
+      structured_instance_store_empty_json mixed > "${lock_dir}/before.json" || return $?
+    fi
+  fi
+  [[ "${expected_revision}" == "${current_revision}" ]] || return 1
+  if [[ "${operation}" == migrate ]]; then
+    if mixed_structured_state_active; then
+      revision=${current_revision}; noop=y; return 0
+    fi
+    jq '.revision=1' "${lock_dir}/before.json" > "${lock_dir}/after.json" || return $?
+  else
+    if [[ "${operation}" == create || "${operation}" == replace ]]; then
+      [[ -f "${input}" && ! -L "${input}" ]] || return 1
+      head -c 1048577 -- "${input}" > "${lock_dir}/record.json" || return $?
+      [[ "$(wc -c < "${lock_dir}/record.json")" -le 1048576 ]] || return 1
+      # New plaintext exposure requires a distinct acknowledgement. Legacy
+      # migration alone retains its existing listener without changing it.
+      if [[ "${allow_public}" != y ]]; then
+        jq -es 'length==1 and (.[0].listen.address | .=="::1" or test("^127\\."))' "${lock_dir}/record.json" >/dev/null 2>&1 || return 1
+      fi
+      input="${lock_dir}/record.json"
+    fi
+    structured_instance_store_candidate mixed "${lock_dir}/before.json" "${operation}" "${input}" \
+      "${current_revision}" > "${lock_dir}/after.json" || return $?
+  fi
+  validate_structured_instance_store mixed "${lock_dir}/after.json" || return $?
+  revision=$(jq -r .revision "${lock_dir}/after.json") || return $?
+  if [[ "${revision}" == "${current_revision}" ]]; then noop=y; return 0; fi
+  jq --argjson revision "${revision}" '.new_revision=$revision' "${lock_dir}/transaction.json" > "${lock_dir}/transaction.next" || return $?
+  mv -f "${lock_dir}/transaction.next" "${lock_dir}/transaction.json" || return $?
+  mixed_instance_config_candidate "${SINGBOX_CONFIG_FILE}" "${lock_dir}/before.json" "${lock_dir}/after.json" \
+    > "${lock_dir}/config.json" || return $?
+  validate_managed_component_graph "${lock_dir}/config.json" || return $?
+  validate_managed_listener_resources "${lock_dir}/config.json" || return $?
+  "${SINGBOX_BIN_PATH}" check -c "${lock_dir}/config.json" >&2 || return $?
+  instance_firewall_prepare "${SINGBOX_CONFIG_FILE}" "${lock_dir}/config.json" "${lock_dir}/firewall.json" || return $?
+  phase=snapshot
+  instance_transaction_checkpoint "${lock_dir}" "${phase}" || return $?
+  snapshot_file=$(create_managed_state_snapshot "${lock_dir}/snapshot") || return $?
+  phase=publish
+  instance_transaction_checkpoint "${lock_dir}" "${phase}" || return $?
+  touched=y
+  count=$(jq -r '.instances|length' "${lock_dir}/after.json") || return $?
+  if [[ "${count}" == 0 ]]; then
+    # Preserve the empty, revisioned store as a tombstone. Recreating Mixed
+    # must not reset CAS to zero and revive an older request (ABA).
+    publish_structured_instance_store mixed "${lock_dir}/after.json" "${current_revision}" legacy-empty-activation || return $?
+    persist_file_backup "$(protocol_state_file mixed)" "$(protocol_state_file mixed).bak" || return $?
+    rm -f -- "$(protocol_state_file mixed)" || return $?
+  else
+    publish_structured_instance_store mixed "${lock_dir}/after.json" "${current_revision}" || return $?
+    save_mixed_structured_marker || return $?
+  fi
+  # Match the live config's protocol ordering, retaining every non-Mixed role.
+  indexed=$(jq -r 'reduce .inbounds[]?.type as $type ([]; if index($type) then . else .+[$type] end) | .[]' "${lock_dir}/config.json") || return $?
+  protocols=()
+  while IFS= read -r protocol; do
+    [[ -n "${protocol}" ]] || continue
+    protocols+=("$(normalize_protocol_id "${protocol}")")
+  done <<< "${indexed}"
+  indexed=$(IFS=,; printf '%s' "${protocols[*]-}")
+  write_protocol_index "${indexed}" || return $?
+  publish_managed_config_candidate "${lock_dir}/config.json" || return $?
+  cmp -s -- "${lock_dir}/config.json" "${SINGBOX_CONFIG_FILE}" || return 1
+  if [[ "${count}" != 0 ]]; then
+    mixed_structured_state_matches_config || return 1
+  fi
+  phase=resources
+  instance_transaction_checkpoint "${lock_dir}" "${phase}" || return $?
+  instance_firewall_apply "${lock_dir}/firewall.json" || return $?
+  phase=service
+  instance_transaction_checkpoint "${lock_dir}" "${phase}" || return $?
+  if [[ "${before_active}" == true ]]; then
+    systemctl restart sing-box >/dev/null 2>&1 || return $?
+    systemctl is-active --quiet sing-box || return $?
+  fi
+  phase=committed
+  instance_transaction_checkpoint "${lock_dir}" "${phase}" || return $?
+  completed=y
+  return 0
+)
+
+agent_instance_cli() {
+  local operation=${1:-} protocol=${2:-} expected="" input="" instance_id="" json=n confirmed=n allow_public=n
+  [[ $# -ge 2 ]] || { agent_json_error invalid_arguments "用法: instance 操作 mixed --json --yes --expected-revision N [--file 文件 | --id ID]"; return 1; }
+  shift 2
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) [[ "${json}" == n ]] || break; json=y; shift ;;
+      --yes) [[ "${confirmed}" == n ]] || break; confirmed=y; shift ;;
+      --allow-public) [[ "${allow_public}" == n ]] || break; allow_public=y; shift ;;
+      --expected-revision) [[ $# -ge 2 && -z "${expected}" ]] || break; expected=$2; shift 2 ;;
+      --file) [[ $# -ge 2 && -z "${input}" ]] || break; input=$2; shift 2 ;;
+      --id) [[ $# -ge 2 && -z "${instance_id}" ]] || break; instance_id=$2; shift 2 ;;
+      *) break ;;
+    esac
+  done
+  if [[ $# -ne 0 || "${json}" != y || "${protocol}" != mixed || ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
+    agent_json_error invalid_arguments "实例参数、协议或 revision 无效；未修改。"; return 1
+  fi
+  if ! structured_instance_store_revision_arg "${expected}" >/dev/null; then
+    agent_json_error invalid_arguments "revision 超出安全整数范围；未修改。"; return 1
+  fi
+  [[ "${confirmed}" == y ]] || { agent_json_error confirmation_required "实例写操作需要 --yes；非回环明文入口另需 --allow-public。"; return 1; }
+  case "${operation}" in
+    create|replace) [[ -n "${input}" && -z "${instance_id}" ]] || { agent_json_error invalid_arguments "create/replace 需要 --file 类型化实例记录。"; return 1; } ;;
+    delete|default) [[ -z "${input}" && -n "${instance_id}" && "${allow_public}" == n ]] || { agent_json_error invalid_arguments "delete/default 需要 --id。"; return 1; }; input=${instance_id} ;;
+    migrate|recover) [[ -z "${input}${instance_id}" && "${allow_public}" == n ]] || { agent_json_error invalid_arguments "migrate/recover 不接收实例参数。"; return 1; } ;;
+    *) agent_json_error invalid_arguments "未知实例操作。"; return 1 ;;
+  esac
+  if [[ "${operation}" == recover ]]; then
+    recover_mixed_instance_transaction "${expected}"
+  else
+    apply_mixed_instance_change "${operation}" "${expected}" "${input}" "${allow_public}"
+  fi
+}
+
 agent_cli() {
   local command=${1:-help}
   shift || true
@@ -13194,6 +15078,9 @@ agent_cli() {
         return $?
       fi
       agent_cli_run "capabilities" agent_capabilities_json
+      ;;
+    instance)
+      agent_cli_run "instance" agent_instance_cli "$@"
       ;;
     upgrade-check)
       if [[ $# -ne 2 || "${1:-}" != "--json" ]]; then
@@ -13310,7 +15197,32 @@ agent_dispatch() {
     return $?
   fi
 
-  agent_cli "$@"
+  case "${1:-}" in
+    instance) agent_cli "$@" ;;
+    status|nodes|links|check|doctor|warp|upgrade-check)
+      (
+        if ! acquire_managed_write_lock shared; then
+          agent_cli_error "${command}" instance_write_busy "配置正在被管理进程使用，未返回部分状态。"; return 1
+        fi
+        if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
+          agent_cli_error "${command}" instance_transaction_pending "存在未完成的实例事务；请先检查并恢复。"; return 1
+        fi
+        agent_cli "$@"
+      )
+      ;;
+    upgrade|service|export-client|subman-sync)
+      (
+        if ! acquire_managed_write_lock; then
+          agent_cli_error "${command}" instance_write_busy "另一个管理进程正在执行。"; return 1
+        fi
+        if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
+          agent_cli_error "${command}" instance_transaction_pending "请先完成 instance recover；未开始其他写操作。"; return 1
+        fi
+        agent_cli "$@"
+      )
+      ;;
+    *) agent_cli "$@" ;;
+  esac
 }
 
 push_nodes_to_subman() {
@@ -13520,7 +15432,7 @@ list_config_protocols() {
     inbound_type=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].type // empty' "${SINGBOX_CONFIG_FILE}") || return 1
     protocol=$(normalize_protocol_id "${inbound_type}") || return 1
 
-    if ! protocol_array_contains "${protocol}" "${protocols[@]}"; then
+    if ! protocol_array_contains "${protocol}" ${protocols[@]+"${protocols[@]}"}; then
       protocols+=("${protocol}")
     fi
   done
@@ -13826,6 +15738,313 @@ validate_structured_instance_store() {
   : "${protocol}"
 }
 
+# Build a complete typed Mixed inventory from the live configuration.  This is
+# intentionally a read-only candidate builder: it never sources JSON as shell
+# state and it never writes the root .env or the instance store.  The takeover
+# transaction owns publication of the returned document.
+mixed_config_store_candidate() (
+  umask 077
+  local config_file=${1:-${SINGBOX_CONFIG_FILE:-}}
+  local existing_file=${2:-}
+  local state_file state_schema legacy_name active_state store_file
+  local temp_dir inbound_json inbound_count inbound_index tag address port
+  local username password auth_enabled policy id name base digest suffix
+  local existing_instance existing_store_json existing_match default_id old_revision old_semantics new_semantics
+  local candidate_revision status
+  local marker_schema2=n store_instances=0
+
+  [[ -n "${config_file}" && -f "${config_file}" && ! -L "${config_file}" ]] || {
+    printf '[ERROR] mixed_store_candidate: live configuration is unavailable.\n' >&2
+    return 1
+  }
+
+  temp_dir=$(mktemp -d) || return $?
+  trap 'rm -rf -- "${temp_dir}"' EXIT
+  trap 'return 130' INT
+  trap 'return 143' TERM
+  trap 'return 129' HUP
+
+  # Canonicalize one complete snapshot before any inventory or route reads.
+  # This keeps a concurrently rewritten config from producing a mixed record
+  # assembled from different generations, without truncating arbitrary JSON.
+  if ! jq -cS . "${config_file}" > "${temp_dir}/live.json"; then
+    printf '[ERROR] mixed_store_candidate: live configuration is invalid.\n' >&2
+    return 1
+  fi
+  config_file="${temp_dir}/live.json"
+  if ! validate_live_inbound_inventory "${config_file}"; then
+    printf '[ERROR] mixed_store_candidate: live inbound inventory is not trusted.\n' >&2
+    return 1
+  fi
+
+  # Reject fields that this typed schema cannot reproduce.  In particular,
+  # TLS, multiple users, and listen options must never disappear during a
+  # takeover.  Missing users means unauthenticated Mixed; set_system_proxy is
+  # accepted only in its generated/default false form.
+  if ! jq -e '
+    (.inbounds // []) | map(select(.type == "mixed")) | length > 0
+  ' "${config_file}" >/dev/null 2>&1; then
+    printf '[ERROR] mixed_store_candidate: no Mixed inbound found.\n' >&2
+    return 1
+  fi
+  if ! jq -e '
+    (.inbounds // []) | all(.[];
+      if .type != "mixed" then true
+      else
+        ((keys_unsorted - ["type", "tag", "listen", "listen_port", "users", "set_system_proxy"] | length == 0))
+        and (if has("tag") then (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) else true end)
+        and (if has("listen") then (.listen | type == "string" and length > 0) else true end)
+        and (if has("listen_port") then (.listen_port | type == "number" and floor == . and . >= 1 and . <= 65535) else true end)
+        and (if has("users") then
+              (.users | type == "array" and length <= 1 and
+                all(.[ ]; type == "object" and
+                  ((keys_unsorted | sort) == ["password", "username"]) and
+                  (.username | type == "string" and length > 0 and index("\u0000") == null) and
+                  (.password | type == "string" and length > 0 and index("\u0000") == null)) )
+             else true end)
+        and (if has("set_system_proxy") then .set_system_proxy == false else true end)
+      end)
+  ' "${config_file}" >/dev/null 2>&1; then
+    printf '[ERROR] mixed_store_candidate: Mixed inbound contains unsupported or lossy fields.\n' >&2
+    return 1
+  fi
+
+  # Existing structured metadata is authoritative only when the root marker
+  # says that schema 2 is active.  A valid but orphaned JSON file must not
+  # silently rename legacy nodes.  The helper is supplied by the structured
+  # state layer; the raw schema check keeps this function usable during the
+  # pre-publication phase of takeover.
+  state_file=$(protocol_state_file "mixed") || return 1
+  if [[ -f "${state_file}" ]] &&
+     grep -Eq "^[[:space:]]*CONFIG_SCHEMA_VERSION=" "${state_file}"; then
+    validate_protocol_state_schema mixed "${state_file}" || return 1
+  fi
+  active_state=n
+  if mixed_structured_state_active >/dev/null 2>&1; then
+    active_state=y
+  fi
+  state_schema="1"
+  if [[ -f "${state_file}" ]]; then
+    state_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" | head -n1) || return 1
+    state_schema=${state_schema//\"/}
+    state_schema=${state_schema//\'/}
+  fi
+  if [[ -z "${existing_file}" ]]; then
+    if existing_file=$(mixed_structured_store_file 2>/dev/null); then :; else existing_file="${SB_PROTOCOL_STATE_DIR}/instances/mixed.json"; fi
+  fi
+  store_file="${existing_file}"
+  if [[ "${state_schema}" == "2" ]]; then
+    marker_schema2=y
+  fi
+  if [[ "${marker_schema2}" == "y" || "${active_state}" == "y" ]]; then
+    [[ -f "${store_file}" && ! -L "${store_file}" ]] || {
+      printf '[ERROR] mixed_store_candidate: active Mixed store is missing.\n' >&2
+      return 1
+    }
+    validate_structured_instance_store mixed "${store_file}" || return 1
+    store_instances=$(jq -r '.instances | length' "${store_file}") || return 1
+    [[ "${store_instances}" =~ ^[0-9]+$ && "${store_instances}" -gt 0 ]] || {
+      printf '[ERROR] mixed_store_candidate: empty or orphaned Mixed store cannot be reused.\n' >&2
+      return 1
+    }
+    active_state=y
+  elif [[ -e "${store_file}" || -L "${store_file}" ]]; then
+    # A tombstone belongs to the delete transaction and is not legacy
+    # metadata.  Refuse both empty and non-empty orphan stores so a fresh
+    # takeover cannot accidentally reuse stale identities.
+    printf '[ERROR] mixed_store_candidate: orphaned Mixed store requires explicit recovery.\n' >&2
+    return 1
+  else
+    store_file=""
+  fi
+
+  legacy_name=""
+  if [[ -f "${state_file}" && "${state_schema}" == "1" ]]; then
+    legacy_name=$(
+      unset NODE_NAME
+      # shellcheck disable=SC1090
+      source "${state_file}"
+      # Keep the sentinel outside command substitution's newline-stripping
+      # boundary so a legacy name ending in one or more newlines is exact.
+      printf '%s\1' "${NODE_NAME:-}"
+    ) || return 1
+    legacy_name=${legacy_name%$'\1'}
+  fi
+
+  if [[ -n "${store_file}" ]]; then
+    existing_store_json=$(jq -cS . "${store_file}") || return 1
+    old_revision=$(jq -r '.revision' <<< "${existing_store_json}") || return 1
+  else
+    existing_store_json=$(structured_instance_store_empty_json) || return 1
+    old_revision=0
+  fi
+
+  inbound_count=$(jq -r '[.inbounds[]? | select(.type == "mixed")] | length' "${config_file}") || return 1
+  [[ "${inbound_count}" =~ ^[0-9]+$ && "${inbound_count}" -gt 0 ]] || return 1
+  : > "${temp_dir}/instances.jsonl" || return 1
+
+  # Config order is not identity.  Stable tags select the prior record; a
+  # previously unseen tag gets a deterministic, collision-free ID and keeps
+  # the live tag verbatim.
+  for ((inbound_index = 0; inbound_index < inbound_count; inbound_index++)); do
+    inbound_json=$(jq -c --argjson idx "${inbound_index}" '[.inbounds[]? | select(.type == "mixed")][$idx]' "${config_file}") || return 1
+    tag=$(jq -r '.tag // empty' <<< "${inbound_json}") || return 1
+    if [[ -z "${tag}" ]]; then
+      if [[ "${inbound_count}" == "1" && "${active_state}" != "y" ]]; then
+        tag="mixed-in"
+      else
+        printf '[ERROR] mixed_store_candidate: Mixed inbound tag is required for stable identity.\n' >&2
+        return 1
+      fi
+    fi
+    # sing-box's Mixed listener defaults to loopback, while an omitted port
+    # means an ephemeral listener.  The former is safe to materialize; the
+    # latter cannot be represented in typed state and must fail closed for
+    # every migration path.
+    jq -e 'has("listen_port")' <<< "${inbound_json}" >/dev/null 2>&1 || {
+      printf '[ERROR] mixed_store_candidate: Mixed listen_port must be explicit; ephemeral ports are not recoverable.\n' >&2
+      return 1
+    }
+    address=$(jq -r '.listen // empty' <<< "${inbound_json}") || return 1
+    if [[ -z "${address}" ]]; then
+      address='127.0.0.1'
+    fi
+    port=$(jq -r '.listen_port' <<< "${inbound_json}") || return 1
+    structured_instance_store_validate_address "${address}" || {
+      printf '[ERROR] mixed_store_candidate: Mixed listen address is unsupported.\n' >&2
+      return 1
+    }
+
+    username=""
+    password=""
+    auth_enabled=false
+    if jq -e '.users | length > 0' <<< "${inbound_json}" >/dev/null 2>&1; then
+      auth_enabled=true
+      username=$(jq -j '.users[0].username, "\u0001"' <<< "${inbound_json}") || return 1
+      username=${username%$'\1'}
+      password=$(jq -j '.users[0].password, "\u0001"' <<< "${inbound_json}") || return 1
+      password=${password%$'\1'}
+    fi
+    # This extractor deliberately rejects more than one matching route.  A
+    # route target unknown to the managed model is equally unsafe to flatten.
+    if ! policy=$(vless_reality_outbound_policy_from_config "${tag}" "${config_file}"); then
+      printf '[ERROR] mixed_store_candidate: Mixed outbound policy is ambiguous or unsupported.\n' >&2
+      return 1
+    fi
+
+    id=""
+    name=""
+    if [[ -n "${store_file}" ]]; then
+      existing_match=$(jq -c --arg tag "${tag}" '[.instances[] | select(.tag == $tag)]' "${store_file}") || return 1
+      if [[ "$(jq 'length' <<< "${existing_match}")" == "1" ]]; then
+        id=$(jq -r '.[0].id' <<< "${existing_match}")
+        name=$(jq -j '.[0].name, "\u0001"' <<< "${existing_match}") || return 1
+        name=${name%$'\1'}
+      elif [[ "$(jq 'length' <<< "${existing_match}")" -gt 1 ]]; then
+        printf '[ERROR] mixed_store_candidate: duplicate stored Mixed identity.\n' >&2
+        return 1
+      fi
+    elif [[ "${inbound_count}" == "1" && "${state_schema}" == "1" ]]; then
+      id="main"
+      name="${legacy_name}"
+    fi
+
+    if [[ -z "${id}" ]]; then
+      if structured_instance_store_validate_id "${tag}"; then
+        base="${tag}"
+      else
+        digest=$(printf '%s' "${tag}" | sha256sum) || return 1
+        base="mixed-${digest%% *}"
+        base=${base:0:48}
+      fi
+      id="${base}"
+      suffix=2
+      while {
+        jq -e -s --arg id "${id}" '[.[] | select(.id == $id)] | length > 0' "${temp_dir}/instances.jsonl" >/dev/null 2>&1 ||
+          { [[ -n "${store_file}" ]] && jq -e --arg id "${id}" 'any(.instances[]; .id == $id)' "${store_file}" >/dev/null 2>&1; };
+      }; do
+        id="${base}-${suffix}"
+        suffix=$((suffix + 1))
+      done
+      name="${tag}"
+    fi
+    [[ -n "${name}" ]] || name="${tag}"
+    jq -n -cS \
+      --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
+      --arg address "${address}" --argjson port "${port}" \
+      --argjson auth_enabled "${auth_enabled}" --arg username "${username}" --arg password "${password}" \
+      --arg policy "${policy}" \
+      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$auth_enabled,username:$username,password:$password},outbound_policy:$policy,dependencies:[]}' \
+      >> "${temp_dir}/instances.jsonl" || return 1
+  done
+
+  default_id=""
+  if [[ -n "${store_file}" ]]; then
+    default_id=$(jq -r '.default_instance_id' "${store_file}") || return 1
+  fi
+  if [[ -z "${default_id}" || ! $(jq -s --arg id "${default_id}" 'any(.[]; .id == $id)' "${temp_dir}/instances.jsonl") == true ]]; then
+    default_id=$(jq -r -s 'sort_by(.tag) | .[0].id' "${temp_dir}/instances.jsonl") || return 1
+  fi
+  new_semantics=$(jq -s --arg default_id "${default_id}" '{default_instance_id:$default_id,instances:(sort_by(.tag))}' "${temp_dir}/instances.jsonl") || return 1
+  old_semantics=$(jq -cS '{default_instance_id,instances:(.instances | sort_by(.tag))}' <<< "${existing_store_json}") || return 1
+  new_semantics=$(jq -cS . <<< "${new_semantics}") || return 1
+  candidate_revision="${old_revision}"
+  if [[ "${old_semantics}" != "${new_semantics}" ]]; then
+    [[ "${old_revision}" -lt 9007199254740991 ]] || {
+      printf '[ERROR] mixed_store_candidate: revision exhausted.\n' >&2
+      return 1
+    }
+    candidate_revision=$((old_revision + 1))
+  fi
+  candidate_json=$(jq -n -cS --argjson revision "${candidate_revision}" --argjson semantics "${new_semantics}" '{schema_version:1,protocol:"mixed",revision:$revision,default_instance_id:$semantics.default_instance_id,instances:$semantics.instances}') || return 1
+  printf '%s\n' "${candidate_json}" > "${temp_dir}/candidate.json" || return 1
+  validate_structured_instance_store mixed "${temp_dir}/candidate.json" || return 1
+  rm -rf -- "${temp_dir}" || { status=$?; trap - EXIT INT TERM HUP; return "${status}"; }
+  trap - EXIT INT TERM HUP
+  printf '%s\n' "${candidate_json}"
+)
+
+mixed_structured_state_matches_config() (
+  local config_file=${1:-${SINGBOX_CONFIG_FILE:-}} store_file current expected temp_dir
+  [[ -n "${config_file}" ]] || return 1
+  mixed_structured_state_active >/dev/null 2>&1 || return 1
+  store_file=$(mixed_structured_store_file 2>/dev/null) || return 1
+  [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  validate_structured_instance_store mixed "${store_file}" || return 1
+  temp_dir=$(mktemp -d) || return $?
+  trap 'rm -rf -- "${temp_dir}"' EXIT
+  current=$(jq -cS '{default_instance_id,instances:(.instances | sort_by(.tag))}' "${store_file}") || return 1
+  expected=$(mixed_config_store_candidate "${config_file}" "${store_file}") || return 1
+  expected=$(jq -cS '{default_instance_id,instances:(.instances | sort_by(.tag))}' <<< "${expected}") || return 1
+  [[ "${current}" == "${expected}" ]]
+)
+
+mixed_validate_state_inventory() (
+  local store_file config_count store_count config_tags store_tags state_file state_schema
+  state_file=$(protocol_state_file "mixed" 2>/dev/null || true)
+  if [[ -f "${state_file}" ]] &&
+     grep -Eq "^[[:space:]]*CONFIG_SCHEMA_VERSION=" "${state_file}"; then
+    validate_protocol_state_schema mixed "${state_file}" || return 1
+  fi
+  state_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" 2>/dev/null | head -n1 || true)
+  state_schema=${state_schema//\"/}
+  state_schema=${state_schema//\'/}
+  if [[ "${state_schema}" != "2" ]]; then
+    return 0
+  fi
+  mixed_structured_state_active >/dev/null 2>&1 || return 1
+  store_file=$(mixed_structured_store_file 2>/dev/null) || return 1
+  [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  validate_structured_instance_store mixed "${store_file}" || return 1
+  mixed_structured_state_matches_config || return 1
+  config_count=$(jq -r '[.inbounds[]? | select(.type == "mixed")] | length' "${SINGBOX_CONFIG_FILE}") || return 1
+  store_count=$(jq -r '.instances | length' "${store_file}") || return 1
+  [[ "${config_count}" =~ ^[0-9]+$ && "${config_count}" == "${store_count}" ]] || return 1
+  config_tags=$(jq -c '[.inbounds[]? | select(.type == "mixed") | .tag] | sort' "${SINGBOX_CONFIG_FILE}") || return 1
+  store_tags=$(jq -c '[.instances[].tag] | sort' "${store_file}") || return 1
+  [[ "${config_tags}" == "${store_tags}" ]]
+)
+
 structured_instance_store_empty_json() {
   jq -cn '{schema_version:1,protocol:"mixed",revision:0,default_instance_id:"",instances:[]}'
 }
@@ -13950,7 +16169,7 @@ publish_structured_instance_store() (
   # File primitive only: lifecycle callers still need managed state snapshots.
   umask 077
   [[ ${EUID} -eq 0 ]] || { structured_instance_store_error publish root_required; return 1; }
-  local protocol candidate_file expected_revision instance_dir target backup lock
+  local protocol candidate_file expected_revision instance_dir target backup lock activation=${4:-}
   local staged="" old_copy="" old_backup_copy="" backup_stage=""
   local had_target=n had_backup=n commit_attempted=n backup_attempted=n
   local current_json current_revision candidate_revision old_semantics new_semantics
@@ -14061,10 +16280,18 @@ publish_structured_instance_store() (
   old_semantics=$(jq -cS '{default_instance_id,instances}' <<< "${current_json}") || return $?
   new_semantics=$(jq -cS '{default_instance_id,instances}' "${staged}") || return $?
   if [[ "${old_semantics}" == "${new_semantics}" ]]; then
-    [[ "${candidate_revision}" == "${current_revision}" ]] || return 1
-    structured_write_finish 0 || status=$?
-    trap - EXIT INT TERM HUP
-    return "${status}"
+    if [[ "${activation}" == legacy-empty-activation && "${had_target}" == n &&
+          "${current_revision}" == 0 && "${candidate_revision}" == 1 ]] &&
+       protocol_state_exists mixed && [[ "$(protocol_instance_state_schema mixed)" == 1 ]]; then
+      # Deleting a legacy singleton is a real external lifecycle change even
+      # though its first structured representation is an empty tombstone.
+      :
+    else
+      [[ "${candidate_revision}" == "${current_revision}" ]] || return 1
+      structured_write_finish 0 || status=$?
+      trap - EXIT INT TERM HUP
+      return "${status}"
+    fi
   fi
   jq -e --argjson old "${current_revision}" \
     '$old < 9007199254740991 and .revision == ($old + 1)' "${staged}" >/dev/null || return $?
@@ -14139,6 +16366,144 @@ render_structured_instance_route_rules() {
   jq -c '[.instances[] | {inbound:.tag,action:"sniff"}, (if .outbound_policy == "default" then empty elif .outbound_policy == "direct" then {inbound:.tag,action:"route",outbound:"direct"} else {inbound:.tag,action:"route",outbound:"warp-ep"} end)]' <<< "${snapshot}" 2>/dev/null || { structured_instance_store_error render_routes render_failed; return 1; }
 }
 
+# Mixed schema-2 activation is explicit: the marker and the typed store must
+# both exist and validate.  Legacy mixed.env remains a separate read-only
+# schema-1 contract and is never migrated by a read/render operation.
+mixed_structured_store_file() {
+  printf '%s/instances/mixed.json' "${SB_PROTOCOL_STATE_DIR}"
+}
+
+mixed_structured_marker_is_valid() {
+  local marker_file=${1:-} line trimmed installed_count=0 schema_count=0
+
+  [[ -n "${marker_file}" && -f "${marker_file}" && ! -L "${marker_file}" ]] || return 1
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    trimmed=${line}
+    # Whitespace-only lines and comments are inert.  Do not evaluate or
+    # source any other text from this marker.
+    trimmed="${trimmed#${trimmed%%[![:space:]]*}}"
+    [[ -z "${trimmed}" ]] && continue
+    [[ "${trimmed}" == \#* ]] && continue
+    case "${trimmed}" in
+      INSTALLED=1|INSTALLED=\"1\"|INSTALLED=\'1\')
+        installed_count=$((installed_count + 1))
+        ;;
+      CONFIG_SCHEMA_VERSION=2|CONFIG_SCHEMA_VERSION=\"2\"|CONFIG_SCHEMA_VERSION=\'2\')
+        schema_count=$((schema_count + 1))
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  done < "${marker_file}"
+  [[ "${installed_count}" == "1" && "${schema_count}" == "1" ]]
+}
+
+mixed_structured_state_active() {
+  local state_file store_file
+  state_file=$(protocol_state_file "mixed") || return 1
+  mixed_structured_marker_is_valid "${state_file}" || return 1
+  store_file=$(mixed_structured_store_file) || return 1
+  [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  validate_structured_instance_store mixed "${store_file}" || return 1
+  jq -e '.instances | length > 0' "${store_file}" >/dev/null 2>&1
+}
+
+save_mixed_structured_marker() {
+  local state_file staged backup_file
+  state_file=$(protocol_state_file "mixed") || return 1
+  [[ ! -L "${state_file}" && (! -e "${state_file}" || -f "${state_file}") ]] || return 1
+  [[ -f "$(mixed_structured_store_file)" ]] || return 1
+  validate_structured_instance_store mixed "$(mixed_structured_store_file)" || return 1
+  staged=$(mktemp "${state_file}.candidate.XXXXXX") || return 1
+  if ! {
+    write_env_assignment "INSTALLED" "1"
+    write_env_assignment "CONFIG_SCHEMA_VERSION" "2"
+  } > "${staged}"; then
+    rm -f -- "${staged}"
+    return 1
+  fi
+  chmod 600 "${staged}" || {
+    rm -f -- "${staged}"
+    return 1
+  }
+  if [[ -f "${state_file}" ]]; then
+    backup_file="${state_file}.bak"
+    [[ ! -L "${backup_file}" && (! -e "${backup_file}" || -f "${backup_file}") ]] || {
+      rm -f -- "${staged}"
+      return 1
+    }
+    persist_file_backup "${state_file}" "${backup_file}" || {
+      rm -f -- "${staged}"
+      return 1
+    }
+  fi
+  if ! mv -f -- "${staged}" "${state_file}"; then
+    rm -f -- "${staged}"
+    return 1
+  fi
+}
+
+load_mixed_structured_instance() {
+  local state_file store_file instance_id default_id stream_file field snapshot
+  local fields=()
+  state_file=$(protocol_state_file "mixed") || return 1
+  store_file=$(mixed_structured_store_file) || return 1
+  mixed_structured_marker_is_valid "${state_file}" || return 1
+  [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+
+  # Capture and validate one private snapshot. All subsequent reads use that
+  # snapshot so a concurrent store replacement cannot mix revisions.
+  snapshot=$(structured_instance_store_snapshot_json mixed "${store_file}") || return 1
+  jq -e '.instances | length > 0' <<< "${snapshot}" >/dev/null 2>&1 || return 1
+  default_id=$(jq -r '.default_instance_id' <<< "${snapshot}") || return 1
+  instance_id=${1:-${default_id}}
+  structured_instance_store_validate_id "${instance_id}" || return 1
+  jq -e --arg id "${instance_id}" 'any(.instances[]; .id == $id)' <<< "${snapshot}" >/dev/null 2>&1 || return 1
+
+  reset_protocol_instance_runtime_fields
+  SB_MIXED_STORE_REVISION=$(jq -r '.revision | tostring' <<< "${snapshot}") || return 1
+  [[ "${SB_MIXED_STORE_REVISION}" =~ ^[0-9]+$ ]] || return 1
+
+  # NUL-delimited fields preserve embedded and trailing newlines in names and
+  # credentials; the typed validator has already rejected NUL bytes.
+  stream_file=$(mktemp) || return 1
+  if ! jq -j --arg id "${instance_id}" '
+      .instances[] | select(.id == $id) |
+      [.id, .name, .tag, .listen.address, (.listen.port | tostring),
+       (if .authentication.enabled then "y" else "n" end),
+       .authentication.username, .authentication.password,
+       .outbound_policy] | .[] | ., "\u0000"
+    ' <<< "${snapshot}" > "${stream_file}"; then
+    rm -f -- "${stream_file}"
+    return 1
+  fi
+  while IFS= read -r -d '' field; do
+    fields+=("${field}")
+  done < "${stream_file}"
+  rm -f -- "${stream_file}"
+  [[ ${#fields[@]} -eq 9 ]] || return 1
+
+  INSTALLED=1
+  CONFIG_SCHEMA_VERSION=2
+  NODE_NAME=${fields[1]}
+  PORT=${fields[4]}
+  AUTH_ENABLED=${fields[5]}
+  USERNAME=${fields[6]}
+  PASSWORD=${fields[7]}
+  SB_PROTOCOL="mixed"
+  SB_INSTANCE_ID=${fields[0]}
+  SB_MIXED_INSTANCE_ID=${fields[0]}
+  SB_NODE_NAME=${fields[1]}
+  SB_MIXED_INBOUND_TAG=${fields[2]}
+  SB_MIXED_LISTEN_ADDRESS=${fields[3]}
+  SB_PORT=${fields[4]}
+  SB_MIXED_AUTH_ENABLED=${fields[5]}
+  SB_MIXED_USERNAME=${fields[6]}
+  SB_MIXED_PASSWORD=${fields[7]}
+  SB_OUTBOUND_POLICY=${fields[8]}
+}
+
 protocol_instance_state_schema() {
   local protocol=$1
   local state_file schema schema_count
@@ -14146,13 +16511,13 @@ protocol_instance_state_schema() {
   protocol=$(normalize_protocol_id "${protocol}") || return 1
   state_file=$(protocol_state_file "${protocol}") || return 1
   [[ -f "${state_file}" ]] || return 1
-  schema_count=$(awk '/^CONFIG_SCHEMA_VERSION=/{count++} END{print count + 0}' "${state_file}") || return 1
+  schema_count=$(awk '/^[[:space:]]*CONFIG_SCHEMA_VERSION=/{count++} END{print count + 0}' "${state_file}") || return 1
   if [[ "${schema_count}" == "0" ]]; then
     printf '1'
     return 0
   fi
   [[ "${schema_count}" == "1" ]] || return 1
-  schema=$(sed -n 's/^CONFIG_SCHEMA_VERSION=//p' "${state_file}") || return 1
+  schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}") || return 1
   schema=${schema//\"/}
   schema=${schema//\'/}
   [[ "${schema}" =~ ^[0-9]+$ ]] || return 1
@@ -14202,6 +16567,10 @@ reset_protocol_instance_runtime_fields() {
   SB_MIXED_AUTH_ENABLED="y"
   SB_MIXED_USERNAME=""
   SB_MIXED_PASSWORD=""
+  SB_MIXED_INSTANCE_ID=""
+  SB_MIXED_INBOUND_TAG=""
+  SB_MIXED_LISTEN_ADDRESS=""
+  SB_MIXED_STORE_REVISION="0"
   SB_HY2_DOMAIN=""
   SB_HY2_PASSWORD=""
   SB_HY2_USER_NAME=""
@@ -14254,7 +16623,7 @@ list_protocol_instance_ids() {
   protocol=$(normalize_protocol_id "${protocol}") || return 1
   state_file=$(protocol_state_file "${protocol}") || return 1
   [[ -f "${state_file}" ]] || return 1
-  grep -Eq "^INSTALLED=(1|\"1\"|'1')$" "${state_file}" || return 1
+  grep -Eq "^[[:space:]]*INSTALLED=(1|\"1\"|'1')[[:space:]]*$" "${state_file}" || return 1
   schema=$(protocol_instance_state_schema "${protocol}") || return 1
 
   case "${protocol}:${schema}" in
@@ -14267,6 +16636,10 @@ list_protocol_instance_ids() {
       ;;
     mixed:1|hy2:1|anytls:1)
       printf 'main\n'
+      ;;
+    mixed:2)
+      mixed_structured_state_active || return 1
+      jq -r '.instances[].id' "$(mixed_structured_store_file)"
       ;;
     *)
       return 1
@@ -14318,6 +16691,10 @@ protocol_default_instance_id() {
     vless-reality:1|mixed:1|hy2:1|anytls:1)
       default_id="main"
       ;;
+    mixed:2)
+      mixed_structured_state_active || return 1
+      default_id=$(jq -r '.default_instance_id' "$(mixed_structured_store_file)") || return 1
+      ;;
     *)
       return 1
       ;;
@@ -14337,7 +16714,11 @@ load_protocol_instance_state() {
   local schema instance_ids listed_instance_id legacy_inbound_tag
 
   protocol=$(normalize_protocol_id "${protocol}") || return 1
-  validate_vless_reality_instance_id "${instance_id}" || return 1
+  if [[ "${protocol}" == "mixed" ]]; then
+    structured_instance_store_validate_id "${instance_id}" || return 1
+  else
+    validate_vless_reality_instance_id "${instance_id}" || return 1
+  fi
   schema=$(protocol_instance_state_schema "${protocol}") || return 1
   instance_ids=$(list_protocol_instance_ids "${protocol}") || return 1
   listed_instance_id=""
@@ -14376,6 +16757,9 @@ load_protocol_instance_state() {
       ;;
     mixed:1|hy2:1|anytls:1)
       SB_INSTANCE_ID="main"
+      ;;
+    mixed:2)
+      load_mixed_structured_instance "${instance_id}" || return 1
       ;;
     *)
       return 1
@@ -14428,7 +16812,7 @@ collect_vless_reality_config_instances() {
       return 1
     fi
     [[ -n "${protocol}" ]] || return 1
-    if ! protocol_array_contains "${protocol}" "${VLESS_CONFIG_PROTOCOLS[@]}"; then
+    if ! protocol_array_contains "${protocol}" ${VLESS_CONFIG_PROTOCOLS[@]+"${VLESS_CONFIG_PROTOCOLS[@]}"}; then
       VLESS_CONFIG_PROTOCOLS+=("${protocol}")
     fi
     [[ "${protocol}" == "vless-reality" ]] || continue
@@ -14524,7 +16908,7 @@ collect_vless_reality_config_instances() {
     resolved_ids+=("${candidate}")
   done
 
-  VLESS_CONFIG_INSTANCE_IDS=("${resolved_ids[@]}")
+  VLESS_CONFIG_INSTANCE_IDS=(${resolved_ids[@]+"${resolved_ids[@]}"})
 
   if [[ ${#VLESS_CONFIG_INSTANCE_IDS[@]} -gt 0 ]]; then
     VLESS_CONFIG_DEFAULT_INSTANCE_ID="${VLESS_CONFIG_INSTANCE_IDS[0]}"
@@ -14557,6 +16941,7 @@ render_expected_protocol_state_snapshot() {
   [[ -f "${SINGBOX_CONFIG_FILE}" ]] || return 1
 
   local protocol inbound_index cert_provider_tag outbound_policy acme_extra_json
+  local mixed_expected_port mixed_expected_username mixed_expected_password
   protocol=$(normalize_protocol_id "$1")
   inbound_index=$(find_config_inbound_index_by_protocol "${protocol}") || return 1
 
@@ -14582,15 +16967,17 @@ render_expected_protocol_state_snapshot() {
       done
       ;;
     mixed)
-      printf 'PORT=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "1080"' "${SINGBOX_CONFIG_FILE}")"
+      mixed_expected_port=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // ""' "${SINGBOX_CONFIG_FILE}") || return 1
       if jq -e --argjson idx "${inbound_index}" '(.inbounds[$idx].users // []) | length > 0' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
-        printf 'AUTH_ENABLED=y\n'
-        printf 'USERNAME=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].username // ""' "${SINGBOX_CONFIG_FILE}")"
-        printf 'PASSWORD=%s\n' "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")"
+        mixed_expected_username=$(jq -j --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].username // "", "\u0001"' "${SINGBOX_CONFIG_FILE}") || return 1
+        mixed_expected_username=${mixed_expected_username%$'\1'}
+        mixed_expected_password=$(jq -j --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].password // "", "\u0001"' "${SINGBOX_CONFIG_FILE}") || return 1
+        mixed_expected_password=${mixed_expected_password%$'\1'}
+        jq -cn --arg port "${mixed_expected_port}" --arg username "${mixed_expected_username}" --arg password "${mixed_expected_password}" \
+          '{port:$port,auth_enabled:"y",username:$username,password:$password}'
       else
-        printf 'AUTH_ENABLED=n\n'
-        printf 'USERNAME=\n'
-        printf 'PASSWORD=\n'
+        jq -cn --arg port "${mixed_expected_port}" \
+          '{port:$port,auth_enabled:"n",username:"",password:""}'
       fi
       ;;
     hy2)
@@ -14764,10 +17151,9 @@ render_saved_protocol_state_snapshot() {
       # shellcheck disable=SC1090
       (
         source "${state_file}"
-        printf 'PORT=%s\n' "${PORT:-}"
-        printf 'AUTH_ENABLED=%s\n' "${AUTH_ENABLED:-}"
-        printf 'USERNAME=%s\n' "${USERNAME:-}"
-        printf 'PASSWORD=%s\n' "${PASSWORD:-}"
+        jq -cn --arg port "${PORT:-}" --arg auth_enabled "${AUTH_ENABLED:-}" \
+          --arg username "${USERNAME:-}" --arg password "${PASSWORD:-}" \
+          '{port:$port,auth_enabled:$auth_enabled,username:$username,password:$password}'
       )
       ;;
     hy2)
@@ -14823,6 +17209,23 @@ render_saved_protocol_state_snapshot() {
 protocol_state_matches_config() {
   local protocol expected_snapshot saved_snapshot
   protocol=$(normalize_protocol_id "$1")
+
+  # Schema-2 Mixed state is represented by the typed instance store.  Do this
+  # before the legacy snapshot path, which intentionally only knows the
+  # singleton .env fields and would compare just the first inbound.
+  if [[ "${protocol}" == "mixed" ]]; then
+    if mixed_structured_state_active >/dev/null 2>&1 || {
+      local mixed_state_file mixed_state_schema
+      mixed_state_file=$(protocol_state_file "mixed" 2>/dev/null || true)
+      mixed_state_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${mixed_state_file}" 2>/dev/null | head -n1 || true)
+      mixed_state_schema=${mixed_state_schema//\"/}
+      mixed_state_schema=${mixed_state_schema//\'/}
+      [[ "${mixed_state_schema}" == "2" ]]
+    }; then
+      mixed_structured_state_matches_config
+      return $?
+    fi
+  fi
 
   expected_snapshot=$(render_expected_protocol_state_snapshot "${protocol}") || return 1
   saved_snapshot=$(render_saved_protocol_state_snapshot "${protocol}") || return 1
@@ -15093,8 +17496,14 @@ restore_protocol_state_layer_from_backup() {
 abort_protocol_state_rebuild() {
   local backup_dir=$1
   local state_dir_existed=$2
+  local backup_state_dir="${backup_dir}/state"
 
-  if ! restore_protocol_state_layer_from_backup "${backup_dir}" "${state_dir_existed}"; then
+  # Rebuild work roots also contain transient candidates.  The state snapshot
+  # must be in the dedicated child; do not infer the layout from an arbitrary
+  # directory that could itself be part of a legitimate state tree.
+  [[ -d "${backup_state_dir}" && ! -L "${backup_state_dir}" ]] || return 1
+
+  if ! restore_protocol_state_layer_from_backup "${backup_state_dir}" "${state_dir_existed}"; then
     return 1
   fi
   rm -rf "${backup_dir}"
@@ -15102,6 +17511,13 @@ abort_protocol_state_rebuild() {
 }
 
 rebuild_protocol_state_from_config() {
+  # A pending public instance transaction owns the state/config snapshot. Do
+  # not let takeover or auto-heal clear its state while recovery may still be
+  # required after an interruption.
+  [[ ! -e "${SB_PROJECT_DIR}.instance-write.lock" && ! -L "${SB_PROJECT_DIR}.instance-write.lock" ]] || {
+    printf '[ERROR] instance_transaction_pending: existing Mixed instance transaction requires recovery first.\n' >&2
+    return 1
+  }
   validate_protocol_index_for_rebuild || return 1
   validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" || return 1
   [[ -f "${SINGBOX_CONFIG_FILE}" ]] || return 0
@@ -15110,11 +17526,20 @@ rebuild_protocol_state_from_config() {
   local inbound_count inbound_index inbound_type protocol
   local vless_instance_index=0 instance_id key_file_private state_index=""
   local backup_dir state_dir_existed="n"
+  local mixed_inbound_count=0 mixed_rebuild_mode="legacy"
+  local mixed_candidate_file="" mixed_candidate_revision=0 mixed_state_file mixed_state_schema
+  local mixed_legacy_node_name mixed_legacy_tag mixed_legacy_listen mixed_legacy_policy mixed_stack_listen
+  local backup_state_dir
 
   backup_dir=$(mktemp -d) || return 1
+  backup_state_dir="${backup_dir}/state"
+  if ! mkdir -p "${backup_state_dir}"; then
+    rm -rf "${backup_dir}"
+    return 1
+  fi
   if [[ -d "${SB_PROTOCOL_STATE_DIR}" ]]; then
     state_dir_existed="y"
-    if ! cp -a "${SB_PROTOCOL_STATE_DIR}/." "${backup_dir}/"; then
+    if ! cp -a "${SB_PROTOCOL_STATE_DIR}/." "${backup_state_dir}/"; then
       rm -rf "${backup_dir}"
       return 1
     fi
@@ -15131,6 +17556,100 @@ rebuild_protocol_state_from_config() {
   if [[ ! "${inbound_count}" =~ ^[0-9]+$ ]]; then
     abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
     return 1
+  fi
+
+  # Capture every Mixed inbound while the old root state and typed metadata
+  # still exist.  The subsequent clear operation removes root .env files, so
+  # doing this in the loop would lose IDs, names, credentials, and policies.
+  mixed_inbound_count=$(jq -r '[.inbounds[]? | select(.type == "mixed")] | length' "${SINGBOX_CONFIG_FILE}") || {
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+    return 1
+  }
+  [[ "${mixed_inbound_count}" =~ ^[0-9]+$ ]] || {
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+    return 1
+  }
+  if (( mixed_inbound_count > 0 )); then
+    mixed_state_file=$(protocol_state_file "mixed") || {
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+      return 1
+    }
+    mixed_state_schema="1"
+    if [[ -f "${mixed_state_file}" ]]; then
+      if grep -Eq "^[[:space:]]*CONFIG_SCHEMA_VERSION=" "${mixed_state_file}"; then
+        validate_protocol_state_schema mixed "${mixed_state_file}" || {
+          abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+          return 1
+        }
+      fi
+      mixed_state_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${mixed_state_file}" | head -n1) || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+        return 1
+      }
+      mixed_state_schema=${mixed_state_schema//\"/}
+      mixed_state_schema=${mixed_state_schema//\'/}
+    fi
+    mixed_legacy_node_name=""
+    if [[ -f "${mixed_state_file}" && "${mixed_state_schema}" == "1" ]]; then
+      mixed_legacy_node_name=$(
+        unset NODE_NAME
+        # shellcheck disable=SC1090
+        source "${mixed_state_file}"
+        # Keep trailing newlines in a legacy name across command substitution.
+        printf '%s\1' "${NODE_NAME:-}"
+      ) || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+        return 1
+      }
+      mixed_legacy_node_name=${mixed_legacy_node_name%$'\1'}
+    fi
+
+    # A schema-1 singleton may retain its old state format only when the
+    # fixed legacy renderer can reproduce the live inbound exactly.  Any
+    # custom tag/listen/policy or unsupported field takes the typed path.
+    mixed_rebuild_mode="legacy"
+    if [[ "${mixed_state_schema}" == "2" || "${mixed_inbound_count}" != "1" ]] ||
+       mixed_structured_state_active >/dev/null 2>&1; then
+      mixed_rebuild_mode="structured"
+    else
+      mixed_legacy_tag=$(jq -r '[.inbounds[]? | select(.type == "mixed")][0].tag // "mixed-in"' "${SINGBOX_CONFIG_FILE}" || true)
+      mixed_legacy_listen=$(jq -r '[.inbounds[]? | select(.type == "mixed")][0].listen // empty' "${SINGBOX_CONFIG_FILE}" || true)
+      if [[ -z "${mixed_legacy_listen}" ]]; then
+        # sing-box's omitted Mixed listen address is the verified loopback
+        # default; do not substitute the stack's public bind address.
+        mixed_legacy_listen='127.0.0.1'
+      fi
+      mixed_legacy_policy=$(vless_reality_outbound_policy_from_config "${mixed_legacy_tag}" 2>/dev/null || true)
+      mixed_stack_listen=$(stack_inbound_listen_address 2>/dev/null || true)
+      if [[ "${mixed_legacy_tag}" != "mixed-in" ||
+            "${mixed_legacy_listen}" != "${mixed_stack_listen}" ||
+            "${mixed_legacy_policy}" != "default" ]]; then
+        mixed_rebuild_mode="structured"
+      fi
+    fi
+
+    if [[ "${mixed_rebuild_mode}" == "structured" ]]; then
+      mixed_candidate_file="${backup_dir}/mixed.candidate.json"
+      if ! mixed_config_store_candidate > "${mixed_candidate_file}"; then
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+        return 1
+      fi
+      if [[ -f "$(mixed_structured_store_file 2>/dev/null || true)" ]]; then
+        mixed_candidate_revision=$(jq -r '.revision' "$(mixed_structured_store_file)") || {
+          abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+          return 1
+        }
+      else
+        mixed_candidate_revision=0
+      fi
+    else
+      # Validate singleton fields even when the legacy state remains in use;
+      # otherwise a malformed user/listen value could be silently flattened.
+      if ! mixed_config_store_candidate >/dev/null; then
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+        return 1
+      fi
+    fi
   fi
 
   clear_protocol_state_cache
@@ -15225,13 +17744,24 @@ rebuild_protocol_state_from_config() {
         vless_instance_index=$((vless_instance_index + 1))
         ;;
       mixed)
+        if [[ "${mixed_rebuild_mode}" == "structured" ]]; then
+          # All Mixed records were captured before the root state cache was
+          # cleared and are published once after this loop.  Do not overwrite
+          # the typed store with one-record legacy writes.
+          if ! protocol_array_contains "mixed" ${rebuilt_protocols[@]+"${rebuilt_protocols[@]}"}; then
+            rebuilt_protocols+=("mixed")
+          fi
+          continue
+        fi
         SB_PROTOCOL="mixed"
-        SB_NODE_NAME="$(default_node_name_for_protocol "mixed")"
-        SB_PORT=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "1080"' "${SINGBOX_CONFIG_FILE}")
+        SB_NODE_NAME="${mixed_legacy_node_name:-$(default_node_name_for_protocol "mixed")}"
+        SB_PORT=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port' "${SINGBOX_CONFIG_FILE}")
         if jq -e --argjson idx "${inbound_index}" '(.inbounds[$idx].users // []) | length > 0' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
           SB_MIXED_AUTH_ENABLED="y"
-          SB_MIXED_USERNAME=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].username // ""' "${SINGBOX_CONFIG_FILE}")
-          SB_MIXED_PASSWORD=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].password // ""' "${SINGBOX_CONFIG_FILE}")
+          SB_MIXED_USERNAME=$(jq -j --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].username // "", "\u0001"' "${SINGBOX_CONFIG_FILE}")
+          SB_MIXED_USERNAME=${SB_MIXED_USERNAME%$'\1'}
+          SB_MIXED_PASSWORD=$(jq -j --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].password // "", "\u0001"' "${SINGBOX_CONFIG_FILE}")
+          SB_MIXED_PASSWORD=${SB_MIXED_PASSWORD%$'\1'}
         else
           SB_MIXED_AUTH_ENABLED="n"
           SB_MIXED_USERNAME=""
@@ -15373,10 +17903,24 @@ rebuild_protocol_state_from_config() {
         ;;
     esac
 
-    if ! protocol_array_contains "${protocol}" "${rebuilt_protocols[@]}"; then
+    if ! protocol_array_contains "${protocol}" ${rebuilt_protocols[@]+"${rebuilt_protocols[@]}"}; then
       rebuilt_protocols+=("${protocol}")
     fi
   done
+
+  if [[ "${mixed_rebuild_mode}" == "structured" ]]; then
+    # The candidate was built from the pre-clear snapshot.  Keep the existing
+    # store as the CAS base, publish it once, then write the schema marker;
+    # either failure enters the existing whole-state abort path.
+    if ! publish_structured_instance_store mixed "${mixed_candidate_file}" "${mixed_candidate_revision}"; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+      return 1
+    fi
+    if ! save_mixed_structured_marker; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+      return 1
+    fi
+  fi
 
   if [[ ${#rebuilt_protocols[@]} -eq 0 ]]; then
     abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
@@ -15693,6 +18237,18 @@ install_or_update_singbox() {
 main() {
   local update_status=0
 
+  case "${1:-}" in
+    -h|--help|help|agent) ;;
+    *)
+      check_root
+      acquire_managed_write_lock || return $?
+      if [[ $# -gt 0 && -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
+        printf '[ERROR] 存在未完成的实例事务；先执行 sbv agent instance recover，未执行其他写操作。\n' >&2
+        return 1
+      fi
+      ;;
+  esac
+
   if [[ $# -gt 0 ]]; then
     case "$1" in
       -h|--help|help)
@@ -15763,7 +18319,9 @@ main() {
 
   show_banner
   check_root
-  if ! ensure_sbv_command_installed; then
+  if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
+    log_warn "存在待恢复的实例事务；仅开放只读诊断与菜单 17 恢复入口。"
+  elif ! ensure_sbv_command_installed; then
     log_warn "全局命令 sbv 未能完成同步；当前管理菜单继续运行，请稍后手动重试。"
   fi
   while true; do
@@ -15797,9 +18355,18 @@ main() {
     render_section_title "脚本维护"
     render_menu_item "15" "更新管理脚本 (sbv)" "" "${SCRIPT_VER_STATUS}"
     render_menu_item "16" "卸载管理脚本 (sbv)"
+    render_section_title "实例与状态"
+    render_menu_item "17" "管理 Mixed 实例"
     echo "0. 退出"
     render_main_menu_footer
-    choice=$(prompt_choice "请选择 [0-16]: " 0 16 "")
+    choice=$(prompt_choice "请选择 [0-17]: " 0 17 "")
+
+    if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
+      case "${choice}" in
+        0|9|10|12|17) ;;
+        *) log_warn "请先通过菜单 17 恢复未完成的实例事务；本次未执行其他写操作。"; continue ;;
+      esac
+    fi
 
     case "$choice" in
       1) install_new_protocols_menu ;;
@@ -15825,6 +18392,7 @@ main() {
         fi
         ;;
       16) uninstall_script ;;
+      17) mixed_instance_management_menu ;;
       0) exit_script ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac

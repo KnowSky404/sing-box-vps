@@ -51,6 +51,7 @@ cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
     {
       "type": "mixed",
       "tag": "mixed-in",
+      "listen": "::",
       "listen_port": 1080,
       "users": [
         {
@@ -106,6 +107,29 @@ for mutation in '.inbounds[0].tag="custom-mixed"' \
   [[ ! -f "${SB_PROTOCOL_STATE_DIR}/mixed.env" ]]
 done
 cp "${TMP_DIR}/config.before" "${SINGBOX_CONFIG_FILE}"
+
+# An omitted listen uses sing-box's verified loopback default, not the
+# machine's public stack bind.  It therefore takes the typed recovery path
+# and must publish the explicit loopback address rather than schema-1 state.
+jq 'del(.inbounds[0].listen)' "${TMP_DIR}/config.before" > "${SINGBOX_CONFIG_FILE}"
+rebuild_protocol_state_from_config
+grep -Fqx 'CONFIG_SCHEMA_VERSION=2' "${SB_PROTOCOL_STATE_DIR}/mixed.env"
+mixed_store_file=$(mixed_structured_store_file)
+jq -e '.instances | length == 1 and .[0].listen.address == "127.0.0.1" and .[0].listen.port == 1080' \
+  "${mixed_store_file}" >/dev/null
+
+# Restore the incomplete-index fixture for the existing additional-install
+# recovery assertions below.
+rm -f -- "${mixed_store_file}" "${SB_PROTOCOL_STATE_DIR}/mixed.env"
+if [[ -d "${SB_PROTOCOL_STATE_DIR}/instances" ]]; then
+  rmdir -- "${SB_PROTOCOL_STATE_DIR}/instances"
+fi
+cp "${TMP_DIR}/index.before" "${SB_PROTOCOL_INDEX_FILE}"
+cp "${TMP_DIR}/config.before" "${SINGBOX_CONFIG_FILE}"
+# The typed omitted-listen probe may have inferred a different stack mode in
+# process memory; let the explicit legacy fixture re-infer its :: bind.
+SB_INBOUND_STACK_MODE=""
+SB_OUTBOUND_STACK_MODE=""
 
 install_protocols_interactive "additional" <<'EOF'
 3

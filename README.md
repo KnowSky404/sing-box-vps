@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026090707`
+- 脚本版本：`2026090708`
 - sing-box 适配版本：`1.14.0`
 
 ## 🚀 一键安装
@@ -99,9 +99,9 @@ REALITY 显式接管/状态重建按既有 inbound tag 关联实例，保留稳�
 
 Agent 节点/分享列表与 REALITY 客户端导出共用只读实例接口：旧单实例状态内部映射为 `main`，REALITY 保留原实例身份；读取和客户端渲染不自动迁移旧状态或生成凭据。其他协议的多实例持久化仍在实施中。
 
-开发中的结构化实例存储已加入严格数据模型、revision 条件写入与候选渲染的基础接口，首先验证 Mixed 字段适配器。它尚未接入交互/Agent 写命令及现有实例重建流程，不会自动迁移 `.env`，也不表示当前已支持 Mixed 多实例完整管理。
+Mixed 已接入结构化实例状态（schema 2）和完整的实例管理链路：显式迁移会把旧单实例 `.env` 的稳定身份、tag、监听地址/端口和认证材料带入 `protocols/instances/mixed.json`；首次全新安装仍沿用兼容的 schema 1 路径，不会隐式迁移。Agent 与菜单支持创建、替换、删除、设置默认实例、显式迁移和事务恢复，均使用 revision 条件写入。该入口只管理 Mixed，不代表全协议目标已经完成。
 
-服务端候选和结构化状态现在共用固定监听资源预检：区分 TCP/UDP，识别 IPv4 通配、IPv6 等价地址和双栈重叠；冲突时保留原配置。防火墙开放取自完整已发布配置的实际监听传输；删除根据旧配置备份和剩余入站保护仍被引用的规则，不再同时操作无关 TCP/UDP。全量删除必须先确认服务已停止；清单缺失或无法解释时拒绝清理。后端失败返回非零并明确披露已提交配置、尚未执行重启或可能存在的部分外部变更。这仍不是完整防火墙归属账本或系统资源事务，不追溯删除未归属的历史宽规则，也不检查其他进程抢占端口、动态 UDP relay 和 ACME 临时监听。
+服务端候选和结构化状态现在共用固定监听资源预检：区分 TCP/UDP，识别 IPv4 通配、IPv6 等价地址和双栈重叠；冲突时保留原配置。防火墙开放取自完整已发布配置的实际监听传输；删除根据旧配置备份和剩余入站保护仍被引用的规则，不再同时操作无关 TCP/UDP。Mixed 实例事务初次创建也先在目标同目录 staging 后原子发布，并为文件/config、受管 UFW/iptables/ip6tables 规则和服务恢复保存持久 journal/result；同时以共享 `flock` 串行化管理写入。firewalld 仅作只读外部预检，禁止在事务中 add/delete/reload，缺少所需 allow 或既有归属账本时会在变更前失败并要求人工规则。故障时不把文件恢复冒充为外部防火墙已恢复。全量删除必须先确认服务已停止；清单缺失或无法解释时拒绝清理。后端失败返回非零并明确披露已提交配置、尚未执行重启或可能存在的部分外部变更。这仍不是完整防火墙归属账本或系统资源事务，不追溯删除未归属的历史宽规则，也不检查其他进程抢占端口、动态 UDP relay 和 ACME 临时监听。
 
 全协议改造按[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)推进；[上游能力矩阵](docs/superpowers/specs/2026-09-06-protocol-coverage.md)区分上游支持与项目已实现能力。当前运行时注册表位于独立分发的 `install.sh` 中，原四协议的菜单编号、公开 ID、导出候选、SubMan 类型和验证器元数据均从这里读取。未知索引/状态版本或生成器返回的无效片段会阻断重建并保留原文件。现有配置的入站清单也会全量预检：未知类型、非 REALITY 的 VLESS、重复的单实例协议和重复显式 tag 会阻断自动重建/接管，不再仅识别第一个受支持入站。Agent 的 `status`、`nodes`、`links` 还要求索引、基础状态和 live 协议集合完全对应；REALITY 的旧状态必须包含完整连接字段，多实例状态的清单、文件名、内部 ID 和 inbound tag 必须与 live VLESS 集合一一对应，否则只返回结构化错误而不输出部分结果。服务端与客户端候选还会检查组件 tag、引用和显式依赖环，然后继续执行目标核心 `check`；这些检查尚不覆盖任意外部配置的字段及出站/端点/路由无损接管，也不表示新增协议已完成。
 
@@ -147,6 +147,7 @@ sbv
 - **跨版本配置生成**：目标核心为 1.14+ 时生成新版配置结构；显式固定或运行 1.13.x 时继续生成内联 `tls.acme` 与旧版远程规则集结构。接管或重建时会保留可内联表达的 ACME 扩展字段；若 provider 引用了无法独立保留的共享 `http_client`，脚本会拒绝重写。仅更新二进制时不会重写现有配置。
 - **可审计升级**：`upgrade-check` 会报告实例健康度、当前配置校验、配置 SHA-256、1.14 已知弃用项和阻断原因；`upgrade` 只接受固定版本与 `--yes`，先在 `/root/sing-box-vps-backups/` 创建 root-only 备份，并原子维护 `transaction-result.json`（事务 ID、旧/新版本、状态历史、manifest hash 与回滚结果）。目标核心校验失败时尝试恢复旧二进制并返回非零；若恢复未通过最终校验，会明确返回 `rollback_failed` 和人工介入标记。
 - **多协议支持**：支持 **VLESS + REALITY**、**Mixed (HTTP/HTTPS/SOCKS)**、**Hysteria2** 与 **AnyTLS** 四种入站模式，并支持多协议同时安装。
+- **Mixed 多实例管理**：schema 2 支持多个稳定 ID/tag、独立监听地址/端口、独立认证和默认实例；Agent 提供 `create`、`replace`、`delete`、`default`、`migrate`、`recover`，交互菜单 17 提供逐实例管理。非回环明文监听需要显式公网暴露确认；跨协议批量删除会拒绝并要求逐实例处理 Mixed。
 - **VLESS REALITY 多实例**：可在安装菜单追加多个 REALITY 实例，每个实例拥有独立端口、ShortID、节点名称、可选上下行限速和实例级出站策略；节点展示和 SubMan 同步会逐实例输出。
 - **REALITY QoS 限速**：为设置了上下行 Mbps 的 REALITY 实例自动规划并应用 `tc` 端口级限速规则，重建配置、更新协议或移除实例时会同步刷新规则，避免遗留过滤器影响新配置。
 - **Cloudflare Warp 集成**：支持一键开启/关闭 Warp 出站，自动注册免费账户，完美解决 VPS **“送中”** 问题并解锁 Netflix/Disney+ 等流媒体。
@@ -157,10 +158,11 @@ sbv
 - **环境自适应**：支持架构探测（amd64/arm64）及主流发行版（Debian, Ubuntu, CentOS, AlmaLinux, Rocky Linux）。
 - **极简且安全**：默认开启流量嗅探、uTLS 指纹、多 ShortID 随机化及持久化密钥管理。
 - **性能增强**：集成 **BBR** 一键开启功能，显著提升网络吞吐。
-- **防火墙自动化**：安装或修改端口时，自动尝试在 `UFW`, `Firewalld` 或 `Iptables` 中放行。
+- **Mixed 防火墙事务**：启用 UFW 时仅通过 UFW 管理归属规则；没有活动防火墙前端时才直接管理 `iptables`/`ip6tables`。firewalld 仅执行只读外部预检，不由实例事务 add/delete/reload；UFW 与 firewalld 同时活动或已有账本与当前后端冲突时拒绝写入，要求人工处理。
 - **工业级配置生成**：采用 **`jq` 安全注入** 模式生成 JSON，彻底规避特殊字符导致的转义错误。
 - **协议级展示**：终端可按协议查看节点信息，支持 `VLESS` 与 `Hysteria2` 链接/ANSI 二维码展示，为 `Mixed` 输出代理链接与二维码提示，并为 `AnyTLS` 输出参数摘要和 sing-box outbound JSON 示例；多 REALITY 实例会显示实例 ID、端口和限速摘要。
 - **裸核客户端导出**：可从交互菜单或 `sbv agent export-client --json` 生成 `/root/sing-box-vps/client/sing-box-client.json`，支持当前四协议，覆盖前自动备份，并在输出前执行 `sing-box check`。Mixed 使用 SOCKS5 outbound 与 UoT v2，保留既有认证设置；仅安装 Mixed 也可导出。缺失或无效的 Mixed 端口/认证字段会阻断整份导出，保留原导出及备份，不自动生成密码或降级认证。
+- **Mixed 安全边界**：Mixed 服务端和其导出的 SOCKS5/UoT 链路不提供 TLS；公网明文监听必须经过单独确认，不能把它当作独立的 TLS SOCKS 服务端。Mixed 当前也不新增 SubMan 同步能力。
 - **SubMan 同步**：按 SubMan OpenAPI 1.0.0 契约将当前 VPS 的 VLESS / Hysteria2 节点幂等推送到节点库；仅在 Workspace 已远端提交并回读验证后报告成功，并识别 revision、稳定错误分类和安全重试提示。
 - **规范存储**：统一使用 `/root/sing-box-vps/` 存放配置、密钥及持久化参数。
 
@@ -181,6 +183,12 @@ sbv agent doctor --json
 sbv agent service restart --json --yes
 sbv agent warp --json
 sbv agent subman-sync --json
+sbv agent instance migrate mixed --json --yes --expected-revision 0
+sbv agent instance create mixed --json --yes --expected-revision N --file record.json [--allow-public]
+sbv agent instance replace mixed --json --yes --expected-revision N --file record.json [--allow-public]
+sbv agent instance delete mixed --json --yes --expected-revision N --id ID
+sbv agent instance default mixed --json --yes --expected-revision N --id ID
+sbv agent instance recover mixed --json --yes --expected-revision N
 sbv update sbv
 sbv update sing-box latest
 sbv update sing-box 1.14.0
@@ -190,16 +198,41 @@ sbv update sing-box 1.14.0
 - `upgrade-check`：只读检查固定目标版本的升级资格，返回 `ready`、`blockers[]`、当前核心校验、配置 hash、已知弃用项和兼容性 warning；不会协调或迁移协议状态，也不下载目标二进制，真正的目标版本 `sing-box check` 在 `upgrade` 替换服务进程前执行。
 - `upgrade`：必须使用完整版本号和 `--yes`。创建持久备份后只替换核心二进制，逐字节保留服务端配置；备份清单覆盖全部普通 runtime 文件及 binary、`sbv`、service unit、metadata。每次实际变更返回 `transaction.id`、`transaction.result_path` 和 `transaction.result_persisted`，并在备份目录原子写入权限 `0600` 的 `transaction-result.json`。实际变更只有 `result_persisted=true` 才可接受事务状态；若目标版本已经安装，则返回 `changed=false`、`transaction.status=not_attempted`、`reason=already_installed`，且不会创建备份或事务文件。目标校验、版本、配置 hash 或服务状态不符合预期时尝试自动恢复旧二进制、意外变化的配置和升级前服务活动状态，返回非零与结构化回滚结果。仅当 `rolled_back=true` 且 `rollback_ok=true` 时才可视为自动恢复完成；`error=rollback_failed` 时必须停止并人工处理。
 - `status`：输出脚本/核心/服务/路径/已安装协议，并包含入站与出站栈、BBR、REALITY 实例与 QoS 计数，以及客户端导出/SubMan 是否已配置；不返回凭据。索引、状态或 live 入站集合无法完整对应时返回非零及 `protocol_index_untrusted` / `protocol_state_untrusted`，不报告部分协议。
-- `nodes`：输出所有协议的安全摘要；REALITY 会逐实例返回端口、上下行限速与出站策略，不包含 UUID、密钥、完整分享链接或密码，适合写入普通诊断日志。REALITY 根状态、实例清单、实例文件或 live tag 集合不完整时不输出部分节点。
-- `links`：逐协议、逐 REALITY 实例输出完整连接材料，包括 VLESS/Hysteria2 分享链接、Mixed HTTP/SOCKS 链接，以及 AnyTLS outbound JSON；仅在受信任上下文使用，并沿用与 `nodes` 相同的全有或全无清单门禁。Hysteria2 手动 Ed25519 证书会附带稳定的 `warnings[].code`，提示分享链接无法表达 1.14+ 客户端兼容开关。
+- `nodes`：输出所有协议的安全摘要；REALITY 和 Mixed 均逐实例输出，Mixed 的 `instance_revision` 可用于下一次 CAS 写入；不包含 UUID、密钥、完整分享链接或密码，适合写入普通诊断日志。实例清单、状态与 live 入站不完整时不输出部分节点。
+- `links`：逐协议、逐 REALITY/Mixed 实例输出完整连接材料，包括 VLESS/Hysteria2 分享链接、Mixed HTTP/SOCKS 链接，以及 AnyTLS outbound JSON；仅在受信任上下文使用，并沿用与 `nodes` 相同的全有或全无清单门禁。Hysteria2 手动 Ed25519 证书会附带稳定的 `warnings[].code`，提示分享链接无法表达 1.14+ 客户端兼容开关。
 - `warp`：输出 Cloudflare Warp 状态（启用/路由模式/账户/自定义域名规则集统计），安全用于日常诊断。
-- `export-client`：生成并通过 `sing-box check` 校验裸核客户端配置，写入 `/root/sing-box-vps/client/sing-box-client.json`，覆盖前创建 `.bak` 备份，同时以 JSON 返回路径和配置内容。对 1.14+ Hysteria2 Ed25519 节点会自动设置顶层 `disable_chrome_parrot: true` 并返回结构化 warning。包含 Mixed 时返回 `warnings[].code=mixed_plaintext_transport`，提示 SOCKS5/UoT 链路未加密；这不是独立 SOCKS 服务端或 Mixed 多实例支持，也不新增 SubMan 同步。
+- `export-client`：生成并通过 `sing-box check` 校验裸核客户端配置，写入 `/root/sing-box-vps/client/sing-box-client.json`，覆盖前创建 `.bak` 备份，同时以 JSON 返回路径和配置内容。对 1.14+ Hysteria2 Ed25519 节点会自动设置顶层 `disable_chrome_parrot: true` 并返回结构化 warning。包含 Mixed 时逐实例导出，并返回 `warnings[].code=mixed_plaintext_transport`，提示 SOCKS5/UoT 链路未加密；不表示独立 SOCKS 入站或新增 SubMan 同步。
 - `check`：执行 `sing-box check` 校验服务端配置，并返回 stdout、stderr、退出码和是否通过。
 - `doctor`：输出只读诊断报告，包含服务状态、路径存在性、协议状态和嵌入的配置校验结果。
 - `service restart`：必须显式传入 `--yes`，先校验配置，通过后才重启服务，并返回重启前后的服务状态。
 - `subman-sync`：非交互推送节点到 SubMan；配置缺失时返回结构化错误，不进入交互提示。API 失败时会在 `last_error` 返回稳定的 `code`、`disposition`、HTTP 状态与可用的 `Retry-After`，传输结果不确定时不会盲目重放写请求。
+- `instance`：管理 Mixed schema 2 实例。`migrate` 显式把 legacy schema 1 转成 revision 1；`create`/`replace`/`delete`/`default` 使用 `--expected-revision` 做 CAS，凭据通过私有文件输入；删除最后一个实例后移除 active `mixed.env`、索引项和 Mixed inbound，但仍保留空的 JSON store（`schema_version: 1`）作为 revision tombstone，下一次 `create` 必须以该 revision 继续递增，不会重置为 0；`recover` 只处理可验证的未完成事务，缺少防火墙 journal 时失败并要求人工恢复。非回环地址必须显式传 `--allow-public`，并由调用方承担明文暴露风险。首次全新安装仍写 legacy schema 1，直到显式迁移。
 - `update sbv`：从 GitHub 更新 `/usr/local/bin/sbv` 管理脚本；别名为 `sbv update-sbv`。
 - `update sing-box [latest|x.y.z]`：普通运维更新入口，逐字节保留现有配置，目标核心校验通过后才重启服务，失败明确返回非零；别名为 `sbv update-sing-box [latest|x.y.z]`。自动化升级优先使用上面的固定版本 `agent upgrade`。
+
+Mixed 实例写入使用类型化记录文件；`create` 和 `replace` 必须通过 `--file` 提供一个完整 JSON 对象，不接受命令行凭据。示例（`replace` 时 `id` 和 `tag` 必须保持原值，不能借此改身份）：
+
+```json
+{
+  "id": "main",
+  "name": "办公 Mixed",
+  "tag": "mixed-in",
+  "listen": {"address": "127.0.0.1", "port": 1080},
+  "authentication": {
+    "enabled": true,
+    "username": "proxy-user",
+    "password": "请替换为私有凭据"
+  },
+  "outbound_policy": "default",
+  "dependencies": []
+}
+```
+
+记录只允许上述字段；`listen`、`outbound_policy` 和 `dependencies` 也会参与候选配置及依赖检查，当前 `dependencies` 必须为空数组。写入成功后，根状态标记为 `CONFIG_SCHEMA_VERSION=2`，结构化文件以 `schema_version: 1`、`protocol: "mixed"`、单调 `revision`、`default_instance_id` 和 `instances[]` 封装该记录。`nodes`/`links` 是只读发现入口，可用于找到实例 `id`/tag；若输出 `instance_revision`，写入 CAS 应使用它，否则应从同一状态快照读取 revision（当前 `capabilities` 只声明需要 revision，不提供当前值），不能用猜测值覆盖并发修改。`recover` 是例外：必须使用未完成事务 journal 中原始的 `expected_revision`，不能拿当前 store revision 冒充恢复条件。
+
+交互式管理会话在整个菜单期间持有排他管理 `flock`；需要先选择菜单 0 退出会话，其他 Agent 读写才能取得同一管理锁。Agent 只读操作使用共享锁，写入使用排他锁；锁冲突或未完成事务会返回结构化错误，不会静默绕过锁。
+
+实例结果的 `transaction.firewall` 保留后端可用性和脱敏诊断，并同步写入持久 result 文件；事务目录清理后仍可审计。`unavailable` 不代表已开放防火墙，也不代表公网业务已验证。
 
 已有 1.13.x 主机应先运行 `sbv update sbv` 更新管理脚本，再调用 `capabilities` 与 `upgrade-check`。1.14 对旧版 inline `tls.acme` 和远程规则集 `download_detour` 会给出弃用 warning，但两者到 1.16 才移除，因此 warning 本身不会阻止 1.13→1.14；其他真实不兼容会在目标 1.14 二进制的 `sing-box check` 阶段阻止重启并触发回滚。
 
@@ -239,6 +272,7 @@ Agent/Hermes 文档入口：
 14. **系统管理**：BBR，以及入站监听栈和出站/DNS 策略。
 15. **更新管理脚本 `sbv`**。
 16. **卸载管理脚本 `sbv`**。
+17. **管理 Mixed 实例（开发中）**：创建、修改、删除、设置默认实例、迁移 legacy 状态和恢复未完成事务；完整门禁证据待补。
 
 当脚本发现二进制、service、配置或协议状态层不完整时，会进入接管/修复流程，而不是把残缺实例直接当作全新安装覆盖。
 
@@ -251,6 +285,8 @@ Agent/Hermes 文档入口：
 - **协议状态目录**: `/root/sing-box-vps/protocols/`
 - **密钥文件**: `/root/sing-box-vps/reality.key` (REALITY) / `warp.key` (Warp)
 - **协议状态文件**: `vless-reality.env` / `vless-reality.d/` / `mixed.env` / `hy2.env` / `anytls.env`
+- **Mixed 结构化实例状态**: `/root/sing-box-vps/protocols/instances/mixed.json`（显式迁移或实例写入后启用）
+- **Mixed 事务恢复材料**: `/root/sing-box-vps.instance-write.lock`、`/root/sing-box-vps.instance-transactions/`
 - **REALITY QoS 状态**: `/root/sing-box-vps/reality-qos.filters`
 - **Warp 分流域名**: `/root/sing-box-vps/warp-domains.txt`
 - **Warp 本地规则集目录**: `/root/sing-box-vps/rule-set/warp/`
