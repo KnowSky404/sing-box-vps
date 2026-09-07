@@ -11876,11 +11876,69 @@ agent_protocol_id() {
   protocol_registry_field "$1" agent_id
 }
 
-agent_installed_protocols_json() {
-  local protocol indexed_protocols
+agent_trusted_indexed_protocols_raw() {
+  local index_schema indexed_raw live_raw indexed protocol
+  local indexed_protocols=() live_protocols=()
 
-  validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" || return 1
-  indexed_protocols=$(list_indexed_protocols_raw) || return 1
+  if [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
+    index_schema=$(sed -n 's/^PROTOCOL_STATE_VERSION=//p' "${SB_PROTOCOL_INDEX_FILE}") || return 1
+    index_schema=${index_schema//\"/}
+    index_schema=${index_schema//\'/}
+    [[ "${index_schema:-1}" == "1" ]] || return 1
+  fi
+
+  indexed_raw=$(list_indexed_protocols_raw) || return 1
+  while IFS= read -r indexed; do
+    [[ -n "${indexed}" ]] || continue
+    protocol=$(normalize_protocol_id "${indexed}") || return 1
+    if protocol_array_contains "${protocol}" "${indexed_protocols[@]}"; then
+      return 1
+    fi
+    indexed_protocols+=("${protocol}")
+  done <<< "${indexed_raw}"
+
+  live_raw=$(list_config_protocols) || return 1
+  while IFS= read -r protocol; do
+    [[ -n "${protocol}" ]] && live_protocols+=("${protocol}")
+  done <<< "${live_raw}"
+
+  [[ ${#indexed_protocols[@]} -eq ${#live_protocols[@]} ]] || return 1
+  for protocol in "${live_protocols[@]}"; do
+    protocol_array_contains "${protocol}" "${indexed_protocols[@]}" || return 1
+  done
+
+  [[ ${#indexed_protocols[@]} -gt 0 ]] || return 0
+  printf '%s\n' "${indexed_protocols[@]}"
+}
+
+agent_validate_indexed_protocol_states() {
+  local indexed_protocols=$1 protocol state_file state_id normalized_state_id
+  local expected_protocols=()
+
+  while IFS= read -r protocol; do
+    [[ -n "${protocol}" ]] && expected_protocols+=("${protocol}")
+  done <<< "${indexed_protocols}"
+
+  for state_file in "${SB_PROTOCOL_STATE_DIR}"/*.env; do
+    [[ -e "${state_file}" ]] || continue
+    [[ "${state_file}" == "${SB_PROTOCOL_INDEX_FILE}" ]] && continue
+    state_id=${state_file##*/}
+    state_id=${state_id%.env}
+    normalized_state_id=$(normalize_protocol_id "${state_id}") || return 1
+    [[ "${normalized_state_id}" == "${state_id}" ]] || return 1
+    protocol_array_contains "${state_id}" "${expected_protocols[@]}" || return 1
+    validate_protocol_state_schema "${state_id}" "${state_file}" || return 1
+  done
+
+  for protocol in "${expected_protocols[@]}"; do
+    state_file=$(protocol_state_file "${protocol}") || return 1
+    [[ -f "${state_file}" ]] || return 1
+    validate_protocol_state_schema "${protocol}" "${state_file}" || return 1
+  done
+}
+
+agent_installed_protocols_json() {
+  local indexed_protocols=$1 protocol
 
   while IFS= read -r protocol; do
     [[ -n "${protocol}" ]] || continue
@@ -11890,7 +11948,7 @@ agent_installed_protocols_json() {
 }
 
 agent_status_json() {
-  local installed_protocols_json active_state installed_version warload_mode warload_enabled
+  local indexed_protocols installed_protocols_json active_state installed_version warload_mode warload_enabled
   local host_stack bbr_algorithm bbr_enabled inbound_stack_mode outbound_stack_mode
   local reality_instance_count qos_filter_count subman_configured client_export_exists
 
@@ -11898,10 +11956,15 @@ agent_status_json() {
     agent_json_error "live_inbound_inventory_untrusted" "现有配置包含无法完整识别的入站；未返回部分协议状态。"
     return 1
   fi
-  if ! installed_protocols_json=$(agent_installed_protocols_json); then
+  if ! indexed_protocols=$(agent_trusted_indexed_protocols_raw); then
     agent_json_error "protocol_index_untrusted" "协议索引无法完整识别；未返回部分协议状态。"
     return 1
   fi
+  if ! agent_validate_indexed_protocol_states "${indexed_protocols}"; then
+    agent_json_error "protocol_state_untrusted" "协议状态无法完整读取；未返回部分协议状态。"
+    return 1
+  fi
+  installed_protocols_json=$(agent_installed_protocols_json "${indexed_protocols}") || return 1
   warload_mode="selective"
   warload_enabled=false
   if [[ -f "${SINGBOX_CONFIG_FILE}" ]] && config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; then
@@ -12222,37 +12285,69 @@ agent_link_json_for_current_protocol() {
 
 agent_collect_nodes_json() {
   local mode=$1
-  local public_ip original_protocol_state protocol node_json instance_id indexed_protocols
-  local installed_protocols=()
+  local public_ip original_protocol_state original_state_file protocol node_json instance_id indexed_protocols
+  local vless_instance_ids="" vless_state_schema="" nodes_json='[]'
+  local instance_state_file
+  local installed_protocols=() vless_instance_id_list=()
   local tmpdir status=0 rendered_instances=0
 
   if ! validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}"; then
     agent_json_error "live_inbound_inventory_untrusted" "现有配置包含无法完整识别的入站；未返回部分节点。"
     return 1
   fi
-  if ! indexed_protocols=$(list_indexed_protocols_raw); then
-    agent_json_error "protocol_index_untrusted" "协议索引无法完整读取；未返回部分节点。"
+  if ! indexed_protocols=$(agent_trusted_indexed_protocols_raw); then
+    agent_json_error "protocol_index_untrusted" "协议索引与现有配置无法完整对应；未返回部分节点。"
+    return 1
+  fi
+  if ! agent_validate_indexed_protocol_states "${indexed_protocols}"; then
+    agent_json_error "protocol_state_untrusted" "协议状态无法完整读取；未返回部分节点。"
     return 1
   fi
   while IFS= read -r protocol; do
     [[ -n "${protocol}" ]] || continue
-    if ! agent_protocol_id "${protocol}" >/dev/null; then
-      agent_json_error "protocol_index_untrusted" "协议索引包含无法识别的协议；未返回部分节点。"
-      return 1
-    fi
     installed_protocols+=("${protocol}")
   done <<< "${indexed_protocols}"
 
+  if protocol_array_contains "vless-reality" "${installed_protocols[@]}"; then
+    if ! vless_instance_ids=$(list_vless_reality_instance_ids); then
+      agent_json_error "protocol_state_untrusted" "REALITY 实例清单无法完整读取；未返回部分节点。"
+      return 1
+    fi
+    vless_state_schema=$(sed -n 's/^CONFIG_SCHEMA_VERSION=//p' "$(protocol_state_file "vless-reality")") || return 1
+    vless_state_schema=${vless_state_schema//\"/}
+    vless_state_schema=${vless_state_schema//\'/}
+    if [[ "${vless_state_schema:-1}" == "2" && -z "${vless_instance_ids}" ]]; then
+      agent_json_error "protocol_state_untrusted" "REALITY 实例清单为空；未返回部分节点。"
+      return 1
+    fi
+    while IFS= read -r instance_id; do
+      [[ -n "${instance_id}" ]] || continue
+      validate_vless_reality_instance_id "${instance_id}" || {
+        agent_json_error "protocol_state_untrusted" "REALITY 实例清单包含无效条目；未返回部分节点。"
+        return 1
+      }
+      if protocol_array_contains "${instance_id}" "${vless_instance_id_list[@]}"; then
+        agent_json_error "protocol_state_untrusted" "REALITY 实例清单包含重复条目；未返回部分节点。"
+        return 1
+      fi
+      instance_state_file=$(vless_reality_instance_state_file "${instance_id}") || return 1
+      [[ -f "${instance_state_file}" ]] || {
+        agent_json_error "protocol_state_untrusted" "REALITY 实例状态缺失；未返回部分节点。"
+        return 1
+      }
+      vless_instance_id_list+=("${instance_id}")
+    done <<< "${vless_instance_ids}"
+  fi
+
   public_ip=$(get_public_ip)
   original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
+  original_state_file=""
+  if [[ -n "${original_protocol_state}" ]]; then
+    original_state_file=$(protocol_state_file "${original_protocol_state}" 2>/dev/null || true)
+  fi
   tmpdir=$(mktemp -d)
 
-  trap '
-    if [[ -n "${original_protocol_state:-}" ]] && protocol_state_exists "${original_protocol_state}"; then
-      load_protocol_state "${original_protocol_state}" "read-only"
-    fi
-    rm -rf "${tmpdir:-}"
-  ' RETURN
+  trap 'rm -rf "${tmpdir:-}"' RETURN
 
   for protocol in "${installed_protocols[@]}"; do
     if ! load_protocol_state "${protocol}" "read-only"; then
@@ -12278,8 +12373,8 @@ agent_collect_nodes_json() {
           printf '%s\n' "${node_json}" >> "${tmpdir}/nodes.jsonl"
           rendered_instances=$((rendered_instances + 1))
         fi
-      done < <(list_vless_reality_instance_ids)
-      if (( rendered_instances == 0 )); then
+      done <<< "${vless_instance_ids}"
+      if (( rendered_instances == 0 )) && [[ "${vless_state_schema:-1}" == "1" ]]; then
         SB_VLESS_INSTANCE_ID="main"
         SB_VLESS_RATE_LIMIT_UP_MBPS=""
         SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
@@ -12308,17 +12403,31 @@ agent_collect_nodes_json() {
     [[ -n "${node_json:-}" ]] && printf '%s\n' "${node_json}" >> "${tmpdir}/nodes.jsonl"
   done
 
+  if [[ -s "${tmpdir}/nodes.jsonl" ]]; then
+    nodes_json=$(jq -s '.' "${tmpdir}/nodes.jsonl") || status=1
+  fi
+  if [[ -n "${original_state_file}" && -f "${original_state_file}" ]] &&
+     ! load_protocol_state "${original_protocol_state}" "read-only"; then
+    status=1
+  fi
+  if rm -rf "${tmpdir}"; then
+    tmpdir=""
+  else
+    status=1
+  fi
+
   if [[ "${status}" != "0" ]]; then
     agent_json_error "protocol_state_untrusted" "协议状态无法完整读取；未返回部分节点。"
     return 1
   fi
+  trap - RETURN
 
   jq -n \
     --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
     --arg action "$([[ "${mode}" == "summary" ]] && printf 'nodes' || printf 'links')" \
     --argjson sensitive "$([[ "${mode}" == "links" ]] && printf 'true' || printf 'false')" \
     --arg public_address "${public_ip}" \
-    --argjson nodes "$(if [[ -s "${tmpdir}/nodes.jsonl" ]]; then jq -s '.' "${tmpdir}/nodes.jsonl"; else jq -n '[]'; fi)" \
+    --argjson nodes "${nodes_json}" \
     '{
       "schema": $schema,
       "action": $action,
@@ -12327,12 +12436,7 @@ agent_collect_nodes_json() {
       "nodes": $nodes
     }'
 
-  trap - RETURN
-  if [[ -n "${original_protocol_state}" ]] && protocol_state_exists "${original_protocol_state}"; then
-    load_protocol_state "${original_protocol_state}" "read-only"
-  fi
-  rm -rf "${tmpdir}"
-  return "${status}"
+  return 0
 }
 
 agent_export_client_json() {

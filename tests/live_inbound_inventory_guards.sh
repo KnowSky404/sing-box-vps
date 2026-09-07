@@ -71,6 +71,12 @@ EOF
     managed-mixed-hy2)
       printf '%s\n' '{"inbounds":[{"type":"mixed","tag":"mixed-in"},{"type":"hysteria2","tag":"hy2-in"}]}' > "${SINGBOX_CONFIG_FILE}"
       ;;
+    managed-vless)
+      printf '%s\n' '{"inbounds":[{"type":"vless","tag":"vless-in","tls":{"enabled":true,"reality":{"enabled":true}}}]}' > "${SINGBOX_CONFIG_FILE}"
+      ;;
+    managed-hy2)
+      printf '%s\n' '{"inbounds":[{"type":"hysteria2","tag":"hy2-in"}]}' > "${SINGBOX_CONFIG_FILE}"
+      ;;
     *) return 1 ;;
   esac
 }
@@ -169,24 +175,75 @@ for agent_command in status nodes links; do
   [[ ! -e "${TMP_DIR}/side-effect" ]]
 done
 
+assert_agent_inventory_error() {
+  local expected_error=$1 label=$2 agent_command agent_status secret
+  shift 2
+
+  for agent_command in "$@"; do
+    rm -f "${TMP_DIR}/side-effect"
+    agent_status=0
+    agent_cli "${agent_command}" --json > "${TMP_DIR}/agent-${label}-${agent_command}.json" 2> "${TMP_DIR}/agent-${label}-${agent_command}.stderr" || agent_status=$?
+    [[ "${agent_status}" -ne 0 ]]
+    jq -e --arg expected "${expected_error}" '
+      .schema == "1" and .schema_version == "1.0" and .ok == false and
+      .error == $expected and .data.error == $expected and
+      (.protocols? == null) and (.nodes? == null)
+    ' "${TMP_DIR}/agent-${label}-${agent_command}.json" >/dev/null
+    for secret in \
+      MDEyMzQ1Njc4OWFiY2RlZg== \
+      CONFIG-PASSWORD-DO-NOT-LOG \
+      STATE-PASSWORD-DO-NOT-LOG \
+      HY2-PASSWORD-DO-NOT-LOG; do
+      if grep -Fq "${secret}" "${TMP_DIR}/agent-${label}-${agent_command}.json" "${TMP_DIR}/agent-${label}-${agent_command}.stderr"; then
+        printf 'agent %s leaked credentials for %s\n' "${agent_command}" "${label}" >&2
+        exit 1
+      fi
+    done
+    [[ ! -e "${TMP_DIR}/side-effect" ]]
+  done
+}
+
 write_fixture diagnostic
 cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
 INSTALLED_PROTOCOLS=mixed,future-protocol
 PROTOCOL_STATE_VERSION=1
 EOF
-for agent_command in status nodes links; do
-  rm -f "${TMP_DIR}/side-effect"
-  agent_status=0
-  agent_cli "${agent_command}" --json > "${TMP_DIR}/agent-index-${agent_command}.json" 2> "${TMP_DIR}/agent-index-${agent_command}.stderr" || agent_status=$?
-  [[ "${agent_status}" -ne 0 ]]
-  jq -e '
-    .schema == "1" and .schema_version == "1.0" and .ok == false and
-    .error == "protocol_index_untrusted" and
-    .data.error == "protocol_index_untrusted" and
-    (.protocols? == null) and (.nodes? == null)
-  ' "${TMP_DIR}/agent-index-${agent_command}.json" >/dev/null
-  [[ ! -e "${TMP_DIR}/side-effect" ]]
-done
+assert_agent_inventory_error protocol_index_untrusted unknown-index status nodes links
+
+cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
+INSTALLED_PROTOCOLS=mixed
+PROTOCOL_STATE_VERSION=99
+EOF
+assert_agent_inventory_error protocol_index_untrusted future-index-schema status nodes links
+
+cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
+INSTALLED_PROTOCOLS=mixed,mixed
+PROTOCOL_STATE_VERSION=1
+EOF
+assert_agent_inventory_error protocol_index_untrusted duplicate-index status nodes links
+
+write_fixture managed-mixed-hy2
+cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
+INSTALLED_PROTOCOLS=mixed
+PROTOCOL_STATE_VERSION=1
+EOF
+assert_agent_inventory_error protocol_index_untrusted missing-live-index-entry status nodes links
+
+write_fixture diagnostic
+cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
+INSTALLED_PROTOCOLS=mixed,hy2
+PROTOCOL_STATE_VERSION=1
+EOF
+assert_agent_inventory_error protocol_index_untrusted extra-index-entry status nodes links
+
+cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
+INSTALLED_PROTOCOLS=
+PROTOCOL_STATE_VERSION=1
+EOF
+assert_agent_inventory_error protocol_index_untrusted empty-index status nodes links
+
+rm -f "${SB_PROTOCOL_INDEX_FILE}"
+assert_agent_inventory_error protocol_index_untrusted missing-index status nodes links
 
 write_fixture managed-mixed-hy2
 cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
@@ -214,17 +271,128 @@ INSTALLED=1
 CONFIG_SCHEMA_VERSION=99
 EOF
 get_public_ip() { printf '192.0.2.1'; }
-for agent_command in nodes links; do
-  agent_status=0
-  agent_cli "${agent_command}" --json > "${TMP_DIR}/agent-state-${agent_command}.json" 2> "${TMP_DIR}/agent-state-${agent_command}.stderr" || agent_status=$?
-  [[ "${agent_status}" -ne 0 ]]
-  jq -e '
-    .schema == "1" and .schema_version == "1.0" and .ok == false and
-    .error == "protocol_state_untrusted" and
-    .data.error == "protocol_state_untrusted" and
-    (.nodes? == null)
-  ' "${TMP_DIR}/agent-state-${agent_command}.json" >/dev/null
-done
+assert_agent_inventory_error protocol_state_untrusted partial-state status nodes links
+
+write_fixture diagnostic
+cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
+INSTALLED_PROTOCOLS=mixed
+PROTOCOL_STATE_VERSION=1
+EOF
+cat > "${SB_PROTOCOL_STATE_DIR}/mixed.env" <<'EOF'
+INSTALLED=1
+CONFIG_SCHEMA_VERSION=1
+NODE_NAME=inventory-test
+PORT=1080
+AUTH_ENABLED=y
+USERNAME=state-user
+PASSWORD=STATE-PASSWORD-DO-NOT-LOG
+EOF
+cat > "${SB_PROTOCOL_STATE_DIR}/future.env" <<'EOF'
+INSTALLED=1
+CONFIG_SCHEMA_VERSION=1
+EOF
+assert_agent_inventory_error protocol_state_untrusted orphan-state status nodes links
+rm -f "${SB_PROTOCOL_STATE_DIR}/future.env"
+
+write_fixture managed-vless
+cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
+INSTALLED_PROTOCOLS=vless-reality
+PROTOCOL_STATE_VERSION=1
+EOF
+rm -f "${SB_PROTOCOL_STATE_DIR}/mixed.env" "${SB_PROTOCOL_STATE_DIR}/hy2.env" "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"
+get_public_ip() { mark_side_effect; }
+assert_agent_inventory_error protocol_state_untrusted missing-vless-state status nodes links
+
+mkdir -p "${SB_PROTOCOL_STATE_DIR}/vless-reality.d"
+cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.env" <<'EOF'
+INSTALLED=1
+CONFIG_SCHEMA_VERSION=2
+DEFAULT_INSTANCE_ID=main
+INSTANCE_IDS=main
+REALITY_PRIVATE_KEY=private-key
+REALITY_PUBLIC_KEY=public-key
+EOF
+cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env" <<'EOF'
+INSTANCE_ID=main
+ENABLED=1
+NODE_NAME=vless-inventory-test
+PORT=443
+UUID=11111111-1111-4111-8111-111111111111
+SNI=www.cloudflare.com
+SHORT_ID_1=aaaaaaaaaaaaaaaa
+SHORT_ID_2=bbbbbbbbbbbbbbbb
+OUTBOUND_POLICY=default
+EOF
+(
+  list_vless_reality_instance_ids() { return 42; }
+  assert_agent_inventory_error protocol_state_untrusted vless-instance-enumeration nodes links
+)
+
+rm -f "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env"
+assert_agent_inventory_error protocol_state_untrusted missing-vless-instance nodes links
+
+cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env" <<'EOF'
+INSTANCE_ID=main
+ENABLED=1
+NODE_NAME=vless-inventory-test
+PORT=443
+UUID=11111111-1111-4111-8111-111111111111
+SNI=www.cloudflare.com
+SHORT_ID_1=aaaaaaaaaaaaaaaa
+SHORT_ID_2=bbbbbbbbbbbbbbbb
+OUTBOUND_POLICY=default
+EOF
+sed -i 's/^INSTANCE_IDS=.*/INSTANCE_IDS=main,main/' "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"
+assert_agent_inventory_error protocol_state_untrusted duplicate-vless-instance nodes links
+
+write_fixture managed-hy2
+cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
+INSTALLED_PROTOCOLS=hy2
+PROTOCOL_STATE_VERSION=1
+EOF
+rm -f "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"
+cat > "${SB_PROTOCOL_STATE_DIR}/hy2.env" <<'EOF'
+INSTALLED=1
+CONFIG_SCHEMA_VERSION=1
+NODE_NAME=hy2-restore-test
+PORT=8443
+DOMAIN=hy2.example.com
+PASSWORD=HY2-PASSWORD-DO-NOT-LOG
+USER_NAME=hy2-user
+UP_MBPS=100
+DOWN_MBPS=50
+OBFS_ENABLED=n
+TLS_MODE=manual
+CERT_PATH=/etc/ssl/certs/hy2.pem
+KEY_PATH=/etc/ssl/private/hy2.key
+MASQUERADE=https://example.com/
+EOF
+(
+  SB_PROTOCOL=hy2
+  load_protocol_state() {
+    load_state_calls=$(( ${load_state_calls:-0} + 1 ))
+    if (( load_state_calls > 1 )); then
+      return 42
+    fi
+    SB_PROTOCOL=hy2
+    SB_NODE_NAME=hy2-restore-test
+    SB_PORT=8443
+    SB_HY2_DOMAIN=hy2.example.com
+    SB_HY2_PASSWORD=HY2-PASSWORD-DO-NOT-LOG
+    SB_HY2_USER_NAME=hy2-user
+    SB_HY2_UP_MBPS=100
+    SB_HY2_DOWN_MBPS=50
+    SB_HY2_OBFS_ENABLED=n
+    SB_HY2_OBFS_TYPE=""
+    SB_HY2_OBFS_PASSWORD=""
+    SB_HY2_TLS_MODE=manual
+    SB_HY2_MASQUERADE=https://example.com/
+  }
+  get_public_ip() { printf '192.0.2.1'; }
+  assert_agent_inventory_error protocol_state_untrusted restore-failure nodes links
+)
+
+write_fixture diagnostic
 cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
 INSTALLED_PROTOCOLS=mixed
 PROTOCOL_STATE_VERSION=1

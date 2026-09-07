@@ -143,20 +143,26 @@ jq -e '
   and .integrations.client_export_exists == true
 ' <<< "${status_json}" >/dev/null
 
-# Read-only Agent commands must report stale indexed state without reconciling
-# or rewriting it. Doctor is responsible for flagging the inconsistency.
+# Read-only Agent commands must reject stale indexed state without reconciling
+# or rewriting it. Doctor retains the structured status error for diagnosis.
 cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF_STALE_INDEX'
 INSTALLED_PROTOCOLS=vless-reality,hy2
 PROTOCOL_STATE_VERSION=1
 EOF_STALE_INDEX
 stale_index_hash=$(sha256sum "${SB_PROTOCOL_INDEX_FILE}" | awk '{print $1}')
 
-status_json=$(agent_cli status --json)
-jq -e '.protocols == ["vless-reality", "hysteria2"]' <<< "${status_json}" >/dev/null
+if status_json=$(agent_cli status --json); then
+  printf 'expected status to reject an index that does not match live inbounds\n' >&2
+  exit 1
+fi
+jq -e '.error == "protocol_index_untrusted" and (.protocols? == null)' <<< "${status_json}" >/dev/null
 [[ "$(sha256sum "${SB_PROTOCOL_INDEX_FILE}" | awk '{print $1}')" == "${stale_index_hash}" ]]
 
 doctor_json=$(agent_cli doctor --json)
-jq -e '.diagnostics.managed_instance_state == "incomplete"' <<< "${doctor_json}" >/dev/null
+jq -e '
+  .status.error == "protocol_index_untrusted"
+  and .diagnostics.managed_instance_state == "incomplete"
+' <<< "${doctor_json}" >/dev/null
 [[ "$(sha256sum "${SB_PROTOCOL_INDEX_FILE}" | awk '{print $1}')" == "${stale_index_hash}" ]]
 
 if (agent_cli nodes --json >/dev/null 2>&1); then
