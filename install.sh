@@ -12002,6 +12002,12 @@ agent_validate_vless_state_inventory() (
   while IFS= read -r live_tag; do
     [[ -n "${live_tag}" ]] && live_tag_list+=("${live_tag}")
   done <<< "${live_tags}"
+  if [[ ${#live_tag_list[@]} -ne ${live_count} ]]; then
+    # Legacy tagless configurations use the same unique identity resolution as
+    # takeover. Keep all completeness and exact file-set checks below intact.
+    collect_vless_reality_config_instances || return 1
+    live_tag_list=("${VLESS_CONFIG_INSTANCE_TAGS[@]}")
+  fi
   [[ ${#live_tag_list[@]} -eq ${live_count} ]] || return 1
 
   case "${schema:-1}" in

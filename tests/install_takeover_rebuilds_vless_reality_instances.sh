@@ -302,6 +302,15 @@ EOF
     exit 1
   fi
   [[ "$(state_tree_hash)" == "${before_hash}" ]]
+  if agent_validate_vless_state_inventory; then
+    printf 'Agent must also reject ambiguous anonymous inbounds\n' >&2
+    exit 1
+  fi
+  jq '.inbounds[0].users[0].name = "stable-main" | .inbounds[1].users[0].name = "stable-edge"' \
+    "${SINGBOX_CONFIG_FILE}" > "${TMP_DIR}/identified-config.json"
+  mv "${TMP_DIR}/identified-config.json" "${SINGBOX_CONFIG_FILE}"
+  agent_validate_vless_state_inventory
+  [[ "$(state_tree_hash)" == "${before_hash}" ]]
   mv "${TMP_DIR}/tagged-config.json" "${SINGBOX_CONFIG_FILE}"
 
   # Two managed identities cannot silently claim the same live inbound.
@@ -377,6 +386,15 @@ EOF
   protocol_state_layer_matches_config
   first_hash=$(state_tree_hash)
   rebuild_protocol_state_from_config
+  [[ "$(state_tree_hash)" == "${first_hash}" ]]
+  [[ "$(sha256sum "${SINGBOX_CONFIG_FILE}")" == "${config_hash}" ]]
+  agent_validate_indexed_protocol_states vless-reality
+  get_public_ip() { printf '192.0.2.1'; }
+  agent_status_json > "${TMP_DIR}/untagged-status.json"
+  agent_collect_nodes_json summary > "${TMP_DIR}/untagged-nodes.json"
+  agent_collect_nodes_json links > "${TMP_DIR}/untagged-links.json"
+  jq -e '.nodes | length == 1' "${TMP_DIR}/untagged-nodes.json" >/dev/null
+  jq -e '.nodes | length == 1' "${TMP_DIR}/untagged-links.json" >/dev/null
   [[ "$(state_tree_hash)" == "${first_hash}" ]]
   [[ "$(sha256sum "${SINGBOX_CONFIG_FILE}")" == "${config_hash}" ]]
 )

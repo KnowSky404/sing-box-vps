@@ -109,4 +109,8 @@ DNS Server、证书服务、管理 API、USB/IP 独立服务不扩展为本轮�
 
 最终验证：160 个非 helper Shell 测试在 `SINGBOX_BINARY_113`/`SINGBOX_BINARY_114` 两个实际核心路径下全部退出 0，逐项记录为 `/tmp/sbv-reality-metadata-final.vtBj7I/summary.tsv`。`bash dev/verification/run.sh --changed-file install.sh dev/verification/common.sh` 退出 0，44 个本地门禁测试通过，证据目录 `dev/verification-runs/20260907065820` 包含 9/9 Docker 场景与 12/12 TCP 业务探针成功；包含 1.13.18 → 1.14.0 升级，以及失败注入后 `rolled_back=true`、`rollback_ok=true` 恢复 1.13.18。重建状态渲染的服务端与客户端配置均通过两个真实核心 `check`；Bash 4.2 只读无网络容器的语法检查也通过。Hysteria2 QUIC 仍不计作独立 UDP payload 验证，未操作生产 VPS 或执行 SubMan 同步。
 
+提交 `7acf762` 的精确范围审查发现一项遗漏：旧配置省略 tag 时，重建与健康检查认可内部稳定 tag，但 Agent 清单验证仍直接要求 live tag 非空。修复使 Agent 仅在缺 tag 时复用同一唯一身份关联，随后仍执行完整字段、实例文件集合和 tag 集合检查。新增断言覆盖 tagless 接管后的 `status`、`nodes`、`links` 成功，配置/状态读取不变，多匿名入站拒绝，以及用户名与已有 ID 唯一对应的多实例成功。该后续修复沿用本轮 `2026090703`，不再递增版本。
+
+审查后验证：25 项 Agent/接管/REALITY/清单保护相关测试全部退出 0，记录为 `/tmp/sbv-reality-agent-postreview.pFPefg/summary.tsv`；最终再次执行上述完整门禁，`dev/verification-runs/20260907071014` 的 44 项本地测试、9/9 Docker 场景与 12/12 TCP 探针均成功。前述 160 项全量结果对应首个元数据保留提交；六行 Agent 修复使用相关回归与完整 Docker 门禁复验，未将前次全量结果伪称为再次执行。独立定向复核确认 P1 已关闭，未发现新 P1/P2。
+
 后续仍须实现未知字段和非入站组件的完整无损保护，以及通用实例、资源事务和新增协议全生命周期；本项没有将这些验收要求记为完成。
