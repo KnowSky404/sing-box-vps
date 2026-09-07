@@ -163,9 +163,33 @@ if agent_validate_indexed_protocol_states ""; then
   printf 'expected non-empty orphan SOCKS store to be rejected\n' >&2
   exit 1
 fi
+set_protocol_defaults socks
+SB_INSTANCE_ID=main
+SB_PORT=33104
+SB_MIXED_AUTH_ENABLED=y
+SB_MIXED_USERNAME=fresh-user
+SB_MIXED_PASSWORD=fresh-password
+orphan_hash=$(sha256sum "${store_file}" "${SINGBOX_CONFIG_FILE}" "${SB_PROTOCOL_INDEX_FILE}")
+if save_socks_state >/dev/null 2>&1; then
+  printf 'SOCKS save unexpectedly reactivated orphan listeners\n' >&2
+  exit 1
+fi
+[[ ! -e "${SB_PROTOCOL_STATE_DIR}/socks.env" ]]
+[[ "$(sha256sum "${store_file}" "${SINGBOX_CONFIG_FILE}" "${SB_PROTOCOL_INDEX_FILE}")" == "${orphan_hash}" ]]
+structured_instance_store_empty_json socks > "${store_file}"
+zero_revision_hash=$(sha256sum "${store_file}")
+if save_socks_state >/dev/null 2>&1; then
+  printf 'SOCKS save unexpectedly accepted a revision-zero tombstone\n' >&2
+  exit 1
+fi
+[[ ! -e "${SB_PROTOCOL_STATE_DIR}/socks.env" ]]
+[[ "$(sha256sum "${store_file}")" == "${zero_revision_hash}" ]]
 structured_instance_store_empty_json socks | jq '.revision = 1' > "${store_file}"
 agent_validate_indexed_protocol_states ""
-rm -f -- "${store_file}"
+save_socks_state >/dev/null
+jq -e '.revision == 2 and (.instances | length) == 1 and .instances[0].id == "main"' "${store_file}" >/dev/null
+plain_proxy_structured_state_active socks
+rm -f -- "${store_file}" "${SB_PROTOCOL_STATE_DIR}/socks.env"
 mv "${TMP_DIR}/store-before-orphan.json" "${store_file}"
 mv "${TMP_DIR}/state-before-orphan.env" "${SB_PROTOCOL_STATE_DIR}/socks.env"
 printf 'INSTALLED_PROTOCOLS=socks\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"

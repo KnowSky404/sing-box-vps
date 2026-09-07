@@ -21,6 +21,13 @@ jq -e '
   all(.[]; .implemented == true and .available == null and .validated.status == "not_assessed")
 ' >/dev/null <<< "${registry}"
 capabilities=$(agent_capabilities_json)
+jq -e '
+  .features.plain_proxy_instances as $plain |
+  ($plain.operations | index("migrate") == null) and
+  ($plain.operations_by_protocol.mixed | index("migrate") != null) and
+  ($plain.operations_by_protocol.socks == ["create", "replace", "delete", "default", "recover"]) and
+  .features.mixed_instances.operations == $plain.operations_by_protocol.mixed
+' >/dev/null <<< "${capabilities}"
 jq -e --argjson registry "${registry}" '
   .protocols == ($registry | map({key: .agent_id, value: .legacy_capabilities}) | from_entries) and
   ([.protocol_registry[].capabilities] == [$registry[].legacy_capabilities]) and

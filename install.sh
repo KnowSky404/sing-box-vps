@@ -2250,6 +2250,10 @@ save_socks_state() {
   store_file=$(plain_proxy_structured_store_file socks) || return 1
   if [[ -f "${state_file}" ]]; then
     [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  elif [[ -e "${store_file}" || -L "${store_file}" ]]; then
+    # A missing active marker must not silently reactivate orphan listeners.
+    # Only a validated deletion tombstone may continue its existing revision.
+    plain_proxy_inactive_store_snapshot socks >/dev/null || return 1
   fi
   [[ -n "${listen_address}" ]] || listen_address='127.0.0.1'
   structured_instance_store_validate_id "${SB_INSTANCE_ID:-main}" || return 1
@@ -12422,7 +12426,7 @@ build_singbox_client_config() {
   local installed_protocols_raw
   local installed_protocols=() exportable_protocols=()
   local remote_outbounds_json remote_tags_json
-  local protocol outbound_json usable_protocol_count
+  local protocol protocol_label outbound_json usable_protocol_count
   local use_rule_set_http_client="n"
   local status=0
 
@@ -12470,9 +12474,14 @@ build_singbox_client_config() {
   ' RETURN
 
   for protocol in "${exportable_protocols[@]}"; do
+    if [[ "${protocol}" == "mixed" ]]; then
+      protocol_label="Mixed"
+    else
+      protocol_label="SOCKS"
+    fi
     if ! protocol_state_exists "${protocol}"; then
-      if [[ "${protocol}" == "mixed" ]]; then
-        log_warn "Mixed 状态缺失，已中止客户端导出；原导出文件保持不变。" >&2
+      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" ]]; then
+        log_warn "${protocol_label} 状态缺失，已中止客户端导出；原导出文件保持不变。" >&2
         status=1
         break
       fi
@@ -12481,8 +12490,8 @@ build_singbox_client_config() {
     fi
 
     if ! outbound_json=$(build_client_outbound_json_for_protocol "${protocol}" "${public_ip}"); then
-      if [[ "${protocol}" == "mixed" ]]; then
-        log_warn "Mixed 客户端连接材料无效，已中止客户端导出；原导出文件保持不变。" >&2
+      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" ]]; then
+        log_warn "${protocol_label} 客户端连接材料无效，已中止客户端导出；原导出文件保持不变。" >&2
         status=1
         break
       fi
@@ -12988,7 +12997,11 @@ agent_capabilities_json() {
           legacy_migration_protocols: ["mixed"],
           state_schema: 2,
           store_schema: 1,
-          operations: ["create", "replace", "delete", "default", "migrate", "recover"],
+          operations: ["create", "replace", "delete", "default", "recover"],
+          operations_by_protocol: {
+            mixed: ["create", "replace", "delete", "default", "migrate", "recover"],
+            socks: ["create", "replace", "delete", "default", "recover"]
+          },
           expected_revision_required: true,
           plaintext_public_confirmation: "--allow-public",
           default_new_listener: "127.0.0.1",

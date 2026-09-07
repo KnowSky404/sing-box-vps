@@ -22,6 +22,14 @@
 
 独立预审关闭了 SOCKS Warp 依赖遗漏、orphan store 忽略、跨协议恢复、协议诊断及导出 warning 误归属问题。warning 识别保留 legacy Mixed 的任意持久化节点名，不把 `socks-mixed` 误认作 Mixed；SOCKS 链接警告不宣称 URI 已配置 UoT。冻结源码复核未发现新增确认的 P1/P2，提交后仍须对精确提交范围审查。全协议目标继续进行，其他协议族和外部系统资源边界尚未完成；未推送、部署、操作生产或执行真实 SubMan 同步，用户未跟踪文件 `1`、`2` 均保留。
 
+### SOCKS 提交后补修
+
+`8d69d01` 的精确范围独立审查确认三处遗漏：`save_socks_state` 在缺少 marker 时可复用非空 orphan store；SOCKS 客户端生成失败可能被聚合导出跳过，发布部分结果；共享 capabilities 操作列表未准确区分 Mixed 的 legacy migration。补修分别在保存入口复用空 tombstone 校验、将 SOCKS 纳入整份导出的 fail-closed 路径，以及新增 `operations_by_protocol` 并从公共操作交集中去掉 `migrate`。本轮版本仍为 `2026090709`，不随补修提交重复递增。
+
+负例确认非空 orphan 和 revision=0 空 store 均拒绝且原文件不变；合法 revision=1 tombstone 可创建新实例并递增到 2。接管测试通过原生 Bash 与实际 Bash 4.2，均带真实 1.13.18/1.14.0 核心。Mixed+SOCKS 聚合导出负例在两版 Bash 下验证了无效认证、缺少 marker、Agent/交互失败、原导出与 `.bak` 哈希不变及凭据不泄漏；Mixed 认证导出兼容回归也通过。前述 178 项全量结果属于主提交验收，补修验证单独记录，不宣称再次运行全部 178 项。
+
+补修后的完整默认门禁在 `dev/verification-runs/20260907131600` 退出 0，命令与前述最终门禁相同：65 项本地检查、10/10 Docker 场景和 14/14 TCP 探针全部成功，故障升级仍为 `status=rolled_back`、`rollback.result=success`。补修源码 SHA-256 为 `29eac9ad1e0cd329ddc7d7d71fe7c1186a4e21d91bda7b0cd1e5b5e26ff0ba90`，父代理直接读取当次运行容器内安装脚本确认一致。两路独立补修预审均确认对应问题关闭，未发现新增确认的 P1/P2；未推送或部署。
+
 ## 验收范围
 
 - [ ] 核对 latest stable、目标 release 注册代码、移除 stub、构建标签、平台和运行库；固定版本与来源，保留 1.13.x 路径。
