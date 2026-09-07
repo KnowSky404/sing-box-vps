@@ -60,5 +60,7 @@ DNS Server、证书服务、管理 API、USB/IP 独立服务不扩展为本轮�
 - 旧 Mixed 恢复还通过了两个实际核心的输入/重新渲染 `check`，同时断言原配置字节和用户名/密码不变；命令 `bash /tmp/sbv-legacy-mixed-real-check.sh`，退出 0。此项为受控配置恢复证据，不替代网络连接探针。
 - 2026-09-07 的额外兼容检查在官方 `bash:4.2` 容器复现空 alias 数组的 `nounset` 错误；已修复为空时不展开数组。`tests/protocol_registry_legacy_bash.sh` 在 Bash `4.2.53` 和主机 `5.2.21` 均通过，前者使用只读仓库、无网络容器及临时 `/tmp`。镜像 digest 为 `sha256:326c3fb7e7009e1aa6aad242056abc11c372ac0a2b57dcb29ca5bc8feedf5579`；这证明注册表的旧 Bash 语义兼容，不等于完整 CentOS 系统服务验证。
 - 原子提交 `380eedd`（`feat: centralize protocol capability contracts`）随后进行了实际提交范围的等效 `/review`（本工具面没有该命令入口）。审查发现旧过期索引分支先删除索引且吞掉恢复失败；已停止后续功能接入，改为直接复用保留原索引的重建事务，补上空 inbounds 和原始退出码 `47` 的回归测试。独立复核确认索引字节保留、错误传播及旧过期条目清理均通过，上述完整门禁也已复跑。
+- 修复已形成原子提交 `223ca06`（`fix: preserve protocol indexes when recovery fails`），提交后等效实际范围审查确认该 P1 已解决、无新增 findings。
+- 补充上游角色/版本交叉复核修正了覆盖矩阵：Bridge 从 1.14.0 才存在且只处理 L3；direct inbound 的目标覆盖字段仍然有效，移除仅适用于 direct outbound。证据为固定 tag 源码、1.13.18 对 Bridge type 的实际拒绝，以及两核心对受控 direct inbound 配置的 `check`。
 
 后续仍需完成阶段 2–5 的所有未勾选要求；本阶段的通过结果不作为新增协议或高级接入已实现的证据。
