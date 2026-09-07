@@ -21,6 +21,7 @@ write_config() {
       "listen_port": 443,
       "users": [{"name": "main", "uuid": "11111111-1111-4111-8111-111111111111"}],
       "tls": {
+        "enabled": true,
         "server_name": "main.example.com",
         "reality": {
           "enabled": true,
@@ -35,6 +36,7 @@ write_config() {
       "listen_port": 8443,
       "users": [{"name": "second", "uuid": "22222222-2222-4222-8222-222222222222"}],
       "tls": {
+        "enabled": true,
         "server_name": "second.example.com",
         "alpn": ["http/1.1"],
         "reality": {

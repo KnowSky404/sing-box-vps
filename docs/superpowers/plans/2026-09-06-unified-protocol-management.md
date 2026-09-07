@@ -89,6 +89,8 @@ DNS Server、证书服务、管理 API、USB/IP 独立服务不扩展为本轮�
 
 本轮版本同步为 `2026090702`，仅递增一次。`tests/live_inbound_inventory_guards.sh` 覆盖全部入口的 fail-closed、配置/索引/状态 hash 与 mode 保持、资源准备及重启未调用、诊断脱敏、合法四协议清单和旧 alias。固定 1.13.18 与 1.14.0 实际核心都先接受 Mixed + Shadowsocks 受控配置，随后脚本门禁拒绝将其中未知 Shadowsocks 当作可管理对象；这证明修复针对真实可运行的丢失路径，而不是仅拒绝无效 fixture。
 
-全部 160 个非 helper Shell 测试在两核心环境变量下通过，证据为 `/tmp/sing-box-vps-all-tests-20260907-inventory-final.xDoWHC/summary.tsv`。最终 `bash dev/verification/run.sh --changed-file install.sh --changed-file dev/verification/common.sh` 退出 0，证据目录 `dev/verification-runs/20260907044652`：36 个本地门禁通过，Docker 9/9 场景和 12/12 TCP 业务探针成功，升级路径从 1.13.18 到 1.14.0，注入失败的回滚场景最终恢复为 1.13.18。Hysteria2 的 QUIC 仍不作为独立 UDP payload 验证证据。
+首次提交后的精确范围审查发现两个问题：sing-box 的 TLS/REALITY `enabled` 布尔值省略时默认为 `false`，不能只拒绝显式 `false`；Agent 的 `status`、`nodes` 和 `links` 也不能绕过完整清单校验后返回部分协议。后续修复要求两级开关都显式为 `true`，并使三个 Agent 命令在无法信任 live 清单时返回 `live_inbound_inventory_untrusted` 结构化错误；负例覆盖省略/禁用开关、部分结果阻断、凭据脱敏，以及公网地址和资源准备均未触发。
+
+修复审查问题后的 160 个非 helper Shell 测试在两核心环境变量下全部通过，证据为 `/tmp/sing-box-vps-all-tests-20260907-inventory-reviewfix-final.ZapAZE/summary.tsv`。最终 `bash dev/verification/run.sh --changed-file install.sh --changed-file dev/verification/common.sh` 退出 0，证据目录 `dev/verification-runs/20260907050524`：36 个本地门禁通过，Docker 9/9 场景和 12/12 TCP 业务探针成功，升级路径从 1.13.18 到 1.14.0，注入失败的回滚场景最终恢复为 1.13.18。Hysteria2 的 QUIC 仍不作为独立 UDP payload 验证证据。
 
 边界：本项只完成 live inbound inventory 层保护。额外用户/协议字段，以及未知 outbound、endpoint、DNS、证书和 route/rule 的语义往返保护仍未完成；已有 VLESS 状态的名称、QoS 与稳定 ID 在显式重建中的保留也仍需修复。它不代表新增 Shadowsocks 或其他协议已经实现。

@@ -46,8 +46,8 @@ mkdir -p "${SB_PROTOCOL_STATE_DIR}/vless-reality.d"
 cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
 {
   "inbounds": [
-    { "type": "vless", "tag": "vless-in", "listen_port": 443, "tls": {"reality": {}} },
-    { "type": "vless", "tag": "vless-reality-limited-10m", "listen_port": 8443, "tls": {"reality": {}} },
+    { "type": "vless", "tag": "vless-in", "listen_port": 443, "tls": {"enabled": true, "reality": {"enabled": true}} },
+    { "type": "vless", "tag": "vless-reality-limited-10m", "listen_port": 8443, "tls": {"enabled": true, "reality": {"enabled": true}} },
     { "type": "hysteria2", "tag": "hy2-in", "listen_port": 9443 }
   ],
   "route": { "rules": [] }

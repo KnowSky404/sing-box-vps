@@ -55,7 +55,7 @@ write_base_state() {
       "type": "vless",
       "tag": "vless-in",
       "listen_port": 443,
-      "tls": {"reality": {}}
+      "tls": {"enabled": true, "reality": {"enabled": true}}
     }
   ],
   "route": {

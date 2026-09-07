@@ -38,8 +38,10 @@ write_config() {
         }
       ],
       "tls": {
+        "enabled": true,
         "server_name": "apple.com",
         "reality": {
+          "enabled": true,
           "private_key": "private-key",
           "short_id": [
             "aaaaaaaaaaaaaaaa",

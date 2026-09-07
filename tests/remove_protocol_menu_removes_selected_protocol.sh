@@ -40,7 +40,7 @@ mkdir -p "${SB_PROTOCOL_STATE_DIR}"
 cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
 {
   "inbounds": [
-    { "type": "vless", "tag": "vless-in", "listen_port": 443, "tls": {"reality": {}} },
+    { "type": "vless", "tag": "vless-in", "listen_port": 443, "tls": {"enabled": true, "reality": {"enabled": true}} },
     { "type": "hysteria2", "tag": "hy2-in", "listen_port": 8443 }
   ],
   "route": { "rules": [] }

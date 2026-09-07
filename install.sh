@@ -11877,13 +11877,16 @@ agent_protocol_id() {
 }
 
 agent_installed_protocols_json() {
-  local protocol
+  local protocol indexed_protocols
+
+  validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" || return 1
+  indexed_protocols=$(list_indexed_protocols_raw) || return 1
 
   while IFS= read -r protocol; do
     [[ -n "${protocol}" ]] || continue
     agent_protocol_id "${protocol}" || return 1
     printf '\n'
-  done < <(list_indexed_protocols_raw) | jq -Rsc 'split("\n") | map(select(length > 0))'
+  done <<< "${indexed_protocols}" | jq -Rsc 'split("\n") | map(select(length > 0))'
 }
 
 agent_status_json() {
@@ -11891,7 +11894,14 @@ agent_status_json() {
   local host_stack bbr_algorithm bbr_enabled inbound_stack_mode outbound_stack_mode
   local reality_instance_count qos_filter_count subman_configured client_export_exists
 
-  installed_protocols_json=$(agent_installed_protocols_json)
+  if ! validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}"; then
+    agent_json_error "live_inbound_inventory_untrusted" "现有配置包含无法完整识别的入站；未返回部分协议状态。"
+    return 1
+  fi
+  if ! installed_protocols_json=$(agent_installed_protocols_json); then
+    agent_json_error "protocol_index_untrusted" "协议索引无法完整识别；未返回部分协议状态。"
+    return 1
+  fi
   warload_mode="selective"
   warload_enabled=false
   if [[ -f "${SINGBOX_CONFIG_FILE}" ]] && config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; then
@@ -12215,6 +12225,11 @@ agent_collect_nodes_json() {
   local public_ip original_protocol_state protocol node_json instance_id
   local installed_protocols=()
   local tmpdir status=0 rendered_instances=0
+
+  if ! validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}"; then
+    agent_json_error "live_inbound_inventory_untrusted" "现有配置包含无法完整识别的入站；未返回部分节点。"
+    return 1
+  fi
 
   public_ip=$(get_public_ip)
   original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
@@ -12894,8 +12909,8 @@ validate_live_inbound_inventory() {
           if any($items[]; (.adapters | length) == 0) then "unsupported_inbound_type"
           elif any($items[]; (.adapters | length) != 1) then "ambiguous_inbound_type"
           elif any($items[]; .adapters[0].preset == "reality" and
-            ((.inbound.tls | type) != "object" or .inbound.tls.enabled == false or
-             (.inbound.tls.reality | type) != "object" or .inbound.tls.reality.enabled == false))
+            ((.inbound.tls | type) != "object" or .inbound.tls.enabled != true or
+             (.inbound.tls.reality | type) != "object" or .inbound.tls.reality.enabled != true))
             then "unsupported_inbound_preset"
           elif any($items | group_by(.adapters[0].state_id)[];
             length > 1 and .[0].adapters[0].multi_instance != true)

@@ -15,8 +15,8 @@ write_fixture() {
     managed)
       cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
 {"inbounds":[
-  {"type":"vless","tag":"vless-in","tls":{"reality":{}}},
-  {"type":"vless","tag":"vless-reality-two","tls":{"reality":{"enabled":true}}},
+  {"type":"vless","tag":"vless-in","tls":{"enabled":true,"reality":{"enabled":true}}},
+  {"type":"vless","tag":"vless-reality-two","tls":{"enabled":true,"reality":{"enabled":true}}},
   {"type":"mixed","tag":"mixed-in"},
   {"type":"hysteria2","tag":"hy2-in"},
   {"type":"anytls","tag":"anytls-in"}
@@ -35,6 +35,15 @@ EOF
     plain-vless)
       printf '%s\n' '{"inbounds":[{"type":"vless","tag":"plain-vless","tls":{"enabled":true}}]}' > "${SINGBOX_CONFIG_FILE}"
       ;;
+    implicit-reality)
+      printf '%s\n' '{"inbounds":[{"type":"vless","tag":"implicit-reality","tls":{"reality":{}}}]}' > "${SINGBOX_CONFIG_FILE}"
+      ;;
+    disabled-reality)
+      printf '%s\n' '{"inbounds":[{"type":"vless","tag":"disabled-reality","tls":{"enabled":true,"reality":{"enabled":false}}}]}' > "${SINGBOX_CONFIG_FILE}"
+      ;;
+    disabled-tls)
+      printf '%s\n' '{"inbounds":[{"type":"vless","tag":"disabled-tls","tls":{"enabled":false,"reality":{"enabled":true}}}]}' > "${SINGBOX_CONFIG_FILE}"
+      ;;
     duplicate-mixed)
       printf '%s\n' '{"inbounds":[{"type":"mixed","tag":"mixed-a"},{"type":"mixed","tag":"mixed-b"}]}' > "${SINGBOX_CONFIG_FILE}"
       ;;
@@ -45,7 +54,7 @@ EOF
       printf '%s\n' '{"inbounds":[{"type":"anytls","tag":"anytls-a"},{"type":"anytls","tag":"anytls-b"}]}' > "${SINGBOX_CONFIG_FILE}"
       ;;
     duplicate-tag)
-      printf '%s\n' '{"inbounds":[{"type":"mixed","tag":"same"},{"type":"vless","tag":"same","tls":{"reality":{}}}]}' > "${SINGBOX_CONFIG_FILE}"
+      printf '%s\n' '{"inbounds":[{"type":"mixed","tag":"same"},{"type":"vless","tag":"same","tls":{"enabled":true,"reality":{"enabled":true}}}]}' > "${SINGBOX_CONFIG_FILE}"
       ;;
     bad-structure)
       printf '%s\n' '{"inbounds":{}}' > "${SINGBOX_CONFIG_FILE}"
@@ -107,6 +116,7 @@ create_managed_state_snapshot() { mark_side_effect; }
 ensure_warp_routing_assets() { mark_side_effect; }
 register_warp() { mark_side_effect; }
 restart_service_after_takeover() { mark_side_effect; }
+get_public_ip() { mark_side_effect; }
 
 for handler in \
   validate_live_inbound_inventory \
@@ -139,7 +149,24 @@ for handler in \
   [[ "$(stat -c '%a' "${SB_PROTOCOL_STATE_DIR}/mixed.env")" == "${state_mode_before}" ]]
 done
 
-for fixture in plain-vless duplicate-mixed duplicate-hy2 duplicate-anytls duplicate-tag bad-structure invalid-json; do
+for agent_command in status nodes links; do
+  agent_status=0
+  agent_cli "${agent_command}" --json > "${TMP_DIR}/agent-${agent_command}.json" 2> "${TMP_DIR}/agent-${agent_command}.stderr" || agent_status=$?
+  [[ "${agent_status}" -ne 0 ]]
+  jq -e '
+    .schema == "1" and .schema_version == "1.0" and .ok == false and
+    .error == "live_inbound_inventory_untrusted" and
+    .data.error == "live_inbound_inventory_untrusted" and
+    (.protocols? == null) and (.nodes? == null)
+  ' "${TMP_DIR}/agent-${agent_command}.json" >/dev/null
+  if grep -Fq 'MDEyMzQ1Njc4OWFiY2RlZg==' "${TMP_DIR}/agent-${agent_command}.json" "${TMP_DIR}/agent-${agent_command}.stderr"; then
+    printf 'agent %s leaked live inbound credentials\n' "${agent_command}" >&2
+    exit 1
+  fi
+  [[ ! -e "${TMP_DIR}/side-effect" ]]
+done
+
+for fixture in plain-vless implicit-reality disabled-reality disabled-tls duplicate-mixed duplicate-hy2 duplicate-anytls duplicate-tag bad-structure invalid-json; do
   write_fixture "${fixture}"
   : > "${TMP_DIR}/stdout"
   if validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" > "${TMP_DIR}/stdout" 2> "${TMP_DIR}/stderr"; then
@@ -148,7 +175,7 @@ for fixture in plain-vless duplicate-mixed duplicate-hy2 duplicate-anytls duplic
   fi
   [[ ! -s "${TMP_DIR}/stdout" ]]
   case "${fixture}" in
-    plain-vless) grep -Fq 'unsupported_inbound_preset' "${TMP_DIR}/stderr" ;;
+    plain-vless|implicit-reality|disabled-reality|disabled-tls) grep -Fq 'unsupported_inbound_preset' "${TMP_DIR}/stderr" ;;
     duplicate-mixed|duplicate-hy2|duplicate-anytls) grep -Fq 'unsupported_inbound_multiplicity' "${TMP_DIR}/stderr" ;;
     duplicate-tag) grep -Fq 'duplicate_inbound_tag' "${TMP_DIR}/stderr" ;;
     bad-structure) grep -Fq 'invalid_inbounds' "${TMP_DIR}/stderr" ;;

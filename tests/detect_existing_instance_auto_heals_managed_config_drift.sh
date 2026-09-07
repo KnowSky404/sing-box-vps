@@ -67,8 +67,10 @@ generate_config() {
         }
       ],
       "tls": {
+        "enabled": true,
         "server_name": "apple.com",
         "reality": {
+          "enabled": true,
           "private_key": "private-key",
           "short_id": [
             "aaaaaaaaaaaaaaaa",
@@ -127,8 +129,10 @@ cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
         }
       ],
       "tls": {
+        "enabled": true,
         "server_name": "apple.com",
         "reality": {
+          "enabled": true,
           "private_key": "private-key",
           "short_id": [
             "aaaaaaaaaaaaaaaa",

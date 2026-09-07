@@ -53,7 +53,7 @@ get_public_ipv6() {
 mkdir -p "${SB_PROTOCOL_STATE_DIR}"
 cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
 {"inbounds":[
-  {"type":"vless","tag":"vless-in","tls":{"reality":{}}},
+  {"type":"vless","tag":"vless-in","tls":{"enabled":true,"reality":{"enabled":true}}},
   {"type":"mixed","tag":"mixed-in"},
   {"type":"hysteria2","tag":"hy2-in"},
   {"type":"anytls","tag":"anytls-in"}

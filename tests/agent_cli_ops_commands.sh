@@ -53,7 +53,9 @@ chmod +x "${TMP_DIR}/bin/systemctl"
 source_testable_install
 
 mkdir -p "${SB_PROTOCOL_STATE_DIR}"
-touch "${SINGBOX_CONFIG_FILE}"
+cat > "${SINGBOX_CONFIG_FILE}" <<'EOF_CONFIG'
+{"inbounds":[{"type":"vless","tag":"vless-in","tls":{"enabled":true,"reality":{"enabled":true}}}]}
+EOF_CONFIG
 cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF_INDEX'
 INSTALLED_PROTOCOLS=vless-reality
 PROTOCOL_STATE_VERSION=1

@@ -42,7 +42,7 @@ Agent 保留原 `protocols` 对象，增加 `protocol_registry`。当前实例�
 
 ### 现有入站清单保护
 
-`validate_live_inbound_inventory` 是只读、无网络/状态写入的前置门禁；接受单个 JSON 对象中的入站数组，使用同一注册表的核心 `type`、`preset` 和 `multi_instance` 能力识别全部入站。未知类型、非 REALITY VLESS、重复的单实例协议、重复的非空显式 tag 或无法解析的清单均以固定脱敏分类失败。CLI 的历史 `vless` alias 含义不变，但不能拿这个 alias 将任意 live VLESS 认作 REALITY；仅为已有配置兼容，仍允许 REALITY 对象省略 `enabled`。
+`validate_live_inbound_inventory` 是只读、无网络/状态写入的前置门禁；接受单个 JSON 对象中的入站数组，使用同一注册表的核心 `type`、`preset` 和 `multi_instance` 能力识别全部入站。未知类型、非 REALITY VLESS、重复的单实例协议、重复的非空显式 tag 或无法解析的清单均以固定脱敏分类失败。CLI 的历史 `vless` alias 含义不变，但不能拿这个 alias 将任意 live VLESS 认作 REALITY；上游两个开关默认均为 `false`，所以只有 `tls.enabled=true` 且 `tls.reality.enabled=true` 才是可接管的旧 REALITY 预设。
 
 枚举必须全量成功后才输出清单；状态比较捕获退出码，不经进程替换吞掉失败。索引协调、健康判定、自动修复、接管和生成入口在修改/准备前检查。失败不重写 live 配置、备份或状态，接管诊断也不再输出包含密码、UUID、私钥和 token 的原始快照。
 
