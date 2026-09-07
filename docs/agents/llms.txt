@@ -74,6 +74,7 @@ Common task routing:
 - AI agent node info retrieval: prefer sbv agent nodes --json for summaries and sbv agent links --json only in trusted contexts.
 - VLESS REALITY multi-instance or rate-limit work: use script-managed state under /root/sing-box-vps/protocols/vless-reality.d/ and /root/sing-box-vps/reality-qos.filters; do not hand-edit generated config.json.
 - REALITY takeover retains existing instance IDs, names, QoS and the default instance by matching saved inbound tags. Connection parameters follow the live config; an old public key is retained only when its private key matches. Ambiguous saved tags stop reconstruction before state replacement.
+- Instance reads use the shared protocol/instance adapter. Legacy singleton state is exposed internally as main; REALITY keeps its existing multi-instance IDs. Agent reads and REALITY client rendering do not migrate legacy state or create credentials. This is not multi-instance support for other protocols yet.
 - Client export: use sbv agent export-client --json and remember it writes /root/sing-box-vps/client/sing-box-client.json with backup/validation.
 - SubMan sync: use sbv agent subman-sync --json only when SubMan config exists and the target context is trusted.
 - Repository maintenance: read AGENTS.md, affected scripts, and run verification as required.

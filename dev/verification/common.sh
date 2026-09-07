@@ -69,6 +69,7 @@ resolve_local_tests() {
       tests/bootstrap_download.sh \
       tests/cli_update_commands.sh \
       tests/protocol_registry_contract.sh \
+      tests/protocol_instance_adapter.sh \
       tests/managed_component_graph.sh \
       tests/managed_component_graph_core_startup.sh \
       tests/live_inbound_inventory_guards.sh \

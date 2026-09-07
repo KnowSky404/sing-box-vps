@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090703
+# Version: 2026090704
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090703"
+readonly SCRIPT_VERSION="2026090704"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -86,6 +86,7 @@ SB_REALITY_SNI_CANDIDATES=(
 # --- Global Variables ---
 SB_VERSION="${SB_SUPPORT_MAX_VERSION}"
 SB_PROTOCOL="vless+reality"
+SB_INSTANCE_ID=""
 SB_NODE_NAME="$(hostname)-vless"
 SB_PORT="443"
 SB_UUID=""
@@ -5966,6 +5967,7 @@ load_protocol_state() {
   state_file=$(protocol_state_file "${protocol}")
 
   if [[ ! -f "${state_file}" ]]; then
+    [[ "${state_mode}" == "read-only" ]] && return 1
     if [[ "$(runtime_protocol_to_state "${SB_PROTOCOL}")" == "${protocol}" ]]; then
       return 0
     fi
@@ -9774,38 +9776,67 @@ unique_vless_reality_client_tag() {
 
 build_client_vless_reality_outbounds() {
   local public_ip=${1:-$(get_public_ip)}
-  local instance_id outbound_json base_tag outbound_tag
-  local status=0 count=0
+  local instance_id outbound_json base_tag outbound_tag instance_ids
+  local default_instance_id=""
+  local status=0 adapter_status count=0
   local used_tags=()
+  local outbound_fragments=()
 
-  migrate_vless_reality_state_to_instances_if_needed
+  if instance_ids=$(list_protocol_instance_ids "vless-reality"); then
+    :
+  else
+    adapter_status=$?
+    return "${adapter_status}"
+  fi
+  if default_instance_id=$(protocol_default_instance_id "vless-reality"); then
+    :
+  else
+    adapter_status=$?
+    return "${adapter_status}"
+  fi
+
   while IFS= read -r instance_id; do
     [[ -z "${instance_id}" ]] && continue
-    load_vless_reality_protocol_state
-    if ! load_vless_reality_instance_state "${instance_id}"; then
-      status=1
+    if load_protocol_instance_state "vless-reality" "${instance_id}"; then
+      :
+    else
+      adapter_status=$?
+      [[ "${status}" == "0" ]] && status="${adapter_status}"
       continue
     fi
     base_tag=$(client_outbound_tag_for_protocol "vless-reality")
-    outbound_tag=$(unique_vless_reality_client_tag "${base_tag}" "${instance_id}" "${SB_PORT}" "${used_tags[@]}")
+    outbound_tag=$(unique_vless_reality_client_tag "${base_tag}" "${instance_id}" "${SB_PORT}" ${used_tags[@]+"${used_tags[@]}"})
     if outbound_json=$(build_client_vless_reality_outbound "${public_ip}" "${outbound_tag}"); then
-      printf '%s\n' "${outbound_json}"
+      outbound_fragments+=("${outbound_json}")
       used_tags+=("${outbound_tag}")
       count=$((count + 1))
     else
       status=$?
+      break
     fi
-  done < <(list_vless_reality_instance_ids)
+  done <<< "${instance_ids}"
 
-  load_vless_reality_protocol_state
-  load_vless_reality_instance_state "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-main}" >/dev/null 2>&1 || true
+  if [[ -n "${default_instance_id}" ]]; then
+    if load_protocol_instance_state "vless-reality" "${default_instance_id}" >/dev/null 2>&1; then
+      :
+    else
+      adapter_status=$?
+      [[ "${status}" == "0" ]] && status="${adapter_status}"
+    fi
+  fi
 
+  if (( status != 0 )); then
+    return "${status}"
+  fi
   if (( count == 0 )); then
     log_warn "未找到可用的 VLESS + REALITY 实例，已跳过客户端导出协议: vless-reality" >&2
     return 1
   fi
 
-  return "${status}"
+  for outbound_json in "${outbound_fragments[@]}"; do
+    printf '%s\n' "${outbound_json}" || return 1
+  done
+  return 0
 }
 
 build_client_hy2_outbound() {
@@ -9896,17 +9927,27 @@ build_client_anytls_outbound() {
 }
 
 build_client_outbound_json_for_protocol() {
-  local protocol original_protocol_state outbound_json build_status restore_original_state public_ip
-  protocol=$(normalize_protocol_id "$1")
+  local protocol original_protocol_state original_instance_id outbound_json build_status restore_original_state public_ip
+  local default_instance_id adapter_status
+  protocol=$(normalize_protocol_id "$1") || return 1
   public_ip=${2:-$(get_public_ip)}
   original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
+  original_instance_id=""
+  if [[ -n "${original_protocol_state}" ]] && protocol_state_exists "${original_protocol_state}"; then
+    if original_instance_id=$(protocol_default_instance_id "${original_protocol_state}"); then
+      :
+    else
+      adapter_status=$?
+      return "${adapter_status}"
+    fi
+  fi
   build_status=0
   restore_original_state="n"
 
   case "${protocol}" in
     vless-reality|hy2|anytls) ;;
     *)
-      log_error "不支持的客户端导出协议: ${protocol}"
+      return 1
       ;;
   esac
 
@@ -9914,7 +9955,18 @@ build_client_outbound_json_for_protocol() {
     restore_original_state="y"
   fi
 
-  load_protocol_state "${protocol}"
+  if default_instance_id=$(protocol_default_instance_id "${protocol}"); then
+    :
+  else
+    adapter_status=$?
+    return "${adapter_status}"
+  fi
+  if load_protocol_instance_state "${protocol}" "${default_instance_id}"; then
+    :
+  else
+    adapter_status=$?
+    return "${adapter_status}"
+  fi
 
   case "${protocol}" in
     vless-reality)
@@ -9941,7 +9993,13 @@ build_client_outbound_json_for_protocol() {
   esac
 
   if [[ "${restore_original_state}" == "y" ]]; then
-    load_protocol_state "${original_protocol_state}"
+    if [[ -n "${original_instance_id}" ]] &&
+       load_protocol_instance_state "${original_protocol_state}" "${original_instance_id}" >/dev/null 2>&1; then
+      :
+    else
+      adapter_status=$?
+      [[ "${build_status}" == "0" ]] && build_status="${adapter_status}"
+    fi
   fi
 
   if (( build_status != 0 )); then
@@ -10326,7 +10384,8 @@ client_export_file_path() {
 }
 
 build_singbox_client_config() {
-  local original_protocol_state clash_api_secret public_ip tmpdir
+  local original_protocol_state original_instance_id clash_api_secret public_ip tmpdir
+  local installed_protocols_raw
   local installed_protocols=() exportable_protocols=()
   local remote_outbounds_json remote_tags_json
   local protocol outbound_json usable_protocol_count
@@ -10337,8 +10396,25 @@ build_singbox_client_config() {
     use_rule_set_http_client="y"
   fi
 
-  mapfile -t installed_protocols < <(list_installed_protocols)
-  mapfile -t exportable_protocols < <(list_exportable_client_protocols)
+  original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
+  original_instance_id=""
+  if [[ -n "${original_protocol_state}" ]] && protocol_state_exists "${original_protocol_state}"; then
+    if original_instance_id=$(protocol_default_instance_id "${original_protocol_state}"); then
+      :
+    else
+      return $?
+    fi
+  fi
+  if ! installed_protocols_raw=$(list_installed_protocols_read_only); then
+    return 1
+  fi
+  if [[ -n "${installed_protocols_raw}" ]]; then
+    mapfile -t installed_protocols <<< "${installed_protocols_raw}"
+    for protocol in "${installed_protocols[@]}"; do
+      [[ "$(protocol_registry_field "${protocol}" client_export)" == "true" ]] || continue
+      exportable_protocols+=("${protocol}")
+    done
+  fi
   if [[ ${#exportable_protocols[@]} -eq 0 ]]; then
     if [[ ${#installed_protocols[@]} -gt 0 ]]; then
       log_warn "当前无可导出的 sing-box 裸核客户端节点；已安装协议中仅 vless-reality、hy2、anytls 支持导出，mixed 不支持导出。" >&2
@@ -10348,14 +10424,13 @@ build_singbox_client_config() {
     return 1
   fi
 
-  original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
   clash_api_secret=$(generate_random_token "clash-" 16)
   public_ip=$(get_public_ip)
   tmpdir=$(mktemp -d)
   usable_protocol_count=0
   trap '
     if [[ -n "${original_protocol_state:-}" ]] && protocol_state_exists "${original_protocol_state}"; then
-      load_protocol_state "${original_protocol_state}"
+      load_protocol_instance_state "${original_protocol_state}" "${original_instance_id}" >/dev/null 2>&1
     fi
     rm -rf "${tmpdir:-}"
   ' RETURN
@@ -10533,7 +10608,7 @@ build_singbox_client_config() {
 
   trap - RETURN
   if [[ -n "${original_protocol_state}" ]] && protocol_state_exists "${original_protocol_state}"; then
-    load_protocol_state "${original_protocol_state}"
+    load_protocol_instance_state "${original_protocol_state}" "${original_instance_id}" >/dev/null 2>&1 || status=1
   fi
   rm -rf "${tmpdir}"
   return "${status}"
@@ -11894,7 +11969,7 @@ agent_trusted_indexed_protocols_raw() {
   while IFS= read -r indexed; do
     [[ -n "${indexed}" ]] || continue
     protocol=$(normalize_protocol_id "${indexed}") || return 1
-    if protocol_array_contains "${protocol}" "${indexed_protocols[@]}"; then
+    if protocol_array_contains "${protocol}" ${indexed_protocols[@]+"${indexed_protocols[@]}"}; then
       return 1
     fi
     indexed_protocols+=("${protocol}")
@@ -11906,6 +11981,7 @@ agent_trusted_indexed_protocols_raw() {
   done <<< "${live_raw}"
 
   [[ ${#indexed_protocols[@]} -eq ${#live_protocols[@]} ]] || return 1
+  [[ ${#indexed_protocols[@]} -gt 0 ]] || return 0
   for protocol in "${live_protocols[@]}"; do
     protocol_array_contains "${protocol}" "${indexed_protocols[@]}" || return 1
   done
@@ -11929,11 +12005,11 @@ agent_validate_indexed_protocol_states() {
     state_id=${state_id%.env}
     normalized_state_id=$(normalize_protocol_id "${state_id}") || return 1
     [[ "${normalized_state_id}" == "${state_id}" ]] || return 1
-    protocol_array_contains "${state_id}" "${expected_protocols[@]}" || return 1
+    protocol_array_contains "${state_id}" ${expected_protocols[@]+"${expected_protocols[@]}"} || return 1
     validate_protocol_state_schema "${state_id}" "${state_file}" || return 1
   done
 
-  for protocol in "${expected_protocols[@]}"; do
+  for protocol in ${expected_protocols[@]+"${expected_protocols[@]}"}; do
     state_file=$(protocol_state_file "${protocol}") || return 1
     [[ -f "${state_file}" ]] || return 1
     validate_protocol_state_schema "${protocol}" "${state_file}" || return 1
@@ -11943,7 +12019,7 @@ agent_validate_indexed_protocol_states() {
   done
 }
 
-agent_legacy_vless_state_is_complete() {
+vless_reality_legacy_state_is_complete() {
   local state_file
   state_file=$(protocol_state_file "vless-reality") || return 1
   [[ -f "${state_file}" ]] || return 1
@@ -11959,15 +12035,23 @@ agent_legacy_vless_state_is_complete() {
   )
 }
 
+agent_legacy_vless_state_is_complete() {
+  vless_reality_legacy_state_is_complete
+}
+
+vless_reality_loaded_connection_is_complete() {
+  [[ -n "${SB_NODE_NAME}" ]] || return 1
+  validate_port_number "${SB_PORT}" || return 1
+  [[ "${SB_UUID}" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]] || return 1
+  [[ -n "${SB_SNI}" && -n "${SB_PRIVATE_KEY}" && -n "${SB_PUBLIC_KEY}" && -n "${SB_SHORT_ID_1}" ]]
+}
+
 agent_vless_instance_tag_if_complete() {
   local instance_id=$1
 
   load_vless_reality_instance_state "${instance_id}" || return 1
   [[ "${INSTANCE_ID:-}" == "${instance_id}" && "${ENABLED:-}" == "1" ]] || return 1
-  [[ -n "${SB_NODE_NAME}" ]] || return 1
-  validate_port_number "${SB_PORT}" || return 1
-  [[ "${SB_UUID}" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]] || return 1
-  [[ -n "${SB_SNI}" && -n "${SB_PRIVATE_KEY}" && -n "${SB_PUBLIC_KEY}" && -n "${SB_SHORT_ID_1}" ]] || return 1
+  vless_reality_loaded_connection_is_complete || return 1
   vless_reality_inbound_tag_for_instance "${instance_id}"
 }
 
@@ -12414,10 +12498,12 @@ agent_link_json_for_current_protocol() {
 
 agent_collect_nodes_json() {
   local mode=$1
-  local public_ip original_protocol_state original_state_file protocol node_json instance_id indexed_protocols
-  local vless_instance_ids="" vless_state_schema="" nodes_json='[]'
+  local public_ip original_protocol_state original_state_file original_instance_id
+  local protocol node_json instance_id indexed_protocols instance_ids instance_record
+  local nodes_json='[]'
   local installed_protocols=()
-  local tmpdir status=0 rendered_instances=0
+  local protocol_instance_records=()
+  local tmpdir status=0
 
   if ! validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}"; then
     agent_json_error "live_inbound_inventory_untrusted" "现有配置包含无法完整识别的入站；未返回部分节点。"
@@ -12436,86 +12522,62 @@ agent_collect_nodes_json() {
     installed_protocols+=("${protocol}")
   done <<< "${indexed_protocols}"
 
-  if protocol_array_contains "vless-reality" "${installed_protocols[@]}"; then
-    if ! vless_instance_ids=$(list_vless_reality_instance_ids); then
-      agent_json_error "protocol_state_untrusted" "REALITY 实例清单无法完整读取；未返回部分节点。"
+  # Enumerate every managed instance before doing public-IP or other resource
+  # work.  The records are the single input to the rendering loop below.
+  for protocol in ${installed_protocols[@]+"${installed_protocols[@]}"}; do
+    if ! instance_ids=$(list_protocol_instance_ids "${protocol}"); then
+      agent_json_error "protocol_state_untrusted" "协议实例清单无法完整读取；未返回部分节点。"
       return 1
     fi
-    vless_state_schema=$(sed -n 's/^CONFIG_SCHEMA_VERSION=//p' "$(protocol_state_file "vless-reality")") || return 1
-    vless_state_schema=${vless_state_schema//\"/}
-    vless_state_schema=${vless_state_schema//\'/}
-  fi
+    while IFS= read -r instance_id; do
+      [[ -n "${instance_id}" ]] || continue
+      protocol_instance_records+=("${protocol}"$'\t'"${instance_id}")
+    done <<< "${instance_ids}"
+  done
 
-  public_ip=$(get_public_ip)
   original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
   original_state_file=""
   if [[ -n "${original_protocol_state}" ]]; then
     original_state_file=$(protocol_state_file "${original_protocol_state}" 2>/dev/null || true)
   fi
+  original_instance_id=""
+  if [[ -n "${original_state_file}" && -f "${original_state_file}" ]]; then
+    if ! original_instance_id=$(protocol_default_instance_id "${original_protocol_state}"); then
+      agent_json_error "protocol_state_untrusted" "当前协议默认实例无法完整读取；未返回节点。"
+      return 1
+    fi
+  fi
+  public_ip=$(get_public_ip)
   tmpdir=$(mktemp -d)
 
   trap 'rm -rf "${tmpdir:-}"' RETURN
 
-  for protocol in "${installed_protocols[@]}"; do
-    if ! load_protocol_state "${protocol}" "read-only"; then
+  for instance_record in ${protocol_instance_records[@]+"${protocol_instance_records[@]}"}; do
+    IFS=$'\t' read -r protocol instance_id <<< "${instance_record}"
+    if ! load_protocol_instance_state "${protocol}" "${instance_id}"; then
       status=1
       continue
     fi
-
-    if [[ "${protocol}" == "vless-reality" ]]; then
-      rendered_instances=0
-      while IFS= read -r instance_id; do
-        [[ -n "${instance_id}" ]] || continue
-        if ! load_vless_reality_instance_state "${instance_id}"; then
-          status=1
-          continue
-        fi
-        node_json=""
-        case "${mode}" in
-          summary) node_json=$(agent_node_summary_json_for_current_protocol "${public_ip}") || status=1 ;;
-          links) node_json=$(agent_link_json_for_current_protocol "${public_ip}") || status=1 ;;
-          *) status=1; continue ;;
-        esac
-        if [[ -n "${node_json}" ]]; then
-          printf '%s\n' "${node_json}" >> "${tmpdir}/nodes.jsonl"
-          rendered_instances=$((rendered_instances + 1))
-        fi
-      done <<< "${vless_instance_ids}"
-      if (( rendered_instances == 0 )) && [[ "${vless_state_schema:-1}" == "1" ]]; then
-        SB_VLESS_INSTANCE_ID="main"
-        SB_VLESS_RATE_LIMIT_UP_MBPS=""
-        SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
-        SB_OUTBOUND_POLICY="default"
-        case "${mode}" in
-          summary) node_json=$(agent_node_summary_json_for_current_protocol "${public_ip}") || status=1 ;;
-          links) node_json=$(agent_link_json_for_current_protocol "${public_ip}") || status=1 ;;
-          *) status=1; node_json="" ;;
-        esac
-        if [[ -n "${node_json}" ]]; then
-          printf '%s\n' "${node_json}" >> "${tmpdir}/nodes.jsonl"
-          rendered_instances=1
-        fi
-      fi
-      (( rendered_instances > 0 )) || status=1
-      load_protocol_state "vless-reality" "read-only" || status=1
-      continue
-    fi
-
     case "${mode}" in
       summary) node_json=$(agent_node_summary_json_for_current_protocol "${public_ip}") || status=1 ;;
       links) node_json=$(agent_link_json_for_current_protocol "${public_ip}") || status=1 ;;
       *) status=1; continue ;;
     esac
 
-    [[ -n "${node_json:-}" ]] && printf '%s\n' "${node_json}" >> "${tmpdir}/nodes.jsonl"
+    if [[ -n "${node_json:-}" ]]; then
+      if ! printf '%s\n' "${node_json}" >> "${tmpdir}/nodes.jsonl"; then
+        status=1
+      fi
+    else
+      status=1
+    fi
   done
 
   if [[ -s "${tmpdir}/nodes.jsonl" ]]; then
     nodes_json=$(jq -s '.' "${tmpdir}/nodes.jsonl") || status=1
   fi
-  if [[ -n "${original_state_file}" && -f "${original_state_file}" ]] &&
-     ! load_protocol_state "${original_protocol_state}" "read-only"; then
-    status=1
+  if [[ -n "${original_state_file}" && -f "${original_state_file}" ]]; then
+    load_protocol_instance_state "${original_protocol_state}" "${original_instance_id}" >/dev/null 2>&1 || status=1
   fi
   if rm -rf "${tmpdir}"; then
     tmpdir=""
@@ -13336,6 +13398,254 @@ vless_reality_existing_state_index_for_id() {
     return 0
   done
   return 1
+}
+
+protocol_instance_state_schema() {
+  local protocol=$1
+  local state_file schema schema_count
+
+  protocol=$(normalize_protocol_id "${protocol}") || return 1
+  state_file=$(protocol_state_file "${protocol}") || return 1
+  [[ -f "${state_file}" ]] || return 1
+  schema_count=$(awk '/^CONFIG_SCHEMA_VERSION=/{count++} END{print count + 0}' "${state_file}") || return 1
+  if [[ "${schema_count}" == "0" ]]; then
+    printf '1'
+    return 0
+  fi
+  [[ "${schema_count}" == "1" ]] || return 1
+  schema=$(sed -n 's/^CONFIG_SCHEMA_VERSION=//p' "${state_file}") || return 1
+  schema=${schema//\"/}
+  schema=${schema//\'/}
+  [[ "${schema}" =~ ^[0-9]+$ ]] || return 1
+  printf '%s' "${schema}"
+}
+
+vless_reality_instance_manifest_is_complete() {
+  local instance_dir instance_file instance_file_id instance_file_count=0
+
+  instance_dir=$(vless_reality_instance_dir) || return 1
+  for instance_file in "${instance_dir}"/*.env; do
+    [[ -e "${instance_file}" ]] || continue
+    instance_file_id=${instance_file##*/}
+    instance_file_id=${instance_file_id%.env}
+    validate_vless_reality_instance_id "${instance_file_id}" || return 1
+    protocol_array_contains "${instance_file_id}" "${VLESS_REBUILD_STATE_IDS[@]}" || return 1
+    instance_file_count=$((instance_file_count + 1))
+  done
+  [[ "${instance_file_count}" -eq "${#VLESS_REBUILD_STATE_IDS[@]}" ]]
+}
+
+reset_protocol_state_source_variables() {
+  reset_vless_reality_state_source_variables
+  unset AUTH_ENABLED USERNAME PASSWORD DOMAIN USER_NAME UP_MBPS DOWN_MBPS
+  unset OBFS_ENABLED OBFS_TYPE OBFS_PASSWORD TLS_MODE ACME_MODE ACME_EMAIL
+  unset ACME_DOMAIN ACME_EXTRA_JSON DNS_PROVIDER CF_API_TOKEN CERT_PATH KEY_PATH
+  unset MASQUERADE
+}
+
+reset_protocol_instance_runtime_fields() {
+  SB_INSTANCE_ID=""
+  SB_NODE_NAME=""
+  SB_PORT=""
+  SB_UUID=""
+  SB_PUBLIC_KEY=""
+  SB_PRIVATE_KEY=""
+  SB_SHORT_ID_1=""
+  SB_SHORT_ID_2=""
+  SB_SNI=""
+  SB_VLESS_INSTANCE_ID=""
+  SB_VLESS_INBOUND_TAG=""
+  SB_VLESS_RATE_LIMIT_UP_MBPS=""
+  SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
+  SB_VLESS_ALPN_MODE="off"
+  SB_VLESS_TCP_FAST_OPEN="n"
+  SB_OUTBOUND_POLICY="default"
+  SB_MIXED_AUTH_ENABLED="y"
+  SB_MIXED_USERNAME=""
+  SB_MIXED_PASSWORD=""
+  SB_HY2_DOMAIN=""
+  SB_HY2_PASSWORD=""
+  SB_HY2_USER_NAME=""
+  SB_HY2_UP_MBPS=""
+  SB_HY2_DOWN_MBPS=""
+  SB_HY2_OBFS_ENABLED="n"
+  SB_HY2_OBFS_TYPE=""
+  SB_HY2_OBFS_PASSWORD=""
+  SB_HY2_TLS_MODE="acme"
+  SB_HY2_ACME_MODE="http"
+  SB_HY2_ACME_EMAIL=""
+  SB_HY2_ACME_DOMAIN=""
+  SB_HY2_ACME_EXTRA_JSON='{}'
+  SB_HY2_DNS_PROVIDER="cloudflare"
+  SB_HY2_CF_API_TOKEN=""
+  SB_HY2_CERT_PATH=""
+  SB_HY2_KEY_PATH=""
+  SB_HY2_MASQUERADE=""
+  SB_ANYTLS_DOMAIN=""
+  SB_ANYTLS_PASSWORD=""
+  SB_ANYTLS_USER_NAME=""
+  SB_ANYTLS_TLS_MODE="acme"
+  SB_ANYTLS_ACME_MODE="http"
+  SB_ANYTLS_ACME_EMAIL=""
+  SB_ANYTLS_ACME_DOMAIN=""
+  SB_ANYTLS_ACME_EXTRA_JSON='{}'
+  SB_ANYTLS_DNS_PROVIDER="cloudflare"
+  SB_ANYTLS_CF_API_TOKEN=""
+  SB_ANYTLS_CERT_PATH=""
+  SB_ANYTLS_KEY_PATH=""
+}
+
+list_vless_reality_managed_instance_ids() {
+  load_vless_reality_existing_metadata || return 1
+  [[ ${#VLESS_REBUILD_STATE_IDS[@]} -gt 0 ]] || return 1
+  vless_reality_instance_manifest_is_complete || return 1
+  printf '%s\n' "${VLESS_REBUILD_STATE_IDS[@]}"
+}
+
+read_vless_reality_default_instance_id() {
+  reset_protocol_state_source_variables
+  load_vless_reality_protocol_state || return 1
+  [[ -n "${VLESS_REALITY_DEFAULT_INSTANCE_ID:-}" ]] || return 1
+  printf '%s\n' "${VLESS_REALITY_DEFAULT_INSTANCE_ID}"
+}
+
+list_protocol_instance_ids() {
+  local protocol=${1:-} state_file schema instance_id instance_ids
+
+  protocol=$(normalize_protocol_id "${protocol}") || return 1
+  state_file=$(protocol_state_file "${protocol}") || return 1
+  [[ -f "${state_file}" ]] || return 1
+  grep -Eq "^INSTALLED=(1|\"1\"|'1')$" "${state_file}" || return 1
+  schema=$(protocol_instance_state_schema "${protocol}") || return 1
+
+  case "${protocol}:${schema}" in
+    vless-reality:1)
+      printf 'main\n'
+      ;;
+    vless-reality:2)
+      instance_ids=$(list_vless_reality_managed_instance_ids) || return 1
+      printf '%s\n' "${instance_ids}"
+      ;;
+    mixed:1|hy2:1|anytls:1)
+      printf 'main\n'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+list_installed_protocols_read_only() {
+  local indexed_raw protocol normalized_protocol
+  local indexed_protocols=()
+
+  validate_protocol_index_for_rebuild || return 1
+  indexed_raw=$(list_indexed_protocols_raw) || return 1
+  while IFS= read -r protocol; do
+    [[ -n "${protocol}" ]] || continue
+    normalized_protocol=$(normalize_protocol_id "${protocol}") || return 1
+    if [[ ${#indexed_protocols[@]} -gt 0 ]] &&
+       protocol_array_contains "${normalized_protocol}" "${indexed_protocols[@]}"; then
+      return 1
+    fi
+    indexed_protocols+=("${normalized_protocol}")
+  done <<< "${indexed_raw}"
+
+  [[ ${#indexed_protocols[@]} -gt 0 ]] || return 0
+  printf '%s\n' "${indexed_protocols[@]}"
+}
+
+protocol_default_instance_id() {
+  local protocol=${1:-} state_file schema default_id instance_ids instance_id status
+
+  protocol=$(normalize_protocol_id "${protocol}") || return 1
+  state_file=$(protocol_state_file "${protocol}") || return 1
+  [[ -f "${state_file}" ]] || return 1
+  schema=$(protocol_instance_state_schema "${protocol}") || return 1
+  if instance_ids=$(list_protocol_instance_ids "${protocol}"); then
+    :
+  else
+    status=$?
+    if [[ "${protocol}" == "vless-reality" ]]; then
+      log_warn "未找到可用的 VLESS + REALITY 实例，或实例状态清单无法完整读取。" >&2
+    fi
+    return "${status}"
+  fi
+
+  case "${protocol}:${schema}" in
+    vless-reality:2)
+      default_id=$(read_vless_reality_default_instance_id) || return 1
+      ;;
+    vless-reality:1|mixed:1|hy2:1|anytls:1)
+      default_id="main"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  while IFS= read -r instance_id; do
+    [[ "${instance_id}" == "${default_id}" ]] && {
+      printf '%s\n' "${default_id}"
+      return 0
+    }
+  done <<< "${instance_ids}"
+  return 1
+}
+
+load_protocol_instance_state() {
+  local protocol=${1:-} instance_id=${2:-}
+  local schema instance_ids listed_instance_id legacy_inbound_tag
+
+  protocol=$(normalize_protocol_id "${protocol}") || return 1
+  validate_vless_reality_instance_id "${instance_id}" || return 1
+  schema=$(protocol_instance_state_schema "${protocol}") || return 1
+  instance_ids=$(list_protocol_instance_ids "${protocol}") || return 1
+  listed_instance_id=""
+  while IFS= read -r listed_instance_id; do
+    [[ "${listed_instance_id}" == "${instance_id}" ]] && break
+    listed_instance_id=""
+  done <<< "${instance_ids}"
+  [[ "${listed_instance_id}" == "${instance_id}" ]] || return 1
+
+  if [[ "${protocol}:${schema}" == "vless-reality:1" ]]; then
+    vless_reality_legacy_state_is_complete || return 1
+  fi
+
+  # This adapter is deliberately read-only.  In particular, schema-1
+  # REALITY must never enter the legacy migration path.
+  reset_protocol_state_source_variables
+  reset_protocol_instance_runtime_fields
+  load_protocol_state "${protocol}" "read-only" || return 1
+
+  case "${protocol}:${schema}" in
+    vless-reality:2)
+      load_vless_reality_protocol_state || return 1
+      load_vless_reality_instance_state "${instance_id}" || return 1
+      SB_INSTANCE_ID="${instance_id}"
+      ;;
+    vless-reality:1)
+      legacy_inbound_tag=${INBOUND_TAG:-}
+      SB_INSTANCE_ID="main"
+      SB_VLESS_INSTANCE_ID="main"
+      SB_VLESS_INBOUND_TAG="${legacy_inbound_tag}"
+      SB_VLESS_RATE_LIMIT_UP_MBPS=""
+      SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
+      SB_VLESS_ALPN_MODE="off"
+      SB_VLESS_TCP_FAST_OPEN="n"
+      SB_OUTBOUND_POLICY="default"
+      ;;
+    mixed:1|hy2:1|anytls:1)
+      SB_INSTANCE_ID="main"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  if [[ "${protocol}" == "vless-reality" ]]; then
+    vless_reality_loaded_connection_is_complete || return 1
+  fi
+  return 0
 }
 
 vless_reality_config_id_in_use() {

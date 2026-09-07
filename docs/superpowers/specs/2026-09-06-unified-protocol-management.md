@@ -50,6 +50,16 @@ Agent 保留原 `protocols` 对象，增加 `protocol_registry`。当前实例�
 
 ## 后续通用实例与组合设计（尚未实现）
 
+### 已接入的只读实例兼容接口
+
+Agent 节点/分享列表和 REALITY 客户端导出通过 `list_protocol_instance_ids`、`protocol_default_instance_id` 与 `load_protocol_instance_state` 共用实例枚举/加载契约。实例身份是 `(state_id, instance_id)`，不能把不同协议的 `main` 当成同一个实例。旧 Mixed、Hysteria2、AnyTLS 和 schema 1 REALITY 以虚拟 `main` 适配；schema 2 REALITY 保留既有清单顺序、ID 和默认实例。加载后 `SB_INSTANCE_ID` 表示统一身份，既有 `SB_*` 参数和公开 Agent JSON 字段继续兼容。
+
+枚举捕获全部结果和退出状态，未知/缺失状态、无效 ID 或损坏多实例清单不得输出有效前缀。只读接口不协调索引、不迁移状态、不生成凭据，不接收外部 shell 状态导入。REALITY 客户端导出也不再为读取 schema 1 自动创建实例目录；任一实例构建失败时不输出前面已生成的片段。Agent 保留完整清单验证和失败时无部分节点的语义。
+
+这是统一实例模型的旧格式适配层，尚未提供非 REALITY 协议的多实例持久化或写命令；后续新增协议需接入该接口和下述通用状态/事务设计，不能另建 Agent 特例循环。
+
+### 后续持久化模型
+
 已实现的 REALITY 兼容基础：显式状态重建先读取旧受管实例元数据，再以有效 inbound tag 关联 live 入站。成功关联时保留稳定 ID、默认实例、节点名称及上下行 QoS；连接参数和可表示的路由策略按 live 配置恢复。私钥相同时复用旧公钥，歧义映射、无效 QoS 或未知状态版本拒绝重建。此机制同样用于期望状态比较，避免自定义 ID 在健康检查中被重命名；通用多协议实例模型仍待推广。
 
 现有 `.env` 和 `vless-reality.d/*.env` 继续兼容读取，不做启动时全量迁移。新增实例采用同目录内可按实例备份的结构化数据状态；导入先经过字段 allowlist、类型和引用校验，不能 source 外部数据。状态需包含版本、稳定 ID、family/preset/role、名称、固定 tag、监听、认证、TLS/transport、出站策略及组件依赖。读、渲染、展示和导出不创建新的 UUID/密码/密钥。
