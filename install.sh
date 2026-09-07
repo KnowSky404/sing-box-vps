@@ -9956,41 +9956,40 @@ build_client_outbound_json_for_protocol() {
   fi
 
   if default_instance_id=$(protocol_default_instance_id "${protocol}"); then
-    :
+    if load_protocol_instance_state "${protocol}" "${default_instance_id}"; then
+      :
+    else
+      build_status=$?
+    fi
   else
-    adapter_status=$?
-    return "${adapter_status}"
-  fi
-  if load_protocol_instance_state "${protocol}" "${default_instance_id}"; then
-    :
-  else
-    adapter_status=$?
-    return "${adapter_status}"
+    build_status=$?
   fi
 
-  case "${protocol}" in
-    vless-reality)
-      if outbound_json=$(build_client_vless_reality_outbounds "${public_ip}"); then
-        :
-      else
-        build_status=$?
-      fi
-      ;;
-    hy2)
-      if outbound_json=$(build_client_hy2_outbound); then
-        :
-      else
-        build_status=$?
-      fi
-      ;;
-    anytls)
-      if outbound_json=$(build_client_anytls_outbound); then
-        :
-      else
-        build_status=$?
-      fi
-      ;;
-  esac
+  if (( build_status == 0 )); then
+    case "${protocol}" in
+      vless-reality)
+        if outbound_json=$(build_client_vless_reality_outbounds "${public_ip}"); then
+          :
+        else
+          build_status=$?
+        fi
+        ;;
+      hy2)
+        if outbound_json=$(build_client_hy2_outbound); then
+          :
+        else
+          build_status=$?
+        fi
+        ;;
+      anytls)
+        if outbound_json=$(build_client_anytls_outbound); then
+          :
+        else
+          build_status=$?
+        fi
+        ;;
+    esac
+  fi
 
   if [[ "${restore_original_state}" == "y" ]]; then
     if [[ -n "${original_instance_id}" ]] &&

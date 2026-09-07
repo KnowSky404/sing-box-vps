@@ -192,6 +192,14 @@ cp "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/edge.env" "${TMP_DIR}/valid-edge.en
 for required_field in UUID SNI SHORT_ID_1 PORT; do
   sed "/^${required_field}=/d" "${TMP_DIR}/valid-edge.env" > "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/edge.env"
   assert_rejected_without_output build_client_vless_reality_outbounds 127.0.0.1
+  load_protocol_instance_state mixed main
+  assert_rejected_without_output build_client_outbound_json_for_protocol vless-reality 127.0.0.1
+  [[ "${SB_PROTOCOL}" == mixed && "${SB_INSTANCE_ID}" == main ]]
+  [[ "${SB_NODE_NAME}" == 'mixed name with spaces' && "${SB_PORT}" == 8443 ]]
+  [[ "${SB_MIXED_PASSWORD}" == 'password $() ; quote' && -z "${SB_UUID}" ]]
+  build_client_outbound_json_for_protocol hy2 127.0.0.1 > "${TMP_DIR}/after-failed-reality.json"
+  jq -e '.type == "hysteria2"' "${TMP_DIR}/after-failed-reality.json" >/dev/null
+  [[ "${SB_PROTOCOL}" == mixed && "${SB_INSTANCE_ID}" == main ]]
 done
 cp "${TMP_DIR}/valid-edge.env" "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/edge.env"
 sed '/^REALITY_PUBLIC_KEY=/d' "${TMP_DIR}/valid-root.env" > "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"

@@ -132,3 +132,7 @@ REALITY 导出不再为读取 schema 1 自动执行迁移；完整枚举或任�
 验证证据：161 项全量回归全部通过，记录为 `/tmp/sbv-instance-adapter-reviewed.VEZLE5/summary.tsv`；最后的必填字段及 Bash 兼容修复另以 28 项相关回归复验，记录为 `/tmp/sbv-adapter-bash42-related.Y1PPqT/summary.tsv`。完整默认门禁 `dev/verification-runs/20260907075359` 的 45 项本地检查及 Docker 均通过；最后 Agent 空数组修复后，以 `VERIFY_SKIP_LOCAL_TESTS=1` 单独复跑 Docker（不把跳过的本地检查计为重新通过），最终证据 `dev/verification-runs/20260907075939` 为 9/9 场景、12/12 TCP 业务探针成功，含正常升级和失败回滚。容器中的脚本 SHA-256 与最终源码一致：`a9dec9b25a791de43db3976883e3d52cf85c1a90e2d10e8940ecf7e0499eb3a9`。新旧实例客户端片段通过真实 1.13.18 / 1.14.0 `check`；Hysteria2 QUIC 不作为独立 UDP payload 验证证据。
 
 本项未执行生产操作、推送或 SubMan 同步，也未完成全协议目标；后续仍需通用多实例持久化/写入口、未知字段及非入站组件无损保护、资源事务，以及新增协议完整生命周期。
+
+提交 `bbf6a3d` 的精确范围等效 `/review` 发现跨协议客户端导出在目标实例加载失败时提前返回，跳过原运行态恢复。修复将目标解析/加载失败保存到统一状态码，跳过渲染但继续恢复原协议；初始失败码优先保留。新增回归从 Mixed 出发，逐项移除 REALITY 默认实例的 UUID、SNI、Short ID 和端口，断言失败无输出、原协议/实例/名称/端口/密码恢复、REALITY 字段清空，且后续 Hysteria2 导出成功。实际 Bash 4.2.53 两核心环境测试通过，修复沿用本轮 `2026090704`。
+
+该审查修复的完整门禁再次退出 0：`dev/verification-runs/20260907080539` 包含 45 项本地检查、9/9 Docker 场景及 12/12 TCP 探针成功，失败升级事务结果为 `rolled_back` 且 rollback `result=success`。已核对运行容器源码与待提交脚本 SHA-256 一致：`7d34399104d4a6aa967995a1423fc032cc83d2a42d9deeae842e66b06b9e84a6`。独立定向复核确认状态恢复 P2 已关闭；前述 161 项全量回归并未在这个小修复后重新执行，不混作最终完整重跑证据。
