@@ -83,7 +83,7 @@ if [[ "${TAKEOVER_OUTPUT}" != *"检测到残缺的现有实例"* ]]; then
   exit 1
 fi
 
-if [[ "${TAKEOVER_OUTPUT}" != *"当前配置未识别到可接管的受支持协议"* ]]; then
+if [[ "${TAKEOVER_OUTPUT}" != *"live_inbound_inventory: unsupported_inbound_type"* ]]; then
   printf 'expected clear rejection for unrecognized config takeover, got:\n%s\n' "${TAKEOVER_OUTPUT}" >&2
   exit 1
 fi

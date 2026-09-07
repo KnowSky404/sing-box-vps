@@ -51,7 +51,14 @@ get_public_ipv6() {
 }
 
 mkdir -p "${SB_PROTOCOL_STATE_DIR}"
-touch "${SINGBOX_CONFIG_FILE}"
+cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
+{"inbounds":[
+  {"type":"vless","tag":"vless-in","tls":{"reality":{}}},
+  {"type":"mixed","tag":"mixed-in"},
+  {"type":"hysteria2","tag":"hy2-in"},
+  {"type":"anytls","tag":"anytls-in"}
+]}
+EOF
 
 cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
 INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls

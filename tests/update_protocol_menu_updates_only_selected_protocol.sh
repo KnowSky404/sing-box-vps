@@ -57,7 +57,8 @@ cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
     {
       "type": "vless",
       "tag": "vless-in",
-      "listen_port": 443
+      "listen_port": 443,
+      "tls": {"reality": {}}
     }
   ],
   "route": {

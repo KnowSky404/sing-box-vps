@@ -54,8 +54,8 @@ select_reality_sni_candidate() {
 cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
 {
   "inbounds": [
-    { "type": "vless", "tag": "vless-in", "listen_port": 443 },
-    { "type": "vless", "tag": "vless-reality-second", "listen_port": 8443 }
+    { "type": "vless", "tag": "vless-in", "listen_port": 443, "tls": {"reality": {}} },
+    { "type": "vless", "tag": "vless-reality-second", "listen_port": 8443, "tls": {"reality": {}} }
   ],
   "route": { "rules": [] }
 }

@@ -111,7 +111,8 @@ write_invalid_config() {
     {
       "type": "vless",
       "listen_port": 443,
-      "users": []
+      "users": [],
+      "tls": {"reality": {}}
     }
   ],
   "route": {

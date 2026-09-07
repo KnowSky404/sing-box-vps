@@ -71,6 +71,7 @@ resolve_local_tests() {
       tests/protocol_registry_contract.sh \
       tests/managed_component_graph.sh \
       tests/managed_component_graph_core_startup.sh \
+      tests/live_inbound_inventory_guards.sh \
       tests/verification_protocol_probe_matrix.sh \
       tests/verification_protocol_probe_vless.sh \
       tests/verification_protocol_probe_hy2.sh \

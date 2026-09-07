@@ -38,7 +38,15 @@ Agent 保留原 `protocols` 对象，增加 `protocol_registry`。当前实例�
 
 预检覆盖 detour、selector/urltest 成员及默认选择、route/DNS 的逻辑规则树、rule-set、证书与 inline/named HTTP client、显式 DNS resolver 和必要 Endpoint 引用。引用存在性与依赖边分开：普通路由匹配只检查引用，不当作启动环；普通出站的 resolver 仅在固定域名服务器等明确需要解析的位置产生依赖边，避免把 IP DNS 经 direct 的合法配置误判为循环。DNS transport 自身的显式 resolver 则按核心 manager 语义始终产生启动依赖，即使服务器为 IP。共享 selector DAG 使用邻接表和拓扑消除，不枚举全部路径。
 
-此处不是完整 sing-box schema 实现，也不是外部配置 allowlist 或新的 JSON 透传管理入口。目标版本字段、构建依赖及协议参数仍必须通过真实核心 `check`；动态路由/透明接入的数据面环路必须通过后续资源预检和隔离连接验证。未知 live 对象的无损接管保护、通用实例和删除引用保护仍在下节的待实现范围。
+此处不是完整 sing-box schema 实现，也不是外部配置 allowlist 或新的 JSON 透传管理入口。目标版本字段、构建依赖及协议参数仍必须通过真实核心 `check`；动态路由/透明接入的数据面环路必须通过后续资源预检和隔离连接验证。
+
+### 现有入站清单保护
+
+`validate_live_inbound_inventory` 是只读、无网络/状态写入的前置门禁；接受单个 JSON 对象中的入站数组，使用同一注册表的核心 `type`、`preset` 和 `multi_instance` 能力识别全部入站。未知类型、非 REALITY VLESS、重复的单实例协议、重复的非空显式 tag 或无法解析的清单均以固定脱敏分类失败。CLI 的历史 `vless` alias 含义不变，但不能拿这个 alias 将任意 live VLESS 认作 REALITY；仅为已有配置兼容，仍允许 REALITY 对象省略 `enabled`。
+
+枚举必须全量成功后才输出清单；状态比较捕获退出码，不经进程替换吞掉失败。索引协调、健康判定、自动修复、接管和生成入口在修改/准备前检查。失败不重写 live 配置、备份或状态，接管诊断也不再输出包含密码、UUID、私钥和 token 的原始快照。
+
+这是清单层保护，不是字段的语义往返证明。额外用户、未建模参数以及出站、端点、DNS、证书与路由的完整可恢复性仍需后续保护；通用实例和删除引用保护也仍在下节的待实现范围。
 
 ## 后续通用实例与组合设计（尚未实现）
 

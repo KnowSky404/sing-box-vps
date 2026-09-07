@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090701
+# Version: 2026090702
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090701"
+readonly SCRIPT_VERSION="2026090702"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -2061,6 +2061,7 @@ reconcile_protocol_index_if_needed() {
 
   [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]] || return 0
   validate_protocol_index_for_rebuild || return 1
+  validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" || return 1
 
   mapfile -t indexed_protocols < <(list_indexed_protocols_raw)
   current_protocols=$(extract_protocols_from_index)
@@ -7212,6 +7213,10 @@ generate_config_candidate() {
     return 1
   fi
 
+  # Inspect the complete live inventory before discovery or resource creation.
+  # A supported first inbound is not evidence that the rest can be rebuilt.
+  validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" || return 1
+
   # Capture discovery before resource preparation; process substitution hides
   # its failure status and could otherwise publish an empty/partial config.
   effective_protocols=$(list_effective_protocols) || return 1
@@ -7485,6 +7490,7 @@ generate_config_candidate() {
 generate_config() {
   local snapshot_dir
 
+  validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" || return 1
   snapshot_dir=$(create_managed_state_snapshot) || return 1
   if ! (generate_config_candidate); then
     rollback_managed_state_snapshot "${snapshot_dir}" || true
@@ -12865,25 +12871,71 @@ prompt_singbox_version() {
   done
 }
 
+validate_live_inbound_inventory() {
+  local config_file=$1 registry inventory_status
+
+  [[ -e "${config_file}" || -L "${config_file}" ]] || return 0
+  registry=$(protocol_registry_json) || return 1
+  # This is an inventory gate, not a full field/route round-trip validator.
+  # Accept only real core type names here; CLI aliases (especially vless)
+  # cannot prove that a live inbound uses the corresponding managed preset.
+  if ! inventory_status=$(jq -rs --argjson registry "${registry}" '
+    if length != 1 or (.[0] | type) != "object" then "invalid_document"
+    else .[0] |
+      if has("inbounds") and (.inbounds | type) != "array" then "invalid_inbounds"
+      else (.inbounds // []) as $inbounds |
+        if any($inbounds[]; type != "object" or (.type | type) != "string") then "invalid_inbounds"
+        elif any($inbounds[]; has("tag") and (.tag | type) != "string") then "invalid_inbound_tag"
+        else [
+          $inbounds[] as $inbound |
+          {inbound: $inbound, adapters: [$registry[] |
+            select(.role == "inbound" and .type == $inbound.type)]}
+        ] as $items |
+          if any($items[]; (.adapters | length) == 0) then "unsupported_inbound_type"
+          elif any($items[]; (.adapters | length) != 1) then "ambiguous_inbound_type"
+          elif any($items[]; .adapters[0].preset == "reality" and
+            ((.inbound.tls | type) != "object" or .inbound.tls.enabled == false or
+             (.inbound.tls.reality | type) != "object" or .inbound.tls.reality.enabled == false))
+            then "unsupported_inbound_preset"
+          elif any($items | group_by(.adapters[0].state_id)[];
+            length > 1 and .[0].adapters[0].multi_instance != true)
+            then "unsupported_inbound_multiplicity"
+          elif ([$inbounds[].tag // empty | select(length > 0)] | length) !=
+               ([$inbounds[].tag // empty | select(length > 0)] | unique | length)
+            then "duplicate_inbound_tag"
+          else "ok" end
+        end
+      end
+    end
+  ' "${config_file}" 2>/dev/null); then
+    inventory_status="invalid_json_or_inventory"
+  fi
+  if [[ "${inventory_status}" != "ok" ]]; then
+    printf '[ERROR] live_inbound_inventory: %s; 已保留配置和状态，禁止有损重建；请使用支持该入站的脚本或先备份并人工迁移。\n' "${inventory_status}" >&2
+    return 1
+  fi
+}
+
 list_config_protocols() {
+  validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" || return 1
   [[ -f "${SINGBOX_CONFIG_FILE}" ]] || return 0
 
   local protocols=()
   local inbound_count inbound_index inbound_type protocol
 
-  inbound_count=$(jq -r '(.inbounds // []) | length' "${SINGBOX_CONFIG_FILE}")
-  [[ "${inbound_count}" =~ ^[0-9]+$ ]] || return 0
+  inbound_count=$(jq -r '(.inbounds // []) | length' "${SINGBOX_CONFIG_FILE}") || return 1
+  [[ "${inbound_count}" =~ ^[0-9]+$ ]] || return 1
 
   for ((inbound_index = 0; inbound_index < inbound_count; inbound_index++)); do
-    inbound_type=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].type // empty' "${SINGBOX_CONFIG_FILE}")
-    protocol=$(normalize_protocol_id "${inbound_type}" 2>/dev/null || true)
-    [[ -n "${protocol}" ]] || continue
+    inbound_type=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].type // empty' "${SINGBOX_CONFIG_FILE}") || return 1
+    protocol=$(normalize_protocol_id "${inbound_type}") || return 1
 
     if ! protocol_array_contains "${protocol}" "${protocols[@]}"; then
       protocols+=("${protocol}")
     fi
   done
 
+  [[ ${#protocols[@]} -gt 0 ]] || return 0
   printf '%s\n' "${protocols[@]}"
 }
 
@@ -12922,6 +12974,7 @@ collect_vless_reality_config_instances() {
   local fallback_number=1
   local candidate_index resolved_ids=()
 
+  validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" || return 1
   VLESS_CONFIG_INSTANCE_IDS=()
   VLESS_CONFIG_INSTANCE_INDICES=()
   VLESS_CONFIG_INSTANCE_TAGS=()
@@ -13312,9 +13365,11 @@ protocol_state_layer_matches_config() {
   local config_protocols=()
   local indexed_protocols=()
   local normalized_indexed_protocols=()
-  local protocol joined_config joined_index
+  local protocol joined_config joined_index config_inventory
 
-  mapfile -t config_protocols < <(list_config_protocols)
+  config_inventory=$(list_config_protocols) || return 1
+  [[ -n "${config_inventory}" ]] || return 1
+  mapfile -t config_protocols <<< "${config_inventory}"
   [[ ${#config_protocols[@]} -gt 0 ]] || return 1
 
   mapfile -t indexed_protocols < <(list_indexed_protocols_raw)
@@ -13354,9 +13409,7 @@ clear_protocol_state_cache() {
 log_takeover_state_diagnostics() {
   local config_protocols=()
   local indexed_protocols=()
-  local protocol
-  local expected_snapshot
-  local saved_snapshot
+  local protocol config_inventory
 
   [[ -x "${SINGBOX_BIN_PATH}" ]] || log_warn "接管诊断: 缺少 sing-box 二进制 ${SINGBOX_BIN_PATH}"
   [[ -f "${SINGBOX_SERVICE_FILE}" ]] || log_warn "接管诊断: 缺少 systemd 服务文件 ${SINGBOX_SERVICE_FILE}"
@@ -13364,7 +13417,13 @@ log_takeover_state_diagnostics() {
   [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]] || log_warn "接管诊断: 缺少协议索引 ${SB_PROTOCOL_INDEX_FILE}"
 
   if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
-    mapfile -t config_protocols < <(list_config_protocols)
+    if ! config_inventory=$(list_config_protocols); then
+      log_warn "接管诊断: 配置包含无法完整识别的入站；未输出部分协议清单或原始配置。"
+      return 1
+    fi
+    if [[ -n "${config_inventory}" ]]; then
+      mapfile -t config_protocols <<< "${config_inventory}"
+    fi
     if [[ ${#config_protocols[@]} -gt 0 ]]; then
       log_warn "接管诊断: 配置文件识别到的协议: $(IFS=,; printf '%s' "${config_protocols[*]}")"
     else
@@ -13373,6 +13432,7 @@ log_takeover_state_diagnostics() {
   fi
 
   if [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
+    validate_protocol_index_for_rebuild || return 1
     mapfile -t indexed_protocols < <(list_indexed_protocols_raw)
     if [[ ${#indexed_protocols[@]} -gt 0 ]]; then
       log_warn "接管诊断: 协议索引记录的协议: $(IFS=,; printf '%s' "${indexed_protocols[*]}")"
@@ -13388,22 +13448,7 @@ log_takeover_state_diagnostics() {
     fi
     if ! protocol_state_matches_config "${protocol}"; then
       log_warn "接管诊断: 协议状态与配置不一致: ${protocol}"
-      expected_snapshot=$(render_expected_protocol_state_snapshot "${protocol}" 2>/dev/null || true)
-      saved_snapshot=$(render_saved_protocol_state_snapshot "${protocol}" 2>/dev/null || true)
-
-      if [[ -n "${expected_snapshot}" ]]; then
-        log_warn "接管诊断: ${protocol} 配置期望快照:"
-        while IFS= read -r line; do
-          log_warn "  ${line}"
-        done <<< "${expected_snapshot}"
-      fi
-
-      if [[ -n "${saved_snapshot}" ]]; then
-        log_warn "接管诊断: ${protocol} 当前状态快照:"
-        while IFS= read -r line; do
-          log_warn "  ${line}"
-        done <<< "${saved_snapshot}"
-      fi
+      log_warn "接管诊断: 快照可能包含认证材料，已省略原始值；请在本机安全地检查配置与状态文件。"
     fi
   done
 }
@@ -13449,6 +13494,7 @@ attempt_managed_instance_auto_heal() {
   local snapshot_dir
 
   [[ -x "${SINGBOX_BIN_PATH}" && -f "${SINGBOX_SERVICE_FILE}" && -f "${SINGBOX_CONFIG_FILE}" && -f "${SB_PROTOCOL_INDEX_FILE}" ]] || return 1
+  validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" || return 1
 
   # Detection must not reconcile away an indexed protocol whose state file is
   # missing. That is an incomplete instance requiring takeover, not safe drift
@@ -13585,6 +13631,7 @@ abort_protocol_state_rebuild() {
 
 rebuild_protocol_state_from_config() {
   validate_protocol_index_for_rebuild || return 1
+  validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" || return 1
   [[ -f "${SINGBOX_CONFIG_FILE}" ]] || return 0
 
   local rebuilt_protocols=()
@@ -13851,6 +13898,7 @@ rebuild_protocol_state_from_config() {
 
 take_over_existing_instance() {
   [[ -f "${SINGBOX_CONFIG_FILE}" ]] || log_error "未找到配置文件，无法接管现有实例。请先按全新安装处理。"
+  validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" || return 1
   ensure_takeover_validation_binary
   check_config_valid
   rebuild_protocol_state_from_config || log_error "当前配置未识别到可接管的受支持协议。"
