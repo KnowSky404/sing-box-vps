@@ -277,10 +277,10 @@ record_rule "${FIREWALLD_RUNTIME_RULES}" '32111/tcp'
 record_rule "${FIREWALLD_PERMANENT_RULES}" '32111/tcp'
 record_rule "${FIREWALLD_RUNTIME_RULES}" '32112/tcp'
 record_rule "${FIREWALLD_PERMANENT_RULES}" '32112/tcp'
-record_rule "${UFW_RULES}" '192.0.2.11 32103/tcp ALLOW Anywhere'
+record_rule "${UFW_RULES}" '192.0.2.11 32103/tcp ALLOW Anywhere # user ALLOW OUT 32199/tcp rule'
 record_rule "${UFW_RULES}" '192.0.2.10 32123/tcp ALLOW OUT Anywhere'
 record_rule "${UFW_RULES}" '198.51.100.20 32111/tcp ALLOW IN Anywhere # user-marker'
-record_rule "${UFW_RULES}" '192.0.2.10 32115/tcp ALLOW Anywhere # sbv-instance-test-marker-suffix'
+record_rule "${UFW_RULES}" '192.0.2.10 32115/tcp ALLOW Anywhere # sbv-instance-test-marker-suffix 32198/tcp note'
 record_rule "${UFW_RULES}" '2001:db8::12 32112/tcp ALLOW Anywhere (v6)'
 jq -n '{inbounds:[
   {type:"mixed",tag:"user-rule",listen:"192.0.2.11",listen_port:32103},
@@ -288,7 +288,16 @@ jq -n '{inbounds:[
   {type:"mixed",tag:"wrong-target-rule",listen:"192.0.2.10",listen_port:32111},
   {type:"mixed",tag:"compressed-ipv6-rule",listen:"2001:db8::12",listen_port:32112}
 ]}' > "${new_config}"
-record_rule "${UFW_RULES}" '32110/tcp ALLOW Anywhere'
+record_rule "${UFW_RULES}" '32110/tcp ALLOW Anywhere # user (v6) ALLOW IN rule'
+instance_firewall_rule_query ufw ipv4 tcp 32103 192.0.2.11 '' 0
+if instance_firewall_rule_query ufw ipv4 tcp 32199 192.0.2.11 '' 0; then
+  printf 'UFW comment port was incorrectly treated as a destination port\n' >&2
+  exit 1
+fi
+if instance_firewall_rule_query ufw ipv4 tcp 32198 192.0.2.10 '' 0; then
+  printf 'UFW ordinary comment port was incorrectly treated as a destination port\n' >&2
+  exit 1
+fi
 if instance_firewall_rule_query ufw ipv4 tcp 32123 192.0.2.10 '' 0; then
   printf 'outbound UFW rule was incorrectly treated as inbound\n' >&2
   exit 1

@@ -6548,18 +6548,23 @@ instance_firewall_rule_comment() {
 
 instance_firewall_ufw_status_match() {
   local family=$1 address=$2 transport=$3 port=$4 comment=${5:-} require_marker=${6:-0}
-  local line rule prefix first second target canonical_target target_family target_matched=0
+  local line rule_text line_comment rule prefix first second target canonical_target target_family target_matched=0
   rule="${port}/${transport}"
   while IFS= read -r line; do
-    [[ "${line}" != *' ALLOW OUT '* ]] || continue
-    if [[ "${line}" == *' ALLOW IN '* ]]; then
-      prefix=${line%% ALLOW IN *}
-    elif [[ "${line}" == *' ALLOW '* ]]; then
-      prefix=${line%% ALLOW *}
+    # Comments are opaque data, never action/port/family tokens. Preserve
+    # them separately only for the exact ownership comparison below.
+    rule_text=${line%%' # '*}
+    line_comment=''
+    [[ "${line}" != *' # '* ]] || line_comment=${line#*' # '}
+    [[ "${rule_text}" != *' ALLOW OUT '* ]] || continue
+    if [[ "${rule_text}" == *' ALLOW IN '* ]]; then
+      prefix=${rule_text%% ALLOW IN *}
+    elif [[ "${rule_text}" == *' ALLOW '* ]]; then
+      prefix=${rule_text%% ALLOW *}
     else
       continue
     fi
-    [[ "${line}" =~ (^|[[:space:]])${rule}([[:space:]]|$) ]] || continue
+    [[ "${prefix}" =~ (^|[[:space:]])${rule}([[:space:]]|$) ]] || continue
     target=''
     if [[ "${prefix}" == *' on '* ]]; then
       target=${prefix##* on }
@@ -6573,8 +6578,8 @@ instance_firewall_ufw_status_match() {
     target=${target%/32}
     target=${target%/128}
     if [[ -z "${target}" || "${target}" == Anywhere ]]; then
-      [[ "${family}" == ipv4 && "${line}" != *'(v6)'* ||
-         "${family}" == ipv6 && "${line}" == *'(v6)'* ]] || continue
+      [[ "${family}" == ipv4 && "${rule_text}" != *'(v6)'* ||
+         "${family}" == ipv6 && "${rule_text}" == *'(v6)'* ]] || continue
     elif [[ "${target}" == "Anywhere (v6)" ]]; then
       [[ "${family}" == ipv6 ]] || continue
     else
@@ -6590,10 +6595,7 @@ instance_firewall_ufw_status_match() {
     # UFW's delete operation ignores comments, so ownership requires the
     # complete comment field to match exactly.  A substring is not evidence
     # of ownership (for example, an external suffix/prefix marker).
-    if [[ "${line}" == *' # '* ]]; then
-      local line_comment=${line#*' # '}
-      [[ "${line_comment}" == "${comment}" ]] && return 0
-    fi
+    [[ -n "${line_comment}" && "${line_comment}" == "${comment}" ]] && return 0
   done
   [[ "${require_marker}" == 1 && ${target_matched} -eq 1 ]] && return 4
   return 1

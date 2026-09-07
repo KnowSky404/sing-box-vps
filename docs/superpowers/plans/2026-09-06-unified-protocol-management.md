@@ -208,3 +208,11 @@ Agent 写接口覆盖 `create`、`replace`、`delete`、`default`、`migrate` �
 Mixed 生命周期的真实 1.13.18/1.14.0 各完成 migration=1、instances=2、TCP=7、UDP=7、错误认证拒绝=1、失败候选保留旧服务=1；省略 `listen` 的旧配置在全局 `::` 默认下迁移后仍为 `127.0.0.1`。实际 Bash 4.2 通过直接执行 runtime 测试的 `--run` 分支复验两版核心，日志 `/tmp/sbv-mixed-lifecycle-bash42.aocZVs/`；不是只用旧 Bash 启动随后切回新 Bash 的外层 runner。这些是本机回环 TCP/UoT UDP payload 证据，不证明公网原生 UDP associate 或其他协议的 UDP 数据路径。
 
 父代理另外以最终源码独立复跑 UFW 0.36.2：`/tmp/instance_firewall_ufw_runtime.sh`，证据 `/tmp/instance_firewall_ufw_runtime.final-source.log`，退出 0 且含 `REAL_UFW_INSTANCE_FIREWALL_OK`。实际覆盖 IPv4/IPv6 等价地址、创建/删除/回滚、保留不同目标的预存规则，以及外部 comment 替换和 marker 前后缀伪造时拒绝误删。镜像为 `sing-box-vps-verify:ufw-20260907`，容器使用 `--rm --network none --cap-add NET_ADMIN --cap-add NET_RAW`，仓库只读挂载；没有操作宿主防火墙。firewalld 仍只有只读预检及 mock 证据，不宣称真实运行验证。全协议目标继续进行；未推送、部署、操作生产或执行 SubMan 同步。
+
+### 提交后补修：UFW 注释与规则字段隔离
+
+`855647b` 的提交后审查发现，预存 UFW 入站规则的用户 comment 若含 `ALLOW OUT`，会被整行动作匹配错误地跳过，随后新增同目标规则可能覆盖用户 comment 并误纳入归属账本。修复先分离 comment，动作与地址族只从规则正文判断，端口只在动作之前的目标字段匹配；comment 仅用于完整归属标记比较。本轮脚本版本保持 `2026090708`，不因修复提交重复递增。
+
+防火墙账本与 Mixed 生命周期回归均通过 Bash 5 和实际 Bash 4.2（生命周期 restarts=18）。父代理独立复跑扩展的真实 UFW 0.36.2 隔离测试：预存规则 comment 中的 `ALLOW OUT`、独立 `32126/tcp` token 及 IPv4 wildcard 的 `(v6) ALLOW IN` 均不会改变规则匹配，apply/rollback 保留用户 comment，仅删除本次真正新建的 owned 规则。证据 `/tmp/instance_firewall_ufw_runtime.comment-parser.parent-final.log` 含 `REAL_UFW_INSTANCE_FIREWALL_OK`，日志 SHA-256 为 `3c4e32b4664f244b85b805fd8b7af049984954748f1c1c43e9018730c2fadb71`；临时测试脚本 SHA-256 为 `69fa7af7531c6ac37aabff28edf41d9562968edc0df902e60b2de22c223f4247`。源码 SHA-256 为 `00ca08698551824e18d4e45f358a62b0aa13471413493c1c69f0fe89c156acca`。容器仍采用上述隔离配置，没有操作宿主机防火墙。
+
+修复后的完整默认门禁 `SINGBOX_BINARY_113=… SINGBOX_BINARY_114=… bash dev/verification/run.sh --changed-file install.sh dev/verification/common.sh` 在 `dev/verification-runs/20260907115136` 退出 0：57 项本地检查、9/9 Docker 场景、12/12 既有 TCP 探针通过；失败升级结果仍为 `status=rolled_back`、`rollback.result=success`。直接读取运行容器中的脚本哈希与上述 `00ca0869…` 一致；本次两版 Mixed 生命周期 TCP/UoT UDP 和四种版本组合的客户端导出 runtime 也实际重跑通过。前述 172 项全量记录属于主提交验收，本次补修未冒称再次执行全部 172 项。独立防火墙复核未发现新增 P1/P2；未推送或部署，用户未跟踪文件 `1`、`2` 均保留。
