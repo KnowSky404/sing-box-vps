@@ -78,6 +78,7 @@ readonly SB_PROTOCOL_REGISTRY=(
   'shadowsocks|shadowsocks|shadowsocks|shadowsocks|aead-and-2022|inbound|shadowsocks|Shadowsocks|ss-in|7|true|ss|tcp,udp|tcp,udp|1.13.0|true|none|ss|tcp_loopback|{"multi_instance":true,"multi_user":true,"listen_network_selection":true,"per_instance_outbound":["default","direct","warp"],"authentication":true,"share_links":["ss"],"qr":false,"client_export":true,"subman_sync":true}|ss|build_shadowsocks_inbound_json,save_shadowsocks_state,prompt_shadowsocks_install,prompt_shadowsocks_update,build_client_shadowsocks_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'trojan|trojan|trojan|trojan|tls|inbound|trojan|Trojan|trojan-in|8|true|trojan|tcp,udp|tcp,udp|1.13.0|true|optional|trojan|tcp_loopback|{"multi_instance":true,"authentication":true,"tls":true,"transports":["none","http","ws","grpc","quic"],"listen_transport_projection":true,"client_export":true,"subman_sync":true}|trojan|build_trojan_inbound_json,save_trojan_state,prompt_trojan_install,prompt_trojan_update,build_client_trojan_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'vmess|vmess|vmess|vmess|tls|inbound|vmess|VMess|vmess-in|9|true|vmess|tcp,udp|tcp,udp|1.13.0|true|optional|vmess|tcp_loopback|{"multi_instance":true,"authentication":true,"tls":true,"transports":["none","http","ws","grpc","quic"],"listen_transport_projection":true,"client_export":true,"subman_sync":true}|vmess|build_vmess_inbound_json,save_vmess_state,prompt_vmess_install,prompt_vmess_update,build_client_vmess_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'snell|snell|snell|snell|psk|inbound|snell|Snell|snell-in|11|true||tcp|tcp|1.14.0|true|none|snell|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"versions":[5,6],"v5_obfs_modes":["none","http"],"v6_modes":["","default","unshaped","unsafe-raw"],"udp_via_tcp_packet_api":true,"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true}|snell|build_snell_inbound_json,save_snell_state,prompt_snell_install,prompt_snell_update,build_client_snell_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
 )
 SB_REALITY_SNI_CANDIDATES=(
   "www.apple.com"
@@ -123,6 +124,12 @@ SB_VLESS_PLAIN_AUTH_JSON='[]'
 SB_VLESS_PLAIN_TLS_JSON='{"enabled":false}'
 SB_VLESS_PLAIN_TRANSPORT_JSON='{"type":"none"}'
 SB_VLESS_PLAIN_CLIENT_TRUST="system"
+SB_SNELL_VERSION="6"
+SB_SNELL_PSK=""
+SB_SNELL_USER_JSON='[]'
+SB_SNELL_OBFS_MODE=""
+SB_SNELL_OBFS_HOST=""
+SB_SNELL_MODE=""
 SB_HY2_DOMAIN=""
 SB_HY2_PASSWORD=""
 SB_HY2_USER_NAME=""
@@ -778,6 +785,7 @@ default_node_name_for_protocol() {
     vless+reality) suffix="vless" ;;
     hy2) suffix="hy2" ;;
     anytls) suffix="anytls" ;;
+    snell) suffix="snell" ;;
     mixed) suffix="mixed" ;;
     *) suffix="${protocol}" ;;
   esac
@@ -793,6 +801,7 @@ normalize_node_name() {
     *+vless) node_name="${node_name%+vless}-vless" ;;
     *+hy2) node_name="${node_name%+hy2}-hy2" ;;
     *+anytls) node_name="${node_name%+anytls}-anytls" ;;
+    *+snell) node_name="${node_name%+snell}-snell" ;;
     *+mixed) node_name="${node_name%+mixed}-mixed" ;;
   esac
 
@@ -2094,7 +2103,7 @@ validate_protocol_state_schema() {
   schema=${schema//\"/}
   schema=${schema//\'/}
   case "${protocol}:${schema:-1}" in
-    vless-reality:1|vless-reality:2|vless-plain:2|mixed:1|mixed:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|hy2:1|hy2:2|anytls:1|anytls:2) return 0 ;;
+    vless-reality:1|vless-reality:2|vless-plain:2|mixed:1|mixed:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|hy2:1|hy2:2|anytls:1|anytls:2|snell:2) return 0 ;;
   esac
   printf '[ERROR] 协议状态格式无法识别；已保留文件，请使用写入该状态的脚本版本恢复。\n' >&2
   return 1
@@ -2299,6 +2308,7 @@ save_plain_proxy_state() {
   local listen_address=${SB_MIXED_LISTEN_ADDRESS:-} port=${SB_PORT:-}
   local auth_enabled=${SB_MIXED_AUTH_ENABLED:-y} username=${SB_MIXED_USERNAME:-} password=${SB_MIXED_PASSWORD:-}
   local tag name policy=${SB_OUTBOUND_POLICY:-default} tls_json='{"enabled":false}' auth_json='{}' network_json='["tcp","udp"]' transport_json='{"type":"none"}' client_trust=certificate instance_id=${SB_INSTANCE_ID:-main}
+  local snell_version=${SB_SNELL_VERSION:-6} snell_psk=${SB_SNELL_PSK:-} snell_users_json=${SB_SNELL_USER_JSON:-[]} snell_obfs_mode=${SB_SNELL_OBFS_MODE:-} snell_obfs_host=${SB_SNELL_OBFS_HOST:-} snell_mode=${SB_SNELL_MODE:-}
 
   structured_instance_store_protocol "${protocol}" >/dev/null || return 1
   case "${protocol}" in
@@ -2346,6 +2356,14 @@ save_plain_proxy_state() {
       jq -e 'type == "object"' <<< "${transport_json}" >/dev/null 2>&1 || return 1
       [[ "${client_trust}" == certificate || "${client_trust}" == system ]] || return 1
       ;;
+    snell)
+      tag=${SB_MIXED_INBOUND_TAG:-snell-in}; name=${SB_NODE_NAME:-Snell}
+      snell_version=${SB_SNELL_VERSION:-6}; snell_psk=${SB_SNELL_PSK:-}; snell_users_json=${SB_SNELL_USER_JSON:-[]}
+      snell_obfs_mode=${SB_SNELL_OBFS_MODE:-}; snell_obfs_host=${SB_SNELL_OBFS_HOST:-}; snell_mode=${SB_SNELL_MODE:-}
+      ensure_snell_materials || return 1
+      snell_version=${SB_SNELL_VERSION}; snell_psk=${SB_SNELL_PSK}; snell_users_json=${SB_SNELL_USER_JSON}
+      snell_obfs_mode=${SB_SNELL_OBFS_MODE}; snell_obfs_host=${SB_SNELL_OBFS_HOST}; snell_mode=${SB_SNELL_MODE}
+      ;;
     *) return 1 ;;
   esac
   state_file=$(protocol_state_file "${protocol}") || return 1
@@ -2365,12 +2383,12 @@ save_plain_proxy_state() {
   [[ -n "${tag}" ]] || return 1
   validate_port_number "${port}" || return 1
   structured_instance_store_validate_address "${listen_address}" || return 1
-  if [[ "${protocol}" != shadowsocks ]]; then
+  if [[ "${protocol}" != shadowsocks && "${protocol}" != snell ]]; then
     case "${auth_enabled}" in y|n) ;; *) return 1 ;; esac
   fi
   if [[ "${protocol}" == http ]]; then
     validate_http_client_connection "${port}" "${auth_enabled}" "${username}" "${password}" || return 1
-  elif [[ "${protocol}" != shadowsocks && "${protocol}" != trojan && "${protocol}" != vmess && "${protocol}" != vless-plain ]]; then
+  elif [[ "${protocol}" != shadowsocks && "${protocol}" != snell && "${protocol}" != trojan && "${protocol}" != vmess && "${protocol}" != vless-plain ]]; then
     validate_mixed_client_connection "${port}" "${auth_enabled}" "${username}" "${password}" || return 1
   fi
   [[ "${policy}" == default || "${policy}" == direct || "${policy}" == warp ]] || return 1
@@ -2384,7 +2402,8 @@ save_plain_proxy_state() {
       --arg address "${listen_address}" --argjson port "${port}" \
       --argjson enabled "$([[ "${auth_enabled}" == y ]] && printf true || printf false)" \
       --arg username "${username}" --arg password "${password}" --arg policy "${policy}" --argjson tls "${tls_json}" --argjson auth "${auth_json}" --argjson network "${network_json}" --argjson transport "${transport_json}" --arg client_trust "${client_trust}" --arg protocol "${protocol}" \
-      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$enabled,username:(if $enabled then $username else "" end),password:(if $enabled then $password else "" end)},outbound_policy:$policy,dependencies:[]} + (if $protocol == "http" then {tls:$tls} elif $protocol == "shadowsocks" then {listen:{address:$address,port:$port,network:$network},authentication:$auth} elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then {authentication:{users:$auth},tls:$tls,transport:$transport,client_trust:$client_trust} else {} end)' > "${record_file}"; then
+      --argjson snell_version "${snell_version}" --arg snell_psk "${snell_psk}" --argjson snell_users "${snell_users_json}" --arg snell_obfs_mode "${snell_obfs_mode}" --arg snell_obfs_host "${snell_obfs_host}" --arg snell_mode "${snell_mode}" \
+      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$enabled,username:(if $enabled then $username else "" end),password:(if $enabled then $password else "" end)},outbound_policy:$policy,dependencies:[]} + (if $protocol == "http" then {tls:$tls} elif $protocol == "shadowsocks" then {listen:{address:$address,port:$port,network:$network},authentication:$auth} elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then {authentication:{users:$auth},tls:$tls,transport:$transport,client_trust:$client_trust} elif $protocol == "snell" then {version:$snell_version,authentication:{psk:$snell_psk,users:$snell_users},obfs_mode:$snell_obfs_mode,obfs_host:$snell_obfs_host,mode:$snell_mode} else {} end)' > "${record_file}"; then
     rm -f -- "${record_file}" "${candidate_file}"; return 1
   fi
   structured_instance_store_validate_instance_argument "${record_file}" "${protocol}" || {
@@ -2473,6 +2492,10 @@ save_anytls_state() {
   } > "${state_file}"
 }
 
+save_snell_state() {
+  save_plain_proxy_state snell
+}
+
 save_protocol_state() {
   local protocol
   protocol=$(normalize_protocol_id "$1") || return 1
@@ -2489,6 +2512,7 @@ save_protocol_state() {
     vless-plain) save_vless_plain_state ;;
     hy2) save_hy2_state ;;
     anytls) save_anytls_state ;;
+    snell) save_snell_state ;;
     *) log_error "不支持的协议状态保存类型: ${protocol}" ;;
   esac
 }
@@ -3170,6 +3194,46 @@ prompt_anytls_update() {
   ensure_anytls_materials
 }
 
+prompt_snell_update() {
+  local in_p in_version in_psk in_obfs in_host in_mode
+  in_p=$(prompt_port "新端口 (当前: ${SB_PORT}, 留空保持): " "${SB_PORT}") || return 1
+  if [[ "${in_p}" != "${SB_PORT}" ]]; then SB_PORT=${in_p}; check_port_conflict "${SB_PORT}"; fi
+  in_version=$(prompt_optional_choice "Snell 版本 [1=v5,2=v6] (当前: ${SB_SNELL_VERSION}, 留空保持): " 1 2 "$([[ "${SB_SNELL_VERSION}" == 5 ]] && printf 1 || printf 2)") || return 1
+  case "${in_version}" in 1) SB_SNELL_VERSION=5 ;; 2) SB_SNELL_VERSION=6 ;; esac
+  read -rsp "新 PSK (当前: 已设置，留空保持): " in_psk || return 1; printf '\n' >&2; [[ -z "${in_psk}" ]] || SB_SNELL_PSK=${in_psk}
+  if [[ "${SB_SNELL_VERSION}" == 5 ]]; then
+    in_obfs=$(prompt_optional_choice "v5 obfs [1=none,2=http] (当前: ${SB_SNELL_OBFS_MODE:-none}, 留空保持): " 1 2 "$([[ "${SB_SNELL_OBFS_MODE}" == http ]] && printf 2 || printf 1)") || return 1
+    case "${in_obfs}" in 1) SB_SNELL_OBFS_MODE=none; SB_SNELL_OBFS_HOST="" ;; 2) SB_SNELL_OBFS_MODE=http; read -rp "v5 obfs host (当前: ${SB_SNELL_OBFS_HOST}，留空保持): " in_host || return 1; [[ -z "${in_host}" ]] || SB_SNELL_OBFS_HOST=$(trim_whitespace "${in_host}") ;; esac
+    SB_SNELL_MODE=""
+  else
+    in_mode=$(prompt_optional_choice "v6 shaping [1=default,2=unshaped,3=unsafe-raw] (当前: ${SB_SNELL_MODE:-default}, 留空保持): " 1 3 "$([[ "${SB_SNELL_MODE}" == unshaped ]] && printf 2 || [[ "${SB_SNELL_MODE}" == unsafe-raw ]] && printf 3 || printf 1)") || return 1
+    case "${in_mode}" in 1) SB_SNELL_MODE=default ;; 2) SB_SNELL_MODE=unshaped ;; 3) SB_SNELL_MODE=unsafe-raw ;; esac
+    SB_SNELL_OBFS_MODE=""; SB_SNELL_OBFS_HOST=""
+  fi
+  snell_prompt_users "${SB_SNELL_USER_JSON:-[]}" || return 1
+  ensure_snell_materials
+}
+
+prompt_snell_install() {
+  local in_version in_psk in_obfs in_host in_mode
+  set_protocol_defaults snell
+  SB_PORT=$(prompt_port "[Snell] 端口 (默认 ${SB_PORT}): " "${SB_PORT}") || return 1
+  check_port_conflict "${SB_PORT}"
+  in_version=$(prompt_choice "[Snell] 版本 [1=v5,2=v6] (默认 2): " 1 2 2) || return 1
+  [[ "${in_version}" == 1 ]] && SB_SNELL_VERSION=5 || SB_SNELL_VERSION=6
+  read -rsp "[Snell] PSK (留空自动生成): " in_psk || return 1; printf '\n' >&2; [[ -z "${in_psk}" ]] || SB_SNELL_PSK=${in_psk}
+  if [[ "${SB_SNELL_VERSION}" == 5 ]]; then
+    in_obfs=$(prompt_choice "[Snell] v5 obfs [1=none,2=http] (默认 1): " 1 2 1) || return 1
+    if [[ "${in_obfs}" == 2 ]]; then SB_SNELL_OBFS_MODE=http; read -rp "[Snell] v5 obfs host: " in_host || return 1; SB_SNELL_OBFS_HOST=$(trim_whitespace "${in_host}"); else SB_SNELL_OBFS_MODE=none; fi
+    SB_SNELL_MODE=""
+  else
+    in_mode=$(prompt_choice "[Snell] v6 shaping [1=default,2=unshaped,3=unsafe-raw] (默认 1): " 1 3 1) || return 1
+    case "${in_mode}" in 2) SB_SNELL_MODE=unshaped ;; 3) SB_SNELL_MODE=unsafe-raw ;; *) SB_SNELL_MODE=default ;; esac
+  fi
+  snell_prompt_users '[]' || return 1
+  ensure_snell_materials
+}
+
 prompt_protocol_update_fields() {
   local protocol
   protocol=$(normalize_protocol_id "$1")
@@ -3185,6 +3249,7 @@ prompt_protocol_update_fields() {
     vmess) prompt_vmess_update ;;
     hy2) prompt_hy2_update ;;
     anytls) prompt_anytls_update ;;
+    snell) prompt_snell_update ;;
     *) log_error "不支持的协议修改类型: ${protocol}" ;;
   esac
 }
@@ -3522,6 +3587,33 @@ hy2_prompt_users() {
   SB_HY2_AUTH_JSON=${users}
 }
 
+snell_prompt_users() {
+  local current=${1:-'[]'} count i name userkey old_name old_userkey users='[]' answer
+  count=$(jq -r 'length' <<< "${current}" 2>/dev/null || printf 0)
+  [[ "${count}" =~ ^[0-9][0-9]{0,2}$ && "${count}" -le 128 ]] || count=0
+  read -rp "[Snell] 用户数量 (0-128，默认 ${count}): " answer || return 1
+  [[ -z "${answer}" ]] || count=${answer}
+  [[ "${count}" =~ ^(0|[1-9][0-9]{0,2})$ && "${count}" -le 128 ]] || return 1
+  for ((i=0; i<count; i++)); do
+    old_name=$(jq -r --argjson i "${i}" '.[$i].name // empty' <<< "${current}") || return 1
+    old_userkey=$(jq -j --argjson i "${i}" '.[$i].userkey // "", "\u0001"' <<< "${current}") || return 1
+    old_userkey=${old_userkey%$'\1'}
+    read -rp "[Snell] 用户 $((i+1)) 名称 (默认 ${old_name:-user-$((i+1))}): " name || return 1
+    name=$(trim_whitespace "${name:-${old_name:-user-$((i+1))}}")
+    [[ -n "${name}" ]] || return 1
+    if [[ -n "${old_userkey}" ]]; then
+      read -rsp "[Snell] 用户 ${name} key (留空保持): " userkey || return 1
+    else
+      read -rsp "[Snell] 用户 ${name} key (留空自动生成): " userkey || return 1
+    fi
+    printf '\n' >&2
+    [[ -n "${userkey}" ]] || userkey=${old_userkey}
+    [[ -n "${userkey}" ]] || userkey=$(generate_random_token '' 16) || return 1
+    users=$(jq -cn --argjson users "${users}" --arg name "${name}" --arg userkey "${userkey}" '$users + [{name:$name,userkey:$userkey}]') || return 1
+  done
+  SB_SNELL_USER_JSON=${users}
+}
+
 trojan_prompt_transport() {
   local choice path service transport='{"type":"none"}'
   echo 'Trojan 传输:' >&2
@@ -3830,7 +3922,7 @@ prompt_protocol_install_selection() {
   local installed_protocols=() selected_protocols=()
   local choice raw_choice protocol index installed_list
   local menu_indices=() raw_choices=()
-  local mixed_tombstone=n socks_tombstone=n vless_plain_tombstone=n anytls_tombstone=n hy2_tombstone=n
+  local mixed_tombstone=n socks_tombstone=n vless_plain_tombstone=n anytls_tombstone=n hy2_tombstone=n snell_tombstone=n
 
   SELECTED_PROTOCOLS_CSV=""
 
@@ -3869,6 +3961,12 @@ prompt_protocol_install_selection() {
         installed_protocols+=(hy2)
       fi
     fi
+    if plain_proxy_inactive_store_snapshot snell >/dev/null 2>&1; then
+      snell_tombstone=y
+      if ! protocol_array_contains snell ${installed_protocols[@]+"${installed_protocols[@]}"}; then
+        installed_protocols+=(snell)
+      fi
+    fi
   fi
   while IFS= read -r protocol; do
     menu_indices+=("$(protocol_registry_field "${protocol}" menu_order)")
@@ -3900,6 +3998,8 @@ prompt_protocol_install_selection() {
         echo "${index}. 新增 AnyTLS 实例"
       elif [[ "${install_mode}" == "additional" && "${protocol}" == "hy2" && "${hy2_tombstone}" == y ]]; then
         echo "${index}. 新增 Hysteria2 实例"
+      elif [[ "${install_mode}" == "additional" && "${protocol}" == "snell" && "${snell_tombstone}" == y ]]; then
+        echo "${index}. 新增 Snell 实例"
       fi
       continue
     fi
@@ -3915,7 +4015,7 @@ prompt_protocol_install_selection() {
       protocol=$(protocol_option_to_id "${index}") || continue
       if protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
         if [[ "${install_mode}" == "additional" &&
-              ("${protocol}" == "vless-reality" || "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2") ]]; then
+              ("${protocol}" == "vless-reality" || "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell") ]]; then
           selected_protocols+=("${protocol}")
         fi
         continue
@@ -3941,7 +4041,7 @@ prompt_protocol_install_selection() {
 
     if protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
       if [[ "${install_mode}" == "additional" &&
-            ("${protocol}" == "vless-reality" || "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2") ]]; then
+            ("${protocol}" == "vless-reality" || "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell") ]]; then
         if ! protocol_array_contains "${protocol}" ${selected_protocols[@]+"${selected_protocols[@]}"}; then
           selected_protocols+=("${protocol}")
         fi
@@ -4237,6 +4337,7 @@ prompt_protocol_install_fields() {
     vmess) prompt_vmess_install ;;
     hy2) prompt_hy2_install ;;
     anytls) prompt_anytls_install ;;
+    snell) prompt_snell_install ;;
     *) log_error "不支持的协议安装类型: ${protocol}" ;;
   esac
 }
@@ -4278,6 +4379,7 @@ plain_proxy_management_label() {
     vless-plain) printf 'VLESS' ;;
     anytls) printf 'AnyTLS' ;;
     hy2) printf 'Hysteria2' ;;
+    snell) printf 'Snell' ;;
     *) return 1 ;;
   esac
 }
@@ -4783,6 +4885,75 @@ hy2_management_build_record() {
   structured_instance_store_validate_instance_argument "${destination}" hy2
 }
 
+snell_management_build_record() {
+  local snapshot=${1:-} operation=${2:-create} target=${3:-} destination=${4:-}
+  local id name tag address port policy answer version psk users obfs_mode obfs_host mode
+  local version_choice obfs_choice mode_choice edit_users
+  [[ -f "${snapshot}" && ! -L "${snapshot}" && -n "${destination}" ]] || return 1
+  if [[ "${operation}" == replace ]]; then
+    jq -e --arg id "${target}" 'any(.instances[]; .id == $id)' "${snapshot}" >/dev/null 2>&1 || return 1
+    id=${target}
+    name=$(jq -j --arg id "${id}" '.instances[]|select(.id==$id)|.name,"\u0001"' "${snapshot}") || return 1; name=${name%$'\1'}
+    tag=$(jq -j --arg id "${id}" '.instances[]|select(.id==$id)|.tag,"\u0001"' "${snapshot}") || return 1; tag=${tag%$'\1'}
+    address=$(jq -j --arg id "${id}" '.instances[]|select(.id==$id)|.listen.address,"\u0001"' "${snapshot}") || return 1; address=${address%$'\1'}
+    port=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.listen.port' "${snapshot}") || return 1
+    version=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.version' "${snapshot}") || return 1
+    psk=$(jq -j --arg id "${id}" '.instances[]|select(.id==$id)|.authentication.psk,"\u0001"' "${snapshot}") || return 1; psk=${psk%$'\1'}
+    users=$(jq -c --arg id "${id}" '.instances[]|select(.id==$id)|.authentication.users' "${snapshot}") || return 1
+    obfs_mode=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.obfs_mode' "${snapshot}") || return 1
+    obfs_host=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.obfs_host' "${snapshot}") || return 1
+    mode=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.mode' "${snapshot}") || return 1
+    policy=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.outbound_policy' "${snapshot}") || return 1
+  else
+    id=$(plain_proxy_management_next_id snell "${snapshot}") || return 1
+    name="Snell ${id}"; tag=$(plain_proxy_management_next_tag snell "${snapshot}") || return 1
+    address=127.0.0.1; port=1080; version=6; psk=$(generate_snell_psk) || return 1
+    users='[]'; obfs_mode=""; obfs_host=""; mode=default; policy=default
+  fi
+  read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1; [[ -z "${answer}" ]] || name=$(trim_whitespace "${answer}")
+  if [[ "${operation}" == create ]]; then
+    read -rp "实例 ID（默认 ${id}）: " answer || return 1; [[ -z "${answer}" ]] || id=$(trim_whitespace "${answer}"); structured_instance_store_validate_id "${id}" || return 1
+    read -rp "入口 tag（默认 ${tag}）: " answer || return 1; [[ -z "${answer}" ]] || tag=$(trim_whitespace "${answer}")
+  fi
+  read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}"); structured_instance_store_validate_address "${address}" || return 1
+  port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
+  version_choice=$(prompt_choice "Snell 版本（当前: ${version}，1=v5, 2=v6）: " 1 2 "$([[ "${version}" == 5 ]] && printf 1 || printf 2)") || return 1
+  if [[ "${version_choice}" == 1 ]]; then version=5; else version=6; fi
+  read -rsp "PSK（当前: 已设置，留空保持）: " answer || return 1; printf '\n' >&2; [[ -z "${answer}" ]] || psk=${answer}
+  [[ -n "${psk}" ]] || psk=$(generate_snell_psk) || return 1
+  if [[ "${version}" == 5 ]]; then
+    obfs_choice=$(prompt_choice "Snell v5 obfs（1=none, 2=http，默认保持）: " 1 2 "$([[ "${obfs_mode}" == http ]] && printf 2 || printf 1)") || return 1
+    if [[ "${obfs_choice}" == 2 ]]; then
+      obfs_mode=http
+      read -rp "Snell v5 obfs host（当前: ${obfs_host}）: " answer || return 1; [[ -z "${answer}" ]] || obfs_host=$(trim_whitespace "${answer}")
+      [[ -n "${obfs_host}" ]] || return 1
+    else obfs_mode=none; obfs_host=""; fi
+    mode=""
+  else
+    obfs_mode=""; obfs_host=""
+    mode_choice=$(prompt_choice "Snell v6 shaping（1=default, 2=unshaped, 3=unsafe-raw）: " 1 3 "$([[ "${mode}" == unshaped ]] && printf 2 || [[ "${mode}" == unsafe-raw ]] && printf 3 || printf 1)") || return 1
+    case "${mode_choice}" in 2) mode=unshaped ;; 3) mode=unsafe-raw ;; *) mode=default ;; esac
+  fi
+  if [[ "${operation}" == create ]]; then
+    edit_users=y
+  else
+    edit_users=$(prompt_yes_no '[Snell] 是否重新编辑用户 key [y/n] (默认 n): ' n) || return 1
+  fi
+  if [[ "${edit_users}" == y ]]; then
+    snell_prompt_users "${users}" || return 1
+    users=${SB_SNELL_USER_JSON}
+  fi
+  policy=$(prompt_instance_outbound_policy '出站策略' "${policy:-default}") || return 1
+  answer=$(plain_proxy_management_prompt_public_consent snell "${address}" '' ) || return 1
+  if [[ "${address}" != 127.* && "${address}" != ::1 && "${answer}" != y ]]; then log_info '未确认公网暴露，已取消 Snell 实例变更。'; return 2; fi
+  PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC=${answer}; MIXED_MANAGEMENT_ALLOW_PUBLIC=${answer}
+  jq -n -cS --arg id "${id}" --arg name "${name}" --arg tag "${tag}" --arg address "${address}" \
+    --argjson port "${port}" --argjson version "${version}" --arg psk "${psk}" --argjson users "${users}" \
+    --arg obfs_mode "${obfs_mode}" --arg obfs_host "${obfs_host}" --arg mode "${mode}" --arg policy "${policy}" \
+    '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{psk:$psk,users:$users},version:$version,obfs_mode:$obfs_mode,obfs_host:$obfs_host,mode:$mode,outbound_policy:$policy,dependencies:[]}' > "${destination}" || return 1
+  structured_instance_store_validate_instance_argument "${destination}" snell
+}
+
 plain_proxy_management_build_record() {
   local protocol=${1:-} snapshot=${2:-} operation=${3:-create} target=${4:-} destination=${5:-}
   local id name tag address port auth username password policy answer label tls_json
@@ -4811,6 +4982,10 @@ plain_proxy_management_build_record() {
   fi
   if [[ "${protocol}" == hy2 ]]; then
     hy2_management_build_record "${snapshot}" "${operation}" "${target}" "${destination}"
+    return $?
+  fi
+  if [[ "${protocol}" == snell ]]; then
+    snell_management_build_record "${snapshot}" "${operation}" "${target}" "${destination}"
     return $?
   fi
   label=$(plain_proxy_management_label "${protocol}") || return 1
@@ -5127,6 +5302,10 @@ hy2_instance_management_menu() {
   plain_proxy_instance_management_menu hy2 "$@"
 }
 
+snell_instance_management_menu() {
+  plain_proxy_instance_management_menu snell "$@"
+}
+
 plain_proxy_instance_management_menu() (
   local protocol=${1:-} requested_operation=${2:-} temp_dir choice snapshot revision target result status one_shot=n
   local record_file label confirmation
@@ -5171,6 +5350,8 @@ plain_proxy_instance_management_menu() (
         echo "字段：用户凭据、TLS、client_trust（均为类型化输入）"
       elif [[ "${protocol}" == hy2 ]]; then
         echo "字段：用户凭据、手动 TLS、client_trust、带宽、Salamander obfs、masquerade（均为类型化输入）"
+      elif [[ "${protocol}" == snell ]]; then
+        echo "字段：Snell 版本、PSK、用户 key、v5 obfs 或 v6 shaping（均为类型化输入）"
       fi
       choice=$(prompt_choice "请选择 [0-7]: " 0 7 "") || return 1
     fi
@@ -5219,7 +5400,7 @@ plain_proxy_instance_management_menu() (
         ;;
       5) log_warn "${label} 没有 legacy schema 1 可迁移。" ;;
       7)
-        jq -r --arg protocol "${protocol}" '.instances[] | "\(.id)\t\(.name)\t\(.listen.address):\(.listen.port)" + (if $protocol == "shadowsocks" then "\tnetwork=\(.listen.network|join(","))\tmethod=\(.authentication.method)\tusers=\(.authentication.users|length)" elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then "\tusers=\(.authentication.users|length)\ttransport=\(.transport.type)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" elif $protocol == "anytls" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" elif $protocol == "hy2" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)\tbandwidth=\(.bandwidth.up_mbps // "-")/\(.bandwidth.down_mbps // "-")\tobfs=\(.obfs.enabled)" else "\tauth=\(.authentication.enabled)\tpolicy=\(.outbound_policy)" + (if $protocol == "http" then "\ttls=\(.tls.enabled)" else "" end) end)' "${snapshot}" || return $?
+        jq -r --arg protocol "${protocol}" '.instances[] | "\(.id)\t\(.name)\t\(.listen.address):\(.listen.port)" + (if $protocol == "shadowsocks" then "\tnetwork=\(.listen.network|join(","))\tmethod=\(.authentication.method)\tusers=\(.authentication.users|length)" elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then "\tusers=\(.authentication.users|length)\ttransport=\(.transport.type)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" elif $protocol == "anytls" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" elif $protocol == "hy2" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)\tbandwidth=\(.bandwidth.up_mbps // "-")/\(.bandwidth.down_mbps // "-")\tobfs=\(.obfs.enabled)" elif $protocol == "snell" then "\tversion=\(.version)\tusers=\(.authentication.users|length)\tobfs=\(.obfs_mode // .mode)" else "\tauth=\(.authentication.enabled)\tpolicy=\(.outbound_policy)" + (if $protocol == "http" then "\ttls=\(.tls.enabled)" else "" end) end)' "${snapshot}" || return $?
         [[ "${one_shot}" == y ]] && return 0
         ;;
       *) log_warn "无效选项，请重新选择。" ;;
@@ -5283,6 +5464,11 @@ install_protocols_interactive() {
       log_warn "Hysteria2 已保留 revision；请通过实例管理入口创建 Hysteria2 实例，或本次仅选择其他协议。"
       return 1
     fi
+    if plain_proxy_inactive_store_snapshot snell >/dev/null 2>&1 &&
+       protocol_array_contains snell "${selected_protocols[@]}"; then
+      log_warn "Snell 已保留 revision；请通过实例管理入口创建 Snell 实例，或本次仅选择其他协议。"
+      return 1
+    fi
     snapshot_dir=$(create_managed_state_snapshot) || {
       log_error "无法创建配置状态事务快照。"
       return 1
@@ -5340,6 +5526,10 @@ install_protocols_interactive() {
     if plain_proxy_inactive_store_snapshot hy2 >/dev/null 2>&1 &&
        ! protocol_array_contains hy2 ${installed_protocols[@]+"${installed_protocols[@]}"}; then
       installed_protocols+=(hy2)
+    fi
+    if plain_proxy_inactive_store_snapshot snell >/dev/null 2>&1 &&
+       ! protocol_array_contains snell ${installed_protocols[@]+"${installed_protocols[@]}"}; then
+      installed_protocols+=(snell)
     fi
     prompt_protocol_install_selection "additional" || return 0
     IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
@@ -5423,6 +5613,14 @@ install_protocols_interactive() {
         return 0
       fi
       log_warn "Hysteria2 实例不能与其他新增协议合并操作；请先单独管理 Hysteria2 实例。"
+      return 0
+    fi
+    if protocol_array_contains "snell" "${selected_protocols[@]}"; then
+      if [[ ${#selected_protocols[@]} -eq 1 ]]; then
+        snell_instance_management_menu create || return $?
+        return 0
+      fi
+      log_warn "Snell 实例不能与其他新增协议合并操作；请先单独管理 Snell 实例。"
       return 0
     fi
     snapshot_dir=$(create_managed_state_snapshot) || {
@@ -5697,6 +5895,32 @@ set_protocol_defaults() {
       SB_ANYTLS_CF_API_TOKEN=""
       SB_ANYTLS_CERT_PATH=""
       SB_ANYTLS_KEY_PATH=""
+      ;;
+    snell)
+      SB_PROTOCOL="snell"
+      SB_NODE_NAME="$(default_node_name_for_protocol "snell")"
+      SB_PORT="$(pick_random_high_port)"
+      SB_SNI=""
+      SB_UUID=""
+      SB_PUBLIC_KEY=""
+      SB_PRIVATE_KEY=""
+      SB_SHORT_ID_1=""
+      SB_SHORT_ID_2=""
+      SB_MIXED_AUTH_ENABLED="y"
+      SB_MIXED_USERNAME=""
+      SB_MIXED_PASSWORD=""
+      SB_INSTANCE_ID=""
+      SB_MIXED_INSTANCE_ID=""
+      SB_MIXED_INBOUND_TAG="snell-in"
+      SB_MIXED_LISTEN_ADDRESS="127.0.0.1"
+      SB_MIXED_STORE_REVISION="0"
+      SB_SNELL_VERSION="6"
+      SB_SNELL_PSK=""
+      SB_SNELL_USER_JSON='[]'
+      SB_SNELL_OBFS_MODE=""
+      SB_SNELL_OBFS_HOST=""
+      SB_SNELL_MODE=""
+      SB_OUTBOUND_POLICY="default"
       ;;
     *)
       SB_PROTOCOL="vless+reality"
@@ -9103,7 +9327,7 @@ load_protocol_state() {
       mixed_schema=${mixed_schema//\'/}
     fi
   fi
-  if [[ ("${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2") && -f "${state_file}" ]]; then
+  if [[ ("${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell") && -f "${state_file}" ]]; then
     socks_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" | head -n1) || return 1
     socks_schema=${socks_schema//\"/}
     socks_schema=${socks_schema//\'/}
@@ -9148,7 +9372,7 @@ load_protocol_state() {
   # SOCKS has no legacy .env representation.  Dispatch only a validated
   # schema-2 marker to the typed store and reject every older/unknown shape
   # before it can be sourced as shell code.
-  if [[ "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || ("${protocol}" == "anytls" && "${socks_schema}" == "2") || ("${protocol}" == "hy2" && "${socks_schema}" == "2") ]]; then
+  if [[ "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || ("${protocol}" == "anytls" && "${socks_schema}" == "2") || ("${protocol}" == "hy2" && "${socks_schema}" == "2") || ("${protocol}" == "snell" && "${socks_schema}" == "2") ]]; then
     [[ "${socks_schema}" == "2" ]] || return 1
     plain_proxy_structured_marker_is_valid "${state_file}" || return 1
     load_plain_proxy_structured_instance "${protocol}" || return 1
@@ -9345,6 +9569,27 @@ load_protocol_state() {
       SB_ANYTLS_CERT_PATH="${CERT_PATH:-}"
       SB_ANYTLS_KEY_PATH="${KEY_PATH:-}"
       ;;
+    snell)
+      SB_PROTOCOL="snell"
+      SB_NODE_NAME=$(normalize_node_name "${NODE_NAME:-$(default_node_name_for_protocol "snell")}")
+      SB_PORT="${PORT:-1080}"
+      SB_UUID=""
+      SB_SNI=""
+      SB_PRIVATE_KEY=""
+      SB_PUBLIC_KEY=""
+      SB_SHORT_ID_1=""
+      SB_SHORT_ID_2=""
+      SB_MIXED_AUTH_ENABLED="n"
+      SB_MIXED_USERNAME=""
+      SB_MIXED_PASSWORD=""
+      SB_SNELL_VERSION="${SNELL_VERSION:-6}"
+      SB_SNELL_PSK="${SNELL_PSK:-}"
+      SB_SNELL_USER_JSON="${SNELL_USERS:-${SNELL_USER_JSON:-[]}}"
+      SB_SNELL_OBFS_MODE="${SNELL_OBFS_MODE:-}"
+      SB_SNELL_OBFS_HOST="${SNELL_OBFS_HOST:-}"
+      SB_SNELL_MODE="${SNELL_MODE:-}"
+      SB_OUTBOUND_POLICY="default"
+      ;;
   esac
 }
 
@@ -9425,6 +9670,39 @@ ensure_anytls_materials() {
   fi
 
   return 0
+}
+
+generate_snell_psk() {
+  # Snell v6 requires at least 12 bytes; hex output is portable and avoids
+  # shell/JSON control characters while retaining sufficient entropy.
+  generate_random_token "" 16
+}
+
+ensure_snell_materials() {
+  local user_json
+  if [[ -z "${SB_SNELL_PSK:-}" ]]; then
+    SB_SNELL_PSK=$(generate_snell_psk)
+  fi
+  case "${SB_SNELL_VERSION:-6}" in
+    5)
+      SB_SNELL_VERSION=5
+      [[ -n "${SB_SNELL_OBFS_MODE:-}" ]] || SB_SNELL_OBFS_MODE="none"
+      [[ "${SB_SNELL_OBFS_MODE}" == "none" ]] && SB_SNELL_OBFS_HOST=""
+      SB_SNELL_MODE=""
+      ;;
+    6)
+      SB_SNELL_VERSION=6
+      SB_SNELL_OBFS_MODE=""
+      SB_SNELL_OBFS_HOST=""
+      [[ -n "${SB_SNELL_MODE:-}" ]] || SB_SNELL_MODE="default"
+      ;;
+    *) return 1 ;;
+  esac
+  if [[ -z "${SB_SNELL_USER_JSON:-}" ]]; then
+    SB_SNELL_USER_JSON='[]'
+  fi
+  user_json=$(jq -c . <<< "${SB_SNELL_USER_JSON}") || return 1
+  SB_SNELL_USER_JSON=${user_json}
 }
 
 stack_inbound_listen_address() {
@@ -9626,6 +9904,16 @@ build_vless_plain_inbound_json() {
   plain_proxy_structured_state_active vless-plain || return 1
   store_file=$(plain_proxy_structured_store_file vless-plain) || return 1
   render_structured_instance_inbounds vless-plain "${store_file}"
+}
+
+build_snell_inbound_json() {
+  local store_file
+  plain_proxy_structured_state_active snell || {
+    printf '[ERROR] Snell 结构化状态缺失或无效，未生成入站。\n' >&2
+    return 1
+  }
+  store_file=$(plain_proxy_structured_store_file snell) || return 1
+  render_structured_instance_inbounds snell "${store_file}"
 }
 
 build_shadowsocks_instance_outbounds() (
@@ -9951,7 +10239,7 @@ build_certificate_provider_for_protocol() {
   protocol=$(normalize_protocol_id "$1") || return 1
 
   case "${protocol}" in
-    vless-reality|vless-plain|mixed|socks|http|shadowsocks|trojan|vmess) return 0 ;; # HTTP/VLESS/Trojan/VMess use referenced manual certificates, not providers.
+    vless-reality|vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|snell) return 0 ;; # HTTP/VLESS/Trojan/VMess/Snell use no certificate provider.
     hy2) build_hy2_certificate_provider_json ;;
     anytls) build_anytls_certificate_provider_json ;;
     *) return 1 ;;
@@ -9973,6 +10261,7 @@ build_inbound_for_protocol() {
     vmess) build_vmess_inbound_json ;;
     hy2) build_hy2_inbound_json ;;
     anytls) build_anytls_inbound_json ;;
+    snell) build_snell_inbound_json ;;
     *) return 1 ;;
   esac
 }
@@ -10095,7 +10384,7 @@ instance_outbound_requires_warp() {
       vless-reality)
         vless_reality_has_warp_outbound_policy && return 0
         ;;
-      vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|anytls|hy2)
+      vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|anytls|hy2|snell)
         state_file=$(protocol_state_file "${protocol}") || return 1
         schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" 2>/dev/null || true)
         schema=${schema//\"/}
@@ -10164,6 +10453,10 @@ build_protocol_route_rules() {
       else
         jq -n '[{ "inbound": "hy2-in", "action": "sniff" }]'
       fi
+      ;;
+    snell)
+      plain_proxy_structured_state_active snell || return 1
+      render_structured_instance_route_rules snell "$(plain_proxy_structured_store_file snell)"
       ;;
     *) return 1 ;;
   esac
@@ -12009,6 +12302,10 @@ update_config_only() {
     hy2_instance_management_menu replace
     return $?
   fi
+  if [[ "${selected_protocol}" == snell ]] && plain_proxy_structured_state_active snell; then
+    snell_instance_management_menu replace
+    return $?
+  fi
 
   load_protocol_state "${selected_protocol}"
   if [[ "${selected_protocol}" == "vless-reality" ]]; then
@@ -12169,6 +12466,14 @@ remove_protocol_menu() {
       return $?
     fi
     log_warn "结构化 Hysteria2 实例需通过实例事务逐个移除；请先进入 Hysteria2 实例管理，再移除其他协议。本次未修改。"
+    return 1
+  fi
+  if plain_proxy_structured_state_active snell && protocol_array_contains snell "${selected_protocols[@]}"; then
+    if [[ ${#selected_protocols[@]} -eq 1 ]]; then
+      snell_instance_management_menu delete
+      return $?
+    fi
+    log_warn "结构化 Snell 实例需通过实例事务逐个移除；请先进入 Snell 实例管理，再移除其他协议。本次未修改。"
     return 1
   fi
 
@@ -15922,6 +16227,59 @@ build_shadowsocks_client_outbounds_from_store() (
   cat "${output_file}"
 )
 
+build_client_snell_outbounds() (
+  local public_ip=${1:-} store_override=${2:-} store_file snapshot output_file raw_file
+  local instance_id listen_address server_address raw_outbound user_count expected_count output_count
+  local tmpdir instance_ids_file instance_file
+  if [[ -n "${store_override}" ]]; then store_file=${store_override}; else store_file=$(plain_proxy_structured_store_file snell) || return 1; fi
+  [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  public_ip=${public_ip:-$(get_public_ip)}
+  [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
+  snapshot=$(structured_instance_store_snapshot_json snell "${store_file}") || return 1
+  tmpdir=$(mktemp -d) || return 1
+  trap 'rm -rf -- "${tmpdir}"' EXIT
+  instance_ids_file="${tmpdir}/instance-ids"; output_file="${tmpdir}/outbounds.jsonl"; : > "${output_file}" || return 1
+  jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}" > "${instance_ids_file}" || return 1
+  while IFS= read -r -d '' instance_id; do
+    [[ -n "${instance_id}" ]] || return 1
+    listen_address=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .listen.address' <<< "${snapshot}") || return 1
+    case "${listen_address}" in
+      0.0.0.0|::) server_address=${public_ip} ;;
+      127.*|::1)
+        server_address=${listen_address}
+        printf '[WARN] Snell 实例 %s 绑定回环地址 %s；导出仅供本机使用，未宣称公网可达。\n' "${instance_id}" "${listen_address}" >&2
+        ;;
+      *) server_address=${listen_address} ;;
+    esac
+    instance_file="${tmpdir}/instance-${instance_id}.json"
+    jq --arg id "${instance_id}" '. as $root | ($root.instances | map(select(.id == $id))) as $instances | $root | .default_instance_id=$id | .instances=$instances' <<< "${snapshot}" > "${instance_file}" || return 1
+    raw_file="${tmpdir}/raw-${instance_id}.jsonl"
+    jq -c --arg server "${server_address}" '
+      .instances[] as $instance |
+      (($instance.authentication.users // []) | if length == 0 then [{name:"",userkey:"",single:true}] else map(. + {single:false}) end)[] as $user |
+      {type:"snell",tag:("snell-" + $instance.id + "-" + (if $user.single then "single" else "user-" + ($user.name | @base64) end)),
+       server:$server,server_port:$instance.listen.port,
+       version:(if $instance.version == 5 then 4 else 6 end),psk:$instance.authentication.psk,
+       userkey:(if $user.single then "" else $user.userkey end),network:"tcp",
+       _inbound_version:$instance.version,_obfs_mode:$instance.obfs_mode,_obfs_host:$instance.obfs_host,_mode:$instance.mode}
+    ' "${instance_file}" > "${raw_file}" || return 1
+    while IFS= read -r raw_outbound; do
+      [[ -n "${raw_outbound}" ]] || continue
+      jq -c '
+        if ._inbound_version == 5 then
+          . + (if ._obfs_mode == "http" then {obfs_mode:"http",obfs_host:._obfs_host} else {obfs_mode:"none"} end)
+        else . + {mode:._mode}
+        end | del(._inbound_version,._obfs_mode,._obfs_host,._mode)
+      ' <<< "${raw_outbound}" >> "${output_file}" || return 1
+    done < "${raw_file}"
+  done < "${instance_ids_file}"
+  expected_count=$(jq -r '[.instances[].authentication.users | if length == 0 then 1 else length end] | add // 0' <<< "${snapshot}") || return 1
+  output_count=$(jq -s 'length' "${output_file}") || return 1
+  [[ "${expected_count}" =~ ^[0-9]+$ && "${output_count}" == "${expected_count}" && "${output_count}" -gt 0 ]] || return 1
+  jq -es 'length > 0 and (map(.tag) | unique | length) == length' "${output_file}" >/dev/null || return 1
+  cat "${output_file}"
+)
+
 build_client_outbounds_for_current_protocol() {
   local protocol=${1:-} public_ip=${2:-$(get_public_ip)} outbound_json
   outbound_json=$(build_client_outbound_json_for_protocol "${protocol}" "${public_ip}") || return $?
@@ -15947,7 +16305,7 @@ build_client_outbound_json_for_protocol() {
   restore_original_state="n"
 
   case "${protocol}" in
-    vless-reality|vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|hy2|anytls) ;;
+    vless-reality|vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|hy2|anytls|snell) ;;
     *)
       return 1
       ;;
@@ -16052,6 +16410,14 @@ build_client_outbound_json_for_protocol() {
           :
         else
           build_status=$?
+        fi
+        ;;
+      snell)
+        if [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]] && plain_proxy_structured_state_active snell; then
+          if outbound_json=$(build_client_snell_outbounds "${public_ip}"); then :; else build_status=$?; fi
+        else
+          printf '[ERROR] snell_export_state_invalid: Snell 结构化状态不完整或无效，未生成客户端连接材料。\n' >&2
+          build_status=1
         fi
         ;;
     esac
@@ -16245,6 +16611,16 @@ show_link_info() {
     return 0
   fi
 
+  if [[ "${SB_PROTOCOL}" == "snell" ]]; then
+    local snell_material
+    snell_material=$(agent_snell_link_json "${public_ip}") || return 1
+    printf '\nSnell 实例 %s（无标准分享 URI；连接材料含凭据，请妥善保管）\n' "${SB_INSTANCE_ID:-}"
+    jq -r '.warnings[]?.message' <<< "${snell_material}" >&2 || return 1
+    printf 'Snell 客户端 outbound JSON：\n'
+    jq '.outbounds' <<< "${snell_material}"
+    return $?
+  fi
+
   local plain_links share_warnings http_link socks_link warning_message
   plain_links=$(build_plain_proxy_links_json "${SB_PROTOCOL}" "${public_ip}") || return 1
   share_warnings=$(plain_proxy_share_warnings_json "${SB_PROTOCOL}") || return 1
@@ -16311,6 +16687,11 @@ show_qr_info() {
 
   if [[ "${SB_PROTOCOL}" == "anytls" ]]; then
     log_info "AnyTLS 当前不展示二维码，请使用参数摘要与 outbound JSON 示例手动导入客户端。"
+    return 0
+  fi
+
+  if [[ "${SB_PROTOCOL}" == "snell" ]]; then
+    log_info "Snell 当前不展示二维码；请使用完整客户端 outbound JSON（无标准 URI）。"
     return 0
   fi
 
@@ -16449,7 +16830,7 @@ list_subman_addresses_for_current_protocol() {
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL:-}" 2>/dev/null || true)
   case "${protocol}" in
-    mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2)
+    mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell)
       if plain_proxy_structured_state_active "${protocol}" >/dev/null 2>&1; then
         bound_address=${SB_MIXED_LISTEN_ADDRESS:-}
         case "${bound_address}" in
@@ -16485,7 +16866,7 @@ show_connection_details_for_detected_addresses() {
   local address_entries=()
   local entry label address public_ip
 
-  if [[ ("${SB_PROTOCOL}" == mixed || "${SB_PROTOCOL}" == socks || "${SB_PROTOCOL}" == http || "${SB_PROTOCOL}" == shadowsocks || "${SB_PROTOCOL}" == trojan || "${SB_PROTOCOL}" == vmess || "${SB_PROTOCOL}" == vless-plain || "${SB_PROTOCOL}" == anytls || "${SB_PROTOCOL}" == hy2) ]] && plain_proxy_structured_state_active "${SB_PROTOCOL}"; then
+  if [[ ("${SB_PROTOCOL}" == mixed || "${SB_PROTOCOL}" == socks || "${SB_PROTOCOL}" == http || "${SB_PROTOCOL}" == shadowsocks || "${SB_PROTOCOL}" == trojan || "${SB_PROTOCOL}" == vmess || "${SB_PROTOCOL}" == vless-plain || "${SB_PROTOCOL}" == anytls || "${SB_PROTOCOL}" == hy2 || "${SB_PROTOCOL}" == snell) ]] && plain_proxy_structured_state_active "${SB_PROTOCOL}"; then
     address=${SB_MIXED_LISTEN_ADDRESS:-}
     if [[ -n "${address}" && "${address}" != '::' && "${address}" != 0.0.0.0 ]]; then
       show_connection_details "${mode}" "${address}" "监听地址"
@@ -16535,7 +16916,7 @@ show_all_connection_details() {
 
   for protocol in "${installed_protocols[@]}"; do
     load_protocol_state "${protocol}" || return $?
-    if [[ ("${protocol}" == mixed || "${protocol}" == socks || "${protocol}" == http || "${protocol}" == shadowsocks || "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == vless-plain || "${protocol}" == anytls || "${protocol}" == hy2) ]] && plain_proxy_structured_state_active "${protocol}"; then
+    if [[ ("${protocol}" == mixed || "${protocol}" == socks || "${protocol}" == http || "${protocol}" == shadowsocks || "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == vless-plain || "${protocol}" == anytls || "${protocol}" == hy2 || "${protocol}" == snell) ]] && plain_proxy_structured_state_active "${protocol}"; then
       instance_ids=$(list_protocol_instance_ids "${protocol}") || return $?
       while IFS= read -r instance_id; do
         [[ -n "${instance_id}" ]] || continue
@@ -16634,7 +17015,7 @@ build_singbox_client_config() {
   for protocol in "${exportable_protocols[@]}"; do
     protocol_label=$(protocol_display_name "${protocol}") || return 1
     if ! protocol_state_exists "${protocol}"; then
-      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" ]]; then
+      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "snell" ]]; then
         log_warn "${protocol_label} 状态缺失，已中止客户端导出；原导出文件保持不变。" >&2
         status=1
         break
@@ -16644,7 +17025,7 @@ build_singbox_client_config() {
     fi
 
     if ! outbound_json=$(build_client_outbounds_for_current_protocol "${protocol}" "${public_ip}"); then
-      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" ]]; then
+      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "snell" ]]; then
         log_warn "${protocol_label} 客户端连接材料无效，已中止客户端导出；原导出文件保持不变。" >&2
         status=1
         break
@@ -16925,10 +17306,10 @@ agent_print_help() {
   sbv agent service restart --json --yes
   sbv agent subman-sync --json
   sbv agent warp --json
-  sbv agent instance create|replace mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2 --json --yes --expected-revision N --file record.json [--allow-public]
-  sbv agent instance delete|default mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2 --json --yes --expected-revision N --id ID
+  sbv agent instance create|replace mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell --json --yes --expected-revision N --file record.json [--allow-public]
+  sbv agent instance delete|default mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell --json --yes --expected-revision N --id ID
   sbv agent instance migrate mixed --json --yes --expected-revision N
-  sbv agent instance recover mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2 --json --yes --expected-revision N
+  sbv agent instance recover mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell --json --yes --expected-revision N
 
 说明:
   capabilities  输出协议、功能入口以及只读/变更/敏感分类。
@@ -16943,7 +17324,7 @@ agent_print_help() {
   doctor        输出只读诊断信息和配置校验结果。
   service       执行带 --yes 保护的服务操作，目前支持 restart。
   subman-sync   非交互推送节点到 SubMan，缺少配置时返回结构化错误。
-  instance      Mixed/SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS/AnyTLS/Hysteria2 实例事务；仅 Mixed 支持 legacy migration；recover 使用待恢复事务原 revision。
+  instance      Mixed/SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS/AnyTLS/Hysteria2/Snell 实例事务；仅 Mixed 支持 legacy migration；recover 使用待恢复事务原 revision。
 EOF
 }
 
@@ -17147,7 +17528,7 @@ agent_capabilities_json() {
           persistent_recovery_journal: true
         },
         plain_proxy_instances: {
-          protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2"],
+          protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell"],
           legacy_migration_protocols: ["mixed"],
           state_schema: 2,
           store_schema: 1,
@@ -17161,7 +17542,8 @@ agent_capabilities_json() {
             vmess: ["create", "replace", "delete", "default", "recover"],
             "vless-plain": ["create", "replace", "delete", "default", "recover"],
             anytls: ["create", "replace", "delete", "default", "recover"],
-            hy2: ["create", "replace", "delete", "default", "recover"]
+            hy2: ["create", "replace", "delete", "default", "recover"],
+            snell: ["create", "replace", "delete", "default", "recover"]
           },
           expected_revision_required: true,
           plaintext_public_confirmation: "--allow-public",
@@ -17181,7 +17563,7 @@ agent_capabilities_json() {
         doctor: {mutation: false, sensitive: false},
         "upgrade-check": {mutation: false, sensitive: false},
         upgrade: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart"},
-        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2"]},
+        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell"]},
         "export-client": {mutation: true, sensitive: true},
         "service restart": {mutation: true, sensitive: false, confirmation: "--yes"},
         "subman-sync": {mutation: true, sensitive: true, external_write: true}
@@ -17199,6 +17581,7 @@ agent_capabilities_json() {
         vless_plain_multi_instance_management: true,
         anytls_multi_instance_management: true,
         hy2_multi_instance_management: true,
+        snell_multi_instance_management: true,
         warp_mutation: true,
         inbound_outbound_stack_management: true,
         bbr: true,
@@ -18268,7 +18651,7 @@ agent_validate_indexed_protocol_states() {
   # A deleted plain proxy may leave a valid revisioned empty tombstone for
   # CAS continuity.  It is safe when its protocol is absent from the index; a
   # non-empty orphan would be an unowned inventory and must fail closed.
-  for plain_protocol in mixed socks http shadowsocks trojan vmess vless-plain anytls; do
+  for plain_protocol in mixed socks http shadowsocks trojan vmess vless-plain anytls hy2 snell; do
     if ! protocol_array_contains "${plain_protocol}" ${expected_protocols[@]+"${expected_protocols[@]}"}; then
       plain_store_file=$(plain_proxy_structured_store_file "${plain_protocol}") || return 1
       if [[ -e "${plain_store_file}" || -L "${plain_store_file}" ]]; then
@@ -18303,7 +18686,7 @@ agent_validate_indexed_protocol_states() {
       # partial first-node view would make Agent status/links appear healthy
       # while silently omitting listeners or credentials.
       mixed_validate_state_inventory || return 1
-    elif [[ "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" ]]; then
+    elif [[ "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "snell" ]]; then
       # Plain proxy protocols are structured-only. Validate the complete
       # manifest and compare every live tag before reporting them installed.
       plain_proxy_validate_state_inventory "${protocol}" || return 1
@@ -18989,6 +19372,51 @@ agent_hy2_link_json() (
   jq -cn --argjson summary "${summary}" --argjson links "${links}" --argjson outbounds "${outbounds}" --argjson warnings "${warnings}" '$summary + {links:$links,outbounds:$outbounds,warnings:$warnings}'
 )
 
+agent_snell_node_json() {
+  local public_ip=${1:-$(get_public_ip)} server user_count version obfs_mode mode
+  [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" && "${SB_PROTOCOL}" == snell ]] || return 1
+  plain_proxy_structured_state_active snell || return 1
+  case "${SB_MIXED_LISTEN_ADDRESS:-}" in
+    0.0.0.0|::) server=${public_ip} ;;
+    *) server=${SB_MIXED_LISTEN_ADDRESS:-} ;;
+  esac
+  [[ -n "${server}" ]] || return 1
+  user_count=$(jq -er 'length' <<< "${SB_SNELL_USER_JSON:-[]}") || return 1
+  version=${SB_SNELL_VERSION:-6}; obfs_mode=${SB_SNELL_OBFS_MODE:-}; mode=${SB_SNELL_MODE:-}
+  jq -n --arg name "${SB_NODE_NAME:-Snell}" --arg id "${SB_INSTANCE_ID:-}" --arg tag "${SB_MIXED_INBOUND_TAG:-}" \
+    --arg address "${SB_MIXED_LISTEN_ADDRESS:-}" --arg port "${SB_PORT:-}" --arg revision "${SB_MIXED_STORE_REVISION:-0}" \
+    --arg server "${server}" --argjson version "${version}" --arg obfs_mode "${obfs_mode}" --arg mode "${mode}" \
+    --arg policy "${SB_OUTBOUND_POLICY:-default}" --argjson user_count "${user_count}" \
+    '{protocol:"snell",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},server:$server,user_count:$user_count,auth_enabled:true,version:$version,obfs_mode:$obfs_mode,mode:$mode,udp_via_tcp_packet_api:true,outbound_policy:$policy,shareable:false,client_exportable:true}'
+}
+
+agent_snell_link_json() (
+  umask 077
+  local public_ip=${1:-$(get_public_ip)} store_file snapshot end_snapshot instance_id server isolated_store summary outbounds warnings
+  [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]] || return 1
+  store_file=$(plain_proxy_structured_store_file snell) || return 1
+  snapshot=$(structured_instance_store_snapshot_json snell "${store_file}") || return 1
+  instance_id=${SB_INSTANCE_ID:-}; [[ -n "${instance_id}" ]] || instance_id=$(jq -er '.default_instance_id' <<< "${snapshot}") || return 1
+  jq -e --arg id "${instance_id}" 'any(.instances[]; .id == $id)' <<< "${snapshot}" >/dev/null || return 1
+  [[ "$(jq -r '.revision|tostring' <<< "${snapshot}")" == "${SB_MIXED_STORE_REVISION:-}" ]] || return 1
+  case "${SB_MIXED_LISTEN_ADDRESS:-}" in
+    0.0.0.0|::) server=${public_ip} ;;
+    "") return 1 ;;
+    *) server=${SB_MIXED_LISTEN_ADDRESS} ;;
+  esac
+  [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
+  summary=$(agent_snell_node_json "${public_ip}") || return 1
+  isolated_store=$(mktemp) || return 1
+  trap 'rm -f -- "${isolated_store}"' EXIT
+  jq --arg id "${instance_id}" '. as $root | ($root.instances | map(select(.id == $id))) as $instances | $root | .default_instance_id=$id | .instances=$instances' <<< "${snapshot}" > "${isolated_store}" || return 1
+  outbounds=$(build_client_snell_outbounds "${server}" "${isolated_store}") || return 1
+  end_snapshot=$(structured_instance_store_snapshot_json snell "${store_file}") || return 1
+  [[ "${snapshot}" == "${end_snapshot}" ]] || return 1
+  outbounds=$(jq -sc '.' <<< "${outbounds}") || return 1
+  warnings=$(jq -cn '[{code:"snell_standard_uri_unavailable",message:"Snell 当前没有可安全表达版本、obfs/shaping 与用户 key 的标准分享 URI；请使用 sing-box outbound JSON。"}]') || return 1
+  jq -cn --argjson summary "${summary}" --argjson outbounds "${outbounds}" --argjson warnings "${warnings}" '$summary + {links:{},outbounds:$outbounds,warnings:$warnings}'
+)
+
 agent_node_summary_json_for_current_protocol() {
   local protocol api_protocol public_ip shareable="true" client_exportable="false"
   local auth_enabled="false" server_name="" tls_enabled="false" http_tls_json
@@ -19008,6 +19436,9 @@ agent_node_summary_json_for_current_protocol() {
   fi
   if [[ "${protocol}" == hy2 && "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active hy2; then
     agent_hy2_node_json "${public_ip}"; return $?
+  fi
+  if [[ "${protocol}" == snell && "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active snell; then
+    agent_snell_node_json "${public_ip}"; return $?
   fi
 
   case "${protocol}" in
@@ -19135,6 +19566,9 @@ agent_link_json_for_current_protocol() {
   fi
   if [[ "${protocol}" == hy2 && "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active hy2; then
     agent_hy2_link_json "${public_ip}"; return $?
+  fi
+  if [[ "${protocol}" == snell && "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active snell; then
+    agent_snell_link_json "${public_ip}"; return $?
   fi
   if [[ "${public_ip}" == *:* ]]; then
     address_label="IPv6"
@@ -20246,7 +20680,7 @@ apply_plain_proxy_instance_change() (
 
 agent_instance_cli() {
   local operation=${1:-} protocol=${2:-} expected="" input="" instance_id="" json=n confirmed=n allow_public=n
-  [[ $# -ge 2 ]] || { agent_json_error invalid_arguments "用法: instance 操作 mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2 --json --yes --expected-revision N [--file 文件 | --id ID]"; return 1; }
+  [[ $# -ge 2 ]] || { agent_json_error invalid_arguments "用法: instance 操作 mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell --json --yes --expected-revision N [--file 文件 | --id ID]"; return 1; }
   shift 2
   protocol=$(normalize_protocol_id "${protocol}") || {
     agent_json_error invalid_arguments "实例协议无效；未修改。"; return 1;
@@ -20262,14 +20696,14 @@ agent_instance_cli() {
       *) break ;;
     esac
   done
-  if [[ $# -ne 0 || "${json}" != y || ("${protocol}" != mixed && "${protocol}" != socks && "${protocol}" != http && "${protocol}" != shadowsocks && "${protocol}" != trojan && "${protocol}" != vmess && "${protocol}" != vless-plain && "${protocol}" != anytls && "${protocol}" != hy2) || ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
+  if [[ $# -ne 0 || "${json}" != y || ("${protocol}" != mixed && "${protocol}" != socks && "${protocol}" != http && "${protocol}" != shadowsocks && "${protocol}" != trojan && "${protocol}" != vmess && "${protocol}" != vless-plain && "${protocol}" != anytls && "${protocol}" != hy2 && "${protocol}" != snell) || ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
     agent_json_error invalid_arguments "实例参数、协议或 revision 无效；未修改。"; return 1
   fi
   if ! structured_instance_store_revision_arg "${expected}" >/dev/null; then
     agent_json_error invalid_arguments "revision 超出安全整数范围；未修改。"; return 1
   fi
   if [[ "${operation}" == migrate && "${protocol}" != mixed ]]; then
-    agent_json_error invalid_arguments "只有 Mixed 提供 legacy schema 1 迁移；SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS/AnyTLS/Hysteria2 使用 schema 2，已有 live 配置请使用接管入口。"
+    agent_json_error invalid_arguments "只有 Mixed 提供 legacy schema 1 迁移；SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS/AnyTLS/Hysteria2/Snell 使用 schema 2，已有 live 配置请使用接管入口。"
     return 1
   fi
   [[ "${confirmed}" == y ]] || { agent_json_error confirmation_required "实例写操作需要 --yes；非回环入口另需 --allow-public。"; return 1; }
@@ -20901,7 +21335,7 @@ structured_instance_store_error() {
 structured_instance_store_protocol() {
   local protocol
   protocol=$(normalize_protocol_id "${1:-}") || return 1
-  [[ "${protocol}" == "mixed" || "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" ]] || return 1
+  [[ "${protocol}" == "mixed" || "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" ]] || return 1
   printf '%s' "${protocol}"
 }
 
@@ -21005,9 +21439,15 @@ structured_instance_record_jq_filter() {
            (if $method == "2022-blake3-chacha20-poly1305" then .users == [] else true end)
          elif (.users|length) > 0 then .password == ""
          else (.password|length) > 0 end));
+    def valid_snell_obfs_host:
+      if . == "" then true
+      else type == "string" and length > 0 and utf8bytelength <= 255 and
+        (test("[\u0000-\u001F\u007F]") | not)
+      end;
     def valid_instance($protocol):
       type == "object" and
       ((keys | sort) == ((["authentication","dependencies","id","listen","name","outbound_policy","tag"] +
+        (if $protocol == "snell" then ["mode","obfs_host","obfs_mode","version"] else [] end) +
         (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" then ["tls"] else [] end) +
         (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then ["client_trust","transport"]
          elif $protocol == "anytls" then ["client_trust"]
@@ -21052,6 +21492,18 @@ structured_instance_record_jq_filter() {
                 end)) and
              (map(.name)|unique|length) == length and
              (if $protocol == "trojan" then (map(.password)|unique|length) == length else (map(.uuid)|unique|length) == length end)))
+       elif $protocol == "snell" then
+         (.authentication | type == "object" and (keys|sort) == ["psk","users"] and
+           (.psk | type == "string" and length > 0 and utf8bytelength <= 255 and index("\u0000") == null and
+             (test("[\u0000-\u001F\u007F]") | not)) and
+           (.users | type == "array" and length <= 128 and
+             all(.[]; type == "object" and (keys|sort) == ["name","userkey"] and
+               (.name | type == "string" and length > 0 and utf8bytelength <= 256 and
+                 (test("[\u0000-\u001F\u007F]") | not)) and
+               (.userkey | type == "string" and length > 0 and utf8bytelength <= 255 and
+                 index("\u0000") == null and (test("[\u0000-\u001F\u007F]") | not))) and
+             (map(.name)|unique|length) == length and
+             (map(.userkey)|unique|length) == length))
        else (.authentication | type == "object" and (keys|sort) == ["enabled","password","username"] and
          (.enabled|type == "boolean") and
          (.username|type == "string" and index("\u0000") == null) and
@@ -21065,6 +21517,22 @@ structured_instance_record_jq_filter() {
       (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" then
          (.client_trust | type == "string" and IN("certificate","system")) and
          (if .tls.enabled == false then .client_trust == "system" else true end)
+       else true end) and
+      (if $protocol == "snell" then
+         (.version | type == "number" and floor == . and IN(5,6)) and
+         (.obfs_mode | type == "string") and (.obfs_host | type == "string") and
+         (.mode | type == "string") and
+         (if .version == 5 then
+            (.mode == "" and (.obfs_mode | IN("none","http")) and
+             (if .obfs_mode == "none" then .obfs_host == "" else
+                (.obfs_host | length > 0 and utf8bytelength <= 255 and
+                  (test("[\u0000-\u001F\u007F]") | not))
+              end))
+          else
+            (.obfs_mode == "" and .obfs_host == "" and
+             (.mode | IN("","default","unshaped","unsafe-raw")) and
+             (.authentication.psk | utf8bytelength >= 12))
+          end)
        else true end) and
       (.outbound_policy|IN("default","direct","warp")) and
       (.dependencies|type == "array" and length == 0) and
@@ -21178,6 +21646,7 @@ plain_proxy_config_store_candidate() (
     vless-plain) protocol_label="VLESS" ;;
     anytls) protocol_label="AnyTLS" ;;
     hy2) protocol_label="Hysteria2" ;;
+    snell) protocol_label="Snell" ;;
     *) return 1 ;;
   esac
   shift
@@ -21192,7 +21661,8 @@ plain_proxy_config_store_candidate() (
   local anytls_users_json='[]' anytls_tls_json='{"enabled":false}' anytls_client_trust=system
   local hy2_users_json='[]' hy2_tls_json='{"enabled":false}' hy2_client_trust=system
   local hy2_bandwidth_json='{"down_mbps":null,"up_mbps":null}' hy2_obfs_json='{"enabled":false,"password":"","type":""}' hy2_masquerade=""
-  local existing_instance existing_store_json existing_match default_id old_revision old_semantics new_semantics
+  local snell_version=6 snell_psk="" snell_users_json='[]' snell_obfs_mode="" snell_obfs_host="" snell_mode=""
+  local existing_instance existing_store_json existing_match existing_snell_obfs_host default_id old_revision old_semantics new_semantics
   local candidate_revision status
   local marker_schema2=n store_instances=0
 
@@ -21232,6 +21702,11 @@ plain_proxy_config_store_candidate() (
     def target:
       if $protocol == "vless-plain" then (.type == "vless" and (.tls.reality? == null))
       else .type == $protocol end;
+    def valid_snell_obfs_host:
+      if . == "" then true
+      else type == "string" and length > 0 and utf8bytelength <= 255 and
+        (test("[\u0000-\u001F\u007F]") | not)
+      end;
     (.inbounds // []) | all(.[];
       if (target | not) then true
       else
@@ -21241,6 +21716,7 @@ plain_proxy_config_store_candidate() (
            elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then ["tls", "transport"]
            elif $protocol == "anytls" then ["tls"]
            elif $protocol == "hy2" then ["tls", "up_mbps", "down_mbps", "obfs", "masquerade"]
+           elif $protocol == "snell" then ["version", "psk", "users", "obfs_mode", "obfs_host", "mode"]
            else [] end)) | length == 0))
         and (if has("tag") then (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) else true end)
         and (if has("listen") then (.listen | type == "string" and length > 0) else true end)
@@ -21270,6 +21746,32 @@ plain_proxy_config_store_candidate() (
                   (.name | type == "string" and length > 0 and utf8bytelength <= 256 and (test("[\u0000-\u001F\u007F]") | not)) and
                   (.password | type == "string" and length > 0 and utf8bytelength <= 4096 and index("\u0000") == null)) and
                 (map(.name) | unique | length) == length and (map(.password) | unique | length) == length)
+             elif $protocol == "snell" then
+              (.version | type == "number" and floor == . and IN(5,6)) and
+              (.psk | type == "string" and length > 0 and utf8bytelength <= 255 and index("\u0000") == null and
+                (test("[\u0000-\u001F\u007F]") | not)) and
+              (.users // [] | type == "array" and length <= 128 and
+                all(.[]; type == "object" and (keys_unsorted | sort) == ["name", "userkey"] and
+                  (.name | type == "string" and length > 0 and utf8bytelength <= 256 and
+                    (test("[\u0000-\u001F\u007F]") | not)) and
+                  (.userkey | type == "string" and length > 0 and utf8bytelength <= 255 and
+                    index("\u0000") == null and (test("[\u0000-\u001F\u007F]") | not))) and
+                (map(.name) | unique | length) == length and (map(.userkey) | unique | length) == length) and
+              (if .version == 5 then
+                 (.mode // "") == "" and ((.obfs_mode // "none") | IN("none", "http")) and
+                 # Snell v5 inbound config does not require the outbound
+                 # obfs_host hint. Preserve it from typed metadata when
+                 # available; a missing value is rejected later by the
+                 # typed-record validator if no metadata can supply it.
+                 (
+                   ((.obfs_mode // "none") == "none" and (.obfs_host // "") == "") or
+                   ((.obfs_mode // "none") == "http" and ((.obfs_host // "") | valid_snell_obfs_host))
+                 )
+               else
+                 (.obfs_mode // "") == "" and (.obfs_host // "") == "" and
+                 ((.mode // "") | IN("","default","unshaped","unsafe-raw")) and
+                 (.psk | utf8bytelength >= 12)
+               end)
              elif $protocol == "trojan" then
               (.users | type == "array" and length >= 1 and length <= 128 and
                 all(.[]; type == "object" and ((keys_unsorted | sort) == ["name", "password"]) and
@@ -21553,6 +22055,30 @@ plain_proxy_config_store_candidate() (
       hy2_masquerade=$(jq -j '.masquerade // "", "\u0001"' <<< "${inbound_json}") || return 1
       hy2_masquerade=${hy2_masquerade%$'\1'}
       hy2_client_trust=system
+    elif [[ "${protocol}" == "snell" ]]; then
+      snell_version=$(jq -r '.version // 6' <<< "${inbound_json}") || return 1
+      snell_psk=$(jq -j '.psk // "", "\u0001"' <<< "${inbound_json}") || return 1
+      snell_psk=${snell_psk%$'\1'}
+      snell_users_json=$(jq -c '.users // []' <<< "${inbound_json}") || return 1
+      snell_obfs_mode=$(jq -j '.obfs_mode // "", "\u0001"' <<< "${inbound_json}") || return 1
+      snell_obfs_mode=${snell_obfs_mode%$'\1'}
+      snell_obfs_host=$(jq -j '.obfs_host // "", "\u0001"' <<< "${inbound_json}") || return 1
+      snell_obfs_host=${snell_obfs_host%$'\1'}
+      snell_mode=$(jq -j '.mode // "", "\u0001"' <<< "${inbound_json}") || return 1
+      snell_mode=${snell_mode%$'\1'}
+      [[ "${snell_version}" =~ ^(5|6)$ && -n "${snell_psk}" ]] || {
+        printf '[ERROR] %s_store_candidate: Snell version or PSK is invalid.\n' "${protocol}" >&2
+        return 1
+      }
+      if [[ "${snell_version}" == "5" ]]; then
+        [[ -n "${snell_obfs_mode}" ]] || snell_obfs_mode=none
+        [[ "${snell_obfs_mode}" == "none" || "${snell_obfs_mode}" == "http" ]] || return 1
+        snell_mode=""
+      else
+        snell_obfs_mode=""
+        snell_mode=${snell_mode:-default}
+        [[ "${snell_mode}" == "default" || "${snell_mode}" == "unshaped" || "${snell_mode}" == "unsafe-raw" ]] || return 1
+      fi
     elif jq -e '.users | length > 0' <<< "${inbound_json}" >/dev/null 2>&1; then
       auth_enabled=true
       username=$(jq -j '.users[0].username, "\u0001"' <<< "${inbound_json}") || return 1
@@ -21586,6 +22112,9 @@ plain_proxy_config_store_candidate() (
           anytls_client_trust=$(jq -r '.[0].client_trust // "system"' <<< "${existing_match}") || return 1
         elif [[ "${protocol}" == "hy2" ]]; then
           hy2_client_trust=$(jq -r '.[0].client_trust // "system"' <<< "${existing_match}") || return 1
+        elif [[ "${protocol}" == "snell" ]]; then
+          existing_snell_obfs_host=$(jq -r '.[0].obfs_host // ""' <<< "${existing_match}") || return 1
+          [[ -z "${existing_snell_obfs_host}" ]] || snell_obfs_host=${existing_snell_obfs_host}
         fi
       elif [[ "$(jq 'length' <<< "${existing_match}")" -gt 1 ]]; then
         printf '[ERROR] %s_store_candidate: duplicate stored %s identity.\n' "${protocol}" "${protocol_label}" >&2
@@ -21663,6 +22192,15 @@ plain_proxy_config_store_candidate() (
       --argjson bandwidth "${hy2_bandwidth_json}" --argjson obfs "${hy2_obfs_json}" \
       --arg masquerade "${hy2_masquerade}" --arg policy "${policy}" \
       '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{users:$users},tls:$tls,client_trust:$client_trust,bandwidth:$bandwidth,obfs:$obfs,masquerade:$masquerade,outbound_policy:$policy,dependencies:[]}' \
+      >> "${temp_dir}/instances.jsonl" || return 1
+    elif [[ "${protocol}" == "snell" ]]; then
+      jq -n -cS \
+      --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
+      --arg address "${address}" --argjson port "${port}" --argjson version "${snell_version}" \
+      --arg psk "${snell_psk}" --argjson users "${snell_users_json}" \
+      --arg obfs_mode "${snell_obfs_mode}" --arg obfs_host "${snell_obfs_host}" --arg mode "${snell_mode}" \
+      --arg policy "${policy}" \
+      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{psk:$psk,users:$users},version:$version,obfs_mode:$obfs_mode,obfs_host:$obfs_host,mode:$mode,outbound_policy:$policy,dependencies:[]}' \
       >> "${temp_dir}/instances.jsonl" || return 1
     elif [[ "${protocol}" == "shadowsocks" ]]; then
       jq -n -cS \
@@ -21764,6 +22302,9 @@ plain_proxy_validate_state_inventory() (
   if [[ ("${protocol}" == "anytls" || "${protocol}" == "hy2") && -n "${state_schema}" && "${state_schema}" != "2" ]]; then
     validate_protocol_state_schema "${protocol}" "${state_file}" || return 1
     return 0
+  fi
+  if [[ "${protocol}" == "snell" && "${state_schema}" != "2" ]]; then
+    return 1
   fi
   if [[ -f "${state_file}" ]] &&
      grep -Eq "^[[:space:]]*CONFIG_SCHEMA_VERSION=" "${state_file}"; then
@@ -22140,6 +22681,9 @@ render_structured_instance_inbounds() {
          {users:.authentication.users}
        elif $protocol == "hy2" then
          {users:.authentication.users}
+       elif $protocol == "snell" then
+         {version:.version,psk:.authentication.psk,users:.authentication.users} +
+         (if .version == 5 then {obfs_mode:.obfs_mode} else {mode:.mode} end)
        else {users:(if .authentication.enabled then [{username:.authentication.username,password:.authentication.password}] else [] end)} end) +
       (if $protocol == "http" and .tls.enabled then
          {tls:.tls}
@@ -22316,7 +22860,13 @@ load_plain_proxy_structured_instance() {
        (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" then .client_trust else "" end),
        (if $protocol == "hy2" then (.bandwidth | tojson) else "" end),
        (if $protocol == "hy2" then (.obfs | tojson) else "" end),
-       (if $protocol == "hy2" then .masquerade else "" end)] | .[] | ., "\u0000"
+       (if $protocol == "hy2" then .masquerade else "" end),
+       (if $protocol == "snell" then (.version | tostring) else "" end),
+       (if $protocol == "snell" then (.authentication.psk // "") else "" end),
+       (if $protocol == "snell" then (.authentication.users | tojson) else "" end),
+       (if $protocol == "snell" then (.obfs_mode // "") else "" end),
+       (if $protocol == "snell" then (.obfs_host // "") else "" end),
+       (if $protocol == "snell" then (.mode // "") else "" end)] | .[] | ., "\u0000"
     ' <<< "${snapshot}" > "${stream_file}"; then
     rm -f -- "${stream_file}"
     return 1
@@ -22325,7 +22875,7 @@ load_plain_proxy_structured_instance() {
     fields+=("${field}")
   done < "${stream_file}"
   rm -f -- "${stream_file}"
-  [[ ${#fields[@]} -eq 18 ]] || return 1
+  [[ ${#fields[@]} -eq 24 ]] || return 1
 
   INSTALLED=1
   CONFIG_SCHEMA_VERSION=2
@@ -22384,6 +22934,14 @@ load_plain_proxy_structured_instance() {
       SB_HY2_OBFS_PASSWORD=""
     fi
     SB_HY2_MASQUERADE=${fields[17]}
+  fi
+  if [[ "${protocol}" == "snell" ]]; then
+    SB_SNELL_VERSION=${fields[18]}
+    SB_SNELL_PSK=${fields[19]}
+    SB_SNELL_USER_JSON=${fields[20]}
+    SB_SNELL_OBFS_MODE=${fields[21]}
+    SB_SNELL_OBFS_HOST=${fields[22]}
+    SB_SNELL_MODE=${fields[23]}
   fi
   if [[ "${protocol}" == "http" ]]; then
     SB_HTTP_TLS_JSON=$(jq -c . <<< "${fields[9]}" 2>/dev/null) || return 1
@@ -22453,7 +23011,7 @@ protocol_instance_state_schema() {
   schema=${schema//\"/}
   schema=${schema//\'/}
   [[ "${schema}" =~ ^[0-9]+$ ]] || return 1
-  [[ "${protocol}" != "vless-plain" && "${protocol}" != "socks" && "${protocol}" != "http" && "${protocol}" != "shadowsocks" && "${protocol}" != "trojan" && "${protocol}" != "vmess" || "${schema}" == "2" ]] || return 1
+  [[ "${protocol}" != "vless-plain" && "${protocol}" != "socks" && "${protocol}" != "http" && "${protocol}" != "shadowsocks" && "${protocol}" != "trojan" && "${protocol}" != "vmess" && "${protocol}" != "snell" || "${schema}" == "2" ]] || return 1
   printf '%s' "${schema}"
 }
 
@@ -22478,6 +23036,7 @@ reset_protocol_state_source_variables() {
   unset OBFS_ENABLED OBFS_TYPE OBFS_PASSWORD TLS_MODE ACME_MODE ACME_EMAIL
   unset ACME_DOMAIN ACME_EXTRA_JSON DNS_PROVIDER CF_API_TOKEN CERT_PATH KEY_PATH
   unset MASQUERADE
+  unset SNELL_VERSION SNELL_PSK SNELL_USERS SNELL_USER_JSON SNELL_OBFS_MODE SNELL_OBFS_HOST SNELL_MODE
 }
 
 reset_protocol_instance_runtime_fields() {
@@ -22519,6 +23078,12 @@ reset_protocol_instance_runtime_fields() {
   SB_VLESS_PLAIN_TLS_JSON='{"enabled":false}'
   SB_VLESS_PLAIN_TRANSPORT_JSON='{"type":"none"}'
   SB_VLESS_PLAIN_CLIENT_TRUST="certificate"
+  SB_SNELL_VERSION="6"
+  SB_SNELL_PSK=""
+  SB_SNELL_USER_JSON='[]'
+  SB_SNELL_OBFS_MODE=""
+  SB_SNELL_OBFS_HOST=""
+  SB_SNELL_MODE=""
   SB_ANYTLS_AUTH_JSON='[]'
   SB_ANYTLS_TLS_JSON='{"enabled":false}'
   SB_ANYTLS_CLIENT_TRUST="system"
@@ -22595,7 +23160,7 @@ list_protocol_instance_ids() {
       mixed_structured_state_active || return 1
       jq -r '.instances[].id' "$(mixed_structured_store_file)"
       ;;
-    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2)
+    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2)
       plain_proxy_structured_state_active "${protocol}" || return 1
       jq -r '.instances[].id' "$(plain_proxy_structured_store_file "${protocol}")"
       ;;
@@ -22653,7 +23218,7 @@ protocol_default_instance_id() {
       mixed_structured_state_active || return 1
       default_id=$(jq -r '.default_instance_id' "$(mixed_structured_store_file)") || return 1
       ;;
-    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2)
+    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2)
       plain_proxy_structured_state_active "${protocol}" || return 1
       default_id=$(jq -r '.default_instance_id' "$(plain_proxy_structured_store_file "${protocol}")") || return 1
       ;;
@@ -22676,7 +23241,7 @@ load_protocol_instance_state() {
   local schema instance_ids listed_instance_id legacy_inbound_tag
 
   protocol=$(normalize_protocol_id "${protocol}") || return 1
-  if [[ "${protocol}" == "mixed" || "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" ]]; then
+  if [[ "${protocol}" == "mixed" || "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" ]]; then
     structured_instance_store_validate_id "${instance_id}" || return 1
   else
     validate_vless_reality_instance_id "${instance_id}" || return 1
@@ -22723,7 +23288,7 @@ load_protocol_instance_state() {
     mixed:2)
       load_mixed_structured_instance "${instance_id}" || return 1
       ;;
-    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2)
+    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2)
       load_plain_proxy_structured_instance "${protocol}" "${instance_id}" || return 1
       ;;
     *)
@@ -23243,6 +23808,10 @@ protocol_state_matches_config() {
       return $?
     fi
   fi
+  if [[ "${protocol}" == "snell" ]]; then
+    plain_proxy_structured_state_matches_config snell
+    return $?
+  fi
 
   expected_snapshot=$(render_expected_protocol_state_snapshot "${protocol}") || return 1
   saved_snapshot=$(render_saved_protocol_state_snapshot "${protocol}") || return 1
@@ -23554,6 +24123,7 @@ rebuild_protocol_state_from_config() {
   local vless_plain_inbound_count=0 vless_plain_candidate_file="" vless_plain_candidate_revision=0 vless_plain_state_file vless_plain_state_schema
   local hy2_inbound_count=0 hy2_candidate_file="" hy2_candidate_revision=0 hy2_state_file hy2_state_schema hy2_rebuild_mode="legacy"
   local anytls_inbound_count=0 anytls_candidate_file="" anytls_candidate_revision=0 anytls_state_file anytls_state_schema anytls_rebuild_mode="legacy"
+  local snell_inbound_count=0 snell_candidate_file="" snell_candidate_revision=0 snell_state_file snell_state_schema
   local backup_state_dir
 
   backup_dir=$(mktemp -d) || return 1
@@ -23992,6 +24562,47 @@ rebuild_protocol_state_from_config() {
     fi
   fi
 
+  # Snell is structured-only. Its version/PSK/user-key tuple and v5/v6
+  # transport mode must survive takeover exactly; legacy .env state is not a
+  # lossless representation and is rejected before the state cache is cleared.
+  snell_inbound_count=$(jq -r '[.inbounds[]? | select(.type == "snell")] | length' "${SINGBOX_CONFIG_FILE}") || {
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+  }
+  [[ "${snell_inbound_count}" =~ ^[0-9]+$ ]] || {
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+  }
+  if (( snell_inbound_count > 0 )); then
+    snell_state_file=$(protocol_state_file snell) || {
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+    }
+    snell_state_schema=""
+    if [[ -f "${snell_state_file}" ]]; then
+      validate_protocol_state_schema snell "${snell_state_file}" || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+      }
+      snell_state_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${snell_state_file}" | head -n1) || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+      }
+      snell_state_schema=${snell_state_schema//\"/}
+      snell_state_schema=${snell_state_schema//\'/}
+    fi
+    [[ -z "${snell_state_schema}" || "${snell_state_schema}" == 2 ]] || {
+      printf '[ERROR] snell_store_candidate: Snell legacy state is unsupported; 已保留原状态。\n' >&2
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+    }
+    snell_candidate_file="${backup_dir}/snell.candidate.json"
+    plain_proxy_config_store_candidate snell > "${snell_candidate_file}" || {
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+    }
+    if [[ -f "$(plain_proxy_structured_store_file snell 2>/dev/null || true)" ]]; then
+      snell_candidate_revision=$(jq -r '.revision' "$(plain_proxy_structured_store_file snell)") || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+      }
+    else
+      snell_candidate_revision=0
+    fi
+  fi
+
   clear_protocol_state_cache
   ensure_protocol_state_dir
   if ! rm -rf "${SB_PROTOCOL_STATE_DIR}/vless-reality.d"; then
@@ -24285,6 +24896,12 @@ rebuild_protocol_state_from_config() {
           return 1
         fi
         ;;
+      snell)
+        if ! protocol_array_contains "snell" ${rebuilt_protocols[@]+"${rebuilt_protocols[@]}"}; then
+          rebuilt_protocols+=("snell")
+        fi
+        continue
+        ;;
       *)
         abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
         return 1
@@ -24384,6 +25001,15 @@ rebuild_protocol_state_from_config() {
       abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
     fi
     if ! save_plain_proxy_structured_marker hy2; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
+    fi
+  fi
+
+  if (( snell_inbound_count > 0 )); then
+    if ! publish_structured_instance_store snell "${snell_candidate_file}" "${snell_candidate_revision}"; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
+    fi
+    if ! save_plain_proxy_structured_marker snell; then
       abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
     fi
   fi
@@ -24831,14 +25457,15 @@ main() {
     render_menu_item "23" "管理 VLESS 实例"
     render_menu_item "24" "管理 AnyTLS 实例"
     render_menu_item "25" "管理 Hysteria2 实例"
+    render_menu_item "26" "管理 Snell 实例"
     echo "0. 退出"
     render_main_menu_footer
-    choice=$(prompt_choice "请选择 [0-25]: " 0 25 "")
+    choice=$(prompt_choice "请选择 [0-26]: " 0 26 "")
 
     if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
       case "${choice}" in
-        0|9|10|12|17|18|19|20|21|22|23|24|25) ;;
-        *) log_warn "请先通过菜单 17–25 恢复对应协议未完成的实例事务；本次未执行其他写操作。"; continue ;;
+        0|9|10|12|17|18|19|20|21|22|23|24|25|26) ;;
+        *) log_warn "请先通过菜单 17–26 恢复对应协议未完成的实例事务；本次未执行其他写操作。"; continue ;;
       esac
     fi
 
@@ -24875,6 +25502,7 @@ main() {
       23) vless_plain_instance_management_menu ;;
       24) anytls_instance_management_menu ;;
       25) hy2_instance_management_menu ;;
+      26) snell_instance_management_menu ;;
       0) exit_script ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac

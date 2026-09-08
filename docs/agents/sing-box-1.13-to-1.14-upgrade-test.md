@@ -19,6 +19,7 @@
 | Mixed HTTP/SOCKS | 交互安装/修改；nodes/links | 修改交互；links 敏感 | 认证状态与端口；摘要不得含密码 |
 | Hysteria2 | 交互安装/修改；nodes/links/export | 修改交互；export/links 敏感 | ACME/provider、obfs、masquerade、Ed25519 client warning |
 | AnyTLS | 交互安装/修改；nodes/links/export | 修改交互；export/links 敏感 | ACME/provider、`client_metadata`、导出 check |
+| Snell | 交互安装/修改；nodes/links/export | 修改交互；export/links 敏感 | 仅 1.14；v5/v6、PSK/user key、v5 obfs/v6 shaping、无标准 URI/SubMan |
 | REALITY 多实例 | 交互菜单 | 交互/变更 | instance state、端口、ShortID、节点名逐实例一致 |
 | REALITY QoS | 交互菜单 | 交互/变更 | `tc` 规则与 `reality-qos.filters` 无残留 |
 | Warp | 菜单 13；`agent warp --json` | 查询只读；变更交互 | endpoint、路由模式、规则集、账户状态 |
@@ -116,7 +117,7 @@ jq -e '.schema_version == "1.0" and .status == "success" and .rollback.attempted
 [[ "$(stat -c '%a' "${transaction_result}")" == "600" ]]
 ```
 
-根据已安装协议分别执行真实客户端闭环探测；VLESS REALITY、Mixed、Hysteria2、AnyTLS、Warp 路由和 REALITY QoS 不能因 `sing-box check` 成功就推定业务可用。只有被明确批准时才执行媒体检测或 SubMan 写入。
+根据已安装协议分别执行真实客户端闭环探测；VLESS REALITY、Mixed、Hysteria2、AnyTLS、Snell、Warp 路由和 REALITY QoS 不能因 `sing-box check` 成功就推定业务可用。Snell 的 UDP 业务由 TCP 会话 packet API 承载，当前专项没有独立 UDP payload 探针。只有被明确批准时才执行媒体检测或 SubMan 写入。
 
 ## 5. 失败与回滚
 
@@ -136,7 +137,8 @@ jq -e '.schema_version == "1.0" and .status == "success" and .rollback.attempted
 - ACME：1.14+ 新生成配置使用顶层 `certificate_providers`；旧 `tls.acme` 仅兼容，不应在本演练中自动迁移。
 - 远程规则集：1.14+ 新生成结构使用 `http_client.detour`；旧 `download_detour` 仍保留兼容性，但计划在 1.16 移除。
 - Hysteria2 Ed25519：这是客户端语义边界。1.14 client export 可设置顶层 `disable_chrome_parrot=true`；分享链接和 SubMan raw 不能表达该开关，必须读取结构化 warning。
-- VLESS Reality、Mixed、AnyTLS、WARP endpoint、DNS、路由、栈模式、BBR、媒体检测和 QoS 必须在升级后分别核验，不因 binary check 通过而推断业务可用。
+- Snell：1.14-only 的 v5/v6 入站与 v4/v6 出站版本映射、PSK 长度和 obfs/shaping 字段必须在目标核心 check 前核验；没有标准 URI 或 SubMan sync 路径。
+- VLESS Reality、Mixed、AnyTLS、Snell、WARP endpoint、DNS、路由、栈模式、BBR、媒体检测和 QoS 必须在升级后分别核验，不因 binary check 通过而推断业务可用。
 
 ## 交付报告模板
 

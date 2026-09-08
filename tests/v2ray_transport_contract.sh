@@ -325,13 +325,14 @@ STATE_AFTER=$(find "${TMP_DIR}/project" -mindepth 0 -print 2>/dev/null | sort)
 STATE_SENTINEL_AFTER=$(sha256sum "${TMP_DIR}/project/sentinel")
 [[ "${STATE_SENTINEL_BEFORE}" == "${STATE_SENTINEL_AFTER}" ]] || fail 'transport calls rewrote existing managed state'
 
-# The deployable protocol registry includes the validated Trojan adapter; the
-# transport helper must not add any other family as a side effect.
+# The deployable protocol registry includes the validated Trojan and Snell
+# adapters; the transport helper must not add any other family as a side
+# effect.
 registered_protocols=''
 registry_status=0
 registered_protocols=$(list_registered_protocols) || registry_status=$?
 (( registry_status == 0 )) || fail "protocol registry producer failed (status ${registry_status})"
-expected_registered_protocols=$'vless-reality\nvless-plain\nmixed\nhy2\nanytls\nsocks\nhttp\nshadowsocks\ntrojan\nvmess'
+expected_registered_protocols=$'vless-reality\nvless-plain\nmixed\nhy2\nanytls\nsocks\nhttp\nshadowsocks\ntrojan\nvmess\nsnell'
 [[ "${registered_protocols}" == "${expected_registered_protocols}" ]] || \
   fail "unexpected protocol appeared in the deployable protocol registry: ${registered_protocols}"
 

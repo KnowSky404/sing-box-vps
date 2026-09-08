@@ -10,9 +10,15 @@ HTTP 沿用 Mixed/SOCKS 的 schema 2 marker、版本化 JSON store、CAS 和持�
 
 HTTP 的认证字段单独遵循 Basic 约束（用户名无冒号、双方无 ASCII 控制字符、各不超过 4096 UTF-8 字节），不复用 SOCKS 255 字节上限。HTTP CONNECT 客户端只提供 TCP，入口 TLS 与目标 HTTPS 独立；客户端导出嵌入最小公有证书信任，禁止私钥或混杂非证书材料。TLS 分享返回不可表达 warning，不能伪造遗漏信任的 HTTPS URI。以下第一、二阶段章节保留原架构演进记录；当前实例写入能力应结合 HTTP、Mixed、SOCKS 实施记录阅读。
 
+## 当前结构化 Snell 接入
+
+Snell 使用独立 `snell` preset/state/agent ID（注册表 preset 11、交互菜单 26），沿用 schema 2 active marker、schema 1 JSON store、revision CAS 和受管实例事务。记录只允许上游 Snell 字段：入站版本 `5/6`、PSK、0–128 个唯一用户 key，以及 v5 的 `none/http` obfs 与可选 host；v6 使用 `default/unshaped/unsafe-raw` traffic shaping。v6 PSK 必须为 12–255 个 UTF-8 字节，v5/v6 的版本和字段组合不相互混用。
+
+Snell 入站固定 TCP listener；其 UDP 能力是 TCP 会话上的 packet API，不应在资源计划中伪造成 UDP 监听。客户端导出按用户生成完整 Snell outbound JSON，并将 v5 入站映射为 v4 outbound、v6 映射为 v6；标准 URI 无法无损表达，Agent links 返回结构化 warning 且不生成伪链接，SubMan 明确 unsupported。Snell 的接管、重建、Agent 脱敏和 CAS 生命周期由专项测试覆盖；目标二进制 `check` 只在配置可用时执行，不能替代 UDP payload、公网、生产或真实 SubMan 证据。
+
 ## 第一阶段已实现的公共契约
 
-`SB_PROTOCOL_REGISTRY` 仅登记已有实际适配器的四个产品预设。它不是上游全部 type 的可用列表；尚未实现的能力在覆盖矩阵单独说明。
+`SB_PROTOCOL_REGISTRY` 仅登记已有实际适配器的当前产品预设（包括 Snell 等阶段性接入项）。它不是上游全部 type 的可用列表；尚未实现的能力在覆盖矩阵单独说明。
 
 | 旧输入/alias | state_id | runtime_id | agent_id | family / preset | 上游角色/type |
 |---|---|---|---|---|---|
@@ -20,6 +26,7 @@ HTTP 的认证字段单独遵循 Basic 约束（用户名无冒号、双方无 A
 | `mixed` | `mixed` | `mixed` | `mixed` | mixed / plain | inbound / mixed |
 | `hy2`、`hysteria2` | `hy2` | `hy2` | `hysteria2` | hysteria2 / tls | inbound / hysteria2 |
 | `anytls` | `anytls` | `anytls` | `anytls` | anytls / tls | inbound / anytls |
+| `snell` | `snell` | `snell` | `snell` | snell / psk | inbound / snell |
 
 不能修改 `vless` 历史别名的含义来接入普通 VLESS。后续普通 VLESS 将使用独立的 preset/state ID，配置识别还必须检查完整 TLS/transport 对象。
 
@@ -56,23 +63,23 @@ Agent 保留原 `protocols` 对象，增加 `protocol_registry`。当前实例�
 
 这是清单层保护，不是字段的语义往返证明。额外用户、未建模参数以及出站、端点、DNS、证书与路由的完整可恢复性仍需后续保护；通用实例和删除引用保护也仍在下节的待实现范围。
 
-## 后续通用实例与组合设计（尚未实现）
+## 后续通用实例与组合设计（部分已实现，剩余能力待实现）
 
 ### 已接入的只读实例兼容接口
 
-Agent 节点/分享列表和 REALITY 客户端导出通过 `list_protocol_instance_ids`、`protocol_default_instance_id` 与 `load_protocol_instance_state` 共用实例枚举/加载契约。实例身份是 `(state_id, instance_id)`，不能把不同协议的 `main` 当成同一个实例。旧 Mixed、Hysteria2、AnyTLS 和 schema 1 REALITY 以虚拟 `main` 适配；schema 2 REALITY 保留既有清单顺序、ID 和默认实例。加载后 `SB_INSTANCE_ID` 表示统一身份，既有 `SB_*` 参数和公开 Agent JSON 字段继续兼容。
+Agent 节点/分享列表和 REALITY 客户端导出通过 `list_protocol_instance_ids`、`protocol_default_instance_id` 与 `load_protocol_instance_state` 共用实例枚举/加载契约。实例身份是 `(state_id, instance_id)`，不能把不同协议的 `main` 当成同一个实例。旧 Mixed、Hysteria2、AnyTLS、Snell 和 schema 1 REALITY 以虚拟 `main` 适配；schema 2 REALITY 保留既有清单顺序、ID 和默认实例。加载后 `SB_INSTANCE_ID` 表示统一身份，既有 `SB_*` 参数和公开 Agent JSON 字段继续兼容。
 
 枚举捕获全部结果和退出状态，未知/缺失状态、无效 ID 或损坏多实例清单不得输出有效前缀。只读接口不协调索引、不迁移状态、不生成凭据，不接收外部 shell 状态导入。REALITY 客户端导出也不再为读取 schema 1 自动创建实例目录；任一实例构建失败时不输出前面已生成的片段。Agent 保留完整清单验证和失败时无部分节点的语义。
 
-这是统一实例模型的旧格式适配层，尚未提供非 REALITY 协议的多实例持久化或写命令；后续新增协议需接入该接口和下述通用状态/事务设计，不能另建 Agent 特例循环。
+这是统一实例模型的旧格式适配层；Mixed、SOCKS、HTTP、Shadowsocks、Trojan、VMess、Hysteria2、AnyTLS 和 Snell 已提供类型化多实例持久化/写命令，其余非 REALITY 协议仍需接入该接口和下述通用状态/事务设计，不能另建 Agent 特例循环。
 
 ### 后续持久化模型
 
 结构化存储基础使用 `protocols/instances/<protocol>.json`，包含 `schema_version`、`protocol`、`revision`、`default_instance_id` 和有序 `instances`。每个实例具有稳定 `id`、`name`、`tag`、`listen`、`authentication`、`outbound_policy` 和 `dependencies`；不是 sing-box JSON 透传。第一种字段适配器为 Mixed，其他协议必须实现明确的校验/渲染 handler 后才能使用。当前 Mixed 仅允许空依赖数组，TLS/transport 和组合引用留给适用协议的类型化适配器，不能伪造通用开关。
 
-`structured_instance_store_candidate` 对 create/replace/delete/default 执行完整旧/新文档校验及 revision 比较；replace 保留稳定 tag，默认实例删除后选择剩余首项，清空后默认 ID 为空。无变更请求不增加 revision。`publish_structured_instance_store` 是受管状态文件的原子写原语：固定路径、私有目录/文件、条件写锁、同目录 staging、备份、原子替换、postcheck/rollback；它不是配置/服务/防火墙事务的替代品。未来写入口仍须把它置于现有 managed snapshot 和配置发布流程中。
+`structured_instance_store_candidate` 对 create/replace/delete/default 执行完整旧/新文档校验及 revision 比较；replace 保留稳定 tag，默认实例删除后选择剩余首项，清空后默认 ID 为空。无变更请求不增加 revision。`publish_structured_instance_store` 是受管状态文件的原子写原语：固定路径、私有目录/文件、条件写锁、同目录 staging、备份、原子替换、postcheck/rollback；它不是配置/服务/防火墙事务的替代品。已接入的协议写入口还必须把它置于现有 managed snapshot 和配置发布流程中，剩余协议不得只发布孤立 JSON 片段。
 
-`render_structured_instance_inbounds` 和 `render_structured_instance_route_rules` 是类型化纯渲染器，读取不产生认证材料，不修改旧 `.env`。当前存储尚未成为旧菜单、Agent、健康修复或接管的状态来源，也没有启动时自动迁移。完整启用 Mixed 多实例前必须同时完成全部实例匹配、写入口、端口资源归属、删除、导出与重建，不能只修改注册表的 `multi_instance` 标记。
+`render_structured_instance_inbounds` 和 `render_structured_instance_route_rules` 是类型化纯渲染器，读取不产生认证材料，不修改旧 `.env`。已接入协议的菜单、Agent、健康修复和接管使用经过校验的结构化状态；没有启动时自动迁移。完整启用剩余协议或扩展 Mixed 多实例前必须同时完成全部实例匹配、写入口、端口资源归属、删除、导出与重建，不能只修改注册表的 `multi_instance` 标记。
 
 当前数据层与服务端候选共用固定监听冲突预检，区分 TCP/UDP、IPv4 通配、IPv6 等价表示和 `::` 双栈重叠。地址字段接受 IPv4、纯十六进制 IPv6 与 `::ffff:IPv4` 文本，不接受主机名或 zone；状态保留原始文本，资源计划把等价 mapped 地址归一为 IPv4。Mixed 新建明文入口的安全监听/公网风险确认必须由后续写入口处理；内部存储原语不更改旧实例监听行为。
 
@@ -86,7 +93,7 @@ Agent 节点/分享列表和 REALITY 客户端导出通过 `list_protocol_instan
 
 ## 资源与事务扩展（监听预检与删除引用保护已接入，其余待实现）
 
-`managed_listener_plan <config_file>` 一次有界私有捕获后生成无认证字段的监听数组，字段为 `owner`（稳定 inbound tag）、`protocol`（内部状态 ID）、规范化 `address`、`family`、`transport`、`port`、`dual_stack`。监听传输取自注册表的 `listen_networks`，不是业务 `traffic_networks`；当前六个预设由此共享声明。资源计划本身不是新的协议接管或配置透传入口，不为未实现协议开放能力。缺失 tag、未知类型、无效地址/端口、重复 tag、特殊 netns/bind_interface/reuse_addr 及未建模的固定 Endpoint 监听均拒绝，不输出部分清单或原配置诊断。
+`managed_listener_plan <config_file>` 一次有界私有捕获后生成无认证字段的监听数组，字段为 `owner`（稳定 inbound tag）、`protocol`（内部状态 ID）、规范化 `address`、`family`、`transport`、`port`、`dual_stack`。监听传输取自注册表的 `listen_networks`，不是业务 `traffic_networks`；当前已接入预设由此共享声明。资源计划本身不是新的协议接管或配置透传入口，不为未实现协议开放能力。缺失 tag、未知类型、无效地址/端口、重复 tag、特殊 netns/bind_interface/reuse_addr 及未建模的固定 Endpoint 监听均拒绝，不输出部分清单或原配置诊断。
 
 `2026090800` 增加显式 `features.listen_network_selection=true` 的适配契约：只有声明该能力的适配器，才允许实例通过 `network` 从 `listen_networks` 中选择真实固定监听。字符串与数组按目标核心 NetworkList 语义解析；省略、`null`、空数组使用默认网络，空字符串、未知网络、重复项及超出注册能力的网络被拒绝。未声明能力的旧预设遇到 `network` 字段也拒绝，不将 SOCKS 的 UDP 业务误作固定 UDP 监听。空或畸形 `listen_networks` 不能再产生成功的空资源清单。此契约已用测试专属 Shadowsocks 元数据和两版真实核心验证，但不把该测试元数据加入公开注册表，不代表 Shadowsocks 生命周期已实现。
 
@@ -138,7 +145,7 @@ WS 的 `Sec-WebSocket-Protocol` 支持单个 token（字符串或单元素数组
 
 profile 含完整请求头，可能包含调用方的认证材料；它是配置构造数据，不得直接用作 Agent nodes/status 的安全摘要。检查失败只输出固定错误分类，不能把 jq 原始诊断或输入字段写入日志。
 
-返回 profile 不能证明构建依赖可用或协议已实现：在 `2026090803` 阶段 VMess/Trojan/普通 VLESS 的状态写入、接管、生命周期、菜单、Agent 与 SubMan 尚未接通，公开注册表为七项。`2026090804` 单独接入 Trojan 第八预设，具体 typed record、TLS 信任、分享边界见 [Trojan 契约](../../agents/sing-box-vps-agent-runbook.md#trojan-typed-instance-contract)，最终证据见实施记录。随后同一版本增量接入 VMess 第九预设，具体 typed record、`security`/`alter_id`、TLS 信任、V2Ray transport、分享和 SubMan 边界见 [VMess 契约](../../agents/sing-box-vps-agent-runbook.md#vmess-typed-instance-contract)。普通 VLESS 仍待接通。真实 transport fixture 仅验证这些原语构造出的隔离连接，不能替代最终协议生命周期验收。
+返回 profile 不能证明构建依赖可用或协议已实现：早期 `2026090803` 阶段只记录了 transport 原语，公开注册表当时为七项。随后 `2026090804` 增量接入 Trojan 第八、VMess 第九、普通 VLESS 第十和 Snell 第十一预设；具体 typed record、TLS/transport、分享和 SubMan 边界分别见对应 runbook 契约及实施记录。Snell 的 v5/v6 记录和出站版本映射见 [Snell 契约](../../agents/sing-box-vps-agent-runbook.md#snell-typed-instance-contract)。真实 transport fixture 仅验证隔离原语构造，不能替代最终协议生命周期验收；剩余协议仍在完整目标范围内。
 
 ### 完整适配接入清单
 

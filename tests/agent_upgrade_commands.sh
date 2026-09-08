@@ -117,11 +117,14 @@ jq -e '
   and .schema
   and (.commands | type == "object")
   and (.interactive_features | type == "object")
-  and (.protocols | keys | sort == ["anytls", "http", "hysteria2", "mixed", "shadowsocks", "socks", "trojan", "vless-plain", "vless-reality", "vmess"])
+  and (.protocols | keys | sort == ["anytls", "http", "hysteria2", "mixed", "shadowsocks", "snell", "socks", "trojan", "vless-plain", "vless-reality", "vmess"])
   and .multi_protocol_coexistence == true
   and .protocols["vless-reality"].multi_instance == true
   and .protocols.trojan.multi_instance == true
   and .protocols.trojan.subman_sync == true
+  and .protocols.snell.multi_instance == true
+  and .protocols.snell.client_export == true
+  and .protocols.snell.subman_sync == false
   and .features.network_stack.inbound == ["ipv4_only", "ipv6_only", "dual_stack"]
   and .features.subman.supported_protocols == ["vless-reality", "vless-plain", "hysteria2", "shadowsocks", "trojan", "vmess"]
   and (.commands["upgrade-check"].mutation == false)
