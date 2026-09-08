@@ -36,6 +36,8 @@
 
 冻结后的尾段 `/tmp/sbv-trojan-gate3-remaining3.log` 最终退出 0，逐项 `PASS` 为 46/46；与第三轮前 49 项合起来覆盖本轮选定的 95 项本地测试，不声称单次完整门禁或全部 95 项同一初始源码快照。最终运行时仍为 `5cc640772851d2aa2e542adecda82ed5dd3cc0df220b5f146e481e1a9a633827`，新增 Trojan 专项与 Docker 均已覆盖该版本；实际 Bash 4.2 分享、SubMan、菜单和状态测试也通过。独立最终预审没有确认的 P1/P2。当前工具没有原生 `/review` 执行入口，原子提交后使用独立审查员与父线程核对精确提交范围作为等效复审。版本本轮仅递增一次至 `2026090804`；完整全协议目标仍未完成，未 push 或部署，用户未跟踪 `1`、`2` 保留。
 
+`5bccee1` 的立即提交复审未发现运行时代码 P1/P2，但发现 README 和 Agent 上层索引遗漏 Trojan、部分能力列表仍写七协议。随后仅补齐文档索引、公开 ID、命令示例、SubMan/导出边界与最新验证入口，运行时代码、上述哈希和版本不变；历史 Shadowsocks 阶段证据保留，不改写成 Trojan 证据。
+
 ## 2026-09-08：V2Ray 传输组合与真实数据路径基础
 
 从 `4460aa1` 继续原始完整目标；工作树只有既有未跟踪文件 `1`、`2`，未读取或修改。基线 `bash dev/verification/run.sh` 的 `dev/verification-runs/20260908060621` 退出 0，为 local 空变更门禁，不代表全量回归。GitHub `releases/latest` 重新确认 `v1.14.0` 为 stable，非 draft/prerelease；本轮仍固定 1.13.18/1.14.0。Context7 首先 resolve/query `/sagernet/sing-box`，结果仅为 testing；随后按固定 tag 的 `option/v2ray_transport.go`、`transport/v2ray/transport.go` 和各 transport client/server 实现核对。1.13.18 与 1.14.0 的 WebSocket server 源码完全相同，transport option 差异主要为新增 schema 描述，未改变本轮字段。
