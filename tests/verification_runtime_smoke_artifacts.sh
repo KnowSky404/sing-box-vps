@@ -35,6 +35,8 @@ REMOTE_SHADOWSOCKS_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/shadowsocks.env"
 REMOTE_SHADOWSOCKS_STORE_FILE="${REMOTE_PROTOCOLS_DIR}/instances/shadowsocks.json"
 REMOTE_TROJAN_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/trojan.env"
 REMOTE_TROJAN_STORE_FILE="${REMOTE_PROTOCOLS_DIR}/instances/trojan.json"
+REMOTE_VLESS_PLAIN_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/vless-plain.env"
+REMOTE_VLESS_PLAIN_STORE_FILE="${REMOTE_PROTOCOLS_DIR}/instances/vless-plain.json"
 REMOTE_INDEX_FILE="${REMOTE_PROTOCOLS_DIR}/index.env"
 REMOTE_ASSERT_LOG_FILE="${TMP_DIR}/remote-assert.log"
 REMOTE_DISPATCH_LOG_FILE="${TMP_DIR}/remote-dispatch.log"
@@ -1233,6 +1235,8 @@ perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/shadowsocks.env|state_fi
 perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/shadowsocks.json|store_file='"${REMOTE_SHADOWSOCKS_STORE_FILE}"'|g' "\${script_file}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/trojan.env|state_file='"${REMOTE_TROJAN_STATE_FILE}"'|g' "\${script_file}"
 perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/trojan.json|store_file='"${REMOTE_TROJAN_STORE_FILE}"'|g' "\${script_file}"
+perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/vless-plain.env|state_file='"${REMOTE_VLESS_PLAIN_STATE_FILE}"'|g' "\${script_file}"
+perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/vless-plain.json|store_file='"${REMOTE_VLESS_PLAIN_STORE_FILE}"'|g' "\${script_file}"
 cat > "\${script_file}.wrapper" <<'WRAP_EOF'
 eval "\$(declare -f verification_run_protocol_probes | sed '1s/verification_run_protocol_probes/verification_run_protocol_probes__original/')"
 verification_run_protocol_probes() {
@@ -1258,6 +1262,10 @@ verification_finalize_scenario() {
   verification_finalize_scenario__original "\$@"
   if [[ "\${VERIFY_CURRENT_SCENARIO:-}" == "fresh_install_vmess" ]]; then
     verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/protocols/instances/vmess.json" '{"schema_version":1,"protocol":"vmess","revision":1,"default_instance_id":"main","instances":[{"id":"main","name":"VMess verification","tag":"vmess-in","listen":{"address":"127.0.0.1","port":1085},"authentication":{"users":[{"name":"vmess-user","uuid":"11111111-1111-4111-8111-111111111111","alter_id":0,"security":"auto"}]},"tls":{"enabled":true,"server_name":"vmess.example"},"client_trust":"certificate","transport":{"type":"none"},"outbound_policy":"default","dependencies":[]}]}'
+  fi
+  if [[ "\${VERIFY_CURRENT_SCENARIO:-}" == "fresh_install_vless_plain" ]]; then
+    verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/protocols/vless-plain.env" $'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2'
+    verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/protocols/instances/vless-plain.json" '{"schema_version":1,"protocol":"vless-plain","revision":1,"default_instance_id":"main","instances":[{"id":"main","name":"VLESS verification","tag":"vless-plain-in","listen":{"address":"127.0.0.1","port":1086},"authentication":{"users":[{"name":"probe","uuid":"11111111-1111-4111-8111-111111111111","flow":""}]},"tls":{"enabled":false},"client_trust":"system","transport":{"type":"none"},"outbound_policy":"default","dependencies":[]}]}'
   fi
 }
 
@@ -1298,6 +1306,14 @@ verification_scenario_fresh_install_vmess() {
   verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/config.json" '{"inbounds":[{"type":"vmess","tag":"vmess-in","listen":"127.0.0.1","listen_port":1085,"users":[{"name":"vmess-user","uuid":"11111111-1111-4111-8111-111111111111","alterId":0,"security":"auto"}],"tls":{"enabled":true,"server_name":"vmess.example"}}]}'
   verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/protocols/vmess.env" $'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2'
   verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/protocols/instances/vmess.json" '{"schema_version":1,"protocol":"vmess","revision":1,"default_instance_id":"main","instances":[{"id":"main","name":"VMess verification","tag":"vmess-in","listen":{"address":"127.0.0.1","port":1085},"authentication":{"users":[{"name":"vmess-user","uuid":"11111111-1111-4111-8111-111111111111","alter_id":0,"security":"auto"}]},"tls":{"enabled":true,"server_name":"vmess.example"},"client_trust":"certificate","transport":{"type":"none"},"outbound_policy":"default","dependencies":[]}]}'
+}
+
+verification_scenario_fresh_install_vless_plain() {
+  printf 'SCENARIO=fresh_install_vless_plain\n'
+  printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/config.json" '{"inbounds":[{"type":"vless","tag":"vless-plain-in","listen":"127.0.0.1","listen_port":1086,"users":[{"name":"probe","uuid":"11111111-1111-4111-8111-111111111111"}]}]}'
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/protocols/vless-plain.env" $'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2'
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/protocols/instances/vless-plain.json" '{"schema_version":1,"protocol":"vless-plain","revision":1,"default_instance_id":"main","instances":[{"id":"main","name":"VLESS verification","tag":"vless-plain-in","listen":{"address":"127.0.0.1","port":1086},"authentication":{"users":[{"name":"probe","uuid":"11111111-1111-4111-8111-111111111111","flow":""}]},"tls":{"enabled":false},"client_trust":"system","transport":{"type":"none"},"outbound_policy":"default","dependencies":[]}]}'
 }
 
 verification_scenario_upgrade_rollback_1_13_to_1_14() {
@@ -1378,6 +1394,7 @@ grep -Fq 'fresh_install_http' "${run_dir}/scenarios.txt"
 grep -Fq 'fresh_install_shadowsocks' "${run_dir}/scenarios.txt"
 grep -Fq 'fresh_install_trojan' "${run_dir}/scenarios.txt"
 grep -Fq 'fresh_install_vmess' "${run_dir}/scenarios.txt"
+grep -Fq 'fresh_install_vless_plain' "${run_dir}/scenarios.txt"
 grep -Fq 'upgrade_rollback_1_13_to_1_14' "${run_dir}/scenarios.txt"
 grep -Fq 'remote_target=docker:test-container' "${run_dir}/summary.log"
 grep -Fq 'remote_target=docker:test-container' "${TMP_DIR}/stdout.txt"
@@ -1395,6 +1412,9 @@ grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/fresh_install_
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/fresh_install_trojan/protocol-probes/trojan/result.env"
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vmess/config.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vmess/protocols/instances/vmess.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless_plain/config.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless_plain/protocols/vless-plain.env" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless_plain/protocols/instances/vless-plain.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/listeners.ss-lntp.txt" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/client.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/probe.stdout.txt" ]]
@@ -1438,6 +1458,7 @@ grep -Fqx 'fresh_install_http' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'fresh_install_shadowsocks' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'fresh_install_trojan' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'fresh_install_vmess' "${REMOTE_DISPATCH_LOG_FILE}"
+grep -Fqx 'fresh_install_vless_plain' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'upgrade_1_13_to_1_14' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'runtime_smoke' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'multi_protocol_coexistence' "${REMOTE_DISPATCH_LOG_FILE}"

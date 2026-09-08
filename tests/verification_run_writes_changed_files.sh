@@ -381,6 +381,13 @@ verification_scenario_fresh_install_vmess() {
   verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/instances/vmess.json" '{"schema_version":1,"protocol":"vmess","revision":1,"default_instance_id":"main","instances":[{"id":"main","name":"VMess verification","tag":"vmess-in","listen":{"address":"127.0.0.1","port":1085},"authentication":{"users":[{"name":"vmess-user","uuid":"11111111-1111-4111-8111-111111111111","alter_id":0,"security":"auto"}]},"tls":{"enabled":true,"server_name":"vmess.example"},"client_trust":"certificate","transport":{"type":"none"},"outbound_policy":"default","dependencies":[]}]}'
 }
 
+verification_scenario_fresh_install_vless_plain() {
+  printf 'SCENARIO=fresh_install_vless_plain\n'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/config.json" '{"inbounds":[{"type":"vless","tag":"vless-plain-in","listen":"127.0.0.1","listen_port":1086,"users":[{"name":"probe","uuid":"11111111-1111-4111-8111-111111111111"}]}]}'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/vless-plain.env" $'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/instances/vless-plain.json" '{"schema_version":1,"protocol":"vless-plain","revision":1,"default_instance_id":"main","instances":[{"id":"main","name":"VLESS verification","tag":"vless-plain-in","listen":{"address":"127.0.0.1","port":1086},"authentication":{"users":[{"name":"probe","uuid":"11111111-1111-4111-8111-111111111111","flow":""}]},"tls":{"enabled":false},"client_trust":"system","transport":{"type":"none"},"outbound_policy":"default","dependencies":[]}]}'
+}
+
 verification_scenario_upgrade_1_13_to_1_14() {
   printf 'SCENARIO=upgrade_1_13_to_1_14\n'
   verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/upgrade.json" '{"ok":true,"installed":"1.14.0","transaction":{"status":"success","result_persisted":true}}'
@@ -463,7 +470,7 @@ grep -Fqx 'tests/new_untracked_case.sh' "${run_dir}/changed-files.txt"
 
 # Check scenarios
 scenarios=$(paste -sd, "${run_dir}/scenarios.txt")
-[[ "${scenarios}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,fresh_install_trojan,fresh_install_vmess,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" ]] || {
+[[ "${scenarios}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,fresh_install_trojan,fresh_install_vmess,fresh_install_vless_plain,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" ]] || {
   printf 'unexpected scenarios: %s\n' "${scenarios}" >&2; exit 1
 }
 
@@ -490,6 +497,9 @@ grep -Fq 'remote_target=docker:test-container' "${TMP_DIR}/stdout.txt"
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vmess/config.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vmess/protocols/vmess.env" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vmess/protocols/instances/vmess.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless_plain/config.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless_plain/protocols/vless-plain.env" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless_plain/protocols/instances/vless-plain.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/result.env" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/upgrade.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/transaction-result.json" ]]
@@ -597,7 +607,7 @@ grep -Fqx 'install.sh' "${run_dir_skip}/changed-files.txt"
 grep -Fqx 'README.md' "${run_dir_skip}/changed-files.txt"
 grep -Fqx 'tests/new_untracked_case.sh' "${run_dir_skip}/changed-files.txt"
 scenarios_skip=$(paste -sd, "${run_dir_skip}/scenarios.txt")
-[[ "${scenarios_skip}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,fresh_install_trojan,fresh_install_vmess,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" ]] || {
+[[ "${scenarios_skip}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,fresh_install_trojan,fresh_install_vmess,fresh_install_vless_plain,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" ]] || {
   printf 'unexpected scenarios for skip run: %s\n' "${scenarios_skip}" >&2; exit 1
 }
 skip_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
@@ -613,7 +623,7 @@ env -u VERIFY_SKIP_LOCAL_TESTS \
 
 run_dir_remote_framework=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout-remote-framework.txt")
 scenarios_remote_framework=$(paste -sd, "${run_dir_remote_framework}/scenarios.txt")
-[[ "${scenarios_remote_framework}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,fresh_install_trojan,fresh_install_vmess,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke,uninstall_and_reinstall" ]] || {
+[[ "${scenarios_remote_framework}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,fresh_install_trojan,fresh_install_vmess,fresh_install_vless_plain,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke,uninstall_and_reinstall" ]] || {
   printf 'unexpected scenarios for remote framework change: %s\n' "${scenarios_remote_framework}" >&2; exit 1
 }
 grep -Fqx 'tests/verification_artifact_dir_layout.sh|1' "${TMP_DIR}/local-tests.log"

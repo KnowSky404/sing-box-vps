@@ -38,12 +38,17 @@ EOF
 
 output=$(cat "${OUTPUT_FILE}")
 
-if [[ "${SELECTED_PROTOCOLS_CSV}" != "vless-reality,mixed,hy2,anytls,socks,http,shadowsocks" ]]; then
+if [[ "${SELECTED_PROTOCOLS_CSV}" != "vless-reality,vless-plain,mixed,hy2,anytls,socks,http,shadowsocks,trojan,vmess" ]]; then
   printf 'expected blank selection to install all available protocols, got %s\n' "${SELECTED_PROTOCOLS_CSV}" >&2
   exit 1
 fi
 
 if [[ "${output}" != *"留空则安装全部可用协议"* ]]; then
   printf 'expected prompt to mention blank selection installs all, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${output}" != *"10. VLESS"* || "${output}" == *"10. VLESS + REALITY"* ]]; then
+  printf 'expected menu item 10 to identify ordinary VLESS separately, got:\n%s\n' "${output}" >&2
   exit 1
 fi

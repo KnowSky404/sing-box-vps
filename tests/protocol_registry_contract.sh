@@ -14,10 +14,10 @@ source "${TEST_DIR}/install.sh"
 
 registry=$(protocol_registry_json)
 jq -e '
-  length == 9 and
-  ([.[].state_id] | unique | length == 9) and
-  ([.[].agent_id] | unique | length == 9) and
-  ([.[].menu_order] | sort == [1,2,3,4,5,6,7,8,9]) and
+  length == 10 and
+  ([.[].state_id] | unique | length == 10) and
+  ([.[].agent_id] | unique | length == 10) and
+  ([.[].menu_order] | sort == [1,2,3,4,5,6,7,8,9,10]) and
   all(.[]; .implemented == true and .available == null and .validated.status == "not_assessed") and
   any(.[]; .state_id == "shadowsocks" and
     .features.listen_network_selection == true and
@@ -30,6 +30,11 @@ jq -e '
     .features.multi_instance == true and
     .features.listen_transport_projection == true and
     .features.client_export == true)
+  and any(.[]; .state_id == "vless-plain" and
+    .runtime_id == "vless" and .agent_id == "vless-plain" and
+    .subman_type == "vless" and .features.multi_user == true and
+    .features.listen_transport_projection == true and
+    .features.client_export == true and .features.subman_sync == true)
 ' >/dev/null <<< "${registry}"
 capabilities=$(agent_capabilities_json)
 jq -e '
@@ -43,6 +48,8 @@ jq -e '
   ($plain.operations_by_protocol.trojan == ["create", "replace", "delete", "default", "recover"]) and
   ($plain.protocols | index("vmess") != null) and
   ($plain.operations_by_protocol.vmess == ["create", "replace", "delete", "default", "recover"]) and
+  ($plain.protocols | index("vless-plain") != null) and
+  ($plain.operations_by_protocol["vless-plain"] == ["create", "replace", "delete", "default", "recover"]) and
   .features.mixed_instances.operations == $plain.operations_by_protocol.mixed
 ' >/dev/null <<< "${capabilities}"
 jq -e --argjson registry "${registry}" '
@@ -57,6 +64,8 @@ jq -e --argjson registry "${registry}" '
   any(.protocol_registry[]; .state_id == "vmess" and
     .features.listen_transport_projection == true and
     .capabilities.listen_transport_projection == true) and
+  any(.protocol_registry[]; .state_id == "vless-plain" and
+    .capabilities.multi_user == true and .capabilities.subman_sync == true) and
   (.features.subman.supported_protocols | index("trojan") != null) and
   .features.subman.supported_protocols == ($registry | map(select(.subman_type != "") | .agent_id))
 ' >/dev/null <<< "${capabilities}"
@@ -67,7 +76,7 @@ jq -e --argjson registry "${registry}" '
 [[ "$(state_protocol_to_runtime vless-reality)" == vless+reality ]]
 [[ "$(agent_protocol_id hy2)" == hysteria2 ]]
 [[ "$(protocol_inbound_tag hysteria2)" == hy2-in ]]
-for unknown in unknown '' '../mixed' 'mixed;touch /tmp/unsafe' '$(false)' 'vless-plain'; do
+for unknown in unknown '' '../mixed' 'mixed;touch /tmp/unsafe' '$(false)'; do
   for handler in normalize_protocol_id state_protocol_to_runtime protocol_inbound_tag protocol_state_file \
     build_inbound_for_protocol build_certificate_provider_for_protocol build_protocol_route_rules save_protocol_state; do
     if "${handler}" "${unknown}" > "${TEST_DIR}/unknown.stdout" 2> "${TEST_DIR}/unknown.stderr"; then
@@ -82,7 +91,7 @@ mkdir -p "${SB_PROTOCOL_STATE_DIR}"
 for protocol in $(list_registered_protocols); do
   protocol_registry_require_handlers "${protocol}"
   [[ "$(protocol_option_to_id "$(protocol_registry_field "${protocol}" menu_order)")" == "${protocol}" ]]
-  if [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" ]]; then
+  if [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" ]]; then
     printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2\n' > "$(protocol_state_file "${protocol}")"
     mkdir -p "${SB_PROTOCOL_STATE_DIR}/instances"
     if [[ "${protocol}" == "socks" ]]; then
@@ -169,6 +178,29 @@ SHADOWSOCKS_STORE_EOF
   ]
 }
 TROJAN_STORE_EOF
+    elif [[ "${protocol}" == "vless-plain" ]]; then
+      cat > "${SB_PROTOCOL_STATE_DIR}/instances/vless-plain.json" <<'VLESS_PLAIN_STORE_EOF'
+{
+  "schema_version": 1,
+  "protocol": "vless-plain",
+  "revision": 1,
+  "default_instance_id": "main",
+  "instances": [
+    {
+      "id": "main",
+      "name": "VLESS contract",
+      "tag": "vless-plain-in",
+      "listen": {"address": "127.0.0.1", "port": 1086},
+      "authentication": {"users": [{"name": "vless-user", "uuid": "11111111-1111-4111-8111-111111111111", "flow": ""}]},
+      "tls": {"enabled": false},
+      "client_trust": "system",
+      "transport": {"type": "none"},
+      "outbound_policy": "default",
+      "dependencies": []
+    }
+  ]
+}
+VLESS_PLAIN_STORE_EOF
     else
       cat > "${SB_PROTOCOL_STATE_DIR}/instances/vmess.json" <<'VMESS_STORE_EOF'
 {
@@ -197,8 +229,8 @@ VMESS_STORE_EOF
     printf 'CONFIG_SCHEMA_VERSION=1\n' > "$(protocol_state_file "${protocol}")"
   fi
 done
-printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan,vmess\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
-[[ "$(list_exportable_client_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nsocks\nhttp\nshadowsocks\ntrojan\nvmess' ]]
+printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan,vmess,vless-plain\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
+[[ "$(list_exportable_client_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nsocks\nhttp\nshadowsocks\ntrojan\nvmess\nvless-plain' ]]
 [[ "$(protocol_registry_field mixed client_export)" == true ]]
 [[ "$(protocol_registry_field mixed multi_instance)" == true ]]
 [[ -z "$(protocol_registry_field mixed subman_type)" ]]
@@ -246,6 +278,18 @@ printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsock
 [[ "$(protocol_registry_field vmess handlers)" == *build_client_vmess_outbounds* ]]
 [[ "$(protocol_registry_field vmess handlers)" == *load_plain_proxy_structured_instance* ]]
 [[ "$(protocol_registry_field vmess handlers)" == *apply_plain_proxy_instance_change* ]]
+[[ "$(protocol_registry_field vless-plain menu_order)" == 10 ]]
+[[ "$(protocol_registry_field vless-plain default_tag)" == vless-plain-in ]]
+[[ "$(protocol_registry_field vless-plain state_id)" == vless-plain ]]
+[[ "$(protocol_registry_field vless-plain agent_id)" == vless-plain ]]
+[[ "$(protocol_registry_field vless-plain runtime_id)" == vless ]]
+[[ "$(protocol_registry_field vless-plain listen_networks)" == tcp,udp ]]
+[[ "$(protocol_registry_field vless-plain subman_type)" == vless ]]
+[[ "$(protocol_registry_field vless-plain share_formats)" == vless ]]
+[[ "$(protocol_registry_field vless-plain handlers)" == *build_vless_plain_inbound_json* ]]
+[[ "$(protocol_registry_field vless-plain handlers)" == *build_client_vless_plain_outbounds* ]]
+[[ "$(protocol_registry_field vless-plain handlers)" == *load_plain_proxy_structured_instance* ]]
+[[ "$(protocol_registry_field vless-plain handlers)" == *apply_plain_proxy_instance_change* ]]
 
 trojan_store_file=$(plain_proxy_structured_store_file trojan)
 trojan_inbounds=$(render_structured_instance_inbounds trojan "${trojan_store_file}" | jq -s .)
@@ -285,6 +329,27 @@ jq -e '
   .[0].network == ["tcp", "udp"] and
   (.[0] | has("tls") | not) and (.[0] | has("transport") | not)
 ' >/dev/null <<< "${vmess_export}"
+
+vless_plain_store_file=$(plain_proxy_structured_store_file vless-plain)
+vless_plain_inbounds=$(render_structured_instance_inbounds vless-plain "${vless_plain_store_file}" | jq -s .)
+jq -e '
+  length == 1 and
+  .[0].type == "vless" and .[0].tag == "vless-plain-in" and
+  .[0].listen == "127.0.0.1" and .[0].listen_port == 1086 and
+  .[0].users[0].name == "vless-user" and
+  .[0].users[0].uuid == "11111111-1111-4111-8111-111111111111" and
+  (.[0].users[0] | has("flow") | not) and (.[0] | has("tls") | not) and
+  (.[0] | has("transport") | not)
+' >/dev/null <<< "${vless_plain_inbounds}"
+vless_plain_export=$(build_client_vless_plain_outbounds 127.0.0.1 | jq -s .)
+jq -e '
+  length == 1 and .[0].type == "vless" and
+  .[0].tag == "vless-plain-main-user-dmxlc3MtdXNlcg==" and
+  .[0].server == "127.0.0.1" and .[0].server_port == 1086 and
+  .[0].uuid == "11111111-1111-4111-8111-111111111111" and
+  .[0].network == ["tcp", "udp"] and
+  (.[0] | has("tls") | not) and (.[0] | has("transport") | not)
+' >/dev/null <<< "${vless_plain_export}"
 
 # Unknown protocol and future schema must not disappear during reconciliation.
 for invalid in $'INSTALLED_PROTOCOLS=mixed,future-protocol\nPROTOCOL_STATE_VERSION=1' \

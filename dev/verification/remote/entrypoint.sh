@@ -599,6 +599,44 @@ verification_load_vmess_probe_record() {
   printf '%s\n' "${record}"
 }
 
+verification_load_vless_plain_probe_record() {
+  local state_file=$1
+  local store_file=$2
+  local tag=$3
+  local record
+
+  [[ -f "${state_file}" && ! -L "${state_file}" ]] || return 1
+  grep -Eq '^[[:space:]]*CONFIG_SCHEMA_VERSION=2([[:space:]]*)$' "${state_file}" || return 1
+  [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  record=$(jq -ce --arg tag "${tag}" '
+    if .schema_version == 1 and .protocol == "vless-plain" and
+       ([.instances[] | select(.tag == $tag)] | length) == 1 then
+      ([.instances[] | select(.tag == $tag)][0] |
+        select(
+          (.listen.address | type == "string" and length > 0) and
+          (.listen.port | type == "number" and floor == . and . >= 1 and . <= 65535) and
+          (.authentication.users | type == "array" and length >= 1 and length <= 128 and
+            all(.[]; type == "object" and
+              (.name | type == "string" and length > 0) and
+              (.uuid | type == "string" and test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89a-fA-F][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")) and
+              ((.flow // "") | IN("", "xtls-rprx-vision")))) and
+          (.tls | type == "object") and
+          (.transport | type == "object" and (.type | IN("none", "http", "ws", "grpc", "quic"))) and
+          (.client_trust | IN("certificate", "system"))
+        ) | {
+          listen: .listen,
+          authentication: .authentication,
+          tls: .tls,
+          transport: .transport,
+          client_trust: .client_trust
+        }
+      )
+    else error("invalid VLESS plain structured state")
+    end
+  ' "${store_file}") || return 1
+  printf '%s\n' "${record}"
+}
+
 verification_generate_protocol_probe_client_config() {
   local protocol=$1
   local config_file=$2
@@ -638,6 +676,10 @@ verification_generate_protocol_probe_client_config() {
   local vmess_alter_id=''
   local vmess_transport_json=''
   local vmess_tls_json=''
+  local vless_plain_state_file=''
+  local vless_plain_store_file=''
+  local vless_plain_tag=''
+  local vless_plain_record=''
 
   case "${protocol}" in
     vless-reality)
@@ -894,6 +936,76 @@ verification_generate_protocol_probe_client_config() {
       output_path=$(verification_artifact_path \
         "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
       verification_generate_vmess_probe_client "${config_file}" "${output_path}" || return 1
+      ;;
+    vless-plain)
+      vless_plain_state_file=/root/sing-box-vps/protocols/vless-plain.env
+      vless_plain_store_file=/root/sing-box-vps/protocols/instances/vless-plain.json
+      output_path=$(verification_artifact_path \
+        "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
+      temp_output_path="${output_path}.tmp.${BASHPID}"
+      rm -f "${temp_output_path}"
+
+      inbound_index=$(jq -r '
+        [(.inbounds // []) | to_entries[] |
+          select(.value.type == "vless" and (.value.tls.reality? == null))][0].key // empty
+      ' "${config_file}") || return 1
+      [[ "${inbound_index}" =~ ^[0-9]+$ ]] || {
+        printf 'missing inbound for protocol generator: %s\n' "${protocol}" >&2
+        return 1
+      }
+      server_port=$(jq -r --argjson idx "${inbound_index}" \
+        '.inbounds[$idx].listen_port // empty' "${config_file}")
+      vless_plain_tag=$(jq -r --argjson idx "${inbound_index}" \
+        '.inbounds[$idx].tag // empty' "${config_file}")
+      verification_require_protocol_probe_field "${protocol}" server_port "${server_port}" || return 1
+      verification_require_protocol_probe_field "${protocol}" inbound_tag "${vless_plain_tag}" || return 1
+      vless_plain_record=$(verification_load_vless_plain_probe_record \
+        "${vless_plain_state_file}" "${vless_plain_store_file}" "${vless_plain_tag}") || {
+        printf 'missing or invalid VLESS plain structured state for protocol generator: %s\n' "${protocol}" >&2
+        return 1
+      }
+
+      if jq -n \
+        --arg server_port "${server_port}" \
+        --argjson record "${vless_plain_record}" \
+        '($record.authentication.users[0]) as $user |
+         ($record.transport) as $transport |
+         ($record.tls) as $tls |
+         {
+           log: {disabled: true},
+           inbounds: [
+             {
+               type: "socks",
+               tag: "local-socks",
+               listen: "127.0.0.1",
+               listen_port: 19080
+             }
+           ],
+           outbounds: [
+             (
+               {
+                 type: "vless",
+                 tag: "proxy",
+                 server: "127.0.0.1",
+                 server_port: ($server_port | tonumber),
+                 uuid: $user.uuid,
+                 network: (if $transport.type == "quic" then ["udp"] else ["tcp", "udp"] end)
+               }
+               + (if ($user.flow // "") != "" then {flow: $user.flow} else {} end)
+               + (if $transport.type != "none" then {transport: $transport} else {} end)
+               + (if $tls.enabled == true then
+                    {tls: {enabled: true, server_name: $tls.server_name, insecure: true}}
+                  else
+                    {}
+                  end)
+             )
+           ]
+         }' > "${temp_output_path}"; then
+        chmod 600 "${temp_output_path}" && mv "${temp_output_path}" "${output_path}"
+      else
+        rm -f "${temp_output_path}"
+        return 1
+      fi
       ;;
     shadowsocks)
       state_file=/root/sing-box-vps/protocols/shadowsocks.env
@@ -1392,6 +1504,9 @@ for scenario in "$@"; do
       ;;
     fresh_install_vmess)
       run_verification_scenario fresh_install_vmess verification_scenario_fresh_install_vmess
+      ;;
+    fresh_install_vless_plain)
+      run_verification_scenario fresh_install_vless_plain verification_scenario_fresh_install_vless_plain
       ;;
     multi_protocol_coexistence)
       run_verification_scenario multi_protocol_coexistence verification_scenario_multi_protocol_coexistence

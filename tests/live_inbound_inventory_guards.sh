@@ -32,8 +32,7 @@ EOF
       cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
 {"inbounds":[
   {"type":"mixed","tag":"mixed-in","listen":"127.0.0.1","listen_port":1080},
-  {"type":"naive","tag":"unknown-in","listen":"127.0.0.1","listen_port":8388,
-   "users":[{"username":"unknown-user","password":"UNKNOWN-PASSWORD-DO-NOT-LOG"}]}
+      {"type":"direct","tag":"unknown-in","listen":"127.0.0.1","listen_port":8388}
 ]}
 EOF
       ;;
@@ -472,7 +471,10 @@ EOF
 write_fixture duplicate-mixed
 validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}"
 
-for fixture in plain-vless implicit-reality disabled-reality disabled-tls duplicate-hy2 duplicate-anytls duplicate-tag bad-structure invalid-json; do
+write_fixture plain-vless
+validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}"
+
+for fixture in implicit-reality disabled-reality disabled-tls duplicate-hy2 duplicate-anytls duplicate-tag bad-structure invalid-json; do
   write_fixture "${fixture}"
   : > "${TMP_DIR}/stdout"
   if validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" > "${TMP_DIR}/stdout" 2> "${TMP_DIR}/stderr"; then
@@ -481,7 +483,7 @@ for fixture in plain-vless implicit-reality disabled-reality disabled-tls duplic
   fi
   [[ ! -s "${TMP_DIR}/stdout" ]]
   case "${fixture}" in
-    plain-vless|implicit-reality|disabled-reality|disabled-tls) grep -Fq 'unsupported_inbound_preset' "${TMP_DIR}/stderr" ;;
+    implicit-reality|disabled-reality|disabled-tls) grep -Fq 'unsupported_inbound_preset' "${TMP_DIR}/stderr" ;;
     duplicate-hy2|duplicate-anytls) grep -Fq 'unsupported_inbound_multiplicity' "${TMP_DIR}/stderr" ;;
     duplicate-tag) grep -Fq 'duplicate_inbound_tag' "${TMP_DIR}/stderr" ;;
     bad-structure) grep -Fq 'invalid_inbounds' "${TMP_DIR}/stderr" ;;

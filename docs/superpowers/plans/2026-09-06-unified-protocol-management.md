@@ -4,6 +4,14 @@
 起点为 `cc12c06`，工作区干净；保留参考基线 `0d0bdac` 之后的下载事务修复。
 本文记录完整目标的进展；阶段提交不代表全协议已交付。
 
+## 2026-09-08：普通 VLESS 管理链路接入（阶段交付）
+
+从 VMess 阶段继续原始完整目标；保留未跟踪文件 `1`、`2`，未读取或修改。Context7 `/sagernet/sing-box` 的 VLESS 文档确认普通 VLESS outbound 需要 `server`、`server_port`、`uuid`，可选 `flow`、`network`、TLS 和 transport；项目仍固定验证 sing-box `1.13.18` 与 `1.14.0`。
+
+本阶段接入第十个 `vless-plain` 预设，保留 `normalize_protocol_id vless` → `vless-reality` 的旧 alias。普通 VLESS 使用独立 schema 2 marker、schema 1 JSON 实例库和实例 CAS 事务，支持 1–128 个用户、按用户 `flow`、TLS `client_trust`、none/http/ws/grpc/quic typed transport、监听资源计划、接管/重建、菜单 10/23、Agent 节点/分享、裸核客户端导出和 SubMan 逐实例逐用户同步。未知字段、HTTPUpgrade、WS early data、服务器私钥输出和无法由 URI 无损表达的条目均 fail closed；SubMan 与真实外部 API 的同步仍未执行。
+
+新增专项门禁：`vless_plain_structured_instance_store.sh`、`vless_plain_instance_lifecycle.sh`、`vless_plain_export_runtime.sh`、`vless_plain_agent_share.sh`、`subman_vless_plain_sync.sh`、`verification_protocol_probe_vless_plain.sh` 以及 `fresh_install_vless_plain` Docker 场景。专项测试覆盖实例 revision stale-write/delete/recreate、TLS/transport/flow 校验、两核心客户端/服务端 `check`、VLESS URI 特殊字段、凭据脱敏、SubMan `synced=3/skipped=2`、普通 VLESS 与 REALITY 的 live discriminator，以及安装后的真实回环 TCP 探针。最终本地门禁运行目录为 `dev/verification-runs/20260908141403`，以两版官方 ARM64 核心通过 108/108 项；最终 Docker 运行目录为 `dev/verification-runs/20260908144031`，15/15 场景 `STATUS=success`、22/22 协议探针 `RESULT=success`，包含普通 VLESS 新装、十协议共存和升级成功/回滚产物。SubMan 仍为 mock，不把静态配置、容器回环或 mock API 当作生产/公网证据。
+
 ## 2026-09-08：VMess 管理链路接入（阶段交付）
 
 从 Trojan 与 V2Ray transport 阶段继续原始完整目标；保留未跟踪文件 `1`、`2`，未读取或修改。Context7 `/sagernet/sing-box` 与固定 1.14.0 源码确认 VMess 入站用户字段为 `name`、UUID、`alterId`，出站安全枚举为 `auto`、`none`、`zero`、`aes-128-cfb`、`aes-128-gcm`、`chacha20-poly1305`；项目同时保留 1.13.18 ARM64 核心兼容检查。

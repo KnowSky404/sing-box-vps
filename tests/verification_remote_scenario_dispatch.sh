@@ -1158,6 +1158,12 @@ verification_scenario_fresh_install_vmess() {
   printf '%s\n' "${VERIFY_CURRENT_SCENARIO}" >> "${REMOTE_DISPATCH_LOG_FILE}"
   verification_run_protocol_probes
 }
+
+verification_scenario_fresh_install_vless_plain() {
+  printf 'SCENARIO=fresh_install_vless_plain\n'
+  printf '%s\n' "${VERIFY_CURRENT_SCENARIO}" >> "${REMOTE_DISPATCH_LOG_FILE}"
+  verification_run_protocol_probes
+}
 WRAP_EOF
 awk -v wrapper_file="${PAYLOAD_FILE}.wrapper" '
   $0 == "if ! mkdir \"${LOCK_DIR}\" 2>/dev/null; then" {
@@ -1222,6 +1228,7 @@ REAL_JQ="${REAL_JQ}" \
     fresh_install_shadowsocks \
     fresh_install_trojan \
     fresh_install_vmess \
+    fresh_install_vless_plain \
     runtime_smoke \
     uninstall_and_reinstall \
     > "${STDOUT_FILE}" \
@@ -1240,6 +1247,7 @@ grep -Fqx 'SCENARIO=fresh_install_http' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=fresh_install_shadowsocks' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=fresh_install_trojan' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=fresh_install_vmess' "${STDOUT_FILE}"
+grep -Fqx 'SCENARIO=fresh_install_vless_plain' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=uninstall_and_reinstall' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=runtime_smoke' "${STDOUT_FILE}"
 grep -Fq '__SING_BOX_VPS_REMOTE_ARTIFACT_BUNDLE_BEGIN__' "${STDOUT_FILE}"
@@ -1293,6 +1301,7 @@ grep -Fq 'verification_scenario_fresh_install_http' "${PAYLOAD_FILE}"
 grep -Fq 'verification_scenario_fresh_install_shadowsocks' "${PAYLOAD_FILE}"
 grep -Fq 'verification_scenario_fresh_install_trojan' "${PAYLOAD_FILE}"
 grep -Fq 'verification_scenario_fresh_install_vmess' "${PAYLOAD_FILE}"
+grep -Fq 'verification_scenario_fresh_install_vless_plain' "${PAYLOAD_FILE}"
 grep -Fq 'verification_scenario_upgrade_rollback_1_13_to_1_14' "${PAYLOAD_FILE}"
 ! grep -Fq 'verification_execute_single_protocol_probe vless-reality /root/sing-box-vps/config.json' "${PAYLOAD_FILE}"
 grep -Fqx 'test:-f|/root/sing-box-vps/protocols/vless-reality.env|' "${ASSERT_LOG_FILE}"

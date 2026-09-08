@@ -331,8 +331,7 @@ registered_protocols=''
 registry_status=0
 registered_protocols=$(list_registered_protocols) || registry_status=$?
 (( registry_status == 0 )) || fail "protocol registry producer failed (status ${registry_status})"
-expected_registered_protocols=$'vless-reality\nmixed\nhy2\nanytls\nsocks\nhttp\nshadowsocks\ntrojan'
-expected_registered_protocols+=$'\nvmess'
+expected_registered_protocols=$'vless-reality\nvless-plain\nmixed\nhy2\nanytls\nsocks\nhttp\nshadowsocks\ntrojan\nvmess'
 [[ "${registered_protocols}" == "${expected_registered_protocols}" ]] || \
   fail "unexpected protocol appeared in the deployable protocol registry: ${registered_protocols}"
 

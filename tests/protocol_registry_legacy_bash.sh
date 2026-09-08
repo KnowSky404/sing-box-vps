@@ -9,6 +9,7 @@ source "${REPO_ROOT}/install.sh"
 # Bash 4.2 container used for the CentOS 7 shell compatibility boundary.
 for mapping in \
   'vless:vless-reality' 'vless+reality:vless-reality' 'vless-reality:vless-reality' \
+  'vless-plain:vless-plain' \
   'mixed:mixed' 'hy2:hy2' 'hysteria2:hy2' 'anytls:anytls' 'trojan:trojan' 'vmess:vmess'; do
   input=${mapping%%:*}
   expected=${mapping#*:}

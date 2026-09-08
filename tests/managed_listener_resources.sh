@@ -34,6 +34,8 @@ for api in managed_listener_plan validate_managed_listener_resources; do
   }
 done
 
+structured_instance_store_validate_address '0:0:0:0:0:ffff:192.0.2.7'
+
 SECRET='listener-test-password-must-not-leak'
 TAG_MARKERS='mixed-default|vless-ipv6|anytls-ipv6|hy2-udp|sensitive-tag|duplicate-tag|first-listener|second-listener|structured-first|structured-second'
 
@@ -114,7 +116,8 @@ jq -n --arg secret "${SECRET}" '
   {inbounds:[
     {type:"mixed",tag:"mixed-default",listen_port:21001},
     {type:"vless",tag:"vless-ipv6",listen:"::1",listen_port:21002,
-      users:[{uuid:"11111111-1111-4111-8111-111111111111",password:$secret}]},
+      users:[{uuid:"11111111-1111-4111-8111-111111111111",password:$secret}],
+      tls:{reality:{}}},
     {type:"anytls",tag:"anytls-ipv6",listen:"2001:0DB8:0:0:0:0:0:AB",listen_port:21003},
     {type:"hysteria2",tag:"hy2-udp",listen:"0.0.0.0",listen_port:21004,
       users:[{name:"test-user",password:$secret}],tls:{enabled:true}}

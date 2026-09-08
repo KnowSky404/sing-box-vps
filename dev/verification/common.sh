@@ -118,6 +118,11 @@ resolve_local_tests() {
       tests/vmess_agent_share.sh \
       tests/vmess_export_runtime.sh \
       tests/subman_vmess_sync.sh \
+      tests/vless_plain_structured_instance_store.sh \
+      tests/vless_plain_instance_lifecycle.sh \
+      tests/vless_plain_agent_share.sh \
+      tests/vless_plain_export_runtime.sh \
+      tests/subman_vless_plain_sync.sh \
       tests/managed_component_graph.sh \
       tests/managed_component_graph_core_startup.sh \
       tests/live_inbound_inventory_guards.sh \
@@ -129,6 +134,7 @@ resolve_local_tests() {
       tests/verification_protocol_probe_shadowsocks.sh \
       tests/verification_protocol_probe_trojan.sh \
       tests/verification_protocol_probe_vmess.sh \
+      tests/verification_protocol_probe_vless_plain.sh \
       tests/reality_sni_validation.sh \
       tests/generate_config_cleans_temp_files_on_failure.sh \
       tests/generate_config_commits_validated_candidate.sh \
@@ -225,6 +231,7 @@ resolve_remote_scenarios() {
       fresh_install_shadowsocks
       fresh_install_trojan
       fresh_install_vmess
+      fresh_install_vless_plain
       multi_protocol_coexistence
       upgrade_1_13_to_1_14
       upgrade_rollback_1_13_to_1_14

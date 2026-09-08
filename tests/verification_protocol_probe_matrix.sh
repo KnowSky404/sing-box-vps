@@ -92,7 +92,7 @@ write_probe_harness() {
   local artifact_dir=$3
   local calls_file=$4
   local setup_snippet=${5:-}
-  local index_contents=${6:-$'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,shadowsocks,mystery-protocol'}
+  local index_contents=${6:-$'INSTALLED_PROTOCOLS=vless-reality,vless-plain,mixed,hy2,anytls,shadowsocks,mystery-protocol'}
   local index_contents_shell
   printf -v index_contents_shell '%q' "${index_contents}"
 
@@ -177,12 +177,15 @@ if bash "${TMP_DIR}/probe-harness-supported-failure.sh" \
 fi
 
 grep -Fqx 'vless-reality|/root/sing-box-vps/config.json' "${FAILURE_CALLS_FILE}"
+grep -Fqx 'vless-plain|/root/sing-box-vps/config.json' "${FAILURE_CALLS_FILE}"
 grep -Fqx 'mixed|/root/sing-box-vps/config.json' "${FAILURE_CALLS_FILE}"
 grep -Fqx 'hy2|/root/sing-box-vps/config.json' "${FAILURE_CALLS_FILE}"
 grep -Fqx 'anytls|/root/sing-box-vps/config.json' "${FAILURE_CALLS_FILE}"
 grep -Fqx 'shadowsocks|/root/sing-box-vps/config.json' "${FAILURE_CALLS_FILE}"
 grep -Fqx 'RESULT=success' \
   "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/vless-reality/result.env"
+grep -Fqx 'RESULT=failure' \
+  "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/vless-plain/result.env"
 grep -Fqx 'RESULT=failure' \
   "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/mixed/result.env"
 grep -Fqx 'RESULT=failure' \
@@ -202,10 +205,10 @@ write_probe_harness \
   "${ALIAS_ARTIFACT_DIR}" \
   "${ALIAS_CALLS_FILE}" \
   $'verification_execute_single_protocol_probe() {\n  printf \'%s\\n\' "$1" >> "${PROBE_CALLS_FILE}"\n}' \
-  $'INSTALLED_PROTOCOLS=vless,vless+reality,hysteria2,hy2,mixed,mixed'
+  $'INSTALLED_PROTOCOLS=vless,vless+reality,vless-plain,hysteria2,hy2,mixed,mixed'
 
 bash "${TMP_DIR}/probe-harness-alias.sh"
-printf '%s\n' vless-reality hy2 mixed > "${TMP_DIR}/calls-alias.expected"
+printf '%s\n' vless-reality vless-plain hy2 mixed > "${TMP_DIR}/calls-alias.expected"
 cmp "${TMP_DIR}/calls-alias.expected" "${ALIAS_CALLS_FILE}"
 
 INVALID_ARTIFACT_DIR="${TMP_DIR}/artifacts-invalid-id"
@@ -535,6 +538,7 @@ bash "${TMP_DIR}/probe-harness-green.sh" \
   2> "${TMP_DIR}/stderr-green.txt"
 
 grep -Fqx 'vless-reality|/root/sing-box-vps/config.json' "${GREEN_CALLS_FILE}"
+grep -Fqx 'vless-plain|/root/sing-box-vps/config.json' "${GREEN_CALLS_FILE}"
 grep -Fqx 'mixed|/root/sing-box-vps/config.json' "${GREEN_CALLS_FILE}"
 grep -Fqx 'hy2|/root/sing-box-vps/config.json' "${GREEN_CALLS_FILE}"
 grep -Fqx 'anytls|/root/sing-box-vps/config.json' "${GREEN_CALLS_FILE}"
