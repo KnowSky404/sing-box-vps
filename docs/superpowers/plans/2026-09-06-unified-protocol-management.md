@@ -18,6 +18,8 @@
 
 `41c0aa9` 提交后等效审查的定向重跑再次出现核心退出 1，故未直接交付。保留的 `/tmp/tmp.Zd9UKu3zYT/core.log` 明确为 `start service: context canceled`：socket 已存在但 `Box.Start` 尚未结束，测试的停止信号打断了启动。修正仅涉及测试：等待核心完整 `sing-box started` 标记后再观察 PID socket 并停止，失败时保留私有测试目录；不把“socket 存在”当成初始化已完成。随后原生连续 5 轮（共 60 次核心 check/start）与实际 Bash 4.2 的 12 次 check/start 均通过；默认验证入口 `dev/verification-runs/20260908042346` 为 local、退出 0，不冒称重复执行了完整门禁。运行时代码、版本及上述 Docker 被测哈希未改变，同轮修正不再次递增版本。
 
+`aba8880` 修正后的等效审查与两核心测试通过；继续复核异步启动顺序，补充在父进程中预先清空日志，防止子进程尚未执行重定向时误读上一进程的启动标记。最终隔离版本又通过原生连续 3 轮和实际 Bash 4.2 检查，每轮 22 个拒绝场景、12 次真实核心 check/start。两次后续修正均只涉及测试与本记录，没有改变资源计划运行时代码。
+
 ## 2026-09-07：独立 HTTP 与入口 TLS 接入
 
 本轮从 `fe26417` 继续完整目标，重新读取需求、当前工作树和矩阵；基线 `bash dev/verification/run.sh` 在 `dev/verification-runs/20260907135121` 退出 0，但因仅有原有未跟踪文件而为 local 空变更门禁，不能冒称全量基线回归。GitHub `releases/latest` 再次确认稳定版为 `v1.14.0`、非 draft/prerelease。Context7 `/sagernet/sing-box` 仅提供 testing HTTP 文档，随后读取固定 tag `protocol/http/{inbound,outbound}.go` 和对应配置文档：入口有可选 TLS，客户端为 TCP-only HTTP CONNECT，不能替换成 SOCKS 或宣称普通 HTTP outbound 支持 UDP。

@@ -130,7 +130,10 @@ for core in "${SINGBOX_BINARY_113:-}" "${SINGBOX_BINARY_114:-}"; do
     "${core}" check -c "${config}" >"${TMP_DIR}/check.log" 2>&1
     checks=$((checks+1))
     expected=$(managed_listener_plan "${config}" | jq -r 'map(.transport)|join(",")')
-    "${core}" run -c "${config}" >"${TMP_DIR}/core.log" 2>&1 &
+    # Clear in the parent before the asynchronous redirection can run; a
+    # previous process's completed-start marker must never satisfy this run.
+    : >"${TMP_DIR}/core.log"
+    "${core}" run -c "${config}" >>"${TMP_DIR}/core.log" 2>&1 &
     runtime_pid=$!
     # Listener sockets can exist before Box.Start finishes. Wait for the
     # core's completed-start marker before observations and normal shutdown;
