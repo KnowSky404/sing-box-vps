@@ -6,7 +6,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026090802`，`SB_SUPPORT_MAX_VERSION=1.14.0`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026090803`，`SB_SUPPORT_MAX_VERSION=1.14.0`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -69,12 +69,12 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 | socks（独立预设） | `socks` / inbound | 基础内建 | TCP listen；SOCKS4/4a/5；UDP associate/UoT 业务经该 TCP 会话处理；认证可选；无 HTTP/TLS | yes | yes（Linux） | active schema 2 marker + JSON store（`schema_version: 1`）与共享实例事务；yes/yes/yes/yes（实现范围，不等同全协议目标完成） | SOCKS5 + UoT v2 裸核客户端（明文警告） / SOCKS 链接 / no current SubMan | project-real-tcp；六项回归、两核心 check/runtime、菜单、Docker 10/10 与 TCP 14/14 通过；公网原生 UDP 未验证 |
 | http | `http` / inbound | 基础内建；项目兼容 1.13.x；TLS 需用户提供有效证书/私钥引用 | HTTP CONNECT 入口，TCP；入口 TLS 与代理 HTTPS 目标独立；新实例默认回环与认证 | yes | yes（Linux；手工 TLS 文件另行预检） | schema 2 + 共享实例事务；yes/yes/yes/yes；无 legacy migration | HTTP CONNECT TCP 客户端（TLS 嵌入公有证书信任） / 明文 HTTP URI；TLS 返回不可表达 warning / no current SubMan | 两核心 check/TCP/TLS 正反向路径、实际 Bash 4.2、75 项本地门禁；修正测试断言后 Docker 11/11、TCP 16/16；仅本地/容器，非公网或生产证明 |
 | shadowsocks | `shadowsocks` / inbound | 基础内建；项目兼容 1.13.x | TCP/UDP 可分选；九种方法；none/2022 ChaCha 无多用户；项目未建模 relay/mux/plugin | yes | yes（Linux） | schema 2 marker + schema 1 JSON 与共享实例事务；yes/yes/yes/yes；无 legacy migration | 逐用户完整 JSON / SIP002（单网络 warning） / 双网络加密项逐用户同步，单网络/none 跳过，mock-only | 两核心、原生 Bash/实际 Bash 4.2：9 方法 check、每组 7 TCP + 7 UDP marker、错误认证拒绝；最终源码 Docker 12/12、TCP 18/18；公网/生产未验证 |
-| vmess | `vmess` / inbound | 基础内建 | TCP 监听；TLS 和 V2Ray transport（HTTP/WS/gRPC/HTTPUpgrade 等）需合法组合；`alterId>0` 是兼容模式 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check |
-| trojan | `trojan` / inbound | 基础内建 | TCP + TLS；用户、可选 fallback/fallback-for-ALPN、transport；fallback 不是安全性证明 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check |
+| vmess | `vmess` / inbound | 基础内建；QUIC transport 另需 `with_quic` | 原生及 HTTP/WS/gRPC/HTTPUpgrade 外层 TCP，QUIC 外层 UDP + TLS；可承载 TCP/UDP 业务；`alterId>0` 是兼容模式 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check；内部 transport fixture 不等于管理链路验收 |
+| trojan | `trojan` / inbound | 基础内建；QUIC transport 另需 `with_quic` | 外层 TCP 或 QUIC/UDP；TLS 与 transport 分别建模，明文 fixture 不等于安全部署；fallback 不是安全性证明 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check；内部 transport fixture 不等于管理链路验收 |
 | naive-inbound | `naive` / inbound | 入站本体内建；QUIC 路径需要 `with_quic` | TCP 或 UDP；用户和 TLS 必填；UDP 为 HTTP/3/QUIC 路径，不能只以 TCP check 代替 | conditional | yes（tag 已含；QUIC/TLS 仍需） | none；—/—/—/— | — / — / — | registry-check（无 TLS 按预期失败） |
 | hysteria | `hysteria` / inbound | `with_quic`；官方默认 Linux tag 含它 | QUIC/UDP；TLS、认证、QUIC 窗口/拥塞和可选 obfs；不要与 hysteria2 字段混用 | conditional | yes（tag 已含） | none；—/—/—/— | — / — / — | registry-check（无 TLS 按预期失败） |
 | shadowtls | `shadowtls` / inbound | 基础内建 | TCP 包装层；v1/v2/v3 的 password、users、handshake 和 strict/wildcard 约束不同；必须组合内层代理 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check（无 handshake 按预期失败） |
-| vless | `vless` / inbound | 基础内建；普通 VLESS 与旧项目 `vless-reality` 是不同产品预设 | TCP；TLS/REALITY 和 transport 必须按目标版本组合；`xtls-rprx-vision` 是特定 flow，不是通用开关 | yes | yes（Linux） | none（旧 `vless-reality` 另计）；—/—/—/— | — / — / — | registry-check |
+| vless | `vless` / inbound | 基础内建；普通 VLESS 与旧项目 `vless-reality` 是不同产品预设；QUIC 另需 `with_quic` | 外层 TCP 或 QUIC/UDP；TLS/REALITY 和 transport 必须按目标版本组合；`xtls-rprx-vision` 是特定 flow，不是通用开关 | yes | yes（Linux） | none（旧 `vless-reality` 另计）；—/—/—/— | — / — / — | registry-check；内部 transport fixture 不等于管理链路验收 |
 | tuic | `tuic` / inbound | `with_quic`；官方默认 Linux tag 含它 | QUIC/UDP + TLS；UUID/password、UDP relay mode、拥塞控制、0-RTT 等需分别管理 | conditional | yes（tag 已含） | none；—/—/—/— | — / — / — | registry-check（无 TLS 按预期失败） |
 | hysteria2 | `hysteria2` / inbound | `with_quic`；官方默认 Linux tag 含它 | QUIC/UDP + TLS；password、salamander/gecko obfs、masquerade；realm/STUN/端口映射是额外控制面 | conditional | yes（tag 已含） | 旧预设（项目 ID `hy2`）；yes/yes/yes/yes | 裸核客户端 / Hysteria2 URI（受证书算法 warning 约束） / 部分同步 | project-real-tcp（QUIC 传输） |
 | anytls | `anytls` / inbound | 自 1.12.0；基础内建 | TCP + TLS；users/password 和 padding scheme；客户端 metadata 不能由普通 URI 无损表达 | yes | yes（Linux） | 旧预设；yes/yes/yes/yes | AnyTLS client JSON / 无稳定无损 URI / no current SubMan | project-real-tcp |

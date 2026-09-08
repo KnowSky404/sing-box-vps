@@ -4,6 +4,30 @@
 起点为 `cc12c06`，工作区干净；保留参考基线 `0d0bdac` 之后的下载事务修复。
 本文记录完整目标的进展；阶段提交不代表全协议已交付。
 
+## 2026-09-08：V2Ray 传输组合与真实数据路径基础
+
+从 `4460aa1` 继续原始完整目标；工作树只有既有未跟踪文件 `1`、`2`，未读取或修改。基线 `bash dev/verification/run.sh` 的 `dev/verification-runs/20260908060621` 退出 0，为 local 空变更门禁，不代表全量回归。GitHub `releases/latest` 重新确认 `v1.14.0` 为 stable，非 draft/prerelease；本轮仍固定 1.13.18/1.14.0。Context7 首先 resolve/query `/sagernet/sing-box`，结果仅为 testing；随后按固定 tag 的 `option/v2ray_transport.go`、`transport/v2ray/transport.go` 和各 transport client/server 实现核对。1.13.18 与 1.14.0 的 WebSocket server 源码完全相同，transport option 差异主要为新增 schema 描述，未改变本轮字段。
+
+为后续 VMess/Trojan/普通 VLESS 接入增加无副作用的 typed transport 验证与 profile 构造，版本仅递增一次至 `2026090803`。原生 TCP 不向核心输出虚构 transport type；实际 HTTP/WS/gRPC/HTTPUpgrade/QUIC 分别给出外层监听网络、TLS ALPN 和构建依赖。未知字段、原始 JSON 多根、头部注入/碰撞、无效时限及非法 security/flow 组合 fail closed，不写状态、不创建凭据、不申请证书。协议族 API 与旧 alias 分开，公开注册表及菜单保持七项；本阶段没有将普通 VLESS、VMess、Trojan 的完整管理链路标记为已实现。
+
+源代码复核补上两个仅靠配置 check 不足以判定的边界：WS 在空 early-data header 时使用 RequestURI 对比未经编码的路径，故这类模式拒绝会被 URL 转义的路径字符，Unicode/空格需显式 header-based early data；HTTP `HEAD/CONNECT` 不用于共享字节隧道。HTTPUpgrade 的 headers 不冒称会被服务端回写；默认 lite gRPC 不实现的 `permit_without_stream:true` 显式拒绝。完整接口、管理子集及未来 handler 接入示例沿用现有 spec，不建立重复文档体系。
+
+既有重点回归 18/18 通过（13 项事务/接管/升级/Agent/导出测试与 5 项 SubMan 测试），证据 `/tmp/sbv-v2ray-regressions.8Wws1F/results.tsv`；期间 profile 实现仍在修改，不能把该批称为冻结源码全量验证。最终门禁、真实连接、Bash 4.2 结果及审查在本节后续补充。无生产操作、真实 SubMan API 调用、push 或部署；完整目标保持进行中。
+
+首次完整门禁 `dev/verification-runs/20260908062126` 在 V2Ray runtime 阶段退出 52，未开始 Docker；此前通过的局部测试不冒称整个门禁通过。父代理核对失败产物，纠正了早期 WS 夹具的两端路径不一致（server `/ws`、client `/ws path/测试`），不能据此认定 Unicode/header-based early data 不可用。最终测试让两端读取同一冻结 profile，并显式比较传输、ALPN，真实 WS Unicode/空格 TCP/UDP 已在 1.14 验证。另一个审查推断认为指数/小数写法的整数 early-data 值不被 Go 接受；父代理用两版实际核心确认 `1e3/1.0/1E+3` 均 check 成功、`1.5` 被拒绝，因此按数值整数验证，不基于标准库推断扩大拒绝范围。
+
+HTTPUpgrade 失败并非 WS 夹具问题：匹配配置下，父代理分别在 1.14.0 的 Trojan TLS TCP（`/tmp/sbv-v2ray-transport-failure.6sU25V`）、1.13.18 的 Trojan 明文 TCP（`/tmp/sbv-v2ray-transport-failure.s3NtGW`）复现；完整门禁另在 VMess 明文 TCP 复现（`/tmp/sbv-v2ray-transport-failure.R35Wvh`），先前 VLESS UDP 还有 `unknown version:17`。源码 `httpupgrade/server.go` 在两版完全相同，丢弃 hijack reader 与握手字节丢失现象相符，但这里只作为根因推断。未修改或替换官方核心来掩盖问题，也未把失败用例静默删除。
+
+因此分开 inspect 与 build：inspect 保留所有六类结构并返回 HTTPUpgrade 的 `runtime_guard.status=blocked/code=httpupgrade_runtime_unreliable`，普通 build 阻止该类型输出；独立 `--diagnose-httpupgrade` 继续保留六组合真实复现。常规 runtime 仅对其余 27 个组合分别统计 TCP/UDP，另外六项明确 BLOCKED，不计通过；HTTPUpgrade 的实际交付仍是完整目标未完成项。最终源码冻结哈希为 `37cb5df80a955edffcf10d90e6efe1f88fe11a7932a7f486bf09861c5c304d79`，第二轮完整门禁为 `dev/verification-runs/20260908063625`，最终结果见后续记录。
+
+后续四组验证 `/tmp/sbv-v2ray-runtime-final3.44WLAT` 的首次 native 1.13.18 出现 VMess/WS 明文响应 `cipher: message authentication failed`，诊断 `/tmp/sbv-v2ray-transport-failure.Hp2M9n`。父代理确认 UUID、端口、两侧 transport 完全一致，服务端已经认证并转发，不能误报为初始 UUID 认证失败。其余三组与重跑通过不消除该失败。源码复核确认 WS 客户端复制握手缓存时把 `buf.NewSize` 的初始零 Len 作为读取长度，导致已有缓存字节丢失。两版均存在该代码路径，故所有协议族/安全模式的 WS early data 均阻断普通 build；inspect 保留原始字段和固定错误分类。无 early data 的 WS 单独验证，新增六项 BLOCKED 不计为业务通过。第二轮门禁为此前 `37cb…` 源码，不能作为此补修的最终源码验收；最终运行时 SHA-256 改为 `158f8d8d583d241fa728cddba43c5f41f10f2e3d447c7e8617059ffd3739a3d3`。
+
+补修证据：`/tmp/sbv-v2ray-ws-repro-run2.d4xmt1` 使用原失败配置生成同侧匹配的隔离 VMess WS 对照，不加载项目 builder 来绕过 guard。每组固定 200 请求、没有失败重试：1.13.18/1.14.0 无 early data 均 200/200 成功；ASCII + early data 分别 85/92 次失败；Unicode + early data 分别 114/105 次失败。父代理检查复现脚本、结果与两侧 transport 一致性；该复现证明问题并非仅 Unicode 路径。它不是最终受管协议支持测试。
+
+补修后的 native Bash 5 与实际 Bash 4.2 contract 均通过；两种 Shell 直接执行两版核心 runtime，每组 40 profile 检查、27 TCP + 27 UDP payload、错误认证/错误 SNI 各 1 项拒绝；HTTPUpgrade 6 项及 WS early data 6 项单列 BLOCKED。Bash 4.2 的命令、日志与起止冻结 hash 为 `/tmp/sbv-v2ray-final-check.nrsL3m`，不是由旧 Bash 再启动新 Bash 的间接验证。注册表和 Agent 文档覆盖复验通过。此前完整门禁 `20260908063625` 的 85 项本地检查、12/12 Docker 场景、18/18 既有 TCP 探针全部通过，故障升级结果 `rolled_back/success`；它属于补修前快照。补修最终源码另外运行 `VERIFY_SKIP_LOCAL_TESTS=1 bash dev/verification/run.sh --changed-file install.sh dev/verification/common.sh`，run 为 `20260908065337`，明确只重跑 Docker，不冒称重新执行全部 85 项本地门禁。容器中实际脚本 hash 已读取并保存为该 run 的 `container-runtime.sha256`，与 `158f8d8d…` 一致。
+
+最终 Docker 补验 `20260908065337` 退出 0、`remote_status=success`：12/12 场景、18/18 既有 TCP 业务探针成功，故障升级 `status=rolled_back`、`rollback.result=success`。本次 Docker 证明现有七预设回归，不是新 V2Ray 协议生命周期或公网/生产验收。最终差异独立预审无新增 P1/P2；无生产访问、push、部署或真实 SubMan 同步，原未跟踪文件 `1`、`2` 保留。全协议目标保持未完成。
+
 ## 2026-09-08：Shadowsocks 实例管理、分享与客户端集成
 
 从 `35e98db` 继续，基线 `dev/verification-runs/20260908045421` 是 local 空变更门禁，退出 0；不是新的全量基线。版本本轮仅递增一次至 `2026090802`。再次读取 GitHub `releases/latest`：稳定目标仍为 `v1.14.0`（非 draft/prerelease，2026-08-31 发布）。Context7 先查询 sing-box 和 Shadowsocks 文档；前者仅提供 testing，随后使用固定 `v1.14.0` 源码和两版官方 ARM64 核心确认行为。SIP002 依据 [官方规范](https://github.com/shadowsocks/shadowsocks-org/blob/main/docs/doc/sip002.md)，经典方法使用 URL-safe Base64 userinfo，2022 使用百分号编码而非 Base64 userinfo。

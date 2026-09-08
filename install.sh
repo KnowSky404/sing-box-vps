@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090802
+# Version: 2026090803
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090802"
+readonly SCRIPT_VERSION="2026090803"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -11465,6 +11465,177 @@ validate_http_client_connection() {
     n) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+# Shared typed transport contract for the VMess/Trojan/plain-VLESS adapters.
+# This does not register a deployable protocol. Native TCP is represented in
+# managed data by {type:"none"}; it must be omitted from sing-box configuration.
+# No state, certificate, account, credential or public-network access occurs here.
+validate_v2ray_transport_state_json() {
+  local transport_json=${1:-} LC_ALL=C
+  [[ $# -eq 1 && -n "${transport_json}" && ${#transport_json} -le 65536 ]] || return 1
+  jq -es '
+    def bounded($n): type == "string" and utf8bytelength <= $n and
+      (test("[\u0000-\u001f\u007f]") | not);
+    def token: bounded(256) and length > 0 and
+      test("^[!#$%&\u0027*+.^_`|~0-9A-Za-z-]+$");
+    def allowed($keys): (keys_unsorted - $keys | length) == 0;
+    def optional($key; filter): if has($key) then .[$key] | filter else true end;
+    # A shared server/client path is decoded text, not a URI. Query, fragment
+    # and percent-encoded paths have different server/client interpretations.
+    def path: bounded(4096) and (length == 0 or startswith("/")) and
+      (test("[%?#]") | not);
+    def host: bounded(1024) and length > 0 and (test("[ /@?#%\\\\]") | not);
+    def host_list: if type == "string" then host
+      elif type == "array" then length <= 32 and all(.[]; host)
+      else false end;
+    # Managed timeouts use bounded, non-negative ASCII Go duration units.
+    # Reject overflow before a core check; do not silently clamp or normalize.
+    def duration:
+      bounded(64) and
+      (if . == "0" then true
+       elif test("^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$") then
+         ([scan("([0-9]+(?:\\.[0-9]+)?)(ns|us|ms|s|m|h)") |
+           (.[0] | tonumber) *
+           ({ns:0.000000001,us:0.000001,ms:0.001,s:1,m:60,h:3600}[.[1]])] |
+          add <= 86400)
+       else false end);
+    def header_values:
+      if type == "string" then bounded(4096)
+      elif type == "array" then length > 0 and length <= 32 and all(.[]; bounded(4096))
+      else false end;
+    def headers($ws):
+      type == "object" and length <= 64 and
+      ([keys_unsorted[] | ascii_downcase] | unique | length) == length and
+      all(to_entries[];
+        (.key | token) and (.value | header_values) and
+        (.key | ascii_downcase) as $key |
+        (["connection","proxy-connection","upgrade","content-length","content-encoding","expect","transfer-encoding","keep-alive",
+          "te","trailer","sec-websocket-key","sec-websocket-accept",
+          "sec-websocket-version","sec-websocket-extensions"] |
+          index($key) | not) and
+        (if $key == "host" then $ws and
+           (.value | if type == "array" then length == 1 and (.[0] | host) else host end)
+         elif $key == "sec-websocket-protocol" then $ws and
+           (.value | if type == "array" then length == 1 and (.[0] | token) else token end)
+         else true end));
+    def record:
+      type == "object" and (.type | type == "string") and
+      (if .type == "none" or .type == "quic" then allowed(["type"])
+       elif .type == "http" then
+         allowed(["type","host","path","method","headers","idle_timeout","ping_timeout"]) and
+         optional("host"; host_list) and optional("path"; path) and
+         optional("method"; (. == "" or token) and . != "HEAD" and . != "CONNECT") and
+         optional("headers"; headers(false)) and
+         optional("idle_timeout"; duration) and optional("ping_timeout"; duration)
+       elif .type == "ws" then
+         allowed(["type","path","headers","max_early_data","early_data_header_name"]) and
+         optional("path"; path) and optional("headers"; headers(true)) and
+         # The core compares RequestURI against the unescaped base path when
+         # early data uses the path, even with max_early_data=0. Only header-
+         # based early data can safely use characters that Go URL-escapes.
+         (if (.early_data_header_name // "") == "" then
+            optional("path"; test("^[A-Za-z0-9/._~$&+,;=:@-]*$"))
+          else true end) and
+         optional("max_early_data"; type == "number" and floor == . and . >= 0 and . <= 65536) and
+         optional("early_data_header_name"; . == "" or token) and
+         (if (.early_data_header_name // "") != "" then
+           (.max_early_data // 0) > 0 and
+           (.early_data_header_name | ascii_downcase) as $key |
+           (["host","connection","proxy-connection","upgrade","content-length","content-encoding","expect","transfer-encoding","keep-alive",
+             "te","trailer","sec-websocket-key","sec-websocket-accept",
+             "sec-websocket-version","sec-websocket-extensions"] | index($key) | not) and
+           ([((.headers // {}) | keys_unsorted[]) | ascii_downcase] | index($key) | not)
+          else true end)
+       elif .type == "grpc" then
+         allowed(["type","service_name","idle_timeout","ping_timeout","permit_without_stream"]) and
+         optional("service_name"; bounded(256) and test("^[A-Za-z0-9_.-]*$")) and
+         optional("idle_timeout"; duration) and optional("ping_timeout"; duration) and
+         # The default lite gRPC build does not implement this standard-gRPC option.
+         optional("permit_without_stream"; . == false)
+       elif .type == "httpupgrade" then
+         allowed(["type","host","path","headers"]) and
+         optional("host"; . == "" or host) and optional("path"; path) and
+         optional("headers"; headers(false))
+       else false end);
+    length == 1 and (.[0] | record)
+  ' <<< "${transport_json}" >/dev/null 2>&1
+}
+
+inspect_v2ray_transport_profile_json() {
+  local family=${1:-} transport_json=${2:-} tls_mode=${3:-} flow=${4-} core_version=${5:-}
+  local transport_type listen_network=tcp alpn='[]' required_build_tags='[]'
+  [[ $# -eq 5 ]] || {
+    printf '[ERROR] v2ray_transport: invalid arguments\n' >&2
+    return 1
+  }
+  # Explicit family, not normalize_protocol_id: the historical vless alias
+  # remains vless-reality, while this API describes the upstream family.
+  case "${family}" in vmess|trojan|vless) ;; *)
+    printf '[ERROR] v2ray_transport: unsupported family\n' >&2; return 1 ;;
+  esac
+  case "${tls_mode}" in disabled|tls|reality) ;; *)
+    printf '[ERROR] v2ray_transport: invalid security mode\n' >&2; return 1 ;;
+  esac
+  core_version=${core_version#v}
+  if [[ ! "${core_version}" =~ ^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$ ]] ||
+      ! singbox_version_at_least "${core_version}" 1.13.0 ||
+      ! singbox_version_at_least "${SB_SUPPORT_MAX_VERSION}" "${core_version}"; then
+    printf '[ERROR] v2ray_transport: unsupported core version\n' >&2
+    return 1
+  fi
+  if ! validate_v2ray_transport_state_json "${transport_json}"; then
+    printf '[ERROR] v2ray_transport: invalid typed transport\n' >&2
+    return 1
+  fi
+  transport_type=$(jq -er '.type' <<< "${transport_json}") || return 1
+  # Managed REALITY remains the native VLESS preset, not a generic switch
+  # offered for arbitrary protocols/transports accepted by a loose TLS schema.
+  if [[ "${tls_mode}" == reality && ( "${family}" != vless || "${transport_type}" != none ) ]] ||
+      [[ -n "${flow}" && ( "${flow}" != xtls-rprx-vision || "${family}" != vless ||
+        "${transport_type}" != none || "${tls_mode}" == disabled ) ]] ||
+      [[ "${transport_type}" == quic && "${tls_mode}" != tls ]]; then
+    printf '[ERROR] v2ray_transport: incompatible security or flow\n' >&2
+    return 1
+  fi
+  if [[ "${transport_type}" == quic ]]; then
+    listen_network=udp
+    required_build_tags='["with_quic"]'
+  fi
+  if [[ "${tls_mode}" == tls ]]; then
+    case "${transport_type}" in
+      http|grpc) alpn='["h2"]' ;;
+      ws|httpupgrade) alpn='["http/1.1"]' ;;
+      quic) alpn='["h3"]' ;;
+    esac
+  fi
+  jq -cn --argjson transport "${transport_json}" --arg network "${listen_network}" \
+    --argjson alpn "${alpn}" --argjson required_build_tags "${required_build_tags}" '
+    {transport:(if $transport.type == "none" then null else $transport end),
+     listen_networks:[$network],tls_alpn:$alpn,required_build_tags:$required_build_tags,
+     runtime_guard:(if $transport.type == "httpupgrade" then
+       {status:"blocked",code:"httpupgrade_runtime_unreliable"}
+       elif $transport.type == "ws" and ($transport.max_early_data // 0) > 0 then
+       {status:"blocked",code:"ws_early_data_runtime_unreliable"}
+       else {status:"requires_validation",code:null} end)}'
+}
+
+build_v2ray_transport_profile_json() {
+  local profile guard_code
+  profile=$(inspect_v2ray_transport_profile_json "$@") || return 1
+  # Fixed 1.13.18/1.14.0 HTTPUpgrade client/server pairs intermittently lose
+  # their protocol handshake despite passing check (both TLS and plaintext).
+  # Keep inspection/reproduction available, but never publish this known
+  # unreliable transport through the normal adapter contract. A newer core
+  # must be independently revalidated before this guard is removed. WebSocket
+  # early data also exposed response corruption; block it for all families and
+  # security modes because the client upgrade buffering path is shared.
+  if ! jq -e '.runtime_guard.status == "requires_validation"' <<< "${profile}" >/dev/null; then
+    guard_code=$(jq -er '.runtime_guard.code' <<< "${profile}") || return 1
+    printf '[ERROR] v2ray_transport: %s; use diagnostic inspection, not deployment\n' "${guard_code}" >&2
+    return 1
+  fi
+  printf '%s\n' "${profile}"
 }
 
 validate_http_tls_state_json() {

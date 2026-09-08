@@ -7,6 +7,8 @@ Runtime source of truth: install.sh.
 Remote verification: Docker-based, auto-builds sing-box-vps-verify image.
 Agent protocol contract revision: 2026090802.
 
+Script 2026090803 adds internal typed V2Ray transport profiles only. It does not add managed VMess/Trojan/plain-VLESS protocols, Agent write commands, or SubMan support; the seven-protocol public contract is unchanged.
+
 Canonical documents:
 - AGENTS.md: repository rules, validation requirements, SSH alias conventions, version rules.
 - README.md: user-facing install, features, versions, runtime paths.

@@ -112,6 +112,36 @@ Agent 节点/分享列表和 REALITY 客户端导出通过 `list_protocol_instan
 
 ## 未来协议扩展示例
 
+### V2Ray 传输公共契约（2026090803）
+
+`validate_v2ray_transport_state_json <json>`、`inspect_v2ray_transport_profile_json <family> <json> <security> <flow> <core_version>` 与同参数的 `build_v2ray_transport_profile_json` 是无副作用的适配原语，不是通用 JSON 透传，也不是新的安装入口。family 仅接受上游 `vmess`、`trojan`、`vless`；这里不调用旧 alias 归一化，现有 `vless` 命令仍指向 REALITY。security 必须显式指定 `disabled/tls/reality`，没有自动降低 TLS 的回退。
+
+内部原生传输表示为 `{"type":"none"}`，生成 profile 中的 `transport:null`，下游构造服务端/客户端时必须省略该字段；不可向核心写入 `type:tcp` 或 `type:none`。其余受控类型是 `http/ws/grpc/httpupgrade/quic`，验证后保留已建模字段原值。profile 同时给出 `listen_networks`、`tls_alpn`、`required_build_tags`：QUIC 固定 UDP、TLS、`h3` 且需 `with_quic`；HTTP/gRPC 的 TLS 使用 `h2`，WS/HTTPUpgrade 的 TLS 使用 `http/1.1`；其余原生监听为 TCP，不据此限制代理内部的 UDP 业务。
+
+REALITY 的受管策略仍只允许原生 VLESS；Vision flow 只允许带 TLS/REALITY 的原生 VLESS。这是本项目预设约束，不声称上游宽泛的 TLS schema 已禁止所有其他组合。适配原语允许上游可运行的明文 VMess/Trojan/VLESS 测试组合，不代表未来安装菜单应默认选择明文或无需公网风险确认。
+
+所有输入必须是单个 JSON 对象，最大 64 KiB，字段实行逐类型 allowlist；不支持字段、显式 null、控制字符、头部注入、大小写重复 header、协议握手/长度头覆盖均拒绝。HTTP host 接受核心的单值/数组形式；WS Host 只能是单值，其他传输使用独立 host 字段。路径是服务端/客户端共享的 decoded path，不接收查询、fragment 或百分号编码形式。管理界限包括：timeout 使用非负 ASCII Go duration（最多 24 小时），WS early data 最多 64 KiB，gRPC service name 使用字母数字及 `_.-`。`permit_without_stream:true` 只对标准 gRPC 实现生效，默认 lite 构建不实现，故此契约拒绝它而不默默忽略。
+
+WS 在没有 early-data header 时还会比较原始 RequestURI（两版核心即使 `max_early_data=0` 也如此），因此这种模式仅接受 Go URL 无需转义的路径字符；Unicode/空格路径需要明确启用 header-based early data。HTTP/HTTPUpgrade 的 decoded-path 比较不受此限制。不自动改写路径，也不在服务端/客户端之间悄悄丢失编码含义。
+
+WS 的 `Sec-WebSocket-Protocol` 支持单个 token（字符串或单元素数组），但不能与同名 early-data header 冲突。HTTP 的 `HEAD/CONNECT` 方法因响应体抑制或 authority-form 语义无法用作此共享字节隧道，拒绝而不只依赖核心 check。HTTPUpgrade 的 headers 在固定源码中只实际影响客户端请求，不能宣称服务端会回写这些头部。
+
+**HTTPUpgrade 运行阻断**：两版官方核心在完全匹配的服务端/客户端配置下均复现过 HTTPUpgrade 握手数据错误，包括 VMess 明文、Trojan 明文/TLS，以及 VLESS UDP。`check` 成功不能证明此链路可稳定运行。两版 `transport/v2rayhttpupgrade/server.go` 完全相同，代码未保留 HTTP hijack 返回 reader 的缓冲数据，与观测相符；具体根因目前是源码推断，不冒称已经抓包证明。inspect 保留该类型的字段/ALPN，并明确返回 `runtime_guard:{status:"blocked",code:"httpupgrade_runtime_unreliable"}`；普通 build 必须失败且不输出半份 profile。其他传输为 `requires_validation`，不是对任意环境或实例的已验证声明。
+
+`bash tests/v2ray_transport_runtime.sh --diagnose-httpupgrade <core_binary> <core_version>` 是隔离诊断入口，显式绕过此运行 guard，仅用于复现六种 HTTPUpgrade 组合；不提供生产安装。普通测试独立记录六项 BLOCKED，不计入其余 27 项 TCP/UDP 通过数。即使诊断偶然一轮未复现，也不能自动取消 guard；修复或更换核心后仍需重新验证。HTTPUpgrade 的完整交付仍是原目标未完成项，不以安全拒绝代替实现。
+
+**WebSocket early data 运行阻断**：结构校验允许建模这些字段，但 `max_early_data>0` 的 inspect 返回 `runtime_guard:{status:"blocked",code:"ws_early_data_runtime_unreliable"}`，build 在所有 family、明文/TLS 模式拒绝输出。匹配的 VMess/WS 明文配置曾在服务端认证并转发之后发生客户端响应解密失败。固定 [WS client](https://github.com/SagerNet/sing-box/blob/v1.14.0/transport/v2raywebsocket/client.go) 将握手返回 reader 的缓存复制到 `buf.NewSize`，却传入初始值为零的 `buffer.Len()`；固定 [sing buffer](https://github.com/SagerNet/sing/blob/v0.9.0-beta.4/common/buf/buffer.go) 可确认此路径会丢弃已缓存的响应字节。1.13.18 客户端虽然拨号函数不同，保留了相同的零长度复制代码。源码缺陷可确认；单次运行错误与其对应关系仍不是抓包证据。不得用重复运行成功或 TLS 偶然通过移除 guard。
+
+普通 fixture 的六组 WS 使用 `max_early_data:0` 和 ASCII 路径；它们与六组 early-data BLOCKED 分别统计，不把变更选项后的成功写成 early data 已通过。上文 Unicode/空格路径是结构可表达范围，不是当前 build 可部署范围。HTTPUpgrade 和 WS early data 均仍是完整目标未完成项。
+
+例如 `build_v2ray_transport_profile_json vmess '{"type":"ws","path":"/proxy","max_early_data":0}' tls '' 1.14.0` 返回传输对象、TCP 监听及 HTTP/1.1 ALPN。新增适配器必须将 profile 与经过独立验证的认证、TLS 信任/证书引用组合，执行真实目标核心 check，再走原有实例事务；该函数不生成证书/凭据，不读取私钥，不写入状态，不申请账户或更改系统监听。
+
+profile 含完整请求头，可能包含调用方的认证材料；它是配置构造数据，不得直接用作 Agent nodes/status 的安全摘要。检查失败只输出固定错误分类，不能把 jq 原始诊断或输入字段写入日志。
+
+返回 profile 不能证明构建依赖可用或协议已实现：VMess/Trojan/普通 VLESS 的状态写入、接管、生命周期、菜单、Agent 与 SubMan 仍须后续接通，公开注册表保持七项。真实 transport fixture 仅验证这些原语构造出的隔离连接，不能替代最终协议生命周期验收。
+
+### 完整适配接入清单
+
 以普通 VLESS 为例，交付需要同时完成以下内容：
 
 1. 选择不会改变旧 alias 的新 preset ID，登记 role、family、版本/构建要求、监听/业务能力、分享/导出/SubMan 状态。

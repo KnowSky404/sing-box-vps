@@ -4,11 +4,13 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026090802`
+- 脚本版本：`2026090803`
 
 - sing-box 适配版本：`1.14.0`
 
 Shadowsocks 为第七个入站预设，支持实例级 TCP/UDP 选择；未声明或无效的网络字段会阻止变更。全协议目标仍在推进，不能由当前预设推断其他上游协议已接入。
+
+`2026090803` 增加了供后续协议适配器使用的 V2Ray 传输/TLS 组合校验与监听计划原语；不新增 VMess、Trojan 或普通 VLESS 安装入口。HTTPUpgrade 与 WebSocket early data 因真实连接失败阻断普通构造，未计作已支持。接口与范围见[协议扩展示例](docs/superpowers/specs/2026-09-06-unified-protocol-management.md#v2ray-传输公共契约2026090803)。
 
 ## 🚀 一键安装
 

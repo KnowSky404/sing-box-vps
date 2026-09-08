@@ -103,6 +103,8 @@ resolve_local_tests() {
       tests/shadowsocks_agent_share.sh \
       tests/shadowsocks_runtime.sh \
       tests/subman_shadowsocks_sync.sh \
+      tests/v2ray_transport_contract.sh \
+      tests/v2ray_transport_runtime.sh \
       tests/managed_component_graph.sh \
       tests/managed_component_graph_core_startup.sh \
       tests/live_inbound_inventory_guards.sh \
