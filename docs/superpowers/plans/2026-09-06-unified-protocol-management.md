@@ -4,6 +4,14 @@
 起点为 `cc12c06`，工作区干净；保留参考基线 `0d0bdac` 之后的下载事务修复。
 本文记录完整目标的进展；阶段提交不代表全协议已交付。
 
+## 2026-09-08：保留防火墙开放链路的实例网络选择
+
+从 `607b0c8` 继续，基线 `bash dev/verification/run.sh` 在 `dev/verification-runs/20260908042949` 为 local 空变更门禁、退出 0。核对 Shadowsocks 接入点时发现 `open_all_protocol_ports` 将完整资源计划缩减为 protocol/port，随后 `open_firewall_port` 重新展开注册默认网络，未来单 TCP/UDP 实例会因此多开另一传输。先单独修复这个已确认问题；认证模型草稿未注册或交付，不将资源修复称为 Shadowsocks 支持。
+
+版本统一递增为 `2026090801`。开放链路保留 transport，去重同协议、同端口、同传输的所有监听地址；双参数函数调用保持默认网络兼容。显式选择必须是注册能力内的单个 TCP/UDP，在任何后端调用前拒绝空值、列表、未知值与能力扩张。后端失败仍保留原退出码及部分外部变更提示。扩展现有 `tests/firewall_listener_references.sh`，仅注入测试专属双网络元数据及 mock 后端，覆盖仅 TCP/UDP 开放和清理、同端口双传输保留、重复所有者去重、旧调用、无效选择和完整计划拒绝；不触碰开发机真实防火墙。
+
+定向执行 `bash -n install.sh tests/firewall_listener_references.sh`、`bash tests/firewall_listener_references.sh`、`bash tests/system_safety_guards.sh` 均退出 0；实际 Bash 4.2 直接运行防火墙测试也通过。冻结运行时 SHA-256 为 `93fbfe31df46d261c492c426b7a00698450a8540617a6b803c17f9ed35ab361d`。完整执行 `SINGBOX_BINARY_113=… SINGBOX_BINARY_114=… bash dev/verification/run.sh --changed-file install.sh dev/verification/common.sh dev/verification/remote/entrypoint.sh`，使用官方 ARM64 1.13.18/1.14.0，本地测试未跳过；`dev/verification-runs/20260908044028` 退出 0、`remote_status=success`，76 项本地门禁、11/11 Docker 场景及 16/16 既有协议 TCP 业务探针成功，故障升级 `status=rolled_back`、`rollback.result=success`。直接读取容器 `502c6e22cd10` 的两份实际脚本，哈希均与冻结源码一致，保存于 run 的 `container-runtime.sha256`。防火墙新增选择分支由 mock 后端验证，Docker 证明现有六协议无该回归，不冒称新 Shadowsocks 业务或真实主机防火墙覆盖。未 push、未部署、未访问生产或执行真实 SubMan 同步；全协议目标保持未完成。
+
 ## 2026-09-08：Shadowsocks 接入前的监听网络契约
 
 上一轮 `e948653` 完成 HTTP 增量；本轮起点仅保留原有未跟踪 `1`、`2`，基线 `bash dev/verification/run.sh` 在 `dev/verification-runs/20260908035714` 为 local 空变更门禁、退出 0，不冒称新的全量基线。GitHub stable 再次确认 `v1.14.0`。Context7 `/sagernet/sing-box` 仍只返回 testing Shadowsocks 文档，随后读取固定 `v1.14.0` 的 `docs/configuration/{inbound,outbound}/shadowsocks.md`、`protocol/shadowsocks/{inbound,inbound_multi}.go` 与 `option/types.go`。后者明确 NetworkList 同时接受字符串/数组，空数组与 null 落到默认 TCP+UDP；空字符串会因 unknown network 失败。这一差异不能仅凭文档“empty”一词猜测。

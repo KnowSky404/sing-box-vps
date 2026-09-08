@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090800
+# Version: 2026090801
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090800"
+readonly SCRIPT_VERSION="2026090801"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -3144,12 +3144,12 @@ prompt_http_update() {
 }
 
 open_all_protocol_ports() {
-  local plan entries protocol port
+  local plan entries protocol port transport
   plan=$(managed_listener_plan "${SINGBOX_CONFIG_FILE}") || return $?
-  entries=$(jq -r 'unique_by([.protocol,.port])[] | [.protocol,.port] | @tsv' <<< "${plan}") || return $?
-  while IFS=$'\t' read -r protocol port; do
+  entries=$(jq -r 'unique_by([.protocol,.port,.transport])[] | [.protocol,.port,.transport] | @tsv' <<< "${plan}") || return $?
+  while IFS=$'\t' read -r protocol port transport; do
     [[ -n "${protocol}" ]] || continue
-    open_firewall_port "${port}" "${protocol}" || return $?
+    open_firewall_port "${port}" "${protocol}" "${transport}" || return $?
   done <<< "${entries}"
 }
 
@@ -6573,7 +6573,7 @@ set_sysctl_conf_value() {
 
 # Open firewall port
 open_firewall_port() {
-  local port=${1:-} networks transport status
+  local port=${1:-} networks transport status selected_transport=${3:-}
   local transports=()
   [[ "${port}" =~ ^[1-9][0-9]{0,4}$ && ${port} -le 65535 ]] || return 1
   networks=$(protocol_registry_field "${2:-${SB_PROTOCOL}}" listen_networks) || return 1
@@ -6582,6 +6582,14 @@ open_firewall_port() {
   for transport in "${transports[@]}"; do
     [[ "${transport}" == tcp || "${transport}" == udp ]] || return 1
   done
+  # A committed listener plan may narrow a protocol's default networks. Keep
+  # legacy two-argument calls, but never expand a selected instance network.
+  # Validate before touching any backend, including explicitly empty input.
+  if [[ $# -ge 3 ]]; then
+    [[ "${selected_transport}" == tcp || "${selected_transport}" == udp ]] || return 1
+    [[ ",${networks}," == *",${selected_transport},"* ]] || return 1
+    transports=("${selected_transport}")
+  fi
   log_info "正在尝试放行端口 ${port}..."
   for transport in "${transports[@]}"; do
     # UFW

@@ -163,4 +163,82 @@ else status=$?; fi
 [[ ${status} == 47 ]]
 grep -Fq 'config_committed; firewall_may_be_partial; service_restart_not_attempted' "${TMP_DIR}/err"
 unset UFW_FAILURE
+
+# Test-only dual-network metadata: this exercises the resource contract, not
+# a public Shadowsocks adapter. The real registry is deliberately unchanged.
+base_registry=$(protocol_registry_json)
+fixture_registry=$(jq '. + [{state_id:"shadowsocks",type:"shadowsocks",
+  listen_networks:["tcp","udp"],features:{listen_network_selection:true}}]' <<< "${base_registry}")
+protocol_registry_json() { printf '%s\n' "${fixture_registry}"; }
+protocol_registry_field() {
+  [[ "$2" == listen_networks ]] || return 98
+  jq -er --arg protocol "$1" '.[] | select(.state_id==$protocol) | .listen_networks | join(",")' <<< "${fixture_registry}"
+}
+ss='{"type":"shadowsocks","tag":"private-tag-ss","listen":"127.0.0.1","listen_port":32100}'
+for network in tcp udp; do
+  config "[${ss}]" "${SINGBOX_CONFIG_FILE}.base"
+  jq --arg network "${network}" '.inbounds[0].network=$network' "${SINGBOX_CONFIG_FILE}.base" > "${SINGBOX_CONFIG_FILE}"
+  : > "${BACKEND_LOG}"
+  IPTABLES_CHECK_STATUS=1
+  open_all_protocol_ports >/dev/null
+  unset IPTABLES_CHECK_STATUS
+  grep -Fqx "ufw allow 32100/${network}" "${BACKEND_LOG}"
+  grep -Fqx "firewalld --permanent --add-port=32100/${network}" "${BACKEND_LOG}"
+  grep -Fqx "iptables -I INPUT -p ${network} --dport 32100 -j ACCEPT" "${BACKEND_LOG}"
+  if [[ "${network}" == tcp ]]; then opposite=udp; else opposite=tcp; fi
+  ! grep -q "${opposite}" "${BACKEND_LOG}"
+  cp "${SINGBOX_CONFIG_FILE}" "${SINGBOX_CONFIG_FILE}.bak"
+  config '[]' "${SINGBOX_CONFIG_FILE}"
+  close_firewall_port 32100 >/dev/null
+  grep -Fqx "ufw delete allow 32100/${network}" "${BACKEND_LOG}"
+  ! grep -q "${opposite}" "${BACKEND_LOG}"
+done
+
+# Preserve both selected transports on one port; deduplicate same-network
+# owners across addresses, but do not collapse the UDP owner into TCP.
+jq -n --argjson ss "${ss}" '{inbounds:[
+  ($ss + {network:"tcp"}),
+  ($ss + {tag:"second-tcp",listen:"127.0.0.2",network:"tcp"}),
+  ($ss + {tag:"udp",network:"udp"})]}' > "${SINGBOX_CONFIG_FILE}"
+: > "${BACKEND_LOG}"
+open_all_protocol_ports >/dev/null
+[[ $(grep -Fxc 'ufw allow 32100/tcp' "${BACKEND_LOG}") == 1 ]]
+[[ $(grep -Fxc 'ufw allow 32100/udp' "${BACKEND_LOG}") == 1 ]]
+
+# Legacy calls still open registered defaults. An explicit selection must be
+# one valid member, never an empty value, a list, or expanded capability.
+: > "${BACKEND_LOG}"
+open_firewall_port 32100 shadowsocks >/dev/null
+grep -Fqx 'ufw allow 32100/tcp' "${BACKEND_LOG}"
+grep -Fqx 'ufw allow 32100/udp' "${BACKEND_LOG}"
+for selection in '' icmp 'tcp,udp' 'tcp private-tag'; do
+  : > "${BACKEND_LOG}"
+  if open_firewall_port 32100 shadowsocks "${selection}" > "${TMP_DIR}/out" 2> "${TMP_DIR}/err"; then
+    printf 'invalid firewall selection accepted\n' >&2; exit 1
+  fi
+  [[ ! -s "${BACKEND_LOG}" && ! -s "${TMP_DIR}/out" ]]
+  ! grep -Fq 'private-tag' "${TMP_DIR}/err"
+done
+: > "${BACKEND_LOG}"
+if open_firewall_port 32100 mixed udp >/dev/null 2>&1; then
+  printf 'firewall selection expanded protocol capability\n' >&2; exit 1
+fi
+[[ ! -s "${BACKEND_LOG}" ]]
+
+# Reject the entire malformed plan before any backend calls, even when an
+# earlier inbound would be valid. Preserve raw backend failure status too.
+jq '.inbounds[2].network="invalid"' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if open_all_protocol_ports > "${TMP_DIR}/out" 2> "${TMP_DIR}/err"; then
+  printf 'malformed firewall listener plan accepted\n' >&2; exit 1
+fi
+[[ ! -s "${BACKEND_LOG}" ]]
+config "[${ss}]" "${SINGBOX_CONFIG_FILE}"
+UFW_FAILURE=47
+if open_all_protocol_ports > "${TMP_DIR}/out" 2> "${TMP_DIR}/err"; then
+  printf 'expected selected backend failure\n' >&2; exit 1
+else status=$?; fi
+[[ ${status} == 47 ]]
+grep -Fq 'external_state_may_be_partial' "${TMP_DIR}/err"
+unset UFW_FAILURE
 printf 'firewall listener reference checks passed (mock backends only)\n'

@@ -94,7 +94,7 @@ Agent 节点/分享列表和 REALITY 客户端导出通过 `list_protocol_instan
 
 `close_firewall_port` 比较上一配置 `.bak` 与剩余配置，只处理旧监听实际拥有的 transport/port，且任何剩余地址或协议的同 transport/port 引用都会保留宽规则。清单缺失/不可信时不清理；全协议删除仅在明确 `all_removed` 且配置/索引均已移除时使用空新清单。后端写入/检查失败不再静默吞掉，保留错误码并报告外部状态可能部分变更。此保护尚不能区分早于脚本存在的同形用户规则与脚本创建的规则，未构成精确规则归属账本；不得宣称已经完成下述全部资源事务。
 
-预审后补齐对称性：`open_all_protocol_ports` 从完整已提交配置的资源计划遍历，不加载或迁移协议状态；`open_firewall_port` 只开放对应注册表的实际监听传输。历史无归属宽规则不追溯删除。全量移除在清空配置/索引前要求 `systemctl stop` 成功且 `ActiveState=inactive`；停止失败恢复文件并保留原始退出码，状态无法确认则保留规则并提示人工检查服务。发布后开放规则失败由统一 wrapper 报告 `config_committed`、`firewall_may_be_partial`、`service_restart_not_attempted`，不以成功日志掩盖部分外部变化。
+预审后补齐对称性：`open_all_protocol_ports` 从完整已提交配置的资源计划遍历，不加载或迁移协议状态；`2026090801` 修正遍历时丢失实例所选传输的问题，按 protocol/port/transport 去重并将单个传输传给 `open_firewall_port`。后者在任何后端操作前校验所选传输属于注册能力，拒绝空值、列表和超出能力的输入；历史双参数调用仍使用注册默认值。历史无归属宽规则不追溯删除。全量移除在清空配置/索引前要求 `systemctl stop` 成功且 `ActiveState=inactive`；停止失败恢复文件并保留原始退出码，状态无法确认则保留规则并提示人工检查服务。发布后开放规则失败由统一 wrapper 报告 `config_committed`、`firewall_may_be_partial`、`service_restart_not_attempted`，不以成功日志掩盖部分外部变化。
 
 复用 `create_managed_state_snapshot`、配置 candidate 校验与原子发布边界，补上写锁、持久事务结果和受管资源清单。清单至少记录地址/地址族/传输/端口/实例归属、证书与组件引用、运行库、受管防火墙/QoS/路由规则及原服务活动状态。
 
