@@ -16,6 +16,8 @@
 
 修正后完整执行 `SINGBOX_BINARY_113=… SINGBOX_BINARY_114=… bash dev/verification/run.sh --changed-file install.sh dev/verification/common.sh dev/verification/remote/entrypoint.sh`，未跳过本地测试；`dev/verification-runs/20260908040724` 退出 0，76 项本地门禁、11/11 Docker 场景和 16/16 既有协议 TCP 业务探针均通过。故障升级为 `status=rolled_back`、`rollback.result=success`。直接读取运行容器 `08faaf038ac0` 中的脚本，哈希与上述冻结源码相同，记录于 run 的 `container-runtime.sha256`。独立新测试日志保存在 `/tmp/sbv-listener-network-final.Ct9Ou1/{native,bash42}.log`，源码和测试文件的起止哈希一致。这不新增 Shadowsocks 业务/生命周期验证状态；未 push、未部署或访问生产。
 
+`41c0aa9` 提交后等效审查的定向重跑再次出现核心退出 1，故未直接交付。保留的 `/tmp/tmp.Zd9UKu3zYT/core.log` 明确为 `start service: context canceled`：socket 已存在但 `Box.Start` 尚未结束，测试的停止信号打断了启动。修正仅涉及测试：等待核心完整 `sing-box started` 标记后再观察 PID socket 并停止，失败时保留私有测试目录；不把“socket 存在”当成初始化已完成。随后原生连续 5 轮（共 60 次核心 check/start）与实际 Bash 4.2 的 12 次 check/start 均通过；默认验证入口 `dev/verification-runs/20260908042346` 为 local、退出 0，不冒称重复执行了完整门禁。运行时代码、版本及上述 Docker 被测哈希未改变，同轮修正不再次递增版本。
+
 ## 2026-09-07：独立 HTTP 与入口 TLS 接入
 
 本轮从 `fe26417` 继续完整目标，重新读取需求、当前工作树和矩阵；基线 `bash dev/verification/run.sh` 在 `dev/verification-runs/20260907135121` 退出 0，但因仅有原有未跟踪文件而为 local 空变更门禁，不能冒称全量基线回归。GitHub `releases/latest` 再次确认稳定版为 `v1.14.0`、非 draft/prerelease。Context7 `/sagernet/sing-box` 仅提供 testing HTTP 文档，随后读取固定 tag `protocol/http/{inbound,outbound}.go` 和对应配置文档：入口有可选 TLS，客户端为 TCP-only HTTP CONNECT，不能替换成 SOCKS 或宣称普通 HTTP outbound 支持 UDP。

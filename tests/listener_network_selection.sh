@@ -27,7 +27,11 @@ stop_runtime() {
 cleanup_network_test() {
   local status=$?
   stop_runtime || status=1
-  rm -rf -- "${TMP_DIR}"
+  if [[ "${status}" == 0 ]]; then
+    rm -rf -- "${TMP_DIR}"
+  else
+    printf 'listener test failure artifacts retained: %s\n' "${TMP_DIR}" >&2
+  fi
   exit "${status}"
 }
 trap cleanup_network_test EXIT
@@ -119,7 +123,7 @@ for core in "${SINGBOX_BINARY_113:-}" "${SINGBOX_BINARY_114:-}"; do
   for selection in 'null' '[]' '"tcp"' '"udp"' '["tcp","udp"]' '["udp","tcp"]'; do
     port=$(python3 -c 'import socket; t=socket.socket(); t.bind(("127.0.0.1",0)); p=t.getsockname()[1]; u=socket.socket(type=socket.SOCK_DGRAM); u.bind(("127.0.0.1",p)); print(p); u.close(); t.close()')
     jq -n --argjson port "${port}" --argjson selection "${selection}" '{
-      log:{disabled:true},inbounds:[{type:"shadowsocks",tag:"ss-probe",listen:"127.0.0.1",listen_port:$port,
+      log:{level:"info"},inbounds:[{type:"shadowsocks",tag:"ss-probe",listen:"127.0.0.1",listen_port:$port,
         network:$selection,method:"aes-128-gcm",password:"listener-fixture-only"}],
       outbounds:[{type:"direct",tag:"direct"}],route:{final:"direct"}
     }' >"${config}"
@@ -128,6 +132,19 @@ for core in "${SINGBOX_BINARY_113:-}" "${SINGBOX_BINARY_114:-}"; do
     expected=$(managed_listener_plan "${config}" | jq -r 'map(.transport)|join(",")')
     "${core}" run -c "${config}" >"${TMP_DIR}/core.log" 2>&1 &
     runtime_pid=$!
+    # Listener sockets can exist before Box.Start finishes. Wait for the
+    # core's completed-start marker before observations and normal shutdown;
+    # stopping in that window can correctly exit 1 with context canceled.
+    ready=n
+    for attempt in {1..100}; do
+      kill -0 "${runtime_pid}" 2>/dev/null || break
+      if grep -Fq 'sing-box started' "${TMP_DIR}/core.log"; then
+        ready=y
+        break
+      fi
+      sleep 0.02
+    done
+    [[ "${ready}" == y ]] || { printf 'listener core did not complete startup\n' >&2; exit 1; }
     python3 - "${port}" "${expected}" "${runtime_pid}" <<'PY'
 import os
 import sys
