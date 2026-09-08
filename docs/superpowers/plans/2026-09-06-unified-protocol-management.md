@@ -4,6 +4,18 @@
 起点为 `cc12c06`，工作区干净；保留参考基线 `0d0bdac` 之后的下载事务修复。
 本文记录完整目标的进展；阶段提交不代表全协议已交付。
 
+## 2026-09-08：Shadowsocks 接入前的监听网络契约
+
+上一轮 `e948653` 完成 HTTP 增量；本轮起点仅保留原有未跟踪 `1`、`2`，基线 `bash dev/verification/run.sh` 在 `dev/verification-runs/20260908035714` 为 local 空变更门禁、退出 0，不冒称新的全量基线。GitHub stable 再次确认 `v1.14.0`。Context7 `/sagernet/sing-box` 仍只返回 testing Shadowsocks 文档，随后读取固定 `v1.14.0` 的 `docs/configuration/{inbound,outbound}/shadowsocks.md`、`protocol/shadowsocks/{inbound,inbound_multi}.go` 与 `option/types.go`。后者明确 NetworkList 同时接受字符串/数组，空数组与 null 落到默认 TCP+UDP；空字符串会因 unknown network 失败。这一差异不能仅凭文档“empty”一词猜测。
+
+接入 Shadowsocks 前发现共享资源计划只展开协议级 `listen_networks`，无法表达同端口分别仅 TCP/仅 UDP 的实例。版本统一递增为 `2026090800`，增加受注册能力开关控制的选择契约；同时拒绝空/重复/畸形监听元数据，避免成功却漏报资源。旧六协议没有被偷偷赋予新网络选项，Shadowsocks 仍未进入公开注册表。后续完整接入须继续实现方法/2022 密钥、多用户、实例状态、事务、菜单、Agent、导出/SubMan 与 TCP/UDP 业务路径，不能以本次资源层工作代替这些要求。
+
+新增 `tests/listener_network_selection.sh` 并纳入默认门禁，覆盖未知协议保护、可选网络、非法输入脱敏、能力门控、畸形元数据与同端口异传输不冲突。测试仅注入局部 Shadowsocks 元数据；固定 ARM64 官方 1.13.18/1.14.0 分别执行 6 组真实 check/start，与核心 PID 持有的 TCP/UDP socket inode 对照。原生连续三轮和实际 Bash 4.2 均通过 22 个拒绝场景、12 次 check、12 次启动。它证明监听资源投影，不证明 Shadowsocks 业务交付或生命周期。
+
+首轮门禁 `dev/verification-runs/20260908040414` 的新测试报告核心退出 1；复核发现启动时用临时 bind 判断占用存在抢占核心端口的竞态。改为只读 `/proc/<pid>/fd` 与网络表的 inode 关联后消除探测干扰，不把其他进程占用误当成目标核心。该失败不计成功；运行时源码始终为 SHA-256 `64f6ce51d26830119bf7f2b219de7104d7b9b196bd7def9bd99c14bfc16b6c3d`。
+
+修正后完整执行 `SINGBOX_BINARY_113=… SINGBOX_BINARY_114=… bash dev/verification/run.sh --changed-file install.sh dev/verification/common.sh dev/verification/remote/entrypoint.sh`，未跳过本地测试；`dev/verification-runs/20260908040724` 退出 0，76 项本地门禁、11/11 Docker 场景和 16/16 既有协议 TCP 业务探针均通过。故障升级为 `status=rolled_back`、`rollback.result=success`。直接读取运行容器 `08faaf038ac0` 中的脚本，哈希与上述冻结源码相同，记录于 run 的 `container-runtime.sha256`。独立新测试日志保存在 `/tmp/sbv-listener-network-final.Ct9Ou1/{native,bash42}.log`，源码和测试文件的起止哈希一致。这不新增 Shadowsocks 业务/生命周期验证状态；未 push、未部署或访问生产。
+
 ## 2026-09-07：独立 HTTP 与入口 TLS 接入
 
 本轮从 `fe26417` 继续完整目标，重新读取需求、当前工作树和矩阵；基线 `bash dev/verification/run.sh` 在 `dev/verification-runs/20260907135121` 退出 0，但因仅有原有未跟踪文件而为 local 空变更门禁，不能冒称全量基线回归。GitHub `releases/latest` 再次确认稳定版为 `v1.14.0`、非 draft/prerelease。Context7 `/sagernet/sing-box` 仅提供 testing HTTP 文档，随后读取固定 tag `protocol/http/{inbound,outbound}.go` 和对应配置文档：入口有可选 TLS，客户端为 TCP-only HTTP CONNECT，不能替换成 SOCKS 或宣称普通 HTTP outbound 支持 UDP。

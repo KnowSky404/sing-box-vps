@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090711
+# Version: 2026090800
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090711"
+readonly SCRIPT_VERSION="2026090800"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -6658,6 +6658,25 @@ managed_listener_plan_json() {
   # before emission. Input is bounded by the file wrapper or the typed store.
   if ! projected=$(jq -cs --argjson registry "${registry}" '
     def require($ok): if $ok then . else error("invalid_listener") end;
+    # Only an explicitly modelled adapter may select its fixed listeners.
+    # NetworkList accepts a string or list; absent/null/[] mean defaults.
+    # This is independent of traffic_networks (e.g. SOCKS UDP over TCP).
+    def networks($inbound; $entry):
+      $entry.listen_networks |
+      require(type == "array" and length > 0) |
+      require(all(.[]; . == "tcp" or . == "udp")) |
+      require((unique | length) == length) | . as $defaults |
+      if ($inbound | has("network")) then
+        require($entry.features.listen_network_selection == true) |
+        ($inbound.network | if . == null then []
+          elif type == "string" then [.] elif type == "array" then .
+          else error("invalid_listener") end) as $requested |
+        require(all($requested[]; . == "tcp" or . == "udp")) |
+        require(($requested | unique | length) == ($requested | length)) |
+        require(all($requested[]; . as $network | $defaults | index($network) != null)) |
+        if ($requested | length) == 0 then $defaults
+        else [$defaults[] | . as $network | select($requested | index($network) != null)] end
+      else $defaults end;
     require(length == 1) | .[0] | require(type == "object") |
     require((.inbounds | type) == "array") |
     require((has("endpoints") | not) or (.endpoints | type) == "array") |
@@ -6672,7 +6691,7 @@ managed_listener_plan_json() {
     require((map(.tag) | unique | length) == length) |
     map(. as $inbound | [$registry[] | select(.type == $inbound.type)] |
       require(length == 1) | .[0] as $entry |
-      $entry.listen_networks[] | require(. == "tcp" or . == "udp") |
+      networks($inbound; $entry)[] |
       {owner:$inbound.tag, protocol:$entry.state_id, address:($inbound.listen // "127.0.0.1"),
        transport:., port:$inbound.listen_port})
   ' 2>/dev/null); then

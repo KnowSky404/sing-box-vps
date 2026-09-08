@@ -86,7 +86,9 @@ Agent 节点/分享列表和 REALITY 客户端导出通过 `list_protocol_instan
 
 ## 资源与事务扩展（监听预检与删除引用保护已接入，其余待实现）
 
-`managed_listener_plan <config_file>` 一次有界私有捕获后生成无认证字段的监听数组，字段为 `owner`（稳定 inbound tag）、`protocol`（内部状态 ID）、规范化 `address`、`family`、`transport`、`port`、`dual_stack`。监听传输取自注册表的 `listen_networks`，不是业务 `traffic_networks`；当前四协议由此共享声明。资源计划本身不是新的协议接管或配置透传入口，不为未实现协议开放能力。缺失 tag、未知类型、无效地址/端口、重复 tag、特殊 netns/bind_interface/reuse_addr 及未建模的固定 Endpoint 监听均拒绝，不输出部分清单或原配置诊断。
+`managed_listener_plan <config_file>` 一次有界私有捕获后生成无认证字段的监听数组，字段为 `owner`（稳定 inbound tag）、`protocol`（内部状态 ID）、规范化 `address`、`family`、`transport`、`port`、`dual_stack`。监听传输取自注册表的 `listen_networks`，不是业务 `traffic_networks`；当前六个预设由此共享声明。资源计划本身不是新的协议接管或配置透传入口，不为未实现协议开放能力。缺失 tag、未知类型、无效地址/端口、重复 tag、特殊 netns/bind_interface/reuse_addr 及未建模的固定 Endpoint 监听均拒绝，不输出部分清单或原配置诊断。
+
+`2026090800` 增加显式 `features.listen_network_selection=true` 的适配契约：只有声明该能力的适配器，才允许实例通过 `network` 从 `listen_networks` 中选择真实固定监听。字符串与数组按目标核心 NetworkList 语义解析；省略、`null`、空数组使用默认网络，空字符串、未知网络、重复项及超出注册能力的网络被拒绝。未声明能力的旧预设遇到 `network` 字段也拒绝，不将 SOCKS 的 UDP 业务误作固定 UDP 监听。空或畸形 `listen_networks` 不能再产生成功的空资源清单。此契约已用测试专属 Shadowsocks 元数据和两版真实核心验证，但不把该测试元数据加入公开注册表，不代表 Shadowsocks 生命周期已实现。
 
 `validate_managed_listener_resources` 在服务端核心 `check` 和原子发布前拦截固定监听重叠；结构化 Mixed 的 validate/candidate/publisher/renderer 同样经过此预检。IPv4/IPv6 特定地址可以按实际绑定范围共用端口，同一数字的 TCP/UDP 不算冲突。当前目标 Linux 核心的 `::` 作为双栈资源处理，不按可能与实际绑定不同的 UI 栈名称猜测 v6-only。此处不检查其他进程的 socket，不提供并发 OS 端口预留，也未覆盖动态 UDP relay、ACME 临时监听和高级网络命名空间。
 

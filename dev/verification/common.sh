@@ -72,6 +72,7 @@ resolve_local_tests() {
       tests/protocol_instance_adapter.sh \
       tests/structured_instance_store.sh \
       tests/managed_listener_resources.sh \
+      tests/listener_network_selection.sh \
       tests/firewall_listener_references.sh \
       tests/mixed_active_state.sh \
       tests/mixed_instance_lifecycle.sh \
