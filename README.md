@@ -297,6 +297,8 @@ Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码
 17. **管理 Mixed 实例**：创建、修改、删除、设置默认实例、迁移 legacy 状态和恢复未完成事务；完整门禁证据见实施记录。
 18. **管理 SOCKS 实例**：创建、修改、删除、设置默认实例和恢复未完成事务；使用独立 SOCKS 的 schema 2 typed store，不提供 legacy `.env` migration。
 19. **管理 HTTP 实例**：创建、修改、删除、设置默认实例和恢复未完成事务；入口可选明文或手工证书 TLS，使用共享事务，不提供 legacy migration。
+20. **管理 Shadowsocks 实例**：逐实例管理认证、监听网络、默认实例与事务恢复，不提供 legacy migration。
+21. **管理 Trojan 实例**：逐实例创建、修改、删除、设置默认和恢复；显式管理多用户、TLS 信任及传输，使用共享 CAS 事务，不提供 legacy migration。
 
 当脚本发现二进制、service、配置或协议状态层不完整时，会进入接管/修复流程，而不是把残缺实例直接当作全新安装覆盖。
 
@@ -308,7 +310,8 @@ Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码
 - **最后协议删除前的索引备份**: `/root/sing-box-vps/protocols/index.env.bak`
 - **协议状态目录**: `/root/sing-box-vps/protocols/`
 - **密钥文件**: `/root/sing-box-vps/reality.key` (REALITY) / `warp.key` (Warp)
-- **协议状态文件**: `vless-reality.env` / `vless-reality.d/` / `mixed.env` / `instances/mixed.json` / `socks.env` / `instances/socks.json` / `hy2.env` / `anytls.env`
+- **协议状态文件**: `vless-reality.env` / `vless-reality.d/` / `mixed.env` / `instances/mixed.json` / `socks.env` / `instances/socks.json` / `http.env` / `instances/http.json` / `shadowsocks.env` / `instances/shadowsocks.json` / `trojan.env` / `instances/trojan.json` / `hy2.env` / `anytls.env`
+- **Trojan 结构化实例状态**: `/root/sing-box-vps/protocols/instances/trojan.json`（schema 1 store，`trojan.env` 为 schema 2 active marker）
 - **Mixed 结构化实例状态**: `/root/sing-box-vps/protocols/instances/mixed.json`（显式迁移或实例写入后启用）
 - **Mixed 事务恢复材料**: `/root/sing-box-vps.instance-write.lock`、`/root/sing-box-vps.instance-transactions/`
 - **REALITY QoS 状态**: `/root/sing-box-vps/reality-qos.filters`
