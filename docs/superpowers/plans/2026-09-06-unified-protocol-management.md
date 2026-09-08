@@ -12,6 +12,14 @@
 
 新增专项门禁：`vless_plain_structured_instance_store.sh`、`vless_plain_instance_lifecycle.sh`、`vless_plain_export_runtime.sh`、`vless_plain_agent_share.sh`、`subman_vless_plain_sync.sh`、`verification_protocol_probe_vless_plain.sh` 以及 `fresh_install_vless_plain` Docker 场景。专项测试覆盖实例 revision stale-write/delete/recreate、TLS/transport/flow 校验、两核心客户端/服务端 `check`、VLESS URI 特殊字段、凭据脱敏、SubMan `synced=3/skipped=2`、普通 VLESS 与 REALITY 的 live discriminator，以及安装后的真实回环 TCP 探针。最终本地门禁运行目录为 `dev/verification-runs/20260908141403`，以两版官方 ARM64 核心通过 108/108 项；最终 Docker 运行目录为 `dev/verification-runs/20260908144031`，15/15 场景 `STATUS=success`、22/22 协议探针 `RESULT=success`，包含普通 VLESS 新装、十协议共存和升级成功/回滚产物。SubMan 仍为 mock，不把静态配置、容器回环或 mock API 当作生产/公网证据。
 
+## 2026-09-08：AnyTLS 结构化实例管理链路（阶段交付）
+
+从普通 VLESS 阶段继续原始完整目标；保留未跟踪文件 `1`、`2`，未读取或修改。Context7 `/sagernet/sing-box` 核对 AnyTLS inbound/outbound 的 `users`、TLS 和 `client_metadata` 字段；客户端的 `tls.certificate` 只嵌入公开 PEM，不读取服务器私钥。
+
+本阶段把 AnyTLS 接入共享 schema 2 marker + schema 1 JSON store、实例 CAS 事务、监听资源、重建/接管、菜单 24、Agent `nodes`/`links`/`export-client` 和逐用户客户端 outbound。typed 记录严格限定 1–128 个用户名/密码、启用的手工 `server_name`/证书/私钥路径及 `client_trust` (`certificate`/`system`)；没有标准分享 URI 时返回 `anytls_standard_uri_unavailable`，凭据只出现在受保护的 outbound JSON。为避免丢失 ACME/provider 语义，legacy AnyTLS 继续使用 schema 1 路径，结构化接管对无法无损表达的 provider/ACME 配置 fail closed 并保留原状态。
+
+新增 `tests/anytls_structured_instance_store.sh`、`anytls_instance_lifecycle.sh`、`anytls_agent_share.sh` 和 `anytls_export_runtime.sh`，并扩展 registry/capability、旧 AnyTLS loader、Agent 清单、重建与菜单回归。无本地核心时 runtime 测试显式 skip；配置了官方 1.13.18/1.14.0 核心时会执行服务端/客户端 `sing-box check`。SubMan 不为 AnyTLS 生成或执行同步请求；本阶段证据仍是本地/mock/容器回环，不代表公网、生产或真实 SubMan 结果。全协议目标继续未完成。
+
 ## 2026-09-08：VMess 管理链路接入（阶段交付）
 
 从 Trojan 与 V2Ray transport 阶段继续原始完整目标；保留未跟踪文件 `1`、`2`，未读取或修改。Context7 `/sagernet/sing-box` 与固定 1.14.0 源码确认 VMess 入站用户字段为 `name`、UUID、`alterId`，出站安全枚举为 `auto`、`none`、`zero`、`aes-128-cfb`、`aes-128-gcm`、`chacha20-poly1305`；项目同时保留 1.13.18 ARM64 核心兼容检查。

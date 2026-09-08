@@ -474,7 +474,10 @@ validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}"
 write_fixture plain-vless
 validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}"
 
-for fixture in implicit-reality disabled-reality disabled-tls duplicate-hy2 duplicate-anytls duplicate-tag bad-structure invalid-json; do
+write_fixture duplicate-anytls
+validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}"
+
+for fixture in implicit-reality disabled-reality disabled-tls duplicate-hy2 duplicate-tag bad-structure invalid-json; do
   write_fixture "${fixture}"
   : > "${TMP_DIR}/stdout"
   if validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" > "${TMP_DIR}/stdout" 2> "${TMP_DIR}/stderr"; then
@@ -484,7 +487,7 @@ for fixture in implicit-reality disabled-reality disabled-tls duplicate-hy2 dupl
   [[ ! -s "${TMP_DIR}/stdout" ]]
   case "${fixture}" in
     implicit-reality|disabled-reality|disabled-tls) grep -Fq 'unsupported_inbound_preset' "${TMP_DIR}/stderr" ;;
-    duplicate-hy2|duplicate-anytls) grep -Fq 'unsupported_inbound_multiplicity' "${TMP_DIR}/stderr" ;;
+    duplicate-hy2) grep -Fq 'unsupported_inbound_multiplicity' "${TMP_DIR}/stderr" ;;
     duplicate-tag) grep -Fq 'duplicate_inbound_tag' "${TMP_DIR}/stderr" ;;
     bad-structure) grep -Fq 'invalid_inbounds' "${TMP_DIR}/stderr" ;;
     invalid-json) grep -Fq 'invalid_json_or_inventory' "${TMP_DIR}/stderr" ;;

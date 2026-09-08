@@ -123,6 +123,11 @@ resolve_local_tests() {
       tests/vless_plain_agent_share.sh \
       tests/vless_plain_export_runtime.sh \
       tests/subman_vless_plain_sync.sh \
+      tests/anytls_structured_instance_store.sh \
+      tests/anytls_structured_takeover.sh \
+      tests/anytls_instance_lifecycle.sh \
+      tests/anytls_agent_share.sh \
+      tests/anytls_export_runtime.sh \
       tests/managed_component_graph.sh \
       tests/managed_component_graph_core_startup.sh \
       tests/live_inbound_inventory_guards.sh \

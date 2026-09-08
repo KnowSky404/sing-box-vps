@@ -591,6 +591,11 @@ grep -Fqx 'tests/subman_config_helpers.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_payload_generation.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_api_push.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/subman_sync_orchestration.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/anytls_structured_instance_store.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/anytls_structured_takeover.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/anytls_instance_lifecycle.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/anytls_agent_share.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/anytls_export_runtime.sh|1' "${TMP_DIR}/local-tests.log"
 
 default_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
 expected_local_test_count=$(bash -c 'source "$1"; resolve_local_tests install.sh | wc -l' _ "${REPO_ROOT}/dev/verification/common.sh")

@@ -72,7 +72,7 @@ readonly SB_PROTOCOL_REGISTRY=(
   'vless-plain|vless|vless-plain|vless|plain|inbound|vless|VLESS|vless-plain-in|10|true|vless|tcp,udp|tcp,udp|1.13.0|true|optional|vless|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"transports":["none","http","ws","grpc","quic"],"listen_transport_projection":true,"share_link":true,"client_export":true,"subman_sync":true}|vless-plain|build_vless_plain_inbound_json,build_vless_plain_route_rules_json,build_client_vless_plain_outbounds,save_vless_plain_state,prompt_vless_plain_install,prompt_vless_plain_update,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'mixed|mixed|mixed|mixed|plain|inbound|mixed|Mixed (HTTP/HTTPS/SOCKS)|mixed-in|2|true||tcp|tcp,udp|1.13.0|true|none|http,socks5|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"http":true,"socks5":true,"authentication":true,"share_links":["http","socks5"],"qr":false,"client_export":true,"subman_sync":false}||build_mixed_inbound_json,save_mixed_state,prompt_mixed_install,prompt_mixed_update,build_client_mixed_outbounds,load_mixed_structured_instance,apply_mixed_instance_change'
   'hy2|hy2|hysteria2|hysteria2|tls|inbound|hysteria2|Hysteria2|hy2-in|3|true|hysteria2|udp|tcp,udp|1.13.0|false|optional|hysteria2|tcp_loopback|{"tls_modes":["acme_http01","acme_cloudflare_dns01","manual"],"bandwidth":true,"obfs":true,"share_link":true,"qr":true,"client_export":true,"subman_sync":true}|hysteria2|build_hy2_inbound_json,build_hy2_certificate_provider_json,build_client_hy2_outbound,save_hy2_state,prompt_hy2_install,prompt_hy2_update'
-  'anytls|anytls|anytls|anytls|tls|inbound|anytls|AnyTLS|anytls-in|4|true||tcp|tcp,udp|1.13.0|false|optional||tcp_loopback|{"tls_modes":["acme_http01","acme_cloudflare_dns01","manual"],"standard_share_uri":false,"outbound_example":true,"qr":false,"client_export":true,"subman_sync":false}||build_anytls_inbound_json,build_anytls_certificate_provider_json,build_client_anytls_outbound,save_anytls_state,prompt_anytls_install,prompt_anytls_update'
+  'anytls|anytls|anytls|anytls|tls|inbound|anytls|AnyTLS|anytls-in|4|true||tcp|tcp,udp|1.13.0|true|optional||tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"tls_modes":["acme_http01","acme_cloudflare_dns01","manual"],"standard_share_uri":false,"outbound_example":true,"qr":false,"client_export":true,"subman_sync":false}||build_anytls_inbound_json,build_anytls_certificate_provider_json,build_client_anytls_outbound,save_anytls_state,prompt_anytls_install,prompt_anytls_update,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'socks|socks|socks|socks|plain|inbound|socks|SOCKS|socks-in|5|true||tcp|tcp,udp|1.13.0|true|none|socks5|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"socks5":true,"authentication":true,"share_links":["socks5"],"qr":false,"client_export":true,"subman_sync":false}||build_socks_inbound_json,save_socks_state,prompt_socks_install,prompt_socks_update,build_client_socks_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'http|http|http|http|plain-or-tls|inbound|http|HTTP Proxy|http-in|6|true||tcp|tcp|1.13.0|true|none|http|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"http":true,"tls":true,"tls_modes":["disabled","manual_certificate"],"tls_share_links":false,"authentication":true,"share_links":["http"],"qr":false,"client_export":true,"subman_sync":false}||build_http_inbound_json,save_http_state,prompt_http_install,prompt_http_update,build_client_http_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'shadowsocks|shadowsocks|shadowsocks|shadowsocks|aead-and-2022|inbound|shadowsocks|Shadowsocks|ss-in|7|true|ss|tcp,udp|tcp,udp|1.13.0|true|none|ss|tcp_loopback|{"multi_instance":true,"multi_user":true,"listen_network_selection":true,"per_instance_outbound":["default","direct","warp"],"authentication":true,"share_links":["ss"],"qr":false,"client_export":true,"subman_sync":true}|ss|build_shadowsocks_inbound_json,save_shadowsocks_state,prompt_shadowsocks_install,prompt_shadowsocks_update,build_client_shadowsocks_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
@@ -2093,7 +2093,7 @@ validate_protocol_state_schema() {
   schema=${schema//\"/}
   schema=${schema//\'/}
   case "${protocol}:${schema:-1}" in
-    vless-reality:1|vless-reality:2|vless-plain:2|mixed:1|mixed:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|hy2:1|anytls:1) return 0 ;;
+    vless-reality:1|vless-reality:2|vless-plain:2|mixed:1|mixed:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|hy2:1|anytls:1|anytls:2) return 0 ;;
   esac
   printf '[ERROR] 协议状态格式无法识别；已保留文件，请使用写入该状态的脚本版本恢复。\n' >&2
   return 1
@@ -3473,6 +3473,32 @@ trojan_prompt_users() {
   SB_TROJAN_AUTH_JSON=${users}
 }
 
+anytls_prompt_users() {
+  local current=${1:-'[]'} count i name password old_name old_password users='[]' answer
+  count=$(jq -r 'length' <<< "${current}" 2>/dev/null || printf 0)
+  [[ "${count}" =~ ^[1-9][0-9]{0,2}$ && "${count}" -le 128 ]] || count=1
+  read -rp "[AnyTLS] 用户数量 (1-128，默认 ${count}): " answer || return 1
+  [[ -z "${answer}" ]] || count=${answer}
+  [[ "${count}" =~ ^[1-9][0-9]{0,2}$ && "${count}" -le 128 ]] || return 1
+  for ((i=0; i<count; i++)); do
+    old_name=$(jq -r --argjson i "${i}" '.[$i].name // empty' <<< "${current}") || return 1
+    old_password=$(jq -j --argjson i "${i}" '.[$i].password // "", "\u0001"' <<< "${current}") || return 1
+    old_password=${old_password%$'\1'}
+    read -rp "[AnyTLS] 用户 $((i+1)) 名称 (默认 ${old_name:-user-$((i+1))}): " name || return 1
+    name=${name:-${old_name:-user-$((i+1))}}
+    if [[ -n "${old_password}" ]]; then
+      read -rsp "[AnyTLS] 用户 ${name} 密码 (留空保持): " password || return 1
+    else
+      read -rsp "[AnyTLS] 用户 ${name} 密码 (留空自动生成): " password || return 1
+    fi
+    printf '\n' >&2
+    [[ -n "${password}" ]] || password=${old_password}
+    [[ -n "${password}" ]] || password=$(trojan_generate_password) || return 1
+    users=$(jq -cn --argjson users "${users}" --arg name "${name}" --arg password "${password}" '$users + [{name:$name,password:$password}]') || return 1
+  done
+  SB_ANYTLS_AUTH_JSON=${users}
+}
+
 trojan_prompt_transport() {
   local choice path service transport='{"type":"none"}'
   echo 'Trojan 传输:' >&2
@@ -4211,6 +4237,7 @@ plain_proxy_management_label() {
     trojan) printf 'Trojan' ;;
     vmess) printf 'VMess' ;;
     vless-plain) printf 'VLESS' ;;
+    anytls) printf 'AnyTLS' ;;
     *) return 1 ;;
   esac
 }
@@ -4224,6 +4251,8 @@ plain_proxy_management_capture_snapshot() {
     structured_instance_store_snapshot_json "${protocol}" "${store_file}" > "${destination}" || return 1
   elif [[ "${protocol}" == mixed ]] && protocol_state_exists mixed; then
     mixed_config_store_candidate | jq -c '.revision=0' > "${destination}" || return 1
+  elif [[ "${protocol}" == anytls ]] && protocol_state_exists anytls; then
+    plain_proxy_config_store_candidate anytls | jq -c '.revision=0' > "${destination}" || return 1
   elif [[ -e "$(plain_proxy_structured_store_file "${protocol}")" ]]; then
     plain_proxy_inactive_store_snapshot "${protocol}" > "${destination}" || return 1
   else
@@ -4522,10 +4551,81 @@ vless_plain_management_build_record() {
   structured_instance_store_validate_instance_argument "${destination}" vless-plain
 }
 
+anytls_management_build_record() {
+  local snapshot=${1:-} operation=${2:-create} target=${3:-} destination=${4:-}
+  local id name tag address port policy answer users tls trust trust_choice edit_users
+  local server_name certificate_path key_path
+  [[ -f "${snapshot}" && ! -L "${snapshot}" && -n "${destination}" ]] || return 1
+  if [[ "${operation}" == replace ]]; then
+    jq -e --arg id "${target}" 'any(.instances[]; .id == $id)' "${snapshot}" >/dev/null 2>&1 || return 1
+    id=${target}
+    name=$(jq -j --arg id "${id}" '.instances[]|select(.id==$id)|.name,"\u0001"' "${snapshot}") || return 1; name=${name%$'\1'}
+    tag=$(jq -j --arg id "${id}" '.instances[]|select(.id==$id)|.tag,"\u0001"' "${snapshot}") || return 1; tag=${tag%$'\1'}
+    address=$(jq -j --arg id "${id}" '.instances[]|select(.id==$id)|.listen.address,"\u0001"' "${snapshot}") || return 1; address=${address%$'\1'}
+    port=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.listen.port' "${snapshot}") || return 1
+    users=$(jq -c --arg id "${id}" '.instances[]|select(.id==$id)|.authentication.users' "${snapshot}") || return 1
+    tls=$(jq -c --arg id "${id}" '.instances[]|select(.id==$id)|.tls' "${snapshot}") || return 1
+    trust=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.client_trust' "${snapshot}") || return 1
+    policy=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.outbound_policy' "${snapshot}") || return 1
+  else
+    id=$(plain_proxy_management_next_id anytls "${snapshot}") || return 1
+    name="AnyTLS ${id}"
+    tag=$(plain_proxy_management_next_tag anytls "${snapshot}") || return 1
+    address=127.0.0.1; port=443; users='[]'; tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'; trust=system; policy=default
+  fi
+  read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1
+  [[ -z "${answer}" ]] || name=$(trim_whitespace "${answer}")
+  if [[ "${operation}" == create ]]; then
+    read -rp "实例 ID（默认 ${id}）: " answer || return 1
+    [[ -z "${answer}" ]] || id=$(trim_whitespace "${answer}")
+    structured_instance_store_validate_id "${id}" || return 1
+    read -rp "入口 tag（默认 ${tag}）: " answer || return 1
+    [[ -z "${answer}" ]] || tag=$(trim_whitespace "${answer}")
+  fi
+  read -rp "监听地址（默认 ${address}）: " answer || return 1
+  [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}")
+  structured_instance_store_validate_address "${address}" || return 1
+  port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
+  policy=$(prompt_instance_outbound_policy '出站策略' "${policy}") || return 1
+  if [[ "${operation}" == create ]]; then
+    edit_users=y
+  else
+    edit_users=$(prompt_yes_no '[AnyTLS] 是否重新编辑用户凭据 [y/n] (默认 n): ' n) || return 1
+  fi
+  if [[ "${edit_users}" == y ]]; then
+    anytls_prompt_users "${users}" || return 1
+    users=${SB_ANYTLS_AUTH_JSON}
+  fi
+  server_name=$(jq -r '.server_name // empty' <<< "${tls}") || return 1
+  certificate_path=$(jq -r '.certificate_path // empty' <<< "${tls}") || return 1
+  key_path=$(jq -r '.key_path // empty' <<< "${tls}") || return 1
+  while [[ -z "${server_name}" ]]; do
+    read -rp "[AnyTLS] TLS server name: " answer || return 1
+    server_name=$(trim_whitespace "${answer}")
+    [[ -n "${server_name}" ]] || log_warn '[AnyTLS] TLS server name 不能为空。' >&2
+  done
+  certificate_path=$(prompt_required_path "[AnyTLS] TLS 证书绝对路径（当前 ${certificate_path}）: " "${certificate_path}") || return 1
+  key_path=$(prompt_required_path "[AnyTLS] TLS 私钥绝对路径（当前 ${key_path}）: " "${key_path}") || return 1
+  tls=$(jq -cn --arg server_name "${server_name}" --arg certificate_path "${certificate_path}" --arg key_path "${key_path}" \
+    '{enabled:true,server_name:$server_name,certificate_path:$certificate_path,key_path:$key_path}') || return 1
+  trust_choice=$(prompt_choice '[AnyTLS] 客户端证书信任 [1=certificate,2=system] (默认保持): ' 1 2 "$([[ "${trust}" == system ]] && printf 2 || printf 1)") || return 1
+  [[ "${trust_choice}" == 2 ]] && trust=system || trust=certificate
+  [[ "${trust}" == system ]] && log_warn '系统信任模式要求客户端系统信任该证书签发链；不关闭证书校验。' >&2
+  answer=$(plain_proxy_management_prompt_public_consent anytls "${address}" "${tls}") || return 1
+  if [[ "${address}" != 127.* && "${address}" != ::1 && "${answer}" != y ]]; then
+    log_info '未确认公网暴露，已取消 AnyTLS 实例变更。'; return 2
+  fi
+  PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC=${answer}; MIXED_MANAGEMENT_ALLOW_PUBLIC=${answer}
+  jq -n -cS --arg id "${id}" --arg name "${name}" --arg tag "${tag}" --arg address "${address}" \
+    --argjson port "${port}" --argjson users "${users}" --argjson tls "${tls}" --arg trust "${trust}" --arg policy "${policy}" \
+    '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{users:$users},tls:$tls,client_trust:$trust,outbound_policy:$policy,dependencies:[]}' > "${destination}" || return 1
+  structured_instance_store_validate_instance_argument "${destination}" anytls
+}
+
 plain_proxy_management_prompt_public_consent() {
   local protocol=${1:-} address=${2:-} tls_json=${3:-} auth_json=${4:-} label tls_enabled=n plaintext=y
   label=$(plain_proxy_management_label "${protocol}") || return 1
-  if [[ ("${protocol}" == http || "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == vless-plain) && -n "${tls_json}" ]] &&
+  if [[ ("${protocol}" == http || "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == "vless-plain" || "${protocol}" == anytls) && -n "${tls_json}" ]] &&
      jq -e '.enabled == true' <<< "${tls_json}" >/dev/null 2>&1; then
     tls_enabled=y
   fi
@@ -4595,6 +4695,10 @@ plain_proxy_management_build_record() {
   fi
   if [[ "${protocol}" == vless-plain ]]; then
     vless_plain_management_build_record "${snapshot}" "${operation}" "${target}" "${destination}"
+    return $?
+  fi
+  if [[ "${protocol}" == anytls ]]; then
+    anytls_management_build_record "${snapshot}" "${operation}" "${target}" "${destination}"
     return $?
   fi
   label=$(plain_proxy_management_label "${protocol}") || return 1
@@ -4895,6 +4999,14 @@ vless_plain_instance_management_menu() {
   plain_proxy_instance_management_menu vless-plain "$@"
 }
 
+anytls_instance_management_menu() {
+  if protocol_state_exists anytls && ! plain_proxy_structured_state_active anytls; then
+    log_warn '当前 AnyTLS 仍是 legacy schema 1；请使用配置更新入口保留原有 ACME/provider 配置，不能直接进入 schema 2 实例管理。' >&2
+    return 1
+  fi
+  plain_proxy_instance_management_menu anytls "$@"
+}
+
 plain_proxy_instance_management_menu() (
   local protocol=${1:-} requested_operation=${2:-} temp_dir choice snapshot revision target result status one_shot=n
   local record_file label confirmation
@@ -4935,6 +5047,8 @@ plain_proxy_instance_management_menu() (
       echo "5. 迁移 legacy schema 1（不适用）"; echo "6. 恢复未完成事务"; echo "7. 列出实例（含 ID）"; echo "0. 返回"
       if [[ "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == vless-plain ]]; then
         echo "字段：用户凭据、TLS、传输、client_trust（均为类型化输入）"
+      elif [[ "${protocol}" == anytls ]]; then
+        echo "字段：用户凭据、TLS、client_trust（均为类型化输入）"
       fi
       choice=$(prompt_choice "请选择 [0-7]: " 0 7 "") || return 1
     fi
@@ -4983,7 +5097,7 @@ plain_proxy_instance_management_menu() (
         ;;
       5) log_warn "${label} 没有 legacy schema 1 可迁移。" ;;
       7)
-        jq -r --arg protocol "${protocol}" '.instances[] | "\(.id)\t\(.name)\t\(.listen.address):\(.listen.port)" + (if $protocol == "shadowsocks" then "\tnetwork=\(.listen.network|join(","))\tmethod=\(.authentication.method)\tusers=\(.authentication.users|length)" elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then "\tusers=\(.authentication.users|length)\ttransport=\(.transport.type)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" else "\tauth=\(.authentication.enabled)\tpolicy=\(.outbound_policy)" + (if $protocol == "http" then "\ttls=\(.tls.enabled)" else "" end) end)' "${snapshot}" || return $?
+        jq -r --arg protocol "${protocol}" '.instances[] | "\(.id)\t\(.name)\t\(.listen.address):\(.listen.port)" + (if $protocol == "shadowsocks" then "\tnetwork=\(.listen.network|join(","))\tmethod=\(.authentication.method)\tusers=\(.authentication.users|length)" elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then "\tusers=\(.authentication.users|length)\ttransport=\(.transport.type)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" elif $protocol == "anytls" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" else "\tauth=\(.authentication.enabled)\tpolicy=\(.outbound_policy)" + (if $protocol == "http" then "\ttls=\(.tls.enabled)" else "" end) end)' "${snapshot}" || return $?
         [[ "${one_shot}" == y ]] && return 0
         ;;
       *) log_warn "无效选项，请重新选择。" ;;
@@ -5037,6 +5151,11 @@ install_protocols_interactive() {
       log_warn "VLESS 已保留 revision；请通过实例管理入口创建 VLESS 实例，或本次仅选择其他协议。"
       return 1
     fi
+    if plain_proxy_inactive_store_snapshot anytls >/dev/null 2>&1 &&
+       protocol_array_contains anytls "${selected_protocols[@]}"; then
+      log_warn "AnyTLS 已保留 revision；请通过实例管理入口创建 AnyTLS 实例，或本次仅选择其他协议。"
+      return 1
+    fi
     snapshot_dir=$(create_managed_state_snapshot) || {
       log_error "无法创建配置状态事务快照。"
       return 1
@@ -5086,6 +5205,10 @@ install_protocols_interactive() {
     if plain_proxy_inactive_store_snapshot vless-plain >/dev/null 2>&1 &&
        ! protocol_array_contains vless-plain ${installed_protocols[@]+"${installed_protocols[@]}"}; then
       installed_protocols+=(vless-plain)
+    fi
+    if plain_proxy_inactive_store_snapshot anytls >/dev/null 2>&1 &&
+       ! protocol_array_contains anytls ${installed_protocols[@]+"${installed_protocols[@]}"}; then
+      installed_protocols+=(anytls)
     fi
     prompt_protocol_install_selection "additional" || return 0
     IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
@@ -5153,6 +5276,14 @@ install_protocols_interactive() {
         return 0
       fi
       log_warn "VLESS 实例不能与其他新增协议合并操作；请先单独管理 VLESS 实例。"
+      return 0
+    fi
+    if protocol_array_contains "anytls" "${selected_protocols[@]}"; then
+      if [[ ${#selected_protocols[@]} -eq 1 ]]; then
+        anytls_instance_management_menu create || return $?
+        return 0
+      fi
+      log_warn "AnyTLS 实例不能与其他新增协议合并操作；请先单独管理 AnyTLS 实例。"
       return 0
     fi
     snapshot_dir=$(create_managed_state_snapshot) || {
@@ -8833,7 +8964,7 @@ load_protocol_state() {
       mixed_schema=${mixed_schema//\'/}
     fi
   fi
-  if [[ ("${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess") && -f "${state_file}" ]]; then
+  if [[ ("${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls") && -f "${state_file}" ]]; then
     socks_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" | head -n1) || return 1
     socks_schema=${socks_schema//\"/}
     socks_schema=${socks_schema//\'/}
@@ -8878,7 +9009,7 @@ load_protocol_state() {
   # SOCKS has no legacy .env representation.  Dispatch only a validated
   # schema-2 marker to the typed store and reject every older/unknown shape
   # before it can be sourced as shell code.
-  if [[ "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" ]]; then
+  if [[ "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || ("${protocol}" == "anytls" && "${socks_schema}" == "2") ]]; then
     [[ "${socks_schema}" == "2" ]] || return 1
     plain_proxy_structured_marker_is_valid "${state_file}" || return 1
     load_plain_proxy_structured_instance "${protocol}" || return 1
@@ -9613,6 +9744,10 @@ build_anytls_certificate_provider_json() {
 }
 
 build_anytls_inbound_json() {
+  if [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]] && plain_proxy_structured_state_active anytls; then
+    render_structured_instance_inbounds anytls "$(plain_proxy_structured_store_file anytls)"
+    return $?
+  fi
   ensure_anytls_materials
   local acme_json use_certificate_provider="n"
   acme_json=$(build_anytls_acme_json)
@@ -9817,7 +9952,7 @@ instance_outbound_requires_warp() {
       vless-reality)
         vless_reality_has_warp_outbound_policy && return 0
         ;;
-      vless-plain|mixed|socks|http|shadowsocks|trojan|vmess)
+      vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|anytls)
         state_file=$(protocol_state_file "${protocol}") || return 1
         schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" 2>/dev/null || true)
         schema=${schema//\"/}
@@ -9861,11 +9996,21 @@ build_protocol_route_rules() {
       plain_proxy_structured_state_active "${protocol}" || return 1
       render_structured_instance_route_rules "${protocol}" "$(plain_proxy_structured_store_file "${protocol}")"
       ;;
+    anytls)
+      local state_file schema
+      state_file=$(protocol_state_file "${protocol}") || return 1
+      schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" 2>/dev/null | head -n1 || true)
+      schema=${schema//\"/}
+      schema=${schema//\'/}
+      if [[ "${schema}" == "2" ]]; then
+        plain_proxy_structured_state_active "${protocol}" || return 1
+        render_structured_instance_route_rules "${protocol}" "$(plain_proxy_structured_store_file "${protocol}")"
+      else
+        jq -n '[{ "inbound": "anytls-in", "action": "sniff" }]'
+      fi
+      ;;
     hy2)
       jq -n '[{ "inbound": "hy2-in", "action": "sniff" }]'
-      ;;
-    anytls)
-      jq -n '[{ "inbound": "anytls-in", "action": "sniff" }]'
       ;;
     *) return 1 ;;
   esac
@@ -11703,6 +11848,10 @@ update_config_only() {
     vmess_instance_management_menu replace
     return $?
   fi
+  if [[ "${selected_protocol}" == anytls ]] && plain_proxy_structured_state_active anytls; then
+    anytls_instance_management_menu replace
+    return $?
+  fi
 
   load_protocol_state "${selected_protocol}"
   if [[ "${selected_protocol}" == "vless-reality" ]]; then
@@ -11847,6 +11996,14 @@ remove_protocol_menu() {
       return $?
     fi
     log_warn "结构化 VLESS 实例需通过实例事务逐个移除；请先进入 VLESS 实例管理，再移除其他协议。本次未修改。"
+    return 1
+  fi
+  if plain_proxy_structured_state_active anytls && protocol_array_contains anytls "${selected_protocols[@]}"; then
+    if [[ ${#selected_protocols[@]} -eq 1 ]]; then
+      anytls_instance_management_menu delete
+      return $?
+    fi
+    log_warn "结构化 AnyTLS 实例需通过实例事务逐个移除；请先进入 AnyTLS 实例管理，再移除其他协议。本次未修改。"
     return 1
   fi
 
@@ -14490,6 +14647,113 @@ build_client_anytls_outbound() {
     }'
 }
 
+build_client_anytls_outbounds() (
+  local public_ip=${1:-} store_file snapshot tmpdir instance_ids_file instance_file output_file
+  local instance_id listen_address server_address expected_count output_count
+
+  store_file=$(plain_proxy_structured_store_file anytls) || return 1
+  public_ip=${public_ip:-$(get_public_ip)}
+  [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
+  snapshot=$(structured_instance_store_snapshot_json anytls "${store_file}") || return 1
+  tmpdir=$(mktemp -d) || return 1
+  trap 'rm -rf -- "${tmpdir}"' EXIT
+  instance_ids_file="${tmpdir}/instance-ids"
+  output_file="${tmpdir}/outbounds.jsonl"
+  : > "${output_file}" || return 1
+  jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}" > "${instance_ids_file}" || return 1
+  while IFS= read -r -d '' instance_id; do
+    [[ -n "${instance_id}" ]] || return 1
+    instance_file=$(mktemp "${tmpdir}/store.XXXXXX") || return 1
+    jq --arg id "${instance_id}" '
+      . as $root |
+      ($root.instances | map(select(.id == $id))) as $instances |
+      $root | .default_instance_id=$id | .instances=$instances
+    ' <<< "${snapshot}" > "${instance_file}" || return 1
+    listen_address=$(jq -er --arg id "${instance_id}" \
+      '.instances[] | select(.id == $id) | .listen.address' <<< "${snapshot}") || return 1
+    case "${listen_address}" in
+      0.0.0.0|::)
+        server_address=${public_ip}
+        ;;
+      127.*|::1)
+        server_address=${listen_address}
+        printf '[WARN] AnyTLS 实例 %s 绑定回环地址 %s；导出仅供本机使用，未宣称公网可达。\n' \
+          "${instance_id}" "${listen_address}" >&2
+        ;;
+      *)
+        server_address=${listen_address}
+        ;;
+    esac
+    [[ -n "${server_address}" ]] || return 1
+    build_anytls_client_outbounds_from_store "${instance_file}" "${server_address}" >> "${output_file}" || return 1
+  done < "${instance_ids_file}"
+  expected_count=$(jq -r '[.instances[].authentication.users | length] | add // 0' <<< "${snapshot}") || return 1
+  output_count=$(jq -s 'length' "${output_file}") || return 1
+  [[ "${expected_count}" =~ ^[0-9]+$ && "${output_count}" == "${expected_count}" && "${output_count}" -gt 0 ]] || return 1
+  jq -es 'length > 0 and (map(.tag) | unique | length) == length' "${output_file}" >/dev/null || return 1
+  cat "${output_file}"
+)
+
+build_anytls_client_outbounds_from_store() (
+  local store_file=${1:-} server=${2:-} raw_file output_file expected_count output_count snapshot raw_outbound
+  local tls_json trust server_name certificate_path certificate_pem
+
+  [[ $# -eq 2 && -n "${store_file}" && -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
+  validate_structured_instance_store anytls "${store_file}" || return 1
+  snapshot=$(structured_instance_store_snapshot_json anytls "${store_file}") || return 1
+  raw_file=$(mktemp) || return 1
+  output_file=$(mktemp) || {
+    rm -f -- "${raw_file}"
+    return 1
+  }
+  trap 'rm -f -- "${raw_file}" "${output_file}"' EXIT
+  jq -c --arg server "${server}" '
+    .instances[] as $instance |
+    $instance.authentication.users[] as $user |
+    {
+      type:"anytls",
+      tag:("anytls-" + $instance.id + "-user-" + ($user.name | @base64)),
+      server:$server,
+      server_port:$instance.listen.port,
+      password:$user.password,
+      client_metadata:"",
+      _tls:$instance.tls,
+      _client_trust:$instance.client_trust
+    }
+  ' <<< "${snapshot}" > "${raw_file}" || return 1
+
+  while IFS= read -r raw_outbound; do
+    [[ -n "${raw_outbound}" ]] || continue
+    tls_json=$(jq -ec '._tls' <<< "${raw_outbound}") || return 1
+    jq -e '.enabled == true' <<< "${tls_json}" >/dev/null || return 1
+    server_name=$(jq -er '._tls.server_name' <<< "${raw_outbound}") || return 1
+    trust=$(jq -er '._client_trust' <<< "${raw_outbound}") || return 1
+    case "${trust}" in
+      system)
+        tls_json=$(jq -cn --arg server_name "${server_name}" \
+          '{enabled:true,server_name:$server_name}') || return 1
+        ;;
+      certificate)
+        certificate_path=$(jq -er '._tls.certificate_path' <<< "${raw_outbound}") || return 1
+        certificate_pem=$(read_public_certificate_pem "${certificate_path}") || return 1
+        tls_json=$(jq -cn --arg server_name "${server_name}" --arg certificate "${certificate_pem}" \
+          '{enabled:true,server_name:$server_name,certificate:$certificate}') || return 1
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+    jq -c --argjson tls "${tls_json}" \
+      'del(._tls,._client_trust) | .tls=$tls' <<< "${raw_outbound}" >> "${output_file}" || return 1
+  done < "${raw_file}"
+  expected_count=$(jq -r '[.instances[].authentication.users | length] | add // 0' <<< "${snapshot}") || return 1
+  output_count=$(jq -s 'length' "${output_file}") || return 1
+  [[ "${expected_count}" =~ ^[0-9]+$ && "${output_count}" == "${expected_count}" && "${output_count}" -gt 0 ]] || return 1
+  jq -es 'length > 0 and (map(.tag) | unique | length) == length' "${output_file}" >/dev/null || return 1
+  cat "${output_file}"
+)
+
 validate_mixed_client_connection() {
   local port=${1:-} auth_enabled=${2:-} username=${3:-} password=${4:-}
   local LC_ALL=C
@@ -15245,7 +15509,13 @@ build_client_outbound_json_for_protocol() {
         fi
         ;;
       anytls)
-        if outbound_json=$(build_client_anytls_outbound); then
+        if [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]] && plain_proxy_structured_state_active anytls; then
+          if outbound_json=$(build_client_anytls_outbounds "${public_ip}"); then
+            :
+          else
+            build_status=$?
+          fi
+        elif outbound_json=$(build_client_anytls_outbound); then
           :
         else
           build_status=$?
@@ -15418,6 +15688,14 @@ show_link_info() {
   fi
 
   if [[ "${SB_PROTOCOL}" == "anytls" ]]; then
+    if [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]] && plain_proxy_structured_state_active anytls; then
+      local anytls_material
+      anytls_material=$(agent_anytls_link_json "${public_ip}") || return 1
+      printf '\nAnyTLS 实例 %s（连接材料含凭据，请妥善保管）\n' "${SB_INSTANCE_ID:-}"
+      printf 'AnyTLS 客户端 outbound JSON：\n'
+      jq '.outbounds' <<< "${anytls_material}"
+      return $?
+    fi
     echo "1. AnyTLS 客户端 outbound JSON 示例"
     build_anytls_outbound_example "${public_ip}"
     echo ""
@@ -15617,7 +15895,7 @@ list_subman_addresses_for_current_protocol() {
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL:-}" 2>/dev/null || true)
   case "${protocol}" in
-    mixed|socks|http|shadowsocks|trojan|vmess|vless-plain)
+    mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls)
       if plain_proxy_structured_state_active "${protocol}" >/dev/null 2>&1; then
         bound_address=${SB_MIXED_LISTEN_ADDRESS:-}
         case "${bound_address}" in
@@ -15653,7 +15931,7 @@ show_connection_details_for_detected_addresses() {
   local address_entries=()
   local entry label address public_ip
 
-  if [[ ("${SB_PROTOCOL}" == mixed || "${SB_PROTOCOL}" == socks || "${SB_PROTOCOL}" == http || "${SB_PROTOCOL}" == shadowsocks || "${SB_PROTOCOL}" == trojan || "${SB_PROTOCOL}" == vmess || "${SB_PROTOCOL}" == vless-plain) ]] && plain_proxy_structured_state_active "${SB_PROTOCOL}"; then
+  if [[ ("${SB_PROTOCOL}" == mixed || "${SB_PROTOCOL}" == socks || "${SB_PROTOCOL}" == http || "${SB_PROTOCOL}" == shadowsocks || "${SB_PROTOCOL}" == trojan || "${SB_PROTOCOL}" == vmess || "${SB_PROTOCOL}" == vless-plain || "${SB_PROTOCOL}" == anytls) ]] && plain_proxy_structured_state_active "${SB_PROTOCOL}"; then
     address=${SB_MIXED_LISTEN_ADDRESS:-}
     if [[ -n "${address}" && "${address}" != '::' && "${address}" != 0.0.0.0 ]]; then
       show_connection_details "${mode}" "${address}" "监听地址"
@@ -15703,7 +15981,7 @@ show_all_connection_details() {
 
   for protocol in "${installed_protocols[@]}"; do
     load_protocol_state "${protocol}" || return $?
-    if [[ ("${protocol}" == mixed || "${protocol}" == socks || "${protocol}" == http || "${protocol}" == shadowsocks || "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == vless-plain) ]] && plain_proxy_structured_state_active "${protocol}"; then
+    if [[ ("${protocol}" == mixed || "${protocol}" == socks || "${protocol}" == http || "${protocol}" == shadowsocks || "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == vless-plain || "${protocol}" == anytls) ]] && plain_proxy_structured_state_active "${protocol}"; then
       instance_ids=$(list_protocol_instance_ids "${protocol}") || return $?
       while IFS= read -r instance_id; do
         [[ -n "${instance_id}" ]] || continue
@@ -15802,7 +16080,7 @@ build_singbox_client_config() {
   for protocol in "${exportable_protocols[@]}"; do
     protocol_label=$(protocol_display_name "${protocol}") || return 1
     if ! protocol_state_exists "${protocol}"; then
-      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" ]]; then
+      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" ]]; then
         log_warn "${protocol_label} 状态缺失，已中止客户端导出；原导出文件保持不变。" >&2
         status=1
         break
@@ -15812,7 +16090,7 @@ build_singbox_client_config() {
     fi
 
     if ! outbound_json=$(build_client_outbounds_for_current_protocol "${protocol}" "${public_ip}"); then
-      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" ]]; then
+      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" ]]; then
         log_warn "${protocol_label} 客户端连接材料无效，已中止客户端导出；原导出文件保持不变。" >&2
         status=1
         break
@@ -16093,10 +16371,10 @@ agent_print_help() {
   sbv agent service restart --json --yes
   sbv agent subman-sync --json
   sbv agent warp --json
-  sbv agent instance create|replace mixed|socks|http|shadowsocks|trojan|vmess|vless-plain --json --yes --expected-revision N --file record.json [--allow-public]
-  sbv agent instance delete|default mixed|socks|http|shadowsocks|trojan|vmess|vless-plain --json --yes --expected-revision N --id ID
+  sbv agent instance create|replace mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls --json --yes --expected-revision N --file record.json [--allow-public]
+  sbv agent instance delete|default mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls --json --yes --expected-revision N --id ID
   sbv agent instance migrate mixed --json --yes --expected-revision N
-  sbv agent instance recover mixed|socks|http|shadowsocks|trojan|vmess|vless-plain --json --yes --expected-revision N
+  sbv agent instance recover mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls --json --yes --expected-revision N
 
 说明:
   capabilities  输出协议、功能入口以及只读/变更/敏感分类。
@@ -16315,7 +16593,7 @@ agent_capabilities_json() {
           persistent_recovery_journal: true
         },
         plain_proxy_instances: {
-          protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain"],
+          protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls"],
           legacy_migration_protocols: ["mixed"],
           state_schema: 2,
           store_schema: 1,
@@ -16327,7 +16605,8 @@ agent_capabilities_json() {
             shadowsocks: ["create", "replace", "delete", "default", "recover"],
             trojan: ["create", "replace", "delete", "default", "recover"],
             vmess: ["create", "replace", "delete", "default", "recover"],
-            "vless-plain": ["create", "replace", "delete", "default", "recover"]
+            "vless-plain": ["create", "replace", "delete", "default", "recover"],
+            anytls: ["create", "replace", "delete", "default", "recover"]
           },
           expected_revision_required: true,
           plaintext_public_confirmation: "--allow-public",
@@ -16347,7 +16626,7 @@ agent_capabilities_json() {
         doctor: {mutation: false, sensitive: false},
         "upgrade-check": {mutation: false, sensitive: false},
         upgrade: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart"},
-        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain"]},
+        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls"]},
         "export-client": {mutation: true, sensitive: true},
         "service restart": {mutation: true, sensitive: false, confirmation: "--yes"},
         "subman-sync": {mutation: true, sensitive: true, external_write: true}
@@ -16363,6 +16642,7 @@ agent_capabilities_json() {
         trojan_multi_instance_management: true,
         vmess_multi_instance_management: true,
         vless_plain_multi_instance_management: true,
+        anytls_multi_instance_management: true,
         warp_mutation: true,
         inbound_outbound_stack_management: true,
         bbr: true,
@@ -17432,7 +17712,7 @@ agent_validate_indexed_protocol_states() {
   # A deleted plain proxy may leave a valid revisioned empty tombstone for
   # CAS continuity.  It is safe when its protocol is absent from the index; a
   # non-empty orphan would be an unowned inventory and must fail closed.
-  for plain_protocol in mixed socks http shadowsocks trojan vmess vless-plain; do
+  for plain_protocol in mixed socks http shadowsocks trojan vmess vless-plain anytls; do
     if ! protocol_array_contains "${plain_protocol}" ${expected_protocols[@]+"${expected_protocols[@]}"}; then
       plain_store_file=$(plain_proxy_structured_store_file "${plain_protocol}") || return 1
       if [[ -e "${plain_store_file}" || -L "${plain_store_file}" ]]; then
@@ -17471,6 +17751,16 @@ agent_validate_indexed_protocol_states() {
       # Plain proxy protocols are structured-only. Validate the complete
       # manifest and compare every live tag before reporting them installed.
       plain_proxy_validate_state_inventory "${protocol}" || return 1
+    elif [[ "${protocol}" == "anytls" ]]; then
+      # AnyTLS retains its schema-1 ACME/provider state. Only the manual-TLS
+      # schema-2 marker owns a typed instance store and live tag comparison.
+      local anytls_state_schema
+      anytls_state_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" | head -n1) || return 1
+      anytls_state_schema=${anytls_state_schema//\"/}
+      anytls_state_schema=${anytls_state_schema//\'/}
+      if [[ "${anytls_state_schema}" == "2" ]]; then
+        plain_proxy_validate_state_inventory anytls || return 1
+      fi
     fi
   done
 }
@@ -17984,6 +18274,80 @@ agent_vless_plain_link_json() (
   jq -cn --argjson summary "${summary}" --argjson links "${links}" --argjson outbounds "${outbounds}" --argjson warnings '[]' '$summary + {links:$links,outbounds:$outbounds,warnings:$warnings}'
 )
 
+agent_anytls_node_json() {
+  local public_ip=${1:-$(get_public_ip)} server tls_json tls_enabled user_count
+  local client_trust tls_mode outbound_policy
+
+  [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]] || return 1
+  [[ "${SB_PROTOCOL}" == "anytls" ]] || return 1
+  tls_json=${SB_ANYTLS_TLS_JSON:-}
+  [[ -n "${tls_json}" ]] || return 1
+  tls_enabled=$(jq -er 'if .enabled == true then "true" elif .enabled == false then "false" else empty end' <<< "${tls_json}") || return 1
+  [[ "${tls_enabled}" == true ]] || return 1
+  user_count=$(jq -er 'length' <<< "${SB_ANYTLS_AUTH_JSON:-[]}") || return 1
+  client_trust=${SB_ANYTLS_CLIENT_TRUST:-system}
+  [[ "${client_trust}" == certificate || "${client_trust}" == system ]] || return 1
+  tls_mode=${SB_ANYTLS_TLS_MODE:-manual}
+  [[ "${tls_mode}" == manual ]] || return 1
+  outbound_policy=${SB_OUTBOUND_POLICY:-default}
+  case "${SB_MIXED_LISTEN_ADDRESS:-}" in
+    0.0.0.0|::) server=${public_ip} ;;
+    *) server=${SB_MIXED_LISTEN_ADDRESS:-} ;;
+  esac
+  [[ -n "${server}" ]] || return 1
+  jq -n \
+    --arg name "${SB_NODE_NAME:-AnyTLS}" \
+    --arg id "${SB_INSTANCE_ID:-}" \
+    --arg tag "${SB_MIXED_INBOUND_TAG:-}" \
+    --arg address "${SB_MIXED_LISTEN_ADDRESS:-}" \
+    --arg port "${SB_PORT:-}" \
+    --arg revision "${SB_MIXED_STORE_REVISION:-0}" \
+    --arg server "${server}" \
+    --arg trust "${client_trust}" \
+    --arg server_name "$(jq -r '.server_name' <<< "${tls_json}")" \
+    --arg policy "${outbound_policy}" \
+    --arg tls_mode "${tls_mode}" \
+    --argjson user_count "${user_count}" \
+    '{protocol:"anytls",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,
+      instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},
+      server:$server,user_count:$user_count,auth_enabled:($user_count>0),tls_enabled:true,
+      server_name:$server_name,tls_mode:$tls_mode,client_trust:$trust,
+      outbound_policy:$policy,shareable:false,client_exportable:true}'
+}
+
+agent_anytls_link_json() (
+  umask 077
+  local server=${1:-} store_file snapshot end_snapshot instance_id isolated_store summary outbounds warnings
+
+  [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]] || return 1
+  store_file=$(plain_proxy_structured_store_file anytls) || return 1
+  snapshot=$(structured_instance_store_snapshot_json anytls "${store_file}") || return 1
+  instance_id=${SB_INSTANCE_ID:-}
+  [[ -n "${instance_id}" ]] || instance_id=$(jq -er '.default_instance_id' <<< "${snapshot}") || return 1
+  jq -e --arg id "${instance_id}" 'any(.instances[]; .id == $id)' <<< "${snapshot}" >/dev/null || return 1
+  [[ "$(jq -r '.revision|tostring' <<< "${snapshot}")" == "${SB_MIXED_STORE_REVISION:-}" ]] || return 1
+  case "${SB_MIXED_LISTEN_ADDRESS:-}" in
+    0.0.0.0|::) server=${server:-$(get_public_ip)} ;;
+    "") return 1 ;;
+    *) server=${SB_MIXED_LISTEN_ADDRESS} ;;
+  esac
+  [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
+  summary=$(agent_anytls_node_json "${server}") || return 1
+  isolated_store=$(mktemp) || return 1
+  trap 'rm -f -- "${isolated_store}"' EXIT
+  jq --arg id "${instance_id}" \
+    '. as $root | ($root.instances | map(select(.id == $id))) as $instances |
+     $root | .default_instance_id=$id | .instances=$instances' \
+    <<< "${snapshot}" > "${isolated_store}" || return 1
+  outbounds=$(build_anytls_client_outbounds_from_store "${isolated_store}" "${server}") || return 1
+  end_snapshot=$(structured_instance_store_snapshot_json anytls "${store_file}") || return 1
+  [[ "${snapshot}" == "${end_snapshot}" ]] || return 1
+  outbounds=$(jq -sc '.' <<< "${outbounds}") || return 1
+  warnings=$(jq -cn '[{code:"anytls_standard_uri_unavailable",message:"AnyTLS 当前没有可安全表达完整配置的标准分享 URI；请使用 sing-box outbound JSON。"}]') || return 1
+  jq -cn --argjson summary "${summary}" --argjson outbounds "${outbounds}" --argjson warnings "${warnings}" \
+    '$summary + {links:{},outbounds:$outbounds,warnings:$warnings}'
+)
+
 agent_node_summary_json_for_current_protocol() {
   local protocol api_protocol public_ip shareable="true" client_exportable="false"
   local auth_enabled="false" server_name="" tls_enabled="false" http_tls_json
@@ -17998,6 +18362,9 @@ agent_node_summary_json_for_current_protocol() {
   if [[ "${protocol}" == trojan ]]; then agent_trojan_node_json "${public_ip}"; return $?; fi
   if [[ "${protocol}" == vmess ]]; then agent_vmess_node_json "${public_ip}"; return $?; fi
   if [[ "${protocol}" == vless-plain ]]; then agent_vless_plain_node_json "${public_ip}"; return $?; fi
+  if [[ "${protocol}" == anytls && "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active anytls; then
+    agent_anytls_node_json "${public_ip}"; return $?
+  fi
 
   case "${protocol}" in
     vless-reality)
@@ -18119,6 +18486,9 @@ agent_link_json_for_current_protocol() {
   if [[ "${protocol}" == trojan ]]; then agent_trojan_link_json "${public_ip}"; return $?; fi
   if [[ "${protocol}" == vmess ]]; then agent_vmess_link_json "${public_ip}"; return $?; fi
   if [[ "${protocol}" == vless-plain ]]; then agent_vless_plain_link_json "${public_ip}"; return $?; fi
+  if [[ "${protocol}" == anytls && "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active anytls; then
+    agent_anytls_link_json "${public_ip}"; return $?
+  fi
   if [[ "${public_ip}" == *:* ]]; then
     address_label="IPv6"
   elif [[ "${public_ip}" == *.* ]]; then
@@ -19103,8 +19473,15 @@ apply_plain_proxy_instance_change() (
     structured_instance_store_snapshot_json "${instance_protocol}" "$(plain_proxy_structured_store_file "${instance_protocol}")" > "${lock_dir}/before.json" || return $?
     current_revision=$(jq -r .revision "${lock_dir}/before.json") || return $?
   elif protocol_state_exists "${instance_protocol}"; then
-    [[ "${instance_protocol}" == mixed && ! -e "$(mixed_structured_store_file)" ]] || return 1
-    mixed_config_store_candidate | jq '.revision=0' > "${lock_dir}/before.json" || return $?
+    if [[ "${instance_protocol}" == mixed ]]; then
+      [[ ! -e "$(mixed_structured_store_file)" ]] || return 1
+      mixed_config_store_candidate | jq '.revision=0' > "${lock_dir}/before.json" || return $?
+    elif [[ "${instance_protocol}" == anytls ]]; then
+      [[ ! -e "$(plain_proxy_structured_store_file anytls)" ]] || return 1
+      plain_proxy_config_store_candidate anytls | jq '.revision=0' > "${lock_dir}/before.json" || return $?
+    else
+      return 1
+    fi
   else
     [[ "${operation}" != migrate ]] || return 1
     [[ "$(config_protocol_inbound_count "${instance_protocol}" "${SINGBOX_CONFIG_FILE}" 2>/dev/null || printf 0)" == "0" ]] || return 1
@@ -19195,7 +19572,7 @@ apply_plain_proxy_instance_change() (
 
 agent_instance_cli() {
   local operation=${1:-} protocol=${2:-} expected="" input="" instance_id="" json=n confirmed=n allow_public=n
-  [[ $# -ge 2 ]] || { agent_json_error invalid_arguments "用法: instance 操作 mixed|socks|http|shadowsocks|trojan|vmess|vless-plain --json --yes --expected-revision N [--file 文件 | --id ID]"; return 1; }
+  [[ $# -ge 2 ]] || { agent_json_error invalid_arguments "用法: instance 操作 mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls --json --yes --expected-revision N [--file 文件 | --id ID]"; return 1; }
   shift 2
   protocol=$(normalize_protocol_id "${protocol}") || {
     agent_json_error invalid_arguments "实例协议无效；未修改。"; return 1;
@@ -19211,14 +19588,14 @@ agent_instance_cli() {
       *) break ;;
     esac
   done
-  if [[ $# -ne 0 || "${json}" != y || ("${protocol}" != mixed && "${protocol}" != socks && "${protocol}" != http && "${protocol}" != shadowsocks && "${protocol}" != trojan && "${protocol}" != vmess && "${protocol}" != vless-plain) || ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
+  if [[ $# -ne 0 || "${json}" != y || ("${protocol}" != mixed && "${protocol}" != socks && "${protocol}" != http && "${protocol}" != shadowsocks && "${protocol}" != trojan && "${protocol}" != vmess && "${protocol}" != vless-plain && "${protocol}" != anytls) || ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
     agent_json_error invalid_arguments "实例参数、协议或 revision 无效；未修改。"; return 1
   fi
   if ! structured_instance_store_revision_arg "${expected}" >/dev/null; then
     agent_json_error invalid_arguments "revision 超出安全整数范围；未修改。"; return 1
   fi
   if [[ "${operation}" == migrate && "${protocol}" != mixed ]]; then
-    agent_json_error invalid_arguments "只有 Mixed 提供 legacy schema 1 迁移；SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS 使用 schema 2，已有 live 配置请使用接管入口。"
+    agent_json_error invalid_arguments "只有 Mixed 提供 legacy schema 1 迁移；SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS/AnyTLS 使用 schema 2，已有 live 配置请使用接管入口。"
     return 1
   fi
   [[ "${confirmed}" == y ]] || { agent_json_error confirmation_required "实例写操作需要 --yes；非回环入口另需 --allow-public。"; return 1; }
@@ -19834,7 +20211,7 @@ structured_instance_store_error() {
 structured_instance_store_protocol() {
   local protocol
   protocol=$(normalize_protocol_id "${1:-}") || return 1
-  [[ "${protocol}" == "mixed" || "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" ]] || return 1
+  [[ "${protocol}" == "mixed" || "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" ]] || return 1
   printf '%s' "${protocol}"
 }
 
@@ -19941,8 +20318,8 @@ structured_instance_record_jq_filter() {
     def valid_instance($protocol):
       type == "object" and
       ((keys | sort) == ((["authentication","dependencies","id","listen","name","outbound_policy","tag"] +
-        (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then ["tls"] else [] end) +
-        (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then ["client_trust","transport"] else [] end)) | sort)) and
+        (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" then ["tls"] else [] end) +
+        (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then ["client_trust","transport"] elif $protocol == "anytls" then ["client_trust"] else [] end)) | sort)) and
       (.id | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and
       (.name | type == "string" and length > 0 and index("\u0000") == null) and
       (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]")|not)) and
@@ -19955,6 +20332,15 @@ structured_instance_record_jq_filter() {
             all(.[]; . == "tcp" or . == "udp") and . == (sort|unique))
          else true end)) and
       (if $protocol == "shadowsocks" then (.authentication | ss_auth)
+       elif $protocol == "anytls" then
+         (.authentication | type == "object" and (keys|sort) == ["users"] and
+           (.users | type == "array" and length >= 1 and length <= 128 and
+             all(.[]; type == "object" and (keys|sort) == ["name","password"] and
+               (.name | type == "string" and length > 0 and utf8bytelength <= 256 and
+                 (test("[\u0000-\u001F\u007F]") | not)) and
+               (.password | type == "string" and length > 0 and utf8bytelength <= 4096 and index("\u0000") == null)) and
+             (map(.name)|unique|length) == length and
+             (map(.password)|unique|length) == length))
        elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then
          (.authentication | type == "object" and (keys|sort) == ["users"] and
            (.users | type == "array" and length >= 1 and length <= 128 and
@@ -19983,14 +20369,14 @@ structured_instance_record_jq_filter() {
           else (.username|utf8bytelength <= 255) and (.password|utf8bytelength <= 255) end) and
          (if .enabled then (.username|length)>0 and (.password|length)>0 else .username=="" and .password=="" end))
        end) and
-      (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then
+      (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" then
          (.client_trust | type == "string" and IN("certificate","system")) and
          (if .tls.enabled == false then .client_trust == "system" else true end)
        else true end) and
       (.outbound_policy|IN("default","direct","warp")) and
       (.dependencies|type == "array" and length == 0) and
-      (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then (.tls|type == "object" and
-         (if .enabled == false then (keys|sort)==["enabled"]
+      (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" then (.tls|type == "object" and
+         (if .enabled == false then ($protocol != "anytls" and (keys|sort)==["enabled"])
           elif .enabled == true then
             (keys|sort)==["certificate_path","enabled","key_path","server_name"] and
             (.server_name|type=="string" and length>0 and (test("[\u0000-\u001F\u007F]")|not)) and
@@ -20086,6 +20472,7 @@ plain_proxy_config_store_candidate() (
     trojan) protocol_label="Trojan" ;;
     vmess) protocol_label="VMess" ;;
     vless-plain) protocol_label="VLESS" ;;
+    anytls) protocol_label="AnyTLS" ;;
     *) return 1 ;;
   esac
   shift
@@ -20097,6 +20484,7 @@ plain_proxy_config_store_candidate() (
   local ss_method ss_password ss_users_json network_json trojan_users_json='[]' trojan_transport_json='{"type":"none"}' trojan_client_trust=certificate trojan_profile
   local vmess_users_json='[]' vmess_transport_json='{"type":"none"}' vmess_client_trust=system vmess_profile
   local vless_users_json='[]' vless_transport_json='{"type":"none"}' vless_client_trust=system vless_profile vless_flow_list vless_flow
+  local anytls_users_json='[]' anytls_tls_json='{"enabled":false}' anytls_client_trust=system
   local existing_instance existing_store_json existing_match default_id old_revision old_semantics new_semantics
   local candidate_revision status
   local marker_schema2=n store_instances=0
@@ -20144,6 +20532,7 @@ plain_proxy_config_store_candidate() (
           (if $protocol == "http" then ["tls"]
            elif $protocol == "shadowsocks" then ["network", "method", "password"]
            elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then ["tls", "transport"]
+           elif $protocol == "anytls" then ["tls"]
            else [] end)) | length == 0))
         and (if has("tag") then (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) else true end)
         and (if has("listen") then (.listen | type == "string" and length > 0) else true end)
@@ -20161,6 +20550,12 @@ plain_proxy_config_store_candidate() (
                   (.name | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
                   (.password | type == "string" and length > 0 and index("\u0000") == null)))
                else true end)
+             elif $protocol == "anytls" then
+              (.users | type == "array" and length >= 1 and length <= 128 and
+                all(.[]; type == "object" and ((keys_unsorted | sort) == ["name", "password"]) and
+                  (.name | type == "string" and length > 0 and utf8bytelength <= 256 and (test("[\u0000-\u001F\u007F]") | not)) and
+                  (.password | type == "string" and length > 0 and utf8bytelength <= 4096 and index("\u0000") == null)) and
+                (map(.name) | unique | length) == length and (map(.password) | unique | length) == length)
              elif $protocol == "trojan" then
               (.users | type == "array" and length >= 1 and length <= 128 and
                 all(.[]; type == "object" and ((keys_unsorted | sort) == ["name", "password"]) and
@@ -20202,19 +20597,19 @@ plain_proxy_config_store_candidate() (
              else true end)
         and (if $protocol == "mixed" then
              (if has("set_system_proxy") then .set_system_proxy == false else true end)
-             elif $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then
+             elif $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" then
               ((if has("set_system_proxy") then $protocol == "http" and .set_system_proxy == false else true end)
               and (if has("tls") then
                 (.tls | type == "object") and
                   (if .tls.enabled == false then
-                    ((.tls | keys_unsorted | sort) == ["enabled"])
+                    ($protocol != "anytls" and (.tls | keys_unsorted | sort) == ["enabled"])
                   elif .tls.enabled == true then
                     ((.tls | (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then del(.alpn) else . end) | keys_unsorted | sort) == ["certificate_path", "enabled", "key_path", "server_name"]) and
                     (.tls.server_name | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
                     (.tls.certificate_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not)) and
                     (.tls.key_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not))
                   else false end)
-                else true end))
+                else $protocol != "anytls" end))
              else
               (has("set_system_proxy") | not)
              end)
@@ -20255,7 +20650,7 @@ plain_proxy_config_store_candidate() (
   if [[ "${state_schema}" == "2" ]]; then
     marker_schema2=y
   fi
-  if [[ "${protocol}" != "mixed" && -f "${state_file}" && "${state_schema}" != "2" ]]; then
+  if [[ "${protocol}" != "mixed" && "${protocol}" != "anytls" && -f "${state_file}" && "${state_schema}" != "2" ]]; then
     printf '[ERROR] %s_store_candidate: legacy state migration is unsupported.\n' "${protocol}" >&2
     return 1
   fi
@@ -20356,7 +20751,7 @@ plain_proxy_config_store_candidate() (
     fi
 
     tls_json='null'
-    if [[ "${protocol}" == "http" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" ]]; then
+    if [[ "${protocol}" == "http" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" ]]; then
       tls_json=$(jq -c '.tls // {enabled:false}' <<< "${inbound_json}") || return 1
     fi
 
@@ -20423,6 +20818,14 @@ plain_proxy_config_store_candidate() (
         return 1
       fi
       tls_json=$(jq -c 'del(.alpn)' <<< "${tls_json}") || return 1
+    elif [[ "${protocol}" == "anytls" ]]; then
+      anytls_users_json=$(jq -c '.users' <<< "${inbound_json}") || return 1
+      anytls_tls_json=$(jq -c '.tls' <<< "${inbound_json}") || return 1
+      jq -e '.enabled == true and (keys_unsorted | sort) == ["certificate_path","enabled","key_path","server_name"]' <<< "${anytls_tls_json}" >/dev/null 2>&1 || {
+        printf '[ERROR] %s_store_candidate: AnyTLS requires a manual TLS certificate that the typed state can preserve.\n' "${protocol}" >&2
+        return 1
+      }
+      anytls_client_trust=system
     elif jq -e '.users | length > 0' <<< "${inbound_json}" >/dev/null 2>&1; then
       auth_enabled=true
       username=$(jq -j '.users[0].username, "\u0001"' <<< "${inbound_json}") || return 1
@@ -20452,6 +20855,8 @@ plain_proxy_config_store_candidate() (
           vmess_users_json=$(jq -c --argjson live "${vmess_users_json}" '.[0].authentication.users as $old | $live | map(. as $u | (($old[]? | select(.name == $u.name and .uuid == $u.uuid) | .security) // "auto") as $security | .security=$security)' <<< "${existing_match}") || return 1
         elif [[ "${protocol}" == "vless-plain" ]]; then
           vless_client_trust=$(jq -r '.[0].client_trust // "system"' <<< "${existing_match}") || return 1
+        elif [[ "${protocol}" == "anytls" ]]; then
+          anytls_client_trust=$(jq -r '.[0].client_trust // "system"' <<< "${existing_match}") || return 1
         fi
       elif [[ "$(jq 'length' <<< "${existing_match}")" -gt 1 ]]; then
         printf '[ERROR] %s_store_candidate: duplicate stored %s identity.\n' "${protocol}" "${protocol_label}" >&2
@@ -20514,6 +20919,13 @@ plain_proxy_config_store_candidate() (
       --arg client_trust "${vless_client_trust}" \
       '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{users:$users},tls:$tls,transport:$transport,client_trust:$client_trust,outbound_policy:$policy,dependencies:[]}' \
       >> "${temp_dir}/instances.jsonl" || return 1
+    elif [[ "${protocol}" == "anytls" ]]; then
+      jq -n -cS \
+      --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
+      --arg address "${address}" --argjson port "${port}" --argjson users "${anytls_users_json}" \
+      --argjson tls "${anytls_tls_json}" --arg client_trust "${anytls_client_trust}" --arg policy "${policy}" \
+      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{users:$users},tls:$tls,client_trust:$client_trust,outbound_policy:$policy,dependencies:[]}' \
+      >> "${temp_dir}/instances.jsonl" || return 1
     elif [[ "${protocol}" == "shadowsocks" ]]; then
       jq -n -cS \
       --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
@@ -20575,6 +20987,10 @@ vmess_config_store_candidate() {
   plain_proxy_config_store_candidate vmess "$@"
 }
 
+anytls_config_store_candidate() {
+  plain_proxy_config_store_candidate anytls "$@"
+}
+
 plain_proxy_structured_state_matches_config() (
   local protocol config_file store_file current expected temp_dir
   protocol=$(structured_instance_store_protocol "${1:-}") || return 1
@@ -20600,6 +21016,13 @@ plain_proxy_validate_state_inventory() (
   local protocol store_file config_count store_count config_tags store_tags state_file state_schema
   protocol=$(structured_instance_store_protocol "${1:-}") || return 1
   state_file=$(protocol_state_file "${protocol}" 2>/dev/null || true)
+  state_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" 2>/dev/null | head -n1 || true)
+  state_schema=${state_schema//\"/}
+  state_schema=${state_schema//\'/}
+  if [[ "${protocol}" == "anytls" && -n "${state_schema}" && "${state_schema}" != "2" ]]; then
+    validate_protocol_state_schema anytls "${state_file}" || return 1
+    return 0
+  fi
   if [[ -f "${state_file}" ]] &&
      grep -Eq "^[[:space:]]*CONFIG_SCHEMA_VERSION=" "${state_file}"; then
     if [[ "${protocol}" == "mixed" ]]; then
@@ -20608,9 +21031,6 @@ plain_proxy_validate_state_inventory() (
       plain_proxy_structured_marker_is_valid "${state_file}" || return 1
     fi
   fi
-  state_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" 2>/dev/null | head -n1 || true)
-  state_schema=${state_schema//\"/}
-  state_schema=${state_schema//\'/}
   if [[ "${state_schema}" != "2" ]]; then
     return 0
   fi
@@ -20974,11 +21394,15 @@ render_structured_instance_inbounds() {
           users:.authentication.users,network:.listen.network}
        elif $protocol == "vless-plain" then
          {users:(.authentication.users | map(if .flow == "" then del(.flow) else . end))}
+       elif $protocol == "anytls" then
+         {users:.authentication.users}
        else {users:(if .authentication.enabled then [{username:.authentication.username,password:.authentication.password}] else [] end)} end) +
       (if $protocol == "http" and .tls.enabled then
          {tls:.tls}
       elif ($protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain") and .tls.enabled then
          {tls:(.tls + {alpn:(if .transport.type == "http" or .transport.type == "grpc" then ["h2"] elif .transport.type == "ws" then ["http/1.1"] elif .transport.type == "quic" then ["h3"] else [] end)})}
+      elif $protocol == "anytls" then
+         {tls:.tls}
        else {}
        end) +
       (if $protocol == "trojan" then
@@ -21129,15 +21553,15 @@ load_plain_proxy_structured_instance() {
   if ! jq -j --arg id "${instance_id}" --arg protocol "${protocol}" '
       .instances[] | select(.id == $id) |
       [.id, .name, .tag, .listen.address, (.listen.port | tostring),
-       (if $protocol == "trojan" then "y" elif .authentication.enabled then "y" else "n" end),
-       (if $protocol == "trojan" then "" else (.authentication.username // "") end),
-       (if $protocol == "trojan" then "" else .authentication.password end),
-       .outbound_policy, (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then (.tls | tojson) else "" end),
+       (if $protocol == "trojan" or $protocol == "anytls" then "y" elif .authentication.enabled then "y" else "n" end),
+       (if $protocol == "trojan" then "" elif $protocol == "anytls" then (.authentication.users[0].name // "") else (.authentication.username // "") end),
+       (if $protocol == "trojan" then "" elif $protocol == "anytls" then (.authentication.users[0].password // "") else .authentication.password end),
+       .outbound_policy, (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" then (.tls | tojson) else "" end),
        (if $protocol == "shadowsocks" then (.authentication | tojson) else "" end),
        (if $protocol == "shadowsocks" then (.listen.network | tojson) else "" end),
-       (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then (.authentication.users | tojson) else "" end),
+       (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" then (.authentication.users | tojson) else "" end),
        (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then (.transport | tojson) else "" end),
-       (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then .client_trust else "" end)] | .[] | ., "\u0000"
+       (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" then .client_trust else "" end)] | .[] | ., "\u0000"
     ' <<< "${snapshot}" > "${stream_file}"; then
     rm -f -- "${stream_file}"
     return 1
@@ -21181,6 +21605,17 @@ load_plain_proxy_structured_instance() {
     SB_HTTP_TLS_JSON=$(jq -c . <<< "${fields[9]}" 2>/dev/null) || return 1
   else
     SB_HTTP_TLS_JSON=""
+  fi
+  if [[ "${protocol}" == "anytls" ]]; then
+    SB_ANYTLS_TLS_JSON=$(jq -c . <<< "${fields[9]}" 2>/dev/null) || return 1
+    SB_ANYTLS_AUTH_JSON=$(jq -c . <<< "${fields[12]}" 2>/dev/null) || return 1
+    SB_ANYTLS_CLIENT_TRUST=${fields[14]}
+    SB_ANYTLS_DOMAIN=$(jq -r '.server_name // empty' <<< "${SB_ANYTLS_TLS_JSON}") || return 1
+    SB_ANYTLS_TLS_MODE=manual
+    SB_ANYTLS_CERT_PATH=$(jq -r '.certificate_path // empty' <<< "${SB_ANYTLS_TLS_JSON}") || return 1
+    SB_ANYTLS_KEY_PATH=$(jq -r '.key_path // empty' <<< "${SB_ANYTLS_TLS_JSON}") || return 1
+    SB_ANYTLS_USER_NAME=${fields[6]}
+    SB_ANYTLS_PASSWORD=${fields[7]}
   fi
   if [[ "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" ]]; then
     SB_TROJAN_TLS_JSON=$(jq -c . <<< "${fields[9]}" 2>/dev/null) || return 1
@@ -21300,6 +21735,9 @@ reset_protocol_instance_runtime_fields() {
   SB_VLESS_PLAIN_TLS_JSON='{"enabled":false}'
   SB_VLESS_PLAIN_TRANSPORT_JSON='{"type":"none"}'
   SB_VLESS_PLAIN_CLIENT_TRUST="certificate"
+  SB_ANYTLS_AUTH_JSON='[]'
+  SB_ANYTLS_TLS_JSON='{"enabled":false}'
+  SB_ANYTLS_CLIENT_TRUST="system"
   SB_HY2_DOMAIN=""
   SB_HY2_PASSWORD=""
   SB_HY2_USER_NAME=""
@@ -21370,7 +21808,7 @@ list_protocol_instance_ids() {
       mixed_structured_state_active || return 1
       jq -r '.instances[].id' "$(mixed_structured_store_file)"
       ;;
-    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2)
+    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2)
       plain_proxy_structured_state_active "${protocol}" || return 1
       jq -r '.instances[].id' "$(plain_proxy_structured_store_file "${protocol}")"
       ;;
@@ -21428,7 +21866,7 @@ protocol_default_instance_id() {
       mixed_structured_state_active || return 1
       default_id=$(jq -r '.default_instance_id' "$(mixed_structured_store_file)") || return 1
       ;;
-    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2)
+    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2)
       plain_proxy_structured_state_active "${protocol}" || return 1
       default_id=$(jq -r '.default_instance_id' "$(plain_proxy_structured_store_file "${protocol}")") || return 1
       ;;
@@ -21451,7 +21889,7 @@ load_protocol_instance_state() {
   local schema instance_ids listed_instance_id legacy_inbound_tag
 
   protocol=$(normalize_protocol_id "${protocol}") || return 1
-  if [[ "${protocol}" == "mixed" || "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" ]]; then
+  if [[ "${protocol}" == "mixed" || "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" ]]; then
     structured_instance_store_validate_id "${instance_id}" || return 1
   else
     validate_vless_reality_instance_id "${instance_id}" || return 1
@@ -21498,7 +21936,7 @@ load_protocol_instance_state() {
     mixed:2)
       load_mixed_structured_instance "${instance_id}" || return 1
       ;;
-    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2)
+    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2)
       load_plain_proxy_structured_instance "${protocol}" "${instance_id}" || return 1
       ;;
     *)
@@ -21996,6 +22434,17 @@ protocol_state_matches_config() {
     plain_proxy_structured_state_matches_config vless-plain
     return $?
   fi
+  if [[ "${protocol}" == "anytls" ]]; then
+    local anytls_state_file anytls_state_schema
+    anytls_state_file=$(protocol_state_file "anytls" 2>/dev/null || true)
+    anytls_state_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${anytls_state_file}" 2>/dev/null | head -n1 || true)
+    anytls_state_schema=${anytls_state_schema//\"/}
+    anytls_state_schema=${anytls_state_schema//\'/}
+    if [[ "${anytls_state_schema}" == "2" ]]; then
+      plain_proxy_structured_state_matches_config anytls
+      return $?
+    fi
+  fi
 
   expected_snapshot=$(render_expected_protocol_state_snapshot "${protocol}") || return 1
   saved_snapshot=$(render_saved_protocol_state_snapshot "${protocol}") || return 1
@@ -22305,6 +22754,7 @@ rebuild_protocol_state_from_config() {
   local trojan_inbound_count=0 trojan_candidate_file="" trojan_candidate_revision=0 trojan_state_file trojan_state_schema
   local vmess_inbound_count=0 vmess_candidate_file="" vmess_candidate_revision=0 vmess_state_file vmess_state_schema
   local vless_plain_inbound_count=0 vless_plain_candidate_file="" vless_plain_candidate_revision=0 vless_plain_state_file vless_plain_state_schema
+  local anytls_inbound_count=0 anytls_candidate_file="" anytls_candidate_revision=0 anytls_state_file anytls_state_schema anytls_rebuild_mode="legacy"
   local backup_state_dir
 
   backup_dir=$(mktemp -d) || return 1
@@ -22654,6 +23104,51 @@ rebuild_protocol_state_from_config() {
     else vless_plain_candidate_revision=0; fi
   fi
 
+  # AnyTLS keeps its legacy schema-1 state for ACME/provider configurations,
+  # while schema 2 uses the shared typed multi-instance store.  Capture the
+  # typed candidate before clearing the protocol cache so IDs, users, TLS and
+  # revisions survive takeover without flattening them into one legacy user.
+  anytls_inbound_count=$(jq -r '[.inbounds[]? | select(.type == "anytls")] | length' "${SINGBOX_CONFIG_FILE}") || {
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+  }
+  [[ "${anytls_inbound_count}" =~ ^[0-9]+$ ]] || {
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+  }
+  if (( anytls_inbound_count > 0 )); then
+    anytls_state_file=$(protocol_state_file anytls) || {
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+    }
+    anytls_state_schema="1"
+    if [[ -f "${anytls_state_file}" ]]; then
+      validate_protocol_state_schema anytls "${anytls_state_file}" || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+      }
+      anytls_state_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${anytls_state_file}" | head -n1) || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+      }
+      anytls_state_schema=${anytls_state_schema//\"/}; anytls_state_schema=${anytls_state_schema//\'/}
+    fi
+    [[ "${anytls_state_schema}" == 1 || "${anytls_state_schema}" == 2 ]] || {
+      printf '[ERROR] anytls_store_candidate: AnyTLS 状态 schema 无法识别；已保留原状态。\n' >&2
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+    }
+    if [[ "${anytls_state_schema}" == 2 || "${anytls_inbound_count}" != "1" ]] ||
+       plain_proxy_structured_state_active anytls >/dev/null 2>&1; then
+      anytls_rebuild_mode="structured"
+      anytls_candidate_file="${backup_dir}/anytls.candidate.json"
+      plain_proxy_config_store_candidate anytls > "${anytls_candidate_file}" || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+      }
+      if [[ -f "$(plain_proxy_structured_store_file anytls 2>/dev/null || true)" ]]; then
+        anytls_candidate_revision=$(jq -r '.revision' "$(plain_proxy_structured_store_file anytls)") || {
+          abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+        }
+      else
+        anytls_candidate_revision=0
+      fi
+    fi
+  fi
+
   clear_protocol_state_cache
   ensure_protocol_state_dir
   if ! rm -rf "${SB_PROTOCOL_STATE_DIR}/vless-reality.d"; then
@@ -22880,6 +23375,12 @@ rebuild_protocol_state_from_config() {
         fi
         ;;
       anytls)
+        if [[ "${anytls_rebuild_mode}" == "structured" ]]; then
+          if ! protocol_array_contains "anytls" ${rebuilt_protocols[@]+"${rebuilt_protocols[@]}"}; then
+            rebuilt_protocols+=("anytls")
+          fi
+          continue
+        fi
         SB_PROTOCOL="anytls"
         SB_NODE_NAME="$(default_node_name_for_protocol "anytls")"
         SB_PORT=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")
@@ -23016,6 +23517,15 @@ rebuild_protocol_state_from_config() {
       abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
     fi
     if ! save_plain_proxy_structured_marker vless-plain; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
+    fi
+  fi
+
+  if (( anytls_inbound_count > 0 )) && [[ "${anytls_rebuild_mode}" == "structured" ]]; then
+    if ! publish_structured_instance_store anytls "${anytls_candidate_file}" "${anytls_candidate_revision}"; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
+    fi
+    if ! save_plain_proxy_structured_marker anytls; then
       abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
     fi
   fi
@@ -23461,14 +23971,15 @@ main() {
     render_menu_item "21" "管理 Trojan 实例"
     render_menu_item "22" "管理 VMess 实例"
     render_menu_item "23" "管理 VLESS 实例"
+    render_menu_item "24" "管理 AnyTLS 实例"
     echo "0. 退出"
     render_main_menu_footer
-    choice=$(prompt_choice "请选择 [0-23]: " 0 23 "")
+    choice=$(prompt_choice "请选择 [0-24]: " 0 24 "")
 
     if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
       case "${choice}" in
-        0|9|10|12|17|18|19|20|21|22|23) ;;
-        *) log_warn "请先通过菜单 17–23 恢复对应协议未完成的实例事务；本次未执行其他写操作。"; continue ;;
+        0|9|10|12|17|18|19|20|21|22|23|24) ;;
+        *) log_warn "请先通过菜单 17–24 恢复对应协议未完成的实例事务；本次未执行其他写操作。"; continue ;;
       esac
     fi
 
@@ -23503,6 +24014,7 @@ main() {
       21) trojan_instance_management_menu ;;
       22) vmess_instance_management_menu ;;
       23) vless_plain_instance_management_menu ;;
+      24) anytls_instance_management_menu ;;
       0) exit_script ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac

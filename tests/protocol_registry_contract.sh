@@ -35,6 +35,11 @@ jq -e '
     .subman_type == "vless" and .features.multi_user == true and
     .features.listen_transport_projection == true and
     .features.client_export == true and .features.subman_sync == true)
+  and any(.[]; .state_id == "anytls" and
+    .runtime_id == "anytls" and .agent_id == "anytls" and
+    .features.multi_instance == true and .features.multi_user == true and
+    .features.authentication == true and .features.tls == true and
+    .features.standard_share_uri == false and .features.client_export == true)
 ' >/dev/null <<< "${registry}"
 capabilities=$(agent_capabilities_json)
 jq -e '
@@ -50,6 +55,8 @@ jq -e '
   ($plain.operations_by_protocol.vmess == ["create", "replace", "delete", "default", "recover"]) and
   ($plain.protocols | index("vless-plain") != null) and
   ($plain.operations_by_protocol["vless-plain"] == ["create", "replace", "delete", "default", "recover"]) and
+  ($plain.protocols | index("anytls") != null) and
+  ($plain.operations_by_protocol.anytls == ["create", "replace", "delete", "default", "recover"]) and
   .features.mixed_instances.operations == $plain.operations_by_protocol.mixed
 ' >/dev/null <<< "${capabilities}"
 jq -e --argjson registry "${registry}" '
@@ -91,7 +98,7 @@ mkdir -p "${SB_PROTOCOL_STATE_DIR}"
 for protocol in $(list_registered_protocols); do
   protocol_registry_require_handlers "${protocol}"
   [[ "$(protocol_option_to_id "$(protocol_registry_field "${protocol}" menu_order)")" == "${protocol}" ]]
-  if [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" ]]; then
+  if [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" ]]; then
     printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2\n' > "$(protocol_state_file "${protocol}")"
     mkdir -p "${SB_PROTOCOL_STATE_DIR}/instances"
     if [[ "${protocol}" == "socks" ]]; then
@@ -201,6 +208,28 @@ TROJAN_STORE_EOF
   ]
 }
 VLESS_PLAIN_STORE_EOF
+    elif [[ "${protocol}" == "anytls" ]]; then
+      cat > "${SB_PROTOCOL_STATE_DIR}/instances/anytls.json" <<'ANYTLS_STORE_EOF'
+{
+  "schema_version": 1,
+  "protocol": "anytls",
+  "revision": 1,
+  "default_instance_id": "main",
+  "instances": [
+    {
+      "id": "main",
+      "name": "AnyTLS contract",
+      "tag": "anytls-in",
+      "listen": {"address": "127.0.0.1", "port": 1087},
+      "authentication": {"users": [{"name": "anytls-user", "password": "ANYTLS-CONTRACT-PASSWORD"}]},
+      "tls": {"enabled": true, "server_name": "anytls.example.com", "certificate_path": "/tmp/anytls-contract.crt", "key_path": "/tmp/anytls-contract.key"},
+      "client_trust": "system",
+      "outbound_policy": "default",
+      "dependencies": []
+    }
+  ]
+}
+ANYTLS_STORE_EOF
     else
       cat > "${SB_PROTOCOL_STATE_DIR}/instances/vmess.json" <<'VMESS_STORE_EOF'
 {
@@ -350,6 +379,25 @@ jq -e '
   .[0].network == ["tcp", "udp"] and
   (.[0] | has("tls") | not) and (.[0] | has("transport") | not)
 ' >/dev/null <<< "${vless_plain_export}"
+
+anytls_store_file=$(plain_proxy_structured_store_file anytls)
+anytls_inbounds=$(render_structured_instance_inbounds anytls "${anytls_store_file}" | jq -s .)
+jq -e '
+  length == 1 and .[0].type == "anytls" and .[0].tag == "anytls-in" and
+  .[0].listen == "127.0.0.1" and .[0].listen_port == 1087 and
+  .[0].users[0].name == "anytls-user" and .[0].users[0].password == "ANYTLS-CONTRACT-PASSWORD" and
+  .[0].tls.enabled == true and .[0].tls.server_name == "anytls.example.com" and
+  (.[0] | has("transport") | not)
+' >/dev/null <<< "${anytls_inbounds}"
+anytls_export=$(build_client_anytls_outbounds 127.0.0.1 | jq -s .)
+jq -e '
+  length == 1 and .[0].type == "anytls" and
+  .[0].tag == "anytls-main-user-YW55dGxzLXVzZXI=" and
+  .[0].server == "127.0.0.1" and .[0].server_port == 1087 and
+  .[0].password == "ANYTLS-CONTRACT-PASSWORD" and .[0].client_metadata == "" and
+  .[0].tls.enabled == true and .[0].tls.server_name == "anytls.example.com" and
+  (.[0].tls | has("certificate") | not) and (.[0] | has("transport") | not)
+' >/dev/null <<< "${anytls_export}"
 
 # Unknown protocol and future schema must not disappear during reconciliation.
 for invalid in $'INSTALLED_PROTOCOLS=mixed,future-protocol\nPROTOCOL_STATE_VERSION=1' \
