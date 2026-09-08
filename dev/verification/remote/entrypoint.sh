@@ -424,6 +424,42 @@ verification_load_mixed_probe_state() {
   printf -v "${password_var}" '%s' "${PASSWORD-}"
 }
 
+verification_generate_trojan_probe_client() (
+  set -euo pipefail
+  umask 077
+  local config_file=$1 output_path=$2 installer temp_dir selected_tag snapshot
+  installer=${VERIFY_REMOTE_INSTALL_SCRIPT:-/usr/local/bin/sbv}
+  [[ -f "${installer}" ]] || return 1
+  temp_dir=$(mktemp -d "${output_path}.trojan.XXXXXX") || return 1
+  trap 'rm -rf -- "${temp_dir}"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+  # Use the exact runtime under verification, not a second hand-maintained
+  # client template. The isolated runtime test separately covers all users.
+  source "${installer}"
+  plain_proxy_structured_state_active trojan || return 1
+  snapshot=$(structured_instance_store_snapshot_json trojan \
+    "$(plain_proxy_structured_store_file trojan)") || return 1
+  selected_tag=$(jq -er '[.inbounds[] | select(.type=="trojan")][0].tag' "${config_file}") || return 1
+  jq -e --arg tag "${selected_tag}" '
+    .instances |= map(select(.tag==$tag)) |
+    if (.instances|length)==1 then .default_instance_id=.instances[0].id
+    else error("invalid probe inventory") end
+  ' <<< "${snapshot}" > "${temp_dir}/store.json" || return 1
+  build_trojan_client_outbounds_from_store "${temp_dir}/store.json" 127.0.0.1 \
+    > "${temp_dir}/outbounds.jsonl" || return 1
+  jq -se '
+    if length>0 then
+      {log:{disabled:true},
+       inbounds:[{type:"socks",tag:"local-socks",listen:"127.0.0.1",listen_port:19080}],
+       outbounds:[(.[0] | .tag="proxy")],route:{final:"proxy"}}
+    else error("empty probe export") end
+  ' "${temp_dir}/outbounds.jsonl" > "${temp_dir}/client.json" || return 1
+  chmod 600 "${temp_dir}/client.json" || return 1
+  mv -f -- "${temp_dir}/client.json" "${output_path}" || return 1
+)
+
 verification_load_http_probe_record() {
   local state_file=$1
   local store_file=$2
@@ -755,6 +791,11 @@ verification_generate_protocol_probe_client_config() {
         rm -f "${temp_output_path}"
         return 1
       fi
+      ;;
+    trojan)
+      output_path=$(verification_artifact_path \
+        "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
+      verification_generate_trojan_probe_client "${config_file}" "${output_path}" || return 1
       ;;
     shadowsocks)
       state_file=/root/sing-box-vps/protocols/shadowsocks.env
@@ -1247,6 +1288,9 @@ for scenario in "$@"; do
       ;;
     fresh_install_shadowsocks)
       run_verification_scenario fresh_install_shadowsocks verification_scenario_fresh_install_shadowsocks
+      ;;
+    fresh_install_trojan)
+      run_verification_scenario fresh_install_trojan verification_scenario_fresh_install_trojan
       ;;
     multi_protocol_coexistence)
       run_verification_scenario multi_protocol_coexistence verification_scenario_multi_protocol_coexistence

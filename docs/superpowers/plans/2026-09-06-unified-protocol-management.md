@@ -4,6 +4,38 @@
 起点为 `cc12c06`，工作区干净；保留参考基线 `0d0bdac` 之后的下载事务修复。
 本文记录完整目标的进展；阶段提交不代表全协议已交付。
 
+## 2026-09-08：Trojan 管理链路接入（阶段交付）
+
+从已审查的 `2543462` 继续原始完整目标，重新读取原始需求与工作区；既有未跟踪 `1`、`2` 不读取、不修改。基线 `bash dev/verification/run.sh` 在 `20260908065918` 为 local 空变更门禁通过，不等同全回归。固定 HEAD 的既有回归另在私有 archive 快照执行；后续记录区分该基线与最终工作区验收。
+
+重新读取 GitHub `releases/latest`：稳定版仍为 `v1.14.0`，非 draft/prerelease，保留官方 ARM64 `1.13.18` 兼容验证。Context7 resolve/query `/sagernet/sing-box` 返回 testing 分支 Trojan 文档，因此继续核对固定 `v1.14.0` 的 `option/trojan.go`、入站/出站文档和 `protocol/trojan/inbound.go`。后者确认 TLS 是独立可选层，外层 socket 由 transport 决定：原生 TCP、QUIC UDP；不能把 registry 中的可选监听集合直接当作每个实例同时使用的网络。
+
+本阶段接入第八个预设 Trojan，不改变旧 `vless` → `vless-reality` alias。复用结构化 store、marker、CAS 写锁、资源账本、持久事务、回滚、菜单和 Agent；多用户认证与 TLS/transport 各自建模，不透传 fallback、multiplex 或未知字段。沿用上一阶段两个已复现的 runtime guard：HTTPUpgrade、WS early data 不作为支持项。完整目标仍包含后续协议和高级角色，不能以此增量替代。
+
+固定 HEAD `2543462f28012dc57037ae3d7b6e0a72cd7a8640` 的 archive 快照 `/tmp/sbv-trojan-baseline.vgP8YZ` 已执行用户指定的 13 项既有事务、接管、导出、Agent 与升级回归，均退出 0。去重结果 `/tmp/sbv-trojan-baseline-results.YPlPWE/status.unique.tsv`；原执行日志因观察返回后重复调度了后五项而含重复行，不将重复行当作新增覆盖。该证据只属于旧 HEAD 基线，不替代新 Trojan 工作区验证。
+
+只读审阅当前 SubMan `docs/api/openapi.yaml`、`src/lib/client-export/trojan.ts` 和 `common.ts` 后明确：API 接受 `type:trojan` 的 URI，但 parser 的 TLS 默认始终启用，且不能承载自定义证书信任、任意 headers 或 transport timeout。因此新增 `client_trust` 显式区分 `certificate` 与 `system`：默认手工 TLS 使用公开证书信任导出；只有显式系统信任且 URI 字段可无损表达时才分享/同步。明文、证书信任或不能保真的组合返回逐项 warning/skipped，不以改成 insecure 绕过。SubMan 测试仅 mock 契约，不访问真实 API、不改 SubMan 仓库。
+
+阶段检查：真实 SubMan parser（当前本地只读源码）对五种传输 × IPv4/IPv6 的十组 URI 与受管 outbound 逐字段往返比较通过，Unicode/特殊字符/尾换行凭据保真；解析后十份完整候选分别通过两版官方核心 `check`。证据 `/tmp/sbv-trojan-subman-roundtrip.ciA8v0`，不等同真实 SubMan API 同步或公网业务。首次集成门禁 `20260908073435` 在注册表 capability 接入断言处退出 1，未进入 Docker。另定位并修复中的问题包括原生入站被 jq `empty` 删除、QUIC outbound 错误限制业务为 UDP、单实例字段排序误拒绝、Agent 白名单/清单遗漏、单用户 URI 超限影响同实例其他用户。中途源码持续变化，不将阶段结果冒称最终冻结验收。
+
+真实受管 runtime 首轮在原生明文 Trojan 上失败，证据 `/tmp/sbv-trojan-export-failure.ClX4YZ`：1.13.18 `check` 通过，但 outbound 显式 `tls:{enabled:false}` 仍构造 TLS dialer，连接触发 nil config panic。固定 1.14.0 `protocol/trojan/outbound.go` 同样以 TLS 指针非空为条件构造 dialer。修正为明文 outbound 完全省略 TLS，不将明文功能误判为不可支持。`/tmp/sbv-trojan-runtime-parent113b.log` 随后完成九实例、十用户的 10 TCP + 10 UDP、错误密码与错误 SNI 拒绝；这属于原生 Bash 1.13.18 阶段证据，最终 Shell/核心矩阵及 Docker 结果待后续记录。
+
+实际 Bash 4.2.53 直接执行同一 runtime 测试也在两版核心分别通过 10 TCP + 10 UDP、错误认证与错误 SNI 拒绝：`/tmp/sbv-trojan-export-bash42-113.9OaIHi`、`/tmp/sbv-trojan-export-bash42-114.A8egMT`。测试哈希 `629bf408fcd7bc8cccc85789aa5c960a5357de18134f9ffb3beb156fb7d8b55f`；运行时主线程仍补充接管字段边界、SubMan 失败计数、主菜单与通用编辑/删除入口，因此这两组不是全脚本冻结证据。每组起止 hash、命令、退出码均单独保留，数据路径测试未绕过受管导出器，也未使用 insecure。
+
+后续父线程确认原生 Bash 两版受管 runtime 均退出 0：`/tmp/sbv-trojan-runtime-parent113b.log`、`/tmp/sbv-trojan-runtime-parent114.log`，每版九实例、十用户、10 TCP + 10 UDP，并拒绝错误认证和错误 SNI。实际 SubMan parser 最终阶段复跑 `/tmp/sbv-trojan-subman-roundtrip.H91xR5` 仍为十组往返比较及两核心共二十次 check 通过，起止源码 `e4fa7c743…` 相同。此后仅放宽核心确认合法的用户名冒号、补齐提示与汇总边界，未修改传输导出数据路径。
+
+冻结 `ebab73f8e63cfa2ab6e27342a7972ce94ba091a052905e82f0fb2979f391b4e3` 后另复跑实际 Bash 4.2 双核心 runtime：`/tmp/sbv-trojan-export-frozen-bash42-113.po8ory`、`/tmp/sbv-trojan-export-frozen-bash42-114.imfWDt`，两组起止哈希一致且各 10 TCP + 10 UDP 全部通过。后续预审又发现并修复 Agent 全用户跳过时错误返回 `public_ip_unavailable` 和 help 遗漏 Trojan；因此这两组是数据路径冻结证据，不冒称最后整份源码哈希。父线程的 Bash 4.2 生命周期 1.13.18 校验 `/tmp/sbv-trojan-lifecycle-final-bash42-113.log` 通过，包含 16 次模拟 systemctl restart 与真实 core check；不把模拟重启算成真实服务数据路径。
+
+第二轮完整门禁 `20260908074718` 在旧 V2Ray 注册顺序断言退出 1，未进入 Docker。修正该测试及 Agent capabilities 的相同顺序断言后启动第三轮 `20260908080643`。预审发现的交互 SubMan 逐用户计数遗漏已经修正；`tests/subman_trojan_sync.sh` 的本地 mock 回归覆盖同实例 1 同步/1 超限跳过、全部 8 用户 certificate 跳过，以及交互 4 同步/4 跳过和 Agent 保留结构化 warnings。未访问真实 SubMan API。最终门禁与提交审查结果待后续记录。
+
+最终运行时代码 SHA-256 暂冻结为 `5cc640772851d2aa2e542adecda82ed5dd3cc0df220b5f146e481e1a9a633827`。第三轮门禁的 Trojan native runtime 在该版本分别通过两核心 10 TCP + 10 UDP、严格信任和错误认证/SNI 拒绝；新 Agent/share、菜单、状态及接管检查亦通过。实际 Bash 4.2 的 Agent/share、SubMan、菜单分别在 `/tmp/sbv-trojan-agent-final-bash42b.log`、`/tmp/sbv-trojan-subman-final-bash42.log`、`/tmp/sbv-trojan-menu-final-bash42.log` 退出 0。Bash 4.2 分享测试曾因嵌套 here-string 中再执行使用 here-string 的 API 而失败，最小复现 `jq -R . <<< "$(protocol_registry_field trojan agent_id)"` 会使旧 Bash 的 `read -a` 丢失字段；改成先赋值、再交给断言后通过，未为测试放松产品状态校验。
+
+第三轮完整门禁通过前 49 项后，在第 50 项旧 live inventory 测试中发现过时的 `unknown=trojan` 夹具而退出 1，未执行容器阶段。该夹具最终改为核心合法、项目尚未注册的 VMess，保留原“上游支持不等于受管支持”的负例。第一次尾段补跑使用虚构类型时通过了管理拒绝断言、但未通过原有真实核心正向 check；第二次与测试文件编辑重叠出现解析错误，两次均不计成功，最终冻结后的尾段日志为 `/tmp/sbv-trojan-gate3-remaining3.log`。
+
+容器部分单独以 `VERIFY_SKIP_LOCAL_TESTS=1` 执行原验证入口，`dev/verification-runs/20260908083120` 退出 0。父线程逐项检查 13/13 场景 `STATUS=success`、20/20 TCP 探针 `RESULT=success`，包含 Trojan TLS native 新装和 TLS QUIC 八协议共存；失败升级持久结果 `status=rolled_back`、`rollback.result=success`。直接读取运行容器 `09f3c14c99108…` 的 `/usr/local/bin/sbv`，其哈希与上述 `5cc640772…` 一致，保存在 `container-runtime.sha256`。这是完整 Docker 场景复跑，不是又一次完整本地门禁；未操作宿主防火墙、生产、真实 SubMan API 或公网 UDP 可达性。
+
+冻结后的尾段 `/tmp/sbv-trojan-gate3-remaining3.log` 最终退出 0，逐项 `PASS` 为 46/46；与第三轮前 49 项合起来覆盖本轮选定的 95 项本地测试，不声称单次完整门禁或全部 95 项同一初始源码快照。最终运行时仍为 `5cc640772851d2aa2e542adecda82ed5dd3cc0df220b5f146e481e1a9a633827`，新增 Trojan 专项与 Docker 均已覆盖该版本；实际 Bash 4.2 分享、SubMan、菜单和状态测试也通过。独立最终预审没有确认的 P1/P2。当前工具没有原生 `/review` 执行入口，原子提交后使用独立审查员与父线程核对精确提交范围作为等效复审。版本本轮仅递增一次至 `2026090804`；完整全协议目标仍未完成，未 push 或部署，用户未跟踪 `1`、`2` 保留。
+
 ## 2026-09-08：V2Ray 传输组合与真实数据路径基础
 
 从 `4460aa1` 继续原始完整目标；工作树只有既有未跟踪文件 `1`、`2`，未读取或修改。基线 `bash dev/verification/run.sh` 的 `dev/verification-runs/20260908060621` 退出 0，为 local 空变更门禁，不代表全量回归。GitHub `releases/latest` 重新确认 `v1.14.0` 为 stable，非 draft/prerelease；本轮仍固定 1.13.18/1.14.0。Context7 首先 resolve/query `/sagernet/sing-box`，结果仅为 testing；随后按固定 tag 的 `option/v2ray_transport.go`、`transport/v2ray/transport.go` 和各 transport client/server 实现核对。1.13.18 与 1.14.0 的 WebSocket server 源码完全相同，transport option 差异主要为新增 schema 描述，未改变本轮字段。

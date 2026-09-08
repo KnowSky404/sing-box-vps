@@ -5,9 +5,9 @@ Purpose: one-script install and management tool for deploying sing-box on Linux 
 Primary language: Bash.
 Runtime source of truth: install.sh.
 Remote verification: Docker-based, auto-builds sing-box-vps-verify image.
-Agent protocol contract revision: 2026090802.
+Agent protocol contract revision: 2026090804.
 
-Script 2026090803 adds internal typed V2Ray transport profiles only. It does not add managed VMess/Trojan/plain-VLESS protocols, Agent write commands, or SubMan support; the seven-protocol public contract is unchanged.
+Script 2026090804 adds managed Trojan as preset 8: multi-instance, multi-user, typed TLS trust and transport, shared CAS lifecycle, menu, Agent and lossless-only SubMan URI sync. VMess and plain VLESS remain unmanaged. HTTPUpgrade and WebSocket early data remain runtime-blocked. This increment does not complete the full protocol goal.
 
 Canonical documents:
 - AGENTS.md: repository rules, validation requirements, SSH alias conventions, version rules.
@@ -27,6 +27,8 @@ Key runtime paths:
 - systemd service: sing-box
 
 Agent CLI:
+
+- Trojan uses protocol ID trojan and menu preset 8 with schema-1 JSON store and schema-2 active marker. It supports create/replace/delete/default/recover, not legacy migrate. client_trust is explicitly certificate or system. Only TLS system trust with losslessly representable transport can be shared as a SubMan URI; other users receive structured skip warnings. Client JSON preserves credentials and carries public certificate trust when selected, never the server private key. Native/HTTP/WS/gRPC use TCP listeners; TLS QUIC uses UDP listeners while retaining TCP and UDP business traffic. See the Trojan typed instance contract in the runbook.
 
 - Standalone HTTP uses protocol ID http, menu preset 6, and the shared schema-2 instance lifecycle (create/replace/delete/default/recover, never migrate). Typed records additionally require tls: {enabled:false} or {enabled:true,server_name,certificate_path,key_path}. HTTP CONNECT client export is TCP-only; TLS export embeds public certificate trust, never the server key. TLS URI material is unavailable with http_tls_uri_unrepresentable: use export-client JSON. No HTTP SubMan sync. Existing Mixed/SOCKS formats are unchanged.
 - Shadowsocks uses public protocol/Agent ID `shadowsocks`, alias `ss`, registry/menu preset 7, and the shared schema-2 instance lifecycle (create/replace/delete/default/recover, never migrate). Its typed schema-1 JSON store requires `listen.network` and an `authentication` object; the exact record and method/network limits are documented in the runbook below. New listeners default to loopback; a non-loopback write requires `--allow-public` (interactive management asks for the same consent). The `none` method emits a plaintext warning. Final evidence for this contract includes final script hash `8d24fa6e`, two core targets, all 9 methods in config checks, four native Bash/Bash 4.2 runtime groups across 1.13.18 and 1.14 with 7 TCP plus 7 UDP cases per group, and long-PSK derivation. The Docker rerun recorded 12/12 scenarios, 18/18 TCP probes, successful `rolled_back` and `success` rollback outcomes, and matching script/container hashes; see the runbook for the local-test boundary.

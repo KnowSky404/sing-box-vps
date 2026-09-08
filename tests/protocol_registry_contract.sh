@@ -14,14 +14,17 @@ source "${TEST_DIR}/install.sh"
 
 registry=$(protocol_registry_json)
 jq -e '
-  length == 7 and
-  ([.[].state_id] | unique | length == 7) and
-  ([.[].agent_id] | unique | length == 7) and
-  ([.[].menu_order] | sort == [1,2,3,4,5,6,7]) and
+  length == 8 and
+  ([.[].state_id] | unique | length == 8) and
+  ([.[].agent_id] | unique | length == 8) and
+  ([.[].menu_order] | sort == [1,2,3,4,5,6,7,8]) and
   all(.[]; .implemented == true and .available == null and .validated.status == "not_assessed") and
   any(.[]; .state_id == "shadowsocks" and
     .features.listen_network_selection == true and
     .legacy_capabilities.listen_network_selection == true)
+  and any(.[]; .state_id == "trojan" and
+    .subman_type == "trojan" and
+    .legacy_capabilities.subman_sync == true)
 ' >/dev/null <<< "${registry}"
 capabilities=$(agent_capabilities_json)
 jq -e '
@@ -31,6 +34,8 @@ jq -e '
   ($plain.operations_by_protocol.socks == ["create", "replace", "delete", "default", "recover"]) and
   ($plain.protocols | index("http") != null) and
   ($plain.operations_by_protocol.http == ["create", "replace", "delete", "default", "recover"]) and
+  ($plain.protocols | index("trojan") != null) and
+  ($plain.operations_by_protocol.trojan == ["create", "replace", "delete", "default", "recover"]) and
   .features.mixed_instances.operations == $plain.operations_by_protocol.mixed
 ' >/dev/null <<< "${capabilities}"
 jq -e --argjson registry "${registry}" '
@@ -39,6 +44,10 @@ jq -e --argjson registry "${registry}" '
   any(.protocol_registry[]; .state_id == "shadowsocks" and
     .features.listen_network_selection == true and
     .capabilities.listen_network_selection == true) and
+  any(.protocol_registry[]; .state_id == "trojan" and
+    .features.listen_transport_projection == true and
+    .capabilities.listen_transport_projection == true) and
+  (.features.subman.supported_protocols | index("trojan") != null) and
   .features.subman.supported_protocols == ($registry | map(select(.subman_type != "") | .agent_id))
 ' >/dev/null <<< "${capabilities}"
 
@@ -63,7 +72,7 @@ mkdir -p "${SB_PROTOCOL_STATE_DIR}"
 for protocol in $(list_registered_protocols); do
   protocol_registry_require_handlers "${protocol}"
   [[ "$(protocol_option_to_id "$(protocol_registry_field "${protocol}" menu_order)")" == "${protocol}" ]]
-  if [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" ]]; then
+  if [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" ]]; then
     printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2\n' > "$(protocol_state_file "${protocol}")"
     mkdir -p "${SB_PROTOCOL_STATE_DIR}/instances"
     if [[ "${protocol}" == "socks" ]]; then
@@ -107,7 +116,7 @@ SOCKS_STORE_EOF
   ]
 }
 HTTP_STORE_EOF
-    else
+    elif [[ "${protocol}" == "shadowsocks" ]]; then
       cat > "${SB_PROTOCOL_STATE_DIR}/instances/shadowsocks.json" <<'SHADOWSOCKS_STORE_EOF'
 {
   "schema_version": 1,
@@ -127,13 +136,36 @@ HTTP_STORE_EOF
   ]
 }
 SHADOWSOCKS_STORE_EOF
+    else
+      cat > "${SB_PROTOCOL_STATE_DIR}/instances/trojan.json" <<'TROJAN_STORE_EOF'
+{
+  "schema_version": 1,
+  "protocol": "trojan",
+  "revision": 1,
+  "default_instance_id": "main",
+  "instances": [
+    {
+      "id": "main",
+      "name": "Trojan contract",
+      "tag": "trojan-in",
+      "listen": {"address": "127.0.0.1", "port": 1084},
+      "authentication": {"users": [{"name": "trojan-user", "password": "TROJAN-CONTRACT-PASSWORD"}]},
+      "tls": {"enabled": false},
+      "client_trust": "system",
+      "transport": {"type": "none"},
+      "outbound_policy": "default",
+      "dependencies": []
+    }
+  ]
+}
+TROJAN_STORE_EOF
     fi
   else
     printf 'CONFIG_SCHEMA_VERSION=1\n' > "$(protocol_state_file "${protocol}")"
   fi
 done
-printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
-[[ "$(list_exportable_client_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nsocks\nhttp\nshadowsocks' ]]
+printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,trojan,shadowsocks\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
+[[ "$(list_exportable_client_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nsocks\nhttp\ntrojan\nshadowsocks' ]]
 [[ "$(protocol_registry_field mixed client_export)" == true ]]
 [[ "$(protocol_registry_field mixed multi_instance)" == true ]]
 [[ -z "$(protocol_registry_field mixed subman_type)" ]]
@@ -157,6 +189,35 @@ printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsock
 [[ "$(protocol_registry_field shadowsocks listen_networks)" == tcp,udp ]]
 [[ "$(protocol_registry_field shadowsocks multi_instance)" == true ]]
 [[ "$(protocol_registry_field shadowsocks handlers)" == *load_plain_proxy_structured_instance* ]]
+[[ "$(protocol_registry_field trojan menu_order)" == 8 ]]
+[[ "$(protocol_registry_field trojan default_tag)" == trojan-in ]]
+[[ "$(protocol_registry_field trojan state_id)" == trojan ]]
+[[ "$(protocol_registry_field trojan agent_id)" == trojan ]]
+[[ "$(protocol_registry_field trojan runtime_id)" == trojan ]]
+[[ "$(protocol_registry_field trojan listen_networks)" == tcp,udp ]]
+[[ "$(protocol_registry_field trojan subman_type)" == trojan ]]
+[[ "$(protocol_registry_field trojan share_formats)" == trojan ]]
+[[ "$(protocol_registry_field trojan handlers)" == *build_trojan_inbound_json* ]]
+[[ "$(protocol_registry_field trojan handlers)" == *build_client_trojan_outbounds* ]]
+[[ "$(protocol_registry_field trojan handlers)" == *load_plain_proxy_structured_instance* ]]
+[[ "$(protocol_registry_field trojan handlers)" == *apply_plain_proxy_instance_change* ]]
+
+trojan_store_file=$(plain_proxy_structured_store_file trojan)
+trojan_inbounds=$(render_structured_instance_inbounds trojan "${trojan_store_file}" | jq -s .)
+jq -e '
+  length == 1 and
+  .[0].type == "trojan" and .[0].tag == "trojan-in" and
+  .[0].listen == "127.0.0.1" and .[0].listen_port == 1084 and
+  (.[0].tls.enabled // false) == false and .[0].users[0].name == "trojan-user" and
+  (.[0] | has("transport") | not)
+' >/dev/null <<< "${trojan_inbounds}"
+trojan_export=$(build_client_trojan_outbounds 127.0.0.1 | jq -s .)
+jq -e '
+  length == 1 and .[0].type == "trojan" and .[0].tag == "trojan-main-user-dHJvamFuLXVzZXI=" and
+  .[0].server == "127.0.0.1" and .[0].server_port == 1084 and
+  .[0].password == "TROJAN-CONTRACT-PASSWORD" and (.[0] | has("tls") | not) and
+  (.[0] | has("transport") | not)
+' >/dev/null <<< "${trojan_export}"
 
 # Unknown protocol and future schema must not disappear during reconciliation.
 for invalid in $'INSTALLED_PROTOCOLS=mixed,future-protocol\nPROTOCOL_STATE_VERSION=1' \

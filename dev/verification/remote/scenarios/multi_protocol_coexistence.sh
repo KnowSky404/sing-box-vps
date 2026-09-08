@@ -22,7 +22,9 @@ verification_scenario_multi_protocol_coexistence() {
     -keyout "${key_path}" \
     -out "${cert_path}" \
     -subj '/CN=sing-box-vps-verification.invalid' \
+    -addext 'subjectAltName=DNS:sing-box-vps-verification.invalid' \
     -days 1 >/dev/null 2>&1
+  chmod 600 "${cert_path}" "${key_path}"
 
   printf 'SCENARIO=multi_protocol_coexistence\n'
   bash "${VERIFY_REMOTE_UNINSTALL_SCRIPT}" --yes || \
@@ -106,22 +108,37 @@ EOF
   jq -e '.ok==true and .protocol=="shadowsocks" and .changed==true and .revision==1' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-create.json" >/dev/null
 
+  local trojan_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/trojan-record.json"
+  (umask 077; jq -n --arg cert "${cert_path}" --arg key "${key_path}" '
+    {id:"main",name:"Trojan QUIC verification",tag:"trojan-in",
+     listen:{address:"127.0.0.1",port:1084},
+     authentication:{users:[{name:"main",password:"trojan-verification-password"}]},
+     tls:{enabled:true,server_name:"sing-box-vps-verification.invalid",certificate_path:$cert,key_path:$key},
+     client_trust:"certificate",transport:{type:"quic"},
+     outbound_policy:"default",dependencies:[]}' > "${trojan_record}")
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent instance create trojan --json --yes \
+    --expected-revision 0 --file "${trojan_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/trojan-create.json"
+  jq -e '.ok==true and .protocol=="trojan" and .changed==true and .revision==1' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/trojan-create.json" >/dev/null
+
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/config.json")
   index_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/index.env")
   cp /root/sing-box-vps/config.json "${config_path}"
   cp /root/sing-box-vps/protocols/index.env "${index_path}"
-  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks' "${index_path}"
+  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan' "${index_path}"
   jq -e '
-    ([.inbounds[] | .type] | sort) == ["anytls", "http", "hysteria2", "mixed", "shadowsocks", "socks", "vless"] and
+    ([.inbounds[] | .type] | sort) == ["anytls", "http", "hysteria2", "mixed", "shadowsocks", "socks", "trojan", "vless"] and
     ([.inbounds[] | select(.type == "vless") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "mixed") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "hysteria2") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "anytls") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "socks") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "http") | .listen_port] | length == 1) and
-    ([.inbounds[] | select(.type == "shadowsocks") | .listen_port] | length == 1)
+    ([.inbounds[] | select(.type == "shadowsocks") | .listen_port] | length == 1) and
+    ([.inbounds[] | select(.type == "trojan" and .transport.type=="quic" and .tls.alpn==["h3"])] | length == 1)
   ' /root/sing-box-vps/config.json >/dev/null
   grep -Fqx 'sing-box version 1.14.0' <(sing-box version)
   verification_wait_for_service_active sing-box

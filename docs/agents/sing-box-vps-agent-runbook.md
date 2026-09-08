@@ -474,6 +474,46 @@ systemctl start sing-box
 systemctl status sing-box --no-pager
 ```
 
+## Trojan typed instance contract
+
+Trojan uses public/state ID `trojan`, preset 8, management menu 21 and the shared instance transaction. It is separate from VMess and the legacy VLESS REALITY alias. The store is `protocols/instances/trojan.json` (`schema_version:1`) with the standard active `CONFIG_SCHEMA_VERSION=2` marker. There is no legacy Trojan migration operation; unsupported live fields must block lossy takeover. Generic edit/remove menus route Trojan through this same instance transaction, never the legacy singleton rewrite path.
+
+```bash
+sbv agent instance create trojan --json --yes --expected-revision 0 --file record.json
+sbv agent instance replace trojan --json --yes --expected-revision N --file record.json
+sbv agent instance default trojan --json --yes --expected-revision N --id main
+sbv agent instance delete trojan --json --yes --expected-revision N --id main
+sbv agent instance recover trojan --json --yes --expected-revision N
+```
+
+Use a private record file, for example:
+
+```json
+{
+  "id": "main",
+  "name": "Trojan main",
+  "tag": "trojan-in",
+  "listen": {"address": "127.0.0.1", "port": 8443},
+  "authentication": {"users": [{"name": "first", "password": "replace-with-a-private-password"}]},
+  "tls": {
+    "enabled": true,
+    "server_name": "proxy.example.com",
+    "certificate_path": "/etc/ssl/certs/proxy.pem",
+    "key_path": "/etc/ssl/private/proxy.key"
+  },
+  "client_trust": "certificate",
+  "transport": {"type": "none"},
+  "outbound_policy": "default",
+  "dependencies": []
+}
+```
+
+Authentication contains 1–128 users with unique names and passwords. Names are stable user identities; editing unrelated fields must not rotate credentials. TLS uses administrator-provided certificate/key references. `client_trust:"certificate"` embeds only the public certificate in client exports; `"system"` explicitly chooses the client's system trust store and must not be inferred from a certificate filename. Disabled TLS requires `client_trust:"system"` and is not encrypted; non-loopback changes require the public-exposure confirmation.
+
+Managed transport types are internal `none` (omitted from core JSON), HTTP, WebSocket without early data, gRPC and TLS-only QUIC. QUIC owns a UDP listener; other transports own TCP listeners, while both can carry TCP/UDP business traffic. Plaintext client JSON omits `tls` entirely: the pinned Trojan cores must not receive an explicit disabled TLS object, which can create an invalid TLS dialer despite passing `check`. HTTPUpgrade and WebSocket early data remain blocked by the previously reproduced runtime defects. REALITY, Vision, fallback and multiplex are not silently accepted as generic Trojan options. Takeover accepts only ALPN matching the managed transport profile; arbitrary ALPN is not discarded.
+
+`nodes`/`status` are safe summaries, not complete transport records: authentication secrets and custom request headers must not leak. `links` and `export-client` are sensitive. Client exports are per-user complete outbounds with stable tags, matching transport/ALPN and strict trust; server private keys are never copied. Share/SubMan candidates require enabled TLS, explicit system trust and losslessly expressible transport fields. Plaintext, certificate-trust exports, custom headers and unsupported transport options return explicit warnings/skips instead of incomplete URIs. This is a local/mock integration contract, not proof of production reachability or an authorized real SubMan synchronization.
+
 ## External Documentation
 
 When current `sing-box` configuration syntax, migration behavior, or version compatibility is needed, use Context7 first. If Context7 cannot provide enough detail, use official `sing-box` documentation or the official repository before relying on third-party posts.

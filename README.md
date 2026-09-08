@@ -4,13 +4,13 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026090803`
+- 脚本版本：`2026090804`
 
 - sing-box 适配版本：`1.14.0`
 
-Shadowsocks 为第七个入站预设，支持实例级 TCP/UDP 选择；未声明或无效的网络字段会阻止变更。全协议目标仍在推进，不能由当前预设推断其他上游协议已接入。
+Trojan 为第八个入站预设，支持多实例、多用户，以及独立建模的 TLS 与传输设置。新入口默认回环监听；公开监听须明确确认。Shadowsocks 仍为第七预设，保留实例级 TCP/UDP 选择。全协议目标仍在推进，不能由当前预设推断其他上游协议已接入。
 
-`2026090803` 增加了供后续协议适配器使用的 V2Ray 传输/TLS 组合校验与监听计划原语；不新增 VMess、Trojan 或普通 VLESS 安装入口。HTTPUpgrade 与 WebSocket early data 因真实连接失败阻断普通构造，未计作已支持。接口与范围见[协议扩展示例](docs/superpowers/specs/2026-09-06-unified-protocol-management.md#v2ray-传输公共契约2026090803)。
+Trojan 可管理原生 TCP、HTTP、WebSocket（无 early data）、gRPC 和 TLS QUIC；QUIC 使用 UDP 监听，不限制代理业务只能走 UDP。客户端导出保留用户凭据，并按明确选择使用系统信任或公开证书，绝不导出服务器私钥或自动关闭证书校验。分享/SubMan 仅同步 TLS 系统信任且 URI 能无损表达的用户，其余返回跳过原因。VMess、普通 VLESS 尚未接入。HTTPUpgrade 与 WebSocket early data 因真实连接失败仍被阻断，未计作已支持。接口与范围见[Trojan 契约](docs/agents/sing-box-vps-agent-runbook.md#trojan-typed-instance-contract)。
 
 ## 🚀 一键安装
 
@@ -108,7 +108,7 @@ Mixed 已接入结构化实例状态（schema 2）和完整的实例管理链路
 
 服务端候选和结构化状态现在共用固定监听资源预检：区分 TCP/UDP，识别 IPv4 通配、IPv6 等价地址和双栈重叠；冲突时保留原配置。防火墙开放取自完整已发布配置的实际监听传输；删除根据旧配置备份和剩余入站保护仍被引用的规则，不再同时操作无关 TCP/UDP。Mixed 实例事务初次创建也先在目标同目录 staging 后原子发布，并为文件/config、受管 UFW/iptables/ip6tables 规则和服务恢复保存持久 journal/result；同时以共享 `flock` 串行化管理写入。firewalld 仅作只读外部预检，禁止在事务中 add/delete/reload，缺少所需 allow 或既有归属账本时会在变更前失败并要求人工规则。故障时不把文件恢复冒充为外部防火墙已恢复。全量删除必须先确认服务已停止；清单缺失或无法解释时拒绝清理。后端失败返回非零并明确披露已提交配置、尚未执行重启或可能存在的部分外部变更。这仍不是完整防火墙归属账本或系统资源事务，不追溯删除未归属的历史宽规则，也不检查其他进程抢占端口、动态 UDP relay 和 ACME 临时监听。
 
-全协议改造按[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)推进；[上游能力矩阵](docs/superpowers/specs/2026-09-06-protocol-coverage.md)区分上游支持与项目已实现能力。当前运行时注册表位于独立分发的 `install.sh` 中，现有七个入站预设的菜单编号、公开 ID、导出候选、SubMan 类型和验证器元数据均从这里读取。未知索引/状态版本或生成器返回的无效片段会阻断重建并保留原文件。现有配置的入站清单也会全量预检：未知类型、非 REALITY 的 VLESS、重复的单实例协议和重复显式 tag 会阻断自动重建/接管，不再仅识别第一个受支持入站。Agent 的 `status`、`nodes`、`links` 还要求索引、基础状态和 live 协议集合完全对应；REALITY 的旧状态必须包含完整连接字段，多实例状态的清单、文件名、内部 ID 和 inbound tag 必须与 live VLESS 集合一一对应，否则只返回结构化错误而不输出部分结果。服务端与客户端候选还会检查组件 tag、引用和显式依赖环，然后继续执行目标核心 `check`；这些检查尚不覆盖任意外部配置的字段及出站/端点/路由无损接管，也不表示新增协议已完成。
+全协议改造按[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)推进；[上游能力矩阵](docs/superpowers/specs/2026-09-06-protocol-coverage.md)区分上游支持与项目已实现能力。当前运行时注册表位于独立分发的 `install.sh` 中，现有八个入站预设的菜单编号、公开 ID、导出候选、SubMan 类型和验证器元数据均从这里读取。未知索引/状态版本或生成器返回的无效片段会阻断重建并保留原文件。现有配置的入站清单也会全量预检：未知类型、非 REALITY 的 VLESS、重复的单实例协议和重复显式 tag 会阻断自动重建/接管，不再仅识别第一个受支持入站。Agent 的 `status`、`nodes`、`links` 还要求索引、基础状态和 live 协议集合完全对应；REALITY 的旧状态必须包含完整连接字段，多实例状态的清单、文件名、内部 ID 和 inbound tag 必须与 live VLESS 集合一一对应，否则只返回结构化错误而不输出部分结果。服务端与客户端候选还会检查组件 tag、引用和显式依赖环，然后继续执行目标核心 `check`；这些检查尚不覆盖任意外部配置的字段及出站/端点/路由无损接管，也不表示新增协议已完成。
 
 ```bash
 bash dev/verification/run.sh
@@ -170,7 +170,7 @@ sbv
 - **Mixed 防火墙事务**：启用 UFW 时仅通过 UFW 管理归属规则；没有活动防火墙前端时才直接管理 `iptables`/`ip6tables`。firewalld 仅执行只读外部预检，不由实例事务 add/delete/reload；UFW 与 firewalld 同时活动或已有账本与当前后端冲突时拒绝写入，要求人工处理。
 - **工业级配置生成**：采用 **`jq` 安全注入** 模式生成 JSON，彻底规避特殊字符导致的转义错误。
 - **协议级展示**：终端可按协议查看节点信息，支持 `VLESS` 与 `Hysteria2` 链接/ANSI 二维码展示，为 `Mixed` 和独立 `SOCKS` 输出代理链接与二维码提示，并为 `AnyTLS` 输出参数摘要和 sing-box outbound JSON 示例；多 REALITY、Mixed、SOCKS 实例会显示实例 ID、端口和限速摘要。
-- **裸核客户端导出**：可从交互菜单或 `sbv agent export-client --json` 生成 `/root/sing-box-vps/client/sing-box-client.json`，支持当前七个预设，覆盖前自动备份，并在输出前执行 `sing-box check`。Mixed 和独立 SOCKS 使用 SOCKS5 outbound 与 UoT v2，保留既有认证设置；缺失或无效的端口/认证字段会阻断整份导出，保留原导出及备份，不自动生成密码或降级认证。
+- **裸核客户端导出**：可从交互菜单或 `sbv agent export-client --json` 生成 `/root/sing-box-vps/client/sing-box-client.json`，支持当前八个预设，覆盖前自动备份，并在输出前执行 `sing-box check`。Mixed 和独立 SOCKS 使用 SOCKS5 outbound 与 UoT v2，保留既有认证设置；缺失或无效的端口/认证字段会阻断整份导出，保留原导出及备份，不自动生成密码或降级认证。
 - **Mixed 安全边界**：Mixed 服务端和其导出的 SOCKS5/UoT 链路不提供 TLS；公网明文监听必须经过单独确认，不能把它当作独立的 TLS SOCKS 服务端。Mixed 当前也不新增 SubMan 同步能力。
 - **独立 SOCKS（已验证边界）**：注册表菜单项 5 使用 `socks` state/Agent ID，active marker 为 schema 2、JSON store 为 `schema_version: 1`，支持同认证 typed record、共享事务与实例级 CAS；服务端无 HTTP/TLS，客户端导出为 SOCKS5 + UoT v2。六项回归、两核心 check/runtime、菜单和最终 Docker/TCP 门禁均已通过；这不等于 TLS、HTTP、SubMan 或全协议目标已完成。证据见[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)。
 - **独立 HTTP**：菜单项 6、管理菜单 19，使用 `http` state/Agent ID 与 schema 2 共享实例事务。默认回环监听并启用认证，可选择明文或手工证书 TLS；证书文件由用户维护，实例操作不申请或删除它们。客户端导出为 TCP-only HTTP CONNECT；TLS 导出仅嵌入公开证书信任与 SNI，不读取私钥。明文 URI 返回 `http_plaintext_transport`；TLS 无可保真 URI，返回 `http_tls_uri_unrepresentable` 并使用完整 JSON。访问 HTTPS 目标不等于代理入口已加密；不支持 HTTP SubMan 同步。

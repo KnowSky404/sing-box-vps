@@ -33,6 +33,8 @@ REMOTE_HTTP_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/http.env"
 REMOTE_HTTP_STORE_FILE="${REMOTE_PROTOCOLS_DIR}/instances/http.json"
 REMOTE_SHADOWSOCKS_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/shadowsocks.env"
 REMOTE_SHADOWSOCKS_STORE_FILE="${REMOTE_PROTOCOLS_DIR}/instances/shadowsocks.json"
+REMOTE_TROJAN_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/trojan.env"
+REMOTE_TROJAN_STORE_FILE="${REMOTE_PROTOCOLS_DIR}/instances/trojan.json"
 REMOTE_INDEX_FILE="${REMOTE_PROTOCOLS_DIR}/index.env"
 REMOTE_ASSERT_LOG_FILE="${TMP_DIR}/remote-assert.log"
 REMOTE_DISPATCH_LOG_FILE="${TMP_DIR}/remote-dispatch.log"
@@ -299,6 +301,36 @@ STATE_EOF
 STATE_EOF
 }
 
+write_trojan_state() {
+  mkdir -p "\$(dirname "\${REMOTE_TROJAN_STORE_FILE}")"
+  cat > "\${REMOTE_TROJAN_STATE_FILE}" <<'STATE_EOF'
+INSTALLED=1
+CONFIG_SCHEMA_VERSION=2
+STATE_EOF
+  cat > "\${REMOTE_TROJAN_STORE_FILE}" <<'STATE_EOF'
+{
+  "schema_version": 1,
+  "protocol": "trojan",
+  "revision": 1,
+  "default_instance_id": "main",
+  "instances": [{
+    "id": "main",
+    "name": "Trojan verification",
+    "tag": "trojan-in",
+    "listen": {"address": "127.0.0.1", "port": 1084},
+    "authentication": {"users": [{"name": "trojan-user", "password": "trojan-pass"}]},
+    "tls": {"enabled": true, "server_name": "trojan.example",
+      "certificate_path": "/root/sing-box-vps/trojan.crt",
+      "key_path": "/root/sing-box-vps/trojan.key"},
+    "client_trust": "system",
+    "transport": {"type": "quic"},
+    "outbound_policy": "default",
+    "dependencies": []
+  }]
+}
+STATE_EOF
+}
+
 write_runtime_config() {
   cat > "\${REMOTE_CONFIG_FILE}" <<CONFIG_EOF
 {
@@ -384,6 +416,15 @@ write_runtime_config() {
       "method": "2022-blake3-aes-128-gcm",
       "password": "MDEyMzQ1Njc4OWFiY2RlZg==",
       "users": []
+    },
+    {
+      "type": "trojan",
+      "tag": "trojan-in",
+      "listen": "127.0.0.1",
+      "listen_port": 1084,
+      "users": [{"name": "trojan-user", "password": "trojan-pass"}],
+      "tls": {"enabled": true, "server_name": "trojan.example"},
+      "transport": {"type": "quic"}
     }
   ]
 }
@@ -398,8 +439,9 @@ enable_multi_protocol_probe_fixture() {
   write_socks_state
   write_http_state
   write_shadowsocks_state
+  write_trojan_state
   cat > "\${REMOTE_INDEX_FILE}" <<'INDEX_EOF'
-INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,mystery-protocol
+INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan,mystery-protocol
 INDEX_EOF
   write_runtime_config
 }
@@ -939,6 +981,16 @@ test() {
     return
   fi
 
+  if [[ "\${1:-}" == "-f" && "\${2:-}" == "/root/sing-box-vps/protocols/trojan.env" ]]; then
+    [[ -f "\${REMOTE_TROJAN_STATE_FILE}" ]]
+    return
+  fi
+
+  if [[ "\${1:-}" == "-f" && "\${2:-}" == "/root/sing-box-vps/protocols/instances/trojan.json" ]]; then
+    [[ -f "\${REMOTE_TROJAN_STORE_FILE}" ]]
+    return
+  fi
+
   if [[ "\${1:-}" == "-f" && "\${2:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
     [[ -f "\${REMOTE_INDEX_FILE}" ]]
     return
@@ -1037,6 +1089,10 @@ jq() {
     args[\$last_index]="\${REMOTE_SHADOWSOCKS_STORE_FILE}"
   fi
 
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/instances/trojan.json" ]]; then
+    args[\$last_index]="\${REMOTE_TROJAN_STORE_FILE}"
+  fi
+
   command "\${REAL_JQ}" "\${args[@]}"
 }
 
@@ -1066,6 +1122,10 @@ sed() {
 
   if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/shadowsocks.env" ]]; then
     args[\$last_index]="\${REMOTE_SHADOWSOCKS_STATE_FILE}"
+  fi
+
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/trojan.env" ]]; then
+    args[\$last_index]="\${REMOTE_TROJAN_STATE_FILE}"
   fi
 
   command sed "\${args[@]}"
@@ -1154,10 +1214,15 @@ stat() {
     printf '600\n'
     return 0
   fi
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/instances/trojan.json" ]]; then
+    printf '600\n'
+    return 0
+  fi
   command stat "\$@"
 }
 PAYLOAD_PRELUDE
 cat >> "\${script_file}"
+perl -0pi -e 's|readonly SB_PROJECT_DIR="/root/sing-box-vps"|readonly SB_PROJECT_DIR="'"${REMOTE_ROOT_DIR}/root/sing-box-vps"'"|g' "\${script_file}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/vless-reality.env|state_file='"${REMOTE_STATE_FILE}"'|g' "\${script_file}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/mixed.env|state_file='"${REMOTE_MIXED_STATE_FILE}"'|g' "\${script_file}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/hy2.env|state_file='"${REMOTE_HY2_STATE_FILE}"'|g' "\${script_file}"
@@ -1166,10 +1231,15 @@ perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/http.env|state_file='"${
 perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/http.json|store_file='"${REMOTE_HTTP_STORE_FILE}"'|g' "\${script_file}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/shadowsocks.env|state_file='"${REMOTE_SHADOWSOCKS_STATE_FILE}"'|g' "\${script_file}"
 perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/shadowsocks.json|store_file='"${REMOTE_SHADOWSOCKS_STORE_FILE}"'|g' "\${script_file}"
+perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/trojan.env|state_file='"${REMOTE_TROJAN_STATE_FILE}"'|g' "\${script_file}"
+perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/trojan.json|store_file='"${REMOTE_TROJAN_STORE_FILE}"'|g' "\${script_file}"
 cat > "\${script_file}.wrapper" <<'WRAP_EOF'
 eval "\$(declare -f verification_run_protocol_probes | sed '1s/verification_run_protocol_probes/verification_run_protocol_probes__original/')"
 verification_run_protocol_probes() {
   local status=0
+  if [[ ! -f "\${VERIFY_REMOTE_INSTALL_SCRIPT:-}" ]]; then
+    verification_prepare_remote_local_tree
+  fi
   enable_multi_protocol_probe_fixture
   printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
   set +e
@@ -1204,6 +1274,12 @@ verification_scenario_fresh_install_http() {
 
 verification_scenario_fresh_install_shadowsocks() {
   printf 'SCENARIO=fresh_install_shadowsocks\n'
+  printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
+  verification_run_protocol_probes
+}
+
+verification_scenario_fresh_install_trojan() {
+  printf 'SCENARIO=fresh_install_trojan\n'
   printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
   verification_run_protocol_probes
 }
@@ -1262,6 +1338,8 @@ REMOTE_HTTP_STATE_FILE="${REMOTE_HTTP_STATE_FILE}" \
 REMOTE_HTTP_STORE_FILE="${REMOTE_HTTP_STORE_FILE}" \
 REMOTE_SHADOWSOCKS_STATE_FILE="${REMOTE_SHADOWSOCKS_STATE_FILE}" \
 REMOTE_SHADOWSOCKS_STORE_FILE="${REMOTE_SHADOWSOCKS_STORE_FILE}" \
+REMOTE_TROJAN_STATE_FILE="${REMOTE_TROJAN_STATE_FILE}" \
+REMOTE_TROJAN_STORE_FILE="${REMOTE_TROJAN_STORE_FILE}" \
 REAL_JQ="${REAL_JQ}" \
 PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" "\${script_file}" "\${@:7}"
   exit \$?
@@ -1282,6 +1360,7 @@ grep -Fq 'runtime_smoke' "${run_dir}/scenarios.txt"
 grep -Fq 'multi_protocol_coexistence' "${run_dir}/scenarios.txt"
 grep -Fq 'fresh_install_http' "${run_dir}/scenarios.txt"
 grep -Fq 'fresh_install_shadowsocks' "${run_dir}/scenarios.txt"
+grep -Fq 'fresh_install_trojan' "${run_dir}/scenarios.txt"
 grep -Fq 'upgrade_rollback_1_13_to_1_14' "${run_dir}/scenarios.txt"
 grep -Fq 'remote_target=docker:test-container' "${run_dir}/summary.log"
 grep -Fq 'remote_target=docker:test-container' "${TMP_DIR}/stdout.txt"
@@ -1296,6 +1375,7 @@ grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/fresh_install_
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_shadowsocks/config.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_shadowsocks/protocols/instances/shadowsocks.json" ]]
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/fresh_install_shadowsocks/protocol-probes/shadowsocks/result.env"
+grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/fresh_install_trojan/protocol-probes/trojan/result.env"
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/listeners.ss-lntp.txt" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/client.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/probe.stdout.txt" ]]
@@ -1312,6 +1392,9 @@ grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/http/client.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/http/probe.stdout.txt" ]]
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/http/result.env"
+[[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/trojan/client.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/trojan/probe.stdout.txt" ]]
+grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/trojan/result.env"
 grep -Fqx 'RESULT=unsupported' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/mystery-protocol/result.env"
 grep -Fqx 'STATUS=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/result.env"
 grep -Fqx 'STATUS=success' "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/result.env"
@@ -1334,6 +1417,7 @@ grep -Fqx 'reconfigure_existing_install' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'fresh_install_anytls' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'fresh_install_http' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'fresh_install_shadowsocks' "${REMOTE_DISPATCH_LOG_FILE}"
+grep -Fqx 'fresh_install_trojan' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'upgrade_1_13_to_1_14' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'runtime_smoke' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'multi_protocol_coexistence' "${REMOTE_DISPATCH_LOG_FILE}"

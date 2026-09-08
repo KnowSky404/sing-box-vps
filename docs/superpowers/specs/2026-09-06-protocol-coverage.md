@@ -6,7 +6,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026090803`，`SB_SUPPORT_MAX_VERSION=1.14.0`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026090804`，`SB_SUPPORT_MAX_VERSION=1.14.0`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -70,7 +70,7 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 | http | `http` / inbound | 基础内建；项目兼容 1.13.x；TLS 需用户提供有效证书/私钥引用 | HTTP CONNECT 入口，TCP；入口 TLS 与代理 HTTPS 目标独立；新实例默认回环与认证 | yes | yes（Linux；手工 TLS 文件另行预检） | schema 2 + 共享实例事务；yes/yes/yes/yes；无 legacy migration | HTTP CONNECT TCP 客户端（TLS 嵌入公有证书信任） / 明文 HTTP URI；TLS 返回不可表达 warning / no current SubMan | 两核心 check/TCP/TLS 正反向路径、实际 Bash 4.2、75 项本地门禁；修正测试断言后 Docker 11/11、TCP 16/16；仅本地/容器，非公网或生产证明 |
 | shadowsocks | `shadowsocks` / inbound | 基础内建；项目兼容 1.13.x | TCP/UDP 可分选；九种方法；none/2022 ChaCha 无多用户；项目未建模 relay/mux/plugin | yes | yes（Linux） | schema 2 marker + schema 1 JSON 与共享实例事务；yes/yes/yes/yes；无 legacy migration | 逐用户完整 JSON / SIP002（单网络 warning） / 双网络加密项逐用户同步，单网络/none 跳过，mock-only | 两核心、原生 Bash/实际 Bash 4.2：9 方法 check、每组 7 TCP + 7 UDP marker、错误认证拒绝；最终源码 Docker 12/12、TCP 18/18；公网/生产未验证 |
 | vmess | `vmess` / inbound | 基础内建；QUIC transport 另需 `with_quic` | 原生及 HTTP/WS/gRPC/HTTPUpgrade 外层 TCP，QUIC 外层 UDP + TLS；可承载 TCP/UDP 业务；`alterId>0` 是兼容模式 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check；内部 transport fixture 不等于管理链路验收 |
-| trojan | `trojan` / inbound | 基础内建；QUIC transport 另需 `with_quic` | 外层 TCP 或 QUIC/UDP；TLS 与 transport 分别建模，明文 fixture 不等于安全部署；fallback 不是安全性证明 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check；内部 transport fixture 不等于管理链路验收 |
+| trojan | `trojan` / inbound | 基础内建；QUIC transport 另需 `with_quic`；项目兼容 1.13.x | 外层 TCP 或 TLS QUIC/UDP；TLS/transport/客户端信任分别建模；不接管 fallback/mux/未知字段；HTTPUpgrade、WS early data 被阻断 | yes | yes（Linux） | 第八预设，schema 2 marker + schema 1 store，共享实例事务；yes/yes/yes/yes；无 legacy migration | 逐用户完整 JSON / TLS 系统信任的无损 URI 子集 / 逐用户同步及跳过原因，本地 mock | 受管导出经实际 SubMan parser 十组往返、两核心 check；完整生命周期和最终 Docker 验收见实施记录，阶段检查不等于最终通过 |
 | naive-inbound | `naive` / inbound | 入站本体内建；QUIC 路径需要 `with_quic` | TCP 或 UDP；用户和 TLS 必填；UDP 为 HTTP/3/QUIC 路径，不能只以 TCP check 代替 | conditional | yes（tag 已含；QUIC/TLS 仍需） | none；—/—/—/— | — / — / — | registry-check（无 TLS 按预期失败） |
 | hysteria | `hysteria` / inbound | `with_quic`；官方默认 Linux tag 含它 | QUIC/UDP；TLS、认证、QUIC 窗口/拥塞和可选 obfs；不要与 hysteria2 字段混用 | conditional | yes（tag 已含） | none；—/—/—/— | — / — / — | registry-check（无 TLS 按预期失败） |
 | shadowtls | `shadowtls` / inbound | 基础内建 | TCP 包装层；v1/v2/v3 的 password、users、handshake 和 strict/wildcard 约束不同；必须组合内层代理 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check（无 handshake 按预期失败） |

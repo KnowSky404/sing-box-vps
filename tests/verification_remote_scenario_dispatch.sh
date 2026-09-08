@@ -33,6 +33,8 @@ HTTP_STATE_FILE="${PROTOCOLS_DIR}/http.env"
 HTTP_STORE_FILE="${PROTOCOLS_DIR}/instances/http.json"
 SHADOWSOCKS_STATE_FILE="${PROTOCOLS_DIR}/shadowsocks.env"
 SHADOWSOCKS_STORE_FILE="${PROTOCOLS_DIR}/instances/shadowsocks.json"
+TROJAN_STATE_FILE="${PROTOCOLS_DIR}/trojan.env"
+TROJAN_STORE_FILE="${PROTOCOLS_DIR}/instances/trojan.json"
 INDEX_FILE="${PROTOCOLS_DIR}/index.env"
 ASSERT_LOG_FILE="${TMP_DIR}/assert.log"
 CALLS_FILE="${TMP_DIR}/calls.log"
@@ -54,6 +56,9 @@ printf '1\n' > "${SERVICE_ACTIVE_FILE}"
 : > "${ASSERT_LOG_FILE}"
 : > "${CALLS_FILE}"
 printf '0\n' > "${INSTALL_COUNT_FILE}"
+mkdir -p "$(dirname "${EMBEDDED_INSTALL_SCRIPT}")"
+cp "${REPO_ROOT}/install.sh" "${EMBEDDED_INSTALL_SCRIPT}"
+perl -0pi -e 's|readonly SB_PROJECT_DIR="/root/sing-box-vps"|readonly SB_PROJECT_DIR="'"${REMOTE_ROOT_DIR}/root/sing-box-vps"'"|g' "${EMBEDDED_INSTALL_SCRIPT}"
 mkdir -p "$(dirname "${INSTANCE_STATE_FILE}")"
 cat > "${STATE_FILE}" <<'EOF'
 CONFIG_SCHEMA_VERSION=2
@@ -342,6 +347,54 @@ CONFIG_EOF
   chmod 600 "${SHADOWSOCKS_STORE_FILE}"
 }
 
+write_trojan_state() {
+  local certificate_path=${1:-/root/sing-box-vps/trojan.crt}
+  local key_path=${2:-/root/sing-box-vps/trojan.key}
+  mkdir -p "$(dirname "${TROJAN_STORE_FILE}")"
+  printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2\n' > "${TROJAN_STATE_FILE}"
+  cat > "${TROJAN_STORE_FILE}" <<STATE_EOF
+{
+  "schema_version": 1,
+  "protocol": "trojan",
+  "revision": 1,
+  "default_instance_id": "main",
+  "instances": [{
+    "id": "main",
+    "name": "Trojan verification",
+    "tag": "trojan-in",
+    "listen": {"address": "127.0.0.1", "port": 1084},
+    "authentication": {"users": [
+      {"name": "first", "password": "trojan-first-password"},
+      {"name": "second", "password": "trojan-second-password"}
+    ]},
+    "tls": {"enabled": true, "server_name": "trojan.verification.invalid",
+      "certificate_path": "${certificate_path}", "key_path": "${key_path}"},
+    "transport": {"type": "none"},
+    "client_trust": "certificate",
+    "outbound_policy": "default",
+    "dependencies": []
+  }]
+}
+STATE_EOF
+  cat > "${CONFIG_FILE}" <<CONFIG_EOF
+{
+  "inbounds": [{
+    "type": "trojan",
+    "tag": "trojan-in",
+    "listen": "127.0.0.1",
+    "listen_port": 1084,
+    "users": [
+      {"name": "first", "password": "trojan-first-password"},
+      {"name": "second", "password": "trojan-second-password"}
+    ],
+    "tls": {"enabled": true, "server_name": "trojan.verification.invalid",
+      "certificate_path": "${certificate_path}", "key_path": "${key_path}"}
+  }]
+}
+CONFIG_EOF
+  chmod 600 "${TROJAN_STORE_FILE}"
+}
+
 reset_runtime_artifacts() {
   printf '0\n' > "${CONFIG_PRESENT_FILE}"
   printf '0\n' > "${SERVICE_FILE_PRESENT_FILE}"
@@ -586,6 +639,41 @@ INDEX_EOF
           return 0
         fi
 
+        if [[ "${actual_lines[2]:-}" == "8" ]]; then
+          if [[ "${#actual_lines[@]}" -ne 18 ]]; then
+            printf 'unexpected trojan install input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
+            return 1
+          fi
+          [[ "${actual_lines[0]}" == "1" ]]
+          [[ "${actual_lines[1]}" == "" ]]
+          [[ "${actual_lines[2]}" == "8" ]]
+          [[ "${actual_lines[3]}" == "1084" ]]
+          [[ "${actual_lines[4]}" == "2" ]]
+          [[ "${actual_lines[5]}" == "first" ]]
+          [[ "${actual_lines[6]}" == "trojan-first-password" ]]
+          [[ "${actual_lines[7]}" == "second" ]]
+          [[ "${actual_lines[8]}" == "trojan-second-password" ]]
+          [[ "${actual_lines[9]}" == "y" ]]
+          [[ -n "${actual_lines[10]}" ]]
+          [[ -n "${actual_lines[11]}" ]]
+          [[ "${actual_lines[12]}" == "trojan.verification.invalid" ]]
+          [[ "${actual_lines[13]}" == "1" ]]
+          [[ "${actual_lines[14]}" == "1" ]]
+          [[ "${actual_lines[15]}" == "n" ]]
+          [[ "${actual_lines[16]}" == "n" ]]
+          [[ "${actual_lines[17]}" == "0" ]]
+          printf '1084\n' > "${PORT_FILE}"
+          printf '1\n' > "${CONFIG_PRESENT_FILE}"
+          printf '1\n' > "${SERVICE_FILE_PRESENT_FILE}"
+          printf '1\n' > "${SBV_PRESENT_FILE}"
+          printf '1\n' > "${SERVICE_ACTIVE_FILE}"
+          write_trojan_state "${actual_lines[10]}" "${actual_lines[11]}"
+          cat > "${INDEX_FILE}" <<'INDEX_EOF'
+INSTALLED_PROTOCOLS=trojan
+INDEX_EOF
+          return 0
+        fi
+
         printf 'unexpected install input: %s\n' "${actual_lines[*]:-}" >&2
         return 1
       fi
@@ -723,6 +811,16 @@ test() {
     return
   fi
 
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/trojan.env" ]]; then
+    [[ -f "${TROJAN_STATE_FILE}" ]]
+    return
+  fi
+
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/instances/trojan.json" ]]; then
+    [[ -f "${TROJAN_STORE_FILE}" ]]
+    return
+  fi
+
   if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
     [[ -f "${INDEX_FILE}" ]]
     return
@@ -792,6 +890,10 @@ jq() {
     args[$last_index]="${SHADOWSOCKS_STORE_FILE}"
   fi
 
+  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/trojan.json" ]]; then
+    args[$last_index]="${TROJAN_STORE_FILE}"
+  fi
+
   command "${REAL_JQ}" "${args[@]}"
 }
 
@@ -823,8 +925,16 @@ sed() {
     args[$last_index]="${SHADOWSOCKS_STATE_FILE}"
   fi
 
+  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/trojan.env" ]]; then
+    args[$last_index]="${TROJAN_STATE_FILE}"
+  fi
+
   if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/socks.json" ]]; then
     args[$last_index]="${SOCKS_STORE_FILE}"
+  fi
+
+  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/trojan.json" ]]; then
+    args[$last_index]="${TROJAN_STORE_FILE}"
   fi
 
   if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
@@ -891,8 +1001,16 @@ grep() {
     args[$last_index]="${SHADOWSOCKS_STATE_FILE}"
   fi
 
+  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/trojan.env" ]]; then
+    args[$last_index]="${TROJAN_STATE_FILE}"
+  fi
+
   if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/instances/shadowsocks.json" ]]; then
     args[$last_index]="${SHADOWSOCKS_STORE_FILE}"
+  fi
+
+  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/instances/trojan.json" ]]; then
+    args[$last_index]="${TROJAN_STORE_FILE}"
   fi
 
   if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/index.env" ]]; then
@@ -914,6 +1032,10 @@ stat() {
     return 0
   fi
   if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/shadowsocks.json" ]]; then
+    printf '600\n'
+    return 0
+  fi
+  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/trojan.json" ]]; then
     printf '600\n'
     return 0
   fi
@@ -988,12 +1110,65 @@ for scenario_file in "${REPO_ROOT}"/dev/verification/remote/scenarios/*.sh; do
 done
 
 cat "${REPO_ROOT}/dev/verification/remote/entrypoint.sh" >> "${PAYLOAD_FILE}"
+cat > "${PAYLOAD_FILE}.wrapper" <<'WRAP_EOF'
+eval "$(declare -f verification_run_protocol_probes | sed '1s/verification_run_protocol_probes/verification_run_protocol_probes__original/')"
+verification_run_protocol_probes() {
+  if [[ ! -f "${VERIFY_REMOTE_INSTALL_SCRIPT:-}" ]]; then
+    verification_prepare_remote_local_tree
+  fi
+  if [[ -f "${TROJAN_STORE_FILE:-}" ]]; then
+    local certificate_path key_path server_name
+    certificate_path=$(jq -r '.instances[] | select(.client_trust == "certificate") | .tls.certificate_path // empty' "${TROJAN_STORE_FILE}")
+    if [[ -n "${certificate_path}" && ! -f "${certificate_path}" ]]; then
+      key_path=$(jq -r '.instances[] | select(.client_trust == "certificate") | .tls.key_path // empty' "${TROJAN_STORE_FILE}")
+      server_name=$(jq -r '.instances[] | select(.client_trust == "certificate") | .tls.server_name // "trojan.verification.invalid"' "${TROJAN_STORE_FILE}")
+      mkdir -p "$(dirname "${certificate_path}")" "$(dirname "${key_path}")"
+      openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
+        -subj "/CN=${server_name}" \
+        -addext "subjectAltName=DNS:${server_name}" \
+        -keyout "${key_path}" -out "${certificate_path}" >/dev/null 2>&1
+      chmod 600 "${certificate_path}" "${key_path}"
+    fi
+  fi
+  if [[ "${VERIFY_CURRENT_SCENARIO:-}" == "runtime_smoke" ]] &&
+     [[ -f "${INDEX_FILE:-}" ]] && grep -Fqx 'INSTALLED_PROTOCOLS=trojan' "${INDEX_FILE}"; then
+    write_shadowsocks_state
+    cat > "${CONFIG_FILE}" <<'CONFIG_EOF'
+{
+  "inbounds": [
+    {"type":"shadowsocks","tag":"ss-in","listen":"127.0.0.1","listen_port":1083,
+     "network":["tcp","udp"],"method":"2022-blake3-aes-128-gcm",
+     "password":"MDEyMzQ1Njc4OWFiY2RlZg==","users":[]},
+    {"type":"trojan","tag":"trojan-in","listen":"127.0.0.1","listen_port":1084,
+     "users":[{"name":"first","password":"trojan-first-password"}],
+     "tls":{"enabled":true,"server_name":"trojan.verification.invalid"}}
+  ]
+}
+CONFIG_EOF
+    printf 'INSTALLED_PROTOCOLS=shadowsocks,trojan\n' > "${INDEX_FILE}"
+    printf '1083\n' > "${PORT_FILE}"
+  fi
+  verification_run_protocol_probes__original "$@"
+}
+WRAP_EOF
+awk -v wrapper_file="${PAYLOAD_FILE}.wrapper" '
+  $0 == "if ! mkdir \"${LOCK_DIR}\" 2>/dev/null; then" {
+    while ((getline line < wrapper_file) > 0) {
+      print line
+    }
+    close(wrapper_file)
+  }
+  { print }
+' "${PAYLOAD_FILE}" > "${PAYLOAD_FILE}.tmp"
+mv "${PAYLOAD_FILE}.tmp" "${PAYLOAD_FILE}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/vless-reality.env|state_file='"${STATE_FILE}"'|g' "${PAYLOAD_FILE}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/anytls.env|state_file='"${ANYTLS_STATE_FILE}"'|g' "${PAYLOAD_FILE}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/http.env|state_file='"${HTTP_STATE_FILE}"'|g' "${PAYLOAD_FILE}"
 perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/http.json|store_file='"${HTTP_STORE_FILE}"'|g' "${PAYLOAD_FILE}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/shadowsocks.env|state_file='"${SHADOWSOCKS_STATE_FILE}"'|g' "${PAYLOAD_FILE}"
 perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/shadowsocks.json|store_file='"${SHADOWSOCKS_STORE_FILE}"'|g' "${PAYLOAD_FILE}"
+perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/trojan.env|state_file='"${TROJAN_STATE_FILE}"'|g' "${PAYLOAD_FILE}"
+perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/trojan.json|store_file='"${TROJAN_STORE_FILE}"'|g' "${PAYLOAD_FILE}"
 
 CALLS_FILE="${CALLS_FILE}" \
 CONFIG_PRESENT_FILE="${CONFIG_PRESENT_FILE}" \
@@ -1018,6 +1193,8 @@ HTTP_STATE_FILE="${HTTP_STATE_FILE}" \
 HTTP_STORE_FILE="${HTTP_STORE_FILE}" \
 SHADOWSOCKS_STATE_FILE="${SHADOWSOCKS_STATE_FILE}" \
 SHADOWSOCKS_STORE_FILE="${SHADOWSOCKS_STORE_FILE}" \
+TROJAN_STATE_FILE="${TROJAN_STATE_FILE}" \
+TROJAN_STORE_FILE="${TROJAN_STORE_FILE}" \
 INDEX_FILE="${INDEX_FILE}" \
 ASSERT_LOG_FILE="${ASSERT_LOG_FILE}" \
 INSTALL_COUNT_FILE="${INSTALL_COUNT_FILE}" \
@@ -1034,6 +1211,7 @@ REAL_JQ="${REAL_JQ}" \
     fresh_install_socks \
     fresh_install_http \
     fresh_install_shadowsocks \
+    fresh_install_trojan \
     runtime_smoke \
     uninstall_and_reinstall \
     > "${STDOUT_FILE}" \
@@ -1050,6 +1228,7 @@ grep -Fqx 'SCENARIO=fresh_install_anytls' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=fresh_install_socks' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=fresh_install_http' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=fresh_install_shadowsocks' "${STDOUT_FILE}"
+grep -Fqx 'SCENARIO=fresh_install_trojan' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=uninstall_and_reinstall' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=runtime_smoke' "${STDOUT_FILE}"
 grep -Fq '__SING_BOX_VPS_REMOTE_ARTIFACT_BUNDLE_BEGIN__' "${STDOUT_FILE}"
@@ -1086,6 +1265,9 @@ grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_http/protoco
 [[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_shadowsocks/config.json" ]]
 [[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_shadowsocks/protocols/instances/shadowsocks.json" ]]
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_shadowsocks/protocol-probes/shadowsocks/result.env"
+[[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_trojan/config.json" ]]
+[[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_trojan/protocols/instances/trojan.json" ]]
+grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_trojan/protocol-probes/trojan/result.env"
 [[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/sing-box-check.txt" ]]
 grep -Fqx 'STATUS=success' "${ARTIFACT_DIR}/scenarios/runtime_smoke/result.env"
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/shadowsocks/result.env"
@@ -1098,6 +1280,7 @@ grep -Fq 'run_verification_scenario upgrade_1_13_to_1_14 verification_scenario_u
 grep -Fq 'verification_scenario_multi_protocol_coexistence' "${PAYLOAD_FILE}"
 grep -Fq 'verification_scenario_fresh_install_http' "${PAYLOAD_FILE}"
 grep -Fq 'verification_scenario_fresh_install_shadowsocks' "${PAYLOAD_FILE}"
+grep -Fq 'verification_scenario_fresh_install_trojan' "${PAYLOAD_FILE}"
 grep -Fq 'verification_scenario_upgrade_rollback_1_13_to_1_14' "${PAYLOAD_FILE}"
 ! grep -Fq 'verification_execute_single_protocol_probe vless-reality /root/sing-box-vps/config.json' "${PAYLOAD_FILE}"
 grep -Fqx 'test:-f|/root/sing-box-vps/protocols/vless-reality.env|' "${ASSERT_LOG_FILE}"

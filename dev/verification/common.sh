@@ -105,6 +105,13 @@ resolve_local_tests() {
       tests/subman_shadowsocks_sync.sh \
       tests/v2ray_transport_contract.sh \
       tests/v2ray_transport_runtime.sh \
+      tests/trojan_structured_instance_store.sh \
+      tests/trojan_structured_takeover.sh \
+      tests/trojan_instance_lifecycle.sh \
+      tests/trojan_instance_menu.sh \
+      tests/trojan_agent_share.sh \
+      tests/trojan_export_runtime.sh \
+      tests/subman_trojan_sync.sh \
       tests/managed_component_graph.sh \
       tests/managed_component_graph_core_startup.sh \
       tests/live_inbound_inventory_guards.sh \
@@ -114,6 +121,7 @@ resolve_local_tests() {
       tests/verification_protocol_probe_anytls.sh \
       tests/verification_protocol_probe_http.sh \
       tests/verification_protocol_probe_shadowsocks.sh \
+      tests/verification_protocol_probe_trojan.sh \
       tests/reality_sni_validation.sh \
       tests/generate_config_cleans_temp_files_on_failure.sh \
       tests/generate_config_commits_validated_candidate.sh \
@@ -208,6 +216,7 @@ resolve_remote_scenarios() {
       fresh_install_socks
       fresh_install_http
       fresh_install_shadowsocks
+      fresh_install_trojan
       multi_protocol_coexistence
       upgrade_1_13_to_1_14
       upgrade_rollback_1_13_to_1_14

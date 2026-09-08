@@ -367,6 +367,13 @@ verification_scenario_fresh_install_shadowsocks() {
   verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/instances/shadowsocks.json" '{"schema_version":1,"protocol":"shadowsocks","revision":1}'
 }
 
+verification_scenario_fresh_install_trojan() {
+  printf 'SCENARIO=fresh_install_trojan\n'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/config.json" '{"inbounds":[{"type":"trojan","tag":"trojan-in","listen":"127.0.0.1","listen_port":1084,"users":[{"name":"trojan-user","password":"trojan-pass"}],"tls":{"enabled":true,"server_name":"trojan.example"}}]}'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/trojan.env" $'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/instances/trojan.json" '{"schema_version":1,"protocol":"trojan","revision":1,"default_instance_id":"main","instances":[{"id":"main","name":"Trojan verification","tag":"trojan-in","listen":{"address":"127.0.0.1","port":1084},"authentication":{"users":[{"name":"trojan-user","password":"trojan-pass"}]},"tls":{"enabled":true,"server_name":"trojan.example"},"transport":{"type":"none"},"client_trust":"certificate","outbound_policy":"default","dependencies":[]}]}'
+}
+
 verification_scenario_upgrade_1_13_to_1_14() {
   printf 'SCENARIO=upgrade_1_13_to_1_14\n'
   verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/upgrade.json" '{"ok":true,"installed":"1.14.0","transaction":{"status":"success","result_persisted":true}}'
@@ -375,8 +382,8 @@ verification_scenario_upgrade_1_13_to_1_14() {
 
 verification_scenario_multi_protocol_coexistence() {
   printf 'SCENARIO=multi_protocol_coexistence\n'
-  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/config.json" 'seven protocol config fixture'
-  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/index.env" 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/config.json" 'eight protocol config fixture'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/index.env" 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan'
 }
 
 verification_scenario_upgrade_rollback_1_13_to_1_14() {
@@ -449,7 +456,7 @@ grep -Fqx 'tests/new_untracked_case.sh' "${run_dir}/changed-files.txt"
 
 # Check scenarios
 scenarios=$(paste -sd, "${run_dir}/scenarios.txt")
-[[ "${scenarios}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" ]] || {
+[[ "${scenarios}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,fresh_install_trojan,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" ]] || {
   printf 'unexpected scenarios: %s\n' "${scenarios}" >&2; exit 1
 }
 
@@ -470,6 +477,9 @@ grep -Fq 'remote_target=docker:test-container' "${TMP_DIR}/stdout.txt"
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_http/protocols/instances/http.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_shadowsocks/config.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_shadowsocks/protocols/instances/shadowsocks.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_trojan/config.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_trojan/protocols/trojan.env" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_trojan/protocols/instances/trojan.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/result.env" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/upgrade.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/transaction-result.json" ]]
@@ -577,7 +587,7 @@ grep -Fqx 'install.sh' "${run_dir_skip}/changed-files.txt"
 grep -Fqx 'README.md' "${run_dir_skip}/changed-files.txt"
 grep -Fqx 'tests/new_untracked_case.sh' "${run_dir_skip}/changed-files.txt"
 scenarios_skip=$(paste -sd, "${run_dir_skip}/scenarios.txt")
-[[ "${scenarios_skip}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" ]] || {
+[[ "${scenarios_skip}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,fresh_install_trojan,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" ]] || {
   printf 'unexpected scenarios for skip run: %s\n' "${scenarios_skip}" >&2; exit 1
 }
 skip_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
@@ -593,7 +603,7 @@ env -u VERIFY_SKIP_LOCAL_TESTS \
 
 run_dir_remote_framework=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout-remote-framework.txt")
 scenarios_remote_framework=$(paste -sd, "${run_dir_remote_framework}/scenarios.txt")
-[[ "${scenarios_remote_framework}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke,uninstall_and_reinstall" ]] || {
+[[ "${scenarios_remote_framework}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,fresh_install_trojan,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke,uninstall_and_reinstall" ]] || {
   printf 'unexpected scenarios for remote framework change: %s\n' "${scenarios_remote_framework}" >&2; exit 1
 }
 grep -Fqx 'tests/verification_artifact_dir_layout.sh|1' "${TMP_DIR}/local-tests.log"
