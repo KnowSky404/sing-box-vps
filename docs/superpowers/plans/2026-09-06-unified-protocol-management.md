@@ -4,6 +4,14 @@
 起点为 `cc12c06`，工作区干净；保留参考基线 `0d0bdac` 之后的下载事务修复。
 本文记录完整目标的进展；阶段提交不代表全协议已交付。
 
+## 2026-09-09：TUIC 结构化实例管理链路（阶段交付）
+
+从 Snell 阶段继续原始完整目标；保留未跟踪文件 `1`、`2`，未读取或修改。Context7 `/sagernet/sing-box` 核对 TUIC 官方 inbound/outbound 字段，随后用固定官方 `v1.14.0` ARM64 核心验证实际 schema。核心明确接受 TUIC QUIC/UDP 服务端与客户端字段，但拒绝入站 `udp_relay_mode`；该字段以及 `udp_over_stream` 只属于 outbound。
+
+本阶段接入第十二个 `tuic` 预设（安装菜单 12、管理菜单 27），使用 schema 2 active marker + schema 1 JSON store、实例 revision/CAS、监听资源、接管/重建、创建/替换/删除/默认/恢复事务，以及 Agent `nodes`/`links`/`export-client`。typed 记录限定 1–128 个 UUID/密码用户、手工证书 TLS、`certificate`/`system` 客户端信任、拥塞控制、auth timeout、heartbeat 和 zero-rtt；`udp_relay_mode` (`native|quic`) 与 `udp_over_stream` 保留在记录中供客户端导出，但服务端入站渲染时明确省略。TUIC 无标准分享 URI/二维码，也不执行 SubMan 同步。
+
+新增 `tests/tuic_instance_lifecycle.sh`，覆盖 create/replace/delete/default/recover、stale CAS、删除 tombstone、用户/TLS/选项校验、服务端 outbound-only 字段排除、接管候选、Agent 凭据脱敏、no-URI warning 和客户端逐用户 outbound。设置 `SINGBOX_BINARY_114` 时，专项测试同时对服务端 candidate 与客户端 outbound 执行真实 `sing-box 1.14.0 check`；主机 mock 与该目标核心均通过。受影响文件的完整 Docker 验证运行目录为 `dev/verification-runs/20260909001234`，Docker verification、image build/run 和 exec failure 场景均通过；该次未注入两版核心路径，因此核心依赖门禁按规则跳过，TUIC 的 1.14 检查由上述专项单独完成。该证据是本地结构化生命周期、目标配置检查和回环材料，不代表公网 UDP 可达、TUIC UDP payload、生产部署或真实 SubMan。未执行生产操作、推送或外部同步；版本沿用本轮已提升的 `2026090805`，全协议目标继续未完成。
+
 ## 2026-09-08：Snell 结构化实例管理链路（阶段交付）
 
 从 Hysteria2 阶段继续原始完整目标；保留未跟踪文件 `1`、`2`，未读取或修改。Context7 `/sagernet/sing-box` 核对 Snell 入站/出站的版本、PSK、用户 key、v5 HTTP obfs 与 v6 traffic-shaping 字段；固定 1.14.0 源码进一步确认入站版本为 `5/6`、出站版本为 `4/6`，不能把两端整数直接当作同一版本。

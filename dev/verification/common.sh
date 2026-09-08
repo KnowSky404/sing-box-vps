@@ -129,6 +129,7 @@ resolve_local_tests() {
       tests/anytls_agent_share.sh \
       tests/anytls_export_runtime.sh \
       tests/snell_instance_lifecycle.sh \
+      tests/tuic_instance_lifecycle.sh \
       tests/managed_component_graph.sh \
       tests/managed_component_graph_core_startup.sh \
       tests/live_inbound_inventory_guards.sh \

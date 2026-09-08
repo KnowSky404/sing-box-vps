@@ -14,10 +14,10 @@ source "${TEST_DIR}/install.sh"
 
 registry=$(protocol_registry_json)
 jq -e '
-  length == 11 and
-  ([.[].state_id] | unique | length == 11) and
-  ([.[].agent_id] | unique | length == 11) and
-  ([.[].menu_order] | sort == [1,2,3,4,5,6,7,8,9,10,11]) and
+  length == 12 and
+  ([.[].state_id] | unique | length == 12) and
+  ([.[].agent_id] | unique | length == 12) and
+  ([.[].menu_order] | sort == [1,2,3,4,5,6,7,8,9,10,11,12]) and
   all(.[]; .implemented == true and .available == null and .validated.status == "not_assessed") and
   any(.[]; .state_id == "shadowsocks" and
     .features.listen_network_selection == true and
@@ -49,6 +49,15 @@ jq -e '
     .features.udp_via_tcp_packet_api == true and
     .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
     .features.subman_sync == false)
+  and any(.[]; .state_id == "tuic" and
+    .runtime_id == "tuic" and .agent_id == "tuic" and
+    .features.multi_instance == true and .features.multi_user == true and
+    .features.authentication == true and .features.tls == true and
+    .features.tls_modes == ["manual_certificate"] and .features.quic == true and
+    .features.congestion_control == ["cubic", "new_reno", "bbr"] and
+    .features.udp_relay_modes == ["native", "quic"] and .features.udp_over_stream == true and
+    .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
+    .features.subman_sync == false)
 ' >/dev/null <<< "${registry}"
 capabilities=$(agent_capabilities_json)
 jq -e '
@@ -68,6 +77,8 @@ jq -e '
   ($plain.operations_by_protocol.anytls == ["create", "replace", "delete", "default", "recover"]) and
   ($plain.protocols | index("snell") != null) and
   ($plain.operations_by_protocol.snell == ["create", "replace", "delete", "default", "recover"]) and
+  ($plain.protocols | index("tuic") != null) and
+  ($plain.operations_by_protocol.tuic == ["create", "replace", "delete", "default", "recover"]) and
   .features.mixed_instances.operations == $plain.operations_by_protocol.mixed
 ' >/dev/null <<< "${capabilities}"
 jq -e --argjson registry "${registry}" '
@@ -85,6 +96,10 @@ jq -e --argjson registry "${registry}" '
   any(.protocol_registry[]; .state_id == "vless-plain" and
     .capabilities.multi_user == true and .capabilities.subman_sync == true) and
   any(.protocol_registry[]; .state_id == "snell" and
+    .features.multi_instance == true and .features.multi_user == true and
+    .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
+    .capabilities.subman_sync == false) and
+  any(.protocol_registry[]; .state_id == "tuic" and
     .features.multi_instance == true and .features.multi_user == true and
     .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
     .capabilities.subman_sync == false) and
@@ -113,7 +128,7 @@ mkdir -p "${SB_PROTOCOL_STATE_DIR}"
 for protocol in $(list_registered_protocols); do
   protocol_registry_require_handlers "${protocol}"
   [[ "$(protocol_option_to_id "$(protocol_registry_field "${protocol}" menu_order)")" == "${protocol}" ]]
-  if [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "snell" ]]; then
+  if [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "snell" || "${protocol}" == "tuic" ]]; then
     printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2\n' > "$(protocol_state_file "${protocol}")"
     mkdir -p "${SB_PROTOCOL_STATE_DIR}/instances"
     if [[ "${protocol}" == "socks" ]]; then
@@ -267,6 +282,29 @@ ANYTLS_STORE_EOF
   ]
 }
 SNELL_STORE_EOF
+    elif [[ "${protocol}" == "tuic" ]]; then
+      cat > "${SB_PROTOCOL_STATE_DIR}/instances/tuic.json" <<'TUIC_STORE_EOF'
+{
+  "schema_version": 1,
+  "protocol": "tuic",
+  "revision": 1,
+  "default_instance_id": "main",
+  "instances": [
+    {
+      "id": "main",
+      "name": "TUIC contract",
+      "tag": "tuic-in",
+      "listen": {"address": "127.0.0.1", "port": 1089},
+      "authentication": {"users": [{"name": "tuic-user", "uuid": "11111111-1111-4111-8111-111111111111", "password": "TUIC-CONTRACT-PASSWORD"}]},
+      "tls": {"enabled": true, "server_name": "tuic.example.com", "certificate_path": "/tmp/tuic-contract.crt", "key_path": "/tmp/tuic-contract.key"},
+      "client_trust": "system",
+      "tuic": {"auth_timeout_seconds": 3, "congestion_control": "bbr", "heartbeat_seconds": 10, "udp_over_stream": false, "udp_relay_mode": "native", "zero_rtt_handshake": false},
+      "outbound_policy": "default",
+      "dependencies": []
+    }
+  ]
+}
+TUIC_STORE_EOF
     else
       cat > "${SB_PROTOCOL_STATE_DIR}/instances/vmess.json" <<'VMESS_STORE_EOF'
 {
@@ -295,8 +333,8 @@ VMESS_STORE_EOF
     printf 'CONFIG_SCHEMA_VERSION=1\n' > "$(protocol_state_file "${protocol}")"
   fi
 done
-printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,snell,socks,http,shadowsocks,trojan,vmess,vless-plain\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
-[[ "$(list_exportable_client_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nsnell\nsocks\nhttp\nshadowsocks\ntrojan\nvmess\nvless-plain' ]]
+printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,snell,tuic,socks,http,shadowsocks,trojan,vmess,vless-plain\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
+[[ "$(list_exportable_client_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nsnell\ntuic\nsocks\nhttp\nshadowsocks\ntrojan\nvmess\nvless-plain' ]]
 [[ "$(protocol_registry_field mixed client_export)" == true ]]
 [[ "$(protocol_registry_field mixed multi_instance)" == true ]]
 [[ -z "$(protocol_registry_field mixed subman_type)" ]]
@@ -324,6 +362,19 @@ printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,snell,socks,http,shad
 [[ "$(protocol_registry_field snell handlers)" == *build_client_snell_outbounds* ]]
 [[ "$(protocol_registry_field snell handlers)" == *load_plain_proxy_structured_instance* ]]
 [[ "$(protocol_registry_field snell handlers)" == *apply_plain_proxy_instance_change* ]]
+[[ "$(protocol_registry_field tuic menu_order)" == 12 ]]
+[[ "$(protocol_registry_field tuic default_tag)" == tuic-in ]]
+[[ "$(protocol_registry_field tuic state_id)" == tuic ]]
+[[ "$(protocol_registry_field tuic agent_id)" == tuic ]]
+[[ "$(protocol_registry_field tuic runtime_id)" == tuic ]]
+[[ "$(protocol_registry_field tuic listen_networks)" == udp ]]
+[[ "$(protocol_registry_field tuic traffic_networks)" == tcp,udp ]]
+[[ "$(protocol_registry_field tuic client_export)" == true ]]
+[[ -z "$(protocol_registry_field tuic subman_type)" ]]
+[[ "$(protocol_registry_field tuic handlers)" == *build_tuic_inbound_json* ]]
+[[ "$(protocol_registry_field tuic handlers)" == *build_client_tuic_outbounds* ]]
+[[ "$(protocol_registry_field tuic handlers)" == *load_plain_proxy_structured_instance* ]]
+[[ "$(protocol_registry_field tuic handlers)" == *apply_plain_proxy_instance_change* ]]
 [[ "$(protocol_registry_field shadowsocks menu_order)" == 7 ]]
 [[ "$(protocol_registry_field shadowsocks default_tag)" == ss-in ]]
 [[ "$(protocol_registry_field shadowsocks state_id)" == shadowsocks ]]
@@ -447,6 +498,33 @@ jq -e '
   .[0].tls.enabled == true and .[0].tls.server_name == "anytls.example.com" and
   (.[0].tls | has("certificate") | not) and (.[0] | has("transport") | not)
 ' >/dev/null <<< "${anytls_export}"
+
+tuic_store_file=$(plain_proxy_structured_store_file tuic)
+tuic_inbounds=$(render_structured_instance_inbounds tuic "${tuic_store_file}" | jq -s .)
+jq -e '
+  length == 1 and .[0].type == "tuic" and .[0].tag == "tuic-in" and
+  .[0].listen == "127.0.0.1" and .[0].listen_port == 1089 and
+  .[0].users[0].name == "tuic-user" and .[0].users[0].uuid == "11111111-1111-4111-8111-111111111111" and
+  .[0].users[0].password == "TUIC-CONTRACT-PASSWORD" and
+  .[0].tls.enabled == true and .[0].tls.server_name == "tuic.example.com" and
+  .[0].tls.alpn == ["h3"] and .[0].congestion_control == "bbr" and
+  .[0].auth_timeout == "3s" and .[0].heartbeat == "10s" and
+  (.[0].zero_rtt_handshake // false) == false and
+  (.[0] | has("udp_relay_mode") | not) and (.[0] | has("udp_over_stream") | not)
+' >/dev/null <<< "${tuic_inbounds}"
+tuic_export=$(build_client_tuic_outbounds 127.0.0.1 | jq -s .)
+jq -e '
+  length == 1 and .[0].type == "tuic" and
+  .[0].tag == "tuic-main-user-dHVpYy11c2Vy" and
+  .[0].server == "127.0.0.1" and .[0].server_port == 1089 and
+  .[0].uuid == "11111111-1111-4111-8111-111111111111" and
+  .[0].password == "TUIC-CONTRACT-PASSWORD" and .[0].network == ["tcp", "udp"] and
+  .[0].congestion_control == "bbr" and .[0].udp_relay_mode == "native" and
+  (.[0].udp_over_stream // false) == false and .[0].heartbeat == "10s" and
+  (.[0].zero_rtt_handshake // false) == false and .[0].tls.enabled == true and
+  .[0].tls.server_name == "tuic.example.com" and
+  (.[0].tls | has("certificate") | not)
+' >/dev/null <<< "${tuic_export}"
 
 # Unknown protocol and future schema must not disappear during reconciliation.
 for invalid in $'INSTALLED_PROTOCOLS=mixed,future-protocol\nPROTOCOL_STATE_VERSION=1' \

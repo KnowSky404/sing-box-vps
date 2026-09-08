@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090804
+# Version: 2026090805
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090804"
+readonly SCRIPT_VERSION="2026090805"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -79,6 +79,7 @@ readonly SB_PROTOCOL_REGISTRY=(
   'trojan|trojan|trojan|trojan|tls|inbound|trojan|Trojan|trojan-in|8|true|trojan|tcp,udp|tcp,udp|1.13.0|true|optional|trojan|tcp_loopback|{"multi_instance":true,"authentication":true,"tls":true,"transports":["none","http","ws","grpc","quic"],"listen_transport_projection":true,"client_export":true,"subman_sync":true}|trojan|build_trojan_inbound_json,save_trojan_state,prompt_trojan_install,prompt_trojan_update,build_client_trojan_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'vmess|vmess|vmess|vmess|tls|inbound|vmess|VMess|vmess-in|9|true|vmess|tcp,udp|tcp,udp|1.13.0|true|optional|vmess|tcp_loopback|{"multi_instance":true,"authentication":true,"tls":true,"transports":["none","http","ws","grpc","quic"],"listen_transport_projection":true,"client_export":true,"subman_sync":true}|vmess|build_vmess_inbound_json,save_vmess_state,prompt_vmess_install,prompt_vmess_update,build_client_vmess_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'snell|snell|snell|snell|psk|inbound|snell|Snell|snell-in|11|true||tcp|tcp|1.14.0|true|none|snell|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"versions":[5,6],"v5_obfs_modes":["none","http"],"v6_modes":["","default","unshaped","unsafe-raw"],"udp_via_tcp_packet_api":true,"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true}|snell|build_snell_inbound_json,save_snell_state,prompt_snell_install,prompt_snell_update,build_client_snell_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'tuic|tuic|tuic|tuic|tls-quic|inbound|tuic|TUIC|tuic-in|12|true||udp|tcp,udp|1.13.0|true|optional|tuic|quic_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"tls_modes":["manual_certificate"],"quic":true,"congestion_control":["cubic","new_reno","bbr"],"udp_relay_modes":["native","quic"],"udp_over_stream":true,"zero_rtt_handshake":true,"heartbeat":true,"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true}|tuic|build_tuic_inbound_json,save_tuic_state,prompt_tuic_install,prompt_tuic_update,build_client_tuic_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
 )
 SB_REALITY_SNI_CANDIDATES=(
   "www.apple.com"
@@ -130,6 +131,15 @@ SB_SNELL_USER_JSON='[]'
 SB_SNELL_OBFS_MODE=""
 SB_SNELL_OBFS_HOST=""
 SB_SNELL_MODE=""
+SB_TUIC_AUTH_JSON='[]'
+SB_TUIC_TLS_JSON='{"enabled":false}'
+SB_TUIC_CLIENT_TRUST="system"
+SB_TUIC_CONGESTION_CONTROL="bbr"
+SB_TUIC_AUTH_TIMEOUT_SECONDS="3"
+SB_TUIC_HEARTBEAT_SECONDS="10"
+SB_TUIC_ZERO_RTT_HANDSHAKE="n"
+SB_TUIC_UDP_RELAY_MODE="native"
+SB_TUIC_UDP_OVER_STREAM="n"
 SB_HY2_DOMAIN=""
 SB_HY2_PASSWORD=""
 SB_HY2_USER_NAME=""
@@ -786,6 +796,7 @@ default_node_name_for_protocol() {
     hy2) suffix="hy2" ;;
     anytls) suffix="anytls" ;;
     snell) suffix="snell" ;;
+    tuic) suffix="tuic" ;;
     mixed) suffix="mixed" ;;
     *) suffix="${protocol}" ;;
   esac
@@ -802,6 +813,7 @@ normalize_node_name() {
     *+hy2) node_name="${node_name%+hy2}-hy2" ;;
     *+anytls) node_name="${node_name%+anytls}-anytls" ;;
     *+snell) node_name="${node_name%+snell}-snell" ;;
+    *+tuic) node_name="${node_name%+tuic}-tuic" ;;
     *+mixed) node_name="${node_name%+mixed}-mixed" ;;
   esac
 
@@ -2103,7 +2115,7 @@ validate_protocol_state_schema() {
   schema=${schema//\"/}
   schema=${schema//\'/}
   case "${protocol}:${schema:-1}" in
-    vless-reality:1|vless-reality:2|vless-plain:2|mixed:1|mixed:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|hy2:1|hy2:2|anytls:1|anytls:2|snell:2) return 0 ;;
+    vless-reality:1|vless-reality:2|vless-plain:2|mixed:1|mixed:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|hy2:1|hy2:2|anytls:1|anytls:2|snell:2|tuic:2) return 0 ;;
   esac
   printf '[ERROR] 协议状态格式无法识别；已保留文件，请使用写入该状态的脚本版本恢复。\n' >&2
   return 1
@@ -2309,6 +2321,8 @@ save_plain_proxy_state() {
   local auth_enabled=${SB_MIXED_AUTH_ENABLED:-y} username=${SB_MIXED_USERNAME:-} password=${SB_MIXED_PASSWORD:-}
   local tag name policy=${SB_OUTBOUND_POLICY:-default} tls_json='{"enabled":false}' auth_json='{}' network_json='["tcp","udp"]' transport_json='{"type":"none"}' client_trust=certificate instance_id=${SB_INSTANCE_ID:-main}
   local snell_version=${SB_SNELL_VERSION:-6} snell_psk=${SB_SNELL_PSK:-} snell_users_json=${SB_SNELL_USER_JSON:-[]} snell_obfs_mode=${SB_SNELL_OBFS_MODE:-} snell_obfs_host=${SB_SNELL_OBFS_HOST:-} snell_mode=${SB_SNELL_MODE:-}
+  local tuic_users_json=${SB_TUIC_AUTH_JSON:-[]} tuic_tls_json=${SB_TUIC_TLS_JSON:-'{"enabled":false}'} tuic_client_trust=${SB_TUIC_CLIENT_TRUST:-system}
+  local tuic_congestion_control=${SB_TUIC_CONGESTION_CONTROL:-bbr} tuic_auth_timeout_seconds=${SB_TUIC_AUTH_TIMEOUT_SECONDS:-3} tuic_heartbeat_seconds=${SB_TUIC_HEARTBEAT_SECONDS:-10} tuic_zero_rtt_handshake=${SB_TUIC_ZERO_RTT_HANDSHAKE:-n} tuic_udp_relay_mode=${SB_TUIC_UDP_RELAY_MODE:-native} tuic_udp_over_stream=${SB_TUIC_UDP_OVER_STREAM:-n}
 
   structured_instance_store_protocol "${protocol}" >/dev/null || return 1
   case "${protocol}" in
@@ -2364,6 +2378,14 @@ save_plain_proxy_state() {
       snell_version=${SB_SNELL_VERSION}; snell_psk=${SB_SNELL_PSK}; snell_users_json=${SB_SNELL_USER_JSON}
       snell_obfs_mode=${SB_SNELL_OBFS_MODE}; snell_obfs_host=${SB_SNELL_OBFS_HOST}; snell_mode=${SB_SNELL_MODE}
       ;;
+    tuic)
+      tag=${SB_MIXED_INBOUND_TAG:-tuic-in}; name=${SB_NODE_NAME:-TUIC}
+      tuic_users_json=${SB_TUIC_AUTH_JSON:-[]}; tuic_tls_json=${SB_TUIC_TLS_JSON:-'{"enabled":false}'}
+      tuic_client_trust=${SB_TUIC_CLIENT_TRUST:-system}
+      ensure_tuic_materials || return 1
+      tuic_users_json=${SB_TUIC_AUTH_JSON}; tuic_tls_json=${SB_TUIC_TLS_JSON}; tuic_client_trust=${SB_TUIC_CLIENT_TRUST}
+      tuic_congestion_control=${SB_TUIC_CONGESTION_CONTROL}; tuic_auth_timeout_seconds=${SB_TUIC_AUTH_TIMEOUT_SECONDS}; tuic_heartbeat_seconds=${SB_TUIC_HEARTBEAT_SECONDS}; tuic_zero_rtt_handshake=${SB_TUIC_ZERO_RTT_HANDSHAKE}; tuic_udp_relay_mode=${SB_TUIC_UDP_RELAY_MODE}; tuic_udp_over_stream=${SB_TUIC_UDP_OVER_STREAM}
+      ;;
     *) return 1 ;;
   esac
   state_file=$(protocol_state_file "${protocol}") || return 1
@@ -2383,16 +2405,16 @@ save_plain_proxy_state() {
   [[ -n "${tag}" ]] || return 1
   validate_port_number "${port}" || return 1
   structured_instance_store_validate_address "${listen_address}" || return 1
-  if [[ "${protocol}" != shadowsocks && "${protocol}" != snell ]]; then
+  if [[ "${protocol}" != shadowsocks && "${protocol}" != snell && "${protocol}" != tuic ]]; then
     case "${auth_enabled}" in y|n) ;; *) return 1 ;; esac
   fi
   if [[ "${protocol}" == http ]]; then
     validate_http_client_connection "${port}" "${auth_enabled}" "${username}" "${password}" || return 1
-  elif [[ "${protocol}" != shadowsocks && "${protocol}" != snell && "${protocol}" != trojan && "${protocol}" != vmess && "${protocol}" != vless-plain ]]; then
+  elif [[ "${protocol}" != shadowsocks && "${protocol}" != snell && "${protocol}" != tuic && "${protocol}" != trojan && "${protocol}" != vmess && "${protocol}" != vless-plain ]]; then
     validate_mixed_client_connection "${port}" "${auth_enabled}" "${username}" "${password}" || return 1
   fi
   [[ "${policy}" == default || "${policy}" == direct || "${policy}" == warp ]] || return 1
-  if [[ "${protocol}" == http || "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == vless-plain ]]; then
+  if [[ "${protocol}" == http || "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == vless-plain || "${protocol}" == tuic ]]; then
     jq -e 'type == "object"' <<< "${tls_json}" >/dev/null 2>&1 || return 1
   fi
 
@@ -2403,7 +2425,8 @@ save_plain_proxy_state() {
       --argjson enabled "$([[ "${auth_enabled}" == y ]] && printf true || printf false)" \
       --arg username "${username}" --arg password "${password}" --arg policy "${policy}" --argjson tls "${tls_json}" --argjson auth "${auth_json}" --argjson network "${network_json}" --argjson transport "${transport_json}" --arg client_trust "${client_trust}" --arg protocol "${protocol}" \
       --argjson snell_version "${snell_version}" --arg snell_psk "${snell_psk}" --argjson snell_users "${snell_users_json}" --arg snell_obfs_mode "${snell_obfs_mode}" --arg snell_obfs_host "${snell_obfs_host}" --arg snell_mode "${snell_mode}" \
-      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$enabled,username:(if $enabled then $username else "" end),password:(if $enabled then $password else "" end)},outbound_policy:$policy,dependencies:[]} + (if $protocol == "http" then {tls:$tls} elif $protocol == "shadowsocks" then {listen:{address:$address,port:$port,network:$network},authentication:$auth} elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then {authentication:{users:$auth},tls:$tls,transport:$transport,client_trust:$client_trust} elif $protocol == "snell" then {version:$snell_version,authentication:{psk:$snell_psk,users:$snell_users},obfs_mode:$snell_obfs_mode,obfs_host:$snell_obfs_host,mode:$snell_mode} else {} end)' > "${record_file}"; then
+      --argjson tuic_users "${tuic_users_json}" --argjson tuic_tls "${tuic_tls_json}" --arg tuic_trust "${tuic_client_trust}" --arg tuic_cc "${tuic_congestion_control}" --argjson tuic_auth_timeout "${tuic_auth_timeout_seconds}" --argjson tuic_heartbeat "${tuic_heartbeat_seconds}" --argjson tuic_zero_rtt "$([[ "${tuic_zero_rtt_handshake}" == y ]] && printf true || printf false)" --arg tuic_relay "${tuic_udp_relay_mode}" --argjson tuic_uos "$([[ "${tuic_udp_over_stream}" == y ]] && printf true || printf false)" \
+      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$enabled,username:(if $enabled then $username else "" end),password:(if $enabled then $password else "" end)},outbound_policy:$policy,dependencies:[]} + (if $protocol == "http" then {tls:$tls} elif $protocol == "shadowsocks" then {listen:{address:$address,port:$port,network:$network},authentication:$auth} elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then {authentication:{users:$auth},tls:$tls,transport:$transport,client_trust:$client_trust} elif $protocol == "snell" then {version:$snell_version,authentication:{psk:$snell_psk,users:$snell_users},obfs_mode:$snell_obfs_mode,obfs_host:$snell_obfs_host,mode:$snell_mode} elif $protocol == "tuic" then {authentication:{users:$tuic_users},tls:$tuic_tls,client_trust:$tuic_trust,tuic:{auth_timeout_seconds:$tuic_auth_timeout,congestion_control:$tuic_cc,heartbeat_seconds:$tuic_heartbeat,udp_over_stream:$tuic_uos,udp_relay_mode:$tuic_relay,zero_rtt_handshake:$tuic_zero_rtt}} else {} end)' > "${record_file}"; then
     rm -f -- "${record_file}" "${candidate_file}"; return 1
   fi
   structured_instance_store_validate_instance_argument "${record_file}" "${protocol}" || {
@@ -2496,6 +2519,10 @@ save_snell_state() {
   save_plain_proxy_state snell
 }
 
+save_tuic_state() {
+  save_plain_proxy_state tuic
+}
+
 save_protocol_state() {
   local protocol
   protocol=$(normalize_protocol_id "$1") || return 1
@@ -2513,6 +2540,7 @@ save_protocol_state() {
     hy2) save_hy2_state ;;
     anytls) save_anytls_state ;;
     snell) save_snell_state ;;
+    tuic) save_tuic_state ;;
     *) log_error "不支持的协议状态保存类型: ${protocol}" ;;
   esac
 }
@@ -3250,6 +3278,7 @@ prompt_protocol_update_fields() {
     hy2) prompt_hy2_update ;;
     anytls) prompt_anytls_update ;;
     snell) prompt_snell_update ;;
+    tuic) prompt_tuic_update ;;
     *) log_error "不支持的协议修改类型: ${protocol}" ;;
   esac
 }
@@ -3614,6 +3643,112 @@ snell_prompt_users() {
   SB_SNELL_USER_JSON=${users}
 }
 
+tuic_generate_uuid() {
+  local value
+  value=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid) || return 1
+  [[ "${value}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]] || return 1
+  printf '%s' "${value,,}"
+}
+
+tuic_prompt_users() {
+  local current=${1:-'[]'} count i name uuid password old_name old_uuid old_password users='[]' answer
+  count=$(jq -r 'length' <<< "${current}" 2>/dev/null || printf 0)
+  [[ "${count}" =~ ^[1-9][0-9]{0,2}$ && "${count}" -le 128 ]] || count=1
+  read -rp '[TUIC] 用户数量 (1-128，默认当前值): ' answer || return 1
+  [[ -z "${answer}" ]] || count=${answer}
+  [[ "${count}" =~ ^[1-9][0-9]{0,2}$ && "${count}" -le 128 ]] || return 1
+  for ((i = 0; i < count; i++)); do
+    old_name=$(jq -r --argjson i "${i}" '.[$i].name // empty' <<< "${current}") || return 1
+    old_uuid=$(jq -r --argjson i "${i}" '.[$i].uuid // empty' <<< "${current}") || return 1
+    old_password=$(jq -j --argjson i "${i}" '.[$i].password // "", "\u0001"' <<< "${current}") || return 1
+    old_password=${old_password%$'\1'}
+    name=${old_name:-tuic-user-$((i + 1))}
+    read -rp "[TUIC] 用户 $((i + 1)) 名称 (默认 ${name}): " answer || return 1
+    [[ -z "${answer}" ]] || name=$(trim_whitespace "${answer}")
+    [[ -n "${name}" ]] || return 1
+    uuid=${old_uuid}
+    while true; do
+      read -rp "[TUIC] 用户 ${name} UUID (留空自动生成): " answer || return 1
+      [[ -z "${answer}" ]] && answer=${uuid}
+      [[ -n "${answer}" ]] || answer=$(tuic_generate_uuid) || return 1
+      if [[ "${answer}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]; then uuid=${answer,,}; break; fi
+      log_warn '[TUIC] UUID 格式无效，请输入标准 UUID。' >&2
+      uuid=""
+    done
+    if [[ -n "${old_password}" ]]; then
+      read -rsp "[TUIC] 用户 ${name} 密码 (留空保持): " answer || return 1
+    else
+      read -rsp "[TUIC] 用户 ${name} 密码 (留空自动生成): " answer || return 1
+    fi
+    printf '\n' >&2
+    password=${answer:-${old_password}}
+    [[ -n "${password}" ]] || password=$(trojan_generate_password) || return 1
+    users=$(jq -cn --argjson users "${users}" --arg name "${name}" --arg uuid "${uuid}" --arg password "${password}" '$users + [{name:$name,uuid:$uuid,password:$password}]') || return 1
+  done
+  SB_TUIC_AUTH_JSON=${users}
+}
+
+tuic_prompt_options() {
+  local current_cc=${1:-bbr} current_timeout=${2:-3} current_heartbeat=${3:-10}
+  local current_zero=${4:-n} current_relay=${5:-native} current_uos=${6:-n}
+  local choice value
+  choice=$(prompt_choice "[TUIC] 拥塞控制 [1=cubic,2=new_reno,3=bbr] (默认保持): " 1 3 "$([[ "${current_cc}" == cubic ]] && printf 1 || [[ "${current_cc}" == new_reno ]] && printf 2 || printf 3)") || return 1
+  case "${choice}" in 1) SB_TUIC_CONGESTION_CONTROL=cubic ;; 2) SB_TUIC_CONGESTION_CONTROL=new_reno ;; *) SB_TUIC_CONGESTION_CONTROL=bbr ;; esac
+  value=$(prompt_optional_positive_integer "[TUIC] auth_timeout 秒 (当前 ${current_timeout}，留空保持): " "${current_timeout}" "auth_timeout") || return 1
+  SB_TUIC_AUTH_TIMEOUT_SECONDS=${value}
+  value=$(prompt_optional_positive_integer "[TUIC] heartbeat 秒 (当前 ${current_heartbeat}，留空保持): " "${current_heartbeat}" "heartbeat") || return 1
+  SB_TUIC_HEARTBEAT_SECONDS=${value}
+  SB_TUIC_ZERO_RTT_HANDSHAKE=$(prompt_yes_no "[TUIC] 是否启用 zero-rtt-handshake [y/n] (当前 ${current_zero}): " "${current_zero}") || return 1
+  choice=$(prompt_choice "[TUIC] UDP relay mode [1=native,2=quic,3=关闭并使用 udp_over_stream] (默认保持): " 1 3 "$([[ "${current_relay}" == quic ]] && printf 2 || [[ "${current_uos}" == y ]] && printf 3 || printf 1)") || return 1
+  case "${choice}" in
+    1) SB_TUIC_UDP_RELAY_MODE=native; SB_TUIC_UDP_OVER_STREAM=n ;;
+    2) SB_TUIC_UDP_RELAY_MODE=quic; SB_TUIC_UDP_OVER_STREAM=n ;;
+    3) SB_TUIC_UDP_RELAY_MODE=""; SB_TUIC_UDP_OVER_STREAM=y ;;
+  esac
+}
+
+prompt_tuic_update() {
+  local in_p answer server_name certificate_path key_path trust_choice edit_users trust
+  local old_tls=${SB_TUIC_TLS_JSON:-'{"enabled":false}'}
+  in_p=$(prompt_port '[TUIC] 新端口 (当前值，留空保持): ' "${SB_PORT}") || return 1
+  if [[ "${in_p}" != "${SB_PORT}" ]]; then SB_PORT=${in_p}; check_port_conflict "${SB_PORT}"; fi
+  edit_users=$(prompt_yes_no '[TUIC] 是否重新编辑用户凭据 [y/n] (默认 n): ' n) || return 1
+  if [[ "${edit_users}" == y ]]; then tuic_prompt_users "${SB_TUIC_AUTH_JSON:-[]}" || return 1; fi
+  server_name=$(jq -r '.server_name // empty' <<< "${old_tls}") || return 1
+  certificate_path=$(jq -r '.certificate_path // empty' <<< "${old_tls}") || return 1
+  key_path=$(jq -r '.key_path // empty' <<< "${old_tls}") || return 1
+  read -rp "[TUIC] TLS server name (当前 ${server_name}，留空保持): " answer || return 1
+  [[ -z "${answer}" ]] || server_name=$(trim_whitespace "${answer}")
+  [[ -n "${server_name}" ]] || return 1
+  certificate_path=$(prompt_required_path "[TUIC] TLS 证书绝对路径 (当前 ${certificate_path}): " "${certificate_path}") || return 1
+  key_path=$(prompt_required_path "[TUIC] TLS 私钥绝对路径 (当前 ${key_path}): " "${key_path}") || return 1
+  SB_TUIC_TLS_JSON=$(jq -cn --arg server_name "${server_name}" --arg certificate_path "${certificate_path}" --arg key_path "${key_path}" '{enabled:true,server_name:$server_name,certificate_path:$certificate_path,key_path:$key_path}') || return 1
+  trust=${SB_TUIC_CLIENT_TRUST:-system}
+  trust_choice=$(prompt_choice '[TUIC] 客户端证书信任 [1=certificate,2=system] (默认保持): ' 1 2 "$([[ "${trust}" == system ]] && printf 2 || printf 1)") || return 1
+  [[ "${trust_choice}" == 2 ]] && SB_TUIC_CLIENT_TRUST=system || SB_TUIC_CLIENT_TRUST=certificate
+  tuic_prompt_options "${SB_TUIC_CONGESTION_CONTROL:-bbr}" "${SB_TUIC_AUTH_TIMEOUT_SECONDS:-3}" "${SB_TUIC_HEARTBEAT_SECONDS:-10}" "${SB_TUIC_ZERO_RTT_HANDSHAKE:-n}" "${SB_TUIC_UDP_RELAY_MODE:-native}" "${SB_TUIC_UDP_OVER_STREAM:-n}" || return 1
+  ensure_tuic_materials
+}
+
+prompt_tuic_install() {
+  local answer server_name certificate_path key_path trust_choice
+  set_protocol_defaults tuic
+  SB_PORT=$(prompt_port '[TUIC] 端口 (默认当前值): ' "${SB_PORT}") || return 1
+  check_port_conflict "${SB_PORT}"
+  tuic_prompt_users '[]' || return 1
+  while [[ -z "${server_name:-}" ]]; do
+    read -rp '[TUIC] TLS server name: ' answer || return 1
+    server_name=$(trim_whitespace "${answer}")
+  done
+  certificate_path=$(prompt_required_path '[TUIC] TLS 证书绝对路径: ') || return 1
+  key_path=$(prompt_required_path '[TUIC] TLS 私钥绝对路径: ') || return 1
+  SB_TUIC_TLS_JSON=$(jq -cn --arg server_name "${server_name}" --arg certificate_path "${certificate_path}" --arg key_path "${key_path}" '{enabled:true,server_name:$server_name,certificate_path:$certificate_path,key_path:$key_path}') || return 1
+  trust_choice=$(prompt_choice '[TUIC] 客户端证书信任 [1=certificate,2=system] (默认 2): ' 1 2 2) || return 1
+  [[ "${trust_choice}" == 2 ]] && SB_TUIC_CLIENT_TRUST=system || SB_TUIC_CLIENT_TRUST=certificate
+  tuic_prompt_options bbr 3 10 n native n || return 1
+  ensure_tuic_materials
+}
+
 trojan_prompt_transport() {
   local choice path service transport='{"type":"none"}'
   echo 'Trojan 传输:' >&2
@@ -3922,7 +4057,7 @@ prompt_protocol_install_selection() {
   local installed_protocols=() selected_protocols=()
   local choice raw_choice protocol index installed_list
   local menu_indices=() raw_choices=()
-  local mixed_tombstone=n socks_tombstone=n vless_plain_tombstone=n anytls_tombstone=n hy2_tombstone=n snell_tombstone=n
+  local mixed_tombstone=n socks_tombstone=n vless_plain_tombstone=n anytls_tombstone=n hy2_tombstone=n snell_tombstone=n tuic_tombstone=n
 
   SELECTED_PROTOCOLS_CSV=""
 
@@ -3967,6 +4102,12 @@ prompt_protocol_install_selection() {
         installed_protocols+=(snell)
       fi
     fi
+    if plain_proxy_inactive_store_snapshot tuic >/dev/null 2>&1; then
+      tuic_tombstone=y
+      if ! protocol_array_contains tuic ${installed_protocols[@]+"${installed_protocols[@]}"}; then
+        installed_protocols+=(tuic)
+      fi
+    fi
   fi
   while IFS= read -r protocol; do
     menu_indices+=("$(protocol_registry_field "${protocol}" menu_order)")
@@ -4000,6 +4141,8 @@ prompt_protocol_install_selection() {
         echo "${index}. 新增 Hysteria2 实例"
       elif [[ "${install_mode}" == "additional" && "${protocol}" == "snell" && "${snell_tombstone}" == y ]]; then
         echo "${index}. 新增 Snell 实例"
+      elif [[ "${install_mode}" == "additional" && "${protocol}" == "tuic" && "${tuic_tombstone}" == y ]]; then
+        echo "${index}. 新增 TUIC 实例"
       fi
       continue
     fi
@@ -4015,7 +4158,7 @@ prompt_protocol_install_selection() {
       protocol=$(protocol_option_to_id "${index}") || continue
       if protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
         if [[ "${install_mode}" == "additional" &&
-              ("${protocol}" == "vless-reality" || "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell") ]]; then
+              ("${protocol}" == "vless-reality" || "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic") ]]; then
           selected_protocols+=("${protocol}")
         fi
         continue
@@ -4041,7 +4184,7 @@ prompt_protocol_install_selection() {
 
     if protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
       if [[ "${install_mode}" == "additional" &&
-            ("${protocol}" == "vless-reality" || "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell") ]]; then
+            ("${protocol}" == "vless-reality" || "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic") ]]; then
         if ! protocol_array_contains "${protocol}" ${selected_protocols[@]+"${selected_protocols[@]}"}; then
           selected_protocols+=("${protocol}")
         fi
@@ -4338,6 +4481,7 @@ prompt_protocol_install_fields() {
     hy2) prompt_hy2_install ;;
     anytls) prompt_anytls_install ;;
     snell) prompt_snell_install ;;
+    tuic) prompt_tuic_install ;;
     *) log_error "不支持的协议安装类型: ${protocol}" ;;
   esac
 }
@@ -4380,6 +4524,7 @@ plain_proxy_management_label() {
     anytls) printf 'AnyTLS' ;;
     hy2) printf 'Hysteria2' ;;
     snell) printf 'Snell' ;;
+    tuic) printf 'TUIC' ;;
     *) return 1 ;;
   esac
 }
@@ -4772,7 +4917,7 @@ anytls_management_build_record() {
 plain_proxy_management_prompt_public_consent() {
   local protocol=${1:-} address=${2:-} tls_json=${3:-} auth_json=${4:-} label tls_enabled=n plaintext=y
   label=$(plain_proxy_management_label "${protocol}") || return 1
-  if [[ ("${protocol}" == http || "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == "vless-plain" || "${protocol}" == anytls || "${protocol}" == hy2) && -n "${tls_json}" ]] &&
+  if [[ ("${protocol}" == http || "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == "vless-plain" || "${protocol}" == anytls || "${protocol}" == hy2 || "${protocol}" == tuic) && -n "${tls_json}" ]] &&
      jq -e '.enabled == true' <<< "${tls_json}" >/dev/null 2>&1; then
     tls_enabled=y
   fi
@@ -4954,6 +5099,74 @@ snell_management_build_record() {
   structured_instance_store_validate_instance_argument "${destination}" snell
 }
 
+tuic_management_build_record() {
+  local snapshot=${1:-} operation=${2:-create} target=${3:-} destination=${4:-}
+  local id name tag address port policy answer users tls trust trust_choice edit_users
+  local server_name certificate_path key_path cc auth_timeout heartbeat zero_rtt relay udp_over_stream
+  local cc_choice relay_choice
+  [[ -f "${snapshot}" && ! -L "${snapshot}" && -n "${destination}" ]] || return 1
+  if [[ "${operation}" == replace ]]; then
+    jq -e --arg id "${target}" 'any(.instances[]; .id == $id)' "${snapshot}" >/dev/null 2>&1 || return 1
+    id=${target}
+    name=$(jq -j --arg id "${id}" '.instances[]|select(.id==$id)|.name,"\u0001"' "${snapshot}") || return 1; name=${name%$'\1'}
+    tag=$(jq -j --arg id "${id}" '.instances[]|select(.id==$id)|.tag,"\u0001"' "${snapshot}") || return 1; tag=${tag%$'\1'}
+    address=$(jq -j --arg id "${id}" '.instances[]|select(.id==$id)|.listen.address,"\u0001"' "${snapshot}") || return 1; address=${address%$'\1'}
+    port=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.listen.port' "${snapshot}") || return 1
+    users=$(jq -c --arg id "${id}" '.instances[]|select(.id==$id)|.authentication.users' "${snapshot}") || return 1
+    tls=$(jq -c --arg id "${id}" '.instances[]|select(.id==$id)|.tls' "${snapshot}") || return 1
+    trust=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.client_trust' "${snapshot}") || return 1
+    cc=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.tuic.congestion_control' "${snapshot}") || return 1
+    auth_timeout=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.tuic.auth_timeout_seconds' "${snapshot}") || return 1
+    heartbeat=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.tuic.heartbeat_seconds' "${snapshot}") || return 1
+    zero_rtt=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|if .tuic.zero_rtt_handshake then "y" else "n" end' "${snapshot}") || return 1
+    relay=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.tuic.udp_relay_mode' "${snapshot}") || return 1
+    udp_over_stream=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|if .tuic.udp_over_stream then "y" else "n" end' "${snapshot}") || return 1
+    policy=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.outbound_policy' "${snapshot}") || return 1
+  else
+    id=$(plain_proxy_management_next_id tuic "${snapshot}") || return 1
+    name="TUIC ${id}"; tag=$(plain_proxy_management_next_tag tuic "${snapshot}") || return 1
+    address=127.0.0.1; port=443
+    users=$(jq -cn --arg uuid "$(tuic_generate_uuid)" --arg password "$(trojan_generate_password)" '[{name:"tuic-user-1",uuid:$uuid,password:$password}]') || return 1
+    tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'
+    trust=system; cc=bbr; auth_timeout=3; heartbeat=10; zero_rtt=n; relay=native; udp_over_stream=n; policy=default
+  fi
+  read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1; [[ -z "${answer}" ]] || name=$(trim_whitespace "${answer}")
+  if [[ "${operation}" == create ]]; then
+    read -rp "实例 ID（默认 ${id}）: " answer || return 1; [[ -z "${answer}" ]] || id=$(trim_whitespace "${answer}"); structured_instance_store_validate_id "${id}" || return 1
+    read -rp "入口 tag（默认 ${tag}）: " answer || return 1; [[ -z "${answer}" ]] || tag=$(trim_whitespace "${answer}")
+  fi
+  read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}"); structured_instance_store_validate_address "${address}" || return 1
+  port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
+  policy=$(prompt_instance_outbound_policy '出站策略' "${policy:-default}") || return 1
+  if [[ "${operation}" == create ]]; then edit_users=y; else edit_users=$(prompt_yes_no '[TUIC] 是否重新编辑用户凭据 [y/n] (默认 n): ' n) || return 1; fi
+  if [[ "${edit_users}" == y ]]; then tuic_prompt_users "${users}" || return 1; users=${SB_TUIC_AUTH_JSON}; fi
+  server_name=$(jq -r '.server_name // empty' <<< "${tls}") || return 1
+  certificate_path=$(jq -r '.certificate_path // empty' <<< "${tls}") || return 1
+  key_path=$(jq -r '.key_path // empty' <<< "${tls}") || return 1
+  while [[ -z "${server_name}" ]]; do read -rp '[TUIC] TLS server name: ' answer || return 1; server_name=$(trim_whitespace "${answer}"); done
+  certificate_path=$(prompt_required_path "[TUIC] TLS 证书绝对路径（当前 ${certificate_path}）: " "${certificate_path}") || return 1
+  key_path=$(prompt_required_path "[TUIC] TLS 私钥绝对路径（当前 ${key_path}）: " "${key_path}") || return 1
+  tls=$(jq -cn --arg server_name "${server_name}" --arg certificate_path "${certificate_path}" --arg key_path "${key_path}" '{enabled:true,server_name:$server_name,certificate_path:$certificate_path,key_path:$key_path}') || return 1
+  trust_choice=$(prompt_choice '[TUIC] 客户端证书信任 [1=certificate,2=system] (默认保持): ' 1 2 "$([[ "${trust}" == system ]] && printf 2 || printf 1)") || return 1
+  [[ "${trust_choice}" == 2 ]] && trust=system || trust=certificate
+  cc_choice=$(prompt_choice '[TUIC] 拥塞控制 [1=cubic,2=new_reno,3=bbr] (默认保持): ' 1 3 "$([[ "${cc}" == cubic ]] && printf 1 || [[ "${cc}" == new_reno ]] && printf 2 || printf 3)") || return 1
+  case "${cc_choice}" in 1) cc=cubic ;; 2) cc=new_reno ;; *) cc=bbr ;; esac
+  auth_timeout=$(prompt_optional_positive_integer "[TUIC] auth_timeout 秒（当前 ${auth_timeout}）: " "${auth_timeout}" "auth_timeout") || return 1
+  heartbeat=$(prompt_optional_positive_integer "[TUIC] heartbeat 秒（当前 ${heartbeat}）: " "${heartbeat}" "heartbeat") || return 1
+  zero_rtt=$(prompt_yes_no "[TUIC] 是否启用 zero-rtt-handshake [y/n]（当前 ${zero_rtt}）: " "${zero_rtt}") || return 1
+  relay_choice=$(prompt_choice '[TUIC] UDP relay [1=native,2=quic,3=udp_over_stream] (默认保持): ' 1 3 "$([[ "${udp_over_stream}" == y ]] && printf 3 || [[ "${relay}" == quic ]] && printf 2 || printf 1)") || return 1
+  case "${relay_choice}" in 1) relay=native; udp_over_stream=n ;; 2) relay=quic; udp_over_stream=n ;; 3) relay=""; udp_over_stream=y ;; esac
+  answer=$(plain_proxy_management_prompt_public_consent tuic "${address}" "${tls}") || return 1
+  if [[ "${address}" != 127.* && "${address}" != ::1 && "${answer}" != y ]]; then log_info '未确认公网暴露，已取消 TUIC 实例变更。'; return 2; fi
+  PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC=${answer}; MIXED_MANAGEMENT_ALLOW_PUBLIC=${answer}
+  jq -n -cS --arg id "${id}" --arg name "${name}" --arg tag "${tag}" --arg address "${address}" \
+    --argjson port "${port}" --argjson users "${users}" --argjson tls "${tls}" --arg trust "${trust}" \
+    --arg cc "${cc}" --arg auth_timeout "${auth_timeout}" --arg heartbeat "${heartbeat}" \
+    --arg zero_rtt "${zero_rtt}" --arg relay "${relay}" --arg udp_over_stream "${udp_over_stream}" --arg policy "${policy}" \
+    '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{users:$users},tls:$tls,client_trust:$trust,tuic:{auth_timeout_seconds:($auth_timeout|tonumber),congestion_control:$cc,heartbeat_seconds:($heartbeat|tonumber),udp_over_stream:($udp_over_stream=="y"),udp_relay_mode:$relay,zero_rtt_handshake:($zero_rtt=="y")},outbound_policy:$policy,dependencies:[]}' > "${destination}" || return 1
+  structured_instance_store_validate_instance_argument "${destination}" tuic
+}
+
 plain_proxy_management_build_record() {
   local protocol=${1:-} snapshot=${2:-} operation=${3:-create} target=${4:-} destination=${5:-}
   local id name tag address port auth username password policy answer label tls_json
@@ -4986,6 +5199,10 @@ plain_proxy_management_build_record() {
   fi
   if [[ "${protocol}" == snell ]]; then
     snell_management_build_record "${snapshot}" "${operation}" "${target}" "${destination}"
+    return $?
+  fi
+  if [[ "${protocol}" == tuic ]]; then
+    tuic_management_build_record "${snapshot}" "${operation}" "${target}" "${destination}"
     return $?
   fi
   label=$(plain_proxy_management_label "${protocol}") || return 1
@@ -5306,6 +5523,10 @@ snell_instance_management_menu() {
   plain_proxy_instance_management_menu snell "$@"
 }
 
+tuic_instance_management_menu() {
+  plain_proxy_instance_management_menu tuic "$@"
+}
+
 plain_proxy_instance_management_menu() (
   local protocol=${1:-} requested_operation=${2:-} temp_dir choice snapshot revision target result status one_shot=n
   local record_file label confirmation
@@ -5352,6 +5573,8 @@ plain_proxy_instance_management_menu() (
         echo "字段：用户凭据、手动 TLS、client_trust、带宽、Salamander obfs、masquerade（均为类型化输入）"
       elif [[ "${protocol}" == snell ]]; then
         echo "字段：Snell 版本、PSK、用户 key、v5 obfs 或 v6 shaping（均为类型化输入）"
+      elif [[ "${protocol}" == tuic ]]; then
+        echo "字段：用户 UUID/密码、手动 TLS、client_trust、QUIC 拥塞与 UDP relay 选项（均为类型化输入）"
       fi
       choice=$(prompt_choice "请选择 [0-7]: " 0 7 "") || return 1
     fi
@@ -5400,7 +5623,7 @@ plain_proxy_instance_management_menu() (
         ;;
       5) log_warn "${label} 没有 legacy schema 1 可迁移。" ;;
       7)
-        jq -r --arg protocol "${protocol}" '.instances[] | "\(.id)\t\(.name)\t\(.listen.address):\(.listen.port)" + (if $protocol == "shadowsocks" then "\tnetwork=\(.listen.network|join(","))\tmethod=\(.authentication.method)\tusers=\(.authentication.users|length)" elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then "\tusers=\(.authentication.users|length)\ttransport=\(.transport.type)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" elif $protocol == "anytls" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" elif $protocol == "hy2" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)\tbandwidth=\(.bandwidth.up_mbps // "-")/\(.bandwidth.down_mbps // "-")\tobfs=\(.obfs.enabled)" elif $protocol == "snell" then "\tversion=\(.version)\tusers=\(.authentication.users|length)\tobfs=\(.obfs_mode // .mode)" else "\tauth=\(.authentication.enabled)\tpolicy=\(.outbound_policy)" + (if $protocol == "http" then "\ttls=\(.tls.enabled)" else "" end) end)' "${snapshot}" || return $?
+        jq -r --arg protocol "${protocol}" '.instances[] | "\(.id)\t\(.name)\t\(.listen.address):\(.listen.port)" + (if $protocol == "shadowsocks" then "\tnetwork=\(.listen.network|join(","))\tmethod=\(.authentication.method)\tusers=\(.authentication.users|length)" elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then "\tusers=\(.authentication.users|length)\ttransport=\(.transport.type)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" elif $protocol == "anytls" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" elif $protocol == "hy2" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)\tbandwidth=\(.bandwidth.up_mbps // "-")/\(.bandwidth.down_mbps // "-")\tobfs=\(.obfs.enabled)" elif $protocol == "snell" then "\tversion=\(.version)\tusers=\(.authentication.users|length)\tobfs=\(.obfs_mode // .mode)" elif $protocol == "tuic" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)\tcc=\(.tuic.congestion_control)\trelay=\(.tuic.udp_relay_mode // (if .tuic.udp_over_stream then "udp_over_stream" else "-" end))" else "\tauth=\(.authentication.enabled)\tpolicy=\(.outbound_policy)" + (if $protocol == "http" then "\ttls=\(.tls.enabled)" else "" end) end)' "${snapshot}" || return $?
         [[ "${one_shot}" == y ]] && return 0
         ;;
       *) log_warn "无效选项，请重新选择。" ;;
@@ -5469,6 +5692,11 @@ install_protocols_interactive() {
       log_warn "Snell 已保留 revision；请通过实例管理入口创建 Snell 实例，或本次仅选择其他协议。"
       return 1
     fi
+    if plain_proxy_inactive_store_snapshot tuic >/dev/null 2>&1 &&
+       protocol_array_contains tuic "${selected_protocols[@]}"; then
+      log_warn "TUIC 已保留 revision；请通过实例管理入口创建 TUIC 实例，或本次仅选择其他协议。"
+      return 1
+    fi
     snapshot_dir=$(create_managed_state_snapshot) || {
       log_error "无法创建配置状态事务快照。"
       return 1
@@ -5530,6 +5758,10 @@ install_protocols_interactive() {
     if plain_proxy_inactive_store_snapshot snell >/dev/null 2>&1 &&
        ! protocol_array_contains snell ${installed_protocols[@]+"${installed_protocols[@]}"}; then
       installed_protocols+=(snell)
+    fi
+    if plain_proxy_inactive_store_snapshot tuic >/dev/null 2>&1 &&
+       ! protocol_array_contains tuic ${installed_protocols[@]+"${installed_protocols[@]}"}; then
+      installed_protocols+=(tuic)
     fi
     prompt_protocol_install_selection "additional" || return 0
     IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
@@ -5623,6 +5855,14 @@ install_protocols_interactive() {
       log_warn "Snell 实例不能与其他新增协议合并操作；请先单独管理 Snell 实例。"
       return 0
     fi
+    if protocol_array_contains "tuic" "${selected_protocols[@]}"; then
+      if [[ ${#selected_protocols[@]} -eq 1 ]]; then
+        tuic_instance_management_menu create || return $?
+        return 0
+      fi
+      log_warn "TUIC 实例不能与其他新增协议合并操作；请先单独管理 TUIC 实例。"
+      return 0
+    fi
     snapshot_dir=$(create_managed_state_snapshot) || {
       log_error "无法创建配置状态事务快照。"
       return 1
@@ -5690,6 +5930,35 @@ set_protocol_defaults() {
       SB_MIXED_INBOUND_TAG="socks-in"
       SB_MIXED_LISTEN_ADDRESS="127.0.0.1"
       SB_MIXED_STORE_REVISION="0"
+      SB_OUTBOUND_POLICY="default"
+      ;;
+    tuic)
+      SB_PROTOCOL="tuic"
+      SB_NODE_NAME="$(default_node_name_for_protocol "tuic")"
+      SB_PORT="$(pick_random_high_port)"
+      SB_SNI=""
+      SB_UUID=""
+      SB_PUBLIC_KEY=""
+      SB_PRIVATE_KEY=""
+      SB_SHORT_ID_1=""
+      SB_SHORT_ID_2=""
+      SB_MIXED_AUTH_ENABLED="y"
+      SB_MIXED_USERNAME=""
+      SB_MIXED_PASSWORD=""
+      SB_INSTANCE_ID=""
+      SB_MIXED_INSTANCE_ID=""
+      SB_MIXED_INBOUND_TAG="tuic-in"
+      SB_MIXED_LISTEN_ADDRESS="127.0.0.1"
+      SB_MIXED_STORE_REVISION="0"
+      SB_TUIC_AUTH_JSON='[]'
+      SB_TUIC_TLS_JSON='{"enabled":false}'
+      SB_TUIC_CLIENT_TRUST="system"
+      SB_TUIC_CONGESTION_CONTROL="bbr"
+      SB_TUIC_AUTH_TIMEOUT_SECONDS="3"
+      SB_TUIC_HEARTBEAT_SECONDS="10"
+      SB_TUIC_ZERO_RTT_HANDSHAKE="n"
+      SB_TUIC_UDP_RELAY_MODE="native"
+      SB_TUIC_UDP_OVER_STREAM="n"
       SB_OUTBOUND_POLICY="default"
       ;;
     vless-plain)
@@ -9327,7 +9596,7 @@ load_protocol_state() {
       mixed_schema=${mixed_schema//\'/}
     fi
   fi
-  if [[ ("${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell") && -f "${state_file}" ]]; then
+  if [[ ("${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic") && -f "${state_file}" ]]; then
     socks_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" | head -n1) || return 1
     socks_schema=${socks_schema//\"/}
     socks_schema=${socks_schema//\'/}
@@ -9372,7 +9641,7 @@ load_protocol_state() {
   # SOCKS has no legacy .env representation.  Dispatch only a validated
   # schema-2 marker to the typed store and reject every older/unknown shape
   # before it can be sourced as shell code.
-  if [[ "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || ("${protocol}" == "anytls" && "${socks_schema}" == "2") || ("${protocol}" == "hy2" && "${socks_schema}" == "2") || ("${protocol}" == "snell" && "${socks_schema}" == "2") ]]; then
+  if [[ "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || ("${protocol}" == "anytls" && "${socks_schema}" == "2") || ("${protocol}" == "hy2" && "${socks_schema}" == "2") || ("${protocol}" == "snell" && "${socks_schema}" == "2") || ("${protocol}" == "tuic" && "${socks_schema}" == "2") ]]; then
     [[ "${socks_schema}" == "2" ]] || return 1
     plain_proxy_structured_marker_is_valid "${state_file}" || return 1
     load_plain_proxy_structured_instance "${protocol}" || return 1
@@ -9705,6 +9974,38 @@ ensure_snell_materials() {
   SB_SNELL_USER_JSON=${user_json}
 }
 
+ensure_tuic_materials() {
+  local user_json tls_json
+  SB_TUIC_CONGESTION_CONTROL=${SB_TUIC_CONGESTION_CONTROL:-bbr}
+  [[ "${SB_TUIC_CONGESTION_CONTROL}" == cubic || "${SB_TUIC_CONGESTION_CONTROL}" == new_reno || "${SB_TUIC_CONGESTION_CONTROL}" == bbr ]] || return 1
+  SB_TUIC_AUTH_TIMEOUT_SECONDS=${SB_TUIC_AUTH_TIMEOUT_SECONDS:-3}
+  SB_TUIC_HEARTBEAT_SECONDS=${SB_TUIC_HEARTBEAT_SECONDS:-10}
+  [[ "${SB_TUIC_AUTH_TIMEOUT_SECONDS}" =~ ^[0-9]+$ && "${SB_TUIC_AUTH_TIMEOUT_SECONDS}" -le 86400 ]] || return 1
+  [[ "${SB_TUIC_HEARTBEAT_SECONDS}" =~ ^[0-9]+$ && "${SB_TUIC_HEARTBEAT_SECONDS}" -le 86400 ]] || return 1
+  SB_TUIC_ZERO_RTT_HANDSHAKE=${SB_TUIC_ZERO_RTT_HANDSHAKE:-n}
+  SB_TUIC_UDP_RELAY_MODE=${SB_TUIC_UDP_RELAY_MODE:-native}
+  SB_TUIC_UDP_OVER_STREAM=${SB_TUIC_UDP_OVER_STREAM:-n}
+  [[ "${SB_TUIC_ZERO_RTT_HANDSHAKE}" == y || "${SB_TUIC_ZERO_RTT_HANDSHAKE}" == n ]] || return 1
+  [[ "${SB_TUIC_UDP_RELAY_MODE}" == "" || "${SB_TUIC_UDP_RELAY_MODE}" == native || "${SB_TUIC_UDP_RELAY_MODE}" == quic ]] || return 1
+  [[ "${SB_TUIC_UDP_OVER_STREAM}" == y || "${SB_TUIC_UDP_OVER_STREAM}" == n ]] || return 1
+  if [[ "${SB_TUIC_UDP_OVER_STREAM}" == y ]]; then
+    SB_TUIC_UDP_RELAY_MODE=""
+  elif [[ -z "${SB_TUIC_UDP_RELAY_MODE}" ]]; then
+    SB_TUIC_UDP_RELAY_MODE=native
+  fi
+  user_json=$(jq -c . <<< "${SB_TUIC_AUTH_JSON:-[]}") || return 1
+  if [[ "${user_json}" == "[]" ]]; then
+    user_json=$(jq -cn --arg uuid "$(tuic_generate_uuid)" --arg password "$(trojan_generate_password)" '[{name:"tuic-user-1",uuid:$uuid,password:$password}]') || return 1
+  fi
+  jq -e 'type == "array" and length >= 1 and length <= 128' <<< "${user_json}" >/dev/null || return 1
+  SB_TUIC_AUTH_JSON=${user_json}
+  tls_json=$(jq -c . <<< "${SB_TUIC_TLS_JSON:-'{"enabled":false}'}") || return 1
+  jq -e 'type == "object" and .enabled == true and (keys|sort) == ["certificate_path","enabled","key_path","server_name"] and (.server_name|type=="string" and length>0) and (.certificate_path|type=="string" and startswith("/")) and (.key_path|type=="string" and startswith("/"))' <<< "${tls_json}" >/dev/null || return 1
+  SB_TUIC_TLS_JSON=${tls_json}
+  SB_TUIC_CLIENT_TRUST=${SB_TUIC_CLIENT_TRUST:-system}
+  [[ "${SB_TUIC_CLIENT_TRUST}" == certificate || "${SB_TUIC_CLIENT_TRUST}" == system ]] || return 1
+}
+
 stack_inbound_listen_address() {
   ensure_stack_mode_state_loaded
 
@@ -9914,6 +10215,16 @@ build_snell_inbound_json() {
   }
   store_file=$(plain_proxy_structured_store_file snell) || return 1
   render_structured_instance_inbounds snell "${store_file}"
+}
+
+build_tuic_inbound_json() {
+  local store_file
+  plain_proxy_structured_state_active tuic || {
+    printf '[ERROR] TUIC 结构化状态缺失或无效，未生成入站。\n' >&2
+    return 1
+  }
+  store_file=$(plain_proxy_structured_store_file tuic) || return 1
+  render_structured_instance_inbounds tuic "${store_file}"
 }
 
 build_shadowsocks_instance_outbounds() (
@@ -10239,7 +10550,7 @@ build_certificate_provider_for_protocol() {
   protocol=$(normalize_protocol_id "$1") || return 1
 
   case "${protocol}" in
-    vless-reality|vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|snell) return 0 ;; # HTTP/VLESS/Trojan/VMess/Snell use no certificate provider.
+    vless-reality|vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|snell|tuic) return 0 ;; # HTTP/VLESS/Trojan/VMess/Snell/TUIC use no certificate provider.
     hy2) build_hy2_certificate_provider_json ;;
     anytls) build_anytls_certificate_provider_json ;;
     *) return 1 ;;
@@ -10262,6 +10573,7 @@ build_inbound_for_protocol() {
     hy2) build_hy2_inbound_json ;;
     anytls) build_anytls_inbound_json ;;
     snell) build_snell_inbound_json ;;
+    tuic) build_tuic_inbound_json ;;
     *) return 1 ;;
   esac
 }
@@ -10384,7 +10696,7 @@ instance_outbound_requires_warp() {
       vless-reality)
         vless_reality_has_warp_outbound_policy && return 0
         ;;
-      vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|anytls|hy2|snell)
+      vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|anytls|hy2|snell|tuic)
         state_file=$(protocol_state_file "${protocol}") || return 1
         schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" 2>/dev/null || true)
         schema=${schema//\"/}
@@ -10457,6 +10769,10 @@ build_protocol_route_rules() {
     snell)
       plain_proxy_structured_state_active snell || return 1
       render_structured_instance_route_rules snell "$(plain_proxy_structured_store_file snell)"
+      ;;
+    tuic)
+      plain_proxy_structured_state_active tuic || return 1
+      render_structured_instance_route_rules tuic "$(plain_proxy_structured_store_file tuic)"
       ;;
     *) return 1 ;;
   esac
@@ -12306,6 +12622,10 @@ update_config_only() {
     snell_instance_management_menu replace
     return $?
   fi
+  if [[ "${selected_protocol}" == tuic ]] && plain_proxy_structured_state_active tuic; then
+    tuic_instance_management_menu replace
+    return $?
+  fi
 
   load_protocol_state "${selected_protocol}"
   if [[ "${selected_protocol}" == "vless-reality" ]]; then
@@ -12474,6 +12794,14 @@ remove_protocol_menu() {
       return $?
     fi
     log_warn "结构化 Snell 实例需通过实例事务逐个移除；请先进入 Snell 实例管理，再移除其他协议。本次未修改。"
+    return 1
+  fi
+  if plain_proxy_structured_state_active tuic && protocol_array_contains tuic "${selected_protocols[@]}"; then
+    if [[ ${#selected_protocols[@]} -eq 1 ]]; then
+      tuic_instance_management_menu delete
+      return $?
+    fi
+    log_warn "结构化 TUIC 实例需通过实例事务逐个移除；请先进入 TUIC 实例管理，再移除其他协议。本次未修改。"
     return 1
   fi
 
@@ -16280,6 +16608,98 @@ build_client_snell_outbounds() (
   cat "${output_file}"
 )
 
+build_client_tuic_outbounds() (
+  local public_ip=${1:-} store_override=${2:-} store_file snapshot tmpdir instance_ids_file instance_file output_file
+  local instance_id listen_address server_address expected_count output_count raw_file raw_outbound
+  local tls_json trust server_name certificate_path certificate_pem
+
+  if [[ -n "${store_override}" ]]; then
+    store_file=${store_override}
+  else
+    store_file=$(plain_proxy_structured_store_file tuic) || return 1
+  fi
+  [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  validate_structured_instance_store tuic "${store_file}" || return 1
+  public_ip=${public_ip:-$(get_public_ip)}
+  [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
+  snapshot=$(structured_instance_store_snapshot_json tuic "${store_file}") || return 1
+  tmpdir=$(mktemp -d) || return 1
+  trap 'rm -rf -- "${tmpdir}"' EXIT
+  instance_ids_file="${tmpdir}/instance-ids"
+  output_file="${tmpdir}/outbounds.jsonl"
+  : > "${output_file}" || return 1
+  jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}" > "${instance_ids_file}" || return 1
+  while IFS= read -r -d '' instance_id; do
+    [[ -n "${instance_id}" ]] || return 1
+    instance_file="${tmpdir}/instance-${instance_id}.json"
+    jq --arg id "${instance_id}" \
+      '. as $root | ($root.instances | map(select(.id == $id))) as $instances |
+       $root | .default_instance_id=$id | .instances=$instances' \
+      <<< "${snapshot}" > "${instance_file}" || return 1
+    listen_address=$(jq -er --arg id "${instance_id}" \
+      '.instances[] | select(.id == $id) | .listen.address' <<< "${snapshot}") || return 1
+    case "${listen_address}" in
+      0.0.0.0|::)
+        server_address=${public_ip}
+        ;;
+      127.*|::1)
+        server_address=${listen_address}
+        printf '[WARN] TUIC 实例 %s 绑定回环地址 %s；导出仅供本机使用，未宣称公网可达。\n' \
+          "${instance_id}" "${listen_address}" >&2
+        ;;
+      *)
+        server_address=${listen_address}
+        ;;
+    esac
+    [[ -n "${server_address}" ]] || return 1
+    raw_file="${tmpdir}/raw-${instance_id}.jsonl"
+    jq -c --arg server "${server_address}" '
+      .instances[] as $instance |
+      $instance.authentication.users[] as $user |
+      {type:"tuic",tag:("tuic-" + $instance.id + "-user-" + ($user.name | @base64)),
+       server:$server,server_port:$instance.listen.port,uuid:$user.uuid,password:$user.password,
+       network:["tcp","udp"],_tls:$instance.tls,_client_trust:$instance.client_trust,_tuic:$instance.tuic}
+    ' "${instance_file}" > "${raw_file}" || return 1
+    while IFS= read -r raw_outbound; do
+      [[ -n "${raw_outbound}" ]] || continue
+      tls_json=$(jq -ec '._tls' <<< "${raw_outbound}") || return 1
+      jq -e '.enabled == true' <<< "${tls_json}" >/dev/null || return 1
+      server_name=$(jq -er '._tls.server_name' <<< "${raw_outbound}") || return 1
+      trust=$(jq -er '._client_trust' <<< "${raw_outbound}") || return 1
+      case "${trust}" in
+        system)
+          tls_json=$(jq -cn --arg server_name "${server_name}" \
+            '{enabled:true,server_name:$server_name}') || return 1
+          ;;
+        certificate)
+          certificate_path=$(jq -er '._tls.certificate_path' <<< "${raw_outbound}") || return 1
+          certificate_pem=$(read_public_certificate_pem "${certificate_path}") || return 1
+          tls_json=$(jq -cn --arg server_name "${server_name}" --arg certificate "${certificate_pem}" \
+            '{enabled:true,server_name:$server_name,certificate:$certificate}') || return 1
+          ;;
+        *) return 1 ;;
+      esac
+      jq -c --argjson tls "${tls_json}" \
+        --arg cc "$(jq -er '._tuic.congestion_control' <<< "${raw_outbound}")" \
+        --arg relay "$(jq -r '._tuic.udp_relay_mode // ""' <<< "${raw_outbound}")" \
+        --argjson udp_over_stream "$(jq -er '._tuic.udp_over_stream' <<< "${raw_outbound}")" \
+        --argjson zero_rtt_handshake "$(jq -er '._tuic.zero_rtt_handshake' <<< "${raw_outbound}")" \
+        --arg heartbeat_seconds "$(jq -er '._tuic.heartbeat_seconds | tostring' <<< "${raw_outbound}")" \
+        'del(._tls,._client_trust,._tuic) | .tls=$tls | .congestion_control=$cc
+         | if $relay != "" then .udp_relay_mode=$relay
+           elif $udp_over_stream then .udp_over_stream=true else . end
+         | if $zero_rtt_handshake then .zero_rtt_handshake=true else . end
+         | if (($heartbeat_seconds|tonumber) > 0) then .heartbeat=(($heartbeat_seconds|tonumber)|tostring + "s") else . end' \
+        <<< "${raw_outbound}" >> "${output_file}" || return 1
+    done < "${raw_file}"
+  done < "${instance_ids_file}"
+  expected_count=$(jq -r '[.instances[].authentication.users | length] | add // 0' <<< "${snapshot}") || return 1
+  output_count=$(jq -s 'length' "${output_file}") || return 1
+  [[ "${expected_count}" =~ ^[0-9]+$ && "${output_count}" == "${expected_count}" && "${output_count}" -gt 0 ]] || return 1
+  jq -es 'length > 0 and (map(.tag) | unique | length) == length' "${output_file}" >/dev/null || return 1
+  cat "${output_file}"
+)
+
 build_client_outbounds_for_current_protocol() {
   local protocol=${1:-} public_ip=${2:-$(get_public_ip)} outbound_json
   outbound_json=$(build_client_outbound_json_for_protocol "${protocol}" "${public_ip}") || return $?
@@ -16305,7 +16725,7 @@ build_client_outbound_json_for_protocol() {
   restore_original_state="n"
 
   case "${protocol}" in
-    vless-reality|vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|hy2|anytls|snell) ;;
+    vless-reality|vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|hy2|anytls|snell|tuic) ;;
     *)
       return 1
       ;;
@@ -16417,6 +16837,14 @@ build_client_outbound_json_for_protocol() {
           if outbound_json=$(build_client_snell_outbounds "${public_ip}"); then :; else build_status=$?; fi
         else
           printf '[ERROR] snell_export_state_invalid: Snell 结构化状态不完整或无效，未生成客户端连接材料。\n' >&2
+          build_status=1
+        fi
+        ;;
+      tuic)
+        if [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]] && plain_proxy_structured_state_active tuic; then
+          if outbound_json=$(build_client_tuic_outbounds "${public_ip}"); then :; else build_status=$?; fi
+        else
+          printf '[ERROR] tuic_export_state_invalid: TUIC 结构化状态不完整或无效，未生成客户端连接材料。\n' >&2
           build_status=1
         fi
         ;;
@@ -16621,6 +17049,16 @@ show_link_info() {
     return $?
   fi
 
+  if [[ "${SB_PROTOCOL}" == "tuic" ]]; then
+    local tuic_material
+    tuic_material=$(agent_tuic_link_json "${public_ip}") || return 1
+    printf '\nTUIC 实例 %s（无标准分享 URI；连接材料含凭据，请妥善保管）\n' "${SB_INSTANCE_ID:-}"
+    jq -r '.warnings[]?.message' <<< "${tuic_material}" >&2 || return 1
+    printf 'TUIC 客户端 outbound JSON：\n'
+    jq '.outbounds' <<< "${tuic_material}"
+    return $?
+  fi
+
   local plain_links share_warnings http_link socks_link warning_message
   plain_links=$(build_plain_proxy_links_json "${SB_PROTOCOL}" "${public_ip}") || return 1
   share_warnings=$(plain_proxy_share_warnings_json "${SB_PROTOCOL}") || return 1
@@ -16692,6 +17130,11 @@ show_qr_info() {
 
   if [[ "${SB_PROTOCOL}" == "snell" ]]; then
     log_info "Snell 当前不展示二维码；请使用完整客户端 outbound JSON（无标准 URI）。"
+    return 0
+  fi
+
+  if [[ "${SB_PROTOCOL}" == "tuic" ]]; then
+    log_info "TUIC 当前不展示二维码；请使用完整客户端 outbound JSON（无标准 URI）。"
     return 0
   fi
 
@@ -16820,7 +17263,7 @@ list_public_addresses_for_current_stack() {
 
 protocol_uses_domain_connection_material() {
   case "$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)" in
-    hy2|anytls) return 0 ;;
+    hy2|anytls|tuic) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -16830,7 +17273,7 @@ list_subman_addresses_for_current_protocol() {
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL:-}" 2>/dev/null || true)
   case "${protocol}" in
-    mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell)
+    mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic)
       if plain_proxy_structured_state_active "${protocol}" >/dev/null 2>&1; then
         bound_address=${SB_MIXED_LISTEN_ADDRESS:-}
         case "${bound_address}" in
@@ -16866,7 +17309,7 @@ show_connection_details_for_detected_addresses() {
   local address_entries=()
   local entry label address public_ip
 
-  if [[ ("${SB_PROTOCOL}" == mixed || "${SB_PROTOCOL}" == socks || "${SB_PROTOCOL}" == http || "${SB_PROTOCOL}" == shadowsocks || "${SB_PROTOCOL}" == trojan || "${SB_PROTOCOL}" == vmess || "${SB_PROTOCOL}" == vless-plain || "${SB_PROTOCOL}" == anytls || "${SB_PROTOCOL}" == hy2 || "${SB_PROTOCOL}" == snell) ]] && plain_proxy_structured_state_active "${SB_PROTOCOL}"; then
+  if [[ ("${SB_PROTOCOL}" == mixed || "${SB_PROTOCOL}" == socks || "${SB_PROTOCOL}" == http || "${SB_PROTOCOL}" == shadowsocks || "${SB_PROTOCOL}" == trojan || "${SB_PROTOCOL}" == vmess || "${SB_PROTOCOL}" == vless-plain || "${SB_PROTOCOL}" == anytls || "${SB_PROTOCOL}" == hy2 || "${SB_PROTOCOL}" == snell || "${SB_PROTOCOL}" == tuic) ]] && plain_proxy_structured_state_active "${SB_PROTOCOL}"; then
     address=${SB_MIXED_LISTEN_ADDRESS:-}
     if [[ -n "${address}" && "${address}" != '::' && "${address}" != 0.0.0.0 ]]; then
       show_connection_details "${mode}" "${address}" "监听地址"
@@ -16916,7 +17359,7 @@ show_all_connection_details() {
 
   for protocol in "${installed_protocols[@]}"; do
     load_protocol_state "${protocol}" || return $?
-    if [[ ("${protocol}" == mixed || "${protocol}" == socks || "${protocol}" == http || "${protocol}" == shadowsocks || "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == vless-plain || "${protocol}" == anytls || "${protocol}" == hy2 || "${protocol}" == snell) ]] && plain_proxy_structured_state_active "${protocol}"; then
+    if [[ ("${protocol}" == mixed || "${protocol}" == socks || "${protocol}" == http || "${protocol}" == shadowsocks || "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == vless-plain || "${protocol}" == anytls || "${protocol}" == hy2 || "${protocol}" == snell || "${protocol}" == tuic) ]] && plain_proxy_structured_state_active "${protocol}"; then
       instance_ids=$(list_protocol_instance_ids "${protocol}") || return $?
       while IFS= read -r instance_id; do
         [[ -n "${instance_id}" ]] || continue
@@ -17015,7 +17458,7 @@ build_singbox_client_config() {
   for protocol in "${exportable_protocols[@]}"; do
     protocol_label=$(protocol_display_name "${protocol}") || return 1
     if ! protocol_state_exists "${protocol}"; then
-      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "snell" ]]; then
+      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "snell" || "${protocol}" == "tuic" ]]; then
         log_warn "${protocol_label} 状态缺失，已中止客户端导出；原导出文件保持不变。" >&2
         status=1
         break
@@ -17025,7 +17468,7 @@ build_singbox_client_config() {
     fi
 
     if ! outbound_json=$(build_client_outbounds_for_current_protocol "${protocol}" "${public_ip}"); then
-      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "snell" ]]; then
+      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "snell" || "${protocol}" == "tuic" ]]; then
         log_warn "${protocol_label} 客户端连接材料无效，已中止客户端导出；原导出文件保持不变。" >&2
         status=1
         break
@@ -17306,10 +17749,10 @@ agent_print_help() {
   sbv agent service restart --json --yes
   sbv agent subman-sync --json
   sbv agent warp --json
-  sbv agent instance create|replace mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell --json --yes --expected-revision N --file record.json [--allow-public]
-  sbv agent instance delete|default mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell --json --yes --expected-revision N --id ID
+  sbv agent instance create|replace mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic --json --yes --expected-revision N --file record.json [--allow-public]
+  sbv agent instance delete|default mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic --json --yes --expected-revision N --id ID
   sbv agent instance migrate mixed --json --yes --expected-revision N
-  sbv agent instance recover mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell --json --yes --expected-revision N
+  sbv agent instance recover mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic --json --yes --expected-revision N
 
 说明:
   capabilities  输出协议、功能入口以及只读/变更/敏感分类。
@@ -17324,7 +17767,7 @@ agent_print_help() {
   doctor        输出只读诊断信息和配置校验结果。
   service       执行带 --yes 保护的服务操作，目前支持 restart。
   subman-sync   非交互推送节点到 SubMan，缺少配置时返回结构化错误。
-  instance      Mixed/SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS/AnyTLS/Hysteria2/Snell 实例事务；仅 Mixed 支持 legacy migration；recover 使用待恢复事务原 revision。
+  instance      Mixed/SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS/AnyTLS/Hysteria2/Snell/TUIC 实例事务；仅 Mixed 支持 legacy migration；recover 使用待恢复事务原 revision。
 EOF
 }
 
@@ -17528,7 +17971,7 @@ agent_capabilities_json() {
           persistent_recovery_journal: true
         },
         plain_proxy_instances: {
-          protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell"],
+          protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic"],
           legacy_migration_protocols: ["mixed"],
           state_schema: 2,
           store_schema: 1,
@@ -17543,7 +17986,8 @@ agent_capabilities_json() {
             "vless-plain": ["create", "replace", "delete", "default", "recover"],
             anytls: ["create", "replace", "delete", "default", "recover"],
             hy2: ["create", "replace", "delete", "default", "recover"],
-            snell: ["create", "replace", "delete", "default", "recover"]
+            snell: ["create", "replace", "delete", "default", "recover"],
+            tuic: ["create", "replace", "delete", "default", "recover"]
           },
           expected_revision_required: true,
           plaintext_public_confirmation: "--allow-public",
@@ -17563,7 +18007,7 @@ agent_capabilities_json() {
         doctor: {mutation: false, sensitive: false},
         "upgrade-check": {mutation: false, sensitive: false},
         upgrade: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart"},
-        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell"]},
+        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic"]},
         "export-client": {mutation: true, sensitive: true},
         "service restart": {mutation: true, sensitive: false, confirmation: "--yes"},
         "subman-sync": {mutation: true, sensitive: true, external_write: true}
@@ -17582,6 +18026,7 @@ agent_capabilities_json() {
         anytls_multi_instance_management: true,
         hy2_multi_instance_management: true,
         snell_multi_instance_management: true,
+        tuic_multi_instance_management: true,
         warp_mutation: true,
         inbound_outbound_stack_management: true,
         bbr: true,
@@ -18651,7 +19096,7 @@ agent_validate_indexed_protocol_states() {
   # A deleted plain proxy may leave a valid revisioned empty tombstone for
   # CAS continuity.  It is safe when its protocol is absent from the index; a
   # non-empty orphan would be an unowned inventory and must fail closed.
-  for plain_protocol in mixed socks http shadowsocks trojan vmess vless-plain anytls hy2 snell; do
+  for plain_protocol in mixed socks http shadowsocks trojan vmess vless-plain anytls hy2 snell tuic; do
     if ! protocol_array_contains "${plain_protocol}" ${expected_protocols[@]+"${expected_protocols[@]}"}; then
       plain_store_file=$(plain_proxy_structured_store_file "${plain_protocol}") || return 1
       if [[ -e "${plain_store_file}" || -L "${plain_store_file}" ]]; then
@@ -18686,7 +19131,7 @@ agent_validate_indexed_protocol_states() {
       # partial first-node view would make Agent status/links appear healthy
       # while silently omitting listeners or credentials.
       mixed_validate_state_inventory || return 1
-    elif [[ "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "snell" ]]; then
+    elif [[ "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "snell" || "${protocol}" == "tuic" ]]; then
       # Plain proxy protocols are structured-only. Validate the complete
       # manifest and compare every live tag before reporting them installed.
       plain_proxy_validate_state_inventory "${protocol}" || return 1
@@ -19417,6 +19862,67 @@ agent_snell_link_json() (
   jq -cn --argjson summary "${summary}" --argjson outbounds "${outbounds}" --argjson warnings "${warnings}" '$summary + {links:{},outbounds:$outbounds,warnings:$warnings}'
 )
 
+agent_tuic_node_json() {
+  local public_ip=${1:-$(get_public_ip)} server tls_json user_count shareable=false
+  [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" && "${SB_PROTOCOL}" == tuic ]] || return 1
+  plain_proxy_structured_state_active tuic || return 1
+  tls_json=${SB_TUIC_TLS_JSON:-}
+  [[ -n "${tls_json}" ]] || return 1
+  jq -e '.enabled == true and .server_name != ""' <<< "${tls_json}" >/dev/null || return 1
+  user_count=$(jq -er 'length' <<< "${SB_TUIC_AUTH_JSON:-[]}") || return 1
+  case "${SB_MIXED_LISTEN_ADDRESS:-}" in
+    0.0.0.0|::) server=${public_ip} ;;
+    *) server=${SB_MIXED_LISTEN_ADDRESS:-} ;;
+  esac
+  [[ -n "${server}" ]] || return 1
+  jq -n \
+    --arg name "${SB_NODE_NAME:-TUIC}" --arg id "${SB_INSTANCE_ID:-}" \
+    --arg tag "${SB_MIXED_INBOUND_TAG:-}" --arg address "${SB_MIXED_LISTEN_ADDRESS:-}" \
+    --arg port "${SB_PORT:-}" --arg revision "${SB_MIXED_STORE_REVISION:-0}" \
+    --arg server "${server}" --arg server_name "$(jq -r '.server_name' <<< "${tls_json}")" \
+    --arg trust "${SB_TUIC_CLIENT_TRUST:-system}" --arg cc "${SB_TUIC_CONGESTION_CONTROL:-bbr}" \
+    --arg relay "${SB_TUIC_UDP_RELAY_MODE:-}" --arg auth_timeout "${SB_TUIC_AUTH_TIMEOUT_SECONDS:-0}" \
+    --arg heartbeat "${SB_TUIC_HEARTBEAT_SECONDS:-0}" \
+    --arg policy "${SB_OUTBOUND_POLICY:-default}" \
+    --argjson user_count "${user_count}" \
+    --argjson shareable "${shareable}" \
+    --argjson zero_rtt "$([[ "${SB_TUIC_ZERO_RTT_HANDSHAKE:-n}" == y ]] && printf true || printf false)" \
+    --argjson udp_over_stream "$([[ "${SB_TUIC_UDP_OVER_STREAM:-n}" == y ]] && printf true || printf false)" \
+    '{protocol:"tuic",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber),network:["udp"]},server:$server,user_count:$user_count,auth_enabled:true,tls_enabled:true,server_name:$server_name,tls_mode:"manual",client_trust:$trust,congestion_control:$cc,auth_timeout_seconds:($auth_timeout|tonumber),heartbeat_seconds:($heartbeat|tonumber),udp_relay_mode:$relay,udp_over_stream:$udp_over_stream,zero_rtt_handshake:$zero_rtt,outbound_policy:$policy,shareable:$shareable,client_exportable:true}'
+}
+
+agent_tuic_link_json() (
+  umask 077
+  local public_ip=${1:-$(get_public_ip)} store_file snapshot end_snapshot instance_id server isolated_store summary outbounds warnings
+  [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]] || return 1
+  store_file=$(plain_proxy_structured_store_file tuic) || return 1
+  snapshot=$(structured_instance_store_snapshot_json tuic "${store_file}") || return 1
+  instance_id=${SB_INSTANCE_ID:-}
+  [[ -n "${instance_id}" ]] || instance_id=$(jq -er '.default_instance_id' <<< "${snapshot}") || return 1
+  jq -e --arg id "${instance_id}" 'any(.instances[]; .id == $id)' <<< "${snapshot}" >/dev/null || return 1
+  [[ "$(jq -r '.revision|tostring' <<< "${snapshot}")" == "${SB_MIXED_STORE_REVISION:-}" ]] || return 1
+  case "${SB_MIXED_LISTEN_ADDRESS:-}" in
+    0.0.0.0|::) server=${public_ip} ;;
+    "") return 1 ;;
+    *) server=${SB_MIXED_LISTEN_ADDRESS} ;;
+  esac
+  [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
+  summary=$(agent_tuic_node_json "${public_ip}") || return 1
+  isolated_store=$(mktemp) || return 1
+  trap 'rm -f -- "${isolated_store}"' EXIT
+  jq --arg id "${instance_id}" \
+    '. as $root | ($root.instances | map(select(.id == $id))) as $instances |
+     $root | .default_instance_id=$id | .instances=$instances' \
+    <<< "${snapshot}" > "${isolated_store}" || return 1
+  outbounds=$(build_client_tuic_outbounds "${server}" "${isolated_store}") || return 1
+  end_snapshot=$(structured_instance_store_snapshot_json tuic "${store_file}") || return 1
+  [[ "${snapshot}" == "${end_snapshot}" ]] || return 1
+  outbounds=$(jq -sc '.' <<< "${outbounds}") || return 1
+  warnings=$(jq -cn '[{code:"tuic_standard_uri_unavailable",message:"TUIC 当前没有可安全表达 TLS、QUIC 与多用户选项的标准分享 URI；请使用 sing-box outbound JSON。"}]') || return 1
+  jq -cn --argjson summary "${summary}" --argjson outbounds "${outbounds}" --argjson warnings "${warnings}" \
+    '$summary + {links:{},outbounds:$outbounds,warnings:$warnings}'
+)
+
 agent_node_summary_json_for_current_protocol() {
   local protocol api_protocol public_ip shareable="true" client_exportable="false"
   local auth_enabled="false" server_name="" tls_enabled="false" http_tls_json
@@ -19439,6 +19945,9 @@ agent_node_summary_json_for_current_protocol() {
   fi
   if [[ "${protocol}" == snell && "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active snell; then
     agent_snell_node_json "${public_ip}"; return $?
+  fi
+  if [[ "${protocol}" == tuic && "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active tuic; then
+    agent_tuic_node_json "${public_ip}"; return $?
   fi
 
   case "${protocol}" in
@@ -19569,6 +20078,9 @@ agent_link_json_for_current_protocol() {
   fi
   if [[ "${protocol}" == snell && "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active snell; then
     agent_snell_link_json "${public_ip}"; return $?
+  fi
+  if [[ "${protocol}" == tuic && "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active tuic; then
+    agent_tuic_link_json "${public_ip}"; return $?
   fi
   if [[ "${public_ip}" == *:* ]]; then
     address_label="IPv6"
@@ -20680,7 +21192,7 @@ apply_plain_proxy_instance_change() (
 
 agent_instance_cli() {
   local operation=${1:-} protocol=${2:-} expected="" input="" instance_id="" json=n confirmed=n allow_public=n
-  [[ $# -ge 2 ]] || { agent_json_error invalid_arguments "用法: instance 操作 mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell --json --yes --expected-revision N [--file 文件 | --id ID]"; return 1; }
+  [[ $# -ge 2 ]] || { agent_json_error invalid_arguments "用法: instance 操作 mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic --json --yes --expected-revision N [--file 文件 | --id ID]"; return 1; }
   shift 2
   protocol=$(normalize_protocol_id "${protocol}") || {
     agent_json_error invalid_arguments "实例协议无效；未修改。"; return 1;
@@ -20696,14 +21208,14 @@ agent_instance_cli() {
       *) break ;;
     esac
   done
-  if [[ $# -ne 0 || "${json}" != y || ("${protocol}" != mixed && "${protocol}" != socks && "${protocol}" != http && "${protocol}" != shadowsocks && "${protocol}" != trojan && "${protocol}" != vmess && "${protocol}" != vless-plain && "${protocol}" != anytls && "${protocol}" != hy2 && "${protocol}" != snell) || ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
+  if [[ $# -ne 0 || "${json}" != y || ("${protocol}" != mixed && "${protocol}" != socks && "${protocol}" != http && "${protocol}" != shadowsocks && "${protocol}" != trojan && "${protocol}" != vmess && "${protocol}" != vless-plain && "${protocol}" != anytls && "${protocol}" != hy2 && "${protocol}" != snell && "${protocol}" != tuic) || ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
     agent_json_error invalid_arguments "实例参数、协议或 revision 无效；未修改。"; return 1
   fi
   if ! structured_instance_store_revision_arg "${expected}" >/dev/null; then
     agent_json_error invalid_arguments "revision 超出安全整数范围；未修改。"; return 1
   fi
   if [[ "${operation}" == migrate && "${protocol}" != mixed ]]; then
-    agent_json_error invalid_arguments "只有 Mixed 提供 legacy schema 1 迁移；SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS/AnyTLS/Hysteria2/Snell 使用 schema 2，已有 live 配置请使用接管入口。"
+    agent_json_error invalid_arguments "只有 Mixed 提供 legacy schema 1 迁移；SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS/AnyTLS/Hysteria2/Snell/TUIC 使用 schema 2，已有 live 配置请使用接管入口。"
     return 1
   fi
   [[ "${confirmed}" == y ]] || { agent_json_error confirmation_required "实例写操作需要 --yes；非回环入口另需 --allow-public。"; return 1; }
@@ -21335,7 +21847,7 @@ structured_instance_store_error() {
 structured_instance_store_protocol() {
   local protocol
   protocol=$(normalize_protocol_id "${1:-}") || return 1
-  [[ "${protocol}" == "mixed" || "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" ]] || return 1
+  [[ "${protocol}" == "mixed" || "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" ]] || return 1
   printf '%s' "${protocol}"
 }
 
@@ -21448,10 +21960,11 @@ structured_instance_record_jq_filter() {
       type == "object" and
       ((keys | sort) == ((["authentication","dependencies","id","listen","name","outbound_policy","tag"] +
         (if $protocol == "snell" then ["mode","obfs_host","obfs_mode","version"] else [] end) +
-        (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" then ["tls"] else [] end) +
+        (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" then ["tls"] else [] end) +
         (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then ["client_trust","transport"]
          elif $protocol == "anytls" then ["client_trust"]
          elif $protocol == "hy2" then ["bandwidth","client_trust","masquerade","obfs"]
+         elif $protocol == "tuic" then ["client_trust","tuic"]
          else [] end)) | sort)) and
       (.id | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and
       (.name | type == "string" and length > 0 and index("\u0000") == null) and
@@ -21465,7 +21978,7 @@ structured_instance_record_jq_filter() {
             all(.[]; . == "tcp" or . == "udp") and . == (sort|unique))
          else true end)) and
       (if $protocol == "shadowsocks" then (.authentication | ss_auth)
-       elif $protocol == "anytls" or $protocol == "hy2" then
+      elif $protocol == "anytls" or $protocol == "hy2" then
          (.authentication | type == "object" and (keys|sort) == ["users"] and
            (.users | type == "array" and length >= 1 and length <= 128 and
              all(.[]; type == "object" and (keys|sort) == ["name","password"] and
@@ -21473,6 +21986,17 @@ structured_instance_record_jq_filter() {
                  (test("[\u0000-\u001F\u007F]") | not)) and
                (.password | type == "string" and length > 0 and utf8bytelength <= 4096 and index("\u0000") == null)) and
              (map(.name)|unique|length) == length and
+             (map(.password)|unique|length) == length))
+       elif $protocol == "tuic" then
+         (.authentication | type == "object" and (keys|sort) == ["users"] and
+           (.users | type == "array" and length >= 1 and length <= 128 and
+             all(.[]; type == "object" and (keys|sort) == ["name","password","uuid"] and
+               (.name | type == "string" and length > 0 and utf8bytelength <= 256 and
+                 (test("[\u0000-\u001F\u007F]") | not)) and
+               (.password | type == "string" and length > 0 and utf8bytelength <= 4096 and index("\u0000") == null) and
+               (.uuid | type == "string" and test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"))) and
+             (map(.name)|unique|length) == length and
+             (map(.uuid)|unique|length) == length and
              (map(.password)|unique|length) == length))
        elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then
          (.authentication | type == "object" and (keys|sort) == ["users"] and
@@ -21514,7 +22038,7 @@ structured_instance_record_jq_filter() {
           else (.username|utf8bytelength <= 255) and (.password|utf8bytelength <= 255) end) and
          (if .enabled then (.username|length)>0 and (.password|length)>0 else .username=="" and .password=="" end))
        end) and
-      (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" then
+      (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" then
          (.client_trust | type == "string" and IN("certificate","system")) and
          (if .tls.enabled == false then .client_trust == "system" else true end)
        else true end) and
@@ -21536,8 +22060,8 @@ structured_instance_record_jq_filter() {
        else true end) and
       (.outbound_policy|IN("default","direct","warp")) and
       (.dependencies|type == "array" and length == 0) and
-      (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" then (.tls|type == "object" and
-         (if .enabled == false then ($protocol != "anytls" and $protocol != "hy2" and (keys|sort)==["enabled"])
+      (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" then (.tls|type == "object" and
+         (if .enabled == false then ($protocol != "anytls" and $protocol != "hy2" and $protocol != "tuic" and (keys|sort)==["enabled"])
           elif .enabled == true then
             (keys|sort)==["certificate_path","enabled","key_path","server_name"] and
             (.server_name|type=="string" and length>0 and (test("[\u0000-\u001F\u007F]")|not)) and
@@ -21554,6 +22078,15 @@ structured_instance_record_jq_filter() {
            (.password | type == "string" and utf8bytelength <= 4096 and index("\u0000") == null and (test("[\u0000-\u001F\u007F]") | not)) and
            (if .enabled then .type == "salamander" and (.password|length)>0 else .type == "" and .password == "" end)) and
          (.masquerade | type == "string" and utf8bytelength <= 4096 and index("\u0000") == null and (test("[\u0000-\u001F\u007F]") | not))
+       elif $protocol == "tuic" then
+         (.tuic | type == "object" and (keys|sort) == ["auth_timeout_seconds","congestion_control","heartbeat_seconds","udp_over_stream","udp_relay_mode","zero_rtt_handshake"] and
+           (.auth_timeout_seconds | type == "number" and floor == . and . >= 0 and . <= 86400) and
+           (.heartbeat_seconds | type == "number" and floor == . and . >= 0 and . <= 86400) and
+           (.congestion_control | type == "string" and IN("cubic","new_reno","bbr")) and
+           (.udp_over_stream | type == "boolean") and
+           (.zero_rtt_handshake | type == "boolean") and
+           (.udp_relay_mode | type == "string" and IN("","native","quic")) and
+           (if .udp_over_stream then .udp_relay_mode == "" else .udp_relay_mode != "" end))
        else true end);
 JQ
 }
@@ -21577,7 +22110,7 @@ structured_instance_store_validate_common_json() {
       (.instances|type=="array" and length<=128 and all(.[]; valid_instance($protocol)) and
         (map(.id)|unique|length)==length and (map(.tag)|unique|length)==length and
         (map([.listen.address,.listen.port,
-          (if $protocol == "hy2" then ["udp"]
+          (if $protocol == "hy2" or $protocol == "tuic" then ["udp"]
            elif $protocol == "trojan" or $protocol == "vmess" then
              (if .transport.type == "quic" then ["udp"] else ["tcp"] end)
            else (.listen.network // ["tcp"]) end)]|@json)|unique|length)==length))
@@ -21647,6 +22180,7 @@ plain_proxy_config_store_candidate() (
     anytls) protocol_label="AnyTLS" ;;
     hy2) protocol_label="Hysteria2" ;;
     snell) protocol_label="Snell" ;;
+    tuic) protocol_label="TUIC" ;;
     *) return 1 ;;
   esac
   shift
@@ -21662,6 +22196,7 @@ plain_proxy_config_store_candidate() (
   local hy2_users_json='[]' hy2_tls_json='{"enabled":false}' hy2_client_trust=system
   local hy2_bandwidth_json='{"down_mbps":null,"up_mbps":null}' hy2_obfs_json='{"enabled":false,"password":"","type":""}' hy2_masquerade=""
   local snell_version=6 snell_psk="" snell_users_json='[]' snell_obfs_mode="" snell_obfs_host="" snell_mode=""
+  local tuic_users_json='[]' tuic_tls_json='{"enabled":false}' tuic_client_trust=system tuic_congestion_control=bbr tuic_auth_timeout_seconds=3 tuic_heartbeat_seconds=10 tuic_zero_rtt_handshake=false tuic_udp_relay_mode=native tuic_udp_over_stream=false
   local existing_instance existing_store_json existing_match existing_snell_obfs_host default_id old_revision old_semantics new_semantics
   local candidate_revision status
   local marker_schema2=n store_instances=0
@@ -21717,6 +22252,7 @@ plain_proxy_config_store_candidate() (
            elif $protocol == "anytls" then ["tls"]
            elif $protocol == "hy2" then ["tls", "up_mbps", "down_mbps", "obfs", "masquerade"]
            elif $protocol == "snell" then ["version", "psk", "users", "obfs_mode", "obfs_host", "mode"]
+           elif $protocol == "tuic" then ["tls", "users", "congestion_control", "auth_timeout", "zero_rtt_handshake", "heartbeat"]
            else [] end)) | length == 0))
         and (if has("tag") then (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) else true end)
         and (if has("listen") then (.listen | type == "string" and length > 0) else true end)
@@ -21772,6 +22308,17 @@ plain_proxy_config_store_candidate() (
                  ((.mode // "") | IN("","default","unshaped","unsafe-raw")) and
                  (.psk | utf8bytelength >= 12)
                end)
+             elif $protocol == "tuic" then
+              (.users | type == "array" and length >= 1 and length <= 128 and
+                all(.[]; type == "object" and (keys_unsorted | sort) == ["name","password","uuid"] and
+                  (.name | type == "string" and length > 0 and utf8bytelength <= 256 and (test("[\u0000-\u001F\u007F]") | not)) and
+                  (.password | type == "string" and length > 0 and utf8bytelength <= 4096 and index("\u0000") == null) and
+                  (.uuid | type == "string" and test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"))) and
+                (map(.name) | unique | length) == length and (map(.uuid) | unique | length) == length and (map(.password) | unique | length) == length) and
+              (if has("congestion_control") then (.congestion_control | type == "string" and IN("cubic","new_reno","bbr")) else true end) and
+              (if has("auth_timeout") then (.auth_timeout | type == "string" and test("^[0-9]+s$") and (sub("s$";"")|tonumber) <= 86400) else true end) and
+              (if has("heartbeat") then (.heartbeat | type == "string" and test("^[0-9]+s$") and (sub("s$";"")|tonumber) <= 86400) else true end) and
+              (if has("zero_rtt_handshake") then (.zero_rtt_handshake | type == "boolean") else true end)
              elif $protocol == "trojan" then
               (.users | type == "array" and length >= 1 and length <= 128 and
                 all(.[]; type == "object" and ((keys_unsorted | sort) == ["name", "password"]) and
@@ -21813,14 +22360,14 @@ plain_proxy_config_store_candidate() (
              else true end)
         and (if $protocol == "mixed" then
              (if has("set_system_proxy") then .set_system_proxy == false else true end)
-             elif $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" then
+             elif $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" then
               ((if has("set_system_proxy") then $protocol == "http" and .set_system_proxy == false else true end)
               and (if has("tls") then
                 (.tls | type == "object") and
                   (if .tls.enabled == false then
-                    ($protocol != "anytls" and $protocol != "hy2" and (.tls | keys_unsorted | sort) == ["enabled"])
+                    ($protocol != "anytls" and $protocol != "hy2" and $protocol != "tuic" and (.tls | keys_unsorted | sort) == ["enabled"])
                   elif .tls.enabled == true then
-                    ((.tls | (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then del(.alpn) else . end) | keys_unsorted | sort) == ["certificate_path", "enabled", "key_path", "server_name"]) and
+                    ((.tls | (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "tuic" then del(.alpn) else . end) | keys_unsorted | sort) == ["certificate_path", "enabled", "key_path", "server_name"]) and
                     (.tls.server_name | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
                     (.tls.certificate_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not)) and
                     (.tls.key_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not))
@@ -21866,7 +22413,7 @@ plain_proxy_config_store_candidate() (
   if [[ "${state_schema}" == "2" ]]; then
     marker_schema2=y
   fi
-  if [[ "${protocol}" != "mixed" && "${protocol}" != "anytls" && "${protocol}" != "hy2" && -f "${state_file}" && "${state_schema}" != "2" ]]; then
+  if [[ "${protocol}" != "mixed" && "${protocol}" != "anytls" && "${protocol}" != "hy2" && "${protocol}" != "tuic" && -f "${state_file}" && "${state_schema}" != "2" ]]; then
     printf '[ERROR] %s_store_candidate: legacy state migration is unsupported.\n' "${protocol}" >&2
     return 1
   fi
@@ -21967,7 +22514,7 @@ plain_proxy_config_store_candidate() (
     fi
 
     tls_json='null'
-    if [[ "${protocol}" == "http" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" ]]; then
+  if [[ "${protocol}" == "http" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "tuic" ]]; then
       tls_json=$(jq -c '.tls // {enabled:false}' <<< "${inbound_json}") || return 1
     fi
 
@@ -22079,6 +22626,29 @@ plain_proxy_config_store_candidate() (
         snell_mode=${snell_mode:-default}
         [[ "${snell_mode}" == "default" || "${snell_mode}" == "unshaped" || "${snell_mode}" == "unsafe-raw" ]] || return 1
       fi
+    elif [[ "${protocol}" == "tuic" ]]; then
+      tuic_users_json=$(jq -c '.users' <<< "${inbound_json}") || return 1
+      tuic_tls_json=$(jq -c '.tls' <<< "${inbound_json}") || return 1
+      jq -e '(.enabled == true) and ((del(.alpn) | keys_unsorted | sort) == ["certificate_path","enabled","key_path","server_name"]) and ((.alpn // ["h3"]) == ["h3"])' <<< "${tuic_tls_json}" >/dev/null 2>&1 || {
+        printf '[ERROR] %s_store_candidate: TUIC requires manual TLS certificate material and h3 ALPN.\n' "${protocol}" >&2
+        return 1
+      }
+      tuic_tls_json=$(jq -c 'del(.alpn)' <<< "${tuic_tls_json}") || return 1
+      tuic_congestion_control=$(jq -r '.congestion_control // "bbr"' <<< "${inbound_json}") || return 1
+      tuic_auth_timeout_seconds=$(jq -r '(.auth_timeout // "3s") | sub("s$";"") | tonumber' <<< "${inbound_json}") || return 1
+      tuic_heartbeat_seconds=$(jq -r '(.heartbeat // "10s") | sub("s$";"") | tonumber' <<< "${inbound_json}") || return 1
+      tuic_zero_rtt_handshake=$(jq -r 'if .zero_rtt_handshake == true then true else false end' <<< "${inbound_json}") || return 1
+      tuic_udp_relay_mode=$(jq -r '.udp_relay_mode // "native"' <<< "${inbound_json}") || return 1
+      tuic_udp_over_stream=$(jq -r 'if .udp_over_stream == true then true else false end' <<< "${inbound_json}") || return 1
+      [[ "${tuic_congestion_control}" == cubic || "${tuic_congestion_control}" == new_reno || "${tuic_congestion_control}" == bbr ]] || return 1
+      [[ "${tuic_auth_timeout_seconds}" =~ ^[0-9]+$ && "${tuic_auth_timeout_seconds}" -le 86400 ]] || return 1
+      [[ "${tuic_heartbeat_seconds}" =~ ^[0-9]+$ && "${tuic_heartbeat_seconds}" -le 86400 ]] || return 1
+      if [[ "${tuic_udp_over_stream}" == true ]]; then
+        [[ "${tuic_udp_relay_mode}" == native ]] && tuic_udp_relay_mode=""
+        [[ -z "${tuic_udp_relay_mode}" ]] || return 1
+      else
+        [[ "${tuic_udp_relay_mode}" == native || "${tuic_udp_relay_mode}" == quic ]] || return 1
+      fi
     elif jq -e '.users | length > 0' <<< "${inbound_json}" >/dev/null 2>&1; then
       auth_enabled=true
       username=$(jq -j '.users[0].username, "\u0001"' <<< "${inbound_json}") || return 1
@@ -22115,6 +22685,20 @@ plain_proxy_config_store_candidate() (
         elif [[ "${protocol}" == "snell" ]]; then
           existing_snell_obfs_host=$(jq -r '.[0].obfs_host // ""' <<< "${existing_match}") || return 1
           [[ -z "${existing_snell_obfs_host}" ]] || snell_obfs_host=${existing_snell_obfs_host}
+        elif [[ "${protocol}" == "tuic" ]]; then
+          tuic_client_trust=$(jq -r '.[0].client_trust // "system"' <<< "${existing_match}") || return 1
+          if ! jq -e 'has("congestion_control")' <<< "${inbound_json}" >/dev/null 2>&1; then tuic_congestion_control=$(jq -r '.[0].tuic.congestion_control // "bbr"' <<< "${existing_match}") || return 1; fi
+          if ! jq -e 'has("auth_timeout")' <<< "${inbound_json}" >/dev/null 2>&1; then tuic_auth_timeout_seconds=$(jq -r '.[0].tuic.auth_timeout_seconds // 3' <<< "${existing_match}") || return 1; fi
+          if ! jq -e 'has("heartbeat")' <<< "${inbound_json}" >/dev/null 2>&1; then tuic_heartbeat_seconds=$(jq -r '.[0].tuic.heartbeat_seconds // 10' <<< "${existing_match}") || return 1; fi
+          if ! jq -e 'has("zero_rtt_handshake")' <<< "${inbound_json}" >/dev/null 2>&1; then tuic_zero_rtt_handshake=$(jq -r '.[0].tuic.zero_rtt_handshake // false' <<< "${existing_match}") || return 1; fi
+          if ! jq -e 'has("udp_relay_mode") or has("udp_over_stream")' <<< "${inbound_json}" >/dev/null 2>&1; then
+            tuic_udp_relay_mode=$(jq -r '.[0].tuic.udp_relay_mode // "native"' <<< "${existing_match}") || return 1
+            tuic_udp_over_stream=$(jq -r '.[0].tuic.udp_over_stream // false' <<< "${existing_match}") || return 1
+          elif ! jq -e 'has("udp_relay_mode")' <<< "${inbound_json}" >/dev/null 2>&1; then
+            tuic_udp_relay_mode=""
+          elif ! jq -e 'has("udp_over_stream")' <<< "${inbound_json}" >/dev/null 2>&1; then
+            tuic_udp_over_stream=false
+          fi
         fi
       elif [[ "$(jq 'length' <<< "${existing_match}")" -gt 1 ]]; then
         printf '[ERROR] %s_store_candidate: duplicate stored %s identity.\n' "${protocol}" "${protocol_label}" >&2
@@ -22202,6 +22786,16 @@ plain_proxy_config_store_candidate() (
       --arg policy "${policy}" \
       '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{psk:$psk,users:$users},version:$version,obfs_mode:$obfs_mode,obfs_host:$obfs_host,mode:$mode,outbound_policy:$policy,dependencies:[]}' \
       >> "${temp_dir}/instances.jsonl" || return 1
+    elif [[ "${protocol}" == "tuic" ]]; then
+      jq -n -cS \
+      --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
+      --arg address "${address}" --argjson port "${port}" --argjson users "${tuic_users_json}" \
+      --argjson tls "${tuic_tls_json}" --arg trust "${tuic_client_trust}" \
+      --arg congestion_control "${tuic_congestion_control}" --argjson auth_timeout_seconds "${tuic_auth_timeout_seconds}" \
+      --argjson heartbeat_seconds "${tuic_heartbeat_seconds}" --argjson zero_rtt_handshake "${tuic_zero_rtt_handshake}" \
+      --arg udp_relay_mode "${tuic_udp_relay_mode}" --argjson udp_over_stream "${tuic_udp_over_stream}" --arg policy "${policy}" \
+      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{users:$users},tls:$tls,client_trust:$trust,tuic:{auth_timeout_seconds:$auth_timeout_seconds,congestion_control:$congestion_control,heartbeat_seconds:$heartbeat_seconds,udp_over_stream:$udp_over_stream,udp_relay_mode:$udp_relay_mode,zero_rtt_handshake:$zero_rtt_handshake},outbound_policy:$policy,dependencies:[]}' \
+      >> "${temp_dir}/instances.jsonl" || return 1
     elif [[ "${protocol}" == "shadowsocks" ]]; then
       jq -n -cS \
       --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
@@ -22271,6 +22865,10 @@ hy2_config_store_candidate() {
   plain_proxy_config_store_candidate hy2 "$@"
 }
 
+tuic_config_store_candidate() {
+  plain_proxy_config_store_candidate tuic "$@"
+}
+
 plain_proxy_structured_state_matches_config() (
   local protocol config_file store_file current expected temp_dir
   protocol=$(structured_instance_store_protocol "${1:-}") || return 1
@@ -22303,7 +22901,7 @@ plain_proxy_validate_state_inventory() (
     validate_protocol_state_schema "${protocol}" "${state_file}" || return 1
     return 0
   fi
-  if [[ "${protocol}" == "snell" && "${state_schema}" != "2" ]]; then
+  if [[ ("${protocol}" == "snell" || "${protocol}" == "tuic") && "${state_schema}" != "2" ]]; then
     return 1
   fi
   if [[ -f "${state_file}" ]] &&
@@ -22681,6 +23279,8 @@ render_structured_instance_inbounds() {
          {users:.authentication.users}
        elif $protocol == "hy2" then
          {users:.authentication.users}
+       elif $protocol == "tuic" then
+         {users:(.authentication.users | map({name,uuid,password}))}
        elif $protocol == "snell" then
          {version:.version,psk:.authentication.psk,users:.authentication.users} +
          (if .version == 5 then {obfs_mode:.obfs_mode} else {mode:.mode} end)
@@ -22692,6 +23292,8 @@ render_structured_instance_inbounds() {
        elif $protocol == "anytls" then
          {tls:.tls}
        elif $protocol == "hy2" then
+         {tls:(.tls + {alpn:["h3"]})}
+       elif $protocol == "tuic" then
          {tls:(.tls + {alpn:["h3"]})}
        else {}
        end) +
@@ -22711,6 +23313,11 @@ render_structured_instance_inbounds() {
          (if .bandwidth.down_mbps != null then {down_mbps:.bandwidth.down_mbps} else {} end) +
          (if .obfs.enabled then {obfs:{type:.obfs.type,password:.obfs.password}} else {} end) +
          (if .masquerade != "" then {masquerade:.masquerade} else {} end)
+       elif $protocol == "tuic" then
+         (if .tuic.congestion_control != "" then {congestion_control:.tuic.congestion_control} else {} end) +
+         (if .tuic.auth_timeout_seconds > 0 then {auth_timeout:((.tuic.auth_timeout_seconds|tostring) + "s")} else {} end) +
+         (if .tuic.zero_rtt_handshake then {zero_rtt_handshake:true} else {} end) +
+         (if .tuic.heartbeat_seconds > 0 then {heartbeat:((.tuic.heartbeat_seconds|tostring) + "s")} else {} end)
        else {} end))
   ' <<< "${snapshot}" 2>/dev/null || { structured_instance_store_error render_inbounds render_failed; return 1; }
 }
@@ -22849,15 +23456,15 @@ load_plain_proxy_structured_instance() {
   if ! jq -j --arg id "${instance_id}" --arg protocol "${protocol}" '
       .instances[] | select(.id == $id) |
       [.id, .name, .tag, .listen.address, (.listen.port | tostring),
-       (if $protocol == "trojan" or $protocol == "anytls" or $protocol == "hy2" then "y" elif .authentication.enabled then "y" else "n" end),
-       (if $protocol == "trojan" then "" elif $protocol == "anytls" or $protocol == "hy2" then (.authentication.users[0].name // "") else (.authentication.username // "") end),
-       (if $protocol == "trojan" then "" elif $protocol == "anytls" or $protocol == "hy2" then (.authentication.users[0].password // "") else .authentication.password end),
-       .outbound_policy, (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" then (.tls | tojson) else "" end),
+       (if $protocol == "trojan" or $protocol == "tuic" or $protocol == "anytls" or $protocol == "hy2" then "y" elif .authentication.enabled then "y" else "n" end),
+       (if $protocol == "trojan" then "" elif $protocol == "tuic" or $protocol == "anytls" or $protocol == "hy2" then (.authentication.users[0].name // "") else (.authentication.username // "") end),
+       (if $protocol == "trojan" then "" elif $protocol == "tuic" or $protocol == "anytls" or $protocol == "hy2" then (.authentication.users[0].password // "") else .authentication.password end),
+       .outbound_policy, (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" then (.tls | tojson) else "" end),
        (if $protocol == "shadowsocks" then (.authentication | tojson) else "" end),
        (if $protocol == "shadowsocks" then (.listen.network | tojson) else "" end),
-       (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" then (.authentication.users | tojson) else "" end),
+       (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" then (.authentication.users | tojson) else "" end),
        (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then (.transport | tojson) else "" end),
-       (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" then .client_trust else "" end),
+       (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" then .client_trust else "" end),
        (if $protocol == "hy2" then (.bandwidth | tojson) else "" end),
        (if $protocol == "hy2" then (.obfs | tojson) else "" end),
        (if $protocol == "hy2" then .masquerade else "" end),
@@ -22866,7 +23473,8 @@ load_plain_proxy_structured_instance() {
        (if $protocol == "snell" then (.authentication.users | tojson) else "" end),
        (if $protocol == "snell" then (.obfs_mode // "") else "" end),
        (if $protocol == "snell" then (.obfs_host // "") else "" end),
-       (if $protocol == "snell" then (.mode // "") else "" end)] | .[] | ., "\u0000"
+       (if $protocol == "snell" then (.mode // "") else "" end),
+       (if $protocol == "tuic" then (.tuic | tojson) else "" end)] | .[] | ., "\u0000"
     ' <<< "${snapshot}" > "${stream_file}"; then
     rm -f -- "${stream_file}"
     return 1
@@ -22875,7 +23483,7 @@ load_plain_proxy_structured_instance() {
     fields+=("${field}")
   done < "${stream_file}"
   rm -f -- "${stream_file}"
-  [[ ${#fields[@]} -eq 24 ]] || return 1
+  [[ ${#fields[@]} -eq 25 ]] || return 1
 
   INSTALLED=1
   CONFIG_SCHEMA_VERSION=2
@@ -22942,6 +23550,17 @@ load_plain_proxy_structured_instance() {
     SB_SNELL_OBFS_MODE=${fields[21]}
     SB_SNELL_OBFS_HOST=${fields[22]}
     SB_SNELL_MODE=${fields[23]}
+  fi
+  if [[ "${protocol}" == "tuic" ]]; then
+    SB_TUIC_TLS_JSON=$(jq -c . <<< "${fields[9]}" 2>/dev/null) || return 1
+    SB_TUIC_AUTH_JSON=$(jq -c . <<< "${fields[12]}" 2>/dev/null) || return 1
+    SB_TUIC_CLIENT_TRUST=${fields[14]}
+    SB_TUIC_CONGESTION_CONTROL=$(jq -r '.congestion_control // "bbr"' <<< "${fields[24]}") || return 1
+    SB_TUIC_AUTH_TIMEOUT_SECONDS=$(jq -r '.auth_timeout_seconds // 3' <<< "${fields[24]}") || return 1
+    SB_TUIC_HEARTBEAT_SECONDS=$(jq -r '.heartbeat_seconds // 10' <<< "${fields[24]}") || return 1
+    SB_TUIC_ZERO_RTT_HANDSHAKE=$(jq -r 'if .zero_rtt_handshake then "y" else "n" end' <<< "${fields[24]}") || return 1
+    SB_TUIC_UDP_RELAY_MODE=$(jq -r '.udp_relay_mode // "native"' <<< "${fields[24]}") || return 1
+    SB_TUIC_UDP_OVER_STREAM=$(jq -r 'if .udp_over_stream then "y" else "n" end' <<< "${fields[24]}") || return 1
   fi
   if [[ "${protocol}" == "http" ]]; then
     SB_HTTP_TLS_JSON=$(jq -c . <<< "${fields[9]}" 2>/dev/null) || return 1
@@ -23011,7 +23630,7 @@ protocol_instance_state_schema() {
   schema=${schema//\"/}
   schema=${schema//\'/}
   [[ "${schema}" =~ ^[0-9]+$ ]] || return 1
-  [[ "${protocol}" != "vless-plain" && "${protocol}" != "socks" && "${protocol}" != "http" && "${protocol}" != "shadowsocks" && "${protocol}" != "trojan" && "${protocol}" != "vmess" && "${protocol}" != "snell" || "${schema}" == "2" ]] || return 1
+  [[ "${protocol}" != "vless-plain" && "${protocol}" != "socks" && "${protocol}" != "http" && "${protocol}" != "shadowsocks" && "${protocol}" != "trojan" && "${protocol}" != "vmess" && "${protocol}" != "snell" && "${protocol}" != "tuic" || "${schema}" == "2" ]] || return 1
   printf '%s' "${schema}"
 }
 
@@ -23037,6 +23656,7 @@ reset_protocol_state_source_variables() {
   unset ACME_DOMAIN ACME_EXTRA_JSON DNS_PROVIDER CF_API_TOKEN CERT_PATH KEY_PATH
   unset MASQUERADE
   unset SNELL_VERSION SNELL_PSK SNELL_USERS SNELL_USER_JSON SNELL_OBFS_MODE SNELL_OBFS_HOST SNELL_MODE
+  unset TUIC_USERS TUIC_USER_JSON TUIC_TLS TUIC_CLIENT_TRUST TUIC_CONGESTION_CONTROL TUIC_AUTH_TIMEOUT TUIC_HEARTBEAT TUIC_ZERO_RTT_HANDSHAKE TUIC_UDP_RELAY_MODE TUIC_UDP_OVER_STREAM
 }
 
 reset_protocol_instance_runtime_fields() {
@@ -23084,6 +23704,15 @@ reset_protocol_instance_runtime_fields() {
   SB_SNELL_OBFS_MODE=""
   SB_SNELL_OBFS_HOST=""
   SB_SNELL_MODE=""
+  SB_TUIC_AUTH_JSON='[]'
+  SB_TUIC_TLS_JSON='{"enabled":false}'
+  SB_TUIC_CLIENT_TRUST="system"
+  SB_TUIC_CONGESTION_CONTROL="bbr"
+  SB_TUIC_AUTH_TIMEOUT_SECONDS="3"
+  SB_TUIC_HEARTBEAT_SECONDS="10"
+  SB_TUIC_ZERO_RTT_HANDSHAKE="n"
+  SB_TUIC_UDP_RELAY_MODE="native"
+  SB_TUIC_UDP_OVER_STREAM="n"
   SB_ANYTLS_AUTH_JSON='[]'
   SB_ANYTLS_TLS_JSON='{"enabled":false}'
   SB_ANYTLS_CLIENT_TRUST="system"
@@ -23160,7 +23789,7 @@ list_protocol_instance_ids() {
       mixed_structured_state_active || return 1
       jq -r '.instances[].id' "$(mixed_structured_store_file)"
       ;;
-    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2)
+    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2|tuic:2)
       plain_proxy_structured_state_active "${protocol}" || return 1
       jq -r '.instances[].id' "$(plain_proxy_structured_store_file "${protocol}")"
       ;;
@@ -23218,7 +23847,7 @@ protocol_default_instance_id() {
       mixed_structured_state_active || return 1
       default_id=$(jq -r '.default_instance_id' "$(mixed_structured_store_file)") || return 1
       ;;
-    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2)
+    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2|tuic:2)
       plain_proxy_structured_state_active "${protocol}" || return 1
       default_id=$(jq -r '.default_instance_id' "$(plain_proxy_structured_store_file "${protocol}")") || return 1
       ;;
@@ -23241,7 +23870,7 @@ load_protocol_instance_state() {
   local schema instance_ids listed_instance_id legacy_inbound_tag
 
   protocol=$(normalize_protocol_id "${protocol}") || return 1
-  if [[ "${protocol}" == "mixed" || "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" ]]; then
+  if [[ "${protocol}" == "mixed" || "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" ]]; then
     structured_instance_store_validate_id "${instance_id}" || return 1
   else
     validate_vless_reality_instance_id "${instance_id}" || return 1
@@ -23288,7 +23917,7 @@ load_protocol_instance_state() {
     mixed:2)
       load_mixed_structured_instance "${instance_id}" || return 1
       ;;
-    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2)
+    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2|tuic:2)
       load_plain_proxy_structured_instance "${protocol}" "${instance_id}" || return 1
       ;;
     *)
@@ -23812,6 +24441,10 @@ protocol_state_matches_config() {
     plain_proxy_structured_state_matches_config snell
     return $?
   fi
+  if [[ "${protocol}" == "tuic" ]]; then
+    plain_proxy_structured_state_matches_config tuic
+    return $?
+  fi
 
   expected_snapshot=$(render_expected_protocol_state_snapshot "${protocol}") || return 1
   saved_snapshot=$(render_saved_protocol_state_snapshot "${protocol}") || return 1
@@ -24124,6 +24757,7 @@ rebuild_protocol_state_from_config() {
   local hy2_inbound_count=0 hy2_candidate_file="" hy2_candidate_revision=0 hy2_state_file hy2_state_schema hy2_rebuild_mode="legacy"
   local anytls_inbound_count=0 anytls_candidate_file="" anytls_candidate_revision=0 anytls_state_file anytls_state_schema anytls_rebuild_mode="legacy"
   local snell_inbound_count=0 snell_candidate_file="" snell_candidate_revision=0 snell_state_file snell_state_schema
+  local tuic_inbound_count=0 tuic_candidate_file="" tuic_candidate_revision=0 tuic_state_file tuic_state_schema
   local backup_state_dir
 
   backup_dir=$(mktemp -d) || return 1
@@ -24603,6 +25237,47 @@ rebuild_protocol_state_from_config() {
     fi
   fi
 
+  # TUIC is structured-only.  Its UUID/password users, mandatory manual TLS,
+  # and QUIC transport options have no lossless schema-1 representation, so
+  # reject legacy state before clearing the protocol cache and capture a typed
+  # candidate while the existing identities and CAS revision are available.
+  tuic_inbound_count=$(jq -r '[.inbounds[]? | select(.type == "tuic")] | length' "${SINGBOX_CONFIG_FILE}") || {
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+  }
+  [[ "${tuic_inbound_count}" =~ ^[0-9]+$ ]] || {
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+  }
+  if (( tuic_inbound_count > 0 )); then
+    tuic_state_file=$(protocol_state_file tuic) || {
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+    }
+    tuic_state_schema=""
+    if [[ -f "${tuic_state_file}" ]]; then
+      validate_protocol_state_schema tuic "${tuic_state_file}" || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+      }
+      tuic_state_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${tuic_state_file}" | head -n1) || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+      }
+      tuic_state_schema=${tuic_state_schema//\"/}; tuic_state_schema=${tuic_state_schema//\'/}
+    fi
+    [[ -z "${tuic_state_schema}" || "${tuic_state_schema}" == 2 ]] || {
+      printf '[ERROR] tuic_store_candidate: TUIC legacy state is unsupported; 已保留原状态。\n' >&2
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
+    }
+    tuic_candidate_file="${backup_dir}/tuic.candidate.json"
+    plain_proxy_config_store_candidate tuic > "${tuic_candidate_file}" || {
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+    }
+    if [[ -f "$(plain_proxy_structured_store_file tuic 2>/dev/null || true)" ]]; then
+      tuic_candidate_revision=$(jq -r '.revision' "$(plain_proxy_structured_store_file tuic)") || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+      }
+    else
+      tuic_candidate_revision=0
+    fi
+  fi
+
   clear_protocol_state_cache
   ensure_protocol_state_dir
   if ! rm -rf "${SB_PROTOCOL_STATE_DIR}/vless-reality.d"; then
@@ -24902,6 +25577,12 @@ rebuild_protocol_state_from_config() {
         fi
         continue
         ;;
+      tuic)
+        if ! protocol_array_contains "tuic" ${rebuilt_protocols[@]+"${rebuilt_protocols[@]}"}; then
+          rebuilt_protocols+=("tuic")
+        fi
+        continue
+        ;;
       *)
         abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
         return 1
@@ -25010,6 +25691,15 @@ rebuild_protocol_state_from_config() {
       abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
     fi
     if ! save_plain_proxy_structured_marker snell; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
+    fi
+  fi
+
+  if (( tuic_inbound_count > 0 )); then
+    if ! publish_structured_instance_store tuic "${tuic_candidate_file}" "${tuic_candidate_revision}"; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
+    fi
+    if ! save_plain_proxy_structured_marker tuic; then
       abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
     fi
   fi
@@ -25458,14 +26148,15 @@ main() {
     render_menu_item "24" "管理 AnyTLS 实例"
     render_menu_item "25" "管理 Hysteria2 实例"
     render_menu_item "26" "管理 Snell 实例"
+    render_menu_item "27" "管理 TUIC 实例"
     echo "0. 退出"
     render_main_menu_footer
-    choice=$(prompt_choice "请选择 [0-26]: " 0 26 "")
+    choice=$(prompt_choice "请选择 [0-27]: " 0 27 "")
 
     if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
       case "${choice}" in
-        0|9|10|12|17|18|19|20|21|22|23|24|25|26) ;;
-        *) log_warn "请先通过菜单 17–26 恢复对应协议未完成的实例事务；本次未执行其他写操作。"; continue ;;
+        0|9|10|12|17|18|19|20|21|22|23|24|25|26|27) ;;
+        *) log_warn "请先通过菜单 17–27 恢复对应协议未完成的实例事务；本次未执行其他写操作。"; continue ;;
       esac
     fi
 
@@ -25503,6 +26194,7 @@ main() {
       24) anytls_instance_management_menu ;;
       25) hy2_instance_management_menu ;;
       26) snell_instance_management_menu ;;
+      27) tuic_instance_management_menu ;;
       0) exit_script ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac

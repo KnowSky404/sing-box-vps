@@ -4,13 +4,13 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026090804`
+- 脚本版本：`2026090805`
 
 - sing-box 适配版本：`1.14.0`
 
-Trojan 为第八个入站预设，支持多实例、多用户，以及独立建模的 TLS 与传输设置；VMess 为第九个入站预设；普通 VLESS 为第十个入站预设，使用独立的 `vless-plain` ID，与旧 `vless`/REALITY alias 分开，支持多实例、多用户、TLS、V2Ray transport、分享和 SubMan 边界。Hysteria2 现支持 schema 2 多实例、多用户、手动 TLS、带宽、Salamander obfs、masquerade、客户端导出、Agent 与 SubMan 逐用户路径；legacy Hysteria2 的 ACME/provider 状态仍保留原路径。Snell 为第十一个入站预设，支持 schema 2 多实例、多用户、Snell v5/v6、v5 HTTP obfs、v6 shaping、客户端 outbound JSON 与 Agent 事务；Snell 没有安全的标准分享 URI，也不进入 SubMan 同步。新入口默认回环监听；公开监听须明确确认。Shadowsocks 仍为第七预设，保留实例级 TCP/UDP 选择。全协议目标仍在推进，不能由当前预设推断其他上游协议已接入。
+Trojan 为第八个入站预设，支持多实例、多用户，以及独立建模的 TLS 与传输设置；VMess 为第九个入站预设；普通 VLESS 为第十个入站预设，使用独立的 `vless-plain` ID，与旧 `vless`/REALITY alias 分开，支持多实例、多用户、TLS、V2Ray transport、分享和 SubMan 边界。Hysteria2 现支持 schema 2 多实例、多用户、手动 TLS、带宽、Salamander obfs、masquerade、客户端导出、Agent 与 SubMan 逐用户路径；legacy Hysteria2 的 ACME/provider 状态仍保留原路径。Snell 为第十一个入站预设，支持 schema 2 多实例、多用户、Snell v5/v6、v5 HTTP obfs、v6 shaping、客户端 outbound JSON 与 Agent 事务；Snell 没有安全的标准分享 URI，也不进入 SubMan 同步。TUIC 为第十二个入站预设，使用 schema 2 多实例、多用户、手动证书 TLS、QUIC/UDP 监听与客户端 outbound JSON；`udp_relay_mode` 和 `udp_over_stream` 仅用于客户端出站，服务端入站不会渲染这两个字段。TUIC 没有安全的标准分享 URI、二维码或 SubMan 同步。新入口默认回环监听；公开监听须明确确认。Shadowsocks 仍为第七预设，保留实例级 TCP/UDP 选择。全协议目标仍在推进，不能由当前预设推断其他上游协议已接入。
 
-Trojan 可管理原生 TCP、HTTP、WebSocket（无 early data）、gRPC 和 TLS QUIC；QUIC 使用 UDP 监听，不限制代理业务只能走 UDP。VMess 同样按用户保留凭据，支持原生 TCP、HTTP、WebSocket（无 early data）、gRPC 和 TLS QUIC，并保留 `security`/`alter_id` 等 V2Ray 字段。普通 VLESS 使用独立的 `vless-plain` 状态/实例库，支持原生 TCP、HTTP、WebSocket、gRPC、QUIC、可选 TLS，以及按用户的 `flow`；客户端导出、VLESS URI、Agent、实例 CAS、接管/重建和 SubMan 均从同一快照生成。客户端导出按明确选择使用系统信任或公开证书，绝不导出服务器私钥或自动关闭证书校验。分享/SubMan 仅同步 TLS 系统信任且 URI 能无损表达的用户，其余返回跳过原因。HTTPUpgrade 与 WebSocket early data 因真实连接失败仍被阻断，未计作已支持。接口与范围见[Trojan 契约](docs/agents/sing-box-vps-agent-runbook.md#trojan-typed-instance-contract)与[VMess 契约](docs/agents/sing-box-vps-agent-runbook.md#vmess-typed-instance-contract)。
+Trojan 可管理原生 TCP、HTTP、WebSocket（无 early data）、gRPC 和 TLS QUIC；QUIC 使用 UDP 监听，不限制代理业务只能走 UDP。VMess 同样按用户保留凭据，支持原生 TCP、HTTP、WebSocket（无 early data）、gRPC 和 TLS QUIC，并保留 `security`/`alter_id` 等 V2Ray 字段。普通 VLESS 使用独立的 `vless-plain` 状态/实例库，支持原生 TCP、HTTP、WebSocket、gRPC、QUIC、可选 TLS，以及按用户的 `flow`；客户端导出、VLESS URI、Agent、实例 CAS、接管/重建和 SubMan 均从同一快照生成。TUIC 服务端使用 QUIC/UDP 与 h3 TLS，用户凭据为 UUID/密码；客户端按用户导出含 `network: ["tcp", "udp"]`、拥塞控制、relay 或 udp-over-stream 选项的完整 outbound JSON。客户端导出按明确选择使用系统信任或公开证书，绝不导出服务器私钥或自动关闭证书校验。分享/SubMan 仅同步 TLS 系统信任且 URI 能无损表达的用户，其余返回跳过原因。HTTPUpgrade 与 WebSocket early data 因真实连接失败仍被阻断，未计作已支持。接口与范围见[Trojan 契约](docs/agents/sing-box-vps-agent-runbook.md#trojan-typed-instance-contract)、[VMess 契约](docs/agents/sing-box-vps-agent-runbook.md#vmess-typed-instance-contract)与[TUIC 契约](docs/agents/sing-box-vps-agent-runbook.md#tuic-typed-instance-contract)。
 
 ## 🚀 一键安装
 
@@ -102,13 +102,13 @@ Docker 验证镜像自动管理，无需额外配置。
 
 REALITY 显式接管/状态重建按既有 inbound tag 关联实例，保留稳定 ID、节点名称、上下行限速和默认实例；连接字段继续从现有配置恢复，旧公钥仅在私钥一致时复用。存在歧义的身份映射会阻断重建，状态写入失败会恢复原协议状态目录。
 
-Agent 节点/分享列表与 REALITY、VMess、普通 VLESS、Hysteria2、AnyTLS、Snell 客户端导出共用只读实例接口：旧单实例状态内部映射为 `main`，REALITY、VMess、普通 VLESS、Hysteria2、AnyTLS 与 Snell 保留原实例身份；读取和客户端渲染不自动迁移旧状态或生成凭据。其他协议的多实例持久化仍在实施中。
+Agent 节点/分享列表与 REALITY、VMess、普通 VLESS、Hysteria2、AnyTLS、Snell、TUIC 客户端导出共用只读实例接口：旧单实例状态内部映射为 `main`，REALITY、VMess、普通 VLESS、Hysteria2、AnyTLS、Snell 与 TUIC 保留原实例身份；读取和客户端渲染不自动迁移旧状态或生成凭据。其他协议的多实例持久化仍在实施中。
 
 Mixed 已接入结构化实例状态（schema 2）和完整的实例管理链路：显式迁移会把旧单实例 `.env` 的稳定身份、tag、监听地址/端口和认证材料带入 `protocols/instances/mixed.json`；首次全新安装仍沿用兼容的 schema 1 路径，不会隐式迁移。Agent 与菜单支持创建、替换、删除、设置默认实例、显式迁移和事务恢复，均使用 revision 条件写入。该入口只管理 Mixed，不代表全协议目标已经完成。
 
 服务端候选和结构化状态现在共用固定监听资源预检：区分 TCP/UDP，识别 IPv4 通配、IPv6 等价地址和双栈重叠；冲突时保留原配置。防火墙开放取自完整已发布配置的实际监听传输；删除根据旧配置备份和剩余入站保护仍被引用的规则，不再同时操作无关 TCP/UDP。Mixed 实例事务初次创建也先在目标同目录 staging 后原子发布，并为文件/config、受管 UFW/iptables/ip6tables 规则和服务恢复保存持久 journal/result；同时以共享 `flock` 串行化管理写入。firewalld 仅作只读外部预检，禁止在事务中 add/delete/reload，缺少所需 allow 或既有归属账本时会在变更前失败并要求人工规则。故障时不把文件恢复冒充为外部防火墙已恢复。全量删除必须先确认服务已停止；清单缺失或无法解释时拒绝清理。后端失败返回非零并明确披露已提交配置、尚未执行重启或可能存在的部分外部变更。这仍不是完整防火墙归属账本或系统资源事务，不追溯删除未归属的历史宽规则，也不检查其他进程抢占端口、动态 UDP relay 和 ACME 临时监听。
 
-全协议改造按[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)推进；[上游能力矩阵](docs/superpowers/specs/2026-09-06-protocol-coverage.md)区分上游支持与项目已实现能力。当前运行时注册表位于独立分发的 `install.sh` 中，现有十一个入站预设的菜单编号、公开 ID、导出候选、SubMan 类型和验证器元数据均从这里读取；普通 VLESS 使用独立 `vless-plain` preset，旧 `vless` alias 仍表示 REALITY。未知索引/状态版本或生成器返回的无效片段会阻断重建并保留原文件。现有配置的入站清单也会全量预检：未知类型、非 REALITY 的 VLESS、重复的单实例协议和重复显式 tag 会阻断自动重建/接管，不再仅识别第一个受支持入站。Agent 的 `status`、`nodes`、`links` 还要求索引、基础状态和 live 协议集合完全对应；REALITY、普通 VLESS、Snell 的状态必须包含完整连接字段，多实例状态的清单、文件名、内部 ID 和 inbound tag 必须与 live 入站集合一一对应，否则只返回结构化错误而不输出部分结果。服务端与客户端候选还会检查组件 tag、引用和显式依赖环，然后继续执行目标核心 `check`；这些检查尚不覆盖任意外部配置的字段及出站/端点/路由无损接管，也不表示新增协议已完成。
+全协议改造按[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)推进；[上游能力矩阵](docs/superpowers/specs/2026-09-06-protocol-coverage.md)区分上游支持与项目已实现能力。当前运行时注册表位于独立分发的 `install.sh` 中，现有十二个入站预设的菜单编号、公开 ID、导出候选、SubMan 类型和验证器元数据均从这里读取；普通 VLESS 使用独立 `vless-plain` preset，旧 `vless` alias 仍表示 REALITY。未知索引/状态版本或生成器返回的无效片段会阻断重建并保留原文件。现有配置的入站清单也会全量预检：未知类型、非 REALITY 的 VLESS、重复的单实例协议和重复显式 tag 会阻断自动重建/接管，不再仅识别第一个受支持入站。Agent 的 `status`、`nodes`、`links` 还要求索引、基础状态和 live 协议集合完全对应；REALITY、普通 VLESS、Snell、TUIC 的状态必须包含完整连接字段，多实例状态的清单、文件名、内部 ID 和 inbound tag 必须与 live 入站集合一一对应，否则只返回结构化错误而不输出部分结果。服务端与客户端候选还会检查组件 tag、引用和显式依赖环，然后继续执行目标核心 `check`；这些检查尚不覆盖任意外部配置的字段及出站/端点/路由无损接管，也不表示新增协议已完成。
 
 ```bash
 bash dev/verification/run.sh
@@ -129,14 +129,14 @@ VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh
 默认工作流已做分层优化：
 - 核心脚本改动默认只跑协议探测快测
 - 仅在改动 `dev/verification/run.sh`、`dev/verification/common.sh` 或 `dev/verification/remote/` 时，才追加远程调度与远程框架回归
-- 远程验证默认优先收敛到 `runtime_smoke`；安装/重配相关改动会扩到全新安装、接管、重配和已有十协议共存，以及真实的 `upgrade_1_13_to_1_14` 成功升级和 `upgrade_rollback_1_13_to_1_14` 故障回滚场景；Snell 当前由本地结构化生命周期与目标 1.14 `check` 专项覆盖，尚未纳入既有 Docker 协议探针场景。
+- 远程验证默认优先收敛到 `runtime_smoke`；安装/重配相关改动会扩到全新安装、接管、重配和已有十协议共存，以及真实的 `upgrade_1_13_to_1_14` 成功升级和 `upgrade_rollback_1_13_to_1_14` 故障回滚场景；Snell 与 TUIC 当前由本地结构化生命周期与目标 1.14 `check` 专项覆盖，尚未纳入既有 Docker 协议探针场景。
 
 命中远程验证时，测试机会额外执行协议级闭环探测：先用目标 `sing-box` 校验客户端配置，再启动临时客户端连接本机服务端入站，并通过客户端 SOCKS 代理访问本机 HTTP 标记服务。HTTP 增量已通过 75 项本地门禁，修正测试断言后 Docker 重跑为 11/11 场景、16/16 TCP 探测成功；普通 VLESS 阶段的最终本地门禁运行目录为 `dev/verification-runs/20260908141403`，108/108 项通过；最终 Docker 运行目录 `dev/verification-runs/20260908144031` 为 15/15 场景、22/22 协议探针成功，包含普通 VLESS 新装、十协议共存和升级回滚产物。HTTP TLS 另以 1.13.18/1.14.0 与实际 Bash 4.2 完成本地正反向连接测试。SOCKS UoT 的 UDP 证据限于回环测试，不代表公网原生 UDP 可达。未知协议会在产物中标记为 `unsupported`。详细命令、失败记录、重跑范围与证据见[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)。
 
 脚本会自动：
 1. 安装所有必要依赖（curl, wget, jq, qrencode 等）。
 2. 下载并配置适配的 `sing-box` (当前适配：1.14.0)。
-3. 生成 **VLESS + REALITY**、普通 **VLESS**、**Mixed (HTTP/HTTPS/SOCKS)**、独立 **SOCKS**、独立 **HTTP**、**Shadowsocks**、**Trojan**、**VMess**、**Hysteria2**、**AnyTLS** 或 **Snell** 配置，并支持多协议共存；其中 VLESS REALITY、普通 VLESS、VMess、Hysteria2、AnyTLS 与 Snell 支持多实例，VLESS REALITY 还支持独立端口和可选上下行限速。HTTP/SOCKS 明文入口仅适合可信网络或受保护隧道。
+3. 生成 **VLESS + REALITY**、普通 **VLESS**、**Mixed (HTTP/HTTPS/SOCKS)**、独立 **SOCKS**、独立 **HTTP**、**Shadowsocks**、**Trojan**、**VMess**、**Hysteria2**、**AnyTLS**、**Snell** 或 **TUIC** 配置，并支持多协议共存；其中 VLESS REALITY、普通 VLESS、VMess、Hysteria2、AnyTLS、Snell 与 TUIC 支持多实例，VLESS REALITY 还支持独立端口和可选上下行限速。HTTP/SOCKS 明文入口仅适合可信网络或受保护隧道。
 4. 以 **`install.sh`** 作为唯一安装与维护真源，并将自己安装为全局命令 **`sbv`**，方便您随时管理。
 
 ---
@@ -151,11 +151,11 @@ sbv
 
 ## ✨ 项目特性
 
-- **Agent 友好命令行**：提供 `sbv agent ... --json` 非交互命令，方便 Hermes、OpenClaw、Codex 等 AI Agent 发现完整能力、获取状态与节点信息、导出客户端配置，并执行带预检、确认、持久备份和自动回滚的固定版本升级。所有 `--json` 响应采用 `schema_version: "1.0"` 统一 envelope，同时保留兼容字段 `schema: "1"`；对外协议 ID 统一使用 `vless-reality`、`vless-plain`、`mixed`、`socks`、`http`、`shadowsocks`、`trojan`、`vmess`、`hysteria2`、`anytls`、`snell`，独立 SOCKS、VMess、普通 VLESS、Hysteria2 与 Snell 生命周期已通过定向门禁。
+- **Agent 友好命令行**：提供 `sbv agent ... --json` 非交互命令，方便 Hermes、OpenClaw、Codex 等 AI Agent 发现完整能力、获取状态与节点信息、导出客户端配置，并执行带预检、确认、持久备份和自动回滚的固定版本升级。所有 `--json` 响应采用 `schema_version: "1.0"` 统一 envelope，同时保留兼容字段 `schema: "1"`；对外协议 ID 统一使用 `vless-reality`、`vless-plain`、`mixed`、`socks`、`http`、`shadowsocks`、`trojan`、`vmess`、`hysteria2`、`anytls`、`snell`、`tuic`，独立 SOCKS、VMess、普通 VLESS、Hysteria2、Snell 与 TUIC 生命周期已通过定向门禁。
 - **1.14.x 深度适配**：继续采用 **Endpoint（端点化）** 架构，并适配顶层 ACME `certificate_providers`、远程规则集 `http_client` 与 Hysteria2 `disable_chrome_parrot`。
 - **跨版本配置生成**：目标核心为 1.14+ 时生成新版配置结构；显式固定或运行 1.13.x 时继续生成内联 `tls.acme` 与旧版远程规则集结构。接管或重建时会保留可内联表达的 ACME 扩展字段；若 provider 引用了无法独立保留的共享 `http_client`，脚本会拒绝重写。仅更新二进制时不会重写现有配置。
 - **可审计升级**：`upgrade-check` 会报告实例健康度、当前配置校验、配置 SHA-256、1.14 已知弃用项和阻断原因；`upgrade` 只接受固定版本与 `--yes`，先在 `/root/sing-box-vps-backups/` 创建 root-only 备份，并原子维护 `transaction-result.json`（事务 ID、旧/新版本、状态历史、manifest hash 与回滚结果）。目标核心校验失败时尝试恢复旧二进制并返回非零；若恢复未通过最终校验，会明确返回 `rollback_failed` 和人工介入标记。
-- **多协议支持**：支持 **VLESS + REALITY**、普通 **VLESS**、**Mixed (HTTP/HTTPS/SOCKS)**、**独立 SOCKS**、**独立 HTTP（可选入口 TLS）**、**Shadowsocks**、**Trojan**、**VMess**、**Hysteria2**、**AnyTLS** 与 **Snell** 十一个入站预设。已有服务新增 HTTP、Shadowsocks、Trojan、VMess、普通 VLESS、Hysteria2、AnyTLS 或 Snell 时单独进入共享实例事务，不与其他协议合并追加；全协议目标仍未完成。
+- **多协议支持**：支持 **VLESS + REALITY**、普通 **VLESS**、**Mixed (HTTP/HTTPS/SOCKS)**、**独立 SOCKS**、**独立 HTTP（可选入口 TLS）**、**Shadowsocks**、**Trojan**、**VMess**、**Hysteria2**、**AnyTLS**、**Snell** 与 **TUIC** 十二个入站预设。已有服务新增 HTTP、Shadowsocks、Trojan、VMess、普通 VLESS、Hysteria2、AnyTLS、Snell 或 TUIC 时单独进入共享实例事务，不与其他协议合并追加；全协议目标仍未完成。
 - **Mixed 多实例管理**：schema 2 支持多个稳定 ID/tag、独立监听地址/端口、独立认证和默认实例；Agent 提供 `create`、`replace`、`delete`、`default`、`migrate`、`recover`，交互菜单 17 提供逐实例管理。非回环明文监听需要显式公网暴露确认；跨协议批量删除会拒绝并要求逐实例处理 Mixed。
 - **VLESS REALITY 多实例**：可在安装菜单追加多个 REALITY 实例，每个实例拥有独立端口、ShortID、节点名称、可选上下行限速和实例级出站策略；节点展示和 SubMan 同步会逐实例输出。
 - **REALITY QoS 限速**：为设置了上下行 Mbps 的 REALITY 实例自动规划并应用 `tc` 端口级限速规则，重建配置、更新协议或移除实例时会同步刷新规则，避免遗留过滤器影响新配置。
@@ -169,15 +169,15 @@ sbv
 - **性能增强**：集成 **BBR** 一键开启功能，显著提升网络吞吐。
 - **Mixed 防火墙事务**：启用 UFW 时仅通过 UFW 管理归属规则；没有活动防火墙前端时才直接管理 `iptables`/`ip6tables`。firewalld 仅执行只读外部预检，不由实例事务 add/delete/reload；UFW 与 firewalld 同时活动或已有账本与当前后端冲突时拒绝写入，要求人工处理。
 - **工业级配置生成**：采用 **`jq` 安全注入** 模式生成 JSON，彻底规避特殊字符导致的转义错误。
-- **协议级展示**：终端可按协议查看节点信息，支持 `VLESS`、`VMess` 与 `Hysteria2` 链接/ANSI 二维码展示，为 `Mixed` 和独立 `SOCKS` 输出代理链接与二维码提示，并为 `AnyTLS`、`Snell` 输出逐实例参数摘要和 sing-box outbound JSON（无标准 URI）；多 REALITY、普通 VLESS、Mixed、SOCKS、Trojan、VMess、Hysteria2、AnyTLS、Snell 实例会显示实例 ID、端口和限速摘要。
-- **裸核客户端导出**：可从交互菜单或 `sbv agent export-client --json` 生成 `/root/sing-box-vps/client/sing-box-client.json`，支持当前十一个预设，覆盖前自动备份，并在输出前执行 `sing-box check`。Mixed 和独立 SOCKS 使用 SOCKS5 outbound 与 UoT v2，VMess/Trojan/普通 VLESS/Hysteria2/AnyTLS/Snell 按用户保留认证、TLS 与传输；缺失或无效的端口/认证字段会阻断整份导出，保留原导出及备份，不自动生成密码或降级认证。
+- **协议级展示**：终端可按协议查看节点信息，支持 `VLESS`、`VMess` 与 `Hysteria2` 链接/ANSI 二维码展示，为 `Mixed` 和独立 `SOCKS` 输出代理链接与二维码提示，并为 `AnyTLS`、`Snell`、`TUIC` 输出逐实例参数摘要和 sing-box outbound JSON（无标准 URI）；多 REALITY、普通 VLESS、Mixed、SOCKS、Trojan、VMess、Hysteria2、AnyTLS、Snell、TUIC 实例会显示实例 ID、端口和限速摘要。
+- **裸核客户端导出**：可从交互菜单或 `sbv agent export-client --json` 生成 `/root/sing-box-vps/client/sing-box-client.json`，支持当前十二个预设，覆盖前自动备份，并在输出前执行 `sing-box check`。Mixed 和独立 SOCKS 使用 SOCKS5 outbound 与 UoT v2，VMess/Trojan/普通 VLESS/Hysteria2/AnyTLS/Snell/TUIC 按用户保留认证、TLS 与传输；缺失或无效的端口/认证字段会阻断整份导出，保留原导出及备份，不自动生成密码或降级认证。
 - **Mixed 安全边界**：Mixed 服务端和其导出的 SOCKS5/UoT 链路不提供 TLS；公网明文监听必须经过单独确认，不能把它当作独立的 TLS SOCKS 服务端。Mixed 当前也不新增 SubMan 同步能力。
 - **独立 SOCKS（已验证边界）**：注册表菜单项 5 使用 `socks` state/Agent ID，active marker 为 schema 2、JSON store 为 `schema_version: 1`，支持同认证 typed record、共享事务与实例级 CAS；服务端无 HTTP/TLS，客户端导出为 SOCKS5 + UoT v2。六项回归、两核心 check/runtime、菜单和最终 Docker/TCP 门禁均已通过；这不等于 TLS、HTTP、SubMan 或全协议目标已完成。证据见[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)。
 - **独立 HTTP**：菜单项 6、管理菜单 19，使用 `http` state/Agent ID 与 schema 2 共享实例事务。默认回环监听并启用认证，可选择明文或手工证书 TLS；证书文件由用户维护，实例操作不申请或删除它们。客户端导出为 TCP-only HTTP CONNECT；TLS 导出仅嵌入公开证书信任与 SNI，不读取私钥。明文 URI 返回 `http_plaintext_transport`；TLS 无可保真 URI，返回 `http_tls_uri_unrepresentable` 并使用完整 JSON。访问 HTTPS 目标不等于代理入口已加密；不支持 HTTP SubMan 同步。
 - **Shadowsocks**：安装菜单 7、管理菜单 20，协议 ID `shadowsocks`（别名 `ss`），使用 schema 2 marker 与 schema 1 JSON 实例库。支持九种入站方法、可用方法的多用户、实例出站策略和 TCP/UDP 独立选择；默认回环监听，非回环写入需确认。`none` 是明文，2022 ChaCha 不支持多用户；不接管未建模的 relay、mux 或 plugin。完整 JSON 保留网络限制；SIP002 无法表达单网络限制时返回 warning。长 2022 PSK 在客户端按核心规则派生等效定长密钥，原始状态不变。
 - **VMess**：安装菜单 9、管理菜单 22，协议 ID `vmess`，使用 schema 2 marker 与 schema 1 JSON 实例库。支持 1–128 个唯一用户、`security`/`alter_id`、TLS 信任和 none/http/ws/grpc/quic typed transport；WS early data 与 HTTPUpgrade 仍按已知 runtime guard 阻断。客户端导出和 `vmess://` 分享保留可表达字段，不读取服务器私钥；SubMan 仅同步 TLS 系统信任且 URI 无损可表达的用户。
 - **普通 VLESS**：安装菜单 10、管理菜单 23，协议 ID `vless-plain`（运行时 type 仍为 `vless`），使用独立 schema 2 marker 与 schema 1 JSON 实例库。支持 1–128 个用户、按用户 `flow`、TLS 信任和 none/http/ws/grpc/quic typed transport；客户端导出和 `vless://` 分享不读取服务器私钥，SubMan 仅同步 TLS 系统信任且 URI 无损可表达的用户。旧 `vless` alias 不会被重新解释，仍表示 VLESS + REALITY。
-- **SubMan 同步**：按 SubMan OpenAPI 1.0.0 契约将 VLESS + REALITY、普通 VLESS、Hysteria2、双网络加密 Shadowsocks，以及 TLS 系统信任且 URI 无损表达的 Trojan/VMess 用户幂等推送到节点库；Snell 因版本、v5 obfs/v6 shaping 和用户 key 无标准无损 URI，明确保持 unsupported，不伪装成 `other`。各协议按实例/用户使用稳定外部键，从同一快照生成身份与凭据，无法表达的 TLS、传输、证书信任或 URI 大小条目明确跳过。Hysteria2 的带宽和 masquerade 在完整客户端 JSON 中保留，标准 URI 无法携带时仅以 warning 披露，不伪造 SubMan 字段。仅在 Workspace 已远端提交并回读验证后报告成功，并识别 revision、稳定错误分类和安全重试提示。集成测试使用 mock，不代表已授权或执行真实同步；全部跳过不报告同步成功。
+- **SubMan 同步**：按 SubMan OpenAPI 1.0.0 契约将 VLESS + REALITY、普通 VLESS、Hysteria2、双网络加密 Shadowsocks，以及 TLS 系统信任且 URI 无损表达的 Trojan/VMess 用户幂等推送到节点库；Snell 与 TUIC 因无标准无损 URI，明确保持 unsupported，不伪装成 `other`。各协议按实例/用户使用稳定外部键，从同一快照生成身份与凭据，无法表达的 TLS、传输、证书信任或 URI 大小条目明确跳过。Hysteria2 的带宽和 masquerade 在完整客户端 JSON 中保留，标准 URI 无法携带时仅以 warning 披露，不伪造 SubMan 字段。仅在 Workspace 已远端提交并回读验证后报告成功，并识别 revision、稳定错误分类和安全重试提示。集成测试使用 mock，不代表已授权或执行真实同步；全部跳过不报告同步成功。
 - **规范存储**：统一使用 `/root/sing-box-vps/` 存放配置、密钥及持久化参数。
 
 ## Agent 非交互命令
@@ -213,6 +213,11 @@ sbv agent instance replace snell --json --yes --expected-revision N --file recor
 sbv agent instance delete snell --json --yes --expected-revision N --id ID
 sbv agent instance default snell --json --yes --expected-revision N --id ID
 sbv agent instance recover snell --json --yes --expected-revision N
+sbv agent instance create tuic --json --yes --expected-revision N --file record.json [--allow-public]
+sbv agent instance replace tuic --json --yes --expected-revision N --file record.json [--allow-public]
+sbv agent instance delete tuic --json --yes --expected-revision N --id ID
+sbv agent instance default tuic --json --yes --expected-revision N --id ID
+sbv agent instance recover tuic --json --yes --expected-revision N
 sbv agent instance create vmess --json --yes --expected-revision N --file record.json [--allow-public]
 sbv agent instance replace vmess --json --yes --expected-revision N --file record.json [--allow-public]
 sbv agent instance delete vmess --json --yes --expected-revision N --id ID
@@ -223,18 +228,18 @@ sbv update sing-box latest
 sbv update sing-box 1.14.0
 ```
 
-- `capabilities`：输出十一个协议、历史功能入口与 `mutation` / `sensitive` / 确认要求，Agent 应先据此选择操作。新增的 `protocol_registry` 提供 family、preset、role、内部/公开 ID、能力和验证方法；独立 SOCKS、VMess、普通 VLESS、Hysteria2、AnyTLS 与 Snell 的实现和生命周期已由定向门禁验证，但不应解读为全协议目标完成。`available=null` 与 `validated.status=not_assessed` 表示尚未对当前实例做环境预检和连接验证，不应解读为可部署或测试通过。
+- `capabilities`：输出十二个协议、历史功能入口与 `mutation` / `sensitive` / 确认要求，Agent 应先据此选择操作。新增的 `protocol_registry` 提供 family、preset、role、内部/公开 ID、能力和验证方法；独立 SOCKS、VMess、普通 VLESS、Hysteria2、AnyTLS、Snell 与 TUIC 的实现和生命周期已由定向门禁验证，但不应解读为全协议目标完成。`available=null` 与 `validated.status=not_assessed` 表示尚未对当前实例做环境预检和连接验证，不应解读为可部署或测试通过。
 - `upgrade-check`：只读检查固定目标版本的升级资格，返回 `ready`、`blockers[]`、当前核心校验、配置 hash、已知弃用项和兼容性 warning；不会协调或迁移协议状态，也不下载目标二进制，真正的目标版本 `sing-box check` 在 `upgrade` 替换服务进程前执行。
 - `upgrade`：必须使用完整版本号和 `--yes`。创建持久备份后只替换核心二进制，逐字节保留服务端配置；备份清单覆盖全部普通 runtime 文件及 binary、`sbv`、service unit、metadata。每次实际变更返回 `transaction.id`、`transaction.result_path` 和 `transaction.result_persisted`，并在备份目录原子写入权限 `0600` 的 `transaction-result.json`。实际变更只有 `result_persisted=true` 才可接受事务状态；若目标版本已经安装，则返回 `changed=false`、`transaction.status=not_attempted`、`reason=already_installed`，且不会创建备份或事务文件。目标校验、版本、配置 hash 或服务状态不符合预期时尝试自动恢复旧二进制、意外变化的配置和升级前服务活动状态，返回非零与结构化回滚结果。仅当 `rolled_back=true` 且 `rollback_ok=true` 时才可视为自动恢复完成；`error=rollback_failed` 时必须停止并人工处理。
 - `status`：输出脚本/核心/服务/路径/已安装协议，并包含入站与出站栈、BBR、REALITY 实例与 QoS 计数，以及客户端导出/SubMan 是否已配置；不返回凭据。索引、状态或 live 入站集合无法完整对应时返回非零及 `protocol_index_untrusted` / `protocol_state_untrusted`，不报告部分协议。
-- `nodes`：输出所有协议的安全摘要；REALITY、Mixed、SOCKS、HTTP、Shadowsocks、Trojan、VMess、Hysteria2、AnyTLS 和 Snell 均逐实例输出，`instance_revision` 可用于下一次 CAS 写入；不包含 UUID、密钥、完整分享链接或密码，适合写入普通诊断日志。实例清单、状态与 live 入站不完整时不输出部分节点。
-- `links`：逐协议、逐 REALITY/Mixed/SOCKS/HTTP/Shadowsocks/Trojan/VMess/Hysteria2/AnyTLS/Snell 实例输出完整连接材料，包括 VLESS/VMess/Hysteria2 分享链接、Mixed/SOCKS 链接，以及 AnyTLS/Snell outbound JSON；AnyTLS 明确返回 `anytls_standard_uri_unavailable` warning，Snell 返回 `snell_standard_uri_unavailable` warning；仅在受信任上下文使用，并沿用与 `nodes` 相同的全有或全无清单门禁。Hysteria2 手动 Ed25519 证书会附带稳定的 `warnings[].code`，提示分享链接无法表达 1.14+ 客户端兼容开关。
+- `nodes`：输出所有协议的安全摘要；REALITY、Mixed、SOCKS、HTTP、Shadowsocks、Trojan、VMess、Hysteria2、AnyTLS、Snell 和 TUIC 均逐实例输出，`instance_revision` 可用于下一次 CAS 写入；不包含 UUID、密钥、完整分享链接或密码，适合写入普通诊断日志。实例清单、状态与 live 入站不完整时不输出部分节点。
+- `links`：逐协议、逐 REALITY/Mixed/SOCKS/HTTP/Shadowsocks/Trojan/VMess/Hysteria2/AnyTLS/Snell/TUIC 实例输出完整连接材料，包括 VLESS/VMess/Hysteria2 分享链接、Mixed/SOCKS 链接，以及 AnyTLS/Snell/TUIC outbound JSON；AnyTLS、Snell、TUIC 分别返回 `anytls_standard_uri_unavailable`、`snell_standard_uri_unavailable`、`tuic_standard_uri_unavailable` warning；仅在受信任上下文使用，并沿用与 `nodes` 相同的全有或全无清单门禁。Hysteria2 手动 Ed25519 证书会附带稳定的 `warnings[].code`，提示分享链接无法表达 1.14+ 客户端兼容开关。
 - `warp`：输出 Cloudflare Warp 状态（启用/路由模式/账户/自定义域名规则集统计），安全用于日常诊断。
-- `export-client`：生成并通过 `sing-box check` 校验裸核客户端配置，写入 `/root/sing-box-vps/client/sing-box-client.json`，覆盖前创建 `.bak` 备份，同时以 JSON 返回路径和配置内容。对 1.14+ Hysteria2 Ed25519 节点会自动设置顶层 `disable_chrome_parrot: true` 并返回结构化 warning。包含 Mixed 或独立 SOCKS 时逐实例导出为 SOCKS5 + UoT v2，并返回明文传输 warning；Trojan/VMess/普通 VLESS/AnyTLS/Snell 按用户完整导出传输与明确的证书信任方式，不读取服务端私钥，不自动关闭验证。VMess URI 与客户端 JSON 均保留 V2Ray `security`、`alter_id` 和 typed transport；AnyTLS 与 Snell 无标准 URI，使用完整 outbound JSON。
+- `export-client`：生成并通过 `sing-box check` 校验裸核客户端配置，写入 `/root/sing-box-vps/client/sing-box-client.json`，覆盖前创建 `.bak` 备份，同时以 JSON 返回路径和配置内容。对 1.14+ Hysteria2 Ed25519 节点会自动设置顶层 `disable_chrome_parrot: true` 并返回结构化 warning。包含 Mixed 或独立 SOCKS 时逐实例导出为 SOCKS5 + UoT v2，并返回明文传输 warning；Trojan/VMess/普通 VLESS/AnyTLS/Snell/TUIC 按用户完整导出传输与明确的证书信任方式，不读取服务端私钥，不自动关闭验证。VMess URI 与客户端 JSON 均保留 V2Ray `security`、`alter_id` 和 typed transport；AnyTLS、Snell 与 TUIC 无标准 URI，使用完整 outbound JSON。
 - `check`：执行 `sing-box check` 校验服务端配置，并返回 stdout、stderr、退出码和是否通过。
 - `doctor`：输出只读诊断报告，包含服务状态、路径存在性、协议状态和嵌入的配置校验结果。
 - `service restart`：必须显式传入 `--yes`，先校验配置，通过后才重启服务，并返回重启前后的服务状态。
-- `subman-sync`：非交互推送节点到 SubMan；配置缺失时返回结构化错误，不进入交互提示。API 失败时会在 `last_error` 返回稳定的 `code`、`disposition`、HTTP 状态与可用的 `Retry-After`，传输结果不确定时不会盲目重放写请求。 Hysteria2、Trojan 与 VMess 使用独立逐实例/用户路径，完整返回成功、跳过、失败计数及跳过原因；仅 TLS 系统信任且 URI 可无损表达的条目进入同步。
+- `subman-sync`：非交互推送节点到 SubMan；配置缺失时返回结构化错误，不进入交互提示。API 失败时会在 `last_error` 返回稳定的 `code`、`disposition`、HTTP 状态与可用的 `Retry-After`，传输结果不确定时不会盲目重放写请求。 Hysteria2、Trojan 与 VMess 使用独立逐实例/用户路径，TUIC、AnyTLS、Snell 明确跳过并返回原因；仅 TLS 系统信任且 URI 可无损表达的条目进入同步。
 - `instance`：管理 Mixed schema 2 实例。`migrate` 显式把 legacy schema 1 转成 revision 1；`create`/`replace`/`delete`/`default` 使用 `--expected-revision` 做 CAS，凭据通过私有文件输入；删除最后一个实例后移除 active `mixed.env`、索引项和 Mixed inbound，但仍保留空的 JSON store（`schema_version: 1`）作为 revision tombstone，下一次 `create` 必须以该 revision 继续递增，不会重置为 0；`recover` 只处理可验证的未完成事务，缺少防火墙 journal 时失败并要求人工恢复。非回环地址必须显式传 `--allow-public`，并由调用方承担明文暴露风险。首次全新安装仍写 legacy schema 1，直到显式迁移。
 - `instance <operation> socks`：使用 `create`/`replace`/`delete`/`default`/`recover`、`--expected-revision`、typed record、共享事务和回滚边界管理独立 SOCKS；记录只表达 SOCKS 入站的监听/认证，不含 HTTP 或 TLS。`migrate socks` 明确返回 invalid arguments；已有 live SOCKS 配置应使用 takeover，不把 legacy `.env` migration 语义套到该预设。六项回归、两核心 check/runtime、菜单和最终 Docker/TCP 门禁已通过，但不应从注册表存在推断为全协议目标完成。
 - `instance <operation> http`：操作与 SOCKS 相同，但完整记录必须包含 `tls: {enabled:false}` 或手工 TLS 的 `enabled/server_name/certificate_path/key_path`。非回环写入须显式 `--allow-public`，无 legacy migration。记录示例与限制见 [Agent Runbook](docs/agents/sing-box-vps-agent-runbook.md)。HTTP TLS 节点的 `shareable=false`、`client_exportable=true`，不将空链接视为可用 URI。
@@ -243,6 +248,7 @@ sbv update sing-box 1.14.0
 - `instance <operation> anytls`：支持 `create`/`replace`/`delete`/`default`/`recover` 与 revision CAS，拒绝 `migrate`；记录包含 1–128 个唯一用户名/密码、必需手工 TLS 证书路径、server name、客户端 `certificate`/`system` 信任和出站策略。AnyTLS 没有标准分享 URI，`links` 返回凭据 outbound JSON 与 `anytls_standard_uri_unavailable` warning；`nodes` 不返回密码。legacy AnyTLS 的 ACME/provider 配置不自动迁移到 typed store，接管会拒绝无法无损表达的字段；完整边界见 [AnyTLS 契约](docs/agents/sing-box-vps-agent-runbook.md#anytls-typed-instance-contract)。
 - `instance <operation> hy2`：支持 `create`/`replace`/`delete`/`default`/`recover` 与 revision CAS，拒绝 `migrate`；记录包含 1–128 个唯一用户名/密码、必需手工 TLS、`certificate`/`system` 客户端信任、可独立设置的 `up_mbps`/`down_mbps`、Salamander obfs、masquerade 和出站策略。legacy Hysteria2 的 ACME/provider 配置不自动扁平化；标准 Hysteria2 URI 按用户生成，证书信任、URI 大小、带宽/masquerade 和 Ed25519 客户端开关均返回结构化 warning；完整边界见 [Hysteria2 契约](docs/agents/sing-box-vps-agent-runbook.md#hysteria2-typed-instance-contract)。
 - `instance <operation> snell`：支持 `create`/`replace`/`delete`/`default`/`recover` 与 revision CAS，拒绝 `migrate`；记录包含版本 `5`/`6`、PSK、0–128 个唯一用户 key、v5 `none/http` obfs（HTTP host 作为客户端元数据）或 v6 `default/unshaped/unsafe-raw` shaping。Snell listener 固定 TCP，UDP 业务依赖 packet API；客户端导出逐用户保留 outbound JSON，`links` 返回 `snell_standard_uri_unavailable`，不执行 SubMan 同步。完整边界见 [Snell 契约](docs/agents/sing-box-vps-agent-runbook.md#snell-typed-instance-contract)。
+- `instance <operation> tuic`：支持 `create`/`replace`/`delete`/`default`/`recover` 与 revision CAS，拒绝 `migrate`；记录包含 1–128 个 UUID/密码用户、手工证书 TLS、客户端 `certificate`/`system` 信任、拥塞控制、auth timeout、heartbeat 和 zero-rtt。服务端是 QUIC/UDP 入站，`udp_relay_mode` (`native`/`quic`) 与 `udp_over_stream` 只在客户端出站生效，不会写入入站。客户端按用户输出完整 TUIC outbound JSON，`links` 返回 `tuic_standard_uri_unavailable`，不执行 SubMan 同步。完整边界见 [TUIC 契约](docs/agents/sing-box-vps-agent-runbook.md#tuic-typed-instance-contract)。
 - `update sbv`：从 GitHub 更新 `/usr/local/bin/sbv` 管理脚本；别名为 `sbv update-sbv`。
 - `update sing-box [latest|x.y.z]`：普通运维更新入口，逐字节保留现有配置，目标核心校验通过后才重启服务，失败明确返回非零；别名为 `sbv update-sing-box [latest|x.y.z]`。自动化升级优先使用上面的固定版本 `agent upgrade`。
 
@@ -294,7 +300,7 @@ Agent/Hermes 文档入口：
 
 Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码，避免 `@`、`#`、`%`、空格或换行改变链接结构；服务端凭据保持不变。HTTP Basic 无法表达含冒号的用户名或含 ASCII 控制字符的认证：此时 Mixed 的 Agent `links` 只提供 SOCKS5，并返回 `mixed_http_auth_unrepresentable`，不生成不可用的 HTTP 链接。SOCKS5 URI 不携带 UoT v2 等客户端选项，返回 `socks5_uri_transport_options_omitted`；需要完整配置时使用 `export-client` JSON。百分号编码不是加密，链接仍是敏感材料。
 
-1. **安装新协议**：首次安装或向现有实例追加 VLESS REALITY、Mixed、独立 SOCKS、独立 HTTP、Shadowsocks、Trojan、VMess、Hysteria2、AnyTLS、Snell；协议选择注册表第 5 项为 SOCKS，第 6 项为 HTTP，第 9 项为 VMess，第 11 项为 Snell。
+1. **安装新协议**：首次安装或向现有实例追加 VLESS REALITY、Mixed、独立 SOCKS、独立 HTTP、Shadowsocks、Trojan、VMess、Hysteria2、AnyTLS、Snell、TUIC；协议选择注册表第 5 项为 SOCKS，第 6 项为 HTTP，第 9 项为 VMess，第 11 项为 Snell，第 12 项为 TUIC。
 2. **修改已安装协议配置**：只修改选中的协议/REALITY 实例，并重建、校验整体配置。
 3. **移除已安装协议**：移除指定协议或 REALITY 实例；存在多个 REALITY 实例时会明确询问“单实例”或“整个 VLESS 协议”，并同步清理 QoS 与已移除端口的防火墙放行。
 4. **更新 sing-box 版本**：保留配置的核心更新；目标 `sing-box check` 通过才重启。
@@ -320,6 +326,7 @@ Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码
 24. **管理 AnyTLS 实例**：逐实例创建、修改、删除、设置默认和恢复；显式管理多用户、手工 TLS 证书和客户端信任，使用共享 CAS 事务。legacy AnyTLS 仍沿用原 ACME/provider 更新路径，不自动扁平化迁移。
 25. **管理 Hysteria2 实例**：逐实例创建、修改、删除、设置默认和恢复；显式管理多用户、手工 TLS、带宽、Salamander obfs、masquerade 与客户端信任。legacy Hysteria2 仍沿用原 ACME/provider 更新路径，不自动扁平化迁移。
 26. **管理 Snell 实例**：逐实例创建、修改、删除、设置默认和恢复；显式管理 Snell v5/v6、PSK、用户 key、v5 HTTP obfs 或 v6 shaping。Snell 仅输出完整 outbound JSON，不生成标准分享 URI，也不执行 SubMan 同步。
+27. **管理 TUIC 实例**：逐实例创建、修改、删除、设置默认和恢复；显式管理 UUID/密码用户、手工证书 TLS、拥塞控制、auth timeout、heartbeat、zero-rtt，以及仅客户端出站使用的 relay/udp-over-stream。TUIC 仅输出完整 outbound JSON，不生成标准分享 URI，也不执行 SubMan 同步。
 
 当脚本发现二进制、service、配置或协议状态层不完整时，会进入接管/修复流程，而不是把残缺实例直接当作全新安装覆盖。
 
@@ -331,12 +338,13 @@ Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码
 - **最后协议删除前的索引备份**: `/root/sing-box-vps/protocols/index.env.bak`
 - **协议状态目录**: `/root/sing-box-vps/protocols/`
 - **密钥文件**: `/root/sing-box-vps/reality.key` (REALITY) / `warp.key` (Warp)
-- **协议状态文件**: `vless-reality.env` / `vless-reality.d/` / `mixed.env` / `instances/mixed.json` / `socks.env` / `instances/socks.json` / `http.env` / `instances/http.json` / `shadowsocks.env` / `instances/shadowsocks.json` / `trojan.env` / `instances/trojan.json` / `vmess.env` / `instances/vmess.json` / `vless-plain.env` / `instances/vless-plain.json` / `hy2.env` / `anytls.env` / `instances/anytls.json` / `snell.env` / `instances/snell.json`
+- **协议状态文件**: `vless-reality.env` / `vless-reality.d/` / `mixed.env` / `instances/mixed.json` / `socks.env` / `instances/socks.json` / `http.env` / `instances/http.json` / `shadowsocks.env` / `instances/shadowsocks.json` / `trojan.env` / `instances/trojan.json` / `vmess.env` / `instances/vmess.json` / `vless-plain.env` / `instances/vless-plain.json` / `hy2.env` / `anytls.env` / `instances/anytls.json` / `snell.env` / `instances/snell.json` / `tuic.env` / `instances/tuic.json`
 - **Trojan 结构化实例状态**: `/root/sing-box-vps/protocols/instances/trojan.json`（schema 1 store，`trojan.env` 为 schema 2 active marker）
 - **VMess 结构化实例状态**: `/root/sing-box-vps/protocols/instances/vmess.json`（schema 1 store，`vmess.env` 为 schema 2 active marker）
 - **AnyTLS 结构化实例状态**: `/root/sing-box-vps/protocols/instances/anytls.json`（schema 1 store，`anytls.env` 为 schema 2 active marker；仅保留手工 TLS，无法无损接管 ACME/provider）
 - **Hysteria2 结构化实例状态**: `/root/sing-box-vps/protocols/instances/hy2.json`（schema 1 store，`hy2.env` 为 schema 2 active marker；手工 TLS 多实例记录保留用户、带宽、obfs、masquerade；legacy ACME/provider 仍保留原状态）
 - **Snell 结构化实例状态**: `/root/sing-box-vps/protocols/instances/snell.json`（schema 1 store，`snell.env` 为 schema 2 active marker；记录版本、PSK、用户 key、v5 obfs 或 v6 shaping；无标准 URI/SubMan 同步）
+- **TUIC 结构化实例状态**: `/root/sing-box-vps/protocols/instances/tuic.json`（schema 1 store，`tuic.env` 为 schema 2 active marker；记录 UUID/密码用户、手工 TLS、QUIC 参数与客户端出站 relay/udp-over-stream；无标准 URI/SubMan 同步）
 - **Mixed 结构化实例状态**: `/root/sing-box-vps/protocols/instances/mixed.json`（显式迁移或实例写入后启用）
 - **Mixed 事务恢复材料**: `/root/sing-box-vps.instance-write.lock`、`/root/sing-box-vps.instance-transactions/`
 - **REALITY QoS 状态**: `/root/sing-box-vps/reality-qos.filters`
