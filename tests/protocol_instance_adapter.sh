@@ -70,6 +70,33 @@ load_protocol_instance_state http main
 [[ "${SB_MIXED_AUTH_ENABLED}" == y && "${SB_MIXED_USERNAME}" == http-user ]]
 jq -e '.enabled == false' <<< "${SB_HTTP_TLS_JSON}" >/dev/null
 assert_rejected_without_output load_protocol_instance_state http other
+printf '%s\n' 'INSTALLED=1' 'CONFIG_SCHEMA_VERSION=2' > "${SB_PROTOCOL_STATE_DIR}/shadowsocks.env"
+jq -n '
+  {
+    schema_version: 1,
+    protocol: "shadowsocks",
+    revision: 0,
+    default_instance_id: "main",
+    instances: [{
+      id: "main",
+      name: "Shadowsocks adapter",
+      tag: "ss-in",
+      listen: {address: "127.0.0.1", port: 8445, network: ["tcp", "udp"]},
+      authentication: {method: "aes-256-gcm", password: "ss-password", users: []},
+      outbound_policy: "default",
+      dependencies: []
+    }]
+  }
+' > "${SB_PROTOCOL_STATE_DIR}/instances/shadowsocks.json"
+[[ "$(list_protocol_instance_ids ss)" == main ]]
+[[ "$(protocol_default_instance_id ss)" == main ]]
+load_protocol_instance_state ss main
+[[ "${SB_PROTOCOL}" == shadowsocks && "${SB_INSTANCE_ID}" == main ]]
+[[ "${SB_MIXED_LISTEN_ADDRESS}" == 127.0.0.1 && "${SB_PORT}" == 8445 ]]
+jq -e '.method == "aes-256-gcm" and .password == "ss-password" and (.users | length) == 0' \
+  <<< "${SB_SHADOWSOCKS_AUTH_JSON}" >/dev/null
+[[ "${SB_SHADOWSOCKS_NETWORK_JSON}" == '["tcp","udp"]' ]]
+assert_rejected_without_output load_protocol_instance_state shadowsocks other
 before_hash=$(tree_hash)
 for protocol in mixed hy2 hysteria2 anytls; do
   [[ "$(list_protocol_instance_ids "${protocol}")" == main ]]

@@ -4,10 +4,11 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026090801`
+- 脚本版本：`2026090802`
 
-监听资源计划支持适配器显式声明的实例级 TCP/UDP 选择；未声明或无效的网络字段会阻止变更。该基础能力不代表新增 Shadowsocks 预设已可部署，当前可管理协议仍为下列六种。
 - sing-box 适配版本：`1.14.0`
+
+Shadowsocks 为第七个入站预设，支持实例级 TCP/UDP 选择；未声明或无效的网络字段会阻止变更。全协议目标仍在推进，不能由当前预设推断其他上游协议已接入。
 
 ## 🚀 一键安装
 
@@ -105,13 +106,15 @@ Mixed 已接入结构化实例状态（schema 2）和完整的实例管理链路
 
 服务端候选和结构化状态现在共用固定监听资源预检：区分 TCP/UDP，识别 IPv4 通配、IPv6 等价地址和双栈重叠；冲突时保留原配置。防火墙开放取自完整已发布配置的实际监听传输；删除根据旧配置备份和剩余入站保护仍被引用的规则，不再同时操作无关 TCP/UDP。Mixed 实例事务初次创建也先在目标同目录 staging 后原子发布，并为文件/config、受管 UFW/iptables/ip6tables 规则和服务恢复保存持久 journal/result；同时以共享 `flock` 串行化管理写入。firewalld 仅作只读外部预检，禁止在事务中 add/delete/reload，缺少所需 allow 或既有归属账本时会在变更前失败并要求人工规则。故障时不把文件恢复冒充为外部防火墙已恢复。全量删除必须先确认服务已停止；清单缺失或无法解释时拒绝清理。后端失败返回非零并明确披露已提交配置、尚未执行重启或可能存在的部分外部变更。这仍不是完整防火墙归属账本或系统资源事务，不追溯删除未归属的历史宽规则，也不检查其他进程抢占端口、动态 UDP relay 和 ACME 临时监听。
 
-全协议改造按[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)推进；[上游能力矩阵](docs/superpowers/specs/2026-09-06-protocol-coverage.md)区分上游支持与项目已实现能力。当前运行时注册表位于独立分发的 `install.sh` 中，现有六个入站预设的菜单编号、公开 ID、导出候选、SubMan 类型和验证器元数据均从这里读取。未知索引/状态版本或生成器返回的无效片段会阻断重建并保留原文件。现有配置的入站清单也会全量预检：未知类型、非 REALITY 的 VLESS、重复的单实例协议和重复显式 tag 会阻断自动重建/接管，不再仅识别第一个受支持入站。Agent 的 `status`、`nodes`、`links` 还要求索引、基础状态和 live 协议集合完全对应；REALITY 的旧状态必须包含完整连接字段，多实例状态的清单、文件名、内部 ID 和 inbound tag 必须与 live VLESS 集合一一对应，否则只返回结构化错误而不输出部分结果。服务端与客户端候选还会检查组件 tag、引用和显式依赖环，然后继续执行目标核心 `check`；这些检查尚不覆盖任意外部配置的字段及出站/端点/路由无损接管，也不表示新增协议已完成。
+全协议改造按[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)推进；[上游能力矩阵](docs/superpowers/specs/2026-09-06-protocol-coverage.md)区分上游支持与项目已实现能力。当前运行时注册表位于独立分发的 `install.sh` 中，现有七个入站预设的菜单编号、公开 ID、导出候选、SubMan 类型和验证器元数据均从这里读取。未知索引/状态版本或生成器返回的无效片段会阻断重建并保留原文件。现有配置的入站清单也会全量预检：未知类型、非 REALITY 的 VLESS、重复的单实例协议和重复显式 tag 会阻断自动重建/接管，不再仅识别第一个受支持入站。Agent 的 `status`、`nodes`、`links` 还要求索引、基础状态和 live 协议集合完全对应；REALITY 的旧状态必须包含完整连接字段，多实例状态的清单、文件名、内部 ID 和 inbound tag 必须与 live VLESS 集合一一对应，否则只返回结构化错误而不输出部分结果。服务端与客户端候选还会检查组件 tag、引用和显式依赖环，然后继续执行目标核心 `check`；这些检查尚不覆盖任意外部配置的字段及出站/端点/路由无损接管，也不表示新增协议已完成。
 
 ```bash
 bash dev/verification/run.sh
 ```
 
 独立 SOCKS（协议注册表第 5 项、安装选择菜单 5）已纳入最终门禁并通过：使用 `socks` 入站和 active `CONFIG_SCHEMA_VERSION=2` marker 配合 JSON `schema_version: 1` typed store，沿用与 Mixed 相同的认证记录、实例 ID/tag、监听与 revision CAS。它只提供 SOCKS4/4a/5 代理入口，不提供 HTTP 或 TLS；客户端导出使用 SOCKS5 outbound 和 UoT v2。Agent 实例接口为 `create`、`replace`、`delete`、`default`、`recover`，命令形式与 Mixed 相同但协议参数为 `socks`；`migrate socks` 明确拒绝，已有 live SOCKS 配置应走 takeover。六项回归、两核心 runtime/check、菜单及最终验证框架已通过；完整协议目标仍未完成。详细证据见[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)。
+
+Shadowsocks 增量已通过最终源码的 12/12 Docker 场景、18/18 TCP 探针，以及原生 Bash / 实际 Bash 4.2 × 1.13.18 / 1.14.0 的四组回环业务测试（每组 7 TCP、7 UDP）。九种方法均通过核心配置检查，不把 check 等同于所有方法的业务实测。SubMan 仅有 mock 证据；公网 UDP 和生产部署未验证。本地回归的首次失败、修复与分阶段重跑范围见[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)。
 
 只想验证本地调度与触发规则时，可运行：
 
@@ -124,7 +127,7 @@ VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh
 默认工作流已做分层优化：
 - 核心脚本改动默认只跑协议探测快测
 - 仅在改动 `dev/verification/run.sh`、`dev/verification/common.sh` 或 `dev/verification/remote/` 时，才追加远程调度与远程框架回归
-- 远程验证默认优先收敛到 `runtime_smoke`；安装/重配相关改动会扩到全新安装、接管、重配、六协议共存，以及真实的 `upgrade_1_13_to_1_14` 成功升级和 `upgrade_rollback_1_13_to_1_14` 故障回滚场景；独立 SOCKS 与 HTTP 共存均纳入门禁。
+- 远程验证默认优先收敛到 `runtime_smoke`；安装/重配相关改动会扩到全新安装、接管、重配、七协议共存，以及真实的 `upgrade_1_13_to_1_14` 成功升级和 `upgrade_rollback_1_13_to_1_14` 故障回滚场景；独立 SOCKS、HTTP 与 Shadowsocks 共存均纳入门禁。
 
 命中远程验证时，测试机会额外执行协议级闭环探测：先用目标 `sing-box` 校验客户端配置，再启动临时客户端连接本机服务端入站，并通过客户端 SOCKS 代理访问本机 HTTP 标记服务。HTTP 增量已通过 75 项本地门禁，修正测试断言后全量 Docker 重跑为 11/11 场景、16/16 TCP 探测成功，覆盖六个入站预设共存。HTTP TLS 另以 1.13.18/1.14.0 与实际 Bash 4.2 完成本地正反向连接测试。SOCKS UoT 的 UDP 证据限于回环测试，不代表公网原生 UDP 可达。未知协议会在产物中标记为 `unsupported`。详细命令、失败记录、重跑范围与证据见[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)。
 
@@ -150,7 +153,7 @@ sbv
 - **1.14.x 深度适配**：继续采用 **Endpoint（端点化）** 架构，并适配顶层 ACME `certificate_providers`、远程规则集 `http_client` 与 Hysteria2 `disable_chrome_parrot`。
 - **跨版本配置生成**：目标核心为 1.14+ 时生成新版配置结构；显式固定或运行 1.13.x 时继续生成内联 `tls.acme` 与旧版远程规则集结构。接管或重建时会保留可内联表达的 ACME 扩展字段；若 provider 引用了无法独立保留的共享 `http_client`，脚本会拒绝重写。仅更新二进制时不会重写现有配置。
 - **可审计升级**：`upgrade-check` 会报告实例健康度、当前配置校验、配置 SHA-256、1.14 已知弃用项和阻断原因；`upgrade` 只接受固定版本与 `--yes`，先在 `/root/sing-box-vps-backups/` 创建 root-only 备份，并原子维护 `transaction-result.json`（事务 ID、旧/新版本、状态历史、manifest hash 与回滚结果）。目标核心校验失败时尝试恢复旧二进制并返回非零；若恢复未通过最终校验，会明确返回 `rollback_failed` 和人工介入标记。
-- **多协议支持**：支持 **VLESS + REALITY**、**Mixed (HTTP/HTTPS/SOCKS)**、**独立 SOCKS**、**独立 HTTP（可选入口 TLS）**、**Hysteria2** 与 **AnyTLS** 六种入站预设。已有服务新增 HTTP 时单独进入共享实例事务，不与其他协议合并追加；全协议目标仍未完成。
+- **多协议支持**：支持 **VLESS + REALITY**、**Mixed (HTTP/HTTPS/SOCKS)**、**独立 SOCKS**、**独立 HTTP（可选入口 TLS）**、**Shadowsocks**、**Hysteria2** 与 **AnyTLS** 七种入站预设。已有服务新增 HTTP 或 Shadowsocks 时单独进入共享实例事务，不与其他协议合并追加；全协议目标仍未完成。
 - **Mixed 多实例管理**：schema 2 支持多个稳定 ID/tag、独立监听地址/端口、独立认证和默认实例；Agent 提供 `create`、`replace`、`delete`、`default`、`migrate`、`recover`，交互菜单 17 提供逐实例管理。非回环明文监听需要显式公网暴露确认；跨协议批量删除会拒绝并要求逐实例处理 Mixed。
 - **VLESS REALITY 多实例**：可在安装菜单追加多个 REALITY 实例，每个实例拥有独立端口、ShortID、节点名称、可选上下行限速和实例级出站策略；节点展示和 SubMan 同步会逐实例输出。
 - **REALITY QoS 限速**：为设置了上下行 Mbps 的 REALITY 实例自动规划并应用 `tc` 端口级限速规则，重建配置、更新协议或移除实例时会同步刷新规则，避免遗留过滤器影响新配置。
@@ -165,11 +168,12 @@ sbv
 - **Mixed 防火墙事务**：启用 UFW 时仅通过 UFW 管理归属规则；没有活动防火墙前端时才直接管理 `iptables`/`ip6tables`。firewalld 仅执行只读外部预检，不由实例事务 add/delete/reload；UFW 与 firewalld 同时活动或已有账本与当前后端冲突时拒绝写入，要求人工处理。
 - **工业级配置生成**：采用 **`jq` 安全注入** 模式生成 JSON，彻底规避特殊字符导致的转义错误。
 - **协议级展示**：终端可按协议查看节点信息，支持 `VLESS` 与 `Hysteria2` 链接/ANSI 二维码展示，为 `Mixed` 和独立 `SOCKS` 输出代理链接与二维码提示，并为 `AnyTLS` 输出参数摘要和 sing-box outbound JSON 示例；多 REALITY、Mixed、SOCKS 实例会显示实例 ID、端口和限速摘要。
-- **裸核客户端导出**：可从交互菜单或 `sbv agent export-client --json` 生成 `/root/sing-box-vps/client/sing-box-client.json`，支持当前六个预设，覆盖前自动备份，并在输出前执行 `sing-box check`。Mixed 和独立 SOCKS 使用 SOCKS5 outbound 与 UoT v2，保留既有认证设置；缺失或无效的端口/认证字段会阻断整份导出，保留原导出及备份，不自动生成密码或降级认证。
+- **裸核客户端导出**：可从交互菜单或 `sbv agent export-client --json` 生成 `/root/sing-box-vps/client/sing-box-client.json`，支持当前七个预设，覆盖前自动备份，并在输出前执行 `sing-box check`。Mixed 和独立 SOCKS 使用 SOCKS5 outbound 与 UoT v2，保留既有认证设置；缺失或无效的端口/认证字段会阻断整份导出，保留原导出及备份，不自动生成密码或降级认证。
 - **Mixed 安全边界**：Mixed 服务端和其导出的 SOCKS5/UoT 链路不提供 TLS；公网明文监听必须经过单独确认，不能把它当作独立的 TLS SOCKS 服务端。Mixed 当前也不新增 SubMan 同步能力。
 - **独立 SOCKS（已验证边界）**：注册表菜单项 5 使用 `socks` state/Agent ID，active marker 为 schema 2、JSON store 为 `schema_version: 1`，支持同认证 typed record、共享事务与实例级 CAS；服务端无 HTTP/TLS，客户端导出为 SOCKS5 + UoT v2。六项回归、两核心 check/runtime、菜单和最终 Docker/TCP 门禁均已通过；这不等于 TLS、HTTP、SubMan 或全协议目标已完成。证据见[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)。
 - **独立 HTTP**：菜单项 6、管理菜单 19，使用 `http` state/Agent ID 与 schema 2 共享实例事务。默认回环监听并启用认证，可选择明文或手工证书 TLS；证书文件由用户维护，实例操作不申请或删除它们。客户端导出为 TCP-only HTTP CONNECT；TLS 导出仅嵌入公开证书信任与 SNI，不读取私钥。明文 URI 返回 `http_plaintext_transport`；TLS 无可保真 URI，返回 `http_tls_uri_unrepresentable` 并使用完整 JSON。访问 HTTPS 目标不等于代理入口已加密；不支持 HTTP SubMan 同步。
-- **SubMan 同步**：按 SubMan OpenAPI 1.0.0 契约将当前 VPS 的 VLESS / Hysteria2 节点幂等推送到节点库；仅在 Workspace 已远端提交并回读验证后报告成功，并识别 revision、稳定错误分类和安全重试提示。
+- **Shadowsocks**：安装菜单 7、管理菜单 20，协议 ID `shadowsocks`（别名 `ss`），使用 schema 2 marker 与 schema 1 JSON 实例库。支持九种入站方法、可用方法的多用户、实例出站策略和 TCP/UDP 独立选择；默认回环监听，非回环写入需确认。`none` 是明文，2022 ChaCha 不支持多用户；不接管未建模的 relay、mux 或 plugin。完整 JSON 保留网络限制；SIP002 无法表达单网络限制时返回 warning。长 2022 PSK 在客户端按核心规则派生等效定长密钥，原始状态不变。
+- **SubMan 同步**：按 SubMan OpenAPI 1.0.0 契约将 VLESS / Hysteria2 和双网络加密 Shadowsocks 节点幂等推送到节点库；SS 按实例/用户使用稳定外部键，从同一快照生成身份与凭据，单网络条目和当前 SubMan 解析器不接受的 `none` 空密码条目明确跳过。仅在 Workspace 已远端提交并回读验证后报告成功，并识别 revision、稳定错误分类和安全重试提示。SS 集成测试使用 mock，不代表已授权或执行真实同步。
 - **规范存储**：统一使用 `/root/sing-box-vps/` 存放配置、密钥及持久化参数。
 
 ## Agent 非交互命令
@@ -205,12 +209,12 @@ sbv update sing-box latest
 sbv update sing-box 1.14.0
 ```
 
-- `capabilities`：输出六种协议、历史功能入口与 `mutation` / `sensitive` / 确认要求，Agent 应先据此选择操作。新增的 `protocol_registry` 提供 family、preset、role、内部/公开 ID、能力和验证方法；独立 SOCKS 的实现与生命周期已由最终门禁验证，但不应解读为全协议目标完成。`available=null` 与 `validated.status=not_assessed` 表示尚未对当前实例做环境预检和连接验证，不应解读为可部署或测试通过。
+- `capabilities`：输出七种协议、历史功能入口与 `mutation` / `sensitive` / 确认要求，Agent 应先据此选择操作。新增的 `protocol_registry` 提供 family、preset、role、内部/公开 ID、能力和验证方法；独立 SOCKS 的实现与生命周期已由最终门禁验证，但不应解读为全协议目标完成。`available=null` 与 `validated.status=not_assessed` 表示尚未对当前实例做环境预检和连接验证，不应解读为可部署或测试通过。
 - `upgrade-check`：只读检查固定目标版本的升级资格，返回 `ready`、`blockers[]`、当前核心校验、配置 hash、已知弃用项和兼容性 warning；不会协调或迁移协议状态，也不下载目标二进制，真正的目标版本 `sing-box check` 在 `upgrade` 替换服务进程前执行。
 - `upgrade`：必须使用完整版本号和 `--yes`。创建持久备份后只替换核心二进制，逐字节保留服务端配置；备份清单覆盖全部普通 runtime 文件及 binary、`sbv`、service unit、metadata。每次实际变更返回 `transaction.id`、`transaction.result_path` 和 `transaction.result_persisted`，并在备份目录原子写入权限 `0600` 的 `transaction-result.json`。实际变更只有 `result_persisted=true` 才可接受事务状态；若目标版本已经安装，则返回 `changed=false`、`transaction.status=not_attempted`、`reason=already_installed`，且不会创建备份或事务文件。目标校验、版本、配置 hash 或服务状态不符合预期时尝试自动恢复旧二进制、意外变化的配置和升级前服务活动状态，返回非零与结构化回滚结果。仅当 `rolled_back=true` 且 `rollback_ok=true` 时才可视为自动恢复完成；`error=rollback_failed` 时必须停止并人工处理。
 - `status`：输出脚本/核心/服务/路径/已安装协议，并包含入站与出站栈、BBR、REALITY 实例与 QoS 计数，以及客户端导出/SubMan 是否已配置；不返回凭据。索引、状态或 live 入站集合无法完整对应时返回非零及 `protocol_index_untrusted` / `protocol_state_untrusted`，不报告部分协议。
-- `nodes`：输出所有协议的安全摘要；REALITY、Mixed、SOCKS 和 HTTP 均逐实例输出，`instance_revision` 可用于下一次 CAS 写入；不包含 UUID、密钥、完整分享链接或密码，适合写入普通诊断日志。实例清单、状态与 live 入站不完整时不输出部分节点。
-- `links`：逐协议、逐 REALITY/Mixed/SOCKS/HTTP 实例输出完整连接材料，包括 VLESS/Hysteria2 分享链接、Mixed/SOCKS 链接，以及 AnyTLS outbound JSON；仅在受信任上下文使用，并沿用与 `nodes` 相同的全有或全无清单门禁。Hysteria2 手动 Ed25519 证书会附带稳定的 `warnings[].code`，提示分享链接无法表达 1.14+ 客户端兼容开关。
+- `nodes`：输出所有协议的安全摘要；REALITY、Mixed、SOCKS、HTTP 和 Shadowsocks 均逐实例输出，`instance_revision` 可用于下一次 CAS 写入；不包含 UUID、密钥、完整分享链接或密码，适合写入普通诊断日志。实例清单、状态与 live 入站不完整时不输出部分节点。
+- `links`：逐协议、逐 REALITY/Mixed/SOCKS/HTTP/Shadowsocks 实例输出完整连接材料，包括 VLESS/Hysteria2 分享链接、Mixed/SOCKS 链接，以及 AnyTLS outbound JSON；仅在受信任上下文使用，并沿用与 `nodes` 相同的全有或全无清单门禁。Hysteria2 手动 Ed25519 证书会附带稳定的 `warnings[].code`，提示分享链接无法表达 1.14+ 客户端兼容开关。
 - `warp`：输出 Cloudflare Warp 状态（启用/路由模式/账户/自定义域名规则集统计），安全用于日常诊断。
 - `export-client`：生成并通过 `sing-box check` 校验裸核客户端配置，写入 `/root/sing-box-vps/client/sing-box-client.json`，覆盖前创建 `.bak` 备份，同时以 JSON 返回路径和配置内容。对 1.14+ Hysteria2 Ed25519 节点会自动设置顶层 `disable_chrome_parrot: true` 并返回结构化 warning。包含 Mixed 或独立 SOCKS 时逐实例导出为 SOCKS5 + UoT v2，并返回明文传输 warning；独立 SOCKS 导出已在最终门禁验证，但不表示 TLS、HTTP 或新增 SubMan 同步。
 - `check`：执行 `sing-box check` 校验服务端配置，并返回 stdout、stderr、退出码和是否通过。
@@ -220,6 +224,7 @@ sbv update sing-box 1.14.0
 - `instance`：管理 Mixed schema 2 实例。`migrate` 显式把 legacy schema 1 转成 revision 1；`create`/`replace`/`delete`/`default` 使用 `--expected-revision` 做 CAS，凭据通过私有文件输入；删除最后一个实例后移除 active `mixed.env`、索引项和 Mixed inbound，但仍保留空的 JSON store（`schema_version: 1`）作为 revision tombstone，下一次 `create` 必须以该 revision 继续递增，不会重置为 0；`recover` 只处理可验证的未完成事务，缺少防火墙 journal 时失败并要求人工恢复。非回环地址必须显式传 `--allow-public`，并由调用方承担明文暴露风险。首次全新安装仍写 legacy schema 1，直到显式迁移。
 - `instance <operation> socks`：使用 `create`/`replace`/`delete`/`default`/`recover`、`--expected-revision`、typed record、共享事务和回滚边界管理独立 SOCKS；记录只表达 SOCKS 入站的监听/认证，不含 HTTP 或 TLS。`migrate socks` 明确返回 invalid arguments；已有 live SOCKS 配置应使用 takeover，不把 legacy `.env` migration 语义套到该预设。六项回归、两核心 check/runtime、菜单和最终 Docker/TCP 门禁已通过，但不应从注册表存在推断为全协议目标完成。
 - `instance <operation> http`：操作与 SOCKS 相同，但完整记录必须包含 `tls: {enabled:false}` 或手工 TLS 的 `enabled/server_name/certificate_path/key_path`。非回环写入须显式 `--allow-public`，无 legacy migration。记录示例与限制见 [Agent Runbook](docs/agents/sing-box-vps-agent-runbook.md)。HTTP TLS 节点的 `shareable=false`、`client_exportable=true`，不将空链接视为可用 URI。
+- `instance <operation> shadowsocks`：支持 `create`/`replace`/`delete`/`default`/`recover` 与 revision CAS，拒绝 `migrate`；记录包含 `listen.network` 和 `authentication`，完整示例见 [Agent Runbook](docs/agents/sing-box-vps-agent-runbook.md#shadowsocks-inbound)。`nodes` 不输出密钥；敏感的 `links` 返回逐用户 URI、outbounds 与限制 warning。
 - `update sbv`：从 GitHub 更新 `/usr/local/bin/sbv` 管理脚本；别名为 `sbv update-sbv`。
 - `update sing-box [latest|x.y.z]`：普通运维更新入口，逐字节保留现有配置，目标核心校验通过后才重启服务，失败明确返回非零；别名为 `sbv update-sing-box [latest|x.y.z]`。自动化升级优先使用上面的固定版本 `agent upgrade`。
 

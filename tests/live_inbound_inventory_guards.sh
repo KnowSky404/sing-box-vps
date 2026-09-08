@@ -20,7 +20,9 @@ write_fixture() {
   {"type":"mixed","tag":"mixed-in"},
   {"type":"hysteria2","tag":"hy2-in"},
   {"type":"anytls","tag":"anytls-in"},
-  {"type":"http","tag":"http-in","tls":{"enabled":false}}
+  {"type":"http","tag":"http-in","tls":{"enabled":false}},
+  {"type":"shadowsocks","tag":"ss-in","listen":"127.0.0.1","listen_port":1084,
+   "network":["tcp","udp"],"method":"aes-256-gcm","password":"SS-PASSWORD-DO-NOT-LOG"}
 ]}
 EOF
       ;;
@@ -28,8 +30,7 @@ EOF
       cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
 {"inbounds":[
   {"type":"mixed","tag":"mixed-in","listen":"127.0.0.1","listen_port":1080},
-  {"type":"shadowsocks","tag":"ss-in","listen":"127.0.0.1","listen_port":8388,
-   "method":"2022-blake3-aes-128-gcm","password":"MDEyMzQ1Njc4OWFiY2RlZg=="}
+  {"type":"trojan","tag":"unknown-in","listen":"127.0.0.1","listen_port":8388}
 ]}
 EOF
       ;;
@@ -110,7 +111,7 @@ chmod 755 "${SINGBOX_BIN_PATH}"
 printf '%s\n' '[Service]' > "${SINGBOX_SERVICE_FILE}"
 
 write_fixture managed
-[[ "$(list_config_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nhttp' ]]
+[[ "$(list_config_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nhttp\nshadowsocks' ]]
 validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}"
 [[ "$(normalize_protocol_id vless)" == "vless-reality" ]]
 

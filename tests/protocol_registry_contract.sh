@@ -14,11 +14,14 @@ source "${TEST_DIR}/install.sh"
 
 registry=$(protocol_registry_json)
 jq -e '
-  length == 6 and
-  ([.[].state_id] | unique | length == 6) and
-  ([.[].agent_id] | unique | length == 6) and
-  ([.[].menu_order] | sort == [1,2,3,4,5,6]) and
-  all(.[]; .implemented == true and .available == null and .validated.status == "not_assessed")
+  length == 7 and
+  ([.[].state_id] | unique | length == 7) and
+  ([.[].agent_id] | unique | length == 7) and
+  ([.[].menu_order] | sort == [1,2,3,4,5,6,7]) and
+  all(.[]; .implemented == true and .available == null and .validated.status == "not_assessed") and
+  any(.[]; .state_id == "shadowsocks" and
+    .features.listen_network_selection == true and
+    .legacy_capabilities.listen_network_selection == true)
 ' >/dev/null <<< "${registry}"
 capabilities=$(agent_capabilities_json)
 jq -e '
@@ -33,6 +36,9 @@ jq -e '
 jq -e --argjson registry "${registry}" '
   .protocols == ($registry | map({key: .agent_id, value: .legacy_capabilities}) | from_entries) and
   ([.protocol_registry[].capabilities] == [$registry[].legacy_capabilities]) and
+  any(.protocol_registry[]; .state_id == "shadowsocks" and
+    .features.listen_network_selection == true and
+    .capabilities.listen_network_selection == true) and
   .features.subman.supported_protocols == ($registry | map(select(.subman_type != "") | .agent_id))
 ' >/dev/null <<< "${capabilities}"
 
@@ -57,7 +63,7 @@ mkdir -p "${SB_PROTOCOL_STATE_DIR}"
 for protocol in $(list_registered_protocols); do
   protocol_registry_require_handlers "${protocol}"
   [[ "$(protocol_option_to_id "$(protocol_registry_field "${protocol}" menu_order)")" == "${protocol}" ]]
-  if [[ "${protocol}" == "socks" || "${protocol}" == "http" ]]; then
+  if [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" ]]; then
     printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2\n' > "$(protocol_state_file "${protocol}")"
     mkdir -p "${SB_PROTOCOL_STATE_DIR}/instances"
     if [[ "${protocol}" == "socks" ]]; then
@@ -80,7 +86,7 @@ for protocol in $(list_registered_protocols); do
   ]
 }
 SOCKS_STORE_EOF
-    else
+    elif [[ "${protocol}" == "http" ]]; then
       cat > "${SB_PROTOCOL_STATE_DIR}/instances/http.json" <<'HTTP_STORE_EOF'
 {
   "schema_version": 1,
@@ -101,13 +107,33 @@ SOCKS_STORE_EOF
   ]
 }
 HTTP_STORE_EOF
+    else
+      cat > "${SB_PROTOCOL_STATE_DIR}/instances/shadowsocks.json" <<'SHADOWSOCKS_STORE_EOF'
+{
+  "schema_version": 1,
+  "protocol": "shadowsocks",
+  "revision": 1,
+  "default_instance_id": "main",
+  "instances": [
+    {
+      "id": "main",
+      "name": "Shadowsocks contract",
+      "tag": "ss-in",
+      "listen": {"address": "127.0.0.1", "port": 1083, "network": ["tcp", "udp"]},
+      "authentication": {"method": "aes-256-gcm", "password": "ss-password", "users": []},
+      "outbound_policy": "default",
+      "dependencies": []
+    }
+  ]
+}
+SHADOWSOCKS_STORE_EOF
     fi
   else
     printf 'CONFIG_SCHEMA_VERSION=1\n' > "$(protocol_state_file "${protocol}")"
   fi
 done
-printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
-[[ "$(list_exportable_client_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nsocks\nhttp' ]]
+printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
+[[ "$(list_exportable_client_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nsocks\nhttp\nshadowsocks' ]]
 [[ "$(protocol_registry_field mixed client_export)" == true ]]
 [[ "$(protocol_registry_field mixed multi_instance)" == true ]]
 [[ -z "$(protocol_registry_field mixed subman_type)" ]]
@@ -123,6 +149,14 @@ printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http\nPROTOCOL_
 [[ "$(protocol_registry_field http listen_networks)" == tcp ]]
 [[ "$(protocol_registry_field http handlers)" == *load_plain_proxy_structured_instance* ]]
 [[ "$(protocol_registry_field http handlers)" == *apply_plain_proxy_instance_change* ]]
+[[ "$(protocol_registry_field shadowsocks menu_order)" == 7 ]]
+[[ "$(protocol_registry_field shadowsocks default_tag)" == ss-in ]]
+[[ "$(protocol_registry_field shadowsocks state_id)" == shadowsocks ]]
+[[ "$(protocol_registry_field shadowsocks agent_id)" == shadowsocks ]]
+[[ "$(protocol_registry_field shadowsocks runtime_id)" == shadowsocks ]]
+[[ "$(protocol_registry_field shadowsocks listen_networks)" == tcp,udp ]]
+[[ "$(protocol_registry_field shadowsocks multi_instance)" == true ]]
+[[ "$(protocol_registry_field shadowsocks handlers)" == *load_plain_proxy_structured_instance* ]]
 
 # Unknown protocol and future schema must not disappear during reconciliation.
 for invalid in $'INSTALLED_PROTOCOLS=mixed,future-protocol\nPROTOCOL_STATE_VERSION=1' \

@@ -4,6 +4,32 @@
 起点为 `cc12c06`，工作区干净；保留参考基线 `0d0bdac` 之后的下载事务修复。
 本文记录完整目标的进展；阶段提交不代表全协议已交付。
 
+## 2026-09-08：Shadowsocks 实例管理、分享与客户端集成
+
+从 `35e98db` 继续，基线 `dev/verification-runs/20260908045421` 是 local 空变更门禁，退出 0；不是新的全量基线。版本本轮仅递增一次至 `2026090802`。再次读取 GitHub `releases/latest`：稳定目标仍为 `v1.14.0`（非 draft/prerelease，2026-08-31 发布）。Context7 先查询 sing-box 和 Shadowsocks 文档；前者仅提供 testing，随后使用固定 `v1.14.0` 源码和两版官方 ARM64 核心确认行为。SIP002 依据 [官方规范](https://github.com/shadowsocks/shadowsocks-org/blob/main/docs/doc/sip002.md)，经典方法使用 URL-safe Base64 userinfo，2022 使用百分号编码而非 Base64 userinfo。
+
+第七预设 `shadowsocks`（别名 `ss`）接入状态、typed record、菜单、Agent CAS 事务、接管/健康比较、默认实例/删除/恢复、实例网络资源、逐用户客户端与分享。九种入站方法覆盖 `none`、五种经典 AEAD 与三种 2022；多用户限核心支持的方法，不提供 relay/mux/plugin 透传。严格拒绝未知字段和不完整凭据；默认回环，公网入口需确认。注册表同时输出同源 `features` 与兼容 `legacy_capabilities`，修复此前网络 planner 读取真实注册表时看不到实例选择能力的问题。IPv4-mapped dotted listen 保留原文，冲突规划按等价 IPv4 判断。
+
+真实核心揭示 2022 PSK 的服务端/客户端不对称：入站依赖 `sing-shadowsocks v0.2.8` 接受超过最小长度的 key，出站依赖 `sing-shadowsocks2 v0.2.1` 要求定长。AES-128 server 16 bytes/user 32 bytes 在两核心 inbound check 均成功，原样客户端 check 均失败。按固定 [v0.2.8 Key 实现](https://github.com/SagerNet/sing-shadowsocks/blob/v0.2.8/shadowaead_2022/protocol.go) 对长 key 执行 SHA-256 并截取 16/32 bytes，导出等效凭据而不改原始 store；真实 TCP/UDP 已验证一致。另修复经典密码末尾 LF 被 Shell 截断的问题，经典分支直接保留 JSON；全实例导出缓冲完成后才输出，失败不返回半份连接材料。
+
+SubMan 使用同一 validated snapshot 产生用户身份、监听地址、凭据及稳定外部键，避免并发重排配错用户。只读核对本机 SubMan OpenAPI 的 `ss` 类型和 parser：双网络加密项可同步，单网络无法由 SIP002 保真，`none` 空密码不被现有 parser 接受，均明确 skipped。测试只有 mock API，并未访问真实 SubMan。长 PSK、单网络及明文边界提供机器可读 warning；日志安全的 Agent nodes 不泄露密钥。
+
+预审修复还包括加密入口不误称明文、菜单端口预检不阻止同端口不同传输、用户数量防算术溢出、临时快照信号清理和 full JSON `none` 明文 warning。完整冻结验收结果在本节后续记录；此前各 worker 的中间哈希和运行不能代替最终源码门禁。全协议目标仍未完成，未 push/部署/操作生产或宿主机防火墙。
+
+冻结运行时 SHA-256：`6a2e211f1d8c7918cda838ec883038911e2e03e02933b3c8cd4c1122be82e506`。实际 Bash 4.2 直接执行 runtime 的 `--run` 分支，1.13.18/1.14.0 均退出 0，每版 9 方法 check、8 outbounds、6 用户认证业务、7 TCP/7 UDP payload、同端口分传输 2 项、错误认证拒绝 1 项；开始/结束源码哈希相同，证据 `/tmp/shadowsocks-runtime-logs/final-6a2e211/`。这是本机回环证据，不证明公网 UDP、防火墙可达或生产部署。
+
+Bash 4.2 focused 首跑中 export test 失败，不能忽略：`wrapper_json=$(jq ... <<< "$(builder ...)")` 的嵌套命令替换触发旧 Bash 临时 IFS 行为，使注册行未按 `|` 拆分。直接读取全部七条注册记录正常，故没有通过给 `fields[20]` 填默认值掩盖问题。测试改为先捕获 builder、再交给 jq，并增加真实产品 dispatcher 路径断言；实际 Bash 4.2 重跑通过，产品源码未变。失败记录在 `/tmp/shadowsocks-runtime-logs/focused-6a2e211/`，修复后双核心 export check 在 `/tmp/sbv-ss-bash42-norun113.1BKp4P/` 与 `/tmp/sbv-ss-bash42-norun114.XltujE/`。其余 focused、SubMan mock 和协议探针测试首跑均通过。
+
+最终验收与重跑边界：
+
+- 默认门禁 `dev/verification-runs/20260908053115` 选择 85 项本地检查，但在旧 `agent_upgrade_commands.sh` 六协议断言处退出 1，未进入 Docker；其中 SS 生命周期（16 次服务重启、真实 core check）、菜单、两核 export/runtime、Agent 与 SubMan 专项已经通过。后续不把该失败 run 宣称为 85/85。
+- 普通测试清单共 182 项：首批 173 项在 `6a2e211…` 下完成，168 通过、5 失败；其中四项为旧六协议/未知协议 fixture，修正后独立复跑 4/4 通过。遗漏的 9 项新增测试另行补跑 9/9 通过。证据 `/tmp/sbv-socks-all.3e6PHj/` 保留原始失败、recheck、additional manifest 与阶段哈希。验证框架自身 16/16 串行通过，目录 `/tmp/sbv-verification-all.kEARBq/`。
+- 第五项 `subman_sync_orchestration.sh` 发现真实提示回归：全局 skipped 计数会遮住旧协议的空公网 IP 诊断。仅两处 orchestration 新增 Shadowsocks 专用 skipped 计数，使 SS 保真性跳过保留明确结果，旧协议仍返回原无 IP 诊断。最终源码 SHA-256 为 `8d24fa6ef0746668210ac96335e5897ee3128fbc4d446e6e7fdfbb5905a6490b`，版本仍为本轮 `2026090802`。父线程冻结后独立复跑 SubMan orchestration、SS SubMan、SS Agent/share 与 Agent upgrade，4/4 通过，日志和起止哈希 `/tmp/sbv-ss-parent-final.3YqLFx/`。此前一次父测试与测试文件编辑重叠的语法失败已废弃，不作为冻结验证证据。局部修复后未冒称再次完整执行全部 182 项。
+- Docker 采用 `VERIFY_SKIP_LOCAL_TESTS=1` 重跑容器部分，两个 run `20260908054547`（修复前）和 `20260908055118`（最终源码）均退出 0。最终 run 逐个回读 12/12 场景 `STATUS=success`、18/18 TCP 探针 `RESULT=success`，包含 SS 新装与七协议共存；升级故障 `status=rolled_back`、`rollback.result=success`。运行容器 `9824f895737b` 内实际脚本 SHA 与最终源码一致，证据 `container-runtime.sha256`。这不是新一轮完整本地门禁。
+- 最终源码再次执行 native/Bash 4.2 × 1.13.18/1.14.0 四组 SS runtime，全部退出 0；每组 9 方法 check、8 exports、6 用户认证业务、7 TCP、7 UDP、2 个分网络案例及 1 个错误认证拒绝。`/tmp/shadowsocks-runtime-logs/final-8d24fa6/` 的四组 command/status/start.sha256/end.sha256 均已核对。仅回环与隔离 Docker 证据，未做真实 SubMan 同步、生产部署或公网 UDP 可达验证。
+
+地址接管仍为明确的类型化子集：支持 IPv4、纯十六进制 IPv6 和 `::ffff:IPv4`；完整展开的 dotted IPv6 如 `0:0:0:0:0:ffff:192.0.2.1` 安全拒绝并保留原配置，未将这一覆盖限制称为无损支持全部地址文本。全协议目标继续保持未完成。
+
 ## 2026-09-08：保留防火墙开放链路的实例网络选择
 
 从 `607b0c8` 继续，基线 `bash dev/verification/run.sh` 在 `dev/verification-runs/20260908042949` 为 local 空变更门禁、退出 0。核对 Shadowsocks 接入点时发现 `open_all_protocol_ports` 将完整资源计划缩减为 protocol/port，随后 `open_firewall_port` 重新展开注册默认网络，未来单 TCP/UDP 实例会因此多开另一传输。先单独修复这个已确认问题；认证模型草稿未注册或交付，不将资源修复称为 Shadowsocks 支持。

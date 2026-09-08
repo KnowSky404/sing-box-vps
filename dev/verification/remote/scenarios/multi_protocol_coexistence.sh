@@ -95,21 +95,33 @@ EOF
   jq -e '.ok==true and .protocol=="http" and .changed==true and .revision==1' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/http-create.json" >/dev/null
 
+  local shadowsocks_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-record.json"
+  (umask 077; jq -n '{id:"main",name:"Shadowsocks verification",tag:"ss-in",
+    listen:{address:"127.0.0.1",port:1083,network:["tcp","udp"]},
+    authentication:{method:"2022-blake3-aes-128-gcm",password:"MDEyMzQ1Njc4OWFiY2RlZg==",users:[]},
+    outbound_policy:"default",dependencies:[]}' > "${shadowsocks_record}")
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent instance create shadowsocks --json --yes \
+    --expected-revision 0 --file "${shadowsocks_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-create.json"
+  jq -e '.ok==true and .protocol=="shadowsocks" and .changed==true and .revision==1' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-create.json" >/dev/null
+
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/config.json")
   index_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/index.env")
   cp /root/sing-box-vps/config.json "${config_path}"
   cp /root/sing-box-vps/protocols/index.env "${index_path}"
-  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http' "${index_path}"
+  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks' "${index_path}"
   jq -e '
-    ([.inbounds[] | .type] | sort) == ["anytls", "http", "hysteria2", "mixed", "socks", "vless"] and
+    ([.inbounds[] | .type] | sort) == ["anytls", "http", "hysteria2", "mixed", "shadowsocks", "socks", "vless"] and
     ([.inbounds[] | select(.type == "vless") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "mixed") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "hysteria2") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "anytls") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "socks") | .listen_port] | length == 1) and
-    ([.inbounds[] | select(.type == "http") | .listen_port] | length == 1)
+    ([.inbounds[] | select(.type == "http") | .listen_port] | length == 1) and
+    ([.inbounds[] | select(.type == "shadowsocks") | .listen_port] | length == 1)
   ' /root/sing-box-vps/config.json >/dev/null
   grep -Fqx 'sing-box version 1.14.0' <(sing-box version)
   verification_wait_for_service_active sing-box

@@ -49,7 +49,7 @@ write_unknown_protocol_config() {
 {
   "inbounds": [
     {
-      "type": "shadowsocks",
+      "type": "unregistered-test-protocol",
       "listen_port": 8388,
       "method": "2022-blake3-aes-128-gcm",
       "password": "secret"

@@ -36,7 +36,7 @@ cleanup_network_test() {
 }
 trap cleanup_network_test EXIT
 
-base_registry=$(protocol_registry_json)
+base_registry=$(protocol_registry_json | jq 'map(select(.state_id!="shadowsocks"))')
 config="${TMP_DIR}/network.json"
 rejected=0
 expect_rejected() {
@@ -49,9 +49,10 @@ expect_rejected() {
   rejected=$((rejected+1))
 }
 
-# No Shadowsocks project adapter is advertised by this foundational test.
-# The test-only metadata below exercises an upcoming dual-listener adapter.
-jq -n '{inbounds:[{type:"shadowsocks",tag:"secret-marker",listen_port:23801}]}' >"${config}"
+# The production registry must expose the same switch as resource projection.
+protocol_registry_json | jq -e 'any(.[]; .state_id=="shadowsocks" and .features.listen_network_selection==true)' >/dev/null
+# Keep malformed metadata isolated from the real adapter registration.
+jq -n '{inbounds:[{type:"unregistered-resource-fixture",tag:"secret-marker",listen_port:23801}]}' >"${config}"
 expect_rejected
 fixture_registry=$(jq '. + [{state_id:"shadowsocks",type:"shadowsocks",
   listen_networks:["tcp","udp"],traffic_networks:["tcp","udp"],
@@ -113,7 +114,7 @@ fi
 [[ ! -s "${TMP_DIR}/conflict.out" ]]
 
 # These real-core checks prove listener projection, not SS lifecycle or
-# traffic delivery. SS is deliberately still absent from the real registry.
+# traffic delivery; separate Shadowsocks tests cover those contracts.
 # Read socket ownership without binding probes that could race core startup.
 checks=0
 starts=0

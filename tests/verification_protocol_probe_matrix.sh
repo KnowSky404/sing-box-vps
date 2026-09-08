@@ -24,6 +24,8 @@ INDEX_FILE="${PROTOCOLS_DIR}/index.env"
 MIXED_STATE_FILE="${PROTOCOLS_DIR}/mixed.env"
 HTTP_STATE_FILE="${PROTOCOLS_DIR}/http.env"
 HTTP_STORE_FILE="${PROTOCOLS_DIR}/instances/http.json"
+SHADOWSOCKS_STATE_FILE="${PROTOCOLS_DIR}/shadowsocks.env"
+SHADOWSOCKS_STORE_FILE="${PROTOCOLS_DIR}/instances/shadowsocks.json"
 FAILURE_CALLS_FILE="${TMP_DIR}/calls-failure.log"
 GREEN_CALLS_FILE="${TMP_DIR}/calls-green.log"
 mkdir -p "${RED_ARTIFACT_DIR}/meta" "${RED_ARTIFACT_DIR}/scenarios/runtime_smoke"
@@ -42,6 +44,8 @@ awk '
   | perl -0pe 's|/root/sing-box-vps/protocols/mixed.env|'"${MIXED_STATE_FILE}"'|g' \
   | perl -0pe 's|/root/sing-box-vps/protocols/http.env|'"${HTTP_STATE_FILE}"'|g' \
   | perl -0pe 's|/root/sing-box-vps/protocols/instances/http.json|'"${HTTP_STORE_FILE}"'|g' \
+  | perl -0pe 's|/root/sing-box-vps/protocols/shadowsocks.env|'"${SHADOWSOCKS_STATE_FILE}"'|g' \
+  | perl -0pe 's|/root/sing-box-vps/protocols/instances/shadowsocks.json|'"${SHADOWSOCKS_STORE_FILE}"'|g' \
   > "${TESTABLE_ENTRYPOINT}"
 
 cat > "${LISTENER_HARNESS}" <<EOF_LISTENER
@@ -88,7 +92,7 @@ write_probe_harness() {
   local artifact_dir=$3
   local calls_file=$4
   local setup_snippet=${5:-}
-  local index_contents=${6:-$'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,mystery-protocol'}
+  local index_contents=${6:-$'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,shadowsocks,mystery-protocol'}
   local index_contents_shell
   printf -v index_contents_shell '%q' "${index_contents}"
 
@@ -176,6 +180,7 @@ grep -Fqx 'vless-reality|/root/sing-box-vps/config.json' "${FAILURE_CALLS_FILE}"
 grep -Fqx 'mixed|/root/sing-box-vps/config.json' "${FAILURE_CALLS_FILE}"
 grep -Fqx 'hy2|/root/sing-box-vps/config.json' "${FAILURE_CALLS_FILE}"
 grep -Fqx 'anytls|/root/sing-box-vps/config.json' "${FAILURE_CALLS_FILE}"
+grep -Fqx 'shadowsocks|/root/sing-box-vps/config.json' "${FAILURE_CALLS_FILE}"
 grep -Fqx 'RESULT=success' \
   "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/vless-reality/result.env"
 grep -Fqx 'RESULT=failure' \
@@ -184,6 +189,8 @@ grep -Fqx 'RESULT=failure' \
   "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/hy2/result.env"
 grep -Fqx 'RESULT=failure' \
   "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/anytls/result.env"
+grep -Fqx 'RESULT=failure' \
+  "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/shadowsocks/result.env"
 grep -Fqx 'RESULT=unsupported' \
   "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/mystery-protocol/result.env"
 
@@ -421,6 +428,67 @@ grep -Fqx 'RESULT=success' "${HTTP_TLS_PROBE_DIR}/result.env"
 assert_protocol_probe_processes_cleaned "${PROBE_CLIENT_PID_FILE}"
 assert_protocol_probe_processes_cleaned "${PROBE_HTTP_PID_FILE}"
 
+SHADOWSOCKS_ARTIFACT_DIR=${TMP_DIR}/artifacts-shadowsocks
+SHADOWSOCKS_CONFIG_FILE=${TMP_DIR}/shadowsocks-server.json
+cat > "${SHADOWSOCKS_CONFIG_FILE}" <<'EOF_SHADOWSOCKS_CONFIG'
+{
+  "inbounds": [{
+    "type": "shadowsocks",
+    "tag": "ss-in",
+    "listen": "127.0.0.1",
+    "listen_port": 18083,
+    "network": ["tcp", "udp"],
+    "method": "2022-blake3-aes-128-gcm",
+    "password": "MDEyMzQ1Njc4OWFiY2RlZg==",
+    "users": []
+  }]
+}
+EOF_SHADOWSOCKS_CONFIG
+mkdir -p "$(dirname "${SHADOWSOCKS_STORE_FILE}")"
+cat > "${SHADOWSOCKS_STATE_FILE}" <<'EOF_SHADOWSOCKS_STATE'
+INSTALLED=1
+CONFIG_SCHEMA_VERSION=2
+EOF_SHADOWSOCKS_STATE
+cat > "${SHADOWSOCKS_STORE_FILE}" <<'EOF_SHADOWSOCKS_STORE'
+{
+  "schema_version": 1,
+  "protocol": "shadowsocks",
+  "revision": 1,
+  "default_instance_id": "main",
+  "instances": [{
+    "id": "main",
+    "name": "Shadowsocks verification",
+    "tag": "ss-in",
+    "listen": {"address": "127.0.0.1", "port": 18083, "network": ["tcp", "udp"]},
+    "authentication": {"method": "2022-blake3-aes-128-gcm", "password": "MDEyMzQ1Njc4OWFiY2RlZg==", "users": []},
+    "outbound_policy": "default",
+    "dependencies": []
+  }]
+}
+EOF_SHADOWSOCKS_STORE
+bash -s -- "${TESTABLE_ENTRYPOINT}" "${SHADOWSOCKS_ARTIFACT_DIR}" "${SHADOWSOCKS_CONFIG_FILE}" <<'EOF_SHADOWSOCKS_RUN'
+set -euo pipefail
+source "$1"
+VERIFY_ARTIFACT_DIR=$2
+VERIFY_CURRENT_SCENARIO=runtime_smoke
+VERIFY_CURRENT_SCENARIO_DIR=scenarios/runtime_smoke
+verification_execute_single_protocol_probe shadowsocks "$3"
+EOF_SHADOWSOCKS_RUN
+SHADOWSOCKS_PROBE_DIR="${SHADOWSOCKS_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/shadowsocks"
+jq -e '
+  .outbounds[0].type=="shadowsocks" and
+  (.outbounds[0].type=="socks"|not) and
+  .outbounds[0].server=="127.0.0.1" and
+  .outbounds[0].server_port==18083 and
+  .outbounds[0].method=="2022-blake3-aes-128-gcm" and
+  .outbounds[0].password=="MDEyMzQ1Njc4OWFiY2RlZg==" and
+  .outbounds[0].network==["tcp","udp"]
+' "${SHADOWSOCKS_PROBE_DIR}/client.json" >/dev/null
+grep -Fqx 'client-check-ok' "${SHADOWSOCKS_PROBE_DIR}/client.check.txt"
+grep -Fqx 'RESULT=success' "${SHADOWSOCKS_PROBE_DIR}/result.env"
+assert_protocol_probe_processes_cleaned "${PROBE_CLIENT_PID_FILE}"
+assert_protocol_probe_processes_cleaned "${PROBE_HTTP_PID_FILE}"
+
 : > "${PROBE_CLIENT_PID_FILE}"
 : > "${PROBE_HTTP_PID_FILE}"
 if PROBE_FAIL_CHECK=1 bash "${TMP_DIR}/run-actual-probe.sh"; then
@@ -470,11 +538,14 @@ grep -Fqx 'vless-reality|/root/sing-box-vps/config.json' "${GREEN_CALLS_FILE}"
 grep -Fqx 'mixed|/root/sing-box-vps/config.json' "${GREEN_CALLS_FILE}"
 grep -Fqx 'hy2|/root/sing-box-vps/config.json' "${GREEN_CALLS_FILE}"
 grep -Fqx 'anytls|/root/sing-box-vps/config.json' "${GREEN_CALLS_FILE}"
+grep -Fqx 'shadowsocks|/root/sing-box-vps/config.json' "${GREEN_CALLS_FILE}"
 grep -Fqx 'RESULT=success' \
   "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/vless-reality/result.env"
 grep -Fqx 'RESULT=success' \
   "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/hy2/result.env"
 grep -Fqx 'RESULT=success' \
   "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/anytls/result.env"
+grep -Fqx 'RESULT=success' \
+  "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/shadowsocks/result.env"
 grep -Fqx 'RESULT=unsupported' \
   "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/mystery-protocol/result.env"

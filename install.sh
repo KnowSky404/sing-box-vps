@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090801
+# Version: 2026090802
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090801"
+readonly SCRIPT_VERSION="2026090802"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -74,6 +74,7 @@ readonly SB_PROTOCOL_REGISTRY=(
   'anytls|anytls|anytls|anytls|tls|inbound|anytls|AnyTLS|anytls-in|4|true||tcp|tcp,udp|1.13.0|false|optional||tcp_loopback|{"tls_modes":["acme_http01","acme_cloudflare_dns01","manual"],"standard_share_uri":false,"outbound_example":true,"qr":false,"client_export":true,"subman_sync":false}||build_anytls_inbound_json,build_anytls_certificate_provider_json,build_client_anytls_outbound,save_anytls_state,prompt_anytls_install,prompt_anytls_update'
   'socks|socks|socks|socks|plain|inbound|socks|SOCKS|socks-in|5|true||tcp|tcp,udp|1.13.0|true|none|socks5|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"socks5":true,"authentication":true,"share_links":["socks5"],"qr":false,"client_export":true,"subman_sync":false}||build_socks_inbound_json,save_socks_state,prompt_socks_install,prompt_socks_update,build_client_socks_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'http|http|http|http|plain-or-tls|inbound|http|HTTP Proxy|http-in|6|true||tcp|tcp|1.13.0|true|none|http|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"http":true,"tls":true,"tls_modes":["disabled","manual_certificate"],"tls_share_links":false,"authentication":true,"share_links":["http"],"qr":false,"client_export":true,"subman_sync":false}||build_http_inbound_json,save_http_state,prompt_http_install,prompt_http_update,build_client_http_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'shadowsocks|shadowsocks|shadowsocks|shadowsocks|aead-and-2022|inbound|shadowsocks|Shadowsocks|ss-in|7|true|ss|tcp,udp|tcp,udp|1.13.0|true|none|ss|tcp_loopback|{"multi_instance":true,"multi_user":true,"listen_network_selection":true,"per_instance_outbound":["default","direct","warp"],"authentication":true,"share_links":["ss"],"qr":false,"client_export":true,"subman_sync":true}|ss|build_shadowsocks_inbound_json,save_shadowsocks_state,prompt_shadowsocks_install,prompt_shadowsocks_update,build_client_shadowsocks_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
 )
 SB_REALITY_SNI_CANDIDATES=(
   "www.apple.com"
@@ -105,6 +106,8 @@ SB_MIXED_INBOUND_TAG=""
 SB_MIXED_LISTEN_ADDRESS=""
 SB_MIXED_STORE_REVISION="0"
 SB_HTTP_TLS_JSON=""
+SB_SHADOWSOCKS_AUTH_JSON=""
+SB_SHADOWSOCKS_NETWORK_JSON=""
 SB_HY2_DOMAIN=""
 SB_HY2_PASSWORD=""
 SB_HY2_USER_NAME=""
@@ -937,7 +940,7 @@ protocol_registry_json() {
       listen_networks: (.[12] | csv), traffic_networks: (.[13] | csv),
       multi_instance: (.[15] == "true"), certificate_contract: .[16],
       share_formats: (.[17] | csv), probe: .[18],
-      legacy_capabilities: (.[19] | fromjson), handlers: (.[21] | csv)
+      legacy_capabilities: (.[19] | fromjson), features: (.[19] | fromjson), handlers: (.[21] | csv)
     }]'
 }
 
@@ -2036,7 +2039,7 @@ validate_protocol_state_schema() {
   schema=${schema//\"/}
   schema=${schema//\'/}
   case "${protocol}:${schema:-1}" in
-    vless-reality:1|vless-reality:2|mixed:1|mixed:2|socks:2|http:2|hy2:1|anytls:1) return 0 ;;
+    vless-reality:1|vless-reality:2|mixed:1|mixed:2|socks:2|http:2|shadowsocks:2|hy2:1|anytls:1) return 0 ;;
   esac
   printf '[ERROR] 协议状态格式无法识别；已保留文件，请使用写入该状态的脚本版本恢复。\n' >&2
   return 1
@@ -2241,7 +2244,7 @@ save_plain_proxy_state() {
   local record_file candidate_file operation expected_revision
   local listen_address=${SB_MIXED_LISTEN_ADDRESS:-} port=${SB_PORT:-}
   local auth_enabled=${SB_MIXED_AUTH_ENABLED:-y} username=${SB_MIXED_USERNAME:-} password=${SB_MIXED_PASSWORD:-}
-  local tag name policy=${SB_OUTBOUND_POLICY:-default} tls_json='{"enabled":false}' instance_id=${SB_INSTANCE_ID:-main}
+  local tag name policy=${SB_OUTBOUND_POLICY:-default} tls_json='{"enabled":false}' auth_json='{}' network_json='["tcp","udp"]' instance_id=${SB_INSTANCE_ID:-main}
 
   structured_instance_store_protocol "${protocol}" >/dev/null || return 1
   case "${protocol}" in
@@ -2251,6 +2254,13 @@ save_plain_proxy_state() {
       [[ -n "${SB_HTTP_TLS_JSON:-}" ]] || return 1
       tls_json=${SB_HTTP_TLS_JSON}
       validate_http_tls_state_json "${tls_json}" || return 1
+      ;;
+    shadowsocks)
+      tag=${SB_MIXED_INBOUND_TAG:-ss-in}; name=${SB_NODE_NAME:-Shadowsocks}
+      [[ -n "${SB_SHADOWSOCKS_AUTH_JSON:-}" && -n "${SB_SHADOWSOCKS_NETWORK_JSON:-}" ]] || return 1
+      auth_json=${SB_SHADOWSOCKS_AUTH_JSON}; network_json=${SB_SHADOWSOCKS_NETWORK_JSON}
+      jq -e 'type == "object"' <<< "${auth_json}" >/dev/null 2>&1 || return 1
+      jq -e 'type == "array" and length > 0' <<< "${network_json}" >/dev/null 2>&1 || return 1
       ;;
     *) return 1 ;;
   esac
@@ -2271,10 +2281,12 @@ save_plain_proxy_state() {
   [[ -n "${tag}" ]] || return 1
   validate_port_number "${port}" || return 1
   structured_instance_store_validate_address "${listen_address}" || return 1
-  case "${auth_enabled}" in y|n) ;; *) return 1 ;; esac
+  if [[ "${protocol}" != shadowsocks ]]; then
+    case "${auth_enabled}" in y|n) ;; *) return 1 ;; esac
+  fi
   if [[ "${protocol}" == http ]]; then
     validate_http_client_connection "${port}" "${auth_enabled}" "${username}" "${password}" || return 1
-  else
+  elif [[ "${protocol}" != shadowsocks ]]; then
     validate_mixed_client_connection "${port}" "${auth_enabled}" "${username}" "${password}" || return 1
   fi
   [[ "${policy}" == default || "${policy}" == direct || "${policy}" == warp ]] || return 1
@@ -2287,8 +2299,8 @@ save_plain_proxy_state() {
   if ! jq -n -cS --arg id "${instance_id}" --arg name "${name}" --arg tag "${tag}" \
       --arg address "${listen_address}" --argjson port "${port}" \
       --argjson enabled "$([[ "${auth_enabled}" == y ]] && printf true || printf false)" \
-      --arg username "${username}" --arg password "${password}" --arg policy "${policy}" --argjson tls "${tls_json}" --arg protocol "${protocol}" \
-      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$enabled,username:(if $enabled then $username else "" end),password:(if $enabled then $password else "" end)},outbound_policy:$policy,dependencies:[]} + (if $protocol == "http" then {tls:$tls} else {} end)' > "${record_file}"; then
+      --arg username "${username}" --arg password "${password}" --arg policy "${policy}" --argjson tls "${tls_json}" --argjson auth "${auth_json}" --argjson network "${network_json}" --arg protocol "${protocol}" \
+      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$enabled,username:(if $enabled then $username else "" end),password:(if $enabled then $password else "" end)},outbound_policy:$policy,dependencies:[]} + (if $protocol == "http" then {tls:$tls} elif $protocol == "shadowsocks" then {listen:{address:$address,port:$port,network:$network},authentication:$auth} else {} end)' > "${record_file}"; then
     rm -f -- "${record_file}" "${candidate_file}"; return 1
   fi
   structured_instance_store_validate_instance_argument "${record_file}" "${protocol}" || {
@@ -2318,6 +2330,7 @@ save_plain_proxy_state() {
 
 save_socks_state() { save_plain_proxy_state socks; }
 save_http_state() { save_plain_proxy_state http; }
+save_shadowsocks_state() { save_plain_proxy_state shadowsocks; }
 
 save_hy2_state() {
   local state_file
@@ -2383,6 +2396,7 @@ save_protocol_state() {
     mixed) save_mixed_state ;;
     socks) save_socks_state ;;
     http) save_http_state ;;
+    shadowsocks) save_shadowsocks_state ;;
     hy2) save_hy2_state ;;
     anytls) save_anytls_state ;;
     *) log_error "不支持的协议状态保存类型: ${protocol}" ;;
@@ -3075,10 +3089,173 @@ prompt_protocol_update_fields() {
     mixed) prompt_mixed_update ;;
     socks) prompt_socks_update ;;
     http) prompt_http_update ;;
+    shadowsocks) prompt_shadowsocks_update ;;
     hy2) prompt_hy2_update ;;
     anytls) prompt_anytls_update ;;
     *) log_error "不支持的协议修改类型: ${protocol}" ;;
   esac
+}
+
+shadowsocks_method_display_name() {
+  case "${1:-}" in
+    none) printf '无认证（明文）' ;;
+    aes-128-gcm) printf 'AES-128-GCM' ;;
+    aes-192-gcm) printf 'AES-192-GCM' ;;
+    aes-256-gcm) printf 'AES-256-GCM' ;;
+    chacha20-ietf-poly1305) printf 'ChaCha20-Poly1305' ;;
+    xchacha20-ietf-poly1305) printf 'XChaCha20-Poly1305' ;;
+    2022-blake3-aes-128-gcm) printf '2022 AES-128-GCM' ;;
+    2022-blake3-aes-256-gcm) printf '2022 AES-256-GCM' ;;
+    2022-blake3-chacha20-poly1305) printf '2022 ChaCha20-Poly1305' ;;
+    *) return 1 ;;
+  esac
+}
+
+shadowsocks_method_from_choice() {
+  case "${1:-}" in
+    1) printf 'none' ;;
+    2) printf 'aes-128-gcm' ;;
+    3) printf 'aes-192-gcm' ;;
+    4) printf 'aes-256-gcm' ;;
+    5) printf 'chacha20-ietf-poly1305' ;;
+    6) printf 'xchacha20-ietf-poly1305' ;;
+    7) printf '2022-blake3-aes-128-gcm' ;;
+    8) printf '2022-blake3-aes-256-gcm' ;;
+    9) printf '2022-blake3-chacha20-poly1305' ;;
+    *) return 1 ;;
+  esac
+}
+
+shadowsocks_method_choice() {
+  case "${1:-}" in
+    none) printf 1 ;; aes-128-gcm) printf 2 ;; aes-192-gcm) printf 3 ;;
+    aes-256-gcm) printf 4 ;; chacha20-ietf-poly1305) printf 5 ;;
+    xchacha20-ietf-poly1305) printf 6 ;; 2022-blake3-aes-128-gcm) printf 7 ;;
+    2022-blake3-aes-256-gcm) printf 8 ;; 2022-blake3-chacha20-poly1305) printf 9 ;;
+    *) return 1 ;;
+  esac
+}
+
+shadowsocks_method_is_2022() {
+  [[ "${1:-}" == 2022-* ]]
+}
+
+shadowsocks_method_key_bytes() {
+  case "${1:-}" in
+    2022-blake3-aes-128-gcm) printf 16 ;;
+    2022-blake3-aes-256-gcm|2022-blake3-chacha20-poly1305) printf 32 ;;
+    *) return 1 ;;
+  esac
+}
+
+shadowsocks_generate_key() {
+  local bytes=${1:-16} key
+  key=$(openssl rand -base64 "${bytes}" 2>/dev/null | tr -d '\n') || return 1
+  [[ -n "${key}" ]] || return 1
+  printf '%s' "${key}"
+}
+
+shadowsocks_prompt_method() {
+  local current=${1:-2022-blake3-aes-128-gcm} choice default_choice method
+  default_choice=$(shadowsocks_method_choice "${current}" 2>/dev/null || printf 7)
+  echo 'Shadowsocks 加密方法:' >&2
+  for choice in {1..9}; do
+    method=$(shadowsocks_method_from_choice "${choice}") || return 1
+    printf '%s. %s\n' "${choice}" "$(shadowsocks_method_display_name "${method}")" >&2
+  done
+  while true; do
+    read -rp "请选择 [1-9]（当前 ${default_choice}）: " choice || return 1
+    choice=$(trim_whitespace "${choice}")
+    [[ -z "${choice}" ]] && choice=${default_choice}
+    method=$(shadowsocks_method_from_choice "${choice}" 2>/dev/null || true)
+    [[ -n "${method}" ]] && { printf '%s' "${method}"; return 0; }
+    log_warn '请输入 1-9。' >&2
+  done
+}
+
+shadowsocks_prompt_network() {
+  local current=${1:-'["tcp","udp"]'} choice default_choice network
+  jq -e 'type == "array" and length > 0 and length <= 2' <<< "${current}" >/dev/null 2>&1 || current='["tcp","udp"]'
+  if jq -e 'sort == ["tcp","udp"]' <<< "${current}" >/dev/null 2>&1; then default_choice=1
+  elif jq -e '.[0] == "tcp"' <<< "${current}" >/dev/null 2>&1; then default_choice=2
+  else default_choice=3; fi
+  echo '监听网络:' >&2
+  echo '1. tcp + udp' >&2; echo '2. tcp' >&2; echo '3. udp' >&2
+  while true; do
+    read -rp "请选择 [1-3]（当前 ${default_choice}）: " choice || return 1
+    choice=$(trim_whitespace "${choice}"); [[ -z "${choice}" ]] && choice=${default_choice}
+    case "${choice}" in
+      1) network='["tcp","udp"]' ;; 2) network='["tcp"]' ;; 3) network='["udp"]' ;; *) log_warn '请输入 1-3。' >&2; continue ;;
+    esac
+    printf '%s' "${network}"; return 0
+  done
+}
+
+shadowsocks_prompt_auth() {
+  local method=${1:-} current=${2:-} current_method current_password current_users_json
+  local multi_choice multi_default count raw_count i name password user_password bytes users_json='[]'
+  local users_names=() users_passwords=() current_count=0
+  current_method=$(jq -r '.method // empty' <<< "${current}" 2>/dev/null || true)
+  current_password=$(jq -j '.password // "", "\u0001"' <<< "${current}" 2>/dev/null || true); current_password=${current_password%$'\1'}
+  current_users_json=$(jq -c '.users // []' <<< "${current}" 2>/dev/null || printf '[]')
+  [[ "${current_method}" == "${method}" ]] || { current_password=''; current_users_json='[]'; }
+  current_count=$(jq -r 'length' <<< "${current_users_json}") || return 1
+
+  if [[ "${method}" == none || "${method}" == 2022-blake3-chacha20-poly1305 ]]; then
+    multi_choice=n
+  else
+    multi_default=n; [[ ${current_count} -gt 0 ]] && multi_default=y
+    multi_choice=$(prompt_yes_no '是否配置多用户 [y/n]（默认保留当前设置）: ' "${multi_default}") || return 1
+  fi
+
+  if [[ "${multi_choice}" == y ]]; then
+    while true; do
+      read -rp "用户数量（当前 ${current_count:-0}，请输入 1-128）: " raw_count || return 1
+      [[ -z "${raw_count}" && ${current_count} -gt 0 ]] && raw_count=${current_count}
+      [[ "${raw_count}" =~ ^[1-9][0-9]{0,2}$ ]] && (( raw_count <= 128 )) && { count=${raw_count}; break; }
+      log_warn '用户数量必须为 1-128。' >&2
+    done
+  else
+    count=0
+  fi
+
+  if [[ "${method}" == none ]]; then
+    SB_SHADOWSOCKS_AUTH_JSON='{"method":"none","password":"","users":[]}'
+    return 0
+  fi
+  if (( count == 0 )) || [[ "${method}" == 2022-blake3-aes-128-gcm || "${method}" == 2022-blake3-aes-256-gcm ]]; then
+    if (( count > 0 )) || [[ "${method}" == 2022-* ]]; then
+      bytes=$(shadowsocks_method_key_bytes "${method}" 2>/dev/null || printf 0)
+      password=${current_password}
+      read -rsp "主密码/PSK（留空保持或自动生成）: " raw_count || return 1; printf '\n' >&2
+      [[ -z "${raw_count}" ]] || password=${raw_count}
+      [[ -n "${password}" ]] || password=$(shadowsocks_generate_key "${bytes}") || return 1
+    else
+      password=${current_password}
+      read -rsp '密码（留空保持或自动生成）: ' raw_count || return 1; printf '\n' >&2
+      [[ -z "${raw_count}" ]] || password=${raw_count}
+      [[ -n "${password}" ]] || password=$(generate_random_token '' 16) || return 1
+    fi
+  else
+    password=""
+  fi
+
+  for ((i = 0; i < count; i++)); do
+    name=$(jq -j --argjson i "${i}" '.[$i].name // "", "\u0001"' <<< "${current_users_json}") || return 1; name=${name%$'\1'}
+    user_password=$(jq -j --argjson i "${i}" '.[$i].password // "", "\u0001"' <<< "${current_users_json}") || return 1; user_password=${user_password%$'\1'}
+    [[ -n "${name}" ]] || name="ss-user-$((i + 1))"
+    read -rp "用户 $((i + 1)) 名称（默认 ${name}）: " raw_count || return 1
+    [[ -z "${raw_count}" ]] || name=${raw_count}
+    read -rsp "用户 $((i + 1)) 密码（留空保持或自动生成）: " raw_count || return 1; printf '\n' >&2
+    [[ -z "${raw_count}" ]] || user_password=${raw_count}
+    if [[ -z "${user_password}" ]]; then
+      if shadowsocks_method_is_2022 "${method}"; then bytes=$(shadowsocks_method_key_bytes "${method}") || return 1; user_password=$(shadowsocks_generate_key "${bytes}") || return 1
+      else user_password=$(generate_random_token '' 16) || return 1; fi
+    fi
+    users_names+=("${name}"); users_passwords+=("${user_password}")
+    users_json=$(jq -c --arg name "${name}" --arg password "${user_password}" '. + [{name:$name,password:$password}]' <<< "${users_json}") || return 1
+  done
+  SB_SHADOWSOCKS_AUTH_JSON=$(jq -n -cS --arg method "${method}" --arg password "${password}" --argjson users "${users_json}" '{method:$method,password:$password,users:$users}') || return 1
 }
 
 prompt_plain_proxy_install() {
@@ -3141,6 +3318,34 @@ prompt_http_install() {
 
 prompt_http_update() {
   prompt_plain_proxy_update http
+}
+
+prompt_shadowsocks_install() {
+  local method current_auth
+  set_protocol_defaults shadowsocks
+  echo -e "\n${BLUE}--- 配置 Shadowsocks ---${NC}"
+  SB_PORT=$(prompt_port '[Shadowsocks] 端口（默认当前值）: ' "${SB_PORT}") || return 1
+  method=$(shadowsocks_prompt_method '2022-blake3-aes-128-gcm') || return 1
+  current_auth=${SB_SHADOWSOCKS_AUTH_JSON:-}
+  shadowsocks_prompt_auth "${method}" "${current_auth}" || return 1
+  SB_SHADOWSOCKS_NETWORK_JSON=$(shadowsocks_prompt_network '["tcp","udp"]') || return 1
+  if [[ "${method}" == none ]]; then
+    log_warn 'Shadowsocks none 不提供加密，仅适合受限内网；请确认防火墙与访问源限制。'
+  fi
+}
+
+prompt_shadowsocks_update() {
+  local method current_auth current_network
+  current_auth=${SB_SHADOWSOCKS_AUTH_JSON:-}
+  current_network=${SB_SHADOWSOCKS_NETWORK_JSON:-'["tcp","udp"]'}
+  SB_PORT=$(prompt_port '新端口（当前值，留空保持）: ' "${SB_PORT}") || return 1
+  method=$(jq -r '.method // "2022-blake3-aes-128-gcm"' <<< "${current_auth}" 2>/dev/null || printf '2022-blake3-aes-128-gcm')
+  method=$(shadowsocks_prompt_method "${method}") || return 1
+  shadowsocks_prompt_auth "${method}" "${current_auth}" || return 1
+  SB_SHADOWSOCKS_NETWORK_JSON=$(shadowsocks_prompt_network "${current_network}") || return 1
+  if [[ "${method}" == none ]]; then
+    log_warn 'Shadowsocks none 不提供加密，仅适合受限内网；请确认防火墙与访问源限制。'
+  fi
 }
 
 open_all_protocol_ports() {
@@ -3567,6 +3772,7 @@ prompt_protocol_install_fields() {
     mixed) prompt_mixed_install ;;
     socks) prompt_socks_install ;;
     http) prompt_http_install ;;
+    shadowsocks) prompt_shadowsocks_install ;;
     hy2) prompt_hy2_install ;;
     anytls) prompt_anytls_install ;;
     *) log_error "不支持的协议安装类型: ${protocol}" ;;
@@ -3604,6 +3810,7 @@ plain_proxy_management_label() {
     mixed) printf 'Mixed' ;;
     socks) printf 'SOCKS' ;;
     http) printf 'HTTP' ;;
+    shadowsocks) printf 'Shadowsocks' ;;
     *) return 1 ;;
   esac
 }
@@ -3679,20 +3886,84 @@ plain_proxy_management_next_tag() {
   printf '%s' "${candidate}"
 }
 
+shadowsocks_management_build_record() {
+  local snapshot=${1:-} operation=${2:-create} target=${3:-} destination=${4:-}
+  local id name tag address port policy answer auth_json network_json method current_auth current_network
+  [[ -f "${snapshot}" && ! -L "${snapshot}" && -n "${destination}" ]] || return 1
+  PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC=n
+  if [[ "${operation}" == replace ]]; then
+    jq -e --arg id "${target}" 'any(.instances[]; .id == $id)' "${snapshot}" >/dev/null 2>&1 || return 1
+    id=$(jq -j --arg id "${target}" '.instances[] | select(.id == $id) | .id, "\u0001"' "${snapshot}") || return 1; id=${id%$'\1'}
+    name=$(jq -j --arg id "${target}" '.instances[] | select(.id == $id) | .name, "\u0001"' "${snapshot}") || return 1; name=${name%$'\1'}
+    tag=$(jq -j --arg id "${target}" '.instances[] | select(.id == $id) | .tag, "\u0001"' "${snapshot}") || return 1; tag=${tag%$'\1'}
+    address=$(jq -j --arg id "${target}" '.instances[] | select(.id == $id) | .listen.address, "\u0001"' "${snapshot}") || return 1; address=${address%$'\1'}
+    port=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .listen.port' "${snapshot}") || return 1
+    policy=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .outbound_policy' "${snapshot}") || return 1
+    current_auth=$(jq -c --arg id "${target}" '.instances[] | select(.id == $id) | .authentication' "${snapshot}") || return 1
+    current_network=$(jq -c --arg id "${target}" '.instances[] | select(.id == $id) | .listen.network' "${snapshot}") || return 1
+  else
+    id=$(plain_proxy_management_next_id shadowsocks "${snapshot}") || return 1
+    name="Shadowsocks ${id}"
+    tag=$(plain_proxy_management_next_tag shadowsocks "${snapshot}") || return 1
+    address=127.0.0.1; port=1080; policy=default
+    current_auth='{"method":"2022-blake3-aes-128-gcm","password":"","users":[]}'
+    current_network='["tcp","udp"]'
+  fi
+  read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1
+  [[ -z "${answer}" ]] || name=${answer}
+  if [[ "${operation}" == create ]]; then
+    read -rp "实例 ID（默认 ${id}）: " answer || return 1; [[ -z "${answer}" ]] || id=$(trim_whitespace "${answer}")
+    structured_instance_store_validate_id "${id}" || return 1
+    read -rp "入口 tag（默认 ${tag}）: " answer || return 1; [[ -z "${answer}" ]] || tag=$(trim_whitespace "${answer}")
+  fi
+  read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}")
+  structured_instance_store_validate_address "${address}" || return 1
+  port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
+  policy=$(prompt_instance_outbound_policy '出站策略' "${policy}") || return 1
+  method=$(jq -r '.method' <<< "${current_auth}") || return 1
+  method=$(shadowsocks_prompt_method "${method}") || return 1
+  shadowsocks_prompt_auth "${method}" "${current_auth}" || return 1
+  auth_json=${SB_SHADOWSOCKS_AUTH_JSON}
+  network_json=$(shadowsocks_prompt_network "${current_network}") || return 1
+  SB_SHADOWSOCKS_NETWORK_JSON=${network_json}
+  if [[ "${method}" == none ]]; then
+    log_warn 'Shadowsocks none 不提供加密，仅适合受限内网；请确认防火墙与访问源限制。' >&2
+  fi
+  answer=$(plain_proxy_management_prompt_public_consent shadowsocks "${address}" '' "${auth_json}") || return 1
+  if [[ "${address}" != 127.* && "${address}" != ::1 && "${answer}" != y ]]; then
+    log_info '未确认公网暴露，已取消 Shadowsocks 实例变更。'; return 2
+  fi
+  PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC=${answer}
+  MIXED_MANAGEMENT_ALLOW_PUBLIC=${answer}
+  jq -n -cS --arg id "${id}" --arg name "${name}" --arg tag "${tag}" --arg address "${address}" \
+    --argjson port "${port}" --argjson network "${network_json}" --argjson auth "${auth_json}" --arg policy "${policy}" \
+    '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port,network:$network},authentication:$auth,outbound_policy:$policy,dependencies:[]}' > "${destination}" || return 1
+  structured_instance_store_validate_instance_argument "${destination}" shadowsocks
+}
+
 plain_proxy_management_prompt_public_consent() {
-  local protocol=${1:-} address=${2:-} tls_json=${3:-} label tls_enabled=n
+  local protocol=${1:-} address=${2:-} tls_json=${3:-} auth_json=${4:-} label tls_enabled=n plaintext=y
   label=$(plain_proxy_management_label "${protocol}") || return 1
   if [[ "${protocol}" == http && -n "${tls_json}" ]] &&
      jq -e '.enabled == true' <<< "${tls_json}" >/dev/null 2>&1; then
     tls_enabled=y
+  fi
+  if [[ "${protocol}" == shadowsocks ]]; then
+    plaintext=n
+    if [[ -n "${auth_json}" ]] &&
+       [[ "$(jq -r '.method // empty' <<< "${auth_json}" 2>/dev/null || true)" == none ]]; then
+      plaintext=y
+    fi
   fi
   case "${address}" in
     127.*|::1) printf 'n'; return 0 ;;
   esac
   if [[ "${tls_enabled}" == y ]]; then
     prompt_yes_no "该 ${label} 入口将在非回环地址 ${address} 提供 TLS；确认继续并承担公网暴露风险 [y/N]: " n
-  else
+  elif [[ "${plaintext}" == y ]]; then
     prompt_yes_no "该 ${label} 入口将以明文暴露在非回环地址 ${address}；确认继续并承担公网暴露风险 [y/N]: " n
+  else
+    prompt_yes_no "该 ${label} 入口将在非回环地址 ${address} 提供服务；确认继续并承担公网暴露风险 [y/N]: " n
   fi
 }
 
@@ -3729,6 +4000,10 @@ plain_proxy_management_build_record() {
   local name_changed=n address_changed=n port_changed=n username_changed=n password_changed=n
   local auth_changed=n policy_changed=n
   structured_instance_store_protocol "${protocol}" >/dev/null || return 1
+  if [[ "${protocol}" == shadowsocks ]]; then
+    shadowsocks_management_build_record "${snapshot}" "${operation}" "${target}" "${destination}"
+    return $?
+  fi
   label=$(plain_proxy_management_label "${protocol}") || return 1
   [[ -f "${snapshot}" && ! -L "${snapshot}" && -n "${destination}" ]] || return 1
   PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC=n
@@ -4011,6 +4286,10 @@ http_instance_management_menu() {
   plain_proxy_instance_management_menu http "$@"
 }
 
+shadowsocks_instance_management_menu() {
+  plain_proxy_instance_management_menu shadowsocks "$@"
+}
+
 plain_proxy_instance_management_menu() (
   local protocol=${1:-} requested_operation=${2:-} temp_dir choice snapshot revision target result status one_shot=n
   local record_file label confirmation
@@ -4096,7 +4375,7 @@ plain_proxy_instance_management_menu() (
         ;;
       5) log_warn "${label} 没有 legacy schema 1 可迁移。" ;;
       7)
-        jq -r --arg protocol "${protocol}" '.instances[] | "\(.id)\t\(.name)\t\(.listen.address):\(.listen.port)\tauth=\(.authentication.enabled)\tpolicy=\(.outbound_policy)" + (if $protocol == "http" then "\ttls=\(.tls.enabled)" else "" end)' "${snapshot}" || return $?
+        jq -r --arg protocol "${protocol}" '.instances[] | "\(.id)\t\(.name)\t\(.listen.address):\(.listen.port)" + (if $protocol == "shadowsocks" then "\tnetwork=\(.listen.network|join(","))\tmethod=\(.authentication.method)\tusers=\(.authentication.users|length)" else "\tauth=\(.authentication.enabled)\tpolicy=\(.outbound_policy)" + (if $protocol == "http" then "\ttls=\(.tls.enabled)" else "" end) end)' "${snapshot}" || return $?
         [[ "${one_shot}" == y ]] && return 0
         ;;
       *) log_warn "无效选项，请重新选择。" ;;
@@ -4128,6 +4407,11 @@ install_protocols_interactive() {
     if plain_proxy_inactive_store_snapshot http >/dev/null 2>&1 &&
        protocol_array_contains http "${selected_protocols[@]}"; then
       log_warn "HTTP 已保留 revision；请通过主菜单 19 创建 HTTP 实例，或本次仅选择其他协议。"
+      return 1
+    fi
+    if plain_proxy_inactive_store_snapshot shadowsocks >/dev/null 2>&1 &&
+       protocol_array_contains shadowsocks "${selected_protocols[@]}"; then
+      log_warn "Shadowsocks 已保留 revision；请通过主菜单 20 创建 Shadowsocks 实例，或本次仅选择其他协议。"
       return 1
     fi
     snapshot_dir=$(create_managed_state_snapshot) || {
@@ -4164,6 +4448,10 @@ install_protocols_interactive() {
        ! protocol_array_contains http ${installed_protocols[@]+"${installed_protocols[@]}"}; then
       installed_protocols+=(http)
     fi
+    if plain_proxy_inactive_store_snapshot shadowsocks >/dev/null 2>&1 &&
+       ! protocol_array_contains shadowsocks ${installed_protocols[@]+"${installed_protocols[@]}"}; then
+      installed_protocols+=(shadowsocks)
+    fi
     prompt_protocol_install_selection "additional" || return 0
     IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
 
@@ -4198,6 +4486,14 @@ install_protocols_interactive() {
         return 0
       fi
       log_warn "HTTP 实例不能与其他新增协议合并操作；请先单独管理 HTTP 实例。"
+      return 0
+    fi
+    if protocol_array_contains "shadowsocks" "${selected_protocols[@]}"; then
+      if [[ ${#selected_protocols[@]} -eq 1 ]]; then
+        shadowsocks_instance_management_menu create || return $?
+        return 0
+      fi
+      log_warn "Shadowsocks 实例不能与其他新增协议合并操作；请先单独管理 Shadowsocks 实例。"
       return 0
     fi
     snapshot_dir=$(create_managed_state_snapshot) || {
@@ -4288,6 +4584,28 @@ set_protocol_defaults() {
       SB_MIXED_LISTEN_ADDRESS="127.0.0.1"
       SB_MIXED_STORE_REVISION="0"
       SB_HTTP_TLS_JSON='{"enabled":false}'
+      SB_OUTBOUND_POLICY="default"
+      ;;
+    shadowsocks)
+      SB_PROTOCOL="shadowsocks"
+      SB_NODE_NAME="$(default_node_name_for_protocol "shadowsocks")"
+      SB_PORT="$(pick_random_high_port)"
+      SB_SNI=""
+      SB_UUID=""
+      SB_PUBLIC_KEY=""
+      SB_PRIVATE_KEY=""
+      SB_SHORT_ID_1=""
+      SB_SHORT_ID_2=""
+      SB_MIXED_AUTH_ENABLED="y"
+      SB_MIXED_USERNAME=""
+      SB_MIXED_PASSWORD=""
+      SB_INSTANCE_ID=""
+      SB_MIXED_INSTANCE_ID=""
+      SB_MIXED_INBOUND_TAG="ss-in"
+      SB_MIXED_LISTEN_ADDRESS="127.0.0.1"
+      SB_MIXED_STORE_REVISION="0"
+      SB_SHADOWSOCKS_AUTH_JSON=""
+      SB_SHADOWSOCKS_NETWORK_JSON='["tcp","udp"]'
       SB_OUTBOUND_POLICY="default"
       ;;
     mixed)
@@ -7775,7 +8093,7 @@ load_protocol_state() {
       mixed_schema=${mixed_schema//\'/}
     fi
   fi
-  if [[ ("${protocol}" == "socks" || "${protocol}" == "http") && -f "${state_file}" ]]; then
+  if [[ ("${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks") && -f "${state_file}" ]]; then
     socks_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" | head -n1) || return 1
     socks_schema=${socks_schema//\"/}
     socks_schema=${socks_schema//\'/}
@@ -7820,7 +8138,7 @@ load_protocol_state() {
   # SOCKS has no legacy .env representation.  Dispatch only a validated
   # schema-2 marker to the typed store and reject every older/unknown shape
   # before it can be sourced as shell code.
-  if [[ "${protocol}" == "socks" || "${protocol}" == "http" ]]; then
+  if [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" ]]; then
     [[ "${socks_schema}" == "2" ]] || return 1
     plain_proxy_structured_marker_is_valid "${state_file}" || return 1
     load_plain_proxy_structured_instance "${protocol}" || return 1
@@ -8269,6 +8587,75 @@ build_http_inbound_json() {
   render_structured_instance_inbounds http "$(plain_proxy_structured_store_file http)"
 }
 
+build_shadowsocks_inbound_json() {
+  plain_proxy_structured_state_active shadowsocks || return 1
+  render_structured_instance_inbounds shadowsocks "$(plain_proxy_structured_store_file shadowsocks)"
+}
+
+build_shadowsocks_instance_outbounds() (
+  umask 077
+  local instance_id=${1:-} server=${2:-} snapshot temporary address
+  structured_instance_store_validate_id "${instance_id}" || return 1
+  snapshot=$(structured_instance_store_snapshot_json shadowsocks "$(plain_proxy_structured_store_file shadowsocks)") || return 1
+  jq -e --arg id "${instance_id}" 'any(.instances[]; .id==$id)' <<< "${snapshot}" >/dev/null || return 1
+  temporary=$(mktemp) || return 1
+  trap 'rm -f -- "${temporary}"' EXIT
+  jq -c --arg id "${instance_id}" '.instances |= map(select(.id==$id)) | .default_instance_id=$id' \
+    <<< "${snapshot}" > "${temporary}" || return 1
+  address=$(jq -er '.instances[0].listen.address' "${temporary}") || return 1
+  case "${address}" in 0.0.0.0|::) ;; *) server=${address} ;; esac
+  build_shadowsocks_client_outbounds_from_store "${temporary}" "${server}"
+)
+
+# SIP002: classic AEAD uses unpadded Base64URL userinfo; AEAD-2022 MUST
+# instead percent-encode method and password separately. Never emit raw secrets.
+build_shadowsocks_uri() {
+  local outbound=${1:-} name=${2:-Shadowsocks}
+  jq -ers --arg name "${name}" '
+    select(length==1) | .[0] |
+    select(type=="object" and .type=="shadowsocks") |
+    select(.method|IN("none","aes-128-gcm","aes-192-gcm","aes-256-gcm",
+      "chacha20-ietf-poly1305","xchacha20-ietf-poly1305","2022-blake3-aes-128-gcm",
+      "2022-blake3-aes-256-gcm","2022-blake3-chacha20-poly1305")) |
+    select(.password|type=="string" and utf8bytelength<=8193 and index("\u0000")==null) |
+    select(.server|type=="string" and length>0 and (test("[\u0000-\u0020\u007F@/?#%\\[\\]]")|not)) |
+    select(.server_port|type=="number" and floor==. and .>=1 and .<=65535) |
+    (if .method|startswith("2022-") then (.method|@uri)+":"+(.password|@uri)
+     else ((.method+":"+.password)|@base64|gsub("\\+";"-")|gsub("/";"_")|sub("=+$";"")) end) as $userinfo |
+    "ss://"+$userinfo+"@"+(if .server|contains(":") then "["+.server+"]" else .server end)+
+    ":"+(.server_port|tostring)+"#"+($name|@uri)
+  ' <<< "${outbound}" 2>/dev/null
+}
+
+build_shadowsocks_links_json() {
+  local server=${1:-} instance_id=${2:-${SB_INSTANCE_ID:-}} outbounds outbound uri key result='{}'
+  outbounds=$(build_shadowsocks_instance_outbounds "${instance_id}" "${server}") || return 1
+  while IFS= read -r outbound; do
+    [[ -n "${outbound}" ]] || continue
+    key=$(jq -er '.tag' <<< "${outbound}") || return 1
+    uri=$(build_shadowsocks_uri "${outbound}" "${SB_NODE_NAME:-Shadowsocks} ${key}") || return 1
+    result=$(jq -cn --argjson result "${result}" --arg key "${key}" --arg uri "${uri}" '$result+{($key):$uri}') || return 1
+  done <<< "${outbounds}"
+  jq -e 'length>0' <<< "${result}" >/dev/null || return 1
+  printf '%s\n' "${result}"
+}
+
+shadowsocks_share_warnings_json() {
+  jq -cn --argjson auth "${SB_SHADOWSOCKS_AUTH_JSON:-null}" --argjson network "${SB_SHADOWSOCKS_NETWORK_JSON:-null}" '
+    (if $network != ["tcp","udp"] then [{code:"shadowsocks_uri_network_omitted",
+      message:"SIP002 无法表达实例的单 TCP/UDP 限制；请使用完整客户端 JSON。"}] else [] end) +
+    (if $auth.method=="none" then [{code:"shadowsocks_plaintext_transport",
+      message:"Shadowsocks none 不提供加密或认证，只能用于可信网络或受保护隧道。"}] else [] end) +
+    (if ($auth.method|startswith("2022-")) and
+      any(([$auth.password]+[$auth.users[].password])[];
+        ((length/4*3)-(if endswith("==") then 2 elif endswith("=") then 1 else 0 end)) >
+        (if $auth.method=="2022-blake3-aes-128-gcm" then 16 else 32 end))
+     then [{code:"shadowsocks_2022_psk_derived",
+       message:"长 PSK 已按服务端 SHA-256 派生规则导出为客户端等效定长密钥；原始实例凭据未修改。"}]
+     else [] end)
+  '
+}
+
 hy2_certificate_provider_tag() {
   printf 'hy2-cert-provider'
 }
@@ -8520,7 +8907,7 @@ build_certificate_provider_for_protocol() {
   protocol=$(normalize_protocol_id "$1") || return 1
 
   case "${protocol}" in
-    vless-reality|mixed|socks|http) return 0 ;; # HTTP uses referenced manual certificates, not providers.
+    vless-reality|mixed|socks|http|shadowsocks) return 0 ;; # HTTP uses referenced manual certificates, not providers.
     hy2) build_hy2_certificate_provider_json ;;
     anytls) build_anytls_certificate_provider_json ;;
     *) return 1 ;;
@@ -8536,6 +8923,7 @@ build_inbound_for_protocol() {
     mixed) build_mixed_inbound_json ;;
     socks) build_socks_inbound_json ;;
     http) build_http_inbound_json ;;
+    shadowsocks) build_shadowsocks_inbound_json ;;
     hy2) build_hy2_inbound_json ;;
     anytls) build_anytls_inbound_json ;;
     *) return 1 ;;
@@ -8653,7 +9041,7 @@ instance_outbound_requires_warp() {
       vless-reality)
         vless_reality_has_warp_outbound_policy && return 0
         ;;
-      mixed|socks|http)
+      mixed|socks|http|shadowsocks)
         state_file=$(protocol_state_file "${protocol}") || return 1
         schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" 2>/dev/null || true)
         schema=${schema//\"/}
@@ -8691,7 +9079,7 @@ build_protocol_route_rules() {
         jq -n '[{ "inbound": "mixed-in", "action": "sniff" }]'
       fi
       ;;
-    socks|http)
+    socks|http|shadowsocks)
       local state_file
       state_file=$(protocol_state_file "${protocol}") || return 1
       plain_proxy_structured_state_active "${protocol}" || return 1
@@ -10527,6 +10915,10 @@ update_config_only() {
     http_instance_management_menu replace
     return $?
   fi
+  if [[ "${selected_protocol}" == shadowsocks ]]; then
+    shadowsocks_instance_management_menu replace
+    return $?
+  fi
 
   load_protocol_state "${selected_protocol}"
   if [[ "${selected_protocol}" == "vless-reality" ]]; then
@@ -10638,6 +11030,14 @@ remove_protocol_menu() {
       return $?
     fi
     log_warn "结构化 HTTP 实例需通过实例事务逐个移除；请先进入 HTTP 实例管理，再移除其他协议。本次未修改。"
+    return 1
+  fi
+  if plain_proxy_structured_state_active shadowsocks && protocol_array_contains shadowsocks "${selected_protocols[@]}"; then
+    if [[ ${#selected_protocols[@]} -eq 1 ]]; then
+      shadowsocks_instance_management_menu delete
+      return $?
+    fi
+    log_warn "结构化 Shadowsocks 实例需通过实例事务逐个移除；请先进入 Shadowsocks 实例管理，再移除其他协议。本次未修改。"
     return 1
   fi
 
@@ -11357,6 +11757,10 @@ collect_client_export_warnings_json() {
       code: "http_tls_certificate_embedded",
       message: "HTTP TLS 导出仅嵌入公开证书信任与 server_name；服务端私钥未读取或写入客户端配置。"
     }] else [] end)
+    + (if any(.outbounds[]?; .type == "shadowsocks" and .method == "none") then [{
+      code: "shadowsocks_plaintext_transport",
+      message: "Shadowsocks none 不提供加密或认证，只能用于可信网络或受保护隧道。"
+    }] else [] end)
   ' <<< "${config_json}"
 }
 
@@ -11413,6 +11817,239 @@ subman_external_key_for_protocol() {
   fi
 
   printf '%s' "${key}"
+}
+
+subman_external_key_for_shadowsocks_user() {
+  local instance_id=${1:-} user_name=${2:-} address_label=${3:-}
+  local prefix digest key stack_suffix key_bytes
+
+  structured_instance_store_validate_id "${instance_id}" || return 1
+  prefix=$(subman_node_prefix)
+  digest=$(printf '%s' "${user_name}" | sha256sum) || return 1
+  digest=${digest%% *}
+  key="sing-box-vps:${prefix}:shadowsocks:${instance_id}:user-${digest}"
+  stack_suffix=$(network_stack_suffix_from_label "${address_label}")
+  if [[ -n "${stack_suffix}" ]]; then
+    key="${key}:${stack_suffix}"
+  fi
+  key_bytes=$(printf '%s' "${key}" | wc -c | tr -d '[:space:]') || return 1
+  [[ "${key_bytes}" =~ ^[0-9]+$ && "${key_bytes}" -gt 0 && "${key_bytes}" -le 256 ]] || return 1
+  printf '%s' "${key}"
+}
+
+subman_shadowsocks_node_name() {
+  local instance_id=${1:-} user_name=${2:-} prefix digest suffix name name_bytes
+
+  prefix=$(subman_node_prefix)
+  digest=$(printf '%s' "${user_name}" | sha256sum) || return 1
+  digest=${digest%% *}
+  if [[ -n "${user_name}" ]]; then
+    suffix="user-${digest:0:12}"
+  else
+    suffix="single-${digest:0:12}"
+  fi
+  name="${prefix} Shadowsocks ${instance_id} ${suffix}"
+  name_bytes=$(printf '%s' "${name}" | wc -c | tr -d '[:space:]') || return 1
+  if [[ ! "${name_bytes}" =~ ^[0-9]+$ || "${name_bytes}" -gt 256 ]]; then
+    name="Shadowsocks ${instance_id} ${suffix}"
+  fi
+  printf '%s' "${name}"
+}
+
+build_subman_shadowsocks_node_payload() {
+  local outbound=${1:-} name=${2:-} node_type prefix raw_link
+
+  [[ -n "${outbound}" && -n "${name}" ]] || return 1
+  node_type=$(subman_type_for_protocol shadowsocks) || return 1
+  raw_link=$(build_shadowsocks_uri "${outbound}" "${name}") || return 1
+  prefix=$(subman_node_prefix)
+  jq -n \
+    --arg name "${name}" \
+    --arg type "${node_type}" \
+    --arg raw "${raw_link}" \
+    --arg prefix "${prefix}" \
+    '{name:$name,type:$type,raw:$raw,enabled:true,tags:["sing-box-vps",$prefix],source:"single"}'
+}
+
+push_subman_shadowsocks_instance() {
+  local instance_id=${1:-} server=${2:-} quiet=${3:-n} address_label=${4:-}
+  local store_file outbound user_name external_key node_name payload_json network_json method
+  local snapshot outbounds_text user_names_text instance_address
+  local outbounds=() user_names=() index
+
+  SUBMAN_SHADOWSOCKS_SYNCED=0
+  SUBMAN_SHADOWSOCKS_SKIPPED=0
+  SUBMAN_SHADOWSOCKS_FAILED=0
+  structured_instance_store_validate_id "${instance_id}" || {
+    SUBMAN_SHADOWSOCKS_FAILED=1
+    return 1
+  }
+  store_file=$(plain_proxy_structured_store_file shadowsocks) || {
+    SUBMAN_SHADOWSOCKS_FAILED=1
+    return 1
+  }
+  snapshot=$(structured_instance_store_snapshot_json shadowsocks "${store_file}") || {
+    SUBMAN_SHADOWSOCKS_FAILED=1
+    return 1
+  }
+  jq -e --arg id "${instance_id}" 'any(.instances[]; .id == $id)' <<< "${snapshot}" >/dev/null 2>&1 || {
+    SUBMAN_SHADOWSOCKS_FAILED=1
+    return 1
+  }
+  if ! instance_address=$(jq -er --arg id "${instance_id}" \
+      '.instances[] | select(.id == $id) | .listen.address' <<< "${snapshot}"); then
+    SUBMAN_SHADOWSOCKS_FAILED=1
+    return 1
+  fi
+  case "${instance_address}" in
+    0.0.0.0|::) ;;
+    *) server=${instance_address} ;;
+  esac
+  if ! outbounds_text=$(
+    temporary=$(mktemp) || exit 1
+    cleanup_snapshot_file() {
+      local cleanup_status=$?
+      rm -f -- "${temporary}"
+      return "${cleanup_status}"
+    }
+    trap cleanup_snapshot_file EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'exit 129' HUP
+    if ! jq -c --arg id "${instance_id}" \
+        '.instances |= map(select(.id == $id)) | .default_instance_id = $id' \
+        <<< "${snapshot}" > "${temporary}"; then
+      exit 1
+    fi
+    build_shadowsocks_client_outbounds_from_store "${temporary}" "${server}"
+  ); then
+    SUBMAN_SHADOWSOCKS_FAILED=1
+    return 1
+  fi
+  mapfile -t outbounds <<< "${outbounds_text}"
+  if ! user_names_text=$(jq -r --arg id "${instance_id}" '
+    .instances[] | select(.id == $id) |
+    if (.authentication.users | length) == 0 then ""
+    else .authentication.users[].name end
+  ' <<< "${snapshot}"); then
+    SUBMAN_SHADOWSOCKS_FAILED=1
+    return 1
+  fi
+  mapfile -t user_names <<< "${user_names_text}"
+  [[ ${#outbounds[@]} -gt 0 && ${#outbounds[@]} -eq ${#user_names[@]} ]] || {
+    SUBMAN_SHADOWSOCKS_FAILED=1
+    return 1
+  }
+
+  for index in "${!outbounds[@]}"; do
+    outbound=${outbounds[${index}]}
+    user_name=${user_names[${index}]}
+    network_json=$(jq -c '.network // []' <<< "${outbound}") || {
+      SUBMAN_SHADOWSOCKS_FAILED=$((SUBMAN_SHADOWSOCKS_FAILED + 1))
+      continue
+    }
+    method=$(jq -r '.method // empty' <<< "${outbound}") || {
+      SUBMAN_SHADOWSOCKS_FAILED=$((SUBMAN_SHADOWSOCKS_FAILED + 1))
+      continue
+    }
+    if [[ "${method}" == none ]]; then
+      if ! SUBMAN_SHADOWSOCKS_WARNINGS_JSON=$(jq -cn \
+          --argjson existing "${SUBMAN_SHADOWSOCKS_WARNINGS_JSON:-[]}" \
+          '$existing + [{code:"shadowsocks_subman_none_unsupported",message:"Shadowsocks none 无法转换为 SubMan SIP002；该实例已跳过。"}]'); then
+        SUBMAN_SHADOWSOCKS_FAILED=$((SUBMAN_SHADOWSOCKS_FAILED + 1))
+        continue
+      fi
+      SUBMAN_SHADOWSOCKS_SKIPPED=$((SUBMAN_SHADOWSOCKS_SKIPPED + 1))
+      [[ "${quiet}" == y ]] || print_warn "Shadowsocks 实例 ${instance_id} 使用 none；SubMan SIP002 parser 无法接受空密码，已跳过。"
+      continue
+    fi
+    if [[ "${network_json}" != '["tcp","udp"]' ]]; then
+      SUBMAN_SHADOWSOCKS_SKIPPED=$((SUBMAN_SHADOWSOCKS_SKIPPED + 1))
+      [[ "${quiet}" == y ]] || print_warn "Shadowsocks 实例 ${instance_id} 用户项网络限制为 ${network_json}，SIP002 无法保真，已跳过。"
+      continue
+    fi
+    if ! external_key=$(subman_external_key_for_shadowsocks_user "${instance_id}" "${user_name}" "${address_label}"); then
+      SUBMAN_SHADOWSOCKS_FAILED=$((SUBMAN_SHADOWSOCKS_FAILED + 1))
+      continue
+    fi
+    node_name=$(subman_shadowsocks_node_name "${instance_id}" "${user_name}") || {
+      SUBMAN_SHADOWSOCKS_FAILED=$((SUBMAN_SHADOWSOCKS_FAILED + 1))
+      continue
+    }
+    payload_json=$(build_subman_shadowsocks_node_payload "${outbound}" "${node_name}") || {
+      SUBMAN_SHADOWSOCKS_FAILED=$((SUBMAN_SHADOWSOCKS_FAILED + 1))
+      continue
+    }
+    if [[ "${quiet}" == y ]]; then
+      if push_subman_node "${external_key}" "${payload_json}" >/dev/null; then
+        SUBMAN_SHADOWSOCKS_SYNCED=$((SUBMAN_SHADOWSOCKS_SYNCED + 1))
+      else
+        SUBMAN_SHADOWSOCKS_FAILED=$((SUBMAN_SHADOWSOCKS_FAILED + 1))
+      fi
+    elif push_subman_node "${external_key}" "${payload_json}"; then
+      SUBMAN_SHADOWSOCKS_SYNCED=$((SUBMAN_SHADOWSOCKS_SYNCED + 1))
+    else
+      SUBMAN_SHADOWSOCKS_FAILED=$((SUBMAN_SHADOWSOCKS_FAILED + 1))
+    fi
+  done
+
+  (( SUBMAN_SHADOWSOCKS_FAILED == 0 ))
+}
+
+push_subman_shadowsocks_protocol() {
+  local quiet=${1:-n} instance_ids instance_id address_entries=() address_entry address_label public_ip address_text
+  local warnings instance_synced instance_skipped instance_failed
+  local total_synced=0 total_skipped=0 total_failed=0
+
+  SUBMAN_SHADOWSOCKS_WARNINGS_JSON='[]'
+  instance_ids=$(list_protocol_instance_ids shadowsocks) || {
+    SUBMAN_SHADOWSOCKS_SYNCED=0
+    SUBMAN_SHADOWSOCKS_SKIPPED=0
+    SUBMAN_SHADOWSOCKS_FAILED=1
+    return 1
+  }
+  while IFS= read -r instance_id; do
+    [[ -n "${instance_id}" ]] || continue
+    if ! load_protocol_instance_state shadowsocks "${instance_id}"; then
+      total_failed=$((total_failed + 1))
+      continue
+    fi
+    if warnings=$(shadowsocks_share_warnings_json); then
+      SUBMAN_SHADOWSOCKS_WARNINGS_JSON=$(jq -cn \
+        --argjson existing "${SUBMAN_SHADOWSOCKS_WARNINGS_JSON}" \
+        --argjson additions "${warnings}" '$existing + $additions') || return 1
+    fi
+    if ! address_text=$(list_subman_addresses_for_current_protocol); then
+      total_failed=$((total_failed + 1))
+      continue
+    fi
+    address_entries=()
+    while IFS= read -r address_entry; do
+      if [[ -n "${address_entry}" ]]; then
+        address_entries+=("${address_entry}")
+      fi
+    done <<< "${address_text}"
+    if [[ ${#address_entries[@]} -eq 0 ]]; then
+      total_failed=$((total_failed + 1))
+      continue
+    fi
+    for address_entry in "${address_entries[@]}"; do
+      [[ -n "${address_entry}" ]] || continue
+      address_label=${address_entry%%|*}
+      public_ip=${address_entry#*|}
+      push_subman_shadowsocks_instance "${instance_id}" "${public_ip}" "${quiet}" "${address_label}" || :
+      instance_synced=${SUBMAN_SHADOWSOCKS_SYNCED}
+      instance_skipped=${SUBMAN_SHADOWSOCKS_SKIPPED}
+      instance_failed=${SUBMAN_SHADOWSOCKS_FAILED}
+      total_synced=$((total_synced + instance_synced))
+      total_skipped=$((total_skipped + instance_skipped))
+      total_failed=$((total_failed + instance_failed))
+    done
+  done <<< "${instance_ids}"
+  SUBMAN_SHADOWSOCKS_SYNCED=${total_synced}
+  SUBMAN_SHADOWSOCKS_SKIPPED=${total_skipped}
+  SUBMAN_SHADOWSOCKS_FAILED=${total_failed}
+  (( total_failed == 0 ))
 }
 
 build_subman_raw_for_protocol() {
@@ -11477,6 +12114,11 @@ push_subman_protocol_instance() {
   local quiet=${4:-n}
   local address_label=${5:-}
   local external_key payload_json
+
+  if [[ "${protocol}" == "shadowsocks" ]]; then
+    push_subman_shadowsocks_instance "${instance_id}" "${public_ip}" "${quiet}" "${address_label}"
+    return $?
+  fi
 
   if ! external_key=$(subman_external_key_for_protocol "${protocol}" "${instance_id}" "${address_label}"); then
     [[ "${quiet}" == "y" ]] || print_warn "生成 SubMan 外部键失败: ${protocol}"
@@ -12292,6 +12934,133 @@ build_client_http_outbounds() (
   build_client_plain_proxy_outbounds http "${public_ip}"
 )
 
+shadowsocks_client_psk() (
+  local method=${1:-} psk=${2-} min_bytes decoded_file digest_file decoded_bytes
+
+  case "${method}" in
+    2022-blake3-aes-128-gcm) min_bytes=16 ;;
+    2022-blake3-aes-256-gcm|2022-blake3-chacha20-poly1305) min_bytes=32 ;;
+    none|aes-128-gcm|aes-192-gcm|aes-256-gcm|chacha20-ietf-poly1305|xchacha20-ietf-poly1305)
+      printf '%s' "${psk}"
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
+  [[ -n "${psk}" ]] || return 1
+  command -v openssl >/dev/null 2>&1 || return 1
+  decoded_file=$(mktemp) || return 1
+  digest_file=$(mktemp) || {
+    rm -f -- "${decoded_file}"
+    return 1
+  }
+  trap 'rm -f -- "${decoded_file}" "${digest_file}"' EXIT
+  printf '%s' "${psk}" | openssl base64 -d -A > "${decoded_file}" || return 1
+  decoded_bytes=$(wc -c < "${decoded_file}") || return 1
+  if (( decoded_bytes == min_bytes )); then
+    printf '%s' "${psk}"
+    return 0
+  fi
+  (( decoded_bytes > min_bytes )) || return 1
+  openssl dgst -sha256 -binary "${decoded_file}" > "${digest_file}" || return 1
+  head -c "${min_bytes}" "${digest_file}" | openssl base64 -A || return 1
+)
+
+build_client_shadowsocks_outbounds() (
+  local public_ip=${1:-$(get_public_ip)} store_file snapshot tmpdir instance_ids_file instance_file output_file
+  local instance_id listen_address server_address
+  store_file=$(plain_proxy_structured_store_file shadowsocks) || return 1
+  [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
+  snapshot=$(structured_instance_store_snapshot_json shadowsocks "${store_file}") || return 1
+  tmpdir=$(mktemp -d) || return 1
+  trap 'rm -rf -- "${tmpdir}"' EXIT
+  instance_ids_file="${tmpdir}/instance-ids"
+  output_file="${tmpdir}/outbounds.jsonl"
+  : > "${output_file}" || return 1
+  jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}" > "${instance_ids_file}" || return 1
+  while IFS= read -r -d '' instance_id; do
+    [[ -n "${instance_id}" ]] || return 1
+    instance_file=$(mktemp "${tmpdir}/store.XXXXXX") || return 1
+    jq --arg id "${instance_id}" '
+      . as $root |
+      ($root.instances | map(select(.id == $id))) as $instances |
+      $root | .default_instance_id=$id | .instances=$instances
+    ' <<< "${snapshot}" > "${instance_file}" || return 1
+    listen_address=$(jq -r --arg id "${instance_id}" '.instances[] | select(.id == $id) | .listen.address' <<< "${snapshot}") || return 1
+    case "${listen_address}" in
+      0.0.0.0|::) server_address=${public_ip} ;;
+      *) server_address=${listen_address} ;;
+    esac
+    build_shadowsocks_client_outbounds_from_store "${instance_file}" "${server_address}" >> "${output_file}" || return 1
+  done < "${instance_ids_file}"
+  jq -c '.' "${output_file}"
+)
+
+build_shadowsocks_client_outbounds_from_store() (
+  local store_file=${1:-} server=${2:-} raw_file output_file expected_count output_count
+  local raw_outbound method server_psk user_psk password
+
+  [[ $# -eq 2 && -n "${store_file}" && -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
+  validate_structured_instance_store shadowsocks "${store_file}" || return 1
+
+  raw_file=$(mktemp) || return 1
+  output_file=$(mktemp) || {
+    rm -f -- "${raw_file}"
+    return 1
+  }
+  trap 'rm -f -- "${raw_file}" "${output_file}"' EXIT
+  jq -c --arg server "${server}" '
+    .instances[] as $instance |
+    $instance.authentication as $authentication |
+    ($authentication.users |
+      if length == 0 then
+        [{name:"", password:$authentication.password, single:true}]
+      else
+        map(. + {single:false})
+      end)[] as $user |
+    ($authentication.method == "2022-blake3-aes-128-gcm" or
+     $authentication.method == "2022-blake3-aes-256-gcm") as $aes2022 |
+    {
+      type:"shadowsocks",
+      tag:("shadowsocks-" + $instance.id + "-" +
+        (if $user.single then "single" else "user-" + ($user.name | @base64) end)),
+      server:$server,
+      server_port:$instance.listen.port,
+      method:$authentication.method,
+      password:(if $user.single then $authentication.password
+        elif $aes2022 then ($authentication.password + ":" + $user.password)
+        else $user.password end),
+      network:$instance.listen.network,
+      _server_psk:$authentication.password,
+      _user_psk:(if $user.single then "" else $user.password end)
+    }
+  ' "${store_file}" > "${raw_file}" || return 1
+  while IFS= read -r raw_outbound; do
+    [[ -n "${raw_outbound}" ]] || continue
+    method=$(jq -er '._method // .method' <<< "${raw_outbound}") || return 1
+    if [[ "${method}" == 2022-* ]]; then
+      server_psk=$(jq -er '._server_psk' <<< "${raw_outbound}") || return 1
+      server_psk=$(shadowsocks_client_psk "${method}" "${server_psk}") || return 1
+      user_psk=$(jq -er '._user_psk' <<< "${raw_outbound}") || return 1
+      if [[ -n "${user_psk}" ]]; then
+        user_psk=$(shadowsocks_client_psk "${method}" "${user_psk}") || return 1
+        password="${server_psk}:${user_psk}"
+      else
+        password=${server_psk}
+      fi
+      jq -c --arg password "${password}" 'del(._server_psk, ._user_psk) | .password=$password' \
+        <<< "${raw_outbound}" >> "${output_file}" || return 1
+    else
+      jq -c 'del(._server_psk, ._user_psk)' <<< "${raw_outbound}" >> "${output_file}" || return 1
+    fi
+  done < "${raw_file}"
+  expected_count=$(jq -r '[.instances[] | if (.authentication.users | length) == 0 then 1 else (.authentication.users | length) end] | add // 0' "${store_file}") || return 1
+  output_count=$(jq -s 'length' "${output_file}") || return 1
+  [[ "${expected_count}" =~ ^[0-9]+$ && "${output_count}" == "${expected_count}" ]] || return 1
+  jq -es 'length > 0 and (map(.tag) | unique | length) == length' "${output_file}" >/dev/null || return 1
+  cat "${output_file}"
+)
+
 build_client_outbounds_for_current_protocol() {
   local protocol=${1:-} public_ip=${2:-$(get_public_ip)} outbound_json
   outbound_json=$(build_client_outbound_json_for_protocol "${protocol}" "${public_ip}") || return $?
@@ -12317,7 +13086,7 @@ build_client_outbound_json_for_protocol() {
   restore_original_state="n"
 
   case "${protocol}" in
-    vless-reality|mixed|socks|http|hy2|anytls) ;;
+    vless-reality|mixed|socks|http|shadowsocks|hy2|anytls) ;;
     *)
       return 1
       ;;
@@ -12378,6 +13147,9 @@ build_client_outbound_json_for_protocol() {
           printf '[ERROR] http_export_state_invalid: HTTP 结构化状态不完整或无效，未生成客户端连接材料。\n' >&2
           build_status=1
         fi
+        ;;
+      shadowsocks)
+        if outbound_json=$(build_client_shadowsocks_outbounds "${public_ip}"); then :; else build_status=$?; fi
         ;;
       vless-reality)
         if outbound_json=$(build_client_vless_reality_outbounds "${public_ip}"); then
@@ -12457,6 +13229,15 @@ show_link_info() {
   local address_label=${2:-}
   local instance_id rate_summary
   local header_label
+
+  if [[ "${SB_PROTOCOL}" == shadowsocks ]]; then
+    local ss_links ss_warnings
+    ss_links=$(build_shadowsocks_links_json "${public_ip}") || return 1
+    ss_warnings=$(shadowsocks_share_warnings_json) || return 1
+    jq -r 'to_entries[] | .key+"\n"+.value' <<< "${ss_links}" || return 1
+    jq -r '.[].message' <<< "${ss_warnings}" >&2 || return 1
+    return 0
+  fi
 
   header_label="${address_label}"
   if protocol_uses_domain_connection_material; then
@@ -12585,7 +13366,7 @@ show_qr_info() {
     echo -e "\n${YELLOW}连接二维码：${NC}"
   fi
 
-  if [[ "${SB_PROTOCOL}" == "mixed" || "${SB_PROTOCOL}" == "socks" || "${SB_PROTOCOL}" == "http" ]]; then
+  if [[ "${SB_PROTOCOL}" == "mixed" || "${SB_PROTOCOL}" == "socks" || "${SB_PROTOCOL}" == "http" || "${SB_PROTOCOL}" == "shadowsocks" ]]; then
     local plain_label
     plain_label=$(plain_proxy_management_label "${SB_PROTOCOL}") || return 1
     log_info "${plain_label} 协议当前不提供二维码，请使用链接方式手动配置客户端。"
@@ -12717,7 +13498,20 @@ protocol_uses_domain_connection_material() {
 }
 
 list_subman_addresses_for_current_protocol() {
-  local public_ip address_entries=()
+  local public_ip address_entries=() bound_address protocol
+
+  protocol=$(runtime_protocol_to_state "${SB_PROTOCOL:-}" 2>/dev/null || true)
+  case "${protocol}" in
+    mixed|socks|http|shadowsocks)
+      if plain_proxy_structured_state_active "${protocol}" >/dev/null 2>&1; then
+        bound_address=${SB_MIXED_LISTEN_ADDRESS:-}
+        case "${bound_address}" in
+          ""|0.0.0.0|::) ;;
+          *) printf '监听地址|%s\n' "${bound_address}"; return 0 ;;
+        esac
+      fi
+      ;;
+  esac
 
   if protocol_uses_domain_connection_material; then
     public_ip=$(get_public_ip)
@@ -12744,7 +13538,7 @@ show_connection_details_for_detected_addresses() {
   local address_entries=()
   local entry label address public_ip
 
-  if [[ ("${SB_PROTOCOL}" == mixed || "${SB_PROTOCOL}" == socks || "${SB_PROTOCOL}" == http) ]] && plain_proxy_structured_state_active "${SB_PROTOCOL}"; then
+  if [[ ("${SB_PROTOCOL}" == mixed || "${SB_PROTOCOL}" == socks || "${SB_PROTOCOL}" == http || "${SB_PROTOCOL}" == shadowsocks) ]] && plain_proxy_structured_state_active "${SB_PROTOCOL}"; then
     address=${SB_MIXED_LISTEN_ADDRESS:-}
     if [[ -n "${address}" && "${address}" != '::' && "${address}" != 0.0.0.0 ]]; then
       show_connection_details "${mode}" "${address}" "监听地址"
@@ -12794,7 +13588,7 @@ show_all_connection_details() {
 
   for protocol in "${installed_protocols[@]}"; do
     load_protocol_state "${protocol}" || return $?
-    if [[ ("${protocol}" == mixed || "${protocol}" == socks || "${protocol}" == http) ]] && plain_proxy_structured_state_active "${protocol}"; then
+    if [[ ("${protocol}" == mixed || "${protocol}" == socks || "${protocol}" == http || "${protocol}" == shadowsocks) ]] && plain_proxy_structured_state_active "${protocol}"; then
       instance_ids=$(list_protocol_instance_ids "${protocol}") || return $?
       while IFS= read -r instance_id; do
         [[ -n "${instance_id}" ]] || continue
@@ -12893,7 +13687,7 @@ build_singbox_client_config() {
   for protocol in "${exportable_protocols[@]}"; do
     protocol_label=$(protocol_display_name "${protocol}") || return 1
     if ! protocol_state_exists "${protocol}"; then
-      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" ]]; then
+      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" ]]; then
         log_warn "${protocol_label} 状态缺失，已中止客户端导出；原导出文件保持不变。" >&2
         status=1
         break
@@ -12903,7 +13697,7 @@ build_singbox_client_config() {
     fi
 
     if ! outbound_json=$(build_client_outbounds_for_current_protocol "${protocol}" "${public_ip}"); then
-      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" ]]; then
+      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" ]]; then
         log_warn "${protocol_label} 客户端连接材料无效，已中止客户端导出；原导出文件保持不变。" >&2
         status=1
         break
@@ -13184,10 +13978,10 @@ agent_print_help() {
   sbv agent service restart --json --yes
   sbv agent subman-sync --json
   sbv agent warp --json
-  sbv agent instance create|replace mixed|socks|http --json --yes --expected-revision N --file record.json [--allow-public]
-  sbv agent instance delete|default mixed|socks|http --json --yes --expected-revision N --id ID
+  sbv agent instance create|replace mixed|socks|http|shadowsocks --json --yes --expected-revision N --file record.json [--allow-public]
+  sbv agent instance delete|default mixed|socks|http|shadowsocks --json --yes --expected-revision N --id ID
   sbv agent instance migrate mixed --json --yes --expected-revision N
-  sbv agent instance recover mixed|socks|http --json --yes --expected-revision N
+  sbv agent instance recover mixed|socks|http|shadowsocks --json --yes --expected-revision N
 
 说明:
   capabilities  输出协议、功能入口以及只读/变更/敏感分类。
@@ -13406,7 +14200,7 @@ agent_capabilities_json() {
           persistent_recovery_journal: true
         },
         plain_proxy_instances: {
-          protocols: ["mixed", "socks", "http"],
+          protocols: ["mixed", "socks", "http", "shadowsocks"],
           legacy_migration_protocols: ["mixed"],
           state_schema: 2,
           store_schema: 1,
@@ -13414,7 +14208,8 @@ agent_capabilities_json() {
           operations_by_protocol: {
             mixed: ["create", "replace", "delete", "default", "migrate", "recover"],
             socks: ["create", "replace", "delete", "default", "recover"],
-            http: ["create", "replace", "delete", "default", "recover"]
+            http: ["create", "replace", "delete", "default", "recover"],
+            shadowsocks: ["create", "replace", "delete", "default", "recover"]
           },
           expected_revision_required: true,
           plaintext_public_confirmation: "--allow-public",
@@ -13434,7 +14229,7 @@ agent_capabilities_json() {
         doctor: {mutation: false, sensitive: false},
         "upgrade-check": {mutation: false, sensitive: false},
         upgrade: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart"},
-        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http"]},
+        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks"]},
         "export-client": {mutation: true, sensitive: true},
         "service restart": {mutation: true, sensitive: false, confirmation: "--yes"},
         "subman-sync": {mutation: true, sensitive: true, external_write: true}
@@ -13446,6 +14241,7 @@ agent_capabilities_json() {
         mixed_multi_instance_management: true,
         socks_multi_instance_management: true,
         http_multi_instance_management: true,
+        shadowsocks_multi_instance_management: true,
         warp_mutation: true,
         inbound_outbound_stack_management: true,
         bbr: true,
@@ -14515,7 +15311,7 @@ agent_validate_indexed_protocol_states() {
   # A deleted plain proxy may leave a valid revisioned empty tombstone for
   # CAS continuity.  It is safe when its protocol is absent from the index; a
   # non-empty orphan would be an unowned inventory and must fail closed.
-  for plain_protocol in mixed socks http; do
+  for plain_protocol in mixed socks http shadowsocks; do
     if ! protocol_array_contains "${plain_protocol}" ${expected_protocols[@]+"${expected_protocols[@]}"}; then
       plain_store_file=$(plain_proxy_structured_store_file "${plain_protocol}") || return 1
       if [[ -e "${plain_store_file}" || -L "${plain_store_file}" ]]; then
@@ -14550,7 +15346,7 @@ agent_validate_indexed_protocol_states() {
       # partial first-node view would make Agent status/links appear healthy
       # while silently omitting listeners or credentials.
       mixed_validate_state_inventory || return 1
-    elif [[ "${protocol}" == "socks" || "${protocol}" == "http" ]]; then
+    elif [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" ]]; then
       # Plain proxy protocols are structured-only. Validate the complete
       # manifest and compare every live tag before reporting them installed.
       plain_proxy_validate_state_inventory "${protocol}" || return 1
@@ -14871,6 +15667,41 @@ agent_doctor_json() {
     }'
 }
 
+agent_shadowsocks_node_json() {
+  local filter
+  filter=$(structured_instance_record_jq_filter) || return 1
+  jq -e "${filter}"'ss_auth' <<< "${SB_SHADOWSOCKS_AUTH_JSON:-null}" >/dev/null 2>&1 || return 1
+  jq -n --arg id "${SB_INSTANCE_ID}" --arg name "${SB_NODE_NAME}" --arg tag "${SB_MIXED_INBOUND_TAG}" \
+    --arg address "${SB_MIXED_LISTEN_ADDRESS}" --argjson port "${SB_PORT}" \
+    --argjson revision "${SB_MIXED_STORE_REVISION}" --arg policy "${SB_OUTBOUND_POLICY}" \
+    --argjson network "${SB_SHADOWSOCKS_NETWORK_JSON}" --argjson auth "${SB_SHADOWSOCKS_AUTH_JSON}" '
+      {protocol:"shadowsocks",name:$name,port:$port,instance_id:$id,tag:$tag,
+       instance_revision:$revision,listen:{address:$address,port:$port,network:$network},
+       outbound_policy:$policy,method:$auth.method,auth_enabled:($auth.method!="none"),
+       user_count:(if ($auth.users|length)==0 then 1 else ($auth.users|length) end),
+       shareable:true,client_exportable:true}
+    '
+}
+
+agent_shadowsocks_link_json() {
+  local server=${1:-} summary links outbounds warnings store_file start_snapshot end_snapshot start_revision
+  store_file=$(plain_proxy_structured_store_file shadowsocks) || return 1
+  start_snapshot=$(structured_instance_store_snapshot_json shadowsocks "${store_file}") || return 1
+  start_revision=$(jq -r '.revision | tostring' <<< "${start_snapshot}") || return 1
+  [[ "${start_revision}" =~ ^[0-9]+$ && "${start_revision}" == "${SB_MIXED_STORE_REVISION:-}" ]] || return 1
+  jq -e --arg id "${SB_INSTANCE_ID:-}" 'any(.instances[]; .id == $id)' <<< "${start_snapshot}" >/dev/null 2>&1 || return 1
+  summary=$(agent_shadowsocks_node_json) || return 1
+  links=$(build_shadowsocks_links_json "${server}") || return 1
+  outbounds=$(build_shadowsocks_instance_outbounds "${SB_INSTANCE_ID}" "${server}") || return 1
+  end_snapshot=$(structured_instance_store_snapshot_json shadowsocks "${store_file}") || return 1
+  [[ "${end_snapshot}" == "${start_snapshot}" ]] || return 1
+  outbounds=$(jq -cs . <<< "${outbounds}") || return 1
+  warnings=$(shadowsocks_share_warnings_json) || return 1
+  jq -cn --argjson summary "${summary}" --argjson links "${links}" \
+    --argjson outbounds "${outbounds}" --argjson warnings "${warnings}" \
+    '$summary + {links:$links,outbounds:$outbounds,warnings:$warnings}'
+}
+
 agent_node_summary_json_for_current_protocol() {
   local protocol api_protocol public_ip shareable="true" client_exportable="false"
   local auth_enabled="false" server_name="" tls_enabled="false" http_tls_json
@@ -14881,6 +15712,7 @@ agent_node_summary_json_for_current_protocol() {
   api_protocol=$(agent_protocol_id "${protocol}" 2>/dev/null || printf '%s' "${protocol}")
   public_ip=${1:-$(get_public_ip)}
   node_name=$(display_node_name_for_protocol "${protocol}" "${SB_NODE_NAME}" "")
+  if [[ "${protocol}" == shadowsocks ]]; then agent_shadowsocks_node_json; return $?; fi
 
   case "${protocol}" in
     vless-reality)
@@ -14998,6 +15830,7 @@ agent_link_json_for_current_protocol() {
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
   api_protocol=$(agent_protocol_id "${protocol}" 2>/dev/null || printf '%s' "${protocol}")
   public_ip=${1:-$(get_public_ip)}
+  if [[ "${protocol}" == shadowsocks ]]; then agent_shadowsocks_link_json "${public_ip}"; return $?; fi
   if [[ "${public_ip}" == *:* ]]; then
     address_label="IPv6"
   elif [[ "${public_ip}" == *.* ]]; then
@@ -15350,7 +16183,7 @@ agent_push_nodes_to_subman_json() {
   local original_protocol_state protocol instance_id
   local address_entry address_label public_ip
   local instance_attempted instance_synced instance_stacked_synced
-  local synced_count skipped_count failed_count ok_json
+  local synced_count skipped_count failed_count shadowsocks_skipped_count ok_json
   local last_error_code last_error_disposition last_http_status last_retry_after
   local compatibility_warnings_json
   local installed_protocols=()
@@ -15359,6 +16192,7 @@ agent_push_nodes_to_subman_json() {
   synced_count=0
   skipped_count=0
   failed_count=0
+  shadowsocks_skipped_count=0
   last_error_code=""
   last_error_disposition=""
   last_http_status=""
@@ -15432,6 +16266,26 @@ agent_push_nodes_to_subman_json() {
       continue
     fi
 
+    if [[ "${protocol}" == "shadowsocks" ]]; then
+      push_subman_shadowsocks_protocol y || true
+      synced_count=$((synced_count + ${SUBMAN_SHADOWSOCKS_SYNCED:-0}))
+      skipped_count=$((skipped_count + ${SUBMAN_SHADOWSOCKS_SKIPPED:-0}))
+      shadowsocks_skipped_count=$((shadowsocks_skipped_count + ${SUBMAN_SHADOWSOCKS_SKIPPED:-0}))
+      failed_count=$((failed_count + ${SUBMAN_SHADOWSOCKS_FAILED:-0}))
+      if [[ -n "${SUBMAN_SHADOWSOCKS_WARNINGS_JSON:-}" ]]; then
+        compatibility_warnings_json=$(jq -cn \
+          --argjson existing "${compatibility_warnings_json}" \
+          --argjson additions "${SUBMAN_SHADOWSOCKS_WARNINGS_JSON}" '$existing + $additions') || return 1
+      fi
+      if [[ "${SUBMAN_SHADOWSOCKS_FAILED:-0}" -gt 0 ]]; then
+        last_error_code=${SUBMAN_LAST_ERROR_CODE:-shadowsocks_sync_failed}
+        last_error_disposition=${SUBMAN_LAST_ERROR_DISPOSITION:-operator-repair}
+        last_http_status=${SUBMAN_LAST_HTTP_STATUS:-}
+        last_retry_after=${SUBMAN_LAST_RETRY_AFTER:-}
+      fi
+      continue
+    fi
+
     while IFS= read -r address_entry; do
       [[ -z "${address_entry}" ]] && continue
       address_label=${address_entry%%|*}
@@ -15452,7 +16306,7 @@ agent_push_nodes_to_subman_json() {
     load_protocol_state "${original_protocol_state}"
   fi
 
-  if (( synced_count == 0 && failed_count == 0 )); then
+  if (( synced_count == 0 && shadowsocks_skipped_count == 0 && failed_count == 0 )); then
     agent_json_error "public_ip_unavailable" "未获取到公网 IP，无法生成 SubMan 节点链接。"
     return 1
   fi
@@ -15902,7 +16756,7 @@ apply_plain_proxy_instance_change() (
       [[ -f "${input}" && ! -L "${input}" ]] || return 1
       head -c 1048577 -- "${input}" > "${lock_dir}/record.json" || return $?
       [[ "$(wc -c < "${lock_dir}/record.json")" -le 1048576 ]] || return 1
-      # New plaintext exposure requires a distinct acknowledgement. Legacy
+      # New non-loopback exposure requires a distinct acknowledgement. Legacy
       # migration alone retains its existing listener without changing it.
       if [[ "${allow_public}" != y ]]; then
         jq -es 'length==1 and (.[0].listen.address | .=="::1" or test("^127\\."))' "${lock_dir}/record.json" >/dev/null 2>&1 || return 1
@@ -15971,8 +16825,11 @@ apply_plain_proxy_instance_change() (
 
 agent_instance_cli() {
   local operation=${1:-} protocol=${2:-} expected="" input="" instance_id="" json=n confirmed=n allow_public=n
-  [[ $# -ge 2 ]] || { agent_json_error invalid_arguments "用法: instance 操作 mixed|socks|http --json --yes --expected-revision N [--file 文件 | --id ID]"; return 1; }
+  [[ $# -ge 2 ]] || { agent_json_error invalid_arguments "用法: instance 操作 mixed|socks|http|shadowsocks --json --yes --expected-revision N [--file 文件 | --id ID]"; return 1; }
   shift 2
+  protocol=$(normalize_protocol_id "${protocol}") || {
+    agent_json_error invalid_arguments "实例协议无效；未修改。"; return 1;
+  }
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --json) [[ "${json}" == n ]] || break; json=y; shift ;;
@@ -15984,17 +16841,17 @@ agent_instance_cli() {
       *) break ;;
     esac
   done
-  if [[ $# -ne 0 || "${json}" != y || ("${protocol}" != mixed && "${protocol}" != socks && "${protocol}" != http) || ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
+  if [[ $# -ne 0 || "${json}" != y || ("${protocol}" != mixed && "${protocol}" != socks && "${protocol}" != http && "${protocol}" != shadowsocks) || ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
     agent_json_error invalid_arguments "实例参数、协议或 revision 无效；未修改。"; return 1
   fi
   if ! structured_instance_store_revision_arg "${expected}" >/dev/null; then
     agent_json_error invalid_arguments "revision 超出安全整数范围；未修改。"; return 1
   fi
   if [[ "${operation}" == migrate && "${protocol}" != mixed ]]; then
-    agent_json_error invalid_arguments "只有 Mixed 提供 legacy schema 1 迁移；SOCKS/HTTP 使用 schema 2，已有 live 配置请使用接管入口。"
+    agent_json_error invalid_arguments "只有 Mixed 提供 legacy schema 1 迁移；SOCKS/HTTP/Shadowsocks 使用 schema 2，已有 live 配置请使用接管入口。"
     return 1
   fi
-  [[ "${confirmed}" == y ]] || { agent_json_error confirmation_required "实例写操作需要 --yes；非回环明文入口另需 --allow-public。"; return 1; }
+  [[ "${confirmed}" == y ]] || { agent_json_error confirmation_required "实例写操作需要 --yes；非回环入口另需 --allow-public。"; return 1; }
   case "${operation}" in
     create|replace) [[ -n "${input}" && -z "${instance_id}" ]] || { agent_json_error invalid_arguments "create/replace 需要 --file 类型化实例记录。"; return 1; } ;;
     delete|default) [[ -z "${input}" && -n "${instance_id}" && "${allow_public}" == n ]] || { agent_json_error invalid_arguments "delete/default 需要 --id。"; return 1; }; input=${instance_id} ;;
@@ -16178,7 +17035,7 @@ push_nodes_to_subman() {
   local original_protocol_state protocol instance_id
   local address_entry address_label public_ip
   local instance_attempted instance_synced instance_stacked_synced
-  local synced_count skipped_count failed_count
+  local synced_count skipped_count failed_count shadowsocks_skipped_count
   local installed_protocols=()
 
   prompt_subman_config_if_needed
@@ -16186,6 +17043,7 @@ push_nodes_to_subman() {
   synced_count=0
   skipped_count=0
   failed_count=0
+  shadowsocks_skipped_count=0
 
   mapfile -t installed_protocols < <(list_installed_protocols)
   if [[ ${#installed_protocols[@]} -eq 0 ]]; then
@@ -16254,6 +17112,15 @@ push_nodes_to_subman() {
       continue
     fi
 
+    if [[ "${protocol}" == "shadowsocks" ]]; then
+      push_subman_shadowsocks_protocol n || true
+      synced_count=$((synced_count + ${SUBMAN_SHADOWSOCKS_SYNCED:-0}))
+      skipped_count=$((skipped_count + ${SUBMAN_SHADOWSOCKS_SKIPPED:-0}))
+      shadowsocks_skipped_count=$((shadowsocks_skipped_count + ${SUBMAN_SHADOWSOCKS_SKIPPED:-0}))
+      failed_count=$((failed_count + ${SUBMAN_SHADOWSOCKS_FAILED:-0}))
+      continue
+    fi
+
     while IFS= read -r address_entry; do
       [[ -z "${address_entry}" ]] && continue
       address_label=${address_entry%%|*}
@@ -16270,7 +17137,7 @@ push_nodes_to_subman() {
     load_protocol_state "${original_protocol_state}"
   fi
 
-  if (( synced_count == 0 && failed_count == 0 )); then
+  if (( synced_count == 0 && shadowsocks_skipped_count == 0 && failed_count == 0 )); then
     log_warn "未获取到公网 IP，无法生成 SubMan 节点链接。"
     return 1
   fi
@@ -16560,7 +17427,7 @@ structured_instance_store_error() {
 structured_instance_store_protocol() {
   local protocol
   protocol=$(normalize_protocol_id "${1:-}") || return 1
-  [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" ]] || return 1
+  [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" ]] || return 1
   printf '%s' "${protocol}"
 }
 
@@ -16572,6 +17439,9 @@ structured_instance_store_validate_address() {
   local address=${1:-} part octet count left right
   local parts=() octets=()
   [[ -n "${address}" && "${address}" != *%* ]] || return 1
+  # Validate the dotted IPv4 tail of mapped IPv6 without rewriting the
+  # stored listen value. Resource projection canonicalizes aliases separately.
+  if [[ "${address,,}" == ::ffff:*.* ]]; then address=${address:7}; fi
 
   if [[ "${address}" =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then
     IFS=. read -r -a octets <<< "${address}"
@@ -16617,77 +17487,94 @@ structured_instance_store_validate_address() {
   done
 }
 
+structured_instance_record_jq_filter() {
+  cat <<'JQ'
+    def ss_key($method):
+      type == "string" and utf8bytelength <= 4096 and
+      test("^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?$") and
+      # The pinned core derives longer PSKs, for both server and user keys.
+      # Count decoded bytes without jq @base64d corrupting arbitrary binary.
+      (((length / 4 * 3) - (if endswith("==") then 2 elif endswith("=") then 1 else 0 end)) >=
+       (if $method == "2022-blake3-aes-128-gcm" then 16 else 32 end));
+    def ss_auth:
+      type == "object" and (keys | sort) == ["method","password","users"] and
+      (.method | IN("none","aes-128-gcm","aes-192-gcm","aes-256-gcm",
+        "chacha20-ietf-poly1305","xchacha20-ietf-poly1305",
+        "2022-blake3-aes-128-gcm","2022-blake3-aes-256-gcm","2022-blake3-chacha20-poly1305")) and
+      (.method as $method |
+        (.password | type == "string" and index("\u0000") == null and utf8bytelength <= 4096) and
+        (.users | type == "array" and length <= 128 and
+          all(.[]; type == "object" and (keys | sort) == ["name","password"] and
+            (.name | type == "string" and length > 0 and utf8bytelength <= 256 and
+              (test("[\u0000-\u001F\u007F]") | not)) and
+            (.password | type == "string" and length > 0 and utf8bytelength <= 4096 and index("\u0000") == null) and
+            (if $method | startswith("2022-") then (.password | ss_key($method)) else true end)) and
+          ((map(.name)|unique|length) == length) and ((map(.password)|unique|length) == length)) and
+        (if $method == "none" then .password == "" and .users == []
+         elif $method | startswith("2022-") then
+           (.password | ss_key($method)) and
+           (if $method == "2022-blake3-chacha20-poly1305" then .users == [] else true end)
+         elif (.users|length) > 0 then .password == ""
+         else (.password|length) > 0 end));
+    def valid_instance($protocol):
+      type == "object" and
+      ((keys | sort) == (["authentication","dependencies","id","listen","name","outbound_policy","tag"] +
+        (if $protocol == "http" then ["tls"] else [] end))) and
+      (.id | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and
+      (.name | type == "string" and length > 0 and index("\u0000") == null) and
+      (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]")|not)) and
+      (.listen | type == "object" and
+        ((keys|sort) == (if $protocol == "shadowsocks" then ["address","network","port"] else ["address","port"] end)) and
+        (.address | type == "string" and length > 0 and (test("[\u0000-\u0020\u007F]")|not)) and
+        (.port | type == "number" and floor == . and . >= 1 and . <= 65535) and
+        (if $protocol == "shadowsocks" then
+          (.network | type == "array" and length > 0 and length <= 2 and
+            all(.[]; . == "tcp" or . == "udp") and . == (sort|unique))
+         else true end)) and
+      (if $protocol == "shadowsocks" then (.authentication | ss_auth)
+       else (.authentication | type == "object" and (keys|sort) == ["enabled","password","username"] and
+         (.enabled|type == "boolean") and
+         (.username|type == "string" and index("\u0000") == null) and
+         (.password|type == "string" and index("\u0000") == null) and
+         (if $protocol == "http" then
+            (.username|utf8bytelength <= 4096 and (test("[\u0000-\u001F\u007F]")|not) and (contains(":")|not)) and
+            (.password|utf8bytelength <= 4096 and (test("[\u0000-\u001F\u007F]")|not))
+          else (.username|utf8bytelength <= 255) and (.password|utf8bytelength <= 255) end) and
+         (if .enabled then (.username|length)>0 and (.password|length)>0 else .username=="" and .password=="" end))
+       end) and
+      (.outbound_policy|IN("default","direct","warp")) and
+      (.dependencies|type == "array" and length == 0) and
+      (if $protocol == "http" then (.tls|type == "object" and
+         (if .enabled == false then (keys|sort)==["enabled"]
+          elif .enabled == true then
+            (keys|sort)==["certificate_path","enabled","key_path","server_name"] and
+            (.server_name|type=="string" and length>0 and (test("[\u0000-\u001F\u007F]")|not)) and
+            (.certificate_path|type=="string" and startswith("/") and (test("[\u0000-\u001F\u007F]")|not)) and
+            (.key_path|type=="string" and startswith("/") and (test("[\u0000-\u001F\u007F]")|not))
+          else false end))
+       else true end);
+JQ
+}
+
 structured_instance_store_validate_common_json() {
-  local protocol=${1:-mixed} file=${2:-} file_size
-  if [[ $# -eq 1 ]]; then
-    file=${1:-}
-    protocol=mixed
-  fi
+  local protocol=${1:-mixed} file=${2:-} file_size filter
+  if [[ $# -eq 1 ]]; then file=${1:-}; protocol=mixed; fi
   [[ -n "${file}" && -f "${file}" && ! -L "${file}" ]] || return 1
   file_size=$(wc -c < "${file}") || return 1
   [[ "${file_size}" =~ ^[0-9]+$ && ${file_size} -le 1048576 ]] || return 1
-  jq -e -s 'length == 1' "${file}" >/dev/null 2>&1 || return 1
-  jq -e '
-    type == "object" and
-    ((keys_unsorted | sort) == ["default_instance_id", "instances", "protocol", "revision", "schema_version"]) and
-    (.schema_version | type == "number" and . == 1) and
-    (.protocol | type == "string" and . == $protocol) and
-    (.revision | type == "number" and . == floor and . >= 0 and . <= 9007199254740991) and
-    (.default_instance_id | type == "string" and (test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$") or . == "")) and
-    (. as $root | if (.instances | length) == 0 then .default_instance_id == ""
-      else .default_instance_id != "" and any(.instances[]; .id == $root.default_instance_id) end) and
-    (.instances | type == "array" and length <= 128 and
-      all(.[];
-        type == "object" and
-        ((if $protocol == "http" then
-            (keys_unsorted | sort) == ["authentication", "dependencies", "id", "listen", "name", "outbound_policy", "tag", "tls"]
-          else
-            (keys_unsorted | sort) == ["authentication", "dependencies", "id", "listen", "name", "outbound_policy", "tag"]
-          end)) and
-        (.id | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and
-        (.name | type == "string" and length > 0 and (index("\u0000") == null)) and
-        (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
-        (.listen | type == "object" and ((keys_unsorted | sort) == ["address", "port"]) and
-          (.address | type == "string" and length > 0 and (test("[\u0000-\u0020\u007F]") | not))) and
-        (.listen.port | type == "number" and floor == . and . >= 1 and . <= 65535) and
-        (.authentication | type == "object" and ((keys_unsorted | sort) == ["enabled", "password", "username"]) and
-          (.enabled | type == "boolean") and
-          (.username | type == "string" and (index("\u0000") == null)) and
-          (.password | type == "string" and (index("\u0000") == null)) and
-          (if $protocol == "http" then
-             (if .enabled then
-               (.username | length > 0 and utf8bytelength <= 4096 and
-                 (test("[\u0000-\u001F\u007F]") | not) and
-                 (contains(":") | not)) and
-               (.password | length > 0 and utf8bytelength <= 4096 and
-                 (test("[\u0000-\u001F\u007F]") | not))
-              else
-               (.username == "" and .password == "")
-              end)
-           else
-             (.username | utf8bytelength <= 255) and
-             (.password | utf8bytelength <= 255) and
-             (if .enabled then (.username | length > 0) and (.password | length > 0)
-              else (.username == "" and .password == "") end)
-           end)) and
-        (.outbound_policy | type == "string" and (. == "default" or . == "direct" or . == "warp")) and
-        (.dependencies | type == "array" and length == 0) and
-        (if $protocol == "http" then
-           (.tls | type == "object" and
-             (if .enabled == false then
-                ((keys_unsorted | sort) == ["enabled"])
-              elif .enabled == true then
-                ((keys_unsorted | sort) == ["certificate_path", "enabled", "key_path", "server_name"]) and
-                (.server_name | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
-                (.certificate_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not)) and
-                (.key_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not))
-              else false end))
-         else true end)
-      ) and
-      ((map(.id) | unique | length) == length) and
-      ((map(.tag) | unique | length) == length) and
-      ((map([.listen.address, .listen.port] | @json) | unique | length) == length)
-    )
+  filter=$(structured_instance_record_jq_filter) || return 1
+  jq -es "${filter}"'
+    length == 1 and (.[0] |
+      type == "object" and
+      (keys|sort) == ["default_instance_id","instances","protocol","revision","schema_version"] and
+      .schema_version == 1 and .protocol == $protocol and
+      (.revision|type=="number" and floor==. and .>=0 and .<=9007199254740991) and
+      (.default_instance_id|type=="string" and (test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$") or .=="")) and
+      (. as $root | if (.instances|length)==0 then .default_instance_id==""
+        else .default_instance_id!="" and any(.instances[]; .id==$root.default_instance_id) end) and
+      (.instances|type=="array" and length<=128 and all(.[]; valid_instance($protocol)) and
+        (map(.id)|unique|length)==length and (map(.tag)|unique|length)==length and
+        (map([.listen.address,.listen.port,(.listen.network // ["tcp"])]|@json)|unique|length)==length))
   ' --arg protocol "${protocol}" "${file}" >/dev/null 2>&1
 }
 
@@ -16713,7 +17600,7 @@ validate_structured_instance_store() {
       return 1
     }
   done <<< "${addresses}"
-  listener_input=$(jq -c --arg protocol "${protocol}" '{inbounds:[.instances[] | {type:$protocol,tag:.tag,listen:.listen.address,listen_port:.listen.port}]}' "${file}") || return 1
+  listener_input=$(jq -c --arg protocol "${protocol}" '{inbounds:[.instances[] | {type:$protocol,tag:.tag,listen:.listen.address,listen_port:.listen.port} + (if $protocol == "shadowsocks" then {network:.listen.network} else {} end)]}' "${file}") || return 1
   listener_plan=$(managed_listener_plan_json <<< "${listener_input}") || return 1
   validate_listener_plan_json <<< "${listener_plan}" || return 1
   : "${protocol}"
@@ -16731,6 +17618,7 @@ plain_proxy_config_store_candidate() (
     mixed) protocol_label="Mixed" ;;
     socks) protocol_label="SOCKS" ;;
     http) protocol_label="HTTP" ;;
+    shadowsocks) protocol_label="Shadowsocks" ;;
     *) return 1 ;;
   esac
   shift
@@ -16739,6 +17627,7 @@ plain_proxy_config_store_candidate() (
   local state_file state_schema legacy_name active_state store_file
   local temp_dir inbound_json inbound_count inbound_index tag address port
   local username password auth_enabled policy id name base digest suffix tls_json
+  local ss_method ss_password ss_users_json network_json
   local existing_instance existing_store_json existing_match default_id old_revision old_semantics new_semantics
   local candidate_revision status
   local marker_schema2=n store_instances=0
@@ -16781,16 +17670,42 @@ plain_proxy_config_store_candidate() (
     (.inbounds // []) | all(.[];
       if .type != $protocol then true
       else
-        ((keys_unsorted - (["type", "tag", "listen", "listen_port", "users", "set_system_proxy"] + (if $protocol == "http" then ["tls"] else [] end)) | length == 0))
+        ((keys_unsorted - (["type", "tag", "listen", "listen_port", "users", "set_system_proxy"] +
+          (if $protocol == "http" then ["tls"]
+           elif $protocol == "shadowsocks" then ["network", "method", "password"]
+           else [] end)) | length == 0))
         and (if has("tag") then (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) else true end)
         and (if has("listen") then (.listen | type == "string" and length > 0) else true end)
         and (if has("listen_port") then (.listen_port | type == "number" and floor == . and . >= 1 and . <= 65535) else true end)
-        and (if has("users") then
+        and (if $protocol == "shadowsocks" then
+              (has("method") and (.method | type == "string" and
+                IN("none", "aes-128-gcm", "aes-192-gcm", "aes-256-gcm",
+                   "chacha20-ietf-poly1305", "xchacha20-ietf-poly1305",
+                   "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm",
+                   "2022-blake3-chacha20-poly1305"))) and
+              (has("password") and (.password | type == "string" and index("\u0000") == null)) and
+              (if has("users") then
+                (.users | type == "array" and length <= 128 and all(.[];
+                  type == "object" and ((keys_unsorted | sort) == ["name", "password"]) and
+                  (.name | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
+                  (.password | type == "string" and length > 0 and index("\u0000") == null)))
+               else true end)
+             elif has("users") then
               (.users | type == "array" and length <= 1 and
                 all(.[ ]; type == "object" and
                   ((keys_unsorted | sort) == ["password", "username"]) and
                   (.username | type == "string" and length > 0 and index("\u0000") == null) and
                   (.password | type == "string" and length > 0 and index("\u0000") == null)) )
+             else true end)
+        and (if $protocol == "shadowsocks" then
+              (if has("network") then
+                (.network | if type == "string" then [.]
+                  elif type == "array" then (if length == 0 then ["tcp", "udp"] else . end)
+                  elif . == null then ["tcp", "udp"]
+                  else error("invalid network") end) |
+                (length > 0 and length <= 2 and all(.[]; . == "tcp" or . == "udp") and
+                 (sort | unique) == .)
+               else true end)
              else true end)
         and (if $protocol == "mixed" then
              (if has("set_system_proxy") then .set_system_proxy == false else true end)
@@ -16930,6 +17845,23 @@ plain_proxy_config_store_candidate() (
       return 1
     }
 
+    network_json='["tcp","udp"]'
+    ss_method=""
+    ss_password=""
+    ss_users_json='[]'
+    if [[ "${protocol}" == "shadowsocks" ]]; then
+      ss_method=$(jq -r '.method' <<< "${inbound_json}") || return 1
+      ss_password=$(jq -j '.password, "\u0001"' <<< "${inbound_json}") || return 1
+      ss_password=${ss_password%$'\1'}
+      ss_users_json=$(jq -c '.users // []' <<< "${inbound_json}") || return 1
+      network_json=$(jq -c '
+        if (.network == null or .network == []) then ["tcp", "udp"]
+        elif (.network | type) == "string" then [.network]
+        else .network
+        end | sort | unique
+      ' <<< "${inbound_json}") || return 1
+    fi
+
     tls_json='null'
     if [[ "${protocol}" == "http" ]]; then
       tls_json=$(jq -c '.tls // {enabled:false}' <<< "${inbound_json}") || return 1
@@ -16997,6 +17929,14 @@ plain_proxy_config_store_candidate() (
       --arg policy "${policy}" --argjson tls "${tls_json}" \
       '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$auth_enabled,username:$username,password:$password},outbound_policy:$policy,tls:$tls,dependencies:[]}' \
       >> "${temp_dir}/instances.jsonl" || return 1
+    elif [[ "${protocol}" == "shadowsocks" ]]; then
+      jq -n -cS \
+      --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
+      --arg address "${address}" --argjson port "${port}" --argjson network "${network_json}" \
+      --arg method "${ss_method}" --arg password "${ss_password}" --argjson users "${ss_users_json}" \
+      --arg policy "${policy}" \
+      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port,network:$network},authentication:{method:$method,password:$password,users:$users},outbound_policy:$policy,dependencies:[]}' \
+      >> "${temp_dir}/instances.jsonl" || return 1
     else
       jq -n -cS \
       --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
@@ -17036,6 +17976,10 @@ plain_proxy_config_store_candidate() (
 
 mixed_config_store_candidate() {
   plain_proxy_config_store_candidate mixed "$@"
+}
+
+shadowsocks_config_store_candidate() {
+  plain_proxy_config_store_candidate shadowsocks "$@"
 }
 
 plain_proxy_structured_state_matches_config() (
@@ -17101,49 +18045,14 @@ structured_instance_store_empty_json() {
 }
 
 structured_instance_store_validate_instance_argument() {
-  local file=${1:-} protocol=${2:-mixed} file_size
+  local file=${1:-} protocol=${2:-mixed} file_size filter
   protocol=$(structured_instance_store_protocol "${protocol}") || return 1
   [[ -n "${file}" && -f "${file}" && ! -L "${file}" ]] || return 1
   file_size=$(wc -c < "${file}") || return 1
   [[ "${file_size}" =~ ^[0-9]+$ && ${file_size} -le 1048576 ]] || return 1
-  jq -e -s 'length == 1' "${file}" >/dev/null 2>&1 || return 1
-  jq -e '
-    type == "object" and
-    ((if $protocol == "http" then
-        (keys_unsorted | sort) == ["authentication", "dependencies", "id", "listen", "name", "outbound_policy", "tag", "tls"]
-      else
-        (keys_unsorted | sort) == ["authentication", "dependencies", "id", "listen", "name", "outbound_policy", "tag"]
-      end)) and
-    (.id | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and
-    (.name | type == "string" and length > 0 and (index("\u0000") == null)) and
-    (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
-    (.listen | type == "object" and ((keys_unsorted | sort) == ["address", "port"]) and (.address | type == "string") and (.port | type == "number" and floor == . and . >= 1 and . <= 65535)) and
-    (.authentication | type == "object" and ((keys_unsorted | sort) == ["enabled", "password", "username"]) and (.enabled | type == "boolean") and (.username | type == "string" and (index("\u0000") == null)) and (.password | type == "string" and (index("\u0000") == null)) and
-      (if $protocol == "http" then
-         (if .enabled then
-           (.username | length > 0 and utf8bytelength <= 4096 and (test("[\u0000-\u001F\u007F]") | not) and (contains(":") | not)) and
-           (.password | length > 0 and utf8bytelength <= 4096 and (test("[\u0000-\u001F\u007F]") | not))
-          else
-           (.username == "" and .password == "")
-          end)
-       else
-         (.username | utf8bytelength <= 255) and (.password | utf8bytelength <= 255) and
-         (if .enabled then (.username | length > 0) and (.password | length > 0) else (.username == "" and .password == "") end)
-       end)) and
-    (.outbound_policy | type == "string" and (. == "default" or . == "direct" or . == "warp")) and
-    (.dependencies | type == "array" and length == 0) and
-    (if $protocol == "http" then
-       (.tls | type == "object" and
-         (if .enabled == false then
-            ((keys_unsorted | sort) == ["enabled"])
-          elif .enabled == true then
-            ((keys_unsorted | sort) == ["certificate_path", "enabled", "key_path", "server_name"]) and
-            (.server_name | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
-            (.certificate_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not)) and
-            (.key_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not))
-          else false end))
-     else true end)
-  ' --arg protocol "${protocol}" "${file}" >/dev/null 2>&1
+  filter=$(structured_instance_record_jq_filter) || return 1
+  jq -es "${filter}"'length == 1 and (.[0] | valid_instance($protocol))' \
+    --arg protocol "${protocol}" "${file}" >/dev/null 2>&1
 }
 
 structured_instance_store_revision() {
@@ -17436,8 +18345,11 @@ render_structured_instance_inbounds() {
   snapshot=$(structured_instance_store_snapshot_json "${protocol}" "${2:-}") || return $?
   jq -c --arg protocol "${protocol}" '
     .instances[] |
-    ({type:$protocol,tag:.tag,listen:.listen.address,listen_port:.listen.port,
-      users:(if .authentication.enabled then [{username:.authentication.username,password:.authentication.password}] else [] end)} +
+    ({type:$protocol,tag:.tag,listen:.listen.address,listen_port:.listen.port} +
+      (if $protocol == "shadowsocks" then
+         {method:.authentication.method,password:.authentication.password,
+          users:.authentication.users,network:.listen.network}
+       else {users:(if .authentication.enabled then [{username:.authentication.username,password:.authentication.password}] else [] end)} end) +
       (if $protocol == "http" and .tls.enabled then
          {tls:.tls}
        else {}
@@ -17580,8 +18492,10 @@ load_plain_proxy_structured_instance() {
       .instances[] | select(.id == $id) |
       [.id, .name, .tag, .listen.address, (.listen.port | tostring),
        (if .authentication.enabled then "y" else "n" end),
-       .authentication.username, .authentication.password,
-       .outbound_policy, (if $protocol == "http" then (.tls | tojson) else "" end)] | .[] | ., "\u0000"
+       (.authentication.username // ""), .authentication.password,
+       .outbound_policy, (if $protocol == "http" then (.tls | tojson) else "" end),
+       (if $protocol == "shadowsocks" then (.authentication | tojson) else "" end),
+       (if $protocol == "shadowsocks" then (.listen.network | tojson) else "" end)] | .[] | ., "\u0000"
     ' <<< "${snapshot}" > "${stream_file}"; then
     rm -f -- "${stream_file}"
     return 1
@@ -17590,7 +18504,7 @@ load_plain_proxy_structured_instance() {
     fields+=("${field}")
   done < "${stream_file}"
   rm -f -- "${stream_file}"
-  [[ ${#fields[@]} -eq 10 ]] || return 1
+  [[ ${#fields[@]} -eq 12 ]] || return 1
 
   INSTALLED=1
   CONFIG_SCHEMA_VERSION=2
@@ -17610,6 +18524,8 @@ load_plain_proxy_structured_instance() {
   SB_MIXED_USERNAME=${fields[6]}
   SB_MIXED_PASSWORD=${fields[7]}
   SB_OUTBOUND_POLICY=${fields[8]}
+  SB_SHADOWSOCKS_AUTH_JSON=${fields[10]}
+  SB_SHADOWSOCKS_NETWORK_JSON=${fields[11]}
   if [[ "${protocol}" == "http" ]]; then
     SB_HTTP_TLS_JSON=$(jq -c . <<< "${fields[9]}" 2>/dev/null) || return 1
   else
@@ -17642,7 +18558,7 @@ protocol_instance_state_schema() {
   schema=${schema//\"/}
   schema=${schema//\'/}
   [[ "${schema}" =~ ^[0-9]+$ ]] || return 1
-  [[ "${protocol}" != "socks" && "${protocol}" != "http" || "${schema}" == "2" ]] || return 1
+  [[ "${protocol}" != "socks" && "${protocol}" != "http" && "${protocol}" != "shadowsocks" || "${schema}" == "2" ]] || return 1
   printf '%s' "${schema}"
 }
 
@@ -17694,6 +18610,8 @@ reset_protocol_instance_runtime_fields() {
   SB_MIXED_LISTEN_ADDRESS=""
   SB_MIXED_STORE_REVISION="0"
   SB_HTTP_TLS_JSON=""
+  SB_SHADOWSOCKS_AUTH_JSON=""
+  SB_SHADOWSOCKS_NETWORK_JSON=""
   SB_HY2_DOMAIN=""
   SB_HY2_PASSWORD=""
   SB_HY2_USER_NAME=""
@@ -17764,7 +18682,7 @@ list_protocol_instance_ids() {
       mixed_structured_state_active || return 1
       jq -r '.instances[].id' "$(mixed_structured_store_file)"
       ;;
-    socks:2|http:2)
+    socks:2|http:2|shadowsocks:2)
       plain_proxy_structured_state_active "${protocol}" || return 1
       jq -r '.instances[].id' "$(plain_proxy_structured_store_file "${protocol}")"
       ;;
@@ -17822,7 +18740,7 @@ protocol_default_instance_id() {
       mixed_structured_state_active || return 1
       default_id=$(jq -r '.default_instance_id' "$(mixed_structured_store_file)") || return 1
       ;;
-    socks:2|http:2)
+    socks:2|http:2|shadowsocks:2)
       plain_proxy_structured_state_active "${protocol}" || return 1
       default_id=$(jq -r '.default_instance_id' "$(plain_proxy_structured_store_file "${protocol}")") || return 1
       ;;
@@ -17845,7 +18763,7 @@ load_protocol_instance_state() {
   local schema instance_ids listed_instance_id legacy_inbound_tag
 
   protocol=$(normalize_protocol_id "${protocol}") || return 1
-  if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" ]]; then
+  if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" ]]; then
     structured_instance_store_validate_id "${instance_id}" || return 1
   else
     validate_vless_reality_instance_id "${instance_id}" || return 1
@@ -17892,7 +18810,7 @@ load_protocol_instance_state() {
     mixed:2)
       load_mixed_structured_instance "${instance_id}" || return 1
       ;;
-    socks:2|http:2)
+    socks:2|http:2|shadowsocks:2)
       load_plain_proxy_structured_instance "${protocol}" "${instance_id}" || return 1
       ;;
     *)
@@ -18372,6 +19290,12 @@ protocol_state_matches_config() {
     plain_proxy_structured_state_matches_config http
     return $?
   fi
+  if [[ "${protocol}" == "shadowsocks" ]]; then
+    # Shadowsocks has no legacy snapshot fallback: compare every typed
+    # listener, network selection, authentication record, and route policy.
+    plain_proxy_structured_state_matches_config shadowsocks
+    return $?
+  fi
 
   expected_snapshot=$(render_expected_protocol_state_snapshot "${protocol}") || return 1
   saved_snapshot=$(render_saved_protocol_state_snapshot "${protocol}") || return 1
@@ -18677,6 +19601,7 @@ rebuild_protocol_state_from_config() {
   local mixed_legacy_node_name mixed_legacy_tag mixed_legacy_listen mixed_legacy_policy mixed_stack_listen
   local socks_inbound_count=0 socks_candidate_file="" socks_candidate_revision=0 socks_state_file socks_state_schema
   local http_inbound_count=0 http_candidate_file="" http_candidate_revision=0 http_state_file http_state_schema
+  local shadowsocks_inbound_count=0 shadowsocks_candidate_file="" shadowsocks_candidate_revision=0 shadowsocks_state_file shadowsocks_state_schema
   local backup_state_dir
 
   backup_dir=$(mktemp -d) || return 1
@@ -18896,6 +19821,54 @@ rebuild_protocol_state_from_config() {
     fi
   fi
 
+  # Shadowsocks is structured-only. Capture its complete typed candidate while
+  # the old metadata is still available; the clear below removes root .env files.
+  shadowsocks_inbound_count=$(jq -r '[.inbounds[]? | select(.type == "shadowsocks")] | length' "${SINGBOX_CONFIG_FILE}") || {
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+    return 1
+  }
+  [[ "${shadowsocks_inbound_count}" =~ ^[0-9]+$ ]] || {
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+    return 1
+  }
+  if (( shadowsocks_inbound_count > 0 )); then
+    shadowsocks_state_file=$(protocol_state_file shadowsocks) || {
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+      return 1
+    }
+    shadowsocks_state_schema=""
+    if [[ -f "${shadowsocks_state_file}" ]]; then
+      validate_protocol_state_schema shadowsocks "${shadowsocks_state_file}" || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+        return 1
+      }
+      shadowsocks_state_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${shadowsocks_state_file}" | head -n1) || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+        return 1
+      }
+      shadowsocks_state_schema=${shadowsocks_state_schema//\"/}
+      shadowsocks_state_schema=${shadowsocks_state_schema//\'/}
+    fi
+    [[ -z "${shadowsocks_state_schema}" || "${shadowsocks_state_schema}" == "2" ]] || {
+      printf '[ERROR] shadowsocks_store_candidate: Shadowsocks legacy state is unsupported; 已保留原状态。\n' >&2
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+      return 1
+    }
+    shadowsocks_candidate_file="${backup_dir}/shadowsocks.candidate.json"
+    if ! plain_proxy_config_store_candidate shadowsocks > "${shadowsocks_candidate_file}"; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+      return 1
+    fi
+    if [[ -f "$(plain_proxy_structured_store_file shadowsocks 2>/dev/null || true)" ]]; then
+      shadowsocks_candidate_revision=$(jq -r '.revision' "$(plain_proxy_structured_store_file shadowsocks)") || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+        return 1
+      }
+    else
+      shadowsocks_candidate_revision=0
+    fi
+  fi
+
   clear_protocol_state_cache
   ensure_protocol_state_dir
   if ! rm -rf "${SB_PROTOCOL_STATE_DIR}/vless-reality.d"; then
@@ -19025,6 +19998,12 @@ rebuild_protocol_state_from_config() {
       http)
         if ! protocol_array_contains "http" ${rebuilt_protocols[@]+"${rebuilt_protocols[@]}"}; then
           rebuilt_protocols+=("http")
+        fi
+        continue
+        ;;
+      shadowsocks)
+        if ! protocol_array_contains "shadowsocks" ${rebuilt_protocols[@]+"${rebuilt_protocols[@]}"}; then
+          rebuilt_protocols+=("shadowsocks")
         fi
         continue
         ;;
@@ -19195,6 +20174,17 @@ rebuild_protocol_state_from_config() {
       return 1
     fi
     if ! save_plain_proxy_structured_marker http; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+      return 1
+    fi
+  fi
+
+  if (( shadowsocks_inbound_count > 0 )); then
+    if ! publish_structured_instance_store shadowsocks "${shadowsocks_candidate_file}" "${shadowsocks_candidate_revision}"; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+      return 1
+    fi
+    if ! save_plain_proxy_structured_marker shadowsocks; then
       abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
       return 1
     fi
@@ -19637,13 +20627,14 @@ main() {
     render_menu_item "17" "管理 Mixed 实例"
     render_menu_item "18" "管理 SOCKS 实例"
     render_menu_item "19" "管理 HTTP 实例"
+    render_menu_item "20" "管理 Shadowsocks 实例"
     echo "0. 退出"
     render_main_menu_footer
-    choice=$(prompt_choice "请选择 [0-19]: " 0 19 "")
+    choice=$(prompt_choice "请选择 [0-20]: " 0 20 "")
 
     if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
       case "${choice}" in
-        0|9|10|12|17|18|19) ;;
+        0|9|10|12|17|18|19|20) ;;
         *) log_warn "请先通过菜单 17/18/19 恢复对应协议未完成的实例事务；本次未执行其他写操作。"; continue ;;
       esac
     fi
@@ -19675,6 +20666,7 @@ main() {
       17) mixed_instance_management_menu ;;
       18) socks_instance_management_menu ;;
       19) http_instance_management_menu ;;
+      20) shadowsocks_instance_management_menu ;;
       0) exit_script ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac

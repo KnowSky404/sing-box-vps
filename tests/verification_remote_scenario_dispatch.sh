@@ -31,6 +31,8 @@ SOCKS_STATE_FILE="${PROTOCOLS_DIR}/socks.env"
 SOCKS_STORE_FILE="${PROTOCOLS_DIR}/instances/socks.json"
 HTTP_STATE_FILE="${PROTOCOLS_DIR}/http.env"
 HTTP_STORE_FILE="${PROTOCOLS_DIR}/instances/http.json"
+SHADOWSOCKS_STATE_FILE="${PROTOCOLS_DIR}/shadowsocks.env"
+SHADOWSOCKS_STORE_FILE="${PROTOCOLS_DIR}/instances/shadowsocks.json"
 INDEX_FILE="${PROTOCOLS_DIR}/index.env"
 ASSERT_LOG_FILE="${TMP_DIR}/assert.log"
 CALLS_FILE="${TMP_DIR}/calls.log"
@@ -303,6 +305,43 @@ STATE_EOF
 CONFIG_EOF
 }
 
+write_shadowsocks_state() {
+  mkdir -p "$(dirname "${SHADOWSOCKS_STORE_FILE}")"
+  printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2\n' > "${SHADOWSOCKS_STATE_FILE}"
+  cat > "${SHADOWSOCKS_STORE_FILE}" <<'STATE_EOF'
+{
+  "schema_version": 1,
+  "protocol": "shadowsocks",
+  "revision": 1,
+  "default_instance_id": "main",
+  "instances": [{
+    "id": "main",
+    "name": "Shadowsocks verification",
+    "tag": "ss-in",
+    "listen": {"address": "127.0.0.1", "port": 1083, "network": ["tcp", "udp"]},
+    "authentication": {"method": "2022-blake3-aes-128-gcm", "password": "MDEyMzQ1Njc4OWFiY2RlZg==", "users": []},
+    "outbound_policy": "default",
+    "dependencies": []
+  }]
+}
+STATE_EOF
+  cat > "${CONFIG_FILE}" <<'CONFIG_EOF'
+{
+  "inbounds": [{
+    "type": "shadowsocks",
+    "tag": "ss-in",
+    "listen": "127.0.0.1",
+    "listen_port": 1083,
+    "network": ["tcp", "udp"],
+    "method": "2022-blake3-aes-128-gcm",
+    "password": "MDEyMzQ1Njc4OWFiY2RlZg==",
+    "users": []
+  }]
+}
+CONFIG_EOF
+  chmod 600 "${SHADOWSOCKS_STORE_FILE}"
+}
+
 reset_runtime_artifacts() {
   printf '0\n' > "${CONFIG_PRESENT_FILE}"
   printf '0\n' > "${SERVICE_FILE_PRESENT_FILE}"
@@ -519,6 +558,34 @@ INDEX_EOF
           return 0
         fi
 
+        if [[ "${actual_lines[2]:-}" == "7" ]]; then
+          if [[ "${#actual_lines[@]}" -ne 11 ]]; then
+            printf 'unexpected shadowsocks install input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
+            return 1
+          fi
+          [[ "${actual_lines[0]}" == "1" ]]
+          [[ "${actual_lines[1]}" == "" ]]
+          [[ "${actual_lines[2]}" == "7" ]]
+          [[ "${actual_lines[3]}" == "1083" ]]
+          [[ "${actual_lines[4]}" == "" ]]
+          [[ "${actual_lines[5]}" == "n" ]]
+          [[ "${actual_lines[6]}" == "MDEyMzQ1Njc4OWFiY2RlZg==" ]]
+          [[ "${actual_lines[7]}" == "1" ]]
+          [[ "${actual_lines[8]}" == "n" ]]
+          [[ "${actual_lines[9]}" == "n" ]]
+          [[ "${actual_lines[10]}" == "0" ]]
+          printf '1083\n' > "${PORT_FILE}"
+          printf '1\n' > "${CONFIG_PRESENT_FILE}"
+          printf '1\n' > "${SERVICE_FILE_PRESENT_FILE}"
+          printf '1\n' > "${SBV_PRESENT_FILE}"
+          printf '1\n' > "${SERVICE_ACTIVE_FILE}"
+          write_shadowsocks_state
+          cat > "${INDEX_FILE}" <<'INDEX_EOF'
+INSTALLED_PROTOCOLS=shadowsocks
+INDEX_EOF
+          return 0
+        fi
+
         printf 'unexpected install input: %s\n' "${actual_lines[*]:-}" >&2
         return 1
       fi
@@ -646,6 +713,16 @@ test() {
     return
   fi
 
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/shadowsocks.env" ]]; then
+    [[ -f "${SHADOWSOCKS_STATE_FILE}" ]]
+    return
+  fi
+
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/instances/shadowsocks.json" ]]; then
+    [[ -f "${SHADOWSOCKS_STORE_FILE}" ]]
+    return
+  fi
+
   if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
     [[ -f "${INDEX_FILE}" ]]
     return
@@ -711,6 +788,10 @@ jq() {
     args[$last_index]="${HTTP_STORE_FILE}"
   fi
 
+  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/shadowsocks.json" ]]; then
+    args[$last_index]="${SHADOWSOCKS_STORE_FILE}"
+  fi
+
   command "${REAL_JQ}" "${args[@]}"
 }
 
@@ -736,6 +817,10 @@ sed() {
 
   if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/http.env" ]]; then
     args[$last_index]="${HTTP_STATE_FILE}"
+  fi
+
+  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/shadowsocks.env" ]]; then
+    args[$last_index]="${SHADOWSOCKS_STATE_FILE}"
   fi
 
   if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/socks.json" ]]; then
@@ -802,6 +887,14 @@ grep() {
     args[$last_index]="${HTTP_STORE_FILE}"
   fi
 
+  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/shadowsocks.env" ]]; then
+    args[$last_index]="${SHADOWSOCKS_STATE_FILE}"
+  fi
+
+  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/instances/shadowsocks.json" ]]; then
+    args[$last_index]="${SHADOWSOCKS_STORE_FILE}"
+  fi
+
   if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/index.env" ]]; then
     args[$last_index]="${INDEX_FILE}"
   fi
@@ -817,6 +910,10 @@ stat() {
     return 0
   fi
   if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/http.json" ]]; then
+    printf '600\n'
+    return 0
+  fi
+  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/shadowsocks.json" ]]; then
     printf '600\n'
     return 0
   fi
@@ -895,6 +992,8 @@ perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/vless-reality.env|state_
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/anytls.env|state_file='"${ANYTLS_STATE_FILE}"'|g' "${PAYLOAD_FILE}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/http.env|state_file='"${HTTP_STATE_FILE}"'|g' "${PAYLOAD_FILE}"
 perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/http.json|store_file='"${HTTP_STORE_FILE}"'|g' "${PAYLOAD_FILE}"
+perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/shadowsocks.env|state_file='"${SHADOWSOCKS_STATE_FILE}"'|g' "${PAYLOAD_FILE}"
+perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/shadowsocks.json|store_file='"${SHADOWSOCKS_STORE_FILE}"'|g' "${PAYLOAD_FILE}"
 
 CALLS_FILE="${CALLS_FILE}" \
 CONFIG_PRESENT_FILE="${CONFIG_PRESENT_FILE}" \
@@ -917,6 +1016,8 @@ SOCKS_STATE_FILE="${SOCKS_STATE_FILE}" \
 SOCKS_STORE_FILE="${SOCKS_STORE_FILE}" \
 HTTP_STATE_FILE="${HTTP_STATE_FILE}" \
 HTTP_STORE_FILE="${HTTP_STORE_FILE}" \
+SHADOWSOCKS_STATE_FILE="${SHADOWSOCKS_STATE_FILE}" \
+SHADOWSOCKS_STORE_FILE="${SHADOWSOCKS_STORE_FILE}" \
 INDEX_FILE="${INDEX_FILE}" \
 ASSERT_LOG_FILE="${ASSERT_LOG_FILE}" \
 INSTALL_COUNT_FILE="${INSTALL_COUNT_FILE}" \
@@ -932,6 +1033,7 @@ REAL_JQ="${REAL_JQ}" \
     fresh_install_anytls \
     fresh_install_socks \
     fresh_install_http \
+    fresh_install_shadowsocks \
     runtime_smoke \
     uninstall_and_reinstall \
     > "${STDOUT_FILE}" \
@@ -947,6 +1049,7 @@ grep -Fqx 'SCENARIO=legacy_takeover_export' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=fresh_install_anytls' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=fresh_install_socks' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=fresh_install_http' "${STDOUT_FILE}"
+grep -Fqx 'SCENARIO=fresh_install_shadowsocks' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=uninstall_and_reinstall' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=runtime_smoke' "${STDOUT_FILE}"
 grep -Fq '__SING_BOX_VPS_REMOTE_ARTIFACT_BUNDLE_BEGIN__' "${STDOUT_FILE}"
@@ -980,17 +1083,21 @@ grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_socks/protoc
 [[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_http/config.json" ]]
 [[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_http/protocols/instances/http.json" ]]
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_http/protocol-probes/http/result.env"
+[[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_shadowsocks/config.json" ]]
+[[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_shadowsocks/protocols/instances/shadowsocks.json" ]]
+grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_shadowsocks/protocol-probes/shadowsocks/result.env"
 [[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/sing-box-check.txt" ]]
 grep -Fqx 'STATUS=success' "${ARTIFACT_DIR}/scenarios/runtime_smoke/result.env"
-grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/http/result.env"
+grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/shadowsocks/result.env"
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/uninstall_and_reinstall/protocol-probes/vless-reality/result.env"
-[[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/http/client.json" ]]
-[[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/http/probe.stdout.txt" ]]
+[[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/shadowsocks/client.json" ]]
+[[ -f "${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/shadowsocks/probe.stdout.txt" ]]
 grep -Fq 'verification_run_protocol_probes' "${PAYLOAD_FILE}"
 grep -Fq 'verification_scenario_upgrade_1_13_to_1_14' "${PAYLOAD_FILE}"
 grep -Fq 'run_verification_scenario upgrade_1_13_to_1_14 verification_scenario_upgrade_1_13_to_1_14' "${PAYLOAD_FILE}"
 grep -Fq 'verification_scenario_multi_protocol_coexistence' "${PAYLOAD_FILE}"
 grep -Fq 'verification_scenario_fresh_install_http' "${PAYLOAD_FILE}"
+grep -Fq 'verification_scenario_fresh_install_shadowsocks' "${PAYLOAD_FILE}"
 grep -Fq 'verification_scenario_upgrade_rollback_1_13_to_1_14' "${PAYLOAD_FILE}"
 ! grep -Fq 'verification_execute_single_protocol_probe vless-reality /root/sing-box-vps/config.json' "${PAYLOAD_FILE}"
 grep -Fqx 'test:-f|/root/sing-box-vps/protocols/vless-reality.env|' "${ASSERT_LOG_FILE}"

@@ -164,9 +164,9 @@ else status=$?; fi
 grep -Fq 'config_committed; firewall_may_be_partial; service_restart_not_attempted' "${TMP_DIR}/err"
 unset UFW_FAILURE
 
-# Test-only dual-network metadata: this exercises the resource contract, not
-# a public Shadowsocks adapter. The real registry is deliberately unchanged.
-base_registry=$(protocol_registry_json)
+# Test-only dual-network metadata isolates malformed/resource contracts from
+# the real Shadowsocks adapter. Backends remain mocked throughout.
+base_registry=$(protocol_registry_json | jq 'map(select(.state_id!="shadowsocks"))')
 fixture_registry=$(jq '. + [{state_id:"shadowsocks",type:"shadowsocks",
   listen_networks:["tcp","udp"],features:{listen_network_selection:true}}]' <<< "${base_registry}")
 protocol_registry_json() { printf '%s\n' "${fixture_registry}"; }

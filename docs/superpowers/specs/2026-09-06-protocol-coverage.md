@@ -6,7 +6,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026090801`，`SB_SUPPORT_MAX_VERSION=1.14.0`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026090802`，`SB_SUPPORT_MAX_VERSION=1.14.0`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -68,7 +68,7 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 | vless-reality（旧预设） | `vless` / inbound | 项目保留 1.13.x；REALITY、Vision 与 TCP 预设 | TCP listen，TCP/UDP 业务；已有多实例、固定 tag/UUID/ShortID、实例出站和 QoS | yes | yes（Linux；需握手目标） | 旧预设；yes/yes/yes/yes | 裸核客户端 / VLESS URI / VLESS 同步 | project-real-tcp |
 | socks（独立预设） | `socks` / inbound | 基础内建 | TCP listen；SOCKS4/4a/5；UDP associate/UoT 业务经该 TCP 会话处理；认证可选；无 HTTP/TLS | yes | yes（Linux） | active schema 2 marker + JSON store（`schema_version: 1`）与共享实例事务；yes/yes/yes/yes（实现范围，不等同全协议目标完成） | SOCKS5 + UoT v2 裸核客户端（明文警告） / SOCKS 链接 / no current SubMan | project-real-tcp；六项回归、两核心 check/runtime、菜单、Docker 10/10 与 TCP 14/14 通过；公网原生 UDP 未验证 |
 | http | `http` / inbound | 基础内建；项目兼容 1.13.x；TLS 需用户提供有效证书/私钥引用 | HTTP CONNECT 入口，TCP；入口 TLS 与代理 HTTPS 目标独立；新实例默认回环与认证 | yes | yes（Linux；手工 TLS 文件另行预检） | schema 2 + 共享实例事务；yes/yes/yes/yes；无 legacy migration | HTTP CONNECT TCP 客户端（TLS 嵌入公有证书信任） / 明文 HTTP URI；TLS 返回不可表达 warning / no current SubMan | 两核心 check/TCP/TLS 正反向路径、实际 Bash 4.2、75 项本地门禁；修正测试断言后 Docker 11/11、TCP 16/16；仅本地/容器，非公网或生产证明 |
-| shadowsocks | `shadowsocks` / inbound | 基础内建 | TCP/UDP；方法、密码、可选多用户/多路复用；2022 方法有密钥格式要求 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check（无 method 的最小配置按预期失败） |
+| shadowsocks | `shadowsocks` / inbound | 基础内建；项目兼容 1.13.x | TCP/UDP 可分选；九种方法；none/2022 ChaCha 无多用户；项目未建模 relay/mux/plugin | yes | yes（Linux） | schema 2 marker + schema 1 JSON 与共享实例事务；yes/yes/yes/yes；无 legacy migration | 逐用户完整 JSON / SIP002（单网络 warning） / 双网络加密项逐用户同步，单网络/none 跳过，mock-only | 两核心、原生 Bash/实际 Bash 4.2：9 方法 check、每组 7 TCP + 7 UDP marker、错误认证拒绝；最终源码 Docker 12/12、TCP 18/18；公网/生产未验证 |
 | vmess | `vmess` / inbound | 基础内建 | TCP 监听；TLS 和 V2Ray transport（HTTP/WS/gRPC/HTTPUpgrade 等）需合法组合；`alterId>0` 是兼容模式 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check |
 | trojan | `trojan` / inbound | 基础内建 | TCP + TLS；用户、可选 fallback/fallback-for-ALPN、transport；fallback 不是安全性证明 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check |
 | naive-inbound | `naive` / inbound | 入站本体内建；QUIC 路径需要 `with_quic` | TCP 或 UDP；用户和 TLS 必填；UDP 为 HTTP/3/QUIC 路径，不能只以 TCP check 代替 | conditional | yes（tag 已含；QUIC/TLS 仍需） | none；—/—/—/— | — / — / — | registry-check（无 TLS 按预期失败） |

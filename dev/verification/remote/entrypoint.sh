@@ -447,6 +447,39 @@ verification_load_http_probe_record() {
   printf '%s\n' "${record}"
 }
 
+verification_load_shadowsocks_probe_record() {
+  local state_file=$1
+  local store_file=$2
+  local tag=$3
+  local record
+
+  [[ -f "${state_file}" && ! -L "${state_file}" ]] || return 1
+  grep -Eq '^[[:space:]]*CONFIG_SCHEMA_VERSION=2([[:space:]]*)$' "${state_file}" || return 1
+  [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  record=$(jq -ce --arg tag "${tag}" '
+    if .schema_version == 1 and .protocol == "shadowsocks" and
+       ([.instances[] | select(.tag == $tag)] | length) == 1 then
+      ([.instances[] | select(.tag == $tag)][0] |
+        select(
+          (.listen.address | type == "string" and length > 0) and
+          (.listen.port | type == "number" and floor == . and . >= 1 and . <= 65535) and
+          (.listen.network | type == "array" and length > 0 and
+             all(.[]; . == "tcp" or . == "udp") and . == (sort | unique)) and
+          (.authentication | type == "object") and
+          (.authentication.method | type == "string" and length > 0) and
+          (.authentication.password | type == "string") and
+          (.authentication.users | type == "array" and length <= 128 and
+             all(.[]; type == "object" and
+               (.name | type == "string" and length > 0) and
+               (.password | type == "string" and length > 0)))
+        )
+      )
+    else error("invalid Shadowsocks structured state")
+    end
+  ' "${store_file}") || return 1
+  printf '%s\n' "${record}"
+}
+
 verification_generate_protocol_probe_client_config() {
   local protocol=$1
   local config_file=$2
@@ -469,7 +502,13 @@ verification_generate_protocol_probe_client_config() {
   local http_tls_json=''
   local http_record=''
   local http_tag=''
+  local shadowsocks_tag=''
   local store_file=''
+  local shadowsocks_record=''
+  local shadowsocks_method=''
+  local shadowsocks_password=''
+  local shadowsocks_network_json=''
+  local shadowsocks_user_password=''
 
   case "${protocol}" in
     vless-reality)
@@ -716,6 +755,61 @@ verification_generate_protocol_probe_client_config() {
         rm -f "${temp_output_path}"
         return 1
       fi
+      ;;
+    shadowsocks)
+      state_file=/root/sing-box-vps/protocols/shadowsocks.env
+      store_file=/root/sing-box-vps/protocols/instances/shadowsocks.json
+      output_path=$(verification_artifact_path \
+        "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
+      temp_output_path="${output_path}.tmp.${BASHPID}"
+      rm -f "${temp_output_path}"
+
+      inbound_index=$(verification_find_config_inbound_index_by_type "${config_file}" shadowsocks) || {
+        printf 'missing inbound for protocol generator: %s\n' "${protocol}" >&2
+        return 1
+      }
+      server_port=$(jq -r --argjson idx "${inbound_index}" \
+        '.inbounds[$idx].listen_port // empty' "${config_file}")
+      shadowsocks_tag=$(jq -r --argjson idx "${inbound_index}" \
+        '.inbounds[$idx].tag // empty' "${config_file}")
+      verification_require_protocol_probe_field "${protocol}" server_port "${server_port}" || return 1
+      verification_require_protocol_probe_field "${protocol}" inbound_tag "${shadowsocks_tag}" || return 1
+      shadowsocks_record=$(verification_load_shadowsocks_probe_record \
+        "${state_file}" "${store_file}" "${shadowsocks_tag}") || {
+        printf 'missing or invalid Shadowsocks structured state for protocol generator: %s\n' "${protocol}" >&2
+        return 1
+      }
+      shadowsocks_method=$(jq -r '.authentication.method' <<< "${shadowsocks_record}") || return 1
+      shadowsocks_password=$(jq -r '.authentication.password' <<< "${shadowsocks_record}") || return 1
+      shadowsocks_network_json=$(jq -c '.listen.network' <<< "${shadowsocks_record}") || return 1
+      if jq -e '(.authentication.users | length) > 0' <<< "${shadowsocks_record}" >/dev/null; then
+        shadowsocks_user_password=$(jq -r '.authentication.users[0].password' <<< "${shadowsocks_record}") || return 1
+        if [[ "${shadowsocks_method}" == 2022-* ]]; then
+          shadowsocks_password="${shadowsocks_password}:${shadowsocks_user_password}"
+        else
+          shadowsocks_password="${shadowsocks_user_password}"
+        fi
+      fi
+      verification_require_protocol_probe_field "${protocol}" method "${shadowsocks_method}" || return 1
+      verification_require_protocol_probe_field "${protocol}" password "${shadowsocks_password}" || return 1
+      jq -n \
+        --arg server_port "${server_port}" \
+        --arg method "${shadowsocks_method}" \
+        --arg password "${shadowsocks_password}" \
+        --argjson network "${shadowsocks_network_json}" \
+        '{
+          log: {disabled: true},
+          inbounds: [{type:"socks",tag:"local-socks",listen:"127.0.0.1",listen_port:19080}],
+          outbounds: [{
+            type:"shadowsocks", tag:"proxy", server:"127.0.0.1",
+            server_port:($server_port|tonumber), method:$method,
+            password:$password, network:$network
+          }]
+        }' > "${temp_output_path}" || {
+        rm -f "${temp_output_path}"
+        return 1
+      }
+      chmod 600 "${temp_output_path}" && mv "${temp_output_path}" "${output_path}"
       ;;
     mixed)
       state_file=/root/sing-box-vps/protocols/mixed.env
@@ -1150,6 +1244,9 @@ for scenario in "$@"; do
       ;;
     fresh_install_http)
       run_verification_scenario fresh_install_http verification_scenario_fresh_install_http
+      ;;
+    fresh_install_shadowsocks)
+      run_verification_scenario fresh_install_shadowsocks verification_scenario_fresh_install_shadowsocks
       ;;
     multi_protocol_coexistence)
       run_verification_scenario multi_protocol_coexistence verification_scenario_multi_protocol_coexistence

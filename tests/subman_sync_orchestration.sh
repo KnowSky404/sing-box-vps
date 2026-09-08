@@ -7,12 +7,15 @@ TESTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${TESTS_DIR}/menu_test_helper.sh"
 
 setup_menu_test_env 120
-source_testable_install
+# Source at file scope: Bash 4.2 keeps the installer's readonly registry
+# global; sourcing through the helper function makes it function-local.
+# shellcheck disable=SC1090
+source "${TESTABLE_INSTALL}"
 
 ensure_protocol_state_dir
 write_protocol_index "vless-reality,mixed,hy2,anytls"
 
-cat > "$(protocol_state_file vless-reality)" <<'EOF'
+cat > "${SB_PROTOCOL_STATE_DIR}/vless-reality.env" <<'EOF'
 INSTALLED=1
 CONFIG_SCHEMA_VERSION=1
 NODE_NAME='edge-vless'
@@ -25,7 +28,7 @@ SHORT_ID_1='abcd1234'
 SHORT_ID_2='dcba4321'
 EOF
 
-cat > "$(protocol_state_file mixed)" <<'EOF'
+cat > "${SB_PROTOCOL_STATE_DIR}/mixed.env" <<'EOF'
 INSTALLED=1
 CONFIG_SCHEMA_VERSION=1
 NODE_NAME='edge-mixed'
@@ -35,7 +38,7 @@ USERNAME='mixed-user'
 PASSWORD='mixed-pass'
 EOF
 
-cat > "$(protocol_state_file hy2)" <<'EOF'
+cat > "${SB_PROTOCOL_STATE_DIR}/hy2.env" <<'EOF'
 INSTALLED=1
 CONFIG_SCHEMA_VERSION=1
 NODE_NAME='edge-hy2'
@@ -59,7 +62,7 @@ KEY_PATH=''
 MASQUERADE='https://bing.com'
 EOF
 
-cat > "$(protocol_state_file anytls)" <<'EOF'
+cat > "${SB_PROTOCOL_STATE_DIR}/anytls.env" <<'EOF'
 INSTALLED=1
 CONFIG_SCHEMA_VERSION=1
 NODE_NAME='edge-anytls'
@@ -310,6 +313,54 @@ fi
 
 if [[ "${empty_ip_output}" == *"push_subman_node should not be called"* ]]; then
   printf 'expected no SubMan push call when public IP is empty, got:\n%s\n' "${empty_ip_output}" >&2
+  exit 1
+fi
+
+# Shadowsocks skips are a real result, not an empty public-IP discovery.  Keep
+# both interactive and Agent orchestration diagnostics/counts explicit.
+write_protocol_index "shadowsocks"
+mkdir -p "${SB_PROTOCOL_STATE_DIR}/instances"
+printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2\n' > "${SB_PROTOCOL_STATE_DIR}/shadowsocks.env"
+jq -n '{schema_version:1,protocol:"shadowsocks",revision:1,default_instance_id:"ss-none",
+  instances:[{id:"ss-none",name:"SS none",tag:"ss-none",listen:{address:"127.0.0.1",port:18081,network:["tcp","udp"]},
+    authentication:{method:"none",password:"",users:[]},outbound_policy:"default",dependencies:[]}]}' \
+  > "${SB_PROTOCOL_STATE_DIR}/instances/shadowsocks.json"
+chmod 600 "${SB_PROTOCOL_STATE_DIR}/shadowsocks.env" "${SB_PROTOCOL_STATE_DIR}/instances/shadowsocks.json"
+load_protocol_state "shadowsocks"
+
+set +e
+ss_empty_ip_output=$(push_nodes_to_subman 2>&1)
+ss_empty_ip_status=$?
+set -e
+if [[ "${ss_empty_ip_status}" -eq 0 || "${ss_empty_ip_output}" != *"已同步: 0，已跳过: 1，失败: 0"* ]]; then
+  printf 'expected Shadowsocks skip summary without public-IP diagnostic, got status=%s output:\n%s\n' \
+    "${ss_empty_ip_status}" "${ss_empty_ip_output}" >&2
+  exit 1
+fi
+if [[ "${ss_empty_ip_output}" == *"未获取到公网 IP"* ]]; then
+  printf 'expected Shadowsocks skip not to be reported as public-IP discovery failure, got:\n%s\n' \
+    "${ss_empty_ip_output}" >&2
+  exit 1
+fi
+
+set +e
+ss_agent_empty_ip_output=$(agent_push_nodes_to_subman_json)
+ss_agent_empty_ip_status=$?
+set -e
+if [[ "${ss_agent_empty_ip_status}" -eq 0 ]]; then
+  printf 'expected Agent Shadowsocks-only skip result to remain unsuccessful\n' >&2
+  exit 1
+fi
+if ! jq -e '
+  .ok == false and .synced == 0 and .skipped == 1 and .failed == 0
+  and any(.warnings[]?; .code == "shadowsocks_subman_none_unsupported")
+' >/dev/null <<< "${ss_agent_empty_ip_output}"; then
+  printf 'expected Agent Shadowsocks skip warning/count, got:\n%s\n' "${ss_agent_empty_ip_output}" >&2
+  exit 1
+fi
+if [[ "${ss_agent_empty_ip_output}" == *"public_ip_unavailable"* ]]; then
+  printf 'expected Agent Shadowsocks skip not to use public_ip_unavailable, got:\n%s\n' \
+    "${ss_agent_empty_ip_output}" >&2
   exit 1
 fi
 

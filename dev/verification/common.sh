@@ -95,6 +95,14 @@ resolve_local_tests() {
       tests/http_export_client.sh \
       tests/http_export_runtime.sh \
       tests/http_agent_contract.sh \
+      tests/shadowsocks_structured_instance_store.sh \
+      tests/shadowsocks_structured_takeover.sh \
+      tests/shadowsocks_instance_lifecycle.sh \
+      tests/shadowsocks_instance_menu.sh \
+      tests/shadowsocks_export_client.sh \
+      tests/shadowsocks_agent_share.sh \
+      tests/shadowsocks_runtime.sh \
+      tests/subman_shadowsocks_sync.sh \
       tests/managed_component_graph.sh \
       tests/managed_component_graph_core_startup.sh \
       tests/live_inbound_inventory_guards.sh \
@@ -103,6 +111,7 @@ resolve_local_tests() {
       tests/verification_protocol_probe_hy2.sh \
       tests/verification_protocol_probe_anytls.sh \
       tests/verification_protocol_probe_http.sh \
+      tests/verification_protocol_probe_shadowsocks.sh \
       tests/reality_sni_validation.sh \
       tests/generate_config_cleans_temp_files_on_failure.sh \
       tests/generate_config_commits_validated_candidate.sh \
@@ -196,6 +205,7 @@ resolve_remote_scenarios() {
       fresh_install_anytls
       fresh_install_socks
       fresh_install_http
+      fresh_install_shadowsocks
       multi_protocol_coexistence
       upgrade_1_13_to_1_14
       upgrade_rollback_1_13_to_1_14
