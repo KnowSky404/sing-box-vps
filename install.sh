@@ -76,6 +76,7 @@ readonly SB_PROTOCOL_REGISTRY=(
   'http|http|http|http|plain-or-tls|inbound|http|HTTP Proxy|http-in|6|true||tcp|tcp|1.13.0|true|none|http|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"http":true,"tls":true,"tls_modes":["disabled","manual_certificate"],"tls_share_links":false,"authentication":true,"share_links":["http"],"qr":false,"client_export":true,"subman_sync":false}||build_http_inbound_json,save_http_state,prompt_http_install,prompt_http_update,build_client_http_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'shadowsocks|shadowsocks|shadowsocks|shadowsocks|aead-and-2022|inbound|shadowsocks|Shadowsocks|ss-in|7|true|ss|tcp,udp|tcp,udp|1.13.0|true|none|ss|tcp_loopback|{"multi_instance":true,"multi_user":true,"listen_network_selection":true,"per_instance_outbound":["default","direct","warp"],"authentication":true,"share_links":["ss"],"qr":false,"client_export":true,"subman_sync":true}|ss|build_shadowsocks_inbound_json,save_shadowsocks_state,prompt_shadowsocks_install,prompt_shadowsocks_update,build_client_shadowsocks_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'trojan|trojan|trojan|trojan|tls|inbound|trojan|Trojan|trojan-in|8|true|trojan|tcp,udp|tcp,udp|1.13.0|true|optional|trojan|tcp_loopback|{"multi_instance":true,"authentication":true,"tls":true,"transports":["none","http","ws","grpc","quic"],"listen_transport_projection":true,"client_export":true,"subman_sync":true}|trojan|build_trojan_inbound_json,save_trojan_state,prompt_trojan_install,prompt_trojan_update,build_client_trojan_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'vmess|vmess|vmess|vmess|tls|inbound|vmess|VMess|vmess-in|9|true|vmess|tcp,udp|tcp,udp|1.13.0|true|optional|vmess|tcp_loopback|{"multi_instance":true,"authentication":true,"tls":true,"transports":["none","http","ws","grpc","quic"],"listen_transport_projection":true,"client_export":true,"subman_sync":true}|vmess|build_vmess_inbound_json,save_vmess_state,prompt_vmess_install,prompt_vmess_update,build_client_vmess_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
 )
 SB_REALITY_SNI_CANDIDATES=(
   "www.apple.com"
@@ -113,6 +114,10 @@ SB_TROJAN_AUTH_JSON='[]'
 SB_TROJAN_TLS_JSON='{"enabled":false}'
 SB_TROJAN_TRANSPORT_JSON='{"type":"none"}'
 SB_TROJAN_CLIENT_TRUST="certificate"
+SB_VMESS_AUTH_JSON='[]'
+SB_VMESS_TLS_JSON='{"enabled":false}'
+SB_VMESS_TRANSPORT_JSON='{"type":"none"}'
+SB_VMESS_CLIENT_TRUST="certificate"
 SB_HY2_DOMAIN=""
 SB_HY2_PASSWORD=""
 SB_HY2_USER_NAME=""
@@ -2044,7 +2049,7 @@ validate_protocol_state_schema() {
   schema=${schema//\"/}
   schema=${schema//\'/}
   case "${protocol}:${schema:-1}" in
-    vless-reality:1|vless-reality:2|mixed:1|mixed:2|socks:2|http:2|shadowsocks:2|trojan:2|hy2:1|anytls:1) return 0 ;;
+    vless-reality:1|vless-reality:2|mixed:1|mixed:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|hy2:1|anytls:1) return 0 ;;
   esac
   printf '[ERROR] 协议状态格式无法识别；已保留文件，请使用写入该状态的脚本版本恢复。\n' >&2
   return 1
@@ -2277,6 +2282,16 @@ save_plain_proxy_state() {
       jq -e 'type == "object"' <<< "${transport_json}" >/dev/null 2>&1 || return 1
       [[ "${client_trust}" == certificate || "${client_trust}" == system ]] || return 1
       ;;
+    vmess)
+      tag=${SB_MIXED_INBOUND_TAG:-vmess-in}; name=${SB_NODE_NAME:-VMess}
+      auth_json=${SB_VMESS_AUTH_JSON:-[]}; tls_json=${SB_VMESS_TLS_JSON:-'{"enabled":false}'}
+      transport_json=${SB_VMESS_TRANSPORT_JSON:-'{"type":"none"}'}
+      client_trust=${SB_VMESS_CLIENT_TRUST:-certificate}
+      jq -e 'type == "array" and length > 0' <<< "${auth_json}" >/dev/null 2>&1 || return 1
+      jq -e 'type == "object"' <<< "${tls_json}" >/dev/null 2>&1 || return 1
+      jq -e 'type == "object"' <<< "${transport_json}" >/dev/null 2>&1 || return 1
+      [[ "${client_trust}" == certificate || "${client_trust}" == system ]] || return 1
+      ;;
     *) return 1 ;;
   esac
   state_file=$(protocol_state_file "${protocol}") || return 1
@@ -2301,11 +2316,11 @@ save_plain_proxy_state() {
   fi
   if [[ "${protocol}" == http ]]; then
     validate_http_client_connection "${port}" "${auth_enabled}" "${username}" "${password}" || return 1
-  elif [[ "${protocol}" != shadowsocks && "${protocol}" != trojan ]]; then
+  elif [[ "${protocol}" != shadowsocks && "${protocol}" != trojan && "${protocol}" != vmess ]]; then
     validate_mixed_client_connection "${port}" "${auth_enabled}" "${username}" "${password}" || return 1
   fi
   [[ "${policy}" == default || "${policy}" == direct || "${policy}" == warp ]] || return 1
-  if [[ "${protocol}" == http || "${protocol}" == trojan ]]; then
+  if [[ "${protocol}" == http || "${protocol}" == trojan || "${protocol}" == vmess ]]; then
     jq -e 'type == "object"' <<< "${tls_json}" >/dev/null 2>&1 || return 1
   fi
 
@@ -2315,7 +2330,7 @@ save_plain_proxy_state() {
       --arg address "${listen_address}" --argjson port "${port}" \
       --argjson enabled "$([[ "${auth_enabled}" == y ]] && printf true || printf false)" \
       --arg username "${username}" --arg password "${password}" --arg policy "${policy}" --argjson tls "${tls_json}" --argjson auth "${auth_json}" --argjson network "${network_json}" --argjson transport "${transport_json}" --arg client_trust "${client_trust}" --arg protocol "${protocol}" \
-      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$enabled,username:(if $enabled then $username else "" end),password:(if $enabled then $password else "" end)},outbound_policy:$policy,dependencies:[]} + (if $protocol == "http" then {tls:$tls} elif $protocol == "shadowsocks" then {listen:{address:$address,port:$port,network:$network},authentication:$auth} elif $protocol == "trojan" then {authentication:{users:$auth},tls:$tls,transport:$transport,client_trust:$client_trust} else {} end)' > "${record_file}"; then
+      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$enabled,username:(if $enabled then $username else "" end),password:(if $enabled then $password else "" end)},outbound_policy:$policy,dependencies:[]} + (if $protocol == "http" then {tls:$tls} elif $protocol == "shadowsocks" then {listen:{address:$address,port:$port,network:$network},authentication:$auth} elif $protocol == "trojan" or $protocol == "vmess" then {authentication:{users:$auth},tls:$tls,transport:$transport,client_trust:$client_trust} else {} end)' > "${record_file}"; then
     rm -f -- "${record_file}" "${candidate_file}"; return 1
   fi
   structured_instance_store_validate_instance_argument "${record_file}" "${protocol}" || {
@@ -2347,6 +2362,7 @@ save_socks_state() { save_plain_proxy_state socks; }
 save_http_state() { save_plain_proxy_state http; }
 save_shadowsocks_state() { save_plain_proxy_state shadowsocks; }
 save_trojan_state() { save_plain_proxy_state trojan; }
+save_vmess_state() { save_plain_proxy_state vmess; }
 
 save_hy2_state() {
   local state_file
@@ -2414,6 +2430,7 @@ save_protocol_state() {
     http) save_http_state ;;
     shadowsocks) save_shadowsocks_state ;;
     trojan) save_trojan_state ;;
+    vmess) save_vmess_state ;;
     hy2) save_hy2_state ;;
     anytls) save_anytls_state ;;
     *) log_error "不支持的协议状态保存类型: ${protocol}" ;;
@@ -3108,6 +3125,7 @@ prompt_protocol_update_fields() {
     http) prompt_http_update ;;
     shadowsocks) prompt_shadowsocks_update ;;
     trojan) prompt_trojan_update ;;
+    vmess) prompt_vmess_update ;;
     hy2) prompt_hy2_update ;;
     anytls) prompt_anytls_update ;;
     *) log_error "不支持的协议修改类型: ${protocol}" ;;
@@ -3465,6 +3483,104 @@ prompt_trojan_update() {
   SB_TROJAN_TRANSPORT_JSON=${old_transport}
   edit_transport=$(prompt_yes_no '[Trojan] 是否编辑传输 [y/n] (默认 n): ' n) || return 1
   if [[ "${edit_transport}" == y ]]; then trojan_prompt_transport || return 1; fi
+}
+
+vmess_generate_uuid() {
+  local value
+  value=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid) || return 1
+  [[ "${value}" =~ ^[0-9a-fA-F-]{36}$ ]] || return 1
+  printf '%s' "${value,,}"
+}
+
+vmess_prompt_users() {
+  local current=${1:-'[]'} count i name uuid alter_id security old_name old_uuid old_alter old_security users='[]' answer
+  count=$(jq -r 'length' <<< "${current}" 2>/dev/null || printf 0)
+  [[ "${count}" =~ ^[1-9][0-9]{0,2}$ && "${count}" -le 128 ]] || count=1
+  read -rp '[VMess] 用户数量 (1-128，默认当前值): ' answer || return 1
+  [[ -z "${answer}" ]] || count=${answer}
+  [[ "${count}" =~ ^[1-9][0-9]{0,2}$ && "${count}" -le 128 ]] || return 1
+  for ((i = 0; i < count; i++)); do
+    old_name=$(jq -r --argjson i "${i}" '.[$i].name // empty' <<< "${current}") || return 1
+    old_uuid=$(jq -r --argjson i "${i}" '.[$i].uuid // empty' <<< "${current}") || return 1
+    old_alter=$(jq -r --argjson i "${i}" '.[$i].alter_id // 0' <<< "${current}") || return 1
+    old_security=$(jq -r --argjson i "${i}" '.[$i].security // "auto"' <<< "${current}") || return 1
+    name=${old_name:-vmess-user-$((i + 1))}
+    read -rp "[VMess] 用户 $((i + 1)) 名称 (默认 ${name}): " answer || return 1
+    [[ -z "${answer}" ]] || name=${answer}
+    uuid=${old_uuid}
+    while true; do
+      read -rp "[VMess] 用户 ${name} UUID (留空自动生成): " answer || return 1
+      [[ -z "${answer}" ]] && answer=${uuid}
+      [[ -n "${answer}" ]] || answer=$(vmess_generate_uuid) || return 1
+      if [[ "${answer}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]; then uuid=${answer,,}; break; fi
+      log_warn '[VMess] UUID 格式无效，请输入标准 UUID。' >&2
+      uuid=""
+    done
+    read -rp "[VMess] 用户 ${name} alterId (默认 ${old_alter}，建议 0): " answer || return 1
+    alter_id=${answer:-${old_alter:-0}}
+    [[ "${alter_id}" =~ ^[0-9]+$ ]] && (( alter_id <= 65535 )) || return 1
+    read -rp "[VMess] 用户 ${name} security [auto/none/zero/aes-128-cfb/aes-128-gcm/chacha20-poly1305] (默认 ${old_security}): " answer || return 1
+    security=${answer:-${old_security:-auto}}
+    case "${security}" in auto|none|zero|aes-128-cfb|aes-128-gcm|chacha20-poly1305) ;; *) return 1 ;; esac
+    users=$(jq -cn --argjson users "${users}" --arg name "${name}" --arg uuid "${uuid}" --argjson alter_id "${alter_id}" --arg security "${security}" '$users + [{name:$name,uuid:$uuid,alter_id:$alter_id,security:$security}]') || return 1
+  done
+  SB_VMESS_AUTH_JSON=${users}
+}
+
+vmess_prompt_transport() {
+  local choice path service transport='{"type":"none"}'
+  echo 'VMess 传输:' >&2
+  echo '1. TCP' >&2; echo '2. HTTP' >&2; echo '3. WebSocket' >&2; echo '4. gRPC' >&2; echo '5. QUIC' >&2
+  choice=$(prompt_choice '[VMess] 请选择传输 [1-5] (默认 1): ' 1 5 1) || return 1
+  case "${choice}" in
+    1) transport='{"type":"none"}' ;;
+    2) read -rp '[VMess] HTTP path (可留空): ' path || return 1; transport=$(jq -cn --arg path "${path}" '{type:"http"} + (if $path != "" then {path:$path} else {} end)') || return 1 ;;
+    3) read -rp '[VMess] WebSocket path (默认 /): ' path || return 1; path=${path:-/}; transport=$(jq -cn --arg path "${path}" '{type:"ws",path:$path}') || return 1 ;;
+    4) read -rp '[VMess] gRPC service name (可留空): ' service || return 1; transport=$(jq -cn --arg service "${service}" '{type:"grpc"} + (if $service != "" then {service_name:$service} else {} end)') || return 1 ;;
+    5) transport='{"type":"quic"}' ;;
+  esac
+  SB_VMESS_TRANSPORT_JSON=${transport}
+}
+
+vmess_prompt_tls() {
+  local current=${1:-'{"enabled":false}'} enabled server_name certificate_path key_path trust_choice answer
+  enabled=$(jq -r 'if .enabled == true then "y" else "n" end' <<< "${current}") || return 1
+  enabled=$(prompt_yes_no '[VMess] 是否启用 TLS [y/n] (默认保持当前): ' "${enabled}") || return 1
+  if [[ "${enabled}" == n ]]; then
+    SB_VMESS_TLS_JSON='{"enabled":false}'
+    SB_VMESS_CLIENT_TRUST=system
+    return 0
+  fi
+  server_name=$(jq -r '.server_name // empty' <<< "${current}") || return 1
+  certificate_path=$(jq -r '.certificate_path // empty' <<< "${current}") || return 1
+  key_path=$(jq -r '.key_path // empty' <<< "${current}") || return 1
+  read -rp "[VMess] TLS server name (当前 ${server_name}): " answer || return 1; [[ -z "${answer}" ]] || server_name=${answer}
+  [[ -n "${server_name}" ]] || return 1
+  certificate_path=$(prompt_required_path "[VMess] TLS 证书绝对路径（当前 ${certificate_path}）: " "${certificate_path}") || return 1
+  key_path=$(prompt_required_path "[VMess] TLS 私钥绝对路径（当前 ${key_path}）: " "${key_path}") || return 1
+  SB_VMESS_TLS_JSON=$(jq -cn --arg server_name "${server_name}" --arg certificate_path "${certificate_path}" --arg key_path "${key_path}" '{enabled:true,server_name:$server_name,certificate_path:$certificate_path,key_path:$key_path}') || return 1
+  trust_choice=$(prompt_choice '[VMess] 客户端证书信任 [1=certificate,2=system] (默认 1): ' 1 2 1) || return 1
+  [[ "${trust_choice}" == 2 ]] && SB_VMESS_CLIENT_TRUST=system || SB_VMESS_CLIENT_TRUST=certificate
+}
+
+prompt_vmess_install() {
+  set_protocol_defaults vmess
+  echo -e '\n'"${BLUE}"'--- 配置 VMess ---'"${NC}" >&2
+  SB_PORT=$(prompt_port '[VMess] 端口 (默认当前值): ' "${SB_PORT}") || return 1
+  vmess_prompt_users '[]' || return 1
+  vmess_prompt_tls '{"enabled":false}' || return 1
+  vmess_prompt_transport || return 1
+}
+
+prompt_vmess_update() {
+  local old_users=${SB_VMESS_AUTH_JSON:-'[]'} old_tls=${SB_VMESS_TLS_JSON:-'{"enabled":false}'} edit_users edit_transport
+  SB_PORT=$(prompt_port '[VMess] 新端口 (当前值，留空保持): ' "${SB_PORT}") || return 1
+  edit_users=$(prompt_yes_no '[VMess] 是否重新编辑用户凭据 [y/n] (默认 n): ' n) || return 1
+  if [[ "${edit_users}" == y ]]; then vmess_prompt_users "${old_users}" || return 1; else SB_VMESS_AUTH_JSON=${old_users}; fi
+  vmess_prompt_tls "${old_tls}" || return 1
+  SB_VMESS_TRANSPORT_JSON=${SB_VMESS_TRANSPORT_JSON:-'{"type":"none"}'}
+  edit_transport=$(prompt_yes_no '[VMess] 是否编辑传输 [y/n] (默认 n): ' n) || return 1
+  if [[ "${edit_transport}" == y ]]; then vmess_prompt_transport || return 1; fi
 }
 
 open_all_protocol_ports() {
@@ -3893,6 +4009,7 @@ prompt_protocol_install_fields() {
     http) prompt_http_install ;;
     shadowsocks) prompt_shadowsocks_install ;;
     trojan) prompt_trojan_install ;;
+    vmess) prompt_vmess_install ;;
     hy2) prompt_hy2_install ;;
     anytls) prompt_anytls_install ;;
     *) log_error "不支持的协议安装类型: ${protocol}" ;;
@@ -3932,6 +4049,7 @@ plain_proxy_management_label() {
     http) printf 'HTTP' ;;
     shadowsocks) printf 'Shadowsocks' ;;
     trojan) printf 'Trojan' ;;
+    vmess) printf 'VMess' ;;
     *) return 1 ;;
   esac
 }
@@ -4137,10 +4255,64 @@ trojan_management_build_record() {
   structured_instance_store_validate_instance_argument "${destination}" trojan
 }
 
+vmess_management_build_record() {
+  local snapshot=${1:-} operation=${2:-create} target=${3:-} destination=${4:-}
+  local id name tag address port policy answer users tls transport trust
+  local edit_users edit_transport
+  [[ -f "${snapshot}" && ! -L "${snapshot}" && -n "${destination}" ]] || return 1
+  if [[ "${operation}" == replace ]]; then
+    jq -e --arg id "${target}" 'any(.instances[]; .id == $id)' "${snapshot}" >/dev/null 2>&1 || return 1
+    id=${target}
+    name=$(jq -j --arg id "${id}" '.instances[]|select(.id==$id)|.name,"\u0001"' "${snapshot}") || return 1; name=${name%$'\1'}
+    tag=$(jq -j --arg id "${id}" '.instances[]|select(.id==$id)|.tag,"\u0001"' "${snapshot}") || return 1; tag=${tag%$'\1'}
+    address=$(jq -j --arg id "${id}" '.instances[]|select(.id==$id)|.listen.address,"\u0001"' "${snapshot}") || return 1; address=${address%$'\1'}
+    port=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.listen.port' "${snapshot}") || return 1
+    users=$(jq -c --arg id "${id}" '.instances[]|select(.id==$id)|.authentication.users' "${snapshot}") || return 1
+    tls=$(jq -c --arg id "${id}" '.instances[]|select(.id==$id)|.tls' "${snapshot}") || return 1
+    transport=$(jq -c --arg id "${id}" '.instances[]|select(.id==$id)|.transport' "${snapshot}") || return 1
+    trust=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.client_trust' "${snapshot}") || return 1
+    policy=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.outbound_policy' "${snapshot}") || return 1
+  else
+    id=$(plain_proxy_management_next_id vmess "${snapshot}") || return 1
+    name="VMess ${id}"; tag=$(plain_proxy_management_next_tag vmess "${snapshot}") || return 1
+    address=127.0.0.1; port=1080; users='[]'; tls='{"enabled":false}'; transport='{"type":"none"}'; trust=system; policy=default
+  fi
+  read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1; [[ -z "${answer}" ]] || name=$(trim_whitespace "${answer}")
+  if [[ "${operation}" == create ]]; then
+    read -rp "实例 ID（默认 ${id}）: " answer || return 1; [[ -z "${answer}" ]] || id=$(trim_whitespace "${answer}")
+    structured_instance_store_validate_id "${id}" || return 1
+    read -rp "入口 tag（默认 ${tag}）: " answer || return 1; [[ -z "${answer}" ]] || tag=$(trim_whitespace "${answer}")
+  fi
+  read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}")
+  structured_instance_store_validate_address "${address}" || return 1
+  port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
+  policy=$(prompt_instance_outbound_policy '出站策略' "${policy}") || return 1
+  if [[ "${operation}" == create ]]; then edit_users=y; else edit_users=$(prompt_yes_no '[VMess] 是否重新编辑用户凭据 [y/n] (默认 n): ' n) || return 1; fi
+  if [[ "${edit_users}" == y ]]; then vmess_prompt_users "${users}" || return 1; users=${SB_VMESS_AUTH_JSON}; fi
+  vmess_prompt_tls "${tls}" || return 1; tls=${SB_VMESS_TLS_JSON}
+  trust=${SB_VMESS_CLIENT_TRUST:-system}
+  if [[ "${operation}" == create ]]; then
+    vmess_prompt_transport || return 1; transport=${SB_VMESS_TRANSPORT_JSON}
+  else
+    edit_transport=$(prompt_yes_no '[VMess] 是否编辑传输 [y/n] (默认 n): ' n) || return 1
+    if [[ "${edit_transport}" == y ]]; then vmess_prompt_transport || return 1; transport=${SB_VMESS_TRANSPORT_JSON}; fi
+  fi
+  answer=$(plain_proxy_management_prompt_public_consent vmess "${address}" "${tls}") || return 1
+  if [[ "${address}" != 127.* && "${address}" != ::1 && "${answer}" != y ]]; then
+    log_info '未确认公网暴露，已取消 VMess 实例变更。'; return 2
+  fi
+  PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC=${answer}; MIXED_MANAGEMENT_ALLOW_PUBLIC=${answer}
+  jq -n -cS --arg id "${id}" --arg name "${name}" --arg tag "${tag}" --arg address "${address}" \
+    --argjson port "${port}" --argjson users "${users}" --argjson tls "${tls}" --argjson transport "${transport}" \
+    --arg trust "${trust}" --arg policy "${policy}" \
+    '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{users:$users},tls:$tls,transport:$transport,client_trust:$trust,outbound_policy:$policy,dependencies:[]}' > "${destination}" || return 1
+  structured_instance_store_validate_instance_argument "${destination}" vmess
+}
+
 plain_proxy_management_prompt_public_consent() {
   local protocol=${1:-} address=${2:-} tls_json=${3:-} auth_json=${4:-} label tls_enabled=n plaintext=y
   label=$(plain_proxy_management_label "${protocol}") || return 1
-  if [[ ("${protocol}" == http || "${protocol}" == trojan) && -n "${tls_json}" ]] &&
+  if [[ ("${protocol}" == http || "${protocol}" == trojan || "${protocol}" == vmess) && -n "${tls_json}" ]] &&
      jq -e '.enabled == true' <<< "${tls_json}" >/dev/null 2>&1; then
     tls_enabled=y
   fi
@@ -4202,6 +4374,10 @@ plain_proxy_management_build_record() {
   fi
   if [[ "${protocol}" == trojan ]]; then
     trojan_management_build_record "${snapshot}" "${operation}" "${target}" "${destination}"
+    return $?
+  fi
+  if [[ "${protocol}" == vmess ]]; then
+    vmess_management_build_record "${snapshot}" "${operation}" "${target}" "${destination}"
     return $?
   fi
   label=$(plain_proxy_management_label "${protocol}") || return 1
@@ -4494,6 +4670,10 @@ trojan_instance_management_menu() {
   plain_proxy_instance_management_menu trojan "$@"
 }
 
+vmess_instance_management_menu() {
+  plain_proxy_instance_management_menu vmess "$@"
+}
+
 plain_proxy_instance_management_menu() (
   local protocol=${1:-} requested_operation=${2:-} temp_dir choice snapshot revision target result status one_shot=n
   local record_file label confirmation
@@ -4532,7 +4712,9 @@ plain_proxy_instance_management_menu() (
       echo -e "\n${BLUE}--- ${label} 实例管理 ---${NC}"
       echo "1. 创建实例"; echo "2. 修改实例"; echo "3. 删除实例"; echo "4. 设置默认实例"
       echo "5. 迁移 legacy schema 1（不适用）"; echo "6. 恢复未完成事务"; echo "7. 列出实例（含 ID）"; echo "0. 返回"
-      [[ "${protocol}" == trojan ]] && echo "字段：用户凭据、TLS、传输、client_trust（均为类型化输入）"
+      if [[ "${protocol}" == trojan || "${protocol}" == vmess ]]; then
+        echo "字段：用户凭据、TLS、传输、client_trust（均为类型化输入）"
+      fi
       choice=$(prompt_choice "请选择 [0-7]: " 0 7 "") || return 1
     fi
     [[ "${choice}" == 0 ]] && return 0
@@ -4580,7 +4762,7 @@ plain_proxy_instance_management_menu() (
         ;;
       5) log_warn "${label} 没有 legacy schema 1 可迁移。" ;;
       7)
-        jq -r --arg protocol "${protocol}" '.instances[] | "\(.id)\t\(.name)\t\(.listen.address):\(.listen.port)" + (if $protocol == "shadowsocks" then "\tnetwork=\(.listen.network|join(","))\tmethod=\(.authentication.method)\tusers=\(.authentication.users|length)" elif $protocol == "trojan" then "\tusers=\(.authentication.users|length)\ttransport=\(.transport.type)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" else "\tauth=\(.authentication.enabled)\tpolicy=\(.outbound_policy)" + (if $protocol == "http" then "\ttls=\(.tls.enabled)" else "" end) end)' "${snapshot}" || return $?
+        jq -r --arg protocol "${protocol}" '.instances[] | "\(.id)\t\(.name)\t\(.listen.address):\(.listen.port)" + (if $protocol == "shadowsocks" then "\tnetwork=\(.listen.network|join(","))\tmethod=\(.authentication.method)\tusers=\(.authentication.users|length)" elif $protocol == "trojan" or $protocol == "vmess" then "\tusers=\(.authentication.users|length)\ttransport=\(.transport.type)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" else "\tauth=\(.authentication.enabled)\tpolicy=\(.outbound_policy)" + (if $protocol == "http" then "\ttls=\(.tls.enabled)" else "" end) end)' "${snapshot}" || return $?
         [[ "${one_shot}" == y ]] && return 0
         ;;
       *) log_warn "无效选项，请重新选择。" ;;
@@ -4624,6 +4806,11 @@ install_protocols_interactive() {
       log_warn "Trojan 已保留 revision；请通过实例管理入口创建 Trojan 实例，或本次仅选择其他协议。"
       return 1
     fi
+    if plain_proxy_inactive_store_snapshot vmess >/dev/null 2>&1 &&
+       protocol_array_contains vmess "${selected_protocols[@]}"; then
+      log_warn "VMess 已保留 revision；请通过实例管理入口创建 VMess 实例，或本次仅选择其他协议。"
+      return 1
+    fi
     snapshot_dir=$(create_managed_state_snapshot) || {
       log_error "无法创建配置状态事务快照。"
       return 1
@@ -4665,6 +4852,10 @@ install_protocols_interactive() {
     if plain_proxy_inactive_store_snapshot trojan >/dev/null 2>&1 &&
        ! protocol_array_contains trojan ${installed_protocols[@]+"${installed_protocols[@]}"}; then
       installed_protocols+=(trojan)
+    fi
+    if plain_proxy_inactive_store_snapshot vmess >/dev/null 2>&1 &&
+       ! protocol_array_contains vmess ${installed_protocols[@]+"${installed_protocols[@]}"}; then
+      installed_protocols+=(vmess)
     fi
     prompt_protocol_install_selection "additional" || return 0
     IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
@@ -4716,6 +4907,14 @@ install_protocols_interactive() {
         return 0
       fi
       log_warn "Trojan 实例不能与其他新增协议合并操作；请先单独管理 Trojan 实例。"
+      return 0
+    fi
+    if protocol_array_contains "vmess" "${selected_protocols[@]}"; then
+      if [[ ${#selected_protocols[@]} -eq 1 ]]; then
+        vmess_instance_management_menu create || return $?
+        return 0
+      fi
+      log_warn "VMess 实例不能与其他新增协议合并操作；请先单独管理 VMess 实例。"
       return 0
     fi
     snapshot_dir=$(create_managed_state_snapshot) || {
@@ -4785,6 +4984,30 @@ set_protocol_defaults() {
       SB_MIXED_INBOUND_TAG="socks-in"
       SB_MIXED_LISTEN_ADDRESS="127.0.0.1"
       SB_MIXED_STORE_REVISION="0"
+      SB_OUTBOUND_POLICY="default"
+      ;;
+    vmess)
+      SB_PROTOCOL="vmess"
+      SB_NODE_NAME="$(default_node_name_for_protocol "vmess")"
+      SB_PORT="$(pick_random_high_port)"
+      SB_SNI=""
+      SB_UUID=""
+      SB_PUBLIC_KEY=""
+      SB_PRIVATE_KEY=""
+      SB_SHORT_ID_1=""
+      SB_SHORT_ID_2=""
+      SB_MIXED_AUTH_ENABLED="y"
+      SB_MIXED_USERNAME=""
+      SB_MIXED_PASSWORD=""
+      SB_INSTANCE_ID=""
+      SB_MIXED_INSTANCE_ID=""
+      SB_MIXED_INBOUND_TAG="vmess-in"
+      SB_MIXED_LISTEN_ADDRESS="127.0.0.1"
+      SB_MIXED_STORE_REVISION="0"
+      SB_VMESS_AUTH_JSON='[]'
+      SB_VMESS_TLS_JSON='{"enabled":false}'
+      SB_VMESS_TRANSPORT_JSON='{"type":"none"}'
+      SB_VMESS_CLIENT_TRUST="system"
       SB_OUTBOUND_POLICY="default"
       ;;
     trojan)
@@ -8344,7 +8567,7 @@ load_protocol_state() {
       mixed_schema=${mixed_schema//\'/}
     fi
   fi
-  if [[ ("${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan") && -f "${state_file}" ]]; then
+  if [[ ("${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess") && -f "${state_file}" ]]; then
     socks_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" | head -n1) || return 1
     socks_schema=${socks_schema//\"/}
     socks_schema=${socks_schema//\'/}
@@ -8389,7 +8612,7 @@ load_protocol_state() {
   # SOCKS has no legacy .env representation.  Dispatch only a validated
   # schema-2 marker to the typed store and reject every older/unknown shape
   # before it can be sourced as shell code.
-  if [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" ]]; then
+  if [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" ]]; then
     [[ "${socks_schema}" == "2" ]] || return 1
     plain_proxy_structured_marker_is_valid "${state_file}" || return 1
     load_plain_proxy_structured_instance "${protocol}" || return 1
@@ -8852,6 +9075,16 @@ build_trojan_inbound_json() {
   render_structured_instance_inbounds trojan "${store_file}"
 }
 
+build_vmess_inbound_json() {
+  local store_file
+  plain_proxy_structured_state_active vmess || return 1
+  store_file=$(plain_proxy_structured_store_file vmess) || return 1
+  # VMess security is client-side metadata; the server accepts only name/UUID
+  # and alterId.  The renderer also derives transport ALPN from the typed
+  # profile and never emits an explicit disabled TLS object.
+  render_structured_instance_inbounds vmess "${store_file}"
+}
+
 build_shadowsocks_instance_outbounds() (
   umask 077
   local instance_id=${1:-} server=${2:-} snapshot temporary address
@@ -9167,7 +9400,7 @@ build_certificate_provider_for_protocol() {
   protocol=$(normalize_protocol_id "$1") || return 1
 
   case "${protocol}" in
-    vless-reality|mixed|socks|http|shadowsocks|trojan) return 0 ;; # HTTP/Trojan use referenced manual certificates, not providers.
+    vless-reality|mixed|socks|http|shadowsocks|trojan|vmess) return 0 ;; # HTTP/Trojan/VMess use referenced manual certificates, not providers.
     hy2) build_hy2_certificate_provider_json ;;
     anytls) build_anytls_certificate_provider_json ;;
     *) return 1 ;;
@@ -9185,6 +9418,7 @@ build_inbound_for_protocol() {
     http) build_http_inbound_json ;;
     shadowsocks) build_shadowsocks_inbound_json ;;
     trojan) build_trojan_inbound_json ;;
+    vmess) build_vmess_inbound_json ;;
     hy2) build_hy2_inbound_json ;;
     anytls) build_anytls_inbound_json ;;
     *) return 1 ;;
@@ -9302,7 +9536,7 @@ instance_outbound_requires_warp() {
       vless-reality)
         vless_reality_has_warp_outbound_policy && return 0
         ;;
-      mixed|socks|http|shadowsocks|trojan)
+      mixed|socks|http|shadowsocks|trojan|vmess)
         state_file=$(protocol_state_file "${protocol}") || return 1
         schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" 2>/dev/null || true)
         schema=${schema//\"/}
@@ -9340,7 +9574,7 @@ build_protocol_route_rules() {
         jq -n '[{ "inbound": "mixed-in", "action": "sniff" }]'
       fi
       ;;
-    socks|http|shadowsocks|trojan)
+    socks|http|shadowsocks|trojan|vmess)
       local state_file
       state_file=$(protocol_state_file "${protocol}") || return 1
       plain_proxy_structured_state_active "${protocol}" || return 1
@@ -11184,6 +11418,10 @@ update_config_only() {
     trojan_instance_management_menu replace
     return $?
   fi
+  if [[ "${selected_protocol}" == vmess ]]; then
+    vmess_instance_management_menu replace
+    return $?
+  fi
 
   load_protocol_state "${selected_protocol}"
   if [[ "${selected_protocol}" == "vless-reality" ]]; then
@@ -11312,6 +11550,14 @@ remove_protocol_menu() {
       return $?
     fi
     log_warn "结构化 Trojan 实例需通过实例事务逐个移除；请先进入 Trojan 实例管理，再移除其他协议。本次未修改。"
+    return 1
+  fi
+  if plain_proxy_structured_state_active vmess && protocol_array_contains vmess "${selected_protocols[@]}"; then
+    if [[ ${#selected_protocols[@]} -eq 1 ]]; then
+      vmess_instance_management_menu delete
+      return $?
+    fi
+    log_warn "结构化 VMess 实例需通过实例事务逐个移除；请先进入 VMess 实例管理，再移除其他协议。本次未修改。"
     return 1
   fi
 
@@ -12680,6 +12926,153 @@ push_subman_trojan_protocol() {
   (( total_failed == 0 && (total_synced > 0 || total_skipped > 0) ))
 }
 
+vmess_share_skip() {
+  VMESS_SHARE_SKIP_CODE=${1:-vmess_uri_unrepresentable}
+  VMESS_SHARE_SKIP_MESSAGE=${2:-VMess 当前配置无法无损转换为 SubMan raw URI。}
+  return 2
+}
+
+build_vmess_subman_uri_from_store() (
+  local store_file=${1:-} server=${2:-} instance_id=${3:-} user_name=${4-} node_name=${5:-VMess}
+  local snapshot instance client_trust tag outbound uri uri_bytes filtered_file
+  [[ $# -eq 5 && -n "${store_file}" && -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
+  structured_instance_store_validate_id "${instance_id}" || return 1
+  validate_structured_instance_store vmess "${store_file}" || return 1
+  snapshot=$(structured_instance_store_snapshot_json vmess "${store_file}") || return 1
+  instance=$(jq -ce --arg id "${instance_id}" --arg user "${user_name}" '.instances[] | select(.id == $id) | select(any(.authentication.users[]; .name == $user))' <<< "${snapshot}") || return 1
+  client_trust=$(jq -er '.client_trust' <<< "${instance}") || return 1
+  if [[ "${client_trust}" != system ]]; then
+    vmess_share_skip vmess_tls_certificate_uri_unrepresentable 'VMess 自定义证书信任无法由 SubMan raw URI 无损表达；该用户已跳过。'
+    return 31
+  fi
+  tag=$(jq -r --arg user "${user_name}" '"vmess-" + .id + "-user-" + ($user | @base64)' <<< "${instance}") || return 1
+  filtered_file=$(mktemp) || return 1
+  trap 'rm -f -- "${filtered_file}"' EXIT
+  jq -e --arg id "${instance_id}" '.instances |= map(select(.id == $id)) | .default_instance_id=$id' \
+    <<< "${snapshot}" > "${filtered_file}" || return 1
+  outbound=$(build_vmess_client_outbounds_from_store "${filtered_file}" "${server}" | jq -ce --arg tag "${tag}" 'select(.tag == $tag)') || return 1
+  uri=$(build_vmess_uri_from_outbound "${outbound}" "${node_name}") || return 1
+  uri_bytes=$(printf '%s' "${uri}" | wc -c) || return 1
+  [[ "${uri_bytes}" =~ ^[0-9]+$ && "${uri_bytes}" -le 16384 ]] || {
+    vmess_share_skip vmess_uri_too_large 'VMess raw URI 超过 SubMan 16384 字节上限；该用户已跳过。'; return 32;
+  }
+  printf '%s' "${uri}"
+)
+
+vmess_share_warning_for_status() {
+  case "${1:-1}" in
+    31) jq -cn '[{code:"vmess_tls_certificate_uri_unrepresentable",message:"VMess 自定义证书信任无法由 SubMan raw URI 无损表达；该用户已跳过。"}]' ;;
+    32) jq -cn '[{code:"vmess_uri_too_large",message:"VMess raw URI 超过 SubMan 16384 字节上限；该用户已跳过。"}]' ;;
+    *) return 1 ;;
+  esac
+}
+
+build_vmess_subman_links_and_warnings_json() (
+  local server=${1:-} instance_id=${2:-} store_file snapshot snapshot_file instance user_name node_name tag uri status warning
+  local links='{}' warnings='[]' users_text
+  store_file=$(plain_proxy_structured_store_file vmess) || return 1
+  snapshot=$(structured_instance_store_snapshot_json vmess "${store_file}") || return 1
+  snapshot_file=$(mktemp) || return 1; trap 'rm -f -- "${snapshot_file}"' EXIT
+  printf '%s\n' "${snapshot}" > "${snapshot_file}" || return 1
+  instance_id=${2:-$(jq -er '.default_instance_id' <<< "${snapshot}")}
+  instance=$(jq -ce --arg id "${instance_id}" '.instances[] | select(.id == $id)' <<< "${snapshot}") || return 1
+  node_name=$(jq -r '.name' <<< "${instance}") || return 1
+  users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || return 1
+  while IFS= read -r user_name; do
+    [[ -n "${user_name}" ]] || continue
+    tag=$(jq -r --arg user "${user_name}" '"vmess-" + .id + "-user-" + ($user | @base64)' <<< "${instance}") || return 1
+    if uri=$(build_vmess_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name} ${tag}"); then
+      links=$(jq -cn --argjson links "${links}" --arg tag "${tag}" --arg uri "${uri}" '$links + {($tag):$uri}') || return 1
+    else
+      status=$?
+      if [[ "${status}" == 31 || "${status}" == 32 ]]; then
+        warning=$(vmess_share_warning_for_status "${status}") || return 1
+        warnings=$(jq -cn --argjson warnings "${warnings}" --argjson warning "${warning}" --arg instance_id "${instance_id}" --arg tag "${tag}" '$warnings + ($warning | map(. + {instance_id:$instance_id,outbound_tag:$tag}))') || return 1
+      else return "${status}"; fi
+    fi
+  done <<< "${users_text}"
+  jq -cn --argjson links "${links}" --argjson warnings "${warnings}" '{links:$links,warnings:$warnings}'
+)
+
+subman_external_key_for_vmess_user() {
+  local instance_id=${1:-} user_name=${2-} address_label=${3:-} prefix digest key stack_suffix key_bytes
+  structured_instance_store_validate_id "${instance_id}" || return 1
+  prefix=$(subman_node_prefix) || return 1; digest=$(printf '%s' "${user_name}" | sha256sum); digest=${digest%% *}
+  key="sing-box-vps:${prefix}:vmess:${instance_id}:user-${digest}"
+  stack_suffix=$(network_stack_suffix_from_label "${address_label}") || return 1
+  [[ -z "${stack_suffix}" ]] || key="${key}:${stack_suffix}"
+  key_bytes=$(printf '%s' "${key}" | wc -c) || return 1
+  [[ "${key_bytes}" =~ ^[0-9]+$ && "${key_bytes}" -le 256 ]] || return 1
+  printf '%s' "${key}"
+}
+
+subman_vmess_node_name() {
+  local instance_id=${1:-} user_name=${2-} prefix digest suffix
+  prefix=$(subman_node_prefix) || return 1; digest=$(printf '%s' "${user_name}" | sha256sum); digest=${digest%% *}; suffix="user-${digest:0:12}"
+  printf '%s VMess %s %s' "${prefix}" "${instance_id}" "${suffix}"
+}
+
+build_subman_vmess_node_payload() {
+  local raw_link=${1:-} name=${2:-} node_type prefix
+  [[ -n "${raw_link}" && -n "${name}" ]] || return 1
+  node_type=$(subman_type_for_protocol vmess) || return 1; prefix=$(subman_node_prefix) || return 1
+  jq -n --arg name "${name}" --arg type "${node_type}" --arg raw "${raw_link}" --arg prefix "${prefix}" '{name:$name,type:$type,raw:$raw,enabled:true,tags:["sing-box-vps",$prefix],source:"single"}'
+}
+
+push_subman_vmess_instance() {
+  local instance_id=${1:-} server=${2:-} quiet=${3:-n} address_label=${4:-}
+  local store_file snapshot snapshot_file instance user_name node_name raw_link external_key payload_json status warning users_text
+  local synced=0 skipped=0 failed=0 warnings='[]'
+  SUBMAN_VMESS_SYNCED=0; SUBMAN_VMESS_SKIPPED=0; SUBMAN_VMESS_FAILED=0; SUBMAN_VMESS_WARNINGS_JSON='[]'
+  structured_instance_store_validate_id "${instance_id}" || { SUBMAN_VMESS_FAILED=1; return 1; }
+  store_file=$(plain_proxy_structured_store_file vmess) || { SUBMAN_VMESS_FAILED=1; return 1; }
+  snapshot=$(structured_instance_store_snapshot_json vmess "${store_file}") || { SUBMAN_VMESS_FAILED=1; return 1; }
+  instance=$(jq -ce --arg id "${instance_id}" '.instances[] | select(.id == $id)' <<< "${snapshot}") || { SUBMAN_VMESS_FAILED=1; return 1; }
+  case "$(jq -r '.listen.address' <<< "${instance}")" in 0.0.0.0|::) ;; *) server=$(jq -r '.listen.address' <<< "${instance}") ;; esac
+  snapshot_file=$(mktemp) || { SUBMAN_VMESS_FAILED=1; return 1; }; printf '%s\n' "${snapshot}" > "${snapshot_file}" || { rm -f -- "${snapshot_file}"; SUBMAN_VMESS_FAILED=1; return 1; }
+  users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || { rm -f -- "${snapshot_file}"; SUBMAN_VMESS_FAILED=1; return 1; }
+  while IFS= read -r user_name; do
+    [[ -n "${user_name}" ]] || continue
+    node_name=$(subman_vmess_node_name "${instance_id}" "${user_name}") || { failed=$((failed + 1)); continue; }
+    if raw_link=$(build_vmess_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name}"); then
+      external_key=$(subman_external_key_for_vmess_user "${instance_id}" "${user_name}" "${address_label}") || { failed=$((failed + 1)); continue; }
+      payload_json=$(build_subman_vmess_node_payload "${raw_link}" "${node_name}") || { failed=$((failed + 1)); continue; }
+      if [[ "${quiet}" == y ]]; then push_subman_node "${external_key}" "${payload_json}" >/dev/null && synced=$((synced + 1)) || failed=$((failed + 1)); else push_subman_node "${external_key}" "${payload_json}" && synced=$((synced + 1)) || failed=$((failed + 1)); fi
+    else
+      status=$?
+      if [[ "${status}" == 31 || "${status}" == 32 ]]; then
+        skipped=$((skipped + 1)); warning=$(vmess_share_warning_for_status "${status}") || { failed=$((failed + 1)); continue; }
+        warnings=$(jq -cn --argjson existing "${warnings}" --argjson addition "${warning}" --arg instance_id "${instance_id}" --arg user "${user_name}" '$existing + ($addition | map(. + {instance_id:$instance_id,outbound_tag:("vmess-" + $instance_id + "-user-" + ($user | @base64))}))') || { failed=$((failed + 1)); continue; }
+        [[ "${quiet}" == y ]] || print_warn "VMess 实例 ${instance_id} 用户 ${user_name} 无法无损转换为 SubMan raw URI，已跳过。"
+      else failed=$((failed + 1)); fi
+    fi
+  done <<< "${users_text}"
+  rm -f -- "${snapshot_file}" || failed=$((failed + 1))
+  SUBMAN_VMESS_SYNCED=${synced}; SUBMAN_VMESS_SKIPPED=${skipped}; SUBMAN_VMESS_FAILED=${failed}; SUBMAN_VMESS_WARNINGS_JSON=${warnings}
+  (( failed == 0 && (synced > 0 || skipped > 0) ))
+}
+
+push_subman_vmess_protocol() {
+  local quiet=${1:-n} instance_ids instance_id address_entries address_entry address_label public_ip
+  local total_synced=0 total_skipped=0 total_failed=0 warnings='[]'
+  SUBMAN_VMESS_SYNCED=0; SUBMAN_VMESS_SKIPPED=0; SUBMAN_VMESS_FAILED=0; SUBMAN_VMESS_WARNINGS_JSON='[]'
+  instance_ids=$(list_protocol_instance_ids vmess) || { SUBMAN_VMESS_FAILED=1; return 1; }
+  while IFS= read -r instance_id; do
+    [[ -n "${instance_id}" ]] || continue
+    load_protocol_instance_state vmess "${instance_id}" || { total_failed=$((total_failed + 1)); continue; }
+    address_entries=$(list_subman_addresses_for_current_protocol) || { total_failed=$((total_failed + 1)); continue; }
+    while IFS= read -r address_entry; do
+      [[ -n "${address_entry}" ]] || continue; address_label=${address_entry%%|*}; public_ip=${address_entry#*|}
+      push_subman_vmess_instance "${instance_id}" "${public_ip}" "${quiet}" "${address_label}" || :
+      total_synced=$((total_synced + ${SUBMAN_VMESS_SYNCED:-0})); total_skipped=$((total_skipped + ${SUBMAN_VMESS_SKIPPED:-0})); total_failed=$((total_failed + ${SUBMAN_VMESS_FAILED:-0}))
+      if [[ -n "${SUBMAN_VMESS_WARNINGS_JSON:-}" ]]; then warnings=$(jq -cn --argjson a "${warnings}" --argjson b "${SUBMAN_VMESS_WARNINGS_JSON}" '$a+$b') || return 1; fi
+    done <<< "${address_entries}"
+  done <<< "${instance_ids}"
+  SUBMAN_VMESS_SYNCED=${total_synced}; SUBMAN_VMESS_SKIPPED=${total_skipped}; SUBMAN_VMESS_FAILED=${total_failed}; SUBMAN_VMESS_WARNINGS_JSON=${warnings}
+  (( total_failed == 0 && (total_synced > 0 || total_skipped > 0) ))
+}
+
 push_subman_shadowsocks_instance() {
   local instance_id=${1:-} server=${2:-} quiet=${3:-n} address_label=${4:-}
   local store_file outbound user_name external_key node_name payload_json network_json method
@@ -12891,6 +13284,16 @@ build_subman_raw_for_protocol() {
       node_name=$(display_node_name_for_protocol trojan "${SB_NODE_NAME:-Trojan}" "${address_label}") || return 1
       build_trojan_subman_uri_from_store "${store_file}" "${public_ip}" "${instance_id}" "${user_name}" "${node_name}"
       ;;
+    vmess)
+      store_file=$(plain_proxy_structured_store_file vmess) || return 1
+      snapshot=$(structured_instance_store_snapshot_json vmess "${store_file}") || return 1
+      instance_id=${instance_id:-${SB_INSTANCE_ID:-}}
+      [[ -n "${instance_id}" ]] || instance_id=$(jq -er '.default_instance_id' <<< "${snapshot}") || return 1
+      case "${SB_MIXED_LISTEN_ADDRESS:-}" in 0.0.0.0|::) ;; "") ;; *) public_ip=${SB_MIXED_LISTEN_ADDRESS} ;; esac
+      user_name=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .authentication.users[0].name' <<< "${snapshot}") || return 1
+      node_name=$(display_node_name_for_protocol vmess "${SB_NODE_NAME:-VMess}" "${address_label}") || return 1
+      build_vmess_subman_uri_from_store "${store_file}" "${public_ip}" "${instance_id}" "${user_name}" "${node_name}"
+      ;;
     hy2) build_hy2_link "${public_ip}" "${address_label}" ;;
     *) return 1 ;;
   esac
@@ -12945,6 +13348,10 @@ push_subman_protocol_instance() {
   fi
   if [[ "${protocol}" == "trojan" ]]; then
     push_subman_trojan_instance "${instance_id}" "${public_ip}" "${quiet}" "${address_label}"
+    return $?
+  fi
+  if [[ "${protocol}" == "vmess" ]]; then
+    push_subman_vmess_instance "${instance_id}" "${public_ip}" "${quiet}" "${address_label}"
     return $?
   fi
   if ! external_key=$(subman_external_key_for_protocol "${protocol}" "${instance_id}" "${address_label}"); then
@@ -13877,6 +14284,114 @@ build_trojan_client_outbounds_from_store() (
   cat "${output_file}"
 )
 
+build_client_vmess_outbounds() (
+  local public_ip=${1:-} store_file snapshot tmpdir instance_ids_file instance_file output_file
+  local instance_id listen_address server_address expected_count output_count
+  store_file=$(plain_proxy_structured_store_file vmess) || return 1
+  snapshot=$(structured_instance_store_snapshot_json vmess "${store_file}") || return 1
+  tmpdir=$(mktemp -d) || return 1
+  trap 'rm -rf -- "${tmpdir}"' EXIT
+  instance_ids_file="${tmpdir}/instance-ids"; output_file="${tmpdir}/outbounds.jsonl"
+  : > "${output_file}" || return 1
+  jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}" > "${instance_ids_file}" || return 1
+  while IFS= read -r -d '' instance_id; do
+    [[ -n "${instance_id}" ]] || return 1
+    instance_file=$(mktemp "${tmpdir}/store.XXXXXX") || return 1
+    jq --arg id "${instance_id}" '. as $root | ($root.instances | map(select(.id == $id))) as $instances | $root | .default_instance_id=$id | .instances=$instances' <<< "${snapshot}" > "${instance_file}" || return 1
+    listen_address=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .listen.address' <<< "${snapshot}") || return 1
+    case "${listen_address}" in 0.0.0.0|::) server_address=${public_ip:-$(get_public_ip)} ;; *) server_address=${listen_address} ;; esac
+    [[ -n "${server_address}" ]] || return 1
+    build_vmess_client_outbounds_from_store "${instance_file}" "${server_address}" >> "${output_file}" || return 1
+  done < "${instance_ids_file}"
+  expected_count=$(jq -r '[.instances[].authentication.users | length] | add // 0' <<< "${snapshot}") || return 1
+  output_count=$(jq -s 'length' "${output_file}") || return 1
+  [[ "${expected_count}" =~ ^[0-9]+$ && "${output_count}" == "${expected_count}" && "${output_count}" -gt 0 ]] || return 1
+  jq -es 'length > 0 and (map(.tag) | unique | length) == length' "${output_file}" >/dev/null || return 1
+  cat "${output_file}"
+)
+
+build_vmess_client_outbounds_from_store() (
+  local store_file=${1:-} server=${2:-} raw_file output_file snapshot raw_outbound tls_json transport_json profile tls_mode
+  local server_name certificate_path certificate_pem alpn_json network_json security alter_id
+  [[ $# -eq 2 && -n "${store_file}" && -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
+  validate_structured_instance_store vmess "${store_file}" || return 1
+  snapshot=$(structured_instance_store_snapshot_json vmess "${store_file}") || return 1
+  raw_file=$(mktemp) || return 1
+  output_file=$(mktemp) || { rm -f -- "${raw_file}"; return 1; }
+  trap 'rm -f -- "${raw_file}" "${output_file}"' EXIT
+  jq -c --arg server "${server}" '.instances[] as $instance | $instance.authentication.users[] as $user |
+    {type:"vmess",tag:("vmess-" + $instance.id + "-user-" + ($user.name | @base64)),server:$server,server_port:$instance.listen.port,
+     uuid:$user.uuid,security:$user.security,alter_id:$user.alter_id,network:(if $instance.transport.type == "quic" then ["udp"] else ["tcp","udp"] end),
+     _tls:$instance.tls,_client_trust:$instance.client_trust,_transport:$instance.transport}' <<< "${snapshot}" > "${raw_file}" || return 1
+  while IFS= read -r raw_outbound; do
+    [[ -n "${raw_outbound}" ]] || continue
+    tls_json=$(jq -ec '._tls' <<< "${raw_outbound}") || return 1
+    transport_json=$(jq -ec '._transport' <<< "${raw_outbound}") || return 1
+    tls_mode=disabled
+    if jq -e '.enabled == true' <<< "${tls_json}" >/dev/null; then tls_mode=tls
+    elif ! jq -e '.enabled == false' <<< "${tls_json}" >/dev/null; then return 1; fi
+    profile=$(build_v2ray_transport_profile_json vmess "${transport_json}" "${tls_mode}" '' "$(resolve_config_target_singbox_version)") || return 1
+    alpn_json=$(jq -c '.tls_alpn' <<< "${profile}") || return 1
+    if [[ "${tls_mode}" == tls ]]; then
+      server_name=$(jq -er '._tls.server_name' <<< "${raw_outbound}") || return 1
+      case "$(jq -er '._client_trust' <<< "${raw_outbound}")" in
+        system)
+          tls_json=$(jq -cn --arg server_name "${server_name}" --argjson alpn "${alpn_json}" '{enabled:true,server_name:$server_name} + (if ($alpn|length)>0 then {alpn:$alpn} else {} end)') || return 1 ;;
+        certificate)
+          certificate_path=$(jq -er '._tls.certificate_path' <<< "${raw_outbound}") || return 1
+          certificate_pem=$(read_public_certificate_pem "${certificate_path}") || return 1
+          tls_json=$(jq -cn --arg server_name "${server_name}" --arg certificate "${certificate_pem}" --argjson alpn "${alpn_json}" '{enabled:true,server_name:$server_name,certificate:$certificate} + (if ($alpn|length)>0 then {alpn:$alpn} else {} end)') || return 1 ;;
+        *) return 1 ;;
+      esac
+    else tls_json='{"enabled":false}'; fi
+    jq -c --argjson tls "${tls_json}" --argjson transport "${transport_json}" 'del(._tls,._client_trust,._transport) | (if $tls.enabled then .tls=$tls else del(.tls) end) | (if $transport.type == "none" then del(.transport) else .transport=$transport end)' <<< "${raw_outbound}" >> "${output_file}" || return 1
+  done < "${raw_file}"
+  output_count=$(jq -s 'length' "${output_file}") || return 1
+  expected_count=$(jq -r '[.instances[].authentication.users | length] | add // 0' <<< "${snapshot}") || return 1
+  [[ "${output_count}" == "${expected_count}" && "${output_count}" -gt 0 ]] || return 1
+  jq -es 'length > 0 and (map(.tag) | unique | length) == length' "${output_file}" >/dev/null || return 1
+  cat "${output_file}"
+)
+
+build_vmess_uri_from_outbound() {
+  local outbound=${1:-} name=${2:-VMess} payload encoded
+  [[ -n "${outbound}" ]] || return 1
+  payload=$(jq -cS --arg name "${name}" '
+    .transport as $transport | (.tls // {}) as $tls |
+    select((($transport.type // "none") != "http" and ($transport.type // "none") != "ws") or
+      ((($transport.headers // {}) | keys | all(. == "Host")) and
+       (($transport.method // "GET") == "GET"))) |
+    select((($transport.type // "none") != "http") or
+      ((($transport.host // []) | if type == "array" then length <= 1 else true end))) |
+    {v:"2",ps:$name,add:.server,port:(.server_port|tostring),id:.uuid,aid:(.alter_id // 0),scy:.security,
+     net:(if ($transport.type // "none") == "none" then "tcp" elif $transport.type == "http" then "http" elif $transport.type == "ws" then "ws" elif $transport.type == "grpc" then "grpc" elif $transport.type == "quic" then "quic" else error("unsupported transport") end),
+     type:(if ($transport.type // "none") == "grpc" then "gun" else "none" end),
+     host:(if $transport.type == "ws" then ($transport.headers.Host // $transport.host // "")
+       elif (($transport.host // "")|type) == "array" then (($transport.host // [])|join(","))
+       else ($transport.host // "") end),
+     path:(if ($transport.type // "none") == "grpc" then ($transport.service_name // "") else ($transport.path // "") end),
+     tls:(if ($tls.enabled // false) then "tls" else "" end),sni:($tls.server_name // "")}' <<< "${outbound}") || return 1
+  encoded=$(printf '%s' "${payload}" | base64 -w0 2>/dev/null) || return 1
+  [[ -n "${encoded}" ]] || return 1
+  encoded=${encoded//$'\n'/}; encoded=${encoded//+/-}; encoded=${encoded//\//_}; encoded=${encoded%%=*}
+  printf 'vmess://%s' "${encoded}"
+}
+
+build_vmess_links_json() {
+  local server=${1:-} instance_id=${2:-${SB_INSTANCE_ID:-}} outbounds outbound uri key result='{}'
+  outbounds=$(build_client_vmess_outbounds "${server}") || return 1
+  while IFS= read -r outbound; do
+    [[ -n "${outbound}" ]] || continue
+    key=$(jq -er '.tag' <<< "${outbound}") || return 1
+    if [[ -n "${instance_id}" && "${key}" != "vmess-${instance_id}-user-"* ]]; then continue; fi
+    uri=$(build_vmess_uri_from_outbound "${outbound}" "${SB_NODE_NAME:-VMess} ${key}") || return 1
+    result=$(jq -cn --argjson result "${result}" --arg key "${key}" --arg uri "${uri}" '$result+{($key):$uri}') || return 1
+  done <<< "${outbounds}"
+  jq -e 'length > 0' <<< "${result}" >/dev/null || return 1
+  printf '%s\n' "${result}"
+}
+
 shadowsocks_client_psk() (
   local method=${1:-} psk=${2-} min_bytes decoded_file digest_file decoded_bytes
 
@@ -14029,7 +14544,7 @@ build_client_outbound_json_for_protocol() {
   restore_original_state="n"
 
   case "${protocol}" in
-    vless-reality|mixed|socks|http|shadowsocks|trojan|hy2|anytls) ;;
+    vless-reality|mixed|socks|http|shadowsocks|trojan|vmess|hy2|anytls) ;;
     *)
       return 1
       ;;
@@ -14096,6 +14611,9 @@ build_client_outbound_json_for_protocol() {
         ;;
       trojan)
         if outbound_json=$(build_client_trojan_outbounds "${public_ip}"); then :; else build_status=$?; fi
+        ;;
+      vmess)
+        if outbound_json=$(build_client_vmess_outbounds "${public_ip}"); then :; else build_status=$?; fi
         ;;
       vless-reality)
         if outbound_json=$(build_client_vless_reality_outbounds "${public_ip}"); then
@@ -14184,6 +14702,16 @@ show_link_info() {
     jq -r '.warnings[].message' <<< "${trojan_material}" >&2 || return 1
     printf 'Trojan 客户端 outbound JSON：\n'
     jq '.outbounds' <<< "${trojan_material}"
+    return $?
+  fi
+
+  if [[ "${SB_PROTOCOL}" == vmess ]]; then
+    local vmess_links
+    vmess_links=$(build_vmess_links_json "${public_ip}" "${SB_INSTANCE_ID:-}") || return 1
+    printf '\nVMess 实例 %s（连接材料含凭据，请妥善保管）\n' "${SB_INSTANCE_ID:-}"
+    jq -r 'to_entries[] | .key + "\n" + .value' <<< "${vmess_links}" || return 1
+    printf 'VMess 客户端 outbound JSON：\n'
+    build_client_vmess_outbounds "${public_ip}" | jq -s '.'
     return $?
   fi
 
@@ -14312,8 +14840,8 @@ show_qr_info() {
   local instance_id
   local header_label
 
-  if [[ "${SB_PROTOCOL}" == trojan ]]; then
-    log_info 'Trojan 当前不展示二维码；请使用可用 URI 或完整客户端 JSON。'
+  if [[ "${SB_PROTOCOL}" == trojan || "${SB_PROTOCOL}" == vmess ]]; then
+    log_info "${SB_PROTOCOL} 当前不展示二维码；请使用可用 URI 或完整客户端 JSON。"
     return 0
   fi
 
@@ -14464,7 +14992,7 @@ list_subman_addresses_for_current_protocol() {
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL:-}" 2>/dev/null || true)
   case "${protocol}" in
-    mixed|socks|http|shadowsocks|trojan)
+    mixed|socks|http|shadowsocks|trojan|vmess)
       if plain_proxy_structured_state_active "${protocol}" >/dev/null 2>&1; then
         bound_address=${SB_MIXED_LISTEN_ADDRESS:-}
         case "${bound_address}" in
@@ -14500,7 +15028,7 @@ show_connection_details_for_detected_addresses() {
   local address_entries=()
   local entry label address public_ip
 
-  if [[ ("${SB_PROTOCOL}" == mixed || "${SB_PROTOCOL}" == socks || "${SB_PROTOCOL}" == http || "${SB_PROTOCOL}" == shadowsocks || "${SB_PROTOCOL}" == trojan) ]] && plain_proxy_structured_state_active "${SB_PROTOCOL}"; then
+  if [[ ("${SB_PROTOCOL}" == mixed || "${SB_PROTOCOL}" == socks || "${SB_PROTOCOL}" == http || "${SB_PROTOCOL}" == shadowsocks || "${SB_PROTOCOL}" == trojan || "${SB_PROTOCOL}" == vmess) ]] && plain_proxy_structured_state_active "${SB_PROTOCOL}"; then
     address=${SB_MIXED_LISTEN_ADDRESS:-}
     if [[ -n "${address}" && "${address}" != '::' && "${address}" != 0.0.0.0 ]]; then
       show_connection_details "${mode}" "${address}" "监听地址"
@@ -14550,7 +15078,7 @@ show_all_connection_details() {
 
   for protocol in "${installed_protocols[@]}"; do
     load_protocol_state "${protocol}" || return $?
-    if [[ ("${protocol}" == mixed || "${protocol}" == socks || "${protocol}" == http || "${protocol}" == shadowsocks || "${protocol}" == trojan) ]] && plain_proxy_structured_state_active "${protocol}"; then
+    if [[ ("${protocol}" == mixed || "${protocol}" == socks || "${protocol}" == http || "${protocol}" == shadowsocks || "${protocol}" == trojan || "${protocol}" == vmess) ]] && plain_proxy_structured_state_active "${protocol}"; then
       instance_ids=$(list_protocol_instance_ids "${protocol}") || return $?
       while IFS= read -r instance_id; do
         [[ -n "${instance_id}" ]] || continue
@@ -14649,7 +15177,7 @@ build_singbox_client_config() {
   for protocol in "${exportable_protocols[@]}"; do
     protocol_label=$(protocol_display_name "${protocol}") || return 1
     if ! protocol_state_exists "${protocol}"; then
-      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" ]]; then
+      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" ]]; then
         log_warn "${protocol_label} 状态缺失，已中止客户端导出；原导出文件保持不变。" >&2
         status=1
         break
@@ -14659,7 +15187,7 @@ build_singbox_client_config() {
     fi
 
     if ! outbound_json=$(build_client_outbounds_for_current_protocol "${protocol}" "${public_ip}"); then
-      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" ]]; then
+      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" ]]; then
         log_warn "${protocol_label} 客户端连接材料无效，已中止客户端导出；原导出文件保持不变。" >&2
         status=1
         break
@@ -14940,10 +15468,10 @@ agent_print_help() {
   sbv agent service restart --json --yes
   sbv agent subman-sync --json
   sbv agent warp --json
-  sbv agent instance create|replace mixed|socks|http|shadowsocks|trojan --json --yes --expected-revision N --file record.json [--allow-public]
-  sbv agent instance delete|default mixed|socks|http|shadowsocks|trojan --json --yes --expected-revision N --id ID
+  sbv agent instance create|replace mixed|socks|http|shadowsocks|trojan|vmess --json --yes --expected-revision N --file record.json [--allow-public]
+  sbv agent instance delete|default mixed|socks|http|shadowsocks|trojan|vmess --json --yes --expected-revision N --id ID
   sbv agent instance migrate mixed --json --yes --expected-revision N
-  sbv agent instance recover mixed|socks|http|shadowsocks|trojan --json --yes --expected-revision N
+  sbv agent instance recover mixed|socks|http|shadowsocks|trojan|vmess --json --yes --expected-revision N
 
 说明:
   capabilities  输出协议、功能入口以及只读/变更/敏感分类。
@@ -15162,7 +15690,7 @@ agent_capabilities_json() {
           persistent_recovery_journal: true
         },
         plain_proxy_instances: {
-          protocols: ["mixed", "socks", "http", "shadowsocks", "trojan"],
+          protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess"],
           legacy_migration_protocols: ["mixed"],
           state_schema: 2,
           store_schema: 1,
@@ -15172,7 +15700,8 @@ agent_capabilities_json() {
             socks: ["create", "replace", "delete", "default", "recover"],
             http: ["create", "replace", "delete", "default", "recover"],
             shadowsocks: ["create", "replace", "delete", "default", "recover"],
-            trojan: ["create", "replace", "delete", "default", "recover"]
+            trojan: ["create", "replace", "delete", "default", "recover"],
+            vmess: ["create", "replace", "delete", "default", "recover"]
           },
           expected_revision_required: true,
           plaintext_public_confirmation: "--allow-public",
@@ -15192,7 +15721,7 @@ agent_capabilities_json() {
         doctor: {mutation: false, sensitive: false},
         "upgrade-check": {mutation: false, sensitive: false},
         upgrade: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart"},
-        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan"]},
+        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess"]},
         "export-client": {mutation: true, sensitive: true},
         "service restart": {mutation: true, sensitive: false, confirmation: "--yes"},
         "subman-sync": {mutation: true, sensitive: true, external_write: true}
@@ -15206,6 +15735,7 @@ agent_capabilities_json() {
         http_multi_instance_management: true,
         shadowsocks_multi_instance_management: true,
         trojan_multi_instance_management: true,
+        vmess_multi_instance_management: true,
         warp_mutation: true,
         inbound_outbound_stack_management: true,
         bbr: true,
@@ -16275,7 +16805,7 @@ agent_validate_indexed_protocol_states() {
   # A deleted plain proxy may leave a valid revisioned empty tombstone for
   # CAS continuity.  It is safe when its protocol is absent from the index; a
   # non-empty orphan would be an unowned inventory and must fail closed.
-  for plain_protocol in mixed socks http shadowsocks trojan; do
+  for plain_protocol in mixed socks http shadowsocks trojan vmess; do
     if ! protocol_array_contains "${plain_protocol}" ${expected_protocols[@]+"${expected_protocols[@]}"}; then
       plain_store_file=$(plain_proxy_structured_store_file "${plain_protocol}") || return 1
       if [[ -e "${plain_store_file}" || -L "${plain_store_file}" ]]; then
@@ -16310,7 +16840,7 @@ agent_validate_indexed_protocol_states() {
       # partial first-node view would make Agent status/links appear healthy
       # while silently omitting listeners or credentials.
       mixed_validate_state_inventory || return 1
-    elif [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" ]]; then
+    elif [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" ]]; then
       # Plain proxy protocols are structured-only. Validate the complete
       # manifest and compare every live tag before reporting them installed.
       plain_proxy_validate_state_inventory "${protocol}" || return 1
@@ -16751,6 +17281,44 @@ agent_trojan_link_json() (
     '$summary + {links:$links,outbounds:$outbounds,warnings:$warnings}'
 )
 
+agent_vmess_node_json() {
+  local public_ip=${1:-$(get_public_ip)} server shareable=false tls_json transport_json tls_enabled transport_type user_count
+  tls_json=${SB_VMESS_TLS_JSON:-}; transport_json=${SB_VMESS_TRANSPORT_JSON:-}
+  [[ -n "${tls_json}" && -n "${transport_json}" ]] || return 1
+  tls_enabled=$(jq -er 'if .enabled == true then "true" elif .enabled == false then "false" else empty end' <<< "${tls_json}") || return 1
+  transport_type=$(jq -er '.type' <<< "${transport_json}") || return 1
+  user_count=$(jq -er 'length' <<< "${SB_VMESS_AUTH_JSON:-[]}") || return 1
+  case "${SB_MIXED_LISTEN_ADDRESS:-}" in 0.0.0.0|::) server=${public_ip} ;; *) server=${SB_MIXED_LISTEN_ADDRESS:-} ;; esac
+  if [[ -n "${server}" ]] && build_vmess_links_json "${server}" "${SB_INSTANCE_ID:-}" >/dev/null 2>&1; then shareable=true; fi
+  jq -n --arg name "${SB_NODE_NAME:-VMess}" --arg id "${SB_INSTANCE_ID:-}" --arg tag "${SB_MIXED_INBOUND_TAG:-}" \
+    --arg address "${SB_MIXED_LISTEN_ADDRESS:-}" --arg port "${SB_PORT:-}" --arg revision "${SB_MIXED_STORE_REVISION:-0}" \
+    --arg policy "${SB_OUTBOUND_POLICY:-default}" --arg trust "${SB_VMESS_CLIENT_TRUST:-system}" \
+    --arg server_name "$(jq -r '.server_name // empty' <<< "${tls_json}")" --arg transport_type "${transport_type}" \
+    --argjson tls_enabled "${tls_enabled}" --argjson user_count "${user_count}" --argjson shareable "${shareable}" \
+    '{protocol:"vmess",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},user_count:$user_count,auth_enabled:($user_count>0),tls_enabled:$tls_enabled,client_trust:$trust,transport_type:$transport_type,outbound_policy:$policy,shareable:$shareable,client_exportable:true} + (if $server_name=="" then {} else {server_name:$server_name} end)'
+}
+
+agent_vmess_link_json() (
+  umask 077
+  local server=${1:-} store_file snapshot end_snapshot instance_id links outbounds isolated_store summary
+  store_file=$(plain_proxy_structured_store_file vmess) || return 1
+  snapshot=$(structured_instance_store_snapshot_json vmess "${store_file}") || return 1
+  instance_id=${SB_INSTANCE_ID:-}; [[ -n "${instance_id}" ]] || instance_id=$(jq -er '.default_instance_id' <<< "${snapshot}") || return 1
+  jq -e --arg id "${instance_id}" 'any(.instances[]; .id == $id)' <<< "${snapshot}" >/dev/null || return 1
+  [[ "$(jq -r '.revision|tostring' <<< "${snapshot}")" == "${SB_MIXED_STORE_REVISION:-}" ]] || return 1
+  case "${SB_MIXED_LISTEN_ADDRESS:-}" in 0.0.0.0|::) ;; "") return 1 ;; *) server=${SB_MIXED_LISTEN_ADDRESS} ;; esac
+  summary=$(agent_vmess_node_json "${server}") || return 1
+  links=$(build_vmess_links_json "${server}" "${instance_id}") || return 1
+  isolated_store=$(mktemp) || return 1
+  trap 'rm -f -- "${isolated_store}"' EXIT
+  jq --arg id "${instance_id}" '. as $root | ($root.instances | map(select(.id == $id))) as $instances | $root | .default_instance_id=$id | .instances=$instances' <<< "${snapshot}" > "${isolated_store}" || return 1
+  outbounds=$(build_vmess_client_outbounds_from_store "${isolated_store}" "${server}") || return 1
+  end_snapshot=$(structured_instance_store_snapshot_json vmess "${store_file}") || return 1
+  [[ "${snapshot}" == "${end_snapshot}" ]] || return 1
+  outbounds=$(jq -sc '.' <<< "${outbounds}") || return 1
+  jq -cn --argjson summary "${summary}" --argjson links "${links}" --argjson outbounds "${outbounds}" --argjson warnings '[]' '$summary + {links:$links,outbounds:$outbounds,warnings:$warnings}'
+)
+
 agent_node_summary_json_for_current_protocol() {
   local protocol api_protocol public_ip shareable="true" client_exportable="false"
   local auth_enabled="false" server_name="" tls_enabled="false" http_tls_json
@@ -16763,6 +17331,7 @@ agent_node_summary_json_for_current_protocol() {
   node_name=$(display_node_name_for_protocol "${protocol}" "${SB_NODE_NAME}" "")
   if [[ "${protocol}" == shadowsocks ]]; then agent_shadowsocks_node_json; return $?; fi
   if [[ "${protocol}" == trojan ]]; then agent_trojan_node_json "${public_ip}"; return $?; fi
+  if [[ "${protocol}" == vmess ]]; then agent_vmess_node_json "${public_ip}"; return $?; fi
 
   case "${protocol}" in
     vless-reality)
@@ -16882,6 +17451,7 @@ agent_link_json_for_current_protocol() {
   public_ip=${1:-$(get_public_ip)}
   if [[ "${protocol}" == shadowsocks ]]; then agent_shadowsocks_link_json "${public_ip}"; return $?; fi
   if [[ "${protocol}" == trojan ]]; then agent_trojan_link_json "${public_ip}"; return $?; fi
+  if [[ "${protocol}" == vmess ]]; then agent_vmess_link_json "${public_ip}"; return $?; fi
   if [[ "${public_ip}" == *:* ]]; then
     address_label="IPv6"
   elif [[ "${public_ip}" == *.* ]]; then
@@ -17234,7 +17804,7 @@ agent_push_nodes_to_subman_json() {
   local original_protocol_state protocol instance_id
   local address_entry address_label public_ip
   local instance_attempted instance_synced instance_stacked_synced
-  local synced_count skipped_count failed_count shadowsocks_skipped_count trojan_skipped_count ok_json
+  local synced_count skipped_count failed_count shadowsocks_skipped_count trojan_skipped_count vmess_skipped_count ok_json
   local last_error_code last_error_disposition last_http_status last_retry_after
   local compatibility_warnings_json
   local installed_protocols=()
@@ -17245,6 +17815,7 @@ agent_push_nodes_to_subman_json() {
   failed_count=0
   shadowsocks_skipped_count=0
   trojan_skipped_count=0
+  vmess_skipped_count=0
   last_error_code=""
   last_error_disposition=""
   last_http_status=""
@@ -17367,6 +17938,29 @@ agent_push_nodes_to_subman_json() {
       continue
     fi
 
+    if [[ "${protocol}" == "vmess" ]]; then
+      if push_subman_vmess_protocol y; then :; else
+        last_error_code=${SUBMAN_LAST_ERROR_CODE:-vmess_sync_failed}
+        last_error_disposition=${SUBMAN_LAST_ERROR_DISPOSITION:-operator-repair}
+        last_http_status=${SUBMAN_LAST_HTTP_STATUS:-}
+        last_retry_after=${SUBMAN_LAST_RETRY_AFTER:-}
+      fi
+      synced_count=$((synced_count + ${SUBMAN_VMESS_SYNCED:-0}))
+      skipped_count=$((skipped_count + ${SUBMAN_VMESS_SKIPPED:-0}))
+      vmess_skipped_count=$((vmess_skipped_count + ${SUBMAN_VMESS_SKIPPED:-0}))
+      failed_count=$((failed_count + ${SUBMAN_VMESS_FAILED:-0}))
+      if [[ -n "${SUBMAN_VMESS_WARNINGS_JSON:-}" ]]; then
+        compatibility_warnings_json=$(jq -cn --argjson existing "${compatibility_warnings_json}" --argjson additions "${SUBMAN_VMESS_WARNINGS_JSON}" '$existing + $additions') || return 1
+      fi
+      if [[ "${SUBMAN_VMESS_FAILED:-0}" -gt 0 ]]; then
+        last_error_code=${SUBMAN_LAST_ERROR_CODE:-vmess_sync_failed}
+        last_error_disposition=${SUBMAN_LAST_ERROR_DISPOSITION:-operator-repair}
+        last_http_status=${SUBMAN_LAST_HTTP_STATUS:-}
+        last_retry_after=${SUBMAN_LAST_RETRY_AFTER:-}
+      fi
+      continue
+    fi
+
     while IFS= read -r address_entry; do
       [[ -z "${address_entry}" ]] && continue
       address_label=${address_entry%%|*}
@@ -17387,7 +17981,7 @@ agent_push_nodes_to_subman_json() {
     load_protocol_state "${original_protocol_state}"
   fi
 
-  if (( synced_count == 0 && shadowsocks_skipped_count == 0 && trojan_skipped_count == 0 && failed_count == 0 )); then
+  if (( synced_count == 0 && shadowsocks_skipped_count == 0 && trojan_skipped_count == 0 && vmess_skipped_count == 0 && failed_count == 0 )); then
     agent_json_error "public_ip_unavailable" "未获取到公网 IP，无法生成 SubMan 节点链接。"
     return 1
   fi
@@ -17906,7 +18500,7 @@ apply_plain_proxy_instance_change() (
 
 agent_instance_cli() {
   local operation=${1:-} protocol=${2:-} expected="" input="" instance_id="" json=n confirmed=n allow_public=n
-  [[ $# -ge 2 ]] || { agent_json_error invalid_arguments "用法: instance 操作 mixed|socks|http|shadowsocks|trojan --json --yes --expected-revision N [--file 文件 | --id ID]"; return 1; }
+  [[ $# -ge 2 ]] || { agent_json_error invalid_arguments "用法: instance 操作 mixed|socks|http|shadowsocks|trojan|vmess --json --yes --expected-revision N [--file 文件 | --id ID]"; return 1; }
   shift 2
   protocol=$(normalize_protocol_id "${protocol}") || {
     agent_json_error invalid_arguments "实例协议无效；未修改。"; return 1;
@@ -17922,14 +18516,14 @@ agent_instance_cli() {
       *) break ;;
     esac
   done
-  if [[ $# -ne 0 || "${json}" != y || ("${protocol}" != mixed && "${protocol}" != socks && "${protocol}" != http && "${protocol}" != shadowsocks && "${protocol}" != trojan) || ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
+  if [[ $# -ne 0 || "${json}" != y || ("${protocol}" != mixed && "${protocol}" != socks && "${protocol}" != http && "${protocol}" != shadowsocks && "${protocol}" != trojan && "${protocol}" != vmess) || ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
     agent_json_error invalid_arguments "实例参数、协议或 revision 无效；未修改。"; return 1
   fi
   if ! structured_instance_store_revision_arg "${expected}" >/dev/null; then
     agent_json_error invalid_arguments "revision 超出安全整数范围；未修改。"; return 1
   fi
   if [[ "${operation}" == migrate && "${protocol}" != mixed ]]; then
-    agent_json_error invalid_arguments "只有 Mixed 提供 legacy schema 1 迁移；SOCKS/HTTP/Shadowsocks/Trojan 使用 schema 2，已有 live 配置请使用接管入口。"
+    agent_json_error invalid_arguments "只有 Mixed 提供 legacy schema 1 迁移；SOCKS/HTTP/Shadowsocks/Trojan/VMess 使用 schema 2，已有 live 配置请使用接管入口。"
     return 1
   fi
   [[ "${confirmed}" == y ]] || { agent_json_error confirmation_required "实例写操作需要 --yes；非回环入口另需 --allow-public。"; return 1; }
@@ -18116,7 +18710,7 @@ push_nodes_to_subman() {
   local original_protocol_state protocol instance_id
   local address_entry address_label public_ip
   local instance_attempted instance_synced instance_stacked_synced
-  local synced_count skipped_count failed_count shadowsocks_skipped_count trojan_skipped_count trojan_status
+  local synced_count skipped_count failed_count shadowsocks_skipped_count trojan_skipped_count vmess_skipped_count trojan_status
   local installed_protocols=()
 
   prompt_subman_config_if_needed
@@ -18126,6 +18720,7 @@ push_nodes_to_subman() {
   failed_count=0
   shadowsocks_skipped_count=0
   trojan_skipped_count=0
+  vmess_skipped_count=0
 
   mapfile -t installed_protocols < <(list_installed_protocols)
   if [[ ${#installed_protocols[@]} -eq 0 ]]; then
@@ -18207,6 +18802,15 @@ push_nodes_to_subman() {
       continue
     fi
 
+    if [[ "${protocol}" == "vmess" ]]; then
+      push_subman_vmess_protocol n || true
+      synced_count=$((synced_count + ${SUBMAN_VMESS_SYNCED:-0}))
+      skipped_count=$((skipped_count + ${SUBMAN_VMESS_SKIPPED:-0}))
+      vmess_skipped_count=$((vmess_skipped_count + ${SUBMAN_VMESS_SKIPPED:-0}))
+      failed_count=$((failed_count + ${SUBMAN_VMESS_FAILED:-0}))
+      continue
+    fi
+
     if [[ "${protocol}" == "shadowsocks" ]]; then
       push_subman_shadowsocks_protocol n || true
       synced_count=$((synced_count + ${SUBMAN_SHADOWSOCKS_SYNCED:-0}))
@@ -18232,7 +18836,7 @@ push_nodes_to_subman() {
     load_protocol_state "${original_protocol_state}"
   fi
 
-  if (( synced_count == 0 && shadowsocks_skipped_count == 0 && trojan_skipped_count == 0 && failed_count == 0 )); then
+  if (( synced_count == 0 && shadowsocks_skipped_count == 0 && trojan_skipped_count == 0 && vmess_skipped_count == 0 && failed_count == 0 )); then
     log_warn "未获取到公网 IP，无法生成 SubMan 节点链接。"
     return 1
   fi
@@ -18522,7 +19126,7 @@ structured_instance_store_error() {
 structured_instance_store_protocol() {
   local protocol
   protocol=$(normalize_protocol_id "${1:-}") || return 1
-  [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" ]] || return 1
+  [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" ]] || return 1
   printf '%s' "${protocol}"
 }
 
@@ -18614,8 +19218,8 @@ structured_instance_record_jq_filter() {
     def valid_instance($protocol):
       type == "object" and
       ((keys | sort) == ((["authentication","dependencies","id","listen","name","outbound_policy","tag"] +
-        (if $protocol == "http" or $protocol == "trojan" then ["tls"] else [] end) +
-        (if $protocol == "trojan" then ["client_trust","transport"] else [] end)) | sort)) and
+        (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" then ["tls"] else [] end) +
+        (if $protocol == "trojan" or $protocol == "vmess" then ["client_trust","transport"] else [] end)) | sort)) and
       (.id | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and
       (.name | type == "string" and length > 0 and index("\u0000") == null) and
       (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]")|not)) and
@@ -18628,16 +19232,21 @@ structured_instance_record_jq_filter() {
             all(.[]; . == "tcp" or . == "udp") and . == (sort|unique))
          else true end)) and
       (if $protocol == "shadowsocks" then (.authentication | ss_auth)
-       elif $protocol == "trojan" then
+       elif $protocol == "trojan" or $protocol == "vmess" then
          (.authentication | type == "object" and (keys|sort) == ["users"] and
            (.users | type == "array" and length >= 1 and length <= 128 and
-             all(.[]; type == "object" and (keys|sort) == ["name","password"] and
+             all(.[]; type == "object" and (keys|sort) == (if $protocol == "trojan" then ["name","password"] else ["alter_id","name","security","uuid"] end) and
                (.name | type == "string" and length > 0 and utf8bytelength <= 256 and
                  (test("[\u0000-\u001F\u007F]") | not)) and
-               (.password | type == "string" and length > 0 and utf8bytelength <= 4096 and
-                 index("\u0000") == null)) and
+               (if $protocol == "trojan" then
+                 (.password | type == "string" and length > 0 and utf8bytelength <= 4096 and index("\u0000") == null)
+                else
+                 (.uuid | type == "string" and test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")) and
+                 (.alter_id | type == "number" and floor == . and . >= 0 and . <= 65535) and
+                 (.security | type == "string" and IN("auto","none","zero","aes-128-cfb","aes-128-gcm","chacha20-poly1305"))
+                end)) and
              (map(.name)|unique|length) == length and
-             (map(.password)|unique|length) == length))
+             (if $protocol == "trojan" then (map(.password)|unique|length) == length else (map(.uuid)|unique|length) == length end)))
        else (.authentication | type == "object" and (keys|sort) == ["enabled","password","username"] and
          (.enabled|type == "boolean") and
          (.username|type == "string" and index("\u0000") == null) and
@@ -18648,13 +19257,13 @@ structured_instance_record_jq_filter() {
           else (.username|utf8bytelength <= 255) and (.password|utf8bytelength <= 255) end) and
          (if .enabled then (.username|length)>0 and (.password|length)>0 else .username=="" and .password=="" end))
        end) and
-      (if $protocol == "trojan" then
+      (if $protocol == "trojan" or $protocol == "vmess" then
          (.client_trust | type == "string" and IN("certificate","system")) and
          (if .tls.enabled == false then .client_trust == "system" else true end)
        else true end) and
       (.outbound_policy|IN("default","direct","warp")) and
       (.dependencies|type == "array" and length == 0) and
-      (if $protocol == "http" or $protocol == "trojan" then (.tls|type == "object" and
+      (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" then (.tls|type == "object" and
          (if .enabled == false then (keys|sort)==["enabled"]
           elif .enabled == true then
             (keys|sort)==["certificate_path","enabled","key_path","server_name"] and
@@ -18685,17 +19294,17 @@ structured_instance_store_validate_common_json() {
       (.instances|type=="array" and length<=128 and all(.[]; valid_instance($protocol)) and
         (map(.id)|unique|length)==length and (map(.tag)|unique|length)==length and
         (map([.listen.address,.listen.port,
-          (if $protocol == "trojan" then
+          (if $protocol == "trojan" or $protocol == "vmess" then
              (if .transport.type == "quic" then ["udp"] else ["tcp"] end)
            else (.listen.network // ["tcp"]) end)]|@json)|unique|length)==length))
   ' --arg protocol "${protocol}" "${file}" >/dev/null 2>&1 || return 1
-  if [[ "${protocol}" == "trojan" ]]; then
+  if [[ "${protocol}" == "trojan" || "${protocol}" == "vmess" ]]; then
     transport_list=$(jq -c '.instances[] | [.transport, .tls.enabled]' "${file}") || return 1
     while IFS= read -r transport_record; do
       [[ -n "${transport_record}" ]] || continue
       transport_json=$(jq -c '.[0]' <<< "${transport_record}") || return 1
       tls_mode=$(jq -r 'if .[1] then "tls" else "disabled" end' <<< "${transport_record}") || return 1
-      build_v2ray_transport_profile_json trojan "${transport_json}" "${tls_mode}" "" "$(resolve_config_target_singbox_version)" >/dev/null || return 1
+      build_v2ray_transport_profile_json "${protocol}" "${transport_json}" "${tls_mode}" "" "$(resolve_config_target_singbox_version)" >/dev/null || return 1
     done <<< "${transport_list}"
   fi
 }
@@ -18722,7 +19331,7 @@ validate_structured_instance_store() {
       return 1
     }
   done <<< "${addresses}"
-  listener_input=$(jq -c --arg protocol "${protocol}" '{inbounds:[.instances[] | {type:$protocol,tag:.tag,listen:.listen.address,listen_port:.listen.port} + (if $protocol == "shadowsocks" then {network:.listen.network} elif $protocol == "trojan" then {transport:.transport} else {} end)]}' "${file}") || return 1
+  listener_input=$(jq -c --arg protocol "${protocol}" '{inbounds:[.instances[] | {type:$protocol,tag:.tag,listen:.listen.address,listen_port:.listen.port} + (if $protocol == "shadowsocks" then {network:.listen.network} elif $protocol == "trojan" or $protocol == "vmess" then {transport:.transport} else {} end)]}' "${file}") || return 1
   listener_plan=$(managed_listener_plan_json <<< "${listener_input}") || return 1
   validate_listener_plan_json <<< "${listener_plan}" || return 1
   : "${protocol}"
@@ -18742,6 +19351,7 @@ plain_proxy_config_store_candidate() (
     http) protocol_label="HTTP" ;;
     shadowsocks) protocol_label="Shadowsocks" ;;
     trojan) protocol_label="Trojan" ;;
+    vmess) protocol_label="VMess" ;;
     *) return 1 ;;
   esac
   shift
@@ -18751,6 +19361,7 @@ plain_proxy_config_store_candidate() (
   local temp_dir inbound_json inbound_count inbound_index tag address port
   local username password auth_enabled policy id name base digest suffix tls_json
   local ss_method ss_password ss_users_json network_json trojan_users_json='[]' trojan_transport_json='{"type":"none"}' trojan_client_trust=certificate trojan_profile
+  local vmess_users_json='[]' vmess_transport_json='{"type":"none"}' vmess_client_trust=system vmess_profile
   local existing_instance existing_store_json existing_match default_id old_revision old_semantics new_semantics
   local candidate_revision status
   local marker_schema2=n store_instances=0
@@ -18796,7 +19407,7 @@ plain_proxy_config_store_candidate() (
         ((keys_unsorted - (["type", "tag", "listen", "listen_port", "users", "set_system_proxy"] +
           (if $protocol == "http" then ["tls"]
            elif $protocol == "shadowsocks" then ["network", "method", "password"]
-           elif $protocol == "trojan" then ["tls", "transport"]
+           elif $protocol == "trojan" or $protocol == "vmess" then ["tls", "transport"]
            else [] end)) | length == 0))
         and (if has("tag") then (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) else true end)
         and (if has("listen") then (.listen | type == "string" and length > 0) else true end)
@@ -18820,6 +19431,13 @@ plain_proxy_config_store_candidate() (
                   (.name | type == "string" and length > 0 and utf8bytelength <= 256 and (test("[\u0000-\u001F\u007F]") | not)) and
                   (.password | type == "string" and length > 0 and utf8bytelength <= 4096 and index("\u0000") == null)) and
                 (map(.name) | unique | length) == length and (map(.password) | unique | length) == length)
+             elif $protocol == "vmess" then
+              (.users | type == "array" and length >= 1 and length <= 128 and
+                all(.[]; type == "object" and ((keys_unsorted | sort) == ["alterId", "name", "uuid"]) and
+                  (.name | type == "string" and length > 0 and utf8bytelength <= 256 and (test("[\u0000-\u001F\u007F]") | not)) and
+                  (.uuid | type == "string" and test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")) and
+                  (.alterId | type == "number" and floor == . and . >= 0 and . <= 65535)) and
+                (map(.name) | unique | length) == length and (map(.uuid) | unique | length) == length)
              elif has("users") then
               (.users | type == "array" and length <= 1 and
                 all(.[ ]; type == "object" and
@@ -18839,14 +19457,14 @@ plain_proxy_config_store_candidate() (
              else true end)
         and (if $protocol == "mixed" then
              (if has("set_system_proxy") then .set_system_proxy == false else true end)
-             elif $protocol == "http" or $protocol == "trojan" then
+             elif $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" then
               ((if has("set_system_proxy") then $protocol == "http" and .set_system_proxy == false else true end)
               and (if has("tls") then
                 (.tls | type == "object") and
                   (if .tls.enabled == false then
                     ((.tls | keys_unsorted | sort) == ["enabled"])
                   elif .tls.enabled == true then
-                    ((.tls | (if $protocol == "trojan" then del(.alpn) else . end) | keys_unsorted | sort) == ["certificate_path", "enabled", "key_path", "server_name"]) and
+                    ((.tls | (if $protocol == "trojan" or $protocol == "vmess" then del(.alpn) else . end) | keys_unsorted | sort) == ["certificate_path", "enabled", "key_path", "server_name"]) and
                     (.tls.server_name | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
                     (.tls.certificate_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not)) and
                     (.tls.key_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not))
@@ -18993,7 +19611,7 @@ plain_proxy_config_store_candidate() (
     fi
 
     tls_json='null'
-    if [[ "${protocol}" == "http" || "${protocol}" == "trojan" ]]; then
+    if [[ "${protocol}" == "http" || "${protocol}" == "trojan" || "${protocol}" == "vmess" ]]; then
       tls_json=$(jq -c '.tls // {enabled:false}' <<< "${inbound_json}") || return 1
     fi
 
@@ -19024,6 +19642,21 @@ plain_proxy_config_store_candidate() (
         return 1
       fi
       tls_json=$(jq -c 'del(.alpn)' <<< "${tls_json}") || return 1
+    elif [[ "${protocol}" == "vmess" ]]; then
+      vmess_users_json=$(jq -c '.users' <<< "${inbound_json}") || return 1
+      vmess_users_json=$(jq -c 'map({name,uuid,alter_id:(.alterId // 0),security:"auto"})' <<< "${vmess_users_json}") || return 1
+      vmess_transport_json=$(jq -c '.transport // {type:"none"}' <<< "${inbound_json}") || return 1
+      vmess_client_trust=system
+      if jq -e '.enabled == true' <<< "${tls_json}" >/dev/null 2>&1; then :; else vmess_client_trust=system; fi
+      vmess_profile=$(build_v2ray_transport_profile_json vmess "${vmess_transport_json}" "$(jq -r 'if .enabled == true then "tls" else "disabled" end' <<< "${tls_json}")" "" "$(resolve_config_target_singbox_version)") || {
+        printf '[ERROR] %s_store_candidate: unsupported VMess transport profile.\n' "${protocol}" >&2
+        return 1
+      }
+      if ! jq -e --argjson profile "${vmess_profile}" 'if has("alpn") then .alpn == $profile.tls_alpn else true end' <<< "${tls_json}" >/dev/null; then
+        printf '[ERROR] vmess_store_candidate: unsupported TLS ALPN; 已保留原配置。\n' >&2
+        return 1
+      fi
+      tls_json=$(jq -c 'del(.alpn)' <<< "${tls_json}") || return 1
     elif jq -e '.users | length > 0' <<< "${inbound_json}" >/dev/null 2>&1; then
       auth_enabled=true
       username=$(jq -j '.users[0].username, "\u0001"' <<< "${inbound_json}") || return 1
@@ -19048,6 +19681,9 @@ plain_proxy_config_store_candidate() (
         name=${name%$'\1'}
         if [[ "${protocol}" == "trojan" ]]; then
           trojan_client_trust=$(jq -r '.[0].client_trust // "certificate"' <<< "${existing_match}") || return 1
+        elif [[ "${protocol}" == "vmess" ]]; then
+          vmess_client_trust=$(jq -r '.[0].client_trust // "system"' <<< "${existing_match}") || return 1
+          vmess_users_json=$(jq -c --argjson live "${vmess_users_json}" '.[0].authentication.users as $old | $live | map(. as $u | (($old[]? | select(.name == $u.name and .uuid == $u.uuid) | .security) // "auto") as $security | .security=$security)' <<< "${existing_match}") || return 1
         fi
       elif [[ "$(jq 'length' <<< "${existing_match}")" -gt 1 ]]; then
         printf '[ERROR] %s_store_candidate: duplicate stored %s identity.\n' "${protocol}" "${protocol_label}" >&2
@@ -19092,6 +19728,14 @@ plain_proxy_config_store_candidate() (
       --arg address "${address}" --argjson port "${port}" --argjson users "${trojan_users_json}" \
       --arg policy "${policy}" --argjson tls "${tls_json}" --argjson transport "${trojan_transport_json}" \
       --arg client_trust "${trojan_client_trust}" \
+      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{users:$users},tls:$tls,transport:$transport,client_trust:$client_trust,outbound_policy:$policy,dependencies:[]}' \
+      >> "${temp_dir}/instances.jsonl" || return 1
+    elif [[ "${protocol}" == "vmess" ]]; then
+      jq -n -cS \
+      --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
+      --arg address "${address}" --argjson port "${port}" --argjson users "${vmess_users_json}" \
+      --arg policy "${policy}" --argjson tls "${tls_json}" --argjson transport "${vmess_transport_json}" \
+      --arg client_trust "${vmess_client_trust}" \
       '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{users:$users},tls:$tls,transport:$transport,client_trust:$client_trust,outbound_policy:$policy,dependencies:[]}' \
       >> "${temp_dir}/instances.jsonl" || return 1
     elif [[ "${protocol}" == "shadowsocks" ]]; then
@@ -19149,6 +19793,10 @@ shadowsocks_config_store_candidate() {
 
 trojan_config_store_candidate() {
   plain_proxy_config_store_candidate trojan "$@"
+}
+
+vmess_config_store_candidate() {
+  plain_proxy_config_store_candidate vmess "$@"
 }
 
 plain_proxy_structured_state_matches_config() (
@@ -19222,11 +19870,11 @@ structured_instance_store_validate_instance_argument() {
   filter=$(structured_instance_record_jq_filter) || return 1
   jq -es "${filter}"'length == 1 and (.[0] | valid_instance($protocol))' \
     --arg protocol "${protocol}" "${file}" >/dev/null 2>&1 || return 1
-  if [[ "${protocol}" == trojan ]]; then
+  if [[ "${protocol}" == trojan || "${protocol}" == vmess ]]; then
     transport_json=$(jq -c '.transport' "${file}") || return 1
     validate_v2ray_transport_state_json "${transport_json}" || return 1
     tls_mode=$(jq -r 'if .tls.enabled == true then "tls" else "disabled" end' "${file}") || return 1
-    build_v2ray_transport_profile_json trojan "${transport_json}" "${tls_mode}" "" \
+    build_v2ray_transport_profile_json "${protocol}" "${transport_json}" "${tls_mode}" "" \
       "$(resolve_config_target_singbox_version)" >/dev/null || return 1
   fi
 }
@@ -19519,13 +20167,13 @@ render_structured_instance_inbounds() {
   local protocol snapshot transport_json tls_mode transport_list transport_record
   protocol=$(structured_instance_store_protocol "${1:-}") || { structured_instance_store_error render_inbounds unsupported_protocol; return 1; }
   snapshot=$(structured_instance_store_snapshot_json "${protocol}" "${2:-}") || return $?
-  if [[ "${protocol}" == trojan ]]; then
+  if [[ "${protocol}" == trojan || "${protocol}" == vmess ]]; then
     transport_list=$(jq -c '.instances[] | [.transport, .tls.enabled]' <<< "${snapshot}") || return 1
     while IFS= read -r transport_record; do
       [[ -n "${transport_record}" ]] || continue
       transport_json=$(jq -c '.[0]' <<< "${transport_record}") || return 1
       tls_mode=$(jq -r 'if .[1] then "tls" else "disabled" end' <<< "${transport_record}") || return 1
-      build_v2ray_transport_profile_json trojan "${transport_json}" "${tls_mode}" "" "$(resolve_config_target_singbox_version)" >/dev/null || return 1
+      build_v2ray_transport_profile_json "${protocol}" "${transport_json}" "${tls_mode}" "" "$(resolve_config_target_singbox_version)" >/dev/null || return 1
     done <<< "${transport_list}"
   fi
   jq -c --arg protocol "${protocol}" '
@@ -19537,12 +20185,15 @@ render_structured_instance_inbounds() {
        else {users:(if .authentication.enabled then [{username:.authentication.username,password:.authentication.password}] else [] end)} end) +
       (if $protocol == "http" and .tls.enabled then
          {tls:.tls}
-       elif $protocol == "trojan" and .tls.enabled then
+      elif ($protocol == "trojan" or $protocol == "vmess") and .tls.enabled then
          {tls:(.tls + {alpn:(if .transport.type == "http" or .transport.type == "grpc" then ["h2"] elif .transport.type == "ws" then ["http/1.1"] elif .transport.type == "quic" then ["h3"] else [] end)})}
        else {}
        end) +
       (if $protocol == "trojan" then
          {users:(.authentication.users)} +
+         (if .transport.type == "none" then {} else {transport:.transport} end)
+       elif $protocol == "vmess" then
+         {users:(.authentication.users | map({name,uuid,alterId:.alter_id}))} +
          (if .transport.type == "none" then {} else {transport:.transport} end)
        else {}
        end))
@@ -19686,12 +20337,12 @@ load_plain_proxy_structured_instance() {
        (if $protocol == "trojan" then "y" elif .authentication.enabled then "y" else "n" end),
        (if $protocol == "trojan" then "" else (.authentication.username // "") end),
        (if $protocol == "trojan" then "" else .authentication.password end),
-       .outbound_policy, (if $protocol == "http" or $protocol == "trojan" then (.tls | tojson) else "" end),
+       .outbound_policy, (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" then (.tls | tojson) else "" end),
        (if $protocol == "shadowsocks" then (.authentication | tojson) else "" end),
        (if $protocol == "shadowsocks" then (.listen.network | tojson) else "" end),
-       (if $protocol == "trojan" then (.authentication.users | tojson) else "" end),
-       (if $protocol == "trojan" then (.transport | tojson) else "" end),
-       (if $protocol == "trojan" then .client_trust else "" end)] | .[] | ., "\u0000"
+       (if $protocol == "trojan" or $protocol == "vmess" then (.authentication.users | tojson) else "" end),
+       (if $protocol == "trojan" or $protocol == "vmess" then (.transport | tojson) else "" end),
+       (if $protocol == "trojan" or $protocol == "vmess" then .client_trust else "" end)] | .[] | ., "\u0000"
     ' <<< "${snapshot}" > "${stream_file}"; then
     rm -f -- "${stream_file}"
     return 1
@@ -19725,20 +20376,30 @@ load_plain_proxy_structured_instance() {
   SB_TROJAN_AUTH_JSON=${fields[12]}
   SB_TROJAN_TRANSPORT_JSON=${fields[13]}
   SB_TROJAN_CLIENT_TRUST=${fields[14]}
+  SB_VMESS_AUTH_JSON=${fields[12]}
+  SB_VMESS_TRANSPORT_JSON=${fields[13]}
+  SB_VMESS_CLIENT_TRUST=${fields[14]}
   if [[ "${protocol}" == "http" ]]; then
     SB_HTTP_TLS_JSON=$(jq -c . <<< "${fields[9]}" 2>/dev/null) || return 1
   else
     SB_HTTP_TLS_JSON=""
   fi
-  if [[ "${protocol}" == "trojan" ]]; then
+  if [[ "${protocol}" == "trojan" || "${protocol}" == "vmess" ]]; then
     SB_TROJAN_TLS_JSON=$(jq -c . <<< "${fields[9]}" 2>/dev/null) || return 1
     SB_TROJAN_AUTH_JSON=$(jq -c . <<< "${fields[12]}" 2>/dev/null) || return 1
     SB_TROJAN_TRANSPORT_JSON=$(jq -c . <<< "${fields[13]}" 2>/dev/null) || return 1
+    SB_VMESS_TLS_JSON=$(jq -c . <<< "${fields[9]}" 2>/dev/null) || return 1
+    SB_VMESS_AUTH_JSON=$(jq -c . <<< "${fields[12]}" 2>/dev/null) || return 1
+    SB_VMESS_TRANSPORT_JSON=$(jq -c . <<< "${fields[13]}" 2>/dev/null) || return 1
   else
     SB_TROJAN_TLS_JSON='{"enabled":false}'
     SB_TROJAN_AUTH_JSON='[]'
     SB_TROJAN_TRANSPORT_JSON='{"type":"none"}'
     SB_TROJAN_CLIENT_TRUST="certificate"
+    SB_VMESS_TLS_JSON='{"enabled":false}'
+    SB_VMESS_AUTH_JSON='[]'
+    SB_VMESS_TRANSPORT_JSON='{"type":"none"}'
+    SB_VMESS_CLIENT_TRUST="certificate"
   fi
 }
 
@@ -19767,7 +20428,7 @@ protocol_instance_state_schema() {
   schema=${schema//\"/}
   schema=${schema//\'/}
   [[ "${schema}" =~ ^[0-9]+$ ]] || return 1
-  [[ "${protocol}" != "socks" && "${protocol}" != "http" && "${protocol}" != "shadowsocks" && "${protocol}" != "trojan" || "${schema}" == "2" ]] || return 1
+  [[ "${protocol}" != "socks" && "${protocol}" != "http" && "${protocol}" != "shadowsocks" && "${protocol}" != "trojan" && "${protocol}" != "vmess" || "${schema}" == "2" ]] || return 1
   printf '%s' "${schema}"
 }
 
@@ -19825,6 +20486,10 @@ reset_protocol_instance_runtime_fields() {
   SB_TROJAN_TLS_JSON='{"enabled":false}'
   SB_TROJAN_TRANSPORT_JSON='{"type":"none"}'
   SB_TROJAN_CLIENT_TRUST="certificate"
+  SB_VMESS_AUTH_JSON='[]'
+  SB_VMESS_TLS_JSON='{"enabled":false}'
+  SB_VMESS_TRANSPORT_JSON='{"type":"none"}'
+  SB_VMESS_CLIENT_TRUST="certificate"
   SB_HY2_DOMAIN=""
   SB_HY2_PASSWORD=""
   SB_HY2_USER_NAME=""
@@ -19895,7 +20560,7 @@ list_protocol_instance_ids() {
       mixed_structured_state_active || return 1
       jq -r '.instances[].id' "$(mixed_structured_store_file)"
       ;;
-    socks:2|http:2|shadowsocks:2|trojan:2)
+    socks:2|http:2|shadowsocks:2|trojan:2|vmess:2)
       plain_proxy_structured_state_active "${protocol}" || return 1
       jq -r '.instances[].id' "$(plain_proxy_structured_store_file "${protocol}")"
       ;;
@@ -19953,7 +20618,7 @@ protocol_default_instance_id() {
       mixed_structured_state_active || return 1
       default_id=$(jq -r '.default_instance_id' "$(mixed_structured_store_file)") || return 1
       ;;
-    socks:2|http:2|shadowsocks:2|trojan:2)
+    socks:2|http:2|shadowsocks:2|trojan:2|vmess:2)
       plain_proxy_structured_state_active "${protocol}" || return 1
       default_id=$(jq -r '.default_instance_id' "$(plain_proxy_structured_store_file "${protocol}")") || return 1
       ;;
@@ -19976,7 +20641,7 @@ load_protocol_instance_state() {
   local schema instance_ids listed_instance_id legacy_inbound_tag
 
   protocol=$(normalize_protocol_id "${protocol}") || return 1
-  if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" ]]; then
+  if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" ]]; then
     structured_instance_store_validate_id "${instance_id}" || return 1
   else
     validate_vless_reality_instance_id "${instance_id}" || return 1
@@ -20023,7 +20688,7 @@ load_protocol_instance_state() {
     mixed:2)
       load_mixed_structured_instance "${instance_id}" || return 1
       ;;
-    socks:2|http:2|shadowsocks:2|trojan:2)
+    socks:2|http:2|shadowsocks:2|trojan:2|vmess:2)
       load_plain_proxy_structured_instance "${protocol}" "${instance_id}" || return 1
       ;;
     *)
@@ -20513,6 +21178,10 @@ protocol_state_matches_config() {
     plain_proxy_structured_state_matches_config trojan
     return $?
   fi
+  if [[ "${protocol}" == "vmess" ]]; then
+    plain_proxy_structured_state_matches_config vmess
+    return $?
+  fi
 
   expected_snapshot=$(render_expected_protocol_state_snapshot "${protocol}") || return 1
   saved_snapshot=$(render_saved_protocol_state_snapshot "${protocol}") || return 1
@@ -20820,6 +21489,7 @@ rebuild_protocol_state_from_config() {
   local http_inbound_count=0 http_candidate_file="" http_candidate_revision=0 http_state_file http_state_schema
   local shadowsocks_inbound_count=0 shadowsocks_candidate_file="" shadowsocks_candidate_revision=0 shadowsocks_state_file shadowsocks_state_schema
   local trojan_inbound_count=0 trojan_candidate_file="" trojan_candidate_revision=0 trojan_state_file trojan_state_schema
+  local vmess_inbound_count=0 vmess_candidate_file="" vmess_candidate_revision=0 vmess_state_file vmess_state_schema
   local backup_state_dir
 
   backup_dir=$(mktemp -d) || return 1
@@ -21114,6 +21784,33 @@ rebuild_protocol_state_from_config() {
     else trojan_candidate_revision=0; fi
   fi
 
+  # VMess is structured-only. Capture its complete typed candidate before
+  # clearing the protocol cache; legacy VMess env files are never accepted.
+  vmess_inbound_count=$(jq -r '[.inbounds[]? | select(.type == "vmess")] | length' "${SINGBOX_CONFIG_FILE}") || {
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+  }
+  [[ "${vmess_inbound_count}" =~ ^[0-9]+$ ]] || {
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+  }
+  if (( vmess_inbound_count > 0 )); then
+    vmess_state_file=$(protocol_state_file vmess) || { abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1; }
+    vmess_state_schema=""
+    if [[ -f "${vmess_state_file}" ]]; then
+      validate_protocol_state_schema vmess "${vmess_state_file}" || { abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1; }
+      vmess_state_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${vmess_state_file}" | head -n1) || { abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1; }
+      vmess_state_schema=${vmess_state_schema//\"/}; vmess_state_schema=${vmess_state_schema//\'/}
+    fi
+    [[ -z "${vmess_state_schema}" || "${vmess_state_schema}" == 2 ]] || {
+      printf '[ERROR] vmess_store_candidate: VMess legacy state is unsupported; 已保留原状态。\n' >&2
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
+    }
+    vmess_candidate_file="${backup_dir}/vmess.candidate.json"
+    vmess_config_store_candidate > "${vmess_candidate_file}" || { abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1; }
+    if [[ -f "$(plain_proxy_structured_store_file vmess 2>/dev/null || true)" ]]; then
+      vmess_candidate_revision=$(jq -r '.revision' "$(plain_proxy_structured_store_file vmess)") || { abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1; }
+    else vmess_candidate_revision=0; fi
+  fi
+
   clear_protocol_state_cache
   ensure_protocol_state_dir
   if ! rm -rf "${SB_PROTOCOL_STATE_DIR}/vless-reality.d"; then
@@ -21255,6 +21952,12 @@ rebuild_protocol_state_from_config() {
       trojan)
         if ! protocol_array_contains "trojan" ${rebuilt_protocols[@]+"${rebuilt_protocols[@]}"}; then
           rebuilt_protocols+=("trojan")
+        fi
+        continue
+        ;;
+      vmess)
+        if ! protocol_array_contains "vmess" ${rebuilt_protocols[@]+"${rebuilt_protocols[@]}"}; then
+          rebuilt_protocols+=("vmess")
         fi
         continue
         ;;
@@ -21446,6 +22149,15 @@ rebuild_protocol_state_from_config() {
       abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
     fi
     if ! save_plain_proxy_structured_marker trojan; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
+    fi
+  fi
+
+  if (( vmess_inbound_count > 0 )); then
+    if ! publish_structured_instance_store vmess "${vmess_candidate_file}" "${vmess_candidate_revision}"; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
+    fi
+    if ! save_plain_proxy_structured_marker vmess; then
       abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
     fi
   fi
@@ -21889,14 +22601,15 @@ main() {
     render_menu_item "19" "管理 HTTP 实例"
     render_menu_item "20" "管理 Shadowsocks 实例"
     render_menu_item "21" "管理 Trojan 实例"
+    render_menu_item "22" "管理 VMess 实例"
     echo "0. 退出"
     render_main_menu_footer
-    choice=$(prompt_choice "请选择 [0-21]: " 0 21 "")
+    choice=$(prompt_choice "请选择 [0-22]: " 0 22 "")
 
     if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
       case "${choice}" in
-        0|9|10|12|17|18|19|20|21) ;;
-        *) log_warn "请先通过菜单 17–21 恢复对应协议未完成的实例事务；本次未执行其他写操作。"; continue ;;
+        0|9|10|12|17|18|19|20|21|22) ;;
+        *) log_warn "请先通过菜单 17–22 恢复对应协议未完成的实例事务；本次未执行其他写操作。"; continue ;;
       esac
     fi
 
@@ -21929,6 +22642,7 @@ main() {
       19) http_instance_management_menu ;;
       20) shadowsocks_instance_management_menu ;;
       21) trojan_instance_management_menu ;;
+      22) vmess_instance_management_menu ;;
       0) exit_script ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac

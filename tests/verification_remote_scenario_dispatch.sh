@@ -38,6 +38,7 @@ TROJAN_STORE_FILE="${PROTOCOLS_DIR}/instances/trojan.json"
 INDEX_FILE="${PROTOCOLS_DIR}/index.env"
 ASSERT_LOG_FILE="${TMP_DIR}/assert.log"
 CALLS_FILE="${TMP_DIR}/calls.log"
+REMOTE_DISPATCH_LOG_FILE="${TMP_DIR}/remote-dispatch.log"
 PAYLOAD_FILE="${TMP_DIR}/remote-payload.sh"
 STDOUT_FILE="${TMP_DIR}/stdout.log"
 STDERR_FILE="${TMP_DIR}/stderr.log"
@@ -55,6 +56,7 @@ printf '1\n' > "${SBV_PRESENT_FILE}"
 printf '1\n' > "${SERVICE_ACTIVE_FILE}"
 : > "${ASSERT_LOG_FILE}"
 : > "${CALLS_FILE}"
+: > "${REMOTE_DISPATCH_LOG_FILE}"
 printf '0\n' > "${INSTALL_COUNT_FILE}"
 mkdir -p "$(dirname "${EMBEDDED_INSTALL_SCRIPT}")"
 cp "${REPO_ROOT}/install.sh" "${EMBEDDED_INSTALL_SCRIPT}"
@@ -1150,6 +1152,12 @@ CONFIG_EOF
   fi
   verification_run_protocol_probes__original "$@"
 }
+
+verification_scenario_fresh_install_vmess() {
+  printf 'SCENARIO=fresh_install_vmess\n'
+  printf '%s\n' "${VERIFY_CURRENT_SCENARIO}" >> "${REMOTE_DISPATCH_LOG_FILE}"
+  verification_run_protocol_probes
+}
 WRAP_EOF
 awk -v wrapper_file="${PAYLOAD_FILE}.wrapper" '
   $0 == "if ! mkdir \"${LOCK_DIR}\" 2>/dev/null; then" {
@@ -1197,6 +1205,7 @@ TROJAN_STATE_FILE="${TROJAN_STATE_FILE}" \
 TROJAN_STORE_FILE="${TROJAN_STORE_FILE}" \
 INDEX_FILE="${INDEX_FILE}" \
 ASSERT_LOG_FILE="${ASSERT_LOG_FILE}" \
+REMOTE_DISPATCH_LOG_FILE="${REMOTE_DISPATCH_LOG_FILE}" \
 INSTALL_COUNT_FILE="${INSTALL_COUNT_FILE}" \
 PROBE_CLIENT_PID_FILE="${TMP_DIR}/probe-client.pid" \
 PROBE_HTTP_PID_FILE="${TMP_DIR}/probe-http.pid" \
@@ -1212,6 +1221,7 @@ REAL_JQ="${REAL_JQ}" \
     fresh_install_http \
     fresh_install_shadowsocks \
     fresh_install_trojan \
+    fresh_install_vmess \
     runtime_smoke \
     uninstall_and_reinstall \
     > "${STDOUT_FILE}" \
@@ -1229,6 +1239,7 @@ grep -Fqx 'SCENARIO=fresh_install_socks' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=fresh_install_http' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=fresh_install_shadowsocks' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=fresh_install_trojan' "${STDOUT_FILE}"
+grep -Fqx 'SCENARIO=fresh_install_vmess' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=uninstall_and_reinstall' "${STDOUT_FILE}"
 grep -Fqx 'SCENARIO=runtime_smoke' "${STDOUT_FILE}"
 grep -Fq '__SING_BOX_VPS_REMOTE_ARTIFACT_BUNDLE_BEGIN__' "${STDOUT_FILE}"
@@ -1281,6 +1292,7 @@ grep -Fq 'verification_scenario_multi_protocol_coexistence' "${PAYLOAD_FILE}"
 grep -Fq 'verification_scenario_fresh_install_http' "${PAYLOAD_FILE}"
 grep -Fq 'verification_scenario_fresh_install_shadowsocks' "${PAYLOAD_FILE}"
 grep -Fq 'verification_scenario_fresh_install_trojan' "${PAYLOAD_FILE}"
+grep -Fq 'verification_scenario_fresh_install_vmess' "${PAYLOAD_FILE}"
 grep -Fq 'verification_scenario_upgrade_rollback_1_13_to_1_14' "${PAYLOAD_FILE}"
 ! grep -Fq 'verification_execute_single_protocol_probe vless-reality /root/sing-box-vps/config.json' "${PAYLOAD_FILE}"
 grep -Fqx 'test:-f|/root/sing-box-vps/protocols/vless-reality.env|' "${ASSERT_LOG_FILE}"

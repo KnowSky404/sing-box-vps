@@ -1253,6 +1253,14 @@ INDEX_EOF
   return "\${status}"
 }
 
+eval "\$(declare -f verification_finalize_scenario | sed '1s/verification_finalize_scenario/verification_finalize_scenario__original/')"
+verification_finalize_scenario() {
+  verification_finalize_scenario__original "\$@"
+  if [[ "\${VERIFY_CURRENT_SCENARIO:-}" == "fresh_install_vmess" ]]; then
+    verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/protocols/instances/vmess.json" '{"schema_version":1,"protocol":"vmess","revision":1,"default_instance_id":"main","instances":[{"id":"main","name":"VMess verification","tag":"vmess-in","listen":{"address":"127.0.0.1","port":1085},"authentication":{"users":[{"name":"vmess-user","uuid":"11111111-1111-4111-8111-111111111111","alter_id":0,"security":"auto"}]},"tls":{"enabled":true,"server_name":"vmess.example"},"client_trust":"certificate","transport":{"type":"none"},"outbound_policy":"default","dependencies":[]}]}'
+  fi
+}
+
 verification_scenario_upgrade_1_13_to_1_14() {
   printf 'SCENARIO=upgrade_1_13_to_1_14\n'
   printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
@@ -1282,6 +1290,14 @@ verification_scenario_fresh_install_trojan() {
   printf 'SCENARIO=fresh_install_trojan\n'
   printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
   verification_run_protocol_probes
+}
+
+verification_scenario_fresh_install_vmess() {
+  printf 'SCENARIO=fresh_install_vmess\n'
+  printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/config.json" '{"inbounds":[{"type":"vmess","tag":"vmess-in","listen":"127.0.0.1","listen_port":1085,"users":[{"name":"vmess-user","uuid":"11111111-1111-4111-8111-111111111111","alterId":0,"security":"auto"}],"tls":{"enabled":true,"server_name":"vmess.example"}}]}'
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/protocols/vmess.env" $'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2'
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/protocols/instances/vmess.json" '{"schema_version":1,"protocol":"vmess","revision":1,"default_instance_id":"main","instances":[{"id":"main","name":"VMess verification","tag":"vmess-in","listen":{"address":"127.0.0.1","port":1085},"authentication":{"users":[{"name":"vmess-user","uuid":"11111111-1111-4111-8111-111111111111","alter_id":0,"security":"auto"}]},"tls":{"enabled":true,"server_name":"vmess.example"},"client_trust":"certificate","transport":{"type":"none"},"outbound_policy":"default","dependencies":[]}]}'
 }
 
 verification_scenario_upgrade_rollback_1_13_to_1_14() {
@@ -1361,6 +1377,7 @@ grep -Fq 'multi_protocol_coexistence' "${run_dir}/scenarios.txt"
 grep -Fq 'fresh_install_http' "${run_dir}/scenarios.txt"
 grep -Fq 'fresh_install_shadowsocks' "${run_dir}/scenarios.txt"
 grep -Fq 'fresh_install_trojan' "${run_dir}/scenarios.txt"
+grep -Fq 'fresh_install_vmess' "${run_dir}/scenarios.txt"
 grep -Fq 'upgrade_rollback_1_13_to_1_14' "${run_dir}/scenarios.txt"
 grep -Fq 'remote_target=docker:test-container' "${run_dir}/summary.log"
 grep -Fq 'remote_target=docker:test-container' "${TMP_DIR}/stdout.txt"
@@ -1376,6 +1393,8 @@ grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/fresh_install_
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_shadowsocks/protocols/instances/shadowsocks.json" ]]
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/fresh_install_shadowsocks/protocol-probes/shadowsocks/result.env"
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/fresh_install_trojan/protocol-probes/trojan/result.env"
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vmess/config.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vmess/protocols/instances/vmess.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/listeners.ss-lntp.txt" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/client.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/probe.stdout.txt" ]]
@@ -1418,6 +1437,7 @@ grep -Fqx 'fresh_install_anytls' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'fresh_install_http' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'fresh_install_shadowsocks' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'fresh_install_trojan' "${REMOTE_DISPATCH_LOG_FILE}"
+grep -Fqx 'fresh_install_vmess' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'upgrade_1_13_to_1_14' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'runtime_smoke' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'multi_protocol_coexistence' "${REMOTE_DISPATCH_LOG_FILE}"

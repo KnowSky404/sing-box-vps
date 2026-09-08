@@ -4,6 +4,16 @@
 起点为 `cc12c06`，工作区干净；保留参考基线 `0d0bdac` 之后的下载事务修复。
 本文记录完整目标的进展；阶段提交不代表全协议已交付。
 
+## 2026-09-08：VMess 管理链路接入（阶段交付）
+
+从 Trojan 与 V2Ray transport 阶段继续原始完整目标；保留未跟踪文件 `1`、`2`，未读取或修改。Context7 `/sagernet/sing-box` 与固定 1.14.0 源码确认 VMess 入站用户字段为 `name`、UUID、`alterId`，出站安全枚举为 `auto`、`none`、`zero`、`aes-128-cfb`、`aes-128-gcm`、`chacha20-poly1305`；项目同时保留 1.13.18 ARM64 核心兼容检查。
+
+本阶段接入第九个 `vmess` 预设，不改变旧 `vless` → `vless-reality` alias。VMess 复用结构化 schema 1 store、schema 2 active marker、CAS 实例事务、监听资源计划、接管/重建、菜单 22、Agent 节点/分享/导出和 SubMan 逐实例逐用户路径。每个实例显式建模 1–128 个唯一用户、`security`、`alter_id`、TLS 信任和 none/http/ws/grpc/quic typed transport；不透传 unknown fields、WS early data 或 HTTPUpgrade。导出生成逐用户完整 VMess outbound 与标准 `vmess://` JSON，禁止读取或输出服务器私钥；SubMan 只接受 TLS 系统信任且 URI 无损可表达的条目，其他组合保留稳定 skip code/count。
+
+新增 `tests/vmess_structured_instance_store.sh`、`vmess_structured_takeover.sh`、`vmess_instance_lifecycle.sh`、`vmess_agent_share.sh`、`subman_vmess_sync.sh`、`verification_protocol_probe_vmess.sh` 和 `vmess_export_runtime.sh`，并把协议注册表、旧 Bash、transport、Agent、live inventory 与验证场景映射纳入回归。定向测试覆盖三实例、TLS certificate/system trust、五类 transport、用户 UUID/安全/alterId 校验、接管身份保留、revision stale-write、删除 tombstone/recreate、Agent credential-free nodes、逐用户链接/导出、URI 头部 fail-closed、SubMan `synced=3/skipped=1` 以及 probe-only public certificate。
+
+固定 ARM64 核心的本地 runtime fixture 在 1.13.18 与 1.14.0 均通过 VMess none/http/ws/grpc/quic 两用户服务端和客户端 `sing-box check`；没有配置核心时测试明确 skip，不把静态 JSON 当作业务证据。当前 focused local tests、Bash 语法与 diff 检查通过；SubMan 仍为 mock，尚未执行真实 API。Docker 门禁已完成，运行目录为 `dev/verification-runs/20260908110530`（退出 0）：14/14 场景 `STATUS=success`、21/21 协议探针 `RESULT=success`，其中 `fresh_install_vmess` 含核心 check、受管 VMess store、监听采集和真实回环 TCP 探针；同一运行还覆盖九协议共存及升级成功/回滚产物。普通 VLESS、Naive、Hysteria、ShadowTLS、Tuic、Snell、端点和高层控制面仍按矩阵推进。
+
 ## 2026-09-08：Trojan 管理链路接入（阶段交付）
 
 从已审查的 `2543462` 继续原始完整目标，重新读取原始需求与工作区；既有未跟踪 `1`、`2` 不读取、不修改。基线 `bash dev/verification/run.sh` 在 `20260908065918` 为 local 空变更门禁通过，不等同全回归。固定 HEAD 的既有回归另在私有 archive 快照执行；后续记录区分该基线与最终工作区验收。

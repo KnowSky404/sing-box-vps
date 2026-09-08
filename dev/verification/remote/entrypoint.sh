@@ -460,6 +460,50 @@ verification_generate_trojan_probe_client() (
   mv -f -- "${temp_dir}/client.json" "${output_path}" || return 1
 )
 
+verification_generate_vmess_probe_client() (
+  set -euo pipefail
+  umask 077
+  local config_file=$1 output_path=$2 installer temp_dir selected_tag snapshot
+  local state_file store_file record
+  installer=${VERIFY_REMOTE_INSTALL_SCRIPT:-/usr/local/bin/sbv}
+  [[ -f "${installer}" ]] || return 1
+  temp_dir=$(mktemp -d "${output_path}.vmess.XXXXXX") || return 1
+  trap 'rm -rf -- "${temp_dir}"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+  # Use the exact runtime exporter under verification.  The probe validates
+  # the managed VMess store first and then trusts only the public certificate
+  # emitted by the exporter; private key material is never copied.
+  source "${installer}"
+  plain_proxy_structured_state_active vmess || return 1
+  state_file=$(protocol_state_file vmess) || return 1
+  store_file=$(plain_proxy_structured_store_file vmess) || return 1
+  selected_tag=$(jq -er '[.inbounds[] | select(.type=="vmess")][0].tag' "${config_file}") || return 1
+  record=$(verification_load_vmess_probe_record "${state_file}" "${store_file}" "${selected_tag}") || return 1
+  snapshot=$(structured_instance_store_snapshot_json vmess "${store_file}") || return 1
+  jq -e --arg tag "${selected_tag}" --argjson expected "${record}" '
+    any(.instances[]; .tag == $tag) and
+    any(.instances[]; .tag == $tag and .listen.port == $expected.listen.port)
+  ' <<< "${snapshot}" >/dev/null || return 1
+  jq -e --arg tag "${selected_tag}" '
+    .instances |= map(select(.tag == $tag)) |
+    if (.instances|length)==1 then .default_instance_id=.instances[0].id
+    else error("invalid probe inventory") end
+  ' <<< "${snapshot}" > "${temp_dir}/store.json" || return 1
+  build_vmess_client_outbounds_from_store "${temp_dir}/store.json" 127.0.0.1 \
+    > "${temp_dir}/outbounds.jsonl" || return 1
+  jq -se '
+    if length>0 then
+      {log:{disabled:true},
+       inbounds:[{type:"socks",tag:"local-socks",listen:"127.0.0.1",listen_port:19080}],
+       outbounds:[(.[0] | .tag="proxy")],route:{final:"proxy"}}
+    else error("empty probe export") end
+  ' "${temp_dir}/outbounds.jsonl" > "${temp_dir}/client.json" || return 1
+  chmod 600 "${temp_dir}/client.json" || return 1
+  mv -f -- "${temp_dir}/client.json" "${output_path}" || return 1
+)
+
 verification_load_http_probe_record() {
   local state_file=$1
   local store_file=$2
@@ -516,6 +560,45 @@ verification_load_shadowsocks_probe_record() {
   printf '%s\n' "${record}"
 }
 
+verification_load_vmess_probe_record() {
+  local state_file=$1
+  local store_file=$2
+  local tag=$3
+  local record
+
+  [[ -f "${state_file}" && ! -L "${state_file}" ]] || return 1
+  grep -Eq '^[[:space:]]*CONFIG_SCHEMA_VERSION=2([[:space:]]*)$' "${state_file}" || return 1
+  [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  record=$(jq -ce --arg tag "${tag}" '
+    if .schema_version == 1 and .protocol == "vmess" and
+       ([.instances[] | select(.tag == $tag)] | length) == 1 then
+      ([.instances[] | select(.tag == $tag)][0] |
+        select(
+          (.listen.address | type == "string" and length > 0) and
+          (.listen.port | type == "number" and floor == . and . >= 1 and . <= 65535) and
+          (.authentication.users | type == "array" and length >= 1 and length <= 128 and
+            all(.[]; type == "object" and
+              (.name | type == "string" and length > 0) and
+              (.uuid | type == "string" and test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89a-fA-F][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")) and
+              (.alter_id | type == "number" and floor == . and . >= 0 and . <= 65535) and
+              (.security | type == "string" and IN("auto","none","zero","aes-128-cfb","aes-128-gcm","chacha20-poly1305")))) and
+          (.tls | type == "object") and
+          (.transport | type == "object") and
+          (.client_trust | IN("certificate","system"))
+        ) | {
+          listen: .listen,
+          authentication: .authentication,
+          tls: .tls,
+          transport: .transport,
+          client_trust: .client_trust
+        }
+      )
+    else error("invalid VMess structured state")
+    end
+  ' "${store_file}") || return 1
+  printf '%s\n' "${record}"
+}
+
 verification_generate_protocol_probe_client_config() {
   local protocol=$1
   local config_file=$2
@@ -545,6 +628,16 @@ verification_generate_protocol_probe_client_config() {
   local shadowsocks_password=''
   local shadowsocks_network_json=''
   local shadowsocks_user_password=''
+  local vmess_state_file=''
+  local vmess_store_file=''
+  local vmess_tag=''
+  local vmess_record=''
+  local vmess_server_port=''
+  local vmess_user_uuid=''
+  local vmess_security=''
+  local vmess_alter_id=''
+  local vmess_transport_json=''
+  local vmess_tls_json=''
 
   case "${protocol}" in
     vless-reality)
@@ -796,6 +889,11 @@ verification_generate_protocol_probe_client_config() {
       output_path=$(verification_artifact_path \
         "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
       verification_generate_trojan_probe_client "${config_file}" "${output_path}" || return 1
+      ;;
+    vmess)
+      output_path=$(verification_artifact_path \
+        "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
+      verification_generate_vmess_probe_client "${config_file}" "${output_path}" || return 1
       ;;
     shadowsocks)
       state_file=/root/sing-box-vps/protocols/shadowsocks.env
@@ -1291,6 +1389,9 @@ for scenario in "$@"; do
       ;;
     fresh_install_trojan)
       run_verification_scenario fresh_install_trojan verification_scenario_fresh_install_trojan
+      ;;
+    fresh_install_vmess)
+      run_verification_scenario fresh_install_vmess verification_scenario_fresh_install_vmess
       ;;
     multi_protocol_coexistence)
       run_verification_scenario multi_protocol_coexistence verification_scenario_multi_protocol_coexistence

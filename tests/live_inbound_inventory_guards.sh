@@ -32,8 +32,8 @@ EOF
       cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
 {"inbounds":[
   {"type":"mixed","tag":"mixed-in","listen":"127.0.0.1","listen_port":1080},
-  {"type":"vmess","tag":"unknown-in","listen":"127.0.0.1","listen_port":8388,
-   "users":[{"uuid":"11111111-1111-4111-8111-111111111111"}]}
+  {"type":"naive","tag":"unknown-in","listen":"127.0.0.1","listen_port":8388,
+   "users":[{"username":"unknown-user","password":"UNKNOWN-PASSWORD-DO-NOT-LOG"}]}
 ]}
 EOF
       ;;

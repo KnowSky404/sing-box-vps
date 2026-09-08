@@ -138,7 +138,7 @@ WS 的 `Sec-WebSocket-Protocol` 支持单个 token（字符串或单元素数组
 
 profile 含完整请求头，可能包含调用方的认证材料；它是配置构造数据，不得直接用作 Agent nodes/status 的安全摘要。检查失败只输出固定错误分类，不能把 jq 原始诊断或输入字段写入日志。
 
-返回 profile 不能证明构建依赖可用或协议已实现：在 `2026090803` 阶段 VMess/Trojan/普通 VLESS 的状态写入、接管、生命周期、菜单、Agent 与 SubMan 尚未接通，公开注册表为七项。`2026090804` 单独接入 Trojan 第八预设，具体 typed record、TLS 信任、分享边界见 [Trojan 契约](../../agents/sing-box-vps-agent-runbook.md#trojan-typed-instance-contract)，最终证据见实施记录。VMess/普通 VLESS 仍待接通。真实 transport fixture 仅验证这些原语构造出的隔离连接，不能替代最终协议生命周期验收。
+返回 profile 不能证明构建依赖可用或协议已实现：在 `2026090803` 阶段 VMess/Trojan/普通 VLESS 的状态写入、接管、生命周期、菜单、Agent 与 SubMan 尚未接通，公开注册表为七项。`2026090804` 单独接入 Trojan 第八预设，具体 typed record、TLS 信任、分享边界见 [Trojan 契约](../../agents/sing-box-vps-agent-runbook.md#trojan-typed-instance-contract)，最终证据见实施记录。随后同一版本增量接入 VMess 第九预设，具体 typed record、`security`/`alter_id`、TLS 信任、V2Ray transport、分享和 SubMan 边界见 [VMess 契约](../../agents/sing-box-vps-agent-runbook.md#vmess-typed-instance-contract)。普通 VLESS 仍待接通。真实 transport fixture 仅验证这些原语构造出的隔离连接，不能替代最终协议生命周期验收。
 
 ### 完整适配接入清单
 
