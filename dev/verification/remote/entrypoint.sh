@@ -424,6 +424,29 @@ verification_load_mixed_probe_state() {
   printf -v "${password_var}" '%s' "${PASSWORD-}"
 }
 
+verification_load_http_probe_record() {
+  local state_file=$1
+  local store_file=$2
+  local tag=$3
+  local record
+
+  [[ -f "${state_file}" && ! -L "${state_file}" ]] || return 1
+  grep -Eq '^[[:space:]]*CONFIG_SCHEMA_VERSION=2([[:space:]]*)$' "${state_file}" || return 1
+  [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  record=$(jq -ce --arg tag "${tag}" '
+    if .schema_version == 1 and .protocol == "http" and
+       ([.instances[] | select(.tag == $tag)] | length) == 1 then
+      ([.instances[] | select(.tag == $tag)][0] | {
+        authentication: .authentication,
+        tls: .tls
+      })
+    else
+      error("invalid HTTP structured state")
+    end
+  ' "${store_file}") || return 1
+  printf '%s\n' "${record}"
+}
+
 verification_generate_protocol_probe_client_config() {
   local protocol=$1
   local config_file=$2
@@ -443,6 +466,10 @@ verification_generate_protocol_probe_client_config() {
   local username=''
   local obfs_password=''
   local obfs_type=''
+  local http_tls_json=''
+  local http_record=''
+  local http_tag=''
+  local store_file=''
 
   case "${protocol}" in
     vless-reality)
@@ -621,6 +648,69 @@ verification_generate_protocol_probe_client_config() {
             {username:$server.users[0].username,password:$server.users[0].password} else {} end))]}
         end
       ' "${config_file}" > "${temp_output_path}"; then
+        chmod 600 "${temp_output_path}" && mv "${temp_output_path}" "${output_path}"
+      else
+        rm -f "${temp_output_path}"
+        return 1
+      fi
+      ;;
+    http)
+      state_file=/root/sing-box-vps/protocols/http.env
+      store_file=/root/sing-box-vps/protocols/instances/http.json
+      output_path=$(verification_artifact_path \
+        "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
+      temp_output_path="${output_path}.tmp.$$"
+      rm -f "${temp_output_path}"
+
+      inbound_index=$(verification_find_config_inbound_index_by_type "${config_file}" http) || {
+        printf 'missing inbound for protocol generator: %s\n' "${protocol}" >&2
+        return 1
+      }
+      server_port=$(jq -r --argjson idx "${inbound_index}" \
+        '.inbounds[$idx].listen_port // empty' "${config_file}")
+      http_tag=$(jq -r --argjson idx "${inbound_index}" \
+        '.inbounds[$idx].tag // empty' "${config_file}")
+      verification_require_protocol_probe_field "${protocol}" server_port "${server_port}" || return 1
+      verification_require_protocol_probe_field "${protocol}" inbound_tag "${http_tag}" || return 1
+      http_record=$(verification_load_http_probe_record "${state_file}" "${store_file}" "${http_tag}") || {
+        printf 'missing or invalid HTTP structured state for protocol generator: %s\n' "${protocol}" >&2
+        return 1
+      }
+      auth_enabled=$(jq -r '.authentication.enabled | if . == true then "y" elif . == false then "n" else empty end' <<< "${http_record}") || return 1
+      username=$(jq -r '.authentication.username // empty' <<< "${http_record}") || return 1
+      password=$(jq -r '.authentication.password // empty' <<< "${http_record}") || return 1
+      http_tls_json=$(jq -c '.tls' <<< "${http_record}") || return 1
+      jq -e 'type == "object" and
+        ((keys_unsorted | sort) == ["enabled"] or
+         (keys_unsorted | sort) == ["certificate_path", "enabled", "key_path", "server_name"]) and
+        (.enabled | type == "boolean") and
+        (if .enabled then (.server_name | type == "string" and length > 0) else true end)' \
+        <<< "${http_tls_json}" >/dev/null || return 1
+      if [[ "${auth_enabled}" == "y" ]]; then
+        verification_require_protocol_probe_field "${protocol}" username "${username}" || return 1
+        verification_require_protocol_probe_field "${protocol}" password "${password}" || return 1
+      elif [[ "${auth_enabled}" != "n" ]]; then
+        printf 'invalid HTTP probe field: auth_enabled\n' >&2
+        return 1
+      fi
+
+      if jq -n \
+        --arg server_port "${server_port}" \
+        --arg auth_enabled "${auth_enabled}" \
+        --arg username "${username}" \
+        --arg password "${password}" \
+        --argjson tls "${http_tls_json}" \
+        '{
+          log: {disabled: true},
+          inbounds: [{type:"socks",tag:"local-socks",listen:"127.0.0.1",listen_port:19080}],
+          outbounds: [
+            ({type:"http",tag:"proxy",server:"127.0.0.1",server_port:($server_port|tonumber)}
+             + (if $auth_enabled == "y" then {username:$username,password:$password} else {} end)
+             + (if $tls.enabled == true then
+                  {tls:{enabled:true,server_name:$tls.server_name,insecure:true}}
+                else {} end))
+          ]
+        }' > "${temp_output_path}"; then
         chmod 600 "${temp_output_path}" && mv "${temp_output_path}" "${output_path}"
       else
         rm -f "${temp_output_path}"
@@ -1057,6 +1147,9 @@ for scenario in "$@"; do
       ;;
     fresh_install_socks)
       run_verification_scenario fresh_install_socks verification_scenario_fresh_install_socks
+      ;;
+    fresh_install_http)
+      run_verification_scenario fresh_install_http verification_scenario_fresh_install_http
       ;;
     multi_protocol_coexistence)
       run_verification_scenario multi_protocol_coexistence verification_scenario_multi_protocol_coexistence

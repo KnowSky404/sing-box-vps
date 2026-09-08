@@ -2,6 +2,14 @@
 
 对应[完整实施记录](../plans/2026-09-06-unified-protocol-management.md)和[固定版本能力核对](2026-09-06-protocol-coverage.md)。运行时继续由独立的 `install.sh` 提供，不能依赖研发目录。
 
+## 当前结构化 HTTP 接入
+
+HTTP 沿用 Mixed/SOCKS 的 schema 2 marker、版本化 JSON store、CAS 和持久化文件/配置/服务/防火墙事务。HTTP 的实例额外要求类型化 `tls`：关闭时仅 `{enabled:false}`；开启时精确包含 `enabled:true`、`server_name`、绝对 `certificate_path` 与 `key_path`。这不是原始 TLS JSON 透传；尚未建模的 ACME/provider、客户端证书认证、额外监听与传输选项在接管时阻断，不能丢弃后发布。Mixed/SOCKS 旧记录不增加字段，不自动迁移；HTTP 没有 legacy schema 1。
+
+证书是引用的用户管理文件，准备/渲染不创建或修改它们，实例删除不会删除引用文件，因此共享引用没有独占清理副作用。配置发布前由真实核心校验文件和证书/私钥配对；事务只回滚本次实际修改的受管材料，不声称能回滚用户同时在外部改动的证书。该预设不自动申请证书，后续通用证书资源管理仍是整体目标的一部分。
+
+HTTP 的认证字段单独遵循 Basic 约束（用户名无冒号、双方无 ASCII 控制字符、各不超过 4096 UTF-8 字节），不复用 SOCKS 255 字节上限。HTTP CONNECT 客户端只提供 TCP，入口 TLS 与目标 HTTPS 独立；客户端导出嵌入最小公有证书信任，禁止私钥或混杂非证书材料。TLS 分享返回不可表达 warning，不能伪造遗漏信任的 HTTPS URI。以下第一、二阶段章节保留原架构演进记录；当前实例写入能力应结合 HTTP、Mixed、SOCKS 实施记录阅读。
+
 ## 第一阶段已实现的公共契约
 
 `SB_PROTOCOL_REGISTRY` 仅登记已有实际适配器的四个产品预设。它不是上游全部 type 的可用列表；尚未实现的能力在覆盖矩阵单独说明。

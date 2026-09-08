@@ -33,7 +33,7 @@ assert_rejected_without_output() {
   [[ ! -s "${TMP_DIR}/rejected.stdout" ]]
 }
 
-mkdir -p "${SB_PROTOCOL_STATE_DIR}"
+mkdir -p "${SB_PROTOCOL_STATE_DIR}/instances"
 for protocol in mixed hy2 anytls; do
   {
     printf '%s\n' 'INSTALLED=1' 'CONFIG_SCHEMA_VERSION=1' 'PORT=8443'
@@ -43,6 +43,33 @@ for protocol in mixed hy2 anytls; do
     printf '%s\n' 'AUTH_ENABLED=y' 'DOMAIN=example.com' 'USER_NAME=proxy-user' 'TLS_MODE=manual'
   } > "${SB_PROTOCOL_STATE_DIR}/${protocol}.env"
 done
+printf '%s\n' 'INSTALLED=1' 'CONFIG_SCHEMA_VERSION=2' > "${SB_PROTOCOL_STATE_DIR}/http.env"
+jq -n '
+  {
+    schema_version: 1,
+    protocol: "http",
+    revision: 0,
+    default_instance_id: "main",
+    instances: [{
+      id: "main",
+      name: "HTTP adapter",
+      tag: "http-in",
+      listen: {address: "127.0.0.1", port: 8444},
+      authentication: {enabled: true, username: "http-user", password: "http-password"},
+      outbound_policy: "default",
+      dependencies: [],
+      tls: {enabled: false}
+    }]
+  }
+' > "${SB_PROTOCOL_STATE_DIR}/instances/http.json"
+[[ "$(list_protocol_instance_ids http)" == main ]]
+[[ "$(protocol_default_instance_id http)" == main ]]
+load_protocol_instance_state http main
+[[ "${SB_PROTOCOL}" == http && "${SB_INSTANCE_ID}" == main ]]
+[[ "${SB_MIXED_LISTEN_ADDRESS}" == 127.0.0.1 && "${SB_PORT}" == 8444 ]]
+[[ "${SB_MIXED_AUTH_ENABLED}" == y && "${SB_MIXED_USERNAME}" == http-user ]]
+jq -e '.enabled == false' <<< "${SB_HTTP_TLS_JSON}" >/dev/null
+assert_rejected_without_output load_protocol_instance_state http other
 before_hash=$(tree_hash)
 for protocol in mixed hy2 hysteria2 anytls; do
   [[ "$(list_protocol_instance_ids "${protocol}")" == main ]]

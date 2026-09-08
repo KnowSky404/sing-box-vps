@@ -19,7 +19,8 @@ write_fixture() {
   {"type":"vless","tag":"vless-reality-two","tls":{"enabled":true,"reality":{"enabled":true}}},
   {"type":"mixed","tag":"mixed-in"},
   {"type":"hysteria2","tag":"hy2-in"},
-  {"type":"anytls","tag":"anytls-in"}
+  {"type":"anytls","tag":"anytls-in"},
+  {"type":"http","tag":"http-in","tls":{"enabled":false}}
 ]}
 EOF
       ;;
@@ -109,7 +110,7 @@ chmod 755 "${SINGBOX_BIN_PATH}"
 printf '%s\n' '[Service]' > "${SINGBOX_SERVICE_FILE}"
 
 write_fixture managed
-[[ "$(list_config_protocols)" == $'vless-reality\nmixed\nhy2\nanytls' ]]
+[[ "$(list_config_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nhttp' ]]
 validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}"
 [[ "$(normalize_protocol_id vless)" == "vless-reality" ]]
 

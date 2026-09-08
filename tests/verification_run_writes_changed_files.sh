@@ -355,6 +355,12 @@ verification_scenario_fresh_install_socks() {
   verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/instances/socks.json" '{"schema_version":1,"protocol":"socks","revision":1}'
 }
 
+verification_scenario_fresh_install_http() {
+  printf 'SCENARIO=fresh_install_http\n'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/config.json" '{"inbounds":[{"type":"http","listen_port":1082}]}'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/instances/http.json" '{"schema_version":1,"protocol":"http","revision":1}'
+}
+
 verification_scenario_upgrade_1_13_to_1_14() {
   printf 'SCENARIO=upgrade_1_13_to_1_14\n'
   verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/upgrade.json" '{"ok":true,"installed":"1.14.0","transaction":{"status":"success","result_persisted":true}}'
@@ -363,8 +369,8 @@ verification_scenario_upgrade_1_13_to_1_14() {
 
 verification_scenario_multi_protocol_coexistence() {
   printf 'SCENARIO=multi_protocol_coexistence\n'
-  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/config.json" 'four protocol config fixture'
-  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/index.env" 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/config.json" 'six protocol config fixture'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/index.env" 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http'
 }
 
 verification_scenario_upgrade_rollback_1_13_to_1_14() {
@@ -437,7 +443,7 @@ grep -Fqx 'tests/new_untracked_case.sh' "${run_dir}/changed-files.txt"
 
 # Check scenarios
 scenarios=$(paste -sd, "${run_dir}/scenarios.txt")
-[[ "${scenarios}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" ]] || {
+[[ "${scenarios}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" ]] || {
   printf 'unexpected scenarios: %s\n' "${scenarios}" >&2; exit 1
 }
 
@@ -454,6 +460,8 @@ grep -Fq 'remote_target=docker:test-container' "${TMP_DIR}/stdout.txt"
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_anytls/sing-box-check.txt" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_socks/config.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_socks/protocols/instances/socks.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_http/config.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_http/protocols/instances/http.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/result.env" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/upgrade.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/transaction-result.json" ]]
@@ -501,6 +509,14 @@ grep -Fqx 'tests/socks_structured_takeover.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/socks_export_client.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/plain_proxy_share_links.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/plain_proxy_share_runtime.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/http_structured_instance_store.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/http_structured_takeover.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/http_instance_lifecycle.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/http_instance_menu.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/http_export_client.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/http_export_runtime.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/http_agent_contract.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_protocol_probe_http.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_matrix.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_vless.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_hy2.sh|1' "${TMP_DIR}/local-tests.log"
@@ -552,7 +568,7 @@ grep -Fqx 'install.sh' "${run_dir_skip}/changed-files.txt"
 grep -Fqx 'README.md' "${run_dir_skip}/changed-files.txt"
 grep -Fqx 'tests/new_untracked_case.sh' "${run_dir_skip}/changed-files.txt"
 scenarios_skip=$(paste -sd, "${run_dir_skip}/scenarios.txt")
-[[ "${scenarios_skip}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" ]] || {
+[[ "${scenarios_skip}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" ]] || {
   printf 'unexpected scenarios for skip run: %s\n' "${scenarios_skip}" >&2; exit 1
 }
 skip_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
@@ -568,7 +584,7 @@ env -u VERIFY_SKIP_LOCAL_TESTS \
 
 run_dir_remote_framework=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout-remote-framework.txt")
 scenarios_remote_framework=$(paste -sd, "${run_dir_remote_framework}/scenarios.txt")
-[[ "${scenarios_remote_framework}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke,uninstall_and_reinstall" ]] || {
+[[ "${scenarios_remote_framework}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke,uninstall_and_reinstall" ]] || {
   printf 'unexpected scenarios for remote framework change: %s\n' "${scenarios_remote_framework}" >&2; exit 1
 }
 grep -Fqx 'tests/verification_artifact_dir_layout.sh|1' "${TMP_DIR}/local-tests.log"

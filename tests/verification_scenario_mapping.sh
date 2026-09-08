@@ -23,6 +23,7 @@ source <(awk '
 [[ $(verification_config_inbound_type_for_protocol hy2) == "hysteria2" ]]
 [[ $(verification_config_inbound_type_for_protocol anytls) == "anytls" ]]
 [[ $(verification_config_inbound_type_for_protocol socks) == "socks" ]]
+[[ $(verification_config_inbound_type_for_protocol http) == "http" ]]
 if verification_config_inbound_type_for_protocol unsupported >/dev/null; then
   printf 'expected unsupported protocol config type lookup to fail\n' >&2
   exit 1
@@ -39,18 +40,19 @@ assert_scenarios() {
   fi
 }
 
-assert_scenarios "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" install.sh
-assert_scenarios "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" configs/example.json
+assert_scenarios "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" install.sh
+assert_scenarios "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" configs/example.json
 assert_scenarios "runtime_smoke" utils/common.sh
 assert_scenarios "runtime_smoke,uninstall_and_reinstall" uninstall.sh
-assert_scenarios "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke,uninstall_and_reinstall" install.sh tests/uninstall_purge_removes_runtime_artifacts.sh
+assert_scenarios "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke,uninstall_and_reinstall" install.sh tests/uninstall_purge_removes_runtime_artifacts.sh
 assert_scenarios "multi_protocol_coexistence,runtime_smoke" dev/verification/remote/scenarios/multi_protocol_coexistence.sh
 assert_scenarios "upgrade_rollback_1_13_to_1_14,runtime_smoke" dev/verification/remote/scenarios/upgrade_rollback_1_13_to_1_14.sh
 assert_scenarios "legacy_takeover_export,runtime_smoke,uninstall_and_reinstall" dev/verification/remote/scenarios/legacy_takeover_export.sh
-assert_scenarios "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke,uninstall_and_reinstall" dev/verification/common.sh
-assert_scenarios "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke,uninstall_and_reinstall" dev/verification/remote/entrypoint.sh
-assert_scenarios "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" install.sh dev/verification/remote/scenarios/multi_protocol_coexistence.sh
+assert_scenarios "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke,uninstall_and_reinstall" dev/verification/common.sh
+assert_scenarios "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke,uninstall_and_reinstall" dev/verification/remote/entrypoint.sh
+assert_scenarios "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" install.sh dev/verification/remote/scenarios/multi_protocol_coexistence.sh
 assert_scenarios "fresh_install_socks,runtime_smoke" dev/verification/remote/scenarios/fresh_install_socks.sh
+assert_scenarios "fresh_install_http,runtime_smoke" dev/verification/remote/scenarios/fresh_install_http.sh
 
 date() {
   if [[ "${1:-}" == "+%s" ]]; then

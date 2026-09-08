@@ -4,6 +4,26 @@
 起点为 `cc12c06`，工作区干净；保留参考基线 `0d0bdac` 之后的下载事务修复。
 本文记录完整目标的进展；阶段提交不代表全协议已交付。
 
+## 2026-09-07：独立 HTTP 与入口 TLS 接入
+
+本轮从 `fe26417` 继续完整目标，重新读取需求、当前工作树和矩阵；基线 `bash dev/verification/run.sh` 在 `dev/verification-runs/20260907135121` 退出 0，但因仅有原有未跟踪文件而为 local 空变更门禁，不能冒称全量基线回归。GitHub `releases/latest` 再次确认稳定版为 `v1.14.0`、非 draft/prerelease。Context7 `/sagernet/sing-box` 仅提供 testing HTTP 文档，随后读取固定 tag `protocol/http/{inbound,outbound}.go` 和对应配置文档：入口有可选 TLS，客户端为 TCP-only HTTP CONNECT，不能替换成 SOCKS 或宣称普通 HTTP outbound 支持 UDP。
+
+版本统一递增为 `2026090711`。HTTP 作为第六个独立预设接入共享实例状态、事务和资源计划；保留旧别名和 Mixed/SOCKS 数据格式。HTTP 记录显式区分明文与手工证书 TLS，支持实例身份、认证、出站策略及证书引用；未建模字段在接管时拒绝有损重建。此阶段不申请 ACME 证书、不改变真实外部账户、不同步 SubMan；本地 OpenAPI `NodeType` 仍无 HTTP 类型，不伪装为 `other`。
+
+提交前复核修复了共享路由候选中的缺失规则插入顺序：已有托管规则原位更新，缺失 sniff 置前，而缺失 direct/Warp fallback 置后，保留自定义条件及 reject 的优先级，回归同时覆盖已有与新增实例标签。HTTP 单条写入记录使用独立 Basic 认证约束（4096 UTF-8 字节上限、用户名无冒号、认证无 ASCII 控制字符），不误用 SOCKS 的 255 字节约束。TLS 状态须显式存在；关闭 TLS 的运行配置省略 `tls`，而非把状态默认值泄露到不兼容字段组合中。
+
+HTTP 导出只生成 TCP HTTP CONNECT，不伪装为 SOCKS/UoT。严格有界的 PEM 读取器只接受公开证书材料，不读取私钥；支持 CRLF 与用户维护的证书符号链接。明文链接和客户端导出返回 `http_plaintext_transport`。合法 TLS 状态返回空 URI 集合与 `http_tls_uri_unrepresentable`，对应安全摘要为 `shareable=false`、`client_exportable=true`；非法认证仍必须失败，不能借 TLS 的空链接语义伪装成功。Mixed 导出不受遗留 HTTP TLS 全局变量影响。
+
+冻结源码 SHA-256 为 `908796034f55875e9ed8b8f521aff235ab4a56b6c9c32f31eb9900ebc3b3be2e`。原生与实际 Bash 4.2 均使用固定 ARM64 官方核心 1.13.18、1.14.0：认证/无认证明文和固定信任 TLS 均完成客户端→HTTP 入站→本地 HTTP marker；错误认证、信任或 SNI 被拒绝，缺失证书和不匹配私钥由真实核心拒绝。Bash 4.2 的六项非 runtime HTTP 测试及两核心 `--run` 均通过，起止源码哈希一致，证据 `/tmp/sbv-http-bash42-final.mLqBq8/`；最终路由测试又以相同测试文件哈希定向复跑通过（`route-final.log`）。这些是本地回环证据，不是公网/生产连接或外部 CA 签发证明。
+
+全量回归发现并修复三个旧五协议选择/capabilities 断言；已执行失败项重跑。首轮完整门禁 `dev/verification-runs/20260908032430` 在验证器单测处停止：HTTP 新场景缺少模拟覆写，误入真实脚本，被只读文件系统阻止；真实 Docker 场景尚未启动。补齐模拟场景、场景列表及产物断言后，验证器 15/15 单测串行通过（`/tmp/sbv-http-verification-final.uLTiEq/`）。该失败运行不计成功；后续完整门禁另行记录。
+
+普通 Shell 回归共 173 项，首轮 171 通过、2 个旧断言失败；修正后两个失败项定向重跑均退出 0，其余测试保持通过，日志与 `recheck-results.txt` 在 `/tmp/sbv-http-suite.tY6E3a/`。该批起止源码哈希一致。连同独立的 15 项验证器单测，共 188 项已验证通过（含修正重跑，而非声称首次全绿）。
+
+第二轮 `SINGBOX_BINARY_113=… SINGBOX_BINARY_114=… bash dev/verification/run.sh --changed-file install.sh dev/verification/common.sh dev/verification/remote/entrypoint.sh` 在 `dev/verification-runs/20260908033809` 完成全部 75 项本地门禁；真实 Docker 前六场景成功，包括 HTTP 菜单 6 首次安装。六协议共存因测试预期数组把 `http` 与 `hysteria2` 的字典序写反而失败；实际配置及索引已包含全部六个正确入站。修正场景断言、针对提取的真实配置确认，并重跑场景映射、调度及 changed-file 产物单测后，运行时代码哈希仍未变化。因此后续以 `VERIFY_SKIP_LOCAL_TESTS=1` 配合相同核心与 `--changed-file` 重跑全部 Docker 场景，不重复无变化的 75 项本地测试；不得将本次失败 Docker 运行计为成功。
+
+最终全量 Docker 重跑 `dev/verification-runs/20260908035049` 退出 0、`remote_status=success`：11/11 场景的 `STATUS=success/EXIT_STATUS=0`，16/16 TCP 业务探针成功，六协议共存的每个协议均有独立成功产物。故障升级结果为 `status=rolled_back`、`rollback.result=success`。父线程直接读取容器 `092f58d20ce9` 实际执行的 `/tmp/sing-box-vps-verification.Le4Ktk/install.sh`，哈希与冻结源码相同，保存于该 run 的 `container-runtime.sha256`。Docker 的新增 HTTP 场景使用明文回环入口；TLS 严格信任与拒绝路径由上述两核心原生/Bash 4.2 runtime 提供证据，不把 Docker 明文连接扩大为 TLS 或公网验证。全协议目标保持未完成，其他普通代理、高级接入、Endpoint 和上游组件继续按矩阵推进；未 push、未访问生产或执行真实 SubMan 同步。
+
 ## 2026-09-07：分享 URI 编码与可表达性
 
 对照原目标第八节，发现 Mixed/SOCKS builder 原样拼接 userinfo，甚至测试将原始换行视为有效 URI。版本 `2026090710` 引入共享字节级百分号编码；普通未保留 ASCII 字符的旧链接不变，保留认证内容及 IPv6 方括号语义。Agent 先完整构造链接对象再返回，编码/校验失败不会被嵌套命令替换吞掉为成功的空链接。

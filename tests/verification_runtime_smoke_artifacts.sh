@@ -29,6 +29,8 @@ REMOTE_HY2_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/hy2.env"
 REMOTE_ANYTLS_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/anytls.env"
 REMOTE_SOCKS_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/socks.env"
 REMOTE_SOCKS_STORE_FILE="${REMOTE_PROTOCOLS_DIR}/instances/socks.json"
+REMOTE_HTTP_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/http.env"
+REMOTE_HTTP_STORE_FILE="${REMOTE_PROTOCOLS_DIR}/instances/http.json"
 REMOTE_INDEX_FILE="${REMOTE_PROTOCOLS_DIR}/index.env"
 REMOTE_ASSERT_LOG_FILE="${TMP_DIR}/remote-assert.log"
 REMOTE_DISPATCH_LOG_FILE="${TMP_DIR}/remote-dispatch.log"
@@ -244,6 +246,32 @@ STATE_EOF
 STATE_EOF
 }
 
+write_http_state() {
+  mkdir -p "$(dirname "${REMOTE_HTTP_STORE_FILE}")"
+  cat > "${REMOTE_HTTP_STATE_FILE}" <<'STATE_EOF'
+INSTALLED=1
+CONFIG_SCHEMA_VERSION=2
+STATE_EOF
+  cat > "${REMOTE_HTTP_STORE_FILE}" <<'STATE_EOF'
+{
+  "schema_version": 1,
+  "protocol": "http",
+  "revision": 1,
+  "default_instance_id": "main",
+  "instances": [{
+    "id": "main",
+    "name": "HTTP verification",
+    "tag": "http-in",
+    "listen": {"address": "127.0.0.1", "port": 1082},
+    "authentication": {"enabled": true, "username": "http-user", "password": "http-pass"},
+    "outbound_policy": "default",
+    "tls": {"enabled": false},
+    "dependencies": []
+  }]
+}
+STATE_EOF
+}
+
 write_runtime_config() {
   cat > "\${REMOTE_CONFIG_FILE}" <<CONFIG_EOF
 {
@@ -312,6 +340,13 @@ write_runtime_config() {
       "listen": "127.0.0.1",
       "listen_port": 1081,
       "users": [{"username": "socks-user", "password": "socks-pass"}]
+    },
+    {
+      "type": "http",
+      "tag": "http-in",
+      "listen": "127.0.0.1",
+      "listen_port": 1082,
+      "users": [{"username": "http-user", "password": "http-pass"}]
     }
   ]
 }
@@ -324,8 +359,9 @@ enable_multi_protocol_probe_fixture() {
   write_hy2_state
   write_anytls_state
   write_socks_state
+  write_http_state
   cat > "\${REMOTE_INDEX_FILE}" <<'INDEX_EOF'
-INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,mystery-protocol
+INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,mystery-protocol
 INDEX_EOF
   write_runtime_config
 }
@@ -625,8 +661,57 @@ INDEX_EOF
           return 0
         fi
 
+        if [[ "\${actual_lines[2]:-}" == "6" ]]; then
+          [[ "\${#actual_lines[@]}" -eq 11 ]]
+          [[ "\${actual_lines[0]}" == "1" ]]
+          [[ "\${actual_lines[1]}" == "" ]]
+          [[ "\${actual_lines[2]}" == "6" ]]
+          [[ "\${actual_lines[3]}" == "1082" ]]
+          [[ "\${actual_lines[4]}" == "y" ]]
+          [[ "\${actual_lines[5]}" == "http-user" ]]
+          [[ "\${actual_lines[6]}" == "http-pass" ]]
+          [[ "\${actual_lines[7]}" == "n" ]]
+          [[ "\${actual_lines[8]}" == "n" ]]
+          [[ "\${actual_lines[9]}" == "n" ]]
+          [[ "\${actual_lines[10]}" == "0" ]]
+          printf '1082\n' > "\${REMOTE_PORT_FILE}"
+          printf '1\n' > "\${REMOTE_CONFIG_PRESENT_FILE}"
+          printf '1\n' > "\${REMOTE_SERVICE_FILE_PRESENT_FILE}"
+          printf '1\n' > "\${REMOTE_SBV_PRESENT_FILE}"
+          printf '1\n' > "\${REMOTE_SERVICE_ACTIVE_FILE}"
+          write_http_state
+          cat > "\${REMOTE_CONFIG_FILE}" <<'CONFIG_EOF'
+{
+  "inbounds": [{
+    "type": "http",
+    "tag": "http-in",
+    "listen": "127.0.0.1",
+    "listen_port": 1082,
+    "users": [{"username": "http-user", "password": "http-pass"}]
+  }]
+}
+CONFIG_EOF
+          cat > "\${REMOTE_INDEX_FILE}" <<'INDEX_EOF'
+INSTALLED_PROTOCOLS=http
+INDEX_EOF
+          return 0
+        fi
+
         printf 'unexpected install input: %s\n' "\${actual_lines[*]:-}" >&2
         return 1
+      fi
+      if [[ "\${1:-}" == "agent" && "\${2:-}" == "instance" && "\${3:-}" == "create" && "\${4:-}" == "http" ]]; then
+        printf '%s' '{"ok":true,"protocol":"http","changed":true,"revision":1}'
+        write_http_state
+        command jq '.inbounds += [{
+          "type":"http","tag":"http-in","listen":"127.0.0.1","listen_port":1082,
+          "users":[{"username":"http-user","password":"http-pass"}]
+        }]' "\${REMOTE_CONFIG_FILE}" > "\${REMOTE_CONFIG_FILE}.tmp"
+        mv "\${REMOTE_CONFIG_FILE}.tmp" "\${REMOTE_CONFIG_FILE}"
+        cat > "\${REMOTE_INDEX_FILE}" <<'INDEX_EOF'
+INSTALLED_PROTOCOLS=vless-reality,http
+INDEX_EOF
+        return 0
       fi
       if [[ "\${1:-}" == "--internal-uninstall-purge" && "\${2:-}" == "--yes" ]]; then
         reset_runtime_artifacts
@@ -833,6 +918,10 @@ jq() {
     args[\$last_index]="\${REMOTE_SOCKS_STORE_FILE}"
   fi
 
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/instances/http.json" ]]; then
+    args[\$last_index]="\${REMOTE_HTTP_STORE_FILE}"
+  fi
+
   command "\${REAL_JQ}" "\${args[@]}"
 }
 
@@ -854,6 +943,10 @@ sed() {
 
   if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/socks.env" ]]; then
     args[\$last_index]="\${REMOTE_SOCKS_STATE_FILE}"
+  fi
+
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/http.env" ]]; then
+    args[\$last_index]="\${REMOTE_HTTP_STATE_FILE}"
   fi
 
   command sed "\${args[@]}"
@@ -900,8 +993,16 @@ grep() {
     args[\$last_index]="\${REMOTE_SOCKS_STATE_FILE}"
   fi
 
+  if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/http.env" ]]; then
+    args[\$last_index]="\${REMOTE_HTTP_STATE_FILE}"
+  fi
+
   if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/instances/socks.json" ]]; then
     args[\$last_index]="\${REMOTE_SOCKS_STORE_FILE}"
+  fi
+
+  if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/instances/http.json" ]]; then
+    args[\$last_index]="\${REMOTE_HTTP_STORE_FILE}"
   fi
 
   if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/index.env" ]]; then
@@ -918,6 +1019,10 @@ stat() {
     printf '600\n'
     return 0
   fi
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/instances/http.json" ]]; then
+    printf '600\n'
+    return 0
+  fi
   command stat "\$@"
 }
 PAYLOAD_PRELUDE
@@ -926,6 +1031,8 @@ perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/vless-reality.env|state_
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/mixed.env|state_file='"${REMOTE_MIXED_STATE_FILE}"'|g' "\${script_file}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/hy2.env|state_file='"${REMOTE_HY2_STATE_FILE}"'|g' "\${script_file}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/anytls.env|state_file='"${REMOTE_ANYTLS_STATE_FILE}"'|g' "\${script_file}"
+perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/http.env|state_file='"${REMOTE_HTTP_STATE_FILE}"'|g' "\${script_file}"
+perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/http.json|store_file='"${REMOTE_HTTP_STORE_FILE}"'|g' "\${script_file}"
 cat > "\${script_file}.wrapper" <<'WRAP_EOF'
 eval "\$(declare -f verification_run_protocol_probes | sed '1s/verification_run_protocol_probes/verification_run_protocol_probes__original/')"
 verification_run_protocol_probes() {
@@ -952,6 +1059,12 @@ verification_scenario_upgrade_1_13_to_1_14() {
 
 verification_scenario_multi_protocol_coexistence() {
   printf 'SCENARIO=multi_protocol_coexistence\n'
+  printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
+  verification_run_protocol_probes
+}
+
+verification_scenario_fresh_install_http() {
+  printf 'SCENARIO=fresh_install_http\n'
   printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
   verification_run_protocol_probes
 }
@@ -1006,6 +1119,8 @@ REMOTE_PROBE_HTTP_PID_FILE="${TMP_DIR}/remote-probe-http.pid" \
 INSTALL_COUNT_FILE="${INSTALL_COUNT_FILE}" \
 REMOTE_SOCKS_STATE_FILE="${REMOTE_SOCKS_STATE_FILE}" \
 REMOTE_SOCKS_STORE_FILE="${REMOTE_SOCKS_STORE_FILE}" \
+REMOTE_HTTP_STATE_FILE="${REMOTE_HTTP_STATE_FILE}" \
+REMOTE_HTTP_STORE_FILE="${REMOTE_HTTP_STORE_FILE}" \
 REAL_JQ="${REAL_JQ}" \
 PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" "\${script_file}" "\${@:7}"
   exit \$?
@@ -1024,6 +1139,7 @@ PATH="${TMP_DIR}:${PATH}" VERIFY_SKIP_LOCAL_TESTS=1 \
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout.txt")
 grep -Fq 'runtime_smoke' "${run_dir}/scenarios.txt"
 grep -Fq 'multi_protocol_coexistence' "${run_dir}/scenarios.txt"
+grep -Fq 'fresh_install_http' "${run_dir}/scenarios.txt"
 grep -Fq 'upgrade_rollback_1_13_to_1_14' "${run_dir}/scenarios.txt"
 grep -Fq 'remote_target=docker:test-container' "${run_dir}/summary.log"
 grep -Fq 'remote_target=docker:test-container' "${TMP_DIR}/stdout.txt"
@@ -1032,6 +1148,9 @@ grep -Fq 'SERVICE_ACTIVE=active' "${run_dir}/remote.stdout.log"
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/sing-box-check.txt" ]]
 grep -Fqx 'sing-box version 1.14.0' "${run_dir}/remote-artifacts/scenarios/fresh_install_vless/sing-box.version.txt"
 grep -Fqx 'sing-box version 1.14.0' "${run_dir}/remote-artifacts/scenarios/fresh_install_anytls/sing-box.version.txt"
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_http/config.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_http/protocols/instances/http.json" ]]
+grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/fresh_install_http/protocol-probes/http/result.env"
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/listeners.ss-lntp.txt" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/client.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/probe.stdout.txt" ]]
@@ -1045,6 +1164,9 @@ grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/anytls/client.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/anytls/probe.stdout.txt" ]]
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/anytls/result.env"
+[[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/http/client.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/http/probe.stdout.txt" ]]
+grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/http/result.env"
 grep -Fqx 'RESULT=unsupported' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/mystery-protocol/result.env"
 grep -Fqx 'STATUS=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/result.env"
 grep -Fqx 'STATUS=success' "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/result.env"
@@ -1065,6 +1187,7 @@ grep -Fq 'verification_run_protocol_probes' "${TMP_DIR}/remote-script.sh"
 grep -Fqx 'fresh_install_vless' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'reconfigure_existing_install' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'fresh_install_anytls' "${REMOTE_DISPATCH_LOG_FILE}"
+grep -Fqx 'fresh_install_http' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'upgrade_1_13_to_1_14' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'runtime_smoke' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'multi_protocol_coexistence' "${REMOTE_DISPATCH_LOG_FILE}"

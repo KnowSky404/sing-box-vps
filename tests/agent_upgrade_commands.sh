@@ -117,7 +117,7 @@ jq -e '
   and .schema
   and (.commands | type == "object")
   and (.interactive_features | type == "object")
-  and (.protocols | keys | sort == ["anytls", "hysteria2", "mixed", "socks", "vless-reality"])
+  and (.protocols | keys | sort == ["anytls", "http", "hysteria2", "mixed", "socks", "vless-reality"])
   and .multi_protocol_coexistence == true
   and .protocols["vless-reality"].multi_instance == true
   and .features.network_stack.inbound == ["ipv4_only", "ipv6_only", "dual_stack"]

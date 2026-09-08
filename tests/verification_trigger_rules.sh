@@ -37,4 +37,11 @@ assert_decision local tests/socks_structured_takeover.sh
 assert_decision local tests/socks_export_client.sh
 assert_decision local tests/plain_proxy_share_links.sh
 assert_decision local tests/plain_proxy_share_runtime.sh
+assert_decision local tests/http_structured_instance_store.sh
+assert_decision local tests/http_structured_takeover.sh
+assert_decision local tests/http_instance_lifecycle.sh
+assert_decision local tests/http_instance_menu.sh
+assert_decision local tests/http_export_client.sh
+assert_decision local tests/http_export_runtime.sh
+assert_decision local tests/http_agent_contract.sh
 assert_decision local docs/superpowers/specs/2026-04-22-remote-validation-workflow-design.md

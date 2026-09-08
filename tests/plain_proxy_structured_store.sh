@@ -90,6 +90,80 @@ mv "${TMP_DIR}/socks-config-unknown.json" "${SINGBOX_CONFIG_FILE}"
 ! plain_proxy_config_store_candidate socks >/dev/null 2>&1
 mv "${TMP_DIR}/socks-config-before-unknown.json" "${SINGBOX_CONFIG_FILE}"
 
+# HTTP is a separate schema-2 typed store.  TLS is stored as a typed reference
+# (never as arbitrary passthrough JSON) and is reproduced in the live inbound.
+http_store_file="${SB_PROTOCOL_STATE_DIR}/instances/http.json"
+http_state_file="${SB_PROTOCOL_STATE_DIR}/http.env"
+jq -n '
+  {
+    schema_version: 1,
+    protocol: "http",
+    revision: 0,
+    default_instance_id: "http-main",
+    instances: [{
+      id: "http-main",
+      name: "HTTP primary",
+      tag: "http-primary",
+      listen: {address: "127.0.0.1", port: 33104},
+      authentication: {enabled: true, username: "http-user", password: "http-password"},
+      outbound_policy: "direct",
+      dependencies: [],
+      tls: {enabled: true, server_name: "proxy.example.com", certificate_path: "/tmp/http.crt", key_path: "/tmp/http.key"}
+    }]
+  }
+' > "${http_store_file}"
+printf '%s\n' 'INSTALLED=1' 'CONFIG_SCHEMA_VERSION=2' > "${http_state_file}"
+chmod 600 "${http_store_file}" "${http_state_file}"
+
+[[ "$(structured_instance_store_protocol http)" == http ]]
+validate_structured_instance_store http "${http_store_file}"
+plain_proxy_structured_state_active http
+load_plain_proxy_structured_instance http
+[[ "${SB_PROTOCOL}" == http && "${SB_INSTANCE_ID}" == http-main ]]
+jq -e '
+  .enabled == true and .server_name == "proxy.example.com" and
+  .certificate_path == "/tmp/http.crt" and .key_path == "/tmp/http.key"
+' <<< "${SB_HTTP_TLS_JSON}" >/dev/null
+
+http_inbounds_json=$(render_structured_instance_inbounds http "${http_store_file}" | jq -s .)
+jq -e '
+  length == 1 and .[0].type == "http" and .[0].tag == "http-primary" and
+  .[0].listen == "127.0.0.1" and .[0].listen_port == 33104 and
+  .[0].users[0].username == "http-user" and
+  .[0].tls.enabled == true and .[0].tls.server_name == "proxy.example.com"
+' <<< "${http_inbounds_json}" >/dev/null
+
+jq '{inbounds: [.instances[] | {type: "http", tag: .tag, listen: .listen.address,
+  listen_port: .listen.port, users: [{username: .authentication.username, password: .authentication.password}],
+  tls: .tls}], route: {rules: ([.instances[] | select(.outbound_policy != "default") |
+    {inbound: .tag, action: "route", outbound: (if .outbound_policy == "warp" then "warp-ep" else .outbound_policy end)}])}}' \
+  "${http_store_file}" > "${SINGBOX_CONFIG_FILE}"
+plain_proxy_validate_state_inventory http
+plain_proxy_structured_state_matches_config http
+http_candidate_json=$(plain_proxy_config_store_candidate http)
+jq -e '
+  .protocol == "http" and (.instances | length) == 1 and
+  .instances[0].tls.enabled == true and
+  .instances[0].tls.certificate_path == "/tmp/http.crt"
+' <<< "${http_candidate_json}" >/dev/null
+
+cp -p "${SINGBOX_CONFIG_FILE}" "${TMP_DIR}/http-config-before-unsupported.json"
+jq '.inbounds[0].unsupported_http_option = true' "${SINGBOX_CONFIG_FILE}" > "${TMP_DIR}/http-config-unsupported.json"
+mv "${TMP_DIR}/http-config-unsupported.json" "${SINGBOX_CONFIG_FILE}"
+! plain_proxy_config_store_candidate http >/dev/null 2>&1
+cp -p "${TMP_DIR}/http-config-before-unsupported.json" "${SINGBOX_CONFIG_FILE}"
+
+jq '.inbounds[0].tls.ca = "/tmp/unsupported-ca.pem"' "${SINGBOX_CONFIG_FILE}" > "${TMP_DIR}/http-config-unsupported-tls.json"
+mv "${TMP_DIR}/http-config-unsupported-tls.json" "${SINGBOX_CONFIG_FILE}"
+! plain_proxy_config_store_candidate http >/dev/null 2>&1
+cp -p "${TMP_DIR}/http-config-before-unsupported.json" "${SINGBOX_CONFIG_FILE}"
+
+jq '.inbounds += [{type: "unknown-http-endpoint", tag: "unknown-http-endpoint", listen_port: 33105}]' \
+  "${SINGBOX_CONFIG_FILE}" > "${TMP_DIR}/http-config-unknown-type.json"
+mv "${TMP_DIR}/http-config-unknown-type.json" "${SINGBOX_CONFIG_FILE}"
+! plain_proxy_config_store_candidate http >/dev/null 2>&1
+cp -p "${TMP_DIR}/http-config-before-unsupported.json" "${SINGBOX_CONFIG_FILE}"
+
 # The generic file primitive must preserve the protocol field and support CAS
 # records without accepting a Mixed document under the SOCKS path.
 empty_json=$(structured_instance_store_empty_json socks)

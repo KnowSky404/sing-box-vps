@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090710
+# Version: 2026090711
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090710"
+readonly SCRIPT_VERSION="2026090711"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -73,6 +73,7 @@ readonly SB_PROTOCOL_REGISTRY=(
   'hy2|hy2|hysteria2|hysteria2|tls|inbound|hysteria2|Hysteria2|hy2-in|3|true|hysteria2|udp|tcp,udp|1.13.0|false|optional|hysteria2|tcp_loopback|{"tls_modes":["acme_http01","acme_cloudflare_dns01","manual"],"bandwidth":true,"obfs":true,"share_link":true,"qr":true,"client_export":true,"subman_sync":true}|hysteria2|build_hy2_inbound_json,build_hy2_certificate_provider_json,build_client_hy2_outbound,save_hy2_state,prompt_hy2_install,prompt_hy2_update'
   'anytls|anytls|anytls|anytls|tls|inbound|anytls|AnyTLS|anytls-in|4|true||tcp|tcp,udp|1.13.0|false|optional||tcp_loopback|{"tls_modes":["acme_http01","acme_cloudflare_dns01","manual"],"standard_share_uri":false,"outbound_example":true,"qr":false,"client_export":true,"subman_sync":false}||build_anytls_inbound_json,build_anytls_certificate_provider_json,build_client_anytls_outbound,save_anytls_state,prompt_anytls_install,prompt_anytls_update'
   'socks|socks|socks|socks|plain|inbound|socks|SOCKS|socks-in|5|true||tcp|tcp,udp|1.13.0|true|none|socks5|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"socks5":true,"authentication":true,"share_links":["socks5"],"qr":false,"client_export":true,"subman_sync":false}||build_socks_inbound_json,save_socks_state,prompt_socks_install,prompt_socks_update,build_client_socks_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'http|http|http|http|plain-or-tls|inbound|http|HTTP Proxy|http-in|6|true||tcp|tcp|1.13.0|true|none|http|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"http":true,"tls":true,"tls_modes":["disabled","manual_certificate"],"tls_share_links":false,"authentication":true,"share_links":["http"],"qr":false,"client_export":true,"subman_sync":false}||build_http_inbound_json,save_http_state,prompt_http_install,prompt_http_update,build_client_http_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
 )
 SB_REALITY_SNI_CANDIDATES=(
   "www.apple.com"
@@ -103,6 +104,7 @@ SB_MIXED_INSTANCE_ID=""
 SB_MIXED_INBOUND_TAG=""
 SB_MIXED_LISTEN_ADDRESS=""
 SB_MIXED_STORE_REVISION="0"
+SB_HTTP_TLS_JSON=""
 SB_HY2_DOMAIN=""
 SB_HY2_PASSWORD=""
 SB_HY2_USER_NAME=""
@@ -2034,7 +2036,7 @@ validate_protocol_state_schema() {
   schema=${schema//\"/}
   schema=${schema//\'/}
   case "${protocol}:${schema:-1}" in
-    vless-reality:1|vless-reality:2|mixed:1|mixed:2|socks:2|hy2:1|anytls:1) return 0 ;;
+    vless-reality:1|vless-reality:2|mixed:1|mixed:2|socks:2|http:2|hy2:1|anytls:1) return 0 ;;
   esac
   printf '[ERROR] 协议状态格式无法识别；已保留文件，请使用写入该状态的脚本版本恢复。\n' >&2
   return 1
@@ -2234,76 +2236,88 @@ save_mixed_state() {
   } > "${state_file}"
 }
 
-save_socks_state() {
-  local state_file store_file current_revision
+save_plain_proxy_state() {
+  local protocol=${1:-} state_file store_file current_revision
   local record_file candidate_file operation expected_revision
   local listen_address=${SB_MIXED_LISTEN_ADDRESS:-} port=${SB_PORT:-}
   local auth_enabled=${SB_MIXED_AUTH_ENABLED:-y} username=${SB_MIXED_USERNAME:-} password=${SB_MIXED_PASSWORD:-}
-  local tag=${SB_MIXED_INBOUND_TAG:-socks-in} name=${SB_NODE_NAME:-SOCKS} policy=${SB_OUTBOUND_POLICY:-default}
+  local tag name policy=${SB_OUTBOUND_POLICY:-default} tls_json='{"enabled":false}' instance_id=${SB_INSTANCE_ID:-main}
 
-  state_file=$(protocol_state_file socks) || return 1
+  structured_instance_store_protocol "${protocol}" >/dev/null || return 1
+  case "${protocol}" in
+    socks) tag=${SB_MIXED_INBOUND_TAG:-socks-in}; name=${SB_NODE_NAME:-SOCKS} ;;
+    http)
+      tag=${SB_MIXED_INBOUND_TAG:-http-in}; name=${SB_NODE_NAME:-HTTP}
+      [[ -n "${SB_HTTP_TLS_JSON:-}" ]] || return 1
+      tls_json=${SB_HTTP_TLS_JSON}
+      validate_http_tls_state_json "${tls_json}" || return 1
+      ;;
+    *) return 1 ;;
+  esac
+  state_file=$(protocol_state_file "${protocol}") || return 1
   if [[ -e "${state_file}" || -L "${state_file}" ]]; then
     [[ -f "${state_file}" && ! -L "${state_file}" ]] || return 1
-    validate_protocol_state_schema socks "${state_file}" || return 1
+    validate_protocol_state_schema "${protocol}" "${state_file}" || return 1
     plain_proxy_structured_marker_is_valid "${state_file}" || return 1
   fi
-  store_file=$(plain_proxy_structured_store_file socks) || return 1
+  store_file=$(plain_proxy_structured_store_file "${protocol}") || return 1
   if [[ -f "${state_file}" ]]; then
     [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
   elif [[ -e "${store_file}" || -L "${store_file}" ]]; then
-    # A missing active marker must not silently reactivate orphan listeners.
-    # Only a validated deletion tombstone may continue its existing revision.
-    plain_proxy_inactive_store_snapshot socks >/dev/null || return 1
+    plain_proxy_inactive_store_snapshot "${protocol}" >/dev/null || return 1
   fi
   [[ -n "${listen_address}" ]] || listen_address='127.0.0.1'
-  structured_instance_store_validate_id "${SB_INSTANCE_ID:-main}" || return 1
+  structured_instance_store_validate_id "${instance_id}" || return 1
   [[ -n "${tag}" ]] || return 1
   validate_port_number "${port}" || return 1
   structured_instance_store_validate_address "${listen_address}" || return 1
   case "${auth_enabled}" in y|n) ;; *) return 1 ;; esac
-  validate_mixed_client_connection "${port}" "${auth_enabled}" "${username}" "${password}" || return 1
+  if [[ "${protocol}" == http ]]; then
+    validate_http_client_connection "${port}" "${auth_enabled}" "${username}" "${password}" || return 1
+  else
+    validate_mixed_client_connection "${port}" "${auth_enabled}" "${username}" "${password}" || return 1
+  fi
   [[ "${policy}" == default || "${policy}" == direct || "${policy}" == warp ]] || return 1
+  if [[ "${protocol}" == http ]]; then
+    jq -e 'type == "object"' <<< "${tls_json}" >/dev/null 2>&1 || return 1
+  fi
 
   record_file=$(mktemp) || return 1
   candidate_file=$(mktemp) || { rm -f -- "${record_file}"; return 1; }
-  if ! jq -n -cS --arg id "${SB_INSTANCE_ID:-main}" --arg name "${name}" --arg tag "${tag}" \
+  if ! jq -n -cS --arg id "${instance_id}" --arg name "${name}" --arg tag "${tag}" \
       --arg address "${listen_address}" --argjson port "${port}" \
       --argjson enabled "$([[ "${auth_enabled}" == y ]] && printf true || printf false)" \
-      --arg username "${username}" --arg password "${password}" --arg policy "${policy}" \
-      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$enabled,username:(if $enabled then $username else "" end),password:(if $enabled then $password else "" end)},outbound_policy:$policy,dependencies:[]}' \
-      > "${record_file}"; then
-    rm -f -- "${record_file}" "${candidate_file}"
-    return 1
+      --arg username "${username}" --arg password "${password}" --arg policy "${policy}" --argjson tls "${tls_json}" --arg protocol "${protocol}" \
+      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$enabled,username:(if $enabled then $username else "" end),password:(if $enabled then $password else "" end)},outbound_policy:$policy,dependencies:[]} + (if $protocol == "http" then {tls:$tls} else {} end)' > "${record_file}"; then
+    rm -f -- "${record_file}" "${candidate_file}"; return 1
   fi
-  structured_instance_store_validate_instance_argument "${record_file}" || {
+  structured_instance_store_validate_instance_argument "${record_file}" "${protocol}" || {
     rm -f -- "${record_file}" "${candidate_file}"; return 1;
   }
   if [[ -f "${store_file}" ]]; then
-    validate_structured_instance_store socks "${store_file}" || { rm -f -- "${record_file}" "${candidate_file}"; return 1; }
+    validate_structured_instance_store "${protocol}" "${store_file}" || { rm -f -- "${record_file}" "${candidate_file}"; return 1; }
     current_revision=$(structured_instance_store_revision "${store_file}") || { rm -f -- "${record_file}" "${candidate_file}"; return 1; }
     expected_revision=${current_revision}
-    if jq -e --arg id "${SB_INSTANCE_ID:-main}" 'any(.instances[]; .id == $id)' "${store_file}" >/dev/null 2>&1; then
-      operation=replace
-    else
-      operation=create
-    fi
-    structured_instance_store_candidate socks "${store_file}" "${operation}" "${record_file}" "${expected_revision}" > "${candidate_file}" || {
+    if jq -e --arg id "${instance_id}" 'any(.instances[]; .id == $id)' "${store_file}" >/dev/null 2>&1; then operation=replace; else operation=create; fi
+    structured_instance_store_candidate "${protocol}" "${store_file}" "${operation}" "${record_file}" "${expected_revision}" > "${candidate_file}" || {
       rm -f -- "${record_file}" "${candidate_file}"; return 1;
     }
   else
-    structured_instance_store_candidate socks "" create "${record_file}" 0 > "${candidate_file}" || {
+    structured_instance_store_candidate "${protocol}" "" create "${record_file}" 0 > "${candidate_file}" || {
       rm -f -- "${record_file}" "${candidate_file}"; return 1;
     }
     expected_revision=0
   fi
-  if ! publish_structured_instance_store socks "${candidate_file}" "${expected_revision}" ||
-     ! save_plain_proxy_structured_marker socks; then
-    rm -f -- "${record_file}" "${candidate_file}"
-    return 1
+  if ! publish_structured_instance_store "${protocol}" "${candidate_file}" "${expected_revision}" ||
+     ! save_plain_proxy_structured_marker "${protocol}"; then
+    rm -f -- "${record_file}" "${candidate_file}"; return 1
   fi
   rm -f -- "${record_file}" "${candidate_file}"
-  load_plain_proxy_structured_instance socks "${SB_INSTANCE_ID:-main}"
+  load_plain_proxy_structured_instance "${protocol}" "${instance_id}"
 }
+
+save_socks_state() { save_plain_proxy_state socks; }
+save_http_state() { save_plain_proxy_state http; }
 
 save_hy2_state() {
   local state_file
@@ -2368,6 +2382,7 @@ save_protocol_state() {
     vless-reality) save_vless_reality_state ;;
     mixed) save_mixed_state ;;
     socks) save_socks_state ;;
+    http) save_http_state ;;
     hy2) save_hy2_state ;;
     anytls) save_anytls_state ;;
     *) log_error "不支持的协议状态保存类型: ${protocol}" ;;
@@ -3059,33 +3074,39 @@ prompt_protocol_update_fields() {
     vless-reality) prompt_vless_reality_update ;;
     mixed) prompt_mixed_update ;;
     socks) prompt_socks_update ;;
+    http) prompt_http_update ;;
     hy2) prompt_hy2_update ;;
     anytls) prompt_anytls_update ;;
     *) log_error "不支持的协议修改类型: ${protocol}" ;;
   esac
 }
 
-prompt_socks_install() {
-  local in_user in_pass
-  set_protocol_defaults socks
-  echo -e "\n${BLUE}--- 配置 SOCKS ---${NC}"
-  SB_PORT=$(prompt_port "[SOCKS] 端口 (默认 ${SB_PORT}): " "${SB_PORT}") || return 1
+prompt_plain_proxy_install() {
+  local protocol=${1:-} label in_user in_pass
+  label=$(plain_proxy_management_label "${protocol}") || return 1
+  set_protocol_defaults "${protocol}"
+  echo -e "\n${BLUE}--- 配置 ${label} ---${NC}"
+  SB_PORT=$(prompt_port "[${label}] 端口 (默认 ${SB_PORT}): " "${SB_PORT}") || return 1
   check_port_conflict "${SB_PORT}"
-  SB_MIXED_AUTH_ENABLED=$(prompt_yes_no "[SOCKS] 是否启用用户名密码认证 [y/n] (默认 y): " y) || return 1
+  SB_MIXED_AUTH_ENABLED=$(prompt_yes_no "[${label}] 是否启用用户名密码认证 [y/n] (默认 y): " y) || return 1
   if [[ "${SB_MIXED_AUTH_ENABLED}" == y ]]; then
-    read -rp "[SOCKS] 用户名 (留空自动生成): " in_user || return 1
-    read -rsp "[SOCKS] 密码 (留空自动生成): " in_pass || return 1
+    read -rp "[${label}] 用户名 (留空自动生成): " in_user || return 1
+    read -rsp "[${label}] 密码 (留空自动生成): " in_pass || return 1
     printf '\n' >&2
     SB_MIXED_USERNAME=${in_user}; SB_MIXED_PASSWORD=${in_pass}
     ensure_mixed_auth_credentials || return 1
   else
     SB_MIXED_USERNAME=""; SB_MIXED_PASSWORD=""
-    log_warn "你选择了关闭认证。开放的 SOCKS 代理存在明显安全风险，请确认防火墙与访问源限制。"
+    log_warn "你选择了关闭认证。开放的 ${label} 代理存在明显安全风险，请确认防火墙与访问源限制。"
+  fi
+  if [[ "${protocol}" == http ]]; then
+    plain_proxy_management_prompt_tls http '{"enabled":false}' || return 1
   fi
 }
 
-prompt_socks_update() {
-  local in_p in_auth in_user in_pass
+prompt_plain_proxy_update() {
+  local protocol=${1:-} label in_p in_auth in_user in_pass current_tls
+  label=$(plain_proxy_management_label "${protocol}") || return 1
   in_p=$(prompt_port "新端口 (当前: ${SB_PORT}, 留空保持): " "${SB_PORT}") || return 1
   if [[ "${in_p}" != "${SB_PORT}" ]]; then SB_PORT=${in_p}; check_port_conflict "${SB_PORT}"; fi
   in_auth=$(prompt_yes_no "是否启用用户名密码认证 [y/n] (当前: ${SB_MIXED_AUTH_ENABLED}, 留空保持): " "${SB_MIXED_AUTH_ENABLED}") || return 1
@@ -3098,8 +3119,28 @@ prompt_socks_update() {
     ensure_mixed_auth_credentials || return 1
   else
     SB_MIXED_USERNAME=""; SB_MIXED_PASSWORD=""
-    log_warn "关闭 SOCKS 认证会暴露开放代理，存在明显安全风险。"
+    log_warn "关闭 ${label} 认证会暴露开放代理，存在明显安全风险。"
   fi
+  if [[ "${protocol}" == http ]]; then
+    current_tls=${SB_HTTP_TLS_JSON:-'{"enabled":false}'}
+    plain_proxy_management_prompt_tls http "${current_tls}" || return 1
+  fi
+}
+
+prompt_socks_install() {
+  prompt_plain_proxy_install socks
+}
+
+prompt_socks_update() {
+  prompt_plain_proxy_update socks
+}
+
+prompt_http_install() {
+  prompt_plain_proxy_install http
+}
+
+prompt_http_update() {
+  prompt_plain_proxy_update http
 }
 
 open_all_protocol_ports() {
@@ -3525,6 +3566,7 @@ prompt_protocol_install_fields() {
     vless-reality) prompt_vless_reality_install ;;
     mixed) prompt_mixed_install ;;
     socks) prompt_socks_install ;;
+    http) prompt_http_install ;;
     hy2) prompt_hy2_install ;;
     anytls) prompt_anytls_install ;;
     *) log_error "不支持的协议安装类型: ${protocol}" ;;
@@ -3561,6 +3603,7 @@ plain_proxy_management_label() {
   case "${1:-}" in
     mixed) printf 'Mixed' ;;
     socks) printf 'SOCKS' ;;
+    http) printf 'HTTP' ;;
     *) return 1 ;;
   esac
 }
@@ -3637,17 +3680,52 @@ plain_proxy_management_next_tag() {
 }
 
 plain_proxy_management_prompt_public_consent() {
-  local protocol=${1:-} address=${2:-} label
+  local protocol=${1:-} address=${2:-} tls_json=${3:-} label tls_enabled=n
   label=$(plain_proxy_management_label "${protocol}") || return 1
+  if [[ "${protocol}" == http && -n "${tls_json}" ]] &&
+     jq -e '.enabled == true' <<< "${tls_json}" >/dev/null 2>&1; then
+    tls_enabled=y
+  fi
   case "${address}" in
     127.*|::1) printf 'n'; return 0 ;;
   esac
-  prompt_yes_no "该 ${label} 入口将以明文暴露在非回环地址 ${address}；确认继续并承担公网暴露风险 [y/N]: " n
+  if [[ "${tls_enabled}" == y ]]; then
+    prompt_yes_no "该 ${label} 入口将在非回环地址 ${address} 提供 TLS；确认继续并承担公网暴露风险 [y/N]: " n
+  else
+    prompt_yes_no "该 ${label} 入口将以明文暴露在非回环地址 ${address}；确认继续并承担公网暴露风险 [y/N]: " n
+  fi
+}
+
+plain_proxy_management_prompt_tls() {
+  local protocol=${1:-} current=${2:-'{"enabled":false}'} enabled server_name certificate_path key_path
+  [[ "${protocol}" == http ]] || return 1
+  jq -e 'type == "object" and (.enabled | type == "boolean")' <<< "${current}" >/dev/null 2>&1 || return 1
+  enabled=$(jq -r '.enabled' <<< "${current}") || return 1
+  if [[ "${enabled}" == true ]]; then
+    enabled=y
+  else
+    enabled=n
+  fi
+  enabled=$(prompt_yes_no "是否启用 HTTP TLS [y/n]（当前: ${enabled}，默认 ${enabled}）: " "${enabled}") || return 1
+  if [[ "${enabled}" == n ]]; then
+    SB_HTTP_TLS_JSON='{"enabled":false}'
+    return 0
+  fi
+  server_name=$(jq -r '.server_name // empty' <<< "${current}") || return 1
+  certificate_path=$(jq -r '.certificate_path // empty' <<< "${current}") || return 1
+  key_path=$(jq -r '.key_path // empty' <<< "${current}") || return 1
+  server_name=$(prompt_optional_domain "HTTP TLS server name（当前: ${server_name}）: " "${server_name}") || return 1
+  # Paths are references only. The menu never creates, deletes, or rewrites
+  # certificate material; config generation performs the final file check.
+  certificate_path=$(prompt_required_path "HTTP TLS 证书绝对路径（当前: ${certificate_path}）: " "${certificate_path}") || return 1
+  key_path=$(prompt_required_path "HTTP TLS 私钥绝对路径（当前: ${key_path}）: " "${key_path}") || return 1
+  SB_HTTP_TLS_JSON=$(jq -n -cS --arg server_name "${server_name}" --arg certificate_path "${certificate_path}" --arg key_path "${key_path}" \
+    '{enabled:true,server_name:$server_name,certificate_path:$certificate_path,key_path:$key_path}') || return 1
 }
 
 plain_proxy_management_build_record() {
   local protocol=${1:-} snapshot=${2:-} operation=${3:-create} target=${4:-} destination=${5:-}
-  local id name tag address port auth username password policy answer label
+  local id name tag address port auth username password policy answer label tls_json
   local name_changed=n address_changed=n port_changed=n username_changed=n password_changed=n
   local auth_changed=n policy_changed=n
   structured_instance_store_protocol "${protocol}" >/dev/null || return 1
@@ -3666,10 +3744,15 @@ plain_proxy_management_build_record() {
     username=$(jq -j --arg id "${target}" '.instances[] | select(.id == $id) | .authentication.username, "\u0001"' "${snapshot}") || return 1; username=${username%$'\1'}
     password=$(jq -j --arg id "${target}" '.instances[] | select(.id == $id) | .authentication.password, "\u0001"' "${snapshot}") || return 1; password=${password%$'\1'}
     policy=$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .outbound_policy' "${snapshot}") || return 1
+    tls_json='{"enabled":false}'
+    if [[ "${protocol}" == http ]]; then
+      tls_json=$(jq -j --arg id "${target}" '.instances[] | select(.id == $id) | .tls, "\u0001"' "${snapshot}") || return 1
+      tls_json=${tls_json%$'\1'}
+    fi
   else
     id=$(plain_proxy_management_next_id "${protocol}" "${snapshot}") || return 1
     name="${label} ${id}"; tag=$(plain_proxy_management_next_tag "${protocol}" "${snapshot}") || return 1
-    address=127.0.0.1; port=1080; auth=y; username=""; password=""; policy=default
+    address=127.0.0.1; port=1080; auth=y; username=""; password=""; policy=default; tls_json='{"enabled":false}'
   fi
 
   read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1
@@ -3699,26 +3782,31 @@ plain_proxy_management_build_record() {
   else username=""; password=""; fi
   policy=$(prompt_instance_outbound_policy "出站策略" "${policy}") || return 1
   [[ "${operation}" == create || "${policy}" != "$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .outbound_policy' "${snapshot}")" ]] && policy_changed=y
-  answer=$(plain_proxy_management_prompt_public_consent "${protocol}" "${address}") || return 1
+  if [[ "${protocol}" == http ]]; then
+    SB_HTTP_TLS_JSON=${tls_json}
+    plain_proxy_management_prompt_tls http "${tls_json}" || return 1
+    tls_json=${SB_HTTP_TLS_JSON}
+  fi
+  answer=$(plain_proxy_management_prompt_public_consent "${protocol}" "${address}" "${tls_json}") || return 1
   if [[ "${address}" != 127.* && "${address}" != ::1 && "${answer}" != y ]]; then
     log_info "未确认公网明文暴露，已取消 ${label} 实例变更。"; return 2
   fi
   PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC=${answer}
   MIXED_MANAGEMENT_ALLOW_PUBLIC=${answer}
   if [[ "${operation}" == replace ]]; then
-    jq -cS --arg id "${id}" --arg name "${name}" --arg address "${address}" --argjson port "${port}" \
+    jq -cS --arg id "${id}" --arg name "${name}" --arg address "${address}" --arg protocol "${protocol}" --argjson tls "${tls_json}" --argjson port "${port}" \
       --argjson enabled "$([[ "${auth}" == y ]] && printf true || printf false)" --arg username "${username}" --arg password "${password}" --arg policy "${policy}" \
       --argjson name_changed "$([[ "${name_changed}" == y ]] && printf true || printf false)" --argjson address_changed "$([[ "${address_changed}" == y ]] && printf true || printf false)" \
       --argjson port_changed "$([[ "${port_changed}" == y ]] && printf true || printf false)" --argjson auth_changed "$([[ "${auth_changed}" == y ]] && printf true || printf false)" \
       --argjson username_changed "$([[ "${username_changed}" == y ]] && printf true || printf false)" --argjson password_changed "$([[ "${password_changed}" == y ]] && printf true || printf false)" \
       --argjson policy_changed "$([[ "${policy_changed}" == y ]] && printf true || printf false)" \
-      'first(.instances[] | select(.id == $id) | .name = if $name_changed then $name else .name end | .listen.address = if $address_changed then $address else .listen.address end | .listen.port = if $port_changed then $port else .listen.port end | .authentication = if $auth_changed and ($enabled | not) then {enabled:false,username:"",password:""} elif $auth_changed or $username_changed or $password_changed then {enabled:true,username:(if $username_changed then $username else .authentication.username end),password:(if $password_changed then $password else .authentication.password end)} else .authentication end | .outbound_policy = if $policy_changed then $policy else .outbound_policy end)' "${snapshot}" > "${destination}" || return 1
+      'first(.instances[] | select(.id == $id) | .name = if $name_changed then $name else .name end | .listen.address = if $address_changed then $address else .listen.address end | .listen.port = if $port_changed then $port else .listen.port end | .authentication = if $auth_changed and ($enabled | not) then {enabled:false,username:"",password:""} elif $auth_changed or $username_changed or $password_changed then {enabled:true,username:(if $username_changed then $username else .authentication.username end),password:(if $password_changed then $password else .authentication.password end)} else .authentication end | .outbound_policy = if $policy_changed then $policy else .outbound_policy end | if $protocol == "http" then .tls = $tls else . end)' "${snapshot}" > "${destination}" || return 1
   else
-    jq -n -cS --arg id "${id}" --arg name "${name}" --arg tag "${tag}" --arg address "${address}" --argjson port "${port}" \
+    jq -n -cS --arg id "${id}" --arg name "${name}" --arg tag "${tag}" --arg address "${address}" --arg protocol "${protocol}" --argjson tls "${tls_json}" --argjson port "${port}" \
       --argjson enabled "$([[ "${auth}" == y ]] && printf true || printf false)" --arg username "${username}" --arg password "${password}" --arg policy "${policy}" \
-      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$enabled,username:$username,password:$password},outbound_policy:$policy,dependencies:[]}' > "${destination}" || return 1
+      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$enabled,username:$username,password:$password},outbound_policy:$policy,dependencies:[]} + (if $protocol == "http" then {tls:$tls} else {} end)' > "${destination}" || return 1
   fi
-  structured_instance_store_validate_instance_argument "${destination}"
+  structured_instance_store_validate_instance_argument "${destination}" "${protocol}"
 }
 
 # Compatibility surface for the existing Mixed menu/tests.  The old public
@@ -3915,11 +4003,19 @@ mixed_instance_management_menu() (
   done
 )
 
-socks_instance_management_menu() (
-  local requested_operation=${1:-} temp_dir choice snapshot revision target result status one_shot=n
+socks_instance_management_menu() {
+  plain_proxy_instance_management_menu socks "$@"
+}
+
+http_instance_management_menu() {
+  plain_proxy_instance_management_menu http "$@"
+}
+
+plain_proxy_instance_management_menu() (
+  local protocol=${1:-} requested_operation=${2:-} temp_dir choice snapshot revision target result status one_shot=n
   local record_file label confirmation
   umask 077
-  label=$(plain_proxy_management_label socks) || return 1
+  label=$(plain_proxy_management_label "${protocol}") || return 1
   case "${requested_operation}" in
     "") ;;
     create) choice=1; one_shot=y ;;
@@ -3935,12 +4031,12 @@ socks_instance_management_menu() (
   trap 'rm -rf -- "${temp_dir}"' EXIT
   while true; do
     if [[ -d "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
-      if revision=$(plain_proxy_management_pending_revision socks); then
+      if revision=$(plain_proxy_management_pending_revision "${protocol}"); then
         echo "检测到未完成的 ${label} 实例事务（revision ${revision}）。" >&2
         choice=$(prompt_choice "仅可恢复该事务；恢复 [1]，返回 [0]: " 0 1 0) || return 1
         [[ "${choice}" == 1 ]] || return 0
         [[ "$(mixed_management_confirm "确认执行事务恢复")" == y ]] || return 0
-        result=$(recover_plain_proxy_instance_transaction socks "${revision}") || {
+        result=$(recover_plain_proxy_instance_transaction "${protocol}" "${revision}") || {
           status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; return "${status}"
         }
         [[ -n "${result}" ]] && printf '%s\n' "${result}"
@@ -3957,16 +4053,16 @@ socks_instance_management_menu() (
     fi
     [[ "${choice}" == 0 ]] && return 0
     if [[ "${choice}" == 6 ]]; then
-      revision=$(plain_proxy_management_pending_revision socks 2>/dev/null || true)
+      revision=$(plain_proxy_management_pending_revision "${protocol}" 2>/dev/null || true)
       if [[ -n "${revision}" ]]; then
         [[ "$(mixed_management_confirm "确认执行事务恢复")" == y ]] || { [[ "${one_shot}" == y ]] && return 0 || continue; }
-        result=$(recover_plain_proxy_instance_transaction socks "${revision}") || { status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; [[ "${one_shot}" == y ]] && return "${status}" || continue; }
+        result=$(recover_plain_proxy_instance_transaction "${protocol}" "${revision}") || { status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; [[ "${one_shot}" == y ]] && return "${status}" || continue; }
         [[ -n "${result}" ]] && printf '%s\n' "${result}"
       else log_warn "当前没有可验证的待恢复事务。"; fi
       [[ "${one_shot}" == y ]] && return 0
       continue
     fi
-    if ! plain_proxy_management_capture_snapshot socks "${temp_dir}/before.json"; then
+    if ! plain_proxy_management_capture_snapshot "${protocol}" "${temp_dir}/before.json"; then
       log_error "${label} 状态缺失或格式不可信；未执行任何变更。"; return 1
     fi
     snapshot="${temp_dir}/before.json"; revision=$(jq -r '.revision' "${snapshot}") || return 1
@@ -3975,32 +4071,32 @@ socks_instance_management_menu() (
         record_file="${temp_dir}/record.json"
         target=""
         if [[ "${choice}" == 2 ]]; then
-          target=$(plain_proxy_management_prompt_target socks "${snapshot}" "请选择要修改的 ${label} 实例") || { [[ "${one_shot}" == y ]] && return 0 || continue; }
+          target=$(plain_proxy_management_prompt_target "${protocol}" "${snapshot}" "请选择要修改的 ${label} 实例") || { [[ "${one_shot}" == y ]] && return 0 || continue; }
         fi
-        plain_proxy_management_build_record socks "${snapshot}" "$([[ "${choice}" == 1 ]] && printf create || printf replace)" "${target}" "${record_file}" || {
+        plain_proxy_management_build_record "${protocol}" "${snapshot}" "$([[ "${choice}" == 1 ]] && printf create || printf replace)" "${target}" "${record_file}" || {
           status=$?
           [[ "${one_shot}" == y ]] && return "${status}"
           continue
         }
-        result=$(apply_plain_proxy_instance_change socks "$([[ "${choice}" == 1 ]] && printf create || printf replace)" "${revision}" "${record_file}" "${PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC:-n}") || { status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; [[ "${one_shot}" == y ]] && return "${status}" || continue; }
+        result=$(apply_plain_proxy_instance_change "${protocol}" "$([[ "${choice}" == 1 ]] && printf create || printf replace)" "${revision}" "${record_file}" "${PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC:-n}") || { status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; [[ "${one_shot}" == y ]] && return "${status}" || continue; }
         [[ -n "${result}" ]] && printf '%s\n' "${result}"
         [[ "${one_shot}" == y ]] && return 0
         ;;
       3|4)
-        target=$(plain_proxy_management_prompt_target socks "${snapshot}" "请选择实例") || { [[ "${one_shot}" == y ]] && return 0 || continue; }
+        target=$(plain_proxy_management_prompt_target "${protocol}" "${snapshot}" "请选择实例") || { [[ "${one_shot}" == y ]] && return 0 || continue; }
         if [[ "${choice}" == 3 ]]; then
           confirmation="确认删除实例 ${target}"
         else
           confirmation="确认将 ${target} 设为默认实例"
         fi
         [[ "$(mixed_management_confirm "${confirmation}")" == y ]] || { [[ "${one_shot}" == y ]] && return 0 || continue; }
-        result=$(apply_plain_proxy_instance_change socks "$([[ "${choice}" == 3 ]] && printf delete || printf default)" "${revision}" "${target}" n) || { status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; [[ "${one_shot}" == y ]] && return "${status}" || continue; }
+        result=$(apply_plain_proxy_instance_change "${protocol}" "$([[ "${choice}" == 3 ]] && printf delete || printf default)" "${revision}" "${target}" n) || { status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; [[ "${one_shot}" == y ]] && return "${status}" || continue; }
         [[ -n "${result}" ]] && printf '%s\n' "${result}"
         [[ "${one_shot}" == y ]] && return 0
         ;;
       5) log_warn "${label} 没有 legacy schema 1 可迁移。" ;;
       7)
-        jq -r '.instances[] | "\(.id)\t\(.name)\t\(.listen.address):\(.listen.port)\tauth=\(.authentication.enabled)\tpolicy=\(.outbound_policy)"' "${snapshot}" || return $?
+        jq -r --arg protocol "${protocol}" '.instances[] | "\(.id)\t\(.name)\t\(.listen.address):\(.listen.port)\tauth=\(.authentication.enabled)\tpolicy=\(.outbound_policy)" + (if $protocol == "http" then "\ttls=\(.tls.enabled)" else "" end)' "${snapshot}" || return $?
         [[ "${one_shot}" == y ]] && return 0
         ;;
       *) log_warn "无效选项，请重新选择。" ;;
@@ -4027,6 +4123,11 @@ install_protocols_interactive() {
     fi
     if protocol_array_contains socks "${selected_protocols[@]}" && plain_proxy_inactive_store_snapshot socks >/dev/null 2>&1; then
       log_warn "SOCKS 已保留 revision；请通过追加安装单独创建 SOCKS 实例，或本次仅选择其他协议。"
+      return 1
+    fi
+    if plain_proxy_inactive_store_snapshot http >/dev/null 2>&1 &&
+       protocol_array_contains http "${selected_protocols[@]}"; then
+      log_warn "HTTP 已保留 revision；请通过主菜单 19 创建 HTTP 实例，或本次仅选择其他协议。"
       return 1
     fi
     snapshot_dir=$(create_managed_state_snapshot) || {
@@ -4056,8 +4157,12 @@ install_protocols_interactive() {
       mapfile -t installed_protocols <<< "${installed_protocol_list}"
     fi
     if mixed_inactive_store_snapshot >/dev/null 2>&1 &&
-       ! protocol_array_contains mixed "${installed_protocols[@]}"; then
+       ! protocol_array_contains mixed ${installed_protocols[@]+"${installed_protocols[@]}"}; then
       installed_protocols+=(mixed)
+    fi
+    if plain_proxy_inactive_store_snapshot http >/dev/null 2>&1 &&
+       ! protocol_array_contains http ${installed_protocols[@]+"${installed_protocols[@]}"}; then
+      installed_protocols+=(http)
     fi
     prompt_protocol_install_selection "additional" || return 0
     IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
@@ -4066,7 +4171,7 @@ install_protocols_interactive() {
     # before the old transaction takes a snapshot.  Mixed combined with a
     # different protocol is rejected here because the legacy save path cannot
     # safely publish a JSON inventory in the same transaction.
-    if protocol_array_contains "mixed" "${installed_protocols[@]}" &&
+    if protocol_array_contains "mixed" ${installed_protocols[@]+"${installed_protocols[@]}"} &&
        protocol_array_contains "mixed" "${selected_protocols[@]}"; then
       if [[ ${#selected_protocols[@]} -eq 1 ]]; then
         mixed_instance_create_interactive || return $?
@@ -4075,7 +4180,7 @@ install_protocols_interactive() {
       log_warn "Mixed 实例不能与其他新增协议合并操作；请先单独管理 Mixed 实例。"
       return 0
     fi
-    if protocol_array_contains "socks" "${installed_protocols[@]}" &&
+    if protocol_array_contains "socks" ${installed_protocols[@]+"${installed_protocols[@]}"} &&
        protocol_array_contains "socks" "${selected_protocols[@]}"; then
       if [[ ${#selected_protocols[@]} -eq 1 ]]; then
         socks_instance_management_menu create || return $?
@@ -4084,13 +4189,24 @@ install_protocols_interactive() {
       log_warn "SOCKS 实例不能与其他新增协议合并操作；请先单独管理 SOCKS 实例。"
       return 0
     fi
+    # HTTP is always a standalone typed-instance operation in the additional
+    # flow, including its first install.  This prevents the legacy save path
+    # from flattening the HTTP TLS/plain record into an env singleton.
+    if protocol_array_contains "http" "${selected_protocols[@]}"; then
+      if [[ ${#selected_protocols[@]} -eq 1 ]]; then
+        http_instance_management_menu create || return $?
+        return 0
+      fi
+      log_warn "HTTP 实例不能与其他新增协议合并操作；请先单独管理 HTTP 实例。"
+      return 0
+    fi
     snapshot_dir=$(create_managed_state_snapshot) || {
       log_error "无法创建配置状态事务快照。"
       return 1
     }
 
     for protocol in "${selected_protocols[@]}"; do
-      if [[ "${protocol}" == "vless-reality" ]] && protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
+      if [[ "${protocol}" == "vless-reality" ]] && protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
         if ! prompt_vless_reality_instance_create; then
           abort_managed_state_transaction "${snapshot_dir}" "REALITY 实例配置失败"
           return 1
@@ -4101,7 +4217,7 @@ install_protocols_interactive() {
           return 1
         fi
       fi
-      if ! protocol_array_contains "${protocol}" "${installed_protocols[@]}"; then
+      if ! protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
         installed_protocols+=("${protocol}")
       fi
     done
@@ -4151,6 +4267,27 @@ set_protocol_defaults() {
       SB_MIXED_INBOUND_TAG="socks-in"
       SB_MIXED_LISTEN_ADDRESS="127.0.0.1"
       SB_MIXED_STORE_REVISION="0"
+      SB_OUTBOUND_POLICY="default"
+      ;;
+    http)
+      SB_PROTOCOL="http"
+      SB_NODE_NAME="$(default_node_name_for_protocol "http")"
+      SB_PORT="$(pick_random_high_port)"
+      SB_SNI=""
+      SB_UUID=""
+      SB_PUBLIC_KEY=""
+      SB_PRIVATE_KEY=""
+      SB_SHORT_ID_1=""
+      SB_SHORT_ID_2=""
+      SB_MIXED_AUTH_ENABLED="y"
+      SB_MIXED_USERNAME=""
+      SB_MIXED_PASSWORD=""
+      SB_INSTANCE_ID=""
+      SB_MIXED_INSTANCE_ID=""
+      SB_MIXED_INBOUND_TAG="http-in"
+      SB_MIXED_LISTEN_ADDRESS="127.0.0.1"
+      SB_MIXED_STORE_REVISION="0"
+      SB_HTTP_TLS_JSON='{"enabled":false}'
       SB_OUTBOUND_POLICY="default"
       ;;
     mixed)
@@ -7611,7 +7748,7 @@ load_protocol_state() {
       mixed_schema=${mixed_schema//\'/}
     fi
   fi
-  if [[ "${protocol}" == "socks" && -f "${state_file}" ]]; then
+  if [[ ("${protocol}" == "socks" || "${protocol}" == "http") && -f "${state_file}" ]]; then
     socks_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" | head -n1) || return 1
     socks_schema=${socks_schema//\"/}
     socks_schema=${socks_schema//\'/}
@@ -7656,10 +7793,10 @@ load_protocol_state() {
   # SOCKS has no legacy .env representation.  Dispatch only a validated
   # schema-2 marker to the typed store and reject every older/unknown shape
   # before it can be sourced as shell code.
-  if [[ "${protocol}" == "socks" ]]; then
+  if [[ "${protocol}" == "socks" || "${protocol}" == "http" ]]; then
     [[ "${socks_schema}" == "2" ]] || return 1
     plain_proxy_structured_marker_is_valid "${state_file}" || return 1
-    load_plain_proxy_structured_instance socks || return 1
+    load_plain_proxy_structured_instance "${protocol}" || return 1
     return 0
   fi
 
@@ -8100,6 +8237,11 @@ build_socks_inbound_json() {
   render_structured_instance_inbounds socks "$(plain_proxy_structured_store_file socks)"
 }
 
+build_http_inbound_json() {
+  plain_proxy_structured_state_active http || return 1
+  render_structured_instance_inbounds http "$(plain_proxy_structured_store_file http)"
+}
+
 hy2_certificate_provider_tag() {
   printf 'hy2-cert-provider'
 }
@@ -8351,7 +8493,7 @@ build_certificate_provider_for_protocol() {
   protocol=$(normalize_protocol_id "$1") || return 1
 
   case "${protocol}" in
-    vless-reality|mixed|socks) return 0 ;; # Explicit no-certificate-provider contract.
+    vless-reality|mixed|socks|http) return 0 ;; # HTTP uses referenced manual certificates, not providers.
     hy2) build_hy2_certificate_provider_json ;;
     anytls) build_anytls_certificate_provider_json ;;
     *) return 1 ;;
@@ -8366,6 +8508,7 @@ build_inbound_for_protocol() {
     vless-reality) build_vless_inbound_json ;;
     mixed) build_mixed_inbound_json ;;
     socks) build_socks_inbound_json ;;
+    http) build_http_inbound_json ;;
     hy2) build_hy2_inbound_json ;;
     anytls) build_anytls_inbound_json ;;
     *) return 1 ;;
@@ -8483,7 +8626,7 @@ instance_outbound_requires_warp() {
       vless-reality)
         vless_reality_has_warp_outbound_policy && return 0
         ;;
-      mixed|socks)
+      mixed|socks|http)
         state_file=$(protocol_state_file "${protocol}") || return 1
         schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" 2>/dev/null || true)
         schema=${schema//\"/}
@@ -8521,11 +8664,11 @@ build_protocol_route_rules() {
         jq -n '[{ "inbound": "mixed-in", "action": "sniff" }]'
       fi
       ;;
-    socks)
+    socks|http)
       local state_file
-      state_file=$(protocol_state_file socks) || return 1
-      plain_proxy_structured_state_active socks || return 1
-      render_structured_instance_route_rules socks "$(plain_proxy_structured_store_file socks)"
+      state_file=$(protocol_state_file "${protocol}") || return 1
+      plain_proxy_structured_state_active "${protocol}" || return 1
+      render_structured_instance_route_rules "${protocol}" "$(plain_proxy_structured_store_file "${protocol}")"
       ;;
     hy2)
       jq -n '[{ "inbound": "hy2-in", "action": "sniff" }]'
@@ -10353,6 +10496,10 @@ update_config_only() {
     socks_instance_management_menu replace
     return $?
   fi
+  if [[ "${selected_protocol}" == http ]]; then
+    http_instance_management_menu replace
+    return $?
+  fi
 
   load_protocol_state "${selected_protocol}"
   if [[ "${selected_protocol}" == "vless-reality" ]]; then
@@ -10456,6 +10603,14 @@ remove_protocol_menu() {
       return $?
     fi
     log_warn "结构化 SOCKS 实例需通过实例事务逐个移除；请先进入 SOCKS 实例管理，再移除其他协议。本次未修改。"
+    return 1
+  fi
+  if plain_proxy_structured_state_active http && protocol_array_contains http "${selected_protocols[@]}"; then
+    if [[ ${#selected_protocols[@]} -eq 1 ]]; then
+      http_instance_management_menu delete
+      return $?
+    fi
+    log_warn "结构化 HTTP 实例需通过实例事务逐个移除；请先进入 HTTP 实例管理，再移除其他协议。本次未修改。"
     return 1
   fi
 
@@ -10867,12 +11022,91 @@ plain_proxy_http_auth_representable() {
      ! "${SB_MIXED_USERNAME:-}${SB_MIXED_PASSWORD:-}" =~ [[:cntrl:]] ]]
 }
 
+validate_http_client_connection() {
+  local port=${1:-} auth_enabled=${2:-} username=${3:-} password=${4:-}
+  local username_bytes password_bytes
+  [[ "${port}" =~ ^[0-9]{1,5}$ ]] || return 1
+  jq -en --arg port "${port}" '$port | tonumber | . >= 1 and . <= 65535' >/dev/null || return 1
+  case "${auth_enabled}" in
+    y)
+      [[ -n "${username}" && -n "${password}" ]] || return 1
+      username_bytes=$(printf '%s' "${username}" | wc -c) || return 1
+      password_bytes=$(printf '%s' "${password}" | wc -c) || return 1
+      [[ "${username_bytes}" =~ ^[0-9]+$ && "${password_bytes}" =~ ^[0-9]+$ &&
+        "${username_bytes}" -le 4096 && "${password_bytes}" -le 4096 ]]
+      ;;
+    n) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_http_tls_state_json() {
+  local tls_json=${1:-}
+  [[ -n "${tls_json}" ]] || return 1
+  jq -e 'type == "object" and (.enabled | type == "boolean") and
+    (if .enabled then
+       (keys_unsorted | sort) == ["certificate_path", "enabled", "key_path", "server_name"] and
+       (.server_name | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
+       (.certificate_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not)) and
+       (.key_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not))
+     else
+       (keys_unsorted | sort) == ["enabled"]
+     end)' <<< "${tls_json}" >/dev/null
+}
+
+read_public_certificate_pem() {
+  local certificate_path=${1:-} staged certificate_size certificate_pem
+  [[ -n "${certificate_path}" && -f "${certificate_path}" && -r "${certificate_path}" ]] || return 1
+  staged=$(mktemp) || return 1
+  if ! head -c 1048577 -- "${certificate_path}" > "${staged}"; then
+    rm -f -- "${staged}"
+    return 1
+  fi
+  certificate_size=$(wc -c < "${staged}") || {
+    rm -f -- "${staged}"
+    return 1
+  }
+  if [[ ! "${certificate_size}" =~ ^[0-9]+$ || "${certificate_size}" -gt 1048576 ]]; then
+    rm -f -- "${staged}"
+    return 1
+  fi
+  certificate_pem=$(<"${staged}") || {
+    rm -f -- "${staged}"
+    return 1
+  }
+  rm -f -- "${staged}" || return 1
+  LC_ALL=C awk '
+    BEGIN { state = 0; certificates = 0; invalid = 0; payload = 0 }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      if (line ~ /^[[:space:]]*$/) next
+      if (state == 0) {
+        if (line == "-----BEGIN CERTIFICATE-----") { state = 1; payload = 0 }
+        else { invalid = 1; next }
+      } else if (line == "-----END CERTIFICATE-----") {
+        if (payload == 0) invalid = 1
+        else { state = 0; certificates++ }
+      } else if (line !~ /^[A-Za-z0-9+\/=]+$/) {
+        invalid = 1
+      } else payload = 1
+    }
+    END { exit !(invalid == 0 && state == 0 && certificates > 0) }
+  ' <<< "${certificate_pem}" >/dev/null || return 1
+  printf '%s' "${certificate_pem}"
+}
+
 build_plain_proxy_link() {
   local scheme=${1:-} public_ip=${2:-} share_host username password
   [[ "${scheme}" == http || "${scheme}" == socks5 ]] || return 1
   [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
-  validate_mixed_client_connection "${SB_PORT:-}" "${SB_MIXED_AUTH_ENABLED:-}" \
-    "${SB_MIXED_USERNAME:-}" "${SB_MIXED_PASSWORD:-}" || return 1
+  if [[ "${scheme}" == http ]]; then
+    validate_http_client_connection "${SB_PORT:-}" "${SB_MIXED_AUTH_ENABLED:-}" \
+      "${SB_MIXED_USERNAME:-}" "${SB_MIXED_PASSWORD:-}" || return 1
+  else
+    validate_mixed_client_connection "${SB_PORT:-}" "${SB_MIXED_AUTH_ENABLED:-}" \
+      "${SB_MIXED_USERNAME:-}" "${SB_MIXED_PASSWORD:-}" || return 1
+  fi
   if [[ "${scheme}" == http ]] && ! plain_proxy_http_auth_representable; then
     printf '[WARN] mixed_http_auth_unrepresentable: HTTP Basic 无法表达当前认证；请使用 SOCKS5 或客户端 JSON，原凭据未修改。\n' >&2
     return 1
@@ -10891,23 +11125,61 @@ build_mixed_http_link() { build_plain_proxy_link http "$@"; }
 build_mixed_socks5_link() { build_plain_proxy_link socks5 "$@"; }
 
 build_plain_proxy_links_json() {
-  local protocol=${1:-} address=${2:-} socks_link http_link=""
-  [[ "${protocol}" == mixed || "${protocol}" == socks ]] || return 1
-  socks_link=$(build_mixed_socks5_link "${address}") || return 1
-  if [[ "${protocol}" == mixed ]] && plain_proxy_http_auth_representable; then
-    http_link=$(build_mixed_http_link "${address}") || return 1
-  fi
-  jq -cn --arg socks5 "${socks_link}" --arg http "${http_link}" \
-    '{socks5:$socks5} + (if $http == "" then {} else {http:$http} end)'
+  local protocol=${1:-} address=${2:-} socks_link="" http_link="" tls_json
+  case "${protocol}" in
+    mixed)
+      socks_link=$(build_mixed_socks5_link "${address}") || return 1
+      if plain_proxy_http_auth_representable; then
+        http_link=$(build_mixed_http_link "${address}") || return 1
+      fi
+      jq -cn --arg socks5 "${socks_link}" --arg http "${http_link}" \
+        '{socks5:$socks5} + (if $http == "" then {} else {http:$http} end)'
+      ;;
+    socks)
+      socks_link=$(build_mixed_socks5_link "${address}") || return 1
+      jq -cn --arg socks5 "${socks_link}" '{socks5:$socks5}'
+      ;;
+    http)
+      tls_json=${SB_HTTP_TLS_JSON:-}
+      validate_http_tls_state_json "${tls_json}" || return 1
+      validate_http_client_connection "${SB_PORT:-}" "${SB_MIXED_AUTH_ENABLED:-}" \
+        "${SB_MIXED_USERNAME:-}" "${SB_MIXED_PASSWORD:-}" || return 1
+      plain_proxy_http_auth_representable || return 1
+      [[ -n "${address}" && "${address}" != *[[:space:]@/?#%]* ]] || return 1
+      if jq -e '.enabled == true' <<< "${tls_json}" >/dev/null 2>&1; then
+        jq -cn '{}'
+      else
+        http_link=$(build_mixed_http_link "${address}") || return 1
+        jq -cn --arg http "${http_link}" '{http:$http}'
+      fi
+      ;;
+    *) return 1 ;;
+  esac
 }
 
 plain_proxy_share_warnings_json() {
-  local protocol=${1:-} unavailable=false
-  [[ "${protocol}" == mixed || "${protocol}" == socks ]] || return 1
+  local protocol=${1:-} unavailable=false tls_uri_unavailable=false tls_json
+  case "${protocol}" in
+    mixed|socks) ;;
+    http)
+      tls_json=${SB_HTTP_TLS_JSON:-}
+      validate_http_tls_state_json "${tls_json}" || return 1
+      validate_http_client_connection "${SB_PORT:-}" "${SB_MIXED_AUTH_ENABLED:-}" \
+        "${SB_MIXED_USERNAME:-}" "${SB_MIXED_PASSWORD:-}" || return 1
+      plain_proxy_http_auth_representable || return 1
+      if jq -e '.enabled == true' <<< "${tls_json}" >/dev/null 2>&1; then
+        tls_uri_unavailable=true
+      fi
+      ;;
+    *) return 1 ;;
+  esac
   if [[ "${protocol}" == mixed ]] && ! plain_proxy_http_auth_representable; then unavailable=true; fi
-  jq -cn --argjson unavailable "${unavailable}" '
-    [{code:"socks5_uri_transport_options_omitted",message:"SOCKS5 URI 只携带代理地址和认证，不携带 UoT v2 等客户端选项；完整连接配置请使用 export-client JSON。"}]
-    + (if $unavailable then [{code:"mixed_http_auth_unrepresentable",message:"当前认证不符合 HTTP Basic 字段约束，未提供 HTTP 链接；SOCKS5 和客户端 JSON 仍可使用，原凭据未修改。"}] else [] end)'
+  jq -cn --argjson unavailable "${unavailable}" --argjson tls_uri_unavailable "${tls_uri_unavailable}" \
+    --arg protocol "${protocol}" '
+    (if $protocol == "http" then [] else [{code:"socks5_uri_transport_options_omitted",message:"SOCKS5 URI 只携带代理地址和认证，不携带 UoT v2 等客户端选项；完整连接配置请使用 export-client JSON。"}] end)
+    + (if $protocol == "http" and ($tls_uri_unavailable | not) then [{code:"http_plaintext_transport",message:"HTTP 代理入口未启用 TLS，认证信息与非加密业务可能被读取；访问 HTTPS 目标不等于代理入口已加密。仅用于可信网络或受保护隧道。"}] else [] end)
+    + (if $protocol == "http" then [] else (if $unavailable then [{code:"mixed_http_auth_unrepresentable",message:"当前认证不符合 HTTP Basic 字段约束，未提供 HTTP 链接；SOCKS5 和客户端 JSON 仍可使用，原凭据未修改。"}] else [] end) end)
+    + (if $tls_uri_unavailable then [{code:"http_tls_uri_unrepresentable",message:"HTTP TLS 客户端配置包含证书信任或 SNI，分享 URI 无法安全表达；未提供 HTTP 链接，请使用客户端 JSON 导出。"}] else [] end)'
 }
 
 hy2_manual_certificate_algorithm() {
@@ -11049,6 +11321,14 @@ collect_client_export_warnings_json() {
         .type == "socks" and (mixed_origin | not)) then [{
       code: "socks_plaintext_transport",
       message: "SOCKS5 导出使用明文代理链路，认证信息与非加密业务可能被读取；仅用于可信网络或受保护隧道。UoT 即使启用也不提供加密。"
+    }] else [] end)
+    + (if any(.outbounds[]?; .type == "http" and .tls.enabled != true) then [{
+      code: "http_plaintext_transport",
+      message: "HTTP 代理入口未启用 TLS，认证信息与非加密业务可能被读取；访问 HTTPS 目标不等于代理入口已加密。仅用于可信网络或受保护隧道。"
+    }] else [] end)
+    + (if any(.outbounds[]?; .type == "http" and .tls.enabled == true) then [{
+      code: "http_tls_certificate_embedded",
+      message: "HTTP TLS 导出仅嵌入公开证书信任与 server_name；服务端私钥未读取或写入客户端配置。"
     }] else [] end)
   ' <<< "${config_json}"
 }
@@ -11856,34 +12136,64 @@ mixed_loaded_state_is_exportable() {
 
 build_client_plain_proxy_outbound() {
   local protocol=${1:-}
-  local public_ip outbound_tag protocol_label
+  local public_ip outbound_tag protocol_label outbound_type
+  local http_tls_json certificate_path certificate_pem tls_json='{}'
 
   protocol=$(structured_instance_store_protocol "${protocol}") || return 1
   public_ip=${2:-$(get_public_ip)}
   outbound_tag=${3:-$(client_outbound_tag_for_protocol "${protocol}")}
-  if [[ "${protocol}" == "mixed" ]]; then
-    protocol_label="Mixed"
-  else
-    protocol_label="SOCKS"
+  case "${protocol}" in
+    mixed) protocol_label="Mixed"; outbound_type=socks ;;
+    socks) protocol_label="SOCKS"; outbound_type=socks ;;
+    http) protocol_label="HTTP"; outbound_type=http ;;
+    *) return 1 ;;
+  esac
+  if [[ -z "${public_ip}" || -z "${outbound_tag}" ]]; then
+    printf '[ERROR] %s_export_state_invalid: %s 端口或认证字段不完整或无效，未生成客户端连接材料。\n' \
+      "${protocol}" "${protocol_label}" >&2
+    return 1
   fi
-  if [[ -z "${public_ip}" || -z "${outbound_tag}" ]] ||
-     ! validate_mixed_client_connection "${SB_PORT:-}" "${SB_MIXED_AUTH_ENABLED:-}" \
-       "${SB_MIXED_USERNAME:-}" "${SB_MIXED_PASSWORD:-}"; then
+  if [[ "${protocol}" == http ]]; then
+    if ! validate_http_client_connection "${SB_PORT:-}" "${SB_MIXED_AUTH_ENABLED:-}" \
+      "${SB_MIXED_USERNAME:-}" "${SB_MIXED_PASSWORD:-}"; then
+      printf '[ERROR] http_export_state_invalid: HTTP 端口或认证字段不完整或无效，未生成客户端连接材料。\n' >&2
+      return 1
+    fi
+    if ! plain_proxy_http_auth_representable; then
+      printf '[ERROR] http_export_state_invalid: HTTP Basic 用户名或密码无法安全表达，未生成客户端连接材料。\n' >&2
+      return 1
+    fi
+  elif ! validate_mixed_client_connection "${SB_PORT:-}" "${SB_MIXED_AUTH_ENABLED:-}" \
+    "${SB_MIXED_USERNAME:-}" "${SB_MIXED_PASSWORD:-}"; then
     printf '[ERROR] %s_export_state_invalid: %s 端口或认证字段不完整或无效，未生成客户端连接材料。\n' \
       "${protocol}" "${protocol_label}" >&2
     return 1
   fi
 
+  if [[ "${protocol}" == http ]]; then
+    http_tls_json=${SB_HTTP_TLS_JSON:-}
+    validate_http_tls_state_json "${http_tls_json}" || return 1
+    if jq -e '.enabled == true' <<< "${http_tls_json}" >/dev/null; then
+      certificate_path=$(jq -r '.certificate_path' <<< "${http_tls_json}") || return 1
+      certificate_pem=$(read_public_certificate_pem "${certificate_path}") || return 1
+      tls_json=$(jq -n --arg server_name "$(jq -r '.server_name' <<< "${http_tls_json}")" \
+        --arg certificate "${certificate_pem}" \
+        '{enabled:true,server_name:$server_name,certificate:$certificate}') || return 1
+    fi
+  fi
   jq -n \
+    --arg type "${outbound_type}" \
     --arg tag "${outbound_tag}" \
     --arg server "${public_ip}" \
     --arg port "${SB_PORT}" \
     --arg auth_enabled "${SB_MIXED_AUTH_ENABLED}" \
     --arg username "${SB_MIXED_USERNAME:-}" \
     --arg password "${SB_MIXED_PASSWORD:-}" \
-    '{type:"socks", tag:$tag, server:$server, server_port:($port|tonumber),
-      version:"5", udp_over_tcp:{enabled:true, version:2}}
-    + (if $auth_enabled == "y" then {username:$username, password:$password} else {} end)'
+    --argjson tls "${tls_json}" \
+    '{type:$type, tag:$tag, server:$server, server_port:($port|tonumber)}
+    + (if $type == "socks" then {version:"5", udp_over_tcp:{enabled:true, version:2}} else {} end)
+    + (if $auth_enabled == "y" then {username:$username, password:$password} else {} end)
+    + (if $type == "http" and ($tls | length) > 0 then {tls:$tls} else {} end)'
 }
 
 build_client_mixed_outbound() (
@@ -11893,17 +12203,18 @@ build_client_mixed_outbound() (
 build_client_plain_proxy_outbounds() (
   local protocol=${1:-}
   local public_ip
-  local store_file instance_id listen_address server_address outbound_json tmpdir display_protocol
+  local store_file instance_id listen_address server_address outbound_json tmpdir display_protocol outbound_type
   local instance_ids_raw
   local instance_ids=()
 
   protocol=$(structured_instance_store_protocol "${protocol}") || return 1
   public_ip=${2:-$(get_public_ip)}
-  if [[ "${protocol}" == "mixed" ]]; then
-    display_protocol="Mixed"
-  else
-    display_protocol="SOCKS"
-  fi
+  case "${protocol}" in
+    mixed) display_protocol="Mixed"; outbound_type=socks ;;
+    socks) display_protocol="SOCKS"; outbound_type=socks ;;
+    http) display_protocol="HTTP"; outbound_type=http ;;
+    *) return 1 ;;
+  esac
   [[ -n "${public_ip}" ]] || return 1
   plain_proxy_structured_state_active "${protocol}" || return 1
   store_file=$(plain_proxy_structured_store_file "${protocol}") || return 1
@@ -11935,7 +12246,7 @@ build_client_plain_proxy_outbounds() (
         server_address=${listen_address}
         ;;
     esac
-    outbound_json=$(build_client_plain_proxy_outbound "${protocol}" "${server_address}" "${protocol}-${instance_id}") || return 1
+    outbound_json=$(build_client_plain_proxy_outbound "${protocol}" "${server_address}" "${protocol}-${instance_id}" "${outbound_type}") || return 1
     printf '%s\n' "${outbound_json}" >> "${tmpdir}/outbounds.jsonl" || return 1
   done
   jq -c '.' "${tmpdir}/outbounds.jsonl"
@@ -11948,6 +12259,17 @@ build_client_mixed_outbounds() (
 build_client_socks_outbounds() (
   build_client_plain_proxy_outbounds socks "$@"
 )
+
+build_client_http_outbounds() (
+  local public_ip=${1:-$(get_public_ip)}
+  build_client_plain_proxy_outbounds http "${public_ip}"
+)
+
+build_client_outbounds_for_current_protocol() {
+  local protocol=${1:-} public_ip=${2:-$(get_public_ip)} outbound_json
+  outbound_json=$(build_client_outbound_json_for_protocol "${protocol}" "${public_ip}") || return $?
+  printf '%s\n' "${outbound_json}"
+}
 
 build_client_outbound_json_for_protocol() {
   local protocol original_protocol_state original_instance_id outbound_json build_status restore_original_state public_ip
@@ -11968,7 +12290,7 @@ build_client_outbound_json_for_protocol() {
   restore_original_state="n"
 
   case "${protocol}" in
-    vless-reality|mixed|socks|hy2|anytls) ;;
+    vless-reality|mixed|socks|http|hy2|anytls) ;;
     *)
       return 1
       ;;
@@ -12015,6 +12337,18 @@ build_client_outbound_json_for_protocol() {
           fi
         else
           printf '[ERROR] socks_export_state_invalid: SOCKS 结构化状态不完整或无效，未生成客户端连接材料。\n' >&2
+          build_status=1
+        fi
+        ;;
+      http)
+        if [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]] && plain_proxy_structured_state_active http; then
+          if outbound_json=$(build_client_http_outbounds "${public_ip}"); then
+            :
+          else
+            build_status=$?
+          fi
+        else
+          printf '[ERROR] http_export_state_invalid: HTTP 结构化状态不完整或无效，未生成客户端连接材料。\n' >&2
           build_status=1
         fi
         ;;
@@ -12176,13 +12510,17 @@ show_link_info() {
   plain_links=$(build_plain_proxy_links_json "${SB_PROTOCOL}" "${public_ip}") || return 1
   share_warnings=$(plain_proxy_share_warnings_json "${SB_PROTOCOL}") || return 1
   http_link=$(jq -r '.http // empty' <<< "${plain_links}") || return 1
-  socks_link=$(jq -er '.socks5' <<< "${plain_links}") || return 1
+  socks_link=$(jq -r '.socks5 // empty' <<< "${plain_links}") || return 1
   if [[ -n "${http_link}" ]]; then
-    printf '1. Mixed HTTP 代理链接\n%s\n' "${http_link}"
+    if [[ "${SB_PROTOCOL}" == http ]]; then
+      printf '1. HTTP 代理链接\n%s\n' "${http_link}"
+    else
+      printf '1. Mixed HTTP 代理链接\n%s\n' "${http_link}"
+    fi
   fi
   if [[ "${SB_PROTOCOL}" == mixed ]]; then
     printf '2. Mixed SOCKS5 代理链接\n%s\n' "${socks_link}"
-  else
+  elif [[ "${SB_PROTOCOL}" == socks ]]; then
     printf '1. SOCKS5 代理链接\n%s\n' "${socks_link}"
   fi
   while IFS= read -r warning_message; do
@@ -12190,6 +12528,12 @@ show_link_info() {
   done < <(jq -r '.[].message' <<< "${share_warnings}")
   if [[ "${SB_PROTOCOL}" == socks ]]; then
     log_warn "SOCKS5 代理链路未启用 TLS，认证信息与业务流量可能被读取；仅用于可信网络或受保护隧道。"
+    return 0
+  fi
+  if [[ "${SB_PROTOCOL}" == http ]]; then
+    if [[ "${SB_MIXED_AUTH_ENABLED}" != "y" ]]; then
+      log_warn "当前 HTTP 代理未启用认证，请尽快确认防火墙限制或开启认证。"
+    fi
     return 0
   fi
   if [[ "${SB_MIXED_AUTH_ENABLED}" != "y" ]]; then
@@ -12214,9 +12558,9 @@ show_qr_info() {
     echo -e "\n${YELLOW}连接二维码：${NC}"
   fi
 
-  if [[ "${SB_PROTOCOL}" == "mixed" || "${SB_PROTOCOL}" == "socks" ]]; then
-    local plain_label="Mixed"
-    [[ "${SB_PROTOCOL}" != "socks" ]] || plain_label="SOCKS"
+  if [[ "${SB_PROTOCOL}" == "mixed" || "${SB_PROTOCOL}" == "socks" || "${SB_PROTOCOL}" == "http" ]]; then
+    local plain_label
+    plain_label=$(plain_proxy_management_label "${SB_PROTOCOL}") || return 1
     log_info "${plain_label} 协议当前不提供二维码，请使用链接方式手动配置客户端。"
     return 0
   fi
@@ -12373,7 +12717,7 @@ show_connection_details_for_detected_addresses() {
   local address_entries=()
   local entry label address public_ip
 
-  if [[ ("${SB_PROTOCOL}" == mixed || "${SB_PROTOCOL}" == socks) ]] && plain_proxy_structured_state_active "${SB_PROTOCOL}"; then
+  if [[ ("${SB_PROTOCOL}" == mixed || "${SB_PROTOCOL}" == socks || "${SB_PROTOCOL}" == http) ]] && plain_proxy_structured_state_active "${SB_PROTOCOL}"; then
     address=${SB_MIXED_LISTEN_ADDRESS:-}
     if [[ -n "${address}" && "${address}" != '::' && "${address}" != 0.0.0.0 ]]; then
       show_connection_details "${mode}" "${address}" "监听地址"
@@ -12423,7 +12767,7 @@ show_all_connection_details() {
 
   for protocol in "${installed_protocols[@]}"; do
     load_protocol_state "${protocol}" || return $?
-    if [[ ("${protocol}" == mixed || "${protocol}" == socks) ]] && plain_proxy_structured_state_active "${protocol}"; then
+    if [[ ("${protocol}" == mixed || "${protocol}" == socks || "${protocol}" == http) ]] && plain_proxy_structured_state_active "${protocol}"; then
       instance_ids=$(list_protocol_instance_ids "${protocol}") || return $?
       while IFS= read -r instance_id; do
         [[ -n "${instance_id}" ]] || continue
@@ -12520,13 +12864,9 @@ build_singbox_client_config() {
   ' RETURN
 
   for protocol in "${exportable_protocols[@]}"; do
-    if [[ "${protocol}" == "mixed" ]]; then
-      protocol_label="Mixed"
-    else
-      protocol_label="SOCKS"
-    fi
+    protocol_label=$(protocol_display_name "${protocol}") || return 1
     if ! protocol_state_exists "${protocol}"; then
-      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" ]]; then
+      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" ]]; then
         log_warn "${protocol_label} 状态缺失，已中止客户端导出；原导出文件保持不变。" >&2
         status=1
         break
@@ -12535,8 +12875,8 @@ build_singbox_client_config() {
       continue
     fi
 
-    if ! outbound_json=$(build_client_outbound_json_for_protocol "${protocol}" "${public_ip}"); then
-      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" ]]; then
+    if ! outbound_json=$(build_client_outbounds_for_current_protocol "${protocol}" "${public_ip}"); then
+      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" ]]; then
         log_warn "${protocol_label} 客户端连接材料无效，已中止客户端导出；原导出文件保持不变。" >&2
         status=1
         break
@@ -12817,10 +13157,10 @@ agent_print_help() {
   sbv agent service restart --json --yes
   sbv agent subman-sync --json
   sbv agent warp --json
-  sbv agent instance create|replace mixed|socks --json --yes --expected-revision N --file record.json [--allow-public]
-  sbv agent instance delete|default mixed|socks --json --yes --expected-revision N --id ID
+  sbv agent instance create|replace mixed|socks|http --json --yes --expected-revision N --file record.json [--allow-public]
+  sbv agent instance delete|default mixed|socks|http --json --yes --expected-revision N --id ID
   sbv agent instance migrate mixed --json --yes --expected-revision N
-  sbv agent instance recover mixed|socks --json --yes --expected-revision N
+  sbv agent instance recover mixed|socks|http --json --yes --expected-revision N
 
 说明:
   capabilities  输出协议、功能入口以及只读/变更/敏感分类。
@@ -12835,7 +13175,7 @@ agent_print_help() {
   doctor        输出只读诊断信息和配置校验结果。
   service       执行带 --yes 保护的服务操作，目前支持 restart。
   subman-sync   非交互推送节点到 SubMan，缺少配置时返回结构化错误。
-  instance      Mixed/SOCKS 实例事务；legacy 首次写入 revision 为 0；recover 使用待恢复事务原 revision。
+  instance      Mixed/SOCKS/HTTP 实例事务；仅 Mixed 支持 legacy migration；recover 使用待恢复事务原 revision。
 EOF
 }
 
@@ -13039,14 +13379,15 @@ agent_capabilities_json() {
           persistent_recovery_journal: true
         },
         plain_proxy_instances: {
-          protocols: ["mixed", "socks"],
+          protocols: ["mixed", "socks", "http"],
           legacy_migration_protocols: ["mixed"],
           state_schema: 2,
           store_schema: 1,
           operations: ["create", "replace", "delete", "default", "recover"],
           operations_by_protocol: {
             mixed: ["create", "replace", "delete", "default", "migrate", "recover"],
-            socks: ["create", "replace", "delete", "default", "recover"]
+            socks: ["create", "replace", "delete", "default", "recover"],
+            http: ["create", "replace", "delete", "default", "recover"]
           },
           expected_revision_required: true,
           plaintext_public_confirmation: "--allow-public",
@@ -13066,7 +13407,7 @@ agent_capabilities_json() {
         doctor: {mutation: false, sensitive: false},
         "upgrade-check": {mutation: false, sensitive: false},
         upgrade: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart"},
-        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks"]},
+        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http"]},
         "export-client": {mutation: true, sensitive: true},
         "service restart": {mutation: true, sensitive: false, confirmation: "--yes"},
         "subman-sync": {mutation: true, sensitive: true, external_write: true}
@@ -13077,6 +13418,7 @@ agent_capabilities_json() {
         reality_multi_instance_and_qos: true,
         mixed_multi_instance_management: true,
         socks_multi_instance_management: true,
+        http_multi_instance_management: true,
         warp_mutation: true,
         inbound_outbound_stack_management: true,
         bbr: true,
@@ -14146,7 +14488,7 @@ agent_validate_indexed_protocol_states() {
   # A deleted plain proxy may leave a valid revisioned empty tombstone for
   # CAS continuity.  It is safe when its protocol is absent from the index; a
   # non-empty orphan would be an unowned inventory and must fail closed.
-  for plain_protocol in mixed socks; do
+  for plain_protocol in mixed socks http; do
     if ! protocol_array_contains "${plain_protocol}" ${expected_protocols[@]+"${expected_protocols[@]}"}; then
       plain_store_file=$(plain_proxy_structured_store_file "${plain_protocol}") || return 1
       if [[ -e "${plain_store_file}" || -L "${plain_store_file}" ]]; then
@@ -14181,10 +14523,10 @@ agent_validate_indexed_protocol_states() {
       # partial first-node view would make Agent status/links appear healthy
       # while silently omitting listeners or credentials.
       mixed_validate_state_inventory || return 1
-    elif [[ "${protocol}" == "socks" ]]; then
-      # SOCKS is structured-only.  Validate the complete manifest and compare
-      # every live tag before reporting the protocol as installed.
-      plain_proxy_validate_state_inventory socks || return 1
+    elif [[ "${protocol}" == "socks" || "${protocol}" == "http" ]]; then
+      # Plain proxy protocols are structured-only. Validate the complete
+      # manifest and compare every live tag before reporting them installed.
+      plain_proxy_validate_state_inventory "${protocol}" || return 1
     fi
   done
 }
@@ -14504,7 +14846,7 @@ agent_doctor_json() {
 
 agent_node_summary_json_for_current_protocol() {
   local protocol api_protocol public_ip shareable="true" client_exportable="false"
-  local auth_enabled="false" server_name=""
+  local auth_enabled="false" server_name="" tls_enabled="false" http_tls_json
   local node_name instance_id="" inbound_tag="" listen_address="" instance_revision="0" rate_up="" rate_down="" outbound_policy=""
   local tls_mode="" acme_mode="" obfs_enabled="false"
 
@@ -14529,6 +14871,18 @@ agent_node_summary_json_for_current_protocol() {
       inbound_tag="${SB_MIXED_INBOUND_TAG:-}"
       listen_address="${SB_MIXED_LISTEN_ADDRESS:-}"
       instance_revision="${SB_MIXED_STORE_REVISION:-0}"
+      ;;
+    http)
+      client_exportable="true"
+      [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]] && auth_enabled="true"
+      instance_id="${SB_MIXED_INSTANCE_ID:-}"
+      inbound_tag="${SB_MIXED_INBOUND_TAG:-}"
+      listen_address="${SB_MIXED_LISTEN_ADDRESS:-}"
+      instance_revision="${SB_MIXED_STORE_REVISION:-0}"
+      http_tls_json=${SB_HTTP_TLS_JSON:-}
+      [[ -n "${http_tls_json}" ]] || return 1
+      tls_enabled=$(jq -er 'if .enabled == true then "true" elif .enabled == false then "false" else empty end' <<< "${http_tls_json}") || return 1
+      [[ "${tls_enabled}" == true ]] && shareable="false"
       ;;
     hy2)
       client_exportable="true"
@@ -14568,6 +14922,7 @@ agent_node_summary_json_for_current_protocol() {
     --argjson shareable "${shareable}" \
     --argjson client_exportable "${client_exportable}" \
     --argjson auth_enabled "${auth_enabled}" \
+    --argjson tls_enabled "${tls_enabled}" \
     '{
       "protocol": $protocol,
       "name": $name,
@@ -14576,9 +14931,10 @@ agent_node_summary_json_for_current_protocol() {
       "client_exportable": $client_exportable
     }
     + (if $server_name != "" then {"server_name": $server_name} else {} end)
-    + (if ($protocol == "mixed" or $protocol == "socks") then {"auth_enabled": $auth_enabled} else {} end)
-    + (if ($protocol == "mixed" or $protocol == "socks") then {"instance_revision": ($instance_revision | tonumber)} else {} end)
-    + (if ($protocol == "mixed" or $protocol == "socks") and $instance_id != "" then {
+    + (if ($protocol == "mixed" or $protocol == "socks" or $protocol == "http") then {"auth_enabled": $auth_enabled} else {} end)
+    + (if ($protocol == "mixed" or $protocol == "socks" or $protocol == "http") then {"instance_revision": ($instance_revision | tonumber)} else {} end)
+    + (if ($protocol == "http") then {"tls_enabled": $tls_enabled} else {} end)
+    + (if ($protocol == "mixed" or $protocol == "socks" or $protocol == "http") and $instance_id != "" then {
         "instance_id": $instance_id,
         "tag": $inbound_tag,
         "listen": {"address": $listen_address, "port": ($port | tonumber)}
@@ -14609,7 +14965,7 @@ agent_node_summary_json_for_current_protocol() {
 agent_link_json_for_current_protocol() {
   local protocol api_protocol public_ip link_json outbound_json
   local address_label
-  local node_name instance_id="" inbound_tag="" listen_address="" mixed_link_address="" instance_revision="0" rate_up="" rate_down="" outbound_policy=""
+  local node_name instance_id="" inbound_tag="" listen_address="" mixed_link_address="" instance_revision="0" rate_up="" rate_down="" outbound_policy="" http_tls_json http_tls_enabled
   local compatibility_warnings_json='[]' share_warnings
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
@@ -14662,6 +15018,24 @@ agent_link_json_for_current_protocol() {
         message: "SOCKS5 导出使用明文代理链路，认证信息与非加密业务可能被读取；仅用于可信网络或受保护隧道。UoT 即使启用也不提供加密。"
       }]')
       ;;
+    http)
+      instance_id="${SB_MIXED_INSTANCE_ID:-}"
+      inbound_tag="${SB_MIXED_INBOUND_TAG:-}"
+      listen_address="${SB_MIXED_LISTEN_ADDRESS:-}"
+      instance_revision="${SB_MIXED_STORE_REVISION:-0}"
+      mixed_link_address="${public_ip}"
+      case "${listen_address}" in
+        0.0.0.0|::) mixed_link_address="${public_ip}" ;;
+        "") ;;
+        *) mixed_link_address="${listen_address}" ;;
+      esac
+      http_tls_json=${SB_HTTP_TLS_JSON:-}
+      [[ -n "${http_tls_json}" ]] || return 1
+      http_tls_enabled=$(jq -er 'if .enabled == true then "true" elif .enabled == false then "false" else empty end' <<< "${http_tls_json}") || return 1
+      [[ "${http_tls_enabled}" == true || "${http_tls_enabled}" == false ]] || return 1
+      plain_proxy_http_auth_representable || return 1
+      link_json=$(build_plain_proxy_links_json http "${mixed_link_address}") || return 1
+      ;;
     hy2)
       link_json=$(jq -n --arg hy2 "$(build_hy2_link "${public_ip}" "${address_label}")" '{"hy2": $hy2}')
       compatibility_warnings_json=$(build_hy2_compatibility_warnings_json "share")
@@ -14675,7 +15049,7 @@ agent_link_json_for_current_protocol() {
       ;;
   esac
 
-  if [[ "${protocol}" == mixed || "${protocol}" == socks ]]; then
+  if [[ "${protocol}" == mixed || "${protocol}" == socks || "${protocol}" == http ]]; then
     share_warnings=$(plain_proxy_share_warnings_json "${protocol}") || return 1
     compatibility_warnings_json=$(jq -cn --argjson existing "${compatibility_warnings_json}" \
       --argjson share "${share_warnings}" '$existing + $share') || return 1
@@ -14709,12 +15083,12 @@ agent_link_json_for_current_protocol() {
         },
         "outbound_policy": $outbound_policy
       } else {} end)
-    + (if ($protocol == "mixed" or $protocol == "socks") and $instance_id != "" then {
+    + (if ($protocol == "mixed" or $protocol == "socks" or $protocol == "http") and $instance_id != "" then {
         "instance_id": $instance_id,
         "tag": $inbound_tag,
         "listen": {"address": $listen_address, "port": ($port | tonumber)}
       } else {} end)
-    + (if ($protocol == "mixed" or $protocol == "socks") then {"instance_revision": ($instance_revision | tonumber)} else {} end)
+    + (if ($protocol == "mixed" or $protocol == "socks" or $protocol == "http") then {"instance_revision": ($instance_revision | tonumber)} else {} end)
     + (if $outbound != null then {"outbound": $outbound} else {} end)
     + (if ($warnings | length) > 0 then {"warnings": $warnings} else {} end)'
 }
@@ -15153,7 +15527,16 @@ plain_proxy_instance_config_candidate() {
         else .seen += [[$rule.inbound,$rule.action]] |
           .rules += [$rules[] | select(.inbound == $rule.inbound and .action == $rule.action)] end
       else .rules += [$rule] end)) as $retained |
-    .route.rules = ([$rules[] | select([.inbound,.action] as $key | $positioned | index([$key]) == null)] + $retained.rules)
+    # A missing sniff rule is observational and must run before retained
+    # custom rules. A missing route rule is a fallback; append it after the
+    # retained rules so a conditional/reject rule keeps its precedence.
+    .route.rules = (
+      [$rules[] | select(.action == "sniff") |
+        select([.inbound,.action] as $key | $positioned | index([$key]) == null)]
+      + $retained.rules
+      + [$rules[] | select(.action == "route") |
+        select([.inbound,.action] as $key | $positioned | index([$key]) == null)]
+    )
   ' "${old_config}"
 }
 
@@ -15561,7 +15944,7 @@ apply_plain_proxy_instance_change() (
 
 agent_instance_cli() {
   local operation=${1:-} protocol=${2:-} expected="" input="" instance_id="" json=n confirmed=n allow_public=n
-  [[ $# -ge 2 ]] || { agent_json_error invalid_arguments "用法: instance 操作 mixed|socks --json --yes --expected-revision N [--file 文件 | --id ID]"; return 1; }
+  [[ $# -ge 2 ]] || { agent_json_error invalid_arguments "用法: instance 操作 mixed|socks|http --json --yes --expected-revision N [--file 文件 | --id ID]"; return 1; }
   shift 2
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -15574,14 +15957,14 @@ agent_instance_cli() {
       *) break ;;
     esac
   done
-  if [[ $# -ne 0 || "${json}" != y || ("${protocol}" != mixed && "${protocol}" != socks) || ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
+  if [[ $# -ne 0 || "${json}" != y || ("${protocol}" != mixed && "${protocol}" != socks && "${protocol}" != http) || ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
     agent_json_error invalid_arguments "实例参数、协议或 revision 无效；未修改。"; return 1
   fi
   if ! structured_instance_store_revision_arg "${expected}" >/dev/null; then
     agent_json_error invalid_arguments "revision 超出安全整数范围；未修改。"; return 1
   fi
   if [[ "${operation}" == migrate && "${protocol}" != mixed ]]; then
-    agent_json_error invalid_arguments "只有 Mixed 提供 legacy schema 1 迁移；SOCKS 使用 schema 2，已有 live 配置请使用接管入口。"
+    agent_json_error invalid_arguments "只有 Mixed 提供 legacy schema 1 迁移；SOCKS/HTTP 使用 schema 2，已有 live 配置请使用接管入口。"
     return 1
   fi
   [[ "${confirmed}" == y ]] || { agent_json_error confirmation_required "实例写操作需要 --yes；非回环明文入口另需 --allow-public。"; return 1; }
@@ -16150,7 +16533,7 @@ structured_instance_store_error() {
 structured_instance_store_protocol() {
   local protocol
   protocol=$(normalize_protocol_id "${1:-}") || return 1
-  [[ "${protocol}" == "mixed" || "${protocol}" == "socks" ]] || return 1
+  [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" ]] || return 1
   printf '%s' "${protocol}"
 }
 
@@ -16229,7 +16612,11 @@ structured_instance_store_validate_common_json() {
     (.instances | type == "array" and length <= 128 and
       all(.[];
         type == "object" and
-        ((keys_unsorted | sort) == ["authentication", "dependencies", "id", "listen", "name", "outbound_policy", "tag"]) and
+        ((if $protocol == "http" then
+            (keys_unsorted | sort) == ["authentication", "dependencies", "id", "listen", "name", "outbound_policy", "tag", "tls"]
+          else
+            (keys_unsorted | sort) == ["authentication", "dependencies", "id", "listen", "name", "outbound_policy", "tag"]
+          end)) and
         (.id | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and
         (.name | type == "string" and length > 0 and (index("\u0000") == null)) and
         (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
@@ -16240,11 +16627,35 @@ structured_instance_store_validate_common_json() {
           (.enabled | type == "boolean") and
           (.username | type == "string" and (index("\u0000") == null)) and
           (.password | type == "string" and (index("\u0000") == null)) and
-          (.username | utf8bytelength <= 255) and
-          (.password | utf8bytelength <= 255) and
-          (if .enabled then (.username | length > 0) and (.password | length > 0) else (.username == "" and .password == "") end)) and
+          (if $protocol == "http" then
+             (if .enabled then
+               (.username | length > 0 and utf8bytelength <= 4096 and
+                 (test("[\u0000-\u001F\u007F]") | not) and
+                 (contains(":") | not)) and
+               (.password | length > 0 and utf8bytelength <= 4096 and
+                 (test("[\u0000-\u001F\u007F]") | not))
+              else
+               (.username == "" and .password == "")
+              end)
+           else
+             (.username | utf8bytelength <= 255) and
+             (.password | utf8bytelength <= 255) and
+             (if .enabled then (.username | length > 0) and (.password | length > 0)
+              else (.username == "" and .password == "") end)
+           end)) and
         (.outbound_policy | type == "string" and (. == "default" or . == "direct" or . == "warp")) and
-        (.dependencies | type == "array" and length == 0)
+        (.dependencies | type == "array" and length == 0) and
+        (if $protocol == "http" then
+           (.tls | type == "object" and
+             (if .enabled == false then
+                ((keys_unsorted | sort) == ["enabled"])
+              elif .enabled == true then
+                ((keys_unsorted | sort) == ["certificate_path", "enabled", "key_path", "server_name"]) and
+                (.server_name | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
+                (.certificate_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not)) and
+                (.key_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not))
+              else false end))
+         else true end)
       ) and
       ((map(.id) | unique | length) == length) and
       ((map(.tag) | unique | length) == length) and
@@ -16289,17 +16700,18 @@ plain_proxy_config_store_candidate() (
   umask 077
   local protocol config_file existing_file protocol_label
   protocol=$(structured_instance_store_protocol "${1:-}") || return 1
-  if [[ "${protocol}" == "mixed" ]]; then
-    protocol_label="Mixed"
-  else
-    protocol_label="SOCKS"
-  fi
+  case "${protocol}" in
+    mixed) protocol_label="Mixed" ;;
+    socks) protocol_label="SOCKS" ;;
+    http) protocol_label="HTTP" ;;
+    *) return 1 ;;
+  esac
   shift
   config_file=${1:-${SINGBOX_CONFIG_FILE:-}}
   existing_file=${2:-}
   local state_file state_schema legacy_name active_state store_file
   local temp_dir inbound_json inbound_count inbound_index tag address port
-  local username password auth_enabled policy id name base digest suffix
+  local username password auth_enabled policy id name base digest suffix tls_json
   local existing_instance existing_store_json existing_match default_id old_revision old_semantics new_semantics
   local candidate_revision status
   local marker_schema2=n store_instances=0
@@ -16342,7 +16754,7 @@ plain_proxy_config_store_candidate() (
     (.inbounds // []) | all(.[];
       if .type != $protocol then true
       else
-        ((keys_unsorted - ["type", "tag", "listen", "listen_port", "users", "set_system_proxy"] | length == 0))
+        ((keys_unsorted - (["type", "tag", "listen", "listen_port", "users", "set_system_proxy"] + (if $protocol == "http" then ["tls"] else [] end)) | length == 0))
         and (if has("tag") then (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) else true end)
         and (if has("listen") then (.listen | type == "string" and length > 0) else true end)
         and (if has("listen_port") then (.listen_port | type == "number" and floor == . and . >= 1 and . <= 65535) else true end)
@@ -16354,7 +16766,20 @@ plain_proxy_config_store_candidate() (
                   (.password | type == "string" and length > 0 and index("\u0000") == null)) )
              else true end)
         and (if $protocol == "mixed" then
-              (if has("set_system_proxy") then .set_system_proxy == false else true end)
+             (if has("set_system_proxy") then .set_system_proxy == false else true end)
+             elif $protocol == "http" then
+              ((if has("set_system_proxy") then .set_system_proxy == false else true end)
+              and (if has("tls") then
+                (.tls | type == "object") and
+                  (if .tls.enabled == false then
+                    ((.tls | keys_unsorted | sort) == ["enabled"])
+                  elif .tls.enabled == true then
+                    ((.tls | keys_unsorted | sort) == ["certificate_path", "enabled", "key_path", "server_name"]) and
+                    (.tls.server_name | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
+                    (.tls.certificate_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not)) and
+                    (.tls.key_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not))
+                  else false end)
+                else true end))
              else
               (has("set_system_proxy") | not)
              end)
@@ -16460,7 +16885,7 @@ plain_proxy_config_store_candidate() (
         return 1
       fi
     fi
-    # sing-box's Mixed listener defaults to loopback, while an omitted port
+    # sing-box's plain-proxy listener defaults to loopback, while an omitted port
     # means an ephemeral listener.  The former is safe to materialize; the
     # latter cannot be represented in typed state and must fail closed for
     # every migration path.
@@ -16477,6 +16902,11 @@ plain_proxy_config_store_candidate() (
       printf '[ERROR] %s_store_candidate: %s listen address is unsupported.\n' "${protocol}" "${protocol_label}" >&2
       return 1
     }
+
+    tls_json='null'
+    if [[ "${protocol}" == "http" ]]; then
+      tls_json=$(jq -c '.tls // {enabled:false}' <<< "${inbound_json}") || return 1
+    fi
 
     username=""
     password=""
@@ -16532,13 +16962,23 @@ plain_proxy_config_store_candidate() (
       name="${tag}"
     fi
     [[ -n "${name}" ]] || name="${tag}"
-    jq -n -cS \
+    if [[ "${protocol}" == "http" ]]; then
+      jq -n -cS \
+      --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
+      --arg address "${address}" --argjson port "${port}" \
+      --argjson auth_enabled "${auth_enabled}" --arg username "${username}" --arg password "${password}" \
+      --arg policy "${policy}" --argjson tls "${tls_json}" \
+      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$auth_enabled,username:$username,password:$password},outbound_policy:$policy,tls:$tls,dependencies:[]}' \
+      >> "${temp_dir}/instances.jsonl" || return 1
+    else
+      jq -n -cS \
       --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
       --arg address "${address}" --argjson port "${port}" \
       --argjson auth_enabled "${auth_enabled}" --arg username "${username}" --arg password "${password}" \
       --arg policy "${policy}" \
       '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$auth_enabled,username:$username,password:$password},outbound_policy:$policy,dependencies:[]}' \
       >> "${temp_dir}/instances.jsonl" || return 1
+    fi
   done
 
   default_id=""
@@ -16634,22 +17074,49 @@ structured_instance_store_empty_json() {
 }
 
 structured_instance_store_validate_instance_argument() {
-  local file=${1:-} file_size
+  local file=${1:-} protocol=${2:-mixed} file_size
+  protocol=$(structured_instance_store_protocol "${protocol}") || return 1
   [[ -n "${file}" && -f "${file}" && ! -L "${file}" ]] || return 1
   file_size=$(wc -c < "${file}") || return 1
   [[ "${file_size}" =~ ^[0-9]+$ && ${file_size} -le 1048576 ]] || return 1
   jq -e -s 'length == 1' "${file}" >/dev/null 2>&1 || return 1
   jq -e '
     type == "object" and
-    ((keys_unsorted | sort) == ["authentication", "dependencies", "id", "listen", "name", "outbound_policy", "tag"]) and
+    ((if $protocol == "http" then
+        (keys_unsorted | sort) == ["authentication", "dependencies", "id", "listen", "name", "outbound_policy", "tag", "tls"]
+      else
+        (keys_unsorted | sort) == ["authentication", "dependencies", "id", "listen", "name", "outbound_policy", "tag"]
+      end)) and
     (.id | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and
     (.name | type == "string" and length > 0 and (index("\u0000") == null)) and
     (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
     (.listen | type == "object" and ((keys_unsorted | sort) == ["address", "port"]) and (.address | type == "string") and (.port | type == "number" and floor == . and . >= 1 and . <= 65535)) and
-    (.authentication | type == "object" and ((keys_unsorted | sort) == ["enabled", "password", "username"]) and (.enabled | type == "boolean") and (.username | type == "string" and (index("\u0000") == null) and utf8bytelength <= 255) and (.password | type == "string" and (index("\u0000") == null) and utf8bytelength <= 255) and (if .enabled then (.username | length > 0) and (.password | length > 0) else (.username == "" and .password == "") end)) and
+    (.authentication | type == "object" and ((keys_unsorted | sort) == ["enabled", "password", "username"]) and (.enabled | type == "boolean") and (.username | type == "string" and (index("\u0000") == null)) and (.password | type == "string" and (index("\u0000") == null)) and
+      (if $protocol == "http" then
+         (if .enabled then
+           (.username | length > 0 and utf8bytelength <= 4096 and (test("[\u0000-\u001F\u007F]") | not) and (contains(":") | not)) and
+           (.password | length > 0 and utf8bytelength <= 4096 and (test("[\u0000-\u001F\u007F]") | not))
+          else
+           (.username == "" and .password == "")
+          end)
+       else
+         (.username | utf8bytelength <= 255) and (.password | utf8bytelength <= 255) and
+         (if .enabled then (.username | length > 0) and (.password | length > 0) else (.username == "" and .password == "") end)
+       end)) and
     (.outbound_policy | type == "string" and (. == "default" or . == "direct" or . == "warp")) and
-    (.dependencies | type == "array" and length == 0)
-  ' "${file}" >/dev/null 2>&1
+    (.dependencies | type == "array" and length == 0) and
+    (if $protocol == "http" then
+       (.tls | type == "object" and
+         (if .enabled == false then
+            ((keys_unsorted | sort) == ["enabled"])
+          elif .enabled == true then
+            ((keys_unsorted | sort) == ["certificate_path", "enabled", "key_path", "server_name"]) and
+            (.server_name | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
+            (.certificate_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not)) and
+            (.key_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not))
+          else false end))
+     else true end)
+  ' --arg protocol "${protocol}" "${file}" >/dev/null 2>&1
 }
 
 structured_instance_store_revision() {
@@ -16700,7 +17167,7 @@ structured_instance_store_candidate() (
     create|replace)
       [[ -f "${argument}" && ! -L "${argument}" ]] || return 1
       head -c 1048577 -- "${argument}" > "${temp_dir}/instance.json" || return $?
-      structured_instance_store_validate_instance_argument "${temp_dir}/instance.json" || {
+      structured_instance_store_validate_instance_argument "${temp_dir}/instance.json" "${protocol}" || {
         structured_instance_store_error candidate invalid_instance; return 1;
       }
       ;;
@@ -16940,7 +17407,15 @@ render_structured_instance_inbounds() {
   local protocol snapshot
   protocol=$(structured_instance_store_protocol "${1:-}") || { structured_instance_store_error render_inbounds unsupported_protocol; return 1; }
   snapshot=$(structured_instance_store_snapshot_json "${protocol}" "${2:-}") || return $?
-  jq -c --arg protocol "${protocol}" '.instances[] | {type:$protocol,tag:.tag,listen:.listen.address,listen_port:.listen.port,users:(if .authentication.enabled then [{username:.authentication.username,password:.authentication.password}] else [] end)}' <<< "${snapshot}" 2>/dev/null || { structured_instance_store_error render_inbounds render_failed; return 1; }
+  jq -c --arg protocol "${protocol}" '
+    .instances[] |
+    ({type:$protocol,tag:.tag,listen:.listen.address,listen_port:.listen.port,
+      users:(if .authentication.enabled then [{username:.authentication.username,password:.authentication.password}] else [] end)} +
+      (if $protocol == "http" and .tls.enabled then
+         {tls:.tls}
+       else {}
+       end))
+  ' <<< "${snapshot}" 2>/dev/null || { structured_instance_store_error render_inbounds render_failed; return 1; }
 }
 
 render_structured_instance_route_rules() {
@@ -17074,12 +17549,12 @@ load_plain_proxy_structured_instance() {
   # NUL-delimited fields preserve embedded and trailing newlines in names and
   # credentials; the typed validator has already rejected NUL bytes.
   stream_file=$(mktemp) || return 1
-  if ! jq -j --arg id "${instance_id}" '
+  if ! jq -j --arg id "${instance_id}" --arg protocol "${protocol}" '
       .instances[] | select(.id == $id) |
       [.id, .name, .tag, .listen.address, (.listen.port | tostring),
        (if .authentication.enabled then "y" else "n" end),
        .authentication.username, .authentication.password,
-       .outbound_policy] | .[] | ., "\u0000"
+       .outbound_policy, (if $protocol == "http" then (.tls | tojson) else "" end)] | .[] | ., "\u0000"
     ' <<< "${snapshot}" > "${stream_file}"; then
     rm -f -- "${stream_file}"
     return 1
@@ -17088,7 +17563,7 @@ load_plain_proxy_structured_instance() {
     fields+=("${field}")
   done < "${stream_file}"
   rm -f -- "${stream_file}"
-  [[ ${#fields[@]} -eq 9 ]] || return 1
+  [[ ${#fields[@]} -eq 10 ]] || return 1
 
   INSTALLED=1
   CONFIG_SCHEMA_VERSION=2
@@ -17108,6 +17583,11 @@ load_plain_proxy_structured_instance() {
   SB_MIXED_USERNAME=${fields[6]}
   SB_MIXED_PASSWORD=${fields[7]}
   SB_OUTBOUND_POLICY=${fields[8]}
+  if [[ "${protocol}" == "http" ]]; then
+    SB_HTTP_TLS_JSON=$(jq -c . <<< "${fields[9]}" 2>/dev/null) || return 1
+  else
+    SB_HTTP_TLS_JSON=""
+  fi
 }
 
 load_mixed_structured_instance() {
@@ -17135,7 +17615,7 @@ protocol_instance_state_schema() {
   schema=${schema//\"/}
   schema=${schema//\'/}
   [[ "${schema}" =~ ^[0-9]+$ ]] || return 1
-  [[ "${protocol}" != "socks" || "${schema}" == "2" ]] || return 1
+  [[ "${protocol}" != "socks" && "${protocol}" != "http" || "${schema}" == "2" ]] || return 1
   printf '%s' "${schema}"
 }
 
@@ -17186,6 +17666,7 @@ reset_protocol_instance_runtime_fields() {
   SB_MIXED_INBOUND_TAG=""
   SB_MIXED_LISTEN_ADDRESS=""
   SB_MIXED_STORE_REVISION="0"
+  SB_HTTP_TLS_JSON=""
   SB_HY2_DOMAIN=""
   SB_HY2_PASSWORD=""
   SB_HY2_USER_NAME=""
@@ -17256,9 +17737,9 @@ list_protocol_instance_ids() {
       mixed_structured_state_active || return 1
       jq -r '.instances[].id' "$(mixed_structured_store_file)"
       ;;
-    socks:2)
-      plain_proxy_structured_state_active socks || return 1
-      jq -r '.instances[].id' "$(plain_proxy_structured_store_file socks)"
+    socks:2|http:2)
+      plain_proxy_structured_state_active "${protocol}" || return 1
+      jq -r '.instances[].id' "$(plain_proxy_structured_store_file "${protocol}")"
       ;;
     *)
       return 1
@@ -17314,9 +17795,9 @@ protocol_default_instance_id() {
       mixed_structured_state_active || return 1
       default_id=$(jq -r '.default_instance_id' "$(mixed_structured_store_file)") || return 1
       ;;
-    socks:2)
-      plain_proxy_structured_state_active socks || return 1
-      default_id=$(jq -r '.default_instance_id' "$(plain_proxy_structured_store_file socks)") || return 1
+    socks:2|http:2)
+      plain_proxy_structured_state_active "${protocol}" || return 1
+      default_id=$(jq -r '.default_instance_id' "$(plain_proxy_structured_store_file "${protocol}")") || return 1
       ;;
     *)
       return 1
@@ -17337,7 +17818,7 @@ load_protocol_instance_state() {
   local schema instance_ids listed_instance_id legacy_inbound_tag
 
   protocol=$(normalize_protocol_id "${protocol}") || return 1
-  if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" ]]; then
+  if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" ]]; then
     structured_instance_store_validate_id "${instance_id}" || return 1
   else
     validate_vless_reality_instance_id "${instance_id}" || return 1
@@ -17384,8 +17865,8 @@ load_protocol_instance_state() {
     mixed:2)
       load_mixed_structured_instance "${instance_id}" || return 1
       ;;
-    socks:2)
-      load_plain_proxy_structured_instance socks "${instance_id}" || return 1
+    socks:2|http:2)
+      load_plain_proxy_structured_instance "${protocol}" "${instance_id}" || return 1
       ;;
     *)
       return 1
@@ -17858,6 +18339,12 @@ protocol_state_matches_config() {
     plain_proxy_structured_state_matches_config socks
     return $?
   fi
+  if [[ "${protocol}" == "http" ]]; then
+    # HTTP has no schema-1 fallback either: compare every typed inbound,
+    # including authentication, route policy, and the complete TLS record.
+    plain_proxy_structured_state_matches_config http
+    return $?
+  fi
 
   expected_snapshot=$(render_expected_protocol_state_snapshot "${protocol}") || return 1
   saved_snapshot=$(render_saved_protocol_state_snapshot "${protocol}") || return 1
@@ -18162,6 +18649,7 @@ rebuild_protocol_state_from_config() {
   local mixed_candidate_file="" mixed_candidate_revision=0 mixed_state_file mixed_state_schema
   local mixed_legacy_node_name mixed_legacy_tag mixed_legacy_listen mixed_legacy_policy mixed_stack_listen
   local socks_inbound_count=0 socks_candidate_file="" socks_candidate_revision=0 socks_state_file socks_state_schema
+  local http_inbound_count=0 http_candidate_file="" http_candidate_revision=0 http_state_file http_state_schema
   local backup_state_dir
 
   backup_dir=$(mktemp -d) || return 1
@@ -18333,6 +18821,54 @@ rebuild_protocol_state_from_config() {
     fi
   fi
 
+  # HTTP is structured-only. Capture its complete typed candidate while the
+  # old metadata is still available; the clear below removes root .env files.
+  http_inbound_count=$(jq -r '[.inbounds[]? | select(.type == "http")] | length' "${SINGBOX_CONFIG_FILE}") || {
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+    return 1
+  }
+  [[ "${http_inbound_count}" =~ ^[0-9]+$ ]] || {
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+    return 1
+  }
+  if (( http_inbound_count > 0 )); then
+    http_state_file=$(protocol_state_file http) || {
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+      return 1
+    }
+    http_state_schema=""
+    if [[ -f "${http_state_file}" ]]; then
+      validate_protocol_state_schema http "${http_state_file}" || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+        return 1
+      }
+      http_state_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${http_state_file}" | head -n1) || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+        return 1
+      }
+      http_state_schema=${http_state_schema//\"/}
+      http_state_schema=${http_state_schema//\'/}
+    fi
+    [[ -z "${http_state_schema}" || "${http_state_schema}" == "2" ]] || {
+      printf '[ERROR] http_store_candidate: HTTP legacy state is unsupported; 已保留原状态。\n' >&2
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+      return 1
+    }
+    http_candidate_file="${backup_dir}/http.candidate.json"
+    if ! plain_proxy_config_store_candidate http > "${http_candidate_file}"; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+      return 1
+    fi
+    if [[ -f "$(plain_proxy_structured_store_file http 2>/dev/null || true)" ]]; then
+      http_candidate_revision=$(jq -r '.revision' "$(plain_proxy_structured_store_file http)") || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+        return 1
+      }
+    else
+      http_candidate_revision=0
+    fi
+  fi
+
   clear_protocol_state_cache
   ensure_protocol_state_dir
   if ! rm -rf "${SB_PROTOCOL_STATE_DIR}/vless-reality.d"; then
@@ -18456,6 +18992,12 @@ rebuild_protocol_state_from_config() {
       socks)
         if ! protocol_array_contains "socks" ${rebuilt_protocols[@]+"${rebuilt_protocols[@]}"}; then
           rebuilt_protocols+=("socks")
+        fi
+        continue
+        ;;
+      http)
+        if ! protocol_array_contains "http" ${rebuilt_protocols[@]+"${rebuilt_protocols[@]}"}; then
+          rebuilt_protocols+=("http")
         fi
         continue
         ;;
@@ -18615,6 +19157,17 @@ rebuild_protocol_state_from_config() {
       return 1
     fi
     if ! save_plain_proxy_structured_marker socks; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+      return 1
+    fi
+  fi
+
+  if (( http_inbound_count > 0 )); then
+    if ! publish_structured_instance_store http "${http_candidate_file}" "${http_candidate_revision}"; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
+      return 1
+    fi
+    if ! save_plain_proxy_structured_marker http; then
       abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
       return 1
     fi
@@ -19056,14 +19609,15 @@ main() {
     render_section_title "实例与状态"
     render_menu_item "17" "管理 Mixed 实例"
     render_menu_item "18" "管理 SOCKS 实例"
+    render_menu_item "19" "管理 HTTP 实例"
     echo "0. 退出"
     render_main_menu_footer
-    choice=$(prompt_choice "请选择 [0-18]: " 0 18 "")
+    choice=$(prompt_choice "请选择 [0-19]: " 0 19 "")
 
     if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
       case "${choice}" in
-        0|9|10|12|17|18) ;;
-        *) log_warn "请先通过菜单 17/18 恢复未完成的实例事务；本次未执行其他写操作。"; continue ;;
+        0|9|10|12|17|18|19) ;;
+        *) log_warn "请先通过菜单 17/18/19 恢复对应协议未完成的实例事务；本次未执行其他写操作。"; continue ;;
       esac
     fi
 
@@ -19093,6 +19647,7 @@ main() {
       16) uninstall_script ;;
       17) mixed_instance_management_menu ;;
       18) socks_instance_management_menu ;;
+      19) http_instance_management_menu ;;
       0) exit_script ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac

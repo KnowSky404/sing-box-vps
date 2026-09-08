@@ -87,6 +87,13 @@ resolve_local_tests() {
       tests/socks_export_client.sh \
       tests/plain_proxy_share_links.sh \
       tests/plain_proxy_share_runtime.sh \
+      tests/http_structured_instance_store.sh \
+      tests/http_structured_takeover.sh \
+      tests/http_instance_lifecycle.sh \
+      tests/http_instance_menu.sh \
+      tests/http_export_client.sh \
+      tests/http_export_runtime.sh \
+      tests/http_agent_contract.sh \
       tests/managed_component_graph.sh \
       tests/managed_component_graph_core_startup.sh \
       tests/live_inbound_inventory_guards.sh \
@@ -94,6 +101,7 @@ resolve_local_tests() {
       tests/verification_protocol_probe_vless.sh \
       tests/verification_protocol_probe_hy2.sh \
       tests/verification_protocol_probe_anytls.sh \
+      tests/verification_protocol_probe_http.sh \
       tests/reality_sni_validation.sh \
       tests/generate_config_cleans_temp_files_on_failure.sh \
       tests/generate_config_commits_validated_candidate.sh \
@@ -186,6 +194,7 @@ resolve_remote_scenarios() {
       legacy_takeover_export
       fresh_install_anytls
       fresh_install_socks
+      fresh_install_http
       multi_protocol_coexistence
       upgrade_1_13_to_1_14
       upgrade_rollback_1_13_to_1_14

@@ -343,6 +343,26 @@ Use `nodes --json` to discover `instance_id`, `tag`, listen fields and `instance
 
 Standalone SOCKS integration passed the final local/runtime verification gate. The six focused tests (`plain_proxy_structured_store.sh`, `socks_instance_lifecycle.sh`, `socks_instance_lifecycle_runtime.sh`, `socks_instance_menu.sh`, `socks_structured_takeover.sh`, and `socks_export_client.sh`), two-core check/runtime coverage, menu 5 selection, and final Docker/TCP gate passed. The implementation record documents the remaining boundaries: no TLS/HTTP/SubMan, public native UDP unverified, and the full protocol goal unfinished.
 
+## Standalone HTTP Inbound
+
+`http` is registry preset 6 and management menu 19, separate from Mixed and SOCKS. Its schema-2 marker references `protocols/instances/http.json` (`schema_version:1`). Use the same `instance create|replace|delete|default|recover http --json --yes --expected-revision N` contract; create/replace require `--file`, delete/default require `--id`. No legacy `migrate http` exists. Takeover preserves supported live HTTP authentication, tags, listener, policy and TLS references, and rejects unsupported fields rather than discarding them.
+
+The complete record has the common instance fields plus a required `tls` object. Plain example:
+
+```json
+{
+  "id": "main", "name": "Private HTTP", "tag": "http-in",
+  "listen": {"address": "127.0.0.1", "port": 18080},
+  "authentication": {"enabled": true, "username": "proxy-user", "password": "replace-with-a-secret"},
+  "tls": {"enabled": false},
+  "outbound_policy": "default", "dependencies": []
+}
+```
+
+For TLS replace the entire `tls` value with `{"enabled":true,"server_name":"proxy.example.com","certificate_path":"/etc/proxy/server.crt","key_path":"/etc/proxy/server.key"}`. Supply valid existing certificate/key files; this preset does not issue ACME certificates, mutate the files, or delete them when an instance is removed. Unsupported TLS/provider/transport fields are rejected. Validate referenced files with the target core before publication. Non-loopback writes still require `--allow-public`; new interactive instances default to loopback and authentication. HTTP Basic rejects colons in usernames and ASCII controls in either credential; it does not impose SOCKS's 255-byte credential limit.
+
+The client uses `type:http`, HTTP CONNECT and TCP only, not SOCKS/UoT. Entry TLS is independent of a destination website using HTTPS. TLS export embeds only public certificate trust and server name, never the server private key. Plain links use encoded `http://` userinfo and return `http_plaintext_transport`: use only trusted networks or protected tunnels. TLS trust cannot be carried faithfully in that URI, so TLS links are omitted with `http_tls_uri_unrepresentable` and callers should use `export-client`; TLS node summaries have `shareable=false` and `client_exportable=true`. HTTP is not synchronized to SubMan. `nodes` remains a credential-free summary; `links` and client exports are sensitive. This HTTP preset does not claim all upstream HTTP options or completion of the full protocol goal.
+
 ## WARP Operations
 
 WARP state can be inspected non-interactively:

@@ -14,10 +14,10 @@ source "${TEST_DIR}/install.sh"
 
 registry=$(protocol_registry_json)
 jq -e '
-  length == 5 and
-  ([.[].state_id] | unique | length == 5) and
-  ([.[].agent_id] | unique | length == 5) and
-  ([.[].menu_order] | sort == [1,2,3,4,5]) and
+  length == 6 and
+  ([.[].state_id] | unique | length == 6) and
+  ([.[].agent_id] | unique | length == 6) and
+  ([.[].menu_order] | sort == [1,2,3,4,5,6]) and
   all(.[]; .implemented == true and .available == null and .validated.status == "not_assessed")
 ' >/dev/null <<< "${registry}"
 capabilities=$(agent_capabilities_json)
@@ -26,6 +26,8 @@ jq -e '
   ($plain.operations | index("migrate") == null) and
   ($plain.operations_by_protocol.mixed | index("migrate") != null) and
   ($plain.operations_by_protocol.socks == ["create", "replace", "delete", "default", "recover"]) and
+  ($plain.protocols | index("http") != null) and
+  ($plain.operations_by_protocol.http == ["create", "replace", "delete", "default", "recover"]) and
   .features.mixed_instances.operations == $plain.operations_by_protocol.mixed
 ' >/dev/null <<< "${capabilities}"
 jq -e --argjson registry "${registry}" '
@@ -55,10 +57,11 @@ mkdir -p "${SB_PROTOCOL_STATE_DIR}"
 for protocol in $(list_registered_protocols); do
   protocol_registry_require_handlers "${protocol}"
   [[ "$(protocol_option_to_id "$(protocol_registry_field "${protocol}" menu_order)")" == "${protocol}" ]]
-  if [[ "${protocol}" == "socks" ]]; then
+  if [[ "${protocol}" == "socks" || "${protocol}" == "http" ]]; then
     printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2\n' > "$(protocol_state_file "${protocol}")"
     mkdir -p "${SB_PROTOCOL_STATE_DIR}/instances"
-    cat > "${SB_PROTOCOL_STATE_DIR}/instances/socks.json" <<'SOCKS_STORE_EOF'
+    if [[ "${protocol}" == "socks" ]]; then
+      cat > "${SB_PROTOCOL_STATE_DIR}/instances/socks.json" <<'SOCKS_STORE_EOF'
 {
   "schema_version": 1,
   "protocol": "socks",
@@ -77,12 +80,34 @@ for protocol in $(list_registered_protocols); do
   ]
 }
 SOCKS_STORE_EOF
+    else
+      cat > "${SB_PROTOCOL_STATE_DIR}/instances/http.json" <<'HTTP_STORE_EOF'
+{
+  "schema_version": 1,
+  "protocol": "http",
+  "revision": 1,
+  "default_instance_id": "main",
+  "instances": [
+    {
+      "id": "main",
+      "name": "HTTP contract",
+      "tag": "http-in",
+      "listen": {"address": "127.0.0.1", "port": 1082},
+      "authentication": {"enabled": true, "username": "http-user", "password": "HTTP-CONTRACT-PASSWORD"},
+      "outbound_policy": "default",
+      "dependencies": [],
+      "tls": {"enabled": true, "server_name": "http.example.com", "certificate_path": "/tmp/http-contract.crt", "key_path": "/tmp/http-contract.key"}
+    }
+  ]
+}
+HTTP_STORE_EOF
+    fi
   else
     printf 'CONFIG_SCHEMA_VERSION=1\n' > "$(protocol_state_file "${protocol}")"
   fi
 done
-printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
-[[ "$(list_exportable_client_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nsocks' ]]
+printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
+[[ "$(list_exportable_client_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nsocks\nhttp' ]]
 [[ "$(protocol_registry_field mixed client_export)" == true ]]
 [[ "$(protocol_registry_field mixed multi_instance)" == true ]]
 [[ -z "$(protocol_registry_field mixed subman_type)" ]]
@@ -92,6 +117,12 @@ printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks\nPROTOCOL_STATE
 [[ "$(protocol_registry_field socks default_tag)" == socks-in ]]
 [[ "$(protocol_registry_field socks handlers)" == *load_plain_proxy_structured_instance* ]]
 [[ "$(protocol_registry_field socks handlers)" == *apply_plain_proxy_instance_change* ]]
+[[ "$(protocol_registry_field http menu_order)" == 6 ]]
+[[ "$(protocol_registry_field http default_tag)" == http-in ]]
+[[ "$(protocol_registry_field http state_id)" == http ]]
+[[ "$(protocol_registry_field http listen_networks)" == tcp ]]
+[[ "$(protocol_registry_field http handlers)" == *load_plain_proxy_structured_instance* ]]
+[[ "$(protocol_registry_field http handlers)" == *apply_plain_proxy_instance_change* ]]
 
 # Unknown protocol and future schema must not disappear during reconciliation.
 for invalid in $'INSTALLED_PROTOCOLS=mixed,future-protocol\nPROTOCOL_STATE_VERSION=1' \

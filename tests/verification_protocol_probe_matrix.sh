@@ -22,6 +22,8 @@ LISTENER_HARNESS="${TMP_DIR}/listener-harness.sh"
 PROTOCOLS_DIR="${TMP_DIR}/protocols"
 INDEX_FILE="${PROTOCOLS_DIR}/index.env"
 MIXED_STATE_FILE="${PROTOCOLS_DIR}/mixed.env"
+HTTP_STATE_FILE="${PROTOCOLS_DIR}/http.env"
+HTTP_STORE_FILE="${PROTOCOLS_DIR}/instances/http.json"
 FAILURE_CALLS_FILE="${TMP_DIR}/calls-failure.log"
 GREEN_CALLS_FILE="${TMP_DIR}/calls-green.log"
 mkdir -p "${RED_ARTIFACT_DIR}/meta" "${RED_ARTIFACT_DIR}/scenarios/runtime_smoke"
@@ -38,6 +40,8 @@ awk '
 ' "${REPO_ROOT}/dev/verification/remote/entrypoint.sh" \
   | perl -0pe 's|/root/sing-box-vps/protocols/index.env|'"${INDEX_FILE}"'|g' \
   | perl -0pe 's|/root/sing-box-vps/protocols/mixed.env|'"${MIXED_STATE_FILE}"'|g' \
+  | perl -0pe 's|/root/sing-box-vps/protocols/http.env|'"${HTTP_STATE_FILE}"'|g' \
+  | perl -0pe 's|/root/sing-box-vps/protocols/instances/http.json|'"${HTTP_STORE_FILE}"'|g' \
   > "${TESTABLE_ENTRYPOINT}"
 
 cat > "${LISTENER_HARNESS}" <<EOF_LISTENER
@@ -340,6 +344,80 @@ jq -e --slurpfile server "${SOCKS_CONFIG_FILE}" '
 ' "${SOCKS_PROBE_DIR}/client.json" >/dev/null
 [[ "$(stat -c %a "${SOCKS_PROBE_DIR}/client.json")" == 600 ]]
 grep -Fqx 'RESULT=success' "${SOCKS_PROBE_DIR}/result.env"
+assert_protocol_probe_processes_cleaned "${PROBE_CLIENT_PID_FILE}"
+assert_protocol_probe_processes_cleaned "${PROBE_HTTP_PID_FILE}"
+
+HTTP_ARTIFACT_DIR="${TMP_DIR}/artifacts-http"
+HTTP_CONFIG_FILE="${TMP_DIR}/http-server.json"
+jq '.inbounds[0].type="http" |
+  .inbounds[0].tag="http-in" |
+  .inbounds[0].listen_port=18082 |
+  .inbounds[0].tls={enabled:false}' \
+  "${MIXED_CONFIG_FILE}" > "${HTTP_CONFIG_FILE}"
+mkdir -p "$(dirname "${HTTP_STORE_FILE}")"
+cat > "${HTTP_STATE_FILE}" <<'EOF_HTTP_STATE'
+INSTALLED=1
+CONFIG_SCHEMA_VERSION=2
+EOF_HTTP_STATE
+cat > "${HTTP_STORE_FILE}" <<'EOF_HTTP_STORE'
+{
+  "schema_version": 1,
+  "protocol": "http",
+  "revision": 1,
+  "default_instance_id": "main",
+  "instances": [{
+    "id": "main",
+    "name": "HTTP verification",
+    "tag": "http-in",
+    "listen": {"address": "127.0.0.1", "port": 18082},
+    "authentication": {"enabled": true, "username": "http-user", "password": "http-pass"},
+    "outbound_policy": "default",
+    "tls": {"enabled": false},
+    "dependencies": []
+  }]
+}
+EOF_HTTP_STORE
+bash -s -- "${TESTABLE_ENTRYPOINT}" "${HTTP_ARTIFACT_DIR}" "${HTTP_CONFIG_FILE}" <<'EOF_HTTP_RUN'
+set -euo pipefail
+source "$1"
+VERIFY_ARTIFACT_DIR=$2
+VERIFY_CURRENT_SCENARIO=runtime_smoke
+VERIFY_CURRENT_SCENARIO_DIR=scenarios/runtime_smoke
+verification_execute_single_protocol_probe http "$3"
+EOF_HTTP_RUN
+HTTP_PROBE_DIR="${HTTP_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/http"
+jq -e '
+  .outbounds[0].type=="http" and .outbounds[0].server=="127.0.0.1" and
+  .outbounds[0].server_port==18082 and .outbounds[0].username=="http-user" and
+  .outbounds[0].password=="http-pass" and (.outbounds[0]|has("tls")|not)
+' "${HTTP_PROBE_DIR}/client.json" >/dev/null
+grep -Fqx 'RESULT=success' "${HTTP_PROBE_DIR}/result.env"
+assert_protocol_probe_processes_cleaned "${PROBE_CLIENT_PID_FILE}"
+assert_protocol_probe_processes_cleaned "${PROBE_HTTP_PID_FILE}"
+
+# Enabled HTTP TLS contributes only public SNI/trust settings to the client;
+# certificate_path and key_path are server-side state and must not be copied.
+jq '.inbounds[0].tls={enabled:true,server_name:"http.example.com",certificate_path:"/secret/cert.pem",key_path:"/secret/key.pem"}' \
+  "${HTTP_CONFIG_FILE}" > "${TMP_DIR}/http-tls-server.json"
+jq '.instances[0].tls={enabled:true,server_name:"http.example.com",certificate_path:"/secret/cert.pem",key_path:"/secret/key.pem"}' \
+  "${HTTP_STORE_FILE}" > "${TMP_DIR}/http-tls-store.json"
+cp "${TMP_DIR}/http-tls-store.json" "${HTTP_STORE_FILE}"
+bash -s -- "${TESTABLE_ENTRYPOINT}" "${TMP_DIR}/artifacts-http-tls" "${TMP_DIR}/http-tls-server.json" <<'EOF_HTTP_TLS_RUN'
+set -euo pipefail
+source "$1"
+VERIFY_ARTIFACT_DIR=$2
+VERIFY_CURRENT_SCENARIO=runtime_smoke
+VERIFY_CURRENT_SCENARIO_DIR=scenarios/runtime_smoke
+verification_execute_single_protocol_probe http "$3"
+EOF_HTTP_TLS_RUN
+HTTP_TLS_PROBE_DIR="${TMP_DIR}/artifacts-http-tls/scenarios/runtime_smoke/protocol-probes/http"
+jq -e '
+  .outbounds[0].type=="http" and
+  .outbounds[0].tls=={enabled:true,server_name:"http.example.com",insecure:true} and
+  (.outbounds[0]|has("certificate_path")|not) and
+  (.outbounds[0]|has("key_path")|not)
+' "${HTTP_TLS_PROBE_DIR}/client.json" >/dev/null
+grep -Fqx 'RESULT=success' "${HTTP_TLS_PROBE_DIR}/result.env"
 assert_protocol_probe_processes_cleaned "${PROBE_CLIENT_PID_FILE}"
 assert_protocol_probe_processes_cleaned "${PROBE_HTTP_PID_FILE}"
 

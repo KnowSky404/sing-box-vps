@@ -312,3 +312,30 @@ if [[ "${empty_ip_output}" == *"push_subman_node should not be called"* ]]; then
   printf 'expected no SubMan push call when public IP is empty, got:\n%s\n' "${empty_ip_output}" >&2
   exit 1
 fi
+
+# An unsupported HTTP instance must be reported without fabricating an API
+# type or preventing the existing VLESS/Hysteria2 nodes from synchronizing.
+write_protocol_index "vless-reality,mixed,hy2,anytls,http"
+mkdir -p "${SB_PROTOCOL_STATE_DIR}/instances"
+printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2\n' > "${SB_PROTOCOL_STATE_DIR}/http.env"
+jq -n '{schema_version:1,protocol:"http",revision:1,default_instance_id:"main",
+  instances:[{id:"main",name:"HTTP",tag:"http-in",listen:{address:"127.0.0.1",port:18080},
+    authentication:{enabled:true,username:"http-user",password:"http-secret"},
+    tls:{enabled:false},outbound_policy:"default",dependencies:[]}]}' \
+  > "${SB_PROTOCOL_STATE_DIR}/instances/http.json"
+http_state_hash=$(sha256sum "${SB_PROTOCOL_STATE_DIR}/instances/http.json")
+get_public_ip() { printf '198.51.100.20\n'; }
+push_subman_node() {
+  printf '%s\n' "$1" >> "${PUSH_KEYS_FILE}"
+  printf '%s\n' "$2" >> "${PUSH_PAYLOADS_FILE}"
+}
+: > "${PUSH_KEYS_FILE}"
+: > "${PUSH_PAYLOADS_FILE}"
+http_output=$(push_nodes_to_subman 2>&1)
+[[ "${http_output}" == *'已同步: 2，已跳过: 3，失败: 0'* ]]
+[[ "${http_output}" == *'SubMan 暂不支持协议，已跳过: http'* ]]
+[[ "${http_output}" != *http-secret* ]]
+[[ "$(wc -l < "${PUSH_KEYS_FILE}")" == 2 ]]
+jq -es 'length == 2 and all(.[]; .type == "vless" or .type == "hysteria2")' \
+  "${PUSH_PAYLOADS_FILE}" >/dev/null
+[[ "$(sha256sum "${SB_PROTOCOL_STATE_DIR}/instances/http.json")" == "${http_state_hash}" ]]
