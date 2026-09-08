@@ -4,6 +4,14 @@
 起点为 `cc12c06`，工作区干净；保留参考基线 `0d0bdac` 之后的下载事务修复。
 本文记录完整目标的进展；阶段提交不代表全协议已交付。
 
+## 2026-09-08：Hysteria2 结构化实例管理链路（阶段交付）
+
+从 AnyTLS 阶段继续原始完整目标；保留未跟踪文件 `1`、`2`，未读取或修改。Context7 `/sagernet/sing-box` 核对 Hysteria2 入站的 `users`、TLS、独立 `up_mbps`/`down_mbps`、salamander obfs 与 masquerade 字段；typed 路径固定使用手工 TLS，避免把 ACME/provider 语义压扁。
+
+本阶段将项目 ID `hy2` 接入共享 schema 2 marker + schema 1 JSON store、实例 CAS 事务、监听资源、接管/重建、菜单 25、Agent `nodes`/`links`/`export-client` 和逐用户客户端 outbound。记录严格限定 1–128 个唯一用户、手工 TLS、可独立设置的上下行带宽、salamander obfs 与有限 masquerade；客户端按证书算法发出 Ed25519 兼容性 warning，不输出私钥。旧 Hysteria2 schema 1 仍保留 ACME/provider 路径；重复 legacy 入站继续阻断，只有活动 typed store 才允许结构化多实例。
+
+新增 `tests/structured_hy2_instance_management.sh`，覆盖 schema/字段边界、独立带宽渲染、重复入站判定、重建/接管、Agent 链接、Ed25519 与部分选项 warning、逐用户 Hysteria2 URI/client outbound 和 mock SubMan 同步。最终 `VERIFY_SKIP_LOCAL_TESTS=1 bash dev/verification/run.sh` 运行目录为 `dev/verification-runs/20260908200118`：Docker 14/14 场景成功，包含旧 Hysteria2 共存/接管路径；此前本地门禁也通过（当前环境未配置 `SINGBOX_BINARY_113`/`SINGBOX_BINARY_114`，核心依赖项按测试契约 skip）。容器 QUIC/TCP 回环和静态/mock SubMan 不代表独立 UDP payload、公网、生产或真实 SubMan 证据；本阶段未执行生产操作、推送或外部同步。全协议目标继续未完成。
+
 ## 2026-09-08：普通 VLESS 管理链路接入（阶段交付）
 
 从 VMess 阶段继续原始完整目标；保留未跟踪文件 `1`、`2`，未读取或修改。Context7 `/sagernet/sing-box` 的 VLESS 文档确认普通 VLESS outbound 需要 `server`、`server_port`、`uuid`，可选 `flow`、`network`、TLS 和 transport；项目仍固定验证 sing-box `1.13.18` 与 `1.14.0`。
