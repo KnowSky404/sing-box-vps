@@ -25,6 +25,7 @@ jq -e '
 
 direct_record='{"id":"direct-local","role":"inbound","type":"direct","tag":"direct-local-in","enabled":true,"route_rules":[],"config":{"listen":"127.0.0.1","listen_port":15080}}'
 tun_record='{"id":"tun-local","role":"inbound","type":"tun","tag":"tun-local-in","enabled":true,"route_rules":[],"config":{"interface_name":"tun-sbv","address":["172.19.0.1/30"],"auto_route":false,"strict_route":true}}'
+redirect_record='{"id":"redirect-local","role":"inbound","type":"redirect","tag":"redirect-local-in","enabled":true,"route_rules":[],"config":{"listen":"127.0.0.1","listen_port":15081}}'
 selector_record='{"id":"selector-local","role":"outbound","type":"selector","tag":"selector-local","enabled":true,"route_rules":[{"inbound":["direct-local-in"],"action":"route","outbound":"selector-local"}],"config":{"outbounds":["direct","block"],"default":"direct"}}'
 
 state=$(managed_component_state_default_json)
@@ -90,6 +91,17 @@ validate_managed_listener_resources "${listener_config_file}"
 listener_plan=$(managed_listener_plan_json <<< "${listener_config}")
 jq -e 'any(.[]; .owner == "direct-local-in" and .transport == "tcp" and .port == 15080) and length == 2' <<< "${listener_plan}" >/dev/null
 rm -f "${listener_config_file}"
+
+redirect_config=$(jq -cn --argjson inbounds "$(managed_component_render_json "$(managed_component_state_candidate "${state}" create "${redirect_record}")" | jq '.inbounds')" \
+  '{inbounds:$inbounds,endpoints:[],outbounds:[{type:"direct",tag:"direct"},{type:"block",tag:"block"}],route:{final:"direct",rules:[]}}')
+redirect_config_file=$(mktemp)
+printf '%s\n' "${redirect_config}" > "${redirect_config_file}"
+validate_managed_component_graph "${redirect_config_file}"
+validate_managed_listener_resources "${redirect_config_file}"
+redirect_plan=$(managed_listener_plan_json <<< "${redirect_config}")
+jq -e 'any(.[]; .owner == "redirect-local-in" and .transport == "tcp") and
+  all(.[]; .owner != "redirect-local-in" or .transport == "tcp")' <<< "${redirect_plan}" >/dev/null
+rm -f "${redirect_config_file}"
 
 secret_record=$(jq -c '.config.token = "secret-token-not-for-list"' <<< \
   '{"id":"cf1","role":"inbound","type":"cloudflared","tag":"cf-in","enabled":true,"route_rules":[],"config":{"token":"placeholder"}}')

@@ -9475,7 +9475,7 @@ managed_listener_plan_json() {
       if ($entry.advanced // false) then
         if ($inbound.type == "tun" or $inbound.type == "cloudflared") then []
         else
-          (if $inbound.type == "redirect" then ["tcp", "udp"]
+          (if $inbound.type == "redirect" then ["tcp"]
            elif ($inbound.type == "direct" or $inbound.type == "tproxy") then
              ($inbound.network // ["tcp", "udp"] |
                if type == "string" then [.] elif type == "array" then . else error("invalid_listener") end)
