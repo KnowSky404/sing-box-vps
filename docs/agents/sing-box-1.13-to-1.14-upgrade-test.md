@@ -20,6 +20,7 @@
 | Hysteria2 | 交互安装/修改；nodes/links/export | 修改交互；export/links 敏感 | ACME/provider、obfs、masquerade、Ed25519 client warning |
 | AnyTLS | 交互安装/修改；nodes/links/export | 修改交互；export/links 敏感 | ACME/provider、`client_metadata`、导出 check |
 | Snell | 交互安装/修改；nodes/links/export | 修改交互；export/links 敏感 | 仅 1.14；v5/v6、PSK/user key、v5 obfs/v6 shaping、无标准 URI/SubMan |
+| NaiveProxy | 交互安装/修改；nodes/links/export | 修改交互；export/links 敏感 | 手工 TLS；TCP/UDP listener；`with_naive_outbound`/`libcronet.so` client prerequisite；无标准 URI/SubMan |
 | REALITY 多实例 | 交互菜单 | 交互/变更 | instance state、端口、ShortID、节点名逐实例一致 |
 | REALITY QoS | 交互菜单 | 交互/变更 | `tc` 规则与 `reality-qos.filters` 无残留 |
 | Warp | 菜单 13；`agent warp --json` | 查询只读；变更交互 | endpoint、路由模式、规则集、账户状态 |

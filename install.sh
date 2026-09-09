@@ -81,6 +81,7 @@ readonly SB_PROTOCOL_REGISTRY=(
   'snell|snell|snell|snell|psk|inbound|snell|Snell|snell-in|11|true||tcp|tcp|1.14.0|true|none|snell|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"versions":[5,6],"v5_obfs_modes":["none","http"],"v6_modes":["","default","unshaped","unsafe-raw"],"udp_via_tcp_packet_api":true,"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true}|snell|build_snell_inbound_json,save_snell_state,prompt_snell_install,prompt_snell_update,build_client_snell_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'tuic|tuic|tuic|tuic|tls-quic|inbound|tuic|TUIC|tuic-in|12|true||udp|tcp,udp|1.13.0|true|optional|tuic|quic_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"tls_modes":["manual_certificate"],"quic":true,"congestion_control":["cubic","new_reno","bbr"],"udp_relay_modes":["native","quic"],"udp_over_stream":true,"zero_rtt_handshake":true,"heartbeat":true,"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true}|tuic|build_tuic_inbound_json,save_tuic_state,prompt_tuic_install,prompt_tuic_update,build_client_tuic_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'hysteria|hysteria|hysteria|hysteria|tls-quic|inbound|hysteria|Hysteria|hysteria-in|13|true||udp|tcp,udp|1.13.0|true|optional|hysteria|quic_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"tls_modes":["manual_certificate"],"bandwidth":true,"obfs":true,"quic":true,"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true}|hysteria|build_hysteria_inbound_json,save_hysteria_state,prompt_hysteria_install,prompt_hysteria_update,build_client_hysteria_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'naive|naive|naive|naive|tls-quic|inbound|naive|NaiveProxy|naive-in|14|true||tcp,udp|tcp,udp|1.13.0|true|optional|naive|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"network":["tcp","udp"],"listen_network_selection":true,"quic_congestion_control":["bbr","cubic","reno"],"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true,"outbound_runtime":"with_naive_outbound+libcronet"}|naive|build_naive_inbound_json,save_naive_state,prompt_naive_install,prompt_naive_update,build_client_naive_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
 )
 SB_REALITY_SNI_CANDIDATES=(
   "www.apple.com"
@@ -149,6 +150,16 @@ SB_HYSTERIA_DOWN_MBPS="100"
 SB_HYSTERIA_OBFS_ENABLED="n"
 SB_HYSTERIA_OBFS_PASSWORD=""
 SB_HYSTERIA_QUIC_JSON='{"connection_receive_window":"","disable_path_mtu_discovery":false,"initial_packet_size":0,"max_concurrent_streams":0,"stream_receive_window":""}'
+SB_NAIVE_AUTH_JSON='[]'
+SB_NAIVE_TLS_JSON='{"enabled":false}'
+SB_NAIVE_CLIENT_TRUST="system"
+SB_NAIVE_NETWORK_JSON='["tcp","udp"]'
+SB_NAIVE_QUIC_CONGESTION_CONTROL="bbr"
+SB_NAIVE_QUIC="n"
+SB_NAIVE_INSECURE_CONCURRENCY="0"
+SB_NAIVE_STREAM_RECEIVE_WINDOW=""
+SB_NAIVE_QUIC_SESSION_RECEIVE_WINDOW=""
+SB_NAIVE_EXTRA_HEADERS_JSON='{}'
 SB_HY2_DOMAIN=""
 SB_HY2_PASSWORD=""
 SB_HY2_USER_NAME=""
@@ -807,6 +818,7 @@ default_node_name_for_protocol() {
     snell) suffix="snell" ;;
     tuic) suffix="tuic" ;;
     hysteria) suffix="hysteria" ;;
+    naive) suffix="naive" ;;
     mixed) suffix="mixed" ;;
     *) suffix="${protocol}" ;;
   esac
@@ -825,6 +837,7 @@ normalize_node_name() {
     *+snell) node_name="${node_name%+snell}-snell" ;;
     *+tuic) node_name="${node_name%+tuic}-tuic" ;;
     *+hysteria) node_name="${node_name%+hysteria}-hysteria" ;;
+    *+naive) node_name="${node_name%+naive}-naive" ;;
     *+mixed) node_name="${node_name%+mixed}-mixed" ;;
   esac
 
@@ -2126,7 +2139,7 @@ validate_protocol_state_schema() {
   schema=${schema//\"/}
   schema=${schema//\'/}
   case "${protocol}:${schema:-1}" in
-    vless-reality:1|vless-reality:2|vless-plain:2|mixed:1|mixed:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|hy2:1|hy2:2|anytls:1|anytls:2|snell:2|tuic:2|hysteria:2) return 0 ;;
+    vless-reality:1|vless-reality:2|vless-plain:2|mixed:1|mixed:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|hy2:1|hy2:2|anytls:1|anytls:2|snell:2|tuic:2|hysteria:2|naive:2) return 0 ;;
   esac
   printf '[ERROR] 协议状态格式无法识别；已保留文件，请使用写入该状态的脚本版本恢复。\n' >&2
   return 1
@@ -2336,6 +2349,8 @@ save_plain_proxy_state() {
   local tuic_congestion_control=${SB_TUIC_CONGESTION_CONTROL:-bbr} tuic_auth_timeout_seconds=${SB_TUIC_AUTH_TIMEOUT_SECONDS:-3} tuic_heartbeat_seconds=${SB_TUIC_HEARTBEAT_SECONDS:-10} tuic_zero_rtt_handshake=${SB_TUIC_ZERO_RTT_HANDSHAKE:-n} tuic_udp_relay_mode=${SB_TUIC_UDP_RELAY_MODE:-native} tuic_udp_over_stream=${SB_TUIC_UDP_OVER_STREAM:-n}
   local hysteria_users_json=${SB_HYSTERIA_AUTH_JSON:-[]} hysteria_tls_json=${SB_HYSTERIA_TLS_JSON:-'{"enabled":false}'} hysteria_client_trust=${SB_HYSTERIA_CLIENT_TRUST:-system}
   local hysteria_up_mbps=${SB_HYSTERIA_UP_MBPS:-100} hysteria_down_mbps=${SB_HYSTERIA_DOWN_MBPS:-100} hysteria_obfs_enabled=${SB_HYSTERIA_OBFS_ENABLED:-n} hysteria_obfs_password=${SB_HYSTERIA_OBFS_PASSWORD:-} hysteria_quic_json=${SB_HYSTERIA_QUIC_JSON:-'{"connection_receive_window":"","disable_path_mtu_discovery":false,"initial_packet_size":0,"max_concurrent_streams":0,"stream_receive_window":""}'}
+  local naive_users_json=${SB_NAIVE_AUTH_JSON:-[]} naive_tls_json=${SB_NAIVE_TLS_JSON:-'{"enabled":false}'} naive_client_trust=${SB_NAIVE_CLIENT_TRUST:-system}
+  local naive_network_json=${SB_NAIVE_NETWORK_JSON:-'["tcp","udp"]'} naive_quic_congestion_control=${SB_NAIVE_QUIC_CONGESTION_CONTROL:-bbr} naive_quic=${SB_NAIVE_QUIC:-n} naive_insecure_concurrency=${SB_NAIVE_INSECURE_CONCURRENCY:-0} naive_stream_receive_window=${SB_NAIVE_STREAM_RECEIVE_WINDOW:-} naive_quic_session_receive_window=${SB_NAIVE_QUIC_SESSION_RECEIVE_WINDOW:-} naive_extra_headers_json=${SB_NAIVE_EXTRA_HEADERS_JSON:-'{}'}
 
   structured_instance_store_protocol "${protocol}" >/dev/null || return 1
   case "${protocol}" in
@@ -2410,6 +2425,16 @@ save_plain_proxy_state() {
       hysteria_users_json=${SB_HYSTERIA_AUTH_JSON}; hysteria_tls_json=${SB_HYSTERIA_TLS_JSON}; hysteria_client_trust=${SB_HYSTERIA_CLIENT_TRUST}
       hysteria_up_mbps=${SB_HYSTERIA_UP_MBPS}; hysteria_down_mbps=${SB_HYSTERIA_DOWN_MBPS}; hysteria_obfs_enabled=${SB_HYSTERIA_OBFS_ENABLED}; hysteria_obfs_password=${SB_HYSTERIA_OBFS_PASSWORD}; hysteria_quic_json=${SB_HYSTERIA_QUIC_JSON}
       ;;
+    naive)
+      tag=${SB_MIXED_INBOUND_TAG:-naive-in}; name=${SB_NODE_NAME:-NaiveProxy}
+      naive_users_json=${SB_NAIVE_AUTH_JSON:-[]}; naive_tls_json=${SB_NAIVE_TLS_JSON:-'{"enabled":false}'}; naive_client_trust=${SB_NAIVE_CLIENT_TRUST:-system}
+      naive_network_json=${SB_NAIVE_NETWORK_JSON:-'["tcp","udp"]'}; naive_quic_congestion_control=${SB_NAIVE_QUIC_CONGESTION_CONTROL:-bbr}; naive_quic=${SB_NAIVE_QUIC:-n}
+      naive_insecure_concurrency=${SB_NAIVE_INSECURE_CONCURRENCY:-0}; naive_stream_receive_window=${SB_NAIVE_STREAM_RECEIVE_WINDOW:-}; naive_quic_session_receive_window=${SB_NAIVE_QUIC_SESSION_RECEIVE_WINDOW:-}; naive_extra_headers_json=${SB_NAIVE_EXTRA_HEADERS_JSON:-'{}'}
+      ensure_naive_materials || return 1
+      naive_users_json=${SB_NAIVE_AUTH_JSON}; naive_tls_json=${SB_NAIVE_TLS_JSON}; naive_client_trust=${SB_NAIVE_CLIENT_TRUST}
+      naive_network_json=${SB_NAIVE_NETWORK_JSON}; naive_quic_congestion_control=${SB_NAIVE_QUIC_CONGESTION_CONTROL}; naive_quic=${SB_NAIVE_QUIC}
+      naive_insecure_concurrency=${SB_NAIVE_INSECURE_CONCURRENCY}; naive_stream_receive_window=${SB_NAIVE_STREAM_RECEIVE_WINDOW}; naive_quic_session_receive_window=${SB_NAIVE_QUIC_SESSION_RECEIVE_WINDOW}; naive_extra_headers_json=${SB_NAIVE_EXTRA_HEADERS_JSON}
+      ;;
     *) return 1 ;;
   esac
   state_file=$(protocol_state_file "${protocol}") || return 1
@@ -2429,16 +2454,16 @@ save_plain_proxy_state() {
   [[ -n "${tag}" ]] || return 1
   validate_port_number "${port}" || return 1
   structured_instance_store_validate_address "${listen_address}" || return 1
-  if [[ "${protocol}" != shadowsocks && "${protocol}" != snell && "${protocol}" != tuic && "${protocol}" != hysteria ]]; then
+  if [[ "${protocol}" != shadowsocks && "${protocol}" != snell && "${protocol}" != tuic && "${protocol}" != hysteria && "${protocol}" != naive ]]; then
     case "${auth_enabled}" in y|n) ;; *) return 1 ;; esac
   fi
   if [[ "${protocol}" == http ]]; then
     validate_http_client_connection "${port}" "${auth_enabled}" "${username}" "${password}" || return 1
-  elif [[ "${protocol}" != shadowsocks && "${protocol}" != snell && "${protocol}" != tuic && "${protocol}" != hysteria && "${protocol}" != trojan && "${protocol}" != vmess && "${protocol}" != vless-plain ]]; then
+  elif [[ "${protocol}" != shadowsocks && "${protocol}" != snell && "${protocol}" != tuic && "${protocol}" != hysteria && "${protocol}" != naive && "${protocol}" != trojan && "${protocol}" != vmess && "${protocol}" != vless-plain ]]; then
     validate_mixed_client_connection "${port}" "${auth_enabled}" "${username}" "${password}" || return 1
   fi
   [[ "${policy}" == default || "${policy}" == direct || "${policy}" == warp ]] || return 1
-  if [[ "${protocol}" == http || "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == vless-plain || "${protocol}" == tuic || "${protocol}" == hysteria ]]; then
+  if [[ "${protocol}" == http || "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == vless-plain || "${protocol}" == tuic || "${protocol}" == hysteria || "${protocol}" == naive ]]; then
     jq -e 'type == "object"' <<< "${tls_json}" >/dev/null 2>&1 || return 1
   fi
 
@@ -2451,7 +2476,8 @@ save_plain_proxy_state() {
       --argjson snell_version "${snell_version}" --arg snell_psk "${snell_psk}" --argjson snell_users "${snell_users_json}" --arg snell_obfs_mode "${snell_obfs_mode}" --arg snell_obfs_host "${snell_obfs_host}" --arg snell_mode "${snell_mode}" \
       --argjson tuic_users "${tuic_users_json}" --argjson tuic_tls "${tuic_tls_json}" --arg tuic_trust "${tuic_client_trust}" --arg tuic_cc "${tuic_congestion_control}" --argjson tuic_auth_timeout "${tuic_auth_timeout_seconds}" --argjson tuic_heartbeat "${tuic_heartbeat_seconds}" --argjson tuic_zero_rtt "$([[ "${tuic_zero_rtt_handshake}" == y ]] && printf true || printf false)" --arg tuic_relay "${tuic_udp_relay_mode}" --argjson tuic_uos "$([[ "${tuic_udp_over_stream}" == y ]] && printf true || printf false)" \
       --argjson hysteria_users "${hysteria_users_json}" --argjson hysteria_tls "${hysteria_tls_json}" --arg hysteria_trust "${hysteria_client_trust}" --argjson hysteria_up "${hysteria_up_mbps}" --argjson hysteria_down "${hysteria_down_mbps}" --argjson hysteria_obfs_enabled "$([[ "${hysteria_obfs_enabled}" == y ]] && printf true || printf false)" --arg hysteria_obfs_password "${hysteria_obfs_password}" --argjson hysteria_quic "${hysteria_quic_json}" \
-      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$enabled,username:(if $enabled then $username else "" end),password:(if $enabled then $password else "" end)},outbound_policy:$policy,dependencies:[]} + (if $protocol == "http" then {tls:$tls} elif $protocol == "shadowsocks" then {listen:{address:$address,port:$port,network:$network},authentication:$auth} elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then {authentication:{users:$auth},tls:$tls,transport:$transport,client_trust:$client_trust} elif $protocol == "snell" then {version:$snell_version,authentication:{psk:$snell_psk,users:$snell_users},obfs_mode:$snell_obfs_mode,obfs_host:$snell_obfs_host,mode:$snell_mode} elif $protocol == "tuic" then {authentication:{users:$tuic_users},tls:$tuic_tls,client_trust:$tuic_trust,tuic:{auth_timeout_seconds:$tuic_auth_timeout,congestion_control:$tuic_cc,heartbeat_seconds:$tuic_heartbeat,udp_over_stream:$tuic_uos,udp_relay_mode:$tuic_relay,zero_rtt_handshake:$tuic_zero_rtt}} elif $protocol == "hysteria" then {authentication:{users:$hysteria_users},tls:$hysteria_tls,client_trust:$hysteria_trust,bandwidth:{up_mbps:$hysteria_up,down_mbps:$hysteria_down},obfs:{enabled:$hysteria_obfs_enabled,password:$hysteria_obfs_password},hysteria:$hysteria_quic} else {} end)' > "${record_file}"; then
+      --argjson naive_users "${naive_users_json}" --argjson naive_tls "${naive_tls_json}" --arg naive_trust "${naive_client_trust}" --argjson naive_network "${naive_network_json}" --arg naive_cc "${naive_quic_congestion_control}" --argjson naive_quic "$([[ "${naive_quic}" == y ]] && printf true || printf false)" --argjson naive_insecure_concurrency "${naive_insecure_concurrency}" --arg naive_stream_receive_window "${naive_stream_receive_window}" --arg naive_quic_session_receive_window "${naive_quic_session_receive_window}" --argjson naive_extra_headers "${naive_extra_headers_json}" \
+      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$enabled,username:(if $enabled then $username else "" end),password:(if $enabled then $password else "" end)},outbound_policy:$policy,dependencies:[]} + (if $protocol == "http" then {tls:$tls} elif $protocol == "shadowsocks" then {listen:{address:$address,port:$port,network:$network},authentication:$auth} elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then {authentication:{users:$auth},tls:$tls,transport:$transport,client_trust:$client_trust} elif $protocol == "snell" then {version:$snell_version,authentication:{psk:$snell_psk,users:$snell_users},obfs_mode:$snell_obfs_mode,obfs_host:$snell_obfs_host,mode:$snell_mode} elif $protocol == "tuic" then {authentication:{users:$tuic_users},tls:$tuic_tls,client_trust:$tuic_trust,tuic:{auth_timeout_seconds:$tuic_auth_timeout,congestion_control:$tuic_cc,heartbeat_seconds:$tuic_heartbeat,udp_over_stream:$tuic_uos,udp_relay_mode:$tuic_relay,zero_rtt_handshake:$tuic_zero_rtt}} elif $protocol == "hysteria" then {authentication:{users:$hysteria_users},tls:$hysteria_tls,client_trust:$hysteria_trust,bandwidth:{up_mbps:$hysteria_up,down_mbps:$hysteria_down},obfs:{enabled:$hysteria_obfs_enabled,password:$hysteria_obfs_password},hysteria:$hysteria_quic} elif $protocol == "naive" then {authentication:{users:$naive_users},tls:$naive_tls,client_trust:$naive_trust,listen:{address:$address,port:$port,network:$naive_network},naive:{quic_congestion_control:$naive_cc,quic:$naive_quic,insecure_concurrency:$naive_insecure_concurrency,stream_receive_window:$naive_stream_receive_window,quic_session_receive_window:$naive_quic_session_receive_window,extra_headers:$naive_extra_headers}} else {} end)' > "${record_file}"; then
     rm -f -- "${record_file}" "${candidate_file}"; return 1
   fi
   structured_instance_store_validate_instance_argument "${record_file}" "${protocol}" || {
@@ -2552,6 +2578,10 @@ save_hysteria_state() {
   save_plain_proxy_state hysteria
 }
 
+save_naive_state() {
+  save_plain_proxy_state naive
+}
+
 save_protocol_state() {
   local protocol
   protocol=$(normalize_protocol_id "$1") || return 1
@@ -2571,6 +2601,7 @@ save_protocol_state() {
     snell) save_snell_state ;;
     tuic) save_tuic_state ;;
     hysteria) save_hysteria_state ;;
+    naive) save_naive_state ;;
     *) log_error "不支持的协议状态保存类型: ${protocol}" ;;
   esac
 }
@@ -3310,6 +3341,7 @@ prompt_protocol_update_fields() {
     snell) prompt_snell_update ;;
     tuic) prompt_tuic_update ;;
     hysteria) prompt_hysteria_update ;;
+    naive) prompt_naive_update ;;
     *) log_error "不支持的协议修改类型: ${protocol}" ;;
   esac
 }
@@ -3844,6 +3876,111 @@ prompt_hysteria_install() {
   ensure_hysteria_materials
 }
 
+naive_prompt_users() {
+  local current=${1:-} count i name username password old_name old_username old_password answer users='[]'
+  [[ -n "${current}" ]] || current='[]'
+  count=$(jq -r 'length' <<< "${current}" 2>/dev/null || printf 0)
+  [[ "${count}" =~ ^[1-9][0-9]{0,2}$ && "${count}" -le 128 ]] || count=1
+  read -rp '[NaiveProxy] 用户数量 (1-128，默认当前值): ' answer || return 1
+  [[ -z "${answer}" ]] || count=${answer}
+  [[ "${count}" =~ ^[1-9][0-9]{0,2}$ && "${count}" -le 128 ]] || return 1
+  for ((i=0; i<count; i++)); do
+    old_name=$(jq -r --argjson i "${i}" '.[$i].name // empty' <<< "${current}") || return 1
+    old_username=$(jq -r --argjson i "${i}" '.[$i].username // empty' <<< "${current}") || return 1
+    old_password=$(jq -j --argjson i "${i}" '.[$i].password // "", "\u0001"' <<< "${current}") || return 1
+    old_password=${old_password%$'\1'}
+    name=${old_name:-naive-user-$((i + 1))}
+    read -rp "[NaiveProxy] 用户 $((i + 1)) 名称（默认 ${name}）: " answer || return 1
+    [[ -z "${answer}" ]] || name=$(trim_whitespace "${answer}")
+    [[ -n "${name}" ]] || return 1
+    username=${old_username:-${name}}
+    while true; do
+      read -rp "[NaiveProxy] 用户 ${name} username（默认 ${username}）: " answer || return 1
+      [[ -z "${answer}" ]] || username=$(trim_whitespace "${answer}")
+      [[ -n "${username}" && "${username}" != *:* ]] && break
+      log_warn '[NaiveProxy] username 不能为空且不能包含冒号。' >&2
+    done
+    read -rsp "[NaiveProxy] 用户 ${name} password（留空保持/自动生成）: " answer || return 1
+    printf '\n' >&2
+    password=${answer:-${old_password}}
+    [[ -n "${password}" ]] || password=$(trojan_generate_password) || return 1
+    users=$(jq -cn --argjson users "${users}" --arg name "${name}" --arg username "${username}" --arg password "${password}" '$users + [{name:$name,username:$username,password:$password}]') || return 1
+  done
+  SB_NAIVE_AUTH_JSON=${users}
+}
+
+naive_prompt_network() {
+  local current=${1:-} choice
+  [[ -n "${current}" ]] || current='["tcp","udp"]'
+  choice=$(prompt_choice '[NaiveProxy] 网络 [1=tcp+udp,2=tcp,3=udp]（默认保持）: ' 1 3 "$([[ "${current}" == '["tcp","udp"]' ]] && printf 1 || [[ "${current}" == '["tcp"]' ]] && printf 2 || printf 3)") || return 1
+  case "${choice}" in
+    1) SB_NAIVE_NETWORK_JSON='["tcp","udp"]' ;;
+    2) SB_NAIVE_NETWORK_JSON='["tcp"]' ;;
+    3) SB_NAIVE_NETWORK_JSON='["udp"]' ;;
+  esac
+}
+
+naive_prompt_options() {
+  local current_cc=${1:-bbr} current_quic=${2:-n} current_concurrency=${3:-0}
+  local current_stream=${4:-} current_session=${5:-} current_headers=${6:-} choice answer
+  [[ -n "${current_headers}" ]] || current_headers='{}'
+  choice=$(prompt_choice '[NaiveProxy] QUIC 拥塞控制 [1=bbr,2=cubic,3=reno]（默认保持）: ' 1 3 "$([[ "${current_cc}" == cubic ]] && printf 2 || [[ "${current_cc}" == reno ]] && printf 3 || printf 1)") || return 1
+  case "${choice}" in 2) SB_NAIVE_QUIC_CONGESTION_CONTROL=cubic ;; 3) SB_NAIVE_QUIC_CONGESTION_CONTROL=reno ;; *) SB_NAIVE_QUIC_CONGESTION_CONTROL=bbr ;; esac
+  SB_NAIVE_QUIC=$(prompt_yes_no "[NaiveProxy] 客户端是否启用 QUIC [y/n]（当前 ${current_quic}）: " "${current_quic}") || return 1
+  SB_NAIVE_INSECURE_CONCURRENCY=$(prompt_optional_positive_integer "[NaiveProxy] insecure_concurrency（当前 ${current_concurrency}）: " "${current_concurrency}" "insecure_concurrency") || return 1
+  read -rp "[NaiveProxy] stream_receive_window（当前 ${current_stream}，留空清除）: " answer || return 1
+  [[ -z "${answer}" ]] || current_stream=$(trim_whitespace "${answer}")
+  SB_NAIVE_STREAM_RECEIVE_WINDOW=${current_stream}
+  read -rp "[NaiveProxy] quic_session_receive_window（当前 ${current_session}，留空清除）: " answer || return 1
+  [[ -z "${answer}" ]] || current_session=$(trim_whitespace "${answer}")
+  SB_NAIVE_QUIC_SESSION_RECEIVE_WINDOW=${current_session}
+  read -rp '[NaiveProxy] extra_headers JSON（留空保持）: ' answer || return 1
+  [[ -z "${answer}" ]] || current_headers=${answer}
+  SB_NAIVE_EXTRA_HEADERS_JSON=${current_headers}
+}
+
+prompt_naive_update() {
+  local in_p answer server_name certificate_path key_path trust_choice edit_users tls_json current_headers
+  tls_json=${SB_NAIVE_TLS_JSON:-'{"enabled":false}'}
+  in_p=$(prompt_port '[NaiveProxy] 新端口（当前值，留空保持）: ' "${SB_PORT}") || return 1
+  if [[ "${in_p}" != "${SB_PORT}" ]]; then SB_PORT=${in_p}; check_port_conflict "${SB_PORT}"; fi
+  edit_users=$(prompt_yes_no '[NaiveProxy] 是否重新编辑用户凭据 [y/n]（默认 n）: ' n) || return 1
+  if [[ "${edit_users}" == y ]]; then naive_prompt_users "${SB_NAIVE_AUTH_JSON:-[]}" || return 1; fi
+  server_name=$(jq -r '.server_name // empty' <<< "${tls_json}") || return 1
+  certificate_path=$(jq -r '.certificate_path // empty' <<< "${tls_json}") || return 1
+  key_path=$(jq -r '.key_path // empty' <<< "${tls_json}") || return 1
+  read -rp "[NaiveProxy] TLS server name（当前 ${server_name}，留空保持）: " answer || return 1; [[ -z "${answer}" ]] || server_name=$(trim_whitespace "${answer}")
+  [[ -n "${server_name}" ]] || return 1
+  certificate_path=$(prompt_required_path "[NaiveProxy] TLS 证书绝对路径（当前 ${certificate_path}）: " "${certificate_path}") || return 1
+  key_path=$(prompt_required_path "[NaiveProxy] TLS 私钥绝对路径（当前 ${key_path}）: " "${key_path}") || return 1
+  SB_NAIVE_TLS_JSON=$(jq -cn --arg server_name "${server_name}" --arg certificate_path "${certificate_path}" --arg key_path "${key_path}" '{enabled:true,server_name:$server_name,certificate_path:$certificate_path,key_path:$key_path}') || return 1
+  trust_choice=$(prompt_choice '[NaiveProxy] 客户端证书信任 [1=certificate,2=system]（默认保持）: ' 1 2 "$([[ "${SB_NAIVE_CLIENT_TRUST:-system}" == system ]] && printf 2 || printf 1)") || return 1
+  [[ "${trust_choice}" == 2 ]] && SB_NAIVE_CLIENT_TRUST=system || SB_NAIVE_CLIENT_TRUST=certificate
+  naive_prompt_network "${SB_NAIVE_NETWORK_JSON:-[\"tcp\",\"udp\"]}" || return 1
+  current_headers=${SB_NAIVE_EXTRA_HEADERS_JSON:-}
+  [[ -n "${current_headers}" ]] || current_headers='{}'
+  naive_prompt_options "${SB_NAIVE_QUIC_CONGESTION_CONTROL:-bbr}" "${SB_NAIVE_QUIC:-n}" "${SB_NAIVE_INSECURE_CONCURRENCY:-0}" "${SB_NAIVE_STREAM_RECEIVE_WINDOW:-}" "${SB_NAIVE_QUIC_SESSION_RECEIVE_WINDOW:-}" "${current_headers}" || return 1
+  ensure_naive_materials
+}
+
+prompt_naive_install() {
+  local answer server_name certificate_path key_path trust_choice
+  set_protocol_defaults naive
+  echo -e '\n'"${BLUE}"'--- 配置 NaiveProxy ---'"${NC}" >&2
+  SB_PORT=$(prompt_port '[NaiveProxy] 端口（默认当前值）: ' "${SB_PORT}") || return 1
+  check_port_conflict "${SB_PORT}"
+  naive_prompt_users '[]' || return 1
+  read -rp '[NaiveProxy] TLS server name: ' answer || return 1; server_name=$(trim_whitespace "${answer}"); [[ -n "${server_name}" ]] || return 1
+  certificate_path=$(prompt_required_path '[NaiveProxy] TLS 证书绝对路径: ') || return 1
+  key_path=$(prompt_required_path '[NaiveProxy] TLS 私钥绝对路径: ') || return 1
+  SB_NAIVE_TLS_JSON=$(jq -cn --arg server_name "${server_name}" --arg certificate_path "${certificate_path}" --arg key_path "${key_path}" '{enabled:true,server_name:$server_name,certificate_path:$certificate_path,key_path:$key_path}') || return 1
+  trust_choice=$(prompt_choice '[NaiveProxy] 客户端证书信任 [1=certificate,2=system]（默认 2）: ' 1 2 2) || return 1
+  [[ "${trust_choice}" == 2 ]] && SB_NAIVE_CLIENT_TRUST=system || SB_NAIVE_CLIENT_TRUST=certificate
+  naive_prompt_network "${SB_NAIVE_NETWORK_JSON}" || return 1
+  naive_prompt_options bbr n 0 '' '' '{}' || return 1
+  ensure_naive_materials
+}
+
 prompt_tuic_update() {
   local in_p answer server_name certificate_path key_path trust_choice edit_users trust
   local old_tls=${SB_TUIC_TLS_JSON:-'{"enabled":false}'}
@@ -4194,7 +4331,7 @@ prompt_protocol_install_selection() {
   local installed_protocols=() selected_protocols=()
   local choice raw_choice protocol index installed_list
   local menu_indices=() raw_choices=()
-  local mixed_tombstone=n socks_tombstone=n vless_plain_tombstone=n anytls_tombstone=n hy2_tombstone=n snell_tombstone=n tuic_tombstone=n hysteria_tombstone=n
+  local mixed_tombstone=n socks_tombstone=n vless_plain_tombstone=n anytls_tombstone=n hy2_tombstone=n snell_tombstone=n tuic_tombstone=n hysteria_tombstone=n naive_tombstone=n
 
   SELECTED_PROTOCOLS_CSV=""
 
@@ -4251,6 +4388,12 @@ prompt_protocol_install_selection() {
         installed_protocols+=(hysteria)
       fi
     fi
+    if plain_proxy_inactive_store_snapshot naive >/dev/null 2>&1; then
+      naive_tombstone=y
+      if ! protocol_array_contains naive ${installed_protocols[@]+"${installed_protocols[@]}"}; then
+        installed_protocols+=(naive)
+      fi
+    fi
   fi
   while IFS= read -r protocol; do
     menu_indices+=("$(protocol_registry_field "${protocol}" menu_order)")
@@ -4288,6 +4431,8 @@ prompt_protocol_install_selection() {
         echo "${index}. 新增 TUIC 实例"
       elif [[ "${install_mode}" == "additional" && "${protocol}" == "hysteria" && "${hysteria_tombstone}" == y ]]; then
         echo "${index}. 新增 Hysteria 实例"
+      elif [[ "${install_mode}" == "additional" && "${protocol}" == "naive" && "${naive_tombstone}" == y ]]; then
+        echo "${index}. 新增 NaiveProxy 实例"
       fi
       continue
     fi
@@ -4303,7 +4448,7 @@ prompt_protocol_install_selection() {
       protocol=$(protocol_option_to_id "${index}") || continue
       if protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
         if [[ "${install_mode}" == "additional" &&
-              ("${protocol}" == "vless-reality" || "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria") ]]; then
+              ("${protocol}" == "vless-reality" || "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive") ]]; then
           selected_protocols+=("${protocol}")
         fi
         continue
@@ -4329,7 +4474,7 @@ prompt_protocol_install_selection() {
 
     if protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
       if [[ "${install_mode}" == "additional" &&
-            ("${protocol}" == "vless-reality" || "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria") ]]; then
+            ("${protocol}" == "vless-reality" || "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive") ]]; then
         if ! protocol_array_contains "${protocol}" ${selected_protocols[@]+"${selected_protocols[@]}"}; then
           selected_protocols+=("${protocol}")
         fi
@@ -4628,6 +4773,7 @@ prompt_protocol_install_fields() {
     snell) prompt_snell_install ;;
     tuic) prompt_tuic_install ;;
     hysteria) prompt_hysteria_install ;;
+    naive) prompt_naive_install ;;
     *) log_error "不支持的协议安装类型: ${protocol}" ;;
   esac
 }
@@ -5064,7 +5210,7 @@ anytls_management_build_record() {
 plain_proxy_management_prompt_public_consent() {
   local protocol=${1:-} address=${2:-} tls_json=${3:-} auth_json=${4:-} label tls_enabled=n plaintext=y
   label=$(plain_proxy_management_label "${protocol}") || return 1
-  if [[ ("${protocol}" == http || "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == "vless-plain" || "${protocol}" == anytls || "${protocol}" == hy2 || "${protocol}" == tuic || "${protocol}" == hysteria) && -n "${tls_json}" ]] &&
+  if [[ ("${protocol}" == http || "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == "vless-plain" || "${protocol}" == anytls || "${protocol}" == hy2 || "${protocol}" == tuic || "${protocol}" == hysteria || "${protocol}" == naive) && -n "${tls_json}" ]] &&
      jq -e '.enabled == true' <<< "${tls_json}" >/dev/null 2>&1; then
     tls_enabled=y
   fi
@@ -5381,6 +5527,66 @@ hysteria_management_build_record() {
   structured_instance_store_validate_instance_argument "${destination}" hysteria
 }
 
+naive_management_build_record() {
+  local snapshot=${1:-} operation=${2:-create} target=${3:-} destination=${4:-}
+  local id name tag address port policy answer users tls trust trust_choice edit_users
+  local server_name certificate_path key_path network cc quic insecure_concurrency stream_window session_window headers
+  [[ -f "${snapshot}" && ! -L "${snapshot}" && -n "${destination}" ]] || return 1
+  if [[ "${operation}" == replace ]]; then
+    jq -e --arg id "${target}" 'any(.instances[]; .id == $id)' "${snapshot}" >/dev/null 2>&1 || return 1
+    id=${target}
+    name=$(jq -j --arg id "${id}" '.instances[]|select(.id==$id)|.name,"\u0001"' "${snapshot}") || return 1; name=${name%$'\1'}
+    tag=$(jq -j --arg id "${id}" '.instances[]|select(.id==$id)|.tag,"\u0001"' "${snapshot}") || return 1; tag=${tag%$'\1'}
+    address=$(jq -j --arg id "${id}" '.instances[]|select(.id==$id)|.listen.address,"\u0001"' "${snapshot}") || return 1; address=${address%$'\1'}
+    port=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.listen.port' "${snapshot}") || return 1
+    users=$(jq -c --arg id "${id}" '.instances[]|select(.id==$id)|.authentication.users' "${snapshot}") || return 1
+    tls=$(jq -c --arg id "${id}" '.instances[]|select(.id==$id)|.tls' "${snapshot}") || return 1
+    trust=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.client_trust' "${snapshot}") || return 1
+    network=$(jq -c --arg id "${id}" '.instances[]|select(.id==$id)|.listen.network' "${snapshot}") || return 1
+    cc=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.naive.quic_congestion_control' "${snapshot}") || return 1
+    quic=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|if .naive.quic then "y" else "n" end' "${snapshot}") || return 1
+    insecure_concurrency=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.naive.insecure_concurrency' "${snapshot}") || return 1
+    stream_window=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.naive.stream_receive_window' "${snapshot}") || return 1
+    session_window=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.naive.quic_session_receive_window' "${snapshot}") || return 1
+    headers=$(jq -c --arg id "${id}" '.instances[]|select(.id==$id)|.naive.extra_headers' "${snapshot}") || return 1
+    policy=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.outbound_policy' "${snapshot}") || return 1
+  else
+    id=$(plain_proxy_management_next_id naive "${snapshot}") || return 1
+    name="NaiveProxy ${id}"; tag=$(plain_proxy_management_next_tag naive "${snapshot}") || return 1
+    address=127.0.0.1; port=1080
+    users=$(jq -cn --arg password "$(trojan_generate_password)" '[{name:"naive-user-1",username:"naive-user-1",password:$password}]') || return 1
+    tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'
+    trust=system; network='["tcp","udp"]'; cc=bbr; quic=n; insecure_concurrency=0; stream_window=""; session_window=""; headers='{}'; policy=default
+  fi
+  read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1; [[ -z "${answer}" ]] || name=$(trim_whitespace "${answer}")
+  if [[ "${operation}" == create ]]; then
+    read -rp "实例 ID（默认 ${id}）: " answer || return 1; [[ -z "${answer}" ]] || id=$(trim_whitespace "${answer}"); structured_instance_store_validate_id "${id}" || return 1
+    read -rp "入口 tag（默认 ${tag}）: " answer || return 1; [[ -z "${answer}" ]] || tag=$(trim_whitespace "${answer}")
+  fi
+  read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}"); structured_instance_store_validate_address "${address}" || return 1
+  port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
+  policy=$(prompt_instance_outbound_policy '出站策略' "${policy:-default}") || return 1
+  if [[ "${operation}" == create ]]; then edit_users=y; else edit_users=$(prompt_yes_no '[NaiveProxy] 是否重新编辑用户凭据 [y/n]（默认 n）: ' n) || return 1; fi
+  if [[ "${edit_users}" == y ]]; then naive_prompt_users "${users}" || return 1; users=${SB_NAIVE_AUTH_JSON}; fi
+  server_name=$(jq -r '.server_name // empty' <<< "${tls}") || return 1
+  certificate_path=$(jq -r '.certificate_path // empty' <<< "${tls}") || return 1
+  key_path=$(jq -r '.key_path // empty' <<< "${tls}") || return 1
+  while [[ -z "${server_name}" ]]; do read -rp '[NaiveProxy] TLS server name: ' answer || return 1; server_name=$(trim_whitespace "${answer}"); done
+  certificate_path=$(prompt_required_path "[NaiveProxy] TLS 证书绝对路径（当前 ${certificate_path}）: " "${certificate_path}") || return 1
+  key_path=$(prompt_required_path "[NaiveProxy] TLS 私钥绝对路径（当前 ${key_path}）: " "${key_path}") || return 1
+  tls=$(jq -cn --arg server_name "${server_name}" --arg certificate_path "${certificate_path}" --arg key_path "${key_path}" '{enabled:true,server_name:$server_name,certificate_path:$certificate_path,key_path:$key_path}') || return 1
+  trust_choice=$(prompt_choice '[NaiveProxy] 客户端证书信任 [1=certificate,2=system]（默认保持）: ' 1 2 "$([[ "${trust}" == system ]] && printf 2 || printf 1)") || return 1
+  [[ "${trust_choice}" == 2 ]] && trust=system || trust=certificate
+  naive_prompt_network "${network}" || return 1; network=${SB_NAIVE_NETWORK_JSON}
+  naive_prompt_options "${cc}" "${quic}" "${insecure_concurrency}" "${stream_window}" "${session_window}" "${headers}" || return 1
+  cc=${SB_NAIVE_QUIC_CONGESTION_CONTROL}; quic=${SB_NAIVE_QUIC}; insecure_concurrency=${SB_NAIVE_INSECURE_CONCURRENCY}; stream_window=${SB_NAIVE_STREAM_RECEIVE_WINDOW}; session_window=${SB_NAIVE_QUIC_SESSION_RECEIVE_WINDOW}; headers=${SB_NAIVE_EXTRA_HEADERS_JSON}
+  answer=$(plain_proxy_management_prompt_public_consent naive "${address}" "${tls}") || return 1
+  if [[ "${address}" != 127.* && "${address}" != ::1 && "${answer}" != y ]]; then log_info '未确认 NaiveProxy 公网暴露，已取消实例变更。'; return 2; fi
+  PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC=${answer}; MIXED_MANAGEMENT_ALLOW_PUBLIC=${answer}
+  jq -n -cS --arg id "${id}" --arg name "${name}" --arg tag "${tag}" --arg address "${address}" --argjson port "${port}" --argjson users "${users}" --argjson tls "${tls}" --arg trust "${trust}" --argjson network "${network}" --arg cc "${cc}" --arg quic "${quic}" --argjson insecure_concurrency "${insecure_concurrency}" --arg stream_window "${stream_window}" --arg session_window "${session_window}" --argjson headers "${headers}" --arg policy "${policy}" '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port,network:$network},authentication:{users:$users},tls:$tls,client_trust:$trust,naive:{extra_headers:$headers,insecure_concurrency:$insecure_concurrency,quic:($quic=="y"),quic_congestion_control:$cc,quic_session_receive_window:$session_window,stream_receive_window:$stream_window},outbound_policy:$policy,dependencies:[]}' > "${destination}" || return 1
+  structured_instance_store_validate_instance_argument "${destination}" naive
+}
+
 plain_proxy_management_build_record() {
   local protocol=${1:-} snapshot=${2:-} operation=${3:-create} target=${4:-} destination=${5:-}
   local id name tag address port auth username password policy answer label tls_json
@@ -5421,6 +5627,10 @@ plain_proxy_management_build_record() {
   fi
   if [[ "${protocol}" == hysteria ]]; then
     hysteria_management_build_record "${snapshot}" "${operation}" "${target}" "${destination}"
+    return $?
+  fi
+  if [[ "${protocol}" == naive ]]; then
+    naive_management_build_record "${snapshot}" "${operation}" "${target}" "${destination}"
     return $?
   fi
   label=$(plain_proxy_management_label "${protocol}") || return 1
@@ -5749,6 +5959,10 @@ hysteria_instance_management_menu() {
   plain_proxy_instance_management_menu hysteria "$@"
 }
 
+naive_instance_management_menu() {
+  plain_proxy_instance_management_menu naive "$@"
+}
+
 plain_proxy_instance_management_menu() (
   local protocol=${1:-} requested_operation=${2:-} temp_dir choice snapshot revision target result status one_shot=n
   local record_file label confirmation
@@ -5799,6 +6013,8 @@ plain_proxy_instance_management_menu() (
         echo "字段：用户 UUID/密码、手动 TLS、client_trust、QUIC 拥塞与 UDP relay 选项（均为类型化输入）"
       elif [[ "${protocol}" == hysteria ]]; then
         echo "字段：用户 auth_str、手动 TLS、client_trust、必填带宽、obfs 与 QUIC 选项（均为类型化输入）"
+      elif [[ "${protocol}" == naive ]]; then
+        echo "字段：NaiveProxy 用户、TCP/UDP 网络、手动 TLS、client_trust 与客户端 QUIC 参数（均为类型化输入）"
       fi
       choice=$(prompt_choice "请选择 [0-7]: " 0 7 "") || return 1
     fi
@@ -5847,7 +6063,7 @@ plain_proxy_instance_management_menu() (
         ;;
       5) log_warn "${label} 没有 legacy schema 1 可迁移。" ;;
       7)
-        jq -r --arg protocol "${protocol}" '.instances[] | "\(.id)\t\(.name)\t\(.listen.address):\(.listen.port)" + (if $protocol == "shadowsocks" then "\tnetwork=\(.listen.network|join(","))\tmethod=\(.authentication.method)\tusers=\(.authentication.users|length)" elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then "\tusers=\(.authentication.users|length)\ttransport=\(.transport.type)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" elif $protocol == "anytls" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" elif $protocol == "hy2" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)\tbandwidth=\(.bandwidth.up_mbps // "-")/\(.bandwidth.down_mbps // "-")\tobfs=\(.obfs.enabled)" elif $protocol == "snell" then "\tversion=\(.version)\tusers=\(.authentication.users|length)\tobfs=\(.obfs_mode // .mode)" elif $protocol == "tuic" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)\tcc=\(.tuic.congestion_control)\trelay=\(.tuic.udp_relay_mode // (if .tuic.udp_over_stream then "udp_over_stream" else "-" end))" elif $protocol == "hysteria" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)\tbandwidth=\(.bandwidth.up_mbps)/\(.bandwidth.down_mbps)\tobfs=\(.obfs.enabled)" else "\tauth=\(.authentication.enabled)\tpolicy=\(.outbound_policy)" + (if $protocol == "http" then "\ttls=\(.tls.enabled)" else "" end) end)' "${snapshot}" || return $?
+        jq -r --arg protocol "${protocol}" '.instances[] | "\(.id)\t\(.name)\t\(.listen.address):\(.listen.port)" + (if $protocol == "shadowsocks" then "\tnetwork=\(.listen.network|join(","))\tmethod=\(.authentication.method)\tusers=\(.authentication.users|length)" elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then "\tusers=\(.authentication.users|length)\ttransport=\(.transport.type)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" elif $protocol == "anytls" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" elif $protocol == "hy2" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)\tbandwidth=\(.bandwidth.up_mbps // "-")/\(.bandwidth.down_mbps // "-")\tobfs=\(.obfs.enabled)" elif $protocol == "snell" then "\tversion=\(.version)\tusers=\(.authentication.users|length)\tobfs=\(.obfs_mode // .mode)" elif $protocol == "tuic" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)\tcc=\(.tuic.congestion_control)\trelay=\(.tuic.udp_relay_mode // (if .tuic.udp_over_stream then "udp_over_stream" else "-" end))" elif $protocol == "hysteria" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)\tbandwidth=\(.bandwidth.up_mbps)/\(.bandwidth.down_mbps)\tobfs=\(.obfs.enabled)" elif $protocol == "naive" then "\tnetwork=\(.listen.network|join(","))\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)\tcc=\(.naive.quic_congestion_control)" else "\tauth=\(.authentication.enabled)\tpolicy=\(.outbound_policy)" + (if $protocol == "http" then "\ttls=\(.tls.enabled)" else "" end) end)' "${snapshot}" || return $?
         [[ "${one_shot}" == y ]] && return 0
         ;;
       *) log_warn "无效选项，请重新选择。" ;;
@@ -5996,6 +6212,10 @@ install_protocols_interactive() {
        ! protocol_array_contains hysteria ${installed_protocols[@]+"${installed_protocols[@]}"}; then
       installed_protocols+=(hysteria)
     fi
+    if plain_proxy_inactive_store_snapshot naive >/dev/null 2>&1 &&
+       ! protocol_array_contains naive ${installed_protocols[@]+"${installed_protocols[@]}"}; then
+      installed_protocols+=(naive)
+    fi
     prompt_protocol_install_selection "additional" || return 0
     IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
 
@@ -6104,6 +6324,14 @@ install_protocols_interactive() {
       log_warn "Hysteria 实例不能与其他新增协议合并操作；请先单独管理 Hysteria 实例。"
       return 0
     fi
+    if protocol_array_contains "naive" "${selected_protocols[@]}"; then
+      if [[ ${#selected_protocols[@]} -eq 1 ]]; then
+        naive_instance_management_menu create || return $?
+        return 0
+      fi
+      log_warn "NaiveProxy 实例不能与其他新增协议合并操作；请先单独管理 NaiveProxy 实例。"
+      return 0
+    fi
     snapshot_dir=$(create_managed_state_snapshot) || {
       log_error "无法创建配置状态事务快照。"
       return 1
@@ -6171,6 +6399,19 @@ set_protocol_defaults() {
       SB_MIXED_INBOUND_TAG="socks-in"
       SB_MIXED_LISTEN_ADDRESS="127.0.0.1"
       SB_MIXED_STORE_REVISION="0"
+      SB_OUTBOUND_POLICY="default"
+      ;;
+    naive)
+      SB_PROTOCOL="naive"
+      SB_NODE_NAME="$(default_node_name_for_protocol "naive")"
+      SB_PORT="$(pick_random_high_port)"
+      SB_SNI=""; SB_UUID=""; SB_PUBLIC_KEY=""; SB_PRIVATE_KEY=""; SB_SHORT_ID_1=""; SB_SHORT_ID_2=""
+      SB_MIXED_AUTH_ENABLED="y"; SB_MIXED_USERNAME=""; SB_MIXED_PASSWORD=""
+      SB_INSTANCE_ID=""; SB_MIXED_INSTANCE_ID=""; SB_MIXED_INBOUND_TAG="naive-in"
+      SB_MIXED_LISTEN_ADDRESS="127.0.0.1"; SB_MIXED_STORE_REVISION="0"
+      SB_NAIVE_AUTH_JSON='[]'; SB_NAIVE_TLS_JSON='{"enabled":false}'; SB_NAIVE_CLIENT_TRUST="system"
+      SB_NAIVE_NETWORK_JSON='["tcp","udp"]'; SB_NAIVE_QUIC_CONGESTION_CONTROL="bbr"; SB_NAIVE_QUIC="n"
+      SB_NAIVE_INSECURE_CONCURRENCY="0"; SB_NAIVE_STREAM_RECEIVE_WINDOW=""; SB_NAIVE_QUIC_SESSION_RECEIVE_WINDOW=""; SB_NAIVE_EXTRA_HEADERS_JSON='{}'
       SB_OUTBOUND_POLICY="default"
       ;;
     tuic)
@@ -9850,7 +10091,7 @@ load_protocol_state() {
       mixed_schema=${mixed_schema//\'/}
     fi
   fi
-  if [[ ("${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria") && -f "${state_file}" ]]; then
+  if [[ ("${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive") && -f "${state_file}" ]]; then
     socks_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" | head -n1) || return 1
     socks_schema=${socks_schema//\"/}
     socks_schema=${socks_schema//\'/}
@@ -9895,7 +10136,7 @@ load_protocol_state() {
   # SOCKS has no legacy .env representation.  Dispatch only a validated
   # schema-2 marker to the typed store and reject every older/unknown shape
   # before it can be sourced as shell code.
-  if [[ "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || ("${protocol}" == "anytls" && "${socks_schema}" == "2") || ("${protocol}" == "hy2" && "${socks_schema}" == "2") || ("${protocol}" == "snell" && "${socks_schema}" == "2") || ("${protocol}" == "tuic" && "${socks_schema}" == "2") || ("${protocol}" == "hysteria" && "${socks_schema}" == "2") ]]; then
+  if [[ "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || ("${protocol}" == "anytls" && "${socks_schema}" == "2") || ("${protocol}" == "hy2" && "${socks_schema}" == "2") || ("${protocol}" == "snell" && "${socks_schema}" == "2") || ("${protocol}" == "tuic" && "${socks_schema}" == "2") || ("${protocol}" == "hysteria" && "${socks_schema}" == "2") || ("${protocol}" == "naive" && "${socks_schema}" == "2") ]]; then
     [[ "${socks_schema}" == "2" ]] || return 1
     plain_proxy_structured_marker_is_valid "${state_file}" || return 1
     load_plain_proxy_structured_instance "${protocol}" || return 1
@@ -10308,6 +10549,50 @@ ensure_hysteria_materials() {
   SB_HYSTERIA_QUIC_JSON=${quic_json}
 }
 
+ensure_naive_materials() {
+  local user_json tls_json network_json extra_headers_json
+  local window_pattern='^$|^[0-9]+( ?(B|KB|MB|GB))$'
+
+  user_json=$(jq -c . <<< "${SB_NAIVE_AUTH_JSON:-[]}") || return 1
+  if [[ "${user_json}" == "[]" ]]; then
+    user_json=$(jq -cn --arg password "$(trojan_generate_password)" '[{name:"naive-user-1",username:"naive-user-1",password:$password}]') || return 1
+  fi
+  jq -e 'type == "array" and length >= 1 and length <= 128 and
+    all(.[]; type == "object" and (keys|sort) == ["name","password","username"] and
+      (.name|type == "string" and length > 0 and utf8bytelength <= 256 and (test("[\u0000-\u001F\u007F]")|not)) and
+      (.username|type == "string" and length > 0 and utf8bytelength <= 4096 and (contains(":")|not) and (test("[\u0000-\u001F\u007F]")|not)) and
+      (.password|type == "string" and length > 0 and utf8bytelength <= 4096 and (test("[\u0000-\u001F\u007F]")|not))) and
+    (map(.name)|unique|length) == length and (map(.username)|unique|length) == length' <<< "${user_json}" >/dev/null || return 1
+  SB_NAIVE_AUTH_JSON=${user_json}
+
+  tls_json=$(jq -c . <<< "${SB_NAIVE_TLS_JSON:-'{"enabled":false}'}") || return 1
+  jq -e 'type == "object" and .enabled == true and (keys|sort) == ["certificate_path","enabled","key_path","server_name"] and
+    (.server_name|type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]")|not)) and
+    (.certificate_path|type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]")|not)) and
+    (.key_path|type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]")|not))' <<< "${tls_json}" >/dev/null || return 1
+  SB_NAIVE_TLS_JSON=${tls_json}
+  SB_NAIVE_CLIENT_TRUST=${SB_NAIVE_CLIENT_TRUST:-system}
+  [[ "${SB_NAIVE_CLIENT_TRUST}" == certificate || "${SB_NAIVE_CLIENT_TRUST}" == system ]] || return 1
+
+  network_json=$(jq -c . <<< "${SB_NAIVE_NETWORK_JSON:-'["tcp","udp"]'}") || return 1
+  jq -e 'type == "array" and length >= 1 and length <= 2 and all(.[]; . == "tcp" or . == "udp") and . == (sort|unique)' <<< "${network_json}" >/dev/null || return 1
+  SB_NAIVE_NETWORK_JSON=${network_json}
+  SB_NAIVE_QUIC_CONGESTION_CONTROL=${SB_NAIVE_QUIC_CONGESTION_CONTROL:-bbr}
+  [[ "${SB_NAIVE_QUIC_CONGESTION_CONTROL}" == bbr || "${SB_NAIVE_QUIC_CONGESTION_CONTROL}" == cubic || "${SB_NAIVE_QUIC_CONGESTION_CONTROL}" == reno ]] || return 1
+  SB_NAIVE_QUIC=${SB_NAIVE_QUIC:-n}
+  [[ "${SB_NAIVE_QUIC}" == y || "${SB_NAIVE_QUIC}" == n ]] || return 1
+  SB_NAIVE_INSECURE_CONCURRENCY=${SB_NAIVE_INSECURE_CONCURRENCY:-0}
+  [[ "${SB_NAIVE_INSECURE_CONCURRENCY}" =~ ^[0-9]+$ && "${SB_NAIVE_INSECURE_CONCURRENCY}" -le 1024 ]] || return 1
+  SB_NAIVE_STREAM_RECEIVE_WINDOW=${SB_NAIVE_STREAM_RECEIVE_WINDOW:-}
+  SB_NAIVE_QUIC_SESSION_RECEIVE_WINDOW=${SB_NAIVE_QUIC_SESSION_RECEIVE_WINDOW:-}
+  [[ "${SB_NAIVE_STREAM_RECEIVE_WINDOW}" =~ ${window_pattern} && "${SB_NAIVE_QUIC_SESSION_RECEIVE_WINDOW}" =~ ${window_pattern} ]] || return 1
+  extra_headers_json=$(jq -c . <<< "${SB_NAIVE_EXTRA_HEADERS_JSON:-'{}'}") || return 1
+  jq -e 'type == "object" and length <= 64 and all(to_entries[];
+    (.key | type == "string" and length > 0 and length <= 128 and (test("^[!#$%&\\u0027*+.^_`|~0-9A-Za-z-]+$"))) and
+    (.value | type == "string" and utf8bytelength <= 4096 and (test("[\u0000-\u001F\u007F]")|not)))' <<< "${extra_headers_json}" >/dev/null || return 1
+  SB_NAIVE_EXTRA_HEADERS_JSON=${extra_headers_json}
+}
+
 stack_inbound_listen_address() {
   ensure_stack_mode_state_loaded
 
@@ -10537,6 +10822,16 @@ build_hysteria_inbound_json() {
   }
   store_file=$(plain_proxy_structured_store_file hysteria) || return 1
   render_structured_instance_inbounds hysteria "${store_file}"
+}
+
+build_naive_inbound_json() {
+  local store_file
+  plain_proxy_structured_state_active naive || {
+    printf '[ERROR] NaiveProxy 结构化状态缺失或无效，未生成入站。\n' >&2
+    return 1
+  }
+  store_file=$(plain_proxy_structured_store_file naive) || return 1
+  render_structured_instance_inbounds naive "${store_file}"
 }
 
 build_shadowsocks_instance_outbounds() (
@@ -10862,7 +11157,7 @@ build_certificate_provider_for_protocol() {
   protocol=$(normalize_protocol_id "$1") || return 1
 
   case "${protocol}" in
-    vless-reality|vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|snell|tuic|hysteria) return 0 ;; # HTTP/VLESS/Trojan/VMess/Snell/TUIC/Hysteria use no certificate provider.
+    vless-reality|vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|snell|tuic|hysteria|naive) return 0 ;; # HTTP/VLESS/Trojan/VMess/Snell/TUIC/Hysteria/Naive use no certificate provider.
     hy2) build_hy2_certificate_provider_json ;;
     anytls) build_anytls_certificate_provider_json ;;
     *) return 1 ;;
@@ -10887,6 +11182,7 @@ build_inbound_for_protocol() {
     snell) build_snell_inbound_json ;;
     tuic) build_tuic_inbound_json ;;
     hysteria) build_hysteria_inbound_json ;;
+    naive) build_naive_inbound_json ;;
     *) return 1 ;;
   esac
 }
@@ -11009,7 +11305,7 @@ instance_outbound_requires_warp() {
       vless-reality)
         vless_reality_has_warp_outbound_policy && return 0
         ;;
-      vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|anytls|hy2|snell|tuic|hysteria)
+      vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|anytls|hy2|snell|tuic|hysteria|naive)
         state_file=$(protocol_state_file "${protocol}") || return 1
         schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" 2>/dev/null || true)
         schema=${schema//\"/}
@@ -11047,7 +11343,7 @@ build_protocol_route_rules() {
         jq -n '[{ "inbound": "mixed-in", "action": "sniff" }]'
       fi
       ;;
-      vless-plain|socks|http|shadowsocks|trojan|vmess|hysteria)
+      vless-plain|socks|http|shadowsocks|trojan|vmess|hysteria|naive)
       local state_file
       state_file=$(protocol_state_file "${protocol}") || return 1
       plain_proxy_structured_state_active "${protocol}" || return 1
@@ -11090,6 +11386,10 @@ build_protocol_route_rules() {
     hysteria)
       plain_proxy_structured_state_active hysteria || return 1
       render_structured_instance_route_rules hysteria "$(plain_proxy_structured_store_file hysteria)"
+      ;;
+    naive)
+      plain_proxy_structured_state_active naive || return 1
+      render_structured_instance_route_rules naive "$(plain_proxy_structured_store_file naive)"
       ;;
     *) return 1 ;;
   esac
@@ -17079,6 +17379,109 @@ build_client_hysteria_outbounds() (
   cat "${tmpdir}/final.jsonl"
 )
 
+build_client_naive_outbounds() (
+  local public_ip=${1:-} store_override=${2:-} store_file snapshot tmpdir output_file raw_file
+  local instance_id listen_address server_address raw_outbound
+  local tls_json trust server_name certificate_path certificate_pem
+  local expected_count output_count
+
+  if [[ -n "${store_override}" ]]; then
+    store_file=${store_override}
+  else
+    store_file=$(plain_proxy_structured_store_file naive) || return 1
+  fi
+  [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  validate_structured_instance_store naive "${store_file}" || return 1
+  public_ip=${public_ip:-$(get_public_ip)}
+  [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
+  snapshot=$(structured_instance_store_snapshot_json naive "${store_file}") || return 1
+  tmpdir=$(mktemp -d) || return 1
+  trap 'rm -rf -- "${tmpdir}"' EXIT
+  output_file="${tmpdir}/outbounds.jsonl"
+  : > "${output_file}" || return 1
+
+  # The official Linux pure-Go Naive outbound is built with
+  # with_naive_outbound and loads libcronet at runtime.  `sing-box check`
+  # cannot prove that the shared library is present, so keep the requirement
+  # explicit in the generated material and the Agent warning instead of
+  # claiming a portable outbound for every custom build.
+  printf '[WARN] NaiveProxy 客户端 outbound 需要带 with_naive_outbound 的 sing-box，并在运行时加载 libcronet.so；当前导出未声称库文件已部署。\n' >&2
+
+  while IFS= read -r -d '' instance_id; do
+    [[ -n "${instance_id}" ]] || return 1
+    listen_address=$(jq -er --arg id "${instance_id}" \
+      '.instances[] | select(.id == $id) | .listen.address' <<< "${snapshot}") || return 1
+    case "${listen_address}" in
+      0.0.0.0|::)
+        server_address=${public_ip}
+        ;;
+      127.*|::1)
+        server_address=${listen_address}
+        printf '[WARN] NaiveProxy 实例 %s 绑定回环地址 %s；导出仅供本机使用，未宣称公网可达。\n' \
+          "${instance_id}" "${listen_address}" >&2
+        ;;
+      *)
+        server_address=${listen_address}
+        ;;
+    esac
+    [[ -n "${server_address}" ]] || return 1
+    raw_file="${tmpdir}/raw-${instance_id}.jsonl"
+    if ! jq -c --arg id "${instance_id}" --arg server "${server_address}" '
+      .instances[] | select(.id == $id) as $instance |
+      $instance.authentication.users[] as $user |
+      {type:"naive",tag:("naive-" + $instance.id + "-user-" + ($user.name | @base64)),
+       server:$server,server_port:$instance.listen.port,username:$user.username,password:$user.password,
+       _tls:$instance.tls,_client_trust:$instance.client_trust,_naive:$instance.naive}
+    ' <<< "${snapshot}" > "${raw_file}"; then
+      return 1
+    fi
+    while IFS= read -r raw_outbound; do
+      [[ -n "${raw_outbound}" ]] || continue
+      tls_json=$(jq -ec '._tls' <<< "${raw_outbound}") || return 1
+      jq -e '.enabled == true and (.server_name | type == "string" and length > 0)' \
+        <<< "${tls_json}" >/dev/null || return 1
+      server_name=$(jq -er '._tls.server_name' <<< "${raw_outbound}") || return 1
+      trust=$(jq -er '._client_trust' <<< "${raw_outbound}") || return 1
+      case "${trust}" in
+        system)
+          tls_json=$(jq -cn --arg server_name "${server_name}" \
+            '{enabled:true,server_name:$server_name}') || return 1
+          ;;
+        certificate)
+          certificate_path=$(jq -er '._tls.certificate_path' <<< "${raw_outbound}") || return 1
+          certificate_pem=$(read_public_certificate_pem "${certificate_path}") || return 1
+          tls_json=$(jq -cn --arg server_name "${server_name}" --arg certificate "${certificate_pem}" \
+            '{enabled:true,server_name:$server_name,certificate:$certificate}') || return 1
+          ;;
+        *)
+          return 1
+          ;;
+      esac
+      jq -c --argjson tls "${tls_json}" \
+        --argjson quic "$(jq -er '._naive.quic' <<< "${raw_outbound}")" \
+        --arg cc "$(jq -er '._naive.quic_congestion_control' <<< "${raw_outbound}")" \
+        --argjson insecure_concurrency "$(jq -er '._naive.insecure_concurrency' <<< "${raw_outbound}")" \
+        --arg stream_receive_window "$(jq -er '._naive.stream_receive_window' <<< "${raw_outbound}")" \
+        --arg quic_session_receive_window "$(jq -er '._naive.quic_session_receive_window' <<< "${raw_outbound}")" \
+        --argjson extra_headers "$(jq -ec '._naive.extra_headers' <<< "${raw_outbound}")" \
+        'del(._tls,._client_trust,._naive) | .tls=$tls |
+         if $quic then .quic=true else . end |
+         if $cc != "bbr" then .quic_congestion_control=$cc else . end |
+         if $insecure_concurrency > 0 then .insecure_concurrency=$insecure_concurrency else . end |
+         if $stream_receive_window != "" then .stream_receive_window=$stream_receive_window else . end |
+         if $quic_session_receive_window != "" then .quic_session_receive_window=$quic_session_receive_window else . end |
+         if ($extra_headers | length) > 0 then .extra_headers=$extra_headers else . end' \
+        <<< "${raw_outbound}" >> "${output_file}" || return 1
+    done < "${raw_file}"
+  done < <(jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}")
+
+  expected_count=$(jq -r '[.instances[].authentication.users | length] | add // 0' <<< "${snapshot}") || return 1
+  output_count=$(jq -s 'length' "${output_file}") || return 1
+  [[ "${expected_count}" =~ ^[0-9]+$ && "${output_count}" == "${expected_count}" && "${output_count}" -gt 0 ]] || return 1
+  jq -es 'length > 0 and (map(.tag) | unique | length) == length' "${output_file}" >/dev/null || return 1
+  cat "${output_file}"
+)
+
 build_client_outbounds_for_current_protocol() {
   local protocol=${1:-} public_ip=${2:-$(get_public_ip)} outbound_json
   outbound_json=$(build_client_outbound_json_for_protocol "${protocol}" "${public_ip}") || return $?
@@ -17104,7 +17507,7 @@ build_client_outbound_json_for_protocol() {
   restore_original_state="n"
 
   case "${protocol}" in
-    vless-reality|vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|hy2|anytls|snell|tuic|hysteria) ;;
+    vless-reality|vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|hy2|anytls|snell|tuic|hysteria|naive) ;;
     *)
       return 1
       ;;
@@ -17232,6 +17635,14 @@ build_client_outbound_json_for_protocol() {
           if outbound_json=$(build_client_hysteria_outbounds "${public_ip}"); then :; else build_status=$?; fi
         else
           printf '[ERROR] hysteria_export_state_invalid: Hysteria 结构化状态不完整或无效，未生成客户端连接材料。\n' >&2
+          build_status=1
+        fi
+        ;;
+      naive)
+        if [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]] && plain_proxy_structured_state_active naive; then
+          if outbound_json=$(build_client_naive_outbounds "${public_ip}"); then :; else build_status=$?; fi
+        else
+          printf '[ERROR] naive_export_state_invalid: NaiveProxy 结构化状态不完整或无效，未生成客户端连接材料。\n' >&2
           build_status=1
         fi
         ;;
@@ -17456,6 +17867,16 @@ show_link_info() {
     return $?
   fi
 
+  if [[ "${SB_PROTOCOL}" == "naive" ]]; then
+    local naive_material
+    naive_material=$(agent_naive_link_json "${public_ip}") || return 1
+    printf '\nNaiveProxy 实例 %s（无标准分享 URI；连接材料含凭据，请妥善保管）\n' "${SB_INSTANCE_ID:-}"
+    jq -r '.warnings[]?.message' <<< "${naive_material}" >&2 || return 1
+    printf 'NaiveProxy 客户端 outbound JSON：\n'
+    jq '.outbounds' <<< "${naive_material}"
+    return $?
+  fi
+
   local plain_links share_warnings http_link socks_link warning_message
   plain_links=$(build_plain_proxy_links_json "${SB_PROTOCOL}" "${public_ip}") || return 1
   share_warnings=$(plain_proxy_share_warnings_json "${SB_PROTOCOL}") || return 1
@@ -17536,6 +17957,10 @@ show_qr_info() {
   fi
   if [[ "${SB_PROTOCOL}" == "hysteria" ]]; then
     log_info "Hysteria 当前不展示二维码；请使用完整客户端 outbound JSON（无标准 URI）。"
+    return 0
+  fi
+  if [[ "${SB_PROTOCOL}" == "naive" ]]; then
+    log_info "NaiveProxy 当前不展示二维码；请使用完整客户端 outbound JSON（需要 with_naive_outbound 与 libcronet，无标准 URI）。"
     return 0
   fi
 
@@ -17664,7 +18089,7 @@ list_public_addresses_for_current_stack() {
 
 protocol_uses_domain_connection_material() {
   case "$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)" in
-    hy2|anytls|tuic|hysteria) return 0 ;;
+    hy2|anytls|tuic|hysteria|naive) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -17674,7 +18099,7 @@ list_subman_addresses_for_current_protocol() {
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL:-}" 2>/dev/null || true)
   case "${protocol}" in
-    mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria)
+    mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive)
       if plain_proxy_structured_state_active "${protocol}" >/dev/null 2>&1; then
         bound_address=${SB_MIXED_LISTEN_ADDRESS:-}
         case "${bound_address}" in
@@ -17710,7 +18135,7 @@ show_connection_details_for_detected_addresses() {
   local address_entries=()
   local entry label address public_ip
 
-  if [[ ("${SB_PROTOCOL}" == mixed || "${SB_PROTOCOL}" == socks || "${SB_PROTOCOL}" == http || "${SB_PROTOCOL}" == shadowsocks || "${SB_PROTOCOL}" == trojan || "${SB_PROTOCOL}" == vmess || "${SB_PROTOCOL}" == vless-plain || "${SB_PROTOCOL}" == anytls || "${SB_PROTOCOL}" == hy2 || "${SB_PROTOCOL}" == snell || "${SB_PROTOCOL}" == tuic || "${SB_PROTOCOL}" == hysteria) ]] && plain_proxy_structured_state_active "${SB_PROTOCOL}"; then
+  if [[ ("${SB_PROTOCOL}" == mixed || "${SB_PROTOCOL}" == socks || "${SB_PROTOCOL}" == http || "${SB_PROTOCOL}" == shadowsocks || "${SB_PROTOCOL}" == trojan || "${SB_PROTOCOL}" == vmess || "${SB_PROTOCOL}" == vless-plain || "${SB_PROTOCOL}" == anytls || "${SB_PROTOCOL}" == hy2 || "${SB_PROTOCOL}" == snell || "${SB_PROTOCOL}" == tuic || "${SB_PROTOCOL}" == hysteria || "${SB_PROTOCOL}" == naive) ]] && plain_proxy_structured_state_active "${SB_PROTOCOL}"; then
     address=${SB_MIXED_LISTEN_ADDRESS:-}
     if [[ -n "${address}" && "${address}" != '::' && "${address}" != 0.0.0.0 ]]; then
       show_connection_details "${mode}" "${address}" "监听地址"
@@ -17760,7 +18185,7 @@ show_all_connection_details() {
 
   for protocol in "${installed_protocols[@]}"; do
     load_protocol_state "${protocol}" || return $?
-    if [[ ("${protocol}" == mixed || "${protocol}" == socks || "${protocol}" == http || "${protocol}" == shadowsocks || "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == vless-plain || "${protocol}" == anytls || "${protocol}" == hy2 || "${protocol}" == snell || "${protocol}" == tuic || "${protocol}" == hysteria) ]] && plain_proxy_structured_state_active "${protocol}"; then
+    if [[ ("${protocol}" == mixed || "${protocol}" == socks || "${protocol}" == http || "${protocol}" == shadowsocks || "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == vless-plain || "${protocol}" == anytls || "${protocol}" == hy2 || "${protocol}" == snell || "${protocol}" == tuic || "${protocol}" == hysteria || "${protocol}" == naive) ]] && plain_proxy_structured_state_active "${protocol}"; then
       instance_ids=$(list_protocol_instance_ids "${protocol}") || return $?
       while IFS= read -r instance_id; do
         [[ -n "${instance_id}" ]] || continue
@@ -17859,7 +18284,7 @@ build_singbox_client_config() {
   for protocol in "${exportable_protocols[@]}"; do
     protocol_label=$(protocol_display_name "${protocol}") || return 1
     if ! protocol_state_exists "${protocol}"; then
-      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" ]]; then
+      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" ]]; then
         log_warn "${protocol_label} 状态缺失，已中止客户端导出；原导出文件保持不变。" >&2
         status=1
         break
@@ -17869,7 +18294,7 @@ build_singbox_client_config() {
     fi
 
     if ! outbound_json=$(build_client_outbounds_for_current_protocol "${protocol}" "${public_ip}"); then
-      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" ]]; then
+      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" ]]; then
         log_warn "${protocol_label} 客户端连接材料无效，已中止客户端导出；原导出文件保持不变。" >&2
         status=1
         break
@@ -18150,10 +18575,10 @@ agent_print_help() {
   sbv agent service restart --json --yes
   sbv agent subman-sync --json
   sbv agent warp --json
-  sbv agent instance create|replace mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria --json --yes --expected-revision N --file record.json [--allow-public]
-  sbv agent instance delete|default mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria --json --yes --expected-revision N --id ID
+  sbv agent instance create|replace mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive --json --yes --expected-revision N --file record.json [--allow-public]
+  sbv agent instance delete|default mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive --json --yes --expected-revision N --id ID
   sbv agent instance migrate mixed --json --yes --expected-revision N
-  sbv agent instance recover mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria --json --yes --expected-revision N
+  sbv agent instance recover mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive --json --yes --expected-revision N
 
 说明:
   capabilities  输出协议、功能入口以及只读/变更/敏感分类。
@@ -18372,7 +18797,7 @@ agent_capabilities_json() {
           persistent_recovery_journal: true
         },
         plain_proxy_instances: {
-          protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic", "hysteria"],
+          protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic", "hysteria", "naive"],
           legacy_migration_protocols: ["mixed"],
           state_schema: 2,
           store_schema: 1,
@@ -18389,7 +18814,8 @@ agent_capabilities_json() {
             hy2: ["create", "replace", "delete", "default", "recover"],
             snell: ["create", "replace", "delete", "default", "recover"],
             tuic: ["create", "replace", "delete", "default", "recover"],
-            hysteria: ["create", "replace", "delete", "default", "recover"]
+            hysteria: ["create", "replace", "delete", "default", "recover"],
+            naive: ["create", "replace", "delete", "default", "recover"]
           },
           expected_revision_required: true,
           plaintext_public_confirmation: "--allow-public",
@@ -18409,7 +18835,7 @@ agent_capabilities_json() {
         doctor: {mutation: false, sensitive: false},
         "upgrade-check": {mutation: false, sensitive: false},
         upgrade: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart"},
-        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic", "hysteria"]},
+        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic", "hysteria", "naive"]},
         "export-client": {mutation: true, sensitive: true},
         "service restart": {mutation: true, sensitive: false, confirmation: "--yes"},
         "subman-sync": {mutation: true, sensitive: true, external_write: true}
@@ -18430,6 +18856,7 @@ agent_capabilities_json() {
         snell_multi_instance_management: true,
         tuic_multi_instance_management: true,
         hysteria_multi_instance_management: true,
+        naive_multi_instance_management: true,
         warp_mutation: true,
         inbound_outbound_stack_management: true,
         bbr: true,
@@ -19499,7 +19926,7 @@ agent_validate_indexed_protocol_states() {
   # A deleted plain proxy may leave a valid revisioned empty tombstone for
   # CAS continuity.  It is safe when its protocol is absent from the index; a
   # non-empty orphan would be an unowned inventory and must fail closed.
-  for plain_protocol in mixed socks http shadowsocks trojan vmess vless-plain anytls hy2 snell tuic hysteria; do
+  for plain_protocol in mixed socks http shadowsocks trojan vmess vless-plain anytls hy2 snell tuic hysteria naive; do
     if ! protocol_array_contains "${plain_protocol}" ${expected_protocols[@]+"${expected_protocols[@]}"}; then
       plain_store_file=$(plain_proxy_structured_store_file "${plain_protocol}") || return 1
       if [[ -e "${plain_store_file}" || -L "${plain_store_file}" ]]; then
@@ -19534,7 +19961,7 @@ agent_validate_indexed_protocol_states() {
       # partial first-node view would make Agent status/links appear healthy
       # while silently omitting listeners or credentials.
       mixed_validate_state_inventory || return 1
-    elif [[ "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" ]]; then
+    elif [[ "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" ]]; then
       # Plain proxy protocols are structured-only. Validate the complete
       # manifest and compare every live tag before reporting them installed.
       plain_proxy_validate_state_inventory "${protocol}" || return 1
@@ -20364,6 +20791,89 @@ agent_hysteria_link_json() (
   jq -cn --argjson summary "${summary}" --argjson outbounds "${outbounds}" --argjson warnings "${warnings}" '$summary + {links:{},outbounds:$outbounds,warnings:$warnings}'
 )
 
+agent_naive_node_json() {
+  local public_ip=${1:-$(get_public_ip)} server tls_json user_count network_json
+  local trust quic cc insecure_concurrency stream_receive_window quic_session_receive_window
+  local extra_headers_count extra_headers_json
+  [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" && "${SB_PROTOCOL}" == naive ]] || return 1
+  plain_proxy_structured_state_active naive || return 1
+  tls_json=${SB_NAIVE_TLS_JSON:-}; [[ -n "${tls_json}" ]] || return 1
+  jq -e '.enabled == true and (.server_name | type == "string" and length > 0)' <<< "${tls_json}" >/dev/null || return 1
+  user_count=$(jq -er 'length' <<< "${SB_NAIVE_AUTH_JSON:-[]}") || return 1
+  network_json=${SB_NAIVE_NETWORK_JSON:-'["tcp","udp"]'}
+  jq -e 'type == "array" and length > 0 and all(.[]; . == "tcp" or . == "udp")' <<< "${network_json}" >/dev/null || return 1
+  case "${SB_MIXED_LISTEN_ADDRESS:-}" in
+    0.0.0.0|::) server=${public_ip} ;;
+    *) server=${SB_MIXED_LISTEN_ADDRESS:-} ;;
+  esac
+  [[ -n "${server}" ]] || return 1
+  trust=${SB_NAIVE_CLIENT_TRUST:-system}
+  quic=$([[ "${SB_NAIVE_QUIC:-n}" == y ]] && printf true || printf false)
+  cc=${SB_NAIVE_QUIC_CONGESTION_CONTROL:-bbr}
+  insecure_concurrency=${SB_NAIVE_INSECURE_CONCURRENCY:-0}
+  stream_receive_window=${SB_NAIVE_STREAM_RECEIVE_WINDOW:-}
+  quic_session_receive_window=${SB_NAIVE_QUIC_SESSION_RECEIVE_WINDOW:-}
+  extra_headers_json=${SB_NAIVE_EXTRA_HEADERS_JSON:-}
+  if [[ -n "${extra_headers_json}" ]]; then
+    extra_headers_count=$(jq -er 'length' <<< "${extra_headers_json}") || return 1
+  else
+    extra_headers_count=0
+  fi
+  jq -n \
+    --arg name "${SB_NODE_NAME:-NaiveProxy}" --arg id "${SB_INSTANCE_ID:-}" \
+    --arg tag "${SB_MIXED_INBOUND_TAG:-}" --arg address "${SB_MIXED_LISTEN_ADDRESS:-}" \
+    --arg port "${SB_PORT:-}" --arg revision "${SB_MIXED_STORE_REVISION:-0}" \
+    --arg server "${server}" --arg server_name "$(jq -r '.server_name' <<< "${tls_json}")" \
+    --arg trust "${trust}" --arg cc "${cc}" --arg stream_receive_window "${stream_receive_window}" \
+    --arg quic_session_receive_window "${quic_session_receive_window}" \
+    --arg runtime "with_naive_outbound+libcronet" --arg policy "${SB_OUTBOUND_POLICY:-default}" --argjson network "${network_json}" \
+    --argjson user_count "${user_count}" --argjson quic "${quic}" \
+    --argjson insecure_concurrency "${insecure_concurrency}" --argjson extra_headers_count "${extra_headers_count}" \
+    '{protocol:"naive",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,
+      instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber),network:$network},
+      server:$server,user_count:$user_count,auth_enabled:true,tls_enabled:true,
+      server_name:$server_name,tls_mode:"manual",client_trust:$trust,network:$network,
+      quic:$quic,quic_congestion_control:$cc,insecure_concurrency:$insecure_concurrency,
+      stream_receive_window:$stream_receive_window,quic_session_receive_window:$quic_session_receive_window,
+      extra_headers_count:$extra_headers_count,outbound_runtime:$runtime,
+      outbound_policy:$policy,shareable:false,client_exportable:true}'
+}
+
+agent_naive_link_json() (
+  umask 077
+  local public_ip=${1:-$(get_public_ip)} store_file snapshot end_snapshot instance_id server isolated_store summary outbounds warnings
+  [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]] || return 1
+  store_file=$(plain_proxy_structured_store_file naive) || return 1
+  snapshot=$(structured_instance_store_snapshot_json naive "${store_file}") || return 1
+  instance_id=${SB_INSTANCE_ID:-}
+  [[ -n "${instance_id}" ]] || instance_id=$(jq -er '.default_instance_id' <<< "${snapshot}") || return 1
+  jq -e --arg id "${instance_id}" 'any(.instances[]; .id == $id)' <<< "${snapshot}" >/dev/null || return 1
+  [[ "$(jq -r '.revision|tostring' <<< "${snapshot}")" == "${SB_MIXED_STORE_REVISION:-}" ]] || return 1
+  case "${SB_MIXED_LISTEN_ADDRESS:-}" in
+    0.0.0.0|::) server=${public_ip} ;;
+    "") return 1 ;;
+    *) server=${SB_MIXED_LISTEN_ADDRESS} ;;
+  esac
+  [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
+  summary=$(agent_naive_node_json "${public_ip}") || return 1
+  isolated_store=$(mktemp) || return 1
+  trap 'rm -f -- "${isolated_store}"' EXIT
+  jq --arg id "${instance_id}" \
+    '. as $root | ($root.instances | map(select(.id == $id))) as $instances |
+     $root | .default_instance_id=$id | .instances=$instances' \
+    <<< "${snapshot}" > "${isolated_store}" || return 1
+  outbounds=$(build_client_naive_outbounds "${server}" "${isolated_store}") || return 1
+  end_snapshot=$(structured_instance_store_snapshot_json naive "${store_file}") || return 1
+  [[ "${snapshot}" == "${end_snapshot}" ]] || return 1
+  outbounds=$(jq -sc '.' <<< "${outbounds}") || return 1
+  warnings=$(jq -cn '[
+    {code:"naive_standard_uri_unavailable",message:"NaiveProxy 当前没有可安全表达完整 TLS、HTTP/2/QUIC 与多用户配置的标准分享 URI；请使用完整客户端 outbound JSON。"},
+    {code:"naive_libcronet_required",message:"NaiveProxy 客户端 outbound 需要带 with_naive_outbound 的 sing-box，并在运行时加载 libcronet.so；当前 Agent 不能证明运行库已部署。"}
+  ]') || return 1
+  jq -cn --argjson summary "${summary}" --argjson outbounds "${outbounds}" --argjson warnings "${warnings}" \
+    '$summary + {links:{},outbounds:$outbounds,warnings:$warnings}'
+)
+
 agent_node_summary_json_for_current_protocol() {
   local protocol api_protocol public_ip shareable="true" client_exportable="false"
   local auth_enabled="false" server_name="" tls_enabled="false" http_tls_json
@@ -20392,6 +20902,9 @@ agent_node_summary_json_for_current_protocol() {
   fi
   if [[ "${protocol}" == hysteria && "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active hysteria; then
     agent_hysteria_node_json "${public_ip}"; return $?
+  fi
+  if [[ "${protocol}" == naive && "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active naive; then
+    agent_naive_node_json "${public_ip}"; return $?
   fi
 
   case "${protocol}" in
@@ -20528,6 +21041,9 @@ agent_link_json_for_current_protocol() {
   fi
   if [[ "${protocol}" == hysteria && "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active hysteria; then
     agent_hysteria_link_json "${public_ip}"; return $?
+  fi
+  if [[ "${protocol}" == naive && "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active naive; then
+    agent_naive_link_json "${public_ip}"; return $?
   fi
   if [[ "${public_ip}" == *:* ]]; then
     address_label="IPv6"
@@ -21655,14 +22171,14 @@ agent_instance_cli() {
       *) break ;;
     esac
   done
-  if [[ $# -ne 0 || "${json}" != y || ("${protocol}" != mixed && "${protocol}" != socks && "${protocol}" != http && "${protocol}" != shadowsocks && "${protocol}" != trojan && "${protocol}" != vmess && "${protocol}" != vless-plain && "${protocol}" != anytls && "${protocol}" != hy2 && "${protocol}" != snell && "${protocol}" != tuic && "${protocol}" != hysteria) || ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
+  if [[ $# -ne 0 || "${json}" != y || ("${protocol}" != mixed && "${protocol}" != socks && "${protocol}" != http && "${protocol}" != shadowsocks && "${protocol}" != trojan && "${protocol}" != vmess && "${protocol}" != vless-plain && "${protocol}" != anytls && "${protocol}" != hy2 && "${protocol}" != snell && "${protocol}" != tuic && "${protocol}" != hysteria && "${protocol}" != naive) || ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
     agent_json_error invalid_arguments "实例参数、协议或 revision 无效；未修改。"; return 1
   fi
   if ! structured_instance_store_revision_arg "${expected}" >/dev/null; then
     agent_json_error invalid_arguments "revision 超出安全整数范围；未修改。"; return 1
   fi
   if [[ "${operation}" == migrate && "${protocol}" != mixed ]]; then
-    agent_json_error invalid_arguments "只有 Mixed 提供 legacy schema 1 迁移；SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS/AnyTLS/Hysteria2/Snell/TUIC 使用 schema 2，已有 live 配置请使用接管入口。"
+    agent_json_error invalid_arguments "只有 Mixed 提供 legacy schema 1 迁移；SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS/AnyTLS/Hysteria2/Snell/TUIC/NaiveProxy 使用 schema 2，已有 live 配置请使用接管入口。"
     return 1
   fi
   [[ "${confirmed}" == y ]] || { agent_json_error confirmation_required "实例写操作需要 --yes；非回环入口另需 --allow-public。"; return 1; }
@@ -22294,7 +22810,7 @@ structured_instance_store_error() {
 structured_instance_store_protocol() {
   local protocol
   protocol=$(normalize_protocol_id "${1:-}") || return 1
-  [[ "${protocol}" == "mixed" || "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" ]] || return 1
+  [[ "${protocol}" == "mixed" || "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" ]] || return 1
   printf '%s' "${protocol}"
 }
 
@@ -22407,21 +22923,22 @@ structured_instance_record_jq_filter() {
       type == "object" and
       ((keys | sort) == ((["authentication","dependencies","id","listen","name","outbound_policy","tag"] +
         (if $protocol == "snell" then ["mode","obfs_host","obfs_mode","version"] else [] end) +
-        (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" or $protocol == "hysteria" then ["tls"] else [] end) +
+        (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" or $protocol == "hysteria" or $protocol == "naive" then ["tls"] else [] end) +
         (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then ["client_trust","transport"]
          elif $protocol == "anytls" then ["client_trust"]
          elif $protocol == "hy2" then ["bandwidth","client_trust","masquerade","obfs"]
          elif $protocol == "tuic" then ["client_trust","tuic"]
          elif $protocol == "hysteria" then ["bandwidth","client_trust","hysteria","obfs"]
+         elif $protocol == "naive" then ["client_trust","naive"]
          else [] end)) | sort)) and
       (.id | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and
       (.name | type == "string" and length > 0 and index("\u0000") == null) and
       (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]")|not)) and
       (.listen | type == "object" and
-        ((keys|sort) == (if $protocol == "shadowsocks" then ["address","network","port"] else ["address","port"] end)) and
+        ((keys|sort) == (if $protocol == "shadowsocks" or $protocol == "naive" then ["address","network","port"] else ["address","port"] end)) and
         (.address | type == "string" and length > 0 and (test("[\u0000-\u0020\u007F]")|not)) and
         (.port | type == "number" and floor == . and . >= 1 and . <= 65535) and
-        (if $protocol == "shadowsocks" then
+        (if $protocol == "shadowsocks" or $protocol == "naive" then
           (.network | type == "array" and length > 0 and length <= 2 and
             all(.[]; . == "tcp" or . == "udp") and . == (sort|unique))
          else true end)) and
@@ -22435,13 +22952,21 @@ structured_instance_record_jq_filter() {
                (.password | type == "string" and length > 0 and utf8bytelength <= 4096 and index("\u0000") == null)) and
              (map(.name)|unique|length) == length and
              (map(.password)|unique|length) == length))
-       elif $protocol == "hysteria" then
+      elif $protocol == "hysteria" then
          (.authentication | type == "object" and (keys|sort) == ["users"] and
            (.users | type == "array" and length >= 1 and length <= 128 and
              all(.[]; type == "object" and (keys|sort) == ["auth_str","name"] and
                (.name | type == "string" and length > 0 and utf8bytelength <= 256 and (test("[\u0000-\u001F\u007F]") | not)) and
                (.auth_str | type == "string" and length > 0 and utf8bytelength <= 4096 and (test("[\u0000-\u001F\u007F]") | not))) and
              (map(.name)|unique|length) == length and (map(.auth_str)|unique|length) == length))
+       elif $protocol == "naive" then
+         (.authentication | type == "object" and (keys|sort) == ["users"] and
+           (.users | type == "array" and length >= 1 and length <= 128 and
+             all(.[]; type == "object" and (keys|sort) == ["name","password","username"] and
+               (.name | type == "string" and length > 0 and utf8bytelength <= 256 and (test("[\u0000-\u001F\u007F]") | not)) and
+               (.username | type == "string" and length > 0 and utf8bytelength <= 4096 and index("\u0000") == null and (test("[\u0000-\u001F\u007F]") | not) and (contains(":") | not)) and
+               (.password | type == "string" and length > 0 and utf8bytelength <= 4096 and index("\u0000") == null and (test("[\u0000-\u001F\u007F]") | not))) and
+             (map(.name)|unique|length) == length and (map(.username)|unique|length) == length))
        elif $protocol == "tuic" then
          (.authentication | type == "object" and (keys|sort) == ["users"] and
            (.users | type == "array" and length >= 1 and length <= 128 and
@@ -22493,7 +23018,7 @@ structured_instance_record_jq_filter() {
           else (.username|utf8bytelength <= 255) and (.password|utf8bytelength <= 255) end) and
          (if .enabled then (.username|length)>0 and (.password|length)>0 else .username=="" and .password=="" end))
        end) and
-      (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" or $protocol == "hysteria" then
+      (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" or $protocol == "hysteria" or $protocol == "naive" then
          (.client_trust | type == "string" and IN("certificate","system")) and
          (if .tls.enabled == false then .client_trust == "system" else true end)
        else true end) and
@@ -22515,8 +23040,8 @@ structured_instance_record_jq_filter() {
        else true end) and
       (.outbound_policy|IN("default","direct","warp")) and
       (.dependencies|type == "array" and length == 0) and
-      (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" or $protocol == "hysteria" then (.tls|type == "object" and
-         (if .enabled == false then ($protocol != "anytls" and $protocol != "hy2" and $protocol != "tuic" and $protocol != "hysteria" and (keys|sort)==["enabled"])
+      (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" or $protocol == "hysteria" or $protocol == "naive" then (.tls|type == "object" and
+         (if .enabled == false then ($protocol != "anytls" and $protocol != "hy2" and $protocol != "tuic" and $protocol != "hysteria" and $protocol != "naive" and (keys|sort)==["enabled"])
           elif .enabled == true then
             (keys|sort)==["certificate_path","enabled","key_path","server_name"] and
             (.server_name|type=="string" and length>0 and (test("[\u0000-\u001F\u007F]")|not)) and
@@ -22556,6 +23081,17 @@ structured_instance_record_jq_filter() {
            (.zero_rtt_handshake | type == "boolean") and
            (.udp_relay_mode | type == "string" and IN("","native","quic")) and
            (if .udp_over_stream then .udp_relay_mode == "" else .udp_relay_mode != "" end))
+       elif $protocol == "naive" then
+         (.naive | type == "object" and (keys|sort) == ["extra_headers","insecure_concurrency","quic","quic_congestion_control","quic_session_receive_window","stream_receive_window"] and
+           (.extra_headers | type == "object" and length <= 64 and all(to_entries[];
+             (.key | type == "string" and length > 0 and length <= 128 and
+               (test("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$") )) and
+             (.value | type == "string" and utf8bytelength <= 4096 and (test("[\u0000-\u001F\u007F]") | not)))) and
+           (.insecure_concurrency | type == "number" and floor == . and . >= 0 and . <= 1024) and
+           (.quic | type == "boolean") and
+           (.quic_congestion_control | type == "string" and IN("bbr","cubic","reno")) and
+           (.quic_session_receive_window | type == "string" and length <= 64 and test("^$|^[0-9]+( ?(B|KB|MB|GB))$")) and
+           (.stream_receive_window | type == "string" and length <= 64 and test("^$|^[0-9]+( ?(B|KB|MB|GB))$")))
        else true end);
 JQ
 }
@@ -22624,7 +23160,7 @@ validate_structured_instance_store() {
       return 1
     }
   done <<< "${addresses}"
-  listener_input=$(jq -c --arg protocol "${protocol}" '{inbounds:[.instances[] | {type:(if $protocol == "vless-plain" then "vless" elif $protocol == "hy2" then "hysteria2" else $protocol end),tag:.tag,listen:.listen.address,listen_port:.listen.port} + (if $protocol == "shadowsocks" then {network:.listen.network} elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then {transport:.transport} else {} end)]}' "${file}") || return 1
+  listener_input=$(jq -c --arg protocol "${protocol}" '{inbounds:[.instances[] | {type:(if $protocol == "vless-plain" then "vless" elif $protocol == "hy2" then "hysteria2" else $protocol end),tag:.tag,listen:.listen.address,listen_port:.listen.port} + (if $protocol == "shadowsocks" or $protocol == "naive" then {network:.listen.network} elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then {transport:.transport} else {} end)]}' "${file}") || return 1
   listener_plan=$(managed_listener_plan_json <<< "${listener_input}") || return 1
   validate_listener_plan_json <<< "${listener_plan}" || return 1
   : "${protocol}"
@@ -22651,6 +23187,7 @@ plain_proxy_config_store_candidate() (
     snell) protocol_label="Snell" ;;
     tuic) protocol_label="TUIC" ;;
     hysteria) protocol_label="Hysteria" ;;
+    naive) protocol_label="NaiveProxy" ;;
     *) return 1 ;;
   esac
   shift
@@ -22668,6 +23205,7 @@ plain_proxy_config_store_candidate() (
   local snell_version=6 snell_psk="" snell_users_json='[]' snell_obfs_mode="" snell_obfs_host="" snell_mode=""
   local tuic_users_json='[]' tuic_tls_json='{"enabled":false}' tuic_client_trust=system tuic_congestion_control=bbr tuic_auth_timeout_seconds=3 tuic_heartbeat_seconds=10 tuic_zero_rtt_handshake=false tuic_udp_relay_mode=native tuic_udp_over_stream=false
   local hysteria_users_json='[]' hysteria_tls_json='{"enabled":false}' hysteria_client_trust=system hysteria_bandwidth_json='{"down_mbps":100,"up_mbps":100}' hysteria_obfs_json='{"enabled":false,"password":""}' hysteria_quic_json='{"connection_receive_window":"","disable_path_mtu_discovery":false,"initial_packet_size":0,"max_concurrent_streams":0,"stream_receive_window":""}'
+  local naive_users_json='[]' naive_tls_json='{"enabled":false}' naive_client_trust=system naive_network_json='["tcp","udp"]' naive_quic_congestion_control=bbr naive_quic=false naive_insecure_concurrency=0 naive_stream_receive_window="" naive_quic_session_receive_window="" naive_extra_headers_json='{}'
   local existing_instance existing_store_json existing_match existing_snell_obfs_host default_id old_revision old_semantics new_semantics
   local candidate_revision status
   local marker_schema2=n store_instances=0
@@ -22725,6 +23263,7 @@ plain_proxy_config_store_candidate() (
            elif $protocol == "snell" then ["version", "psk", "users", "obfs_mode", "obfs_host", "mode"]
            elif $protocol == "tuic" then ["tls", "users", "congestion_control", "auth_timeout", "zero_rtt_handshake", "heartbeat"]
            elif $protocol == "hysteria" then ["tls", "users", "up_mbps", "down_mbps", "obfs", "initial_packet_size", "disable_path_mtu_discovery", "stream_receive_window", "connection_receive_window", "max_concurrent_streams"]
+           elif $protocol == "naive" then ["tls", "users", "network", "quic_congestion_control"]
            else [] end)) | length == 0))
         and (if has("tag") then (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) else true end)
         and (if has("listen") then (.listen | type == "string" and length > 0) else true end)
@@ -22794,6 +23333,12 @@ plain_proxy_config_store_candidate() (
               (if has("disable_path_mtu_discovery") then (.disable_path_mtu_discovery | type == "boolean") else true end) and
               (if has("stream_receive_window") then (.stream_receive_window | type == "string" and length <= 64 and test("^$|^[0-9]+( ?(B|KB|MB|GB))$")) else true end) and
               (if has("connection_receive_window") then (.connection_receive_window | type == "string" and length <= 64 and test("^$|^[0-9]+( ?(B|KB|MB|GB))$")) else true end)
+             elif $protocol == "naive" then
+              (.users | type == "array" and length >= 1 and length <= 128 and
+                all(.[]; type == "object" and (keys_unsorted | sort) == ["password","username"] and
+                  (.username | type == "string" and length > 0 and utf8bytelength <= 4096 and index(":") == null and (test("[\u0000-\u001F\u007F]") | not)) and
+                  (.password | type == "string" and length > 0 and utf8bytelength <= 4096 and (test("[\u0000-\u001F\u007F]") | not))) and
+                (map(.username) | unique | length) == length)
              elif $protocol == "tuic" then
               (.users | type == "array" and length >= 1 and length <= 128 and
                 all(.[]; type == "object" and (keys_unsorted | sort) == ["name","password","uuid"] and
@@ -22834,7 +23379,7 @@ plain_proxy_config_store_candidate() (
                   (.username | type == "string" and length > 0 and index("\u0000") == null) and
                   (.password | type == "string" and length > 0 and index("\u0000") == null)) )
              else true end)
-        and (if $protocol == "shadowsocks" then
+        and (if $protocol == "shadowsocks" or $protocol == "naive" then
               (if has("network") then
                 (.network | if type == "string" then [.]
                   elif type == "array" then (if length == 0 then ["tcp", "udp"] else . end)
@@ -22846,14 +23391,14 @@ plain_proxy_config_store_candidate() (
              else true end)
         and (if $protocol == "mixed" then
              (if has("set_system_proxy") then .set_system_proxy == false else true end)
-             elif $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" or $protocol == "hysteria" then
+             elif $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" or $protocol == "hysteria" or $protocol == "naive" then
               ((if has("set_system_proxy") then $protocol == "http" and .set_system_proxy == false else true end)
               and (if has("tls") then
                 (.tls | type == "object") and
                   (if .tls.enabled == false then
-                    ($protocol != "anytls" and $protocol != "hy2" and $protocol != "tuic" and $protocol != "hysteria" and (.tls | keys_unsorted | sort) == ["enabled"])
+                    ($protocol != "anytls" and $protocol != "hy2" and $protocol != "tuic" and $protocol != "hysteria" and $protocol != "naive" and (.tls | keys_unsorted | sort) == ["enabled"])
                   elif .tls.enabled == true then
-                    ((.tls | (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "tuic" or $protocol == "hysteria" then del(.alpn) else . end) | keys_unsorted | sort) == ["certificate_path", "enabled", "key_path", "server_name"]) and
+                    ((.tls | (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "tuic" or $protocol == "hysteria" or $protocol == "naive" then del(.alpn) else . end) | keys_unsorted | sort) == ["certificate_path", "enabled", "key_path", "server_name"]) and
                     (.tls.server_name | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
                     (.tls.certificate_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not)) and
                     (.tls.key_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not))
@@ -22899,7 +23444,7 @@ plain_proxy_config_store_candidate() (
   if [[ "${state_schema}" == "2" ]]; then
     marker_schema2=y
   fi
-  if [[ "${protocol}" != "mixed" && "${protocol}" != "anytls" && "${protocol}" != "hy2" && "${protocol}" != "tuic" && "${protocol}" != "hysteria" && -f "${state_file}" && "${state_schema}" != "2" ]]; then
+  if [[ "${protocol}" != "mixed" && "${protocol}" != "anytls" && "${protocol}" != "hy2" && "${protocol}" != "tuic" && "${protocol}" != "hysteria" && "${protocol}" != "naive" && -f "${state_file}" && "${state_schema}" != "2" ]]; then
     printf '[ERROR] %s_store_candidate: legacy state migration is unsupported.\n' "${protocol}" >&2
     return 1
   fi
@@ -23000,7 +23545,7 @@ plain_proxy_config_store_candidate() (
     fi
 
     tls_json='null'
-  if [[ "${protocol}" == "http" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" ]]; then
+    if [[ "${protocol}" == "http" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" ]]; then
       tls_json=$(jq -c '.tls // {enabled:false}' <<< "${inbound_json}") || return 1
     fi
 
@@ -23150,6 +23695,22 @@ plain_proxy_config_store_candidate() (
       hysteria_quic_json=$(jq -c '{connection_receive_window:(.connection_receive_window // ""),disable_path_mtu_discovery:(.disable_path_mtu_discovery // false),initial_packet_size:(.initial_packet_size // 0),max_concurrent_streams:(.max_concurrent_streams // 0),stream_receive_window:(.stream_receive_window // "")}' <<< "${inbound_json}") || return 1
       jq -e '(.initial_packet_size | type == "number" and floor == . and . >= 0 and . <= 65535) and (.max_concurrent_streams | type == "number" and floor == . and . >= 0 and . <= 65535) and (.disable_path_mtu_discovery | type == "boolean") and (.stream_receive_window | type == "string" and length <= 64 and test("^$|^[0-9]+( ?(B|KB|MB|GB))$")) and (.connection_receive_window | type == "string" and length <= 64 and test("^$|^[0-9]+( ?(B|KB|MB|GB))$"))' <<< "${hysteria_quic_json}" >/dev/null 2>&1 || return 1
       hysteria_client_trust=system
+    elif [[ "${protocol}" == "naive" ]]; then
+      naive_users_json=$(jq -c '.users | map({name:(.username),username,password})' <<< "${inbound_json}") || return 1
+      naive_tls_json=$(jq -c '.tls' <<< "${inbound_json}") || return 1
+      jq -e '(.enabled == true) and ((del(.alpn) | keys_unsorted | sort) == ["certificate_path","enabled","key_path","server_name"]) and
+        (.server_name | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
+        (.certificate_path | type == "string" and startswith("/")) and (.key_path | type == "string" and startswith("/"))' <<< "${naive_tls_json}" >/dev/null 2>&1 || {
+        printf '[ERROR] %s_store_candidate: NaiveProxy requires manual TLS certificate material.\n' "${protocol}" >&2
+        return 1
+      }
+      naive_tls_json=$(jq -c 'del(.alpn)' <<< "${naive_tls_json}") || return 1
+      naive_network_json=$(jq -c 'if .network == null then ["tcp","udp"] elif (.network | type) == "string" then [.network] else .network end | sort | unique' <<< "${inbound_json}") || return 1
+      naive_quic_congestion_control=$(jq -r '.quic_congestion_control // "bbr"' <<< "${inbound_json}") || return 1
+      [[ "${naive_quic_congestion_control}" == bbr || "${naive_quic_congestion_control}" == cubic || "${naive_quic_congestion_control}" == reno ]] || return 1
+      # The live inbound has no client-only Naive options. Keep their typed
+      # defaults, or preserve them when a tag already exists below.
+      naive_client_trust=system
     elif jq -e '.users | length > 0' <<< "${inbound_json}" >/dev/null 2>&1; then
       auth_enabled=true
       username=$(jq -j '.users[0].username, "\u0001"' <<< "${inbound_json}") || return 1
@@ -23205,6 +23766,14 @@ plain_proxy_config_store_candidate() (
           if ! jq -e 'has("up_mbps")' <<< "${inbound_json}" >/dev/null 2>&1; then hysteria_bandwidth_json=$(jq -c '.[0].bandwidth' <<< "${existing_match}") || return 1; fi
           if ! jq -e 'has("obfs")' <<< "${inbound_json}" >/dev/null 2>&1; then hysteria_obfs_json=$(jq -c '.[0].obfs' <<< "${existing_match}") || return 1; fi
           if ! jq -e 'has("initial_packet_size") or has("disable_path_mtu_discovery") or has("stream_receive_window") or has("connection_receive_window") or has("max_concurrent_streams")' <<< "${inbound_json}" >/dev/null 2>&1; then hysteria_quic_json=$(jq -c '.[0].hysteria' <<< "${existing_match}") || return 1; fi
+        elif [[ "${protocol}" == "naive" ]]; then
+          naive_client_trust=$(jq -r '.[0].client_trust // "system"' <<< "${existing_match}") || return 1
+          if ! jq -e 'has("quic_congestion_control")' <<< "${inbound_json}" >/dev/null 2>&1; then naive_quic_congestion_control=$(jq -r '.[0].naive.quic_congestion_control // "bbr"' <<< "${existing_match}") || return 1; fi
+          naive_quic=$(jq -r 'if .[0].naive.quic then true else false end' <<< "${existing_match}") || return 1
+          naive_insecure_concurrency=$(jq -r '.[0].naive.insecure_concurrency // 0' <<< "${existing_match}") || return 1
+          naive_stream_receive_window=$(jq -r '.[0].naive.stream_receive_window // ""' <<< "${existing_match}") || return 1
+          naive_quic_session_receive_window=$(jq -r '.[0].naive.quic_session_receive_window // ""' <<< "${existing_match}") || return 1
+          naive_extra_headers_json=$(jq -c '.[0].naive.extra_headers // {}' <<< "${existing_match}") || return 1
         fi
       elif [[ "$(jq 'length' <<< "${existing_match}")" -gt 1 ]]; then
         printf '[ERROR] %s_store_candidate: duplicate stored %s identity.\n' "${protocol}" "${protocol_label}" >&2
@@ -23310,6 +23879,16 @@ plain_proxy_config_store_candidate() (
       --argjson bandwidth "${hysteria_bandwidth_json}" --argjson obfs "${hysteria_obfs_json}" --argjson hysteria "${hysteria_quic_json}" --arg policy "${policy}" \
       '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{users:$users},tls:$tls,client_trust:$trust,bandwidth:$bandwidth,obfs:$obfs,hysteria:$hysteria,outbound_policy:$policy,dependencies:[]}' \
       >> "${temp_dir}/instances.jsonl" || return 1
+    elif [[ "${protocol}" == "naive" ]]; then
+      jq -n -cS \
+      --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
+      --arg address "${address}" --argjson port "${port}" --argjson users "${naive_users_json}" \
+      --argjson tls "${naive_tls_json}" --arg trust "${naive_client_trust}" --argjson network "${naive_network_json}" \
+      --arg cc "${naive_quic_congestion_control}" --argjson quic "${naive_quic}" --argjson insecure_concurrency "${naive_insecure_concurrency}" \
+      --arg stream_receive_window "${naive_stream_receive_window}" --arg quic_session_receive_window "${naive_quic_session_receive_window}" \
+      --argjson extra_headers "${naive_extra_headers_json}" --arg policy "${policy}" \
+      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port,network:$network},authentication:{users:$users},tls:$tls,client_trust:$trust,naive:{extra_headers:$extra_headers,insecure_concurrency:$insecure_concurrency,quic:$quic,quic_congestion_control:$cc,quic_session_receive_window:$quic_session_receive_window,stream_receive_window:$stream_receive_window},outbound_policy:$policy,dependencies:[]}' \
+      >> "${temp_dir}/instances.jsonl" || return 1
     elif [[ "${protocol}" == "shadowsocks" ]]; then
       jq -n -cS \
       --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
@@ -23387,6 +23966,10 @@ hysteria_config_store_candidate() {
   plain_proxy_config_store_candidate hysteria "$@"
 }
 
+naive_config_store_candidate() {
+  plain_proxy_config_store_candidate naive "$@"
+}
+
 plain_proxy_structured_state_matches_config() (
   local protocol config_file store_file current expected temp_dir
   protocol=$(structured_instance_store_protocol "${1:-}") || return 1
@@ -23419,7 +24002,7 @@ plain_proxy_validate_state_inventory() (
     validate_protocol_state_schema "${protocol}" "${state_file}" || return 1
     return 0
   fi
-  if [[ ("${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria") && "${state_schema}" != "2" ]]; then
+  if [[ ("${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive") && "${state_schema}" != "2" ]]; then
     return 1
   fi
   if [[ -f "${state_file}" ]] &&
@@ -23798,7 +24381,10 @@ render_structured_instance_inbounds() {
        elif $protocol == "hy2" then
          {users:.authentication.users}
        elif $protocol == "hysteria" then
-         {users:(.authentication.users | map({name,auth_str}))}
+       {users:(.authentication.users | map({name,auth_str}))}
+       elif $protocol == "naive" then
+         {users:(.authentication.users | map({username,password}))} +
+         (if .listen.network == ["tcp","udp"] then {} else {network:.listen.network[0]} end)
        elif $protocol == "tuic" then
          {users:(.authentication.users | map({name,uuid,password}))}
        elif $protocol == "snell" then
@@ -23815,8 +24401,10 @@ render_structured_instance_inbounds() {
          {tls:(.tls + {alpn:["h3"]})}
        elif $protocol == "tuic" then
          {tls:(.tls + {alpn:["h3"]})}
-       elif $protocol == "hysteria" then
+      elif $protocol == "hysteria" then
          {tls:(.tls + {alpn:["h3"]})}
+       elif $protocol == "naive" then
+         {tls:.tls}
        else {}
        end) +
       (if $protocol == "trojan" then
@@ -23848,6 +24436,8 @@ render_structured_instance_inbounds() {
          (if .hysteria.max_concurrent_streams > 0 then {max_concurrent_streams:.hysteria.max_concurrent_streams} else {} end) +
          (if .hysteria.stream_receive_window != "" then {stream_receive_window:.hysteria.stream_receive_window} else {} end) +
          (if .hysteria.connection_receive_window != "" then {connection_receive_window:.hysteria.connection_receive_window} else {} end)
+       elif $protocol == "naive" then
+         (if .naive.quic_congestion_control != "bbr" then {quic_congestion_control:.naive.quic_congestion_control} else {} end)
        else {} end))
   ' <<< "${snapshot}" 2>/dev/null || { structured_instance_store_error render_inbounds render_failed; return 1; }
 }
@@ -23986,15 +24576,15 @@ load_plain_proxy_structured_instance() {
   if ! jq -j --arg id "${instance_id}" --arg protocol "${protocol}" '
       .instances[] | select(.id == $id) |
       [.id, .name, .tag, .listen.address, (.listen.port | tostring),
-       (if $protocol == "trojan" or $protocol == "tuic" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "hysteria" then "y" elif .authentication.enabled then "y" else "n" end),
-       (if $protocol == "trojan" then "" elif $protocol == "tuic" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "hysteria" then (.authentication.users[0].name // "") else (.authentication.username // "") end),
-       (if $protocol == "trojan" then "" elif $protocol == "tuic" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "hysteria" then (.authentication.users[0].password // .authentication.users[0].auth_str // "") else .authentication.password end),
-       .outbound_policy, (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" or $protocol == "hysteria" then (.tls | tojson) else "" end),
+       (if $protocol == "trojan" or $protocol == "tuic" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "hysteria" or $protocol == "naive" then "y" elif .authentication.enabled then "y" else "n" end),
+       (if $protocol == "trojan" then "" elif $protocol == "naive" then (.authentication.users[0].username // "") elif $protocol == "tuic" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "hysteria" then (.authentication.users[0].name // "") else (.authentication.username // "") end),
+       (if $protocol == "trojan" then "" elif $protocol == "naive" then (.authentication.users[0].password // "") elif $protocol == "tuic" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "hysteria" then (.authentication.users[0].password // .authentication.users[0].auth_str // "") else .authentication.password end),
+       .outbound_policy, (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" or $protocol == "hysteria" or $protocol == "naive" then (.tls | tojson) else "" end),
        (if $protocol == "shadowsocks" then (.authentication | tojson) else "" end),
-       (if $protocol == "shadowsocks" then (.listen.network | tojson) else "" end),
-       (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" or $protocol == "hysteria" then (.authentication.users | tojson) else "" end),
+       (if $protocol == "shadowsocks" or $protocol == "naive" then (.listen.network | tojson) else "" end),
+       (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" or $protocol == "hysteria" or $protocol == "naive" then (.authentication.users | tojson) else "" end),
        (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then (.transport | tojson) else "" end),
-       (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" or $protocol == "hysteria" then .client_trust else "" end),
+       (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" or $protocol == "hysteria" or $protocol == "naive" then .client_trust else "" end),
        (if $protocol == "hy2" then (.bandwidth | tojson) else "" end),
        (if $protocol == "hy2" then (.obfs | tojson) else "" end),
        (if $protocol == "hy2" then .masquerade else "" end),
@@ -24005,7 +24595,9 @@ load_plain_proxy_structured_instance() {
        (if $protocol == "snell" then (.obfs_host // "") else "" end),
        (if $protocol == "snell" then (.mode // "") else "" end),
        (if $protocol == "tuic" then (.tuic | tojson) else "" end),
-       (if $protocol == "hysteria" then ({bandwidth:.bandwidth,obfs:.obfs,hysteria:.hysteria} | tojson) else "" end)] | .[] | ., "\u0000"
+       (if $protocol == "hysteria" then ({bandwidth:.bandwidth,obfs:.obfs,hysteria:.hysteria} | tojson)
+        elif $protocol == "naive" then ({network:.listen.network,naive:.naive} | tojson)
+        else "" end)] | .[] | ., "\u0000"
     ' <<< "${snapshot}" > "${stream_file}"; then
     rm -f -- "${stream_file}"
     return 1
@@ -24103,6 +24695,18 @@ load_plain_proxy_structured_instance() {
     SB_HYSTERIA_OBFS_PASSWORD=$(jq -r '.obfs.password // ""' <<< "${fields[25]}") || return 1
     SB_HYSTERIA_QUIC_JSON=$(jq -c '.hysteria' <<< "${fields[25]}") || return 1
   fi
+  if [[ "${protocol}" == "naive" ]]; then
+    SB_NAIVE_TLS_JSON=$(jq -c . <<< "${fields[9]}" 2>/dev/null) || return 1
+    SB_NAIVE_AUTH_JSON=$(jq -c . <<< "${fields[12]}" 2>/dev/null) || return 1
+    SB_NAIVE_CLIENT_TRUST=${fields[14]}
+    SB_NAIVE_NETWORK_JSON=$(jq -c '.network' <<< "${fields[25]}") || return 1
+    SB_NAIVE_QUIC_CONGESTION_CONTROL=$(jq -r '.naive.quic_congestion_control // "bbr"' <<< "${fields[25]}") || return 1
+    SB_NAIVE_QUIC=$(jq -r 'if .naive.quic then "y" else "n" end' <<< "${fields[25]}") || return 1
+    SB_NAIVE_INSECURE_CONCURRENCY=$(jq -r '.naive.insecure_concurrency // 0' <<< "${fields[25]}") || return 1
+    SB_NAIVE_STREAM_RECEIVE_WINDOW=$(jq -r '.naive.stream_receive_window // ""' <<< "${fields[25]}") || return 1
+    SB_NAIVE_QUIC_SESSION_RECEIVE_WINDOW=$(jq -r '.naive.quic_session_receive_window // ""' <<< "${fields[25]}") || return 1
+    SB_NAIVE_EXTRA_HEADERS_JSON=$(jq -c '.naive.extra_headers // {}' <<< "${fields[25]}") || return 1
+  fi
   if [[ "${protocol}" == "http" ]]; then
     SB_HTTP_TLS_JSON=$(jq -c . <<< "${fields[9]}" 2>/dev/null) || return 1
   else
@@ -24171,7 +24775,7 @@ protocol_instance_state_schema() {
   schema=${schema//\"/}
   schema=${schema//\'/}
   [[ "${schema}" =~ ^[0-9]+$ ]] || return 1
-  [[ "${protocol}" != "vless-plain" && "${protocol}" != "socks" && "${protocol}" != "http" && "${protocol}" != "shadowsocks" && "${protocol}" != "trojan" && "${protocol}" != "vmess" && "${protocol}" != "snell" && "${protocol}" != "tuic" && "${protocol}" != "hysteria" || "${schema}" == "2" ]] || return 1
+  [[ "${protocol}" != "vless-plain" && "${protocol}" != "socks" && "${protocol}" != "http" && "${protocol}" != "shadowsocks" && "${protocol}" != "trojan" && "${protocol}" != "vmess" && "${protocol}" != "snell" && "${protocol}" != "tuic" && "${protocol}" != "hysteria" && "${protocol}" != "naive" || "${schema}" == "2" ]] || return 1
   printf '%s' "${schema}"
 }
 
@@ -24199,6 +24803,7 @@ reset_protocol_state_source_variables() {
   unset SNELL_VERSION SNELL_PSK SNELL_USERS SNELL_USER_JSON SNELL_OBFS_MODE SNELL_OBFS_HOST SNELL_MODE
   unset TUIC_USERS TUIC_USER_JSON TUIC_TLS TUIC_CLIENT_TRUST TUIC_CONGESTION_CONTROL TUIC_AUTH_TIMEOUT TUIC_HEARTBEAT TUIC_ZERO_RTT_HANDSHAKE TUIC_UDP_RELAY_MODE TUIC_UDP_OVER_STREAM
   unset HYSTERIA_USERS HYSTERIA_AUTH_JSON HYSTERIA_TLS HYSTERIA_CLIENT_TRUST HYSTERIA_UP_MBPS HYSTERIA_DOWN_MBPS HYSTERIA_OBFS_ENABLED HYSTERIA_OBFS_PASSWORD HYSTERIA_QUIC
+  unset NAIVE_AUTH_JSON NAIVE_TLS NAIVE_CLIENT_TRUST NAIVE_NETWORK NAIVE_QUIC_CONGESTION_CONTROL NAIVE_QUIC NAIVE_INSECURE_CONCURRENCY NAIVE_STREAM_RECEIVE_WINDOW NAIVE_QUIC_SESSION_RECEIVE_WINDOW NAIVE_EXTRA_HEADERS
 }
 
 reset_protocol_instance_runtime_fields() {
@@ -24263,6 +24868,16 @@ reset_protocol_instance_runtime_fields() {
   SB_HYSTERIA_OBFS_ENABLED="n"
   SB_HYSTERIA_OBFS_PASSWORD=""
   SB_HYSTERIA_QUIC_JSON='{"connection_receive_window":"","disable_path_mtu_discovery":false,"initial_packet_size":0,"max_concurrent_streams":0,"stream_receive_window":""}'
+  SB_NAIVE_AUTH_JSON='[]'
+  SB_NAIVE_TLS_JSON='{"enabled":false}'
+  SB_NAIVE_CLIENT_TRUST="system"
+  SB_NAIVE_NETWORK_JSON='["tcp","udp"]'
+  SB_NAIVE_QUIC_CONGESTION_CONTROL="bbr"
+  SB_NAIVE_QUIC="n"
+  SB_NAIVE_INSECURE_CONCURRENCY="0"
+  SB_NAIVE_STREAM_RECEIVE_WINDOW=""
+  SB_NAIVE_QUIC_SESSION_RECEIVE_WINDOW=""
+  SB_NAIVE_EXTRA_HEADERS_JSON='{}'
   SB_ANYTLS_AUTH_JSON='[]'
   SB_ANYTLS_TLS_JSON='{"enabled":false}'
   SB_ANYTLS_CLIENT_TRUST="system"
@@ -24339,7 +24954,7 @@ list_protocol_instance_ids() {
       mixed_structured_state_active || return 1
       jq -r '.instances[].id' "$(mixed_structured_store_file)"
       ;;
-    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2|tuic:2|hysteria:2)
+    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2|tuic:2|hysteria:2|naive:2)
       plain_proxy_structured_state_active "${protocol}" || return 1
       jq -r '.instances[].id' "$(plain_proxy_structured_store_file "${protocol}")"
       ;;
@@ -24397,7 +25012,7 @@ protocol_default_instance_id() {
       mixed_structured_state_active || return 1
       default_id=$(jq -r '.default_instance_id' "$(mixed_structured_store_file)") || return 1
       ;;
-    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2|tuic:2|hysteria:2)
+    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2|tuic:2|hysteria:2|naive:2)
       plain_proxy_structured_state_active "${protocol}" || return 1
       default_id=$(jq -r '.default_instance_id' "$(plain_proxy_structured_store_file "${protocol}")") || return 1
       ;;
@@ -24420,7 +25035,7 @@ load_protocol_instance_state() {
   local schema instance_ids listed_instance_id legacy_inbound_tag
 
   protocol=$(normalize_protocol_id "${protocol}") || return 1
-  if [[ "${protocol}" == "mixed" || "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" ]]; then
+  if [[ "${protocol}" == "mixed" || "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" ]]; then
     structured_instance_store_validate_id "${instance_id}" || return 1
   else
     validate_vless_reality_instance_id "${instance_id}" || return 1
@@ -24467,7 +25082,7 @@ load_protocol_instance_state() {
     mixed:2)
       load_mixed_structured_instance "${instance_id}" || return 1
       ;;
-    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2|tuic:2|hysteria:2)
+    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2|tuic:2|hysteria:2|naive:2)
       load_plain_proxy_structured_instance "${protocol}" "${instance_id}" || return 1
       ;;
     *)
@@ -24999,6 +25614,10 @@ protocol_state_matches_config() {
     plain_proxy_structured_state_matches_config hysteria
     return $?
   fi
+  if [[ "${protocol}" == "naive" ]]; then
+    plain_proxy_structured_state_matches_config naive
+    return $?
+  fi
 
   expected_snapshot=$(render_expected_protocol_state_snapshot "${protocol}") || return 1
   saved_snapshot=$(render_saved_protocol_state_snapshot "${protocol}") || return 1
@@ -25313,6 +25932,7 @@ rebuild_protocol_state_from_config() {
   local snell_inbound_count=0 snell_candidate_file="" snell_candidate_revision=0 snell_state_file snell_state_schema
   local tuic_inbound_count=0 tuic_candidate_file="" tuic_candidate_revision=0 tuic_state_file tuic_state_schema
   local hysteria_inbound_count=0 hysteria_candidate_file="" hysteria_candidate_revision=0 hysteria_state_file hysteria_state_schema
+  local naive_inbound_count=0 naive_candidate_file="" naive_candidate_revision=0 naive_state_file naive_state_schema
   local backup_state_dir
 
   backup_dir=$(mktemp -d) || return 1
@@ -25874,6 +26494,48 @@ rebuild_protocol_state_from_config() {
     fi
   fi
 
+  # NaiveProxy is structured-only. Its multi-user credentials, mandatory
+  # manual TLS, TCP/UDP selection, and optional QUIC/client tuning cannot be
+  # recovered losslessly from a legacy .env state, so reject legacy state
+  # before clearing the cache and capture a typed candidate while identities
+  # and CAS metadata are still available.
+  naive_inbound_count=$(jq -r '[.inbounds[]? | select(.type == "naive")] | length' "${SINGBOX_CONFIG_FILE}") || {
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+  }
+  [[ "${naive_inbound_count}" =~ ^[0-9]+$ ]] || {
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+  }
+  if (( naive_inbound_count > 0 )); then
+    naive_state_file=$(protocol_state_file naive) || {
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+    }
+    naive_state_schema=""
+    if [[ -f "${naive_state_file}" ]]; then
+      validate_protocol_state_schema naive "${naive_state_file}" || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+      }
+      naive_state_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${naive_state_file}" | head -n1) || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+      }
+      naive_state_schema=${naive_state_schema//\"/}; naive_state_schema=${naive_state_schema//\'/}
+    fi
+    [[ -z "${naive_state_schema}" || "${naive_state_schema}" == 2 ]] || {
+      printf '[ERROR] naive_store_candidate: NaiveProxy legacy state is unsupported; 已保留原状态。\n' >&2
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
+    }
+    naive_candidate_file="${backup_dir}/naive.candidate.json"
+    plain_proxy_config_store_candidate naive > "${naive_candidate_file}" || {
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+    }
+    if [[ -f "$(plain_proxy_structured_store_file naive 2>/dev/null || true)" ]]; then
+      naive_candidate_revision=$(jq -r '.revision' "$(plain_proxy_structured_store_file naive)") || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+      }
+    else
+      naive_candidate_revision=0
+    fi
+  fi
+
   clear_protocol_state_cache
   ensure_protocol_state_dir
   if ! rm -rf "${SB_PROTOCOL_STATE_DIR}/vless-reality.d"; then
@@ -26185,6 +26847,12 @@ rebuild_protocol_state_from_config() {
         fi
         continue
         ;;
+      naive)
+        if ! protocol_array_contains "naive" ${rebuilt_protocols[@]+"${rebuilt_protocols[@]}"}; then
+          rebuilt_protocols+=("naive")
+        fi
+        continue
+        ;;
       *)
         abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
         return 1
@@ -26311,6 +26979,15 @@ rebuild_protocol_state_from_config() {
       abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
     fi
     if ! save_plain_proxy_structured_marker hysteria; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
+    fi
+  fi
+
+  if (( naive_inbound_count > 0 )); then
+    if ! publish_structured_instance_store naive "${naive_candidate_file}" "${naive_candidate_revision}"; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
+    fi
+    if ! save_plain_proxy_structured_marker naive; then
       abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
     fi
   fi
@@ -26761,14 +27438,15 @@ main() {
     render_menu_item "26" "管理 Snell 实例"
     render_menu_item "27" "管理 TUIC 实例"
     render_menu_item "28" "管理 Hysteria 实例"
+    render_menu_item "29" "管理 NaiveProxy 实例"
     echo "0. 退出"
     render_main_menu_footer
-    choice=$(prompt_choice "请选择 [0-28]: " 0 28 "")
+    choice=$(prompt_choice "请选择 [0-29]: " 0 29 "")
 
     if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
       case "${choice}" in
-        0|9|10|12|17|18|19|20|21|22|23|24|25|26|27|28) ;;
-        *) log_warn "请先通过菜单 17–28 恢复对应协议未完成的实例事务；本次未执行其他写操作。"; continue ;;
+        0|9|10|12|17|18|19|20|21|22|23|24|25|26|27|28|29) ;;
+        *) log_warn "请先通过菜单 17–29 恢复对应协议未完成的实例事务；本次未执行其他写操作。"; continue ;;
       esac
     fi
 
@@ -26808,6 +27486,7 @@ main() {
       26) snell_instance_management_menu ;;
       27) tuic_instance_management_menu ;;
       28) hysteria_instance_management_menu ;;
+      29) naive_instance_management_menu ;;
       0) exit_script ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac

@@ -22,6 +22,7 @@ for feature in \
   'VLESS + REALITY' \
   'Mixed HTTP/SOCKS' \
   'Hysteria2' \
+  'NaiveProxy' \
   'AnyTLS' \
   'REALITY 多实例' \
   'REALITY QoS' \

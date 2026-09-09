@@ -38,7 +38,7 @@ EOF
 
 output=$(cat "${OUTPUT_FILE}")
 
-if [[ "${SELECTED_PROTOCOLS_CSV}" != "vless-reality,vless-plain,mixed,hy2,anytls,socks,http,shadowsocks,trojan,vmess,snell,tuic,hysteria" ]]; then
+if [[ "${SELECTED_PROTOCOLS_CSV}" != "vless-reality,vless-plain,mixed,hy2,anytls,socks,http,shadowsocks,trojan,vmess,snell,tuic,hysteria,naive" ]]; then
   printf 'expected blank selection to install all available protocols, got %s\n' "${SELECTED_PROTOCOLS_CSV}" >&2
   exit 1
 fi
@@ -55,5 +55,10 @@ fi
 
 if [[ "${output}" != *"13. Hysteria"* ]]; then
   printf 'expected menu item 13 to identify Hysteria, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${output}" != *"14. NaiveProxy"* ]]; then
+  printf 'expected menu item 14 to identify NaiveProxy, got:\n%s\n' "${output}" >&2
   exit 1
 fi

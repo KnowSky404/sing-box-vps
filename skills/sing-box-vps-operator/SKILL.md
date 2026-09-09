@@ -99,18 +99,20 @@ sbv update sing-box latest
 - Use `upgrade-check --json 1.14.0` as a read-only eligibility preflight. Require `ready=true` and `blockers=[]`. It validates the current core and known schema risks without reconciling or migrating protocol state, but does not download the target; `target_binary_validation.performed=false` is expected.
 - Use `upgrade --json 1.14.0 --yes` only after approval. It is mutating, creates an automatic root-only backup under `/root/sing-box-vps-backups/`, preserves the server config byte-for-byte, validates the target core before restart, and automatically restores the old binary and previous service activity on failure. Its `SHA256SUMS` covers every regular runtime file plus the binary, `sbv`, service unit, and metadata. It does not silently migrate or rewrite config. Treat the backup contents as sensitive.
 - Use `nodes --json` for log-safe summaries of every protocol and every REALITY instance, including rate limits and outbound policy. It intentionally omits UUIDs, keys, full links, and passwords.
-- Use `links --json` only in trusted contexts; it returns full connection material for every protocol and REALITY instance.
+- Use `links --json` only in trusted contexts; it returns full connection material for every protocol and REALITY instance, including NaiveProxy outbound JSON and explicit URI/libcronet warnings.
 - Use `export-client --json` to generate and validate the sing-box bare-core client config. It writes the client export file but does not mutate the running server config or restart service.
 - Use `check --json` and `doctor --json` for non-mutating service/config diagnostics.
 - Use `service restart --json --yes` only after confirming the target is safe to mutate. It validates config before restart.
 - Use `warp --json` to inspect Cloudflare Warp status: enabled state, route mode, account health, custom domain counts, rule-set counts, and builtin AI/streaming rule tallies. Safe for routine diagnostics.
-- Use `subman-sync --json` only in trusted contexts with configured SubMan credentials; it pushes VLESS REALITY and Hysteria2 node material.
+- Use `subman-sync --json` only in trusted contexts with configured SubMan credentials; it pushes only eligible URI-backed node material. NaiveProxy, Hysteria v1, Snell, TUIC and AnyTLS are explicitly unsupported and skipped.
 - Safety labels: `status`, `capabilities`, `upgrade-check`, `check`, `doctor`, `nodes`, and `warp` are read-only; `upgrade`, service restart, export, and SubMan sync are mutating; `links`, export, and SubMan sync are sensitive; installation, protocol edits, Warp/BBR/media changes, takeover/repair, and uninstall remain interactive-only.
 - Use `update sbv` to refresh `/usr/local/bin/sbv`; alias: `sbv update-sbv`.
 - Use `update sing-box [latest|x.y.z]` to update a healthy managed sing-box instance non-interactively. It preserves config, runs `sing-box check`, and restarts only after validation passes. Alias: `sbv update-sing-box [latest|x.y.z]`.
 - If `update sing-box` reports an incomplete or missing instance, switch to the interactive `sbv` menu for repair, takeover, or fresh install.
 
 For a 1.13 to 1.14 rehearsal, follow `docs/agents/sing-box-1.13-to-1.14-upgrade-test.md`. Inline `tls.acme` and legacy `download_detour` are deprecated in 1.14 but remain accepted for compatibility; they are scheduled for removal in 1.16. Hysteria2 Ed25519 handling is a client-side compatibility boundary: share links cannot carry the required Chrome QUIC override, while generated 1.14 client exports can.
+
+NaiveProxy is registry preset 14 and management menu 29. Use the typed manual-TLS TCP/UDP instance lifecycle and `export-client` for per-user outbound JSON. The outbound requires an official `with_naive_outbound` build and runtime `libcronet.so`; links return `naive_standard_uri_unavailable` and `naive_libcronet_required`, and no SubMan sync is attempted.
 
 ## VLESS REALITY Operations
 

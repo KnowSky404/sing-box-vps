@@ -131,6 +131,7 @@ resolve_local_tests() {
       tests/snell_instance_lifecycle.sh \
       tests/tuic_instance_lifecycle.sh \
       tests/hysteria_instance_lifecycle.sh \
+      tests/naive_instance_lifecycle.sh \
       tests/managed_component_graph.sh \
       tests/managed_component_graph_core_startup.sh \
       tests/live_inbound_inventory_guards.sh \

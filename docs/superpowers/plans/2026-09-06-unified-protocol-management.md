@@ -4,6 +4,14 @@
 起点为 `cc12c06`，工作区干净；保留参考基线 `0d0bdac` 之后的下载事务修复。
 本文记录完整目标的进展；阶段提交不代表全协议已交付。
 
+## 2026-09-09：NaiveProxy 结构化实例管理链路（阶段交付）
+
+从 Hysteria v1 阶段继续原始完整目标；保留未跟踪文件 `1`、`2`，未读取或修改。Context7 `/sagernet/sing-box` 核对 Naive inbound/outbound 的实际字段：Naive 入站使用必需的用户名/密码用户和 TLS，`network` 可选 TCP、UDP 或两者；客户端出站保留 QUIC 拥塞控制、窗口、并发和额外 headers。官方 Naive outbound 需要带 `with_naive_outbound` 的构建，并在运行时加载 `libcronet.so`，因此脚本只披露该依赖，不把普通 `sing-box check` 当成库可用证明。
+
+本阶段接入第十四个 `naive` 预设（安装菜单 14、管理菜单 29），使用 schema 2 active marker + schema 1 JSON store、实例 revision/CAS、监听资源、接管/重建、创建/替换/删除/默认/恢复事务，以及 Agent `nodes`/`links`/`export-client`。typed 记录限定 1–128 个唯一 `username`/`password` 用户、手工 TLS、`certificate`/`system` 客户端信任、规范化 TCP/UDP 监听网络和有界 Naive/QUIC 选项；单网络服务端按核心要求渲染为标量 `network`，双网络省略该字段。客户端按用户输出完整 Naive outbound JSON，`links` 返回 `naive_standard_uri_unavailable` 与 `naive_libcronet_required`，不生成 QR 或执行 SubMan 同步。
+
+新增 `tests/naive_instance_lifecycle.sh`，覆盖双实例 create/replace/delete、stale CAS、删除 tombstone、用户/TLS/网络/选项校验、接管候选、服务端渲染、客户端导出、Agent 脱敏和 no-URI/libcronet warning；设置 `SINGBOX_BINARY_114` 时，专项测试同时对服务端 candidate 与客户端 outbound 执行真实 sing-box 1.14.0 `check`。`bash tests/naive_instance_lifecycle.sh` 与配置真实 ARM64 核心的专项 check 均通过；`VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh` 通过完整本地调度/回归，Docker 远程验证目录 `dev/verification-runs/20260909053849` 的 `summary.log` 为 `remote_status=success`，15/15 场景与 21/21 既有 TCP 探针成功。证据仍是本地结构化事务、目标核心 schema 检查、容器回环和 mock 资源边界，不代表 libcronet 已部署、公网 TCP/UDP 可达、Naive UDP 数据面、生产部署或真实 SubMan API；本阶段未执行生产操作、推送或外部同步。版本沿用本轮 `2026090901`，全协议目标继续未完成。
+
 ## 2026-09-09：Hysteria v1 结构化实例管理链路（阶段交付）
 
 从 TUIC 阶段继续原始完整目标；保留未跟踪文件 `1`、`2`，未读取或修改。Context7 `/sagernet/sing-box` 与固定官方 `v1.14.0` ARM64 核心核对 Hysteria v1 的实际字段：`users[].auth_str`、手工 TLS、独立 `up_mbps`/`down_mbps`、字符串形式的 QUIC obfs，以及初始包大小、窗口、并发流等 QUIC 选项。Hysteria v1 与 Hysteria2 保持独立协议身份，不复用 salamander/masquerade 或 Hysteria2 的认证语义。

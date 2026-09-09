@@ -14,10 +14,10 @@ source "${TEST_DIR}/install.sh"
 
 registry=$(protocol_registry_json)
 jq -e '
-  length == 13 and
-  ([.[].state_id] | unique | length == 13) and
-  ([.[].agent_id] | unique | length == 13) and
-  ([.[].menu_order] | sort == [1,2,3,4,5,6,7,8,9,10,11,12,13]) and
+  length == 14 and
+  ([.[].state_id] | unique | length == 14) and
+  ([.[].agent_id] | unique | length == 14) and
+  ([.[].menu_order] | sort == [1,2,3,4,5,6,7,8,9,10,11,12,13,14]) and
   all(.[]; .implemented == true and .available == null and .validated.status == "not_assessed") and
   any(.[]; .state_id == "shadowsocks" and
     .features.listen_network_selection == true and
@@ -66,6 +66,15 @@ jq -e '
     .features.obfs == true and .features.quic == true and
     .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
     .features.subman_sync == false)
+  and any(.[]; .state_id == "naive" and
+    .runtime_id == "naive" and .agent_id == "naive" and
+    .features.multi_instance == true and .features.multi_user == true and
+    .features.authentication == true and .features.tls == true and
+    .features.network == ["tcp", "udp"] and .features.listen_network_selection == true and
+    .features.quic_congestion_control == ["bbr", "cubic", "reno"] and
+    .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
+    .features.subman_sync == false and
+    .features.outbound_runtime == "with_naive_outbound+libcronet")
 ' >/dev/null <<< "${registry}"
 capabilities=$(agent_capabilities_json)
 jq -e '
@@ -89,6 +98,8 @@ jq -e '
   ($plain.operations_by_protocol.tuic == ["create", "replace", "delete", "default", "recover"]) and
   ($plain.protocols | index("hysteria") != null) and
   ($plain.operations_by_protocol.hysteria == ["create", "replace", "delete", "default", "recover"]) and
+  ($plain.protocols | index("naive") != null) and
+  ($plain.operations_by_protocol.naive == ["create", "replace", "delete", "default", "recover"]) and
   .features.mixed_instances.operations == $plain.operations_by_protocol.mixed
 ' >/dev/null <<< "${capabilities}"
 jq -e --argjson registry "${registry}" '
@@ -118,6 +129,12 @@ jq -e --argjson registry "${registry}" '
     .features.bandwidth == true and .features.obfs == true and
     .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
     .capabilities.subman_sync == false) and
+  any(.protocol_registry[]; .state_id == "naive" and
+    .features.multi_instance == true and .features.multi_user == true and
+    .features.network == ["tcp", "udp"] and .features.listen_network_selection == true and
+    .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
+    .capabilities.subman_sync == false and
+    .features.outbound_runtime == "with_naive_outbound+libcronet") and
   (.features.subman.supported_protocols | index("trojan") != null) and
   .features.subman.supported_protocols == ($registry | map(select(.subman_type != "") | .agent_id))
 ' >/dev/null <<< "${capabilities}"
@@ -143,7 +160,7 @@ mkdir -p "${SB_PROTOCOL_STATE_DIR}"
 for protocol in $(list_registered_protocols); do
   protocol_registry_require_handlers "${protocol}"
   [[ "$(protocol_option_to_id "$(protocol_registry_field "${protocol}" menu_order)")" == "${protocol}" ]]
-  if [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" ]]; then
+  if [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" ]]; then
     printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2\n' > "$(protocol_state_file "${protocol}")"
     mkdir -p "${SB_PROTOCOL_STATE_DIR}/instances"
     if [[ "${protocol}" == "socks" ]]; then
@@ -345,6 +362,29 @@ TUIC_STORE_EOF
   ]
 }
 HYSTERIA_STORE_EOF
+    elif [[ "${protocol}" == "naive" ]]; then
+      cat > "${SB_PROTOCOL_STATE_DIR}/instances/naive.json" <<'NAIVE_STORE_EOF'
+{
+  "schema_version": 1,
+  "protocol": "naive",
+  "revision": 1,
+  "default_instance_id": "main",
+  "instances": [
+    {
+      "id": "main",
+      "name": "Naive contract",
+      "tag": "naive-in",
+      "listen": {"address": "127.0.0.1", "port": 1091, "network": ["tcp", "udp"]},
+      "authentication": {"users": [{"name": "naive-user", "username": "naive-user", "password": "NAIVE-CONTRACT-PASSWORD"}]},
+      "tls": {"enabled": true, "server_name": "naive.example.com", "certificate_path": "/tmp/naive-contract.crt", "key_path": "/tmp/naive-contract.key"},
+      "client_trust": "system",
+      "naive": {"extra_headers": {}, "insecure_concurrency": 0, "quic": false, "quic_congestion_control": "bbr", "quic_session_receive_window": "", "stream_receive_window": ""},
+      "outbound_policy": "default",
+      "dependencies": []
+    }
+  ]
+}
+NAIVE_STORE_EOF
     else
       cat > "${SB_PROTOCOL_STATE_DIR}/instances/vmess.json" <<'VMESS_STORE_EOF'
 {
@@ -373,8 +413,8 @@ VMESS_STORE_EOF
     printf 'CONFIG_SCHEMA_VERSION=1\n' > "$(protocol_state_file "${protocol}")"
   fi
 done
-printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,snell,tuic,hysteria,socks,http,shadowsocks,trojan,vmess,vless-plain\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
-[[ "$(list_exportable_client_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nsnell\ntuic\nhysteria\nsocks\nhttp\nshadowsocks\ntrojan\nvmess\nvless-plain' ]]
+printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,snell,tuic,hysteria,naive,socks,http,shadowsocks,trojan,vmess,vless-plain\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
+[[ "$(list_exportable_client_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nsnell\ntuic\nhysteria\nnaive\nsocks\nhttp\nshadowsocks\ntrojan\nvmess\nvless-plain' ]]
 [[ "$(protocol_registry_field mixed client_export)" == true ]]
 [[ "$(protocol_registry_field mixed multi_instance)" == true ]]
 [[ -z "$(protocol_registry_field mixed subman_type)" ]]
@@ -428,6 +468,19 @@ printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,snell,tuic,hysteria,s
 [[ "$(protocol_registry_field hysteria handlers)" == *build_client_hysteria_outbounds* ]]
 [[ "$(protocol_registry_field hysteria handlers)" == *load_plain_proxy_structured_instance* ]]
 [[ "$(protocol_registry_field hysteria handlers)" == *apply_plain_proxy_instance_change* ]]
+[[ "$(protocol_registry_field naive menu_order)" == 14 ]]
+[[ "$(protocol_registry_field naive default_tag)" == naive-in ]]
+[[ "$(protocol_registry_field naive state_id)" == naive ]]
+[[ "$(protocol_registry_field naive agent_id)" == naive ]]
+[[ "$(protocol_registry_field naive runtime_id)" == naive ]]
+[[ "$(protocol_registry_field naive listen_networks)" == tcp,udp ]]
+[[ "$(protocol_registry_field naive traffic_networks)" == tcp,udp ]]
+[[ "$(protocol_registry_field naive client_export)" == true ]]
+[[ -z "$(protocol_registry_field naive subman_type)" ]]
+[[ "$(protocol_registry_field naive handlers)" == *build_naive_inbound_json* ]]
+[[ "$(protocol_registry_field naive handlers)" == *build_client_naive_outbounds* ]]
+[[ "$(protocol_registry_field naive handlers)" == *load_plain_proxy_structured_instance* ]]
+[[ "$(protocol_registry_field naive handlers)" == *apply_plain_proxy_instance_change* ]]
 [[ "$(protocol_registry_field shadowsocks menu_order)" == 7 ]]
 [[ "$(protocol_registry_field shadowsocks default_tag)" == ss-in ]]
 [[ "$(protocol_registry_field shadowsocks state_id)" == shadowsocks ]]
