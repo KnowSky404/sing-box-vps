@@ -112,7 +112,10 @@ WireGuard/Tailscale/OpenConnect/OpenVPN endpoints, and SSH/Tor/direct/bridge/
 selector/urltest/block plus protocol outbounds. Non-loopback listeners, TUN,
 tunnels and OpenVPN server require `--allow-public`. External account
 authentication, system routes/firewall, runtime libraries and data-plane
-reachability remain separate operator-reviewed gates.
+reachability remain separate operator-reviewed gates. The registry keeps
+static `available:null` separate from its per-read `environment` observation;
+inspect `environment.status`, dependency reasons and `validated` before
+claiming a component is usable.
 
 - Use `status --json` for version/service/path/protocol diagnostics plus network stack, BBR, REALITY/QoS, and integration presence.
 - Use `capabilities --json` to discover supported protocols/features and operation safety labels before choosing an action.

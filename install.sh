@@ -1105,7 +1105,276 @@ component_registry_field() {
   printf '%s' "${fields[index]}"
 }
 
-component_registry_json() {
+component_environment_dependency_json() {
+  local name=${1:-} status=${2:-} reason=${3:-} required=${4:-true}
+  jq -cn --arg name "${name}" --arg status "${status}" --arg reason "${reason}" \
+    --argjson required "${required}" \
+    '{name:$name,status:$status,required:$required} +
+      (if $reason == "" then {} else {reason:$reason} end)'
+}
+
+component_runtime_library_available() {
+  local search_path candidate
+  if command -v ldconfig >/dev/null 2>&1 &&
+     ldconfig -p 2>/dev/null | grep -Eq '[[:space:]]libcronet\.so([.[:digit:]]*)?[[:space:]]'; then
+    return 0
+  fi
+  IFS=: read -r -a search_paths <<< "${LD_LIBRARY_PATH:-}"
+  for search_path in "${search_paths[@]}"; do
+    [[ -n "${search_path}" && "${search_path}" != *$'\n'* && "${search_path}" != *$'\r'* ]] || continue
+    candidate="${search_path%/}/libcronet.so"
+    [[ -f "${candidate}" && ! -L "${candidate}" && -r "${candidate}" ]] && return 0
+  done
+  return 1
+}
+
+component_registry_environment_probe() {
+  local state_id=${1:-} role=${2:-} type=${3:-} minimum=${4:-} availability=${5:-}
+  local platform core_version core_status=unavailable core_reason=sing_box_binary_missing
+  local overall=unavailable overall_reason=sing_box_binary_missing dependency_rows=()
+  local root_status=available
+  local command_status command_reason
+
+  platform=$(uname -s 2>/dev/null || printf 'unknown')
+  if [[ ! -x "${SINGBOX_BIN_PATH}" ]]; then
+    core_version=''
+  else
+    core_version=$(detect_installed_singbox_version 2>/dev/null || true)
+    if [[ ! "${core_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      core_reason=sing_box_version_unavailable
+    elif ! singbox_version_at_least "${core_version}" "${minimum}"; then
+      core_reason=sing_box_version_too_old
+    else
+      core_status=available
+      core_reason=''
+    fi
+  fi
+  dependency_rows+=("sing_box_binary"$'\t'"${core_status}"$'\t'"${core_reason}"$'\t'"true")
+  dependency_rows+=("sing_box_version"$'\t'"$([[ "${core_status}" == available ]] && printf available || printf unavailable)"$'\t'"$([[ "${core_status}" == available ]] && printf '' || printf '%s' "${core_reason}")"$'\t'"true")
+  overall_reason=${core_reason}
+
+  if [[ "${core_status}" == available ]]; then
+    overall=available
+    overall_reason=''
+  fi
+
+  component_add_dependency() {
+    local name=$1 status=$2 reason=${3:-} required=${4:-true} item
+    dependency_rows+=("${name}"$'\t'"${status}"$'\t'"${reason}"$'\t'"${required}")
+    if [[ "${required}" == true ]]; then
+      if [[ "${status}" == unavailable && "${overall}" == available ]]; then
+        overall=unavailable
+        overall_reason=${reason:-${name}_unavailable}
+      elif [[ "${status}" == not_assessed && "${overall}" == available ]]; then
+        overall=not_assessed
+        overall_reason=${reason:-${name}_not_assessed}
+      fi
+    fi
+  }
+
+  case "${type}" in
+    tun|bridge)
+      if [[ "${EUID}" -ne 0 ]]; then root_status=unavailable; else root_status=available; fi
+      component_add_dependency root "${root_status}" \
+        "$([[ "${root_status}" == available ]] && printf '' || printf root_required)" true || return 1
+      if command -v ip >/dev/null 2>&1; then
+        component_add_dependency iproute2 available '' true || return 1
+      else
+        component_add_dependency iproute2 unavailable iproute2_missing true || return 1
+      fi
+      if [[ "${type}" == tun && "${platform}" != Linux ]]; then
+        component_add_dependency platform unavailable tun_linux_only true || return 1
+      fi
+      if [[ "${type}" == bridge ]]; then
+        component_add_dependency net_admin available '' false || return 1
+      fi
+      ;;
+    redirect|tproxy)
+      if [[ "${EUID}" -ne 0 ]]; then root_status=unavailable; else root_status=available; fi
+      component_add_dependency root "${root_status}" \
+        "$([[ "${root_status}" == available ]] && printf '' || printf root_required)" true || return 1
+      if command -v iptables >/dev/null 2>&1 || command -v nft >/dev/null 2>&1; then
+        component_add_dependency transparent_rule_tool available '' true || return 1
+      else
+        component_add_dependency transparent_rule_tool unavailable transparent_rule_tool_missing true || return 1
+      fi
+      if [[ "${type}" == tproxy && "${platform}" != Linux ]]; then
+        component_add_dependency platform unavailable tproxy_linux_only true || return 1
+      fi
+      ;;
+    cloudflared)
+      if command -v cloudflared >/dev/null 2>&1; then
+        component_add_dependency cloudflared available '' true || return 1
+      else
+        component_add_dependency cloudflared unavailable cloudflared_missing true || return 1
+      fi
+      ;;
+    tailscale)
+      if command -v tailscale >/dev/null 2>&1; then
+        command_status=available; command_reason=''
+      else
+        command_status=unavailable; command_reason=tailscale_binary_missing
+      fi
+      component_add_dependency tailscale_daemon "${command_status}" "${command_reason}" true || return 1
+      component_add_dependency external_auth not_assessed external_auth_required true || return 1
+      ;;
+    openconnect)
+      component_add_dependency external_auth not_assessed external_auth_required true || return 1
+      ;;
+    openvpn-client|openvpn-server)
+      component_add_dependency external_auth not_assessed external_auth_required true || return 1
+      ;;
+    tor)
+      if command -v tor >/dev/null 2>&1; then
+        command_status=available; command_reason=''
+      else
+        command_status=unavailable; command_reason=tor_binary_missing
+      fi
+      component_add_dependency tor_binary "${command_status}" "${command_reason}" true || return 1
+      ;;
+    naive)
+      if component_runtime_library_available; then
+        component_add_dependency libcronet available '' true || return 1
+      else
+        component_add_dependency libcronet unavailable libcronet_missing true || return 1
+      fi
+      ;;
+  esac
+
+  local dependencies
+  dependencies=$(printf '%s\n' "${dependency_rows[@]}" | jq -Rsc '
+    split("\n") | map(select(length > 0) | split("\t") |
+      {name:.[0],status:.[1],required:(.[3] == "true")} +
+      (if .[2] == "" then {} else {reason:.[2]} end))
+  ') || return 1
+  jq -cn --arg state_id "${state_id}" --arg platform "${platform}" \
+    --arg overall "${overall}" --arg reason "${overall_reason}" \
+    --arg core_status "${core_status}" --arg core_version "${core_version}" \
+    --arg minimum "${minimum}" --arg availability "${availability}" \
+    --argjson dependencies "${dependencies}" \
+    '{state_id:$state_id,status:$overall,reason:(if $reason == "" then null else $reason end),
+      static_availability:$availability,
+      platform:{name:$platform},
+      core:{status:$core_status,version:(if $core_version == "" then null else $core_version end),minimum:$minimum},
+      dependencies:$dependencies}'
+}
+
+component_registry_environment_bulk_json() {
+  local static platform core_version core_probe_reason
+  local root_ok=false ip_ok=false transparent_ok=false cloudflared_ok=false
+  local tailscale_ok=false tor_ok=false libcronet_ok=false
+
+  static=$(component_registry_static_json) || return 1
+  platform=$(uname -s 2>/dev/null || printf 'unknown')
+  core_probe_reason=sing_box_binary_missing
+  core_version=''
+  if [[ -x "${SINGBOX_BIN_PATH}" ]]; then
+    core_version=$(detect_installed_singbox_version 2>/dev/null || true)
+    if [[ ! "${core_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      core_probe_reason=sing_box_version_unavailable
+      core_version=''
+    else
+      core_probe_reason=''
+    fi
+  fi
+  [[ "${EUID}" -eq 0 ]] && root_ok=true
+  command -v ip >/dev/null 2>&1 && ip_ok=true
+  (command -v iptables >/dev/null 2>&1 || command -v nft >/dev/null 2>&1) && transparent_ok=true
+  command -v cloudflared >/dev/null 2>&1 && cloudflared_ok=true
+  command -v tailscale >/dev/null 2>&1 && tailscale_ok=true
+  command -v tor >/dev/null 2>&1 && tor_ok=true
+  component_runtime_library_available && libcronet_ok=true || :
+
+  jq -cn --argjson registry "${static}" --arg platform "${platform}" \
+    --arg core_version "${core_version}" --arg core_probe_reason "${core_probe_reason}" \
+    --argjson root_ok "${root_ok}" --argjson ip_ok "${ip_ok}" \
+    --argjson transparent_ok "${transparent_ok}" --argjson cloudflared_ok "${cloudflared_ok}" \
+    --argjson tailscale_ok "${tailscale_ok}" --argjson tor_ok "${tor_ok}" \
+    --argjson libcronet_ok "${libcronet_ok}" '
+    def version_parts($value): $value | split(".") | map(tonumber);
+    def at_least($value; $minimum):
+      (version_parts($value)) as $a | (version_parts($minimum)) as $b |
+      ($a[0] > $b[0] or
+       ($a[0] == $b[0] and ($a[1] > $b[1] or
+        ($a[1] == $b[1] and $a[2] >= $b[2]))));
+    def dependency($name; $status; $reason; $required):
+      {name:$name,status:$status,required:$required} +
+      (if $reason == "" then {} else {reason:$reason} end);
+    def unavailable($name; $reason; $required):
+      dependency($name; "unavailable"; $reason; $required);
+    def available($name; $required):
+      dependency($name; "available"; ""; $required);
+    def not_assessed($name; $reason; $required):
+      dependency($name; "not_assessed"; $reason; $required);
+    def core:
+      if $core_version == "" then
+        {status:"unavailable",reason:$core_probe_reason}
+      elif at_least($core_version; .minimum_project_core) then
+        {status:"available",reason:""}
+      else
+        {status:"unavailable",reason:"sing_box_version_too_old"}
+      end;
+    def extra_dependencies:
+      if .type == "tun" then
+        (if $root_ok then available("root"; true) else unavailable("root"; "root_required"; true) end),
+        (if $ip_ok then available("iproute2"; true) else unavailable("iproute2"; "iproute2_missing"; true) end),
+        (if $platform == "Linux" then [] else [unavailable("platform"; "tun_linux_only"; true)] end)
+      elif .type == "bridge" then
+        (if $root_ok then available("root"; true) else unavailable("root"; "root_required"; true) end),
+        (if $ip_ok then available("iproute2"; true) else unavailable("iproute2"; "iproute2_missing"; true) end),
+        available("net_admin"; false)
+      elif .type == "redirect" or .type == "tproxy" then
+        (if $root_ok then available("root"; true) else unavailable("root"; "root_required"; true) end),
+        (if $transparent_ok then available("transparent_rule_tool"; true)
+         else unavailable("transparent_rule_tool"; "transparent_rule_tool_missing"; true) end),
+        (if .type == "tproxy" and $platform != "Linux" then
+           [unavailable("platform"; "tproxy_linux_only"; true)] else [] end)
+      elif .type == "cloudflared" then
+        (if $cloudflared_ok then available("cloudflared"; true)
+         else unavailable("cloudflared"; "cloudflared_missing"; true) end)
+      elif .type == "tailscale" then
+        (if $tailscale_ok then available("tailscale_daemon"; true)
+         else unavailable("tailscale_daemon"; "tailscale_binary_missing"; true) end),
+        not_assessed("external_auth"; "external_auth_required"; true)
+      elif .type == "openconnect" or .type == "openvpn-client" or .type == "openvpn-server" then
+        not_assessed("external_auth"; "external_auth_required"; true)
+      elif .type == "tor" then
+        (if $tor_ok then available("tor_binary"; true)
+         else unavailable("tor_binary"; "tor_binary_missing"; true) end)
+      elif .type == "naive" then
+        (if $libcronet_ok then available("libcronet"; true)
+         else unavailable("libcronet"; "libcronet_missing"; true) end)
+      else [] end;
+    def final($core; $dependencies):
+      if $core.status == "unavailable" then
+        {status:"unavailable",reason:$core.reason}
+      elif any($dependencies[]; .required and .status == "unavailable") then
+        (first($dependencies[] | select(.required and .status == "unavailable")) |
+          {status:"unavailable",reason:(.reason // (.name + "_unavailable"))})
+      elif any($dependencies[]; .required and .status == "not_assessed") then
+        (first($dependencies[] | select(.required and .status == "not_assessed")) |
+          {status:"not_assessed",reason:(.reason // (.name + "_not_assessed"))})
+      else {status:"available",reason:null} end;
+    $registry | map(
+      . as $entry | (core) as $core |
+      ([dependency("sing_box_binary"; $core.status; $core.reason; true),
+        dependency("sing_box_version"; $core.status; $core.reason; true)] +
+       ([extra_dependencies] | flatten)) as $dependencies |
+      (final($core; $dependencies)) as $result |
+      {state_id:$entry.state_id,status:$result.status,reason:$result.reason,
+       static_availability:$entry.availability,platform:{name:$platform},
+       core:{status:$core.status,
+             version:(if $core_version == "" then null else $core_version end),
+             minimum:$entry.minimum_project_core},
+       dependencies:$dependencies}
+    )'
+}
+
+component_registry_environment_json() {
+  component_registry_environment_bulk_json
+}
+
+component_registry_static_json() {
   printf '%s\n' "${SB_COMPONENT_REGISTRY[@]}" | jq -Rn '
     [inputs | split("|") | {
       state_id: .[0], role: .[1], type: .[2], display_name: .[3],
@@ -1117,16 +1386,27 @@ component_registry_json() {
     }]'
 }
 
+component_registry_json() {
+  local environment static
+  environment=$(component_registry_environment_json) || return 1
+  static=$(component_registry_static_json) || return 1
+  jq -cn --argjson static "${static}" --argjson environment "${environment}" '
+    $static | map(. as $entry |
+      ($environment[] | select(.state_id == $entry.state_id)) as $runtime |
+      . + {environment:$runtime})
+  '
+}
+
 component_registry_inbound_types_json() {
-  component_registry_json | jq -c '[.[] | select(.role == "inbound") | .type]'
+  component_registry_static_json | jq -c '[.[] | select(.role == "inbound") | .type]'
 }
 
 component_registry_endpoint_types_json() {
-  component_registry_json | jq -c '[.[] | select(.role == "endpoint") | .type]'
+  component_registry_static_json | jq -c '[.[] | select(.role == "endpoint") | .type]'
 }
 
 component_registry_outbound_types_json() {
-  component_registry_json | jq -c '[.[] | select(.role == "outbound") | .type]'
+  component_registry_static_json | jq -c '[.[] | select(.role == "outbound") | .type]'
 }
 
 list_registered_protocols() {
@@ -9463,7 +9743,7 @@ canonical_listener_address() {
 managed_listener_plan_json() {
   local registry components projected addresses address canonical normalized='[]' result
   registry=$(protocol_registry_json) || return 1
-  components=$(component_registry_json) || return 1
+  components=$(component_registry_static_json) || return 1
   # Parse once, project only non-secret resource fields, and capture all output
   # before emission. Input is bounded by the file wrapper or the typed store.
   if ! projected=$(jq -cs --argjson registry "${registry}" --argjson components "${components}" '
@@ -12237,6 +12517,7 @@ managed_component_inventory_json() {
         {id:$component.id, role:$component.role, type:$component.type, tag:$component.tag,
          enabled:$component.enabled, registry_id:$entry.state_id,
          display_name:$entry.display_name, availability:$entry.availability,
+         environment:$entry.environment,
          minimum_project_core:$entry.minimum_project_core,
          config_keys:($component.config | keys), route_rule_count:(($component.route_rules // []) | length)}
       ],
