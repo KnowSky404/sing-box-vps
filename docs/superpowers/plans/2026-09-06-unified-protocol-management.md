@@ -12,6 +12,8 @@
 
 新增 `tests/managed_components_contract.sh` 覆盖 registry 30 项、CAS/render、引用删除保护、公开确认、direct+TUN 监听投影、Cloudflared token 脱敏、未知 wrapper 字段和 Agent stale revision，并将其加入 `dev/verification/common.sh` 的 install.sh 本地矩阵。定向与完整本地门禁均通过：`bash dev/verification/run.sh` 运行目录 `dev/verification-runs/20260909105322`，调度解析 108 项测试并退出 0；Docker artifact 同一目录为 15/15 场景成功，`meta/exit-status.txt` 为 0，既有回环协议探针和升级/接管产物均提取成功。固定官方 1.14.0 核心对 direct/tun/redirect/tproxy 组合的图/监听/check 通过；本轮仍未取得 Cloudflared/VPN/Tailscale 外部认证、透明接入真实路由、防火墙事务或新增组件公网/数据面证据。因此 registry 的 `implemented` 只表示本项目组件状态/配置组合切片，`available=null`、`validated.not_assessed` 保持诚实，完整协议目标继续未完成。版本提升为本轮 `2026090903`。
 
+随后独立修正 `redirect` 的监听投影为上游固定的 TCP（不再错误地规划 UDP），并新增回归断言；`tests/managed_components_contract.sh`、`managed_listener_resources.sh`、`listener_network_selection.sh` 与 `live_inbound_inventory_guards.sh` 均退出 0。最新源码的 Docker-only 重跑目录为 `dev/verification-runs/20260909113618`，按 `install.sh` 变更选择的 14/14 场景均为 `STATUS=success`，artifact `meta/exit-status.txt` 为 0；本次跳过已在上一目录完成的 108 项本地矩阵。
+
 ## 2026-09-09：NaiveProxy 结构化实例管理链路（阶段交付）
 
 从 Hysteria v1 阶段继续原始完整目标；保留未跟踪文件 `1`、`2`，未读取或修改。Context7 `/sagernet/sing-box` 核对 Naive inbound/outbound 的实际字段：Naive 入站使用必需的用户名/密码用户和 TLS，`network` 可选 TCP、UDP 或两者；客户端出站保留 QUIC 拥塞控制、窗口、并发和额外 headers。官方 Naive outbound 需要带 `with_naive_outbound` 的构建，并在运行时加载 `libcronet.so`，因此脚本只披露该依赖，不把普通 `sing-box check` 当成库可用证明。
