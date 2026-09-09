@@ -9711,10 +9711,26 @@ open_firewall_port() {
 # resource is unused. Tags are owners in this projection, not new instance IDs.
 canonical_listener_address() {
   local address=${1:-} left right part zeros result='' word
-  local groups=() tail_groups=()
-  # Accept dotted IPv4-mapped IPv6 without accepting arbitrary dotted suffixes.
-  if [[ "${address,,}" == ::ffff:*.* ]]; then
-    address=${address:7}
+  local ipv4_tail ipv4_prefix octet ipv4_group_high ipv4_group_low
+  local groups=() tail_groups=() octets=()
+  # Normalize an IPv4 suffix before expanding the IPv6 groups.  The validator
+  # accepts both compressed and full IPv4-embedded spellings; leaving the
+  # dotted tail in place would make the hexadecimal parser treat it as an
+  # arithmetic expression and reject a valid listener.
+  if [[ "${address}" == *.* && "${address}" == *:* ]]; then
+    ipv4_tail=${address##*:}
+    ipv4_prefix=${address%:*}
+    IFS=. read -r -a octets <<< "${ipv4_tail}"
+    [[ ${#octets[@]} -eq 4 ]] || return 1
+    for octet in "${octets[@]}"; do
+      [[ "${octet}" =~ ^(0|[1-9][0-9]{0,2})$ ]] || return 1
+      (( 10#${octet} <= 255 )) || return 1
+    done
+    printf -v ipv4_group_high '%x' \
+      "$((10#${octets[0]} * 256 + 10#${octets[1]}))"
+    printf -v ipv4_group_low '%x' \
+      "$((10#${octets[2]} * 256 + 10#${octets[3]}))"
+    address="${ipv4_prefix}:${ipv4_group_high}:${ipv4_group_low}"
   fi
   structured_instance_store_validate_address "${address}" || return 1
   if [[ "${address}" != *:* ]]; then printf '%s' "${address}"; return 0; fi

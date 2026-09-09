@@ -136,6 +136,11 @@ jq '.inbounds=[{type:"mixed",tag:"mapped-ipv6",listen:"::ffff:192.0.2.7",listen_
 expect_accept mapped "${TMP_DIR}/mapped.json"
 jq -e '.[0] == {owner:"mapped-ipv6",protocol:"mixed",address:"192.0.2.7",family:"ipv4",transport:"tcp",port:21005,dual_stack:false}' \
   "${TMP_DIR}/mapped.plan.json" >/dev/null
+jq '.inbounds=[{type:"mixed",tag:"mapped-ipv6-full",listen:"0:0:0:0:0:ffff:192.0.2.7",listen_port:21006}]' \
+  "${base_config}" >"${TMP_DIR}/mapped-full.json"
+expect_accept mapped-full "${TMP_DIR}/mapped-full.json"
+jq -e '.[0] == {owner:"mapped-ipv6-full",protocol:"mixed",address:"192.0.2.7",family:"ipv4",transport:"tcp",port:21006,dual_stack:false}' \
+  "${TMP_DIR}/mapped-full.plan.json" >/dev/null
 
 invalid_index=0
 for mutation in \
@@ -194,7 +199,8 @@ for conflict in \
   'mixed|0.0.0.0|anytls|192.0.2.8' \
   'mixed|::|anytls|192.0.2.9' \
   'mixed|::1|anytls|0:0:0:0:0:0:0:1' \
-  'mixed|::ffff:192.0.2.7|anytls|192.0.2.7'; do
+  'mixed|::ffff:192.0.2.7|anytls|192.0.2.7' \
+  'mixed|0:0:0:0:0:ffff:192.0.2.7|anytls|192.0.2.7'; do
   conflict_index=$((conflict_index + 1))
   IFS='|' read -r first_type first_address second_type second_address <<<"${conflict}"
   make_two_listener_config "${first_type}" "${first_address}" "${second_type}" "${second_address}" \

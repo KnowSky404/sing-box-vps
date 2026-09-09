@@ -39,6 +39,17 @@ jq -e --arg k128 "${ss128_key}" --arg k256 "${ss256_key}" '
   (any(.instances[];.tag == "ss-2022-a256-multi" and .authentication.password == $k256 and (.authentication.users|length)==2 and .authentication.users[0].password == $k256 and .authentication.users[1].password != $k256))
 ' <<< "${candidate}" >/dev/null
 
+# A full IPv4-mapped IPv6 spelling must survive takeover extraction.  The
+# listener resource projection canonicalizes it for collision checks, while
+# the typed store intentionally preserves the user's original address.
+full_mapped_config="${TMP_DIR}/full-mapped.json"
+jq '(.inbounds[] | select(.tag == "ss-none")).listen = "0:0:0:0:0:ffff:127.0.0.1"' \
+  "${SINGBOX_CONFIG_FILE}" >"${full_mapped_config}"
+full_mapped_store_file=$(plain_proxy_structured_store_file shadowsocks)
+full_mapped_candidate=$(plain_proxy_config_store_candidate ss "${full_mapped_config}" "${full_mapped_store_file}")
+jq -e 'any(.instances[]; .tag == "ss-none" and .listen.address == "0:0:0:0:0:ffff:127.0.0.1")' \
+  <<< "${full_mapped_candidate}" >/dev/null
+
 jq '.inbounds[1].network=[]' "${SINGBOX_CONFIG_FILE}" > "${TMP_DIR}/empty-network.json"
 mv "${TMP_DIR}/empty-network.json" "${SINGBOX_CONFIG_FILE}"
 candidate=$(shadowsocks_config_store_candidate)
