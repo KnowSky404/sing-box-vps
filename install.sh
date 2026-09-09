@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090902
+# Version: 2026090903
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090902"
+readonly SCRIPT_VERSION="2026090903"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -28,6 +28,8 @@ readonly SB_MEDIA_CHECK_DIR="${SB_PROJECT_DIR}/media-check"
 readonly SB_MEDIA_CHECK_SCRIPT="${SB_MEDIA_CHECK_DIR}/region_restriction_check.sh"
 readonly SB_PROTOCOL_STATE_DIR="${SB_PROJECT_DIR}/protocols"
 readonly SB_PROTOCOL_INDEX_FILE="${SB_PROTOCOL_STATE_DIR}/index.env"
+readonly SB_COMPONENT_STATE_FILE="${SB_PROJECT_DIR}/components.json"
+readonly SB_COMPONENT_STATE_SCHEMA_VERSION="1"
 readonly SB_REALITY_QOS_FILTER_STATE_FILE="${SB_PROJECT_DIR}/reality-qos.filters"
 readonly SB_REALITY_QOS_FILTER_PREF_START="32001"
 readonly SB_REALITY_QOS_BURST="512k"
@@ -83,6 +85,42 @@ readonly SB_PROTOCOL_REGISTRY=(
   'hysteria|hysteria|hysteria|hysteria|tls-quic|inbound|hysteria|Hysteria|hysteria-in|13|true||udp|tcp,udp|1.13.0|true|optional|hysteria|quic_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"tls_modes":["manual_certificate"],"bandwidth":true,"obfs":true,"quic":true,"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true}|hysteria|build_hysteria_inbound_json,save_hysteria_state,prompt_hysteria_install,prompt_hysteria_update,build_client_hysteria_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'naive|naive|naive|naive|tls-quic|inbound|naive|NaiveProxy|naive-in|14|true||tcp,udp|tcp,udp|1.13.0|true|optional|naive|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"network":["tcp","udp"],"listen_network_selection":true,"quic_congestion_control":["bbr","cubic","reno"],"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true,"outbound_runtime":"with_naive_outbound+libcronet"}|naive|build_naive_inbound_json,save_naive_state,prompt_naive_install,prompt_naive_update,build_client_naive_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'shadowtls|shadowtls|shadowtls|shadowtls|tls-wrapper|inbound|shadowtls|ShadowTLS|shadowtls-in|15|true||tcp|tcp|1.13.0|true|optional|shadowtls|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"versions":[1,2,3],"handshake":true,"detour":true,"wildcard_sni":["off","authed","all"],"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true,"composite":true}|shadowtls|build_shadowtls_inbound_json,save_shadowtls_state,prompt_shadowtls_install,prompt_shadowtls_update,build_client_shadowtls_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+)
+# Runtime component registry for the non-proxy protocol surface.  These
+# records deliberately remain separate from SB_PROTOCOL_REGISTRY: advanced
+# inbounds, endpoints and outbounds are not share-link protocols and must not
+# accidentally enter the protocol index or instance menus.
+readonly SB_COMPONENT_REGISTRY=(
+  'direct-inbound|inbound|direct|Direct inbound|1.13.0|builtin|{"listen":true,"network":["tcp","udp"],"loop_prevention":true}'
+  'tun-inbound|inbound|tun|TUN inbound|1.13.0|builtin|{"l3":true,"auto_route":true,"strict_route":true,"loop_prevention":true}'
+  'redirect-inbound|inbound|redirect|Redirect inbound|1.13.0|builtin|{"listen":true,"linux_macos":true,"loop_prevention":true}'
+  'tproxy-inbound|inbound|tproxy|TProxy inbound|1.13.0|builtin|{"listen":true,"network":["tcp","udp"],"linux":true,"loop_prevention":true}'
+  'cloudflared-inbound|inbound|cloudflared|Cloudflared inbound|1.14.0|with_cloudflared|{"tunnel":true,"token_required":true,"account_mutation":false}'
+  'wireguard-endpoint|endpoint|wireguard|WireGuard endpoint|1.11.0|with_wireguard|{"endpoint":true,"modern_endpoint":true,"listen_network":["udp"]}'
+  'tailscale-endpoint|endpoint|tailscale|Tailscale endpoint|1.12.0|with_tailscale|{"endpoint":true,"auth_external":true,"listen_network":["udp"]}'
+  'openconnect-endpoint|endpoint|openconnect|OpenConnect endpoint|1.14.0|with_openconnect|{"endpoint":true,"client_only":true,"auth_external":true}'
+  'openvpn-client-endpoint|endpoint|openvpn-client|OpenVPN client endpoint|1.14.0|with_openvpn|{"endpoint":true,"client_only":true,"auth_external":true}'
+  'openvpn-server-endpoint|endpoint|openvpn-server|OpenVPN server endpoint|1.14.0|with_openvpn|{"endpoint":true,"server":true,"listen_network":["tcp","udp"]}'
+  'ssh-outbound|outbound|ssh|SSH outbound|1.14.0|builtin|{"dialer":true,"credentials":true}'
+  'tor-outbound|outbound|tor|Tor outbound|1.13.0|builtin|{"dialer":true,"dependency_external":true}'
+  'direct-outbound|outbound|direct|Direct outbound|1.13.0|builtin|{"dialer":true}'
+  'bridge-outbound|outbound|bridge|Bridge outbound|1.14.0|builtin|{"l3":true,"requires_privilege":true}'
+  'selector-outbound|outbound|selector|Selector group|1.13.0|builtin|{"group":true,"members_required":true}'
+  'urltest-outbound|outbound|urltest|URLTest group|1.13.0|builtin|{"group":true,"members_required":true}'
+  'block-outbound|outbound|block|Block outbound|1.13.0|builtin|{"terminal":true}'
+  'socks-outbound|outbound|socks|SOCKS outbound|1.13.0|builtin|{"dialer":true}'
+  'http-outbound|outbound|http|HTTP outbound|1.13.0|builtin|{"dialer":true}'
+  'shadowsocks-outbound|outbound|shadowsocks|Shadowsocks outbound|1.13.0|builtin|{"dialer":true}'
+  'vmess-outbound|outbound|vmess|VMess outbound|1.13.0|builtin|{"dialer":true}'
+  'trojan-outbound|outbound|trojan|Trojan outbound|1.13.0|builtin|{"dialer":true}'
+  'naive-outbound|outbound|naive|NaiveProxy outbound|1.13.0|with_naive_outbound|{"dialer":true,"external_runtime":"libcronet"}'
+  'hysteria2-outbound|outbound|hysteria2|Hysteria2 outbound|1.13.0|builtin|{"dialer":true}'
+  'hysteria-outbound|outbound|hysteria|Hysteria outbound|1.13.0|builtin|{"dialer":true}'
+  'tuic-outbound|outbound|tuic|TUIC outbound|1.13.0|builtin|{"dialer":true}'
+  'vless-outbound|outbound|vless|VLESS outbound|1.13.0|builtin|{"dialer":true}'
+  'anytls-outbound|outbound|anytls|AnyTLS outbound|1.14.0|builtin|{"dialer":true}'
+  'snell-outbound|outbound|snell|Snell outbound|1.14.0|builtin|{"dialer":true}'
+  'shadowtls-outbound|outbound|shadowtls|ShadowTLS outbound|1.13.0|builtin|{"dialer":true}'
 )
 SB_REALITY_SNI_CANDIDATES=(
   "www.apple.com"
@@ -499,6 +537,8 @@ print_cli_help() {
   sbv update-sing-box [latest|x.y.z]
   sbv agent help
   sbv agent capabilities --json
+  sbv agent component list --json
+  sbv agent component create|replace|delete ...
   sbv agent upgrade-check --json x.y.z
   sbv agent upgrade --json x.y.z --yes
   sbv uninstall
@@ -509,6 +549,7 @@ print_cli_help() {
   update sing-box            更新 sing-box 二进制并保留现有配置。
   update-sing-box [version]  update sing-box 的短别名，版本可为 latest 或 x.y.z。
   agent                      输出适合自动化读取的 JSON 状态、节点、能力和受保护升级结果。
+  agent component            管理高级入站、Endpoint 与可复用出站/分组组件。
 EOF
 }
 
@@ -1016,6 +1057,76 @@ protocol_registry_json() {
       share_formats: (.[17] | csv), probe: .[18],
       legacy_capabilities: (.[19] | fromjson), features: (.[19] | fromjson), handlers: (.[21] | csv)
     }]'
+}
+
+component_registry_record() {
+  local requested=${1:-} record
+  local fields=()
+  [[ -n "${requested}" ]] || return 1
+  for record in "${SB_COMPONENT_REGISTRY[@]}"; do
+    IFS='|' read -r -a fields <<< "${record}"
+    if [[ "${requested}" == "${fields[0]}" ]]; then
+      printf '%s' "${record}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+component_registry_resolve_id() {
+  local role=${1:-} type=${2:-} record
+  local fields=()
+  [[ -n "${role}" && -n "${type}" ]] || return 1
+  for record in "${SB_COMPONENT_REGISTRY[@]}"; do
+    IFS='|' read -r -a fields <<< "${record}"
+    if [[ "${role}" == "${fields[1]}" && "${type}" == "${fields[2]}" ]]; then
+      printf '%s' "${fields[0]}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+component_registry_field() {
+  local record index
+  local fields=()
+  record=$(component_registry_record "${1:-}") || return 1
+  IFS='|' read -r -a fields <<< "${record}"
+  case "${2:-}" in
+    state_id) index=0 ;;
+    role) index=1 ;;
+    type) index=2 ;;
+    display_name) index=3 ;;
+    minimum_project_core) index=4 ;;
+    availability) index=5 ;;
+    features) index=6 ;;
+    *) return 1 ;;
+  esac
+  printf '%s' "${fields[index]}"
+}
+
+component_registry_json() {
+  printf '%s\n' "${SB_COMPONENT_REGISTRY[@]}" | jq -Rn '
+    [inputs | split("|") | {
+      state_id: .[0], role: .[1], type: .[2], display_name: .[3],
+      minimum_project_core: .[4], availability: .[5],
+      features: (.[6] | fromjson),
+      implemented: true, available: null, availability_reason: .[5],
+      validated: {status: "not_assessed", method: "target_sing_box_check"},
+      lifecycle: {create: true, replace: true, delete: true}
+    }]'
+}
+
+component_registry_inbound_types_json() {
+  component_registry_json | jq -c '[.[] | select(.role == "inbound") | .type]'
+}
+
+component_registry_endpoint_types_json() {
+  component_registry_json | jq -c '[.[] | select(.role == "endpoint") | .type]'
+}
+
+component_registry_outbound_types_json() {
+  component_registry_json | jq -c '[.[] | select(.role == "outbound") | .type]'
 }
 
 list_registered_protocols() {
@@ -9350,57 +9461,85 @@ canonical_listener_address() {
 }
 
 managed_listener_plan_json() {
-  local registry projected addresses address canonical normalized='[]' result
+  local registry components projected addresses address canonical normalized='[]' result
   registry=$(protocol_registry_json) || return 1
+  components=$(component_registry_json) || return 1
   # Parse once, project only non-secret resource fields, and capture all output
   # before emission. Input is bounded by the file wrapper or the typed store.
-  if ! projected=$(jq -cs --argjson registry "${registry}" '
+  if ! projected=$(jq -cs --argjson registry "${registry}" --argjson components "${components}" '
     def require($ok): if $ok then . else error("invalid_listener") end;
     # Only an explicitly modelled adapter may select its fixed listeners.
     # NetworkList accepts a string or list; absent/null/[] mean defaults.
     # This is independent of traffic_networks (e.g. SOCKS UDP over TCP).
     def networks($inbound; $entry):
-      $entry.listen_networks |
-      require(type == "array" and length > 0) |
-      require(all(.[]; . == "tcp" or . == "udp")) |
-      require((unique | length) == length) | . as $defaults |
-      if ($inbound | has("network")) then
-        require($entry.features.listen_network_selection == true) |
-        ($inbound.network | if . == null then []
-          elif type == "string" then [.] elif type == "array" then .
-          else error("invalid_listener") end) as $requested |
-        require(all($requested[]; . == "tcp" or . == "udp")) |
-        require(($requested | unique | length) == ($requested | length)) |
-        require(all($requested[]; . as $network | $defaults | index($network) != null)) |
-        if ($requested | length) == 0 then $defaults
-        else [$defaults[] | . as $network | select($requested | index($network) != null)] end
-      elif $entry.features.listen_transport_projection == true then
-        (($inbound.transport.type // "none")) as $transport |
-        if $transport == "quic" then ["udp"]
-        elif $transport == "none" or $transport == "http" or $transport == "ws" or $transport == "grpc" then ["tcp"]
-        else error("invalid_listener") end
-      else $defaults end;
+      if ($entry.advanced // false) then
+        if ($inbound.type == "tun" or $inbound.type == "cloudflared") then []
+        else
+          (if $inbound.type == "redirect" then ["tcp", "udp"]
+           elif ($inbound.type == "direct" or $inbound.type == "tproxy") then
+             ($inbound.network // ["tcp", "udp"] |
+               if type == "string" then [.] elif type == "array" then . else error("invalid_listener") end)
+           else error("invalid_listener") end) as $defaults |
+          require(($defaults | length) > 0 and all($defaults[]; . == "tcp" or . == "udp")) |
+          require(($defaults | unique | length) == ($defaults | length)) |
+          $defaults
+        end
+      else
+        $entry.listen_networks |
+        require(type == "array" and length > 0) |
+        require(all(.[]; . == "tcp" or . == "udp")) |
+        require((unique | length) == length) | . as $defaults |
+        if ($inbound | has("network")) then
+          require($entry.features.listen_network_selection == true) |
+          ($inbound.network | if . == null then []
+            elif type == "string" then [.] elif type == "array" then .
+            else error("invalid_listener") end) as $requested |
+          require(all($requested[]; . == "tcp" or . == "udp")) |
+          require(($requested | unique | length) == ($requested | length)) |
+          require(all($requested[]; . as $network | $defaults | index($network) != null)) |
+          if ($requested | length) == 0 then $defaults
+          else [$defaults[] | . as $network | select($requested | index($network) != null)] end
+        elif $entry.features.listen_transport_projection == true then
+          (($inbound.transport.type // "none")) as $transport |
+          if $transport == "quic" then ["udp"]
+          elif $transport == "none" or $transport == "http" or $transport == "ws" or $transport == "grpc" then ["tcp"]
+          else error("invalid_listener") end
+        else $defaults end
+      end;
     require(length == 1) | .[0] | require(type == "object") |
     require((.inbounds | type) == "array") |
     require((has("endpoints") | not) or (.endpoints | type) == "array") |
-    require(all((.endpoints // [])[]; (.listen_port // 0) == 0)) |
-    .inbounds | require(length <= 256) |
+    require(all((.endpoints // [])[]; . as $endpoint |
+      any($components[]; .role == "endpoint" and .type == $endpoint.type))) |
+    require(all((.endpoints // [])[]; ((.listen_port // 0) | type == "number" and . == floor and . >= 0 and . <= 65535))) |
+    . as $root | .inbounds | require(length <= 256) |
     require(all(.[]; type == "object" and
       (.tag | type == "string" and length > 0 and (test("[\u0000-\u001f\u007f]") | not)) and
       (.type | type == "string") and
       ((has("listen") | not) or (.listen | type == "string" and length > 0 and (test("[\u0000-\u0020\u007f]") | not))) and
-      (.listen_port | type == "number" and . == floor and . >= 1 and . <= 65535) and
+      (if (.type == "tun" or .type == "cloudflared") then
+         ((.listen_port // 0) == 0)
+       else
+         (.listen_port | type == "number" and . == floor and . >= 1 and . <= 65535)
+       end) and
       ((.netns // "") == "") and ((.bind_interface // "") == "") and ((.reuse_addr // false) == false))) |
     require((map(.tag) | unique | length) == length) |
-    map(. as $inbound | [$registry[] | select(
-      if $inbound.type == "vless" then
-        .state_id == (if $inbound.tls.reality? != null then "vless-reality" else "vless-plain" end)
-      else .type == $inbound.type end
-    )] |
+    (map(. as $inbound |
+      ([$registry[] | select(
+        if $inbound.type == "vless" then
+          .state_id == (if $inbound.tls.reality? != null then "vless-reality" else "vless-plain" end)
+        else .type == $inbound.type end
+      ) | . + {advanced:false}] +
+       [$components[] | select(.role == "inbound" and .type == $inbound.type) | . + {advanced:true}]) |
       require(length == 1) | .[0] as $entry |
       networks($inbound; $entry)[] |
-      {owner:$inbound.tag, protocol:$entry.state_id, address:($inbound.listen // "127.0.0.1"),
+      {owner:$inbound.tag, protocol:($entry.state_id // $entry.type), address:($inbound.listen // "127.0.0.1"),
        transport:., port:$inbound.listen_port})
+      ) +
+      [($root.endpoints // [])[] | select((.listen_port // 0) > 0) |
+       {owner:.tag, protocol:(.type + "-endpoint"), address:(.listen // "0.0.0.0"),
+        transport:(if .type == "openvpn-server" then (.network // "udp") else "udp" end),
+        port:.listen_port}]
   ' 2>/dev/null); then
     printf '[ERROR] listener_resources: unmodelled_or_invalid_listener\n' >&2
     return 1
@@ -11821,6 +11960,388 @@ append_protocol_fragment() {
   printf '%s\n' "${fragment}" >> "${destination}"
 }
 
+# --- Managed advanced components -------------------------------------------------
+# Advanced inbounds, endpoints and outbounds are stored as typed JSON records.
+# They intentionally have their own CAS state file so that adding a TUN or an
+# endpoint cannot silently change the share-link protocol index.  The config
+# graph validator remains the final reference/dep-cycle gate; these helpers
+# provide the state, identity, exposure and transaction guards before a
+# candidate reaches that validator.
+managed_component_state_default_json() {
+  jq -cn --argjson schema "${SB_COMPONENT_STATE_SCHEMA_VERSION}" \
+    '{schema_version:$schema,revision:0,components:[]}'
+}
+
+managed_component_state_id_valid() {
+  [[ "${1:-}" =~ ^[a-z0-9][a-z0-9_-]{0,63}$ ]]
+}
+
+managed_component_tag_valid() {
+  local tag=${1:-}
+  [[ -n "${tag}" && ${#tag} -le 128 && "${tag}" != *[[:space:]]* &&
+    "${tag}" != *$'\n'* && "${tag}" != *$'\r'* ]]
+}
+
+managed_component_state_validate_record() {
+  local record=${1:-} role type tag registry_id config
+  [[ -n "${record}" ]] || return 1
+  jq -e '
+    type == "object" and
+    ((keys - ["id","role","type","tag","enabled","route_rules","config"]) | length == 0) and
+    (.id | type == "string") and (.role | type == "string") and
+    (.type | type == "string") and (.tag | type == "string")
+  ' <<< "${record}" >/dev/null 2>&1 || return 1
+  role=$(jq -r '.role // empty' <<< "${record}") || return 1
+  type=$(jq -r '.type // empty' <<< "${record}") || return 1
+  tag=$(jq -r '.tag // empty' <<< "${record}") || return 1
+  registry_id=$(component_registry_resolve_id "${role}" "${type}") || return 1
+  managed_component_state_id_valid "$(jq -r '.id // empty' <<< "${record}")" || return 1
+  managed_component_tag_valid "${tag}" || return 1
+  jq -e '.role | IN("inbound","endpoint","outbound")' <<< "${record}" >/dev/null 2>&1 || return 1
+  jq -e '.enabled | type == "boolean"' <<< "${record}" >/dev/null 2>&1 || return 1
+  jq -e '.config | type == "object" and (has("type") | not) and (has("tag") | not)' \
+    <<< "${record}" >/dev/null 2>&1 || return 1
+  jq -e '(.route_rules // []) | type == "array" and all(.[]; type == "object")' \
+    <<< "${record}" >/dev/null 2>&1 || return 1
+  config=$(jq -c '.config' <<< "${record}") || return 1
+
+  # Reject the two built-in outbound owners.  Custom direct/block records are
+  # supported, while replacing the safety defaults requires a future explicit
+  # migration rather than creating duplicate tags in the generated graph.
+  if [[ "${role}" == outbound && ("${tag}" == direct || "${tag}" == block) ]]; then
+    return 1
+  fi
+
+  case "${role}:${type}" in
+    inbound:direct|inbound:redirect|inbound:tproxy)
+      jq -e '(.listen_port | type == "number" and . == floor and . >= 1 and . <= 65535) and
+        ((.listen // "127.0.0.1") | type == "string" and length > 0)' <<< "${config}" >/dev/null 2>&1 || return 1
+      if [[ "${type}" == tproxy ]]; then
+        jq -e '((.network // ["tcp","udp"]) | if type == "string" then [.] else . end |
+          type == "array" and length > 0 and all(.[]; . == "tcp" or . == "udp"))' <<< "${config}" >/dev/null 2>&1 || return 1
+      fi
+      ;;
+    inbound:tun)
+      jq -e '(.address | type == "array" and length > 0 and all(.[]; type == "string")) and
+        (.auto_route | type == "boolean") and
+        ((.auto_redirect // false) | type == "boolean") and
+        ((.auto_redirect != true) or (.auto_route == true))' <<< "${config}" >/dev/null 2>&1 || return 1
+      ;;
+    inbound:cloudflared)
+      jq -e '(.token | type == "string" and length > 0) and
+        ((.protocol // "") | IN("","auto","quic","http2","h2mux")) and
+        ((.edge_ip_version // 0) | IN(0,4,6))' <<< "${config}" >/dev/null 2>&1 || return 1
+      ;;
+    endpoint:wireguard)
+      jq -e '(.address | type == "array" and length > 0) and
+        (.private_key | type == "string" and length > 0) and
+        (.peers | type == "array" and length > 0)' <<< "${config}" >/dev/null 2>&1 || return 1
+      ;;
+    endpoint:tailscale)
+      jq -e '((.state_directory // "") | type == "string") and
+        ((.listen_port // 0) | type == "number" and . == floor and . >= 0 and . <= 65535)' <<< "${config}" >/dev/null 2>&1 || return 1
+      ;;
+    endpoint:openconnect)
+      jq -e '(.server | type == "string" and length > 0)' <<< "${config}" >/dev/null 2>&1 || return 1
+      ;;
+    endpoint:openvpn-client)
+      jq -e '((.server // "") | type == "string") and
+        ((.servers // []) | type == "array") and
+        (((.server | length) > 0) or ((.servers // []) | length > 0))' <<< "${config}" >/dev/null 2>&1 || return 1
+      ;;
+    endpoint:openvpn-server)
+      jq -e '(.listen_port | type == "number" and . == floor and . >= 1 and . <= 65535) and
+        ((.network // "udp") | IN("tcp","udp")) and
+        (.address | type == "array" and length > 0)' <<< "${config}" >/dev/null 2>&1 || return 1
+      ;;
+    outbound:selector|outbound:urltest)
+      jq -e '(.outbounds | type == "array" and length > 0 and all(.[]; type == "string" and length > 0))' <<< "${config}" >/dev/null 2>&1 || return 1
+      ;;
+    outbound:ssh)
+      jq -e '(.server | type == "string" and length > 0) and
+        ((.server_port // 22) | type == "number" and . == floor and . >= 1 and . <= 65535)' <<< "${config}" >/dev/null 2>&1 || return 1
+      ;;
+    outbound:tor)
+      jq -e '((.executable_path // "") | type == "string") and
+        ((.data_directory // "") | type == "string")' <<< "${config}" >/dev/null 2>&1 || return 1
+      ;;
+    outbound:direct|outbound:block|outbound:bridge|outbound:socks|outbound:http|outbound:shadowsocks|outbound:vmess|outbound:trojan|outbound:naive|outbound:hysteria2|outbound:hysteria|outbound:tuic|outbound:vless|outbound:anytls|outbound:snell|outbound:shadowtls)
+      ;;
+    *) return 1 ;;
+  esac
+  [[ -n "${registry_id}" ]]
+}
+
+managed_component_state_validate_json() {
+  local state=${1:-} record
+  [[ -n "${state}" ]] || return 1
+  jq -e --argjson schema "${SB_COMPONENT_STATE_SCHEMA_VERSION}" '
+    type == "object" and
+    ((keys - ["schema_version","revision","components"]) | length == 0) and
+    .schema_version == $schema and
+    (.revision | type == "number" and . == floor and . >= 0 and . <= 9007199254740991) and
+    (.components | type == "array" and length <= 128) and
+    (([.components[]?.id] | unique | length) == (.components | length)) and
+    (([.components[]?.tag] | unique | length) == (.components | length)) and
+    all(.components[]; type == "object" and
+      (.id | type == "string") and (.role | type == "string") and
+      (.type | type == "string") and (.tag | type == "string") and
+      (.enabled | type == "boolean") and (.config | type == "object") and
+      ((.route_rules // []) | type == "array"))
+  ' <<< "${state}" >/dev/null 2>&1 || return 1
+  while IFS= read -r record; do
+    [[ -n "${record}" ]] || continue
+    managed_component_state_validate_record "${record}" || return 1
+  done < <(jq -c '.components[]' <<< "${state}")
+}
+
+managed_component_state_json() (
+  local snapshot result
+  if [[ ! -e "${SB_COMPONENT_STATE_FILE}" ]]; then
+    managed_component_state_default_json
+    return 0
+  fi
+  [[ -f "${SB_COMPONENT_STATE_FILE}" && ! -L "${SB_COMPONENT_STATE_FILE}" && -r "${SB_COMPONENT_STATE_FILE}" ]] || return 1
+  snapshot=$(mktemp /tmp/sbv-components.XXXXXX) || return 1
+  trap 'rm -f -- "${snapshot}"' EXIT
+  head -c 4194305 -- "${SB_COMPONENT_STATE_FILE}" > "${snapshot}" || return 1
+  [[ "$(wc -c < "${snapshot}")" -le 4194304 ]] || return 1
+  result=$(jq -cS '.' "${snapshot}") || return 1
+  managed_component_state_validate_json "${result}" || return 1
+  printf '%s\n' "${result}"
+)
+
+managed_component_normalize_input_file() (
+  local input=${1:-} snapshot result
+  [[ -f "${input}" && ! -L "${input}" && -r "${input}" ]] || return 1
+  snapshot=$(mktemp /tmp/sbv-component-record.XXXXXX) || return 1
+  trap 'rm -f -- "${snapshot}"' EXIT
+  head -c 1048577 -- "${input}" > "${snapshot}" || return 1
+  [[ "$(wc -c < "${snapshot}")" -le 1048576 ]] || return 1
+  result=$(jq -cS '
+    if type != "object" then error("record") else . as $r |
+      if ($r | has("config")) and
+         ((($r | keys) - ["id","role","type","tag","enabled","route_rules","config"]) | length > 0)
+      then error("unknown_record_field") else
+      {
+        id: $r.id,
+        role: $r.role,
+        type: $r.type,
+        tag: $r.tag,
+        enabled: ($r.enabled // true),
+        route_rules: ($r.route_rules // []),
+        config: (if ($r | has("config")) then $r.config
+                 else $r | del(.id,.role,.type,.tag,.enabled,.route_rules) end)
+      }
+      end
+    end' "${snapshot}") || return 1
+  managed_component_state_validate_record "${result}" || return 1
+  printf '%s\n' "${result}"
+)
+
+managed_component_render_json() {
+  local state=${1:-}
+  [[ -n "${state}" ]] || state=$(managed_component_state_json) || return 1
+  managed_component_state_validate_json "${state}" || return 1
+  jq -c '
+    def enabled: select(.enabled == true);
+    .components as $components |
+    {
+      inbounds: [$components[] | enabled | select(.role == "inbound") |
+        .config + {type:.type, tag:.tag}],
+      endpoints: [$components[] | enabled | select(.role == "endpoint") |
+        .config + {type:.type, tag:.tag}],
+      outbounds: [$components[] | enabled | select(.role == "outbound") |
+        .config + {type:.type, tag:.tag}],
+      route_rules: [$components[] | enabled | (.route_rules // [])[]]
+    }' <<< "${state}"
+}
+
+managed_component_state_candidate() {
+  local state=${1:-} operation=${2:-} record=${3:-} target_id=${4:-}
+  local candidate
+  managed_component_state_validate_json "${state}" || return 1
+  if [[ "${operation}" == create || "${operation}" == replace ]]; then
+    managed_component_state_validate_record "${record}" || return 1
+  fi
+  if ! candidate=$(jq -c --arg operation "${operation}" --arg target "${target_id}" \
+    --argjson record "${record:-null}" '
+      . as $state |
+      if $operation == "create" then
+        if any($state.components[]; .id == $record.id or .tag == $record.tag) then error("duplicate")
+        else $state | .components += [$record] | .revision = (.revision + 1) end
+      elif $operation == "replace" then
+        if any($state.components[]; .id == $record.id) then
+          $state | .components |= map(if .id == $record.id then $record else . end) |
+          .revision = (.revision + 1)
+        else error("missing") end
+      elif $operation == "delete" then
+        ([$state.components[] | select(.id == $target)] | first) as $existing |
+        if $existing == null then error("missing")
+        elif any($state.components[] | select(.id != $target); [.. | strings | select(. == $existing.tag)] | length > 0) then error("referenced")
+        else $state | .components |= map(select(.id != $target)) | .revision = (.revision + 1) end
+      else error("operation") end
+    ' <<< "${state}" 2>/dev/null); then
+    return 1
+  fi
+  managed_component_state_validate_json "${candidate}" || return 1
+  printf '%s\n' "${candidate}"
+}
+
+managed_component_requires_public_confirmation() {
+  local record=${1:-}
+  jq -e '
+    if .role == "inbound" then
+      (.type == "tun" or .type == "cloudflared" or
+       (((.config.listen // "") != "127.0.0.1") and
+        ((.config.listen // "") != "::1") and
+        ((.config.listen // "") != "localhost")))
+    elif .role == "endpoint" and .type == "openvpn-server" then true
+    else false end
+  ' <<< "${record}" >/dev/null 2>&1
+}
+
+managed_component_write_state() (
+  local state=${1:-} candidate backup
+  managed_component_state_validate_json "${state}" || return 1
+  [[ ! -L "${SB_PROJECT_DIR}" && ! -L "${SB_COMPONENT_STATE_FILE}" &&
+     ! -L "${SB_COMPONENT_STATE_FILE}.bak" ]] || return 1
+  mkdir -p "${SB_PROJECT_DIR}" || return 1
+  candidate=$(mktemp "${SB_PROJECT_DIR}/.components.json.candidate.XXXXXX") || return 1
+  trap 'rm -f -- "${candidate}" "${backup:-}"' EXIT
+  printf '%s\n' "${state}" > "${candidate}" || return 1
+  chmod 600 "${candidate}" || return 1
+  if [[ -f "${SB_COMPONENT_STATE_FILE}" ]]; then
+    backup=$(mktemp "${SB_PROJECT_DIR}/.components.json.backup.XXXXXX") || return 1
+    cp -p "${SB_COMPONENT_STATE_FILE}" "${backup}" || return 1
+    chmod 600 "${backup}" || return 1
+    mv -f "${backup}" "${SB_COMPONENT_STATE_FILE}.bak" || return 1
+    backup=""
+  fi
+  mv -f "${candidate}" "${SB_COMPONENT_STATE_FILE}" || return 1
+  trap - EXIT
+)
+
+managed_component_inventory_json() {
+  local state registry
+  state=$(managed_component_state_json) || return 1
+  registry=$(component_registry_json) || return 1
+  jq -cn --argjson state "${state}" --argjson registry "${registry}" '
+    {
+      schema: "1",
+      action: "component-list",
+      revision: $state.revision,
+      components: [ $state.components[] |
+        . as $component |
+        ($registry[] | select(.role == $component.role and .type == $component.type)) as $entry |
+        {id:$component.id, role:$component.role, type:$component.type, tag:$component.tag,
+         enabled:$component.enabled, registry_id:$entry.state_id,
+         display_name:$entry.display_name, availability:$entry.availability,
+         minimum_project_core:$entry.minimum_project_core,
+         config_keys:($component.config | keys), route_rule_count:(($component.route_rules // []) | length)}
+      ],
+      supported: $registry
+    }'
+}
+
+managed_component_state_matches_live_config() {
+  local config_file=${1:-} state
+  [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
+  state=$(managed_component_state_json) || return 1
+  jq -e --argjson state "${state}" '
+    def managed($role; $type; $tag):
+      any($state.components[]; .role == $role and .type == $type and .tag == $tag and .enabled == true);
+    (all(.inbounds[]?;
+      if (.type | IN("direct","tun","redirect","tproxy","cloudflared")) then
+        managed("inbound"; .type; (.tag // ""))
+      else true end)) and
+    (all(.endpoints[]?;
+      if (.type | IN("wireguard","tailscale","openconnect","openvpn-client","openvpn-server")) then
+        ((.tag // "") == "warp-ep") or managed("endpoint"; .type; (.tag // ""))
+      else true end)) and
+    # Proxy protocol adapters already generate per-user outbounds.  Their
+    # runtime types overlap the generic outbound registry, so only advanced
+    # inbound/endpoint records are ownership-checked here; graph validation
+    # still checks every outbound reference in the candidate.
+    true
+  ' "${config_file}" >/dev/null 2>&1
+}
+
+managed_component_state_apply() {
+  local operation=${1:-} expected=${2:-} input=${3:-} target_id=${4:-} allow_public=${5:-n}
+  local state current_revision record candidate snapshot service_restarted=false
+  local role type tag result_record
+  MANAGED_COMPONENT_LAST_ERROR=""
+  MANAGED_COMPONENT_LAST_RESULT=""
+  result_record='{}'
+  state=$(managed_component_state_json) || { MANAGED_COMPONENT_LAST_ERROR=state_invalid; return 1; }
+  current_revision=$(jq -r '.revision | tostring' <<< "${state}") || { MANAGED_COMPONENT_LAST_ERROR=state_invalid; return 1; }
+  [[ "${expected}" == "${current_revision}" ]] || { MANAGED_COMPONENT_LAST_ERROR=revision_mismatch; return 1; }
+  case "${operation}" in
+    create|replace)
+      record=$(managed_component_normalize_input_file "${input}") || { MANAGED_COMPONENT_LAST_ERROR=record_invalid; return 1; }
+      result_record="${record}"
+      if managed_component_requires_public_confirmation "${record}" && [[ "${allow_public}" != y ]]; then
+        MANAGED_COMPONENT_LAST_ERROR=public_confirmation_required
+        return 1
+      fi
+      candidate=$(managed_component_state_candidate "${state}" "${operation}" "${record}") || {
+        MANAGED_COMPONENT_LAST_ERROR=component_conflict; return 1;
+      }
+      ;;
+    delete)
+      managed_component_state_id_valid "${target_id}" || { MANAGED_COMPONENT_LAST_ERROR=invalid_id; return 1; }
+      candidate=$(managed_component_state_candidate "${state}" delete "" "${target_id}") || {
+        MANAGED_COMPONENT_LAST_ERROR=component_referenced_or_missing; return 1;
+      }
+      ;;
+    *) MANAGED_COMPONENT_LAST_ERROR=invalid_operation; return 1 ;;
+  esac
+
+  snapshot=$(create_managed_state_snapshot) || { MANAGED_COMPONENT_LAST_ERROR=snapshot_failed; return 1; }
+  if ! managed_component_write_state "${candidate}"; then
+    abort_managed_state_transaction "${snapshot}" "高级组件状态写入失败" >/dev/null || :
+    MANAGED_COMPONENT_LAST_ERROR=state_write_failed
+    return 1
+  fi
+  if ! generate_config; then
+    abort_managed_state_transaction "${snapshot}" "高级组件配置生成或校验失败" >/dev/null || :
+    MANAGED_COMPONENT_LAST_ERROR=config_check_failed
+    return 1
+  fi
+  if [[ -f "${SINGBOX_SERVICE_FILE}" ]] && systemctl is-active sing-box >/dev/null 2>&1; then
+    if ! systemctl restart sing-box >/dev/null 2>&1 ||
+       [[ "$(systemctl is-active sing-box 2>/dev/null || true)" != active ]]; then
+      abort_managed_state_transaction "${snapshot}" "高级组件服务重启失败" >/dev/null || :
+      MANAGED_COMPONENT_LAST_ERROR=service_restart_failed
+      return 1
+    fi
+    service_restarted=true
+  fi
+  if ! discard_managed_state_snapshot "${snapshot}"; then
+    MANAGED_COMPONENT_LAST_ERROR=snapshot_cleanup_failed
+    return 1
+  fi
+  role=$(jq -r '.role // empty' <<< "${result_record}")
+  type=$(jq -r '.type // empty' <<< "${result_record}")
+  tag=$(jq -r '.tag // empty' <<< "${result_record}")
+  if [[ "${operation}" == delete ]]; then
+    role=$(jq -r --arg id "${target_id}" '.components[] | select(.id == $id) | .role' <<< "${state}")
+    type=$(jq -r --arg id "${target_id}" '.components[] | select(.id == $id) | .type' <<< "${state}")
+    tag=$(jq -r --arg id "${target_id}" '.components[] | select(.id == $id) | .tag' <<< "${state}")
+  fi
+  local result_id
+  result_id="${target_id}"
+  if [[ -z "${result_id}" ]]; then
+    result_id=$(jq -r '.id // empty' <<< "${result_record}")
+  fi
+  MANAGED_COMPONENT_LAST_RESULT=$(jq -cn --arg operation "${operation}" --arg revision "$(jq -r '.revision' <<< "${candidate}")" \
+    --arg id "${result_id}" --arg role "${role}" --arg type "${type}" --arg tag "${tag}" \
+    --argjson service_restarted "${service_restarted}" \
+    '{action:"component-apply",operation:$operation,revision:($revision|tonumber),id:$id,role:$role,type:$type,tag:$tag,config_check:"passed",service_restarted:$service_restarted}')
+  return 0
+}
+
 managed_state_snapshot_is_valid() {
   local snapshot_dir=$1
 
@@ -12143,6 +12664,14 @@ validate_managed_component_graph() {
           (.role == "endpoint" and .kind == "openvpn-server")) |
           . as $node | .value |
           if has("tls") then .tls | tls_refs($node.id; $default_resolver) else empty end),
+       ($nodes[] | select(.role == "inbound" and .kind == "cloudflared") |
+          . as $node | .value |
+          (if has("control_dialer") then .control_dialer | dial_refs($node.id; true; $default_resolver) else empty end),
+          (if has("tunnel_dialer") then .tunnel_dialer | dial_refs($node.id; true; $default_resolver) else empty end)),
+       ($nodes[] | select(.role == "inbound" and .kind == "tun") |
+          . as $node | .value |
+          list_refs($node.id; "ruleset"; "route_address_set"),
+          list_refs($node.id; "ruleset"; "route_exclude_address_set")),
        ($nodes[] | select(.role == "cert") | . as $node | .value |
           provider_refs($node.id; $default_resolver)),
        ($nodes[] | select((.role == "inbound" or .role == "outbound") and
@@ -12240,6 +12769,7 @@ generate_config_candidate() {
   local config_candidate="" backup_candidate="" protocol
   local exit_cleanup_command effective_protocols
   local inbounds_json certificate_providers_json protocol_rules_json instance_outbound_rules_json
+  local managed_components_json
 
   # Force ensure jq is installed
   if ! command -v jq &>/dev/null; then
@@ -12260,6 +12790,10 @@ generate_config_candidate() {
   # its failure status and could otherwise publish an empty/partial config.
   effective_protocols=$(list_effective_protocols) || return 1
   [[ -n "${effective_protocols}" ]] || return 1
+  managed_components_json=$(managed_component_render_json) || {
+    log_warn "高级组件状态无效，禁止生成可能丢失组件的配置。"
+    return 1
+  }
 
   log_info "正在生成配置 (目标 sing-box $(resolve_config_target_singbox_version)，Endpoint 架构 & 安全注入)..."
   mkdir -p "${SINGBOX_CONFIG_DIR}" || return 1
@@ -12361,6 +12895,7 @@ generate_config_candidate() {
     --argjson w_reserved "${w_reserved}" \
     --arg outbound_stack_mode "${SB_OUTBOUND_STACK_MODE}" \
     --argjson inbounds "${inbounds_json}" \
+    --argjson managed_components "${managed_components_json}" \
     --argjson certificate_providers "${certificate_providers_json}" \
     --argjson protocol_rules "${protocol_rules_json}" \
     --argjson instance_outbound_rules "${instance_outbound_rules_json}" \
@@ -12384,7 +12919,7 @@ generate_config_candidate() {
         ],
         "strategy": $outbound_stack_mode
       },
-      "endpoints": (if $enable_warp_endpoint == "y" then [
+      "endpoints": ((if $enable_warp_endpoint == "y" then [
         {
           "type": "wireguard",
           "tag": "warp-ep",
@@ -12401,9 +12936,9 @@ generate_config_candidate() {
           ],
           "mtu": 1280
         }
-      ] else [] end),
-      "inbounds": $inbounds,
-      "outbounds": [
+      ] else [] end) + ($managed_components.endpoints // [])),
+      "inbounds": ($inbounds + ($managed_components.inbounds // [])),
+      "outbounds": ([
         {
           "type": "direct",
           "tag": "direct",
@@ -12413,7 +12948,7 @@ generate_config_candidate() {
           }
         },
         { "type": "block", "tag": "block" }
-      ],
+      ] + ($managed_components.outbounds // [])),
       "route": {
         "rule_set": (
           if $enable_warp == "y" and $warp_mode == "selective" then
@@ -12423,6 +12958,7 @@ generate_config_candidate() {
           end
         ),
         "rules": (
+          ($managed_components.route_rules // []) +
           $instance_outbound_rules +
           $protocol_rules +
           (if $adv_route == "y" then [ { "ip_is_private": true, "action": "reject" } ] else [] end) +
@@ -19034,6 +19570,9 @@ agent_print_help() {
   sbv agent service restart --json --yes
   sbv agent subman-sync --json
   sbv agent warp --json
+  sbv agent component list --json
+  sbv agent component create|replace --json --yes --expected-revision N --file component.json [--allow-public]
+  sbv agent component delete --json --yes --expected-revision N --id ID
   sbv agent instance create|replace mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N --file record.json [--allow-public]
   sbv agent instance delete|default mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N --id ID
   sbv agent instance migrate mixed --json --yes --expected-revision N
@@ -19048,6 +19587,7 @@ agent_print_help() {
   links         输出完整连接材料，适合受信任 Agent 获取节点信息。
   export-client 生成并校验 sing-box 裸核客户端配置，写入固定路径并输出 JSON。
   warp          输出 Cloudflare Warp 状态，包括启用/路由模式/账户/规则统计。
+  component     管理 direct/tun/redirect/tproxy/cloudflared 入站、WireGuard/Tailscale/OpenConnect/OpenVPN endpoint 以及 SSH/Tor/分组等出站；state revision 使用 CAS，敏感配置不会在 list 输出。
   check         执行 sing-box check 并输出结构化结果。
   doctor        输出只读诊断信息和配置校验结果。
   service       执行带 --yes 保护的服务操作，目前支持 restart。
@@ -19203,14 +19743,17 @@ detect_existing_instance_state_read_only() {
 }
 
 agent_capabilities_json() {
-  local registry
+  local registry components
   registry=$(protocol_registry_json) || return 1
+  components=$(component_registry_json) || return 1
   jq -n \
     --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
     --arg script_version "${SCRIPT_VERSION}" \
     --arg supported_version "${SB_SUPPORT_MAX_VERSION}" \
     --arg backup_root "${SB_UPGRADE_BACKUP_ROOT}" \
+    --arg component_state_file "${SB_COMPONENT_STATE_FILE}" \
     --argjson registry "${registry}" \
+    --argjson components "${components}" \
     '{
       schema: $schema,
       ok: true,
@@ -19283,7 +19826,19 @@ agent_capabilities_json() {
           cross_protocol_bulk_delete: false
         },
         diagnostics: {config_check: true, doctor: true, media_check: true},
-        subman: {supported_protocols: ($registry | map(select(.subman_type != "") | .agent_id)), idempotent_sync: true}
+        subman: {supported_protocols: ($registry | map(select(.subman_type != "") | .agent_id)), idempotent_sync: true},
+        components: {
+          state_file: $component_state_file,
+          schema_version: 1,
+          operations: ["list", "create", "replace", "delete"],
+          expected_revision_required: true,
+          plaintext_public_confirmation: "--allow-public",
+          registry: $components,
+          route_rules: true,
+          reference_protection: true,
+          service_restart_if_active: true,
+          config_check: true
+        }
       },
       commands: {
         capabilities: {mutation: false, sensitive: false},
@@ -19296,6 +19851,7 @@ agent_capabilities_json() {
         "upgrade-check": {mutation: false, sensitive: false},
         upgrade: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart"},
         instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic", "hysteria", "naive", "shadowtls"]},
+        component: {mutation: true, sensitive: true, confirmation: "--yes", service_impact: "restart_if_active", roles: ["inbound", "endpoint", "outbound"]},
         "export-client": {mutation: true, sensitive: true},
         "service restart": {mutation: true, sensitive: false, confirmation: "--yes"},
         "subman-sync": {mutation: true, sensitive: true, external_write: true}
@@ -20584,7 +21140,7 @@ agent_installed_protocols_json() {
 agent_status_json() {
   local indexed_protocols installed_protocols_json active_state installed_version warload_mode warload_enabled
   local host_stack bbr_algorithm bbr_enabled inbound_stack_mode outbound_stack_mode
-  local reality_instance_count qos_filter_count subman_configured client_export_exists
+  local reality_instance_count qos_filter_count subman_configured client_export_exists components_json
 
   if ! validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}"; then
     agent_json_error "live_inbound_inventory_untrusted" "现有配置包含无法完整识别的入站；未返回部分协议状态。"
@@ -20599,6 +21155,10 @@ agent_status_json() {
     return 1
   fi
   installed_protocols_json=$(agent_installed_protocols_json "${indexed_protocols}") || return 1
+  if ! components_json=$(managed_component_inventory_json); then
+    agent_json_error "component_state_untrusted" "高级组件状态无法完整读取；未返回部分组件状态。"
+    return 1
+  fi
   warload_mode="selective"
   warload_enabled=false
   if [[ -f "${SINGBOX_CONFIG_FILE}" ]] && config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; then
@@ -20657,6 +21217,7 @@ agent_status_json() {
     --argjson subman_configured "${subman_configured}" \
     --argjson client_export_exists "${client_export_exists}" \
     --argjson protocols "${installed_protocols_json}" \
+    --argjson components "${components_json}" \
     --argjson warp_enabled "$([[ "${warload_enabled}" == true ]] && printf 'true' || printf 'false')" \
     --arg warp_route_mode "${warload_mode}" \
     '{
@@ -20682,6 +21243,7 @@ agent_status_json() {
         "subman_config": $subman_config_file
       },
       "protocols": $protocols,
+      "components": $components,
       "network_stack": {
         "host": $host_stack,
         "inbound": $inbound_stack_mode,
@@ -22673,6 +23235,67 @@ apply_plain_proxy_instance_change() (
   return 0
 )
 
+agent_component_cli() {
+  local operation=${1:-} expected="" input="" component_id="" json=n confirmed=n allow_public=n
+  shift || true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) [[ "${json}" == n ]] || break; json=y; shift ;;
+      --yes) [[ "${confirmed}" == n ]] || break; confirmed=y; shift ;;
+      --allow-public) [[ "${allow_public}" == n ]] || break; allow_public=y; shift ;;
+      --expected-revision) [[ $# -ge 2 && -z "${expected}" ]] || break; expected=$2; shift 2 ;;
+      --file) [[ $# -ge 2 && -z "${input}" ]] || break; input=$2; shift 2 ;;
+      --id) [[ $# -ge 2 && -z "${component_id}" ]] || break; component_id=$2; shift 2 ;;
+      *) break ;;
+    esac
+  done
+
+  if [[ "${operation}" == list ]]; then
+    if [[ $# -ne 0 || "${json}" != y ]]; then
+      agent_json_error invalid_arguments "用法: sbv agent component list --json"; return 1
+    fi
+    managed_component_inventory_json
+    return $?
+  fi
+
+  if [[ "${operation}" != create && "${operation}" != replace && "${operation}" != delete ||
+        $# -ne 0 || "${json}" != y || "${confirmed}" != y ||
+        ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
+    agent_json_error invalid_arguments "组件参数无效；需要 create/replace/delete、--json、--yes 和 --expected-revision N。"
+    return 1
+  fi
+  if ! structured_instance_store_revision_arg "${expected}" >/dev/null; then
+    agent_json_error invalid_arguments "revision 超出安全整数范围；未修改。"
+    return 1
+  fi
+  case "${operation}" in
+    create|replace)
+      if [[ -z "${input}" || -n "${component_id}" ]]; then
+        agent_json_error invalid_arguments "create/replace 需要 --file，且不接受 --id。"; return 1
+      fi
+      ;;
+    delete)
+      if [[ -n "${input}" || -z "${component_id}" || "${allow_public}" != n ]]; then
+        agent_json_error invalid_arguments "delete 需要 --id，且不接受 --file/--allow-public。"; return 1
+      fi
+      ;;
+  esac
+  if managed_component_state_apply "${operation}" "${expected}" "${input}" "${component_id}" "${allow_public}"; then
+    printf '%s\n' "${MANAGED_COMPONENT_LAST_RESULT}"
+    return 0
+  fi
+  case "${MANAGED_COMPONENT_LAST_ERROR:-component_apply_failed}" in
+    revision_mismatch) agent_json_error revision_mismatch "组件 state revision 不匹配；未修改。" ;;
+    public_confirmation_required) agent_json_error confirmation_required "公开监听或隧道组件需要 --allow-public；未修改。" ;;
+    component_referenced_or_missing) agent_json_error component_referenced "组件仍被 route/group/detour 引用，或目标不存在；未修改。" ;;
+    record_invalid|component_conflict) agent_json_error invalid_component "组件记录无效、类型不受支持或 tag/id 冲突；未修改。" ;;
+    service_restart_failed) agent_json_error service_restart_failed "组件已回滚；服务重启失败。" ;;
+    config_check_failed) agent_json_error config_check_failed "组件已回滚；生成的配置未通过图校验或 sing-box check。" ;;
+    *) agent_json_error component_apply_failed "组件事务失败，状态已回滚或保留快照待恢复。" ;;
+  esac
+  return 1
+}
+
 agent_instance_cli() {
   local operation=${1:-} protocol=${2:-} expected="" input="" instance_id="" json=n confirmed=n allow_public=n
   [[ $# -ge 2 ]] || { agent_json_error invalid_arguments "用法: instance 操作 mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N [--file 文件 | --id ID]"; return 1; }
@@ -22737,6 +23360,9 @@ agent_cli() {
       ;;
     instance)
       agent_cli_run "instance" agent_instance_cli "$@"
+      ;;
+    component)
+      agent_cli_run "component" agent_component_cli "$@"
       ;;
     upgrade-check)
       if [[ $# -ne 2 || "${1:-}" != "--json" ]]; then
@@ -22855,6 +23481,28 @@ agent_dispatch() {
 
   case "${1:-}" in
     instance) agent_cli "$@" ;;
+    component)
+      case "${2:-}" in
+        list) (
+          if ! acquire_managed_write_lock shared; then
+            agent_cli_error "component" instance_write_busy "配置正在被管理进程使用，未返回部分组件状态。"; return 1
+          fi
+          if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
+            agent_cli_error "component" instance_transaction_pending "存在未完成的实例事务；请先检查并恢复。"; return 1
+          fi
+          agent_cli "$@"
+        ) ;;
+        *) (
+          if ! acquire_managed_write_lock; then
+            agent_cli_error "component" instance_write_busy "另一个管理进程正在执行。"; return 1
+          fi
+          if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
+            agent_cli_error "component" instance_transaction_pending "请先完成 instance recover；未开始其他写操作。"; return 1
+          fi
+          agent_cli "$@"
+        ) ;;
+      esac
+      ;;
     status|nodes|links|check|doctor|warp|upgrade-check)
       (
         if ! acquire_managed_write_lock shared; then
@@ -23084,17 +23732,18 @@ prompt_singbox_version() {
 }
 
 validate_live_inbound_inventory() {
-  local config_file=$1 registry inventory_status allow_structured_hy2=false
+  local config_file=$1 registry advanced_types component_state inventory_status allow_structured_hy2=false
 
   [[ -e "${config_file}" || -L "${config_file}" ]] || return 0
   registry=$(protocol_registry_json) || return 1
+  advanced_types=$(component_registry_inbound_types_json) || return 1
   if plain_proxy_structured_state_active hy2 >/dev/null 2>&1; then
     allow_structured_hy2=true
   fi
   # This is an inventory gate, not a full field/route round-trip validator.
   # Accept only real core type names here; CLI aliases (especially vless)
   # cannot prove that a live inbound uses the corresponding managed preset.
-  if ! inventory_status=$(jq -rs --argjson registry "${registry}" --argjson allow_structured_hy2 "${allow_structured_hy2}" '
+  if ! inventory_status=$(jq -rs --argjson registry "${registry}" --argjson advanced_types "${advanced_types}" --argjson allow_structured_hy2 "${allow_structured_hy2}" '
     if length != 1 or (.[0] | type) != "object" then "invalid_document"
     else .[0] |
       if has("inbounds") and (.inbounds | type) != "array" then "invalid_inbounds"
@@ -23103,11 +23752,16 @@ validate_live_inbound_inventory() {
         elif any($inbounds[]; has("tag") and (.tag | type) != "string") then "invalid_inbound_tag"
         else [
           $inbounds[] as $inbound |
-          {inbound: $inbound, adapters: [$registry[] |
-            select(.role == "inbound" and .type == $inbound.type and
-              (if .type == "vless" then
-                ((.preset == "reality") == ($inbound.tls.reality? != null))
-              else true end))]}
+          {inbound: $inbound, adapters:
+            (if ($advanced_types | index($inbound.type)) != null then
+               [{state_id:("advanced-" + $inbound.type), managed:true}]
+             else
+               [$registry[] |
+                select(.role == "inbound" and .type == $inbound.type and
+                  (if .type == "vless" then
+                    ((.preset == "reality") == ($inbound.tls.reality? != null))
+                  else true end))]
+             end)}
         ] as $items |
           if any($items[]; (.adapters | length) == 0) then "unsupported_inbound_type"
           elif any($items[]; (.adapters | length) != 1) then "ambiguous_inbound_type"
@@ -23116,7 +23770,7 @@ validate_live_inbound_inventory() {
              (.inbound.tls.reality | type) != "object" or .inbound.tls.reality.enabled != true))
             then "unsupported_inbound_preset"
           elif any($items | group_by(.adapters[0].state_id)[];
-            length > 1 and (
+            length > 1 and .[0].adapters[0].managed != true and (
               (.[0].adapters[0].state_id == "hy2" and ($allow_structured_hy2 | not)) or
               (.[0].adapters[0].state_id != "hy2" and .[0].adapters[0].multi_instance != true)
             ))
@@ -23133,6 +23787,25 @@ validate_live_inbound_inventory() {
   fi
   if [[ "${inventory_status}" != "ok" ]]; then
     printf '[ERROR] live_inbound_inventory: %s; 已保留配置和状态，禁止有损重建；请使用支持该入站的脚本或先备份并人工迁移。\n' "${inventory_status}" >&2
+    return 1
+  fi
+  if ! managed_component_state_matches_live_config "${config_file}"; then
+    # Preserve the long-standing inventory error for an advanced inbound that
+    # is present in the live config but has no owned component record. This
+    # keeps takeover/rebuild fail-closed while distinguishing endpoint-only
+    # ownership drift as a component-state error.
+    component_state=$(managed_component_state_json 2>/dev/null || printf '{}')
+    if jq -e --argjson advanced_types "${advanced_types}" --argjson state "${component_state}" '
+      any(.inbounds[]?; . as $inbound |
+        ($advanced_types | index($inbound.type)) != null and
+        (any($state.components[]?;
+          .role == "inbound" and .type == $inbound.type and
+          .tag == ($inbound.tag // "") and .enabled == true) | not))
+    ' "${config_file}" >/dev/null 2>&1; then
+      printf '[ERROR] live_inbound_inventory: unsupported_inbound_type; 已保留配置和状态，禁止有损重建；请使用支持该入站的脚本或先备份并人工迁移。\n' >&2
+    else
+      printf '[ERROR] live_component_inventory: advanced component state/config mismatch; 已保留配置和状态，禁止有损重建。\n' >&2
+    fi
     return 1
   fi
   if ! jq -e '
@@ -23160,6 +23833,11 @@ list_config_protocols() {
 
   for ((inbound_index = 0; inbound_index < inbound_count; inbound_index++)); do
     inbound_json=$(jq -c --argjson idx "${inbound_index}" '.inbounds[$idx]' "${SINGBOX_CONFIG_FILE}") || return 1
+    if jq -e '.type | IN("direct","tun","redirect","tproxy","cloudflared")' <<< "${inbound_json}" >/dev/null 2>&1; then
+      # Advanced inbounds have their own typed component state and must not
+      # pollute the share-link protocol index.
+      continue
+    fi
     protocol=$(config_inbound_protocol "${inbound_json}") || return 1
 
     if ! protocol_array_contains "${protocol}" ${protocols[@]+"${protocols[@]}"}; then

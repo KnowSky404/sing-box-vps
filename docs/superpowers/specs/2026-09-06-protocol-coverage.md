@@ -6,7 +6,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026090901`，`SB_SUPPORT_MAX_VERSION=1.14.0`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026090903`，`SB_SUPPORT_MAX_VERSION=1.14.0`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -16,6 +16,8 @@
 - `validated`：本轮实际取得的证据。`registry-check` 只证明目标二进制能识别该 type 并进入初始化校验；`project-real-tcp` 表示回读了项目真实 TCP 业务闭环 artifact，不能由 `check`、监听端口或进程存活代替，也不证明 UDP 业务已测。
 
 表中“版本”优先表示本项目实现时的核心版本门槛：除标明“自 1.14.0”的能力外，继续以项目已有的 1.13.x 兼容路径为下限；它不声称是该协议在 sing-box 历史上的首次引入版本。需要 1.14.0 的 type 或字段必须在目标版本门控后才可生成。
+
+2026-09-09 高级组件增量：本项目新增独立 `components.json`（schema 1、revision/CAS）和 30 项 runtime component registry，接入 direct/tun/redirect/tproxy/cloudflared inbound、WireGuard/Tailscale/OpenConnect/OpenVPN endpoint，以及 SSH/Tor/direct/bridge/selector/urltest/block 和协议 outbound 的受控状态/config 组合。`implemented` 在本增量中表示状态读取、类型专属边界、配置合并、引用/依赖图、监听计划、Agent list/create/replace/delete 和目标核心校验切片已存在；`available` 仍为动态 `null`，`validated` 默认 `not_assessed`。这些组件不进入普通分享节点索引，外部控制面、构建 tag、路由/防火墙权限和真实数据面均不由 registry 或 `sing-box check` 推断；因此下方组件行的 D/T/E/R 与导出、分享、SubMan 仍按此边界记录，完整协议目标继续未完成。
 
 ## 版本与证据
 
@@ -68,7 +70,7 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 
 | ID | 官方 type / 角色 | 版本、构建和平台条件 | TCP/UDP/主要约束 | upstream | available（官方 ARM64 包） | implemented；D/T/E/R | 导出 / 分享 / SubMan | validated |
 |---|---|---|---|---|---|---|---|---|
-| direct-inbound | `direct` / inbound | 基础内建 | TCP 或 UDP，由 `network` 指定，留空为两者；仍支持 `override_address/override_port` 端口转发，不能与 direct outbound 的移除项混淆 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check；两核心 override 配置 check 通过 |
+| direct-inbound | `direct` / inbound | 基础内建 | TCP 或 UDP，由 `network` 指定，留空为两者；仍支持 `override_address/override_port` 端口转发，不能与 direct outbound 的移除项混淆 | yes | yes（Linux） | component state/config；yes/yes/yes/yes* | — / — / — | registry-check；两核心 override 配置 check 通过 |
 | mixed | `mixed` / inbound | 基础内建 | TCP listen；同一入口提供 SOCKS4/4a/5 和 HTTP；UDP 业务经 SOCKS UDP/UoT，不开固定 UDP listen；schema 2 可管理多实例 | yes | yes（Linux） | 旧预设 + schema 2 实例链路；yes/yes/yes/yes（首次全新安装仍为 legacy schema 1，显式迁移后启用 schema 2） | SOCKS5 + UoT v2 裸核客户端（明文警告） / HTTP、SOCKS 链接 / no current SubMan | project-real-tcp；多实例生命周期、导出及本轮五协议最终门禁通过 |
 | vless-reality（旧预设） | `vless` / inbound | 项目保留 1.13.x；REALITY、Vision 与 TCP 预设 | TCP listen，TCP/UDP 业务；已有多实例、固定 tag/UUID/ShortID、实例出站和 QoS | yes | yes（Linux；需握手目标） | 旧预设；yes/yes/yes/yes | 裸核客户端 / VLESS URI / VLESS 同步 | project-real-tcp |
 | vless-plain（普通预设） | `vless` / inbound | 项目兼容 1.13.x；QUIC transport 另需 `with_quic` | 外层 TCP 或 QUIC/UDP；可选 TLS；按用户 `flow`；支持 none/http/ws/grpc/quic，HTTPUpgrade 与 WS early data fail closed | yes | yes（Linux） | 第十预设，schema 2 marker + schema 1 store，共享实例事务；yes/yes/yes/yes；多用户/TLS/transport/接管/恢复 | 逐用户完整 JSON / VLESS URI（可表达字段） / 逐实例逐用户同步（不可表达组合稳定跳过） | 两核心 1.13.18/1.14.0 check/export；专项 lifecycle/Agent/share/SubMan/probe 通过；最终本地 `20260908141403` 为 108/108，最终 Docker `20260908144031` 为 15/15 场景与 22/22 探针通过；仅容器/回环，非公网或生产证明 |
@@ -85,10 +87,12 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 | hysteria2 | `hysteria2` / inbound | `with_quic`；官方默认 Linux tag 含它 | QUIC/UDP + TLS；password、salamander/gecko obfs、masquerade；realm/STUN/端口映射是额外控制面 | conditional | yes（tag 已含） | 旧 schema 1 + typed schema 2 手工 TLS 多实例/用户；yes/yes/yes/yes；旧 ACME/provider 接管保留 legacy，重复 legacy 入站仍阻断 | 逐用户完整 client JSON / Hysteria2 URI（证书 trust 或证书算法可能 warning） / system-trust 用户逐用户同步，证书 trust 跳过，带宽/masquerade 无法由 URI 表达并保留 warning | typed store/lifecycle/Agent/export/SubMan mock 专项通过；Docker 旧路径共存通过；未配置目标核心，QUIC 不作为独立 UDP payload 证据 |
 | anytls | `anytls` / inbound | 自 1.12.0；基础内建 | TCP + TLS；users/password 和 padding scheme；客户端 metadata 不能由普通 URI 无损表达 | yes | yes（Linux） | 旧 schema 1 + typed schema 2 manual-TLS 实例；yes/yes/yes/yes；ACME/provider takeover fail closed | AnyTLS client JSON / 无稳定无损 URI（warning） / no current SubMan | typed store/lifecycle/Agent/export check；公网与真实 SubMan 未验证 |
 | snell | `snell` / inbound | 自 1.14.0；基础注册但协议为新版本能力 | TCP listen；server 版本 `5` 或 `6`，UDP 业务由 Snell packet API 经 TCP 会话承载；v5 只 HTTP obfs 且不支持 QUIC proxy，v6 为 traffic shaping 并要求 12–255 字节 PSK | yes | yes（Linux） | active schema 2 marker + schema 1 JSON store、共享实例事务；yes/yes/yes/yes；0–128 用户；无 legacy migration | 逐用户完整 Snell outbound JSON / 无标准 URI（warning） / unsupported（不执行 SubMan） | typed lifecycle/takeover/rebuild/Agent/export 专项通过；配置目标 1.14.0 时执行 check；未证明 UDP payload、公网、生产或 SubMan |
-| tun | `tun` / inbound | 基础内建；Linux 需要系统权限与路由工具，平台行为不同 | TCP/UDP/ICMP 的透明接入；Linux `auto_route/auto_redirect`、nftables/iproute2、DNS 劫持和自捕获环路必须一起管理 | yes | yes（Linux；权限/路由仍需） | none；—/—/—/— | 不属于分享节点 / — / — | registry-check |
-| redirect | `redirect` / inbound | Linux、macOS；Linux 通常需 root/iptables 或 nftables 方案 | TCP only；源码 listener 固定 `NetworkTCP`，通过原始目标重定向连接；必须防止管理 SSH 被捕获 | conditional | yes（Linux；root/重定向规则仍需） | none；—/—/—/— | 不属于分享节点 / — / — | registry-check |
-| tproxy | `tproxy` / inbound | Linux；需 root、策略路由/防火墙能力 | TCP/UDP（空值表示两者）；Linux 专属，UDP NAT 参数和路由归属必须持久化 | conditional | yes（Linux；root/策略路由仍需） | none；—/—/—/— | 不属于分享节点 / — / — | registry-check |
-| cloudflared | `cloudflared` / inbound | 自 1.14.0；`with_cloudflared`；需 Cloudflare Tunnel token 和外部控制面 | Cloudflare Tunnel 可承载 TCP、UDP、ICMP；`protocol` 为 QUIC/HTTP2，UDP datagram v2/v3；不能虚构普通节点 URI | conditional | yes（tag 已含；token/控制面仍需） | none；—/—/—/— | 不提供普通分享 / — / — | registry-check（无 token 按预期失败） |
+| tun | `tun` / inbound | 基础内建；Linux 需要系统权限与路由工具，平台行为不同 | TCP/UDP/ICMP 的透明接入；Linux `auto_route/auto_redirect`、nftables/iproute2、DNS 劫持和自捕获环路必须一起管理 | yes | yes（Linux；权限/路由仍需） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | registry-check |
+| redirect | `redirect` / inbound | Linux、macOS；Linux 通常需 root/iptables 或 nftables 方案 | TCP only；源码 listener 固定 `NetworkTCP`，通过原始目标重定向连接；必须防止管理 SSH 被捕获 | conditional | yes（Linux；root/重定向规则仍需） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | registry-check |
+| tproxy | `tproxy` / inbound | Linux；需 root、策略路由/防火墙能力 | TCP/UDP（空值表示两者）；Linux 专属，UDP NAT 参数和路由归属必须持久化 | conditional | yes（Linux；root/策略路由仍需） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | registry-check |
+| cloudflared | `cloudflared` / inbound | 自 1.14.0；`with_cloudflared`；需 Cloudflare Tunnel token 和外部控制面 | Cloudflare Tunnel 可承载 TCP、UDP、ICMP；`protocol` 为 QUIC/HTTP2，UDP datagram v2/v3；不能虚构普通节点 URI | conditional | yes（tag 已含；token/控制面仍需） | component state/config；yes/yes/yes/yes* | 不提供普通分享 / — / — | registry-check（无 token 按预期失败） |
+
+`tun`、`redirect`、`tproxy` 与 `cloudflared` 行的 `component state/config` 仅覆盖本项目的统一状态、配置合并、引用保护、监听投影、Agent CAS 和目标核心校验；透明路由、nftables/iproute2、防火墙、Cloudflare 控制面与真实业务仍未宣称通过。`*` 表示同上所述的组件生命周期切片，不是公网部署证明。
 
 `vless-reality` 是本项目旧兼容预设，配置使用上游 `type: vless`，并非独立的上游 type；普通 VLESS 使用独立 `vless-plain` preset/state ID。项目继续把 `vless`、`vless+reality`、`vless-reality` 归一到旧 REALITY 状态，普通 VLESS 不复用该 alias，避免接管、重建或导出时将两种语义混淆。
 
@@ -98,9 +102,9 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 
 | ID | 官方 type / 角色 | 版本、构建和平台条件 | TCP/UDP/主要约束 | upstream | available（官方 ARM64 包） | implemented；D/T/E/R | 导出 / 分享 / SubMan | validated |
 |---|---|---|---|---|---|---|---|---|
-| direct-outbound | `direct` / outbound | 基础内建 | TCP/UDP 直连；旧 `override_address/port` 在 1.13 已移除，改用 route options | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check |
-| bridge | `bridge` / outbound | 自 1.14.0；需要 Linux/macOS/Windows、rooted Android 或 jailbroken iOS 的权限/接口 | 只接收来自 TUN/Endpoint pre-match 的 L3 流量（TCP/UDP/ICMP），拒绝 L4 代理连接与本机目的地址；Linux 有 iproute2 table/rule | conditional | yes（Linux；接口/root 仍需） | none；—/—/—/— | 不属于分享节点 / — / — | registry-check；1.13.18 明确拒绝未知 type |
-| block | `block` / outbound | 基础内建 | 丢弃连接/数据；无网络协议 | yes | yes（Linux） | none；—/—/—/— | 不属于分享节点 / — / — | registry-check |
+| direct-outbound | `direct` / outbound | 基础内建 | TCP/UDP 直连；旧 `override_address/port` 在 1.13 已移除，改用 route options | yes | yes（Linux） | component state/config；yes/yes/yes/yes* | — / — / — | registry-check |
+| bridge | `bridge` / outbound | 自 1.14.0；需要 Linux/macOS/Windows、rooted Android 或 jailbroken iOS 的权限/接口 | 只接收来自 TUN/Endpoint pre-match 的 L3 流量（TCP/UDP/ICMP），拒绝 L4 代理连接与本机目的地址；Linux 有 iproute2 table/rule | conditional | yes（Linux；接口/root 仍需） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | registry-check；1.13.18 明确拒绝未知 type |
+| block | `block` / outbound | 基础内建 | 丢弃连接/数据；无网络协议 | yes | yes（Linux） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | registry-check |
 | socks | `socks` / outbound | 基础内建 | SOCKS4/4a/5；TCP，UDP 依 server 支持，可 UDP-over-TCP | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check |
 | http | `http` / outbound | 基础内建 | HTTP CONNECT，TCP；可单独配置 outbound TLS、headers、path | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check |
 | shadowsocks | `shadowsocks` / outbound | 基础内建 | TCP/UDP；方法覆盖 SS2022 与传统方法，密码/密钥长度须按 method 校验；可 multiplex/UoT | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check（无 method 按预期失败） |
@@ -118,8 +122,8 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 | tor | `tor` / outbound | type 总是注册；嵌入 Tor 需 `with_embedded_tor` + CGO，默认官方包不含 embedded Tor | 通过外部 Tor executable 或嵌入实例；必须管理 executable path/data directory/torrc；不能把 Tor 当普通服务端节点 | conditional | yes（外部 executable；embedded 需额外 tag/CGO） | none；—/—/—/— | — / 不生成 Tor 分享 / — | registry-check（外部路径为空时仅证明注册） |
 | ssh | `ssh` / outbound | 基础内建；目标 SSH 服务和密钥/host key 策略是外部条件 | TCP；密码或 private key、host key/cipher/kex 需校验；不创建新的 SSH server | conditional | yes（Linux；目标 SSH/凭据仍需） | none；—/—/—/— | — / 不生成 SSH 节点 URI / — | registry-check |
 | dns-legacy | `dns` / outbound | 1.13 已移除 | 不再作为 outbound；使用 DNS rule action、DNS server 和 domain resolver | removed | no（removed） | none；—/—/—/— | 不可用 / — / — | check 明确报告 removed |
-| selector | `selector` / outbound group | 基础内建 | 只选择已注册 outbound tag；成员为空或引用不存在都应失败 | yes | yes（Linux） | none；—/—/—/— | 不属于分享节点 / — / — | registry-check（无 tags 按预期失败） |
-| urltest | `urltest` / outbound group | 基础内建 | 对成员 URL 测试延迟并选择；需要可达探测 URL、成员 tag 和 timeout/interval 策略 | yes | yes（Linux） | none；—/—/—/— | 不属于分享节点 / — / — | registry-check（无 tags 按预期失败） |
+| selector | `selector` / outbound group | 基础内建 | 只选择已注册 outbound tag；成员为空或引用不存在都应失败 | yes | yes（Linux） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | registry-check（无 tags 按预期失败） |
+| urltest | `urltest` / outbound group | 基础内建 | 对成员 URL 测试延迟并选择；需要可达探测 URL、成员 tag 和 timeout/interval 策略 | yes | yes（Linux） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | registry-check（无 tags 按预期失败） |
 | naive | `naive` / outbound | `with_naive_outbound`；Linux 官方纯 Go 变体仅 amd64/arm64，其他变体见下文 | HTTP/2 或可选 QUIC；TLS 只支持 server_name/certificate/path/ECH；依赖 libcronet，不能由 check 证明运行库存在 | conditional | yes（tag+libcronet 已含；运行库加载仍需） | typed per-user client export（由 NaiveProxy 入站实例管理驱动）；— | 完整 Naive outbound JSON / 不编造 URI（warning） / unsupported | `tests/naive_instance_lifecycle.sh` 与真实 1.14.0 outbound check 通过；未验证 libcronet 加载或数据面 |
 
 ## Endpoint 矩阵
@@ -133,6 +137,8 @@ Endpoint 同时具有接入和出站行为，不能塞进普通 `inbounds`/`outb
 | openconnect | `openconnect` / endpoint | 自 1.14.0；`with_openconnect`；`system:false` 还要求 `with_gvisor`；需要 Cisco/GlobalProtect/Fortinet/F5/Pulse/Juniper 服务器和交互认证 | VPN 数据面可 TCP/UDP；HTTPS control channel、cookie/username/password/cert、DNS transport；无授权端点不能标 validated | conditional | yes（tag 已含；system:false 需 gVisor；认证仍需） | none；—/—/—/— | 不属于普通分享节点 / — / — | registry-check（无 server 按预期失败） |
 | openvpn-client | `openvpn-client` / endpoint | 自 1.14.0；`with_openvpn`；`system:false` 还要求 `with_gvisor`；需要外部 OpenVPN server/profile/凭据 | TCP 或 UDP；TLS 或 static_key；interactive auth、certificate/key、topology 和 DNS/route 需保留 | conditional | yes（tag 已含；system:false 需 gVisor；外部 profile 仍需） | none；—/—/—/— | 不属于普通分享节点 / — / — | registry-check（无 server 按预期失败） |
 | openvpn-server | `openvpn-server` / endpoint | 自 1.14.0；`with_openvpn`；`system:false` 还要求 `with_gvisor` | TCP 或 UDP，每个 endpoint 只服务一种 network；同时 TCP+UDP 要两个 server endpoint；TLS/static_key 模式约束不同 | conditional | yes（tag 已含；system:false 需 gVisor；证书/密钥仍需） | none；—/—/—/— | 不属于普通分享节点 / — / — | registry-check（无 address 按预期失败） |
+
+Endpoint 表中仍保留 `none` 的历史行表示没有专用分享/节点适配；2026-09-09 增量新增的 `components.json` 状态/config/CAS 管理切片等价于组件生命周期 `yes/yes/yes/yes*`，但不等同外部 VPN/Tailscale/WireGuard 数据面已验证。`*` 表示配置组合、目标核心 check 和回滚边界已接入，外部认证、系统接口、路由/防火墙及公网业务仍需独立证据。
 
 ## 构建变体和依赖门控
 

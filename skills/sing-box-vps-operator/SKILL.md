@@ -93,6 +93,27 @@ sbv update sbv
 sbv update sing-box latest
 ```
 
+Use the advanced component API for non-shareable inbounds, endpoints and
+reusable outbounds/groups:
+
+```bash
+sbv agent component list --json
+sbv agent component create|replace --json --yes --expected-revision N --file component.json [--allow-public]
+sbv agent component delete --json --yes --expected-revision N --id COMPONENT_ID
+```
+
+Component state is stored in `/root/sing-box-vps/components.json` with an
+independent schema-1 revision. `list` returns only metadata and config keys;
+it never returns tokens, passwords or private keys. Mutations rebuild the
+combined config, enforce component references and listener conflicts, run the
+target core check, and restart an active service after publication. The
+registry covers direct/tun/redirect/tproxy/cloudflared inbounds,
+WireGuard/Tailscale/OpenConnect/OpenVPN endpoints, and SSH/Tor/direct/bridge/
+selector/urltest/block plus protocol outbounds. Non-loopback listeners, TUN,
+tunnels and OpenVPN server require `--allow-public`. External account
+authentication, system routes/firewall, runtime libraries and data-plane
+reachability remain separate operator-reviewed gates.
+
 - Use `status --json` for version/service/path/protocol diagnostics plus network stack, BBR, REALITY/QoS, and integration presence.
 - Use `capabilities --json` to discover supported protocols/features and operation safety labels before choosing an action.
 - On an existing 1.13 host, run `sbv update sbv` first and start a new invocation before expecting the new Agent commands.

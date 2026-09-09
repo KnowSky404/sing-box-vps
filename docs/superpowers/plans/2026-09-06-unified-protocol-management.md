@@ -4,6 +4,14 @@
 起点为 `cc12c06`，工作区干净；保留参考基线 `0d0bdac` 之后的下载事务修复。
 本文记录完整目标的进展；阶段提交不代表全协议已交付。
 
+## 2026-09-09：高级入站、Endpoint 与上游组件状态层（阶段交付）
+
+从 ShadowTLS 阶段继续原始完整目标；保留未跟踪文件 `1`、`2`，未读取或修改。Context7 `/sagernet/sing-box` 用于核对当前上游文档入口，再以固定 `v1.14.0` 源码确认 direct/tun/redirect/tproxy/cloudflared、WireGuard/Tailscale/OpenConnect/OpenVPN endpoint，以及 SSH/Tor/direct/bridge/selector/urltest/block 和协议 outbound 的角色、字段和条件构建 tag。Cloudflared token、外部 VPN/Tailscale 控制面、WireGuard peer 和 Naive runtime 均不在本机伪造或认证。
+
+本阶段新增独立 `components.json`（schema 1、revision/CAS、最多 128 条组件）与 30 项组件 registry。组件记录使用显式 `id/role/type/tag/enabled/route_rules/config`，通过未知字段拒绝、类型专属必填检查、引用保护、公开监听确认和同目录原子备份写入；配置生成将启用组件合并到现有协议/ Warp 配置，随后执行组件图（引用与依赖环）、监听资源和目标 `sing-box check`。`sbv agent component list --json` 只返回元数据/配置键，create/replace/delete 需要 `--yes` 与精确 `--expected-revision`；TUN、Cloudflared、OpenVPN server 和非回环监听需要 `--allow-public`。高级 inbound 不进入普通协议索引，Warp endpoint 保留旧专用归属，删除被 route/group/detour 引用的组件会阻断。
+
+新增 `tests/managed_components_contract.sh` 覆盖 registry 30 项、CAS/render、引用删除保护、公开确认、direct+TUN 监听投影、Cloudflared token 脱敏、未知 wrapper 字段和 Agent stale revision，并将其加入 `dev/verification/common.sh` 的 install.sh 本地矩阵。定向与完整本地门禁均通过：`bash dev/verification/run.sh` 运行目录 `dev/verification-runs/20260909105322`，调度解析 108 项测试并退出 0；Docker artifact 同一目录为 15/15 场景成功，`meta/exit-status.txt` 为 0，既有回环协议探针和升级/接管产物均提取成功。固定官方 1.14.0 核心对 direct/tun/redirect/tproxy 组合的图/监听/check 通过；本轮仍未取得 Cloudflared/VPN/Tailscale 外部认证、透明接入真实路由、防火墙事务或新增组件公网/数据面证据。因此 registry 的 `implemented` 只表示本项目组件状态/配置组合切片，`available=null`、`validated.not_assessed` 保持诚实，完整协议目标继续未完成。版本提升为本轮 `2026090903`。
+
 ## 2026-09-09：NaiveProxy 结构化实例管理链路（阶段交付）
 
 从 Hysteria v1 阶段继续原始完整目标；保留未跟踪文件 `1`、`2`，未读取或修改。Context7 `/sagernet/sing-box` 核对 Naive inbound/outbound 的实际字段：Naive 入站使用必需的用户名/密码用户和 TLS，`network` 可选 TCP、UDP 或两者；客户端出站保留 QUIC 拥塞控制、窗口、并发和额外 headers。官方 Naive outbound 需要带 `with_naive_outbound` 的构建，并在运行时加载 `libcronet.so`，因此脚本只披露该依赖，不把普通 `sing-box check` 当成库可用证明。
