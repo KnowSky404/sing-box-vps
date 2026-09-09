@@ -117,7 +117,7 @@ jq -e '
   and .schema
   and (.commands | type == "object")
   and (.interactive_features | type == "object")
-  and (.protocols | keys | sort == ["anytls", "http", "hysteria2", "mixed", "shadowsocks", "snell", "socks", "trojan", "tuic", "vless-plain", "vless-reality", "vmess"])
+  and (.protocols | keys | sort == ["anytls", "http", "hysteria", "hysteria2", "mixed", "shadowsocks", "snell", "socks", "trojan", "tuic", "vless-plain", "vless-reality", "vmess"])
   and .multi_protocol_coexistence == true
   and .protocols["vless-reality"].multi_instance == true
   and .protocols.trojan.multi_instance == true
@@ -128,6 +128,9 @@ jq -e '
   and .protocols.tuic.multi_instance == true
   and .protocols.tuic.client_export == true
   and .protocols.tuic.subman_sync == false
+  and .protocols.hysteria.multi_instance == true
+  and .protocols.hysteria.client_export == true
+  and .protocols.hysteria.subman_sync == false
   and .features.network_stack.inbound == ["ipv4_only", "ipv6_only", "dual_stack"]
   and .features.subman.supported_protocols == ["vless-reality", "vless-plain", "hysteria2", "shadowsocks", "trojan", "vmess"]
   and (.commands["upgrade-check"].mutation == false)

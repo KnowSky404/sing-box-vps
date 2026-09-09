@@ -4,6 +4,14 @@
 起点为 `cc12c06`，工作区干净；保留参考基线 `0d0bdac` 之后的下载事务修复。
 本文记录完整目标的进展；阶段提交不代表全协议已交付。
 
+## 2026-09-09：Hysteria v1 结构化实例管理链路（阶段交付）
+
+从 TUIC 阶段继续原始完整目标；保留未跟踪文件 `1`、`2`，未读取或修改。Context7 `/sagernet/sing-box` 与固定官方 `v1.14.0` ARM64 核心核对 Hysteria v1 的实际字段：`users[].auth_str`、手工 TLS、独立 `up_mbps`/`down_mbps`、字符串形式的 QUIC obfs，以及初始包大小、窗口、并发流等 QUIC 选项。Hysteria v1 与 Hysteria2 保持独立协议身份，不复用 salamander/masquerade 或 Hysteria2 的认证语义。
+
+本阶段接入第十三个 `hysteria` 预设（安装菜单 13、管理菜单 28），使用 schema 2 active marker + schema 1 JSON store、实例 revision/CAS、监听资源、接管/重建、创建/替换/删除/默认/恢复事务，以及 Agent `nodes`/`links`/`export-client`。typed 记录限定 1–128 个唯一 `name`/`auth_str` 用户、手工证书 TLS、`certificate`/`system` 客户端信任、正的上下行带宽、可选字符串 obfs 和严格类型的 QUIC 选项；服务端与客户端均通过逐用户 JSON outbound 导出。Hysteria v1 没有本项目可无损生成的标准分享 URI/二维码，也不执行 SubMan 同步；Agent links 返回稳定 warning 并脱敏凭据。
+
+新增 `tests/hysteria_instance_lifecycle.sh`，覆盖双实例 create/replace/delete/default/recover、stale CAS、字段边界、接管候选、服务端渲染、客户端导出和 Agent 脱敏/no-URI warning；设置 `SINGBOX_BINARY_114` 时，专项测试同时对 candidate 与客户端 outbound 执行真实 `sing-box 1.14.0 check`。本阶段专项测试、注册表/文档契约和既有 TUIC 回归均通过；完整 Docker 验证沿用本轮已通过的基础场景，尚未新增公网 Hysteria UDP payload 探针。现有证据是本地结构化事务、目标核心 schema 检查、容器回环与 mock 数据，不代表公网可达性、生产部署或真实 SubMan API；本阶段未执行生产操作、推送或外部同步。版本提升为 `2026090901`，全协议目标继续未完成。
+
 ## 2026-09-09：TUIC 结构化实例管理链路（阶段交付）
 
 从 Snell 阶段继续原始完整目标；保留未跟踪文件 `1`、`2`，未读取或修改。Context7 `/sagernet/sing-box` 核对 TUIC 官方 inbound/outbound 字段，随后用固定官方 `v1.14.0` ARM64 核心验证实际 schema。核心明确接受 TUIC QUIC/UDP 服务端与客户端字段，但拒绝入站 `udp_relay_mode`；该字段以及 `udp_over_stream` 只属于 outbound。

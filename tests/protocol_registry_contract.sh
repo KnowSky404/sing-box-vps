@@ -14,10 +14,10 @@ source "${TEST_DIR}/install.sh"
 
 registry=$(protocol_registry_json)
 jq -e '
-  length == 12 and
-  ([.[].state_id] | unique | length == 12) and
-  ([.[].agent_id] | unique | length == 12) and
-  ([.[].menu_order] | sort == [1,2,3,4,5,6,7,8,9,10,11,12]) and
+  length == 13 and
+  ([.[].state_id] | unique | length == 13) and
+  ([.[].agent_id] | unique | length == 13) and
+  ([.[].menu_order] | sort == [1,2,3,4,5,6,7,8,9,10,11,12,13]) and
   all(.[]; .implemented == true and .available == null and .validated.status == "not_assessed") and
   any(.[]; .state_id == "shadowsocks" and
     .features.listen_network_selection == true and
@@ -58,6 +58,14 @@ jq -e '
     .features.udp_relay_modes == ["native", "quic"] and .features.udp_over_stream == true and
     .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
     .features.subman_sync == false)
+  and any(.[]; .state_id == "hysteria" and
+    .runtime_id == "hysteria" and .agent_id == "hysteria" and
+    .features.multi_instance == true and .features.multi_user == true and
+    .features.authentication == true and .features.tls == true and
+    .features.tls_modes == ["manual_certificate"] and .features.bandwidth == true and
+    .features.obfs == true and .features.quic == true and
+    .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
+    .features.subman_sync == false)
 ' >/dev/null <<< "${registry}"
 capabilities=$(agent_capabilities_json)
 jq -e '
@@ -79,6 +87,8 @@ jq -e '
   ($plain.operations_by_protocol.snell == ["create", "replace", "delete", "default", "recover"]) and
   ($plain.protocols | index("tuic") != null) and
   ($plain.operations_by_protocol.tuic == ["create", "replace", "delete", "default", "recover"]) and
+  ($plain.protocols | index("hysteria") != null) and
+  ($plain.operations_by_protocol.hysteria == ["create", "replace", "delete", "default", "recover"]) and
   .features.mixed_instances.operations == $plain.operations_by_protocol.mixed
 ' >/dev/null <<< "${capabilities}"
 jq -e --argjson registry "${registry}" '
@@ -101,6 +111,11 @@ jq -e --argjson registry "${registry}" '
     .capabilities.subman_sync == false) and
   any(.protocol_registry[]; .state_id == "tuic" and
     .features.multi_instance == true and .features.multi_user == true and
+    .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
+    .capabilities.subman_sync == false) and
+  any(.protocol_registry[]; .state_id == "hysteria" and
+    .features.multi_instance == true and .features.multi_user == true and
+    .features.bandwidth == true and .features.obfs == true and
     .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
     .capabilities.subman_sync == false) and
   (.features.subman.supported_protocols | index("trojan") != null) and
@@ -128,7 +143,7 @@ mkdir -p "${SB_PROTOCOL_STATE_DIR}"
 for protocol in $(list_registered_protocols); do
   protocol_registry_require_handlers "${protocol}"
   [[ "$(protocol_option_to_id "$(protocol_registry_field "${protocol}" menu_order)")" == "${protocol}" ]]
-  if [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "snell" || "${protocol}" == "tuic" ]]; then
+  if [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" ]]; then
     printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2\n' > "$(protocol_state_file "${protocol}")"
     mkdir -p "${SB_PROTOCOL_STATE_DIR}/instances"
     if [[ "${protocol}" == "socks" ]]; then
@@ -305,6 +320,31 @@ SNELL_STORE_EOF
   ]
 }
 TUIC_STORE_EOF
+    elif [[ "${protocol}" == "hysteria" ]]; then
+      cat > "${SB_PROTOCOL_STATE_DIR}/instances/hysteria.json" <<'HYSTERIA_STORE_EOF'
+{
+  "schema_version": 1,
+  "protocol": "hysteria",
+  "revision": 1,
+  "default_instance_id": "main",
+  "instances": [
+    {
+      "id": "main",
+      "name": "Hysteria contract",
+      "tag": "hysteria-in",
+      "listen": {"address": "127.0.0.1", "port": 1090},
+      "authentication": {"users": [{"name": "hysteria-user", "auth_str": "HYSTERIA-CONTRACT-AUTH"}]},
+      "tls": {"enabled": true, "server_name": "hysteria.example.com", "certificate_path": "/tmp/hysteria-contract.crt", "key_path": "/tmp/hysteria-contract.key"},
+      "client_trust": "system",
+      "bandwidth": {"up_mbps": 100, "down_mbps": 200},
+      "obfs": {"enabled": true, "password": "HYSTERIA-OBFS"},
+      "hysteria": {"connection_receive_window": "", "disable_path_mtu_discovery": false, "initial_packet_size": 0, "max_concurrent_streams": 0, "stream_receive_window": ""},
+      "outbound_policy": "default",
+      "dependencies": []
+    }
+  ]
+}
+HYSTERIA_STORE_EOF
     else
       cat > "${SB_PROTOCOL_STATE_DIR}/instances/vmess.json" <<'VMESS_STORE_EOF'
 {
@@ -333,8 +373,8 @@ VMESS_STORE_EOF
     printf 'CONFIG_SCHEMA_VERSION=1\n' > "$(protocol_state_file "${protocol}")"
   fi
 done
-printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,snell,tuic,socks,http,shadowsocks,trojan,vmess,vless-plain\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
-[[ "$(list_exportable_client_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nsnell\ntuic\nsocks\nhttp\nshadowsocks\ntrojan\nvmess\nvless-plain' ]]
+printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,snell,tuic,hysteria,socks,http,shadowsocks,trojan,vmess,vless-plain\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
+[[ "$(list_exportable_client_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nsnell\ntuic\nhysteria\nsocks\nhttp\nshadowsocks\ntrojan\nvmess\nvless-plain' ]]
 [[ "$(protocol_registry_field mixed client_export)" == true ]]
 [[ "$(protocol_registry_field mixed multi_instance)" == true ]]
 [[ -z "$(protocol_registry_field mixed subman_type)" ]]
@@ -375,6 +415,19 @@ printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,snell,tuic,socks,http
 [[ "$(protocol_registry_field tuic handlers)" == *build_client_tuic_outbounds* ]]
 [[ "$(protocol_registry_field tuic handlers)" == *load_plain_proxy_structured_instance* ]]
 [[ "$(protocol_registry_field tuic handlers)" == *apply_plain_proxy_instance_change* ]]
+[[ "$(protocol_registry_field hysteria menu_order)" == 13 ]]
+[[ "$(protocol_registry_field hysteria default_tag)" == hysteria-in ]]
+[[ "$(protocol_registry_field hysteria state_id)" == hysteria ]]
+[[ "$(protocol_registry_field hysteria agent_id)" == hysteria ]]
+[[ "$(protocol_registry_field hysteria runtime_id)" == hysteria ]]
+[[ "$(protocol_registry_field hysteria listen_networks)" == udp ]]
+[[ "$(protocol_registry_field hysteria traffic_networks)" == tcp,udp ]]
+[[ "$(protocol_registry_field hysteria client_export)" == true ]]
+[[ -z "$(protocol_registry_field hysteria subman_type)" ]]
+[[ "$(protocol_registry_field hysteria handlers)" == *build_hysteria_inbound_json* ]]
+[[ "$(protocol_registry_field hysteria handlers)" == *build_client_hysteria_outbounds* ]]
+[[ "$(protocol_registry_field hysteria handlers)" == *load_plain_proxy_structured_instance* ]]
+[[ "$(protocol_registry_field hysteria handlers)" == *apply_plain_proxy_instance_change* ]]
 [[ "$(protocol_registry_field shadowsocks menu_order)" == 7 ]]
 [[ "$(protocol_registry_field shadowsocks default_tag)" == ss-in ]]
 [[ "$(protocol_registry_field shadowsocks state_id)" == shadowsocks ]]
@@ -525,6 +578,27 @@ jq -e '
   .[0].tls.server_name == "tuic.example.com" and
   (.[0].tls | has("certificate") | not)
 ' >/dev/null <<< "${tuic_export}"
+
+hysteria_store_file=$(plain_proxy_structured_store_file hysteria)
+hysteria_inbounds=$(render_structured_instance_inbounds hysteria "${hysteria_store_file}" | jq -s .)
+jq -e '
+  length == 1 and .[0].type == "hysteria" and .[0].tag == "hysteria-in" and
+  .[0].listen == "127.0.0.1" and .[0].listen_port == 1090 and
+  .[0].users[0].name == "hysteria-user" and .[0].users[0].auth_str == "HYSTERIA-CONTRACT-AUTH" and
+  .[0].tls.enabled == true and .[0].tls.server_name == "hysteria.example.com" and
+  .[0].tls.alpn == ["h3"] and .[0].up_mbps == 100 and .[0].down_mbps == 200 and
+  .[0].obfs == "HYSTERIA-OBFS" and
+  (.[0] | has("initial_packet_size") | not)
+' >/dev/null <<< "${hysteria_inbounds}"
+hysteria_export=$(build_client_hysteria_outbounds 127.0.0.1 | jq -s .)
+jq -e '
+  length == 1 and .[0].type == "hysteria" and
+  .[0].tag == "hysteria-main-user-aHlzdGVyaWEtdXNlcg==" and
+  .[0].server == "127.0.0.1" and .[0].server_port == 1090 and
+  .[0].auth_str == "HYSTERIA-CONTRACT-AUTH" and .[0].up_mbps == 100 and .[0].down_mbps == 200 and
+  .[0].obfs == "HYSTERIA-OBFS" and .[0].tls.server_name == "hysteria.example.com" and
+  (.[0].tls | has("certificate") | not)
+' >/dev/null <<< "${hysteria_export}"
 
 # Unknown protocol and future schema must not disappear during reconciliation.
 for invalid in $'INSTALLED_PROTOCOLS=mixed,future-protocol\nPROTOCOL_STATE_VERSION=1' \
