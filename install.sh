@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090901
+# Version: 2026090902
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090901"
+readonly SCRIPT_VERSION="2026090902"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -82,6 +82,7 @@ readonly SB_PROTOCOL_REGISTRY=(
   'tuic|tuic|tuic|tuic|tls-quic|inbound|tuic|TUIC|tuic-in|12|true||udp|tcp,udp|1.13.0|true|optional|tuic|quic_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"tls_modes":["manual_certificate"],"quic":true,"congestion_control":["cubic","new_reno","bbr"],"udp_relay_modes":["native","quic"],"udp_over_stream":true,"zero_rtt_handshake":true,"heartbeat":true,"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true}|tuic|build_tuic_inbound_json,save_tuic_state,prompt_tuic_install,prompt_tuic_update,build_client_tuic_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'hysteria|hysteria|hysteria|hysteria|tls-quic|inbound|hysteria|Hysteria|hysteria-in|13|true||udp|tcp,udp|1.13.0|true|optional|hysteria|quic_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"tls_modes":["manual_certificate"],"bandwidth":true,"obfs":true,"quic":true,"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true}|hysteria|build_hysteria_inbound_json,save_hysteria_state,prompt_hysteria_install,prompt_hysteria_update,build_client_hysteria_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'naive|naive|naive|naive|tls-quic|inbound|naive|NaiveProxy|naive-in|14|true||tcp,udp|tcp,udp|1.13.0|true|optional|naive|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"network":["tcp","udp"],"listen_network_selection":true,"quic_congestion_control":["bbr","cubic","reno"],"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true,"outbound_runtime":"with_naive_outbound+libcronet"}|naive|build_naive_inbound_json,save_naive_state,prompt_naive_install,prompt_naive_update,build_client_naive_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'shadowtls|shadowtls|shadowtls|shadowtls|tls-wrapper|inbound|shadowtls|ShadowTLS|shadowtls-in|15|true||tcp|tcp|1.13.0|true|optional|shadowtls|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"versions":[1,2,3],"handshake":true,"detour":true,"wildcard_sni":["off","authed","all"],"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true,"composite":true}|shadowtls|build_shadowtls_inbound_json,save_shadowtls_state,prompt_shadowtls_install,prompt_shadowtls_update,build_client_shadowtls_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
 )
 SB_REALITY_SNI_CANDIDATES=(
   "www.apple.com"
@@ -160,6 +161,17 @@ SB_NAIVE_INSECURE_CONCURRENCY="0"
 SB_NAIVE_STREAM_RECEIVE_WINDOW=""
 SB_NAIVE_QUIC_SESSION_RECEIVE_WINDOW=""
 SB_NAIVE_EXTRA_HEADERS_JSON='{}'
+SB_SHADOWTLS_VERSION=3
+SB_SHADOWTLS_PASSWORD=""
+SB_SHADOWTLS_AUTH_JSON='[]'
+SB_SHADOWTLS_HANDSHAKE_JSON='{"server":"","server_port":443}'
+SB_SHADOWTLS_HANDSHAKE_FOR_SERVER_NAME_JSON='{}'
+SB_SHADOWTLS_STRICT_MODE="n"
+SB_SHADOWTLS_WILDCARD_SNI="off"
+SB_SHADOWTLS_DETOUR_TAG=""
+SB_SHADOWTLS_DETOUR_PORT=""
+SB_SHADOWTLS_CLIENT_TRUST="system"
+SB_SHADOWTLS_CLIENT_TLS_JSON='{"enabled":true,"server_name":"","certificate_path":""}'
 SB_HY2_DOMAIN=""
 SB_HY2_PASSWORD=""
 SB_HY2_USER_NAME=""
@@ -819,6 +831,7 @@ default_node_name_for_protocol() {
     tuic) suffix="tuic" ;;
     hysteria) suffix="hysteria" ;;
     naive) suffix="naive" ;;
+    shadowtls) suffix="shadowtls" ;;
     mixed) suffix="mixed" ;;
     *) suffix="${protocol}" ;;
   esac
@@ -838,6 +851,7 @@ normalize_node_name() {
     *+tuic) node_name="${node_name%+tuic}-tuic" ;;
     *+hysteria) node_name="${node_name%+hysteria}-hysteria" ;;
     *+naive) node_name="${node_name%+naive}-naive" ;;
+    *+shadowtls) node_name="${node_name%+shadowtls}-shadowtls" ;;
     *+mixed) node_name="${node_name%+mixed}-mixed" ;;
   esac
 
@@ -1038,6 +1052,10 @@ config_inbound_protocol() {
   local inbound_json=${1:-} inbound_type
   [[ -n "${inbound_json}" ]] || return 1
   inbound_type=$(jq -er '.type' <<< "${inbound_json}") || return 1
+  if [[ "${inbound_type}" == "mixed" ]] && [[ "$(jq -r '.tag // empty' <<< "${inbound_json}")" == shadowtls-inner-* ]]; then
+    printf 'shadowtls'
+    return 0
+  fi
   if [[ "${inbound_type}" == "vless" ]]; then
     if jq -e '(.tls.reality? != null)' <<< "${inbound_json}" >/dev/null 2>&1; then
       printf 'vless-reality'
@@ -1054,6 +1072,8 @@ config_protocol_jq_filter() {
     vless-reality) printf '.type == "vless" and (.tls.reality? != null)' ;;
     vless-plain) printf '.type == "vless" and (.tls.reality? == null)' ;;
     hy2) printf '.type == "hysteria2"' ;;
+    shadowtls) printf '.type == "shadowtls"' ;;
+    mixed) printf '.type == "mixed" and ((.tag // "") | startswith("shadowtls-inner-") | not)' ;;
     *) printf '.type == "%s"' "${1:-}" ;;
   esac
 }
@@ -2139,7 +2159,7 @@ validate_protocol_state_schema() {
   schema=${schema//\"/}
   schema=${schema//\'/}
   case "${protocol}:${schema:-1}" in
-    vless-reality:1|vless-reality:2|vless-plain:2|mixed:1|mixed:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|hy2:1|hy2:2|anytls:1|anytls:2|snell:2|tuic:2|hysteria:2|naive:2) return 0 ;;
+    vless-reality:1|vless-reality:2|vless-plain:2|mixed:1|mixed:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|hy2:1|hy2:2|anytls:1|anytls:2|snell:2|tuic:2|hysteria:2|naive:2|shadowtls:2) return 0 ;;
   esac
   printf '[ERROR] 协议状态格式无法识别；已保留文件，请使用写入该状态的脚本版本恢复。\n' >&2
   return 1
@@ -2351,6 +2371,11 @@ save_plain_proxy_state() {
   local hysteria_up_mbps=${SB_HYSTERIA_UP_MBPS:-100} hysteria_down_mbps=${SB_HYSTERIA_DOWN_MBPS:-100} hysteria_obfs_enabled=${SB_HYSTERIA_OBFS_ENABLED:-n} hysteria_obfs_password=${SB_HYSTERIA_OBFS_PASSWORD:-} hysteria_quic_json=${SB_HYSTERIA_QUIC_JSON:-'{"connection_receive_window":"","disable_path_mtu_discovery":false,"initial_packet_size":0,"max_concurrent_streams":0,"stream_receive_window":""}'}
   local naive_users_json=${SB_NAIVE_AUTH_JSON:-[]} naive_tls_json=${SB_NAIVE_TLS_JSON:-'{"enabled":false}'} naive_client_trust=${SB_NAIVE_CLIENT_TRUST:-system}
   local naive_network_json=${SB_NAIVE_NETWORK_JSON:-'["tcp","udp"]'} naive_quic_congestion_control=${SB_NAIVE_QUIC_CONGESTION_CONTROL:-bbr} naive_quic=${SB_NAIVE_QUIC:-n} naive_insecure_concurrency=${SB_NAIVE_INSECURE_CONCURRENCY:-0} naive_stream_receive_window=${SB_NAIVE_STREAM_RECEIVE_WINDOW:-} naive_quic_session_receive_window=${SB_NAIVE_QUIC_SESSION_RECEIVE_WINDOW:-} naive_extra_headers_json=${SB_NAIVE_EXTRA_HEADERS_JSON:-'{}'}
+
+  if [[ "${protocol}" == "shadowtls" ]]; then
+    save_shadowtls_state
+    return $?
+  fi
 
   structured_instance_store_protocol "${protocol}" >/dev/null || return 1
   case "${protocol}" in
@@ -2582,6 +2607,82 @@ save_naive_state() {
   save_plain_proxy_state naive
 }
 
+save_shadowtls_state() {
+  local state_file store_file record_file candidate_file current_file current_revision expected_revision operation
+  local instance_id=${SB_INSTANCE_ID:-main} tag=${SB_MIXED_INBOUND_TAG:-shadowtls-in} name=${SB_NODE_NAME:-ShadowTLS}
+  local address=${SB_MIXED_LISTEN_ADDRESS:-127.0.0.1} port=${SB_PORT:-443} policy=${SB_OUTBOUND_POLICY:-default}
+  local version=${SB_SHADOWTLS_VERSION:-3} password=${SB_SHADOWTLS_PASSWORD:-} users=${SB_SHADOWTLS_AUTH_JSON:-[]}
+  local handshake=${SB_SHADOWTLS_HANDSHAKE_JSON:-'{"server":"","server_port":443}'}
+  local handshake_map=${SB_SHADOWTLS_HANDSHAKE_FOR_SERVER_NAME_JSON:-'{}'} strict_mode=${SB_SHADOWTLS_STRICT_MODE:-n}
+  local wildcard_sni=${SB_SHADOWTLS_WILDCARD_SNI:-off} detour_tag detour_port=${SB_SHADOWTLS_DETOUR_PORT:-}
+  local trust=${SB_SHADOWTLS_CLIENT_TRUST:-system} client_tls=${SB_SHADOWTLS_CLIENT_TLS_JSON:-'{"enabled":true,"server_name":"","certificate_path":""}'}
+  local client_server_name client_certificate_path
+
+  structured_instance_store_validate_id "${instance_id}" || return 1
+  [[ -n "${tag}" ]] || return 1
+  validate_port_number "${port}" || return 1
+  structured_instance_store_validate_address "${address}" || return 1
+  [[ "${version}" =~ ^[123]$ ]] || return 1
+  [[ "${strict_mode}" == y || "${strict_mode}" == n ]] || return 1
+  [[ "${wildcard_sni}" == off || "${wildcard_sni}" == authed || "${wildcard_sni}" == all ]] || return 1
+  [[ "${trust}" == system || "${trust}" == certificate ]] || return 1
+  [[ -n "${detour_port}" ]] || detour_port=$(pick_random_high_port) || return 1
+  validate_port_number "${detour_port}" || return 1
+  [[ "${detour_port}" != "${port}" ]] || return 1
+  detour_tag="shadowtls-inner-${instance_id}"
+  jq -e 'type == "array"' <<< "${users}" >/dev/null 2>&1 || return 1
+  jq -e 'type == "object"' <<< "${handshake}" >/dev/null 2>&1 || return 1
+  jq -e 'type == "object"' <<< "${handshake_map}" >/dev/null 2>&1 || return 1
+  client_server_name=$(jq -r '.server_name // empty' <<< "${client_tls}") || return 1
+  client_certificate_path=$(jq -r '.certificate_path // ""' <<< "${client_tls}") || return 1
+  [[ -n "${client_server_name}" ]] || return 1
+  if [[ "${trust}" == system ]]; then
+    client_certificate_path=""
+  else
+    [[ "${client_certificate_path}" == /* ]] || return 1
+  fi
+
+  state_file=$(protocol_state_file shadowtls) || return 1
+  store_file=$(plain_proxy_structured_store_file shadowtls) || return 1
+  if [[ -e "${state_file}" || -L "${state_file}" ]]; then
+    [[ -f "${state_file}" && ! -L "${state_file}" ]] || return 1
+    plain_proxy_structured_marker_is_valid "${state_file}" || return 1
+  fi
+  if [[ -f "${store_file}" ]]; then
+    validate_structured_instance_store shadowtls "${store_file}" || return 1
+    current_revision=$(structured_instance_store_revision "${store_file}") || return 1
+    expected_revision=${current_revision}
+    if jq -e --arg id "${instance_id}" 'any(.instances[]; .id == $id)' "${store_file}" >/dev/null 2>&1; then operation=replace; else operation=create; fi
+  else
+    current_revision=0
+    expected_revision=0
+    operation=create
+    current_file=""
+  fi
+  [[ -n "${current_file:-}" ]] || current_file="${store_file}"
+  if [[ ! -f "${current_file}" ]]; then current_file=""; fi
+
+  record_file=$(mktemp) || return 1
+  candidate_file=$(mktemp) || { rm -f -- "${record_file}"; return 1; }
+  if ! jq -n -cS --arg id "${instance_id}" --arg name "${name}" --arg tag "${tag}" --arg address "${address}" --argjson port "${port}" \
+      --argjson version "${version}" --arg password "${password}" --argjson users "${users}" --argjson handshake "${handshake}" \
+      --argjson handshake_map "${handshake_map}" --argjson strict_mode "$([[ "${strict_mode}" == y ]] && printf true || printf false)" \
+      --arg wildcard_sni "${wildcard_sni}" --arg detour_tag "${detour_tag}" --argjson detour_port "${detour_port}" \
+      --arg trust "${trust}" --arg server_name "${client_server_name}" --arg certificate_path "${client_certificate_path}" --arg policy "${policy}" \
+      '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},version:$version,authentication:{password:$password,users:$users},handshake:$handshake,handshake_for_server_name:$handshake_map,strict_mode:$strict_mode,wildcard_sni:$wildcard_sni,detour:{tag:$detour_tag,listen:{address:"127.0.0.1",port:$detour_port}},dependencies:[$detour_tag],client_trust:$trust,client_tls:{server_name:$server_name,certificate_path:$certificate_path},outbound_policy:$policy}' > "${record_file}"; then
+    rm -f -- "${record_file}" "${candidate_file}"; return 1
+  fi
+  structured_instance_store_validate_instance_argument "${record_file}" shadowtls || { rm -f -- "${record_file}" "${candidate_file}"; return 1; }
+  if ! structured_instance_store_candidate shadowtls "${current_file}" "${operation}" "${record_file}" "${expected_revision}" > "${candidate_file}"; then
+    rm -f -- "${record_file}" "${candidate_file}"; return 1
+  fi
+  if ! publish_structured_instance_store shadowtls "${candidate_file}" "${expected_revision}" || ! save_plain_proxy_structured_marker shadowtls; then
+    rm -f -- "${record_file}" "${candidate_file}"; return 1
+  fi
+  rm -f -- "${record_file}" "${candidate_file}"
+  load_plain_proxy_structured_instance shadowtls "${instance_id}"
+}
+
 save_protocol_state() {
   local protocol
   protocol=$(normalize_protocol_id "$1") || return 1
@@ -2602,6 +2703,7 @@ save_protocol_state() {
     tuic) save_tuic_state ;;
     hysteria) save_hysteria_state ;;
     naive) save_naive_state ;;
+    shadowtls) save_shadowtls_state ;;
     *) log_error "不支持的协议状态保存类型: ${protocol}" ;;
   esac
 }
@@ -3342,6 +3444,7 @@ prompt_protocol_update_fields() {
     tuic) prompt_tuic_update ;;
     hysteria) prompt_hysteria_update ;;
     naive) prompt_naive_update ;;
+    shadowtls) prompt_shadowtls_update ;;
     *) log_error "不支持的协议修改类型: ${protocol}" ;;
   esac
 }
@@ -3981,6 +4084,129 @@ prompt_naive_install() {
   ensure_naive_materials
 }
 
+shadowtls_prompt_users() {
+  local current=${1:-[]} count i name password old_name old_password answer users='[]'
+  count=$(jq -r 'length' <<< "${current}" 2>/dev/null || printf 0)
+  [[ "${count}" =~ ^[1-9][0-9]{0,2}$ && "${count}" -le 128 ]] || count=1
+  read -rp '[ShadowTLS] 用户数量 (1-128，默认当前值): ' answer || return 1
+  [[ -z "${answer}" ]] || count=${answer}
+  [[ "${count}" =~ ^[1-9][0-9]{0,2}$ && "${count}" -le 128 ]] || return 1
+  for ((i = 0; i < count; i++)); do
+    old_name=$(jq -r --argjson i "${i}" '.[$i].name // empty' <<< "${current}") || return 1
+    old_password=$(jq -r --argjson i "${i}" '.[$i].password // empty' <<< "${current}") || return 1
+    name=${old_name:-shadowtls-user-$((i + 1))}
+    read -rp "[ShadowTLS] 用户 $((i + 1)) 名称（默认 ${name}）: " answer || return 1
+    [[ -z "${answer}" ]] || name=$(trim_whitespace "${answer}")
+    [[ -n "${name}" ]] || return 1
+    read -rsp "[ShadowTLS] 用户 ${name} password（留空保持/自动生成）: " answer || return 1
+    printf '\n' >&2
+    password=${answer:-${old_password}}
+    [[ -n "${password}" ]] || password=$(trojan_generate_password) || return 1
+    users=$(jq -cn --argjson users "${users}" --arg name "${name}" --arg password "${password}" '$users + [{name:$name,password:$password}]') || return 1
+  done
+  SB_SHADOWTLS_AUTH_JSON=${users}
+}
+
+shadowtls_prompt_handshake() {
+  local current=${1:-'{"server":"","server_port":443}'} server port answer
+  server=$(jq -r '.server // empty' <<< "${current}") || return 1
+  port=$(jq -r '.server_port // 443' <<< "${current}") || return 1
+  read -rp "[ShadowTLS] 握手服务器（当前 ${server}）: " answer || return 1
+  [[ -z "${answer}" ]] || server=$(trim_whitespace "${answer}")
+  [[ -n "${server}" ]] || return 1
+  port=$(prompt_port "[ShadowTLS] 握手端口（当前 ${port}）: " "${port}") || return 1
+  SB_SHADOWTLS_HANDSHAKE_JSON=$(jq -cn --arg server "${server}" --argjson port "${port}" '{server:$server,server_port:$port}') || return 1
+}
+
+shadowtls_prompt_handshake_map() {
+  local current=${1:-} answer
+  [[ -n "${current}" ]] || current='{}'
+  read -rp '[ShadowTLS] 按 SNI 覆盖握手映射 JSON（留空保持当前）: ' answer || return 1
+  [[ -z "${answer}" ]] || current=${answer}
+  jq -e 'type == "object" and all(to_entries[]; (.key|type=="string" and length>0) and (.value|type=="object" and (.server|type=="string" and length>0) and (.server_port|type=="number" and floor==. and .>=1 and .<=65535)))' <<< "${current}" >/dev/null 2>&1 || return 1
+  SB_SHADOWTLS_HANDSHAKE_FOR_SERVER_NAME_JSON=$(jq -cS . <<< "${current}") || return 1
+}
+
+shadowtls_prompt_client_tls() {
+  local current=${1:-'{"server_name":"","certificate_path":""}'} trust=${2:-system} server_name certificate_path answer
+  server_name=$(jq -r '.server_name // empty' <<< "${current}") || return 1
+  certificate_path=$(jq -r '.certificate_path // empty' <<< "${current}") || return 1
+  read -rp "[ShadowTLS] 客户端 TLS server_name（当前 ${server_name}）: " answer || return 1
+  [[ -z "${answer}" ]] || server_name=$(trim_whitespace "${answer}")
+  [[ -n "${server_name}" ]] || return 1
+  if [[ "${trust}" == certificate ]]; then
+    certificate_path=$(prompt_required_path "[ShadowTLS] 客户端信任证书绝对路径: " "${certificate_path}") || return 1
+  else
+    certificate_path=""
+  fi
+  SB_SHADOWTLS_CLIENT_TLS_JSON=$(jq -cn --arg server_name "${server_name}" --arg certificate_path "${certificate_path}" '{enabled:true,server_name:$server_name,certificate_path:$certificate_path}') || return 1
+}
+
+shadowtls_prompt_version_and_auth() {
+  local current=${1:-3} choice answer
+  choice=$(prompt_choice '[ShadowTLS] 版本 [1/2/3]（默认保持）: ' 1 3 "${current}") || return 1
+  SB_SHADOWTLS_VERSION=${choice}
+  case "${choice}" in
+    1) SB_SHADOWTLS_PASSWORD=""; SB_SHADOWTLS_AUTH_JSON='[]' ;;
+    2)
+      read -rsp '[ShadowTLS] v2 password（留空自动生成）: ' answer || return 1; printf '\n' >&2
+      SB_SHADOWTLS_PASSWORD=${answer:-${SB_SHADOWTLS_PASSWORD:-$(trojan_generate_password)}}
+      SB_SHADOWTLS_AUTH_JSON='[]'
+      [[ -n "${SB_SHADOWTLS_PASSWORD}" ]] || return 1
+      ;;
+    3) shadowtls_prompt_users "${SB_SHADOWTLS_AUTH_JSON:-[]}" || return 1; SB_SHADOWTLS_PASSWORD="" ;;
+    *) return 1 ;;
+  esac
+}
+
+prompt_shadowtls_update() {
+  local in_p answer choice current_version current_handshake current_map current_client_tls trust_choice detour_port
+  in_p=$(prompt_port '[ShadowTLS] 新端口（当前值，留空保持）: ' "${SB_PORT}") || return 1
+  if [[ "${in_p}" != "${SB_PORT}" ]]; then SB_PORT=${in_p}; check_port_conflict "${SB_PORT}"; fi
+  current_version=${SB_SHADOWTLS_VERSION:-3}
+  shadowtls_prompt_version_and_auth "${current_version}" || return 1
+  current_handshake=${SB_SHADOWTLS_HANDSHAKE_JSON:-}
+  [[ -n "${current_handshake}" ]] || current_handshake='{"server":"","server_port":443}'
+  shadowtls_prompt_handshake "${current_handshake}" || return 1
+  current_map=${SB_SHADOWTLS_HANDSHAKE_FOR_SERVER_NAME_JSON:-}
+  [[ -n "${current_map}" ]] || current_map='{}'
+  if [[ "${SB_SHADOWTLS_VERSION}" -eq 1 ]]; then SB_SHADOWTLS_HANDSHAKE_FOR_SERVER_NAME_JSON='{}'; else shadowtls_prompt_handshake_map "${current_map}" || return 1; fi
+  if [[ "${SB_SHADOWTLS_VERSION}" -eq 3 ]]; then
+    SB_SHADOWTLS_STRICT_MODE=$(prompt_yes_no "[ShadowTLS] strict_mode [y/n]（当前 ${SB_SHADOWTLS_STRICT_MODE:-n}）: " "${SB_SHADOWTLS_STRICT_MODE:-n}") || return 1
+    choice=$(prompt_choice '[ShadowTLS] wildcard_sni [1=off,2=authed,3=all]（默认保持）: ' 1 3 "$([[ "${SB_SHADOWTLS_WILDCARD_SNI:-off}" == authed ]] && printf 2 || [[ "${SB_SHADOWTLS_WILDCARD_SNI:-off}" == all ]] && printf 3 || printf 1)") || return 1
+    case "${choice}" in 2) SB_SHADOWTLS_WILDCARD_SNI=authed ;; 3) SB_SHADOWTLS_WILDCARD_SNI=all ;; *) SB_SHADOWTLS_WILDCARD_SNI=off ;; esac
+  else SB_SHADOWTLS_STRICT_MODE=n; SB_SHADOWTLS_WILDCARD_SNI=off; fi
+  detour_port=$(prompt_port '[ShadowTLS] 私有内层端口（当前值，留空保持）: ' "${SB_SHADOWTLS_DETOUR_PORT}") || return 1
+  [[ -n "${detour_port}" ]] && SB_SHADOWTLS_DETOUR_PORT=${detour_port}
+  trust_choice=$(prompt_choice '[ShadowTLS] 客户端证书信任 [1=certificate,2=system]（默认保持）: ' 1 2 "$([[ "${SB_SHADOWTLS_CLIENT_TRUST:-system}" == system ]] && printf 2 || printf 1)") || return 1
+  [[ "${trust_choice}" == 1 ]] && SB_SHADOWTLS_CLIENT_TRUST=certificate || SB_SHADOWTLS_CLIENT_TRUST=system
+  current_client_tls=${SB_SHADOWTLS_CLIENT_TLS_JSON:-}
+  [[ -n "${current_client_tls}" ]] || current_client_tls='{"server_name":"","certificate_path":""}'
+  shadowtls_prompt_client_tls "${current_client_tls}" "${SB_SHADOWTLS_CLIENT_TRUST}" || return 1
+}
+
+prompt_shadowtls_install() {
+  local choice answer trust_choice
+  set_protocol_defaults shadowtls
+  echo -e '\n'"${BLUE}"'--- 配置 ShadowTLS ---'"${NC}" >&2
+  SB_PORT=$(prompt_port '[ShadowTLS] 外层监听端口（默认当前值）: ' "${SB_PORT}") || return 1
+  check_port_conflict "${SB_PORT}"
+  shadowtls_prompt_version_and_auth 3 || return 1
+  shadowtls_prompt_handshake "${SB_SHADOWTLS_HANDSHAKE_JSON}" || return 1
+  if [[ "${SB_SHADOWTLS_VERSION}" -eq 1 ]]; then SB_SHADOWTLS_HANDSHAKE_FOR_SERVER_NAME_JSON='{}'; else shadowtls_prompt_handshake_map '{}' || return 1; fi
+  if [[ "${SB_SHADOWTLS_VERSION}" -eq 3 ]]; then
+    SB_SHADOWTLS_STRICT_MODE=$(prompt_yes_no '[ShadowTLS] strict_mode [y/n]（默认 n）: ' n) || return 1
+    choice=$(prompt_choice '[ShadowTLS] wildcard_sni [1=off,2=authed,3=all]（默认 1）: ' 1 3 1) || return 1
+    case "${choice}" in 2) SB_SHADOWTLS_WILDCARD_SNI=authed ;; 3) SB_SHADOWTLS_WILDCARD_SNI=all ;; *) SB_SHADOWTLS_WILDCARD_SNI=off ;; esac
+  fi
+  while [[ "${SB_SHADOWTLS_DETOUR_PORT}" == "${SB_PORT}" ]]; do SB_SHADOWTLS_DETOUR_PORT=$(pick_random_high_port) || return 1; done
+  SB_SHADOWTLS_DETOUR_PORT=$(prompt_port '[ShadowTLS] 私有内层端口（默认当前值）: ' "${SB_SHADOWTLS_DETOUR_PORT}") || return 1
+  check_port_conflict "${SB_SHADOWTLS_DETOUR_PORT}"
+  trust_choice=$(prompt_choice '[ShadowTLS] 客户端证书信任 [1=certificate,2=system]（默认 2）: ' 1 2 2) || return 1
+  [[ "${trust_choice}" == 1 ]] && SB_SHADOWTLS_CLIENT_TRUST=certificate || SB_SHADOWTLS_CLIENT_TRUST=system
+  shadowtls_prompt_client_tls '{"server_name":"","certificate_path":""}' "${SB_SHADOWTLS_CLIENT_TRUST}" || return 1
+}
+
 prompt_tuic_update() {
   local in_p answer server_name certificate_path key_path trust_choice edit_users trust
   local old_tls=${SB_TUIC_TLS_JSON:-'{"enabled":false}'}
@@ -4331,7 +4557,7 @@ prompt_protocol_install_selection() {
   local installed_protocols=() selected_protocols=()
   local choice raw_choice protocol index installed_list
   local menu_indices=() raw_choices=()
-  local mixed_tombstone=n socks_tombstone=n vless_plain_tombstone=n anytls_tombstone=n hy2_tombstone=n snell_tombstone=n tuic_tombstone=n hysteria_tombstone=n naive_tombstone=n
+  local mixed_tombstone=n socks_tombstone=n vless_plain_tombstone=n anytls_tombstone=n hy2_tombstone=n snell_tombstone=n tuic_tombstone=n hysteria_tombstone=n naive_tombstone=n shadowtls_tombstone=n
 
   SELECTED_PROTOCOLS_CSV=""
 
@@ -4394,6 +4620,12 @@ prompt_protocol_install_selection() {
         installed_protocols+=(naive)
       fi
     fi
+    if plain_proxy_inactive_store_snapshot shadowtls >/dev/null 2>&1; then
+      shadowtls_tombstone=y
+      if ! protocol_array_contains shadowtls ${installed_protocols[@]+"${installed_protocols[@]}"}; then
+        installed_protocols+=(shadowtls)
+      fi
+    fi
   fi
   while IFS= read -r protocol; do
     menu_indices+=("$(protocol_registry_field "${protocol}" menu_order)")
@@ -4433,6 +4665,8 @@ prompt_protocol_install_selection() {
         echo "${index}. 新增 Hysteria 实例"
       elif [[ "${install_mode}" == "additional" && "${protocol}" == "naive" && "${naive_tombstone}" == y ]]; then
         echo "${index}. 新增 NaiveProxy 实例"
+      elif [[ "${install_mode}" == "additional" && "${protocol}" == "shadowtls" && "${shadowtls_tombstone}" == y ]]; then
+        echo "${index}. 新增 ShadowTLS 实例"
       fi
       continue
     fi
@@ -4448,7 +4682,7 @@ prompt_protocol_install_selection() {
       protocol=$(protocol_option_to_id "${index}") || continue
       if protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
         if [[ "${install_mode}" == "additional" &&
-              ("${protocol}" == "vless-reality" || "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive") ]]; then
+              ("${protocol}" == "vless-reality" || "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" || "${protocol}" == "shadowtls") ]]; then
           selected_protocols+=("${protocol}")
         fi
         continue
@@ -4474,7 +4708,7 @@ prompt_protocol_install_selection() {
 
     if protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
       if [[ "${install_mode}" == "additional" &&
-            ("${protocol}" == "vless-reality" || "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive") ]]; then
+            ("${protocol}" == "vless-reality" || "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" || "${protocol}" == "shadowtls") ]]; then
         if ! protocol_array_contains "${protocol}" ${selected_protocols[@]+"${selected_protocols[@]}"}; then
           selected_protocols+=("${protocol}")
         fi
@@ -4774,6 +5008,7 @@ prompt_protocol_install_fields() {
     tuic) prompt_tuic_install ;;
     hysteria) prompt_hysteria_install ;;
     naive) prompt_naive_install ;;
+    shadowtls) prompt_shadowtls_install ;;
     *) log_error "不支持的协议安装类型: ${protocol}" ;;
   esac
 }
@@ -4818,6 +5053,7 @@ plain_proxy_management_label() {
     snell) printf 'Snell' ;;
     tuic) printf 'TUIC' ;;
     hysteria) printf 'Hysteria' ;;
+    shadowtls) printf 'ShadowTLS' ;;
     *) return 1 ;;
   esac
 }
@@ -4838,6 +5074,12 @@ plain_proxy_management_capture_snapshot() {
     # builder deliberately rejects those, so management remains fail-closed
     # until the operator explicitly uses a manual-TLS schema-2 record.
     plain_proxy_config_store_candidate hy2 | jq -c '.revision=0' > "${destination}" || return 1
+  elif [[ "${protocol}" == shadowtls ]] && [[ -f "${SINGBOX_CONFIG_FILE}" ]] &&
+       [[ "$(config_protocol_inbound_count shadowtls "${SINGBOX_CONFIG_FILE}" 2>/dev/null || printf 0)" -gt 0 ]]; then
+    # ShadowTLS has no legacy .env shape.  A live composite config can be
+    # taken over only through the typed candidate extractor, which preserves
+    # the outer/inner relationship and starts its local CAS at revision 0.
+    plain_proxy_config_store_candidate shadowtls "${SINGBOX_CONFIG_FILE}" | jq -c '.revision=0' > "${destination}" || return 1
   elif [[ -e "$(plain_proxy_structured_store_file "${protocol}")" ]]; then
     plain_proxy_inactive_store_snapshot "${protocol}" > "${destination}" || return 1
   else
@@ -5587,6 +5829,105 @@ naive_management_build_record() {
   structured_instance_store_validate_instance_argument "${destination}" naive
 }
 
+shadowtls_management_build_record() {
+  local snapshot=${1:-} operation=${2:-create} target=${3:-} destination=${4:-}
+  local id name tag address port policy answer version password users handshake handshake_default handshake_map
+  local strict wildcard detour_port trust client_tls detour_tag tls_json
+  [[ -f "${snapshot}" && ! -L "${snapshot}" && -n "${destination}" ]] || return 1
+  if [[ "${operation}" == replace ]]; then
+    jq -e --arg id "${target}" 'any(.instances[]; .id == $id)' "${snapshot}" >/dev/null 2>&1 || return 1
+    id=${target}
+    name=$(jq -j --arg id "${id}" '.instances[] | select(.id == $id) | .name, "\u0001"' "${snapshot}") || return 1; name=${name%$'\1'}
+    tag=$(jq -j --arg id "${id}" '.instances[] | select(.id == $id) | .tag, "\u0001"' "${snapshot}") || return 1; tag=${tag%$'\1'}
+    address=$(jq -j --arg id "${id}" '.instances[] | select(.id == $id) | .listen.address, "\u0001"' "${snapshot}") || return 1; address=${address%$'\1'}
+    port=$(jq -r --arg id "${id}" '.instances[] | select(.id == $id) | .listen.port' "${snapshot}") || return 1
+    version=$(jq -r --arg id "${id}" '.instances[] | select(.id == $id) | .version' "${snapshot}") || return 1
+    password=$(jq -j --arg id "${id}" '.instances[] | select(.id == $id) | .authentication.password, "\u0001"' "${snapshot}") || return 1; password=${password%$'\1'}
+    users=$(jq -c --arg id "${id}" '.instances[] | select(.id == $id) | .authentication.users' "${snapshot}") || return 1
+    handshake=$(jq -c --arg id "${id}" '.instances[] | select(.id == $id) | .handshake' "${snapshot}") || return 1
+    handshake_map=$(jq -c --arg id "${id}" '.instances[] | select(.id == $id) | .handshake_for_server_name' "${snapshot}") || return 1
+    strict=$(jq -r --arg id "${id}" '.instances[] | select(.id == $id) | if .strict_mode then "y" else "n" end' "${snapshot}") || return 1
+    wildcard=$(jq -r --arg id "${id}" '.instances[] | select(.id == $id) | .wildcard_sni' "${snapshot}") || return 1
+    detour_port=$(jq -r --arg id "${id}" '.instances[] | select(.id == $id) | .detour.listen.port' "${snapshot}") || return 1
+    trust=$(jq -r --arg id "${id}" '.instances[] | select(.id == $id) | .client_trust' "${snapshot}") || return 1
+    client_tls=$(jq -c --arg id "${id}" '.instances[] | select(.id == $id) | .client_tls' "${snapshot}") || return 1
+    policy=$(jq -r --arg id "${id}" '.instances[] | select(.id == $id) | .outbound_policy' "${snapshot}") || return 1
+  else
+    id=$(plain_proxy_management_next_id shadowtls "${snapshot}") || return 1
+    name="ShadowTLS ${id}"
+    tag=$(plain_proxy_management_next_tag shadowtls "${snapshot}") || return 1
+    address=127.0.0.1; port=8443; version=3; password=""
+    users=$(jq -cn --arg password "$(trojan_generate_password)" '[{name:"shadowtls-user-1",password:$password}]') || return 1
+    handshake='{"server":"www.apple.com","server_port":443}'
+    handshake_map='{}'; strict=n; wildcard=off; detour_port=$(pick_random_high_port) || return 1
+    while [[ "${detour_port}" == "${port}" ]]; do detour_port=$(pick_random_high_port) || return 1; done
+    trust=system; client_tls='{"server_name":"www.apple.com","certificate_path":""}'; policy=default
+  fi
+
+  read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1
+  [[ -z "${answer}" ]] || name=$(trim_whitespace "${answer}")
+  if [[ "${operation}" == create ]]; then
+    read -rp "实例 ID（默认 ${id}）: " answer || return 1
+    [[ -z "${answer}" ]] || id=$(trim_whitespace "${answer}")
+    structured_instance_store_validate_id "${id}" || return 1
+    read -rp "入口 tag（默认 ${tag}）: " answer || return 1
+    [[ -z "${answer}" ]] || tag=$(trim_whitespace "${answer}")
+  fi
+  detour_tag="shadowtls-inner-${id}"
+  read -rp "监听地址（默认 ${address}）: " answer || return 1
+  [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}")
+  structured_instance_store_validate_address "${address}" || return 1
+  port=$(prompt_port "外层监听端口（当前: ${port}）: " "${port}") || return 1
+  policy=$(prompt_instance_outbound_policy '出站策略' "${policy}") || return 1
+
+  SB_SHADOWTLS_VERSION=${version}
+  SB_SHADOWTLS_PASSWORD=${password}
+  SB_SHADOWTLS_AUTH_JSON=${users}
+  shadowtls_prompt_version_and_auth "${version}" || return 1
+  version=${SB_SHADOWTLS_VERSION}; password=${SB_SHADOWTLS_PASSWORD}; users=${SB_SHADOWTLS_AUTH_JSON}
+  handshake_default=${handshake}
+  shadowtls_prompt_handshake "${handshake_default}" || return 1
+  handshake=${SB_SHADOWTLS_HANDSHAKE_JSON}
+  if [[ "${version}" -eq 1 ]]; then
+    handshake_map='{}'
+  else
+    shadowtls_prompt_handshake_map "${handshake_map}" || return 1
+    handshake_map=${SB_SHADOWTLS_HANDSHAKE_FOR_SERVER_NAME_JSON}
+  fi
+  if [[ "${version}" -eq 3 ]]; then
+    strict=$(prompt_yes_no "strict_mode [y/n]（当前 ${strict}）: " "${strict}") || return 1
+    answer=$(prompt_choice 'wildcard_sni [1=off,2=authed,3=all]（默认保持）: ' 1 3 "$([[ "${wildcard}" == authed ]] && printf 2 || [[ "${wildcard}" == all ]] && printf 3 || printf 1)") || return 1
+    case "${answer}" in 2) wildcard=authed ;; 3) wildcard=all ;; *) wildcard=off ;; esac
+  else
+    strict=n; wildcard=off
+  fi
+  detour_port=$(prompt_port "私有内层端口（当前: ${detour_port}）: " "${detour_port}") || return 1
+  [[ "${detour_port}" != "${port}" ]] || {
+    printf '[ERROR] ShadowTLS 外层与内层端口必须不同。\n' >&2
+    return 1
+  }
+  answer=$(prompt_choice '客户端证书信任 [1=certificate,2=system]（默认保持）: ' 1 2 "$([[ "${trust}" == system ]] && printf 2 || printf 1)") || return 1
+  [[ "${answer}" == 1 ]] && trust=certificate || trust=system
+  shadowtls_prompt_client_tls "${client_tls}" "${trust}" || return 1
+  client_tls=${SB_SHADOWTLS_CLIENT_TLS_JSON}
+  tls_json=$(jq -cS 'del(.enabled)' <<< "${client_tls}") || return 1
+
+  answer=$(plain_proxy_management_prompt_public_consent shadowtls "${address}" "") || return 1
+  if [[ "${address}" != 127.* && "${address}" != ::1 && "${answer}" != y ]]; then
+    log_info '未确认 ShadowTLS 公网暴露，已取消实例变更。'
+    return 2
+  fi
+  PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC=${answer}; MIXED_MANAGEMENT_ALLOW_PUBLIC=${answer}
+  jq -n -cS --arg id "${id}" --arg name "${name}" --arg tag "${tag}" --arg address "${address}" \
+    --argjson port "${port}" --argjson version "${version}" --arg password "${password}" --argjson users "${users}" \
+    --argjson handshake "${handshake}" --argjson handshake_map "${handshake_map}" \
+    --argjson strict "$([[ "${strict}" == y ]] && printf true || printf false)" --arg wildcard "${wildcard}" \
+    --arg detour_tag "${detour_tag}" --argjson detour_port "${detour_port}" --arg trust "${trust}" \
+    --argjson client_tls "${tls_json}" --arg policy "${policy}" \
+    '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},version:$version,authentication:{password:$password,users:$users},handshake:$handshake,handshake_for_server_name:$handshake_map,strict_mode:$strict,wildcard_sni:$wildcard,detour:{tag:$detour_tag,listen:{address:"127.0.0.1",port:$detour_port}},dependencies:[$detour_tag],client_trust:$trust,client_tls:$client_tls,outbound_policy:$policy}' > "${destination}" || return 1
+  structured_instance_store_validate_instance_argument "${destination}" shadowtls
+}
+
 plain_proxy_management_build_record() {
   local protocol=${1:-} snapshot=${2:-} operation=${3:-create} target=${4:-} destination=${5:-}
   local id name tag address port auth username password policy answer label tls_json
@@ -5631,6 +5972,10 @@ plain_proxy_management_build_record() {
   fi
   if [[ "${protocol}" == naive ]]; then
     naive_management_build_record "${snapshot}" "${operation}" "${target}" "${destination}"
+    return $?
+  fi
+  if [[ "${protocol}" == shadowtls ]]; then
+    shadowtls_management_build_record "${snapshot}" "${operation}" "${target}" "${destination}"
     return $?
   fi
   label=$(plain_proxy_management_label "${protocol}") || return 1
@@ -5963,6 +6308,10 @@ naive_instance_management_menu() {
   plain_proxy_instance_management_menu naive "$@"
 }
 
+shadowtls_instance_management_menu() {
+  plain_proxy_instance_management_menu shadowtls "$@"
+}
+
 plain_proxy_instance_management_menu() (
   local protocol=${1:-} requested_operation=${2:-} temp_dir choice snapshot revision target result status one_shot=n
   local record_file label confirmation
@@ -6015,6 +6364,8 @@ plain_proxy_instance_management_menu() (
         echo "字段：用户 auth_str、手动 TLS、client_trust、必填带宽、obfs 与 QUIC 选项（均为类型化输入）"
       elif [[ "${protocol}" == naive ]]; then
         echo "字段：NaiveProxy 用户、TCP/UDP 网络、手动 TLS、client_trust 与客户端 QUIC 参数（均为类型化输入）"
+      elif [[ "${protocol}" == shadowtls ]]; then
+        echo "字段：ShadowTLS 版本/认证、握手映射、strict/wildcard、detour 与客户端信任（均为类型化输入）"
       fi
       choice=$(prompt_choice "请选择 [0-7]: " 0 7 "") || return 1
     fi
@@ -6063,7 +6414,7 @@ plain_proxy_instance_management_menu() (
         ;;
       5) log_warn "${label} 没有 legacy schema 1 可迁移。" ;;
       7)
-        jq -r --arg protocol "${protocol}" '.instances[] | "\(.id)\t\(.name)\t\(.listen.address):\(.listen.port)" + (if $protocol == "shadowsocks" then "\tnetwork=\(.listen.network|join(","))\tmethod=\(.authentication.method)\tusers=\(.authentication.users|length)" elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then "\tusers=\(.authentication.users|length)\ttransport=\(.transport.type)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" elif $protocol == "anytls" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" elif $protocol == "hy2" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)\tbandwidth=\(.bandwidth.up_mbps // "-")/\(.bandwidth.down_mbps // "-")\tobfs=\(.obfs.enabled)" elif $protocol == "snell" then "\tversion=\(.version)\tusers=\(.authentication.users|length)\tobfs=\(.obfs_mode // .mode)" elif $protocol == "tuic" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)\tcc=\(.tuic.congestion_control)\trelay=\(.tuic.udp_relay_mode // (if .tuic.udp_over_stream then "udp_over_stream" else "-" end))" elif $protocol == "hysteria" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)\tbandwidth=\(.bandwidth.up_mbps)/\(.bandwidth.down_mbps)\tobfs=\(.obfs.enabled)" elif $protocol == "naive" then "\tnetwork=\(.listen.network|join(","))\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)\tcc=\(.naive.quic_congestion_control)" else "\tauth=\(.authentication.enabled)\tpolicy=\(.outbound_policy)" + (if $protocol == "http" then "\ttls=\(.tls.enabled)" else "" end) end)' "${snapshot}" || return $?
+        jq -r --arg protocol "${protocol}" '.instances[] | "\(.id)\t\(.name)\t\(.listen.address):\(.listen.port)" + (if $protocol == "shadowsocks" then "\tnetwork=\(.listen.network|join(","))\tmethod=\(.authentication.method)\tusers=\(.authentication.users|length)" elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then "\tusers=\(.authentication.users|length)\ttransport=\(.transport.type)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" elif $protocol == "anytls" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)" elif $protocol == "hy2" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)\tbandwidth=\(.bandwidth.up_mbps // "-")/\(.bandwidth.down_mbps // "-")\tobfs=\(.obfs.enabled)" elif $protocol == "snell" then "\tversion=\(.version)\tusers=\(.authentication.users|length)\tobfs=\(.obfs_mode // .mode)" elif $protocol == "tuic" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)\tcc=\(.tuic.congestion_control)\trelay=\(.tuic.udp_relay_mode // (if .tuic.udp_over_stream then "udp_over_stream" else "-" end))" elif $protocol == "hysteria" then "\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)\tbandwidth=\(.bandwidth.up_mbps)/\(.bandwidth.down_mbps)\tobfs=\(.obfs.enabled)" elif $protocol == "naive" then "\tnetwork=\(.listen.network|join(","))\tusers=\(.authentication.users|length)\ttls=\(.tls.enabled)\tclient_trust=\(.client_trust)\tcc=\(.naive.quic_congestion_control)" elif $protocol == "shadowtls" then "\tversion=\(.version)\tusers=\(if .version == 3 then (.authentication.users|length) else (if .version == 2 then 1 else 0 end) end)\tclient_trust=\(.client_trust)\tdetour=\(.detour.listen.address):\(.detour.listen.port)" else "\tauth=\(.authentication.enabled)\tpolicy=\(.outbound_policy)" + (if $protocol == "http" then "\ttls=\(.tls.enabled)" else "" end) end)' "${snapshot}" || return $?
         [[ "${one_shot}" == y ]] && return 0
         ;;
       *) log_warn "无效选项，请重新选择。" ;;
@@ -6142,6 +6493,11 @@ install_protocols_interactive() {
       log_warn "Hysteria 已保留 revision；请通过实例管理入口创建 Hysteria 实例，或本次仅选择其他协议。"
       return 1
     fi
+    if plain_proxy_inactive_store_snapshot shadowtls >/dev/null 2>&1 &&
+       protocol_array_contains shadowtls "${selected_protocols[@]}"; then
+      log_warn "ShadowTLS 已保留 revision；请通过主菜单 30 创建 ShadowTLS 实例，或本次仅选择其他协议。"
+      return 1
+    fi
     snapshot_dir=$(create_managed_state_snapshot) || {
       log_error "无法创建配置状态事务快照。"
       return 1
@@ -6215,6 +6571,10 @@ install_protocols_interactive() {
     if plain_proxy_inactive_store_snapshot naive >/dev/null 2>&1 &&
        ! protocol_array_contains naive ${installed_protocols[@]+"${installed_protocols[@]}"}; then
       installed_protocols+=(naive)
+    fi
+    if plain_proxy_inactive_store_snapshot shadowtls >/dev/null 2>&1 &&
+       ! protocol_array_contains shadowtls ${installed_protocols[@]+"${installed_protocols[@]}"}; then
+      installed_protocols+=(shadowtls)
     fi
     prompt_protocol_install_selection "additional" || return 0
     IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
@@ -6332,6 +6692,14 @@ install_protocols_interactive() {
       log_warn "NaiveProxy 实例不能与其他新增协议合并操作；请先单独管理 NaiveProxy 实例。"
       return 0
     fi
+    if protocol_array_contains "shadowtls" "${selected_protocols[@]}"; then
+      if [[ ${#selected_protocols[@]} -eq 1 ]]; then
+        shadowtls_instance_management_menu create || return $?
+        return 0
+      fi
+      log_warn "ShadowTLS 实例不能与其他新增协议合并操作；请先单独管理 ShadowTLS 实例。"
+      return 0
+    fi
     snapshot_dir=$(create_managed_state_snapshot) || {
       log_error "无法创建配置状态事务快照。"
       return 1
@@ -6399,6 +6767,21 @@ set_protocol_defaults() {
       SB_MIXED_INBOUND_TAG="socks-in"
       SB_MIXED_LISTEN_ADDRESS="127.0.0.1"
       SB_MIXED_STORE_REVISION="0"
+      SB_OUTBOUND_POLICY="default"
+      ;;
+    shadowtls)
+      SB_PROTOCOL="shadowtls"
+      SB_NODE_NAME="$(default_node_name_for_protocol "shadowtls")"
+      SB_PORT="$(pick_random_high_port)"
+      SB_SNI=""; SB_UUID=""; SB_PUBLIC_KEY=""; SB_PRIVATE_KEY=""; SB_SHORT_ID_1=""; SB_SHORT_ID_2=""
+      SB_MIXED_AUTH_ENABLED="n"; SB_MIXED_USERNAME=""; SB_MIXED_PASSWORD=""
+      SB_INSTANCE_ID=""; SB_MIXED_INSTANCE_ID=""; SB_MIXED_INBOUND_TAG="shadowtls-in"
+      SB_MIXED_LISTEN_ADDRESS="$(stack_inbound_listen_address)"; SB_MIXED_STORE_REVISION="0"
+      SB_SHADOWTLS_VERSION="3"; SB_SHADOWTLS_PASSWORD=""; SB_SHADOWTLS_AUTH_JSON='[]'
+      SB_SHADOWTLS_HANDSHAKE_JSON='{"server":"","server_port":443}'
+      SB_SHADOWTLS_HANDSHAKE_FOR_SERVER_NAME_JSON='{}'; SB_SHADOWTLS_STRICT_MODE="n"; SB_SHADOWTLS_WILDCARD_SNI="off"
+      SB_SHADOWTLS_DETOUR_TAG=""; SB_SHADOWTLS_DETOUR_PORT="$(pick_random_high_port)"
+      SB_SHADOWTLS_CLIENT_TRUST="system"; SB_SHADOWTLS_CLIENT_TLS_JSON='{"enabled":true,"server_name":"","certificate_path":""}'
       SB_OUTBOUND_POLICY="default"
       ;;
     naive)
@@ -9198,6 +9581,7 @@ instance_firewall_ledger_validate() {
     def clean_string:
       type == "string" and length > 0 and (test("[\u0000-\u001f\u007f]") | not);
     def ref_valid:
+      . as $instance |
       type == "object" and
       (.owner | clean_string) and
       (.protocol | clean_string) and
@@ -10091,7 +10475,7 @@ load_protocol_state() {
       mixed_schema=${mixed_schema//\'/}
     fi
   fi
-  if [[ ("${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive") && -f "${state_file}" ]]; then
+  if [[ ("${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" || "${protocol}" == "shadowtls") && -f "${state_file}" ]]; then
     socks_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" | head -n1) || return 1
     socks_schema=${socks_schema//\"/}
     socks_schema=${socks_schema//\'/}
@@ -10136,7 +10520,7 @@ load_protocol_state() {
   # SOCKS has no legacy .env representation.  Dispatch only a validated
   # schema-2 marker to the typed store and reject every older/unknown shape
   # before it can be sourced as shell code.
-  if [[ "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || ("${protocol}" == "anytls" && "${socks_schema}" == "2") || ("${protocol}" == "hy2" && "${socks_schema}" == "2") || ("${protocol}" == "snell" && "${socks_schema}" == "2") || ("${protocol}" == "tuic" && "${socks_schema}" == "2") || ("${protocol}" == "hysteria" && "${socks_schema}" == "2") || ("${protocol}" == "naive" && "${socks_schema}" == "2") ]]; then
+  if [[ "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || ("${protocol}" == "anytls" && "${socks_schema}" == "2") || ("${protocol}" == "hy2" && "${socks_schema}" == "2") || ("${protocol}" == "snell" && "${socks_schema}" == "2") || ("${protocol}" == "tuic" && "${socks_schema}" == "2") || ("${protocol}" == "hysteria" && "${socks_schema}" == "2") || ("${protocol}" == "naive" && "${socks_schema}" == "2") || ("${protocol}" == "shadowtls" && "${socks_schema}" == "2") ]]; then
     [[ "${socks_schema}" == "2" ]] || return 1
     plain_proxy_structured_marker_is_valid "${state_file}" || return 1
     load_plain_proxy_structured_instance "${protocol}" || return 1
@@ -10834,6 +11218,16 @@ build_naive_inbound_json() {
   render_structured_instance_inbounds naive "${store_file}"
 }
 
+build_shadowtls_inbound_json() {
+  local store_file
+  plain_proxy_structured_state_active shadowtls || {
+    printf '[ERROR] ShadowTLS 结构化状态缺失或无效，未生成入站。\n' >&2
+    return 1
+  }
+  store_file=$(plain_proxy_structured_store_file shadowtls) || return 1
+  render_structured_instance_inbounds shadowtls "${store_file}"
+}
+
 build_shadowsocks_instance_outbounds() (
   umask 077
   local instance_id=${1:-} server=${2:-} snapshot temporary address
@@ -11157,7 +11551,7 @@ build_certificate_provider_for_protocol() {
   protocol=$(normalize_protocol_id "$1") || return 1
 
   case "${protocol}" in
-    vless-reality|vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|snell|tuic|hysteria|naive) return 0 ;; # HTTP/VLESS/Trojan/VMess/Snell/TUIC/Hysteria/Naive use no certificate provider.
+    vless-reality|vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|snell|tuic|hysteria|naive|shadowtls) return 0 ;; # HTTP/VLESS/Trojan/VMess/Snell/TUIC/Hysteria/Naive/ShadowTLS use no certificate provider.
     hy2) build_hy2_certificate_provider_json ;;
     anytls) build_anytls_certificate_provider_json ;;
     *) return 1 ;;
@@ -11183,6 +11577,7 @@ build_inbound_for_protocol() {
     tuic) build_tuic_inbound_json ;;
     hysteria) build_hysteria_inbound_json ;;
     naive) build_naive_inbound_json ;;
+    shadowtls) build_shadowtls_inbound_json ;;
     *) return 1 ;;
   esac
 }
@@ -11305,7 +11700,7 @@ instance_outbound_requires_warp() {
       vless-reality)
         vless_reality_has_warp_outbound_policy && return 0
         ;;
-      vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|anytls|hy2|snell|tuic|hysteria|naive)
+      vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|anytls|hy2|snell|tuic|hysteria|naive|shadowtls)
         state_file=$(protocol_state_file "${protocol}") || return 1
         schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${state_file}" 2>/dev/null || true)
         schema=${schema//\"/}
@@ -11343,7 +11738,7 @@ build_protocol_route_rules() {
         jq -n '[{ "inbound": "mixed-in", "action": "sniff" }]'
       fi
       ;;
-      vless-plain|socks|http|shadowsocks|trojan|vmess|hysteria|naive)
+      vless-plain|socks|http|shadowsocks|trojan|vmess|hysteria|naive|shadowtls)
       local state_file
       state_file=$(protocol_state_file "${protocol}") || return 1
       plain_proxy_structured_state_active "${protocol}" || return 1
@@ -11411,7 +11806,9 @@ append_protocol_fragment() {
   if ! jq -es --arg kind "${kind}" --arg expected_type "${expected_type}" --arg contract "${contract}" '
     def tagged: type == "object" and (.tag | type == "string" and length > 0);
     if $kind == "inbound" then
-      length > 0 and all(.[]; tagged and .type == $expected_type)
+      length > 0 and (if $expected_type == "shadowtls" then
+        all(.[]; tagged and ((.type == "shadowtls") or (.type == "mixed" and (.tag | startswith("shadowtls-inner-")))))
+      else all(.[]; tagged and .type == $expected_type) end)
     elif $kind == "certificate" then
       if $contract == "none" then length == 0
       elif $contract == "optional" then all(.[]; tagged and (.type | type == "string" and length > 0))
@@ -17482,6 +17879,50 @@ build_client_naive_outbounds() (
   cat "${output_file}"
 )
 
+build_client_shadowtls_outbounds() (
+  local public_ip=${1:-} store_override=${2:-} store_file snapshot tmpdir output_file instance_id listen_address server_address
+  local version users_json trust server_name certificate_path certificate_pem tls_json expected_count output_count
+  if [[ -n "${store_override}" ]]; then store_file=${store_override}; else store_file=$(plain_proxy_structured_store_file shadowtls) || return 1; fi
+  [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  validate_structured_instance_store shadowtls "${store_file}" || return 1
+  public_ip=${public_ip:-$(get_public_ip)}
+  [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
+  snapshot=$(structured_instance_store_snapshot_json shadowtls "${store_file}") || return 1
+  tmpdir=$(mktemp -d) || return 1
+  trap 'rm -rf -- "${tmpdir}"' EXIT
+  output_file="${tmpdir}/outbounds.jsonl"
+  : > "${output_file}" || return 1
+  while IFS= read -r -d '' instance_id; do
+    listen_address=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .listen.address' <<< "${snapshot}") || return 1
+    case "${listen_address}" in
+      0.0.0.0|::) server_address=${public_ip} ;;
+      127.*|::1) server_address=${listen_address}; printf '[WARN] ShadowTLS 实例 %s 绑定回环地址 %s；导出仅供本机使用，未宣称公网可达。\n' "${instance_id}" "${listen_address}" >&2 ;;
+      *) server_address=${listen_address} ;;
+    esac
+    version=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .version' <<< "${snapshot}") || return 1
+    users_json=$(jq -c --arg id "${instance_id}" '.instances[] | select(.id == $id) | .authentication.users' <<< "${snapshot}") || return 1
+    server_name=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .client_tls.server_name' <<< "${snapshot}") || return 1
+    trust=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .client_trust' <<< "${snapshot}") || return 1
+    tls_json=$(jq -cn --arg server_name "${server_name}" '{enabled:true,server_name:$server_name}') || return 1
+    if [[ "${trust}" == certificate ]]; then
+      certificate_path=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .client_tls.certificate_path' <<< "${snapshot}") || return 1
+      certificate_pem=$(read_public_certificate_pem "${certificate_path}") || return 1
+      tls_json=$(jq -cn --arg server_name "${server_name}" --arg certificate "${certificate_pem}" '{enabled:true,server_name:$server_name,certificate:$certificate}') || return 1
+    fi
+    jq -c --arg id "${instance_id}" --arg server "${server_address}" --argjson version "${version}" --argjson users "${users_json}" --argjson tls "${tls_json}" '
+      .instances[] | select(.id == $id) as $instance |
+      (if $version == 3 then $users else [{name:"default",password:$instance.authentication.password}] end)[] as $user |
+      {type:"shadowtls",tag:("shadowtls-" + $instance.id + "-" + ($user.name | @base64)),server:$server,server_port:$instance.listen.port,version:$version,tls:$tls} +
+      (if $version == 2 then {password:$instance.authentication.password} elif $version == 3 then {password:$user.password} else {} end)
+    ' <<< "${snapshot}" >> "${output_file}" || return 1
+  done < <(jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}")
+  expected_count=$(jq -r '[.instances[] | if .version == 3 then (.authentication.users | length) else 1 end] | add // 0' <<< "${snapshot}") || return 1
+  output_count=$(jq -s 'length' "${output_file}") || return 1
+  [[ "${expected_count}" =~ ^[0-9]+$ && "${output_count}" == "${expected_count}" && "${output_count}" -gt 0 ]] || return 1
+  jq -es 'length > 0 and (map(.tag) | unique | length) == length and all(.[]; .type == "shadowtls" and .tls.enabled == true)' "${output_file}" >/dev/null || return 1
+  cat "${output_file}"
+)
+
 build_client_outbounds_for_current_protocol() {
   local protocol=${1:-} public_ip=${2:-$(get_public_ip)} outbound_json
   outbound_json=$(build_client_outbound_json_for_protocol "${protocol}" "${public_ip}") || return $?
@@ -17507,7 +17948,7 @@ build_client_outbound_json_for_protocol() {
   restore_original_state="n"
 
   case "${protocol}" in
-    vless-reality|vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|hy2|anytls|snell|tuic|hysteria|naive) ;;
+    vless-reality|vless-plain|mixed|socks|http|shadowsocks|trojan|vmess|hy2|anytls|snell|tuic|hysteria|naive|shadowtls) ;;
     *)
       return 1
       ;;
@@ -17643,6 +18084,14 @@ build_client_outbound_json_for_protocol() {
           if outbound_json=$(build_client_naive_outbounds "${public_ip}"); then :; else build_status=$?; fi
         else
           printf '[ERROR] naive_export_state_invalid: NaiveProxy 结构化状态不完整或无效，未生成客户端连接材料。\n' >&2
+          build_status=1
+        fi
+        ;;
+      shadowtls)
+        if [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]] && plain_proxy_structured_state_active shadowtls; then
+          if outbound_json=$(build_client_shadowtls_outbounds "${public_ip}"); then :; else build_status=$?; fi
+        else
+          printf '[ERROR] shadowtls_export_state_invalid: ShadowTLS 结构化状态不完整或无效，未生成客户端连接材料。\n' >&2
           build_status=1
         fi
         ;;
@@ -17877,6 +18326,16 @@ show_link_info() {
     return $?
   fi
 
+  if [[ "${SB_PROTOCOL}" == "shadowtls" ]]; then
+    local shadowtls_material
+    shadowtls_material=$(agent_shadowtls_link_json "${public_ip}") || return 1
+    printf '\nShadowTLS 实例 %s（TLS 包装层组合协议；无标准分享 URI）\n' "${SB_INSTANCE_ID:-}"
+    jq -r '.warnings[]?.message' <<< "${shadowtls_material}" >&2 || return 1
+    printf 'ShadowTLS 客户端 outbound JSON：\n'
+    jq '.outbounds' <<< "${shadowtls_material}"
+    return $?
+  fi
+
   local plain_links share_warnings http_link socks_link warning_message
   plain_links=$(build_plain_proxy_links_json "${SB_PROTOCOL}" "${public_ip}") || return 1
   share_warnings=$(plain_proxy_share_warnings_json "${SB_PROTOCOL}") || return 1
@@ -17918,7 +18377,7 @@ show_qr_info() {
   local instance_id
   local header_label
 
-  if [[ "${SB_PROTOCOL}" == trojan || "${SB_PROTOCOL}" == vmess || "${SB_PROTOCOL}" == vless || "${SB_PROTOCOL}" == vless-plain ]]; then
+  if [[ "${SB_PROTOCOL}" == trojan || "${SB_PROTOCOL}" == vmess || "${SB_PROTOCOL}" == vless || "${SB_PROTOCOL}" == vless-plain || "${SB_PROTOCOL}" == shadowtls ]]; then
     log_info "${SB_PROTOCOL} 当前不展示二维码；请使用可用 URI 或完整客户端 JSON。"
     return 0
   fi
@@ -18099,7 +18558,7 @@ list_subman_addresses_for_current_protocol() {
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL:-}" 2>/dev/null || true)
   case "${protocol}" in
-    mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive)
+    mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls)
       if plain_proxy_structured_state_active "${protocol}" >/dev/null 2>&1; then
         bound_address=${SB_MIXED_LISTEN_ADDRESS:-}
         case "${bound_address}" in
@@ -18135,7 +18594,7 @@ show_connection_details_for_detected_addresses() {
   local address_entries=()
   local entry label address public_ip
 
-  if [[ ("${SB_PROTOCOL}" == mixed || "${SB_PROTOCOL}" == socks || "${SB_PROTOCOL}" == http || "${SB_PROTOCOL}" == shadowsocks || "${SB_PROTOCOL}" == trojan || "${SB_PROTOCOL}" == vmess || "${SB_PROTOCOL}" == vless-plain || "${SB_PROTOCOL}" == anytls || "${SB_PROTOCOL}" == hy2 || "${SB_PROTOCOL}" == snell || "${SB_PROTOCOL}" == tuic || "${SB_PROTOCOL}" == hysteria || "${SB_PROTOCOL}" == naive) ]] && plain_proxy_structured_state_active "${SB_PROTOCOL}"; then
+  if [[ ("${SB_PROTOCOL}" == mixed || "${SB_PROTOCOL}" == socks || "${SB_PROTOCOL}" == http || "${SB_PROTOCOL}" == shadowsocks || "${SB_PROTOCOL}" == trojan || "${SB_PROTOCOL}" == vmess || "${SB_PROTOCOL}" == vless-plain || "${SB_PROTOCOL}" == anytls || "${SB_PROTOCOL}" == hy2 || "${SB_PROTOCOL}" == snell || "${SB_PROTOCOL}" == tuic || "${SB_PROTOCOL}" == hysteria || "${SB_PROTOCOL}" == naive || "${SB_PROTOCOL}" == shadowtls) ]] && plain_proxy_structured_state_active "${SB_PROTOCOL}"; then
     address=${SB_MIXED_LISTEN_ADDRESS:-}
     if [[ -n "${address}" && "${address}" != '::' && "${address}" != 0.0.0.0 ]]; then
       show_connection_details "${mode}" "${address}" "监听地址"
@@ -18185,7 +18644,7 @@ show_all_connection_details() {
 
   for protocol in "${installed_protocols[@]}"; do
     load_protocol_state "${protocol}" || return $?
-    if [[ ("${protocol}" == mixed || "${protocol}" == socks || "${protocol}" == http || "${protocol}" == shadowsocks || "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == vless-plain || "${protocol}" == anytls || "${protocol}" == hy2 || "${protocol}" == snell || "${protocol}" == tuic || "${protocol}" == hysteria || "${protocol}" == naive) ]] && plain_proxy_structured_state_active "${protocol}"; then
+    if [[ ("${protocol}" == mixed || "${protocol}" == socks || "${protocol}" == http || "${protocol}" == shadowsocks || "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == vless-plain || "${protocol}" == anytls || "${protocol}" == hy2 || "${protocol}" == snell || "${protocol}" == tuic || "${protocol}" == hysteria || "${protocol}" == naive || "${protocol}" == shadowtls) ]] && plain_proxy_structured_state_active "${protocol}"; then
       instance_ids=$(list_protocol_instance_ids "${protocol}") || return $?
       while IFS= read -r instance_id; do
         [[ -n "${instance_id}" ]] || continue
@@ -18284,7 +18743,7 @@ build_singbox_client_config() {
   for protocol in "${exportable_protocols[@]}"; do
     protocol_label=$(protocol_display_name "${protocol}") || return 1
     if ! protocol_state_exists "${protocol}"; then
-      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" ]]; then
+      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" || "${protocol}" == "shadowtls" ]]; then
         log_warn "${protocol_label} 状态缺失，已中止客户端导出；原导出文件保持不变。" >&2
         status=1
         break
@@ -18294,7 +18753,7 @@ build_singbox_client_config() {
     fi
 
     if ! outbound_json=$(build_client_outbounds_for_current_protocol "${protocol}" "${public_ip}"); then
-      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" ]]; then
+      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" || "${protocol}" == "shadowtls" ]]; then
         log_warn "${protocol_label} 客户端连接材料无效，已中止客户端导出；原导出文件保持不变。" >&2
         status=1
         break
@@ -18575,10 +19034,10 @@ agent_print_help() {
   sbv agent service restart --json --yes
   sbv agent subman-sync --json
   sbv agent warp --json
-  sbv agent instance create|replace mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive --json --yes --expected-revision N --file record.json [--allow-public]
-  sbv agent instance delete|default mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive --json --yes --expected-revision N --id ID
+  sbv agent instance create|replace mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N --file record.json [--allow-public]
+  sbv agent instance delete|default mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N --id ID
   sbv agent instance migrate mixed --json --yes --expected-revision N
-  sbv agent instance recover mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive --json --yes --expected-revision N
+  sbv agent instance recover mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N
 
 说明:
   capabilities  输出协议、功能入口以及只读/变更/敏感分类。
@@ -18593,7 +19052,7 @@ agent_print_help() {
   doctor        输出只读诊断信息和配置校验结果。
   service       执行带 --yes 保护的服务操作，目前支持 restart。
   subman-sync   非交互推送节点到 SubMan，缺少配置时返回结构化错误。
-  instance      Mixed/SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS/AnyTLS/Hysteria2/Snell/TUIC/Hysteria 实例事务；仅 Mixed 支持 legacy migration；recover 使用待恢复事务原 revision。
+  instance      Mixed/SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS/AnyTLS/Hysteria2/Snell/TUIC/Hysteria/NaiveProxy/ShadowTLS 实例事务；仅 Mixed 支持 legacy migration；recover 使用待恢复事务原 revision。
 EOF
 }
 
@@ -18797,7 +19256,7 @@ agent_capabilities_json() {
           persistent_recovery_journal: true
         },
         plain_proxy_instances: {
-          protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic", "hysteria", "naive"],
+          protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic", "hysteria", "naive", "shadowtls"],
           legacy_migration_protocols: ["mixed"],
           state_schema: 2,
           store_schema: 1,
@@ -18815,7 +19274,8 @@ agent_capabilities_json() {
             snell: ["create", "replace", "delete", "default", "recover"],
             tuic: ["create", "replace", "delete", "default", "recover"],
             hysteria: ["create", "replace", "delete", "default", "recover"],
-            naive: ["create", "replace", "delete", "default", "recover"]
+            naive: ["create", "replace", "delete", "default", "recover"],
+            shadowtls: ["create", "replace", "delete", "default", "recover"]
           },
           expected_revision_required: true,
           plaintext_public_confirmation: "--allow-public",
@@ -18835,7 +19295,7 @@ agent_capabilities_json() {
         doctor: {mutation: false, sensitive: false},
         "upgrade-check": {mutation: false, sensitive: false},
         upgrade: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart"},
-        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic", "hysteria", "naive"]},
+        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic", "hysteria", "naive", "shadowtls"]},
         "export-client": {mutation: true, sensitive: true},
         "service restart": {mutation: true, sensitive: false, confirmation: "--yes"},
         "subman-sync": {mutation: true, sensitive: true, external_write: true}
@@ -18857,6 +19317,7 @@ agent_capabilities_json() {
         tuic_multi_instance_management: true,
         hysteria_multi_instance_management: true,
         naive_multi_instance_management: true,
+        shadowtls_multi_instance_management: true,
         warp_mutation: true,
         inbound_outbound_stack_management: true,
         bbr: true,
@@ -19926,7 +20387,7 @@ agent_validate_indexed_protocol_states() {
   # A deleted plain proxy may leave a valid revisioned empty tombstone for
   # CAS continuity.  It is safe when its protocol is absent from the index; a
   # non-empty orphan would be an unowned inventory and must fail closed.
-  for plain_protocol in mixed socks http shadowsocks trojan vmess vless-plain anytls hy2 snell tuic hysteria naive; do
+  for plain_protocol in mixed socks http shadowsocks trojan vmess vless-plain anytls hy2 snell tuic hysteria naive shadowtls; do
     if ! protocol_array_contains "${plain_protocol}" ${expected_protocols[@]+"${expected_protocols[@]}"}; then
       plain_store_file=$(plain_proxy_structured_store_file "${plain_protocol}") || return 1
       if [[ -e "${plain_store_file}" || -L "${plain_store_file}" ]]; then
@@ -19961,7 +20422,7 @@ agent_validate_indexed_protocol_states() {
       # partial first-node view would make Agent status/links appear healthy
       # while silently omitting listeners or credentials.
       mixed_validate_state_inventory || return 1
-    elif [[ "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" ]]; then
+    elif [[ "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" || "${protocol}" == "shadowtls" ]]; then
       # Plain proxy protocols are structured-only. Validate the complete
       # manifest and compare every live tag before reporting them installed.
       plain_proxy_validate_state_inventory "${protocol}" || return 1
@@ -20874,6 +21335,46 @@ agent_naive_link_json() (
     '$summary + {links:{},outbounds:$outbounds,warnings:$warnings}'
 )
 
+agent_shadowtls_node_json() {
+  local public_ip=${1:-$(get_public_ip)} server version user_count handshake wildcard strict trust
+  [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" && "${SB_PROTOCOL}" == shadowtls ]] || return 1
+  plain_proxy_structured_state_active shadowtls || return 1
+  version=${SB_SHADOWTLS_VERSION:-3}
+  user_count=$(jq -er 'length' <<< "${SB_SHADOWTLS_AUTH_JSON:-[]}") || return 1
+  handshake=$(jq -er '.server' <<< "${SB_SHADOWTLS_HANDSHAKE_JSON:-}") || return 1
+  wildcard=${SB_SHADOWTLS_WILDCARD_SNI:-off}; strict=$([[ "${SB_SHADOWTLS_STRICT_MODE:-n}" == y ]] && printf true || printf false)
+  trust=${SB_SHADOWTLS_CLIENT_TRUST:-system}
+  case "${SB_MIXED_LISTEN_ADDRESS:-}" in 0.0.0.0|::) server=${public_ip} ;; *) server=${SB_MIXED_LISTEN_ADDRESS:-} ;; esac
+  [[ -n "${server}" ]] || return 1
+  jq -n --arg name "${SB_NODE_NAME:-ShadowTLS}" --arg id "${SB_INSTANCE_ID:-}" --arg tag "${SB_MIXED_INBOUND_TAG:-}" --arg address "${SB_MIXED_LISTEN_ADDRESS:-}" --arg port "${SB_PORT:-}" --arg revision "${SB_MIXED_STORE_REVISION:-0}" --arg server "${server}" --arg handshake_server "${handshake}" --arg trust "${trust}" --arg wildcard "${wildcard}" --arg policy "${SB_OUTBOUND_POLICY:-default}" --arg detour "${SB_SHADOWTLS_DETOUR_TAG:-shadowtls-inner-${SB_INSTANCE_ID:-}}" --argjson version "${version}" --argjson user_count "${user_count}" --argjson strict "${strict}" '{protocol:"shadowtls",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},server:$server,version:$version,handshake_server:$handshake_server,user_count:(if $version == 3 then $user_count else 1 end),auth_enabled:($version != 1),wildcard_sni:$wildcard,strict_mode:$strict,detour_tag:$detour,client_trust:$trust,outbound_policy:$policy,shareable:false,client_exportable:true}'
+}
+
+agent_shadowtls_link_json() (
+  umask 077
+  local public_ip=${1:-$(get_public_ip)} store_file snapshot end_snapshot instance_id server isolated_store summary outbounds warnings
+  [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]] || return 1
+  store_file=$(plain_proxy_structured_store_file shadowtls) || return 1
+  snapshot=$(structured_instance_store_snapshot_json shadowtls "${store_file}") || return 1
+  instance_id=${SB_INSTANCE_ID:-}; [[ -n "${instance_id}" ]] || instance_id=$(jq -er '.default_instance_id' <<< "${snapshot}") || return 1
+  jq -e --arg id "${instance_id}" 'any(.instances[]; .id == $id)' <<< "${snapshot}" >/dev/null || return 1
+  [[ "$(jq -r '.revision|tostring' <<< "${snapshot}")" == "${SB_MIXED_STORE_REVISION:-}" ]] || return 1
+  case "${SB_MIXED_LISTEN_ADDRESS:-}" in 0.0.0.0|::) server=${public_ip} ;; "") return 1 ;; *) server=${SB_MIXED_LISTEN_ADDRESS} ;; esac
+  [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
+  summary=$(agent_shadowtls_node_json "${public_ip}") || return 1
+  isolated_store=$(mktemp) || return 1
+  trap 'rm -f -- "${isolated_store}"' EXIT
+  jq --arg id "${instance_id}" '. as $root | ($root.instances|map(select(.id==$id))) as $instances | $root|.default_instance_id=$id|.instances=$instances' <<< "${snapshot}" > "${isolated_store}" || return 1
+  outbounds=$(build_client_shadowtls_outbounds "${server}" "${isolated_store}") || return 1
+  end_snapshot=$(structured_instance_store_snapshot_json shadowtls "${store_file}") || return 1
+  [[ "${snapshot}" == "${end_snapshot}" ]] || return 1
+  outbounds=$(jq -sc '.' <<< "${outbounds}") || return 1
+  warnings=$(jq -cn '[{code:"shadowtls_standard_uri_unavailable",message:"ShadowTLS 是 TLS 包装层组合协议，当前没有可安全表达握手映射、detour 与版本参数的标准分享 URI；请使用完整客户端 outbound JSON。"}]') || return 1
+  if [[ "${SB_SHADOWTLS_CLIENT_TRUST:-system}" == certificate ]]; then
+    warnings=$(jq -cn --argjson warnings "${warnings}" '$warnings + [{code:"shadowtls_uri_certificate_trust_unavailable",message:"ShadowTLS certificate trust 无法由标准 URI 表达；请使用完整客户端 outbound JSON。"}]') || return 1
+  fi
+  jq -cn --argjson summary "${summary}" --argjson outbounds "${outbounds}" --argjson warnings "${warnings}" '$summary + {links:{},outbounds:$outbounds,warnings:$warnings}'
+)
+
 agent_node_summary_json_for_current_protocol() {
   local protocol api_protocol public_ip shareable="true" client_exportable="false"
   local auth_enabled="false" server_name="" tls_enabled="false" http_tls_json
@@ -20905,6 +21406,9 @@ agent_node_summary_json_for_current_protocol() {
   fi
   if [[ "${protocol}" == naive && "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active naive; then
     agent_naive_node_json "${public_ip}"; return $?
+  fi
+  if [[ "${protocol}" == shadowtls && "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active shadowtls; then
+    agent_shadowtls_node_json "${public_ip}"; return $?
   fi
 
   case "${protocol}" in
@@ -21044,6 +21548,9 @@ agent_link_json_for_current_protocol() {
   fi
   if [[ "${protocol}" == naive && "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active naive; then
     agent_naive_link_json "${public_ip}"; return $?
+  fi
+  if [[ "${protocol}" == shadowtls && "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active shadowtls; then
+    agent_shadowtls_link_json "${public_ip}"; return $?
   fi
   if [[ "${public_ip}" == *:* ]]; then
     address_label="IPv6"
@@ -21706,10 +22213,12 @@ plain_proxy_instance_config_candidate() {
   rules=$(render_structured_instance_route_rules "${protocol}" "${new_store}") || return $?
   jq --arg protocol "${protocol}" --slurpfile old "${old_store}" --argjson added "${inbounds}" --argjson rules "${rules}" '
     def protocol_id:
-      if .type == "vless" then
+      if $protocol == "shadowtls" and .type == "mixed" and ((.tag // "") | startswith("shadowtls-inner-")) then
+        "shadowtls"
+      elif .type == "vless" then
         (if .tls.reality? != null then "vless-reality" else "vless-plain" end)
       else .type end;
-    ($old[0].instances | map(.tag)) as $old_tags |
+    ($old[0].instances | map(.tag) + (if $protocol == "shadowtls" then map(.detour.tag) else [] end)) as $old_tags |
     def owned_rule:
       (.inbound | type) == "string" and (.inbound as $tag | $old_tags | index($tag) != null) and
       ((.action == "sniff" and (keys | sort) == ["action","inbound"]) or
@@ -22062,17 +22571,28 @@ apply_plain_proxy_instance_change() (
     elif [[ "${instance_protocol}" == hy2 ]]; then
       [[ ! -e "$(plain_proxy_structured_store_file hy2)" ]] || return 1
       plain_proxy_config_store_candidate hy2 | jq '.revision=0' > "${lock_dir}/before.json" || return $?
+    elif [[ "${instance_protocol}" == shadowtls ]]; then
+      [[ ! -e "$(plain_proxy_structured_store_file shadowtls)" ]] || return 1
+      plain_proxy_config_store_candidate shadowtls "${SINGBOX_CONFIG_FILE}" | jq '.revision=0' > "${lock_dir}/before.json" || return $?
     else
       return 1
     fi
   else
     [[ "${operation}" != migrate ]] || return 1
-    [[ "$(config_protocol_inbound_count "${instance_protocol}" "${SINGBOX_CONFIG_FILE}" 2>/dev/null || printf 0)" == "0" ]] || return 1
-    if [[ -e "$(plain_proxy_structured_store_file "${instance_protocol}")" ]]; then
-      plain_proxy_inactive_store_snapshot "${instance_protocol}" > "${lock_dir}/before.json" || return $?
-      current_revision=$(jq -r .revision "${lock_dir}/before.json") || return $?
+    if [[ "${instance_protocol}" == shadowtls ]] &&
+       [[ "$(config_protocol_inbound_count shadowtls "${SINGBOX_CONFIG_FILE}" 2>/dev/null || printf 0)" -gt 0 ]]; then
+      [[ ! -e "$(plain_proxy_structured_store_file shadowtls)" ]] || return 1
+      plain_proxy_config_store_candidate shadowtls "${SINGBOX_CONFIG_FILE}" | jq '.revision=0' > "${lock_dir}/before.json" || return $?
+      current_revision=0
+    elif [[ "$(config_protocol_inbound_count "${instance_protocol}" "${SINGBOX_CONFIG_FILE}" 2>/dev/null || printf 0)" == "0" ]]; then
+      if [[ -e "$(plain_proxy_structured_store_file "${instance_protocol}")" ]]; then
+        plain_proxy_inactive_store_snapshot "${instance_protocol}" > "${lock_dir}/before.json" || return $?
+        current_revision=$(jq -r .revision "${lock_dir}/before.json") || return $?
+      else
+        structured_instance_store_empty_json "${instance_protocol}" > "${lock_dir}/before.json" || return $?
+      fi
     else
-      structured_instance_store_empty_json "${instance_protocol}" > "${lock_dir}/before.json" || return $?
+      return 1
     fi
   fi
   [[ "${expected_revision}" == "${current_revision}" ]] || return 1
@@ -22155,7 +22675,7 @@ apply_plain_proxy_instance_change() (
 
 agent_instance_cli() {
   local operation=${1:-} protocol=${2:-} expected="" input="" instance_id="" json=n confirmed=n allow_public=n
-  [[ $# -ge 2 ]] || { agent_json_error invalid_arguments "用法: instance 操作 mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria --json --yes --expected-revision N [--file 文件 | --id ID]"; return 1; }
+  [[ $# -ge 2 ]] || { agent_json_error invalid_arguments "用法: instance 操作 mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N [--file 文件 | --id ID]"; return 1; }
   shift 2
   protocol=$(normalize_protocol_id "${protocol}") || {
     agent_json_error invalid_arguments "实例协议无效；未修改。"; return 1;
@@ -22171,14 +22691,14 @@ agent_instance_cli() {
       *) break ;;
     esac
   done
-  if [[ $# -ne 0 || "${json}" != y || ("${protocol}" != mixed && "${protocol}" != socks && "${protocol}" != http && "${protocol}" != shadowsocks && "${protocol}" != trojan && "${protocol}" != vmess && "${protocol}" != vless-plain && "${protocol}" != anytls && "${protocol}" != hy2 && "${protocol}" != snell && "${protocol}" != tuic && "${protocol}" != hysteria && "${protocol}" != naive) || ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
+  if [[ $# -ne 0 || "${json}" != y || ("${protocol}" != mixed && "${protocol}" != socks && "${protocol}" != http && "${protocol}" != shadowsocks && "${protocol}" != trojan && "${protocol}" != vmess && "${protocol}" != vless-plain && "${protocol}" != anytls && "${protocol}" != hy2 && "${protocol}" != snell && "${protocol}" != tuic && "${protocol}" != hysteria && "${protocol}" != naive && "${protocol}" != shadowtls) || ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
     agent_json_error invalid_arguments "实例参数、协议或 revision 无效；未修改。"; return 1
   fi
   if ! structured_instance_store_revision_arg "${expected}" >/dev/null; then
     agent_json_error invalid_arguments "revision 超出安全整数范围；未修改。"; return 1
   fi
   if [[ "${operation}" == migrate && "${protocol}" != mixed ]]; then
-    agent_json_error invalid_arguments "只有 Mixed 提供 legacy schema 1 迁移；SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS/AnyTLS/Hysteria2/Snell/TUIC/NaiveProxy 使用 schema 2，已有 live 配置请使用接管入口。"
+    agent_json_error invalid_arguments "只有 Mixed 提供 legacy schema 1 迁移；SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS/AnyTLS/Hysteria2/Snell/TUIC/Hysteria/NaiveProxy/ShadowTLS 使用 schema 2，已有 live 配置请使用接管入口。"
     return 1
   fi
   [[ "${confirmed}" == y ]] || { agent_json_error confirmation_required "实例写操作需要 --yes；非回环入口另需 --allow-public。"; return 1; }
@@ -22615,6 +23135,17 @@ validate_live_inbound_inventory() {
     printf '[ERROR] live_inbound_inventory: %s; 已保留配置和状态，禁止有损重建；请使用支持该入站的脚本或先备份并人工迁移。\n' "${inventory_status}" >&2
     return 1
   fi
+  if ! jq -e '
+    (.inbounds // []) as $inbounds |
+    ([$inbounds[] | select(.type == "shadowtls")]) as $outers |
+    ([$inbounds[] | select(.type == "mixed" and ((.tag // "") | startswith("shadowtls-inner-")))]) as $inners |
+    (all($inners[]; . as $inner | ([ $outers[] | select(.detour == $inner.tag) ] | length) == 1)) and
+    (all($outers[]; . as $outer | ($outer.detour | type == "string") and ([ $inners[] | select(.tag == $outer.detour) ] | length) == 1)) and
+    (all($inbounds[]; (((.tag // "") | startswith("shadowtls-inner-")) | not) or (.type == "mixed")))
+  ' "${config_file}" >/dev/null 2>&1; then
+    printf '[ERROR] live_inbound_inventory: shadowtls_composite_invalid; 已保留配置和状态，禁止有损重建。\n' >&2
+    return 1
+  fi
 }
 
 list_config_protocols() {
@@ -22810,7 +23341,7 @@ structured_instance_store_error() {
 structured_instance_store_protocol() {
   local protocol
   protocol=$(normalize_protocol_id "${1:-}") || return 1
-  [[ "${protocol}" == "mixed" || "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" ]] || return 1
+  [[ "${protocol}" == "mixed" || "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" || "${protocol}" == "shadowtls" ]] || return 1
   printf '%s' "${protocol}"
 }
 
@@ -22919,7 +23450,7 @@ structured_instance_record_jq_filter() {
       else type == "string" and length > 0 and utf8bytelength <= 255 and
         (test("[\u0000-\u001F\u007F]") | not)
       end;
-    def valid_instance($protocol):
+    def valid_plain_instance($protocol):
       type == "object" and
       ((keys | sort) == ((["authentication","dependencies","id","listen","name","outbound_policy","tag"] +
         (if $protocol == "snell" then ["mode","obfs_host","obfs_mode","version"] else [] end) +
@@ -23093,6 +23624,55 @@ structured_instance_record_jq_filter() {
            (.quic_session_receive_window | type == "string" and length <= 64 and test("^$|^[0-9]+( ?(B|KB|MB|GB))$")) and
            (.stream_receive_window | type == "string" and length <= 64 and test("^$|^[0-9]+( ?(B|KB|MB|GB))$")))
        else true end);
+    def valid_shadowtls_instance:
+      . as $instance |
+      type == "object" and
+      (keys|sort) == ["authentication","client_tls","client_trust","dependencies","detour","handshake","handshake_for_server_name","id","listen","name","outbound_policy","strict_mode","tag","version","wildcard_sni"] and
+      (.id | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and
+      (.name | type == "string" and length > 0 and index("\u0000") == null) and
+      (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]")|not)) and
+      (.listen | type == "object" and (keys|sort) == ["address","port"] and
+        (.address | type == "string" and length > 0 and (test("[\u0000-\u0020\u007F]")|not)) and
+        (.port | type == "number" and floor == . and . >= 1 and . <= 65535)) and
+      (.version | type == "number" and floor == . and IN(1,2,3)) and
+      (.authentication | type == "object" and (keys|sort) == ["password","users"] and
+        (.password | type == "string" and length <= 4096 and index("\u0000") == null and (test("[\u0000-\u001F\u007F]")|not)) and
+        (.users | type == "array" and length <= 128 and
+          all(.[]; type == "object" and (keys|sort) == ["name","password"] and
+            (.name | type == "string" and length > 0 and utf8bytelength <= 256 and (test("[\u0000-\u001F\u007F]")|not)) and
+            (.password | type == "string" and length > 0 and utf8bytelength <= 4096 and index("\u0000") == null and (test("[\u0000-\u001F\u007F]")|not))) and
+          (map(.name)|unique|length) == length and (map(.password)|unique|length) == length) and
+        (if $instance.version == 1 then .password == "" and .users == []
+         elif $instance.version == 2 then (.password|length) > 0 and .users == []
+         else .password == "" and (.users|length) >= 1 end)) and
+      (.handshake | type == "object" and (keys|sort) == ["server","server_port"] and
+        (.server | type == "string" and length > 0 and utf8bytelength <= 4096 and (test("[\u0000-\u001F\u007F]")|not)) and
+        (.server_port | type == "number" and floor == . and . >= 1 and . <= 65535)) and
+      (.handshake_for_server_name | type == "object" and
+        all(to_entries[]; .key | type == "string" and length > 0 and utf8bytelength <= 255 and (test("[\u0000-\u001F\u007F]")|not)) and
+        all(to_entries[]; .value | type == "object" and (keys|sort) == ["server","server_port"] and
+          (.server | type == "string" and length > 0 and utf8bytelength <= 4096 and (test("[\u0000-\u001F\u007F]")|not)) and
+          (.server_port | type == "number" and floor == . and . >= 1 and . <= 65535)) and
+        (if $instance.version == 1 then length == 0 else true end)) and
+      (.strict_mode | type == "boolean") and
+      (.wildcard_sni | type == "string" and IN("off","authed","all")) and
+      (if .version == 1 then (.strict_mode == false and .wildcard_sni == "off")
+       elif .version == 2 then (.strict_mode == false and .wildcard_sni == "off")
+       else true end) and
+      (.detour | type == "object" and (keys|sort) == ["listen","tag"] and
+        (.tag | type == "string" and . == ("shadowtls-inner-" + $instance.id)) and
+        (.listen | type == "object" and (keys|sort) == ["address","port"] and
+          .address == "127.0.0.1" and (.port | type == "number" and floor == . and . >= 1 and . <= 65535) and
+          .port != $instance.listen.port)) and
+      (.dependencies | type == "array") and (.dependencies == [$instance.detour.tag]) and
+      (.client_trust | type == "string" and IN("system","certificate")) and
+      (.client_tls | type == "object" and (keys|sort) == ["certificate_path","server_name"] and
+        (.server_name | type == "string" and length > 0 and utf8bytelength <= 4096 and (test("[\u0000-\u001F\u007F]")|not)) and
+        (.certificate_path | type == "string" and (test("[\u0000-\u001F\u007F]")|not)) and
+        (if $instance.client_trust == "system" then .certificate_path == "" else (.certificate_path | startswith("/")) end)) and
+      (.outbound_policy | IN("default","direct","warp"));
+    def valid_instance($protocol):
+      if $protocol == "shadowtls" then valid_shadowtls_instance else valid_plain_instance($protocol) end;
 JQ
 }
 
@@ -23115,7 +23695,8 @@ structured_instance_store_validate_common_json() {
       (.instances|type=="array" and length<=128 and all(.[]; valid_instance($protocol)) and
         (map(.id)|unique|length)==length and (map(.tag)|unique|length)==length and
         (map([.listen.address,.listen.port,
-          (if $protocol == "hy2" or $protocol == "tuic" or $protocol == "hysteria" then ["udp"]
+          (if $protocol == "shadowtls" then ["tcp"]
+           elif $protocol == "hy2" or $protocol == "tuic" or $protocol == "hysteria" then ["udp"]
            elif $protocol == "trojan" or $protocol == "vmess" then
              (if .transport.type == "quic" then ["udp"] else ["tcp"] end)
            else (.listen.network // ["tcp"]) end)]|@json)|unique|length)==length))
@@ -23160,7 +23741,28 @@ validate_structured_instance_store() {
       return 1
     }
   done <<< "${addresses}"
+  if [[ "${protocol}" == "shadowtls" ]]; then
+    jq -e '(.instances | all(.[]; .detour.listen.address == "127.0.0.1" and .detour.listen.port != .listen.port)) and
+      (([.instances[].listen.port] + [.instances[].detour.listen.port]) as $ports | ($ports|unique|length) == ($ports|length))' "${file}" >/dev/null 2>&1 || {
+      structured_instance_store_error validate invalid_shadowtls_detour
+      return 1
+    }
+    while IFS= read -r address; do
+      [[ -n "${address}" ]] || continue
+      structured_instance_store_validate_address "${address}" || {
+        structured_instance_store_error validate invalid_detour_address
+        return 1
+      }
+    done < <(jq -r '.instances[].detour.listen.address' "${file}")
+  fi
   listener_input=$(jq -c --arg protocol "${protocol}" '{inbounds:[.instances[] | {type:(if $protocol == "vless-plain" then "vless" elif $protocol == "hy2" then "hysteria2" else $protocol end),tag:.tag,listen:.listen.address,listen_port:.listen.port} + (if $protocol == "shadowsocks" or $protocol == "naive" then {network:.listen.network} elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then {transport:.transport} else {} end)]}' "${file}") || return 1
+  if [[ "${protocol}" == "shadowtls" ]]; then
+    listener_input=$(jq -c '{inbounds:(.instances | map([
+      ({type:"shadowtls",tag:.tag,listen:.listen.address,listen_port:.listen.port,detour:.detour.tag,version:.version,handshake:.handshake} +
+       (if .version == 2 then {password:.authentication.password} elif .version == 3 then {users:.authentication.users} else {} end)),
+      {type:"mixed",tag:.detour.tag,listen:.detour.listen.address,listen_port:.detour.listen.port}
+    ]) | add // [])}' "${file}") || return 1
+  fi
   listener_plan=$(managed_listener_plan_json <<< "${listener_input}") || return 1
   validate_listener_plan_json <<< "${listener_plan}" || return 1
   : "${protocol}"
@@ -23188,9 +23790,14 @@ plain_proxy_config_store_candidate() (
     tuic) protocol_label="TUIC" ;;
     hysteria) protocol_label="Hysteria" ;;
     naive) protocol_label="NaiveProxy" ;;
+    shadowtls) protocol_label="ShadowTLS" ;;
     *) return 1 ;;
   esac
   shift
+  if [[ "${protocol}" == shadowtls ]]; then
+    shadowtls_config_store_candidate "$@"
+    return $?
+  fi
   config_file=${1:-${SINGBOX_CONFIG_FILE:-}}
   existing_file=${2:-}
   local state_file state_schema legacy_name active_state store_file
@@ -23970,6 +24577,111 @@ naive_config_store_candidate() {
   plain_proxy_config_store_candidate naive "$@"
 }
 
+shadowtls_config_store_candidate() (
+  umask 077
+  local config_file=${1:-${SINGBOX_CONFIG_FILE:-}} existing_file=${2:-} temp_dir inbound_json tag detour detour_id detour_port id name policy trust cert_path client_server_name
+  local default_id="" old_revision=0 candidate_revision=0 existing_match base digest suffix existing_semantics new_semantics candidate_json
+  [[ -n "${config_file}" && -f "${config_file}" && ! -L "${config_file}" ]] || return 1
+  temp_dir=$(mktemp -d) || return $?
+  trap 'rm -rf -- "${temp_dir}"' EXIT
+  trap 'return 130' INT
+  trap 'return 143' TERM
+  trap 'return 129' HUP
+  jq -cS . "${config_file}" > "${temp_dir}/live.json" || return 1
+  config_file="${temp_dir}/live.json"
+  validate_live_inbound_inventory "${config_file}" || return 1
+  [[ "$(config_protocol_inbound_count shadowtls "${config_file}")" -gt 0 ]] || return 1
+  if ! jq -e '
+    (.inbounds // []) | all(.[]?;
+      if .type != "shadowtls" then true else
+        ((keys_unsorted - ["type","tag","listen","listen_port","detour","version","password","users","handshake","handshake_for_server_name","strict_mode","wildcard_sni"]) | length == 0) and
+        (.tag | type == "string" and length > 0) and (.listen | type == "string" and length > 0) and
+        (.listen_port | type == "number" and floor == . and . >= 1 and . <= 65535) and
+        (.version | type == "number" and floor == . and IN(1,2,3)) and
+        (.detour | type == "string" and startswith("shadowtls-inner-")) and
+        (.handshake | (type == "object" and
+          (.server | type == "string" and length > 0) and
+          (.server_port | type == "number" and floor == . and . >= 1 and . <= 65535))) and
+        (if has("handshake_for_server_name") then .handshake_for_server_name | type == "object" else true end) and
+        (if .version == 1 then (.password? == null and (.users? == null or .users == []) and (.strict_mode? == null or .strict_mode == false) and (.wildcard_sni? == null or .wildcard_sni == "off"))
+         elif .version == 2 then (.password | type == "string" and length > 0) and (.users? == null or .users == []) and (.strict_mode? == null or .strict_mode == false) and (.wildcard_sni? == null or .wildcard_sni == "off")
+         else (.password? == null or .password == "") and (.users | type == "array" and length >= 1 and all(.[]; type == "object" and (keys_unsorted|sort) == ["name","password"])) and ((.wildcard_sni? == null) or (.wildcard_sni | IN("off","authed","all"))) end)
+      end)' "${config_file}" >/dev/null 2>&1; then
+    printf '[ERROR] ShadowTLS live inbound contains unsupported or lossy fields.\n' >&2
+    return 1
+  fi
+  if [[ -z "${existing_file}" ]]; then
+    existing_file=$(plain_proxy_structured_store_file shadowtls 2>/dev/null || true)
+  fi
+  if [[ -n "${existing_file}" && -f "${existing_file}" ]]; then
+    validate_structured_instance_store shadowtls "${existing_file}" || return 1
+    old_revision=$(structured_instance_store_revision "${existing_file}") || return 1
+    default_id=$(jq -r '.default_instance_id' "${existing_file}") || return 1
+    existing_semantics=$(jq -cS '{default_instance_id,instances:(.instances|sort_by(.tag))}' "${existing_file}") || return 1
+  else
+    existing_file=""
+    existing_semantics='{"default_instance_id":"","instances":[]}'
+  fi
+  : > "${temp_dir}/instances.jsonl"
+  while IFS= read -r inbound_json; do
+    [[ -n "${inbound_json}" ]] || continue
+    tag=$(jq -r '.tag' <<< "${inbound_json}") || return 1
+    detour=$(jq -r '.detour' <<< "${inbound_json}") || return 1
+    detour_port=$(jq -r --arg tag "${detour}" '.inbounds[] | select(.type == "mixed" and .tag == $tag) | .listen_port' "${config_file}") || return 1
+    [[ "${detour_port}" =~ ^[0-9]+$ ]] || return 1
+    policy=$(vless_reality_outbound_policy_from_config "${detour}" "${config_file}") || return 1
+    id=""; name=""; existing_match='[]'
+    if [[ -n "${existing_file}" ]]; then
+      existing_match=$(jq -c --arg tag "${tag}" '[.instances[] | select(.tag == $tag)]' "${existing_file}") || return 1
+      if [[ "$(jq 'length' <<< "${existing_match}")" == 1 ]]; then
+        id=$(jq -r '.[0].id' <<< "${existing_match}") || return 1
+        name=$(jq -r '.[0].name' <<< "${existing_match}") || return 1
+      elif [[ "$(jq 'length' <<< "${existing_match}")" -gt 1 ]]; then
+        return 1
+      fi
+    fi
+    if [[ -z "${id}" ]]; then
+      detour_id=${detour#shadowtls-inner-}
+      structured_instance_store_validate_id "${detour_id}" || {
+        printf '[ERROR] ShadowTLS live detour tag cannot be mapped to a safe instance id.\n' >&2
+        return 1
+      }
+      base="${detour_id}"
+      id="${base}"; suffix=2
+      while jq -e -s --arg id "${id}" 'any(.[]; .id == $id)' "${temp_dir}/instances.jsonl" >/dev/null 2>&1; do id="${base}-${suffix}"; suffix=$((suffix + 1)); done
+      name="${tag}"
+    fi
+    [[ -n "${name}" ]] || name="${tag}"
+    trust=$(jq -r '.[0].client_trust // "system"' <<< "${existing_match}") || return 1
+    cert_path=$(jq -r '.[0].client_tls.certificate_path // ""' <<< "${existing_match}") || return 1
+    client_server_name=$(jq -r '.[0].client_tls.server_name // empty' <<< "${existing_match}") || return 1
+    [[ -n "${client_server_name}" ]] || client_server_name=$(jq -r '.handshake.server' <<< "${inbound_json}") || return 1
+    if ! jq -n -cS --arg id "${id}" --arg name "${name}" --arg tag "${tag}" --argjson inbound "${inbound_json}" --argjson detour_port "${detour_port}" --arg policy "${policy}" --arg trust "${trust}" --arg server_name "${client_server_name}" --arg cert_path "${cert_path}" '
+      {id:$id,name:$name,tag:$tag,listen:{address:$inbound.listen,port:$inbound.listen_port},version:$inbound.version,authentication:{password:($inbound.password // ""),users:($inbound.users // [])},handshake:$inbound.handshake,handshake_for_server_name:($inbound.handshake_for_server_name // {}),strict_mode:($inbound.strict_mode // false),wildcard_sni:($inbound.wildcard_sni // "off"),detour:{tag:$inbound.detour,listen:{address:"127.0.0.1",port:$detour_port}},dependencies:[$inbound.detour],client_trust:$trust,client_tls:{server_name:$server_name,certificate_path:$cert_path},outbound_policy:$policy}' >> "${temp_dir}/instances.jsonl"; then
+      return 1
+    fi
+  done < <(config_protocol_inbounds_jsonl shadowtls "${config_file}")
+  jq -s '{default_instance_id:"",instances:.}' "${temp_dir}/instances.jsonl" > "${temp_dir}/candidate-semantics.json" || return 1
+  new_semantics=$(jq -cS . "${temp_dir}/candidate-semantics.json") || return 1
+  default_id=$(jq -r --arg id "${default_id}" 'if $id != "" and any(.instances[]; .id == $id) then $id else (.instances[0].id // "") end' <<< "${new_semantics}") || return 1
+  new_semantics=$(jq -cS --arg id "${default_id}" '.default_instance_id=$id' <<< "${new_semantics}") || return 1
+  if [[ "${existing_semantics}" == "$(jq -cS . <<< "${new_semantics}")" ]]; then
+    candidate_revision=${old_revision}
+  else
+    [[ "${old_revision}" -lt 9007199254740991 ]] || {
+      printf '[ERROR] shadowtls_store_candidate: revision exhausted.\n' >&2
+      return 1
+    }
+    candidate_revision=$((old_revision + 1))
+  fi
+  candidate_json=$(jq -n -cS --argjson revision "${candidate_revision}" --argjson semantics "${new_semantics}" '{schema_version:1,protocol:"shadowtls",revision:$revision,default_instance_id:$semantics.default_instance_id,instances:($semantics.instances|sort_by(.tag))}') || return 1
+  printf '%s\n' "${candidate_json}" > "${temp_dir}/candidate.json"
+  validate_structured_instance_store shadowtls "${temp_dir}/candidate.json" || return 1
+  rm -rf -- "${temp_dir}" || return 1
+  trap - EXIT INT TERM HUP
+  printf '%s\n' "${candidate_json}"
+)
+
 plain_proxy_structured_state_matches_config() (
   local protocol config_file store_file current expected temp_dir
   protocol=$(structured_instance_store_protocol "${1:-}") || return 1
@@ -24002,7 +24714,7 @@ plain_proxy_validate_state_inventory() (
     validate_protocol_state_schema "${protocol}" "${state_file}" || return 1
     return 0
   fi
-  if [[ ("${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive") && "${state_schema}" != "2" ]]; then
+  if [[ ("${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" || "${protocol}" == "shadowtls") && "${state_schema}" != "2" ]]; then
     return 1
   fi
   if [[ -f "${state_file}" ]] &&
@@ -24352,6 +25064,18 @@ render_structured_instance_inbounds() {
   local protocol snapshot transport_json tls_mode transport_list transport_record flow flow_list
   protocol=$(structured_instance_store_protocol "${1:-}") || { structured_instance_store_error render_inbounds unsupported_protocol; return 1; }
   snapshot=$(structured_instance_store_snapshot_json "${protocol}" "${2:-}") || return $?
+  if [[ "${protocol}" == shadowtls ]]; then
+    jq -c '.instances[] | [
+      ({type:"shadowtls",tag:.tag,listen:.listen.address,listen_port:.listen.port,detour:.detour.tag,version:.version,handshake:.handshake} +
+       (if .version == 2 then {password:.authentication.password}
+        elif .version == 3 then {users:.authentication.users}
+        else {} end) +
+       (if (.handshake_for_server_name | length) > 0 then {handshake_for_server_name:.handshake_for_server_name} else {} end) +
+       (if .version == 3 then {strict_mode:.strict_mode,wildcard_sni:.wildcard_sni} else {} end)),
+      {type:"mixed",tag:.detour.tag,listen:.detour.listen.address,listen_port:.detour.listen.port}
+    ] | .[]' <<< "${snapshot}" 2>/dev/null || { structured_instance_store_error render_inbounds render_failed; return 1; }
+    return 0
+  fi
   if [[ "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == vless-plain ]]; then
     transport_list=$(jq -c --arg protocol "${protocol}" '.instances[] | [.transport, .tls.enabled, (if $protocol == "vless-plain" then (.authentication.users | map(.flow // "")) else [""] end)]' <<< "${snapshot}") || return 1
     while IFS= read -r transport_record; do
@@ -24446,6 +25170,10 @@ render_structured_instance_route_rules() {
   local protocol snapshot
   protocol=$(structured_instance_store_protocol "${1:-}") || { structured_instance_store_error render_routes unsupported_protocol; return 1; }
   snapshot=$(structured_instance_store_snapshot_json "${protocol}" "${2:-}") || return $?
+  if [[ "${protocol}" == shadowtls ]]; then
+    jq -c '[.instances[] | {inbound:.detour.tag,action:"sniff"}, (if .outbound_policy == "default" then empty elif .outbound_policy == "direct" then {inbound:.detour.tag,action:"route",outbound:"direct"} else {inbound:.detour.tag,action:"route",outbound:"warp-ep"} end)]' <<< "${snapshot}" 2>/dev/null || { structured_instance_store_error render_routes render_failed; return 1; }
+    return 0
+  fi
   jq -c '[.instances[] | {inbound:.tag,action:"sniff"}, (if .outbound_policy == "default" then empty elif .outbound_policy == "direct" then {inbound:.tag,action:"route",outbound:"direct"} else {inbound:.tag,action:"route",outbound:"warp-ep"} end)]' <<< "${snapshot}" 2>/dev/null || { structured_instance_store_error render_routes render_failed; return 1; }
 }
 
@@ -24548,10 +25276,60 @@ save_mixed_structured_marker() {
   save_plain_proxy_structured_marker mixed
 }
 
+load_shadowtls_structured_instance() {
+  local state_file store_file instance_id default_id snapshot instance_json
+  state_file=$(protocol_state_file shadowtls) || return 1
+  store_file=$(plain_proxy_structured_store_file shadowtls) || return 1
+  plain_proxy_structured_marker_is_valid "${state_file}" || return 1
+  [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  snapshot=$(structured_instance_store_snapshot_json shadowtls "${store_file}") || return 1
+  default_id=$(jq -r '.default_instance_id' <<< "${snapshot}") || return 1
+  instance_id=${1:-${default_id}}
+  structured_instance_store_validate_id "${instance_id}" || return 1
+  instance_json=$(jq -c --arg id "${instance_id}" '.instances[] | select(.id == $id)' <<< "${snapshot}") || return 1
+  [[ -n "${instance_json}" ]] || return 1
+  reset_protocol_instance_runtime_fields
+  INSTALLED=1
+  CONFIG_SCHEMA_VERSION=2
+  SB_PROTOCOL=shadowtls
+  SB_INSTANCE_ID=${instance_id}
+  SB_MIXED_INSTANCE_ID=${instance_id}
+  SB_NODE_NAME=$(jq -r '.name' <<< "${instance_json}") || return 1
+  SB_MIXED_INBOUND_TAG=$(jq -r '.tag' <<< "${instance_json}") || return 1
+  SB_MIXED_LISTEN_ADDRESS=$(jq -r '.listen.address' <<< "${instance_json}") || return 1
+  SB_PORT=$(jq -r '.listen.port' <<< "${instance_json}") || return 1
+  SB_OUTBOUND_POLICY=$(jq -r '.outbound_policy' <<< "${instance_json}") || return 1
+  SB_SHADOWTLS_VERSION=$(jq -r '.version' <<< "${instance_json}") || return 1
+  SB_SHADOWTLS_PASSWORD=$(jq -r '.authentication.password' <<< "${instance_json}") || return 1
+  SB_SHADOWTLS_AUTH_JSON=$(jq -c '.authentication.users' <<< "${instance_json}") || return 1
+  SB_SHADOWTLS_HANDSHAKE_JSON=$(jq -c '.handshake' <<< "${instance_json}") || return 1
+  SB_SHADOWTLS_HANDSHAKE_FOR_SERVER_NAME_JSON=$(jq -c '.handshake_for_server_name' <<< "${instance_json}") || return 1
+  SB_SHADOWTLS_STRICT_MODE=$(jq -r 'if .strict_mode then "y" else "n" end' <<< "${instance_json}") || return 1
+  SB_SHADOWTLS_WILDCARD_SNI=$(jq -r '.wildcard_sni' <<< "${instance_json}") || return 1
+  SB_SHADOWTLS_DETOUR_TAG=$(jq -r '.detour.tag' <<< "${instance_json}") || return 1
+  SB_SHADOWTLS_DETOUR_PORT=$(jq -r '.detour.listen.port' <<< "${instance_json}") || return 1
+  SB_SHADOWTLS_CLIENT_TRUST=$(jq -r '.client_trust' <<< "${instance_json}") || return 1
+  SB_SHADOWTLS_CLIENT_TLS_JSON=$(jq -c '.client_tls + {enabled:true}' <<< "${instance_json}") || return 1
+  SB_MIXED_AUTH_ENABLED=n
+  SB_MIXED_USERNAME=""
+  SB_MIXED_PASSWORD=""
+  SB_MIXED_STORE_REVISION=$(jq -r '.revision | tostring' <<< "${snapshot}") || return 1
+  NODE_NAME=${SB_NODE_NAME}
+  PORT=${SB_PORT}
+  AUTH_ENABLED=n
+  USERNAME=""
+  PASSWORD=""
+  export INSTALLED CONFIG_SCHEMA_VERSION NODE_NAME PORT AUTH_ENABLED USERNAME PASSWORD
+}
+
 load_plain_proxy_structured_instance() {
   local protocol state_file store_file instance_id default_id stream_file field snapshot
   local fields=()
   protocol=$(structured_instance_store_protocol "${1:-}") || return 1
+  if [[ "${protocol}" == shadowtls ]]; then
+    load_shadowtls_structured_instance "${2:-}"
+    return $?
+  fi
   state_file=$(protocol_state_file "${protocol}") || return 1
   store_file=$(plain_proxy_structured_store_file "${protocol}") || return 1
   plain_proxy_structured_marker_is_valid "${state_file}" || return 1
@@ -24775,7 +25553,7 @@ protocol_instance_state_schema() {
   schema=${schema//\"/}
   schema=${schema//\'/}
   [[ "${schema}" =~ ^[0-9]+$ ]] || return 1
-  [[ "${protocol}" != "vless-plain" && "${protocol}" != "socks" && "${protocol}" != "http" && "${protocol}" != "shadowsocks" && "${protocol}" != "trojan" && "${protocol}" != "vmess" && "${protocol}" != "snell" && "${protocol}" != "tuic" && "${protocol}" != "hysteria" && "${protocol}" != "naive" || "${schema}" == "2" ]] || return 1
+  [[ "${protocol}" != "vless-plain" && "${protocol}" != "socks" && "${protocol}" != "http" && "${protocol}" != "shadowsocks" && "${protocol}" != "trojan" && "${protocol}" != "vmess" && "${protocol}" != "snell" && "${protocol}" != "tuic" && "${protocol}" != "hysteria" && "${protocol}" != "naive" && "${protocol}" != "shadowtls" || "${schema}" == "2" ]] || return 1
   printf '%s' "${schema}"
 }
 
@@ -24804,6 +25582,7 @@ reset_protocol_state_source_variables() {
   unset TUIC_USERS TUIC_USER_JSON TUIC_TLS TUIC_CLIENT_TRUST TUIC_CONGESTION_CONTROL TUIC_AUTH_TIMEOUT TUIC_HEARTBEAT TUIC_ZERO_RTT_HANDSHAKE TUIC_UDP_RELAY_MODE TUIC_UDP_OVER_STREAM
   unset HYSTERIA_USERS HYSTERIA_AUTH_JSON HYSTERIA_TLS HYSTERIA_CLIENT_TRUST HYSTERIA_UP_MBPS HYSTERIA_DOWN_MBPS HYSTERIA_OBFS_ENABLED HYSTERIA_OBFS_PASSWORD HYSTERIA_QUIC
   unset NAIVE_AUTH_JSON NAIVE_TLS NAIVE_CLIENT_TRUST NAIVE_NETWORK NAIVE_QUIC_CONGESTION_CONTROL NAIVE_QUIC NAIVE_INSECURE_CONCURRENCY NAIVE_STREAM_RECEIVE_WINDOW NAIVE_QUIC_SESSION_RECEIVE_WINDOW NAIVE_EXTRA_HEADERS
+  unset SHADOWTLS_VERSION SHADOWTLS_PASSWORD SHADOWTLS_AUTH_JSON SHADOWTLS_HANDSHAKE_JSON SHADOWTLS_HANDSHAKE_FOR_SERVER_NAME_JSON SHADOWTLS_STRICT_MODE SHADOWTLS_WILDCARD_SNI SHADOWTLS_DETOUR_TAG SHADOWTLS_DETOUR_PORT SHADOWTLS_CLIENT_TRUST SHADOWTLS_CLIENT_TLS_JSON
 }
 
 reset_protocol_instance_runtime_fields() {
@@ -24878,6 +25657,17 @@ reset_protocol_instance_runtime_fields() {
   SB_NAIVE_STREAM_RECEIVE_WINDOW=""
   SB_NAIVE_QUIC_SESSION_RECEIVE_WINDOW=""
   SB_NAIVE_EXTRA_HEADERS_JSON='{}'
+  SB_SHADOWTLS_VERSION="3"
+  SB_SHADOWTLS_PASSWORD=""
+  SB_SHADOWTLS_AUTH_JSON='[]'
+  SB_SHADOWTLS_HANDSHAKE_JSON='{"server":"","server_port":443}'
+  SB_SHADOWTLS_HANDSHAKE_FOR_SERVER_NAME_JSON='{}'
+  SB_SHADOWTLS_STRICT_MODE="n"
+  SB_SHADOWTLS_WILDCARD_SNI="off"
+  SB_SHADOWTLS_DETOUR_TAG=""
+  SB_SHADOWTLS_DETOUR_PORT=""
+  SB_SHADOWTLS_CLIENT_TRUST="system"
+  SB_SHADOWTLS_CLIENT_TLS_JSON='{"enabled":true,"server_name":"","certificate_path":""}'
   SB_ANYTLS_AUTH_JSON='[]'
   SB_ANYTLS_TLS_JSON='{"enabled":false}'
   SB_ANYTLS_CLIENT_TRUST="system"
@@ -24954,7 +25744,7 @@ list_protocol_instance_ids() {
       mixed_structured_state_active || return 1
       jq -r '.instances[].id' "$(mixed_structured_store_file)"
       ;;
-    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2|tuic:2|hysteria:2|naive:2)
+    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2|tuic:2|hysteria:2|naive:2|shadowtls:2)
       plain_proxy_structured_state_active "${protocol}" || return 1
       jq -r '.instances[].id' "$(plain_proxy_structured_store_file "${protocol}")"
       ;;
@@ -25012,7 +25802,7 @@ protocol_default_instance_id() {
       mixed_structured_state_active || return 1
       default_id=$(jq -r '.default_instance_id' "$(mixed_structured_store_file)") || return 1
       ;;
-    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2|tuic:2|hysteria:2|naive:2)
+    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2|tuic:2|hysteria:2|naive:2|shadowtls:2)
       plain_proxy_structured_state_active "${protocol}" || return 1
       default_id=$(jq -r '.default_instance_id' "$(plain_proxy_structured_store_file "${protocol}")") || return 1
       ;;
@@ -25035,7 +25825,7 @@ load_protocol_instance_state() {
   local schema instance_ids listed_instance_id legacy_inbound_tag
 
   protocol=$(normalize_protocol_id "${protocol}") || return 1
-  if [[ "${protocol}" == "mixed" || "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" ]]; then
+  if [[ "${protocol}" == "mixed" || "${protocol}" == "vless-plain" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" || "${protocol}" == "shadowtls" ]]; then
     structured_instance_store_validate_id "${instance_id}" || return 1
   else
     validate_vless_reality_instance_id "${instance_id}" || return 1
@@ -25082,7 +25872,7 @@ load_protocol_instance_state() {
     mixed:2)
       load_mixed_structured_instance "${instance_id}" || return 1
       ;;
-    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2|tuic:2|hysteria:2|naive:2)
+    vless-plain:2|socks:2|http:2|shadowsocks:2|trojan:2|vmess:2|anytls:2|hy2:2|snell:2|tuic:2|hysteria:2|naive:2|shadowtls:2)
       load_plain_proxy_structured_instance "${protocol}" "${instance_id}" || return 1
       ;;
     *)
@@ -25618,6 +26408,10 @@ protocol_state_matches_config() {
     plain_proxy_structured_state_matches_config naive
     return $?
   fi
+  if [[ "${protocol}" == "shadowtls" ]]; then
+    plain_proxy_structured_state_matches_config shadowtls
+    return $?
+  fi
 
   expected_snapshot=$(render_expected_protocol_state_snapshot "${protocol}") || return 1
   saved_snapshot=$(render_saved_protocol_state_snapshot "${protocol}") || return 1
@@ -25933,6 +26727,7 @@ rebuild_protocol_state_from_config() {
   local tuic_inbound_count=0 tuic_candidate_file="" tuic_candidate_revision=0 tuic_state_file tuic_state_schema
   local hysteria_inbound_count=0 hysteria_candidate_file="" hysteria_candidate_revision=0 hysteria_state_file hysteria_state_schema
   local naive_inbound_count=0 naive_candidate_file="" naive_candidate_revision=0 naive_state_file naive_state_schema
+  local shadowtls_inbound_count=0 shadowtls_candidate_file="" shadowtls_candidate_revision=0 shadowtls_state_file shadowtls_state_schema
   local backup_state_dir
 
   backup_dir=$(mktemp -d) || return 1
@@ -25965,7 +26760,7 @@ rebuild_protocol_state_from_config() {
   # Capture every Mixed inbound while the old root state and typed metadata
   # still exist.  The subsequent clear operation removes root .env files, so
   # doing this in the loop would lose IDs, names, credentials, and policies.
-  mixed_inbound_count=$(jq -r '[.inbounds[]? | select(.type == "mixed")] | length' "${SINGBOX_CONFIG_FILE}") || {
+  mixed_inbound_count=$(config_protocol_inbound_count mixed "${SINGBOX_CONFIG_FILE}") || {
     abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
     return 1
   }
@@ -26536,6 +27331,47 @@ rebuild_protocol_state_from_config() {
     fi
   fi
 
+  # ShadowTLS is a composite structured-only protocol: each managed instance
+  # owns one outer ShadowTLS listener and one hidden loopback Mixed detour.
+  # Capture its typed candidate before clearing the protocol cache so the
+  # composite identity, dependency and CAS revision survive takeover.
+  shadowtls_inbound_count=$(config_protocol_inbound_count shadowtls "${SINGBOX_CONFIG_FILE}") || {
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+  }
+  [[ "${shadowtls_inbound_count}" =~ ^[0-9]+$ ]] || {
+    abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+  }
+  if (( shadowtls_inbound_count > 0 )); then
+    shadowtls_state_file=$(protocol_state_file shadowtls) || {
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+    }
+    shadowtls_state_schema=""
+    if [[ -f "${shadowtls_state_file}" ]]; then
+      validate_protocol_state_schema shadowtls "${shadowtls_state_file}" || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+      }
+      shadowtls_state_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA_VERSION=//p' "${shadowtls_state_file}" | head -n1) || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+      }
+      shadowtls_state_schema=${shadowtls_state_schema//\"/}; shadowtls_state_schema=${shadowtls_state_schema//\'/}
+    fi
+    [[ -z "${shadowtls_state_schema}" || "${shadowtls_state_schema}" == 2 ]] || {
+      printf '[ERROR] shadowtls_store_candidate: ShadowTLS legacy state is unsupported; 已保留原状态。\n' >&2
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+    }
+    shadowtls_candidate_file="${backup_dir}/shadowtls.candidate.json"
+    plain_proxy_config_store_candidate shadowtls > "${shadowtls_candidate_file}" || {
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+    }
+    if [[ -f "$(plain_proxy_structured_store_file shadowtls 2>/dev/null || true)" ]]; then
+      shadowtls_candidate_revision=$(jq -r '.revision' "$(plain_proxy_structured_store_file shadowtls)") || {
+        abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1;
+      }
+    else
+      shadowtls_candidate_revision=0
+    fi
+  fi
+
   clear_protocol_state_cache
   ensure_protocol_state_dir
   if ! rm -rf "${SB_PROTOCOL_STATE_DIR}/vless-reality.d"; then
@@ -26853,6 +27689,12 @@ rebuild_protocol_state_from_config() {
         fi
         continue
         ;;
+      shadowtls)
+        if ! protocol_array_contains "shadowtls" ${rebuilt_protocols[@]+"${rebuilt_protocols[@]}"}; then
+          rebuilt_protocols+=("shadowtls")
+        fi
+        continue
+        ;;
       *)
         abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
         return 1
@@ -26988,6 +27830,15 @@ rebuild_protocol_state_from_config() {
       abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
     fi
     if ! save_plain_proxy_structured_marker naive; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
+    fi
+  fi
+
+  if (( shadowtls_inbound_count > 0 )); then
+    if ! publish_structured_instance_store shadowtls "${shadowtls_candidate_file}" "${shadowtls_candidate_revision}"; then
+      abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
+    fi
+    if ! save_plain_proxy_structured_marker shadowtls; then
       abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"; return 1
     fi
   fi
@@ -27439,14 +28290,15 @@ main() {
     render_menu_item "27" "管理 TUIC 实例"
     render_menu_item "28" "管理 Hysteria 实例"
     render_menu_item "29" "管理 NaiveProxy 实例"
+    render_menu_item "30" "管理 ShadowTLS 实例"
     echo "0. 退出"
     render_main_menu_footer
-    choice=$(prompt_choice "请选择 [0-29]: " 0 29 "")
+    choice=$(prompt_choice "请选择 [0-30]: " 0 30 "")
 
     if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
       case "${choice}" in
-        0|9|10|12|17|18|19|20|21|22|23|24|25|26|27|28|29) ;;
-        *) log_warn "请先通过菜单 17–29 恢复对应协议未完成的实例事务；本次未执行其他写操作。"; continue ;;
+        0|9|10|12|17|18|19|20|21|22|23|24|25|26|27|28|29|30) ;;
+        *) log_warn "请先通过菜单 17–30 恢复对应协议未完成的实例事务；本次未执行其他写操作。"; continue ;;
       esac
     fi
 
@@ -27487,6 +28339,7 @@ main() {
       27) tuic_instance_management_menu ;;
       28) hysteria_instance_management_menu ;;
       29) naive_instance_management_menu ;;
+      30) shadowtls_instance_management_menu ;;
       0) exit_script ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac

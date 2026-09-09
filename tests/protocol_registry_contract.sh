@@ -14,10 +14,10 @@ source "${TEST_DIR}/install.sh"
 
 registry=$(protocol_registry_json)
 jq -e '
-  length == 14 and
-  ([.[].state_id] | unique | length == 14) and
-  ([.[].agent_id] | unique | length == 14) and
-  ([.[].menu_order] | sort == [1,2,3,4,5,6,7,8,9,10,11,12,13,14]) and
+  length == 15 and
+  ([.[].state_id] | unique | length == 15) and
+  ([.[].agent_id] | unique | length == 15) and
+  ([.[].menu_order] | sort == [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]) and
   all(.[]; .implemented == true and .available == null and .validated.status == "not_assessed") and
   any(.[]; .state_id == "shadowsocks" and
     .features.listen_network_selection == true and
@@ -75,6 +75,15 @@ jq -e '
     .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
     .features.subman_sync == false and
     .features.outbound_runtime == "with_naive_outbound+libcronet")
+  and any(.[]; .state_id == "shadowtls" and
+    .runtime_id == "shadowtls" and .agent_id == "shadowtls" and
+    .features.multi_instance == true and .features.multi_user == true and
+    .features.authentication == true and .features.versions == [1,2,3] and
+    .features.handshake == true and .features.detour == true and
+    .features.wildcard_sni == ["off", "authed", "all"] and
+    .features.standard_share_uri == false and .features.qr == false and
+    .features.client_export == true and .features.subman_sync == false and
+    .features.composite == true)
 ' >/dev/null <<< "${registry}"
 capabilities=$(agent_capabilities_json)
 jq -e '
@@ -100,6 +109,8 @@ jq -e '
   ($plain.operations_by_protocol.hysteria == ["create", "replace", "delete", "default", "recover"]) and
   ($plain.protocols | index("naive") != null) and
   ($plain.operations_by_protocol.naive == ["create", "replace", "delete", "default", "recover"]) and
+  ($plain.protocols | index("shadowtls") != null) and
+  ($plain.operations_by_protocol.shadowtls == ["create", "replace", "delete", "default", "recover"]) and
   .features.mixed_instances.operations == $plain.operations_by_protocol.mixed
 ' >/dev/null <<< "${capabilities}"
 jq -e --argjson registry "${registry}" '
@@ -135,6 +146,12 @@ jq -e --argjson registry "${registry}" '
     .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
     .capabilities.subman_sync == false and
     .features.outbound_runtime == "with_naive_outbound+libcronet") and
+  any(.protocol_registry[]; .state_id == "shadowtls" and
+    .features.multi_instance == true and .features.multi_user == true and
+    .features.handshake == true and .features.detour == true and
+    .features.standard_share_uri == false and .features.qr == false and
+    .features.client_export == true and .capabilities.subman_sync == false and
+    .features.composite == true) and
   (.features.subman.supported_protocols | index("trojan") != null) and
   .features.subman.supported_protocols == ($registry | map(select(.subman_type != "") | .agent_id))
 ' >/dev/null <<< "${capabilities}"
@@ -160,7 +177,7 @@ mkdir -p "${SB_PROTOCOL_STATE_DIR}"
 for protocol in $(list_registered_protocols); do
   protocol_registry_require_handlers "${protocol}"
   [[ "$(protocol_option_to_id "$(protocol_registry_field "${protocol}" menu_order)")" == "${protocol}" ]]
-  if [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" ]]; then
+  if [[ "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" || "${protocol}" == "shadowtls" ]]; then
     printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2\n' > "$(protocol_state_file "${protocol}")"
     mkdir -p "${SB_PROTOCOL_STATE_DIR}/instances"
     if [[ "${protocol}" == "socks" ]]; then
@@ -385,6 +402,34 @@ HYSTERIA_STORE_EOF
   ]
 }
 NAIVE_STORE_EOF
+    elif [[ "${protocol}" == "shadowtls" ]]; then
+      cat > "${SB_PROTOCOL_STATE_DIR}/instances/shadowtls.json" <<'SHADOWTLS_STORE_EOF'
+{
+  "schema_version": 1,
+  "protocol": "shadowtls",
+  "revision": 1,
+  "default_instance_id": "main",
+  "instances": [
+    {
+      "id": "main",
+      "name": "ShadowTLS contract",
+      "tag": "shadowtls-in",
+      "listen": {"address": "127.0.0.1", "port": 1092},
+      "version": 3,
+      "authentication": {"password": "", "users": [{"name": "shadowtls-user", "password": "SHADOWTLS-CONTRACT-PASSWORD"}]},
+      "handshake": {"server": "shadowtls.example.com", "server_port": 443},
+      "handshake_for_server_name": {},
+      "strict_mode": false,
+      "wildcard_sni": "off",
+      "detour": {"tag": "shadowtls-inner-main", "listen": {"address": "127.0.0.1", "port": 1093}},
+      "dependencies": ["shadowtls-inner-main"],
+      "client_trust": "system",
+      "client_tls": {"server_name": "shadowtls.example.com", "certificate_path": ""},
+      "outbound_policy": "default"
+    }
+  ]
+}
+SHADOWTLS_STORE_EOF
     else
       cat > "${SB_PROTOCOL_STATE_DIR}/instances/vmess.json" <<'VMESS_STORE_EOF'
 {
@@ -413,8 +458,8 @@ VMESS_STORE_EOF
     printf 'CONFIG_SCHEMA_VERSION=1\n' > "$(protocol_state_file "${protocol}")"
   fi
 done
-printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,snell,tuic,hysteria,naive,socks,http,shadowsocks,trojan,vmess,vless-plain\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
-[[ "$(list_exportable_client_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nsnell\ntuic\nhysteria\nnaive\nsocks\nhttp\nshadowsocks\ntrojan\nvmess\nvless-plain' ]]
+printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,snell,tuic,hysteria,naive,shadowtls,socks,http,shadowsocks,trojan,vmess,vless-plain\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
+[[ "$(list_exportable_client_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nsnell\ntuic\nhysteria\nnaive\nshadowtls\nsocks\nhttp\nshadowsocks\ntrojan\nvmess\nvless-plain' ]]
 [[ "$(protocol_registry_field mixed client_export)" == true ]]
 [[ "$(protocol_registry_field mixed multi_instance)" == true ]]
 [[ -z "$(protocol_registry_field mixed subman_type)" ]]
@@ -481,6 +526,17 @@ printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,snell,tuic,hysteria,n
 [[ "$(protocol_registry_field naive handlers)" == *build_client_naive_outbounds* ]]
 [[ "$(protocol_registry_field naive handlers)" == *load_plain_proxy_structured_instance* ]]
 [[ "$(protocol_registry_field naive handlers)" == *apply_plain_proxy_instance_change* ]]
+[[ "$(protocol_registry_field shadowtls menu_order)" == 15 ]]
+[[ "$(protocol_registry_field shadowtls default_tag)" == shadowtls-in ]]
+[[ "$(protocol_registry_field shadowtls state_id)" == shadowtls ]]
+[[ "$(protocol_registry_field shadowtls agent_id)" == shadowtls ]]
+[[ "$(protocol_registry_field shadowtls listen_networks)" == tcp ]]
+[[ "$(protocol_registry_field shadowtls client_export)" == true ]]
+[[ -z "$(protocol_registry_field shadowtls subman_type)" ]]
+[[ "$(protocol_registry_field shadowtls handlers)" == *build_shadowtls_inbound_json* ]]
+[[ "$(protocol_registry_field shadowtls handlers)" == *build_client_shadowtls_outbounds* ]]
+[[ "$(protocol_registry_field shadowtls handlers)" == *load_plain_proxy_structured_instance* ]]
+[[ "$(protocol_registry_field shadowtls handlers)" == *apply_plain_proxy_instance_change* ]]
 [[ "$(protocol_registry_field shadowsocks menu_order)" == 7 ]]
 [[ "$(protocol_registry_field shadowsocks default_tag)" == ss-in ]]
 [[ "$(protocol_registry_field shadowsocks state_id)" == shadowsocks ]]
@@ -652,6 +708,29 @@ jq -e '
   .[0].obfs == "HYSTERIA-OBFS" and .[0].tls.server_name == "hysteria.example.com" and
   (.[0].tls | has("certificate") | not)
 ' >/dev/null <<< "${hysteria_export}"
+
+shadowtls_store_file=$(plain_proxy_structured_store_file shadowtls)
+shadowtls_inbounds=$(render_structured_instance_inbounds shadowtls "${shadowtls_store_file}" | jq -s .)
+jq -e '
+  length == 2 and
+  .[0].type == "shadowtls" and .[0].tag == "shadowtls-in" and
+  .[0].listen == "127.0.0.1" and .[0].listen_port == 1092 and
+  .[0].detour == "shadowtls-inner-main" and .[0].version == 3 and
+  .[0].handshake.server == "shadowtls.example.com" and
+  .[0].users[0].password == "SHADOWTLS-CONTRACT-PASSWORD" and
+  .[0].strict_mode == false and .[0].wildcard_sni == "off" and
+  .[1].type == "mixed" and .[1].tag == "shadowtls-inner-main" and
+  .[1].listen == "127.0.0.1" and .[1].listen_port == 1093
+' >/dev/null <<< "${shadowtls_inbounds}"
+shadowtls_export=$(build_client_shadowtls_outbounds 127.0.0.1 | jq -s .)
+jq -e '
+  length == 1 and .[0].type == "shadowtls" and
+  (.[0].tag | startswith("shadowtls-main-")) and
+  .[0].server == "127.0.0.1" and .[0].server_port == 1092 and
+  .[0].version == 3 and .[0].password == "SHADOWTLS-CONTRACT-PASSWORD" and
+  .[0].tls.enabled == true and .[0].tls.server_name == "shadowtls.example.com" and
+  (.[0].tls | has("certificate") | not)
+' >/dev/null <<< "${shadowtls_export}"
 
 # Unknown protocol and future schema must not disappear during reconciliation.
 for invalid in $'INSTALLED_PROTOCOLS=mixed,future-protocol\nPROTOCOL_STATE_VERSION=1' \

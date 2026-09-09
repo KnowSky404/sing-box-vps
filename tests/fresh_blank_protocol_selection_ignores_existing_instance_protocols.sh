@@ -38,7 +38,7 @@ prompt_protocol_install_selection "fresh" >"${OUTPUT_FILE}" 2>&1 <<'EOF'
 
 EOF
 
-if [[ "${SELECTED_PROTOCOLS_CSV}" != "vless-reality,vless-plain,mixed,hy2,anytls,socks,http,shadowsocks,trojan,vmess,snell,tuic,hysteria,naive" ]]; then
+if [[ "${SELECTED_PROTOCOLS_CSV}" != "vless-reality,vless-plain,mixed,hy2,anytls,socks,http,shadowsocks,trojan,vmess,snell,tuic,hysteria,naive,shadowtls" ]]; then
   printf 'expected fresh blank selection to ignore existing instance protocols, got %s\n' "${SELECTED_PROTOCOLS_CSV}" >&2
   exit 1
 fi

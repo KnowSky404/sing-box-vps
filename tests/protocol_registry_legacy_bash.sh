@@ -10,7 +10,7 @@ source "${REPO_ROOT}/install.sh"
 for mapping in \
   'vless:vless-reality' 'vless+reality:vless-reality' 'vless-reality:vless-reality' \
   'vless-plain:vless-plain' \
-  'mixed:mixed' 'hy2:hy2' 'hysteria2:hy2' 'anytls:anytls' 'trojan:trojan' 'vmess:vmess'; do
+  'mixed:mixed' 'hy2:hy2' 'hysteria2:hy2' 'anytls:anytls' 'trojan:trojan' 'vmess:vmess' 'snell:snell' 'tuic:tuic' 'hysteria:hysteria' 'naive:naive' 'shadowtls:shadowtls'; do
   input=${mapping%%:*}
   expected=${mapping#*:}
   actual=$(normalize_protocol_id "${input}")
@@ -25,7 +25,7 @@ for invalid in '' unknown '../mixed' '$(false)' 'mixed;false'; do
   fi
 done
 
-for runtime in vless+reality mixed hy2 anytls trojan vmess; do
+for runtime in vless+reality mixed hy2 anytls trojan vmess snell tuic hysteria naive shadowtls; do
   validate_protocol "${runtime}"
 done
 if validate_protocol vless; then
