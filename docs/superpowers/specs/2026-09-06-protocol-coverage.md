@@ -29,6 +29,8 @@
 
 2026-09-10 SOCKS outbound 增量：managed `socks` outbound component 按固定 [1.14.0 SOCKS outbound](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/socks.md) 与 shared Dial Fields 建立 typed allowlist；`server`/`server_port`、版本 `4|4a|5`、用户名/密码、TCP/UDP network、UDP-over-TCP 及拨号字段均按目标类型校验，拒绝 deprecated `domain_strategy`、未知字段、错误版本/网络/端口和控制字符。组件仍使用统一 state/CAS、接管、重建、导出和配置图/监听/核心校验事务，凭据只在敏感 component export 返回。1.13.18/1.14.0 官方 ARM64 核心对最小组合配置 `check` 均通过；未把核心检查扩大为远端 SOCKS 握手或真实出站数据面证据。
 
+2026-09-10 HTTP outbound 增量：managed `http` outbound component 按固定 [1.14.0 HTTP outbound](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/http.md)、Outbound TLS 与 shared Dial Fields 建立递归 typed allowlist；server/port、用户名/密码、path、HTTP headers、TCP-only 语义和 TLS 的 ECH/uTLS/REALITY 嵌套字段均受控，未知/弃用字段、错误 scalar/list、非法 header 名和控制字符在 state/CAS 与接管前拒绝。统一 component state/CAS、接管、重建、敏感导出、图/监听/核心校验事务复用不变。1.13.18/1.14.0 官方 ARM64 核心对明文与启用 TLS 的最小 HTTP outbound 配置 `check` 均通过；未把核心检查扩大为远端 HTTP CONNECT 握手或真实出站数据面证据。
+
 2026-09-10 TUN 路由安全增量：启用的 managed TUN 若设置 `auto_route=true`，候选配置会在顶层 `route` 自动补 `auto_detect_interface=true`；已有配置明确关闭该保护且未设置 `default_interface` 时 fail-closed，明确选择默认接口则保留原设置。该门禁只防止配置层自捕获环路，不宣称已接管主机策略路由、nftables、DNS 劫持或透明数据面，完整协议目标继续未完成。
 
 ## 版本与证据
@@ -118,7 +120,7 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 | bridge | `bridge` / outbound | 自 1.14.0；需要 Linux/macOS/Windows、rooted Android 或 jailbroken iOS 的权限/接口 | 只接收来自 TUN/Endpoint pre-match 的 L3 流量（TCP/UDP/ICMP），拒绝 L4 代理连接与本机目的地址；Linux 有 iproute2 table/rule | conditional | yes（Linux；接口/root 仍需） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | registry-check；1.13.18 明确拒绝未知 type |
 | block | `block` / outbound | 基础内建 | 丢弃连接/数据；无网络协议 | yes | yes（Linux） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | registry-check |
 | socks | `socks` / outbound | 基础内建 | SOCKS4/4a/5；TCP，UDP 依 server 支持，可 UDP-over-TCP | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 component JSON（不进入普通分享节点） / 不生成服务端分享 URI / no current SubMan | 两核心 1.13.18/1.14.0 typed config check；未验证上游 SOCKS 握手/数据面 |
-| http | `http` / outbound | 基础内建 | HTTP CONNECT，TCP；可单独配置 outbound TLS、headers、path | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check |
+| http | `http` / outbound | 基础内建 | HTTP CONNECT，TCP；可配置认证、path、headers 与 outbound TLS | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 component JSON（不进入普通分享节点） / 不生成服务端分享 URI / no current SubMan | 两核心 1.13.18/1.14.0 明文+TLS typed config check；未验证上游 HTTP CONNECT 握手/数据面 |
 | shadowsocks | `shadowsocks` / outbound | 基础内建 | TCP/UDP；方法覆盖 SS2022 与传统方法，密码/密钥长度须按 method 校验；可 multiplex/UoT | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check（无 method 按预期失败） |
 | vmess | `vmess` / outbound | 基础内建 | TCP/UDP；TLS、transport、packet encoding 和 legacy alterId 组合有限 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check |
 | trojan | `trojan` / outbound | 基础内建 | TCP/UDP（按 outbound network）+ TLS；transport/multiplex 需对端支持 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check |

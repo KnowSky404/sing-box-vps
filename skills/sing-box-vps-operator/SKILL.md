@@ -122,7 +122,10 @@ redacted `member_count`. SOCKS outbound components enforce the sing-box 1.14
 server/version/auth, TCP/UDP network, UDP-over-TCP and shared Dial Field
 allowlist; invalid versions, networks, ports, deprecated fields and control
 characters fail before CAS/takeover, and credentials remain export-only.
-Non-loopback listeners, TUN,
+HTTP outbound components enforce the sing-box 1.14 TCP-only server/auth/path,
+headers, recursive outbound TLS and shared Dial Field allowlist; invalid nested
+fields and header/scalar values fail before CAS/takeover, and credentials remain
+export-only. Non-loopback listeners, TUN,
 tunnels and OpenVPN server require `--allow-public`. External account
 authentication, system routes/firewall, runtime libraries and data-plane
 reachability remain separate operator-reviewed gates. The registry keeps

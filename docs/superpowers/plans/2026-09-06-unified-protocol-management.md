@@ -523,3 +523,9 @@ managed `selector`/`urltest` outbound group 不再只检查 `outbounds` 是非�
 managed SOCKS outbound 现在通过 `managed_component_socks_config_validate_json` 处理，而不是把注册的 protocol outbound 当作任意 JSON。契约按 sing-box 1.14.0 `SOCKSOutboundOptions` 和 shared Dial Fields 限定 `server`、`server_port`、`version`、认证字段、listable TCP/UDP `network`、UDP-over-TCP 以及拨号参数；deprecated `domain_strategy`、未知字段、错误版本/网络/端口和控制字符在 state/CAS 与 live takeover 前拒绝。统一 component state、配置渲染、图/监听/核心校验、重建、接管与敏感导出路径保持不变，凭据不会进入 list/diagnose inventory。
 
 `tests/managed_components_contract.sh` 增加 SOCKS outbound 正向渲染、默认版本、错误版本/网络/UDP-over-TCP/端口、deprecated 字段和控制字符拒绝断言。固定官方 ARM64 `sing-box` 1.13.18 与 1.14.0 对包含 SOCKS outbound、认证、双网络与 UoT v2 的最小组合配置执行 `check` 均成功；该证据不代表已连接远端 SOCKS 服务或完成真实出站数据面验证。版本统一为本轮 `2026091007`，完整协议目标仍未完成。
+
+### 2026-09-10：HTTP outbound typed contract
+
+managed HTTP outbound 现在通过 `managed_component_http_config_validate_json` 处理。契约按 sing-box 1.14.0 `HTTPOutboundOptions` 限定 TCP-only 的 server/port、用户名/密码、path、HTTP header map、Outbound TLS 以及 shared Dial Fields；TLS 内的 ECH、uTLS、REALITY、listable certificate/ALPN/curve 等嵌套对象也有独立 allowlist 和标量校验。未知或弃用嵌套字段、非法 header 名、错误 scalar/list 和控制字符在 state/CAS 与 live takeover 前拒绝，敏感凭据不出现在 list/diagnose。
+
+`tests/managed_components_contract.sh` 增加 HTTP 明文/TLS render、header/path/TLS 嵌套正向断言，以及未知字段、弃用 ECH 字段、错误 engine/header/scalar 和控制字符拒绝断言。固定官方 ARM64 `sing-box` 1.13.18 与 1.14.0 对明文和启用 TLS 的最小 HTTP outbound 配置 `check` 均成功；该证据不代表远端 HTTP CONNECT 握手或真实出站数据面验证。完整协议目标仍未完成。

@@ -221,6 +221,63 @@ if managed_component_state_validate_record "${socks_bad_port}"; then
   exit 1
 fi
 
+# HTTP outbound is a TCP-only upstream proxy.  Its headers and outbound TLS
+# object are typed recursively so an unknown nested option cannot bypass the
+# component contract.
+http_outbound_record='{"id":"http-outbound-local","role":"outbound","type":"http","tag":"http-upstream","enabled":true,"route_rules":[],"config":{"server":"127.0.0.1","server_port":3128,"username":"proxy-user","password":"proxy-password","path":"/proxy","headers":{"User-Agent":"sing-box-vps","X-Proxy":["one","two"]},"tls":{"enabled":true,"engine":"go","server_name":"proxy.example","insecure":false,"alpn":["h2","http/1.1"],"min_version":"1.2","max_version":"1.3","curve_preferences":["X25519","P256"],"utls":{"enabled":true,"fingerprint":"chrome"},"ech":{"enabled":false,"config_path":"/etc/sing-box/ech.bin"},"reality":{"enabled":false,"public_key":"","short_id":""}},"connect_timeout":"5s","network_strategy":"default","network_type":["ethernet"],"domain_resolver":"dns-local","protect_path":"/usr/lib/sing-box/http-protect"}}'
+managed_component_state_validate_record "${http_outbound_record}"
+http_outbound_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${http_outbound_record}")
+http_outbound_rendered=$(managed_component_render_json "${http_outbound_state}")
+jq -e '
+  (.outbounds | length == 1) and
+  .outbounds[0].type == "http" and
+  .outbounds[0].tag == "http-upstream" and
+  .outbounds[0].server_port == 3128 and
+  .outbounds[0].path == "/proxy" and
+  .outbounds[0].headers["X-Proxy"] == ["one","two"] and
+  .outbounds[0].tls.enabled == true and
+  .outbounds[0].tls.utls.fingerprint == "chrome" and
+  .outbounds[0].protect_path == "/usr/lib/sing-box/http-protect" and
+  .outbounds[0].route_rules == null
+' <<< "${http_outbound_rendered}" >/dev/null
+http_plain_record=$(jq -c '.config |= del(.tls,.path,.headers)' <<< "${http_outbound_record}")
+managed_component_state_validate_record "${http_plain_record}"
+http_bad_header_value=$(jq -c '.config.headers["X-Proxy"] = 42' <<< "${http_outbound_record}")
+if managed_component_state_validate_record "${http_bad_header_value}"; then
+  printf 'HTTP non-string header value unexpectedly accepted\n' >&2
+  exit 1
+fi
+http_bad_header_name=$(jq -c '.config.headers["Bad Header"] = "value"' <<< "${http_outbound_record}")
+if managed_component_state_validate_record "${http_bad_header_name}"; then
+  printf 'HTTP invalid header name unexpectedly accepted\n' >&2
+  exit 1
+fi
+http_bad_tls_field=$(jq -c '.config.tls |= (. + {domain_strategy:"prefer_ipv4"})' <<< "${http_outbound_record}")
+if managed_component_state_validate_record "${http_bad_tls_field}"; then
+  printf 'HTTP unknown TLS field unexpectedly accepted\n' >&2
+  exit 1
+fi
+http_bad_ech_field=$(jq -c '.config.tls.ech |= (. + {pq_signature_schemes_enabled:true})' <<< "${http_outbound_record}")
+if managed_component_state_validate_record "${http_bad_ech_field}"; then
+  printf 'HTTP deprecated ECH field unexpectedly accepted\n' >&2
+  exit 1
+fi
+http_bad_engine=$(jq -c '.config.tls.engine = "rustls"' <<< "${http_outbound_record}")
+if managed_component_state_validate_record "${http_bad_engine}"; then
+  printf 'HTTP unsupported TLS engine unexpectedly accepted\n' >&2
+  exit 1
+fi
+http_bad_path=$(jq -c '.config.path = "/proxy\u0001"' <<< "${http_outbound_record}")
+if managed_component_state_validate_record "${http_bad_path}"; then
+  printf 'HTTP control-character path unexpectedly accepted\n' >&2
+  exit 1
+fi
+http_unknown_field=$(jq -c '.config |= (. + {domain_strategy:"prefer_ipv4"})' <<< "${http_outbound_record}")
+if managed_component_state_validate_record "${http_unknown_field}"; then
+  printf 'HTTP deprecated/unknown Dial Field unexpectedly accepted\n' >&2
+  exit 1
+fi
+
 # Selector and URLTest groups own outbound member references.  Their upstream
 # schemas are deliberately narrow: duplicate members, a selector default not
 # present in the member list, and URLTest's selector-only fields must fail

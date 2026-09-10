@@ -12568,6 +12568,159 @@ managed_component_socks_config_validate_json() {
   ' <<< "${config}" >/dev/null 2>&1 || return 1
 }
 
+# Validate the HTTP outbound contract against sing-box 1.14.0.  HTTP is a
+# TCP-only upstream proxy; its optional TLS and header maps are still typed
+# here so nested JSON cannot become an unbounded passthrough.  Deprecated
+# Dial/TLS fields are rejected before state/CAS or live takeover publication.
+managed_component_http_config_validate_json() {
+  local config=${1:-}
+  [[ -n "${config}" ]] || return 1
+  jq -e '
+    def safe_string:
+      type == "string" and (any(explode[]; . < 32 or . == 127) | not);
+    def nonempty_safe_string:
+      safe_string and length > 0;
+    def listable_safe_string:
+      (safe_string or (type == "array" and all(.[]; safe_string)));
+    def optional_safe_string($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_listable_safe_string($name):
+      (has($name) | not) or (.[$name] | listable_safe_string);
+    def optional_bool($name):
+      (has($name) | not) or (.[$name] | type == "boolean");
+    def optional_duration($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_routing_mark:
+      (has("routing_mark") | not) or
+      (.routing_mark |
+        ((type == "number" and . == floor and . >= 0 and . <= 4294967295) or
+         (type == "string" and (length == 0 or test("^0x[0-9a-fA-F]+$")))));
+    def optional_network_strategy:
+      (has("network_strategy") | not) or
+      (.network_strategy | type == "string" and IN("","default","hybrid","fallback"));
+    def optional_network_types($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "string" and (length == 0 or IN("wifi","cellular","ethernet","other"))) or
+         (type == "array" and all(.[]; type == "string" and
+           IN("wifi","cellular","ethernet","other")))));
+    def optional_header_map:
+      (has("headers") | not) or
+      (.headers | type == "object" and
+        all(to_entries[];
+          (.key | type == "string" and length > 0 and
+            (test("^[A-Za-z0-9!#$%&\u0027+.^_\u0060|~-]+$") )) and
+          (.value | listable_safe_string)));
+    def optional_domain_resolver:
+      (has("domain_resolver") | not) or
+      (.domain_resolver | type == "string" or type == "object");
+    def optional_tls_listable_curve($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "string" and IN("P256","P384","P521","X25519","X25519MLKEM768")) or
+         (type == "array" and all(.[]; type == "string" and
+           IN("P256","P384","P521","X25519","X25519MLKEM768")))));
+    def optional_ech:
+      (has("ech") | not) or
+      (.ech | type == "object" and
+        ((keys - ["enabled","config","config_path","query_server_name"]) | length == 0) and
+        optional_bool("enabled") and
+        optional_listable_safe_string("config") and
+        optional_safe_string("config_path") and
+        optional_safe_string("query_server_name"));
+    def optional_utls:
+      (has("utls") | not) or
+      (.utls | type == "object" and
+        ((keys - ["enabled","fingerprint"]) | length == 0) and
+        optional_bool("enabled") and
+        ((has("fingerprint") | not) or
+          (.fingerprint | type == "string" and IN("","chrome_psk","chrome_psk_shuffle",
+            "chrome_padding_psk_shuffle","chrome_pq","chrome_pq_psk","chrome",
+            "firefox","edge","safari","360","qq","ios","android","random","randomized"))));
+    def optional_reality:
+      (has("reality") | not) or
+      (.reality | type == "object" and
+        ((keys - ["enabled","public_key","short_id"]) | length == 0) and
+        optional_bool("enabled") and
+        optional_safe_string("public_key") and
+        optional_safe_string("short_id"));
+    def optional_tls:
+      (has("tls") | not) or
+      (.tls | type == "object" and
+        ((keys - [
+          "enabled","engine","disable_sni","server_name","insecure","alpn",
+          "min_version","max_version","cipher_suites","curve_preferences",
+          "certificate","certificate_path","certificate_public_key_sha256",
+          "client_certificate","client_certificate_path","client_key","client_key_path",
+          "fragment","fragment_fallback_delay","record_fragment","spoof","spoof_method",
+          "kernel_tx","kernel_rx","handshake_timeout","ech","utls","reality"
+        ]) | length == 0) and
+        optional_bool("enabled") and
+        ((has("engine") | not) or (.engine | type == "string" and IN("","go","apple","windows"))) and
+        optional_bool("disable_sni") and
+        optional_safe_string("server_name") and
+        optional_bool("insecure") and
+        optional_listable_safe_string("alpn") and
+        ((has("min_version") | not) or (.min_version | type == "string" and IN("","1.0","1.1","1.2","1.3"))) and
+        ((has("max_version") | not) or (.max_version | type == "string" and IN("","1.0","1.1","1.2","1.3"))) and
+        optional_listable_safe_string("cipher_suites") and
+        optional_tls_listable_curve("curve_preferences") and
+        optional_listable_safe_string("certificate") and
+        optional_safe_string("certificate_path") and
+        optional_listable_safe_string("certificate_public_key_sha256") and
+        optional_listable_safe_string("client_certificate") and
+        optional_safe_string("client_certificate_path") and
+        optional_listable_safe_string("client_key") and
+        optional_safe_string("client_key_path") and
+        optional_bool("fragment") and
+        optional_duration("fragment_fallback_delay") and
+        optional_bool("record_fragment") and
+        optional_safe_string("spoof") and
+        ((has("spoof_method") | not) or (.spoof_method | type == "string" and
+          IN("","wrong-sequence","wrong-checksum","wrong-ack","wrong-md5","wrong-timestamp"))) and
+        optional_bool("kernel_tx") and
+        optional_bool("kernel_rx") and
+        optional_duration("handshake_timeout") and
+        optional_ech and optional_utls and optional_reality);
+    type == "object" and
+    ((keys - [
+      "server","server_port","username","password","path","headers","tls",
+      "detour","bind_interface","inet4_bind_address","inet6_bind_address",
+      "bind_address_no_port","protect_path","routing_mark","reuse_addr","netns",
+      "connect_timeout","tcp_fast_open","tcp_multi_path","disable_tcp_keep_alive",
+      "tcp_keep_alive","tcp_keep_alive_interval","udp_fragment","domain_resolver",
+      "network_strategy","network_type","fallback_network_type","fallback_delay"
+    ]) | length == 0) and
+    (.server | nonempty_safe_string) and
+    (.server_port | type == "number" and . == floor and . >= 1 and . <= 65535) and
+    optional_safe_string("username") and
+    optional_safe_string("password") and
+    optional_safe_string("path") and
+    optional_header_map and optional_tls and
+    optional_safe_string("detour") and
+    optional_safe_string("bind_interface") and
+    optional_safe_string("inet4_bind_address") and
+    optional_safe_string("inet6_bind_address") and
+    optional_bool("bind_address_no_port") and
+    optional_safe_string("protect_path") and
+    optional_routing_mark and
+    optional_bool("reuse_addr") and
+    optional_safe_string("netns") and
+    optional_duration("connect_timeout") and
+    optional_bool("tcp_fast_open") and
+    optional_bool("tcp_multi_path") and
+    optional_bool("disable_tcp_keep_alive") and
+    optional_duration("tcp_keep_alive") and
+    optional_duration("tcp_keep_alive_interval") and
+    optional_bool("udp_fragment") and
+    optional_domain_resolver and
+    optional_network_strategy and
+    optional_network_types("network_type") and
+    optional_network_types("fallback_network_type") and
+    optional_duration("fallback_delay")
+  ' <<< "${config}" >/dev/null 2>&1 || return 1
+}
+
 # Validate selector and URLTest groups against sing-box 1.14.0.  Group
 # members are stable outbound references rather than arbitrary labels: require
 # a non-empty unique list here, while the graph validator resolves each tag to
@@ -12697,6 +12850,9 @@ managed_component_state_validate_record() {
       ;;
     outbound:socks)
       managed_component_socks_config_validate_json "${config}" || return 1
+      ;;
+    outbound:http)
+      managed_component_http_config_validate_json "${config}" || return 1
       ;;
     outbound:direct|outbound:block|outbound:bridge|outbound:socks|outbound:http|outbound:shadowsocks|outbound:vmess|outbound:trojan|outbound:naive|outbound:hysteria2|outbound:hysteria|outbound:tuic|outbound:vless|outbound:anytls|outbound:snell|outbound:shadowtls)
       ;;
