@@ -529,3 +529,9 @@ managed SOCKS outbound 现在通过 `managed_component_socks_config_validate_jso
 managed HTTP outbound 现在通过 `managed_component_http_config_validate_json` 处理。契约按 sing-box 1.14.0 `HTTPOutboundOptions` 限定 TCP-only 的 server/port、用户名/密码、path、HTTP header map、Outbound TLS 以及 shared Dial Fields；TLS 内的 ECH、uTLS、REALITY、listable certificate/ALPN/curve 等嵌套对象也有独立 allowlist 和标量校验。未知或弃用嵌套字段、非法 header 名、错误 scalar/list 和控制字符在 state/CAS 与 live takeover 前拒绝，敏感凭据不出现在 list/diagnose。
 
 `tests/managed_components_contract.sh` 增加 HTTP 明文/TLS render、header/path/TLS 嵌套正向断言，以及未知字段、弃用 ECH 字段、错误 engine/header/scalar 和控制字符拒绝断言。固定官方 ARM64 `sing-box` 1.13.18 与 1.14.0 对明文和启用 TLS 的最小 HTTP outbound 配置 `check` 均成功；该证据不代表远端 HTTP CONNECT 握手或真实出站数据面验证。完整协议目标仍未完成。
+
+### 2026-09-10：Shadowsocks outbound typed contract
+
+managed Shadowsocks outbound 现在通过 `managed_component_shadowsocks_config_validate_json` 处理。契约按固定 1.14.0 `ShadowsocksOutboundOptions`、SIP003、UoT、multiplex 与 shared Dial Fields 限定 server/port、method/password、TCP/UDP network、插件和嵌套选项；SS2022 password 按严格 Base64 解码后的 16/32 字节密钥长度校验，传统加密方法必须有非空密码，`none` 仅在显式配置时保留上游兼容语义。未知/弃用字段、错误方法/密钥长度/插件、错误 scalar/list、嵌套 multiplex/UoT 字段和控制字符在 state/CAS 与 live takeover 前拒绝，凭据不进入 list/diagnose。
+
+`tests/managed_components_contract.sh` 增加 SS2022 128/256、传统 AEAD、插件、双网络/UoT/multiplex render 和认证密钥长度、方法/插件/嵌套字段、deprecated Dial Field 与控制字符拒绝断言。固定官方 ARM64 `sing-box` 1.13.18 与 1.14.0 对 SS2022 128/256、传统 AEAD、插件、双网络/UoT/multiplex 最小组合配置 `check` 均成功；该证据不代表远端 Shadowsocks 握手或真实 TCP/UDP 数据面验证。版本统一为本轮 `2026091008`，完整协议目标仍未完成。

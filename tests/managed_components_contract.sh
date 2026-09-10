@@ -278,6 +278,95 @@ if managed_component_state_validate_record "${http_unknown_field}"; then
   exit 1
 fi
 
+# Shadowsocks outbound keeps the target core's method/password contract,
+# listable network, SIP003 plugin, UDP-over-TCP and multiplex options typed
+# before state/CAS publication.  SS2022 passwords are validated by byte size.
+shadowsocks_outbound_record='{"id":"shadowsocks-outbound-local","role":"outbound","type":"shadowsocks","tag":"ss-upstream","enabled":true,"route_rules":[],"config":{"server":"127.0.0.1","server_port":8388,"method":"2022-blake3-aes-128-gcm","password":"AAAAAAAAAAAAAAAAAAAAAA==","plugin":"obfs-local","plugin_opts":"obfs=http;obfs-host=proxy.example","network":["tcp","udp"],"udp_over_tcp":{"enabled":true,"version":2},"multiplex":{"enabled":true,"protocol":"h2mux","max_connections":2,"min_streams":1,"max_streams":4,"padding":true,"brutal":{"enabled":false}},"connect_timeout":"5s","network_strategy":"default","network_type":["ethernet"],"domain_resolver":"dns-local","protect_path":"/usr/lib/sing-box/shadowsocks-protect"}}'
+managed_component_state_validate_record "${shadowsocks_outbound_record}"
+shadowsocks_outbound_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${shadowsocks_outbound_record}")
+shadowsocks_outbound_rendered=$(managed_component_render_json "${shadowsocks_outbound_state}")
+jq -e '
+  (.outbounds | length == 1) and
+  .outbounds[0].type == "shadowsocks" and
+  .outbounds[0].tag == "ss-upstream" and
+  .outbounds[0].server_port == 8388 and
+  .outbounds[0].method == "2022-blake3-aes-128-gcm" and
+  .outbounds[0].password == "AAAAAAAAAAAAAAAAAAAAAA==" and
+  .outbounds[0].plugin == "obfs-local" and
+  .outbounds[0].plugin_opts == "obfs=http;obfs-host=proxy.example" and
+  .outbounds[0].network == ["tcp","udp"] and
+  .outbounds[0].udp_over_tcp.version == 2 and
+  .outbounds[0].multiplex.protocol == "h2mux" and
+  .outbounds[0].protect_path == "/usr/lib/sing-box/shadowsocks-protect" and
+  .outbounds[0].route_rules == null
+' <<< "${shadowsocks_outbound_rendered}" >/dev/null
+shadowsocks_legacy_record=$(jq -c '.config |= (. + {method:"aes-256-gcm",password:"legacy-password"})' <<< "${shadowsocks_outbound_record}")
+managed_component_state_validate_record "${shadowsocks_legacy_record}"
+shadowsocks_2022_256_record=$(jq -c '.config |= (. + {method:"2022-blake3-aes-256-gcm",password:"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="})' <<< "${shadowsocks_outbound_record}")
+managed_component_state_validate_record "${shadowsocks_2022_256_record}"
+shadowsocks_none_record=$(jq -c '.config |= (. + {method:"none",password:""})' <<< "${shadowsocks_outbound_record}")
+managed_component_state_validate_record "${shadowsocks_none_record}"
+shadowsocks_missing_method=$(jq -c '.config |= del(.method)' <<< "${shadowsocks_outbound_record}")
+if managed_component_state_validate_record "${shadowsocks_missing_method}"; then
+  printf 'Shadowsocks missing method unexpectedly accepted\n' >&2
+  exit 1
+fi
+shadowsocks_bad_method=$(jq -c '.config.method = "aes-192-foo"' <<< "${shadowsocks_outbound_record}")
+if managed_component_state_validate_record "${shadowsocks_bad_method}"; then
+  printf 'Shadowsocks unknown method unexpectedly accepted\n' >&2
+  exit 1
+fi
+shadowsocks_bad_2022_short=$(jq -c '.config.password = "short"' <<< "${shadowsocks_outbound_record}")
+if managed_component_state_validate_record "${shadowsocks_bad_2022_short}"; then
+  printf 'Shadowsocks SS2022 short key unexpectedly accepted\n' >&2
+  exit 1
+fi
+shadowsocks_bad_2022_256=$(jq -c '.config.method = "2022-blake3-aes-256-gcm"' <<< "${shadowsocks_outbound_record}")
+if managed_component_state_validate_record "${shadowsocks_bad_2022_256}"; then
+  printf 'Shadowsocks SS2022 256-bit short key unexpectedly accepted\n' >&2
+  exit 1
+fi
+shadowsocks_bad_legacy_password=$(jq -c '.config |= (. + {method:"aes-128-gcm",password:""})' <<< "${shadowsocks_outbound_record}")
+if managed_component_state_validate_record "${shadowsocks_bad_legacy_password}"; then
+  printf 'Shadowsocks encrypted method without password unexpectedly accepted\n' >&2
+  exit 1
+fi
+shadowsocks_bad_network=$(jq -c '.config.network = ["tcp","icmp"]' <<< "${shadowsocks_outbound_record}")
+if managed_component_state_validate_record "${shadowsocks_bad_network}"; then
+  printf 'Shadowsocks unsupported network unexpectedly accepted\n' >&2
+  exit 1
+fi
+shadowsocks_bad_plugin=$(jq -c '.config.plugin = "simple-obfs"' <<< "${shadowsocks_outbound_record}")
+if managed_component_state_validate_record "${shadowsocks_bad_plugin}"; then
+  printf 'Shadowsocks unsupported plugin unexpectedly accepted\n' >&2
+  exit 1
+fi
+shadowsocks_bad_plugin_opts=$(jq -c '.config.plugin_opts = "obfs=http\u0001"' <<< "${shadowsocks_outbound_record}")
+if managed_component_state_validate_record "${shadowsocks_bad_plugin_opts}"; then
+  printf 'Shadowsocks control-character plugin options unexpectedly accepted\n' >&2
+  exit 1
+fi
+shadowsocks_bad_multiplex=$(jq -c '.config.multiplex |= (. + {unknown:true})' <<< "${shadowsocks_outbound_record}")
+if managed_component_state_validate_record "${shadowsocks_bad_multiplex}"; then
+  printf 'Shadowsocks unknown multiplex field unexpectedly accepted\n' >&2
+  exit 1
+fi
+shadowsocks_bad_uot=$(jq -c '.config.udp_over_tcp = {enabled:true,version:3}' <<< "${shadowsocks_outbound_record}")
+if managed_component_state_validate_record "${shadowsocks_bad_uot}"; then
+  printf 'Shadowsocks unsupported UDP-over-TCP version unexpectedly accepted\n' >&2
+  exit 1
+fi
+shadowsocks_unknown_field=$(jq -c '.config |= (. + {domain_strategy:"prefer_ipv4"})' <<< "${shadowsocks_outbound_record}")
+if managed_component_state_validate_record "${shadowsocks_unknown_field}"; then
+  printf 'Shadowsocks deprecated/unknown Dial Field unexpectedly accepted\n' >&2
+  exit 1
+fi
+shadowsocks_bad_server=$(jq -c '.config.server = "proxy\u0001.example"' <<< "${shadowsocks_outbound_record}")
+if managed_component_state_validate_record "${shadowsocks_bad_server}"; then
+  printf 'Shadowsocks control-character server unexpectedly accepted\n' >&2
+  exit 1
+fi
+
 # Selector and URLTest groups own outbound member references.  Their upstream
 # schemas are deliberately narrow: duplicate members, a selector default not
 # present in the member list, and URLTest's selector-only fields must fail

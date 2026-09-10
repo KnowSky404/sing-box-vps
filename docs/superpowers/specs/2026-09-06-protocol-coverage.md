@@ -6,7 +6,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091007`，`SB_SUPPORT_MAX_VERSION=1.14.0`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091008`，`SB_SUPPORT_MAX_VERSION=1.14.0`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -30,6 +30,8 @@
 2026-09-10 SOCKS outbound 增量：managed `socks` outbound component 按固定 [1.14.0 SOCKS outbound](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/socks.md) 与 shared Dial Fields 建立 typed allowlist；`server`/`server_port`、版本 `4|4a|5`、用户名/密码、TCP/UDP network、UDP-over-TCP 及拨号字段均按目标类型校验，拒绝 deprecated `domain_strategy`、未知字段、错误版本/网络/端口和控制字符。组件仍使用统一 state/CAS、接管、重建、导出和配置图/监听/核心校验事务，凭据只在敏感 component export 返回。1.13.18/1.14.0 官方 ARM64 核心对最小组合配置 `check` 均通过；未把核心检查扩大为远端 SOCKS 握手或真实出站数据面证据。
 
 2026-09-10 HTTP outbound 增量：managed `http` outbound component 按固定 [1.14.0 HTTP outbound](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/http.md)、Outbound TLS 与 shared Dial Fields 建立递归 typed allowlist；server/port、用户名/密码、path、HTTP headers、TCP-only 语义和 TLS 的 ECH/uTLS/REALITY 嵌套字段均受控，未知/弃用字段、错误 scalar/list、非法 header 名和控制字符在 state/CAS 与接管前拒绝。统一 component state/CAS、接管、重建、敏感导出、图/监听/核心校验事务复用不变。1.13.18/1.14.0 官方 ARM64 核心对明文与启用 TLS 的最小 HTTP outbound 配置 `check` 均通过；未把核心检查扩大为远端 HTTP CONNECT 握手或真实出站数据面证据。
+
+2026-09-10 Shadowsocks outbound 增量：managed `shadowsocks` outbound component 按固定 [1.14.0 Shadowsocks outbound](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/shadowsocks.md)、SIP003、UoT、multiplex 与 shared Dial Fields 建立 typed allowlist；server/port、method/password、SS2022 strict Base64 16/32-byte key、TCP/UDP network、插件及嵌套选项均受控，未知/弃用字段、错误方法/密钥长度/插件、错误 scalar/list 和控制字符在 state/CAS 与接管前拒绝。统一 component state/CAS、接管、重建、敏感导出、图/监听/核心校验事务复用不变。1.13.18/1.14.0 官方 ARM64 核心对 SS2022 128/256、传统 AEAD、插件、双网络/UoT/multiplex 最小配置 `check` 均通过；未把核心检查扩大为远端 Shadowsocks 握手或真实 TCP/UDP 数据面证据。
 
 2026-09-10 TUN 路由安全增量：启用的 managed TUN 若设置 `auto_route=true`，候选配置会在顶层 `route` 自动补 `auto_detect_interface=true`；已有配置明确关闭该保护且未设置 `default_interface` 时 fail-closed，明确选择默认接口则保留原设置。该门禁只防止配置层自捕获环路，不宣称已接管主机策略路由、nftables、DNS 劫持或透明数据面，完整协议目标继续未完成。
 
@@ -121,7 +123,7 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 | block | `block` / outbound | 基础内建 | 丢弃连接/数据；无网络协议 | yes | yes（Linux） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | registry-check |
 | socks | `socks` / outbound | 基础内建 | SOCKS4/4a/5；TCP，UDP 依 server 支持，可 UDP-over-TCP | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 component JSON（不进入普通分享节点） / 不生成服务端分享 URI / no current SubMan | 两核心 1.13.18/1.14.0 typed config check；未验证上游 SOCKS 握手/数据面 |
 | http | `http` / outbound | 基础内建 | HTTP CONNECT，TCP；可配置认证、path、headers 与 outbound TLS | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 component JSON（不进入普通分享节点） / 不生成服务端分享 URI / no current SubMan | 两核心 1.13.18/1.14.0 明文+TLS typed config check；未验证上游 HTTP CONNECT 握手/数据面 |
-| shadowsocks | `shadowsocks` / outbound | 基础内建 | TCP/UDP；方法覆盖 SS2022 与传统方法，密码/密钥长度须按 method 校验；可 multiplex/UoT | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check（无 method 按预期失败） |
+| shadowsocks | `shadowsocks` / outbound | 基础内建 | TCP/UDP；方法覆盖 SS2022 与传统方法，Base64 密钥长度按 method 校验；可 SIP003/multiplex/UoT | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 component JSON（不进入普通分享节点） / 不生成服务端分享 URI / no current SubMan | 两核心 1.13.18/1.14.0 SS2022/传统/插件/UoT typed config check；未验证上游 Shadowsocks 握手/数据面 |
 | vmess | `vmess` / outbound | 基础内建 | TCP/UDP；TLS、transport、packet encoding 和 legacy alterId 组合有限 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check |
 | trojan | `trojan` / outbound | 基础内建 | TCP/UDP（按 outbound network）+ TLS；transport/multiplex 需对端支持 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check |
 | wireguard-legacy | `wireguard` / outbound | 已移除；不能靠导航页恢复 | 不再创建；应使用 WireGuard endpoint，再由 route/dial 关系接入 | removed stub | no（removed） | none；—/—/—/— | 不可导出为旧 outbound / — / — | check 明确报告 removed |

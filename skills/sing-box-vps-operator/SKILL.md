@@ -125,7 +125,11 @@ characters fail before CAS/takeover, and credentials remain export-only.
 HTTP outbound components enforce the sing-box 1.14 TCP-only server/auth/path,
 headers, recursive outbound TLS and shared Dial Field allowlist; invalid nested
 fields and header/scalar values fail before CAS/takeover, and credentials remain
-export-only. Non-loopback listeners, TUN,
+export-only.
+Shadowsocks outbound components enforce sing-box 1.14 method/password (including
+strict Base64 SS2022 key sizes), network, SIP003 plugin, UDP-over-TCP, multiplex
+and shared Dial Fields; invalid methods/keys/plugins/nested values fail before
+CAS/takeover, and credentials remain export-only. Non-loopback listeners, TUN,
 tunnels and OpenVPN server require `--allow-public`. External account
 authentication, system routes/firewall, runtime libraries and data-plane
 reachability remain separate operator-reviewed gates. The registry keeps

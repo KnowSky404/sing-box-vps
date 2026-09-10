@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091007
+# Version: 2026091008
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091007"
+readonly SCRIPT_VERSION="2026091008"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -12721,6 +12721,140 @@ managed_component_http_config_validate_json() {
   ' <<< "${config}" >/dev/null 2>&1 || return 1
 }
 
+# Validate the Shadowsocks outbound contract against sing-box 1.14.0.  Keep
+# the upstream method/password, plugin, network, UDP-over-TCP and multiplex
+# shapes typed while rejecting deprecated Dial Fields and arbitrary nested
+# JSON before state/CAS or takeover publication.  SS2022 key sizes are
+# checked below after strict base64 decoding because the core derives the key
+# from the decoded password bytes.
+managed_component_shadowsocks_config_validate_json() {
+  local config=${1:-} method password password_bytes
+  [[ -n "${config}" ]] || return 1
+  jq -e '
+    def safe_string:
+      type == "string" and (any(explode[]; . < 32 or . == 127) | not);
+    def nonempty_safe_string:
+      safe_string and length > 0;
+    def optional_safe_string($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_bool($name):
+      (has($name) | not) or (.[$name] | type == "boolean");
+    def optional_duration($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_nonnegative_int($name):
+      (has($name) | not) or
+      (.[$name] | type == "number" and . == floor and . >= 0 and . <= 2147483647);
+    def optional_routing_mark:
+      (has("routing_mark") | not) or
+      (.routing_mark |
+        ((type == "number" and . == floor and . >= 0 and . <= 4294967295) or
+         (type == "string" and (length == 0 or test("^0x[0-9a-fA-F]+$")))));
+    def optional_network_strategy:
+      (has("network_strategy") | not) or
+      (.network_strategy | type == "string" and IN("","default","hybrid","fallback"));
+    def optional_network_types($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "string" and (length == 0 or IN("wifi","cellular","ethernet","other"))) or
+         (type == "array" and all(.[]; type == "string" and
+           IN("wifi","cellular","ethernet","other")))));
+    def optional_network:
+      (has("network") | not) or
+      (.network |
+        ((type == "string" and (length == 0 or IN("tcp","udp"))) or
+         (type == "array" and all(.[]; type == "string" and IN("tcp","udp")))));
+    def optional_udp_over_tcp:
+      (has("udp_over_tcp") | not) or
+      (.udp_over_tcp |
+        (type == "boolean" or
+         (type == "object" and
+          ((keys - ["enabled","version"]) | length == 0) and
+          ((has("enabled") | not) or (.enabled | type == "boolean")) and
+          ((has("version") | not) or
+            (.version | type == "number" and . == floor and . >= 1 and . <= 2)))));
+    def optional_brutal:
+      (has("brutal") | not) or
+      (.brutal | type == "object" and
+        ((keys - ["enabled","up_mbps","down_mbps"]) | length == 0) and
+        optional_bool("enabled") and
+        optional_nonnegative_int("up_mbps") and
+        optional_nonnegative_int("down_mbps"));
+    def optional_multiplex:
+      (has("multiplex") | not) or
+      (.multiplex | type == "object" and
+        ((keys - ["enabled","protocol","max_connections","min_streams",
+          "max_streams","padding","brutal"]) | length == 0) and
+        optional_bool("enabled") and
+        ((has("protocol") | not) or
+          (.protocol | type == "string" and IN("","h2mux","smux","yamux"))) and
+        optional_nonnegative_int("max_connections") and
+        optional_nonnegative_int("min_streams") and
+        optional_nonnegative_int("max_streams") and
+        optional_bool("padding") and optional_brutal);
+    type == "object" and
+    ((keys - [
+      "server","server_port","method","password","plugin","plugin_opts",
+      "network","udp_over_tcp","multiplex","detour","bind_interface",
+      "inet4_bind_address","inet6_bind_address","bind_address_no_port",
+      "protect_path","routing_mark","reuse_addr","netns","connect_timeout",
+      "tcp_fast_open","tcp_multi_path","disable_tcp_keep_alive","tcp_keep_alive",
+      "tcp_keep_alive_interval","udp_fragment","domain_resolver","network_strategy",
+      "network_type","fallback_network_type","fallback_delay"
+    ]) | length == 0) and
+    (.server | nonempty_safe_string) and
+    (.server_port | type == "number" and . == floor and . >= 1 and . <= 65535) and
+    (.method | type == "string" and IN(
+      "none","aes-128-gcm","aes-192-gcm","aes-256-gcm",
+      "chacha20-ietf-poly1305","xchacha20-ietf-poly1305",
+      "2022-blake3-aes-128-gcm","2022-blake3-aes-256-gcm",
+      "2022-blake3-chacha20-poly1305","aes-128-ctr","aes-192-ctr",
+      "aes-256-ctr","aes-128-cfb","aes-192-cfb","aes-256-cfb",
+      "rc4-md5","chacha20-ietf","xchacha20")) and
+    (.password | safe_string) and
+    ((has("plugin") | not) or
+      (.plugin | type == "string" and IN("","obfs-local","v2ray-plugin"))) and
+    optional_safe_string("plugin_opts") and optional_network and
+    optional_udp_over_tcp and optional_multiplex and
+    optional_safe_string("detour") and
+    optional_safe_string("bind_interface") and
+    optional_safe_string("inet4_bind_address") and
+    optional_safe_string("inet6_bind_address") and
+    optional_bool("bind_address_no_port") and
+    optional_safe_string("protect_path") and
+    optional_routing_mark and
+    optional_bool("reuse_addr") and
+    optional_safe_string("netns") and
+    optional_duration("connect_timeout") and
+    optional_bool("tcp_fast_open") and
+    optional_bool("tcp_multi_path") and
+    optional_bool("disable_tcp_keep_alive") and
+    optional_duration("tcp_keep_alive") and
+    optional_duration("tcp_keep_alive_interval") and
+    optional_bool("udp_fragment") and
+    ((has("domain_resolver") | not) or
+      (.domain_resolver | type == "string" or type == "object")) and
+    optional_network_strategy and
+    optional_network_types("network_type") and
+    optional_network_types("fallback_network_type") and
+    optional_duration("fallback_delay")
+  ' <<< "${config}" >/dev/null 2>&1 || return 1
+
+  method=$(jq -er '.method' <<< "${config}") || return 1
+  password=$(jq -er '.password' <<< "${config}") || return 1
+  if [[ "${method}" == 2022-* ]]; then
+    [[ "${password}" =~ ^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$ ]] || return 1
+    password_bytes=$(LC_ALL=C printf '%s' "${password}" |
+      LC_ALL=C base64 -d | LC_ALL=C wc -c) || return 1
+    if [[ "${method}" == 2022-blake3-aes-128-gcm ]]; then
+      ((password_bytes == 16)) || return 1
+    else
+      ((password_bytes == 32)) || return 1
+    fi
+  elif [[ "${method}" != "none" && -z "${password}" ]]; then
+    return 1
+  fi
+}
+
 # Validate selector and URLTest groups against sing-box 1.14.0.  Group
 # members are stable outbound references rather than arbitrary labels: require
 # a non-empty unique list here, while the graph validator resolves each tag to
@@ -12853,6 +12987,9 @@ managed_component_state_validate_record() {
       ;;
     outbound:http)
       managed_component_http_config_validate_json "${config}" || return 1
+      ;;
+    outbound:shadowsocks)
+      managed_component_shadowsocks_config_validate_json "${config}" || return 1
       ;;
     outbound:direct|outbound:block|outbound:bridge|outbound:socks|outbound:http|outbound:shadowsocks|outbound:vmess|outbound:trojan|outbound:naive|outbound:hysteria2|outbound:hysteria|outbound:tuic|outbound:vless|outbound:anytls|outbound:snell|outbound:shadowtls)
       ;;
