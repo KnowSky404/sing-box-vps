@@ -6,7 +6,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091005`，`SB_SUPPORT_MAX_VERSION=1.14.0`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091006`，`SB_SUPPORT_MAX_VERSION=1.14.0`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -24,6 +24,8 @@
 2026-09-10 SSH outbound 增量：managed `ssh` component 现在按固定 [1.14.0 SSH outbound](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/ssh.md) 与 [shared Dial Fields](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/shared/dial.md) 的 `SSHOutboundOptions` 建立 allowlist；`server` 必须是安全非空字符串，端口限制为 1–65535，且必须提供 password、private key 或 private-key path 之一。listable private/host key 与 cipher/MAC/KEX 字段只接受字符串列表形状，deprecated `domain_strategy` 和任意未建模字段在 state/CAS、live takeover 前拒绝；`host_key` 仍可省略以保持上游“接受任意主机密钥”的兼容语义，但 inventory 以 `host_key_verification=unverified` 披露，非空固定列表才标记 `pinned`。回归覆盖密码、路径、PEM 私钥、缺凭据、孤立 passphrase、端口越界、未知字段、脱敏 inventory、live takeover、路由规则保留与敏感 export；未执行远端 SSH 登录，不把 `sing-box check` 或状态层写成 SSH 数据面/主机密钥验证证据。
 
 2026-09-10 Tor outbound 增量：managed `tor` component 现在按固定 [1.14.0 Tor outbound](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/tor.md) 与 [shared Dial Fields](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/shared/dial.md) 的 `TorOutboundOptions` 建立 allowlist；Tor-specific 字段仅允许 `executable_path`、`extra_args`、`data_directory` 和字符串值 `torrc` map，且拒绝 deprecated `domain_strategy`、控制字符及错误类型。未提供 executable path 的记录保留上游 embedded 语义，但 inventory 标为 `runtime_mode=embedded_unverified`；指定路径则标为 `external`，不声称路径存在、构建包含 `with_embedded_tor`/CGO 或已有 Tor circuit。回归覆盖 external/embedded 两种记录、Dial Fields、torrc/extra_args 类型边界、控制字符、脱敏运行模式和 live takeover/路由规则保留；未执行外部 Tor 安装、嵌入构建、控制面或真实数据面验证。
+
+2026-09-10 selector/urltest group 增量：managed `selector` 与 `urltest` component 现在按固定 [1.14.0 selector](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/selector.md) / [urltest](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/urltest.md) schema 建立 allowlist；两者都要求非空且唯一的 outbound member 列表，selector 的 `default` 必须属于该列表，URLTest 的 `tolerance` 限制为 uint16，并拒绝错误 scalar、selector-only/urltest-only 交叉字段和未知字段。图校验继续负责把每个成员解析到实际 outbound 并阻断依赖环，inventory 仅显示脱敏 `member_count`。回归覆盖 render、成员重复/default 越界、字段类型、live takeover 与路由规则保留；未把 URLTest 探测 URL 的可达性或真实组切换数据面写成验证证据。
 
 2026-09-10 TUN 路由安全增量：启用的 managed TUN 若设置 `auto_route=true`，候选配置会在顶层 `route` 自动补 `auto_detect_interface=true`；已有配置明确关闭该保护且未设置 `default_interface` 时 fail-closed，明确选择默认接口则保留原设置。该门禁只防止配置层自捕获环路，不宣称已接管主机策略路由、nftables、DNS 劫持或透明数据面，完整协议目标继续未完成。
 

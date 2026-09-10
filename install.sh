@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091005
+# Version: 2026091006
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091005"
+readonly SCRIPT_VERSION="2026091006"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -106,8 +106,8 @@ readonly SB_COMPONENT_REGISTRY=(
   'tor-outbound|outbound|tor|Tor outbound|1.13.0|builtin|{"dialer":true,"dependency_external":true,"runtime_modes":["external","embedded_unverified"]}'
   'direct-outbound|outbound|direct|Direct outbound|1.13.0|builtin|{"dialer":true}'
   'bridge-outbound|outbound|bridge|Bridge outbound|1.14.0|builtin|{"l3":true,"requires_privilege":true}'
-  'selector-outbound|outbound|selector|Selector group|1.13.0|builtin|{"group":true,"members_required":true}'
-  'urltest-outbound|outbound|urltest|URLTest group|1.13.0|builtin|{"group":true,"members_required":true}'
+  'selector-outbound|outbound|selector|Selector group|1.13.0|builtin|{"group":true,"members_required":true,"members_unique":true}'
+  'urltest-outbound|outbound|urltest|URLTest group|1.13.0|builtin|{"group":true,"members_required":true,"members_unique":true}'
   'block-outbound|outbound|block|Block outbound|1.13.0|builtin|{"terminal":true}'
   'socks-outbound|outbound|socks|SOCKS outbound|1.13.0|builtin|{"dialer":true}'
   'http-outbound|outbound|http|HTTP outbound|1.13.0|builtin|{"dialer":true}'
@@ -12479,6 +12479,52 @@ managed_component_tor_config_validate_json() {
   ' <<< "${config}" >/dev/null 2>&1 || return 1
 }
 
+# Validate selector and URLTest groups against sing-box 1.14.0.  Group
+# members are stable outbound references rather than arbitrary labels: require
+# a non-empty unique list here, while the graph validator resolves each tag to
+# a real outbound and detects dependency cycles.  URLTest retains upstream's
+# empty-string defaults for URL and durations; the target core remains the
+# authority for parsing duration syntax and probing reachability.
+managed_component_group_config_validate_json() {
+  local group_type=${1:-} config=${2:-}
+  [[ "${group_type}" == selector || "${group_type}" == urltest ]] || return 1
+  [[ -n "${config}" ]] || return 1
+  jq -e --arg group_type "${group_type}" '
+    def safe_string:
+      type == "string" and (any(explode[]; . < 32 or . == 127) | not);
+    def nonempty_safe_string:
+      safe_string and length > 0;
+    def optional_safe_string($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_bool($name):
+      (has($name) | not) or (.[$name] | type == "boolean");
+    def optional_duration($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def members:
+      (.outbounds | type == "array" and length > 0 and
+        all(.[]; nonempty_safe_string) and
+        (length == (unique | length)));
+    type == "object" and
+    members and
+    (if $group_type == "selector" then
+      ((keys - ["outbounds","default","interrupt_exist_connections"]) | length == 0) and
+      optional_safe_string("default") and
+      optional_bool("interrupt_exist_connections") and
+      ((.default? // "") as $default |
+        ($default == "" or (.outbounds | index($default)) != null))
+    elif $group_type == "urltest" then
+      ((keys - ["outbounds","url","interval","tolerance","idle_timeout",
+        "interrupt_exist_connections"]) | length == 0) and
+      optional_safe_string("url") and
+      optional_duration("interval") and
+      ((has("tolerance") | not) or
+        (.tolerance | type == "number" and . == floor and . >= 0 and . <= 65535)) and
+      optional_duration("idle_timeout") and
+      optional_bool("interrupt_exist_connections")
+    else false end)
+  ' <<< "${config}" >/dev/null 2>&1 || return 1
+}
+
 managed_component_state_validate_record() {
   local record=${1:-} role type tag registry_id config
   [[ -n "${record}" ]] || return 1
@@ -12552,7 +12598,7 @@ managed_component_state_validate_record() {
         (.address | type == "array" and length > 0)' <<< "${config}" >/dev/null 2>&1 || return 1
       ;;
     outbound:selector|outbound:urltest)
-      jq -e '(.outbounds | type == "array" and length > 0 and all(.[]; type == "string" and length > 0))' <<< "${config}" >/dev/null 2>&1 || return 1
+      managed_component_group_config_validate_json "${type}" "${config}" || return 1
       ;;
     outbound:ssh)
       managed_component_ssh_config_validate_json "${config}" || return 1
@@ -12957,6 +13003,8 @@ managed_component_inventory_json() {
             if (($component.config.executable_path? // null) |
                 if type == "string" then length > 0 else false end)
             then "external" else "embedded_unverified" end)}
+        elif (.role == "outbound" and (.type == "selector" or .type == "urltest")) then
+          . + {member_count:(($component.config.outbounds // []) | length)}
         else . end
       ],
       supported: $registry

@@ -168,6 +168,81 @@ tor_embedded_inventory=$(managed_component_inventory_json)
 eval "${original_managed_component_state_json}"
 jq -e '.components[0].runtime_mode == "embedded_unverified"' <<< "${tor_embedded_inventory}" >/dev/null
 
+# Selector and URLTest groups own outbound member references.  Their upstream
+# schemas are deliberately narrow: duplicate members, a selector default not
+# present in the member list, and URLTest's selector-only fields must fail
+# before graph/CAS publication.
+selector_group_record=$(jq -c '.config.interrupt_exist_connections = true' <<< "${selector_record}")
+managed_component_state_validate_record "${selector_group_record}"
+selector_group_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${selector_group_record}")
+selector_group_rendered=$(managed_component_render_json "${selector_group_state}")
+jq -e '
+  .outbounds[0].type == "selector" and
+  .outbounds[0].outbounds == ["direct","block"] and
+  .outbounds[0].default == "direct" and
+  .outbounds[0].interrupt_exist_connections == true
+' <<< "${selector_group_rendered}" >/dev/null
+selector_duplicate_member=$(jq -c '.config.outbounds = ["direct","direct"]' <<< "${selector_group_record}")
+if managed_component_state_validate_record "${selector_duplicate_member}"; then
+  printf 'selector duplicate member unexpectedly accepted\n' >&2
+  exit 1
+fi
+selector_unknown_member=$(jq -c '.config.default = "missing"' <<< "${selector_group_record}")
+if managed_component_state_validate_record "${selector_unknown_member}"; then
+  printf 'selector default outside member list unexpectedly accepted\n' >&2
+  exit 1
+fi
+selector_unknown_field=$(jq -c '.config.url = "https://example.com"' <<< "${selector_group_record}")
+if managed_component_state_validate_record "${selector_unknown_field}"; then
+  printf 'selector unknown URLTest field unexpectedly accepted\n' >&2
+  exit 1
+fi
+selector_bad_interrupt=$(jq -c '.config.interrupt_exist_connections = "true"' <<< "${selector_group_record}")
+if managed_component_state_validate_record "${selector_bad_interrupt}"; then
+  printf 'selector non-boolean interrupt flag unexpectedly accepted\n' >&2
+  exit 1
+fi
+urltest_record='{"id":"urltest-local","role":"outbound","type":"urltest","tag":"urltest-local","enabled":true,"route_rules":[],"config":{"outbounds":["direct","block"],"url":"https://www.gstatic.com/generate_204","interval":"1m","tolerance":50,"idle_timeout":"30m","interrupt_exist_connections":true}}'
+managed_component_state_validate_record "${urltest_record}"
+urltest_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${urltest_record}")
+urltest_rendered=$(managed_component_render_json "${urltest_state}")
+jq -e '
+  .outbounds[0].type == "urltest" and
+  .outbounds[0].outbounds == ["direct","block"] and
+  .outbounds[0].url == "https://www.gstatic.com/generate_204" and
+  .outbounds[0].interval == "1m" and .outbounds[0].tolerance == 50 and
+  .outbounds[0].idle_timeout == "30m" and
+  .outbounds[0].interrupt_exist_connections == true
+' <<< "${urltest_rendered}" >/dev/null
+urltest_duplicate_member=$(jq -c '.config.outbounds = ["direct","block","block"]' <<< "${urltest_record}")
+if managed_component_state_validate_record "${urltest_duplicate_member}"; then
+  printf 'urltest duplicate member unexpectedly accepted\n' >&2
+  exit 1
+fi
+urltest_bad_tolerance=$(jq -c '.config.tolerance = 65536' <<< "${urltest_record}")
+if managed_component_state_validate_record "${urltest_bad_tolerance}"; then
+  printf 'urltest out-of-range tolerance unexpectedly accepted\n' >&2
+  exit 1
+fi
+urltest_selector_field=$(jq -c '.config.default = "direct"' <<< "${urltest_record}")
+if managed_component_state_validate_record "${urltest_selector_field}"; then
+  printf 'urltest selector-only default field unexpectedly accepted\n' >&2
+  exit 1
+fi
+urltest_bad_url=$(jq -c '.config.url = 204' <<< "${urltest_record}")
+if managed_component_state_validate_record "${urltest_bad_url}"; then
+  printf 'urltest non-string URL unexpectedly accepted\n' >&2
+  exit 1
+fi
+groups_inventory_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${selector_group_record}")
+original_managed_component_state_json=$(declare -f managed_component_state_json)
+managed_component_state_json() {
+  printf '%s\n' "${groups_inventory_state}"
+}
+groups_inventory=$(managed_component_inventory_json)
+eval "${original_managed_component_state_json}"
+jq -e '.components[0].member_count == 2 and .components[0].config_keys == ["default","interrupt_exist_connections","outbounds"]' <<< "${groups_inventory}" >/dev/null
+
 if managed_component_state_candidate "${state}" delete "" direct-local >/dev/null 2>&1; then
   printf 'expected deletion of referenced component to fail\n' >&2
   exit 1
@@ -397,12 +472,15 @@ selector_live=$(jq -cn '{type:"selector",tag:"selector-live",outbounds:["direct"
 jq --argjson endpoint "${wireguard_live}" --argjson outbound "${selector_live}" \
   --argjson ssh_outbound "${ssh_record}" \
   --argjson tor_outbound "${tor_record}" \
+  --argjson urltest_outbound "${urltest_record}" \
   '.endpoints += [$endpoint] | .outbounds += [$outbound] |
    .outbounds += [($ssh_outbound.config + {type:$ssh_outbound.type,tag:$ssh_outbound.tag})] |
    .outbounds += [($tor_outbound.config + {type:$tor_outbound.type,tag:$tor_outbound.tag})] |
+   .outbounds += [($urltest_outbound.config + {type:$urltest_outbound.type,tag:$urltest_outbound.tag})] |
    .route.rules += [{domain:["selector.example"],action:"route",outbound:"selector-live"},
                     {domain:["ssh.example"],action:"route",outbound:"ssh-local"},
-                    {domain:["tor.example"],action:"route",outbound:"tor-local"}]' \
+                    {domain:["tor.example"],action:"route",outbound:"tor-local"},
+                    {domain:["urltest.example"],action:"route",outbound:"urltest-local"}]' \
   "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
 mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
 if takeover_without_public=$(agent_dispatch component takeover --json --yes --expected-revision 4); then
@@ -413,7 +491,7 @@ jq -e '.ok == false and .error == "confirmation_required"' <<< "${takeover_witho
 takeover_json=$(agent_dispatch component takeover --json --yes --expected-revision 4 --allow-public)
 jq -e '.ok == true and .data.action == "component-apply" and
   .data.operation == "takeover" and .data.revision == 5 and
-  .data.count == 7 and .data.firewall.status == "not_attempted"' <<< "${takeover_json}" >/dev/null
+  .data.count == 8 and .data.firewall.status == "not_attempted"' <<< "${takeover_json}" >/dev/null
 jq -e 'any(.components[]; .id == "endpoint-wireguard-wg-live" and
   .type == "wireguard" and .config.private_key == "private-key-preserved")' \
   "${SB_COMPONENT_STATE_FILE}" >/dev/null
@@ -430,15 +508,23 @@ jq -e 'any(.components[]; .type == "tor" and .tag == "tor-local" and
   .config.torrc.ClientOnly == "1" and
   (.route_rules | any(.[]; .outbound == "tor-local")))' \
   "${SB_COMPONENT_STATE_FILE}" >/dev/null
+jq -e 'any(.components[]; .type == "urltest" and .tag == "urltest-local" and
+  .config.outbounds == ["direct","block"] and
+  .config.interval == "1m" and
+  (.route_rules | any(.[]; .outbound == "urltest-local")))' \
+  "${SB_COMPONENT_STATE_FILE}" >/dev/null
 jq -e 'any(.endpoints[]; .tag == "wg-live" and .private_key == "private-key-preserved")' \
   "${SINGBOX_CONFIG_FILE}" >/dev/null
 jq -e 'any(.outbounds[]; .tag == "selector-live" and .outbounds == ["direct","block"]) and
   any(.outbounds[]; .tag == "ssh-local" and .server == "ssh.example" and .password == "ssh-password") and
   any(.outbounds[]; .tag == "tor-local" and .executable_path == "/usr/bin/tor" and
     .torrc.ClientOnly == "1") and
+  any(.outbounds[]; .tag == "urltest-local" and .outbounds == ["direct","block"] and
+    .interval == "1m") and
   any(.route.rules[]; .outbound == "selector-live" and (.domain | index("selector.example")) != null) and
   any(.route.rules[]; .outbound == "ssh-local" and (.domain | index("ssh.example")) != null) and
-  any(.route.rules[]; .outbound == "tor-local" and (.domain | index("tor.example")) != null)' \
+  any(.route.rules[]; .outbound == "tor-local" and (.domain | index("tor.example")) != null) and
+  any(.route.rules[]; .outbound == "urltest-local" and (.domain | index("urltest.example")) != null)' \
   "${SINGBOX_CONFIG_FILE}" >/dev/null
 export_takeover_json=$(agent_dispatch component export --json --id endpoint-wireguard-wg-live --expected-revision 5)
 jq -e '.ok == true and .data.sensitive == true and

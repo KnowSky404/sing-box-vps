@@ -509,3 +509,11 @@ managed `tor` outbound 不再只是检查 `executable_path`/`data_directory` 是
 `tests/managed_components_contract.sh` 新增 external/embedded Tor 记录、完整 Dial Fields/torrc/extra_args render、错误类型与控制字符拒绝、运行模式脱敏和 live takeover/路由规则保留断言，同时补齐 SSH 的共享 `protect_path` 字段。此切片只证明状态、候选与无损接管边界；未执行外部 Tor 安装、嵌入构建、控制面、远端 circuit 或真实 Tor 数据面验证。版本统一为本轮 `2026091005`，完整协议目标仍未完成。
 
 完整默认门禁 `bash dev/verification/run.sh` 在 `dev/verification-runs/20260910162713` 退出 0：本地协议/生命周期/组件回归全部通过，Docker `remote_status=success`，14/14 场景和 21/21 既有协议探针成功；真实 `SINGBOX_BINARY_113/114` 未配置，相关核心项按规则 skip。该验证没有把 Tor 状态契约扩大为外部 executable、embedded build、Tor circuit 或公网数据面证据。
+
+### 2026-09-10：selector/urltest outbound group typed contract
+
+managed `selector`/`urltest` outbound group 不再只检查 `outbounds` 是非空字符串数组。`managed_component_group_config_validate_json` 按固定 sing-box 1.14.0 group schema 建立分型 allowlist：两者都要求非空且唯一的 outbound member 列表；selector 只接受可选 `default` 与 `interrupt_exist_connections`，并要求 default 指向成员；URLTest 只接受 `url`、`interval`、`tolerance`、`idle_timeout` 与 `interrupt_exist_connections`，其中 tolerance 限制为 uint16。未知字段、交叉字段、重复成员和错误 scalar 在 state/CAS 与 live takeover 前拒绝；图校验继续解析成员引用并阻断依赖环，inventory 只返回脱敏 `member_count`。
+
+`tests/managed_components_contract.sh` 新增 selector/urltest render、成员重复、default 越界、字段交叉/类型、脱敏成员计数和 live takeover/路由规则保留断言。该切片不宣称 URLTest 探测 URL 可达、定时组切换或真实出站数据面已验证。版本统一为本轮 `2026091006`，完整协议目标仍未完成。
+
+完整默认门禁 `bash dev/verification/run.sh` 在 `dev/verification-runs/20260910171857` 退出 0：本地协议/生命周期/组件回归全部通过，Docker `remote_status=success`，14/14 场景和 21/21 协议探针结果为 `success`；真实 `SINGBOX_BINARY_113/114` 未配置，相关核心项按规则 skip。该验证没有把 selector/urltest 状态契约扩大为探测 URL 可达、动态选路切换或公网数据面证据。

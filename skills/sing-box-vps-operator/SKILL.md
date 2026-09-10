@@ -116,7 +116,9 @@ path authentication; metadata reports only config keys and
 `executable_path`, `extra_args`, `data_directory`, string-valued `torrc` and
 Dial Field allowlist; inventory reports `runtime_mode=external` or
 `embedded_unverified` and never treats the default build as embedded-Tor
-runtime proof. Non-loopback listeners, TUN,
+runtime proof. Selector and URLTest groups require unique non-empty outbound
+members, enforce selector defaults and URLTest field types, and expose only a
+redacted `member_count`. Non-loopback listeners, TUN,
 tunnels and OpenVPN server require `--allow-public`. External account
 authentication, system routes/firewall, runtime libraries and data-plane
 reachability remain separate operator-reviewed gates. The registry keeps
