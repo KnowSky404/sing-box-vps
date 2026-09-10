@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091006
+# Version: 2026091007
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091006"
+readonly SCRIPT_VERSION="2026091007"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -12479,6 +12479,95 @@ managed_component_tor_config_validate_json() {
   ' <<< "${config}" >/dev/null 2>&1 || return 1
 }
 
+# Validate the SOCKS outbound contract against sing-box 1.14.0.  This is a
+# managed client-side dialer, not a share-link inbound: keep the upstream
+# server/auth/network/UoT fields and the shared Dial Fields, while rejecting
+# deprecated domain_strategy and arbitrary JSON passthrough before CAS or
+# takeover publication.
+managed_component_socks_config_validate_json() {
+  local config=${1:-}
+  [[ -n "${config}" ]] || return 1
+  jq -e '
+    def safe_string:
+      type == "string" and (any(explode[]; . < 32 or . == 127) | not);
+    def nonempty_safe_string:
+      safe_string and length > 0;
+    def optional_safe_string($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_bool($name):
+      (has($name) | not) or (.[$name] | type == "boolean");
+    def optional_duration($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_routing_mark:
+      (has("routing_mark") | not) or
+      (.routing_mark |
+        ((type == "number" and . == floor and . >= 0 and . <= 4294967295) or
+         (type == "string" and (length == 0 or test("^0x[0-9a-fA-F]+$")))));
+    def optional_network_strategy:
+      (has("network_strategy") | not) or
+      (.network_strategy | type == "string" and IN("","default","hybrid","fallback"));
+    def optional_network_types($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "string" and (length == 0 or IN("wifi","cellular","ethernet","other"))) or
+         (type == "array" and all(.[]; type == "string" and
+           IN("wifi","cellular","ethernet","other")))));
+    def optional_network($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "string" and (length == 0 or IN("tcp","udp"))) or
+         (type == "array" and all(.[]; type == "string" and IN("tcp","udp")))));
+    def optional_udp_over_tcp:
+      (has("udp_over_tcp") | not) or
+      (.udp_over_tcp |
+        (type == "boolean" or
+         (type == "object" and
+          ((keys - ["enabled","version"]) | length == 0) and
+          ((has("enabled") | not) or (.enabled | type == "boolean")) and
+          ((has("version") | not) or
+            (.version | type == "number" and . == floor and . >= 1 and . <= 2)))));
+    type == "object" and
+    ((keys - [
+      "server","server_port","version","username","password","network",
+      "udp_over_tcp","detour","bind_interface","inet4_bind_address",
+      "inet6_bind_address","bind_address_no_port","protect_path",
+      "routing_mark","reuse_addr","netns","connect_timeout","tcp_fast_open",
+      "tcp_multi_path","disable_tcp_keep_alive","tcp_keep_alive",
+      "tcp_keep_alive_interval","udp_fragment","domain_resolver",
+      "network_strategy","network_type","fallback_network_type","fallback_delay"
+    ]) | length == 0) and
+    (.server | nonempty_safe_string) and
+    (.server_port | type == "number" and . == floor and . >= 1 and . <= 65535) and
+    ((has("version") | not) or (.version | type == "string" and IN("","4","4a","5"))) and
+    optional_safe_string("username") and
+    optional_safe_string("password") and
+    optional_network("network") and
+    optional_udp_over_tcp and
+    optional_safe_string("detour") and
+    optional_safe_string("bind_interface") and
+    optional_safe_string("inet4_bind_address") and
+    optional_safe_string("inet6_bind_address") and
+    optional_bool("bind_address_no_port") and
+    optional_safe_string("protect_path") and
+    optional_routing_mark and
+    optional_bool("reuse_addr") and
+    optional_safe_string("netns") and
+    optional_duration("connect_timeout") and
+    optional_bool("tcp_fast_open") and
+    optional_bool("tcp_multi_path") and
+    optional_bool("disable_tcp_keep_alive") and
+    optional_duration("tcp_keep_alive") and
+    optional_duration("tcp_keep_alive_interval") and
+    optional_bool("udp_fragment") and
+    ((has("domain_resolver") | not) or
+      (.domain_resolver | type == "string" or type == "object")) and
+    optional_network_strategy and
+    optional_network_types("network_type") and
+    optional_network_types("fallback_network_type") and
+    optional_duration("fallback_delay")
+  ' <<< "${config}" >/dev/null 2>&1 || return 1
+}
+
 # Validate selector and URLTest groups against sing-box 1.14.0.  Group
 # members are stable outbound references rather than arbitrary labels: require
 # a non-empty unique list here, while the graph validator resolves each tag to
@@ -12605,6 +12694,9 @@ managed_component_state_validate_record() {
       ;;
     outbound:tor)
       managed_component_tor_config_validate_json "${config}" || return 1
+      ;;
+    outbound:socks)
+      managed_component_socks_config_validate_json "${config}" || return 1
       ;;
     outbound:direct|outbound:block|outbound:bridge|outbound:socks|outbound:http|outbound:shadowsocks|outbound:vmess|outbound:trojan|outbound:naive|outbound:hysteria2|outbound:hysteria|outbound:tuic|outbound:vless|outbound:anytls|outbound:snell|outbound:shadowtls)
       ;;

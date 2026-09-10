@@ -168,6 +168,59 @@ tor_embedded_inventory=$(managed_component_inventory_json)
 eval "${original_managed_component_state_json}"
 jq -e '.components[0].runtime_mode == "embedded_unverified"' <<< "${tor_embedded_inventory}" >/dev/null
 
+# SOCKS outbound is a typed client-side dialer.  Keep the server/auth,
+# listable TCP/UDP network, optional UDP-over-TCP and shared Dial Fields, but
+# reject deprecated/unknown fields and malformed scalar values before state
+# publication.
+socks_outbound_record='{"id":"socks-outbound-local","role":"outbound","type":"socks","tag":"socks-upstream","enabled":true,"route_rules":[],"config":{"server":"127.0.0.1","server_port":1080,"version":"5","username":"proxy-user","password":"proxy-password","network":["tcp","udp"],"udp_over_tcp":{"enabled":true,"version":2},"connect_timeout":"5s","network_strategy":"default","network_type":["ethernet"],"domain_resolver":"dns-local","protect_path":"/usr/lib/sing-box/socks-protect"}}'
+managed_component_state_validate_record "${socks_outbound_record}"
+socks_outbound_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${socks_outbound_record}")
+socks_outbound_rendered=$(managed_component_render_json "${socks_outbound_state}")
+jq -e '
+  (.outbounds | length == 1) and
+  .outbounds[0].type == "socks" and
+  .outbounds[0].tag == "socks-upstream" and
+  .outbounds[0].server_port == 1080 and
+  .outbounds[0].version == "5" and
+  .outbounds[0].network == ["tcp","udp"] and
+  .outbounds[0].udp_over_tcp.enabled == true and
+  .outbounds[0].udp_over_tcp.version == 2 and
+  .outbounds[0].protect_path == "/usr/lib/sing-box/socks-protect" and
+  .outbounds[0].route_rules == null
+' <<< "${socks_outbound_rendered}" >/dev/null
+socks_default_version=$(jq -c '.config |= del(.version)' <<< "${socks_outbound_record}")
+managed_component_state_validate_record "${socks_default_version}"
+socks_bad_version=$(jq -c '.config.version = "6"' <<< "${socks_outbound_record}")
+if managed_component_state_validate_record "${socks_bad_version}"; then
+  printf 'SOCKS unsupported version unexpectedly accepted\n' >&2
+  exit 1
+fi
+socks_bad_network=$(jq -c '.config.network = ["icmp"]' <<< "${socks_outbound_record}")
+if managed_component_state_validate_record "${socks_bad_network}"; then
+  printf 'SOCKS unsupported network unexpectedly accepted\n' >&2
+  exit 1
+fi
+socks_bad_uot=$(jq -c '.config.udp_over_tcp = {enabled:true,version:3}' <<< "${socks_outbound_record}")
+if managed_component_state_validate_record "${socks_bad_uot}"; then
+  printf 'SOCKS unsupported UDP-over-TCP version unexpectedly accepted\n' >&2
+  exit 1
+fi
+socks_unknown_field=$(jq -c '.config |= (. + {domain_strategy:"prefer_ipv4"})' <<< "${socks_outbound_record}")
+if managed_component_state_validate_record "${socks_unknown_field}"; then
+  printf 'SOCKS deprecated/unknown Dial Field unexpectedly accepted\n' >&2
+  exit 1
+fi
+socks_bad_server=$(jq -c '.config.server = "proxy\u0001.example"' <<< "${socks_outbound_record}")
+if managed_component_state_validate_record "${socks_bad_server}"; then
+  printf 'SOCKS control-character server unexpectedly accepted\n' >&2
+  exit 1
+fi
+socks_bad_port=$(jq -c '.config.server_port = 65536' <<< "${socks_outbound_record}")
+if managed_component_state_validate_record "${socks_bad_port}"; then
+  printf 'SOCKS out-of-range server port unexpectedly accepted\n' >&2
+  exit 1
+fi
+
 # Selector and URLTest groups own outbound member references.  Their upstream
 # schemas are deliberately narrow: duplicate members, a selector default not
 # present in the member list, and URLTest's selector-only fields must fail

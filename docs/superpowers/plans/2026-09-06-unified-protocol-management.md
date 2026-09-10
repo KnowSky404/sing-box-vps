@@ -517,3 +517,9 @@ managed `selector`/`urltest` outbound group 不再只检查 `outbounds` 是非�
 `tests/managed_components_contract.sh` 新增 selector/urltest render、成员重复、default 越界、字段交叉/类型、脱敏成员计数和 live takeover/路由规则保留断言。该切片不宣称 URLTest 探测 URL 可达、定时组切换或真实出站数据面已验证。版本统一为本轮 `2026091006`，完整协议目标仍未完成。
 
 完整默认门禁 `bash dev/verification/run.sh` 在 `dev/verification-runs/20260910171857` 退出 0：本地协议/生命周期/组件回归全部通过，Docker `remote_status=success`，14/14 场景和 21/21 协议探针结果为 `success`；真实 `SINGBOX_BINARY_113/114` 未配置，相关核心项按规则 skip。该验证没有把 selector/urltest 状态契约扩大为探测 URL 可达、动态选路切换或公网数据面证据。
+
+### 2026-09-10：SOCKS outbound typed contract
+
+managed SOCKS outbound 现在通过 `managed_component_socks_config_validate_json` 处理，而不是把注册的 protocol outbound 当作任意 JSON。契约按 sing-box 1.14.0 `SOCKSOutboundOptions` 和 shared Dial Fields 限定 `server`、`server_port`、`version`、认证字段、listable TCP/UDP `network`、UDP-over-TCP 以及拨号参数；deprecated `domain_strategy`、未知字段、错误版本/网络/端口和控制字符在 state/CAS 与 live takeover 前拒绝。统一 component state、配置渲染、图/监听/核心校验、重建、接管与敏感导出路径保持不变，凭据不会进入 list/diagnose inventory。
+
+`tests/managed_components_contract.sh` 增加 SOCKS outbound 正向渲染、默认版本、错误版本/网络/UDP-over-TCP/端口、deprecated 字段和控制字符拒绝断言。固定官方 ARM64 `sing-box` 1.13.18 与 1.14.0 对包含 SOCKS outbound、认证、双网络与 UoT v2 的最小组合配置执行 `check` 均成功；该证据不代表已连接远端 SOCKS 服务或完成真实出站数据面验证。版本统一为本轮 `2026091007`，完整协议目标仍未完成。
