@@ -19,6 +19,7 @@ jq -e '
     ["openconnect","openvpn-client","openvpn-server","tailscale","wireguard"] and
   any(.[]; .role == "outbound" and .type == "selector" and .features.group == true) and
   any(.[]; .role == "outbound" and .type == "urltest" and .features.group == true) and
+  all(.[]; .lifecycle.takeover == true) and
   any(.[]; .role == "inbound" and .type == "cloudflared" and
     .features.account_mutation == false and .availability == "with_cloudflared")
 ' <<< "${registry}" >/dev/null
@@ -248,7 +249,11 @@ live_without_selector_rules=$(jq -c '(.components[] | select(.id == "selector-lo
 managed_component_write_state "${live_without_selector_rules}"
 generate_config
 wireguard_live=$(jq -cn '{type:"wireguard",tag:"wg-live",system:true,address:["10.0.0.2/32"],private_key:"private-key-preserved",peers:[{address:"198.51.100.1",port:51820,public_key:"peer-key",allowed_ips:["0.0.0.0/0"]}]}')
-jq --argjson endpoint "${wireguard_live}" '.endpoints += [$endpoint]' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+selector_live=$(jq -cn '{type:"selector",tag:"selector-live",outbounds:["direct","block"],default:"direct"}')
+jq --argjson endpoint "${wireguard_live}" --argjson outbound "${selector_live}" \
+  '.endpoints += [$endpoint] | .outbounds += [$outbound] |
+   .route.rules += [{domain:["selector.example"],action:"route",outbound:"selector-live"}]' \
+  "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
 mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
 if takeover_without_public=$(agent_dispatch component takeover --json --yes --expected-revision 4); then
   printf 'cloudflared takeover without public confirmation unexpectedly succeeded\n' >&2
@@ -258,15 +263,61 @@ jq -e '.ok == false and .error == "confirmation_required"' <<< "${takeover_witho
 takeover_json=$(agent_dispatch component takeover --json --yes --expected-revision 4 --allow-public)
 jq -e '.ok == true and .data.action == "component-apply" and
   .data.operation == "takeover" and .data.revision == 5 and
-  .data.count == 4 and .data.firewall.status == "not_attempted"' <<< "${takeover_json}" >/dev/null
+  .data.count == 5 and .data.firewall.status == "not_attempted"' <<< "${takeover_json}" >/dev/null
 jq -e 'any(.components[]; .id == "endpoint-wireguard-wg-live" and
   .type == "wireguard" and .config.private_key == "private-key-preserved")' \
   "${SB_COMPONENT_STATE_FILE}" >/dev/null
+jq -e 'any(.components[]; .id == "outbound-selector-selector-live" and
+  .type == "selector" and .config.outbounds == ["direct","block"] and
+  (.route_rules | any(.[]; .outbound == "selector-live")))' \
+  "${SB_COMPONENT_STATE_FILE}" >/dev/null
 jq -e 'any(.endpoints[]; .tag == "wg-live" and .private_key == "private-key-preserved")' \
+  "${SINGBOX_CONFIG_FILE}" >/dev/null
+jq -e 'any(.outbounds[]; .tag == "selector-live" and .outbounds == ["direct","block"]) and
+  any(.route.rules[]; .outbound == "selector-live" and (.domain | index("selector.example")) != null)' \
   "${SINGBOX_CONFIG_FILE}" >/dev/null
 export_takeover_json=$(agent_dispatch component export --json --id endpoint-wireguard-wg-live --expected-revision 5)
 jq -e '.ok == true and .data.sensitive == true and
   .data.component.config.private_key == "private-key-preserved"' <<< "${export_takeover_json}" >/dev/null
+
+# The generator-owned Warp endpoint is already emitted by the normal config
+# builder and must not become a duplicate managed component during takeover.
+config_before_warp_owner=$(cat "${SINGBOX_CONFIG_FILE}")
+warp_owner_endpoint=$(jq -cn '{type:"wireguard",tag:"warp-ep",address:["172.16.0.2/32"],private_key:"warp-private-key",peers:[{address:"198.51.100.2",port:2408,public_key:"warp-peer-key",allowed_ips:["0.0.0.0/0"]}]}')
+jq --argjson endpoint "${warp_owner_endpoint}" '.endpoints += [$endpoint]' \
+  "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+warp_owner_records=$(managed_component_live_takeover_records_json "$(managed_component_state_json)")
+if jq -e 'any(.[]; .role == "endpoint" and .tag == "warp-ep")' <<< "${warp_owner_records}" >/dev/null; then
+  printf 'generator-owned warp endpoint was unexpectedly imported\n' >&2
+  exit 1
+fi
+printf '%s\n' "${config_before_warp_owner}" > "${SINGBOX_CONFIG_FILE}"
+
+# Registered built-ins remain generator-owned, while unknown types and
+# reserved tags are rejected before a takeover transaction can mutate state.
+state_before_unknown_outbound=$(cat "${SB_COMPONENT_STATE_FILE}")
+config_before_unknown_outbound=$(cat "${SINGBOX_CONFIG_FILE}")
+jq '.outbounds += [{type:"future-outbound",tag:"future-live"}]' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if unknown_outbound_takeover=$(agent_dispatch component takeover --json --yes --expected-revision 5 --allow-public); then
+  printf 'unknown outbound takeover unexpectedly succeeded\n' >&2
+  exit 1
+fi
+jq -e '.ok == false and .error == "component_live_untrusted"' <<< "${unknown_outbound_takeover}" >/dev/null
+[[ "$(cat "${SB_COMPONENT_STATE_FILE}")" == "${state_before_unknown_outbound}" ]]
+[[ "$(cat "${SINGBOX_CONFIG_FILE}")" != "${config_before_unknown_outbound}" ]]
+printf '%s\n' "${config_before_unknown_outbound}" > "${SINGBOX_CONFIG_FILE}"
+
+jq '.outbounds += [{type:"selector",tag:"direct",outbounds:["direct"]}]' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if reserved_outbound_takeover=$(agent_dispatch component takeover --json --yes --expected-revision 5 --allow-public); then
+  printf 'reserved outbound tag takeover unexpectedly succeeded\n' >&2
+  exit 1
+fi
+jq -e '.ok == false and .error == "component_live_untrusted"' <<< "${reserved_outbound_takeover}" >/dev/null
+[[ "$(cat "${SB_COMPONENT_STATE_FILE}")" == "${state_before_unknown_outbound}" ]]
+printf '%s\n' "${config_before_unknown_outbound}" > "${SINGBOX_CONFIG_FILE}"
 
 # Unknown top-level configuration is also outside the component model.  It
 # must not be silently discarded by the normal generator during takeover.
@@ -334,5 +385,27 @@ jq -e '.ok == true and .data.action == "component-recover" and
 [[ "$(cat "${SB_COMPONENT_STATE_FILE}")" == "${state_before_recovery}" ]]
 [[ "$(cat "${SINGBOX_CONFIG_FILE}")" == "${config_before_recovery}" ]]
 [[ ! -e "${SB_COMPONENT_TRANSACTION_DIR}" ]]
+
+# A destructive component transition must compare the old live inventory with
+# the transaction snapshot, not with the already-published candidate state.
+# This exercises the delete path after a state record has been removed.
+delete_state=$(jq -c '(.components[] | select(.id == "outbound-selector-selector-live") | .route_rules) = []' \
+  "${SB_COMPONENT_STATE_FILE}")
+managed_component_write_state "${delete_state}"
+jq ' .route.rules |= map(select(.outbound != "selector-live"))' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+delete_json=$(agent_dispatch component delete --json --yes --expected-revision 5 \
+  --id outbound-selector-selector-live)
+jq -e '.ok == true and .data.operation == "delete" and .data.revision == 6 and
+  .data.id == "outbound-selector-selector-live"' <<< "${delete_json}" >/dev/null
+if jq -e 'any(.components[]; .id == "outbound-selector-selector-live")' \
+  "${SB_COMPONENT_STATE_FILE}" >/dev/null; then
+  printf 'deleted outbound component remained in state\n' >&2
+  exit 1
+fi
+if jq -e 'any(.outbounds[]; .tag == "selector-live")' "${SINGBOX_CONFIG_FILE}" >/dev/null; then
+  printf 'deleted outbound component remained in config\n' >&2
+  exit 1
+fi
 
 printf '%s\n' 'managed component contracts passed'

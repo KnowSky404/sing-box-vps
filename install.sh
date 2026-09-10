@@ -1389,7 +1389,7 @@ component_registry_static_json() {
       validated: {status: "not_assessed", method: "target_sing_box_check"},
       lifecycle: {
         create: true, replace: true, delete: true, rebuild: true, export: true,
-        takeover: (.[1] == "inbound" or .[1] == "endpoint"), recover: true
+        takeover: (.[1] == "inbound" or .[1] == "endpoint" or .[1] == "outbound"), recover: true
       }
     }]'
 }
@@ -12508,7 +12508,7 @@ managed_component_takeover_id() {
 }
 
 managed_component_live_takeover_records_json() (
-  local state=${1:-} registry inbound_types endpoint_types source_objects object role type tag id config route_rules record
+  local state=${1:-} registry inbound_types endpoint_types outbound_types source_objects object role type tag id config route_rules record
   local config_snapshot
   local records=() existing_id
   [[ -n "${state}" ]] || return 1
@@ -12521,14 +12521,36 @@ managed_component_live_takeover_records_json() (
   registry=$(component_registry_static_json) || return 1
   inbound_types=$(jq -c '[.[] | select(.role == "inbound") | .type]' <<< "${registry}") || return 1
   endpoint_types=$(jq -c '[.[] | select(.role == "endpoint") | .type]' <<< "${registry}") || return 1
-  source_objects=$(jq -c --argjson inbound_types "${inbound_types}" --argjson endpoint_types "${endpoint_types}" '
+  outbound_types=$(jq -c '[.[] | select(.role == "outbound") | .type]' <<< "${registry}") || return 1
+  source_objects=$(jq -c --argjson inbound_types "${inbound_types}" --argjson endpoint_types "${endpoint_types}" \
+    --argjson outbound_types "${outbound_types}" '
     if type != "object" then error("invalid_document") else
+      if any(.outbounds[]?;
+             . as $outbound |
+             ($outbound.tag // "") != "warp-ep" and
+             (($outbound_types | index($outbound.type // "")) == null)) then
+        error("unknown_outbound_type")
+      elif any(.outbounds[]?;
+               (.tag // "") != "warp-ep" and
+               (((.tag // "") == "direct" and (.type // "") != "direct") or
+                ((.tag // "") == "block" and (.type // "") != "block"))) then
+        error("reserved_outbound_tag")
+      else
       ([.inbounds // [] | .[] | select(.type as $type | $inbound_types | index($type) != null) |
         {role:"inbound",object:.}] +
-       [.endpoints // [] | .[] | select(.type as $type | $endpoint_types | index($type) != null) |
-        {role:"endpoint",object:.}])[]
+       [.endpoints // [] | .[] |
+        select((.tag // "") != "warp-ep") |
+        select(.type as $type | $endpoint_types | index($type) != null) |
+        {role:"endpoint",object:.}] +
+       [.outbounds // [] | .[] |
+        if ((((.tag // "") == "warp-ep") or
+             (.type == "direct" and (.tag // "") == "direct") or
+             (.type == "block" and (.tag // "") == "block")) | not) then
+          {role:"outbound",object:.}
+        else empty end])[]
+      end
     end
-  ' "${config_snapshot}") || return 4
+  ' "${config_snapshot}" 2>/dev/null) || return 4
   while IFS= read -r object; do
     [[ -n "${object}" ]] || continue
     role=$(jq -r '.role' <<< "${object}") || return 4
@@ -12543,9 +12565,15 @@ managed_component_live_takeover_records_json() (
       id=$(managed_component_takeover_id "${role}" "${type}" "${tag}") || return 4
     fi
     config=$(jq -c '.object | del(.type,.tag)' <<< "${object}") || return 4
-    route_rules=$(jq -c --arg tag "${tag}" '[.route.rules[]? |
-      select((.inbound == $tag) or ((.inbound | type) == "array" and ((.inbound | index($tag)) != null)))]' \
+    if [[ "${role}" == outbound ]]; then
+      route_rules=$(jq -c --arg tag "${tag}" '[.route.rules[]? |
+        select((.outbound == $tag) or ((.outbound | type) == "array" and ((.outbound | index($tag)) != null)))]' \
+        "${config_snapshot}") || return 4
+    else
+      route_rules=$(jq -c --arg tag "${tag}" '[.route.rules[]? |
+        select((.inbound == $tag) or ((.inbound | type) == "array" and ((.inbound | index($tag)) != null)))]' \
       "${config_snapshot}") || return 4
+    fi
     record=$(jq -cn --arg id "${id}" --arg role "${role}" --arg type "${type}" --arg tag "${tag}" \
       --argjson config "${config}" --argjson route_rules "${route_rules}" \
       '{id:$id,role:$role,type:$type,tag:$tag,enabled:true,route_rules:$route_rules,config:$config}') || return 4
@@ -12794,10 +12822,26 @@ managed_component_export_json() {
 }
 
 managed_component_state_matches_live_config() {
-  local config_file=${1:-} state
+  local config_file=${1:-} state_file=${2:-} state registry outbound_types snapshot_dir
   [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
-  state=$(managed_component_state_json) || return 1
-  jq -e --argjson state "${state}" '
+  if [[ -n "${state_file}" ]]; then
+    snapshot_dir=${state_file%/project/components.json}
+    [[ "${state_file}" == "${snapshot_dir}/project/components.json" ]] || return 1
+    managed_state_snapshot_is_valid "${snapshot_dir}" || return 1
+    if [[ -f "${state_file}" && ! -L "${state_file}" && -r "${state_file}" ]]; then
+      state=$(jq -cS '.' "${state_file}") || return 1
+      managed_component_state_validate_json "${state}" || return 1
+    elif [[ ! -e "${state_file}" ]]; then
+      state=$(managed_component_state_default_json) || return 1
+    else
+      return 1
+    fi
+  else
+    state=$(managed_component_state_json) || return 1
+  fi
+  registry=$(component_registry_static_json) || return 1
+  outbound_types=$(jq -c '[.[] | select(.role == "outbound") | .type]' <<< "${registry}") || return 1
+  jq -e --argjson state "${state}" --argjson outbound_types "${outbound_types}" '
     def managed($role; $type; $tag):
       any($state.components[]; .role == $role and .type == $type and .tag == $tag and .enabled == true);
     (all(.inbounds[]?;
@@ -12808,11 +12852,22 @@ managed_component_state_matches_live_config() {
       if (.type | IN("wireguard","tailscale","openconnect","openvpn-client","openvpn-server")) then
         ((.tag // "") == "warp-ep") or managed("endpoint"; .type; (.tag // ""))
       else true end)) and
-    # Proxy protocol adapters already generate per-user outbounds.  Their
-    # runtime types overlap the generic outbound registry, so only advanced
-    # inbound/endpoint records are ownership-checked here; graph validation
-    # still checks every outbound reference in the candidate.
-    true
+    # Proxy protocol adapters generate client outbounds only for exports; the
+    # server configuration registered custom outbounds are component-owned.
+    # Keep the two built-in safety owners out of the state contract.
+    (all(.outbounds[]?;
+      . as $outbound |
+      if (($outbound.tag // "") == "warp-ep") then
+        true
+      elif (($outbound_types | index($outbound.type // "")) != null) and
+         ((($outbound.type == "direct" and ($outbound.tag // "") == "direct") or
+           ($outbound.type == "block" and ($outbound.tag // "") == "block")) | not) then
+        managed("outbound"; ($outbound.type // ""); ($outbound.tag // ""))
+      elif (($outbound.tag // "") == "direct" or ($outbound.tag // "") == "block") then
+        (($outbound.type // "") == ($outbound.tag // ""))
+      elif (($outbound_types | index($outbound.type // "")) == null) then
+        false
+      else true end))
   ' "${config_file}" >/dev/null 2>&1
 }
 
@@ -12824,6 +12879,7 @@ managed_component_state_apply() {
   local firewall_journal=""
   local firewall_summary='{"status":"not_attempted","backends":[],"diagnostics":[]}'
   local result_id candidate_revision lock_dir="${SB_COMPONENT_TRANSACTION_DIR}" before_active=false owner_pid owner_start=""
+  local inventory_state_file=""
   MANAGED_COMPONENT_LAST_ERROR=""
   MANAGED_COMPONENT_LAST_RESULT=""
   result_record='{}'
@@ -12949,7 +13005,10 @@ managed_component_state_apply() {
       return 1
     fi
   fi
-  if ! generate_config ||
+  if [[ "${operation}" != takeover ]]; then
+    inventory_state_file="${snapshot}/project/components.json"
+  fi
+  if ! generate_config "${inventory_state_file}" ||
      [[ ! -f "${SINGBOX_CONFIG_FILE}" || -L "${SINGBOX_CONFIG_FILE}" ]]; then
     managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件配置生成或校验失败" || :
     MANAGED_COMPONENT_LAST_ERROR=config_check_failed
@@ -13963,6 +14022,7 @@ publish_managed_config_candidate() (
 )
 
 generate_config_candidate() {
+  local inventory_state_file=${1:-}
   local inbound_file="" provider_file="" protocol_rule_file="" instance_outbound_rule_file=""
   local config_candidate="" backup_candidate="" protocol
   local exit_cleanup_command effective_protocols
@@ -13982,7 +14042,7 @@ generate_config_candidate() {
 
   # Inspect the complete live inventory before discovery or resource creation.
   # A supported first inbound is not evidence that the rest can be rebuilt.
-  validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" || return 1
+  validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" "${inventory_state_file}" || return 1
 
   # Capture discovery before resource preparation; process substitution hides
   # its failure status and could otherwise publish an empty/partial config.
@@ -14231,11 +14291,11 @@ generate_config_candidate() {
 }
 
 generate_config() {
-  local snapshot_dir
+  local inventory_state_file=${1:-} snapshot_dir
 
-  validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" || return 1
+  validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" "${inventory_state_file}" || return 1
   snapshot_dir=$(create_managed_state_snapshot) || return 1
-  if ! (generate_config_candidate); then
+  if ! (generate_config_candidate "${inventory_state_file}"); then
     rollback_managed_state_snapshot "${snapshot_dir}" || true
     return 1
   fi
@@ -25092,7 +25152,7 @@ prompt_singbox_version() {
 }
 
 validate_live_inbound_inventory() {
-  local config_file=$1 registry advanced_types component_state inventory_status allow_structured_hy2=false
+  local config_file=$1 state_file=${2:-} registry advanced_types component_state inventory_status allow_structured_hy2=false
 
   [[ -e "${config_file}" || -L "${config_file}" ]] || return 0
   registry=$(protocol_registry_json) || return 1
@@ -25149,12 +25209,22 @@ validate_live_inbound_inventory() {
     printf '[ERROR] live_inbound_inventory: %s; 已保留配置和状态，禁止有损重建；请使用支持该入站的脚本或先备份并人工迁移。\n' "${inventory_status}" >&2
     return 1
   fi
-  if ! managed_component_state_matches_live_config "${config_file}"; then
+  if ! managed_component_state_matches_live_config "${config_file}" "${state_file}"; then
     # Preserve the long-standing inventory error for an advanced inbound that
     # is present in the live config but has no owned component record. This
     # keeps takeover/rebuild fail-closed while distinguishing endpoint-only
     # ownership drift as a component-state error.
-    component_state=$(managed_component_state_json 2>/dev/null || printf '{}')
+    if [[ -n "${state_file}" ]]; then
+      if [[ -f "${state_file}" && ! -L "${state_file}" && -r "${state_file}" ]]; then
+        component_state=$(jq -cS '.' "${state_file}" 2>/dev/null || printf '{}')
+      elif [[ ! -e "${state_file}" ]]; then
+        component_state=$(managed_component_state_default_json 2>/dev/null || printf '{}')
+      else
+        component_state='{}'
+      fi
+    else
+      component_state=$(managed_component_state_json 2>/dev/null || printf '{}')
+    fi
     if jq -e --argjson advanced_types "${advanced_types}" --argjson state "${component_state}" '
       any(.inbounds[]?; . as $inbound |
         ($advanced_types | index($inbound.type)) != null and
