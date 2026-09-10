@@ -10622,7 +10622,7 @@ instance_firewall_rollback() {
   journal=$(instance_firewall_journal_validate "${journal_file}") || return 1
   status=$(jq -r '.status' <<< "${journal}") || return 1
   [[ "${status}" == prepared || "${status}" == applying || "${status}" == applied ||
-     "${status}" == apply_failed || "${status}" == rolling_back ||
+     "${status}" == committed || "${status}" == apply_failed || "${status}" == rolling_back ||
      "${status}" == rollback_failed || "${status}" == rollback_uncertain ||
      "${status}" == rolled_back ]] || return 1
   instance_firewall_journal_update "${journal_file}" '.status="rolling_back"' || return 1
@@ -12567,10 +12567,17 @@ managed_component_state_matches_live_config() {
 managed_component_state_apply() {
   local operation=${1:-} expected=${2:-} input=${3:-} target_id=${4:-} allow_public=${5:-n}
   local state current_revision record candidate snapshot service_restarted=false
-  local role type tag result_record
+  local role type tag result_record old_config old_listener_plan new_listener_plan
+  local firewall_journal=""
+  local firewall_summary='{"status":"not_attempted","backends":[],"diagnostics":[]}'
+  local result_id
   MANAGED_COMPONENT_LAST_ERROR=""
   MANAGED_COMPONENT_LAST_RESULT=""
   result_record='{}'
+  [[ ${EUID} -eq 0 ]] || { MANAGED_COMPONENT_LAST_ERROR=root_required; return 1; }
+  [[ ! -L "${SB_PROJECT_DIR}" ]] || { MANAGED_COMPONENT_LAST_ERROR=component_write_failed; return 1; }
+  mkdir -p "${SB_PROJECT_DIR}" || { MANAGED_COMPONENT_LAST_ERROR=component_write_failed; return 1; }
+  acquire_managed_write_lock || { MANAGED_COMPONENT_LAST_ERROR=component_write_busy; return 1; }
   state=$(managed_component_state_json) || { MANAGED_COMPONENT_LAST_ERROR=state_invalid; return 1; }
   current_revision=$(jq -r '.revision | tostring' <<< "${state}") || { MANAGED_COMPONENT_LAST_ERROR=state_invalid; return 1; }
   [[ "${expected}" == "${current_revision}" ]] || { MANAGED_COMPONENT_LAST_ERROR=revision_mismatch; return 1; }
@@ -12596,24 +12603,110 @@ managed_component_state_apply() {
   esac
 
   snapshot=$(create_managed_state_snapshot) || { MANAGED_COMPONENT_LAST_ERROR=snapshot_failed; return 1; }
+  old_config="${snapshot}/project/config.json"
+  [[ -f "${old_config}" && ! -L "${old_config}" ]] || old_config=""
   if ! managed_component_write_state "${candidate}"; then
-    abort_managed_state_transaction "${snapshot}" "高级组件状态写入失败" >/dev/null || :
+    managed_component_abort_state_transaction "${snapshot}" "高级组件状态写入失败" || :
     MANAGED_COMPONENT_LAST_ERROR=state_write_failed
     return 1
   fi
-  if ! generate_config; then
-    abort_managed_state_transaction "${snapshot}" "高级组件配置生成或校验失败" >/dev/null || :
+  if ! generate_config ||
+     [[ ! -f "${SINGBOX_CONFIG_FILE}" || -L "${SINGBOX_CONFIG_FILE}" ]]; then
+    managed_component_abort_state_transaction "${snapshot}" "高级组件配置生成或校验失败" || :
     MANAGED_COMPONENT_LAST_ERROR=config_check_failed
     return 1
+  fi
+
+  # Fixed listeners owned by advanced components use the same firewall
+  # ownership ledger as structured protocol instances.  Keep the journal in
+  # the state snapshot so a file/config rollback and external resource
+  # compensation share one bounded recovery material set.
+  new_listener_plan=$(managed_listener_plan "${SINGBOX_CONFIG_FILE}") || {
+    managed_component_abort_state_transaction "${snapshot}" "高级组件监听资源预检失败" || :
+    MANAGED_COMPONENT_LAST_ERROR=config_check_failed
+    return 1
+  }
+  if [[ -n "${old_config}" ]]; then
+    old_listener_plan=$(managed_listener_plan "${old_config}") || {
+      managed_component_abort_state_transaction "${snapshot}" "高级组件旧监听资源预检失败" || :
+      MANAGED_COMPONENT_LAST_ERROR=config_check_failed
+      return 1
+    }
+  else
+    old_listener_plan='[]'
+  fi
+  if [[ "${old_listener_plan}" != "${new_listener_plan}" ]]; then
+    firewall_journal="${snapshot}/component-firewall.json"
+    if ! instance_firewall_prepare "${old_config}" "${SINGBOX_CONFIG_FILE}" "${firewall_journal}"; then
+      firewall_summary=$(instance_transaction_firewall_summary "${firewall_journal}")
+      managed_component_abort_state_transaction "${snapshot}" "高级组件防火墙资源预检失败" || :
+      MANAGED_COMPONENT_LAST_ERROR=firewall_prepare_failed
+      return 1
+    fi
+    firewall_summary=$(instance_transaction_firewall_summary "${firewall_journal}")
+    if ! instance_firewall_apply "${firewall_journal}"; then
+      firewall_summary=$(instance_transaction_firewall_summary "${firewall_journal}")
+      if ! instance_firewall_rollback "${firewall_journal}"; then
+        MANAGED_COMPONENT_LAST_ERROR=firewall_rollback_failed
+        if restore_managed_state_snapshot "${snapshot}"; then
+          printf '[ERROR] 高级组件防火墙应用失败且外部资源回滚不确定；文件状态已恢复，事务快照保留在 %s。\n' \
+            "${snapshot}" >&2
+        else
+          printf '[ERROR] 高级组件防火墙应用失败且自动回滚失败；事务快照保留在 %s。\n' \
+            "${snapshot}" >&2
+        fi
+        return 1
+      fi
+      firewall_summary=$(instance_transaction_firewall_summary "${firewall_journal}")
+      managed_component_abort_state_transaction "${snapshot}" "高级组件防火墙资源应用失败" || :
+      MANAGED_COMPONENT_LAST_ERROR=firewall_apply_failed
+      return 1
+    fi
+    firewall_summary=$(instance_transaction_firewall_summary "${firewall_journal}")
   fi
   if [[ -f "${SINGBOX_SERVICE_FILE}" ]] && systemctl is-active sing-box >/dev/null 2>&1; then
     if ! systemctl restart sing-box >/dev/null 2>&1 ||
        [[ "$(systemctl is-active sing-box 2>/dev/null || true)" != active ]]; then
-      abort_managed_state_transaction "${snapshot}" "高级组件服务重启失败" >/dev/null || :
+      if [[ -n "${firewall_journal}" ]]; then
+        if ! instance_firewall_rollback "${firewall_journal}"; then
+          MANAGED_COMPONENT_LAST_ERROR=firewall_rollback_failed
+          if restore_managed_state_snapshot "${snapshot}"; then
+            printf '[ERROR] 高级组件服务重启失败且防火墙回滚不确定；文件状态已恢复，事务快照保留在 %s。\n' \
+              "${snapshot}" >&2
+          else
+            printf '[ERROR] 高级组件服务重启失败且自动回滚失败；事务快照保留在 %s。\n' \
+              "${snapshot}" >&2
+          fi
+          return 1
+        fi
+        firewall_summary=$(instance_transaction_firewall_summary "${firewall_journal}")
+      fi
+      managed_component_abort_state_transaction "${snapshot}" "高级组件服务重启失败" || :
       MANAGED_COMPONENT_LAST_ERROR=service_restart_failed
       return 1
     fi
     service_restarted=true
+  fi
+  if [[ -n "${firewall_journal}" ]]; then
+    if ! instance_firewall_commit "${firewall_journal}"; then
+      firewall_summary=$(instance_transaction_firewall_summary "${firewall_journal}")
+      if ! instance_firewall_rollback "${firewall_journal}"; then
+        MANAGED_COMPONENT_LAST_ERROR=firewall_rollback_failed
+        if restore_managed_state_snapshot "${snapshot}"; then
+          printf '[ERROR] 高级组件防火墙提交失败且外部资源回滚不确定；文件状态已恢复，事务快照保留在 %s。\n' \
+            "${snapshot}" >&2
+        else
+          printf '[ERROR] 高级组件防火墙提交失败且自动回滚失败；事务快照保留在 %s。\n' \
+            "${snapshot}" >&2
+        fi
+        return 1
+      fi
+      firewall_summary=$(instance_transaction_firewall_summary "${firewall_journal}")
+      managed_component_abort_state_transaction "${snapshot}" "高级组件防火墙资源提交失败" || :
+      MANAGED_COMPONENT_LAST_ERROR=firewall_commit_failed
+      return 1
+    fi
+    firewall_summary=$(instance_transaction_firewall_summary "${firewall_journal}")
   fi
   if ! discard_managed_state_snapshot "${snapshot}"; then
     MANAGED_COMPONENT_LAST_ERROR=snapshot_cleanup_failed
@@ -12627,7 +12720,6 @@ managed_component_state_apply() {
     type=$(jq -r --arg id "${target_id}" '.components[] | select(.id == $id) | .type' <<< "${state}")
     tag=$(jq -r --arg id "${target_id}" '.components[] | select(.id == $id) | .tag' <<< "${state}")
   fi
-  local result_id
   result_id="${target_id}"
   if [[ -z "${result_id}" ]]; then
     result_id=$(jq -r '.id // empty' <<< "${result_record}")
@@ -12635,7 +12727,8 @@ managed_component_state_apply() {
   MANAGED_COMPONENT_LAST_RESULT=$(jq -cn --arg operation "${operation}" --arg revision "$(jq -r '.revision' <<< "${candidate}")" \
     --arg id "${result_id}" --arg role "${role}" --arg type "${type}" --arg tag "${tag}" \
     --argjson service_restarted "${service_restarted}" \
-    '{action:"component-apply",operation:$operation,revision:($revision|tonumber),id:$id,role:$role,type:$type,tag:$tag,config_check:"passed",service_restarted:$service_restarted}')
+    --argjson firewall "${firewall_summary}" \
+    '{action:"component-apply",operation:$operation,revision:($revision|tonumber),id:$id,role:$role,type:$type,tag:$tag,config_check:"passed",service_restarted:$service_restarted,firewall:$firewall}')
   return 0
 }
 
@@ -12799,6 +12892,22 @@ abort_managed_state_transaction() {
     return 1
   fi
   log_error "${failure_message}，且自动回滚失败；事务快照保留在 ${snapshot_dir}。"
+  return 1
+}
+
+# Agent component writes must return a machine-readable error envelope.  The
+# legacy abort helper intentionally calls log_error (which exits) for menu
+# entrypoints, so keep a non-exiting equivalent for this API boundary.
+managed_component_abort_state_transaction() {
+  local snapshot_dir=$1
+  local failure_message=$2
+
+  if rollback_managed_state_snapshot "${snapshot_dir}" >/dev/null; then
+    printf '[ERROR] %s，已恢复变更前的配置状态。\n' "${failure_message}" >&2
+  else
+    printf '[ERROR] %s，且自动回滚失败；事务快照保留在 %s。\n' \
+      "${failure_message}" "${snapshot_dir}" >&2
+  fi
   return 1
 }
 
@@ -23588,6 +23697,12 @@ agent_component_cli() {
     record_invalid|component_conflict) agent_json_error invalid_component "组件记录无效、类型不受支持或 tag/id 冲突；未修改。" ;;
     service_restart_failed) agent_json_error service_restart_failed "组件已回滚；服务重启失败。" ;;
     config_check_failed) agent_json_error config_check_failed "组件已回滚；生成的配置未通过图校验或 sing-box check。" ;;
+    root_required) agent_json_error root_required "组件写操作必须以 root 执行；未修改。" ;;
+    component_write_busy) agent_json_error component_write_busy "另一个管理进程正在执行；组件未修改。" ;;
+    firewall_prepare_failed) agent_json_error firewall_prepare_failed "组件已回滚；防火墙资源预检失败，未执行外部变更。" ;;
+    firewall_apply_failed) agent_json_error firewall_apply_failed "组件已回滚；防火墙资源应用失败。" ;;
+    firewall_commit_failed) agent_json_error firewall_commit_failed "组件已回滚；防火墙资源提交失败。" ;;
+    firewall_rollback_failed) agent_json_error firewall_rollback_failed "防火墙外部资源回滚不确定；已保留事务快照供恢复。" ;;
     *) agent_json_error component_apply_failed "组件事务失败，状态已回滚或保留快照待恢复。" ;;
   esac
   return 1

@@ -92,7 +92,7 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 | tproxy | `tproxy` / inbound | Linux；需 root、策略路由/防火墙能力 | TCP/UDP（空值表示两者）；Linux 专属，UDP NAT 参数和路由归属必须持久化 | conditional | yes（Linux；root/策略路由仍需） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | registry-check |
 | cloudflared | `cloudflared` / inbound | 自 1.14.0；`with_cloudflared`；需 Cloudflare Tunnel token 和外部控制面 | Cloudflare Tunnel 可承载 TCP、UDP、ICMP；`protocol` 为 QUIC/HTTP2，UDP datagram v2/v3；不能虚构普通节点 URI | conditional | yes（tag 已含；token/控制面仍需） | component state/config；yes/yes/yes/yes* | 不提供普通分享 / — / — | registry-check（无 token 按预期失败） |
 
-`tun`、`redirect`、`tproxy` 与 `cloudflared` 行的 `component state/config` 仅覆盖本项目的统一状态、配置合并、引用保护、监听投影、Agent CAS 和目标核心校验；透明路由、nftables/iproute2、防火墙、Cloudflare 控制面与真实业务仍未宣称通过。`*` 表示同上所述的组件生命周期切片，不是公网部署证明。
+`tun`、`redirect`、`tproxy` 与 `cloudflared` 行的 `component state/config` 覆盖本项目的统一状态、配置合并、引用保护、监听投影、Agent CAS、目标核心校验，以及固定监听变化所复用的受管 UFW/iptables/ip6tables 归属事务；透明路由、策略路由、nftables/iproute2、TUN/Cloudflare 控制面、动态资源和真实业务仍未宣称通过。`*` 表示同上所述的组件生命周期切片，不是公网部署证明。
 
 `vless-reality` 是本项目旧兼容预设，配置使用上游 `type: vless`，并非独立的上游 type；普通 VLESS 使用独立 `vless-plain` preset/state ID。项目继续把 `vless`、`vless+reality`、`vless-reality` 归一到旧 REALITY 状态，普通 VLESS 不复用该 alias，避免接管、重建或导出时将两种语义混淆。
 

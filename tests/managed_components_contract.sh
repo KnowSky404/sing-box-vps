@@ -121,15 +121,76 @@ if managed_component_write_state "${state}"; then
 fi
 rm -f "${SB_COMPONENT_STATE_FILE}.bak"
 
-generate_config() { return 0; }
+generate_config() {
+  local rendered inbounds outbounds route_rules
+  rendered=$(managed_component_render_json) || return 1
+  inbounds=$(jq -c '.inbounds' <<< "${rendered}") || return 1
+  outbounds=$(jq -c '.outbounds' <<< "${rendered}") || return 1
+  route_rules=$(jq -c '.route_rules' <<< "${rendered}") || return 1
+  jq -n --argjson inbounds "${inbounds}" --argjson outbounds "${outbounds}" \
+    --argjson route_rules "${route_rules}" \
+    '{inbounds:$inbounds,endpoints:[],outbounds:$outbounds,route:{final:"direct",rules:$route_rules}}' \
+    > "${SINGBOX_CONFIG_FILE}"
+}
+
+generate_config
+
+component_firewall_log="${TMP_DIR}/component-firewall.log"
+component_firewall_apply_failure="${TMP_DIR}/component-firewall-apply-failure"
+: > "${component_firewall_log}"
+instance_firewall_prepare() {
+  printf 'prepare\n' >> "${component_firewall_log}"
+  jq -n '{status:"prepared"}' > "${3}"
+}
+instance_firewall_apply() {
+  printf 'apply\n' >> "${component_firewall_log}"
+  if [[ -e "${component_firewall_apply_failure}" ]]; then
+    return 1
+  fi
+  jq '.status="applied"' "${1}" > "${1}.next"
+  mv -f "${1}.next" "${1}"
+}
+instance_firewall_rollback() {
+  printf 'rollback\n' >> "${component_firewall_log}"
+  return 0
+}
+instance_firewall_commit() {
+  printf 'commit\n' >> "${component_firewall_log}"
+  jq '.status="committed"' "${1}" > "${1}.next"
+  mv -f "${1}.next" "${1}"
+}
+instance_transaction_firewall_summary() {
+  local journal=${1:-} status="not_attempted"
+  if [[ -f "${journal}" ]]; then
+    status=$(jq -r '.status // "unavailable"' "${journal}")
+  fi
+  jq -cn --arg status "${status}" '{status:$status,backends:[],diagnostics:[]}'
+}
+
 created_record=$(mktemp)
-printf '%s\n' "${direct_record}" > "${created_record}"
+printf '%s\n' "$(jq -c '.config.listen_port = 15084' <<< "${direct_record}")" > "${created_record}"
 create_json=$(agent_cli component replace --json --yes --expected-revision 3 --file "${created_record}")
-jq -e '.ok == true and .data.action == "component-apply" and .data.revision == 4' <<< "${create_json}" >/dev/null
+jq -e '.ok == true and .data.action == "component-apply" and .data.revision == 4 and
+  .data.firewall.status == "committed"' <<< "${create_json}" >/dev/null
+[[ "$(< "${component_firewall_log}")" == $'prepare\napply\ncommit' ]]
 if agent_cli component replace --json --yes --expected-revision 3 --file "${created_record}" >/dev/null 2>&1; then
   printf 'stale component revision unexpectedly succeeded\n' >&2
   exit 1
 fi
+
+printf '%s\n' "$(jq -c '.config.listen_port = 15085' <<< "${direct_record}")" > "${created_record}"
+touch "${component_firewall_apply_failure}"
+if failed_json=$(agent_cli component replace --json --yes --expected-revision 4 --file "${created_record}"); then
+  printf 'component firewall apply failure unexpectedly succeeded\n' >&2
+  exit 1
+fi
+jq -e '.ok == false and .error == "firewall_apply_failed"' <<< "${failed_json}" >/dev/null
+jq -e '.revision == 4 and any(.components[]; .id == "direct-local" and .config.listen_port == 15084)' \
+  "${SB_COMPONENT_STATE_FILE}" >/dev/null
+jq -e '.inbounds[] | select(.tag == "direct-local-in") | .listen_port == 15084' \
+  "${SINGBOX_CONFIG_FILE}" >/dev/null
+[[ "$(< "${component_firewall_log}")" == $'prepare\napply\ncommit\nprepare\napply\nrollback' ]]
+rm -f "${component_firewall_apply_failure}"
 rm -f "${created_record}"
 
 printf '%s\n' 'managed component contracts passed'
