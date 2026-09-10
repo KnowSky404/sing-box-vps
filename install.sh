@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091001
+# Version: 2026091002
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091001"
+readonly SCRIPT_VERSION="2026091002"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -29,6 +29,7 @@ readonly SB_MEDIA_CHECK_SCRIPT="${SB_MEDIA_CHECK_DIR}/region_restriction_check.s
 readonly SB_PROTOCOL_STATE_DIR="${SB_PROJECT_DIR}/protocols"
 readonly SB_PROTOCOL_INDEX_FILE="${SB_PROTOCOL_STATE_DIR}/index.env"
 readonly SB_COMPONENT_STATE_FILE="${SB_PROJECT_DIR}/components.json"
+readonly SB_COMPONENT_TRANSACTION_DIR="${SB_PROJECT_DIR}.component-write.lock"
 readonly SB_COMPONENT_STATE_SCHEMA_VERSION="1"
 readonly SB_REALITY_QOS_FILTER_STATE_FILE="${SB_PROJECT_DIR}/reality-qos.filters"
 readonly SB_REALITY_QOS_FILTER_PREF_START="32001"
@@ -539,6 +540,7 @@ print_cli_help() {
   sbv agent capabilities --json
   sbv agent component list|diagnose --json
   sbv agent component export --json --id ID [--expected-revision N]
+  sbv agent component recover --json --yes --expected-revision N
   sbv agent component takeover --json --yes --expected-revision N [--allow-public]
   sbv agent component rebuild --json --yes --expected-revision N
   sbv agent component create|replace|delete ...
@@ -1387,7 +1389,7 @@ component_registry_static_json() {
       validated: {status: "not_assessed", method: "target_sing_box_check"},
       lifecycle: {
         create: true, replace: true, delete: true, rebuild: true, export: true,
-        takeover: (.[1] == "inbound" or .[1] == "endpoint")
+        takeover: (.[1] == "inbound" or .[1] == "endpoint"), recover: true
       }
     }]'
 }
@@ -12696,7 +12698,7 @@ managed_component_inventory_json() {
 managed_component_diagnose_json() {
   local state inventory config_status graph_status listener_status core_status
   local config_present=false service_state=unknown firewall_status=not_configured firewall_rules=0
-  local instance_pending=false component_pending=false ledger
+  local instance_pending=false component_pending=false component_transaction_phase=none ledger
 
   state=$(managed_component_state_json) || return 1
   inventory=$(managed_component_inventory_json) || return 1
@@ -12747,7 +12749,17 @@ managed_component_diagnose_json() {
     fi
   fi
   [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]] && instance_pending=true
-  [[ -e "${SB_PROJECT_DIR}.component-write.lock" ]] && component_pending=true
+  if [[ -e "${SB_COMPONENT_TRANSACTION_DIR}" ]]; then
+    component_pending=true
+    if [[ -f "${SB_COMPONENT_TRANSACTION_DIR}/transaction.json" &&
+          ! -L "${SB_COMPONENT_TRANSACTION_DIR}/transaction.json" ]] &&
+       component_transaction_phase=$(jq -r '.phase // "untrusted"' \
+         "${SB_COMPONENT_TRANSACTION_DIR}/transaction.json"); then
+      :
+    else
+      component_transaction_phase=untrusted
+    fi
+  fi
 
   jq -cn --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" --arg revision "$(jq -r '.revision' <<< "${state}")" \
     --arg config_status "${config_status}" --arg graph_status "${graph_status}" \
@@ -12755,13 +12767,15 @@ managed_component_diagnose_json() {
     --arg service_state "${service_state:-unknown}" --arg firewall_status "${firewall_status}" \
     --argjson config_present "${config_present}" --argjson component_count "$(jq -r '.components | length' <<< "${state}")" \
     --argjson firewall_rules "${firewall_rules}" --argjson instance_pending "${instance_pending}" \
-    --argjson component_pending "${component_pending}" --argjson inventory "${inventory}" \
+    --argjson component_pending "${component_pending}" --arg component_phase "${component_transaction_phase}" \
+    --argjson inventory "${inventory}" \
     '{schema:$schema,action:"component-diagnose",
       state:{revision:($revision|tonumber),component_count:$component_count,valid:true},
       config:{status:$config_status,present:$config_present,graph:$graph_status,listener_resources:$listener_status,core_check:$core_status},
       service:{active_state:$service_state},
       firewall:{ledger_status:$firewall_status,managed_rule_count:$firewall_rules},
-      transactions:{instance_write_pending:$instance_pending,component_write_pending:$component_pending},
+      transactions:{instance_write_pending:$instance_pending,component_write_pending:$component_pending,
+        component_write_phase:$component_phase},
       components:$inventory.components,supported:$inventory.supported}'
 }
 
@@ -12809,7 +12823,7 @@ managed_component_state_apply() {
   local takeover_records takeover_status result_count=0
   local firewall_journal=""
   local firewall_summary='{"status":"not_attempted","backends":[],"diagnostics":[]}'
-  local result_id
+  local result_id candidate_revision lock_dir="${SB_COMPONENT_TRANSACTION_DIR}" before_active=false owner_pid owner_start=""
   MANAGED_COMPONENT_LAST_ERROR=""
   MANAGED_COMPONENT_LAST_RESULT=""
   result_record='{}'
@@ -12817,9 +12831,29 @@ managed_component_state_apply() {
   [[ ! -L "${SB_PROJECT_DIR}" ]] || { MANAGED_COMPONENT_LAST_ERROR=component_write_failed; return 1; }
   mkdir -p "${SB_PROJECT_DIR}" || { MANAGED_COMPONENT_LAST_ERROR=component_write_failed; return 1; }
   acquire_managed_write_lock || { MANAGED_COMPONENT_LAST_ERROR=component_write_busy; return 1; }
+  if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" || -L "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
+    MANAGED_COMPONENT_LAST_ERROR=instance_transaction_pending
+    return 1
+  fi
   state=$(managed_component_state_json) || { MANAGED_COMPONENT_LAST_ERROR=state_invalid; return 1; }
   current_revision=$(jq -r '.revision | tostring' <<< "${state}") || { MANAGED_COMPONENT_LAST_ERROR=state_invalid; return 1; }
   [[ "${expected}" == "${current_revision}" ]] || { MANAGED_COMPONENT_LAST_ERROR=revision_mismatch; return 1; }
+  [[ ! -e "${lock_dir}" && ! -L "${lock_dir}" ]] || {
+    MANAGED_COMPONENT_LAST_ERROR=component_transaction_pending
+    return 1
+  }
+  owner_pid=${BASHPID:-$$}
+  owner_start=$(awk '{print $22}' "/proc/${owner_pid}/stat") || {
+    MANAGED_COMPONENT_LAST_ERROR=component_transaction_begin_failed
+    return 1
+  }
+  [[ "${owner_start}" =~ ^[0-9]+$ ]] || {
+    MANAGED_COMPONENT_LAST_ERROR=component_transaction_begin_failed
+    return 1
+  }
+  if [[ -f "${SINGBOX_SERVICE_FILE}" ]] && systemctl is-active sing-box >/dev/null 2>&1; then
+    before_active=true
+  fi
   case "${operation}" in
     create|replace)
       record=$(managed_component_normalize_input_file "${input}") || { MANAGED_COMPONENT_LAST_ERROR=record_invalid; return 1; }
@@ -12880,25 +12914,50 @@ managed_component_state_apply() {
     *) MANAGED_COMPONENT_LAST_ERROR=invalid_operation; return 1 ;;
   esac
 
-  snapshot=$(create_managed_state_snapshot) || { MANAGED_COMPONENT_LAST_ERROR=snapshot_failed; return 1; }
+  if ! managed_component_transaction_begin "${lock_dir}" "${operation}" "${expected}" \
+    "${before_active}" "${owner_pid}" "${owner_start}"; then
+    MANAGED_COMPONENT_LAST_ERROR=component_transaction_begin_failed
+    return 1
+  fi
+  snapshot="${lock_dir}/snapshot"
+  if ! create_managed_state_snapshot "${snapshot}" >/dev/null; then
+    if ! rm -rf -- "${lock_dir}"; then
+      MANAGED_COMPONENT_LAST_ERROR=component_cleanup_failed
+    else
+      MANAGED_COMPONENT_LAST_ERROR=snapshot_failed
+    fi
+    return 1
+  fi
+  candidate_revision=$(jq -r '.revision' <<< "${candidate}") || {
+    managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件事务 revision 读取失败" || :
+    MANAGED_COMPONENT_LAST_ERROR=component_transaction_write_failed
+    return 1
+  }
+  if ! managed_component_transaction_checkpoint "${lock_dir}" snapshot ||
+     ! managed_component_transaction_set_revision "${lock_dir}" "${candidate_revision}" ||
+     ! managed_component_transaction_checkpoint "${lock_dir}" publish; then
+    managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件事务日志写入失败" || :
+    MANAGED_COMPONENT_LAST_ERROR=component_transaction_write_failed
+    return 1
+  fi
   old_config="${snapshot}/project/config.json"
   [[ -f "${old_config}" && ! -L "${old_config}" ]] || old_config=""
   if [[ "${state_changed}" == true ]]; then
     if ! managed_component_write_state "${candidate}"; then
-      managed_component_abort_state_transaction "${snapshot}" "高级组件状态写入失败" || :
+      managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件状态写入失败" || :
       MANAGED_COMPONENT_LAST_ERROR=state_write_failed
       return 1
     fi
   fi
   if ! generate_config ||
      [[ ! -f "${SINGBOX_CONFIG_FILE}" || -L "${SINGBOX_CONFIG_FILE}" ]]; then
-    managed_component_abort_state_transaction "${snapshot}" "高级组件配置生成或校验失败" || :
+    managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件配置生成或校验失败" || :
     MANAGED_COMPONENT_LAST_ERROR=config_check_failed
     return 1
   fi
   if [[ "${operation}" == takeover ]] &&
      ! managed_component_takeover_preserves_live_config "${old_config}" "${SINGBOX_CONFIG_FILE}"; then
-    managed_component_abort_state_transaction "${snapshot}" "高级组件接管会丢失现有配置对象或路由规则" || :
+    managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件接管会丢失现有配置对象或路由规则" || :
     MANAGED_COMPONENT_LAST_ERROR=config_check_failed
     return 1
   fi
@@ -12908,13 +12967,13 @@ managed_component_state_apply() {
   # the state snapshot so a file/config rollback and external resource
   # compensation share one bounded recovery material set.
   new_listener_plan=$(managed_listener_plan "${SINGBOX_CONFIG_FILE}") || {
-    managed_component_abort_state_transaction "${snapshot}" "高级组件监听资源预检失败" || :
+    managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件监听资源预检失败" || :
     MANAGED_COMPONENT_LAST_ERROR=config_check_failed
     return 1
   }
   if [[ -n "${old_config}" ]]; then
     old_listener_plan=$(managed_listener_plan "${old_config}") || {
-      managed_component_abort_state_transaction "${snapshot}" "高级组件旧监听资源预检失败" || :
+      managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件旧监听资源预检失败" || :
       MANAGED_COMPONENT_LAST_ERROR=config_check_failed
       return 1
     }
@@ -12922,10 +12981,23 @@ managed_component_state_apply() {
     old_listener_plan='[]'
   fi
   if [[ "${old_listener_plan}" != "${new_listener_plan}" ]]; then
+    if ! managed_component_transaction_set_firewall_expected "${lock_dir}" true ||
+       ! managed_component_transaction_checkpoint "${lock_dir}" resources; then
+      managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件事务资源阶段记录失败" || :
+      MANAGED_COMPONENT_LAST_ERROR=component_transaction_write_failed
+      return 1
+    fi
+  elif ! managed_component_transaction_set_firewall_expected "${lock_dir}" false ||
+       ! managed_component_transaction_checkpoint "${lock_dir}" resources; then
+    managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件事务资源阶段记录失败" || :
+    MANAGED_COMPONENT_LAST_ERROR=component_transaction_write_failed
+    return 1
+  fi
+  if [[ "${old_listener_plan}" != "${new_listener_plan}" ]]; then
     firewall_journal="${snapshot}/component-firewall.json"
     if ! instance_firewall_prepare "${old_config}" "${SINGBOX_CONFIG_FILE}" "${firewall_journal}"; then
       firewall_summary=$(instance_transaction_firewall_summary "${firewall_journal}")
-      managed_component_abort_state_transaction "${snapshot}" "高级组件防火墙资源预检失败" || :
+      managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件防火墙资源预检失败" || :
       MANAGED_COMPONENT_LAST_ERROR=firewall_prepare_failed
       return 1
     fi
@@ -12944,13 +13016,29 @@ managed_component_state_apply() {
         return 1
       fi
       firewall_summary=$(instance_transaction_firewall_summary "${firewall_journal}")
-      managed_component_abort_state_transaction "${snapshot}" "高级组件防火墙资源应用失败" || :
+      managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件防火墙资源应用失败" || :
       MANAGED_COMPONENT_LAST_ERROR=firewall_apply_failed
       return 1
     fi
     firewall_summary=$(instance_transaction_firewall_summary "${firewall_journal}")
   fi
-  if [[ -f "${SINGBOX_SERVICE_FILE}" ]] && systemctl is-active sing-box >/dev/null 2>&1; then
+  if ! managed_component_transaction_checkpoint "${lock_dir}" service; then
+    if [[ -n "${firewall_journal}" ]] && ! instance_firewall_rollback "${firewall_journal}"; then
+      MANAGED_COMPONENT_LAST_ERROR=firewall_rollback_failed
+      if restore_managed_state_snapshot "${snapshot}"; then
+        printf '[ERROR] 高级组件事务服务阶段记录失败且防火墙回滚不确定；文件状态已恢复，事务目录保留在 %s。\n' \
+          "${lock_dir}" >&2
+      else
+        printf '[ERROR] 高级组件事务服务阶段记录失败且自动回滚失败；事务目录保留在 %s。\n' \
+          "${lock_dir}" >&2
+      fi
+      return 1
+    fi
+    managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件事务服务阶段记录失败" || :
+    MANAGED_COMPONENT_LAST_ERROR=component_transaction_write_failed
+    return 1
+  fi
+  if [[ "${before_active}" == true ]]; then
     if ! systemctl restart sing-box >/dev/null 2>&1 ||
        [[ "$(systemctl is-active sing-box 2>/dev/null || true)" != active ]]; then
       if [[ -n "${firewall_journal}" ]]; then
@@ -12967,7 +13055,7 @@ managed_component_state_apply() {
         fi
         firewall_summary=$(instance_transaction_firewall_summary "${firewall_journal}")
       fi
-      managed_component_abort_state_transaction "${snapshot}" "高级组件服务重启失败" || :
+      managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件服务重启失败" y || :
       MANAGED_COMPONENT_LAST_ERROR=service_restart_failed
       return 1
     fi
@@ -12988,14 +13076,30 @@ managed_component_state_apply() {
         return 1
       fi
       firewall_summary=$(instance_transaction_firewall_summary "${firewall_journal}")
-      managed_component_abort_state_transaction "${snapshot}" "高级组件防火墙资源提交失败" || :
+      managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件防火墙资源提交失败" y || :
       MANAGED_COMPONENT_LAST_ERROR=firewall_commit_failed
       return 1
     fi
     firewall_summary=$(instance_transaction_firewall_summary "${firewall_journal}")
   fi
-  if ! discard_managed_state_snapshot "${snapshot}"; then
-    MANAGED_COMPONENT_LAST_ERROR=snapshot_cleanup_failed
+  if ! managed_component_transaction_checkpoint "${lock_dir}" committed; then
+    if [[ -n "${firewall_journal}" ]] && ! instance_firewall_rollback "${firewall_journal}"; then
+      MANAGED_COMPONENT_LAST_ERROR=firewall_rollback_failed
+      if restore_managed_state_snapshot "${snapshot}"; then
+        printf '[ERROR] 高级组件事务提交记录失败且防火墙回滚不确定；文件状态已恢复，事务目录保留在 %s。\n' \
+          "${lock_dir}" >&2
+      else
+        printf '[ERROR] 高级组件事务提交记录失败且自动回滚失败；事务目录保留在 %s。\n' \
+          "${lock_dir}" >&2
+      fi
+      return 1
+    fi
+    managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件事务提交记录失败" y || :
+    MANAGED_COMPONENT_LAST_ERROR=component_transaction_write_failed
+    return 1
+  fi
+  if ! rm -rf -- "${lock_dir}"; then
+    MANAGED_COMPONENT_LAST_ERROR=component_cleanup_failed
     return 1
   fi
   role=$(jq -r '.role // empty' <<< "${result_record}")
@@ -13030,7 +13134,8 @@ managed_state_snapshot_is_valid() {
   local snapshot_dir=$1
 
   [[ "${snapshot_dir}" == /tmp/sing-box-vps-state.* ||
-     "${snapshot_dir}" == "${SB_PROJECT_DIR}.instance-write.lock/snapshot" ]] || return 1
+     "${snapshot_dir}" == "${SB_PROJECT_DIR}.instance-write.lock/snapshot" ||
+     "${snapshot_dir}" == "${SB_COMPONENT_TRANSACTION_DIR}/snapshot" ]] || return 1
   [[ ! -L "${snapshot_dir}" ]] || return 1
   [[ -d "${snapshot_dir}" && -f "${snapshot_dir}/snapshot.meta" ]] || return 1
   grep -Fqx 'SNAPSHOT_VERSION=1' "${snapshot_dir}/snapshot.meta" || return 1
@@ -13059,8 +13164,10 @@ create_managed_state_snapshot() {
   local snapshot_dir
 
   if [[ $# -gt 0 ]]; then
-    [[ "$1" == "${SB_PROJECT_DIR}.instance-write.lock/snapshot" &&
-       -d "${SB_PROJECT_DIR}.instance-write.lock" && ! -L "${SB_PROJECT_DIR}.instance-write.lock" ]] || return 1
+    [[ ("$1" == "${SB_PROJECT_DIR}.instance-write.lock/snapshot" &&
+        -d "${SB_PROJECT_DIR}.instance-write.lock" && ! -L "${SB_PROJECT_DIR}.instance-write.lock") ||
+       ("$1" == "${SB_COMPONENT_TRANSACTION_DIR}/snapshot" &&
+        -d "${SB_COMPONENT_TRANSACTION_DIR}" && ! -L "${SB_COMPONENT_TRANSACTION_DIR}") ]] || return 1
     snapshot_dir=$1
     mkdir -m 700 "${snapshot_dir}" || return 1
   else
@@ -13203,6 +13310,397 @@ managed_component_abort_state_transaction() {
       "${failure_message}" "${snapshot_dir}" >&2
   fi
   return 1
+}
+
+# Advanced component mutations use a durable journal.  The management flock
+# serializes live writers, while this directory survives an abrupt process or
+# host interruption and gives the next operator a bounded recovery path.
+MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=""
+MANAGED_COMPONENT_RECOVERY_LAST_ERROR=""
+
+managed_component_transaction_path_is_trusted() {
+  local lock_dir=${1:-}
+
+  [[ "${lock_dir}" == "${SB_COMPONENT_TRANSACTION_DIR}" &&
+     -d "${lock_dir}" && ! -L "${lock_dir}" ]]
+}
+
+managed_component_transaction_begin() {
+  local lock_dir=${1:-} operation=${2:-} expected_revision=${3:-}
+  local before_active=${4:-false} owner_pid=${5:-} owner_start=${6:-}
+  local transaction_next
+
+  [[ "${lock_dir}" == "${SB_COMPONENT_TRANSACTION_DIR}" &&
+     ! -e "${lock_dir}" && ! -L "${lock_dir}" ]] || return 1
+  [[ "${operation}" =~ ^(create|replace|delete|rebuild|takeover)$ ]] || return 1
+  [[ "${expected_revision}" =~ ^(0|[1-9][0-9]{0,15})$ ]] || return 1
+  [[ "${before_active}" == true || "${before_active}" == false ]] || return 1
+  [[ "${owner_pid}" =~ ^[1-9][0-9]*$ && "${owner_start}" =~ ^[0-9]+$ ]] || return 1
+
+  umask 077
+  mkdir -m 700 "${lock_dir}" || return 1
+  transaction_next="${lock_dir}/transaction.next"
+  if ! jq -n \
+    --arg operation "${operation}" \
+    --arg expected "${expected_revision}" \
+    --argjson pid "${owner_pid}" \
+    --arg start "${owner_start}" \
+    --argjson before "${before_active}" \
+    '{schema_version:1,operation:$operation,expected_revision:$expected,
+      owner_pid:$pid,owner_start:$start,before_active:$before,phase:"prepare",
+      new_revision:null,firewall_expected:false}' > "${transaction_next}"; then
+    rm -rf -- "${lock_dir}"
+    return 1
+  fi
+  if ! chmod 600 "${transaction_next}"; then
+    rm -rf -- "${lock_dir}"
+    return 1
+  fi
+  if ! mv -f -- "${transaction_next}" "${lock_dir}/transaction.json"; then
+    rm -rf -- "${lock_dir}"
+    return 1
+  fi
+}
+
+managed_component_transaction_checkpoint() {
+  local lock_dir=${1:-} phase=${2:-} transaction_next
+
+  managed_component_transaction_path_is_trusted "${lock_dir}" || return 1
+  [[ -f "${lock_dir}/transaction.json" && ! -L "${lock_dir}/transaction.json" ]] || return 1
+  [[ "${phase}" =~ ^(prepare|snapshot|publish|resources|service|committed)$ ]] || return 1
+  transaction_next="${lock_dir}/transaction.next"
+  if ! jq --arg phase "${phase}" '.phase=$phase' \
+    "${lock_dir}/transaction.json" > "${transaction_next}"; then
+    rm -f -- "${transaction_next}"
+    return 1
+  fi
+  chmod 600 "${transaction_next}" || return 1
+  mv -f -- "${transaction_next}" "${lock_dir}/transaction.json"
+}
+
+managed_component_transaction_set_revision() {
+  local lock_dir=${1:-} revision=${2:-} transaction_next
+
+  managed_component_transaction_path_is_trusted "${lock_dir}" || return 1
+  [[ -f "${lock_dir}/transaction.json" && ! -L "${lock_dir}/transaction.json" &&
+     "${revision}" =~ ^(0|[1-9][0-9]{0,15})$ ]] || return 1
+  transaction_next="${lock_dir}/transaction.next"
+  if ! jq --argjson revision "${revision}" '.new_revision=$revision' \
+    "${lock_dir}/transaction.json" > "${transaction_next}"; then
+    rm -f -- "${transaction_next}"
+    return 1
+  fi
+  chmod 600 "${transaction_next}" || return 1
+  mv -f -- "${transaction_next}" "${lock_dir}/transaction.json"
+}
+
+managed_component_transaction_set_firewall_expected() {
+  local lock_dir=${1:-} expected=${2:-false} transaction_next
+
+  managed_component_transaction_path_is_trusted "${lock_dir}" || return 1
+  [[ -f "${lock_dir}/transaction.json" && ! -L "${lock_dir}/transaction.json" &&
+     ("${expected}" == true || "${expected}" == false) ]] || return 1
+  transaction_next="${lock_dir}/transaction.next"
+  if ! jq --argjson expected "${expected}" '.firewall_expected=$expected' \
+    "${lock_dir}/transaction.json" > "${transaction_next}"; then
+    rm -f -- "${transaction_next}"
+    return 1
+  fi
+  chmod 600 "${transaction_next}" || return 1
+  mv -f -- "${transaction_next}" "${lock_dir}/transaction.json"
+}
+
+managed_component_transaction_restore() {
+  local lock_dir=${1:-} before_active firewall_expected firewall_journal
+  local status=0 service_state
+  MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=""
+
+  managed_component_transaction_path_is_trusted "${lock_dir}" || {
+    MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=component_rollback_failed
+    return 1
+  }
+  [[ -f "${lock_dir}/transaction.json" && ! -L "${lock_dir}/transaction.json" ]] || {
+    MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=component_rollback_failed
+    return 1
+  }
+  before_active=$(jq -r '.before_active' "${lock_dir}/transaction.json") || {
+    MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=component_rollback_failed
+    return 1
+  }
+  firewall_expected=$(jq -r '.firewall_expected' "${lock_dir}/transaction.json") || {
+    MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=component_rollback_failed
+    return 1
+  }
+  firewall_journal="${lock_dir}/snapshot/component-firewall.json"
+  if [[ -e "${firewall_journal}" || -L "${firewall_journal}" ]]; then
+    if [[ ! -f "${firewall_journal}" || -L "${firewall_journal}" ]]; then
+      MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=firewall_rollback_failed
+      return 1
+    fi
+    if ! instance_firewall_rollback "${firewall_journal}"; then
+      MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=firewall_rollback_failed
+      status=1
+    fi
+  elif [[ "${firewall_expected}" == true ]]; then
+    printf '[ERROR] 高级组件事务防火墙日志缺失；无法证明外部状态已恢复。\n' >&2
+    MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=firewall_rollback_failed
+    status=1
+  fi
+
+  if ! managed_state_snapshot_is_valid "${lock_dir}/snapshot" ||
+     ! restore_managed_state_snapshot "${lock_dir}/snapshot"; then
+    printf '[ERROR] 高级组件事务状态快照恢复失败；事务目录已保留供人工处理。\n' >&2
+    MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=${MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR:-component_rollback_failed}
+    return 1
+  fi
+
+  if [[ "${before_active}" == true ]]; then
+    if [[ ! -f "${SINGBOX_SERVICE_FILE}" ]] ||
+       ! systemctl restart sing-box >/dev/null 2>&1 ||
+       ! systemctl is-active --quiet sing-box; then
+      MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=${MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR:-component_rollback_failed}
+      status=1
+    fi
+  elif [[ -f "${SINGBOX_SERVICE_FILE}" ]]; then
+    service_state=$(systemctl is-active sing-box 2>/dev/null || printf 'unknown')
+    case "${service_state}" in
+      active)
+        if ! systemctl stop sing-box >/dev/null 2>&1 || ! singbox_service_confirmed_stopped; then
+          MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=${MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR:-component_rollback_failed}
+          status=1
+        fi
+        ;;
+      inactive|failed) ;;
+      *)
+        MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=${MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR:-component_rollback_failed}
+        status=1
+        ;;
+    esac
+  fi
+  return "${status}"
+}
+
+managed_component_restore_service_activity() {
+  local lock_dir=${1:-} before_active service_state
+
+  managed_component_transaction_path_is_trusted "${lock_dir}" || return 1
+  [[ -f "${lock_dir}/transaction.json" && ! -L "${lock_dir}/transaction.json" ]] || return 1
+  before_active=$(jq -r '.before_active' "${lock_dir}/transaction.json") || return 1
+  if [[ "${before_active}" == true ]]; then
+    [[ -f "${SINGBOX_SERVICE_FILE}" ]] || return 1
+    systemctl restart sing-box >/dev/null 2>&1 || return 1
+    systemctl is-active --quiet sing-box
+    return $?
+  fi
+  [[ -f "${SINGBOX_SERVICE_FILE}" ]] || return 0
+  service_state=$(systemctl is-active sing-box 2>/dev/null || printf 'unknown')
+  case "${service_state}" in
+    inactive|failed) return 0 ;;
+    active)
+      systemctl stop sing-box >/dev/null 2>&1 || return 1
+      singbox_service_confirmed_stopped
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+managed_component_abort_component_transaction() {
+  local lock_dir=${1:-} snapshot_dir=${2:-} failure_message=${3:-} restore_service=${4:-n}
+
+  if [[ -n "${snapshot_dir}" ]] && managed_state_snapshot_is_valid "${snapshot_dir}" &&
+     restore_managed_state_snapshot "${snapshot_dir}"; then
+    if [[ "${restore_service}" == y ]] && ! managed_component_restore_service_activity "${lock_dir}"; then
+      printf '[ERROR] %s，配置状态已恢复但服务活动状态恢复失败；事务目录保留在 %s。\n' \
+        "${failure_message}" "${lock_dir}" >&2
+    elif rm -rf -- "${lock_dir}"; then
+      printf '[ERROR] %s，已恢复变更前的配置状态。\n' "${failure_message}" >&2
+    else
+      printf '[ERROR] %s，配置状态已恢复但事务目录未能删除：%s。\n' \
+        "${failure_message}" "${lock_dir}" >&2
+    fi
+  else
+    printf '[ERROR] %s，且自动回滚失败；事务目录保留在 %s。\n' \
+      "${failure_message}" "${lock_dir}" >&2
+  fi
+  return 1
+}
+
+managed_component_recovery_result_json() {
+  local operation=${1:-unknown} revision=${2:-0} phase=${3:-prepare} status=${4:-unchanged}
+
+  jq -cn --arg operation "${operation}" --arg revision "${revision}" --arg phase "${phase}" \
+    --arg status "${status}" \
+    '{ok:true,action:"component-recover",operation:$operation,revision:($revision|tonumber),
+      status:$status,transaction:{phase:$phase,manual_intervention_required:false}}'
+}
+
+managed_component_recover_transaction() {
+  local expected_revision=${1:-} lock_dir="${SB_COMPONENT_TRANSACTION_DIR}"
+  local recovery_entries transaction_expected owner_pid owner_start current_start=""
+  local phase operation revision snapshot recovery_fd state current_revision
+  local recovery_error
+  MANAGED_COMPONENT_RECOVERY_LAST_ERROR=""
+  MANAGED_COMPONENT_RECOVERY_LAST_RESULT=""
+
+  [[ ${EUID} -eq 0 ]] || {
+    MANAGED_COMPONENT_RECOVERY_LAST_ERROR=root_required
+    agent_json_error root_required "恢复必须以 root 执行。"
+    return 1
+  }
+  [[ "${expected_revision}" =~ ^(0|[1-9][0-9]{0,15})$ ]] || {
+    MANAGED_COMPONENT_RECOVERY_LAST_ERROR=invalid_arguments
+    agent_json_error invalid_arguments "组件恢复需要有效的 --expected-revision。"
+    return 1
+  }
+  acquire_managed_write_lock || {
+    MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_write_busy
+    agent_json_error component_write_busy "另一个管理进程正在执行；未开始组件恢复。"
+    return 1
+  }
+  if [[ ! -e "${lock_dir}" ]]; then
+    MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_recovery_unavailable
+    agent_json_error component_recovery_unavailable "未找到可验证的待恢复高级组件事务。"
+    return 1
+  fi
+  managed_component_transaction_path_is_trusted "${lock_dir}" || {
+    MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_recovery_untrusted
+    agent_json_error component_recovery_untrusted "高级组件事务目录不可信；未修改。"
+    return 1
+  }
+  if [[ ! -e "${lock_dir}/transaction.json" ]]; then
+    recovery_entries=$(find "${lock_dir}" -mindepth 1 -maxdepth 1 -printf '%f\n') || {
+      MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_recovery_untrusted
+      agent_json_error component_recovery_untrusted "高级组件事务目录无法安全读取；未修改。"
+      return 1
+    }
+    if [[ -n "${recovery_entries}" && "${recovery_entries}" != transaction.next ]] ||
+       [[ -e "${lock_dir}/transaction.next" &&
+          ( ! -f "${lock_dir}/transaction.next" || -L "${lock_dir}/transaction.next" ) ]]; then
+      MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_recovery_untrusted
+      agent_json_error component_recovery_untrusted "主日志缺失且发现已准备材料；无法证明未发生变更。"
+      return 1
+    fi
+    if ! rm -rf -- "${lock_dir}"; then
+      MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_cleanup_failed
+      agent_json_error component_cleanup_failed "组件事务未发生发布，但事务目录清理失败。"
+      return 1
+    fi
+    MANAGED_COMPONENT_RECOVERY_LAST_RESULT=$(managed_component_recovery_result_json unknown "${expected_revision}" prepare unchanged) || return 1
+    printf '%s\n' "${MANAGED_COMPONENT_RECOVERY_LAST_RESULT}"
+    return 0
+  fi
+  [[ -f "${lock_dir}/transaction.json" && ! -L "${lock_dir}/transaction.json" ]] || {
+    MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_recovery_untrusted
+    agent_json_error component_recovery_untrusted "高级组件事务主日志不是可信普通文件；未修改。"
+    return 1
+  }
+  if ! jq -e '
+    .schema_version == 1 and
+    (.operation | IN("create","replace","delete","rebuild","takeover")) and
+    (.owner_pid | type == "number" and . == floor and . > 0) and
+    (.owner_start | type == "string" and test("^[0-9]+$")) and
+    (.before_active | type == "boolean") and
+    (.phase | IN("prepare","snapshot","publish","resources","service","committed")) and
+    (.new_revision == null or (.new_revision | type == "number" and . == floor and . >= 0 and . <= 9007199254740991)) and
+    (.firewall_expected | type == "boolean")
+  ' "${lock_dir}/transaction.json" >/dev/null 2>&1; then
+    MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_recovery_untrusted
+    agent_json_error component_recovery_untrusted "高级组件事务日志无法验证；请保留目录人工检查。"
+    return 1
+  fi
+  transaction_expected=$(jq -r '.expected_revision' "${lock_dir}/transaction.json") || return 1
+  if [[ "${transaction_expected}" != "${expected_revision}" ]]; then
+    MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_revision_mismatch
+    agent_json_error component_revision_mismatch "组件事务原 revision 与请求不匹配；未恢复。"
+    return 1
+  fi
+  operation=$(jq -r '.operation' "${lock_dir}/transaction.json") || return 1
+  owner_pid=$(jq -r '.owner_pid' "${lock_dir}/transaction.json") || return 1
+  owner_start=$(jq -r '.owner_start' "${lock_dir}/transaction.json") || return 1
+  if [[ -r "/proc/${owner_pid}/stat" ]]; then
+    current_start=$(awk '{print $22}' "/proc/${owner_pid}/stat") || {
+      MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_recovery_untrusted
+      agent_json_error component_recovery_untrusted "无法验证原组件写进程；未恢复。"
+      return 1
+    }
+    if [[ "${current_start}" == "${owner_start}" ]]; then
+      MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_transaction_active
+      agent_json_error component_transaction_active "原组件写进程仍在运行；禁止并发恢复。"
+      return 1
+    fi
+  fi
+  command -v flock >/dev/null 2>&1 && [[ ! -L "${lock_dir}/recovery.flock" ]] || {
+    MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_recovery_unavailable
+    agent_json_error component_recovery_unavailable "组件恢复需要可用且可信的 flock。"
+    return 1
+  }
+  exec {recovery_fd}>"${lock_dir}/recovery.flock" || {
+    MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_recovery_unavailable
+    agent_json_error component_recovery_unavailable "无法打开组件恢复锁；未修改。"
+    return 1
+  }
+  flock -n "${recovery_fd}" || {
+    MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_recovery_active
+    agent_json_error component_recovery_active "另一个恢复进程已取得组件恢复锁。"
+    return 1
+  }
+  phase=$(jq -r '.phase' "${lock_dir}/transaction.json") || return 1
+  revision=$(jq -r '.new_revision // .expected_revision' "${lock_dir}/transaction.json") || return 1
+  snapshot="${lock_dir}/snapshot"
+  if [[ "${phase}" == committed ]]; then
+    state=$(managed_component_state_json) || {
+      MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_recovery_untrusted
+      agent_json_error component_recovery_untrusted "已提交组件事务的当前 state 无法安全读取；事务目录保留。"
+      return 1
+    }
+    current_revision=$(jq -r '.revision | tostring' <<< "${state}") || return 1
+    if [[ "${current_revision}" != "${revision}" ]]; then
+      MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_recovery_untrusted
+      agent_json_error component_recovery_untrusted "已提交组件事务 revision 与当前 state 不一致；事务目录保留。"
+      return 1
+    fi
+    if ! rm -rf -- "${lock_dir}"; then
+      MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_cleanup_failed
+      agent_json_error component_cleanup_failed "组件事务已提交，但事务目录清理失败。"
+      return 1
+    fi
+    MANAGED_COMPONENT_RECOVERY_LAST_RESULT=$(managed_component_recovery_result_json "${operation}" "${revision}" "${phase}" committed) || return 1
+    printf '%s\n' "${MANAGED_COMPONENT_RECOVERY_LAST_RESULT}"
+    return 0
+  fi
+  if [[ "${phase}" == prepare && ! -e "${snapshot}" ]]; then
+    if ! rm -rf -- "${lock_dir}"; then
+      MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_cleanup_failed
+      agent_json_error component_cleanup_failed "组件事务尚未发布，但事务目录清理失败。"
+      return 1
+    fi
+    MANAGED_COMPONENT_RECOVERY_LAST_RESULT=$(managed_component_recovery_result_json "${operation}" "${expected_revision}" "${phase}" unchanged) || return 1
+    printf '%s\n' "${MANAGED_COMPONENT_RECOVERY_LAST_RESULT}"
+    return 0
+  fi
+  if ! managed_state_snapshot_is_valid "${snapshot}"; then
+    MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_recovery_untrusted
+    agent_json_error component_recovery_untrusted "组件事务快照缺失或不可信；未自动恢复。"
+    return 1
+  fi
+  if ! managed_component_transaction_restore "${lock_dir}"; then
+    recovery_error=${MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR:-component_rollback_failed}
+    MANAGED_COMPONENT_RECOVERY_LAST_ERROR=${recovery_error}
+    case "${recovery_error}" in
+      firewall_rollback_failed)
+        agent_json_error firewall_rollback_failed "组件事务状态已尝试恢复，但防火墙外部资源仍不确定；事务目录已保留。" ;;
+      *)
+        agent_json_error component_rollback_failed "组件事务自动回滚失败；事务目录已保留供人工恢复。" ;;
+    esac
+    return 1
+  fi
+  if ! rm -rf -- "${lock_dir}"; then
+    MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_cleanup_failed
+    agent_json_error component_cleanup_failed "组件事务已回滚，但事务目录清理失败。"
+    return 1
+  fi
+  MANAGED_COMPONENT_RECOVERY_LAST_RESULT=$(managed_component_recovery_result_json "${operation}" "${expected_revision}" "${phase}" rolled_back) || return 1
+  printf '%s\n' "${MANAGED_COMPONENT_RECOVERY_LAST_RESULT}"
 }
 
 # Validate only managed candidates, not arbitrary existing configurations on
@@ -20272,6 +20770,7 @@ agent_print_help() {
   sbv agent warp --json
   sbv agent component list|diagnose --json
   sbv agent component export --json --id ID [--expected-revision N]
+  sbv agent component recover --json --yes --expected-revision N
   sbv agent component takeover --json --yes --expected-revision N [--allow-public]
   sbv agent component rebuild --json --yes --expected-revision N
   sbv agent component create|replace --json --yes --expected-revision N --file component.json [--allow-public]
@@ -20290,7 +20789,7 @@ agent_print_help() {
   links         输出完整连接材料，适合受信任 Agent 获取节点信息。
   export-client 生成并校验 sing-box 裸核客户端配置，写入固定路径并输出 JSON。
   warp          输出 Cloudflare Warp 状态，包括启用/路由模式/账户/规则统计。
-  component     管理 direct/tun/redirect/tproxy/cloudflared 入站、WireGuard/Tailscale/OpenConnect/OpenVPN endpoint 以及 SSH/Tor/分组等出站；list/diagnose 只读，export 仅按 ID 输出敏感配置，takeover/rebuild/create/replace/delete 使用 CAS 事务。
+  component     管理 direct/tun/redirect/tproxy/cloudflared 入站、WireGuard/Tailscale/OpenConnect/OpenVPN endpoint 以及 SSH/Tor/分组等出站；list/diagnose 只读，export 仅按 ID 输出敏感配置，recover/takeover/rebuild/create/replace/delete 使用 CAS 与持久事务。
   check         执行 sing-box check 并输出结构化结果。
   doctor        输出只读诊断信息和配置校验结果。
   service       执行带 --yes 保护的服务操作，目前支持 restart。
@@ -20455,6 +20954,7 @@ agent_capabilities_json() {
     --arg supported_version "${SB_SUPPORT_MAX_VERSION}" \
     --arg backup_root "${SB_UPGRADE_BACKUP_ROOT}" \
     --arg component_state_file "${SB_COMPONENT_STATE_FILE}" \
+    --arg component_transaction_dir "${SB_COMPONENT_TRANSACTION_DIR}" \
     --argjson registry "${registry}" \
     --argjson components "${components}" \
     '{
@@ -20533,7 +21033,8 @@ agent_capabilities_json() {
         components: {
           state_file: $component_state_file,
           schema_version: 1,
-          operations: ["list", "diagnose", "export", "takeover", "rebuild", "create", "replace", "delete"],
+          operations: ["list", "diagnose", "export", "recover", "takeover", "rebuild", "create", "replace", "delete"],
+          recovery_operations: ["recover"],
           read_only_operations: ["list", "diagnose", "export"],
           sensitive_operations: ["export"],
           diagnosis_fields: ["state", "config", "service", "firewall", "transactions"],
@@ -20543,7 +21044,9 @@ agent_capabilities_json() {
           route_rules: true,
           reference_protection: true,
           service_restart_if_active: true,
-          config_check: true
+          config_check: true,
+          persistent_recovery_journal: true,
+          transaction_directory: $component_transaction_dir
         }
       },
       commands: {
@@ -23659,6 +24162,10 @@ recover_plain_proxy_instance_transaction() (
   acquire_managed_write_lock || {
     agent_json_error instance_write_busy "另一个管理进程正在执行；未开始恢复。"; return 1;
   }
+  if [[ -e "${SB_COMPONENT_TRANSACTION_DIR}" || -L "${SB_COMPONENT_TRANSACTION_DIR}" ]]; then
+    agent_json_error component_transaction_pending "存在未完成的高级组件事务；请先完成 component recover。未开始实例恢复。"
+    return 1
+  fi
   [[ -d "${lock_dir}" && ! -L "${lock_dir}" ]] || {
     agent_json_error instance_recovery_unavailable "未找到可验证的待恢复实例事务；未自动删除任何文件。"; return 1;
   }
@@ -23976,6 +24483,19 @@ agent_component_cli() {
     return 1
   fi
 
+  if [[ "${operation}" == recover ]]; then
+    if [[ $# -ne 0 || "${json}" != y || "${confirmed}" != y || "${allow_public}" != n ||
+          -n "${input}" || -n "${component_id}" ||
+          ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
+      agent_json_error invalid_arguments "用法: sbv agent component recover --json --yes --expected-revision N"; return 1
+    fi
+    if ! structured_instance_store_revision_arg "${expected}" >/dev/null; then
+      agent_json_error invalid_arguments "revision 超出安全整数范围；未修改。"; return 1
+    fi
+    managed_component_recover_transaction "${expected}"
+    return $?
+  fi
+
   if [[ "${operation}" == export ]]; then
     if [[ $# -ne 0 || "${json}" != y || "${confirmed}" != n || "${allow_public}" != n ||
           -z "${component_id}" || -n "${input}" ||
@@ -24014,7 +24534,11 @@ agent_component_cli() {
     fi
     case "${MANAGED_COMPONENT_LAST_ERROR:-component_takeover_failed}" in
       revision_mismatch) agent_json_error revision_mismatch "组件 state revision 不匹配；未修改。" ;;
+      instance_transaction_pending) agent_json_error instance_transaction_pending "存在未完成的实例事务；请先完成 instance recover。" ;;
       component_write_busy) agent_json_error component_write_busy "另一个管理进程正在执行；组件未修改。" ;;
+      component_transaction_pending) agent_json_error component_transaction_pending "存在未完成的高级组件事务；请先执行 component recover。" ;;
+      component_transaction_begin_failed|component_transaction_write_failed) agent_json_error component_transaction_failed "高级组件持久事务日志写入失败；未报告成功。" ;;
+      component_cleanup_failed) agent_json_error component_cleanup_failed "组件已提交，但持久事务目录清理失败；请执行 component recover。" ;;
       public_confirmation_required) agent_json_error confirmation_required "现有接管对象包含公开监听或 OpenVPN server；请明确传入 --allow-public。" ;;
       component_live_missing) agent_json_error component_live_missing "当前配置没有可接管的已注册高级入站或 Endpoint。" ;;
       component_live_untrusted) agent_json_error component_live_untrusted "当前配置对象或组件状态无法安全读取；未修改。" ;;
@@ -24044,7 +24568,11 @@ agent_component_cli() {
     fi
     case "${MANAGED_COMPONENT_LAST_ERROR:-component_apply_failed}" in
       revision_mismatch) agent_json_error revision_mismatch "组件 state revision 不匹配；未修改。" ;;
+      instance_transaction_pending) agent_json_error instance_transaction_pending "存在未完成的实例事务；请先完成 instance recover。" ;;
       component_write_busy) agent_json_error component_write_busy "另一个管理进程正在执行；组件未修改。" ;;
+      component_transaction_pending) agent_json_error component_transaction_pending "存在未完成的高级组件事务；请先执行 component recover。" ;;
+      component_transaction_begin_failed|component_transaction_write_failed) agent_json_error component_transaction_failed "高级组件持久事务日志写入失败；未报告成功。" ;;
+      component_cleanup_failed) agent_json_error component_cleanup_failed "组件已提交，但持久事务目录清理失败；请执行 component recover。" ;;
       config_check_failed) agent_json_error config_check_failed "组件重建已回滚；生成的配置未通过图校验、监听校验或 sing-box check。" ;;
       service_restart_failed) agent_json_error service_restart_failed "组件重建已回滚；服务重启失败。" ;;
       firewall_prepare_failed) agent_json_error firewall_prepare_failed "组件重建已回滚；防火墙资源预检失败。" ;;
@@ -24084,6 +24612,7 @@ agent_component_cli() {
   fi
   case "${MANAGED_COMPONENT_LAST_ERROR:-component_apply_failed}" in
     revision_mismatch) agent_json_error revision_mismatch "组件 state revision 不匹配；未修改。" ;;
+    instance_transaction_pending) agent_json_error instance_transaction_pending "存在未完成的实例事务；请先完成 instance recover。" ;;
     public_confirmation_required) agent_json_error confirmation_required "公开监听或隧道组件需要 --allow-public；未修改。" ;;
     component_referenced_or_missing) agent_json_error component_referenced "组件仍被 route/group/detour 引用，或目标不存在；未修改。" ;;
     record_invalid|component_conflict) agent_json_error invalid_component "组件记录无效、类型不受支持或 tag/id 冲突；未修改。" ;;
@@ -24091,6 +24620,9 @@ agent_component_cli() {
     config_check_failed) agent_json_error config_check_failed "组件已回滚；生成的配置未通过图校验或 sing-box check。" ;;
     root_required) agent_json_error root_required "组件写操作必须以 root 执行；未修改。" ;;
     component_write_busy) agent_json_error component_write_busy "另一个管理进程正在执行；组件未修改。" ;;
+    component_transaction_pending) agent_json_error component_transaction_pending "存在未完成的高级组件事务；请先执行 component recover。" ;;
+    component_transaction_begin_failed|component_transaction_write_failed) agent_json_error component_transaction_failed "高级组件持久事务日志写入失败；未报告成功。" ;;
+    component_cleanup_failed) agent_json_error component_cleanup_failed "组件已提交，但持久事务目录清理失败；请执行 component recover。" ;;
     firewall_prepare_failed) agent_json_error firewall_prepare_failed "组件已回滚；防火墙资源预检失败，未执行外部变更。" ;;
     firewall_apply_failed) agent_json_error firewall_apply_failed "组件已回滚；防火墙资源应用失败。" ;;
     firewall_commit_failed) agent_json_error firewall_commit_failed "组件已回滚；防火墙资源提交失败。" ;;
@@ -24287,12 +24819,33 @@ agent_dispatch() {
     instance) agent_cli "$@" ;;
     component)
       case "${2:-}" in
-        list|diagnose|export) (
+        diagnose) (
           if ! acquire_managed_write_lock shared; then
             agent_cli_error "component" instance_write_busy "配置正在被管理进程使用，未返回部分组件状态。"; return 1
           fi
           if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
             agent_cli_error "component" instance_transaction_pending "存在未完成的实例事务；请先检查并恢复。"; return 1
+          fi
+          agent_cli "$@"
+        ) ;;
+        list|export) (
+          if ! acquire_managed_write_lock shared; then
+            agent_cli_error "component" instance_write_busy "配置正在被管理进程使用，未返回部分组件状态。"; return 1
+          fi
+          if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
+            agent_cli_error "component" instance_transaction_pending "存在未完成的实例事务；请先检查并恢复。"; return 1
+          fi
+          if [[ -e "${SB_COMPONENT_TRANSACTION_DIR}" ]]; then
+            agent_cli_error "component" component_transaction_pending "存在未完成的高级组件事务；请先执行 component recover。"; return 1
+          fi
+          agent_cli "$@"
+        ) ;;
+        recover) (
+          if ! acquire_managed_write_lock; then
+            agent_cli_error "component" instance_write_busy "另一个管理进程正在执行；未开始组件恢复。"; return 1
+          fi
+          if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
+            agent_cli_error "component" instance_transaction_pending "请先完成 instance recover；未开始组件恢复。"; return 1
           fi
           agent_cli "$@"
         ) ;;
@@ -24302,6 +24855,9 @@ agent_dispatch() {
           fi
           if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
             agent_cli_error "component" instance_transaction_pending "请先完成 instance recover；未开始其他写操作。"; return 1
+          fi
+          if [[ -e "${SB_COMPONENT_TRANSACTION_DIR}" ]]; then
+            agent_cli_error "component" component_transaction_pending "请先完成 component recover；未开始其他写操作。"; return 1
           fi
           agent_cli "$@"
         ) ;;

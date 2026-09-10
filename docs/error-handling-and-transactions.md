@@ -44,6 +44,14 @@ PRECHECK
 - `unchanged`：没有提交过变更；通常意味着候选下载/校验失败，或提交前失败。
 - `no-op`：健康目标已经是候选版本，没有备份、提交或无意义覆盖。
 
+## 高级组件持久事务
+
+组件 `create`、`replace`、`delete`、`rebuild` 和 `takeover` 在 `${SB_PROJECT_DIR}.component-write.lock` 中原子发布 `transaction.json`，再写入同目录的状态快照。`phase` 按 `prepare`、`snapshot`、`publish`、`resources`、`service`、`committed` 前进；监听资源变化时，防火墙 journal 与快照绑定，并记录 `firewall_expected`。正常提交先写 `committed` 再清理目录，故障或不可捕获中断不会把临时目录当作成功。
+
+`sbv agent component recover --json --yes --expected-revision N` 只接受匹配 CAS revision、owner 已结束、journal schema/phase/快照可信的事务。发布或资源阶段按防火墙、状态/config、服务活动顺序补偿；缺失或不确定的外部日志、活动 owner、revision 不匹配和清理失败均保留事务目录并返回稳定错误。`component diagnose --json` 只报告 pending 与 phase 摘要，不泄漏组件配置或密钥。
+
+实例写入/恢复与组件写入/恢复共享同一管理锁；任一持久事务目录 pending 时，另一类变更都会被拒绝，避免后续快照回滚覆盖已经提交的不同资源。
+
 标准错误上下文至少包含：`operation`、`stage`、`code`、`message`、`detail`、`command_exit_code`、`hint`、`changed`、`rollback_attempted`、`rolled_back`、`rollback_ok`、`manual_intervention_required`、`current_version`、`candidate_version`、`target_path` 和 `log_file`。人类提示写 stderr；错误详情最多保留有限长度，并过滤 URL 用户信息、Token、密码和 Authorization 字段。
 
 ## 下载错误分类

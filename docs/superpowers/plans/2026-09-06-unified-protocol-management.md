@@ -482,3 +482,11 @@ Mixed 生命周期的真实 1.13.18/1.14.0 各完成 migration=1、instances=2�
 新增 `sbv agent component takeover --json --yes --expected-revision N [--allow-public]` 与 `sbv agent component export --json --id ID [--expected-revision N]`。接管扫描当前 live 配置中的已注册高级 inbound/endpoint，按既有 `(role,type,tag)` 保留稳定 ID，给新对象分配确定性 ID，并把对象字段及绑定 inbound 的路由规则放入组件 state；候选发布后再次确认现有 tagged objects、证书/服务对象和全部 route rules 均未丢失，发现未知或无法保真的对象即回滚。导出只按稳定 ID 返回完整敏感记录，带 `sensitive=true` 与可选 revision 门禁；`list`/`diagnose` 继续脱敏。
 
 新增回归覆盖 endpoint 接管、重复接管、导出秘密字段、stale revision，以及全局路由规则会导致接管拒绝且 state/config 字节保持。该入口仍不等同 TUN/透明路由真实数据面、Endpoint 外部认证、动态资源事务或完整上游 outbound 接管。
+
+### 2026-09-10：高级组件持久化事务恢复
+
+高级组件的 create/replace/delete/rebuild/takeover 现在先在 `${SB_PROJECT_DIR}.component-write.lock` 原子发布 owner、CAS revision、before-active、阶段和防火墙意图，再把状态快照保存到同一事务目录。发布、监听资源和服务阶段均有 checkpoint；完成后以 `committed` checkpoint 清理事务目录。进程在清理前中断时，`sbv agent component recover --json --yes --expected-revision N` 校验 dead owner、精确 revision、journal schema、快照及外部防火墙日志，随后按 firewall→state/config→service 顺序补偿；active 或不可信 journal 保留原目录，不做猜测性删除。`component diagnose` 输出 pending 与当前阶段摘要。
+
+`tests/managed_components_contract.sh` 新增 publish 阶段中断模拟：先保存 state/config，再写持久 journal 并注入 revision/route 部分变更，recover 必须回滚字节内容、返回 `status=rolled_back` 并删除事务目录。该切片补齐高级组件崩溃恢复边界，但仍不宣称 TUN/透明路由、动态资源、Endpoint 外部认证、公网防火墙或全协议数据面完成；完整协议目标继续未完成。
+
+本轮 `bash dev/verification/run.sh` 在 `dev/verification-runs/20260910090836` 完成：`remote_status=success`，Docker artifact 已提取，包含 14/14 场景与 21/21 既有协议探针成功；本机未配置 `SINGBOX_BINARY_113/114` 的真实核心项按规则标记 skip。该证据覆盖当前受管回归和 Docker 安装/升级边界，不扩大为公网协议、动态 Endpoint 或真实 SubMan 验证。

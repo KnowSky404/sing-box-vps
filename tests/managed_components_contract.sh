@@ -299,4 +299,40 @@ jq -e '.ok == false and .error == "config_check_failed"' <<< "${lossless_takeove
 [[ "$(cat "${SB_COMPONENT_STATE_FILE}")" == "${state_before_lossless_takeover}" ]]
 [[ "$(cat "${SINGBOX_CONFIG_FILE}")" == "${config_with_unmanaged_rule}" ]]
 
+# A process interruption after publish must leave a durable component journal
+# that a later CAS-protected recover operation can safely roll back.
+state_before_recovery=$(cat "${SB_COMPONENT_STATE_FILE}")
+config_before_recovery=$(cat "${SINGBOX_CONFIG_FILE}")
+mkdir -m 700 "${SB_COMPONENT_TRANSACTION_DIR}"
+create_managed_state_snapshot "${SB_COMPONENT_TRANSACTION_DIR}/snapshot" >/dev/null
+jq -n \
+  --arg operation replace --arg expected 5 --arg start 0 --argjson pid 999999999 \
+  '{schema_version:1,operation:$operation,expected_revision:$expected,owner_pid:$pid,
+    owner_start:$start,before_active:false,phase:"publish",new_revision:6,firewall_expected:false}' \
+  > "${SB_COMPONENT_TRANSACTION_DIR}/transaction.json"
+chmod 600 "${SB_COMPONENT_TRANSACTION_DIR}/transaction.json"
+jq '.revision = 6' "${SB_COMPONENT_STATE_FILE}" > "${SB_COMPONENT_STATE_FILE}.next"
+mv -f "${SB_COMPONENT_STATE_FILE}.next" "${SB_COMPONENT_STATE_FILE}"
+jq '.route.rules += [{domain:["crash-mutation.example"],action:"route",outbound:"direct"}]' \
+  "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if pending_component_write=$(agent_cli component rebuild --json --yes --expected-revision 6); then
+  printf 'component write unexpectedly crossed a pending component journal\n' >&2
+  exit 1
+fi
+jq -e '.ok == false and .error == "component_transaction_pending"' <<< "${pending_component_write}" >/dev/null
+if pending_instance_recovery=$(agent_cli instance recover mixed --json --yes --expected-revision 0); then
+  printf 'instance recovery unexpectedly crossed a pending component journal\n' >&2
+  exit 1
+fi
+jq -e '.ok == false and .error == "component_transaction_pending"' <<< "${pending_instance_recovery}" >/dev/null
+recovered_json=$(agent_dispatch component recover --json --yes --expected-revision 5)
+jq -e '.ok == true and .data.action == "component-recover" and
+  .data.operation == "replace" and .data.status == "rolled_back" and
+  .data.transaction.phase == "publish" and
+  .data.transaction.manual_intervention_required == false' <<< "${recovered_json}" >/dev/null
+[[ "$(cat "${SB_COMPONENT_STATE_FILE}")" == "${state_before_recovery}" ]]
+[[ "$(cat "${SINGBOX_CONFIG_FILE}")" == "${config_before_recovery}" ]]
+[[ ! -e "${SB_COMPONENT_TRANSACTION_DIR}" ]]
+
 printf '%s\n' 'managed component contracts passed'
