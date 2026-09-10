@@ -46,6 +46,73 @@ jq -e '
   .outbounds[0].type == "selector" and .outbounds[0].outbounds == ["direct","block"]
 ' <<< "${rendered}" >/dev/null
 
+# SSH is a typed outbound contract: retain the upstream SSH fields and Dial
+# Fields, require one usable authentication method, and reject accidental
+# passthrough of unknown/deprecated keys.  Private keys may be PEM/multiline
+# strings; list/diagnose must still expose metadata only.
+ssh_record='{"id":"ssh-local","role":"outbound","type":"ssh","tag":"ssh-local","enabled":true,"route_rules":[],"config":{"server":"ssh.example","server_port":2222,"user":"deploy","password":"ssh-password","host_key":["ssh-ed25519 AAAAssh-host-key"],"client_version":"SSH-2.0-sing-box","connect_timeout":"5s","network_strategy":"default","network_type":["ethernet"],"domain_resolver":"dns-local"}}'
+managed_component_state_validate_record "${ssh_record}"
+ssh_empty_path_record=$(jq -c '.config.private_key_path = ""' <<< "${ssh_record}")
+managed_component_state_validate_record "${ssh_empty_path_record}"
+ssh_rendered_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${ssh_record}")
+ssh_rendered=$(managed_component_render_json "${ssh_rendered_state}")
+jq -e '
+  (.outbounds | length == 1) and
+  .outbounds[0].type == "ssh" and .outbounds[0].tag == "ssh-local" and
+  .outbounds[0].server_port == 2222 and
+  .outbounds[0].host_key == ["ssh-ed25519 AAAAssh-host-key"] and
+  .outbounds[0].route_rules == null
+' <<< "${ssh_rendered}" >/dev/null
+ssh_path_record=$(jq -c '.config |= (del(.password) + {private_key_path:"/root/.ssh/id_ed25519",host_key:"ssh-ed25519 AAAAssh-host-key"})' <<< "${ssh_record}")
+managed_component_state_validate_record "${ssh_path_record}"
+ssh_key_record=$(jq -c '.config |= (del(.password) + {private_key:"-----BEGIN OPENSSH PRIVATE KEY-----\nfixture\n-----END OPENSSH PRIVATE KEY-----",private_key_passphrase:"passphrase"})' <<< "${ssh_record}")
+managed_component_state_validate_record "${ssh_key_record}"
+ssh_missing_auth=$(jq -c '.config |= del(.password,.private_key,.private_key_path)' <<< "${ssh_record}")
+if managed_component_state_validate_record "${ssh_missing_auth}"; then
+  printf 'SSH outbound without authentication unexpectedly accepted\n' >&2
+  exit 1
+fi
+ssh_passphrase_without_key=$(jq -c '.config |= (del(.password) + {private_key_passphrase:"orphan-passphrase"})' <<< "${ssh_record}")
+if managed_component_state_validate_record "${ssh_passphrase_without_key}"; then
+  printf 'SSH private key passphrase without a key unexpectedly accepted\n' >&2
+  exit 1
+fi
+ssh_unknown_field=$(jq -c '.config |= (. + {domain_strategy:"prefer_ipv4"})' <<< "${ssh_record}")
+if managed_component_state_validate_record "${ssh_unknown_field}"; then
+  printf 'SSH deprecated/unknown Dial Field unexpectedly accepted\n' >&2
+  exit 1
+fi
+ssh_bad_port=$(jq -c '.config.server_port = 65536' <<< "${ssh_record}")
+if managed_component_state_validate_record "${ssh_bad_port}"; then
+  printf 'SSH out-of-range server port unexpectedly accepted\n' >&2
+  exit 1
+fi
+ssh_unverified_record=$(jq -c '.config |= del(.host_key)' <<< "${ssh_record}")
+managed_component_state_validate_record "${ssh_unverified_record}"
+ssh_pinned_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${ssh_record}")
+original_managed_component_state_json=$(declare -f managed_component_state_json)
+managed_component_state_json() {
+  printf '%s\n' "${ssh_pinned_state}"
+}
+ssh_pinned_inventory=$(managed_component_inventory_json)
+eval "${original_managed_component_state_json}"
+jq -e '.components[0].host_key_verification == "pinned"' <<< "${ssh_pinned_inventory}" >/dev/null
+ssh_unverified_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${ssh_unverified_record}")
+original_managed_component_state_json=$(declare -f managed_component_state_json)
+managed_component_state_json() {
+  printf '%s\n' "${ssh_unverified_state}"
+}
+ssh_unverified_inventory=$(managed_component_inventory_json)
+eval "${original_managed_component_state_json}"
+if grep -Fq 'ssh-password' <<< "${ssh_unverified_inventory}"; then
+  printf 'SSH outbound password leaked from inventory\n' >&2
+  exit 1
+fi
+jq -e '(.components | length == 1) and
+  .components[0].type == "ssh" and
+  .components[0].host_key_verification == "unverified" and
+  (.components[0].config_keys | index("password")) != null' <<< "${ssh_unverified_inventory}" >/dev/null
+
 if managed_component_state_candidate "${state}" delete "" direct-local >/dev/null 2>&1; then
   printf 'expected deletion of referenced component to fail\n' >&2
   exit 1
@@ -273,8 +340,11 @@ generate_config
 wireguard_live=$(jq -cn '{type:"wireguard",tag:"wg-live",system:true,address:["10.0.0.2/32"],private_key:"private-key-preserved",peers:[{address:"198.51.100.1",port:51820,public_key:"peer-key",allowed_ips:["0.0.0.0/0"]}]}')
 selector_live=$(jq -cn '{type:"selector",tag:"selector-live",outbounds:["direct","block"],default:"direct"}')
 jq --argjson endpoint "${wireguard_live}" --argjson outbound "${selector_live}" \
+  --argjson ssh_outbound "${ssh_record}" \
   '.endpoints += [$endpoint] | .outbounds += [$outbound] |
-   .route.rules += [{domain:["selector.example"],action:"route",outbound:"selector-live"}]' \
+   .outbounds += [($ssh_outbound.config + {type:$ssh_outbound.type,tag:$ssh_outbound.tag})] |
+   .route.rules += [{domain:["selector.example"],action:"route",outbound:"selector-live"},
+                    {domain:["ssh.example"],action:"route",outbound:"ssh-local"}]' \
   "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
 mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
 if takeover_without_public=$(agent_dispatch component takeover --json --yes --expected-revision 4); then
@@ -285,7 +355,7 @@ jq -e '.ok == false and .error == "confirmation_required"' <<< "${takeover_witho
 takeover_json=$(agent_dispatch component takeover --json --yes --expected-revision 4 --allow-public)
 jq -e '.ok == true and .data.action == "component-apply" and
   .data.operation == "takeover" and .data.revision == 5 and
-  .data.count == 5 and .data.firewall.status == "not_attempted"' <<< "${takeover_json}" >/dev/null
+  .data.count == 6 and .data.firewall.status == "not_attempted"' <<< "${takeover_json}" >/dev/null
 jq -e 'any(.components[]; .id == "endpoint-wireguard-wg-live" and
   .type == "wireguard" and .config.private_key == "private-key-preserved")' \
   "${SB_COMPONENT_STATE_FILE}" >/dev/null
@@ -293,10 +363,16 @@ jq -e 'any(.components[]; .id == "outbound-selector-selector-live" and
   .type == "selector" and .config.outbounds == ["direct","block"] and
   (.route_rules | any(.[]; .outbound == "selector-live")))' \
   "${SB_COMPONENT_STATE_FILE}" >/dev/null
+jq -e 'any(.components[]; .type == "ssh" and .tag == "ssh-local" and
+  .config.password == "ssh-password" and
+  (.route_rules | any(.[]; .outbound == "ssh-local")))' \
+  "${SB_COMPONENT_STATE_FILE}" >/dev/null
 jq -e 'any(.endpoints[]; .tag == "wg-live" and .private_key == "private-key-preserved")' \
   "${SINGBOX_CONFIG_FILE}" >/dev/null
 jq -e 'any(.outbounds[]; .tag == "selector-live" and .outbounds == ["direct","block"]) and
-  any(.route.rules[]; .outbound == "selector-live" and (.domain | index("selector.example")) != null)' \
+  any(.outbounds[]; .tag == "ssh-local" and .server == "ssh.example" and .password == "ssh-password") and
+  any(.route.rules[]; .outbound == "selector-live" and (.domain | index("selector.example")) != null) and
+  any(.route.rules[]; .outbound == "ssh-local" and (.domain | index("ssh.example")) != null)' \
   "${SINGBOX_CONFIG_FILE}" >/dev/null
 export_takeover_json=$(agent_dispatch component export --json --id endpoint-wireguard-wg-live --expected-revision 5)
 jq -e '.ok == true and .data.sensitive == true and

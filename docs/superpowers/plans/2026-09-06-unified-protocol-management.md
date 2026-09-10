@@ -494,3 +494,10 @@ Mixed 生命周期的真实 1.13.18/1.14.0 各完成 migration=1、instances=2�
 启用的 managed TUN 若声明 `auto_route=true`，配置生成器会把 `route.auto_detect_interface=true` 合并到顶层路由，以避免默认路由再次捕获 TUN 自身流量；已有配置若明确关闭该保护且没有 `route.default_interface` 则拒绝候选发布，明确设置默认接口时保留操作员选择。`tests/managed_components_contract.sh` 覆盖无 TUN、自动补 guard、显式冲突 fail-closed 与显式默认接口四条边界；`tests/generate_config_commits_validated_candidate.sh` 还覆盖实际 `generate_config` 发布与保留显式默认接口。本切片只处理 sing-box 配置层的环路保护，不冒充主机策略路由/nftables、DNS 劫持、透明接入或真实数据面完成；版本提升为本轮 `2026091003`。
 
 本轮 `bash dev/verification/run.sh` 在 `dev/verification-runs/20260910133840` 完成：`remote_status=success`，Docker artifact 已提取，包含 14/14 场景与 21/21 既有协议探针成功；本机未配置 `SINGBOX_BINARY_113/114` 的真实核心项按规则标记 skip。该证据覆盖当前受管回归和 Docker 安装/升级边界，不扩大为公网协议、动态 Endpoint 或真实 SubMan 验证。
+
+### 2026-09-10：SSH outbound typed contract
+
+managed `ssh` outbound 不再是只检查 `server`/端口的通用 JSON 容器。`managed_component_ssh_config_validate_json` 按固定 sing-box 1.14.0 `SSHOutboundOptions` 及 shared Dial Fields 建立字段 allowlist：服务地址必须为安全非空字符串，端口限制为 1–65535；password、listable private key 或 private-key path 至少提供一种认证方式；user、client version、地址/命名空间、duration、routing mark、network strategy/type、boolean Dial Fields 和 domain resolver 分别执行类型/范围检查。private/host key、cipher、MAC、KEX 的 listable 形状只接受字符串，已移除的 `domain_strategy` 与任意未知字段会在 state/CAS 和 live takeover 前拒绝。
+
+空 `host_key` 保留上游“接受任意主机密钥”的兼容语义，但 inventory 增加脱敏 `host_key_verification`，只有非空固定列表显示 `pinned`，否则显示 `unverified`；list/diagnose 不返回 SSH 密码、私钥或 passphrase，敏感 `export` 仍按稳定 ID 返回完整记录。`tests/managed_components_contract.sh` 新增 password/path/PEM、缺认证、孤立 passphrase、越界端口、deprecated 字段、清单脱敏、live takeover、路由规则保留和 export 断言。此切片只证明状态/候选/无损接管边界；未执行远端 SSH 登录、主机密钥握手或真实 SSH 数据面验证。版本统一为本轮 `2026091004`，完整协议目标仍未完成。
+完整默认门禁 `bash dev/verification/run.sh` 在 `dev/verification-runs/20260910153514` 退出 0：本地协议/生命周期/组件回归全部通过，Docker `remote_status=success`，14/14 场景与 21/21 既有协议探针成功；真实 `SINGBOX_BINARY_113/114` 未配置，相关核心项按规则 skip。该验证没有把 SSH outbound 的状态契约扩大为远端 SSH 握手或公网数据面证据。

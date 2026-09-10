@@ -6,7 +6,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091003`，`SB_SUPPORT_MAX_VERSION=1.14.0`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091004`，`SB_SUPPORT_MAX_VERSION=1.14.0`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -20,6 +20,8 @@
 2026-09-09 高级组件增量：本项目新增独立 `components.json`（schema 1、revision/CAS）和 30 项 runtime component registry，接入 direct/tun/redirect/tproxy/cloudflared inbound、WireGuard/Tailscale/OpenConnect/OpenVPN endpoint，以及 SSH/Tor/direct/bridge/selector/urltest/block 和协议 outbound 的受控状态/config 组合。`implemented` 在本增量中表示状态读取、类型专属边界、配置合并、引用/依赖图、监听计划、Agent list/create/replace/delete 和目标核心校验切片已存在；组件的静态 `available` 仍为 `null`，另在 registry 每次读取时填充不缓存的 `environment` 观察（目标核心版本、平台、root/工具/运行库和外部认证依赖），其 `status` 只能是 `available`、`unavailable` 或 `not_assessed`，不等同于连接验证。`validated` 默认 `not_assessed`。高级 inbound/endpoint 及注册 outbound/group 现在支持无损保护接管和敏感单组件导出；内建 `direct`/`block` 与生成器自有 `warp-ep` endpoint 仍由生成器拥有，未知 outbound、保留 tag 冲突、未归属全局 route rule 及任意未建模顶层字段会阻断接管。这些组件不进入普通分享节点索引，外部控制面、构建 tag、路由/防火墙权限和真实数据面均不由 registry 或 `sing-box check` 推断；因此下方组件行的 D/T/E/R 与导出、分享、SubMan 仍按此边界记录，完整协议目标继续未完成。
 
 2026-09-10 持久化事务增量：高级组件写入现在在 `${SB_PROJECT_DIR}.component-write.lock` 中原子发布 `transaction.json`，记录 owner、CAS revision、before-active、publish/resources/service/committed 阶段和防火墙外部日志意图。`sbv agent component recover --json --yes --expected-revision N` 只接受已结束的 owner、可信快照和严格 phase/schema；中断发生在发布或资源阶段时先补偿防火墙再恢复 state/config/service，无法证明安全时保留目录并返回稳定错误。`component diagnose` 暴露 pending/phase 摘要；这仍不是公网防火墙、TUN/透明路由、Endpoint 外部认证或真实数据面验证，完整协议目标继续未完成。
+
+2026-09-10 SSH outbound 增量：managed `ssh` component 现在按固定 [1.14.0 SSH outbound](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/ssh.md) 与 [shared Dial Fields](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/shared/dial.md) 的 `SSHOutboundOptions` 建立 allowlist；`server` 必须是安全非空字符串，端口限制为 1–65535，且必须提供 password、private key 或 private-key path 之一。listable private/host key 与 cipher/MAC/KEX 字段只接受字符串列表形状，deprecated `domain_strategy` 和任意未建模字段在 state/CAS、live takeover 前拒绝；`host_key` 仍可省略以保持上游“接受任意主机密钥”的兼容语义，但 inventory 以 `host_key_verification=unverified` 披露，非空固定列表才标记 `pinned`。回归覆盖密码、路径、PEM 私钥、缺凭据、孤立 passphrase、端口越界、未知字段、脱敏 inventory、live takeover、路由规则保留与敏感 export；未执行远端 SSH 登录，不把 `sing-box check` 或状态层写成 SSH 数据面/主机密钥验证证据。
 
 2026-09-10 TUN 路由安全增量：启用的 managed TUN 若设置 `auto_route=true`，候选配置会在顶层 `route` 自动补 `auto_detect_interface=true`；已有配置明确关闭该保护且未设置 `default_interface` 时 fail-closed，明确选择默认接口则保留原设置。该门禁只防止配置层自捕获环路，不宣称已接管主机策略路由、nftables、DNS 劫持或透明数据面，完整协议目标继续未完成。
 

@@ -109,7 +109,10 @@ combined config, enforce component references and listener conflicts, run the
 target core check, and restart an active service after publication. The
 registry covers direct/tun/redirect/tproxy/cloudflared inbounds,
 WireGuard/Tailscale/OpenConnect/OpenVPN endpoints, and SSH/Tor/direct/bridge/
-selector/urltest/block plus protocol outbounds. Non-loopback listeners, TUN,
+selector/urltest/block plus protocol outbounds. SSH records use the sing-box
+1.14 SSH/Dial Field allowlist and require password, private key or private-key
+path authentication; metadata reports only config keys and
+`host_key_verification=pinned|unverified`. Non-loopback listeners, TUN,
 tunnels and OpenVPN server require `--allow-public`. External account
 authentication, system routes/firewall, runtime libraries and data-plane
 reachability remain separate operator-reviewed gates. The registry keeps
