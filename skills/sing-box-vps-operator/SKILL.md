@@ -112,7 +112,11 @@ WireGuard/Tailscale/OpenConnect/OpenVPN endpoints, and SSH/Tor/direct/bridge/
 selector/urltest/block plus protocol outbounds. SSH records use the sing-box
 1.14 SSH/Dial Field allowlist and require password, private key or private-key
 path authentication; metadata reports only config keys and
-`host_key_verification=pinned|unverified`. Non-loopback listeners, TUN,
+`host_key_verification=pinned|unverified`. Tor records use the sing-box 1.14
+`executable_path`, `extra_args`, `data_directory`, string-valued `torrc` and
+Dial Field allowlist; inventory reports `runtime_mode=external` or
+`embedded_unverified` and never treats the default build as embedded-Tor
+runtime proof. Non-loopback listeners, TUN,
 tunnels and OpenVPN server require `--allow-public`. External account
 authentication, system routes/firewall, runtime libraries and data-plane
 reachability remain separate operator-reviewed gates. The registry keeps

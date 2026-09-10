@@ -501,3 +501,11 @@ managed `ssh` outbound 不再是只检查 `server`/端口的通用 JSON 容器�
 
 空 `host_key` 保留上游“接受任意主机密钥”的兼容语义，但 inventory 增加脱敏 `host_key_verification`，只有非空固定列表显示 `pinned`，否则显示 `unverified`；list/diagnose 不返回 SSH 密码、私钥或 passphrase，敏感 `export` 仍按稳定 ID 返回完整记录。`tests/managed_components_contract.sh` 新增 password/path/PEM、缺认证、孤立 passphrase、越界端口、deprecated 字段、清单脱敏、live takeover、路由规则保留和 export 断言。此切片只证明状态/候选/无损接管边界；未执行远端 SSH 登录、主机密钥握手或真实 SSH 数据面验证。版本统一为本轮 `2026091004`，完整协议目标仍未完成。
 完整默认门禁 `bash dev/verification/run.sh` 在 `dev/verification-runs/20260910153514` 退出 0：本地协议/生命周期/组件回归全部通过，Docker `remote_status=success`，14/14 场景与 21/21 既有协议探针成功；真实 `SINGBOX_BINARY_113/114` 未配置，相关核心项按规则 skip。该验证没有把 SSH outbound 的状态契约扩大为远端 SSH 握手或公网数据面证据。
+
+### 2026-09-10：Tor outbound typed contract
+
+managed `tor` outbound 不再只是检查 `executable_path`/`data_directory` 是否为字符串。`managed_component_tor_config_validate_json` 按固定 sing-box 1.14.0 `TorOutboundOptions` 及 shared Dial Fields 建立 allowlist：Tor-specific 字段仅允许 `executable_path`、`extra_args`、`data_directory` 和字符串值 `torrc` map；Dial Fields 逐项检查字符串、duration、boolean、network strategy/type 与 routing mark 形状，deprecated `domain_strategy`、控制字符和未知字段在 state/CAS 与 live takeover 前拒绝。未提供 executable path 的记录仍保留上游 embedded 语义，但 inventory 只报告 `runtime_mode=embedded_unverified`；提供路径时报告 `external`，不把默认构建缺少 `with_embedded_tor`+CGO、路径存在或 Tor circuit 当作已验证。
+
+`tests/managed_components_contract.sh` 新增 external/embedded Tor 记录、完整 Dial Fields/torrc/extra_args render、错误类型与控制字符拒绝、运行模式脱敏和 live takeover/路由规则保留断言，同时补齐 SSH 的共享 `protect_path` 字段。此切片只证明状态、候选与无损接管边界；未执行外部 Tor 安装、嵌入构建、控制面、远端 circuit 或真实 Tor 数据面验证。版本统一为本轮 `2026091005`，完整协议目标仍未完成。
+
+完整默认门禁 `bash dev/verification/run.sh` 在 `dev/verification-runs/20260910162713` 退出 0：本地协议/生命周期/组件回归全部通过，Docker `remote_status=success`，14/14 场景和 21/21 既有协议探针成功；真实 `SINGBOX_BINARY_113/114` 未配置，相关核心项按规则 skip。该验证没有把 Tor 状态契约扩大为外部 executable、embedded build、Tor circuit 或公网数据面证据。

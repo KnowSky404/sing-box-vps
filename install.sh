@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091004
+# Version: 2026091005
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091004"
+readonly SCRIPT_VERSION="2026091005"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -103,7 +103,7 @@ readonly SB_COMPONENT_REGISTRY=(
   'openvpn-client-endpoint|endpoint|openvpn-client|OpenVPN client endpoint|1.14.0|with_openvpn|{"endpoint":true,"client_only":true,"auth_external":true}'
   'openvpn-server-endpoint|endpoint|openvpn-server|OpenVPN server endpoint|1.14.0|with_openvpn|{"endpoint":true,"server":true,"listen_network":["tcp","udp"]}'
   'ssh-outbound|outbound|ssh|SSH outbound|1.14.0|builtin|{"dialer":true,"credentials":true}'
-  'tor-outbound|outbound|tor|Tor outbound|1.13.0|builtin|{"dialer":true,"dependency_external":true}'
+  'tor-outbound|outbound|tor|Tor outbound|1.13.0|builtin|{"dialer":true,"dependency_external":true,"runtime_modes":["external","embedded_unverified"]}'
   'direct-outbound|outbound|direct|Direct outbound|1.13.0|builtin|{"dialer":true}'
   'bridge-outbound|outbound|bridge|Bridge outbound|1.14.0|builtin|{"l3":true,"requires_privilege":true}'
   'selector-outbound|outbound|selector|Selector group|1.13.0|builtin|{"group":true,"members_required":true}'
@@ -12342,7 +12342,7 @@ managed_component_ssh_config_validate_json() {
       "private_key_path","private_key_passphrase","host_key",
       "host_key_algorithms","client_version","cipher","mac",
       "kex_algorithm","detour","bind_interface","inet4_bind_address",
-      "inet6_bind_address","bind_address_no_port","routing_mark",
+      "inet6_bind_address","bind_address_no_port","protect_path","routing_mark",
       "reuse_addr","netns","connect_timeout","tcp_fast_open",
       "tcp_multi_path","disable_tcp_keep_alive","tcp_keep_alive",
       "tcp_keep_alive_interval","udp_fragment","domain_resolver",
@@ -12368,6 +12368,7 @@ managed_component_ssh_config_validate_json() {
     optional_safe_string("inet4_bind_address") and
     optional_safe_string("inet6_bind_address") and
     optional_bool("bind_address_no_port") and
+    optional_safe_string("protect_path") and
     optional_routing_mark and
     optional_bool("reuse_addr") and
     optional_safe_string("netns") and
@@ -12396,6 +12397,85 @@ managed_component_ssh_config_validate_json() {
         if . == null then false else listable_nonempty_string end) or
       ((.private_key_path? // "") | nonempty_safe_string)
     )
+  ' <<< "${config}" >/dev/null 2>&1 || return 1
+}
+
+# Validate the Tor outbound contract against sing-box 1.14.0.  Tor has no
+# server/authentication fields: the managed record controls the Tor runtime
+# (external executable or embedded build), its torrc map, extra arguments and
+# shared Dial Fields.  The embedded form is accepted for upstream
+# compatibility, but inventory marks it unverified because the default
+# sing-box build does not include embedded Tor.
+managed_component_tor_config_validate_json() {
+  local config=${1:-}
+  [[ -n "${config}" ]] || return 1
+  jq -e '
+    def safe_string:
+      type == "string" and (any(explode[]; . < 32 or . == 127) | not);
+    def optional_safe_string($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_bool($name):
+      (has($name) | not) or (.[$name] | type == "boolean");
+    def optional_duration($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_routing_mark:
+      (has("routing_mark") | not) or
+      (.routing_mark |
+        ((type == "number" and . == floor and . >= 0 and . <= 4294967295) or
+         (type == "string" and (length == 0 or test("^0x[0-9a-fA-F]+$")))));
+    def optional_network_strategy:
+      (has("network_strategy") | not) or
+      (.network_strategy | type == "string" and IN("","default","hybrid","fallback"));
+    def optional_network_types($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "string" and (length == 0 or IN("wifi","cellular","ethernet","other"))) or
+         (type == "array" and all(.[]; type == "string" and
+           IN("wifi","cellular","ethernet","other")))));
+    def optional_extra_args:
+      (has("extra_args") | not) or
+      (.extra_args | type == "array" and all(.[]; safe_string));
+    def optional_torrc:
+      (has("torrc") | not) or
+      (.torrc | type == "object" and
+        all(to_entries[]; (.key | safe_string) and (.value | safe_string)));
+    type == "object" and
+    ((keys - [
+      "executable_path","extra_args","data_directory","torrc",
+      "detour","bind_interface","inet4_bind_address",
+      "inet6_bind_address","bind_address_no_port","protect_path",
+      "routing_mark","reuse_addr","netns","connect_timeout",
+      "tcp_fast_open","tcp_multi_path","disable_tcp_keep_alive",
+      "tcp_keep_alive","tcp_keep_alive_interval","udp_fragment",
+      "domain_resolver","network_strategy","network_type",
+      "fallback_network_type","fallback_delay"
+    ]) | length == 0) and
+    optional_safe_string("executable_path") and
+    optional_extra_args and
+    optional_safe_string("data_directory") and
+    optional_torrc and
+    optional_safe_string("detour") and
+    optional_safe_string("bind_interface") and
+    optional_safe_string("inet4_bind_address") and
+    optional_safe_string("inet6_bind_address") and
+    optional_bool("bind_address_no_port") and
+    optional_safe_string("protect_path") and
+    optional_routing_mark and
+    optional_bool("reuse_addr") and
+    optional_safe_string("netns") and
+    optional_duration("connect_timeout") and
+    optional_bool("tcp_fast_open") and
+    optional_bool("tcp_multi_path") and
+    optional_bool("disable_tcp_keep_alive") and
+    optional_duration("tcp_keep_alive") and
+    optional_duration("tcp_keep_alive_interval") and
+    optional_bool("udp_fragment") and
+    ((has("domain_resolver") | not) or
+      (.domain_resolver | type == "string" or type == "object")) and
+    optional_network_strategy and
+    optional_network_types("network_type") and
+    optional_network_types("fallback_network_type") and
+    optional_duration("fallback_delay")
   ' <<< "${config}" >/dev/null 2>&1 || return 1
 }
 
@@ -12478,8 +12558,7 @@ managed_component_state_validate_record() {
       managed_component_ssh_config_validate_json "${config}" || return 1
       ;;
     outbound:tor)
-      jq -e '((.executable_path // "") | type == "string") and
-        ((.data_directory // "") | type == "string")' <<< "${config}" >/dev/null 2>&1 || return 1
+      managed_component_tor_config_validate_json "${config}" || return 1
       ;;
     outbound:direct|outbound:block|outbound:bridge|outbound:socks|outbound:http|outbound:shadowsocks|outbound:vmess|outbound:trojan|outbound:naive|outbound:hysteria2|outbound:hysteria|outbound:tuic|outbound:vless|outbound:anytls|outbound:snell|outbound:shadowtls)
       ;;
@@ -12873,6 +12952,11 @@ managed_component_inventory_json() {
                 elif type == "string" then length > 0
                 else false end)
             then "pinned" else "unverified" end)}
+        elif (.role == "outbound" and .type == "tor") then
+          . + {runtime_mode:(
+            if (($component.config.executable_path? // null) |
+                if type == "string" then length > 0 else false end)
+            then "external" else "embedded_unverified" end)}
         else . end
       ],
       supported: $registry

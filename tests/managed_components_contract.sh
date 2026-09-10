@@ -50,7 +50,7 @@ jq -e '
 # Fields, require one usable authentication method, and reject accidental
 # passthrough of unknown/deprecated keys.  Private keys may be PEM/multiline
 # strings; list/diagnose must still expose metadata only.
-ssh_record='{"id":"ssh-local","role":"outbound","type":"ssh","tag":"ssh-local","enabled":true,"route_rules":[],"config":{"server":"ssh.example","server_port":2222,"user":"deploy","password":"ssh-password","host_key":["ssh-ed25519 AAAAssh-host-key"],"client_version":"SSH-2.0-sing-box","connect_timeout":"5s","network_strategy":"default","network_type":["ethernet"],"domain_resolver":"dns-local"}}'
+ssh_record='{"id":"ssh-local","role":"outbound","type":"ssh","tag":"ssh-local","enabled":true,"route_rules":[],"config":{"server":"ssh.example","server_port":2222,"user":"deploy","password":"ssh-password","host_key":["ssh-ed25519 AAAAssh-host-key"],"client_version":"SSH-2.0-sing-box","connect_timeout":"5s","network_strategy":"default","network_type":["ethernet"],"domain_resolver":"dns-local","protect_path":"/usr/lib/sing-box/ssh-protect"}}'
 managed_component_state_validate_record "${ssh_record}"
 ssh_empty_path_record=$(jq -c '.config.private_key_path = ""' <<< "${ssh_record}")
 managed_component_state_validate_record "${ssh_empty_path_record}"
@@ -61,6 +61,7 @@ jq -e '
   .outbounds[0].type == "ssh" and .outbounds[0].tag == "ssh-local" and
   .outbounds[0].server_port == 2222 and
   .outbounds[0].host_key == ["ssh-ed25519 AAAAssh-host-key"] and
+  .outbounds[0].protect_path == "/usr/lib/sing-box/ssh-protect" and
   .outbounds[0].route_rules == null
 ' <<< "${ssh_rendered}" >/dev/null
 ssh_path_record=$(jq -c '.config |= (del(.password) + {private_key_path:"/root/.ssh/id_ed25519",host_key:"ssh-ed25519 AAAAssh-host-key"})' <<< "${ssh_record}")
@@ -112,6 +113,60 @@ jq -e '(.components | length == 1) and
   .components[0].type == "ssh" and
   .components[0].host_key_verification == "unverified" and
   (.components[0].config_keys | index("password")) != null' <<< "${ssh_unverified_inventory}" >/dev/null
+
+# Tor is a runtime-backed outbound rather than a server node.  The typed
+# contract preserves the upstream external/embedded forms, torrc string map,
+# extra arguments and Dial Fields while rejecting deprecated/unsafe shapes.
+tor_record='{"id":"tor-local","role":"outbound","type":"tor","tag":"tor-local","enabled":true,"route_rules":[],"config":{"executable_path":"/usr/bin/tor","extra_args":["--SocksPort","0"],"data_directory":"/var/lib/sing-box/tor","torrc":{"ClientOnly":"1","Log":"notice stdout"},"protect_path":"/usr/lib/sing-box/tor-protect","connect_timeout":"10s","network_strategy":"fallback","network_type":["ethernet"]}}'
+managed_component_state_validate_record "${tor_record}"
+tor_rendered_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${tor_record}")
+tor_rendered=$(managed_component_render_json "${tor_rendered_state}")
+jq -e '
+  (.outbounds | length == 1) and
+  .outbounds[0].type == "tor" and .outbounds[0].tag == "tor-local" and
+  .outbounds[0].executable_path == "/usr/bin/tor" and
+  .outbounds[0].extra_args == ["--SocksPort","0"] and
+  .outbounds[0].torrc.ClientOnly == "1" and
+  .outbounds[0].protect_path == "/usr/lib/sing-box/tor-protect"
+' <<< "${tor_rendered}" >/dev/null
+tor_embedded_record=$(jq -c '.config |= (del(.executable_path) + {torrc:{ClientOnly:"1"}})' <<< "${tor_record}")
+managed_component_state_validate_record "${tor_embedded_record}"
+tor_unknown_field=$(jq -c '.config |= (. + {domain_strategy:"prefer_ipv4"})' <<< "${tor_record}")
+if managed_component_state_validate_record "${tor_unknown_field}"; then
+  printf 'Tor deprecated/unknown Dial Field unexpectedly accepted\n' >&2
+  exit 1
+fi
+tor_bad_args=$(jq -c '.config.extra_args = {value:"--SocksPort"}' <<< "${tor_record}")
+if managed_component_state_validate_record "${tor_bad_args}"; then
+  printf 'Tor non-array extra_args unexpectedly accepted\n' >&2
+  exit 1
+fi
+tor_bad_torrc=$(jq -c '.config.torrc = {ClientOnly:1}' <<< "${tor_record}")
+if managed_component_state_validate_record "${tor_bad_torrc}"; then
+  printf 'Tor non-string torrc value unexpectedly accepted\n' >&2
+  exit 1
+fi
+tor_bad_path=$(jq -c '.config.executable_path = "/usr/bin/tor\u0001"' <<< "${tor_record}")
+if managed_component_state_validate_record "${tor_bad_path}"; then
+  printf 'Tor control-character executable path unexpectedly accepted\n' >&2
+  exit 1
+fi
+tor_external_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${tor_record}")
+original_managed_component_state_json=$(declare -f managed_component_state_json)
+managed_component_state_json() {
+  printf '%s\n' "${tor_external_state}"
+}
+tor_external_inventory=$(managed_component_inventory_json)
+eval "${original_managed_component_state_json}"
+jq -e '.components[0].runtime_mode == "external"' <<< "${tor_external_inventory}" >/dev/null
+tor_embedded_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${tor_embedded_record}")
+original_managed_component_state_json=$(declare -f managed_component_state_json)
+managed_component_state_json() {
+  printf '%s\n' "${tor_embedded_state}"
+}
+tor_embedded_inventory=$(managed_component_inventory_json)
+eval "${original_managed_component_state_json}"
+jq -e '.components[0].runtime_mode == "embedded_unverified"' <<< "${tor_embedded_inventory}" >/dev/null
 
 if managed_component_state_candidate "${state}" delete "" direct-local >/dev/null 2>&1; then
   printf 'expected deletion of referenced component to fail\n' >&2
@@ -341,10 +396,13 @@ wireguard_live=$(jq -cn '{type:"wireguard",tag:"wg-live",system:true,address:["1
 selector_live=$(jq -cn '{type:"selector",tag:"selector-live",outbounds:["direct","block"],default:"direct"}')
 jq --argjson endpoint "${wireguard_live}" --argjson outbound "${selector_live}" \
   --argjson ssh_outbound "${ssh_record}" \
+  --argjson tor_outbound "${tor_record}" \
   '.endpoints += [$endpoint] | .outbounds += [$outbound] |
    .outbounds += [($ssh_outbound.config + {type:$ssh_outbound.type,tag:$ssh_outbound.tag})] |
+   .outbounds += [($tor_outbound.config + {type:$tor_outbound.type,tag:$tor_outbound.tag})] |
    .route.rules += [{domain:["selector.example"],action:"route",outbound:"selector-live"},
-                    {domain:["ssh.example"],action:"route",outbound:"ssh-local"}]' \
+                    {domain:["ssh.example"],action:"route",outbound:"ssh-local"},
+                    {domain:["tor.example"],action:"route",outbound:"tor-local"}]' \
   "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
 mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
 if takeover_without_public=$(agent_dispatch component takeover --json --yes --expected-revision 4); then
@@ -355,7 +413,7 @@ jq -e '.ok == false and .error == "confirmation_required"' <<< "${takeover_witho
 takeover_json=$(agent_dispatch component takeover --json --yes --expected-revision 4 --allow-public)
 jq -e '.ok == true and .data.action == "component-apply" and
   .data.operation == "takeover" and .data.revision == 5 and
-  .data.count == 6 and .data.firewall.status == "not_attempted"' <<< "${takeover_json}" >/dev/null
+  .data.count == 7 and .data.firewall.status == "not_attempted"' <<< "${takeover_json}" >/dev/null
 jq -e 'any(.components[]; .id == "endpoint-wireguard-wg-live" and
   .type == "wireguard" and .config.private_key == "private-key-preserved")' \
   "${SB_COMPONENT_STATE_FILE}" >/dev/null
@@ -367,12 +425,20 @@ jq -e 'any(.components[]; .type == "ssh" and .tag == "ssh-local" and
   .config.password == "ssh-password" and
   (.route_rules | any(.[]; .outbound == "ssh-local")))' \
   "${SB_COMPONENT_STATE_FILE}" >/dev/null
+jq -e 'any(.components[]; .type == "tor" and .tag == "tor-local" and
+  .config.executable_path == "/usr/bin/tor" and
+  .config.torrc.ClientOnly == "1" and
+  (.route_rules | any(.[]; .outbound == "tor-local")))' \
+  "${SB_COMPONENT_STATE_FILE}" >/dev/null
 jq -e 'any(.endpoints[]; .tag == "wg-live" and .private_key == "private-key-preserved")' \
   "${SINGBOX_CONFIG_FILE}" >/dev/null
 jq -e 'any(.outbounds[]; .tag == "selector-live" and .outbounds == ["direct","block"]) and
   any(.outbounds[]; .tag == "ssh-local" and .server == "ssh.example" and .password == "ssh-password") and
+  any(.outbounds[]; .tag == "tor-local" and .executable_path == "/usr/bin/tor" and
+    .torrc.ClientOnly == "1") and
   any(.route.rules[]; .outbound == "selector-live" and (.domain | index("selector.example")) != null) and
-  any(.route.rules[]; .outbound == "ssh-local" and (.domain | index("ssh.example")) != null)' \
+  any(.route.rules[]; .outbound == "ssh-local" and (.domain | index("ssh.example")) != null) and
+  any(.route.rules[]; .outbound == "tor-local" and (.domain | index("tor.example")) != null)' \
   "${SINGBOX_CONFIG_FILE}" >/dev/null
 export_takeover_json=$(agent_dispatch component export --json --id endpoint-wireguard-wg-live --expected-revision 5)
 jq -e '.ok == true and .data.sensitive == true and
