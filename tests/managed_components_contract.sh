@@ -129,11 +129,22 @@ generate_config() {
   route_rules=$(jq -c '.route_rules' <<< "${rendered}") || return 1
   jq -n --argjson inbounds "${inbounds}" --argjson outbounds "${outbounds}" \
     --argjson route_rules "${route_rules}" \
-    '{inbounds:$inbounds,endpoints:[],outbounds:$outbounds,route:{final:"direct",rules:$route_rules}}' \
+    '{inbounds:$inbounds,endpoints:[],outbounds:([{type:"direct",tag:"direct"},{type:"block",tag:"block"}] + $outbounds),route:{final:"direct",rules:$route_rules}}' \
     > "${SINGBOX_CONFIG_FILE}"
 }
 
 generate_config
+
+diagnose_json=$(agent_cli component diagnose --json)
+jq -e '.ok == true and .data.action == "component-diagnose" and
+  .data.state.revision == 3 and .data.config.status == "present" and
+  .data.config.graph == "passed" and .data.config.listener_resources == "passed" and
+  .data.config.core_check == "unavailable" and (.data.components | length) == 3 and
+  (.data.supported | length) == 30' <<< "${diagnose_json}" >/dev/null
+if grep -Fq 'secret-token-not-for-list' <<< "${diagnose_json}"; then
+  printf 'component diagnose leaked a secret token\n' >&2
+  exit 1
+fi
 
 component_firewall_log="${TMP_DIR}/component-firewall.log"
 component_firewall_apply_failure="${TMP_DIR}/component-firewall-apply-failure"

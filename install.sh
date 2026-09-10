@@ -537,7 +537,7 @@ print_cli_help() {
   sbv update-sing-box [latest|x.y.z]
   sbv agent help
   sbv agent capabilities --json
-  sbv agent component list --json
+  sbv agent component list|diagnose --json
   sbv agent component create|replace|delete ...
   sbv agent upgrade-check --json x.y.z
   sbv agent upgrade --json x.y.z --yes
@@ -12541,6 +12541,78 @@ managed_component_inventory_json() {
     }'
 }
 
+managed_component_diagnose_json() {
+  local state inventory config_status graph_status listener_status core_status
+  local config_present=false service_state=unknown firewall_status=not_configured firewall_rules=0
+  local instance_pending=false component_pending=false ledger
+
+  state=$(managed_component_state_json) || return 1
+  inventory=$(managed_component_inventory_json) || return 1
+
+  if [[ ! -e "${SINGBOX_CONFIG_FILE}" ]]; then
+    config_status=missing
+    graph_status=not_run
+    listener_status=not_run
+    core_status=not_run
+  elif [[ -f "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" && -r "${SINGBOX_CONFIG_FILE}" ]]; then
+    config_present=true
+    config_status=present
+    if validate_managed_component_graph "${SINGBOX_CONFIG_FILE}" >/dev/null 2>&1; then
+      graph_status=passed
+    else
+      graph_status=failed
+    fi
+    if validate_managed_listener_resources "${SINGBOX_CONFIG_FILE}" >/dev/null 2>&1; then
+      listener_status=passed
+    else
+      listener_status=failed
+    fi
+    if [[ -x "${SINGBOX_BIN_PATH}" ]]; then
+      if "${SINGBOX_BIN_PATH}" check -c "${SINGBOX_CONFIG_FILE}" >/dev/null 2>&1; then
+        core_status=passed
+      else
+        core_status=failed
+      fi
+    else
+      core_status=unavailable
+    fi
+  else
+    config_status=untrusted
+    graph_status=not_run
+    listener_status=not_run
+    core_status=not_run
+  fi
+
+  if command -v systemctl >/dev/null 2>&1; then
+    service_state=$(systemctl is-active sing-box 2>/dev/null || printf 'unknown')
+  fi
+  if [[ -e "${INSTANCE_FIREWALL_LEDGER_FILE}" ]]; then
+    if ledger=$(instance_firewall_read_ledger); then
+      firewall_status=available
+      firewall_rules=$(jq -r '.rules | length' <<< "${ledger}") || firewall_rules=0
+    else
+      firewall_status=unavailable
+    fi
+  fi
+  [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]] && instance_pending=true
+  [[ -e "${SB_PROJECT_DIR}.component-write.lock" ]] && component_pending=true
+
+  jq -cn --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" --arg revision "$(jq -r '.revision' <<< "${state}")" \
+    --arg config_status "${config_status}" --arg graph_status "${graph_status}" \
+    --arg listener_status "${listener_status}" --arg core_status "${core_status}" \
+    --arg service_state "${service_state:-unknown}" --arg firewall_status "${firewall_status}" \
+    --argjson config_present "${config_present}" --argjson component_count "$(jq -r '.components | length' <<< "${state}")" \
+    --argjson firewall_rules "${firewall_rules}" --argjson instance_pending "${instance_pending}" \
+    --argjson component_pending "${component_pending}" --argjson inventory "${inventory}" \
+    '{schema:$schema,action:"component-diagnose",
+      state:{revision:($revision|tonumber),component_count:$component_count,valid:true},
+      config:{status:$config_status,present:$config_present,graph:$graph_status,listener_resources:$listener_status,core_check:$core_status},
+      service:{active_state:$service_state},
+      firewall:{ledger_status:$firewall_status,managed_rule_count:$firewall_rules},
+      transactions:{instance_write_pending:$instance_pending,component_write_pending:$component_pending},
+      components:$inventory.components,supported:$inventory.supported}'
+}
+
 managed_component_state_matches_live_config() {
   local config_file=${1:-} state
   [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
@@ -19976,7 +20048,7 @@ agent_print_help() {
   sbv agent service restart --json --yes
   sbv agent subman-sync --json
   sbv agent warp --json
-  sbv agent component list --json
+  sbv agent component list|diagnose --json
   sbv agent component create|replace --json --yes --expected-revision N --file component.json [--allow-public]
   sbv agent component delete --json --yes --expected-revision N --id ID
   sbv agent instance create|replace mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N --file record.json [--allow-public]
@@ -19993,7 +20065,7 @@ agent_print_help() {
   links         输出完整连接材料，适合受信任 Agent 获取节点信息。
   export-client 生成并校验 sing-box 裸核客户端配置，写入固定路径并输出 JSON。
   warp          输出 Cloudflare Warp 状态，包括启用/路由模式/账户/规则统计。
-  component     管理 direct/tun/redirect/tproxy/cloudflared 入站、WireGuard/Tailscale/OpenConnect/OpenVPN endpoint 以及 SSH/Tor/分组等出站；state revision 使用 CAS，敏感配置不会在 list 输出。
+  component     管理 direct/tun/redirect/tproxy/cloudflared 入站、WireGuard/Tailscale/OpenConnect/OpenVPN endpoint 以及 SSH/Tor/分组等出站；list/diagnose 只读，state revision 使用 CAS，敏感配置不会在 list/diagnose 输出。
   check         执行 sing-box check 并输出结构化结果。
   doctor        输出只读诊断信息和配置校验结果。
   service       执行带 --yes 保护的服务操作，目前支持 restart。
@@ -20236,7 +20308,9 @@ agent_capabilities_json() {
         components: {
           state_file: $component_state_file,
           schema_version: 1,
-          operations: ["list", "create", "replace", "delete"],
+          operations: ["list", "diagnose", "create", "replace", "delete"],
+          read_only_operations: ["list", "diagnose"],
+          diagnosis_fields: ["state", "config", "service", "firewall", "transactions"],
           expected_revision_required: true,
           plaintext_public_confirmation: "--allow-public",
           registry: $components,
@@ -23657,11 +23731,22 @@ agent_component_cli() {
   done
 
   if [[ "${operation}" == list ]]; then
-    if [[ $# -ne 0 || "${json}" != y ]]; then
+    if [[ $# -ne 0 || "${json}" != y || "${confirmed}" != n || "${allow_public}" != n || -n "${expected}" || -n "${input}" || -n "${component_id}" ]]; then
       agent_json_error invalid_arguments "用法: sbv agent component list --json"; return 1
     fi
     managed_component_inventory_json
     return $?
+  fi
+
+  if [[ "${operation}" == diagnose ]]; then
+    if [[ $# -ne 0 || "${json}" != y || "${confirmed}" != n || "${allow_public}" != n || -n "${expected}" || -n "${input}" || -n "${component_id}" ]]; then
+      agent_json_error invalid_arguments "用法: sbv agent component diagnose --json"; return 1
+    fi
+    if managed_component_diagnose_json; then
+      return 0
+    fi
+    agent_json_error component_state_untrusted "高级组件状态无法完整读取；未返回部分诊断。"
+    return 1
   fi
 
   if [[ "${operation}" != create && "${operation}" != replace && "${operation}" != delete ||
@@ -23895,7 +23980,7 @@ agent_dispatch() {
     instance) agent_cli "$@" ;;
     component)
       case "${2:-}" in
-        list) (
+        list|diagnose) (
           if ! acquire_managed_write_lock shared; then
             agent_cli_error "component" instance_write_busy "配置正在被管理进程使用，未返回部分组件状态。"; return 1
           fi

@@ -464,3 +464,9 @@ Mixed 生命周期的真实 1.13.18/1.14.0 各完成 migration=1、instances=2�
 统一组件的 Agent `create`/`replace`/`delete` 现在在配置候选发布后比较旧/新固定监听计划；只有监听实际变化时才创建与快照同目录的防火墙 journal，并复用受管 UFW/iptables/ip6tables 账本执行 prepare→apply→commit。服务重启失败、资源应用失败或资源提交失败会先补偿外部规则，再恢复组件状态和配置；补偿不确定时保留快照并返回稳定的 `firewall_rollback_failed` 错误。无固定监听的 outbound/group 或没有计划变化的配置不会触发无关防火墙后端探测。Agent 成功结果新增脱敏 `firewall` 摘要；组件写入要求 root 与共享管理 `flock`，生成器返回成功但未产生普通配置文件也会拒绝提交。
 
 回归新增到 `tests/managed_components_contract.sh`：固定监听端口替换断言 prepare/apply/commit 顺序、结果摘要和 CAS；注入 apply 失败后断言 rollback、配置/组件 revision 恢复及稳定错误 envelope。该接入仍只覆盖固定监听归属，不实现 TUN/redirect/TProxy 的策略路由、nftables、DNS 劫持、SSH 保留或 Cloudflared 控制面；不把 `unavailable` 后端状态写成公网防火墙或真实数据面验证。本轮定向组件/防火墙/Agent 回归及由 `install.sh` 触发的完整 `bash dev/verification/run.sh --changed-file install.sh` 均退出 0；Docker 运行目录 `dev/verification-runs/20260909130338` 提取 14/14 场景成功、0 个失败。该门禁未配置 `SINGBOX_BINARY_113/114`，本地真实双版本专项目明确显示 skip；Docker 场景和既有本地 mock/协议回归通过不等于 TUN/透明路由/公网防火墙或全协议数据面完成。未推送、部署、访问生产或执行真实 SubMan 同步。
+
+### 2026-09-10：高级组件只读诊断入口
+
+新增 Agent `sbv agent component diagnose --json`。该命令在共享读锁下只读检查组件 state revision/数量、组合配置是否存在、组件引用图、固定监听计划、目标核心 `sing-box check`、服务活动状态和受管防火墙账本规则数，并附带与 `component list` 相同的脱敏 registry/inventory；缺少核心、配置或账本时报告 `unavailable`/`missing`，不把诊断失败伪装成写入成功，也不迁移或改写状态。`list` 与 `diagnose` 均拒绝写入参数，实际 CLI 通过 `agent_dispatch` 的 shared lock 和未完成实例事务门禁。
+
+`tests/managed_components_contract.sh` 增加诊断成功、图/监听通过、核心缺失状态和 Cloudflared token 不泄漏断言；本地 `bash -n` 与组件契约回归通过。该入口只补齐可观测性，不等同 TUN/透明路由、Endpoint 外部认证、动态资源或公网数据面验证；组件重建/接管/导出和持久化崩溃恢复仍未完成。
