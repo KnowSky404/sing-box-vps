@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091009
+# Version: 2026091010
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091009"
+readonly SCRIPT_VERSION="2026091010"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -12855,6 +12855,99 @@ managed_component_shadowsocks_config_validate_json() {
   fi
 }
 
+# Validate the AnyTLS outbound contract against sing-box 1.14.0.  AnyTLS has
+# a deliberately small protocol-specific surface: server/port/password,
+# optional session tuning and client metadata, mandatory outbound TLS, and the
+# shared Dial Fields.  It does not expose a configurable network, transport or
+# multiplex object; unknown fields must therefore fail before state/CAS or
+# takeover publication.  The target AnyTLS adapter also rejects TCP fast open
+# when enabled because its lazy connection path cannot safely use it.
+managed_component_anytls_config_validate_json() {
+  local config=${1:-} tls tls_record
+  [[ -n "${config}" ]] || return 1
+  jq -e '
+    def safe_string:
+      type == "string" and (any(explode[]; . < 32 or . == 127) | not);
+    def nonempty_safe_string:
+      safe_string and length > 0;
+    def optional_safe_string($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_bool($name):
+      (has($name) | not) or (.[$name] | type == "boolean");
+    def optional_duration($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_nonnegative_int($name):
+      (has($name) | not) or
+      (.[$name] | type == "number" and . == floor and . >= 0 and . <= 2147483647);
+    def optional_routing_mark:
+      (has("routing_mark") | not) or
+      (.routing_mark |
+        ((type == "number" and . == floor and . >= 0 and . <= 4294967295) or
+         (type == "string" and (length == 0 or test("^0x[0-9a-fA-F]+$")))));
+    def optional_network_strategy:
+      (has("network_strategy") | not) or
+      (.network_strategy | type == "string" and IN("","default","hybrid","fallback"));
+    def optional_network_types($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "string" and (length == 0 or IN("wifi","cellular","ethernet","other"))) or
+         (type == "array" and all(.[]; type == "string" and
+           IN("wifi","cellular","ethernet","other")))));
+    type == "object" and
+    ((keys - [
+      "server","server_port","password","idle_session_check_interval",
+      "idle_session_timeout","min_idle_session","client_metadata","tls",
+      "detour","bind_interface","inet4_bind_address","inet6_bind_address",
+      "bind_address_no_port","protect_path","routing_mark","reuse_addr",
+      "netns","connect_timeout","tcp_fast_open","tcp_multi_path",
+      "disable_tcp_keep_alive","tcp_keep_alive","tcp_keep_alive_interval",
+      "udp_fragment","domain_resolver","network_strategy","network_type",
+      "fallback_network_type","fallback_delay"
+    ]) | length == 0) and
+    (.server | nonempty_safe_string) and
+    (.server_port | type == "number" and . == floor and . >= 1 and . <= 65535) and
+    (.password | nonempty_safe_string) and
+    optional_duration("idle_session_check_interval") and
+    optional_duration("idle_session_timeout") and
+    optional_nonnegative_int("min_idle_session") and
+    optional_safe_string("client_metadata") and
+    optional_bool("tcp_fast_open") and
+    optional_safe_string("detour") and
+    optional_safe_string("bind_interface") and
+    optional_safe_string("inet4_bind_address") and
+    optional_safe_string("inet6_bind_address") and
+    optional_bool("bind_address_no_port") and
+    optional_safe_string("protect_path") and
+    optional_routing_mark and
+    optional_bool("reuse_addr") and
+    optional_safe_string("netns") and
+    optional_duration("connect_timeout") and
+    optional_bool("tcp_multi_path") and
+    optional_bool("disable_tcp_keep_alive") and
+    optional_duration("tcp_keep_alive") and
+    optional_duration("tcp_keep_alive_interval") and
+    ((has("udp_fragment") | not) or (.udp_fragment | type == "boolean")) and
+    ((has("domain_resolver") | not) or
+      (.domain_resolver | type == "string" or type == "object")) and
+    optional_network_strategy and
+    optional_network_types("network_type") and
+    optional_network_types("fallback_network_type") and
+    optional_duration("fallback_delay") and
+    (.tls | (type == "object" and .enabled == true))
+  ' <<< "${config}" >/dev/null 2>&1 || return 1
+
+  # Reuse the recursive outbound-TLS validator used by HTTP/V2Ray clients so
+  # AnyTLS cannot carry an unbounded nested TLS object.
+  tls=$(jq -c '.tls' <<< "${config}") || return 1
+  tls_record=$(jq -cn --argjson tls "${tls}" \
+    '{server:"anytls-tls",server_port:1,tls:$tls}') || return 1
+  managed_component_http_config_validate_json "${tls_record}" || return 1
+
+  # protocol/anytls/outbound.go rejects TCP fast open=true on the lazy
+  # connection path; preserve that runtime safety boundary in state.
+  jq -e '((.tcp_fast_open // false) != true)' <<< "${config}" >/dev/null 2>&1 || return 1
+}
+
 # Validate the shared V2Ray transport object used by VMess/Trojan/VLESS
 # outbounds.  The transport is a discriminated union in sing-box; keeping the
 # variant-specific fields here prevents an HTTP/WS/gRPC option from silently
@@ -13190,10 +13283,13 @@ managed_component_state_validate_record() {
     outbound:shadowsocks)
       managed_component_shadowsocks_config_validate_json "${config}" || return 1
       ;;
+    outbound:anytls)
+      managed_component_anytls_config_validate_json "${config}" || return 1
+      ;;
     outbound:vless|outbound:vmess|outbound:trojan)
       managed_component_v2ray_outbound_config_validate_json "${type}" "${config}" || return 1
       ;;
-    outbound:direct|outbound:block|outbound:bridge|outbound:socks|outbound:http|outbound:shadowsocks|outbound:naive|outbound:hysteria2|outbound:hysteria|outbound:tuic|outbound:anytls|outbound:snell|outbound:shadowtls)
+    outbound:direct|outbound:block|outbound:bridge|outbound:naive|outbound:hysteria2|outbound:hysteria|outbound:tuic|outbound:snell|outbound:shadowtls)
       ;;
     *) return 1 ;;
   esac

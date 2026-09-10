@@ -6,7 +6,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091009`，`SB_SUPPORT_MAX_VERSION=1.14.0`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091010`，`SB_SUPPORT_MAX_VERSION=1.14.0`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -36,6 +36,8 @@
 2026-09-10 VMess/Trojan outbound 增量：managed `vmess` 与 `trojan` outbound component 按固定 [1.14.0 VMess](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/vmess.md)、[Trojan](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/trojan.md)、V2Ray transport、Outbound TLS、multiplex 与 shared Dial Fields 建立 typed allowlist；VMess 的 UUID/security/alter_id/packet encoding 与 Trojan password、TCP/UDP network、TLS、transport、multiplex 均受控，未知/弃用字段、错误 scalar/list、控制字符、HTTPUpgrade、WS early data、明文 QUIC 与 lite-gRPC `permit_without_stream` 在 state/CAS 与接管前拒绝。凭据只经敏感 component export 返回，不生成服务端分享 URI 或 SubMan 载荷。两版官方 ARM64 核心对 VMess TLS+WS、Trojan TLS+gRPC 及明文最小 outbound `check` 均通过；这不代表远端握手、TLS 信任、QUIC/UDP 或真实出站数据面验证，完整目标仍未完成。
 
 2026-09-10 VLESS outbound 增量：managed `vless` outbound component 按固定 [1.14.0 VLESS](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/vless.md)、V2Ray transport、Outbound TLS、multiplex 与 shared Dial Fields 建立 typed allowlist；UUID、空 flow/`xtls-rprx-vision`、TCP/UDP network、packet encoding、TLS、transport 与 multiplex 均受控，省略 packet encoding 保留上游 xudp 默认。Vision 仅允许启用 TLS 且不带 transport；HTTPUpgrade、WS early data、明文 QUIC、lite-gRPC `permit_without_stream` 和错误 flow/transport 组合在 state/CAS 与接管前拒绝。凭据只经敏感 component export 返回，不生成服务端分享 URI 或 SubMan 载荷；两版核心 typed check 及远端握手/数据面证据边界均单独记录，完整目标仍未完成。
+
+2026-09-10 AnyTLS outbound 增量：managed `anytls` outbound component 按固定 [1.14.0 AnyTLS](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/anytls.md)、Outbound TLS 与 shared Dial Fields 建立 typed allowlist；`server`、`server_port`、非空 `password`、启用 TLS、可选 idle-session fields 和 `client_metadata` 均按目标类型校验。AnyTLS adapter 固定承载 TCP/UDP，不提供可配置的 `network`、transport 或 multiplex 字段；`tcp_fast_open=true` 因上游 lazy connection 限制在 state/CAS 与接管前拒绝。TLS 嵌套字段复用 outbound-TLS 校验，凭据只经敏感 component export 返回。两版官方 ARM64 核心对 TLS/session/shared-Dial 最小 AnyTLS outbound `check` 通过；未验证远端 AnyTLS 握手或 TCP/UDP 数据面，完整目标仍未完成。
 
 2026-09-10 TUN 路由安全增量：启用的 managed TUN 若设置 `auto_route=true`，候选配置会在顶层 `route` 自动补 `auto_detect_interface=true`；已有配置明确关闭该保护且未设置 `default_interface` 时 fail-closed，明确选择默认接口则保留原设置。该门禁只防止配置层自捕获环路，不宣称已接管主机策略路由、nftables、DNS 劫持或透明数据面，完整协议目标继续未完成。
 
@@ -137,7 +139,7 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 | shadowtls | `shadowtls` / outbound | 基础内建 | TCP 包装层；必须指向实际内层服务端，v1/v2/v3 字段不能混用 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check（无 TLS 按预期失败） |
 | tuic | `tuic` / outbound | `with_quic` | QUIC/UDP + TLS；`network`、native/quic UDP relay、可选 UDP-over-stream、0-RTT、heartbeat 和拥塞控制 | yes | yes（官方包含 `with_quic`） | typed per-user client export（由 TUIC 入站实例管理驱动）；— | 完整 TUIC outbound JSON / 无标准 URI（`tuic_standard_uri_unavailable`） / unsupported | `tests/tuic_instance_lifecycle.sh` 与真实 1.14.0 outbound check 通过；未验证公网 UDP 或数据面 |
 | hysteria2 | `hysteria2` / outbound | `with_quic` | QUIC/UDP + TLS；obfs、realm/STUN、Chrome QUIC fingerprint 和证书算法约束 | conditional | yes（tag 已含） | typed per-user client export（由 Hysteria2 入站实例管理驱动）；— | Hysteria2 URI 与完整 outbound JSON（按 trust/证书算法发 warning） / — | typed builder/URI/Ed25519 warning 专项通过；目标核心未配置 |
-| anytls | `anytls` / outbound | 自 1.12.0；基础内建 | TCP + TLS；password、idle session、client_metadata；需与 AnyTLS server 配套 | yes | yes（Linux） | typed per-user client export；— | AnyTLS client JSON（`client_metadata` empty, optional public PEM） / 不生成伪 URI / no current SubMan | registry-check（无 TLS 按预期失败）；两核心 check when configured |
+| anytls | `anytls` / outbound | 自 1.12.0；基础内建 | TCP + UDP adapter + 必需 outbound TLS；password、idle session、client_metadata；无 configurable network/transport/multiplex；`tcp_fast_open=true` 不可用 | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 AnyTLS component JSON（不进入普通分享节点） / 不生成伪 URI / no current SubMan | 两核心 1.13.18/1.14.0 TLS/session/shared-Dial typed config check；未验证 AnyTLS 握手或 TCP/UDP 数据面 |
 | snell | `snell` / outbound | 自 1.14.0；基础注册 | TCP transport；版本 `4` 或 `6`，UDP 业务由客户端通过 TCP 会话的 packet API 承载；v5 QUIC proxy 明确不支持；v4 obfs 与 v6 shaping 不同 | yes | yes（Linux） | typed per-user client export（由 Snell 入站实例管理驱动）；— | 完整 outbound JSON（v5 入站映射 v4、v6 入站映射 v6） / — / — | Snell lifecycle/export 专项通过；目标核心 check 需按配置执行；无独立 UDP payload 证据 |
 | tor | `tor` / outbound | type 总是注册；嵌入 Tor 需 `with_embedded_tor` + CGO，默认官方包不含 embedded Tor | 通过外部 Tor executable 或嵌入实例；必须管理 executable path/data directory/torrc；不能把 Tor 当普通服务端节点 | conditional | yes（外部 executable；embedded 需额外 tag/CGO） | none；—/—/—/— | — / 不生成 Tor 分享 / — | registry-check（外部路径为空时仅证明注册） |
 | ssh | `ssh` / outbound | 基础内建；目标 SSH 服务和密钥/host key 策略是外部条件 | TCP；密码或 private key、host key/cipher/kex 需校验；不创建新的 SSH server | conditional | yes（Linux；目标 SSH/凭据仍需） | none；—/—/—/— | — / 不生成 SSH 节点 URI / — | registry-check |

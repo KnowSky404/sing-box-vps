@@ -624,6 +624,102 @@ if managed_component_state_validate_record "${vless_bad_uuid}"; then
   exit 1
 fi
 
+# AnyTLS outbound records have a protocol-specific typed contract rather than
+# generic JSON passthrough.  TLS is mandatory; session tuning and client
+# metadata are optional; AnyTLS has no configurable network/transport/multiplex
+# object; and the target adapter rejects TCP fast open when enabled.
+anytls_outbound_record='{"id":"anytls-outbound-local","role":"outbound","type":"anytls","tag":"anytls-upstream","enabled":true,"route_rules":[],"config":{"server":"anytls.example","server_port":443,"password":"anytls-password","idle_session_check_interval":"30s","idle_session_timeout":"30s","min_idle_session":2,"client_metadata":"","tls":{"enabled":true,"server_name":"anytls.example","insecure":true},"connect_timeout":"5s","network_strategy":"default","network_type":["ethernet"],"domain_resolver":"dns-local","protect_path":"/usr/lib/sing-box/anytls-protect"}}'
+managed_component_state_validate_record "${anytls_outbound_record}"
+anytls_outbound_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${anytls_outbound_record}")
+anytls_outbound_rendered=$(managed_component_render_json "${anytls_outbound_state}")
+jq -e '
+  (.outbounds | length == 1) and
+  .outbounds[0].type == "anytls" and
+  .outbounds[0].tag == "anytls-upstream" and
+  .outbounds[0].server == "anytls.example" and
+  .outbounds[0].server_port == 443 and
+  .outbounds[0].password == "anytls-password" and
+  .outbounds[0].idle_session_check_interval == "30s" and
+  .outbounds[0].idle_session_timeout == "30s" and
+  .outbounds[0].min_idle_session == 2 and
+  .outbounds[0].client_metadata == "" and
+  .outbounds[0].tls.server_name == "anytls.example" and
+  .outbounds[0].protect_path == "/usr/lib/sing-box/anytls-protect" and
+  .outbounds[0].route_rules == null
+' <<< "${anytls_outbound_rendered}" >/dev/null
+anytls_minimal_record=$(jq -c '.config |= (del(.idle_session_check_interval,.idle_session_timeout,.min_idle_session,.client_metadata,.connect_timeout,.network_strategy,.network_type,.domain_resolver,.protect_path) + {tcp_fast_open:false})' <<< "${anytls_outbound_record}")
+managed_component_state_validate_record "${anytls_minimal_record}"
+anytls_missing_password=$(jq -c '.config |= del(.password)' <<< "${anytls_outbound_record}")
+if managed_component_state_validate_record "${anytls_missing_password}"; then
+  printf 'AnyTLS outbound without password unexpectedly accepted\n' >&2
+  exit 1
+fi
+anytls_missing_tls=$(jq -c '.config |= del(.tls)' <<< "${anytls_outbound_record}")
+if managed_component_state_validate_record "${anytls_missing_tls}"; then
+  printf 'AnyTLS outbound without TLS unexpectedly accepted\n' >&2
+  exit 1
+fi
+anytls_disabled_tls=$(jq -c '.config.tls.enabled = false' <<< "${anytls_outbound_record}")
+if managed_component_state_validate_record "${anytls_disabled_tls}"; then
+  printf 'AnyTLS outbound with disabled TLS unexpectedly accepted\n' >&2
+  exit 1
+fi
+anytls_fast_open=$(jq -c '.config.tcp_fast_open = true' <<< "${anytls_outbound_record}")
+if managed_component_state_validate_record "${anytls_fast_open}"; then
+  printf 'AnyTLS TCP fast open unexpectedly accepted\n' >&2
+  exit 1
+fi
+anytls_network=$(jq -c '.config.network = "tcp"' <<< "${anytls_outbound_record}")
+if managed_component_state_validate_record "${anytls_network}"; then
+  printf 'AnyTLS configurable network unexpectedly accepted\n' >&2
+  exit 1
+fi
+anytls_transport=$(jq -c '.config.transport = {type:"ws",path:"/anytls"}' <<< "${anytls_outbound_record}")
+if managed_component_state_validate_record "${anytls_transport}"; then
+  printf 'AnyTLS transport unexpectedly accepted\n' >&2
+  exit 1
+fi
+anytls_multiplex=$(jq -c '.config.multiplex = {enabled:false}' <<< "${anytls_outbound_record}")
+if managed_component_state_validate_record "${anytls_multiplex}"; then
+  printf 'AnyTLS multiplex unexpectedly accepted\n' >&2
+  exit 1
+fi
+anytls_bad_metadata=$(jq -c '.config.client_metadata = {value:"metadata"}' <<< "${anytls_outbound_record}")
+if managed_component_state_validate_record "${anytls_bad_metadata}"; then
+  printf 'AnyTLS non-string client metadata unexpectedly accepted\n' >&2
+  exit 1
+fi
+anytls_bad_min_idle=$(jq -c '.config.min_idle_session = -1' <<< "${anytls_outbound_record}")
+if managed_component_state_validate_record "${anytls_bad_min_idle}"; then
+  printf 'AnyTLS negative min_idle_session unexpectedly accepted\n' >&2
+  exit 1
+fi
+anytls_bad_port=$(jq -c '.config.server_port = 65536' <<< "${anytls_outbound_record}")
+if managed_component_state_validate_record "${anytls_bad_port}"; then
+  printf 'AnyTLS out-of-range server port unexpectedly accepted\n' >&2
+  exit 1
+fi
+anytls_bad_tls=$(jq -c '.config.tls |= (. + {domain_strategy:"prefer_ipv4"})' <<< "${anytls_outbound_record}")
+if managed_component_state_validate_record "${anytls_bad_tls}"; then
+  printf 'AnyTLS unknown TLS field unexpectedly accepted\n' >&2
+  exit 1
+fi
+anytls_unknown_field=$(jq -c '.config |= (. + {domain_strategy:"prefer_ipv4"})' <<< "${anytls_outbound_record}")
+if managed_component_state_validate_record "${anytls_unknown_field}"; then
+  printf 'AnyTLS deprecated/unknown Dial Field unexpectedly accepted\n' >&2
+  exit 1
+fi
+anytls_bad_password=$(jq -c '.config.password = "anytls\u0001password"' <<< "${anytls_outbound_record}")
+if managed_component_state_validate_record "${anytls_bad_password}"; then
+  printf 'AnyTLS control-character password unexpectedly accepted\n' >&2
+  exit 1
+fi
+anytls_bad_duration=$(jq -c '.config.idle_session_timeout = 30' <<< "${anytls_outbound_record}")
+if managed_component_state_validate_record "${anytls_bad_duration}"; then
+  printf 'AnyTLS non-string duration unexpectedly accepted\n' >&2
+  exit 1
+fi
+
 # Selector and URLTest groups own outbound member references.  Their upstream
 # schemas are deliberately narrow: duplicate members, a selector default not
 # present in the member list, and URLTest's selector-only fields must fail

@@ -151,6 +151,13 @@ and Dial Field path. The empty flow supports native transports, while
 flow combinations fail closed before CAS/takeover and credentials remain in
 sensitive export only.
 
+AnyTLS outbound components require `server`, `server_port`, a non-empty
+`password`, and enabled outbound TLS. Idle-session fields and `client_metadata`
+are optional typed values; AnyTLS has no configurable network, transport, or
+multiplex field, and `tcp_fast_open=true` is rejected to match the target
+adapter. Keep credentials in sensitive component export only; a target-core
+`check` does not prove an AnyTLS handshake or TCP/UDP data plane.
+
 - Use `status --json` for version/service/path/protocol diagnostics plus network stack, BBR, REALITY/QoS, and integration presence.
 - Use `capabilities --json` to discover supported protocols/features and operation safety labels before choosing an action.
 - On an existing 1.13 host, run `sbv update sbv` first and start a new invocation before expecting the new Agent commands.

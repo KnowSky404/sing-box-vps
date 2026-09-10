@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026091009`
+- 脚本版本：`2026091010`
 
 - sing-box 适配版本：`1.14.0`
 
@@ -21,6 +21,8 @@ Shadowsocks outbound 已按 sing-box 1.14 的 method/password、SS2022 严格 Ba
 VMess 与 Trojan outbound 已按 sing-box 1.14 的必需认证字段、TCP/UDP network、TLS、V2Ray transport、multiplex 和共享 Dial Fields 接入统一 typed component state；VMess 保留 UUID、security、alter_id、packet encoding 等字段，Trojan 保留 password。HTTP、WebSocket（无 early data）、gRPC 与 TLS-only QUIC 按固定字段校验，HTTPUpgrade、WebSocket early data、明文 QUIC 与 lite gRPC 的 `permit_without_stream` 会在状态/CAS 与接管前拒绝；凭据仅通过敏感 component export 返回，核心 `check` 不等于远端握手或出站数据面证据。
 
 VLESS outbound 已按 sing-box 1.14 的 UUID、flow、TCP/UDP network、packet encoding、TLS、V2Ray transport、multiplex 和共享 Dial Fields 接入同一 typed component state；省略 `packet_encoding` 保留上游默认 xudp，Vision flow 只允许 TLS 直连且不与 V2Ray transport 叠加。HTTP、无 early data 的 WebSocket、gRPC 与 TLS-only QUIC 可表达，HTTPUpgrade、WS early data、明文 QUIC、lite gRPC `permit_without_stream`、无 TLS/带 transport 的 Vision flow 均在状态/CAS 与接管前拒绝；凭据仅通过敏感 component export 返回，不生成服务端分享 URI 或 SubMan 载荷。
+
+AnyTLS outbound 已按 sing-box 1.14 的 `AnyTLSOutboundOptions` 接入 typed component state；`server`、`server_port`、非空 `password` 与启用的 outbound TLS 必填，`idle_session_check_interval`、`idle_session_timeout`、`min_idle_session` 和 `client_metadata` 可选，共享 Dial Fields 仍逐项校验。AnyTLS 没有可配置的 `network`、transport 或 multiplex 字段；目标核心的 `tcp_fast_open=true` 也会在状态/CAS 与接管前拒绝。凭据仅通过敏感 component export 返回，固定核心 `check` 只证明配置可解析，不代表远端 AnyTLS 握手或 TCP/UDP 出站数据面。
 
 ## 🚀 一键安装
 
