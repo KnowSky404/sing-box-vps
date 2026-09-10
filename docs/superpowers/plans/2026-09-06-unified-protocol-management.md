@@ -470,3 +470,9 @@ Mixed 生命周期的真实 1.13.18/1.14.0 各完成 migration=1、instances=2�
 新增 Agent `sbv agent component diagnose --json`。该命令在共享读锁下只读检查组件 state revision/数量、组合配置是否存在、组件引用图、固定监听计划、目标核心 `sing-box check`、服务活动状态和受管防火墙账本规则数，并附带与 `component list` 相同的脱敏 registry/inventory；缺少核心、配置或账本时报告 `unavailable`/`missing`，不把诊断失败伪装成写入成功，也不迁移或改写状态。`list` 与 `diagnose` 均拒绝写入参数，实际 CLI 通过 `agent_dispatch` 的 shared lock 和未完成实例事务门禁。
 
 `tests/managed_components_contract.sh` 增加诊断成功、图/监听通过、核心缺失状态和 Cloudflared token 不泄漏断言；本地 `bash -n` 与组件契约回归通过。该入口只补齐可观测性，不等同 TUN/透明路由、Endpoint 外部认证、动态资源或公网数据面验证；组件重建/接管/导出和持久化崩溃恢复仍未完成。
+
+### 2026-09-10：高级组件受管重建入口
+
+新增 Agent `sbv agent component rebuild --json --yes --expected-revision N`。它在排他管理锁和精确 revision 门禁下不改写 `components.json`，从同一受管状态重新生成组合配置，继续执行组件图、监听资源、目标核心 check、服务重启与防火墙 prepare/apply/commit；失败按既有快照路径恢复，成功结果标记 `operation=rebuild` 且 revision 不递增。回归新增 state/config 字节不变、无资源变化不探测防火墙和参数门禁断言。
+
+该入口补齐了高级组件的重建生命周期，但不等同 live 高级配置接管、TUN/透明路由、Endpoint 外部认证、动态资源或持久化崩溃恢复；组件 takeover/export 仍未完成。

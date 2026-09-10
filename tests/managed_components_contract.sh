@@ -123,6 +123,9 @@ rm -f "${SB_COMPONENT_STATE_FILE}.bak"
 
 generate_config() {
   local rendered inbounds outbounds route_rules
+  if [[ -e "${component_rebuild_failure:-}" ]]; then
+    return 1
+  fi
   rendered=$(managed_component_render_json) || return 1
   inbounds=$(jq -c '.inbounds' <<< "${rendered}") || return 1
   outbounds=$(jq -c '.outbounds' <<< "${rendered}") || return 1
@@ -145,6 +148,27 @@ if grep -Fq 'secret-token-not-for-list' <<< "${diagnose_json}"; then
   printf 'component diagnose leaked a secret token\n' >&2
   exit 1
 fi
+
+state_before_rebuild=$(cat "${SB_COMPONENT_STATE_FILE}")
+config_before_rebuild=$(cat "${SINGBOX_CONFIG_FILE}")
+rebuild_json=$(agent_dispatch component rebuild --json --yes --expected-revision 3)
+jq -e '.ok == true and .data.action == "component-apply" and
+  .data.operation == "rebuild" and .data.revision == 3 and
+  .data.id == null and .data.service_restarted == false and
+  .data.firewall.status == "not_attempted"' <<< "${rebuild_json}" >/dev/null
+[[ "$(cat "${SB_COMPONENT_STATE_FILE}")" == "${state_before_rebuild}" ]]
+[[ "$(cat "${SINGBOX_CONFIG_FILE}")" == "${config_before_rebuild}" ]]
+
+component_rebuild_failure="${TMP_DIR}/component-rebuild-failure"
+touch "${component_rebuild_failure}"
+if failed_rebuild_json=$(agent_dispatch component rebuild --json --yes --expected-revision 3); then
+  printf 'component rebuild failure unexpectedly succeeded\n' >&2
+  exit 1
+fi
+jq -e '.ok == false and .error == "config_check_failed"' <<< "${failed_rebuild_json}" >/dev/null
+[[ "$(cat "${SB_COMPONENT_STATE_FILE}")" == "${state_before_rebuild}" ]]
+[[ "$(cat "${SINGBOX_CONFIG_FILE}")" == "${config_before_rebuild}" ]]
+rm -f "${component_rebuild_failure}"
 
 component_firewall_log="${TMP_DIR}/component-firewall.log"
 component_firewall_apply_failure="${TMP_DIR}/component-firewall-apply-failure"

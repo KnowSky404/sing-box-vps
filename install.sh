@@ -538,6 +538,7 @@ print_cli_help() {
   sbv agent help
   sbv agent capabilities --json
   sbv agent component list|diagnose --json
+  sbv agent component rebuild --json --yes --expected-revision N
   sbv agent component create|replace|delete ...
   sbv agent upgrade-check --json x.y.z
   sbv agent upgrade --json x.y.z --yes
@@ -12638,7 +12639,7 @@ managed_component_state_matches_live_config() {
 
 managed_component_state_apply() {
   local operation=${1:-} expected=${2:-} input=${3:-} target_id=${4:-} allow_public=${5:-n}
-  local state current_revision record candidate snapshot service_restarted=false
+  local state current_revision record candidate snapshot service_restarted=false state_changed=true
   local role type tag result_record old_config old_listener_plan new_listener_plan
   local firewall_journal=""
   local firewall_summary='{"status":"not_attempted","backends":[],"diagnostics":[]}'
@@ -12671,16 +12672,25 @@ managed_component_state_apply() {
         MANAGED_COMPONENT_LAST_ERROR=component_referenced_or_missing; return 1;
       }
       ;;
+    rebuild)
+      [[ -z "${input}${target_id}" && "${allow_public}" == n ]] || {
+        MANAGED_COMPONENT_LAST_ERROR=invalid_operation; return 1;
+      }
+      candidate="${state}"
+      state_changed=false
+      ;;
     *) MANAGED_COMPONENT_LAST_ERROR=invalid_operation; return 1 ;;
   esac
 
   snapshot=$(create_managed_state_snapshot) || { MANAGED_COMPONENT_LAST_ERROR=snapshot_failed; return 1; }
   old_config="${snapshot}/project/config.json"
   [[ -f "${old_config}" && ! -L "${old_config}" ]] || old_config=""
-  if ! managed_component_write_state "${candidate}"; then
-    managed_component_abort_state_transaction "${snapshot}" "高级组件状态写入失败" || :
-    MANAGED_COMPONENT_LAST_ERROR=state_write_failed
-    return 1
+  if [[ "${state_changed}" == true ]]; then
+    if ! managed_component_write_state "${candidate}"; then
+      managed_component_abort_state_transaction "${snapshot}" "高级组件状态写入失败" || :
+      MANAGED_COMPONENT_LAST_ERROR=state_write_failed
+      return 1
+    fi
   fi
   if ! generate_config ||
      [[ ! -f "${SINGBOX_CONFIG_FILE}" || -L "${SINGBOX_CONFIG_FILE}" ]]; then
@@ -12800,7 +12810,12 @@ managed_component_state_apply() {
     --arg id "${result_id}" --arg role "${role}" --arg type "${type}" --arg tag "${tag}" \
     --argjson service_restarted "${service_restarted}" \
     --argjson firewall "${firewall_summary}" \
-    '{action:"component-apply",operation:$operation,revision:($revision|tonumber),id:$id,role:$role,type:$type,tag:$tag,config_check:"passed",service_restarted:$service_restarted,firewall:$firewall}')
+    '{action:"component-apply",operation:$operation,revision:($revision|tonumber),
+      id:(if $id == "" then null else $id end),
+      role:(if $role == "" then null else $role end),
+      type:(if $type == "" then null else $type end),
+      tag:(if $tag == "" then null else $tag end),
+      config_check:"passed",service_restarted:$service_restarted,firewall:$firewall}')
   return 0
 }
 
@@ -20049,6 +20064,7 @@ agent_print_help() {
   sbv agent subman-sync --json
   sbv agent warp --json
   sbv agent component list|diagnose --json
+  sbv agent component rebuild --json --yes --expected-revision N
   sbv agent component create|replace --json --yes --expected-revision N --file component.json [--allow-public]
   sbv agent component delete --json --yes --expected-revision N --id ID
   sbv agent instance create|replace mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N --file record.json [--allow-public]
@@ -20065,7 +20081,7 @@ agent_print_help() {
   links         输出完整连接材料，适合受信任 Agent 获取节点信息。
   export-client 生成并校验 sing-box 裸核客户端配置，写入固定路径并输出 JSON。
   warp          输出 Cloudflare Warp 状态，包括启用/路由模式/账户/规则统计。
-  component     管理 direct/tun/redirect/tproxy/cloudflared 入站、WireGuard/Tailscale/OpenConnect/OpenVPN endpoint 以及 SSH/Tor/分组等出站；list/diagnose 只读，state revision 使用 CAS，敏感配置不会在 list/diagnose 输出。
+  component     管理 direct/tun/redirect/tproxy/cloudflared 入站、WireGuard/Tailscale/OpenConnect/OpenVPN endpoint 以及 SSH/Tor/分组等出站；list/diagnose 只读，rebuild/create/replace/delete 使用 CAS 事务，敏感配置不会在 list/diagnose 输出。
   check         执行 sing-box check 并输出结构化结果。
   doctor        输出只读诊断信息和配置校验结果。
   service       执行带 --yes 保护的服务操作，目前支持 restart。
@@ -20308,7 +20324,7 @@ agent_capabilities_json() {
         components: {
           state_file: $component_state_file,
           schema_version: 1,
-          operations: ["list", "diagnose", "create", "replace", "delete"],
+          operations: ["list", "diagnose", "rebuild", "create", "replace", "delete"],
           read_only_operations: ["list", "diagnose"],
           diagnosis_fields: ["state", "config", "service", "firewall", "transactions"],
           expected_revision_required: true,
@@ -23746,6 +23762,32 @@ agent_component_cli() {
       return 0
     fi
     agent_json_error component_state_untrusted "高级组件状态无法完整读取；未返回部分诊断。"
+    return 1
+  fi
+
+  if [[ "${operation}" == rebuild ]]; then
+    if [[ $# -ne 0 || "${json}" != y || "${confirmed}" != y || "${allow_public}" != n ||
+          -n "${input}" || -n "${component_id}" || ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
+      agent_json_error invalid_arguments "用法: sbv agent component rebuild --json --yes --expected-revision N"; return 1
+    fi
+    if ! structured_instance_store_revision_arg "${expected}" >/dev/null; then
+      agent_json_error invalid_arguments "revision 超出安全整数范围；未修改。"; return 1
+    fi
+    if managed_component_state_apply rebuild "${expected}" "" "" n; then
+      printf '%s\n' "${MANAGED_COMPONENT_LAST_RESULT}"
+      return 0
+    fi
+    case "${MANAGED_COMPONENT_LAST_ERROR:-component_apply_failed}" in
+      revision_mismatch) agent_json_error revision_mismatch "组件 state revision 不匹配；未修改。" ;;
+      component_write_busy) agent_json_error component_write_busy "另一个管理进程正在执行；组件未修改。" ;;
+      config_check_failed) agent_json_error config_check_failed "组件重建已回滚；生成的配置未通过图校验、监听校验或 sing-box check。" ;;
+      service_restart_failed) agent_json_error service_restart_failed "组件重建已回滚；服务重启失败。" ;;
+      firewall_prepare_failed) agent_json_error firewall_prepare_failed "组件重建已回滚；防火墙资源预检失败。" ;;
+      firewall_apply_failed) agent_json_error firewall_apply_failed "组件重建已回滚；防火墙资源应用失败。" ;;
+      firewall_commit_failed) agent_json_error firewall_commit_failed "组件重建已回滚；防火墙资源提交失败。" ;;
+      firewall_rollback_failed) agent_json_error firewall_rollback_failed "防火墙外部资源回滚不确定；已保留事务快照供恢复。" ;;
+      *) agent_json_error component_apply_failed "组件重建失败，状态已回滚或保留快照待恢复。" ;;
+    esac
     return 1
   fi
 
