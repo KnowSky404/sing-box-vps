@@ -113,6 +113,40 @@ if [[ "${checked_candidate}" == "${SINGBOX_CONFIG_FILE}" || "${checked_candidate
   exit 1
 fi
 
+# Exercise the production jq assembly rather than only the helper contract:
+# an auto-routed managed TUN must add the loop guard to the published route,
+# while an explicit unsafe live setting must abort before publication.
+managed_component_render_json_definition=$(declare -f managed_component_render_json)
+validate_live_inbound_inventory_definition=$(declare -f validate_live_inbound_inventory)
+managed_component_render_json() {
+  jq -cn '{inbounds:[{type:"tun",tag:"tun-auto",interface_name:"tun-sbv",address:["172.19.0.1/30"],auto_route:true,strict_route:true}],endpoints:[],outbounds:[],route_rules:[]}'
+}
+validate_live_inbound_inventory() { :; }
+generate_config >/dev/null
+jq -e '.route.auto_detect_interface == true and any(.inbounds[]; .tag == "tun-auto" and .auto_route == true)' \
+  "${SINGBOX_CONFIG_FILE}" >/dev/null
+jq '.route.auto_detect_interface = false | del(.route.default_interface)' \
+  "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+tun_config_conflict_input=$(cat "${SINGBOX_CONFIG_FILE}")
+if generate_config >"${TMP_DIR}/tun-route.out" 2>"${TMP_DIR}/tun-route.err"; then
+  printf 'expected explicit unsafe TUN loop guard to abort generation\n' >&2
+  exit 1
+fi
+grep -Fq 'tun_auto_route_loop_guard_conflict' "${TMP_DIR}/tun-route.err"
+[[ "$(cat "${SINGBOX_CONFIG_FILE}")" == "${tun_config_conflict_input}" ]]
+jq -e '.route.auto_detect_interface == false and (.route.default_interface? == null)' \
+  "${SINGBOX_CONFIG_FILE}" >/dev/null
+jq '.route.default_interface = "eth0"' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+generate_config >/dev/null
+jq -e '.route.auto_detect_interface == false and .route.default_interface == "eth0"' \
+  "${SINGBOX_CONFIG_FILE}" >/dev/null
+eval "${managed_component_render_json_definition}"
+unset managed_component_render_json_definition
+eval "${validate_live_inbound_inventory_definition}"
+unset validate_live_inbound_inventory_definition
+
 printf '%s\n' '{"keep":"check-failure"}' > "${SINGBOX_CONFIG_FILE}"
 rm -f "${SINGBOX_CONFIG_FILE}.bak"
 touch "${CHECK_FAIL_FILE}"

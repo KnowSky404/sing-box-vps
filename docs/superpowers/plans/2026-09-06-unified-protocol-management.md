@@ -489,4 +489,8 @@ Mixed 生命周期的真实 1.13.18/1.14.0 各完成 migration=1、instances=2�
 
 `tests/managed_components_contract.sh` 新增 publish 阶段中断模拟：先保存 state/config，再写持久 journal 并注入 revision/route 部分变更，recover 必须回滚字节内容、返回 `status=rolled_back` 并删除事务目录。该切片补齐高级组件崩溃恢复边界，但仍不宣称 TUN/透明路由、动态资源、Endpoint 外部认证、公网防火墙或全协议数据面完成；完整协议目标继续未完成。
 
-本轮 `bash dev/verification/run.sh` 在 `dev/verification-runs/20260910112126` 完成：`remote_status=success`，Docker artifact 已提取，包含 14/14 场景与 21/21 既有协议探针成功；本机未配置 `SINGBOX_BINARY_113/114` 的真实核心项按规则标记 skip。该证据覆盖当前受管回归和 Docker 安装/升级边界，不扩大为公网协议、动态 Endpoint 或真实 SubMan 验证。
+### 2026-09-10：受管 TUN auto-route 环路门禁
+
+启用的 managed TUN 若声明 `auto_route=true`，配置生成器会把 `route.auto_detect_interface=true` 合并到顶层路由，以避免默认路由再次捕获 TUN 自身流量；已有配置若明确关闭该保护且没有 `route.default_interface` 则拒绝候选发布，明确设置默认接口时保留操作员选择。`tests/managed_components_contract.sh` 覆盖无 TUN、自动补 guard、显式冲突 fail-closed 与显式默认接口四条边界；`tests/generate_config_commits_validated_candidate.sh` 还覆盖实际 `generate_config` 发布与保留显式默认接口。本切片只处理 sing-box 配置层的环路保护，不冒充主机策略路由/nftables、DNS 劫持、透明接入或真实数据面完成；版本提升为本轮 `2026091003`。
+
+本轮 `bash dev/verification/run.sh` 在 `dev/verification-runs/20260910133840` 完成：`remote_status=success`，Docker artifact 已提取，包含 14/14 场景与 21/21 既有协议探针成功；本机未配置 `SINGBOX_BINARY_113/114` 的真实核心项按规则标记 skip。该证据覆盖当前受管回归和 Docker 安装/升级边界，不扩大为公网协议、动态 Endpoint 或真实 SubMan 验证。

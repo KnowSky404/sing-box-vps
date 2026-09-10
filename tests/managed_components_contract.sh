@@ -140,6 +140,28 @@ generate_config() {
 
 generate_config
 
+# An auto-routed TUN requires a host-route loop guard.  The generator adds the
+# safe default when no route interface has been selected, preserves an explicit
+# default interface, and rejects an explicitly disabled guard without one.
+no_tun_route_options=$(managed_component_tun_route_options_json "${rendered}")
+jq -e '. == {}' <<< "${no_tun_route_options}" >/dev/null
+tun_auto_components=$(jq -cn '{inbounds:[{type:"tun",tag:"tun-auto",auto_route:true}],endpoints:[],outbounds:[],route_rules:[]}')
+tun_route_options=$(managed_component_tun_route_options_json "${tun_auto_components}")
+jq -e '.auto_detect_interface == true and (length == 1)' <<< "${tun_route_options}" >/dev/null
+config_before_tun_route_guard=$(cat "${SINGBOX_CONFIG_FILE}")
+jq '(.route |= (. + {auto_detect_interface:false} | del(.default_interface)))' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if managed_component_tun_route_options_json "${tun_auto_components}" > /dev/null 2>"${TMP_DIR}/tun-route-error"; then
+  printf 'explicitly disabled TUN loop guard unexpectedly succeeded\n' >&2
+  exit 1
+fi
+grep -Fq 'tun_auto_route_loop_guard_conflict' "${TMP_DIR}/tun-route-error"
+jq '.route.auto_detect_interface = false | .route.default_interface = "eth0"' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+tun_default_route_options=$(managed_component_tun_route_options_json "${tun_auto_components}")
+jq -e '.auto_detect_interface == false and .default_interface == "eth0"' <<< "${tun_default_route_options}" >/dev/null
+printf '%s\n' "${config_before_tun_route_guard}" > "${SINGBOX_CONFIG_FILE}"
+
 diagnose_json=$(agent_cli component diagnose --json)
 jq -e '.ok == true and .data.action == "component-diagnose" and
   .data.state.revision == 3 and .data.config.status == "present" and

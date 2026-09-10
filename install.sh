@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091002
+# Version: 2026091003
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091002"
+readonly SCRIPT_VERSION="2026091003"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -12461,6 +12461,42 @@ managed_component_render_json() {
     }' <<< "${state}"
 }
 
+# An auto-routed TUN must have an explicit host-route loop guard.  The
+# generator can safely add auto_detect_interface when the existing route does
+# not choose another interface, but it must not silently override an operator's
+# explicit unsafe setting.  This is a config-level guard only; it does not
+# claim to manage the host's complete policy-routing or firewall state.
+managed_component_tun_route_options_json() {
+  local components=${1:-} route='{}'
+  [[ -n "${components}" ]] || return 1
+  jq -e 'type == "object" and (.inbounds | type == "array")' <<< "${components}" >/dev/null 2>&1 || return 1
+  if ! jq -e 'any(.inbounds[]?; .type == "tun" and .auto_route == true)' <<< "${components}" >/dev/null 2>&1; then
+    printf '{}\n'
+    return 0
+  fi
+  if [[ -e "${SINGBOX_CONFIG_FILE}" ]]; then
+    [[ -f "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" && -r "${SINGBOX_CONFIG_FILE}" ]] || return 1
+    route=$(jq -c 'if has("route") then .route else {} end' "${SINGBOX_CONFIG_FILE}") || return 1
+    jq -e 'type == "object" and
+      ((has("auto_detect_interface") | not) or (.auto_detect_interface | type == "boolean")) and
+      ((has("default_interface") | not) or (.default_interface | type == "string"))' \
+      <<< "${route}" >/dev/null 2>&1 || return 1
+    if jq -e '.auto_detect_interface == false and
+      ((.default_interface // "") == "")' <<< "${route}" >/dev/null 2>&1; then
+      printf '[ERROR] component_route: tun_auto_route_loop_guard_conflict; 请启用 route.auto_detect_interface 或设置 route.default_interface。\n' >&2
+      return 1
+    fi
+    if jq -e 'has("auto_detect_interface") or
+      (has("default_interface") and ((.default_interface // "") | length > 0))' \
+      <<< "${route}" >/dev/null 2>&1; then
+      jq -c 'with_entries(select(.key == "auto_detect_interface" or
+        (.key == "default_interface" and ((.value // "") | length > 0))))' <<< "${route}"
+      return 0
+    fi
+  fi
+  printf '%s\n' '{"auto_detect_interface":true}'
+}
+
 managed_component_state_candidate() {
   local state=${1:-} operation=${2:-} record=${3:-} target_id=${4:-}
   local candidate
@@ -14027,7 +14063,7 @@ generate_config_candidate() {
   local config_candidate="" backup_candidate="" protocol
   local exit_cleanup_command effective_protocols
   local inbounds_json certificate_providers_json protocol_rules_json instance_outbound_rules_json
-  local managed_components_json
+  local managed_components_json managed_route_options_json
 
   # Force ensure jq is installed
   if ! command -v jq &>/dev/null; then
@@ -14052,6 +14088,7 @@ generate_config_candidate() {
     log_warn "高级组件状态无效，禁止生成可能丢失组件的配置。"
     return 1
   }
+  managed_route_options_json=$(managed_component_tun_route_options_json "${managed_components_json}") || return 1
 
   log_info "正在生成配置 (目标 sing-box $(resolve_config_target_singbox_version)，Endpoint 架构 & 安全注入)..."
   mkdir -p "${SINGBOX_CONFIG_DIR}" || return 1
@@ -14157,6 +14194,7 @@ generate_config_candidate() {
     --argjson certificate_providers "${certificate_providers_json}" \
     --argjson protocol_rules "${protocol_rules_json}" \
     --argjson instance_outbound_rules "${instance_outbound_rules_json}" \
+    --argjson managed_route_options "${managed_route_options_json}" \
     --argjson ai_domains "${WARP_AI_ROUTE_DOMAINS_JSON}" \
     --argjson ai_domain_suffixes "${WARP_AI_ROUTE_DOMAIN_SUFFIXES_JSON}" \
     --argjson stream_domains "${WARP_STREAM_ROUTE_DOMAINS_JSON}" \
@@ -14207,7 +14245,7 @@ generate_config_candidate() {
         },
         { "type": "block", "tag": "block" }
       ] + ($managed_components.outbounds // [])),
-      "route": {
+      "route": ({
         "rule_set": (
           if $enable_warp == "y" and $warp_mode == "selective" then
             $local_rule_sets + $remote_rule_sets
@@ -14269,7 +14307,7 @@ generate_config_candidate() {
           )
         ),
         "final": (if $enable_warp == "y" and $warp_mode == "all" then "warp-ep" else "direct" end)
-      }
+      } + $managed_route_options)
     } + (
       if ($certificate_providers | length) > 0 then
         { "certificate_providers": $certificate_providers }
