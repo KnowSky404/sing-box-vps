@@ -515,6 +515,115 @@ if managed_component_state_validate_record "${trojan_unknown_field}"; then
   exit 1
 fi
 
+# VLESS outbound records use the same V2Ray transport/TLS/multiplex contract,
+# with VLESS-specific flow and packet-encoding semantics.  Vision is only a
+# direct TLS flow; native transports remain available for the empty flow.
+vless_outbound_record='{"id":"vless-outbound-local","role":"outbound","type":"vless","tag":"vless-upstream","enabled":true,"route_rules":[],"config":{"server":"127.0.0.1","server_port":443,"uuid":"bf000d23-0752-40b4-affe-68f7707a9661","flow":"","network":["tcp","udp"],"tls":{"enabled":true,"server_name":"vless.example","insecure":true},"packet_encoding":"xudp","transport":{"type":"ws","path":"/vless","headers":{"Host":"vless.example"}},"multiplex":{"enabled":false,"protocol":"h2mux"},"connect_timeout":"5s","network_strategy":"default","network_type":["ethernet"],"domain_resolver":"dns-local","protect_path":"/usr/lib/sing-box/vless-protect"}}'
+managed_component_state_validate_record "${vless_outbound_record}"
+vless_outbound_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${vless_outbound_record}")
+vless_outbound_rendered=$(managed_component_render_json "${vless_outbound_state}")
+jq -e '
+  (.outbounds | length == 1) and
+  .outbounds[0].type == "vless" and
+  .outbounds[0].tag == "vless-upstream" and
+  .outbounds[0].server_port == 443 and
+  .outbounds[0].uuid == "bf000d23-0752-40b4-affe-68f7707a9661" and
+  .outbounds[0].packet_encoding == "xudp" and
+  .outbounds[0].transport.type == "ws" and
+  .outbounds[0].transport.headers.Host == "vless.example" and
+  .outbounds[0].multiplex.protocol == "h2mux" and
+  .outbounds[0].tls.server_name == "vless.example" and
+  .outbounds[0].protect_path == "/usr/lib/sing-box/vless-protect" and
+  .outbounds[0].route_rules == null
+' <<< "${vless_outbound_rendered}" >/dev/null
+vless_plain_record=$(jq -c '.config |= del(.tls,.transport,.multiplex)' <<< "${vless_outbound_record}")
+managed_component_state_validate_record "${vless_plain_record}"
+vless_flow_record=$(jq -c '.config.flow = "xtls-rprx-vision" | .config |= (del(.transport) + {tls:{enabled:true,server_name:"vless.example",insecure:true}})' <<< "${vless_outbound_record}")
+managed_component_state_validate_record "${vless_flow_record}"
+vless_http_transport=$(jq -c '.config.transport = {type:"http",host:["vless.example"],path:"/vless",method:"POST",headers:{"X-Proxy":"vless"},idle_timeout:"30s",ping_timeout:"10s"}' <<< "${vless_outbound_record}")
+managed_component_state_validate_record "${vless_http_transport}"
+vless_grpc_transport=$(jq -c '.config.transport = {type:"grpc",service_name:"vless",idle_timeout:"30s",ping_timeout:"10s",permit_without_stream:false}' <<< "${vless_outbound_record}")
+managed_component_state_validate_record "${vless_grpc_transport}"
+vless_quic_transport=$(jq -c '.config.transport = {type:"quic"} | .config.tls = {enabled:true,server_name:"vless.example",insecure:true}' <<< "${vless_outbound_record}")
+managed_component_state_validate_record "${vless_quic_transport}"
+vless_packet_encoding_omitted=$(jq -c '.config |= del(.packet_encoding)' <<< "${vless_outbound_record}")
+managed_component_state_validate_record "${vless_packet_encoding_omitted}"
+vless_httpupgrade_transport=$(jq -c '.config.transport = {type:"httpupgrade",host:"vless.example",path:"/vless",headers:{Host:"vless.example"}}' <<< "${vless_outbound_record}")
+if managed_component_state_validate_record "${vless_httpupgrade_transport}"; then
+  printf 'VLESS HTTPUpgrade transport unexpectedly accepted\n' >&2
+  exit 1
+fi
+vless_ws_early_data=$(jq -c '.config.transport = {type:"ws",path:"/vless",max_early_data:1,early_data_header_name:"X-Early-Data"}' <<< "${vless_outbound_record}")
+if managed_component_state_validate_record "${vless_ws_early_data}"; then
+  printf 'VLESS WebSocket early data unexpectedly accepted\n' >&2
+  exit 1
+fi
+vless_grpc_permit=$(jq -c '.config.transport = {type:"grpc",service_name:"vless",permit_without_stream:true}' <<< "${vless_outbound_record}")
+if managed_component_state_validate_record "${vless_grpc_permit}"; then
+  printf 'VLESS lite-gRPC permit_without_stream unexpectedly accepted\n' >&2
+  exit 1
+fi
+vless_quic_without_tls=$(jq -c '.config |= (del(.tls) | .transport = {type:"quic"})' <<< "${vless_outbound_record}")
+if managed_component_state_validate_record "${vless_quic_without_tls}"; then
+  printf 'VLESS plaintext QUIC unexpectedly accepted\n' >&2
+  exit 1
+fi
+vless_flow_without_tls=$(jq -c '.config.flow = "xtls-rprx-vision" | .config |= del(.tls,.transport)' <<< "${vless_outbound_record}")
+if managed_component_state_validate_record "${vless_flow_without_tls}"; then
+  printf 'VLESS Vision flow without TLS unexpectedly accepted\n' >&2
+  exit 1
+fi
+vless_flow_with_transport=$(jq -c '.config.flow = "xtls-rprx-vision"' <<< "${vless_outbound_record}")
+if managed_component_state_validate_record "${vless_flow_with_transport}"; then
+  printf 'VLESS Vision flow with transport unexpectedly accepted\n' >&2
+  exit 1
+fi
+vless_missing_uuid=$(jq -c '.config |= del(.uuid)' <<< "${vless_outbound_record}")
+if managed_component_state_validate_record "${vless_missing_uuid}"; then
+  printf 'VLESS outbound without UUID unexpectedly accepted\n' >&2
+  exit 1
+fi
+vless_bad_flow=$(jq -c '.config.flow = "xtls-rprx-vision-plus"' <<< "${vless_outbound_record}")
+if managed_component_state_validate_record "${vless_bad_flow}"; then
+  printf 'VLESS unsupported flow unexpectedly accepted\n' >&2
+  exit 1
+fi
+vless_bad_packet_encoding=$(jq -c '.config.packet_encoding = "quic"' <<< "${vless_outbound_record}")
+if managed_component_state_validate_record "${vless_bad_packet_encoding}"; then
+  printf 'VLESS unsupported packet encoding unexpectedly accepted\n' >&2
+  exit 1
+fi
+vless_bad_transport=$(jq -c '.config.transport.type = "h2"' <<< "${vless_outbound_record}")
+if managed_component_state_validate_record "${vless_bad_transport}"; then
+  printf 'VLESS unsupported transport unexpectedly accepted\n' >&2
+  exit 1
+fi
+vless_none_transport=$(jq -c '.config.transport = {type:"none"}' <<< "${vless_outbound_record}")
+if managed_component_state_validate_record "${vless_none_transport}"; then
+  printf 'VLESS none transport unexpectedly accepted\n' >&2
+  exit 1
+fi
+vless_bad_multiplex=$(jq -c '.config.multiplex.protocol = "mux"' <<< "${vless_outbound_record}")
+if managed_component_state_validate_record "${vless_bad_multiplex}"; then
+  printf 'VLESS unsupported multiplex protocol unexpectedly accepted\n' >&2
+  exit 1
+fi
+vless_bad_tls=$(jq -c '.config.tls |= (. + {domain_strategy:"prefer_ipv4"})' <<< "${vless_outbound_record}")
+if managed_component_state_validate_record "${vless_bad_tls}"; then
+  printf 'VLESS unknown TLS field unexpectedly accepted\n' >&2
+  exit 1
+fi
+vless_unknown_field=$(jq -c '.config |= (. + {domain_strategy:"prefer_ipv4"})' <<< "${vless_outbound_record}")
+if managed_component_state_validate_record "${vless_unknown_field}"; then
+  printf 'VLESS deprecated/unknown Dial Field unexpectedly accepted\n' >&2
+  exit 1
+fi
+vless_bad_uuid=$(jq -c '.config.uuid = "vless\u0001uuid"' <<< "${vless_outbound_record}")
+if managed_component_state_validate_record "${vless_bad_uuid}"; then
+  printf 'VLESS control-character UUID unexpectedly accepted\n' >&2
+  exit 1
+fi
+
 # Selector and URLTest groups own outbound member references.  Their upstream
 # schemas are deliberately narrow: duplicate members, a selector default not
 # present in the member list, and URLTest's selector-only fields must fail

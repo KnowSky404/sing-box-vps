@@ -144,6 +144,13 @@ HTTPUpgrade, WebSocket early data, plaintext QUIC and lite-gRPC
 in sensitive export only. A target-core `check` is configuration evidence, not
 proof of remote protocol handshake or data-plane reachability.
 
+VLESS outbound components use the same typed TLS, V2Ray transport, multiplex
+and Dial Field path. The empty flow supports native transports, while
+`xtls-rprx-vision` requires enabled TLS with no transport; omitted
+`packet_encoding` retains the upstream xudp default. Unsafe transport and
+flow combinations fail closed before CAS/takeover and credentials remain in
+sensitive export only.
+
 - Use `status --json` for version/service/path/protocol diagnostics plus network stack, BBR, REALITY/QoS, and integration presence.
 - Use `capabilities --json` to discover supported protocols/features and operation safety labels before choosing an action.
 - On an existing 1.13 host, run `sbv update sbv` first and start a new invocation before expecting the new Agent commands.

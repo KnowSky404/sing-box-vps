@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091008
+# Version: 2026091009
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091008"
+readonly SCRIPT_VERSION="2026091009"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -12923,13 +12923,13 @@ managed_component_outbound_multiplex_validate_json() {
   ' <<< "${multiplex}" >/dev/null 2>&1 || return 1
 }
 
-# Validate VMess and Trojan outbound records.  Their TLS object reuses the
-# already fixed outbound-TLS validator from the HTTP contract; V2Ray transport
-# and multiplex remain explicit shared validators so future VLESS support can
-# use the same guarded path.
+# Validate VLESS, VMess and Trojan outbound records.  Their TLS object reuses
+# the already fixed outbound-TLS validator from the HTTP contract; V2Ray
+# transport and multiplex remain explicit shared validators so all V2Ray
+# client families use the same guarded path.
 managed_component_v2ray_outbound_config_validate_json() {
-  local kind=${1:-} config=${2:-} transport multiplex tls tls_record transport_type
-  [[ "${kind}" == vmess || "${kind}" == trojan ]] || return 1
+  local kind=${1:-} config=${2:-} transport multiplex tls tls_record transport_type flow
+  [[ "${kind}" == vmess || "${kind}" == trojan || "${kind}" == vless ]] || return 1
   [[ -n "${config}" ]] || return 1
   jq -e --arg kind "${kind}" '
     def safe_string:
@@ -12984,6 +12984,14 @@ managed_component_v2ray_outbound_config_validate_json() {
        ((keys - (["server","server_port","password","network","tls",
           "multiplex","transport"] + shared_fields)) | length == 0) and
        (.password | nonempty_safe_string)
+     elif $kind == "vless" then
+       ((keys - (["server","server_port","uuid","flow","network","tls",
+          "packet_encoding","multiplex","transport"] + shared_fields)) | length == 0) and
+       (.uuid | nonempty_safe_string) and
+       ((has("flow") | not) or
+         (.flow | type == "string" and IN("","xtls-rprx-vision"))) and
+       ((has("packet_encoding") | not) or
+         (.packet_encoding | type == "string" and IN("","packetaddr","xudp")))
      else false end) and
     (.server | nonempty_safe_string) and
     (.server_port | type == "number" and . == floor and . >= 1 and . <= 65535) and
@@ -13012,6 +13020,17 @@ managed_component_v2ray_outbound_config_validate_json() {
     optional_network_types("fallback_network_type") and
     optional_duration("fallback_delay")
   ' <<< "${config}" >/dev/null 2>&1 || return 1
+
+  if [[ "${kind}" == vless ]]; then
+    flow=$(jq -r '.flow // empty' <<< "${config}") || return 1
+    if [[ "${flow}" == xtls-rprx-vision ]]; then
+      # Vision is a TCP/TLS sub-protocol.  The existing transport profile
+      # contract requires TLS and no V2Ray transport for this flow; preserve
+      # that boundary for generic VLESS outbounds as well.
+      jq -e '(.tls.enabled == true) and (has("transport") | not)' \
+        <<< "${config}" >/dev/null 2>&1 || return 1
+    fi
+  fi
 
   if jq -e 'has("transport")' <<< "${config}" >/dev/null 2>&1; then
     transport=$(jq -c '.transport' <<< "${config}") || return 1
@@ -13171,10 +13190,10 @@ managed_component_state_validate_record() {
     outbound:shadowsocks)
       managed_component_shadowsocks_config_validate_json "${config}" || return 1
       ;;
-    outbound:vmess|outbound:trojan)
+    outbound:vless|outbound:vmess|outbound:trojan)
       managed_component_v2ray_outbound_config_validate_json "${type}" "${config}" || return 1
       ;;
-    outbound:direct|outbound:block|outbound:bridge|outbound:socks|outbound:http|outbound:shadowsocks|outbound:vmess|outbound:trojan|outbound:naive|outbound:hysteria2|outbound:hysteria|outbound:tuic|outbound:vless|outbound:anytls|outbound:snell|outbound:shadowtls)
+    outbound:direct|outbound:block|outbound:bridge|outbound:socks|outbound:http|outbound:shadowsocks|outbound:naive|outbound:hysteria2|outbound:hysteria|outbound:tuic|outbound:anytls|outbound:snell|outbound:shadowtls)
       ;;
     *) return 1 ;;
   esac

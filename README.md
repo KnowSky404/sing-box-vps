@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026091008`
+- 脚本版本：`2026091009`
 
 - sing-box 适配版本：`1.14.0`
 
@@ -19,6 +19,8 @@ HTTP outbound 已按 sing-box 1.14 的 server/port、认证、path、headers、o
 Shadowsocks outbound 已按 sing-box 1.14 的 method/password、SS2022 严格 Base64 密钥长度、TCP/UDP network、SIP003 插件、UDP-over-TCP、multiplex 和共享 Dial Fields 建立 typed allowlist；未知/弃用字段、错误方法/密钥长度、插件或嵌套类型及控制字符会在状态/CAS 与接管前拒绝，凭据仅通过敏感 component export 返回，不生成伪分享链接或 SubMan 载荷。
 
 VMess 与 Trojan outbound 已按 sing-box 1.14 的必需认证字段、TCP/UDP network、TLS、V2Ray transport、multiplex 和共享 Dial Fields 接入统一 typed component state；VMess 保留 UUID、security、alter_id、packet encoding 等字段，Trojan 保留 password。HTTP、WebSocket（无 early data）、gRPC 与 TLS-only QUIC 按固定字段校验，HTTPUpgrade、WebSocket early data、明文 QUIC 与 lite gRPC 的 `permit_without_stream` 会在状态/CAS 与接管前拒绝；凭据仅通过敏感 component export 返回，核心 `check` 不等于远端握手或出站数据面证据。
+
+VLESS outbound 已按 sing-box 1.14 的 UUID、flow、TCP/UDP network、packet encoding、TLS、V2Ray transport、multiplex 和共享 Dial Fields 接入同一 typed component state；省略 `packet_encoding` 保留上游默认 xudp，Vision flow 只允许 TLS 直连且不与 V2Ray transport 叠加。HTTP、无 early data 的 WebSocket、gRPC 与 TLS-only QUIC 可表达，HTTPUpgrade、WS early data、明文 QUIC、lite gRPC `permit_without_stream`、无 TLS/带 transport 的 Vision flow 均在状态/CAS 与接管前拒绝；凭据仅通过敏感 component export 返回，不生成服务端分享 URI 或 SubMan 载荷。
 
 ## 🚀 一键安装
 

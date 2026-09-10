@@ -6,7 +6,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091008`，`SB_SUPPORT_MAX_VERSION=1.14.0`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091009`，`SB_SUPPORT_MAX_VERSION=1.14.0`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -34,6 +34,8 @@
 2026-09-10 Shadowsocks outbound 增量：managed `shadowsocks` outbound component 按固定 [1.14.0 Shadowsocks outbound](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/shadowsocks.md)、SIP003、UoT、multiplex 与 shared Dial Fields 建立 typed allowlist；server/port、method/password、SS2022 strict Base64 16/32-byte key、TCP/UDP network、插件及嵌套选项均受控，未知/弃用字段、错误方法/密钥长度/插件、错误 scalar/list 和控制字符在 state/CAS 与接管前拒绝。统一 component state/CAS、接管、重建、敏感导出、图/监听/核心校验事务复用不变。1.13.18/1.14.0 官方 ARM64 核心对 SS2022 128/256、传统 AEAD、插件、双网络/UoT/multiplex 最小配置 `check` 均通过；未把核心检查扩大为远端 Shadowsocks 握手或真实 TCP/UDP 数据面证据。
 
 2026-09-10 VMess/Trojan outbound 增量：managed `vmess` 与 `trojan` outbound component 按固定 [1.14.0 VMess](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/vmess.md)、[Trojan](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/trojan.md)、V2Ray transport、Outbound TLS、multiplex 与 shared Dial Fields 建立 typed allowlist；VMess 的 UUID/security/alter_id/packet encoding 与 Trojan password、TCP/UDP network、TLS、transport、multiplex 均受控，未知/弃用字段、错误 scalar/list、控制字符、HTTPUpgrade、WS early data、明文 QUIC 与 lite-gRPC `permit_without_stream` 在 state/CAS 与接管前拒绝。凭据只经敏感 component export 返回，不生成服务端分享 URI 或 SubMan 载荷。两版官方 ARM64 核心对 VMess TLS+WS、Trojan TLS+gRPC 及明文最小 outbound `check` 均通过；这不代表远端握手、TLS 信任、QUIC/UDP 或真实出站数据面验证，完整目标仍未完成。
+
+2026-09-10 VLESS outbound 增量：managed `vless` outbound component 按固定 [1.14.0 VLESS](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/vless.md)、V2Ray transport、Outbound TLS、multiplex 与 shared Dial Fields 建立 typed allowlist；UUID、空 flow/`xtls-rprx-vision`、TCP/UDP network、packet encoding、TLS、transport 与 multiplex 均受控，省略 packet encoding 保留上游 xudp 默认。Vision 仅允许启用 TLS 且不带 transport；HTTPUpgrade、WS early data、明文 QUIC、lite-gRPC `permit_without_stream` 和错误 flow/transport 组合在 state/CAS 与接管前拒绝。凭据只经敏感 component export 返回，不生成服务端分享 URI 或 SubMan 载荷；两版核心 typed check 及远端握手/数据面证据边界均单独记录，完整目标仍未完成。
 
 2026-09-10 TUN 路由安全增量：启用的 managed TUN 若设置 `auto_route=true`，候选配置会在顶层 `route` 自动补 `auto_detect_interface=true`；已有配置明确关闭该保护且未设置 `default_interface` 时 fail-closed，明确选择默认接口则保留原设置。该门禁只防止配置层自捕获环路，不宣称已接管主机策略路由、nftables、DNS 劫持或透明数据面，完整协议目标继续未完成。
 
@@ -131,7 +133,7 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 | wireguard-legacy | `wireguard` / outbound | 已移除；不能靠导航页恢复 | 不再创建；应使用 WireGuard endpoint，再由 route/dial 关系接入 | removed stub | no（removed） | none；—/—/—/— | 不可导出为旧 outbound / — / — | check 明确报告 removed |
 | wireguard | `wireguard` / endpoint | 自 1.11 endpoint 架构；`with_wireguard`；官方 VPS 包含该 tag | UDP tunnel，peer、allowed IP、private key、MTU；`system`/gVisor 和平台权限影响数据路径 | conditional | yes（tag 已含；peer/权限仍需） | Warp 特例；通用 none | 不属于普通分享节点；Warp 由项目专用材料管理 / no current SubMan | endpoint registry-check |
 | hysteria | `hysteria` / outbound | `with_quic` | QUIC/UDP + TLS；`auth_str`、上下行带宽、字符串 obfs 和 QUIC 参数，不与 hysteria2 互换 | conditional | yes（tag 已含） | typed per-user client export（由 Hysteria 入站实例管理驱动）；— | 完整 Hysteria outbound JSON / 无标准 URI（`hysteria_standard_uri_unavailable`） / unsupported | `tests/hysteria_instance_lifecycle.sh` 与真实 1.14.0 outbound check 通过；未验证公网 UDP 或数据面 |
-| vless | `vless` / outbound | 基础内建 | TCP/UDP；TLS/REALITY、flow、transport、xudp packet encoding 必须分别表示 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check |
+| vless | `vless` / outbound | 基础内建 | TCP/UDP；TLS/REALITY、空 flow 或 `xtls-rprx-vision`、transport、xudp/packetaddr encoding 必须分别表示；Vision 仅 TLS 直连 | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 component JSON（不进入普通分享节点） / 不生成服务端分享 URI / no current SubMan | 两核心 1.13.18/1.14.0 typed TLS+WS/Vision/plain check；未验证远端 VLESS 握手、TLS 信任或数据面 |
 | shadowtls | `shadowtls` / outbound | 基础内建 | TCP 包装层；必须指向实际内层服务端，v1/v2/v3 字段不能混用 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check（无 TLS 按预期失败） |
 | tuic | `tuic` / outbound | `with_quic` | QUIC/UDP + TLS；`network`、native/quic UDP relay、可选 UDP-over-stream、0-RTT、heartbeat 和拥塞控制 | yes | yes（官方包含 `with_quic`） | typed per-user client export（由 TUIC 入站实例管理驱动）；— | 完整 TUIC outbound JSON / 无标准 URI（`tuic_standard_uri_unavailable`） / unsupported | `tests/tuic_instance_lifecycle.sh` 与真实 1.14.0 outbound check 通过；未验证公网 UDP 或数据面 |
 | hysteria2 | `hysteria2` / outbound | `with_quic` | QUIC/UDP + TLS；obfs、realm/STUN、Chrome QUIC fingerprint 和证书算法约束 | conditional | yes（tag 已含） | typed per-user client export（由 Hysteria2 入站实例管理驱动）；— | Hysteria2 URI 与完整 outbound JSON（按 trust/证书算法发 warning） / — | typed builder/URI/Ed25519 warning 专项通过；目标核心未配置 |
