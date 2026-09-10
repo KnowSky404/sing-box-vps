@@ -137,6 +137,13 @@ static `available:null` separate from its per-read `environment` observation;
 inspect `environment.status`, dependency reasons and `validated` before
 claiming a component is usable.
 
+VMess and Trojan outbound components enforce the sing-box 1.14 authentication,
+TCP/UDP, TLS, guarded V2Ray transport, multiplex and shared Dial Field shapes;
+HTTPUpgrade, WebSocket early data, plaintext QUIC and lite-gRPC
+`permit_without_stream` fail closed before CAS/takeover, while credentials stay
+in sensitive export only. A target-core `check` is configuration evidence, not
+proof of remote protocol handshake or data-plane reachability.
+
 - Use `status --json` for version/service/path/protocol diagnostics plus network stack, BBR, REALITY/QoS, and integration presence.
 - Use `capabilities --json` to discover supported protocols/features and operation safety labels before choosing an action.
 - On an existing 1.13 host, run `sbv update sbv` first and start a new invocation before expecting the new Agent commands.

@@ -12855,6 +12855,186 @@ managed_component_shadowsocks_config_validate_json() {
   fi
 }
 
+# Validate the shared V2Ray transport object used by VMess/Trojan/VLESS
+# outbounds.  The transport is a discriminated union in sing-box; keeping the
+# variant-specific fields here prevents an HTTP/WS/gRPC option from silently
+# crossing into another transport or from carrying arbitrary JSON.
+managed_component_v2ray_transport_validate_json() {
+  local transport=${1:-} transport_type
+  [[ -n "${transport}" ]] || return 1
+  jq -e 'type == "object" and
+    (.type | type == "string" and IN("http","ws","quic","grpc","httpupgrade"))' \
+    <<< "${transport}" >/dev/null 2>&1 || return 1
+  transport_type=$(jq -er '.type' <<< "${transport}") || return 1
+  # Reuse the transport contract already exercised by the protocol adapters:
+  # bounded paths/hosts, header-injection protections, duration limits and
+  # the default lite-gRPC restriction all stay identical across roles.
+  validate_v2ray_transport_state_json "${transport}" || return 1
+  case "${transport_type}" in
+    httpupgrade)
+      # Fixed 1.13.18/1.14.0 clients have a known handshake buffering defect;
+      # keep the type available to diagnostic inspection, never deployment.
+      return 1
+      ;;
+    ws)
+      # WebSocket early data has the same reproduced response corruption. A
+      # non-empty header name is also rejected when the size is zero so no
+      # inert early-data hint is carried into generated state.
+      jq -e '((.max_early_data // 0) == 0) and ((.early_data_header_name // "") == "")' \
+        <<< "${transport}" >/dev/null 2>&1 || return 1
+      ;;
+  esac
+}
+
+# Validate the shared outbound multiplex object against sing-box 1.14.0.
+# Brutal is only meaningful when enabled and then requires positive speeds;
+# the target core still performs the final protocol/runtime checks.
+managed_component_outbound_multiplex_validate_json() {
+  local multiplex=${1:-}
+  [[ -n "${multiplex}" ]] || return 1
+  jq -e '
+    def optional_bool($name):
+      (has($name) | not) or (.[$name] | type == "boolean");
+    def optional_nonnegative_int($name):
+      (has($name) | not) or
+      (.[$name] | type == "number" and . == floor and . >= 0 and . <= 2147483647);
+    def optional_positive_int($name):
+      (has($name) | not) or
+      (.[$name] | type == "number" and . == floor and . >= 1 and . <= 2147483647);
+    def optional_brutal:
+      (has("brutal") | not) or
+      (.brutal | type == "object" and
+        ((keys - ["enabled","up_mbps","down_mbps"]) | length == 0) and
+        optional_bool("enabled") and
+        optional_nonnegative_int("up_mbps") and
+        optional_nonnegative_int("down_mbps") and
+        ((.enabled? // false) != true or
+          (optional_positive_int("up_mbps") and optional_positive_int("down_mbps"))));
+    type == "object" and
+    ((keys - ["enabled","protocol","max_connections","min_streams",
+      "max_streams","padding","brutal"]) | length == 0) and
+    optional_bool("enabled") and
+    ((has("protocol") | not) or
+      (.protocol | type == "string" and IN("h2mux","smux","yamux"))) and
+    optional_nonnegative_int("max_connections") and
+    optional_nonnegative_int("min_streams") and
+    optional_nonnegative_int("max_streams") and
+    optional_bool("padding") and optional_brutal
+  ' <<< "${multiplex}" >/dev/null 2>&1 || return 1
+}
+
+# Validate VMess and Trojan outbound records.  Their TLS object reuses the
+# already fixed outbound-TLS validator from the HTTP contract; V2Ray transport
+# and multiplex remain explicit shared validators so future VLESS support can
+# use the same guarded path.
+managed_component_v2ray_outbound_config_validate_json() {
+  local kind=${1:-} config=${2:-} transport multiplex tls tls_record transport_type
+  [[ "${kind}" == vmess || "${kind}" == trojan ]] || return 1
+  [[ -n "${config}" ]] || return 1
+  jq -e --arg kind "${kind}" '
+    def safe_string:
+      type == "string" and (any(explode[]; . < 32 or . == 127) | not);
+    def nonempty_safe_string:
+      safe_string and length > 0;
+    def optional_safe_string($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_bool($name):
+      (has($name) | not) or (.[$name] | type == "boolean");
+    def optional_int($name):
+      (has($name) | not) or
+      (.[$name] | type == "number" and . == floor and . >= 0 and . <= 65535);
+    def optional_network:
+      (has("network") | not) or
+      (.network |
+        ((type == "string" and IN("tcp","udp")) or
+         (type == "array" and all(.[]; type == "string" and IN("tcp","udp")))));
+    def optional_network_types($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "string" and IN("wifi","cellular","ethernet","other")) or
+         (type == "array" and all(.[]; type == "string" and
+           IN("wifi","cellular","ethernet","other")))));
+    def optional_duration($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_routing_mark:
+      (has("routing_mark") | not) or
+      (.routing_mark |
+        ((type == "number" and . == floor and . >= 0 and . <= 4294967295) or
+         (type == "string" and test("^(0x[0-9a-fA-F]+|[0-9]+)$"))));
+    def shared_fields:
+      ["detour","bind_interface","inet4_bind_address","inet6_bind_address",
+       "bind_address_no_port","protect_path","routing_mark","reuse_addr","netns",
+       "connect_timeout","tcp_fast_open","tcp_multi_path","disable_tcp_keep_alive",
+       "tcp_keep_alive","tcp_keep_alive_interval","udp_fragment","domain_resolver",
+       "network_strategy","network_type","fallback_network_type","fallback_delay"];
+    type == "object" and
+    (if $kind == "vmess" then
+       ((keys - (["server","server_port","uuid","security","alter_id",
+          "global_padding","authenticated_length","network","tls","packet_encoding",
+          "multiplex","transport"] + shared_fields)) | length == 0) and
+       (.uuid | nonempty_safe_string) and
+       (.security | type == "string" and
+         IN("auto","none","zero","aes-128-cfb","aes-128-gcm","chacha20-poly1305")) and
+       optional_int("alter_id") and
+       optional_bool("global_padding") and
+       optional_bool("authenticated_length") and
+       ((has("packet_encoding") | not) or
+         (.packet_encoding | type == "string" and IN("","packetaddr","xudp")))
+     elif $kind == "trojan" then
+       ((keys - (["server","server_port","password","network","tls",
+          "multiplex","transport"] + shared_fields)) | length == 0) and
+       (.password | nonempty_safe_string)
+     else false end) and
+    (.server | nonempty_safe_string) and
+    (.server_port | type == "number" and . == floor and . >= 1 and . <= 65535) and
+    optional_network and
+    optional_safe_string("detour") and
+    optional_safe_string("bind_interface") and
+    optional_safe_string("inet4_bind_address") and
+    optional_safe_string("inet6_bind_address") and
+    optional_bool("bind_address_no_port") and
+    optional_safe_string("protect_path") and
+    optional_routing_mark and
+    optional_bool("reuse_addr") and
+    optional_safe_string("netns") and
+    optional_duration("connect_timeout") and
+    optional_bool("tcp_fast_open") and
+    optional_bool("tcp_multi_path") and
+    optional_bool("disable_tcp_keep_alive") and
+    optional_duration("tcp_keep_alive") and
+    optional_duration("tcp_keep_alive_interval") and
+    ((has("udp_fragment") | not) or (.udp_fragment | type == "boolean")) and
+    ((has("domain_resolver") | not) or
+      (.domain_resolver | type == "string" or type == "object")) and
+    ((has("network_strategy") | not) or
+      (.network_strategy | type == "string" and IN("default","hybrid","fallback"))) and
+    optional_network_types("network_type") and
+    optional_network_types("fallback_network_type") and
+    optional_duration("fallback_delay")
+  ' <<< "${config}" >/dev/null 2>&1 || return 1
+
+  if jq -e 'has("transport")' <<< "${config}" >/dev/null 2>&1; then
+    transport=$(jq -c '.transport' <<< "${config}") || return 1
+    managed_component_v2ray_transport_validate_json "${transport}" || return 1
+    transport_type=$(jq -er '.type' <<< "${transport}") || return 1
+    if [[ "${transport_type}" == quic ]]; then
+      # V2Ray QUIC constructs an HTTP/3 TLS dialer; a plaintext QUIC profile is
+      # not a supported client combination even though its JSON may parse.
+      jq -e '.tls.enabled == true' <<< "${config}" >/dev/null 2>&1 || return 1
+    fi
+  fi
+  if jq -e 'has("multiplex")' <<< "${config}" >/dev/null 2>&1; then
+    multiplex=$(jq -c '.multiplex' <<< "${config}") || return 1
+    managed_component_outbound_multiplex_validate_json "${multiplex}" || return 1
+  fi
+  if jq -e 'has("tls")' <<< "${config}" >/dev/null 2>&1; then
+    tls=$(jq -c '.tls' <<< "${config}") || return 1
+    tls_record=$(jq -cn --argjson tls "${tls}" \
+      '{server:"v2ray-tls",server_port:1,tls:$tls}') || return 1
+    managed_component_http_config_validate_json "${tls_record}" || return 1
+  fi
+}
+
 # Validate selector and URLTest groups against sing-box 1.14.0.  Group
 # members are stable outbound references rather than arbitrary labels: require
 # a non-empty unique list here, while the graph validator resolves each tag to
@@ -12990,6 +13170,9 @@ managed_component_state_validate_record() {
       ;;
     outbound:shadowsocks)
       managed_component_shadowsocks_config_validate_json "${config}" || return 1
+      ;;
+    outbound:vmess|outbound:trojan)
+      managed_component_v2ray_outbound_config_validate_json "${type}" "${config}" || return 1
       ;;
     outbound:direct|outbound:block|outbound:bridge|outbound:socks|outbound:http|outbound:shadowsocks|outbound:vmess|outbound:trojan|outbound:naive|outbound:hysteria2|outbound:hysteria|outbound:tuic|outbound:vless|outbound:anytls|outbound:snell|outbound:shadowtls)
       ;;

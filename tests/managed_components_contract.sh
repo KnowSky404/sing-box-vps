@@ -367,6 +367,154 @@ if managed_component_state_validate_record "${shadowsocks_bad_server}"; then
   exit 1
 fi
 
+# VMess and Trojan outbounds share the fixed 1.14 V2Ray transport, outbound
+# TLS and multiplex contracts.  Keep credentials and packet/security options
+# typed through the same component state/CAS path rather than accepting an
+# arbitrary client profile blob.
+vmess_outbound_record='{"id":"vmess-outbound-local","role":"outbound","type":"vmess","tag":"vmess-upstream","enabled":true,"route_rules":[],"config":{"server":"127.0.0.1","server_port":443,"uuid":"bf000d23-0752-40b4-affe-68f7707a9661","security":"auto","alter_id":0,"global_padding":true,"authenticated_length":true,"network":["tcp","udp"],"tls":{"enabled":true,"server_name":"vmess.example","insecure":true},"packet_encoding":"xudp","transport":{"type":"ws","path":"/vmess","headers":{"Host":"vmess.example"}},"multiplex":{"enabled":false,"protocol":"h2mux","max_connections":2,"min_streams":1,"max_streams":4,"padding":true,"brutal":{"enabled":false}},"connect_timeout":"5s","network_strategy":"default","network_type":["ethernet"],"domain_resolver":"dns-local","protect_path":"/usr/lib/sing-box/vmess-protect"}}'
+managed_component_state_validate_record "${vmess_outbound_record}"
+vmess_outbound_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${vmess_outbound_record}")
+vmess_outbound_rendered=$(managed_component_render_json "${vmess_outbound_state}")
+jq -e '
+  (.outbounds | length == 1) and
+  .outbounds[0].type == "vmess" and
+  .outbounds[0].tag == "vmess-upstream" and
+  .outbounds[0].server_port == 443 and
+  .outbounds[0].uuid == "bf000d23-0752-40b4-affe-68f7707a9661" and
+  .outbounds[0].security == "auto" and
+  .outbounds[0].packet_encoding == "xudp" and
+  .outbounds[0].transport.type == "ws" and
+  .outbounds[0].transport.headers.Host == "vmess.example" and
+  .outbounds[0].multiplex.protocol == "h2mux" and
+  .outbounds[0].tls.server_name == "vmess.example" and
+  .outbounds[0].protect_path == "/usr/lib/sing-box/vmess-protect" and
+  .outbounds[0].route_rules == null
+' <<< "${vmess_outbound_rendered}" >/dev/null
+vmess_plain_record=$(jq -c '.config |= del(.tls,.transport,.multiplex)' <<< "${vmess_outbound_record}")
+managed_component_state_validate_record "${vmess_plain_record}"
+vmess_http_transport=$(jq -c '.config.transport = {type:"http",host:["vmess.example"],path:"/vmess",method:"POST",headers:{"X-Proxy":"vmess"},idle_timeout:"30s",ping_timeout:"10s"}' <<< "${vmess_outbound_record}")
+managed_component_state_validate_record "${vmess_http_transport}"
+vmess_grpc_transport=$(jq -c '.config.transport = {type:"grpc",service_name:"vmess",idle_timeout:"30s",ping_timeout:"10s",permit_without_stream:false}' <<< "${vmess_outbound_record}")
+managed_component_state_validate_record "${vmess_grpc_transport}"
+vmess_quic_transport=$(jq -c '.config.transport = {type:"quic"} | .config.tls = {enabled:true,server_name:"vmess.example",insecure:true}' <<< "${vmess_outbound_record}")
+managed_component_state_validate_record "${vmess_quic_transport}"
+vmess_httpupgrade_transport=$(jq -c '.config.transport = {type:"httpupgrade",host:"vmess.example",path:"/vmess",headers:{Host:"vmess.example"}}' <<< "${vmess_outbound_record}")
+if managed_component_state_validate_record "${vmess_httpupgrade_transport}"; then
+  printf 'VMess HTTPUpgrade transport unexpectedly accepted\n' >&2
+  exit 1
+fi
+vmess_ws_early_data=$(jq -c '.config.transport = {type:"ws",path:"/vmess",max_early_data:1,early_data_header_name:"X-Early-Data"}' <<< "${vmess_outbound_record}")
+if managed_component_state_validate_record "${vmess_ws_early_data}"; then
+  printf 'VMess WebSocket early data unexpectedly accepted\n' >&2
+  exit 1
+fi
+vmess_quic_without_tls=$(jq -c '.config |= (del(.tls) | .transport = {type:"quic"})' <<< "${vmess_outbound_record}")
+if managed_component_state_validate_record "${vmess_quic_without_tls}"; then
+  printf 'VMess plaintext QUIC unexpectedly accepted\n' >&2
+  exit 1
+fi
+vmess_missing_uuid=$(jq -c '.config |= del(.uuid)' <<< "${vmess_outbound_record}")
+if managed_component_state_validate_record "${vmess_missing_uuid}"; then
+  printf 'VMess outbound without UUID unexpectedly accepted\n' >&2
+  exit 1
+fi
+vmess_bad_security=$(jq -c '.config.security = "aes-256-gcm"' <<< "${vmess_outbound_record}")
+if managed_component_state_validate_record "${vmess_bad_security}"; then
+  printf 'VMess unsupported security unexpectedly accepted\n' >&2
+  exit 1
+fi
+vmess_bad_packet_encoding=$(jq -c '.config.packet_encoding = "quic"' <<< "${vmess_outbound_record}")
+if managed_component_state_validate_record "${vmess_bad_packet_encoding}"; then
+  printf 'VMess unsupported packet encoding unexpectedly accepted\n' >&2
+  exit 1
+fi
+vmess_bad_alter_id=$(jq -c '.config.alter_id = 65536' <<< "${vmess_outbound_record}")
+if managed_component_state_validate_record "${vmess_bad_alter_id}"; then
+  printf 'VMess out-of-range alter_id unexpectedly accepted\n' >&2
+  exit 1
+fi
+vmess_bad_transport_type=$(jq -c '.config.transport.type = "h2"' <<< "${vmess_outbound_record}")
+if managed_component_state_validate_record "${vmess_bad_transport_type}"; then
+  printf 'VMess unsupported transport unexpectedly accepted\n' >&2
+  exit 1
+fi
+vmess_bad_transport_field=$(jq -c '.config.transport |= (. + {unknown:true})' <<< "${vmess_outbound_record}")
+if managed_component_state_validate_record "${vmess_bad_transport_field}"; then
+  printf 'VMess unknown transport field unexpectedly accepted\n' >&2
+  exit 1
+fi
+vmess_bad_transport_header=$(jq -c '.config.transport.headers["Bad Header"] = "value"' <<< "${vmess_outbound_record}")
+if managed_component_state_validate_record "${vmess_bad_transport_header}"; then
+  printf 'VMess invalid transport header unexpectedly accepted\n' >&2
+  exit 1
+fi
+vmess_bad_multiplex=$(jq -c '.config.multiplex.protocol = "mux"' <<< "${vmess_outbound_record}")
+if managed_component_state_validate_record "${vmess_bad_multiplex}"; then
+  printf 'VMess unsupported multiplex protocol unexpectedly accepted\n' >&2
+  exit 1
+fi
+vmess_bad_tls=$(jq -c '.config.tls |= (. + {domain_strategy:"prefer_ipv4"})' <<< "${vmess_outbound_record}")
+if managed_component_state_validate_record "${vmess_bad_tls}"; then
+  printf 'VMess unknown TLS field unexpectedly accepted\n' >&2
+  exit 1
+fi
+vmess_unknown_field=$(jq -c '.config |= (. + {domain_strategy:"prefer_ipv4"})' <<< "${vmess_outbound_record}")
+if managed_component_state_validate_record "${vmess_unknown_field}"; then
+  printf 'VMess deprecated/unknown Dial Field unexpectedly accepted\n' >&2
+  exit 1
+fi
+vmess_bad_uuid=$(jq -c '.config.uuid = "vmess\u0001uuid"' <<< "${vmess_outbound_record}")
+if managed_component_state_validate_record "${vmess_bad_uuid}"; then
+  printf 'VMess control-character UUID unexpectedly accepted\n' >&2
+  exit 1
+fi
+
+trojan_outbound_record='{"id":"trojan-outbound-local","role":"outbound","type":"trojan","tag":"trojan-upstream","enabled":true,"route_rules":[],"config":{"server":"127.0.0.1","server_port":443,"password":"trojan-password","network":["tcp","udp"],"tls":{"enabled":true,"server_name":"trojan.example","insecure":true},"transport":{"type":"grpc","service_name":"trojan","permit_without_stream":false},"multiplex":{"enabled":false,"protocol":"smux"},"connect_timeout":"5s","network_strategy":"default","network_type":["ethernet"],"domain_resolver":"dns-local","protect_path":"/usr/lib/sing-box/trojan-protect"}}'
+managed_component_state_validate_record "${trojan_outbound_record}"
+trojan_outbound_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${trojan_outbound_record}")
+trojan_outbound_rendered=$(managed_component_render_json "${trojan_outbound_state}")
+jq -e '
+  (.outbounds | length == 1) and
+  .outbounds[0].type == "trojan" and
+  .outbounds[0].tag == "trojan-upstream" and
+  .outbounds[0].server_port == 443 and
+  .outbounds[0].password == "trojan-password" and
+  .outbounds[0].network == ["tcp","udp"] and
+  .outbounds[0].transport.type == "grpc" and
+  .outbounds[0].transport.service_name == "trojan" and
+  .outbounds[0].multiplex.protocol == "smux" and
+  .outbounds[0].tls.server_name == "trojan.example" and
+  .outbounds[0].protect_path == "/usr/lib/sing-box/trojan-protect" and
+  .outbounds[0].route_rules == null
+' <<< "${trojan_outbound_rendered}" >/dev/null
+trojan_plain_record=$(jq -c '.config |= del(.tls,.transport,.multiplex)' <<< "${trojan_outbound_record}")
+managed_component_state_validate_record "${trojan_plain_record}"
+trojan_missing_password=$(jq -c '.config |= del(.password)' <<< "${trojan_outbound_record}")
+if managed_component_state_validate_record "${trojan_missing_password}"; then
+  printf 'Trojan outbound without password unexpectedly accepted\n' >&2
+  exit 1
+fi
+trojan_bad_network=$(jq -c '.config.network = ["icmp"]' <<< "${trojan_outbound_record}")
+if managed_component_state_validate_record "${trojan_bad_network}"; then
+  printf 'Trojan unsupported network unexpectedly accepted\n' >&2
+  exit 1
+fi
+trojan_bad_transport=$(jq -c '.config.transport |= (. + {force_lite:true})' <<< "${trojan_outbound_record}")
+if managed_component_state_validate_record "${trojan_bad_transport}"; then
+  printf 'Trojan unsupported transport field unexpectedly accepted\n' >&2
+  exit 1
+fi
+trojan_bad_tls=$(jq -c '.config.tls.server_name = "trojan\u0001.example"' <<< "${trojan_outbound_record}")
+if managed_component_state_validate_record "${trojan_bad_tls}"; then
+  printf 'Trojan control-character TLS name unexpectedly accepted\n' >&2
+  exit 1
+fi
+trojan_unknown_field=$(jq -c '.config |= (. + {domain_strategy:"prefer_ipv4"})' <<< "${trojan_outbound_record}")
+if managed_component_state_validate_record "${trojan_unknown_field}"; then
+  printf 'Trojan deprecated/unknown Dial Field unexpectedly accepted\n' >&2
+  exit 1
+fi
+
 # Selector and URLTest groups own outbound member references.  Their upstream
 # schemas are deliberately narrow: duplicate members, a selector default not
 # present in the member list, and URLTest's selector-only fields must fail

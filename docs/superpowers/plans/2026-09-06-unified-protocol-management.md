@@ -535,3 +535,9 @@ managed HTTP outbound 现在通过 `managed_component_http_config_validate_json`
 managed Shadowsocks outbound 现在通过 `managed_component_shadowsocks_config_validate_json` 处理。契约按固定 1.14.0 `ShadowsocksOutboundOptions`、SIP003、UoT、multiplex 与 shared Dial Fields 限定 server/port、method/password、TCP/UDP network、插件和嵌套选项；SS2022 password 按严格 Base64 解码后的 16/32 字节密钥长度校验，传统加密方法必须有非空密码，`none` 仅在显式配置时保留上游兼容语义。未知/弃用字段、错误方法/密钥长度/插件、错误 scalar/list、嵌套 multiplex/UoT 字段和控制字符在 state/CAS 与 live takeover 前拒绝，凭据不进入 list/diagnose。
 
 `tests/managed_components_contract.sh` 增加 SS2022 128/256、传统 AEAD、插件、双网络/UoT/multiplex render 和认证密钥长度、方法/插件/嵌套字段、deprecated Dial Field 与控制字符拒绝断言。固定官方 ARM64 `sing-box` 1.13.18 与 1.14.0 对 SS2022 128/256、传统 AEAD、插件、双网络/UoT/multiplex 最小组合配置 `check` 均成功；该证据不代表远端 Shadowsocks 握手或真实 TCP/UDP 数据面验证。版本统一为本轮 `2026091008`，完整协议目标仍未完成。
+
+### 2026-09-10：VMess/Trojan outbound typed contract
+
+managed VMess 与 Trojan outbound 现在通过 `managed_component_v2ray_outbound_config_validate_json` 处理，复用 `validate_v2ray_transport_state_json` 的 V2Ray transport 边界，并显式校验 Outbound TLS、multiplex、shared Dial Fields、TCP/UDP network 与协议认证字段。VMess 需要非空 UUID、固定 `security`/`alter_id`/packet encoding；Trojan 需要非空 password。HTTP、无 early data 的 WebSocket、gRPC 与 TLS-only QUIC 可表达；HTTPUpgrade、WS early data、明文 QUIC 和 lite-gRPC `permit_without_stream:true` 在 state/CAS 与 live takeover 前 fail closed。未知或弃用字段、错误 scalar/list、控制字符和无效嵌套 transport 不会进入配置渲染。
+
+`tests/managed_components_contract.sh` 增加 VMess/Trojan render、native/plain 与 HTTP/WS/gRPC/QUIC transport 正向断言，以及认证缺失、security/packet encoding、transport/multiplex/TLS/Dial Field、HTTPUpgrade、WS early data、明文 QUIC、gRPC permit 和控制字符拒绝断言。固定官方 ARM64 `sing-box` 1.13.18 与 1.14.0 对 VMess TLS+WS、Trojan TLS+gRPC 及明文最小 outbound 配置 `check` 均成功；该证据不代表远端握手、TLS 信任、QUIC/UDP 或出站数据面验证。版本保持本轮 `2026091008`，完整协议目标仍未完成。

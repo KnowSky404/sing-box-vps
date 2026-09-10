@@ -18,6 +18,8 @@ HTTP outbound 已按 sing-box 1.14 的 server/port、认证、path、headers、o
 
 Shadowsocks outbound 已按 sing-box 1.14 的 method/password、SS2022 严格 Base64 密钥长度、TCP/UDP network、SIP003 插件、UDP-over-TCP、multiplex 和共享 Dial Fields 建立 typed allowlist；未知/弃用字段、错误方法/密钥长度、插件或嵌套类型及控制字符会在状态/CAS 与接管前拒绝，凭据仅通过敏感 component export 返回，不生成伪分享链接或 SubMan 载荷。
 
+VMess 与 Trojan outbound 已按 sing-box 1.14 的必需认证字段、TCP/UDP network、TLS、V2Ray transport、multiplex 和共享 Dial Fields 接入统一 typed component state；VMess 保留 UUID、security、alter_id、packet encoding 等字段，Trojan 保留 password。HTTP、WebSocket（无 early data）、gRPC 与 TLS-only QUIC 按固定字段校验，HTTPUpgrade、WebSocket early data、明文 QUIC 与 lite gRPC 的 `permit_without_stream` 会在状态/CAS 与接管前拒绝；凭据仅通过敏感 component export 返回，核心 `check` 不等于远端握手或出站数据面证据。
+
 ## 🚀 一键安装
 
 在您的 VPS 上运行以下安全 Bootstrap 即可开始安装。它会先完整下载到权限为 `0600` 的临时文件，再执行语法和项目身份校验；下载、校验或脚本执行的退出码会原样返回。整个流程运行在子 Shell 中，不会用 `exit` 关闭当前 SSH 登录 Shell。
