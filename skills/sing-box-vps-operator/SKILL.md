@@ -158,6 +158,13 @@ multiplex field, and `tcp_fast_open=true` is rejected to match the target
 adapter. Keep credentials in sensitive component export only; a target-core
 `check` does not prove an AnyTLS handshake or TCP/UDP data plane.
 
+Snell outbound components accept only sing-box 1.14 version 4 or 6. Version 4
+uses typed HTTP obfuscation fields; version 6 uses typed traffic shaping and a
+PSK of at least 12 bytes. Keep userkey/reuse, TCP/UDP network, and shared Dial
+Fields typed, reject fields from the other version, and do not expose Snell v5
+QUIC proxy as a separate outbound. 1.13.18 lacks the Snell outbound type, and a
+1.14 target-core `check` is not remote Snell handshake or data-plane proof.
+
 - Use `status --json` for version/service/path/protocol diagnostics plus network stack, BBR, REALITY/QoS, and integration presence.
 - Use `capabilities --json` to discover supported protocols/features and operation safety labels before choosing an action.
 - On an existing 1.13 host, run `sbv update sbv` first and start a new invocation before expecting the new Agent commands.

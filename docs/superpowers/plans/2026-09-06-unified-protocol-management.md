@@ -553,3 +553,9 @@ managed VLESS outbound 复用 `managed_component_v2ray_outbound_config_validate_
 managed AnyTLS outbound 现在通过 `managed_component_anytls_config_validate_json` 处理，按固定 sing-box 1.14.0 `AnyTLSOutboundOptions` 和 shared Dial Fields 建立 typed allowlist。`server`、`server_port`、非空 `password` 和启用的 outbound TLS 必填；`idle_session_check_interval`、`idle_session_timeout`、`min_idle_session` 与 `client_metadata` 保留上游可选标量。AnyTLS 没有可配置的 `network`、transport 或 multiplex 字段，且目标 `protocol/anytls` adapter 在 lazy connection 路径拒绝 `tcp_fast_open=true`，因此这些边界在 state/CAS 与 live takeover 前 fail closed。TLS 嵌套对象复用既有 outbound-TLS validator，凭据仍只经敏感 component export 返回。
 
 `tests/managed_components_contract.sh` 增加 AnyTLS render/minimal TLS 正向断言，以及缺少 password/TLS、禁用 TLS、TCP fast open、network/transport/multiplex、metadata/min-idle/port/duration、未知 TLS/Dial Field 和控制字符拒绝断言。固定官方 ARM64 `sing-box` 1.13.18 与 1.14.0 对带 TLS、session fields、client metadata 与 shared Dial Fields 的 AnyTLS outbound 最小配置执行 `check`；该证据只代表目标核心配置解析，不代表远端 AnyTLS 握手或 TCP/UDP 出站数据面。版本统一为本轮 `2026091010`，完整协议目标仍未完成。
+
+### 2026-09-11：Snell outbound typed contract
+
+managed Snell outbound 现在通过 `managed_component_snell_config_validate_json` 处理，按固定 sing-box 1.14.0 `SnellOutboundOptions` 建立版本分型 allowlist。outbound 版本仅允许 `4` 或 `6`：v4 接受 `obfs_mode`/`obfs_host` 的 HTTP obfuscation，v6 接受 `mode` 的 `default`/`unshaped`/`unsafe-raw` traffic shaping；两组字段不可交叉，v6 PSK 至少 12 字节、所有 PSK/userkey 保持安全字符串与 255 字节上限。`server`、`server_port`、PSK、可选 userkey/reuse、TCP/UDP network 与 shared Dial Fields 均逐项校验，未知或弃用字段、重复 network、控制字符和越界端口在 state/CAS 与接管前拒绝。
+
+Snell v5 QUIC proxy 不作为独立 outbound 版本提供；inbound 的 v5/v6 只分别映射到 outbound 的 v4/v6，UDP 业务由 Snell TCP 会话的 packet API 承载。`tests/managed_components_contract.sh` 覆盖 v4/v6 render、字段分型、network/PSK/端口边界、共享拨号字段、接管/导出已有路径和脱敏约束。固定官方 ARM64 `sing-box` 1.14.0 对 v4/v6 最小配置 `check` 均成功，1.13.18 明确返回未知 outbound type；这些核心解析证据不代表远端 Snell 握手或 TCP/UDP 数据面。版本统一为本轮 `2026091011`，完整协议目标仍未完成。

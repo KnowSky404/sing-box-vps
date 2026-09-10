@@ -720,6 +720,125 @@ if managed_component_state_validate_record "${anytls_bad_duration}"; then
   exit 1
 fi
 
+# Snell outbound records are a versioned discriminated union.  sing-box 1.14
+# exposes v4 (HTTP obfuscation) and v6 (traffic shaping); the v5 wire protocol
+# is intentionally not a separate outbound version.  Shared Dial Fields and
+# TCP/UDP network selection remain typed, and version-crossed fields fail
+# closed instead of becoming arbitrary JSON.
+snell4_outbound_record='{"id":"snell4-outbound-local","role":"outbound","type":"snell","tag":"snell4-upstream","enabled":true,"route_rules":[],"config":{"server":"snell.example","server_port":443,"version":4,"psk":"snell-password","userkey":"snell-user-key","reuse":true,"network":["tcp","udp"],"obfs_mode":"http","obfs_host":"snell.example","connect_timeout":"5s","network_strategy":"default","network_type":["ethernet"],"protect_path":"/usr/lib/sing-box/snell-protect"}}'
+managed_component_state_validate_record "${snell4_outbound_record}"
+snell4_outbound_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${snell4_outbound_record}")
+snell4_outbound_rendered=$(managed_component_render_json "${snell4_outbound_state}")
+jq -e '
+  (.outbounds | length == 1) and
+  .outbounds[0].type == "snell" and
+  .outbounds[0].tag == "snell4-upstream" and
+  .outbounds[0].server == "snell.example" and
+  .outbounds[0].server_port == 443 and
+  .outbounds[0].version == 4 and
+  .outbounds[0].psk == "snell-password" and
+  .outbounds[0].userkey == "snell-user-key" and
+  .outbounds[0].reuse == true and
+  .outbounds[0].network == ["tcp","udp"] and
+  .outbounds[0].obfs_mode == "http" and
+  .outbounds[0].obfs_host == "snell.example" and
+  .outbounds[0].route_rules == null
+' <<< "${snell4_outbound_rendered}" >/dev/null
+snell6_outbound_record='{"id":"snell6-outbound-local","role":"outbound","type":"snell","tag":"snell6-upstream","enabled":true,"route_rules":[],"config":{"server":"snell.example","server_port":8443,"version":6,"psk":"snell-password-12","userkey":"","reuse":false,"network":"tcp","mode":"unshaped","connect_timeout":"5s","network_strategy":"default","network_type":["ethernet"],"protect_path":"/usr/lib/sing-box/snell6-protect"}}'
+managed_component_state_validate_record "${snell6_outbound_record}"
+snell6_outbound_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${snell6_outbound_record}")
+snell6_outbound_rendered=$(managed_component_render_json "${snell6_outbound_state}")
+jq -e '
+  (.outbounds | length == 1) and
+  .outbounds[0].type == "snell" and
+  .outbounds[0].tag == "snell6-upstream" and
+  .outbounds[0].version == 6 and
+  .outbounds[0].psk == "snell-password-12" and
+  .outbounds[0].network == "tcp" and
+  .outbounds[0].mode == "unshaped" and
+  (.outbounds[0] | has("obfs_mode") | not) and
+  .outbounds[0].protect_path == "/usr/lib/sing-box/snell6-protect"
+' <<< "${snell6_outbound_rendered}" >/dev/null
+snell4_empty_obfs=$(jq -c '.config.obfs_mode = "" | .config.obfs_host = ""' <<< "${snell4_outbound_record}")
+managed_component_state_validate_record "${snell4_empty_obfs}"
+snell6_default_mode=$(jq -c '.config.mode = "default"' <<< "${snell6_outbound_record}")
+managed_component_state_validate_record "${snell6_default_mode}"
+snell_missing_version=$(jq -c '.config |= del(.version)' <<< "${snell4_outbound_record}")
+if managed_component_state_validate_record "${snell_missing_version}"; then
+  printf 'Snell outbound without version unexpectedly accepted\n' >&2
+  exit 1
+fi
+snell_unsupported_version=$(jq -c '.config.version = 5' <<< "${snell4_outbound_record}")
+if managed_component_state_validate_record "${snell_unsupported_version}"; then
+  printf 'Snell outbound v5 unexpectedly accepted\n' >&2
+  exit 1
+fi
+snell_missing_psk=$(jq -c '.config |= del(.psk)' <<< "${snell4_outbound_record}")
+if managed_component_state_validate_record "${snell_missing_psk}"; then
+  printf 'Snell outbound without PSK unexpectedly accepted\n' >&2
+  exit 1
+fi
+snell_short_v6_psk=$(jq -c '.config.psk = "short"' <<< "${snell6_outbound_record}")
+if managed_component_state_validate_record "${snell_short_v6_psk}"; then
+  printf 'Snell v6 short PSK unexpectedly accepted\n' >&2
+  exit 1
+fi
+snell_v6_obfs=$(jq -c '.config.obfs_mode = "none"' <<< "${snell6_outbound_record}")
+if managed_component_state_validate_record "${snell_v6_obfs}"; then
+  printf 'Snell v6 obfs field unexpectedly accepted\n' >&2
+  exit 1
+fi
+snell_v6_obfs_host=$(jq -c '.config.obfs_host = "snell.example"' <<< "${snell6_outbound_record}")
+if managed_component_state_validate_record "${snell_v6_obfs_host}"; then
+  printf 'Snell v6 obfs host unexpectedly accepted\n' >&2
+  exit 1
+fi
+snell_v4_mode=$(jq -c '.config.mode = "default"' <<< "${snell4_outbound_record}")
+if managed_component_state_validate_record "${snell_v4_mode}"; then
+  printf 'Snell v4 shaping field unexpectedly accepted\n' >&2
+  exit 1
+fi
+snell_bad_obfs=$(jq -c '.config.obfs_mode = "tls"' <<< "${snell4_outbound_record}")
+if managed_component_state_validate_record "${snell_bad_obfs}"; then
+  printf 'Snell unsupported obfs mode unexpectedly accepted\n' >&2
+  exit 1
+fi
+snell_bad_host=$(jq -c '.config.obfs_host = "snell\u0001.example"' <<< "${snell4_outbound_record}")
+if managed_component_state_validate_record "${snell_bad_host}"; then
+  printf 'Snell HTTP obfs control-character host unexpectedly accepted\n' >&2
+  exit 1
+fi
+snell_bad_mode=$(jq -c '.config.mode = "shaped"' <<< "${snell6_outbound_record}")
+if managed_component_state_validate_record "${snell_bad_mode}"; then
+  printf 'Snell unsupported shaping mode unexpectedly accepted\n' >&2
+  exit 1
+fi
+snell_bad_network=$(jq -c '.config.network = ["icmp"]' <<< "${snell4_outbound_record}")
+if managed_component_state_validate_record "${snell_bad_network}"; then
+  printf 'Snell unsupported network unexpectedly accepted\n' >&2
+  exit 1
+fi
+snell_duplicate_network=$(jq -c '.config.network = ["tcp","tcp"]' <<< "${snell4_outbound_record}")
+if managed_component_state_validate_record "${snell_duplicate_network}"; then
+  printf 'Snell duplicate network unexpectedly accepted\n' >&2
+  exit 1
+fi
+snell_unknown_field=$(jq -c '.config |= (. + {domain_strategy:"prefer_ipv4"})' <<< "${snell4_outbound_record}")
+if managed_component_state_validate_record "${snell_unknown_field}"; then
+  printf 'Snell deprecated/unknown Dial Field unexpectedly accepted\n' >&2
+  exit 1
+fi
+snell_bad_psk=$(jq -c '.config.psk = "snell\u0001password"' <<< "${snell4_outbound_record}")
+if managed_component_state_validate_record "${snell_bad_psk}"; then
+  printf 'Snell control-character PSK unexpectedly accepted\n' >&2
+  exit 1
+fi
+snell_bad_port=$(jq -c '.config.server_port = 65536' <<< "${snell4_outbound_record}")
+if managed_component_state_validate_record "${snell_bad_port}"; then
+  printf 'Snell out-of-range server port unexpectedly accepted\n' >&2
+  exit 1
+fi
+
 # Selector and URLTest groups own outbound member references.  Their upstream
 # schemas are deliberately narrow: duplicate members, a selector default not
 # present in the member list, and URLTest's selector-only fields must fail

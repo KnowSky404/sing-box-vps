@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091010
+# Version: 2026091011
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091010"
+readonly SCRIPT_VERSION="2026091011"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -120,7 +120,7 @@ readonly SB_COMPONENT_REGISTRY=(
   'tuic-outbound|outbound|tuic|TUIC outbound|1.13.0|builtin|{"dialer":true}'
   'vless-outbound|outbound|vless|VLESS outbound|1.13.0|builtin|{"dialer":true}'
   'anytls-outbound|outbound|anytls|AnyTLS outbound|1.14.0|builtin|{"dialer":true}'
-  'snell-outbound|outbound|snell|Snell outbound|1.14.0|builtin|{"dialer":true}'
+  'snell-outbound|outbound|snell|Snell outbound|1.14.0|builtin|{"dialer":true,"versions":[4,6],"obfs_modes":["none","http"],"shaping_modes":["default","unshaped","unsafe-raw"],"udp_via_tcp_packet_api":true}'
   'shadowtls-outbound|outbound|shadowtls|ShadowTLS outbound|1.13.0|builtin|{"dialer":true}'
 )
 SB_REALITY_SNI_CANDIDATES=(
@@ -12948,6 +12948,112 @@ managed_component_anytls_config_validate_json() {
   jq -e '((.tcp_fast_open // false) != true)' <<< "${config}" >/dev/null 2>&1 || return 1
 }
 
+# Validate the Snell outbound contract against sing-box 1.14.0.  The outbound
+# discriminator is version 4 or 6 (the inbound uses the corresponding wire
+# versions 5 and 6): v4 exposes HTTP obfuscation, while v6 exposes traffic
+# shaping.  Keep the PSK/userkey, network list and shared Dial Fields typed;
+# version-crossed fields and deprecated Dial Fields must fail before state/CAS
+# or takeover publication.
+managed_component_snell_config_validate_json() {
+  local config=${1:-} version
+  [[ -n "${config}" ]] || return 1
+  jq -e '
+    def safe_string:
+      type == "string" and (any(explode[]; . < 32 or . == 127) | not);
+    def nonempty_safe_string:
+      safe_string and length > 0;
+    def optional_safe_string($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_bool($name):
+      (has($name) | not) or (.[$name] | type == "boolean");
+    def optional_duration($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_routing_mark:
+      (has("routing_mark") | not) or
+      (.routing_mark |
+        ((type == "number" and . == floor and . >= 0 and . <= 4294967295) or
+         (type == "string" and (length == 0 or test("^0x[0-9a-fA-F]+$")))));
+    def optional_network_strategy:
+      (has("network_strategy") | not) or
+      (.network_strategy | type == "string" and IN("","default","hybrid","fallback"));
+    def optional_network_types($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "string" and (length == 0 or IN("wifi","cellular","ethernet","other"))) or
+         (type == "array" and all(.[]; type == "string" and
+           IN("wifi","cellular","ethernet","other")))));
+    def optional_network:
+      (has("network") | not) or
+      (.network |
+        ((type == "string" and (length == 0 or IN("tcp","udp"))) or
+         (type == "array" and length <= 2 and
+           all(.[]; type == "string" and IN("tcp","udp")) and
+           (length == (unique | length)))));
+    type == "object" and
+    ((keys - [
+      "server","server_port","version","psk","userkey","reuse","network",
+      "obfs_mode","obfs_host","mode","detour","bind_interface",
+      "inet4_bind_address","inet6_bind_address","bind_address_no_port",
+      "protect_path","routing_mark","reuse_addr","netns","connect_timeout",
+      "tcp_fast_open","tcp_multi_path","disable_tcp_keep_alive","tcp_keep_alive",
+      "tcp_keep_alive_interval","udp_fragment","domain_resolver",
+      "network_strategy","network_type","fallback_network_type","fallback_delay"
+    ]) | length == 0) and
+    (.server | nonempty_safe_string) and
+    (.server_port | type == "number" and . == floor and . >= 1 and . <= 65535) and
+    (.version | type == "number" and . == floor and IN(4,6)) and
+    (.psk | nonempty_safe_string and utf8bytelength <= 255) and
+    ((has("userkey") | not) or
+      (.userkey | safe_string and utf8bytelength <= 255)) and
+    optional_bool("reuse") and
+    optional_network and
+    optional_safe_string("obfs_mode") and
+    optional_safe_string("obfs_host") and
+    optional_safe_string("mode") and
+    optional_safe_string("detour") and
+    optional_safe_string("bind_interface") and
+    optional_safe_string("inet4_bind_address") and
+    optional_safe_string("inet6_bind_address") and
+    optional_bool("bind_address_no_port") and
+    optional_safe_string("protect_path") and
+    optional_routing_mark and
+    optional_bool("reuse_addr") and
+    optional_safe_string("netns") and
+    optional_duration("connect_timeout") and
+    optional_bool("tcp_fast_open") and
+    optional_bool("tcp_multi_path") and
+    optional_bool("disable_tcp_keep_alive") and
+    optional_duration("tcp_keep_alive") and
+    optional_duration("tcp_keep_alive_interval") and
+    ((has("udp_fragment") | not) or (.udp_fragment | type == "boolean")) and
+    ((has("domain_resolver") | not) or
+      (.domain_resolver | type == "string" or type == "object")) and
+    optional_network_strategy and
+    optional_network_types("network_type") and
+    optional_network_types("fallback_network_type") and
+    optional_duration("fallback_delay")
+  ' <<< "${config}" >/dev/null 2>&1 || return 1
+
+  version=$(jq -er '.version' <<< "${config}") || return 1
+  if [[ "${version}" == 4 ]]; then
+    jq -e '
+      (has("mode") | not) and
+      ((.obfs_mode // "") | IN("","none","http")) and
+      ((.obfs_host // "") | type == "string" and utf8bytelength <= 255) and
+      (((.obfs_mode // "") == "http") or ((.obfs_host // "") == ""))
+    ' <<< "${config}" >/dev/null 2>&1 || return 1
+  else
+    jq -e '
+      (has("obfs_mode") | not) and
+      (has("obfs_host") | not) and
+      ((.obfs_mode // "") == "") and
+      ((.obfs_host // "") == "") and
+      ((.mode // "") | IN("","default","unshaped","unsafe-raw")) and
+      (.psk | utf8bytelength >= 12)
+    ' <<< "${config}" >/dev/null 2>&1 || return 1
+  fi
+}
+
 # Validate the shared V2Ray transport object used by VMess/Trojan/VLESS
 # outbounds.  The transport is a discriminated union in sing-box; keeping the
 # variant-specific fields here prevents an HTTP/WS/gRPC option from silently
@@ -13286,10 +13392,13 @@ managed_component_state_validate_record() {
     outbound:anytls)
       managed_component_anytls_config_validate_json "${config}" || return 1
       ;;
+    outbound:snell)
+      managed_component_snell_config_validate_json "${config}" || return 1
+      ;;
     outbound:vless|outbound:vmess|outbound:trojan)
       managed_component_v2ray_outbound_config_validate_json "${type}" "${config}" || return 1
       ;;
-    outbound:direct|outbound:block|outbound:bridge|outbound:naive|outbound:hysteria2|outbound:hysteria|outbound:tuic|outbound:snell|outbound:shadowtls)
+    outbound:direct|outbound:block|outbound:bridge|outbound:naive|outbound:hysteria2|outbound:hysteria|outbound:tuic|outbound:shadowtls)
       ;;
     *) return 1 ;;
   esac
