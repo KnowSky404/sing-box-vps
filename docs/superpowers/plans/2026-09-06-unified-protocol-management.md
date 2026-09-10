@@ -476,3 +476,9 @@ Mixed 生命周期的真实 1.13.18/1.14.0 各完成 migration=1、instances=2�
 新增 Agent `sbv agent component rebuild --json --yes --expected-revision N`。它在排他管理锁和精确 revision 门禁下不改写 `components.json`，从同一受管状态重新生成组合配置，继续执行组件图、监听资源、目标核心 check、服务重启与防火墙 prepare/apply/commit；失败按既有快照路径恢复，成功结果标记 `operation=rebuild` 且 revision 不递增。回归新增 state/config 字节不变、无资源变化不探测防火墙和参数门禁断言。
 
 该入口补齐了高级组件的重建生命周期，但不等同 live 高级配置接管、TUN/透明路由、Endpoint 外部认证、动态资源或持久化崩溃恢复；组件 takeover/export 仍未完成。
+
+### 2026-09-10：高级组件 live 接管与敏感导出
+
+新增 `sbv agent component takeover --json --yes --expected-revision N [--allow-public]` 与 `sbv agent component export --json --id ID [--expected-revision N]`。接管扫描当前 live 配置中的已注册高级 inbound/endpoint，按既有 `(role,type,tag)` 保留稳定 ID，给新对象分配确定性 ID，并把对象字段及绑定 inbound 的路由规则放入组件 state；候选发布后再次确认现有 tagged objects、证书/服务对象和全部 route rules 均未丢失，发现未知或无法保真的对象即回滚。导出只按稳定 ID 返回完整敏感记录，带 `sensitive=true` 与可选 revision 门禁；`list`/`diagnose` 继续脱敏。
+
+新增回归覆盖 endpoint 接管、重复接管、导出秘密字段、stale revision，以及全局路由规则会导致接管拒绝且 state/config 字节保持。该入口仍不等同 TUN/透明路由真实数据面、Endpoint 外部认证、动态资源事务或完整上游 outbound 接管。

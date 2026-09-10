@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026090903
+# Version: 2026091001
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026090903"
+readonly SCRIPT_VERSION="2026091001"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -538,6 +538,8 @@ print_cli_help() {
   sbv agent help
   sbv agent capabilities --json
   sbv agent component list|diagnose --json
+  sbv agent component export --json --id ID [--expected-revision N]
+  sbv agent component takeover --json --yes --expected-revision N [--allow-public]
   sbv agent component rebuild --json --yes --expected-revision N
   sbv agent component create|replace|delete ...
   sbv agent upgrade-check --json x.y.z
@@ -1383,7 +1385,10 @@ component_registry_static_json() {
       features: (.[6] | fromjson),
       implemented: true, available: null, availability_reason: .[5],
       validated: {status: "not_assessed", method: "target_sing_box_check"},
-      lifecycle: {create: true, replace: true, delete: true}
+      lifecycle: {
+        create: true, replace: true, delete: true, rebuild: true, export: true,
+        takeover: (.[1] == "inbound" or .[1] == "endpoint")
+      }
     }]'
 }
 
@@ -12485,6 +12490,152 @@ managed_component_state_candidate() {
   printf '%s\n' "${candidate}"
 }
 
+managed_component_takeover_id() {
+  local role=${1:-} type=${2:-} tag=${3:-} safe_tag digest candidate
+  [[ -n "${role}" && -n "${type}" && -n "${tag}" ]] || return 1
+  if [[ "${tag}" =~ ^[a-z0-9][a-z0-9_-]{0,47}$ ]]; then
+    safe_tag=${tag}
+    candidate="${role}-${type}-${safe_tag}"
+  else
+    digest=$(printf '%s:%s:%s' "${role}" "${type}" "${tag}" | sha256sum | awk '{print substr($1,1,16)}') || return 1
+    candidate="${role}-${type}-${digest}"
+  fi
+  [[ ${#candidate} -le 64 ]] || candidate="${role}-${type}-$(printf '%s' "${candidate}" | sha256sum | awk '{print substr($1,1,16)}')"
+  managed_component_state_id_valid "${candidate}" || return 1
+  printf '%s' "${candidate}"
+}
+
+managed_component_live_takeover_records_json() (
+  local state=${1:-} registry inbound_types endpoint_types source_objects object role type tag id config route_rules record
+  local config_snapshot
+  local records=() existing_id
+  [[ -n "${state}" ]] || return 1
+  [[ -f "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" && -r "${SINGBOX_CONFIG_FILE}" ]] || return 2
+  config_snapshot=$(mktemp /tmp/sbv-component-live.XXXXXX) || return 1
+  trap 'rm -f -- "${config_snapshot}"' EXIT
+  head -c 4194305 -- "${SINGBOX_CONFIG_FILE}" > "${config_snapshot}" || return 4
+  [[ "$(wc -c < "${config_snapshot}")" -le 4194304 ]] || return 4
+  managed_component_state_validate_json "${state}" || return 1
+  registry=$(component_registry_static_json) || return 1
+  inbound_types=$(jq -c '[.[] | select(.role == "inbound") | .type]' <<< "${registry}") || return 1
+  endpoint_types=$(jq -c '[.[] | select(.role == "endpoint") | .type]' <<< "${registry}") || return 1
+  source_objects=$(jq -c --argjson inbound_types "${inbound_types}" --argjson endpoint_types "${endpoint_types}" '
+    if type != "object" then error("invalid_document") else
+      ([.inbounds // [] | .[] | select(.type as $type | $inbound_types | index($type) != null) |
+        {role:"inbound",object:.}] +
+       [.endpoints // [] | .[] | select(.type as $type | $endpoint_types | index($type) != null) |
+        {role:"endpoint",object:.}])[]
+    end
+  ' "${config_snapshot}") || return 4
+  while IFS= read -r object; do
+    [[ -n "${object}" ]] || continue
+    role=$(jq -r '.role' <<< "${object}") || return 4
+    type=$(jq -r '.object.type // empty' <<< "${object}") || return 4
+    tag=$(jq -r '.object.tag // empty' <<< "${object}") || return 4
+    managed_component_tag_valid "${tag}" || return 4
+    existing_id=$(jq -r --arg role "${role}" --arg type "${type}" --arg tag "${tag}" \
+      '.components[] | select(.role == $role and .type == $type and .tag == $tag) | .id' <<< "${state}" | head -n1) || return 1
+    if [[ -n "${existing_id}" ]]; then
+      id=${existing_id}
+    else
+      id=$(managed_component_takeover_id "${role}" "${type}" "${tag}") || return 4
+    fi
+    config=$(jq -c '.object | del(.type,.tag)' <<< "${object}") || return 4
+    route_rules=$(jq -c --arg tag "${tag}" '[.route.rules[]? |
+      select((.inbound == $tag) or ((.inbound | type) == "array" and ((.inbound | index($tag)) != null)))]' \
+      "${config_snapshot}") || return 4
+    record=$(jq -cn --arg id "${id}" --arg role "${role}" --arg type "${type}" --arg tag "${tag}" \
+      --argjson config "${config}" --argjson route_rules "${route_rules}" \
+      '{id:$id,role:$role,type:$type,tag:$tag,enabled:true,route_rules:$route_rules,config:$config}') || return 4
+    managed_component_state_validate_record "${record}" || return 4
+    records+=("${record}")
+  done <<< "${source_objects}"
+  ((${#records[@]} > 0)) || return 3
+  printf '%s\n' "${records[@]}" | jq -scS '.'
+)
+
+managed_component_state_takeover_candidate() {
+  local state=${1:-} records=${2:-} candidate
+  managed_component_state_validate_json "${state}" || return 1
+  jq -e 'type == "array" and length > 0 and all(.[]; type == "object")' <<< "${records}" >/dev/null 2>&1 || return 1
+  if ! candidate=$(jq -cS --argjson records "${records}" '
+    . as $state |
+    reduce $records[] as $record (.;
+      if any(.components[]; .role == $record.role and .type == $record.type and .tag == $record.tag) then
+        .components |= map(if .role == $record.role and .type == $record.type and .tag == $record.tag
+                           then ($record | .id = .id) else . end)
+      elif any(.components[]; .id == $record.id or .tag == $record.tag) then
+        error("component_conflict")
+      else
+        .components += [$record]
+      end) |
+    if .components == $state.components then . else .revision = (.revision + 1) end
+  ' <<< "${state}" 2>/dev/null); then
+    return 1
+  fi
+  managed_component_state_validate_json "${candidate}" || return 1
+  printf '%s\n' "${candidate}"
+}
+
+managed_component_takeover_preserves_live_config() {
+  local old_config=${1:-} new_config=${2:-} registry inbound_types endpoint_types
+  [[ -f "${old_config}" && ! -L "${old_config}" && -f "${new_config}" && ! -L "${new_config}" ]] || return 1
+  [[ "$(wc -c < "${old_config}")" -le 4194304 && "$(wc -c < "${new_config}")" -le 4194304 ]] || return 1
+  registry=$(component_registry_static_json) || return 1
+  inbound_types=$(jq -c '[.[] | select(.role == "inbound") | .type]' <<< "${registry}") || return 1
+  endpoint_types=$(jq -c '[.[] | select(.role == "endpoint") | .type]' <<< "${registry}") || return 1
+  jq -se --argjson inbound_types "${inbound_types}" --argjson endpoint_types "${endpoint_types}" '
+    def preserves($new; $old):
+      (($new | type) == ($old | type)) and
+      (if ($new | type) == "object" or ($new | type) == "array" then
+         ($new | contains($old))
+       else
+         $new == $old
+       end);
+    def root_object_arrays:
+      ["inbounds","endpoints","outbounds","certificate_providers","http_clients","services","network_namespaces"];
+    def root_fields_preserved($old; $new):
+      ($old | keys) as $keys |
+      ($keys | all(.[]; . as $key |
+        if (root_object_arrays | index($key)) != null then true
+        elif ($new | has($key)) then preserves($new[$key]; $old[$key])
+        else false end));
+    def objects($root):
+      ([($root.inbounds // [])[]? | {role:"inbound",object:.}] +
+       [($root.endpoints // [])[]? | {role:"endpoint",object:.}] +
+       [($root.outbounds // [])[]? | {role:"outbound",object:.}] +
+       [($root.certificate_providers // [])[]? | {role:"certificate_provider",object:.}] +
+       [($root.http_clients // [])[]? | {role:"http_client",object:.}] +
+       [($root.services // [])[]? | {role:"service",object:.}] +
+       [($root.network_namespaces // [])[]? | {role:"network_namespace",object:.}]);
+    .[0] as $old |
+    .[1] as $new |
+    objects($old) as $old_objects |
+    objects($new) as $new_objects |
+    root_fields_preserved($old; $new) as $root_ok |
+    ($old_objects | map(
+      . as $item |
+      {
+        supported:(
+          if $item.role == "inbound" then
+            ($inbound_types | index($item.object.type // "")) != null
+          elif $item.role == "endpoint" then
+            ($endpoint_types | index($item.object.type // "")) != null
+          else true end),
+        preserved:any($new_objects[];
+          .role == $item.role and
+          (.object.type // "") == ($item.object.type // "") and
+          (.object.tag // "") == ($item.object.tag // "") and
+          (.object | contains($item.object)))
+      }
+    ) | all(.[]; .supported and .preserved)) as $objects_ok |
+    ($old.route.rules // []) as $old_rules |
+    ($new.route.rules // []) as $new_rules |
+    ($old_rules | all(.[]; . as $rule | any($new_rules[]; . == $rule))) as $rules_ok |
+    ($root_ok and $objects_ok and $rules_ok)
+  ' <(jq -cS . "${old_config}") <(jq -cS . "${new_config}") >/dev/null 2>&1
+}
+
 managed_component_requires_public_confirmation() {
   local record=${1:-}
   jq -e '
@@ -12614,6 +12765,20 @@ managed_component_diagnose_json() {
       components:$inventory.components,supported:$inventory.supported}'
 }
 
+managed_component_export_json() {
+  local component_id=${1:-} expected_revision=${2:-} state revision record
+  managed_component_state_id_valid "${component_id}" || return 1
+  state=$(managed_component_state_json) || return 1
+  revision=$(jq -r '.revision | tostring' <<< "${state}") || return 1
+  if [[ -n "${expected_revision}" && "${expected_revision}" != "${revision}" ]]; then
+    return 2
+  fi
+  record=$(jq -c --arg id "${component_id}" '.components[] | select(.id == $id)' <<< "${state}") || return 1
+  [[ -n "${record}" ]] || return 3
+  jq -cn --arg revision "${revision}" --argjson component "${record}" \
+    '{action:"component-export",revision:($revision|tonumber),sensitive:true,component:$component}'
+}
+
 managed_component_state_matches_live_config() {
   local config_file=${1:-} state
   [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
@@ -12641,6 +12806,7 @@ managed_component_state_apply() {
   local operation=${1:-} expected=${2:-} input=${3:-} target_id=${4:-} allow_public=${5:-n}
   local state current_revision record candidate snapshot service_restarted=false state_changed=true
   local role type tag result_record old_config old_listener_plan new_listener_plan
+  local takeover_records takeover_status result_count=0
   local firewall_journal=""
   local firewall_summary='{"status":"not_attempted","backends":[],"diagnostics":[]}'
   local result_id
@@ -12679,6 +12845,38 @@ managed_component_state_apply() {
       candidate="${state}"
       state_changed=false
       ;;
+    takeover)
+      [[ -z "${input}${target_id}" ]] || {
+        MANAGED_COMPONENT_LAST_ERROR=invalid_operation; return 1;
+      }
+      takeover_records=$(managed_component_live_takeover_records_json "${state}") || {
+        takeover_status=$?
+        case "${takeover_status}" in
+          2) MANAGED_COMPONENT_LAST_ERROR=component_live_missing ;;
+          3) MANAGED_COMPONENT_LAST_ERROR=component_live_missing ;;
+          4) MANAGED_COMPONENT_LAST_ERROR=component_live_untrusted ;;
+          *) MANAGED_COMPONENT_LAST_ERROR=component_takeover_failed ;;
+        esac
+        return 1
+      }
+      if jq -e 'any(.[];
+          (.role == "inbound" and
+           (.type == "tun" or .type == "cloudflared" or
+            ((.config.listen // "127.0.0.1") as $listen |
+             ($listen != "127.0.0.1" and $listen != "::1" and $listen != "localhost")))) or
+          (.role == "endpoint" and .type == "openvpn-server"))' <<< "${takeover_records}" >/dev/null 2>&1 &&
+         [[ "${allow_public}" != y ]]; then
+        MANAGED_COMPONENT_LAST_ERROR=public_confirmation_required
+        return 1
+      fi
+      candidate=$(managed_component_state_takeover_candidate "${state}" "${takeover_records}") || {
+        MANAGED_COMPONENT_LAST_ERROR=component_takeover_conflict; return 1;
+      }
+      if [[ "${candidate}" == "${state}" ]]; then
+        state_changed=false
+      fi
+      result_record='{}'
+      ;;
     *) MANAGED_COMPONENT_LAST_ERROR=invalid_operation; return 1 ;;
   esac
 
@@ -12695,6 +12893,12 @@ managed_component_state_apply() {
   if ! generate_config ||
      [[ ! -f "${SINGBOX_CONFIG_FILE}" || -L "${SINGBOX_CONFIG_FILE}" ]]; then
     managed_component_abort_state_transaction "${snapshot}" "高级组件配置生成或校验失败" || :
+    MANAGED_COMPONENT_LAST_ERROR=config_check_failed
+    return 1
+  fi
+  if [[ "${operation}" == takeover ]] &&
+     ! managed_component_takeover_preserves_live_config "${old_config}" "${SINGBOX_CONFIG_FILE}"; then
+    managed_component_abort_state_transaction "${snapshot}" "高级组件接管会丢失现有配置对象或路由规则" || :
     MANAGED_COMPONENT_LAST_ERROR=config_check_failed
     return 1
   fi
@@ -12806,8 +13010,10 @@ managed_component_state_apply() {
   if [[ -z "${result_id}" ]]; then
     result_id=$(jq -r '.id // empty' <<< "${result_record}")
   fi
+  result_count=$(jq -r '.components | length' <<< "${candidate}") || result_count=0
   MANAGED_COMPONENT_LAST_RESULT=$(jq -cn --arg operation "${operation}" --arg revision "$(jq -r '.revision' <<< "${candidate}")" \
     --arg id "${result_id}" --arg role "${role}" --arg type "${type}" --arg tag "${tag}" \
+    --argjson count "${result_count}" \
     --argjson service_restarted "${service_restarted}" \
     --argjson firewall "${firewall_summary}" \
     '{action:"component-apply",operation:$operation,revision:($revision|tonumber),
@@ -12815,7 +13021,8 @@ managed_component_state_apply() {
       role:(if $role == "" then null else $role end),
       type:(if $type == "" then null else $type end),
       tag:(if $tag == "" then null else $tag end),
-      config_check:"passed",service_restarted:$service_restarted,firewall:$firewall}')
+      config_check:"passed",service_restarted:$service_restarted,firewall:$firewall} +
+      (if $operation == "takeover" then {count:$count} else {} end)')
   return 0
 }
 
@@ -20064,6 +20271,8 @@ agent_print_help() {
   sbv agent subman-sync --json
   sbv agent warp --json
   sbv agent component list|diagnose --json
+  sbv agent component export --json --id ID [--expected-revision N]
+  sbv agent component takeover --json --yes --expected-revision N [--allow-public]
   sbv agent component rebuild --json --yes --expected-revision N
   sbv agent component create|replace --json --yes --expected-revision N --file component.json [--allow-public]
   sbv agent component delete --json --yes --expected-revision N --id ID
@@ -20081,7 +20290,7 @@ agent_print_help() {
   links         输出完整连接材料，适合受信任 Agent 获取节点信息。
   export-client 生成并校验 sing-box 裸核客户端配置，写入固定路径并输出 JSON。
   warp          输出 Cloudflare Warp 状态，包括启用/路由模式/账户/规则统计。
-  component     管理 direct/tun/redirect/tproxy/cloudflared 入站、WireGuard/Tailscale/OpenConnect/OpenVPN endpoint 以及 SSH/Tor/分组等出站；list/diagnose 只读，rebuild/create/replace/delete 使用 CAS 事务，敏感配置不会在 list/diagnose 输出。
+  component     管理 direct/tun/redirect/tproxy/cloudflared 入站、WireGuard/Tailscale/OpenConnect/OpenVPN endpoint 以及 SSH/Tor/分组等出站；list/diagnose 只读，export 仅按 ID 输出敏感配置，takeover/rebuild/create/replace/delete 使用 CAS 事务。
   check         执行 sing-box check 并输出结构化结果。
   doctor        输出只读诊断信息和配置校验结果。
   service       执行带 --yes 保护的服务操作，目前支持 restart。
@@ -20324,8 +20533,9 @@ agent_capabilities_json() {
         components: {
           state_file: $component_state_file,
           schema_version: 1,
-          operations: ["list", "diagnose", "rebuild", "create", "replace", "delete"],
-          read_only_operations: ["list", "diagnose"],
+          operations: ["list", "diagnose", "export", "takeover", "rebuild", "create", "replace", "delete"],
+          read_only_operations: ["list", "diagnose", "export"],
+          sensitive_operations: ["export"],
           diagnosis_fields: ["state", "config", "service", "firewall", "transactions"],
           expected_revision_required: true,
           plaintext_public_confirmation: "--allow-public",
@@ -23733,6 +23943,7 @@ apply_plain_proxy_instance_change() (
 
 agent_component_cli() {
   local operation=${1:-} expected="" input="" component_id="" json=n confirmed=n allow_public=n
+  local export_json export_status
   shift || true
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -23762,6 +23973,60 @@ agent_component_cli() {
       return 0
     fi
     agent_json_error component_state_untrusted "高级组件状态无法完整读取；未返回部分诊断。"
+    return 1
+  fi
+
+  if [[ "${operation}" == export ]]; then
+    if [[ $# -ne 0 || "${json}" != y || "${confirmed}" != n || "${allow_public}" != n ||
+          -z "${component_id}" || -n "${input}" ||
+          ( -n "${expected}" && ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ) ]]; then
+      agent_json_error invalid_arguments "用法: sbv agent component export --json --id ID [--expected-revision N]"; return 1
+    fi
+    if [[ -n "${expected}" ]] && ! structured_instance_store_revision_arg "${expected}" >/dev/null; then
+      agent_json_error invalid_arguments "revision 超出安全整数范围；未修改。"; return 1
+    fi
+    if export_json=$(managed_component_export_json "${component_id}" "${expected}"); then
+      printf '%s\n' "${export_json}"
+      return 0
+    else
+      export_status=$?
+    fi
+    case "${export_status}" in
+      2) agent_json_error revision_mismatch "组件 state revision 不匹配；未返回导出。" ;;
+      3) agent_json_error component_not_found "组件不存在；未返回导出。" ;;
+      *) agent_json_error component_export_failed "组件状态无法安全读取；未返回导出。" ;;
+    esac
+    return 1
+  fi
+
+  if [[ "${operation}" == takeover ]]; then
+    if [[ $# -ne 0 || "${json}" != y || "${confirmed}" != y ||
+          -n "${input}" || -n "${component_id}" ||
+          ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
+      agent_json_error invalid_arguments "用法: sbv agent component takeover --json --yes --expected-revision N [--allow-public]"; return 1
+    fi
+    if ! structured_instance_store_revision_arg "${expected}" >/dev/null; then
+      agent_json_error invalid_arguments "revision 超出安全整数范围；未修改。"; return 1
+    fi
+    if managed_component_state_apply takeover "${expected}" "" "" "${allow_public}"; then
+      printf '%s\n' "${MANAGED_COMPONENT_LAST_RESULT}"
+      return 0
+    fi
+    case "${MANAGED_COMPONENT_LAST_ERROR:-component_takeover_failed}" in
+      revision_mismatch) agent_json_error revision_mismatch "组件 state revision 不匹配；未修改。" ;;
+      component_write_busy) agent_json_error component_write_busy "另一个管理进程正在执行；组件未修改。" ;;
+      public_confirmation_required) agent_json_error confirmation_required "现有接管对象包含公开监听或 OpenVPN server；请明确传入 --allow-public。" ;;
+      component_live_missing) agent_json_error component_live_missing "当前配置没有可接管的已注册高级入站或 Endpoint。" ;;
+      component_live_untrusted) agent_json_error component_live_untrusted "当前配置对象或组件状态无法安全读取；未修改。" ;;
+      component_takeover_conflict) agent_json_error component_takeover_conflict "接管对象与现有组件 ID/tag 冲突；未修改。" ;;
+      config_check_failed) agent_json_error config_check_failed "组件接管已回滚；候选配置或无损保留校验失败。" ;;
+      service_restart_failed) agent_json_error service_restart_failed "组件接管已回滚；服务重启失败。" ;;
+      firewall_prepare_failed) agent_json_error firewall_prepare_failed "组件接管已回滚；防火墙资源预检失败。" ;;
+      firewall_apply_failed) agent_json_error firewall_apply_failed "组件接管已回滚；防火墙资源应用失败。" ;;
+      firewall_commit_failed) agent_json_error firewall_commit_failed "组件接管已回滚；防火墙资源提交失败。" ;;
+      firewall_rollback_failed) agent_json_error firewall_rollback_failed "防火墙外部资源回滚不确定；已保留事务快照供恢复。" ;;
+      *) agent_json_error component_takeover_failed "组件接管失败，状态已回滚或保留快照待恢复。" ;;
+    esac
     return 1
   fi
 
@@ -24022,7 +24287,7 @@ agent_dispatch() {
     instance) agent_cli "$@" ;;
     component)
       case "${2:-}" in
-        list|diagnose) (
+        list|diagnose|export) (
           if ! acquire_managed_write_lock shared; then
             agent_cli_error "component" instance_write_busy "配置正在被管理进程使用，未返回部分组件状态。"; return 1
           fi

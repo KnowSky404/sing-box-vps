@@ -122,17 +122,18 @@ fi
 rm -f "${SB_COMPONENT_STATE_FILE}.bak"
 
 generate_config() {
-  local rendered inbounds outbounds route_rules
+  local rendered inbounds endpoints outbounds route_rules
   if [[ -e "${component_rebuild_failure:-}" ]]; then
     return 1
   fi
   rendered=$(managed_component_render_json) || return 1
   inbounds=$(jq -c '.inbounds' <<< "${rendered}") || return 1
+  endpoints=$(jq -c '.endpoints' <<< "${rendered}") || return 1
   outbounds=$(jq -c '.outbounds' <<< "${rendered}") || return 1
   route_rules=$(jq -c '.route_rules' <<< "${rendered}") || return 1
-  jq -n --argjson inbounds "${inbounds}" --argjson outbounds "${outbounds}" \
+  jq -n --argjson inbounds "${inbounds}" --argjson endpoints "${endpoints}" --argjson outbounds "${outbounds}" \
     --argjson route_rules "${route_rules}" \
-    '{inbounds:$inbounds,endpoints:[],outbounds:([{type:"direct",tag:"direct"},{type:"block",tag:"block"}] + $outbounds),route:{final:"direct",rules:$route_rules}}' \
+    '{inbounds:$inbounds,endpoints:$endpoints,outbounds:([{type:"direct",tag:"direct"},{type:"block",tag:"block"}] + $outbounds),route:{final:"direct",rules:$route_rules}}' \
     > "${SINGBOX_CONFIG_FILE}"
 }
 
@@ -146,6 +147,16 @@ jq -e '.ok == true and .data.action == "component-diagnose" and
   (.data.supported | length) == 30' <<< "${diagnose_json}" >/dev/null
 if grep -Fq 'secret-token-not-for-list' <<< "${diagnose_json}"; then
   printf 'component diagnose leaked a secret token\n' >&2
+  exit 1
+fi
+
+export_json=$(agent_dispatch component export --json --id cf1 --expected-revision 3)
+jq -e '.ok == true and .data.action == "component-export" and
+  .data.sensitive == true and .data.revision == 3 and
+  .data.component.id == "cf1" and
+  .data.component.config.token == "secret-token-not-for-list"' <<< "${export_json}" >/dev/null
+if agent_dispatch component export --json --id cf1 --expected-revision 2 >/dev/null 2>&1; then
+  printf 'stale component export unexpectedly succeeded\n' >&2
   exit 1
 fi
 
@@ -227,5 +238,65 @@ jq -e '.inbounds[] | select(.tag == "direct-local-in") | .listen_port == 15084' 
 [[ "$(< "${component_firewall_log}")" == $'prepare\napply\ncommit\nprepare\napply\nrollback' ]]
 rm -f "${component_firewall_apply_failure}"
 rm -f "${created_record}"
+
+# Take over registered advanced objects from a live configuration without
+# dropping object fields or route rules.  The operation is idempotent for
+# already-owned objects and assigns a deterministic ID to a newly discovered
+# endpoint.
+live_without_selector_rules=$(jq -c '(.components[] | select(.id == "selector-local") | .route_rules) = []' \
+  "${SB_COMPONENT_STATE_FILE}")
+managed_component_write_state "${live_without_selector_rules}"
+generate_config
+wireguard_live=$(jq -cn '{type:"wireguard",tag:"wg-live",system:true,address:["10.0.0.2/32"],private_key:"private-key-preserved",peers:[{address:"198.51.100.1",port:51820,public_key:"peer-key",allowed_ips:["0.0.0.0/0"]}]}')
+jq --argjson endpoint "${wireguard_live}" '.endpoints += [$endpoint]' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if takeover_without_public=$(agent_dispatch component takeover --json --yes --expected-revision 4); then
+  printf 'cloudflared takeover without public confirmation unexpectedly succeeded\n' >&2
+  exit 1
+fi
+jq -e '.ok == false and .error == "confirmation_required"' <<< "${takeover_without_public}" >/dev/null
+takeover_json=$(agent_dispatch component takeover --json --yes --expected-revision 4 --allow-public)
+jq -e '.ok == true and .data.action == "component-apply" and
+  .data.operation == "takeover" and .data.revision == 5 and
+  .data.count == 4 and .data.firewall.status == "not_attempted"' <<< "${takeover_json}" >/dev/null
+jq -e 'any(.components[]; .id == "endpoint-wireguard-wg-live" and
+  .type == "wireguard" and .config.private_key == "private-key-preserved")' \
+  "${SB_COMPONENT_STATE_FILE}" >/dev/null
+jq -e 'any(.endpoints[]; .tag == "wg-live" and .private_key == "private-key-preserved")' \
+  "${SINGBOX_CONFIG_FILE}" >/dev/null
+export_takeover_json=$(agent_dispatch component export --json --id endpoint-wireguard-wg-live --expected-revision 5)
+jq -e '.ok == true and .data.sensitive == true and
+  .data.component.config.private_key == "private-key-preserved"' <<< "${export_takeover_json}" >/dev/null
+
+# Unknown top-level configuration is also outside the component model.  It
+# must not be silently discarded by the normal generator during takeover.
+state_before_unknown_root=$(cat "${SB_COMPONENT_STATE_FILE}")
+jq '.experimental = {must_preserve:true}' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+config_with_unknown_root=$(cat "${SINGBOX_CONFIG_FILE}")
+if unknown_root_takeover_json=$(agent_dispatch component takeover --json --yes --expected-revision 5 --allow-public); then
+  printf 'unknown top-level component takeover unexpectedly succeeded\n' >&2
+  exit 1
+fi
+jq -e '.ok == false and .error == "config_check_failed"' <<< "${unknown_root_takeover_json}" >/dev/null
+[[ "$(cat "${SB_COMPONENT_STATE_FILE}")" == "${state_before_unknown_root}" ]]
+[[ "$(cat "${SINGBOX_CONFIG_FILE}")" == "${config_with_unknown_root}" ]]
+jq 'del(.experimental)' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+
+# Global route rules are not implicitly assigned to a component.  A takeover
+# must therefore reject the candidate rather than silently dropping one.
+state_before_lossless_takeover=$(cat "${SB_COMPONENT_STATE_FILE}")
+jq '.route.rules += [{domain:["must-preserve.example"],action:"route",outbound:"direct"}]' \
+  "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+config_with_unmanaged_rule=$(cat "${SINGBOX_CONFIG_FILE}")
+if lossless_takeover_json=$(agent_dispatch component takeover --json --yes --expected-revision 5 --allow-public); then
+  printf 'lossy component takeover unexpectedly succeeded\n' >&2
+  exit 1
+fi
+jq -e '.ok == false and .error == "config_check_failed"' <<< "${lossless_takeover_json}" >/dev/null
+[[ "$(cat "${SB_COMPONENT_STATE_FILE}")" == "${state_before_lossless_takeover}" ]]
+[[ "$(cat "${SINGBOX_CONFIG_FILE}")" == "${config_with_unmanaged_rule}" ]]
 
 printf '%s\n' 'managed component contracts passed'
