@@ -1135,6 +1135,110 @@ if managed_component_state_validate_record "${hysteria_control_password}"; then
   exit 1
 fi
 
+# TUIC outbound records keep the client-only relay choices separate from the
+# inbound schema, while sharing typed TLS, QUIC, network and Dial Field
+# handling.
+tuic_outbound_record='{"id":"tuic-outbound-local","role":"outbound","type":"tuic","tag":"tuic-upstream","enabled":true,"route_rules":[],"config":{"server":"tuic.example","server_port":443,"uuid":"2dd61d93-75d8-4da4-ac0e-6aece7eac365","password":"tuic-password","congestion_control":"bbr","udp_relay_mode":"native","udp_over_stream":false,"zero_rtt_handshake":true,"heartbeat":"10s","network":["tcp","udp"],"tls":{"enabled":true,"server_name":"tuic.example","insecure":true},"idle_timeout":"30s","keep_alive_period":"10s","stream_receive_window":"64 MB","connection_receive_window":"128 MB","max_concurrent_streams":100,"initial_packet_size":1200,"disable_path_mtu_discovery":false,"connect_timeout":"5s","network_strategy":"default","network_type":["ethernet"],"domain_resolver":"dns-local","protect_path":"/usr/lib/sing-box/tuic-protect"}}'
+managed_component_state_validate_record "${tuic_outbound_record}"
+tuic_outbound_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${tuic_outbound_record}")
+tuic_outbound_rendered=$(managed_component_render_json "${tuic_outbound_state}")
+jq -e '
+  (.outbounds | length == 1) and
+  .outbounds[0].type == "tuic" and
+  .outbounds[0].tag == "tuic-upstream" and
+  .outbounds[0].server == "tuic.example" and
+  .outbounds[0].server_port == 443 and
+  .outbounds[0].uuid == "2dd61d93-75d8-4da4-ac0e-6aece7eac365" and
+  .outbounds[0].congestion_control == "bbr" and
+  .outbounds[0].udp_relay_mode == "native" and
+  .outbounds[0].udp_over_stream == false and
+  .outbounds[0].network == ["tcp","udp"] and
+  .outbounds[0].tls.enabled == true and
+  .outbounds[0].initial_packet_size == 1200 and
+  .outbounds[0].route_rules == null
+' <<< "${tuic_outbound_rendered}" >/dev/null
+tuic_string_network=$(jq -c '.config.network = "tcp" | .config.udp_relay_mode = "quic"' <<< "${tuic_outbound_record}")
+managed_component_state_validate_record "${tuic_string_network}"
+tuic_udp_over_stream=$(jq -c '.config |= (del(.udp_relay_mode) + {udp_over_stream:true})' <<< "${tuic_outbound_record}")
+managed_component_state_validate_record "${tuic_udp_over_stream}"
+tuic_udp_over_stream_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${tuic_udp_over_stream}")
+tuic_udp_over_stream_rendered=$(managed_component_render_json "${tuic_udp_over_stream_state}")
+jq -e '
+  .outbounds[0].type == "tuic" and
+  (.outbounds[0] | has("udp_relay_mode") | not) and
+  .outbounds[0].udp_over_stream == true
+' <<< "${tuic_udp_over_stream_rendered}" >/dev/null
+tuic_relay_conflict=$(jq -c '.config.udp_over_stream = true' <<< "${tuic_outbound_record}")
+if managed_component_state_validate_record "${tuic_relay_conflict}"; then
+  printf 'TUIC udp relay/udp-over-stream conflict unexpectedly accepted\n' >&2
+  exit 1
+fi
+tuic_missing_tls=$(jq -c '.config |= del(.tls)' <<< "${tuic_outbound_record}")
+if managed_component_state_validate_record "${tuic_missing_tls}"; then
+  printf 'TUIC outbound without TLS unexpectedly accepted\n' >&2
+  exit 1
+fi
+tuic_disabled_tls=$(jq -c '.config.tls.enabled = false' <<< "${tuic_outbound_record}")
+if managed_component_state_validate_record "${tuic_disabled_tls}"; then
+  printf 'TUIC outbound with disabled TLS unexpectedly accepted\n' >&2
+  exit 1
+fi
+tuic_missing_server=$(jq -c '.config |= del(.server)' <<< "${tuic_outbound_record}")
+if managed_component_state_validate_record "${tuic_missing_server}"; then
+  printf 'TUIC outbound without server unexpectedly accepted\n' >&2
+  exit 1
+fi
+tuic_bad_port=$(jq -c '.config.server_port = 65536' <<< "${tuic_outbound_record}")
+if managed_component_state_validate_record "${tuic_bad_port}"; then
+  printf 'TUIC outbound invalid port unexpectedly accepted\n' >&2
+  exit 1
+fi
+tuic_bad_uuid=$(jq -c '.config.uuid = "not-a-uuid"' <<< "${tuic_outbound_record}")
+if managed_component_state_validate_record "${tuic_bad_uuid}"; then
+  printf 'TUIC outbound invalid UUID unexpectedly accepted\n' >&2
+  exit 1
+fi
+tuic_bad_password=$(jq -c '.config.password = "tuic\u0001password"' <<< "${tuic_outbound_record}")
+if managed_component_state_validate_record "${tuic_bad_password}"; then
+  printf 'TUIC outbound control-character password unexpectedly accepted\n' >&2
+  exit 1
+fi
+tuic_bad_congestion=$(jq -c '.config.congestion_control = "reno"' <<< "${tuic_outbound_record}")
+if managed_component_state_validate_record "${tuic_bad_congestion}"; then
+  printf 'TUIC unsupported congestion control unexpectedly accepted\n' >&2
+  exit 1
+fi
+tuic_bad_relay=$(jq -c '.config.udp_relay_mode = "native+quic"' <<< "${tuic_outbound_record}")
+if managed_component_state_validate_record "${tuic_bad_relay}"; then
+  printf 'TUIC unsupported relay mode unexpectedly accepted\n' >&2
+  exit 1
+fi
+tuic_bad_network=$(jq -c '.config.network = ["icmp"]' <<< "${tuic_outbound_record}")
+if managed_component_state_validate_record "${tuic_bad_network}"; then
+  printf 'TUIC unsupported network unexpectedly accepted\n' >&2
+  exit 1
+fi
+tuic_duplicate_network=$(jq -c '.config.network = ["udp","udp"]' <<< "${tuic_outbound_record}")
+if managed_component_state_validate_record "${tuic_duplicate_network}"; then
+  printf 'TUIC duplicate network unexpectedly accepted\n' >&2
+  exit 1
+fi
+tuic_bad_quic=$(jq -c '.config.initial_packet_size = "1200"' <<< "${tuic_outbound_record}")
+if managed_component_state_validate_record "${tuic_bad_quic}"; then
+  printf 'TUIC invalid QUIC scalar unexpectedly accepted\n' >&2
+  exit 1
+fi
+tuic_bad_heartbeat=$(jq -c '.config.heartbeat = 10' <<< "${tuic_outbound_record}")
+if managed_component_state_validate_record "${tuic_bad_heartbeat}"; then
+  printf 'TUIC invalid heartbeat scalar unexpectedly accepted\n' >&2
+  exit 1
+fi
+tuic_unknown_field=$(jq -c '.config |= (. + {domain_strategy:"prefer_ipv4"})' <<< "${tuic_outbound_record}")
+if managed_component_state_validate_record "${tuic_unknown_field}"; then
+  printf 'TUIC deprecated field unexpectedly accepted\n' >&2
+  exit 1
+fi
+
 # Selector and URLTest groups own outbound member references.  Their upstream
 # schemas are deliberately narrow: duplicate members, a selector default not
 # present in the member list, and URLTest's selector-only fields must fail

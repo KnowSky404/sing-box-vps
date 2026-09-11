@@ -571,3 +571,9 @@ managed Hysteria2 outbound 现在通过 `managed_component_hysteria2_config_vali
 managed Hysteria v1 outbound 现在通过 `managed_component_hysteria_config_validate_json` 处理，按固定 sing-box 1.14.0 `HysteriaOutboundOptions` 建立 typed allowlist。标准路径要求 `server` 与互斥的 `server_port`/`server_ports`，并支持 `hop_interval`、`up`/`down` 网络带宽兼容字段、`up_mbps`/`down_mbps`、字符串 obfs、`auth`/`auth_str`、TCP/UDP network、必需 outbound TLS、QUIC fields 与 shared Dial Fields；每个方向至少声明一种带宽形式，auth 的 Base64/字节数组形状均受约束。
 
 Hysteria v1 的 `recv_window_conn`、`recv_window`、`disable_mtu_discovery` 及 Hysteria2 的 `password`、对象 obfs、BBR/Realm 字段不会混入，未知、弃用、错误分型、控制字符和负带宽在 state/CAS 与接管前拒绝。`tests/managed_components_contract.sh` 覆盖两种带宽/auth 形式、端口范围、TLS/QUIC/network、字段隔离和失败边界；固定官方 ARM64 `sing-box` 1.14.0 全字段配置及 1.13.18 兼容子集 `check` 通过，仍不代表远端 Hysteria 握手或 UDP 数据面。版本统一为本轮 `2026091102`，完整协议目标仍未完成。
+
+### 2026-09-11：TUIC outbound typed contract
+
+managed TUIC outbound 现在通过 `managed_component_tuic_config_validate_json` 处理，按固定 sing-box 1.14.0 `TUICOutboundOptions` 建立 typed allowlist。标准路径要求 server/server_port、规范 UUID、可选 password、拥塞控制、native/quic UDP relay、可选 UDP-over-stream、zero-RTT、heartbeat、TCP/UDP network、必需 outbound TLS、QUIC fields 与 shared Dial Fields；`udp_relay_mode` 与 `udp_over_stream` 冲突以及未知/弃用字段在 state/CAS 与接管前拒绝。
+
+`tests/managed_components_contract.sh` 覆盖完整/字符串 network、native/quic relay、UDP-over-stream、TLS/QUIC、UUID/端口/密码/拥塞控制边界、冲突组合和敏感导出既有路径。固定官方 ARM64 `sing-box` 1.14.0 全字段配置及 1.13.18 兼容子集配置 `check` 通过；较新的 QUIC 字段在 1.13.18 中按预期不可用，仍不代表远端 TUIC 握手或 UDP 数据面。版本统一为本轮 `2026091103`，完整协议目标仍未完成。

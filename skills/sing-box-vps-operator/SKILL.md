@@ -179,6 +179,14 @@ Hysteria2 password/obfs/BBR/Realm schema, reject deprecated receive-window
 aliases, and treat target-core `check` as configuration evidence only, not a
 remote Hysteria handshake or UDP data-plane proof.
 
+TUIC outbound components preserve sing-box 1.14 UUID/password, congestion
+control, native/quic relay, optional UDP-over-stream, zero-RTT, heartbeat,
+TCP/UDP network, required TLS, QUIC fields and shared Dial Fields. Reject
+`udp_relay_mode` plus `udp_over_stream` conflicts before state/CAS, keep the
+outbound-only relay fields out of TUIC inbound records, and treat target-core
+`check` as configuration evidence only, not a remote TUIC handshake or UDP
+data-plane proof.
+
 - Use `status --json` for version/service/path/protocol diagnostics plus network stack, BBR, REALITY/QoS, and integration presence.
 - Use `capabilities --json` to discover supported protocols/features and operation safety labels before choosing an action.
 - On an existing 1.13 host, run `sbv update sbv` first and start a new invocation before expecting the new Agent commands.

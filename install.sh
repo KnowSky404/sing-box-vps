@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091102
+# Version: 2026091103
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091102"
+readonly SCRIPT_VERSION="2026091103"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -117,7 +117,7 @@ readonly SB_COMPONENT_REGISTRY=(
   'naive-outbound|outbound|naive|NaiveProxy outbound|1.13.0|with_naive_outbound|{"dialer":true,"external_runtime":"libcronet"}'
   'hysteria2-outbound|outbound|hysteria2|Hysteria2 outbound|1.13.0|builtin|{"dialer":true,"network":["tcp","udp"],"tls_required":true,"obfs_types":["salamander","gecko"],"realm":true,"quic":true,"bbr_profiles":["conservative","standard","aggressive"]}'
   'hysteria-outbound|outbound|hysteria|Hysteria outbound|1.13.0|builtin|{"dialer":true,"network":["tcp","udp"],"tls_required":true,"auth_fields":["auth","auth_str"],"bandwidth":true,"obfs":true,"quic":true}'
-  'tuic-outbound|outbound|tuic|TUIC outbound|1.13.0|builtin|{"dialer":true}'
+  'tuic-outbound|outbound|tuic|TUIC outbound|1.13.0|builtin|{"dialer":true,"network":["tcp","udp"],"tls_required":true,"congestion_control":["cubic","new_reno","bbr"],"udp_relay_modes":["native","quic"],"udp_over_stream":true,"zero_rtt_handshake":true,"heartbeat":true,"quic":true}'
   'vless-outbound|outbound|vless|VLESS outbound|1.13.0|builtin|{"dialer":true}'
   'anytls-outbound|outbound|anytls|AnyTLS outbound|1.14.0|builtin|{"dialer":true}'
   'snell-outbound|outbound|snell|Snell outbound|1.14.0|builtin|{"dialer":true,"versions":[4,6],"obfs_modes":["none","http"],"shaping_modes":["default","unshaped","unsafe-raw"],"udp_via_tcp_packet_api":true}'
@@ -13399,6 +13399,106 @@ managed_component_hysteria_config_validate_json() {
   managed_component_http_config_validate_json "${tls_record}" || return 1
 }
 
+# Validate the TUIC outbound contract against sing-box 1.14.0.  TUIC has
+# mandatory outbound TLS and UUID authentication, plus outbound-only UDP relay
+# choices that must not be confused with the TUIC inbound fields.  Keep QUIC
+# and shared Dial Fields typed, and reject udp_over_stream/udp_relay_mode
+# conflicts before state/CAS or takeover publication.
+managed_component_tuic_config_validate_json() {
+  local config=${1:-} tls tls_record
+  [[ -n "${config}" ]] || return 1
+  jq -e '
+    def safe_string:
+      type == "string" and (any(explode[]; . < 32 or . == 127) | not);
+    def nonempty_safe_string:
+      safe_string and length > 0;
+    def optional_safe_string($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_bool($name):
+      (has($name) | not) or (.[$name] | type == "boolean");
+    def optional_duration($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_nonnegative_int($name):
+      (has($name) | not) or
+      (.[$name] | type == "number" and . == floor and . >= 0 and . <= 2147483647);
+    def optional_memory($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "number" and . == floor and . >= 0 and . <= 9007199254740991) or
+         (type == "string" and safe_string)));
+    def optional_routing_mark:
+      (has("routing_mark") | not) or
+      (.routing_mark |
+        ((type == "number" and . == floor and . >= 0 and . <= 4294967295) or
+         (type == "string" and (length == 0 or test("^0x[0-9a-fA-F]+$")))));
+    def optional_network_strategy:
+      (has("network_strategy") | not) or
+      (.network_strategy | type == "string" and IN("","default","hybrid","fallback"));
+    def optional_network_types($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "string" and (length == 0 or IN("wifi","cellular","ethernet","other"))) or
+         (type == "array" and all(.[]; type == "string" and
+           IN("wifi","cellular","ethernet","other")))));
+    def optional_network:
+      (has("network") | not) or
+      (.network |
+        ((type == "string" and (length == 0 or IN("tcp","udp"))) or
+         (type == "array" and length <= 2 and
+           all(.[]; type == "string" and IN("tcp","udp")) and
+           (length == (unique | length)))));
+    type == "object" and
+    ((keys - [
+      "server","server_port","uuid","password","congestion_control",
+      "udp_relay_mode","udp_over_stream","zero_rtt_handshake","heartbeat",
+      "network","tls","idle_timeout","keep_alive_period",
+      "stream_receive_window","connection_receive_window","max_concurrent_streams",
+      "initial_packet_size","disable_path_mtu_discovery","detour","bind_interface",
+      "inet4_bind_address","inet6_bind_address","bind_address_no_port","protect_path",
+      "routing_mark","reuse_addr","netns","connect_timeout","tcp_fast_open",
+      "tcp_multi_path","disable_tcp_keep_alive","tcp_keep_alive",
+      "tcp_keep_alive_interval","udp_fragment","domain_resolver","network_strategy",
+      "network_type","fallback_network_type","fallback_delay"
+    ]) | length == 0) and
+    (.server | nonempty_safe_string) and
+    (.server_port | type == "number" and . == floor and . >= 1 and . <= 65535) and
+    (.uuid | type == "string" and
+      test("^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-5][0-9A-Fa-f]{3}-[89abAB][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}$")) and
+    optional_safe_string("password") and
+    ((has("congestion_control") | not) or
+      (.congestion_control | type == "string" and IN("","cubic","new_reno","bbr"))) and
+    ((has("udp_relay_mode") | not) or
+      (.udp_relay_mode | type == "string" and IN("","native","quic"))) and
+    optional_bool("udp_over_stream") and optional_bool("zero_rtt_handshake") and
+    optional_duration("heartbeat") and optional_network and
+    (has("tls") and (.tls | type == "object" and
+      (.enabled | type == "boolean" and . == true))) and
+    optional_duration("idle_timeout") and optional_duration("keep_alive_period") and
+    optional_memory("stream_receive_window") and optional_memory("connection_receive_window") and
+    optional_nonnegative_int("max_concurrent_streams") and
+    optional_nonnegative_int("initial_packet_size") and
+    optional_bool("disable_path_mtu_discovery") and
+    optional_safe_string("detour") and optional_safe_string("bind_interface") and
+    optional_safe_string("inet4_bind_address") and optional_safe_string("inet6_bind_address") and
+    optional_bool("bind_address_no_port") and optional_safe_string("protect_path") and
+    optional_routing_mark and optional_bool("reuse_addr") and optional_safe_string("netns") and
+    optional_duration("connect_timeout") and optional_bool("tcp_fast_open") and
+    optional_bool("tcp_multi_path") and optional_bool("disable_tcp_keep_alive") and
+    optional_duration("tcp_keep_alive") and optional_duration("tcp_keep_alive_interval") and
+    optional_bool("udp_fragment") and
+    ((has("domain_resolver") | not) or
+      (.domain_resolver | type == "string" or type == "object")) and
+    optional_network_strategy and optional_network_types("network_type") and
+    optional_network_types("fallback_network_type") and optional_duration("fallback_delay") and
+    ((.udp_over_stream // false) != true or (.udp_relay_mode // "") == "")
+  ' <<< "${config}" >/dev/null 2>&1 || return 1
+
+  tls=$(jq -c '.tls' <<< "${config}") || return 1
+  tls_record=$(jq -cn --argjson tls "${tls}" \
+    '{server:"tuic-tls",server_port:1,tls:$tls}') || return 1
+  managed_component_http_config_validate_json "${tls_record}" || return 1
+}
+
 # Validate the shared V2Ray transport object used by VMess/Trojan/VLESS
 # outbounds.  The transport is a discriminated union in sing-box; keeping the
 # variant-specific fields here prevents an HTTP/WS/gRPC option from silently
@@ -13746,10 +13846,13 @@ managed_component_state_validate_record() {
     outbound:hysteria)
       managed_component_hysteria_config_validate_json "${config}" || return 1
       ;;
+    outbound:tuic)
+      managed_component_tuic_config_validate_json "${config}" || return 1
+      ;;
     outbound:vless|outbound:vmess|outbound:trojan)
       managed_component_v2ray_outbound_config_validate_json "${type}" "${config}" || return 1
       ;;
-    outbound:direct|outbound:block|outbound:bridge|outbound:naive|outbound:tuic|outbound:shadowtls)
+    outbound:direct|outbound:block|outbound:bridge|outbound:naive|outbound:shadowtls)
       ;;
     *) return 1 ;;
   esac
