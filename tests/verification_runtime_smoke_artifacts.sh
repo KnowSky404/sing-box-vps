@@ -1407,6 +1407,18 @@ verification_finalize_scenario() {
   fi
 }
 
+# Re-apply the final QUIC state after the original finalizer captures the
+# fake runtime tree, which intentionally starts from the legacy Reality stub.
+eval "\$(declare -f verification_finalize_scenario | sed '1s/verification_finalize_scenario/verification_finalize_scenario__with_vless_quic/')"
+verification_finalize_scenario() {
+  verification_finalize_scenario__with_vless_quic "\$@"
+  if [[ "\${VERIFY_CURRENT_SCENARIO:-}" == "fresh_install_vless_plain" ]]; then
+    verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/config.json" '{"inbounds":[{"type":"vless","tag":"vless-plain-in","listen":"127.0.0.1","listen_port":1086,"users":[{"name":"probe","uuid":"11111111-1111-1111-1111-111111111111"}],"tls":{"enabled":true,"server_name":"vless-plain.verification.invalid","alpn":["h3"]},"transport":{"type":"quic"}}]}'
+    verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/protocols/vless-plain.env" $'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2'
+    verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/protocols/instances/vless-plain.json" '{"schema_version":1,"protocol":"vless-plain","revision":2,"default_instance_id":"main","instances":[{"id":"main","name":"VLESS plain QUIC verification","tag":"vless-plain-in","listen":{"address":"127.0.0.1","port":1086},"authentication":{"users":[{"name":"probe","uuid":"11111111-1111-1111-1111-111111111111","flow":""}]},"tls":{"enabled":true,"server_name":"vless-plain.verification.invalid","certificate_path":"/tmp/vless-plain.crt","key_path":"/tmp/vless-plain.key"},"client_trust":"certificate","transport":{"type":"quic"},"outbound_policy":"default","dependencies":[]}]}'
+  fi
+}
+
 # The runtime-smoke harness uses a lightweight fake sing-box process and
 # cannot perform a real SOCKS5 UDP association.  The dedicated UDP probe
 # test exercises that data-plane helper with a fake SOCKS relay; keep this
@@ -1464,9 +1476,10 @@ verification_scenario_fresh_install_vmess() {
 verification_scenario_fresh_install_vless_plain() {
   printf 'SCENARIO=fresh_install_vless_plain\n'
   printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
-  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/config.json" '{"inbounds":[{"type":"vless","tag":"vless-plain-in","listen":"127.0.0.1","listen_port":1086,"users":[{"name":"probe","uuid":"11111111-1111-4111-8111-111111111111"}]}]}'
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/config.json" '{"inbounds":[{"type":"vless","tag":"vless-plain-in","listen":"127.0.0.1","listen_port":1086,"users":[{"name":"probe","uuid":"11111111-1111-4111-8111-111111111111"}],"tls":{"enabled":true,"server_name":"vless-plain.verification.invalid","alpn":["h3"]},"transport":{"type":"quic"}}]}'
   verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/protocols/vless-plain.env" $'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2'
-  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/protocols/instances/vless-plain.json" '{"schema_version":1,"protocol":"vless-plain","revision":1,"default_instance_id":"main","instances":[{"id":"main","name":"VLESS verification","tag":"vless-plain-in","listen":{"address":"127.0.0.1","port":1086},"authentication":{"users":[{"name":"probe","uuid":"11111111-1111-4111-8111-111111111111","flow":""}]},"tls":{"enabled":false},"client_trust":"system","transport":{"type":"none"},"outbound_policy":"default","dependencies":[]}]}'
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/protocols/instances/vless-plain.json" '{"schema_version":1,"protocol":"vless-plain","revision":2,"default_instance_id":"main","instances":[{"id":"main","name":"VLESS plain QUIC verification","tag":"vless-plain-in","listen":{"address":"127.0.0.1","port":1086},"authentication":{"users":[{"name":"probe","uuid":"11111111-1111-4111-8111-111111111111","flow":""}]},"tls":{"enabled":true,"server_name":"vless-plain.verification.invalid","certificate_path":"/tmp/vless-plain.crt","key_path":"/tmp/vless-plain.key"},"client_trust":"certificate","transport":{"type":"quic"},"outbound_policy":"default","dependencies":[]}]}'
+  verification_execute_protocol_udp_probe vless-plain /root/sing-box-vps/config.json
 }
 
 verification_scenario_upgrade_rollback_1_13_to_1_14() {
@@ -1577,6 +1590,14 @@ grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/fresh_install_
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless_plain/config.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless_plain/protocols/vless-plain.env" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless_plain/protocols/instances/vless-plain.json" ]]
+jq -e '.inbounds[0].type=="vless" and .inbounds[0].transport=={type:"quic"} and
+  .inbounds[0].tls.alpn==["h3"]' \
+  "${run_dir}/remote-artifacts/scenarios/fresh_install_vless_plain/config.json" >/dev/null
+jq -e '.revision==2 and .instances[0].transport=={type:"quic"} and
+  .instances[0].client_trust=="certificate"' \
+  "${run_dir}/remote-artifacts/scenarios/fresh_install_vless_plain/protocols/instances/vless-plain.json" >/dev/null
+grep -Fqx 'RESULT=success' \
+  "${run_dir}/remote-artifacts/scenarios/fresh_install_vless_plain/protocol-probes/vless-plain/udp.result.env"
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/listeners.ss-lntp.txt" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/client.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/vless-reality/probe.stdout.txt" ]]

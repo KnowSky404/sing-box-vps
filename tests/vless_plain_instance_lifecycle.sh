@@ -101,6 +101,7 @@ jq -e '.revision==1 and .instances[0].transport=={type:"none"}' \
 jq -e '.inbounds[0].type=="vless" and .inbounds[0].listen_port==2095 and
   .inbounds[0].users[0].flow? == null and (.inbounds[0]|has("transport")|not)' \
   "${SINGBOX_CONFIG_FILE}" >/dev/null
+grep -Fqx 'INSTALLED_PROTOCOLS=vless-plain' "${SB_PROTOCOL_INDEX_FILE}"
 
 expect_failure stale_revision replace vless-plain --json --yes --expected-revision 0 --file "${TMP_DIR}/ws.json"
 expect_success replace 2 replace vless-plain --json --yes --expected-revision 1 --file "${TMP_DIR}/ws.json"
@@ -108,6 +109,7 @@ jq -e '.revision==2 and .instances[0].transport=={type:"ws",path:"/vless"}' \
   "${SB_PROTOCOL_STATE_DIR}/instances/vless-plain.json" >/dev/null
 jq -e '.inbounds|length==1 and .[0].type=="vless" and .[0].transport.type=="ws" and .[0].transport.path=="/vless"' \
   "${SINGBOX_CONFIG_FILE}" >/dev/null
+grep -Fqx 'INSTALLED_PROTOCOLS=vless-plain' "${SB_PROTOCOL_INDEX_FILE}"
 
 expect_success delete 3 delete vless-plain --json --yes --expected-revision 2 --id main
 [[ ! -e "${SB_PROTOCOL_STATE_DIR}/vless-plain.env" ]]

@@ -27343,7 +27343,7 @@ apply_plain_proxy_instance_change() (
   local lock_dir="${SB_PROJECT_DIR}.instance-write.lock" touched=n completed=n noop=n
   local phase=prepare revision=0 before_active=false current_revision=0 schema count indexed protocol
   local owner_pid=${BASHPID:-$$} owner_start snapshot_file result_status
-  local protocols=()
+  local protocols=() inbound_json
   umask 077
   structured_instance_store_protocol "${instance_protocol}" >/dev/null || return 1
   [[ "${operation}" != migrate || "${instance_protocol}" == mixed ]] || return 1
@@ -27513,12 +27513,22 @@ apply_plain_proxy_instance_change() (
     save_plain_proxy_structured_marker "${instance_protocol}" || return $?
   fi
   # Match the live config's protocol ordering, retaining every non-Mixed role.
-  indexed=$(jq -r 'reduce .inbounds[]?.type as $type ([]; if index($type) then . else .+[$type] end) | .[]' "${lock_dir}/config.json") || return $?
+  # `vless` is shared by REALITY and plain VLESS, so classify each inbound
+  # through the config-aware adapter instead of normalizing the raw core type.
   protocols=()
-  while IFS= read -r protocol; do
-    [[ -n "${protocol}" ]] || continue
-    protocols+=("$(normalize_protocol_id "${protocol}")")
-  done <<< "${indexed}"
+  while IFS= read -r inbound_json; do
+    [[ -n "${inbound_json}" ]] || continue
+    if jq -e '.type | IN("direct","tun","redirect","tproxy","cloudflared")' \
+      <<< "${inbound_json}" >/dev/null 2>&1; then
+      # Advanced component inbounds have their own state and do not belong in
+      # the share-link protocol index.
+      continue
+    fi
+    protocol=$(config_inbound_protocol "${inbound_json}") || return 1
+    if ! protocol_array_contains "${protocol}" ${protocols[@]+"${protocols[@]}"}; then
+      protocols+=("${protocol}")
+    fi
+  done < <(jq -c '.inbounds[]?' "${lock_dir}/config.json")
   indexed=$(IFS=,; printf '%s' "${protocols[*]-}")
   write_protocol_index "${indexed}" || return $?
   publish_managed_config_candidate "${lock_dir}/config.json" || return $?

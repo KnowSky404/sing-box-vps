@@ -92,4 +92,58 @@ assert_protocol_probe_processes_cleaned "${PROBE_CLIENT_PID_FILE}"
 assert_protocol_probe_processes_cleaned "${PROBE_HTTP_PID_FILE}"
 ! grep -Fq 'PRIVATE KEY' "${PROBE_DIR}/client.json"
 ! grep -Fq 'server.key' "${PROBE_DIR}/client.json"
+
+# The same managed record can select QUIC.  Generate its client profile after
+# the ordinary WebSocket probe and assert that QUIC keeps the proxy network
+# broad while adding the h3 ALPN required by the transport.
+cat > "${STORE_FILE}" <<EOF_STORE_QUIC
+{
+  "schema_version": 1,
+  "protocol": "vless-plain",
+  "revision": 2,
+  "default_instance_id": "main",
+  "instances": [{
+    "id": "main",
+    "name": "VLESS QUIC probe",
+    "tag": "vless-plain-in",
+    "listen": {"address": "127.0.0.1", "port": 18089},
+    "authentication": {"users": [{"name": "probe", "uuid": "11111111-1111-4111-8111-111111111111", "flow": ""}]},
+    "tls": {"enabled": true, "server_name": "vless-probe.test", "certificate_path": "${TMP_DIR}/server.crt", "key_path": "${TMP_DIR}/server.key"},
+    "client_trust": "certificate",
+    "transport": {"type": "quic"},
+    "outbound_policy": "default",
+    "dependencies": []
+  }]
+}
+EOF_STORE_QUIC
+cat > "${CONFIG_FILE}" <<'EOF_CONFIG_QUIC'
+{
+  "inbounds": [
+    {"type": "vless", "tag": "vless-reality-in", "listen_port": 18443,
+     "tls": {"enabled": true, "reality": {"enabled": true}}, "users": []},
+    {"type": "vless", "tag": "vless-plain-in", "listen": "127.0.0.1", "listen_port": 18089,
+     "tls": {"enabled": true, "server_name": "vless-probe.test", "alpn": ["h3"]},
+     "transport": {"type": "quic"}, "users": []}
+  ]
+}
+EOF_CONFIG_QUIC
+bash -s -- "${ENTRYPOINT_FILE}" "${ARTIFACT_DIR}" "${CONFIG_FILE}" \
+  "${TMP_DIR}/vless-quic-client.json" <<'EOF_QUIC_RUN'
+set -euo pipefail
+source "$1"
+VERIFY_ARTIFACT_DIR=$2
+VERIFY_CURRENT_SCENARIO=runtime_smoke
+VERIFY_CURRENT_SCENARIO_DIR=scenarios/runtime_smoke
+quic_client_config=$(verification_generate_protocol_probe_client_config vless-plain "$3")
+cp "$quic_client_config" "$4"
+EOF_QUIC_RUN
+jq -e '
+  .outbounds[0] as $out |
+  $out.type == "vless" and $out.server == "127.0.0.1" and $out.server_port == 18089 and
+  $out.uuid == "11111111-1111-4111-8111-111111111111" and
+  $out.network == ["tcp", "udp"] and $out.transport == {type:"quic"} and
+  $out.tls == {enabled:true,server_name:"vless-probe.test",insecure:true,alpn:["h3"]}
+' "${TMP_DIR}/vless-quic-client.json" >/dev/null
+! grep -Fq 'PRIVATE KEY' "${TMP_DIR}/vless-quic-client.json"
+! grep -Fq 'server.key' "${TMP_DIR}/vless-quic-client.json"
 printf 'VLESS plain probe generator uses the ordinary discriminator and probe-only TLS trust\n'
