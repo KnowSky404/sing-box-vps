@@ -19,6 +19,12 @@ jq -e '
     ["openconnect","openvpn-client","openvpn-server","tailscale","wireguard"] and
   any(.[]; .role == "outbound" and .type == "selector" and .features.group == true) and
   any(.[]; .role == "outbound" and .type == "urltest" and .features.group == true) and
+  any(.[]; .role == "outbound" and .type == "naive" and
+    .features.tls_required == true and .features.udp_over_tcp == true and
+    .features.external_runtime == "libcronet") and
+  any(.[]; .role == "outbound" and .type == "shadowtls" and
+    .features.network == ["tcp"] and .features.tls_required == true and
+    .features.versions == [1,2,3]) and
   all(.[]; .lifecycle.takeover == true) and
   any(.[]; .role == "inbound" and .type == "cloudflared" and
     .features.account_mutation == false and .availability == "with_cloudflared")
@@ -1236,6 +1242,130 @@ fi
 tuic_unknown_field=$(jq -c '.config |= (. + {domain_strategy:"prefer_ipv4"})' <<< "${tuic_outbound_record}")
 if managed_component_state_validate_record "${tuic_unknown_field}"; then
   printf 'TUIC deprecated field unexpectedly accepted\n' >&2
+  exit 1
+fi
+
+# NaiveProxy outbound records keep the official libcronet client surface
+# typed: UDP is supplied by the optional UDP-over-TCP adapter, QUIC has its
+# own congestion/window fields, and outbound TLS accepts only the four
+# documented Naive fields.  A QUIC client cannot use insecure concurrency.
+naive_outbound_record='{"id":"naive-outbound-local","role":"outbound","type":"naive","tag":"naive-upstream","enabled":true,"route_rules":[],"config":{"server":"naive.example","server_port":443,"username":"naive-user","password":"naive-password","insecure_concurrency":0,"extra_headers":{"User-Agent":["sing-box-vps"],"X-Naive":"value"},"stream_receive_window":"128 MB","udp_over_tcp":{"enabled":true,"version":2},"quic":true,"quic_congestion_control":"bbr2","quic_session_receive_window":"15 MB","tls":{"enabled":true,"server_name":"naive.example","ech":{"enabled":false,"config_path":"/etc/sing-box/ech.bin"}},"connect_timeout":"5s","network_strategy":"default","network_type":["ethernet"],"protect_path":"/usr/lib/sing-box/naive-protect"}}'
+managed_component_state_validate_record "${naive_outbound_record}"
+naive_outbound_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${naive_outbound_record}")
+naive_outbound_rendered=$(managed_component_render_json "${naive_outbound_state}")
+jq -e '
+  (.outbounds | length == 1) and
+  .outbounds[0].type == "naive" and
+  .outbounds[0].tag == "naive-upstream" and
+  .outbounds[0].server == "naive.example" and
+  .outbounds[0].server_port == 443 and
+  .outbounds[0].udp_over_tcp.enabled == true and
+  .outbounds[0].udp_over_tcp.version == 2 and
+  .outbounds[0].quic == true and
+  .outbounds[0].quic_congestion_control == "bbr2" and
+  .outbounds[0].tls.enabled == true and
+  .outbounds[0].tls.ech.enabled == false and
+  .outbounds[0].route_rules == null
+' <<< "${naive_outbound_rendered}" >/dev/null
+naive_h2_record=$(jq -c '.config.quic = false | .config.insecure_concurrency = 2' <<< "${naive_outbound_record}")
+managed_component_state_validate_record "${naive_h2_record}"
+naive_default_uot=$(jq -c '.config.udp_over_tcp = true' <<< "${naive_h2_record}")
+managed_component_state_validate_record "${naive_default_uot}"
+naive_bad_quic_concurrency=$(jq -c '.config.quic = true | .config.insecure_concurrency = 2' <<< "${naive_outbound_record}")
+if managed_component_state_validate_record "${naive_bad_quic_concurrency}"; then
+  printf 'Naive QUIC insecure concurrency unexpectedly accepted\n' >&2
+  exit 1
+fi
+naive_missing_tls=$(jq -c '.config |= del(.tls)' <<< "${naive_outbound_record}")
+if managed_component_state_validate_record "${naive_missing_tls}"; then
+  printf 'Naive outbound without TLS unexpectedly accepted\n' >&2
+  exit 1
+fi
+naive_disabled_tls=$(jq -c '.config.tls.enabled = false' <<< "${naive_outbound_record}")
+if managed_component_state_validate_record "${naive_disabled_tls}"; then
+  printf 'Naive outbound with disabled TLS unexpectedly accepted\n' >&2
+  exit 1
+fi
+naive_unsupported_tls=$(jq -c '.config.tls.insecure = true' <<< "${naive_outbound_record}")
+if managed_component_state_validate_record "${naive_unsupported_tls}"; then
+  printf 'Naive unsupported TLS field unexpectedly accepted\n' >&2
+  exit 1
+fi
+naive_bad_uot=$(jq -c '.config.udp_over_tcp = {enabled:true,version:3}' <<< "${naive_outbound_record}")
+if managed_component_state_validate_record "${naive_bad_uot}"; then
+  printf 'Naive unsupported UDP-over-TCP version unexpectedly accepted\n' >&2
+  exit 1
+fi
+naive_bad_congestion=$(jq -c '.config.quic_congestion_control = "reno2"' <<< "${naive_outbound_record}")
+if managed_component_state_validate_record "${naive_bad_congestion}"; then
+  printf 'Naive unsupported congestion control unexpectedly accepted\n' >&2
+  exit 1
+fi
+naive_bad_headers=$(jq -c '.config.extra_headers["Bad Header"] = "value"' <<< "${naive_outbound_record}")
+if managed_component_state_validate_record "${naive_bad_headers}"; then
+  printf 'Naive invalid extra header name unexpectedly accepted\n' >&2
+  exit 1
+fi
+naive_bad_memory=$(jq -c '.config.stream_receive_window = -1' <<< "${naive_outbound_record}")
+if managed_component_state_validate_record "${naive_bad_memory}"; then
+  printf 'Naive negative receive window unexpectedly accepted\n' >&2
+  exit 1
+fi
+naive_unknown_field=$(jq -c '.config |= (. + {domain_strategy:"prefer_ipv4"})' <<< "${naive_outbound_record}")
+if managed_component_state_validate_record "${naive_unknown_field}"; then
+  printf 'Naive deprecated field unexpectedly accepted\n' >&2
+  exit 1
+fi
+
+# ShadowTLS outbound is the TCP wrapper client, distinct from the project's
+# local outer-inbound + loopback-Mixed composite.  Its typed record therefore
+# has only server/version/password/TLS plus shared Dial Fields and never
+# claims a standalone UDP or share-link surface.
+shadowtls_outbound_record='{"id":"shadowtls-outbound-local","role":"outbound","type":"shadowtls","tag":"shadowtls-upstream","enabled":true,"route_rules":[],"config":{"server":"shadowtls.example","server_port":443,"version":3,"password":"shadow-password","tls":{"enabled":true,"server_name":"shadowtls.example","insecure":true},"connect_timeout":"5s","network_strategy":"default","network_type":["ethernet"],"protect_path":"/usr/lib/sing-box/shadowtls-protect"}}'
+managed_component_state_validate_record "${shadowtls_outbound_record}"
+shadowtls_outbound_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${shadowtls_outbound_record}")
+shadowtls_outbound_rendered=$(managed_component_render_json "${shadowtls_outbound_state}")
+jq -e '
+  (.outbounds | length == 1) and
+  .outbounds[0].type == "shadowtls" and
+  .outbounds[0].tag == "shadowtls-upstream" and
+  .outbounds[0].server == "shadowtls.example" and
+  .outbounds[0].server_port == 443 and
+  .outbounds[0].version == 3 and
+  .outbounds[0].password == "shadow-password" and
+  .outbounds[0].tls.enabled == true and
+  .outbounds[0].route_rules == null
+' <<< "${shadowtls_outbound_rendered}" >/dev/null
+shadowtls_default_version=$(jq -c '.config |= del(.version,.password)' <<< "${shadowtls_outbound_record}")
+managed_component_state_validate_record "${shadowtls_default_version}"
+shadowtls_missing_tls=$(jq -c '.config |= del(.tls)' <<< "${shadowtls_outbound_record}")
+if managed_component_state_validate_record "${shadowtls_missing_tls}"; then
+  printf 'ShadowTLS outbound without TLS unexpectedly accepted\n' >&2
+  exit 1
+fi
+shadowtls_disabled_tls=$(jq -c '.config.tls.enabled = false' <<< "${shadowtls_outbound_record}")
+if managed_component_state_validate_record "${shadowtls_disabled_tls}"; then
+  printf 'ShadowTLS outbound with disabled TLS unexpectedly accepted\n' >&2
+  exit 1
+fi
+shadowtls_bad_version=$(jq -c '.config.version = 4' <<< "${shadowtls_outbound_record}")
+if managed_component_state_validate_record "${shadowtls_bad_version}"; then
+  printf 'ShadowTLS unsupported version unexpectedly accepted\n' >&2
+  exit 1
+fi
+shadowtls_bad_network=$(jq -c '.config.network = ["tcp"]' <<< "${shadowtls_outbound_record}")
+if managed_component_state_validate_record "${shadowtls_bad_network}"; then
+  printf 'ShadowTLS outbound network field unexpectedly accepted\n' >&2
+  exit 1
+fi
+shadowtls_bad_password=$(jq -c '.config.password = "shadow\u0001password"' <<< "${shadowtls_outbound_record}")
+if managed_component_state_validate_record "${shadowtls_bad_password}"; then
+  printf 'ShadowTLS control-character password unexpectedly accepted\n' >&2
+  exit 1
+fi
+shadowtls_unknown_field=$(jq -c '.config |= (. + {domain_strategy:"prefer_ipv4"})' <<< "${shadowtls_outbound_record}")
+if managed_component_state_validate_record "${shadowtls_unknown_field}"; then
+  printf 'ShadowTLS deprecated field unexpectedly accepted\n' >&2
   exit 1
 fi
 

@@ -577,3 +577,11 @@ Hysteria v1 的 `recv_window_conn`、`recv_window`、`disable_mtu_discovery` 及
 managed TUIC outbound 现在通过 `managed_component_tuic_config_validate_json` 处理，按固定 sing-box 1.14.0 `TUICOutboundOptions` 建立 typed allowlist。标准路径要求 server/server_port、规范 UUID、可选 password、拥塞控制、native/quic UDP relay、可选 UDP-over-stream、zero-RTT、heartbeat、TCP/UDP network、必需 outbound TLS、QUIC fields 与 shared Dial Fields；`udp_relay_mode` 与 `udp_over_stream` 冲突以及未知/弃用字段在 state/CAS 与接管前拒绝。
 
 `tests/managed_components_contract.sh` 覆盖完整/字符串 network、native/quic relay、UDP-over-stream、TLS/QUIC、UUID/端口/密码/拥塞控制边界、冲突组合和敏感导出既有路径。固定官方 ARM64 `sing-box` 1.14.0 全字段配置及 1.13.18 兼容子集配置 `check` 通过；较新的 QUIC 字段在 1.13.18 中按预期不可用，仍不代表远端 TUIC 握手或 UDP 数据面。版本统一为本轮 `2026091103`，完整协议目标仍未完成。
+
+### 2026-09-11：NaiveProxy 与 ShadowTLS outbound typed contracts
+
+managed NaiveProxy outbound 现在通过 `managed_component_naive_config_validate_json` 处理，按固定 sing-box 1.14.0 `NaiveOutboundOptions` 建立 typed allowlist。标准路径保留 server/server_port、username/password、extra headers、HTTP/2 或 QUIC、UDP-over-TCP、stream/QUIC session receive windows、QUIC congestion control 及 shared Dial Fields；TLS 只接受 Naive 官方支持的 enabled、server_name、certificate、certificate_path、ECH 字段。非零 `insecure_concurrency` 与 QUIC 的目标 adapter 冲突，unsupported TLS、错误 UoT/header/window、控制字符、未知或弃用字段均在 state/CAS 与接管前拒绝；`with_naive_outbound`/`libcronet.so` 仍由环境门控，不从 `check` 推断运行库已加载。
+
+managed ShadowTLS outbound 现在通过 `managed_component_shadowtls_config_validate_json` 处理，按固定 sing-box 1.14.0 `ShadowTLSOutboundOptions` 建立 TCP-only wrapper allowlist。标准路径保留 server/server_port、版本 1–3、可选 password、必需 outbound TLS 与 shared Dial Fields，并与本项目 ShadowTLS 入站的 outer + loopback Mixed composite 分离；未知/弃用字段、错误版本/网络/控制字符和缺少 TLS 在 state/CAS 与接管前拒绝。
+
+`tests/managed_components_contract.sh` 新增 Naive/ShadowTLS outbound render、TLS/UoT/QUIC/headers/window、版本与角色隔离、运行时冲突和敏感字段负例。固定官方 ARM64 `sing-box` 1.14.0 完整 Naive（`bbr2`）与 ShadowTLS 配置、1.13.18 兼容 Naive 子集与 ShadowTLS 配置 `check` 均通过；核心检查不代表 libcronet 加载、远端握手或 TCP/UDP 数据面。版本统一为本轮 `2026091104`，完整协议目标仍未完成。

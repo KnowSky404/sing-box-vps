@@ -187,6 +187,19 @@ outbound-only relay fields out of TUIC inbound records, and treat target-core
 `check` as configuration evidence only, not a remote TUIC handshake or UDP
 data-plane proof.
 
+NaiveProxy outbound components preserve sing-box 1.14 server/port,
+username/password, extra headers, HTTP/2 or QUIC, UDP-over-TCP, receive
+windows, the documented restricted TLS fields and shared Dial Fields. Reject
+non-zero `insecure_concurrency` with QUIC and unsupported TLS/UoT/header/window
+fields before state/CAS; the `with_naive_outbound` build and `libcronet.so`
+runtime remain separate availability requirements.
+
+ShadowTLS outbound components are TCP-only wrappers with typed server/port,
+version 1–3, optional password, required outbound TLS and shared Dial Fields.
+Keep this outbound separate from the local ShadowTLS outer-plus-loopback-Mixed
+inbound composite, and do not treat target-core `check` as remote handshake or
+TCP data-plane proof.
+
 - Use `status --json` for version/service/path/protocol diagnostics plus network stack, BBR, REALITY/QoS, and integration presence.
 - Use `capabilities --json` to discover supported protocols/features and operation safety labels before choosing an action.
 - On an existing 1.13 host, run `sbv update sbv` first and start a new invocation before expecting the new Agent commands.
