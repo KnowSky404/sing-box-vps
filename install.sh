@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091109
+# Version: 2026091110
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091109"
+readonly SCRIPT_VERSION="2026091110"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -22533,7 +22533,7 @@ build_client_tuic_outbounds() (
         --argjson udp_over_stream "$(jq -er '._tuic.udp_over_stream' <<< "${raw_outbound}")" \
         --argjson zero_rtt_handshake "$(jq -er '._tuic.zero_rtt_handshake' <<< "${raw_outbound}")" \
         --arg heartbeat_seconds "$(jq -er '._tuic.heartbeat_seconds | tostring' <<< "${raw_outbound}")" \
-        'del(._tls,._client_trust,._tuic) | .tls=$tls | .congestion_control=$cc
+        'del(._tls,._client_trust,._tuic) | .tls=($tls + {alpn:["h3"]}) | .congestion_control=$cc
          | if $relay != "" then .udp_relay_mode=$relay
            elif $udp_over_stream then .udp_over_stream=true else . end
          | if $zero_rtt_handshake then .zero_rtt_handshake=true else . end

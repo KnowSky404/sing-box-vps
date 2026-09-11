@@ -680,7 +680,7 @@ jq -e '
   .[0].tag == "tuic-main-user-dHVpYy11c2Vy" and
   .[0].server == "127.0.0.1" and .[0].server_port == 1089 and
   .[0].uuid == "11111111-1111-4111-8111-111111111111" and
-  .[0].password == "TUIC-CONTRACT-PASSWORD" and .[0].network == ["tcp", "udp"] and
+  .[0].password == "TUIC-CONTRACT-PASSWORD" and .[0].network == ["tcp", "udp"] and .[0].tls.alpn == ["h3"] and
   .[0].congestion_control == "bbr" and .[0].udp_relay_mode == "native" and
   (.[0].udp_over_stream // false) == false and .[0].heartbeat == "10s" and
   (.[0].zero_rtt_handshake // false) == false and .[0].tls.enabled == true and

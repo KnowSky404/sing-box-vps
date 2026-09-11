@@ -1407,6 +1407,16 @@ verification_finalize_scenario() {
   fi
 }
 
+# The runtime-smoke harness uses a lightweight fake sing-box process and
+# cannot perform a real SOCKS5 UDP association.  The dedicated UDP probe
+# test exercises that data-plane helper with a fake SOCKS relay; keep this
+# artifact-dispatch harness focused on scenario routing and cleanup.
+verification_execute_protocol_udp_probe() {
+  local protocol=\$1
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/\${protocol}/udp.result.env" \
+    "PROTOCOL=\${protocol}" "RESULT=success"
+}
+
 verification_scenario_upgrade_1_13_to_1_14() {
   printf 'SCENARIO=upgrade_1_13_to_1_14\n'
   printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
@@ -1558,6 +1568,7 @@ grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/fresh_install_
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_hysteria/protocols/instances/hysteria.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_hysteria/listeners.ss-lunp.txt" ]]
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/fresh_install_hysteria/protocol-probes/hysteria/result.env"
+grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/fresh_install_hysteria/protocol-probes/hysteria/udp.result.env"
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless_plain/config.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless_plain/protocols/vless-plain.env" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless_plain/protocols/instances/vless-plain.json" ]]

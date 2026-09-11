@@ -549,6 +549,58 @@ verification_generate_hysteria_probe_client() (
   mv -f -- "${temp_dir}/client.json" "${output_path}" || return 1
 )
 
+verification_generate_tuic_probe_client() (
+  set -euo pipefail
+  umask 077
+  local protocol=tuic
+  local config_file=$1 output_path=$2 installer temp_dir selected_tag snapshot
+  local state_file store_file record
+  installer=${VERIFY_REMOTE_INSTALL_SCRIPT:-/usr/local/bin/sbv}
+  [[ -f "${installer}" ]] || return 1
+  temp_dir=$(mktemp -d "${output_path}.tuic.XXXXXX") || return 1
+  trap 'rm -rf -- "${temp_dir}"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+
+  # TUIC is represented by the structured store rather than the rendered
+  # inbound alone.  Reuse the exact runtime exporter so credentials,
+  # certificate trust and UDP relay options cannot drift from production
+  # client exports.
+  source "${installer}"
+  plain_proxy_structured_state_active tuic || return 1
+  state_file=$(protocol_state_file tuic) || return 1
+  store_file=$(plain_proxy_structured_store_file tuic) || return 1
+  selected_tag=$(jq -er '[.inbounds[] | select(.type=="tuic")][0].tag' "${config_file}") || return 1
+  record=$(verification_load_tuic_probe_record "${state_file}" "${store_file}" "${selected_tag}") || {
+    printf 'missing or invalid TUIC structured state for protocol generator: %s\n' "${protocol}" >&2
+    return 1
+  }
+  snapshot=$(structured_instance_store_snapshot_json tuic "${store_file}") || return 1
+  jq -e --arg tag "${selected_tag}" --argjson expected "${record}" '
+    any(.instances[]; .tag == $tag and .listen.port == $expected.listen.port and
+      .authentication.users == $expected.authentication.users and
+      .tls == $expected.tls and .client_trust == $expected.client_trust and
+      .tuic == $expected.tuic)
+  ' <<< "${snapshot}" >/dev/null || return 1
+  jq -e --arg tag "${selected_tag}" '
+    .instances |= map(select(.tag == $tag)) |
+    if (.instances|length)==1 then .default_instance_id=.instances[0].id
+    else error("invalid probe inventory") end
+  ' <<< "${snapshot}" > "${temp_dir}/store.json" || return 1
+  build_client_tuic_outbounds 127.0.0.1 "${temp_dir}/store.json" \
+    > "${temp_dir}/outbounds.jsonl" || return 1
+  jq -se '
+    if length>0 then
+      {log:{disabled:true},
+       inbounds:[{type:"socks",tag:"local-socks",listen:"127.0.0.1",listen_port:19080}],
+       outbounds:[(.[0] | .tag="proxy")],route:{final:"proxy"}}
+    else error("empty probe export") end
+  ' "${temp_dir}/outbounds.jsonl" > "${temp_dir}/client.json" || return 1
+  chmod 600 "${temp_dir}/client.json" || return 1
+  mv -f -- "${temp_dir}/client.json" "${output_path}" || return 1
+)
+
 verification_load_http_probe_record() {
   local state_file=$1
   local store_file=$2
@@ -691,6 +743,71 @@ verification_load_hysteria_probe_record() {
         }
       )
     else error("invalid Hysteria structured state")
+    end
+  ' "${store_file}") || return 1
+  printf '%s\n' "${record}"
+}
+
+verification_load_tuic_probe_record() {
+  local state_file=$1
+  local store_file=$2
+  local tag=$3
+  local record
+
+  [[ -f "${state_file}" && ! -L "${state_file}" ]] || return 1
+  grep -Eq '^[[:space:]]*CONFIG_SCHEMA_VERSION=2([[:space:]]*)$' "${state_file}" || return 1
+  [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  record=$(jq -ce --arg tag "${tag}" '
+    if .schema_version == 1 and .protocol == "tuic" and
+       (.instances | type == "array") and
+       ([.instances[] | select(.tag == $tag)] | length) == 1 then
+      ([.instances[] | select(.tag == $tag)][0] |
+        select(
+          (.listen | type == "object" and (keys | sort) == ["address","port"] and
+            (.address | type == "string" and length > 0 and
+              (test("[\u0000-\u0020\u007F]") | not))) and
+          (.listen.port | type == "number" and floor == . and . >= 1 and . <= 65535) and
+          (.authentication | type == "object" and (keys | sort) == ["users"] and
+            (.users | type == "array" and length >= 1 and length <= 128 and
+              all(.[]; type == "object" and (keys | sort) == ["name","password","uuid"] and
+                (.name | type == "string" and length > 0 and utf8bytelength <= 256 and
+                  (test("[\u0000-\u001F\u007F]") | not)) and
+                (.password | type == "string" and length > 0 and utf8bytelength <= 4096 and
+                  index("\u0000") == null) and
+                (.uuid | type == "string" and
+                  test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"))) and
+              (map(.name) | unique | length) == length and
+              (map(.uuid) | unique | length) == length and
+              (map(.password) | unique | length) == length)) and
+          (.tls | type == "object" and (keys | sort) == ["certificate_path","enabled","key_path","server_name"] and
+            .enabled == true and
+            (.server_name | type == "string" and length > 0 and
+              (test("[\u0000-\u001F\u007F]") | not)) and
+            (.certificate_path | type == "string" and startswith("/") and
+              (test("[\u0000-\u001F\u007F]") | not)) and
+            (.key_path | type == "string" and startswith("/") and
+              (test("[\u0000-\u001F\u007F]") | not))) and
+          (.client_trust | type == "string" and IN("certificate","system")) and
+          (.tuic | type == "object" and
+            (keys | sort) == ["auth_timeout_seconds","congestion_control","heartbeat_seconds","udp_over_stream","udp_relay_mode","zero_rtt_handshake"] and
+            (.auth_timeout_seconds | type == "number" and floor == . and . >= 0 and . <= 86400) and
+            (.heartbeat_seconds | type == "number" and floor == . and . >= 0 and . <= 86400) and
+            (.congestion_control | type == "string" and IN("cubic","new_reno","bbr")) and
+            (.udp_over_stream | type == "boolean") and
+            (.zero_rtt_handshake | type == "boolean") and
+            (.udp_relay_mode | type == "string" and IN("","native","quic")) and
+            (if .udp_over_stream then .udp_relay_mode == "" else .udp_relay_mode != "" end)) and
+          (.outbound_policy | IN("default","direct","warp")) and
+          (.dependencies | type == "array" and length == 0)
+        ) | {
+          listen: .listen,
+          authentication: .authentication,
+          tls: .tls,
+          client_trust: .client_trust,
+          tuic: .tuic
+        }
+      )
+    else error("invalid TUIC structured state")
     end
   ' "${store_file}") || return 1
   printf '%s\n' "${record}"
@@ -1038,6 +1155,11 @@ verification_generate_protocol_probe_client_config() {
       output_path=$(verification_artifact_path \
         "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
       verification_generate_hysteria_probe_client "${config_file}" "${output_path}" || return 1
+      ;;
+    tuic)
+      output_path=$(verification_artifact_path \
+        "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
+      verification_generate_tuic_probe_client "${config_file}" "${output_path}" || return 1
       ;;
     vless-plain)
       vless_plain_state_file=/root/sing-box-vps/protocols/vless-plain.env

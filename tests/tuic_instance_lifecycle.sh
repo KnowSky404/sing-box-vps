@@ -140,7 +140,7 @@ if [[ -n "${SINGBOX_BINARY_114:-}" && -x "${SINGBOX_BINARY_114}" ]]; then
   "${SINGBOX_BINARY_114}" check -c "${SINGBOX_CONFIG_FILE}" >/dev/null
 fi
 outbounds=$(build_client_tuic_outbounds 203.0.113.10 | jq -s .)
-jq -e 'length==1 and .[0].type=="tuic" and .[0].network==["tcp","udp"] and
+jq -e 'length==1 and .[0].type=="tuic" and .[0].network==["tcp","udp"] and .[0].tls.alpn==["h3"] and
   .[0].server=="127.0.0.1" and .[0].server_port==2089 and
   .[0].udp_relay_mode=="native" and .[0].tls.certificate and
   (.[] | has("password"))' <<< "${outbounds}" >/dev/null
@@ -157,8 +157,8 @@ jq -e '([.inbounds[].type] | sort)==["tuic","tuic"] and
   all(.inbounds[]; (. | has("udp_relay_mode") | not) and (. | has("udp_over_stream") | not))' \
   "${SINGBOX_CONFIG_FILE}" >/dev/null
 outbounds=$(build_client_tuic_outbounds 203.0.113.10 | jq -s .)
-jq -e 'length==2 and any(.[]; .server_port==2090 and .udp_over_stream==true and (. | has("udp_relay_mode") | not)) and
-  any(.[]; .server_port==2089 and .udp_relay_mode=="native")' <<< "${outbounds}" >/dev/null
+jq -e 'length==2 and any(.[]; .server_port==2090 and .udp_over_stream==true and .tls.alpn==["h3"] and (. | has("udp_relay_mode") | not)) and
+  any(.[]; .server_port==2089 and .udp_relay_mode=="native" and .tls.alpn==["h3"])' <<< "${outbounds}" >/dev/null
 server_outbound_config "${outbounds}" "${TMP_DIR}/tuic-client-stream.json"
 if [[ -n "${SINGBOX_BINARY_114:-}" && -x "${SINGBOX_BINARY_114}" ]]; then
   "${SINGBOX_BINARY_114}" check -c "${SINGBOX_CONFIG_FILE}" >/dev/null

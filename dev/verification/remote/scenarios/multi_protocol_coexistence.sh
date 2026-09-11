@@ -122,15 +122,35 @@ EOF
   jq -e '.ok==true and .protocol=="trojan" and .changed==true and .revision==1' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/trojan-create.json" >/dev/null
 
+  # Add TUIC through the typed instance transaction and exercise its QUIC/UDP
+  # data plane below.  The probe uses the same structured exporter as client
+  # export, so the test covers UUID/password, TLS trust and relay options.
+  local tuic_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/tuic-record.json"
+  (umask 077; jq -n --arg cert "${cert_path}" --arg key "${key_path}" '
+    {id:"main",name:"TUIC verification",tag:"tuic-in",
+     listen:{address:"127.0.0.1",port:1087},
+     authentication:{users:[{name:"tuic-user",uuid:"11111111-1111-4111-8111-111111111111",
+       password:"tuic-verification-password"}]},
+     tls:{enabled:true,server_name:"sing-box-vps-verification.invalid",certificate_path:$cert,key_path:$key},
+     client_trust:"certificate",
+     tuic:{auth_timeout_seconds:3,congestion_control:"bbr",heartbeat_seconds:10,
+       udp_over_stream:false,udp_relay_mode:"native",zero_rtt_handshake:false},
+     outbound_policy:"default",dependencies:[]}' > "${tuic_record}")
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent instance create tuic --json --yes \
+    --expected-revision 0 --file "${tuic_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tuic-create.json"
+  jq -e '.ok==true and .protocol=="tuic" and .changed==true and .revision==1' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tuic-create.json" >/dev/null
+
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/config.json")
   index_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/index.env")
   cp /root/sing-box-vps/config.json "${config_path}"
   cp /root/sing-box-vps/protocols/index.env "${index_path}"
-  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan' "${index_path}"
+  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan,tuic' "${index_path}"
   jq -e '
-    ([.inbounds[] | .type] | sort) == ["anytls", "http", "hysteria2", "mixed", "shadowsocks", "socks", "trojan", "vless"] and
+    ([.inbounds[] | .type] | sort) == ["anytls", "http", "hysteria2", "mixed", "shadowsocks", "socks", "trojan", "tuic", "vless"] and
     ([.inbounds[] | select(.type == "vless") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "mixed") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "hysteria2") | .listen_port] | length == 1) and
@@ -138,7 +158,10 @@ EOF
     ([.inbounds[] | select(.type == "socks") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "http") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "shadowsocks") | .listen_port] | length == 1) and
-    ([.inbounds[] | select(.type == "trojan" and .transport.type=="quic" and .tls.alpn==["h3"])] | length == 1)
+    ([.inbounds[] | select(.type == "trojan" and .transport.type=="quic" and .tls.alpn==["h3"])] | length == 1) and
+    ([.inbounds[] | select(.type == "tuic" and .tls.alpn==["h3"] and
+      .congestion_control=="bbr" and .auth_timeout=="3s" and .heartbeat=="10s" and
+      (. | has("udp_relay_mode") | not) and (. | has("udp_over_stream") | not))] | length == 1)
   ' /root/sing-box-vps/config.json >/dev/null
   grep -Fqx 'sing-box version 1.14.0' <(sing-box version)
   verification_wait_for_service_active sing-box
@@ -161,4 +184,5 @@ EOF
   done < <(read_installed_protocols)
   verification_run_protocol_probes
   verification_execute_protocol_udp_probe hy2 /root/sing-box-vps/config.json
+  verification_execute_protocol_udp_probe tuic /root/sing-box-vps/config.json
 }

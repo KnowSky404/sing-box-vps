@@ -590,6 +590,7 @@ grep -Fqx 'tests/verification_protocol_probe_matrix.sh|1' "${TMP_DIR}/local-test
 grep -Fqx 'tests/verification_protocol_probe_vless.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_hy2.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_hysteria.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_protocol_probe_tuic.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_udp.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_anytls.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/reality_sni_validation.sh|1' "${TMP_DIR}/local-tests.log"

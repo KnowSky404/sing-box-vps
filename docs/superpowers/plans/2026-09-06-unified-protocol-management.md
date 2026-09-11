@@ -611,3 +611,11 @@ managed Tailscale endpoint 现在按固定 1.14 `TailscaleEndpointOptions` 校�
 新增 `verification_execute_protocol_udp_probe` 作为可复用的真实 UDP 探针：它先对 exporter 生成的客户端配置执行 `sing-box check`，再启动本地 UDP echo，运行客户端核心并通过 SOCKS5 UDP ASSOCIATE 发送带协议标识的 marker，严格校验返回 payload 完全一致；探针记录 check、客户端路径、响应、stderr 和 `udp.result.env`，失败时清理自身进程及临时目录，不接触 systemd 管理的服务。`fresh_install_hysteria` 调用它验证 Hysteria v1，`multi_protocol_coexistence` 调用它验证 Hysteria2。
 
 完整 Docker run `dev/verification-runs/20260911154013` 的 16/16 场景与 23/23 协议探针均 success；Hysteria 与 Hysteria2 的 `udp.result.env` 均为 `RESULT=success`，对应 artifact 的 `udp-response.txt` 保留精确 marker。独立 fixture `tests/verification_protocol_probe_udp.sh` 覆盖 SOCKS5 协商、UDP ASSOCIATE、响应解析、artifact 和清理边界。该证据仍限定在固定 1.14.0 核心的隔离 Docker 回环，不扩张为公网 UDP、防火墙/路由、外部认证、生产部署或其他尚未接入探针的协议/Endpoint 数据面；完整协议目标仍未完成。
+
+### 2026-09-11：TUIC UDP 数据面与 exporter ALPN 修复
+
+从上一阶段的 Hysteria v1/Hysteria2 探针继续推进，新增 `verification_generate_tuic_probe_client` 与严格的 TUIC marker/store loader。生成器只接受活动 schema-2 marker、schema-1 typed store 和当前配置中选出的 TUIC tag，随后复用生产 `build_client_tuic_outbounds`；客户端 JSON 保留逐用户 UUID/password、`network:["tcp","udp"]`、native/quic relay 或 udp-over-stream、拥塞控制、heartbeat、zero-rtt、公开证书信任，并拒绝写入私钥。
+
+真实共存场景新增 TUIC typed instance（手工 SAN 证书、native relay、bbr、auth timeout/heartbeat），验证服务端只渲染核心接受的 users/TLS+h3/拥塞/超时字段，监听计划包含 UDP，固定 1.14.0 `sing-box check` 通过。期间发现 exporter 未将客户端 TLS ALPN 与服务端 renderer 的 `h3` 对齐，真实核心报 `CRYPTO_ERROR ... no application protocol`；生产 exporter 已修复为始终输出 `tls.alpn:["h3"]`，并由生命周期、registry 与探针测试锁定。
+
+`multi_protocol_coexistence` 现在启动固定核心客户端，经 SOCKS5 UDP ASSOCIATE 把 marker 穿过 TUIC QUIC/UDP 至本地 echo 并精确回读；完整 Docker run `dev/verification-runs/20260911164148` 记录 16/16 场景、23/23 常规协议探针和三个 QUIC UDP artifact（Hysteria、Hysteria2、TUIC）成功。证据只属于隔离容器/回环和固定 1.14.0 核心，不扩张为公网可达、生产部署、外部认证、SubMan 或全协议目标完成；本阶段版本提升为 `2026091110`。
