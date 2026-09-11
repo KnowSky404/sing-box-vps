@@ -1012,6 +1012,129 @@ if managed_component_state_validate_record "${hysteria2_realm_http2_quic_field}"
   exit 1
 fi
 
+# Hysteria v1 outbound records keep the legacy auth/auth_str and bandwidth
+# compatibility fields distinct from Hysteria2, while sharing typed TLS, QUIC,
+# network and Dial Field handling.
+hysteria_outbound_record='{"id":"hysteria-outbound-local","role":"outbound","type":"hysteria","tag":"hysteria-upstream","enabled":true,"route_rules":[],"config":{"server":"hy1.example","server_port":443,"hop_interval":"30s","up_mbps":100,"down_mbps":200,"obfs":"obfs-password","auth_str":"hy1-password","network":["tcp","udp"],"tls":{"enabled":true,"server_name":"hy1.example","insecure":true},"idle_timeout":"30s","keep_alive_period":"10s","stream_receive_window":"64 MB","connection_receive_window":"128 MB","max_concurrent_streams":100,"initial_packet_size":1200,"disable_path_mtu_discovery":false,"connect_timeout":"5s","network_strategy":"default","network_type":["ethernet"],"domain_resolver":"dns-local","protect_path":"/usr/lib/sing-box/hysteria-protect"}}'
+managed_component_state_validate_record "${hysteria_outbound_record}"
+hysteria_outbound_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${hysteria_outbound_record}")
+hysteria_outbound_rendered=$(managed_component_render_json "${hysteria_outbound_state}")
+jq -e '
+  (.outbounds | length == 1) and
+  .outbounds[0].type == "hysteria" and
+  .outbounds[0].tag == "hysteria-upstream" and
+  .outbounds[0].server == "hy1.example" and
+  .outbounds[0].server_port == 443 and
+  .outbounds[0].up_mbps == 100 and
+  .outbounds[0].down_mbps == 200 and
+  .outbounds[0].obfs == "obfs-password" and
+  .outbounds[0].auth_str == "hy1-password" and
+  .outbounds[0].network == ["tcp","udp"] and
+  .outbounds[0].tls.enabled == true and
+  .outbounds[0].initial_packet_size == 1200 and
+  .outbounds[0].route_rules == null
+' <<< "${hysteria_outbound_rendered}" >/dev/null
+hysteria_network_bytes=$(jq -c '.config |= (del(.up_mbps,.down_mbps) + {up:"100 Mbps",down:"200 Mbps"})' <<< "${hysteria_outbound_record}")
+managed_component_state_validate_record "${hysteria_network_bytes}"
+hysteria_auth_bytes=$(jq -c '.config |= (del(.auth_str) + {auth:"cHc="})' <<< "${hysteria_outbound_record}")
+managed_component_state_validate_record "${hysteria_auth_bytes}"
+hysteria_auth_array=$(jq -c '.config |= (del(.auth_str) + {auth:[112,119]})' <<< "${hysteria_outbound_record}")
+managed_component_state_validate_record "${hysteria_auth_array}"
+hysteria_ports_only=$(jq -c '.config |= (del(.server_port) + {server_ports:["2080:3000"]})' <<< "${hysteria_outbound_record}")
+managed_component_state_validate_record "${hysteria_ports_only}"
+hysteria_ports_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${hysteria_ports_only}")
+hysteria_ports_rendered=$(managed_component_render_json "${hysteria_ports_state}")
+jq -e '
+  .outbounds[0].server == "hy1.example" and
+  (.outbounds[0] | has("server_port") | not) and
+  .outbounds[0].server_ports == ["2080:3000"]
+' <<< "${hysteria_ports_rendered}" >/dev/null
+hysteria_port_conflict=$(jq -c '.config.server_ports = ["2080:3000"]' <<< "${hysteria_outbound_record}")
+if managed_component_state_validate_record "${hysteria_port_conflict}"; then
+  printf 'Hysteria server_port/server_ports conflict unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria_missing_speed=$(jq -c '.config |= del(.up,.down,.up_mbps,.down_mbps)' <<< "${hysteria_outbound_record}")
+if managed_component_state_validate_record "${hysteria_missing_speed}"; then
+  printf 'Hysteria outbound without bandwidth unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria_negative_bandwidth=$(jq -c '.config.up_mbps = -1' <<< "${hysteria_outbound_record}")
+if managed_component_state_validate_record "${hysteria_negative_bandwidth}"; then
+  printf 'Hysteria negative bandwidth unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria_bad_network_bytes=$(jq -c '.config.up = 1.5' <<< "${hysteria_outbound_record}")
+if managed_component_state_validate_record "${hysteria_bad_network_bytes}"; then
+  printf 'Hysteria fractional network bytes unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria_bad_auth=$(jq -c '.config.auth = "not-base64"' <<< "${hysteria_outbound_record}")
+if managed_component_state_validate_record "${hysteria_bad_auth}"; then
+  printf 'Hysteria invalid base64 auth unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria_bad_auth_array=$(jq -c '.config.auth = [256]' <<< "${hysteria_outbound_record}")
+if managed_component_state_validate_record "${hysteria_bad_auth_array}"; then
+  printf 'Hysteria out-of-range auth byte unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria_missing_tls=$(jq -c '.config |= del(.tls)' <<< "${hysteria_outbound_record}")
+if managed_component_state_validate_record "${hysteria_missing_tls}"; then
+  printf 'Hysteria outbound without TLS unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria_disabled_tls=$(jq -c '.config.tls.enabled = false' <<< "${hysteria_outbound_record}")
+if managed_component_state_validate_record "${hysteria_disabled_tls}"; then
+  printf 'Hysteria outbound with disabled TLS unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria_missing_server=$(jq -c '.config |= del(.server)' <<< "${hysteria_outbound_record}")
+if managed_component_state_validate_record "${hysteria_missing_server}"; then
+  printf 'Hysteria outbound without server unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria_missing_port=$(jq -c '.config |= del(.server_port,.server_ports)' <<< "${hysteria_outbound_record}")
+if managed_component_state_validate_record "${hysteria_missing_port}"; then
+  printf 'Hysteria outbound without server port unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria_bad_network=$(jq -c '.config.network = ["icmp"]' <<< "${hysteria_outbound_record}")
+if managed_component_state_validate_record "${hysteria_bad_network}"; then
+  printf 'Hysteria unsupported network unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria_duplicate_network=$(jq -c '.config.network = ["udp","udp"]' <<< "${hysteria_outbound_record}")
+if managed_component_state_validate_record "${hysteria_duplicate_network}"; then
+  printf 'Hysteria duplicate network unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria_bad_obfs=$(jq -c '.config.obfs = {password:"wrong-shape"}' <<< "${hysteria_outbound_record}")
+if managed_component_state_validate_record "${hysteria_bad_obfs}"; then
+  printf 'Hysteria object obfs unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria_bad_quic=$(jq -c '.config.initial_packet_size = "1200"' <<< "${hysteria_outbound_record}")
+if managed_component_state_validate_record "${hysteria_bad_quic}"; then
+  printf 'Hysteria invalid QUIC scalar unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria_deprecated_field=$(jq -c '.config |= (. + {recv_window:1})' <<< "${hysteria_outbound_record}")
+if managed_component_state_validate_record "${hysteria_deprecated_field}"; then
+  printf 'Hysteria deprecated receive window unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria_hy2_field=$(jq -c '.config |= (. + {bbr_profile:"standard"})' <<< "${hysteria_outbound_record}")
+if managed_component_state_validate_record "${hysteria_hy2_field}"; then
+  printf 'Hysteria2-only field unexpectedly accepted by Hysteria v1\n' >&2
+  exit 1
+fi
+hysteria_control_password=$(jq -c '.config.auth_str = "hy1\u0001password"' <<< "${hysteria_outbound_record}")
+if managed_component_state_validate_record "${hysteria_control_password}"; then
+  printf 'Hysteria control-character auth unexpectedly accepted\n' >&2
+  exit 1
+fi
+
 # Selector and URLTest groups own outbound member references.  Their upstream
 # schemas are deliberately narrow: duplicate members, a selector default not
 # present in the member list, and URLTest's selector-only fields must fail

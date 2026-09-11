@@ -6,7 +6,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091101`，`SB_SUPPORT_MAX_VERSION=1.14.0`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091102`，`SB_SUPPORT_MAX_VERSION=1.14.0`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -42,6 +42,8 @@
 2026-09-11 Snell outbound 增量：managed `snell` outbound component 按固定 [1.14.0 Snell](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/snell.md) 与 shared Dial Fields 建立版本分型 typed allowlist；`server`、`server_port`、非空 PSK、可选 userkey/reuse、TCP/UDP network 与拨号字段逐项校验。outbound 版本只允许 `4` 或 `6`：v4 只接受 HTTP obfuscation 的 `obfs_mode`/`obfs_host`，v6 只接受 traffic shaping 的 `mode`，且 v6 PSK 至少 12 字节；未知、弃用、控制字符、重复 network、越界端口及版本交叉字段在 state/CAS 与接管前拒绝。Snell v5 QUIC proxy 不作为独立 outbound 暴露，inbound v5/v6 仅分别映射 outbound v4/v6，UDP 业务经 TCP packet API 承载。敏感凭据只在 component export 返回。1.14.0 官方 ARM64 核心对 v4/v6 最小配置 `check` 通过，1.13.18 明确拒绝未知 type；这不代表远端 Snell 握手或 TCP/UDP 数据面，完整目标仍未完成。
 
 2026-09-11 Hysteria2 outbound 增量：managed `hysteria2` outbound component 按固定 [1.14.0 Hysteria2](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/hysteria2.md)、QUIC、Outbound TLS 与 shared Dial Fields 建立 typed allowlist；标准路径支持 server 与互斥的 server_port/server_ports、port hopping、up/down Mbps、salamander/gecko obfs、password、TCP/UDP network、必需 TLS、QUIC fields、BBR profile 与 Chrome QUIC 控制，Realm 路径要求 server URL、realm ID、STUN 列表并约束端口映射/IP version/HTTP client。v1 Hysteria 的 `auth` 与已弃用接收窗口字段不会混入，未知/弃用字段、错误分型、控制字符和冲突组合在 state/CAS 与接管前拒绝。敏感凭据只在 component export 返回；1.14.0 官方 ARM64 核心对标准 Hysteria2 outbound `check` 通过，这不代表远端 QUIC 握手或 UDP 数据面，完整目标仍未完成。
+
+2026-09-11 Hysteria v1 outbound 增量：managed `hysteria` outbound component 按固定 [1.14.0 Hysteria](https://github.com/SagerNet/sing-box/blob/v1.14.0/docs/configuration/outbound/hysteria.md)、QUIC、Outbound TLS 与 shared Dial Fields 建立 typed allowlist；支持 server 与互斥的 server_port/server_ports、hop_interval、`up`/`down` 网络带宽兼容字段、up_mbps/down_mbps、字符串 obfs、auth/auth_str、TCP/UDP network、必需 TLS 与 QUIC fields。每个方向要求至少一种带宽声明，auth 接受上游 Base64 字符串或字节数组；Hysteria2 的 password、Salamander/Gecko、BBR、Realm 以及 v1 已弃用接收窗口字段不会交叉。敏感凭据只在 component export 返回；1.14.0 官方 ARM64 全字段和 1.13.18 兼容子集 `check` 通过，这不代表远端 Hysteria 握手或 UDP 数据面，完整目标仍未完成。
 
 2026-09-10 TUN 路由安全增量：启用的 managed TUN 若设置 `auto_route=true`，候选配置会在顶层 `route` 自动补 `auto_detect_interface=true`；已有配置明确关闭该保护且未设置 `default_interface` 时 fail-closed，明确选择默认接口则保留原设置。该门禁只防止配置层自捕获环路，不宣称已接管主机策略路由、nftables、DNS 劫持或透明数据面，完整协议目标继续未完成。
 
@@ -138,7 +140,7 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 | trojan | `trojan` / outbound | 基础内建 | TCP/UDP（按 outbound network）；TLS、transport/multiplex 需对端支持；WS early data 与 HTTPUpgrade 阻断 | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 component JSON（不进入普通分享节点） / 不生成服务端分享 URI / no current SubMan | 两核心 1.13.18/1.14.0 typed TLS+gRPC/plain check；未验证远端 Trojan 握手、TLS 信任或数据面 |
 | wireguard-legacy | `wireguard` / outbound | 已移除；不能靠导航页恢复 | 不再创建；应使用 WireGuard endpoint，再由 route/dial 关系接入 | removed stub | no（removed） | none；—/—/—/— | 不可导出为旧 outbound / — / — | check 明确报告 removed |
 | wireguard | `wireguard` / endpoint | 自 1.11 endpoint 架构；`with_wireguard`；官方 VPS 包含该 tag | UDP tunnel，peer、allowed IP、private key、MTU；`system`/gVisor 和平台权限影响数据路径 | conditional | yes（tag 已含；peer/权限仍需） | Warp 特例；通用 none | 不属于普通分享节点；Warp 由项目专用材料管理 / no current SubMan | endpoint registry-check |
-| hysteria | `hysteria` / outbound | `with_quic` | QUIC/UDP + TLS；`auth_str`、上下行带宽、字符串 obfs 和 QUIC 参数，不与 hysteria2 互换 | conditional | yes（tag 已含） | typed per-user client export（由 Hysteria 入站实例管理驱动）；— | 完整 Hysteria outbound JSON / 无标准 URI（`hysteria_standard_uri_unavailable`） / unsupported | `tests/hysteria_instance_lifecycle.sh` 与真实 1.14.0 outbound check 通过；未验证公网 UDP 或数据面 |
+| hysteria | `hysteria` / outbound | `with_quic` | QUIC/UDP + TLS；server 与互斥的 server_port/server_ports、hop_interval、`up`/`down` 网络带宽兼容字段、up_mbps/down_mbps、auth/auth_str、字符串 obfs 和 QUIC 参数，不与 hysteria2 互换 | conditional | yes（tag 已含） | typed component state/config；yes/yes/yes/yes* | 完整敏感 Hysteria outbound JSON（不生成标准 URI；no current SubMan） | 1.14.0 官方 ARM64 全字段与 1.13.18 兼容子集 typed config check；未验证远端 Hysteria 握手或 UDP 数据面 |
 | vless | `vless` / outbound | 基础内建 | TCP/UDP；TLS/REALITY、空 flow 或 `xtls-rprx-vision`、transport、xudp/packetaddr encoding 必须分别表示；Vision 仅 TLS 直连 | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 component JSON（不进入普通分享节点） / 不生成服务端分享 URI / no current SubMan | 两核心 1.13.18/1.14.0 typed TLS+WS/Vision/plain check；未验证远端 VLESS 握手、TLS 信任或数据面 |
 | shadowtls | `shadowtls` / outbound | 基础内建 | TCP 包装层；必须指向实际内层服务端，v1/v2/v3 字段不能混用 | yes | yes（Linux） | none；—/—/—/— | — / — / — | registry-check（无 TLS 按预期失败） |
 | tuic | `tuic` / outbound | `with_quic` | QUIC/UDP + TLS；`network`、native/quic UDP relay、可选 UDP-over-stream、0-RTT、heartbeat 和拥塞控制 | yes | yes（官方包含 `with_quic`） | typed per-user client export（由 TUIC 入站实例管理驱动）；— | 完整 TUIC outbound JSON / 无标准 URI（`tuic_standard_uri_unavailable`） / unsupported | `tests/tuic_instance_lifecycle.sh` 与真实 1.14.0 outbound check 通过；未验证公网 UDP 或数据面 |

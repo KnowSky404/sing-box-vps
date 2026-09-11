@@ -172,6 +172,13 @@ Hysteria Realm. Keep Realm server/STUN/port-mapping/HTTP-client shapes typed,
 reject Hysteria v1/deprecated receive-window fields, and treat target-core
 `check` as configuration evidence only, not remote QUIC or UDP data-plane proof.
 
+Hysteria v1 outbound components preserve sing-box 1.14 `auth`/`auth_str`,
+string or Mbps bandwidth, hop interval, string obfs, TCP/UDP network, required
+TLS, QUIC fields and shared Dial Fields. Keep Hysteria v1 separate from the
+Hysteria2 password/obfs/BBR/Realm schema, reject deprecated receive-window
+aliases, and treat target-core `check` as configuration evidence only, not a
+remote Hysteria handshake or UDP data-plane proof.
+
 - Use `status --json` for version/service/path/protocol diagnostics plus network stack, BBR, REALITY/QoS, and integration presence.
 - Use `capabilities --json` to discover supported protocols/features and operation safety labels before choosing an action.
 - On an existing 1.13 host, run `sbv update sbv` first and start a new invocation before expecting the new Agent commands.
