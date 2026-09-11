@@ -560,6 +560,80 @@ verification_generate_snell_probe_client() (
   mv -f -- "${temp_dir}/client.json" "${output_path}" || return 1
 )
 
+verification_generate_shadowtls_probe_client() (
+  set -euo pipefail
+  umask 077
+  local config_file=$1 output_path=$2 installer temp_dir selected_tag snapshot record store_file state_file
+  local server_port detour_tag outbounds_json
+  installer=${VERIFY_REMOTE_INSTALL_SCRIPT:-/usr/local/bin/sbv}
+  [[ -f "${installer}" ]] || return 1
+  temp_dir=$(mktemp -d "${output_path}.shadowtls.XXXXXX") || return 1
+  trap 'rm -rf -- "${temp_dir}"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+
+  # ShadowTLS is a transport wrapper around the managed inner Mixed listener.
+  # Generate both outbounds from the production composite exporter and route
+  # the probe's HTTP proxy through the transport dependency.
+  source "${installer}"
+  plain_proxy_structured_state_active shadowtls || return 1
+  state_file=$(protocol_state_file shadowtls) || return 1
+  store_file=$(plain_proxy_structured_store_file shadowtls) || return 1
+  selected_tag=$(jq -er '
+    [(.inbounds // [])[] | select(.type == "shadowtls")] |
+    if length == 1 and (.[0].tag | type == "string" and length > 0)
+    then .[0].tag else error("invalid ShadowTLS probe inventory") end
+  ' "${config_file}") || return 1
+  server_port=$(jq -er --arg tag "${selected_tag}" '
+    [(.inbounds // [])[] | select(.type == "shadowtls" and .tag == $tag)] |
+    if length == 1 and (.[0].listen_port | type == "number" and floor == .)
+    then .[0].listen_port else error("invalid ShadowTLS probe listener") end
+  ' "${config_file}") || return 1
+  detour_tag=$(jq -er --arg tag "${selected_tag}" '
+    [(.inbounds // [])[] | select(.type == "shadowtls" and .tag == $tag)] |
+    if length == 1 and (.[0].detour | type == "string" and length > 0)
+    then .[0].detour else error("invalid ShadowTLS probe detour") end
+  ' "${config_file}") || return 1
+  record=$(verification_load_shadowtls_probe_record "${state_file}" "${store_file}" "${selected_tag}") || return 1
+  snapshot=$(structured_instance_store_snapshot_json shadowtls "${store_file}") || return 1
+  jq -e --arg tag "${selected_tag}" --arg detour "${detour_tag}" --argjson port "${server_port}" --argjson expected "${record}" '
+    any(.instances[]; .tag == $tag and .listen.port == $port and
+      .authentication == $expected.authentication and .version == $expected.version and
+      .handshake == $expected.handshake and .detour == $expected.detour and
+      .client_trust == $expected.client_trust and .client_tls == $expected.client_tls and
+      .detour.tag == $detour)
+  ' <<< "${snapshot}" >/dev/null || return 1
+  jq -e --arg tag "${selected_tag}" '
+    .instances |= map(select(.tag == $tag)) |
+    if (.instances | length) == 1 then .default_instance_id = .instances[0].id
+    else error("invalid probe inventory") end
+  ' <<< "${snapshot}" > "${temp_dir}/store.json" || return 1
+  build_client_shadowtls_outbounds 127.0.0.1 "${temp_dir}/store.json" \
+    > "${temp_dir}/outbounds.jsonl" || return 1
+  outbounds_json=$(jq -se '
+    if length == 2 and
+       ([.[] | select(.type == "shadowtls")] | length) == 1 and
+       ([.[] | select(.type == "http" and (.detour | type == "string"))] | length) == 1 then
+      map(
+        if .type == "shadowtls" then
+          .tag = "shadowtls-transport"
+        elif .type == "http" then
+          .tag = "proxy" | .detour = "shadowtls-transport"
+        else . end
+      ) as $outbounds |
+      if ($outbounds | map(select(.type == "http" and .tag == "proxy" and .server_port > 0)) | length) == 1 then
+        {log:{disabled:true},
+         inbounds:[{type:"socks",tag:"local-socks",listen:"127.0.0.1",listen_port:19080}],
+         outbounds:$outbounds,route:{final:"proxy"}}
+      else error("invalid ShadowTLS composite export") end
+    else error("invalid ShadowTLS composite export") end
+  ' "${temp_dir}/outbounds.jsonl") || return 1
+  printf '%s\n' "${outbounds_json}" > "${temp_dir}/client.json" || return 1
+  chmod 600 "${temp_dir}/client.json" || return 1
+  mv -f -- "${temp_dir}/client.json" "${output_path}" || return 1
+)
+
 verification_generate_hysteria_probe_client() (
   set -euo pipefail
   umask 077
@@ -809,6 +883,75 @@ verification_load_snell_probe_record() {
         }
       )
     else error("invalid Snell structured state")
+    end
+  ' "${store_file}") || return 1
+  printf '%s\n' "${record}"
+}
+
+verification_load_shadowtls_probe_record() {
+  local state_file=$1
+  local store_file=$2
+  local tag=$3
+  local record
+
+  [[ -f "${state_file}" && ! -L "${state_file}" ]] || return 1
+  grep -Eq '^[[:space:]]*CONFIG_SCHEMA_VERSION=2([[:space:]]*)$' "${state_file}" || return 1
+  [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  record=$(jq -ce --arg tag "${tag}" '
+    def safe_text:
+      type == "string" and length > 0 and utf8bytelength <= 4096 and
+      (test("[\u0000-\u001F\u007F]") | not);
+    def safe_address:
+      type == "string" and length > 0 and
+      (test("[\u0000-\u0020\u007F]") | not);
+    if .schema_version == 1 and .protocol == "shadowtls" and
+       (.instances | type == "array") and
+       ([.instances[] | select(.tag == $tag)] | length) == 1 then
+      ([.instances[] | select(.tag == $tag)][0] | . as $instance |
+        select(
+          (.listen | type == "object" and (keys | sort) == ["address","port"] and
+            (.address | safe_address) and
+            (.port | type == "number" and floor == . and . >= 1 and . <= 65535)) and
+          (.version | type == "number" and floor == . and IN(1,2,3)) and
+          (.authentication | type == "object" and (keys | sort) == ["password","users"] and
+            (.password | type == "string" and utf8bytelength <= 4096 and
+              (test("[\u0000-\u001F\u007F]") | not)) and
+            (.users | type == "array" and length <= 128 and
+              all(.[]; type == "object" and (keys | sort) == ["name","password"] and
+                (.name | safe_text) and (.password | safe_text)) and
+              (map(.name) | unique | length) == length and
+              (map(.password) | unique | length) == length) and
+            (if $instance.version == 1 then .password == "" and .users == []
+             elif $instance.version == 2 then (.password | safe_text) and .users == []
+             else .password == "" and (.users | length) > 0 end)) and
+          (.handshake | type == "object" and (keys | sort) == ["server","server_port"] and
+            (.server | safe_text) and
+            (.server_port | type == "number" and floor == . and . >= 1 and . <= 65535)) and
+          (.detour | type == "object" and (keys | sort) == ["listen","tag"] and
+            .tag == ("shadowtls-inner-" + $instance.id) and
+            (.listen | type == "object" and (keys | sort) == ["address","port"] and
+              .address == "127.0.0.1" and
+              (.port | type == "number" and floor == . and . >= 1 and . <= 65535))) and
+          (.client_trust | type == "string" and IN("certificate","system")) and
+          (.client_tls | type == "object" and (keys | sort) == ["certificate_path","server_name"] and
+            (.server_name | safe_text) and
+            (.certificate_path | type == "string" and
+              (test("[\u0000-\u001F\u007F]") | not)) and
+            (if $instance.client_trust == "certificate" then (.certificate_path | startswith("/"))
+             else .certificate_path == "" end)) and
+          (.dependencies | type == "array" and . == [$instance.detour.tag])
+        ) | {
+          id: $instance.id,
+          listen: $instance.listen,
+          version: $instance.version,
+          authentication: $instance.authentication,
+          handshake: $instance.handshake,
+          detour: $instance.detour,
+          client_trust: $instance.client_trust,
+          client_tls: $instance.client_tls
+        }
+      )
+    else error("invalid ShadowTLS structured state")
     end
   ' "${store_file}") || return 1
   printf '%s\n' "${record}"
@@ -1277,6 +1420,11 @@ verification_generate_protocol_probe_client_config() {
       output_path=$(verification_artifact_path \
         "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
       verification_generate_snell_probe_client "${config_file}" "${output_path}" || return 1
+      ;;
+    shadowtls)
+      output_path=$(verification_artifact_path \
+        "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
+      verification_generate_shadowtls_probe_client "${config_file}" "${output_path}" || return 1
       ;;
     hysteria)
       output_path=$(verification_artifact_path \

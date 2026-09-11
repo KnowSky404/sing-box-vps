@@ -22706,9 +22706,9 @@ build_client_naive_outbounds() (
   cat "${output_file}"
 )
 
-build_client_shadowtls_outbounds() (
-  local public_ip=${1:-} store_override=${2:-} store_file snapshot tmpdir output_file instance_id listen_address server_address
-  local version users_json trust server_name certificate_path certificate_pem tls_json expected_count output_count
+build_client_shadowtls_bundle_json() (
+  local public_ip=${1:-} store_override=${2:-} store_file snapshot tmpdir records_file bundle_file instance_id listen_address server_address
+  local detour_address detour_port version users_json trust server_name certificate_path certificate_pem tls_json expected_count record_count
   if [[ -n "${store_override}" ]]; then store_file=${store_override}; else store_file=$(plain_proxy_structured_store_file shadowtls) || return 1; fi
   [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
   validate_structured_instance_store shadowtls "${store_file}" || return 1
@@ -22717,8 +22717,9 @@ build_client_shadowtls_outbounds() (
   snapshot=$(structured_instance_store_snapshot_json shadowtls "${store_file}") || return 1
   tmpdir=$(mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
-  output_file="${tmpdir}/outbounds.jsonl"
-  : > "${output_file}" || return 1
+  records_file="${tmpdir}/records.jsonl"
+  bundle_file="${tmpdir}/bundle.json"
+  : > "${records_file}" || return 1
   while IFS= read -r -d '' instance_id; do
     listen_address=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .listen.address' <<< "${snapshot}") || return 1
     case "${listen_address}" in
@@ -22728,6 +22729,8 @@ build_client_shadowtls_outbounds() (
     esac
     version=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .version' <<< "${snapshot}") || return 1
     users_json=$(jq -c --arg id "${instance_id}" '.instances[] | select(.id == $id) | .authentication.users' <<< "${snapshot}") || return 1
+    detour_address=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .detour.listen.address' <<< "${snapshot}") || return 1
+    detour_port=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .detour.listen.port' <<< "${snapshot}") || return 1
     server_name=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .client_tls.server_name' <<< "${snapshot}") || return 1
     trust=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .client_trust' <<< "${snapshot}") || return 1
     tls_json=$(jq -cn --arg server_name "${server_name}" '{enabled:true,server_name:$server_name}') || return 1
@@ -22736,18 +22739,41 @@ build_client_shadowtls_outbounds() (
       certificate_pem=$(read_public_certificate_pem "${certificate_path}") || return 1
       tls_json=$(jq -cn --arg server_name "${server_name}" --arg certificate "${certificate_pem}" '{enabled:true,server_name:$server_name,certificate:$certificate}') || return 1
     fi
-    jq -c --arg id "${instance_id}" --arg server "${server_address}" --argjson version "${version}" --argjson users "${users_json}" --argjson tls "${tls_json}" '
+    jq -c --arg id "${instance_id}" --arg server "${server_address}" --arg detour_address "${detour_address}" --argjson detour_port "${detour_port}" --argjson version "${version}" --argjson users "${users_json}" --argjson tls "${tls_json}" '
       .instances[] | select(.id == $id) as $instance |
       (if $version == 3 then $users else [{name:"default",password:$instance.authentication.password}] end)[] as $user |
-      {type:"shadowtls",tag:("shadowtls-" + $instance.id + "-" + ($user.name | @base64)),server:$server,server_port:$instance.listen.port,version:$version,tls:$tls} +
-      (if $version == 2 then {password:$instance.authentication.password} elif $version == 3 then {password:$user.password} else {} end)
-    ' <<< "${snapshot}" >> "${output_file}" || return 1
+      ("shadowtls-" + $instance.id + "-" + ($user.name | @base64)) as $primary_tag |
+      ($primary_tag + "-transport") as $transport_tag |
+      {
+        transport: (
+          {type:"shadowtls",tag:$transport_tag,server:$server,server_port:$instance.listen.port,version:$version,tls:$tls} +
+          (if $version == 2 then {password:$instance.authentication.password} elif $version == 3 then {password:$user.password} else {} end)
+        ),
+        primary: {type:"http",tag:$primary_tag,server:$detour_address,server_port:$detour_port,detour:$transport_tag}
+      }
+    ' <<< "${snapshot}" >> "${records_file}" || return 1
   done < <(jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}")
   expected_count=$(jq -r '[.instances[] | if .version == 3 then (.authentication.users | length) else 1 end] | add // 0' <<< "${snapshot}") || return 1
-  output_count=$(jq -s 'length' "${output_file}") || return 1
-  [[ "${expected_count}" =~ ^[0-9]+$ && "${output_count}" == "${expected_count}" && "${output_count}" -gt 0 ]] || return 1
-  jq -es 'length > 0 and (map(.tag) | unique | length) == length and all(.[]; .type == "shadowtls" and .tls.enabled == true)' "${output_file}" >/dev/null || return 1
-  cat "${output_file}"
+  record_count=$(jq -s 'length' "${records_file}") || return 1
+  [[ "${expected_count}" =~ ^[0-9]+$ && "${record_count}" == "${expected_count}" && "${record_count}" -gt 0 ]] || return 1
+  jq -s '{outbounds:[.[] | .transport, .primary],primary_tags:map(.primary.tag)}' "${records_file}" > "${bundle_file}" || return 1
+  jq -e --argjson expected "${expected_count}" '
+      . as $bundle |
+      ($bundle.outbounds | length == ($expected * 2)) and
+      ($bundle.primary_tags | length == $expected) and
+      ($bundle.outbounds | (map(.tag) | unique | length) == length) and
+      ($bundle.primary_tags | (unique | length) == length) and
+      (all($bundle.outbounds[]; if .type == "shadowtls" then (.tls.enabled == true and (.tag | endswith("-transport")))
+                              elif .type == "http" then (.detour | type == "string" and endswith("-transport"))
+                              else false end))
+    ' "${bundle_file}" >/dev/null || return 1
+  cat "${bundle_file}"
+)
+
+build_client_shadowtls_outbounds() (
+  local bundle_json
+  bundle_json=$(build_client_shadowtls_bundle_json "$@") || return 1
+  jq -c '.outbounds[]' <<< "${bundle_json}"
 )
 
 build_client_outbounds_for_current_protocol() {
@@ -23520,7 +23546,7 @@ build_singbox_client_config() {
   local installed_protocols_raw
   local installed_protocols=() exportable_protocols=()
   local remote_outbounds_json remote_tags_json
-  local protocol protocol_label outbound_json usable_protocol_count
+  local protocol protocol_label outbound_json protocol_tags shadowtls_bundle_json usable_protocol_count
   local use_rule_set_http_client="n"
   local status=0
 
@@ -23579,7 +23605,19 @@ build_singbox_client_config() {
       continue
     fi
 
-    if ! outbound_json=$(build_client_outbounds_for_current_protocol "${protocol}" "${public_ip}"); then
+    if [[ "${protocol}" == "shadowtls" ]]; then
+      if ! shadowtls_bundle_json=$(build_client_shadowtls_bundle_json "${public_ip}"); then
+        log_warn "${protocol_label} 客户端连接材料无效，已中止客户端导出；原导出文件保持不变。" >&2
+        status=1
+        break
+      fi
+      if ! outbound_json=$(jq -c '.outbounds[]' <<< "${shadowtls_bundle_json}") ||
+         ! protocol_tags=$(jq -r '.primary_tags[]' <<< "${shadowtls_bundle_json}"); then
+        log_warn "${protocol_label} 客户端组合连接材料无效，已中止客户端导出；原导出文件保持不变。" >&2
+        status=1
+        break
+      fi
+    elif ! outbound_json=$(build_client_outbounds_for_current_protocol "${protocol}" "${public_ip}"); then
       if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" || "${protocol}" == "shadowtls" ]]; then
         log_warn "${protocol_label} 客户端连接材料无效，已中止客户端导出；原导出文件保持不变。" >&2
         status=1
@@ -23587,10 +23625,16 @@ build_singbox_client_config() {
       fi
       log_warn "生成客户端导出协议失败，已跳过: ${protocol}" >&2
       continue
+    else
+      if ! protocol_tags=$(jq -r '.tag' <<< "${outbound_json}"); then
+        log_warn "${protocol_label} 客户端连接材料标签无效，已中止客户端导出；原导出文件保持不变。" >&2
+        status=1
+        break
+      fi
     fi
 
     printf '%s\n' "${outbound_json}" >> "${tmpdir}/outbounds.jsonl"
-    printf '%s\n' "$(jq -r '.tag' <<< "${outbound_json}")" >> "${tmpdir}/tags.txt"
+    printf '%s\n' "${protocol_tags}" >> "${tmpdir}/tags.txt"
     usable_protocol_count=$((usable_protocol_count + 1))
   done
 
@@ -26215,7 +26259,7 @@ agent_shadowtls_node_json() {
 
 agent_shadowtls_link_json() (
   umask 077
-  local public_ip=${1:-$(get_public_ip)} store_file snapshot end_snapshot instance_id server isolated_store summary outbounds warnings
+  local public_ip=${1:-$(get_public_ip)} store_file snapshot end_snapshot instance_id server isolated_store summary bundle_json outbounds primary_tags warnings
   [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]] || return 1
   store_file=$(plain_proxy_structured_store_file shadowtls) || return 1
   snapshot=$(structured_instance_store_snapshot_json shadowtls "${store_file}") || return 1
@@ -26228,15 +26272,16 @@ agent_shadowtls_link_json() (
   isolated_store=$(mktemp) || return 1
   trap 'rm -f -- "${isolated_store}"' EXIT
   jq --arg id "${instance_id}" '. as $root | ($root.instances|map(select(.id==$id))) as $instances | $root|.default_instance_id=$id|.instances=$instances' <<< "${snapshot}" > "${isolated_store}" || return 1
-  outbounds=$(build_client_shadowtls_outbounds "${server}" "${isolated_store}") || return 1
+  bundle_json=$(build_client_shadowtls_bundle_json "${server}" "${isolated_store}") || return 1
   end_snapshot=$(structured_instance_store_snapshot_json shadowtls "${store_file}") || return 1
   [[ "${snapshot}" == "${end_snapshot}" ]] || return 1
-  outbounds=$(jq -sc '.' <<< "${outbounds}") || return 1
+  outbounds=$(jq -c '.outbounds' <<< "${bundle_json}") || return 1
+  primary_tags=$(jq -c '.primary_tags' <<< "${bundle_json}") || return 1
   warnings=$(jq -cn '[{code:"shadowtls_standard_uri_unavailable",message:"ShadowTLS 是 TLS 包装层组合协议，当前没有可安全表达握手映射、detour 与版本参数的标准分享 URI；请使用完整客户端 outbound JSON。"}]') || return 1
   if [[ "${SB_SHADOWTLS_CLIENT_TRUST:-system}" == certificate ]]; then
     warnings=$(jq -cn --argjson warnings "${warnings}" '$warnings + [{code:"shadowtls_uri_certificate_trust_unavailable",message:"ShadowTLS certificate trust 无法由标准 URI 表达；请使用完整客户端 outbound JSON。"}]') || return 1
   fi
-  jq -cn --argjson summary "${summary}" --argjson outbounds "${outbounds}" --argjson warnings "${warnings}" '$summary + {links:{},outbounds:$outbounds,warnings:$warnings}'
+  jq -cn --argjson summary "${summary}" --argjson outbounds "${outbounds}" --argjson primary_tags "${primary_tags}" --argjson warnings "${warnings}" '$summary + {links:{},outbounds:$outbounds,primary_outbound_tags:$primary_tags,warnings:$warnings}'
 )
 
 agent_node_summary_json_for_current_protocol() {

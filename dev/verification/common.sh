@@ -132,6 +132,7 @@ resolve_local_tests() {
       tests/tuic_instance_lifecycle.sh \
       tests/hysteria_instance_lifecycle.sh \
       tests/naive_instance_lifecycle.sh \
+      tests/shadowtls_composite_export.sh \
       tests/managed_components_contract.sh \
       tests/managed_component_availability.sh \
       tests/managed_component_graph.sh \
@@ -146,6 +147,7 @@ resolve_local_tests() {
       tests/verification_protocol_probe_trojan.sh \
       tests/verification_protocol_probe_vmess.sh \
       tests/verification_protocol_probe_snell.sh \
+      tests/verification_protocol_probe_shadowtls.sh \
       tests/verification_protocol_probe_hysteria.sh \
       tests/verification_protocol_probe_tuic.sh \
       tests/verification_protocol_probe_udp.sh \

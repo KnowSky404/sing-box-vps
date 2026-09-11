@@ -2,19 +2,42 @@ verification_config_inbound_type_for_protocol() {
   verification_protocol_metadata "$1" | jq -er '.type'
 }
 
+verification_config_inbound_port_for_protocol() {
+  local protocol=$1
+  local config_file=$2
+  local config_type
+
+  config_type=$(verification_config_inbound_type_for_protocol "${protocol}")
+  if [[ "${protocol}" == "mixed" ]]; then
+    jq -er --arg config_type "${config_type}" '
+      [.inbounds[] | select(.type == $config_type and
+        ((.tag // "") | startswith("shadowtls-inner-") | not))][0].listen_port
+    ' "${config_file}"
+    return 0
+  fi
+
+  jq -er --arg config_type "${config_type}" '
+    [.inbounds[] | select(.type == $config_type)][0].listen_port
+  ' "${config_file}"
+}
+
 verification_scenario_multi_protocol_coexistence() {
   local cert_dir
   local cert_path
-  local config_type
   local key_path
   local config_path
   local index_path
   local protocol
   local port
+  local shadowtls_handshake_pid=''
 
   verification_prepare_remote_local_tree
-  trap 'verification_cleanup_remote_local_tree; trap - RETURN' RETURN
-  cert_dir="${VERIFY_REMOTE_LOCAL_TREE_DIR}/shared-tls"
+  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
+  # Keep the certificate paths valid for the following runtime_smoke scenario.
+  # The Docker container is disposable, so this test-only directory cannot
+  # outlive the verification run or affect a host installation.
+  cert_dir="/tmp/sing-box-vps-verification-tls"
+  rm -rf -- "${cert_dir}"
   cert_path="${cert_dir}/cert.pem"
   key_path="${cert_dir}/key.pem"
   mkdir -p "${cert_dir}"
@@ -177,17 +200,56 @@ EOF
   jq -e '.ok==true and .protocol=="snell" and .changed==true and .revision==1' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/snell-create.json" >/dev/null
 
+  # ShadowTLS v3 requires a real TLS cover connection and proxies the client
+  # stream into its private Mixed detour.  Keep the cover server inside the
+  # verification container so the following probe exercises that composite
+  # data path rather than merely checking two independent listeners.
+  local shadowtls_cover_stdout
+  local shadowtls_cover_stderr
+  shadowtls_cover_stdout=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-cover.stdout.txt")
+  shadowtls_cover_stderr=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-cover.stderr.txt")
+  openssl s_server -accept 1090 -cert "${cert_path}" -key "${key_path}" -www -quiet \
+    >"${shadowtls_cover_stdout}" 2>"${shadowtls_cover_stderr}" &
+  shadowtls_handshake_pid=$!
+  for _ in {1..50}; do
+    if verification_port_is_listening 1090; then break; fi
+    kill -0 "${shadowtls_handshake_pid}" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  verification_assert_port_listening 1090 \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-cover.ss-lntp.txt"
+
+  local shadowtls_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-record.json"
+  (umask 077; jq -n --arg cert "${cert_path}" '
+    {id:"main",name:"ShadowTLS v3 verification",tag:"shadowtls-in",
+     listen:{address:"127.0.0.1",port:1088},version:3,
+     authentication:{password:"",users:[{name:"shadow-user",password:"shadowtls-verification-password"}]},
+     handshake:{server:"127.0.0.1",server_port:1090},handshake_for_server_name:{},
+     strict_mode:false,wildcard_sni:"off",
+     detour:{tag:"shadowtls-inner-main",listen:{address:"127.0.0.1",port:1089}},
+     dependencies:["shadowtls-inner-main"],client_trust:"certificate",
+     client_tls:{server_name:"sing-box-vps-verification.invalid",certificate_path:$cert},
+     outbound_policy:"default"}
+  ' > "${shadowtls_record}")
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent instance create shadowtls --json --yes \
+    --expected-revision 0 --file "${shadowtls_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-create.json"
+  jq -e '.ok==true and .protocol=="shadowtls" and .changed==true and .revision==1' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-create.json" >/dev/null
+
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/config.json")
   index_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/index.env")
   cp /root/sing-box-vps/config.json "${config_path}"
   cp /root/sing-box-vps/protocols/index.env "${index_path}"
-  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan,tuic,vmess,snell' "${index_path}"
+  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan,tuic,vmess,snell,shadowtls' "${index_path}"
   jq -e '
-    ([.inbounds[] | .type] | sort) == ["anytls", "http", "hysteria2", "mixed", "shadowsocks", "snell", "socks", "trojan", "tuic", "vless", "vmess"] and
+    ([.inbounds[] | .type] | sort) == ["anytls", "http", "hysteria2", "mixed", "mixed", "shadowsocks", "shadowtls", "snell", "socks", "trojan", "tuic", "vless", "vmess"] and
     ([.inbounds[] | select(.type == "vless") | .listen_port] | length == 1) and
-    ([.inbounds[] | select(.type == "mixed") | .listen_port] | length == 1) and
+    ([.inbounds[] | select(.type == "mixed") | .listen_port] | length == 2) and
     ([.inbounds[] | select(.type == "hysteria2") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "anytls") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "socks") | .listen_port] | length == 1) and
@@ -201,7 +263,13 @@ EOF
       .users[0].uuid=="22222222-2222-4222-8222-222222222222")] | length == 1) and
     ([.inbounds[] | select(.type == "snell" and .version == 6 and
       .psk == "snell-v6-psk-123456" and .users[0].userkey == "snell-user-key" and
-      .mode == "default")] | length == 1)
+      .mode == "default")] | length == 1) and
+    ([.inbounds[] | select(.type == "shadowtls" and .tag == "shadowtls-in" and
+      .listen_port == 1088 and .version == 3 and .users[0].password == "shadowtls-verification-password" and
+      .handshake.server == "127.0.0.1" and .handshake.server_port == 1090 and
+      .detour == "shadowtls-inner-main")] | length == 1) and
+    ([.inbounds[] | select(.type == "mixed" and .tag == "shadowtls-inner-main" and
+      .listen == "127.0.0.1" and .listen_port == 1089)] | length == 1)
   ' /root/sing-box-vps/config.json >/dev/null
   grep -Fqx 'sing-box version 1.14.0' <(sing-box version)
   verification_wait_for_service_active sing-box
@@ -209,10 +277,8 @@ EOF
     "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" \
     sing-box check -c /root/sing-box-vps/config.json
   while IFS= read -r protocol; do
-    config_type=$(verification_config_inbound_type_for_protocol "${protocol}")
-    port=$(jq -r --arg config_type "${config_type}" \
-      '.inbounds[] | select(.type == $config_type) | .listen_port' \
-      /root/sing-box-vps/config.json)
+    port=$(verification_config_inbound_port_for_protocol \
+      "${protocol}" /root/sing-box-vps/config.json)
     if verification_protocol_metadata "${protocol}" | jq -e \
       '.listen_networks | type == "array" and index("udp") != null' >/dev/null; then
       verification_assert_udp_port_listening "${port}" \

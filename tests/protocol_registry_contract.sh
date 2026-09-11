@@ -724,12 +724,17 @@ jq -e '
 ' >/dev/null <<< "${shadowtls_inbounds}"
 shadowtls_export=$(build_client_shadowtls_outbounds 127.0.0.1 | jq -s .)
 jq -e '
-  length == 1 and .[0].type == "shadowtls" and
-  (.[0].tag | startswith("shadowtls-main-")) and
-  .[0].server == "127.0.0.1" and .[0].server_port == 1092 and
-  .[0].version == 3 and .[0].password == "SHADOWTLS-CONTRACT-PASSWORD" and
-  .[0].tls.enabled == true and .[0].tls.server_name == "shadowtls.example.com" and
-  (.[0].tls | has("certificate") | not)
+  length == 2 and
+  ([.[] | select(.type == "shadowtls")] | length) == 1 and
+  ([.[] | select(.type == "http")] | length) == 1 and
+  (.[0].type == "shadowtls" and (.[0].tag | endswith("-transport")) and
+    .[0].server == "127.0.0.1" and .[0].server_port == 1092 and
+    .[0].version == 3 and .[0].password == "SHADOWTLS-CONTRACT-PASSWORD" and
+    .[0].tls.enabled == true and .[0].tls.server_name == "shadowtls.example.com" and
+    (.[0].tls | has("certificate") | not)) and
+  (.[1].type == "http" and (.[1].tag | startswith("shadowtls-main-")) and
+    .[1].server == "127.0.0.1" and .[1].server_port == 1093 and
+    .[1].detour == .[0].tag)
 ' >/dev/null <<< "${shadowtls_export}"
 
 # Unknown protocol and future schema must not disappear during reconciliation.
