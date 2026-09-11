@@ -6,7 +6,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091104`，`SB_SUPPORT_MAX_VERSION=1.14.0`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091105`，`SB_SUPPORT_MAX_VERSION=1.14.0`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -143,7 +143,7 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 | vmess | `vmess` / outbound | 基础内建 | TCP/UDP；TLS、transport、packet encoding 和 legacy alterId；QUIC 需 TLS/UDP，WS early data 与 HTTPUpgrade 阻断 | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 component JSON（不进入普通分享节点） / 不生成服务端分享 URI / no current SubMan | 两核心 1.13.18/1.14.0 typed TLS+WS/plain check；未验证远端 VMess 握手、TLS 信任或数据面 |
 | trojan | `trojan` / outbound | 基础内建 | TCP/UDP（按 outbound network）；TLS、transport/multiplex 需对端支持；WS early data 与 HTTPUpgrade 阻断 | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 component JSON（不进入普通分享节点） / 不生成服务端分享 URI / no current SubMan | 两核心 1.13.18/1.14.0 typed TLS+gRPC/plain check；未验证远端 Trojan 握手、TLS 信任或数据面 |
 | wireguard-legacy | `wireguard` / outbound | 已移除；不能靠导航页恢复 | 不再创建；应使用 WireGuard endpoint，再由 route/dial 关系接入 | removed stub | no（removed） | none；—/—/—/— | 不可导出为旧 outbound / — / — | check 明确报告 removed |
-| wireguard | `wireguard` / endpoint | 自 1.11 endpoint 架构；`with_wireguard`；官方 VPS 包含该 tag | UDP tunnel，peer、allowed IP、private key、MTU；`system`/gVisor 和平台权限影响数据路径 | conditional | yes（tag 已含；peer/权限仍需） | Warp 特例；通用 none | 不属于普通分享节点；Warp 由项目专用材料管理 / no current SubMan | endpoint registry-check |
+| wireguard | `wireguard` / endpoint | 自 1.11 endpoint 架构；`with_wireguard`；官方 VPS 包含该 tag | UDP tunnel，peer、allowed IP、private key、MTU；system/gVisor 和平台权限影响数据路径；UDP NAT 与 Dial Fields 按 typed allowlist | conditional | yes（tag 已含；peer/权限仍需） | typed component state/config；yes/yes/yes/yes*；现代 endpoint，不恢复旧 outbound | 完整敏感 endpoint JSON（不属于普通分享节点；Warp 由项目专用材料管理） / no URI / no current SubMan | 1.14.0 全字段与 1.13.18 基础 endpoint typed config check；未验证系统接口、peer 握手或 UDP 数据面 |
 | hysteria | `hysteria` / outbound | `with_quic` | QUIC/UDP + TLS；server 与互斥的 server_port/server_ports、hop_interval、`up`/`down` 网络带宽兼容字段、up_mbps/down_mbps、auth/auth_str、字符串 obfs 和 QUIC 参数，不与 hysteria2 互换 | conditional | yes（tag 已含） | typed component state/config；yes/yes/yes/yes* | 完整敏感 Hysteria outbound JSON（不生成标准 URI；no current SubMan） | 1.14.0 官方 ARM64 全字段与 1.13.18 兼容子集 typed config check；未验证远端 Hysteria 握手或 UDP 数据面 |
 | vless | `vless` / outbound | 基础内建 | TCP/UDP；TLS/REALITY、空 flow 或 `xtls-rprx-vision`、transport、xudp/packetaddr encoding 必须分别表示；Vision 仅 TLS 直连 | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 component JSON（不进入普通分享节点） / 不生成服务端分享 URI / no current SubMan | 两核心 1.13.18/1.14.0 typed TLS+WS/Vision/plain check；未验证远端 VLESS 握手、TLS 信任或数据面 |
 | shadowtls | `shadowtls` / outbound | 基础内建 | TCP-only ShadowTLS wrapper；server/port、v1/v2/v3、可选 password、必需 outbound TLS 与 shared Dial Fields；与本项目 inbound outer + loopback Mixed composite 分离 | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 ShadowTLS outbound JSON（不生成标准 URI；no current SubMan） | 1.14.0/1.13.18 官方 ARM64 typed config check；未验证远端 ShadowTLS 握手或 TCP 数据面 |
@@ -164,13 +164,15 @@ Endpoint 同时具有接入和出站行为，不能塞进普通 `inbounds`/`outb
 
 | ID | 官方 type / 角色 | 版本、构建和平台条件 | TCP/UDP/主要约束 | upstream | available（官方 ARM64 包） | implemented；D/T/E/R | 导出 / 分享 / SubMan | validated |
 |---|---|---|---|---|---|---|---|---|
-| wireguard-endpoint | `wireguard` / endpoint | `with_wireguard`；`system` 数据路径依赖平台权限，gVisor 路径依赖 `with_gvisor` | UDP、peer/allowed IP/private key/MTU；支持多个 peer；不是旧 outbound | conditional | yes（tag 已含；peer/权限仍需） | Warp 特例；通用 none | Warp 专用 key/route 状态；不输出普通分享 / no current SubMan | registry-check |
+| wireguard-endpoint | `wireguard` / endpoint | `with_wireguard`；`system` 数据路径依赖平台权限，gVisor 路径依赖 `with_gvisor` | UDP、peer/allowed IP/private key/MTU；支持多个 peer；UDP NAT、workers 与 shared Dial Fields 受控；不是旧 outbound | conditional | yes（tag 已含；peer/权限仍需） | typed component state/config；yes/yes/yes/yes* | 敏感 endpoint JSON；不输出普通分享 / no current SubMan | registry-check + 1.14 全字段/1.13 基础子集 `check` |
 | tailscale | `tailscale` / endpoint | `with_tailscale`；需要 auth key 或交互登录/控制面；可带 gVisor/system 接口 | WireGuard peer-to-peer UDP、控制面和可选 relay；可 advertise/accept routes、exit node、SSH；状态目录必须持久化 | conditional | yes（tag 已含；auth/控制面仍需） | none；—/—/—/— | 不属于普通分享节点 / — / — | registry-check（无 auth 时仅注册检查） |
 | openconnect | `openconnect` / endpoint | 自 1.14.0；`with_openconnect`；`system:false` 还要求 `with_gvisor`；需要 Cisco/GlobalProtect/Fortinet/F5/Pulse/Juniper 服务器和交互认证 | VPN 数据面可 TCP/UDP；HTTPS control channel、cookie/username/password/cert、DNS transport；无授权端点不能标 validated | conditional | yes（tag 已含；system:false 需 gVisor；认证仍需） | none；—/—/—/— | 不属于普通分享节点 / — / — | registry-check（无 server 按预期失败） |
 | openvpn-client | `openvpn-client` / endpoint | 自 1.14.0；`with_openvpn`；`system:false` 还要求 `with_gvisor`；需要外部 OpenVPN server/profile/凭据 | TCP 或 UDP；TLS 或 static_key；interactive auth、certificate/key、topology 和 DNS/route 需保留 | conditional | yes（tag 已含；system:false 需 gVisor；外部 profile 仍需） | none；—/—/—/— | 不属于普通分享节点 / — / — | registry-check（无 server 按预期失败） |
 | openvpn-server | `openvpn-server` / endpoint | 自 1.14.0；`with_openvpn`；`system:false` 还要求 `with_gvisor` | TCP 或 UDP，每个 endpoint 只服务一种 network；同时 TCP+UDP 要两个 server endpoint；TLS/static_key 模式约束不同 | conditional | yes（tag 已含；system:false 需 gVisor；证书/密钥仍需） | none；—/—/—/— | 不属于普通分享节点 / — / — | registry-check（无 address 按预期失败） |
 
 Endpoint 表中仍保留 `none` 的历史行表示没有专用分享/节点适配；2026-09-09 增量新增的 `components.json` 状态/config/CAS 管理切片等价于组件生命周期 `yes/yes/yes/yes*`，但不等同外部 VPN/Tailscale/WireGuard 数据面已验证。`*` 表示配置组合、目标核心 check 和回滚边界已接入，外部认证、系统接口、路由/防火墙及公网业务仍需独立证据。
+
+2026-09-11 WireGuard 增量：managed endpoint 按固定 1.14.0 `WireGuardEndpointOptions` 建立 typed allowlist，校验标准 Base64 32-byte key、CIDR address/allowed_ips、peer keepalive/reserved、MTU/listen/workers、UDP NAT 和 Dial Fields；live takeover 继续排除生成器自有 `warp-ep`，旧 wireguard outbound 仍由核心 removed stub 拒绝。固定 1.14.0 全字段与 1.13.18 基础字段 `check` 通过，未将其扩大为系统接口权限、peer 握手或 UDP 数据面证据。
 
 ## 构建变体和依赖门控
 

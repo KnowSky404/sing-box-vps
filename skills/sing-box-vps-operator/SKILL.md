@@ -151,6 +151,15 @@ and Dial Field path. The empty flow supports native transports, while
 flow combinations fail closed before CAS/takeover and credentials remain in
 sensitive export only.
 
+WireGuard endpoint components use the modern endpoint role, never the removed
+`wireguard` outbound. Preserve standard 32-byte Base64 private/public/PSK keys,
+CIDR address and allowed IPs, peer keepalive/reserved tuples, MTU/listen/
+workers, UDP NAT behavior and shared Dial Fields; reject malformed keys,
+prefixes, peer tuples, deprecated fields and unknown fields before state/CAS.
+Fixed 1.14 full-field and 1.13.18 base-subset `check` results are configuration
+evidence only, not system-interface permission, peer-handshake or UDP
+data-plane proof.
+
 AnyTLS outbound components require `server`, `server_port`, a non-empty
 `password`, and enabled outbound TLS. Idle-session fields and `client_metadata`
 are optional typed values; AnyTLS has no configurable network, transport, or

@@ -25,6 +25,9 @@ jq -e '
   any(.[]; .role == "outbound" and .type == "shadowtls" and
     .features.network == ["tcp"] and .features.tls_required == true and
     .features.versions == [1,2,3]) and
+  any(.[]; .role == "endpoint" and .type == "wireguard" and
+    .features.typed_config == true and .features.peers == true and
+    .features.allowed_ips == true and .features.udp_nat == true) and
   all(.[]; .lifecycle.takeover == true) and
   any(.[]; .role == "inbound" and .type == "cloudflared" and
     .features.account_mutation == false and .availability == "with_cloudflared")
@@ -1660,6 +1663,70 @@ jq -e '.inbounds[] | select(.tag == "direct-local-in") | .listen_port == 15084' 
 rm -f "${component_firewall_apply_failure}"
 rm -f "${created_record}"
 
+# WireGuard is managed as a typed modern endpoint rather than as the removed
+# outbound.  Exercise listable prefixes, exact 32-byte keys, peer/NAT fields,
+# Dial Fields, rendering, and fail-closed malformed combinations.
+wireguard_fixture_private_key='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+wireguard_fixture_public_key='bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo='
+wireguard_endpoint_record=$(jq -cn \
+  --arg private_key "${wireguard_fixture_private_key}" \
+  --arg public_key "${wireguard_fixture_public_key}" \
+  '{id:"endpoint-wireguard-typed",role:"endpoint",type:"wireguard",tag:"wg-typed",enabled:true,route_rules:[],config:{
+    system:false,name:"wg-typed",mtu:1408,address:["10.0.0.2/32","fd00::2/128"],
+    private_key:$private_key,listen_port:51820,udp_timeout:"5m",
+    udp_mapping:"endpoint_independent",udp_filtering:"address_dependent",udp_nat_max:1024,
+    workers:2,peers:[{address:"198.51.100.1",port:51820,public_key:$public_key,
+      pre_shared_key:$private_key,allowed_ips:["0.0.0.0/0","::/0"],
+      persistent_keepalive_interval:25,reserved:[1,2,3]}],
+    connect_timeout:"5s",network_type:["ethernet"]}}')
+managed_component_state_validate_record "${wireguard_endpoint_record}"
+wireguard_typed_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${wireguard_endpoint_record}")
+wireguard_typed_rendered=$(managed_component_render_json "${wireguard_typed_state}")
+jq -e --arg private_key "${wireguard_fixture_private_key}" --arg public_key "${wireguard_fixture_public_key}" '
+  (.endpoints | length == 1) and
+  .endpoints[0].type == "wireguard" and
+  .endpoints[0].tag == "wg-typed" and
+  .endpoints[0].private_key == $private_key and
+  .endpoints[0].address == ["10.0.0.2/32","fd00::2/128"] and
+  .endpoints[0].peers[0].public_key == $public_key and
+  .endpoints[0].peers[0].allowed_ips == ["0.0.0.0/0","::/0"] and
+  .endpoints[0].peers[0].reserved == [1,2,3] and
+  .endpoints[0].udp_mapping == "endpoint_independent" and
+  .endpoints[0].udp_filtering == "address_dependent"
+' <<< "${wireguard_typed_rendered}" >/dev/null
+wireguard_scalar_record=$(jq -c '.config.address = "10.0.0.2/32" | .config.peers[0].allowed_ips = "0.0.0.0/0"' <<< "${wireguard_endpoint_record}")
+managed_component_state_validate_record "${wireguard_scalar_record}"
+wireguard_bad_key=$(jq -c '.config.private_key = "not-a-wireguard-key"' <<< "${wireguard_endpoint_record}")
+if managed_component_state_validate_record "${wireguard_bad_key}"; then
+  printf 'WireGuard malformed private key unexpectedly accepted\n' >&2
+  exit 1
+fi
+wireguard_bad_prefix=$(jq -c '.config.address[0] = "10.0.0.2/33"' <<< "${wireguard_endpoint_record}")
+if managed_component_state_validate_record "${wireguard_bad_prefix}"; then
+  printf 'WireGuard invalid address prefix unexpectedly accepted\n' >&2
+  exit 1
+fi
+wireguard_missing_allowed_ips=$(jq -c '.config.peers[0] |= del(.allowed_ips)' <<< "${wireguard_endpoint_record}")
+if managed_component_state_validate_record "${wireguard_missing_allowed_ips}"; then
+  printf 'WireGuard peer without allowed IPs unexpectedly accepted\n' >&2
+  exit 1
+fi
+wireguard_bad_reserved=$(jq -c '.config.peers[0].reserved = [1,2]' <<< "${wireguard_endpoint_record}")
+if managed_component_state_validate_record "${wireguard_bad_reserved}"; then
+  printf 'WireGuard invalid reserved tuple unexpectedly accepted\n' >&2
+  exit 1
+fi
+wireguard_bad_nat=$(jq -c '.config.udp_mapping = "symmetric"' <<< "${wireguard_endpoint_record}")
+if managed_component_state_validate_record "${wireguard_bad_nat}"; then
+  printf 'WireGuard invalid UDP NAT behavior unexpectedly accepted\n' >&2
+  exit 1
+fi
+wireguard_unknown_field=$(jq -c '.config.domain_strategy = "prefer_ipv4"' <<< "${wireguard_endpoint_record}")
+if managed_component_state_validate_record "${wireguard_unknown_field}"; then
+  printf 'WireGuard deprecated field unexpectedly accepted\n' >&2
+  exit 1
+fi
+
 # Take over registered advanced objects from a live configuration without
 # dropping object fields or route rules.  The operation is idempotent for
 # already-owned objects and assigns a deterministic ID to a newly discovered
@@ -1668,7 +1735,10 @@ live_without_selector_rules=$(jq -c '(.components[] | select(.id == "selector-lo
   "${SB_COMPONENT_STATE_FILE}")
 managed_component_write_state "${live_without_selector_rules}"
 generate_config
-wireguard_live=$(jq -cn '{type:"wireguard",tag:"wg-live",system:true,address:["10.0.0.2/32"],private_key:"private-key-preserved",peers:[{address:"198.51.100.1",port:51820,public_key:"peer-key",allowed_ips:["0.0.0.0/0"]}]}')
+wireguard_live=$(jq -cn \
+  --arg private_key "${wireguard_fixture_private_key}" \
+  --arg public_key "${wireguard_fixture_public_key}" \
+  '{type:"wireguard",tag:"wg-live",system:true,address:["10.0.0.2/32"],private_key:$private_key,peers:[{address:"198.51.100.1",port:51820,public_key:$public_key,allowed_ips:["0.0.0.0/0"]}]}')
 selector_live=$(jq -cn '{type:"selector",tag:"selector-live",outbounds:["direct","block"],default:"direct"}')
 jq --argjson endpoint "${wireguard_live}" --argjson outbound "${selector_live}" \
   --argjson ssh_outbound "${ssh_record}" \
@@ -1693,8 +1763,8 @@ takeover_json=$(agent_dispatch component takeover --json --yes --expected-revisi
 jq -e '.ok == true and .data.action == "component-apply" and
   .data.operation == "takeover" and .data.revision == 5 and
   .data.count == 8 and .data.firewall.status == "not_attempted"' <<< "${takeover_json}" >/dev/null
-jq -e 'any(.components[]; .id == "endpoint-wireguard-wg-live" and
-  .type == "wireguard" and .config.private_key == "private-key-preserved")' \
+jq -e --arg private_key "${wireguard_fixture_private_key}" 'any(.components[]; .id == "endpoint-wireguard-wg-live" and
+  .type == "wireguard" and .config.private_key == $private_key)' \
   "${SB_COMPONENT_STATE_FILE}" >/dev/null
 jq -e 'any(.components[]; .id == "outbound-selector-selector-live" and
   .type == "selector" and .config.outbounds == ["direct","block"] and
@@ -1714,7 +1784,7 @@ jq -e 'any(.components[]; .type == "urltest" and .tag == "urltest-local" and
   .config.interval == "1m" and
   (.route_rules | any(.[]; .outbound == "urltest-local")))' \
   "${SB_COMPONENT_STATE_FILE}" >/dev/null
-jq -e 'any(.endpoints[]; .tag == "wg-live" and .private_key == "private-key-preserved")' \
+jq -e --arg private_key "${wireguard_fixture_private_key}" 'any(.endpoints[]; .tag == "wg-live" and .private_key == $private_key)' \
   "${SINGBOX_CONFIG_FILE}" >/dev/null
 jq -e 'any(.outbounds[]; .tag == "selector-live" and .outbounds == ["direct","block"]) and
   any(.outbounds[]; .tag == "ssh-local" and .server == "ssh.example" and .password == "ssh-password") and
@@ -1728,8 +1798,8 @@ jq -e 'any(.outbounds[]; .tag == "selector-live" and .outbounds == ["direct","bl
   any(.route.rules[]; .outbound == "urltest-local" and (.domain | index("urltest.example")) != null)' \
   "${SINGBOX_CONFIG_FILE}" >/dev/null
 export_takeover_json=$(agent_dispatch component export --json --id endpoint-wireguard-wg-live --expected-revision 5)
-jq -e '.ok == true and .data.sensitive == true and
-  .data.component.config.private_key == "private-key-preserved"' <<< "${export_takeover_json}" >/dev/null
+jq -e --arg private_key "${wireguard_fixture_private_key}" '.ok == true and .data.sensitive == true and
+  .data.component.config.private_key == $private_key' <<< "${export_takeover_json}" >/dev/null
 
 # The generator-owned Warp endpoint is already emitted by the normal config
 # builder and must not become a duplicate managed component during takeover.
