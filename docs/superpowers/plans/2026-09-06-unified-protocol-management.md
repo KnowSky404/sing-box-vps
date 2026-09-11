@@ -597,3 +597,9 @@ managed WireGuard endpoint 现在通过 `managed_component_wireguard_config_vali
 managed Tailscale endpoint 现在按固定 1.14 `TailscaleEndpointOptions` 校验持久化 state/auth/control、route advertisement、relay AddrPort、exit-node 互斥、可选 SSH 和 shared Dial Fields；OpenConnect endpoint 按 client-only `OpenConnectEndpointOptions` 校验 flavor、token secret/path、mobile identity、CSD/HIP/TNCC、TLS material、form-entry 配对以及压缩/keepalive 互斥；OpenVPN client/server endpoint 分别按 TLS/static_key union 校验 remote、address pool/family、证书和密钥 material、control wrapping、users、push DNS/routes 与 TCP/UDP 约束。PEM/key inline material 可含 LF/CR，路径和普通字段仍拒绝控制字符；未知字段和不合法组合在 state/CAS 与 takeover 前失败。
 
 `tests/managed_components_contract.sh` 新增四类 endpoint 的 render、凭据/材料形状、route/family、TLS/static-key、token/mobile、control-wrap、push DNS 和未知字段负例。固定核心 check 与组件 state/render 只证明本地配置边界；未执行 Tailscale/OpenConnect/OpenVPN 外部认证、证书文件加载、系统接口权限或真实 TCP/UDP 数据面验证。本轮版本统一为 `2026091106`，完整协议目标仍未完成。
+
+### 2026-09-11：组件环境构建 tag 门控
+
+组件 registry 的每次环境读取现在解析目标 `sing-box version` 的 `Tags:` 行，并把已排序、校验过的 tag 列表放入 `environment.core.build_tags`。记录声明 `with_quic`、`with_wireguard`、`with_tailscale`、`with_openconnect`、`with_openvpn`、`with_cloudflared` 或 `with_naive_outbound` 时，已报告但缺失所需 tag 的组件返回 `unavailable`；包装器或旧二进制没有 `Tags:` 行时返回 `not_assessed`，不会把未知构建误报为可用。Hysteria、Hysteria2 与 TUIC outbound 的 registry 条件同步标记为 `with_quic`；Naive 的 `libcronet.so`、外部认证、系统权限和真实数据面仍是独立依赖。
+
+`tests/managed_component_availability.sh` 新增已报告 tag、缺失 `with_quic` 与未报告 tag 的正负门禁，固定官方 1.14.0 ARM64 包的解析结果也保持无凭据、排序和最小字段输出。该切片只改善构建变体可见性，不把 `Tags:`、版本检查或 `sing-box check` 扩大为外部控制面或 TCP/UDP 数据面验证。版本统一为本轮 `2026091107`，完整协议目标仍未完成。

@@ -6,7 +6,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091106`，`SB_SUPPORT_MAX_VERSION=1.14.0`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091107`，`SB_SUPPORT_MAX_VERSION=1.14.0`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -17,7 +17,7 @@
 
 表中“版本”优先表示本项目实现时的核心版本门槛：除标明“自 1.14.0”的能力外，继续以项目已有的 1.13.x 兼容路径为下限；它不声称是该协议在 sing-box 历史上的首次引入版本。需要 1.14.0 的 type 或字段必须在目标版本门控后才可生成。
 
-2026-09-09 高级组件增量：本项目新增独立 `components.json`（schema 1、revision/CAS）和 30 项 runtime component registry，接入 direct/tun/redirect/tproxy/cloudflared inbound、WireGuard/Tailscale/OpenConnect/OpenVPN endpoint，以及 SSH/Tor/direct/bridge/selector/urltest/block 和协议 outbound 的受控状态/config 组合。`implemented` 在本增量中表示状态读取、类型专属边界、配置合并、引用/依赖图、监听计划、Agent list/create/replace/delete 和目标核心校验切片已存在；组件的静态 `available` 仍为 `null`，另在 registry 每次读取时填充不缓存的 `environment` 观察（目标核心版本、平台、root/工具/运行库和外部认证依赖），其 `status` 只能是 `available`、`unavailable` 或 `not_assessed`，不等同于连接验证。`validated` 默认 `not_assessed`。高级 inbound/endpoint 及注册 outbound/group 现在支持无损保护接管和敏感单组件导出；内建 `direct`/`block` 与生成器自有 `warp-ep` endpoint 仍由生成器拥有，未知 outbound、保留 tag 冲突、未归属全局 route rule 及任意未建模顶层字段会阻断接管。这些组件不进入普通分享节点索引，外部控制面、构建 tag、路由/防火墙权限和真实数据面均不由 registry 或 `sing-box check` 推断；因此下方组件行的 D/T/E/R 与导出、分享、SubMan 仍按此边界记录，完整协议目标继续未完成。
+2026-09-09 高级组件增量：本项目新增独立 `components.json`（schema 1、revision/CAS）和 30 项 runtime component registry，接入 direct/tun/redirect/tproxy/cloudflared inbound、WireGuard/Tailscale/OpenConnect/OpenVPN endpoint，以及 SSH/Tor/direct/bridge/selector/urltest/block 和协议 outbound 的受控状态/config 组合。`implemented` 在本增量中表示状态读取、类型专属边界、配置合并、引用/依赖图、监听计划、Agent list/create/replace/delete 和目标核心校验切片已存在；组件的静态 `available` 仍为 `null`，另在 registry 每次读取时填充不缓存的 `environment` 观察（目标核心版本、平台、root/工具/运行库、构建 tag 和外部认证依赖），其 `status` 只能是 `available`、`unavailable` 或 `not_assessed`，不等同于连接验证。`validated` 默认 `not_assessed`。高级 inbound/endpoint 及注册 outbound/group 现在支持无损保护接管和敏感单组件导出；内建 `direct`/`block` 与生成器自有 `warp-ep` endpoint 仍由生成器拥有，未知 outbound、保留 tag 冲突、未归属全局 route rule 及任意未建模顶层字段会阻断接管。这些组件不进入普通分享节点索引，外部控制面、路由/防火墙权限和真实数据面均不由 registry 或 `sing-box check` 推断；若目标二进制未报告 `Tags:`，条件构建保持 `not_assessed`，已报告但缺少所需 tag 时为 `unavailable`。因此下方组件行的 D/T/E/R 与导出、分享、SubMan 仍按此边界记录，完整协议目标继续未完成。
 
 2026-09-10 持久化事务增量：高级组件写入现在在 `${SB_PROJECT_DIR}.component-write.lock` 中原子发布 `transaction.json`，记录 owner、CAS revision、before-active、publish/resources/service/committed 阶段和防火墙外部日志意图。`sbv agent component recover --json --yes --expected-revision N` 只接受已结束的 owner、可信快照和严格 phase/schema；中断发生在发布或资源阶段时先补偿防火墙再恢复 state/config/service，无法证明安全时保留目录并返回稳定错误。`component diagnose` 暴露 pending/phase 摘要；这仍不是公网防火墙、TUN/透明路由、Endpoint 外部认证或真实数据面验证，完整协议目标继续未完成。
 

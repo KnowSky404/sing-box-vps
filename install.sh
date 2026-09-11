@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091106
+# Version: 2026091107
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091106"
+readonly SCRIPT_VERSION="2026091107"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -115,9 +115,9 @@ readonly SB_COMPONENT_REGISTRY=(
   'vmess-outbound|outbound|vmess|VMess outbound|1.13.0|builtin|{"dialer":true}'
   'trojan-outbound|outbound|trojan|Trojan outbound|1.13.0|builtin|{"dialer":true}'
   'naive-outbound|outbound|naive|NaiveProxy outbound|1.13.0|with_naive_outbound|{"dialer":true,"network":["tcp","udp"],"tls_required":true,"quic":true,"quic_congestion_control":["bbr","bbr2","cubic","reno"],"udp_over_tcp":true,"external_runtime":"libcronet"}'
-  'hysteria2-outbound|outbound|hysteria2|Hysteria2 outbound|1.13.0|builtin|{"dialer":true,"network":["tcp","udp"],"tls_required":true,"obfs_types":["salamander","gecko"],"realm":true,"quic":true,"bbr_profiles":["conservative","standard","aggressive"]}'
-  'hysteria-outbound|outbound|hysteria|Hysteria outbound|1.13.0|builtin|{"dialer":true,"network":["tcp","udp"],"tls_required":true,"auth_fields":["auth","auth_str"],"bandwidth":true,"obfs":true,"quic":true}'
-  'tuic-outbound|outbound|tuic|TUIC outbound|1.13.0|builtin|{"dialer":true,"network":["tcp","udp"],"tls_required":true,"congestion_control":["cubic","new_reno","bbr"],"udp_relay_modes":["native","quic"],"udp_over_stream":true,"zero_rtt_handshake":true,"heartbeat":true,"quic":true}'
+  'hysteria2-outbound|outbound|hysteria2|Hysteria2 outbound|1.13.0|with_quic|{"dialer":true,"network":["tcp","udp"],"tls_required":true,"obfs_types":["salamander","gecko"],"realm":true,"quic":true,"bbr_profiles":["conservative","standard","aggressive"]}'
+  'hysteria-outbound|outbound|hysteria|Hysteria outbound|1.13.0|with_quic|{"dialer":true,"network":["tcp","udp"],"tls_required":true,"auth_fields":["auth","auth_str"],"bandwidth":true,"obfs":true,"quic":true}'
+  'tuic-outbound|outbound|tuic|TUIC outbound|1.13.0|with_quic|{"dialer":true,"network":["tcp","udp"],"tls_required":true,"congestion_control":["cubic","new_reno","bbr"],"udp_relay_modes":["native","quic"],"udp_over_stream":true,"zero_rtt_handshake":true,"heartbeat":true,"quic":true}'
   'vless-outbound|outbound|vless|VLESS outbound|1.13.0|builtin|{"dialer":true}'
   'anytls-outbound|outbound|anytls|AnyTLS outbound|1.14.0|builtin|{"dialer":true}'
   'snell-outbound|outbound|snell|Snell outbound|1.14.0|builtin|{"dialer":true,"versions":[4,6],"obfs_modes":["none","http"],"shaping_modes":["default","unshaped","unsafe-raw"],"udp_via_tcp_packet_api":true}'
@@ -1133,12 +1133,52 @@ component_runtime_library_available() {
   return 1
 }
 
+# The version command is the only stable, credential-free way for the
+# registry to observe build tags at runtime.  Return 2 when an older or
+# wrapper binary does not report a Tags line so callers can distinguish
+# "not reported" from a known tag mismatch.  No arbitrary version output is
+# exposed to the caller; only a validated, sorted tag array is emitted.
+detect_installed_singbox_build_tags_json() {
+  [[ -x "${SINGBOX_BIN_PATH}" ]] || return 1
+
+  local version_output tags_line tag_status
+  version_output=$("${SINGBOX_BIN_PATH}" version 2>/dev/null) || return 1
+  if tags_line=$(printf '%s\n' "${version_output}" | awk '
+    index($0, "Tags:") == 1 {
+      sub(/^Tags:[[:space:]]*/, "")
+      print
+      found=1
+      exit 0
+    }
+    END {
+      if (!found) exit 2
+    }
+  '); then
+    :
+  else
+    tag_status=$?
+    [[ "${tag_status}" -eq 2 ]] && return 2
+    return 1
+  fi
+
+  jq -cn --arg tags "${tags_line}" '
+    ($tags | if . == "" then [] else split(",") | map(gsub("^[[:space:]]+|[[:space:]]+$"; "")) end) as $values |
+    if all($values[]; test("^[A-Za-z0-9][A-Za-z0-9_.+\\-]{0,127}$")) and
+       (($values | unique | length) == ($values | length)) then
+      ($values | sort)
+    else
+      error("invalid_build_tags")
+    end
+  ' || return 1
+}
+
 component_registry_environment_probe() {
   local state_id=${1:-} role=${2:-} type=${3:-} minimum=${4:-} availability=${5:-}
   local platform core_version core_status=unavailable core_reason=sing_box_binary_missing
   local overall=unavailable overall_reason=sing_box_binary_missing dependency_rows=()
   local root_status=available
-  local command_status command_reason
+  local command_status command_reason build_tag build_tags_json='[]'
+  local build_tags_status=unavailable build_tags_reason=sing_box_binary_missing tag_status
 
   platform=$(uname -s 2>/dev/null || printf 'unknown')
   if [[ ! -x "${SINGBOX_BIN_PATH}" ]]; then
@@ -1158,6 +1198,26 @@ component_registry_environment_probe() {
   dependency_rows+=("sing_box_version"$'\t'"$([[ "${core_status}" == available ]] && printf available || printf unavailable)"$'\t'"$([[ "${core_status}" == available ]] && printf '' || printf '%s' "${core_reason}")"$'\t'"true")
   overall_reason=${core_reason}
 
+  if [[ -n "${core_version}" && "${core_reason}" != sing_box_version_unavailable ]]; then
+    if build_tags_json=$(detect_installed_singbox_build_tags_json); then
+      build_tags_status=available
+      build_tags_reason=''
+    else
+      tag_status=$?
+      build_tags_json='[]'
+      if [[ "${tag_status}" -eq 2 ]]; then
+        build_tags_status=not_assessed
+        build_tags_reason=build_tags_not_reported
+      else
+        build_tags_status=unavailable
+        build_tags_reason=sing_box_build_tags_unavailable
+      fi
+    fi
+  elif [[ "${core_reason}" == sing_box_version_unavailable ]]; then
+    build_tags_status=not_assessed
+    build_tags_reason=sing_box_version_unavailable
+  fi
+
   if [[ "${core_status}" == available ]]; then
     overall=available
     overall_reason=''
@@ -1167,7 +1227,7 @@ component_registry_environment_probe() {
     local name=$1 status=$2 reason=${3:-} required=${4:-true} item
     dependency_rows+=("${name}"$'\t'"${status}"$'\t'"${reason}"$'\t'"${required}")
     if [[ "${required}" == true ]]; then
-      if [[ "${status}" == unavailable && "${overall}" == available ]]; then
+      if [[ "${status}" == unavailable && "${overall}" != unavailable ]]; then
         overall=unavailable
         overall_reason=${reason:-${name}_unavailable}
       elif [[ "${status}" == not_assessed && "${overall}" == available ]]; then
@@ -1246,6 +1306,25 @@ component_registry_environment_probe() {
       ;;
   esac
 
+  if [[ "${availability}" == with_* ]]; then
+    build_tag=${availability}
+    if [[ "${build_tags_status}" == available ]]; then
+      if jq -en --arg tag "${build_tag}" --argjson tags "${build_tags_json}" \
+        '$tags | index($tag) != null' >/dev/null; then
+        component_add_dependency "build_tag_${build_tag}" available '' true || return 1
+      else
+        component_add_dependency "build_tag_${build_tag}" unavailable \
+          "build_tag_missing_${build_tag}" true || return 1
+      fi
+    elif [[ "${build_tags_status}" == not_assessed ]]; then
+      component_add_dependency "build_tag_${build_tag}" not_assessed \
+        "${build_tags_reason}" true || return 1
+    else
+      component_add_dependency "build_tag_${build_tag}" unavailable \
+        "${build_tags_reason}" true || return 1
+    fi
+  fi
+
   local dependencies
   dependencies=$(printf '%s\n' "${dependency_rows[@]}" | jq -Rsc '
     split("\n") | map(select(length > 0) | split("\t") |
@@ -1256,11 +1335,14 @@ component_registry_environment_probe() {
     --arg overall "${overall}" --arg reason "${overall_reason}" \
     --arg core_status "${core_status}" --arg core_version "${core_version}" \
     --arg minimum "${minimum}" --arg availability "${availability}" \
+    --arg tags_status "${build_tags_status}" --arg tags_reason "${build_tags_reason}" \
+    --argjson tags "${build_tags_json}" \
     --argjson dependencies "${dependencies}" \
     '{state_id:$state_id,status:$overall,reason:(if $reason == "" then null else $reason end),
       static_availability:$availability,
       platform:{name:$platform},
-      core:{status:$core_status,version:(if $core_version == "" then null else $core_version end),minimum:$minimum},
+      core:{status:$core_status,version:(if $core_version == "" then null else $core_version end),minimum:$minimum,
+        build_tags:{status:$tags_status,values:$tags,reason:(if $tags_reason == "" then null else $tags_reason end)}},
       dependencies:$dependencies}'
 }
 
@@ -1268,6 +1350,7 @@ component_registry_environment_bulk_json() {
   local static platform core_version core_probe_reason
   local root_ok=false ip_ok=false transparent_ok=false cloudflared_ok=false
   local tailscale_ok=false tor_ok=false libcronet_ok=false
+  local core_tags_json='[]' core_tags_status=unavailable core_tags_reason=sing_box_binary_missing tag_status
 
   static=$(component_registry_static_json) || return 1
   platform=$(uname -s 2>/dev/null || printf 'unknown')
@@ -1278,8 +1361,24 @@ component_registry_environment_bulk_json() {
     if [[ ! "${core_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
       core_probe_reason=sing_box_version_unavailable
       core_version=''
+      core_tags_status=not_assessed
+      core_tags_reason=sing_box_version_unavailable
     else
       core_probe_reason=''
+      if core_tags_json=$(detect_installed_singbox_build_tags_json); then
+        core_tags_status=available
+        core_tags_reason=''
+      else
+        tag_status=$?
+        core_tags_json='[]'
+        if [[ "${tag_status}" -eq 2 ]]; then
+          core_tags_status=not_assessed
+          core_tags_reason=build_tags_not_reported
+        else
+          core_tags_status=unavailable
+          core_tags_reason=sing_box_build_tags_unavailable
+        fi
+      fi
     fi
   fi
   [[ "${EUID}" -eq 0 ]] && root_ok=true
@@ -1295,7 +1394,8 @@ component_registry_environment_bulk_json() {
     --argjson root_ok "${root_ok}" --argjson ip_ok "${ip_ok}" \
     --argjson transparent_ok "${transparent_ok}" --argjson cloudflared_ok "${cloudflared_ok}" \
     --argjson tailscale_ok "${tailscale_ok}" --argjson tor_ok "${tor_ok}" \
-    --argjson libcronet_ok "${libcronet_ok}" '
+    --argjson libcronet_ok "${libcronet_ok}" --arg tags_status "${core_tags_status}" \
+    --arg tags_reason "${core_tags_reason}" --argjson core_tags "${core_tags_json}" '
     def version_parts($value): $value | split(".") | map(tonumber);
     def at_least($value; $minimum):
       (version_parts($value)) as $a | (version_parts($minimum)) as $b |
@@ -1311,6 +1411,22 @@ component_registry_environment_bulk_json() {
       dependency($name; "available"; ""; $required);
     def not_assessed($name; $reason; $required):
       dependency($name; "not_assessed"; $reason; $required);
+    def build_tag_dependencies:
+      if (.availability | startswith("with_")) then
+        .availability as $tag |
+        ("build_tag_" + $tag) as $name |
+        if $tags_status == "available" then
+          if ($core_tags | index($tag)) == null then
+            [unavailable($name; "build_tag_missing_" + $tag; true)]
+          else
+            [available($name; true)]
+          end
+        elif $tags_status == "not_assessed" then
+          [not_assessed($name; $tags_reason; true)]
+        else
+          [unavailable($name; $tags_reason; true)]
+        end
+      else [] end;
     def core:
       if $core_version == "" then
         {status:"unavailable",reason:$core_probe_reason}
@@ -1364,13 +1480,15 @@ component_registry_environment_bulk_json() {
       . as $entry | (core) as $core |
       ([dependency("sing_box_binary"; $core.status; $core.reason; true),
         dependency("sing_box_version"; $core.status; $core.reason; true)] +
-       ([extra_dependencies] | flatten)) as $dependencies |
-      (final($core; $dependencies)) as $result |
-      {state_id:$entry.state_id,status:$result.status,reason:$result.reason,
+       (([extra_dependencies] | flatten) + ($entry | build_tag_dependencies))) as $dependencies |
+       (final($core; $dependencies)) as $result |
+       {state_id:$entry.state_id,status:$result.status,reason:$result.reason,
        static_availability:$entry.availability,platform:{name:$platform},
        core:{status:$core.status,
              version:(if $core_version == "" then null else $core_version end),
-             minimum:$entry.minimum_project_core},
+             minimum:$entry.minimum_project_core,
+             build_tags:{status:$tags_status,values:$core_tags,
+                         reason:(if $tags_reason == "" then null else $tags_reason end)}},
        dependencies:$dependencies}
     )'
 }
