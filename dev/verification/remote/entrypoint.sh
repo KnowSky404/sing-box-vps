@@ -1213,12 +1213,13 @@ verification_generate_protocol_probe_client_config() {
                  server: "127.0.0.1",
                  server_port: ($server_port | tonumber),
                  uuid: $user.uuid,
-                 network: (if $transport.type == "quic" then ["udp"] else ["tcp", "udp"] end)
+                 network: ["tcp", "udp"]
                }
                + (if ($user.flow // "") != "" then {flow: $user.flow} else {} end)
                + (if $transport.type != "none" then {transport: $transport} else {} end)
                + (if $tls.enabled == true then
-                    {tls: {enabled: true, server_name: $tls.server_name, insecure: true}}
+                    {tls: ({enabled: true, server_name: $tls.server_name, insecure: true} +
+                      (if $transport.type == "quic" then {alpn: ["h3"]} else {} end))}
                   else
                     {}
                   end)

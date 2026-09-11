@@ -884,7 +884,7 @@ The private record contains the common `id`, `name`, `tag`, `listen`, `outbound_
 
 ## 2026-09-11：Hysteria v1/Hysteria2 Docker 数据面探针
 
-`fresh_install_hysteria` 远程场景现在生成持久于验证容器生命周期的自签名 SAN 证书，安装 Hysteria v1 后用受管状态导出单用户客户端；导出器保留 `auth_str`、`up_mbps/down_mbps`、公开证书（不含私钥）和显式 `h3` ALPN。固定 1.14.0 核心的服务端 UDP listener、客户端 SOCKS listener、HTTP marker 与 SOCKS5 UDP ASSOCIATE marker 均在 Docker 回环内通过；`multi_protocol_coexistence` 对 Hysteria2、SS2022、Trojan QUIC 与 TUIC 也完成同一 UDP marker 回环，TUIC 客户端 exporter 的 `h3` ALPN 与服务端协商保持一致。完整 run `dev/verification-runs/20260911175746` 记录 16/16 场景、23/23 常规协议探针成功，五个 `udp.result.env` 均为 `RESULT=success`，精确 payload 保存在对应 `udp-response.txt`。QUIC 选项输入允许 `0` 表示上游默认；这些结果仍只证明隔离容器/回环业务路径，不证明公网、生产、外部控制面或全协议目标完成。
+`fresh_install_hysteria` 远程场景现在生成持久于验证容器生命周期的自签名 SAN 证书，安装 Hysteria v1 后用受管状态导出单用户客户端；导出器保留 `auth_str`、`up_mbps/down_mbps`、公开证书（不含私钥）和显式 `h3` ALPN。固定 1.14.0 核心的服务端 UDP listener、客户端 SOCKS listener、HTTP marker 与 SOCKS5 UDP ASSOCIATE marker 均在 Docker 回环内通过；`multi_protocol_coexistence` 对 Hysteria2、SS2022、Trojan QUIC、TUIC 与 VMess QUIC 也完成同一 UDP marker 回环，TUIC/VMess 客户端 exporter 的 `h3` ALPN 与服务端协商保持一致，同时 VMess/VLESS QUIC exporter 保留 `tcp+udp` proxy network。完整 run `dev/verification-runs/20260911194118` 记录 16/16 场景、24/24 常规协议探针成功，六个 `udp.result.env` 均为 `RESULT=success`，精确 payload 保存在对应 `udp-response.txt`。QUIC 选项输入允许 `0` 表示上游默认；这些结果仍只证明隔离容器/回环业务路径，不证明公网、生产、外部控制面或全协议目标完成。
 
 ## External Documentation
 

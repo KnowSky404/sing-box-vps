@@ -110,7 +110,7 @@ for transport in \
   jq -e --arg type "${transport_type}" --arg trust "${trust}" \
     'length==2 and all(.[]; .type=="vless" and .server=="203.0.113.9" and
       (.network|type)=="array" and ((.network|index("tcp")) != null or (.network|index("udp")) != null)) and
-      (if $type=="quic" then all(.[]; .network==["udp"]) else all(.[]; .network==["tcp","udp"]) end) and
+      all(.[]; .network==["tcp","udp"]) and
       (if $trust=="certificate" then all(.[]; ((.tls.certificate // "") | contains("BEGIN CERTIFICATE"))) else true end)' \
     <<< "${outbounds}" >/dev/null
   if [[ "${transport_type}" == ws ]]; then

@@ -142,15 +142,34 @@ EOF
   jq -e '.ok==true and .protocol=="tuic" and .changed==true and .revision==1' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tuic-create.json" >/dev/null
 
+  # VMess QUIC shares the V2Ray transport profile with production client
+  # export.  Keep it as a separate typed instance so the coexistence run
+  # proves the VMess UDP listener and h3 client negotiation without changing
+  # the ordinary fresh-install preset.
+  local vmess_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/vmess-record.json"
+  (umask 077; jq -n --arg cert "${cert_path}" --arg key "${key_path}" '
+    {id:"main",name:"VMess QUIC verification",tag:"vmess-in",
+     listen:{address:"127.0.0.1",port:1085},
+     authentication:{users:[{name:"vmess-user",uuid:"22222222-2222-4222-8222-222222222222",
+       alter_id:0,security:"auto"}]},
+     tls:{enabled:true,server_name:"sing-box-vps-verification.invalid",certificate_path:$cert,key_path:$key},
+     client_trust:"certificate",transport:{type:"quic"},
+     outbound_policy:"default",dependencies:[]}' > "${vmess_record}")
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent instance create vmess --json --yes \
+    --expected-revision 0 --file "${vmess_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/vmess-create.json"
+  jq -e '.ok==true and .protocol=="vmess" and .changed==true and .revision==1' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/vmess-create.json" >/dev/null
+
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/config.json")
   index_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/index.env")
   cp /root/sing-box-vps/config.json "${config_path}"
   cp /root/sing-box-vps/protocols/index.env "${index_path}"
-  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan,tuic' "${index_path}"
+  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan,tuic,vmess' "${index_path}"
   jq -e '
-    ([.inbounds[] | .type] | sort) == ["anytls", "http", "hysteria2", "mixed", "shadowsocks", "socks", "trojan", "tuic", "vless"] and
+    ([.inbounds[] | .type] | sort) == ["anytls", "http", "hysteria2", "mixed", "shadowsocks", "socks", "trojan", "tuic", "vless", "vmess"] and
     ([.inbounds[] | select(.type == "vless") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "mixed") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "hysteria2") | .listen_port] | length == 1) and
@@ -161,7 +180,9 @@ EOF
     ([.inbounds[] | select(.type == "trojan" and .transport.type=="quic" and .tls.alpn==["h3"])] | length == 1) and
     ([.inbounds[] | select(.type == "tuic" and .tls.alpn==["h3"] and
       .congestion_control=="bbr" and .auth_timeout=="3s" and .heartbeat=="10s" and
-      (. | has("udp_relay_mode") | not) and (. | has("udp_over_stream") | not))] | length == 1)
+      (. | has("udp_relay_mode") | not) and (. | has("udp_over_stream") | not))] | length == 1) and
+    ([.inbounds[] | select(.type == "vmess" and .transport.type=="quic" and .tls.alpn==["h3"] and
+      .users[0].uuid=="22222222-2222-4222-8222-222222222222")] | length == 1)
   ' /root/sing-box-vps/config.json >/dev/null
   grep -Fqx 'sing-box version 1.14.0' <(sing-box version)
   verification_wait_for_service_active sing-box
@@ -187,4 +208,5 @@ EOF
   verification_execute_protocol_udp_probe shadowsocks /root/sing-box-vps/config.json
   verification_execute_protocol_udp_probe trojan /root/sing-box-vps/config.json
   verification_execute_protocol_udp_probe tuic /root/sing-box-vps/config.json
+  verification_execute_protocol_udp_probe vmess /root/sing-box-vps/config.json
 }

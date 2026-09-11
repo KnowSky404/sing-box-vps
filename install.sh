@@ -22076,9 +22076,12 @@ build_vmess_client_outbounds_from_store() (
   raw_file=$(mktemp) || return 1
   output_file=$(mktemp) || { rm -f -- "${raw_file}"; return 1; }
   trap 'rm -f -- "${raw_file}" "${output_file}"' EXIT
+  # V2Ray QUIC selects the transport socket, but does not turn a proxy
+  # outbound into a UDP-only service.  Keep both proxy networks enabled; the
+  # transport profile is the source of the server's UDP listener projection.
   jq -c --arg server "${server}" '.instances[] as $instance | $instance.authentication.users[] as $user |
     {type:"vmess",tag:("vmess-" + $instance.id + "-user-" + ($user.name | @base64)),server:$server,server_port:$instance.listen.port,
-     uuid:$user.uuid,security:$user.security,alter_id:$user.alter_id,network:(if $instance.transport.type == "quic" then ["udp"] else ["tcp","udp"] end),
+     uuid:$user.uuid,security:$user.security,alter_id:$user.alter_id,network:["tcp","udp"],
      _tls:$instance.tls,_client_trust:$instance.client_trust,_transport:$instance.transport}' <<< "${snapshot}" > "${raw_file}" || return 1
   while IFS= read -r raw_outbound; do
     [[ -n "${raw_outbound}" ]] || continue
@@ -22146,10 +22149,12 @@ build_vless_plain_client_outbounds_from_store() (
   raw_file=$(mktemp) || return 1
   output_file=$(mktemp) || { rm -f -- "${raw_file}"; return 1; }
   trap 'rm -f -- "${raw_file}" "${output_file}"' EXIT
+  # Like VMess, VLESS QUIC uses UDP for the transport socket while the proxy
+  # outbound may still carry TCP streams and UDP packets.
   jq -c --arg server "${server}" '.instances[] as $instance | $instance.authentication.users[] as $user |
     {type:"vless",tag:("vless-plain-" + $instance.id + "-user-" + ($user.name | @base64)),server:$server,server_port:$instance.listen.port,
      uuid:$user.uuid} + (if ($user.flow // "") == "" then {} else {flow:$user.flow} end) +
-     {network:(if $instance.transport.type == "quic" then ["udp"] else ["tcp","udp"] end),
+     {network:["tcp","udp"],
       _tls:$instance.tls,_client_trust:$instance.client_trust,_transport:$instance.transport}' <<< "${snapshot}" > "${raw_file}" || return 1
   while IFS= read -r raw_outbound; do
     [[ -n "${raw_outbound}" ]] || continue
