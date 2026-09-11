@@ -504,6 +504,62 @@ verification_generate_vmess_probe_client() (
   mv -f -- "${temp_dir}/client.json" "${output_path}" || return 1
 )
 
+verification_generate_snell_probe_client() (
+  set -euo pipefail
+  umask 077
+  local config_file=$1 output_path=$2 installer temp_dir selected_tag snapshot
+  local state_file store_file record server_port
+  installer=${VERIFY_REMOTE_INSTALL_SCRIPT:-/usr/local/bin/sbv}
+  [[ -f "${installer}" ]] || return 1
+  temp_dir=$(mktemp -d "${output_path}.snell.XXXXXX") || return 1
+  trap 'rm -rf -- "${temp_dir}"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+
+  # Snell has no standard share URI.  Build the probe from the exact typed
+  # store/exporter used by the runtime, after checking that the rendered
+  # inbound still identifies the same managed instance and credentials.
+  source "${installer}"
+  plain_proxy_structured_state_active snell || return 1
+  state_file=$(protocol_state_file snell) || return 1
+  store_file=$(plain_proxy_structured_store_file snell) || return 1
+  selected_tag=$(jq -er '
+    [(.inbounds // [])[] | select(.type == "snell")] |
+    if length == 1 and (.[0].tag | type == "string" and length > 0)
+    then .[0].tag else error("invalid Snell probe inventory") end
+  ' "${config_file}") || return 1
+  server_port=$(jq -er --arg tag "${selected_tag}" '
+    [(.inbounds // [])[] | select(.type == "snell" and .tag == $tag)] |
+    if length == 1 and (.[0].listen_port | type == "number" and floor == .)
+    then .[0].listen_port else error("invalid Snell probe listener") end
+  ' "${config_file}") || return 1
+  record=$(verification_load_snell_probe_record "${state_file}" "${store_file}" "${selected_tag}") || return 1
+  snapshot=$(structured_instance_store_snapshot_json snell "${store_file}") || return 1
+  jq -e --arg tag "${selected_tag}" --argjson expected "${record}" --argjson port "${server_port}" '
+    any(.instances[]; .tag == $tag and .listen == $expected.listen and
+      .listen.port == $port and .authentication == $expected.authentication and
+      .version == $expected.version and .obfs_mode == $expected.obfs_mode and
+      .obfs_host == $expected.obfs_host and .mode == $expected.mode)
+  ' <<< "${snapshot}" >/dev/null || return 1
+  jq -e --arg tag "${selected_tag}" '
+    .instances |= map(select(.tag == $tag)) |
+    if (.instances|length)==1 then .default_instance_id=.instances[0].id
+    else error("invalid probe inventory") end
+  ' <<< "${snapshot}" > "${temp_dir}/store.json" || return 1
+  build_client_snell_outbounds 127.0.0.1 "${temp_dir}/store.json" \
+    > "${temp_dir}/outbounds.jsonl" || return 1
+  jq -se '
+    if length == 1 then
+      {log:{disabled:true},
+       inbounds:[{type:"socks",tag:"local-socks",listen:"127.0.0.1",listen_port:19080}],
+       outbounds:[(.[0] | .tag="proxy")],route:{final:"proxy"}}
+    else error("invalid Snell probe export") end
+  ' "${temp_dir}/outbounds.jsonl" > "${temp_dir}/client.json" || return 1
+  chmod 600 "${temp_dir}/client.json" || return 1
+  mv -f -- "${temp_dir}/client.json" "${output_path}" || return 1
+)
+
 verification_generate_hysteria_probe_client() (
   set -euo pipefail
   umask 077
@@ -691,6 +747,68 @@ verification_load_vmess_probe_record() {
         }
       )
     else error("invalid VMess structured state")
+    end
+  ' "${store_file}") || return 1
+  printf '%s\n' "${record}"
+}
+
+verification_load_snell_probe_record() {
+  local state_file=$1
+  local store_file=$2
+  local tag=$3
+  local record
+
+  [[ -f "${state_file}" && ! -L "${state_file}" ]] || return 1
+  grep -Eq '^[[:space:]]*CONFIG_SCHEMA_VERSION=2([[:space:]]*)$' "${state_file}" || return 1
+  [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  record=$(jq -ce --arg tag "${tag}" '
+    def safe_text:
+      type == "string" and length > 0 and
+      (test("[[:cntrl:]]") | not);
+    def safe_address:
+      type == "string" and length > 0 and
+      (test("[[:cntrl:][:space:]]") | not);
+    if .schema_version == 1 and .protocol == "snell" and
+       (.instances | type == "array") and
+       ([.instances[] | select(.tag == $tag)] | length) == 1 then
+      ([.instances[] | select(.tag == $tag)][0] |
+        select(
+          (.listen | type == "object" and (keys | sort) == ["address","port"] and
+            (.address | safe_address) and
+            (.port | type == "number" and floor == . and . >= 1 and . <= 65535)) and
+          (.authentication | type == "object" and (keys | sort) == ["psk","users"] and
+            (.psk | safe_text and utf8bytelength <= 255) and
+            (.users | type == "array" and length <= 128 and
+              all(.[]; type == "object" and (keys | sort) == ["name","userkey"] and
+                (.name | safe_text and utf8bytelength <= 256) and
+                (.userkey | safe_text and utf8bytelength <= 255)) and
+              (map(.name) | unique | length) == length and
+              (map(.userkey) | unique | length) == length)) and
+          (.version | type == "number" and floor == . and IN(5,6)) and
+          (.obfs_mode | type == "string") and
+          (.obfs_host | type == "string") and
+          (.mode | type == "string") and
+          (if .version == 5 then
+             .mode == "" and (.obfs_mode | IN("none","http")) and
+             (if .obfs_mode == "none" then .obfs_host == ""
+              else (.obfs_host | safe_text and utf8bytelength <= 255) end)
+           else
+             .obfs_mode == "" and .obfs_host == "" and
+             (.mode | IN("","default","unshaped","unsafe-raw")) and
+             (.authentication.psk | utf8bytelength >= 12)
+           end) and
+          (.outbound_policy | IN("default","direct","warp")) and
+          (.dependencies | type == "array" and length == 0)
+        ) | {
+          listen: .listen,
+          authentication: .authentication,
+          version: .version,
+          obfs_mode: .obfs_mode,
+          obfs_host: .obfs_host,
+          mode: .mode
+        }
+      )
+    else error("invalid Snell structured state")
     end
   ' "${store_file}") || return 1
   printf '%s\n' "${record}"
@@ -890,6 +1008,10 @@ verification_generate_protocol_probe_client_config() {
   local vmess_alter_id=''
   local vmess_transport_json=''
   local vmess_tls_json=''
+  local snell_state_file=''
+  local snell_store_file=''
+  local snell_tag=''
+  local snell_record=''
   local vless_plain_state_file=''
   local vless_plain_store_file=''
   local vless_plain_tag=''
@@ -1150,6 +1272,11 @@ verification_generate_protocol_probe_client_config() {
       output_path=$(verification_artifact_path \
         "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
       verification_generate_vmess_probe_client "${config_file}" "${output_path}" || return 1
+      ;;
+    snell)
+      output_path=$(verification_artifact_path \
+        "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
+      verification_generate_snell_probe_client "${config_file}" "${output_path}" || return 1
       ;;
     hysteria)
       output_path=$(verification_artifact_path \

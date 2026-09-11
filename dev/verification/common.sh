@@ -145,6 +145,7 @@ resolve_local_tests() {
       tests/verification_protocol_probe_shadowsocks.sh \
       tests/verification_protocol_probe_trojan.sh \
       tests/verification_protocol_probe_vmess.sh \
+      tests/verification_protocol_probe_snell.sh \
       tests/verification_protocol_probe_hysteria.sh \
       tests/verification_protocol_probe_tuic.sh \
       tests/verification_protocol_probe_udp.sh \

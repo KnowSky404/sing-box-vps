@@ -161,15 +161,31 @@ EOF
   jq -e '.ok==true and .protocol=="vmess" and .changed==true and .revision==1' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/vmess-create.json" >/dev/null
 
+  # Snell v6 is a TCP listener whose packet API can carry UDP semantics over
+  # the same authenticated stream.  Keep this scenario's evidence bounded to
+  # the real TCP marker probe; no separate native-UDP claim is made here.
+  local snell_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/snell-record.json"
+  (umask 077; jq -n '
+    {id:"main",name:"Snell v6 verification",tag:"snell-in",
+     listen:{address:"127.0.0.1",port:1086},
+     authentication:{psk:"snell-v6-psk-123456",users:[{name:"snell-user",userkey:"snell-user-key"}]},
+     version:6,obfs_mode:"",obfs_host:"",mode:"default",
+     outbound_policy:"default",dependencies:[]}' > "${snell_record}")
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent instance create snell --json --yes \
+    --expected-revision 0 --file "${snell_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/snell-create.json"
+  jq -e '.ok==true and .protocol=="snell" and .changed==true and .revision==1' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/snell-create.json" >/dev/null
+
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/config.json")
   index_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/index.env")
   cp /root/sing-box-vps/config.json "${config_path}"
   cp /root/sing-box-vps/protocols/index.env "${index_path}"
-  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan,tuic,vmess' "${index_path}"
+  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan,tuic,vmess,snell' "${index_path}"
   jq -e '
-    ([.inbounds[] | .type] | sort) == ["anytls", "http", "hysteria2", "mixed", "shadowsocks", "socks", "trojan", "tuic", "vless", "vmess"] and
+    ([.inbounds[] | .type] | sort) == ["anytls", "http", "hysteria2", "mixed", "shadowsocks", "snell", "socks", "trojan", "tuic", "vless", "vmess"] and
     ([.inbounds[] | select(.type == "vless") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "mixed") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "hysteria2") | .listen_port] | length == 1) and
@@ -182,7 +198,10 @@ EOF
       .congestion_control=="bbr" and .auth_timeout=="3s" and .heartbeat=="10s" and
       (. | has("udp_relay_mode") | not) and (. | has("udp_over_stream") | not))] | length == 1) and
     ([.inbounds[] | select(.type == "vmess" and .transport.type=="quic" and .tls.alpn==["h3"] and
-      .users[0].uuid=="22222222-2222-4222-8222-222222222222")] | length == 1)
+      .users[0].uuid=="22222222-2222-4222-8222-222222222222")] | length == 1) and
+    ([.inbounds[] | select(.type == "snell" and .version == 6 and
+      .psk == "snell-v6-psk-123456" and .users[0].userkey == "snell-user-key" and
+      .mode == "default")] | length == 1)
   ' /root/sing-box-vps/config.json >/dev/null
   grep -Fqx 'sing-box version 1.14.0' <(sing-box version)
   verification_wait_for_service_active sing-box
