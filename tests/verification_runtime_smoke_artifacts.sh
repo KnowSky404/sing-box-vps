@@ -1428,6 +1428,9 @@ verification_scenario_multi_protocol_coexistence() {
   printf 'SCENARIO=multi_protocol_coexistence\n'
   printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
   verification_run_protocol_probes
+  verification_execute_protocol_udp_probe hy2 /root/sing-box-vps/config.json
+  verification_execute_protocol_udp_probe trojan /root/sing-box-vps/config.json
+  verification_execute_protocol_udp_probe tuic /root/sing-box-vps/config.json
 }
 
 verification_scenario_fresh_install_http() {
@@ -1596,6 +1599,7 @@ grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/hysteria/result.env"
 grep -Fqx 'RESULT=unsupported' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/mystery-protocol/result.env"
 grep -Fqx 'STATUS=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/result.env"
+grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/protocol-probes/trojan/udp.result.env"
 grep -Fqx 'STATUS=success' "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/result.env"
 [[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/upgrade.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/transaction-result.json" ]]

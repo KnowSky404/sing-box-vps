@@ -184,5 +184,6 @@ EOF
   done < <(read_installed_protocols)
   verification_run_protocol_probes
   verification_execute_protocol_udp_probe hy2 /root/sing-box-vps/config.json
+  verification_execute_protocol_udp_probe trojan /root/sing-box-vps/config.json
   verification_execute_protocol_udp_probe tuic /root/sing-box-vps/config.json
 }
