@@ -76,4 +76,5 @@ EOF
   verification_assert_udp_port_listening "${expected_port}" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.ss-lunp.txt"
   verification_run_protocol_probes
+  verification_execute_protocol_udp_probe hysteria "${config_file}"
 }

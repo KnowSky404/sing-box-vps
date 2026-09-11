@@ -160,4 +160,5 @@ EOF
     fi
   done < <(read_installed_protocols)
   verification_run_protocol_probes
+  verification_execute_protocol_udp_probe hy2 /root/sing-box-vps/config.json
 }

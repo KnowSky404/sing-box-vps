@@ -146,6 +146,7 @@ resolve_local_tests() {
       tests/verification_protocol_probe_trojan.sh \
       tests/verification_protocol_probe_vmess.sh \
       tests/verification_protocol_probe_hysteria.sh \
+      tests/verification_protocol_probe_udp.sh \
       tests/verification_protocol_probe_vless_plain.sh \
       tests/reality_sni_validation.sh \
       tests/generate_config_cleans_temp_files_on_failure.sh \

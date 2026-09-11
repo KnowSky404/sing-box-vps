@@ -604,6 +604,10 @@ managed Tailscale endpoint 现在按固定 1.14 `TailscaleEndpointOptions` 校�
 
 `tests/managed_component_availability.sh` 新增已报告 tag、缺失 `with_quic` 与未报告 tag 的正负门禁，固定官方 1.14.0 ARM64 包的解析结果也保持无凭据、排序和最小字段输出。该切片只改善构建变体可见性，不把 `Tags:`、版本检查或 `sing-box check` 扩大为外部控制面或 TCP/UDP 数据面验证。版本统一为本轮 `2026091107`，完整协议目标仍未完成。
 
-### 2026-09-11：Hysteria v1 真实 Docker 回环探针
+### 2026-09-11：Hysteria v1/Hysteria2 Docker 数据面探针
 
-本轮将 Hysteria v1 从“仅配置/生命周期”推进到可重复的远程业务探针：新增 `tests/verification_protocol_probe_hysteria.sh` 与 `fresh_install_hysteria`，使用受管 typed store/exporter 生成单用户客户端，显式保留 `auth_str`、`up_mbps/down_mbps`、公开证书和 `h3` ALPN；QUIC 初始包/最大并发为 `0` 时按上游默认值接受。服务端使用持久于验证容器的 SAN 证书，客户端经本地 SOCKS 访问 Python HTTP marker，避免将第二用户凭据、私钥或公网可达性写入 artifact。runtime smoke 同步按 registry 选择 TCP/UDP listener assertion。聚焦 run `dev/verification-runs/20260911124157` 中 `fresh_install_hysteria` 与 `runtime_smoke` 均 success，两个 Hysteria probe 均 `RESULT=success`；随后远程完整门禁 `dev/verification-runs/20260911140159` 在 `VERIFY_SKIP_LOCAL_TESTS=1` 下 16/16 场景、23/23 协议探针 success，其中 `fresh_install_hysteria` 的 Hysteria probe 返回 HTTP marker。该证据仍限于容器/回环，完整协议目标仍未完成。
+本轮将 Hysteria v1 从“仅配置/生命周期”推进到可重复的 TCP/UDP payload 业务探针：新增 `tests/verification_protocol_probe_hysteria.sh` 与 `fresh_install_hysteria`，使用受管 typed store/exporter 生成单用户客户端，显式保留 `auth_str`、`up_mbps/down_mbps`、公开证书和 `h3` ALPN；QUIC 初始包/最大并发为 `0` 时按上游默认值接受。服务端使用持久于验证容器的 SAN 证书，客户端经本地 SOCKS 访问 Python HTTP marker，避免将第二用户凭据、私钥或公网可达性写入 artifact。
+
+新增 `verification_execute_protocol_udp_probe` 作为可复用的真实 UDP 探针：它先对 exporter 生成的客户端配置执行 `sing-box check`，再启动本地 UDP echo，运行客户端核心并通过 SOCKS5 UDP ASSOCIATE 发送带协议标识的 marker，严格校验返回 payload 完全一致；探针记录 check、客户端路径、响应、stderr 和 `udp.result.env`，失败时清理自身进程及临时目录，不接触 systemd 管理的服务。`fresh_install_hysteria` 调用它验证 Hysteria v1，`multi_protocol_coexistence` 调用它验证 Hysteria2。
+
+完整 Docker run `dev/verification-runs/20260911154013` 的 16/16 场景与 23/23 协议探针均 success；Hysteria 与 Hysteria2 的 `udp.result.env` 均为 `RESULT=success`，对应 artifact 的 `udp-response.txt` 保留精确 marker。独立 fixture `tests/verification_protocol_probe_udp.sh` 覆盖 SOCKS5 协商、UDP ASSOCIATE、响应解析、artifact 和清理边界。该证据仍限定在固定 1.14.0 核心的隔离 Docker 回环，不扩张为公网 UDP、防火墙/路由、外部认证、生产部署或其他尚未接入探针的协议/Endpoint 数据面；完整协议目标仍未完成。

@@ -1308,6 +1308,189 @@ verification_generate_protocol_probe_client_config() {
   printf '%s\n' "${output_path}"
 }
 
+verification_execute_protocol_udp_probe() (
+  set -euo pipefail
+  local protocol=$1 config_file=$2
+  local probe_dir client_config_path check_artifact
+  local response_artifact stdout_artifact stderr_artifact server_stdout_artifact server_stderr_artifact
+  local result_artifact path_artifact
+  local temp_dir port_file marker udp_port
+  local server_pid='' client_pid='' check_status=0 udp_status=1
+
+  verification_protocol_id_is_safe "${protocol}" || return 1
+  probe_dir="${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}"
+  check_artifact=$(verification_artifact_path "${probe_dir}/udp-client.check.txt")
+  response_artifact=$(verification_artifact_path "${probe_dir}/udp-response.txt")
+  stdout_artifact=$(verification_artifact_path "${probe_dir}/udp-probe.stdout.txt")
+  stderr_artifact=$(verification_artifact_path "${probe_dir}/udp-client.stderr.txt")
+  server_stdout_artifact=$(verification_artifact_path "${probe_dir}/udp-server.stdout.txt")
+  server_stderr_artifact=$(verification_artifact_path "${probe_dir}/udp-server.stderr.txt")
+  result_artifact=$(verification_artifact_path "${probe_dir}/udp.result.env")
+  path_artifact=$(verification_artifact_path "${probe_dir}/udp-client.path.txt")
+  rm -f -- "${check_artifact}" "${response_artifact}" "${stdout_artifact}" \
+    "${stderr_artifact}" "${server_stdout_artifact}" "${server_stderr_artifact}" \
+    "${result_artifact}" "${path_artifact}"
+
+  cleanup_udp_probe() {
+    local pid
+
+    set +e
+    for pid in "${server_pid}" "${client_pid}"; do
+      [[ -n "${pid}" ]] || continue
+      if kill -0 "${pid}" 2>/dev/null; then
+        kill "${pid}" 2>/dev/null || true
+      fi
+      wait "${pid}" 2>/dev/null || true
+    done
+    [[ -n "${temp_dir:-}" ]] && rm -rf -- "${temp_dir}"
+  }
+
+  finalize_udp_probe() {
+    local status=$?
+
+    cleanup_udp_probe
+    if [[ "${udp_status}" == "0" && "${status}" == "0" ]]; then
+      verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/udp.result.env" \
+        "PROTOCOL=${protocol}" "RESULT=success"
+    else
+      verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/udp.result.env" \
+        "PROTOCOL=${protocol}" "RESULT=failure"
+    fi
+    return "${status}"
+  }
+  trap 'finalize_udp_probe; exit $?' EXIT
+
+  client_config_path=$(verification_generate_protocol_probe_client_config "${protocol}" "${config_file}")
+  verification_write_artifact "${probe_dir}/udp-client.path.txt" "${client_config_path}"
+  set +e
+  sing-box check -c "${client_config_path}" > "${check_artifact}" 2>&1
+  check_status=$?
+  set -e
+  [[ "${check_status}" == "0" ]] || return "${check_status}"
+
+  temp_dir=$(mktemp -d /tmp/sing-box-vps-udp-probe.XXXXXX)
+  port_file="${temp_dir}/port"
+  marker="sing-box-vps-udp-loopback-ok-${protocol}-$(date +%s)-$$"
+  python3 - "${port_file}" "${marker}" \
+    > "${server_stdout_artifact}" \
+    2> "${server_stderr_artifact}" <<'PY' &
+import pathlib
+import socket
+import sys
+
+port_file, _marker = sys.argv[1:]
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+sock.bind(("127.0.0.1", 0))
+pathlib.Path(port_file).write_text(str(sock.getsockname()[1]), encoding="ascii")
+while True:
+    payload, address = sock.recvfrom(65535)
+    sock.sendto(payload, address)
+PY
+  server_pid=$!
+
+  for _ in {1..50}; do
+    [[ -s "${port_file}" ]] && break
+    kill -0 "${server_pid}" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  [[ -s "${port_file}" ]]
+  udp_port=$(cat "${port_file}")
+  [[ "${udp_port}" =~ ^[0-9]+$ && "${udp_port}" -ge 1 && "${udp_port}" -le 65535 ]]
+
+  sing-box run -c "${client_config_path}" \
+    > "${stdout_artifact}" \
+    2> "${stderr_artifact}" &
+  client_pid=$!
+  for _ in {1..50}; do
+    if verification_ss_output | awk '$1 == "LISTEN" && $4 ~ /:19080$/ { found = 1 } END { exit(found ? 0 : 1) }'; then
+      break
+    fi
+    kill -0 "${client_pid}" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  verification_ss_output | awk '$1 == "LISTEN" && $4 ~ /:19080$/ { found = 1 } END { exit(found ? 0 : 1) }'
+
+  set +e
+  python3 - "19080" "${udp_port}" "${marker}" \
+    > "${response_artifact}" \
+    2>> "${stderr_artifact}" <<'PY'
+import socket
+import struct
+import sys
+
+socks_port, target_port, marker = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3].encode()
+
+def recv_exact(conn, size):
+    chunks = []
+    received = 0
+    while received < size:
+        chunk = conn.recv(size - received)
+        if not chunk:
+            raise RuntimeError("SOCKS control connection closed")
+        chunks.append(chunk)
+        received += len(chunk)
+    return b"".join(chunks)
+
+def read_address(conn, atyp):
+    if atyp == 1:
+        return socket.inet_ntoa(recv_exact(conn, 4))
+    if atyp == 3:
+        size = recv_exact(conn, 1)[0]
+        return recv_exact(conn, size).decode("ascii")
+    if atyp == 4:
+        return socket.inet_ntop(socket.AF_INET6, recv_exact(conn, 16))
+    raise RuntimeError("unsupported SOCKS address type")
+
+def read_reply(conn):
+    header = recv_exact(conn, 4)
+    if header[0] != 5 or header[1] != 0:
+        raise RuntimeError("SOCKS UDP ASSOCIATE failed")
+    address = read_address(conn, header[3])
+    port = struct.unpack("!H", recv_exact(conn, 2))[0]
+    return address, port
+
+with socket.create_connection(("127.0.0.1", socks_port), timeout=5) as control:
+    control.settimeout(5)
+    control.sendall(b"\x05\x01\x00")
+    if recv_exact(control, 2) != b"\x05\x00":
+        raise RuntimeError("SOCKS no-auth negotiation failed")
+    control.sendall(b"\x05\x03\x00\x01\x00\x00\x00\x00\x00\x00")
+    relay_address, relay_port = read_reply(control)
+    if relay_address in ("0.0.0.0", "::"):
+        relay_address = "127.0.0.1"
+    request = b"\x00\x00\x00\x01" + socket.inet_aton("127.0.0.1") + struct.pack("!H", target_port) + marker
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+        udp.settimeout(5)
+        udp.sendto(request, (relay_address, relay_port))
+        response, _source = udp.recvfrom(65535)
+    if len(response) < 10 or response[:3] != b"\x00\x00\x00":
+        raise RuntimeError("invalid SOCKS UDP response header")
+    offset = 4
+    if response[3] == 1:
+        offset += 4
+    elif response[3] == 3:
+        offset += 1 + response[4]
+    elif response[3] == 4:
+        offset += 16
+    else:
+        raise RuntimeError("invalid SOCKS UDP response address type")
+    offset += 2
+    payload = response[offset:]
+    if payload != marker:
+        raise RuntimeError("UDP marker mismatch")
+    sys.stdout.buffer.write(payload)
+PY
+  udp_status=$?
+  set -e
+  if [[ -f "${response_artifact}" ]]; then
+    cp "${response_artifact}" "${stdout_artifact}" || return 1
+  fi
+  [[ "${udp_status}" == "0" ]] || return "${udp_status}"
+  grep -Fqx "${marker}" "${response_artifact}"
+  udp_status=0
+)
+
 verification_execute_single_protocol_probe() {
   local protocol=$1
   local config_file=$2
