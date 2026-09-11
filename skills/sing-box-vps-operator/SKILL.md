@@ -165,6 +165,13 @@ Fields typed, reject fields from the other version, and do not expose Snell v5
 QUIC proxy as a separate outbound. 1.13.18 lacks the Snell outbound type, and a
 1.14 target-core `check` is not remote Snell handshake or data-plane proof.
 
+Hysteria2 outbound components accept sing-box 1.14 server/server-port ranges,
+port hopping, bandwidth, salamander/gecko obfs, TCP/UDP network, required TLS,
+QUIC fields, BBR profile, Chrome QUIC control, shared Dial Fields and optional
+Hysteria Realm. Keep Realm server/STUN/port-mapping/HTTP-client shapes typed,
+reject Hysteria v1/deprecated receive-window fields, and treat target-core
+`check` as configuration evidence only, not remote QUIC or UDP data-plane proof.
+
 - Use `status --json` for version/service/path/protocol diagnostics plus network stack, BBR, REALITY/QoS, and integration presence.
 - Use `capabilities --json` to discover supported protocols/features and operation safety labels before choosing an action.
 - On an existing 1.13 host, run `sbv update sbv` first and start a new invocation before expecting the new Agent commands.

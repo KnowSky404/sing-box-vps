@@ -839,6 +839,179 @@ if managed_component_state_validate_record "${snell_bad_port}"; then
   exit 1
 fi
 
+# Hysteria2 outbound records preserve the QUIC client contract instead of
+# falling through to the generic protocol branch.  Port hopping, gecko obfs,
+# QUIC fields, outbound TLS, optional Realm rendezvous and shared Dial Fields
+# are all typed before state/CAS publication.
+hysteria2_outbound_record='{"id":"hysteria2-outbound-local","role":"outbound","type":"hysteria2","tag":"hysteria2-upstream","enabled":true,"route_rules":[],"config":{"server":"hy2.example","server_port":443,"hop_interval":"30s","hop_interval_max":"60s","up_mbps":100,"down_mbps":200,"obfs":{"type":"gecko","password":"gecko-password","min_packet_size":512,"max_packet_size":1200},"password":"hy2-password","network":["tcp","udp"],"tls":{"enabled":true,"server_name":"hy2.example","insecure":true},"idle_timeout":"30s","keep_alive_period":"10s","stream_receive_window":"64 MB","connection_receive_window":"128 MB","max_concurrent_streams":100,"initial_packet_size":1200,"disable_path_mtu_discovery":false,"bbr_profile":"standard","brutal_debug":false,"disable_chrome_parrot":true,"connect_timeout":"5s","network_strategy":"default","network_type":["ethernet"],"domain_resolver":"dns-local","protect_path":"/usr/lib/sing-box/hysteria2-protect"}}'
+managed_component_state_validate_record "${hysteria2_outbound_record}"
+hysteria2_outbound_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${hysteria2_outbound_record}")
+hysteria2_outbound_rendered=$(managed_component_render_json "${hysteria2_outbound_state}")
+jq -e '
+  (.outbounds | length == 1) and
+  .outbounds[0].type == "hysteria2" and
+  .outbounds[0].tag == "hysteria2-upstream" and
+  .outbounds[0].server == "hy2.example" and
+  .outbounds[0].server_port == 443 and
+  (.outbounds[0] | has("server_ports") | not) and
+  .outbounds[0].obfs.type == "gecko" and
+  .outbounds[0].obfs.password == "gecko-password" and
+  .outbounds[0].obfs.min_packet_size == 512 and
+  .outbounds[0].obfs.max_packet_size == 1200 and
+  .outbounds[0].network == ["tcp","udp"] and
+  .outbounds[0].tls.enabled == true and
+  .outbounds[0].bbr_profile == "standard" and
+  .outbounds[0].disable_chrome_parrot == true and
+  .outbounds[0].route_rules == null
+' <<< "${hysteria2_outbound_rendered}" >/dev/null
+hysteria2_realm_record=$(jq -c '
+  .config |= (del(.server,.server_port,.server_ports,.obfs) + {
+    realm:{server_url:"https://realm.example",token:"realm-token",realm_id:"slot-1",
+      stun_servers:["stun.example.com","stun2.example.com"],ip_version:4,
+      port_mapping:{enabled:true,timeout:"10s",lifetime:"10m"},
+      http_client:{engine:"go",version:2,headers:{"User-Agent":"sbv"},
+        tls:{enabled:true,server_name:"realm.example",insecure:true},connect_timeout:"5s"}}
+  })
+' <<< "${hysteria2_outbound_record}")
+managed_component_state_validate_record "${hysteria2_realm_record}"
+hysteria2_realm_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${hysteria2_realm_record}")
+hysteria2_realm_rendered=$(managed_component_render_json "${hysteria2_realm_state}")
+jq -e '
+  .outbounds[0].type == "hysteria2" and
+  (.outbounds[0] | has("server") | not) and
+  .outbounds[0].realm.server_url == "https://realm.example" and
+  .outbounds[0].realm.realm_id == "slot-1" and
+  .outbounds[0].realm.stun_servers == ["stun.example.com","stun2.example.com"] and
+  .outbounds[0].realm.port_mapping.enabled == true and
+  .outbounds[0].realm.http_client.tls.server_name == "realm.example"
+' <<< "${hysteria2_realm_rendered}" >/dev/null
+hysteria2_salamander=$(jq -c '.config.obfs = {type:"salamander",password:"salamander-password"}' <<< "${hysteria2_outbound_record}")
+managed_component_state_validate_record "${hysteria2_salamander}"
+hysteria2_ports_only=$(jq -c '.config |= (del(.server_port) + {server_ports:["2080:3000"]})' <<< "${hysteria2_outbound_record}")
+managed_component_state_validate_record "${hysteria2_ports_only}"
+hysteria2_ports_only_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${hysteria2_ports_only}")
+hysteria2_ports_only_rendered=$(managed_component_render_json "${hysteria2_ports_only_state}")
+jq -e '
+  .outbounds[0].server == "hy2.example" and
+  (.outbounds[0] | has("server_port") | not) and
+  .outbounds[0].server_ports == ["2080:3000"]
+' <<< "${hysteria2_ports_only_rendered}" >/dev/null
+hysteria2_port_conflict=$(jq -c '.config.server_ports = ["2080:3000"]' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_port_conflict}"; then
+  printf 'Hysteria2 server_port/server_ports conflict unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_missing_tls=$(jq -c '.config |= del(.tls)' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_missing_tls}"; then
+  printf 'Hysteria2 outbound without TLS unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_disabled_tls=$(jq -c '.config.tls.enabled = false' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_disabled_tls}"; then
+  printf 'Hysteria2 outbound with disabled TLS unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_missing_server=$(jq -c '.config |= del(.server,.server_port,.server_ports)' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_missing_server}"; then
+  printf 'Hysteria2 outbound without server unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_missing_port=$(jq -c '.config |= del(.server_port,.server_ports)' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_missing_port}"; then
+  printf 'Hysteria2 outbound without server port unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_bad_network=$(jq -c '.config.network = ["icmp"]' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_bad_network}"; then
+  printf 'Hysteria2 unsupported network unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_duplicate_network=$(jq -c '.config.network = ["udp","udp"]' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_duplicate_network}"; then
+  printf 'Hysteria2 duplicate network unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_bad_obfs=$(jq -c '.config.obfs.type = "xor"' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_bad_obfs}"; then
+  printf 'Hysteria2 unsupported obfs type unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_missing_obfs_password=$(jq -c '.config.obfs |= del(.password)' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_missing_obfs_password}"; then
+  printf 'Hysteria2 obfs without password unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_salamander_gecko_field=$(jq -c '.config.obfs = {type:"salamander",password:"salamander-password",min_packet_size:512}' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_salamander_gecko_field}"; then
+  printf 'Hysteria2 salamander gecko field unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_reversed_gecko=$(jq -c '.config.obfs.min_packet_size = 1200 | .config.obfs.max_packet_size = 512' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_reversed_gecko}"; then
+  printf 'Hysteria2 reversed gecko packet range unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_bad_ports=$(jq -c '.config.server_ports = ["3000:2000"]' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_bad_ports}"; then
+  printf 'Hysteria2 reversed port range unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_bad_bandwidth=$(jq -c '.config.up_mbps = -1' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_bad_bandwidth}"; then
+  printf 'Hysteria2 negative bandwidth unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_bad_bbr=$(jq -c '.config.bbr_profile = "fast"' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_bad_bbr}"; then
+  printf 'Hysteria2 unsupported BBR profile unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_bad_quic=$(jq -c '.config.initial_packet_size = "1200"' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_bad_quic}"; then
+  printf 'Hysteria2 invalid QUIC scalar unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_unknown_field=$(jq -c '.config |= (. + {recv_window:1})' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_unknown_field}"; then
+  printf 'Hysteria2 deprecated field unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_bad_password=$(jq -c '.config.password = "hy2\u0001password"' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_bad_password}"; then
+  printf 'Hysteria2 control-character password unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_realm_conflict=$(jq -c '.config.realm = {server_url:"https://realm.example",realm_id:"slot-1",stun_servers:["stun.example.com"]}' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_realm_conflict}"; then
+  printf 'Hysteria2 realm/server conflict unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_realm_missing_stun=$(jq -c '.config |= (del(.server,.server_port,.server_ports) + {realm:{server_url:"https://realm.example",realm_id:"slot-1"}})' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_realm_missing_stun}"; then
+  printf 'Hysteria2 realm without STUN servers unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_realm_ipv6_mapping=$(jq -c '.config |= (del(.server,.server_port,.server_ports) + {realm:{server_url:"https://realm.example",realm_id:"slot-1",stun_servers:["stun.example.com"],ip_version:6,port_mapping:{enabled:true}}})' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_realm_ipv6_mapping}"; then
+  printf 'Hysteria2 IPv6 realm port mapping unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_realm_bad_http_client=$(jq -c '.config |= (del(.server,.server_port,.server_ports) + {realm:{server_url:"https://realm.example",realm_id:"slot-1",stun_servers:["stun.example.com"],http_client:{unknown:true}}})' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_realm_bad_http_client}"; then
+  printf 'Hysteria2 realm unknown HTTP client field unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_realm_http1_variant=$(jq -c '.config |= (del(.server,.server_port,.server_ports) + {realm:{server_url:"https://realm.example",realm_id:"slot-1",stun_servers:["stun.example.com"],http_client:{version:1,idle_timeout:"5s"}}})' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_realm_http1_variant}"; then
+  printf 'Hysteria2 realm HTTP/1 client with HTTP/2 field unexpectedly accepted\n' >&2
+  exit 1
+fi
+hysteria2_realm_http2_quic_field=$(jq -c '.config |= (del(.server,.server_port,.server_ports) + {realm:{server_url:"https://realm.example",realm_id:"slot-1",stun_servers:["stun.example.com"],http_client:{version:2,initial_packet_size:1200}}})' <<< "${hysteria2_outbound_record}")
+if managed_component_state_validate_record "${hysteria2_realm_http2_quic_field}"; then
+  printf 'Hysteria2 realm HTTP/2 client with QUIC field unexpectedly accepted\n' >&2
+  exit 1
+fi
+
 # Selector and URLTest groups own outbound member references.  Their upstream
 # schemas are deliberately narrow: duplicate members, a selector default not
 # present in the member list, and URLTest's selector-only fields must fail

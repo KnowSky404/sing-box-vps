@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026091011`
+- 脚本版本：`2026091101`
 
 - sing-box 适配版本：`1.14.0`
 
@@ -23,6 +23,8 @@ VMess 与 Trojan outbound 已按 sing-box 1.14 的必需认证字段、TCP/UDP n
 VLESS outbound 已按 sing-box 1.14 的 UUID、flow、TCP/UDP network、packet encoding、TLS、V2Ray transport、multiplex 和共享 Dial Fields 接入同一 typed component state；省略 `packet_encoding` 保留上游默认 xudp，Vision flow 只允许 TLS 直连且不与 V2Ray transport 叠加。HTTP、无 early data 的 WebSocket、gRPC 与 TLS-only QUIC 可表达，HTTPUpgrade、WS early data、明文 QUIC、lite gRPC `permit_without_stream`、无 TLS/带 transport 的 Vision flow 均在状态/CAS 与接管前拒绝；凭据仅通过敏感 component export 返回，不生成服务端分享 URI 或 SubMan 载荷。
 
 AnyTLS outbound 已按 sing-box 1.14 的 `AnyTLSOutboundOptions` 接入 typed component state；`server`、`server_port`、非空 `password` 与启用的 outbound TLS 必填，`idle_session_check_interval`、`idle_session_timeout`、`min_idle_session` 和 `client_metadata` 可选，共享 Dial Fields 仍逐项校验。AnyTLS 没有可配置的 `network`、transport 或 multiplex 字段；目标核心的 `tcp_fast_open=true` 也会在状态/CAS 与接管前拒绝。凭据仅通过敏感 component export 返回，固定核心 `check` 只证明配置可解析，不代表远端 AnyTLS 握手或 TCP/UDP 出站数据面。
+
+Hysteria2 outbound 已按 sing-box 1.14 的 `Hysteria2OutboundOptions` 接入 typed component state；支持 server 与互斥的 server_port/server_ports、port hopping、up/down Mbps、salamander/gecko obfs、TCP/UDP network、必需 outbound TLS、QUIC fields、BBR profile、Chrome QUIC fingerprint 控制和可选 Hysteria Realm。Realm 的 server、STUN、端口映射与 HTTP client 字段按分型校验，v1 Hysteria 的 auth/旧窗口字段不会混入；凭据仅通过敏感 component export 返回，目标核心 `check` 不代表远端 QUIC 握手或 UDP 数据面。
 
 Snell outbound 已按 sing-box 1.14 的 `SnellOutboundOptions` 接入 typed component state；版本仅允许 v4（HTTP obfs）或 v6（traffic shaping），并保留 PSK、可选 userkey/reuse、TCP/UDP network 和共享 Dial Fields。v4/v6 字段不可交叉，v6 PSK 至少 12 字节；Snell v5 QUIC proxy 不作为独立 outbound 提供，UDP 业务由 Snell 的 TCP packet API 承载。凭据仅通过敏感 component export 返回，1.14 核心 `check` 不代表远端 Snell 握手或 TCP/UDP 数据面，1.13.18 核心明确不注册该 type。
 

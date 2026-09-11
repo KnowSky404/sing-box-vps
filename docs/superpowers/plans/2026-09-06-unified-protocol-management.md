@@ -559,3 +559,9 @@ managed AnyTLS outbound 现在通过 `managed_component_anytls_config_validate_j
 managed Snell outbound 现在通过 `managed_component_snell_config_validate_json` 处理，按固定 sing-box 1.14.0 `SnellOutboundOptions` 建立版本分型 allowlist。outbound 版本仅允许 `4` 或 `6`：v4 接受 `obfs_mode`/`obfs_host` 的 HTTP obfuscation，v6 接受 `mode` 的 `default`/`unshaped`/`unsafe-raw` traffic shaping；两组字段不可交叉，v6 PSK 至少 12 字节、所有 PSK/userkey 保持安全字符串与 255 字节上限。`server`、`server_port`、PSK、可选 userkey/reuse、TCP/UDP network 与 shared Dial Fields 均逐项校验，未知或弃用字段、重复 network、控制字符和越界端口在 state/CAS 与接管前拒绝。
 
 Snell v5 QUIC proxy 不作为独立 outbound 版本提供；inbound 的 v5/v6 只分别映射到 outbound 的 v4/v6，UDP 业务由 Snell TCP 会话的 packet API 承载。`tests/managed_components_contract.sh` 覆盖 v4/v6 render、字段分型、network/PSK/端口边界、共享拨号字段、接管/导出已有路径和脱敏约束。固定官方 ARM64 `sing-box` 1.14.0 对 v4/v6 最小配置 `check` 均成功，1.13.18 明确返回未知 outbound type；这些核心解析证据不代表远端 Snell 握手或 TCP/UDP 数据面。版本统一为本轮 `2026091011`，完整协议目标仍未完成。
+
+### 2026-09-11：Hysteria2 outbound typed contract
+
+managed Hysteria2 outbound 现在通过 `managed_component_hysteria2_config_validate_json` 处理，按固定 sing-box 1.14.0 `Hysteria2OutboundOptions` 建立 typed allowlist。标准服务器路径支持 `server` 与互斥的 `server_port`/`server_ports`、port hopping、up/down Mbps、salamander/gecko obfs、password、TCP/UDP network、必需 outbound TLS、QUIC fields、BBR profile、Chrome QUIC 控制和 shared Dial Fields；v1 Hysteria 的 `auth`/旧接收窗口字段不会被接受。可选 Hysteria Realm 作为分型对象要求 `server_url`、`realm_id`、非空 STUN 列表，约束 IP version、IPv6 与 port mapping 冲突，并对嵌套 HTTP client/TLS 进行边界校验。
+
+`tests/managed_components_contract.sh` 覆盖标准/Realm render、server-port 关系、TLS/QUIC、obfs 分型、带宽/BBR、deprecated 字段、控制字符、STUN/port-mapping/HTTP-client 负例和敏感导出既有路径。固定官方 ARM64 `sing-box` 1.14.0 对标准 Hysteria2 outbound 配置 `check` 通过；Hysteria2 outbound 在 1.13.18 中仍可被注册，但本增量不把核心解析扩大为远端 QUIC 握手或 UDP 数据面证据。版本统一为本轮 `2026091101`，完整协议目标仍未完成。

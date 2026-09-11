@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091011
+# Version: 2026091101
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091011"
+readonly SCRIPT_VERSION="2026091101"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -115,7 +115,7 @@ readonly SB_COMPONENT_REGISTRY=(
   'vmess-outbound|outbound|vmess|VMess outbound|1.13.0|builtin|{"dialer":true}'
   'trojan-outbound|outbound|trojan|Trojan outbound|1.13.0|builtin|{"dialer":true}'
   'naive-outbound|outbound|naive|NaiveProxy outbound|1.13.0|with_naive_outbound|{"dialer":true,"external_runtime":"libcronet"}'
-  'hysteria2-outbound|outbound|hysteria2|Hysteria2 outbound|1.13.0|builtin|{"dialer":true}'
+  'hysteria2-outbound|outbound|hysteria2|Hysteria2 outbound|1.13.0|builtin|{"dialer":true,"network":["tcp","udp"],"tls_required":true,"obfs_types":["salamander","gecko"],"realm":true,"quic":true,"bbr_profiles":["conservative","standard","aggressive"]}'
   'hysteria-outbound|outbound|hysteria|Hysteria outbound|1.13.0|builtin|{"dialer":true}'
   'tuic-outbound|outbound|tuic|TUIC outbound|1.13.0|builtin|{"dialer":true}'
   'vless-outbound|outbound|vless|VLESS outbound|1.13.0|builtin|{"dialer":true}'
@@ -13054,6 +13054,223 @@ managed_component_snell_config_validate_json() {
   fi
 }
 
+# Validate the Hysteria2 outbound contract against sing-box 1.14.0.  Hysteria2
+# is a QUIC client with optional TCP/UDP projection, port hopping, typed obfs,
+# and the 1.14 Hysteria Realm rendezvous path.  Keep those discriminated
+# objects bounded instead of treating a registered outbound as arbitrary JSON;
+# the target core remains responsible for duration and memory-size parsing.
+managed_component_hysteria2_config_validate_json() {
+  local config=${1:-} tls tls_record realm_http_tls realm_http_tls_record
+  [[ -n "${config}" ]] || return 1
+  jq -e '
+    def safe_string:
+      type == "string" and (any(explode[]; . < 32 or . == 127) | not);
+    def nonempty_safe_string:
+      safe_string and length > 0;
+    def listable_safe_string:
+      safe_string or (type == "array" and all(.[]; safe_string));
+    def optional_safe_string($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_bool($name):
+      (has($name) | not) or (.[$name] | type == "boolean");
+    def optional_duration($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_nonnegative_int($name):
+      (has($name) | not) or
+      (.[$name] | type == "number" and . == floor and . >= 0 and . <= 2147483647);
+    def optional_memory($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "number" and . == floor and . >= 0 and . <= 9007199254740991) or
+         (type == "string" and safe_string)));
+    def optional_routing_mark:
+      (has("routing_mark") | not) or
+      (.routing_mark |
+        ((type == "number" and . == floor and . >= 0 and . <= 4294967295) or
+         (type == "string" and (length == 0 or test("^0x[0-9a-fA-F]+$")))));
+    def optional_network_strategy:
+      (has("network_strategy") | not) or
+      (.network_strategy | type == "string" and IN("","default","hybrid","fallback"));
+    def optional_network_types($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "string" and (length == 0 or IN("wifi","cellular","ethernet","other"))) or
+         (type == "array" and all(.[]; type == "string" and
+           IN("wifi","cellular","ethernet","other")))));
+    def optional_network:
+      (has("network") | not) or
+      (.network |
+        ((type == "string" and (length == 0 or IN("tcp","udp"))) or
+         (type == "array" and length <= 2 and
+           all(.[]; type == "string" and IN("tcp","udp")) and
+           (length == (unique | length)))));
+    def valid_port_range:
+      safe_string and
+      (try (test("^[0-9]{1,5}(:[0-9]{1,5})?$") and
+        (split(":") | map(tonumber)) as $ports |
+          all($ports[]; . >= 1 and . <= 65535) and
+          (($ports | length) == 1 or $ports[0] <= $ports[1])) catch false);
+    def optional_server_ports:
+      (has("server_ports") | not) or
+      (.server_ports |
+        (valid_port_range or
+          (type == "array" and length > 0 and
+           all(.[]; valid_port_range) and (length == (unique | length)))));
+    def optional_header_map:
+      (has("headers") | not) or
+      (.headers | type == "object" and
+        all(to_entries[];
+          (.key | type == "string" and length > 0 and
+            test("^[A-Za-z0-9!#$%&\u0027+.^_\u0060|~-]+$")) and
+          (.value | listable_safe_string)));
+    def optional_domain_resolver:
+      (has("domain_resolver") | not) or
+      (.domain_resolver | type == "string" or type == "object");
+    def optional_http_client:
+      (has("http_client") | not) or
+      (.http_client |
+        ((type == "string" and nonempty_safe_string) or
+         (type == "object" and
+          ((keys - [
+            "engine","version","disable_version_fallback","headers","idle_timeout",
+            "keep_alive_period","stream_receive_window","connection_receive_window",
+            "max_concurrent_streams","initial_packet_size","disable_path_mtu_discovery",
+            "tls","detour","bind_interface","inet4_bind_address","inet6_bind_address",
+            "bind_address_no_port","protect_path","routing_mark","reuse_addr","netns",
+            "connect_timeout","tcp_fast_open","tcp_multi_path","disable_tcp_keep_alive",
+            "tcp_keep_alive","tcp_keep_alive_interval","udp_fragment","domain_resolver",
+            "network_strategy","network_type","fallback_network_type","fallback_delay"
+          ]) | length == 0) and
+          ((has("engine") | not) or (.engine | type == "string" and IN("","go","apple"))) and
+          ((has("version") | not) or (.version | type == "number" and . == floor and . >= 0 and . <= 3)) and
+          optional_bool("disable_version_fallback") and optional_header_map and
+          optional_duration("idle_timeout") and optional_duration("keep_alive_period") and
+          optional_memory("stream_receive_window") and optional_memory("connection_receive_window") and
+          optional_nonnegative_int("max_concurrent_streams") and
+          optional_nonnegative_int("initial_packet_size") and
+          optional_bool("disable_path_mtu_discovery") and
+          ((.version // 0) != 1 or
+            ((has("idle_timeout") | not) and (has("keep_alive_period") | not) and
+             (has("stream_receive_window") | not) and
+             (has("connection_receive_window") | not) and
+             (has("max_concurrent_streams") | not) and
+             (has("initial_packet_size") | not) and
+             (has("disable_path_mtu_discovery") | not))) and
+          ((.version // 0) == 3 or
+            ((has("initial_packet_size") | not) and
+             (has("disable_path_mtu_discovery") | not))) and
+          ((has("tls") | not) or (.tls | type == "object")) and
+          optional_safe_string("detour") and optional_safe_string("bind_interface") and
+          optional_safe_string("inet4_bind_address") and optional_safe_string("inet6_bind_address") and
+          optional_bool("bind_address_no_port") and optional_safe_string("protect_path") and
+          optional_routing_mark and optional_bool("reuse_addr") and optional_safe_string("netns") and
+          optional_duration("connect_timeout") and optional_bool("tcp_fast_open") and
+          optional_bool("tcp_multi_path") and optional_bool("disable_tcp_keep_alive") and
+          optional_duration("tcp_keep_alive") and optional_duration("tcp_keep_alive_interval") and
+          optional_bool("udp_fragment") and optional_domain_resolver and optional_network_strategy and
+          optional_network_types("network_type") and optional_network_types("fallback_network_type") and
+          optional_duration("fallback_delay"))));
+    def optional_obfs:
+      (has("obfs") | not) or
+      (.obfs | type == "object" and
+        ((keys - ["type","password","min_packet_size","max_packet_size"]) | length == 0) and
+        (.type | type == "string" and IN("salamander","gecko")) and
+        (.password | nonempty_safe_string) and
+        (((.type == "salamander") and
+          (has("min_packet_size") | not) and (has("max_packet_size") | not)) or
+         ((.type == "gecko") and optional_nonnegative_int("min_packet_size") and
+          optional_nonnegative_int("max_packet_size") and
+          ((.min_packet_size // 512) as $min | (.max_packet_size // 1200) as $max |
+            $min >= 1 and $max <= 65535 and $min <= $max))));
+    def optional_port_mapping:
+      (has("port_mapping") | not) or
+      (.port_mapping | type == "object" and
+        ((keys - ["enabled","timeout","lifetime"]) | length == 0) and
+        optional_bool("enabled") and optional_duration("timeout") and optional_duration("lifetime"));
+    def optional_realm:
+      (has("realm") | not) or
+      (.realm | type == "object" and
+        ((keys - ["server_url","token","realm_id","stun_servers","ip_version",
+          "port_mapping","http_client"]) | length == 0) and
+        (.server_url | nonempty_safe_string and
+          test("^[A-Za-z][A-Za-z0-9+.-]*://[^[:space:]]+$")) and
+        optional_safe_string("token") and (.realm_id | nonempty_safe_string) and
+        (.stun_servers |
+          ((type == "string" and nonempty_safe_string) or
+           (type == "array" and length > 0 and all(.[]; nonempty_safe_string) and
+            (length == (unique | length))))) and
+        ((has("ip_version") | not) or
+          (.ip_version | type == "number" and . == floor and IN(0,4,6))) and
+        optional_port_mapping and
+        (((.port_mapping.enabled // false) != true) or ((.ip_version // 0) != 6)) and
+        optional_http_client);
+    type == "object" and
+    ((keys - [
+      "server","server_port","server_ports","hop_interval","hop_interval_max",
+      "up_mbps","down_mbps","obfs","password","network","tls",
+      "idle_timeout","keep_alive_period","stream_receive_window",
+      "connection_receive_window","max_concurrent_streams","initial_packet_size",
+      "disable_path_mtu_discovery","bbr_profile","brutal_debug","disable_chrome_parrot",
+      "realm","detour","bind_interface","inet4_bind_address","inet6_bind_address",
+      "bind_address_no_port","protect_path","routing_mark","reuse_addr","netns",
+      "connect_timeout","tcp_fast_open","tcp_multi_path","disable_tcp_keep_alive",
+      "tcp_keep_alive","tcp_keep_alive_interval","udp_fragment","domain_resolver",
+      "network_strategy","network_type","fallback_network_type","fallback_delay"
+    ]) | length == 0) and
+    ((has("server") | not) or (.server | nonempty_safe_string)) and
+    ((has("server_port") | not) or
+      (.server_port | type == "number" and . == floor and . >= 1 and . <= 65535)) and
+    ((has("server_port") and has("server_ports")) | not) and
+    optional_server_ports and optional_duration("hop_interval") and
+    optional_duration("hop_interval_max") and optional_nonnegative_int("up_mbps") and
+    optional_nonnegative_int("down_mbps") and optional_obfs and optional_safe_string("password") and
+    optional_network and
+    (has("tls") and (.tls | type == "object" and
+      (.enabled | type == "boolean" and . == true))) and
+    optional_duration("idle_timeout") and optional_duration("keep_alive_period") and
+    optional_memory("stream_receive_window") and optional_memory("connection_receive_window") and
+    optional_nonnegative_int("max_concurrent_streams") and optional_nonnegative_int("initial_packet_size") and
+    optional_bool("disable_path_mtu_discovery") and
+    ((has("bbr_profile") | not) or
+      (.bbr_profile | type == "string" and IN("","conservative","standard","aggressive"))) and
+    optional_bool("brutal_debug") and optional_bool("disable_chrome_parrot") and optional_realm and
+    optional_safe_string("detour") and optional_safe_string("bind_interface") and
+    optional_safe_string("inet4_bind_address") and optional_safe_string("inet6_bind_address") and
+    optional_bool("bind_address_no_port") and optional_safe_string("protect_path") and
+    optional_routing_mark and optional_bool("reuse_addr") and optional_safe_string("netns") and
+    optional_duration("connect_timeout") and optional_bool("tcp_fast_open") and
+    optional_bool("tcp_multi_path") and optional_bool("disable_tcp_keep_alive") and
+    optional_duration("tcp_keep_alive") and optional_duration("tcp_keep_alive_interval") and
+    optional_bool("udp_fragment") and optional_domain_resolver and optional_network_strategy and
+    optional_network_types("network_type") and optional_network_types("fallback_network_type") and
+    optional_duration("fallback_delay")
+  ' <<< "${config}" >/dev/null 2>&1 || return 1
+
+  if jq -e 'has("realm")' <<< "${config}" >/dev/null 2>&1; then
+    jq -e '((has("server") | not) and (has("server_port") | not) and (has("server_ports") | not))' \
+      <<< "${config}" >/dev/null 2>&1 || return 1
+  else
+    jq -e '(.server | type == "string" and length > 0 and
+      (any(explode[]; . < 32 or . == 127) | not)) and
+      ((has("server_port") and (.server_port | type == "number" and . == floor and . >= 1 and . <= 65535)) or
+       (has("server_ports")))' \
+      <<< "${config}" >/dev/null 2>&1 || return 1
+  fi
+
+  tls=$(jq -c '.tls' <<< "${config}") || return 1
+  tls_record=$(jq -cn --argjson tls "${tls}" \
+    '{server:"hysteria2-tls",server_port:1,tls:$tls}') || return 1
+  managed_component_http_config_validate_json "${tls_record}" || return 1
+
+  if jq -e '(.realm.http_client? | type == "object" and has("tls"))' \
+    <<< "${config}" >/dev/null 2>&1; then
+    realm_http_tls=$(jq -c '.realm.http_client.tls' <<< "${config}") || return 1
+    realm_http_tls_record=$(jq -cn --argjson tls "${realm_http_tls}" \
+      '{server:"hysteria2-realm",server_port:1,tls:$tls}') || return 1
+    managed_component_http_config_validate_json "${realm_http_tls_record}" || return 1
+  fi
+}
+
 # Validate the shared V2Ray transport object used by VMess/Trojan/VLESS
 # outbounds.  The transport is a discriminated union in sing-box; keeping the
 # variant-specific fields here prevents an HTTP/WS/gRPC option from silently
@@ -13395,10 +13612,13 @@ managed_component_state_validate_record() {
     outbound:snell)
       managed_component_snell_config_validate_json "${config}" || return 1
       ;;
+    outbound:hysteria2)
+      managed_component_hysteria2_config_validate_json "${config}" || return 1
+      ;;
     outbound:vless|outbound:vmess|outbound:trojan)
       managed_component_v2ray_outbound_config_validate_json "${type}" "${config}" || return 1
       ;;
-    outbound:direct|outbound:block|outbound:bridge|outbound:naive|outbound:hysteria2|outbound:hysteria|outbound:tuic|outbound:shadowtls)
+    outbound:direct|outbound:block|outbound:bridge|outbound:naive|outbound:hysteria|outbound:tuic|outbound:shadowtls)
       ;;
     *) return 1 ;;
   esac
