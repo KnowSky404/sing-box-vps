@@ -242,3 +242,9 @@ Hysteria v1 的验证元数据由 `quic_loopback` 提升为实际 TCP/UDP payloa
 `multi_protocol_coexistence` 新增独立的 VMess QUIC typed instance，使用手工 SAN 证书、`security:"auto"`、UUID 用户和服务端 `h3` ALPN；固定 1.14.0 客户端通过 SOCKS5 UDP ASSOCIATE 将 marker 穿过 VMess QUIC 至本地 UDP echo，`udp.result.env` 与精确 `udp-response.txt` 均为成功。期间真实核心复现并修复 VMess exporter 将 QUIC outbound 错误限制为 `network:["udp"]` 的问题；V2Ray transport 的 QUIC socket 是 UDP，但 proxy outbound 仍需保留 TCP 与 UDP，故 VMess/VLESS plain exporter 统一输出 `network:["tcp","udp"]`，并为探针 VLESS QUIC 客户端补齐 `h3` ALPN。两版固定 ARM64 核心的 VMess/VLESS plain exporter runtime 覆盖 none/http/ws/grpc/quic，全部通过；未把 VLESS plain 远端 UDP payload 误记为已验证。
 
 完整 Docker run `dev/verification-runs/20260911194118` 记录 16/16 场景、24/24 可执行常规协议探针和六个 `udp.result.env`（Hysteria、Hysteria2、SS2022、Trojan、TUIC、VMess）成功；一个既有 TUIC 常规 probe 仍按 registry 标记 `unsupported`，不计入可执行探针成功分母。证据仅属于固定 1.14.0 核心的隔离容器/回环，不代表公网可达、生产部署、外部认证、SubMan 或全协议目标完成。
+
+### 2026-09-11：普通 VLESS QUIC 实例替换与 UDP 数据面切片
+
+`fresh_install_vless_plain` 在固定 1.14.0 Docker 容器中先安装普通 VLESS TCP/none revision 1，再使用同一 `main` 实例通过 Agent CAS 替换为 TLS QUIC revision 2；候选配置渲染为 VLESS QUIC/UDP inbound、`tls.alpn:["h3"]`，协议索引仍为 `INSTALLED_PROTOCOLS=vless-plain`，不会把 core 的共享 `type:"vless"` 误归类为 VLESS + REALITY。受管 exporter 生成的 QUIC 客户端保留 `network:["tcp","udp"]`，只在探针副本中把服务端证书信任映射为公开证书/`insecure:true`，不携带私钥。固定核心 `check`、UDP listener、SOCKS5 UDP ASSOCIATE marker 与精确 `udp-response.txt` 均成功；本地 lifecycle/probe/smoke fixtures 也锁定 revision/index/transport/ALPN 回归。
+
+最终 Docker run `dev/verification-runs/20260911215408` 共 15/15 场景，24 个常规 protocol result 中 23/23 可执行 probe 成功、1 个既有 TUIC 结果为 `unsupported`；7 个 UDP artifact（Hysteria、Hysteria2、SS2022、Trojan、TUIC、VMess、普通 VLESS）均为 `RESULT=success`。这是固定 1.14.0 核心与隔离容器回环 evidence，不证明公网可达、生产部署、外部认证、真实 SubMan 或全协议目标完成。
