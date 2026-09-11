@@ -618,4 +618,4 @@ managed Tailscale endpoint 现在按固定 1.14 `TailscaleEndpointOptions` 校�
 
 真实共存场景新增 TUIC typed instance（手工 SAN 证书、native relay、bbr、auth timeout/heartbeat），验证服务端只渲染核心接受的 users/TLS+h3/拥塞/超时字段，监听计划包含 UDP，固定 1.14.0 `sing-box check` 通过。期间发现 exporter 未将客户端 TLS ALPN 与服务端 renderer 的 `h3` 对齐，真实核心报 `CRYPTO_ERROR ... no application protocol`；生产 exporter 已修复为始终输出 `tls.alpn:["h3"]`，并由生命周期、registry 与探针测试锁定。
 
-`multi_protocol_coexistence` 现在启动固定核心客户端，经 SOCKS5 UDP ASSOCIATE 把 marker 穿过 Trojan QUIC 与 TUIC QUIC/UDP 至本地 echo 并精确回读；完整 Docker run `dev/verification-runs/20260911174458` 记录 16/16 场景、23/23 常规协议探针和四个 QUIC UDP artifact（Hysteria、Hysteria2、Trojan、TUIC）成功。证据只属于隔离容器/回环和固定 1.14.0 核心，不扩张为公网可达、生产部署、外部认证、SubMan 或全协议目标完成；本阶段版本提升为 `2026091110`。
+`multi_protocol_coexistence` 现在启动固定核心客户端，经 SOCKS5 UDP ASSOCIATE 把 marker 穿过 SS2022 原生 UDP、Trojan QUIC 与 TUIC QUIC/UDP 至本地 echo 并精确回读；完整 Docker run `dev/verification-runs/20260911175746` 记录 16/16 场景、23/23 常规协议探针和五个 QUIC/UDP artifact（Hysteria、Hysteria2、SS2022、Trojan、TUIC）成功。证据只属于隔离容器/回环和固定 1.14.0 核心，不扩张为公网可达、生产部署、外部认证、SubMan 或全协议目标完成；本阶段版本提升为 `2026091110`。
