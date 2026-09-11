@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026091105`
+- 脚本版本：`2026091106`
 
 - sing-box 适配版本：`1.14.0`
 
@@ -35,6 +35,8 @@ NaiveProxy outbound 已按 sing-box 1.14 的 `NaiveOutboundOptions` 接入 typed
 ShadowTLS outbound 已按 sing-box 1.14 的 `ShadowTLSOutboundOptions` 接入 typed component state；支持 TCP-only wrapper 的 server/port、v1/v2/v3、password、必需 outbound TLS 与 shared Dial Fields，并与本项目 ShadowTLS 入站的 outer + loopback Mixed 组合保持角色隔离。ShadowTLS outbound 不生成伪分享 URI 或 SubMan 载荷，核心 `check` 不代表远端握手或 TCP 数据面。
 
 WireGuard endpoint 已按 sing-box 1.14 的 `WireGuardEndpointOptions` 接入 typed component state；使用现代 endpoint（不恢复已移除的 wireguard outbound），校验 32-byte 标准 Base64 private/public/PSK、CIDR address/allowed_ips、peer keepalive/reserved、listen/MTU/workers、UDP NAT 与 shared Dial Fields。1.14 全字段和 1.13.18 基础 endpoint 子集通过固定核心 `check`；不代表系统接口权限、peer 握手或 UDP 数据面已验证。
+
+Tailscale endpoint 现在按 `TailscaleEndpointOptions` 接入 typed state/render，校验持久化 state/auth/control 字段、advertise/accept routes、relay AddrPort、exit-node 互斥、可选 SSH 服务和 shared Dial Fields；OpenConnect endpoint 按 1.14 client-only 选项校验 flavor、token secret/path、mobile identity、CSD/HIP/TNCC、TLS material、form entries、UDP NAT 与 keepalive/compression 约束；OpenVPN client/server endpoint 分别按 TLS/static_key discriminated union 校验 remote、address pool、peer family、证书/key、control wrap、users、push DNS/routes 和 TCP/UDP 约束。新增测试只证明组件状态、渲染和固定核心配置边界；外部 VPN/Tailscale 控制面、证书文件、系统接口权限与真实数据面仍未验证，不能将这些 endpoint 写成已完成公网部署。
 
 Snell outbound 已按 sing-box 1.14 的 `SnellOutboundOptions` 接入 typed component state；版本仅允许 v4（HTTP obfs）或 v6（traffic shaping），并保留 PSK、可选 userkey/reuse、TCP/UDP network 和共享 Dial Fields。v4/v6 字段不可交叉，v6 PSK 至少 12 字节；Snell v5 QUIC proxy 不作为独立 outbound 提供，UDP 业务由 Snell 的 TCP packet API 承载。凭据仅通过敏感 component export 返回，1.14 核心 `check` 不代表远端 Snell 握手或 TCP/UDP 数据面，1.13.18 核心明确不注册该 type。
 

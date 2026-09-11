@@ -28,6 +28,19 @@ jq -e '
   any(.[]; .role == "endpoint" and .type == "wireguard" and
     .features.typed_config == true and .features.peers == true and
     .features.allowed_ips == true and .features.udp_nat == true) and
+  any(.[]; .role == "endpoint" and .type == "tailscale" and
+    .features.typed_config == true and .features.routes == true and
+    .features.relay == true and .features.ssh_server == true) and
+  any(.[]; .role == "endpoint" and .type == "openconnect" and
+    .features.typed_config == true and .features.tls == true and
+    .features.udp_nat == true) and
+  any(.[]; .role == "endpoint" and .type == "openvpn-client" and
+    .features.typed_config == true and .features.tls == true and
+    .features.static_key == true and .features.routes == true) and
+  any(.[]; .role == "endpoint" and .type == "openvpn-server" and
+    .features.typed_config == true and .features.tls == true and
+    .features.static_key == true and .features.users == true and
+    .features.push == true) and
   all(.[]; .lifecycle.takeover == true) and
   any(.[]; .role == "inbound" and .type == "cloudflared" and
     .features.account_mutation == false and .availability == "with_cloudflared")
@@ -1724,6 +1737,221 @@ fi
 wireguard_unknown_field=$(jq -c '.config.domain_strategy = "prefer_ipv4"' <<< "${wireguard_endpoint_record}")
 if managed_component_state_validate_record "${wireguard_unknown_field}"; then
   printf 'WireGuard deprecated field unexpectedly accepted\n' >&2
+  exit 1
+fi
+
+# Tailscale endpoint options combine a persistent control-plane state
+# directory with route advertisement, relay pinning and optional SSH service.
+# These are typed state/render checks only: no Tailscale login or peer data
+# plane is attempted by this contract test.
+tailscale_endpoint_record=$(jq -cn '{id:"endpoint-tailscale-typed",role:"endpoint",type:"tailscale",tag:"ts-typed",enabled:true,route_rules:[],config:{
+  state_directory:"/var/lib/tailscale",auth_key:"tskey-auth-placeholder",control_url:"https://control.example",
+  ephemeral:false,hostname:"sbv-node",accept_routes:true,advertise_routes:["10.20.0.0/24"],
+  advertise_tags:["tag:prod"],listen_port:41641,relay_server_port:3478,
+  relay_server_static_endpoints:["198.51.100.2:3478"],system_interface:false,
+  system_interface_name:"tailscale0",system_interface_mtu:1280,udp_timeout:"5m",
+  ssh_server:{enabled:true,disable_pty:false,disable_sftp:true,disable_forwarding:false},
+  taildrop_directory:"/var/lib/tailscale/taildrop",connect_timeout:"5s",
+  network_strategy:"default",network_type:["ethernet"]}}')
+managed_component_state_validate_record "${tailscale_endpoint_record}"
+tailscale_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${tailscale_endpoint_record}")
+tailscale_rendered=$(managed_component_render_json "${tailscale_state}")
+jq -e '
+  (.endpoints | length == 1) and .endpoints[0].type == "tailscale" and
+  .endpoints[0].tag == "ts-typed" and .endpoints[0].advertise_routes == ["10.20.0.0/24"] and
+  .endpoints[0].relay_server_static_endpoints == ["198.51.100.2:3478"] and
+  .endpoints[0].ssh_server.enabled == true and .endpoints[0].network_type == ["ethernet"]
+' <<< "${tailscale_rendered}" >/dev/null
+tailscale_default_route=$(jq -c '.config.advertise_routes=["0.0.0.0/0"]' <<< "${tailscale_endpoint_record}")
+if managed_component_state_validate_record "${tailscale_default_route}"; then
+  printf 'Tailscale default advertise route unexpectedly accepted\n' >&2
+  exit 1
+fi
+tailscale_exit_route_conflict=$(jq -c '.config.exit_node="100.64.0.1" | .config.advertise_exit_node=true' <<< "${tailscale_endpoint_record}")
+if managed_component_state_validate_record "${tailscale_exit_route_conflict}"; then
+  printf 'Tailscale exit-node/advertise-exit conflict unexpectedly accepted\n' >&2
+  exit 1
+fi
+tailscale_bad_ssh=$(jq -c '.config.ssh_server={enabled:true,unexpected:true}' <<< "${tailscale_endpoint_record}")
+if managed_component_state_validate_record "${tailscale_bad_ssh}"; then
+  printf 'Tailscale unknown SSH field unexpectedly accepted\n' >&2
+  exit 1
+fi
+
+# OpenConnect is a client-only endpoint.  Keep the server/flavor/token/mobile
+# and TLS material forms in the managed state while making authentication
+# requirements and mutually-exclusive material sources explicit.
+openconnect_endpoint_record=$(jq -cn '{id:"endpoint-openconnect-typed",role:"endpoint",type:"openconnect",tag:"oc-typed",enabled:true,route_rules:[],config:{
+  server:"https://vpn.example.com",flavor:"anyconnect",username:"alice",password:"password",
+  token:{mode:"totp",secret:"JBSWY3DPEHPK3PXP"},mobile:{platform_version:"17.0",device_type:"iphone",device_unique_id:"fixture-device"},
+  tncc:{device_id:"tncc-device",machine_identification_enabled:true,certificates:[{certificate:"-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----"}]},
+  tls:{server_name:"vpn.example.com",certificate_authority_path:"/etc/sbv/ca.pem",client_certificate_path:"/etc/sbv/client.pem",client_key_path:"/etc/sbv/client.key"},
+  form_entries:[{form_id:"login",submission_key:"username",name:"user",value:"alice",promote:false}],
+  no_udp:false,dtls_local_port:443,compression_mode:"stateless",mtu:1400,base_mtu:1500,udp_timeout:"5m",
+  udp_mapping:"endpoint_independent",udp_filtering:"address_dependent",udp_nat_max:1024,connect_timeout:"5s",
+  network_strategy:"default",network_type:["ethernet"]}}')
+managed_component_state_validate_record "${openconnect_endpoint_record}"
+openconnect_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${openconnect_endpoint_record}")
+openconnect_rendered=$(managed_component_render_json "${openconnect_state}")
+jq -e '
+  (.endpoints | length == 1) and .endpoints[0].type == "openconnect" and
+  .endpoints[0].server == "https://vpn.example.com" and
+  .endpoints[0].token.mode == "totp" and
+  .endpoints[0].mobile.device_unique_id == "fixture-device" and
+  .endpoints[0].tls.certificate_authority_path == "/etc/sbv/ca.pem" and
+  .endpoints[0].form_entries[0].promote == false
+' <<< "${openconnect_rendered}" >/dev/null
+openconnect_bad_flavor=$(jq -c '.config.flavor = "unsupported"' <<< "${openconnect_endpoint_record}")
+if managed_component_state_validate_record "${openconnect_bad_flavor}"; then
+  printf 'OpenConnect unknown flavor unexpectedly accepted\n' >&2
+  exit 1
+fi
+openconnect_bad_tls=$(jq -c '.config.tls = {certificate_authority:"inline",certificate_authority_path:"/tmp/ca.pem"}' <<< "${openconnect_endpoint_record}")
+if managed_component_state_validate_record "${openconnect_bad_tls}"; then
+  printf 'OpenConnect conflicting TLS material unexpectedly accepted\n' >&2
+  exit 1
+fi
+openconnect_bad_token=$(jq -c '.config.token = {mode:"hotp",secret:"inline",secret_path:"/tmp/token"}' <<< "${openconnect_endpoint_record}")
+if managed_component_state_validate_record "${openconnect_bad_token}"; then
+  printf 'OpenConnect conflicting token material unexpectedly accepted\n' >&2
+  exit 1
+fi
+openconnect_bad_mobile=$(jq -c '.config.mobile.device_unique_id = ""' <<< "${openconnect_endpoint_record}")
+if managed_component_state_validate_record "${openconnect_bad_mobile}"; then
+  printf 'OpenConnect incomplete mobile identity unexpectedly accepted\n' >&2
+  exit 1
+fi
+openconnect_bad_form=$(jq -c '.config.form_entries=[{name:"user",value:"alice"}]' <<< "${openconnect_endpoint_record}")
+if managed_component_state_validate_record "${openconnect_bad_form}"; then
+  printf 'OpenConnect incomplete form entry unexpectedly accepted\n' >&2
+  exit 1
+fi
+openconnect_bad_client_material=$(jq -c '.config.tls |= (del(.client_key_path) + {client_certificate_path:"/etc/sbv/client.pem"})' <<< "${openconnect_endpoint_record}")
+if managed_component_state_validate_record "${openconnect_bad_client_material}"; then
+  printf 'OpenConnect client certificate without key unexpectedly accepted\n' >&2
+  exit 1
+fi
+openconnect_bad_tncc=$(jq -c '.config.tncc.wrapper_path="/usr/libexec/tncc"' <<< "${openconnect_endpoint_record}")
+if managed_component_state_validate_record "${openconnect_bad_tncc}"; then
+  printf 'OpenConnect TNCC wrapper/material conflict unexpectedly accepted\n' >&2
+  exit 1
+fi
+openconnect_bad_form_promote=$(jq -c '.config.form_entries[0].promote=true' <<< "${openconnect_endpoint_record}")
+if managed_component_state_validate_record "${openconnect_bad_form_promote}"; then
+  printf 'OpenConnect form value/promote conflict unexpectedly accepted\n' >&2
+  exit 1
+fi
+openconnect_bad_timeout=$(jq -c '.config.udp_timeout=5' <<< "${openconnect_endpoint_record}")
+if managed_component_state_validate_record "${openconnect_bad_timeout}"; then
+  printf 'OpenConnect numeric duration unexpectedly accepted\n' >&2
+  exit 1
+fi
+openconnect_unknown_field=$(jq -c '.config.on_demand=true' <<< "${openconnect_endpoint_record}")
+if managed_component_state_validate_record "${openconnect_unknown_field}"; then
+  printf 'OpenConnect unknown field unexpectedly accepted\n' >&2
+  exit 1
+fi
+
+# OpenVPN client and server records exercise both the TLS and deprecated
+# static-key unions.  These checks stop at state/render boundaries; external
+# certificate material and a peer control plane are intentionally not mocked.
+openvpn_client_tls_record=$(jq -cn '{id:"endpoint-openvpn-client-tls",role:"endpoint",type:"openvpn-client",tag:"ovpn-client-tls",enabled:true,route_rules:[],config:{
+  mode:"tls",server:"vpn.example.com",server_port:1194,network:"udp",address:["10.30.0.2/24","fd30::2/64"],
+  username:"alice",password:"password",tls:{certificate_path:"/etc/sbv/ca.pem",server_name:"vpn.example.com",
+    peer_fingerprint:["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],control_wrap:{type:"tls_auth",key_path:"/etc/sbv/ta.key",direction:"client"}},
+  routes:["10.40.0.0/16"],redirect_gateway:false,udp_timeout:"5m",network_type:["ethernet"]}}')
+managed_component_state_validate_record "${openvpn_client_tls_record}"
+openvpn_client_tls_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${openvpn_client_tls_record}")
+openvpn_client_tls_rendered=$(managed_component_render_json "${openvpn_client_tls_state}")
+jq -e '
+  (.endpoints | length == 1) and .endpoints[0].type == "openvpn-client" and
+  .endpoints[0].tls.control_wrap.type == "tls_auth" and
+  .endpoints[0].tls.peer_fingerprint[0] == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" and
+  .endpoints[0].routes == ["10.40.0.0/16"]
+' <<< "${openvpn_client_tls_rendered}" >/dev/null
+openvpn_client_static_record=$(jq -c '.id="endpoint-openvpn-client-static" | .tag="ovpn-client-static" | .config |= (del(.tls,.username,.password,.routes) + {mode:"static_key",server:"198.51.100.5",server_port:1194,address:"10.31.0.2/30",peer_address:"10.31.0.1",static_key_path:"/etc/sbv/static.key",key_direction:"client",cipher:"AES-256-CBC"})' <<< "${openvpn_client_tls_record}")
+managed_component_state_validate_record "${openvpn_client_static_record}"
+openvpn_client_both_remotes=$(jq -c '.config.servers=[{server:"backup.example.com",server_port:1194}]' <<< "${openvpn_client_tls_record}")
+if managed_component_state_validate_record "${openvpn_client_both_remotes}"; then
+  printf 'OpenVPN client server/servers conflict unexpectedly accepted\n' >&2
+  exit 1
+fi
+openvpn_client_missing_tls=$(jq -c '.config |= del(.tls)' <<< "${openvpn_client_tls_record}")
+if managed_component_state_validate_record "${openvpn_client_missing_tls}"; then
+  printf 'OpenVPN TLS client without tls options unexpectedly accepted\n' >&2
+  exit 1
+fi
+openvpn_client_bad_fingerprint=$(jq -c '.config.tls.peer_fingerprint=["not-a-sha256-fingerprint"]' <<< "${openvpn_client_tls_record}")
+if managed_component_state_validate_record "${openvpn_client_bad_fingerprint}"; then
+  printf 'OpenVPN malformed peer fingerprint unexpectedly accepted\n' >&2
+  exit 1
+fi
+openvpn_client_bad_mss=$(jq -c '.config.mss_fix_mode="mtu"' <<< "${openvpn_client_tls_record}")
+if managed_component_state_validate_record "${openvpn_client_bad_mss}"; then
+  printf 'OpenVPN MSS mode without mss_fix unexpectedly accepted\n' >&2
+  exit 1
+fi
+openvpn_client_bad_fragment=$(jq -c '.config.network="tcp" | .config.fragment=1200' <<< "${openvpn_client_tls_record}")
+if managed_component_state_validate_record "${openvpn_client_bad_fragment}"; then
+  printf 'OpenVPN TCP fragment unexpectedly accepted\n' >&2
+  exit 1
+fi
+openvpn_client_bad_replay=$(jq -c '.config.replay_window=65537' <<< "${openvpn_client_tls_record}")
+if managed_component_state_validate_record "${openvpn_client_bad_replay}"; then
+  printf 'OpenVPN replay window overflow unexpectedly accepted\n' >&2
+  exit 1
+fi
+openvpn_client_bad_compression=$(jq -c '.config.allow_compression="no" | .config.compression="lz4"' <<< "${openvpn_client_tls_record}")
+if managed_component_state_validate_record "${openvpn_client_bad_compression}"; then
+  printf 'OpenVPN compression policy conflict unexpectedly accepted\n' >&2
+  exit 1
+fi
+
+openvpn_server_tls_record=$(jq -cn '{id:"endpoint-openvpn-server-tls",role:"endpoint",type:"openvpn-server",tag:"ovpn-server-tls",enabled:true,route_rules:[],config:{
+  mode:"tls",listen:"0.0.0.0",listen_port:1194,network:"udp",address:["10.50.0.1/24","fd50::1/64"],max_clients:128,
+  users:[{username:"alice",password:"password"}],tls:{certificate_path:"/etc/sbv/server.pem",key_path:"/etc/sbv/server.key",
+    verify_client_certificate:"optional",client_certificate_path:"/etc/sbv/ca.pem",control_wrap:{type:"tls_crypt_v2",key_path:"/etc/sbv/ta.key",force_cookie:true}},
+  push:{routes:["10.60.0.0/16"],dns:["10.50.0.1"],dns_servers:[{priority:10,addresses:["1.1.1.1","[2001:4860:4860::8888]:853"],transport:"dot",sni:"cloudflare-dns.com"}]},
+  udp_mapping:"endpoint_independent",udp_filtering:"address_dependent"}}')
+managed_component_state_validate_record "${openvpn_server_tls_record}"
+openvpn_server_tls_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${openvpn_server_tls_record}")
+openvpn_server_tls_rendered=$(managed_component_render_json "${openvpn_server_tls_state}")
+jq -e '
+  (.endpoints | length == 1) and .endpoints[0].type == "openvpn-server" and
+  .endpoints[0].tls.control_wrap.force_cookie == true and
+  .endpoints[0].push.dns == ["10.50.0.1"] and
+  .endpoints[0].push.dns_servers[0].addresses[1] == "[2001:4860:4860::8888]:853"
+' <<< "${openvpn_server_tls_rendered}" >/dev/null
+openvpn_server_static_record=$(jq -c '.id="endpoint-openvpn-server-static" | .tag="ovpn-server-static" | .config |= (del(.tls,.users,.push) + {mode:"static_key",network:"tcp",address:"10.51.0.1/30",peer_address:"10.51.0.2",max_clients:1,static_key_path:"/etc/sbv/static.key",key_direction:"server",cipher:"AES-256-CBC"})' <<< "${openvpn_server_tls_record}")
+managed_component_state_validate_record "${openvpn_server_static_record}"
+openvpn_server_missing_address=$(jq -c '.config.address=[]' <<< "${openvpn_server_tls_record}")
+if managed_component_state_validate_record "${openvpn_server_missing_address}"; then
+  printf 'OpenVPN server without address pool unexpectedly accepted\n' >&2
+  exit 1
+fi
+openvpn_server_bad_network=$(jq -c '.config.network="tcp4"' <<< "${openvpn_server_tls_record}")
+if managed_component_state_validate_record "${openvpn_server_bad_network}"; then
+  printf 'OpenVPN server invalid network unexpectedly accepted\n' >&2
+  exit 1
+fi
+openvpn_server_static_tls=$(jq -c '.config |= (. + {mode:"static_key",static_key_path:"/etc/sbv/static.key"})' <<< "${openvpn_server_tls_record}")
+if managed_component_state_validate_record "${openvpn_server_static_tls}"; then
+  printf 'OpenVPN server static/TLS conflict unexpectedly accepted\n' >&2
+  exit 1
+fi
+openvpn_server_bad_dns=$(jq -c '.config.push.dns=["not-an-ip"]' <<< "${openvpn_server_tls_record}")
+if managed_component_state_validate_record "${openvpn_server_bad_dns}"; then
+  printf 'OpenVPN server malformed pushed DNS unexpectedly accepted\n' >&2
+  exit 1
+fi
+openvpn_server_bad_mss=$(jq -c '.config.mss_fix_mode="fixed"' <<< "${openvpn_server_tls_record}")
+if managed_component_state_validate_record "${openvpn_server_bad_mss}"; then
+  printf 'OpenVPN server MSS mode without mss_fix unexpectedly accepted\n' >&2
+  exit 1
+fi
+openvpn_server_bad_replay=$(jq -c '.config.replay_window=65537' <<< "${openvpn_server_tls_record}")
+if managed_component_state_validate_record "${openvpn_server_bad_replay}"; then
+  printf 'OpenVPN server replay window overflow unexpectedly accepted\n' >&2
   exit 1
 fi
 

@@ -160,6 +160,18 @@ Fixed 1.14 full-field and 1.13.18 base-subset `check` results are configuration
 evidence only, not system-interface permission, peer-handshake or UDP
 data-plane proof.
 
+Tailscale endpoint components validate persistent state/auth/control fields,
+route advertisement and exit-node conflicts, relay AddrPort values, optional
+SSH settings and shared Dial Fields. OpenConnect is client-only and validates
+flavor, token secret/path, mobile identity, CSD/HIP/TNCC, TLS material,
+form-entry pairing and compression/keepalive constraints. OpenVPN client and
+server components validate TLS/static-key unions, remotes and address-family
+rules, certificate/key material, control wrapping, users and pushed DNS/routes.
+Inline PEM/key material may contain LF/CR; paths and ordinary fields remain
+control-character safe. These state/render contracts and fixed-core checks do
+not prove external VPN/Tailscale authentication, certificate loading,
+system-interface privileges or TCP/UDP data-plane reachability.
+
 AnyTLS outbound components require `server`, `server_port`, a non-empty
 `password`, and enabled outbound TLS. Idle-session fields and `client_metadata`
 are optional typed values; AnyTLS has no configurable network, transport, or

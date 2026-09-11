@@ -591,3 +591,9 @@ managed ShadowTLS outbound 现在通过 `managed_component_shadowtls_config_vali
 managed WireGuard endpoint 现在通过 `managed_component_wireguard_config_validate_json` 处理，明确使用 sing-box 现代 `WireGuardEndpointOptions`，不恢复已移除的 wireguard outbound。状态层校验标准 32-byte Base64 private/public/PSK、listable CIDR address 与 peer allowed_ips、peer keepalive/reserved tuple、MTU/listen/workers、UDP NAT 行为和 shared Dial Fields；未知/弃用字段、错误 key/prefix、越界 tuple/NAT 值在 state/CAS 与 live takeover 前拒绝。
 
 `tests/managed_components_contract.sh` 新增 WireGuard typed render、scalar/listable 兼容、key/prefix/peer/NAT/未知字段负例，并将 takeover fixture 改为真实形状的 Base64 key。固定官方 ARM64 `sing-box` 1.14.0 全字段 endpoint 与 1.13.18 基础 endpoint 子集 `check` 均通过；这只证明配置解析，不代表系统接口权限、peer 握手或 UDP 数据面。版本统一为本轮 `2026091105`，完整协议目标仍未完成。
+
+### 2026-09-11：Tailscale/OpenConnect/OpenVPN endpoint typed contracts
+
+managed Tailscale endpoint 现在按固定 1.14 `TailscaleEndpointOptions` 校验持久化 state/auth/control、route advertisement、relay AddrPort、exit-node 互斥、可选 SSH 和 shared Dial Fields；OpenConnect endpoint 按 client-only `OpenConnectEndpointOptions` 校验 flavor、token secret/path、mobile identity、CSD/HIP/TNCC、TLS material、form-entry 配对以及压缩/keepalive 互斥；OpenVPN client/server endpoint 分别按 TLS/static_key union 校验 remote、address pool/family、证书和密钥 material、control wrapping、users、push DNS/routes 与 TCP/UDP 约束。PEM/key inline material 可含 LF/CR，路径和普通字段仍拒绝控制字符；未知字段和不合法组合在 state/CAS 与 takeover 前失败。
+
+`tests/managed_components_contract.sh` 新增四类 endpoint 的 render、凭据/材料形状、route/family、TLS/static-key、token/mobile、control-wrap、push DNS 和未知字段负例。固定核心 check 与组件 state/render 只证明本地配置边界；未执行 Tailscale/OpenConnect/OpenVPN 外部认证、证书文件加载、系统接口权限或真实 TCP/UDP 数据面验证。本轮版本统一为 `2026091106`，完整协议目标仍未完成。
