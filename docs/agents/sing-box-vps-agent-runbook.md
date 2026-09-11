@@ -882,6 +882,10 @@ The private record contains the common `id`, `name`, `tag`, `listen`, `outbound_
 
 `version` is `5` or `6`. Version 5 uses `obfs_mode:"none"` or `"http"`; HTTP mode keeps an `obfs_host` hint for client export, while the inbound renderer emits only fields accepted by the Snell server. Version 6 clears v5 fields and uses `mode:"default"`, `"unshaped"` or `"unsafe-raw"`; its PSK must be 12–255 UTF-8 bytes. Authentication accepts zero to 128 unique `name`/`userkey` pairs; with no users, the PSK itself is used by the exported client. Client export maps inbound v5 to outbound v4 and inbound v6 to outbound v6, emits TCP network and preserves each user key. `nodes` never exposes PSKs or user keys. Snell has no lossless standard share URI, so `links` returns `links:{}`, full outbound JSON and `warnings[].code=snell_standard_uri_unavailable`; SubMan deliberately does not advertise Snell as `other`. Non-loopback writes require `--allow-public`. The focused lifecycle test uses mock service/firewall boundaries and an optional target-core `check`; it does not prove public reachability, UDP data-path behavior or real SubMan synchronization.
 
+## 2026-09-11：Hysteria v1 Docker 数据面探针
+
+`fresh_install_hysteria` 远程场景现在生成持久于验证容器生命周期的自签名 SAN 证书，安装 Hysteria v1 后用受管状态导出单用户客户端；导出器保留 `auth_str`、`up_mbps/down_mbps`、公开证书（不含私钥）和显式 `h3` ALPN。固定 1.14.0 核心的服务端 UDP listener、客户端 SOCKS listener 与 HTTP marker 请求均在 Docker 回环内通过，聚焦 run `dev/verification-runs/20260911124157` 的场景和探针 artifact 为 success；远程完整 run `dev/verification-runs/20260911140159` 另有 16/16 场景、23/23 协议探针 success。QUIC 选项输入允许 `0` 表示上游默认；Hysteria v1 的此项仍只证明容器/回环配置与业务路径，不证明公网、生产、外部控制面或独立 UDP payload 完整覆盖。
+
 ## External Documentation
 
 When current `sing-box` configuration syntax, migration behavior, or version compatibility is needed, use Context7 first. If Context7 cannot provide enough detail, use official `sing-box` documentation or the official repository before relying on third-party posts.

@@ -603,3 +603,7 @@ managed Tailscale endpoint 现在按固定 1.14 `TailscaleEndpointOptions` 校�
 组件 registry 的每次环境读取现在解析目标 `sing-box version` 的 `Tags:` 行，并把已排序、校验过的 tag 列表放入 `environment.core.build_tags`。记录声明 `with_quic`、`with_wireguard`、`with_tailscale`、`with_openconnect`、`with_openvpn`、`with_cloudflared` 或 `with_naive_outbound` 时，已报告但缺失所需 tag 的组件返回 `unavailable`；包装器或旧二进制没有 `Tags:` 行时返回 `not_assessed`，不会把未知构建误报为可用。Hysteria、Hysteria2 与 TUIC outbound 的 registry 条件同步标记为 `with_quic`；Naive 的 `libcronet.so`、外部认证、系统权限和真实数据面仍是独立依赖。
 
 `tests/managed_component_availability.sh` 新增已报告 tag、缺失 `with_quic` 与未报告 tag 的正负门禁，固定官方 1.14.0 ARM64 包的解析结果也保持无凭据、排序和最小字段输出。该切片只改善构建变体可见性，不把 `Tags:`、版本检查或 `sing-box check` 扩大为外部控制面或 TCP/UDP 数据面验证。版本统一为本轮 `2026091107`，完整协议目标仍未完成。
+
+### 2026-09-11：Hysteria v1 真实 Docker 回环探针
+
+本轮将 Hysteria v1 从“仅配置/生命周期”推进到可重复的远程业务探针：新增 `tests/verification_protocol_probe_hysteria.sh` 与 `fresh_install_hysteria`，使用受管 typed store/exporter 生成单用户客户端，显式保留 `auth_str`、`up_mbps/down_mbps`、公开证书和 `h3` ALPN；QUIC 初始包/最大并发为 `0` 时按上游默认值接受。服务端使用持久于验证容器的 SAN 证书，客户端经本地 SOCKS 访问 Python HTTP marker，避免将第二用户凭据、私钥或公网可达性写入 artifact。runtime smoke 同步按 registry 选择 TCP/UDP listener assertion。聚焦 run `dev/verification-runs/20260911124157` 中 `fresh_install_hysteria` 与 `runtime_smoke` 均 success，两个 Hysteria probe 均 `RESULT=success`；随后远程完整门禁 `dev/verification-runs/20260911140159` 在 `VERIFY_SKIP_LOCAL_TESTS=1` 下 16/16 场景、23/23 协议探针 success，其中 `fresh_install_hysteria` 的 Hysteria probe 返回 HTTP marker。该证据仍限于容器/回环，完整协议目标仍未完成。

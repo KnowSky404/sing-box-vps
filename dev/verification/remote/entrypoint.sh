@@ -504,6 +504,51 @@ verification_generate_vmess_probe_client() (
   mv -f -- "${temp_dir}/client.json" "${output_path}" || return 1
 )
 
+verification_generate_hysteria_probe_client() (
+  set -euo pipefail
+  umask 077
+  local config_file=$1 output_path=$2 installer temp_dir selected_tag snapshot
+  local state_file store_file record
+  installer=${VERIFY_REMOTE_INSTALL_SCRIPT:-/usr/local/bin/sbv}
+  [[ -f "${installer}" ]] || return 1
+  temp_dir=$(mktemp -d "${output_path}.hysteria.XXXXXX") || return 1
+  trap 'rm -rf -- "${temp_dir}"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+  # Hysteria v1 has a distinct auth_str/bandwidth/QUIC contract.  Use the
+  # exact runtime exporter after validating the selected typed record so the
+  # probe cannot silently fall back to Hysteria2 fields or stale credentials.
+  source "${installer}"
+  plain_proxy_structured_state_active hysteria || return 1
+  state_file=$(protocol_state_file hysteria) || return 1
+  store_file=$(plain_proxy_structured_store_file hysteria) || return 1
+  selected_tag=$(jq -er '[.inbounds[] | select(.type=="hysteria")][0].tag' "${config_file}") || return 1
+  record=$(verification_load_hysteria_probe_record "${state_file}" "${store_file}" "${selected_tag}") || return 1
+  snapshot=$(structured_instance_store_snapshot_json hysteria "${store_file}") || return 1
+  jq -e --arg tag "${selected_tag}" --argjson expected "${record}" '
+    any(.instances[]; .tag == $tag and .listen.port == $expected.listen.port and
+      .bandwidth == $expected.bandwidth and
+      .authentication.users[0].auth_str == $expected.authentication.users[0].auth_str)
+  ' <<< "${snapshot}" >/dev/null || return 1
+  jq -e --arg tag "${selected_tag}" '
+    .instances |= map(select(.tag == $tag)) |
+    if (.instances|length)==1 then .default_instance_id=.instances[0].id
+    else error("invalid probe inventory") end
+  ' <<< "${snapshot}" > "${temp_dir}/store.json" || return 1
+  build_client_hysteria_outbounds 127.0.0.1 "${temp_dir}/store.json" \
+    > "${temp_dir}/outbounds.jsonl" || return 1
+  jq -se '
+    if length>0 then
+      {log:{disabled:true},
+       inbounds:[{type:"socks",tag:"local-socks",listen:"127.0.0.1",listen_port:19080}],
+       outbounds:[(.[0] | .tag="proxy" | .tls.alpn=["h3"])],route:{final:"proxy"}}
+    else error("empty probe export") end
+  ' "${temp_dir}/outbounds.jsonl" > "${temp_dir}/client.json" || return 1
+  chmod 600 "${temp_dir}/client.json" || return 1
+  mv -f -- "${temp_dir}/client.json" "${output_path}" || return 1
+)
+
 verification_load_http_probe_record() {
   local state_file=$1
   local store_file=$2
@@ -594,6 +639,58 @@ verification_load_vmess_probe_record() {
         }
       )
     else error("invalid VMess structured state")
+    end
+  ' "${store_file}") || return 1
+  printf '%s\n' "${record}"
+}
+
+verification_load_hysteria_probe_record() {
+  local state_file=$1
+  local store_file=$2
+  local tag=$3
+  local record
+
+  [[ -f "${state_file}" && ! -L "${state_file}" ]] || return 1
+  grep -Eq '^[[:space:]]*CONFIG_SCHEMA_VERSION=2([[:space:]]*)$' "${state_file}" || return 1
+  [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  record=$(jq -ce --arg tag "${tag}" '
+    if .schema_version == 1 and .protocol == "hysteria" and
+       (.instances | type == "array") and
+       ([.instances[] | select(.tag == $tag)] | length) == 1 then
+      ([.instances[] | select(.tag == $tag)][0] |
+        select(
+          (.listen.address | type == "string" and length > 0) and
+          (.listen.port | type == "number" and floor == . and . >= 1 and . <= 65535) and
+          (.authentication.users | type == "array" and length >= 1 and length <= 128 and
+            all(.[]; type == "object" and
+              (keys | sort) == ["auth_str","name"] and
+              (.name | type == "string" and length > 0 and
+                (test("[\u0000-\u001F\u007F]") | not)) and
+              (.auth_str | type == "string" and length > 0 and
+                (test("[\u0000-\u001F\u007F]") | not))) and
+            (map(.name) | unique | length) == length and
+            (map(.auth_str) | unique | length) == length) and
+          (.tls | type == "object" and .enabled == true and
+            (.server_name | type == "string" and length > 0) and
+            (.certificate_path | type == "string" and startswith("/")) and
+            (.key_path | type == "string" and startswith("/"))) and
+          (.client_trust | IN("certificate","system")) and
+          (.bandwidth | type == "object" and
+            (.up_mbps | type == "number" and floor == . and . >= 1 and . <= 1000000) and
+            (.down_mbps | type == "number" and floor == . and . >= 1 and . <= 1000000)) and
+          (.obfs | type == "object" and (.enabled | type == "boolean")) and
+          (.hysteria | type == "object")
+        ) | {
+          listen: .listen,
+          authentication: .authentication,
+          tls: .tls,
+          client_trust: .client_trust,
+          bandwidth: .bandwidth,
+          obfs: .obfs,
+          hysteria: .hysteria
+        }
+      )
+    else error("invalid Hysteria structured state")
     end
   ' "${store_file}") || return 1
   printf '%s\n' "${record}"
@@ -936,6 +1033,11 @@ verification_generate_protocol_probe_client_config() {
       output_path=$(verification_artifact_path \
         "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
       verification_generate_vmess_probe_client "${config_file}" "${output_path}" || return 1
+      ;;
+    hysteria)
+      output_path=$(verification_artifact_path \
+        "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
+      verification_generate_hysteria_probe_client "${config_file}" "${output_path}" || return 1
       ;;
     vless-plain)
       vless_plain_state_file=/root/sing-box-vps/protocols/vless-plain.env
@@ -1504,6 +1606,9 @@ for scenario in "$@"; do
       ;;
     fresh_install_vmess)
       run_verification_scenario fresh_install_vmess verification_scenario_fresh_install_vmess
+      ;;
+    fresh_install_hysteria)
+      run_verification_scenario fresh_install_hysteria verification_scenario_fresh_install_hysteria
       ;;
     fresh_install_vless_plain)
       run_verification_scenario fresh_install_vless_plain verification_scenario_fresh_install_vless_plain

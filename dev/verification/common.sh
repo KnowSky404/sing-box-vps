@@ -145,6 +145,7 @@ resolve_local_tests() {
       tests/verification_protocol_probe_shadowsocks.sh \
       tests/verification_protocol_probe_trojan.sh \
       tests/verification_protocol_probe_vmess.sh \
+      tests/verification_protocol_probe_hysteria.sh \
       tests/verification_protocol_probe_vless_plain.sh \
       tests/reality_sni_validation.sh \
       tests/generate_config_cleans_temp_files_on_failure.sh \
@@ -242,6 +243,7 @@ resolve_remote_scenarios() {
       fresh_install_shadowsocks
       fresh_install_trojan
       fresh_install_vmess
+      fresh_install_hysteria
       fresh_install_vless_plain
       multi_protocol_coexistence
       upgrade_1_13_to_1_14

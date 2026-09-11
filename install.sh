@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091107
+# Version: 2026091108
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091107"
+readonly SCRIPT_VERSION="2026091108"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -83,7 +83,7 @@ readonly SB_PROTOCOL_REGISTRY=(
   'vmess|vmess|vmess|vmess|tls|inbound|vmess|VMess|vmess-in|9|true|vmess|tcp,udp|tcp,udp|1.13.0|true|optional|vmess|tcp_loopback|{"multi_instance":true,"authentication":true,"tls":true,"transports":["none","http","ws","grpc","quic"],"listen_transport_projection":true,"client_export":true,"subman_sync":true}|vmess|build_vmess_inbound_json,save_vmess_state,prompt_vmess_install,prompt_vmess_update,build_client_vmess_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'snell|snell|snell|snell|psk|inbound|snell|Snell|snell-in|11|true||tcp|tcp|1.14.0|true|none|snell|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"versions":[5,6],"v5_obfs_modes":["none","http"],"v6_modes":["","default","unshaped","unsafe-raw"],"udp_via_tcp_packet_api":true,"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true}|snell|build_snell_inbound_json,save_snell_state,prompt_snell_install,prompt_snell_update,build_client_snell_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'tuic|tuic|tuic|tuic|tls-quic|inbound|tuic|TUIC|tuic-in|12|true||udp|tcp,udp|1.13.0|true|optional|tuic|quic_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"tls_modes":["manual_certificate"],"quic":true,"congestion_control":["cubic","new_reno","bbr"],"udp_relay_modes":["native","quic"],"udp_over_stream":true,"zero_rtt_handshake":true,"heartbeat":true,"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true}|tuic|build_tuic_inbound_json,save_tuic_state,prompt_tuic_install,prompt_tuic_update,build_client_tuic_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
-  'hysteria|hysteria|hysteria|hysteria|tls-quic|inbound|hysteria|Hysteria|hysteria-in|13|true||udp|tcp,udp|1.13.0|true|optional|hysteria|quic_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"tls_modes":["manual_certificate"],"bandwidth":true,"obfs":true,"quic":true,"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true}|hysteria|build_hysteria_inbound_json,save_hysteria_state,prompt_hysteria_install,prompt_hysteria_update,build_client_hysteria_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'hysteria|hysteria|hysteria|hysteria|tls-quic|inbound|hysteria|Hysteria|hysteria-in|13|true||udp|tcp,udp|1.13.0|true|optional|hysteria|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"tls_modes":["manual_certificate"],"bandwidth":true,"obfs":true,"quic":true,"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true}|hysteria|build_hysteria_inbound_json,save_hysteria_state,prompt_hysteria_install,prompt_hysteria_update,build_client_hysteria_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'naive|naive|naive|naive|tls-quic|inbound|naive|NaiveProxy|naive-in|14|true||tcp,udp|tcp,udp|1.13.0|true|optional|naive|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"network":["tcp","udp"],"listen_network_selection":true,"quic_congestion_control":["bbr","cubic","reno"],"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true,"outbound_runtime":"with_naive_outbound+libcronet"}|naive|build_naive_inbound_json,save_naive_state,prompt_naive_install,prompt_naive_update,build_client_naive_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
   'shadowtls|shadowtls|shadowtls|shadowtls|tls-wrapper|inbound|shadowtls|ShadowTLS|shadowtls-in|15|true||tcp|tcp|1.13.0|true|optional|shadowtls|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"versions":[1,2,3],"handshake":true,"detour":true,"wildcard_sni":["off","authed","all"],"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true,"composite":true}|shadowtls|build_shadowtls_inbound_json,save_shadowtls_state,prompt_shadowtls_install,prompt_shadowtls_update,build_client_shadowtls_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
 )
@@ -1787,6 +1787,22 @@ prompt_optional_positive_integer() {
       return 0
     fi
     log_warn "${label}必须为空或正整数。" >&2
+  done
+}
+
+prompt_optional_nonnegative_integer() {
+  local prompt=$1 default=${2:-} label=${3:-数值}
+  local value
+
+  while true; do
+    read -rp "${prompt}" value || return 1
+    value=$(trim_whitespace "${value}")
+    [[ -z "${value}" && -n "${default}" ]] && value="${default}"
+    if [[ -z "${value}" || "${value}" =~ ^[0-9]+$ ]]; then
+      printf '%s' "${value}"
+      return 0
+    fi
+    log_warn "${label}必须为空或非负整数。" >&2
   done
 }
 
@@ -4426,11 +4442,11 @@ hysteria_prompt_quic_options() {
   streams=$(jq -r '.max_concurrent_streams // 0' <<< "${current}") || return 1
   stream=$(jq -r '.stream_receive_window // ""' <<< "${current}") || return 1
   connection=$(jq -r '.connection_receive_window // ""' <<< "${current}") || return 1
-  initial=$(prompt_optional_positive_integer "[Hysteria] QUIC initial_packet_size（当前 ${initial}，0 为默认）: " "${initial}" "initial_packet_size") || return 1
+  initial=$(prompt_optional_nonnegative_integer "[Hysteria] QUIC initial_packet_size（当前 ${initial}，0 为默认）: " "${initial}" "initial_packet_size") || return 1
   [[ -n "${initial}" ]] || initial=0
   [[ "${initial}" -le 65535 ]] || return 1
   mtu=$(prompt_yes_no "[Hysteria] 禁用 QUIC path MTU discovery [y/n]（当前 ${mtu}）: " "${mtu}") || return 1
-  streams=$(prompt_optional_positive_integer "[Hysteria] QUIC max_concurrent_streams（当前 ${streams}，0 为默认）: " "${streams}" "max_concurrent_streams") || return 1
+  streams=$(prompt_optional_nonnegative_integer "[Hysteria] QUIC max_concurrent_streams（当前 ${streams}，0 为默认）: " "${streams}" "max_concurrent_streams") || return 1
   [[ -n "${streams}" ]] || streams=0
   [[ "${streams}" -le 65535 ]] || return 1
   read -rp "[Hysteria] stream_receive_window（当前 ${stream}，留空保持/清除）: " answer || return 1
@@ -11459,8 +11475,8 @@ ensure_hysteria_materials() {
   fi
   jq -e 'type == "array" and length >= 1 and length <= 128 and
     all(.[]; type == "object" and (keys|sort) == ["auth_str","name"] and
-      (.name|type == "string" and length > 0 and utf8bytelength <= 256 and (test("[\\u0000-\\u001F\\u007F]")|not)) and
-      (.auth_str|type == "string" and length > 0 and utf8bytelength <= 4096 and (test("[\\u0000-\\u001F\\u007F]")|not))) and
+      (.name|type == "string" and length > 0 and utf8bytelength <= 256 and (test("[\u0000-\u001F\u007F]")|not)) and
+      (.auth_str|type == "string" and length > 0 and utf8bytelength <= 4096 and (test("[\u0000-\u001F\u007F]")|not))) and
     (map(.name)|unique|length) == length and (map(.auth_str)|unique|length) == length' <<< "${user_json}" >/dev/null || return 1
   SB_HYSTERIA_AUTH_JSON=${user_json}
 

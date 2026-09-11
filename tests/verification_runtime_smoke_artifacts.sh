@@ -35,6 +35,8 @@ REMOTE_SHADOWSOCKS_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/shadowsocks.env"
 REMOTE_SHADOWSOCKS_STORE_FILE="${REMOTE_PROTOCOLS_DIR}/instances/shadowsocks.json"
 REMOTE_TROJAN_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/trojan.env"
 REMOTE_TROJAN_STORE_FILE="${REMOTE_PROTOCOLS_DIR}/instances/trojan.json"
+REMOTE_HYSTERIA_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/hysteria.env"
+REMOTE_HYSTERIA_STORE_FILE="${REMOTE_PROTOCOLS_DIR}/instances/hysteria.json"
 REMOTE_VLESS_PLAIN_STATE_FILE="${REMOTE_PROTOCOLS_DIR}/vless-plain.env"
 REMOTE_VLESS_PLAIN_STORE_FILE="${REMOTE_PROTOCOLS_DIR}/instances/vless-plain.json"
 REMOTE_INDEX_FILE="${REMOTE_PROTOCOLS_DIR}/index.env"
@@ -172,7 +174,11 @@ chmod +x "${TMP_DIR}/python3"
 
 cat > "${TMP_DIR}/ss" <<'EOF'
 #!/usr/bin/env bash
-printf 'LISTEN 0 0 127.0.0.1:%s 0.0.0.0:*\n' "$(cat "${REMOTE_PORT_FILE}")"
+if grep -Fqx 'INSTALLED_PROTOCOLS=hysteria' "${REMOTE_INDEX_FILE}" 2>/dev/null; then
+  printf 'UNCONN 0 0 127.0.0.1:%s 0.0.0.0:*\n' "$(cat "${REMOTE_PORT_FILE}")"
+else
+  printf 'LISTEN 0 0 127.0.0.1:%s 0.0.0.0:*\n' "$(cat "${REMOTE_PORT_FILE}")"
+fi
 if [[ -s "${REMOTE_PROBE_CLIENT_PID_FILE:?}" ]] && kill -0 "$(cat "${REMOTE_PROBE_CLIENT_PID_FILE}")" 2>/dev/null; then
   printf 'LISTEN 0 0 127.0.0.1:19080 0.0.0.0:*\n'
 fi
@@ -333,6 +339,39 @@ STATE_EOF
 STATE_EOF
 }
 
+write_hysteria_state() {
+  mkdir -p "\$(dirname "\${REMOTE_HYSTERIA_STORE_FILE}")"
+  cat > "\${REMOTE_HYSTERIA_STATE_FILE}" <<'STATE_EOF'
+INSTALLED=1
+CONFIG_SCHEMA_VERSION=2
+STATE_EOF
+  cat > "\${REMOTE_HYSTERIA_STORE_FILE}" <<'STATE_EOF'
+{
+  "schema_version": 1,
+  "protocol": "hysteria",
+  "revision": 1,
+  "default_instance_id": "main",
+  "instances": [{
+    "id": "main",
+    "name": "Hysteria verification",
+    "tag": "hysteria-in",
+    "listen": {"address": "127.0.0.1", "port": 1086},
+    "authentication": {"users": [{"name": "hysteria-user", "auth_str": "hysteria-verification-auth"}]},
+    "tls": {"enabled": true, "server_name": "hysteria.verification.invalid",
+      "certificate_path": "/tmp/sing-box-vps-verification-hysteria.crt",
+      "key_path": "/tmp/sing-box-vps-verification-hysteria.key"},
+    "client_trust": "certificate",
+    "bandwidth": {"up_mbps": 100, "down_mbps": 100},
+    "obfs": {"enabled": false, "password": ""},
+    "hysteria": {"connection_receive_window": "", "disable_path_mtu_discovery": false,
+      "initial_packet_size": 0, "max_concurrent_streams": 0, "stream_receive_window": ""},
+    "outbound_policy": "default",
+    "dependencies": []
+  }]
+}
+STATE_EOF
+}
+
 write_runtime_config() {
   cat > "\${REMOTE_CONFIG_FILE}" <<CONFIG_EOF
 {
@@ -427,6 +466,16 @@ write_runtime_config() {
       "users": [{"name": "trojan-user", "password": "trojan-pass"}],
       "tls": {"enabled": true, "server_name": "trojan.example"},
       "transport": {"type": "quic"}
+    },
+    {
+      "type": "hysteria",
+      "tag": "hysteria-in",
+      "listen": "127.0.0.1",
+      "listen_port": 1086,
+      "users": [{"name": "hysteria-user", "auth_str": "hysteria-verification-auth"}],
+      "tls": {"enabled": true, "server_name": "hysteria.verification.invalid", "alpn": ["h3"]},
+      "up_mbps": 100,
+      "down_mbps": 100
     }
   ]
 }
@@ -442,8 +491,11 @@ enable_multi_protocol_probe_fixture() {
   write_http_state
   write_shadowsocks_state
   write_trojan_state
+  write_hysteria_state
+  command jq '.instances[].client_trust = "system"' "\${REMOTE_HYSTERIA_STORE_FILE}" > "\${REMOTE_HYSTERIA_STORE_FILE}.tmp"
+  mv "\${REMOTE_HYSTERIA_STORE_FILE}.tmp" "\${REMOTE_HYSTERIA_STORE_FILE}"
   cat > "\${REMOTE_INDEX_FILE}" <<'INDEX_EOF'
-INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan,mystery-protocol
+INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan,hysteria,mystery-protocol
 INDEX_EOF
   write_runtime_config
 }
@@ -818,6 +870,56 @@ INDEX_EOF
           return 0
         fi
 
+        if [[ "\${actual_lines[2]:-}" == "13" ]]; then
+          [[ "\${#actual_lines[@]}" -eq 22 ]]
+          [[ "\${actual_lines[0]}" == "1" ]]
+          [[ "\${actual_lines[1]}" == "" ]]
+          [[ "\${actual_lines[2]}" == "13" ]]
+          [[ "\${actual_lines[3]}" == "1086" ]]
+          [[ "\${actual_lines[4]}" == "1" ]]
+          [[ "\${actual_lines[5]}" == "hysteria-user" ]]
+          [[ "\${actual_lines[6]}" == "hysteria-verification-auth" ]]
+          [[ "\${actual_lines[7]}" == "hysteria.verification.invalid" ]]
+          [[ "\${actual_lines[8]}" == "/tmp/sing-box-vps-verification-hysteria.crt" ]]
+          [[ "\${actual_lines[9]}" == "/tmp/sing-box-vps-verification-hysteria.key" ]]
+          [[ "\${actual_lines[10]}" == "1" ]]
+          [[ "\${actual_lines[11]}" == "100" ]]
+          [[ "\${actual_lines[12]}" == "100" ]]
+          [[ "\${actual_lines[13]}" == "n" ]]
+          [[ "\${actual_lines[14]}" == "0" ]]
+          [[ "\${actual_lines[15]}" == "n" ]]
+          [[ "\${actual_lines[16]}" == "0" ]]
+          [[ "\${actual_lines[17]}" == "" ]]
+          [[ "\${actual_lines[18]}" == "" ]]
+          [[ "\${actual_lines[19]}" == "n" ]]
+          [[ "\${actual_lines[20]}" == "n" ]]
+          [[ "\${actual_lines[21]}" == "0" ]]
+          printf '1086\n' > "\${REMOTE_PORT_FILE}"
+          printf '1\n' > "\${REMOTE_CONFIG_PRESENT_FILE}"
+          printf '1\n' > "\${REMOTE_SERVICE_FILE_PRESENT_FILE}"
+          printf '1\n' > "\${REMOTE_SBV_PRESENT_FILE}"
+          printf '1\n' > "\${REMOTE_SERVICE_ACTIVE_FILE}"
+          write_hysteria_state
+          cat > "\${REMOTE_CONFIG_FILE}" <<'CONFIG_EOF'
+{
+  "inbounds": [{
+    "type": "hysteria",
+    "tag": "hysteria-in",
+    "listen": "127.0.0.1",
+    "listen_port": 1086,
+    "users": [{"name": "hysteria-user", "auth_str": "hysteria-verification-auth"}],
+    "tls": {"enabled": true, "server_name": "hysteria.verification.invalid", "alpn": ["h3"]},
+    "up_mbps": 100,
+    "down_mbps": 100
+  }]
+}
+CONFIG_EOF
+          cat > "\${REMOTE_INDEX_FILE}" <<'INDEX_EOF'
+INSTALLED_PROTOCOLS=hysteria
+INDEX_EOF
+          return 0
+        fi
+
         printf 'unexpected install input: %s\n' "\${actual_lines[*]:-}" >&2
         return 1
       fi
@@ -993,6 +1095,16 @@ test() {
     return
   fi
 
+  if [[ "\${1:-}" == "-f" && "\${2:-}" == "/root/sing-box-vps/protocols/hysteria.env" ]]; then
+    [[ -f "\${REMOTE_HYSTERIA_STATE_FILE}" ]]
+    return
+  fi
+
+  if [[ "\${1:-}" == "-f" && "\${2:-}" == "/root/sing-box-vps/protocols/instances/hysteria.json" ]]; then
+    [[ -f "\${REMOTE_HYSTERIA_STORE_FILE}" ]]
+    return
+  fi
+
   if [[ "\${1:-}" == "-f" && "\${2:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
     [[ -f "\${REMOTE_INDEX_FILE}" ]]
     return
@@ -1095,6 +1207,10 @@ jq() {
     args[\$last_index]="\${REMOTE_TROJAN_STORE_FILE}"
   fi
 
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/instances/hysteria.json" ]]; then
+    args[\$last_index]="\${REMOTE_HYSTERIA_STORE_FILE}"
+  fi
+
   command "\${REAL_JQ}" "\${args[@]}"
 }
 
@@ -1128,6 +1244,10 @@ sed() {
 
   if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/trojan.env" ]]; then
     args[\$last_index]="\${REMOTE_TROJAN_STATE_FILE}"
+  fi
+
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/hysteria.env" ]]; then
+    args[\$last_index]="\${REMOTE_HYSTERIA_STATE_FILE}"
   fi
 
   command sed "\${args[@]}"
@@ -1194,8 +1314,20 @@ grep() {
     args[\$last_index]="\${REMOTE_SHADOWSOCKS_STORE_FILE}"
   fi
 
+  if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/instances/hysteria.json" ]]; then
+    args[\$last_index]="\${REMOTE_HYSTERIA_STORE_FILE}"
+  fi
+
   if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/index.env" ]]; then
     args[\$last_index]="\${REMOTE_INDEX_FILE}"
+  fi
+
+  if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/trojan.env" ]]; then
+    args[\$last_index]="\${REMOTE_TROJAN_STATE_FILE}"
+  fi
+
+  if [[ "\${args[\$last_index]}" == "/root/sing-box-vps/protocols/hysteria.env" ]]; then
+    args[\$last_index]="\${REMOTE_HYSTERIA_STATE_FILE}"
   fi
 
   command grep "\${args[@]}"
@@ -1220,6 +1352,10 @@ stat() {
     printf '600\n'
     return 0
   fi
+  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/instances/hysteria.json" ]]; then
+    printf '600\n'
+    return 0
+  fi
   command stat "\$@"
 }
 PAYLOAD_PRELUDE
@@ -1235,6 +1371,8 @@ perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/shadowsocks.env|state_fi
 perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/shadowsocks.json|store_file='"${REMOTE_SHADOWSOCKS_STORE_FILE}"'|g' "\${script_file}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/trojan.env|state_file='"${REMOTE_TROJAN_STATE_FILE}"'|g' "\${script_file}"
 perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/trojan.json|store_file='"${REMOTE_TROJAN_STORE_FILE}"'|g' "\${script_file}"
+perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/hysteria.env|state_file='"${REMOTE_HYSTERIA_STATE_FILE}"'|g' "\${script_file}"
+perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/hysteria.json|store_file='"${REMOTE_HYSTERIA_STORE_FILE}"'|g' "\${script_file}"
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/vless-plain.env|state_file='"${REMOTE_VLESS_PLAIN_STATE_FILE}"'|g' "\${script_file}"
 perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/vless-plain.json|store_file='"${REMOTE_VLESS_PLAIN_STORE_FILE}"'|g' "\${script_file}"
 cat > "\${script_file}.wrapper" <<'WRAP_EOF'
@@ -1372,6 +1510,8 @@ REMOTE_SHADOWSOCKS_STATE_FILE="${REMOTE_SHADOWSOCKS_STATE_FILE}" \
 REMOTE_SHADOWSOCKS_STORE_FILE="${REMOTE_SHADOWSOCKS_STORE_FILE}" \
 REMOTE_TROJAN_STATE_FILE="${REMOTE_TROJAN_STATE_FILE}" \
 REMOTE_TROJAN_STORE_FILE="${REMOTE_TROJAN_STORE_FILE}" \
+REMOTE_HYSTERIA_STATE_FILE="${REMOTE_HYSTERIA_STATE_FILE}" \
+REMOTE_HYSTERIA_STORE_FILE="${REMOTE_HYSTERIA_STORE_FILE}" \
 REAL_JQ="${REAL_JQ}" \
 PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" "\${script_file}" "\${@:7}"
   exit \$?
@@ -1394,6 +1534,7 @@ grep -Fq 'fresh_install_http' "${run_dir}/scenarios.txt"
 grep -Fq 'fresh_install_shadowsocks' "${run_dir}/scenarios.txt"
 grep -Fq 'fresh_install_trojan' "${run_dir}/scenarios.txt"
 grep -Fq 'fresh_install_vmess' "${run_dir}/scenarios.txt"
+grep -Fq 'fresh_install_hysteria' "${run_dir}/scenarios.txt"
 grep -Fq 'fresh_install_vless_plain' "${run_dir}/scenarios.txt"
 grep -Fq 'upgrade_rollback_1_13_to_1_14' "${run_dir}/scenarios.txt"
 grep -Fq 'remote_target=docker:test-container' "${run_dir}/summary.log"
@@ -1412,6 +1553,11 @@ grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/fresh_install_
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/fresh_install_trojan/protocol-probes/trojan/result.env"
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vmess/config.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vmess/protocols/instances/vmess.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_hysteria/config.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_hysteria/protocols/hysteria.env" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_hysteria/protocols/instances/hysteria.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_hysteria/listeners.ss-lunp.txt" ]]
+grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/fresh_install_hysteria/protocol-probes/hysteria/result.env"
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless_plain/config.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless_plain/protocols/vless-plain.env" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless_plain/protocols/instances/vless-plain.json" ]]
@@ -1434,6 +1580,9 @@ grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/trojan/client.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/trojan/probe.stdout.txt" ]]
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/trojan/result.env"
+[[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/hysteria/client.json" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/hysteria/probe.stdout.txt" ]]
+grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/hysteria/result.env"
 grep -Fqx 'RESULT=unsupported' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/mystery-protocol/result.env"
 grep -Fqx 'STATUS=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/result.env"
 grep -Fqx 'STATUS=success' "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/result.env"
@@ -1458,6 +1607,7 @@ grep -Fqx 'fresh_install_http' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'fresh_install_shadowsocks' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'fresh_install_trojan' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'fresh_install_vmess' "${REMOTE_DISPATCH_LOG_FILE}"
+grep -Fqx 'fresh_install_hysteria' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'fresh_install_vless_plain' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'upgrade_1_13_to_1_14' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'runtime_smoke' "${REMOTE_DISPATCH_LOG_FILE}"

@@ -317,6 +317,29 @@ grep() {
 PAYLOAD_PRELUDE
   cat >> "${scenario_file}"
   cat > "${scenario_file}.wrapper" <<'WRAP_EOF'
+eval "$(declare -f verification_capture_file_if_present | sed '1s/verification_capture_file_if_present/verification_capture_file_if_present__original/')"
+verification_capture_file_if_present() {
+  local source_path=$1
+  local relative_path=$2
+  local target_path
+  target_path=$(verification_artifact_path "${relative_path}")
+  if [[ -e "${target_path}" ]]; then
+    return 0
+  fi
+  verification_capture_file_if_present__original "${source_path}" "${relative_path}"
+}
+
+eval "$(declare -f verification_capture_tree_if_present | sed '1s/verification_capture_tree_if_present/verification_capture_tree_if_present__original/')"
+verification_capture_tree_if_present() {
+  local source_path=$1
+  local relative_path=$2
+  local target_path="${VERIFY_ARTIFACT_DIR}/${relative_path}"
+  if [[ -e "${target_path}" ]]; then
+    return 0
+  fi
+  verification_capture_tree_if_present__original "${source_path}" "${relative_path}"
+}
+
 verification_fixture_write_file() {
   local path
   path=$(verification_artifact_path "$1")
@@ -379,6 +402,13 @@ verification_scenario_fresh_install_vmess() {
   verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/config.json" '{"inbounds":[{"type":"vmess","tag":"vmess-in","listen":"127.0.0.1","listen_port":1085,"users":[{"name":"vmess-user","uuid":"11111111-1111-4111-8111-111111111111","alterId":0,"security":"auto"}],"tls":{"enabled":true,"server_name":"vmess.example"}}]}'
   verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/vmess.env" $'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2'
   verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/instances/vmess.json" '{"schema_version":1,"protocol":"vmess","revision":1,"default_instance_id":"main","instances":[{"id":"main","name":"VMess verification","tag":"vmess-in","listen":{"address":"127.0.0.1","port":1085},"authentication":{"users":[{"name":"vmess-user","uuid":"11111111-1111-4111-8111-111111111111","alter_id":0,"security":"auto"}]},"tls":{"enabled":true,"server_name":"vmess.example"},"client_trust":"certificate","transport":{"type":"none"},"outbound_policy":"default","dependencies":[]}]}'
+}
+
+verification_scenario_fresh_install_hysteria() {
+  printf 'SCENARIO=fresh_install_hysteria\n'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/config.json" '{"inbounds":[{"type":"hysteria","tag":"hysteria-in","listen":"127.0.0.1","listen_port":1086,"users":[{"name":"hysteria-user","auth_str":"hysteria-verification-auth"}],"tls":{"enabled":true,"server_name":"hysteria.verification.invalid","alpn":["h3"]},"up_mbps":100,"down_mbps":100}]}'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/hysteria.env" $'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/instances/hysteria.json" '{"schema_version":1,"protocol":"hysteria","revision":1,"default_instance_id":"main","instances":[{"id":"main","name":"Hysteria verification","tag":"hysteria-in","listen":{"address":"127.0.0.1","port":1086},"authentication":{"users":[{"name":"hysteria-user","auth_str":"hysteria-verification-auth"}]},"tls":{"enabled":true,"server_name":"hysteria.verification.invalid","certificate_path":"/tmp/sing-box-vps-verification-hysteria.crt","key_path":"/tmp/sing-box-vps-verification-hysteria.key"},"bandwidth":{"up_mbps":100,"down_mbps":100},"obfs":{"enabled":false,"password":""},"hysteria":{"connection_receive_window":"","disable_path_mtu_discovery":false,"initial_packet_size":0,"max_concurrent_streams":0,"stream_receive_window":""},"client_trust":"system","outbound_policy":"default","dependencies":[]}]}'
 }
 
 verification_scenario_fresh_install_vless_plain() {
@@ -470,7 +500,7 @@ grep -Fqx 'tests/new_untracked_case.sh' "${run_dir}/changed-files.txt"
 
 # Check scenarios
 scenarios=$(paste -sd, "${run_dir}/scenarios.txt")
-[[ "${scenarios}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,fresh_install_trojan,fresh_install_vmess,fresh_install_vless_plain,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" ]] || {
+[[ "${scenarios}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,fresh_install_trojan,fresh_install_vmess,fresh_install_hysteria,fresh_install_vless_plain,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" ]] || {
   printf 'unexpected scenarios: %s\n' "${scenarios}" >&2; exit 1
 }
 
@@ -559,6 +589,7 @@ grep -Fqx 'tests/verification_protocol_probe_http.sh|1' "${TMP_DIR}/local-tests.
 grep -Fqx 'tests/verification_protocol_probe_matrix.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_vless.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_hy2.sh|1' "${TMP_DIR}/local-tests.log"
+grep -Fqx 'tests/verification_protocol_probe_hysteria.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_protocol_probe_anytls.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/reality_sni_validation.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/generate_config_cleans_temp_files_on_failure.sh|1' "${TMP_DIR}/local-tests.log"
@@ -616,7 +647,7 @@ grep -Fqx 'install.sh' "${run_dir_skip}/changed-files.txt"
 grep -Fqx 'README.md' "${run_dir_skip}/changed-files.txt"
 grep -Fqx 'tests/new_untracked_case.sh' "${run_dir_skip}/changed-files.txt"
 scenarios_skip=$(paste -sd, "${run_dir_skip}/scenarios.txt")
-[[ "${scenarios_skip}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,fresh_install_trojan,fresh_install_vmess,fresh_install_vless_plain,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" ]] || {
+[[ "${scenarios_skip}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,fresh_install_trojan,fresh_install_vmess,fresh_install_hysteria,fresh_install_vless_plain,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" ]] || {
   printf 'unexpected scenarios for skip run: %s\n' "${scenarios_skip}" >&2; exit 1
 }
 skip_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
@@ -632,7 +663,7 @@ env -u VERIFY_SKIP_LOCAL_TESTS \
 
 run_dir_remote_framework=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout-remote-framework.txt")
 scenarios_remote_framework=$(paste -sd, "${run_dir_remote_framework}/scenarios.txt")
-[[ "${scenarios_remote_framework}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,fresh_install_trojan,fresh_install_vmess,fresh_install_vless_plain,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke,uninstall_and_reinstall" ]] || {
+[[ "${scenarios_remote_framework}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,fresh_install_trojan,fresh_install_vmess,fresh_install_hysteria,fresh_install_vless_plain,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke,uninstall_and_reinstall" ]] || {
   printf 'unexpected scenarios for remote framework change: %s\n' "${scenarios_remote_framework}" >&2; exit 1
 }
 grep -Fqx 'tests/verification_artifact_dir_layout.sh|1' "${TMP_DIR}/local-tests.log"

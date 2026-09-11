@@ -228,3 +228,7 @@ Warp 是当前项目的 Cloudflare 专用注册与 WireGuard endpoint 路径，�
 Mixed 与独立 SOCKS 的实现边界仍然明确：服务端及导出的 SOCKS5/UoT 链路没有 TLS，独立 SOCKS 也没有 HTTP surface；两者均没有当前 SubMan 同步。独立 SOCKS 的共享实例管理、客户端导出、两核心 check/runtime 与最终 Docker/TCP 门禁均已通过，证据见[实施记录](../plans/2026-09-06-unified-protocol-management.md)。这些 SOCKS 结果不覆盖公网原生 UDP、TLS/HTTP/SubMan 或其他未实现协议；独立 HTTP 的入口 TLS 与 HTTP CONNECT 客户端证据另列于该记录。当前已接入预设及本节明确的组件实例管理范围仍是分阶段实现，全协议目标仍未完成，不能把 `sing-box check` 通过写成所有协议生命周期已完成。
 
 本审阅没有访问生产 VPS、Cloudflare/Tailscale/OpenConnect/OpenVPN 账户，也没有执行真实外部控制面认证；因此这些条件性能力保持 `registry-check` 或未验证，不能在交付说明中写成已通过。后续实现应继续保留当前显式固定的 1.13.x 兼容路径，并在使用 1.14-only type（Snell、Cloudflared、Bridge、OpenConnect、OpenVPN）时以目标版本门控阻断，而不是只提高 `SB_SUPPORT_MAX_VERSION`。
+
+### 2026-09-11：Hysteria v1 真实回环探针切片
+
+Hysteria v1 的验证元数据由 `quic_loopback` 提升为已实现的 `tcp_loopback` 业务探针：客户端由受管 `build_client_hysteria_outbounds` 生成，补充上游必需的 `h3` ALPN，保留 `auth_str`、独立带宽、字符串 obfs 和公开证书，不复制私钥或第二用户凭据。`fresh_install_hysteria` 远程 Docker 场景覆盖安装、schema-2 marker/store、固定 1.14.0 服务端 UDP listener、`sing-box check`、客户端 SOCKS listener 以及经 Hysteria QUIC/UDP 返回 HTTP marker；runtime smoke 对 UDP listener 使用与 registry 一致的网络判定。聚焦证据为 `dev/verification-runs/20260911124157`，两个场景和两个 Hysteria 探针均 success；远程完整 run `dev/verification-runs/20260911140159` 的 16/16 场景与 23/23 协议探针均 success，含一次 Hysteria marker probe。该证据仍限定在本地 Docker 回环，不扩张为公网、生产、外部认证、独立 UDP payload 或全协议目标完成。
