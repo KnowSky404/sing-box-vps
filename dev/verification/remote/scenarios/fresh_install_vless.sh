@@ -78,4 +78,80 @@ EOF
   verification_mark_step fresh_install_vless_status_menu
   verification_run_protocol_probes
   verification_mark_step fresh_install_vless_protocol_probes
+
+  # The privileged verification container can exercise the core-owned part of
+  # a Linux TUN lifecycle.  The component transaction itself remains the
+  # owner of state/config/service rollback; host PREROUTING policy is not
+  # installed or inferred here.
+  local tun_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/tun-resource-record.json"
+  local tun_create_json="${VERIFY_REMOTE_LOCAL_TREE_DIR}/tun-resource-create.json"
+  local tun_delete_json="${VERIFY_REMOTE_LOCAL_TREE_DIR}/tun-resource-delete.json"
+  local tun_diagnose_json="${VERIFY_REMOTE_LOCAL_TREE_DIR}/tun-resource-diagnose.json"
+  local tun_after_delete_diagnose_json="${VERIFY_REMOTE_LOCAL_TREE_DIR}/tun-resource-after-delete-diagnose.json"
+  (umask 077; jq -n '{id:"tun-resource-verification",role:"inbound",type:"tun",
+    tag:"tun-resource-verification",enabled:true,route_rules:[],config:{
+    interface_name:"sbv-tun",address:["172.19.0.1/30"],auto_route:true,
+    strict_route:true}}' > "${tun_record}")
+  bash /usr/local/bin/sbv agent component create --json --yes --allow-public \
+    --expected-revision 0 --file "${tun_record}" > "${tun_create_json}"
+  verification_capture_file_if_present "${tun_create_json}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/tun-resource-create.json"
+  jq -e '.ok==true and .operation=="create" and .revision==1 and
+    .type=="tun" and .service_restarted==true' "${tun_create_json}" >/dev/null
+  verification_mark_step fresh_install_vless_tun_component_created
+  verification_wait_for_service_active sing-box
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/tun-resource-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/tun-interface.json" \
+    ip -j link show dev sbv-tun
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/tun-rules.json" \
+    ip -j rule show
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/tun-routes.json" \
+    ip -j route show table all
+  jq -e 'any(.[]; .ifname == "sbv-tun")' \
+    "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/tun-interface.json")" >/dev/null
+  jq -e 'any(.[]; (.priority == 9000) and ((.table // "" | tostring) == "2022"))' \
+    "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/tun-rules.json")" >/dev/null
+  jq -e 'any(.[]; ((.table // "main" | tostring) == "2022") and .dev == "sbv-tun")' \
+    "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/tun-routes.json")" >/dev/null
+  bash /usr/local/bin/sbv agent component diagnose --json > "${tun_diagnose_json}"
+  verification_capture_file_if_present "${tun_diagnose_json}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/tun-resource-diagnose.json"
+  jq -e '.ok==true and .data.transparent_resources.status=="available" and
+    .data.transparent_resources.service_active==true and
+    ([.data.transparent_resources.resources[] | select(.type=="tun" and
+      .interface.status=="present" and .policy_routing.status=="present" and
+      .rule.status=="present")] | length == 1)' "${tun_diagnose_json}" >/dev/null
+  verification_mark_step fresh_install_vless_tun_resources_observed
+
+  bash /usr/local/bin/sbv agent component delete --json --yes \
+    --expected-revision 1 --id tun-resource-verification > "${tun_delete_json}"
+  verification_capture_file_if_present "${tun_delete_json}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/tun-resource-delete.json"
+  jq -e '.ok==true and .operation=="delete" and .revision==2 and
+    .id=="tun-resource-verification" and .service_restarted==true' \
+    "${tun_delete_json}" >/dev/null
+  verification_mark_step fresh_install_vless_tun_component_deleted
+  verification_wait_for_service_active sing-box
+  verification_capture_best_effort_command "${VERIFY_CURRENT_SCENARIO_DIR}/tun-interface-after-delete.json" \
+    ip -j link show dev sbv-tun
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/tun-rules-after-delete.json" \
+    ip -j rule show
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/tun-routes-after-delete.json" \
+    ip -j route show table all
+  if ip -j link show dev sbv-tun >/dev/null 2>&1; then
+    printf 'TUN interface remained after managed component deletion\n' >&2
+    return 1
+  fi
+  ! jq -e 'any(.[]; (.priority == 9000) and ((.table // "" | tostring) == "2022"))' \
+    "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/tun-rules-after-delete.json")" >/dev/null
+  ! jq -e 'any(.[]; ((.table // "main" | tostring) == "2022") and .dev == "sbv-tun")' \
+    "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/tun-routes-after-delete.json")" >/dev/null
+  bash /usr/local/bin/sbv agent component diagnose --json > "${tun_after_delete_diagnose_json}"
+  verification_capture_file_if_present "${tun_after_delete_diagnose_json}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/tun-resource-after-delete-diagnose.json"
+  jq -e '.ok==true and .data.transparent_resources.status=="available" and
+    (.data.transparent_resources.resources | length == 0)' \
+    "${tun_after_delete_diagnose_json}" >/dev/null
+  verification_mark_step fresh_install_vless_tun_resources_cleaned
 }

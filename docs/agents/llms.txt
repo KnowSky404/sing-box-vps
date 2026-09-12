@@ -56,6 +56,11 @@ resources are reported as `unavailable`. Redirect/TProxy entries remain
 `host_policy_rules_not_managed` because the installer does not claim ownership
 of host PREROUTING or policy-routing rules. This is observation evidence only,
 not a transparent data-plane or host-resource transaction claim.
+The privileged Docker `fresh_install_vless` scenario additionally creates and
+deletes a managed `sbv-tun`, observes the core-owned interface and
+priority-9000/table-2022 resources, and records post-delete cleanup; it does
+not prove packet forwarding, host policy ownership, public reachability, or
+production deployment.
 
 Canonical documents:
 - AGENTS.md: repository rules, validation requirements, SSH alias conventions, version rules.

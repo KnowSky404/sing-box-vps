@@ -52,7 +52,7 @@ Tailscale endpoint 现在按 `TailscaleEndpointOptions` 接入 typed state/rende
 
 Snell outbound 已按 sing-box 1.14 的 `SnellOutboundOptions` 接入 typed component state；版本仅允许 v4（HTTP obfs）或 v6（traffic shaping），并保留 PSK、可选 userkey/reuse、TCP/UDP network 和共享 Dial Fields。v4/v6 字段不可交叉，v6 PSK 至少 12 字节；Snell v5 QUIC proxy 不作为独立 outbound 提供，UDP 业务由 Snell 的 TCP packet API 承载。凭据仅通过敏感 component export 返回，1.14 核心 `check` 不代表远端 Snell 握手或 TCP/UDP 数据面，1.13.18 核心明确不注册该 type。
 
-透明组件诊断现在额外返回 `transparent_resources`：服务 active 时只读检查 TUN 接口、iproute2 规则/路由及 auto-redirect 的 nftables 观测；缺失的 core-owned 资源会报告 `unavailable`。当活动服务重启包含 TUN 的组件事务时，同一组 core-owned 资源检查作为 postcheck 执行，失败会先补偿受管防火墙并恢复变更前的 state/config/service，返回 `transparent_resource_check_failed`。Redirect/TProxy 资源明确标记 `host_policy_rules_not_managed`，仍需操作员维护 PREROUTING/策略路由，诊断结果不把任意主机规则当作项目所有。
+透明组件诊断现在额外返回 `transparent_resources`：服务 active 时只读检查 TUN 接口、iproute2 规则/路由及 auto-redirect 的 nftables 观测；缺失的 core-owned 资源会报告 `unavailable`。当活动服务重启包含 TUN 的组件事务时，同一组 core-owned 资源检查作为 postcheck 执行，失败会先补偿受管防火墙并恢复变更前的 state/config/service，返回 `transparent_resource_check_failed`。特权隔离 Docker 的 `fresh_install_vless` 场景已实际创建并删除受管 TUN，回读 `sbv-tun`、table 2022/priority 9000 规则和路由，确认删除后的清理；这仍不代表透明包转发或宿主策略已完成。Redirect/TProxy 资源明确标记 `host_policy_rules_not_managed`，仍需操作员维护 PREROUTING/策略路由，诊断结果不把任意主机规则当作项目所有。
 
 ## 🚀 一键安装
 

@@ -697,3 +697,22 @@ postcheck。任一必需资源缺失都会先回滚已应用的受管防火墙�
 覆盖缺失资源的 CAS 回滚、服务恢复和资源完整时的成功提交；定向与完整
 Docker 门禁必须继续通过。该 postcheck 只保证能观测到 sing-box core-owned
 资源，不伪造宿主透明策略或公网数据面，完整协议目标仍未完成。
+
+### 2026-09-12：TUN core-owned Docker 生命周期证据
+
+在特权隔离 Docker 的 `fresh_install_vless` 场景中新增一条真实 TUN
+生命周期：通过 `sbv agent component create --expected-revision 0` 发布
+固定地址的 `sbv-tun`/`auto_route` 组件，等待 systemd active，执行目标
+`sing-box 1.14.0 check`，并回读 `ip -j link`、priority `9000`/table `2022`
+规则和 table `2022` 路由。`component diagnose --json` 同时确认
+`transparent_resources.status=available`、接口/rule/policy routing 均为
+`present`；随后以 revision `1` 删除组件，确认接口不存在、9000/2022 资源
+消失，诊断回到空资源。协议索引重concile 现在沿用事务快照校验 live
+advanced inbound，避免删除候选在发布前被误报为 unmanaged type。
+
+定向 Docker run `dev/verification-runs/20260912200008` 的场景结果为
+`STATUS=success`，artifact 保存创建/诊断/删除、内核资源和清理检查；这
+只证明 sing-box core-owned TUN 资源在一次受限网络命名空间中的生命周期，
+不包括透明包转发、宿主 PREROUTING/策略路由所有权、外部控制面、公网或
+生产部署。Redirect/TProxy 与 Cloudflared 仍按未验证边界记录，完整协议
+目标继续未完成。

@@ -524,4 +524,19 @@ else
   printf 'real core inventory controls passed: %d\n' "${real_core_checks}"
 fi
 
+# Candidate config generation can reconcile the protocol index while the live
+# config still contains an advanced inbound that is being deleted.  The
+# transaction snapshot must be forwarded to that inventory check; otherwise
+# the pre-publish state is incorrectly rejected as an unmanaged inbound.
+snapshot_state_file="${TMP_DIR}/component-snapshot/project/components.json"
+mkdir -p "${TMP_DIR}/component-snapshot/project"
+printf '%s\n' 'INSTALLED_PROTOCOLS=mixed' 'PROTOCOL_STATE_VERSION=1' > "${SB_PROTOCOL_INDEX_FILE}"
+extract_protocols_from_index() { printf 'mixed\n'; }
+list_indexed_protocols_raw() { printf 'mixed\n'; }
+validate_protocol_index_for_rebuild() { :; }
+validate_live_inbound_inventory() { [[ "${2:-}" == "${snapshot_state_file}" ]]; }
+protocol_state_exists() { return 0; }
+write_protocol_index() { :; }
+[[ "$(list_effective_protocols "${snapshot_state_file}")" == 'mixed' ]]
+
 printf 'live inbound inventory guards passed\n'

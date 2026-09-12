@@ -2895,12 +2895,13 @@ validate_protocol_index_for_rebuild() {
 }
 
 reconcile_protocol_index_if_needed() {
+  local inventory_state_file=${1:-}
   local indexed_protocols=() valid_protocols=()
   local protocol joined_protocols current_protocols
 
   [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]] || return 0
   validate_protocol_index_for_rebuild || return 1
-  validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" || return 1
+  validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" "${inventory_state_file}" || return 1
 
   mapfile -t indexed_protocols < <(list_indexed_protocols_raw)
   current_protocols=$(extract_protocols_from_index)
@@ -2942,7 +2943,7 @@ reconcile_protocol_index_if_needed() {
 }
 
 list_installed_protocols() {
-  reconcile_protocol_index_if_needed || return $?
+  reconcile_protocol_index_if_needed "${1:-}" || return $?
   list_indexed_protocols_raw
 }
 
@@ -11248,11 +11249,11 @@ service_file_needs_repair() {
 
 # --- Protocol State Helpers ---
 list_effective_protocols() {
-  local installed
+  local inventory_state_file=${1:-} installed
   installed=$(extract_protocols_from_index)
 
   if [[ -n "${installed}" ]]; then
-    list_installed_protocols
+    list_installed_protocols "${inventory_state_file}"
     return $?
   fi
 
@@ -18150,7 +18151,7 @@ generate_config_candidate() {
 
   # Capture discovery before resource preparation; process substitution hides
   # its failure status and could otherwise publish an empty/partial config.
-  effective_protocols=$(list_effective_protocols) || return 1
+  effective_protocols=$(list_effective_protocols "${inventory_state_file}") || return 1
   [[ -n "${effective_protocols}" ]] || return 1
   managed_components_json=$(managed_component_render_json) || {
     log_warn "高级组件状态无效，禁止生成可能丢失组件的配置。"
