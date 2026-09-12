@@ -25253,7 +25253,7 @@ agent_capabilities_json() {
           recovery_operations: ["recover"],
           read_only_operations: ["list", "diagnose", "export"],
           sensitive_operations: ["export"],
-          diagnosis_fields: ["state", "config", "service", "firewall", "transactions"],
+          diagnosis_fields: ["state", "config", "service", "firewall", "transactions", "transparent_resources"],
           expected_revision_required: true,
           plaintext_public_confirmation: "--allow-public",
           registry: $components,

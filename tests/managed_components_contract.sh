@@ -46,6 +46,11 @@ jq -e '
     .features.account_mutation == false and .availability == "with_cloudflared")
 ' <<< "${registry}" >/dev/null
 
+capabilities=$(agent_capabilities_json)
+jq -e '
+  .features.components.diagnosis_fields | index("transparent_resources") != null
+' <<< "${capabilities}" >/dev/null
+
 direct_record='{"id":"direct-local","role":"inbound","type":"direct","tag":"direct-local-in","enabled":true,"route_rules":[],"config":{"listen":"127.0.0.1","listen_port":15080}}'
 tun_record='{"id":"tun-local","role":"inbound","type":"tun","tag":"tun-local-in","enabled":true,"route_rules":[],"config":{"interface_name":"tun-sbv","address":["172.19.0.1/30"],"auto_route":false,"strict_route":true}}'
 redirect_record='{"id":"redirect-local","role":"inbound","type":"redirect","tag":"redirect-local-in","enabled":true,"route_rules":[],"config":{"listen":"127.0.0.1","listen_port":15081}}'
