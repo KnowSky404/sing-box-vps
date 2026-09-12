@@ -6,7 +6,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091202`，`SB_SUPPORT_MAX_VERSION=1.14.0`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091203`，`SB_SUPPORT_MAX_VERSION=1.14.0`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -108,7 +108,7 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 
 | ID | 官方 type / 角色 | 版本、构建和平台条件 | TCP/UDP/主要约束 | upstream | available（官方 ARM64 包） | implemented；D/T/E/R | 导出 / 分享 / SubMan | validated |
 |---|---|---|---|---|---|---|---|---|
-| direct-inbound | `direct` / inbound | 基础内建 | TCP 或 UDP，由 `network` 指定，留空为两者；仍支持 `override_address/override_port` 端口转发，不能与 direct outbound 的移除项混淆 | yes | yes（Linux） | component state/config；yes/yes/yes/yes* | — / — / — | registry-check；两核心 override 配置 check 通过 |
+| direct-inbound | `direct` / inbound | 基础内建 | TCP 或 UDP，由 `network` 指定，留空为两者；仍支持 `override_address/override_port` 端口转发，不能与 direct outbound 的移除项混淆 | yes | yes（Linux） | component state/config；yes/yes/yes/yes* | — / — / — | project-real-tcp；Docker `20260912063217` 的 direct inbound override loopback marker、目标核心 check、监听和渲染断言通过 |
 | mixed | `mixed` / inbound | 基础内建 | TCP listen；同一入口提供 SOCKS4/4a/5 和 HTTP；UDP 业务经 SOCKS UDP/UoT，不开固定 UDP listen；schema 2 可管理多实例 | yes | yes（Linux） | 旧预设 + schema 2 实例链路；yes/yes/yes/yes（首次全新安装仍为 legacy schema 1，显式迁移后启用 schema 2） | SOCKS5 + UoT v2 裸核客户端（明文警告） / HTTP、SOCKS 链接 / no current SubMan | project-real-tcp；多实例生命周期、导出及本轮五协议最终门禁通过 |
 | vless-reality（旧预设） | `vless` / inbound | 项目保留 1.13.x；REALITY、Vision 与 TCP 预设 | TCP listen，TCP/UDP 业务；已有多实例、固定 tag/UUID/ShortID、实例出站和 QoS | yes | yes（Linux；需握手目标） | 旧预设；yes/yes/yes/yes | 裸核客户端 / VLESS URI / VLESS 同步 | project-real-tcp |
 | vless-plain（普通预设） | `vless` / inbound | 项目兼容 1.13.x；QUIC transport 另需 `with_quic` | 外层 TCP 或 QUIC/UDP；可选 TLS；按用户 `flow`；支持 none/http/ws/grpc/quic，HTTPUpgrade 与 WS early data fail closed | yes | yes（Linux） | 第十预设，schema 2 marker + schema 1 store，共享实例事务；yes/yes/yes/yes；多用户/TLS/transport/接管/恢复 | 逐用户完整 JSON / VLESS URI（可表达字段） / 逐实例逐用户同步（不可表达组合稳定跳过） | 两核心 1.13.18/1.14.0 check/export；专项 lifecycle/Agent/share/SubMan/probe 通过；最终本地 `20260908141403` 为 108/108，最终 Docker `20260908144031` 为 15/15 场景与 22/22 探针通过；本轮两核心 exporter 回归覆盖 none/http/ws/grpc/quic，QUIC outbound 保留 TCP+UDP；Docker `20260911215408` 的普通 VLESS 实例替换与 UDP marker 回环通过 |
@@ -260,3 +260,9 @@ Hysteria v1 的验证元数据由 `quic_loopback` 提升为实际 TCP/UDP payloa
 `verification_generate_snell_probe_client` 只从活动 schema-2 marker 和 schema-1 Snell store 读取受管 v6 实例，严格校验 tag、监听端口、PSK、用户 key、版本与 `mode`，再调用生产 `build_client_snell_outbounds` 输出单实例 TCP 客户端；`multi_protocol_coexistence` 的 typed create、live index/config/store 断言与固定 1.14.0 `sing-box check` 均通过。客户端经本地 SOCKS5 访问 HTTP marker 并精确回读，client artifact 保持 600 且不含服务端私钥。
 
 `dev/verification-runs/20260911230518` 为 15/15 场景、25 个常规协议结果（24 个可执行成功，既有 TUIC 结果为 `unsupported`）；Snell 的 `result.env`、`client.check.txt`、HTTP marker 与 index/store 证据均成功。七个既有 Hysteria/Hysteria2/SS2022/Trojan/TUIC/VMess/普通 VLESS UDP artifact 继续为成功；本轮没有把 Snell packet API 记作独立原生 UDP marker。证据只覆盖固定 1.14.0、隔离 Docker 和回环数据面，不证明公网可达、生产部署、外部认证、SubMan 或完整协议目标。
+
+### 2026-09-12：Direct inbound TCP override 数据面切片
+
+`direct-inbound` 组件现在在通用监听校验之外约束上游 `network` 为 `tcp`/`udp`，并对可选 `override_address` 与 `override_port` 执行安全字符串、控制字符和 1–65535 端口边界检查；这些字段由 renderer 原样保留，仍与 direct outbound 已移除的 destination override 语义分开。`tests/managed_components_contract.sh` 覆盖合法 render、非法 network、控制字符地址和端口溢出负例。
+
+`multi_protocol_coexistence` 创建回环 `direct-inbound-verification` component（revision 2），通过目标 1.14.0 `sing-box check` 和监听快照后，用一次性 loopback HTTP marker 作为 override destination；原始 TCP HTTP 请求连接到受管 direct listener，响应必须精确等于 marker，结果写入 `direct-inbound.result.env`，同时保留渲染配置和 component envelope。Docker run `dev/verification-runs/20260912063217` 的 direct artifact 成功。该结果是固定核心、隔离容器、回环 TCP forwarding 证据，不代表 TUN/redirect/TProxy 透明路由、主机防火墙、公网/生产、外部控制面或全协议目标完成。

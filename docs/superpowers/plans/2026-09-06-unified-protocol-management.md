@@ -645,3 +645,9 @@ managed Tailscale endpoint 现在按固定 1.14 `TailscaleEndpointOptions` 校�
 本轮把 HTTP outbound 从 typed allowlist 与核心 `check` 推进到可回读的业务闭环：`multi_protocol_coexistence` 启动一次性 loopback marker server 与受认证的 loopback HTTP proxy，将 synthetic domain 只映射到 marker，创建 `http-outbound-verification` component 后由现有 SOCKS5 inbound 发起 CONNECT。探针逐项检查 component envelope、service active、目标 `sing-box check`、渲染 outbound/route、精确 Basic `Proxy-Authorization`、`X-SBV-Proxy` header 和 marker 响应，并把 `http-outbound.result.env` 与 `steps.txt` 写入 artifact。
 
 同时修复两个会破坏 Agent 事务边界的实现问题：`agent_cli_run` 在命令作用域启用 JSON 日志模式，进度日志统一写 stderr，stdout 保持单一 JSON object；managed component 重生成前从 live config 恢复高级 route/Warp 开关，避免 fresh Agent shell 的 component-only CAS 写入重置既有路由。`tests/agent_json_regression.sh` 覆盖 stdout purity 与 route/Warp state loader，完整 Docker run `dev/verification-runs/20260912051138` 成功，HTTP data-plane artifact 为 `RESULT=success`，其余可执行协议探针保持成功，既有 TUIC 常规结果仍为 `unsupported`。证据仅属于固定 1.14.0、隔离 Docker/loopback 与合成代理，不代表公网、外部代理、生产、外部认证、SubMan 或全协议目标完成；本轮脚本版本为 `2026091202`。
+
+### 2026-09-12：Direct inbound TCP override 数据面切片
+
+本轮继续推进高级 inbound 的实际业务证据。`managed_component_state_validate_record` 为 `direct` 组件补上 `network`、`override_address` 和 `override_port` 的 typed 边界：只接受上游的 TCP/UDP 网络字符串，override 地址拒绝控制字符/空值，端口限制在 1–65535；renderer、监听资源计划和现有 direct outbound 移除语义保持分离。`tests/managed_components_contract.sh` 新增合法转发配置及 network、地址、端口负例。
+
+`multi_protocol_coexistence` 先启动一次性 loopback HTTP marker，再通过 component CAS 创建 `direct-inbound-verification`（revision 2、TCP listener 1092、override 到 marker 端口）。候选发布后等待 systemd active、执行固定 sing-box 1.14.0 `check`、核对实际渲染配置和监听，最后用 curl 发送真实 HTTP 请求并逐字节核对 marker；`direct-inbound.result.env`、response、config 和 listener artifact 均成功，定向 Docker run 为 `dev/verification-runs/20260912063217`。该切片只证明 direct TCP override 的容器回环 forwarding，不把 `check`/listener 扩大为 TUN、redirect、TProxy 透明路由、主机防火墙、公网或生产验证；全协议目标仍未完成，脚本版本本轮递增为 `2026091203`。

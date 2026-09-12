@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026091202`
+- 脚本版本：`2026091203`
 
 - sing-box 适配版本：`1.14.0`
 
@@ -21,6 +21,8 @@ ShadowTLS composite 现在也有真实的容器内 TCP 数据面证据：`multi_
 NaiveProxy 现有隔离容器内的 TCP 数据面证据：完整门禁 `dev/verification-runs/20260912014158` 的 `multi_protocol_coexistence` 使用 SAN 证书、固定 1.14.0 核心和官方 `with_naive_outbound`/`libcronet.so`，经 Naive TLS/HTTP2、loopback SOCKS 与 direct 访问 HTTP marker；随后严格渲染配置比对与库 hash artifact 的定向复跑为 `dev/verification-runs/20260912022837`，`protocol-probes/naive/result.env` 仍为 `RESULT=success`。安装器从官方归档原子 staging `/usr/local/lib/libcronet.so`，写入 hash marker 并刷新 loader cache；核心升级会把该库和 marker 纳入独立备份，配置/check/服务失败时一起回滚；未受管同名库不会覆盖，卸载仅删除 hash 仍匹配的受管库。该证据只覆盖 Docker/回环 Naive TCP，不代表 UDP/HTTP3、公网、生产、外部认证、SubMan 或全协议目标完成。
 
 HTTP outbound 已按 sing-box 1.14 的 server/port、认证、path、headers、outbound TLS 与共享 Dial Fields 建立递归 allowlist；它固定为 TCP 上游代理，未知/弃用字段、错误 TLS 嵌套类型和控制字符会在状态/CAS 与接管前拒绝，凭据仅通过敏感 component export 返回。Docker run `dev/verification-runs/20260912051138` 在 `multi_protocol_coexistence` 中创建 typed HTTP outbound，先通过目标核心 `check` 和服务 active，再由受认证的 loopback HTTP proxy 接收 SOCKS5 发出的 CONNECT；artifact 核对精确 `Proxy-Authorization`、自定义 header、配置 route 和 marker 响应，`http-outbound.result.env` 为 `RESULT=success`。该数据面证据只属于固定 1.14.0、隔离容器和回环 fixture，不代表公网可达、外部代理、生产部署或全协议目标完成。
+
+Direct inbound 的 typed component 现在额外校验 `network`、`override_address` 和 `override_port` 的类型、控制字符与端口边界。共存场景在同一组件 CAS/服务事务中创建回环 `direct-inbound-verification`，固定 1.14.0 `check` 后由真实 TCP 请求经 direct inbound 转发到一次性 loopback marker；Docker run `dev/verification-runs/20260912063217` 的 `direct-inbound.result.env`、渲染配置、监听快照和精确 marker 均成功。该证据只证明 direct 的 TCP override loopback 路径，不代表透明路由、主机防火墙、公网部署或全协议目标完成。
 
 组件环境探针还会读取目标 `sing-box version` 的 `Tags:` 行：已报告的构建 tag 缺失时条件组件为 `unavailable`，包装器或旧二进制未报告 tag 时为 `not_assessed`；这只说明构建条件，不代表外部认证、系统路由/防火墙或真实数据面已通过。
 

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091202
+# Version: 2026091203
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091202"
+readonly SCRIPT_VERSION="2026091203"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -15498,6 +15498,18 @@ managed_component_state_validate_record() {
       if [[ "${type}" == tproxy ]]; then
         jq -e '((.network // ["tcp","udp"]) | if type == "string" then [.] else . end |
           type == "array" and length > 0 and all(.[]; . == "tcp" or . == "udp"))' <<< "${config}" >/dev/null 2>&1 || return 1
+      fi
+      if [[ "${type}" == direct ]]; then
+        jq -e '
+          def safe_string:
+            type == "string" and (any(explode[]; . < 32 or . == 127) | not);
+          ((has("network") | not) or
+            (.network | type == "string" and IN("tcp","udp"))) and
+          ((has("override_address") | not) or
+            (.override_address | safe_string and length > 0)) and
+          ((has("override_port") | not) or
+            (.override_port | type == "number" and . == floor and . >= 1 and . <= 65535))
+        ' <<< "${config}" >/dev/null 2>&1 || return 1
       fi
       ;;
     inbound:tun)

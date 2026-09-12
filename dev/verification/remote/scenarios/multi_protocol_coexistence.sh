@@ -56,9 +56,10 @@ verification_scenario_multi_protocol_coexistence() {
   local shadowtls_handshake_pid=''
   local http_outbound_marker_pid=''
   local http_outbound_proxy_pid=''
+  local direct_marker_pid=''
 
   verification_prepare_remote_local_tree
-  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
+  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_marker_pid:-}" ]]; then kill "${direct_marker_pid}" 2>/dev/null || true; wait "${direct_marker_pid}" 2>/dev/null || true; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
   # Keep the certificate paths valid for the following runtime_smoke scenario.
   # The Docker container is disposable, so this test-only directory cannot
   # outlive the verification run or affect a host installation.
@@ -524,6 +525,113 @@ PY
     "${VERIFY_CURRENT_SCENARIO_DIR}/http-outbound.result.env" \
     'COMPONENT=http-outbound' 'RESULT=success' 'DATA_PLANE=authenticated_http_proxy_loopback'
 
+  # A direct inbound must prove its actual tunnel/override behavior rather
+  # than merely occupying a listener.  The disposable marker binds to a
+  # random loopback port; the managed direct listener receives the HTTP
+  # request and forwards it to the configured override address/port.
+  local direct_marker_port_file="${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-marker.port"
+  local direct_marker_stdout
+  local direct_marker_stderr
+  local direct_marker
+  local direct_marker_port
+  local direct_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-record.json"
+  local direct_response="${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound-response.txt"
+  local direct_curl_stderr="${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound-curl.stderr.txt"
+  direct_marker_stdout=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound-marker.stdout.txt")
+  direct_marker_stderr=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound-marker.stderr.txt")
+  direct_marker="sing-box-vps-direct-inbound-loopback-ok-$(date +%s)-$$"
+  python3 - "${direct_marker_port_file}" "${direct_marker}" \
+    > "${direct_marker_stdout}" 2> "${direct_marker_stderr}" <<'PY' &
+import http.server
+import pathlib
+import socketserver
+import sys
+
+port_file, marker = sys.argv[1:]
+
+class MarkerHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = (marker + "\n").encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        return
+
+class ReusableServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+with ReusableServer(("127.0.0.1", 0), MarkerHandler) as server:
+    pathlib.Path(port_file).write_text(str(server.server_address[1]), encoding="ascii")
+    server.serve_forever()
+PY
+  direct_marker_pid=$!
+  for _ in {1..50}; do
+    [[ -s "${direct_marker_port_file}" ]] && break
+    kill -0 "${direct_marker_pid}" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  [[ -s "${direct_marker_port_file}" ]]
+  direct_marker_port=$(cat "${direct_marker_port_file}")
+  [[ "${direct_marker_port}" =~ ^[0-9]+$ ]]
+  (umask 077; jq -n --argjson marker_port "${direct_marker_port}" '
+    {id:"direct-inbound-verification",role:"inbound",type:"direct",
+     tag:"direct-inbound-verification",enabled:true,route_rules:[],
+     config:{listen:"127.0.0.1",listen_port:1092,network:"tcp",
+       override_address:"127.0.0.1",override_port:$marker_port}}
+  ' > "${direct_record}")
+  local direct_create_status=0
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
+    --expected-revision 1 --file "${direct_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-create.json"
+  direct_create_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-create.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/direct-create.json"
+  if [[ "${direct_create_status}" != "0" ]]; then
+    return "${direct_create_status}"
+  fi
+  jq -e '.ok==true and .operation=="create" and .revision==2 and .type=="direct"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-create.json" >/dev/null
+  verification_mark_step direct-inbound-component-created
+  verification_wait_for_service_active sing-box
+  verification_mark_step direct-inbound-service-active
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  verification_mark_step direct-inbound-config-checked
+  config_path=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound-config.json")
+  cp /root/sing-box-vps/config.json "${config_path}"
+  jq -e --argjson marker_port "${direct_marker_port}" '
+    ([.inbounds[] | select(.type == "direct" and .tag == "direct-inbound-verification" and
+      .listen == "127.0.0.1" and .listen_port == 1092 and .network == "tcp" and
+      .override_address == "127.0.0.1" and .override_port == $marker_port)] | length == 1)
+  ' "${config_path}" >/dev/null
+  verification_mark_step direct-inbound-config-asserted
+  verification_assert_port_listening 1092 \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.direct-inbound.ss-lntp.txt"
+  set +e
+  curl --fail --silent --show-error --max-time 5 --noproxy '*' \
+    "http://127.0.0.1:1092/" \
+    > "$(verification_artifact_path "${direct_response}")" \
+    2> "$(verification_artifact_path "${direct_curl_stderr}")"
+  local direct_curl_status=$?
+  set -e
+  [[ "${direct_curl_status}" == "0" ]]
+  grep -Fqx "${direct_marker}" "$(verification_artifact_path "${direct_response}")"
+  verification_mark_step direct-inbound-curl-complete
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound.result.env" \
+    'COMPONENT=direct-inbound' 'RESULT=success' 'DATA_PLANE=direct_tcp_override_loopback'
+
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/config.json")
   index_path=$(verification_artifact_path \
@@ -535,7 +643,7 @@ PY
   cp /root/sing-box-vps/protocols/index.env "${index_path}"
   grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan,tuic,vmess,snell,shadowtls,naive' "${index_path}"
   jq -e '
-    ([.inbounds[] | .type] | sort) == ["anytls", "http", "hysteria2", "mixed", "mixed", "naive", "shadowsocks", "shadowtls", "snell", "socks", "trojan", "tuic", "vless", "vmess"] and
+    ([.inbounds[] | .type] | sort) == ["anytls", "direct", "http", "hysteria2", "mixed", "mixed", "naive", "shadowsocks", "shadowtls", "snell", "socks", "trojan", "tuic", "vless", "vmess"] and
     ([.inbounds[] | select(.type == "vless") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "mixed") | .listen_port] | length == 2) and
     ([.inbounds[] | select(.type == "hysteria2") | .listen_port] | length == 1) and

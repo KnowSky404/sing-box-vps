@@ -51,6 +51,31 @@ tun_record='{"id":"tun-local","role":"inbound","type":"tun","tag":"tun-local-in"
 redirect_record='{"id":"redirect-local","role":"inbound","type":"redirect","tag":"redirect-local-in","enabled":true,"route_rules":[],"config":{"listen":"127.0.0.1","listen_port":15081}}'
 selector_record='{"id":"selector-local","role":"outbound","type":"selector","tag":"selector-local","enabled":true,"route_rules":[{"inbound":["direct-local-in"],"action":"route","outbound":"selector-local"}],"config":{"outbounds":["direct","block"],"default":"direct"}}'
 
+direct_override_record=$(jq -c '.config += {network:"tcp",override_address:"127.0.0.1",override_port:18082}' <<< "${direct_record}")
+managed_component_state_validate_record "${direct_override_record}"
+direct_override_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${direct_override_record}")
+direct_override_rendered=$(managed_component_render_json "${direct_override_state}")
+jq -e '
+  .inbounds | length == 1 and
+  .[0].type == "direct" and .[0].network == "tcp" and
+  .[0].override_address == "127.0.0.1" and .[0].override_port == 18082
+' <<< "${direct_override_rendered}" >/dev/null
+direct_bad_network=$(jq -c '.config.network = "icmp"' <<< "${direct_override_record}")
+if managed_component_state_validate_record "${direct_bad_network}"; then
+  printf 'direct inbound invalid network was unexpectedly accepted\n' >&2
+  exit 1
+fi
+direct_bad_override_address=$(jq -c '.config.override_address = "127.0.0.1\nforged"' <<< "${direct_override_record}")
+if managed_component_state_validate_record "${direct_bad_override_address}"; then
+  printf 'direct inbound override address control character was unexpectedly accepted\n' >&2
+  exit 1
+fi
+direct_bad_override_port=$(jq -c '.config.override_port = 65536' <<< "${direct_override_record}")
+if managed_component_state_validate_record "${direct_bad_override_port}"; then
+  printf 'direct inbound override port overflow was unexpectedly accepted\n' >&2
+  exit 1
+fi
+
 state=$(managed_component_state_default_json)
 state=$(managed_component_state_candidate "${state}" create "${direct_record}")
 state=$(managed_component_state_candidate "${state}" create "${selector_record}")
