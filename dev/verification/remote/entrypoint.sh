@@ -560,6 +560,74 @@ verification_generate_snell_probe_client() (
   mv -f -- "${temp_dir}/client.json" "${output_path}" || return 1
 )
 
+verification_generate_naive_probe_client() (
+  set -euo pipefail
+  umask 077
+  local config_file=$1 output_path=$2 installer temp_dir selected_tag snapshot record store_file state_file
+  local server_port outbounds_json
+  installer=${VERIFY_REMOTE_INSTALL_SCRIPT:-/usr/local/bin/sbv}
+  [[ -f "${installer}" ]] || return 1
+  temp_dir=$(mktemp -d "${output_path}.naive.XXXXXX") || return 1
+  trap 'rm -rf -- "${temp_dir}"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+
+  # NaiveProxy's runtime is provided by the official with_naive_outbound
+  # build and libcronet.so.  Reuse the production exporter after checking the
+  # typed store and rendered listener, so this probe never silently falls back
+  # to an incomplete or plaintext client.
+  source "${installer}"
+  plain_proxy_structured_state_active naive || return 1
+  state_file=$(protocol_state_file naive) || return 1
+  store_file=$(plain_proxy_structured_store_file naive) || return 1
+  selected_tag=$(jq -er '
+    [(.inbounds // [])[] | select(.type == "naive")] |
+    if length == 1 and (.[0].tag | type == "string" and length > 0)
+    then .[0].tag else error("invalid NaiveProxy probe inventory") end
+  ' "${config_file}") || return 1
+  server_port=$(jq -er --arg tag "${selected_tag}" '
+    [(.inbounds // [])[] | select(.type == "naive" and .tag == $tag)] |
+    if length == 1 and (.[0].listen_port | type == "number" and floor == .)
+    then .[0].listen_port else error("invalid NaiveProxy probe listener") end
+  ' "${config_file}") || return 1
+  record=$(verification_load_naive_probe_record "${state_file}" "${store_file}" "${selected_tag}") || return 1
+  snapshot=$(structured_instance_store_snapshot_json naive "${store_file}") || return 1
+  jq -e --arg tag "${selected_tag}" --argjson expected "${record}" --argjson port "${server_port}" '
+    any(.instances[]; .tag == $tag and .listen.port == $port and
+      .listen == $expected.listen and
+      .authentication == $expected.authentication and .tls == $expected.tls and
+      .client_trust == $expected.client_trust and .naive == $expected.naive and
+      .outbound_policy == $expected.outbound_policy and .dependencies == $expected.dependencies)
+  ' <<< "${snapshot}" >/dev/null || return 1
+  jq -e --arg tag "${selected_tag}" --argjson expected "${record}" --argjson port "${server_port}" '
+    any((.inbounds // [])[];
+      .type == "naive" and .tag == $tag and .listen_port == $port and
+      .listen == $expected.listen.address and
+      (((.network // ["tcp"]) | if type == "string" then [.] else . end) == $expected.listen.network) and
+      ([.users[] | {name: .username, username: .username, password: .password}] == $expected.authentication.users) and
+      .tls == $expected.tls)
+  ' "${config_file}" >/dev/null || return 1
+  jq -e --arg tag "${selected_tag}" '
+    .instances |= map(select(.tag == $tag)) |
+    if (.instances | length) == 1 then .default_instance_id = .instances[0].id
+    else error("invalid probe inventory") end
+  ' <<< "${snapshot}" > "${temp_dir}/store.json" || return 1
+  build_client_naive_outbounds 127.0.0.1 "${temp_dir}/store.json" \
+    > "${temp_dir}/outbounds.jsonl" || return 1
+  outbounds_json=$(jq -se '
+    if length == 1 and .[0].type == "naive" then
+      (.[0] | .tag = "proxy") as $outbound |
+      {log:{disabled:true},
+       inbounds:[{type:"socks",tag:"local-socks",listen:"127.0.0.1",listen_port:19080}],
+       outbounds:[$outbound],route:{final:"proxy"}}
+    else error("invalid NaiveProxy probe export") end
+  ' "${temp_dir}/outbounds.jsonl") || return 1
+  printf '%s\n' "${outbounds_json}" > "${temp_dir}/client.json" || return 1
+  chmod 600 "${temp_dir}/client.json" || return 1
+  mv -f -- "${temp_dir}/client.json" "${output_path}" || return 1
+)
+
 verification_generate_shadowtls_probe_client() (
   set -euo pipefail
   umask 077
@@ -952,6 +1020,82 @@ verification_load_shadowtls_probe_record() {
         }
       )
     else error("invalid ShadowTLS structured state")
+    end
+  ' "${store_file}") || return 1
+  printf '%s\n' "${record}"
+}
+
+verification_load_naive_probe_record() {
+  local state_file=$1
+  local store_file=$2
+  local tag=$3
+  local record
+
+  [[ -f "${state_file}" && ! -L "${state_file}" ]] || return 1
+  grep -Eq '^[[:space:]]*CONFIG_SCHEMA_VERSION=2([[:space:]]*)$' "${state_file}" || return 1
+  [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+  record=$(jq -ce --arg tag "${tag}" '
+    def safe_text:
+      type == "string" and length > 0 and utf8bytelength <= 4096 and
+      (test("[\u0000-\u001F\u007F]") | not);
+    def safe_address:
+      type == "string" and length > 0 and
+      (test("[\u0000-\u0020\u007F]") | not);
+    if .schema_version == 1 and .protocol == "naive" and
+       (.instances | type == "array") and
+       ([.instances[] | select(.tag == $tag)] | length) == 1 then
+      ([.instances[] | select(.tag == $tag)][0] | . as $instance |
+        select(
+          (.id | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and
+          (.listen | type == "object" and (keys | sort) == ["address","network","port"] and
+            (.address | safe_address) and
+            (.port | type == "number" and floor == . and . >= 1 and . <= 65535) and
+            (.network | type == "array" and . == ["tcp"])) and
+          (.authentication | type == "object" and (keys | sort) == ["users"] and
+            (.users | type == "array" and length >= 1 and length <= 128 and
+              all(.[]; type == "object" and (keys | sort) == ["name","password","username"] and
+                (.name | safe_text) and
+                (.username | safe_text and (contains(":") | not)) and
+                (.password | safe_text)) and
+              (map(.name) | unique | length) == length and
+              (map(.username) | unique | length) == length)) and
+          (.tls | type == "object" and (keys | sort) == ["certificate_path","enabled","key_path","server_name"] and
+            .enabled == true and
+            (.server_name | safe_text) and
+            (.certificate_path | type == "string" and startswith("/") and
+              (test("[\u0000-\u001F\u007F]") | not)) and
+            (.key_path | type == "string" and startswith("/") and
+              (test("[\u0000-\u001F\u007F]") | not))) and
+          (.client_trust | type == "string" and IN("certificate","system")) and
+          (.naive | type == "object" and
+            (keys | sort) == ["extra_headers","insecure_concurrency","quic","quic_congestion_control","quic_session_receive_window","stream_receive_window"] and
+            (.extra_headers | type == "object" and length <= 64 and
+              all(to_entries[];
+                (.key | type == "string" and length > 0 and length <= 128 and
+                  test("^[!#$%&\u0027*+.^_\u0060|~0-9A-Za-z-]+$")) and
+                (.value | type == "string" and utf8bytelength <= 4096 and
+                  (test("[\u0000-\u001F\u007F]") | not)))) and
+            (.insecure_concurrency | type == "number" and floor == . and . >= 0 and . <= 1024) and
+            .quic == false and
+            (.quic_congestion_control | type == "string" and IN("bbr","cubic","reno")) and
+            (.quic_session_receive_window | type == "string" and length <= 64 and
+              test("^$|^[0-9]+( ?(B|KB|MB|GB))$")) and
+            (.stream_receive_window | type == "string" and length <= 64 and
+              test("^$|^[0-9]+( ?(B|KB|MB|GB))$"))) and
+          (.outbound_policy | IN("default","direct","warp")) and
+          (.dependencies | type == "array" and length == 0)
+        ) | {
+          id: $instance.id,
+          listen: $instance.listen,
+          authentication: $instance.authentication,
+          tls: $instance.tls,
+          client_trust: $instance.client_trust,
+          naive: $instance.naive,
+          outbound_policy: $instance.outbound_policy,
+          dependencies: $instance.dependencies
+        }
+      )
+    else error("invalid NaiveProxy structured state")
     end
   ' "${store_file}") || return 1
   printf '%s\n' "${record}"
@@ -1420,6 +1564,11 @@ verification_generate_protocol_probe_client_config() {
       output_path=$(verification_artifact_path \
         "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
       verification_generate_snell_probe_client "${config_file}" "${output_path}" || return 1
+      ;;
+    naive)
+      output_path=$(verification_artifact_path \
+        "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
+      verification_generate_naive_probe_client "${config_file}" "${output_path}" || return 1
       ;;
     shadowtls)
       output_path=$(verification_artifact_path \

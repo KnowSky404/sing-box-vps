@@ -147,6 +147,7 @@ resolve_local_tests() {
       tests/verification_protocol_probe_trojan.sh \
       tests/verification_protocol_probe_vmess.sh \
       tests/verification_protocol_probe_snell.sh \
+      tests/verification_protocol_probe_naive.sh \
       tests/verification_protocol_probe_shadowtls.sh \
       tests/verification_protocol_probe_hysteria.sh \
       tests/verification_protocol_probe_tuic.sh \
@@ -174,8 +175,10 @@ resolve_local_tests() {
       tests/install_takeover_rebuilds_vless_reality_instances.sh \
       tests/detect_existing_instance_auto_heals_managed_config_drift.sh \
       tests/update_keeps_existing_config.sh \
+      tests/update_binary_path_initializes_system_info.sh \
       tests/update_rolls_back_binary_when_config_invalid.sh \
       tests/update_rolls_back_binary_when_restart_fails.sh \
+      tests/uninstall_purge_removes_runtime_artifacts.sh \
       tests/subman_config_helpers.sh \
       tests/subman_payload_generation.sh \
       tests/subman_api_push.sh \

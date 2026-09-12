@@ -36,6 +36,7 @@ readonly SB_REALITY_QOS_FILTER_PREF_START="32001"
 readonly SB_REALITY_QOS_BURST="512k"
 readonly SB_ACME_DATA_DIR="${SB_PROJECT_DIR}/acme"
 readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
+readonly SB_NAIVE_LIBRARY_MARKER="${SB_PROJECT_DIR}/libcronet.sha256"
 readonly SBV_BIN_PATH="/usr/local/bin/sbv"
 readonly SBV_UPDATE_URL="https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh"
 readonly SBV_SCRIPT_MIN_SIZE="1024"
@@ -1119,7 +1120,11 @@ component_environment_dependency_json() {
 }
 
 component_runtime_library_available() {
-  local search_path candidate
+  local search_path candidate managed_library_path
+  managed_library_path=$(singbox_library_path) || return 1
+  if [[ -f "${managed_library_path}" && ! -L "${managed_library_path}" && -r "${managed_library_path}" ]]; then
+    return 0
+  fi
   if command -v ldconfig >/dev/null 2>&1 &&
      ldconfig -p 2>/dev/null | grep -Eq '[[:space:]]libcronet\.so([.[:digit:]]*)?[[:space:]]'; then
     return 0
@@ -2640,6 +2645,12 @@ detect_installed_singbox_version() {
   installed_version=$("${SINGBOX_BIN_PATH}" version 2>/dev/null | head -n1 | awk '{print $3}' || true)
   installed_version=$(trim_whitespace "${installed_version}")
   printf '%s' "${installed_version}"
+}
+
+singbox_library_path() {
+  local bin_dir
+  bin_dir=$(dirname "${SINGBOX_BIN_PATH}") || return 1
+  printf '%s/lib/libcronet.so' "$(dirname "${bin_dir}")"
 }
 
 resolve_protocol_index_singbox_version() {
@@ -10960,6 +10971,12 @@ replace_singbox_binary_atomically() {
 install_binary() {
   local download_url="https://github.com/SagerNet/sing-box/releases/download/v${SB_VERSION}/sing-box-${SB_VERSION}-linux-${ARCH}.tar.gz"
   local temp_dir="/tmp/sing-box-install"
+  local bin_path
+  local lib_source
+  local lib_path
+  local lib_dir
+  local staged_lib
+  local staged_marker
   
   # Ensure we are in a valid directory before cleanup/extraction
   cd /tmp
@@ -10978,7 +10995,7 @@ install_binary() {
     log_error "解压失败。"
   fi
   
-  local bin_path=$(find "${temp_dir}" -name "sing-box" -type f)
+  bin_path=$(find "${temp_dir}" -name "sing-box" -type f -print -quit)
   if [[ -z "${bin_path}" ]]; then
     log_error "找不到 sing-box 二进制文件。"
   fi
@@ -10986,7 +11003,49 @@ install_binary() {
   if ! replace_singbox_binary_atomically "${bin_path}"; then
     log_error "安装 sing-box 二进制失败。"
   fi
-  
+
+  # Official Linux pure-Go archives include the optional libcronet runtime
+  # beside the binary.  Keep a managed copy in the sibling lib directory so
+  # NaiveProxy client outbounds can load it without relying on an extracted
+  # temporary archive.  An unowned existing library is never overwritten.
+  lib_source=$(find "${temp_dir}" -name "libcronet.so" -type f -print -quit)
+  if [[ -n "${lib_source}" ]]; then
+    lib_path=$(singbox_library_path) || log_error "无法确定 libcronet.so 安装路径。"
+    lib_dir=$(dirname "${lib_path}")
+    if [[ -e "${lib_path}" && ! -f "${SB_NAIVE_LIBRARY_MARKER}" ]]; then
+      log_warn "发现未由 sbv 管理的 ${lib_path}，保留现有文件并跳过 libcronet.so 替换。"
+    else
+      if ! mkdir -p "${lib_dir}"; then
+        log_error "创建 libcronet.so 目录失败。"
+      fi
+      staged_lib=$(mktemp "${lib_dir}/.libcronet.XXXXXXXX") || \
+        log_error "创建 libcronet.so staging 文件失败。"
+      if ! cp -p -- "${lib_source}" "${staged_lib}" ||
+         ! chmod 0644 "${staged_lib}" ||
+         ! mv -f -- "${staged_lib}" "${lib_path}"; then
+        rm -f -- "${staged_lib}"
+        log_error "安装 libcronet.so 失败。"
+      fi
+      staged_marker=$(mktemp "${SB_NAIVE_LIBRARY_MARKER}.XXXXXXXX") || \
+        log_error "创建 libcronet.so 标记文件失败。"
+      if ! sha256sum "${lib_path}" | awk '{print $1}' > "${staged_marker}" ||
+         ! chmod 600 "${staged_marker}" ||
+         ! mv -f -- "${staged_marker}" "${SB_NAIVE_LIBRARY_MARKER}"; then
+        rm -f -- "${staged_marker}"
+        log_error "提交 libcronet.so 标记文件失败。"
+      fi
+      if command -v ldconfig >/dev/null 2>&1; then
+        if ! ldconfig; then
+          log_warn "ldconfig 未能刷新 libcronet.so 缓存；运行 NaiveProxy 客户端时请设置 LD_LIBRARY_PATH=${lib_dir}。"
+        fi
+      else
+        log_warn "未找到 ldconfig；运行 NaiveProxy 客户端时请设置 LD_LIBRARY_PATH=${lib_dir}。"
+      fi
+    fi
+  else
+    log_warn "下载归档未包含 libcronet.so；NaiveProxy 客户端运行时依赖仍不可用。"
+  fi
+
   # Final Cleanup
   rm -rf "${temp_dir}"
   log_success "二进制文件安装成功并已清理临时文件。"
@@ -17334,6 +17393,8 @@ generate_config() {
 
 # --- Uninstaller ---
 perform_singbox_runtime_uninstall() {
+  local lib_path expected_hash actual_hash
+
   log_info "正在彻底卸载 sing-box 环境..."
   if command -v tc >/dev/null 2>&1; then
     clear_vless_reality_qos_rules
@@ -17343,6 +17404,23 @@ perform_singbox_runtime_uninstall() {
   rm -f "${SINGBOX_SERVICE_FILE}"
   systemctl daemon-reload
   rm -f "${SINGBOX_BIN_PATH}"
+  lib_path=$(singbox_library_path || printf '')
+  if [[ -n "${lib_path}" && -f "${SB_NAIVE_LIBRARY_MARKER}" ]]; then
+    expected_hash=$(tr -d '[:space:]' < "${SB_NAIVE_LIBRARY_MARKER}")
+    actual_hash=''
+    if [[ -f "${lib_path}" && ! -L "${lib_path}" ]]; then
+      actual_hash=$(sha256sum "${lib_path}" | awk '{print $1}')
+    fi
+    if [[ -n "${expected_hash}" && "${expected_hash}" == "${actual_hash}" ]]; then
+      rm -f "${lib_path}"
+      if [[ "$(dirname "${lib_path}")" == "/usr/local/lib" ]] &&
+         command -v ldconfig >/dev/null 2>&1; then
+        ldconfig || log_warn "libcronet.so 已删除，但 ldconfig 缓存刷新失败。"
+      fi
+    else
+      log_warn "检测到 libcronet.so 已被外部修改，保留 ${lib_path} 以避免误删。"
+    fi
+  fi
   rm -rf "${SINGBOX_CONFIG_DIR}"
   print_success "sing-box 服务、二进制和配置目录已彻底删除。"
 }

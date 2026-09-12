@@ -30,6 +30,13 @@ if [[ "${1:-}" == "marker" ]]; then
 fi
 EOF
   chmod 0644 "${extracted_dir}/sing-box"
+  printf 'libcronet-test\n' > "${extracted_dir}/libcronet.so"
+  chmod 0644 "${extracted_dir}/libcronet.so"
+}
+
+LD_CONFIG_CALLS=0
+ldconfig() {
+  LD_CONFIG_CALLS=$((LD_CONFIG_CALLS + 1))
 }
 
 mv() {
@@ -58,6 +65,19 @@ if [[ "${ATOMIC_RENAME_MODE}" != "755" ]]; then
 fi
 if [[ "$("${SINGBOX_BIN_PATH}" marker)" != "atomically-installed" ]]; then
   printf 'expected atomically installed binary at the final path\n' >&2
+  exit 1
+fi
+
+if [[ "$(cat "$(singbox_library_path)")" != "libcronet-test" ]]; then
+  printf 'expected libcronet.so to be installed beside the binary family\n' >&2
+  exit 1
+fi
+if [[ "$(cat "${SB_NAIVE_LIBRARY_MARKER}")" != "$(sha256sum "$(singbox_library_path)" | awk '{print $1}')" ]]; then
+  printf 'expected the managed libcronet.so marker to contain its committed hash\n' >&2
+  exit 1
+fi
+if (( LD_CONFIG_CALLS != 1 )); then
+  printf 'expected install to refresh the dynamic loader cache once, got %s\n' "${LD_CONFIG_CALLS}" >&2
   exit 1
 fi
 

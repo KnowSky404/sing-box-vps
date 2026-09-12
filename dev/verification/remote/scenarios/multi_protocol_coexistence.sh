@@ -21,6 +21,29 @@ verification_config_inbound_port_for_protocol() {
   ' "${config_file}"
 }
 
+verification_config_inbound_network_for_protocol() {
+  local protocol=$1
+  local config_file=$2
+  local config_type
+
+  config_type=$(verification_config_inbound_type_for_protocol "${protocol}")
+  if [[ "${protocol}" == "mixed" ]]; then
+    jq -er --arg config_type "${config_type}" '
+      [.inbounds[] | select(.type == $config_type and
+        ((.tag // "") | startswith("shadowtls-inner-") | not))][0]
+      | (.network // "")
+      | if type == "array" then join(",") else . end
+    ' "${config_file}"
+    return 0
+  fi
+
+  jq -er --arg config_type "${config_type}" '
+    [.inbounds[] | select(.type == $config_type)][0]
+    | (.network // "")
+    | if type == "array" then join(",") else . end
+  ' "${config_file}"
+}
+
 verification_scenario_multi_protocol_coexistence() {
   local cert_dir
   local cert_path
@@ -29,6 +52,7 @@ verification_scenario_multi_protocol_coexistence() {
   local index_path
   local protocol
   local port
+  local configured_network
   local shadowtls_handshake_pid=''
 
   verification_prepare_remote_local_tree
@@ -239,15 +263,39 @@ EOF
   jq -e '.ok==true and .protocol=="shadowtls" and .changed==true and .revision==1' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-create.json" >/dev/null
 
+  # NaiveProxy's TCP path is independently probeable with the official
+  # with_naive_outbound/libcronet build.  Keep QUIC disabled in this slice so
+  # the marker proves the authenticated HTTP/2 data plane without claiming a
+  # separate UDP/HTTP3 result.
+  local naive_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/naive-record.json"
+  (umask 077; jq -n --arg cert "${cert_path}" --arg key "${key_path}" '
+    {id:"main",name:"Naive TCP verification",tag:"naive-in",
+     listen:{address:"127.0.0.1",port:1091,network:["tcp"]},
+     authentication:{users:[{name:"naive-user",username:"naive-user",password:"naive-verification-password"}]},
+     tls:{enabled:true,server_name:"sing-box-vps-verification.invalid",certificate_path:$cert,key_path:$key},
+     client_trust:"certificate",
+     naive:{extra_headers:{},insecure_concurrency:0,quic:false,
+       quic_congestion_control:"bbr",quic_session_receive_window:"",stream_receive_window:""},
+     outbound_policy:"default",dependencies:[]}
+  ' > "${naive_record}")
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent instance create naive --json --yes \
+    --expected-revision 0 --file "${naive_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/naive-create.json"
+  jq -e '.ok==true and .protocol=="naive" and .changed==true and .revision==1' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/naive-create.json" >/dev/null
+
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/config.json")
   index_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/index.env")
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/libcronet.sha256.txt" \
+    sha256sum /usr/local/lib/libcronet.so
   cp /root/sing-box-vps/config.json "${config_path}"
   cp /root/sing-box-vps/protocols/index.env "${index_path}"
-  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan,tuic,vmess,snell,shadowtls' "${index_path}"
+  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan,tuic,vmess,snell,shadowtls,naive' "${index_path}"
   jq -e '
-    ([.inbounds[] | .type] | sort) == ["anytls", "http", "hysteria2", "mixed", "mixed", "shadowsocks", "shadowtls", "snell", "socks", "trojan", "tuic", "vless", "vmess"] and
+    ([.inbounds[] | .type] | sort) == ["anytls", "http", "hysteria2", "mixed", "mixed", "naive", "shadowsocks", "shadowtls", "snell", "socks", "trojan", "tuic", "vless", "vmess"] and
     ([.inbounds[] | select(.type == "vless") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "mixed") | .listen_port] | length == 2) and
     ([.inbounds[] | select(.type == "hysteria2") | .listen_port] | length == 1) and
@@ -269,7 +317,10 @@ EOF
       .handshake.server == "127.0.0.1" and .handshake.server_port == 1090 and
       .detour == "shadowtls-inner-main")] | length == 1) and
     ([.inbounds[] | select(.type == "mixed" and .tag == "shadowtls-inner-main" and
-      .listen == "127.0.0.1" and .listen_port == 1089)] | length == 1)
+      .listen == "127.0.0.1" and .listen_port == 1089)] | length == 1) and
+    ([.inbounds[] | select(.type == "naive" and .tag == "naive-in" and
+      .listen == "127.0.0.1" and .listen_port == 1091 and .network == "tcp" and
+      .users[0].username == "naive-user" and .tls.server_name == "sing-box-vps-verification.invalid")] | length == 1)
   ' /root/sing-box-vps/config.json >/dev/null
   grep -Fqx 'sing-box version 1.14.0' <(sing-box version)
   verification_wait_for_service_active sing-box
@@ -279,7 +330,15 @@ EOF
   while IFS= read -r protocol; do
     port=$(verification_config_inbound_port_for_protocol \
       "${protocol}" /root/sing-box-vps/config.json)
-    if verification_protocol_metadata "${protocol}" | jq -e \
+    configured_network=$(verification_config_inbound_network_for_protocol \
+      "${protocol}" /root/sing-box-vps/config.json)
+    if [[ "${configured_network}" == "tcp" ]]; then
+      verification_assert_port_listening "${port}" \
+        "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.${protocol}.ss-lntp.txt"
+    elif [[ "${configured_network}" == "udp" ]]; then
+      verification_assert_udp_port_listening "${port}" \
+        "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.${protocol}.ss-lunp.txt"
+    elif verification_protocol_metadata "${protocol}" | jq -e \
       '.listen_networks | type == "array" and index("udp") != null' >/dev/null; then
       verification_assert_udp_port_listening "${port}" \
         "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.${protocol}.ss-lunp.txt"

@@ -11,6 +11,7 @@ PROJECT_DIR="${TMP_DIR}/project"
 SINGBOX_BIN_PATH="${TMP_DIR}/bin/sing-box"
 SBV_BIN_PATH="${TMP_DIR}/bin/sbv"
 SINGBOX_SERVICE_FILE="${TMP_DIR}/systemd/sing-box.service"
+LIBCRONET_PATH="${TMP_DIR}/lib/libcronet.so"
 
 sed \
   -e '/^main "\$@"$/d' \
@@ -22,6 +23,9 @@ sed \
 
 mkdir -p "${PROJECT_DIR}" "$(dirname "${SINGBOX_BIN_PATH}")" "$(dirname "${SINGBOX_SERVICE_FILE}")" "${TMP_DIR}/stub-bin"
 touch "${PROJECT_DIR}/config.json" "${SINGBOX_BIN_PATH}" "${SBV_BIN_PATH}" "${SINGBOX_SERVICE_FILE}"
+mkdir -p "$(dirname "${LIBCRONET_PATH}")"
+printf 'managed-libcronet\n' > "${LIBCRONET_PATH}"
+sha256sum "${LIBCRONET_PATH}" | awk '{print $1}' > "${PROJECT_DIR}/libcronet.sha256"
 
 cat > "${TMP_DIR}/stub-bin/systemctl" <<EOF
 #!/usr/bin/env bash
@@ -54,6 +58,11 @@ fi
 
 if [[ -e "${SINGBOX_SERVICE_FILE}" ]]; then
   printf 'expected service file to be removed: %s\n' "${SINGBOX_SERVICE_FILE}" >&2
+  exit 1
+fi
+
+if [[ -e "${LIBCRONET_PATH}" ]]; then
+  printf 'expected managed libcronet.so to be removed: %s\n' "${LIBCRONET_PATH}" >&2
   exit 1
 fi
 
