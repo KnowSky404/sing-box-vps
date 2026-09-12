@@ -16328,6 +16328,173 @@ managed_component_tun_route_options_json() {
   printf '%s\n' '{"auto_detect_interface":true}'
 }
 
+# Inspect resources which are created by a running transparent inbound.  The
+# sing-box process owns TUN interfaces, iproute2 rules/routes and auto-redirect
+# nftables state; the installer must not try to infer ownership from arbitrary
+# host rules or delete an operator's policy.  Redirect/TProxy listeners still
+# need an operator-owned PREROUTING policy, so those resources are explicitly
+# reported as not assessed rather than being mistaken for a complete data
+# plane.  This function is read-only and bounded: it is used by diagnose and
+# never mutates the network namespace.
+managed_component_transparent_resources_json() (
+  local config_file=${1:-${SINGBOX_CONFIG_FILE:-}} service_state=${2:-unknown}
+  local snapshot records='[]' resources='[]' status=not_assessed reason=service_inactive
+  local tun_count=0 record tag type interface_name auto_route auto_redirect
+  local table_index rule_index link_status route_status rule_status nft_status
+  local link_file rule_file route_file nft_file output_size
+  [[ -f "${config_file}" && ! -L "${config_file}" && -r "${config_file}" ]] || return 1
+  snapshot=$(mktemp -d /tmp/sbv-transparent-resources.XXXXXX) || return 1
+  trap 'rm -rf -- "${snapshot}"' EXIT INT TERM HUP
+  head -c 4194305 -- "${config_file}" > "${snapshot}/config.json" || return 1
+  [[ "$(wc -c < "${snapshot}/config.json")" -le 4194304 ]] || return 1
+  records=$(jq -c '[.inbounds[]? | select(.type == "tun" or .type == "redirect" or .type == "tproxy") |
+    {tag:(.tag // ""),type:.type,interface_name:(.interface_name // "tun0"),
+     auto_route:(.auto_route // false),auto_redirect:(.auto_redirect // false),
+     table_index:(.iproute2_table_index // 2022),rule_index:(.iproute2_rule_index // 9000),
+     listen:(.listen // ""),listen_port:(.listen_port // 0)}]' "${snapshot}/config.json") || return 1
+  tun_count=$(jq -r '[.[] | select(.type == "tun")] | length' <<< "${records}") || return 1
+  if [[ "${service_state}" != active ]]; then
+    jq -cn --arg status "${status}" --arg reason "${reason}" --argjson resources "${records}" \
+      '{status:$status,reason:$reason,service_active:false,resources:($resources | map({tag,type,listen,listen_port,resource_scope:(if .type == "tun" then "core_owned" else "operator_policy_required" end),status:"not_assessed",reason:"service_inactive"})),limitations:["redirect/tproxy host policy rules are not installer-owned","TUN routes and auto-redirect state require a running core"]}'
+    return 0
+  fi
+  if (( tun_count == 0 )) && ! jq -e 'any(.[]; .type == "redirect" or .type == "tproxy")' <<< "${records}" >/dev/null 2>&1; then
+    jq -cn '{status:"available",reason:null,service_active:true,resources:[],limitations:[]}'
+    return 0
+  fi
+  if (( tun_count == 0 )); then
+    jq -cn --argjson resources "${records}" \
+      '{status:"not_assessed",reason:"host_policy_rules_not_managed",service_active:true,
+        resources:($resources | map({tag,type,listen,listen_port,
+          resource_scope:"operator_policy_required",status:"not_assessed",
+          reason:"host_policy_rules_not_managed"})),
+        limitations:["redirect/tproxy host policy rules are not installer-owned"]}'
+    return 0
+  fi
+  status=available
+  reason=''
+  if ! command -v ip >/dev/null 2>&1; then
+    status=unavailable
+    reason=iproute2_missing
+  else
+    link_file="${snapshot}/link.json"
+    rule_file="${snapshot}/rule.json"
+    route_file="${snapshot}/route.json"
+    if ! ip -j rule show > "${rule_file}" 2>"${snapshot}/rule.stderr"; then
+      status=unavailable
+      reason=iproute2_rule_probe_failed
+    elif [[ "$(wc -c < "${rule_file}")" -gt 1048576 ]]; then
+      status=unavailable
+      reason=iproute2_rule_probe_oversized
+    elif ! jq -e 'type == "array"' "${rule_file}" >/dev/null 2>&1; then
+      status=unavailable
+      reason=iproute2_rule_probe_invalid
+    elif ! ip -j route show table all > "${route_file}" 2>"${snapshot}/route.stderr"; then
+      status=unavailable
+      reason=iproute2_route_probe_failed
+    elif [[ "$(wc -c < "${route_file}")" -gt 1048576 ]]; then
+      status=unavailable
+      reason=iproute2_route_probe_oversized
+    elif ! jq -e 'type == "array"' "${route_file}" >/dev/null 2>&1; then
+      status=unavailable
+      reason=iproute2_route_probe_invalid
+    fi
+  fi
+  if (( tun_count > 0 )) && [[ "${status}" == available ]]; then
+    if command -v nft >/dev/null 2>&1; then
+      nft_file="${snapshot}/nft.json"
+      if nft -j list ruleset > "${nft_file}" 2>"${snapshot}/nft.stderr"; then
+        output_size=$(wc -c < "${nft_file}") || output_size=0
+        if (( output_size > 2097152 )); then
+          nft_status=oversized
+        elif jq -e 'type == "object"' "${nft_file}" >/dev/null 2>&1; then
+          nft_status=observed
+        else
+          nft_status=invalid
+        fi
+      else
+        nft_status=probe_failed
+      fi
+    else
+      nft_status=missing
+    fi
+  else
+    nft_status=not_required
+  fi
+  while IFS= read -r record; do
+    [[ -n "${record}" ]] || continue
+    tag=$(jq -r '.tag' <<< "${record}") || return 1
+    type=$(jq -r '.type' <<< "${record}") || return 1
+    if [[ "${type}" != tun ]]; then
+      resources=$(jq -c --argjson item "${record}" '. + [($item | {
+        tag,type,listen,listen_port,
+        resource_scope:"operator_policy_required",status:"not_assessed",
+        reason:"host_policy_rules_not_managed"})]' <<< "${resources}") || return 1
+      [[ "${status}" == available ]] && { status=not_assessed; reason=host_policy_rules_not_managed; }
+      continue
+    fi
+    interface_name=$(jq -r '.interface_name' <<< "${record}") || return 1
+    [[ "${interface_name}" =~ ^[A-Za-z0-9_.-]{1,15}$ ]] || return 1
+    auto_route=$(jq -r '.auto_route' <<< "${record}") || return 1
+    auto_redirect=$(jq -r '.auto_redirect' <<< "${record}") || return 1
+    table_index=$(jq -r 'if ((.table_index | type) == "number" and .table_index > 0) then .table_index elif ((.table_index | type) == "array" and ((.table_index[0] // 0) > 0)) then .table_index[0] else 2022 end' <<< "${record}") || return 1
+    rule_index=$(jq -r 'if ((.rule_index | type) == "number" and .rule_index > 0) then .rule_index elif ((.rule_index | type) == "array" and ((.rule_index[0] // 0) > 0)) then .rule_index[0] else 9000 end' <<< "${record}") || return 1
+    link_status=missing
+    if [[ "${status}" == available ]] && ip -j link show dev "${interface_name}" > "${link_file}" 2>"${snapshot}/link.stderr"; then
+      if [[ "$(wc -c < "${link_file}")" -le 1048576 ]] && jq -e 'type == "array"' "${link_file}" >/dev/null 2>&1; then
+        if jq -e --arg name "${interface_name}" 'any(.[]; .ifname == $name)' "${link_file}" >/dev/null 2>&1; then
+          link_status=present
+        else
+          link_status=missing
+        fi
+      else
+        link_status=invalid
+      fi
+    elif [[ "${status}" != available ]]; then
+      link_status=not_probed
+    fi
+    route_status=not_required
+    rule_status=not_required
+    if [[ "${auto_route}" == true ]]; then
+      if [[ "${status}" == available ]]; then
+        if jq -e --argjson priority "${rule_index}" --arg table "${table_index}" \
+          'any(.[]; (.priority == $priority) and ((.table // "") | tostring) == $table)' "${rule_file}" >/dev/null 2>&1; then
+          rule_status=present
+        else
+          rule_status=missing
+        fi
+        if jq -e --arg table "${table_index}" --arg name "${interface_name}" \
+          'any(.[]; ((.table // "main") | tostring) == $table and (.dev // "") == $name)' "${route_file}" >/dev/null 2>&1; then
+          route_status=present
+        else
+          route_status=missing
+        fi
+      else
+        route_status=not_probed
+        rule_status=not_probed
+      fi
+    fi
+    record=$(jq -c --argjson item "${record}" --arg scope core_owned --arg link "${link_status}" \
+      --arg route "${route_status}" --arg rule "${rule_status}" --arg nft "${nft_status}" \
+      '{tag:$item.tag,type:$item.type,interface_name:$item.interface_name,auto_route:$item.auto_route,
+        auto_redirect:$item.auto_redirect,resource_scope:$scope,
+        interface:{status:$link},policy_routing:{status:$route},rule:{status:$rule},
+        auto_redirect_rules:{status:(if $item.auto_redirect then $nft else "not_required" end),ownership:"core_dynamic"}}' \
+      <<< "${record}") || return 1
+    if [[ "${link_status}" != present || ( "${auto_route}" == true && ("${route_status}" != present || "${rule_status}" != present)) ]]; then
+      status=unavailable
+      reason=tun_runtime_resources_missing
+    elif [[ "${auto_redirect}" == true && "${nft_status}" != observed ]]; then
+      status=not_assessed
+      reason=auto_redirect_rules_not_observed
+    fi
+    resources=$(jq -c --argjson item "${record}" '. + [$item]' <<< "${resources}") || return 1
+  done < <(jq -c '.[]' <<< "${records}")
+  jq -cn --arg status "${status}" --arg reason "${reason}" --argjson resources "${resources}" \
+    '{status:$status,reason:(if $reason == "" then null else $reason end),service_active:true,resources:$resources,
+      limitations:["redirect/tproxy host policy rules are not installer-owned","reported core-owned state is observation only"]}'
+)
+
 managed_component_state_candidate() {
   local state=${1:-} operation=${2:-} record=${3:-} target_id=${4:-}
   local candidate
@@ -16609,6 +16776,7 @@ managed_component_diagnose_json() {
   local state inventory config_status graph_status listener_status core_status
   local config_present=false service_state=unknown firewall_status=not_configured firewall_rules=0
   local instance_pending=false component_pending=false component_transaction_phase=none ledger
+  local transparent_resources='{"status":"not_assessed","reason":"config_missing","service_active":false,"resources":[],"limitations":[]}'
 
   state=$(managed_component_state_json) || return 1
   inventory=$(managed_component_inventory_json) || return 1
@@ -16650,6 +16818,10 @@ managed_component_diagnose_json() {
   if command -v systemctl >/dev/null 2>&1; then
     service_state=$(systemctl is-active sing-box 2>/dev/null || printf 'unknown')
   fi
+  if [[ "${config_present}" == true ]]; then
+    transparent_resources=$(managed_component_transparent_resources_json "${SINGBOX_CONFIG_FILE}" "${service_state}") || \
+      transparent_resources='{"status":"unavailable","reason":"resource_probe_failed","service_active":false,"resources":[],"limitations":[]}'
+  fi
   if [[ -e "${INSTANCE_FIREWALL_LEDGER_FILE}" ]]; then
     if ledger=$(instance_firewall_read_ledger); then
       firewall_status=available
@@ -16678,7 +16850,7 @@ managed_component_diagnose_json() {
     --argjson config_present "${config_present}" --argjson component_count "$(jq -r '.components | length' <<< "${state}")" \
     --argjson firewall_rules "${firewall_rules}" --argjson instance_pending "${instance_pending}" \
     --argjson component_pending "${component_pending}" --arg component_phase "${component_transaction_phase}" \
-    --argjson inventory "${inventory}" \
+    --argjson inventory "${inventory}" --argjson transparent_resources "${transparent_resources}" \
     '{schema:$schema,action:"component-diagnose",
       state:{revision:($revision|tonumber),component_count:$component_count,valid:true},
       config:{status:$config_status,present:$config_present,graph:$graph_status,listener_resources:$listener_status,core_check:$core_status},
@@ -16686,6 +16858,7 @@ managed_component_diagnose_json() {
       firewall:{ledger_status:$firewall_status,managed_rule_count:$firewall_rules},
       transactions:{instance_write_pending:$instance_pending,component_write_pending:$component_pending,
         component_write_phase:$component_phase},
+      transparent_resources:$transparent_resources,
       components:$inventory.components,supported:$inventory.supported}'
 }
 

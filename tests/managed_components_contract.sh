@@ -1859,7 +1859,9 @@ jq -e '.ok == true and .data.action == "component-diagnose" and
   .data.state.revision == 3 and .data.config.status == "present" and
   .data.config.graph == "passed" and .data.config.listener_resources == "passed" and
   .data.config.core_check == "unavailable" and (.data.components | length) == 3 and
-  (.data.supported | length) == 30' <<< "${diagnose_json}" >/dev/null
+  (.data.supported | length) == 30 and
+  .data.transparent_resources.status == "not_assessed" and
+  .data.transparent_resources.service_active == false' <<< "${diagnose_json}" >/dev/null
 if grep -Fq 'secret-token-not-for-list' <<< "${diagnose_json}"; then
   printf 'component diagnose leaked a secret token\n' >&2
   exit 1

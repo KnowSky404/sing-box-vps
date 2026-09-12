@@ -47,6 +47,14 @@ Advanced components are stored in `/root/sing-box-vps/components.json` (schema 1
 
 The component environment observation now parses the target binary's `Tags:` line. Conditional components report a missing required tag as `unavailable`; wrappers that omit the line remain `not_assessed`. The tag list is exposed only as validated metadata under `environment.core.build_tags`, and this does not prove external authentication, host routes/firewall or a data plane.
 
+`component diagnose --json` also emits a read-only `transparent_resources`
+snapshot. When the service is active it checks managed TUN interface,
+iproute2 rule/route and auto-redirect nftables observations; missing core-owned
+resources are reported as `unavailable`. Redirect/TProxy entries remain
+`host_policy_rules_not_managed` because the installer does not claim ownership
+of host PREROUTING or policy-routing rules. This is observation evidence only,
+not a transparent data-plane or host-resource transaction claim.
+
 Canonical documents:
 - AGENTS.md: repository rules, validation requirements, SSH alias conventions, version rules.
 - README.md: user-facing install, features, versions, runtime paths.

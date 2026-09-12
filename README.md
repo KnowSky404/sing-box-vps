@@ -52,6 +52,8 @@ Tailscale endpoint 现在按 `TailscaleEndpointOptions` 接入 typed state/rende
 
 Snell outbound 已按 sing-box 1.14 的 `SnellOutboundOptions` 接入 typed component state；版本仅允许 v4（HTTP obfs）或 v6（traffic shaping），并保留 PSK、可选 userkey/reuse、TCP/UDP network 和共享 Dial Fields。v4/v6 字段不可交叉，v6 PSK 至少 12 字节；Snell v5 QUIC proxy 不作为独立 outbound 提供，UDP 业务由 Snell 的 TCP packet API 承载。凭据仅通过敏感 component export 返回，1.14 核心 `check` 不代表远端 Snell 握手或 TCP/UDP 数据面，1.13.18 核心明确不注册该 type。
 
+透明组件诊断现在额外返回 `transparent_resources`：服务 active 时只读检查 TUN 接口、iproute2 规则/路由及 auto-redirect 的 nftables 观测；缺失的 core-owned 资源会报告 `unavailable`。Redirect/TProxy 资源明确标记 `host_policy_rules_not_managed`，仍需操作员维护 PREROUTING/策略路由，诊断结果不把任意主机规则当作项目所有。
+
 ## 🚀 一键安装
 
 在您的 VPS 上运行以下安全 Bootstrap 即可开始安装。它会先完整下载到权限为 `0600` 的临时文件，再执行语法和项目身份校验；下载、校验或脚本执行的退出码会原样返回。整个流程运行在子 Shell 中，不会用 `exit` 关闭当前 SSH 登录 Shell。

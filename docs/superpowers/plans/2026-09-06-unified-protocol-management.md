@@ -676,3 +676,9 @@ action 及 action 交叉字段在 state/CAS 与 live takeover 前拒绝。合法
 为 `2026091205`。这项切片关闭了组件 route JSON 任意透传缺口，但不宣称
 主机策略路由/nftables、TUN/Redirect/TProxy 透明数据面、Endpoint 外部认证
 或全协议目标完成。
+
+### 2026-09-12：透明资源只读诊断切片
+
+新增 `managed_component_transparent_resources_json`，在不修改网络命名空间的前提下，从运行中的配置观测 TUN 的接口、iproute2 规则/路由和 auto-redirect nftables 规则集；默认 Linux TUN 的 table `2022` 与 rule priority `9000` 会被逐项核对，接口或路由缺失报告 `tun_runtime_resources_missing`。Redirect/TProxy 不会把宿主 PREROUTING、策略路由或现有 nftables 规则误认作组件所有，而是在 `component diagnose --json` 中明确返回 `host_policy_rules_not_managed`。
+
+`tests/managed_transparent_resources.sh` 覆盖服务非 active、TUN 资源完整/缺失、Redirect/TProxy 未托管策略和非法接口名；所有探针使用有界 JSON 读取，未执行写入命令。该切片补齐透明资源的真实观测和诊断边界，但仍不实现宿主策略规则事务或 Redirect/TProxy 数据面；完整协议目标继续未完成。
