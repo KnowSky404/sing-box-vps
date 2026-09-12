@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091201
+# Version: 2026091202
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091201"
+readonly SCRIPT_VERSION="2026091202"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -414,38 +414,66 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-log_info() { 
-  echo -e "${BLUE}[INFO]${NC} $1"
+log_info() {
+  if [[ "${SB_AGENT_JSON_MODE:-n}" == y ]]; then
+    echo -e "${BLUE}[INFO]${NC} $1" >&2
+  else
+    echo -e "${BLUE}[INFO]${NC} $1"
+  fi
   mkdir -p "${SB_PROJECT_DIR}"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $1" >> "${SBV_LOG_FILE}"
 }
-log_success() { 
-  echo -e "${GREEN}[SUCCESS]${NC} $1"
+log_success() {
+  if [[ "${SB_AGENT_JSON_MODE:-n}" == y ]]; then
+    echo -e "${GREEN}[SUCCESS]${NC} $1" >&2
+  else
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+  fi
   mkdir -p "${SB_PROJECT_DIR}"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUCCESS] $1" >> "${SBV_LOG_FILE}"
 }
-log_warn() { 
-  echo -e "${YELLOW}[WARN]${NC} $1"
+log_warn() {
+  if [[ "${SB_AGENT_JSON_MODE:-n}" == y ]]; then
+    echo -e "${YELLOW}[WARN]${NC} $1" >&2
+  else
+    echo -e "${YELLOW}[WARN]${NC} $1"
+  fi
   mkdir -p "${SB_PROJECT_DIR}"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARN] $1" >> "${SBV_LOG_FILE}"
 }
-log_error() { 
-  echo -e "${RED}[ERROR]${NC} $1"
+log_error() {
+  if [[ "${SB_AGENT_JSON_MODE:-n}" == y ]]; then
+    echo -e "${RED}[ERROR]${NC} $1" >&2
+  else
+    echo -e "${RED}[ERROR]${NC} $1"
+  fi
   mkdir -p "${SB_PROJECT_DIR}"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $1" >> "${SBV_LOG_FILE}"
   exit 1
 }
 
 print_info() {
-  echo -e "${BLUE}[INFO]${NC} $1"
+  if [[ "${SB_AGENT_JSON_MODE:-n}" == y ]]; then
+    echo -e "${BLUE}[INFO]${NC} $1" >&2
+  else
+    echo -e "${BLUE}[INFO]${NC} $1"
+  fi
 }
 
 print_success() {
-  echo -e "${GREEN}[SUCCESS]${NC} $1"
+  if [[ "${SB_AGENT_JSON_MODE:-n}" == y ]]; then
+    echo -e "${GREEN}[SUCCESS]${NC} $1" >&2
+  else
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+  fi
 }
 
 print_warn() {
-  echo -e "${YELLOW}[WARN]${NC} $1"
+  if [[ "${SB_AGENT_JSON_MODE:-n}" == y ]]; then
+    echo -e "${YELLOW}[WARN]${NC} $1" >&2
+  else
+    echo -e "${YELLOW}[WARN]${NC} $1"
+  fi
 }
 
 trim_whitespace() {
@@ -16230,6 +16258,14 @@ managed_component_state_apply() {
   if [[ "${operation}" != takeover ]]; then
     inventory_state_file="${snapshot}/project/components.json"
   fi
+
+  # Agent component writes can start in a fresh shell that has not gone
+  # through the interactive config-state loader. Preserve route toggles from
+  # the live config before regeneration; otherwise a component-only change
+  # would silently re-enable the default private-address reject rule or drop
+  # an existing Warp endpoint.
+  load_config_generation_settings "${SINGBOX_CONFIG_FILE}"
+
   if ! generate_config "${inventory_state_file}" ||
      [[ ! -f "${SINGBOX_CONFIG_FILE}" || -L "${SINGBOX_CONFIG_FILE}" ]]; then
     managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件配置生成或校验失败" || :
@@ -18119,6 +18155,25 @@ config_has_advanced_route() {
       (.geosite == "category-ads-all")
     )
   ' "${config_file}" &>/dev/null
+}
+
+load_config_generation_settings() {
+  local config_file=${1:-}
+
+  [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 0
+  jq -e 'type == "object"' "${config_file}" >/dev/null 2>&1 || return 0
+
+  if config_has_advanced_route "${config_file}"; then
+    SB_ADVANCED_ROUTE="y"
+  else
+    SB_ADVANCED_ROUTE="n"
+  fi
+  if config_has_warp_enabled "${config_file}"; then
+    SB_ENABLE_WARP="y"
+  else
+    SB_ENABLE_WARP="n"
+  fi
+  load_warp_route_settings
 }
 
 normalize_acme_extra_json() {
@@ -24228,6 +24283,10 @@ agent_cli_run() {
   local command=$1
   shift
   local payload status
+  # Structured agent stdout must contain exactly one JSON object.  Keep the
+  # human-readable progress log available on stderr while the command runs so
+  # generators cannot corrupt the envelope captured below.
+  local SB_AGENT_JSON_MODE=y
 
   if payload=$("$@"); then
     status=0

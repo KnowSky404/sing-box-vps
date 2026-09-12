@@ -54,9 +54,11 @@ verification_scenario_multi_protocol_coexistence() {
   local port
   local configured_network
   local shadowtls_handshake_pid=''
+  local http_outbound_marker_pid=''
+  local http_outbound_proxy_pid=''
 
   verification_prepare_remote_local_tree
-  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
+  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
   # Keep the certificate paths valid for the following runtime_smoke scenario.
   # The Docker container is disposable, so this test-only directory cannot
   # outlive the verification run or affect a host installation.
@@ -283,6 +285,244 @@ EOF
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/naive-create.json"
   jq -e '.ok==true and .protocol=="naive" and .changed==true and .revision==1' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/naive-create.json" >/dev/null
+
+  # A managed HTTP outbound must prove more than schema validation: route an
+  # authenticated SOCKS client through a local HTTP proxy and verify that the
+  # proxy receives the request and returns the exact marker.  The fixture is
+  # disposable and maps only the synthetic target name to its local marker,
+  # so it cannot accidentally assert public reachability.
+  local http_outbound_marker_port_file="${VERIFY_REMOTE_LOCAL_TREE_DIR}/http-outbound-marker.port"
+  local http_outbound_proxy_port_file="${VERIFY_REMOTE_LOCAL_TREE_DIR}/http-outbound-proxy.port"
+  local http_outbound_marker_stdout
+  local http_outbound_marker_stderr
+  local http_outbound_proxy_stdout
+  local http_outbound_proxy_stderr
+  local http_outbound_proxy_requests
+  local http_outbound_marker
+  local http_outbound_proxy_auth
+  local http_outbound_marker_port
+  local http_outbound_proxy_port
+  local http_outbound_target_domain='sbv-http-outbound.invalid'
+  http_outbound_marker_stdout=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/http-outbound-marker.stdout.txt")
+  http_outbound_marker_stderr=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/http-outbound-marker.stderr.txt")
+  http_outbound_proxy_stdout=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/http-outbound-proxy.stdout.txt")
+  http_outbound_proxy_stderr=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/http-outbound-proxy.stderr.txt")
+  http_outbound_proxy_requests=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/http-outbound-proxy.request.txt")
+  http_outbound_marker="sing-box-vps-http-outbound-loopback-ok-$(date +%s)-$$"
+  http_outbound_proxy_auth=$(printf 'proxy-user:proxy-pass' | base64 | tr -d '\n')
+  python3 - "${http_outbound_marker_port_file}" "${http_outbound_marker}" \
+    > "${http_outbound_marker_stdout}" 2> "${http_outbound_marker_stderr}" <<'PY' &
+import http.server
+import pathlib
+import socketserver
+import sys
+
+port_file, marker = sys.argv[1:]
+
+class MarkerHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = (marker + "\n").encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        return
+
+with socketserver.ThreadingTCPServer(("127.0.0.1", 0), MarkerHandler) as server:
+    server.daemon_threads = True
+    pathlib.Path(port_file).write_text(str(server.server_address[1]), encoding="ascii")
+    server.serve_forever()
+PY
+  http_outbound_marker_pid=$!
+  for _ in {1..50}; do
+    [[ -s "${http_outbound_marker_port_file}" ]] && break
+    kill -0 "${http_outbound_marker_pid}" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  [[ -s "${http_outbound_marker_port_file}" ]]
+  http_outbound_marker_port=$(cat "${http_outbound_marker_port_file}")
+  [[ "${http_outbound_marker_port}" =~ ^[0-9]+$ ]]
+
+  python3 - "${http_outbound_proxy_port_file}" "${http_outbound_marker_port}" \
+    "${http_outbound_target_domain}" "${http_outbound_proxy_auth}" \
+    "${http_outbound_proxy_requests}" <<'PY' \
+    > "${http_outbound_proxy_stdout}" 2> "${http_outbound_proxy_stderr}" &
+import pathlib
+import select
+import socket
+import socketserver
+import sys
+from urllib.parse import urlsplit
+
+port_file, marker_port, marker_domain, expected_auth, request_log = sys.argv[1:]
+marker_port = int(marker_port)
+expected_proxy_auth = "Basic " + expected_auth
+
+def recv_headers(conn):
+    data = bytearray()
+    while b"\r\n\r\n" not in data and len(data) <= 1024 * 1024:
+        chunk = conn.recv(65536)
+        if not chunk:
+            break
+        data.extend(chunk)
+    return bytes(data)
+
+def relay(left, right):
+    sockets = [left, right]
+    while True:
+        ready, _, _ = select.select(sockets, [], [], 5)
+        if not ready:
+            continue
+        for source in ready:
+            payload = source.recv(65536)
+            if not payload:
+                return
+            destination = right if source is left else left
+            destination.sendall(payload)
+
+class ProxyHandler(socketserver.BaseRequestHandler):
+    def handle(self):
+        client = self.request
+        client.settimeout(5)
+        raw = recv_headers(client)
+        if b"\r\n\r\n" not in raw:
+            return
+        pathlib.Path(request_log).write_bytes(raw)
+        header_block = raw.split(b"\r\n\r\n", 1)[0].decode("iso-8859-1")
+        lines = header_block.split("\r\n")
+        request_line = lines[0].split(" ", 2)
+        headers = {}
+        for line in lines[1:]:
+            if ":" in line:
+                key, value = line.split(":", 1)
+                headers[key.lower()] = value.strip()
+        if headers.get("proxy-authorization") != expected_proxy_auth:
+            client.sendall(b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n")
+            return
+        if len(request_line) != 3:
+            return
+        method, target, version = request_line
+        host = ""
+        port = 80
+        path = target
+        if method.upper() == "CONNECT":
+            host, _, port_text = target.rpartition(":")
+            port = int(port_text or "443")
+        elif target.startswith("http://") or target.startswith("https://"):
+            parsed = urlsplit(target)
+            host = parsed.hostname or ""
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            path = parsed.path or "/"
+            if parsed.query:
+                path += "?" + parsed.query
+        else:
+            host_header = headers.get("host", "")
+            host, _, port_text = host_header.rpartition(":")
+            if not host:
+                host = host_header
+            port = int(port_text or "80")
+        if host == marker_domain:
+            host = "127.0.0.1"
+            port = marker_port
+        if host != "127.0.0.1":
+            return
+        with socket.create_connection((host, port), timeout=5) as upstream:
+            if method.upper() == "CONNECT":
+                client.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                relay(client, upstream)
+                return
+            rewritten = (method + " " + path + " " + version + "\r\n" +
+                         "\r\n".join(lines[1:]) + "\r\n\r\n").encode("iso-8859-1")
+            upstream.sendall(rewritten)
+            relay(client, upstream)
+
+class ReusableServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+with ReusableServer(("127.0.0.1", 0), ProxyHandler) as server:
+    pathlib.Path(port_file).write_text(str(server.server_address[1]), encoding="ascii")
+    server.serve_forever()
+PY
+  http_outbound_proxy_pid=$!
+  for _ in {1..50}; do
+    [[ -s "${http_outbound_proxy_port_file}" ]] && break
+    kill -0 "${http_outbound_proxy_pid}" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  [[ -s "${http_outbound_proxy_port_file}" ]]
+  http_outbound_proxy_port=$(cat "${http_outbound_proxy_port_file}")
+  [[ "${http_outbound_proxy_port}" =~ ^[0-9]+$ ]]
+
+  local http_outbound_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/http-outbound-record.json"
+  (umask 077; jq -n --argjson proxy_port "${http_outbound_proxy_port}" --arg domain "${http_outbound_target_domain}" '
+    {id:"http-outbound-verification",role:"outbound",type:"http",tag:"http-outbound-verification",enabled:true,
+     route_rules:[{domain:[$domain],action:"route",outbound:"http-outbound-verification"}],
+     config:{server:"127.0.0.1",server_port:$proxy_port,username:"proxy-user",password:"proxy-pass",
+       headers:{"X-SBV-Proxy":"http-outbound"},connect_timeout:"5s"}}' > "${http_outbound_record}")
+  local http_outbound_create_status=0
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
+    --expected-revision 0 --file "${http_outbound_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/http-outbound-create.json"
+  http_outbound_create_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/http-outbound-create.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/http-outbound-create.json"
+  if [[ "${http_outbound_create_status}" != "0" ]]; then
+    return "${http_outbound_create_status}"
+  fi
+  jq -e '.ok==true and .operation=="create" and .revision==1 and .type=="http"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/http-outbound-create.json" >/dev/null
+  verification_mark_step http-outbound-component-created
+
+  verification_wait_for_service_active sing-box
+  verification_mark_step http-outbound-service-active
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/http-outbound-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  verification_mark_step http-outbound-config-checked
+  config_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/config.json")
+  cp /root/sing-box-vps/config.json "${config_path}"
+  jq -e --arg domain "${http_outbound_target_domain}" --argjson proxy_port "${http_outbound_proxy_port}" '
+    ([.outbounds[] | select(.type == "http" and .tag == "http-outbound-verification" and
+      .server == "127.0.0.1" and .server_port == $proxy_port and
+      .username == "proxy-user" and .password == "proxy-pass" and
+      .headers["X-SBV-Proxy"] == "http-outbound")] | length == 1) and
+    ([.route.rules[] | select(.outbound == "http-outbound-verification" and .domain == [$domain])] | length == 1)
+  ' "${config_path}" >/dev/null
+  verification_mark_step http-outbound-config-asserted
+
+  local http_outbound_response="${VERIFY_CURRENT_SCENARIO_DIR}/http-outbound-response.txt"
+  local http_outbound_curl_stderr="${VERIFY_CURRENT_SCENARIO_DIR}/http-outbound-curl.stderr.txt"
+  set +e
+  curl --fail --silent --show-error --noproxy '' \
+    --proxy "socks5h://socks-user:socks-pass@127.0.0.1:1081" \
+    "http://${http_outbound_target_domain}/" \
+    > "$(verification_artifact_path "${http_outbound_response}")" \
+    2> "$(verification_artifact_path "${http_outbound_curl_stderr}")"
+  local http_outbound_curl_status=$?
+  set -e
+  [[ "${http_outbound_curl_status}" == "0" ]]
+  verification_mark_step http-outbound-curl-complete
+  grep -Fqx "${http_outbound_marker}" "$(verification_artifact_path "${http_outbound_response}")"
+  grep -Fq 'Proxy-Authorization: Basic cHJveHktdXNlcjpwcm94eS1wYXNz' \
+    "${http_outbound_proxy_requests}"
+  # sing-box canonicalizes outbound header names (for example, X-Sbv-Proxy),
+  # so the value assertion is intentionally case-insensitive for the field
+  # name while remaining exact for the test marker.
+  grep -iFq 'X-SBV-Proxy: http-outbound' "${http_outbound_proxy_requests}"
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/http-outbound.result.env" \
+    'COMPONENT=http-outbound' 'RESULT=success' 'DATA_PLANE=authenticated_http_proxy_loopback'
 
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/config.json")

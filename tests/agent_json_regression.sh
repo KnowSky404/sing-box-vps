@@ -46,6 +46,22 @@ chmod +x "${TMP_DIR}/bin/systemctl"
 source_testable_install
 touch "${SINGBOX_CONFIG_FILE}"
 
+generation_settings_config="${TMP_DIR}/generation-settings.json"
+jq -n '{endpoints:[{type:"wireguard",tag:"warp-ep"}],outbounds:[],route:{final:"warp-ep",rules:[{ip_is_private:true,action:"reject"}]}}' \
+  > "${generation_settings_config}"
+cp "${generation_settings_config}" "${SINGBOX_CONFIG_FILE}"
+SB_ADVANCED_ROUTE=n
+SB_ENABLE_WARP=n
+SB_WARP_ROUTE_MODE=selective
+load_config_generation_settings "${generation_settings_config}"
+[[ "${SB_ADVANCED_ROUTE}" == y && "${SB_ENABLE_WARP}" == y &&
+   "${SB_WARP_ROUTE_MODE}" == all ]]
+jq -n '{endpoints:[],outbounds:[],route:{final:"direct",rules:[]}}' \
+  > "${generation_settings_config}"
+cp "${generation_settings_config}" "${SINGBOX_CONFIG_FILE}"
+load_config_generation_settings "${generation_settings_config}"
+[[ "${SB_ADVANCED_ROUTE}" == n && "${SB_ENABLE_WARP}" == n ]]
+
 assert_envelope() {
   local command=$1
   local expected_ok=$2
@@ -195,5 +211,21 @@ if inconsistent_failure=$(agent_emit_json_envelope consistency 19 '{"ok":true}')
 fi
 assert_envelope consistency false "${inconsistent_failure}"
 jq -e '.schema == "1" and .data.ok == true' <<< "${inconsistent_failure}" >/dev/null
+
+agent_json_log_probe() {
+  log_info "agent JSON log probe"
+  print_warn "agent JSON warning probe"
+  printf '%s\n' '{"ok":true,"action":"log-probe"}'
+}
+agent_log_stderr="${TMP_DIR}/agent-log.stderr"
+log_probe_json=$(agent_cli_run log-probe agent_json_log_probe 2>"${agent_log_stderr}")
+assert_envelope log-probe true "${log_probe_json}"
+jq -e '.data.action == "log-probe"' <<< "${log_probe_json}" >/dev/null
+if grep -Fq 'agent JSON log probe' <<< "${log_probe_json}"; then
+  printf 'agent progress log leaked to structured stdout\n' >&2
+  exit 1
+fi
+grep -Fq 'agent JSON log probe' "${agent_log_stderr}"
+grep -Fq 'agent JSON warning probe' "${agent_log_stderr}"
 
 printf '%s\n' 'agent JSON regression checks passed'
