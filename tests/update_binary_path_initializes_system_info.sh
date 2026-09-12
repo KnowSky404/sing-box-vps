@@ -81,6 +81,19 @@ if (( LD_CONFIG_CALLS != 1 )); then
   exit 1
 fi
 
+printf 'unowned-libcronet\n' > "$(singbox_library_path)"
+rm -f "${SB_NAIVE_LIBRARY_MARKER}"
+LD_CONFIG_CALLS=0
+install_binary >/dev/null
+if [[ "$(cat "$(singbox_library_path)")" != "unowned-libcronet" ]]; then
+  printf 'expected an unowned libcronet.so to remain untouched during reinstall\n' >&2
+  exit 1
+fi
+if (( LD_CONFIG_CALLS != 0 )); then
+  printf 'expected reinstall to skip loader refresh for an unowned library, got %s\n' "${LD_CONFIG_CALLS}" >&2
+  exit 1
+fi
+
 unset -f wget tar mv
 
 write_singbox_binary() {

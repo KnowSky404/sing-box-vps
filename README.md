@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026091111`
+- 脚本版本：`2026091201`
 
 - sing-box 适配版本：`1.14.0`
 
@@ -18,7 +18,7 @@ Trojan 可管理原生 TCP、HTTP、WebSocket（无 early data）、gRPC 和 TLS
 
 ShadowTLS composite 现在也有真实的容器内 TCP 数据面证据：`multi_protocol_coexistence` 与 `runtime_smoke` 在门禁 `dev/verification-runs/20260912001650` 中都生成完整的 ShadowTLS transport + HTTP detour 客户端链，固定 1.14.0 核心 `check` 通过后由临时 TLS cover 提供握手，再经 outer ShadowTLS、loopback Mixed 和 direct 访问 HTTP marker；ShadowTLS 与 AnyTLS 的 `result.env` 均为 `RESULT=success`。cover 证书、握手地址和端口只属于隔离 Docker/loopback fixture，不能推出公网可达、外部握手服务、生产部署、SubMan 或全协议目标完成。
 
-NaiveProxy 现有隔离容器内的 TCP 数据面证据：完整门禁 `dev/verification-runs/20260912014158` 的 `multi_protocol_coexistence` 使用 SAN 证书、固定 1.14.0 核心和官方 `with_naive_outbound`/`libcronet.so`，经 Naive TLS/HTTP2、loopback SOCKS 与 direct 访问 HTTP marker；随后严格渲染配置比对与库 hash artifact 的定向复跑为 `dev/verification-runs/20260912022837`，`protocol-probes/naive/result.env` 仍为 `RESULT=success`。安装器从官方归档原子 staging `/usr/local/lib/libcronet.so`，写入 hash marker 并刷新 loader cache；未受管同名库不会覆盖，卸载仅删除 hash 仍匹配的受管库。该证据只覆盖 Docker/回环 Naive TCP，不代表 UDP/HTTP3、公网、生产、外部认证、SubMan 或全协议目标完成。
+NaiveProxy 现有隔离容器内的 TCP 数据面证据：完整门禁 `dev/verification-runs/20260912014158` 的 `multi_protocol_coexistence` 使用 SAN 证书、固定 1.14.0 核心和官方 `with_naive_outbound`/`libcronet.so`，经 Naive TLS/HTTP2、loopback SOCKS 与 direct 访问 HTTP marker；随后严格渲染配置比对与库 hash artifact 的定向复跑为 `dev/verification-runs/20260912022837`，`protocol-probes/naive/result.env` 仍为 `RESULT=success`。安装器从官方归档原子 staging `/usr/local/lib/libcronet.so`，写入 hash marker 并刷新 loader cache；核心升级会把该库和 marker 纳入独立备份，配置/check/服务失败时一起回滚；未受管同名库不会覆盖，卸载仅删除 hash 仍匹配的受管库。该证据只覆盖 Docker/回环 Naive TCP，不代表 UDP/HTTP3、公网、生产、外部认证、SubMan 或全协议目标完成。
 
 HTTP outbound 已按 sing-box 1.14 的 server/port、认证、path、headers、outbound TLS 与共享 Dial Fields 建立递归 allowlist；它固定为 TCP 上游代理，未知/弃用字段、错误 TLS 嵌套类型和控制字符会在状态/CAS 与接管前拒绝，凭据仅通过敏感 component export 返回。
 

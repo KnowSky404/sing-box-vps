@@ -10,6 +10,10 @@ setup_menu_test_env 120
 perl -0pi -e 's|/root/sing-box-vps-backups|'"${TMP_DIR}"'/sing-box-vps-backups|g' "${TESTABLE_INSTALL}"
 source_testable_install
 
+mkdir -p "$(dirname "$(singbox_library_path)")"
+printf 'agent-upgrade-libcronet\n' > "$(singbox_library_path)"
+sha256sum "$(singbox_library_path)" | awk '{print $1}' > "${SB_NAIVE_LIBRARY_MARKER}"
+
 CURRENT_CHECK_FAIL_FILE="${TMP_DIR}/current-check-fails"
 TARGET_CHECK_FAIL_FILE="${TMP_DIR}/target-check-fails"
 SERVICE_RESTART_FAIL_FILE="${TMP_DIR}/service-restart-fails"
@@ -442,11 +446,16 @@ backup_dir=$(jq -r '.backup' <<< "${upgrade_json}")
 [[ -f "${backup_dir}/SHA256SUMS" ]]
 [[ -f "${backup_dir}/metadata.json" ]]
 [[ -f "${backup_dir}/transaction-result.json" ]]
+[[ -f "${backup_dir}/external-runtime/libcronet.so" ]]
+[[ -f "${backup_dir}/external-runtime/library.state" ]]
+[[ -f "${backup_dir}/external-runtime/marker.state" ]]
 jq -e '
   (.transaction_id | length > 0)
   and .old_version == "1.13.18"
   and .new_version == "1.14.0"
   and (.manifest_path | endswith("/SHA256SUMS"))
+  and (.external_runtime.library_path | endswith("/lib/libcronet.so"))
+  and (.external_runtime.marker_path | endswith("/libcronet.sha256"))
 ' "${backup_dir}/metadata.json" >/dev/null
 jq -e '
   .schema_version == "1.0"
@@ -463,6 +472,8 @@ jq -e '
 ' "${backup_dir}/transaction-result.json" >/dev/null
 grep -Fq '  runtime/protocols/hy2.env' "${backup_dir}/SHA256SUMS"
 grep -Fq '  runtime/protocols/index.env' "${backup_dir}/SHA256SUMS"
+grep -Fq '  external-runtime/libcronet.so' "${backup_dir}/SHA256SUMS"
+grep -Fq '  external-runtime/library.state' "${backup_dir}/SHA256SUMS"
 grep -Fq '  metadata.json' "${backup_dir}/SHA256SUMS"
 [[ "$(stat -c '%a' "${backup_dir}")" == "700" ]]
 [[ "$(stat -c '%a' "${backup_dir}/metadata.json")" == "600" ]]

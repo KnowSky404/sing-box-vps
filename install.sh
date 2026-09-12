@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091111
+# Version: 2026091201
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091111"
+readonly SCRIPT_VERSION="2026091201"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -2651,6 +2651,129 @@ singbox_library_path() {
   local bin_dir
   bin_dir=$(dirname "${SINGBOX_BIN_PATH}") || return 1
   printf '%s/lib/libcronet.so' "$(dirname "${bin_dir}")"
+}
+
+# Snapshot the optional NaiveProxy runtime separately from the project
+# directory.  Core upgrades replace /usr/local/bin/sing-box, while
+# libcronet.so lives beside the binary family and therefore needs its own
+# rollback record.  The state markers distinguish a managed regular file from
+# an unrelated file/symlink that must never be overwritten or removed.
+singbox_library_snapshot() {
+  local destination=$1
+  local lib_path
+  local lib_state='absent'
+  local marker_state='absent'
+
+  [[ -n "${destination}" && ! -L "${destination}" ]] || return 1
+  lib_path=$(singbox_library_path) || return 1
+  mkdir -p "${destination}" || return 1
+
+  if [[ -f "${SB_NAIVE_LIBRARY_MARKER}" && ! -L "${SB_NAIVE_LIBRARY_MARKER}" ]]; then
+    cp -p -- "${SB_NAIVE_LIBRARY_MARKER}" "${destination}/libcronet.sha256" || return 1
+    marker_state='present'
+  elif [[ -e "${SB_NAIVE_LIBRARY_MARKER}" || -L "${SB_NAIVE_LIBRARY_MARKER}" ]]; then
+    marker_state='unmanaged'
+  fi
+  if [[ -f "${lib_path}" && ! -L "${lib_path}" ]]; then
+    if [[ "${marker_state}" == "present" ]]; then
+      cp -p -- "${lib_path}" "${destination}/libcronet.so" || return 1
+      lib_state='present'
+    else
+      lib_state='unmanaged'
+    fi
+  elif [[ -e "${lib_path}" || -L "${lib_path}" ]]; then
+    lib_state='unmanaged'
+  fi
+
+  printf '%s\n' "${lib_state}" > "${destination}/library.state" || return 1
+  printf '%s\n' "${marker_state}" > "${destination}/marker.state" || return 1
+  chmod 600 "${destination}/library.state" "${destination}/marker.state" || return 1
+}
+
+singbox_library_restore_snapshot() {
+  local snapshot_dir=$1
+  local lib_path lib_dir staged expected_hash actual_hash
+  local lib_state marker_state
+  local status=0
+
+  [[ -d "${snapshot_dir}" && ! -L "${snapshot_dir}" ]] || return 1
+  [[ -f "${snapshot_dir}/library.state" && ! -L "${snapshot_dir}/library.state" ]] || return 1
+  [[ -f "${snapshot_dir}/marker.state" && ! -L "${snapshot_dir}/marker.state" ]] || return 1
+  lib_state=$(tr -d '[:space:]' < "${snapshot_dir}/library.state") || return 1
+  marker_state=$(tr -d '[:space:]' < "${snapshot_dir}/marker.state") || return 1
+  lib_path=$(singbox_library_path) || return 1
+  lib_dir=$(dirname "${lib_path}")
+
+  case "${lib_state}" in
+    present)
+      [[ -f "${snapshot_dir}/libcronet.so" && ! -L "${snapshot_dir}/libcronet.so" ]] || return 1
+      [[ ! -L "${lib_path}" && ! -d "${lib_path}" ]] || return 1
+      mkdir -p "${lib_dir}" || return 1
+      staged=$(mktemp "${lib_dir}/.libcronet.restore.XXXXXXXX") || return 1
+      if ! cp -p -- "${snapshot_dir}/libcronet.so" "${staged}" ||
+         ! chmod 0644 "${staged}" ||
+         ! mv -f -- "${staged}" "${lib_path}"; then
+        rm -f -- "${staged}"
+        return 1
+      fi
+      ;;
+    absent)
+      if [[ -f "${lib_path}" && ! -L "${lib_path}" ]]; then
+        if [[ -f "${SB_NAIVE_LIBRARY_MARKER}" && ! -L "${SB_NAIVE_LIBRARY_MARKER}" ]]; then
+          expected_hash=$(tr -d '[:space:]' < "${SB_NAIVE_LIBRARY_MARKER}") || return 1
+          actual_hash=$(sha256sum "${lib_path}" | awk '{print $1}') || return 1
+          if [[ -n "${expected_hash}" && "${expected_hash}" == "${actual_hash}" ]]; then
+            rm -f -- "${lib_path}" || return 1
+          else
+            status=1
+          fi
+        fi
+      elif [[ -L "${lib_path}" || -d "${lib_path}" ]]; then
+        status=1
+      fi
+      ;;
+    unmanaged)
+      :
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  case "${marker_state}" in
+    present)
+      [[ -f "${snapshot_dir}/libcronet.sha256" && ! -L "${snapshot_dir}/libcronet.sha256" ]] || return 1
+      [[ ! -L "${SB_NAIVE_LIBRARY_MARKER}" && ! -d "${SB_NAIVE_LIBRARY_MARKER}" ]] || return 1
+      mkdir -p "${SB_PROJECT_DIR}" || return 1
+      staged=$(mktemp "${SB_NAIVE_LIBRARY_MARKER}.restore.XXXXXXXX") || return 1
+      if ! cp -p -- "${snapshot_dir}/libcronet.sha256" "${staged}" ||
+         ! chmod 600 "${staged}" ||
+         ! mv -f -- "${staged}" "${SB_NAIVE_LIBRARY_MARKER}"; then
+        rm -f -- "${staged}"
+        return 1
+      fi
+      ;;
+    absent)
+      if [[ -f "${SB_NAIVE_LIBRARY_MARKER}" && ! -L "${SB_NAIVE_LIBRARY_MARKER}" ]]; then
+        rm -f -- "${SB_NAIVE_LIBRARY_MARKER}" || return 1
+      elif [[ -L "${SB_NAIVE_LIBRARY_MARKER}" || -d "${SB_NAIVE_LIBRARY_MARKER}" ]]; then
+        status=1
+      fi
+      ;;
+    unmanaged)
+      :
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  if [[ "${lib_state}" == "present" || "${lib_state}" == "absent" ]] &&
+     [[ "$(dirname "${lib_path}")" == "/usr/local/lib" ]] &&
+     command -v ldconfig >/dev/null 2>&1; then
+    ldconfig || status=1
+  fi
+  return "${status}"
 }
 
 resolve_protocol_index_singbox_version() {
@@ -10966,6 +11089,20 @@ replace_singbox_binary_atomically() {
     rm -f -- "${staged_binary}"
     return 1
   fi
+}
+
+restore_singbox_update_artifacts() {
+  local binary_backup=$1
+  local library_backup_dir=$2
+  local status=0
+
+  if ! replace_singbox_binary_atomically "${binary_backup}"; then
+    status=1
+  fi
+  if ! singbox_library_restore_snapshot "${library_backup_dir}"; then
+    status=1
+  fi
+  return "${status}"
 }
 
 install_binary() {
@@ -24526,6 +24663,8 @@ create_agent_upgrade_backup() {
   local manifest_file
   local relative_path
   local runtime_file_list
+  local external_runtime_dir
+  local external_library_path
 
   transaction_id=$(printf 'tx-%s-%s-%s' "$(date -u '+%Y%m%dT%H%M%SZ')" "$$" "${RANDOM}")
 
@@ -24556,6 +24695,15 @@ create_agent_upgrade_backup() {
     rm -rf -- "${backup_dir}"
     return 1
   fi
+  external_runtime_dir="${backup_dir}/external-runtime"
+  external_library_path=$(singbox_library_path) || {
+    rm -rf -- "${backup_dir}"
+    return 1
+  }
+  if ! singbox_library_snapshot "${external_runtime_dir}"; then
+    rm -rf -- "${backup_dir}"
+    return 1
+  fi
 
   if ! jq -n \
     --arg created_at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
@@ -24565,6 +24713,9 @@ create_agent_upgrade_backup() {
     --arg target_version "${target_version}" \
     --arg source_config "${SINGBOX_CONFIG_FILE}" \
     --arg manifest_path "${backup_dir}/SHA256SUMS" \
+    --arg external_runtime_path "${external_runtime_dir}" \
+    --arg external_library_path "${external_library_path}" \
+    --arg external_marker_path "${SB_NAIVE_LIBRARY_MARKER}" \
     '{
       created_at: $created_at,
       script_version: $script_version,
@@ -24575,6 +24726,11 @@ create_agent_upgrade_backup() {
       target_version: $target_version,
       source_config: $source_config,
       manifest_path: $manifest_path,
+      external_runtime: {
+        path: $external_runtime_path,
+        library_path: $external_library_path,
+        marker_path: $external_marker_path
+      },
       manifest_scope: "all_regular_runtime_files_and_control_files",
       contains_sensitive_runtime_material: true
     }' > "${backup_dir}/metadata.json"; then
@@ -24590,6 +24746,11 @@ create_agent_upgrade_backup() {
   fi
   if [[ -d "${backup_dir}/runtime" ]] && \
     ! (cd "${backup_dir}" && find runtime -type f -print0) > "${runtime_file_list}"; then
+    rm -rf -- "${backup_dir}"
+    return 1
+  fi
+  if [[ -d "${backup_dir}/external-runtime" ]] && \
+    ! (cd "${backup_dir}" && find external-runtime -type f -print0) >> "${runtime_file_list}"; then
     rm -rf -- "${backup_dir}"
     return 1
   fi
@@ -24721,6 +24882,12 @@ restore_agent_upgrade_backup() {
   else
     status=1
     artifacts_restored="n"
+  fi
+  if [[ -d "${backup_dir}/external-runtime" ]]; then
+    if ! singbox_library_restore_snapshot "${backup_dir}/external-runtime"; then
+      status=1
+      artifacts_restored="n"
+    fi
   fi
 
   if [[ -f "${backup_dir}/sing-box.service" ]]; then
@@ -33198,6 +33365,7 @@ update_singbox_binary_preserving_config() {
   local installed_target_ver
   local reinstall_choice
   local binary_backup=""
+  local library_backup_dir=""
   local before_service_state
   local restore_status=0
 
@@ -33236,6 +33404,15 @@ update_singbox_binary_preserving_config() {
     rm -f "${binary_backup}"
     log_error "备份现有 sing-box 二进制失败，已取消更新。"
   fi
+  if ! library_backup_dir=$(mktemp -d); then
+    rm -f "${binary_backup}"
+    log_error "创建 libcronet.so 临时备份失败，已取消更新。"
+  fi
+  if ! singbox_library_snapshot "${library_backup_dir}"; then
+    rm -f "${binary_backup}"
+    rm -rf "${library_backup_dir}"
+    log_error "备份 libcronet.so 运行时状态失败，已取消更新。"
+  fi
 
   install_binary
 
@@ -33243,11 +33420,12 @@ update_singbox_binary_preserving_config() {
   installed_target_ver=${installed_target_ver#v}
   if [[ -z "${installed_target_ver}" || "${installed_target_ver}" != "${SB_VERSION#v}" ]]; then
     log_warn "安装后的 sing-box 版本 (${installed_target_ver:-未知}) 与目标版本 ${SB_VERSION#v} 不一致，服务未重启。"
-    if replace_singbox_binary_atomically "${binary_backup}" 2>/dev/null; then
+    if restore_singbox_update_artifacts "${binary_backup}" "${library_backup_dir}"; then
       rm -f "${binary_backup}"
-      log_warn "已自动恢复更新前的 sing-box 二进制。"
+      rm -rf "${library_backup_dir}"
+      log_warn "已自动恢复更新前的 sing-box 二进制和 NaiveProxy 运行库。"
     else
-      log_warn "自动恢复旧 sing-box 二进制失败，请从备份 ${binary_backup} 手动恢复。"
+      log_warn "自动恢复旧 sing-box 二进制或 NaiveProxy 运行库失败，请从备份 ${binary_backup} 和 ${library_backup_dir} 手动恢复。"
     fi
     return 1
   fi
@@ -33256,20 +33434,21 @@ update_singbox_binary_preserving_config() {
   if ! validate_config_file; then
     log_warn "现有配置未通过 sing-box ${SB_VERSION} 校验。配置已保留，服务未重启。"
     log_warn "这通常意味着新版本存在 breaking changes，请按 sing-box migration 文档迁移配置后再重载服务。"
-    if replace_singbox_binary_atomically "${binary_backup}" 2>/dev/null; then
-      log_warn "已自动恢复更新前的 sing-box 二进制。"
+    if restore_singbox_update_artifacts "${binary_backup}" "${library_backup_dir}"; then
+      log_warn "已自动恢复更新前的 sing-box 二进制和 NaiveProxy 运行库。"
     else
-      log_warn "自动恢复旧 sing-box 二进制失败，请从备份 ${binary_backup} 手动恢复。"
+      log_warn "自动恢复旧 sing-box 二进制或 NaiveProxy 运行库失败，请从备份 ${binary_backup} 和 ${library_backup_dir} 手动恢复。"
       return 1
     fi
     rm -f "${binary_backup}"
+    rm -rf "${library_backup_dir}"
     return 1
   fi
   log_success "现有配置通过 sing-box ${SB_VERSION} 校验。"
   if ! systemctl restart sing-box || [[ "$(systemctl is-active sing-box 2>/dev/null || true)" != "active" ]]; then
     log_warn "sing-box 服务重启失败或未保持 active。"
-    if ! replace_singbox_binary_atomically "${binary_backup}" 2>/dev/null; then
-      log_warn "自动恢复旧 sing-box 二进制失败，请从备份 ${binary_backup} 手动恢复。"
+    if ! restore_singbox_update_artifacts "${binary_backup}" "${library_backup_dir}"; then
+      log_warn "自动恢复旧 sing-box 二进制或 NaiveProxy 运行库失败，请从备份 ${binary_backup} 和 ${library_backup_dir} 手动恢复。"
       return 1
     fi
     if [[ "${before_service_state}" == "active" ]]; then
@@ -33284,14 +33463,16 @@ update_singbox_binary_preserving_config() {
       fi
     fi
     if [[ "${restore_status}" != "0" ]]; then
-      log_warn "恢复更新前 sing-box 服务状态失败，请手动检查服务状态；旧二进制备份保留在 ${binary_backup}。"
+      log_warn "恢复更新前 sing-box 服务状态失败，请手动检查服务状态；旧二进制备份保留在 ${binary_backup}，运行库备份保留在 ${library_backup_dir}。"
       return 1
     fi
     rm -f "${binary_backup}"
-    log_warn "已恢复更新前的 sing-box 二进制及服务状态。"
+    rm -rf "${library_backup_dir}"
+    log_warn "已恢复更新前的 sing-box 二进制、NaiveProxy 运行库及服务状态。"
     return 1
   fi
   rm -f "${binary_backup}"
+  rm -rf "${library_backup_dir}"
   log_success "sing-box 已更新到 ${SB_VERSION}，当前配置已保留。"
   display_status_summary
   log_info "连接信息未自动展示，如需查看请进入菜单 11。"

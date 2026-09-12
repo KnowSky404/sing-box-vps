@@ -16,6 +16,9 @@ sed \
   "${REPO_ROOT}/install.sh" > "${TESTABLE_INSTALL}"
 
 mkdir -p "${TMP_DIR}/bin" "${TMP_DIR}/project"
+mkdir -p "${TMP_DIR}/lib"
+printf 'old-libcronet\n' > "${TMP_DIR}/lib/libcronet.so"
+sha256sum "${TMP_DIR}/lib/libcronet.so" | awk '{print $1}' > "${TMP_DIR}/project/libcronet.sha256"
 
 cat > "${TMP_DIR}/bin/sing-box" <<'EOF'
 #!/usr/bin/env bash
@@ -74,6 +77,8 @@ case "${1:-}" in
 esac
 EOF
   chmod +x "${SINGBOX_BIN_PATH}"
+  printf 'new-libcronet\n' > "$(singbox_library_path)"
+  sha256sum "$(singbox_library_path)" | awk '{print $1}' > "${SB_NAIVE_LIBRARY_MARKER}"
 }
 
 SB_VERSION="1.13.18"
@@ -84,5 +89,23 @@ fi
 
 if [[ "$("${SINGBOX_BIN_PATH}" marker)" != "old" ]]; then
   printf 'expected old sing-box binary to be restored when new binary rejects config\n' >&2
+  exit 1
+fi
+if [[ "$(cat "$(singbox_library_path)")" != "old-libcronet" ]]; then
+  printf 'expected old libcronet.so to be restored when new binary rejects config\n' >&2
+  exit 1
+fi
+if [[ "$(cat "${SB_NAIVE_LIBRARY_MARKER}")" != "$(sha256sum "$(singbox_library_path)" | awk '{print $1}')" ]]; then
+  printf 'expected the restored libcronet.so marker to match the old library\n' >&2
+  exit 1
+fi
+
+rm -f "$(singbox_library_path)" "${SB_NAIVE_LIBRARY_MARKER}"
+if update_singbox_binary_preserving_config >/dev/null; then
+  printf 'expected a second invalid target config to return non-zero\n' >&2
+  exit 1
+fi
+if [[ -e "$(singbox_library_path)" || -e "${SB_NAIVE_LIBRARY_MARKER}" ]]; then
+  printf 'expected a library introduced by a failed upgrade to be removed on rollback\n' >&2
   exit 1
 fi
