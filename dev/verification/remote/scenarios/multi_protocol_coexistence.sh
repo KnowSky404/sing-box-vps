@@ -57,9 +57,10 @@ verification_scenario_multi_protocol_coexistence() {
   local http_outbound_marker_pid=''
   local http_outbound_proxy_pid=''
   local direct_marker_pid=''
+  local direct_udp_marker_pid=''
 
   verification_prepare_remote_local_tree
-  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_marker_pid:-}" ]]; then kill "${direct_marker_pid}" 2>/dev/null || true; wait "${direct_marker_pid}" 2>/dev/null || true; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
+  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_marker_pid:-}" ]]; then kill "${direct_marker_pid}" 2>/dev/null || true; wait "${direct_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_udp_marker_pid:-}" ]]; then kill "${direct_udp_marker_pid}" 2>/dev/null || true; wait "${direct_udp_marker_pid}" 2>/dev/null || true; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
   # Keep the certificate paths valid for the following runtime_smoke scenario.
   # The Docker container is disposable, so this test-only directory cannot
   # outlive the verification run or affect a host installation.
@@ -632,6 +633,110 @@ PY
     "${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound.result.env" \
     'COMPONENT=direct-inbound' 'RESULT=success' 'DATA_PLANE=direct_tcp_override_loopback'
 
+  # The same direct adapter also supports UDP when the listener explicitly
+  # selects that network.  Use a second disposable echo fixture and a
+  # separate managed component so the TCP and UDP projections are observed
+  # independently in the listener/resource plan.
+  local direct_udp_marker_port_file="${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-udp-marker.port"
+  local direct_udp_marker_stdout
+  local direct_udp_marker_stderr
+  local direct_udp_marker
+  local direct_udp_marker_port
+  local direct_udp_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-udp-record.json"
+  local direct_udp_response="${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound-udp-response.txt"
+  local direct_udp_response_path
+  local direct_udp_client_stderr="${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound-udp-client.stderr.txt"
+  direct_udp_marker_stdout=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound-udp-marker.stdout.txt")
+  direct_udp_marker_stderr=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound-udp-marker.stderr.txt")
+  direct_udp_marker="sing-box-vps-direct-inbound-udp-loopback-ok-$(date +%s)-$$"
+  python3 - "${direct_udp_marker_port_file}" \
+    > "${direct_udp_marker_stdout}" 2> "${direct_udp_marker_stderr}" <<'PY' &
+import pathlib
+import socket
+import sys
+
+port_file = sys.argv[1]
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server:
+    server.bind(("127.0.0.1", 0))
+    pathlib.Path(port_file).write_text(str(server.getsockname()[1]), encoding="ascii")
+    while True:
+        payload, address = server.recvfrom(65535)
+        server.sendto(payload, address)
+PY
+  direct_udp_marker_pid=$!
+  for _ in {1..50}; do
+    [[ -s "${direct_udp_marker_port_file}" ]] && break
+    kill -0 "${direct_udp_marker_pid}" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  [[ -s "${direct_udp_marker_port_file}" ]]
+  direct_udp_marker_port=$(cat "${direct_udp_marker_port_file}")
+  [[ "${direct_udp_marker_port}" =~ ^[0-9]+$ ]]
+  (umask 077; jq -n --argjson marker_port "${direct_udp_marker_port}" '
+    {id:"direct-udp-inbound-verification",role:"inbound",type:"direct",
+     tag:"direct-udp-inbound-verification",enabled:true,route_rules:[],
+     config:{listen:"127.0.0.1",listen_port:1093,network:"udp",
+       override_address:"127.0.0.1",override_port:$marker_port}}
+  ' > "${direct_udp_record}")
+  local direct_udp_create_status=0
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
+    --expected-revision 2 --file "${direct_udp_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-udp-create.json"
+  direct_udp_create_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-udp-create.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/direct-udp-create.json"
+  if [[ "${direct_udp_create_status}" != "0" ]]; then
+    return "${direct_udp_create_status}"
+  fi
+  jq -e '.ok==true and .operation=="create" and .revision==3 and .type=="direct"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-udp-create.json" >/dev/null
+  verification_mark_step direct-udp-inbound-component-created
+  verification_wait_for_service_active sing-box
+  verification_mark_step direct-udp-inbound-service-active
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound-udp-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  verification_mark_step direct-udp-inbound-config-checked
+  config_path=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound-udp-config.json")
+  cp /root/sing-box-vps/config.json "${config_path}"
+  jq -e --argjson marker_port "${direct_udp_marker_port}" '
+    ([.inbounds[] | select(.type == "direct" and .tag == "direct-udp-inbound-verification" and
+      .listen == "127.0.0.1" and .listen_port == 1093 and .network == "udp" and
+      .override_address == "127.0.0.1" and .override_port == $marker_port)] | length == 1)
+  ' "${config_path}" >/dev/null
+  verification_mark_step direct-udp-inbound-config-asserted
+  verification_assert_udp_port_listening 1093 \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.direct-udp-inbound.ss-lunp.txt"
+  direct_udp_response_path=$(verification_artifact_path "${direct_udp_response}")
+  set +e
+  python3 - "${direct_udp_response_path}" "${direct_udp_marker}" \
+    > /dev/null 2> "$(verification_artifact_path "${direct_udp_client_stderr}")" <<'PY'
+import pathlib
+import socket
+import sys
+
+response_path, marker = sys.argv[1:]
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+    client.settimeout(5)
+    client.sendto(marker.encode(), ("127.0.0.1", 1093))
+    payload, _ = client.recvfrom(65535)
+pathlib.Path(response_path).write_bytes(payload)
+PY
+  local direct_udp_client_status=$?
+  set -e
+  [[ "${direct_udp_client_status}" == "0" ]]
+  grep -Fqx "${direct_udp_marker}" "${direct_udp_response_path}"
+  verification_mark_step direct-udp-inbound-client-complete
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound-udp.result.env" \
+    'COMPONENT=direct-inbound' 'RESULT=success' 'DATA_PLANE=direct_udp_override_loopback'
+
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/config.json")
   index_path=$(verification_artifact_path \
@@ -643,7 +748,8 @@ PY
   cp /root/sing-box-vps/protocols/index.env "${index_path}"
   grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan,tuic,vmess,snell,shadowtls,naive' "${index_path}"
   jq -e '
-    ([.inbounds[] | .type] | sort) == ["anytls", "direct", "http", "hysteria2", "mixed", "mixed", "naive", "shadowsocks", "shadowtls", "snell", "socks", "trojan", "tuic", "vless", "vmess"] and
+    ([.inbounds[] | .type] | sort) == ["anytls", "direct", "direct", "http", "hysteria2", "mixed", "mixed", "naive", "shadowsocks", "shadowtls", "snell", "socks", "trojan", "tuic", "vless", "vmess"] and
+    ([.inbounds[] | select(.type == "direct")] | length == 2) and
     ([.inbounds[] | select(.type == "vless") | .listen_port] | length == 1) and
     ([.inbounds[] | select(.type == "mixed") | .listen_port] | length == 2) and
     ([.inbounds[] | select(.type == "hysteria2") | .listen_port] | length == 1) and
