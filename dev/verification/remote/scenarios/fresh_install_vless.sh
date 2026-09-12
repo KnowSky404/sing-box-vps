@@ -79,6 +79,11 @@ EOF
   verification_run_protocol_probes
   verification_mark_step fresh_install_vless_protocol_probes
 
+  if [[ ! -e /dev/net/tun ]] || ! command -v ip >/dev/null 2>&1; then
+    verification_mark_step fresh_install_vless_tun_resources_unavailable
+    return 0
+  fi
+
   # The privileged verification container can exercise the core-owned part of
   # a Linux TUN lifecycle.  The component transaction itself remains the
   # owner of state/config/service rollback; host PREROUTING policy is not
