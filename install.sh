@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091204
+# Version: 2026091205
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091204"
+readonly SCRIPT_VERSION="2026091205"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -15813,8 +15813,291 @@ managed_component_cloudflared_config_validate_json() {
   ' <<< "${config}" >/dev/null 2>&1 || return 1
 }
 
+# Component route rules are data owned by the component state store.  Do not
+# pass arbitrary objects through to the top-level sing-box route list: an
+# unknown field could otherwise survive state/CAS and only fail (or change
+# meaning) after publication.  This is the project-facing subset of the
+# sing-box 1.14 default/logical rule union and route actions.  Values that are
+# intentionally opaque to the project (CIDR/domain expressions and duration
+# strings) are still constrained to safe scalar/listable forms.
+managed_component_route_rules_validate_json() {
+  local rules=${1:-}
+  [[ -n "${rules}" ]] || return 1
+  jq -e '
+    def safe_string:
+      type == "string" and (any(explode[]; . < 32 or . == 127) | not);
+    def nonempty_safe_string:
+      safe_string and length > 0;
+    def listable_string:
+      ((type == "string" and safe_string) or
+       (type == "array" and length > 0 and all(.[]; safe_string) and
+        (length == (unique | length))));
+    def listable_nonempty_string:
+      ((type == "string" and nonempty_safe_string) or
+       (type == "array" and length > 0 and all(.[]; nonempty_safe_string) and
+        (length == (unique | length))));
+    def listable_enum($values):
+      ((type == "string" and IN($values[])) or
+       (type == "array" and length > 0 and all(.[]; type == "string" and IN($values[])) and
+        (length == (unique | length))));
+    def optional_string($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_nonempty_string($name):
+      (has($name) | not) or (.[$name] | nonempty_safe_string);
+    def optional_listable_string($name):
+      (has($name) | not) or (.[$name] | listable_string);
+    def optional_listable_nonempty_string($name):
+      (has($name) | not) or (.[$name] | listable_nonempty_string);
+    def optional_bool($name):
+      (has($name) | not) or (.[$name] | type == "boolean");
+    def optional_uint($name; $max):
+      (has($name) | not) or
+      (.[$name] | type == "number" and . == floor and . >= 0 and . <= $max);
+    def optional_int32($name):
+      (has($name) | not) or
+      (.[$name] | type == "number" and . == floor and
+        . >= -2147483648 and . <= 2147483647);
+    def optional_listable_int32($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "number" and . == floor and . >= -2147483648 and . <= 2147483647) or
+         (type == "array" and length > 0 and all(.[]; type == "number" and . == floor and
+           . >= -2147483648 and . <= 2147483647) and (length == (unique | length)))));
+    def optional_listable_uint16($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "number" and . == floor and . >= 0 and . <= 65535) or
+         (type == "array" and length > 0 and all(.[]; type == "number" and . == floor and
+           . >= 0 and . <= 65535) and (length == (unique | length)))));
+    def optional_uint32($name): optional_uint($name; 4294967295);
+    def optional_duration($name):
+      (has($name) | not) or (.[$name] | nonempty_safe_string);
+    def optional_strategy($name):
+      (has($name) | not) or
+      (.[$name] | type == "string" and
+        IN("","as_is","prefer_ipv4","prefer_ipv6","ipv4_only","ipv6_only"));
+    def optional_route_network_strategy($name):
+      (has($name) | not) or
+      (.[$name] | type == "string" and IN("default","hybrid","fallback"));
+    def optional_interface_address:
+      (has("interface_address") | not) or
+      (.interface_address | type == "object" and
+        all(to_entries[];
+          (.key | nonempty_safe_string) and
+          (.value | listable_nonempty_string)));
+    def optional_network_interface_address:
+      (has("network_interface_address") | not) or
+      (.network_interface_address | type == "object" and
+        all(to_entries[];
+          (.key | type == "string" and IN("wifi","cellular","ethernet","other")) and
+          (.value | listable_nonempty_string)));
+    def optional_default_interface_address:
+      (has("default_interface_address") | not) or
+      (.default_interface_address | listable_nonempty_string);
+    def optional_match_fields:
+      optional_listable_string("inbound") and
+      optional_uint("ip_version"; 6) and
+      ((has("ip_version") | not) or (.ip_version | IN(4,6))) and
+      ((has("network") | not) or (.network | listable_enum(["tcp","udp","icmp"]))) and
+      optional_listable_string("auth_user") and
+      ((has("protocol") | not) or (.protocol | listable_enum(["tls","http","quic","dns","stun","bittorrent","dtls","ssh","rdp","ntp"]))) and
+      optional_listable_string("client") and
+      optional_listable_string("domain") and
+      optional_listable_string("domain_suffix") and
+      optional_listable_string("domain_keyword") and
+      optional_listable_string("domain_regex") and
+      optional_listable_string("geosite") and
+      optional_listable_string("source_geoip") and
+      optional_listable_string("geoip") and
+      optional_listable_string("source_ip_cidr") and
+      optional_bool("source_ip_is_private") and
+      optional_listable_string("ip_cidr") and
+      optional_bool("ip_is_private") and
+      optional_listable_uint16("source_port") and
+      optional_listable_string("source_port_range") and
+      optional_listable_uint16("port") and
+      optional_listable_string("port_range") and
+      optional_listable_string("process_name") and
+      optional_listable_string("process_path") and
+      optional_listable_string("process_path_regex") and
+      optional_listable_string("package_name") and
+      optional_listable_string("package_name_regex") and
+      optional_listable_string("user") and
+      optional_listable_int32("user_id") and
+      optional_string("clash_mode") and
+      ((has("network_type") | not) or (.network_type | listable_enum(["wifi","cellular","ethernet","other"]))) and
+      optional_bool("network_is_expensive") and
+      optional_bool("network_is_constrained") and
+      optional_listable_string("wifi_ssid") and
+      optional_listable_string("wifi_bssid") and
+      optional_interface_address and
+      optional_network_interface_address and
+      optional_default_interface_address and
+      optional_listable_string("source_mac_address") and
+      optional_listable_string("source_hostname") and
+      optional_listable_string("preferred_by") and
+      optional_listable_string("rule_set") and
+      optional_bool("rule_set_ip_cidr_match_source") and
+      optional_bool("invert");
+    def optional_route_action_fields:
+      optional_string("outbound") and
+      optional_string("override_address") and
+      optional_uint("override_port"; 65535) and
+      optional_route_network_strategy("network_strategy") and
+      optional_uint32("fallback_delay") and
+      optional_bool("udp_disable_domain_unmapping") and
+      optional_bool("udp_connect") and
+      optional_duration("udp_timeout") and
+      optional_bool("tls_fragment") and
+      optional_duration("tls_fragment_fallback_delay") and
+      optional_bool("tls_record_fragment") and
+      optional_string("tls_spoof") and
+      ((has("tls_spoof_method") | not) or (.tls_spoof_method | type == "string" and
+        IN("wrong-sequence","wrong-checksum","wrong-ack","wrong-md5","wrong-timestamp")));
+    def route_options_nonempty:
+      ((.override_address // "") != "") or
+      ((.override_port // 0) != 0) or
+      ((.network_strategy // "") != "") or
+      ((.fallback_delay // 0) != 0) or
+      ((.udp_disable_domain_unmapping // false) == true) or
+      ((.udp_connect // false) == true) or
+      ((.udp_timeout // "") != "") or
+      ((.tls_fragment // false) == true) or
+      ((.tls_fragment_fallback_delay // "") != "") or
+      ((.tls_record_fragment // false) == true) or
+      ((.tls_spoof // "") != "") or
+      ((.tls_spoof_method // "") != "");
+    def route_rule($nested; $depth):
+      if $depth > 8 then false
+      elif type != "object" then false
+      elif (($nested and ((keys - [
+              "type","mode","rules","invert","inbound","ip_version","network","auth_user",
+              "protocol","client","domain","domain_suffix","domain_keyword","domain_regex","geosite",
+              "source_geoip","geoip","source_ip_cidr","source_ip_is_private","ip_cidr","ip_is_private",
+              "source_port","source_port_range","port","port_range","process_name","process_path",
+              "process_path_regex","package_name","package_name_regex","user","user_id","clash_mode",
+              "network_type","network_is_expensive","network_is_constrained","wifi_ssid","wifi_bssid",
+              "interface_address","network_interface_address","default_interface_address","source_mac_address",
+              "source_hostname","preferred_by","rule_set","rule_set_ip_cidr_match_source","invert"
+            ]) | length != 0)) or
+            ($nested and (.type // "") != "logical" and (has("mode") or has("rules"))) or
+            (keys | length > 128)) then false
+      elif (($nested | not) and
+            ((keys - [
+              "type","mode","rules","inbound","ip_version","network","auth_user","protocol","client",
+              "domain","domain_suffix","domain_keyword","domain_regex","geosite","source_geoip",
+              "geoip","source_ip_cidr","source_ip_is_private","ip_cidr","ip_is_private",
+              "source_port","source_port_range","port","port_range","process_name","process_path",
+              "process_path_regex","package_name","package_name_regex","user","user_id","clash_mode",
+              "network_type","network_is_expensive","network_is_constrained","wifi_ssid","wifi_bssid",
+              "interface_address","network_interface_address","default_interface_address","source_mac_address",
+              "source_hostname","preferred_by","rule_set","rule_set_ip_cidr_match_source","invert",
+              "action","outbound","override_address","override_port","network_strategy","fallback_delay",
+              "udp_disable_domain_unmapping","udp_connect","udp_timeout","tls_fragment",
+              "tls_fragment_fallback_delay","tls_record_fragment","tls_spoof","tls_spoof_method",
+              "method","no_drop","sniffer","timeout","server","strategy","disable_cache",
+              "disable_optimistic_cache","rewrite_ttl","client_subnet","remove_client_subnet"
+            ]) | length != 0)) then false
+      elif (.type // "") == "logical" then
+        ((keys - ["type","mode","rules","invert","action","outbound","override_address",
+          "override_port","network_strategy","fallback_delay","udp_disable_domain_unmapping",
+          "udp_connect","udp_timeout","tls_fragment","tls_fragment_fallback_delay",
+          "tls_record_fragment","tls_spoof","tls_spoof_method","method","no_drop","sniffer",
+          "timeout","server","strategy","disable_cache","disable_optimistic_cache","rewrite_ttl",
+          "client_subnet","remove_client_subnet"]) | length == 0) and
+        (.mode | type == "string" and IN("and","or")) and
+        (.rules | type == "array" and length > 0 and length <= 64 and all(.[]; route_rule(true; ($depth + 1)))) and
+        optional_bool("invert") and
+        (if $nested then
+           (has("action") | not)
+         else
+           (del(.type,.mode,.rules,.invert) | route_rule(false; $depth))
+         end)
+      elif ((.type // "") == "" or .type == "default") then
+        (has("mode") | not) and (has("rules") | not) and
+        optional_match_fields and
+        ((has("action") | not) or (.action | type == "string" and
+          IN("route","route-options","direct","bypass","reject","hijack-dns","sniff","resolve"))) and
+        (if ((.action // "route") | IN("route","bypass")) then
+           optional_route_action_fields and
+           ((has("method") | not) and (has("no_drop") | not) and (has("sniffer") | not)) and
+           ((has("timeout") | not) and (has("server") | not) and (has("strategy") | not) and
+            (has("disable_cache") | not) and (has("disable_optimistic_cache") | not) and
+            (has("rewrite_ttl") | not) and (has("client_subnet") | not) and (has("remove_client_subnet") | not))
+         elif .action == "route-options" then
+           (has("outbound") | not) and optional_route_action_fields and route_options_nonempty and
+           ((.tls_fragment // false) != true or (.tls_record_fragment // false) != true) and
+           ((has("method") | not) and (has("no_drop") | not) and (has("sniffer") | not)) and
+           ((has("timeout") | not) and (has("server") | not) and (has("strategy") | not) and
+            (has("disable_cache") | not) and (has("disable_optimistic_cache") | not) and
+            (has("rewrite_ttl") | not) and (has("client_subnet") | not) and (has("remove_client_subnet") | not))
+         elif .action == "reject" then
+           ((has("method") | not) or (.method | type == "string" and IN("","default","drop","reply"))) and
+           optional_bool("no_drop") and
+           ((.method // "") != "drop" or (.no_drop // false) != true) and
+           ((keys - ["type","inbound","ip_version","network","auth_user","protocol","client",
+             "domain","domain_suffix","domain_keyword","domain_regex","geosite","source_geoip",
+             "geoip","source_ip_cidr","source_ip_is_private","ip_cidr","ip_is_private","source_port",
+             "source_port_range","port","port_range","process_name","process_path","process_path_regex",
+             "package_name","package_name_regex","user","user_id","clash_mode","network_type",
+             "network_is_expensive","network_is_constrained","wifi_ssid","wifi_bssid","interface_address",
+             "network_interface_address","default_interface_address","source_mac_address","source_hostname",
+             "preferred_by","rule_set","rule_set_ip_cidr_match_source","invert","action","method","no_drop"])
+             | length == 0)
+         elif .action == "hijack-dns" then
+           ((keys - ["type","inbound","ip_version","network","auth_user","protocol","client",
+             "domain","domain_suffix","domain_keyword","domain_regex","geosite","source_geoip",
+             "geoip","source_ip_cidr","source_ip_is_private","ip_cidr","ip_is_private","source_port",
+             "source_port_range","port","port_range","process_name","process_path","process_path_regex",
+             "package_name","package_name_regex","user","user_id","clash_mode","network_type",
+             "network_is_expensive","network_is_constrained","wifi_ssid","wifi_bssid","interface_address",
+             "network_interface_address","default_interface_address","source_mac_address","source_hostname",
+             "preferred_by","rule_set","rule_set_ip_cidr_match_source","invert","action"])
+             | length == 0)
+         elif .action == "sniff" then
+           ((has("sniffer") | not) or (.sniffer | listable_enum(["tls","http","quic","dns","stun","bittorrent","dtls","ssh","rdp","ntp"]))) and
+           optional_duration("timeout") and
+           ((keys - ["type","inbound","ip_version","network","auth_user","protocol","client",
+             "domain","domain_suffix","domain_keyword","domain_regex","geosite","source_geoip",
+             "geoip","source_ip_cidr","source_ip_is_private","ip_cidr","ip_is_private","source_port",
+             "source_port_range","port","port_range","process_name","process_path","process_path_regex",
+             "package_name","package_name_regex","user","user_id","clash_mode","network_type",
+             "network_is_expensive","network_is_constrained","wifi_ssid","wifi_bssid","interface_address",
+             "network_interface_address","default_interface_address","source_mac_address","source_hostname",
+             "preferred_by","rule_set","rule_set_ip_cidr_match_source","invert","action","sniffer","timeout"])
+             | length == 0)
+         elif .action == "resolve" then
+           optional_string("server") and optional_duration("timeout") and optional_strategy("strategy") and
+           optional_bool("disable_cache") and optional_bool("disable_optimistic_cache") and
+           optional_uint32("rewrite_ttl") and optional_string("client_subnet") and
+           ((keys - ["type","inbound","ip_version","network","auth_user","protocol","client",
+             "domain","domain_suffix","domain_keyword","domain_regex","geosite","source_geoip",
+             "geoip","source_ip_cidr","source_ip_is_private","ip_cidr","ip_is_private","source_port",
+             "source_port_range","port","port_range","process_name","process_path","process_path_regex",
+             "package_name","package_name_regex","user","user_id","clash_mode","network_type",
+             "network_is_expensive","network_is_constrained","wifi_ssid","wifi_bssid","interface_address",
+             "network_interface_address","default_interface_address","source_mac_address","source_hostname",
+             "preferred_by","rule_set","rule_set_ip_cidr_match_source","invert","action","server","timeout",
+             "strategy","disable_cache","disable_optimistic_cache","rewrite_ttl","client_subnet"])
+             | length == 0)
+         elif .action == "direct" then
+           ((keys - ["type","inbound","ip_version","network","auth_user","protocol","client",
+             "domain","domain_suffix","domain_keyword","domain_regex","geosite","source_geoip",
+             "geoip","source_ip_cidr","source_ip_is_private","ip_cidr","ip_is_private","source_port",
+             "source_port_range","port","port_range","process_name","process_path","process_path_regex",
+             "package_name","package_name_regex","user","user_id","clash_mode","network_type",
+             "network_is_expensive","network_is_constrained","wifi_ssid","wifi_bssid","interface_address",
+             "network_interface_address","default_interface_address","source_mac_address","source_hostname",
+             "preferred_by","rule_set","rule_set_ip_cidr_match_source","invert","action"])
+             | length == 0)
+         else false end)
+      else false end;
+    type == "array" and length <= 128 and all(.[]; route_rule(false; 0))
+  ' <<< "${rules}" >/dev/null 2>&1 || return 1
+}
+
 managed_component_state_validate_record() {
-  local record=${1:-} role type tag registry_id config
+  local record=${1:-} role type tag registry_id config route_rules
   [[ -n "${record}" ]] || return 1
   jq -e '
     type == "object" and
@@ -15832,8 +16115,8 @@ managed_component_state_validate_record() {
   jq -e '.enabled | type == "boolean"' <<< "${record}" >/dev/null 2>&1 || return 1
   jq -e '.config | type == "object" and (has("type") | not) and (has("tag") | not)' \
     <<< "${record}" >/dev/null 2>&1 || return 1
-  jq -e '(.route_rules // []) | type == "array" and all(.[]; type == "object")' \
-    <<< "${record}" >/dev/null 2>&1 || return 1
+  route_rules=$(jq -c '.route_rules // []' <<< "${record}") || return 1
+  managed_component_route_rules_validate_json "${route_rules}" || return 1
   config=$(jq -c '.config' <<< "${record}") || return 1
 
   # Reject the two built-in outbound owners.  Custom direct/block records are

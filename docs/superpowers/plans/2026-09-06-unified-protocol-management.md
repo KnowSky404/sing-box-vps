@@ -659,3 +659,20 @@ managed Tailscale endpoint 现在按固定 1.14 `TailscaleEndpointOptions` 校�
 TUN 记录现在覆盖 v1.14 的地址/DNS、auto-route/auto-redirect mark、iproute2 index、route/address set、interface/UID/package/MAC 过滤、UDP NAT、stack 和 platform HTTP proxy 字段，并拒绝已移除的 `inet4_*`/`inet6_*`、`gso` 及 legacy inbound sniff/domain 字段；`auto_redirect` 没有 `auto_route` 时 fail closed。Cloudflared 记录覆盖 token、HA/protocol/edge/datagram/grace/region 和 control/tunnel nested DialerOptions/domain resolver，token 仍只允许在敏感 export 中读取，inventory/diagnose 继续脱敏。`tests/managed_components_contract.sh` 新增正负字段矩阵、重复 network、deprecated/unknown field、enum、嵌套 dialer 和 auto-route 约束回归。
 
 这项变更证明了状态/CAS 层不会把任意 JSON 透传到这些高级 inbound，但 `sing-box check` 仍是最终配置语义校验；本轮没有伪造 TUN 设备、主机路由/nftables/TProxy 权限、Cloudflared token 控制连接或公网数据面证据。透明路由资源事务、TUN/Redirect/TProxy 实际业务闭环、Cloudflared 外部控制面和完整协议目标仍未完成；脚本版本本轮统一为 `2026091204`。
+
+### 2026-09-12：组件路由规则 typed contract
+
+组件状态中的 `route_rules` 不再只是“数组对象”占位。新增的
+`managed_component_route_rules_validate_json` 对 sing-box 1.14
+default/logical matcher union、顶层 route actions（route、route-options、
+direct、bypass、reject、hijack-dns、sniff、resolve）及其
+scalar/listable 字段执行 allowlist 和类型校验；逻辑子规则只允许 match
+字段并限制递归深度/数量，重复列表成员、对象型 matcher、未知字段、未知
+action 及 action 交叉字段在 state/CAS 与 live takeover 前拒绝。合法规则
+在统一 renderer 中原样保留，图校验仍负责引用和依赖解析。
+
+`tests/managed_components_contract.sh` 增加 route/逻辑规则正向渲染，以及
+未知字段、未知动作、对象 matcher 和嵌套 action 的负例；本轮脚本版本统一
+为 `2026091205`。这项切片关闭了组件 route JSON 任意透传缺口，但不宣称
+主机策略路由/nftables、TUN/Redirect/TProxy 透明数据面、Endpoint 外部认证
+或全协议目标完成。

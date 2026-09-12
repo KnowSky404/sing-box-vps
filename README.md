@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026091204`
+- 脚本版本：`2026091205`
 
 - sing-box 适配版本：`1.14.0`
 
@@ -23,6 +23,8 @@ NaiveProxy 现有隔离容器内的 TCP 数据面证据：完整门禁 `dev/veri
 HTTP outbound 已按 sing-box 1.14 的 server/port、认证、path、headers、outbound TLS 与共享 Dial Fields 建立递归 allowlist；它固定为 TCP 上游代理，未知/弃用字段、错误 TLS 嵌套类型和控制字符会在状态/CAS 与接管前拒绝，凭据仅通过敏感 component export 返回。Docker run `dev/verification-runs/20260912051138` 在 `multi_protocol_coexistence` 中创建 typed HTTP outbound，先通过目标核心 `check` 和服务 active，再由受认证的 loopback HTTP proxy 接收 SOCKS5 发出的 CONNECT；artifact 核对精确 `Proxy-Authorization`、自定义 header、配置 route 和 marker 响应，`http-outbound.result.env` 为 `RESULT=success`。该数据面证据只属于固定 1.14.0、隔离容器和回环 fixture，不代表公网可达、外部代理、生产部署或全协议目标完成。
 
 Direct inbound 的 typed component 现在额外校验 `network`、`override_address` 和 `override_port` 的类型、控制字符与端口边界。共存场景在同一组件 CAS/服务事务中创建回环 `direct-inbound-verification` 与 UDP 对应实例，固定 1.14.0 `check` 后由真实 TCP/UDP 请求经 direct inbound 转发到一次性 loopback marker/echo；Docker run `dev/verification-runs/20260912073323` 的 `direct-inbound.result.env`、`direct-inbound-udp.result.env`、渲染配置、监听快照和精确 marker 均成功。该证据只证明 direct 的 TCP/UDP override loopback 路径，不代表透明路由、主机防火墙、公网部署或全协议目标完成。
+
+组件 `route_rules` 现在也使用 sing-box 1.14 default/logical matcher 与 route-action typed allowlist；逻辑子规则只允许 match 字段，递归和列表大小有界，未知字段/动作、对象 matcher、重复列表成员和 action 交叉字段在 CAS/接管前拒绝。合法规则仍由统一 renderer 原样组合进顶层 route；这关闭了任意 route JSON 透传缺口，但不代表主机策略路由、nftables、透明数据面或全协议目标已完成。
 
 组件环境探针还会读取目标 `sing-box version` 的 `Tags:` 行：已报告的构建 tag 缺失时条件组件为 `unavailable`，包装器或旧二进制未报告 tag 时为 `not_assessed`；这只说明构建条件，不代表外部认证、系统路由/防火墙或真实数据面已通过。
 

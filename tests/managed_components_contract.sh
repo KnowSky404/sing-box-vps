@@ -96,6 +96,103 @@ if managed_component_state_validate_record "${direct_unknown_listen_field}"; the
   exit 1
 fi
 
+# Component-owned route rules use the target core's default/logical rule union
+# and route actions, but are not an arbitrary JSON escape hatch.  Keep common
+# match/action combinations renderable, reject unknown fields and preserve the
+# nested-rule restriction that actions only belong to top-level rules.
+route_rule_record=$(jq -c '.route_rules = [
+  {domain:["managed.example"],network:["tcp","udp"],action:"route",outbound:"direct",
+   override_address:"127.0.0.1",override_port:18082,udp_timeout:"5s"},
+  {type:"logical",mode:"and",invert:false,rules:[
+    {domain_suffix:["example"],ip_is_private:false},
+    {protocol:"tls"}
+  ],action:"route",outbound:"direct"}
+]' <<< "${direct_record}")
+managed_component_state_validate_record "${route_rule_record}"
+route_rule_record=$(jq -c '.route_rules = [
+  {domain:["managed.example"],network:["tcp","udp"],action:"route",outbound:"direct",
+   override_address:"127.0.0.1",override_port:18082,udp_timeout:"5s"},
+  {type:"logical",mode:"and",invert:false,rules:[
+    {domain_suffix:["example"],ip_is_private:false},
+    {protocol:"tls"}
+  ]}
+]' <<< "${direct_record}")
+managed_component_state_validate_record "${route_rule_record}"
+route_rule_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${route_rule_record}")
+route_rule_rendered=$(managed_component_render_json "${route_rule_state}")
+jq -e '
+  .route_rules[0].action == "route" and
+  .route_rules[0].outbound == "direct" and
+  .route_rules[0].override_port == 18082 and
+  .route_rules[1].type == "logical" and
+  .route_rules[1].rules[0].domain_suffix == ["example"]
+' <<< "${route_rule_rendered}" >/dev/null
+route_rule_logical_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "$(jq -c '.route_rules = [
+  {type:"logical",mode:"and",rules:[{domain:"example.com"}],action:"route",outbound:"direct"}
+]' <<< "${direct_record}")")
+route_rule_logical_rendered=$(managed_component_render_json "${route_rule_logical_state}")
+jq -e '.route_rules[0].type == "logical" and .route_rules[0].action == "route" and .route_rules[0].outbound == "direct"' \
+  <<< "${route_rule_logical_rendered}" >/dev/null
+route_rule_unknown_field=$(jq -c '.route_rules[0].must_not_passthrough = true' <<< "${route_rule_record}")
+if managed_component_state_validate_record "${route_rule_unknown_field}"; then
+  printf 'unknown component route field unexpectedly accepted\n' >&2
+  exit 1
+fi
+route_rule_bad_action=$(jq -c '.route_rules[0].action = "proxy"' <<< "${route_rule_record}")
+if managed_component_state_validate_record "${route_rule_bad_action}"; then
+  printf 'unknown component route action unexpectedly accepted\n' >&2
+  exit 1
+fi
+route_rule_bad_match=$(jq -c '.route_rules[0].domain = {value:"managed.example"}' <<< "${route_rule_record}")
+if managed_component_state_validate_record "${route_rule_bad_match}"; then
+  printf 'object component route matcher unexpectedly accepted\n' >&2
+  exit 1
+fi
+route_rule_duplicate_match=$(jq -c '.route_rules[0].network = ["tcp","tcp"]' <<< "${route_rule_record}")
+if managed_component_state_validate_record "${route_rule_duplicate_match}"; then
+  printf 'duplicate component route matcher unexpectedly accepted\n' >&2
+  exit 1
+fi
+route_rule_nested_action=$(jq -c '.route_rules[1].rules[0].action = "route"' <<< "${route_rule_record}")
+if managed_component_state_validate_record "${route_rule_nested_action}"; then
+  printf 'nested component route action unexpectedly accepted\n' >&2
+  exit 1
+fi
+route_rule_nested_logical_fields=$(jq -c '.route_rules[1].rules[0] += {mode:"and",rules:[]}' <<< "${route_rule_record}")
+if managed_component_state_validate_record "${route_rule_nested_logical_fields}"; then
+  printf 'logical fields on a default nested route rule unexpectedly accepted\n' >&2
+  exit 1
+fi
+route_rule_default_logical_fields=$(jq -c '.route_rules[0] += {mode:"and",rules:[]}' <<< "${route_rule_record}")
+if managed_component_state_validate_record "${route_rule_default_logical_fields}"; then
+  printf 'logical fields on a default route rule unexpectedly accepted\n' >&2
+  exit 1
+fi
+route_rule_deep_logical=$(jq -cn '
+  reduce range(0; 10) as $depth
+    ({domain:["deep.example"]}; {type:"logical",mode:"and",rules:[.]})
+')
+route_rule_deep_record=$(jq -c --argjson deep_rule "${route_rule_deep_logical}" '.route_rules = [$deep_rule]' <<< "${route_rule_record}")
+if managed_component_state_validate_record "${route_rule_deep_record}"; then
+  printf 'unbounded nested logical route rule unexpectedly accepted\n' >&2
+  exit 1
+fi
+route_rule_empty_options=$(jq -c '.route_rules[0] = {domain:["managed.example"],action:"route-options"}' <<< "${route_rule_record}")
+if managed_component_state_validate_record "${route_rule_empty_options}"; then
+  printf 'empty route-options action unexpectedly accepted\n' >&2
+  exit 1
+fi
+route_rule_fragment_conflict=$(jq -c '.route_rules[0] = {domain:["managed.example"],action:"route-options",tls_fragment:true,tls_record_fragment:true}' <<< "${route_rule_record}")
+if managed_component_state_validate_record "${route_rule_fragment_conflict}"; then
+  printf 'conflicting route-options fragments unexpectedly accepted\n' >&2
+  exit 1
+fi
+route_rule_resolve_remove=$(jq -c '.route_rules[0] = {domain:["managed.example"],action:"resolve",remove_client_subnet:true}' <<< "${route_rule_record}")
+if managed_component_state_validate_record "${route_rule_resolve_remove}"; then
+  printf 'unsupported resolve remove_client_subnet unexpectedly accepted\n' >&2
+  exit 1
+fi
+
 redirect_listen_options=$(jq -c '.config += {bind_interface:"lo",disable_tcp_keep_alive:true,tcp_keep_alive:"5m",tcp_keep_alive_interval:"75s",tcp_multi_path:true}' <<< "${redirect_record}")
 managed_component_state_validate_record "${redirect_listen_options}"
 redirect_bad_port=$(jq -c '.config.listen_port = 0' <<< "${redirect_record}")
