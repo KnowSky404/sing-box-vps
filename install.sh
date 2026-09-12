@@ -15824,21 +15824,22 @@ managed_component_route_rules_validate_json() {
   local rules=${1:-}
   [[ -n "${rules}" ]] || return 1
   jq -e '
+    def max_list_items: 64;
     def safe_string:
       type == "string" and (any(explode[]; . < 32 or . == 127) | not);
     def nonempty_safe_string:
       safe_string and length > 0;
     def listable_string:
       ((type == "string" and safe_string) or
-       (type == "array" and length > 0 and all(.[]; safe_string) and
+       (type == "array" and length > 0 and length <= max_list_items and all(.[]; safe_string) and
         (length == (unique | length))));
     def listable_nonempty_string:
       ((type == "string" and nonempty_safe_string) or
-       (type == "array" and length > 0 and all(.[]; nonempty_safe_string) and
+       (type == "array" and length > 0 and length <= max_list_items and all(.[]; nonempty_safe_string) and
         (length == (unique | length))));
     def listable_enum($values):
       ((type == "string" and IN($values[])) or
-       (type == "array" and length > 0 and all(.[]; type == "string" and IN($values[])) and
+       (type == "array" and length > 0 and length <= max_list_items and all(.[]; type == "string" and IN($values[])) and
         (length == (unique | length))));
     def optional_string($name):
       (has($name) | not) or (.[$name] | safe_string);
@@ -15861,13 +15862,13 @@ managed_component_route_rules_validate_json() {
       (has($name) | not) or
       (.[$name] |
         ((type == "number" and . == floor and . >= -2147483648 and . <= 2147483647) or
-         (type == "array" and length > 0 and all(.[]; type == "number" and . == floor and
+         (type == "array" and length > 0 and length <= max_list_items and all(.[]; type == "number" and . == floor and
            . >= -2147483648 and . <= 2147483647) and (length == (unique | length)))));
     def optional_listable_uint16($name):
       (has($name) | not) or
       (.[$name] |
         ((type == "number" and . == floor and . >= 0 and . <= 65535) or
-         (type == "array" and length > 0 and all(.[]; type == "number" and . == floor and
+         (type == "array" and length > 0 and length <= max_list_items and all(.[]; type == "number" and . == floor and
            . >= 0 and . <= 65535) and (length == (unique | length)))));
     def optional_uint32($name): optional_uint($name; 4294967295);
     def optional_duration($name):
@@ -15881,13 +15882,13 @@ managed_component_route_rules_validate_json() {
       (.[$name] | type == "string" and IN("default","hybrid","fallback"));
     def optional_interface_address:
       (has("interface_address") | not) or
-      (.interface_address | type == "object" and
+      (.interface_address | type == "object" and length <= max_list_items and
         all(to_entries[];
           (.key | nonempty_safe_string) and
           (.value | listable_nonempty_string)));
     def optional_network_interface_address:
       (has("network_interface_address") | not) or
-      (.network_interface_address | type == "object" and
+      (.network_interface_address | type == "object" and length <= max_list_items and
         all(to_entries[];
           (.key | type == "string" and IN("wifi","cellular","ethernet","other")) and
           (.value | listable_nonempty_string)));

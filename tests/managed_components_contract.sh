@@ -153,6 +153,15 @@ if managed_component_state_validate_record "${route_rule_duplicate_match}"; then
   printf 'duplicate component route matcher unexpectedly accepted\n' >&2
   exit 1
 fi
+route_rule_oversized_match=$(jq -cn '
+  [range(0; 65) | ("managed-" + tostring)] as $domains |
+  {id:"route-oversized",role:"inbound",type:"direct",tag:"route-oversized",enabled:true,
+   route_rules:[{domain:$domains}],config:{listen:"127.0.0.1",listen_port:18083}}
+')
+if managed_component_state_validate_record "${route_rule_oversized_match}"; then
+  printf 'oversized component route matcher unexpectedly accepted\n' >&2
+  exit 1
+fi
 route_rule_nested_action=$(jq -c '.route_rules[1].rules[0].action = "route"' <<< "${route_rule_record}")
 if managed_component_state_validate_record "${route_rule_nested_action}"; then
   printf 'nested component route action unexpectedly accepted\n' >&2
