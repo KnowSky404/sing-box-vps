@@ -226,6 +226,16 @@ nftables 规则没有被本项目声明所有或自动删除。该入口和
 `tests/managed_transparent_resources.sh` 只建立真实资源观测/隔离负例，不
 等价于宿主规则事务或透明数据面完成，完整协议目标继续未完成。
 
+2026-09-12 事务 postcheck 增量：活动服务执行组件重启后，若候选配置包含
+TUN，事务会再次读取上述只读资源报告，并要求每个 TUN 的接口存在；启用
+`auto_route` 时要求匹配的 iproute2 rule/table/route，启用 `auto_redirect`
+时要求 nftables 规则集可观测。检查失败先补偿已应用的受管防火墙账本，再
+恢复变更前 state/config/service，Agent 返回
+`transparent_resource_check_failed`；防火墙补偿失败则保留快照并返回
+`firewall_rollback_failed`。这只把 sing-box 自己创建的资源纳入可验证的
+提交边界，Redirect/TProxy 宿主 PREROUTING、策略路由和其他 nftables 规则
+仍未声明所有或自动管理。
+
 审计起点 `cc12c06` 的协议校验、保存和导出分别维护四协议白名单；当前入站预设由 `SB_PROTOCOL_REGISTRY` 提供 ID、菜单、导出候选、Agent 和验证元数据。上游没有独立的 mixed outbound，客户端须选择 SOCKS 或 HTTP outbound。Mixed、独立 SOCKS 与 HTTP 提供共享的 schema 2 类型化实例状态和生命周期入口，但这只改变项目预设，不扩展上游协议类型。
 
 Mixed schema 2 的完整管理链路包括：显式把 legacy schema 1 单实例迁移为 `protocols/instances/mixed.json`，并保留原有 ID/tag/监听地址/端口/认证；Agent 的 `create`、`replace`、`delete`、`default`、`migrate`、`recover` 使用 revision CAS 和 JSON envelope；交互菜单 17 提供逐实例创建/修改/删除/默认/迁移/恢复。首次全新安装仍沿用 legacy schema 1，不自动迁移。删除最后一个实例后保留空 JSON store（`schema_version: 1`）作为 revision tombstone；active marker 仍是 `CONFIG_SCHEMA_VERSION=2`，并移除 active Mixed 的 env/index/inbound，但下一次 `create` 必须以 tombstone revision 继续递增，不能清空 JSON 后把 CAS 重置为 0。非回环明文入口需要显式 `--allow-public`；活动 Mixed 与其他协议的批量删除会拒绝，要求逐个实例处理。上述是实现范围说明，运行门禁证据由实施记录补充，不能由源码存在替代。

@@ -16495,6 +16495,24 @@ managed_component_transparent_resources_json() (
       limitations:["redirect/tproxy host policy rules are not installer-owned","reported core-owned state is observation only"]}'
 )
 
+managed_component_transparent_runtime_healthy() {
+  local config_file=${1:-} report
+
+  [[ -f "${config_file}" && ! -L "${config_file}" && -r "${config_file}" ]] || return 1
+  report=$(managed_component_transparent_resources_json "${config_file}" active) || return 1
+  jq -e '
+    type == "object" and
+    .service_active == true and
+    (.resources | type == "array" and length > 0) and
+    ([.resources[] | select(.type == "tun")] | length > 0) and
+    (all(.resources[] | select(.type == "tun");
+      .interface.status == "present" and
+      ((.auto_route != true) or
+       (.policy_routing.status == "present" and .rule.status == "present")) and
+      ((.auto_redirect != true) or .auto_redirect_rules.status == "observed")))
+  ' <<< "${report}" >/dev/null 2>&1
+}
+
 managed_component_state_candidate() {
   local state=${1:-} operation=${2:-} record=${3:-} target_id=${4:-}
   local candidate
@@ -17182,6 +17200,29 @@ managed_component_state_apply() {
       return 1
     fi
     service_restarted=true
+  fi
+  if [[ "${service_restarted}" == true ]] &&
+     jq -e 'any(.inbounds[]?; .type == "tun")' "${SINGBOX_CONFIG_FILE}" >/dev/null 2>&1; then
+    if ! managed_component_transparent_runtime_healthy "${SINGBOX_CONFIG_FILE}"; then
+      if [[ -n "${firewall_journal}" ]]; then
+        if ! instance_firewall_rollback "${firewall_journal}"; then
+          MANAGED_COMPONENT_LAST_ERROR=firewall_rollback_failed
+          if restore_managed_state_snapshot "${snapshot}"; then
+            printf '[ERROR] 高级组件 TUN 运行资源检查失败且防火墙回滚不确定；文件状态已恢复，事务快照保留在 %s。\n' \
+              "${snapshot}" >&2
+          else
+            printf '[ERROR] 高级组件 TUN 运行资源检查失败且自动回滚失败；事务快照保留在 %s。\n' \
+              "${snapshot}" >&2
+          fi
+          return 1
+        fi
+        firewall_summary=$(instance_transaction_firewall_summary "${firewall_journal}")
+      fi
+      managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" \
+        "高级组件 TUN 运行资源检查失败" y || :
+      MANAGED_COMPONENT_LAST_ERROR=transparent_resource_check_failed
+      return 1
+    fi
   fi
   if [[ -n "${firewall_journal}" ]]; then
     if ! instance_firewall_commit "${firewall_journal}"; then
@@ -28802,6 +28843,7 @@ agent_component_cli() {
       component_takeover_conflict) agent_json_error component_takeover_conflict "接管对象与现有组件 ID/tag 冲突；未修改。" ;;
       config_check_failed) agent_json_error config_check_failed "组件接管已回滚；候选配置或无损保留校验失败。" ;;
       service_restart_failed) agent_json_error service_restart_failed "组件接管已回滚；服务重启失败。" ;;
+      transparent_resource_check_failed) agent_json_error transparent_resource_check_failed "组件接管已回滚；TUN core-owned 接口、路由或规则未就绪。" ;;
       firewall_prepare_failed) agent_json_error firewall_prepare_failed "组件接管已回滚；防火墙资源预检失败。" ;;
       firewall_apply_failed) agent_json_error firewall_apply_failed "组件接管已回滚；防火墙资源应用失败。" ;;
       firewall_commit_failed) agent_json_error firewall_commit_failed "组件接管已回滚；防火墙资源提交失败。" ;;
@@ -28832,6 +28874,7 @@ agent_component_cli() {
       component_cleanup_failed) agent_json_error component_cleanup_failed "组件已提交，但持久事务目录清理失败；请执行 component recover。" ;;
       config_check_failed) agent_json_error config_check_failed "组件重建已回滚；生成的配置未通过图校验、监听校验或 sing-box check。" ;;
       service_restart_failed) agent_json_error service_restart_failed "组件重建已回滚；服务重启失败。" ;;
+      transparent_resource_check_failed) agent_json_error transparent_resource_check_failed "组件重建已回滚；TUN core-owned 接口、路由或规则未就绪。" ;;
       firewall_prepare_failed) agent_json_error firewall_prepare_failed "组件重建已回滚；防火墙资源预检失败。" ;;
       firewall_apply_failed) agent_json_error firewall_apply_failed "组件重建已回滚；防火墙资源应用失败。" ;;
       firewall_commit_failed) agent_json_error firewall_commit_failed "组件重建已回滚；防火墙资源提交失败。" ;;
@@ -28874,6 +28917,7 @@ agent_component_cli() {
     component_referenced_or_missing) agent_json_error component_referenced "组件仍被 route/group/detour 引用，或目标不存在；未修改。" ;;
     record_invalid|component_conflict) agent_json_error invalid_component "组件记录无效、类型不受支持或 tag/id 冲突；未修改。" ;;
     service_restart_failed) agent_json_error service_restart_failed "组件已回滚；服务重启失败。" ;;
+    transparent_resource_check_failed) agent_json_error transparent_resource_check_failed "组件已回滚；TUN core-owned 接口、路由或规则未就绪。" ;;
     config_check_failed) agent_json_error config_check_failed "组件已回滚；生成的配置未通过图校验或 sing-box check。" ;;
     root_required) agent_json_error root_required "组件写操作必须以 root 执行；未修改。" ;;
     component_write_busy) agent_json_error component_write_busy "另一个管理进程正在执行；组件未修改。" ;;

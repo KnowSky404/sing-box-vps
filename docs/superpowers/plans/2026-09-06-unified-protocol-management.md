@@ -682,3 +682,18 @@ action 及 action 交叉字段在 state/CAS 与 live takeover 前拒绝。合法
 新增 `managed_component_transparent_resources_json`，在不修改网络命名空间的前提下，从运行中的配置观测 TUN 的接口、iproute2 规则/路由和 auto-redirect nftables 规则集；默认 Linux TUN 的 table `2022` 与 rule priority `9000` 会被逐项核对，接口或路由缺失报告 `tun_runtime_resources_missing`。Redirect/TProxy 不会把宿主 PREROUTING、策略路由或现有 nftables 规则误认作组件所有，而是在 `component diagnose --json` 中明确返回 `host_policy_rules_not_managed`。
 
 `tests/managed_transparent_resources.sh` 覆盖服务非 active、TUN 资源完整/缺失、Redirect/TProxy 未托管策略和非法接口名；所有探针使用有界 JSON 读取，未执行写入命令。该切片补齐透明资源的真实观测和诊断边界，但仍不实现宿主策略规则事务或 Redirect/TProxy 数据面；完整协议目标继续未完成。
+
+### 2026-09-12：TUN core-owned 事务 postcheck
+
+组件事务在活动服务重启后，如果候选配置包含 TUN，会复用
+`managed_component_transparent_resources_json` 对 core-owned 接口、
+auto-route 的 iproute2 rule/table/route 以及 auto-redirect nftables 观测执行
+postcheck。任一必需资源缺失都会先回滚已应用的受管防火墙资源，再恢复变更
+前的 state、config 和服务活动状态，并通过 Agent 返回稳定的
+`transparent_resource_check_failed`；Redirect/TProxy 的宿主 PREROUTING 和
+策略路由仍不进入项目所有权或自动回滚范围。
+
+`tests/managed_transparent_transaction.sh` 用隔离的 active systemd/ip fixture
+覆盖缺失资源的 CAS 回滚、服务恢复和资源完整时的成功提交；定向与完整
+Docker 门禁必须继续通过。该 postcheck 只保证能观测到 sing-box core-owned
+资源，不伪造宿主透明策略或公网数据面，完整协议目标仍未完成。

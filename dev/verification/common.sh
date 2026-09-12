@@ -135,6 +135,7 @@ resolve_local_tests() {
       tests/shadowtls_composite_export.sh \
       tests/managed_components_contract.sh \
       tests/managed_transparent_resources.sh \
+      tests/managed_transparent_transaction.sh \
       tests/managed_component_availability.sh \
       tests/managed_component_graph.sh \
       tests/managed_component_graph_core_startup.sh \
