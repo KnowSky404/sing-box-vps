@@ -651,3 +651,11 @@ managed Tailscale endpoint 现在按固定 1.14 `TailscaleEndpointOptions` 校�
 本轮继续推进高级 inbound 的实际业务证据。`managed_component_state_validate_record` 为 `direct` 组件补上 `network`、`override_address` 和 `override_port` 的 typed 边界：只接受上游的 TCP/UDP 网络字符串，override 地址拒绝控制字符/空值，端口限制在 1–65535；renderer、监听资源计划和现有 direct outbound 移除语义保持分离。`tests/managed_components_contract.sh` 新增合法转发配置及 network、地址、端口负例。
 
 `multi_protocol_coexistence` 先启动一次性 loopback HTTP marker 与 UDP echo，再通过 component CAS 创建 `direct-inbound-verification`（revision 2、TCP listener 1092）和 `direct-udp-inbound-verification`（revision 3、UDP listener 1093），分别 override 到对应 fixture 端口。候选发布后等待 systemd active、执行固定 sing-box 1.14.0 `check`、核对实际渲染配置和监听，最后用 curl 与 UDP client 发送真实请求并逐字节核对 marker；两个 `direct-inbound*.result.env`、response、config 和 listener artifact 均成功，定向 Docker run 为 `dev/verification-runs/20260912073323`。该切片只证明 direct TCP/UDP override 的容器回环 forwarding，不把 `check`/listener 扩大为 TUN、redirect、TProxy 透明路由、主机防火墙、公网或生产验证；全协议目标仍未完成，脚本版本本轮保持 `2026091203`。
+
+### 2026-09-12：高级 inbound typed Listen/TUN/Cloudflared contracts
+
+本轮将组件状态层的高级入站字段从“最小必填检查”收紧为显式的 v1.14.0 typed allowlist。direct/redirect/TProxy 共享 `ListenOptions` 的监听地址、端口、bind/interface、mark、keep-alive、UDP fragment/timeout 和 detour 字段；direct/TProxy 的 `network` 只接受 `tcp`/`udp` 的唯一字符串或列表，direct override 端口继续限制在 1–65535，TProxy UDP NAT 行为和 NAT 上限按上游枚举/uint32 校验。redirect 不接受 direct/TProxy 专属字段，也不接受 legacy proxy/sniff 字段。
+
+TUN 记录现在覆盖 v1.14 的地址/DNS、auto-route/auto-redirect mark、iproute2 index、route/address set、interface/UID/package/MAC 过滤、UDP NAT、stack 和 platform HTTP proxy 字段，并拒绝已移除的 `inet4_*`/`inet6_*`、`gso` 及 legacy inbound sniff/domain 字段；`auto_redirect` 没有 `auto_route` 时 fail closed。Cloudflared 记录覆盖 token、HA/protocol/edge/datagram/grace/region 和 control/tunnel nested DialerOptions/domain resolver，token 仍只允许在敏感 export 中读取，inventory/diagnose 继续脱敏。`tests/managed_components_contract.sh` 新增正负字段矩阵、重复 network、deprecated/unknown field、enum、嵌套 dialer 和 auto-route 约束回归。
+
+这项变更证明了状态/CAS 层不会把任意 JSON 透传到这些高级 inbound，但 `sing-box check` 仍是最终配置语义校验；本轮没有伪造 TUN 设备、主机路由/nftables/TProxy 权限、Cloudflared token 控制连接或公网数据面证据。透明路由资源事务、TUN/Redirect/TProxy 实际业务闭环、Cloudflared 外部控制面和完整协议目标仍未完成；脚本版本本轮统一为 `2026091204`。

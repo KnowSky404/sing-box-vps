@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091203
+# Version: 2026091204
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091203"
+readonly SCRIPT_VERSION="2026091204"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -15461,6 +15461,358 @@ managed_component_group_config_validate_json() {
   ' <<< "${config}" >/dev/null 2>&1 || return 1
 }
 
+# ListenOptions is shared by the redirect, TProxy and direct inbounds.  Keep
+# this allowlist separate from outbound Dial Fields: inbound listen options
+# have a different contract and must not accidentally accept deprecated
+# inbound fields or arbitrary JSON.
+managed_component_listen_config_validate_json() {
+  local config=${1:-} extra_keys=${2:-'[]'}
+  [[ -n "${config}" ]] || return 1
+  jq -e --argjson extra_keys "${extra_keys}" '
+    def safe_string:
+      type == "string" and (any(explode[]; . < 32 or . == 127) | not);
+    def optional_safe_string($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_bool($name):
+      (has($name) | not) or (.[$name] | type == "boolean");
+    def optional_duration($name):
+      (has($name) | not) or (.[$name] | safe_string and length > 0);
+    def optional_udp_timeout:
+      (has("udp_timeout") | not) or
+      (.udp_timeout |
+        ((type == "string" and safe_string and length > 0) or
+         (type == "number" and . == floor and . >= 0 and . <= 4294967295)));
+    def optional_mark:
+      (has("routing_mark") | not) or
+      (.routing_mark |
+        ((type == "number" and . == floor and . >= 0 and . <= 4294967295) or
+         (type == "string" and
+          ((test("^0x[0-9a-fA-F]{1,8}$")) or
+           (test("^[0-9]{1,10}$") and (tonumber <= 4294967295))))));
+    type == "object" and
+    ((keys - ([
+      "listen","listen_port","bind_interface","routing_mark","reuse_addr",
+      "netns","disable_tcp_keep_alive","tcp_keep_alive",
+      "tcp_keep_alive_interval","tcp_fast_open","tcp_multi_path",
+      "udp_fragment","udp_timeout","detour"
+    ] + $extra_keys)) | length == 0) and
+    optional_safe_string("listen") and
+    ((has("listen_port") | not) or
+      (.listen_port | type == "number" and . == floor and . >= 0 and . <= 65535)) and
+    optional_safe_string("bind_interface") and
+    optional_mark and
+    optional_bool("reuse_addr") and
+    optional_safe_string("netns") and
+    optional_bool("disable_tcp_keep_alive") and
+    optional_duration("tcp_keep_alive") and
+    optional_duration("tcp_keep_alive_interval") and
+    optional_bool("tcp_fast_open") and
+    optional_bool("tcp_multi_path") and
+    ((has("udp_fragment") | not) or (.udp_fragment | type == "boolean")) and
+    optional_udp_timeout and
+    optional_safe_string("detour")
+  ' <<< "${config}" >/dev/null 2>&1 || return 1
+}
+
+managed_component_direct_config_validate_json() {
+  local config=${1:-}
+  [[ -n "${config}" ]] || return 1
+  managed_component_listen_config_validate_json "${config}" '["network","override_address","override_port"]' || return 1
+  jq -e '
+    def safe_string:
+      type == "string" and (any(explode[]; . < 32 or . == 127) | not);
+    def network_list:
+      ((type == "string" and IN("tcp","udp")) or
+       (type == "array" and length > 0 and
+        all(.[]; type == "string" and IN("tcp","udp")) and
+        (length as $count | unique | length == $count)));
+    type == "object" and
+    ((keys - ["listen","listen_port","bind_interface","routing_mark","reuse_addr",
+      "netns","disable_tcp_keep_alive","tcp_keep_alive","tcp_keep_alive_interval",
+      "tcp_fast_open","tcp_multi_path","udp_fragment","udp_timeout","detour",
+      "network","override_address","override_port"]) | length == 0) and
+    (.listen_port | type == "number" and . == floor and . >= 1 and . <= 65535) and
+    ((has("network") | not) or (.network | network_list)) and
+    ((has("override_address") | not) or
+      (.override_address | safe_string and length > 0)) and
+    ((has("override_port") | not) or
+      (.override_port | type == "number" and . == floor and . >= 1 and . <= 65535))
+  ' <<< "${config}" >/dev/null 2>&1 || return 1
+}
+
+managed_component_redirect_config_validate_json() {
+  local config=${1:-}
+  [[ -n "${config}" ]] || return 1
+  managed_component_listen_config_validate_json "${config}" || return 1
+  jq -e '.listen_port | type == "number" and . == floor and . >= 1 and . <= 65535' \
+    <<< "${config}" >/dev/null 2>&1
+}
+
+managed_component_tproxy_config_validate_json() {
+  local config=${1:-}
+  [[ -n "${config}" ]] || return 1
+  managed_component_listen_config_validate_json "${config}" '["network","udp_mapping","udp_filtering","udp_nat_max"]' || return 1
+  jq -e '
+    def network_list:
+      ((type == "string" and IN("tcp","udp")) or
+       (type == "array" and length > 0 and
+        all(.[]; type == "string" and IN("tcp","udp")) and
+        (length as $count | unique | length == $count)));
+    def nat_behavior:
+      type == "string" and
+      IN("","endpoint_independent","address_dependent","address_and_port_dependent");
+    type == "object" and
+    ((keys - ["listen","listen_port","bind_interface","routing_mark","reuse_addr",
+      "netns","disable_tcp_keep_alive","tcp_keep_alive","tcp_keep_alive_interval",
+      "tcp_fast_open","tcp_multi_path","udp_fragment","udp_timeout","detour",
+      "network","udp_mapping","udp_filtering","udp_nat_max"]) | length == 0) and
+    (.listen_port | type == "number" and . == floor and . >= 1 and . <= 65535) and
+    ((has("network") | not) or (.network | network_list)) and
+    ((has("udp_mapping") | not) or (.udp_mapping | nat_behavior)) and
+    ((has("udp_filtering") | not) or (.udp_filtering | nat_behavior)) and
+    ((has("udp_nat_max") | not) or
+      (.udp_nat_max | type == "number" and . == floor and . >= 0 and . <= 4294967295))
+  ' <<< "${config}" >/dev/null 2>&1 || return 1
+}
+
+managed_component_tun_config_validate_json() {
+  local config=${1:-}
+  [[ -n "${config}" ]] || return 1
+  jq -e '
+    def safe_string:
+      type == "string" and (any(explode[]; . < 32 or . == 127) | not);
+    def listable_safe_string:
+      ((type == "string" and safe_string) or
+       (type == "array" and all(.[]; safe_string)));
+    def listable_nonempty_safe_string:
+      ((type == "string" and safe_string and length > 0) or
+       (type == "array" and length > 0 and all(.[]; safe_string and length > 0)));
+    def listable_uint32:
+      ((type == "number" and . == floor and . >= 0 and . <= 4294967295) or
+       (type == "array" and all(.[]; type == "number" and . == floor and
+         . >= 0 and . <= 4294967295)));
+    def listable_nonnegative_int:
+      ((type == "number" and . == floor and . >= 0 and . <= 2147483647) or
+       (type == "array" and all(.[]; type == "number" and . == floor and
+         . >= 0 and . <= 2147483647)));
+    def uid_range:
+      if type != "string" then false
+      else (capture("^(?<start>[0-9]+):(?<end>[0-9]+)$") // false) as $range |
+        if $range == false then false
+        else ($range.start | tonumber) <= 4294967295 and
+          ($range.end | tonumber) <= 4294967295 and
+          ($range.start | tonumber) <= ($range.end | tonumber)
+        end
+      end;
+    def optional_safe_string($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_bool($name):
+      (has($name) | not) or (.[$name] | type == "boolean");
+    def optional_duration($name):
+      (has($name) | not) or (.[$name] | safe_string and length > 0);
+    def optional_listable_safe_string($name):
+      (has($name) | not) or (.[$name] | listable_safe_string);
+    def interface_type:
+      type == "string" and IN("wifi","cellular","ethernet","other");
+    def optional_network_types($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "string" and interface_type) or
+         (type == "array" and all(.[]; interface_type))));
+    def optional_listable_uint32($name):
+      (has($name) | not) or (.[$name] | listable_uint32);
+    def optional_listable_nonnegative_int($name):
+      (has($name) | not) or (.[$name] | listable_nonnegative_int);
+    def optional_uid_range($name):
+      (has($name) | not) or
+      (.[$name] | (uid_range or (type == "array" and all(.[]; uid_range))));
+    def optional_mark($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "number" and . == floor and . >= 0 and . <= 4294967295) or
+         (type == "string" and
+          ((test("^0x[0-9a-fA-F]{1,8}$")) or
+           (test("^[0-9]{1,10}$") and (tonumber <= 4294967295))))));
+    def optional_nat($name):
+      (has($name) | not) or
+      (.[$name] | type == "string" and
+        IN("","endpoint_independent","address_dependent","address_and_port_dependent"));
+    def optional_udp_timeout:
+      (has("udp_timeout") | not) or
+      (.udp_timeout |
+        ((type == "string" and safe_string and length > 0) or
+         (type == "number" and . == floor and . >= 0 and . <= 4294967295)));
+    def optional_platform:
+      (has("platform") | not) or
+      (.platform | type == "object" and
+        ((keys - ["http_proxy"]) | length == 0) and
+        ((has("http_proxy") | not) or
+          (.http_proxy | type == "object" and
+            ((keys - ["enabled","server","server_port","bypass_domain","match_domain"]) | length == 0) and
+            ((has("enabled") | not) or (.enabled | type == "boolean")) and
+            ((has("server") | not) or (.server | safe_string)) and
+            ((has("server_port") | not) or
+              (.server_port | type == "number" and . == floor and . >= 1 and . <= 65535)) and
+            ((.enabled // false) != true or
+              (.server | type == "string" and length > 0 and safe_string) and
+              (.server_port | type == "number" and . == floor and . >= 1 and . <= 65535)) and
+            ((has("bypass_domain") | not) or (.bypass_domain | listable_safe_string)) and
+            ((has("match_domain") | not) or (.match_domain | listable_safe_string)))));
+    type == "object" and
+    ((keys - [
+      "interface_name","netns","mtu","address","dns_mode","dns_address",
+      "auto_route","iproute2_table_index","iproute2_rule_index","auto_redirect",
+      "auto_redirect_input_mark","auto_redirect_output_mark","auto_redirect_reset_mark",
+      "auto_redirect_nfqueue","auto_redirect_iproute2_fallback_rule_index",
+      "exclude_mptcp","loopback_address","strict_route","route_address",
+      "route_address_set","route_exclude_address","route_exclude_address_set",
+      "include_interface","exclude_interface","include_uid","include_uid_range",
+      "exclude_uid","exclude_uid_range","include_android_user","include_package",
+      "exclude_package","include_mac_address","exclude_mac_address","udp_timeout",
+      "udp_mapping","udp_filtering","udp_nat_max","stack","platform",
+      "inet4_address","inet6_address","inet4_route_address","inet6_route_address",
+      "inet4_route_exclude_address","inet6_route_exclude_address","gso",
+      "endpoint_independent_nat","sniff","sniff_override_destination","sniff_timeout",
+      "domain_strategy","udp_disable_domain_unmapping"
+    ]) | length == 0) and
+    (has("inet4_address") | not) and
+    (has("inet6_address") | not) and
+    (has("inet4_route_address") | not) and
+    (has("inet6_route_address") | not) and
+    (has("inet4_route_exclude_address") | not) and
+    (has("inet6_route_exclude_address") | not) and
+    (has("gso") | not) and
+    (has("endpoint_independent_nat") | not) and
+    (has("sniff") | not) and
+    (has("sniff_override_destination") | not) and
+    (has("sniff_timeout") | not) and
+    (has("domain_strategy") | not) and
+    (has("udp_disable_domain_unmapping") | not) and
+    (.address | listable_nonempty_safe_string) and
+    (.auto_route | type == "boolean") and
+    optional_safe_string("interface_name") and
+    optional_safe_string("netns") and
+    ((has("mtu") | not) or (.mtu | type == "number" and . == floor and . >= 0 and . <= 4294967295)) and
+    ((has("dns_mode") | not) or (.dns_mode | type == "string" and IN("disabled","native","hijack"))) and
+    optional_listable_safe_string("dns_address") and
+    optional_listable_nonnegative_int("iproute2_table_index") and
+    optional_listable_nonnegative_int("iproute2_rule_index") and
+    optional_bool("auto_redirect") and
+    ((.auto_redirect // false) != true or .auto_route == true) and
+    optional_mark("auto_redirect_input_mark") and
+    optional_mark("auto_redirect_output_mark") and
+    optional_mark("auto_redirect_reset_mark") and
+    ((has("auto_redirect_nfqueue") | not) or
+      (.auto_redirect_nfqueue | type == "number" and . == floor and . >= 0 and . <= 65535)) and
+    optional_listable_nonnegative_int("auto_redirect_iproute2_fallback_rule_index") and
+    optional_bool("exclude_mptcp") and
+    optional_listable_safe_string("loopback_address") and
+    optional_bool("strict_route") and
+    optional_listable_safe_string("route_address") and
+    optional_listable_safe_string("route_address_set") and
+    optional_listable_safe_string("route_exclude_address") and
+    optional_listable_safe_string("route_exclude_address_set") and
+    optional_listable_safe_string("include_interface") and
+    optional_listable_safe_string("exclude_interface") and
+    optional_listable_uint32("include_uid") and
+    optional_uid_range("include_uid_range") and
+    optional_listable_uint32("exclude_uid") and
+    optional_uid_range("exclude_uid_range") and
+    optional_listable_nonnegative_int("include_android_user") and
+    optional_listable_safe_string("include_package") and
+    optional_listable_safe_string("exclude_package") and
+    optional_listable_safe_string("include_mac_address") and
+    optional_listable_safe_string("exclude_mac_address") and
+    optional_udp_timeout and
+    optional_nat("udp_mapping") and
+    optional_nat("udp_filtering") and
+    ((has("udp_nat_max") | not) or
+      (.udp_nat_max | type == "number" and . == floor and . >= 0 and . <= 4294967295)) and
+    ((has("stack") | not) or (.stack | type == "string" and IN("","system","gvisor","mixed"))) and
+    optional_platform
+  ' <<< "${config}" >/dev/null 2>&1 || return 1
+}
+
+managed_component_cloudflared_config_validate_json() {
+  local config=${1:-}
+  [[ -n "${config}" ]] || return 1
+  jq -e '
+    def safe_string:
+      type == "string" and (any(explode[]; . < 32 or . == 127) | not);
+    def optional_safe_string($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_bool($name):
+      (has($name) | not) or (.[$name] | type == "boolean");
+    def optional_duration($name):
+      (has($name) | not) or (.[$name] | safe_string and length > 0);
+    def optional_mark:
+      (has("routing_mark") | not) or
+      (.routing_mark |
+        ((type == "number" and . == floor and . >= 0 and . <= 4294967295) or
+         (type == "string" and
+          ((test("^0x[0-9a-fA-F]{1,8}$")) or
+           (test("^[0-9]{1,10}$") and (tonumber <= 4294967295))))));
+    def interface_type:
+      type == "string" and IN("wifi","cellular","ethernet","other");
+    def optional_network_types($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "string" and interface_type) or
+         (type == "array" and all(.[]; interface_type))));
+    def optional_domain_resolver:
+      (has("domain_resolver") | not) or
+      (.domain_resolver |
+        ((type == "string" and safe_string) or
+         (type == "object" and
+          ((keys - ["server","timeout","strategy","disable_cache",
+            "disable_optimistic_cache","rewrite_ttl","client_subnet"]) | length == 0) and
+          (.server | type == "string" and length > 0 and safe_string) and
+          ((has("timeout") | not) or (.timeout | safe_string and length > 0)) and
+          ((has("strategy") | not) or (.strategy | type == "string" and
+            IN("","as_is","prefer_ipv4","prefer_ipv6","ipv4_only","ipv6_only"))) and
+          ((has("disable_cache") | not) or (.disable_cache | type == "boolean")) and
+          ((has("disable_optimistic_cache") | not) or
+            (.disable_optimistic_cache | type == "boolean")) and
+          ((has("rewrite_ttl") | not) or
+            (.rewrite_ttl | type == "number" and . == floor and . >= 0 and . <= 4294967295)) and
+          ((has("client_subnet") | not) or (.client_subnet | safe_string)))));
+    def dialer($name):
+      (has($name) | not) or
+      (.[$name] | type == "object" and
+        ((keys - ["detour","bind_interface","inet4_bind_address","inet6_bind_address",
+          "bind_address_no_port","protect_path","routing_mark","reuse_addr","netns",
+          "connect_timeout","tcp_fast_open","tcp_multi_path","disable_tcp_keep_alive",
+          "tcp_keep_alive","tcp_keep_alive_interval","udp_fragment","domain_resolver",
+          "network_strategy","network_type","fallback_network_type","fallback_delay"]) | length == 0) and
+        optional_safe_string("detour") and optional_safe_string("bind_interface") and
+        optional_safe_string("inet4_bind_address") and optional_safe_string("inet6_bind_address") and
+        optional_bool("bind_address_no_port") and optional_safe_string("protect_path") and
+        optional_mark and optional_bool("reuse_addr") and optional_safe_string("netns") and
+        optional_duration("connect_timeout") and optional_bool("tcp_fast_open") and
+        optional_bool("tcp_multi_path") and optional_bool("disable_tcp_keep_alive") and
+        optional_duration("tcp_keep_alive") and optional_duration("tcp_keep_alive_interval") and
+        ((has("udp_fragment") | not) or (.udp_fragment | type == "boolean")) and
+        optional_domain_resolver and
+        ((has("network_strategy") | not) or (.network_strategy | type == "string" and
+          IN("","default","hybrid","fallback"))) and
+        optional_network_types("network_type") and optional_network_types("fallback_network_type") and
+        optional_duration("fallback_delay"));
+    type == "object" and
+    ((keys - ["token","ha_connections","protocol","post_quantum","edge_ip_version",
+      "datagram_version","grace_period","region","control_dialer","tunnel_dialer"]) | length == 0) and
+    (.token | type == "string" and length > 0 and safe_string) and
+    ((has("ha_connections") | not) or
+      (.ha_connections | type == "number" and . == floor and . >= 0 and . <= 2147483647)) and
+    ((has("protocol") | not) or (.protocol | type == "string" and IN("","auto","quic","http2","h2mux"))) and
+    optional_bool("post_quantum") and
+    ((has("edge_ip_version") | not) or (.edge_ip_version | type == "number" and . == floor and IN(0,4,6))) and
+    ((has("datagram_version") | not) or (.datagram_version | type == "string" and IN("v2","v3"))) and
+    optional_duration("grace_period") and
+    optional_safe_string("region") and
+    dialer("control_dialer") and dialer("tunnel_dialer")
+  ' <<< "${config}" >/dev/null 2>&1 || return 1
+}
+
 managed_component_state_validate_record() {
   local record=${1:-} role type tag registry_id config
   [[ -n "${record}" ]] || return 1
@@ -15492,36 +15844,20 @@ managed_component_state_validate_record() {
   fi
 
   case "${role}:${type}" in
-    inbound:direct|inbound:redirect|inbound:tproxy)
-      jq -e '(.listen_port | type == "number" and . == floor and . >= 1 and . <= 65535) and
-        ((.listen // "127.0.0.1") | type == "string" and length > 0)' <<< "${config}" >/dev/null 2>&1 || return 1
-      if [[ "${type}" == tproxy ]]; then
-        jq -e '((.network // ["tcp","udp"]) | if type == "string" then [.] else . end |
-          type == "array" and length > 0 and all(.[]; . == "tcp" or . == "udp"))' <<< "${config}" >/dev/null 2>&1 || return 1
-      fi
-      if [[ "${type}" == direct ]]; then
-        jq -e '
-          def safe_string:
-            type == "string" and (any(explode[]; . < 32 or . == 127) | not);
-          ((has("network") | not) or
-            (.network | type == "string" and IN("tcp","udp"))) and
-          ((has("override_address") | not) or
-            (.override_address | safe_string and length > 0)) and
-          ((has("override_port") | not) or
-            (.override_port | type == "number" and . == floor and . >= 1 and . <= 65535))
-        ' <<< "${config}" >/dev/null 2>&1 || return 1
-      fi
+    inbound:direct)
+      managed_component_direct_config_validate_json "${config}" || return 1
+      ;;
+    inbound:redirect)
+      managed_component_redirect_config_validate_json "${config}" || return 1
+      ;;
+    inbound:tproxy)
+      managed_component_tproxy_config_validate_json "${config}" || return 1
       ;;
     inbound:tun)
-      jq -e '(.address | type == "array" and length > 0 and all(.[]; type == "string")) and
-        (.auto_route | type == "boolean") and
-        ((.auto_redirect // false) | type == "boolean") and
-        ((.auto_redirect != true) or (.auto_route == true))' <<< "${config}" >/dev/null 2>&1 || return 1
+      managed_component_tun_config_validate_json "${config}" || return 1
       ;;
     inbound:cloudflared)
-      jq -e '(.token | type == "string" and length > 0) and
-        ((.protocol // "") | IN("","auto","quic","http2","h2mux")) and
-        ((.edge_ip_version // 0) | IN(0,4,6))' <<< "${config}" >/dev/null 2>&1 || return 1
+      managed_component_cloudflared_config_validate_json "${config}" || return 1
       ;;
     endpoint:wireguard)
       managed_component_wireguard_config_validate_json "${config}" || return 1

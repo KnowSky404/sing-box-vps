@@ -49,6 +49,7 @@ jq -e '
 direct_record='{"id":"direct-local","role":"inbound","type":"direct","tag":"direct-local-in","enabled":true,"route_rules":[],"config":{"listen":"127.0.0.1","listen_port":15080}}'
 tun_record='{"id":"tun-local","role":"inbound","type":"tun","tag":"tun-local-in","enabled":true,"route_rules":[],"config":{"interface_name":"tun-sbv","address":["172.19.0.1/30"],"auto_route":false,"strict_route":true}}'
 redirect_record='{"id":"redirect-local","role":"inbound","type":"redirect","tag":"redirect-local-in","enabled":true,"route_rules":[],"config":{"listen":"127.0.0.1","listen_port":15081}}'
+tproxy_record='{"id":"tproxy-local","role":"inbound","type":"tproxy","tag":"tproxy-local-in","enabled":true,"route_rules":[],"config":{"listen":"127.0.0.1","listen_port":15082}}'
 selector_record='{"id":"selector-local","role":"outbound","type":"selector","tag":"selector-local","enabled":true,"route_rules":[{"inbound":["direct-local-in"],"action":"route","outbound":"selector-local"}],"config":{"outbounds":["direct","block"],"default":"direct"}}'
 
 direct_override_record=$(jq -c '.config += {network:"tcp",override_address:"127.0.0.1",override_port:18082}' <<< "${direct_record}")
@@ -73,6 +74,112 @@ fi
 direct_bad_override_port=$(jq -c '.config.override_port = 65536' <<< "${direct_override_record}")
 if managed_component_state_validate_record "${direct_bad_override_port}"; then
   printf 'direct inbound override port overflow was unexpectedly accepted\n' >&2
+  exit 1
+fi
+
+# Direct, redirect and TProxy inbounds share typed ListenOptions but keep their
+# protocol-specific fields separate.  Arrays are accepted where sing-box's
+# Listable type permits them; duplicate network members and unknown fields are
+# rejected before state publication.
+direct_listen_options=$(jq -c '.config += {network:["tcp","udp"],bind_interface:"lo",routing_mark:"0x20",reuse_addr:true,tcp_fast_open:true,udp_fragment:false,udp_timeout:"30s",detour:"direct-upstream"}' <<< "${direct_record}")
+managed_component_state_validate_record "${direct_listen_options}"
+direct_listen_rendered=$(managed_component_render_json "$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${direct_listen_options}")")
+jq -e '.inbounds[0].network == ["tcp","udp"] and .inbounds[0].routing_mark == "0x20" and .inbounds[0].reuse_addr == true and .inbounds[0].udp_timeout == "30s"' <<< "${direct_listen_rendered}" >/dev/null
+direct_duplicate_network=$(jq -c '.config.network = ["tcp","tcp"]' <<< "${direct_listen_options}")
+if managed_component_state_validate_record "${direct_duplicate_network}"; then
+  printf 'direct duplicate network member unexpectedly accepted\n' >&2
+  exit 1
+fi
+direct_unknown_listen_field=$(jq -c '.config |= (. + {proxy_protocol:true})' <<< "${direct_record}")
+if managed_component_state_validate_record "${direct_unknown_listen_field}"; then
+  printf 'direct deprecated listen field unexpectedly accepted\n' >&2
+  exit 1
+fi
+
+redirect_listen_options=$(jq -c '.config += {bind_interface:"lo",disable_tcp_keep_alive:true,tcp_keep_alive:"5m",tcp_keep_alive_interval:"75s",tcp_multi_path:true}' <<< "${redirect_record}")
+managed_component_state_validate_record "${redirect_listen_options}"
+redirect_bad_port=$(jq -c '.config.listen_port = 0' <<< "${redirect_record}")
+if managed_component_state_validate_record "${redirect_bad_port}"; then
+  printf 'redirect zero listen port unexpectedly accepted\n' >&2
+  exit 1
+fi
+redirect_unknown_field=$(jq -c '.config |= (. + {network:["tcp"]})' <<< "${redirect_record}")
+if managed_component_state_validate_record "${redirect_unknown_field}"; then
+  printf 'redirect protocol-only field unexpectedly accepted\n' >&2
+  exit 1
+fi
+
+tproxy_options=$(jq -c '.config += {network:["tcp","udp"],udp_mapping:"address_dependent",udp_filtering:"address_and_port_dependent",udp_nat_max:4096,routing_mark:1234}' <<< "${tproxy_record}")
+managed_component_state_validate_record "${tproxy_options}"
+tproxy_empty_nat=$(jq -c '.config.udp_mapping = ""' <<< "${tproxy_options}")
+managed_component_state_validate_record "${tproxy_empty_nat}"
+tproxy_bad_nat=$(jq -c '.config.udp_filtering = "invalid"' <<< "${tproxy_options}")
+if managed_component_state_validate_record "${tproxy_bad_nat}"; then
+  printf 'TProxy invalid UDP NAT behavior unexpectedly accepted\n' >&2
+  exit 1
+fi
+tproxy_duplicate_network=$(jq -c '.config.network = ["udp","udp"]' <<< "${tproxy_options}")
+if managed_component_state_validate_record "${tproxy_duplicate_network}"; then
+  printf 'TProxy duplicate network member unexpectedly accepted\n' >&2
+  exit 1
+fi
+tproxy_unknown_field=$(jq -c '.config |= (. + {sniff:true})' <<< "${tproxy_record}")
+if managed_component_state_validate_record "${tproxy_unknown_field}"; then
+  printf 'TProxy legacy inbound field unexpectedly accepted\n' >&2
+  exit 1
+fi
+tproxy_bad_timeout=$(jq -c '.config.udp_timeout = 4294967296' <<< "${tproxy_record}")
+if managed_component_state_validate_record "${tproxy_bad_timeout}"; then
+  printf 'TProxy UDP timeout overflow unexpectedly accepted\n' >&2
+  exit 1
+fi
+
+# TUN exposes the v1.14 route, UID/package, UDP NAT and platform surfaces as a
+# typed record.  The old inet4/inet6/GSO and legacy sniff fields are rejected;
+# auto_redirect also requires auto_route so a record cannot claim a partial
+# transparent-routing setup.
+tun_advanced_record=$(jq -c '.config = {
+  interface_name:"tun-sbv",netns:"sbv-net",mtu:1500,
+  address:["172.19.0.1/30","fdfe:dcba:9876::1/126"],
+  dns_mode:"hijack",dns_address:["172.19.0.2","fdfe:dcba:9876::2"],
+  auto_route:true,iproute2_table_index:2022,iproute2_rule_index:9000,
+  auto_redirect:true,auto_redirect_input_mark:"0x2023",auto_redirect_output_mark:"0x2024",
+  auto_redirect_reset_mark:"0x2025",auto_redirect_nfqueue:100,
+  auto_redirect_iproute2_fallback_rule_index:9001,exclude_mptcp:true,
+  loopback_address:"127.0.0.1",strict_route:true,
+  route_address:["0.0.0.0/0","::/0"],route_address_set:["set-main"],
+  route_exclude_address:["192.168.0.0/16"],route_exclude_address_set:["set-private"],
+  include_interface:["eth0"],exclude_interface:["docker0"],include_uid:[1000],
+  include_uid_range:["1000:2000"],exclude_uid:[65534],exclude_uid_range:["65534:65534"],
+  include_android_user:[0],include_package:["com.example.app"],exclude_package:["com.example.bad"],
+  include_mac_address:["02:00:00:00:00:01"],exclude_mac_address:["02:00:00:00:00:02"],
+  udp_timeout:"5m",udp_mapping:"endpoint_independent",udp_filtering:"address_dependent",udp_nat_max:8192,
+  stack:"system",platform:{http_proxy:{enabled:true,server:"127.0.0.1",server_port:8080,bypass_domain:["localhost"],match_domain:["example.com"]}}
+}' <<< "${tun_record}")
+managed_component_state_validate_record "${tun_advanced_record}"
+tun_bad_deprecated=$(jq -c '.config.gso = true' <<< "${tun_record}")
+if managed_component_state_validate_record "${tun_bad_deprecated}"; then
+  printf 'TUN deprecated GSO field unexpectedly accepted\n' >&2
+  exit 1
+fi
+tun_bad_redirect=$(jq -c '.config.auto_redirect = true' <<< "${tun_record}")
+if managed_component_state_validate_record "${tun_bad_redirect}"; then
+  printf 'TUN auto_redirect without auto_route unexpectedly accepted\n' >&2
+  exit 1
+fi
+tun_unknown_field=$(jq -c '.config |= (. + {unexpected:true})' <<< "${tun_record}")
+if managed_component_state_validate_record "${tun_unknown_field}"; then
+  printf 'TUN unknown field unexpectedly accepted\n' >&2
+  exit 1
+fi
+tun_bad_uid_range=$(jq -c '.config.include_uid_range = ["1000-2000"]' <<< "${tun_advanced_record}")
+if managed_component_state_validate_record "${tun_bad_uid_range}"; then
+  printf 'TUN malformed UID range unexpectedly accepted\n' >&2
+  exit 1
+fi
+tun_missing_http_proxy_server=$(jq -c '.config.platform.http_proxy |= del(.server,.server_port)' <<< "${tun_advanced_record}")
+if managed_component_state_validate_record "${tun_missing_http_proxy_server}"; then
+  printf 'TUN enabled HTTP proxy without server unexpectedly accepted\n' >&2
   exit 1
 fi
 
@@ -1512,7 +1619,10 @@ if managed_component_state_validate_record "$(jq -c '.tag = {value:"direct"}' <<
   exit 1
 fi
 unknown_config_field=$(jq -c '.config = (.config + {unexpected:true})' <<< "${direct_record}")
-managed_component_state_validate_record "${unknown_config_field}"
+if managed_component_state_validate_record "${unknown_config_field}"; then
+  printf 'unexpected direct config field was accepted\n' >&2
+  exit 1
+fi
 unknown_wrapped_file=$(mktemp)
 printf '%s\n' "${unknown_record_field}" > "${unknown_wrapped_file}"
 if managed_component_normalize_input_file "${unknown_wrapped_file}" >/dev/null 2>&1; then
@@ -1542,6 +1652,43 @@ redirect_plan=$(managed_listener_plan_json <<< "${redirect_config}")
 jq -e 'any(.[]; .owner == "redirect-local-in" and .transport == "tcp") and
   all(.[]; .owner != "redirect-local-in" or .transport == "tcp")' <<< "${redirect_plan}" >/dev/null
 rm -f "${redirect_config_file}"
+
+# Cloudflared's token/control-plane settings and both nested DialerOptions are
+# typed independently.  The token is accepted for state validation but is
+# still redacted from inventory/diagnose output; nested arbitrary JSON is not.
+cloudflared_advanced_record=$(jq -c '.config = {
+  token:"eyJ-test-token",ha_connections:4,protocol:"quic",post_quantum:true,
+  edge_ip_version:4,datagram_version:"v3",grace_period:"30s",region:"fra01",
+  control_dialer:{detour:"direct",bind_interface:"eth0",inet4_bind_address:"192.0.2.10",
+    bind_address_no_port:true,protect_path:"/usr/lib/sing-box/protect",
+    routing_mark:"0x30",reuse_addr:true,netns:"sbv-net",connect_timeout:"5s",
+    tcp_fast_open:true,tcp_multi_path:true,disable_tcp_keep_alive:false,
+    tcp_keep_alive:"5m",tcp_keep_alive_interval:"75s",udp_fragment:false,
+    domain_resolver:{server:"dns-local",timeout:"5s",strategy:"prefer_ipv4",disable_cache:true,rewrite_ttl:60,client_subnet:"192.0.2.0/24"},
+    network_strategy:"hybrid",network_type:["ethernet"],fallback_network_type:["wifi"],fallback_delay:"1s"},
+  tunnel_dialer:{detour:"direct",connect_timeout:"10s",network_strategy:"fallback",network_type:"ethernet",fallback_delay:"2s"}
+}' <<< '{"id":"cloudflared-local","role":"inbound","type":"cloudflared","tag":"cloudflared-local-in","enabled":true,"route_rules":[],"config":{"token":"placeholder"}}')
+managed_component_state_validate_record "${cloudflared_advanced_record}"
+cloudflared_bad_datagram=$(jq -c '.config.datagram_version = "v4"' <<< "${cloudflared_advanced_record}")
+if managed_component_state_validate_record "${cloudflared_bad_datagram}"; then
+  printf 'Cloudflared unsupported datagram version unexpectedly accepted\n' >&2
+  exit 1
+fi
+cloudflared_bad_dialer=$(jq -c '.config.control_dialer |= (. + {domain_strategy:"prefer_ipv4"})' <<< "${cloudflared_advanced_record}")
+if managed_component_state_validate_record "${cloudflared_bad_dialer}"; then
+  printf 'Cloudflared deprecated dialer field unexpectedly accepted\n' >&2
+  exit 1
+fi
+cloudflared_bad_network_type=$(jq -c '.config.tunnel_dialer.network_type = "satellite"' <<< "${cloudflared_advanced_record}")
+if managed_component_state_validate_record "${cloudflared_bad_network_type}"; then
+  printf 'Cloudflared invalid dialer network type unexpectedly accepted\n' >&2
+  exit 1
+fi
+cloudflared_bad_edge=$(jq -c '.config.edge_ip_version = 5' <<< "${cloudflared_advanced_record}")
+if managed_component_state_validate_record "${cloudflared_bad_edge}"; then
+  printf 'Cloudflared invalid edge IP version unexpectedly accepted\n' >&2
+  exit 1
+fi
 
 secret_record=$(jq -c '.config.token = "secret-token-not-for-list"' <<< \
   '{"id":"cf1","role":"inbound","type":"cloudflared","tag":"cf-in","enabled":true,"route_rules":[],"config":{"token":"placeholder"}}')
