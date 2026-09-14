@@ -58,6 +58,7 @@ verification_scenario_multi_protocol_coexistence() {
   local http_outbound_proxy_pid=''
   local direct_marker_pid=''
   local direct_udp_marker_pid=''
+  local anytls_udp_journal_artifact=''
 
   verification_prepare_remote_local_tree
   trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_marker_pid:-}" ]]; then kill "${direct_marker_pid}" 2>/dev/null || true; wait "${direct_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_udp_marker_pid:-}" ]]; then kill "${direct_udp_marker_pid}" 2>/dev/null || true; wait "${direct_udp_marker_pid}" 2>/dev/null || true; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
@@ -802,6 +803,21 @@ PY
     fi
   done < <(read_installed_protocols)
   verification_run_protocol_probes
+  # AnyTLS keeps a TCP listener; this shared SOCKS5 UDP probe exercises its
+  # authenticated UDP-over-AnyTLS (UoT) adapter without calling it native UDP.
+  verification_execute_protocol_udp_probe anytls /root/sing-box-vps/config.json
+  anytls_udp_journal_artifact=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/anytls-udp-journal.txt")
+  for _ in {1..20}; do
+    journalctl -u sing-box -n 100 --no-pager > "${anytls_udp_journal_artifact}" 2>&1
+    if grep -Fq 'inbound/anytls[anytls-in]: inbound UoT connection' \
+      "${anytls_udp_journal_artifact}"; then
+      break
+    fi
+    sleep 0.1
+  done
+  grep -Fq 'inbound/anytls[anytls-in]: inbound UoT connection' \
+    "${anytls_udp_journal_artifact}"
   verification_execute_protocol_udp_probe hy2 /root/sing-box-vps/config.json
   verification_execute_protocol_udp_probe shadowsocks /root/sing-box-vps/config.json
   verification_execute_protocol_udp_probe trojan /root/sing-box-vps/config.json

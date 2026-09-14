@@ -141,6 +141,9 @@ if ! jq -e '
   .outbounds[0].server == "127.0.0.1" and
   .outbounds[0].server_port == 9443 and
   .outbounds[0].password == $password and
+  (.outbounds[0] | has("network") | not) and
+  (.outbounds[0] | has("transport") | not) and
+  (.outbounds[0] | has("multiplex") | not) and
   .outbounds[0].tls.enabled == true and
   .outbounds[0].tls.server_name == $domain
 ' --arg domain "${ESCAPED_DOMAIN}" \

@@ -659,7 +659,7 @@ The private record contains the common `id`, `name`, `tag`, `listen`, `outbound_
 }
 ```
 
-Authentication accepts 1–128 users with unique names and passwords. TLS is always enabled in the typed record and must use exactly `server_name`, `certificate_path` and `key_path`; the files are administrator-owned and are never issued, copied into the client export, or deleted by lifecycle operations. `client_trust:"certificate"` embeds only the public PEM in each client outbound, while `"system"` uses the client system trust store. AnyTLS has no standard share URI: `nodes` is credential-free, and `links` returns `links:{}`, per-user outbound JSON, and `warnings[].code=anytls_standard_uri_unavailable`. Client outbounds set `client_metadata` to an empty string, preserve the password, and never disable verification or include a private key. Non-loopback writes require `--allow-public`; lifecycle, export and Agent tests are local/mock evidence and do not prove public reachability or real SubMan synchronization.
+Authentication accepts 1–128 users with unique names and passwords. TLS is always enabled in the typed record and must use exactly `server_name`, `certificate_path` and `key_path`; the files are administrator-owned and are never issued, copied into the client export, or deleted by lifecycle operations. The AnyTLS listener is TCP; UDP business traffic uses the client/server UoT adapter rather than a native UDP listener. `client_trust:"certificate"` embeds only the public PEM in each client outbound, while `"system"` uses the client system trust store. AnyTLS has no standard share URI: `nodes` is credential-free, and `links` returns `links:{}`, per-user outbound JSON, and `warnings[].code=anytls_standard_uri_unavailable`. Client outbounds set `client_metadata` to an empty string, preserve the password, and never disable verification or include a private key. Non-loopback writes require `--allow-public`; lifecycle, export and Agent tests are local/mock evidence and do not prove public reachability or real SubMan synchronization.
 
 ## Hysteria2 typed instance contract
 
@@ -924,6 +924,21 @@ The private record contains the common `id`, `name`, `tag`, `listen`, `outbound_
 在 TCP 切片基础上，`multi_protocol_coexistence` 现在也调用共享 `verification_execute_protocol_udp_probe snell`。探针只接受活动 schema-2 marker、schema-1 store 和当前 v6 tag，复用生产 exporter 的 `network:["tcp","udp"]`，先执行固定 1.14.0 client `check`，再经 SOCKS5 UDP ASSOCIATE 发送精确 marker；Snell v6 listener 仍只有 TCP，UDP 语义由该认证 TCP 会话的 packet API 承载。
 
 定向 Docker run `dev/verification-runs/20260914153908` 的 `multi_protocol_coexistence` 与 `runtime_smoke` 均成功；共存 artifact 中 `protocol-probes/snell/result.env`、`udp.result.env` 均为 `RESULT=success`，并保留 TCP/UDP 精确响应、client check、渲染配置与 journal 的 packet-connection 行。该证据只覆盖固定核心、隔离 Docker/回环和受管 exporter，不把 packet API 误写成原生 UDP listener，也不代表公网、生产、外部认证、SubMan 或完整协议目标完成。
+
+## 2026-09-14：AnyTLS UoT UDP 数据面探针
+
+在既有 AnyTLS TCP marker 之上，`multi_protocol_coexistence` 新增共享
+`verification_execute_protocol_udp_probe anytls`。探针由受管 AnyTLS marker/state
+生成客户端 outbound，先执行 client `sing-box check`，并确认生成 JSON 不含
+可配置的 `network`、`transport` 或 `multiplex` 字段；随后通过 SOCKS5 UDP
+ASSOCIATE 发送精确 marker，经 AnyTLS UoT adapter 回到一次性 loopback UDP
+echo，保留 `udp.result.env`、`udp-response.txt`、client check 与 stderr。
+
+AnyTLS listener 仍是 TCP，UDP 结果表示 UoT adapter 的业务路径而非原生 UDP
+监听。定向 Docker run `dev/verification-runs/20260914165733` 的共存场景与
+runtime smoke 均成功，并保留 `inbound UoT connection` journal 行。该验证只
+覆盖固定 1.14.0、隔离 Docker/loopback 和受管客户端导出，不能推出公网可达、
+生产部署、外部认证、SubMan 或完整协议目标完成。
 
 ## External Documentation
 

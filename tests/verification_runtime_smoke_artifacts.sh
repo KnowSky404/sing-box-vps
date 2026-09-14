@@ -1422,7 +1422,8 @@ verification_finalize_scenario() {
 # The runtime-smoke harness uses a lightweight fake sing-box process and
 # cannot perform a real SOCKS5 UDP association.  The dedicated UDP probe
 # test exercises that data-plane helper with a fake SOCKS relay; keep this
-# artifact-dispatch harness focused on scenario routing and cleanup.
+# artifact-dispatch harness focused on scenario routing and cleanup while
+# mirroring every UDP call made by the real coexistence scenario.
 verification_execute_protocol_udp_probe() {
   local protocol=\$1
   verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/\${protocol}/udp.result.env" \
@@ -1440,6 +1441,7 @@ verification_scenario_multi_protocol_coexistence() {
   printf 'SCENARIO=multi_protocol_coexistence\n'
   printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
   verification_run_protocol_probes
+  verification_execute_protocol_udp_probe anytls /root/sing-box-vps/config.json
   verification_execute_protocol_udp_probe hy2 /root/sing-box-vps/config.json
   verification_execute_protocol_udp_probe shadowsocks /root/sing-box-vps/config.json
   verification_execute_protocol_udp_probe trojan /root/sing-box-vps/config.json
@@ -1624,6 +1626,7 @@ grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/hysteria/result.env"
 grep -Fqx 'RESULT=unsupported' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/mystery-protocol/result.env"
 grep -Fqx 'STATUS=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/result.env"
+grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/protocol-probes/anytls/udp.result.env"
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/protocol-probes/shadowsocks/udp.result.env"
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/protocol-probes/trojan/udp.result.env"
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/protocol-probes/vmess/udp.result.env"

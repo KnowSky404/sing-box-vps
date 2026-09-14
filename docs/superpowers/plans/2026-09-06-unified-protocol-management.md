@@ -763,3 +763,14 @@ SubMan 仍未验证，完整协议目标继续未完成。
 Snell v6 的 listener 仍固定为 TCP，但 exporter 现在明确输出 `network:["tcp","udp"]`，使客户端 adapter 同时保留流和 packet 能力。`multi_protocol_coexistence` 复用共享 `verification_execute_protocol_udp_probe`：先检查受管 schema-2 marker/store、当前 v6 tag 和固定 1.14.0 client 配置，再从 SOCKS5 UDP ASSOCIATE 发送带 Snell 标识的 marker，经认证 TCP 会话 packet API 到本地 UDP echo，严格回读响应并保存 `udp.result.env`、client check、stderr 和 journal。
 
 定向 Docker run `dev/verification-runs/20260914153908` 的 `multi_protocol_coexistence` 与 `runtime_smoke` 均成功；共存场景 Snell TCP HTTP marker 和 packet-API UDP marker 均为 `RESULT=success`，渲染配置和 exporter 回归同时通过。该切片证明受管 v6 的 TCP/packet API 闭环，不宣称原生 UDP listener、公网/生产、外部认证、SubMan 或完整协议目标完成；脚本版本保持 `2026091402`。
+
+### 2026-09-14：AnyTLS UoT UDP 数据面探针
+
+在既有 AnyTLS TCP 数据面证据上，`multi_protocol_coexistence` 新增共享
+`verification_execute_protocol_udp_probe anytls`。探针从受管 marker/state 生成
+AnyTLS outbound，先执行 client `sing-box check`，同时回归确认 AnyTLS 没有可配置
+的 `network`、`transport` 或 `multiplex` 字段；随后用 SOCKS5 UDP ASSOCIATE
+发送精确 marker，经 AnyTLS UoT adapter 到一次性 loopback UDP echo，并保存
+`udp.result.env`、精确响应、client check 和 stderr。AnyTLS 仍是 TCP listener，
+该结果只表示 UoT adapter 业务路径，不是原生 UDP listener、公网、生产、外部
+认证、SubMan 或完整协议目标完成证明；脚本版本保持 `2026091402`。
