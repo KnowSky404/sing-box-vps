@@ -406,6 +406,175 @@ PY
   verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/after-delete.env" \
     'RESULT=success' 'RESOURCES=managed_components_removed'
   verification_mark_step fresh_install_vless_openvpn_endpoint_udp_resources_cleaned
+
+  # A separate pair exercises OpenVPN's privileged system-device lifecycle.
+  # The core owns the named TUN interfaces and the tunnel handshake, while
+  # host routes and packet payload remain outside this scenario's claim.
+  local system_expected_revision="${udp_server_delete_revision}"
+  local system_server_create_revision=$((system_expected_revision + 1))
+  local system_client_create_revision=$((system_expected_revision + 2))
+  local system_client_delete_revision=$((system_expected_revision + 3))
+  local system_server_delete_revision=$((system_expected_revision + 4))
+  local system_server_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-system-server.json"
+  local system_client_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-system-client.json"
+  local system_server_create="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-system-server-create.json"
+  local system_client_create="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-system-client-create.json"
+  local system_client_delete="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-system-client-delete.json"
+  local system_server_delete="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-system-server-delete.json"
+  local system_diagnose="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-system-diagnose.json"
+  local system_after_delete_diagnose="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-system-after-delete-diagnose.json"
+  local system_journal_relative="${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/journalctl.txt"
+  local system_journal_path
+
+  if [[ "$(id -u)" -ne 0 || ! -c /dev/net/tun ]]; then
+    verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/result.env" \
+      'RESULT=blocked' 'REASON=system_tun_unavailable' 'PAYLOAD=not_attempted'
+    verification_mark_step fresh_install_vless_openvpn_endpoint_system_blocked
+    if [[ -n "${OPENVPN_ENDPOINT_MARKER_PID:-}" ]]; then
+      kill "${OPENVPN_ENDPOINT_MARKER_PID}" 2>/dev/null || true
+      wait "${OPENVPN_ENDPOINT_MARKER_PID}" 2>/dev/null || true
+      OPENVPN_ENDPOINT_MARKER_PID=''
+    fi
+    rm -rf -- "${endpoint_cert_dir}"
+    return 0
+  fi
+
+  (umask 077; jq -n --arg cert "${endpoint_cert_path}" --arg key "${endpoint_key_path}" '
+    {id:"openvpn-endpoint-system-server-verification",role:"endpoint",type:"openvpn-server",
+     tag:"openvpn-endpoint-system-server-verification",enabled:true,route_rules:[],config:{
+       mode:"tls",system:true,name:"sbv-ovpn-srv",listen:"127.0.0.1",listen_port:11996,
+       network:"tcp",address:["10.79.0.1/24"],mtu:1500,
+       users:[{username:"probe",password:"probe-pass"}],
+       tls:{certificate_path:$cert,key_path:$key,verify_client_certificate:"none"}}}' \
+    > "${system_server_record}")
+  (umask 077; jq -n --arg cert "${endpoint_cert_path}" '
+    {id:"openvpn-endpoint-system-client-verification",role:"endpoint",type:"openvpn-client",
+     tag:"openvpn-endpoint-system-client-verification",enabled:true,route_rules:[],config:{
+       mode:"tls",system:true,name:"sbv-ovpn-cli",server:"127.0.0.1",server_port:11996,
+       network:"tcp",address:["10.79.0.2/24"],mtu:1500,
+       username:"probe",password:"probe-pass",
+       tls:{certificate_path:$cert,server_name:"sing-box-vps-openvpn-verification.invalid",
+         remote_certificate_tls:"server"}}}' \
+    > "${system_client_record}")
+
+  bash /usr/local/bin/sbv agent component create --json --yes --allow-public \
+    --expected-revision "${system_expected_revision}" --file "${system_server_record}" > "${system_server_create}"
+  verification_capture_file_if_present "${system_server_create}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/server-create.json"
+  jq -e --argjson revision "${system_server_create_revision}" '.ok==true and .operation=="create" and .revision==$revision and
+    .type=="openvpn-server" and .service_restarted==true' "${system_server_create}" >/dev/null
+  verification_mark_step fresh_install_vless_openvpn_endpoint_system_server_created
+  verification_wait_for_service_active sing-box
+
+  bash /usr/local/bin/sbv agent component create --json --yes \
+    --expected-revision "${system_server_create_revision}" --file "${system_client_record}" > "${system_client_create}"
+  verification_capture_file_if_present "${system_client_create}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/client-create.json"
+  jq -e --argjson revision "${system_client_create_revision}" '.ok==true and .operation=="create" and .revision==$revision and
+    .type=="openvpn-client" and .service_restarted==true' "${system_client_create}" >/dev/null
+  verification_mark_step fresh_install_vless_openvpn_endpoint_system_client_created
+  verification_wait_for_service_active sing-box
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/config.check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/config.json" \
+    jq -c '{endpoints:[.endpoints[] | select(.tag == "openvpn-endpoint-system-server-verification" or
+      .tag == "openvpn-endpoint-system-client-verification")]}' \
+    /root/sing-box-vps/config.json
+  jq -e '
+    (.endpoints | length == 2) and
+    any(.endpoints[]; .type=="openvpn-server" and .system==true and .name=="sbv-ovpn-srv" and
+      .address==["10.79.0.1/24"] and .mtu==1500) and
+    any(.endpoints[]; .type=="openvpn-client" and .system==true and .name=="sbv-ovpn-cli" and
+      .address==["10.79.0.2/24"] and .mtu==1500)
+  ' "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/config.json")" >/dev/null
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/server-link.json" \
+    ip -j link show dev sbv-ovpn-srv
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/client-link.json" \
+    ip -j link show dev sbv-ovpn-cli
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/server-address.json" \
+    ip -j addr show dev sbv-ovpn-srv
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/client-address.json" \
+    ip -j addr show dev sbv-ovpn-cli
+  jq -e 'any(.[]; .ifname=="sbv-ovpn-srv" and .mtu==1500)' \
+    "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/server-link.json")" >/dev/null
+  jq -e 'any(.[]; .ifname=="sbv-ovpn-cli" and .mtu==1500)' \
+    "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/client-link.json")" >/dev/null
+  jq -e 'any(.[]; any(.addr_info[]?; .local=="10.79.0.1" and .prefixlen==24))' \
+    "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/server-address.json")" >/dev/null
+  jq -e 'any(.[]; any(.addr_info[]?; .local=="10.79.0.2" and .prefixlen==24))' \
+    "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/client-address.json")" >/dev/null
+  bash /usr/local/bin/sbv agent component diagnose --json > "${system_diagnose}"
+  verification_capture_file_if_present "${system_diagnose}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/diagnose.json"
+  jq -e '
+    .ok==true and .data.transparent_resources.status=="available" and
+    ([.data.transparent_resources.resources[] | select(.system_interface==true and
+      .interface_name=="sbv-ovpn-srv" and .interface.status=="present" and
+      .interface_addresses.status=="present" and .mtu.status=="present")] | length == 1) and
+    ([.data.transparent_resources.resources[] | select(.system_interface==true and
+      .interface_name=="sbv-ovpn-cli" and .interface.status=="present" and
+      .interface_addresses.status=="present" and .mtu.status=="present")] | length == 1)
+  ' "${system_diagnose}" >/dev/null
+  verification_mark_step fresh_install_vless_openvpn_endpoint_system_resources_observed
+  verification_capture_best_effort_command "${system_journal_relative}" \
+    journalctl -u sing-box -n 200 --no-pager
+  system_journal_path=$(verification_artifact_path "${system_journal_relative}")
+  grep -Fq 'peer connected' "${system_journal_path}"
+  grep -Fq 'tunnel established to 127.0.0.1:11996 over tcp' "${system_journal_path}"
+  grep -Fq 'started at sbv-ovpn-srv' "${system_journal_path}"
+  grep -Fq 'started at sbv-ovpn-cli' "${system_journal_path}"
+  verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/result.env" \
+    'RESULT=success' 'TRANSPORT=tcp' 'SYSTEM_INTERFACE=true' 'PAYLOAD=not_attempted' \
+    'RESOURCE_EVIDENCE=interface_and_tunnel'
+  verification_mark_step fresh_install_vless_openvpn_endpoint_system_tunnel_success
+
+  bash /usr/local/bin/sbv agent component delete --json --yes \
+    --expected-revision "${system_client_create_revision}" \
+    --id openvpn-endpoint-system-client-verification > "${system_client_delete}"
+  verification_capture_file_if_present "${system_client_delete}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/client-delete.json"
+  jq -e --argjson revision "${system_client_delete_revision}" '.ok==true and .operation=="delete" and .revision==$revision and
+    .id=="openvpn-endpoint-system-client-verification" and .service_restarted==true' \
+    "${system_client_delete}" >/dev/null
+  verification_mark_step fresh_install_vless_openvpn_endpoint_system_client_deleted
+  verification_wait_for_service_active sing-box
+  verification_capture_best_effort_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/client-after-delete.link.json" \
+    ip -j link show dev sbv-ovpn-cli
+  if ip -j link show dev sbv-ovpn-cli >/dev/null 2>&1; then
+    printf 'OpenVPN system client interface remained after managed component deletion\n' >&2
+    return 1
+  fi
+
+  bash /usr/local/bin/sbv agent component delete --json --yes \
+    --expected-revision "${system_client_delete_revision}" \
+    --id openvpn-endpoint-system-server-verification > "${system_server_delete}"
+  verification_capture_file_if_present "${system_server_delete}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/server-delete.json"
+  jq -e --argjson revision "${system_server_delete_revision}" '.ok==true and .operation=="delete" and .revision==$revision and
+    .id=="openvpn-endpoint-system-server-verification" and .service_restarted==true' \
+    "${system_server_delete}" >/dev/null
+  verification_mark_step fresh_install_vless_openvpn_endpoint_system_server_deleted
+  verification_wait_for_service_active sing-box
+  verification_capture_best_effort_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/server-after-delete.link.json" \
+    ip -j link show dev sbv-ovpn-srv
+  if ip -j link show dev sbv-ovpn-srv >/dev/null 2>&1 ||
+     ip -j link show dev sbv-ovpn-cli >/dev/null 2>&1; then
+    printf 'OpenVPN system interfaces remained after managed component cleanup\n' >&2
+    return 1
+  fi
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/after-delete.check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  bash /usr/local/bin/sbv agent component diagnose --json > "${system_after_delete_diagnose}"
+  verification_capture_file_if_present "${system_after_delete_diagnose}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/after-delete-diagnose.json"
+  jq -e '.ok==true and .data.transparent_resources.status=="available" and
+    (.data.transparent_resources.resources | length == 0)' \
+    "${system_after_delete_diagnose}" >/dev/null
+  verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/after-delete.env" \
+    'RESULT=success' 'RESOURCES=managed_system_interfaces_removed'
+  verification_mark_step fresh_install_vless_openvpn_endpoint_system_resources_cleaned
   if [[ -n "${OPENVPN_ENDPOINT_MARKER_PID:-}" ]]; then
     kill "${OPENVPN_ENDPOINT_MARKER_PID}" 2>/dev/null || true
     wait "${OPENVPN_ENDPOINT_MARKER_PID}" 2>/dev/null || true

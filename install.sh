@@ -16462,36 +16462,62 @@ managed_component_tun_route_options_json() {
 managed_component_transparent_resources_json() (
   local config_file=${1:-${SINGBOX_CONFIG_FILE:-}} service_state=${2:-unknown}
   local snapshot records='[]' resources='[]' status=not_assessed reason=service_inactive
-  local tun_count=0 bridge_count=0 record tag type interface_name auto_route auto_redirect
+  local tun_count=0 bridge_count=0 openvpn_system_count=0 record tag type interface_name auto_route auto_redirect
   local table_index rule_index link_status route_status rule_status nft_status
   local bridge_name bound_interface bridge_interface_name bridge_port bridge_index
   local bridge_table bridge_rule bridge_octet bridge_configured_table bridge_configured_rule
-  local link_file rule_file route_file nft_file output_size
+  local system_interface_name system_addresses system_mtu system_address_count
+  local expected_address expected_addr expected_prefix actual_mtu
+  local interface_status address_status mtu_status
+  local link_file address_file rule_file route_file nft_file output_size
   [[ -f "${config_file}" && ! -L "${config_file}" && -r "${config_file}" ]] || return 1
   snapshot=$(mktemp -d /tmp/sbv-transparent-resources.XXXXXX) || return 1
   trap 'rm -rf -- "${snapshot}"' EXIT INT TERM HUP
   head -c 4194305 -- "${config_file}" > "${snapshot}/config.json" || return 1
   [[ "$(wc -c < "${snapshot}/config.json")" -le 4194304 ]] || return 1
-  records=$(jq -c '[
-    (.inbounds[]? | select(.type == "tun" or .type == "redirect" or .type == "tproxy")),
-    (.outbounds[]? | select(.type == "bridge")) |
-    {tag:(.tag // ""),type:.type,interface_name:(.interface_name // "tun0"),
-     auto_route:(.auto_route // false),auto_redirect:(.auto_redirect // false),
-     table_index:(.iproute2_table_index // null),rule_index:(.iproute2_rule_index // null),
-     bridge_name:(.bridge_name // "bridge"),bound_interface:(.interface // ""),
-     listen:(.listen // ""),listen_port:(.listen_port // 0)}]' "${snapshot}/config.json") || return 1
+  records=$(jq -c '
+    [
+      (.inbounds[]? | select(.type == "tun" or .type == "redirect" or .type == "tproxy") |
+        {tag:(.tag // ""),type:.type,interface_name:(.interface_name // "tun0"),
+         auto_route:(.auto_route // false),auto_redirect:(.auto_redirect // false),
+         table_index:(.iproute2_table_index // null),rule_index:(.iproute2_rule_index // null),
+         bridge_name:(.bridge_name // "bridge"),bound_interface:(.interface // ""),
+         listen:(.listen // ""),listen_port:(.listen_port // 0),system_interface:false,
+         addresses:[],mtu:null}),
+      (.outbounds[]? | select(.type == "bridge") |
+        {tag:(.tag // ""),type:.type,interface_name:(.interface_name // "tun0"),
+         auto_route:(.auto_route // false),auto_redirect:(.auto_redirect // false),
+         table_index:(.iproute2_table_index // null),rule_index:(.iproute2_rule_index // null),
+         bridge_name:(.bridge_name // "bridge"),bound_interface:(.interface // ""),
+         listen:(.listen // ""),listen_port:(.listen_port // 0),system_interface:false,
+         addresses:[],mtu:null}),
+      (.endpoints[]? |
+        select((.type == "openvpn-client" or .type == "openvpn-server") and .system == true) |
+        {tag:(.tag // ""),type:.type,interface_name:(.name // ""),
+         auto_route:false,auto_redirect:false,table_index:null,rule_index:null,
+         bridge_name:"",bound_interface:"",listen:(.listen // ""),listen_port:(.listen_port // 0),
+         system_interface:true,
+         addresses:(if ((.address? // null) | type) == "array" then
+                      [.address[] | select(type == "string" and length > 0)]
+                    elif ((.address? // null) | type) == "string" and (.address | length > 0) then
+                      [.address]
+                    else [] end),
+         mtu:(if ((.mtu? // null) | type) == "number" and (.mtu // 0) > 0 then .mtu else 1500 end)})
+    ]
+  ' "${snapshot}/config.json") || return 1
   tun_count=$(jq -r '[.[] | select(.type == "tun")] | length' <<< "${records}") || return 1
   bridge_count=$(jq -r '[.[] | select(.type == "bridge")] | length' <<< "${records}") || return 1
+  openvpn_system_count=$(jq -r '[.[] | select(.system_interface == true)] | length' <<< "${records}") || return 1
   if [[ "${service_state}" != active ]]; then
     jq -cn --arg status "${status}" --arg reason "${reason}" --argjson resources "${records}" \
-      '{status:$status,reason:$reason,service_active:false,resources:($resources | map({tag,type,listen,listen_port,resource_scope:(if .type == "tun" or .type == "bridge" then "core_owned" else "operator_policy_required" end),status:"not_assessed",reason:"service_inactive"})),limitations:["redirect/tproxy host policy rules are not installer-owned","TUN/bridge core-owned resources require a running core"]}'
+      '{status:$status,reason:$reason,service_active:false,resources:($resources | map({tag,type,listen,listen_port,interface_name:(if .system_interface then .interface_name else null end),resource_scope:(if .type == "tun" or .type == "bridge" or .system_interface then "core_owned" else "operator_policy_required" end),status:"not_assessed",reason:"service_inactive"})),limitations:["redirect/tproxy host policy rules are not installer-owned","TUN/bridge/OpenVPN system interfaces are core-owned resources and require a running core"]}'
     return 0
   fi
-  if (( tun_count == 0 && bridge_count == 0 )) && ! jq -e 'any(.[]; .type == "redirect" or .type == "tproxy")' <<< "${records}" >/dev/null 2>&1; then
+  if (( tun_count == 0 && bridge_count == 0 && openvpn_system_count == 0 )) && ! jq -e 'any(.[]; .type == "redirect" or .type == "tproxy")' <<< "${records}" >/dev/null 2>&1; then
     jq -cn '{status:"available",reason:null,service_active:true,resources:[],limitations:[]}'
     return 0
   fi
-  if (( tun_count == 0 && bridge_count == 0 )); then
+  if (( tun_count == 0 && bridge_count == 0 && openvpn_system_count == 0 )); then
     jq -cn --argjson resources "${records}" \
       '{status:"not_assessed",reason:"host_policy_rules_not_managed",service_active:true,
         resources:($resources | map({tag,type,listen,listen_port,
@@ -16502,11 +16528,11 @@ managed_component_transparent_resources_json() (
   fi
   status=available
   reason=''
+  link_file="${snapshot}/link.json"
   if ! command -v ip >/dev/null 2>&1; then
     status=unavailable
     reason=iproute2_missing
-  else
-    link_file="${snapshot}/link.json"
+  elif (( tun_count > 0 || bridge_count > 0 )); then
     rule_file="${snapshot}/rule.json"
     route_file="${snapshot}/route.json"
     if ! ip -j rule show > "${rule_file}" 2>"${snapshot}/rule.stderr"; then
@@ -16554,6 +16580,90 @@ managed_component_transparent_resources_json() (
     [[ -n "${record}" ]] || continue
     tag=$(jq -r '.tag' <<< "${record}") || return 1
     type=$(jq -r '.type' <<< "${record}") || return 1
+    if [[ "${type}" == openvpn-client || "${type}" == openvpn-server ]]; then
+      system_interface_name=$(jq -r '.interface_name // ""' <<< "${record}") || return 1
+      system_addresses=$(jq -c '.addresses // []' <<< "${record}") || return 1
+      system_mtu=$(jq -r '.mtu // 1500' <<< "${record}") || return 1
+      address_file="${snapshot}/addr.json"
+      interface_status=not_assessed
+      address_status=not_assessed
+      mtu_status=not_assessed
+      if [[ -z "${system_interface_name}" ]]; then
+        if [[ "${status}" == available ]]; then
+          status=not_assessed
+          reason=openvpn_system_interface_name_unset
+        fi
+      elif [[ ! "${system_interface_name}" =~ ^[A-Za-z0-9_.-]{1,15}$ ]]; then
+        if [[ "${status}" == available ]]; then
+          status=not_assessed
+          reason=openvpn_system_interface_name_invalid
+        fi
+      elif [[ "${status}" == unavailable ]]; then
+        interface_status=not_probed
+        address_status=not_probed
+        mtu_status=not_probed
+      else
+        interface_status=missing
+        mtu_status=missing
+        if ip -j link show dev "${system_interface_name}" > "${link_file}" 2>"${snapshot}/link.stderr"; then
+          if [[ "$(wc -c < "${link_file}")" -le 1048576 ]] &&
+             jq -e 'type == "array"' "${link_file}" >/dev/null 2>&1 &&
+             jq -e --arg name "${system_interface_name}" 'any(.[]; .ifname == $name)' "${link_file}" >/dev/null 2>&1; then
+            interface_status=present
+            actual_mtu=$(jq -r --arg name "${system_interface_name}" \
+              '[.[] | select(.ifname == $name) | .mtu][0] // empty' "${link_file}") || return 1
+            if [[ -n "${actual_mtu}" && "${actual_mtu}" == "${system_mtu}" ]]; then
+              mtu_status=present
+            fi
+          fi
+        fi
+        system_address_count=$(jq -r 'length' <<< "${system_addresses}") || return 1
+        if (( system_address_count == 0 )); then
+          address_status=not_required
+        elif [[ "${interface_status}" == present ]]; then
+          address_status=present
+          if ! ip -j addr show dev "${system_interface_name}" > "${address_file}" 2>"${snapshot}/addr.stderr" ||
+             [[ ! -f "${address_file}" ]] ||
+             [[ "$(wc -c < "${address_file}")" -gt 1048576 ]] ||
+             ! jq -e 'type == "array"' "${address_file}" >/dev/null 2>&1; then
+            address_status=missing
+          else
+            while IFS= read -r expected_address; do
+              [[ -n "${expected_address}" ]] || continue
+              if [[ "${expected_address}" != */* ]]; then
+                address_status=missing
+                break
+              fi
+              expected_addr=${expected_address%/*}
+              expected_prefix=${expected_address##*/}
+              if ! jq -e --arg addr "${expected_addr}" --arg prefix "${expected_prefix}" \
+                'any(.[]?.addr_info[]?; (.local // "") == $addr and (((.prefixlen // "") | tostring) == $prefix))' \
+                "${address_file}" >/dev/null 2>&1; then
+                address_status=missing
+                break
+              fi
+            done < <(jq -r '.[]' <<< "${system_addresses}")
+          fi
+        else
+          address_status=not_probed
+        fi
+      fi
+      record=$(jq -c --argjson item "${record}" --arg link "${interface_status}" \
+        --arg addresses "${address_status}" --arg mtu "${mtu_status}" \
+        '{tag:$item.tag,type:$item.type,interface_name:$item.interface_name,system_interface:true,
+          expected_addresses:$item.addresses,expected_mtu:$item.mtu,resource_scope:"core_owned",
+          interface:{status:$link},interface_addresses:{status:$addresses},mtu:{status:$mtu}}' \
+        <<< "${record}") || return 1
+      if [[ "${status}" != unavailable && -n "${system_interface_name}" &&
+            "${system_interface_name}" =~ ^[A-Za-z0-9_.-]{1,15}$ &&
+            ( "${interface_status}" != present || "${mtu_status}" != present ||
+              ( "${address_status}" != present && "${address_status}" != not_required ) ) ]]; then
+        status=unavailable
+        reason=openvpn_system_runtime_resources_missing
+      fi
+      resources=$(jq -c --argjson item "${record}" '. + [$item]' <<< "${resources}") || return 1
+      continue
+    fi
     if [[ "${type}" == bridge ]]; then
       bridge_name=$(jq -r '.bridge_name // "bridge"' <<< "${record}") || return 1
       [[ "${bridge_name}" =~ ^[A-Za-z0-9_.-]{1,15}$ ]] || return 1
@@ -16723,7 +16833,7 @@ managed_component_transparent_resources_json() (
   done < <(jq -c '.[]' <<< "${records}")
   jq -cn --arg status "${status}" --arg reason "${reason}" --argjson resources "${resources}" \
     '{status:$status,reason:(if $reason == "" then null else $reason end),service_active:true,resources:$resources,
-      limitations:["redirect/tproxy host policy rules are not installer-owned","bridge forwarding/NAT policy is core-dynamic and observation only","reported core-owned state is observation only"]}'
+      limitations:["redirect/tproxy host policy rules are not installer-owned","bridge forwarding/NAT policy is core-dynamic and observation only","OpenVPN system interface addresses and MTU are observed but routes and packet payload are not claimed","reported core-owned state is observation only"]}'
 )
 
 managed_component_transparent_runtime_healthy() {
@@ -16735,7 +16845,9 @@ managed_component_transparent_runtime_healthy() {
     type == "object" and
     .service_active == true and
     (.resources | type == "array" and length > 0) and
-    any(.resources[]; .type == "tun" or .type == "bridge") and
+    any(.resources[];
+      .type == "tun" or .type == "bridge" or
+      (.system_interface == true and (.interface_name // "") != "")) and
     (all(.resources[] | select(.type == "tun");
       .interface.status == "present" and
       ((.auto_route != true) or
@@ -16745,6 +16857,11 @@ managed_component_transparent_runtime_healthy() {
     (all(.resources[] | select(.type == "bridge");
       .interface.status == "present" and
       .policy_routing.status == "present" and .rule.status == "present"))
+    and
+    (all(.resources[] | select(.system_interface == true and (.interface_name // "") != "");
+      .interface.status == "present" and
+      (.interface_addresses.status == "present" or .interface_addresses.status == "not_required") and
+      .mtu.status == "present"))
   ' <<< "${report}" >/dev/null 2>&1
 }
 
@@ -17452,7 +17569,11 @@ managed_component_state_apply() {
     service_restarted=true
   fi
   if [[ "${service_restarted}" == true ]] &&
-     jq -e 'any(.inbounds[]?; .type == "tun") or any(.outbounds[]?; .type == "bridge")' \
+     jq -e 'any(.inbounds[]?; .type == "tun") or
+       any(.outbounds[]?; .type == "bridge") or
+       any(.endpoints[]?;
+         (.type == "openvpn-client" or .type == "openvpn-server") and
+         .system == true and ((.name // "") | length > 0))' \
        "${SINGBOX_CONFIG_FILE}" >/dev/null 2>&1; then
     if ! managed_component_transparent_runtime_healthy_with_retry "${SINGBOX_CONFIG_FILE}"; then
       if [[ -n "${firewall_journal}" ]]; then
@@ -29094,7 +29215,7 @@ agent_component_cli() {
       component_takeover_conflict) agent_json_error component_takeover_conflict "接管对象与现有组件 ID/tag 冲突；未修改。" ;;
       config_check_failed) agent_json_error config_check_failed "组件接管已回滚；候选配置或无损保留校验失败。" ;;
       service_restart_failed) agent_json_error service_restart_failed "组件接管已回滚；服务重启失败。" ;;
-      transparent_resource_check_failed) agent_json_error transparent_resource_check_failed "组件接管已回滚；TUN core-owned 接口、路由或规则未就绪。" ;;
+      transparent_resource_check_failed) agent_json_error transparent_resource_check_failed "组件接管已回滚；core-owned 透明资源未就绪。" ;;
       firewall_prepare_failed) agent_json_error firewall_prepare_failed "组件接管已回滚；防火墙资源预检失败。" ;;
       firewall_apply_failed) agent_json_error firewall_apply_failed "组件接管已回滚；防火墙资源应用失败。" ;;
       firewall_commit_failed) agent_json_error firewall_commit_failed "组件接管已回滚；防火墙资源提交失败。" ;;
@@ -29125,7 +29246,7 @@ agent_component_cli() {
       component_cleanup_failed) agent_json_error component_cleanup_failed "组件已提交，但持久事务目录清理失败；请执行 component recover。" ;;
       config_check_failed) agent_json_error config_check_failed "组件重建已回滚；生成的配置未通过图校验、监听校验或 sing-box check。" ;;
       service_restart_failed) agent_json_error service_restart_failed "组件重建已回滚；服务重启失败。" ;;
-      transparent_resource_check_failed) agent_json_error transparent_resource_check_failed "组件重建已回滚；TUN core-owned 接口、路由或规则未就绪。" ;;
+      transparent_resource_check_failed) agent_json_error transparent_resource_check_failed "组件重建已回滚；core-owned 透明资源未就绪。" ;;
       firewall_prepare_failed) agent_json_error firewall_prepare_failed "组件重建已回滚；防火墙资源预检失败。" ;;
       firewall_apply_failed) agent_json_error firewall_apply_failed "组件重建已回滚；防火墙资源应用失败。" ;;
       firewall_commit_failed) agent_json_error firewall_commit_failed "组件重建已回滚；防火墙资源提交失败。" ;;
@@ -29168,7 +29289,7 @@ agent_component_cli() {
     component_referenced_or_missing) agent_json_error component_referenced "组件仍被 route/group/detour 引用，或目标不存在；未修改。" ;;
     record_invalid|component_conflict) agent_json_error invalid_component "组件记录无效、类型不受支持或 tag/id 冲突；未修改。" ;;
     service_restart_failed) agent_json_error service_restart_failed "组件已回滚；服务重启失败。" ;;
-    transparent_resource_check_failed) agent_json_error transparent_resource_check_failed "组件已回滚；TUN core-owned 接口、路由或规则未就绪。" ;;
+    transparent_resource_check_failed) agent_json_error transparent_resource_check_failed "组件已回滚；core-owned 透明资源未就绪。" ;;
     config_check_failed) agent_json_error config_check_failed "组件已回滚；生成的配置未通过图校验或 sing-box check。" ;;
     root_required) agent_json_error root_required "组件写操作必须以 root 执行；未修改。" ;;
     component_write_busy) agent_json_error component_write_busy "另一个管理进程正在执行；组件未修改。" ;;

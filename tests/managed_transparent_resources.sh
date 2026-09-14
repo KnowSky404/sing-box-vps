@@ -40,11 +40,25 @@ if [[ "${1:-}" == "-j" && "${2:-}" == "rule" ]]; then
   printf '%s\n' '[{"priority":9000,"src":"all","table":"2022"},{"priority":120,"iif":"sbv-bridge0","table":"2200"},{"priority":121,"dst":"192.0.2.1","table":"main"}]'
 elif [[ "${1:-}" == "-j" && "${2:-}" == "route" ]]; then
   printf '%s\n' '[{"dst":"default","dev":"sbv-tun-probe","table":"2022"},{"dst":"192.0.2.1","dev":"sbv-bridge0"},{"dst":"default","dev":"lo","table":"2200"}]'
+elif [[ "${1:-}" == "-j" && "${2:-}" == "addr" ]]; then
+  if [[ "${5:-}" == "sbv-ovpn-client" ]]; then
+    printf '%s\n' '[{"ifname":"sbv-ovpn-client","addr_info":[{"family":"inet","local":"10.79.0.2","prefixlen":24}]}]'
+  elif [[ "${5:-}" == "sbv-ovpn-server" ]]; then
+    printf '%s\n' '[{"ifname":"sbv-ovpn-server","addr_info":[{"family":"inet","local":"10.79.0.1","prefixlen":24}]}]'
+  else
+    printf '%s\n' '[]'
+  fi
 elif [[ "${1:-}" == "-j" && "${2:-}" == "link" ]]; then
   if [[ "${5:-}" == "missing-tun" ]]; then
     printf '%s\n' '[]'
+  elif [[ "${5:-}" == "missing-ovpn" ]]; then
+    printf '%s\n' '[]'
   elif [[ "${5:-}" == "sbv-bridge0" ]]; then
     printf '%s\n' '[{"ifname":"sbv-bridge0","operstate":"UP"}]'
+  elif [[ "${5:-}" == "sbv-ovpn-client" ]]; then
+    printf '%s\n' '[{"ifname":"sbv-ovpn-client","operstate":"UP","mtu":1500}]'
+  elif [[ "${5:-}" == "sbv-ovpn-server" ]]; then
+    printf '%s\n' '[{"ifname":"sbv-ovpn-server","operstate":"UP","mtu":1500}]'
   else
     printf '%s\n' '[{"ifname":"sbv-tun-probe","operstate":"UP"}]'
   fi
@@ -115,6 +129,93 @@ mv -f "${bridge_config_file}.next" "${bridge_config_file}"
 bridge_missing=$(managed_component_transparent_resources_json "${bridge_config_file}" active)
 jq -e '.status == "unavailable" and .reason == "bridge_runtime_resources_missing" and
   .resources[0].interface.status == "missing"' <<< "${bridge_missing}" >/dev/null
+
+# Named OpenVPN system endpoints are core-owned resources.  The probe observes
+# the exact kernel interface, configured address/prefix, and MTU; it does not
+# infer host routes or claim packet payload delivery.
+openvpn_config_file="${TMP_DIR}/openvpn-system-config.json"
+jq -n '{
+  inbounds:[],
+  endpoints:[
+    {type:"openvpn-server",tag:"ovpn-server",system:true,name:"sbv-ovpn-server",address:["10.79.0.1/24"],mtu:1500},
+    {type:"openvpn-client",tag:"ovpn-client",system:true,name:"sbv-ovpn-client",address:["10.79.0.2/24"],mtu:1500}
+  ],
+  outbounds:[],route:{final:"direct"}
+}' > "${openvpn_config_file}"
+openvpn_active=$(managed_component_transparent_resources_json "${openvpn_config_file}" active)
+jq -e '
+  .status == "available" and .reason == null and .service_active == true and
+  ([.resources[] | select(.system_interface == true and .tag == "ovpn-server") |
+    .interface_name == "sbv-ovpn-server" and .interface.status == "present" and
+    .interface_addresses.status == "present" and .mtu.status == "present" and
+    .expected_addresses == ["10.79.0.1/24"] and .expected_mtu == 1500] | length == 1) and
+  ([.resources[] | select(.system_interface == true and .tag == "ovpn-client") |
+    .interface_name == "sbv-ovpn-client" and .interface.status == "present" and
+    .interface_addresses.status == "present" and .mtu.status == "present" and
+    .expected_addresses == ["10.79.0.2/24"] and .expected_mtu == 1500] | length == 1)
+' <<< "${openvpn_active}" >/dev/null
+managed_component_transparent_runtime_healthy "${openvpn_config_file}"
+
+jq '.endpoints[0].name = "missing-ovpn"' "${openvpn_config_file}" > "${openvpn_config_file}.next"
+mv -f "${openvpn_config_file}.next" "${openvpn_config_file}"
+openvpn_missing=$(managed_component_transparent_resources_json "${openvpn_config_file}" active)
+jq -e '.status == "unavailable" and .reason == "openvpn_system_runtime_resources_missing" and
+  ([.resources[] | select(.tag == "ovpn-server") |
+    .interface_name == "missing-ovpn" and .interface.status == "missing" and
+    .interface_addresses.status == "not_probed" and .mtu.status == "missing"] | length == 1)' \
+  <<< "${openvpn_missing}" >/dev/null
+
+jq '.endpoints[0].address = ["10.79.0.99/24"]' "${openvpn_config_file}" > "${openvpn_config_file}.next"
+mv -f "${openvpn_config_file}.next" "${openvpn_config_file}"
+openvpn_address_missing=$(managed_component_transparent_resources_json "${openvpn_config_file}" active)
+jq -e '.status == "unavailable" and .reason == "openvpn_system_runtime_resources_missing" and
+  ([.resources[] | select(.tag == "ovpn-server") |
+    .interface.status == "present" and .interface_addresses.status == "missing" and
+    .mtu.status == "present"] | length == 1)' \
+  <<< "${openvpn_address_missing}" >/dev/null
+
+jq '.endpoints[0].address = ["10.79.0.1/24"] | .endpoints[0].mtu = 1400' \
+  "${openvpn_config_file}" > "${openvpn_config_file}.next"
+mv -f "${openvpn_config_file}.next" "${openvpn_config_file}"
+openvpn_mtu_missing=$(managed_component_transparent_resources_json "${openvpn_config_file}" active)
+jq -e '.status == "unavailable" and .reason == "openvpn_system_runtime_resources_missing" and
+  ([.resources[] | select(.tag == "ovpn-server") |
+    .interface.status == "present" and .interface_addresses.status == "present" and
+    .mtu.status == "missing"] | length == 1)' \
+  <<< "${openvpn_mtu_missing}" >/dev/null
+
+jq '.endpoints[0].mtu = 1500 | .endpoints[0].name = "bad name"' \
+  "${openvpn_config_file}" > "${openvpn_config_file}.next"
+mv -f "${openvpn_config_file}.next" "${openvpn_config_file}"
+openvpn_invalid=$(managed_component_transparent_resources_json "${openvpn_config_file}" active)
+jq -e '.status == "not_assessed" and .reason == "openvpn_system_interface_name_invalid" and
+  ([.resources[] | select(.tag == "ovpn-server") |
+    .interface_name == "bad name" and .interface.status == "not_assessed" and
+    .interface_addresses.status == "not_assessed" and .mtu.status == "not_assessed"] | length == 1)' \
+  <<< "${openvpn_invalid}" >/dev/null
+
+jq '.endpoints[0].name = ""' "${openvpn_config_file}" > "${openvpn_config_file}.next"
+mv -f "${openvpn_config_file}.next" "${openvpn_config_file}"
+openvpn_unset=$(managed_component_transparent_resources_json "${openvpn_config_file}" active)
+jq -e '.status == "not_assessed" and .reason == "openvpn_system_interface_name_unset" and
+  ([.resources[] | select(.tag == "ovpn-server") |
+    .interface_name == "" and .interface.status == "not_assessed" and
+    .interface_addresses.status == "not_assessed" and .mtu.status == "not_assessed"] | length == 1)' \
+  <<< "${openvpn_unset}" >/dev/null
+
+# An unassessed endpoint must not suppress an independently named resource,
+# regardless of endpoint order.  The named resource remains observable while
+# the aggregate status retains the honest unset-name limitation.
+jq '(.endpoints[0].name = "") | (.endpoints[1].name = "sbv-ovpn-client")' \
+  "${openvpn_config_file}" > "${openvpn_config_file}.next"
+mv -f "${openvpn_config_file}.next" "${openvpn_config_file}"
+openvpn_mixed=$(managed_component_transparent_resources_json "${openvpn_config_file}" active)
+jq -e '
+  .status == "not_assessed" and .reason == "openvpn_system_interface_name_unset" and
+  ([.resources[] | select(.tag == "ovpn-client") |
+    .interface_name == "sbv-ovpn-client" and .interface.status == "present" and
+    .interface_addresses.status == "present" and .mtu.status == "present"] | length == 1)
+' <<< "${openvpn_mixed}" >/dev/null
 
 # A failed iproute2 probe must remain a structured unavailable diagnostic; it
 # must not try to read an absent route snapshot or block on stdin.

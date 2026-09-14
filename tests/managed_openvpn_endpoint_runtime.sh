@@ -256,4 +256,139 @@ run_openvpn_transport() {
 run_openvpn_transport tcp 11994 15091 10.77.0.1/24
 run_openvpn_transport udp 11995 15092 10.78.0.1/24
 
-printf 'OpenVPN endpoint TCP+UDP runtime closures passed: %s\n' "${MARKER}"
+SYSTEM_RUNTIME_RESULT=skipped
+if [[ "$(id -u)" -ne 0 || ! -c /dev/net/tun ]]; then
+  printf 'SKIP OpenVPN system endpoint runtime: root or /dev/net/tun unavailable\n'
+else
+  run_openvpn_system_transport() {
+    local server_port=11996
+    local server_tag=openvpn-runtime-system-server
+    local client_tag=openvpn-runtime-system-client
+    local server_name=sbv-ovpn-srv
+    local client_name=sbv-ovpn-cli
+    local config_path="${TEST_DIR}/config-system.json"
+    local core_stdout_path="${TEST_DIR}/core-system.stdout"
+    local core_stderr_path="${TEST_DIR}/core-system.stderr"
+    local link_path="${TEST_DIR}/system-link.json"
+    local address_path="${TEST_DIR}/system-address.json"
+    local ready=1
+    local endpoint interface_name expected_address
+
+    jq -n \
+      --arg cert "${CERT_PATH}" \
+      --arg key "${KEY_PATH}" \
+      --arg server_tag "${server_tag}" \
+      --arg client_tag "${client_tag}" \
+      --arg server_name "${server_name}" \
+      --arg client_name "${client_name}" \
+      --argjson server_port "${server_port}" \
+      ' {
+        log: { level: "info", timestamp: false },
+        inbounds: [],
+        endpoints: [
+          {
+            type: "openvpn-server",
+            tag: $server_tag,
+            system: true,
+            name: $server_name,
+            listen: "127.0.0.1",
+            listen_port: $server_port,
+            network: "tcp",
+            address: ["10.79.0.1/24"],
+            mtu: 1500,
+            users: [{username: "probe", password: "probe-pass"}],
+            tls: {
+              certificate_path: $cert,
+              key_path: $key,
+              verify_client_certificate: "none"
+            }
+          },
+          {
+            type: "openvpn-client",
+            tag: $client_tag,
+            system: true,
+            name: $client_name,
+            server: "127.0.0.1",
+            server_port: $server_port,
+            network: "tcp",
+            address: ["10.79.0.2/24"],
+            mtu: 1500,
+            username: "probe",
+            password: "probe-pass",
+            tls: {
+              certificate_path: $cert,
+              server_name: "sing-box-vps-openvpn-runtime.invalid",
+              remote_certificate_tls: "server"
+            }
+          }
+        ],
+        outbounds: [{type: "direct", tag: "direct"}],
+        route: {final: "direct"}
+      }' > "${config_path}"
+
+    "${CORE}" check -c "${config_path}"
+    "${CORE}" run -c "${config_path}" >"${core_stdout_path}" 2>"${core_stderr_path}" &
+    CORE_PID=$!
+
+    for _ in {1..200}; do
+      kill -0 "${CORE_PID}" 2>/dev/null || {
+        printf 'OpenVPN system endpoint core exited before resource startup\n' >&2
+        /usr/bin/sed -n '1,200p' "${core_stderr_path}" >&2
+        return 1
+      }
+      if ip -j link show dev "${server_name}" >"${link_path}" 2>/dev/null &&
+         jq -e --arg name "${server_name}" 'any(.[]; .ifname == $name and .mtu == 1500)' \
+           "${link_path}" >/dev/null 2>&1 &&
+         ip -j link show dev "${client_name}" >"${link_path}" 2>/dev/null &&
+         jq -e --arg name "${client_name}" 'any(.[]; .ifname == $name and .mtu == 1500)' \
+           "${link_path}" >/dev/null 2>&1 &&
+         grep -Fq "started at ${server_name}" "${core_stderr_path}" &&
+         grep -Fq "started at ${client_name}" "${core_stderr_path}" &&
+         grep -Fq 'peer connected' "${core_stderr_path}" &&
+         grep -Fq 'tunnel established' "${core_stderr_path}"; then
+        ready=0
+        break
+      fi
+      sleep 0.1
+    done
+    if [[ "${ready}" != 0 ]]; then
+      printf 'OpenVPN system endpoint resources did not converge\n' >&2
+      /usr/bin/sed -n '1,240p' "${core_stderr_path}" >&2
+      return 1
+    fi
+
+    for endpoint in "${server_name}:10.79.0.1" "${client_name}:10.79.0.2"; do
+      interface_name=${endpoint%%:*}
+      expected_address=${endpoint##*:}
+      ip -j addr show dev "${interface_name}" >"${address_path}"
+      jq -e --arg name "${interface_name}" --arg address "${expected_address}" \
+        'any(.[]; .ifname == $name and any(.addr_info[]?; .local == $address and .prefixlen == 24))' \
+        "${address_path}" >/dev/null
+    done
+
+    jq -e --arg server_tag "${server_tag}" --arg client_tag "${client_tag}" \
+      --arg server_name "${server_name}" --arg client_name "${client_name}" '
+      ([.endpoints[] | select(.tag == $server_tag and .type == "openvpn-server" and
+        .system == true and .name == $server_name and .address == ["10.79.0.1/24"])] | length == 1) and
+      ([.endpoints[] | select(.tag == $client_tag and .type == "openvpn-client" and
+        .system == true and .name == $client_name and .address == ["10.79.0.2/24"])] | length == 1)
+    ' "${config_path}" >/dev/null
+
+    kill "${CORE_PID}" 2>/dev/null || true
+    wait "${CORE_PID}" 2>/dev/null || true
+    CORE_PID=''
+    if ip -j link show dev "${server_name}" >/dev/null 2>&1 ||
+       ip -j link show dev "${client_name}" >/dev/null 2>&1; then
+      printf 'OpenVPN system endpoint interfaces remained after core shutdown\n' >&2
+      return 1
+    fi
+    printf 'OpenVPN system endpoint resource/tunnel closure passed: %s,%s\n' \
+      "${server_name}" "${client_name}"
+  }
+
+  run_openvpn_system_transport
+  SYSTEM_RUNTIME_RESULT=passed
+fi
+
+printf 'OpenVPN endpoint TCP+UDP runtime closures passed: %s; system resource/tunnel: %s\n' \
+  "${MARKER}" "${SYSTEM_RUNTIME_RESULT}"

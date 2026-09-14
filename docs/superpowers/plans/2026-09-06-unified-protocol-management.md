@@ -755,8 +755,30 @@ listeners、journal 和 marker payload，并执行核心 check、监听/资源�
 `fresh_install_vless/openvpn-endpoint/result.env` 与
 `openvpn-endpoint-udp/result.env` 以及各自 `after-delete.env` 均为
 `RESULT=success`。这只证明合成 server/client 的 `system:false` TCP/UDP 路径与
-受管生命周期清理；`system:true`/TUN、外部控制面、外部证书部署、公网、生产和
-SubMan 仍未验证，完整协议目标继续未完成。
+受管生命周期清理；命名 `system:true`/TUN 资源证据见下一节，外部控制面、外部
+证书部署、公网、生产和 SubMan 仍未验证，完整协议目标继续未完成。
+
+### 2026-09-14：OpenVPN endpoint `system:true` 系统接口资源闭环
+
+在 `system:false` TCP/UDP 闭环之后，本轮将 OpenVPN 的特权系统设备纳入
+组件资源观测和事务 postcheck。`managed_component_transparent_resources_json`
+只读取配置声明为 `system:true` 的 `openvpn-client`/`openvpn-server` endpoint：
+命名接口必须通过严格的内核接口名检查，并逐项回读接口存在性、配置地址/前缀和
+MTU；未命名接口保持 `not_assessed`，不猜测自动生成名。命名系统 endpoint 出现在
+候选配置时，活动服务重启后的 postcheck 要求上述资源全部 present，失败仍按既有
+快照、防火墙日志和服务状态回滚。
+
+`tests/managed_transparent_resources.sh` 增加命名/未命名/缺失接口的 fake
+iproute2 契约；`tests/managed_openvpn_endpoint_runtime.sh` 在具备
+`SINGBOX_BINARY_114`、root 和 `/dev/net/tun` 时运行同样的命名 system-device
+fixture，否则只跳过该 privileged slice。`fresh_install_vless` 的特权隔离 Docker
+运行 `dev/verification-runs/20260914210913` 创建 `sbv-ovpn-srv`/
+`sbv-ovpn-cli`，固定 1.14.0 `sing-box check` 通过，真实回读
+`10.79.0.1/24`、`10.79.0.2/24`、MTU 1500、`peer connected`、
+`tunnel established` 和 diagnose `available`，随后按 revision 删除并确认两个
+接口消失。该证据只覆盖 core-owned 接口/隧道资源生命周期；由于隔离网络命名空间
+没有宿主路由，未宣称透明转发、packet payload、公网、外部控制面、生产或 SubMan，
+完整协议目标仍未完成。
 
 ### 2026-09-14：Snell UDP packet API 数据面探针
 
