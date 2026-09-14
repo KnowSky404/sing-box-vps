@@ -190,6 +190,8 @@ Endpoint 表中仍保留 `none` 的历史行表示没有专用分享/节点适�
 
 2026-09-14 统一系统 endpoint 资源观察：`managed_component_transparent_resources_json` 现在同时识别命名 `system:true` WireGuard/OpenConnect/OpenVPN 与命名 `system_interface:true` Tailscale，按类型读取接口名、配置地址/前缀和非零 MTU；未声明地址或 MTU 时使用 `not_required`，不猜测核心自动选择的值。接口名严格限制为 Linux IFNAMSIZ 可接受的安全字符，未命名或非法名称保持 `not_assessed`，命名资源缺失返回独立的 `*_system_runtime_resources_missing` 并参与活动组件事务 postcheck。`tests/managed_transparent_resources.sh` 以有界 fake iproute2 输出覆盖 WireGuard/OpenConnect/Tailscale 的 present、default/omitted MTU、地址和缺失接口组合。这是统一诊断/回滚边界的本地证据，不是外部控制面、系统路由/DNS、peer 握手或 UDP/TCP 数据面证明。
 
+2026-09-14 实例级环境投影：`managed_component_inventory_json` 在保留 registry 类型级 `environment` 的同时，为每个持久化 component 返回 `instance_environment`。该投影根据 typed `config` 区分 system/internal endpoint：system-mode WireGuard/OpenConnect/OpenVPN/Tailscale 增加 root 和适用的 `/dev/net/tun` 依赖，internal-mode endpoint 增加 `with_gvisor` build tag；TUN、bridge、Redirect、TProxy 也暴露各自 host prerequisite。缺失依赖为 `unavailable`，目标核心未报告 build tags 时保持 `not_assessed`；不执行登录、接口、路由、DNS、防火墙或数据面操作。实例投影测试覆盖 WireGuard system/internal、bridge、TUN 和 component-list metadata，仍不构成外部认证、peer 握手、透明转发、公网、生产或 SubMan 证据。
+
 ## 构建变体和依赖门控
 
 官方 `release/DEFAULT_BUILD_TAGS`（Linux 常见架构、Darwin、Android）包含：

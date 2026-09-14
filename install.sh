@@ -1530,6 +1530,139 @@ component_registry_environment_json() {
   component_registry_environment_bulk_json
 }
 
+# Refine the registry-level environment observation for one persisted
+# component record. The registry cannot know whether an endpoint selected its
+# internal gVisor stack or a privileged system interface, so this layer adds
+# only configuration-derived requirements. It never performs a login or
+# mutates interfaces/routes; missing credentials and external control planes
+# remain not_assessed in the base observation.
+managed_component_instance_environment_json() {
+  local record=${1:-} base=${2:-} role type config state_id registry_record minimum availability
+  local dependencies status reason system_mode=internal requires_root=false
+  local requires_tun_device=false requires_gvisor=false tags_status tags_reason tags='[]'
+  local dependency_name dependency_status dependency_reason dependency_item requirements
+  [[ -n "${record}" ]] || return 1
+  jq -e 'type == "object" and (.role | type == "string") and
+    (.type | type == "string") and (.config | type == "object")' <<< "${record}" >/dev/null 2>&1 || return 1
+
+  role=$(jq -r '.role' <<< "${record}") || return 1
+  type=$(jq -r '.type' <<< "${record}") || return 1
+  config=$(jq -c '.config' <<< "${record}") || return 1
+  state_id=$(component_registry_resolve_id "${role}" "${type}") || return 1
+
+  if [[ -z "${base}" ]]; then
+    registry_record=$(component_registry_record "${state_id}") || return 1
+    minimum=$(component_registry_field "${state_id}" minimum_project_core) || return 1
+    availability=$(component_registry_field "${state_id}" availability) || return 1
+    base=$(component_registry_environment_probe "${state_id}" "${role}" "${type}" \
+      "${minimum}" "${availability}") || return 1
+  fi
+  jq -e 'type == "object" and (.state_id | type == "string") and
+    (.dependencies | type == "array") and (.core | type == "object")' <<< "${base}" >/dev/null 2>&1 || return 1
+  [[ "$(jq -r '.state_id' <<< "${base}")" == "${state_id}" ]] || return 1
+
+  dependencies=$(jq -c '.dependencies' <<< "${base}") || return 1
+  status=$(jq -r '.status // "unavailable"' <<< "${base}") || return 1
+  reason=$(jq -r '.reason // ""' <<< "${base}") || return 1
+  tags_status=$(jq -r '.core.build_tags.status // "unavailable"' <<< "${base}") || return 1
+  tags_reason=$(jq -r '.core.build_tags.reason // ""' <<< "${base}") || return 1
+  tags=$(jq -c '.core.build_tags.values // []' <<< "${base}") || return 1
+
+  case "${type}" in
+    tun)
+      requires_root=true
+      requires_tun_device=true
+      ;;
+    bridge)
+      # Bridge uses the host bridge API and requires privilege, but it does
+      # not create a TUN character device itself.
+      requires_root=true
+      ;;
+    redirect|tproxy)
+      requires_root=true
+      ;;
+    wireguard|openconnect|openvpn-client|openvpn-server)
+      if [[ "$(jq -r 'if .system == true then "system" else "internal" end' <<< "${config}")" == system ]]; then
+        system_mode=system
+        requires_root=true
+        if [[ "${type}" != wireguard ]]; then
+          requires_tun_device=true
+        fi
+      else
+        requires_gvisor=true
+      fi
+      ;;
+    tailscale)
+      if [[ "$(jq -r 'if .system_interface == true then "system" else "internal" end' <<< "${config}")" == system ]]; then
+        system_mode=system
+        requires_root=true
+        requires_tun_device=true
+      else
+        requires_gvisor=true
+      fi
+      ;;
+  esac
+
+  instance_add_dependency() {
+    dependency_name=${1:-}
+    dependency_status=${2:-}
+    dependency_reason=${3:-}
+    [[ -n "${dependency_name}" && -n "${dependency_status}" ]] || return 1
+    if jq -e --arg name "${dependency_name}" 'any(.[]; .name == $name)' <<< "${dependencies}" >/dev/null 2>&1; then
+      return 0
+    fi
+    dependency_item=$(component_environment_dependency_json "${dependency_name}" \
+      "${dependency_status}" "${dependency_reason}" true) || return 1
+    dependencies=$(jq -c --argjson item "${dependency_item}" '. + [$item]' <<< "${dependencies}") || return 1
+    if [[ "${dependency_status}" == unavailable && "${status}" != unavailable ]]; then
+      status=unavailable
+      reason=${dependency_reason:-${dependency_name}_unavailable}
+    elif [[ "${dependency_status}" == not_assessed && "${status}" == available ]]; then
+      status=not_assessed
+      reason=${dependency_reason:-${dependency_name}_not_assessed}
+    fi
+  }
+
+  if [[ "${requires_root}" == true ]]; then
+    if [[ "${EUID}" -eq 0 ]]; then
+      instance_add_dependency root available '' || return 1
+    else
+      instance_add_dependency root unavailable root_required || return 1
+    fi
+  fi
+  if [[ "${requires_tun_device}" == true ]]; then
+    if [[ -c /dev/net/tun ]]; then
+      instance_add_dependency tun_device available '' || return 1
+    else
+      instance_add_dependency tun_device unavailable tun_device_missing || return 1
+    fi
+  fi
+  if [[ "${requires_gvisor}" == true ]]; then
+    if [[ "${tags_status}" == available ]]; then
+      if jq -en --argjson tags "${tags}" '$tags | index("with_gvisor") != null' >/dev/null; then
+        instance_add_dependency build_tag_with_gvisor available '' || return 1
+      else
+        instance_add_dependency build_tag_with_gvisor unavailable build_tag_missing_with_gvisor || return 1
+      fi
+    elif [[ "${tags_status}" == not_assessed ]]; then
+      instance_add_dependency build_tag_with_gvisor not_assessed \
+        "${tags_reason:-build_tags_not_reported}" || return 1
+    else
+      instance_add_dependency build_tag_with_gvisor unavailable \
+        "${tags_reason:-sing_box_build_tags_unavailable}" || return 1
+    fi
+  fi
+
+  requirements=$(jq -cn --arg mode "${system_mode}" --argjson root "${requires_root}" \
+    --argjson tun "${requires_tun_device}" --argjson gvisor "${requires_gvisor}" \
+    '{system_interface:($mode == "system"),system_mode:$mode,requires_root:$root,
+      requires_tun_device:$tun,requires_gvisor:$gvisor}') || return 1
+  jq -cn --argjson base "${base}" --arg status "${status}" --arg reason "${reason}" \
+    --argjson dependencies "${dependencies}" --argjson requirements "${requirements}" \
+    '$base + {status:$status,reason:(if $reason == "" then null else $reason end),
+      dependencies:$dependencies,requirements:$requirements,source:"instance_config"}'
+}
+
 component_registry_static_json() {
   printf '%s\n' "${SB_COMPONENT_REGISTRY[@]}" | jq -Rn '
     [inputs | split("|") | {
@@ -17155,10 +17288,28 @@ managed_component_write_state() (
 )
 
 managed_component_inventory_json() {
-  local state registry
+  local state registry component_records component component_id role type base environment
+  local instance_environments='[]' instance_environment_rows=()
   state=$(managed_component_state_json) || return 1
   registry=$(component_registry_json) || return 1
-  jq -cn --argjson state "${state}" --argjson registry "${registry}" '
+  component_records=$(jq -c '.components[]' <<< "${state}") || return 1
+  while IFS= read -r component; do
+    [[ -n "${component}" ]] || continue
+    component_id=$(jq -r '.id' <<< "${component}") || return 1
+    role=$(jq -r '.role' <<< "${component}") || return 1
+    type=$(jq -r '.type' <<< "${component}") || return 1
+    base=$(jq -ce --arg role "${role}" --arg type "${type}" \
+      'first(.[] | select(.role == $role and .type == $type) | .environment) // empty' \
+      <<< "${registry}") || return 1
+    environment=$(managed_component_instance_environment_json "${component}" "${base}") || return 1
+    instance_environment_rows+=("$(jq -cn --arg id "${component_id}" --argjson environment "${environment}" \
+      '{id:$id,environment:$environment}')")
+  done <<< "${component_records}"
+  if ((${#instance_environment_rows[@]} > 0)); then
+    instance_environments=$(printf '%s\n' "${instance_environment_rows[@]}" | jq -sc '.') || return 1
+  fi
+  jq -cn --argjson state "${state}" --argjson registry "${registry}" \
+    --argjson instance_environments "${instance_environments}" '
     {
       schema: "1",
       action: "component-list",
@@ -17170,6 +17321,8 @@ managed_component_inventory_json() {
          enabled:$component.enabled, registry_id:$entry.state_id,
          display_name:$entry.display_name, availability:$entry.availability,
          environment:$entry.environment,
+         instance_environment:(first($instance_environments[] |
+           select(.id == $component.id) | .environment) // $entry.environment),
          minimum_project_core:$entry.minimum_project_core,
          config_keys:($component.config | keys), route_rule_count:(($component.route_rules // []) | length)} |
         if (.role == "outbound" and .type == "ssh") then

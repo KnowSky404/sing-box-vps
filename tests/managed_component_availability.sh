@@ -41,6 +41,78 @@ jq -e '
   all(.[]; .static_availability != null)
 ' <<< "${with_core}" >/dev/null
 
+# Registry availability is refined per persisted component configuration. A
+# system WireGuard endpoint needs privilege but no TUN device, while an
+# internal endpoint needs the gVisor build tag. Bridge uses host privileges
+# without claiming that it creates /dev/net/tun.
+wireguard_base=$(jq -ce 'first(.[] | select(.state_id == "wireguard-endpoint").environment)' \
+  <<< "$(component_registry_json)")
+wireguard_system_record='{"id":"wg-system","role":"endpoint","type":"wireguard","tag":"wg-system","enabled":true,"route_rules":[],"config":{"system":true}}'
+wireguard_internal_record='{"id":"wg-internal","role":"endpoint","type":"wireguard","tag":"wg-internal","enabled":true,"route_rules":[],"config":{"system":false}}'
+wireguard_system_environment=$(managed_component_instance_environment_json \
+  "${wireguard_system_record}" "${wireguard_base}")
+wireguard_internal_environment=$(managed_component_instance_environment_json \
+  "${wireguard_internal_record}" "${wireguard_base}")
+jq -e '
+  .status == "available" and .requirements.system_mode == "system" and
+  .requirements.requires_root == true and .requirements.requires_tun_device == false and
+  any(.dependencies[]; .name == "root" and .status == "available")
+' <<< "${wireguard_system_environment}" >/dev/null
+jq -e '
+  .status == "unavailable" and .reason == "build_tag_missing_with_gvisor" and
+  .requirements.system_mode == "internal" and .requirements.requires_gvisor == true and
+  any(.dependencies[]; .name == "build_tag_with_gvisor" and .status == "unavailable")
+' <<< "${wireguard_internal_environment}" >/dev/null
+
+bridge_base=$(jq -ce 'first(.[] | select(.state_id == "bridge-outbound").environment)' \
+  <<< "$(component_registry_json)")
+bridge_record='{"id":"bridge-local","role":"outbound","type":"bridge","tag":"bridge-local","enabled":true,"route_rules":[],"config":{}}'
+bridge_environment=$(managed_component_instance_environment_json "${bridge_record}" "${bridge_base}")
+jq -e '
+  .status == "available" and .requirements.requires_root == true and
+  .requirements.requires_tun_device == false and .requirements.requires_gvisor == false and
+  any(.dependencies[]; .name == "root" and .status == "available")
+' <<< "${bridge_environment}" >/dev/null
+
+tun_base=$(jq -ce 'first(.[] | select(.state_id == "tun-inbound").environment)' \
+  <<< "$(component_registry_json)")
+tun_record='{"id":"tun-local","role":"inbound","type":"tun","tag":"tun-local","enabled":true,"route_rules":[],"config":{}}'
+tun_environment=$(managed_component_instance_environment_json "${tun_record}" "${tun_base}")
+if [[ -c /dev/net/tun ]]; then
+  jq -e '.status == "available" and .requirements.requires_tun_device == true' \
+    <<< "${tun_environment}" >/dev/null
+else
+  jq -e '.status == "unavailable" and .reason == "tun_device_missing" and
+    .requirements.requires_tun_device == true' <<< "${tun_environment}" >/dev/null
+fi
+
+# The component-list contract carries both the type-level environment and a
+# config-derived instance_environment projection for each persisted record.
+instance_state='{"schema":"1","revision":1,"components":[
+  {"id":"wg-system","role":"endpoint","type":"wireguard","tag":"wg-system","enabled":true,"route_rules":[],"config":{"system":true}},
+  {"id":"wg-internal","role":"endpoint","type":"wireguard","tag":"wg-internal","enabled":true,"route_rules":[],"config":{"system":false}},
+  {"id":"bridge-local","role":"outbound","type":"bridge","tag":"bridge-local","enabled":true,"route_rules":[],"config":{}}
+]}'
+original_component_state_json=$(declare -f managed_component_state_json)
+managed_component_state_json() {
+  printf '%s\n' "${instance_state}"
+}
+instance_inventory=$(managed_component_inventory_json)
+eval "${original_component_state_json}"
+jq -e '
+  (.components | length) == 3 and
+  (.components[] | select(.id == "wg-system") |
+    .environment.status == "available" and
+    .instance_environment.requirements.system_mode == "system" and
+    .instance_environment.requirements.requires_tun_device == false) and
+  (.components[] | select(.id == "wg-internal") |
+    .instance_environment.status == "unavailable" and
+    .instance_environment.reason == "build_tag_missing_with_gvisor") and
+  (.components[] | select(.id == "bridge-local") |
+    .instance_environment.requirements.requires_root == true and
+    .instance_environment.requirements.requires_tun_device == false)
+' <<< "${instance_inventory}" >/dev/null
+
 # A reported tag set is authoritative for the build gate.  A QUIC component
 # must not be presented as available when the binary is otherwise new enough
 # but was built without with_quic.

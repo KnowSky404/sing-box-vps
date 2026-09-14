@@ -832,3 +832,18 @@ Tailscale system-interface fixture，覆盖默认/省略 MTU、配置地址、�
 资源健康判断；使用有界 fake iproute2 输出，不修改真实网络。该切片补齐统一
 诊断和事务边界，但没有新增外部 VPN/Tailscale 控制面登录、peer 握手或公网
 业务证据，完整协议目标仍未完成。
+
+### 2026-09-14：实例级 environment 前置条件投影
+
+registry 的类型级 `environment` 无法知道一个持久化 endpoint 选择的是
+`system:true` 还是 internal gVisor 路径。`managed_component_inventory_json` 现在
+为每条记录补充 `instance_environment`，从 typed config 推导 system/internal
+模式、root、`/dev/net/tun` 和 `with_gvisor` 依赖；TUN、bridge、Redirect、TProxy
+也分别暴露 host prerequisite。依赖缺失会 fail-closed 为 `unavailable`，核心未
+报告 build tags 时保留 `not_assessed`，但该投影仍只读，不登录、不修改接口/路由/
+DNS/防火墙，也不宣称外部控制面或数据面。
+
+`tests/managed_component_availability.sh` 覆盖 WireGuard system/internal、bridge
+与 TUN 结果，另以 component-list fixture 验证每个 persisted record 的投影和
+类型级 environment 共存。该切片只补齐 Agent 可见的实例前置条件，完整协议目标
+仍未完成。

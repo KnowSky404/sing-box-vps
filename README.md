@@ -26,7 +26,7 @@ Direct inbound 的 typed component 现在额外校验 `network`、`override_addr
 
 组件 `route_rules` 现在也使用 sing-box 1.14 default/logical matcher 与 route-action typed allowlist；逻辑子规则只允许 match 字段，递归和列表大小有界，未知字段/动作、对象 matcher、重复列表成员和 action 交叉字段在 CAS/接管前拒绝。合法规则仍由统一 renderer 原样组合进顶层 route；这关闭了任意 route JSON 透传缺口，但不代表主机策略路由、nftables、透明数据面或全协议目标已完成。
 
-组件环境探针还会读取目标 `sing-box version` 的 `Tags:` 行：已报告的构建 tag 缺失时条件组件为 `unavailable`，包装器或旧二进制未报告 tag 时为 `not_assessed`；这只说明构建条件，不代表外部认证、系统路由/防火墙或真实数据面已通过。
+组件环境探针还会读取目标 `sing-box version` 的 `Tags:` 行：已报告的构建 tag 缺失时条件组件为 `unavailable`，包装器或旧二进制未报告 tag 时为 `not_assessed`；这只说明构建条件，不代表外部认证、系统路由/防火墙或真实数据面已通过。`component list --json` 另外为每个持久化记录返回 `instance_environment`：它根据该记录选择的 system/internal 模式补充 root、`/dev/net/tun` 与 `with_gvisor` 依赖，并保留类型级 `environment` 作为对照；这是配置/主机前置条件观察，不执行登录、接口或路由变更。
 
 Shadowsocks outbound 已按 sing-box 1.14 的 method/password、SS2022 严格 Base64 密钥长度、TCP/UDP network、SIP003 插件、UDP-over-TCP、multiplex 和共享 Dial Fields 建立 typed allowlist；未知/弃用字段、错误方法/密钥长度、插件或嵌套类型及控制字符会在状态/CAS 与接管前拒绝，凭据仅通过敏感 component export 返回，不生成伪分享链接或 SubMan 载荷。
 
