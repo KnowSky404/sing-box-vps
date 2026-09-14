@@ -824,4 +824,69 @@ PY
   verification_execute_protocol_udp_probe tuic /root/sing-box-vps/config.json
   verification_execute_protocol_udp_probe vmess /root/sing-box-vps/config.json
   verification_execute_protocol_udp_probe snell /root/sing-box-vps/config.json
+
+  # The server v5 wire protocol is exported as a sing-box v4 outbound.  Keep
+  # the v6 evidence above intact, then replace the same typed instance through
+  # revision CAS so the existing single-Snell probe generator can exercise the
+  # v5 HTTP-obfs TCP and packet-API UDP paths without accepting an ambiguous
+  # multi-instance inventory.
+  verification_capture_tree_if_present \
+    "$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/snell")" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/snell-v6"
+  local snell_v5_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/snell-v5-record.json"
+  local snell_v5_replace_status=0
+  (umask 077; jq -n '
+    {id:"main",name:"Snell v5 verification",tag:"snell-in",
+     listen:{address:"127.0.0.1",port:1086},
+     authentication:{psk:"snell-v5-psk-123456",users:[{name:"snell-v5-user",userkey:"snell-v5-user-key"}]},
+     version:5,obfs_mode:"http",obfs_host:"snell-v5.example.com",mode:"",
+     outbound_policy:"default",dependencies:[]}' > "${snell_v5_record}")
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent instance replace snell --json --yes \
+    --expected-revision 1 --file "${snell_v5_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/snell-v5-replace.json"
+  snell_v5_replace_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/snell-v5-replace.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/snell-v5-replace.json"
+  [[ "${snell_v5_replace_status}" == "0" ]]
+  jq -e '.ok==true and .action=="instance" and .protocol=="snell" and
+    .changed==true and .revision==2 and .transaction.status=="success" and
+    .transaction.phase=="committed" and .transaction.operation_exit_code==0' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/snell-v5-replace.json" >/dev/null
+  verification_mark_step snell-v5-instance-replaced
+  verification_wait_for_service_active sing-box
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/snell-v5-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  config_path=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/snell-v5-config.json")
+  cp /root/sing-box-vps/config.json "${config_path}"
+  jq -e '
+    ([.inbounds[] | select(.type == "snell" and .tag == "snell-in" and
+      .listen == "127.0.0.1" and .listen_port == 1086 and .version == 5 and
+      .psk == "snell-v5-psk-123456" and .obfs_mode == "http" and
+      (has("obfs_host") | not) and
+      .users[0].userkey == "snell-v5-user-key" and (has("mode") | not))] |
+      length == 1)
+  ' "${config_path}" >/dev/null
+  jq -e '
+    .revision == 2 and
+    ([.instances[] | select(.id == "main" and .version == 5 and
+      .obfs_mode == "http" and .obfs_host == "snell-v5.example.com" and
+      .mode == "" and .authentication.psk == "snell-v5-psk-123456" and
+      .authentication.users[0].userkey == "snell-v5-user-key")] | length == 1)
+  ' /root/sing-box-vps/protocols/instances/snell.json >/dev/null
+  verification_mark_step snell-v5-config-asserted
+  verification_execute_single_protocol_probe snell /root/sing-box-vps/config.json
+  verification_execute_protocol_udp_probe snell /root/sing-box-vps/config.json
+  jq -e '
+    .outbounds | length == 1 and .[0].type == "snell" and .[0].version == 4 and
+    .[0].network == ["tcp", "udp"] and .[0].obfs_mode == "http" and
+    .[0].obfs_host == "snell-v5.example.com" and
+    (.[0] | has("mode") | not)
+  ' "$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/snell/client.json")" >/dev/null
 }

@@ -1447,6 +1447,7 @@ verification_scenario_multi_protocol_coexistence() {
   verification_execute_protocol_udp_probe trojan /root/sing-box-vps/config.json
   verification_execute_protocol_udp_probe tuic /root/sing-box-vps/config.json
   verification_execute_protocol_udp_probe vmess /root/sing-box-vps/config.json
+  verification_execute_protocol_udp_probe snell /root/sing-box-vps/config.json
 }
 
 verification_scenario_fresh_install_http() {
@@ -1630,6 +1631,7 @@ grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/protocol-probes/shadowsocks/udp.result.env"
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/protocol-probes/trojan/udp.result.env"
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/protocol-probes/vmess/udp.result.env"
+grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/protocol-probes/snell/udp.result.env"
 grep -Fqx 'STATUS=success' "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/result.env"
 [[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/upgrade.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/transaction-result.json" ]]

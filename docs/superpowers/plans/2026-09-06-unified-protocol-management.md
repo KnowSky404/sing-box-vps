@@ -774,3 +774,20 @@ AnyTLS outbound，先执行 client `sing-box check`，同时回归确认 AnyTLS 
 `udp.result.env`、精确响应、client check 和 stderr。AnyTLS 仍是 TCP listener，
 该结果只表示 UoT adapter 业务路径，不是原生 UDP listener、公网、生产、外部
 认证、SubMan 或完整协议目标完成证明；脚本版本保持 `2026091402`。
+
+### 2026-09-14：Snell v5 HTTP obfs 与 packet API 数据面探针
+
+在既有 Snell v6 TCP/packet API 证据上，`multi_protocol_coexistence` 先保存
+v6 的 probe artifact，再以 `agent instance replace snell --expected-revision 1`
+替换同一 typed instance 为 v5 HTTP-obfs 记录。替换响应核对
+`revision:2`、`transaction.status:"success"` 和 `phase:"committed"`；随后
+固定 1.14.0 `sing-box check` 验证 v5 listener，state store 保留客户端所需的
+`obfs_host`，renderer 则只输出核心接受的 `obfs_mode`。
+
+生产 Snell exporter 将该 inbound v5 映射为客户端 outbound version 4，保留
+`obfs_mode:"http"`、`obfs_host` 和 `network:["tcp","udp"]`。v5 的 TCP marker
+与 packet-API UDP marker 均经固定核心和本地 SOCKS5 client 成功回读，精确响应、
+client `check`、journal 与 v5/v6 分离的 artifacts 均保存于
+`dev/verification-runs/20260914185411`。这只证明隔离 Docker/回环中的受管 v5
+adapter，不把 packet API 写成原生 UDP listener，也不代表公网、生产、外部认证、
+SubMan 或完整协议目标完成；脚本版本保持 `2026091402`。
