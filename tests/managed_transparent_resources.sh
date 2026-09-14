@@ -45,6 +45,8 @@ elif [[ "${1:-}" == "-j" && "${2:-}" == "addr" ]]; then
     printf '%s\n' '[{"ifname":"sbv-ovpn-client","addr_info":[{"family":"inet","local":"10.79.0.2","prefixlen":24}]}]'
   elif [[ "${5:-}" == "sbv-ovpn-server" ]]; then
     printf '%s\n' '[{"ifname":"sbv-ovpn-server","addr_info":[{"family":"inet","local":"10.79.0.1","prefixlen":24}]}]'
+  elif [[ "${5:-}" == "sbv-wg" ]]; then
+    printf '%s\n' '[{"ifname":"sbv-wg","addr_info":[{"family":"inet","local":"10.80.0.2","prefixlen":24}]}]'
   else
     printf '%s\n' '[]'
   fi
@@ -59,6 +61,12 @@ elif [[ "${1:-}" == "-j" && "${2:-}" == "link" ]]; then
     printf '%s\n' '[{"ifname":"sbv-ovpn-client","operstate":"UP","mtu":1500}]'
   elif [[ "${5:-}" == "sbv-ovpn-server" ]]; then
     printf '%s\n' '[{"ifname":"sbv-ovpn-server","operstate":"UP","mtu":1500}]'
+  elif [[ "${5:-}" == "sbv-wg" ]]; then
+    printf '%s\n' '[{"ifname":"sbv-wg","operstate":"UP","mtu":1408}]'
+  elif [[ "${5:-}" == "sbv-oc" ]]; then
+    printf '%s\n' '[{"ifname":"sbv-oc","operstate":"UP","mtu":1400}]'
+  elif [[ "${5:-}" == "sbv-ts" ]]; then
+    printf '%s\n' '[{"ifname":"sbv-ts","operstate":"UP","mtu":1280}]'
   else
     printf '%s\n' '[{"ifname":"sbv-tun-probe","operstate":"UP"}]'
   fi
@@ -216,6 +224,49 @@ jq -e '
     .interface_name == "sbv-ovpn-client" and .interface.status == "present" and
     .interface_addresses.status == "present" and .mtu.status == "present"] | length == 1)
 ' <<< "${openvpn_mixed}" >/dev/null
+
+# WireGuard, OpenConnect and Tailscale can also request a core-owned system
+# interface. Their resource contracts differ slightly: WireGuard has
+# configured addresses and a default MTU, while OpenConnect/Tailscale may let
+# the core choose addresses or MTU. The generic probe must preserve those
+# distinctions instead of treating an omitted value as a mismatch.
+system_endpoint_config_file="${TMP_DIR}/system-endpoint-config.json"
+jq -n '{
+  inbounds:[],
+  endpoints:[
+    {type:"wireguard",tag:"wg-system",system:true,name:"sbv-wg",address:["10.80.0.2/24"],mtu:1408},
+    {type:"openconnect",tag:"oc-system",system:true,name:"sbv-oc",server:"vpn.example.com"},
+    {type:"tailscale",tag:"ts-system",system_interface:true,system_interface_name:"sbv-ts",system_interface_mtu:1280}
+  ],
+  outbounds:[],route:{final:"direct"}
+}' > "${system_endpoint_config_file}"
+system_endpoint_active=$(managed_component_transparent_resources_json "${system_endpoint_config_file}" active)
+jq -e '
+  .status == "available" and .reason == null and .service_active == true and
+  ([.resources[] | select(.tag == "wg-system") |
+    .type == "wireguard" and .interface_name == "sbv-wg" and
+    .interface.status == "present" and .interface_addresses.status == "present" and
+    .mtu.status == "present" and .expected_addresses == ["10.80.0.2/24"] and
+    .expected_mtu == 1408] | length == 1) and
+  ([.resources[] | select(.tag == "oc-system") |
+    .type == "openconnect" and .interface_name == "sbv-oc" and
+    .interface.status == "present" and .interface_addresses.status == "not_required" and
+    .mtu.status == "not_required"] | length == 1) and
+  ([.resources[] | select(.tag == "ts-system") |
+    .type == "tailscale" and .interface_name == "sbv-ts" and
+    .interface.status == "present" and .interface_addresses.status == "not_required" and
+    .mtu.status == "present" and .expected_mtu == 1280] | length == 1)
+' <<< "${system_endpoint_active}" >/dev/null
+managed_component_transparent_runtime_healthy "${system_endpoint_config_file}"
+
+jq '.endpoints[0].name = "missing-wg"' "${system_endpoint_config_file}" > "${system_endpoint_config_file}.next"
+mv -f "${system_endpoint_config_file}.next" "${system_endpoint_config_file}"
+system_endpoint_missing=$(managed_component_transparent_resources_json "${system_endpoint_config_file}" active)
+jq -e '.status == "unavailable" and .reason == "wireguard_system_runtime_resources_missing" and
+  ([.resources[] | select(.tag == "wg-system") |
+    .interface_name == "missing-wg" and .interface.status == "missing" and
+    .interface_addresses.status == "not_probed" and .mtu.status == "missing"] | length == 1)' \
+  <<< "${system_endpoint_missing}" >/dev/null
 
 # A failed iproute2 probe must remain a structured unavailable diagnostic; it
 # must not try to read an absent route snapshot or block on stdin.

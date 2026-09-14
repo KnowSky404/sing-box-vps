@@ -813,3 +813,22 @@ client `check`、journal 与 v5/v6 分离的 artifacts 均保存于
 `dev/verification-runs/20260914185411`。这只证明隔离 Docker/回环中的受管 v5
 adapter，不把 packet API 写成原生 UDP listener，也不代表公网、生产、外部认证、
 SubMan 或完整协议目标完成；脚本版本保持 `2026091402`。
+
+### 2026-09-14：统一系统 endpoint core-owned 资源观察
+
+OpenVPN 的命名 `system:true` 资源切片暴露出同一约束也适用于其他可请求系统
+接口的 endpoint：WireGuard/OpenConnect 使用 `system:true` 与 `name`，Tailscale
+使用 `system_interface:true`、`system_interface_name` 和可选的
+`system_interface_mtu`。透明资源探针现在统一枚举这些记录，严格校验接口名，
+只读回读接口存在性、配置声明的地址/前缀（如有）以及非零配置 MTU；未声明地址
+或 MTU 时报告 `not_required`，不把核心自动选择的值误报成缺失。每种 endpoint
+保留独立的 `*_system_interface_name_unset`、`*_system_interface_name_invalid`
+和 `*_system_runtime_resources_missing` 原因；一个未命名 endpoint 不会抑制同一
+候选中的其他命名 endpoint 探测。命名系统接口进入活动组件事务 postcheck，缺失
+时继续 fail-closed 回滚；不安装操作系统路由/DNS，也不声称外部认证或数据面。
+
+`tests/managed_transparent_resources.sh` 增加 WireGuard、OpenConnect 和
+Tailscale system-interface fixture，覆盖默认/省略 MTU、配置地址、缺失接口和
+资源健康判断；使用有界 fake iproute2 输出，不修改真实网络。该切片补齐统一
+诊断和事务边界，但没有新增外部 VPN/Tailscale 控制面登录、peer 握手或公网
+业务证据，完整协议目标仍未完成。

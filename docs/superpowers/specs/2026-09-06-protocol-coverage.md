@@ -132,7 +132,7 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 | tproxy | `tproxy` / inbound | Linux；需 root、策略路由/防火墙能力 | TCP/UDP（空值表示两者）；Linux 专属，UDP NAT 参数和路由归属必须持久化 | conditional | yes（Linux；root/策略路由仍需） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | registry-check |
 | cloudflared | `cloudflared` / inbound | 自 1.14.0；`with_cloudflared`；需 Cloudflare Tunnel token 和外部控制面 | Cloudflare Tunnel 可承载 TCP、UDP、ICMP；`protocol` 为 QUIC/HTTP2，UDP datagram v2/v3；不能虚构普通节点 URI | conditional | yes（tag 已含；token/控制面仍需） | component state/config；yes/yes/yes/yes* | 不提供普通分享 / — / — | registry-check（无 token 按预期失败） |
 
-`tun`、`redirect`、`tproxy` 与 `cloudflared` 行的 `component state/config` 覆盖本项目的统一状态、配置合并、引用保护、监听投影、Agent CAS、目标核心校验，以及固定监听变化所复用的受管 UFW/iptables/ip6tables 归属事务。TUN 现在另有受限的 core-owned 接口/rule/route 创建、诊断和删除清理证据；OpenVPN 命名 `system:true` endpoint 另有接口/地址/MTU/隧道资源观察与删除清理证据，但透明包转发、宿主策略路由/nftables、Redirect/TProxy 策略、Cloudflare 控制面、动态外部资源和公网真实业务仍未宣称通过。`*` 表示同上所述的组件生命周期切片，不是公网部署证明。
+`tun`、`redirect`、`tproxy` 与 `cloudflared` 行的 `component state/config` 覆盖本项目的统一状态、配置合并、引用保护、监听投影、Agent CAS、目标核心校验，以及固定监听变化所复用的受管 UFW/iptables/ip6tables 归属事务。TUN 现在另有受限的 core-owned 接口/rule/route 创建、诊断和删除清理证据；命名 `system:true` WireGuard/OpenConnect/OpenVPN 与命名 `system_interface:true` Tailscale endpoint 现在也进入只读接口/地址（如配置）/MTU 资源观察和事务 postcheck，OpenVPN 另有接口/隧道资源观察与删除清理证据，但透明包转发、宿主策略路由/nftables、Redirect/TProxy 策略、Cloudflare/VPN/Tailscale 控制面、动态外部资源和公网真实业务仍未宣称通过。`*` 表示同上所述的组件生命周期切片，不是公网部署证明。
 
 `vless-reality` 是本项目旧兼容预设，配置使用上游 `type: vless`，并非独立的上游 type；普通 VLESS 使用独立 `vless-plain` preset/state ID。项目继续把 `vless`、`vless+reality`、`vless-reality` 归一到旧 REALITY 状态，普通 VLESS 不复用该 alias，避免接管、重建或导出时将两种语义混淆。
 
@@ -187,6 +187,8 @@ Endpoint 表中仍保留 `none` 的历史行表示没有专用分享/节点适�
 2026-09-14 OpenVPN endpoint TCP+UDP 闭环：在 `fresh_install_vless` 特权隔离 Docker 场景中，使用固定官方 ARM64 `sing-box 1.14.0`、临时 SAN 证书和用户名/密码分别创建两组 `system:false` OpenVPN server/client pair；受管 direct inbound 经各自 client endpoint 访问一次性 marker，日志确认 peer/tunnel 建立，目标核心 `check` 通过，随后按 revision 删除每组 proxy/client/server 并确认监听和组件资源清理。对应 `dev/verification-runs/20260914151532` 的 `fresh_install_vless/openvpn-endpoint/result.env` 与 `openvpn-endpoint-udp/result.env` 均为 `RESULT=success`，验证标签为 `project-real-openvpn-tcp+udp`。`tests/managed_openvpn_endpoint_runtime.sh` 提供同等本机 TCP+UDP fixture，缺少 `SINGBOX_BINARY_114` 或依赖时明确 SKIP；该证据不扩张为外部 VPN 控制面、公网、生产或 SubMan 数据面。
 
 2026-09-14 OpenVPN `system:true` 系统资源闭环：同一特权隔离 Docker 场景 `dev/verification-runs/20260914210913` 创建命名 `system:true` server/client（`sbv-ovpn-srv`、`sbv-ovpn-cli`），固定核心 `check` 通过，真实 `ip -j link/addr` artifact 回读两接口、`10.79.0.1/24` 与 `10.79.0.2/24`、MTU 1500，journal 回读 `peer connected`、`tunnel established` 和两个 `started at`，`component diagnose` 报告两个资源 `available/present`，随后按 revision 删除并确认接口消失、after-delete diagnose 无资源。结果文件明确 `PAYLOAD=not_attempted`；该标签 `project-real-openvpn-system-resources` 只覆盖 core-owned 接口/地址/MTU/隧道资源生命周期，不包含宿主路由、透明转发、packet payload、公网、外部控制面或生产/SubMan。
+
+2026-09-14 统一系统 endpoint 资源观察：`managed_component_transparent_resources_json` 现在同时识别命名 `system:true` WireGuard/OpenConnect/OpenVPN 与命名 `system_interface:true` Tailscale，按类型读取接口名、配置地址/前缀和非零 MTU；未声明地址或 MTU 时使用 `not_required`，不猜测核心自动选择的值。接口名严格限制为 Linux IFNAMSIZ 可接受的安全字符，未命名或非法名称保持 `not_assessed`，命名资源缺失返回独立的 `*_system_runtime_resources_missing` 并参与活动组件事务 postcheck。`tests/managed_transparent_resources.sh` 以有界 fake iproute2 输出覆盖 WireGuard/OpenConnect/Tailscale 的 present、default/omitted MTU、地址和缺失接口组合。这是统一诊断/回滚边界的本地证据，不是外部控制面、系统路由/DNS、peer 握手或 UDP/TCP 数据面证明。
 
 ## 构建变体和依赖门控
 
