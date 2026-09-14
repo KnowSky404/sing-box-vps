@@ -23808,7 +23808,7 @@ build_client_snell_outbounds() (
       {type:"snell",tag:("snell-" + $instance.id + "-" + (if $user.single then "single" else "user-" + ($user.name | @base64) end)),
        server:$server,server_port:$instance.listen.port,
        version:(if $instance.version == 5 then 4 else 6 end),psk:$instance.authentication.psk,
-       userkey:(if $user.single then "" else $user.userkey end),network:"tcp",
+       userkey:(if $user.single then "" else $user.userkey end),network:["tcp","udp"],
        _inbound_version:$instance.version,_obfs_mode:$instance.obfs_mode,_obfs_host:$instance.obfs_host,_mode:$instance.mode}
     ' "${instance_file}" > "${raw_file}" || return 1
     while IFS= read -r raw_outbound; do

@@ -118,7 +118,7 @@ jq -e '.schema_version == "1.0" and .status == "success" and .rollback.attempted
 [[ "$(stat -c '%a' "${transaction_result}")" == "600" ]]
 ```
 
-根据已安装协议分别执行真实客户端闭环探测；VLESS REALITY、Mixed、Hysteria2、AnyTLS、Snell、Warp 路由和 REALITY QoS 不能因 `sing-box check` 成功就推定业务可用。Snell 的 UDP 业务由 TCP 会话 packet API 承载，当前专项没有独立 UDP payload 探针。只有被明确批准时才执行媒体检测或 SubMan 写入。
+根据已安装协议分别执行真实客户端闭环探测；VLESS REALITY、Mixed、Hysteria2、AnyTLS、Snell、Warp 路由和 REALITY QoS 不能因 `sing-box check` 成功就推定业务可用。Snell 的 UDP 业务由 TCP 会话 packet API 承载，定向 Docker 场景已有独立 UDP payload probe，但这不是原生 UDP listener 或公网证明。只有被明确批准时才执行媒体检测或 SubMan 写入。
 
 ## 5. 失败与回滚
 

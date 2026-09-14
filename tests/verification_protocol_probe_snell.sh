@@ -44,11 +44,11 @@ jq -e '
   $out.type == "snell" and $out.tag == "proxy" and
   $out.server == "127.0.0.1" and $out.server_port == 18086 and
   $out.version == 6 and $out.psk == "snell-v6-psk-123456" and
-  $out.userkey == "snell-user-key" and $out.network == "tcp" and
+  $out.userkey == "snell-user-key" and $out.network == ["tcp","udp"] and
   $out.mode == "default" and (.outbounds | length) == 1 and
   .route.final == "proxy" and
   ([.inbounds[] | select(.tag == "local-socks" and .listen_port == 19080)] | length) == 1
 ' "${client_file}" >/dev/null
 [[ $(stat -c '%a' "${client_file}") == 600 ]]
 ! grep -Fq 'snell.json' "${client_file}"
-printf 'Snell verification probe generator uses managed v6 state and TCP exporter\n'
+printf 'Snell verification probe generator uses managed v6 state and TCP+UDP packet-api exporter\n'

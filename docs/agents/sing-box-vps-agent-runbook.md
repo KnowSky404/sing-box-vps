@@ -908,7 +908,7 @@ The private record contains the common `id`, `name`, `tag`, `listen`, `outbound_
 }
 ```
 
-`version` is `5` or `6`. Version 5 uses `obfs_mode:"none"` or `"http"`; HTTP mode keeps an `obfs_host` hint for client export, while the inbound renderer emits only fields accepted by the Snell server. Version 6 clears v5 fields and uses `mode:"default"`, `"unshaped"` or `"unsafe-raw"`; its PSK must be 12–255 UTF-8 bytes. Authentication accepts zero to 128 unique `name`/`userkey` pairs; with no users, the PSK itself is used by the exported client. Client export maps inbound v5 to outbound v4 and inbound v6 to outbound v6, emits TCP network and preserves each user key. `nodes` never exposes PSKs or user keys. Snell has no lossless standard share URI, so `links` returns `links:{}`, full outbound JSON and `warnings[].code=snell_standard_uri_unavailable`; SubMan deliberately does not advertise Snell as `other`. Non-loopback writes require `--allow-public`. The focused lifecycle test uses mock service/firewall boundaries and an optional target-core `check`; it does not prove public reachability, UDP data-path behavior or real SubMan synchronization.
+`version` is `5` or `6`. Version 5 uses `obfs_mode:"none"` or `"http"`; HTTP mode keeps an `obfs_host` hint for client export, while the inbound renderer emits only fields accepted by the Snell server. Version 6 clears v5 fields and uses `mode:"default"`, `"unshaped"` or `"unsafe-raw"`; its PSK must be 12–255 UTF-8 bytes. Authentication accepts zero to 128 unique `name`/`userkey` pairs; with no users, the PSK itself is used by the exported client. Client export maps inbound v5 to outbound v4 and inbound v6 to outbound v6, emits explicit `network:["tcp","udp"]` and preserves each user key. `nodes` never exposes PSKs or user keys. Snell has no lossless standard share URI, so `links` returns `links:{}`, full outbound JSON and `warnings[].code=snell_standard_uri_unavailable`; SubMan deliberately does not advertise Snell as `other`. Non-loopback writes require `--allow-public`. The focused lifecycle test uses mock service/firewall boundaries and an optional target-core `check`; Docker now separately exercises the UDP packet API through the authenticated TCP session, but neither path proves public reachability or real SubMan synchronization.
 
 ## 2026-09-11：Hysteria v1/Hysteria2 Docker 数据面探针
 
@@ -918,6 +918,12 @@ The private record contains the common `id`, `name`, `tag`, `listen`, `outbound_
 `multi_protocol_coexistence` 现在在 VMess 之后创建受管 Snell v6 typed instance（PSK、单用户 key、`mode:"default"`、TCP listener），并把 `snell` 加入 live protocol index 与配置类型断言。远程 entrypoint 先要求活动 schema-2 marker 和 schema-1 Snell store，严格核对选中的 tag、监听端口、版本、认证和 shaping 字段，再调用生产 `build_client_snell_outbounds` 生成探针副本；固定 1.14.0 客户端通过 `sing-box check` 后，经本地 SOCKS listener 访问 HTTP marker，`client.json` 保持 600 权限且不携带服务端私钥。
 
 完整 Docker run `dev/verification-runs/20260911230518` 记录 15/15 场景、25 个常规 protocol result，其中 24/24 可执行探针成功，既有 TUIC 常规结果仍为 `unsupported`；共存场景的 Snell `result.env`、`client.check.txt`、精确 `http-response.txt` 和 typed index/store 均通过。七个既有 Hysteria/Hysteria2/SS2022/Trojan/TUIC/VMess/普通 VLESS UDP artifact 仍为成功；Snell 的 UDP packet API 本轮未单独宣称原生 UDP marker。证据限定在固定 1.14.0 核心、隔离 Docker 与回环业务路径，不代表公网可达、生产部署、外部认证、SubMan 或全协议目标完成。
+
+## 2026-09-14：Snell UDP packet API 数据面探针
+
+在 TCP 切片基础上，`multi_protocol_coexistence` 现在也调用共享 `verification_execute_protocol_udp_probe snell`。探针只接受活动 schema-2 marker、schema-1 store 和当前 v6 tag，复用生产 exporter 的 `network:["tcp","udp"]`，先执行固定 1.14.0 client `check`，再经 SOCKS5 UDP ASSOCIATE 发送精确 marker；Snell v6 listener 仍只有 TCP，UDP 语义由该认证 TCP 会话的 packet API 承载。
+
+定向 Docker run `dev/verification-runs/20260914153908` 的 `multi_protocol_coexistence` 与 `runtime_smoke` 均成功；共存 artifact 中 `protocol-probes/snell/result.env`、`udp.result.env` 均为 `RESULT=success`，并保留 TCP/UDP 精确响应、client check、渲染配置与 journal 的 packet-connection 行。该证据只覆盖固定核心、隔离 Docker/回环和受管 exporter，不把 packet API 误写成原生 UDP listener，也不代表公网、生产、外部认证、SubMan 或完整协议目标完成。
 
 ## External Documentation
 

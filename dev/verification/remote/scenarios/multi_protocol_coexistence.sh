@@ -213,8 +213,8 @@ EOF
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/vmess-create.json" >/dev/null
 
   # Snell v6 is a TCP listener whose packet API can carry UDP semantics over
-  # the same authenticated stream.  Keep this scenario's evidence bounded to
-  # the real TCP marker probe; no separate native-UDP claim is made here.
+  # the same authenticated stream.  The shared SOCKS UDP probe below exercises
+  # that packet path without mislabeling it as a native UDP listener.
   local snell_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/snell-record.json"
   (umask 077; jq -n '
     {id:"main",name:"Snell v6 verification",tag:"snell-in",
@@ -807,4 +807,5 @@ PY
   verification_execute_protocol_udp_probe trojan /root/sing-box-vps/config.json
   verification_execute_protocol_udp_probe tuic /root/sing-box-vps/config.json
   verification_execute_protocol_udp_probe vmess /root/sing-box-vps/config.json
+  verification_execute_protocol_udp_probe snell /root/sing-box-vps/config.json
 }

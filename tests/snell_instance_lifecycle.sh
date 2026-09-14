@@ -159,7 +159,7 @@ jq -e 'length==1 and .[0].type=="snell" and .[0].version==6 and .[0].mode=="defa
   .[0].psk=="snell-v6-replaced-123456" and .[0].users[0].userkey=="alice-key"' \
   <<< "${rendered}" >/dev/null
 outbounds=$(build_client_snell_outbounds 203.0.113.10 | jq -s .)
-jq -e 'length==1 and .[0].type=="snell" and .[0].version==6 and .[0].network=="tcp" and
+jq -e 'length==1 and .[0].type=="snell" and .[0].version==6 and .[0].network==["tcp","udp"] and
   .[0].server=="127.0.0.1" and .[0].server_port==2091 and .[0].userkey=="alice-key"' \
   <<< "${outbounds}" >/dev/null
 
