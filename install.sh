@@ -15814,6 +15814,121 @@ managed_component_cloudflared_config_validate_json() {
   ' <<< "${config}" >/dev/null 2>&1 || return 1
 }
 
+# Direct, block and bridge outbounds are registered component types too.  Keep
+# their small option surfaces typed instead of treating the empty dispatch
+# branch below as permission to pass arbitrary JSON through to sing-box.  A
+# direct outbound deliberately rejects non-empty detours and the deprecated
+# destination/proxy-protocol fields because the 1.14 core rejects them in its
+# constructor; route actions are the supported destination-override path.
+managed_component_direct_outbound_config_validate_json() {
+  local config=${1:-}
+  [[ -n "${config}" ]] || return 1
+  jq -e '
+    def safe_string:
+      type == "string" and (any(explode[]; . < 32 or . == 127) | not);
+    def optional_safe_string($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_nonempty_safe_string($name):
+      (has($name) | not) or (.[$name] | safe_string and length > 0);
+    def optional_bool($name):
+      (has($name) | not) or (.[$name] | type == "boolean");
+    def optional_duration($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_routing_mark:
+      (has("routing_mark") | not) or
+      (.routing_mark |
+        ((type == "number" and . == floor and . >= 0 and . <= 4294967295) or
+         (type == "string" and
+          ((test("^0x[0-9a-fA-F]{1,8}$")) or
+           (test("^[0-9]{1,10}$") and (tonumber <= 4294967295))))));
+    def optional_network_types($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "string" and IN("wifi","cellular","ethernet","other")) or
+         (type == "array" and length <= 64 and
+          all(.[]; type == "string" and IN("wifi","cellular","ethernet","other")) and
+          (unique | length) == length)));
+    def optional_domain_resolver:
+      (has("domain_resolver") | not) or
+      (.domain_resolver |
+        if type == "string" then safe_string
+        elif type == "object" then
+          ((keys - ["server","timeout","strategy","disable_cache",
+            "disable_optimistic_cache","rewrite_ttl","client_subnet"]) | length == 0) and
+          (.server | type == "string" and length > 0 and safe_string) and
+          ((has("timeout") | not) or (.timeout | safe_string)) and
+          ((has("strategy") | not) or
+            (.strategy | type == "string" and
+              IN("","as_is","prefer_ipv4","prefer_ipv6","ipv4_only","ipv6_only"))) and
+          ((has("disable_cache") | not) or (.disable_cache | type == "boolean")) and
+          ((has("disable_optimistic_cache") | not) or
+            (.disable_optimistic_cache | type == "boolean")) and
+          ((has("rewrite_ttl") | not) or
+            (.rewrite_ttl | type == "number" and . == floor and . >= 0 and . <= 4294967295)) and
+          ((has("client_subnet") | not) or (.client_subnet | safe_string))
+        else false
+        end);
+    type == "object" and
+    ((keys - [
+      "bind_interface","inet4_bind_address","inet6_bind_address",
+      "bind_address_no_port","protect_path","routing_mark","reuse_addr",
+      "netns","connect_timeout","tcp_fast_open","tcp_multi_path",
+      "disable_tcp_keep_alive","tcp_keep_alive","tcp_keep_alive_interval",
+      "udp_fragment","domain_resolver","network_strategy","network_type",
+      "fallback_network_type","fallback_delay","detour"
+    ]) | length == 0) and
+    optional_safe_string("bind_interface") and
+    optional_nonempty_safe_string("inet4_bind_address") and
+    optional_nonempty_safe_string("inet6_bind_address") and
+    optional_bool("bind_address_no_port") and
+    optional_safe_string("protect_path") and
+    optional_routing_mark and
+    optional_bool("reuse_addr") and
+    optional_safe_string("netns") and
+    optional_duration("connect_timeout") and
+    optional_bool("tcp_fast_open") and
+    optional_bool("tcp_multi_path") and
+    optional_bool("disable_tcp_keep_alive") and
+    optional_duration("tcp_keep_alive") and
+    optional_duration("tcp_keep_alive_interval") and
+    ((has("udp_fragment") | not) or (.udp_fragment | type == "boolean")) and
+    optional_domain_resolver and
+    ((has("network_strategy") | not) or
+      (.network_strategy | type == "string" and IN("","default","hybrid","fallback"))) and
+    optional_network_types("network_type") and
+    optional_network_types("fallback_network_type") and
+    optional_duration("fallback_delay") and
+    ((has("detour") | not) or (.detour | type == "string" and length == 0))
+  ' <<< "${config}" >/dev/null 2>&1 || return 1
+}
+
+managed_component_block_outbound_config_validate_json() {
+  local config=${1:-}
+  [[ -n "${config}" ]] || return 1
+  jq -e 'type == "object" and length == 0' <<< "${config}" >/dev/null 2>&1
+}
+
+managed_component_bridge_outbound_config_validate_json() {
+  local config=${1:-}
+  [[ -n "${config}" ]] || return 1
+  jq -e '
+    def safe_string:
+      type == "string" and (any(explode[]; . < 32 or . == 127) | not);
+    def optional_safe_string($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_index($name):
+      (has($name) | not) or
+      (.[$name] | type == "number" and . == floor and . >= 0 and . <= 2147483647);
+    type == "object" and
+    ((keys - ["interface","bridge_name","iproute2_table_index","iproute2_rule_index"])
+      | length == 0) and
+    optional_safe_string("interface") and
+    optional_safe_string("bridge_name") and
+    optional_index("iproute2_table_index") and
+    optional_index("iproute2_rule_index")
+  ' <<< "${config}" >/dev/null 2>&1
+}
+
 # Component route rules are data owned by the component state store.  Do not
 # pass arbitrary objects through to the top-level sing-box route list: an
 # unknown field could otherwise survive state/CAS and only fail (or change
@@ -16201,7 +16316,14 @@ managed_component_state_validate_record() {
     outbound:vless|outbound:vmess|outbound:trojan)
       managed_component_v2ray_outbound_config_validate_json "${type}" "${config}" || return 1
       ;;
-    outbound:direct|outbound:block|outbound:bridge)
+    outbound:direct)
+      managed_component_direct_outbound_config_validate_json "${config}" || return 1
+      ;;
+    outbound:block)
+      managed_component_block_outbound_config_validate_json "${config}" || return 1
+      ;;
+    outbound:bridge)
+      managed_component_bridge_outbound_config_validate_json "${config}" || return 1
       ;;
     *) return 1 ;;
   esac

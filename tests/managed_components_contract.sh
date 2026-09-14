@@ -57,6 +57,96 @@ redirect_record='{"id":"redirect-local","role":"inbound","type":"redirect","tag"
 tproxy_record='{"id":"tproxy-local","role":"inbound","type":"tproxy","tag":"tproxy-local-in","enabled":true,"route_rules":[],"config":{"listen":"127.0.0.1","listen_port":15082}}'
 selector_record='{"id":"selector-local","role":"outbound","type":"selector","tag":"selector-local","enabled":true,"route_rules":[{"inbound":["direct-local-in"],"action":"route","outbound":"selector-local"}],"config":{"outbounds":["direct","block"],"default":"direct"}}'
 
+# Direct, block and bridge outbounds are registry-owned component records too.
+# Their configs are flattened into the generated outbound objects, so each
+# variant must have an explicit typed allowlist before it can enter the CAS
+# state.  These fixtures exercise both renderability and the no-passthrough
+# boundary for fields that sing-box does not expose on the corresponding
+# option type.
+direct_outbound_record='{"id":"direct-outbound-local","role":"outbound","type":"direct","tag":"direct-outbound-local","enabled":true,"route_rules":[],"config":{"bind_interface":"lo","routing_mark":"0x20","tcp_fast_open":true,"network_strategy":"default","network_type":["ethernet"]}}'
+managed_component_state_validate_record "${direct_outbound_record}"
+direct_outbound_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${direct_outbound_record}")
+direct_outbound_rendered=$(managed_component_render_json "${direct_outbound_state}")
+jq -e '
+  (.outbounds | length == 1) and
+  .outbounds[0].type == "direct" and
+  .outbounds[0].tag == "direct-outbound-local" and
+  .outbounds[0].bind_interface == "lo" and
+  .outbounds[0].routing_mark == "0x20" and
+  .outbounds[0].tcp_fast_open == true and
+  .outbounds[0].network_strategy == "default" and
+  .outbounds[0].network_type == ["ethernet"]
+' <<< "${direct_outbound_rendered}" >/dev/null
+direct_outbound_unknown_field=$(jq -c '.config.unexpected = true' <<< "${direct_outbound_record}")
+if managed_component_state_validate_record "${direct_outbound_unknown_field}"; then
+  printf 'direct outbound unknown field unexpectedly accepted\n' >&2
+  exit 1
+fi
+direct_outbound_override_field=$(jq -c '.config.override_address = "127.0.0.1"' <<< "${direct_outbound_record}")
+if managed_component_state_validate_record "${direct_outbound_override_field}"; then
+  printf 'direct outbound deprecated override field unexpectedly accepted\n' >&2
+  exit 1
+fi
+direct_outbound_proxy_protocol_field=$(jq -c '.config.proxy_protocol = 1' <<< "${direct_outbound_record}")
+if managed_component_state_validate_record "${direct_outbound_proxy_protocol_field}"; then
+  printf 'direct outbound removed proxy protocol field unexpectedly accepted\n' >&2
+  exit 1
+fi
+direct_outbound_detour_field=$(jq -c '.config.detour = "upstream"' <<< "${direct_outbound_record}")
+if managed_component_state_validate_record "${direct_outbound_detour_field}"; then
+  printf 'direct outbound non-empty detour unexpectedly accepted\n' >&2
+  exit 1
+fi
+
+block_outbound_record='{"id":"block-outbound-local","role":"outbound","type":"block","tag":"block-outbound-local","enabled":true,"route_rules":[],"config":{}}'
+managed_component_state_validate_record "${block_outbound_record}"
+block_outbound_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${block_outbound_record}")
+block_outbound_rendered=$(managed_component_render_json "${block_outbound_state}")
+jq -e '
+  (.outbounds | length == 1) and
+  .outbounds[0].type == "block" and
+  .outbounds[0].tag == "block-outbound-local"
+' <<< "${block_outbound_rendered}" >/dev/null
+block_outbound_unknown_field=$(jq -c '.config.unexpected = true' <<< "${block_outbound_record}")
+if managed_component_state_validate_record "${block_outbound_unknown_field}"; then
+  printf 'block outbound unknown field unexpectedly accepted\n' >&2
+  exit 1
+fi
+
+bridge_outbound_record='{"id":"bridge-outbound-local","role":"outbound","type":"bridge","tag":"bridge-outbound-local","enabled":true,"route_rules":[],"config":{"interface":"eth0","bridge_name":"sbv-bridge","iproute2_table_index":2200,"iproute2_rule_index":100}}'
+managed_component_state_validate_record "${bridge_outbound_record}"
+bridge_outbound_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${bridge_outbound_record}")
+bridge_outbound_rendered=$(managed_component_render_json "${bridge_outbound_state}")
+jq -e '
+  (.outbounds | length == 1) and
+  .outbounds[0].type == "bridge" and
+  .outbounds[0].tag == "bridge-outbound-local" and
+  .outbounds[0].interface == "eth0" and
+  .outbounds[0].bridge_name == "sbv-bridge" and
+  .outbounds[0].iproute2_table_index == 2200 and
+  .outbounds[0].iproute2_rule_index == 100
+' <<< "${bridge_outbound_rendered}" >/dev/null
+bridge_outbound_unknown_field=$(jq -c '.config.unexpected = true' <<< "${bridge_outbound_record}")
+if managed_component_state_validate_record "${bridge_outbound_unknown_field}"; then
+  printf 'bridge outbound unknown field unexpectedly accepted\n' >&2
+  exit 1
+fi
+bridge_outbound_negative_index=$(jq -c '.config.iproute2_rule_index = -1' <<< "${bridge_outbound_record}")
+if managed_component_state_validate_record "${bridge_outbound_negative_index}"; then
+  printf 'bridge outbound negative rule index unexpectedly accepted\n' >&2
+  exit 1
+fi
+bridge_outbound_fractional_index=$(jq -c '.config.iproute2_table_index = 2200.5' <<< "${bridge_outbound_record}")
+if managed_component_state_validate_record "${bridge_outbound_fractional_index}"; then
+  printf 'bridge outbound fractional table index unexpectedly accepted\n' >&2
+  exit 1
+fi
+bridge_outbound_control_field=$(jq -c '.config.interface = "eth0\nforged"' <<< "${bridge_outbound_record}")
+if managed_component_state_validate_record "${bridge_outbound_control_field}"; then
+  printf 'bridge outbound control character unexpectedly accepted\n' >&2
+  exit 1
+fi
+
 direct_override_record=$(jq -c '.config += {network:"tcp",override_address:"127.0.0.1",override_port:18082}' <<< "${direct_record}")
 managed_component_state_validate_record "${direct_override_record}"
 direct_override_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${direct_override_record}")
