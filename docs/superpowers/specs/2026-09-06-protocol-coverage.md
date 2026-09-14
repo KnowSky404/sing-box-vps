@@ -13,7 +13,7 @@
 - `upstream`：目标版本源码中是否有该角色和 type 的注册实现；`conditional` 表示构建 tag、平台、CGO 或外部控制面有条件。
 - `implemented`：本项目是否已经提供状态、配置组合、生命周期、导出/分享等管理链路；`none` 不表示上游不可用。
 - `available`：当前官方 ARM64 Linux 发布包中是否已包含该角色的注册实现，以及仍需满足的构建、平台、运行库或外部控制面条件；它独立于源码中存在注册函数。
-- `validated`：本轮实际取得的证据。`registry-check` 只证明目标二进制能识别该 type 并进入初始化校验；`project-real-tcp` 表示回读了项目真实 TCP 业务闭环 artifact，`project-real-udp` 表示回读了经 SOCKS5 UDP ASSOCIATE 的真实 UDP payload artifact，`project-real-tcp+udp` 表示两者均已取得；`project-real-tun-resources` 只表示在特权隔离 Docker 中回读了 sing-box core-owned TUN 接口、iproute2 rule/route 与删除清理 artifact。它们不能由 `check`、监听端口或进程存活代替，也不代表公网可达、主机透明策略或生产部署。
+- `validated`：本轮实际取得的证据。`registry-check` 只证明目标二进制能识别该 type 并进入初始化校验；`project-real-tcp` 表示回读了项目真实 TCP 业务闭环 artifact，`project-real-udp` 表示回读了经 SOCKS5 UDP ASSOCIATE 的真实 UDP payload artifact，`project-real-tcp+udp` 表示两者均已取得；`project-real-tun-resources` 只表示在特权隔离 Docker 中回读了 sing-box core-owned TUN 接口、iproute2 rule/route 与删除清理 artifact；`project-real-bridge-resources` 只表示回读了 bridge outbound 动态 TUN、core-created rule/route 及删除清理 artifact。它们不能由 `check`、监听端口或进程存活代替，也不代表公网可达、主机透明策略或生产部署。
 
 表中“版本”优先表示本项目实现时的核心版本门槛：除标明“自 1.14.0”的能力外，继续以项目已有的 1.13.x 兼容路径为下限；它不声称是该协议在 sing-box 历史上的首次引入版本。需要 1.14.0 的 type 或字段必须在目标版本门控后才可生成。
 
@@ -141,7 +141,7 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 | ID | 官方 type / 角色 | 版本、构建和平台条件 | TCP/UDP/主要约束 | upstream | available（官方 ARM64 包） | implemented；D/T/E/R | 导出 / 分享 / SubMan | validated |
 |---|---|---|---|---|---|---|---|---|
 | direct-outbound | `direct` / outbound | 基础内建 | TCP/UDP 直连；旧 `override_address/port` 在 1.13 已移除，改用 route options | yes | yes（Linux） | component state/config；yes/yes/yes/yes* | — / — / — | registry-check |
-| bridge | `bridge` / outbound | 自 1.14.0；需要 Linux/macOS/Windows、rooted Android 或 jailbroken iOS 的权限/接口 | 只接收来自 TUN/Endpoint pre-match 的 L3 流量（TCP/UDP/ICMP），拒绝 L4 代理连接与本机目的地址；Linux 有 iproute2 table/rule | conditional | yes（Linux；接口/root 仍需） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | registry-check；1.13.18 明确拒绝未知 type |
+| bridge | `bridge` / outbound | 自 1.14.0；需要 Linux/macOS/Windows、rooted Android 或 jailbroken iOS 的权限/接口 | 只接收来自 TUN/Endpoint pre-match 的 L3 流量（TCP/UDP/ICMP），拒绝 L4 代理连接与本机目的地址；Linux 有 iproute2 table/rule | conditional | yes（Linux；接口/root 仍需） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | project-real-bridge-resources；特权隔离 Docker 回读动态 TUN、priority 120/121 rule、table 2200/192.0.2.1 route、diagnose 与删除清理；仅 core-owned 资源观察，不含 L3 转发、公网或生产证据；1.13.18 明确拒绝未知 type |
 | block | `block` / outbound | 基础内建 | 丢弃连接/数据；无网络协议 | yes | yes（Linux） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | registry-check |
 | socks | `socks` / outbound | 基础内建 | SOCKS4/4a/5；TCP，UDP 依 server 支持，可 UDP-over-TCP | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 component JSON（不进入普通分享节点） / 不生成服务端分享 URI / no current SubMan | 两核心 1.13.18/1.14.0 typed config check；未验证上游 SOCKS 握手/数据面 |
 | http | `http` / outbound | 基础内建 | HTTP CONNECT，TCP；可配置认证、path、headers 与 outbound TLS | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 component JSON（不进入普通分享节点） / 不生成服务端分享 URI / no current SubMan | 两核心 1.13.18/1.14.0 明文+TLS typed config check；Docker `20260912051138` 通过受认证 loopback HTTP proxy 的 CONNECT、header 与 marker 回读；仅容器/回环，非公网或生产证据 |

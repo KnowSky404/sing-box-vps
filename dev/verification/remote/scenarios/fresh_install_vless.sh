@@ -159,4 +159,86 @@ EOF
     (.data.transparent_resources.resources | length == 0)' \
     "${tun_after_delete_diagnose_json}" >/dev/null
   verification_mark_step fresh_install_vless_tun_resources_cleaned
+
+  # Bridge is an outbound L3 component, but like TUN it creates a core-owned
+  # Linux TUN plus iproute2 rules/routes.  Exercise the explicit table/rule
+  # path and ensure the same transaction removes every core-owned resource.
+  local bridge_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/bridge-resource-record.json"
+  local bridge_create_json="${VERIFY_REMOTE_LOCAL_TREE_DIR}/bridge-resource-create.json"
+  local bridge_delete_json="${VERIFY_REMOTE_LOCAL_TREE_DIR}/bridge-resource-delete.json"
+  local bridge_diagnose_json="${VERIFY_REMOTE_LOCAL_TREE_DIR}/bridge-resource-diagnose.json"
+  local bridge_after_delete_diagnose_json="${VERIFY_REMOTE_LOCAL_TREE_DIR}/bridge-resource-after-delete-diagnose.json"
+  (umask 077; jq -n '{id:"bridge-resource-verification",role:"outbound",type:"bridge",
+    tag:"bridge-resource-verification",enabled:true,route_rules:[],config:{
+    interface:"lo",bridge_name:"sbv-bridge",iproute2_table_index:2200,
+    iproute2_rule_index:120}}' > "${bridge_record}")
+  bash /usr/local/bin/sbv agent component create --json --yes \
+    --expected-revision 2 --file "${bridge_record}" > "${bridge_create_json}"
+  verification_capture_file_if_present "${bridge_create_json}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/bridge-resource-create.json"
+  jq -e '.ok==true and .operation=="create" and .revision==3 and
+    .type=="bridge" and .service_restarted==true' "${bridge_create_json}" >/dev/null
+  verification_mark_step fresh_install_vless_bridge_component_created
+  verification_wait_for_service_active sing-box
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/bridge-resource-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/bridge-rules.json" \
+    ip -j rule show
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/bridge-routes.json" \
+    ip -j route show table all
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/bridge-links.json" \
+    ip -j link show
+  jq -e 'any(.[]; .ifname == "sbv-bridge0")' \
+    "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/bridge-links.json")" >/dev/null
+  jq -e 'any(.[]; (.priority == 120) and .iif == "sbv-bridge0" and
+    ((.table // "") | tostring) == "2200") and
+    any(.[]; (.priority == 121) and .dst == "192.0.2.1" and
+      ((.table // "main") | tostring) == "main")' \
+    "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/bridge-rules.json")" >/dev/null
+  jq -e 'any(.[]; .dst == "192.0.2.1" and .dev == "sbv-bridge0" and
+    ((.table // "main") | tostring) == "main") and
+    any(.[]; ((.table // "main") | tostring) == "2200" and
+      ((.dst // "default") == "default" or .type == "blackhole"))' \
+    "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/bridge-routes.json")" >/dev/null
+  bash /usr/local/bin/sbv agent component diagnose --json > "${bridge_diagnose_json}"
+  verification_capture_file_if_present "${bridge_diagnose_json}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/bridge-resource-diagnose.json"
+  jq -e '.ok==true and .data.transparent_resources.status=="available" and
+    ([.data.transparent_resources.resources[] | select(.type=="bridge" and
+      .interface_name=="sbv-bridge0" and .policy_routing.status=="present" and
+      .rule.status=="present")] | length == 1)' "${bridge_diagnose_json}" >/dev/null
+  verification_mark_step fresh_install_vless_bridge_resources_observed
+
+  bash /usr/local/bin/sbv agent component delete --json --yes \
+    --expected-revision 3 --id bridge-resource-verification > "${bridge_delete_json}"
+  verification_capture_file_if_present "${bridge_delete_json}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/bridge-resource-delete.json"
+  jq -e '.ok==true and .operation=="delete" and .revision==4 and
+    .id=="bridge-resource-verification" and .service_restarted==true' \
+    "${bridge_delete_json}" >/dev/null
+  verification_mark_step fresh_install_vless_bridge_component_deleted
+  verification_wait_for_service_active sing-box
+  verification_capture_best_effort_command "${VERIFY_CURRENT_SCENARIO_DIR}/bridge-links-after-delete.json" \
+    ip -j link show
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/bridge-rules-after-delete.json" \
+    ip -j rule show
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/bridge-routes-after-delete.json" \
+    ip -j route show table all
+  if ip -j link show dev sbv-bridge0 >/dev/null 2>&1; then
+    printf 'bridge interface remained after managed component deletion\n' >&2
+    return 1
+  fi
+  ! jq -e 'any(.[]; (.priority == 120) and .iif == "sbv-bridge0") or
+    any(.[]; (.priority == 121) and .dst == "192.0.2.1")' \
+    "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/bridge-rules-after-delete.json")" >/dev/null
+  ! jq -e 'any(.[]; .dev == "sbv-bridge0" and
+    (((.dst // "") == "192.0.2.1") or ((.table // "main") | tostring) == "2200"))' \
+    "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/bridge-routes-after-delete.json")" >/dev/null
+  bash /usr/local/bin/sbv agent component diagnose --json > "${bridge_after_delete_diagnose_json}"
+  verification_capture_file_if_present "${bridge_after_delete_diagnose_json}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/bridge-resource-after-delete-diagnose.json"
+  jq -e '.ok==true and .data.transparent_resources.status=="available" and
+    (.data.transparent_resources.resources | length == 0)' \
+    "${bridge_after_delete_diagnose_json}" >/dev/null
+  verification_mark_step fresh_install_vless_bridge_resources_cleaned
 }

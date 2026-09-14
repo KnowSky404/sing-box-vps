@@ -716,3 +716,22 @@ advanced inbound，避免删除候选在发布前被误报为 unmanaged type。
 不包括透明包转发、宿主 PREROUTING/策略路由所有权、外部控制面、公网或
 生产部署。Redirect/TProxy 与 Cloudflared 仍按未验证边界记录，完整协议
 目标继续未完成。
+
+### 2026-09-14：Bridge outbound core-owned 资源观察与事务 postcheck
+
+此前组件诊断只枚举 TUN/Redirect/TProxy 入站，bridge outbound 虽已可
+typed render，却会被误报为“无透明资源”，且活动服务重启后没有 core-owned
+资源 postcheck。本轮将 bridge 纳入同一只读探针：从 `192.0.2.x` link route
+解析 sing-tun 动态接口名，核对显式或默认的 iproute2 rule/table 与 main
+link route，并将 bridge netfilter 标为 core-dynamic observation；不猜测或
+删除宿主 NAT/forwarding 规则。组件事务在候选包含 bridge 时同样要求接口、
+rule 和 route postcheck，失败按既有快照回滚。
+
+`tests/managed_transparent_resources.sh` 增加动态 bridge 接口、表/规则和
+缺失资源负例；`fresh_install_vless` 在特权隔离 Docker 中创建
+`bridge-resource-verification`（`lo` egress、table 2200、rule 120），回读
+真实 `sbv-bridge0`、192.0.2.1 route、120/121 rules 与 diagnose，再删除并
+确认接口/rules/routes 清理；活动服务事务对 core-owned 资源提供 10 次、每次
+0.2 秒的有界收敛窗口，持续缺失仍 fail-closed 回滚。该证据只覆盖固定 1.14.0、隔离网络命名空间内
+的 core-owned L3 资源生命周期，不代表 bridge L3 payload、宿主防火墙、
+公网或生产部署；完整协议目标仍未完成。

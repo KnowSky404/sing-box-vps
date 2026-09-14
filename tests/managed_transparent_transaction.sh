@@ -47,6 +47,7 @@ chmod 0755 "${TMP_DIR}/bin/systemctl"
 cat > "${TMP_DIR}/bin/ip" <<'EOF_IP'
 #!/usr/bin/env bash
 set -euo pipefail
+link_probe_count_file=${SBV_TRANSPARENT_LINK_PROBE_COUNT:?missing link probe count file}
 case "${1:-}:${2:-}" in
   -j:rule)
     printf '%s\n' '[{"priority":9000,"table":"2022"}]'
@@ -55,7 +56,15 @@ case "${1:-}:${2:-}" in
     printf '%s\n' '[{"dst":"default","dev":"sbv-health","table":"2022"}]'
     ;;
   -j:link)
-    if [[ "${SBV_TRANSPARENT_HEALTH_MODE:-missing}" == present ]]; then
+    if [[ "${SBV_TRANSPARENT_HEALTH_MODE:-missing}" == eventual ]]; then
+      count=$(<"${link_probe_count_file}")
+      printf '%s\n' "$((count + 1))" > "${link_probe_count_file}"
+      if (( count < 2 )); then
+        printf '%s\n' '[]'
+      else
+        printf '%s\n' '[{"ifname":"sbv-health","operstate":"UP"}]'
+      fi
+    elif [[ "${SBV_TRANSPARENT_HEALTH_MODE:-missing}" == present ]]; then
       printf '%s\n' '[{"ifname":"sbv-health","operstate":"UP"}]'
     else
       printf '%s\n' '[]'
@@ -70,8 +79,10 @@ chmod 0755 "${TMP_DIR}/bin/ip"
 source "${TESTABLE_INSTALL}"
 export SBV_TRANSPARENT_SYSTEMCTL_STATE="${TMP_DIR}/systemctl.state"
 export SBV_TRANSPARENT_SYSTEMCTL_COUNT="${TMP_DIR}/systemctl.count"
+export SBV_TRANSPARENT_LINK_PROBE_COUNT="${TMP_DIR}/link-probe.count"
 printf '%s\n' active > "${SBV_TRANSPARENT_SYSTEMCTL_STATE}"
 printf '%s\n' 0 > "${SBV_TRANSPARENT_SYSTEMCTL_COUNT}"
+printf '%s\n' 0 > "${SBV_TRANSPARENT_LINK_PROBE_COUNT}"
 printf '%s\n' '[Unit]' > "${SINGBOX_SERVICE_FILE}"
 
 managed_component_write_state "$(managed_component_state_default_json)"
@@ -121,7 +132,7 @@ jq -e '.ok == false and .error == "transparent_resource_check_failed" and
 [[ ! -e "${SB_COMPONENT_TRANSACTION_DIR}" ]]
 [[ "$(<"${SBV_TRANSPARENT_SYSTEMCTL_COUNT}")" == 2 ]]
 
-export SBV_TRANSPARENT_HEALTH_MODE=present
+export SBV_TRANSPARENT_HEALTH_MODE=eventual
 succeeded=$(agent_cli component create --json --yes --allow-public --expected-revision 0 \
   --file "${tun_record}")
 jq -e '.ok == true and .data.operation == "create" and
@@ -131,5 +142,6 @@ jq -e '.revision == 1 and any(.components[]; .id == "tun-health")' \
 jq -e 'any(.inbounds[]; .type == "tun" and .interface_name == "sbv-health" and
   .auto_route == true)' "${SINGBOX_CONFIG_FILE}" >/dev/null
 [[ "$(<"${SBV_TRANSPARENT_SYSTEMCTL_COUNT}")" == 3 ]]
+[[ "$(<"${SBV_TRANSPARENT_LINK_PROBE_COUNT}")" -ge 3 ]]
 
 printf '%s\n' 'managed transparent transaction checks passed'

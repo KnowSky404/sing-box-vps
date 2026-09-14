@@ -37,12 +37,14 @@ cat > "${TMP_DIR}/bin/ip" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == "-j" && "${2:-}" == "rule" ]]; then
-  printf '%s\n' '[{"priority":9000,"src":"all","table":"2022"}]'
+  printf '%s\n' '[{"priority":9000,"src":"all","table":"2022"},{"priority":120,"iif":"sbv-bridge0","table":"2200"},{"priority":121,"dst":"192.0.2.1","table":"main"}]'
 elif [[ "${1:-}" == "-j" && "${2:-}" == "route" ]]; then
-  printf '%s\n' '[{"dst":"default","dev":"sbv-tun-probe","table":"2022"}]'
+  printf '%s\n' '[{"dst":"default","dev":"sbv-tun-probe","table":"2022"},{"dst":"192.0.2.1","dev":"sbv-bridge0"},{"dst":"default","dev":"lo","table":"2200"}]'
 elif [[ "${1:-}" == "-j" && "${2:-}" == "link" ]]; then
   if [[ "${5:-}" == "missing-tun" ]]; then
     printf '%s\n' '[]'
+  elif [[ "${5:-}" == "sbv-bridge0" ]]; then
+    printf '%s\n' '[{"ifname":"sbv-bridge0","operstate":"UP"}]'
   else
     printf '%s\n' '[{"ifname":"sbv-tun-probe","operstate":"UP"}]'
   fi
@@ -91,6 +93,41 @@ if managed_component_transparent_resources_json "${config_file}" active >/dev/nu
   printf 'unsafe TUN interface name unexpectedly accepted\n' >&2
   exit 1
 fi
+
+# Bridge outbounds own a dynamically named TUN plus a pair of core-created
+# iproute2 rules and a deterministic 192.0.2.x link route.  The probe resolves
+# that name from the bounded route dump and verifies the explicit table/rule
+# values without claiming host firewall/NAT ownership.
+bridge_config_file="${TMP_DIR}/bridge-config.json"
+jq -n '{inbounds:[],outbounds:[{type:"bridge",tag:"bridge-probe",interface:"lo",bridge_name:"sbv-bridge",iproute2_table_index:2200,iproute2_rule_index:120}],route:{final:"direct"}}' > "${bridge_config_file}"
+bridge_active=$(managed_component_transparent_resources_json "${bridge_config_file}" active)
+jq -e '
+  .status == "available" and .reason == null and .service_active == true and
+  ([.resources[] | select(.type == "bridge" and .tag == "bridge-probe") |
+    .interface_name == "sbv-bridge0" and .bridge_port == "192.0.2.1" and
+    .route_table == 2200 and .rule_priority == 120 and
+    .interface.status == "present" and .policy_routing.status == "present" and
+    .rule.status == "present" and .bridge_netfilter.status == "observed"] | length == 1)
+' <<< "${bridge_active}" >/dev/null
+
+jq '.outbounds[0].bridge_name = "missing-bridge"' "${bridge_config_file}" > "${bridge_config_file}.next"
+mv -f "${bridge_config_file}.next" "${bridge_config_file}"
+bridge_missing=$(managed_component_transparent_resources_json "${bridge_config_file}" active)
+jq -e '.status == "unavailable" and .reason == "bridge_runtime_resources_missing" and
+  .resources[0].interface.status == "missing"' <<< "${bridge_missing}" >/dev/null
+
+# A failed iproute2 probe must remain a structured unavailable diagnostic; it
+# must not try to read an absent route snapshot or block on stdin.
+cat > "${TMP_DIR}/bin/ip" <<'EOF'
+#!/usr/bin/env bash
+exit 42
+EOF
+chmod 0755 "${TMP_DIR}/bin/ip"
+bridge_probe_failed=$(managed_component_transparent_resources_json "${bridge_config_file}" active)
+jq -e '.status == "unavailable" and .reason == "iproute2_rule_probe_failed" and
+  .resources[0].type == "bridge" and .resources[0].interface.status == "not_probed" and
+  .resources[0].policy_routing.status == "not_probed" and .resources[0].rule.status == "not_probed"' \
+  <<< "${bridge_probe_failed}" >/dev/null
 
 # Redirect/TProxy-only diagnostics must not fail merely because iproute2 is
 # unavailable: their host policy is explicitly outside installer ownership.

@@ -16462,30 +16462,36 @@ managed_component_tun_route_options_json() {
 managed_component_transparent_resources_json() (
   local config_file=${1:-${SINGBOX_CONFIG_FILE:-}} service_state=${2:-unknown}
   local snapshot records='[]' resources='[]' status=not_assessed reason=service_inactive
-  local tun_count=0 record tag type interface_name auto_route auto_redirect
+  local tun_count=0 bridge_count=0 record tag type interface_name auto_route auto_redirect
   local table_index rule_index link_status route_status rule_status nft_status
+  local bridge_name bound_interface bridge_interface_name bridge_port bridge_index
+  local bridge_table bridge_rule bridge_octet bridge_configured_table bridge_configured_rule
   local link_file rule_file route_file nft_file output_size
   [[ -f "${config_file}" && ! -L "${config_file}" && -r "${config_file}" ]] || return 1
   snapshot=$(mktemp -d /tmp/sbv-transparent-resources.XXXXXX) || return 1
   trap 'rm -rf -- "${snapshot}"' EXIT INT TERM HUP
   head -c 4194305 -- "${config_file}" > "${snapshot}/config.json" || return 1
   [[ "$(wc -c < "${snapshot}/config.json")" -le 4194304 ]] || return 1
-  records=$(jq -c '[.inbounds[]? | select(.type == "tun" or .type == "redirect" or .type == "tproxy") |
+  records=$(jq -c '[
+    (.inbounds[]? | select(.type == "tun" or .type == "redirect" or .type == "tproxy")),
+    (.outbounds[]? | select(.type == "bridge")) |
     {tag:(.tag // ""),type:.type,interface_name:(.interface_name // "tun0"),
      auto_route:(.auto_route // false),auto_redirect:(.auto_redirect // false),
-     table_index:(.iproute2_table_index // 2022),rule_index:(.iproute2_rule_index // 9000),
+     table_index:(.iproute2_table_index // null),rule_index:(.iproute2_rule_index // null),
+     bridge_name:(.bridge_name // "bridge"),bound_interface:(.interface // ""),
      listen:(.listen // ""),listen_port:(.listen_port // 0)}]' "${snapshot}/config.json") || return 1
   tun_count=$(jq -r '[.[] | select(.type == "tun")] | length' <<< "${records}") || return 1
+  bridge_count=$(jq -r '[.[] | select(.type == "bridge")] | length' <<< "${records}") || return 1
   if [[ "${service_state}" != active ]]; then
     jq -cn --arg status "${status}" --arg reason "${reason}" --argjson resources "${records}" \
-      '{status:$status,reason:$reason,service_active:false,resources:($resources | map({tag,type,listen,listen_port,resource_scope:(if .type == "tun" then "core_owned" else "operator_policy_required" end),status:"not_assessed",reason:"service_inactive"})),limitations:["redirect/tproxy host policy rules are not installer-owned","TUN routes and auto-redirect state require a running core"]}'
+      '{status:$status,reason:$reason,service_active:false,resources:($resources | map({tag,type,listen,listen_port,resource_scope:(if .type == "tun" or .type == "bridge" then "core_owned" else "operator_policy_required" end),status:"not_assessed",reason:"service_inactive"})),limitations:["redirect/tproxy host policy rules are not installer-owned","TUN/bridge core-owned resources require a running core"]}'
     return 0
   fi
-  if (( tun_count == 0 )) && ! jq -e 'any(.[]; .type == "redirect" or .type == "tproxy")' <<< "${records}" >/dev/null 2>&1; then
+  if (( tun_count == 0 && bridge_count == 0 )) && ! jq -e 'any(.[]; .type == "redirect" or .type == "tproxy")' <<< "${records}" >/dev/null 2>&1; then
     jq -cn '{status:"available",reason:null,service_active:true,resources:[],limitations:[]}'
     return 0
   fi
-  if (( tun_count == 0 )); then
+  if (( tun_count == 0 && bridge_count == 0 )); then
     jq -cn --argjson resources "${records}" \
       '{status:"not_assessed",reason:"host_policy_rules_not_managed",service_active:true,
         resources:($resources | map({tag,type,listen,listen_port,
@@ -16523,7 +16529,7 @@ managed_component_transparent_resources_json() (
       reason=iproute2_route_probe_invalid
     fi
   fi
-  if (( tun_count > 0 )) && [[ "${status}" == available ]]; then
+  if (( tun_count > 0 || bridge_count > 0 )) && [[ "${status}" == available ]]; then
     if command -v nft >/dev/null 2>&1; then
       nft_file="${snapshot}/nft.json"
       if nft -j list ruleset > "${nft_file}" 2>"${snapshot}/nft.stderr"; then
@@ -16548,6 +16554,108 @@ managed_component_transparent_resources_json() (
     [[ -n "${record}" ]] || continue
     tag=$(jq -r '.tag' <<< "${record}") || return 1
     type=$(jq -r '.type' <<< "${record}") || return 1
+    if [[ "${type}" == bridge ]]; then
+      bridge_name=$(jq -r '.bridge_name // "bridge"' <<< "${record}") || return 1
+      [[ "${bridge_name}" =~ ^[A-Za-z0-9_.-]{1,15}$ ]] || return 1
+      bound_interface=$(jq -r '.bound_interface // ""' <<< "${record}") || return 1
+      bridge_interface_name=''
+      bridge_port=''
+      if [[ "${status}" == available ]]; then
+        bridge_interface_name=$(jq -r --arg base "${bridge_name}" '
+          [.[] | (.dev // "") | tostring |
+            select(. == $base or (startswith($base) and
+              (.[($base | length):] | test("^[0-9]+$"))))] |
+          unique | if length == 1 then .[0] else "" end
+        ' "${route_file}") || return 1
+        bridge_port=$(jq -r --arg interface "${bridge_interface_name}" '
+          [.[] | select((.dev // "") == $interface and
+            ((.dst // "") | test("^192\\.0\\.2\\.[0-9]{1,3}$")) and
+            (((.table // "main") | tostring) == "main")) | .dst] |
+          unique | if length == 1 then .[0] else "" end
+        ' "${route_file}") || return 1
+      fi
+      bridge_index=-1
+      if [[ "${bridge_port}" =~ ^192\.0\.2\.([0-9]+)$ ]]; then
+        bridge_octet=$((10#${BASH_REMATCH[1]}))
+        if (( bridge_octet >= 1 && bridge_octet <= 254 )); then
+          bridge_index=$((bridge_octet - 1))
+        fi
+      fi
+      bridge_configured_table=$(jq -r 'if ((.table_index | type) == "number") then .table_index | tostring else "0" end' <<< "${record}") || return 1
+      bridge_configured_rule=$(jq -r 'if ((.rule_index | type) == "number") then .rule_index | tostring else "0" end' <<< "${record}") || return 1
+      [[ "${bridge_configured_table}" =~ ^[0-9]+$ && "${bridge_configured_rule}" =~ ^[0-9]+$ ]] || return 1
+      (( bridge_configured_table <= 2147483647 && bridge_configured_rule <= 2147483647 )) || return 1
+      bridge_table=0
+      if [[ -n "${bound_interface}" ]]; then
+        if (( bridge_configured_table > 0 )); then
+          bridge_table=${bridge_configured_table}
+        elif (( bridge_index >= 0 )); then
+          bridge_table=$((2200 + bridge_index))
+        else
+          bridge_table=-1
+        fi
+      fi
+      if (( bridge_configured_rule > 0 )); then
+        bridge_rule=${bridge_configured_rule}
+      else
+        bridge_rule=100
+      fi
+      link_status=missing
+      if [[ "${status}" == available && "${bridge_interface_name}" =~ ^[A-Za-z0-9_.-]{1,15}$ ]] &&
+         ip -j link show dev "${bridge_interface_name}" > "${link_file}" 2>"${snapshot}/link.stderr"; then
+        if [[ "$(wc -c < "${link_file}")" -le 1048576 ]] && jq -e 'type == "array"' "${link_file}" >/dev/null 2>&1 &&
+           jq -e --arg name "${bridge_interface_name}" 'any(.[]; .ifname == $name)' "${link_file}" >/dev/null 2>&1; then
+          link_status=present
+        fi
+      elif [[ "${status}" != available ]]; then
+        link_status=not_probed
+      fi
+      route_status=missing
+      rule_status=missing
+      if [[ "${status}" != available ]]; then
+        route_status=not_probed
+        rule_status=not_probed
+      elif [[ "${bridge_interface_name}" =~ ^[A-Za-z0-9_.-]{1,15}$ &&
+            "${bridge_port}" =~ ^192\.0\.2\.[0-9]{1,3}$ && "${bridge_table}" != -1 ]]; then
+        if jq -e --arg dst "${bridge_port}" --arg interface "${bridge_interface_name}" \
+          'any(.[]; (.dst // "") == $dst and (.dev // "") == $interface and
+            (((.table // "main") | tostring) == "main"))' "${route_file}" >/dev/null 2>&1; then
+          route_status=present
+        fi
+        if jq -e --argjson priority "${bridge_rule}" --arg interface "${bridge_interface_name}" \
+          --arg table "$(if (( bridge_table == 0 )); then printf main; else printf '%s' "${bridge_table}"; fi)" \
+          --argjson to_priority "$((bridge_rule + 1))" --arg dst "${bridge_port}" \
+          'any(.[]; (.priority == $priority) and (.iif // "") == $interface and
+            (((.table // "main") | tostring) == $table)) and
+           any(.[]; (.priority == $to_priority) and (.dst // "") == $dst and
+            (((.table // "main") | tostring) == "main"))' "${rule_file}" >/dev/null 2>&1; then
+          rule_status=present
+        fi
+        if (( bridge_table > 0 )) && ! jq -e --arg table "${bridge_table}" --arg interface "${bound_interface}" \
+          'any(.[]; (((.table // "main") | tostring) == $table) and
+            (((.dst // "") == "default" and (.dev // "") == $interface) or
+             ((.type // "") == "blackhole" and (.dst // "") == "default")))' \
+          "${route_file}" >/dev/null 2>&1; then
+          route_status=missing
+        fi
+      fi
+      record=$(jq -c --argjson item "${record}" --arg scope core_owned --arg iface "${bridge_interface_name}" \
+        --arg port "${bridge_port}" --arg table "${bridge_table}" --arg rule "${bridge_rule}" \
+        --arg link "${link_status}" --arg route "${route_status}" --arg rule_status "${rule_status}" \
+        --arg nft "${nft_status}" \
+        '{tag:$item.tag,type:$item.type,bridge_name:$item.bridge_name,bound_interface:$item.bound_interface,
+          interface_name:$iface,bridge_port:$port,route_table:($table|tonumber),rule_priority:($rule|tonumber),
+          resource_scope:$scope,interface:{status:$link},policy_routing:{status:$route},rule:{status:$rule_status},
+          bridge_netfilter:{status:(if $nft == "observed" then "observed" else "not_assessed" end),ownership:"core_dynamic"}}' \
+        <<< "${record}") || return 1
+      if [[ "${status}" == available &&
+            ( "${link_status}" != present || "${route_status}" != present || "${rule_status}" != present ) ]]; then
+        status=unavailable
+        reason=bridge_runtime_resources_missing
+      fi
+      resources=$(jq -c --argjson item "${record}" '. + [$item]' <<< "${resources}") || return 1
+      continue
+    fi
     if [[ "${type}" != tun ]]; then
       resources=$(jq -c --argjson item "${record}" '. + [($item | {
         tag,type,listen,listen_port,
@@ -16615,7 +16723,7 @@ managed_component_transparent_resources_json() (
   done < <(jq -c '.[]' <<< "${records}")
   jq -cn --arg status "${status}" --arg reason "${reason}" --argjson resources "${resources}" \
     '{status:$status,reason:(if $reason == "" then null else $reason end),service_active:true,resources:$resources,
-      limitations:["redirect/tproxy host policy rules are not installer-owned","reported core-owned state is observation only"]}'
+      limitations:["redirect/tproxy host policy rules are not installer-owned","bridge forwarding/NAT policy is core-dynamic and observation only","reported core-owned state is observation only"]}'
 )
 
 managed_component_transparent_runtime_healthy() {
@@ -16627,13 +16735,32 @@ managed_component_transparent_runtime_healthy() {
     type == "object" and
     .service_active == true and
     (.resources | type == "array" and length > 0) and
-    ([.resources[] | select(.type == "tun")] | length > 0) and
+    any(.resources[]; .type == "tun" or .type == "bridge") and
     (all(.resources[] | select(.type == "tun");
       .interface.status == "present" and
       ((.auto_route != true) or
        (.policy_routing.status == "present" and .rule.status == "present")) and
       ((.auto_redirect != true) or .auto_redirect_rules.status == "observed")))
+    and
+    (all(.resources[] | select(.type == "bridge");
+      .interface.status == "present" and
+      .policy_routing.status == "present" and .rule.status == "present"))
   ' <<< "${report}" >/dev/null 2>&1
+}
+
+# A core restart can report active before it has finished publishing a
+# dynamically allocated TUN/rule/route set.  Keep the transaction fail-closed,
+# but give those core-owned resources a short bounded convergence window.
+managed_component_transparent_runtime_healthy_with_retry() {
+  local config_file=${1:-} attempt=0
+  while (( attempt < 10 )); do
+    if managed_component_transparent_runtime_healthy "${config_file}"; then
+      return 0
+    fi
+    ((attempt += 1))
+    (( attempt < 10 )) && sleep 0.2
+  done
+  return 1
 }
 
 managed_component_state_candidate() {
@@ -17325,16 +17452,17 @@ managed_component_state_apply() {
     service_restarted=true
   fi
   if [[ "${service_restarted}" == true ]] &&
-     jq -e 'any(.inbounds[]?; .type == "tun")' "${SINGBOX_CONFIG_FILE}" >/dev/null 2>&1; then
-    if ! managed_component_transparent_runtime_healthy "${SINGBOX_CONFIG_FILE}"; then
+     jq -e 'any(.inbounds[]?; .type == "tun") or any(.outbounds[]?; .type == "bridge")' \
+       "${SINGBOX_CONFIG_FILE}" >/dev/null 2>&1; then
+    if ! managed_component_transparent_runtime_healthy_with_retry "${SINGBOX_CONFIG_FILE}"; then
       if [[ -n "${firewall_journal}" ]]; then
         if ! instance_firewall_rollback "${firewall_journal}"; then
           MANAGED_COMPONENT_LAST_ERROR=firewall_rollback_failed
           if restore_managed_state_snapshot "${snapshot}"; then
-            printf '[ERROR] 高级组件 TUN 运行资源检查失败且防火墙回滚不确定；文件状态已恢复，事务快照保留在 %s。\n' \
+            printf '[ERROR] 高级组件透明运行资源检查失败且防火墙回滚不确定；文件状态已恢复，事务快照保留在 %s。\n' \
               "${snapshot}" >&2
           else
-            printf '[ERROR] 高级组件 TUN 运行资源检查失败且自动回滚失败；事务快照保留在 %s。\n' \
+            printf '[ERROR] 高级组件透明运行资源检查失败且自动回滚失败；事务快照保留在 %s。\n' \
               "${snapshot}" >&2
           fi
           return 1
@@ -17342,7 +17470,7 @@ managed_component_state_apply() {
         firewall_summary=$(instance_transaction_firewall_summary "${firewall_journal}")
       fi
       managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" \
-        "高级组件 TUN 运行资源检查失败" y || :
+        "高级组件透明运行资源检查失败" y || :
       MANAGED_COMPONENT_LAST_ERROR=transparent_resource_check_failed
       return 1
     fi
