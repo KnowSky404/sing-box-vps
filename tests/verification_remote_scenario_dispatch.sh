@@ -1184,6 +1184,7 @@ perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/shadowsocks.js
 perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/trojan.env|state_file='"${TROJAN_STATE_FILE}"'|g' "${PAYLOAD_FILE}"
 perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/trojan.json|store_file='"${TROJAN_STORE_FILE}"'|g' "${PAYLOAD_FILE}"
 
+# The fake payload must not touch host TUN/bridge or endpoint resources.
 CALLS_FILE="${CALLS_FILE}" \
 CONFIG_PRESENT_FILE="${CONFIG_PRESENT_FILE}" \
 PORT_FILE="${PORT_FILE}" \
@@ -1218,7 +1219,8 @@ PROBE_HTTP_PID_FILE="${TMP_DIR}/probe-http.pid" \
 VERIFY_REMOTE_INSTALL_SCRIPT="${EMBEDDED_INSTALL_SCRIPT}" \
 VERIFY_REMOTE_UNINSTALL_SCRIPT="${EMBEDDED_UNINSTALL_SCRIPT}" \
 REAL_JQ="${REAL_JQ}" \
-  bash "${PAYLOAD_FILE}" \
+VERIFY_REMOTE_SKIP_PRIVILEGED_RESOURCES=1 \
+PATH="${TMP_DIR}:/usr/local/bin:/usr/bin:/bin" bash "${PAYLOAD_FILE}" \
     fresh_install_vless \
     reconfigure_existing_install \
     legacy_takeover_export \

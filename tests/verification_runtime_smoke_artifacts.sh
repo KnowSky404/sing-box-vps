@@ -1506,6 +1506,7 @@ awk -v wrapper_file="\${script_file}.wrapper" '
 ' "\${script_file}" > "\${script_file}.tmp"
 mv "\${script_file}.tmp" "\${script_file}"
 printf 'REMOTE_HOST=%s\n' "\${remote_host}"
+# The fake payload must not touch host TUN/bridge or endpoint resources.
 REMOTE_CONFIG_PRESENT_FILE="${REMOTE_CONFIG_PRESENT_FILE}" \
 REMOTE_PORT_FILE="${REMOTE_PORT_FILE}" \
 REMOTE_UUID_FILE="${REMOTE_UUID_FILE}" \
@@ -1541,7 +1542,8 @@ REMOTE_TROJAN_STORE_FILE="${REMOTE_TROJAN_STORE_FILE}" \
 REMOTE_HYSTERIA_STATE_FILE="${REMOTE_HYSTERIA_STATE_FILE}" \
 REMOTE_HYSTERIA_STORE_FILE="${REMOTE_HYSTERIA_STORE_FILE}" \
 REAL_JQ="${REAL_JQ}" \
-PATH="${TMP_DIR}:\$PATH" "${REAL_BASH}" "\${script_file}" "\${@:7}"
+VERIFY_REMOTE_SKIP_PRIVILEGED_RESOURCES=1 \
+PATH="${TMP_DIR}:/usr/local/bin:/usr/bin:/bin" "${REAL_BASH}" "\${script_file}" "\${@:7}"
   exit \$?
 fi
 if [[ "\${1:-}" == "rm" && "\${2:-}" == "-f" ]]; then

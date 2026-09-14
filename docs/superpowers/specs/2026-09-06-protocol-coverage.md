@@ -6,14 +6,14 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091205`，`SB_SUPPORT_MAX_VERSION=1.14.0`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091401`，`SB_SUPPORT_MAX_VERSION=1.14.0`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
 - `upstream`：目标版本源码中是否有该角色和 type 的注册实现；`conditional` 表示构建 tag、平台、CGO 或外部控制面有条件。
 - `implemented`：本项目是否已经提供状态、配置组合、生命周期、导出/分享等管理链路；`none` 不表示上游不可用。
 - `available`：当前官方 ARM64 Linux 发布包中是否已包含该角色的注册实现，以及仍需满足的构建、平台、运行库或外部控制面条件；它独立于源码中存在注册函数。
-- `validated`：本轮实际取得的证据。`registry-check` 只证明目标二进制能识别该 type 并进入初始化校验；`project-real-tcp` 表示回读了项目真实 TCP 业务闭环 artifact，`project-real-udp` 表示回读了经 SOCKS5 UDP ASSOCIATE 的真实 UDP payload artifact，`project-real-tcp+udp` 表示两者均已取得；`project-real-tun-resources` 只表示在特权隔离 Docker 中回读了 sing-box core-owned TUN 接口、iproute2 rule/route 与删除清理 artifact；`project-real-bridge-resources` 只表示回读了 bridge outbound 动态 TUN、core-created rule/route 及删除清理 artifact。它们不能由 `check`、监听端口或进程存活代替，也不代表公网可达、主机透明策略或生产部署。
+- `validated`：本轮实际取得的证据。`registry-check` 只证明目标二进制能识别该 type 并进入初始化校验；`project-real-tcp` 表示回读了项目真实 TCP 业务闭环 artifact，`project-real-udp` 表示回读了经 SOCKS5 UDP ASSOCIATE 的真实 UDP payload artifact，`project-real-tcp+udp` 表示两者均已取得；`project-real-tun-resources` 只表示在特权隔离 Docker 中回读了 sing-box core-owned TUN 接口、iproute2 rule/route 与删除清理 artifact；`project-real-bridge-resources` 只表示回读了 bridge outbound 动态 TUN、core-created rule/route 及删除清理 artifact；`project-real-openvpn-tcp` 表示在特权隔离 Docker 中以合成证书和用户名/密码组成 `system:false` OpenVPN server/client pair，经受管 direct inbound 回读 marker payload，并完成目标核心 check 与 endpoint 删除清理。它们不能由 `check`、监听端口或进程存活代替，也不代表公网可达、主机透明策略、外部控制面或生产部署。
 
 表中“版本”优先表示本项目实现时的核心版本门槛：除标明“自 1.14.0”的能力外，继续以项目已有的 1.13.x 兼容路径为下限；它不声称是该协议在 sing-box 历史上的首次引入版本。需要 1.14.0 的 type 或字段必须在目标版本门控后才可生成。
 
@@ -173,14 +173,16 @@ Endpoint 同时具有接入和出站行为，不能塞进普通 `inbounds`/`outb
 | wireguard-endpoint | `wireguard` / endpoint | `with_wireguard`；`system` 数据路径依赖平台权限，gVisor 路径依赖 `with_gvisor` | UDP、peer/allowed IP/private key/MTU；支持多个 peer；UDP NAT、workers 与 shared Dial Fields 受控；不是旧 outbound | conditional | yes（tag 已含；peer/权限仍需） | typed component state/config；yes/yes/yes/yes* | 敏感 endpoint JSON；不输出普通分享 / no current SubMan | registry-check + 1.14 全字段/1.13 基础子集 `check` |
 | tailscale | `tailscale` / endpoint | `with_tailscale`；需要 auth key 或交互登录/控制面；可带 gVisor/system 接口 | WireGuard peer-to-peer UDP、控制面和可选 relay；可 advertise/accept routes、exit node、SSH；状态目录必须持久化 | conditional | yes（tag 已含；auth/控制面仍需） | typed component state/config；yes/yes/yes/yes* | 敏感 endpoint JSON / 不属于普通分享节点 / no current SubMan | state/render typed checks；registry/core check 不含 auth、relay、SSH 或数据面 |
 | openconnect | `openconnect` / endpoint | 自 1.14.0；`with_openconnect`；`system:false` 还要求 `with_gvisor`；需要 Cisco/GlobalProtect/Fortinet/F5/Pulse/Juniper 服务器和交互认证 | VPN 数据面可 TCP/UDP；HTTPS control channel、cookie/token/username/password/cert、TLS/form/移动身份；无授权端点不能标 validated | conditional | yes（tag 已含；system:false 需 gVisor；认证仍需） | typed component state/config；yes/yes/yes/yes* | 敏感 endpoint JSON / 不属于普通分享节点 / no current SubMan | state/render typed checks；registry/core check 不含外部认证或数据面 |
-| openvpn-client | `openvpn-client` / endpoint | 自 1.14.0；`with_openvpn`；`system:false` 还要求 `with_gvisor`；需要外部 OpenVPN server/profile/凭据 | TCP 或 UDP；TLS 或 static_key union；interactive auth、certificate/key、control-wrap、topology、DNS/route 需保留 | conditional | yes（tag 已含；system:false 需 gVisor；外部 profile 仍需） | typed component state/config；yes/yes/yes/yes* | 敏感 endpoint JSON / 不属于普通分享节点 / no current SubMan | state/render typed checks；registry/core check 不含远端握手或数据面 |
-| openvpn-server | `openvpn-server` / endpoint | 自 1.14.0；`with_openvpn`；`system:false` 还要求 `with_gvisor`；证书/密钥和端口资源是部署条件 | TCP 或 UDP，每个 endpoint 只服务一种 network；TLS/static_key union、address pool/family、users/push 与 control-wrap 约束不同 | conditional | yes（tag 已含；system:false 需 gVisor；证书/密钥仍需） | typed component state/config；yes/yes/yes/yes* | 敏感 endpoint JSON / 不属于普通分享节点 / no current SubMan | state/render typed checks；registry/core check 不含证书加载或真实客户端数据面 |
+| openvpn-client | `openvpn-client` / endpoint | 自 1.14.0；`with_openvpn`；`system:false` 还要求 `with_gvisor`；需要外部 OpenVPN server/profile/凭据 | TCP 或 UDP；TLS 或 static_key union；interactive auth、certificate/key、control-wrap、topology、DNS/route 需保留 | conditional | yes（tag 已含；system:false 需 gVisor；外部 profile 仍需） | typed component state/config；yes/yes/yes/yes* | 敏感 endpoint JSON / 不属于普通分享节点 / no current SubMan | `project-real-openvpn-tcp`；Docker `20260914140016` 以合成 server/client、`system:false`、用户名/密码和临时 SAN 证书完成 `tunnel established` 与 marker TCP 回读，目标核心 check、revision 删除和监听清理均通过；仅固定核心/隔离网络，OpenVPN UDP、`system:true`、外部控制面、公网/生产未验证 |
+| openvpn-server | `openvpn-server` / endpoint | 自 1.14.0；`with_openvpn`；`system:false` 还要求 `with_gvisor`；证书/密钥和端口资源是部署条件 | TCP 或 UDP，每个 endpoint 只服务一种 network；TLS/static_key union、address pool/family、users/push 与 control-wrap 约束不同 | conditional | yes（tag 已含；system:false 需 gVisor；证书/密钥仍需） | typed component state/config；yes/yes/yes/yes* | 敏感 endpoint JSON / 不属于普通分享节点 / no current SubMan | `project-real-openvpn-tcp`；同一隔离 Docker pair 验证 server 监听、peer connected、client tunnel、marker payload 和删除后的端口/资源清理；只覆盖 `system:false` TCP 合成端点，不证明外部证书部署、UDP、`system:true`、公网/生产或 SubMan |
 
 Endpoint 表中仍保留 `none` 的历史行表示没有专用分享/节点适配；2026-09-09 增量新增的 `components.json` 状态/config/CAS 管理切片等价于组件生命周期 `yes/yes/yes/yes*`，但不等同外部 VPN/Tailscale/WireGuard 数据面已验证。`*` 表示配置组合、目标核心 check 和回滚边界已接入，外部认证、系统接口、路由/防火墙及公网业务仍需独立证据。
 
 2026-09-11 WireGuard 增量：managed endpoint 按固定 1.14.0 `WireGuardEndpointOptions` 建立 typed allowlist，校验标准 Base64 32-byte key、CIDR address/allowed_ips、peer keepalive/reserved、MTU/listen/workers、UDP NAT 和 Dial Fields；live takeover 继续排除生成器自有 `warp-ep`，旧 wireguard outbound 仍由核心 removed stub 拒绝。固定 1.14.0 全字段与 1.13.18 基础字段 `check` 通过，未将其扩大为系统接口权限、peer 握手或 UDP 数据面证据。
 
 2026-09-11 Endpoint typed 增量：Tailscale、OpenConnect 与 OpenVPN client/server 从仅 registry-check 提升为受控 typed component state/config 生命周期（`yes/yes/yes/yes*`）。校验覆盖各自 1.14 option allowlist、持久化/认证材料、TLS/static-key union、地址族、relay/push/route、control-wrap、移动身份与 form-entry 约束；inline PEM/key 允许换行，普通路径和字段仍拒绝控制字符。测试和核心检查是本地配置证据，外部控制面、证书文件、系统权限、动态路由/防火墙和真实 TCP/UDP 数据面仍未验证。
+
+2026-09-14 OpenVPN endpoint TCP 闭环：在 `fresh_install_vless` 特权隔离 Docker 场景中，使用固定官方 ARM64 `sing-box 1.14.0`、临时 SAN 证书和用户名/密码创建 `system:false` OpenVPN server/client pair；受管 direct inbound 经 client endpoint 访问一次性 marker，日志确认 peer/tunnel 建立，目标核心 `check` 通过，随后按 revision 删除 proxy/client/server 并确认监听和组件资源清理。对应 `dev/verification-runs/20260914140016` 的 `fresh_install_vless/openvpn-endpoint/result.env` 为 `RESULT=success`，验证标签为 `project-real-openvpn-tcp`。`tests/managed_openvpn_endpoint_runtime.sh` 提供同等本机 TCP fixture，缺少 `SINGBOX_BINARY_114` 或依赖时明确 SKIP；该证据不扩张为 OpenVPN UDP、`system:true`/TUN、外部 VPN 控制面、公网、生产或 SubMan 数据面。
 
 ## 构建变体和依赖门控
 

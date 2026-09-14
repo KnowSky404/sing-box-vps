@@ -134,6 +134,7 @@ resolve_local_tests() {
       tests/naive_instance_lifecycle.sh \
       tests/shadowtls_composite_export.sh \
       tests/managed_components_contract.sh \
+      tests/managed_openvpn_endpoint_runtime.sh \
       tests/managed_transparent_resources.sh \
       tests/managed_transparent_transaction.sh \
       tests/managed_component_availability.sh \
