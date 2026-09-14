@@ -15,6 +15,8 @@ verification_run_openvpn_endpoint_runtime_probe() {
   local server_record client_record proxy_record
   local server_create client_create proxy_create
   local server_delete client_delete proxy_delete
+  local tcp_journal_path
+  local tcp_journal_relative="${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint/journalctl.txt"
   local curl_status=1
 
   if [[ "${VERIFY_REMOTE_SKIP_PRIVILEGED_RESOURCES:-0}" == "1" ]]; then
@@ -199,9 +201,11 @@ PY
   [[ "${curl_status}" == 0 ]]
   grep -Fqx "${marker}" "${marker_response}"
   grep -Fqx '/' "${marker_access}"
-  verification_capture_best_effort_command \
-    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint/journalctl.txt" \
+  verification_capture_best_effort_command "${tcp_journal_relative}" \
     journalctl -u sing-box -n 160 --no-pager
+  tcp_journal_path=$(verification_artifact_path "${tcp_journal_relative}")
+  grep -Fq 'peer connected' "${tcp_journal_path}"
+  grep -Fq 'tunnel established to 127.0.0.1:11994 over tcp' "${tcp_journal_path}"
   verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint/result.env" \
     'RESULT=success' 'TRANSPORT=tcp' 'SYSTEM_INTERFACE=false' \
     'AUTH=username_password' 'PAYLOAD=marker_round_trip'
@@ -245,6 +249,163 @@ PY
   verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint/after-delete.env" \
     'RESULT=success' 'RESOURCES=managed_components_removed'
   verification_mark_step fresh_install_vless_openvpn_endpoint_resources_cleaned
+
+  # Run the same synthetic pair over OpenVPN's UDP transport after the TCP
+  # records have been removed.  Keeping this as a separate revision window and
+  # artifact directory proves that the component graph does not accidentally
+  # reuse a TCP endpoint or leave its listener behind.
+  local udp_expected_revision="${server_delete_revision}"
+  local udp_server_create_revision=$((udp_expected_revision + 1))
+  local udp_client_create_revision=$((udp_expected_revision + 2))
+  local udp_proxy_create_revision=$((udp_expected_revision + 3))
+  local udp_proxy_delete_revision=$((udp_expected_revision + 4))
+  local udp_client_delete_revision=$((udp_expected_revision + 5))
+  local udp_server_delete_revision=$((udp_expected_revision + 6))
+  local udp_server_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-udp-server.json"
+  local udp_client_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-udp-client.json"
+  local udp_proxy_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-udp-proxy.json"
+  local udp_server_create="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-udp-server-create.json"
+  local udp_client_create="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-udp-client-create.json"
+  local udp_proxy_create="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-udp-proxy-create.json"
+  local udp_proxy_delete="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-udp-proxy-delete.json"
+  local udp_client_delete="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-udp-client-delete.json"
+  local udp_server_delete="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-udp-server-delete.json"
+  local udp_marker_response
+  local udp_journal_path
+  local udp_journal_relative="${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/journalctl.txt"
+  local udp_curl_status=1
+
+  (umask 077; jq -n --arg cert "${endpoint_cert_path}" --arg key "${endpoint_key_path}" '
+    {id:"openvpn-endpoint-udp-server-verification",role:"endpoint",type:"openvpn-server",
+     tag:"openvpn-endpoint-udp-server-verification",enabled:true,route_rules:[],config:{
+       mode:"tls",system:false,listen:"127.0.0.1",listen_port:11995,network:"udp",
+       address:["10.78.0.1/24"],users:[{username:"probe",password:"probe-pass"}],
+       tls:{certificate_path:$cert,key_path:$key,verify_client_certificate:"none"}}}' \
+    > "${udp_server_record}")
+  (umask 077; jq -n --arg cert "${endpoint_cert_path}" '
+    {id:"openvpn-endpoint-udp-client-verification",role:"endpoint",type:"openvpn-client",
+     tag:"openvpn-endpoint-udp-client-verification",enabled:true,route_rules:[],config:{
+       mode:"tls",system:false,server:"127.0.0.1",server_port:11995,network:"udp",
+       username:"probe",password:"probe-pass",
+       tls:{certificate_path:$cert,server_name:"sing-box-vps-openvpn-verification.invalid",
+         remote_certificate_tls:"server"}}}' \
+    > "${udp_client_record}")
+  (umask 077; jq -n --arg marker_address "${marker_address}" --argjson marker_port "${marker_port}" '
+    {id:"openvpn-endpoint-udp-proxy-verification",role:"inbound",type:"direct",
+     tag:"openvpn-endpoint-udp-proxy-verification",enabled:true,
+     route_rules:[{inbound:["openvpn-endpoint-udp-proxy-verification"],action:"route",
+       outbound:"openvpn-endpoint-udp-client-verification"}],config:{
+       listen:"127.0.0.1",listen_port:15092,override_address:$marker_address,
+       override_port:$marker_port}}' \
+    > "${udp_proxy_record}")
+
+  bash /usr/local/bin/sbv agent component create --json --yes --allow-public \
+    --expected-revision "${udp_expected_revision}" --file "${udp_server_record}" > "${udp_server_create}"
+  verification_capture_file_if_present "${udp_server_create}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/server-create.json"
+  jq -e --argjson revision "${udp_server_create_revision}" '.ok==true and .operation=="create" and .revision==$revision and
+    .type=="openvpn-server" and .service_restarted==true' "${udp_server_create}" >/dev/null
+  verification_mark_step fresh_install_vless_openvpn_endpoint_udp_server_created
+  verification_wait_for_service_active sing-box
+
+  bash /usr/local/bin/sbv agent component create --json --yes \
+    --expected-revision "${udp_server_create_revision}" --file "${udp_client_record}" > "${udp_client_create}"
+  verification_capture_file_if_present "${udp_client_create}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/client-create.json"
+  jq -e --argjson revision "${udp_client_create_revision}" '.ok==true and .operation=="create" and .revision==$revision and
+    .type=="openvpn-client" and .service_restarted==true' "${udp_client_create}" >/dev/null
+  verification_mark_step fresh_install_vless_openvpn_endpoint_udp_client_created
+  verification_wait_for_service_active sing-box
+
+  bash /usr/local/bin/sbv agent component create --json --yes \
+    --expected-revision "${udp_client_create_revision}" --file "${udp_proxy_record}" > "${udp_proxy_create}"
+  verification_capture_file_if_present "${udp_proxy_create}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/proxy-create.json"
+  jq -e --argjson revision "${udp_proxy_create_revision}" '.ok==true and .operation=="create" and .revision==$revision and
+    .type=="direct" and .service_restarted==true' "${udp_proxy_create}" >/dev/null
+  verification_mark_step fresh_install_vless_openvpn_endpoint_udp_proxy_created
+  verification_wait_for_service_active sing-box
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/config.check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/config.json" \
+    jq -c '{endpoints:[.endpoints[] | select(.tag == "openvpn-endpoint-udp-server-verification" or
+      .tag == "openvpn-endpoint-udp-client-verification")],inbounds:[.inbounds[] |
+      select(.tag == "openvpn-endpoint-udp-proxy-verification")],route:{rules:[.route.rules[] |
+      select(.outbound == "openvpn-endpoint-udp-client-verification")]}}' \
+    /root/sing-box-vps/config.json
+  jq -e '.endpoints | length == 2 and
+    any(.[]; .type=="openvpn-server" and .system==false and .network=="udp") and
+    any(.[]; .type=="openvpn-client" and .system==false and .network=="udp")' \
+    "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/config.json")" >/dev/null
+  verification_assert_udp_port_listening 11995 \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/server-listener.ss-lunp.txt"
+  verification_assert_port_listening 15092 \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/proxy-listener.ss-lntp.txt"
+
+  udp_marker_response=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/marker.response.txt")
+  for _ in {1..20}; do
+    if curl --fail --silent --show-error --max-time 5 --noproxy '*' \
+      http://127.0.0.1:15092/ > "${udp_marker_response}" 2> \
+      "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/curl.stderr.txt")"; then
+      udp_curl_status=0
+      break
+    fi
+    sleep 0.5
+  done
+  [[ "${udp_curl_status}" == 0 ]]
+  grep -Fqx "${marker}" "${udp_marker_response}"
+  grep -Fqx '/' "${marker_access}"
+  verification_capture_best_effort_command "${udp_journal_relative}" \
+    journalctl -u sing-box -n 160 --no-pager
+  udp_journal_path=$(verification_artifact_path "${udp_journal_relative}")
+  grep -Fq 'peer connected' "${udp_journal_path}"
+  grep -Fq 'tunnel established to 127.0.0.1:11995 over udp' "${udp_journal_path}"
+  verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/result.env" \
+    'RESULT=success' 'TRANSPORT=udp' 'SYSTEM_INTERFACE=false' \
+    'AUTH=username_password' 'PAYLOAD=marker_round_trip'
+  verification_mark_step fresh_install_vless_openvpn_endpoint_udp_payload_success
+
+  bash /usr/local/bin/sbv agent component delete --json --yes \
+    --expected-revision "${udp_proxy_create_revision}" --id openvpn-endpoint-udp-proxy-verification > "${udp_proxy_delete}"
+  verification_capture_file_if_present "${udp_proxy_delete}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/proxy-delete.json"
+  jq -e --argjson revision "${udp_proxy_delete_revision}" '.ok==true and .operation=="delete" and .revision==$revision and
+    .id=="openvpn-endpoint-udp-proxy-verification" and .service_restarted==true' \
+    "${udp_proxy_delete}" >/dev/null
+  verification_mark_step fresh_install_vless_openvpn_endpoint_udp_proxy_deleted
+  verification_wait_for_service_active sing-box
+  verification_assert_port_not_listening 15092 \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/proxy-after-delete.ss-lntp.txt"
+
+  bash /usr/local/bin/sbv agent component delete --json --yes \
+    --expected-revision "${udp_proxy_delete_revision}" --id openvpn-endpoint-udp-client-verification > "${udp_client_delete}"
+  verification_capture_file_if_present "${udp_client_delete}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/client-delete.json"
+  jq -e --argjson revision "${udp_client_delete_revision}" '.ok==true and .operation=="delete" and .revision==$revision and
+    .id=="openvpn-endpoint-udp-client-verification" and .service_restarted==true' \
+    "${udp_client_delete}" >/dev/null
+  verification_mark_step fresh_install_vless_openvpn_endpoint_udp_client_deleted
+  verification_wait_for_service_active sing-box
+
+  bash /usr/local/bin/sbv agent component delete --json --yes \
+    --expected-revision "${udp_client_delete_revision}" --id openvpn-endpoint-udp-server-verification > "${udp_server_delete}"
+  verification_capture_file_if_present "${udp_server_delete}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/server-delete.json"
+  jq -e --argjson revision "${udp_server_delete_revision}" '.ok==true and .operation=="delete" and .revision==$revision and
+    .id=="openvpn-endpoint-udp-server-verification" and .service_restarted==true' \
+    "${udp_server_delete}" >/dev/null
+  verification_mark_step fresh_install_vless_openvpn_endpoint_udp_server_deleted
+  verification_wait_for_service_active sing-box
+  verification_capture_best_effort_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/server-after-delete.ss-lunp.txt" \
+    verification_ss_udp_output
+  ! verification_udp_port_is_listening 11995
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/after-delete.check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/after-delete.env" \
+    'RESULT=success' 'RESOURCES=managed_components_removed'
+  verification_mark_step fresh_install_vless_openvpn_endpoint_udp_resources_cleaned
   if [[ -n "${OPENVPN_ENDPOINT_MARKER_PID:-}" ]]; then
     kill "${OPENVPN_ENDPOINT_MARKER_PID}" 2>/dev/null || true
     wait "${OPENVPN_ENDPOINT_MARKER_PID}" 2>/dev/null || true

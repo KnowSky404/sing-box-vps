@@ -736,22 +736,24 @@ rule 和 route postcheck，失败按既有快照回滚。
 的 core-owned L3 资源生命周期，不代表 bridge L3 payload、宿主防火墙、
 公网或生产部署；完整协议目标仍未完成。
 
-### 2026-09-14：OpenVPN endpoint `system:false` TCP 闭环
+### 2026-09-14：OpenVPN endpoint `system:false` TCP + UDP 闭环
 
 Context7 与固定 `v1.14.0` 官方源码确认 OpenVPN endpoint 的 server/client
-配置、TLS 证书用途和 `system:false` 内部网络路径；本轮没有使用外部 VPN
-账户或生产证书。新增 `tests/managed_openvpn_endpoint_runtime.sh`：当配置了
-`SINGBOX_BINARY_114` 时生成带 SAN/serverAuth 的短期测试证书，启动一次性
-HTTP marker，运行真实核心 `check` 与 server/client `system:false` pair，确认
-`peer connected`、`tunnel established` 后经 direct inbound 回读精确 marker；
-缺少核心或依赖时只输出明确 `SKIP`。
+配置、TLS 证书用途、TCP/UDP `network` 选择和 `system:false` 内部网络路径；
+本轮没有使用外部 VPN 账户或生产证书。`tests/managed_openvpn_endpoint_runtime.sh`
+现在在配置 `SINGBOX_BINARY_114` 时生成带 SAN/serverAuth 的短期测试证书，启动
+一次性 HTTP marker，顺序运行真实核心 `check` 与 TCP、UDP 两组
+server/client `system:false` pair，分别确认 `peer connected`、
+`tunnel established` 后经 direct inbound 回读精确 marker；缺少核心或依赖时只
+输出明确 `SKIP`。
 
-`fresh_install_vless` 远程场景在特权隔离 Docker 中以组件 CAS 创建 OpenVPN
-server、client 和 direct proxy（revision `4→7`），回读固定 1.14.0 配置、
-TCP listeners、journal 和 marker payload，随后以 `7→10` 删除三者并执行
-核心 check、监听/资源清理断言。定向证据为
-`dev/verification-runs/20260914140016`，其中
-`fresh_install_vless/openvpn-endpoint/result.env` 和 `after-delete.env` 均为
-`RESULT=success`。这只证明合成 server/client 的 `system:false` TCP 路径与
-受管生命周期清理；OpenVPN UDP、`system:true`/TUN、外部控制面、外部证书部署、
-公网、生产和 SubMan 仍未验证，完整协议目标继续未完成。
+`fresh_install_vless` 远程场景在特权隔离 Docker 中先以组件 CAS 创建并清理
+TCP OpenVPN server、client 和 direct proxy（revision `4→7→10`），再创建并清理
+独立 UDP pair（revision `10→13→16`），回读固定 1.14.0 配置、TCP/UDP
+listeners、journal 和 marker payload，并执行核心 check、监听/资源清理断言。
+定向证据为 `dev/verification-runs/20260914151532`，其中
+`fresh_install_vless/openvpn-endpoint/result.env` 与
+`openvpn-endpoint-udp/result.env` 以及各自 `after-delete.env` 均为
+`RESULT=success`。这只证明合成 server/client 的 `system:false` TCP/UDP 路径与
+受管生命周期清理；`system:true`/TUN、外部控制面、外部证书部署、公网、生产和
+SubMan 仍未验证，完整协议目标继续未完成。

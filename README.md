@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026091401`
+- 脚本版本：`2026091402`
 
 - sing-box 适配版本：`1.14.0`
 
@@ -50,7 +50,7 @@ WireGuard endpoint 已按 sing-box 1.14 的 `WireGuardEndpointOptions` 接入 ty
 
 Tailscale endpoint 现在按 `TailscaleEndpointOptions` 接入 typed state/render，校验持久化 state/auth/control 字段、advertise/accept routes、relay AddrPort、exit-node 互斥、可选 SSH 服务和 shared Dial Fields；OpenConnect endpoint 按 1.14 client-only 选项校验 flavor、token secret/path、mobile identity、CSD/HIP/TNCC、TLS material、form entries、UDP NAT 与 keepalive/compression 约束；OpenVPN client/server endpoint 分别按 TLS/static_key discriminated union 校验 remote、address pool、peer family、证书/key、control wrap、users、push DNS/routes 和 TCP/UDP 约束。新增测试只证明组件状态、渲染和固定核心配置边界；外部 VPN/Tailscale 控制面、证书文件、系统接口权限与真实数据面仍未验证，不能将这些 endpoint 写成已完成公网部署。
 
-OpenVPN endpoint 现在另有一条受限的真实 TCP 闭环：固定官方 ARM64 `sing-box 1.14.0` 的特权隔离 Docker 场景 `dev/verification-runs/20260914140016` 创建 `system:false` 的 OpenVPN server/client endpoint（临时 SAN 证书、用户名/密码），再创建受管 direct inbound 将请求路由到 client endpoint；日志确认 `peer connected`/`tunnel established`，marker 返回精确 payload，目标核心 `check` 通过，随后按 revision 删除 proxy/client/server 并确认监听与资源清理。配置了 `SINGBOX_BINARY_114` 时，`tests/managed_openvpn_endpoint_runtime.sh` 在本机执行同样的 TCP marker 闭环；没有该二进制或依赖时明确 `SKIP`。证据只覆盖 `system:false`、TCP、合成 server/client 与隔离容器/本机网络，不包括 OpenVPN UDP、`system:true`/TUN、外部 VPN 控制面、公网、生产或 SubMan。
+OpenVPN endpoint 现在另有受限的真实 TCP 与 UDP 闭环：固定官方 ARM64 `sing-box 1.14.0` 的特权隔离 Docker 场景 `dev/verification-runs/20260914151532` 分别创建 `system:false` 的 OpenVPN server/client endpoint（临时 SAN 证书、用户名/密码），再创建受管 direct inbound 将请求路由到对应 client endpoint；日志确认 `peer connected`/`tunnel established`，marker 返回精确 payload，目标核心 `check` 通过，随后按 revision 删除 proxy/client/server 并确认监听与资源清理。配置了 `SINGBOX_BINARY_114` 时，`tests/managed_openvpn_endpoint_runtime.sh` 在本机顺序执行同样的 TCP+UDP marker 闭环；没有该二进制或依赖时明确 `SKIP`。证据只覆盖 `system:false`、合成 server/client 与隔离容器/本机网络，不包括 `system:true`/TUN、外部 VPN 控制面、公网、生产或 SubMan。
 
 Snell outbound 已按 sing-box 1.14 的 `SnellOutboundOptions` 接入 typed component state；版本仅允许 v4（HTTP obfs）或 v6（traffic shaping），并保留 PSK、可选 userkey/reuse、TCP/UDP network 和共享 Dial Fields。v4/v6 字段不可交叉，v6 PSK 至少 12 字节；Snell v5 QUIC proxy 不作为独立 outbound 提供，UDP 业务由 Snell 的 TCP packet API 承载。凭据仅通过敏感 component export 返回，1.14 核心 `check` 不代表远端 Snell 握手或 TCP/UDP 数据面，1.13.18 核心明确不注册该 type。
 

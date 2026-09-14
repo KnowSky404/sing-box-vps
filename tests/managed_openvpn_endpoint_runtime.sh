@@ -55,14 +55,10 @@ fi
 
 CERT_PATH="${TEST_DIR}/server.crt"
 KEY_PATH="${TEST_DIR}/server.key"
-CONFIG_PATH="${TEST_DIR}/config.json"
 MARKER_PORT_PATH="${TEST_DIR}/marker.port"
 MARKER_ACCESS_PATH="${TEST_DIR}/marker.access"
-MARKER_RESPONSE_PATH="${TEST_DIR}/marker.response"
 MARKER_STDOUT_PATH="${TEST_DIR}/marker.stdout"
 MARKER_STDERR_PATH="${TEST_DIR}/marker.stderr"
-CORE_STDOUT_PATH="${TEST_DIR}/core.stdout"
-CORE_STDERR_PATH="${TEST_DIR}/core.stderr"
 
 openssl req -x509 -nodes -newkey rsa:2048 \
   -keyout "${KEY_PATH}" \
@@ -113,106 +109,151 @@ done
 MARKER_PORT=$(<"${MARKER_PORT_PATH}")
 [[ "${MARKER_PORT}" =~ ^[0-9]+$ ]]
 
-jq -n \
-  --arg cert "${CERT_PATH}" \
-  --arg key "${KEY_PATH}" \
-  --arg marker_address "${MARKER_ADDRESS}" \
-  --argjson marker_port "${MARKER_PORT}" \
-  '{
-    log: { level: "info", timestamp: false },
-    inbounds: [
-      {
-        type: "direct",
-        tag: "openvpn-runtime-in",
-        listen: "127.0.0.1",
-        listen_port: 15091,
-        override_address: $marker_address,
-        override_port: $marker_port
-      }
-    ],
-    endpoints: [
-      {
-        type: "openvpn-server",
-        tag: "openvpn-runtime-server",
-        system: false,
-        listen: "127.0.0.1",
-        listen_port: 11994,
-        network: "tcp",
-        address: ["10.77.0.1/24"],
-        users: [{username: "probe", password: "probe-pass"}],
-        tls: {
-          certificate_path: $cert,
-          key_path: $key,
-          verify_client_certificate: "none"
-        }
-      },
-      {
-        type: "openvpn-client",
-        tag: "openvpn-runtime-client",
-        system: false,
-        server: "127.0.0.1",
-        server_port: 11994,
-        network: "tcp",
-        username: "probe",
-        password: "probe-pass",
-        tls: {
-          certificate_path: $cert,
-          server_name: "sing-box-vps-openvpn-runtime.invalid",
-          remote_certificate_tls: "server"
-        }
-      }
-    ],
-    outbounds: [{type: "direct", tag: "direct"}],
-    route: {
-      rules: [
+run_openvpn_transport() {
+  local network=$1
+  local server_port=$2
+  local proxy_port=$3
+  local address_cidr=$4
+  local server_tag="openvpn-runtime-${network}-server"
+  local client_tag="openvpn-runtime-${network}-client"
+  local inbound_tag="openvpn-runtime-${network}-in"
+  local config_path="${TEST_DIR}/config-${network}.json"
+  local marker_response_path="${TEST_DIR}/marker-${network}.response"
+  local core_stdout_path="${TEST_DIR}/core-${network}.stdout"
+  local core_stderr_path="${TEST_DIR}/core-${network}.stderr"
+  local listener_ready=1
+
+  : > "${MARKER_ACCESS_PATH}"
+  jq -n \
+    --arg cert "${CERT_PATH}" \
+    --arg key "${KEY_PATH}" \
+    --arg marker_address "${MARKER_ADDRESS}" \
+    --arg network "${network}" \
+    --arg server_tag "${server_tag}" \
+    --arg client_tag "${client_tag}" \
+    --arg inbound_tag "${inbound_tag}" \
+    --argjson server_port "${server_port}" \
+    --argjson proxy_port "${proxy_port}" \
+    --argjson marker_port "${MARKER_PORT}" \
+    --arg address_cidr "${address_cidr}" \
+    '{
+      log: { level: "info", timestamp: false },
+      inbounds: [
         {
-          inbound: ["openvpn-runtime-in"],
-          action: "route",
-          outbound: "openvpn-runtime-client"
+          type: "direct",
+          tag: $inbound_tag,
+          listen: "127.0.0.1",
+          listen_port: $proxy_port,
+          override_address: $marker_address,
+          override_port: $marker_port
         }
       ],
-      final: "direct"
+      endpoints: [
+        {
+          type: "openvpn-server",
+          tag: $server_tag,
+          system: false,
+          listen: "127.0.0.1",
+          listen_port: $server_port,
+          network: $network,
+          address: [$address_cidr],
+          users: [{username: "probe", password: "probe-pass"}],
+          tls: {
+            certificate_path: $cert,
+            key_path: $key,
+            verify_client_certificate: "none"
+          }
+        },
+        {
+          type: "openvpn-client",
+          tag: $client_tag,
+          system: false,
+          server: "127.0.0.1",
+          server_port: $server_port,
+          network: $network,
+          username: "probe",
+          password: "probe-pass",
+          tls: {
+            certificate_path: $cert,
+            server_name: "sing-box-vps-openvpn-runtime.invalid",
+            remote_certificate_tls: "server"
+          }
+        }
+      ],
+      outbounds: [{type: "direct", tag: "direct"}],
+      route: {
+        rules: [
+          {
+            inbound: [$inbound_tag],
+            action: "route",
+            outbound: $client_tag
+          }
+        ],
+        final: "direct"
+      }
+    }' > "${config_path}"
+
+  "${CORE}" check -c "${config_path}"
+  "${CORE}" run -c "${config_path}" >"${core_stdout_path}" 2>"${core_stderr_path}" &
+  CORE_PID=$!
+
+  for _ in {1..100}; do
+    kill -0 "${CORE_PID}" 2>/dev/null || {
+      printf 'OpenVPN %s endpoint core exited before startup\n' "${network}" >&2
+      /usr/bin/sed -n '1,120p' "${core_stderr_path}" >&2
+      return 1
     }
-  }' > "${CONFIG_PATH}"
+    if [[ "${network}" == "udp" ]]; then
+      if ss -lun 2>/dev/null | awk -v port="${server_port}" \
+        '$1 == "UNCONN" && $4 ~ (":" port "$") { found = 1 } END { exit(found ? 0 : 1) }' &&
+        ss -lnt 2>/dev/null | awk -v port="${proxy_port}" \
+        '$1 == "LISTEN" && $4 ~ (":" port "$") { found = 1 } END { exit(found ? 0 : 1) }'; then
+        listener_ready=0
+      fi
+    elif ss -lnt 2>/dev/null | awk -v server_port="${server_port}" -v proxy_port="${proxy_port}" \
+      '($1 == "LISTEN" && $4 ~ (":" server_port "$")) ||
+       ($1 == "LISTEN" && $4 ~ (":" proxy_port "$")) { found++ }
+       END { exit(found == 2 ? 0 : 1) }'; then
+      listener_ready=0
+    fi
+    [[ "${listener_ready}" == 0 ]] && break
+    sleep 0.1
+  done
+  [[ "${listener_ready}" == 0 ]]
 
-"${CORE}" check -c "${CONFIG_PATH}"
-"${CORE}" run -c "${CONFIG_PATH}" >"${CORE_STDOUT_PATH}" 2>"${CORE_STDERR_PATH}" &
-CORE_PID=$!
+  for _ in {1..100}; do
+    grep -Fq 'tunnel established' "${core_stderr_path}" && break
+    kill -0 "${CORE_PID}" 2>/dev/null || {
+      printf 'OpenVPN %s endpoint core exited before tunnel establishment\n' "${network}" >&2
+      /usr/bin/sed -n '1,160p' "${core_stderr_path}" >&2
+      return 1
+    }
+    sleep 0.1
+  done
+  grep -Fq 'tunnel established' "${core_stderr_path}"
 
-for _ in {1..100}; do
-  kill -0 "${CORE_PID}" 2>/dev/null || {
-    printf 'OpenVPN endpoint core exited before startup\n' >&2
-    /usr/bin/sed -n '1,120p' "${CORE_STDERR_PATH}" >&2
-    exit 1
-  }
-  if ss -lnt 2>/dev/null | awk '$1 == "LISTEN" && $4 ~ /:15091$/ { found = 1 } END { exit(found ? 0 : 1) }'; then
-    break
-  fi
-  sleep 0.1
-done
-ss -lnt 2>/dev/null | awk '$1 == "LISTEN" && $4 ~ /:15091$/ { found = 1 } END { exit(found ? 0 : 1) }'
+  curl --fail --silent --show-error --max-time 10 --noproxy '*' \
+    "http://127.0.0.1:${proxy_port}/" >"${marker_response_path}"
+  grep -Fqx "${MARKER}" "${marker_response_path}"
+  grep -Fqx '/' "${MARKER_ACCESS_PATH}"
+  grep -Fq 'peer connected' "${core_stderr_path}"
+  grep -Fq "over ${network}" "${core_stderr_path}"
 
-for _ in {1..100}; do
-  grep -Fq 'tunnel established' "${CORE_STDERR_PATH}" && break
-  kill -0 "${CORE_PID}" 2>/dev/null || {
-    printf 'OpenVPN endpoint core exited before tunnel establishment\n' >&2
-    /usr/bin/sed -n '1,160p' "${CORE_STDERR_PATH}" >&2
-    exit 1
-  }
-  sleep 0.1
-done
-grep -Fq 'tunnel established' "${CORE_STDERR_PATH}"
+  jq -e --arg network "${network}" --arg server_tag "${server_tag}" \
+    --arg client_tag "${client_tag}" --arg inbound_tag "${inbound_tag}" '
+    ([.endpoints[] | select(.type == "openvpn-server" and .tag == $server_tag and
+      .network == $network and .system == false)] | length == 1) and
+    ([.endpoints[] | select(.type == "openvpn-client" and .tag == $client_tag and
+      .network == $network and .system == false)] | length == 1) and
+    (.route.rules[0].inbound == [$inbound_tag] and .route.rules[0].outbound == $client_tag)
+  ' "${config_path}" >/dev/null
 
-curl --fail --silent --show-error --max-time 10 --noproxy '*' \
-  "http://127.0.0.1:15091/" >"${MARKER_RESPONSE_PATH}"
-grep -Fqx "${MARKER}" "${MARKER_RESPONSE_PATH}"
-grep -Fqx '/' "${MARKER_ACCESS_PATH}"
-grep -Fq 'peer connected' "${CORE_STDERR_PATH}"
+  kill "${CORE_PID}" 2>/dev/null || true
+  wait "${CORE_PID}" 2>/dev/null || true
+  CORE_PID=''
+}
 
-jq -e '
-  ([.endpoints[] | select(.type == "openvpn-server" and .tag == "openvpn-runtime-server")] | length == 1) and
-  ([.endpoints[] | select(.type == "openvpn-client" and .tag == "openvpn-runtime-client")] | length == 1) and
-  (.route.rules[0].outbound == "openvpn-runtime-client")
-' "${CONFIG_PATH}" >/dev/null
+run_openvpn_transport tcp 11994 15091 10.77.0.1/24
+run_openvpn_transport udp 11995 15092 10.78.0.1/24
 
-printf 'OpenVPN endpoint TCP runtime closure passed: %s\n' "${MARKER}"
+printf 'OpenVPN endpoint TCP+UDP runtime closures passed: %s\n' "${MARKER}"
