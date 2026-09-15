@@ -738,6 +738,107 @@ PY
     "${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound-udp.result.env" \
     'COMPONENT=direct-inbound' 'RESULT=success' 'DATA_PLANE=direct_udp_override_loopback'
 
+  # Redirect and TProxy are transparent inbounds: unlike direct, they must be
+  # exercised through temporary host policy. The policy is deliberately
+  # created only inside this privileged verification container and is removed
+  # before the component records are deleted; it is not installer-owned.
+  local redirect_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/redirect-record.json"
+  (umask 077; jq -n '{id:"redirect-inbound-verification",role:"inbound",type:"redirect",
+    tag:"redirect-inbound-verification",enabled:true,route_rules:[],
+    config:{listen:"127.0.0.1",listen_port:1094}}' > "${redirect_record}")
+  local redirect_create_status=0
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
+    --expected-revision 3 --file "${redirect_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/redirect-create.json"
+  redirect_create_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/redirect-create.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/redirect-create.json"
+  [[ "${redirect_create_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="create" and .revision==4 and .type=="redirect"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/redirect-create.json" >/dev/null
+  verification_mark_step redirect-inbound-component-created
+  verification_wait_for_service_active sing-box
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/redirect-inbound-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  verification_execute_redirect_probe /root/sing-box-vps/config.json 1094
+  verification_mark_step redirect-inbound-probe-complete
+
+  local tproxy_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/tproxy-record.json"
+  (umask 077; jq -n '{id:"tproxy-inbound-verification",role:"inbound",type:"tproxy",
+    tag:"tproxy-inbound-verification",enabled:true,route_rules:[],
+    config:{listen:"0.0.0.0",listen_port:1095,network:["tcp","udp"]}}' > "${tproxy_record}")
+  local tproxy_create_status=0
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes --allow-public \
+    --expected-revision 4 --file "${tproxy_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tproxy-create.json"
+  tproxy_create_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tproxy-create.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/tproxy-create.json"
+  [[ "${tproxy_create_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="create" and .revision==5 and .type=="tproxy"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tproxy-create.json" >/dev/null
+  verification_mark_step tproxy-inbound-component-created
+  verification_wait_for_service_active sing-box
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/tproxy-inbound-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  verification_execute_tproxy_probe /root/sing-box-vps/config.json 1095
+  verification_mark_step tproxy-inbound-probe-complete
+
+  local transparent_diagnose
+  transparent_diagnose=$(bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component diagnose --json)
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/transparent-component-diagnose.json" \
+    "${transparent_diagnose}"
+  jq -e '
+    .ok == true and
+    any(.data.components[]; .id == "redirect-inbound-verification" and
+      .instance_environment.requirements.requires_root == true and
+      .instance_environment.requirements.requires_tun_device == false) and
+    any(.data.components[]; .id == "tproxy-inbound-verification" and
+      .instance_environment.requirements.requires_root == true and
+      .instance_environment.requirements.requires_tun_device == false)
+  ' <<< "${transparent_diagnose}" >/dev/null
+
+  local tproxy_delete_status=0
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
+    --expected-revision 5 --id tproxy-inbound-verification \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tproxy-delete.json"
+  tproxy_delete_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tproxy-delete.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/tproxy-delete.json"
+  [[ "${tproxy_delete_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="delete" and .revision==6 and .id=="tproxy-inbound-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tproxy-delete.json" >/dev/null
+  local redirect_delete_status=0
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
+    --expected-revision 6 --id redirect-inbound-verification \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/redirect-delete.json"
+  redirect_delete_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/redirect-delete.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/redirect-delete.json"
+  [[ "${redirect_delete_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="delete" and .revision==7 and .id=="redirect-inbound-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/redirect-delete.json" >/dev/null
+  verification_mark_step transparent-components-deleted
+  jq -e '
+    ([.inbounds[] | select(.type == "redirect" and .tag == "redirect-inbound-verification")] | length) == 0 and
+    ([.inbounds[] | select(.type == "tproxy" and .tag == "tproxy-inbound-verification")] | length) == 0
+  ' /root/sing-box-vps/config.json >/dev/null
+
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/config.json")
   index_path=$(verification_artifact_path \

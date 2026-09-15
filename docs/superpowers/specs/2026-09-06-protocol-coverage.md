@@ -13,7 +13,7 @@
 - `upstream`：目标版本源码中是否有该角色和 type 的注册实现；`conditional` 表示构建 tag、平台、CGO 或外部控制面有条件。
 - `implemented`：本项目是否已经提供状态、配置组合、生命周期、导出/分享等管理链路；`none` 不表示上游不可用。
 - `available`：当前官方 ARM64 Linux 发布包中是否已包含该角色的注册实现，以及仍需满足的构建、平台、运行库或外部控制面条件；它独立于源码中存在注册函数。
-- `validated`：本轮实际取得的证据。`registry-check` 只证明目标二进制能识别该 type 并进入初始化校验；`project-real-tcp` 表示回读了项目真实 TCP 业务闭环 artifact，`project-real-udp` 表示回读了经 SOCKS5 UDP ASSOCIATE 的真实 UDP payload artifact，`project-real-tcp+udp` 表示两者均已取得；`project-real-tun-resources` 只表示在特权隔离 Docker 中回读了 sing-box core-owned TUN 接口、iproute2 rule/route 与删除清理 artifact；`project-real-bridge-resources` 只表示回读了 bridge outbound 动态 TUN、core-created rule/route 及删除清理 artifact；`project-real-openvpn-tcp+udp` 表示在特权隔离 Docker 中分别以合成证书和用户名/密码组成 `system:false` OpenVPN server/client pair，经受管 direct inbound 回读 TCP 与 UDP marker payload，并完成目标核心 check 与每个 endpoint 删除清理；`project-real-openvpn-system-resources` 只表示在特权隔离 Docker 中创建命名 `system:true` OpenVPN server/client，回读 core-owned 系统接口、配置地址/前缀、MTU、隧道日志和 diagnose，并按 revision 完成接口删除清理，不包含 packet payload 或宿主路由。它们不能由 `check`、监听端口或进程存活代替，也不代表公网可达、主机透明策略、外部控制面或生产部署。
+- `validated`：本轮实际取得的证据。`registry-check` 只证明目标二进制能识别该 type 并进入初始化校验；`project-real-tcp` 表示回读了项目真实 TCP 业务闭环 artifact，`project-real-udp` 表示回读了经 SOCKS5 UDP ASSOCIATE 的真实 UDP payload artifact，`project-real-tcp+udp` 表示两者均已取得；`project-real-tun-resources` 只表示在特权隔离 Docker 中回读了 sing-box core-owned TUN 接口、iproute2 rule/route 与删除清理 artifact；`project-real-bridge-resources` 只表示回读了 bridge outbound 动态 TUN、core-created rule/route 及删除清理 artifact；`project-real-openvpn-tcp+udp` 表示在特权隔离 Docker 中分别以合成证书和用户名/密码组成 `system:false` OpenVPN server/client pair，经受管 direct inbound 回读 TCP 与 UDP marker payload，并完成目标核心 check 与每个 endpoint 删除清理；`project-real-openvpn-system-resources` 只表示在特权隔离 Docker 中创建命名 `system:true` OpenVPN server/client，回读 core-owned 系统接口、配置地址/前缀、MTU、隧道日志和 diagnose，并按 revision 完成接口删除清理，不包含 packet payload 或宿主路由；`project-real-redirect-tcp` 表示在特权隔离 Docker 中用临时 owner-scoped `OUTPUT REDIRECT` 规则回读 redirect TCP marker，并在 probe 退出时清理规则；`project-real-tproxy-tcp+udp` 表示在特权隔离 Docker 的 disposable veth/network namespace 中以临时 fwmark policy route 和 `PREROUTING TPROXY` 规则回读 TProxy TCP+UDP marker，并完成策略/接口清理。后两项的 policy ownership 固定为 verification-container-only/not-managed，不表示宿主策略所有权。它们不能由 `check`、监听端口或进程存活代替，也不代表公网可达、主机透明策略、外部控制面或生产部署。
 
 另有协议专用的 `project-real-snell-tcp+packet-api-udp`：表示在固定核心、隔离 Docker 中同时回读 Snell TCP marker 与经其认证 TCP 会话 packet API 承载的 UDP marker；它明确不是原生 UDP listener 证明。
 
@@ -132,7 +132,7 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 | tproxy | `tproxy` / inbound | Linux；需 root、策略路由/防火墙能力 | TCP/UDP（空值表示两者）；Linux 专属，UDP NAT 参数和路由归属必须持久化 | conditional | yes（Linux；root/策略路由仍需） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | registry-check |
 | cloudflared | `cloudflared` / inbound | 自 1.14.0；`with_cloudflared`；需 Cloudflare Tunnel token 和外部控制面 | Cloudflare Tunnel 可承载 TCP、UDP、ICMP；`protocol` 为 QUIC/HTTP2，UDP datagram v2/v3；不能虚构普通节点 URI | conditional | yes（tag 已含；token/控制面仍需） | component state/config；yes/yes/yes/yes* | 不提供普通分享 / — / — | registry-check（无 token 按预期失败） |
 
-`tun`、`redirect`、`tproxy` 与 `cloudflared` 行的 `component state/config` 覆盖本项目的统一状态、配置合并、引用保护、监听投影、Agent CAS、目标核心校验，以及固定监听变化所复用的受管 UFW/iptables/ip6tables 归属事务。TUN 现在另有受限的 core-owned 接口/rule/route 创建、诊断和删除清理证据；命名 `system:true` WireGuard/OpenConnect/OpenVPN 与命名 `system_interface:true` Tailscale endpoint 现在也进入只读接口/地址（如配置）/MTU 资源观察和事务 postcheck，OpenVPN 另有接口/隧道资源观察与删除清理证据，但透明包转发、宿主策略路由/nftables、Redirect/TProxy 策略、Cloudflare/VPN/Tailscale 控制面、动态外部资源和公网真实业务仍未宣称通过。`*` 表示同上所述的组件生命周期切片，不是公网部署证明。
+`tun`、`redirect`、`tproxy` 与 `cloudflared` 行的 `component state/config` 覆盖本项目的统一状态、配置合并、引用保护、监听投影、Agent CAS、目标核心校验，以及固定监听变化所复用的受管 UFW/iptables/ip6tables 归属事务。TUN 现在另有受限的 core-owned 接口/rule/route 创建、诊断和删除清理证据；命名 `system:true` WireGuard/OpenConnect/OpenVPN 与命名 `system_interface:true` Tailscale endpoint 现在也进入只读接口/地址（如配置）/MTU 资源观察和事务 postcheck，OpenVPN 另有接口/隧道资源观察与删除清理证据；Redirect/TProxy 现在另有 verification-container-only 的临时策略与 TCP/TCP+UDP marker evidence（见 `project-real-redirect-tcp`、`project-real-tproxy-tcp+udp`），但透明包转发、宿主策略路由/nftables 所有权、Cloudflare/VPN/Tailscale 控制面、动态外部资源和公网真实业务仍未宣称通过。`*` 表示同上所述的组件生命周期切片，不是公网部署证明。
 
 `vless-reality` 是本项目旧兼容预设，配置使用上游 `type: vless`，并非独立的上游 type；普通 VLESS 使用独立 `vless-plain` preset/state ID。项目继续把 `vless`、`vless+reality`、`vless-reality` 归一到旧 REALITY 状态，普通 VLESS 不复用该 alias，避免接管、重建或导出时将两种语义混淆。
 
@@ -334,3 +334,22 @@ packet-API UDP marker、client `check`、精确响应和 Snell journal 均成功
 artifact 保存于 `protocol-probes/snell-v6/`，v5 保存于 `protocol-probes/snell/`。
 该结果仅证明固定核心、隔离 Docker/回环的受管 adapter，不把 packet API 写成
 原生 UDP listener，也不代表公网、生产、外部认证、SubMan 或完整协议目标完成。
+
+### 2026-09-15：Redirect/TProxy 透明数据面证据
+
+`multi_protocol_coexistence` 在特权隔离 Docker 中创建 redirect inbound
+（revision 4）和 TProxy inbound（revision 5），目标 ARM64 `sing-box 1.14.0`
+`check` 均通过。redirect probe 仅在验证容器内加入按 uid 65534 限定的临时
+`OUTPUT REDIRECT` 规则，用一次性 loopback HTTP marker 验证 TCP，并保存
+`transparent/redirect/response.txt`、`iptables.with-redirect.txt` 与
+`iptables.after-cleanup.txt`；规则不进入项目防火墙账本。
+
+TProxy probe 创建 disposable veth/network namespace，加入 fwmark policy route
+及 mangle `PREROUTING` 的 TCP/UDP `TPROXY` 规则，分别回读精确 TCP/UDP marker，
+保存 `transparent/tproxy/tcp-response.txt`、`udp-response.txt`、资源/规则
+before/with/after-cleanup artifact。两项 `result.env` 都明确
+`POLICY_SCOPE=verification_container_only`、`POLICY_OWNERSHIP=not_managed`；
+`component diagnose` 回读两实例需 root 但不需 TUN，随后通过 revision 6/7 删除
+并断言配置、接口、策略和规则清理。证据路径为
+`dev/verification-runs/20260915013127`；这不代表宿主透明策略所有权、公网/生产、
+外部认证、SubMan 或完整协议目标完成。

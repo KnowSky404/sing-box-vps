@@ -2038,6 +2038,401 @@ PY
   udp_status=0
 )
 
+# Exercise a redirect inbound with a disposable OUTPUT REDIRECT rule. The
+# rule is owner-scoped to uid 65534, so the sing-box service and marker server
+# cannot recurse through it. This is verification-only host policy: it never
+# enters the installer firewall ledger.
+verification_execute_redirect_probe() (
+  set -euo pipefail
+  local config_file=$1 listener_port=$2
+  local probe_dir="${VERIFY_CURRENT_SCENARIO_DIR}/transparent/redirect"
+  local check_artifact response_artifact client_stderr_artifact marker_stdout_artifact
+  local marker_stderr_artifact rule_before_artifact rule_after_artifact
+  local result_artifact port_file temp_dir marker marker_port
+  local marker_pid='' rule_added=false probe_status=1
+
+  check_artifact=$(verification_artifact_path "${probe_dir}/sing-box-check.txt")
+  response_artifact=$(verification_artifact_path "${probe_dir}/response.txt")
+  client_stderr_artifact=$(verification_artifact_path "${probe_dir}/client.stderr.txt")
+  marker_stdout_artifact=$(verification_artifact_path "${probe_dir}/marker.stdout.txt")
+  marker_stderr_artifact=$(verification_artifact_path "${probe_dir}/marker.stderr.txt")
+  rule_before_artifact=$(verification_artifact_path "${probe_dir}/iptables.before.txt")
+  rule_after_artifact=$(verification_artifact_path "${probe_dir}/iptables.after.txt")
+  result_artifact=$(verification_artifact_path "${probe_dir}/result.env")
+  rm -f -- "${check_artifact}" "${response_artifact}" "${client_stderr_artifact}" \
+    "${marker_stdout_artifact}" "${marker_stderr_artifact}" "${rule_before_artifact}" \
+    "${rule_after_artifact}" "${result_artifact}"
+
+  cleanup_redirect_probe() {
+    local status=$? cleanup_status=0
+    set +e
+    if [[ -n "${marker_pid}" ]]; then
+      kill "${marker_pid}" 2>/dev/null || true
+      wait "${marker_pid}" 2>/dev/null || true
+      marker_pid=''
+    fi
+    if [[ "${rule_added}" == true ]]; then
+      if ! iptables -t nat -D OUTPUT -m owner --uid-owner 65534 -p tcp \
+        -d 127.0.0.1 --dport "${marker_port}" -j REDIRECT --to-ports "${listener_port}"; then
+        cleanup_status=1
+      fi
+      rule_added=false
+    fi
+    verification_capture_best_effort_command "${probe_dir}/iptables.after-cleanup.txt" \
+      iptables-save -t nat
+    rm -rf -- "${temp_dir:-}"
+    if [[ "${status}" == 0 && "${cleanup_status}" != 0 ]]; then
+      status=1
+    fi
+    if [[ "${status}" == 0 && "${probe_status}" == 0 ]]; then
+      verification_write_artifact "${probe_dir}/result.env" \
+        'COMPONENT=redirect-inbound' 'RESULT=success' \
+        'DATA_PLANE=redirect_tcp_loopback' \
+        'POLICY_SCOPE=verification_container_only' \
+        'POLICY_OWNERSHIP=not_managed'
+    else
+      verification_write_artifact "${probe_dir}/result.env" \
+        'COMPONENT=redirect-inbound' 'RESULT=failure' \
+        'DATA_PLANE=redirect_tcp_loopback' \
+        'POLICY_SCOPE=verification_container_only' \
+        'POLICY_OWNERSHIP=not_managed'
+    fi
+    exit "${status}"
+  }
+  trap 'cleanup_redirect_probe' EXIT
+
+  verification_capture_command "${probe_dir}/sing-box-check.txt" \
+    sing-box check -c "${config_file}"
+  verification_capture_best_effort_command "${probe_dir}/iptables.before.txt" \
+    iptables-save -t nat
+  temp_dir=$(mktemp -d /tmp/sing-box-vps-redirect-probe.XXXXXX)
+  port_file="${temp_dir}/port"
+  marker="sing-box-vps-redirect-loopback-ok-$(date +%s)-$$"
+  python3 - "${port_file}" "${marker}" \
+    > "${marker_stdout_artifact}" 2> "${marker_stderr_artifact}" <<'PY' &
+import http.server
+import pathlib
+import socketserver
+import sys
+
+port_file, marker = sys.argv[1:]
+
+class MarkerHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = (marker + "\n").encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        return
+
+class ReusableServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+with ReusableServer(("127.0.0.1", 0), MarkerHandler) as server:
+    pathlib.Path(port_file).write_text(str(server.server_address[1]), encoding="ascii")
+    server.serve_forever()
+PY
+  marker_pid=$!
+  for _ in {1..50}; do
+    [[ -s "${port_file}" ]] && break
+    kill -0 "${marker_pid}" 2>/dev/null || exit 1
+    sleep 0.1
+  done
+  [[ -s "${port_file}" ]]
+  marker_port=$(cat "${port_file}")
+  [[ "${marker_port}" =~ ^[0-9]+$ && "${marker_port}" -ge 1 && "${marker_port}" -le 65535 ]]
+
+  iptables -t nat -A OUTPUT -m owner --uid-owner 65534 -p tcp \
+    -d 127.0.0.1 --dport "${marker_port}" -j REDIRECT --to-ports "${listener_port}"
+  rule_added=true
+  verification_capture_command "${probe_dir}/iptables.with-redirect.txt" \
+    iptables-save -t nat
+
+  set +e
+  python3 - "${marker_port}" "${marker}" \
+    > "${response_artifact}" 2> "${client_stderr_artifact}" <<'PY'
+import os
+import socket
+import sys
+
+target_port, marker = int(sys.argv[1]), sys.argv[2].encode()
+os.setgroups([])
+os.setgid(65534)
+os.setuid(65534)
+with socket.create_connection(("127.0.0.1", target_port), timeout=5) as conn:
+    conn.settimeout(5)
+    conn.sendall(b"GET / HTTP/1.1\r\nHost: redirect.invalid\r\nConnection: close\r\n\r\n")
+    payload = b""
+    while True:
+        chunk = conn.recv(65535)
+        if not chunk:
+            break
+        payload += chunk
+body = payload.split(b"\r\n\r\n", 1)[1]
+sys.stdout.buffer.write(body)
+if body != marker + b"\n":
+    raise RuntimeError("redirect marker mismatch")
+PY
+  local client_status=$?
+  set -e
+  [[ "${client_status}" == 0 ]]
+  grep -Fqx "${marker}" "${response_artifact}"
+  probe_status=0
+)
+
+# Exercise a TProxy inbound from an isolated network namespace. The veth,
+# policy route, mark and mangle rules are disposable and are never treated as
+# installer-owned firewall state. TCP and UDP clients both cross PREROUTING.
+verification_execute_tproxy_probe() (
+  set -euo pipefail
+  local config_file=$1 listener_port=$2
+  local probe_dir="${VERIFY_CURRENT_SCENARIO_DIR}/transparent/tproxy"
+  local check_artifact tcp_response_artifact udp_response_artifact client_stderr_artifact
+  local tcp_marker_stdout_artifact tcp_marker_stderr_artifact udp_marker_stdout_artifact
+  local udp_marker_stderr_artifact marker_before_artifact marker_after_artifact
+  local rule_before_artifact rule_after_artifact result_artifact temp_dir
+  local netns host_veth peer_veth host_ip='198.18.0.1' peer_ip='198.18.0.2'
+  local table mark mark_mask='255' tcp_port udp_port marker tcp_marker udp_marker
+  local port_file marker_pid='' tcp_rule_added=false udp_rule_added=false
+  local netns_added=false veth_added=false policy_added=false probe_status=1
+
+  probe_dir="${VERIFY_CURRENT_SCENARIO_DIR}/transparent/tproxy"
+  check_artifact=$(verification_artifact_path "${probe_dir}/sing-box-check.txt")
+  tcp_response_artifact=$(verification_artifact_path "${probe_dir}/tcp-response.txt")
+  udp_response_artifact=$(verification_artifact_path "${probe_dir}/udp-response.txt")
+  client_stderr_artifact=$(verification_artifact_path "${probe_dir}/client.stderr.txt")
+  tcp_marker_stdout_artifact=$(verification_artifact_path "${probe_dir}/tcp-marker.stdout.txt")
+  tcp_marker_stderr_artifact=$(verification_artifact_path "${probe_dir}/tcp-marker.stderr.txt")
+  udp_marker_stdout_artifact=$(verification_artifact_path "${probe_dir}/udp-marker.stdout.txt")
+  udp_marker_stderr_artifact=$(verification_artifact_path "${probe_dir}/udp-marker.stderr.txt")
+  marker_before_artifact=$(verification_artifact_path "${probe_dir}/resources.before.txt")
+  marker_after_artifact=$(verification_artifact_path "${probe_dir}/resources.after.txt")
+  rule_before_artifact=$(verification_artifact_path "${probe_dir}/iptables.before.txt")
+  rule_after_artifact=$(verification_artifact_path "${probe_dir}/iptables.with-tproxy.txt")
+  result_artifact=$(verification_artifact_path "${probe_dir}/result.env")
+  rm -f -- "${check_artifact}" "${tcp_response_artifact}" "${udp_response_artifact}" \
+    "${client_stderr_artifact}" "${tcp_marker_stdout_artifact}" "${tcp_marker_stderr_artifact}" \
+    "${udp_marker_stdout_artifact}" "${udp_marker_stderr_artifact}" "${marker_before_artifact}" \
+    "${marker_after_artifact}" "${rule_before_artifact}" "${rule_after_artifact}" \
+    "${result_artifact}"
+
+  cleanup_tproxy_probe() {
+    local status=$? cleanup_status=0
+    set +e
+    if [[ -n "${marker_pid}" ]]; then
+      kill "${marker_pid}" 2>/dev/null || true
+      wait "${marker_pid}" 2>/dev/null || true
+      marker_pid=''
+    fi
+    if [[ "${tcp_rule_added}" == true ]]; then
+      if ! iptables -t mangle -D PREROUTING -i "${host_veth}" -p tcp \
+        -j TPROXY --on-ip 0.0.0.0 --on-port "${listener_port}" \
+        --tproxy-mark "${mark}/${mark_mask}"; then cleanup_status=1; fi
+      tcp_rule_added=false
+    fi
+    if [[ "${udp_rule_added}" == true ]]; then
+      if ! iptables -t mangle -D PREROUTING -i "${host_veth}" -p udp \
+        -j TPROXY --on-ip 0.0.0.0 --on-port "${listener_port}" \
+        --tproxy-mark "${mark}/${mark_mask}"; then cleanup_status=1; fi
+      udp_rule_added=false
+    fi
+    if [[ "${policy_added}" == true ]]; then
+      ip route flush table "${table}" || cleanup_status=1
+      ip rule del fwmark "${mark}/${mark_mask}" table "${table}" || cleanup_status=1
+      policy_added=false
+    fi
+    if [[ "${veth_added}" == true ]]; then
+      ip link del "${host_veth}" || cleanup_status=1
+      veth_added=false
+    fi
+    if [[ "${netns_added}" == true ]]; then
+      ip netns del "${netns}" || cleanup_status=1
+      netns_added=false
+    fi
+    verification_capture_best_effort_command "${probe_dir}/iptables.after-cleanup.txt" \
+      iptables-save -t mangle
+    verification_capture_best_effort_command "${probe_dir}/resources.after-cleanup.txt" \
+      ip rule show
+    rm -rf -- "${temp_dir:-}"
+    if [[ "${status}" == 0 && "${cleanup_status}" != 0 ]]; then status=1; fi
+    if [[ "${status}" == 0 && "${probe_status}" == 0 ]]; then
+      verification_write_artifact "${probe_dir}/result.env" \
+        'COMPONENT=tproxy-inbound' 'RESULT=success' \
+        'DATA_PLANE=tproxy_tcp_udp_netns' \
+        'POLICY_SCOPE=verification_container_only' \
+        'POLICY_OWNERSHIP=not_managed'
+    else
+      verification_write_artifact "${probe_dir}/result.env" \
+        'COMPONENT=tproxy-inbound' 'RESULT=failure' \
+        'DATA_PLANE=tproxy_tcp_udp_netns' \
+        'POLICY_SCOPE=verification_container_only' \
+        'POLICY_OWNERSHIP=not_managed'
+    fi
+    exit "${status}"
+  }
+  trap 'cleanup_tproxy_probe' EXIT
+
+  verification_capture_command "${probe_dir}/sing-box-check.txt" \
+    sing-box check -c "${config_file}"
+  command -v iptables-save >/dev/null 2>&1
+  temp_dir=$(mktemp -d /tmp/sing-box-vps-tproxy-probe.XXXXXX)
+  netns="sbvtns-${BASHPID}"
+  host_veth="sbvth${BASHPID}"
+  peer_veth="sbvtp${BASHPID}"
+  table=$((1000 + (BASHPID % 2000)))
+  mark=$((1 + (BASHPID % 200)))
+  ip netns add "${netns}"
+  netns_added=true
+  ip link add "${host_veth}" type veth peer name "${peer_veth}"
+  ip link set "${peer_veth}" netns "${netns}"
+  veth_added=true
+  ip addr add "${host_ip}/24" dev "${host_veth}"
+  ip link set "${host_veth}" up
+  ip netns exec "${netns}" ip addr add "${peer_ip}/24" dev "${peer_veth}"
+  ip netns exec "${netns}" ip link set lo up
+  ip netns exec "${netns}" ip link set "${peer_veth}" up
+  verification_capture_best_effort_command "${probe_dir}/resources.before.txt" \
+    ip -j addr show "${host_veth}"
+  verification_capture_best_effort_command "${probe_dir}/iptables.before.txt" \
+    iptables-save -t mangle
+
+  ip rule add fwmark "${mark}/${mark_mask}" table "${table}"
+  policy_added=true
+  ip route add local 0.0.0.0/0 dev lo table "${table}"
+  iptables -t mangle -A PREROUTING -i "${host_veth}" -p tcp \
+    -j TPROXY --on-ip 0.0.0.0 --on-port "${listener_port}" \
+    --tproxy-mark "${mark}/${mark_mask}"
+  tcp_rule_added=true
+  iptables -t mangle -A PREROUTING -i "${host_veth}" -p udp \
+    -j TPROXY --on-ip 0.0.0.0 --on-port "${listener_port}" \
+    --tproxy-mark "${mark}/${mark_mask}"
+  udp_rule_added=true
+  verification_capture_command "${probe_dir}/iptables.with-tproxy.txt" \
+    iptables-save -t mangle
+  verification_capture_best_effort_command "${probe_dir}/resources.with-tproxy.txt" \
+    sh -c 'ip rule show; ip route show table '"${table}"
+
+  tcp_marker="sing-box-vps-tproxy-tcp-ok-$(date +%s)-$$"
+  port_file="${temp_dir}/tcp.port"
+  python3 - "${port_file}" "${host_ip}" "${tcp_marker}" \
+    > "${tcp_marker_stdout_artifact}" 2> "${tcp_marker_stderr_artifact}" <<'PY' &
+import http.server
+import pathlib
+import socketserver
+import sys
+
+port_file, bind_address, marker = sys.argv[1:]
+
+class MarkerHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = (marker + "\n").encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        return
+
+class ReusableServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+with ReusableServer((bind_address, 0), MarkerHandler) as server:
+    pathlib.Path(port_file).write_text(str(server.server_address[1]), encoding="ascii")
+    server.serve_forever()
+PY
+  marker_pid=$!
+  for _ in {1..50}; do
+    [[ -s "${port_file}" ]] && break
+    kill -0 "${marker_pid}" 2>/dev/null || exit 1
+    sleep 0.1
+  done
+  [[ -s "${port_file}" ]]
+  tcp_port=$(cat "${port_file}")
+  [[ "${tcp_port}" =~ ^[0-9]+$ && "${tcp_port}" -ge 1 && "${tcp_port}" -le 65535 ]]
+  set +e
+  ip netns exec "${netns}" python3 - "${tcp_port}" "${tcp_marker}" \
+    > "${tcp_response_artifact}" 2> "${client_stderr_artifact}" <<'PY'
+import socket
+import sys
+
+port, marker = int(sys.argv[1]), sys.argv[2].encode()
+with socket.create_connection(("198.18.0.1", port), timeout=5) as conn:
+    conn.settimeout(5)
+    conn.sendall(b"GET / HTTP/1.1\r\nHost: tproxy.invalid\r\nConnection: close\r\n\r\n")
+    payload = b""
+    while True:
+        chunk = conn.recv(65535)
+        if not chunk:
+            break
+        payload += chunk
+body = payload.split(b"\r\n\r\n", 1)[1]
+sys.stdout.buffer.write(body)
+if body != marker + b"\n":
+    raise RuntimeError("tproxy TCP marker mismatch")
+PY
+  local tcp_status=$?
+  set -e
+  [[ "${tcp_status}" == 0 ]]
+  grep -Fqx "${tcp_marker}" "${tcp_response_artifact}"
+  kill "${marker_pid}" 2>/dev/null || true
+  wait "${marker_pid}" 2>/dev/null || true
+  marker_pid=''
+
+  udp_marker="sing-box-vps-tproxy-udp-ok-$(date +%s)-$$"
+  port_file="${temp_dir}/udp.port"
+  python3 - "${port_file}" "${host_ip}" \
+    > "${udp_marker_stdout_artifact}" 2> "${udp_marker_stderr_artifact}" <<'PY' &
+import pathlib
+import socket
+import sys
+
+port_file, bind_address = sys.argv[1:]
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server:
+    server.bind((bind_address, 0))
+    pathlib.Path(port_file).write_text(str(server.getsockname()[1]), encoding="ascii")
+    payload, address = server.recvfrom(65535)
+    server.sendto(payload, address)
+PY
+  marker_pid=$!
+  for _ in {1..50}; do
+    [[ -s "${port_file}" ]] && break
+    kill -0 "${marker_pid}" 2>/dev/null || exit 1
+    sleep 0.1
+  done
+  [[ -s "${port_file}" ]]
+  udp_port=$(cat "${port_file}")
+  [[ "${udp_port}" =~ ^[0-9]+$ && "${udp_port}" -ge 1 && "${udp_port}" -le 65535 ]]
+  set +e
+  ip netns exec "${netns}" python3 - "${udp_port}" "${udp_marker}" \
+    > "${udp_response_artifact}" 2>> "${client_stderr_artifact}" <<'PY'
+import socket
+import sys
+
+port, marker = int(sys.argv[1]), sys.argv[2].encode()
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+    client.settimeout(5)
+    client.sendto(marker, ("198.18.0.1", port))
+    payload, _ = client.recvfrom(65535)
+sys.stdout.buffer.write(payload)
+if payload != marker:
+    raise RuntimeError("tproxy UDP marker mismatch")
+PY
+  local udp_status=$?
+  set -e
+  [[ "${udp_status}" == 0 ]]
+  grep -Fqx "${udp_marker}" "${udp_response_artifact}"
+  kill "${marker_pid}" 2>/dev/null || true
+  wait "${marker_pid}" 2>/dev/null || true
+  marker_pid=''
+  probe_status=0
+)
+
 verification_execute_single_protocol_probe() {
   local protocol=$1
   local config_file=$2

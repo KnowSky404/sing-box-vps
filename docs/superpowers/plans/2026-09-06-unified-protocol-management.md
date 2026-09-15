@@ -847,3 +847,25 @@ DNS/防火墙，也不宣称外部控制面或数据面。
 与 TUN 结果，另以 component-list fixture 验证每个 persisted record 的投影和
 类型级 environment 共存。该切片只补齐 Agent 可见的实例前置条件，完整协议目标
 仍未完成。
+
+### 2026-09-15：Redirect/TProxy 真实透明路径探针
+
+为缩小透明协议的真实证据缺口，本轮在
+`dev/verification/remote/entrypoint.sh` 增加两个有界 probe。Redirect probe
+在验证容器内启动一次性 HTTP marker，以 uid 65534 限定的临时 `OUTPUT
+REDIRECT` 规则把 TCP 连接送入受管 redirect listener；TProxy probe 创建
+disposable veth/network namespace，加入 fwmark policy route 和 mangle
+`PREROUTING` TCP/UDP `TPROXY` 规则，再分别回读 TCP、UDP marker。每个 probe
+都先执行目标核心 `check`，保留 before/with/after-cleanup 规则或资源快照，退出
+时清理全部临时资源，并将结果标记为
+`POLICY_SCOPE=verification_container_only`、`POLICY_OWNERSHIP=not_managed`。
+
+`multi_protocol_coexistence` 在 revision 3 的 direct 组件之后创建 redirect
+revision 4、TProxy revision 5，校验 `component diagnose` 的实例前置条件（两者
+需要 root、不需要 TUN），随后删除至 revision 6/7 并断言渲染配置中不再存在。
+`tests/verification_runtime_smoke_artifacts.sh` 覆盖 helper dispatch、artifact
+提取和 not-managed 标记；完整特权 Docker run
+`dev/verification-runs/20260915013127` 的 redirect TCP marker、TProxy TCP+UDP
+marker、固定 `sing-box 1.14.0 check`、策略快照与清理 artifact 均成功。该切片
+不把临时规则写入安装器账本，不宣称宿主 PREROUTING/策略路由所有权、公网、生产、
+外部认证、SubMan 或完整协议目标完成。

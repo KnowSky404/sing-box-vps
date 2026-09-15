@@ -1430,6 +1430,38 @@ verification_execute_protocol_udp_probe() {
     "PROTOCOL=\${protocol}" "RESULT=success"
 }
 
+# The artifact-dispatch harness does not have a privileged network namespace,
+# so mirror the transparent helper calls with deterministic evidence. The
+# dedicated Docker scenario exercises the real REDIRECT/TPROXY data planes;
+# this fake keeps source dispatch and artifact extraction covered here.
+verification_execute_redirect_probe() {
+  local config_file=\$1 listener_port=\$2
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/transparent/redirect/result.env" \
+    'COMPONENT=redirect-inbound' 'RESULT=success' \
+    'DATA_PLANE=redirect_tcp_loopback' \
+    'POLICY_SCOPE=verification_container_only' \
+    'POLICY_OWNERSHIP=not_managed'
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/transparent/redirect/response.txt" \
+    'redirect-marker'
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/transparent/redirect/iptables.with-redirect.txt" \
+    'REDIRECT owner-scoped verification rule'
+}
+
+verification_execute_tproxy_probe() {
+  local config_file=\$1 listener_port=\$2
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/transparent/tproxy/result.env" \
+    'COMPONENT=tproxy-inbound' 'RESULT=success' \
+    'DATA_PLANE=tproxy_tcp_udp_netns' \
+    'POLICY_SCOPE=verification_container_only' \
+    'POLICY_OWNERSHIP=not_managed'
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/transparent/tproxy/tcp-response.txt" \
+    'tproxy-tcp-marker'
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/transparent/tproxy/udp-response.txt" \
+    'tproxy-udp-marker'
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/transparent/tproxy/iptables.with-tproxy.txt" \
+    'TPROXY tcp/udp verification rules'
+}
+
 verification_scenario_upgrade_1_13_to_1_14() {
   printf 'SCENARIO=upgrade_1_13_to_1_14\n'
   printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
@@ -1448,6 +1480,8 @@ verification_scenario_multi_protocol_coexistence() {
   verification_execute_protocol_udp_probe tuic /root/sing-box-vps/config.json
   verification_execute_protocol_udp_probe vmess /root/sing-box-vps/config.json
   verification_execute_protocol_udp_probe snell /root/sing-box-vps/config.json
+  verification_execute_redirect_probe /root/sing-box-vps/config.json 1094
+  verification_execute_tproxy_probe /root/sing-box-vps/config.json 1095
 }
 
 verification_scenario_fresh_install_http() {
@@ -1632,6 +1666,18 @@ grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/protocol-probes/trojan/udp.result.env"
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/protocol-probes/vmess/udp.result.env"
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/protocol-probes/snell/udp.result.env"
+grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/transparent/redirect/result.env"
+grep -Fqx 'POLICY_OWNERSHIP=not_managed' \
+  "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/transparent/redirect/result.env"
+grep -Fqx 'redirect-marker' \
+  "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/transparent/redirect/response.txt"
+grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/transparent/tproxy/result.env"
+grep -Fqx 'POLICY_OWNERSHIP=not_managed' \
+  "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/transparent/tproxy/result.env"
+grep -Fqx 'tproxy-tcp-marker' \
+  "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/transparent/tproxy/tcp-response.txt"
+grep -Fqx 'tproxy-udp-marker' \
+  "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/transparent/tproxy/udp-response.txt"
 grep -Fqx 'STATUS=success' "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/result.env"
 [[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/upgrade.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_1_13_to_1_14/transaction-result.json" ]]
@@ -1646,6 +1692,14 @@ grep -Fq 'remote_artifacts=extracted' "${run_dir}/summary.log"
 grep -Fq "${INSTALL_VERSION_LINE}" "${TMP_DIR}/remote-script.sh"
 grep -Fq "${UNINSTALL_HELPER_LINE}" "${TMP_DIR}/remote-script.sh"
 grep -Fq 'verification_run_protocol_probes' "${TMP_DIR}/remote-script.sh"
+grep -Fq 'verification_execute_redirect_probe' \
+  "${REPO_ROOT}/dev/verification/remote/entrypoint.sh"
+grep -Fq 'verification_execute_tproxy_probe' \
+  "${REPO_ROOT}/dev/verification/remote/entrypoint.sh"
+grep -Fq 'verification_execute_redirect_probe /root/sing-box-vps/config.json 1094' \
+  "${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
+grep -Fq 'verification_execute_tproxy_probe /root/sing-box-vps/config.json 1095' \
+  "${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
 ! grep -Fq 'verification_execute_single_protocol_probe vless-reality /root/sing-box-vps/config.json' "${TMP_DIR}/remote-script.sh"
 grep -Fqx 'fresh_install_vless' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'reconfigure_existing_install' "${REMOTE_DISPATCH_LOG_FILE}"

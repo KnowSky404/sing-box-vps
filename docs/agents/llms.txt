@@ -79,6 +79,19 @@ priority-9000/table-2022 resources, and records post-delete cleanup; it does
 not prove packet forwarding, host policy ownership, public reachability, or
 production deployment.
 
+2026-09-15 adds bounded Redirect/TProxy data-plane evidence. In Docker run
+`dev/verification-runs/20260915013127`, `multi_protocol_coexistence` creates
+redirect revision 4 and TProxy revision 5, passes the fixed ARM64
+`sing-box 1.14.0` check, and records an owner-scoped temporary `OUTPUT
+REDIRECT` TCP marker plus an isolated veth/network-namespace `PREROUTING
+TPROXY` TCP+UDP marker. The transparent artifacts include exact responses,
+before/with/after-cleanup iptables/iproute2 snapshots and
+`POLICY_OWNERSHIP=not_managed`; diagnose reports root required and TUN not
+required for both instances, then revision deletes 6/7 complete cleanup. The
+temporary policy exists only in the verification container; this is not host
+firewall ownership, public/production reachability, external authentication,
+SubMan evidence, or completion of the full protocol goal.
+
 Canonical documents:
 - AGENTS.md: repository rules, validation requirements, SSH alias conventions, version rules.
 - README.md: user-facing install, features, versions, runtime paths.

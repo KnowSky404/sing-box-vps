@@ -42,6 +42,26 @@ Direct inbound component records may include the upstream `network` string (`tcp
 
 The bounded Docker proof in `multi_protocol_coexistence` creates TCP and UDP direct components through the component CAS API, waits for service activity, runs the target `sing-box check`, and asserts their rendered listeners. Disposable loopback HTTP and UDP marker/echo fixtures receive requests only through the managed direct listeners' override destinations; exact responses are stored in `direct-inbound-response.txt` and `direct-inbound-udp-response.txt`, and the corresponding `direct-inbound.result.env` files report `RESULT=success`. Run `dev/verification-runs/20260912073323` contains the successful artifacts. This is fixed-core/loopback TCP+UDP evidence for direct forwarding only. It does not establish TUN/redirect/TProxy transparent routing, host firewall policy, public reachability, production deployment or full-protocol completion.
 
+## Redirect/TProxy transparent data-plane evidence
+
+The privileged Docker `multi_protocol_coexistence` scenario in
+`dev/verification-runs/20260915013127` creates a redirect inbound at revision 4
+and a TProxy inbound at revision 5. After the target ARM64 `sing-box 1.14.0`
+check, `verification_execute_redirect_probe` installs a temporary owner-scoped
+`OUTPUT REDIRECT` rule and proves a TCP marker; it removes that rule before
+returning. `verification_execute_tproxy_probe` creates a disposable veth pair
+and network namespace, installs a fwmark policy route and mangle `PREROUTING`
+`TPROXY` rules, and proves both TCP and UDP markers before removing every
+resource. The resulting `transparent/redirect` and `transparent/tproxy`
+artifacts retain exact responses, rule/resource snapshots and
+`POLICY_OWNERSHIP=not_managed`.
+
+The same scenario checks `component diagnose` instance requirements (root is
+required; TUN is not), deletes TProxy and redirect through revision 6/7, and
+asserts their rendered inbounds are gone. These temporary rules are verification
+container policy only and are not installer-owned host PREROUTING, policy
+routing, public, production, external-authentication, or SubMan evidence.
+
 ## OpenVPN endpoint TCP and UDP closure
 
 OpenVPN client/server component records remain typed and reference-protected. The bounded Docker scenario `fresh_install_vless` creates separate synthetic `system:false` server/client pairs with a short-lived SAN/serverAuth certificate and username/password, routes managed direct inbounds through each client endpoint, and verifies `peer connected`, `tunnel established`, the exact marker response and target-core `sing-box check` for both TCP and UDP. It then deletes each proxy/client/server set through revision CAS and verifies the listeners and component resources are gone. Run `dev/verification-runs/20260914151532` contains successful `fresh_install_vless/openvpn-endpoint/` and `openvpn-endpoint-udp/` result and cleanup artifacts. `tests/managed_openvpn_endpoint_runtime.sh` provides the same local TCP+UDP fixtures when `SINGBOX_BINARY_114` is configured and prints `SKIP` when the core or dependencies are unavailable.
