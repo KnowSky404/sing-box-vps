@@ -563,8 +563,8 @@ verification_generate_snell_probe_client() (
 verification_generate_naive_probe_client() (
   set -euo pipefail
   umask 077
-  local config_file=$1 output_path=$2 installer temp_dir selected_tag snapshot record store_file state_file
-  local server_port outbounds_json
+  local config_file=$1 output_path=$2 installer temp_dir selected_tag selected_network snapshot record store_file state_file
+  local server_port outbounds_json expected_quic
   installer=${VERIFY_REMOTE_INSTALL_SCRIPT:-/usr/local/bin/sbv}
   [[ -f "${installer}" ]] || return 1
   temp_dir=$(mktemp -d "${output_path}.naive.XXXXXX") || return 1
@@ -591,7 +591,20 @@ verification_generate_naive_probe_client() (
     if length == 1 and (.[0].listen_port | type == "number" and floor == .)
     then .[0].listen_port else error("invalid NaiveProxy probe listener") end
   ' "${config_file}") || return 1
-  record=$(verification_load_naive_probe_record "${state_file}" "${store_file}" "${selected_tag}") || return 1
+  selected_network=$(jq -er --arg tag "${selected_tag}" '
+    [(.inbounds // [])[] | select(.type == "naive" and .tag == $tag)] |
+    if length == 1 then
+      (.[0].network // "tcp") |
+      if type == "string" and IN("tcp","udp") then .
+      else error("Naive probe requires a single TCP or UDP network") end
+    else error("invalid NaiveProxy probe listener") end
+  ' "${config_file}") || return 1
+  expected_quic=false
+  if [[ "${selected_network}" == udp ]]; then
+    expected_quic=true
+  fi
+  record=$(verification_load_naive_probe_record "${state_file}" "${store_file}" \
+    "${selected_tag}" "${selected_network}" "${expected_quic}") || return 1
   snapshot=$(structured_instance_store_snapshot_json naive "${store_file}") || return 1
   jq -e --arg tag "${selected_tag}" --argjson expected "${record}" --argjson port "${server_port}" '
     any(.instances[]; .tag == $tag and .listen.port == $port and
@@ -618,7 +631,7 @@ verification_generate_naive_probe_client() (
   outbounds_json=$(jq -se '
     if length == 1 and .[0].type == "naive" then
       (.[0] | .tag = "proxy") as $outbound |
-      {log:{disabled:true},
+      {log:{level:"debug"},
        inbounds:[{type:"socks",tag:"local-socks",listen:"127.0.0.1",listen_port:19080}],
        outbounds:[$outbound],route:{final:"proxy"}}
     else error("invalid NaiveProxy probe export") end
@@ -1029,12 +1042,17 @@ verification_load_naive_probe_record() {
   local state_file=$1
   local store_file=$2
   local tag=$3
+  local expected_network=${4:-tcp}
+  local expected_quic=${5:-false}
   local record
 
   [[ -f "${state_file}" && ! -L "${state_file}" ]] || return 1
   grep -Eq '^[[:space:]]*CONFIG_SCHEMA_VERSION=2([[:space:]]*)$' "${state_file}" || return 1
   [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
-  record=$(jq -ce --arg tag "${tag}" '
+  [[ "${expected_network}" == tcp || "${expected_network}" == udp ]] || return 1
+  [[ "${expected_quic}" == true || "${expected_quic}" == false ]] || return 1
+  record=$(jq -ce --arg tag "${tag}" --arg expected_network "${expected_network}" \
+    --argjson expected_quic "${expected_quic}" '
     def safe_text:
       type == "string" and length > 0 and utf8bytelength <= 4096 and
       (test("[\u0000-\u001F\u007F]") | not);
@@ -1050,7 +1068,7 @@ verification_load_naive_probe_record() {
           (.listen | type == "object" and (keys | sort) == ["address","network","port"] and
             (.address | safe_address) and
             (.port | type == "number" and floor == . and . >= 1 and . <= 65535) and
-            (.network | type == "array" and . == ["tcp"])) and
+            (.network | type == "array" and . == [$expected_network])) and
           (.authentication | type == "object" and (keys | sort) == ["users"] and
             (.users | type == "array" and length >= 1 and length <= 128 and
               all(.[]; type == "object" and (keys | sort) == ["name","password","username"] and
@@ -1076,7 +1094,7 @@ verification_load_naive_probe_record() {
                 (.value | type == "string" and utf8bytelength <= 4096 and
                   (test("[\u0000-\u001F\u007F]") | not)))) and
             (.insecure_concurrency | type == "number" and floor == . and . >= 0 and . <= 1024) and
-            .quic == false and
+            .quic == $expected_quic and
             (.quic_congestion_control | type == "string" and IN("bbr","cubic","reno")) and
             (.quic_session_receive_window | type == "string" and length <= 64 and
               test("^$|^[0-9]+( ?(B|KB|MB|GB))$")) and

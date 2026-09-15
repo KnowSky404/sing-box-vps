@@ -129,6 +129,7 @@ outbounds=$(build_client_naive_outbounds 203.0.113.10 | jq -s .)
 jq -e 'length==1 and .[0].type=="naive" and .[0].server=="127.0.0.1" and
   .[0].server_port==2098 and .[0].username=="alice" and .[0].password=="first-password" and
   .[0].quic==true and .[0].quic_congestion_control=="cubic" and
+  .[0].udp_over_tcp=={enabled:true,version:2} and
   .[0].tls.certificate and .[0].extra_headers["User-Agent"]=="naive-lifecycle"' \
   <<< "${outbounds}" >/dev/null
 server_outbound_config "${outbounds}" "${TMP_DIR}/naive-client-native.json"
@@ -143,7 +144,10 @@ jq -e '.revision==2 and ([.instances[].id] | sort)==["main","udp"] and
 jq -e '([.inbounds[].type] | sort)==["naive","naive"] and
   any(.inbounds[]; .listen_port==2099 and .network=="udp")' "${SINGBOX_CONFIG_FILE}" >/dev/null
 outbounds=$(build_client_naive_outbounds 203.0.113.10 | jq -s .)
-jq -e 'length==2 and any(.[]; .server_port==2099 and .quic==true and .username=="bob")' <<< "${outbounds}" >/dev/null
+jq -e 'length==2 and
+  any(.[]; .server_port==2098 and .udp_over_tcp=={enabled:true,version:2}) and
+  any(.[]; .server_port==2099 and .quic==true and .username=="bob" and
+    (has("udp_over_tcp") | not))' <<< "${outbounds}" >/dev/null
 
 expect_failure stale_revision replace naive --json --yes --expected-revision 1 --file "${TMP_DIR}/replaced.json"
 expect_success replace_main 3 replace naive --json --yes --expected-revision 2 --file "${TMP_DIR}/replaced.json"

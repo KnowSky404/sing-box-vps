@@ -68,6 +68,8 @@ verification_scenario_multi_protocol_coexistence() {
   local shadowtls_outbound_server_pid=''
   local shadowtls_outbound_server_dir=''
   local anytls_udp_journal_artifact=''
+  local naive_udp_journal_artifact=''
+  local naive_http3_journal_artifact=''
 
   verification_prepare_remote_local_tree
   trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_marker_pid:-}" ]]; then kill "${direct_marker_pid}" 2>/dev/null || true; wait "${direct_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_udp_marker_pid:-}" ]]; then kill "${direct_udp_marker_pid}" 2>/dev/null || true; wait "${direct_udp_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${sshd_pid:-}" ]]; then kill "${sshd_pid}" 2>/dev/null || true; wait "${sshd_pid}" 2>/dev/null || true; fi; if [[ -n "${ssh_marker_pid:-}" ]]; then kill "${ssh_marker_pid}" 2>/dev/null || true; wait "${ssh_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_upstream_pid:-}" ]]; then kill "${socks_upstream_pid}" 2>/dev/null || true; wait "${socks_upstream_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_udp_upstream_pid:-}" ]]; then kill "${socks_udp_upstream_pid}" 2>/dev/null || true; wait "${socks_udp_upstream_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_outbound_marker_pid:-}" ]]; then kill "${socks_outbound_marker_pid}" 2>/dev/null || true; wait "${socks_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_server_pid:-}" ]]; then kill "${vless_outbound_server_pid}" 2>/dev/null || true; wait "${vless_outbound_server_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_server_dir:-}" ]]; then rm -rf -- "${vless_outbound_server_dir}"; fi; if [[ -n "${shadowtls_outbound_server_pid:-}" ]]; then kill "${shadowtls_outbound_server_pid}" 2>/dev/null || true; wait "${shadowtls_outbound_server_pid}" 2>/dev/null || true; fi; if [[ -n "${shadowtls_outbound_server_dir:-}" ]]; then rm -rf -- "${shadowtls_outbound_server_dir}"; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
@@ -1501,6 +1503,104 @@ PY
     fi
   done < <(read_installed_protocols)
   verification_run_protocol_probes
+
+  # Naive outbound carries UDP through its explicit UDP-over-TCP adapter when
+  # the managed listener has a TCP leg.  Preserve the initial TCP probe tree
+  # before replacing the same instance with a UDP-only listener below.
+  verification_execute_protocol_udp_probe naive /root/sing-box-vps/config.json
+  naive_udp_journal_artifact=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/naive-udp-journal.txt")
+  for _ in {1..20}; do
+    journalctl -u sing-box -n 100 --no-pager > "${naive_udp_journal_artifact}" 2>&1
+    if grep -Fq 'inbound/naive[naive-in]: inbound UoT connection' \
+      "${naive_udp_journal_artifact}"; then
+      break
+    fi
+    sleep 0.1
+  done
+  grep -Fq 'inbound/naive[naive-in]: inbound UoT connection' \
+    "${naive_udp_journal_artifact}"
+  verification_capture_tree_if_present \
+    "$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/naive")" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/naive-tcp-uot"
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/naive-tcp-uot/result.env" \
+    'PROTOCOL=naive' 'RESULT=success' \
+    'DATA_PLANE=naive_udp_over_tcp_loopback' 'SERVER_NETWORK=tcp' \
+    'CLIENT_TRANSPORT=http2_uot'
+
+  # A UDP-only Naive listener is HTTP/3/QUIC, not a native TCP listener.  Use
+  # the same typed instance and revision CAS to prove that the renderer,
+  # QUIC exporter and authenticated marker all move together.  UDP payload
+  # remains intentionally separate: sing-box's Naive outbound exposes UDP
+  # through UoT, which requires the TCP leg exercised above.
+  local naive_udp_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/naive-udp-record.json"
+  local naive_udp_replace_status=0
+  (umask 077; jq -n --arg cert "${cert_path}" --arg key "${key_path}" '
+    {id:"main",name:"Naive HTTP3 verification",tag:"naive-in",
+     listen:{address:"127.0.0.1",port:1091,network:["udp"]},
+     authentication:{users:[{name:"naive-user",username:"naive-user",password:"naive-verification-password"}]},
+     tls:{enabled:true,server_name:"sing-box-vps-verification.invalid",certificate_path:$cert,key_path:$key},
+     client_trust:"certificate",
+     naive:{extra_headers:{},insecure_concurrency:0,quic:true,
+       quic_congestion_control:"bbr",quic_session_receive_window:"",stream_receive_window:""},
+     outbound_policy:"default",dependencies:[]}
+  ' > "${naive_udp_record}")
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent instance replace naive --json --yes \
+    --expected-revision 1 --file "${naive_udp_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/naive-udp-replace.json"
+  naive_udp_replace_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/naive-udp-replace.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/naive-udp-replace.json"
+  [[ "${naive_udp_replace_status}" == 0 ]]
+  jq -e '.ok==true and .action=="instance" and .protocol=="naive" and
+    .changed==true and .revision==2 and .transaction.status=="success" and
+    .transaction.phase=="committed" and .transaction.operation_exit_code==0' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/naive-udp-replace.json" >/dev/null
+  verification_mark_step naive-udp-instance-replaced
+  verification_wait_for_service_active sing-box
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/naive-http3-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  config_path=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/naive-http3-config.json")
+  cp /root/sing-box-vps/config.json "${config_path}"
+  jq -e '
+    ([.inbounds[] | select(.type == "naive" and .tag == "naive-in" and
+      .listen == "127.0.0.1" and .listen_port == 1091 and .network == "udp" and
+      .users[0].username == "naive-user" and
+      .tls.server_name == "sing-box-vps-verification.invalid")] | length == 1)
+  ' "${config_path}" >/dev/null
+  verification_mark_step naive-http3-config-asserted
+  verification_execute_single_protocol_probe naive /root/sing-box-vps/config.json
+  jq -e '
+    .outbounds | length == 1 and .[0].type == "naive" and
+    .[0].quic == true and (.[0] | has("udp_over_tcp") | not)
+  ' "$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/naive/client.json")" >/dev/null
+  grep -Fq 'protocol: quic/1+spdy/3' \
+    "$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/naive/client.stderr.txt")"
+  naive_http3_journal_artifact=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/naive-http3-journal.txt")
+  journalctl -u sing-box -n 100 --no-pager > "${naive_http3_journal_artifact}" 2>&1
+  grep -Fq 'inbound/naive[naive-in]: [naive-user] inbound connection' \
+    "${naive_http3_journal_artifact}"
+  verification_capture_tree_if_present \
+    "$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/naive")" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/naive-udp-http3"
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/naive-udp-http3/result.env" \
+    'PROTOCOL=naive' 'RESULT=success' \
+    'DATA_PLANE=naive_http3_tcp_loopback' 'SERVER_NETWORK=udp' \
+    'CLIENT_TRANSPORT=quic_http3'
+  verification_mark_step naive-http3-probe-complete
+
   # AnyTLS keeps a TCP listener; this shared SOCKS5 UDP probe exercises its
   # authenticated UDP-over-AnyTLS (UoT) adapter without calling it native UDP.
   verification_execute_protocol_udp_probe anytls /root/sing-box-vps/config.json

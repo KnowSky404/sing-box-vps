@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091504
+# Version: 2026091505
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091504"
+readonly SCRIPT_VERSION="2026091505"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -24336,7 +24336,8 @@ build_client_naive_outbounds() (
       $instance.authentication.users[] as $user |
       {type:"naive",tag:("naive-" + $instance.id + "-user-" + ($user.name | @base64)),
        server:$server,server_port:$instance.listen.port,username:$user.username,password:$user.password,
-       _tls:$instance.tls,_client_trust:$instance.client_trust,_naive:$instance.naive}
+       _tls:$instance.tls,_client_trust:$instance.client_trust,_naive:$instance.naive,
+       _listen_network:$instance.listen.network}
     ' <<< "${snapshot}" > "${raw_file}"; then
       return 1
     fi
@@ -24369,7 +24370,9 @@ build_client_naive_outbounds() (
         --arg stream_receive_window "$(jq -er '._naive.stream_receive_window' <<< "${raw_outbound}")" \
         --arg quic_session_receive_window "$(jq -er '._naive.quic_session_receive_window' <<< "${raw_outbound}")" \
         --argjson extra_headers "$(jq -ec '._naive.extra_headers' <<< "${raw_outbound}")" \
-        'del(._tls,._client_trust,._naive) | .tls=$tls |
+        --argjson udp_over_tcp_enabled "$(jq -c '._listen_network | index("tcp") != null' <<< "${raw_outbound}")" \
+        'del(._tls,._client_trust,._naive,._listen_network) | .tls=$tls |
+         if $udp_over_tcp_enabled then .udp_over_tcp={enabled:true,version:2} else . end |
          if $quic then .quic=true else . end |
          if $cc != "bbr" then .quic_congestion_control=$cc else . end |
          if $insecure_concurrency > 0 then .insecure_concurrency=$insecure_concurrency else . end |

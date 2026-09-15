@@ -1473,6 +1473,13 @@ verification_scenario_multi_protocol_coexistence() {
   printf 'SCENARIO=multi_protocol_coexistence\n'
   printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
   verification_run_protocol_probes
+  verification_execute_protocol_udp_probe naive /root/sing-box-vps/config.json
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/naive-tcp-uot/result.env" \
+    'PROTOCOL=naive' 'RESULT=success' \
+    'DATA_PLANE=naive_udp_over_tcp_loopback'
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/naive-udp-http3/result.env" \
+    'PROTOCOL=naive' 'RESULT=success' \
+    'DATA_PLANE=naive_http3_tcp_loopback'
   verification_execute_protocol_udp_probe anytls /root/sing-box-vps/config.json
   verification_execute_protocol_udp_probe hy2 /root/sing-box-vps/config.json
   verification_execute_protocol_udp_probe shadowsocks /root/sing-box-vps/config.json
@@ -1662,6 +1669,11 @@ grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/
 grep -Fqx 'RESULT=unsupported' "${run_dir}/remote-artifacts/scenarios/runtime_smoke/protocol-probes/mystery-protocol/result.env"
 grep -Fqx 'STATUS=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/result.env"
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/protocol-probes/anytls/udp.result.env"
+grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/protocol-probes/naive/udp.result.env"
+grep -Fqx 'DATA_PLANE=naive_udp_over_tcp_loopback' \
+  "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/protocol-probes/naive-tcp-uot/result.env"
+grep -Fqx 'DATA_PLANE=naive_http3_tcp_loopback' \
+  "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/protocol-probes/naive-udp-http3/result.env"
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/protocol-probes/shadowsocks/udp.result.env"
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/protocol-probes/trojan/udp.result.env"
 grep -Fqx 'RESULT=success' "${run_dir}/remote-artifacts/scenarios/multi_protocol_coexistence/protocol-probes/vmess/udp.result.env"
@@ -1696,6 +1708,10 @@ grep -Fq 'verification_execute_redirect_probe' \
   "${REPO_ROOT}/dev/verification/remote/entrypoint.sh"
 grep -Fq 'verification_execute_tproxy_probe' \
   "${REPO_ROOT}/dev/verification/remote/entrypoint.sh"
+grep -Fq 'verification_execute_protocol_udp_probe naive /root/sing-box-vps/config.json' \
+  "${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
+grep -Fq 'DATA_PLANE=naive_http3_tcp_loopback' \
+  "${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
 grep -Fq 'verification_execute_redirect_probe /root/sing-box-vps/config.json 1094' \
   "${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
 grep -Fq 'verification_execute_tproxy_probe /root/sing-box-vps/config.json 1095' \

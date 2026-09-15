@@ -72,3 +72,35 @@ jq -e '
 ! grep -Fq 'PRIVATE KEY' "${client_file}"
 ! grep -Fq 'naive.json' "${client_file}"
 printf 'NaiveProxy verification probe generator preserves TCP exporter and public-only TLS material\n'
+
+# A UDP-only Naive listener must select the QUIC/HTTP3 client transport.  The
+# sing-box Naive outbound can carry UDP only through UDP-over-TCP, which needs
+# a TCP listener; do not silently add that adapter to this UDP-only fixture.
+jq '.instances[0].listen.network=["udp"] | .instances[0].naive.quic=true' \
+  "${TMP_DIR}/project/protocols/instances/naive.json" > \
+  "${TMP_DIR}/project/protocols/instances/naive.next.json"
+mv "${TMP_DIR}/project/protocols/instances/naive.next.json" \
+  "${TMP_DIR}/project/protocols/instances/naive.json"
+jq '.inbounds[0].network="udp"' "${TMP_DIR}/config.json" > "${TMP_DIR}/config.next.json"
+mv "${TMP_DIR}/config.next.json" "${TMP_DIR}/config.json"
+VERIFY_CURRENT_SCENARIO_DIR="scenarios/udp"
+export VERIFY_CURRENT_SCENARIO_DIR
+bash -s -- "${TMP_DIR}/entrypoint.sh" "${TMP_DIR}" <<'RUN_UDP'
+set -euo pipefail
+source "$1"
+fixture_dir=$2
+VERIFY_ARTIFACT_DIR="${fixture_dir}/artifacts"
+VERIFY_CURRENT_SCENARIO_DIR="scenarios/udp"
+export VERIFY_ARTIFACT_DIR VERIFY_CURRENT_SCENARIO_DIR
+verification_generate_protocol_probe_client_config naive "${fixture_dir}/config.json" >/dev/null
+RUN_UDP
+
+udp_client_file="${TMP_DIR}/artifacts/scenarios/udp/protocol-probes/naive/client.json"
+jq -e '
+  .log.level == "debug" and
+  .outbounds[0].type == "naive" and
+  .outbounds[0].quic == true and
+  (.outbounds[0] | has("udp_over_tcp") | not) and
+  .outbounds[0].server_port == 18446
+' "${udp_client_file}" >/dev/null
+printf 'NaiveProxy UDP probe generator selects QUIC/HTTP3 and avoids TCP-only UoT\n'

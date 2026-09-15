@@ -1051,3 +1051,24 @@ SOCKS5 UDP response。新的 `socks-outbound-udp-verification` typed component
 `AUTHENTICATION=upstream_username_password`。本切片只覆盖一次性特权 Docker
 容器和回环 SOCKS5 native UDP relay，不代表外部 proxy、公网、生产、SubMan 或
 完整协议目标完成；成功门禁运行记录为 `dev/verification-runs/20260915152726`；脚本版本保持本轮 `2026091504`。
+
+### 2026-09-15：NaiveProxy UoT UDP 与 UDP-only HTTP/3 数据面探针
+
+在 NaiveProxy TCP 探针之后，本轮把 exporter 和验证入口的网络语义接到真实
+listener：当受管实例包含 TCP listener 时，客户端 outbound 自动输出
+`udp_over_tcp:{enabled:true,version:2}`；UDP-only listener 不输出 TCP-only UoT，
+并由 probe generator 从渲染配置选择 `quic:true`，以覆盖 Naive HTTP/3/QUIC。
+generator 仍严格读取 active marker、typed store、用户/TLS/端口和当前 protocol
+index，且 probe 客户端打开 debug log 保存实际 HTTP/2 或 QUIC/HTTP/3 协商信息。
+
+特权 Docker 门禁 `dev/verification-runs/20260915184405` 先用 TCP-capable
+Naive listener 通过 HTTP/2 TCP marker，再经同一认证实例和 SOCKS5 UDP ASSOCIATE
+回读 UoT v2 UDP marker；随后以实例 CAS `1→2` 替换为
+`network:["udp"]`、`quic:true` 的 UDP-only listener，认证客户端通过
+`protocol: quic/1+spdy/3` 回读 TCP marker。完整结果保存在
+`protocol-probes/naive-tcp-uot`、`naive-udp-journal.txt`、
+`protocol-probes/naive-udp-http3` 和 `naive-http3-journal.txt`，两条路径的
+`result.env` 均为 `RESULT=success`。本切片只证明 TCP-capable Naive 的 UoT UDP
+payload 与 UDP-only Naive 的 HTTP/3 TCP transport，不证明 UDP-only listener 的
+原生 UDP payload、公网、生产、外部认证、SubMan 或完整协议目标；本轮脚本版本为
+`2026091505`。
