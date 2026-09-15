@@ -28,6 +28,8 @@ SOCKS outbound 现有固定的 1.14 字段 allowlist、凭据脱敏和敏感 exp
 
 Selector group 现有固定的成员/default/中断连接 allowlist 和图依赖校验；验证运行 `dev/verification-runs/20260915060132` 在特权 Docker 中创建仅含内建 `direct` 成员的 typed selector，经 route 由既有 SOCKS5 入口回读 loopback marker，保存核心 `check`、精确响应和 revision 12→13 CAS 删除 artifact。`selector-outbound.result.env` 为 `RESULT=success`、`selector_direct_loopback`；这只证明单成员 selector 的隔离容器 TCP 选择路径，不代表多成员故障切换、URLTest 探测、公网、生产、SubMan 或完整协议目标完成。
 
+URLTest group 现有固定的成员/探测 URL/interval/tolerance/idle_timeout allowlist 和图依赖校验；验证运行 `dev/verification-runs/20260915062630` 在特权 Docker 中创建仅含内建 `direct` 成员、`interval:"1s"` 和 loopback health URL 的 typed urltest，经 route 由既有 SOCKS5 入口回读精确 marker，保存核心 `check`、配置、revision 14→15 CAS 删除 artifact。`urltest-outbound.result.env` 为 `RESULT=success`、`DATA_PLANE=urltest_direct_loopback`、`HEALTHCHECK=loopback_http`；这只证明单成员 URLTest 健康探测/路由选择的隔离容器 TCP 路径，不代表多成员故障切换、外部 URL、公网、生产、UDP、SubMan 或完整协议目标完成。
+
 Direct inbound 的 typed component 现在额外校验 `network`、`override_address` 和 `override_port` 的类型、控制字符与端口边界。共存场景在同一组件 CAS/服务事务中创建回环 `direct-inbound-verification` 与 UDP 对应实例，固定 1.14.0 `check` 后由真实 TCP/UDP 请求经 direct inbound 转发到一次性 loopback marker/echo；Docker run `dev/verification-runs/20260912073323` 的 `direct-inbound.result.env`、`direct-inbound-udp.result.env`、渲染配置、监听快照和精确 marker 均成功。该证据只证明 direct 的 TCP/UDP override loopback 路径，不代表透明路由、主机防火墙、公网部署或全协议目标完成。
 
 组件 `route_rules` 现在也使用 sing-box 1.14 default/logical matcher 与 route-action typed allowlist；逻辑子规则只允许 match 字段，递归和列表大小有界，未知字段/动作、对象 matcher、重复列表成员和 action 交叉字段在 CAS/接管前拒绝。合法规则仍由统一 renderer 原样组合进顶层 route；这关闭了任意 route JSON 透传缺口，但不代表主机策略路由、nftables、透明数据面或全协议目标已完成。

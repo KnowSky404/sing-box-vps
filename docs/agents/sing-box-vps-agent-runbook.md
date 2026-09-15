@@ -83,6 +83,23 @@ This proves only single-member selector resolution in an isolated container. It
 does not prove multi-member failover, URLTest probing, public reachability,
 production operation or SubMan synchronization.
 
+## URLTest group verification
+
+The privileged Docker `multi_protocol_coexistence` scenario (run
+`dev/verification-runs/20260915062630`) creates a typed URLTest group with one
+built-in `direct` member. Its health URL is the existing loopback HTTP marker,
+with `interval:"1s"`, bounded retry and `idle_timeout:"5s"`; the `localhost`
+route must return the exact marker after the group completes a health probe.
+Artifacts retain the target-core `check`, rendered URLTest configuration,
+response, and revision-14 create/revision-15 delete envelopes. The result label
+is `DATA_PLANE=urltest_direct_loopback` with `HEALTHCHECK=loopback_http`.
+
+This proves only single-member URLTest health checking and route resolution in
+an isolated container. It does not prove multi-member latency ordering or
+failover, an external health URL, public reachability, production operation,
+UDP, or SubMan synchronization; the marker and direct member are disposable
+verification fixtures.
+
 ## Direct inbound override data plane
 
 Direct inbound component records may include the upstream `network` string (`tcp` or `udp`) and destination override fields `override_address`/`override_port`. The component validator rejects control characters, empty override addresses and ports outside 1-65535 while preserving the normal listen fields. A loopback direct record does not require `--allow-public`; non-loopback listeners still do.

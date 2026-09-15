@@ -1344,6 +1344,93 @@ PY
     ([.route.rules[] | select(.outbound == "selector-outbound-verification")] | length) == 0
   ' /root/sing-box-vps/config.json >/dev/null
 
+  # URLTest groups share the same typed member graph but add an active health
+  # URL.  Give it the single direct member and the existing marker URL so the
+  # group must complete a real probe before the routed request succeeds.
+  local urltest_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/urltest-outbound-record.json"
+  local urltest_probe_url="http://localhost:${direct_marker_port}/"
+  local urltest_create_status=0
+  local urltest_delete_status=0
+  local urltest_curl_status=1
+  (umask 077; jq -n --arg url "${urltest_probe_url}" '
+    {id:"urltest-outbound-verification",role:"outbound",type:"urltest",
+     tag:"urltest-outbound-verification",enabled:true,
+     route_rules:[{domain:["localhost"],action:"route",outbound:"urltest-outbound-verification"}],
+     config:{outbounds:["direct"],url:$url,interval:"1s",tolerance:0,
+       idle_timeout:"5s",interrupt_exist_connections:true}}
+  ' > "${urltest_record}")
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
+    --expected-revision 13 --file "${urltest_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/urltest-outbound-create.json"
+  urltest_create_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/urltest-outbound-create.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/urltest-outbound-create.json"
+  [[ "${urltest_create_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="create" and .revision==14 and .type=="urltest"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/urltest-outbound-create.json" >/dev/null
+  verification_mark_step urltest-outbound-component-created
+  verification_wait_for_service_active sing-box
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/urltest-outbound-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  config_path=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/urltest-outbound-config.json")
+  cp /root/sing-box-vps/config.json "${config_path}"
+  jq -e --arg url "${urltest_probe_url}" '
+    ([.outbounds[] | select(.type == "urltest" and .tag == "urltest-outbound-verification" and
+      .outbounds == ["direct"] and .url == $url and .interval == "1s" and
+      .tolerance == 0 and .idle_timeout == "5s" and
+      .interrupt_exist_connections == true)] | length == 1) and
+    ([.route.rules[] | select(.outbound == "urltest-outbound-verification" and
+      .domain == ["localhost"])] | length == 1)
+  ' "${config_path}" >/dev/null
+  verification_mark_step urltest-outbound-config-asserted
+  local urltest_response="${VERIFY_CURRENT_SCENARIO_DIR}/urltest-outbound-response.txt"
+  local urltest_curl_stderr="${VERIFY_CURRENT_SCENARIO_DIR}/urltest-outbound-curl.stderr.txt"
+  for _ in {1..20}; do
+    set +e
+    curl --fail --silent --show-error --max-time 3 --noproxy '' \
+      --proxy 'socks5h://socks-user:socks-pass@127.0.0.1:1081' \
+      "http://localhost:${direct_marker_port}/" \
+      > "$(verification_artifact_path "${urltest_response}")" \
+      2> "$(verification_artifact_path "${urltest_curl_stderr}")"
+    urltest_curl_status=$?
+    set -e
+    if [[ "${urltest_curl_status}" == 0 ]] && \
+      grep -Fqx "${direct_marker}" "$(verification_artifact_path "${urltest_response}")"; then
+      break
+    fi
+    sleep 0.5
+  done
+  [[ "${urltest_curl_status}" == 0 ]]
+  grep -Fqx "${direct_marker}" "$(verification_artifact_path "${urltest_response}")"
+  verification_mark_step urltest-outbound-curl-complete
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/urltest-outbound.result.env" \
+    'COMPONENT=urltest-outbound' 'RESULT=success' \
+    'DATA_PLANE=urltest_direct_loopback' 'HEALTHCHECK=loopback_http'
+
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
+    --expected-revision 14 --id urltest-outbound-verification \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/urltest-outbound-delete.json"
+  urltest_delete_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/urltest-outbound-delete.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/urltest-outbound-delete.json"
+  [[ "${urltest_delete_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="delete" and .revision==15 and .id=="urltest-outbound-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/urltest-outbound-delete.json" >/dev/null
+  verification_mark_step urltest-outbound-component-deleted
+  jq -e '
+    ([.outbounds[] | select(.tag == "urltest-outbound-verification")] | length) == 0 and
+    ([.route.rules[] | select(.outbound == "urltest-outbound-verification")] | length) == 0
+  ' /root/sing-box-vps/config.json >/dev/null
+
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/config.json")
   index_path=$(verification_artifact_path \

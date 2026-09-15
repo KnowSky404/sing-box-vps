@@ -913,3 +913,18 @@ Selector group 此前只有 typed schema、图依赖和核心 `check`。本轮�
 该切片只证明单成员 selector 的组件路由/选择路径；删除后组件和路由均断言移除，
 没有修改防火墙账本，也不宣称多成员故障切换、URLTest 探测、公网、生产、UDP、
 SubMan 或完整协议目标完成。脚本版本保持 `2026091402`。
+
+### 2026-09-15：URLTest 单成员健康探测数据面探针
+
+URLTest group 此前只有 typed schema、图依赖和核心 `check`。本轮在同一
+`multi_protocol_coexistence` 特权隔离 Docker 中创建仅含内建 `direct` 成员的
+`urltest-outbound-verification`，将 health URL 指向已有 loopback HTTP marker，
+并用 `localhost` route 驱动一次真实健康探测和请求。验证运行
+`dev/verification-runs/20260915062630` 保存 `urltest` 的
+`interval:"1s"`、`idle_timeout:"5s"`、目标核心 `check`、精确响应、
+`RESULT=success`/`DATA_PLANE=urltest_direct_loopback`/`HEALTHCHECK=loopback_http`
+结果，以及 revision 14 create/revision 15 delete artifact。
+
+该切片只证明单成员 URLTest 健康探测与 route 选择的隔离容器回环路径；删除后
+组件和路由均断言移除。没有覆盖多成员延迟排序/故障切换、外部探测 URL、公网、
+生产、UDP、SubMan 或完整协议目标，脚本版本保持 `2026091402`。

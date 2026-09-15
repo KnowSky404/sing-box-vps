@@ -15,7 +15,7 @@
 - `available`：当前官方 ARM64 Linux 发布包中是否已包含该角色的注册实现，以及仍需满足的构建、平台、运行库或外部控制面条件；它独立于源码中存在注册函数。
 - `validated`：本轮实际取得的证据。`registry-check` 只证明目标二进制能识别该 type 并进入初始化校验；`project-real-tcp` 表示回读了项目真实 TCP 业务闭环 artifact，`project-real-udp` 表示回读了经 SOCKS5 UDP ASSOCIATE 的真实 UDP payload artifact，`project-real-tcp+udp` 表示两者均已取得；`project-real-tun-resources` 只表示在特权隔离 Docker 中回读了 sing-box core-owned TUN 接口、iproute2 rule/route 与删除清理 artifact；`project-real-bridge-resources` 只表示回读了 bridge outbound 动态 TUN、core-created rule/route 及删除清理 artifact；`project-real-openvpn-tcp+udp` 表示在特权隔离 Docker 中分别以合成证书和用户名/密码组成 `system:false` OpenVPN server/client pair，经受管 direct inbound 回读 TCP 与 UDP marker payload，并完成目标核心 check 与每个 endpoint 删除清理；`project-real-openvpn-system-resources` 只表示在特权隔离 Docker 中创建命名 `system:true` OpenVPN server/client，回读 core-owned 系统接口、配置地址/前缀、MTU、隧道日志和 diagnose，并按 revision 完成接口删除清理，不包含 packet payload 或宿主路由；`project-real-redirect-tcp` 表示在特权隔离 Docker 中用临时 owner-scoped `OUTPUT REDIRECT` 规则回读 redirect TCP marker，并在 probe 退出时清理规则；`project-real-tproxy-tcp+udp` 表示在特权隔离 Docker 的 disposable veth/network namespace 中以临时 fwmark policy route 和 `PREROUTING TPROXY` 规则回读 TProxy TCP+UDP marker，并完成策略/接口清理。后两项的 policy ownership 固定为 verification-container-only/not-managed，不表示宿主策略所有权。它们不能由 `check`、监听端口或进程存活代替，也不代表公网可达、主机透明策略、外部控制面或生产部署。
 
-另有协议专用的 `project-real-snell-tcp+packet-api-udp`：表示在固定核心、隔离 Docker 中同时回读 Snell TCP marker 与经其认证 TCP 会话 packet API 承载的 UDP marker；它明确不是原生 UDP listener 证明。`project-real-ssh-tcp` 表示在特权隔离 Docker 中由一次性 OpenSSH 服务接收 pinned-host-key SSH outbound 的 direct-tcpip loopback marker，并完成组件 CAS 删除；它不表示外部 SSH 服务、公网、生产或 UDP 证据。`project-real-socks-tcp` 表示在同类容器中由一次性认证 SOCKS5 upstream 接收 managed SOCKS outbound 的 CONNECT loopback marker，并完成组件 CAS 删除；它不表示外部 proxy、公网、生产或 UDP 证据。`project-real-selector-tcp` 表示在同类容器中由单成员 selector 选择内建 direct outbound 回读 loopback marker，并完成组件 CAS 删除；它不表示多成员切换、URLTest、公网或生产证据。
+另有协议专用的 `project-real-snell-tcp+packet-api-udp`：表示在固定核心、隔离 Docker 中同时回读 Snell TCP marker 与经其认证 TCP 会话 packet API 承载的 UDP marker；它明确不是原生 UDP listener 证明。`project-real-ssh-tcp` 表示在特权隔离 Docker 中由一次性 OpenSSH 服务接收 pinned-host-key SSH outbound 的 direct-tcpip loopback marker，并完成组件 CAS 删除；它不表示外部 SSH 服务、公网、生产或 UDP 证据。`project-real-socks-tcp` 表示在同类容器中由一次性认证 SOCKS5 upstream 接收 managed SOCKS outbound 的 CONNECT loopback marker，并完成组件 CAS 删除；它不表示外部 proxy、公网、生产或 UDP 证据。`project-real-selector-tcp` 表示在同类容器中由单成员 selector 选择内建 direct outbound 回读 loopback marker，并完成组件 CAS 删除；它不表示多成员切换、URLTest、公网或生产证据。`project-real-urltest-tcp` 表示在同类容器中由单成员 URLTest 以 loopback HTTP URL 完成健康探测并经 route 回读 marker，再完成组件 CAS 删除；它不表示多成员故障切换、公网或生产证据。
 
 表中“版本”优先表示本项目实现时的核心版本门槛：除标明“自 1.14.0”的能力外，继续以项目已有的 1.13.x 兼容路径为下限；它不声称是该协议在 sing-box 历史上的首次引入版本。需要 1.14.0 的 type 或字段必须在目标版本门控后才可生成。
 
@@ -163,7 +163,7 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 | ssh | `ssh` / outbound | 基础内建；目标 SSH 服务和密钥/host key 策略是外部条件 | TCP；密码或 private key、host key/cipher/kex 需校验；不创建新的 SSH server | conditional | yes（Linux；目标 SSH/凭据仍需） | typed component state/config；yes/yes/yes/yes* | 完整敏感 component JSON / 不生成 SSH 节点 URI / no current SubMan | `project-real-ssh-tcp`；特权 Docker `multi_protocol_coexistence` 以一次性 OpenSSH + pinned host key，经 SOCKS5 route 回读 SSH direct-tcpip loopback marker，并按 CAS 删除；不代表外部 SSH、公网、生产或 UDP |
 | dns-legacy | `dns` / outbound | 1.13 已移除 | 不再作为 outbound；使用 DNS rule action、DNS server 和 domain resolver | removed | no（removed） | none；—/—/—/— | 不可用 / — / — | check 明确报告 removed |
 | selector | `selector` / outbound group | 基础内建 | 只选择已注册 outbound tag；成员为空或引用不存在都应失败 | yes | yes（Linux） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | `project-real-selector-tcp`；特权 Docker `multi_protocol_coexistence` 以单成员 `direct` group 经 route 回读 loopback marker、核心 check 和 CAS 删除；不代表多成员切换、公网或生产 |
-| urltest | `urltest` / outbound group | 基础内建 | 对成员 URL 测试延迟并选择；需要可达探测 URL、成员 tag 和 timeout/interval 策略 | yes | yes（Linux） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | registry-check（无 tags 按预期失败） |
+| urltest | `urltest` / outbound group | 基础内建 | 对成员 URL 测试延迟并选择；需要可达探测 URL、成员 tag 和 timeout/interval 策略 | yes | yes（Linux） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | `project-real-urltest-tcp`；特权 Docker `multi_protocol_coexistence` 以单成员 `direct`、loopback HTTP health URL 和 route 回读 marker、核心 check 和 CAS 删除；不代表多成员故障切换、公网或生产 |
 | naive | `naive` / outbound | `with_naive_outbound`；Linux 官方纯 Go 变体仅 amd64/arm64，其他变体见下文 | HTTP/2 或可选 QUIC；TLS 仅支持 server_name/certificate/certificate_path/ECH；UDP 需 UDP-over-TCP；非零 insecure_concurrency 不可与 QUIC 并用；依赖 libcronet，不能由 check 证明运行库存在 | conditional | yes（tag+libcronet 已含） | typed component state/config；yes/yes/yes/yes* | 完整敏感 Naive outbound JSON（不生成标准 URI；no current SubMan） | 1.14.0 官方 ARM64 完整（bbr2）与 1.13.18 兼容子集 typed config check；共存 Docker `20260912014158` 通过实际 Naive TCP marker，安装器 staging/loader-cache、受管 hash 保护和核心升级运行库回滚通过；严格渲染配置/hash artifact 在 `20260912022837` 复跑；UDP/公网/生产未验证 |
 
 ## Endpoint 矩阵
@@ -353,3 +353,17 @@ before/with/after-cleanup artifact。两项 `result.env` 都明确
 并断言配置、接口、策略和规则清理。证据路径为
 `dev/verification-runs/20260915013127`；这不代表宿主透明策略所有权、公网/生产、
 外部认证、SubMan 或完整协议目标完成。
+
+### 2026-09-15：URLTest 单成员健康探测数据面证据
+
+`multi_protocol_coexistence` 在同一特权隔离 Docker 中创建 `urltest` outbound
+（revision 14），只允许内建 `direct` 成员，并将其 health URL 指向场景已有的
+loopback HTTP marker。组件 route 将 `localhost` 请求送入 URLTest；目标
+`sing-box 1.14.0 check`、`interval:"1s"`/`idle_timeout:"5s"` 配置、精确 marker
+响应和 bounded retry 均通过，`urltest-outbound.result.env` 标记为
+`RESULT=success`、`DATA_PLANE=urltest_direct_loopback`、
+`HEALTHCHECK=loopback_http`。组件随后按 revision 14→15 删除，并断言配置与 route
+引用均消失；artifact 见 `dev/verification-runs/20260915062630`。
+
+该切片只证明单成员 URLTest 健康探测和路由选择的隔离容器回环路径；没有覆盖多成员
+延迟排序/故障切换、外部 health URL、公网、生产、UDP、SubMan 或完整协议目标。
