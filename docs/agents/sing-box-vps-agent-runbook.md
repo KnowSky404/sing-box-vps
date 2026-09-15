@@ -304,6 +304,24 @@ non-zero; a missing resource is `unavailable` and participates in the active
 component transaction postcheck. It does not install routes/DNS, authenticate
 an external control plane, or prove a VPN data path.
 
+## WireGuard endpoint UDP closure
+
+The privileged Docker `fresh_install_vless` scenario now creates a disposable
+kernel WireGuard peer with the image's `wireguard-tools`, then manages a
+`system:false`/gVisor WireGuard endpoint and a UDP-only direct inbound. The
+peer's real handshake is observed with `wg latest-handshakes` and transfer
+counters; the inbound sends an exact marker through the endpoint to a UDP
+server bound only on the peer address. The target core `check`, rendered route
+and endpoint (with private key redacted in artifacts), journal, marker response,
+and endpoint/proxy/kernel-peer CAS cleanup are retained under
+`fresh_install_vless/wireguard-endpoint/`. The successful result label is
+`project-real-wireguard-udp`.
+
+This proves only an isolated internal WireGuard UDP path and lifecycle. It does
+not prove `system:true` interface creation, external peer or control-plane
+authentication, public reachability, production operation, host routes or
+SubMan synchronization.
+
 Shadowsocks outbound component records are typed against sing-box 1.14 `ShadowsocksOutboundOptions`: server/port, method/password, TCP/UDP network, SIP003 plugin, UDP-over-TCP, outbound multiplex and shared Dial Fields. SS2022 passwords use strict Base64 decoding with method-specific 16/32-byte keys; unknown/deprecated fields, unsupported methods/plugins, malformed nested options and control characters are rejected before state/CAS or takeover publication. Credentials remain export-only; core `check` evidence does not imply a remote Shadowsocks handshake or data plane.
 
 VMess and Trojan outbound component records are typed against sing-box 1.14 `VMessOutboundOptions` and `TrojanOutboundOptions`. VMess requires a UUID and supported `security`, `alter_id`, packet-encoding, TCP/UDP network and shared Dial Fields; Trojan requires a password and the same network/dial boundaries. Both reuse the guarded outbound TLS, V2Ray transport and multiplex contracts. Native HTTP, WebSocket without early data, gRPC and TLS-only QUIC are representable; HTTPUpgrade, WebSocket early data, plaintext QUIC and lite-gRPC `permit_without_stream` are rejected before state/CAS or takeover publication. Credentials remain export-only, and target-core `check` does not imply a remote protocol handshake or data plane.

@@ -33,6 +33,21 @@ if verification_config_inbound_type_for_protocol unsupported >/dev/null; then
   exit 1
 fi
 
+wireguard_scenario="${REPO_ROOT}/dev/verification/remote/scenarios/fresh_install_vless.sh"
+wireguard_dockerfile="${REPO_ROOT}/dev/verification/docker/Dockerfile"
+test -r "${wireguard_scenario}"
+test -r "${wireguard_dockerfile}"
+bash -n "${wireguard_scenario}"
+grep -Fq 'verification_run_wireguard_endpoint_runtime_probe() (' "${wireguard_scenario}"
+grep -Fq 'type:"wireguard"' "${wireguard_scenario}"
+grep -Fq 'system:false' "${wireguard_scenario}"
+grep -Fq 'wg show "${peer_interface}" latest-handshakes' "${wireguard_scenario}"
+grep -Fq 'wg show "${peer_interface}" transfer' "${wireguard_scenario}"
+grep -Fq 'PAYLOAD=marker_round_trip' "${wireguard_scenario}"
+grep -Fq 'PEER_HANDSHAKE=kernel_wireguard' "${wireguard_scenario}"
+grep -Fq 'fresh_install_vless_wireguard_endpoint_resources_cleaned' "${wireguard_scenario}"
+grep -Fq 'wireguard-tools' "${wireguard_dockerfile}"
+
 assert_scenarios() {
   local expected=$1
   shift
