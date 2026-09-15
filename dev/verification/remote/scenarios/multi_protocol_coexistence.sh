@@ -1679,4 +1679,173 @@ PY
     ([.route.rules[] | select(.outbound == "shadowsocks-outbound-verification" or
       (.inbound == ["ss-in"] and .domain == ["sbv-shadowsocks-outbound.invalid"]))] | length) == 0
   ' /root/sing-box-vps/config.json >/dev/null
+
+  # Direct outbound destination overrides belong to route options in sing-box
+  # 1.14.  Exercise a custom direct component through the existing SOCKS5
+  # ingress and the loopback marker, keeping the deprecated outbound override
+  # fields out of the typed component config.
+  local direct_outbound_target_domain='sbv-direct-outbound.invalid'
+  local direct_outbound_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-outbound-record.json"
+  local direct_outbound_create_status=0
+  local direct_outbound_delete_status=0
+  (umask 077; jq -n --arg domain "${direct_outbound_target_domain}" \
+    --argjson marker_port "${direct_marker_port}" '
+    {id:"direct-outbound-verification",role:"outbound",type:"direct",
+     tag:"direct-outbound-verification",enabled:true,
+     route_rules:[{inbound:["socks-in"],domain:[$domain],action:"route",
+       outbound:"direct-outbound-verification",override_address:"127.0.0.1",
+       override_port:$marker_port}],config:{}}
+  ' > "${direct_outbound_record}")
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
+    --expected-revision 17 --file "${direct_outbound_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-outbound-create.json"
+  direct_outbound_create_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-outbound-create.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/direct-outbound-create.json"
+  [[ "${direct_outbound_create_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="create" and .revision==18 and
+    .type=="direct" and .id=="direct-outbound-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-outbound-create.json" >/dev/null
+  verification_mark_step direct-outbound-component-created
+  verification_wait_for_service_active sing-box
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/direct-outbound-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  config_path=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/direct-outbound-config.json")
+  cp /root/sing-box-vps/config.json "${config_path}"
+  jq -e --arg domain "${direct_outbound_target_domain}" \
+    --argjson marker_port "${direct_marker_port}" '
+    ([.outbounds[] | select(.type == "direct" and
+      .tag == "direct-outbound-verification")] | length == 1) and
+    ([.route.rules[] | select(.inbound == ["socks-in"] and
+      .domain == [$domain] and .action == "route" and
+      .outbound == "direct-outbound-verification" and
+      .override_address == "127.0.0.1" and .override_port == $marker_port)] | length == 1)
+  ' "${config_path}" >/dev/null
+  verification_mark_step direct-outbound-config-asserted
+  local direct_outbound_response="${VERIFY_CURRENT_SCENARIO_DIR}/direct-outbound-response.txt"
+  local direct_outbound_curl_stderr="${VERIFY_CURRENT_SCENARIO_DIR}/direct-outbound-curl.stderr.txt"
+  set +e
+  curl --fail --silent --show-error --max-time 10 --noproxy '' \
+    --proxy 'socks5h://socks-user:socks-pass@127.0.0.1:1081' \
+    "http://${direct_outbound_target_domain}/" \
+    > "$(verification_artifact_path "${direct_outbound_response}")" \
+    2> "$(verification_artifact_path "${direct_outbound_curl_stderr}")"
+  local direct_outbound_curl_status=$?
+  set -e
+  [[ "${direct_outbound_curl_status}" == 0 ]]
+  grep -Fqx "${direct_marker}" \
+    "$(verification_artifact_path "${direct_outbound_response}")"
+  verification_mark_step direct-outbound-curl-complete
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/direct-outbound.result.env" \
+    'COMPONENT=direct-outbound' 'RESULT=success' \
+    'DATA_PLANE=direct_route_override_loopback'
+
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
+    --expected-revision 18 --id direct-outbound-verification \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-outbound-delete.json"
+  direct_outbound_delete_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-outbound-delete.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/direct-outbound-delete.json"
+  [[ "${direct_outbound_delete_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="delete" and .revision==19 and
+    .id=="direct-outbound-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-outbound-delete.json" >/dev/null
+  verification_mark_step direct-outbound-component-deleted
+  jq -e '
+    ([.outbounds[] | select(.tag == "direct-outbound-verification")] | length) == 0 and
+    ([.route.rules[] | select(.outbound == "direct-outbound-verification")] | length) == 0
+  ' /root/sing-box-vps/config.json >/dev/null
+
+  # The block component has no options and must reject the routed request.  A
+  # non-zero curl status is the data-plane assertion; a successful marker would
+  # prove the route unexpectedly fell through to a different outbound.
+  local block_outbound_target_domain='sbv-block-outbound.invalid'
+  local block_outbound_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/block-outbound-record.json"
+  local block_outbound_create_status=0
+  local block_outbound_delete_status=0
+  (umask 077; jq -n --arg domain "${block_outbound_target_domain}" '
+    {id:"block-outbound-verification",role:"outbound",type:"block",
+     tag:"block-outbound-verification",enabled:true,
+     route_rules:[{inbound:["socks-in"],domain:[$domain],action:"route",
+       outbound:"block-outbound-verification"}],config:{}}
+  ' > "${block_outbound_record}")
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
+    --expected-revision 19 --file "${block_outbound_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/block-outbound-create.json"
+  block_outbound_create_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/block-outbound-create.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/block-outbound-create.json"
+  [[ "${block_outbound_create_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="create" and .revision==20 and
+    .type=="block" and .id=="block-outbound-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/block-outbound-create.json" >/dev/null
+  verification_mark_step block-outbound-component-created
+  verification_wait_for_service_active sing-box
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/block-outbound-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  config_path=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/block-outbound-config.json")
+  cp /root/sing-box-vps/config.json "${config_path}"
+  jq -e --arg domain "${block_outbound_target_domain}" '
+    ([.outbounds[] | select(.type == "block" and
+      .tag == "block-outbound-verification")] | length == 1) and
+    ([.route.rules[] | select(.inbound == ["socks-in"] and
+      .domain == [$domain] and .action == "route" and
+      .outbound == "block-outbound-verification")] | length == 1)
+  ' "${config_path}" >/dev/null
+  verification_mark_step block-outbound-config-asserted
+  local block_outbound_response="${VERIFY_CURRENT_SCENARIO_DIR}/block-outbound-response.txt"
+  local block_outbound_curl_stderr="${VERIFY_CURRENT_SCENARIO_DIR}/block-outbound-curl.stderr.txt"
+  set +e
+  curl --fail --silent --show-error --max-time 5 --noproxy '' \
+    --proxy 'socks5h://socks-user:socks-pass@127.0.0.1:1081' \
+    "http://${block_outbound_target_domain}/" \
+    > "$(verification_artifact_path "${block_outbound_response}")" \
+    2> "$(verification_artifact_path "${block_outbound_curl_stderr}")"
+  local block_outbound_curl_status=$?
+  set -e
+  [[ "${block_outbound_curl_status}" != 0 ]]
+  if [[ -s "$(verification_artifact_path "${block_outbound_response}")" ]] &&
+     grep -Fq "${direct_marker}" \
+       "$(verification_artifact_path "${block_outbound_response}")"; then
+    printf 'block outbound unexpectedly returned the direct marker\n' >&2
+    return 1
+  fi
+  verification_mark_step block-outbound-curl-rejected
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/block-outbound.result.env" \
+    'COMPONENT=block-outbound' 'RESULT=success' \
+    'DATA_PLANE=block_reject_loopback' 'REQUEST=expected_failure'
+
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
+    --expected-revision 20 --id block-outbound-verification \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/block-outbound-delete.json"
+  block_outbound_delete_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/block-outbound-delete.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/block-outbound-delete.json"
+  [[ "${block_outbound_delete_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="delete" and .revision==21 and
+    .id=="block-outbound-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/block-outbound-delete.json" >/dev/null
+  verification_mark_step block-outbound-component-deleted
+  jq -e '
+    ([.outbounds[] | select(.tag == "block-outbound-verification")] | length) == 0 and
+    ([.route.rules[] | select(.outbound == "block-outbound-verification")] | length) == 0
+  ' /root/sing-box-vps/config.json >/dev/null
 }

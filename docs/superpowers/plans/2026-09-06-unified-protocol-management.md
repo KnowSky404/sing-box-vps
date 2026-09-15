@@ -947,3 +947,20 @@ upstream、PSK、marker 和 route 全部属于 disposable container；删除后�
 route 引用均断言移除，未修改安装器防火墙账本。该切片只证明隔离容器内的 SS2022
 TCP 路径，不覆盖 UDP、外部 Shadowsocks、公网、生产、SubMan 或完整协议目标，
 脚本版本提升为本轮 `2026091501`。
+
+### 2026-09-15：Direct 与 block outbound 数据面探针
+
+内建 `direct` 与 `block` outbound 此前只有 registry/config check 证据。本轮在
+同一 `multi_protocol_coexistence` 特权隔离 Docker 中分别创建空 config 的
+`direct-outbound-verification` 与 `block-outbound-verification` typed components。
+Direct route 使用 sing-box 1.14 推荐的 `override_address`/`override_port` route
+options，将 synthetic domain 经既有认证 SOCKS5 inbound 转到已运行的 loopback
+marker；block route 则必须返回非零请求状态且不得返回 marker。验证保存目标核心
+`check`、渲染配置、精确 direct 响应、预期 block 拒绝以及 CAS envelope：direct
+以 expected revision 17 创建并提交 18、再以 18 删除并提交 19；block 以 expected
+revision 19 创建并提交 20、再以 20 删除并提交 21，结果标签分别为
+`direct_route_override_loopback` 与 `block_reject_loopback`。
+
+两项组件和 route 均在场景内删除并断言清除，未修改防火墙账本；证据只覆盖隔离容器
+回环 TCP 行为，不代表宿主策略、公网、生产、UDP、SubMan 或完整协议目标，脚本版本
+保持本轮 `2026091502`。
