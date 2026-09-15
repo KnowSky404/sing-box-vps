@@ -48,6 +48,15 @@ grep -Fq 'PEER_HANDSHAKE=kernel_wireguard' "${wireguard_scenario}"
 grep -Fq 'fresh_install_vless_wireguard_endpoint_resources_cleaned' "${wireguard_scenario}"
 grep -Fq 'wireguard-tools' "${wireguard_dockerfile}"
 
+vless_scenario="${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
+test -r "${vless_scenario}"
+bash -n "${vless_scenario}"
+grep -Fq 'vless-outbound-udp-probe-complete' "${vless_scenario}"
+grep -Fq '.network == ["tcp","udp"]' "${vless_scenario}"
+grep -Fq 'has("packet_encoding") | not' "${vless_scenario}"
+grep -Fq 'DATA_PLANE=vless_udp_xudp_loopback' "${vless_scenario}"
+grep -Fq 'CLIENT_TRANSPORT=xudp' "${vless_scenario}"
+
 assert_scenarios() {
   local expected=$1
   shift

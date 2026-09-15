@@ -63,6 +63,7 @@ verification_scenario_multi_protocol_coexistence() {
   local socks_outbound_marker_pid=''
   local socks_upstream_pid=''
   local socks_udp_upstream_pid=''
+  local vless_outbound_udp_client_pid=''
   local vless_outbound_server_pid=''
   local vless_outbound_server_dir=''
   local shadowtls_outbound_server_pid=''
@@ -72,7 +73,7 @@ verification_scenario_multi_protocol_coexistence() {
   local naive_http3_journal_artifact=''
 
   verification_prepare_remote_local_tree
-  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_marker_pid:-}" ]]; then kill "${direct_marker_pid}" 2>/dev/null || true; wait "${direct_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_udp_marker_pid:-}" ]]; then kill "${direct_udp_marker_pid}" 2>/dev/null || true; wait "${direct_udp_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${sshd_pid:-}" ]]; then kill "${sshd_pid}" 2>/dev/null || true; wait "${sshd_pid}" 2>/dev/null || true; fi; if [[ -n "${ssh_marker_pid:-}" ]]; then kill "${ssh_marker_pid}" 2>/dev/null || true; wait "${ssh_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_upstream_pid:-}" ]]; then kill "${socks_upstream_pid}" 2>/dev/null || true; wait "${socks_upstream_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_udp_upstream_pid:-}" ]]; then kill "${socks_udp_upstream_pid}" 2>/dev/null || true; wait "${socks_udp_upstream_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_outbound_marker_pid:-}" ]]; then kill "${socks_outbound_marker_pid}" 2>/dev/null || true; wait "${socks_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_server_pid:-}" ]]; then kill "${vless_outbound_server_pid}" 2>/dev/null || true; wait "${vless_outbound_server_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_server_dir:-}" ]]; then rm -rf -- "${vless_outbound_server_dir}"; fi; if [[ -n "${shadowtls_outbound_server_pid:-}" ]]; then kill "${shadowtls_outbound_server_pid}" 2>/dev/null || true; wait "${shadowtls_outbound_server_pid}" 2>/dev/null || true; fi; if [[ -n "${shadowtls_outbound_server_dir:-}" ]]; then rm -rf -- "${shadowtls_outbound_server_dir}"; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
+  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_marker_pid:-}" ]]; then kill "${direct_marker_pid}" 2>/dev/null || true; wait "${direct_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_udp_marker_pid:-}" ]]; then kill "${direct_udp_marker_pid}" 2>/dev/null || true; wait "${direct_udp_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${sshd_pid:-}" ]]; then kill "${sshd_pid}" 2>/dev/null || true; wait "${sshd_pid}" 2>/dev/null || true; fi; if [[ -n "${ssh_marker_pid:-}" ]]; then kill "${ssh_marker_pid}" 2>/dev/null || true; wait "${ssh_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_upstream_pid:-}" ]]; then kill "${socks_upstream_pid}" 2>/dev/null || true; wait "${socks_upstream_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_udp_upstream_pid:-}" ]]; then kill "${socks_udp_upstream_pid}" 2>/dev/null || true; wait "${socks_udp_upstream_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_outbound_marker_pid:-}" ]]; then kill "${socks_outbound_marker_pid}" 2>/dev/null || true; wait "${socks_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_udp_client_pid:-}" ]]; then kill "${vless_outbound_udp_client_pid}" 2>/dev/null || true; wait "${vless_outbound_udp_client_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_server_pid:-}" ]]; then kill "${vless_outbound_server_pid}" 2>/dev/null || true; wait "${vless_outbound_server_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_server_dir:-}" ]]; then rm -rf -- "${vless_outbound_server_dir}"; fi; if [[ -n "${shadowtls_outbound_server_pid:-}" ]]; then kill "${shadowtls_outbound_server_pid}" 2>/dev/null || true; wait "${shadowtls_outbound_server_pid}" 2>/dev/null || true; fi; if [[ -n "${shadowtls_outbound_server_dir:-}" ]]; then rm -rf -- "${shadowtls_outbound_server_dir}"; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
   # Keep the certificate paths valid for the following runtime_smoke scenario.
   # The Docker container is disposable, so this test-only directory cannot
   # outlive the verification run or affect a host installation.
@@ -2099,13 +2100,18 @@ PY
     --arg domain "${vless_outbound_target_domain}" \
     --arg uuid "${vless_outbound_server_uuid}" \
     --argjson server_port "${vless_outbound_server_port}" \
-    --argjson marker_port "${direct_marker_port}" '
+    --argjson marker_port "${direct_marker_port}" \
+    --argjson udp_marker_port "${direct_udp_marker_port}" '
     {log:{disabled:true},
      inbounds:[{type:"vless",tag:"vless-outbound-upstream",listen:"127.0.0.1",
        listen_port:$server_port,users:[{uuid:$uuid}]}],
      outbounds:[{type:"direct",tag:"vless-upstream-direct"}],
-     route:{rules:[{domain:[$domain],action:"route",outbound:"vless-upstream-direct",
-       override_address:"127.0.0.1",override_port:$marker_port}]}}
+     route:{rules:[
+       {domain:[$domain],action:"route",outbound:"vless-upstream-direct",
+        override_address:"127.0.0.1",override_port:$marker_port},
+       {network:["udp"],port:$udp_marker_port,action:"route",
+        outbound:"vless-upstream-direct"}
+     ]}}
   ' > "${vless_outbound_server_config}")
   verification_capture_command "${vless_outbound_server_check}" \
     sing-box check -c "${vless_outbound_server_config}"
@@ -2125,13 +2131,18 @@ PY
   (umask 077; jq -n \
     --arg domain "${vless_outbound_target_domain}" \
     --arg uuid "${vless_outbound_server_uuid}" \
-    --argjson server_port "${vless_outbound_server_port}" '
+    --argjson server_port "${vless_outbound_server_port}" \
+    --argjson udp_marker_port "${direct_udp_marker_port}" '
     {id:"vless-outbound-verification",role:"outbound",type:"vless",
      tag:"vless-outbound-verification",enabled:true,
-     route_rules:[{inbound:["socks-in"],domain:[$domain],action:"route",
-       outbound:"vless-outbound-verification"}],
+     route_rules:[
+       {inbound:["socks-in"],domain:[$domain],action:"route",
+        outbound:"vless-outbound-verification"},
+       {inbound:["socks-in"],network:["udp"],port:$udp_marker_port,
+        action:"route",outbound:"vless-outbound-verification"}
+     ],
      config:{server:"127.0.0.1",server_port:$server_port,uuid:$uuid,
-       flow:"",network:["tcp"]}}
+       flow:"",network:["tcp","udp"]}}
   ' > "${vless_outbound_record}")
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
@@ -2156,14 +2167,18 @@ PY
   cp /root/sing-box-vps/config.json "${config_path}"
   jq -e --arg domain "${vless_outbound_target_domain}" \
     --arg uuid "${vless_outbound_server_uuid}" \
-    --argjson server_port "${vless_outbound_server_port}" '
+    --argjson server_port "${vless_outbound_server_port}" \
+    --argjson udp_marker_port "${direct_udp_marker_port}" '
     ([.outbounds[] | select(.type == "vless" and
       .tag == "vless-outbound-verification" and .server == "127.0.0.1" and
       .server_port == $server_port and .uuid == $uuid and .flow == "" and
-      .network == ["tcp"])] | length == 1) and
+      .network == ["tcp","udp"])] | length == 1) and
     ([.route.rules[] | select(.inbound == ["socks-in"] and
       .domain == [$domain] and .action == "route" and
-      .outbound == "vless-outbound-verification")] | length == 1)
+      .outbound == "vless-outbound-verification")] | length == 1) and
+    ([.route.rules[] | select(.inbound == ["socks-in"] and
+      .network == ["udp"] and .port == $udp_marker_port and
+      .action == "route" and .outbound == "vless-outbound-verification")] | length == 1)
   ' "${config_path}" >/dev/null
   verification_mark_step vless-outbound-config-asserted
   vless_outbound_response="${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound-response.txt"
@@ -2184,6 +2199,149 @@ PY
     "${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound.result.env" \
     'COMPONENT=vless-outbound' 'RESULT=success' \
     'DATA_PLANE=vless_tcp_loopback' 'UPSTREAM=vless_loopback_server'
+
+  # VLESS carries UDP through its XUDP packet encoding while keeping the
+  # proxy outbound usable for TCP.  Build a minimal client from the rendered
+  # managed outbound so the omitted packet_encoding retains sing-box's xudp
+  # default; the upstream VLESS server routes this synthetic UDP port to the
+  # existing loopback echo fixture.
+  local vless_outbound_udp_client_config
+  local vless_outbound_udp_client_check
+  local vless_outbound_udp_client_stdout
+  local vless_outbound_udp_client_stderr
+  local vless_outbound_udp_response
+  local vless_outbound_udp_response_path
+  local vless_outbound_udp_marker
+  local vless_outbound_udp_rendered
+  local vless_outbound_udp_client_status=1
+  vless_outbound_udp_client_config="${VERIFY_REMOTE_LOCAL_TREE_DIR}/vless-outbound-udp-client.json"
+  vless_outbound_udp_client_check="${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound-udp-client.check.txt"
+  vless_outbound_udp_client_stdout=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound-udp-client.stdout.txt")
+  vless_outbound_udp_client_stderr=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound-udp-client.stderr.txt")
+  vless_outbound_udp_response="${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound-udp-response.txt"
+  vless_outbound_udp_response_path=$(verification_artifact_path \
+    "${vless_outbound_udp_response}")
+  vless_outbound_udp_marker="sing-box-vps-vless-outbound-udp-loopback-ok-$(date +%s)-$$"
+  vless_outbound_udp_rendered=$(jq -ce \
+    '.outbounds[] | select(.tag == "vless-outbound-verification")' \
+    /root/sing-box-vps/config.json)
+  (umask 077; jq -n --argjson outbound "${vless_outbound_udp_rendered}" '
+    {log:{disabled:true},
+     inbounds:[{type:"socks",tag:"vless-outbound-udp-probe-in",listen:"127.0.0.1",
+       listen_port:19081}],
+     outbounds:[($outbound | .tag = "vless-outbound-udp-probe")],
+     route:{final:"vless-outbound-udp-probe"}}
+  ' > "${vless_outbound_udp_client_config}")
+  verification_capture_command "${vless_outbound_udp_client_check}" \
+    sing-box check -c "${vless_outbound_udp_client_config}"
+  jq -e '
+    (.outbounds | length == 1) and
+    (.outbounds[0].type == "vless" and
+      .outbounds[0].network == ["tcp","udp"] and
+      (.outbounds[0] | has("packet_encoding") | not)) and
+    (.route.final == "vless-outbound-udp-probe")
+  ' "${vless_outbound_udp_client_config}" >/dev/null
+  sing-box run -c "${vless_outbound_udp_client_config}" \
+    > "${vless_outbound_udp_client_stdout}" \
+    2> "${vless_outbound_udp_client_stderr}" &
+  vless_outbound_udp_client_pid=$!
+  for _ in {1..50}; do
+    if verification_ss_output | awk '$1 == "LISTEN" && $4 ~ /:19081$/ { found = 1 } END { exit(found ? 0 : 1) }'; then
+      break
+    fi
+    kill -0 "${vless_outbound_udp_client_pid}" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  verification_ss_output | awk '$1 == "LISTEN" && $4 ~ /:19081$/ { found = 1 } END { exit(found ? 0 : 1) }'
+  set +e
+  python3 - "${vless_outbound_udp_response_path}" \
+    "${direct_udp_marker_port}" "${vless_outbound_udp_marker}" \
+    > /dev/null 2> "${vless_outbound_udp_client_stderr}" <<'PY'
+import pathlib
+import socket
+import struct
+import sys
+
+response_path, target_port_text, marker_text = sys.argv[1:]
+target_port = int(target_port_text)
+marker = marker_text.encode("ascii")
+
+def recv_exact(conn, size):
+    chunks = []
+    received = 0
+    while received < size:
+        chunk = conn.recv(size - received)
+        if not chunk:
+            raise RuntimeError("SOCKS control connection closed")
+        chunks.append(chunk)
+        received += len(chunk)
+    return b"".join(chunks)
+
+def read_address(conn, atyp):
+    if atyp == 1:
+        return socket.inet_ntoa(recv_exact(conn, 4))
+    if atyp == 3:
+        size = recv_exact(conn, 1)[0]
+        return recv_exact(conn, size).decode("ascii")
+    if atyp == 4:
+        return socket.inet_ntop(socket.AF_INET6, recv_exact(conn, 16))
+    raise RuntimeError("unsupported SOCKS address type")
+
+def read_reply(conn):
+    header = recv_exact(conn, 4)
+    if header[0] != 5 or header[1] != 0:
+        raise RuntimeError("SOCKS UDP ASSOCIATE failed")
+    address = read_address(conn, header[3])
+    port = struct.unpack("!H", recv_exact(conn, 2))[0]
+    return address, port
+
+with socket.create_connection(("127.0.0.1", 19081), timeout=5) as control:
+    control.settimeout(5)
+    control.sendall(b"\x05\x01\x00")
+    if recv_exact(control, 2) != b"\x05\x00":
+        raise RuntimeError("SOCKS no-auth negotiation failed")
+    control.sendall(b"\x05\x03\x00\x01\x00\x00\x00\x00\x00\x00")
+    relay_address, relay_port = read_reply(control)
+    if relay_address in ("0.0.0.0", "::"):
+        relay_address = "127.0.0.1"
+    request = (b"\x00\x00\x00\x01" + socket.inet_aton("127.0.0.1") +
+               struct.pack("!H", target_port) + marker)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+        udp.settimeout(5)
+        udp.sendto(request, (relay_address, relay_port))
+        response, _source = udp.recvfrom(65535)
+    if len(response) < 10 or response[:3] != b"\x00\x00\x00":
+        raise RuntimeError("invalid SOCKS UDP response header")
+    offset = 4
+    if response[3] == 1:
+        offset += 4
+    elif response[3] == 3:
+        offset += 1 + response[4]
+    elif response[3] == 4:
+        offset += 16
+    else:
+        raise RuntimeError("invalid SOCKS UDP response address type")
+    offset += 2
+    payload = response[offset:]
+    if payload != marker:
+        raise RuntimeError("VLESS UDP marker mismatch")
+    pathlib.Path(response_path).write_bytes(payload)
+PY
+  vless_outbound_udp_client_status=$?
+  set -e
+  [[ "${vless_outbound_udp_client_status}" == 0 ]]
+  grep -Fqx "${vless_outbound_udp_marker}" "${vless_outbound_udp_response_path}"
+  verification_mark_step vless-outbound-udp-probe-complete
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound-udp.result.env" \
+    'COMPONENT=vless-outbound' 'RESULT=success' \
+    'DATA_PLANE=vless_udp_xudp_loopback' 'UPSTREAM=vless_loopback_server' \
+    'CLIENT_TRANSPORT=xudp'
+  kill "${vless_outbound_udp_client_pid}" 2>/dev/null || true
+  wait "${vless_outbound_udp_client_pid}" 2>/dev/null || true
+  vless_outbound_udp_client_pid=''
 
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \

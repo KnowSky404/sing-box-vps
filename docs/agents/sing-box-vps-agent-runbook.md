@@ -207,11 +207,29 @@ listener/check, rendered outbound/route, client response, and CAS envelopes
 23). The result labels are `DATA_PLANE=vless_tcp_loopback` and
 `UPSTREAM=vless_loopback_server`.
 
-The captured Docker run is `dev/verification-runs/20260915081600`.
+The captured TCP Docker run is `dev/verification-runs/20260915081600`.
 
-This is an isolated-container, loopback, plaintext TCP proof only. It does not
-prove external VLESS, TLS/REALITY, UDP, public reachability, production
-operation, SubMan synchronization or completion of the full protocol goal.
+### VLESS outbound UDP/XUDP closure
+
+The same privileged `multi_protocol_coexistence` scenario also closes the
+managed VLESS outbound UDP path. In Docker run
+`dev/verification-runs/20260915235706`, the scenario extracts the rendered
+`vless-outbound-verification` outbound, asserts `network:["tcp","udp"]`, and
+builds a minimal local client without `packet_encoding`; the target core
+therefore keeps its documented xudp default. The client passes
+`sing-box check`, then a real no-auth SOCKS5 UDP ASSOCIATE sends an exact marker
+through the VLESS client/server handshake. The disposable VLESS upstream routes
+that UDP port to the loopback echo, and
+`vless-outbound-udp.result.env` reports
+`DATA_PLANE=vless_udp_xudp_loopback`, `UPSTREAM=vless_loopback_server`, and
+`CLIENT_TRANSPORT=xudp`. The component is deleted afterward through the same
+revision CAS lifecycle (21→23); the UDP response, client check, upstream check,
+and cleanup steps remain in the scenario artifacts.
+
+This is an isolated-container, loopback, plaintext VLESS TCP+UDP/XUDP proof
+only. It does not prove external VLESS, TLS/REALITY, public reachability,
+production operation, SubMan synchronization or completion of the full protocol
+goal.
 
 ## Tor outbound verification
 
