@@ -53,6 +53,22 @@ external SSH service, credential deployment, public reachability, UDP, productio
 operation or SubMan synchronization; the disposable SSH process and user are not
 installer-managed resources.
 
+## SOCKS outbound CONNECT verification
+
+The same privileged Docker scenario (run
+`dev/verification-runs/20260915053927`) starts a disposable username/password
+SOCKS5 upstream and a loopback HTTP marker. A typed
+`socks-outbound-verification` component routes the marker domain through that
+upstream from the existing authenticated SOCKS5 inbound. Artifacts retain the
+upstream authentication/destination record, target-core `check`, exact response,
+and the revision-10 create/revision-11 delete envelope; the result label is
+`DATA_PLANE=socks5_connect_loopback`.
+
+This proves only an isolated-container SOCKS5 TCP CONNECT path. It does not
+prove an external proxy, UDP relay, public reachability, production operation
+or SubMan synchronization; the upstream server and credentials are disposable
+verification fixtures, not installer-managed resources.
+
 ## Direct inbound override data plane
 
 Direct inbound component records may include the upstream `network` string (`tcp` or `udp`) and destination override fields `override_address`/`override_port`. The component validator rejects control characters, empty override addresses and ports outside 1-65535 while preserving the normal listen fields. A loopback direct record does not require `--allow-public`; non-loopback listeners still do.

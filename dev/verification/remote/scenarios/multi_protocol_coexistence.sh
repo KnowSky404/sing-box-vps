@@ -60,10 +60,12 @@ verification_scenario_multi_protocol_coexistence() {
   local direct_udp_marker_pid=''
   local ssh_marker_pid=''
   local sshd_pid=''
+  local socks_outbound_marker_pid=''
+  local socks_upstream_pid=''
   local anytls_udp_journal_artifact=''
 
   verification_prepare_remote_local_tree
-  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_marker_pid:-}" ]]; then kill "${direct_marker_pid}" 2>/dev/null || true; wait "${direct_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_udp_marker_pid:-}" ]]; then kill "${direct_udp_marker_pid}" 2>/dev/null || true; wait "${direct_udp_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${sshd_pid:-}" ]]; then kill "${sshd_pid}" 2>/dev/null || true; wait "${sshd_pid}" 2>/dev/null || true; fi; if [[ -n "${ssh_marker_pid:-}" ]]; then kill "${ssh_marker_pid}" 2>/dev/null || true; wait "${ssh_marker_pid}" 2>/dev/null || true; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
+  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_marker_pid:-}" ]]; then kill "${direct_marker_pid}" 2>/dev/null || true; wait "${direct_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_udp_marker_pid:-}" ]]; then kill "${direct_udp_marker_pid}" 2>/dev/null || true; wait "${direct_udp_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${sshd_pid:-}" ]]; then kill "${sshd_pid}" 2>/dev/null || true; wait "${sshd_pid}" 2>/dev/null || true; fi; if [[ -n "${ssh_marker_pid:-}" ]]; then kill "${ssh_marker_pid}" 2>/dev/null || true; wait "${ssh_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_upstream_pid:-}" ]]; then kill "${socks_upstream_pid}" 2>/dev/null || true; wait "${socks_upstream_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_outbound_marker_pid:-}" ]]; then kill "${socks_outbound_marker_pid}" 2>/dev/null || true; wait "${socks_outbound_marker_pid}" 2>/dev/null || true; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
   # Keep the certificate paths valid for the following runtime_smoke scenario.
   # The Docker container is disposable, so this test-only directory cannot
   # outlive the verification run or affect a host installation.
@@ -1010,6 +1012,260 @@ PY
   jq -e '
     ([.outbounds[] | select(.tag == "ssh-outbound-verification")] | length) == 0 and
     ([.route.rules[] | select(.outbound == "ssh-outbound-verification")] | length) == 0
+  ' /root/sing-box-vps/config.json >/dev/null
+
+  # SOCKS is a managed outbound adapter rather than another inbound preset.
+  # Prove its authenticated SOCKS5 CONNECT path with a disposable upstream
+  # server and loopback marker, keeping the upstream credentials inside this
+  # isolated container and the route owned by the component CAS transaction.
+  local socks_outbound_marker_port_file="${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-marker.port"
+  local socks_outbound_marker_stdout
+  local socks_outbound_marker_stderr
+  local socks_outbound_marker
+  local socks_outbound_marker_port
+  local socks_upstream_port_file="${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-upstream.port"
+  local socks_upstream_stdout
+  local socks_upstream_stderr
+  local socks_upstream_request_log
+  local socks_upstream_port
+  local socks_upstream_user=socks-upstream-user
+  local socks_upstream_password=socks-upstream-pass
+  local socks_outbound_target_domain=sbv-socks-outbound.invalid
+  local socks_outbound_dir="${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound"
+  local socks_outbound_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-record.json"
+  local socks_outbound_response="${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-response.txt"
+  local socks_outbound_curl_stderr="${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-curl.stderr.txt"
+  local socks_outbound_create_status=0
+  local socks_outbound_delete_status=0
+  socks_outbound_marker_stdout=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-marker.stdout.txt")
+  socks_outbound_marker_stderr=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-marker.stderr.txt")
+  socks_upstream_stdout=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/socks-upstream.stdout.txt")
+  socks_upstream_stderr=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/socks-upstream.stderr.txt")
+  socks_upstream_request_log=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/socks-upstream.request.txt")
+  mkdir -p "${socks_outbound_dir}"
+  socks_outbound_marker="sing-box-vps-socks-outbound-loopback-ok-$(date +%s)-$$"
+  python3 - "${socks_outbound_marker_port_file}" "${socks_outbound_marker}" \
+    > "${socks_outbound_marker_stdout}" 2> "${socks_outbound_marker_stderr}" <<'PY' &
+import http.server
+import pathlib
+import socketserver
+import sys
+
+port_file, marker = sys.argv[1:]
+
+class MarkerHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = (marker + "\n").encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        return
+
+class ReusableServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+with ReusableServer(("127.0.0.1", 0), MarkerHandler) as server:
+    pathlib.Path(port_file).write_text(str(server.server_address[1]), encoding="ascii")
+    server.serve_forever()
+PY
+  socks_outbound_marker_pid=$!
+  for _ in {1..50}; do
+    [[ -s "${socks_outbound_marker_port_file}" ]] && break
+    kill -0 "${socks_outbound_marker_pid}" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  [[ -s "${socks_outbound_marker_port_file}" ]]
+  socks_outbound_marker_port=$(cat "${socks_outbound_marker_port_file}")
+  [[ "${socks_outbound_marker_port}" =~ ^[0-9]+$ ]]
+
+  python3 - "${socks_upstream_port_file}" "${socks_outbound_marker_port}" \
+    "${socks_outbound_target_domain}" "${socks_upstream_user}" \
+    "${socks_upstream_password}" "${socks_upstream_request_log}" <<'PY' \
+    > "${socks_upstream_stdout}" 2> "${socks_upstream_stderr}" &
+import pathlib
+import select
+import socket
+import socketserver
+import sys
+
+port_file, marker_port, marker_domain, expected_user, expected_password, request_log = sys.argv[1:]
+marker_port = int(marker_port)
+
+def recv_exact(conn, size):
+    data = bytearray()
+    while len(data) < size:
+        chunk = conn.recv(size - len(data))
+        if not chunk:
+            raise ConnectionError("short SOCKS5 frame")
+        data.extend(chunk)
+    return bytes(data)
+
+def relay(left, right):
+    sockets = [left, right]
+    while True:
+        ready, _, _ = select.select(sockets, [], [], 5)
+        if not ready:
+            continue
+        for source in ready:
+            payload = source.recv(65536)
+            if not payload:
+                return
+            destination = right if source is left else left
+            destination.sendall(payload)
+
+class SocksHandler(socketserver.BaseRequestHandler):
+    def handle(self):
+        client = self.request
+        client.settimeout(5)
+        try:
+            if recv_exact(client, 1) != b"\x05":
+                return
+            method_count = recv_exact(client, 1)[0]
+            methods = recv_exact(client, method_count)
+            if 2 not in methods:
+                client.sendall(b"\x05\xff")
+                return
+            client.sendall(b"\x05\x02")
+            if recv_exact(client, 1) != b"\x01":
+                return
+            user_length = recv_exact(client, 1)[0]
+            user = recv_exact(client, user_length).decode("utf-8")
+            password_length = recv_exact(client, 1)[0]
+            password = recv_exact(client, password_length).decode("utf-8")
+            if user != expected_user or password != expected_password:
+                client.sendall(b"\x01\x01")
+                return
+            client.sendall(b"\x01\x00")
+            version, command, _, address_type = recv_exact(client, 4)
+            if version != 5 or command != 1:
+                client.sendall(b"\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00")
+                return
+            if address_type == 1:
+                host = socket.inet_ntoa(recv_exact(client, 4))
+            elif address_type == 3:
+                host = recv_exact(client, recv_exact(client, 1)[0]).decode("idna")
+            elif address_type == 4:
+                host = socket.inet_ntop(socket.AF_INET6, recv_exact(client, 16))
+            else:
+                client.sendall(b"\x05\x08\x00\x01\x00\x00\x00\x00\x00\x00")
+                return
+            port = int.from_bytes(recv_exact(client, 2), "big")
+            if host not in ("127.0.0.1", "localhost", marker_domain) or port != marker_port:
+                client.sendall(b"\x05\x05\x00\x01\x00\x00\x00\x00\x00\x00")
+                return
+            with socket.create_connection(("127.0.0.1", marker_port), timeout=5) as upstream:
+                bind_host, bind_port = upstream.getsockname()
+                client.sendall(b"\x05\x00\x00\x01" + socket.inet_aton(bind_host) +
+                               bind_port.to_bytes(2, "big"))
+                pathlib.Path(request_log).write_text(
+                    "AUTHENTICATED\nDESTINATION=%s:%s\n" % (host, port),
+                    encoding="ascii")
+                relay(client, upstream)
+        except (ConnectionError, OSError, UnicodeError, ValueError):
+            return
+
+class ReusableServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+with ReusableServer(("127.0.0.1", 0), SocksHandler) as server:
+    pathlib.Path(port_file).write_text(str(server.server_address[1]), encoding="ascii")
+    server.serve_forever()
+PY
+  socks_upstream_pid=$!
+  for _ in {1..50}; do
+    [[ -s "${socks_upstream_port_file}" ]] && break
+    kill -0 "${socks_upstream_pid}" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  [[ -s "${socks_upstream_port_file}" ]]
+  socks_upstream_port=$(cat "${socks_upstream_port_file}")
+  [[ "${socks_upstream_port}" =~ ^[0-9]+$ ]]
+
+  (umask 077; jq -n --argjson upstream_port "${socks_upstream_port}" \
+    --arg domain "${socks_outbound_target_domain}" '
+    {id:"socks-outbound-verification",role:"outbound",type:"socks",
+     tag:"socks-outbound-verification",enabled:true,
+     route_rules:[{domain:[$domain],action:"route",outbound:"socks-outbound-verification"}],
+     config:{server:"127.0.0.1",server_port:$upstream_port,version:"5",
+       username:"socks-upstream-user",password:"socks-upstream-pass",network:["tcp"],
+       connect_timeout:"5s"}}
+  ' > "${socks_outbound_record}")
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
+    --expected-revision 9 --file "${socks_outbound_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-create.json"
+  socks_outbound_create_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-create.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-create.json"
+  [[ "${socks_outbound_create_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="create" and .revision==10 and .type=="socks"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-create.json" >/dev/null
+  verification_mark_step socks-outbound-component-created
+  verification_wait_for_service_active sing-box
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  config_path=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-config.json")
+  cp /root/sing-box-vps/config.json "${config_path}"
+  jq -e --arg domain "${socks_outbound_target_domain}" \
+    --argjson upstream_port "${socks_upstream_port}" '
+    ([.outbounds[] | select(.type == "socks" and .tag == "socks-outbound-verification" and
+      .server == "127.0.0.1" and .server_port == $upstream_port and
+      .version == "5" and .username == "socks-upstream-user" and
+      .password == "socks-upstream-pass" and .network == ["tcp"])] | length == 1) and
+    ([.route.rules[] | select(.outbound == "socks-outbound-verification" and
+      .domain == [$domain])] | length == 1)
+  ' "${config_path}" >/dev/null
+  verification_mark_step socks-outbound-config-asserted
+  set +e
+  curl --fail --silent --show-error --max-time 10 --noproxy '' \
+    --proxy 'socks5h://socks-user:socks-pass@127.0.0.1:1081' \
+    "http://${socks_outbound_target_domain}:${socks_outbound_marker_port}/" \
+    > "$(verification_artifact_path "${socks_outbound_response}")" \
+    2> "$(verification_artifact_path "${socks_outbound_curl_stderr}")"
+  local socks_outbound_curl_status=$?
+  set -e
+  [[ "${socks_outbound_curl_status}" == 0 ]]
+  grep -Fqx "${socks_outbound_marker}" \
+    "$(verification_artifact_path "${socks_outbound_response}")"
+  grep -Fqx 'AUTHENTICATED' "${socks_upstream_request_log}"
+  grep -Fqx "DESTINATION=${socks_outbound_target_domain}:${socks_outbound_marker_port}" \
+    "${socks_upstream_request_log}"
+  verification_mark_step socks-outbound-curl-complete
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound.result.env" \
+    'COMPONENT=socks-outbound' 'RESULT=success' \
+    'DATA_PLANE=socks5_connect_loopback' 'AUTHENTICATION=upstream_username_password'
+
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
+    --expected-revision 10 --id socks-outbound-verification \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-delete.json"
+  socks_outbound_delete_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-delete.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-delete.json"
+  [[ "${socks_outbound_delete_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="delete" and .revision==11 and .id=="socks-outbound-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-delete.json" >/dev/null
+  verification_mark_step socks-outbound-component-deleted
+  jq -e '
+    ([.outbounds[] | select(.tag == "socks-outbound-verification")] | length) == 0 and
+    ([.route.rules[] | select(.outbound == "socks-outbound-verification")] | length) == 0
   ' /root/sing-box-vps/config.json >/dev/null
 
   config_path=$(verification_artifact_path \

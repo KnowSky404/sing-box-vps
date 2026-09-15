@@ -886,3 +886,17 @@ OpenSSH、用户和凭据全部属于 disposable container，组件删除后服�
 均断言不存在；验证不修改安装器防火墙账本，也不宣称外部 SSH 服务、密钥部署、公网、
 UDP、生产或 SubMan 数据面。目标协议全覆盖仍需继续逐行核对，脚本版本保持
 `2026091402`。
+
+### 2026-09-15：SOCKS outbound CONNECT 数据面探针
+
+SOCKS outbound 此前只有 typed state/render 与核心 `check`。本轮在同一
+`multi_protocol_coexistence` 特权隔离 Docker 中启动一次性认证 SOCKS5 upstream
+和 loopback HTTP marker；创建 `socks-outbound-verification` typed outbound，经
+组件 `route_rules` 由既有认证 SOCKS5 inbound 访问 marker。验证运行
+`dev/verification-runs/20260915053927` 的 artifact 保存 upstream
+`AUTHENTICATED`/目标、核心 `check`、精确响应和 revision 10 create/revision 11
+delete 结果，成功标签为 `project-real-socks-tcp`。
+
+upstream、凭据、marker 和 route 只存在于 disposable container，组件删除后配置
+与引用均断言不存在；验证没有修改安装器防火墙账本，也不宣称外部 proxy、公网、UDP、
+生产或 SubMan 数据面。完整协议目标仍需继续逐行核对，脚本版本保持 `2026091402`。
