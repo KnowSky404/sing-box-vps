@@ -121,6 +121,29 @@ It does not prove an external Shadowsocks service, UDP, public reachability,
 production operation, SubMan synchronization or completion of the full
 protocol goal.
 
+## Shadowsocks outbound UDP verification
+
+The same privileged Docker `multi_protocol_coexistence` scenario (run
+`dev/verification-runs/20260915121419`) creates a second typed
+`shadowsocks-outbound-udp-verification` component with the same SS2022
+16-byte Base64 PSK and `network:["udp"]`. Its route is limited to the
+existing authenticated SOCKS5 ingress and the existing SS2022 `ss-in` inbound
+is the encrypted upstream. A real authenticated SOCKS5 UDP ASSOCIATE sends a
+datagram to the disposable direct UDP echo marker and requires the exact
+payload on return. Artifacts retain the target-core `check`, rendered config,
+the `shadowsocks-outbound-udp-response.txt` payload, both
+`outbound/shadowsocks[...]` and `inbound/shadowsocks[ss-in]` journal entries,
+and the expected-revision-29 create (revision 30) / expected-revision-30 delete
+(revision 31) envelopes. The result label is
+`DATA_PLANE=shadowsocks2022_udp_loopback` with
+`AUTHENTICATION=ss2022_psk`.
+
+This proves only the managed SS2022 native UDP path through SOCKS5 UDP
+ASSOCIATE in an isolated container. The SS2022 fixture, key and marker are
+disposable and deletion asserts the component and route are gone; it does not
+prove an external Shadowsocks service, public reachability, production
+operation, SubMan synchronization or completion of the full protocol goal.
+
 ## Direct and block outbound verification
 
 The privileged Docker `multi_protocol_coexistence` scenario creates a typed

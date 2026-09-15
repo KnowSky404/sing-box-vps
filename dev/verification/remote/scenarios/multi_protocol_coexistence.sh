@@ -2308,4 +2308,191 @@ PY
   shadowtls_outbound_server_pid=''
   rm -rf -- "${shadowtls_outbound_server_dir}"
   shadowtls_outbound_server_dir=''
+
+  # The typed Shadowsocks outbound also has a native UDP mode.  Reuse the
+  # existing SS2022 inbound as the encrypted upstream and the direct UDP echo
+  # marker as its destination.  A real authenticated UDP ASSOCIATE through
+  # the managed SOCKS ingress proves the component's UDP network selection and
+  # route ownership instead of only checking a rendered network array.
+  local shadowsocks_outbound_udp_record
+  local shadowsocks_outbound_udp_config
+  local shadowsocks_outbound_udp_response
+  local shadowsocks_outbound_udp_response_path
+  local shadowsocks_outbound_udp_client_stderr
+  local shadowsocks_outbound_udp_journal
+  local shadowsocks_outbound_udp_create_status=0
+  local shadowsocks_outbound_udp_delete_status=0
+  local shadowsocks_outbound_udp_client_status=1
+  shadowsocks_outbound_udp_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-udp-record.json"
+  shadowsocks_outbound_udp_response="${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-udp-response.txt"
+  shadowsocks_outbound_udp_response_path=$(verification_artifact_path \
+    "${shadowsocks_outbound_udp_response}")
+  shadowsocks_outbound_udp_client_stderr="${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-udp-client.stderr.txt"
+  shadowsocks_outbound_udp_journal="${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-udp-journal.txt"
+  (umask 077; jq -n --argjson marker_port "${direct_udp_marker_port}" '
+    {id:"shadowsocks-outbound-udp-verification",role:"outbound",type:"shadowsocks",
+     tag:"shadowsocks-outbound-udp-verification",enabled:true,
+     route_rules:[{inbound:["socks-in"],network:["udp"],port:$marker_port,
+       action:"route",outbound:"shadowsocks-outbound-udp-verification"}],
+     config:{server:"127.0.0.1",server_port:1083,
+       method:"2022-blake3-aes-128-gcm",password:"MDEyMzQ1Njc4OWFiY2RlZg==",
+       network:["udp"]}}
+  ' > "${shadowsocks_outbound_udp_record}")
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
+    --expected-revision 29 --file "${shadowsocks_outbound_udp_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-udp-create.json"
+  shadowsocks_outbound_udp_create_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-udp-create.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-udp-create.json"
+  [[ "${shadowsocks_outbound_udp_create_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="create" and .revision==30 and
+    .type=="shadowsocks" and .id=="shadowsocks-outbound-udp-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-udp-create.json" >/dev/null
+  verification_mark_step shadowsocks-outbound-udp-component-created
+  verification_wait_for_service_active sing-box
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-udp-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  shadowsocks_outbound_udp_config=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-udp-config.json")
+  cp /root/sing-box-vps/config.json "${shadowsocks_outbound_udp_config}"
+  jq -e --argjson marker_port "${direct_udp_marker_port}" '
+    ([.outbounds[] | select(.type == "shadowsocks" and
+      .tag == "shadowsocks-outbound-udp-verification" and
+      .server == "127.0.0.1" and .server_port == 1083 and
+      .method == "2022-blake3-aes-128-gcm" and
+      .password == "MDEyMzQ1Njc4OWFiY2RlZg==" and .network == ["udp"])] |
+      length == 1) and
+    ([.route.rules[] | select(.inbound == ["socks-in"] and
+      .network == ["udp"] and .port == $marker_port and
+      .outbound == "shadowsocks-outbound-udp-verification")] | length == 1)
+  ' "${shadowsocks_outbound_udp_config}" >/dev/null
+  verification_mark_step shadowsocks-outbound-udp-config-asserted
+  rm -f -- "${shadowsocks_outbound_udp_response_path}" \
+    "$(verification_artifact_path "${shadowsocks_outbound_udp_client_stderr}")"
+  set +e
+  python3 - "${shadowsocks_outbound_udp_response_path}" \
+    "${direct_udp_marker}" "${direct_udp_marker_port}" \
+    > /dev/null \
+    2> "$(verification_artifact_path "${shadowsocks_outbound_udp_client_stderr}")" <<'PY'
+import pathlib
+import socket
+import struct
+import sys
+
+response_path, marker_text, target_port_text = sys.argv[1:]
+marker = marker_text.encode("ascii")
+target_port = int(target_port_text)
+
+def recv_exact(conn, size):
+    chunks = []
+    received = 0
+    while received < size:
+        chunk = conn.recv(size - received)
+        if not chunk:
+            raise RuntimeError("SOCKS control connection closed")
+        chunks.append(chunk)
+        received += len(chunk)
+    return b"".join(chunks)
+
+def read_address(conn, address_type):
+    if address_type == 1:
+        return socket.inet_ntoa(recv_exact(conn, 4))
+    if address_type == 3:
+        size = recv_exact(conn, 1)[0]
+        return recv_exact(conn, size).decode("ascii")
+    if address_type == 4:
+        return socket.inet_ntop(socket.AF_INET6, recv_exact(conn, 16))
+    raise RuntimeError("unsupported SOCKS address type")
+
+username = b"socks-user"
+password = b"socks-pass"
+with socket.create_connection(("127.0.0.1", 1081), timeout=5) as control:
+    control.settimeout(5)
+    control.sendall(b"\x05\x01\x02")
+    if recv_exact(control, 2) != b"\x05\x02":
+        raise RuntimeError("SOCKS username/password method was not selected")
+    control.sendall(b"\x01" + bytes([len(username)]) + username +
+                   bytes([len(password)]) + password)
+    if recv_exact(control, 2) != b"\x01\x00":
+        raise RuntimeError("SOCKS authentication failed")
+    control.sendall(b"\x05\x03\x00\x01\x00\x00\x00\x00\x00\x00")
+    reply = recv_exact(control, 4)
+    if reply[:2] != b"\x05\x00":
+        raise RuntimeError("SOCKS UDP ASSOCIATE failed")
+    relay_host = read_address(control, reply[3])
+    relay_port = struct.unpack("!H", recv_exact(control, 2))[0]
+    if relay_host in ("0.0.0.0", "::"):
+        relay_host = "127.0.0.1"
+    request = (b"\x00\x00\x00\x01" + socket.inet_aton("127.0.0.1") +
+               struct.pack("!H", target_port) + marker)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+        udp.settimeout(10)
+        udp.sendto(request, (relay_host, relay_port))
+        response, _source = udp.recvfrom(65535)
+    if len(response) < 10 or response[:3] != b"\x00\x00\x00":
+        raise RuntimeError("invalid SOCKS UDP response header")
+    offset = 4
+    if response[3] == 1:
+        offset += 4
+    elif response[3] == 3:
+        offset += 1 + response[4]
+    elif response[3] == 4:
+        offset += 16
+    else:
+        raise RuntimeError("invalid SOCKS UDP response address type")
+    offset += 2
+    payload = response[offset:]
+    if payload != marker:
+        raise RuntimeError("UDP marker mismatch")
+pathlib.Path(response_path).write_bytes(payload)
+PY
+  shadowsocks_outbound_udp_client_status=$?
+  set -e
+  [[ "${shadowsocks_outbound_udp_client_status}" == 0 ]]
+  grep -Fqx "${direct_udp_marker}" "${shadowsocks_outbound_udp_response_path}"
+  for _ in {1..20}; do
+    verification_capture_command "${shadowsocks_outbound_udp_journal}" \
+      journalctl -u sing-box --no-pager -n 300
+    if grep -Fq 'outbound/shadowsocks[shadowsocks-outbound-udp-verification]' \
+      "$(verification_artifact_path "${shadowsocks_outbound_udp_journal}")" && \
+      grep -Fq 'inbound/shadowsocks[ss-in]' \
+      "$(verification_artifact_path "${shadowsocks_outbound_udp_journal}")"; then
+      break
+    fi
+    sleep 0.1
+  done
+  grep -Fq 'outbound/shadowsocks[shadowsocks-outbound-udp-verification]' \
+    "$(verification_artifact_path "${shadowsocks_outbound_udp_journal}")"
+  grep -Fq 'inbound/shadowsocks[ss-in]' \
+    "$(verification_artifact_path "${shadowsocks_outbound_udp_journal}")"
+  verification_mark_step shadowsocks-outbound-udp-complete
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-udp.result.env" \
+    'COMPONENT=shadowsocks-outbound-udp' 'RESULT=success' \
+    'DATA_PLANE=shadowsocks2022_udp_loopback' 'AUTHENTICATION=ss2022_psk'
+
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
+    --expected-revision 30 --id shadowsocks-outbound-udp-verification \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-udp-delete.json"
+  shadowsocks_outbound_udp_delete_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-udp-delete.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-udp-delete.json"
+  [[ "${shadowsocks_outbound_udp_delete_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="delete" and .revision==31 and
+    .id=="shadowsocks-outbound-udp-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-udp-delete.json" >/dev/null
+  verification_mark_step shadowsocks-outbound-udp-component-deleted
+  jq -e '
+    ([.outbounds[] | select(.tag == "shadowsocks-outbound-udp-verification")] |
+      length) == 0 and
+    ([.route.rules[] | select(.outbound ==
+      "shadowsocks-outbound-udp-verification")] | length) == 0
+  ' /root/sing-box-vps/config.json >/dev/null
 }

@@ -1010,3 +1010,25 @@ server，复用已有证书 cover，并把认证流量 detour 到独立 Mixed li
 运行目录为本轮成功运行 `dev/verification-runs/20260915104124`；证据只覆盖隔离
 容器的组合 TCP 路径，不扩张为独立 transport 任意承载、公网、UDP、生产、SubMan
 或完整协议目标。
+
+### 2026-09-15：Shadowsocks outbound native UDP 数据面探针
+
+在 ShadowTLS outbound composite 之后，`multi_protocol_coexistence` 复用既有
+SS2022 `ss-in` inbound 和 direct UDP echo marker，创建
+`shadowsocks-outbound-udp-verification` typed component，固定
+`2022-blake3-aes-128-gcm`、16-byte Base64 PSK 与 `network:["udp"]`。route
+只接受既有认证 SOCKS5 ingress 的 UDP marker 端口；inline Python 客户端完成
+真实用户名/密码认证的 SOCKS5 UDP ASSOCIATE，发送并校验 exact payload，因而同时
+证明 outbound 的 network 选择、SS2022 加密上游和 inbound packet 日志，而不是只
+检查渲染数组。目标 `sing-box 1.14.0 check`、配置 route、
+`outbound/shadowsocks[shadowsocks-outbound-udp-verification]` 与
+`inbound/shadowsocks[ss-in]` journal 均通过。
+
+验证运行 `dev/verification-runs/20260915121419` 保存
+`shadowsocks-outbound-udp.result.env`（`RESULT=success`、
+`DATA_PLANE=shadowsocks2022_udp_loopback`、`AUTHENTICATION=ss2022_psk`）、
+精确 `shadowsocks-outbound-udp-response.txt`、核心 check、客户端 stderr 与
+revision 29→30 create、30→31 delete envelope。该切片仅覆盖一次性特权 Docker
+容器和回环 SS2022 原生 UDP payload；组件、PSK、marker 与 route 在删除后断言
+清理，不代表外部 Shadowsocks、公网、生产、SubMan 或完整协议目标完成。脚本版本
+保持本轮 `2026091504`。

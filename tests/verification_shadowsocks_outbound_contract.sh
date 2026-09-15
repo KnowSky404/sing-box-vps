@@ -22,6 +22,20 @@ grep -Fq -- '--expected-revision 16 --id shadowsocks-outbound-verification' \
 grep -Fq 'inbound:["socks-in"]' "${SCENARIO_FILE}"
 grep -Fq 'inbound:["ss-in"]' "${SCENARIO_FILE}"
 
+# The same managed family must also prove native UDP through an authenticated
+# SOCKS5 UDP ASSOCIATE, with an independent component/revision sequence.
+grep -Fq 'shadowsocks-outbound-udp-verification' "${SCENARIO_FILE}"
+grep -Fq 'shadowsocks2022_udp_loopback' "${SCENARIO_FILE}"
+grep -Fq 'shadowsocks-outbound-udp-response.txt' "${SCENARIO_FILE}"
+grep -Fq 'shadowsocks-outbound-udp-journal.txt' "${SCENARIO_FILE}"
+grep -Fq 'network:["udp"]' "${SCENARIO_FILE}"
+grep -Fq 'network == ["udp"]' "${SCENARIO_FILE}"
+grep -Fq -- '--expected-revision 29 --file "${shadowsocks_outbound_udp_record}"' \
+  "${SCENARIO_FILE}"
+grep -Fq -- '--expected-revision 30 --id shadowsocks-outbound-udp-verification' \
+  "${SCENARIO_FILE}"
+grep -Fq 'network:["udp"],port:$marker_port' "${SCENARIO_FILE}"
+
 if grep -Fq 'POLICY_OWNERSHIP=managed' "${SCENARIO_FILE}"; then
   printf 'Shadowsocks outbound verification must not claim managed host policy ownership\n' >&2
   exit 1
