@@ -100,6 +100,27 @@ failover, an external health URL, public reachability, production operation,
 UDP, or SubMan synchronization; the marker and direct member are disposable
 verification fixtures.
 
+## Shadowsocks outbound TCP verification
+
+The privileged Docker `multi_protocol_coexistence` scenario (run
+`dev/verification-runs/20260915065946`) creates a typed
+`shadowsocks-outbound-verification` component using
+`2022-blake3-aes-128-gcm`, a 16-byte Base64 PSK and `network:["tcp"]`. The
+synthetic domain is routed from the existing authenticated SOCKS5 inbound to
+the managed outbound; a second rule on the existing SS2022 inbound overrides
+that domain to the disposable direct loopback HTTP marker, preventing a
+recursive route. Artifacts retain the target-core `check`, rendered outbound
+and routes, exact marker response, `AUTHENTICATION=ss2022_psk`, and revision-16
+create/revision-17 delete envelopes. The result label is
+`DATA_PLANE=shadowsocks2022_connect_loopback`.
+
+This proves only the managed SS2022 outbound/upstream TCP path in an isolated
+container. The disposable SS2022 fixture, key and marker are not installer
+resources; deletion asserts the component and both route references are gone.
+It does not prove an external Shadowsocks service, UDP, public reachability,
+production operation, SubMan synchronization or completion of the full
+protocol goal.
+
 ## Direct inbound override data plane
 
 Direct inbound component records may include the upstream `network` string (`tcp` or `udp`) and destination override fields `override_address`/`override_port`. The component validator rejects control characters, empty override addresses and ports outside 1-65535 while preserving the normal listen fields. A loopback direct record does not require `--allow-public`; non-loopback listeners still do.

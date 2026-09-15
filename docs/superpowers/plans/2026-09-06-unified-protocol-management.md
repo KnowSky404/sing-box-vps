@@ -928,3 +928,22 @@ URLTest group 此前只有 typed schema、图依赖和核心 `check`。本轮在
 该切片只证明单成员 URLTest 健康探测与 route 选择的隔离容器回环路径；删除后
 组件和路由均断言移除。没有覆盖多成员延迟排序/故障切换、外部探测 URL、公网、
 生产、UDP、SubMan 或完整协议目标，脚本版本保持 `2026091402`。
+
+### 2026-09-15：Shadowsocks outbound TCP 数据面探针
+
+Shadowsocks outbound 此前只有 typed state/render 与目标核心 `check`。本轮在同一
+`multi_protocol_coexistence` 特权隔离 Docker 中创建
+`shadowsocks-outbound-verification`，使用
+`2022-blake3-aes-128-gcm`、16-byte Base64 PSK、`network:["tcp"]`，并从既有
+认证 SOCKS5 inbound 路由 synthetic domain。为阻断递归，`ss-in` 对同一 domain
+覆盖到场景已有的 direct loopback HTTP marker；因此受管 SS2022 outbound 必须真实
+完成认证连接后才能读到精确 marker。验证运行
+`dev/verification-runs/20260915065946` 保存目标核心 `check`、渲染 outbound/route、
+`AUTHENTICATION=ss2022_psk`、精确响应及 revision 16 create/revision 17 delete
+artifact，`shadowsocks-outbound.result.env` 标记
+`RESULT=success`/`DATA_PLANE=shadowsocks2022_connect_loopback`。
+
+upstream、PSK、marker 和 route 全部属于 disposable container；删除后组件与两条
+route 引用均断言移除，未修改安装器防火墙账本。该切片只证明隔离容器内的 SS2022
+TCP 路径，不覆盖 UDP、外部 Shadowsocks、公网、生产、SubMan 或完整协议目标，
+脚本版本提升为本轮 `2026091501`。

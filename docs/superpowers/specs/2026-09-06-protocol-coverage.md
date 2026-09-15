@@ -6,7 +6,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091402`，`SB_SUPPORT_MAX_VERSION=1.14.0`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091501`，`SB_SUPPORT_MAX_VERSION=1.14.0`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -15,7 +15,7 @@
 - `available`：当前官方 ARM64 Linux 发布包中是否已包含该角色的注册实现，以及仍需满足的构建、平台、运行库或外部控制面条件；它独立于源码中存在注册函数。
 - `validated`：本轮实际取得的证据。`registry-check` 只证明目标二进制能识别该 type 并进入初始化校验；`project-real-tcp` 表示回读了项目真实 TCP 业务闭环 artifact，`project-real-udp` 表示回读了经 SOCKS5 UDP ASSOCIATE 的真实 UDP payload artifact，`project-real-tcp+udp` 表示两者均已取得；`project-real-tun-resources` 只表示在特权隔离 Docker 中回读了 sing-box core-owned TUN 接口、iproute2 rule/route 与删除清理 artifact；`project-real-bridge-resources` 只表示回读了 bridge outbound 动态 TUN、core-created rule/route 及删除清理 artifact；`project-real-openvpn-tcp+udp` 表示在特权隔离 Docker 中分别以合成证书和用户名/密码组成 `system:false` OpenVPN server/client pair，经受管 direct inbound 回读 TCP 与 UDP marker payload，并完成目标核心 check 与每个 endpoint 删除清理；`project-real-openvpn-system-resources` 只表示在特权隔离 Docker 中创建命名 `system:true` OpenVPN server/client，回读 core-owned 系统接口、配置地址/前缀、MTU、隧道日志和 diagnose，并按 revision 完成接口删除清理，不包含 packet payload 或宿主路由；`project-real-redirect-tcp` 表示在特权隔离 Docker 中用临时 owner-scoped `OUTPUT REDIRECT` 规则回读 redirect TCP marker，并在 probe 退出时清理规则；`project-real-tproxy-tcp+udp` 表示在特权隔离 Docker 的 disposable veth/network namespace 中以临时 fwmark policy route 和 `PREROUTING TPROXY` 规则回读 TProxy TCP+UDP marker，并完成策略/接口清理。后两项的 policy ownership 固定为 verification-container-only/not-managed，不表示宿主策略所有权。它们不能由 `check`、监听端口或进程存活代替，也不代表公网可达、主机透明策略、外部控制面或生产部署。
 
-另有协议专用的 `project-real-snell-tcp+packet-api-udp`：表示在固定核心、隔离 Docker 中同时回读 Snell TCP marker 与经其认证 TCP 会话 packet API 承载的 UDP marker；它明确不是原生 UDP listener 证明。`project-real-ssh-tcp` 表示在特权隔离 Docker 中由一次性 OpenSSH 服务接收 pinned-host-key SSH outbound 的 direct-tcpip loopback marker，并完成组件 CAS 删除；它不表示外部 SSH 服务、公网、生产或 UDP 证据。`project-real-socks-tcp` 表示在同类容器中由一次性认证 SOCKS5 upstream 接收 managed SOCKS outbound 的 CONNECT loopback marker，并完成组件 CAS 删除；它不表示外部 proxy、公网、生产或 UDP 证据。`project-real-selector-tcp` 表示在同类容器中由单成员 selector 选择内建 direct outbound 回读 loopback marker，并完成组件 CAS 删除；它不表示多成员切换、URLTest、公网或生产证据。`project-real-urltest-tcp` 表示在同类容器中由单成员 URLTest 以 loopback HTTP URL 完成健康探测并经 route 回读 marker，再完成组件 CAS 删除；它不表示多成员故障切换、公网或生产证据。
+另有协议专用的 `project-real-snell-tcp+packet-api-udp`：表示在固定核心、隔离 Docker 中同时回读 Snell TCP marker 与经其认证 TCP 会话 packet API 承载的 UDP marker；它明确不是原生 UDP listener 证明。`project-real-ssh-tcp` 表示在特权隔离 Docker 中由一次性 OpenSSH 服务接收 pinned-host-key SSH outbound 的 direct-tcpip loopback marker，并完成组件 CAS 删除；它不表示外部 SSH 服务、公网、生产或 UDP 证据。`project-real-socks-tcp` 表示在同类容器中由一次性认证 SOCKS5 upstream 接收 managed SOCKS outbound 的 CONNECT loopback marker，并完成组件 CAS 删除；它不表示外部 proxy、公网、生产或 UDP 证据。`project-real-selector-tcp` 表示在同类容器中由单成员 selector 选择内建 direct outbound 回读 loopback marker，并完成组件 CAS 删除；它不表示多成员切换、URLTest、公网或生产证据。`project-real-urltest-tcp` 表示在同类容器中由单成员 URLTest 以 loopback HTTP URL 完成健康探测并经 route 回读 marker，再完成组件 CAS 删除；它不表示多成员故障切换、公网或生产证据。`project-real-shadowsocks-tcp` 表示在同类容器中由 managed SS2022 outbound 经既有 SS2022 inbound/upstream 回读 loopback marker，并完成组件 CAS 删除；它不表示外部 Shadowsocks、公网、生产、UDP 或 SubMan 证据。
 
 表中“版本”优先表示本项目实现时的核心版本门槛：除标明“自 1.14.0”的能力外，继续以项目已有的 1.13.x 兼容路径为下限；它不声称是该协议在 sing-box 历史上的首次引入版本。需要 1.14.0 的 type 或字段必须在目标版本门控后才可生成。
 
@@ -147,7 +147,7 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 | block | `block` / outbound | 基础内建 | 丢弃连接/数据；无网络协议 | yes | yes（Linux） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | registry-check |
 | socks | `socks` / outbound | 基础内建 | SOCKS4/4a/5；TCP，UDP 依 server 支持，可 UDP-over-TCP | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 component JSON（不进入普通分享节点） / 不生成服务端分享 URI / no current SubMan | `project-real-socks-tcp`；特权 Docker `multi_protocol_coexistence` 以一次性认证 SOCKS5 upstream，经 route 回读 loopback CONNECT marker、核心 check 和 CAS 删除；不代表外部 proxy、公网、生产或 UDP |
 | http | `http` / outbound | 基础内建 | HTTP CONNECT，TCP；可配置认证、path、headers 与 outbound TLS | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 component JSON（不进入普通分享节点） / 不生成服务端分享 URI / no current SubMan | 两核心 1.13.18/1.14.0 明文+TLS typed config check；Docker `20260912051138` 通过受认证 loopback HTTP proxy 的 CONNECT、header 与 marker 回读；仅容器/回环，非公网或生产证据 |
-| shadowsocks | `shadowsocks` / outbound | 基础内建 | TCP/UDP；方法覆盖 SS2022 与传统方法，Base64 密钥长度按 method 校验；可 SIP003/multiplex/UoT | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 component JSON（不进入普通分享节点） / 不生成服务端分享 URI / no current SubMan | 两核心 1.13.18/1.14.0 SS2022/传统/插件/UoT typed config check；未验证上游 Shadowsocks 握手/数据面 |
+| shadowsocks | `shadowsocks` / outbound | 基础内建 | TCP/UDP；方法覆盖 SS2022 与传统方法，Base64 密钥长度按 method 校验；可 SIP003/multiplex/UoT | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 component JSON（不进入普通分享节点） / 不生成服务端分享 URI / no current SubMan | `project-real-shadowsocks-tcp`；特权 Docker `multi_protocol_coexistence` 以 SS2022 PSK typed outbound 经既有 SS2022 inbound/upstream 回读 loopback marker，目标核心 check 与 revision 16→17 CAS 删除通过；仅隔离容器/回环 TCP，不代表外部 Shadowsocks、公网、生产、UDP、SubMan 或完整协议目标完成 |
 | vmess | `vmess` / outbound | 基础内建 | TCP/UDP；TLS、transport、packet encoding 和 legacy alterId；QUIC 需 TLS/UDP，WS early data 与 HTTPUpgrade 阻断 | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 component JSON（不进入普通分享节点） / 不生成服务端分享 URI / no current SubMan | 两核心 1.13.18/1.14.0 typed TLS+WS/plain check；Docker `20260911194118` 共存场景使用 VMess QUIC outbound 完成 UDP payload 回环；QUIC exporter 保留 TCP+UDP，非公网或生产证据 |
 | trojan | `trojan` / outbound | 基础内建 | TCP/UDP（按 outbound network）；TLS、transport/multiplex 需对端支持；WS early data 与 HTTPUpgrade 阻断 | yes | yes（Linux） | typed component state/config；yes/yes/yes/yes* | 完整敏感 component JSON（不进入普通分享节点） / 不生成服务端分享 URI / no current SubMan | 两核心 1.13.18/1.14.0 typed TLS+gRPC/plain check；Docker `20260911194118` 共存场景使用 Trojan QUIC outbound 完成 UDP payload 回环；仅隔离容器/回环，不是公网或生产证据 |
 | wireguard-legacy | `wireguard` / outbound | 已移除；不能靠导航页恢复 | 不再创建；应使用 WireGuard endpoint，再由 route/dial 关系接入 | removed stub | no（removed） | none；—/—/—/— | 不可导出为旧 outbound / — / — | check 明确报告 removed |
@@ -367,3 +367,19 @@ loopback HTTP marker。组件 route 将 `localhost` 请求送入 URLTest；目�
 
 该切片只证明单成员 URLTest 健康探测和路由选择的隔离容器回环路径；没有覆盖多成员
 延迟排序/故障切换、外部 health URL、公网、生产、UDP、SubMan 或完整协议目标。
+
+### 2026-09-15：Shadowsocks outbound TCP 数据面证据
+
+`multi_protocol_coexistence` 在特权隔离 Docker 中创建 `shadowsocks` outbound
+（revision 16），使用固定 `2022-blake3-aes-128-gcm`、16-byte Base64 PSK 和
+`network:["tcp"]`，并将 synthetic domain 的 `socks-in` route 指向该组件。为避免
+递归，`ss-in` route 将同一 domain 覆盖到场景已有的 direct loopback HTTP marker；
+目标 `sing-box 1.14.0 check`、渲染 outbound/两条 route、认证 SS2022 连接和精确
+marker 均通过。artifact 见 `dev/verification-runs/20260915065946`，其中
+`shadowsocks-outbound.result.env` 为 `RESULT=success`、
+`DATA_PLANE=shadowsocks2022_connect_loopback`、`AUTHENTICATION=ss2022_psk`，并保存
+revision 16 create/revision 17 delete envelope。
+
+该切片只证明一次性 SS2022 inbound/upstream 与 managed outbound 的隔离容器回环
+TCP 路径；删除后组件与其两条 route 引用均断言清除。没有覆盖 UDP、外部
+Shadowsocks 服务、公网、生产、SubMan 或完整协议目标完成。

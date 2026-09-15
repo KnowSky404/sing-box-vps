@@ -1582,4 +1582,101 @@ PY
     (.[0] | has("mode") | not)
   ' "$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/snell/client.json")" >/dev/null
+
+  # A managed Shadowsocks outbound must exercise the encrypted upstream and
+  # the component-owned route rules, not only parse a SS2022 object.  Reuse the
+  # disposable SS2022 inbound above as the upstream and scope the first route
+  # to the SOCKS5 ingress; the second route terminates the upstream request at
+  # the existing direct loopback marker instead of recursively selecting the
+  # same outbound for the synthetic domain.
+  local shadowsocks_outbound_target_domain='sbv-shadowsocks-outbound.invalid'
+  local shadowsocks_outbound_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-record.json"
+  local shadowsocks_outbound_create_status=0
+  local shadowsocks_outbound_delete_status=0
+  (umask 077; jq -n --arg domain "${shadowsocks_outbound_target_domain}" \
+    --argjson marker_port "${direct_marker_port}" '
+    {id:"shadowsocks-outbound-verification",role:"outbound",type:"shadowsocks",
+     tag:"shadowsocks-outbound-verification",enabled:true,
+     route_rules:[
+       {inbound:["socks-in"],domain:[$domain],action:"route",outbound:"shadowsocks-outbound-verification"},
+       {inbound:["ss-in"],domain:[$domain],action:"route",outbound:"direct",
+        override_address:"127.0.0.1",override_port:$marker_port}
+     ],
+     config:{server:"127.0.0.1",server_port:1083,
+       method:"2022-blake3-aes-128-gcm",password:"MDEyMzQ1Njc4OWFiY2RlZg==",
+       network:["tcp"]}}
+  ' > "${shadowsocks_outbound_record}")
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
+    --expected-revision 15 --file "${shadowsocks_outbound_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-create.json"
+  shadowsocks_outbound_create_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-create.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-create.json"
+  [[ "${shadowsocks_outbound_create_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="create" and .revision==16 and
+    .type=="shadowsocks" and .id=="shadowsocks-outbound-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-create.json" >/dev/null
+  verification_mark_step shadowsocks-outbound-component-created
+  verification_wait_for_service_active sing-box
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  config_path=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-config.json")
+  cp /root/sing-box-vps/config.json "${config_path}"
+  jq -e --arg domain "${shadowsocks_outbound_target_domain}" \
+    --argjson marker_port "${direct_marker_port}" '
+    ([.outbounds[] | select(.type == "shadowsocks" and
+      .tag == "shadowsocks-outbound-verification" and
+      .server == "127.0.0.1" and .server_port == 1083 and
+      .method == "2022-blake3-aes-128-gcm" and
+      .password == "MDEyMzQ1Njc4OWFiY2RlZg==" and .network == ["tcp"])] | length == 1) and
+    ([.route.rules[] | select(.inbound == ["socks-in"] and
+      .domain == [$domain] and .outbound == "shadowsocks-outbound-verification")] | length == 1) and
+    ([.route.rules[] | select(.inbound == ["ss-in"] and .domain == [$domain] and
+      .outbound == "direct" and .override_address == "127.0.0.1" and
+      .override_port == $marker_port)] | length == 1)
+  ' "${config_path}" >/dev/null
+  verification_mark_step shadowsocks-outbound-config-asserted
+  local shadowsocks_outbound_response="${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-response.txt"
+  local shadowsocks_outbound_curl_stderr="${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-curl.stderr.txt"
+  set +e
+  curl --fail --silent --show-error --max-time 10 --noproxy '' \
+    --proxy 'socks5h://socks-user:socks-pass@127.0.0.1:1081' \
+    "http://${shadowsocks_outbound_target_domain}/" \
+    > "$(verification_artifact_path "${shadowsocks_outbound_response}")" \
+    2> "$(verification_artifact_path "${shadowsocks_outbound_curl_stderr}")"
+  local shadowsocks_outbound_curl_status=$?
+  set -e
+  [[ "${shadowsocks_outbound_curl_status}" == 0 ]]
+  grep -Fqx "${direct_marker}" \
+    "$(verification_artifact_path "${shadowsocks_outbound_response}")"
+  verification_mark_step shadowsocks-outbound-curl-complete
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound.result.env" \
+    'COMPONENT=shadowsocks-outbound' 'RESULT=success' \
+    'DATA_PLANE=shadowsocks2022_connect_loopback' 'AUTHENTICATION=ss2022_psk'
+
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
+    --expected-revision 16 --id shadowsocks-outbound-verification \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-delete.json"
+  shadowsocks_outbound_delete_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-delete.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-delete.json"
+  [[ "${shadowsocks_outbound_delete_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="delete" and .revision==17 and
+    .id=="shadowsocks-outbound-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-delete.json" >/dev/null
+  verification_mark_step shadowsocks-outbound-component-deleted
+  jq -e '
+    ([.outbounds[] | select(.tag == "shadowsocks-outbound-verification")] | length) == 0 and
+    ([.route.rules[] | select(.outbound == "shadowsocks-outbound-verification" or
+      (.inbound == ["ss-in"] and .domain == ["sbv-shadowsocks-outbound.invalid"]))] | length) == 0
+  ' /root/sing-box-vps/config.json >/dev/null
 }
