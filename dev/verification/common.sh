@@ -140,6 +140,7 @@ resolve_local_tests() {
       tests/managed_component_availability.sh \
       tests/verification_ssh_outbound_contract.sh \
       tests/verification_socks_outbound_contract.sh \
+      tests/verification_selector_outbound_contract.sh \
       tests/managed_component_graph.sh \
       tests/managed_component_graph_core_startup.sh \
       tests/live_inbound_inventory_guards.sh \

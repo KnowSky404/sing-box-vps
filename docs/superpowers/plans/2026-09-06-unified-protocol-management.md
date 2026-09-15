@@ -900,3 +900,16 @@ delete 结果，成功标签为 `project-real-socks-tcp`。
 upstream、凭据、marker 和 route 只存在于 disposable container，组件删除后配置
 与引用均断言不存在；验证没有修改安装器防火墙账本，也不宣称外部 proxy、公网、UDP、
 生产或 SubMan 数据面。完整协议目标仍需继续逐行核对，脚本版本保持 `2026091402`。
+
+### 2026-09-15：Selector group 单成员数据面探针
+
+Selector group 此前只有 typed schema、图依赖和核心 `check`。本轮在同一
+`multi_protocol_coexistence` 特权隔离 Docker 中创建仅含内建 `direct` 成员的
+`selector-outbound-verification`，经 route 由既有认证 SOCKS5 inbound 访问已在
+场景中运行的 loopback marker。验证运行 `dev/verification-runs/20260915060132`
+保存 selector config/check、精确响应、revision 12 create/revision 13 delete
+结果，成功标签为 `project-real-selector-tcp`。
+
+该切片只证明单成员 selector 的组件路由/选择路径；删除后组件和路由均断言移除，
+没有修改防火墙账本，也不宣称多成员故障切换、URLTest 探测、公网、生产、UDP、
+SubMan 或完整协议目标完成。脚本版本保持 `2026091402`。

@@ -1268,6 +1268,82 @@ PY
     ([.route.rules[] | select(.outbound == "socks-outbound-verification")] | length) == 0
   ' /root/sing-box-vps/config.json >/dev/null
 
+  # Selector groups must exercise their member resolution, not only parse as
+  # arbitrary JSON.  Reuse the disposable direct loopback marker with a
+  # single-member group so the route and chosen outbound are observable while
+  # keeping the built-in direct owner outside the component registry.
+  local selector_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/selector-outbound-record.json"
+  local selector_create_status=0
+  local selector_delete_status=0
+  (umask 077; jq -n '
+    {id:"selector-outbound-verification",role:"outbound",type:"selector",
+     tag:"selector-outbound-verification",enabled:true,
+     route_rules:[{domain:["localhost"],action:"route",outbound:"selector-outbound-verification"}],
+     config:{outbounds:["direct"],default:"direct",interrupt_exist_connections:true}}
+  ' > "${selector_record}")
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
+    --expected-revision 11 --file "${selector_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/selector-outbound-create.json"
+  selector_create_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/selector-outbound-create.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/selector-outbound-create.json"
+  [[ "${selector_create_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="create" and .revision==12 and .type=="selector"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/selector-outbound-create.json" >/dev/null
+  verification_mark_step selector-outbound-component-created
+  verification_wait_for_service_active sing-box
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/selector-outbound-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  config_path=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/selector-outbound-config.json")
+  cp /root/sing-box-vps/config.json "${config_path}"
+  jq -e '
+    ([.outbounds[] | select(.type == "selector" and .tag == "selector-outbound-verification" and
+      .outbounds == ["direct"] and .default == "direct" and
+      .interrupt_exist_connections == true)] | length == 1) and
+    ([.route.rules[] | select(.outbound == "selector-outbound-verification" and
+      .domain == ["localhost"])] | length == 1)
+  ' "${config_path}" >/dev/null
+  verification_mark_step selector-outbound-config-asserted
+  set +e
+  curl --fail --silent --show-error --max-time 10 --noproxy '' \
+    --proxy 'socks5h://socks-user:socks-pass@127.0.0.1:1081' \
+    "http://localhost:${direct_marker_port}/" \
+    > "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/selector-outbound-response.txt")" \
+    2> "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/selector-outbound-curl.stderr.txt")"
+  local selector_curl_status=$?
+  set -e
+  [[ "${selector_curl_status}" == 0 ]]
+  grep -Fqx "${direct_marker}" \
+    "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/selector-outbound-response.txt")"
+  verification_mark_step selector-outbound-curl-complete
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/selector-outbound.result.env" \
+    'COMPONENT=selector-outbound' 'RESULT=success' \
+    'DATA_PLANE=selector_direct_loopback'
+
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
+    --expected-revision 12 --id selector-outbound-verification \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/selector-outbound-delete.json"
+  selector_delete_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/selector-outbound-delete.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/selector-outbound-delete.json"
+  [[ "${selector_delete_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="delete" and .revision==13 and .id=="selector-outbound-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/selector-outbound-delete.json" >/dev/null
+  verification_mark_step selector-outbound-component-deleted
+  jq -e '
+    ([.outbounds[] | select(.tag == "selector-outbound-verification")] | length) == 0 and
+    ([.route.rules[] | select(.outbound == "selector-outbound-verification")] | length) == 0
+  ' /root/sing-box-vps/config.json >/dev/null
+
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/config.json")
   index_path=$(verification_artifact_path \

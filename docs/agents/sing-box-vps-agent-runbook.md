@@ -69,6 +69,20 @@ prove an external proxy, UDP relay, public reachability, production operation
 or SubMan synchronization; the upstream server and credentials are disposable
 verification fixtures, not installer-managed resources.
 
+## Selector group verification
+
+The privileged Docker `multi_protocol_coexistence` scenario (run
+`dev/verification-runs/20260915060132`) creates a typed selector whose only
+member is the built-in `direct` outbound. The existing authenticated SOCKS5
+inbound routes `localhost` through that group to the disposable loopback marker;
+artifacts retain the target-core `check`, exact response, and revision-12
+create/revision-13 delete envelopes. The result label is
+`DATA_PLANE=selector_direct_loopback`.
+
+This proves only single-member selector resolution in an isolated container. It
+does not prove multi-member failover, URLTest probing, public reachability,
+production operation or SubMan synchronization.
+
 ## Direct inbound override data plane
 
 Direct inbound component records may include the upstream `network` string (`tcp` or `udp`) and destination override fields `override_address`/`override_port`. The component validator rejects control characters, empty override addresses and ports outside 1-65535 while preserving the normal listen fields. A loopback direct record does not require `--allow-public`; non-loopback listeners still do.
