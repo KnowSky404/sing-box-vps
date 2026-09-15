@@ -17760,8 +17760,13 @@ managed_component_state_apply() {
      jq -e 'any(.inbounds[]?; .type == "tun") or
        any(.outbounds[]?; .type == "bridge") or
        any(.endpoints[]?;
-         (.type == "openvpn-client" or .type == "openvpn-server") and
-         .system == true and ((.name // "") | length > 0))' \
+         (
+           ((.type == "wireguard" or .type == "openconnect" or
+             .type == "openvpn-client" or .type == "openvpn-server") and
+            .system == true and ((.name // "") | length > 0)) or
+           (.type == "tailscale" and .system_interface == true and
+            ((.system_interface_name // "") | length > 0))
+         ))' \
        "${SINGBOX_CONFIG_FILE}" >/dev/null 2>&1; then
     if ! managed_component_transparent_runtime_healthy_with_retry "${SINGBOX_CONFIG_FILE}"; then
       if [[ -n "${firewall_journal}" ]]; then

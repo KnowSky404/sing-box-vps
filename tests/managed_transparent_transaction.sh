@@ -56,7 +56,8 @@ case "${1:-}:${2:-}" in
     printf '%s\n' '[{"dst":"default","dev":"sbv-health","table":"2022"}]'
     ;;
   -j:link)
-    if [[ "${SBV_TRANSPARENT_HEALTH_MODE:-missing}" == eventual ]]; then
+    case "${SBV_TRANSPARENT_HEALTH_MODE:-missing}" in
+      eventual)
       count=$(<"${link_probe_count_file}")
       printf '%s\n' "$((count + 1))" > "${link_probe_count_file}"
       if (( count < 2 )); then
@@ -64,11 +65,17 @@ case "${1:-}:${2:-}" in
       else
         printf '%s\n' '[{"ifname":"sbv-health","operstate":"UP"}]'
       fi
-    elif [[ "${SBV_TRANSPARENT_HEALTH_MODE:-missing}" == present ]]; then
+      ;;
+      present)
       printf '%s\n' '[{"ifname":"sbv-health","operstate":"UP"}]'
-    else
+      ;;
+      system-present)
+      printf '%s\n' '[{"ifname":"sbv-oc","operstate":"UP"}]'
+      ;;
+      *)
       printf '%s\n' '[]'
-    fi
+      ;;
+    esac
     ;;
   *) exit 64 ;;
 esac
@@ -143,5 +150,43 @@ jq -e 'any(.inbounds[]; .type == "tun" and .interface_name == "sbv-health" and
   .auto_route == true)' "${SINGBOX_CONFIG_FILE}" >/dev/null
 [[ "$(<"${SBV_TRANSPARENT_SYSTEMCTL_COUNT}")" == 3 ]]
 [[ "$(<"${SBV_TRANSPARENT_LINK_PROBE_COUNT}")" -ge 3 ]]
+
+# Named system endpoints must use the same post-restart resource gate as TUN
+# and OpenVPN.  Exercise both the fail-closed rollback and the successful
+# commit path with an OpenConnect interface whose address/MTU are core-chosen.
+delete_tun=$(agent_cli component delete --json --yes --expected-revision 1 \
+  --id tun-health)
+jq -e '.ok == true and .data.operation == "delete" and .data.revision == 2 and
+  .data.service_restarted == true' <<< "${delete_tun}" >/dev/null
+jq -e '.revision == 2 and ([.components[] | select(.id == "tun-health")] | length == 0)' \
+  "${SB_COMPONENT_STATE_FILE}" >/dev/null
+
+openconnect_record="${TMP_DIR}/openconnect-system.json"
+jq -n '{id:"openconnect-system-health",role:"endpoint",type:"openconnect",
+  tag:"oc-system-health",enabled:true,route_rules:[],config:
+  {server:"vpn.example.com",system:true,name:"sbv-oc"}}' > "${openconnect_record}"
+before_state=$(cat "${SB_COMPONENT_STATE_FILE}")
+before_config=$(cat "${SINGBOX_CONFIG_FILE}")
+export SBV_TRANSPARENT_HEALTH_MODE=system-missing
+if failed=$(agent_cli component create --json --yes --expected-revision 2 \
+  --file "${openconnect_record}"); then
+  printf 'system endpoint transaction unexpectedly succeeded with missing core-owned resources\n' >&2
+  exit 1
+fi
+jq -e '.ok == false and .error == "transparent_resource_check_failed" and
+  .data.ok == false and .data.error == "transparent_resource_check_failed"' <<< "${failed}" >/dev/null
+[[ "$(cat "${SB_COMPONENT_STATE_FILE}")" == "${before_state}" ]]
+[[ "$(cat "${SINGBOX_CONFIG_FILE}")" == "${before_config}" ]]
+[[ ! -e "${SB_COMPONENT_TRANSACTION_DIR}" ]]
+
+export SBV_TRANSPARENT_HEALTH_MODE=system-present
+succeeded=$(agent_cli component create --json --yes --expected-revision 2 \
+  --file "${openconnect_record}")
+jq -e '.ok == true and .data.operation == "create" and
+  .data.revision == 3 and .data.service_restarted == true' <<< "${succeeded}" >/dev/null
+jq -e '.revision == 3 and any(.components[]; .id == "openconnect-system-health")' \
+  "${SB_COMPONENT_STATE_FILE}" >/dev/null
+jq -e 'any(.endpoints[]; .type == "openconnect" and .system == true and
+  .name == "sbv-oc")' "${SINGBOX_CONFIG_FILE}" >/dev/null
 
 printf '%s\n' 'managed transparent transaction checks passed'
