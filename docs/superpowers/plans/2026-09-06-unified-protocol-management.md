@@ -1032,3 +1032,22 @@ revision 29→30 create、30→31 delete envelope。该切片仅覆盖一次性�
 容器和回环 SS2022 原生 UDP payload；组件、PSK、marker 与 route 在删除后断言
 清理，不代表外部 Shadowsocks、公网、生产、SubMan 或完整协议目标完成。脚本版本
 保持本轮 `2026091504`。
+
+### 2026-09-15：SOCKS outbound native UDP 数据面探针
+
+在 SS2022 native UDP 之后，`multi_protocol_coexistence` 为 managed SOCKS
+outbound 增加独立的 UDP 上游验证。场景启动一次性用户名/密码 SOCKS5 server；其
+UDP ASSOCIATE relay 只接受目标 direct UDP marker 和精确 payload，再把回包封装回
+SOCKS5 UDP response。新的 `socks-outbound-udp-verification` typed component
+固定 `network:["udp"]`，route 只允许既有认证 `socks-in` 的 marker 端口，因而真实
+客户端必须经过主 SOCKS ingress、managed SOCKS outbound、上游认证和 UDP relay，
+不能由静态配置断言代替。
+
+目标 `sing-box 1.14.0 check`、渲染 outbound/route、上游
+`AUTHENTICATED`/`UDP_ASSOCIATE`/destination/payload 日志、精确响应和
+`outbound/socks[...]` journal 均作为 artifact 保存。组件 expected revision 31
+创建并提交 32，再以 expected revision 32 删除并提交 33；结果标签为
+`DATA_PLANE=socks5_native_udp_loopback`、
+`AUTHENTICATION=upstream_username_password`。本切片只覆盖一次性特权 Docker
+容器和回环 SOCKS5 native UDP relay，不代表外部 proxy、公网、生产、SubMan 或
+完整协议目标完成；成功门禁运行记录为 `dev/verification-runs/20260915152726`；脚本版本保持本轮 `2026091504`。

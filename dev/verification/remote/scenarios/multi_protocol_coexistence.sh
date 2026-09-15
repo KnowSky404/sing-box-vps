@@ -62,6 +62,7 @@ verification_scenario_multi_protocol_coexistence() {
   local sshd_pid=''
   local socks_outbound_marker_pid=''
   local socks_upstream_pid=''
+  local socks_udp_upstream_pid=''
   local vless_outbound_server_pid=''
   local vless_outbound_server_dir=''
   local shadowtls_outbound_server_pid=''
@@ -69,7 +70,7 @@ verification_scenario_multi_protocol_coexistence() {
   local anytls_udp_journal_artifact=''
 
   verification_prepare_remote_local_tree
-  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_marker_pid:-}" ]]; then kill "${direct_marker_pid}" 2>/dev/null || true; wait "${direct_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_udp_marker_pid:-}" ]]; then kill "${direct_udp_marker_pid}" 2>/dev/null || true; wait "${direct_udp_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${sshd_pid:-}" ]]; then kill "${sshd_pid}" 2>/dev/null || true; wait "${sshd_pid}" 2>/dev/null || true; fi; if [[ -n "${ssh_marker_pid:-}" ]]; then kill "${ssh_marker_pid}" 2>/dev/null || true; wait "${ssh_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_upstream_pid:-}" ]]; then kill "${socks_upstream_pid}" 2>/dev/null || true; wait "${socks_upstream_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_outbound_marker_pid:-}" ]]; then kill "${socks_outbound_marker_pid}" 2>/dev/null || true; wait "${socks_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_server_pid:-}" ]]; then kill "${vless_outbound_server_pid}" 2>/dev/null || true; wait "${vless_outbound_server_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_server_dir:-}" ]]; then rm -rf -- "${vless_outbound_server_dir}"; fi; if [[ -n "${shadowtls_outbound_server_pid:-}" ]]; then kill "${shadowtls_outbound_server_pid}" 2>/dev/null || true; wait "${shadowtls_outbound_server_pid}" 2>/dev/null || true; fi; if [[ -n "${shadowtls_outbound_server_dir:-}" ]]; then rm -rf -- "${shadowtls_outbound_server_dir}"; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
+  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_marker_pid:-}" ]]; then kill "${direct_marker_pid}" 2>/dev/null || true; wait "${direct_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_udp_marker_pid:-}" ]]; then kill "${direct_udp_marker_pid}" 2>/dev/null || true; wait "${direct_udp_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${sshd_pid:-}" ]]; then kill "${sshd_pid}" 2>/dev/null || true; wait "${sshd_pid}" 2>/dev/null || true; fi; if [[ -n "${ssh_marker_pid:-}" ]]; then kill "${ssh_marker_pid}" 2>/dev/null || true; wait "${ssh_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_upstream_pid:-}" ]]; then kill "${socks_upstream_pid}" 2>/dev/null || true; wait "${socks_upstream_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_udp_upstream_pid:-}" ]]; then kill "${socks_udp_upstream_pid}" 2>/dev/null || true; wait "${socks_udp_upstream_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_outbound_marker_pid:-}" ]]; then kill "${socks_outbound_marker_pid}" 2>/dev/null || true; wait "${socks_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_server_pid:-}" ]]; then kill "${vless_outbound_server_pid}" 2>/dev/null || true; wait "${vless_outbound_server_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_server_dir:-}" ]]; then rm -rf -- "${vless_outbound_server_dir}"; fi; if [[ -n "${shadowtls_outbound_server_pid:-}" ]]; then kill "${shadowtls_outbound_server_pid}" 2>/dev/null || true; wait "${shadowtls_outbound_server_pid}" 2>/dev/null || true; fi; if [[ -n "${shadowtls_outbound_server_dir:-}" ]]; then rm -rf -- "${shadowtls_outbound_server_dir}"; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
   # Keep the certificate paths valid for the following runtime_smoke scenario.
   # The Docker container is disposable, so this test-only directory cannot
   # outlive the verification run or affect a host installation.
@@ -2495,4 +2496,386 @@ PY
     ([.route.rules[] | select(.outbound ==
       "shadowsocks-outbound-udp-verification")] | length) == 0
   ' /root/sing-box-vps/config.json >/dev/null
+
+  # SOCKS outbound UDP is a separate upstream contract from SS2022 UDP.  A
+  # disposable SOCKS5 server below implements UDP ASSOCIATE and relays only
+  # the exact marker to the direct UDP echo.  This keeps the proof inside the
+  # verification container while observing both upstream authentication and
+  # the managed outbound's native UDP path.
+  local socks_outbound_udp_upstream_port_file
+  local socks_outbound_udp_upstream_stdout
+  local socks_outbound_udp_upstream_stderr
+  local socks_outbound_udp_upstream_request_log
+  local socks_outbound_udp_upstream_port
+  local socks_outbound_udp_upstream_user=socks-udp-upstream-user
+  local socks_outbound_udp_upstream_password=socks-udp-upstream-pass
+  local socks_outbound_udp_record
+  local socks_outbound_udp_config
+  local socks_outbound_udp_response
+  local socks_outbound_udp_response_path
+  local socks_outbound_udp_client_stderr
+  local socks_outbound_udp_journal
+  local socks_outbound_udp_marker
+  local socks_outbound_udp_create_status=0
+  local socks_outbound_udp_delete_status=0
+  local socks_outbound_udp_client_status=1
+  local socks_outbound_udp_upstream_dir="${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-udp"
+  local socks_outbound_udp_target_domain=sbv-socks-outbound-udp.invalid
+  socks_outbound_udp_upstream_port_file="${socks_outbound_udp_upstream_dir}/port"
+  socks_outbound_udp_upstream_stdout=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-udp-upstream.stdout.txt")
+  socks_outbound_udp_upstream_stderr=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-udp-upstream.stderr.txt")
+  socks_outbound_udp_upstream_request_log=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-udp-upstream.request.txt")
+  socks_outbound_udp_record="${socks_outbound_udp_upstream_dir}/record.json"
+  socks_outbound_udp_response="${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-udp-response.txt"
+  socks_outbound_udp_response_path=$(verification_artifact_path \
+    "${socks_outbound_udp_response}")
+  socks_outbound_udp_client_stderr="${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-udp-client.stderr.txt"
+  socks_outbound_udp_journal="${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-udp-journal.txt"
+  socks_outbound_udp_marker="sing-box-vps-socks-outbound-udp-loopback-ok-$(date +%s)-$$"
+  mkdir -p "${socks_outbound_udp_upstream_dir}"
+  python3 - "${socks_outbound_udp_upstream_port_file}" \
+    "${direct_udp_marker_port}" "${socks_outbound_udp_upstream_user}" \
+    "${socks_outbound_udp_upstream_password}" \
+    "${socks_outbound_udp_upstream_request_log}" "${socks_outbound_udp_marker}" \
+    > "${socks_outbound_udp_upstream_stdout}" \
+    2> "${socks_outbound_udp_upstream_stderr}" <<'PY' &
+import pathlib
+import select
+import socket
+import socketserver
+import struct
+import sys
+
+port_file, target_port_text, expected_user, expected_password, request_log, marker = sys.argv[1:]
+target_port = int(target_port_text)
+marker_bytes = marker.encode("ascii")
+
+
+def recv_exact(conn, size):
+    data = bytearray()
+    while len(data) < size:
+        chunk = conn.recv(size - len(data))
+        if not chunk:
+            raise ConnectionError("short SOCKS5 frame")
+        data.extend(chunk)
+    return bytes(data)
+
+
+def read_tcp_address(conn, address_type):
+    if address_type == 1:
+        return socket.inet_ntoa(recv_exact(conn, 4))
+    if address_type == 3:
+        size = recv_exact(conn, 1)[0]
+        return recv_exact(conn, size).decode("idna")
+    if address_type == 4:
+        return socket.inet_ntop(socket.AF_INET6, recv_exact(conn, 16))
+    raise ValueError("unsupported SOCKS5 address type")
+
+
+def read_udp_address(packet, offset, address_type):
+    if address_type == 1:
+        if len(packet) < offset + 4:
+            raise ValueError("short IPv4 UDP address")
+        return socket.inet_ntoa(packet[offset:offset + 4]), offset + 4
+    if address_type == 3:
+        if len(packet) < offset + 1:
+            raise ValueError("short domain UDP address")
+        size = packet[offset]
+        offset += 1
+        if len(packet) < offset + size:
+            raise ValueError("short domain UDP address")
+        return packet[offset:offset + size].decode("idna"), offset + size
+    if address_type == 4:
+        if len(packet) < offset + 16:
+            raise ValueError("short IPv6 UDP address")
+        return socket.inet_ntop(socket.AF_INET6, packet[offset:offset + 16]), offset + 16
+    raise ValueError("unsupported UDP address type")
+
+
+def append_log(*lines):
+    with open(request_log, "a", encoding="ascii") as stream:
+        for line in lines:
+            stream.write(line + "\n")
+
+
+class SocksUdpHandler(socketserver.BaseRequestHandler):
+    def handle(self):
+        control = self.request
+        control.settimeout(5)
+        relay = None
+        try:
+            if recv_exact(control, 1) != b"\x05":
+                return
+            method_count = recv_exact(control, 1)[0]
+            methods = recv_exact(control, method_count)
+            if 2 not in methods:
+                control.sendall(b"\x05\xff")
+                return
+            control.sendall(b"\x05\x02")
+            if recv_exact(control, 1) != b"\x01":
+                return
+            user_length = recv_exact(control, 1)[0]
+            user = recv_exact(control, user_length).decode("utf-8")
+            password_length = recv_exact(control, 1)[0]
+            password = recv_exact(control, password_length).decode("utf-8")
+            if user != expected_user or password != expected_password:
+                control.sendall(b"\x01\x01")
+                return
+            control.sendall(b"\x01\x00")
+            append_log("AUTHENTICATED")
+
+            version, command, _, address_type = recv_exact(control, 4)
+            if version != 5 or command != 3:
+                control.sendall(b"\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00")
+                return
+            requested_host = read_tcp_address(control, address_type)
+            requested_port = int.from_bytes(recv_exact(control, 2), "big")
+
+            relay = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            relay.bind(("127.0.0.1", 0))
+            relay.settimeout(5)
+            relay_port = relay.getsockname()[1]
+            control.sendall(b"\x05\x00\x00\x01" + socket.inet_aton("127.0.0.1") +
+                            struct.pack("!H", relay_port))
+            append_log("UDP_ASSOCIATE", "ASSOCIATE_TARGET=%s:%s" %
+                       (requested_host, requested_port))
+
+            while True:
+                # sing-box may release the short-lived control connection as
+                # soon as its packet connection is established.  Keep the
+                # disposable relay alive until the UDP marker arrives so the
+                # probe observes the data plane rather than treating control
+                # connection EOF as a failed upstream.
+                ready, _, _ = select.select([relay], [], [], 5)
+                if not ready:
+                    continue
+                packet, client_address = relay.recvfrom(65535)
+                if len(packet) < 4 or packet[:2] != b"\x00\x00" or packet[2] != 0:
+                    continue
+                udp_address_type = packet[3]
+                destination, offset = read_udp_address(packet, 4, udp_address_type)
+                if len(packet) < offset + 2:
+                    continue
+                destination_port = int.from_bytes(packet[offset:offset + 2], "big")
+                payload = packet[offset + 2:]
+                if destination != "127.0.0.1" or destination_port != target_port:
+                    raise ValueError("unexpected UDP destination")
+                if payload != marker_bytes:
+                    raise ValueError("unexpected UDP payload")
+                append_log("DESTINATION=%s:%s" % (destination, destination_port),
+                           "PAYLOAD=%s" % marker)
+                relay.sendto(payload, ("127.0.0.1", target_port))
+                response, _ = relay.recvfrom(65535)
+                response_header = (b"\x00\x00\x00\x01" +
+                                   socket.inet_aton("127.0.0.1") +
+                                   struct.pack("!H", target_port))
+                relay.sendto(response_header + response, client_address)
+        except (ConnectionError, OSError, UnicodeError, ValueError):
+            return
+        finally:
+            if relay is not None:
+                relay.close()
+
+
+class ReusableServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
+with ReusableServer(("127.0.0.1", 0), SocksUdpHandler) as server:
+    pathlib.Path(port_file).write_text(str(server.server_address[1]), encoding="ascii")
+    server.serve_forever()
+PY
+  socks_udp_upstream_pid=$!
+  for _ in {1..50}; do
+    [[ -s "${socks_outbound_udp_upstream_port_file}" ]] && break
+    kill -0 "${socks_udp_upstream_pid}" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  [[ -s "${socks_outbound_udp_upstream_port_file}" ]]
+  socks_outbound_udp_upstream_port=$(cat "${socks_outbound_udp_upstream_port_file}")
+  [[ "${socks_outbound_udp_upstream_port}" =~ ^[0-9]+$ ]]
+
+  (umask 077; jq -n --argjson upstream_port "${socks_outbound_udp_upstream_port}" \
+    --arg domain "${socks_outbound_udp_target_domain}" \
+    --argjson marker_port "${direct_udp_marker_port}" '
+    {id:"socks-outbound-udp-verification",role:"outbound",type:"socks",
+     tag:"socks-outbound-udp-verification",enabled:true,
+     route_rules:[{inbound:["socks-in"],network:["udp"],port:$marker_port,
+       action:"route",outbound:"socks-outbound-udp-verification"}],
+     config:{server:"127.0.0.1",server_port:$upstream_port,version:"5",
+       username:"socks-udp-upstream-user",password:"socks-udp-upstream-pass",
+       network:["udp"]}}
+  ' > "${socks_outbound_udp_record}")
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
+    --expected-revision 31 --file "${socks_outbound_udp_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-udp-create.json"
+  socks_outbound_udp_create_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-udp-create.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-udp-create.json"
+  [[ "${socks_outbound_udp_create_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="create" and .revision==32 and
+    .type=="socks" and .id=="socks-outbound-udp-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-udp-create.json" >/dev/null
+  verification_mark_step socks-outbound-udp-component-created
+  verification_wait_for_service_active sing-box
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-udp-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  socks_outbound_udp_config=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-udp-config.json")
+  cp /root/sing-box-vps/config.json "${socks_outbound_udp_config}"
+  jq -e --arg domain "${socks_outbound_udp_target_domain}" \
+    --argjson upstream_port "${socks_outbound_udp_upstream_port}" \
+    --argjson marker_port "${direct_udp_marker_port}" '
+    ([.outbounds[] | select(.type == "socks" and
+      .tag == "socks-outbound-udp-verification" and
+      .server == "127.0.0.1" and .server_port == $upstream_port and
+      .version == "5" and .username == "socks-udp-upstream-user" and
+      .password == "socks-udp-upstream-pass" and .network == ["udp"])] |
+      length == 1) and
+    ([.route.rules[] | select(.inbound == ["socks-in"] and
+      .network == ["udp"] and .port == $marker_port and
+      .outbound == "socks-outbound-udp-verification")] | length == 1)
+  ' "${socks_outbound_udp_config}" >/dev/null
+  verification_mark_step socks-outbound-udp-config-asserted
+  rm -f -- "${socks_outbound_udp_response_path}" \
+    "$(verification_artifact_path "${socks_outbound_udp_client_stderr}")"
+  set +e
+  python3 - "${socks_outbound_udp_response_path}" \
+    "${socks_outbound_udp_marker}" "${direct_udp_marker_port}" \
+    > /dev/null \
+    2> "$(verification_artifact_path "${socks_outbound_udp_client_stderr}")" <<'PY'
+import pathlib
+import socket
+import struct
+import sys
+
+response_path, marker_text, target_port_text = sys.argv[1:]
+marker = marker_text.encode("ascii")
+target_port = int(target_port_text)
+
+
+def recv_exact(conn, size):
+    chunks = []
+    received = 0
+    while received < size:
+        chunk = conn.recv(size - received)
+        if not chunk:
+            raise RuntimeError("SOCKS control connection closed")
+        chunks.append(chunk)
+        received += len(chunk)
+    return b"".join(chunks)
+
+
+def read_address(conn, address_type):
+    if address_type == 1:
+        return socket.inet_ntoa(recv_exact(conn, 4))
+    if address_type == 3:
+        size = recv_exact(conn, 1)[0]
+        return recv_exact(conn, size).decode("ascii")
+    if address_type == 4:
+        return socket.inet_ntop(socket.AF_INET6, recv_exact(conn, 16))
+    raise RuntimeError("unsupported SOCKS address type")
+
+
+username = b"socks-user"
+password = b"socks-pass"
+with socket.create_connection(("127.0.0.1", 1081), timeout=5) as control:
+    control.settimeout(5)
+    control.sendall(b"\x05\x01\x02")
+    if recv_exact(control, 2) != b"\x05\x02":
+        raise RuntimeError("SOCKS username/password method was not selected")
+    control.sendall(b"\x01" + bytes([len(username)]) + username +
+                   bytes([len(password)]) + password)
+    if recv_exact(control, 2) != b"\x01\x00":
+        raise RuntimeError("SOCKS authentication failed")
+    control.sendall(b"\x05\x03\x00\x01\x00\x00\x00\x00\x00\x00")
+    reply = recv_exact(control, 4)
+    if reply[:2] != b"\x05\x00":
+        raise RuntimeError("SOCKS UDP ASSOCIATE failed")
+    relay_host = read_address(control, reply[3])
+    relay_port = struct.unpack("!H", recv_exact(control, 2))[0]
+    if relay_host in ("0.0.0.0", "::"):
+        relay_host = "127.0.0.1"
+    request = (b"\x00\x00\x00\x01" + socket.inet_aton("127.0.0.1") +
+               struct.pack("!H", target_port) + marker)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+        udp.settimeout(10)
+        udp.sendto(request, (relay_host, relay_port))
+        response, _source = udp.recvfrom(65535)
+    if len(response) < 10 or response[:3] != b"\x00\x00\x00":
+        raise RuntimeError("invalid SOCKS UDP response header")
+    offset = 4
+    if response[3] == 1:
+        offset += 4
+    elif response[3] == 3:
+        offset += 1 + response[4]
+    elif response[3] == 4:
+        offset += 16
+    else:
+        raise RuntimeError("invalid SOCKS UDP response address type")
+    offset += 2
+    payload = response[offset:]
+    if payload != marker:
+        raise RuntimeError("UDP marker mismatch")
+pathlib.Path(response_path).write_bytes(payload)
+PY
+  socks_outbound_udp_client_status=$?
+  set -e
+  [[ "${socks_outbound_udp_client_status}" == 0 ]]
+  grep -Fqx "${socks_outbound_udp_marker}" "${socks_outbound_udp_response_path}"
+  grep -Fqx 'AUTHENTICATED' "${socks_outbound_udp_upstream_request_log}"
+  grep -Fqx 'UDP_ASSOCIATE' "${socks_outbound_udp_upstream_request_log}"
+  grep -Fqx "DESTINATION=127.0.0.1:${direct_udp_marker_port}" \
+    "${socks_outbound_udp_upstream_request_log}"
+  grep -Fqx "PAYLOAD=${socks_outbound_udp_marker}" \
+    "${socks_outbound_udp_upstream_request_log}"
+  verification_mark_step socks-outbound-udp-complete
+  for _ in {1..20}; do
+    verification_capture_command "${socks_outbound_udp_journal}" \
+      journalctl -u sing-box --no-pager -n 300
+    if grep -Fq 'outbound/socks[socks-outbound-udp-verification]' \
+      "$(verification_artifact_path "${socks_outbound_udp_journal}")"; then
+      break
+    fi
+    sleep 0.1
+  done
+  grep -Fq 'outbound/socks[socks-outbound-udp-verification]' \
+    "$(verification_artifact_path "${socks_outbound_udp_journal}")"
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-udp.result.env" \
+    'COMPONENT=socks-outbound-udp' 'RESULT=success' \
+    'DATA_PLANE=socks5_native_udp_loopback' \
+    'AUTHENTICATION=upstream_username_password'
+
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
+    --expected-revision 32 --id socks-outbound-udp-verification \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-udp-delete.json"
+  socks_outbound_udp_delete_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-udp-delete.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-udp-delete.json"
+  [[ "${socks_outbound_udp_delete_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="delete" and .revision==33 and
+    .id=="socks-outbound-udp-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-udp-delete.json" >/dev/null
+  verification_mark_step socks-outbound-udp-component-deleted
+  jq -e '
+    ([.outbounds[] | select(.tag == "socks-outbound-udp-verification")] |
+      length) == 0 and
+    ([.route.rules[] | select(.outbound ==
+      "socks-outbound-udp-verification")] | length) == 0
+  ' /root/sing-box-vps/config.json >/dev/null
+  kill "${socks_udp_upstream_pid}" 2>/dev/null || true
+  wait "${socks_udp_upstream_pid}" 2>/dev/null || true
+  socks_udp_upstream_pid=''
 }

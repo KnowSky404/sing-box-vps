@@ -144,6 +144,30 @@ disposable and deletion asserts the component and route are gone; it does not
 prove an external Shadowsocks service, public reachability, production
 operation, SubMan synchronization or completion of the full protocol goal.
 
+## SOCKS outbound native UDP verification
+
+The same privileged Docker `multi_protocol_coexistence` scenario (run
+`dev/verification-runs/20260915152726`) creates a typed
+`socks-outbound-udp-verification` component with `network:["udp"]` and an
+independent disposable username/password SOCKS5 upstream. That upstream
+implements UDP ASSOCIATE and relays only the exact marker to the existing
+direct UDP echo. The authenticated SOCKS5 ingress therefore traverses the
+managed SOCKS outbound's native UDP path, while the upstream request log proves
+authentication, UDP ASSOCIATE and the constrained destination/payload.
+
+Artifacts retain the target-core `check`, rendered config, exact
+`socks-outbound-udp-response.txt`, upstream request log, outbound journal and
+expected-revision-31 create (revision 32) / expected-revision-32 delete
+(revision 33) envelopes. The result label is
+`DATA_PLANE=socks5_native_udp_loopback` with
+`AUTHENTICATION=upstream_username_password`.
+
+This proves only a SOCKS5 outbound native UDP relay in an isolated container.
+The upstream, credentials and marker are disposable; deletion asserts the
+component and route are gone. It does not prove an external proxy, public
+reachability, production operation, SubMan synchronization or completion of
+the full protocol goal.
+
 ## Direct and block outbound verification
 
 The privileged Docker `multi_protocol_coexistence` scenario creates a typed
