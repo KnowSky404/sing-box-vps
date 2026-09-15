@@ -1072,3 +1072,19 @@ Naive listener 通过 HTTP/2 TCP marker，再经同一认证实例和 SOCKS5 UDP
 payload 与 UDP-only Naive 的 HTTP/3 TCP transport，不证明 UDP-only listener 的
 原生 UDP payload、公网、生产、外部认证、SubMan 或完整协议目标；本轮脚本版本为
 `2026091505`。
+
+### 2026-09-15：Direct outbound TCP+UDP 数据面探针
+
+在 direct outbound TCP route-option 证据上，本轮复用同一 typed
+`direct-outbound-verification` component 和回环 UDP echo，新增
+`network:["udp"]`、synthetic target port 与 `override_address`/
+`override_port` route rule。认证 SOCKS5 ingress 的真实 UDP ASSOCIATE 请求
+发送到不会提供 marker 的 synthetic port，只有 managed direct rule 改写到
+disposable echo 才能回读精确 payload；因此不能由默认 direct fallback 或静态
+配置断言替代。原有 TCP marker 与新增 UDP marker 均保存 response/client stderr、
+目标核心 check、渲染 route 和 CAS envelope，组件仍为 revision 17→18→19。
+
+本切片结果标签为 `project-real-direct-tcp+udp`，仅证明隔离特权 Docker/回环内
+的 direct route-option TCP+UDP forwarding；组件和两条 route 在场景内删除并断言
+清除，不接管宿主策略或防火墙，不代表公网、生产、SubMan 或完整协议目标完成。
+脚本版本保持本轮 `2026091505`。

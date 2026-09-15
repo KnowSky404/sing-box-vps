@@ -1790,16 +1790,24 @@ PY
   # ingress and the loopback marker, keeping the deprecated outbound override
   # fields out of the typed component config.
   local direct_outbound_target_domain='sbv-direct-outbound.invalid'
+  local direct_outbound_udp_target_port=19093
   local direct_outbound_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-outbound-record.json"
   local direct_outbound_create_status=0
   local direct_outbound_delete_status=0
   (umask 077; jq -n --arg domain "${direct_outbound_target_domain}" \
-    --argjson marker_port "${direct_marker_port}" '
-    {id:"direct-outbound-verification",role:"outbound",type:"direct",
+    --argjson marker_port "${direct_marker_port}" \
+    --argjson udp_marker_port "${direct_udp_marker_port}" \
+    --argjson target_port "${direct_outbound_udp_target_port}" '
+     {id:"direct-outbound-verification",role:"outbound",type:"direct",
      tag:"direct-outbound-verification",enabled:true,
-     route_rules:[{inbound:["socks-in"],domain:[$domain],action:"route",
-       outbound:"direct-outbound-verification",override_address:"127.0.0.1",
-       override_port:$marker_port}],config:{}}
+     route_rules:[
+       {inbound:["socks-in"],domain:[$domain],action:"route",
+        outbound:"direct-outbound-verification",override_address:"127.0.0.1",
+        override_port:$marker_port},
+       {inbound:["socks-in"],network:["udp"],port:$target_port,action:"route",
+        outbound:"direct-outbound-verification",override_address:"127.0.0.1",
+        override_port:$udp_marker_port}
+     ],config:{}}
   ' > "${direct_outbound_record}")
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
@@ -1823,13 +1831,19 @@ PY
     "${VERIFY_CURRENT_SCENARIO_DIR}/direct-outbound-config.json")
   cp /root/sing-box-vps/config.json "${config_path}"
   jq -e --arg domain "${direct_outbound_target_domain}" \
-    --argjson marker_port "${direct_marker_port}" '
+    --argjson marker_port "${direct_marker_port}" \
+    --argjson udp_marker_port "${direct_udp_marker_port}" \
+    --argjson target_port "${direct_outbound_udp_target_port}" '
     ([.outbounds[] | select(.type == "direct" and
       .tag == "direct-outbound-verification")] | length == 1) and
     ([.route.rules[] | select(.inbound == ["socks-in"] and
       .domain == [$domain] and .action == "route" and
       .outbound == "direct-outbound-verification" and
-      .override_address == "127.0.0.1" and .override_port == $marker_port)] | length == 1)
+      .override_address == "127.0.0.1" and .override_port == $marker_port)] | length == 1) and
+    ([.route.rules[] | select(.inbound == ["socks-in"] and
+      .network == ["udp"] and .port == $target_port and .action == "route" and
+      .outbound == "direct-outbound-verification" and
+      .override_address == "127.0.0.1" and .override_port == $udp_marker_port)] | length == 1)
   ' "${config_path}" >/dev/null
   verification_mark_step direct-outbound-config-asserted
   local direct_outbound_response="${VERIFY_CURRENT_SCENARIO_DIR}/direct-outbound-response.txt"
@@ -1850,6 +1864,108 @@ PY
     "${VERIFY_CURRENT_SCENARIO_DIR}/direct-outbound.result.env" \
     'COMPONENT=direct-outbound' 'RESULT=success' \
     'DATA_PLANE=direct_route_override_loopback'
+
+  # The same direct outbound must also forward an explicitly routed UDP
+  # request.  The synthetic target port differs from the echo port so a
+  # default direct fallback cannot produce the marker; only the component's
+  # route-option override reaches the existing UDP echo fixture.
+  local direct_outbound_udp_response="${VERIFY_CURRENT_SCENARIO_DIR}/direct-outbound-udp-response.txt"
+  local direct_outbound_udp_response_path
+  local direct_outbound_udp_client_stderr="${VERIFY_CURRENT_SCENARIO_DIR}/direct-outbound-udp-client.stderr.txt"
+  local direct_outbound_udp_marker="sing-box-vps-direct-outbound-udp-loopback-ok-$(date +%s)-$$"
+  direct_outbound_udp_response_path=$(verification_artifact_path \
+    "${direct_outbound_udp_response}")
+  rm -f -- "${direct_outbound_udp_response_path}" \
+    "$(verification_artifact_path "${direct_outbound_udp_client_stderr}")"
+  set +e
+  python3 - "${direct_outbound_udp_response_path}" \
+    "${direct_outbound_udp_marker}" "${direct_outbound_udp_target_port}" \
+    "${direct_udp_marker_port}" > /dev/null \
+    2> "$(verification_artifact_path "${direct_outbound_udp_client_stderr}")" <<'PY'
+import pathlib
+import socket
+import struct
+import sys
+
+response_path, marker_text, target_port_text, echo_port_text = sys.argv[1:]
+marker = marker_text.encode("ascii")
+target_port = int(target_port_text)
+echo_port = int(echo_port_text)
+if target_port == echo_port:
+    raise RuntimeError("synthetic UDP target port must differ from echo port")
+
+def recv_exact(conn, size):
+    chunks = []
+    received = 0
+    while received < size:
+        chunk = conn.recv(size - received)
+        if not chunk:
+            raise RuntimeError("SOCKS control connection closed")
+        chunks.append(chunk)
+        received += len(chunk)
+    return b"".join(chunks)
+
+def read_address(conn, address_type):
+    if address_type == 1:
+        return socket.inet_ntoa(recv_exact(conn, 4))
+    if address_type == 3:
+        size = recv_exact(conn, 1)[0]
+        return recv_exact(conn, size).decode("ascii")
+    if address_type == 4:
+        return socket.inet_ntop(socket.AF_INET6, recv_exact(conn, 16))
+    raise RuntimeError("unsupported SOCKS address type")
+
+username = b"socks-user"
+password = b"socks-pass"
+with socket.create_connection(("127.0.0.1", 1081), timeout=5) as control:
+    control.settimeout(5)
+    control.sendall(b"\x05\x01\x02")
+    if recv_exact(control, 2) != b"\x05\x02":
+        raise RuntimeError("SOCKS username/password method was not selected")
+    control.sendall(b"\x01" + bytes([len(username)]) + username +
+                   bytes([len(password)]) + password)
+    if recv_exact(control, 2) != b"\x01\x00":
+        raise RuntimeError("SOCKS authentication failed")
+    control.sendall(b"\x05\x03\x00\x01\x00\x00\x00\x00\x00\x00")
+    reply = recv_exact(control, 4)
+    if reply[:2] != b"\x05\x00":
+        raise RuntimeError("SOCKS UDP ASSOCIATE failed")
+    relay_host = read_address(control, reply[3])
+    relay_port = struct.unpack("!H", recv_exact(control, 2))[0]
+    if relay_host in ("0.0.0.0", "::"):
+        relay_host = "127.0.0.1"
+    request = (b"\x00\x00\x00\x01" + socket.inet_aton("127.0.0.1") +
+               struct.pack("!H", target_port) + marker)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+        udp.settimeout(10)
+        udp.sendto(request, (relay_host, relay_port))
+        response, _source = udp.recvfrom(65535)
+    if len(response) < 10 or response[:3] != b"\x00\x00\x00":
+        raise RuntimeError("invalid SOCKS UDP response header")
+    offset = 4
+    if response[3] == 1:
+        offset += 4
+    elif response[3] == 3:
+        offset += 1 + response[4]
+    elif response[3] == 4:
+        offset += 16
+    else:
+        raise RuntimeError("invalid SOCKS UDP response address type")
+    offset += 2
+    payload = response[offset:]
+    if payload != marker:
+        raise RuntimeError("UDP marker mismatch")
+pathlib.Path(response_path).write_bytes(payload)
+PY
+  local direct_outbound_udp_client_status=$?
+  set -e
+  [[ "${direct_outbound_udp_client_status}" == 0 ]]
+  grep -Fqx "${direct_outbound_udp_marker}" "${direct_outbound_udp_response_path}"
+  verification_mark_step direct-outbound-udp-complete
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/direct-outbound-udp.result.env" \
+    'COMPONENT=direct-outbound' 'RESULT=success' \
+    'DATA_PLANE=direct_udp_route_override_loopback'
 
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \

@@ -171,23 +171,26 @@ the full protocol goal.
 ## Direct and block outbound verification
 
 The privileged Docker `multi_protocol_coexistence` scenario creates a typed
-custom `direct-outbound-verification` component with an empty config and a
-`route` rule owned by the existing authenticated SOCKS5 inbound. The rule uses
-sing-box 1.14 route options `override_address`/`override_port` to send the
-synthetic request to the disposable direct loopback marker. It then creates a
-typed `block-outbound-verification` component with the same empty config and
-asserts that its routed request fails instead of returning the marker.
+custom `direct-outbound-verification` component with an empty config and
+TCP/UDP `route` rules owned by the existing authenticated SOCKS5 inbound. The
+rules use sing-box 1.14 route options `override_address`/`override_port` to
+send a synthetic TCP domain and a synthetic UDP target port to disposable
+direct loopback markers; the UDP target port differs from the echo port so a
+default direct fallback cannot return the marker. It then creates a typed
+`block-outbound-verification` component with the same empty config and asserts
+that its routed request fails instead of returning the marker.
 Artifacts retain target-core `check`, rendered outbounds/routes, exact direct
-response, expected block rejection, and CAS create/delete envelopes (direct
-revision 17→18→19; block revision 19→20→21). Result labels are
-`DATA_PLANE=direct_route_override_loopback` and
+TCP/UDP responses, expected block rejection, and CAS create/delete envelopes
+(direct revision 17→18→19; block revision 19→20→21). Result labels are
+`DATA_PLANE=direct_route_override_loopback`,
+`DATA_PLANE=direct_udp_route_override_loopback` and
 `DATA_PLANE=block_reject_loopback`.
 
-This proves only custom direct route-option forwarding and block rejection in
-an isolated container. The direct and block components are deleted before the
-scenario exits; no host policy or firewall ownership is claimed. It does not
-prove public reachability, production operation, UDP, SubMan synchronization
-or completion of the full protocol goal.
+This proves only custom direct route-option TCP+UDP forwarding and block
+rejection in an isolated container. The direct and block components are
+deleted before the scenario exits; no host policy or firewall ownership is
+claimed. It does not prove public reachability, production operation, SubMan
+synchronization or completion of the full protocol goal.
 
 ## VLESS outbound verification
 
