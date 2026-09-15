@@ -38,6 +38,8 @@ VLESS outbound 现有固定的 UUID、flow、TCP/UDP、TLS/transport 与共享�
 
 Tor outbound 现有固定的外部 executable、torrc 与共享拨号字段边界；验证运行 `dev/verification-runs/20260915090437` 在特权 Docker 中使用镜像内 `/usr/bin/tor`，创建 `tor-outbound-verification` typed component，经既有认证 SOCKS5 route 访问 `check.torproject.org`，响应确认真实 Tor circuit，再完成 revision 24→25 CAS 删除。结果为 `DATA_PLANE=tor_external_tcp`、`TARGET=check.torproject.org`；证据仅证明本次隔离容器经外部 Tor 网络的 TCP 路径，不代表 Tor 公网稳定性、生产配置、匿名性保证、SubMan 或完整协议目标完成。
 
+ShadowTLS outbound 现有固定的 v3/password/TLS typed component 边界；验证运行 `dev/verification-runs/20260915104124` 在同一特权 Docker 中启动一次性 ShadowTLS v3 server 与证书 cover，通过 managed HTTP detour 完成真实 ShadowTLS TCP 握手并回读 loopback marker，保存 server stderr、主服务 journal 与核心 `check`，再完成 revision 25→29 的双组件 CAS 清理。结果为 `DATA_PLANE=shadowtls_tcp_composite`、`UPSTREAM=shadowtls_v3_loopback`；证据仅证明 HTTP-over-ShadowTLS 的隔离容器组合路径，不代表独立 ShadowTLS transport 可直接承载任意应用、公网、生产、UDP、SubMan 或完整协议目标完成。
+
 Direct inbound 的 typed component 现在额外校验 `network`、`override_address` 和 `override_port` 的类型、控制字符与端口边界。共存场景在同一组件 CAS/服务事务中创建回环 `direct-inbound-verification` 与 UDP 对应实例，固定 1.14.0 `check` 后由真实 TCP/UDP 请求经 direct inbound 转发到一次性 loopback marker/echo；Docker run `dev/verification-runs/20260912073323` 的 `direct-inbound.result.env`、`direct-inbound-udp.result.env`、渲染配置、监听快照和精确 marker 均成功。该证据只证明 direct 的 TCP/UDP override loopback 路径，不代表透明路由、主机防火墙、公网部署或全协议目标完成。
 
 组件 `route_rules` 现在也使用 sing-box 1.14 default/logical matcher 与 route-action typed allowlist；逻辑子规则只允许 match 字段，递归和列表大小有界，未知字段/动作、对象 matcher、重复列表成员和 action 交叉字段在 CAS/接管前拒绝。合法规则仍由统一 renderer 原样组合进顶层 route；这关闭了任意 route JSON 透传缺口，但不代表主机策略路由、nftables、透明数据面或全协议目标已完成。

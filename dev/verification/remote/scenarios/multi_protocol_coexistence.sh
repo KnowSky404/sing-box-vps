@@ -64,10 +64,12 @@ verification_scenario_multi_protocol_coexistence() {
   local socks_upstream_pid=''
   local vless_outbound_server_pid=''
   local vless_outbound_server_dir=''
+  local shadowtls_outbound_server_pid=''
+  local shadowtls_outbound_server_dir=''
   local anytls_udp_journal_artifact=''
 
   verification_prepare_remote_local_tree
-  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_marker_pid:-}" ]]; then kill "${direct_marker_pid}" 2>/dev/null || true; wait "${direct_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_udp_marker_pid:-}" ]]; then kill "${direct_udp_marker_pid}" 2>/dev/null || true; wait "${direct_udp_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${sshd_pid:-}" ]]; then kill "${sshd_pid}" 2>/dev/null || true; wait "${sshd_pid}" 2>/dev/null || true; fi; if [[ -n "${ssh_marker_pid:-}" ]]; then kill "${ssh_marker_pid}" 2>/dev/null || true; wait "${ssh_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_upstream_pid:-}" ]]; then kill "${socks_upstream_pid}" 2>/dev/null || true; wait "${socks_upstream_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_outbound_marker_pid:-}" ]]; then kill "${socks_outbound_marker_pid}" 2>/dev/null || true; wait "${socks_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_server_pid:-}" ]]; then kill "${vless_outbound_server_pid}" 2>/dev/null || true; wait "${vless_outbound_server_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_server_dir:-}" ]]; then rm -rf -- "${vless_outbound_server_dir}"; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
+  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_marker_pid:-}" ]]; then kill "${direct_marker_pid}" 2>/dev/null || true; wait "${direct_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_udp_marker_pid:-}" ]]; then kill "${direct_udp_marker_pid}" 2>/dev/null || true; wait "${direct_udp_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${sshd_pid:-}" ]]; then kill "${sshd_pid}" 2>/dev/null || true; wait "${sshd_pid}" 2>/dev/null || true; fi; if [[ -n "${ssh_marker_pid:-}" ]]; then kill "${ssh_marker_pid}" 2>/dev/null || true; wait "${ssh_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_upstream_pid:-}" ]]; then kill "${socks_upstream_pid}" 2>/dev/null || true; wait "${socks_upstream_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_outbound_marker_pid:-}" ]]; then kill "${socks_outbound_marker_pid}" 2>/dev/null || true; wait "${socks_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_server_pid:-}" ]]; then kill "${vless_outbound_server_pid}" 2>/dev/null || true; wait "${vless_outbound_server_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_server_dir:-}" ]]; then rm -rf -- "${vless_outbound_server_dir}"; fi; if [[ -n "${shadowtls_outbound_server_pid:-}" ]]; then kill "${shadowtls_outbound_server_pid}" 2>/dev/null || true; wait "${shadowtls_outbound_server_pid}" 2>/dev/null || true; fi; if [[ -n "${shadowtls_outbound_server_dir:-}" ]]; then rm -rf -- "${shadowtls_outbound_server_dir}"; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
   # Keep the certificate paths valid for the following runtime_smoke scenario.
   # The Docker container is disposable, so this test-only directory cannot
   # outlive the verification run or affect a host installation.
@@ -2086,4 +2088,224 @@ PY
     ([.outbounds[] | select(.tag == "tor-outbound-verification")] | length) == 0 and
     ([.route.rules[] | select(.outbound == "tor-outbound-verification")] | length) == 0
   ' /root/sing-box-vps/config.json >/dev/null
+
+  # ShadowTLS outbound is a transport, so prove its real v3 handshake through
+  # the typed HTTP detour that carries the application request.  The
+  # disposable server uses the already-running certificate cover and sends
+  # the authenticated stream into a Mixed inbound; only that inner listener's
+  # route reaches the existing loopback marker.  This keeps the evidence
+  # specific to ShadowTLS and does not mistake a standalone transport for a
+  # complete proxy protocol.
+  local shadowtls_outbound_server_config
+  local shadowtls_outbound_server_stdout
+  local shadowtls_outbound_server_stderr
+  local shadowtls_outbound_server_check
+  local shadowtls_outbound_target_domain='sbv-shadowtls-outbound.invalid'
+  local shadowtls_outbound_server_port=1095
+  local shadowtls_outbound_inner_port=1096
+  local shadowtls_outbound_password='shadowtls-outbound-password'
+  local shadowtls_outbound_server_ss_lntp
+  local shadowtls_outbound_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-record.json"
+  local shadowtls_outbound_http_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-http-record.json"
+  local shadowtls_outbound_create_status=0
+  local shadowtls_outbound_http_create_status=0
+  local shadowtls_outbound_http_delete_status=0
+  local shadowtls_outbound_delete_status=0
+  local shadowtls_outbound_response="${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-outbound-response.txt"
+  local shadowtls_outbound_curl_stderr="${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-outbound-curl.stderr.txt"
+  local shadowtls_outbound_journal="${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-outbound-journal.txt"
+  local shadowtls_outbound_config
+  local shadowtls_outbound_curl_status=1
+  shadowtls_outbound_server_dir=$(mktemp -d /tmp/sing-box-vps-shadowtls-upstream.XXXXXX)
+  shadowtls_outbound_server_config="${shadowtls_outbound_server_dir}/config.json"
+  shadowtls_outbound_server_stdout=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-outbound-server.stdout.txt")
+  shadowtls_outbound_server_stderr=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-outbound-server.stderr.txt")
+  shadowtls_outbound_server_check="${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-outbound-server-check.txt"
+  shadowtls_outbound_server_ss_lntp="${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-outbound-server.ss-lntp.txt"
+  (umask 077; jq -n --arg domain "${shadowtls_outbound_target_domain}" \
+    --argjson marker_port "${direct_marker_port}" \
+    --argjson listen_port "${shadowtls_outbound_server_port}" \
+    --argjson inner_port "${shadowtls_outbound_inner_port}" \
+    --arg password "${shadowtls_outbound_password}" '
+    {log:{level:"info"},
+     inbounds:[
+       {type:"shadowtls",tag:"shadowtls-outbound-server",listen:"127.0.0.1",
+        listen_port:$listen_port,version:3,
+        users:[{name:"shadowtls-outbound-user",password:$password}],
+        handshake:{server:"127.0.0.1",server_port:1090},
+        handshake_for_server_name:{},strict_mode:false,wildcard_sni:"off",
+        detour:"shadowtls-outbound-inner"},
+       {type:"mixed",tag:"shadowtls-outbound-inner",listen:"127.0.0.1",
+        listen_port:$inner_port}],
+     outbounds:[{type:"direct",tag:"shadowtls-outbound-direct"}],
+     route:{rules:[{inbound:["shadowtls-outbound-inner"],domain:[$domain],
+       action:"route",outbound:"shadowtls-outbound-direct",
+       override_address:"127.0.0.1",override_port:$marker_port}]}}
+  ' > "${shadowtls_outbound_server_config}")
+  verification_capture_command "${shadowtls_outbound_server_check}" \
+    sing-box check -c "${shadowtls_outbound_server_config}"
+  sing-box run -c "${shadowtls_outbound_server_config}" \
+    > "${shadowtls_outbound_server_stdout}" \
+    2> "${shadowtls_outbound_server_stderr}" &
+  shadowtls_outbound_server_pid=$!
+  for _ in {1..50}; do
+    if verification_port_is_listening "${shadowtls_outbound_server_port}"; then
+      break
+    fi
+    kill -0 "${shadowtls_outbound_server_pid}" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  verification_assert_port_listening "${shadowtls_outbound_server_port}" \
+    "${shadowtls_outbound_server_ss_lntp}"
+
+  (umask 077; jq -n --arg password "${shadowtls_outbound_password}" '
+    {id:"shadowtls-outbound-verification",role:"outbound",type:"shadowtls",
+     tag:"shadowtls-outbound-verification",enabled:true,route_rules:[],
+     config:{server:"127.0.0.1",server_port:1095,version:3,password:$password,
+       tls:{enabled:true,server_name:"sing-box-vps-verification.invalid",insecure:true}}}
+  ' > "${shadowtls_outbound_record}")
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
+    --expected-revision 25 --file "${shadowtls_outbound_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-create.json"
+  shadowtls_outbound_create_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-create.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-outbound-create.json"
+  [[ "${shadowtls_outbound_create_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="create" and .revision==26 and
+    .type=="shadowtls" and .id=="shadowtls-outbound-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-create.json" >/dev/null
+  verification_mark_step shadowtls-outbound-component-created
+
+  (umask 077; jq -n --arg domain "${shadowtls_outbound_target_domain}" \
+    --argjson inner_port "${shadowtls_outbound_inner_port}" '
+    {id:"shadowtls-outbound-http",role:"outbound",type:"http",
+     tag:"shadowtls-outbound-http",enabled:true,
+     route_rules:[{inbound:["socks-in"],domain:[$domain],action:"route",
+       outbound:"shadowtls-outbound-http"}],
+     config:{server:"127.0.0.1",server_port:$inner_port,
+       detour:"shadowtls-outbound-verification"}}
+  ' > "${shadowtls_outbound_http_record}")
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
+    --expected-revision 26 --file "${shadowtls_outbound_http_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-http-create.json"
+  shadowtls_outbound_http_create_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-http-create.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-outbound-http-create.json"
+  [[ "${shadowtls_outbound_http_create_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="create" and .revision==27 and
+    .type=="http" and .id=="shadowtls-outbound-http"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-http-create.json" >/dev/null
+  verification_mark_step shadowtls-outbound-http-component-created
+  verification_wait_for_service_active sing-box
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-outbound-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  shadowtls_outbound_config=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-outbound-config.json")
+  cp /root/sing-box-vps/config.json "${shadowtls_outbound_config}"
+  jq -e --arg domain "${shadowtls_outbound_target_domain}" \
+    --argjson inner_port "${shadowtls_outbound_inner_port}" '
+    ([.outbounds[] | select(.type == "shadowtls" and
+      .tag == "shadowtls-outbound-verification" and .server == "127.0.0.1" and
+      .server_port == 1095 and .version == 3 and
+      .password == "shadowtls-outbound-password" and
+      .tls.server_name == "sing-box-vps-verification.invalid" and
+      .tls.insecure == true)] | length == 1) and
+    ([.outbounds[] | select(.type == "http" and
+      .tag == "shadowtls-outbound-http" and .server == "127.0.0.1" and
+      .server_port == $inner_port and
+      .detour == "shadowtls-outbound-verification")] | length == 1) and
+    ([.route.rules[] | select(.inbound == ["socks-in"] and
+      .domain == [$domain] and .action == "route" and
+      .outbound == "shadowtls-outbound-http")] | length == 1)
+  ' "${shadowtls_outbound_config}" >/dev/null
+  verification_mark_step shadowtls-outbound-config-asserted
+  set +e
+  curl --fail --silent --show-error --max-time 15 --noproxy '' \
+    --proxy 'socks5h://socks-user:socks-pass@127.0.0.1:1081' \
+    "http://${shadowtls_outbound_target_domain}/" \
+    > "$(verification_artifact_path "${shadowtls_outbound_response}")" \
+    2> "$(verification_artifact_path "${shadowtls_outbound_curl_stderr}")"
+  shadowtls_outbound_curl_status=$?
+  set -e
+  [[ "${shadowtls_outbound_curl_status}" == 0 ]]
+  grep -Fqx "${direct_marker}" \
+    "$(verification_artifact_path "${shadowtls_outbound_response}")"
+  for _ in {1..20}; do
+    if grep -Fq 'inbound/shadowtls[shadowtls-outbound-server]' \
+      "${shadowtls_outbound_server_stderr}" && \
+      grep -Fq 'inbound/mixed[shadowtls-outbound-inner]' \
+      "${shadowtls_outbound_server_stderr}"; then
+      break
+    fi
+    sleep 0.1
+  done
+  grep -Fq 'inbound/shadowtls[shadowtls-outbound-server]' \
+    "${shadowtls_outbound_server_stderr}"
+  grep -Fq 'inbound/mixed[shadowtls-outbound-inner]' \
+    "${shadowtls_outbound_server_stderr}"
+  verification_capture_command "${shadowtls_outbound_journal}" \
+    journalctl -u sing-box --no-pager -n 300
+  # The HTTP detour owns the application dial log; the ShadowTLS transport
+  # itself is evidenced by the server-side handshake logs above.
+  grep -Fq 'outbound/http[shadowtls-outbound-http]' \
+    "$(verification_artifact_path "${shadowtls_outbound_journal}")"
+  verification_mark_step shadowtls-outbound-curl-complete
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-outbound.result.env" \
+    'COMPONENT=shadowtls-outbound' 'RESULT=success' \
+    'DATA_PLANE=shadowtls_tcp_composite' 'UPSTREAM=shadowtls_v3_loopback'
+
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
+    --expected-revision 27 --id shadowtls-outbound-http \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-http-delete.json"
+  shadowtls_outbound_http_delete_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-http-delete.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-outbound-http-delete.json"
+  [[ "${shadowtls_outbound_http_delete_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="delete" and .revision==28 and
+    .id=="shadowtls-outbound-http"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-http-delete.json" >/dev/null
+  verification_mark_step shadowtls-outbound-http-component-deleted
+  jq -e --arg domain "${shadowtls_outbound_target_domain}" '
+    ([.outbounds[] | select(.tag == "shadowtls-outbound-http")] | length == 0) and
+    ([.route.rules[] | select(.outbound == "shadowtls-outbound-http" or
+      .domain == [$domain])] | length == 0) and
+    ([.outbounds[] | select(.tag == "shadowtls-outbound-verification")] | length == 1)
+  ' /root/sing-box-vps/config.json >/dev/null
+
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
+    --expected-revision 28 --id shadowtls-outbound-verification \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-delete.json"
+  shadowtls_outbound_delete_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-delete.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-outbound-delete.json"
+  [[ "${shadowtls_outbound_delete_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="delete" and .revision==29 and
+    .id=="shadowtls-outbound-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-delete.json" >/dev/null
+  verification_mark_step shadowtls-outbound-component-deleted
+  jq -e '
+    ([.outbounds[] | select(.tag == "shadowtls-outbound-verification")] | length == 0) and
+    ([.route.rules[] | select(.outbound == "shadowtls-outbound-verification")] | length == 0)
+  ' /root/sing-box-vps/config.json >/dev/null
+  kill "${shadowtls_outbound_server_pid}" 2>/dev/null || true
+  wait "${shadowtls_outbound_server_pid}" 2>/dev/null || true
+  shadowtls_outbound_server_pid=''
+  rm -rf -- "${shadowtls_outbound_server_dir}"
+  shadowtls_outbound_server_dir=''
 }

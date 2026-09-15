@@ -146,6 +146,7 @@ resolve_local_tests() {
       tests/verification_direct_block_outbound_contract.sh \
       tests/verification_vless_outbound_contract.sh \
       tests/verification_tor_outbound_contract.sh \
+      tests/verification_shadowtls_outbound_contract.sh \
       tests/managed_component_graph.sh \
       tests/managed_component_graph_core_startup.sh \
       tests/live_inbound_inventory_guards.sh \

@@ -995,3 +995,18 @@ Tor 进程、Tor SOCKS 控制链路和一次真实 circuit，而不是只执行�
 25；结果标签为 `DATA_PLANE=tor_external_tcp`、`TARGET=check.torproject.org`。
 Docker 运行目录为 `dev/verification-runs/20260915090437`；该证据来自一次性容器和
 外部 Tor 网络，不扩张为公网稳定性、匿名性保证、生产、SubMan 或完整协议目标。
+
+### 2026-09-15：ShadowTLS outbound composite TCP 数据面探针
+
+在 Tor outbound 之后，`multi_protocol_coexistence` 启动一次性 ShadowTLS v3
+server，复用已有证书 cover，并把认证流量 detour 到独立 Mixed listener。场景
+先以 revision 25→26 创建 `shadowtls-outbound-verification`，再以 26→27 创建
+带 `detour` 的 typed HTTP outbound；已有 SOCKS5 inbound 访问 synthetic domain，
+经 HTTP-over-ShadowTLS 真实 v3 握手回读 loopback marker，同时保存 server stderr、
+核心 journal 和目标核心 `check`。
+
+探针随后以 27→28 删除 HTTP detour、以 28→29 删除 ShadowTLS transport；结果标签
+为 `DATA_PLANE=shadowtls_tcp_composite`、`UPSTREAM=shadowtls_v3_loopback`。Docker
+运行目录为本轮成功运行 `dev/verification-runs/20260915104124`；证据只覆盖隔离
+容器的组合 TCP 路径，不扩张为独立 transport 任意承载、公网、UDP、生产、SubMan
+或完整协议目标。

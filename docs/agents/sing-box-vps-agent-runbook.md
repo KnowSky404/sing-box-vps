@@ -179,6 +179,27 @@ This is an external-network TCP proof from a disposable container. It does not
 prove Tor network stability, anonymity guarantees, production configuration,
 SubMan synchronization or completion of the full protocol goal.
 
+## ShadowTLS outbound verification
+
+ShadowTLS outbound is a transport rather than a standalone application proxy.
+The privileged Docker `multi_protocol_coexistence` scenario therefore starts a
+disposable ShadowTLS v3 server with a certificate cover and a Mixed inner
+listener, creates `shadowtls-outbound-verification`, and creates a typed HTTP
+outbound whose detour is the ShadowTLS component. Through the existing
+authenticated SOCKS5 inbound it requests a synthetic loopback target and
+requires the exact direct marker; the server stderr and `sing-box` journal
+capture both sides of the v3 handshake and HTTP detour.
+
+The evidence is captured in `dev/verification-runs/20260915104124`; inspect
+`shadowtls-outbound.result.env`, `shadowtls-outbound-response.txt`,
+`shadowtls-outbound-server.stderr.txt`, `shadowtls-outbound-journal.txt` and
+`shadowtls-outbound-check.txt` under the scenario artifacts. The ShadowTLS
+component uses expected revision 25 to create revision 26; the HTTP detour uses
+26 to create 27, then deletes at 27→28 and 28→29. This proves the isolated
+HTTP-over-ShadowTLS TCP combination only. It does not prove that ShadowTLS
+alone carries arbitrary applications, external endpoints, UDP, production
+configuration, SubMan synchronization or the full protocol goal.
+
 ## Direct inbound override data plane
 
 Direct inbound component records may include the upstream `network` string (`tcp` or `udp`) and destination override fields `override_address`/`override_port`. The component validator rejects control characters, empty override addresses and ports outside 1-65535 while preserving the normal listen fields. A loopback direct record does not require `--allow-public`; non-loopback listeners still do.
