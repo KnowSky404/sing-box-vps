@@ -964,3 +964,20 @@ revision 19 创建并提交 20、再以 20 删除并提交 21，结果标签分�
 两项组件和 route 均在场景内删除并断言清除，未修改防火墙账本；证据只覆盖隔离容器
 回环 TCP 行为，不代表宿主策略、公网、生产、UDP、SubMan 或完整协议目标，脚本版本
 保持本轮 `2026091502`。
+
+### 2026-09-15：VLESS outbound TCP 数据面探针
+
+在 direct/block 之后，`multi_protocol_coexistence` 启动一次性本地明文 VLESS
+upstream；upstream 的 route 使用 destination override 将 synthetic domain 转到
+既有 HTTP marker。场景创建 `vless-outbound-verification` typed component，固定
+`flow:""` 与 `network:["tcp"]`，再通过认证 SOCKS5 inbound 真实穿过 VLESS
+client/server handshake，保存 upstream/managed config 的目标核心 `check`、
+渲染配置、精确 marker 响应和 CAS envelope。
+
+组件使用 expected revision 21 创建并提交 22，再以 expected revision 22 删除并
+提交 23；结果标签为 `DATA_PLANE=vless_tcp_loopback`、
+`UPSTREAM=vless_loopback_server`。upstream 进程和临时目录在成功及异常路径均由
+场景 trap 清理，删除后断言组件与 route 不再存在。该切片只覆盖隔离容器/回环的
+明文 TCP，不扩张为外部 VLESS、TLS/REALITY、UDP、公网、生产、SubMan 或完整协议
+目标。Docker 运行目录为 `dev/verification-runs/20260915081600`，脚本版本提升为
+本轮 `2026091503`。

@@ -62,10 +62,12 @@ verification_scenario_multi_protocol_coexistence() {
   local sshd_pid=''
   local socks_outbound_marker_pid=''
   local socks_upstream_pid=''
+  local vless_outbound_server_pid=''
+  local vless_outbound_server_dir=''
   local anytls_udp_journal_artifact=''
 
   verification_prepare_remote_local_tree
-  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_marker_pid:-}" ]]; then kill "${direct_marker_pid}" 2>/dev/null || true; wait "${direct_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_udp_marker_pid:-}" ]]; then kill "${direct_udp_marker_pid}" 2>/dev/null || true; wait "${direct_udp_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${sshd_pid:-}" ]]; then kill "${sshd_pid}" 2>/dev/null || true; wait "${sshd_pid}" 2>/dev/null || true; fi; if [[ -n "${ssh_marker_pid:-}" ]]; then kill "${ssh_marker_pid}" 2>/dev/null || true; wait "${ssh_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_upstream_pid:-}" ]]; then kill "${socks_upstream_pid}" 2>/dev/null || true; wait "${socks_upstream_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_outbound_marker_pid:-}" ]]; then kill "${socks_outbound_marker_pid}" 2>/dev/null || true; wait "${socks_outbound_marker_pid}" 2>/dev/null || true; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
+  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_marker_pid:-}" ]]; then kill "${direct_marker_pid}" 2>/dev/null || true; wait "${direct_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_udp_marker_pid:-}" ]]; then kill "${direct_udp_marker_pid}" 2>/dev/null || true; wait "${direct_udp_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${sshd_pid:-}" ]]; then kill "${sshd_pid}" 2>/dev/null || true; wait "${sshd_pid}" 2>/dev/null || true; fi; if [[ -n "${ssh_marker_pid:-}" ]]; then kill "${ssh_marker_pid}" 2>/dev/null || true; wait "${ssh_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_upstream_pid:-}" ]]; then kill "${socks_upstream_pid}" 2>/dev/null || true; wait "${socks_upstream_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_outbound_marker_pid:-}" ]]; then kill "${socks_outbound_marker_pid}" 2>/dev/null || true; wait "${socks_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_server_pid:-}" ]]; then kill "${vless_outbound_server_pid}" 2>/dev/null || true; wait "${vless_outbound_server_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_server_dir:-}" ]]; then rm -rf -- "${vless_outbound_server_dir}"; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
   # Keep the certificate paths valid for the following runtime_smoke scenario.
   # The Docker container is disposable, so this test-only directory cannot
   # outlive the verification run or affect a host installation.
@@ -1848,4 +1850,143 @@ PY
     ([.outbounds[] | select(.tag == "block-outbound-verification")] | length) == 0 and
     ([.route.rules[] | select(.outbound == "block-outbound-verification")] | length) == 0
   ' /root/sing-box-vps/config.json >/dev/null
+
+  # A managed VLESS outbound must complete a real VLESS handshake before its
+  # route is considered covered.  The disposable upstream is another
+  # sing-box process inside this verification container; its route sends the
+  # synthetic destination to the existing HTTP marker, keeping the evidence
+  # independent of external DNS, TLS or public services.
+  local vless_outbound_server_config
+  local vless_outbound_server_stdout
+  local vless_outbound_server_stderr
+  local vless_outbound_server_check
+  local vless_outbound_server_port=1094
+  local vless_outbound_server_uuid='33333333-3333-4333-8333-333333333333'
+  local vless_outbound_target_domain='sbv-vless-outbound.invalid'
+  local vless_outbound_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/vless-outbound-record.json"
+  local vless_outbound_create_status=0
+  local vless_outbound_delete_status=0
+  local vless_outbound_response
+  local vless_outbound_curl_stderr
+
+  vless_outbound_server_dir=$(mktemp -d /tmp/sing-box-vps-vless-upstream.XXXXXX)
+  vless_outbound_server_config="${vless_outbound_server_dir}/config.json"
+  vless_outbound_server_stdout=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound-upstream.stdout.txt")
+  vless_outbound_server_stderr=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound-upstream.stderr.txt")
+  vless_outbound_server_check="${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound-upstream-check.txt"
+  (umask 077; jq -n \
+    --arg domain "${vless_outbound_target_domain}" \
+    --arg uuid "${vless_outbound_server_uuid}" \
+    --argjson server_port "${vless_outbound_server_port}" \
+    --argjson marker_port "${direct_marker_port}" '
+    {log:{disabled:true},
+     inbounds:[{type:"vless",tag:"vless-outbound-upstream",listen:"127.0.0.1",
+       listen_port:$server_port,users:[{uuid:$uuid}]}],
+     outbounds:[{type:"direct",tag:"vless-upstream-direct"}],
+     route:{rules:[{domain:[$domain],action:"route",outbound:"vless-upstream-direct",
+       override_address:"127.0.0.1",override_port:$marker_port}]}}
+  ' > "${vless_outbound_server_config}")
+  verification_capture_command "${vless_outbound_server_check}" \
+    sing-box check -c "${vless_outbound_server_config}"
+  sing-box run -c "${vless_outbound_server_config}" \
+    > "${vless_outbound_server_stdout}" \
+    2> "${vless_outbound_server_stderr}" &
+  vless_outbound_server_pid=$!
+  for _ in {1..50}; do
+    if verification_port_is_listening "${vless_outbound_server_port}"; then
+      break
+    fi
+    kill -0 "${vless_outbound_server_pid}" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  verification_assert_port_listening "${vless_outbound_server_port}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound-upstream.ss-lntp.txt"
+  (umask 077; jq -n \
+    --arg domain "${vless_outbound_target_domain}" \
+    --arg uuid "${vless_outbound_server_uuid}" \
+    --argjson server_port "${vless_outbound_server_port}" '
+    {id:"vless-outbound-verification",role:"outbound",type:"vless",
+     tag:"vless-outbound-verification",enabled:true,
+     route_rules:[{inbound:["socks-in"],domain:[$domain],action:"route",
+       outbound:"vless-outbound-verification"}],
+     config:{server:"127.0.0.1",server_port:$server_port,uuid:$uuid,
+       flow:"",network:["tcp"]}}
+  ' > "${vless_outbound_record}")
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
+    --expected-revision 21 --file "${vless_outbound_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/vless-outbound-create.json"
+  vless_outbound_create_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/vless-outbound-create.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound-create.json"
+  [[ "${vless_outbound_create_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="create" and .revision==22 and
+    .type=="vless" and .id=="vless-outbound-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/vless-outbound-create.json" >/dev/null
+  verification_mark_step vless-outbound-component-created
+  verification_wait_for_service_active sing-box
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  config_path=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound-config.json")
+  cp /root/sing-box-vps/config.json "${config_path}"
+  jq -e --arg domain "${vless_outbound_target_domain}" \
+    --arg uuid "${vless_outbound_server_uuid}" \
+    --argjson server_port "${vless_outbound_server_port}" '
+    ([.outbounds[] | select(.type == "vless" and
+      .tag == "vless-outbound-verification" and .server == "127.0.0.1" and
+      .server_port == $server_port and .uuid == $uuid and .flow == "" and
+      .network == ["tcp"])] | length == 1) and
+    ([.route.rules[] | select(.inbound == ["socks-in"] and
+      .domain == [$domain] and .action == "route" and
+      .outbound == "vless-outbound-verification")] | length == 1)
+  ' "${config_path}" >/dev/null
+  verification_mark_step vless-outbound-config-asserted
+  vless_outbound_response="${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound-response.txt"
+  vless_outbound_curl_stderr="${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound-curl.stderr.txt"
+  set +e
+  curl --fail --silent --show-error --max-time 10 --noproxy '' \
+    --proxy 'socks5h://socks-user:socks-pass@127.0.0.1:1081' \
+    "http://${vless_outbound_target_domain}/" \
+    > "$(verification_artifact_path "${vless_outbound_response}")" \
+    2> "$(verification_artifact_path "${vless_outbound_curl_stderr}")"
+  local vless_outbound_curl_status=$?
+  set -e
+  [[ "${vless_outbound_curl_status}" == 0 ]]
+  grep -Fqx "${direct_marker}" \
+    "$(verification_artifact_path "${vless_outbound_response}")"
+  verification_mark_step vless-outbound-curl-complete
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound.result.env" \
+    'COMPONENT=vless-outbound' 'RESULT=success' \
+    'DATA_PLANE=vless_tcp_loopback' 'UPSTREAM=vless_loopback_server'
+
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
+    --expected-revision 22 --id vless-outbound-verification \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/vless-outbound-delete.json"
+  vless_outbound_delete_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/vless-outbound-delete.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound-delete.json"
+  [[ "${vless_outbound_delete_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="delete" and .revision==23 and
+    .id=="vless-outbound-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/vless-outbound-delete.json" >/dev/null
+  verification_mark_step vless-outbound-component-deleted
+  jq -e '
+    ([.outbounds[] | select(.tag == "vless-outbound-verification")] | length) == 0 and
+    ([.route.rules[] | select(.outbound == "vless-outbound-verification")] | length) == 0
+  ' /root/sing-box-vps/config.json >/dev/null
+  kill "${vless_outbound_server_pid}" 2>/dev/null || true
+  wait "${vless_outbound_server_pid}" 2>/dev/null || true
+  vless_outbound_server_pid=''
+  rm -rf -- "${vless_outbound_server_dir}"
+  vless_outbound_server_dir=''
 }

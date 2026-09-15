@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026091502`
+- 脚本版本：`2026091503`
 
 - sing-box 适配版本：`1.14.0`
 
@@ -33,6 +33,8 @@ URLTest group 现有固定的成员/探测 URL/interval/tolerance/idle_timeout a
 Shadowsocks outbound 现有固定的 1.14 字段 allowlist、SS2022 密钥校验和敏感 export 边界；验证运行 `dev/verification-runs/20260915065946` 在特权 Docker 中创建 `shadowsocks-outbound-verification`，以 16-byte SS2022 PSK、`network:["tcp"]` 和既有 SS2022 inbound/upstream 组成 typed route，经认证 SOCKS5 入口回读 direct loopback marker，并保存目标核心 `check`、渲染 outbound/route、`AUTHENTICATION=ss2022_psk`、精确响应和 revision 16→17 CAS 删除 artifact。`shadowsocks-outbound.result.env` 为 `RESULT=success`、`DATA_PLANE=shadowsocks2022_connect_loopback`；这只证明一次性隔离容器内的 SS2022 TCP 路径，不代表外部 Shadowsocks、公网、生产、UDP、SubMan 或完整协议目标完成。
 
 Direct 与 block outbound 现有固定的空配置 typed component 边界；验证运行 `dev/verification-runs/20260915073540` 在特权 Docker 中以 route `override_address/override_port` 将自定义 direct outbound 送到既有 loopback marker，并以自定义 block outbound 预期拒绝同类请求，分别完成 revision 18→19 与 20→21 CAS 删除。两项结果分别为 `DATA_PLANE=direct_route_override_loopback` 与 `DATA_PLANE=block_reject_loopback`；证据仅限隔离容器/回环，不代表宿主策略、公网、生产、UDP、SubMan 或完整协议目标完成。
+
+VLESS outbound 现有固定的 UUID、flow、TCP/UDP、TLS/transport 与共享拨号字段边界；验证运行 `dev/verification-runs/20260915081600` 在特权 Docker 中启动一次性本地 VLESS upstream，创建 `vless-outbound-verification` typed component，经既有认证 SOCKS5 route 完成真实明文 VLESS TCP 握手并回读 loopback marker，再完成 revision 22→23 CAS 删除。结果为 `DATA_PLANE=vless_tcp_loopback`、`UPSTREAM=vless_loopback_server`；证据仅限隔离容器/回环明文 TCP，不代表外部 VLESS、TLS/REALITY、UDP、公网、生产、SubMan 或完整协议目标完成。
 
 Direct inbound 的 typed component 现在额外校验 `network`、`override_address` 和 `override_port` 的类型、控制字符与端口边界。共存场景在同一组件 CAS/服务事务中创建回环 `direct-inbound-verification` 与 UDP 对应实例，固定 1.14.0 `check` 后由真实 TCP/UDP 请求经 direct inbound 转发到一次性 loopback marker/echo；Docker run `dev/verification-runs/20260912073323` 的 `direct-inbound.result.env`、`direct-inbound-udp.result.env`、渲染配置、监听快照和精确 marker 均成功。该证据只证明 direct 的 TCP/UDP override loopback 路径，不代表透明路由、主机防火墙、公网部署或全协议目标完成。
 

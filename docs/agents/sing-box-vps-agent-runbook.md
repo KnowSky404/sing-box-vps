@@ -142,6 +142,27 @@ scenario exits; no host policy or firewall ownership is claimed. It does not
 prove public reachability, production operation, UDP, SubMan synchronization
 or completion of the full protocol goal.
 
+## VLESS outbound verification
+
+The privileged Docker `multi_protocol_coexistence` scenario starts a disposable
+plaintext VLESS upstream whose own route sends the synthetic destination to the
+scenario's HTTP loopback marker. It then creates the typed
+`vless-outbound-verification` component with `flow:""` and
+`network:["tcp"]`, and accesses that destination through the existing
+authenticated SOCKS5 inbound. The client and upstream configurations both pass
+the target `sing-box 1.14.0 check`; the response must contain the exact marker
+after a real VLESS client/server handshake. Artifacts retain the upstream
+listener/check, rendered outbound/route, client response, and CAS envelopes
+(expected revision 21 creates revision 22; expected revision 22 deletes revision
+23). The result labels are `DATA_PLANE=vless_tcp_loopback` and
+`UPSTREAM=vless_loopback_server`.
+
+The captured Docker run is `dev/verification-runs/20260915081600`.
+
+This is an isolated-container, loopback, plaintext TCP proof only. It does not
+prove external VLESS, TLS/REALITY, UDP, public reachability, production
+operation, SubMan synchronization or completion of the full protocol goal.
+
 ## Direct inbound override data plane
 
 Direct inbound component records may include the upstream `network` string (`tcp` or `udp`) and destination override fields `override_address`/`override_port`. The component validator rejects control characters, empty override addresses and ports outside 1-65535 while preserving the normal listen fields. A loopback direct record does not require `--allow-public`; non-loopback listeners still do.
