@@ -58,10 +58,12 @@ verification_scenario_multi_protocol_coexistence() {
   local http_outbound_proxy_pid=''
   local direct_marker_pid=''
   local direct_udp_marker_pid=''
+  local ssh_marker_pid=''
+  local sshd_pid=''
   local anytls_udp_journal_artifact=''
 
   verification_prepare_remote_local_tree
-  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_marker_pid:-}" ]]; then kill "${direct_marker_pid}" 2>/dev/null || true; wait "${direct_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_udp_marker_pid:-}" ]]; then kill "${direct_udp_marker_pid}" 2>/dev/null || true; wait "${direct_udp_marker_pid}" 2>/dev/null || true; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
+  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_marker_pid:-}" ]]; then kill "${direct_marker_pid}" 2>/dev/null || true; wait "${direct_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_udp_marker_pid:-}" ]]; then kill "${direct_udp_marker_pid}" 2>/dev/null || true; wait "${direct_udp_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${sshd_pid:-}" ]]; then kill "${sshd_pid}" 2>/dev/null || true; wait "${sshd_pid}" 2>/dev/null || true; fi; if [[ -n "${ssh_marker_pid:-}" ]]; then kill "${ssh_marker_pid}" 2>/dev/null || true; wait "${ssh_marker_pid}" 2>/dev/null || true; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
   # Keep the certificate paths valid for the following runtime_smoke scenario.
   # The Docker container is disposable, so this test-only directory cannot
   # outlive the verification run or affect a host installation.
@@ -837,6 +839,177 @@ PY
   jq -e '
     ([.inbounds[] | select(.type == "redirect" and .tag == "redirect-inbound-verification")] | length) == 0 and
     ([.inbounds[] | select(.type == "tproxy" and .tag == "tproxy-inbound-verification")] | length) == 0
+  ' /root/sing-box-vps/config.json >/dev/null
+
+  # SSH is an outbound-only adapter.  Prove its real direct-tcpip path with a
+  # disposable OpenSSH server and loopback marker, while keeping the route
+  # owned by the typed component transaction.  The target name is localhost so
+  # the SSH server resolves it inside this same isolated container; no external
+  # host or credential is involved.
+  local ssh_marker_port_file="${VERIFY_REMOTE_LOCAL_TREE_DIR}/ssh-marker.port"
+  local ssh_marker_stdout
+  local ssh_marker_stderr
+  local ssh_marker
+  local ssh_marker_port
+  local ssh_port=2222
+  local ssh_server_user=sbv-verifier
+  local ssh_server_password=sbv-ssh-password
+  local ssh_dir="${VERIFY_REMOTE_LOCAL_TREE_DIR}/ssh"
+  local ssh_host_key="${ssh_dir}/ssh_host_ed25519_key"
+  local ssh_host_key_public
+  local sshd_config="${ssh_dir}/sshd_config"
+  local sshd_log
+  local ssh_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/ssh-outbound-record.json"
+  local ssh_response="${VERIFY_CURRENT_SCENARIO_DIR}/ssh-outbound-response.txt"
+  local ssh_curl_stderr="${VERIFY_CURRENT_SCENARIO_DIR}/ssh-outbound-curl.stderr.txt"
+  local ssh_create_status=0
+  local ssh_delete_status=0
+  ssh_marker_stdout=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/ssh-marker.stdout.txt")
+  ssh_marker_stderr=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/ssh-marker.stderr.txt")
+  sshd_log=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/sshd.log")
+  ssh_marker="sing-box-vps-ssh-outbound-loopback-ok-$(date +%s)-$$"
+  python3 - "${ssh_marker_port_file}" "${ssh_marker}" \
+    > "${ssh_marker_stdout}" 2> "${ssh_marker_stderr}" <<'PY' &
+import http.server
+import pathlib
+import socketserver
+import sys
+
+port_file, marker = sys.argv[1:]
+
+class MarkerHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = (marker + "\n").encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        return
+
+class ReusableServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+with ReusableServer(("127.0.0.1", 0), MarkerHandler) as server:
+    pathlib.Path(port_file).write_text(str(server.server_address[1]), encoding="ascii")
+    server.serve_forever()
+PY
+  ssh_marker_pid=$!
+  for _ in {1..50}; do
+    [[ -s "${ssh_marker_port_file}" ]] && break
+    kill -0 "${ssh_marker_pid}" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  [[ -s "${ssh_marker_port_file}" ]]
+  ssh_marker_port=$(cat "${ssh_marker_port_file}")
+  [[ "${ssh_marker_port}" =~ ^[0-9]+$ ]]
+  ! verification_port_is_listening "${ssh_port}"
+
+  mkdir -p "${ssh_dir}" /run/sshd
+  ssh-keygen -q -t ed25519 -N '' -f "${ssh_host_key}" >/dev/null
+  ssh_host_key_public=$(ssh-keygen -y -f "${ssh_host_key}")
+  if ! id "${ssh_server_user}" >/dev/null 2>&1; then
+    useradd --no-create-home --shell /bin/sh "${ssh_server_user}"
+  fi
+  printf '%s:%s\n' "${ssh_server_user}" "${ssh_server_password}" | chpasswd
+  printf '%s\n' \
+    'Port 2222' \
+    'ListenAddress 127.0.0.1' \
+    "HostKey ${ssh_host_key}" \
+    'PermitRootLogin no' \
+    'PasswordAuthentication yes' \
+    'KbdInteractiveAuthentication no' \
+    'ChallengeResponseAuthentication no' \
+    'PubkeyAuthentication no' \
+    "AllowUsers ${ssh_server_user}" \
+    'UsePAM no' \
+    'StrictModes no' \
+    'LogLevel DEBUG1' > "${sshd_config}"
+  /usr/sbin/sshd -D -e -f "${sshd_config}" > "${sshd_log}" 2>&1 &
+  sshd_pid=$!
+  for _ in {1..50}; do
+    if verification_port_is_listening "${ssh_port}"; then break; fi
+    kill -0 "${sshd_pid}" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  verification_assert_port_listening "${ssh_port}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.sshd.ss-lntp.txt"
+
+  (umask 077; jq -n --arg host_key "${ssh_host_key_public}" \
+    --argjson ssh_port "${ssh_port}" '
+    {id:"ssh-outbound-verification",role:"outbound",type:"ssh",
+     tag:"ssh-outbound-verification",enabled:true,
+     route_rules:[{domain:["localhost"],action:"route",outbound:"ssh-outbound-verification"}],
+     config:{server:"127.0.0.1",server_port:$ssh_port,user:"sbv-verifier",
+       password:"sbv-ssh-password",host_key:[$host_key],connect_timeout:"5s"}}
+  ' > "${ssh_record}")
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
+    --expected-revision 7 --file "${ssh_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/ssh-create.json"
+  ssh_create_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/ssh-create.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/ssh-create.json"
+  [[ "${ssh_create_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="create" and .revision==8 and .type=="ssh"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/ssh-create.json" >/dev/null
+  verification_mark_step ssh-outbound-component-created
+  verification_wait_for_service_active sing-box
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/ssh-outbound-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  config_path=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/ssh-outbound-config.json")
+  cp /root/sing-box-vps/config.json "${config_path}"
+  jq -e --arg host_key "${ssh_host_key_public}" --argjson ssh_port "${ssh_port}" '
+    ([.outbounds[] | select(.type == "ssh" and .tag == "ssh-outbound-verification" and
+      .server == "127.0.0.1" and .server_port == $ssh_port and
+      .user == "sbv-verifier" and .password == "sbv-ssh-password" and
+      .host_key == [$host_key])] | length == 1) and
+    ([.route.rules[] | select(.outbound == "ssh-outbound-verification" and
+      .domain == ["localhost"])] | length == 1)
+  ' "${config_path}" >/dev/null
+  verification_mark_step ssh-outbound-config-asserted
+  set +e
+  curl --fail --silent --show-error --max-time 10 --noproxy '' \
+    --proxy 'socks5h://socks-user:socks-pass@127.0.0.1:1081' \
+    "http://localhost:${ssh_marker_port}/" \
+    > "$(verification_artifact_path "${ssh_response}")" \
+    2> "$(verification_artifact_path "${ssh_curl_stderr}")"
+  local ssh_curl_status=$?
+  set -e
+  [[ "${ssh_curl_status}" == 0 ]]
+  grep -Fqx "${ssh_marker}" "$(verification_artifact_path "${ssh_response}")"
+  grep -Fq "Accepted password for ${ssh_server_user}" "${sshd_log}"
+  verification_mark_step ssh-outbound-curl-complete
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/ssh-outbound.result.env" \
+    'COMPONENT=ssh-outbound' 'RESULT=success' \
+    'DATA_PLANE=ssh_direct_tcpip_loopback' 'HOST_KEY_VERIFICATION=pinned'
+
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
+    --expected-revision 8 --id ssh-outbound-verification \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/ssh-delete.json"
+  ssh_delete_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/ssh-delete.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/ssh-delete.json"
+  [[ "${ssh_delete_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="delete" and .revision==9 and .id=="ssh-outbound-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/ssh-delete.json" >/dev/null
+  verification_mark_step ssh-outbound-component-deleted
+  jq -e '
+    ([.outbounds[] | select(.tag == "ssh-outbound-verification")] | length) == 0 and
+    ([.route.rules[] | select(.outbound == "ssh-outbound-verification")] | length) == 0
   ' /root/sing-box-vps/config.json >/dev/null
 
   config_path=$(verification_artifact_path \

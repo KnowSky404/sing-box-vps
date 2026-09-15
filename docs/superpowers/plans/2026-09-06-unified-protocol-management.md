@@ -869,3 +869,20 @@ revision 4、TProxy revision 5，校验 `component diagnose` 的实例前置条�
 marker、固定 `sing-box 1.14.0 check`、策略快照与清理 artifact 均成功。该切片
 不把临时规则写入安装器账本，不宣称宿主 PREROUTING/策略路由所有权、公网、生产、
 外部认证、SubMan 或完整协议目标完成。
+
+### 2026-09-15：SSH outbound direct-tcpip 数据面探针
+
+SSH outbound 已有 typed state/render 和主机密钥元数据边界，但此前只有核心
+`check`，没有实际 SSH 握手或通道证据。本轮在 `multi_protocol_coexistence` 的
+特权隔离 Docker 中安装 OpenSSH server 依赖，生成一次性 ed25519 host key 和
+测试用户，以 pinned `host_key` 创建 `ssh-outbound-verification` typed outbound。
+现有 SOCKS5 入口将 `localhost` 域名按 component `route_rules` 送入 SSH，SSH
+server 的 direct-tcpip channel 再连接 loopback HTTP marker；验证运行
+`dev/verification-runs/20260915051357` 的 artifact 保存
+`sing-box check`、pinned key、sshd password-accept 日志、精确 marker 和 CAS
+删除结果，成功标签为 `project-real-ssh-tcp`。
+
+OpenSSH、用户和凭据全部属于 disposable container，组件删除后服务配置和路由
+均断言不存在；验证不修改安装器防火墙账本，也不宣称外部 SSH 服务、密钥部署、公网、
+UDP、生产或 SubMan 数据面。目标协议全覆盖仍需继续逐行核对，脚本版本保持
+`2026091402`。

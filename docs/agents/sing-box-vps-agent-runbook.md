@@ -36,6 +36,23 @@ The bounded Docker probe in `multi_protocol_coexistence` creates `http-outbound-
 
 This is fixed 1.14.0, isolated-container/loopback evidence using a synthetic domain. It does not prove public reachability, an external HTTP proxy, production deployment, external authentication or completion of the full protocol goal.
 
+## SSH outbound direct-tcpip verification
+
+The privileged Docker `multi_protocol_coexistence` scenario (run
+`dev/verification-runs/20260915051357`) creates a disposable
+OpenSSH server with a generated ed25519 host key and test user, then publishes a
+typed `ssh-outbound-verification` component with that key pinned. The existing
+authenticated SOCKS5 inbound routes `localhost` through the SSH outbound; the
+SSH server opens a direct-tcpip channel to a loopback HTTP marker. Artifacts
+include the target-core `check`, pinned-key configuration, sshd password-accept
+log, exact marker response and component CAS deletion (`ssh-outbound.result.env`
+uses `DATA_PLANE=ssh_direct_tcpip_loopback`).
+
+This proves only an isolated-container SSH TCP channel. It does not prove an
+external SSH service, credential deployment, public reachability, UDP, production
+operation or SubMan synchronization; the disposable SSH process and user are not
+installer-managed resources.
+
 ## Direct inbound override data plane
 
 Direct inbound component records may include the upstream `network` string (`tcp` or `udp`) and destination override fields `override_address`/`override_port`. The component validator rejects control characters, empty override addresses and ports outside 1-65535 while preserving the normal listen fields. A loopback direct record does not require `--allow-public`; non-loopback listeners still do.
