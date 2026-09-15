@@ -1989,4 +1989,101 @@ PY
   vless_outbound_server_pid=''
   rm -rf -- "${vless_outbound_server_dir}"
   vless_outbound_server_dir=''
+
+  # Tor outbound must exercise the external executable and a real Tor circuit,
+  # not only pass the target-core schema check.  The verification image ships
+  # Debian's tor executable; check.torproject.org provides a stable response
+  # marker confirming that the request exited through Tor.  This intentionally
+  # remains an external-network proof and does not claim production ownership.
+  local tor_outbound_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/tor-outbound-record.json"
+  local tor_outbound_create_status=0
+  local tor_outbound_delete_status=0
+  local tor_outbound_curl_status=1
+  local tor_outbound_target_url='https://check.torproject.org/'
+  (umask 077; jq -n '
+    {id:"tor-outbound-verification",role:"outbound",type:"tor",
+     tag:"tor-outbound-verification",enabled:true,
+     route_rules:[{inbound:["socks-in"],domain:["check.torproject.org"],
+       action:"route",outbound:"tor-outbound-verification"}],
+     config:{executable_path:"/usr/bin/tor",torrc:{ClientOnly:"1"}}}
+  ' > "${tor_outbound_record}")
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
+    --expected-revision 23 --file "${tor_outbound_record}" \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tor-outbound-create.json"
+  tor_outbound_create_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tor-outbound-create.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/tor-outbound-create.json"
+  [[ "${tor_outbound_create_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="create" and .revision==24 and
+    .type=="tor" and .id=="tor-outbound-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tor-outbound-create.json" >/dev/null
+  verification_mark_step tor-outbound-component-created
+  verification_wait_for_service_active sing-box
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/tor-outbound-check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  config_path=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/tor-outbound-config.json")
+  cp /root/sing-box-vps/config.json "${config_path}"
+  jq -e '
+    ([.outbounds[] | select(.type == "tor" and
+      .tag == "tor-outbound-verification" and
+      .executable_path == "/usr/bin/tor" and
+      .torrc.ClientOnly == "1")] | length == 1) and
+    ([.route.rules[] | select(.inbound == ["socks-in"] and
+      .domain == ["check.torproject.org"] and .action == "route" and
+      .outbound == "tor-outbound-verification")] | length == 1)
+  ' "${config_path}" >/dev/null
+  verification_mark_step tor-outbound-config-asserted
+  local tor_outbound_response="${VERIFY_CURRENT_SCENARIO_DIR}/tor-outbound-response.html"
+  local tor_outbound_curl_stderr="${VERIFY_CURRENT_SCENARIO_DIR}/tor-outbound-curl.stderr.txt"
+  local tor_outbound_journal="${VERIFY_CURRENT_SCENARIO_DIR}/tor-outbound-journal.txt"
+  for _ in {1..24}; do
+    set +e
+    curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
+      --noproxy '' --proxy 'socks5h://socks-user:socks-pass@127.0.0.1:1081' \
+      "${tor_outbound_target_url}" \
+      > "$(verification_artifact_path "${tor_outbound_response}")" \
+      2> "$(verification_artifact_path "${tor_outbound_curl_stderr}")"
+    tor_outbound_curl_status=$?
+    set -e
+    if [[ "${tor_outbound_curl_status}" == 0 ]] && \
+      grep -Fq 'This browser is configured to use Tor' \
+      "$(verification_artifact_path "${tor_outbound_response}")"; then
+      break
+    fi
+    sleep 1
+  done
+  [[ "${tor_outbound_curl_status}" == 0 ]]
+  grep -Fq 'This browser is configured to use Tor' \
+    "$(verification_artifact_path "${tor_outbound_response}")"
+  verification_capture_command "${tor_outbound_journal}" \
+    journalctl -u sing-box --no-pager -n 300
+  verification_mark_step tor-outbound-curl-complete
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/tor-outbound.result.env" \
+    'COMPONENT=tor-outbound' 'RESULT=success' \
+    'DATA_PLANE=tor_external_tcp' 'TARGET=check.torproject.org'
+
+  set +e
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
+    --expected-revision 24 --id tor-outbound-verification \
+    > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tor-outbound-delete.json"
+  tor_outbound_delete_status=$?
+  set -e
+  verification_capture_file_if_present \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tor-outbound-delete.json" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/tor-outbound-delete.json"
+  [[ "${tor_outbound_delete_status}" == 0 ]]
+  jq -e '.ok==true and .operation=="delete" and .revision==25 and
+    .id=="tor-outbound-verification"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tor-outbound-delete.json" >/dev/null
+  verification_mark_step tor-outbound-component-deleted
+  jq -e '
+    ([.outbounds[] | select(.tag == "tor-outbound-verification")] | length) == 0 and
+    ([.route.rules[] | select(.outbound == "tor-outbound-verification")] | length) == 0
+  ' /root/sing-box-vps/config.json >/dev/null
 }

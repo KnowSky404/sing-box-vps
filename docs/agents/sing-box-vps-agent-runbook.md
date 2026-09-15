@@ -163,6 +163,22 @@ This is an isolated-container, loopback, plaintext TCP proof only. It does not
 prove external VLESS, TLS/REALITY, UDP, public reachability, production
 operation, SubMan synchronization or completion of the full protocol goal.
 
+## Tor outbound verification
+
+The privileged Docker `multi_protocol_coexistence` scenario uses the image's
+`/usr/bin/tor` external executable and creates a typed
+`tor-outbound-verification` component with `torrc.ClientOnly`. Through the
+existing authenticated SOCKS5 inbound it requests `https://check.torproject.org/`
+and requires the response text `This browser is configured to use Tor`, which
+proves a real Tor circuit rather than only a target-core `check`. The component
+uses expected revision 23 to create revision 24 and expected revision 24 to
+delete revision 25; the captured run is recorded in
+`dev/verification-runs/20260915090437`.
+
+This is an external-network TCP proof from a disposable container. It does not
+prove Tor network stability, anonymity guarantees, production configuration,
+SubMan synchronization or completion of the full protocol goal.
+
 ## Direct inbound override data plane
 
 Direct inbound component records may include the upstream `network` string (`tcp` or `udp`) and destination override fields `override_address`/`override_port`. The component validator rejects control characters, empty override addresses and ports outside 1-65535 while preserving the normal listen fields. A loopback direct record does not require `--allow-public`; non-loopback listeners still do.

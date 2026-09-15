@@ -981,3 +981,17 @@ client/server handshake，保存 upstream/managed config 的目标核心 `check`
 明文 TCP，不扩张为外部 VLESS、TLS/REALITY、UDP、公网、生产、SubMan 或完整协议
 目标。Docker 运行目录为 `dev/verification-runs/20260915081600`，脚本版本提升为
 本轮 `2026091503`。
+
+### 2026-09-15：Tor outbound external circuit 数据面探针
+
+在 VLESS outbound 之后，`multi_protocol_coexistence` 使用验证镜像提供的
+`/usr/bin/tor` 外部 executable，创建 `tor-outbound-verification` typed
+component，配置 `torrc.ClientOnly`，并通过已有认证 SOCKS5 inbound 请求
+`https://check.torproject.org/`。探针要求响应包含
+`This browser is configured to use Tor`，以确认 sing-box Tor outbound、外部
+Tor 进程、Tor SOCKS 控制链路和一次真实 circuit，而不是只执行目标核心 `check`。
+
+组件以 expected revision 23 创建并提交 24，再以 expected revision 24 删除并提交
+25；结果标签为 `DATA_PLANE=tor_external_tcp`、`TARGET=check.torproject.org`。
+Docker 运行目录为 `dev/verification-runs/20260915090437`；该证据来自一次性容器和
+外部 Tor 网络，不扩张为公网稳定性、匿名性保证、生产、SubMan 或完整协议目标。
