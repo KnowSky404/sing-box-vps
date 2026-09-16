@@ -1157,6 +1157,405 @@ PY
   probe_status=0
 )
 
+# Exercise a bridge outbound as the L3 egress for a core-owned TUN. Both
+# namespaces and veth pairs are disposable fixtures: the client packet enters
+# the managed TUN, the bridge outbound forwards it through its dynamic TUN and
+# netfilter path to the server namespace, and the response is returned through
+# conntrack/NAT. No installer firewall ledger or host policy is touched.
+verification_run_bridge_l3_probe() (
+  set -euo pipefail
+
+  local expected_revision=${1:-0}
+  local bridge_create_revision=$((expected_revision + 1))
+  local tun_create_revision=$((expected_revision + 2))
+  local tun_delete_revision=$((expected_revision + 3))
+  local bridge_delete_revision=$((expected_revision + 4))
+  local config_file=${2:-/root/sing-box-vps/config.json}
+  local probe_dir="${VERIFY_CURRENT_SCENARIO_DIR}/bridge-data-plane"
+  local fixture_dir='' client_netns='' server_netns=''
+  local client_host_veth='' client_peer_veth=''
+  local server_host_veth='' server_peer_veth=''
+  local client_veth_created=0 server_veth_created=0
+  local client_netns_created=0 server_netns_created=0
+  local bridge_created=0 tun_created=0
+  local marker_pid='' marker='' udp_marker=''
+  local marker_ready_file='' marker_stdout_artifact='' marker_stderr_artifact=''
+  local tcp_response_artifact='' udp_response_artifact=''
+  local bridge_record='' tun_record='' bridge_create='' tun_create=''
+  local tun_delete='' bridge_delete=''
+  local probe_status=1
+
+  cleanup_bridge_l3_probe() {
+    local status=$? cleanup_status=0
+
+    trap - EXIT INT TERM HUP
+    set +e
+    if [[ -n "${marker_pid}" ]]; then
+      kill "${marker_pid}" 2>/dev/null || true
+      wait "${marker_pid}" 2>/dev/null || true
+      marker_pid=''
+    fi
+    if [[ "${tun_created}" == "1" ]]; then
+      bash /usr/local/bin/sbv agent component delete --json --yes \
+        --expected-revision "${tun_create_revision}" \
+        --id tun-bridge-data-plane-verification \
+        > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/bridge-data-plane/tun-cleanup-delete.json"
+      [[ "$?" == "0" ]] || cleanup_status=1
+      tun_created=0
+    fi
+    if [[ "${bridge_created}" == "1" ]]; then
+      bash /usr/local/bin/sbv agent component delete --json --yes \
+        --expected-revision "${bridge_create_revision}" \
+        --id bridge-l3-data-plane-verification \
+        > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/bridge-data-plane/bridge-cleanup-delete.json"
+      [[ "$?" == "0" ]] || cleanup_status=1
+      bridge_created=0
+    fi
+    if [[ "${client_veth_created}" == "1" ]] &&
+      ip link show dev "${client_host_veth}" >/dev/null 2>&1; then
+      ip link del "${client_host_veth}" || cleanup_status=1
+      client_veth_created=0
+    fi
+    if [[ "${server_veth_created}" == "1" ]] &&
+      ip link show dev "${server_host_veth}" >/dev/null 2>&1; then
+      ip link del "${server_host_veth}" || cleanup_status=1
+      server_veth_created=0
+    fi
+    if [[ "${client_netns_created}" == "1" ]] &&
+      ip netns list | awk '{print $1}' | grep -Fqx "${client_netns}"; then
+      ip netns del "${client_netns}" || cleanup_status=1
+      client_netns_created=0
+    fi
+    if [[ "${server_netns_created}" == "1" ]] &&
+      ip netns list | awk '{print $1}' | grep -Fqx "${server_netns}"; then
+      ip netns del "${server_netns}" || cleanup_status=1
+      server_netns_created=0
+    fi
+    verification_capture_best_effort_command \
+      "${probe_dir}/resources.after-cleanup.txt" \
+      sh -c 'ip -j link show; ip -j rule show; ip -j route show table all'
+    rm -rf -- "${fixture_dir:-}"
+    if [[ "${status}" == "0" && "${cleanup_status}" != "0" ]]; then
+      status=1
+    fi
+    if [[ "${status}" == "0" && "${probe_status}" == "0" ]]; then
+      verification_write_artifact "${probe_dir}/result.env" \
+        'COMPONENT=bridge-outbound' 'RESULT=success' \
+        'DATA_PLANE=bridge_l3_tcp_udp_netns' \
+        'ROUTING=auto_route_to_bridge' \
+        'POLICY_SCOPE=verification_container_only' \
+        'POLICY_OWNERSHIP=core_owned'
+    else
+      verification_write_artifact "${probe_dir}/result.env" \
+        'COMPONENT=bridge-outbound' 'RESULT=failure' \
+        'DATA_PLANE=bridge_l3_tcp_udp_netns' \
+        'ROUTING=auto_route_to_bridge' \
+        'POLICY_SCOPE=verification_container_only' \
+        'POLICY_OWNERSHIP=core_owned'
+    fi
+    exit "${status}"
+  }
+  trap cleanup_bridge_l3_probe EXIT INT TERM HUP
+
+  command -v ip >/dev/null 2>&1
+  command -v python3 >/dev/null 2>&1
+  command -v jq >/dev/null 2>&1
+  verification_capture_command "${probe_dir}/sing-box-check.before.txt" \
+    sing-box check -c "${config_file}"
+  fixture_dir=$(mktemp -d /tmp/sing-box-vps-bridge-l3-probe.XXXXXX)
+  chmod 700 "${fixture_dir}"
+  client_netns="sbvbcn-${BASHPID}"
+  server_netns="sbvbsn-${BASHPID}"
+  client_host_veth="sbvbc-h${BASHPID}"
+  client_peer_veth="sbvbc-p${BASHPID}"
+  server_host_veth="sbvbs-h${BASHPID}"
+  server_peer_veth="sbvbs-p${BASHPID}"
+  marker_ready_file="${fixture_dir}/marker.ready"
+  marker="sing-box-vps-bridge-l3-tcp-ok-$(date +%s)-$$"
+  udp_marker="${marker}-udp"
+  marker_stdout_artifact=$(verification_artifact_path \
+    "${probe_dir}/marker.stdout.txt")
+  marker_stderr_artifact=$(verification_artifact_path \
+    "${probe_dir}/marker.stderr.txt")
+  tcp_response_artifact=$(verification_artifact_path \
+    "${probe_dir}/tcp-response.txt")
+  udp_response_artifact=$(verification_artifact_path \
+    "${probe_dir}/udp-response.txt")
+
+  ip netns add "${client_netns}"
+  client_netns_created=1
+  ip netns add "${server_netns}"
+  server_netns_created=1
+  ip link add "${client_host_veth}" type veth peer name "${client_peer_veth}"
+  ip link set "${client_peer_veth}" netns "${client_netns}"
+  client_veth_created=1
+  ip link add "${server_host_veth}" type veth peer name "${server_peer_veth}"
+  ip link set "${server_peer_veth}" netns "${server_netns}"
+  server_veth_created=1
+  ip addr add 198.18.10.1/24 dev "${client_host_veth}"
+  ip link set "${client_host_veth}" up
+  ip addr add 172.21.0.1/24 dev "${server_host_veth}"
+  ip link set "${server_host_veth}" up
+  ip netns exec "${client_netns}" ip addr add 198.18.10.2/24 dev "${client_peer_veth}"
+  ip netns exec "${client_netns}" ip link set lo up
+  ip netns exec "${client_netns}" ip link set "${client_peer_veth}" up
+  ip netns exec "${client_netns}" ip route add 172.21.0.0/24 via 198.18.10.1
+  ip netns exec "${server_netns}" ip addr add 172.21.0.2/24 dev "${server_peer_veth}"
+  ip netns exec "${server_netns}" ip addr add 172.21.0.100/32 dev "${server_peer_veth}"
+  ip netns exec "${server_netns}" ip link set lo up
+  ip netns exec "${server_netns}" ip link set "${server_peer_veth}" up
+  ip netns exec "${server_netns}" ip route add 198.18.10.0/24 via 172.21.0.1
+  verification_capture_best_effort_command "${probe_dir}/resources.before.txt" \
+    sh -c 'ip -j addr show dev '"${client_host_veth}"'; ip -j addr show dev '"${server_host_veth}"'; ip netns exec '"${client_netns}"' ip -j route show; ip netns exec '"${server_netns}"' ip -j route show'
+
+  ip netns exec "${server_netns}" python3 - "${marker_ready_file}" \
+    "${marker}" > "${marker_stdout_artifact}" 2> "${marker_stderr_artifact}" <<'PY' &
+import http.server
+import pathlib
+import socket
+import sys
+import threading
+
+ready_path, marker_text = sys.argv[1:]
+bind_address = "172.21.0.100"
+tcp_marker = marker_text.encode("ascii")
+
+class MarkerHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = tcp_marker + b"\n"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        return
+
+http_server = http.server.ThreadingHTTPServer((bind_address, 18080), MarkerHandler)
+udp_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+udp_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+udp_server.bind((bind_address, 18081))
+pathlib.Path(ready_path).write_text("ready\n", encoding="ascii")
+threading.Thread(target=http_server.serve_forever, daemon=True).start()
+while True:
+    payload, address = udp_server.recvfrom(65535)
+    udp_server.sendto(payload, address)
+PY
+  marker_pid=$!
+  for _ in {1..100}; do
+    [[ -s "${marker_ready_file}" ]] && break
+    kill -0 "${marker_pid}" 2>/dev/null || {
+      printf 'Bridge L3 marker exited before binding\n' >&2
+      return 1
+    }
+    sleep 0.1
+  done
+  [[ -s "${marker_ready_file}" ]]
+  verification_mark_step fresh_install_vless_bridge_l3_probe_prepared
+
+  bridge_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/bridge-l3-data-plane-record.json"
+  tun_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/tun-bridge-data-plane-record.json"
+  bridge_create="${VERIFY_REMOTE_LOCAL_TREE_DIR}/bridge-l3-data-plane-create.json"
+  tun_create="${VERIFY_REMOTE_LOCAL_TREE_DIR}/tun-bridge-data-plane-create.json"
+  tun_delete="${VERIFY_REMOTE_LOCAL_TREE_DIR}/tun-bridge-data-plane-delete.json"
+  bridge_delete="${VERIFY_REMOTE_LOCAL_TREE_DIR}/bridge-l3-data-plane-delete.json"
+  (umask 077; jq -n --arg interface "${server_host_veth}" \
+    '{id:"bridge-l3-data-plane-verification",role:"outbound",type:"bridge",
+      tag:"bridge-l3-data-plane-verification",enabled:true,route_rules:[],config:{
+      interface:$interface,bridge_name:"sbv-br-l3",iproute2_table_index:2201,
+      iproute2_rule_index:122}}' > "${bridge_record}")
+  (umask 077; jq -n '
+    {id:"tun-bridge-data-plane-verification",role:"inbound",type:"tun",
+     tag:"tun-bridge-data-plane-verification",enabled:true,route_rules:[
+       {inbound:["tun-bridge-data-plane-verification"],network:["tcp"],
+        ip_cidr:["172.21.0.100/32"],action:"route",
+        outbound:"bridge-l3-data-plane-verification"},
+       {inbound:["tun-bridge-data-plane-verification"],network:["udp"],
+        ip_cidr:["172.21.0.100/32"],action:"route",
+        outbound:"bridge-l3-data-plane-verification"}],config:{
+        interface_name:"sbv-tun-bridge",address:["172.22.0.1/24"],
+        auto_route:true,strict_route:true}}' > "${tun_record}")
+
+  bash /usr/local/bin/sbv agent component create --json --yes \
+    --expected-revision "${expected_revision}" --file "${bridge_record}" \
+    > "${bridge_create}"
+  verification_capture_file_if_present "${bridge_create}" \
+    "${probe_dir}/bridge-create.json"
+  jq -e --argjson revision "${bridge_create_revision}" \
+    '.ok==true and .operation=="create" and .revision==$revision and
+     .id=="bridge-l3-data-plane-verification" and .type=="bridge" and
+     .service_restarted==true' "${bridge_create}" >/dev/null
+  bridge_created=1
+  verification_mark_step fresh_install_vless_bridge_l3_component_created
+  verification_wait_for_service_active sing-box
+  verification_capture_command "${probe_dir}/bridge-check.txt" \
+    sing-box check -c "${config_file}"
+  verification_capture_command "${probe_dir}/bridge-links.json" \
+    ip -j link show
+  verification_capture_command "${probe_dir}/bridge-rules.json" \
+    ip -j rule show
+  verification_capture_command "${probe_dir}/bridge-routes.json" \
+    ip -j route show table all
+  jq -e 'any(.[]; .ifname == "sbv-br-l30")' \
+    "$(verification_artifact_path "${probe_dir}/bridge-links.json")" >/dev/null
+  jq -e 'any(.[]; (.priority == 122) and .iif == "sbv-br-l30" and
+    ((.table // "") | tostring) == "2201") and
+    any(.[]; (.priority == 123) and .dst == "192.0.2.1" and
+      ((.table // "main") | tostring) == "main")' \
+    "$(verification_artifact_path "${probe_dir}/bridge-rules.json")" >/dev/null
+  jq -e 'any(.[]; ((.table // "main") | tostring) == "2201" and
+    (.dst == "172.21.0.0/24" or .dst == "172.21.0.0"))' \
+    "$(verification_artifact_path "${probe_dir}/bridge-routes.json")" >/dev/null
+  verification_mark_step fresh_install_vless_bridge_l3_resources_observed
+
+  bash /usr/local/bin/sbv agent component create --json --yes --allow-public \
+    --expected-revision "${bridge_create_revision}" --file "${tun_record}" \
+    > "${tun_create}"
+  verification_capture_file_if_present "${tun_create}" \
+    "${probe_dir}/tun-create.json"
+  jq -e --argjson revision "${tun_create_revision}" \
+    '.ok==true and .operation=="create" and .revision==$revision and
+     .id=="tun-bridge-data-plane-verification" and .type=="tun" and
+     .service_restarted==true' "${tun_create}" >/dev/null
+  tun_created=1
+  verification_mark_step fresh_install_vless_bridge_l3_tun_component_created
+  verification_wait_for_service_active sing-box
+  verification_capture_command "${probe_dir}/sing-box-check.txt" \
+    sing-box check -c "${config_file}"
+  verification_capture_command "${probe_dir}/config.json" \
+    jq -c '{inbounds:[.inbounds[] | select(.tag == "tun-bridge-data-plane-verification")],
+      outbounds:[.outbounds[] | select(.tag == "bridge-l3-data-plane-verification")],
+      route:{rules:[.route.rules[] | select(.inbound == ["tun-bridge-data-plane-verification"])]}}' \
+    "${config_file}"
+  jq -e --arg interface "${server_host_veth}" '
+    (.inbounds | length == 1 and .[0].type == "tun" and
+      .[0].tag == "tun-bridge-data-plane-verification" and
+      .[0].auto_route == true and .[0].strict_route == true) and
+    (.outbounds | length == 1 and .[0].type == "bridge" and
+      .[0].tag == "bridge-l3-data-plane-verification" and
+      .[0].interface == $interface and .[0].bridge_name == "sbv-br-l3") and
+    (.route.rules | length == 2 and
+      all(.[]; .action == "route" and
+        .outbound == "bridge-l3-data-plane-verification" and
+        .ip_cidr == ["172.21.0.100/32"]))
+  ' "$(verification_artifact_path "${probe_dir}/config.json")" >/dev/null
+  verification_capture_command "${probe_dir}/resources.with-components.txt" \
+    sh -c 'ip -j route get 172.21.0.100; ip -j link show; ip -j rule show; ip -j route show table all'
+  grep -Fq '"ifname":"sbv-tun-bridge"' \
+    "$(verification_artifact_path "${probe_dir}/resources.with-components.txt")"
+  verification_capture_best_effort_command "${probe_dir}/diagnose.json" \
+    bash /usr/local/bin/sbv agent component diagnose --json
+  verification_mark_step fresh_install_vless_bridge_l3_components_observed
+
+  verification_capture_command "${probe_dir}/tcp-response.txt" \
+    ip netns exec "${client_netns}" python3 - "${marker}" <<'PY'
+import socket
+import sys
+
+marker = sys.argv[1].encode("ascii") + b"\n"
+with socket.create_connection(("172.21.0.100", 18080), timeout=10) as client:
+    client.settimeout(10)
+    client.sendall(b"GET /bridge HTTP/1.1\r\nHost: bridge.invalid\r\nConnection: close\r\n\r\n")
+    payload = b""
+    while True:
+        chunk = client.recv(65535)
+        if not chunk:
+            break
+        payload += chunk
+body = payload.split(b"\r\n\r\n", 1)[1]
+sys.stdout.buffer.write(body)
+if body != marker:
+    raise RuntimeError("bridge TCP marker mismatch")
+PY
+  grep -Fqx "${marker}" "${tcp_response_artifact}"
+
+  verification_capture_command "${probe_dir}/udp-response.txt" \
+    ip netns exec "${client_netns}" python3 - "${udp_marker}" <<'PY'
+import socket
+import sys
+
+marker = sys.argv[1].encode("ascii")
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+    client.settimeout(2)
+    for attempt in range(1, 6):
+        client.sendto(marker, ("172.21.0.100", 18081))
+        try:
+            payload, _address = client.recvfrom(65535)
+            break
+        except socket.timeout:
+            if attempt == 5:
+                raise
+    else:
+        raise RuntimeError("bridge UDP probe exhausted retries")
+sys.stdout.buffer.write(payload)
+if payload != marker:
+    raise RuntimeError("bridge UDP marker mismatch")
+PY
+  grep -Fqx "${udp_marker}" "${udp_response_artifact}"
+  verification_capture_best_effort_command "${probe_dir}/sing-box-journal.txt" \
+    journalctl -u sing-box -n 220 --no-pager
+  grep -Fq 'bridge started at sbv-br-l30' \
+    "$(verification_artifact_path "${probe_dir}/sing-box-journal.txt")"
+  grep -Fq 'inbound/tun[tun-bridge-data-plane-verification]: started at sbv-tun-bridge' \
+    "$(verification_artifact_path "${probe_dir}/sing-box-journal.txt")"
+  verification_mark_step fresh_install_vless_bridge_l3_payload_success
+
+  bash /usr/local/bin/sbv agent component delete --json --yes \
+    --expected-revision "${tun_create_revision}" \
+    --id tun-bridge-data-plane-verification > "${tun_delete}"
+  verification_capture_file_if_present "${tun_delete}" \
+    "${probe_dir}/tun-delete.json"
+  jq -e --argjson revision "${tun_delete_revision}" \
+    '.ok==true and .operation=="delete" and .revision==$revision and
+     .id=="tun-bridge-data-plane-verification" and .service_restarted==true' \
+    "${tun_delete}" >/dev/null
+  tun_created=0
+  verification_mark_step fresh_install_vless_bridge_l3_tun_component_deleted
+  verification_wait_for_service_active sing-box
+  if ip link show dev sbv-tun-bridge >/dev/null 2>&1; then
+    printf 'bridge L3 TUN interface remained after managed component deletion\n' >&2
+    return 1
+  fi
+
+  bash /usr/local/bin/sbv agent component delete --json --yes \
+    --expected-revision "${tun_delete_revision}" \
+    --id bridge-l3-data-plane-verification > "${bridge_delete}"
+  verification_capture_file_if_present "${bridge_delete}" \
+    "${probe_dir}/bridge-delete.json"
+  jq -e --argjson revision "${bridge_delete_revision}" \
+    '.ok==true and .operation=="delete" and .revision==$revision and
+     .id=="bridge-l3-data-plane-verification" and .service_restarted==true' \
+    "${bridge_delete}" >/dev/null
+  bridge_created=0
+  verification_mark_step fresh_install_vless_bridge_l3_component_deleted
+  verification_wait_for_service_active sing-box
+  if ip link show dev sbv-br-l30 >/dev/null 2>&1; then
+    printf 'bridge L3 dynamic interface remained after managed component deletion\n' >&2
+    return 1
+  fi
+  verification_capture_command "${probe_dir}/links-after-delete.json" \
+    ip -j link show
+  verification_capture_command "${probe_dir}/rules-after-delete.json" \
+    ip -j rule show
+  verification_capture_command "${probe_dir}/routes-after-delete.json" \
+    ip -j route show table all
+  ! jq -e 'any(.[]; .ifname == "sbv-br-l30")' \
+    "$(verification_artifact_path "${probe_dir}/links-after-delete.json")" >/dev/null
+  ! jq -e 'any(.[]; (.priority == 122) or (.priority == 123))' \
+    "$(verification_artifact_path "${probe_dir}/rules-after-delete.json")" >/dev/null
+  ! jq -e 'any(.[]; .dev == "sbv-br-l30" or .dst == "192.0.2.1")' \
+    "$(verification_artifact_path "${probe_dir}/routes-after-delete.json")" >/dev/null
+  verification_capture_command "${probe_dir}/after-delete-diagnose.json" \
+    bash /usr/local/bin/sbv agent component diagnose --json
+  jq -e '.ok==true and .data.transparent_resources.status=="available" and
+    (.data.transparent_resources.resources | length == 0)' \
+    "$(verification_artifact_path "${probe_dir}/after-delete-diagnose.json")" >/dev/null
+  verification_capture_command "${probe_dir}/after-delete.check.txt" \
+    sing-box check -c "${config_file}"
+  verification_mark_step fresh_install_vless_bridge_l3_resources_cleaned
+  probe_status=0
+)
+
 verification_scenario_fresh_install_vless() {
   local config_uuid
   local env_uuid
@@ -1420,4 +1819,10 @@ EOF
 
   verification_run_openvpn_endpoint_runtime_probe 4
   verification_run_wireguard_endpoint_runtime_probe 20
+  local bridge_expected_revision=20
+  if grep -Fqx 'RESULT=success' \
+    "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint/result.env")"; then
+    bridge_expected_revision=24
+  fi
+  verification_run_bridge_l3_probe "${bridge_expected_revision}"
 }

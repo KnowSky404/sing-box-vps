@@ -320,6 +320,25 @@ container. It does not prove host policy routing, DNS or firewall ownership,
 public reachability, external control-plane authentication, production
 deployment or the full protocol goal.
 
+## Bridge outbound L3 payload verification
+
+The privileged Docker `fresh_install_vless` scenario now exercises the managed
+bridge outbound after the core-owned bridge resource check. It creates two
+disposable veth/network namespaces, sends TCP and UDP marker traffic through
+`tun-bridge-data-plane-verification` (`auto_route`) and a route action to
+`bridge-l3-data-plane-verification`, then receives it on a synthetic address
+through the bridge dynamic TUN/netfilter egress. Run
+`dev/verification-runs/20260916071546` contains
+`fresh_install_vless/bridge-data-plane/`; `result.env` reports
+`RESULT=success`, `DATA_PLANE=bridge_l3_tcp_udp_netns`,
+`ROUTING=auto_route_to_bridge`, `POLICY_SCOPE=verification_container_only` and
+`POLICY_OWNERSHIP=core_owned`. The artifact set includes the target core check,
+rendered config, bridge rule/table/link snapshots, exact TCP/UDP responses,
+journal, diagnose, CAS deletion and final veth/namespace cleanup. This is
+`project-real-bridge-l3-tcp+udp` evidence for fixed core/isolated namespaces
+only; it does not prove host policy ownership, an external bridge interface,
+public reachability or production deployment.
+
 ## Redirect/TProxy transparent data-plane evidence
 
 The privileged Docker `multi_protocol_coexistence` scenario in

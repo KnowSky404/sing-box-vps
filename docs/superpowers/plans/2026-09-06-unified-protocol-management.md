@@ -1144,3 +1144,26 @@ core-owned TUN；探针先执行固定 ARM64 `sing-box 1.14.0 check`，再精确
 该证据只覆盖固定核心、隔离容器/network namespace 内 core-owned TUN 的 L3 TCP+UDP 数据面；不表示宿主
 策略路由、DNS/防火墙接管、公网、外部控制面、生产部署或完整协议目标完成。脚本
 版本保持 `2026091601`。
+
+### 2026-09-16：Bridge outbound L3 TCP+UDP 数据面探针
+
+在 bridge outbound 动态 TUN、iproute2 rule/route 与删除清理的资源证据之后，
+`fresh_install_vless` 新增 `verification_run_bridge_l3_probe`。特权 Docker 内
+建立 client/server 两组 disposable veth/network namespace：client namespace
+把 synthetic `172.21.0.100` 的 TCP/UDP 请求路由到 core-owned
+`tun-bridge-data-plane-verification` 的 `auto_route`，route action 再选择
+`bridge-l3-data-plane-verification`；bridge 绑定 server-side veth，经动态
+bridge TUN/netfilter 和 egress route table 2201 把流量交给 server namespace 的
+精确 marker。当前门禁在 WireGuard blocked 分支以 revision 20→21→22 创建，payload
+成功后按 TUN、bridge 逆序删除至 revision 24；WireGuard 可用分支会从 revision 24
+开始，探针根据 artifact 选择 CAS 起点。
+
+门禁 `dev/verification-runs/20260916071546` 的
+`fresh_install_vless/bridge-data-plane/` 保存目标核心 `sing-box check`、渲染的
+bridge/TUN/route、bridge 动态 TUN 与 priority 122/123 rule、egress route、
+两条精确 marker response、journal、diagnose 和 CAS create/delete artifact；
+`result.env` 报告 `RESULT=success`、`DATA_PLANE=bridge_l3_tcp_udp_netns`、
+`ROUTING=auto_route_to_bridge`、`POLICY_SCOPE=verification_container_only` 和
+`POLICY_OWNERSHIP=core_owned`。这证明固定 1.14.0 核心、隔离容器/network
+namespace 内 TUN→bridge L3 TCP+UDP forwarding；不代表宿主策略、外部 bridge
+接口、公网、生产、外部控制面或完整协议目标，脚本版本为 `2026091602`。
