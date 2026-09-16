@@ -1134,7 +1134,7 @@ namespace，令 namespace 侧的 HTTP 与 UDP marker 通过 `auto_route` 进入 
 core-owned TUN；探针先执行固定 ARM64 `sing-box 1.14.0 check`，再精确回读 TCP/UDP
 响应，并在成功或异常路径清理 marker 进程、veth 和 namespace。
 
-最终门禁 `dev/verification-runs/20260916063226` 的
+最终门禁 `dev/verification-runs/20260916064328` 的
 `fresh_install_vless/tun-data-plane/` artifact 包含 `result.env`、目标核心
 `sing-box-check.txt`、精确 `http-response.txt`/`udp-response.txt`、重试诊断和 TUN 运行时日志，
 以及 `resources.before.txt`、`resources.with-tun.txt`、`resources.after-cleanup.txt`（后者确认 disposable veth/namespace 清理，受管 TUN 会在随后组件删除阶段清理）。

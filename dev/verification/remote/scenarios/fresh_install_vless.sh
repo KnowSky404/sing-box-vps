@@ -1108,8 +1108,9 @@ port_path = sys.argv[1]
 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server:
     server.bind(("198.18.1.2", 18081))
     pathlib.Path(port_path).write_text(str(server.getsockname()[1]), encoding="ascii")
-    payload, address = server.recvfrom(65535)
-    server.sendto(payload, address)
+    for _ in range(5):
+        payload, address = server.recvfrom(65535)
+        server.sendto(payload, address)
 PY
   udp_marker_pid=$!
   for _ in {1..100}; do
