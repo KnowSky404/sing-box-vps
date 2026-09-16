@@ -1088,3 +1088,36 @@ disposable echo 才能回读精确 payload；因此不能由默认 direct fallba
 的 direct route-option TCP+UDP forwarding；组件和两条 route 在场景内删除并断言
 清除，不接管宿主策略或防火墙，不代表公网、生产、SubMan 或完整协议目标完成。
 脚本版本保持本轮 `2026091505`。
+
+### 2026-09-15：VLESS outbound TCP+UDP/XUDP 数据面探针
+
+在 VLESS outbound TCP 闭环之后，本轮复用同一一次性明文 VLESS upstream 和
+direct UDP echo，为 `vless-outbound-verification` 增加 `network:["tcp","udp"]`
+及 UDP route。最小客户端从已渲染 outbound 构造，保留 `flow:""` 并省略
+`packet_encoding`，先通过目标 `sing-box 1.14.0 check`，再由 SOCKS5 UDP
+ASSOCIATE 发送精确 marker；VLESS upstream 将 synthetic UDP 端口路由到
+disposable loopback echo 后回传同一 payload。
+
+验证运行 `dev/verification-runs/20260915235706` 保存客户端 check、渲染配置、
+`vless-outbound-udp.result.env`（`RESULT=success`、
+`DATA_PLANE=vless_udp_xudp_loopback`、`CLIENT_TRANSPORT=xudp`）、响应、客户端
+stderr、upstream artifact 和 revision 21→23 CAS 清理。该切片证明隔离容器/回环内
+的 VLESS TCP+UDP/XUDP 路径，不扩张为外部 VLESS、TLS/REALITY、公网、生产、
+SubMan 或完整协议目标；脚本版本保持本轮 `2026091505`。
+
+### 2026-09-16：TCP 监听器入站 UDP 业务探针
+
+在出站 UDP 证据之后，本轮将现有 TCP-listener 入站的 UDP 业务语义接入
+`multi_protocol_coexistence`：常规 TCP probe 完成后，分别对 `vless-reality`、
+`mixed` 和独立 `socks` 执行真实 SOCKS5 UDP ASSOCIATE。每个生成器读取活动
+配置/状态，生成临时客户端，先通过目标 `sing-box 1.14.0 check`，再将带协议标识的
+精确 marker 发送到一次性 UDP echo，并保留响应、客户端日志和清理断言。
+
+VLESS REALITY 客户端保留 Vision flow，省略 `network`/`packet_encoding` 以使用
+核心双网络与 xudp 默认；Mixed 使用原生 SOCKS UDP associate；独立 SOCKS 显式
+使用 `udp_over_tcp:{enabled:true,version:2}`，因此其结果是 TCP 承载的 UoT v2
+业务，不是原生 UDP listener 证明。门禁运行 `dev/verification-runs/20260916022721`
+的三组 `protocol-probes/{vless-reality,mixed,socks}/udp.result.env` 均为
+`RESULT=success`，矩阵标记为 `project-real-tcp+udp`。证据仅限固定核心、特权
+隔离容器和回环，不代表独立 SOCKS 原生 UDP、公网可达、外部客户端、生产、SubMan
+或完整协议目标完成；脚本版本保持 `2026091505`。
