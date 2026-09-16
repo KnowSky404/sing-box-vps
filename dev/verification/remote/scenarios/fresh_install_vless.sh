@@ -949,6 +949,188 @@ PY
   verification_mark_step fresh_install_vless_wireguard_endpoint_resources_cleaned
 )
 
+# Exercise the core-owned TUN as an actual L3 ingress.  A disposable veth
+# namespace hosts the marker so the destination is not a local address; the
+# host request must therefore follow the auto_route table into sing-box and
+# return through the direct outbound.  The namespace and veth are verification
+# fixtures only and are never recorded as installer-owned resources.
+verification_run_tun_l3_probe() (
+  set -euo pipefail
+
+  local config_file=${1:-/root/sing-box-vps/config.json}
+  local probe_dir="${VERIFY_CURRENT_SCENARIO_DIR}/tun-data-plane"
+  local response_artifact udp_response_artifact
+  local marker_stdout_artifact marker_stderr_artifact udp_marker_stdout_artifact
+  local udp_marker_stderr_artifact udp_client_stderr_artifact
+  local temp_dir='' netns='' host_veth='' peer_veth=''
+  local marker_port_file marker_port='' marker='' marker_pid=''
+  local udp_port_file udp_port='' udp_marker='' udp_marker_pid=''
+  local host_ip='198.18.1.1' peer_ip='198.18.1.2'
+  local probe_status=1
+
+  response_artifact=$(verification_artifact_path "${probe_dir}/http-response.txt")
+  udp_response_artifact=$(verification_artifact_path "${probe_dir}/udp-response.txt")
+  marker_stdout_artifact=$(verification_artifact_path "${probe_dir}/marker.stdout.txt")
+  marker_stderr_artifact=$(verification_artifact_path "${probe_dir}/marker.stderr.txt")
+  udp_marker_stdout_artifact=$(verification_artifact_path "${probe_dir}/udp-marker.stdout.txt")
+  udp_marker_stderr_artifact=$(verification_artifact_path "${probe_dir}/udp-marker.stderr.txt")
+  udp_client_stderr_artifact=$(verification_artifact_path "${probe_dir}/udp-client.stderr.txt")
+
+  cleanup_tun_l3_probe() {
+    local status=$? cleanup_status=0
+
+    trap - EXIT INT TERM HUP
+    set +e
+    if [[ -n "${marker_pid}" ]]; then
+      kill "${marker_pid}" 2>/dev/null || true
+      wait "${marker_pid}" 2>/dev/null || true
+      marker_pid=''
+    fi
+    if [[ -n "${udp_marker_pid}" ]]; then
+      kill "${udp_marker_pid}" 2>/dev/null || true
+      wait "${udp_marker_pid}" 2>/dev/null || true
+      udp_marker_pid=''
+    fi
+    if [[ -n "${host_veth}" ]] && ip link show dev "${host_veth}" >/dev/null 2>&1; then
+      ip link del "${host_veth}" || cleanup_status=1
+    fi
+    if [[ -n "${netns}" ]] && ip netns list | awk '{print $1}' | grep -Fqx "${netns}"; then
+      ip netns del "${netns}" || cleanup_status=1
+    fi
+    verification_capture_best_effort_command "${probe_dir}/resources.after-cleanup.txt" \
+      ip -j route show table all
+    rm -rf -- "${temp_dir:-}"
+    if [[ "${status}" == "0" && "${cleanup_status}" != "0" ]]; then
+      status=1
+    fi
+    if [[ "${status}" == "0" && "${probe_status}" == "0" ]]; then
+      verification_write_artifact "${probe_dir}/result.env" \
+        'COMPONENT=tun-inbound' 'RESULT=success' \
+        'DATA_PLANE=tun_l3_tcp_udp_loopback' 'ROUTING=auto_route' \
+        'POLICY_SCOPE=verification_container_only' 'POLICY_OWNERSHIP=core_owned'
+    else
+      verification_write_artifact "${probe_dir}/result.env" \
+        'COMPONENT=tun-inbound' 'RESULT=failure' \
+        'DATA_PLANE=tun_l3_tcp_udp_loopback' 'ROUTING=auto_route' \
+        'POLICY_SCOPE=verification_container_only' 'POLICY_OWNERSHIP=core_owned'
+    fi
+    exit "${status}"
+  }
+  trap cleanup_tun_l3_probe EXIT INT TERM HUP
+
+  command -v ip >/dev/null 2>&1
+  command -v curl >/dev/null 2>&1
+  command -v python3 >/dev/null 2>&1
+  verification_capture_command "${probe_dir}/sing-box-check.txt" \
+    sing-box check -c "${config_file}"
+  temp_dir=$(mktemp -d /tmp/sing-box-vps-tun-l3-probe.XXXXXX)
+  netns="sbvtunns-${BASHPID}"
+  host_veth="sbvtunh${BASHPID}"
+  peer_veth="sbvtunp${BASHPID}"
+  marker_port_file="${temp_dir}/marker.port"
+  udp_port_file="${temp_dir}/udp.port"
+  marker="sing-box-vps-tun-l3-loopback-ok-$(date +%s)-$$"
+
+  ip netns add "${netns}"
+  ip link add "${host_veth}" type veth peer name "${peer_veth}"
+  ip link set "${peer_veth}" netns "${netns}"
+  ip addr add "${host_ip}/24" dev "${host_veth}"
+  ip link set "${host_veth}" up
+  ip netns exec "${netns}" ip addr add "${peer_ip}/24" dev "${peer_veth}"
+  ip netns exec "${netns}" ip link set lo up
+  ip netns exec "${netns}" ip link set "${peer_veth}" up
+  ip netns exec "${netns}" ip route add 172.19.0.0/30 via "${host_ip}"
+  verification_capture_best_effort_command "${probe_dir}/resources.before.txt" \
+    ip -j addr show dev "${host_veth}"
+
+  ip netns exec "${netns}" python3 - "${marker_port_file}" "${marker}" \
+    > "${marker_stdout_artifact}" 2> "${marker_stderr_artifact}" <<'PY' &
+import http.server
+import pathlib
+import sys
+
+port_path, marker = sys.argv[1:]
+
+class MarkerHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = (marker + "\n").encode("ascii")
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        return
+
+server = http.server.ThreadingHTTPServer(("198.18.1.2", 0), MarkerHandler)
+pathlib.Path(port_path).write_text(str(server.server_address[1]), encoding="ascii")
+server.serve_forever()
+PY
+  marker_pid=$!
+  for _ in {1..100}; do
+    [[ -s "${marker_port_file}" ]] && break
+    kill -0 "${marker_pid}" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  [[ -s "${marker_port_file}" ]]
+  marker_port=$(<"${marker_port_file}")
+  [[ "${marker_port}" =~ ^[0-9]+$ && "${marker_port}" -ge 1 && "${marker_port}" -le 65535 ]]
+  verification_capture_best_effort_command "${probe_dir}/resources.with-tun.txt" \
+    ip -j route get "${peer_ip}"
+
+  verification_capture_command "${probe_dir}/http-response.txt" \
+    curl --noproxy '*' --max-time 5 -fsS "http://${peer_ip}:${marker_port}/"
+  grep -Fqx "${marker}" "${response_artifact}"
+
+  udp_marker="${marker}-udp"
+  ip netns exec "${netns}" python3 - "${udp_port_file}" \
+    > "${udp_marker_stdout_artifact}" 2> "${udp_marker_stderr_artifact}" <<'PY' &
+import pathlib
+import socket
+import sys
+
+port_path = sys.argv[1]
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server:
+    server.bind(("198.18.1.2", 0))
+    pathlib.Path(port_path).write_text(str(server.getsockname()[1]), encoding="ascii")
+    payload, address = server.recvfrom(65535)
+    server.sendto(payload, address)
+PY
+  udp_marker_pid=$!
+  for _ in {1..100}; do
+    [[ -s "${udp_port_file}" ]] && break
+    kill -0 "${udp_marker_pid}" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  [[ -s "${udp_port_file}" ]]
+  udp_port=$(<"${udp_port_file}")
+  [[ "${udp_port}" =~ ^[0-9]+$ && "${udp_port}" -ge 1 && "${udp_port}" -le 65535 ]]
+  set +e
+  python3 - "${peer_ip}" "${udp_port}" "${udp_marker}" \
+    > "${udp_response_artifact}" 2> "${udp_client_stderr_artifact}" <<'PY'
+import socket
+import sys
+
+address, port_text, marker_text = sys.argv[1:]
+marker = marker_text.encode("ascii")
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+    client.settimeout(5)
+    client.sendto(marker, (address, int(port_text)))
+    payload, _ = client.recvfrom(65535)
+if payload != marker:
+    raise RuntimeError("TUN UDP marker mismatch")
+sys.stdout.buffer.write(payload)
+PY
+  local udp_status=$?
+  set -e
+  [[ "${udp_status}" == 0 ]]
+  grep -Fqx "${udp_marker}" "${udp_response_artifact}"
+  kill "${udp_marker_pid}" 2>/dev/null || true
+  wait "${udp_marker_pid}" 2>/dev/null || true
+  udp_marker_pid=''
+  probe_status=0
+)
+
 verification_scenario_fresh_install_vless() {
   local config_uuid
   local env_uuid
@@ -1088,6 +1270,8 @@ EOF
       .interface.status=="present" and .policy_routing.status=="present" and
       .rule.status=="present")] | length == 1)' "${tun_diagnose_json}" >/dev/null
   verification_mark_step fresh_install_vless_tun_resources_observed
+  verification_run_tun_l3_probe /root/sing-box-vps/config.json
+  verification_mark_step fresh_install_vless_tun_l3_probe_complete
 
   bash /usr/local/bin/sbv agent component delete --json --yes \
     --expected-revision 1 --id tun-resource-verification > "${tun_delete_json}"

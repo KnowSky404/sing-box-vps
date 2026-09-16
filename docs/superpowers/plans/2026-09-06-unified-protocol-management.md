@@ -1124,3 +1124,23 @@ VLESS REALITY 客户端保留 Vision flow，省略 `network`/`packet_encoding` �
 `RESULT=success`，矩阵标记为 `project-real-tcp+udp`。证据仅限固定核心、特权
 隔离容器和回环，不代表独立 SOCKS 原生 UDP、公网可达、外部客户端、生产、SubMan
 或完整协议目标完成；脚本版本保持 `2026091505`。
+
+### 2026-09-16：TUN core-owned L3 TCP+UDP 数据面探针
+
+在已有 TUN 接口、iproute2 rule/route 和删除清理证据之后，本轮把验证范围扩展到
+受控的 L3 payload。`fresh_install_vless` 在创建并观察 TUN component 后调用
+`verification_run_tun_l3_probe`：在特权 Docker 内建立 disposable veth/network
+namespace，令 namespace 侧的 HTTP 与 UDP marker 通过 `auto_route` 进入 sing-box
+core-owned TUN；探针先执行固定 ARM64 `sing-box 1.14.0 check`，再精确回读 TCP/UDP
+响应，并在成功或异常路径清理 marker 进程、veth 和 namespace。
+
+最终门禁 `dev/verification-runs/20260916041756` 的
+`fresh_install_vless/tun-data-plane/` artifact 包含 `result.env`、目标核心
+`sing-box-check.txt`、精确 `http-response.txt`/`udp-response.txt`、运行时日志，
+以及 `resources.before.txt`、`resources.with-tun.txt`、`resources.after-cleanup.txt`（后者确认 disposable veth/namespace 清理，受管 TUN 会在随后组件删除阶段清理）。
+结果明确标记 `RESULT=success`、`DATA_PLANE=tun_l3_tcp_udp_loopback`、
+`ROUTING=auto_route`、`POLICY_SCOPE=verification_container_only` 和
+`POLICY_OWNERSHIP=core_owned`，新增验证标签 `project-real-tun-l3-tcp+udp`。
+该证据只覆盖固定核心、隔离容器内 core-owned TUN 的 L3 TCP+UDP 回环；不表示宿主
+策略路由、DNS/防火墙接管、公网、外部控制面、生产部署或完整协议目标完成。脚本
+版本保持 `2026091505`。
