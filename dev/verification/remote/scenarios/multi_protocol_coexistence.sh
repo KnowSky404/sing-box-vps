@@ -1505,6 +1505,15 @@ PY
   done < <(read_installed_protocols)
   verification_run_protocol_probes
 
+  # The legacy REALITY, Mixed and standalone SOCKS inbounds all expose their
+  # UDP-capable semantics through the TCP listener.  Exercise each path with
+  # the shared SOCKS5 UDP ASSOCIATE probe after the regular TCP probes; the
+  # protocol-specific client generators preserve REALITY/XUDP defaults and
+  # standalone SOCKS UoT v2 instead of treating a TCP listener as native UDP.
+  verification_execute_protocol_udp_probe vless-reality /root/sing-box-vps/config.json
+  verification_execute_protocol_udp_probe mixed /root/sing-box-vps/config.json
+  verification_execute_protocol_udp_probe socks /root/sing-box-vps/config.json
+
   # Naive outbound carries UDP through its explicit UDP-over-TCP adapter when
   # the managed listener has a TCP leg.  Preserve the initial TCP probe tree
   # before replacing the same instance with a UDP-only listener below.

@@ -231,6 +231,27 @@ only. It does not prove external VLESS, TLS/REALITY, public reachability,
 production operation, SubMan synchronization or completion of the full protocol
 goal.
 
+## TCP-listener inbound UDP business verification
+
+The privileged Docker `multi_protocol_coexistence` gate in
+`dev/verification-runs/20260916022721` runs the normal TCP probes first, then
+executes `verification_execute_protocol_udp_probe` for `vless-reality`, `mixed`
+and `socks`. Each probe reads the active listener/state, generates a disposable
+SOCKS client, passes the target `sing-box 1.14.0 check`, sends one exact
+SOCKS5 UDP ASSOCIATE marker and requires the matching loopback UDP echo. The
+three `protocol-probes/<protocol>/udp.result.env` files report `RESULT=success`
+and the response, client-check and cleanup artifacts are retained.
+
+The VLESS REALITY generator preserves the stored Vision flow and omits
+`network`/`packet_encoding`, exercising the core's default TCP+UDP and xudp
+semantics through the REALITY/TCP listener. The Mixed generator uses a native
+SOCKS UDP ASSOCIATE without UoT. The standalone SOCKS generator explicitly
+uses `udp_over_tcp:{enabled:true,version:2}`, so its result is TCP-carried UoT
+business rather than proof of a native UDP listener. This is fixed-core,
+isolated-container/loopback evidence only: it does not prove public reachability,
+external clients, host firewall policy, production operation, SubMan or full
+protocol completion.
+
 ## Tor outbound verification
 
 The privileged Docker `multi_protocol_coexistence` scenario uses the image's

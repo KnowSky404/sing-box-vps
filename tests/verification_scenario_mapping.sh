@@ -56,6 +56,9 @@ grep -Fq '.network == ["tcp","udp"]' "${vless_scenario}"
 grep -Fq 'has("packet_encoding") | not' "${vless_scenario}"
 grep -Fq 'DATA_PLANE=vless_udp_xudp_loopback' "${vless_scenario}"
 grep -Fq 'CLIENT_TRANSPORT=xudp' "${vless_scenario}"
+grep -Fq 'verification_execute_protocol_udp_probe vless-reality /root/sing-box-vps/config.json' "${vless_scenario}"
+grep -Fq 'verification_execute_protocol_udp_probe mixed /root/sing-box-vps/config.json' "${vless_scenario}"
+grep -Fq 'verification_execute_protocol_udp_probe socks /root/sing-box-vps/config.json' "${vless_scenario}"
 
 assert_scenarios() {
   local expected=$1
