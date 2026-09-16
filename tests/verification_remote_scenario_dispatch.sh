@@ -1264,6 +1264,11 @@ awk '
 [[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_vless/protocols/index.env" ]]
 [[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_vless/listeners.ss-lntp.txt" ]]
 grep -Fqx 'sing-box version 1.14.0' "${ARTIFACT_DIR}/scenarios/fresh_install_vless/sing-box.version.txt"
+[[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_vless/wireguard-endpoint-system/result.env" ]]
+grep -Fqx 'RESULT=blocked' \
+  "${ARTIFACT_DIR}/scenarios/fresh_install_vless/wireguard-endpoint-system/result.env"
+grep -Fqx 'REASON=privileged_resource_probe_disabled' \
+  "${ARTIFACT_DIR}/scenarios/fresh_install_vless/wireguard-endpoint-system/result.env"
 [[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_vless/sbv-status.txt" ]]
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_vless/protocol-probes/vless-reality/result.env"
 [[ -f "${ARTIFACT_DIR}/scenarios/reconfigure_existing_install/config.diff.txt" ]]

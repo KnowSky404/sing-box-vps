@@ -46,6 +46,27 @@ grep -Fq 'wg show "${peer_interface}" transfer' "${wireguard_scenario}"
 grep -Fq 'PAYLOAD=marker_round_trip' "${wireguard_scenario}"
 grep -Fq 'PEER_HANDSHAKE=kernel_wireguard' "${wireguard_scenario}"
 grep -Fq 'fresh_install_vless_wireguard_endpoint_resources_cleaned' "${wireguard_scenario}"
+grep -Fq 'verification_run_wireguard_system_endpoint_runtime_probe() (' "${wireguard_scenario}"
+grep -Fq 'system:true,name:$name' "${wireguard_scenario}"
+grep -Fq 'DATA_PLANE=wireguard_system_udp_netns' "${wireguard_scenario}"
+grep -Fq 'system-interface.json' "${wireguard_scenario}"
+grep -Fq 'system-address.json' "${wireguard_scenario}"
+grep -Fq 'ip link set "${peer_interface}" netns "${marker_netns}"' "${wireguard_scenario}"
+grep -Fq 'ip netns exec "${marker_netns}" ip route add' "${wireguard_scenario}"
+grep -Fq 'ip netns exec "${marker_netns}" wg set' "${wireguard_scenario}"
+grep -Fq 'ip netns exec "${marker_netns}" wg show' "${wireguard_scenario}"
+grep -Fq 'marker_address=198.18.31.2' "${wireguard_scenario}"
+grep -Fq 'ip route add "${marker_address}/32" dev "${system_interface}"' "${wireguard_scenario}"
+if grep -Fq 'marker_policy' "${wireguard_scenario}" ||
+  grep -Fq 'ip rule add priority' "${wireguard_scenario}"; then
+  printf 'system WireGuard probe must not install host policy routing\n' >&2
+  exit 1
+fi
+grep -Fq 'wg show "${peer_interface}" latest-handshakes' "${wireguard_scenario}"
+grep -Fq 'wg show "${peer_interface}" transfer' "${wireguard_scenario}"
+grep -Fq 'fresh_install_vless_wireguard_system_endpoint_payload_success' "${wireguard_scenario}"
+grep -Fq 'fresh_install_vless_wireguard_system_endpoint_resources_cleaned' "${wireguard_scenario}"
+grep -Fq 'verification_run_wireguard_system_endpoint_runtime_probe' "${wireguard_scenario}"
 grep -Fq 'wireguard-tools' "${wireguard_dockerfile}"
 grep -Fq 'verification_run_tun_l3_probe() (' "${wireguard_scenario}"
 grep -Fq 'verification_run_tun_l3_probe /root/sing-box-vps/config.json' "${wireguard_scenario}"

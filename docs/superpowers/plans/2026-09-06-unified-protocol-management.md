@@ -1224,3 +1224,34 @@ bridge/TUN/route、bridge 动态 TUN 与 priority 122/123 rule、egress route、
 `POLICY_OWNERSHIP=core_owned`。这证明固定 1.14.0 核心、隔离容器/network
 namespace 内 TUN→bridge L3 TCP+UDP forwarding；不代表宿主策略、外部 bridge
 接口、公网、生产、外部控制面或完整协议目标，脚本版本为 `2026091602`。
+
+### 2026-09-16：WireGuard `system:true` UDP 数据面探针
+
+在既有 `system:false`/gVisor WireGuard endpoint 的 kernel peer handshake 与 UDP
+marker 证据之后，本轮为 `fresh_install_vless` 增加独立的 `system:true` 路径。特权
+Docker 场景使用镜像内 `wireguard-tools` 创建 disposable kernel peer，将 peer 移入
+与 marker 相邻的命名 network namespace，并以 host/namespace veth 连接；managed
+endpoint 创建命名 `sbv-wg-sys`，配置地址 `10.91.0.2/32`、MTU 1420、独立 UDP
+listen port。一次性 direct UDP inbound 通过该 endpoint 访问 namespace 独立
+loopback `198.18.31.2` marker；namespace 内的 `10.91.0.2/32` peer route 让解密请求
+和加密响应避开宿主 TUN 地址冲突。Linux 内核 peer 在创建后移入 namespace，但其
+UDP socket 保留在创建它的 host namespace；因此 endpoint peer address 使用 host
+veth 的 `198.18.30.1`（而不是 namespace veth 的 `198.18.30.2`），同时仍保留
+namespace/veth 作为 disposable peer/marker 隔离边界。
+
+Context7 对 sing-box 1.14 endpoint 文档的核对确认 system endpoint 只负责创建接口、
+配置地址和 MTU，不安装探针所需的操作系统路由。因此探针明确添加到 marker 的单条
+`198.18.31.2/32` route，artifact 保存 `ip route get` 命中 system interface，并在
+删除 endpoint 前移除该 route；WireGuard peer endpoint 使用 host veth 地址
+`198.18.30.1` 以匹配内核 socket 的 host namespace，不需要 host policy rule/table。
+目标核心 `check`、system interface/
+地址/MTU、component diagnose、精确 UDP payload、kernel peer 的
+`latest-handshakes` 与 `transfer` 非零计数均作为成功条件。system endpoint 暴露的是
+core-owned TUN 载体，不将其误判为可由 `wg show` 读取的内核 WireGuard 设备；结果
+`wireguard-endpoint-system/result.env` 标记 `DATA_PLANE=wireguard_system_udp_netns`、
+`ROUTING=disposable_marker_route`、`POLICY_SCOPE=none`，随后按 CAS revision 删除
+proxy 与 endpoint，确认 route、system interface、kernel peer、veth 和 namespace 清理。
+
+该验证只覆盖固定 1.14.0、特权隔离 Docker 和本地 disposable peer/marker；route 与
+namespace/veth 是 verification fixture，不代表宿主策略所有权、外部 WireGuard peer、公网、
+生产、SubMan 或完整协议目标。脚本版本同步为 `2026091606`。

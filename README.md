@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026091605`
+- 脚本版本：`2026091606`
 
 - sing-box 适配版本：`1.14.0`
 
@@ -261,6 +261,7 @@ sbv
 - **TUN L3 业务探针**：特权 Docker `20260916064328` 在 `fresh_install_vless` 中以 disposable veth/network namespace 将 TCP+UDP marker 送入 core-owned TUN 的 `auto_route` 路径，目标核心 `check`、精确响应与资源清理均成功；这只证明隔离容器/network namespace L3 数据面，不代表宿主策略、DNS/防火墙接管、公网或生产。
 - **Bridge L3 业务探针**：特权 Docker `20260916071546` 在 `fresh_install_vless` 中以两组 disposable veth/network namespace 将 TCP+UDP marker 经 core-owned TUN 的 `auto_route` 和 bridge 动态 TUN/netfilter 送至隔离 egress，目标核心 `check`、精确响应、route/rule/diagnose 及 CAS/接口清理均成功；这只证明隔离容器/network namespace 的 `project-real-bridge-l3-tcp+udp` 数据面，不代表宿主策略、外部 bridge 接口、公网或生产。
 - **OpenVPN `system:true` TCP+UDP 数据面探针**：特权 Docker `20260916104745` 在 `fresh_install_vless` 中保留 `20260916083525` 的 TCP marker，并新增 `sbv-ovpn-us`/`sbv-ovpn-uc` UDP pair（11997）与 direct UDP inbound（15095），均经命名 core-owned TUN 接口回送到独立 disposable veth/network namespace；目标核心 `check`、journal/diagnose、精确 TCP/UDP payload 与 CAS/接口/namespace 清理均成功，结果为 `project-real-openvpn-system-tcp+udp`。证据仅限隔离容器/network namespace，不代表宿主路由、透明策略、公网、生产、外部控制面或 SubMan。
+- **WireGuard `system:true` UDP 数据面探针**：特权 Docker `fresh_install_vless` 使用镜像内 `wireguard-tools` 创建 disposable kernel peer，并将 peer 移入与 marker 相邻的 disposable network namespace，通过 host/namespace veth 连接；命名 `sbv-wg-sys` system endpoint 再经一次性 `/32` marker route 访问独立 loopback UDP echo。namespace 内的 peer route 让解密请求和加密响应不与宿主 TUN 地址冲突；目标核心 `check`、接口地址/MTU、diagnose、精确 payload、kernel peer 的 WireGuard handshake/transfer 计数与 CAS/route/interface/namespace 清理均作为 artifact 保存。system endpoint 是 core-owned TUN 载体，不假定它暴露内核 `wg` 设备统计；结果标签为 `project-real-wireguard-system-udp`。route 与 namespace/veth 只属于验证夹具，不代表宿主策略接管；证据仅限隔离容器、固定核心与回环，不代表公网、外部 peer、生产、SubMan 或完整协议目标。
 - **规范存储**：统一使用 `/root/sing-box-vps/` 存放配置、密钥及持久化参数。
 
 ## Agent 非交互命令

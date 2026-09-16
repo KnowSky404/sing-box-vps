@@ -1617,6 +1617,11 @@ grep -Fq 'SCENARIO=runtime_smoke' "${run_dir}/remote.stdout.log"
 grep -Fq 'SERVICE_ACTIVE=active' "${run_dir}/remote.stdout.log"
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/sing-box-check.txt" ]]
 grep -Fqx 'sing-box version 1.14.0' "${run_dir}/remote-artifacts/scenarios/fresh_install_vless/sing-box.version.txt"
+[[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_vless/wireguard-endpoint-system/result.env" ]]
+grep -Fqx 'RESULT=blocked' \
+  "${run_dir}/remote-artifacts/scenarios/fresh_install_vless/wireguard-endpoint-system/result.env"
+grep -Fqx 'REASON=privileged_resource_probe_disabled' \
+  "${run_dir}/remote-artifacts/scenarios/fresh_install_vless/wireguard-endpoint-system/result.env"
 grep -Fqx 'sing-box version 1.14.0' "${run_dir}/remote-artifacts/scenarios/fresh_install_anytls/sing-box.version.txt"
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_http/config.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/fresh_install_http/protocols/instances/http.json" ]]

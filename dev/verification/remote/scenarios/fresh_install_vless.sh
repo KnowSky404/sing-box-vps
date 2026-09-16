@@ -589,8 +589,12 @@ sock.bind((bind_address, 0))
 pathlib.Path(port_path).write_text(str(sock.getsockname()[1]), encoding="ascii")
 while True:
     payload, address = sock.recvfrom(65535)
+    try:
+        payload_text = payload.decode("ascii")
+    except UnicodeDecodeError:
+        payload_text = f"<hex:{payload.hex()}>"
     pathlib.Path(access_path).write_text(
-        f"{address[0]}:{address[1]}\n{payload.decode('ascii')}\n",
+        f"{address[0]}:{address[1]}\n{payload_text}\n",
         encoding="ascii",
     )
     if payload == marker_bytes:
@@ -1405,6 +1409,23 @@ pathlib.Path(response_path).write_bytes(response)
 PY
   client_status=$?
   set -e
+  if [[ "${client_status}" != "0" ]]; then
+    verification_capture_best_effort_command \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint/journal-after-failure.txt" \
+      journalctl -u sing-box -n 240 --no-pager
+    verification_capture_best_effort_command \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint/peer-latest-handshakes-after-failure.txt" \
+      wg show "${peer_interface}" latest-handshakes
+    verification_capture_best_effort_command \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint/peer-transfer-after-failure.txt" \
+      wg show "${peer_interface}" transfer
+    verification_capture_best_effort_command \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint/peer-link-after-failure.json" \
+      ip -j -s link show dev "${peer_interface}"
+    verification_capture_best_effort_command \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint/routes-after-failure.json" \
+      ip -j route show table all
+  fi
   [[ "${client_status}" == "0" ]]
   grep -Fqx "${marker}" "${response_path}"
   verification_capture_best_effort_command \
@@ -1479,6 +1500,667 @@ PY
   verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint/after-delete.env" \
     'RESULT=success' 'RESOURCES=managed_endpoint_and_kernel_peer_removed'
   verification_mark_step fresh_install_vless_wireguard_endpoint_resources_cleaned
+)
+
+# Exercise a modern system:true WireGuard endpoint against a disposable
+# kernel WireGuard peer.  sing-box owns the named system interface while the
+# peer and the marker network namespace are verification fixtures.  The peer
+# lives beside the marker so its decrypted request and encrypted response do
+# not collide with the sing-box TUN address in the host namespace.  Linux keeps
+# the kernel peer's UDP socket in the namespace where the device was created,
+# so the managed peer endpoint targets the host veth address after the device
+# is moved into the marker namespace.
+verification_run_wireguard_system_endpoint_runtime_probe() (
+  set -euo pipefail
+
+  local expected_revision=${1:-0}
+  local endpoint_create_revision=$((expected_revision + 1))
+  local proxy_create_revision=$((expected_revision + 2))
+  local proxy_delete_revision=$((expected_revision + 3))
+  local endpoint_delete_revision=$((expected_revision + 4))
+  local fixture_dir=/tmp/sing-box-vps-verification-wireguard-system
+  local peer_interface=sbv-wg-peer-sys
+  local system_interface=sbv-wg-sys
+  local endpoint_id=wireguard-endpoint-system-runtime-verification
+  local endpoint_tag=wireguard-endpoint-system-runtime-verification
+  local proxy_id=wireguard-endpoint-system-proxy-verification
+  local proxy_tag=wireguard-endpoint-system-proxy-verification
+  local server_address=10.91.0.1
+  local client_peer_address=10.91.0.2
+  local client_address=10.91.0.2/32
+  local server_port=51992
+  local client_port=51993
+  local proxy_port=15096
+  local marker_host_address=198.18.30.1
+  local peer_netns_address=198.18.30.2
+  local marker_address=198.18.31.2
+  local marker_netns="sbwgns${BASHPID}"
+  local marker_host_veth="sbwgh${BASHPID}"
+  local marker_peer_veth="sbwgp${BASHPID}"
+  local marker=''
+  local marker_port_file="${fixture_dir}/marker.port"
+  local marker_port=''
+  local marker_pid=''
+  local peer_interface_created=0
+  local marker_netns_created=0
+  local marker_veth_created=0
+  local peer_interface_in_marker_netns=0
+  local endpoint_created=0
+  local proxy_created=0
+  local marker_route_created=0
+  local peer_client_route_created=0
+  local current_revision=${expected_revision}
+  local server_private_key=''
+  local server_public_key=''
+  local client_private_key=''
+  local client_public_key=''
+  local server_key_file="${fixture_dir}/server.key"
+  local endpoint_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/wireguard-endpoint-system-record.json"
+  local proxy_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/wireguard-endpoint-system-proxy-record.json"
+  local endpoint_create="${VERIFY_REMOTE_LOCAL_TREE_DIR}/wireguard-endpoint-system-create.json"
+  local proxy_create="${VERIFY_REMOTE_LOCAL_TREE_DIR}/wireguard-endpoint-system-proxy-create.json"
+  local proxy_delete="${VERIFY_REMOTE_LOCAL_TREE_DIR}/wireguard-endpoint-system-proxy-delete.json"
+  local endpoint_delete="${VERIFY_REMOTE_LOCAL_TREE_DIR}/wireguard-endpoint-system-delete.json"
+  local config_path=''
+  local journal_path=''
+  local response_path=''
+  local client_stderr_path=''
+  local client_status=1
+
+  wireguard_system_cleanup() {
+    local status=$?
+    local cleanup_status=0
+
+    trap - EXIT INT TERM HUP
+    set +e
+    if [[ -n "${marker_pid}" ]]; then
+      kill "${marker_pid}" 2>/dev/null
+      wait "${marker_pid}" 2>/dev/null
+      marker_pid=''
+    fi
+    if [[ "${proxy_created}" == "1" ]]; then
+      bash /usr/local/bin/sbv agent component delete --json --yes \
+        --expected-revision "${current_revision}" --id "${proxy_id}" \
+        >/dev/null
+      [[ "$?" == "0" ]] || cleanup_status=1
+      current_revision=${proxy_delete_revision}
+      proxy_created=0
+    fi
+    if [[ "${marker_route_created}" == "1" ]]; then
+      if ip route show "${marker_address}/32" dev "${system_interface}" | grep -Fq \
+        "${marker_address}/32"; then
+        ip route del "${marker_address}/32" dev "${system_interface}"
+        [[ "$?" == "0" ]] || cleanup_status=1
+      fi
+      marker_route_created=0
+    fi
+    if [[ "${peer_client_route_created}" == "1" ]]; then
+      if ip netns exec "${marker_netns}" ip route show \
+        "${client_peer_address}/32" dev "${peer_interface}" | grep -Fq \
+        "${client_peer_address}/32"; then
+        ip netns exec "${marker_netns}" ip route del \
+          "${client_peer_address}/32" dev "${peer_interface}"
+        [[ "$?" == "0" ]] || cleanup_status=1
+      fi
+      peer_client_route_created=0
+    fi
+    if [[ "${endpoint_created}" == "1" ]]; then
+      bash /usr/local/bin/sbv agent component delete --json --yes \
+        --expected-revision "${current_revision}" --id "${endpoint_id}" \
+        >/dev/null
+      [[ "$?" == "0" ]] || cleanup_status=1
+      current_revision=${endpoint_delete_revision}
+      endpoint_created=0
+    fi
+    if [[ "${peer_interface_created}" == "1" ]]; then
+      if [[ "${peer_interface_in_marker_netns}" == "1" ]] &&
+        ip netns list | awk '{print $1}' | grep -Fqx "${marker_netns}" &&
+        ip netns exec "${marker_netns}" ip link show dev "${peer_interface}" \
+          >/dev/null 2>&1; then
+        ip netns exec "${marker_netns}" ip link del "${peer_interface}"
+        [[ "$?" == "0" ]] || cleanup_status=1
+      elif ip link show dev "${peer_interface}" >/dev/null 2>&1; then
+        ip link del "${peer_interface}"
+        [[ "$?" == "0" ]] || cleanup_status=1
+      fi
+      peer_interface_created=0
+      peer_interface_in_marker_netns=0
+    fi
+    if [[ "${marker_veth_created}" == "1" ]] &&
+      ip link show dev "${marker_host_veth}" >/dev/null 2>&1; then
+      ip link del "${marker_host_veth}"
+      [[ "$?" == "0" ]] || cleanup_status=1
+      marker_veth_created=0
+    fi
+    if [[ -n "${marker_netns}" ]] &&
+      ip netns list | awk '{print $1}' | grep -Fqx "${marker_netns}"; then
+      ip netns del "${marker_netns}"
+      [[ "$?" == "0" ]] || cleanup_status=1
+      marker_netns_created=0
+    fi
+    rm -rf -- "${fixture_dir}"
+    [[ "$?" == "0" ]] || cleanup_status=1
+    set -e
+    if [[ "${status}" == "0" && "${cleanup_status}" != "0" ]]; then
+      status=1
+    fi
+    exit "${status}"
+  }
+  trap wireguard_system_cleanup EXIT INT TERM HUP
+
+  if [[ "${VERIFY_REMOTE_SKIP_PRIVILEGED_RESOURCES:-0}" == "1" ]]; then
+    verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/result.env" \
+      'RESULT=blocked' 'REASON=privileged_resource_probe_disabled' 'PAYLOAD=not_attempted'
+    verification_mark_step fresh_install_vless_wireguard_system_endpoint_blocked
+    exit 0
+  fi
+  if [[ "$(id -u)" != "0" ]]; then
+    verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/result.env" \
+      'RESULT=blocked' 'REASON=root_required_for_system_interface' 'PAYLOAD=not_attempted'
+    verification_mark_step fresh_install_vless_wireguard_system_endpoint_blocked
+    exit 0
+  fi
+  if ! command -v ip >/dev/null 2>&1 || ! command -v wg >/dev/null 2>&1; then
+    verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/result.env" \
+      'RESULT=blocked' 'REASON=wireguard_tools_unavailable' 'PAYLOAD=not_attempted'
+    verification_mark_step fresh_install_vless_wireguard_system_endpoint_blocked
+    exit 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/result.env" \
+      'RESULT=blocked' 'REASON=python3_unavailable' 'PAYLOAD=not_attempted'
+    verification_mark_step fresh_install_vless_wireguard_system_endpoint_blocked
+    exit 0
+  fi
+  if ip link show dev "${peer_interface}" >/dev/null 2>&1 ||
+    ip link show dev "${system_interface}" >/dev/null 2>&1; then
+    verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/result.env" \
+      'RESULT=blocked' 'REASON=system_interface_name_in_use' 'PAYLOAD=not_attempted'
+    verification_mark_step fresh_install_vless_wireguard_system_endpoint_blocked
+    exit 0
+  fi
+  if ip netns list | awk '{print $1}' | grep -Fqx "${marker_netns}"; then
+    verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/result.env" \
+      'RESULT=blocked' 'REASON=marker_namespace_name_in_use' 'PAYLOAD=not_attempted'
+    verification_mark_step fresh_install_vless_wireguard_system_endpoint_blocked
+    exit 0
+  fi
+
+  rm -rf -- "${fixture_dir}"
+  mkdir -p "${fixture_dir}"
+  chmod 700 "${fixture_dir}"
+  server_private_key=$(wg genkey)
+  server_public_key=$(printf '%s\n' "${server_private_key}" | wg pubkey)
+  client_private_key=$(wg genkey)
+  client_public_key=$(printf '%s\n' "${client_private_key}" | wg pubkey)
+  printf '%s\n' "${server_private_key}" > "${server_key_file}"
+  chmod 600 "${server_key_file}"
+
+  local peer_create_stderr
+  peer_create_stderr=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/peer-create.stderr.txt")
+  set +e
+  ip link add "${peer_interface}" type wireguard > /dev/null 2> "${peer_create_stderr}"
+  local peer_create_status=$?
+  set -e
+  if [[ "${peer_create_status}" != "0" ]]; then
+    verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/result.env" \
+      'RESULT=blocked' 'REASON=wireguard_kernel_interface_unavailable' 'PAYLOAD=not_attempted'
+    verification_mark_step fresh_install_vless_wireguard_system_endpoint_blocked
+    exit 0
+  fi
+  peer_interface_created=1
+  ip netns add "${marker_netns}"
+  marker_netns_created=1
+  ip link add "${marker_host_veth}" type veth peer name "${marker_peer_veth}"
+  marker_veth_created=1
+  ip link set "${marker_peer_veth}" netns "${marker_netns}"
+  ip addr add "${marker_host_address}/24" dev "${marker_host_veth}"
+  ip link set "${marker_host_veth}" up
+  ip netns exec "${marker_netns}" ip addr add \
+    "${peer_netns_address}/24" dev "${marker_peer_veth}"
+  ip netns exec "${marker_netns}" ip link set lo up
+  ip netns exec "${marker_netns}" ip link set "${marker_peer_veth}" up
+  ip netns exec "${marker_netns}" ip addr add \
+    "${marker_address}/32" dev lo
+  ip link set "${peer_interface}" netns "${marker_netns}"
+  peer_interface_in_marker_netns=1
+  ip netns exec "${marker_netns}" ip addr add \
+    "${server_address}/32" dev "${peer_interface}"
+  ip netns exec "${marker_netns}" ip link set "${peer_interface}" up
+  ip netns exec "${marker_netns}" ip route add \
+    "${client_peer_address}/32" dev "${peer_interface}"
+  peer_client_route_created=1
+  ip netns exec "${marker_netns}" wg set "${peer_interface}" \
+    listen-port "${server_port}" private-key "${server_key_file}" \
+    peer "${client_public_key}" endpoint "${marker_host_address}:${client_port}" \
+    allowed-ips "${client_peer_address}/32" persistent-keepalive 1
+  verification_capture_best_effort_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/peer-listener.ss-lunp.txt" \
+    ss -lunp
+  ss -lun | awk -v port="${server_port}" '
+    ($1 == "UNCONN" || $1 == "LISTEN") && $4 ~ (":" port "$") { found = 1 }
+    END { exit(found ? 0 : 1) }
+  '
+
+  marker="sing-box-vps-wireguard-system-endpoint-loopback-ok-$(date +%s)-$$"
+  local marker_stdout_path
+  local marker_stderr_path
+  local marker_access_path
+  marker_stdout_path=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/marker.stdout.txt")
+  marker_stderr_path=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/marker.stderr.txt")
+  marker_access_path=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/marker.access.txt")
+  ip netns exec "${marker_netns}" python3 \
+    - "${marker_port_file}" "${marker_address}" "${marker}" "${marker_access_path}" \
+    > "${marker_stdout_path}" 2> "${marker_stderr_path}" <<'PY' &
+import pathlib
+import socket
+import sys
+
+port_path, bind_address, marker_text, access_path = sys.argv[1:]
+marker = marker_text.encode("ascii")
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+sock.bind((bind_address, 0))
+pathlib.Path(port_path).write_text(str(sock.getsockname()[1]), encoding="ascii")
+while True:
+    payload, address = sock.recvfrom(65535)
+    try:
+        payload_text = payload.decode("ascii")
+    except UnicodeDecodeError:
+        payload_text = f"<hex:{payload.hex()}>"
+    pathlib.Path(access_path).write_text(
+        f"{address[0]}:{address[1]}\n{payload_text}\n",
+        encoding="ascii",
+    )
+    if payload == marker:
+        sock.sendto(payload, address)
+PY
+  marker_pid=$!
+  for _ in {1..100}; do
+    [[ -s "${marker_port_file}" ]] && break
+    kill -0 "${marker_pid}" 2>/dev/null || {
+      printf 'WireGuard system endpoint marker exited before binding\n' >&2
+      exit 1
+    }
+    sleep 0.1
+  done
+  [[ -s "${marker_port_file}" ]]
+  marker_port=$(<"${marker_port_file}")
+  [[ "${marker_port}" =~ ^[0-9]+$ && "${marker_port}" -ge 1 && \
+    "${marker_port}" -le 65535 ]]
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/marker-link.json" \
+    ip -j addr show dev "${marker_host_veth}"
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/marker-peer-link.json" \
+    ip netns exec "${marker_netns}" ip -j addr show dev "${marker_peer_veth}"
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/marker-loopback.json" \
+    ip netns exec "${marker_netns}" ip -j addr show dev lo
+  jq -e --arg marker_address "${marker_address}" \
+    'any(.[]; any(.addr_info[]?; .local == $marker_address and .prefixlen == 32))' \
+    "$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/marker-loopback.json")" >/dev/null
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/marker-peer-route.json" \
+    ip netns exec "${marker_netns}" ip -j route show table all
+  jq -e --arg peer_interface "${peer_interface}" \
+    --arg client_peer_address "${client_peer_address}" \
+    'any(.[]; .dev == $peer_interface and .dst == $client_peer_address)' \
+    "$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/marker-peer-route.json")" >/dev/null
+  verification_mark_step fresh_install_vless_wireguard_system_endpoint_prepared
+
+  (umask 077; jq -n \
+    --arg private_key "${client_private_key}" \
+    --arg public_key "${server_public_key}" \
+    --arg name "${system_interface}" \
+    --arg server_address "${marker_host_address}" --argjson server_port "${server_port}" \
+    --arg marker_address "${marker_address}" \
+    --arg client_address "${client_address}" \
+    '{id:"wireguard-endpoint-system-runtime-verification",role:"endpoint",type:"wireguard",
+     tag:"wireguard-endpoint-system-runtime-verification",enabled:true,route_rules:[],config:{
+       system:true,name:$name,mtu:1420,address:[$client_address],private_key:$private_key,
+       listen_port:51993,peers:[{address:$server_address,port:$server_port,
+         public_key:$public_key,allowed_ips:[$marker_address + "/32"],
+         persistent_keepalive_interval:1}]}}' > "${endpoint_record}")
+  (umask 077; jq -n \
+    --arg marker_address "${marker_address}" --argjson marker_port "${marker_port}" \
+    --arg endpoint_tag "${endpoint_tag}" --arg proxy_tag "${proxy_tag}" \
+    --argjson proxy_port "${proxy_port}" \
+    '{id:"wireguard-endpoint-system-proxy-verification",role:"inbound",type:"direct",
+     tag:$proxy_tag,enabled:true,
+     route_rules:[{inbound:[$proxy_tag],network:["udp"],action:"route",
+       outbound:$endpoint_tag,override_address:$marker_address,
+       override_port:$marker_port}],config:{network:"udp",listen:"127.0.0.1",
+       listen_port:$proxy_port}}' > "${proxy_record}")
+
+  bash /usr/local/bin/sbv agent component create --json --yes \
+    --expected-revision "${expected_revision}" --file "${endpoint_record}" \
+    > "${endpoint_create}"
+  endpoint_created=1
+  current_revision=${endpoint_create_revision}
+  verification_capture_file_if_present "${endpoint_create}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/endpoint-create.json"
+  jq -e --argjson revision "${endpoint_create_revision}" --arg endpoint_id "${endpoint_id}" \
+    '.ok==true and .operation=="create" and .revision==$revision and
+     .id==$endpoint_id and .type=="wireguard" and .service_restarted==true' \
+    "${endpoint_create}" >/dev/null
+  verification_mark_step fresh_install_vless_wireguard_system_endpoint_created
+  verification_wait_for_service_active sing-box
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/system-interface.json" \
+    ip -j link show dev "${system_interface}"
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/system-address.json" \
+    ip -j addr show dev "${system_interface}"
+  jq -e --arg name "${system_interface}" \
+    'any(.[]; .ifname == $name and .mtu == 1420)' \
+    "$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/system-interface.json")" >/dev/null
+  jq -e 'any(.[]; any(.addr_info[]?; .local=="10.91.0.2" and .prefixlen==32))' \
+    "$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/system-address.json")" >/dev/null
+  bash /usr/local/bin/sbv agent component create --json --yes \
+    --expected-revision "${endpoint_create_revision}" --file "${proxy_record}" \
+    > "${proxy_create}"
+  proxy_created=1
+  current_revision=${proxy_create_revision}
+  verification_capture_file_if_present "${proxy_create}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/proxy-create.json"
+  jq -e --argjson revision "${proxy_create_revision}" --arg proxy_id "${proxy_id}" \
+    '.ok==true and .operation=="create" and .revision==$revision and
+     .id==$proxy_id and .type=="direct" and .service_restarted==true' \
+    "${proxy_create}" >/dev/null
+  verification_mark_step fresh_install_vless_wireguard_system_endpoint_proxy_created
+  verification_wait_for_service_active sing-box
+  # A component restart recreates the core-owned TUN, so install the disposable
+  # marker route only after the proxy transaction's post-restart interface is
+  # present.  The trap removes it before endpoint deletion.
+  ip route add "${marker_address}/32" dev "${system_interface}"
+  marker_route_created=1
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/route-to-marker.json" \
+    ip -j route get "${marker_address}"
+  jq -e --arg name "${system_interface}" --arg marker_address "${marker_address}" \
+    'any(.[]; .dev == $name and .dst == $marker_address)' \
+    "$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/route-to-marker.json")" >/dev/null
+  verification_mark_step fresh_install_vless_wireguard_system_endpoint_resources_observed
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/config.check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  config_path=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/config.json")
+  jq -c --arg endpoint_tag "${endpoint_tag}" --arg proxy_tag "${proxy_tag}" \
+    '{endpoints:[.endpoints[] | select(.tag == $endpoint_tag) |
+      .private_key = "<redacted>"],inbounds:[.inbounds[] | select(.tag == $proxy_tag)],
+      route:{rules:[.route.rules[] | select(.inbound == [$proxy_tag])]}}' \
+    /root/sing-box-vps/config.json > "${config_path}"
+  jq -e --arg endpoint_tag "${endpoint_tag}" --arg proxy_tag "${proxy_tag}" \
+    --arg marker_address "${marker_address}" \
+    --arg marker_host_address "${marker_host_address}" \
+    --arg server_public_key "${server_public_key}" --argjson marker_port "${marker_port}" \
+    --argjson proxy_port "${proxy_port}" \
+    '((.endpoints | length == 1) and
+      (.endpoints[0].type == "wireguard" and .endpoints[0].tag == $endpoint_tag and
+       .endpoints[0].system == true and .endpoints[0].name == "sbv-wg-sys" and
+       .endpoints[0].mtu == 1420 and .endpoints[0].address == ["10.91.0.2/32"] and
+       .endpoints[0].private_key == "<redacted>" and
+       .endpoints[0].listen_port == 51993 and (.endpoints[0].peers | length == 1) and
+       .endpoints[0].peers[0].address == $marker_host_address and
+       .endpoints[0].peers[0].port == 51992 and
+       .endpoints[0].peers[0].public_key == $server_public_key and
+       .endpoints[0].peers[0].allowed_ips == [$marker_address + "/32"])) and
+    ((.inbounds | length == 1) and .inbounds[0].type == "direct" and
+      .inbounds[0].tag == $proxy_tag and .inbounds[0].network == "udp" and
+      .inbounds[0].listen_port == $proxy_port) and
+    ((.route.rules | length == 1) and .route.rules[0].inbound == [$proxy_tag] and
+      .route.rules[0].network == ["udp"] and .route.rules[0].outbound == $endpoint_tag and
+      .route.rules[0].override_address == $marker_address and
+      .route.rules[0].override_port == $marker_port)' "${config_path}" >/dev/null
+  verification_mark_step fresh_install_vless_wireguard_system_endpoint_config_asserted
+  verification_assert_udp_port_listening "${client_port}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/system-listener.ss-lunp.txt"
+  verification_assert_udp_port_listening "${proxy_port}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/proxy-listener.ss-lunp.txt"
+
+  local diagnose_json="${VERIFY_REMOTE_LOCAL_TREE_DIR}/wireguard-endpoint-system-diagnose.json"
+  bash /usr/local/bin/sbv agent component diagnose --json > "${diagnose_json}"
+  verification_capture_file_if_present "${diagnose_json}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/diagnose.json"
+  jq -e --arg name "${system_interface}" '
+    .ok==true and .data.transparent_resources.status=="available" and
+    ([.data.transparent_resources.resources[] | select(.system_interface==true and
+      .interface_name==$name and .interface.status=="present" and
+      .interface_addresses.status=="present" and .mtu.status=="present")] | length == 1)
+  ' "${diagnose_json}" >/dev/null
+
+  response_path=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/marker.response.txt")
+  client_stderr_path=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/udp-client.stderr.txt")
+  verification_capture_best_effort_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/journal-pre-payload.txt" \
+    journalctl -u sing-box -n 240 --no-pager
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/peer-latest-handshakes-pre-payload.txt" \
+    ip netns exec "${marker_netns}" wg show "${peer_interface}" latest-handshakes
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/peer-transfer-pre-payload.txt" \
+    ip netns exec "${marker_netns}" wg show "${peer_interface}" transfer
+  rm -f -- "${response_path}" "${client_stderr_path}"
+  set +e
+  python3 - "${response_path}" "${marker}" "${proxy_port}" > /dev/null \
+    2> "${client_stderr_path}" <<'PY'
+import pathlib
+import socket
+import sys
+
+response_path, marker_text, proxy_port_text = sys.argv[1:]
+marker = marker_text.encode("ascii")
+last_error = None
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+    client.settimeout(1)
+    for _ in range(20):
+        client.sendto(marker, ("127.0.0.1", int(proxy_port_text)))
+        try:
+            response, _address = client.recvfrom(65535)
+        except TimeoutError as error:
+            last_error = error
+            continue
+        if response == marker:
+            pathlib.Path(response_path).write_bytes(response)
+            break
+        raise RuntimeError("WireGuard system UDP marker mismatch")
+    else:
+        raise RuntimeError(f"WireGuard system UDP marker timed out: {last_error}")
+PY
+  client_status=$?
+  set -e
+  if [[ "${client_status}" != "0" ]]; then
+    verification_capture_best_effort_command \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/journal-after-failure.txt" \
+      journalctl -u sing-box -n 240 --no-pager
+    verification_capture_best_effort_command \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/peer-latest-handshakes-after-failure.txt" \
+      ip netns exec "${marker_netns}" wg show "${peer_interface}" latest-handshakes
+    verification_capture_best_effort_command \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/peer-transfer-after-failure.txt" \
+      ip netns exec "${marker_netns}" wg show "${peer_interface}" transfer
+    verification_capture_best_effort_command \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/marker-access-after-failure.txt" \
+      cat "$(verification_artifact_path \
+        "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/marker.access.txt")"
+    verification_capture_best_effort_command \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/routes-after-failure.json" \
+      ip -j route show table all
+    verification_capture_best_effort_command \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/rules-after-failure.json" \
+      ip -j rule show
+    verification_capture_best_effort_command \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/peer-namespace-routes-after-failure.json" \
+      ip netns exec "${marker_netns}" ip -j route show table all
+    verification_capture_best_effort_command \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/marker-host-link-after-failure.json" \
+      ip -j -s link show dev "${marker_host_veth}"
+    verification_capture_best_effort_command \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/marker-peer-link-after-failure.json" \
+      ip netns exec "${marker_netns}" ip -j -s link show dev "${marker_peer_veth}"
+    verification_capture_best_effort_command \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/peer-link-after-failure.json" \
+      ip netns exec "${marker_netns}" ip -j -s link show dev "${peer_interface}"
+    verification_capture_best_effort_command \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/system-link-after-failure.json" \
+      ip -j -s link show dev "${system_interface}"
+  fi
+  [[ "${client_status}" == "0" ]]
+  grep -Fqx "${marker}" "${response_path}"
+  grep -Fqx "${marker}" \
+    "$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/marker.access.txt")"
+  verification_capture_best_effort_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/journalctl.txt" \
+    journalctl -u sing-box -n 240 --no-pager
+  journal_path=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/journalctl.txt")
+  grep -Fq "outbound packet connection to ${marker_address}:${marker_port}" "${journal_path}"
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/peer-latest-handshakes.txt" \
+    ip netns exec "${marker_netns}" wg show "${peer_interface}" latest-handshakes
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/peer-transfer.txt" \
+    ip netns exec "${marker_netns}" wg show "${peer_interface}" transfer
+  awk '$2 ~ /^[0-9]+$/ && ($2 + 0) > 0 { found = 1 }
+    END { exit(found ? 0 : 1) }' \
+    "$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/peer-latest-handshakes.txt")"
+  awk '$2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && ($2 + 0) > 0 && ($3 + 0) > 0 { found = 1 }
+    END { exit(found ? 0 : 1) }' \
+    "$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/peer-transfer.txt")"
+  verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/result.env" \
+    'RESULT=success' 'TRANSPORT=udp' 'SYSTEM_INTERFACE=true' \
+    'AUTH=wireguard_key' 'PAYLOAD=marker_round_trip' \
+    'PEER_HANDSHAKE=kernel_wireguard' 'DATA_PLANE=wireguard_system_udp_netns' \
+    'ROUTING=disposable_marker_route' 'POLICY_SCOPE=none' \
+    'POLICY_OWNERSHIP=not_applicable' 'MARKER_NETWORK=disposable_netns_veth'
+  verification_mark_step fresh_install_vless_wireguard_system_endpoint_payload_success
+
+  bash /usr/local/bin/sbv agent component delete --json --yes \
+    --expected-revision "${proxy_create_revision}" --id "${proxy_id}" \
+    > "${proxy_delete}"
+  verification_capture_file_if_present "${proxy_delete}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/proxy-delete.json"
+  jq -e --argjson revision "${proxy_delete_revision}" --arg proxy_id "${proxy_id}" \
+    '.ok==true and .operation=="delete" and .revision==$revision and
+     .id==$proxy_id and .service_restarted==true' "${proxy_delete}" >/dev/null
+  proxy_created=0
+  current_revision=${proxy_delete_revision}
+  verification_mark_step fresh_install_vless_wireguard_system_endpoint_proxy_deleted
+  verification_wait_for_service_active sing-box
+  verification_capture_best_effort_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/proxy-after-delete.ss-lunp.txt" \
+    verification_ss_udp_output
+  ! verification_udp_port_is_listening "${proxy_port}"
+
+  if ip route show "${marker_address}/32" dev "${system_interface}" | grep -Fq \
+    "${marker_address}/32"; then
+    ip route del "${marker_address}/32" dev "${system_interface}"
+  fi
+  marker_route_created=0
+  if ip netns exec "${marker_netns}" ip route show \
+    "${client_peer_address}/32" dev "${peer_interface}" | grep -Fq \
+    "${client_peer_address}/32"; then
+    ip netns exec "${marker_netns}" ip route del \
+      "${client_peer_address}/32" dev "${peer_interface}"
+  fi
+  peer_client_route_created=0
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/route-after-delete.json" \
+    ip -j route show table all
+  ! jq -e --arg name "${system_interface}" --arg marker_address "${marker_address}" \
+    'any(.[]; .dev == $name and .dst == $marker_address)' \
+    "$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/route-after-delete.json")" >/dev/null
+
+  bash /usr/local/bin/sbv agent component delete --json --yes \
+    --expected-revision "${proxy_delete_revision}" --id "${endpoint_id}" \
+    > "${endpoint_delete}"
+  verification_capture_file_if_present "${endpoint_delete}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/endpoint-delete.json"
+  jq -e --argjson revision "${endpoint_delete_revision}" --arg endpoint_id "${endpoint_id}" \
+    '.ok==true and .operation=="delete" and .revision==$revision and
+     .id==$endpoint_id and .service_restarted==true' "${endpoint_delete}" >/dev/null
+  endpoint_created=0
+  current_revision=${endpoint_delete_revision}
+  verification_mark_step fresh_install_vless_wireguard_system_endpoint_deleted
+  verification_wait_for_service_active sing-box
+  verification_capture_best_effort_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/system-after-delete.link.json" \
+    ip -j link show dev "${system_interface}"
+  if ip -j link show dev "${system_interface}" >/dev/null 2>&1; then
+    printf 'WireGuard system endpoint interface remained after managed component deletion\n' >&2
+    return 1
+  fi
+  verification_capture_best_effort_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/system-after-delete.ss-lunp.txt" \
+    verification_ss_udp_output
+  ! verification_udp_port_is_listening "${client_port}"
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/after-delete.check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+
+  ip netns exec "${marker_netns}" ip link del "${peer_interface}"
+  peer_interface_created=0
+  peer_interface_in_marker_netns=0
+  if ip netns exec "${marker_netns}" ip link show dev "${peer_interface}" \
+    >/dev/null 2>&1; then
+    printf 'WireGuard system verification peer interface remained after cleanup\n' >&2
+    return 1
+  fi
+  if [[ -n "${marker_pid}" ]]; then
+    kill "${marker_pid}" 2>/dev/null || true
+    wait "${marker_pid}" 2>/dev/null || true
+    marker_pid=''
+  fi
+  ip link del "${marker_host_veth}"
+  marker_veth_created=0
+  ip netns del "${marker_netns}"
+  marker_netns_created=0
+  verification_capture_best_effort_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/marker-link-after-cleanup.json" \
+    ip -j link show dev "${marker_host_veth}"
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/marker-netns-after-cleanup.txt" \
+    ip netns list
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/routes-after-cleanup.json" \
+    ip -j route show table all
+  if ip link show dev "${marker_host_veth}" >/dev/null 2>&1; then
+    printf 'WireGuard system endpoint verification fixture link remained after cleanup\n' >&2
+    return 1
+  fi
+  if grep -Fq "${marker_netns}" \
+    "$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/marker-netns-after-cleanup.txt")"; then
+    printf 'WireGuard system endpoint verification marker namespace remained after cleanup\n' >&2
+    return 1
+  fi
+  ! jq -e --arg marker_veth "${marker_host_veth}" --arg system_interface "${system_interface}" \
+    'any(.[]; .dev == $marker_veth or .dev == $system_interface)' \
+    "$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/routes-after-cleanup.json")" \
+    >/dev/null
+  verification_write_artifact \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/after-delete.env" \
+    'RESULT=success' 'RESOURCES=managed_system_interface_and_kernel_peer_removed' \
+    'MARKER_RESOURCES=disposable_netns_veth_removed' 'ROUTE_RESOURCES=marker_route_removed'
+  verification_mark_step fresh_install_vless_wireguard_system_endpoint_resources_cleaned
 )
 
 # Exercise the core-owned TUN as an actual L3 ingress.  A disposable veth
@@ -2167,6 +2849,7 @@ EOF
   ! grep -Fq '地址:' "${status_output_path}"
   ! grep -Fq '端口:' "${status_output_path}"
   verification_mark_step fresh_install_vless_status_menu
+
   verification_run_protocol_probes
   verification_mark_step fresh_install_vless_protocol_probes
 
@@ -2175,11 +2858,18 @@ EOF
     verification_mark_step fresh_install_vless_tun_resources_unavailable
     verification_run_openvpn_endpoint_runtime_probe 0
     local wireguard_expected_revision=0
-    if [[ "${VERIFY_REMOTE_SKIP_PRIVILEGED_RESOURCES:-0}" != "1" ]] &&
-      [[ -e /dev/net/tun ]] && command -v ip >/dev/null 2>&1; then
+    if grep -Fqx 'RESULT=success' \
+      "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint/result.env")"; then
       wireguard_expected_revision=12
     fi
     verification_run_wireguard_endpoint_runtime_probe "${wireguard_expected_revision}"
+    local wireguard_system_expected_revision="${wireguard_expected_revision}"
+    if grep -Fqx 'RESULT=success' \
+      "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint/result.env")"; then
+      wireguard_system_expected_revision=$((wireguard_system_expected_revision + 4))
+    fi
+    verification_run_wireguard_system_endpoint_runtime_probe \
+      "${wireguard_system_expected_revision}"
     return 0
   fi
 
@@ -2351,10 +3041,18 @@ EOF
 
   verification_run_openvpn_endpoint_runtime_probe 4
   verification_run_wireguard_endpoint_runtime_probe 28
-  local bridge_expected_revision=28
+  local wireguard_system_expected_revision=28
   if grep -Fqx 'RESULT=success' \
     "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint/result.env")"; then
-    bridge_expected_revision=32
+    wireguard_system_expected_revision=32
+  fi
+  verification_run_wireguard_system_endpoint_runtime_probe \
+    "${wireguard_system_expected_revision}"
+  local bridge_expected_revision="${wireguard_system_expected_revision}"
+  if grep -Fqx 'RESULT=success' \
+    "$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/result.env")"; then
+    bridge_expected_revision=$((bridge_expected_revision + 4))
   fi
   verification_run_bridge_l3_probe "${bridge_expected_revision}"
 }
