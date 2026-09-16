@@ -805,6 +805,38 @@ journal、接口/link/address/MTU、路由与 `component diagnose`，结果为
 `system:true` UDP、宿主路由/透明策略、公网、外部控制面、生产部署或 SubMan，
 完整协议目标继续未完成。
 
+### 2026-09-16：OpenVPN endpoint `system:true` TCP+UDP 数据面闭环
+
+在 TCP-only 证据之后，本轮继续保持同一 marker network namespace 和命名
+system-interface 约束，补上独立 UDP transport，不把 TCP 成功外推为 UDP 成功。
+最新特权 Docker gate `dev/verification-runs/20260916104745` 先完成原有
+`sbv-ovpn-srv`/`sbv-ovpn-cli`（TCP）pair 的 marker round trip 与删除，再以
+组件 CAS revision `23→25` 创建 `sbv-ovpn-us`/`sbv-ovpn-uc`（UDP server/client，
+server `127.0.0.1:11997`）和 direct UDP proxy `127.0.0.1:15095`。UDP proxy
+仍将流量路由到 client endpoint，目标地址为同一个 disposable veth/network
+namespace marker `198.18.20.2`；marker access log 记录来自 host veth
+`198.18.20.1` 的精确 payload。
+
+该 gate 在固定官方 ARM64 `sing-box 1.14.0` 上执行 `sing-box check`，回读
+UDP listener、`sbv-ovpn-us`/`sbv-ovpn-uc` 接口及 `10.80.0.1/24`、
+`10.80.0.2/24` 地址和 MTU，保存 `peer connected`、`tunnel established`、
+direct/client/server packet journal、component diagnose、路由和 marker
+artifact。结果文件为 `RESULT=success`、`TRANSPORT=tcp+udp`、
+`SYSTEM_INTERFACE=true`、`PAYLOAD=marker_round_trip`、
+`TCP_PAYLOAD=marker_round_trip`、`UDP_PAYLOAD=marker_round_trip`、
+`RESOURCE_EVIDENCE=interface_and_tunnel`、
+`MARKER_NETWORK=disposable_netns_veth`，验证标签为
+`project-real-openvpn-system-tcp+udp`。UDP proxy/client/server 按
+`25→28` 删除，随后确认 TCP/UDP 系统接口、marker veth/network namespace
+和路由均消失；`after-delete.env` 记录
+`RESOURCES=managed_system_interfaces_removed` 与
+`MARKER_RESOURCES=disposable_netns_veth_removed`。脚本/README 版本同步为
+`2026091604`。
+
+范围仍限定于固定核心、特权隔离 Docker 和 disposable marker；没有宿主路由
+或透明策略、外部 VPN 控制面、外部证书、公网、生产部署或 SubMan 操作，完整
+协议目标继续未完成。
+
 ### 2026-09-14：Snell UDP packet API 数据面探针
 
 Snell v6 的 listener 仍固定为 TCP，但 exporter 现在明确输出 `network:["tcp","udp"]`，使客户端 adapter 同时保留流和 packet 能力。`multi_protocol_coexistence` 复用共享 `verification_execute_protocol_udp_probe`：先检查受管 schema-2 marker/store、当前 v6 tag 和固定 1.14.0 client 配置，再从 SOCKS5 UDP ASSOCIATE 发送带 Snell 标识的 marker，经认证 TCP 会话 packet API 到本地 UDP echo，严格回读响应并保存 `udp.result.env`、client check、stderr 和 journal。
