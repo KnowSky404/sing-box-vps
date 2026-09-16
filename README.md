@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026091602`
+- 脚本版本：`2026091603`
 
 - sing-box 适配版本：`1.14.0`
 
@@ -78,7 +78,7 @@ Tailscale endpoint 现在按 `TailscaleEndpointOptions` 接入 typed state/rende
 
 OpenVPN endpoint 现在另有受限的真实 TCP 与 UDP 闭环：固定官方 ARM64 `sing-box 1.14.0` 的特权隔离 Docker 场景 `dev/verification-runs/20260914151532` 分别创建 `system:false` 的 OpenVPN server/client endpoint（临时 SAN 证书、用户名/密码），再创建受管 direct inbound 将请求路由到对应 client endpoint；日志确认 `peer connected`/`tunnel established`，marker 返回精确 payload，目标核心 `check` 通过，随后按 revision 删除 proxy/client/server 并确认监听与资源清理。配置了 `SINGBOX_BINARY_114` 时，`tests/managed_openvpn_endpoint_runtime.sh` 在本机顺序执行同样的 TCP+UDP marker 闭环；没有该二进制或依赖时明确 `SKIP`。证据只覆盖 `system:false`、合成 server/client 与隔离容器/本机网络，不包括外部 VPN 控制面、公网、生产或 SubMan。
 
-同一 `fresh_install_vless` 特权 Docker 场景 `dev/verification-runs/20260914210913` 另创建命名 `system:true` 的 OpenVPN server/client（`sbv-ovpn-srv`/`sbv-ovpn-cli`），回读真实 TUN 接口、`10.79.0.1/24` 与 `10.79.0.2/24` 地址、MTU、`peer connected`/`tunnel established` 日志及 `component diagnose`，再按 revision 删除并确认两个接口清理。该切片只证明 core-owned 系统接口和隧道资源生命周期；未尝试宣称宿主路由、透明包转发、packet payload、公网、生产、外部控制面或 SubMan。事务 postcheck 对命名 `system:true` OpenVPN endpoint 同样 fail-closed；未命名接口保持 `not_assessed`。
+同一 `fresh_install_vless` 特权 Docker 场景 `dev/verification-runs/20260914210913` 先创建命名 `system:true` 的 OpenVPN server/client（`sbv-ovpn-srv`/`sbv-ovpn-cli`），回读真实 TUN 接口、`10.79.0.1/24` 与 `10.79.0.2/24` 地址、MTU、`peer connected`/`tunnel established` 日志及 `component diagnose`，再按 revision 删除并确认两个接口清理。随后 gate `dev/verification-runs/20260916083525` 在同类特权容器中为该 pair 增加受管 direct inbound，使用独立 disposable veth/network namespace 的 marker（`198.18.20.2`）经 `system:true` client 完成真实 TCP marker round trip；artifact 同时保存目标核心 `check`、路由、接口/地址、journal、diagnose、CAS 删除，以及 marker veth/namespace 清理断言，验证标签为 `project-real-openvpn-system-tcp`。该证据只覆盖固定 1.14.0、隔离容器/network namespace 内的 core-owned system interface TCP 数据面；不宣称宿主路由、透明转发、公网、生产、外部控制面或 SubMan。事务 postcheck 对命名 `system:true` OpenVPN endpoint 同样 fail-closed；未命名接口保持 `not_assessed`。
 
 Snell outbound 已按 sing-box 1.14 的 `SnellOutboundOptions` 接入 typed component state；版本仅允许 v4（HTTP obfs）或 v6（traffic shaping），并保留 PSK、可选 userkey/reuse、TCP/UDP network 和共享 Dial Fields。v4/v6 字段不可交叉，v6 PSK 至少 12 字节；Snell v5 QUIC proxy 不作为独立 outbound 提供，UDP 业务由 Snell 的 TCP packet API 承载。凭据仅通过敏感 component export 返回，1.14 核心 `check` 不代表远端 Snell 握手或 TCP/UDP 数据面，1.13.18 核心明确不注册该 type。
 
@@ -260,6 +260,7 @@ sbv
 - **TCP 入口 UDP 业务探针**：Docker `20260916022721` 对 VLESS REALITY、Mixed 和独立 SOCKS 分别回读真实 UDP marker；REALITY 使用 Vision/xudp 默认，Mixed 验证原生 SOCKS UDP，独立 SOCKS 验证显式 UoT v2。证据限定于固定核心、隔离容器和回环，不代表原生 UDP listener、公网、生产或外部客户端。
 - **TUN L3 业务探针**：特权 Docker `20260916064328` 在 `fresh_install_vless` 中以 disposable veth/network namespace 将 TCP+UDP marker 送入 core-owned TUN 的 `auto_route` 路径，目标核心 `check`、精确响应与资源清理均成功；这只证明隔离容器/network namespace L3 数据面，不代表宿主策略、DNS/防火墙接管、公网或生产。
 - **Bridge L3 业务探针**：特权 Docker `20260916071546` 在 `fresh_install_vless` 中以两组 disposable veth/network namespace 将 TCP+UDP marker 经 core-owned TUN 的 `auto_route` 和 bridge 动态 TUN/netfilter 送至隔离 egress，目标核心 `check`、精确响应、route/rule/diagnose 及 CAS/接口清理均成功；这只证明隔离容器/network namespace 的 `project-real-bridge-l3-tcp+udp` 数据面，不代表宿主策略、外部 bridge 接口、公网或生产。
+- **OpenVPN `system:true` TCP 数据面探针**：特权 Docker `20260916083525` 在 `fresh_install_vless` 中将 direct inbound 的 TCP marker 经命名 core-owned TUN 接口和 OpenVPN server/client pair 回送到独立 veth/network namespace，目标核心 `check`、journal/diagnose、精确 payload 与 CAS/接口/namespace 清理均成功；结果为 `project-real-openvpn-system-tcp`。证据仅限隔离容器/network namespace，不代表宿主路由、透明策略、公网、生产、外部控制面或 SubMan。
 - **规范存储**：统一使用 `/root/sing-box-vps/` 存放配置、密钥及持久化参数。
 
 ## Agent 非交互命令

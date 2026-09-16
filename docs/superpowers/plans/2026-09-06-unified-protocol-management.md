@@ -780,6 +780,31 @@ fixture，否则只跳过该 privileged slice。`fresh_install_vless` 的特权�
 没有宿主路由，未宣称透明转发、packet payload、公网、外部控制面、生产或 SubMan，
 完整协议目标仍未完成。
 
+### 2026-09-16：OpenVPN endpoint `system:true` TCP 数据面闭环
+
+在命名 `system:true` 资源闭环之后，本轮补上真实 TCP payload，而不把接口存在性
+误作业务成功。`fresh_install_vless` 的特权隔离 Docker gate
+`dev/verification-runs/20260916083525` 通过组件 CAS 顺序创建
+`sbv-ovpn-srv`/`sbv-ovpn-cli`、direct TCP inbound 和
+`openvpn-endpoint-system-client-verification` proxy，固定 1.14.0 核心
+`check` 后启动一次性 marker。marker 运行在同一隔离网络命名空间内的临时
+`veth/netns`（`198.18.20.1/24` ↔ `198.18.20.2/24`），避免把容器本地地址
+误判为系统接口返回路径；请求经 `system:true` OpenVPN client 的内核设备完成
+真实 TCP 往返，并精确回读 marker body 与 `/` access path。
+
+artifact 同时保存 direct inbound、OpenVPN client/server inbound/outbound 的
+journal、接口/link/address/MTU、路由与 `component diagnose`，结果为
+`RESULT=success`、`TRANSPORT=tcp`、`SYSTEM_INTERFACE=true`、
+`PAYLOAD=marker_round_trip`、`RESOURCE_EVIDENCE=interface_and_tunnel`。
+随后按 CAS revision 删除 proxy/client/server，确认 `sbv-ovpn-srv`、
+`sbv-ovpn-cli`、marker veth/netns 和 marker route 均清理；
+`after-delete.env` 标记 `RESOURCES=managed_system_interfaces_removed` 与
+`MARKER_RESOURCES=disposable_netns_veth_removed`。该证据标签为
+`project-real-openvpn-system-tcp`，脚本/README 版本同步为 `2026091603`。
+范围仍限定在固定核心、特权隔离 Docker 和 disposable marker；未宣称
+`system:true` UDP、宿主路由/透明策略、公网、外部控制面、生产部署或 SubMan，
+完整协议目标继续未完成。
+
 ### 2026-09-14：Snell UDP packet API 数据面探针
 
 Snell v6 的 listener 仍固定为 TCP，但 exporter 现在明确输出 `network:["tcp","udp"]`，使客户端 adapter 同时保留流和 packet 能力。`multi_protocol_coexistence` 复用共享 `verification_execute_protocol_udp_probe`：先检查受管 schema-2 marker/store、当前 v6 tag 和固定 1.14.0 client 配置，再从 SOCKS5 UDP ASSOCIATE 发送带 Snell 标识的 marker，经认证 TCP 会话 packet API 到本地 UDP echo，严格回读响应并保存 `udp.result.env`、client check、stderr 和 journal。

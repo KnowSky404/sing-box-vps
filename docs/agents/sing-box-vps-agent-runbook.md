@@ -387,6 +387,28 @@ non-zero; a missing resource is `unavailable` and participates in the active
 component transaction postcheck. It does not install routes/DNS, authenticate
 an external control plane, or prove a VPN data path.
 
+## OpenVPN system-device TCP payload closure
+
+The follow-up privileged Docker gate `dev/verification-runs/20260916083525`
+extends that resource-only slice with a managed direct inbound and a real TCP
+payload. It starts the same named `system:true` server/client pair, then sends
+the direct inbound's request through the core-owned TUN interfaces to a marker
+bound at `198.18.20.2` in a disposable veth/network namespace. The artifact
+bundle retains the target-core `sing-box check`, marker peer/host links, the
+route to the marker, interface/address/MTU snapshots, `peer connected` and
+`tunnel established` journal lines, endpoint/direct connection logs, and
+`component diagnose`. Proxy, client, and server are deleted by revision CAS;
+the post-delete checks also remove both TUN interfaces and the marker
+veth/namespace and assert that their route is gone. The result is
+`project-real-openvpn-system-tcp` with `SYSTEM_INTERFACE=true`,
+`PAYLOAD=marker_round_trip`, and `MARKER_NETWORK=disposable_netns_veth`.
+
+This is fixed 1.14.0, isolated container/network-namespace evidence for the
+core-owned system-interface TCP path. It does not install host routes or
+transparent policy, authenticate an external VPN control plane, or prove
+public reachability, production operation, SubMan synchronization, or the
+full protocol goal.
+
 ## WireGuard endpoint UDP closure
 
 The privileged Docker `fresh_install_vless` scenario now creates a disposable

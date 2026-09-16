@@ -60,6 +60,9 @@ grep -Fq 'verification_run_bridge_l3_probe "${bridge_expected_revision}"' "${wir
 grep -Fq 'DATA_PLANE=bridge_l3_tcp_udp_netns' "${wireguard_scenario}"
 grep -Fq 'ip_cidr:["172.21.0.100/32"]' "${wireguard_scenario}"
 grep -Fq 'bridge_name:"sbv-br-l3"' "${wireguard_scenario}"
+grep -Fq 'system_marker_address=' "${wireguard_scenario}"
+grep -Fq 'MARKER_NETWORK=disposable_netns_veth' "${wireguard_scenario}"
+grep -Fq 'fresh_install_vless_openvpn_endpoint_system_payload_success' "${wireguard_scenario}"
 
 vless_scenario="${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
 test -r "${vless_scenario}"

@@ -408,23 +408,34 @@ PY
   verification_mark_step fresh_install_vless_openvpn_endpoint_udp_resources_cleaned
 
   # A separate pair exercises OpenVPN's privileged system-device lifecycle.
-  # The core owns the named TUN interfaces and the tunnel handshake, while
-  # host routes and packet payload remain outside this scenario's claim.
+  # The core owns the named TUN interfaces and the tunnel handshake; the
+  # disposable proxy below also proves a TCP payload through the client.
+  # Host routes remain outside this scenario's claim.
   local system_expected_revision="${udp_server_delete_revision}"
   local system_server_create_revision=$((system_expected_revision + 1))
   local system_client_create_revision=$((system_expected_revision + 2))
-  local system_client_delete_revision=$((system_expected_revision + 3))
-  local system_server_delete_revision=$((system_expected_revision + 4))
+  local system_proxy_create_revision=$((system_expected_revision + 3))
+  local system_proxy_delete_revision=$((system_expected_revision + 4))
+  local system_client_delete_revision=$((system_expected_revision + 5))
+  local system_server_delete_revision=$((system_expected_revision + 6))
   local system_server_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-system-server.json"
   local system_client_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-system-client.json"
+  local system_proxy_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-system-proxy.json"
   local system_server_create="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-system-server-create.json"
   local system_client_create="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-system-client-create.json"
+  local system_proxy_create="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-system-proxy-create.json"
+  local system_proxy_delete="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-system-proxy-delete.json"
   local system_client_delete="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-system-client-delete.json"
   local system_server_delete="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-system-server-delete.json"
   local system_diagnose="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-system-diagnose.json"
   local system_after_delete_diagnose="${VERIFY_REMOTE_LOCAL_TREE_DIR}/openvpn-endpoint-system-after-delete-diagnose.json"
   local system_journal_relative="${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/journalctl.txt"
-  local system_journal_path
+  local system_journal_path system_marker_response system_curl_status=1
+  local system_marker_temp_dir='' system_marker_netns='' system_marker_host_veth='' system_marker_peer_veth=''
+  local system_marker_port_file='' system_marker_pid='' system_marker_address='198.18.20.2'
+  local system_marker_host_address='198.18.20.1' system_marker_port='' system_marker=''
+  local system_marker_cleanup_status=0
+  local system_marker_access
 
   if [[ "$(id -u)" -ne 0 || ! -c /dev/net/tun ]]; then
     verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/result.env" \
@@ -438,6 +449,106 @@ PY
     rm -rf -- "${endpoint_cert_dir}"
     return 0
   fi
+
+  system_marker_temp_dir=$(mktemp -d /tmp/sing-box-vps-openvpn-system.XXXXXX)
+  system_marker_netns="sbvovns-${BASHPID}"
+  system_marker_host_veth="sbvovh${BASHPID}"
+  system_marker_peer_veth="sbvovp${BASHPID}"
+  system_marker_port_file="${system_marker_temp_dir}/marker.port"
+  system_marker_access=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/marker.access.txt")
+  system_marker="sing-box-vps-openvpn-system-netns-ok-$(date +%s)-$$"
+
+  cleanup_openvpn_system_marker() {
+    local status=$? cleanup_status=0
+
+    trap - EXIT INT TERM HUP
+    set +e
+    if [[ -n "${system_marker_pid}" ]]; then
+      kill "${system_marker_pid}" 2>/dev/null || true
+      wait "${system_marker_pid}" 2>/dev/null || true
+      system_marker_pid=''
+    fi
+    if [[ -n "${system_marker_host_veth}" ]] &&
+      ip link show dev "${system_marker_host_veth}" >/dev/null 2>&1; then
+      ip link del "${system_marker_host_veth}" || cleanup_status=1
+    fi
+    if [[ -n "${system_marker_netns}" ]] &&
+      ip netns list | awk '{print $1}' | grep -Fqx "${system_marker_netns}"; then
+      ip netns del "${system_marker_netns}" || cleanup_status=1
+    fi
+    if [[ -n "${system_marker_temp_dir}" ]] &&
+      ! rm -rf -- "${system_marker_temp_dir}"; then
+      cleanup_status=1
+    fi
+    if [[ "${status}" != 0 ]]; then
+      printf 'OpenVPN system endpoint marker cleanup completed after status %s\n' \
+        "${status}" >&2
+    fi
+    if [[ "${cleanup_status}" != 0 ]]; then
+      printf 'OpenVPN system endpoint marker cleanup failed\n' >&2
+    fi
+    return "${cleanup_status}"
+  }
+  trap cleanup_openvpn_system_marker EXIT INT TERM HUP
+
+  ip netns add "${system_marker_netns}"
+  ip link add "${system_marker_host_veth}" type veth peer name "${system_marker_peer_veth}"
+  ip link set "${system_marker_peer_veth}" netns "${system_marker_netns}"
+  ip addr add "${system_marker_host_address}/24" dev "${system_marker_host_veth}"
+  ip link set "${system_marker_host_veth}" up
+  ip netns exec "${system_marker_netns}" ip addr add \
+    "${system_marker_address}/24" dev "${system_marker_peer_veth}"
+  ip netns exec "${system_marker_netns}" ip link set lo up
+  ip netns exec "${system_marker_netns}" ip link set "${system_marker_peer_veth}" up
+  ip netns exec "${system_marker_netns}" python3 \
+    - "${system_marker_port_file}" "${system_marker_address}" "${system_marker}" \
+    "${system_marker_access}" \
+    >"$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/marker.stdout.txt")" \
+    2>"$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/marker.stderr.txt")" <<'PY' &
+import http.server
+import pathlib
+import sys
+
+port_path, bind_address, marker, access_path = sys.argv[1:]
+
+class MarkerHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        pathlib.Path(access_path).write_text(self.path + "\n", encoding="ascii")
+        body = (marker + "\n").encode("ascii")
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        return
+
+server = http.server.ThreadingHTTPServer((bind_address, 0), MarkerHandler)
+pathlib.Path(port_path).write_text(str(server.server_address[1]), encoding="ascii")
+server.serve_forever()
+PY
+  system_marker_pid=$!
+  for _ in {1..100}; do
+    [[ -s "${system_marker_port_file}" ]] && break
+    kill -0 "${system_marker_pid}" 2>/dev/null || {
+      printf 'OpenVPN system endpoint marker exited before binding\n' >&2
+      return 1
+    }
+    sleep 0.1
+  done
+  [[ -s "${system_marker_port_file}" ]]
+  system_marker_port=$(<"${system_marker_port_file}")
+  [[ "${system_marker_port}" =~ ^[0-9]+$ ]]
+  verification_capture_best_effort_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/marker-link.json" \
+    ip -j addr show dev "${system_marker_host_veth}"
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/marker-peer-link.json" \
+    ip netns exec "${system_marker_netns}" ip -j addr show dev "${system_marker_peer_veth}"
+  verification_mark_step fresh_install_vless_openvpn_endpoint_system_marker_prepared
 
   (umask 077; jq -n --arg cert "${endpoint_cert_path}" --arg key "${endpoint_key_path}" '
     {id:"openvpn-endpoint-system-server-verification",role:"endpoint",type:"openvpn-server",
@@ -456,6 +567,15 @@ PY
        tls:{certificate_path:$cert,server_name:"sing-box-vps-openvpn-verification.invalid",
          remote_certificate_tls:"server"}}}' \
     > "${system_client_record}")
+  (umask 077; jq -n --arg marker_address "${system_marker_address}" \
+    --argjson marker_port "${system_marker_port}" '
+    {id:"openvpn-endpoint-system-proxy-verification",role:"inbound",type:"direct",
+     tag:"openvpn-endpoint-system-proxy-verification",enabled:true,
+     route_rules:[{inbound:["openvpn-endpoint-system-proxy-verification"],action:"route",
+       outbound:"openvpn-endpoint-system-client-verification"}],config:
+       {listen:"127.0.0.1",listen_port:15094,override_address:$marker_address,
+        override_port:$marker_port}}' \
+    > "${system_proxy_record}")
 
   bash /usr/local/bin/sbv agent component create --json --yes --allow-public \
     --expected-revision "${system_expected_revision}" --file "${system_server_record}" > "${system_server_create}"
@@ -474,6 +594,54 @@ PY
     .type=="openvpn-client" and .service_restarted==true' "${system_client_create}" >/dev/null
   verification_mark_step fresh_install_vless_openvpn_endpoint_system_client_created
   verification_wait_for_service_active sing-box
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/routes-before-payload.json" \
+    ip -j route show table all
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/route-to-marker-before-payload.json" \
+    ip -j route get "${system_marker_address}"
+  verification_mark_step fresh_install_vless_openvpn_endpoint_system_routes_observed
+
+  bash /usr/local/bin/sbv agent component create --json --yes \
+    --expected-revision "${system_client_create_revision}" --file "${system_proxy_record}" > "${system_proxy_create}"
+  verification_capture_file_if_present "${system_proxy_create}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/proxy-create.json"
+  jq -e --argjson revision "${system_proxy_create_revision}" '.ok==true and .operation=="create" and .revision==$revision and
+    .type=="direct" and .service_restarted==true' "${system_proxy_create}" >/dev/null
+  verification_mark_step fresh_install_vless_openvpn_endpoint_system_proxy_created
+  verification_wait_for_service_active sing-box
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/config.after-proxy.check.txt" \
+    sing-box check -c /root/sing-box-vps/config.json
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/config.after-proxy.json" \
+    jq -c '{endpoints:[.endpoints[] | select(.tag == "openvpn-endpoint-system-server-verification" or
+      .tag == "openvpn-endpoint-system-client-verification")],inbounds:[.inbounds[] |
+      select(.tag == "openvpn-endpoint-system-proxy-verification")],route:{rules:[.route.rules[] |
+      select(.outbound == "openvpn-endpoint-system-client-verification")]}}' \
+    /root/sing-box-vps/config.json
+  jq -e '
+    (.endpoints | length == 2) and
+    any(.endpoints[]; .type=="openvpn-server" and .system==true and .name=="sbv-ovpn-srv") and
+    any(.endpoints[]; .type=="openvpn-client" and .system==true and .name=="sbv-ovpn-cli") and
+    any(.inbounds[]; .type=="direct" and .tag=="openvpn-endpoint-system-proxy-verification" and
+      .listen_port==15094) and
+    any(.route.rules[]; ((.inbound // []) | index("openvpn-endpoint-system-proxy-verification")) != null and
+      .outbound=="openvpn-endpoint-system-client-verification")
+  ' "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/config.after-proxy.json")" >/dev/null
+  verification_assert_port_listening 15094 \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/proxy-listener.ss-lntp.txt"
+
+  system_marker_response=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/marker.response.txt")
+  for _ in {1..20}; do
+    if curl --fail --silent --show-error --max-time 5 --noproxy '*' \
+      http://127.0.0.1:15094/ > "${system_marker_response}" 2> \
+      "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/curl.stderr.txt")"; then
+      system_curl_status=0
+      break
+    fi
+    sleep 0.5
+  done
+  [[ "${system_curl_status}" == 0 ]]
+  grep -Fqx "${system_marker}" "${system_marker_response}"
+  grep -Fqx '/' "${system_marker_access}"
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/config.check.txt" \
     sing-box check -c /root/sing-box-vps/config.json
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/config.json" \
@@ -515,7 +683,6 @@ PY
       .interface_name=="sbv-ovpn-cli" and .interface.status=="present" and
       .interface_addresses.status=="present" and .mtu.status=="present")] | length == 1)
   ' "${system_diagnose}" >/dev/null
-  verification_mark_step fresh_install_vless_openvpn_endpoint_system_resources_observed
   verification_capture_best_effort_command "${system_journal_relative}" \
     journalctl -u sing-box -n 200 --no-pager
   system_journal_path=$(verification_artifact_path "${system_journal_relative}")
@@ -523,13 +690,37 @@ PY
   grep -Fq 'tunnel established to 127.0.0.1:11996 over tcp' "${system_journal_path}"
   grep -Fq 'started at sbv-ovpn-srv' "${system_journal_path}"
   grep -Fq 'started at sbv-ovpn-cli' "${system_journal_path}"
+  grep -Fq "inbound/direct[openvpn-endpoint-system-proxy-verification]: inbound connection to ${system_marker_address}:${system_marker_port}" \
+    "${system_journal_path}"
+  grep -Fq "endpoint/openvpn-client[openvpn-endpoint-system-client-verification]: outbound connection to ${system_marker_address}:${system_marker_port}" \
+    "${system_journal_path}"
+  grep -Fq "endpoint/openvpn-server[openvpn-endpoint-system-server-verification]: inbound connection from 10.79.0.2:" \
+    "${system_journal_path}"
+  grep -Fq "endpoint/openvpn-server[openvpn-endpoint-system-server-verification]: inbound connection to ${system_marker_address}:${system_marker_port}" \
+    "${system_journal_path}"
+  grep -Fq "outbound/direct[direct]: outbound connection to ${system_marker_address}:${system_marker_port}" \
+    "${system_journal_path}"
+  verification_mark_step fresh_install_vless_openvpn_endpoint_system_resources_observed
   verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/result.env" \
-    'RESULT=success' 'TRANSPORT=tcp' 'SYSTEM_INTERFACE=true' 'PAYLOAD=not_attempted' \
-    'RESOURCE_EVIDENCE=interface_and_tunnel'
-  verification_mark_step fresh_install_vless_openvpn_endpoint_system_tunnel_success
+    'RESULT=success' 'TRANSPORT=tcp' 'SYSTEM_INTERFACE=true' 'PAYLOAD=marker_round_trip' \
+    'RESOURCE_EVIDENCE=interface_and_tunnel' 'MARKER_NETWORK=disposable_netns_veth'
+  verification_mark_step fresh_install_vless_openvpn_endpoint_system_payload_success
 
   bash /usr/local/bin/sbv agent component delete --json --yes \
-    --expected-revision "${system_client_create_revision}" \
+    --expected-revision "${system_proxy_create_revision}" \
+    --id openvpn-endpoint-system-proxy-verification > "${system_proxy_delete}"
+  verification_capture_file_if_present "${system_proxy_delete}" \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/proxy-delete.json"
+  jq -e --argjson revision "${system_proxy_delete_revision}" '.ok==true and .operation=="delete" and .revision==$revision and
+    .id=="openvpn-endpoint-system-proxy-verification" and .service_restarted==true' \
+    "${system_proxy_delete}" >/dev/null
+  verification_mark_step fresh_install_vless_openvpn_endpoint_system_proxy_deleted
+  verification_wait_for_service_active sing-box
+  verification_assert_port_not_listening 15094 \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/proxy-after-delete.ss-lntp.txt"
+
+  bash /usr/local/bin/sbv agent component delete --json --yes \
+    --expected-revision "${system_proxy_delete_revision}" \
     --id openvpn-endpoint-system-client-verification > "${system_client_delete}"
   verification_capture_file_if_present "${system_client_delete}" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/client-delete.json"
@@ -564,6 +755,10 @@ PY
     printf 'OpenVPN system interfaces remained after managed component cleanup\n' >&2
     return 1
   fi
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/routes-after-delete.json" \
+    ip -j route show table all
+  ! jq -e 'any(.[]; .dev=="sbv-ovpn-srv" or .dev=="sbv-ovpn-cli")' \
+    "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/routes-after-delete.json")" >/dev/null
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/after-delete.check.txt" \
     sing-box check -c /root/sing-box-vps/config.json
   bash /usr/local/bin/sbv agent component diagnose --json > "${system_after_delete_diagnose}"
@@ -572,8 +767,37 @@ PY
   jq -e '.ok==true and .data.transparent_resources.status=="available" and
     (.data.transparent_resources.resources | length == 0)' \
     "${system_after_delete_diagnose}" >/dev/null
+  cleanup_openvpn_system_marker
+  system_marker_cleanup_status=$?
+  set -e
+  [[ "${system_marker_cleanup_status}" == 0 ]]
+  verification_capture_best_effort_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/marker-link-after-cleanup.json" \
+    ip -j link show dev "${system_marker_host_veth}"
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/marker-netns-after-cleanup.txt" \
+    ip netns list
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/routes-after-marker-cleanup.json" \
+    ip -j route show table all
+  if ip link show dev "${system_marker_host_veth}" >/dev/null 2>&1; then
+    printf 'OpenVPN system endpoint marker veth remained after cleanup\n' >&2
+    return 1
+  fi
+  if grep -Fq "${system_marker_netns}" \
+    "$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/marker-netns-after-cleanup.txt")"; then
+    printf 'OpenVPN system endpoint marker namespace remained after cleanup\n' >&2
+    return 1
+  fi
+  ! jq -e --arg marker_veth "${system_marker_host_veth}" \
+    'any(.[]; .dev == $marker_veth)' \
+    "$(verification_artifact_path \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/routes-after-marker-cleanup.json")" \
+    >/dev/null
   verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/after-delete.env" \
-    'RESULT=success' 'RESOURCES=managed_system_interfaces_removed'
+    'RESULT=success' 'RESOURCES=managed_system_interfaces_removed' \
+    'MARKER_RESOURCES=disposable_netns_veth_removed'
   verification_mark_step fresh_install_vless_openvpn_endpoint_system_resources_cleaned
   if [[ -n "${OPENVPN_ENDPOINT_MARKER_PID:-}" ]]; then
     kill "${OPENVPN_ENDPOINT_MARKER_PID}" 2>/dev/null || true
@@ -1818,11 +2042,11 @@ EOF
   verification_mark_step fresh_install_vless_bridge_resources_cleaned
 
   verification_run_openvpn_endpoint_runtime_probe 4
-  verification_run_wireguard_endpoint_runtime_probe 20
-  local bridge_expected_revision=20
+  verification_run_wireguard_endpoint_runtime_probe 22
+  local bridge_expected_revision=22
   if grep -Fqx 'RESULT=success' \
     "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint/result.env")"; then
-    bridge_expected_revision=24
+    bridge_expected_revision=26
   fi
   verification_run_bridge_l3_probe "${bridge_expected_revision}"
 }
