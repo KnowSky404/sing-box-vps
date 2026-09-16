@@ -795,7 +795,10 @@ AnyTLS outbound，先执行 client `sing-box check`，同时回归确认 AnyTLS 
 发送精确 marker，经 AnyTLS UoT adapter 到一次性 loopback UDP echo，并保存
 `udp.result.env`、精确响应、client check 和 stderr。AnyTLS 仍是 TCP listener，
 该结果只表示 UoT adapter 业务路径，不是原生 UDP listener、公网、生产、外部
-认证、SubMan 或完整协议目标完成证明；脚本版本保持 `2026091402`。
+认证、SubMan 或完整协议目标完成证明。定向 Docker run
+`dev/verification-runs/20260914165733` 的共存与 runtime smoke 均成功，
+`inbound UoT connection` journal 和 TCP/UDP marker artifact 均通过；脚本版本
+保持 `2026091402`。
 
 ### 2026-09-14：Snell v5 HTTP obfs 与 packet API 数据面探针
 
