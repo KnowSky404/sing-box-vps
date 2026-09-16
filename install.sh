@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091604
+# Version: 2026091605
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091604"
+readonly SCRIPT_VERSION="2026091605"
 readonly SB_SUPPORT_MAX_VERSION="1.14.0"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -16349,11 +16349,14 @@ managed_component_route_rules_validate_json() {
 managed_component_state_validate_record() {
   local record=${1:-} role type tag registry_id config route_rules
   [[ -n "${record}" ]] || return 1
-  jq -e '
-    type == "object" and
-    ((keys - ["id","role","type","tag","enabled","route_rules","config"]) | length == 0) and
-    (.id | type == "string") and (.role | type == "string") and
-    (.type | type == "string") and (.tag | type == "string")
+  jq -s -e '
+    if length != 1 then false
+    else .[0] |
+      type == "object" and
+      ((keys - ["id","role","type","tag","enabled","route_rules","config"]) | length == 0) and
+      (.id | type == "string") and (.role | type == "string") and
+      (.type | type == "string") and (.tag | type == "string")
+    end
   ' <<< "${record}" >/dev/null 2>&1 || return 1
   role=$(jq -r '.role // empty' <<< "${record}") || return 1
   type=$(jq -r '.type // empty' <<< "${record}") || return 1
@@ -16466,19 +16469,22 @@ managed_component_state_validate_record() {
 managed_component_state_validate_json() {
   local state=${1:-} record
   [[ -n "${state}" ]] || return 1
-  jq -e --argjson schema "${SB_COMPONENT_STATE_SCHEMA_VERSION}" '
-    type == "object" and
-    ((keys - ["schema_version","revision","components"]) | length == 0) and
-    .schema_version == $schema and
-    (.revision | type == "number" and . == floor and . >= 0 and . <= 9007199254740991) and
-    (.components | type == "array" and length <= 128) and
-    (([.components[]?.id] | unique | length) == (.components | length)) and
-    (([.components[]?.tag] | unique | length) == (.components | length)) and
-    all(.components[]; type == "object" and
-      (.id | type == "string") and (.role | type == "string") and
-      (.type | type == "string") and (.tag | type == "string") and
-      (.enabled | type == "boolean") and (.config | type == "object") and
-      ((.route_rules // []) | type == "array"))
+  jq -s -e --argjson schema "${SB_COMPONENT_STATE_SCHEMA_VERSION}" '
+    if length != 1 then false
+    else .[0] |
+      type == "object" and
+      ((keys - ["schema_version","revision","components"]) | length == 0) and
+      .schema_version == $schema and
+      (.revision | type == "number" and . == floor and . >= 0 and . <= 9007199254740991) and
+      (.components | type == "array" and length <= 128) and
+      (([.components[]?.id] | unique | length) == (.components | length)) and
+      (([.components[]?.tag] | unique | length) == (.components | length)) and
+      all(.components[]; type == "object" and
+        (.id | type == "string") and (.role | type == "string") and
+        (.type | type == "string") and (.tag | type == "string") and
+        (.enabled | type == "boolean") and (.config | type == "object") and
+        ((.route_rules // []) | type == "array"))
+    end
   ' <<< "${state}" >/dev/null 2>&1 || return 1
   while IFS= read -r record; do
     [[ -n "${record}" ]] || continue

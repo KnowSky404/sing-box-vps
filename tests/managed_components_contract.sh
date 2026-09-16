@@ -395,6 +395,40 @@ if managed_component_state_validate_json "$(< "${invalid_state_file}")"; then
 fi
 rm -f "${invalid_state_file}"
 jq -e '.revision == 2 and ([.components[].tag] | sort) == ["direct-local-in","selector-local"]' <<< "${state}" >/dev/null
+
+# State and record arguments are JSON text boundaries, not jq streams.  A
+# second valid document, or framing garbage around one document, must never
+# reach the CAS candidate or the persisted-state reader.
+duplicate_state_documents=$(printf '%s\n%s\n' "${state}" "${state}")
+if managed_component_state_validate_json "${duplicate_state_documents}"; then
+  printf 'multiple component state documents unexpectedly accepted\n' >&2
+  exit 1
+fi
+if managed_component_state_candidate "${duplicate_state_documents}" create "${direct_record}" >/dev/null 2>&1; then
+  printf 'multiple component state documents unexpectedly reached candidate\n' >&2
+  exit 1
+fi
+prefix_state_document=$(printf 'prefix\n%s\n' "${state}")
+if managed_component_state_validate_json "${prefix_state_document}"; then
+  printf 'component state prefix garbage unexpectedly accepted\n' >&2
+  exit 1
+fi
+suffix_state_document=$(printf '%s\nsuffix\n' "${state}")
+if managed_component_state_validate_json "${suffix_state_document}"; then
+  printf 'component state suffix garbage unexpectedly accepted\n' >&2
+  exit 1
+fi
+printf '%s\n%s\n' "${state}" "${state}" > "${SB_COMPONENT_STATE_FILE}"
+if managed_component_state_json >/dev/null 2>&1; then
+  printf 'multiple persisted component state documents unexpectedly accepted\n' >&2
+  exit 1
+fi
+rm -f "${SB_COMPONENT_STATE_FILE}"
+duplicate_record_documents=$(printf '%s\n%s\n' "${direct_record}" "${direct_record}")
+if managed_component_state_validate_record "${duplicate_record_documents}"; then
+  printf 'multiple component record documents unexpectedly accepted\n' >&2
+  exit 1
+fi
 rendered=$(managed_component_render_json "${state}")
 jq -e '
   .inbounds[0].type == "direct" and .inbounds[0].tag == "direct-local-in" and
