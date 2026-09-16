@@ -49,7 +49,12 @@ grep -Fq 'fresh_install_vless_wireguard_endpoint_resources_cleaned' "${wireguard
 grep -Fq 'wireguard-tools' "${wireguard_dockerfile}"
 grep -Fq 'verification_run_tun_l3_probe() (' "${wireguard_scenario}"
 grep -Fq 'verification_run_tun_l3_probe /root/sing-box-vps/config.json' "${wireguard_scenario}"
-grep -Fq 'DATA_PLANE=tun_l3_tcp_udp_loopback' "${wireguard_scenario}"
+grep -Fq 'DATA_PLANE=tun_l3_tcp_udp_netns' "${wireguard_scenario}"
+grep -Fq 'ip -j route get 172.19.0.100' "${wireguard_scenario}"
+grep -Fq 'ip_cidr:["172.19.0.100/32"]' "${wireguard_scenario}"
+grep -Fq 'override_address:"198.18.1.2"' "${wireguard_scenario}"
+grep -Fq 'address:["172.19.0.1/24"]' "${wireguard_scenario}"
+grep -Fq 'sing-box-journal.txt' "${wireguard_scenario}"
 
 vless_scenario="${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
 test -r "${vless_scenario}"

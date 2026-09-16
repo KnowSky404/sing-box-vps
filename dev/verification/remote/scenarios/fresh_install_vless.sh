@@ -959,7 +959,7 @@ verification_run_tun_l3_probe() (
 
   local config_file=${1:-/root/sing-box-vps/config.json}
   local probe_dir="${VERIFY_CURRENT_SCENARIO_DIR}/tun-data-plane"
-  local response_artifact udp_response_artifact
+  local response_artifact http_client_stderr_artifact udp_response_artifact
   local marker_stdout_artifact marker_stderr_artifact udp_marker_stdout_artifact
   local udp_marker_stderr_artifact udp_client_stderr_artifact
   local temp_dir='' netns='' host_veth='' peer_veth=''
@@ -969,6 +969,7 @@ verification_run_tun_l3_probe() (
   local probe_status=1
 
   response_artifact=$(verification_artifact_path "${probe_dir}/http-response.txt")
+  http_client_stderr_artifact=$(verification_artifact_path "${probe_dir}/http-client.stderr.txt")
   udp_response_artifact=$(verification_artifact_path "${probe_dir}/udp-response.txt")
   marker_stdout_artifact=$(verification_artifact_path "${probe_dir}/marker.stdout.txt")
   marker_stderr_artifact=$(verification_artifact_path "${probe_dir}/marker.stderr.txt")
@@ -1006,12 +1007,12 @@ verification_run_tun_l3_probe() (
     if [[ "${status}" == "0" && "${probe_status}" == "0" ]]; then
       verification_write_artifact "${probe_dir}/result.env" \
         'COMPONENT=tun-inbound' 'RESULT=success' \
-        'DATA_PLANE=tun_l3_tcp_udp_loopback' 'ROUTING=auto_route' \
+        'DATA_PLANE=tun_l3_tcp_udp_netns' 'ROUTING=auto_route' \
         'POLICY_SCOPE=verification_container_only' 'POLICY_OWNERSHIP=core_owned'
     else
       verification_write_artifact "${probe_dir}/result.env" \
         'COMPONENT=tun-inbound' 'RESULT=failure' \
-        'DATA_PLANE=tun_l3_tcp_udp_loopback' 'ROUTING=auto_route' \
+        'DATA_PLANE=tun_l3_tcp_udp_netns' 'ROUTING=auto_route' \
         'POLICY_SCOPE=verification_container_only' 'POLICY_OWNERSHIP=core_owned'
     fi
     exit "${status}"
@@ -1029,7 +1030,7 @@ verification_run_tun_l3_probe() (
   peer_veth="sbvtunp${BASHPID}"
   marker_port_file="${temp_dir}/marker.port"
   udp_port_file="${temp_dir}/udp.port"
-  marker="sing-box-vps-tun-l3-loopback-ok-$(date +%s)-$$"
+  marker="sing-box-vps-tun-l3-netns-ok-$(date +%s)-$$"
 
   ip netns add "${netns}"
   ip link add "${host_veth}" type veth peer name "${peer_veth}"
@@ -1039,7 +1040,7 @@ verification_run_tun_l3_probe() (
   ip netns exec "${netns}" ip addr add "${peer_ip}/24" dev "${peer_veth}"
   ip netns exec "${netns}" ip link set lo up
   ip netns exec "${netns}" ip link set "${peer_veth}" up
-  ip netns exec "${netns}" ip route add 172.19.0.0/30 via "${host_ip}"
+  ip netns exec "${netns}" ip route add 172.19.0.0/24 via "${host_ip}"
   verification_capture_best_effort_command "${probe_dir}/resources.before.txt" \
     ip -j addr show dev "${host_veth}"
 
@@ -1062,7 +1063,7 @@ class MarkerHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_args):
         return
 
-server = http.server.ThreadingHTTPServer(("198.18.1.2", 0), MarkerHandler)
+server = http.server.ThreadingHTTPServer(("198.18.1.2", 18080), MarkerHandler)
 pathlib.Path(port_path).write_text(str(server.server_address[1]), encoding="ascii")
 server.serve_forever()
 PY
@@ -1074,12 +1075,26 @@ PY
   done
   [[ -s "${marker_port_file}" ]]
   marker_port=$(<"${marker_port_file}")
-  [[ "${marker_port}" =~ ^[0-9]+$ && "${marker_port}" -ge 1 && "${marker_port}" -le 65535 ]]
+  [[ "${marker_port}" == 18080 ]]
   verification_capture_best_effort_command "${probe_dir}/resources.with-tun.txt" \
-    ip -j route get "${peer_ip}"
+    ip -j route get 172.19.0.100
 
-  verification_capture_command "${probe_dir}/http-response.txt" \
-    curl --noproxy '*' --max-time 5 -fsS "http://${peer_ip}:${marker_port}/"
+  tun_http_probe() {
+    local attempt status=1
+    for attempt in {1..5}; do
+      if curl --noproxy '*' --max-time 5 -fsS http://172.19.0.100:18080/ \
+        2>>"${http_client_stderr_artifact}"; then
+        return 0
+      else
+        status=$?
+      fi
+      printf 'TUN HTTP attempt %s failed with status %s; waiting for core network refresh\n' \
+        "${attempt}" "${status}" >>"${http_client_stderr_artifact}"
+      sleep 1
+    done
+    return "${status}"
+  }
+  verification_capture_command "${probe_dir}/http-response.txt" tun_http_probe
   grep -Fqx "${marker}" "${response_artifact}"
 
   udp_marker="${marker}-udp"
@@ -1091,7 +1106,7 @@ import sys
 
 port_path = sys.argv[1]
 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server:
-    server.bind(("198.18.1.2", 0))
+    server.bind(("198.18.1.2", 18081))
     pathlib.Path(port_path).write_text(str(server.getsockname()[1]), encoding="ascii")
     payload, address = server.recvfrom(65535)
     server.sendto(payload, address)
@@ -1104,9 +1119,9 @@ PY
   done
   [[ -s "${udp_port_file}" ]]
   udp_port=$(<"${udp_port_file}")
-  [[ "${udp_port}" =~ ^[0-9]+$ && "${udp_port}" -ge 1 && "${udp_port}" -le 65535 ]]
+  [[ "${udp_port}" == 18081 ]]
   set +e
-  python3 - "${peer_ip}" "${udp_port}" "${udp_marker}" \
+  python3 - 172.19.0.100 "${udp_port}" "${udp_marker}" \
     > "${udp_response_artifact}" 2> "${udp_client_stderr_artifact}" <<'PY'
 import socket
 import sys
@@ -1114,9 +1129,17 @@ import sys
 address, port_text, marker_text = sys.argv[1:]
 marker = marker_text.encode("ascii")
 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
-    client.settimeout(5)
-    client.sendto(marker, (address, int(port_text)))
-    payload, _ = client.recvfrom(65535)
+    client.settimeout(2)
+    for attempt in range(1, 6):
+        client.sendto(marker, (address, int(port_text)))
+        try:
+            payload, _ = client.recvfrom(65535)
+            break
+        except socket.timeout:
+            if attempt == 5:
+                raise
+    else:
+        raise RuntimeError("TUN UDP probe exhausted retries")
 if payload != marker:
     raise RuntimeError("TUN UDP marker mismatch")
 sys.stdout.buffer.write(payload)
@@ -1125,6 +1148,8 @@ PY
   set -e
   [[ "${udp_status}" == 0 ]]
   grep -Fqx "${udp_marker}" "${udp_response_artifact}"
+  verification_capture_best_effort_command "${probe_dir}/sing-box-journal.txt" \
+    journalctl -u sing-box -n 100 --no-pager
   kill "${udp_marker_pid}" 2>/dev/null || true
   wait "${udp_marker_pid}" 2>/dev/null || true
   udp_marker_pid=''
@@ -1236,9 +1261,15 @@ EOF
   local tun_diagnose_json="${VERIFY_REMOTE_LOCAL_TREE_DIR}/tun-resource-diagnose.json"
   local tun_after_delete_diagnose_json="${VERIFY_REMOTE_LOCAL_TREE_DIR}/tun-resource-after-delete-diagnose.json"
   (umask 077; jq -n '{id:"tun-resource-verification",role:"inbound",type:"tun",
-    tag:"tun-resource-verification",enabled:true,route_rules:[],config:{
-    interface_name:"sbv-tun",address:["172.19.0.1/30"],auto_route:true,
-    strict_route:true}}' > "${tun_record}")
+    tag:"tun-resource-verification",enabled:true,route_rules:[
+      {inbound:["tun-resource-verification"],network:["tcp"],
+       ip_cidr:["172.19.0.100/32"],action:"route",outbound:"direct",
+       override_address:"198.18.1.2",override_port:18080},
+      {inbound:["tun-resource-verification"],network:["udp"],
+       ip_cidr:["172.19.0.100/32"],action:"route",outbound:"direct",
+       override_address:"198.18.1.2",override_port:18081}
+    ],config:{interface_name:"sbv-tun",address:["172.19.0.1/24"],
+    auto_route:true,strict_route:true}}' > "${tun_record}")
   bash /usr/local/bin/sbv agent component create --json --yes --allow-public \
     --expected-revision 0 --file "${tun_record}" > "${tun_create_json}"
   verification_capture_file_if_present "${tun_create_json}" \
