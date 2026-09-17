@@ -138,7 +138,7 @@ jq -e '
   and .ok == true
   and (.data | type == "object")
   and .script_version == env.SCRIPT_VERSION
-  and .supported_sing_box_version == "1.14.0"
+  and .supported_sing_box_version == "1.14.1"
   and .service.active_state == "active"
   and .sing_box.version == "1.14.0"
   and .paths.config == env.SINGBOX_CONFIG_FILE

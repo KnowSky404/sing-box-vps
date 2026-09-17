@@ -1255,3 +1255,21 @@ proxy 与 endpoint，确认 route、system interface、kernel peer、veth 和 na
 该验证只覆盖固定 1.14.0、特权隔离 Docker 和本地 disposable peer/marker；route 与
 namespace/veth 是 verification fixture，不代表宿主策略所有权、外部 WireGuard peer、公网、
 生产、SubMan 或完整协议目标。脚本版本同步为 `2026091606`。
+
+### 2026-09-17：官方 v1.14.1 稳定版漂移核对
+
+官方 GitHub Releases API 当前将 `v1.14.1`（2026-09-15 发布）标为最新稳定版。
+Linux ARM64 官方资产 `sing-box-1.14.1-linux-arm64.tar.gz` 的发布摘要为
+`6060b42fa84c5dcaeae1799af7f61b0f1ae4855d9d5ddc9e02baba17154b3ae2`；下载后以
+相同 SHA-256 校验并在现有 ARM64 验证镜像中启动，核心报告 `sing-box version 1.14.1`，
+保留 `with_quic`、`with_wireguard`、`with_openvpn`、`with_openconnect`、
+`with_naive_outbound` 等项目所需构建标签。Context7 `/sagernet/sing-box` 对 endpoint、
+protocol、certificate provider 和 HTTP client 的当前配置入口核对未发现需要改写本项目
+1.14 typed allowlist 的 v1.14.1 迁移项；上游 v1.14.1 变更以修复和依赖更新为主。
+
+`tests/singbox_1_14_compatibility.sh` 与 `tests/managed_components_contract.sh` 使用该
+官方核心执行配置/组件检查；命令输出已作为本轮验证记录。由此将安装器
+`SB_SUPPORT_MAX_VERSION` 从 `1.14.0` 提升到 `1.14.1`，README 的当前版本和 Agent/远程
+版本断言同步更新，历史 1.14.0 固定核心 artifact 标签保持原样，避免把旧验证材料改写
+成新核心证据。脚本版本提升为 `2026091701`；全协议目标及外部控制面、公网、生产和
+SubMan 边界仍未完成。

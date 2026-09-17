@@ -49,6 +49,7 @@ verification_scenario_multi_protocol_coexistence() {
   local cert_path
   local key_path
   local config_path
+  local expected_core_version
   local index_path
   local protocol
   local port
@@ -1478,7 +1479,8 @@ PY
       .listen == "127.0.0.1" and .listen_port == 1091 and .network == "tcp" and
       .users[0].username == "naive-user" and .tls.server_name == "sing-box-vps-verification.invalid")] | length == 1)
   ' /root/sing-box-vps/config.json >/dev/null
-  grep -Fqx 'sing-box version 1.14.0' <(sing-box version)
+  expected_core_version=$(verification_supported_core_version)
+  grep -Fqx "sing-box version ${expected_core_version}" <(sing-box version)
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" \

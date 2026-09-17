@@ -4,9 +4,9 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026091606`
+- 脚本版本：`2026091701`
 
-- sing-box 适配版本：`1.14.0`
+- sing-box 适配版本：`1.14.1`
 
 NaiveProxy 的 TCP-capable listener（`network:["tcp"]` 或双网络）会为客户端导出 UDP-over-TCP v2；UDP-only listener 保留 QUIC/HTTP/3 传输并省略 TCP-only UoT。
 
@@ -213,7 +213,7 @@ VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh
 
 脚本会自动：
 1. 安装所有必要依赖（curl, wget, jq, qrencode 等）。
-2. 下载并配置适配的 `sing-box` (当前适配：1.14.0)。
+2. 下载并配置适配的 `sing-box` (当前适配：1.14.1)。
 3. 生成 **VLESS + REALITY**、普通 **VLESS**、**Mixed (HTTP/HTTPS/SOCKS)**、独立 **SOCKS**、独立 **HTTP**、**Shadowsocks**、**Trojan**、**VMess**、**Hysteria2**、**Hysteria v1**、**AnyTLS**、**Snell**、**TUIC**、**NaiveProxy** 或 **ShadowTLS** 配置，并支持多协议共存；其中 VLESS REALITY、普通 VLESS、VMess、Hysteria2、Hysteria v1、AnyTLS、Snell、TUIC、NaiveProxy 与 ShadowTLS 支持多实例，VLESS REALITY 还支持独立端口和可选上下行限速。HTTP/SOCKS 明文入口仅适合可信网络或受保护隧道。
 4. 以 **`install.sh`** 作为唯一安装与维护真源，并将自己安装为全局命令 **`sbv`**，方便您随时管理。
 
@@ -324,7 +324,7 @@ sbv agent instance default vmess --json --yes --expected-revision N --id ID
 sbv agent instance recover vmess --json --yes --expected-revision N
 sbv update sbv
 sbv update sing-box latest
-sbv update sing-box 1.14.0
+sbv update sing-box 1.14.1
 ```
 
 - `capabilities`：输出十五个协议、历史功能入口与 `mutation` / `sensitive` / 确认要求，Agent 应先据此选择操作。新增的 `protocol_registry` 提供 family、preset、role、内部/公开 ID、能力和验证方法；独立 SOCKS、VMess、普通 VLESS、Hysteria2、Hysteria v1、AnyTLS、Snell、TUIC、NaiveProxy 与 ShadowTLS 的实现和生命周期已由定向门禁验证，但不应解读为全协议目标完成。`available=null` 与 `validated.status=not_assessed` 表示尚未对当前实例做环境预检和连接验证，不应解读为可部署或测试通过。

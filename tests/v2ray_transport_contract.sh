@@ -306,7 +306,7 @@ assert_profile_invalid bad_family vless-reality '{"type":"none"}' disabled '' 1.
 assert_profile_invalid bad_family_empty '' '{"type":"none"}' disabled '' 1.14.0
 assert_profile_invalid bad_security vmess '{"type":"none"}' self-signed '' 1.14.0
 assert_profile_invalid old_core vmess '{"type":"none"}' disabled '' 1.12.99
-assert_profile_invalid above_max_core vmess '{"type":"none"}' disabled '' 1.14.1
+assert_profile_invalid above_max_core vmess '{"type":"none"}' disabled '' 1.14.2
 assert_profile_invalid malformed_core vmess '{"type":"none"}' disabled '' 1.14
 assert_profile_invalid latest_core vmess '{"type":"none"}' disabled '' latest
 assert_profile_invalid invalid_profile_secret vmess "${SECRET_JSON}" disabled '' 1.14.0 "${SECRET}"

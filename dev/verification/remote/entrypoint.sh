@@ -11,6 +11,16 @@ VERIFY_LOCK_HELD=0
 VERIFY_CURRENT_SCENARIO=''
 VERIFY_CURRENT_SCENARIO_DIR=''
 
+verification_supported_core_version() {
+  local installer=${VERIFY_REMOTE_INSTALL_SCRIPT:-/usr/local/bin/sbv}
+  local version
+
+  [[ -f "${installer}" ]] || return 1
+  version=$(sed -n 's/^readonly SB_SUPPORT_MAX_VERSION="\([^"\\]*\)"$/\1/p' "${installer}") || return 1
+  [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  printf '%s\n' "${version}"
+}
+
 verification_artifact_path() {
   local relative_path=$1
   local target_path="${VERIFY_ARTIFACT_DIR}/${relative_path}"
@@ -209,6 +219,7 @@ verification_initialize_run_artifacts() {
 
 verification_start_scenario() {
   VERIFY_CURRENT_SCENARIO=$1
+  export VERIFY_CURRENT_SCENARIO
   VERIFY_CURRENT_SCENARIO_DIR="scenarios/${VERIFY_CURRENT_SCENARIO}"
   mkdir -p "${VERIFY_ARTIFACT_DIR}/${VERIFY_CURRENT_SCENARIO_DIR}"
   verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/scenario.txt" "${VERIFY_CURRENT_SCENARIO}"
