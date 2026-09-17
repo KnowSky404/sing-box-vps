@@ -2500,6 +2500,10 @@ state_before_unknown_root=$(cat "${SB_COMPONENT_STATE_FILE}")
 jq '.experimental = {must_preserve:true}' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
 mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
 config_with_unknown_root=$(cat "${SINGBOX_CONFIG_FILE}")
+if managed_component_live_config_root_fields_supported "${SINGBOX_CONFIG_FILE}"; then
+  printf 'unknown top-level component namespace unexpectedly matched managed state\n' >&2
+  exit 1
+fi
 if unknown_root_takeover_json=$(agent_dispatch component takeover --json --yes --expected-revision 5 --allow-public); then
   printf 'unknown top-level component takeover unexpectedly succeeded\n' >&2
   exit 1

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091702
+# Version: 2026091703
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091702"
+readonly SCRIPT_VERSION="2026091703"
 readonly SB_SUPPORT_MAX_VERSION="1.14.1"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -17455,6 +17455,28 @@ managed_component_export_json() {
     '{action:"component-export",revision:($revision|tonumber),sensitive:true,component:$component}'
 }
 
+managed_component_live_config_root_fields_supported() {
+  local config_file=${1:-}
+  [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
+  # The normal server generator owns only these root namespaces.  Reject any
+  # additional namespace before a rebuild so an operator's service, cache,
+  # HTTP-client, network-namespace or other unmodelled settings cannot be
+  # silently discarded by the projection below.
+  jq -e '
+    if type != "object" then
+      false
+    else
+      . as $root |
+      (["log","dns","endpoints","inbounds","outbounds","route","certificate_providers"]) as $owned |
+      if ($owned | any(.[]; . as $key | ($root | has($key)))) then
+        (($root | keys) - $owned | length == 0)
+      else
+        true
+      end
+    end
+  ' "${config_file}" >/dev/null 2>&1
+}
+
 managed_component_state_matches_live_config() {
   local config_file=${1:-} state_file=${2:-} state registry endpoint_types outbound_types snapshot_dir
   [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
@@ -18725,6 +18747,11 @@ generate_config_candidate() {
   # Inspect the complete live inventory before discovery or resource creation.
   # A supported first inbound is not evidence that the rest can be rebuilt.
   validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" "${inventory_state_file}" || return 1
+  if [[ -e "${SINGBOX_CONFIG_FILE}" ]] &&
+     ! managed_component_live_config_root_fields_supported "${SINGBOX_CONFIG_FILE}"; then
+    log_warn "当前配置包含生成器未建模的顶层命名空间，禁止有损重建；请先迁移或备份后人工处理。"
+    return 1
+  fi
 
   # Capture discovery before resource preparation; process substitution hides
   # its failure status and could otherwise publish an empty/partial config.

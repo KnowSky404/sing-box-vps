@@ -113,6 +113,22 @@ if [[ "${checked_candidate}" == "${SINGBOX_CONFIG_FILE}" || "${checked_candidate
   exit 1
 fi
 
+# A normal protocol candidate must fail before resource preparation when a
+# live root namespace is outside the generator's ownership model.
+unknown_root_config=$(cat "${SINGBOX_CONFIG_FILE}")
+unknown_root_backup=$(cat "${SINGBOX_CONFIG_FILE}.bak")
+jq '.experimental = {must_preserve:true}' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+unknown_root_input=$(cat "${SINGBOX_CONFIG_FILE}")
+if generate_config_candidate >"${TMP_DIR}/unknown-root.out" 2>"${TMP_DIR}/unknown-root.err"; then
+  printf 'expected unknown top-level namespace to abort normal candidate generation\n' >&2
+  exit 1
+fi
+[[ "$(cat "${SINGBOX_CONFIG_FILE}")" == "${unknown_root_input}" ]]
+[[ "$(cat "${SINGBOX_CONFIG_FILE}.bak")" == "${unknown_root_backup}" ]]
+grep -Fq '未建模的顶层命名空间' "${TMP_DIR}/unknown-root.out"
+printf '%s\n' "${unknown_root_config}" > "${SINGBOX_CONFIG_FILE}"
+
 # Exercise the production jq assembly rather than only the helper contract:
 # an auto-routed managed TUN must add the loop guard to the published route,
 # while an explicit unsafe live setting must abort before publication.

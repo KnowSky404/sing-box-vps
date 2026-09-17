@@ -1292,3 +1292,19 @@ runtime checks 均通过，未将跳过项写成双版本证据。
 配置在拒绝时都不被修改；这补上了此前可能静默丢弃未建模 Endpoint 的发布边界，但不
 扩张为证书 provider、HTTP client、宿主透明策略、外部控制面、公网、生产或 SubMan
 验证。脚本版本提升为 `2026091702`；完整协议目标仍未完成。
+
+### 2026-09-17：未建模顶层命名空间发布保护
+
+继续收紧普通协议重生成的无损边界：服务器配置生成器只拥有 `log`、`dns`、
+`endpoints`、`inbounds`、`outbounds`、`route` 和受控 `certificate_providers` 七个
+顶层命名空间。`generate_config_candidate` 现在在任何资源准备或发布前拒绝
+额外的 `experimental`、`services`、`http_clients`、`network_namespaces` 或其他
+未建模顶层字段；配置和组件状态均保持不变，避免把这些设置静默投影丢失。新增回归
+同时覆盖 candidate guard 与 takeover 入口。该保护不声称已经对已允许命名空间
+内部的 DNS、证书 provider、route/rule 语义完成完整往返，也不扩张为宿主透明策略、
+外部控制面、公网、生产或 SubMan 验证。脚本版本统一为 `2026091703`；完整协议目标
+仍未完成。定向 candidate/组件契约、Trojan takeover 和版本一致性检查通过；随后以
+官方 `sing-box 1.14.1` ARM64 核心执行 `VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh
+--changed-file install.sh`，证据目录为 `dev/verification-runs/20260917054139`。所有可
+执行的本地门禁与 1.14.1 runtime 场景通过，1.13 路径因未提供对应核心按测试契约跳过；
+远程 Docker/SSH 阶段明确未执行。
