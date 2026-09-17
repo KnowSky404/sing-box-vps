@@ -126,8 +126,42 @@ if generate_config_candidate >"${TMP_DIR}/unknown-root.out" 2>"${TMP_DIR}/unknow
 fi
 [[ "$(cat "${SINGBOX_CONFIG_FILE}")" == "${unknown_root_input}" ]]
 [[ "$(cat "${SINGBOX_CONFIG_FILE}.bak")" == "${unknown_root_backup}" ]]
-grep -Fq '未建模的顶层命名空间' "${TMP_DIR}/unknown-root.out"
+grep -Fq '未建模的顶层或投影字段' "${TMP_DIR}/unknown-root.out"
 printf '%s\n' "${unknown_root_config}" > "${SINGBOX_CONFIG_FILE}"
+
+assert_projection_rejected() {
+  local label=$1
+  local input backup candidate_input
+  input=$(cat "${SINGBOX_CONFIG_FILE}")
+  backup=$(cat "${SINGBOX_CONFIG_FILE}.bak")
+  case "${label}" in
+    dns)
+      jq '.dns.servers += [{type:"udp",tag:"unowned-dns",server:"1.1.1.1"}]' \
+        "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next" ;;
+    route)
+      jq '.route.default_domain_resolver = "unowned-dns"' \
+        "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next" ;;
+    certificate)
+      jq '.certificate_providers = [{type:"acme",tag:"unowned-cert",domain:["unowned.example"]}]' \
+        "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next" ;;
+    *) return 1 ;;
+  esac
+  mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+  candidate_input=$(cat "${SINGBOX_CONFIG_FILE}")
+  if generate_config_candidate >"${TMP_DIR}/${label}-projection.out" \
+    2>"${TMP_DIR}/${label}-projection.err"; then
+    printf 'expected %s projection drift to abort candidate generation\n' "${label}" >&2
+    exit 1
+  fi
+  [[ "$(cat "${SINGBOX_CONFIG_FILE}")" == "${candidate_input}" ]]
+  [[ "$(cat "${SINGBOX_CONFIG_FILE}.bak")" == "${backup}" ]]
+  grep -Fq '未建模的顶层或投影字段' "${TMP_DIR}/${label}-projection.out"
+  printf '%s\n' "${input}" > "${SINGBOX_CONFIG_FILE}"
+}
+
+assert_projection_rejected dns
+assert_projection_rejected route
+assert_projection_rejected certificate
 
 # Exercise the production jq assembly rather than only the helper contract:
 # an auto-routed managed TUN must add the loop guard to the published route,

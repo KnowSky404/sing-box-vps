@@ -17477,6 +17477,46 @@ managed_component_live_config_root_fields_supported() {
   ' "${config_file}" >/dev/null 2>&1
 }
 
+managed_component_live_config_projection_supported() {
+  local config_file=${1:-}
+  [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
+  managed_component_live_config_root_fields_supported "${config_file}" || return 1
+  jq -e '
+    if has("dns") then
+      (.dns | type == "object" and
+        ((keys - ["servers","strategy"]) | length == 0) and
+        (.servers | type == "array" and length == 1 and
+          .[0] == {type:"local",tag:"local-dns"}) and
+        (.strategy | type == "string" and
+          IN("ipv4_only","ipv6_only","prefer_ipv4","prefer_ipv6")))
+    else true end
+  ' "${config_file}" >/dev/null 2>&1 || return 1
+  jq -e '
+    if has("route") then
+      (.route | type == "object" and
+        ((keys - ["rule_set","rules","final","auto_detect_interface","default_interface"]) | length == 0))
+    else true end
+  ' "${config_file}" >/dev/null 2>&1 || return 1
+  jq -e '
+    if has("certificate_providers") then
+      .certificate_providers as $provider_objects |
+      if ($provider_objects | type) != "array" then
+        false
+      elif (any($provider_objects[]; type != "object" or
+        .type != "acme" or (.tag | type != "string" or length == 0))) then
+        false
+      else
+        ($provider_objects | map(.tag) | unique) as $providers |
+        ([.inbounds[]?.tls? | .certificate_provider? |
+          select(type == "string")] | unique) as $references |
+        (($providers | length) == ($provider_objects | length)) and
+        (all($providers[]; . as $tag | ($references | index($tag)) != null) and
+         all($references[]; . as $tag | ($providers | index($tag)) != null))
+      end
+    else true end
+  ' "${config_file}" >/dev/null 2>&1 || return 1
+}
+
 managed_component_state_matches_live_config() {
   local config_file=${1:-} state_file=${2:-} state registry endpoint_types outbound_types snapshot_dir
   [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
@@ -18748,8 +18788,8 @@ generate_config_candidate() {
   # A supported first inbound is not evidence that the rest can be rebuilt.
   validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" "${inventory_state_file}" || return 1
   if [[ -e "${SINGBOX_CONFIG_FILE}" ]] &&
-     ! managed_component_live_config_root_fields_supported "${SINGBOX_CONFIG_FILE}"; then
-    log_warn "当前配置包含生成器未建模的顶层命名空间，禁止有损重建；请先迁移或备份后人工处理。"
+     ! managed_component_live_config_projection_supported "${SINGBOX_CONFIG_FILE}"; then
+    log_warn "当前配置包含生成器未建模的顶层或投影字段，禁止有损重建；请先迁移或备份后人工处理。"
     return 1
   fi
 

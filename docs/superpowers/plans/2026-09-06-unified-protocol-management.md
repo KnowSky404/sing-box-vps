@@ -1299,12 +1299,13 @@ runtime checks 均通过，未将跳过项写成双版本证据。
 `endpoints`、`inbounds`、`outbounds`、`route` 和受控 `certificate_providers` 七个
 顶层命名空间。`generate_config_candidate` 现在在任何资源准备或发布前拒绝
 额外的 `experimental`、`services`、`http_clients`、`network_namespaces` 或其他
-未建模顶层字段；配置和组件状态均保持不变，避免把这些设置静默投影丢失。新增回归
-同时覆盖 candidate guard 与 takeover 入口。该保护不声称已经对已允许命名空间
-内部的 DNS、证书 provider、route/rule 语义完成完整往返，也不扩张为宿主透明策略、
+未建模顶层字段，并拒绝非生成器 local-dns、route 选项或未被 live 入站引用的 ACME
+provider 投影；配置和组件状态均保持不变，避免把这些设置静默投影丢失。新增回归
+同时覆盖 candidate guard 与 takeover 入口。该保护仍不声称已经对已允许命名空间
+内部的 route/rule 列表语义完成完整往返，也不扩张为宿主透明策略、
 外部控制面、公网、生产或 SubMan 验证。脚本版本统一为 `2026091703`；完整协议目标
 仍未完成。定向 candidate/组件契约、Trojan takeover 和版本一致性检查通过；随后以
 官方 `sing-box 1.14.1` ARM64 核心执行 `VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh
---changed-file install.sh`，证据目录为 `dev/verification-runs/20260917054139`。所有可
+--changed-file install.sh`，证据目录为 `dev/verification-runs/20260917063930`。所有可
 执行的本地门禁与 1.14.1 runtime 场景通过，1.13 路径因未提供对应核心按测试契约跳过；
 远程 Docker/SSH 阶段明确未执行。
