@@ -1307,5 +1307,12 @@ provider 投影；配置和组件状态均保持不变，避免把这些设置�
 仍未完成。定向 candidate/组件契约、Trojan takeover 和版本一致性检查通过；随后以
 官方 `sing-box 1.14.1` ARM64 核心执行 `VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh
 --changed-file install.sh`，证据目录为 `dev/verification-runs/20260917063930`。所有可
-执行的本地门禁与 1.14.1 runtime 场景通过，1.13 路径因未提供对应核心按测试契约跳过；
-远程 Docker/SSH 阶段明确未执行。
+执行的本地门禁与 1.14.1 runtime 场景通过，1.13 路径因未提供对应核心按测试契约跳过。
+
+按项目规约补跑真实 Docker 阶段时，首次运行目录
+`dev/verification-runs/20260917073013` 使用了旧缓存验证镜像，
+`multi_protocol_coexistence` 因镜像缺少 `/usr/bin/tor` 失败；未把该结果计为代码回归。
+重建当前 `dev/verification/docker/Dockerfile`（含 `tor`）对应的同标签镜像后，仅重跑受影响
+场景和 `runtime_smoke`，目录 `dev/verification-runs/20260917090839` 的
+`remote_artifacts=extracted`、`remote_status=success`，两个场景均为
+`STATUS=success/EXIT_STATUS=0`，并保留 Tor、透明 TCP/UDP、协议探针与 CAS 清理产物。
