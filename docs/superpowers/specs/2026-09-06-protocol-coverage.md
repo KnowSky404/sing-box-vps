@@ -8,7 +8,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091704`，`SB_SUPPORT_MAX_VERSION=1.14.1`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091705`，`SB_SUPPORT_MAX_VERSION=1.14.1`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -459,3 +459,23 @@ fail closed。default namespace 要求绝对 `path`，unshare 只接受空配置
 增量只证明两个顶层角色的窄管理链路，不覆盖 `http_clients`、`services`、`rule_set`、
 宿主透明策略、外部控制面、公网/生产、真实 SubMan 或完整协议目标；当前支持上限仍为
 `1.14.1`，脚本版本为 `2026091704`。
+
+### 2026-09-17：共享 HTTP client 组件生命周期
+
+registry 现为 34 项，新增 `http_client:shared`。其 schema-1 state/CAS/render/takeover/
+rebuild/export、typed HTTPClient v1/v2/v3 allowlist、HTTP2/QUIC variant gate、TLS/Dial
+Fields/resolver validation、tag/duplicate/shape/drift guards 和 ACME string reference
+已实现；`route.default_http_client` 会保留并只解析到启用受管 client。官方 ARM64
+sing-box 1.14.1 v1/v2/v3 minimal check、定向 contract/graph/availability 与最终
+local gate `dev/verification-runs/20260917181216` 通过；1.13 缺失路径按契约 skip。匹配
+源码的 Docker remote gate `dev/verification-runs/20260917185953` 已提取 artifact，但
+`remote_status=failure`：`multi_protocol_coexistence` 的 `tor-outbound` 在 Tor 重启后
+立即 curl，出现一次性 127.0.0.1:1081 readiness race，场景在该点停止；此前已完成的
+11 个场景 artifact 均为 success，不能将整轮记作全绿。随后对
+`multi_protocol_coexistence` + `runtime_smoke` 发起定向重跑，run
+`dev/verification-runs/20260917195743` 的 `remote_status=success`；共存场景和 runtime
+smoke 均成功，Tor external TCP、redirect TCP、TProxy TCP+UDP 及既有协议探针均成功，
+TUIC 既有探针仍为契约标记的 `unsupported`。该定向重跑说明 race 非必现，但不覆盖前一
+轮在失败点之后未执行的 upgrade 场景。此切片仍不覆盖
+services/rule_set、宿主透明策略、外部 Cloudflare/Tailscale/OpenConnect/OpenVPN 控制面、
+公网/生产、真实 ACME 或完整 SubMan；当前支持上限 1.14.1，脚本版本 1705。

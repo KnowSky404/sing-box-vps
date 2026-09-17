@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091704
+# Version: 2026091705
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091704"
+readonly SCRIPT_VERSION="2026091705"
 readonly SB_SUPPORT_MAX_VERSION="1.14.1"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -123,7 +123,8 @@ readonly SB_COMPONENT_REGISTRY=(
   'anytls-outbound|outbound|anytls|AnyTLS outbound|1.14.0|builtin|{"dialer":true}'
   'snell-outbound|outbound|snell|Snell outbound|1.14.0|builtin|{"dialer":true,"versions":[4,6],"obfs_modes":["none","http"],"shaping_modes":["default","unshaped","unsafe-raw"],"udp_via_tcp_packet_api":true}'
   'shadowtls-outbound|outbound|shadowtls|ShadowTLS outbound|1.13.0|builtin|{"dialer":true,"network":["tcp"],"tls_required":true,"versions":[1,2,3],"password_versions":[2,3]}'
-  'certificate-provider-acme|certificate_provider|acme|ACME certificate provider|1.14.0|builtin|{"provider":true,"domains":true,"dns01":true,"external_account":true,"http_client_reference":false}'
+  'certificate-provider-acme|certificate_provider|acme|ACME certificate provider|1.14.0|builtin|{"provider":true,"domains":true,"dns01":true,"external_account":true,"http_client_reference":true}'
+  'http-client-shared|http_client|shared|Shared HTTP client|1.14.0|builtin|{"shared":true,"referenceable":true,"versions":[1,2,3],"http2":true,"http3":true,"tls":true,"dialer":true}'
   'network-namespace-default|network_namespace|default|Default network namespace|1.14.0|builtin|{"namespace":true,"path_required":true}'
   'network-namespace-unshare|network_namespace|unshare|Unshare network namespace|1.14.0|builtin|{"namespace":true,"path_required":false}'
 )
@@ -1677,7 +1678,8 @@ component_registry_static_json() {
       lifecycle: {
         create: true, replace: true, delete: true, rebuild: true, export: true,
         takeover: (.[1] == "inbound" or .[1] == "endpoint" or .[1] == "outbound" or
-                   .[1] == "certificate_provider" or .[1] == "network_namespace"), recover: true
+                   .[1] == "certificate_provider" or .[1] == "http_client" or
+                   .[1] == "network_namespace"), recover: true
       }
     }]'
 }
@@ -12822,7 +12824,7 @@ managed_component_certificate_provider_config_validate_json() {
       "domain","data_directory","default_server_name","email","provider",
       "disable_http_challenge","disable_tls_alpn_challenge",
       "alternative_http_port","alternative_tls_port","external_account",
-      "dns01_challenge"
+      "dns01_challenge","http_client"
     ]) | length == 0) and
     (.domain | type == "array" and length > 0 and length <= 128 and
       all(.[]; nonempty_safe_string and length <= 253)) and
@@ -12835,7 +12837,230 @@ managed_component_certificate_provider_config_validate_json() {
     optional_port("alternative_http_port") and
     optional_port("alternative_tls_port") and
     optional_external_account and
-    optional_dns01
+    optional_dns01 and
+    ((has("http_client") | not) or (.http_client | nonempty_safe_string))
+  ' <<< "${config}" >/dev/null 2>&1 || return 1
+}
+
+# Validate a shared top-level HTTP client against the sing-box 1.14 HTTPClient
+# option.  Shared clients are referenced by tag from ACME, remote rule sets,
+# service dashboards and route defaults; they are not HTTP proxy outbounds and
+# therefore intentionally have their own bounded schema.  Keep the supported
+# HTTP/TLS/Dial fields typed so a shared client cannot become an arbitrary JSON
+# escape hatch during a component transaction.
+managed_component_http_client_config_validate_json() {
+  local config=${1:-}
+  [[ -n "${config}" ]] || return 1
+  jq -e '
+    def safe_string:
+      type == "string" and length <= 4096 and
+      (any(explode[]; . < 32 or . == 127) | not);
+    def nonempty_safe_string:
+      safe_string and length > 0;
+    def optional_safe_string($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_nonempty_safe_string($name):
+      (has($name) | not) or (.[$name] | nonempty_safe_string);
+    def optional_bool($name):
+      (has($name) | not) or (.[$name] | type == "boolean");
+    def optional_duration($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_nonnegative_int($name):
+      (has($name) | not) or
+      (.[$name] | type == "number" and . == floor and . >= 0 and . <= 2147483647);
+    def optional_memory($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "number" and . == floor and . >= 0 and . <= 9007199254740991) or
+         (type == "string" and length <= 64 and
+          (any(explode[]; . < 32 or . == 127) | not))));
+    def byte_array:
+      type == "array" and length <= 1024 and
+      all(.[]; type == "number" and . == floor and . >= 0 and . <= 255);
+    def optional_listable_bytes($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "string" and safe_string) or byte_array or
+         (type == "array" and length <= 128 and
+          all(.[]; (type == "string" and safe_string) or byte_array))));
+    def optional_listable_safe_string($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "string" and safe_string) or
+         (type == "array" and length <= 128 and all(.[]; safe_string))));
+    def optional_network_types($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "string" and (length == 0 or
+          IN("wifi","cellular","ethernet","other"))) or
+         (type == "array" and length <= 4 and
+          all(.[]; type == "string" and
+            IN("wifi","cellular","ethernet","other")) and
+          (length == (unique | length)))));
+    def optional_routing_mark:
+      (has("routing_mark") | not) or
+      (.routing_mark |
+        ((type == "number" and . == floor and . >= 0 and . <= 4294967295) or
+         (type == "string" and length <= 32 and
+          (length == 0 or test("^(0x[0-9a-fA-F]+|[0-9]+)$")))));
+    def optional_header_map:
+      (has("headers") | not) or
+      (.headers | type == "object" and length <= 128 and
+        all(to_entries[];
+          (.key | type == "string" and length > 0 and length <= 256 and
+            test("^[A-Za-z0-9!#$%&\u0027+.^_\u0060|~-]+$")) and
+          (.value |
+            ((type == "string" and safe_string) or
+             (type == "array" and length <= 32 and
+              all(.[]; safe_string))))));
+    def optional_tls_listable_curve($name):
+      (has($name) | not) or
+      (.[$name] |
+        ((type == "string" and IN("P256","P384","P521","X25519","X25519MLKEM768")) or
+         (type == "array" and length <= 128 and
+          all(.[]; type == "string" and IN("P256","P384","P521","X25519","X25519MLKEM768")))));
+    def optional_domain_resolver:
+      (has("domain_resolver") | not) or
+      (.domain_resolver |
+        if type == "string" then safe_string
+        elif type == "object" then
+          ((keys - ["server","timeout","strategy","disable_cache",
+            "disable_optimistic_cache","rewrite_ttl","client_subnet"]) | length == 0) and
+          (.server | nonempty_safe_string) and
+          optional_duration("timeout") and
+          ((has("strategy") | not) or
+            (.strategy | type == "string" and
+              IN("","as_is","prefer_ipv4","prefer_ipv6","ipv4_only","ipv6_only"))) and
+          optional_bool("disable_cache") and
+          optional_bool("disable_optimistic_cache") and
+          ((has("rewrite_ttl") | not) or
+            (.rewrite_ttl | type == "number" and . == floor and . >= 0 and
+              . <= 4294967295)) and
+          optional_safe_string("client_subnet")
+        else false end);
+    def optional_tls:
+      (has("tls") | not) or
+      (.tls | type == "object" and
+        ((keys - [
+          "enabled","engine","disable_sni","server_name","insecure","alpn",
+          "min_version","max_version","cipher_suites","curve_preferences",
+          "certificate","certificate_path","certificate_public_key_sha256",
+          "client_certificate","client_certificate_path","client_key","client_key_path",
+          "fragment","fragment_fallback_delay","record_fragment","spoof","spoof_method",
+          "kernel_tx","kernel_rx","handshake_timeout","ech","utls","reality"
+        ]) | length == 0) and
+        optional_bool("enabled") and
+        ((has("engine") | not) or
+          (.engine | type == "string" and IN("","go","apple","windows"))) and
+        optional_bool("disable_sni") and
+        optional_safe_string("server_name") and
+        optional_bool("insecure") and
+        optional_listable_safe_string("alpn") and
+        ((has("min_version") | not) or
+          (.min_version | type == "string" and IN("","1.0","1.1","1.2","1.3"))) and
+        ((has("max_version") | not) or
+          (.max_version | type == "string" and IN("","1.0","1.1","1.2","1.3"))) and
+        optional_listable_safe_string("cipher_suites") and
+        optional_tls_listable_curve("curve_preferences") and
+        optional_listable_safe_string("certificate") and
+        optional_safe_string("certificate_path") and
+        optional_listable_bytes("certificate_public_key_sha256") and
+        optional_listable_safe_string("client_certificate") and
+        optional_safe_string("client_certificate_path") and
+        optional_listable_safe_string("client_key") and
+        optional_safe_string("client_key_path") and
+        optional_bool("fragment") and
+        optional_duration("fragment_fallback_delay") and
+        optional_bool("record_fragment") and
+        optional_safe_string("spoof") and
+        ((has("spoof_method") | not) or
+          (.spoof_method | type == "string" and IN("","wrong-sequence",
+            "wrong-checksum","wrong-ack","wrong-md5","wrong-timestamp"))) and
+        optional_bool("kernel_tx") and
+        optional_bool("kernel_rx") and
+        optional_duration("handshake_timeout") and
+        ((has("ech") | not) or
+          (.ech | type == "object" and
+            ((keys - ["enabled","config","config_path","query_server_name",
+              "pq_signature_schemes_enabled","dynamic_record_sizing_disabled"]) | length == 0) and
+            optional_bool("enabled") and optional_listable_safe_string("config") and
+            optional_safe_string("config_path") and optional_safe_string("query_server_name") and
+            optional_bool("pq_signature_schemes_enabled") and
+            optional_bool("dynamic_record_sizing_disabled"))) and
+        ((has("utls") | not) or
+          (.utls | type == "object" and
+            ((keys - ["enabled","fingerprint"]) | length == 0) and
+            optional_bool("enabled") and
+            ((has("fingerprint") | not) or
+              (.fingerprint | type == "string" and IN("","chrome_psk","chrome_psk_shuffle",
+                "chrome_padding_psk_shuffle","chrome_pq","chrome_pq_psk","chrome",
+                "firefox","edge","safari","360","qq","ios","android","random","randomized"))))) and
+        ((has("reality") | not) or
+          (.reality | type == "object" and
+            ((keys - ["enabled","public_key","short_id"]) | length == 0) and
+            optional_bool("enabled") and optional_safe_string("public_key") and
+            optional_safe_string("short_id"))));
+    type == "object" and
+    ((keys - [
+      "engine","version","disable_version_fallback","headers",
+      "idle_timeout","keep_alive_period","stream_receive_window",
+      "connection_receive_window","max_concurrent_streams","initial_packet_size",
+      "disable_path_mtu_discovery","tls","detour","bind_interface",
+      "inet4_bind_address","inet6_bind_address","bind_address_no_port",
+      "protect_path","routing_mark","reuse_addr","netns","connect_timeout",
+      "tcp_fast_open","tcp_multi_path","disable_tcp_keep_alive","tcp_keep_alive",
+      "tcp_keep_alive_interval","udp_fragment","domain_resolver","network_strategy",
+      "network_type","fallback_network_type","fallback_delay"
+    ]) | length == 0) and
+    ((has("engine") | not) or (.engine | type == "string" and IN("","go","apple"))) and
+    ((has("version") | not) or
+      (.version | type == "number" and . == floor and IN(0,1,2,3))) and
+    optional_bool("disable_version_fallback") and
+    optional_header_map and
+    optional_duration("idle_timeout") and
+    optional_duration("keep_alive_period") and
+    optional_memory("stream_receive_window") and
+    optional_memory("connection_receive_window") and
+    optional_nonnegative_int("max_concurrent_streams") and
+    optional_nonnegative_int("initial_packet_size") and
+    optional_bool("disable_path_mtu_discovery") and
+    optional_tls and
+    optional_safe_string("detour") and
+    optional_safe_string("bind_interface") and
+    optional_safe_string("inet4_bind_address") and
+    optional_safe_string("inet6_bind_address") and
+    optional_bool("bind_address_no_port") and
+    optional_safe_string("protect_path") and
+    optional_routing_mark and
+    optional_bool("reuse_addr") and
+    optional_safe_string("netns") and
+    optional_duration("connect_timeout") and
+    optional_bool("tcp_fast_open") and
+    optional_bool("tcp_multi_path") and
+    optional_bool("disable_tcp_keep_alive") and
+    optional_duration("tcp_keep_alive") and
+    optional_duration("tcp_keep_alive_interval") and
+    optional_bool("udp_fragment") and
+    optional_domain_resolver and
+    ((has("network_strategy") | not) or
+      (.network_strategy | type == "string" and IN("default","hybrid","fallback"))) and
+    optional_network_types("network_type") and
+    optional_network_types("fallback_network_type") and
+    optional_duration("fallback_delay") and
+    # Version 1 is HTTP/1 only; version 2 is the default; version 3 uses the
+    # QUIC fields.  Keep variant-only fields out of state before core check.
+    ((((if (.version? == 0) then 2 else (.version // 2) end) == 1) and
+       (has("idle_timeout") | not) and
+       (has("keep_alive_period") | not) and
+       (has("stream_receive_window") | not) and
+       (has("connection_receive_window") | not) and
+       (has("max_concurrent_streams") | not) and
+       (has("initial_packet_size") | not) and
+       (has("disable_path_mtu_discovery") | not)) or
+      ((if (.version? == 0) then 2 else (.version // 2) end) != 1)) and
+    (((if (.version? == 0) then 2 else (.version // 2) end) == 3) or
+      ((has("initial_packet_size") | not) and
+       (has("disable_path_mtu_discovery") | not)))
   ' <<< "${config}" >/dev/null 2>&1 || return 1
 }
 
@@ -16444,7 +16669,7 @@ managed_component_state_validate_record() {
   registry_id=$(component_registry_resolve_id "${role}" "${type}") || return 1
   managed_component_state_id_valid "$(jq -r '.id // empty' <<< "${record}")" || return 1
   managed_component_tag_valid "${tag}" || return 1
-  jq -e '.role | IN("inbound","endpoint","outbound","certificate_provider","network_namespace")' \
+  jq -e '.role | IN("inbound","endpoint","outbound","certificate_provider","http_client","network_namespace")' \
     <<< "${record}" >/dev/null 2>&1 || return 1
   jq -e '.enabled | type == "boolean"' <<< "${record}" >/dev/null 2>&1 || return 1
   jq -e '.config | type == "object" and (has("type") | not) and (has("tag") | not)' \
@@ -16486,6 +16711,9 @@ managed_component_state_validate_record() {
       ;;
     certificate_provider:acme)
       managed_component_certificate_provider_config_validate_json "${config}" || return 1
+      ;;
+    http_client:shared)
+      managed_component_http_client_config_validate_json "${config}" || return 1
       ;;
     network_namespace:default|network_namespace:unshare)
       managed_component_network_namespace_config_validate_json "${type}" "${config}" || return 1
@@ -16647,6 +16875,8 @@ managed_component_render_json() {
         .config + {type:.type, tag:.tag}],
       certificate_providers: [$components[] | enabled | select(.role == "certificate_provider") |
         .config + {type:.type, tag:.tag}],
+      http_clients: [$components[] | enabled | select(.role == "http_client") |
+        .config + {tag:.tag}],
       network_namespaces: [$components[] | enabled | select(.role == "network_namespace") |
         .config + {type:.type, tag:.tag}],
       route_rules: [$components[] | enabled | (.route_rules // [])[]]
@@ -17200,7 +17430,7 @@ managed_component_takeover_id() {
 }
 
 managed_component_live_takeover_records_json() (
-  local state=${1:-} registry inbound_types endpoint_types outbound_types certificate_provider_types namespace_types
+  local state=${1:-} registry inbound_types endpoint_types outbound_types certificate_provider_types http_client_types namespace_types
   local source_objects object role type tag id config route_rules record
   local config_snapshot
   local records=() existing_id
@@ -17216,10 +17446,12 @@ managed_component_live_takeover_records_json() (
   endpoint_types=$(jq -c '[.[] | select(.role == "endpoint") | .type]' <<< "${registry}") || return 1
   outbound_types=$(jq -c '[.[] | select(.role == "outbound") | .type]' <<< "${registry}") || return 1
   certificate_provider_types=$(jq -c '[.[] | select(.role == "certificate_provider") | .type]' <<< "${registry}") || return 1
+  http_client_types=$(jq -c '[.[] | select(.role == "http_client") | .type]' <<< "${registry}") || return 1
   namespace_types=$(jq -c '[.[] | select(.role == "network_namespace") | .type]' <<< "${registry}") || return 1
   source_objects=$(jq -c --argjson inbound_types "${inbound_types}" --argjson endpoint_types "${endpoint_types}" \
     --argjson outbound_types "${outbound_types}" \
     --argjson certificate_provider_types "${certificate_provider_types}" \
+    --argjson http_client_types "${http_client_types}" \
     --argjson namespace_types "${namespace_types}" '
     if type != "object" then error("invalid_document") else
       if any(.outbounds[]?;
@@ -17243,6 +17475,19 @@ managed_component_live_takeover_records_json() (
                . as $namespace |
                ($namespace_types | index($namespace.type // "")) == null) then
         error("unknown_network_namespace_type")
+      elif (has("http_clients") and (.http_clients | type != "array")) then
+        error("invalid_http_client")
+      elif (has("http_clients") and (.http_clients | length > 128)) then
+        error("invalid_http_client")
+      elif any(.http_clients[]?; type == "object" and has("type")) then
+        error("invalid_http_client")
+      elif any(.http_clients[]?;
+               type != "object" or
+               (.tag | type != "string" or length == 0) or
+               (($http_client_types | index("shared")) == null)) then
+        error("invalid_http_client")
+      elif ([.http_clients[]?.tag] | unique | length) != ([.http_clients[]?.tag] | length) then
+        error("duplicate_http_client_tag")
       else
       ([.inbounds // [] | .[] | select(.type as $type | $inbound_types | index($type) != null) |
         {role:"inbound",object:.}] +
@@ -17260,6 +17505,8 @@ managed_component_live_takeover_records_json() (
         select((.tag // "") | IN("hy2-cert-provider","anytls-cert-provider") | not) |
         select(.type as $type | $certificate_provider_types | index($type) != null) |
         {role:"certificate_provider",object:.}] +
+       [.http_clients // [] | .[] |
+        {role:"http_client",object:(. + {type:"shared"})}] +
        [.network_namespaces // [] | .[] |
         select(.type as $type | $namespace_types | index($type) != null) |
         {role:"network_namespace",object:.}])[]
@@ -17284,6 +17531,8 @@ managed_component_live_takeover_records_json() (
       route_rules=$(jq -c --arg tag "${tag}" '[.route.rules[]? |
         select((.outbound == $tag) or ((.outbound | type) == "array" and ((.outbound | index($tag)) != null)))]' \
         "${config_snapshot}") || return 4
+    elif [[ "${role}" == http_client ]]; then
+      route_rules='[]'
     else
       route_rules=$(jq -c --arg tag "${tag}" '[.route.rules[]? |
         select((.inbound == $tag) or ((.inbound | type) == "array" and ((.inbound | index($tag)) != null)))]' \
@@ -17589,7 +17838,7 @@ managed_component_live_config_root_fields_supported() {
       false
     else
       . as $root |
-      (["log","dns","endpoints","inbounds","outbounds","route","certificate_providers","network_namespaces"]) as $owned |
+      (["log","dns","endpoints","inbounds","outbounds","route","certificate_providers","http_clients","network_namespaces"]) as $owned |
       if ($owned | any(.[]; . as $key | ($root | has($key)))) then
         (($root | keys) - $owned | length == 0)
       else
@@ -17614,11 +17863,42 @@ managed_component_live_config_projection_supported() {
           IN("ipv4_only","ipv6_only","prefer_ipv4","prefer_ipv6")))
     else true end
   ' "${config_file}" >/dev/null 2>&1 || return 1
-  jq -e '
+  jq -e --argjson state "${state}" '
     if has("route") then
       (.route | type == "object" and
-        ((keys - ["rule_set","rules","final","auto_detect_interface","default_interface"]) | length == 0))
+        ((keys - ["rule_set","rules","final","auto_detect_interface","default_interface","default_http_client"]) | length == 0) and
+        ((has("default_http_client") | not) or
+          (.default_http_client as $client |
+            ($client | type == "string" and
+              (any(explode[]; . < 32 or . == 127) | not)) and
+            (($client == "") or
+              any($state.components[]?;
+                .role == "http_client" and .type == "shared" and
+                .tag == $client and .enabled == true)))))
     else true end
+  ' "${config_file}" >/dev/null 2>&1 || return 1
+  jq -e --argjson state "${state}" '
+    if has("http_clients") then
+      (.http_clients) as $client_objects |
+      ($client_objects | type == "array" and length <= 128 and
+        ([.[]?.tag] | unique | length) == length and
+        all(.[]?;
+          . as $client |
+          type == "object" and
+          (.tag | type == "string" and length > 0 and
+            (any(explode[]; . < 32 or . == 127) | not)) and
+          any($state.components[]?;
+            .role == "http_client" and .type == "shared" and
+            .tag == ($client.tag // "") and .enabled == true and
+            ((.config + {tag:.tag}) == $client))) and
+        ([ $state.components[]? |
+           select(.role == "http_client" and .type == "shared" and .enabled == true) ] |
+          length == ($client_objects | length)))
+    else
+      ([ $state.components[]? |
+         select(.role == "http_client" and .type == "shared" and .enabled == true) ] |
+        length == 0)
+    end
   ' "${config_file}" >/dev/null 2>&1 || return 1
   jq -e --argjson state "${state}" '
     if has("certificate_providers") then
@@ -17670,7 +17950,7 @@ managed_component_live_config_projection_supported() {
 
 managed_component_state_matches_live_config() {
   local config_file=${1:-} state_file=${2:-} state registry endpoint_types outbound_types
-  local certificate_provider_types namespace_types snapshot_dir
+  local certificate_provider_types http_client_types namespace_types snapshot_dir
   [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
   if [[ -n "${state_file}" ]]; then
     snapshot_dir=${state_file%/project/components.json}
@@ -17691,11 +17971,16 @@ managed_component_state_matches_live_config() {
   endpoint_types=$(jq -c '[.[] | select(.role == "endpoint") | .type]' <<< "${registry}") || return 1
   outbound_types=$(jq -c '[.[] | select(.role == "outbound") | .type]' <<< "${registry}") || return 1
   certificate_provider_types=$(jq -c '[.[] | select(.role == "certificate_provider") | .type]' <<< "${registry}") || return 1
+  http_client_types=$(jq -c '[.[] | select(.role == "http_client") | .type]' <<< "${registry}") || return 1
   namespace_types=$(jq -c '[.[] | select(.role == "network_namespace") | .type]' <<< "${registry}") || return 1
   jq -e --argjson state "${state}" --argjson endpoint_types "${endpoint_types}" \
     --argjson outbound_types "${outbound_types}" \
     --argjson certificate_provider_types "${certificate_provider_types}" \
+    --argjson http_client_types "${http_client_types}" \
     --argjson namespace_types "${namespace_types}" '
+    def safe_string:
+      type == "string" and length <= 4096 and
+      (any(explode[]; . < 32 or . == 127) | not);
     def managed($role; $type; $tag):
       any($state.components[]; .role == $role and .type == $type and .tag == $tag and .enabled == true);
     (all(.inbounds[]?;
@@ -17735,6 +18020,31 @@ managed_component_state_matches_live_config() {
         .role == "network_namespace" and .type == ($namespace.type // "") and
         .tag == ($namespace.tag // "") and .enabled == true and
         ((.config + {type:.type,tag:.tag}) == $namespace)))) and
+    ((if has("route") then
+        (.route | type == "object" and
+          ((has("default_http_client") | not) or
+            (.default_http_client as $client |
+              ($client | safe_string) and
+              (($client == "") or managed("http_client"; "shared"; $client)))))
+      else true end)) and
+    ((if has("http_clients") then
+        (.http_clients | type == "array" and length <= 128 and
+          ([.[]?.tag] | unique | length) == ([.[]?.tag] | length) and
+          all(.[]?;
+            . as $client |
+            ($client | type == "object" and
+              (.tag | safe_string and length > 0)) and
+            (($http_client_types | index("shared")) != null) and
+            managed("http_client"; "shared"; ($client.tag // "")) and
+            any($state.components[]?;
+              .role == "http_client" and .type == "shared" and
+              .tag == ($client.tag // "") and .enabled == true and
+              ((.config + {tag:.tag}) == $client))))
+      else
+        ([ $state.components[]? |
+           select(.role == "http_client" and .type == "shared" and .enabled == true) ] |
+          length == 0)
+      end)) and
     # Proxy protocol adapters generate client outbounds only for exports; the
     # server configuration registered custom outbounds are component-owned.
     # Keep the two built-in safety owners out of the state contract.
@@ -18951,7 +19261,7 @@ generate_config_candidate() {
   local config_candidate="" backup_candidate="" protocol
   local exit_cleanup_command effective_protocols
   local inbounds_json certificate_providers_json protocol_rules_json instance_outbound_rules_json
-  local managed_components_json managed_route_options_json
+  local managed_components_json managed_route_options_json existing_default_http_client=""
 
   # Force ensure jq is installed
   if ! command -v jq &>/dev/null; then
@@ -18982,6 +19292,10 @@ generate_config_candidate() {
     return 1
   }
   managed_route_options_json=$(managed_component_tun_route_options_json "${managed_components_json}") || return 1
+  if [[ -e "${SINGBOX_CONFIG_FILE}" ]]; then
+    existing_default_http_client=$(jq -r '.route.default_http_client // empty' \
+      "${SINGBOX_CONFIG_FILE}") || return 1
+  fi
 
   log_info "正在生成配置 (目标 sing-box $(resolve_config_target_singbox_version)，Endpoint 架构 & 安全注入)..."
   mkdir -p "${SINGBOX_CONFIG_DIR}" || return 1
@@ -19082,6 +19396,7 @@ generate_config_candidate() {
     --arg w_v6 "${w_v6}/128" \
     --argjson w_reserved "${w_reserved}" \
     --arg outbound_stack_mode "${SB_OUTBOUND_STACK_MODE}" \
+    --arg default_http_client "${existing_default_http_client}" \
     --argjson inbounds "${inbounds_json}" \
     --argjson managed_components "${managed_components_json}" \
     --argjson certificate_providers "${certificate_providers_json}" \
@@ -19200,7 +19515,10 @@ generate_config_candidate() {
           )
         ),
         "final": (if $enable_warp == "y" and $warp_mode == "all" then "warp-ep" else "direct" end)
-      } + $managed_route_options)
+      } + $managed_route_options +
+      (if $default_http_client == "" then {} else
+        {"default_http_client": $default_http_client}
+       end))
     } + (
       if (($managed_components.network_namespaces // []) | length) > 0 then
         { "network_namespaces": ($managed_components.network_namespaces // []) }
@@ -19210,6 +19528,12 @@ generate_config_candidate() {
     ) + (
       if (($certificate_providers | length) + (($managed_components.certificate_providers // []) | length)) > 0 then
         { "certificate_providers": ($certificate_providers + ($managed_components.certificate_providers // [])) }
+      else
+        {}
+      end
+    ) + (
+      if (($managed_components.http_clients // []) | length) > 0 then
+        { "http_clients": ($managed_components.http_clients // []) }
       else
         {}
       end
@@ -19859,8 +20183,25 @@ normalize_acme_extra_json() {
   if ! jq -n -e --argjson acme "${acme_json}" '$acme | type == "object"' >/dev/null 2>&1; then
     return 1
   fi
-  if jq -n -e --argjson acme "${acme_json}" '$acme.http_client? | type == "string"' >/dev/null 2>&1; then
-    return 1
+  if jq -n -e --argjson acme "${acme_json}" '$acme | has("http_client")' >/dev/null 2>&1; then
+    local http_client_json http_client_type
+    http_client_type=$(jq -n -r --argjson acme "${acme_json}" '$acme.http_client | type') || return 1
+    case "${http_client_type}" in
+      string)
+        jq -n -e --argjson acme "${acme_json}" \
+          '$acme.http_client | length > 0 and (any(explode[]; . < 32 or . == 127) | not)' \
+          >/dev/null 2>&1 || return 1
+        ;;
+      object)
+        # Both legacy tls.acme and top-level certificate_provider records may
+        # carry an upstream inline HTTPClientOptions object. Keep it typed and
+        # lossless; managed component state still uses a shared reference when
+        # the client is represented as a first-class top-level component.
+        http_client_json=$(jq -c -n --argjson acme "${acme_json}" '$acme.http_client') || return 1
+        managed_component_http_client_config_validate_json "${http_client_json}" || return 1
+        ;;
+      *) return 1 ;;
+    esac
   fi
 
   jq -cnS \
@@ -19906,6 +20247,7 @@ load_certificate_provider_from_config() {
   local config_file=$1
   local inbound_index=$2
   local provider_kind provider_tag provider_count provider_json provider_type server_name
+  local http_client_type http_client_tag http_client_count http_client_json
 
   CERT_PROVIDER_MODE="none"
   CERT_PROVIDER_TAG=""
@@ -19973,12 +20315,62 @@ load_certificate_provider_from_config() {
     return 1
   fi
 
+  if jq -n -e --argjson provider "${provider_json}" '$provider | has("http_client")' >/dev/null 2>&1; then
+    http_client_type=$(jq -n -r --argjson provider "${provider_json}" '$provider.http_client | type') || {
+      CERT_PROVIDER_ERROR="无法读取 shared http_client 类型"
+      return 1
+    }
+    case "${http_client_type}" in
+      string)
+        http_client_tag=$(jq -n -r --argjson provider "${provider_json}" '$provider.http_client // empty') || {
+          CERT_PROVIDER_ERROR="无法读取 shared http_client tag"
+          return 1
+        }
+        http_client_count=$(jq -r --arg tag "${http_client_tag}" '
+          [(.http_clients // [])[]? |
+            select(type == "object" and .tag == $tag)] | length
+        ' "${config_file}") || {
+          CERT_PROVIDER_ERROR="无法读取 shared http_client 映射"
+          return 1
+        }
+        if [[ "${http_client_count}" != "1" ]]; then
+          CERT_PROVIDER_ERROR="shared http_client 未唯一映射"
+          return 1
+        fi
+        http_client_json=$(jq -c --arg tag "${http_client_tag}" '
+          first((.http_clients // [])[]? |
+            select(type == "object" and .tag == $tag)) // null
+        ' "${config_file}") || {
+          CERT_PROVIDER_ERROR="无法读取 shared http_client"
+          return 1
+        }
+        if ! managed_component_http_client_config_validate_json "$(jq -c 'del(.tag)' <<< "${http_client_json}")"; then
+          CERT_PROVIDER_ERROR="shared http_client 配置无效"
+          return 1
+        fi
+        ;;
+      object)
+        # Upstream also permits an inline HTTPClientOptions object. Keep this
+        # legacy form typed and lossless; only a string uses the top-level
+        # shared-client reference lookup above.
+        http_client_json=$(jq -c -n --argjson provider "${provider_json}" '$provider.http_client') || {
+          CERT_PROVIDER_ERROR="无法读取 inline http_client"
+          return 1
+        }
+        if ! managed_component_http_client_config_validate_json "${http_client_json}"; then
+          CERT_PROVIDER_ERROR="inline http_client 配置无效"
+          return 1
+        fi
+        ;;
+      *)
+        CERT_PROVIDER_ERROR="certificate_provider 的 http_client 类型不受支持"
+        return 1
+        ;;
+    esac
+  fi
+
   if ! CERT_PROVIDER_EXTRA_JSON=$(normalize_acme_extra_json "${provider_json}"); then
-    if jq -n -e --argjson provider "${provider_json}" '$provider.http_client? | type == "string"' >/dev/null 2>&1; then
-      CERT_PROVIDER_ERROR="暂不支持引用 shared http_client 的 ACME provider"
-    else
-      CERT_PROVIDER_ERROR="无法保留 ACME provider 的扩展字段"
-    fi
+    CERT_PROVIDER_ERROR="无法保留 ACME provider 的扩展字段"
     return 1
   fi
 
@@ -25876,7 +26268,7 @@ agent_print_help() {
   links         输出完整连接材料，适合受信任 Agent 获取节点信息。
   export-client 生成并校验 sing-box 裸核客户端配置，写入固定路径并输出 JSON。
   warp          输出 Cloudflare Warp 状态，包括启用/路由模式/账户/规则统计。
-  component     管理 direct/tun/redirect/tproxy/cloudflared 入站、WireGuard/Tailscale/OpenConnect/OpenVPN endpoint 以及 SSH/Tor/分组等出站；list/diagnose 只读，export 仅按 ID 输出敏感配置，recover/takeover/rebuild/create/replace/delete 使用 CAS 与持久事务。
+  component     管理 direct/tun/redirect/tproxy/cloudflared 入站、WireGuard/Tailscale/OpenConnect/OpenVPN endpoint、shared HTTP client 以及 SSH/Tor/分组等出站；list/diagnose 只读，export 仅按 ID 输出敏感配置，recover/takeover/rebuild/create/replace/delete 使用 CAS 与持久事务。
   check         执行 sing-box check 并输出结构化结果。
   doctor        输出只读诊断信息和配置校验结果。
   service       执行带 --yes 保护的服务操作，目前支持 restart。
@@ -26151,7 +26543,7 @@ agent_capabilities_json() {
         "upgrade-check": {mutation: false, sensitive: false},
         upgrade: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart"},
         instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic", "hysteria", "naive", "shadowtls"]},
-        component: {mutation: true, sensitive: true, confirmation: "--yes", service_impact: "restart_if_active", roles: ["inbound", "endpoint", "outbound", "certificate_provider", "network_namespace"]},
+        component: {mutation: true, sensitive: true, confirmation: "--yes", service_impact: "restart_if_active", roles: ["inbound", "endpoint", "outbound", "certificate_provider", "http_client", "network_namespace"]},
         "export-client": {mutation: true, sensitive: true},
         "service restart": {mutation: true, sensitive: false, confirmation: "--yes"},
         "subman-sync": {mutation: true, sensitive: true, external_write: true}
@@ -26218,7 +26610,10 @@ agent_config_compatibility_json() {
   inline_acme_count=$(jq -r '[(.inbounds // [])[] | select(.tls.acme? != null)] | length' "${SINGBOX_CONFIG_FILE}")
   download_detour_count=$(jq -r '[(.route.rule_set // [])[] | select(.download_detour? != null)] | length' "${SINGBOX_CONFIG_FILE}")
   certificate_provider_count=$(jq -r '(.certificate_providers // []) | length' "${SINGBOX_CONFIG_FILE}")
-  http_client_count=$(jq -r '[(.route.rule_set // [])[] | select(.http_client? != null)] | length' "${SINGBOX_CONFIG_FILE}")
+  http_client_count=$(jq -r '
+    (((.http_clients // []) | if type == "array" then length else 0 end) +
+      ([(.route.rule_set // [])[] | select(.http_client? != null)] | length))
+  ' "${SINGBOX_CONFIG_FILE}")
 
   if (( inline_acme_count > 0 || download_detour_count > 0 )); then
     classification="legacy_1_13"

@@ -11,14 +11,16 @@ source_testable_install
 
 registry=$(component_registry_json)
 jq -e '
-  length == 33 and
-  ([.[].state_id] | unique | length) == 33 and
+  length == 34 and
+  ([.[].state_id] | unique | length) == 34 and
   ([.[] | select(.role == "inbound") | .type] | sort) ==
     ["cloudflared","direct","redirect","tproxy","tun"] and
   ([.[] | select(.role == "endpoint") | .type] | sort) ==
     ["openconnect","openvpn-client","openvpn-server","tailscale","wireguard"] and
   ([.[] | select(.role == "certificate_provider") | .type] | sort) == ["acme"] and
   ([.[] | select(.role == "network_namespace") | .type] | sort) == ["default","unshare"] and
+  any(.[]; .role == "http_client" and .type == "shared" and
+    .features.referenceable == true and .features.versions == [1,2,3]) and
   any(.[]; .role == "outbound" and .type == "selector" and .features.group == true) and
   any(.[]; .role == "outbound" and .type == "urltest" and .features.group == true) and
   any(.[]; .role == "outbound" and .type == "naive" and
@@ -52,7 +54,7 @@ capabilities=$(agent_capabilities_json)
 jq -e '
   (.features.components.diagnosis_fields | index("transparent_resources") != null) and
   (.commands.component.roles | sort) ==
-    ["certificate_provider","endpoint","inbound","network_namespace","outbound"]
+    ["certificate_provider","endpoint","http_client","inbound","network_namespace","outbound"]
 ' <<< "${capabilities}" >/dev/null
 
 direct_record='{"id":"direct-local","role":"inbound","type":"direct","tag":"direct-local-in","enabled":true,"route_rules":[],"config":{"listen":"127.0.0.1","listen_port":15080}}'
@@ -65,7 +67,7 @@ selector_record='{"id":"selector-local","role":"outbound","type":"selector","tag
 # component CAS/render path.  The records are intentionally narrow: provider
 # credentials are accepted only in sensitive state/export, while namespace
 # paths must be absolute and unshare has no unmodeled options.
-acme_provider_record='{"id":"acme-provider-local","role":"certificate_provider","type":"acme","tag":"acme-local","enabled":true,"route_rules":[],"config":{"domain":["managed.example"],"email":"ops@example.com","data_directory":"/var/lib/sing-box/acme","provider":"letsencrypt","dns01_challenge":{"provider":"cloudflare","api_token":"test-token"},"external_account":{"key_id":"kid","mac_key":"mkey"}}}'
+acme_provider_record='{"id":"acme-provider-local","role":"certificate_provider","type":"acme","tag":"acme-local","enabled":true,"route_rules":[],"config":{"domain":["managed.example"],"email":"ops@example.com","data_directory":"/var/lib/sing-box/acme","provider":"letsencrypt","http_client":"http-shared","dns01_challenge":{"provider":"cloudflare","api_token":"test-token"},"external_account":{"key_id":"kid","mac_key":"mkey"}}}'
 managed_component_state_validate_record "${acme_provider_record}"
 acme_provider_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${acme_provider_record}")
 acme_provider_rendered=$(managed_component_render_json "${acme_provider_state}")
@@ -98,11 +100,91 @@ if managed_component_state_validate_record "${acme_provider_reserved_tag}"; then
   exit 1
 fi
 
+http_client_record='{"id":"http-client-local","role":"http_client","type":"shared","tag":"http-shared","enabled":true,"route_rules":[],"config":{"version":2,"headers":{"X-SBV":"managed","Accept":["application/json"]},"tls":{"enabled":true,"server_name":"managed.example","insecure":true},"detour":"direct"}}'
+managed_component_state_validate_record "${http_client_record}"
+http_client_state=$(managed_component_state_candidate "${acme_provider_state}" create "${http_client_record}")
+http_client_rendered=$(managed_component_render_json "${http_client_state}")
+jq -e '
+  (.http_clients | length == 1) and
+  .http_clients[0].tag == "http-shared" and
+  .http_clients[0].version == 2 and
+  .http_clients[0].headers["X-SBV"] == "managed" and
+  .http_clients[0].tls.server_name == "managed.example" and
+  (.certificate_providers[0].http_client == "http-shared")
+' <<< "${http_client_rendered}" >/dev/null
+http_client_unknown=$(jq -c '.config.unmodeled = true' <<< "${http_client_record}")
+if managed_component_state_validate_record "${http_client_unknown}"; then
+  printf 'shared HTTP client unknown field unexpectedly accepted\n' >&2
+  exit 1
+fi
+http_client_bad_variant=$(jq -c '.config.version = 1 | .config.max_concurrent_streams = 16' <<< "${http_client_record}")
+if managed_component_state_validate_record "${http_client_bad_variant}"; then
+  printf 'HTTP/1 client HTTP/2 field unexpectedly accepted\n' >&2
+  exit 1
+fi
+http_client_bad_keep_alive=$(jq -c '.config.version = 1 | .config.keep_alive_period = "5s"' <<< "${http_client_record}")
+if managed_component_state_validate_record "${http_client_bad_keep_alive}"; then
+  printf 'HTTP/1 client keep-alive field unexpectedly accepted\n' >&2
+  exit 1
+fi
+http_client_bad_engine=$(jq -c '.config.engine = "windows"' <<< "${http_client_record}")
+if managed_component_state_validate_record "${http_client_bad_engine}"; then
+  printf 'shared HTTP client unsupported engine unexpectedly accepted\n' >&2
+  exit 1
+fi
+http_client_bad_curve=$(jq -c '.config.tls.curve_preferences = ["not-a-curve"]' <<< "${http_client_record}")
+if managed_component_state_validate_record "${http_client_bad_curve}"; then
+  printf 'shared HTTP client unsupported TLS curve unexpectedly accepted\n' >&2
+  exit 1
+fi
+http_client_bad_fingerprint=$(jq -c '.config.tls.utls = {enabled:true,fingerprint:"not-a-fingerprint"}' <<< "${http_client_record}")
+if managed_component_state_validate_record "${http_client_bad_fingerprint}"; then
+  printf 'shared HTTP client unsupported uTLS fingerprint unexpectedly accepted\n' >&2
+  exit 1
+fi
+http_client_tls_bytes=$(jq -c '.config.tls = {enabled:true,certificate_public_key_sha256:[1,2,255]}' <<< "${http_client_record}")
+managed_component_state_validate_record "${http_client_tls_bytes}"
+http_client_bad_network_strategy=$(jq -c '.config.network_strategy = "as_is"' <<< "${http_client_record}")
+if managed_component_state_validate_record "${http_client_bad_network_strategy}"; then
+  printf 'shared HTTP client unsupported network strategy unexpectedly accepted\n' >&2
+  exit 1
+fi
+if managed_component_state_candidate "${http_client_state}" delete "" "http-client-local"; then
+  printf 'referenced shared HTTP client unexpectedly deleted\n' >&2
+  exit 1
+fi
+
+# Protocol state readers must preserve both supported shared ACME HTTP-client
+# references and legacy inline HTTPClientOptions objects.  Invalid inline
+# shapes still fail closed instead of becoming an untyped JSON escape hatch.
+shared_acme_http_config_file=$(mktemp)
+jq -n '{
+  inbounds:[{type:"anytls",tls:{server_name:"shared-http.example",certificate_provider:"shared-provider"}}],
+  certificate_providers:[{type:"acme",tag:"shared-provider",domain:["shared-http.example"],email:"ops@example.com",http_client:"shared-acme-http"}],
+  http_clients:[{tag:"shared-acme-http",engine:"go",version:2}],
+  route:{rules:[]}
+}' > "${shared_acme_http_config_file}"
+load_certificate_provider_from_config "${shared_acme_http_config_file}" 0
+jq -e '.http_client == "shared-acme-http"' <<< "${CERT_PROVIDER_EXTRA_JSON}" >/dev/null
+jq '.certificate_providers[0].http_client = {engine:"go"}' \
+  "${shared_acme_http_config_file}" > "${shared_acme_http_config_file}.next"
+mv -f "${shared_acme_http_config_file}.next" "${shared_acme_http_config_file}"
+load_certificate_provider_from_config "${shared_acme_http_config_file}" 0
+jq -e '.http_client.engine == "go"' <<< "${CERT_PROVIDER_EXTRA_JSON}" >/dev/null
+jq '.certificate_providers[0].http_client = {unknown:true}' \
+  "${shared_acme_http_config_file}" > "${shared_acme_http_config_file}.next"
+mv -f "${shared_acme_http_config_file}.next" "${shared_acme_http_config_file}"
+if load_certificate_provider_from_config "${shared_acme_http_config_file}" 0; then
+  printf 'invalid inline ACME http_client unexpectedly passed protocol reader\n' >&2
+  exit 1
+fi
+rm -f "${shared_acme_http_config_file}"
+
 default_namespace_record='{"id":"default-namespace-local","role":"network_namespace","type":"default","tag":"netns-default","enabled":true,"route_rules":[],"config":{"path":"/proc/1/ns/net"}}'
 unshare_namespace_record='{"id":"unshare-namespace-local","role":"network_namespace","type":"unshare","tag":"netns-unshare","enabled":true,"route_rules":[],"config":{}}'
 managed_component_state_validate_record "${default_namespace_record}"
 managed_component_state_validate_record "${unshare_namespace_record}"
-namespace_state=$(managed_component_state_candidate "${acme_provider_state}" create "${default_namespace_record}")
+namespace_state=$(managed_component_state_candidate "${http_client_state}" create "${default_namespace_record}")
 namespace_state=$(managed_component_state_candidate "${namespace_state}" create "${unshare_namespace_record}")
 namespace_rendered=$(managed_component_render_json "${namespace_state}")
 jq -e '
@@ -114,8 +196,9 @@ jq -e '
 ' <<< "${namespace_rendered}" >/dev/null
 projection_config_file=$(mktemp)
 jq -n --argjson providers "$(jq '.certificate_providers' <<< "${namespace_rendered}")" \
+  --argjson clients "$(jq '.http_clients' <<< "${namespace_rendered}")" \
   --argjson namespaces "$(jq '.network_namespaces' <<< "${namespace_rendered}")" \
-  '{certificate_providers:$providers,network_namespaces:$namespaces}' > "${projection_config_file}"
+  '{certificate_providers:$providers,http_clients:$clients,network_namespaces:$namespaces}' > "${projection_config_file}"
 projection_state_json_definition=$(declare -f managed_component_state_json)
 managed_component_state_json() {
   printf '%s\n' "${namespace_state}"
@@ -138,6 +221,98 @@ fi
 eval "${projection_state_json_definition}"
 unset projection_state_json_definition
 rm -f "${projection_config_file}"
+
+# Shared HTTP clients are first-class top-level components during takeover as
+# well as render/projection.  The live path must reject malformed container
+# shapes and duplicate tags, and state matching must notice field drift instead
+# of treating a same-tag client as sufficient ownership proof.
+http_client_takeover_config='{"http_clients":[{"tag":"http-takeover","version":2,"headers":{"Accept":"application/json"},"detour":"direct"}],"route":{"default_http_client":"http-takeover"}}'
+printf '%s\n' "${http_client_takeover_config}" > "${SINGBOX_CONFIG_FILE}"
+http_client_takeover_base_state=$(managed_component_state_default_json)
+http_client_takeover_records=$(managed_component_live_takeover_records_json "${http_client_takeover_base_state}")
+jq -e '
+  length == 1 and .[0].role == "http_client" and .[0].type == "shared" and
+  .[0].tag == "http-takeover" and .[0].config.version == 2 and
+  .[0].config.headers.Accept == "application/json" and .[0].route_rules == []
+' <<< "${http_client_takeover_records}" >/dev/null
+http_client_takeover_state=$(managed_component_state_takeover_candidate \
+  "${http_client_takeover_base_state}" "${http_client_takeover_records}")
+original_http_client_state_json_definition=$(declare -f managed_component_state_json)
+managed_component_state_json() {
+  printf '%s\n' "${http_client_takeover_state}"
+}
+managed_component_state_matches_live_config "${SINGBOX_CONFIG_FILE}"
+jq '.http_clients[0].headers.Accept = "text/plain"' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if managed_component_state_matches_live_config "${SINGBOX_CONFIG_FILE}"; then
+  printf 'shared HTTP client config drift unexpectedly matched managed state\n' >&2
+  exit 1
+fi
+printf '%s\n' "${http_client_takeover_config}" > "${SINGBOX_CONFIG_FILE}"
+managed_component_live_config_projection_supported "${SINGBOX_CONFIG_FILE}"
+jq '.route.default_http_client = "missing-http-takeover"' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if managed_component_state_matches_live_config "${SINGBOX_CONFIG_FILE}"; then
+  printf 'unmapped shared HTTP client route default unexpectedly matched managed state\n' >&2
+  exit 1
+fi
+printf '%s\n' "${http_client_takeover_config}" > "${SINGBOX_CONFIG_FILE}"
+jq '.http_clients += [{tag:"http-takeover",version:2}]' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if managed_component_state_matches_live_config "${SINGBOX_CONFIG_FILE}"; then
+  printf 'duplicate shared HTTP client tag unexpectedly matched managed state\n' >&2
+  exit 1
+fi
+jq -n --argjson config "${http_client_takeover_config}" '$config' > "${SINGBOX_CONFIG_FILE}"
+jq '.http_clients[0].type = "shared"' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if managed_component_state_matches_live_config "${SINGBOX_CONFIG_FILE}"; then
+  printf 'typed shared HTTP client live object unexpectedly matched managed state\n' >&2
+  exit 1
+fi
+jq -n --argjson config "${http_client_takeover_config}" '$config' > "${SINGBOX_CONFIG_FILE}"
+jq '.http_clients = {tag:"http-takeover"}' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if managed_component_state_matches_live_config "${SINGBOX_CONFIG_FILE}"; then
+  printf 'scalar shared HTTP client container unexpectedly matched managed state\n' >&2
+  exit 1
+fi
+jq -n --argjson config "${http_client_takeover_config}" '$config' > "${SINGBOX_CONFIG_FILE}"
+jq 'del(.http_clients)' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if managed_component_state_matches_live_config "${SINGBOX_CONFIG_FILE}"; then
+  printf 'missing shared HTTP client inventory unexpectedly matched managed state\n' >&2
+  exit 1
+fi
+if managed_component_live_config_projection_supported "${SINGBOX_CONFIG_FILE}"; then
+  printf 'missing shared HTTP client projection unexpectedly passed\n' >&2
+  exit 1
+fi
+jq -n --argjson config "${http_client_takeover_config}" '$config' > "${SINGBOX_CONFIG_FILE}"
+jq '.http_clients += [{tag:"http-takeover",version:2}]' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if managed_component_live_takeover_records_json "${http_client_takeover_base_state}" >/dev/null 2>&1; then
+  printf 'duplicate shared HTTP client tag unexpectedly passed takeover\n' >&2
+  exit 1
+fi
+jq -n --argjson config "${http_client_takeover_config}" '$config' > "${SINGBOX_CONFIG_FILE}"
+jq '.http_clients[0].type = "shared"' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if managed_component_live_takeover_records_json "${http_client_takeover_base_state}" >/dev/null 2>&1; then
+  printf 'typed shared HTTP client live object unexpectedly passed takeover\n' >&2
+  exit 1
+fi
+jq -n --argjson config "${http_client_takeover_config}" '$config' > "${SINGBOX_CONFIG_FILE}"
+jq '.http_clients = {tag:"http-takeover"}' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if managed_component_live_takeover_records_json "${http_client_takeover_base_state}" >/dev/null 2>&1; then
+  printf 'scalar shared HTTP client container unexpectedly passed takeover\n' >&2
+  exit 1
+fi
+eval "${original_http_client_state_json_definition}"
+unset original_http_client_state_json_definition
+rm -f "${SINGBOX_CONFIG_FILE}"
+
 namespace_bad_path=$(jq -c '.config.path = "relative/netns"' <<< "${default_namespace_record}")
 if managed_component_state_validate_record "${namespace_bad_path}"; then
   printf 'network namespace relative path unexpectedly accepted\n' >&2
@@ -2085,7 +2260,7 @@ jq -e '.ok == true and .data.action == "component-diagnose" and
   .data.state.revision == 3 and .data.config.status == "present" and
   .data.config.graph == "passed" and .data.config.listener_resources == "passed" and
   .data.config.core_check == "unavailable" and (.data.components | length) == 3 and
-  (.data.supported | length) == 33 and
+  (.data.supported | length) == 34 and
   .data.transparent_resources.status == "not_assessed" and
   .data.transparent_resources.service_active == false' <<< "${diagnose_json}" >/dev/null
 if grep -Fq 'secret-token-not-for-list' <<< "${diagnose_json}"; then

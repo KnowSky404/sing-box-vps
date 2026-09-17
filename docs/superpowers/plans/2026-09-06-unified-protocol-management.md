@@ -1345,3 +1345,38 @@ Tor、组件 CAS 与清理产物。
 `services`、`rule_set`、宿主透明策略、外部 Cloudflare/Tailscale/OpenConnect/VPN 控制面、
 公网/生产或真实 SubMan 同步写成已实现；完整协议目标仍未完成。脚本与 README 版本
 同步为 `2026091704`。
+
+### 2026-09-17：共享 HTTP client 组件生命周期
+
+本轮将组件 registry 从 33 项扩展到 34 项，新增 `http_client:shared`。共享 client
+采用 schema-1 `components.json`、revision/CAS、原子候选、typed render、takeover、
+rebuild、export 与 drift guard；顶层 `http_clients` 只渲染受管启用对象，使用 `tag`
+作为唯一身份，不伪造 `type` 字段。allowlist 覆盖 sing-box 1.14 HTTPClient 的
+version 1/2/3 变体、HTTP/2/QUIC 字段、TLS、shared Dial Fields、resolver/network
+策略；v1 禁止 HTTP2/QUIC 字段，v2/默认禁止 QUIC 专属字段，v3 允许 QUIC 与嵌入的
+HTTP2 字段。未知字段、错误类型、重复/带 `type` 的 live 对象、容器形状错误和
+超过 128 项均 fail closed。
+
+受管 ACME `certificate_provider.http_client` 使用非空字符串 tag，并在协议状态读取时
+要求顶层唯一且 schema 合法的 shared client；上游兼容的 legacy `tls.acme` 或 inline
+provider HTTPClientOptions 对象也会在 typed reader 中保留。ACME、route.default_http_client、
+remote rule-set/service 等图引用继续通过 registry/reference graph 解析，删除仍受
+引用保护。普通重生成会保留既有 route default；live client 缺失、字段 drift 或
+未注册引用会在 candidate/rebuild/takeover 前阻断，状态和配置保持不变。`sing-box
+1.14.1` ARM64 官方核心对 v1/v2/v3 最小 HTTP client 配置 check 均通过。
+
+定向契约、graph、availability、候选、协议状态读取、版本检查通过。最终本地
+changed-file 门禁为 `dev/verification-runs/20260917181216`（仅缺少
+1.13.18 核心的路径按测试契约 skip；HTTPUpgrade/WS early-data 不稳定项按现有测试
+契约标为诊断 BLOCKED，不写成成功）。匹配源码的特权 Docker remote gate 为
+`dev/verification-runs/20260917185953`，artifact 已提取但 `remote_status=failure`：
+在 `multi_protocol_coexistence` 的 `tor-outbound` 步骤中，重启 Tor 后立即 curl，
+发生一次性 readiness race（连接 127.0.0.1:1081 被拒绝）；该场景在失败点停止，之前
+已完成的 11 个场景 artifact 均为 success，不能把整轮写成全绿。随后对
+`multi_protocol_coexistence` + `runtime_smoke` 发起定向重跑，run
+`dev/verification-runs/20260917195743` 的 `remote_status=success`；共存场景
+`STATUS=success`，Tor external TCP、redirect TCP、TProxy TCP+UDP 和既有协议探针均成功，
+TUIC 既有探针仍按契约为 `unsupported`，runtime smoke 也成功。该定向重跑说明 race
+非必现，但不覆盖前一轮在失败点之后未执行的 upgrade 场景。未执行真实 ACME
+签发、外部账户、生产、公网、宿主策略或 SubMan 全量同步；services/rule_set/外部控制面/
+宿主透明策略仍未完成。脚本与 README 版本同步为 `2026091705`。
