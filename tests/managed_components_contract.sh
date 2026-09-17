@@ -2438,6 +2438,23 @@ export_takeover_json=$(agent_dispatch component export --json --id endpoint-wire
 jq -e --arg private_key "${wireguard_fixture_private_key}" '.ok == true and .data.sensitive == true and
   .data.component.config.private_key == $private_key' <<< "${export_takeover_json}" >/dev/null
 
+# Protocol regeneration must not silently discard an endpoint that is outside
+# the managed registry. The live inventory gate runs before resource or
+# config publication, so the state/config match check rejects the candidate
+# before the generator can publish a partial projection.
+state_before_unknown_endpoint=$(cat "${SB_COMPONENT_STATE_FILE}")
+config_before_unknown_endpoint=$(cat "${SINGBOX_CONFIG_FILE}")
+jq '.endpoints += [{type:"future-endpoint",tag:"future-endpoint"}]' \
+  "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if managed_component_state_matches_live_config "${SINGBOX_CONFIG_FILE}"; then
+  printf 'unknown endpoint inventory unexpectedly matched managed state\n' >&2
+  exit 1
+fi
+[[ "$(cat "${SB_COMPONENT_STATE_FILE}")" == "${state_before_unknown_endpoint}" ]]
+[[ "$(cat "${SINGBOX_CONFIG_FILE}")" != "${config_before_unknown_endpoint}" ]]
+printf '%s\n' "${config_before_unknown_endpoint}" > "${SINGBOX_CONFIG_FILE}"
+
 # The generator-owned Warp endpoint is already emitted by the normal config
 # builder and must not become a duplicate managed component during takeover.
 config_before_warp_owner=$(cat "${SINGBOX_CONFIG_FILE}")

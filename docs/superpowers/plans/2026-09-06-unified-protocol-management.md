@@ -1273,3 +1273,22 @@ protocol、certificate provider 和 HTTP client 的当前配置入口核对未�
 版本断言同步更新，历史 1.14.0 固定核心 artifact 标签保持原样，避免把旧验证材料改写
 成新核心证据。脚本版本提升为 `2026091701`；全协议目标及外部控制面、公网、生产和
 SubMan 边界仍未完成。
+
+### 2026-09-17：当前核心运行标签与未注册 Endpoint 发布保护
+
+在官方 `v1.14.1` ARM64 核心上复核运行时测试时，发现多个跨版本 dispatcher 仍把
+`SINGBOX_BINARY_114` 固定标为旧的 `1.14.0`。这些测试现在从实际二进制的
+`sing-box version` 读取并校验版本标签，再执行相同的 `--run`/`--run-version` 分支，避免
+把 1.14.1 核心运行误报成旧版本；1.13.18 兼容路径保持显式固定。图启动 fixture 同样
+从所选核心读取期望版本。官方 1.14.1 核心对应的完整本地门禁为
+`dev/verification-runs/20260917041252`，设置 `VERIFY_SKIP_REMOTE=1` 且仅缺少
+`SINGBOX_BINARY_113` 时按测试契约跳过 1.13 路径；所有可执行的本地测试和 1.14.1
+runtime checks 均通过，未将跳过项写成双版本证据。
+
+同时，`managed_component_state_matches_live_config` 现在把 live `endpoints` 中的类型
+与 component registry 对照：`warp-ep` 仍由生成器专属拥有，已注册类型必须有启用的
+受管记录，未知/未归属 Endpoint 在正常协议重生成前直接 fail closed。新增
+`tests/managed_components_contract.sh` 回归注入 `future-endpoint`，确认 state 与 live
+配置在拒绝时都不被修改；这补上了此前可能静默丢弃未建模 Endpoint 的发布边界，但不
+扩张为证书 provider、HTTP client、宿主透明策略、外部控制面、公网、生产或 SubMan
+验证。脚本版本提升为 `2026091702`；完整协议目标仍未完成。

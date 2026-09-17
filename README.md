@@ -4,9 +4,12 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026091701`
+- 脚本版本：`2026091702`
 
 - sing-box 适配版本：`1.14.1`
+
+组件重生成会在发布前拒绝未归属的 Endpoint，避免静默丢弃 live 配置；详见实施记录中的
+`2026-09-17` 验证边界。
 
 NaiveProxy 的 TCP-capable listener（`network:["tcp"]` 或双网络）会为客户端导出 UDP-over-TCP v2；UDP-only listener 保留 QUIC/HTTP/3 传输并省略 TCP-only UoT。
 

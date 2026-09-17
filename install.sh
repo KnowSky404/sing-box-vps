@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091701
+# Version: 2026091702
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091701"
+readonly SCRIPT_VERSION="2026091702"
 readonly SB_SUPPORT_MAX_VERSION="1.14.1"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -17456,7 +17456,7 @@ managed_component_export_json() {
 }
 
 managed_component_state_matches_live_config() {
-  local config_file=${1:-} state_file=${2:-} state registry outbound_types snapshot_dir
+  local config_file=${1:-} state_file=${2:-} state registry endpoint_types outbound_types snapshot_dir
   [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
   if [[ -n "${state_file}" ]]; then
     snapshot_dir=${state_file%/project/components.json}
@@ -17474,8 +17474,10 @@ managed_component_state_matches_live_config() {
     state=$(managed_component_state_json) || return 1
   fi
   registry=$(component_registry_static_json) || return 1
+  endpoint_types=$(jq -c '[.[] | select(.role == "endpoint") | .type]' <<< "${registry}") || return 1
   outbound_types=$(jq -c '[.[] | select(.role == "outbound") | .type]' <<< "${registry}") || return 1
-  jq -e --argjson state "${state}" --argjson outbound_types "${outbound_types}" '
+  jq -e --argjson state "${state}" --argjson endpoint_types "${endpoint_types}" \
+    --argjson outbound_types "${outbound_types}" '
     def managed($role; $type; $tag):
       any($state.components[]; .role == $role and .type == $type and .tag == $tag and .enabled == true);
     (all(.inbounds[]?;
@@ -17483,9 +17485,14 @@ managed_component_state_matches_live_config() {
         managed("inbound"; .type; (.tag // ""))
       else true end)) and
     (all(.endpoints[]?;
-      if (.type | IN("wireguard","tailscale","openconnect","openvpn-client","openvpn-server")) then
-        ((.tag // "") == "warp-ep") or managed("endpoint"; .type; (.tag // ""))
-      else true end)) and
+      .type as $endpoint_type |
+      if ((.tag // "") == "warp-ep") then
+        true
+      elif (($endpoint_types | index($endpoint_type // "")) != null) then
+        managed("endpoint"; ($endpoint_type // ""); (.tag // ""))
+      else
+        false
+      end)) and
     # Proxy protocol adapters generate client outbounds only for exports; the
     # server configuration registered custom outbounds are component-owned.
     # Keep the two built-in safety owners out of the state contract.

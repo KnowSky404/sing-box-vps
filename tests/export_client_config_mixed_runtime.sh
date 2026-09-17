@@ -296,14 +296,24 @@ else
   printf 'SKIP mixed export runtime: SINGBOX_BINARY_113 is unavailable\n'
 fi
 if [[ -n "${SINGBOX_BINARY_114:-}" && -x "${SINGBOX_BINARY_114}" ]]; then
-  bash "${BASH_SOURCE[0]}" --run-version "${SINGBOX_BINARY_114}" 1.14.0
+  core_114_label=$("${SINGBOX_BINARY_114}" version | sed -n 's/^sing-box version //p' | head -n 1)
+  [[ "${core_114_label}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+    printf 'configured 1.14.x core reported an invalid version\n' >&2
+    exit 1
+  }
+  bash "${BASH_SOURCE[0]}" --run-version "${SINGBOX_BINARY_114}" "${core_114_label}"
 else
   printf 'SKIP mixed export runtime: SINGBOX_BINARY_114 is unavailable\n'
 fi
 if [[ -n "${SINGBOX_BINARY_113:-}" && -x "${SINGBOX_BINARY_113}" &&
       -n "${SINGBOX_BINARY_114:-}" && -x "${SINGBOX_BINARY_114}" ]]; then
+  core_113_label=$("${SINGBOX_BINARY_113}" version | sed -n 's/^sing-box version //p' | head -n 1)
+  [[ "${core_113_label}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+    printf 'configured 1.13.x core reported an invalid version\n' >&2
+    exit 1
+  }
   bash "${BASH_SOURCE[0]}" --run-version "${SINGBOX_BINARY_113}" 1.13.18 \
-    "${SINGBOX_BINARY_114}" 1.14.0
-  bash "${BASH_SOURCE[0]}" --run-version "${SINGBOX_BINARY_114}" 1.14.0 \
+    "${SINGBOX_BINARY_114}" "${core_114_label}"
+  bash "${BASH_SOURCE[0]}" --run-version "${SINGBOX_BINARY_114}" "${core_114_label}" \
     "${SINGBOX_BINARY_113}" 1.13.18
 fi

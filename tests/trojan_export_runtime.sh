@@ -20,8 +20,13 @@ if [[ ${1:-} != --run ]]; then
     bash "${BASH_SOURCE[0]}" --run "${SINGBOX_BINARY_113}" 1.13.18 || dispatch_status=$?
   fi
   if [[ -n "${SINGBOX_BINARY_114:-}" ]]; then
-    [[ -x "${SINGBOX_BINARY_114}" ]] || { printf 'configured 1.14.0 core unavailable\n' >&2; exit 1; }
-    bash "${BASH_SOURCE[0]}" --run "${SINGBOX_BINARY_114}" 1.14.0 || dispatch_status=$?
+    [[ -x "${SINGBOX_BINARY_114}" ]] || { printf 'configured 1.14.x core unavailable\n' >&2; exit 1; }
+    core_114_label=$("${SINGBOX_BINARY_114}" version | awk 'NR == 1 {print $3}')
+    [[ "${core_114_label}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+      printf 'configured 1.14.x core reported an invalid version\n' >&2
+      exit 1
+    }
+    bash "${BASH_SOURCE[0]}" --run "${SINGBOX_BINARY_114}" "${core_114_label}" || dispatch_status=$?
   fi
   exit "${dispatch_status}"
 fi

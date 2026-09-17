@@ -41,10 +41,11 @@ for binary_var in SINGBOX_BINARY_113 SINGBOX_BINARY_114; do
   binary=${!binary_var:-}
   [[ -n "${binary}" ]] || continue
   [[ -x "${binary}" ]]
-  case "${binary_var}" in
-    SINGBOX_BINARY_113) expected_version=1.13.18 ;;
-    SINGBOX_BINARY_114) expected_version=1.14.0 ;;
-  esac
+  expected_version=$("${binary}" version | sed -n 's/^sing-box version //p' | head -n 1)
+  [[ "${expected_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+    printf 'configured %s core reported an invalid version\n' "${binary_var}" >&2
+    exit 1
+  }
   [[ "$("${binary}" version | sed -n 's/^sing-box version //p')" == "${expected_version}" ]]
   for case_name in route-final dns-final dns-dependency dns-cycle; do
     "${binary}" check -c "${TEST_DIR}/${case_name}.json" \
