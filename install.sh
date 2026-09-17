@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091705
+# Version: 2026091706
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091705"
+readonly SCRIPT_VERSION="2026091706"
 readonly SB_SUPPORT_MAX_VERSION="1.14.1"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -17831,8 +17831,9 @@ managed_component_live_config_root_fields_supported() {
   [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
   # The normal server generator owns only these root namespaces.  Reject any
   # additional namespace before a rebuild so an operator's service, cache,
-  # HTTP-client, rule-set or other unmodelled settings cannot be
-  # silently discarded by the projection below.
+  # HTTP-client or other unmodelled settings cannot be silently discarded by
+  # the projection below.  Route rule-sets are checked separately because
+  # they live below the generator-owned route namespace.
   jq -e '
     if type != "object" then
       false
@@ -17848,10 +17849,36 @@ managed_component_live_config_root_fields_supported() {
   ' "${config_file}" >/dev/null 2>&1
 }
 
+managed_component_live_route_rule_sets_supported() {
+  local config_file=${1:-}
+  [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
+  # The generator owns the Warp rule-set namespace and recreates it from the
+  # project-managed source files.  Any other route rule-set would otherwise
+  # disappear when a protocol is regenerated.  Reject it before resource
+  # preparation instead of pretending that an unmanaged rule-set survived.
+  jq -e '
+    def safe_string:
+      type == "string" and length <= 4096 and
+      (any(explode[]; . < 32 or . == 127) | not);
+    if has("route") then
+      (.route | type == "object" and
+        ((has("rule_set") | not) or
+          (.rule_set | type == "array" and length <= 128 and
+            ([.[]?.tag] | unique | length) == length and
+            all(.[];
+              type == "object" and
+              (.tag | safe_string and length > 0) and
+              (.type | type == "string" and IN("inline","local","remote")) and
+              (.tag | startswith("warp-local-") or startswith("warp-remote-"))))))
+    else true end
+  ' "${config_file}" >/dev/null 2>&1
+}
+
 managed_component_live_config_projection_supported() {
   local config_file=${1:-} state
   [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
   managed_component_live_config_root_fields_supported "${config_file}" || return 1
+  managed_component_live_route_rule_sets_supported "${config_file}" || return 1
   state=$(managed_component_state_json) || return 1
   jq -e '
     if has("dns") then

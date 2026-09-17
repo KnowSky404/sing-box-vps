@@ -204,6 +204,30 @@ managed_component_state_json() {
   printf '%s\n' "${namespace_state}"
 }
 managed_component_live_config_projection_supported "${projection_config_file}"
+jq '.route={rule_set:[{type:"local",tag:"warp-local-owned",format:"source",path:"/var/lib/sing-box/warp.srs"}]}' \
+  "${projection_config_file}" > "${projection_config_file}.next"
+mv -f "${projection_config_file}.next" "${projection_config_file}"
+managed_component_live_config_projection_supported "${projection_config_file}"
+jq '.route.rule_set[0].tag="operator-rules"' \
+  "${projection_config_file}" > "${projection_config_file}.next"
+mv -f "${projection_config_file}.next" "${projection_config_file}"
+if managed_component_live_config_projection_supported "${projection_config_file}"; then
+  printf 'unmanaged route rule-set unexpectedly passed projection guard\n' >&2
+  exit 1
+fi
+jq '.route.rule_set="not-an-array"' \
+  "${projection_config_file}" > "${projection_config_file}.next"
+mv -f "${projection_config_file}.next" "${projection_config_file}"
+if managed_component_live_config_projection_supported "${projection_config_file}"; then
+  printf 'malformed route rule-set container unexpectedly passed projection guard\n' >&2
+  exit 1
+fi
+jq '.route={}' "${projection_config_file}" > "${projection_config_file}.next"
+mv -f "${projection_config_file}.next" "${projection_config_file}"
+jq '.route.rule_set=[{type:"local",tag:"warp-local-owned",format:"source",path:"/var/lib/sing-box/warp.srs"}]' \
+  "${projection_config_file}" > "${projection_config_file}.next"
+mv -f "${projection_config_file}.next" "${projection_config_file}"
+managed_component_live_config_projection_supported "${projection_config_file}"
 jq '.certificate_providers[0].domain = ["drift.example"]' \
   "${projection_config_file}" > "${projection_config_file}.next"
 mv -f "${projection_config_file}.next" "${projection_config_file}"

@@ -8,7 +8,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091705`，`SB_SUPPORT_MAX_VERSION=1.14.1`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091706`，`SB_SUPPORT_MAX_VERSION=1.14.1`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -479,3 +479,12 @@ TUIC 既有探针仍为契约标记的 `unsupported`。该定向重跑说明 rac
 轮在失败点之后未执行的 upgrade 场景。此切片仍不覆盖
 services/rule_set、宿主透明策略、外部 Cloudflare/Tailscale/OpenConnect/OpenVPN 控制面、
 公网/生产、真实 ACME 或完整 SubMan；当前支持上限 1.14.1，脚本版本 1705。
+
+### 2026-09-17：非 Warp route rule-set 重生成保护
+
+生成器会从项目 Warp 资产重建 `route.rule_set`。为避免 live 配置中的其他规则集在协议
+重生成时被静默丢弃，发布前现在要求该字段为有界数组，并只接受安全、非空且带
+`inline`/`local`/`remote` 类型的 `warp-local-*`/`warp-remote-*` 标签；非受管标签、重复
+标签、错误对象或标量容器均在资源准备前拒绝。该切片只保护生成器归属边界，Warp 规则集
+仍由项目文件重建，不提供通用 rule-set 生命周期或 CRUD；services、宿主透明策略、外部
+控制面、公网/生产、真实 ACME 和 SubMan 仍未完成。当前支持上限 1.14.1，脚本版本 1706。

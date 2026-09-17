@@ -1380,3 +1380,16 @@ TUIC 既有探针仍按契约为 `unsupported`，runtime smoke 也成功。该�
 非必现，但不覆盖前一轮在失败点之后未执行的 upgrade 场景。未执行真实 ACME
 签发、外部账户、生产、公网、宿主策略或 SubMan 全量同步；services/rule_set/外部控制面/
 宿主透明策略仍未完成。脚本与 README 版本同步为 `2026091705`。
+
+### 2026-09-17：重生成前保护非 Warp route rule-set
+
+审计发现，生成器会根据项目自己的 Warp 资产重建 `route.rule_set`；如果 live 配置中
+存在其他标签的规则集，原先可能在重生成时被静默丢弃。新增发布前保护：`route.rule_set`
+必须是有界数组，条目必须是对象、非空安全标签和 `inline`/`local`/`remote` 类型，且
+只能使用生成器保留的 `warp-local-*` 或 `warp-remote-*` 标签。其他规则集、重复标签或
+错误容器形状在资源准备前 fail closed，配置和组件状态保持不变；Warp 规则集仍由项目
+资产重建，不把这项保护写成通用 rule-set 生命周期管理。
+
+`tests/managed_components_contract.sh` 新增受管 Warp 标签、非受管标签、标量容器和
+恢复路径回归；本切片不覆盖 `services`、通用 `rule_set` CRUD、宿主透明策略、外部控制面、
+公网/生产、真实 ACME 或 SubMan。脚本与 README 版本同步为 `2026091706`。
