@@ -13,7 +13,7 @@ source_testable_install
 # registry. Every component reports the same bounded, credential-free cause.
 without_core=$(component_registry_environment_json)
 jq -e '
-  length == 30 and
+  length == 33 and
   all(.[]; .status == "unavailable" and .core.status == "unavailable" and
     .core.version == null and .dependencies[0].name == "sing_box_binary")
 ' <<< "${without_core}" >/dev/null
@@ -176,7 +176,7 @@ jq -e '
 # condition, runtime environment observation, and target-core validation.
 registry=$(component_registry_json)
 jq -e '
-  length == 30 and
+  length == 33 and
   all(.[]; .implemented == true and .available == null and
     .validated.status == "not_assessed" and (.environment.status | type) == "string")
 ' <<< "${registry}" >/dev/null

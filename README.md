@@ -4,12 +4,18 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026091703`
+- 脚本版本：`2026091704`
 
 - sing-box 适配版本：`1.14.1`
 
 组件重生成会在发布前拒绝未归属的 Endpoint，避免静默丢弃 live 配置；详见实施记录中的
 `2026-09-17` 验证边界。
+
+当前组件 registry 还将 ACME `certificate_provider` 以及 `default`/`unshare`
+`network_namespace` 纳入同一套 schema-1 状态、CAS、渲染、接管与重建流程；ACME
+状态只接受已建模的域名、DNS-01、外部账户和挑战端口字段，`http_client` 等未建模
+扩展仍保持 fail-closed。每个已登记的 provider/namespace 在 live 投影时必须与状态
+对象逐字段一致，避免普通协议重生成静默覆盖手工修改。
 
 NaiveProxy 的 TCP-capable listener（`network:["tcp"]` 或双网络）会为客户端导出 UDP-over-TCP v2；UDP-only listener 保留 QUIC/HTTP/3 传输并省略 TCP-only UoT。
 

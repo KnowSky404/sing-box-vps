@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091703
+# Version: 2026091704
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091703"
+readonly SCRIPT_VERSION="2026091704"
 readonly SB_SUPPORT_MAX_VERSION="1.14.1"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -123,6 +123,9 @@ readonly SB_COMPONENT_REGISTRY=(
   'anytls-outbound|outbound|anytls|AnyTLS outbound|1.14.0|builtin|{"dialer":true}'
   'snell-outbound|outbound|snell|Snell outbound|1.14.0|builtin|{"dialer":true,"versions":[4,6],"obfs_modes":["none","http"],"shaping_modes":["default","unshaped","unsafe-raw"],"udp_via_tcp_packet_api":true}'
   'shadowtls-outbound|outbound|shadowtls|ShadowTLS outbound|1.13.0|builtin|{"dialer":true,"network":["tcp"],"tls_required":true,"versions":[1,2,3],"password_versions":[2,3]}'
+  'certificate-provider-acme|certificate_provider|acme|ACME certificate provider|1.14.0|builtin|{"provider":true,"domains":true,"dns01":true,"external_account":true,"http_client_reference":false}'
+  'network-namespace-default|network_namespace|default|Default network namespace|1.14.0|builtin|{"namespace":true,"path_required":true}'
+  'network-namespace-unshare|network_namespace|unshare|Unshare network namespace|1.14.0|builtin|{"namespace":true,"path_required":false}'
 )
 SB_REALITY_SNI_CANDIDATES=(
   "www.apple.com"
@@ -1673,7 +1676,8 @@ component_registry_static_json() {
       validated: {status: "not_assessed", method: "target_sing_box_check"},
       lifecycle: {
         create: true, replace: true, delete: true, rebuild: true, export: true,
-        takeover: (.[1] == "inbound" or .[1] == "endpoint" or .[1] == "outbound"), recover: true
+        takeover: (.[1] == "inbound" or .[1] == "endpoint" or .[1] == "outbound" or
+                   .[1] == "certificate_provider" or .[1] == "network_namespace"), recover: true
       }
     }]'
 }
@@ -12757,7 +12761,8 @@ append_protocol_fragment() {
 }
 
 # --- Managed advanced components -------------------------------------------------
-# Advanced inbounds, endpoints and outbounds are stored as typed JSON records.
+# Advanced inbounds, endpoints, outbounds, certificate providers and network
+# namespaces are stored as typed JSON records.
 # They intentionally have their own CAS state file so that adding a TUN or an
 # endpoint cannot silently change the share-link protocol index.  The config
 # graph validator remains the final reference/dep-cycle gate; these helpers
@@ -12776,6 +12781,81 @@ managed_component_tag_valid() {
   local tag=${1:-}
   [[ -n "${tag}" && ${#tag} -le 128 && "${tag}" != *[[:space:]]* &&
     "${tag}" != *$'\n'* && "${tag}" != *$'\r'* ]]
+}
+
+# Certificate providers and network namespaces live in their own top-level
+# arrays.  Keep the small subset managed by this script typed instead of
+# treating either namespace as arbitrary core JSON.  ACME credentials are
+# validated for shape only; they are returned only by the explicit sensitive
+# component export path.
+managed_component_certificate_provider_config_validate_json() {
+  local config=${1:-}
+  [[ -n "${config}" ]] || return 1
+  jq -e '
+    def safe_string:
+      type == "string" and (any(explode[]; . < 32 or . == 127) | not);
+    def nonempty_safe_string:
+      safe_string and length > 0;
+    def optional_safe_string($name):
+      (has($name) | not) or (.[$name] | safe_string);
+    def optional_nonempty_safe_string($name):
+      (has($name) | not) or (.[$name] | nonempty_safe_string);
+    def optional_bool($name):
+      (has($name) | not) or (.[$name] | type == "boolean");
+    def optional_port($name):
+      (has($name) | not) or
+      (.[$name] | type == "number" and . == floor and . >= 0 and . <= 65535);
+    def optional_dns01:
+      (has("dns01_challenge") | not) or
+      (.dns01_challenge | type == "object" and
+        ((keys - ["provider","api_token"]) | length == 0) and
+        (.provider | nonempty_safe_string) and
+        ((has("api_token") | not) or (.api_token | safe_string)));
+    def optional_external_account:
+      (has("external_account") | not) or
+      (.external_account | type == "object" and
+        ((keys - ["key_id","mac_key"]) | length == 0) and
+        (.key_id | nonempty_safe_string) and
+        (.mac_key | nonempty_safe_string));
+    type == "object" and
+    ((keys - [
+      "domain","data_directory","default_server_name","email","provider",
+      "disable_http_challenge","disable_tls_alpn_challenge",
+      "alternative_http_port","alternative_tls_port","external_account",
+      "dns01_challenge"
+    ]) | length == 0) and
+    (.domain | type == "array" and length > 0 and length <= 128 and
+      all(.[]; nonempty_safe_string and length <= 253)) and
+    optional_nonempty_safe_string("data_directory") and
+    optional_safe_string("default_server_name") and
+    optional_safe_string("email") and
+    optional_safe_string("provider") and
+    optional_bool("disable_http_challenge") and
+    optional_bool("disable_tls_alpn_challenge") and
+    optional_port("alternative_http_port") and
+    optional_port("alternative_tls_port") and
+    optional_external_account and
+    optional_dns01
+  ' <<< "${config}" >/dev/null 2>&1 || return 1
+}
+
+managed_component_network_namespace_config_validate_json() {
+  local type=${1:-} config=${2:-}
+  [[ -n "${type}" && -n "${config}" ]] || return 1
+  case "${type}" in
+    default)
+      jq -e '
+        type == "object" and
+        ((keys - ["path"]) | length == 0) and
+        (.path | type == "string" and length > 0 and startswith("/") and
+          (any(explode[]; . < 32 or . == 127) | not))
+      ' <<< "${config}" >/dev/null 2>&1
+      ;;
+    unshare)
+      jq -e 'type == "object" and length == 0' <<< "${config}" >/dev/null 2>&1
+      ;;
+    *) return 1 ;;
+  esac
 }
 
 # Validate the SSH outbound contract instead of treating its config as an
@@ -16364,13 +16444,22 @@ managed_component_state_validate_record() {
   registry_id=$(component_registry_resolve_id "${role}" "${type}") || return 1
   managed_component_state_id_valid "$(jq -r '.id // empty' <<< "${record}")" || return 1
   managed_component_tag_valid "${tag}" || return 1
-  jq -e '.role | IN("inbound","endpoint","outbound")' <<< "${record}" >/dev/null 2>&1 || return 1
+  jq -e '.role | IN("inbound","endpoint","outbound","certificate_provider","network_namespace")' \
+    <<< "${record}" >/dev/null 2>&1 || return 1
   jq -e '.enabled | type == "boolean"' <<< "${record}" >/dev/null 2>&1 || return 1
   jq -e '.config | type == "object" and (has("type") | not) and (has("tag") | not)' \
     <<< "${record}" >/dev/null 2>&1 || return 1
   route_rules=$(jq -c '.route_rules // []' <<< "${record}") || return 1
   managed_component_route_rules_validate_json "${route_rules}" || return 1
   config=$(jq -c '.config' <<< "${record}") || return 1
+
+  if [[ "${role}" == network_namespace && "${route_rules}" != '[]' ]]; then
+    return 1
+  fi
+  if [[ "${role}" == certificate_provider &&
+        ("${tag}" == hy2-cert-provider || "${tag}" == anytls-cert-provider) ]]; then
+    return 1
+  fi
 
   # Reject the two built-in outbound owners.  Custom direct/block records are
   # supported, while replacing the safety defaults requires a future explicit
@@ -16394,6 +16483,12 @@ managed_component_state_validate_record() {
       ;;
     inbound:cloudflared)
       managed_component_cloudflared_config_validate_json "${config}" || return 1
+      ;;
+    certificate_provider:acme)
+      managed_component_certificate_provider_config_validate_json "${config}" || return 1
+      ;;
+    network_namespace:default|network_namespace:unshare)
+      managed_component_network_namespace_config_validate_json "${type}" "${config}" || return 1
       ;;
     endpoint:wireguard)
       managed_component_wireguard_config_validate_json "${config}" || return 1
@@ -16549,6 +16644,10 @@ managed_component_render_json() {
       endpoints: [$components[] | enabled | select(.role == "endpoint") |
         .config + {type:.type, tag:.tag}],
       outbounds: [$components[] | enabled | select(.role == "outbound") |
+        .config + {type:.type, tag:.tag}],
+      certificate_providers: [$components[] | enabled | select(.role == "certificate_provider") |
+        .config + {type:.type, tag:.tag}],
+      network_namespaces: [$components[] | enabled | select(.role == "network_namespace") |
         .config + {type:.type, tag:.tag}],
       route_rules: [$components[] | enabled | (.route_rules // [])[]]
     }' <<< "${state}"
@@ -17101,7 +17200,8 @@ managed_component_takeover_id() {
 }
 
 managed_component_live_takeover_records_json() (
-  local state=${1:-} registry inbound_types endpoint_types outbound_types source_objects object role type tag id config route_rules record
+  local state=${1:-} registry inbound_types endpoint_types outbound_types certificate_provider_types namespace_types
+  local source_objects object role type tag id config route_rules record
   local config_snapshot
   local records=() existing_id
   [[ -n "${state}" ]] || return 1
@@ -17115,8 +17215,12 @@ managed_component_live_takeover_records_json() (
   inbound_types=$(jq -c '[.[] | select(.role == "inbound") | .type]' <<< "${registry}") || return 1
   endpoint_types=$(jq -c '[.[] | select(.role == "endpoint") | .type]' <<< "${registry}") || return 1
   outbound_types=$(jq -c '[.[] | select(.role == "outbound") | .type]' <<< "${registry}") || return 1
+  certificate_provider_types=$(jq -c '[.[] | select(.role == "certificate_provider") | .type]' <<< "${registry}") || return 1
+  namespace_types=$(jq -c '[.[] | select(.role == "network_namespace") | .type]' <<< "${registry}") || return 1
   source_objects=$(jq -c --argjson inbound_types "${inbound_types}" --argjson endpoint_types "${endpoint_types}" \
-    --argjson outbound_types "${outbound_types}" '
+    --argjson outbound_types "${outbound_types}" \
+    --argjson certificate_provider_types "${certificate_provider_types}" \
+    --argjson namespace_types "${namespace_types}" '
     if type != "object" then error("invalid_document") else
       if any(.outbounds[]?;
              . as $outbound |
@@ -17128,6 +17232,17 @@ managed_component_live_takeover_records_json() (
                (((.tag // "") == "direct" and (.type // "") != "direct") or
                 ((.tag // "") == "block" and (.type // "") != "block"))) then
         error("reserved_outbound_tag")
+      elif any(.certificate_providers[]?;
+               . as $provider |
+               ((($provider.tag // "") | IN("hy2-cert-provider","anytls-cert-provider")) and
+                (($provider.type // "") != "acme")) or
+               ((($provider.tag // "") | IN("hy2-cert-provider","anytls-cert-provider") | not) and
+                (($certificate_provider_types | index($provider.type // "")) == null))) then
+        error("unknown_certificate_provider_type")
+      elif any(.network_namespaces[]?;
+               . as $namespace |
+               ($namespace_types | index($namespace.type // "")) == null) then
+        error("unknown_network_namespace_type")
       else
       ([.inbounds // [] | .[] | select(.type as $type | $inbound_types | index($type) != null) |
         {role:"inbound",object:.}] +
@@ -17140,7 +17255,14 @@ managed_component_live_takeover_records_json() (
              (.type == "direct" and (.tag // "") == "direct") or
              (.type == "block" and (.tag // "") == "block")) | not) then
           {role:"outbound",object:.}
-        else empty end])[]
+        else empty end] +
+       [.certificate_providers // [] | .[] |
+        select((.tag // "") | IN("hy2-cert-provider","anytls-cert-provider") | not) |
+        select(.type as $type | $certificate_provider_types | index($type) != null) |
+        {role:"certificate_provider",object:.}] +
+       [.network_namespaces // [] | .[] |
+        select(.type as $type | $namespace_types | index($type) != null) |
+        {role:"network_namespace",object:.}])[]
       end
     end
   ' "${config_snapshot}" 2>/dev/null) || return 4
@@ -17460,14 +17582,14 @@ managed_component_live_config_root_fields_supported() {
   [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
   # The normal server generator owns only these root namespaces.  Reject any
   # additional namespace before a rebuild so an operator's service, cache,
-  # HTTP-client, network-namespace or other unmodelled settings cannot be
+  # HTTP-client, rule-set or other unmodelled settings cannot be
   # silently discarded by the projection below.
   jq -e '
     if type != "object" then
       false
     else
       . as $root |
-      (["log","dns","endpoints","inbounds","outbounds","route","certificate_providers"]) as $owned |
+      (["log","dns","endpoints","inbounds","outbounds","route","certificate_providers","network_namespaces"]) as $owned |
       if ($owned | any(.[]; . as $key | ($root | has($key)))) then
         (($root | keys) - $owned | length == 0)
       else
@@ -17478,9 +17600,10 @@ managed_component_live_config_root_fields_supported() {
 }
 
 managed_component_live_config_projection_supported() {
-  local config_file=${1:-}
+  local config_file=${1:-} state
   [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
   managed_component_live_config_root_fields_supported "${config_file}" || return 1
+  state=$(managed_component_state_json) || return 1
   jq -e '
     if has("dns") then
       (.dns | type == "object" and
@@ -17497,7 +17620,7 @@ managed_component_live_config_projection_supported() {
         ((keys - ["rule_set","rules","final","auto_detect_interface","default_interface"]) | length == 0))
     else true end
   ' "${config_file}" >/dev/null 2>&1 || return 1
-  jq -e '
+  jq -e --argjson state "${state}" '
     if has("certificate_providers") then
       .certificate_providers as $provider_objects |
       if ($provider_objects | type) != "array" then
@@ -17510,15 +17633,44 @@ managed_component_live_config_projection_supported() {
         ([.inbounds[]?.tls? | .certificate_provider? |
           select(type == "string")] | unique) as $references |
         (($providers | length) == ($provider_objects | length)) and
-        (all($providers[]; . as $tag | ($references | index($tag)) != null) and
+        (all($provider_objects[]; . as $provider |
+          (($references | index($provider.tag)) != null or
+           any($state.components[]?;
+             .role == "certificate_provider" and .type == "acme" and
+             .tag == $provider.tag and .enabled == true and
+             ((.config + {type:.type,tag:.tag}) == $provider)))) and
          all($references[]; . as $tag | ($providers | index($tag)) != null))
       end
+    else true end
+  ' "${config_file}" >/dev/null 2>&1 || return 1
+  jq -e --argjson state "${state}" '
+    if has("network_namespaces") then
+      (.network_namespaces | type == "array" and length <= 128 and
+        ([.[]?.tag] | unique | length) == length and
+        all(.[]?;
+          . as $namespace |
+          type == "object" and
+          (.type | type == "string" and IN("default","unshare")) and
+          (.tag | type == "string" and length > 0 and
+            (any(explode[]; . < 32 or . == 127) | not)) and
+          (if .type == "default" then
+             ((keys - ["type","tag","path"]) | length == 0) and
+             (.path | type == "string" and length > 0 and startswith("/") and
+               (any(explode[]; . < 32 or . == 127) | not))
+           else
+             ((keys - ["type","tag"]) | length == 0)
+           end) and
+          any($state.components[]?;
+            .role == "network_namespace" and .type == ($namespace.type // "") and
+            .tag == ($namespace.tag // "") and .enabled == true and
+            ((.config + {type:.type,tag:.tag}) == $namespace))))
     else true end
   ' "${config_file}" >/dev/null 2>&1 || return 1
 }
 
 managed_component_state_matches_live_config() {
-  local config_file=${1:-} state_file=${2:-} state registry endpoint_types outbound_types snapshot_dir
+  local config_file=${1:-} state_file=${2:-} state registry endpoint_types outbound_types
+  local certificate_provider_types namespace_types snapshot_dir
   [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
   if [[ -n "${state_file}" ]]; then
     snapshot_dir=${state_file%/project/components.json}
@@ -17538,8 +17690,12 @@ managed_component_state_matches_live_config() {
   registry=$(component_registry_static_json) || return 1
   endpoint_types=$(jq -c '[.[] | select(.role == "endpoint") | .type]' <<< "${registry}") || return 1
   outbound_types=$(jq -c '[.[] | select(.role == "outbound") | .type]' <<< "${registry}") || return 1
+  certificate_provider_types=$(jq -c '[.[] | select(.role == "certificate_provider") | .type]' <<< "${registry}") || return 1
+  namespace_types=$(jq -c '[.[] | select(.role == "network_namespace") | .type]' <<< "${registry}") || return 1
   jq -e --argjson state "${state}" --argjson endpoint_types "${endpoint_types}" \
-    --argjson outbound_types "${outbound_types}" '
+    --argjson outbound_types "${outbound_types}" \
+    --argjson certificate_provider_types "${certificate_provider_types}" \
+    --argjson namespace_types "${namespace_types}" '
     def managed($role; $type; $tag):
       any($state.components[]; .role == $role and .type == $type and .tag == $tag and .enabled == true);
     (all(.inbounds[]?;
@@ -17555,6 +17711,30 @@ managed_component_state_matches_live_config() {
       else
         false
       end)) and
+    (all(.certificate_providers[]?;
+      . as $provider |
+      if (($provider.tag // "") | IN("hy2-cert-provider","anytls-cert-provider")) then
+        ($provider.type // "") == "acme"
+      elif (($certificate_provider_types | index($provider.type // "")) == null) then
+        false
+      else
+        ([ $state.components[]? |
+          select(.role == "certificate_provider" and .type == "acme" and
+            .tag == ($provider.tag // "") and .enabled == true) ] | length) as $managed_count |
+        ($managed_count == 0 or
+          any($state.components[]?;
+            .role == "certificate_provider" and .type == "acme" and
+            .tag == ($provider.tag // "") and .enabled == true and
+            ((.config + {type:.type,tag:.tag}) == $provider)))
+      end)) and
+    (all(.network_namespaces[]?;
+      . as $namespace |
+      ($namespace_types | index($namespace.type // "")) != null and
+      managed("network_namespace"; ($namespace.type // ""); ($namespace.tag // "")) and
+      any($state.components[]?;
+        .role == "network_namespace" and .type == ($namespace.type // "") and
+        .tag == ($namespace.tag // "") and .enabled == true and
+        ((.config + {type:.type,tag:.tag}) == $namespace)))) and
     # Proxy protocol adapters generate client outbounds only for exports; the
     # server configuration registered custom outbounds are component-owned.
     # Keep the two built-in safety owners out of the state contract.
@@ -19022,8 +19202,14 @@ generate_config_candidate() {
         "final": (if $enable_warp == "y" and $warp_mode == "all" then "warp-ep" else "direct" end)
       } + $managed_route_options)
     } + (
-      if ($certificate_providers | length) > 0 then
-        { "certificate_providers": $certificate_providers }
+      if (($managed_components.network_namespaces // []) | length) > 0 then
+        { "network_namespaces": ($managed_components.network_namespaces // []) }
+      else
+        {}
+      end
+    ) + (
+      if (($certificate_providers | length) + (($managed_components.certificate_providers // []) | length)) > 0 then
+        { "certificate_providers": ($certificate_providers + ($managed_components.certificate_providers // [])) }
       else
         {}
       end
@@ -25965,7 +26151,7 @@ agent_capabilities_json() {
         "upgrade-check": {mutation: false, sensitive: false},
         upgrade: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart"},
         instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic", "hysteria", "naive", "shadowtls"]},
-        component: {mutation: true, sensitive: true, confirmation: "--yes", service_impact: "restart_if_active", roles: ["inbound", "endpoint", "outbound"]},
+        component: {mutation: true, sensitive: true, confirmation: "--yes", service_impact: "restart_if_active", roles: ["inbound", "endpoint", "outbound", "certificate_provider", "network_namespace"]},
         "export-client": {mutation: true, sensitive: true},
         "service restart": {mutation: true, sensitive: false, confirmation: "--yes"},
         "subman-sync": {mutation: true, sensitive: true, external_write: true}

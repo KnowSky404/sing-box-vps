@@ -1316,3 +1316,32 @@ provider 投影；配置和组件状态均保持不变，避免把这些设置�
 场景和 `runtime_smoke`，目录 `dev/verification-runs/20260917090839` 的
 `remote_artifacts=extracted`、`remote_status=success`，两个场景均为
 `STATUS=success/EXIT_STATUS=0`，并保留 Tor、透明 TCP/UDP、协议探针与 CAS 清理产物。
+
+### 2026-09-17：ACME certificate provider 与 network namespace 组件生命周期
+
+继续完整目标审计，本轮把组件 registry 从 30 项扩展到 33 项，新增受控的
+`certificate_provider:acme`、`network_namespace:default` 与
+`network_namespace:unshare`。三类记录沿用 schema-1 `components.json`、revision/CAS、
+原子候选、图/监听/核心校验、创建/替换/删除/重建/接管和敏感导出。ACME 状态只允许
+当前已建模的域名、基础 provider/邮箱/数据目录、DNS-01、外部账户及挑战端口字段；
+`http_client`、其他 provider 或未建模字段 fail closed。固定生成器 provider tag
+（`hy2-cert-provider`、`anytls-cert-provider`）不能被伪造类型接管。namespace 仅允许
+绝对 `default.path` 或空 `unshare`，不接受 route rules；live provider/namespace 在
+普通重生成和接管前必须与启用状态记录逐字段匹配，避免手工 drift 被静默覆盖。
+
+`managed_component_render_json` 与候选生成按需输出 `certificate_providers`/
+`network_namespaces`，空数组不会改变旧核心配置形状；能力输出同步声明两个新 role，
+接管预检、顶层 projection 和固定 tag 保护均有回归。官方 ARM64 `sing-box 1.14.1`
+对 ACME provider 与 default/unshare namespace 最小配置的 `sing-box check` 通过；未
+执行真实 ACME 签发或外部账户操作。专项检查 `managed_components_contract.sh`、
+`managed_component_availability.sh`、候选/图/Trojan/版本检查及最终本地 changed-file
+门禁全部通过，最终本地证据为 `dev/verification-runs/20260917131505`；缺少
+1.13.18 核心的路径按测试契约 skip。最终匹配源码的特权 Docker 证据为
+`dev/verification-runs/20260917140220`，`multi_protocol_coexistence` 与
+`runtime_smoke` 均 `STATUS=success/EXIT_STATUS=0`，并保留既有协议、透明 TCP/UDP、
+Tor、组件 CAS 与清理产物。
+
+本轮只完成上述两个顶层角色的窄 schema 与生命周期，并没有把 `http_clients`、
+`services`、`rule_set`、宿主透明策略、外部 Cloudflare/Tailscale/OpenConnect/VPN 控制面、
+公网/生产或真实 SubMan 同步写成已实现；完整协议目标仍未完成。脚本与 README 版本
+同步为 `2026091704`。

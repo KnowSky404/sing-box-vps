@@ -8,7 +8,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091703`，`SB_SUPPORT_MAX_VERSION=1.14.1`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091704`，`SB_SUPPORT_MAX_VERSION=1.14.1`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -439,3 +439,23 @@ UDP、SubMan 或完整协议目标。
 
 该切片只证明隔离容器内的明文 VLESS TCP outbound 闭环；不覆盖外部 VLESS、TLS/
 REALITY、UDP、公网、生产、外部认证、SubMan 或完整协议目标。
+
+### 2026-09-17：ACME provider 与 network namespace 组件生命周期
+
+项目 registry 当前为 33 项，新增窄 schema 的 `certificate_provider:acme`、
+`network_namespace:default` 和 `network_namespace:unshare`。三者使用 schema-1
+组件状态、revision/CAS、render、接管、重建和敏感 export；ACME 只接受当前实现的
+域名、基础 provider/邮箱/数据目录、DNS-01、外部账户与挑战端口字段，拒绝
+`http_client` 或其他未建模 provider 扩展；生成器固定 ACME tag 的错误类型也会
+fail closed。default namespace 要求绝对 `path`，unshare 只接受空配置，namespace
+不允许 route rules。live 顶层对象在 projection 和普通重生成前须与启用 state
+记录逐字段相等，未归属或 drift 不会被静默丢弃/覆盖；空数组保持条件省略以兼容旧
+配置形状。能力输出的 component roles 已同步包含两个新 role。
+
+官方 ARM64 `sing-box 1.14.1` 对 ACME provider 与 default/unshare namespace 最小
+配置执行 `check` 均通过；未执行真实 ACME 签发或任何外部账户操作。最终本地门禁为
+`dev/verification-runs/20260917131505`，最终匹配源码的特权 Docker 门禁为
+`dev/verification-runs/20260917140220`，其中共存场景和 runtime smoke 均成功。该
+增量只证明两个顶层角色的窄管理链路，不覆盖 `http_clients`、`services`、`rule_set`、
+宿主透明策略、外部控制面、公网/生产、真实 SubMan 或完整协议目标；当前支持上限仍为
+`1.14.1`，脚本版本为 `2026091704`。

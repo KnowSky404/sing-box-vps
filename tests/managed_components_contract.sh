@@ -11,12 +11,14 @@ source_testable_install
 
 registry=$(component_registry_json)
 jq -e '
-  length == 30 and
-  ([.[].state_id] | unique | length) == 30 and
+  length == 33 and
+  ([.[].state_id] | unique | length) == 33 and
   ([.[] | select(.role == "inbound") | .type] | sort) ==
     ["cloudflared","direct","redirect","tproxy","tun"] and
   ([.[] | select(.role == "endpoint") | .type] | sort) ==
     ["openconnect","openvpn-client","openvpn-server","tailscale","wireguard"] and
+  ([.[] | select(.role == "certificate_provider") | .type] | sort) == ["acme"] and
+  ([.[] | select(.role == "network_namespace") | .type] | sort) == ["default","unshare"] and
   any(.[]; .role == "outbound" and .type == "selector" and .features.group == true) and
   any(.[]; .role == "outbound" and .type == "urltest" and .features.group == true) and
   any(.[]; .role == "outbound" and .type == "naive" and
@@ -48,7 +50,9 @@ jq -e '
 
 capabilities=$(agent_capabilities_json)
 jq -e '
-  .features.components.diagnosis_fields | index("transparent_resources") != null
+  (.features.components.diagnosis_fields | index("transparent_resources") != null) and
+  (.commands.component.roles | sort) ==
+    ["certificate_provider","endpoint","inbound","network_namespace","outbound"]
 ' <<< "${capabilities}" >/dev/null
 
 direct_record='{"id":"direct-local","role":"inbound","type":"direct","tag":"direct-local-in","enabled":true,"route_rules":[],"config":{"listen":"127.0.0.1","listen_port":15080}}'
@@ -56,6 +60,99 @@ tun_record='{"id":"tun-local","role":"inbound","type":"tun","tag":"tun-local-in"
 redirect_record='{"id":"redirect-local","role":"inbound","type":"redirect","tag":"redirect-local-in","enabled":true,"route_rules":[],"config":{"listen":"127.0.0.1","listen_port":15081}}'
 tproxy_record='{"id":"tproxy-local","role":"inbound","type":"tproxy","tag":"tproxy-local-in","enabled":true,"route_rules":[],"config":{"listen":"127.0.0.1","listen_port":15082}}'
 selector_record='{"id":"selector-local","role":"outbound","type":"selector","tag":"selector-local","enabled":true,"route_rules":[{"inbound":["direct-local-in"],"action":"route","outbound":"selector-local"}],"config":{"outbounds":["direct","block"],"default":"direct"}}'
+
+# Top-level certificate providers and network namespaces now use the same
+# component CAS/render path.  The records are intentionally narrow: provider
+# credentials are accepted only in sensitive state/export, while namespace
+# paths must be absolute and unshare has no unmodeled options.
+acme_provider_record='{"id":"acme-provider-local","role":"certificate_provider","type":"acme","tag":"acme-local","enabled":true,"route_rules":[],"config":{"domain":["managed.example"],"email":"ops@example.com","data_directory":"/var/lib/sing-box/acme","provider":"letsencrypt","dns01_challenge":{"provider":"cloudflare","api_token":"test-token"},"external_account":{"key_id":"kid","mac_key":"mkey"}}}'
+managed_component_state_validate_record "${acme_provider_record}"
+acme_provider_state=$(managed_component_state_candidate "$(managed_component_state_default_json)" create "${acme_provider_record}")
+acme_provider_rendered=$(managed_component_render_json "${acme_provider_state}")
+jq -e '
+  (.certificate_providers | length == 1) and
+  .certificate_providers[0].type == "acme" and
+  .certificate_providers[0].tag == "acme-local" and
+  .certificate_providers[0].domain == ["managed.example"] and
+  .certificate_providers[0].dns01_challenge.provider == "cloudflare" and
+  (.network_namespaces | length == 0)
+' <<< "${acme_provider_rendered}" >/dev/null
+acme_provider_unknown=$(jq -c '.config.unmodeled = true' <<< "${acme_provider_record}")
+if managed_component_state_validate_record "${acme_provider_unknown}"; then
+  printf 'ACME provider unknown field unexpectedly accepted\n' >&2
+  exit 1
+fi
+acme_provider_bad_domain=$(jq -c '.config.domain = "managed.example"' <<< "${acme_provider_record}")
+if managed_component_state_validate_record "${acme_provider_bad_domain}"; then
+  printf 'ACME provider scalar domain unexpectedly accepted\n' >&2
+  exit 1
+fi
+acme_provider_bad_port=$(jq -c '.config.alternative_http_port = 65536' <<< "${acme_provider_record}")
+if managed_component_state_validate_record "${acme_provider_bad_port}"; then
+  printf 'ACME provider out-of-range challenge port unexpectedly accepted\n' >&2
+  exit 1
+fi
+acme_provider_reserved_tag=$(jq -c '.tag = "hy2-cert-provider"' <<< "${acme_provider_record}")
+if managed_component_state_validate_record "${acme_provider_reserved_tag}"; then
+  printf 'protocol-generated ACME provider tag unexpectedly accepted\n' >&2
+  exit 1
+fi
+
+default_namespace_record='{"id":"default-namespace-local","role":"network_namespace","type":"default","tag":"netns-default","enabled":true,"route_rules":[],"config":{"path":"/proc/1/ns/net"}}'
+unshare_namespace_record='{"id":"unshare-namespace-local","role":"network_namespace","type":"unshare","tag":"netns-unshare","enabled":true,"route_rules":[],"config":{}}'
+managed_component_state_validate_record "${default_namespace_record}"
+managed_component_state_validate_record "${unshare_namespace_record}"
+namespace_state=$(managed_component_state_candidate "${acme_provider_state}" create "${default_namespace_record}")
+namespace_state=$(managed_component_state_candidate "${namespace_state}" create "${unshare_namespace_record}")
+namespace_rendered=$(managed_component_render_json "${namespace_state}")
+jq -e '
+  (.network_namespaces | length == 2) and
+  .network_namespaces[0].type == "default" and
+  .network_namespaces[0].path == "/proc/1/ns/net" and
+  .network_namespaces[1].type == "unshare" and
+  (.network_namespaces[1] | keys) == ["tag","type"]
+' <<< "${namespace_rendered}" >/dev/null
+projection_config_file=$(mktemp)
+jq -n --argjson providers "$(jq '.certificate_providers' <<< "${namespace_rendered}")" \
+  --argjson namespaces "$(jq '.network_namespaces' <<< "${namespace_rendered}")" \
+  '{certificate_providers:$providers,network_namespaces:$namespaces}' > "${projection_config_file}"
+projection_state_json_definition=$(declare -f managed_component_state_json)
+managed_component_state_json() {
+  printf '%s\n' "${namespace_state}"
+}
+managed_component_live_config_projection_supported "${projection_config_file}"
+jq '.certificate_providers[0].domain = ["drift.example"]' \
+  "${projection_config_file}" > "${projection_config_file}.next"
+mv -f "${projection_config_file}.next" "${projection_config_file}"
+if managed_component_live_config_projection_supported "${projection_config_file}"; then
+  printf 'managed certificate provider drift unexpectedly passed projection guard\n' >&2
+  exit 1
+fi
+jq '.network_namespaces[0].path = "/proc/2/ns/net"' \
+  "${projection_config_file}" > "${projection_config_file}.next"
+mv -f "${projection_config_file}.next" "${projection_config_file}"
+if managed_component_live_config_projection_supported "${projection_config_file}"; then
+  printf 'managed network namespace drift unexpectedly passed projection guard\n' >&2
+  exit 1
+fi
+eval "${projection_state_json_definition}"
+unset projection_state_json_definition
+rm -f "${projection_config_file}"
+namespace_bad_path=$(jq -c '.config.path = "relative/netns"' <<< "${default_namespace_record}")
+if managed_component_state_validate_record "${namespace_bad_path}"; then
+  printf 'network namespace relative path unexpectedly accepted\n' >&2
+  exit 1
+fi
+namespace_unknown=$(jq -c '.config.mount = "/run"' <<< "${unshare_namespace_record}")
+if managed_component_state_validate_record "${namespace_unknown}"; then
+  printf 'unshare network namespace unknown field unexpectedly accepted\n' >&2
+  exit 1
+fi
+namespace_route_rule=$(jq -c '.route_rules = [{"action":"route","outbound":"direct"}]' <<< "${unshare_namespace_record}")
+if managed_component_state_validate_record "${namespace_route_rule}"; then
+  printf 'network namespace route rules unexpectedly accepted\n' >&2
+  exit 1
+fi
 
 # Direct, block and bridge outbounds are registry-owned component records too.
 # Their configs are flattened into the generated outbound objects, so each
@@ -1988,7 +2085,7 @@ jq -e '.ok == true and .data.action == "component-diagnose" and
   .data.state.revision == 3 and .data.config.status == "present" and
   .data.config.graph == "passed" and .data.config.listener_resources == "passed" and
   .data.config.core_check == "unavailable" and (.data.components | length) == 3 and
-  (.data.supported | length) == 30 and
+  (.data.supported | length) == 33 and
   .data.transparent_resources.status == "not_assessed" and
   .data.transparent_resources.service_active == false' <<< "${diagnose_json}" >/dev/null
 if grep -Fq 'secret-token-not-for-list' <<< "${diagnose_json}"; then
@@ -2468,6 +2565,19 @@ if jq -e 'any(.[]; .role == "endpoint" and .tag == "warp-ep")' <<< "${warp_owner
   exit 1
 fi
 printf '%s\n' "${config_before_warp_owner}" > "${SINGBOX_CONFIG_FILE}"
+
+# Fixed ACME provider tags are generator-owned too.  A live object that keeps a
+# fixed tag but changes its type must fail closed instead of being skipped from
+# takeover and later replaced by a generated provider.
+config_before_bad_fixed_provider=$(cat "${SINGBOX_CONFIG_FILE}")
+jq '.certificate_providers += [{type:"future-provider",tag:"hy2-cert-provider",domain:["future.example"]}]' \
+  "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if managed_component_live_takeover_records_json "$(managed_component_state_json)" >/dev/null 2>&1; then
+  printf 'fixed ACME provider tag with unknown type unexpectedly passed takeover\n' >&2
+  exit 1
+fi
+printf '%s\n' "${config_before_bad_fixed_provider}" > "${SINGBOX_CONFIG_FILE}"
 
 # Registered built-ins remain generator-owned, while unknown types and
 # reserved tags are rejected before a takeover transaction can mutate state.

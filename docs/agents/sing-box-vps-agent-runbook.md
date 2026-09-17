@@ -6,6 +6,14 @@ The additive `protocol_registry` in `sbv agent capabilities --json` describes ea
 
 ## Managed advanced components
 
+The component registry also manages top-level ACME `certificate_provider`
+records and `default`/`unshare` `network_namespace` records through the same
+schema-1 CAS/render/takeover/rebuild path. ACME records are deliberately
+bounded to the fields validated by this repository; `http_client` and other
+unmodeled provider extensions remain rejected. A live provider or namespace
+must match its enabled state record exactly before ordinary regeneration can
+publish a candidate, so manual drift is reported instead of being overwritten.
+
 The current component contract revision is `2026091205`. Component-owned
 `route_rules` use a typed sing-box 1.14 default/logical matcher and
 route-action allowlist; nested rules are match-only and unknown fields/actions
