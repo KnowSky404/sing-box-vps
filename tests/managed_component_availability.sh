@@ -13,7 +13,7 @@ source_testable_install
 # registry. Every component reports the same bounded, credential-free cause.
 without_core=$(component_registry_environment_json)
 jq -e '
-  length == 34 and
+  length == 35 and
   all(.[]; .status == "unavailable" and .core.status == "unavailable" and
     .core.version == null and .dependencies[0].name == "sing_box_binary")
 ' <<< "${without_core}" >/dev/null
@@ -176,9 +176,25 @@ jq -e '
 # condition, runtime environment observation, and target-core validation.
 registry=$(component_registry_json)
 jq -e '
-  length == 34 and
+  length == 35 and
   all(.[]; .implemented == true and .available == null and
     .validated.status == "not_assessed" and (.environment.status | type) == "string")
 ' <<< "${registry}" >/dev/null
+
+resolved_environment=$(jq -ce 'first(.[] | select(.state_id == "resolved-service").environment)' \
+  <<< "${registry}")
+if [[ "$(uname -s)" != Linux ]]; then
+  jq -e '.status == "unavailable" and
+    any(.dependencies[]; .name == "platform" and .reason == "resolved_linux_only")' \
+    <<< "${resolved_environment}" >/dev/null
+elif [[ -S /run/dbus/system_bus_socket || -S /var/run/dbus/system_bus_socket ]]; then
+  jq -e '.status == "available" and
+    any(.dependencies[]; .name == "dbus_system_bus" and .status == "available")' \
+    <<< "${resolved_environment}" >/dev/null
+else
+  jq -e '.status == "unavailable" and
+    any(.dependencies[]; .name == "dbus_system_bus" and .status == "unavailable" and
+      .reason == "dbus_system_bus_missing")' <<< "${resolved_environment}" >/dev/null
+fi
 
 printf '%s\n' 'managed component availability checks passed'

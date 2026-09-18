@@ -212,6 +212,15 @@ fi
 assert_envelope consistency false "${inconsistent_failure}"
 jq -e '.schema == "1" and .data.ok == true' <<< "${inconsistent_failure}" >/dev/null
 
+# Keep large envelopes off argv: Linux rejects a single argument above
+# MAX_ARG_STRLEN even though the total ARG_MAX is much larger.
+large_payload=$(printf '%s' '{"ok":true,"padding":"';
+  head -c 140000 /dev/zero | tr '\0' 'x';
+  printf '%s\n' '"}')
+large_envelope=$(agent_emit_json_envelope large 0 "${large_payload}")
+assert_envelope large true "${large_envelope}"
+jq -e '.data.padding | type == "string" and length == 140000' <<< "${large_envelope}" >/dev/null
+
 agent_json_log_probe() {
   log_info "agent JSON log probe"
   print_warn "agent JSON warning probe"

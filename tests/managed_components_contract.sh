@@ -11,8 +11,8 @@ source_testable_install
 
 registry=$(component_registry_json)
 jq -e '
-  length == 34 and
-  ([.[].state_id] | unique | length) == 34 and
+  length == 35 and
+  ([.[].state_id] | unique | length) == 35 and
   ([.[] | select(.role == "inbound") | .type] | sort) ==
     ["cloudflared","direct","redirect","tproxy","tun"] and
   ([.[] | select(.role == "endpoint") | .type] | sort) ==
@@ -21,6 +21,9 @@ jq -e '
   ([.[] | select(.role == "network_namespace") | .type] | sort) == ["default","unshare"] and
   any(.[]; .role == "http_client" and .type == "shared" and
     .features.referenceable == true and .features.versions == [1,2,3]) and
+  any(.[]; .role == "service" and .type == "resolved" and
+    .features.linux == true and .features.dbus == true and
+    .features.tcp == true and .features.udp == true) and
   any(.[]; .role == "outbound" and .type == "selector" and .features.group == true) and
   any(.[]; .role == "outbound" and .type == "urltest" and .features.group == true) and
   any(.[]; .role == "outbound" and .type == "naive" and
@@ -54,7 +57,7 @@ capabilities=$(agent_capabilities_json)
 jq -e '
   (.features.components.diagnosis_fields | index("transparent_resources") != null) and
   (.commands.component.roles | sort) ==
-    ["certificate_provider","endpoint","http_client","inbound","network_namespace","outbound"]
+    ["certificate_provider","endpoint","http_client","inbound","network_namespace","outbound","service"]
 ' <<< "${capabilities}" >/dev/null
 
 direct_record='{"id":"direct-local","role":"inbound","type":"direct","tag":"direct-local-in","enabled":true,"route_rules":[],"config":{"listen":"127.0.0.1","listen_port":15080}}'
@@ -182,27 +185,45 @@ rm -f "${shared_acme_http_config_file}"
 
 default_namespace_record='{"id":"default-namespace-local","role":"network_namespace","type":"default","tag":"netns-default","enabled":true,"route_rules":[],"config":{"path":"/proc/1/ns/net"}}'
 unshare_namespace_record='{"id":"unshare-namespace-local","role":"network_namespace","type":"unshare","tag":"netns-unshare","enabled":true,"route_rules":[],"config":{}}'
+resolved_service_record='{"id":"resolved-service-local","role":"service","type":"resolved","tag":"resolved-local","enabled":true,"route_rules":[],"config":{"listen":"127.0.0.53","listen_port":53}}'
 managed_component_state_validate_record "${default_namespace_record}"
 managed_component_state_validate_record "${unshare_namespace_record}"
+managed_component_state_validate_record "${resolved_service_record}"
 namespace_state=$(managed_component_state_candidate "${http_client_state}" create "${default_namespace_record}")
 namespace_state=$(managed_component_state_candidate "${namespace_state}" create "${unshare_namespace_record}")
+namespace_state=$(managed_component_state_candidate "${namespace_state}" create "${resolved_service_record}")
 namespace_rendered=$(managed_component_render_json "${namespace_state}")
 jq -e '
   (.network_namespaces | length == 2) and
   .network_namespaces[0].type == "default" and
   .network_namespaces[0].path == "/proc/1/ns/net" and
   .network_namespaces[1].type == "unshare" and
-  (.network_namespaces[1] | keys) == ["tag","type"]
+  (.network_namespaces[1] | keys) == ["tag","type"] and
+  (.services | length == 1) and
+  .services[0].type == "resolved" and
+  .services[0].tag == "resolved-local" and
+  .services[0].listen == "127.0.0.53" and
+  .services[0].listen_port == 53
 ' <<< "${namespace_rendered}" >/dev/null
 projection_config_file=$(mktemp)
 jq -n --argjson providers "$(jq '.certificate_providers' <<< "${namespace_rendered}")" \
   --argjson clients "$(jq '.http_clients' <<< "${namespace_rendered}")" \
   --argjson namespaces "$(jq '.network_namespaces' <<< "${namespace_rendered}")" \
-  '{certificate_providers:$providers,http_clients:$clients,network_namespaces:$namespaces}' > "${projection_config_file}"
+  --argjson services "$(jq '.services' <<< "${namespace_rendered}")" \
+  '{certificate_providers:$providers,http_clients:$clients,services:$services,network_namespaces:$namespaces}' > "${projection_config_file}"
 projection_state_json_definition=$(declare -f managed_component_state_json)
 managed_component_state_json() {
   printf '%s\n' "${namespace_state}"
 }
+managed_component_live_config_projection_supported "${projection_config_file}"
+jq '.services[0].listen_port = 54' "${projection_config_file}" > "${projection_config_file}.next"
+mv -f "${projection_config_file}.next" "${projection_config_file}"
+if managed_component_live_config_projection_supported "${projection_config_file}"; then
+  printf 'managed resolved service drift unexpectedly passed projection guard\n' >&2
+  exit 1
+fi
+jq '.services[0].listen_port = 53' "${projection_config_file}" > "${projection_config_file}.next"
+mv -f "${projection_config_file}.next" "${projection_config_file}"
 managed_component_live_config_projection_supported "${projection_config_file}"
 jq '.route={rule_set:[{type:"local",tag:"warp-local-owned",format:"source",path:"/var/lib/sing-box/warp.srs"}]}' \
   "${projection_config_file}" > "${projection_config_file}.next"
@@ -337,6 +358,43 @@ eval "${original_http_client_state_json_definition}"
 unset original_http_client_state_json_definition
 rm -f "${SINGBOX_CONFIG_FILE}"
 
+# Resolved services participate in live takeover and matching just like other
+# typed top-level components. Their route ownership is intentionally empty;
+# listener resources are projected as the core's TCP+UDP loopback pair.
+resolved_takeover_config='{"inbounds":[],"services":[{"type":"resolved","tag":"resolved-takeover","listen":"127.0.0.53","listen_port":53}]}'
+printf '%s\n' "${resolved_takeover_config}" > "${SINGBOX_CONFIG_FILE}"
+resolved_takeover_base_state=$(managed_component_state_default_json)
+resolved_takeover_records=$(managed_component_live_takeover_records_json "${resolved_takeover_base_state}")
+jq -e '
+  length == 1 and .[0].role == "service" and .[0].type == "resolved" and
+  .[0].tag == "resolved-takeover" and .[0].config.listen == "127.0.0.53" and
+  .[0].config.listen_port == 53 and .[0].route_rules == []
+' <<< "${resolved_takeover_records}" >/dev/null
+resolved_takeover_state=$(managed_component_state_takeover_candidate \
+  "${resolved_takeover_base_state}" "${resolved_takeover_records}")
+original_resolved_state_json_definition=$(declare -f managed_component_state_json)
+managed_component_state_json() {
+  printf '%s\n' "${resolved_takeover_state}"
+}
+managed_component_state_matches_live_config "${SINGBOX_CONFIG_FILE}"
+managed_component_live_config_projection_supported "${SINGBOX_CONFIG_FILE}"
+jq '.services[0].listen_port = 54' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if managed_component_state_matches_live_config "${SINGBOX_CONFIG_FILE}"; then
+  printf 'resolved service config drift unexpectedly matched managed state\n' >&2
+  exit 1
+fi
+printf '%s\n' "${resolved_takeover_config}" > "${SINGBOX_CONFIG_FILE}"
+jq '.services[0].type = "future-service"' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if managed_component_live_takeover_records_json "${resolved_takeover_base_state}" >/dev/null 2>&1; then
+  printf 'unknown resolved service type unexpectedly passed takeover\n' >&2
+  exit 1
+fi
+eval "${original_resolved_state_json_definition}"
+unset original_resolved_state_json_definition
+rm -f "${SINGBOX_CONFIG_FILE}"
+
 namespace_bad_path=$(jq -c '.config.path = "relative/netns"' <<< "${default_namespace_record}")
 if managed_component_state_validate_record "${namespace_bad_path}"; then
   printf 'network namespace relative path unexpectedly accepted\n' >&2
@@ -352,6 +410,33 @@ if managed_component_state_validate_record "${namespace_route_rule}"; then
   printf 'network namespace route rules unexpectedly accepted\n' >&2
   exit 1
 fi
+resolved_service_unknown=$(jq -c '.config.unknown = true' <<< "${resolved_service_record}")
+if managed_component_state_validate_record "${resolved_service_unknown}"; then
+  printf 'resolved service unknown field unexpectedly accepted\n' >&2
+  exit 1
+fi
+resolved_service_bad_port=$(jq -c '.config.listen_port = 65536' <<< "${resolved_service_record}")
+if managed_component_state_validate_record "${resolved_service_bad_port}"; then
+  printf 'resolved service out-of-range port unexpectedly accepted\n' >&2
+  exit 1
+fi
+resolved_service_empty_listen=$(jq -c '.config.listen = ""' <<< "${resolved_service_record}")
+if managed_component_state_validate_record "${resolved_service_empty_listen}"; then
+  printf 'resolved service empty listen unexpectedly accepted\n' >&2
+  exit 1
+fi
+resolved_service_hostname_listen=$(jq -c '.config.listen = "localhost.example"' <<< "${resolved_service_record}")
+if managed_component_state_validate_record "${resolved_service_hostname_listen}"; then
+  printf 'resolved service hostname listen unexpectedly accepted\n' >&2
+  exit 1
+fi
+resolved_service_route_rule=$(jq -c '.route_rules = [{"action":"route","outbound":"direct"}]' <<< "${resolved_service_record}")
+if managed_component_state_validate_record "${resolved_service_route_rule}"; then
+  printf 'resolved service route rules unexpectedly accepted\n' >&2
+  exit 1
+fi
+resolved_service_public=$(jq -c '.config.listen = "0.0.0.0"' <<< "${resolved_service_record}")
+managed_component_requires_public_confirmation "${resolved_service_public}"
 
 # Direct, block and bridge outbounds are registry-owned component records too.
 # Their configs are flattened into the generated outbound objects, so each
@@ -2184,6 +2269,15 @@ jq -e 'any(.[]; .owner == "redirect-local-in" and .transport == "tcp") and
   all(.[]; .owner != "redirect-local-in" or .transport == "tcp")' <<< "${redirect_plan}" >/dev/null
 rm -f "${redirect_config_file}"
 
+resolved_listener_config=$(jq -cn --argjson services "$(jq '.services' <<< "${namespace_rendered}")" \
+  '{inbounds:[],services:$services,outbounds:[{type:"direct",tag:"direct"},{type:"block",tag:"block"}],route:{final:"direct",rules:[]}}')
+resolved_listener_plan=$(managed_listener_plan_json <<< "${resolved_listener_config}")
+jq -e 'length == 2 and
+  all(.[]; .owner == "resolved-local" and .protocol == "resolved-service" and
+    .address == "127.0.0.53" and .port == 53) and
+  ([.[].transport] | sort) == ["tcp","udp"]' <<< "${resolved_listener_plan}" >/dev/null
+validate_listener_plan_json <<< "${resolved_listener_plan}"
+
 # Cloudflared's token/control-plane settings and both nested DialerOptions are
 # typed independently.  The token is accepted for state validation but is
 # still redacted from inventory/diagnose output; nested arbitrary JSON is not.
@@ -2284,7 +2378,7 @@ jq -e '.ok == true and .data.action == "component-diagnose" and
   .data.state.revision == 3 and .data.config.status == "present" and
   .data.config.graph == "passed" and .data.config.listener_resources == "passed" and
   .data.config.core_check == "unavailable" and (.data.components | length) == 3 and
-  (.data.supported | length) == 34 and
+  (.data.supported | length) == 35 and
   .data.transparent_resources.status == "not_assessed" and
   .data.transparent_resources.service_active == false' <<< "${diagnose_json}" >/dev/null
 if grep -Fq 'secret-token-not-for-list' <<< "${diagnose_json}"; then

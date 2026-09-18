@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091706
+# Version: 2026091801
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091706"
+readonly SCRIPT_VERSION="2026091801"
 readonly SB_SUPPORT_MAX_VERSION="1.14.1"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -125,6 +125,7 @@ readonly SB_COMPONENT_REGISTRY=(
   'shadowtls-outbound|outbound|shadowtls|ShadowTLS outbound|1.13.0|builtin|{"dialer":true,"network":["tcp"],"tls_required":true,"versions":[1,2,3],"password_versions":[2,3]}'
   'certificate-provider-acme|certificate_provider|acme|ACME certificate provider|1.14.0|builtin|{"provider":true,"domains":true,"dns01":true,"external_account":true,"http_client_reference":true}'
   'http-client-shared|http_client|shared|Shared HTTP client|1.14.0|builtin|{"shared":true,"referenceable":true,"versions":[1,2,3],"http2":true,"http3":true,"tls":true,"dialer":true}'
+  'resolved-service|service|resolved|Resolved service|1.13.0|builtin|{"service":true,"listen":true,"tcp":true,"udp":true,"linux":true,"dbus":true}'
   'network-namespace-default|network_namespace|default|Default network namespace|1.14.0|builtin|{"namespace":true,"path_required":true}'
   'network-namespace-unshare|network_namespace|unshare|Unshare network namespace|1.14.0|builtin|{"namespace":true,"path_required":false}'
 )
@@ -1341,6 +1342,18 @@ component_registry_environment_probe() {
         component_add_dependency libcronet unavailable libcronet_missing true || return 1
       fi
       ;;
+    resolved)
+      if [[ "${platform}" == Linux ]]; then
+        component_add_dependency platform available '' true || return 1
+      else
+        component_add_dependency platform unavailable resolved_linux_only true || return 1
+      fi
+      if [[ -S /run/dbus/system_bus_socket || -S /var/run/dbus/system_bus_socket ]]; then
+        component_add_dependency dbus_system_bus available '' true || return 1
+      else
+        component_add_dependency dbus_system_bus unavailable dbus_system_bus_missing true || return 1
+      fi
+      ;;
   esac
 
   if [[ "${availability}" == with_* ]]; then
@@ -1387,6 +1400,7 @@ component_registry_environment_bulk_json() {
   local static platform core_version core_probe_reason
   local root_ok=false ip_ok=false transparent_ok=false cloudflared_ok=false
   local tailscale_ok=false tor_ok=false libcronet_ok=false
+  local dbus_ok=false
   local core_tags_json='[]' core_tags_status=unavailable core_tags_reason=sing_box_binary_missing tag_status
 
   static=$(component_registry_static_json) || return 1
@@ -1425,13 +1439,15 @@ component_registry_environment_bulk_json() {
   command -v tailscale >/dev/null 2>&1 && tailscale_ok=true
   command -v tor >/dev/null 2>&1 && tor_ok=true
   component_runtime_library_available && libcronet_ok=true || :
+  [[ -S /run/dbus/system_bus_socket || -S /var/run/dbus/system_bus_socket ]] && dbus_ok=true
 
   jq -cn --argjson registry "${static}" --arg platform "${platform}" \
     --arg core_version "${core_version}" --arg core_probe_reason "${core_probe_reason}" \
     --argjson root_ok "${root_ok}" --argjson ip_ok "${ip_ok}" \
     --argjson transparent_ok "${transparent_ok}" --argjson cloudflared_ok "${cloudflared_ok}" \
     --argjson tailscale_ok "${tailscale_ok}" --argjson tor_ok "${tor_ok}" \
-    --argjson libcronet_ok "${libcronet_ok}" --arg tags_status "${core_tags_status}" \
+    --argjson libcronet_ok "${libcronet_ok}" --argjson dbus_ok "${dbus_ok}" \
+    --arg tags_status "${core_tags_status}" \
     --arg tags_reason "${core_tags_reason}" --argjson core_tags "${core_tags_json}" '
     def version_parts($value): $value | split(".") | map(tonumber);
     def at_least($value; $minimum):
@@ -1502,6 +1518,11 @@ component_registry_environment_bulk_json() {
       elif .type == "naive" then
         (if $libcronet_ok then available("libcronet"; true)
          else unavailable("libcronet"; "libcronet_missing"; true) end)
+      elif .type == "resolved" then
+        (if $platform == "Linux" then []
+         else [unavailable("platform"; "resolved_linux_only"; true)] end),
+        (if $dbus_ok then available("dbus_system_bus"; true)
+         else unavailable("dbus_system_bus"; "dbus_system_bus_missing"; true) end)
       else [] end;
     def final($core; $dependencies):
       if $core.status == "unavailable" then
@@ -1679,7 +1700,7 @@ component_registry_static_json() {
         create: true, replace: true, delete: true, rebuild: true, export: true,
         takeover: (.[1] == "inbound" or .[1] == "endpoint" or .[1] == "outbound" or
                    .[1] == "certificate_provider" or .[1] == "http_client" or
-                   .[1] == "network_namespace"), recover: true
+                   .[1] == "service" or .[1] == "network_namespace"), recover: true
       }
     }]'
 }
@@ -10252,6 +10273,15 @@ managed_listener_plan_json() {
     require(all((.endpoints // [])[]; . as $endpoint |
       any($components[]; .role == "endpoint" and .type == $endpoint.type))) |
     require(all((.endpoints // [])[]; ((.listen_port // 0) | type == "number" and . == floor and . >= 0 and . <= 65535))) |
+    require((has("services") | not) or (.services | type) == "array") |
+    require(all((.services // [])[]; . as $service |
+      type == "object" and
+      any($components[]; .role == "service" and .type == $service.type) and
+      (.tag | type == "string" and length > 0 and (test("[\u0000-\u001f\u007f]") | not)) and
+      (.type == "resolved") and
+      ((has("listen") | not) or
+        (.listen | type == "string" and length > 0 and (test("[\u0000-\u0020\u007f]") | not))) and
+      ((.listen_port // 0) | type == "number" and . == floor and . >= 0 and . <= 65535))) |
     . as $root | .inbounds | require(length <= 256) |
     require(all(.[]; type == "object" and
       (.tag | type == "string" and length > 0 and (test("[\u0000-\u001f\u007f]") | not)) and
@@ -10279,7 +10309,16 @@ managed_listener_plan_json() {
       [($root.endpoints // [])[] | select((.listen_port // 0) > 0) |
        {owner:.tag, protocol:(.type + "-endpoint"), address:(.listen // "0.0.0.0"),
         transport:(if .type == "openvpn-server" then (.network // "udp") else "udp" end),
-        port:.listen_port}]
+        port:.listen_port}] +
+      [($root.services // [])[] | . as $service |
+       {owner:$service.tag, protocol:("resolved-service"),
+        address:(if (($service.listen // "") == "") then "127.0.0.53" else $service.listen end),
+        transport:"tcp",
+        port:(if (($service.listen_port // 0) == 0) then 53 else $service.listen_port end)},
+       {owner:$service.tag, protocol:("resolved-service"),
+        address:(if (($service.listen // "") == "") then "127.0.0.53" else $service.listen end),
+        transport:"udp",
+        port:(if (($service.listen_port // 0) == 0) then 53 else $service.listen_port end)}]
   ' 2>/dev/null); then
     printf '[ERROR] listener_resources: unmodelled_or_invalid_listener\n' >&2
     return 1
@@ -15953,6 +15992,22 @@ managed_component_listen_config_validate_json() {
   ' <<< "${config}" >/dev/null 2>&1 || return 1
 }
 
+# The resolved service is a narrow service surface backed by sing-box's
+# shared ListenOptions.  Keep it separate from inbound listeners so a service
+# record cannot accidentally inherit inbound-only fields or route ownership.
+managed_component_resolved_service_config_validate_json() {
+  local config=${1:-} listen
+  [[ -n "${config}" ]] || return 1
+  managed_component_listen_config_validate_json "${config}" || return 1
+  jq -e '
+    (has("listen") | not) or (.listen | length > 0)
+  ' <<< "${config}" >/dev/null 2>&1 || return 1
+  if jq -e 'has("listen")' <<< "${config}" >/dev/null 2>&1; then
+    listen=$(jq -r '.listen' <<< "${config}") || return 1
+    structured_instance_store_validate_address "${listen}" || return 1
+  fi
+}
+
 managed_component_direct_config_validate_json() {
   local config=${1:-}
   [[ -n "${config}" ]] || return 1
@@ -16669,7 +16724,7 @@ managed_component_state_validate_record() {
   registry_id=$(component_registry_resolve_id "${role}" "${type}") || return 1
   managed_component_state_id_valid "$(jq -r '.id // empty' <<< "${record}")" || return 1
   managed_component_tag_valid "${tag}" || return 1
-  jq -e '.role | IN("inbound","endpoint","outbound","certificate_provider","http_client","network_namespace")' \
+  jq -e '.role | IN("inbound","endpoint","outbound","certificate_provider","http_client","service","network_namespace")' \
     <<< "${record}" >/dev/null 2>&1 || return 1
   jq -e '.enabled | type == "boolean"' <<< "${record}" >/dev/null 2>&1 || return 1
   jq -e '.config | type == "object" and (has("type") | not) and (has("tag") | not)' \
@@ -16678,7 +16733,7 @@ managed_component_state_validate_record() {
   managed_component_route_rules_validate_json "${route_rules}" || return 1
   config=$(jq -c '.config' <<< "${record}") || return 1
 
-  if [[ "${role}" == network_namespace && "${route_rules}" != '[]' ]]; then
+  if [[ ("${role}" == network_namespace || "${role}" == service) && "${route_rules}" != '[]' ]]; then
     return 1
   fi
   if [[ "${role}" == certificate_provider &&
@@ -16717,6 +16772,9 @@ managed_component_state_validate_record() {
       ;;
     network_namespace:default|network_namespace:unshare)
       managed_component_network_namespace_config_validate_json "${type}" "${config}" || return 1
+      ;;
+    service:resolved)
+      managed_component_resolved_service_config_validate_json "${config}" || return 1
       ;;
     endpoint:wireguard)
       managed_component_wireguard_config_validate_json "${config}" || return 1
@@ -16877,6 +16935,8 @@ managed_component_render_json() {
         .config + {type:.type, tag:.tag}],
       http_clients: [$components[] | enabled | select(.role == "http_client") |
         .config + {tag:.tag}],
+      services: [$components[] | enabled | select(.role == "service") |
+        .config + {type:.type, tag:.tag}],
       network_namespaces: [$components[] | enabled | select(.role == "network_namespace") |
         .config + {type:.type, tag:.tag}],
       route_rules: [$components[] | enabled | (.route_rules // [])[]]
@@ -17430,7 +17490,7 @@ managed_component_takeover_id() {
 }
 
 managed_component_live_takeover_records_json() (
-  local state=${1:-} registry inbound_types endpoint_types outbound_types certificate_provider_types http_client_types namespace_types
+  local state=${1:-} registry inbound_types endpoint_types outbound_types certificate_provider_types http_client_types service_types namespace_types
   local source_objects object role type tag id config route_rules record
   local config_snapshot
   local records=() existing_id
@@ -17447,11 +17507,13 @@ managed_component_live_takeover_records_json() (
   outbound_types=$(jq -c '[.[] | select(.role == "outbound") | .type]' <<< "${registry}") || return 1
   certificate_provider_types=$(jq -c '[.[] | select(.role == "certificate_provider") | .type]' <<< "${registry}") || return 1
   http_client_types=$(jq -c '[.[] | select(.role == "http_client") | .type]' <<< "${registry}") || return 1
+  service_types=$(jq -c '[.[] | select(.role == "service") | .type]' <<< "${registry}") || return 1
   namespace_types=$(jq -c '[.[] | select(.role == "network_namespace") | .type]' <<< "${registry}") || return 1
   source_objects=$(jq -c --argjson inbound_types "${inbound_types}" --argjson endpoint_types "${endpoint_types}" \
     --argjson outbound_types "${outbound_types}" \
     --argjson certificate_provider_types "${certificate_provider_types}" \
     --argjson http_client_types "${http_client_types}" \
+    --argjson service_types "${service_types}" \
     --argjson namespace_types "${namespace_types}" '
     if type != "object" then error("invalid_document") else
       if any(.outbounds[]?;
@@ -17475,6 +17537,17 @@ managed_component_live_takeover_records_json() (
                . as $namespace |
                ($namespace_types | index($namespace.type // "")) == null) then
         error("unknown_network_namespace_type")
+      elif (has("services") and (.services | type != "array")) then
+        error("invalid_service")
+      elif (has("services") and (.services | length > 128)) then
+        error("invalid_service")
+      elif any(.services[]?;
+               type != "object" or
+               (. as $service | ($service_types | index($service.type // "")) == null) or
+               (.tag | type != "string" or length == 0)) then
+        error("invalid_service")
+      elif ([.services[]?.tag] | unique | length) != ([.services[]?.tag] | length) then
+        error("duplicate_service_tag")
       elif (has("http_clients") and (.http_clients | type != "array")) then
         error("invalid_http_client")
       elif (has("http_clients") and (.http_clients | length > 128)) then
@@ -17507,6 +17580,8 @@ managed_component_live_takeover_records_json() (
         {role:"certificate_provider",object:.}] +
        [.http_clients // [] | .[] |
         {role:"http_client",object:(. + {type:"shared"})}] +
+       [.services // [] | .[] |
+        {role:"service",object:.}] +
        [.network_namespaces // [] | .[] |
         select(.type as $type | $namespace_types | index($type) != null) |
         {role:"network_namespace",object:.}])[]
@@ -17531,7 +17606,7 @@ managed_component_live_takeover_records_json() (
       route_rules=$(jq -c --arg tag "${tag}" '[.route.rules[]? |
         select((.outbound == $tag) or ((.outbound | type) == "array" and ((.outbound | index($tag)) != null)))]' \
         "${config_snapshot}") || return 4
-    elif [[ "${role}" == http_client ]]; then
+    elif [[ "${role}" == http_client || "${role}" == service ]]; then
       route_rules='[]'
     else
       route_rules=$(jq -c --arg tag "${tag}" '[.route.rules[]? |
@@ -17637,8 +17712,13 @@ managed_component_requires_public_confirmation() {
       (.type == "tun" or .type == "cloudflared" or
        (((.config.listen // "") != "127.0.0.1") and
         ((.config.listen // "") != "::1") and
-        ((.config.listen // "") != "localhost")))
+       ((.config.listen // "") != "localhost")))
     elif .role == "endpoint" and .type == "openvpn-server" then true
+    elif .role == "service" and .type == "resolved" then
+      (.config.listen // "") as $listen |
+      (($listen | type) != "string" or
+       ($listen != "" and $listen != "localhost" and $listen != "::1" and
+        (($listen | startswith("127.")) | not)))
     else false end
   ' <<< "${record}" >/dev/null 2>&1
 }
@@ -17839,7 +17919,7 @@ managed_component_live_config_root_fields_supported() {
       false
     else
       . as $root |
-      (["log","dns","endpoints","inbounds","outbounds","route","certificate_providers","http_clients","network_namespaces"]) as $owned |
+      (["log","dns","endpoints","inbounds","outbounds","route","certificate_providers","http_clients","services","network_namespaces"]) as $owned |
       if ($owned | any(.[]; . as $key | ($root | has($key)))) then
         (($root | keys) - $owned | length == 0)
       else
@@ -17874,6 +17954,40 @@ managed_component_live_route_rule_sets_supported() {
   ' "${config_file}" >/dev/null 2>&1
 }
 
+managed_component_live_services_supported() {
+  local config_file=${1:-} state service_types
+  [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
+  state=$(managed_component_state_json) || return 1
+  service_types=$(component_registry_static_json | jq -c '[.[] | select(.role == "service") | .type]') || return 1
+  jq -e --argjson state "${state}" --argjson service_types "${service_types}" '
+    def safe_string:
+      type == "string" and length <= 4096 and
+      (any(explode[]; . < 32 or . == 127) | not);
+    if has("services") then
+      (.services) as $services |
+      ($services | type == "array" and length <= 128 and
+        ([.[]?.tag] | unique | length) == ([.[]?.tag] | length) and
+        all(.[]?;
+          . as $service |
+          type == "object" and
+          (($service.type | type == "string") and
+           (($service_types | index($service.type)) != null)) and
+          ($service.tag | safe_string and length > 0) and
+          any($state.components[]?;
+            .role == "service" and .type == ($service.type // "") and
+            .tag == ($service.tag // "") and .enabled == true and
+            ((.config + {type:.type,tag:.tag}) == $service))) and
+        ([ $state.components[]? |
+           select(.role == "service" and .enabled == true) ] |
+          length == ($services | length)))
+    else
+      ([ $state.components[]? |
+         select(.role == "service" and .enabled == true) ] |
+        length == 0)
+    end
+  ' "${config_file}" >/dev/null 2>&1
+}
+
 managed_component_live_config_projection_supported() {
   local config_file=${1:-} state
   [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
@@ -17890,6 +18004,7 @@ managed_component_live_config_projection_supported() {
           IN("ipv4_only","ipv6_only","prefer_ipv4","prefer_ipv6")))
     else true end
   ' "${config_file}" >/dev/null 2>&1 || return 1
+  managed_component_live_services_supported "${config_file}" || return 1
   jq -e --argjson state "${state}" '
     if has("route") then
       (.route | type == "object" and
@@ -17977,7 +18092,7 @@ managed_component_live_config_projection_supported() {
 
 managed_component_state_matches_live_config() {
   local config_file=${1:-} state_file=${2:-} state registry endpoint_types outbound_types
-  local certificate_provider_types http_client_types namespace_types snapshot_dir
+  local certificate_provider_types http_client_types service_types namespace_types snapshot_dir
   [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
   if [[ -n "${state_file}" ]]; then
     snapshot_dir=${state_file%/project/components.json}
@@ -17999,11 +18114,13 @@ managed_component_state_matches_live_config() {
   outbound_types=$(jq -c '[.[] | select(.role == "outbound") | .type]' <<< "${registry}") || return 1
   certificate_provider_types=$(jq -c '[.[] | select(.role == "certificate_provider") | .type]' <<< "${registry}") || return 1
   http_client_types=$(jq -c '[.[] | select(.role == "http_client") | .type]' <<< "${registry}") || return 1
+  service_types=$(jq -c '[.[] | select(.role == "service") | .type]' <<< "${registry}") || return 1
   namespace_types=$(jq -c '[.[] | select(.role == "network_namespace") | .type]' <<< "${registry}") || return 1
   jq -e --argjson state "${state}" --argjson endpoint_types "${endpoint_types}" \
     --argjson outbound_types "${outbound_types}" \
     --argjson certificate_provider_types "${certificate_provider_types}" \
     --argjson http_client_types "${http_client_types}" \
+    --argjson service_types "${service_types}" \
     --argjson namespace_types "${namespace_types}" '
     def safe_string:
       type == "string" and length <= 4096 and
@@ -18047,6 +18164,29 @@ managed_component_state_matches_live_config() {
         .role == "network_namespace" and .type == ($namespace.type // "") and
         .tag == ($namespace.tag // "") and .enabled == true and
         ((.config + {type:.type,tag:.tag}) == $namespace)))) and
+    (if has("services") then
+       (.services) as $services |
+       ($services | type == "array" and length <= 128 and
+         ([.[]?.tag] | unique | length) == ([.[]?.tag] | length) and
+         all(.[]?;
+           . as $service |
+           type == "object" and
+           (($service.type | type == "string") and
+            (($service_types | index($service.type)) != null)) and
+           ($service.tag | safe_string and length > 0) and
+           managed("service"; ($service.type // ""); ($service.tag // "")) and
+           any($state.components[]?;
+             .role == "service" and .type == ($service.type // "") and
+             .tag == ($service.tag // "") and .enabled == true and
+             ((.config + {type:.type,tag:.tag}) == $service))) and
+         ([ $state.components[]? |
+            select(.role == "service" and .enabled == true) ] |
+           length == ($services | length)))
+     else
+       ([ $state.components[]? |
+          select(.role == "service" and .enabled == true) ] |
+         length == 0)
+     end) and
     ((if has("route") then
         (.route | type == "object" and
           ((has("default_http_client") | not) or
@@ -18174,7 +18314,12 @@ managed_component_state_apply() {
            (.type == "tun" or .type == "cloudflared" or
             ((.config.listen // "127.0.0.1") as $listen |
              ($listen != "127.0.0.1" and $listen != "::1" and $listen != "localhost")))) or
-          (.role == "endpoint" and .type == "openvpn-server"))' <<< "${takeover_records}" >/dev/null 2>&1 &&
+          (.role == "endpoint" and .type == "openvpn-server") or
+          (.role == "service" and .type == "resolved" and
+           ((.config.listen // "") as $listen |
+            (($listen | type) != "string" or
+             ($listen != "" and $listen != "localhost" and $listen != "::1" and
+              (($listen | startswith("127.")) | not))))))' <<< "${takeover_records}" >/dev/null 2>&1 &&
          [[ "${allow_public}" != y ]]; then
         MANAGED_COMPONENT_LAST_ERROR=public_confirmation_required
         return 1
@@ -19561,6 +19706,12 @@ generate_config_candidate() {
     ) + (
       if (($managed_components.http_clients // []) | length) > 0 then
         { "http_clients": ($managed_components.http_clients // []) }
+      else
+        {}
+      end
+    ) + (
+      if (($managed_components.services // []) | length) > 0 then
+        { "services": ($managed_components.services // []) }
       else
         {}
       end
@@ -26334,7 +26485,8 @@ agent_emit_json_envelope() {
   [[ "${status}" == "0" ]] && command_ok=true
   timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 
-  if [[ -z "${payload}" ]] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<< "${payload}"; then
+  if [[ -z "${payload}" ]] || ! jq -s -e 'length == 1 and (.[0] | type == "object")' \
+    >/dev/null 2>&1 <<< "${payload}"; then
     jq -n \
       --arg schema_version "1.0" \
       --arg command "${command}" \
@@ -26358,22 +26510,26 @@ agent_emit_json_envelope() {
     effective_ok=true
   fi
 
-  jq -n \
+  # Keep the complete payload on stdin instead of passing it as one argv
+  # element. Linux caps a single argument at MAX_ARG_STRLEN (128 KiB), while
+  # capability/diagnostic envelopes can legitimately exceed that size.
+  if ! jq -n \
     --arg schema_version "1.0" \
     --arg command "${command}" \
     --arg timestamp "${timestamp}" \
     --argjson effective_ok "${effective_ok}" \
-    --argjson payload "${payload}" \
-    '(
-      $payload + {
+    --slurpfile payload /dev/stdin \
+    '($payload[0]) as $payload_object |
+      $payload_object + {
         schema: "1",
         schema_version: $schema_version,
         command: $command,
         timestamp: $timestamp,
         ok: $effective_ok,
-        data: $payload
-      }
-    )'
+        data: $payload_object
+      }' <<< "${payload}"; then
+    return 1
+  fi
   [[ "${effective_ok}" == "true" ]] && return 0
   return 1
 }
@@ -26570,7 +26726,7 @@ agent_capabilities_json() {
         "upgrade-check": {mutation: false, sensitive: false},
         upgrade: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart"},
         instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic", "hysteria", "naive", "shadowtls"]},
-        component: {mutation: true, sensitive: true, confirmation: "--yes", service_impact: "restart_if_active", roles: ["inbound", "endpoint", "outbound", "certificate_provider", "http_client", "network_namespace"]},
+        component: {mutation: true, sensitive: true, confirmation: "--yes", service_impact: "restart_if_active", roles: ["inbound", "endpoint", "outbound", "certificate_provider", "http_client", "service", "network_namespace"]},
         "export-client": {mutation: true, sensitive: true},
         "service restart": {mutation: true, sensitive: false, confirmation: "--yes"},
         "subman-sync": {mutation: true, sensitive: true, external_write: true}

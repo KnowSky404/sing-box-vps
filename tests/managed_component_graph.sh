@@ -167,6 +167,12 @@ expect_valid "same-http-and-outbound-tag" '{
   "http_clients":[{"tag":"shared","engine":"go"}],
   "route":{"final":"shared","default_http_client":"shared"}
 }'
+expect_valid "resolved-service-detour" '{
+  "inbounds":[{"type":"mixed","tag":"resolved-detour"}],
+  "services":[{"type":"resolved","tag":"resolved","listen":"127.0.0.53","listen_port":53,"detour":"resolved-detour"}],
+  "outbounds":[{"type":"direct","tag":"direct"}],
+  "route":{"final":"direct"}
+}'
 expect_valid "positional-dns-and-provider-tags" '{
   "inbounds":[{"type":"mixed","tag":"in","tls":{"certificate_provider":"0"}}],
   "outbounds":[{"type":"direct","tag":"direct"}],
@@ -195,6 +201,7 @@ expect_invalid "missing-reality-handshake-detour" '{"inbounds":[{"type":"mixed",
 expect_invalid "missing-inbound-reference" '{"route":{"rules":[{"inbound":"missing"}]}}' "unknown reference"
 expect_invalid "missing-provider-reference" '{"inbounds":[{"type":"mixed","tag":"in","tls":{"certificate_provider":"missing"}}]}' "unknown reference"
 expect_invalid "missing-http-reference" '{"route":{"default_http_client":"missing"}}' "unknown reference"
+expect_invalid "missing-resolved-service-detour" '{"services":[{"type":"resolved","tag":"resolved","detour":"missing"}]}' "unknown reference"
 expect_invalid "missing-ruleset-reference" '{"route":{"rules":[{"rule_set":"missing"}]}}' "unknown reference"
 expect_invalid "wrong-role-inbound-detour" '{"inbounds":[{"type":"mixed","tag":"in","detour":"out"}],"outbounds":[{"type":"direct","tag":"out"}]}' "unknown reference"
 expect_invalid "route-outbound-array" '{"outbounds":[{"type":"direct","tag":"direct"}],"route":{"rules":[{"outbound":["direct"]}]}}' "invalid field type"

@@ -1393,3 +1393,19 @@ TUIC 既有探针仍按契约为 `unsupported`，runtime smoke 也成功。该�
 `tests/managed_components_contract.sh` 新增受管 Warp 标签、非受管标签、标量容器和
 恢复路径回归；本切片不覆盖 `services`、通用 `rule_set` CRUD、宿主透明策略、外部控制面、
 公网/生产、真实 ACME 或 SubMan。脚本与 README 版本同步为 `2026091706`。
+
+### 2026-09-18：resolved service 组件生命周期
+
+本轮将组件 registry 从 34 项扩展到 35 项，新增窄 schema 的 `service:resolved`。该记录使用
+schema-1 `components.json`、revision/CAS、typed render、create/replace/delete/rebuild、
+takeover、recover 和敏感 export 既有链路；配置仅接受官方 resolved service 继承的
+`ListenOptions`，显式 `listen` 必须是非空 IP 地址（省略时使用受控回环默认值），服务记录不接受 route rules，未知 service type、重复/缺失 tag、漂移或
+未注册 live 对象均在投影、接管和重生成前 fail closed。生成器按需输出 `services`，默认
+`127.0.0.53:53` 的 TCP+UDP 监听会进入统一监听计划；非回环地址仍要求 `--allow-public`，
+公开监听的防火墙变化沿用现有归属账本事务。
+
+环境清单额外观察 Linux 与 system DBus bus；缺少任一运行依赖时报告 `unavailable`，不把
+`sing-box check` 当成 DBus 启动或真实 DNS 数据面证据。官方 ARM64 `sing-box 1.14.1` 对
+resolved 最小配置的 `check` 通过；合同、图、候选和可用性回归均通过，未执行 systemd
+resolved DBus 注册、真实 DNS 请求、公网监听、生产部署或外部控制面验证。脚本与 README
+版本同步为 `2026091801`；完整协议目标仍未完成。

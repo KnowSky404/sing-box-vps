@@ -8,7 +8,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091706`，`SB_SUPPORT_MAX_VERSION=1.14.1`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091801`，`SB_SUPPORT_MAX_VERSION=1.14.1`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -248,7 +248,7 @@ Release API 的 Linux tar 资产覆盖 amd64、arm64、386、armv5/6/7、mips/mi
 | direct outbound `override_address/override_port` | 1.11 弃用、1.13 移除 | 改 route options；接管遇到旧字段要有无损/阻断策略 |
 | Legacy DNS server formats | 1.12 弃用、1.14 移除 | 生成与校验均使用新 DNS server formats |
 | `download_detour`、inline `tls.acme` 等 | 1.14 仍兼容但已弃用，官方记录计划在 1.16 移除 | 项目当前 1.13/1.14 兼容路径可 warning；不能以 warning 当成新协议实现 |
-| DNS server、certificate provider、API、USB/IP、DERP、CCM/OCM | 是独立 service/transport 能力，不是“代理入站全协议” | 只作为组合依赖单列，不扩张成普通节点协议 |
+| DNS server、certificate provider、API、USB/IP、DERP、CCM/OCM | 是独立 service/transport 能力，不是“代理入站全协议” | 只作为组合依赖单列；本项目仅对 `resolved` 提供窄 schema service 生命周期，不扩张成普通节点协议 |
 
 ## 项目差异和后续实现门槛
 
@@ -488,3 +488,17 @@ services/rule_set、宿主透明策略、外部 Cloudflare/Tailscale/OpenConnect
 标签、错误对象或标量容器均在资源准备前拒绝。该切片只保护生成器归属边界，Warp 规则集
 仍由项目文件重建，不提供通用 rule-set 生命周期或 CRUD；services、宿主透明策略、外部
 控制面、公网/生产、真实 ACME 和 SubMan 仍未完成。当前支持上限 1.14.1，脚本版本 1706。
+
+### 2026-09-18：resolved service 组件生命周期
+
+组件 registry 现为 35 项，新增 `service:resolved` 的窄 schema 生命周期。它继承官方
+`ListenOptions`，通过 schema-1 state/CAS、render、create/replace/delete/rebuild、takeover、
+recover 与敏感 export 管理；服务对象只接受 `resolved`、唯一安全 tag、IP listen 和
+`listen_port`/监听选项，禁止 route rules。生成器按需写入 `services`，统一监听计划为
+默认 `127.0.0.53:53` 的 TCP+UDP；非回环监听沿用 `--allow-public` 与防火墙账本确认。
+
+live projection、state matching、接管与重生成均要求服务对象与启用 state 逐字段相等，
+未知类型、漂移、重复 tag、空 listen 或未建模字段 fail closed。环境清单观察 Linux 与
+system DBus socket；官方 ARM64 `sing-box 1.14.1` 最小 resolved 配置 `check` 通过，但
+未执行 DBus 名称注册、真实 DNS 请求、公网监听或生产验证。因此该切片不等同于完整
+service 协议覆盖，当前脚本版本为 `2026091801`。
