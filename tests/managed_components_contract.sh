@@ -11,14 +11,15 @@ source_testable_install
 
 registry=$(component_registry_json)
 jq -e '
-  length == 35 and
-  ([.[].state_id] | unique | length) == 35 and
+  length == 38 and
+  ([.[].state_id] | unique | length) == 38 and
   ([.[] | select(.role == "inbound") | .type] | sort) ==
     ["cloudflared","direct","redirect","tproxy","tun"] and
   ([.[] | select(.role == "endpoint") | .type] | sort) ==
     ["openconnect","openvpn-client","openvpn-server","tailscale","wireguard"] and
   ([.[] | select(.role == "certificate_provider") | .type] | sort) == ["acme"] and
   ([.[] | select(.role == "network_namespace") | .type] | sort) == ["default","unshare"] and
+  ([.[] | select(.role == "rule_set") | .type] | sort) == ["inline","local","remote"] and
   any(.[]; .role == "http_client" and .type == "shared" and
     .features.referenceable == true and .features.versions == [1,2,3]) and
   any(.[]; .role == "service" and .type == "resolved" and
@@ -48,6 +49,13 @@ jq -e '
     .features.typed_config == true and .features.tls == true and
     .features.static_key == true and .features.users == true and
     .features.push == true) and
+  any(.[]; .role == "rule_set" and .type == "inline" and
+    .features.matcher_only == true and .features.max_tags_per_record == 1) and
+  any(.[]; .role == "rule_set" and .type == "local" and
+    .features.path_reference == true and .features.owns_file == false) and
+  any(.[]; .role == "rule_set" and .type == "remote" and
+    .features.download_detour == false and
+    .features.http_client_reference_minimum_core == "1.14.0") and
   all(.[]; .lifecycle.takeover == true) and
   any(.[]; .role == "inbound" and .type == "cloudflared" and
     .features.account_mutation == false and .availability == "with_cloudflared")
@@ -57,7 +65,7 @@ capabilities=$(agent_capabilities_json)
 jq -e '
   (.features.components.diagnosis_fields | index("transparent_resources") != null) and
   (.commands.component.roles | sort) ==
-    ["certificate_provider","endpoint","http_client","inbound","network_namespace","outbound","service"]
+    ["certificate_provider","endpoint","http_client","inbound","network_namespace","outbound","rule_set","service"]
 ' <<< "${capabilities}" >/dev/null
 
 direct_record='{"id":"direct-local","role":"inbound","type":"direct","tag":"direct-local-in","enabled":true,"route_rules":[],"config":{"listen":"127.0.0.1","listen_port":15080}}'
@@ -157,6 +165,121 @@ if managed_component_state_candidate "${http_client_state}" delete "" "http-clie
   exit 1
 fi
 
+# Inline, local and remote route.rule_set objects share the component CAS and
+# renderer. Local paths are references only; remote URLs remain sensitive and
+# use managed shared HTTP-client tags rather than deprecated download_detour.
+inline_rule_set_record='{"id":"rule-set-inline","role":"rule_set","type":"inline","tag":"operator-inline-rules","enabled":true,"route_rules":[],"config":{"rules":[{"domain_suffix":["rules.example.test"]}]}}'
+local_rule_set_record='{"id":"rule-set-local","role":"rule_set","type":"local","tag":"operator-local-rules","enabled":true,"route_rules":[],"config":{"format":"source","path":"/tmp/operator-rules.json"}}'
+remote_rule_set_record='{"id":"rule-set-remote","role":"rule_set","type":"remote","tag":"operator-remote-rules","enabled":true,"route_rules":[],"config":{"format":"binary","url":"https://rules.invalid/rules.srs?token=fixture-secret-token","http_client":"http-shared","initial_path":"/tmp/operator-rules.srs","update_interval":"12h"}}'
+managed_component_state_validate_record "${inline_rule_set_record}"
+managed_component_state_validate_record "${local_rule_set_record}"
+managed_component_state_validate_record "${remote_rule_set_record}"
+rule_set_state=$(managed_component_state_candidate "${http_client_state}" create "${inline_rule_set_record}")
+rule_set_state=$(managed_component_state_candidate "${rule_set_state}" create "${local_rule_set_record}")
+rule_set_state=$(managed_component_state_candidate "${rule_set_state}" create "${remote_rule_set_record}")
+original_detect_installed_singbox_version=$(declare -f detect_installed_singbox_version)
+detect_installed_singbox_version() { printf '1.13.18'; }
+if managed_component_state_core_features_supported "${rule_set_state}"; then
+  printf '1.13 core unexpectedly accepted remote rule-set http_client\n' >&2
+  exit 1
+fi
+remote_rule_set_without_http_client=$(jq -c 'del(.config.http_client)' <<< "${remote_rule_set_record}")
+remote_rule_set_113_state=$(managed_component_state_candidate \
+  "$(managed_component_state_default_json)" create "${remote_rule_set_without_http_client}")
+managed_component_state_core_features_supported "${remote_rule_set_113_state}"
+detect_installed_singbox_version() { printf '1.14.0'; }
+managed_component_state_core_features_supported "${rule_set_state}"
+detect_installed_singbox_version() { printf ''; }
+if managed_component_state_core_features_supported "${rule_set_state}"; then
+  printf 'unknown core version unexpectedly accepted remote rule-set http_client\n' >&2
+  exit 1
+fi
+eval "${original_detect_installed_singbox_version}"
+unset original_detect_installed_singbox_version
+rule_sets_rendered=$(managed_component_render_json "${rule_set_state}")
+jq -e '
+  (.rule_sets | length == 3) and
+  any(.rule_sets[]; .type == "inline" and .tag == "operator-inline-rules" and
+    .rules == [{domain_suffix:["rules.example.test"]}]) and
+  any(.rule_sets[]; .type == "local" and .format == "source" and
+    .path == "/tmp/operator-rules.json") and
+  any(.rule_sets[]; .type == "remote" and .format == "binary" and
+    .http_client == "http-shared" and .update_interval == "12h")
+' <<< "${rule_sets_rendered}" >/dev/null
+
+inline_rule_set_bad_action=$(jq -c '.config.rules[0].action="reject"' <<< "${inline_rule_set_record}")
+if managed_component_state_validate_record "${inline_rule_set_bad_action}"; then
+  printf 'inline route rule-set action unexpectedly accepted\n' >&2
+  exit 1
+fi
+inline_rule_set_bad_match=$(jq -c '.config.rules[0].unknown_match=true' <<< "${inline_rule_set_record}")
+if managed_component_state_validate_record "${inline_rule_set_bad_match}"; then
+  printf 'inline route rule-set unknown matcher unexpectedly accepted\n' >&2
+  exit 1
+fi
+inline_rule_set_empty=$(jq -c '.config.rules=[]' <<< "${inline_rule_set_record}")
+if managed_component_state_validate_record "${inline_rule_set_empty}"; then
+  printf 'empty inline route rule-set unexpectedly accepted\n' >&2
+  exit 1
+fi
+local_rule_set_bad_path=$(jq -c '.config.path="relative-rules.json"' <<< "${local_rule_set_record}")
+if managed_component_state_validate_record "${local_rule_set_bad_path}"; then
+  printf 'relative local route rule-set path unexpectedly accepted\n' >&2
+  exit 1
+fi
+remote_rule_set_bad_url=$(jq -c '.config.url="ftp://rules.invalid/rules.srs"' <<< "${remote_rule_set_record}")
+if managed_component_state_validate_record "${remote_rule_set_bad_url}"; then
+  printf 'non-HTTP remote route rule-set URL unexpectedly accepted\n' >&2
+  exit 1
+fi
+remote_rule_set_legacy_detour=$(jq -c '.config.download_detour="direct"' <<< "${remote_rule_set_record}")
+if managed_component_state_validate_record "${remote_rule_set_legacy_detour}"; then
+  printf 'deprecated remote route rule-set download_detour unexpectedly accepted\n' >&2
+  exit 1
+fi
+remote_rule_set_inline_client=$(jq -c '.config.http_client={detour:"direct"}' <<< "${remote_rule_set_record}")
+if managed_component_state_validate_record "${remote_rule_set_inline_client}"; then
+  printf 'inline remote route rule-set HTTP client unexpectedly accepted\n' >&2
+  exit 1
+fi
+remote_rule_set_reserved_tag=$(jq -c '.tag="warp-local-user-rules"' <<< "${inline_rule_set_record}")
+if managed_component_state_validate_record "${remote_rule_set_reserved_tag}"; then
+  printf 'Warp-owned route rule-set tag unexpectedly accepted\n' >&2
+  exit 1
+fi
+remote_rule_set_multi_tag=$(jq -c '.tag=["one","two"]' <<< "${inline_rule_set_record}")
+if managed_component_state_validate_record "${remote_rule_set_multi_tag}"; then
+  printf 'unmodeled multi-tag route rule-set unexpectedly accepted\n' >&2
+  exit 1
+fi
+if managed_component_state_candidate "${rule_set_state}" delete "" "http-client-local"; then
+  printf 'shared HTTP client referenced by remote rule-set unexpectedly deleted\n' >&2
+  exit 1
+fi
+rule_set_route_reference='{"id":"rule-set-route-reference","role":"outbound","type":"direct","tag":"route-reference-owner","enabled":true,"route_rules":[{"rule_set":"operator-inline-rules","action":"route","outbound":"direct"}],"config":{}}'
+rule_set_reference_state=$(managed_component_state_candidate "${rule_set_state}" create "${rule_set_route_reference}")
+if managed_component_state_candidate "${rule_set_reference_state}" delete "" "rule-set-inline"; then
+  printf 'route rule-set referenced by a managed route rule unexpectedly deleted\n' >&2
+  exit 1
+fi
+rule_set_remote_export=$(
+  managed_component_state_json() { printf '%s\n' "${rule_set_state}"; }
+  managed_component_export_json "rule-set-remote"
+)
+jq -e --arg secret "fixture-secret-token" '
+  .sensitive == true and
+  (.component.config.url | contains($secret))
+' <<< "${rule_set_remote_export}" >/dev/null
+rule_set_inventory=$(
+  managed_component_state_json() { printf '%s\n' "${rule_set_state}"; }
+  managed_component_inventory_json
+)
+jq -e '
+  (.components | length == 5) and
+  (any(.components[]; has("config") or has("url")) | not) and
+  (tojson | contains("fixture-secret-token") | not)
+' <<< "${rule_set_inventory}" >/dev/null
+
 # Protocol state readers must preserve both supported shared ACME HTTP-client
 # references and legacy inline HTTPClientOptions objects.  Invalid inline
 # shapes still fail closed instead of becoming an untyped JSON escape hatch.
@@ -243,12 +366,84 @@ if managed_component_live_config_projection_supported "${projection_config_file}
   printf 'malformed route rule-set container unexpectedly passed projection guard\n' >&2
   exit 1
 fi
+jq '.route.rule_set=null' \
+  "${projection_config_file}" > "${projection_config_file}.next"
+mv -f "${projection_config_file}.next" "${projection_config_file}"
+if managed_component_live_config_projection_supported "${projection_config_file}"; then
+  printf 'null route rule-set container unexpectedly passed projection guard\n' >&2
+  exit 1
+fi
 jq '.route={}' "${projection_config_file}" > "${projection_config_file}.next"
 mv -f "${projection_config_file}.next" "${projection_config_file}"
 jq '.route.rule_set=[{type:"local",tag:"warp-local-owned",format:"source",path:"/var/lib/sing-box/warp.srs"}]' \
   "${projection_config_file}" > "${projection_config_file}.next"
 mv -f "${projection_config_file}.next" "${projection_config_file}"
 managed_component_live_config_projection_supported "${projection_config_file}"
+projection_rule_set_record='{"id":"projection-rule-set","role":"rule_set","type":"inline","tag":"projection-rules","enabled":true,"route_rules":[],"config":{"rules":[{"domain_suffix":["projection.example.test"]}]}}'
+projection_rule_set_state=$(managed_component_state_candidate "${namespace_state}" create "${projection_rule_set_record}")
+projection_rule_set_rendered=$(managed_component_render_json "${projection_rule_set_state}")
+jq --argjson rule_sets "$(jq -c '.rule_sets' <<< "${projection_rule_set_rendered}")" \
+  '.route={rule_set:$rule_sets}' "${projection_config_file}" > "${projection_config_file}.next"
+mv -f "${projection_config_file}.next" "${projection_config_file}"
+managed_component_state_json() {
+  printf '%s\n' "${projection_rule_set_state}"
+}
+managed_component_live_route_rule_sets_match_state "${projection_config_file}" "${projection_rule_set_state}"
+managed_component_live_config_projection_supported "${projection_config_file}"
+jq '.route.rule_set[0].rules[0].domain_suffix=["drift.example.test"]' \
+  "${projection_config_file}" > "${projection_config_file}.next"
+mv -f "${projection_config_file}.next" "${projection_config_file}"
+if managed_component_live_config_projection_supported "${projection_config_file}"; then
+  printf 'managed route rule-set field drift unexpectedly passed projection guard\n' >&2
+  exit 1
+fi
+jq --argjson rule_sets "$(jq -c '.rule_sets' <<< "${projection_rule_set_rendered}")" \
+  '.route={rule_set:$rule_sets}' "${projection_config_file}" > "${projection_config_file}.next"
+mv -f "${projection_config_file}.next" "${projection_config_file}"
+jq '.route.rule_set=[]' "${projection_config_file}" > "${projection_config_file}.next"
+mv -f "${projection_config_file}.next" "${projection_config_file}"
+if managed_component_live_route_rule_sets_match_state "${projection_config_file}" "${projection_rule_set_state}"; then
+  printf 'missing managed route rule set unexpectedly matched state\n' >&2
+  exit 1
+fi
+jq --argjson rule_sets "$(jq -c '.rule_sets' <<< "${projection_rule_set_rendered}")" \
+  '.route={rule_set:$rule_sets}' "${projection_config_file}" > "${projection_config_file}.next"
+mv -f "${projection_config_file}.next" "${projection_config_file}"
+managed_component_write_state "${projection_rule_set_state}"
+projection_rule_set_snapshot=$(create_managed_state_snapshot)
+managed_component_live_route_rule_sets_supported \
+  "${projection_config_file}" "${projection_rule_set_snapshot}/project/components.json"
+discard_managed_state_snapshot "${projection_rule_set_snapshot}"
+managed_component_state_json() {
+  printf '%s\n' "${namespace_state}"
+}
+legacy_rule_set_config_file=$(mktemp)
+jq -n '{route:{rule_set:[{type:"remote",download_detour:"direct"}]}}' > "${legacy_rule_set_config_file}"
+legacy_rule_set_empty_state=$(managed_component_state_default_json)
+if managed_component_live_route_rule_sets_match_state \
+  "${legacy_rule_set_config_file}" "${legacy_rule_set_empty_state}"; then
+  printf 'legacy untracked download_detour rule set unexpectedly passed strict state matching\n' >&2
+  exit 1
+fi
+managed_component_live_route_rule_sets_match_state \
+  "${legacy_rule_set_config_file}" "${legacy_rule_set_empty_state}" true
+jq -n '{route:{rule_set:[{type:"remote",tag:"warp-local-invalid",download_detour:"direct"}]}}' \
+  > "${legacy_rule_set_config_file}"
+if managed_component_live_route_rule_sets_match_state \
+  "${legacy_rule_set_config_file}" "${legacy_rule_set_empty_state}" true; then
+  printf 'legacy download_detour exception accepted a remote Warp-local type mismatch\n' >&2
+  exit 1
+fi
+jq -n '{route:{rule_set:[{type:"remote",tag:"warp-remote-legacy",download_detour:"direct"}]}}' \
+  > "${legacy_rule_set_config_file}"
+managed_component_live_route_rule_sets_match_state \
+  "${legacy_rule_set_config_file}" "${legacy_rule_set_empty_state}" true
+if managed_component_live_route_rule_sets_match_state \
+  "${legacy_rule_set_config_file}" "${projection_rule_set_state}" true; then
+  printf 'legacy rule-set health tolerance ignored enabled managed rule-set state\n' >&2
+  exit 1
+fi
+rm -f "${legacy_rule_set_config_file}"
 jq '.certificate_providers[0].domain = ["drift.example"]' \
   "${projection_config_file}" > "${projection_config_file}.next"
 mv -f "${projection_config_file}.next" "${projection_config_file}"
@@ -393,6 +588,67 @@ if managed_component_live_takeover_records_json "${resolved_takeover_base_state}
 fi
 eval "${original_resolved_state_json_definition}"
 unset original_resolved_state_json_definition
+rm -f "${SINGBOX_CONFIG_FILE}"
+
+# Route rule sets are typed components too: takeover imports only registered
+# non-Warp sets, while reserved Warp names must retain their expected type.
+rule_set_takeover_config='{"route":{"rule_set":[{"type":"inline","tag":"inline-takeover","rules":[{"domain_suffix":["inline.example.test"]}]},{"type":"local","tag":"local-takeover","format":"source","path":"/tmp/local-rules.json"},{"type":"remote","tag":"remote-takeover","format":"source","url":"https://rules.example.test/remote.json"},{"type":"local","tag":"warp-local-owned","format":"source","path":"/tmp/warp-rules.json"}]}}'
+printf '%s\n' "${rule_set_takeover_config}" > "${SINGBOX_CONFIG_FILE}"
+rule_set_takeover_base_state=$(managed_component_state_default_json)
+rule_set_takeover_records=$(managed_component_live_takeover_records_json "${rule_set_takeover_base_state}")
+jq -e '
+  length == 3 and
+  ([.[].role] | unique) == ["rule_set"] and
+  ([.[].type] | sort) == ["inline","local","remote"] and
+  (map(.tag) | sort) == ["inline-takeover","local-takeover","remote-takeover"] and
+  all(.[]; .route_rules == [])
+' <<< "${rule_set_takeover_records}" >/dev/null
+rule_set_takeover_state=$(managed_component_state_takeover_candidate \
+  "${rule_set_takeover_base_state}" "${rule_set_takeover_records}")
+rule_set_takeover_rendered=$(managed_component_render_json "${rule_set_takeover_state}")
+rule_set_takeover_before="${TMP_DIR}/rule-set-takeover-before.json"
+rule_set_takeover_after="${TMP_DIR}/rule-set-takeover-after.json"
+jq 'del(.route.rule_set[3])' <<< "${rule_set_takeover_config}" > "${rule_set_takeover_before}"
+jq --argjson rule_sets "$(jq -c '.rule_sets' <<< "${rule_set_takeover_rendered}")" \
+  '.route.rule_set=$rule_sets' "${rule_set_takeover_before}" > "${rule_set_takeover_after}"
+managed_component_takeover_preserves_live_config \
+  "${rule_set_takeover_before}" "${rule_set_takeover_after}"
+original_rule_set_state_json_definition=$(declare -f managed_component_state_json)
+managed_component_state_json() {
+  printf '%s\n' "${rule_set_takeover_state}"
+}
+managed_component_state_matches_live_config "${SINGBOX_CONFIG_FILE}"
+managed_component_live_config_projection_supported "${SINGBOX_CONFIG_FILE}"
+jq '.route.rule_set[0].rules[0].domain_suffix=["drift.example.test"]' \
+  "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if managed_component_state_matches_live_config "${SINGBOX_CONFIG_FILE}"; then
+  printf 'route rule-set takeover drift unexpectedly matched state\n' >&2
+  exit 1
+fi
+printf '%s\n' "${rule_set_takeover_config}" > "${SINGBOX_CONFIG_FILE}"
+jq '.route.rule_set[0].type="remote"' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if managed_component_live_takeover_records_json "${rule_set_takeover_base_state}" >/dev/null 2>&1; then
+  printf 'reserved Warp rule-set type mismatch unexpectedly passed takeover\n' >&2
+  exit 1
+fi
+printf '%s\n' "${rule_set_takeover_config}" > "${SINGBOX_CONFIG_FILE}"
+jq '.route.rule_set[0].tag=["multi","tag"]' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if managed_component_live_takeover_records_json "${rule_set_takeover_base_state}" >/dev/null 2>&1; then
+  printf 'multi-tag live route rule-set unexpectedly passed takeover\n' >&2
+  exit 1
+fi
+printf '%s\n' "${rule_set_takeover_config}" > "${SINGBOX_CONFIG_FILE}"
+jq '.route.rule_set=null' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
+mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+if managed_component_live_takeover_records_json "${rule_set_takeover_base_state}" >/dev/null 2>&1; then
+  printf 'null live route rule-set unexpectedly passed takeover\n' >&2
+  exit 1
+fi
+eval "${original_rule_set_state_json_definition}"
+unset original_rule_set_state_json_definition
 rm -f "${SINGBOX_CONFIG_FILE}"
 
 namespace_bad_path=$(jq -c '.config.path = "relative/netns"' <<< "${default_namespace_record}")
@@ -2378,7 +2634,7 @@ jq -e '.ok == true and .data.action == "component-diagnose" and
   .data.state.revision == 3 and .data.config.status == "present" and
   .data.config.graph == "passed" and .data.config.listener_resources == "passed" and
   .data.config.core_check == "unavailable" and (.data.components | length) == 3 and
-  (.data.supported | length) == 35 and
+  (.data.supported | length) == 38 and
   .data.transparent_resources.status == "not_assessed" and
   .data.transparent_resources.service_active == false' <<< "${diagnose_json}" >/dev/null
 if grep -Fq 'secret-token-not-for-list' <<< "${diagnose_json}"; then

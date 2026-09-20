@@ -1409,3 +1409,51 @@ takeover、recover 和敏感 export 既有链路；配置仅接受官方 resolve
 resolved 最小配置的 `check` 通过；合同、图、候选和可用性回归均通过，未执行 systemd
 resolved DBus 注册、真实 DNS 请求、公网监听、生产部署或外部控制面验证。脚本与 README
 版本同步为 `2026091801`；完整协议目标仍未完成。
+
+### 2026-09-20：route rule-set 组件生命周期
+
+组件 registry 从 35 项扩展至 38 项，增加 `rule_set:inline`、`rule_set:local` 和
+`rule_set:remote`。三类沿用 schema-1 `components.json` 与统一 revision/CAS 事务，覆盖
+受控状态校验、route 渲染、create/replace/delete、takeover/rebuild、live drift 检查、
+引用图校验和敏感 component export。Inline 只允许有界 matcher-only rules；local 仅引用
+绝对路径，不拥有其文件；remote 仅接受 HTTP(S) URL 与受控 source/binary 格式，可按
+1.14+ 使用受管 named `http_client`，不会再生成已弃用的 `download_detour`。Warp 保留标签
+仍由专用生成器拥有并校验类型，不进入通用 takeover。规则集不是代理节点，不增加普通
+客户端导出、分享链接或 SubMan 同步能力。只读旧状态清单为兼容 1.13 遗留
+`download_detour` 保留有限容忍；所有写入、重建、接管及严格 live projection 路径仍拒绝
+该旧字段。
+
+回归先在 `dev/verification-runs/20260920065647` 的长 Docker 批次中发现验证 fixture
+错误：inline replace 的输入 JSON 与 stdout 响应重定向用了同一路径，shell 在读取前先将
+记录截断。该轮在 route-set 首次 create 后返回 `invalid_component`，因此不能计为整场
+成功。现已拆分 replacement-record 与 replace-response 路径，并在调用前断言二者不同且
+输入记录内容有效；这不是运行时组件实现回归。
+
+最终验证命令为
+`bash dev/verification/run.sh --changed-file dev/verification/remote/scenarios/multi_protocol_coexistence.sh`，
+目录 `dev/verification-runs/20260920091653`。本地关联回归及远程 Docker 门禁退出 0；只
+调度 `multi_protocol_coexistence` 与 `runtime_smoke`，两者均为 `STATUS=success`、
+`EXIT_STATUS=0`，`remote_status=success`。容器场景断言核心版本为 `1.14.1`，生成的
+inline/local/remote rule-set 通过 `sing-box check`；revision 33→34→35 完成 inline
+创建/替换，随后 local 与 remote 创建、三者删除及最终 check 均成功。提取产物
+`remote-artifacts/scenarios/multi_protocol_coexistence/managed-rule-sets.result.env`
+记录 `RESULT=success`、`REMOTE_FETCH=local_http_200`、`CORE_CHECK=passed`；同目录
+`managed-rule-set-http.log` 确认 sing-box 实际请求本地 fixture 的
+`/remote-route-rules.json` 并收到 HTTP 200，删除后还断言 local 源文件仍保留。宿主机未
+配置 `SINGBOX_BINARY_113/114`，相关本地双版本检查按契约 skip；Docker 的 1.14.1 核心
+check 与真实 remote fetch 已单独实测。未触及生产 VPS、SubMan 仓库或真实同步。脚本与
+README 版本同步为 `2026092001`；全协议总目标仍未完成。
+
+随后针对只读旧版健康清单的 Warp tag/type 边界补充 fail-closed 回归：legacy
+`download_detour` 容忍仅接受无 tag 旧项或类型匹配的 `warp-remote-*`；错误地将 remote
+对象命名为 `warp-local-*` 会被拒绝。最终按项目默认入口完整运行
+`bash dev/verification/run.sh`，目录 `dev/verification-runs/20260920111704`：本地映射测试
+与远程 Docker 门禁均退出 0，远程 15/15 场景全部 `STATUS=success`、`EXIT_STATUS=0`，
+`remote_status=success` 且 artifact bundle 已提取。`multi_protocol_coexistence` 中此前各
+TCP/UDP marker 与 typed outbound 检查完成后，inline create/replace、local/remote create、
+核心 1.14.1 `sing-box check`、本地 HTTP fixture 的实际 GET 200，以及三项 revision CAS
+删除和删除后 final check 均通过；result 为 `RESULT=success`、
+`REMOTE_FETCH=local_http_200`、`LIFECYCLE=create_replace_delete`、`CORE_CHECK=passed`。
+本地双版本核心二进制仍未配置，因此相关宿主机 real-core 检查明确 skip；Docker 中的
+1.14.1 检查与 remote fetch 是独立实际证据。本轮没有生产 VPS、SubMan 或外部同步操作；
+脚本与 README 版本仍保持 `2026092001`，全协议总目标仍未完成。

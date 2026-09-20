@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026091801
+# Version: 2026092001
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026091801"
+readonly SCRIPT_VERSION="2026092001"
 readonly SB_SUPPORT_MAX_VERSION="1.14.1"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -128,6 +128,9 @@ readonly SB_COMPONENT_REGISTRY=(
   'resolved-service|service|resolved|Resolved service|1.13.0|builtin|{"service":true,"listen":true,"tcp":true,"udp":true,"linux":true,"dbus":true}'
   'network-namespace-default|network_namespace|default|Default network namespace|1.14.0|builtin|{"namespace":true,"path_required":true}'
   'network-namespace-unshare|network_namespace|unshare|Unshare network namespace|1.14.0|builtin|{"namespace":true,"path_required":false}'
+  'route-rule-set-inline|rule_set|inline|Inline route rule set|1.13.0|builtin|{"rules":true,"matcher_only":true,"max_rules":128,"max_tags_per_record":1}'
+  'route-rule-set-local|rule_set|local|Local route rule set|1.13.0|builtin|{"format":["source","binary"],"path_reference":true,"owns_file":false,"max_tags_per_record":1}'
+  'route-rule-set-remote|rule_set|remote|Remote route rule set|1.13.0|builtin|{"format":["source","binary"],"http_url":true,"initial_path":true,"update_interval":true,"http_client_reference":true,"http_client_reference_minimum_core":"1.14.0","download_detour":false,"max_tags_per_record":1}'
 )
 SB_REALITY_SNI_CANDIDATES=(
   "www.apple.com"
@@ -1700,7 +1703,8 @@ component_registry_static_json() {
         create: true, replace: true, delete: true, rebuild: true, export: true,
         takeover: (.[1] == "inbound" or .[1] == "endpoint" or .[1] == "outbound" or
                    .[1] == "certificate_provider" or .[1] == "http_client" or
-                   .[1] == "service" or .[1] == "network_namespace"), recover: true
+                   .[1] == "service" or .[1] == "network_namespace" or
+                   .[1] == "rule_set"), recover: true
       }
     }]'
 }
@@ -16706,6 +16710,66 @@ managed_component_route_rules_validate_json() {
   ' <<< "${rules}" >/dev/null 2>&1 || return 1
 }
 
+managed_component_rule_set_inline_config_validate_json() {
+  local config=${1:-} rules
+  [[ -n "${config}" ]] || return 1
+  jq -e '
+    type == "object" and
+    ((keys - ["rules"]) | length == 0) and
+    (.rules | type == "array" and length > 0 and length <= 128) and
+    (.rules as $rules |
+      ([ $rules[] | .. | objects | keys[] ] |
+        any(.[]; IN(
+          "action","outbound","override_address","override_port","network_strategy",
+          "fallback_delay","udp_disable_domain_unmapping","udp_connect","udp_timeout",
+          "tls_fragment","tls_fragment_fallback_delay","tls_record_fragment","tls_spoof",
+          "tls_spoof_method","method","no_drop","sniffer","timeout","server","strategy",
+          "disable_cache","disable_optimistic_cache","rewrite_ttl","client_subnet",
+          "remove_client_subnet"
+        )) | not))
+  ' <<< "${config}" >/dev/null 2>&1 || return 1
+  rules=$(jq -c '[.rules[] | . + {action:"route",outbound:"direct"}]' <<< "${config}") || return 1
+  managed_component_route_rules_validate_json "${rules}"
+}
+
+managed_component_rule_set_local_config_validate_json() {
+  local config=${1:-}
+  [[ -n "${config}" ]] || return 1
+  jq -e '
+    def safe_path:
+      type == "string" and length > 1 and length <= 4096 and startswith("/") and
+      (any(explode[]; . < 32 or . == 127) | not);
+    type == "object" and
+    ((keys - ["format","path"]) | length == 0) and
+    (.format | type == "string" and IN("source","binary")) and
+    (.path | safe_path)
+  ' <<< "${config}" >/dev/null 2>&1
+}
+
+managed_component_rule_set_remote_config_validate_json() {
+  local config=${1:-}
+  [[ -n "${config}" ]] || return 1
+  jq -e '
+    def safe_string:
+      type == "string" and length > 0 and length <= 4096 and
+      (any(explode[]; . < 32 or . == 127) | not);
+    def safe_path:
+      safe_string and startswith("/") and . != "/";
+    type == "object" and
+    ((keys - ["format","url","initial_path","http_client","update_interval"]) | length == 0) and
+    (.format | type == "string" and IN("source","binary")) and
+    (.url | safe_string and (startswith("http://") or startswith("https://")) and
+      (contains("#") | not)) and
+    ((has("initial_path") | not) or (.initial_path | safe_path)) and
+    ((has("http_client") | not) or
+      (.http_client | type == "string" and length > 0 and length <= 128 and
+        (any(explode[]; . < 32 or . == 127) | not))) and
+    ((has("update_interval") | not) or
+      (.update_interval | type == "string" and length > 0 and length <= 64 and
+        (any(explode[]; . < 32 or . == 127) | not)))
+  ' <<< "${config}" >/dev/null 2>&1
+}
+
 managed_component_state_validate_record() {
   local record=${1:-} role type tag registry_id config route_rules
   [[ -n "${record}" ]] || return 1
@@ -16724,7 +16788,7 @@ managed_component_state_validate_record() {
   registry_id=$(component_registry_resolve_id "${role}" "${type}") || return 1
   managed_component_state_id_valid "$(jq -r '.id // empty' <<< "${record}")" || return 1
   managed_component_tag_valid "${tag}" || return 1
-  jq -e '.role | IN("inbound","endpoint","outbound","certificate_provider","http_client","service","network_namespace")' \
+  jq -e '.role | IN("inbound","endpoint","outbound","certificate_provider","http_client","service","network_namespace","rule_set")' \
     <<< "${record}" >/dev/null 2>&1 || return 1
   jq -e '.enabled | type == "boolean"' <<< "${record}" >/dev/null 2>&1 || return 1
   jq -e '.config | type == "object" and (has("type") | not) and (has("tag") | not)' \
@@ -16733,7 +16797,11 @@ managed_component_state_validate_record() {
   managed_component_route_rules_validate_json "${route_rules}" || return 1
   config=$(jq -c '.config' <<< "${record}") || return 1
 
-  if [[ ("${role}" == network_namespace || "${role}" == service) && "${route_rules}" != '[]' ]]; then
+  if [[ ("${role}" == network_namespace || "${role}" == service || "${role}" == rule_set) &&
+        "${route_rules}" != '[]' ]]; then
+    return 1
+  fi
+  if [[ "${role}" == rule_set && "${tag}" == warp-* ]]; then
     return 1
   fi
   if [[ "${role}" == certificate_provider &&
@@ -16775,6 +16843,15 @@ managed_component_state_validate_record() {
       ;;
     service:resolved)
       managed_component_resolved_service_config_validate_json "${config}" || return 1
+      ;;
+    rule_set:inline)
+      managed_component_rule_set_inline_config_validate_json "${config}" || return 1
+      ;;
+    rule_set:local)
+      managed_component_rule_set_local_config_validate_json "${config}" || return 1
+      ;;
+    rule_set:remote)
+      managed_component_rule_set_remote_config_validate_json "${config}" || return 1
       ;;
     endpoint:wireguard)
       managed_component_wireguard_config_validate_json "${config}" || return 1
@@ -16938,6 +17015,8 @@ managed_component_render_json() {
       services: [$components[] | enabled | select(.role == "service") |
         .config + {type:.type, tag:.tag}],
       network_namespaces: [$components[] | enabled | select(.role == "network_namespace") |
+        .config + {type:.type, tag:.tag}],
+      rule_sets: [$components[] | enabled | select(.role == "rule_set") |
         .config + {type:.type, tag:.tag}],
       route_rules: [$components[] | enabled | (.route_rules // [])[]]
     }' <<< "${state}"
@@ -17490,7 +17569,7 @@ managed_component_takeover_id() {
 }
 
 managed_component_live_takeover_records_json() (
-  local state=${1:-} registry inbound_types endpoint_types outbound_types certificate_provider_types http_client_types service_types namespace_types
+  local state=${1:-} registry inbound_types endpoint_types outbound_types certificate_provider_types http_client_types service_types namespace_types rule_set_types
   local source_objects object role type tag id config route_rules record
   local config_snapshot
   local records=() existing_id
@@ -17509,12 +17588,17 @@ managed_component_live_takeover_records_json() (
   http_client_types=$(jq -c '[.[] | select(.role == "http_client") | .type]' <<< "${registry}") || return 1
   service_types=$(jq -c '[.[] | select(.role == "service") | .type]' <<< "${registry}") || return 1
   namespace_types=$(jq -c '[.[] | select(.role == "network_namespace") | .type]' <<< "${registry}") || return 1
+  rule_set_types=$(jq -c '[.[] | select(.role == "rule_set") | .type]' <<< "${registry}") || return 1
   source_objects=$(jq -c --argjson inbound_types "${inbound_types}" --argjson endpoint_types "${endpoint_types}" \
     --argjson outbound_types "${outbound_types}" \
     --argjson certificate_provider_types "${certificate_provider_types}" \
     --argjson http_client_types "${http_client_types}" \
     --argjson service_types "${service_types}" \
-    --argjson namespace_types "${namespace_types}" '
+    --argjson namespace_types "${namespace_types}" \
+    --argjson rule_set_types "${rule_set_types}" '
+    def safe_tag:
+      type == "string" and length > 0 and length <= 4096 and
+      (any(explode[]; . < 32 or . == 127) | not);
     if type != "object" then error("invalid_document") else
       if any(.outbounds[]?;
              . as $outbound |
@@ -17561,6 +17645,24 @@ managed_component_live_takeover_records_json() (
         error("invalid_http_client")
       elif ([.http_clients[]?.tag] | unique | length) != ([.http_clients[]?.tag] | length) then
         error("duplicate_http_client_tag")
+      elif (has("route") and (.route | type != "object")) then
+        error("invalid_rule_set")
+      elif (has("route") and (.route | has("rule_set")) and
+            (.route.rule_set | type != "array")) then
+        error("invalid_rule_set")
+      elif ((.route.rule_set // []) | type != "array" or length > 128) then
+        error("invalid_rule_set")
+      elif any((.route.rule_set // [])[];
+               type != "object" or
+               (.tag | safe_tag | not) or
+               (.type | type != "string" or ($rule_set_types | index(.)) == null)) then
+        error("invalid_rule_set")
+      elif any((.route.rule_set // [])[];
+               (((.tag | startswith("warp-local-")) and .type != "local") or
+                ((.tag | startswith("warp-remote-")) and .type != "remote"))) then
+        error("invalid_rule_set")
+      elif ([.route.rule_set[]?.tag] | unique | length) != ([.route.rule_set[]?.tag] | length) then
+        error("duplicate_rule_set_tag")
       else
       ([.inbounds // [] | .[] | select(.type as $type | $inbound_types | index($type) != null) |
         {role:"inbound",object:.}] +
@@ -17584,7 +17686,11 @@ managed_component_live_takeover_records_json() (
         {role:"service",object:.}] +
        [.network_namespaces // [] | .[] |
         select(.type as $type | $namespace_types | index($type) != null) |
-        {role:"network_namespace",object:.}])[]
+        {role:"network_namespace",object:.}] +
+       [(.route.rule_set // [])[] |
+        select((((.tag // "") | startswith("warp-local-")) or
+                ((.tag // "") | startswith("warp-remote-"))) | not) |
+        {role:"rule_set",object:.}])[]
       end
     end
   ' "${config_snapshot}" 2>/dev/null) || return 4
@@ -17606,7 +17712,7 @@ managed_component_live_takeover_records_json() (
       route_rules=$(jq -c --arg tag "${tag}" '[.route.rules[]? |
         select((.outbound == $tag) or ((.outbound | type) == "array" and ((.outbound | index($tag)) != null)))]' \
         "${config_snapshot}") || return 4
-    elif [[ "${role}" == http_client || "${role}" == service ]]; then
+    elif [[ "${role}" == http_client || "${role}" == service || "${role}" == rule_set ]]; then
       route_rules='[]'
     else
       route_rules=$(jq -c --arg tag "${tag}" '[.route.rules[]? |
@@ -17929,29 +18035,80 @@ managed_component_live_config_root_fields_supported() {
   ' "${config_file}" >/dev/null 2>&1
 }
 
-managed_component_live_route_rule_sets_supported() {
-  local config_file=${1:-}
-  [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
-  # The generator owns the Warp rule-set namespace and recreates it from the
-  # project-managed source files.  Any other route rule-set would otherwise
-  # disappear when a protocol is regenerated.  Reject it before resource
-  # preparation instead of pretending that an unmanaged rule-set survived.
-  jq -e '
+managed_component_live_route_rule_sets_match_state() {
+  local config_file=${1:-} state=${2:-} allow_legacy_download_detour=${3:-false}
+  [[ -f "${config_file}" && ! -L "${config_file}" && -n "${state}" ]] || return 1
+  [[ "${allow_legacy_download_detour}" == true || "${allow_legacy_download_detour}" == false ]] || return 1
+  managed_component_state_validate_json "${state}" || return 1
+  jq -e --argjson state "${state}" --argjson allow_legacy_download_detour "${allow_legacy_download_detour}" '
     def safe_string:
       type == "string" and length <= 4096 and
       (any(explode[]; . < 32 or . == 127) | not);
-    if has("route") then
-      (.route | type == "object" and
-        ((has("rule_set") | not) or
-          (.rule_set | type == "array" and length <= 128 and
-            ([.[]?.tag] | unique | length) == length and
-            all(.[];
-              type == "object" and
-              (.tag | safe_string and length > 0) and
-              (.type | type == "string" and IN("inline","local","remote")) and
-              (.tag | startswith("warp-local-") or startswith("warp-remote-"))))))
-    else true end
+    def warp_tag($tag):
+      ($tag | startswith("warp-local-") or startswith("warp-remote-"));
+    def legacy_download_detour($set):
+      $allow_legacy_download_detour and
+      ($set.type == "remote") and
+      ($set | has("download_detour")) and
+      ((($set.tag // "") == "") or
+        (($set.tag | safe_string and length > 0) and
+          ((warp_tag($set.tag) | not) or ($set.tag | startswith("warp-remote-"))) and
+          (any($state.components[]?;
+            .role == "rule_set" and .enabled == true and .tag == $set.tag) | not)));
+    type == "object" and
+    ((has("route") | not) or (.route | type == "object")) and
+    (.route // {}) as $route |
+    ($route | ((has("rule_set") | not) or (.rule_set | type == "array"))) and
+    ($route.rule_set // []) as $sets |
+    ($sets | type == "array" and length <= 128) and
+    ([ $sets[] | select((legacy_download_detour(.) | not) or ((.tag // "") != "")) | .tag ] | unique | length) ==
+      ([ $sets[] | select((legacy_download_detour(.) | not) or ((.tag // "") != "")) ] | length) and
+    all($sets[];
+      . as $set |
+      type == "object" and
+      ($set.type | type == "string" and IN("inline","local","remote")) and
+      (if legacy_download_detour($set) then
+         ((($set.tag // "") == "") or ($set.tag | safe_string and length > 0))
+       else
+         ($set.tag | safe_string and length > 0)
+       end) and
+      (if legacy_download_detour($set) then
+         true
+       elif warp_tag($set.tag) then
+         ((($set.tag | startswith("warp-local-")) and $set.type == "local") or
+          (($set.tag | startswith("warp-remote-")) and $set.type == "remote"))
+       else
+         any($state.components[]?;
+           .role == "rule_set" and .enabled == true and
+           .type == $set.type and .tag == $set.tag and
+           ((.config + {type:.type,tag:.tag}) == $set))
+       end)) and
+    ([$state.components[]? |
+      select(.role == "rule_set" and .enabled == true)] | length) ==
+    ([$sets[] | select((warp_tag(.tag // "") | not) and (legacy_download_detour(.) | not))] | length)
   ' "${config_file}" >/dev/null 2>&1
+}
+
+managed_component_live_route_rule_sets_supported() {
+  local config_file=${1:-} prior_state_file=${2:-} state snapshot_dir
+  [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
+  if [[ -n "${prior_state_file}" ]]; then
+    snapshot_dir=${prior_state_file%/project/components.json}
+    [[ "${prior_state_file}" == "${snapshot_dir}/project/components.json" ]] || return 1
+    managed_state_snapshot_is_valid "${snapshot_dir}" || return 1
+    if [[ -f "${prior_state_file}" && ! -L "${prior_state_file}" &&
+          -r "${prior_state_file}" ]]; then
+      state=$(jq -cS '.' "${prior_state_file}") || return 1
+      managed_component_state_validate_json "${state}" || return 1
+    elif [[ ! -e "${prior_state_file}" ]]; then
+      state=$(managed_component_state_default_json) || return 1
+    else
+      return 1
+    fi
+  else
+    state=$(managed_component_state_json) || return 1
+  fi
+  managed_component_live_route_rule_sets_match_state "${config_file}" "${state}"
 }
 
 managed_component_live_services_supported() {
@@ -17989,10 +18146,10 @@ managed_component_live_services_supported() {
 }
 
 managed_component_live_config_projection_supported() {
-  local config_file=${1:-} state
+  local config_file=${1:-} prior_state_file=${2:-} state
   [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
   managed_component_live_config_root_fields_supported "${config_file}" || return 1
-  managed_component_live_route_rule_sets_supported "${config_file}" || return 1
+  managed_component_live_route_rule_sets_supported "${config_file}" "${prior_state_file}" || return 1
   state=$(managed_component_state_json) || return 1
   jq -e '
     if has("dns") then
@@ -18091,9 +18248,10 @@ managed_component_live_config_projection_supported() {
 }
 
 managed_component_state_matches_live_config() {
-  local config_file=${1:-} state_file=${2:-} state registry endpoint_types outbound_types
+  local config_file=${1:-} state_file=${2:-} allow_legacy_download_detour=${3:-false} state registry endpoint_types outbound_types
   local certificate_provider_types http_client_types service_types namespace_types snapshot_dir
   [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
+  [[ "${allow_legacy_download_detour}" == true || "${allow_legacy_download_detour}" == false ]] || return 1
   if [[ -n "${state_file}" ]]; then
     snapshot_dir=${state_file%/project/components.json}
     [[ "${state_file}" == "${snapshot_dir}/project/components.json" ]] || return 1
@@ -18109,6 +18267,8 @@ managed_component_state_matches_live_config() {
   else
     state=$(managed_component_state_json) || return 1
   fi
+  managed_component_live_route_rule_sets_match_state \
+    "${config_file}" "${state}" "${allow_legacy_download_detour}" || return 1
   registry=$(component_registry_static_json) || return 1
   endpoint_types=$(jq -c '[.[] | select(.role == "endpoint") | .type]' <<< "${registry}") || return 1
   outbound_types=$(jq -c '[.[] | select(.role == "outbound") | .type]' <<< "${registry}") || return 1
@@ -18231,6 +18391,23 @@ managed_component_state_matches_live_config() {
   ' "${config_file}" >/dev/null 2>&1
 }
 
+managed_component_state_core_features_supported() {
+  local state=${1:-} minimum core_version has_http_client_reference
+  [[ -n "${state}" ]] || return 1
+  managed_component_state_validate_json "${state}" || return 1
+  has_http_client_reference=$(jq -r '
+    any(.components[]?;
+      .enabled == true and .role == "rule_set" and .type == "remote" and
+      (.config | has("http_client")))
+  ' <<< "${state}") || return 1
+  [[ "${has_http_client_reference}" == true ]] || return 0
+  minimum=$(component_registry_field route-rule-set-remote features | \
+    jq -er '.http_client_reference_minimum_core | strings') || return 1
+  core_version=$(detect_installed_singbox_version 2>/dev/null) || return 1
+  [[ "${core_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  singbox_version_at_least "${core_version}" "${minimum}"
+}
+
 managed_component_state_apply() {
   local operation=${1:-} expected=${2:-} input=${3:-} target_id=${4:-} allow_public=${5:-n}
   local state current_revision record candidate snapshot service_restarted=false state_changed=true
@@ -18335,6 +18512,10 @@ managed_component_state_apply() {
     *) MANAGED_COMPONENT_LAST_ERROR=invalid_operation; return 1 ;;
   esac
 
+  if ! managed_component_state_core_features_supported "${candidate}"; then
+    MANAGED_COMPONENT_LAST_ERROR=component_feature_unsupported
+    return 1
+  fi
   if ! managed_component_transaction_begin "${lock_dir}" "${operation}" "${expected}" \
     "${before_active}" "${owner_pid}" "${owner_start}"; then
     MANAGED_COMPONENT_LAST_ERROR=component_transaction_begin_failed
@@ -19450,7 +19631,7 @@ generate_config_candidate() {
   # A supported first inbound is not evidence that the rest can be rebuilt.
   validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" "${inventory_state_file}" || return 1
   if [[ -e "${SINGBOX_CONFIG_FILE}" ]] &&
-     ! managed_component_live_config_projection_supported "${SINGBOX_CONFIG_FILE}"; then
+     ! managed_component_live_config_projection_supported "${SINGBOX_CONFIG_FILE}" "${inventory_state_file}"; then
     log_warn "当前配置包含生成器未建模的顶层或投影字段，禁止有损重建；请先迁移或备份后人工处理。"
     return 1
   fi
@@ -19627,11 +19808,12 @@ generate_config_candidate() {
       ] + ($managed_components.outbounds // [])),
       "route": ({
         "rule_set": (
-          if $enable_warp == "y" and $warp_mode == "selective" then
-            $local_rule_sets + $remote_rule_sets
-          else
-            []
-          end
+          ($managed_components.rule_sets // []) +
+          (if $enable_warp == "y" and $warp_mode == "selective" then
+             $local_rule_sets + $remote_rule_sets
+           else
+             []
+           end)
         ),
         "rules": (
           ($managed_components.route_rules // []) +
@@ -26602,7 +26784,7 @@ detect_existing_instance_state_read_only() {
   fi
 
   if [[ "${has_bin}" == "y" && "${has_service}" == "y" && "${has_config}" == "y" && "${has_index}" == "y" && "${has_state}" == "y" ]] && \
-    protocol_state_layer_matches_config; then
+    protocol_state_layer_matches_config true; then
     printf 'healthy'
     return 0
   fi
@@ -26726,7 +26908,7 @@ agent_capabilities_json() {
         "upgrade-check": {mutation: false, sensitive: false},
         upgrade: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart"},
         instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic", "hysteria", "naive", "shadowtls"]},
-        component: {mutation: true, sensitive: true, confirmation: "--yes", service_impact: "restart_if_active", roles: ["inbound", "endpoint", "outbound", "certificate_provider", "http_client", "service", "network_namespace"]},
+        component: {mutation: true, sensitive: true, confirmation: "--yes", service_impact: "restart_if_active", roles: ["inbound", "endpoint", "outbound", "certificate_provider", "http_client", "service", "network_namespace", "rule_set"]},
         "export-client": {mutation: true, sensitive: true},
         "service restart": {mutation: true, sensitive: false, confirmation: "--yes"},
         "subman-sync": {mutation: true, sensitive: true, external_write: true}
@@ -30249,6 +30431,7 @@ agent_component_cli() {
       component_transaction_pending) agent_json_error component_transaction_pending "存在未完成的高级组件事务；请先执行 component recover。" ;;
       component_transaction_begin_failed|component_transaction_write_failed) agent_json_error component_transaction_failed "高级组件持久事务日志写入失败；未报告成功。" ;;
       component_cleanup_failed) agent_json_error component_cleanup_failed "组件已提交，但持久事务目录清理失败；请执行 component recover。" ;;
+      component_feature_unsupported) agent_json_error component_feature_unsupported "当前 sing-box 核心版本未知或不支持远程规则集 http_client；未修改。" ;;
       public_confirmation_required) agent_json_error confirmation_required "现有接管对象包含公开监听或 OpenVPN server；请明确传入 --allow-public。" ;;
       component_live_missing) agent_json_error component_live_missing "当前配置没有可接管的已注册高级入站或 Endpoint。" ;;
       component_live_untrusted) agent_json_error component_live_untrusted "当前配置对象或组件状态无法安全读取；未修改。" ;;
@@ -30284,6 +30467,7 @@ agent_component_cli() {
       component_transaction_pending) agent_json_error component_transaction_pending "存在未完成的高级组件事务；请先执行 component recover。" ;;
       component_transaction_begin_failed|component_transaction_write_failed) agent_json_error component_transaction_failed "高级组件持久事务日志写入失败；未报告成功。" ;;
       component_cleanup_failed) agent_json_error component_cleanup_failed "组件已提交，但持久事务目录清理失败；请执行 component recover。" ;;
+      component_feature_unsupported) agent_json_error component_feature_unsupported "当前 sing-box 核心版本未知或不支持远程规则集 http_client；未修改。" ;;
       config_check_failed) agent_json_error config_check_failed "组件重建已回滚；生成的配置未通过图校验、监听校验或 sing-box check。" ;;
       service_restart_failed) agent_json_error service_restart_failed "组件重建已回滚；服务重启失败。" ;;
       transparent_resource_check_failed) agent_json_error transparent_resource_check_failed "组件重建已回滚；core-owned 透明资源未就绪。" ;;
@@ -30326,6 +30510,7 @@ agent_component_cli() {
     revision_mismatch) agent_json_error revision_mismatch "组件 state revision 不匹配；未修改。" ;;
     instance_transaction_pending) agent_json_error instance_transaction_pending "存在未完成的实例事务；请先完成 instance recover。" ;;
     public_confirmation_required) agent_json_error confirmation_required "公开监听或隧道组件需要 --allow-public；未修改。" ;;
+    component_feature_unsupported) agent_json_error component_feature_unsupported "当前 sing-box 核心版本未知或不支持远程规则集 http_client；未修改。" ;;
     component_referenced_or_missing) agent_json_error component_referenced "组件仍被 route/group/detour 引用，或目标不存在；未修改。" ;;
     record_invalid|component_conflict) agent_json_error invalid_component "组件记录无效、类型不受支持或 tag/id 冲突；未修改。" ;;
     service_restart_failed) agent_json_error service_restart_failed "组件已回滚；服务重启失败。" ;;
@@ -30805,9 +30990,11 @@ prompt_singbox_version() {
 }
 
 validate_live_inbound_inventory() {
-  local config_file=$1 state_file=${2:-} registry advanced_types component_state inventory_status allow_structured_hy2=false
+  local config_file=$1 state_file=${2:-} allow_legacy_download_detour=${3:-false}
+  local registry advanced_types component_state inventory_status allow_structured_hy2=false
 
   [[ -e "${config_file}" || -L "${config_file}" ]] || return 0
+  [[ "${allow_legacy_download_detour}" == true || "${allow_legacy_download_detour}" == false ]] || return 1
   registry=$(protocol_registry_json) || return 1
   advanced_types=$(component_registry_inbound_types_json) || return 1
   if plain_proxy_structured_state_active hy2 >/dev/null 2>&1; then
@@ -30862,7 +31049,8 @@ validate_live_inbound_inventory() {
     printf '[ERROR] live_inbound_inventory: %s; 已保留配置和状态，禁止有损重建；请使用支持该入站的脚本或先备份并人工迁移。\n' "${inventory_status}" >&2
     return 1
   fi
-  if ! managed_component_state_matches_live_config "${config_file}" "${state_file}"; then
+  if ! managed_component_state_matches_live_config \
+    "${config_file}" "${state_file}" "${allow_legacy_download_detour}"; then
     # Preserve the long-standing inventory error for an advanced inbound that
     # is present in the live config but has no owned component record. This
     # keeps takeover/rebuild fail-closed while distinguishing endpoint-only
@@ -30905,7 +31093,9 @@ validate_live_inbound_inventory() {
 }
 
 list_config_protocols() {
-  validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" || return 1
+  local allow_legacy_download_detour=${1:-false}
+  validate_live_inbound_inventory \
+    "${SINGBOX_CONFIG_FILE}" "" "${allow_legacy_download_detour}" || return 1
   [[ -f "${SINGBOX_CONFIG_FILE}" ]] || return 0
 
   local protocols=()
@@ -34181,6 +34371,8 @@ protocol_state_matches_config() {
 }
 
 protocol_state_layer_matches_config() {
+  local allow_legacy_download_detour=${1:-false}
+  [[ "${allow_legacy_download_detour}" == true || "${allow_legacy_download_detour}" == false ]] || return 1
   [[ -f "${SINGBOX_CONFIG_FILE}" && -f "${SB_PROTOCOL_INDEX_FILE}" ]] || return 1
   validate_protocol_index_for_rebuild || return 1
 
@@ -34189,7 +34381,7 @@ protocol_state_layer_matches_config() {
   local normalized_indexed_protocols=()
   local protocol joined_config joined_index config_inventory
 
-  config_inventory=$(list_config_protocols) || return 1
+  config_inventory=$(list_config_protocols "${allow_legacy_download_detour}") || return 1
   [[ -n "${config_inventory}" ]] || return 1
   mapfile -t config_protocols <<< "${config_inventory}"
   [[ ${#config_protocols[@]} -gt 0 ]] || return 1

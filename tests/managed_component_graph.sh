@@ -125,6 +125,15 @@ expect_valid "provider-inline-http-and-headers" '{
   "route":{"final":"leaf","default_http_client":"hc"}
 }'
 
+# Remote rule sets may reference only a named shared HTTP client. The graph
+# must include that dependency so malformed references fail before publish.
+expect_valid "remote-ruleset-http-client-reference" '{
+  "outbounds":[{"type":"direct","tag":"leaf"}],
+  "http_clients":[{"tag":"rules-http","detour":"leaf"}],
+  "route":{"rule_set":[{"type":"remote","tag":"remote-rules","format":"source",
+    "url":"https://rules.example.test/rules.json","http_client":"rules-http"}]}
+}'
+
 expect_valid "valid-domain-resolver-and-dns" '{
   "outbounds":[{"type":"direct","tag":"leaf","server":"example.test"}],
   "route":{"final":"leaf","default_domain_resolver":"dns1"},
@@ -201,6 +210,7 @@ expect_invalid "missing-reality-handshake-detour" '{"inbounds":[{"type":"mixed",
 expect_invalid "missing-inbound-reference" '{"route":{"rules":[{"inbound":"missing"}]}}' "unknown reference"
 expect_invalid "missing-provider-reference" '{"inbounds":[{"type":"mixed","tag":"in","tls":{"certificate_provider":"missing"}}]}' "unknown reference"
 expect_invalid "missing-http-reference" '{"route":{"default_http_client":"missing"}}' "unknown reference"
+expect_invalid "missing-ruleset-http-client-reference" '{"route":{"rule_set":[{"type":"remote","tag":"remote-rules","format":"source","url":"https://rules.example.test/rules.json","http_client":"missing"}]}}' "unknown reference"
 expect_invalid "missing-resolved-service-detour" '{"services":[{"type":"resolved","tag":"resolved","detour":"missing"}]}' "unknown reference"
 expect_invalid "missing-ruleset-reference" '{"route":{"rules":[{"rule_set":"missing"}]}}' "unknown reference"
 expect_invalid "wrong-role-inbound-detour" '{"inbounds":[{"type":"mixed","tag":"in","detour":"out"}],"outbounds":[{"type":"direct","tag":"out"}]}' "unknown reference"

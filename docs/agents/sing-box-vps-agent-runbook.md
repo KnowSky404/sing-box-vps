@@ -7,14 +7,26 @@ The additive `protocol_registry` in `sbv agent capabilities --json` describes ea
 ## Managed advanced components
 
 The component registry also manages top-level ACME `certificate_provider`,
-shared `http_client` and `default`/`unshare` `network_namespace` records through
-the same schema-1 CAS/render/takeover/rebuild path. ACME records are bounded to
+shared `http_client`, `default`/`unshare` `network_namespace` and
+`route.rule_set` records through the same schema-1 CAS/render/takeover/rebuild path. ACME records are bounded to
 the fields validated by this repository; a string `http_client` reference is
 allowed only when it resolves to an enabled managed shared client, while other
 unmodeled provider extensions remain rejected. A live provider, HTTP client or
 namespace must match its enabled state record exactly before ordinary
 regeneration can publish a candidate, so manual drift is reported instead of
 being overwritten.
+
+Rule sets use role `rule_set` and one stable tag per record. `inline` accepts at
+most 128 matcher-only rules; `local` accepts `source` or `binary` format plus an
+absolute path reference, and the component does not own or delete that file;
+`remote` accepts `source` or `binary`, an HTTP(S) URL, optional initial path and
+update interval, and an optional named shared `http_client` reference (1.14+).
+Legacy `download_detour` and inline HTTP-client objects are rejected. Warp tags
+remain generator-owned and type-checked. Takeover imports registered non-Warp
+rule sets; a live object must match its enabled state record exactly before
+ordinary regeneration. Rule sets have no ordinary client export, share-link or
+SubMan surface; full configuration, including remote URLs, is available only
+from the explicitly sensitive component export, never list/diagnose.
 
 The current component contract revision is `2026091205`. Component-owned
 `route_rules` use a typed sing-box 1.14 default/logical matcher and
@@ -648,6 +660,7 @@ Keep historical functions in scope when planning or documenting a change:
 | REALITY | Multiple instances, independent ports/ShortID/names, per-instance outbound policy and optional upload/download QoS | Read with `nodes`; mutate through the interactive protocol menu |
 | TLS | Hysteria2/AnyTLS ACME HTTP-01, Cloudflare DNS-01, or manual certificate paths; Hysteria v1, NaiveProxy, standalone HTTP, Trojan and TUIC use manual certificate paths; Trojan/TUIC/Hysteria v1/NaiveProxy explicitly select certificate or system client trust | Read warnings/check output; mutate interactively |
 | Warp | Account registration, enable/disable, all/selective routing, built-in/custom domains, local/remote rule sets | Read with `warp`; mutate through menu 13 |
+| Route rule sets | Typed `inline`/`local`/`remote` lifecycle through component CAS; local files are references, remote URLs and named HTTP-client references are sensitive | `component create|replace|delete|takeover|rebuild`; no ordinary node export, share link or SubMan |
 | Network/system | IPv4/IPv6/dual inbound stack, outbound/DNS strategy, BBR | Read config/doctor; mutate through menu 14 |
 | Node material | Links/QR, bare-core client export, dual-stack labels | `nodes` is log-safe; `links` and `export-client` are sensitive |
 | SubMan | Idempotent VLESS/Hysteria2 sync; Trojan and VMess sync only losslessly representable TLS/system-trust users and report per-user skips; revision/error/retry semantics; only encrypted dual-network Shadowsocks entries use the dedicated path, while single-network and `none` entries are skipped; Hysteria v1, Snell, TUIC, NaiveProxy, AnyTLS and ShadowTLS remain explicitly unsupported | `subman-sync` is sensitive and externally mutating; same-snapshot mock passed for VMess (`synced=3`, `skipped=1`, `failed=0`), and no unauthorized real sync |

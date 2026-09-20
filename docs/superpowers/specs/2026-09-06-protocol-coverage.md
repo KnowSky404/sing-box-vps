@@ -8,7 +8,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026091801`，`SB_SUPPORT_MAX_VERSION=1.14.1`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026092001`，`SB_SUPPORT_MAX_VERSION=1.14.1`
 
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
@@ -182,6 +182,17 @@ protocol-probe/                 # 本轮的 type 识别/check 探针输入
 | selector | `selector` / outbound group | 基础内建 | 只选择已注册 outbound tag；成员为空或引用不存在都应失败 | yes | yes（Linux） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | `project-real-selector-tcp`；特权 Docker `multi_protocol_coexistence` 以单成员 `direct` group 经 route 回读 loopback marker、核心 check 和 CAS 删除；不代表多成员切换、公网或生产 |
 | urltest | `urltest` / outbound group | 基础内建 | 对成员 URL 测试延迟并选择；需要可达探测 URL、成员 tag 和 timeout/interval 策略 | yes | yes（Linux） | component state/config；yes/yes/yes/yes* | 不属于分享节点 / — / — | `project-real-urltest-tcp`；特权 Docker `multi_protocol_coexistence` 以单成员 `direct`、loopback HTTP health URL 和 route 回读 marker、核心 check 和 CAS 删除；不代表多成员故障切换、公网或生产 |
 | naive | `naive` / outbound | `with_naive_outbound`；Linux 官方纯 Go 变体仅 amd64/arm64，其他变体见下文 | HTTP/2 或可选 QUIC；TLS 仅支持 server_name/certificate/certificate_path/ECH；TCP-capable listener 的 UDP 业务使用 UDP-over-TCP v2，UDP-only listener 使用 QUIC/HTTP/3 TCP transport；非零 insecure_concurrency 不可与 QUIC 并用；依赖 libcronet，不能由 check 证明运行库存在 | conditional | yes（tag+libcronet 已含） | typed component state/config；yes/yes/yes/yes* | 完整敏感 Naive outbound JSON（不生成标准 URI；no current SubMan） | `project-real-naive-tcp+udp-http3`；1.14.0 官方 ARM64 完整（bbr2）与 1.13.18 兼容子集 typed config check；Docker `20260915184405` 验证 TCP listener 的 UoT UDP payload 与 UDP-only listener 的认证 QUIC/HTTP/3 TCP marker，exporter 仅在 listener 含 TCP 时输出 UoT v2；仅隔离容器/回环，不证明 UDP-only 原生 UDP、公网或生产 |
+
+## Route rule-set 辅助组件矩阵
+
+规则集是 `route` 辅助组件，不是代理协议或普通客户端节点。`D/T/E/R` 在本表分别
+表示通过组件事务创建、接管、替换编辑和删除；文件/远程源是外部引用，不隐含其所有权。
+
+| ID | 官方 type / role | 最低核心与格式 | 运行/引用约束 | upstream | available（官方 ARM64 包） | implemented；D/T/E/R | 导出 / 分享 / SubMan | validated |
+|---|---|---|---|---|---|---|---|---|
+| route-rule-set-inline | `inline` / route `rule_set` | 1.13+；inline matcher rules | 每记录一个 tag；最多 128 条，仅匹配条件，不接受 route action | yes | yes（Linux） | typed state/CAS/render；yes/yes/yes/yes | no client export / no share link / no SubMan | local contract/projection/takeover tests；Docker run `dev/verification-runs/20260920111704` 以核心 1.14.1 验证 create/replace/delete 和最终 `sing-box check` |
+| route-rule-set-local | `local` / route `rule_set` | 1.13+；`source` 或 `binary` | 绝对 path 引用；组件不创建、修改或删除被引用文件 | yes | yes（Linux） | typed state/CAS/render；yes/yes/yes/yes | no client export / no share link / no SubMan | local contract/projection/takeover tests；同一 Docker run 验证 create/delete，断言引用源文件仍保留且最终核心 check 通过 |
+| route-rule-set-remote | `remote` / route `rule_set` | 1.13+；`source` 或 `binary`；named `http_client` 自 1.14.0 | HTTP(S) URL、可选 initial path/update interval；旧 `download_detour` 和 inline client 被拒绝；URL 仅在敏感 export 中返回 | yes | yes（Linux） | typed state/CAS/render/reference guard；yes/yes/yes/yes | no client export / no share link / no SubMan | local graph/reference tests；同一 Docker run 的本地 HTTP fixture 记录 `GET /remote-route-rules.json` 200，目标核心 check 通过，result 见 `remote-artifacts/scenarios/multi_protocol_coexistence/managed-rule-sets.result.env` |
 
 ## Endpoint 矩阵
 
