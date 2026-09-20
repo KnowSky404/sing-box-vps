@@ -18052,7 +18052,7 @@ managed_component_live_route_rule_sets_match_state() {
       ($set | has("download_detour")) and
       ((($set.tag // "") == "") or
         (($set.tag | safe_string and length > 0) and
-          ((warp_tag($set.tag) | not) or ($set.tag | startswith("warp-remote-"))) and
+          (($set.tag | startswith("warp-") | not) or ($set.tag | startswith("warp-remote-"))) and
           (any($state.components[]?;
             .role == "rule_set" and .enabled == true and .tag == $set.tag) | not)));
     type == "object" and

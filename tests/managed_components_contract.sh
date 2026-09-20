@@ -434,6 +434,13 @@ if managed_component_live_route_rule_sets_match_state \
   printf 'legacy download_detour exception accepted a remote Warp-local type mismatch\n' >&2
   exit 1
 fi
+jq -n '{route:{rule_set:[{type:"remote",tag:"warp-unknown-legacy",download_detour:"direct"}]}}' \
+  > "${legacy_rule_set_config_file}"
+if managed_component_live_route_rule_sets_match_state \
+  "${legacy_rule_set_config_file}" "${legacy_rule_set_empty_state}" true; then
+  printf 'legacy download_detour exception accepted an unknown reserved Warp tag\n' >&2
+  exit 1
+fi
 jq -n '{route:{rule_set:[{type:"remote",tag:"warp-remote-legacy",download_detour:"direct"}]}}' \
   > "${legacy_rule_set_config_file}"
 managed_component_live_route_rule_sets_match_state \

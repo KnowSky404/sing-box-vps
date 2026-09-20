@@ -1457,3 +1457,22 @@ TCP/UDP marker 与 typed outbound 检查完成后，inline create/replace、loca
 本地双版本核心二进制仍未配置，因此相关宿主机 real-core 检查明确 skip；Docker 中的
 1.14.1 检查与 remote fetch 是独立实际证据。本轮没有生产 VPS、SubMan 或外部同步操作；
 脚本与 README 版本仍保持 `2026092001`，全协议总目标仍未完成。
+
+随后等效提交后审查发现：只读 legacy `download_detour` 兼容分支对 `warp-*` 标签的拒绝
+范围应与状态校验一致，不能只识别已知 `warp-local-*` / `warp-remote-*` 子前缀。现将只读
+例外收窄为非 Warp 标签或类型匹配的 `warp-remote-*`，并新增未知保留标签
+`warp-unknown-legacy` 回归；错误 `warp-local-*` remote 仍 fail closed，普通无 tag 与合法
+旧 remote 项的兼容测试保留。该只读边界修复不改变功能范围，因此脚本与 README 版本不再
+递增，仍为 `2026092001`。
+
+修复后按默认入口重新运行 `bash dev/verification/run.sh`，验证目录
+`dev/verification-runs/20260920134221`；命令退出 0，`remote_status=success`，artifact bundle
+已提取。15/15 Docker 场景均为 `STATUS=success`、`EXIT_STATUS=0`，包括
+`multi_protocol_coexistence`、1.13→1.14 升级及升级回滚。该场景中
+`managed-rule-sets.result.env` 为 `RESULT=success`、`REMOTE_FETCH=local_http_200`、
+`LIFECYCLE=create_replace_delete`、`CORE_CHECK=passed`；`steps.txt` 记录 inline 创建/替换、
+local 与 remote 创建、三者 CAS 删除及 `managed-route-rule-sets-removed`。HTTP fixture 日志
+确认 sing-box 请求 `/remote-route-rules.json` 并获得 HTTP 200。宿主机
+`SINGBOX_BINARY_113/114` 未配置，宿主双版本核心检查仍按规则 skip；Docker 中目标核心
+1.14.1 的规则集 check 与真实 remote fetch 已通过。未触及生产 VPS、SubMan 或外部同步；
+全协议总目标仍未完成。
