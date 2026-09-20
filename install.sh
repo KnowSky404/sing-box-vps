@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026092001
+# Version: 2026092002
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026092001"
+readonly SCRIPT_VERSION="2026092002"
 readonly SB_SUPPORT_MAX_VERSION="1.14.1"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -1081,7 +1081,7 @@ protocol_registry_field() {
   printf '%s' "${fields[index]}"
 }
 
-protocol_registry_json() {
+protocol_registry_static_json() {
   printf '%s\n' "${SB_PROTOCOL_REGISTRY[@]}" | jq -Rn '
     def csv: split(",") | map(select(length > 0));
     [inputs | split("|") | {
@@ -1099,6 +1099,30 @@ protocol_registry_json() {
       share_formats: (.[17] | csv), probe: .[18],
       legacy_capabilities: (.[19] | fromjson), features: (.[19] | fromjson), handlers: (.[21] | csv)
     }]'
+}
+
+# Keep the stable protocol contract separate from a read-only observation of
+# the currently installed core.  `available` remains instance-specific and
+# nullable for compatibility; `environment` only reports the host/core/build
+# prerequisites that can be checked without changing state or starting a
+# listener.
+protocol_registry_json() {
+  local registry environment_registry environment
+
+  registry=$(protocol_registry_static_json) || return 1
+  environment_registry=$(jq -c '
+    map({
+      state_id, role, type, minimum_project_core,
+      availability:(if (.role == "inbound" and
+        (.type | IN("hysteria","hysteria2","tuic")) and
+        .listen_networks == ["udp"]) then "with_quic" else "builtin" end)
+    })
+  ' <<< "${registry}") || return 1
+  environment=$(component_registry_environment_bulk_json "${environment_registry}") || return 1
+  jq -c --argjson environment "${environment}" '
+    ($environment | map({key:.state_id,value:.}) | from_entries) as $by_id |
+    map(. + {environment:$by_id[.state_id]})
+  ' <<< "${registry}"
 }
 
 component_registry_record() {
@@ -1406,7 +1430,11 @@ component_registry_environment_bulk_json() {
   local dbus_ok=false
   local core_tags_json='[]' core_tags_status=unavailable core_tags_reason=sing_box_binary_missing tag_status
 
-  static=$(component_registry_static_json) || return 1
+  if [[ -n "${1:-}" ]]; then
+    static=${1}
+  else
+    static=$(component_registry_static_json) || return 1
+  fi
   platform=$(uname -s 2>/dev/null || printf 'unknown')
   core_probe_reason=sing_box_binary_missing
   core_version=''
@@ -1518,7 +1546,7 @@ component_registry_environment_bulk_json() {
       elif .type == "tor" then
         (if $tor_ok then available("tor_binary"; true)
          else unavailable("tor_binary"; "tor_binary_missing"; true) end)
-      elif .type == "naive" then
+      elif .role == "outbound" and .type == "naive" then
         (if $libcronet_ok then available("libcronet"; true)
          else unavailable("libcronet"; "libcronet_missing"; true) end)
       elif .type == "resolved" then
@@ -26793,9 +26821,14 @@ detect_existing_instance_state_read_only() {
 }
 
 agent_capabilities_json() {
-  local registry components
+  local registry components managed_registry
   registry=$(protocol_registry_json) || return 1
   components=$(component_registry_json) || return 1
+  managed_registry=$(jq -cn --argjson protocols "${registry}" --argjson components "${components}" '
+    (($protocols | map(. + {registry_kind:"protocol"} | del(.legacy_capabilities,.handlers))) +
+     ($components | map(. + {registry_kind:"component"}))) |
+    sort_by(.role,.state_id,.type)
+  ') || return 1
   jq -n \
     --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
     --arg script_version "${SCRIPT_VERSION}" \
@@ -26805,6 +26838,7 @@ agent_capabilities_json() {
     --arg component_transaction_dir "${SB_COMPONENT_TRANSACTION_DIR}" \
     --argjson registry "${registry}" \
     --argjson components "${components}" \
+    --argjson managed_registry "${managed_registry}" \
     '{
       schema: $schema,
       ok: true,
@@ -26814,6 +26848,7 @@ agent_capabilities_json() {
       multi_protocol_coexistence: true,
       protocols: ($registry | map({key: .agent_id, value: .legacy_capabilities}) | from_entries),
       protocol_registry: ($registry | map(. + {capabilities: .legacy_capabilities} | del(.legacy_capabilities, .handlers))),
+      managed_registry: {schema_version:1,entries:$managed_registry},
       features: {
         warp: {
           route_modes: ["all", "selective"],

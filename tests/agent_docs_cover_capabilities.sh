@@ -17,6 +17,14 @@ for doc in "${AGENT_DOCS[@]}"; do
   grep -Fq '/root/sing-box-vps-backups/' "${doc}"
 done
 
+for doc in \
+  "${REPO_ROOT}/README.md" \
+  "${REPO_ROOT}/docs/agents/llms.txt" \
+  "${REPO_ROOT}/docs/agents/sing-box-vps-agent-runbook.md"; do
+  grep -Fq 'managed_registry' "${doc}"
+  grep -Fq 'validated.status=not_assessed' "${doc}"
+done
+
 UPGRADE_DOC="${REPO_ROOT}/docs/agents/sing-box-1.13-to-1.14-upgrade-test.md"
 for feature in \
   'VLESS + REALITY' \

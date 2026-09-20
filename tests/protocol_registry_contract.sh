@@ -19,6 +19,8 @@ jq -e '
   ([.[].agent_id] | unique | length == 15) and
   ([.[].menu_order] | sort == [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]) and
   all(.[]; .implemented == true and .available == null and .validated.status == "not_assessed") and
+  all(.[]; .environment.status == "unavailable" and
+    .environment.reason == "sing_box_binary_missing") and
   any(.[]; .state_id == "shadowsocks" and
     .features.listen_network_selection == true and
     .legacy_capabilities.listen_network_selection == true)
@@ -116,6 +118,17 @@ jq -e '
 jq -e --argjson registry "${registry}" '
   .protocols == ($registry | map({key: .agent_id, value: .legacy_capabilities}) | from_entries) and
   ([.protocol_registry[].capabilities] == [$registry[].legacy_capabilities]) and
+  .managed_registry.schema_version == 1 and
+  (.managed_registry.entries | length) ==
+    ($registry | length) + (.features.components.registry | length) and
+  ([.managed_registry.entries[].registry_kind] | unique == ["component", "protocol"]) and
+  ([.managed_registry.entries[] | [.registry_kind, .state_id]] | unique | length) ==
+    (.managed_registry.entries | length) and
+  any(.managed_registry.entries[]; .registry_kind == "protocol" and
+    .state_id == "vless-reality" and .role == "inbound" and
+    .environment.status == "unavailable" and .validated.status == "not_assessed") and
+  any(.managed_registry.entries[]; .registry_kind == "component" and
+    .state_id == "route-rule-set-remote" and .role == "rule_set") and
   any(.protocol_registry[]; .state_id == "shadowsocks" and
     .features.listen_network_selection == true and
     .capabilities.listen_network_selection == true) and
@@ -155,6 +168,54 @@ jq -e --argjson registry "${registry}" '
   (.features.subman.supported_protocols | index("trojan") != null) and
   .features.subman.supported_protocols == ($registry | map(select(.subman_type != "") | .agent_id))
 ' >/dev/null <<< "${capabilities}"
+
+cat > "${SINGBOX_BIN_PATH}" <<'SINGBOX_VERSION_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${1:-}" == version ]] || exit 2
+printf 'sing-box version 1.14.1\nTags: with_quic,with_cloudflared\n'
+SINGBOX_VERSION_EOF
+chmod 0755 "${SINGBOX_BIN_PATH}"
+registry_with_tags=$(protocol_registry_json)
+jq -e '
+  all(.[]; .environment.core.version == "1.14.1" and
+    .environment.core.status == "available") and
+  any(.[]; .state_id == "hy2" and .environment.status == "available" and
+    any(.environment.dependencies[]; .name == "build_tag_with_quic" and
+      .status == "available")) and
+  any(.[]; .state_id == "snell" and .environment.status == "available" and
+    .environment.core.minimum == "1.14.0") and
+  all(.[]; .available == null and .validated.status == "not_assessed")
+' >/dev/null <<< "${registry_with_tags}"
+
+cat > "${SINGBOX_BIN_PATH}" <<'SINGBOX_VERSION_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${1:-}" == version ]] || exit 2
+printf 'sing-box version 1.13.18\nTags: with_quic\n'
+SINGBOX_VERSION_EOF
+chmod 0755 "${SINGBOX_BIN_PATH}"
+registry_old_core=$(protocol_registry_json)
+jq -e '
+  any(.[]; .state_id == "snell" and .environment.status == "unavailable" and
+    .environment.reason == "sing_box_version_too_old") and
+  any(.[]; .state_id == "hy2" and .environment.status == "available")
+' >/dev/null <<< "${registry_old_core}"
+
+cat > "${SINGBOX_BIN_PATH}" <<'SINGBOX_VERSION_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${1:-}" == version ]] || exit 2
+printf 'sing-box version 1.14.1\n'
+SINGBOX_VERSION_EOF
+chmod 0755 "${SINGBOX_BIN_PATH}"
+registry_unreported_tags=$(protocol_registry_json)
+jq -e '
+  any(.[]; .state_id == "hy2" and .environment.status == "not_assessed" and
+    .environment.reason == "build_tags_not_reported") and
+  any(.[]; .state_id == "vless-plain" and .environment.status == "available")
+' >/dev/null <<< "${registry_unreported_tags}"
+rm -f -- "${SINGBOX_BIN_PATH}"
 
 [[ "$(normalize_protocol_id vless)" == vless-reality ]]
 [[ "$(normalize_protocol_id vless+reality)" == vless-reality ]]
