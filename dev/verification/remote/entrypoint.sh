@@ -2067,84 +2067,39 @@ PY
   udp_status=0
 )
 
-# Exercise a redirect inbound with a disposable OUTPUT REDIRECT rule. The
-# rule is owner-scoped to uid 65534, so the sing-box service and marker server
-# cannot recurse through it. This is verification-only host policy: it never
-# enters the installer firewall ledger.
-verification_execute_redirect_probe() (
-  set -euo pipefail
-  local config_file=$1 listener_port=$2
-  local probe_dir="${VERIFY_CURRENT_SCENARIO_DIR}/transparent/redirect"
-  local check_artifact response_artifact client_stderr_artifact marker_stdout_artifact
-  local marker_stderr_artifact rule_before_artifact rule_after_artifact
-  local result_artifact port_file temp_dir marker marker_port
-  local marker_pid='' rule_added=false probe_status=1
+verification_prepare_redirect_policy_fixture() {
+  local pid_variable=${1:-} probe_dir="${VERIFY_CURRENT_SCENARIO_DIR}/transparent/redirect"
+  local host_veth=sbv-rph0 peer_veth=sbv-rpp0 netns=sbv-rpc
+  local host_address=198.18.21.1 peer_address=198.18.21.2 marker_port=18081
+  local marker="sing-box-vps-redirect-prerouting-ok-$(date +%s)-$$"
+  local probe_response
 
-  check_artifact=$(verification_artifact_path "${probe_dir}/sing-box-check.txt")
-  response_artifact=$(verification_artifact_path "${probe_dir}/response.txt")
-  client_stderr_artifact=$(verification_artifact_path "${probe_dir}/client.stderr.txt")
-  marker_stdout_artifact=$(verification_artifact_path "${probe_dir}/marker.stdout.txt")
-  marker_stderr_artifact=$(verification_artifact_path "${probe_dir}/marker.stderr.txt")
-  rule_before_artifact=$(verification_artifact_path "${probe_dir}/iptables.before.txt")
-  rule_after_artifact=$(verification_artifact_path "${probe_dir}/iptables.after.txt")
-  result_artifact=$(verification_artifact_path "${probe_dir}/result.env")
-  rm -f -- "${check_artifact}" "${response_artifact}" "${client_stderr_artifact}" \
-    "${marker_stdout_artifact}" "${marker_stderr_artifact}" "${rule_before_artifact}" \
-    "${rule_after_artifact}" "${result_artifact}"
+  [[ -n "${pid_variable}" ]] || return 1
+  command -v iptables >/dev/null 2>&1
+  command -v iptables-save >/dev/null 2>&1
+  if ip link show dev "${host_veth}" >/dev/null 2>&1 ||
+     ip netns list | awk -v name="${netns}" '$1 == name { found=1 } END { exit !found }'; then
+    printf '[ERROR] Redirect policy verification fixture names already exist.\n' >&2
+    return 1
+  fi
+  mkdir -p "${probe_dir}"
+  verification_capture_command "${probe_dir}/iptables.before.txt" iptables-save -t nat
+  ip netns add "${netns}"
+  ip link add "${host_veth}" type veth peer name "${peer_veth}"
+  ip link set "${peer_veth}" netns "${netns}"
+  ip addr add "${host_address}/30" dev "${host_veth}"
+  ip link set "${host_veth}" up
+  ip netns exec "${netns}" ip addr add "${peer_address}/30" dev "${peer_veth}"
+  ip netns exec "${netns}" ip link set lo up
+  ip netns exec "${netns}" ip link set "${peer_veth}" up
 
-  cleanup_redirect_probe() {
-    local status=$? cleanup_status=0
-    set +e
-    if [[ -n "${marker_pid}" ]]; then
-      kill "${marker_pid}" 2>/dev/null || true
-      wait "${marker_pid}" 2>/dev/null || true
-      marker_pid=''
-    fi
-    if [[ "${rule_added}" == true ]]; then
-      if ! iptables -t nat -D OUTPUT -m owner --uid-owner 65534 -p tcp \
-        -d 127.0.0.1 --dport "${marker_port}" -j REDIRECT --to-ports "${listener_port}"; then
-        cleanup_status=1
-      fi
-      rule_added=false
-    fi
-    verification_capture_best_effort_command "${probe_dir}/iptables.after-cleanup.txt" \
-      iptables-save -t nat
-    rm -rf -- "${temp_dir:-}"
-    if [[ "${status}" == 0 && "${cleanup_status}" != 0 ]]; then
-      status=1
-    fi
-    if [[ "${status}" == 0 && "${probe_status}" == 0 ]]; then
-      verification_write_artifact "${probe_dir}/result.env" \
-        'COMPONENT=redirect-inbound' 'RESULT=success' \
-        'DATA_PLANE=redirect_tcp_loopback' \
-        'POLICY_SCOPE=verification_container_only' \
-        'POLICY_OWNERSHIP=not_managed'
-    else
-      verification_write_artifact "${probe_dir}/result.env" \
-        'COMPONENT=redirect-inbound' 'RESULT=failure' \
-        'DATA_PLANE=redirect_tcp_loopback' \
-        'POLICY_SCOPE=verification_container_only' \
-        'POLICY_OWNERSHIP=not_managed'
-    fi
-    exit "${status}"
-  }
-  trap 'cleanup_redirect_probe' EXIT
-
-  verification_capture_command "${probe_dir}/sing-box-check.txt" \
-    sing-box check -c "${config_file}"
-  verification_capture_best_effort_command "${probe_dir}/iptables.before.txt" \
-    iptables-save -t nat
-  temp_dir=$(mktemp -d /tmp/sing-box-vps-redirect-probe.XXXXXX)
-  port_file="${temp_dir}/port"
-  marker="sing-box-vps-redirect-loopback-ok-$(date +%s)-$$"
-  python3 - "${port_file}" "${marker}" \
-    > "${marker_stdout_artifact}" 2> "${marker_stderr_artifact}" <<'PY' &
+  python3 - "${host_address}" "${marker_port}" "${marker}" \
+    > "${probe_dir}/marker.stdout.txt" 2> "${probe_dir}/marker.stderr.txt" <<'PY' &
 import http.server
-import pathlib
 import socketserver
 import sys
 
-port_file, marker = sys.argv[1:]
+bind_address, port, marker = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 
 class MarkerHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
@@ -2161,38 +2116,169 @@ class ReusableServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
 
-with ReusableServer(("127.0.0.1", 0), MarkerHandler) as server:
-    pathlib.Path(port_file).write_text(str(server.server_address[1]), encoding="ascii")
+with ReusableServer((bind_address, port), MarkerHandler) as server:
     server.serve_forever()
 PY
-  marker_pid=$!
+  VERIFY_REDIRECT_MARKER_PID=$!
+  printf -v "${pid_variable}" '%s' "${VERIFY_REDIRECT_MARKER_PID}"
+  probe_response=$(verification_artifact_path "${probe_dir}/marker-ready.txt")
   for _ in {1..50}; do
-    [[ -s "${port_file}" ]] && break
-    kill -0 "${marker_pid}" 2>/dev/null || exit 1
+    if curl --noproxy '*' --fail --silent --max-time 2 \
+      "http://${host_address}:${marker_port}/" -o "${probe_response}"; then
+      break
+    fi
+    kill -0 "${VERIFY_REDIRECT_MARKER_PID}" 2>/dev/null || return 1
     sleep 0.1
   done
-  [[ -s "${port_file}" ]]
-  marker_port=$(cat "${port_file}")
-  [[ "${marker_port}" =~ ^[0-9]+$ && "${marker_port}" -ge 1 && "${marker_port}" -le 65535 ]]
+  grep -Fqx "${marker}" "${probe_response}"
+  VERIFY_REDIRECT_HOST_VETH=${host_veth}
+  VERIFY_REDIRECT_NETNS=${netns}
+  VERIFY_REDIRECT_HOST_ADDRESS=${host_address}
+  VERIFY_REDIRECT_MARKER_PORT=${marker_port}
+  VERIFY_REDIRECT_MARKER=${marker}
+}
 
-  iptables -t nat -A OUTPUT -m owner --uid-owner 65534 -p tcp \
-    -d 127.0.0.1 --dport "${marker_port}" -j REDIRECT --to-ports "${listener_port}"
-  rule_added=true
+verification_cleanup_redirect_policy_fixture() {
+  local status=0 component_state_file=/root/sing-box-vps/components.json revision delete_status
+  local delete_artifact="${VERIFY_CURRENT_SCENARIO_DIR}/redirect-cleanup-delete.json"
+  local state_valid=false redirect_record_present=false
+  local restore_errexit=false
+  if [[ -f "${component_state_file}" && ! -L "${component_state_file}" ]]; then
+    if jq -e 'type == "object" and (.revision | type == "number" and . == floor and . >= 0) and
+      (.components | type == "array")' "${component_state_file}" >/dev/null 2>&1; then
+      state_valid=true
+      if jq -e 'any(.components[]; .id == "redirect-inbound-verification" and
+        .role == "inbound" and .type == "redirect" and has("host_policy"))' \
+        "${component_state_file}" >/dev/null 2>&1; then
+        redirect_record_present=true
+      fi
+    else
+      printf '[ERROR] Redirect fixture cleanup found an unreadable component state.\n' >&2
+      status=1
+    fi
+  fi
+  if [[ "${redirect_record_present}" == true ]]; then
+    revision=$(jq -r '.revision | tostring' "${component_state_file}") || status=1
+    if [[ -z "${VERIFY_REMOTE_INSTALL_SCRIPT:-}" || ! -f "${VERIFY_REMOTE_INSTALL_SCRIPT}" ||
+          ! "${revision}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
+      printf '[ERROR] Redirect fixture cleanup cannot run a revisioned component delete.\n' >&2
+      status=1
+    else
+      [[ "$-" == *e* ]] && restore_errexit=true
+      set +e
+      bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
+        --expected-revision "${revision}" --id redirect-inbound-verification \
+        > "${delete_artifact}" 2>&1
+      delete_status=$?
+      if [[ "${restore_errexit}" == true ]]; then
+        set -e
+      fi
+      if [[ "${delete_status}" != 0 ]] ||
+         ! jq -e '.ok == true and .operation == "delete" and
+           .id == "redirect-inbound-verification"' "${delete_artifact}" >/dev/null 2>&1; then
+        printf '[ERROR] Redirect fixture component delete failed; see cleanup artifact.\n' >&2
+        status=1
+      fi
+    fi
+  elif [[ "${state_valid}" == false && -e "${component_state_file}" ]]; then
+    status=1
+  fi
+  if [[ -n "${VERIFY_REDIRECT_MARKER_PID:-}" ]]; then
+    if kill -0 "${VERIFY_REDIRECT_MARKER_PID}" 2>/dev/null; then
+      kill "${VERIFY_REDIRECT_MARKER_PID}" || status=1
+      if wait "${VERIFY_REDIRECT_MARKER_PID}" 2>/dev/null; then
+        :
+      else
+        local wait_status=$?
+        [[ "${wait_status}" == 130 || "${wait_status}" == 143 ]] || status=1
+      fi
+    fi
+    VERIFY_REDIRECT_MARKER_PID=''
+  fi
+  if command -v ip >/dev/null 2>&1; then
+    if ip netns list | awk '$1 == "sbv-rpc" { found=1 } END { exit !found }'; then
+      ip netns del sbv-rpc || status=1
+    fi
+    if ip link show dev sbv-rph0 >/dev/null 2>&1; then
+      ip link del sbv-rph0 || status=1
+    fi
+  else
+    status=1
+  fi
+  if ! verification_assert_redirect_policy_removed; then
+    printf '[ERROR] Redirect fixture cleanup could not prove its owned policy was removed.\n' >&2
+    status=1
+  fi
+  if [[ "${status}" == 0 ]]; then
+    verification_write_artifact \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/cleanup.result.env" \
+      'RESULT=success' 'COMPONENT_STATE=absent' 'OWNED_POLICY=absent' \
+      'MARKER_PROCESS=stopped' 'NETWORK_FIXTURE=removed'
+  else
+    verification_write_artifact \
+      "${VERIFY_CURRENT_SCENARIO_DIR}/cleanup.result.env" \
+      'RESULT=failure' 'MANUAL_REVIEW_REQUIRED=true'
+  fi
+  return "${status}"
+}
+
+# Exercise a Redirect inbound using the component-owned PREROUTING policy.
+# Client packets enter through a disposable veth in a separate network
+# namespace; sing-box's local outbound connection does not traverse PREROUTING.
+verification_execute_redirect_probe() (
+  set -euo pipefail
+  local config_file=$1 listener_port=$2 marker_port=$3 marker=$4
+  local probe_dir="${VERIFY_CURRENT_SCENARIO_DIR}/transparent/redirect"
+  local check_artifact response_artifact client_stderr_artifact marker_stdout_artifact
+  local marker_stderr_artifact rule_before_artifact rule_after_artifact
+  local result_artifact probe_status=1
+
+  check_artifact=$(verification_artifact_path "${probe_dir}/sing-box-check.txt")
+  response_artifact=$(verification_artifact_path "${probe_dir}/response.txt")
+  client_stderr_artifact=$(verification_artifact_path "${probe_dir}/client.stderr.txt")
+  marker_stdout_artifact=$(verification_artifact_path "${probe_dir}/marker.stdout.txt")
+  marker_stderr_artifact=$(verification_artifact_path "${probe_dir}/marker.stderr.txt")
+  rule_before_artifact=$(verification_artifact_path "${probe_dir}/iptables.before.txt")
+  rule_after_artifact=$(verification_artifact_path "${probe_dir}/iptables.after.txt")
+  result_artifact=$(verification_artifact_path "${probe_dir}/result.env")
+  rm -f -- "${check_artifact}" "${response_artifact}" "${client_stderr_artifact}" \
+    "${marker_stdout_artifact}" "${marker_stderr_artifact}" "${rule_before_artifact}" \
+    "${rule_after_artifact}" "${result_artifact}"
+
+  cleanup_redirect_probe() {
+    local status=$?
+    set +e
+    if [[ "${status}" == 0 && "${probe_status}" == 0 ]]; then
+      verification_write_artifact "${probe_dir}/result.env" \
+        'COMPONENT=redirect-inbound' 'RESULT=success' \
+        'DATA_PLANE=redirect_tcp_prerouting_veth' \
+        'POLICY_SCOPE=installer_managed_verification_container' \
+        'POLICY_OWNERSHIP=managed_ipv4_tcp'
+    else
+      verification_write_artifact "${probe_dir}/result.env" \
+        'COMPONENT=redirect-inbound' 'RESULT=failure' \
+        'DATA_PLANE=redirect_tcp_prerouting_veth' \
+        'POLICY_SCOPE=installer_managed_verification_container' \
+        'POLICY_OWNERSHIP=managed_ipv4_tcp'
+    fi
+    exit "${status}"
+  }
+  trap 'cleanup_redirect_probe' EXIT
+
+  verification_capture_command "${probe_dir}/sing-box-check.txt" \
+    sing-box check -c "${config_file}"
+  [[ "${marker_port}" =~ ^[0-9]+$ && "${marker_port}" -ge 1 && "${marker_port}" -le 65535 ]]
   verification_capture_command "${probe_dir}/iptables.with-redirect.txt" \
     iptables-save -t nat
 
   set +e
-  python3 - "${marker_port}" "${marker}" \
+  ip netns exec sbv-rpc python3 - "${VERIFY_REDIRECT_HOST_ADDRESS}" "${marker_port}" "${marker}" \
     > "${response_artifact}" 2> "${client_stderr_artifact}" <<'PY'
-import os
 import socket
 import sys
 
-target_port, marker = int(sys.argv[1]), sys.argv[2].encode()
-os.setgroups([])
-os.setgid(65534)
-os.setuid(65534)
-with socket.create_connection(("127.0.0.1", target_port), timeout=5) as conn:
+target_address, target_port, marker = sys.argv[1], int(sys.argv[2]), sys.argv[3].encode()
+with socket.create_connection((target_address, target_port), timeout=5) as conn:
     conn.settimeout(5)
     conn.sendall(b"GET / HTTP/1.1\r\nHost: redirect.invalid\r\nConnection: close\r\n\r\n")
     payload = b""
@@ -2212,6 +2298,19 @@ PY
   grep -Fqx "${marker}" "${response_artifact}"
   probe_status=0
 )
+
+verification_assert_redirect_policy_removed() {
+  local probe_dir="${VERIFY_CURRENT_SCENARIO_DIR}/transparent/redirect"
+  local after_artifact
+  after_artifact=$(verification_artifact_path "${probe_dir}/iptables.after-delete.txt")
+  verification_capture_command "${after_artifact}" iptables-save -t nat
+  if grep -E 'SBVR_[a-f0-9]{20}|sbv-redirect-[a-f0-9]{20}' "${after_artifact}" >/dev/null; then
+    printf '[ERROR] Redirect managed policy remains after component delete.\n' >&2
+    return 1
+  fi
+  verification_write_artifact "${probe_dir}/cleanup.result.env" \
+    'RESULT=success' 'OWNED_CHAIN=absent' 'OWNED_PREROUTING_JUMP=absent'
+}
 
 # Exercise a TProxy inbound from an isolated network namespace. The veth,
 # policy route, mark and mangle rules are disposable and are never treated as

@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026092002`
+- 脚本版本：`2026092003`
 
 - sing-box 适配版本：`1.14.1`
 
@@ -97,13 +97,17 @@ OpenVPN endpoint 现在另有受限的真实 TCP 与 UDP 闭环：固定官方 A
 
 Snell outbound 已按 sing-box 1.14 的 `SnellOutboundOptions` 接入 typed component state；版本仅允许 v4（HTTP obfs）或 v6（traffic shaping），并保留 PSK、可选 userkey/reuse、TCP/UDP network 和共享 Dial Fields。v4/v6 字段不可交叉，v6 PSK 至少 12 字节；Snell v5 QUIC proxy 不作为独立 outbound 提供，UDP 业务由 Snell 的 TCP packet API 承载。凭据仅通过敏感 component export 返回，1.14 核心 `check` 不代表远端 Snell 握手或 TCP/UDP 数据面，1.13.18 核心明确不注册该 type。
 
-透明组件诊断现在额外返回 `transparent_resources`：服务 active 时只读检查 TUN 接口、iproute2 规则/路由及 auto-redirect 的 nftables 观测，并对命名 `system:true` WireGuard/OpenConnect/OpenVPN 与命名 `system_interface:true` Tailscale 核对 core-owned 接口、配置地址（如有）和 MTU；缺失的 core-owned 资源会报告 `unavailable`。当活动服务重启包含这些组件的事务时，同一组 core-owned 资源检查作为 postcheck 执行，失败会先补偿受管防火墙并恢复变更前的 state/config/service，返回 `transparent_resource_check_failed`。特权隔离 Docker 的 `fresh_install_vless` 场景已实际创建并删除受管 TUN，回读 `sbv-tun`、table 2022/priority 9000 规则和路由，确认删除后的清理；OpenVPN 的命名系统接口/隧道资源证据见下文；这仍不代表透明包转发、VPN 外部认证或宿主策略已完成。Redirect/TProxy 资源明确标记 `host_policy_rules_not_managed`，仍需操作员维护 PREROUTING/策略路由，诊断结果不把任意主机规则当作项目所有。
+透明组件诊断现在额外返回 `transparent_resources`：服务 active 时只读检查 TUN 接口、iproute2 规则/路由及 auto-redirect 的 nftables 观测，并对命名 `system:true` WireGuard/OpenConnect/OpenVPN 与命名 `system_interface:true` Tailscale 核对 core-owned 接口、配置地址（如有）和 MTU；缺失的 core-owned 资源会报告 `unavailable`。当活动服务重启包含这些组件的事务时，同一组 core-owned 资源检查作为 postcheck 执行，失败会先补偿受管防火墙并恢复变更前的 state/config/service，返回 `transparent_resource_check_failed`。特权隔离 Docker 的 `fresh_install_vless` 场景已实际创建并删除受管 TUN，回读 `sbv-tun`、table 2022/priority 9000 规则和路由，确认删除后的清理；OpenVPN 的命名系统接口/隧道资源证据见下文；这仍不代表 VPN 外部认证或宿主完整策略已完成。可选 Redirect `host_policy` 由独立的 `redirect_host_policy` 诊断和事务日志管理；当前仅支持显式 IPv4/TCP PREROUTING 链、指定 ingress interface 与目标端口，要求非回环监听并显式 `--allow-public`。TProxy 策略仍由操作员管理；没有默认端口捕获、全机路由或 DNS 劫持。
 
 2026-09-15 Redirect/TProxy 透明数据面增量：特权隔离 Docker 的 `multi_protocol_coexistence` 场景（`dev/verification-runs/20260915013127`）创建 redirect revision 4 与 TProxy revision 5，固定官方 ARM64 `sing-box 1.14.0` `check` 通过；验证容器内临时 owner-scoped `OUTPUT REDIRECT` TCP marker，以及独立 veth/network namespace、fwmark policy route 和 `PREROUTING TPROXY` 的 TCP+UDP marker。`transparent/*/result.env`、精确 response、iptables/iproute2 before/with/after-cleanup artifact 均成功，`component diagnose` 同时确认两实例需要 root 但不需要 TUN；随后按 revision 删除至 6/7 并清理策略。临时规则明确为 `POLICY_OWNERSHIP=not_managed`，不宣称宿主规则所有权、公网、生产、外部认证、SubMan 或完整协议目标完成。
 
 2026-09-14 Snell/AnyTLS UDP adapter 增量：定向 Docker run `dev/verification-runs/20260914165733` 的 `multi_protocol_coexistence` 与 `runtime_smoke` 均成功；共存场景复用受管 Snell v6 exporter（明确输出 `network:["tcp","udp"]`）和 AnyTLS outbound（无 configurable `network`），在固定 1.14.0 核心 `check` 后分别回读 Snell TCP + packet API UDP marker、AnyTLS TCP + UoT UDP marker，相关 `result.env`/`udp.result.env` 均为 `RESULT=success`，并保留 `inbound UoT connection` journal 行。这不是原生 UDP listener、外部认证、公网、生产、SubMan 或全协议目标完成证明。
 
 2026-09-14 Snell v5 adapter 增量：定向 Docker run `dev/verification-runs/20260914185411` 的 `multi_protocol_coexistence` 与 `runtime_smoke` 均成功。共存场景先保留 v6 的四项 TCP/packet-API UDP artifact，再通过 `agent instance replace snell --expected-revision 1` 原子替换为 v5 HTTP obfs 实例（提交 revision 2）；`snell-v5-config.json` 通过固定 1.14.0 `check`，typed store 保留 `obfs_host`，客户端 exporter 正确映射为 version 4、`obfs_mode:"http"`、`network:["tcp","udp"]`。v5 TCP 与 packet-API UDP marker、精确响应、客户端 check 和 journal 均为成功。该证据仍只覆盖隔离容器/回环，不是原生 UDP listener、公网、生产、外部认证、SubMan 或全协议目标完成证明。
+
+Redirect `host_policy` applies only to enabled components. `destination_ports` and `management_ports` must be disjoint, and the listener port cannot be captured; the first enabled policy also requires sing-box to be active. Its dedicated jump is appended after existing IPv4 PREROUTING rules, so `component diagnose` reports observed ordering and marks effectiveness unassessed when earlier rules exist. This remains an explicit IPv4/TCP opt-in, not general host firewall management.
+
+2026-09-21 Redirect `host_policy` 验收：默认完整门禁 `bash dev/verification/run.sh`（`dev/verification-runs/20260921031904`）退出 0，Docker 远程 16/16 场景成功。`multi_protocol_coexistence` 在固定 `sing-box 1.14.1` 下创建受管 PREROUTING 链并经隔离 veth 回读 TCP marker；artifact 记录 `redirect-inbound-probe-complete`。随后 Redirect 删除 revision 7 返回 `not_configured`/空资源，`transparent-components-deleted` 与 `cleanup.result.env` 证明专属规则链及测试 veth/network namespace 清理断言通过。此项验证只覆盖隔离 Docker 内明确接口/目标端口的策略，不代表宿主机通用防火墙策略、公网或生产部署；TProxy 仍为操作员管理，全协议目标尚未完成。
 
 ## 🚀 一键安装
 

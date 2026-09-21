@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026092002
+# Version: 2026092003
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026092002"
+readonly SCRIPT_VERSION="2026092003"
 readonly SB_SUPPORT_MAX_VERSION="1.14.1"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -31,6 +31,8 @@ readonly SB_PROTOCOL_INDEX_FILE="${SB_PROTOCOL_STATE_DIR}/index.env"
 readonly SB_COMPONENT_STATE_FILE="${SB_PROJECT_DIR}/components.json"
 readonly SB_COMPONENT_TRANSACTION_DIR="${SB_PROJECT_DIR}.component-write.lock"
 readonly SB_COMPONENT_STATE_SCHEMA_VERSION="1"
+readonly MANAGED_REDIRECT_POLICY_CHAIN_PREFIX="SBVR_"
+readonly MANAGED_REDIRECT_POLICY_COMMENT_PREFIX="sbv-redirect-"
 readonly SB_REALITY_QOS_FILTER_STATE_FILE="${SB_PROJECT_DIR}/reality-qos.filters"
 readonly SB_REALITY_QOS_FILTER_PREF_START="32001"
 readonly SB_REALITY_QOS_BURST="512k"
@@ -95,7 +97,7 @@ readonly SB_PROTOCOL_REGISTRY=(
 readonly SB_COMPONENT_REGISTRY=(
   'direct-inbound|inbound|direct|Direct inbound|1.13.0|builtin|{"listen":true,"network":["tcp","udp"],"loop_prevention":true}'
   'tun-inbound|inbound|tun|TUN inbound|1.13.0|builtin|{"l3":true,"auto_route":true,"strict_route":true,"loop_prevention":true}'
-  'redirect-inbound|inbound|redirect|Redirect inbound|1.13.0|builtin|{"listen":true,"linux_macos":true,"loop_prevention":true}'
+  'redirect-inbound|inbound|redirect|Redirect inbound|1.13.0|builtin|{"listen":true,"linux_macos":true,"loop_prevention":true,"optional_host_policy":{"backend":"iptables","family":"ipv4","transport":["tcp"],"scope":"explicit_interface_and_destination_ports"}}'
   'tproxy-inbound|inbound|tproxy|TProxy inbound|1.13.0|builtin|{"listen":true,"network":["tcp","udp"],"linux":true,"loop_prevention":true}'
   'cloudflared-inbound|inbound|cloudflared|Cloudflared inbound|1.14.0|with_cloudflared|{"tunnel":true,"token_required":true,"account_mutation":false}'
   'wireguard-endpoint|endpoint|wireguard|WireGuard endpoint|1.11.0|with_wireguard|{"endpoint":true,"modern_endpoint":true,"typed_config":true,"peers":true,"allowed_ips":true,"udp_nat":true,"dialer":true,"listen_network":["udp"]}'
@@ -1709,10 +1711,30 @@ managed_component_instance_environment_json() {
     fi
   fi
 
+  if jq -e 'has("host_policy") and (.enabled == true)' <<< "${record}" >/dev/null 2>&1; then
+    local host_policy_interface
+    host_policy_interface=$(jq -r '.host_policy.ingress_interface' <<< "${record}") || return 1
+    if [[ "$(uname -s 2>/dev/null || printf unknown)" != Linux ]]; then
+      instance_add_dependency host_policy_platform unavailable redirect_host_policy_linux_only || return 1
+    elif command -v iptables >/dev/null 2>&1 && iptables -t nat -S >/dev/null 2>&1; then
+      instance_add_dependency iptables_nat available '' || return 1
+    else
+      instance_add_dependency iptables_nat unavailable iptables_nat_unavailable || return 1
+    fi
+    if command -v ip >/dev/null 2>&1 && ip link show dev "${host_policy_interface}" >/dev/null 2>&1; then
+      instance_add_dependency ingress_interface available '' || return 1
+    else
+      instance_add_dependency ingress_interface unavailable ingress_interface_unavailable || return 1
+    fi
+  fi
+
   requirements=$(jq -cn --arg mode "${system_mode}" --argjson root "${requires_root}" \
     --argjson tun "${requires_tun_device}" --argjson gvisor "${requires_gvisor}" \
+    --argjson redirect_policy "$(jq -r 'has("host_policy") and (.enabled == true)' <<< "${record}")" \
     '{system_interface:($mode == "system"),system_mode:$mode,requires_root:$root,
-      requires_tun_device:$tun,requires_gvisor:$gvisor}') || return 1
+      requires_tun_device:$tun,requires_gvisor:$gvisor,
+      managed_redirect_host_policy:$redirect_policy,
+      redirect_host_policy_scope:(if $redirect_policy then "ipv4_tcp_prerouting" else null end)}') || return 1
   jq -cn --argjson base "${base}" --arg status "${status}" --arg reason "${reason}" \
     --argjson dependencies "${dependencies}" --argjson requirements "${requirements}" \
     '$base + {status:$status,reason:(if $reason == "" then null else $reason end),
@@ -16798,6 +16820,32 @@ managed_component_rule_set_remote_config_validate_json() {
   ' <<< "${config}" >/dev/null 2>&1
 }
 
+managed_component_redirect_host_policy_validate_record() {
+  local record=${1:-}
+  [[ -n "${record}" ]] || return 1
+  jq -e '
+    if has("host_policy") then
+      . as $record | .host_policy as $policy |
+      ($record.role == "inbound" and $record.type == "redirect" and
+       ($record.enabled | type == "boolean") and
+       $record.config.listen == "0.0.0.0" and
+       ($record.config.listen_port | type == "number" and . == floor and . >= 1 and . <= 65535)) and
+      ($policy | type == "object" and
+        ((keys - ["ingress_interface","destination_ports","management_ports"]) | length == 0) and
+        (.ingress_interface | type == "string" and length >= 1 and length <= 15 and
+          test("^[A-Za-z0-9_.:-]+$")) and
+        (.destination_ports | type == "array" and length >= 1 and length <= 15 and
+          all(.[]; type == "number" and . == floor and . >= 1 and . <= 65535) and
+          (unique | length) == length) and
+        (.management_ports | type == "array" and length >= 1 and length <= 15 and
+          all(.[]; type == "number" and . == floor and . >= 1 and . <= 65535) and
+          (unique | length) == length) and
+        (($policy.destination_ports | index($record.config.listen_port)) == null) and
+        all(.destination_ports[]; . as $port | ($policy.management_ports | index($port)) == null))
+    else true end
+  ' <<< "${record}" >/dev/null 2>&1
+}
+
 managed_component_state_validate_record() {
   local record=${1:-} role type tag registry_id config route_rules
   [[ -n "${record}" ]] || return 1
@@ -16805,7 +16853,7 @@ managed_component_state_validate_record() {
     if length != 1 then false
     else .[0] |
       type == "object" and
-      ((keys - ["id","role","type","tag","enabled","route_rules","config"]) | length == 0) and
+      ((keys - ["id","role","type","tag","enabled","route_rules","config","host_policy"]) | length == 0) and
       (.id | type == "string") and (.role | type == "string") and
       (.type | type == "string") and (.tag | type == "string")
     end
@@ -16821,6 +16869,7 @@ managed_component_state_validate_record() {
   jq -e '.enabled | type == "boolean"' <<< "${record}" >/dev/null 2>&1 || return 1
   jq -e '.config | type == "object" and (has("type") | not) and (has("tag") | not)' \
     <<< "${record}" >/dev/null 2>&1 || return 1
+  managed_component_redirect_host_policy_validate_record "${record}" || return 1
   route_rules=$(jq -c '.route_rules // []' <<< "${record}") || return 1
   managed_component_route_rules_validate_json "${route_rules}" || return 1
   config=$(jq -c '.config' <<< "${record}") || return 1
@@ -17004,18 +17053,18 @@ managed_component_normalize_input_file() (
   result=$(jq -cS '
     if type != "object" then error("record") else . as $r |
       if ($r | has("config")) and
-         ((($r | keys) - ["id","role","type","tag","enabled","route_rules","config"]) | length > 0)
+         ((($r | keys) - ["id","role","type","tag","enabled","route_rules","config","host_policy"]) | length > 0)
       then error("unknown_record_field") else
       {
         id: $r.id,
         role: $r.role,
         type: $r.type,
         tag: $r.tag,
-        enabled: ($r.enabled // true),
+        enabled: (if ($r | has("enabled")) then $r.enabled else true end),
         route_rules: ($r.route_rules // []),
         config: (if ($r | has("config")) then $r.config
-                 else $r | del(.id,.role,.type,.tag,.enabled,.route_rules) end)
-      }
+                 else $r | del(.id,.role,.type,.tag,.enabled,.route_rules,.host_policy) end)
+      } + (if $r | has("host_policy") then {host_policy:$r.host_policy} else {} end)
       end
     end' "${snapshot}") || return 1
   managed_component_state_validate_record "${result}" || return 1
@@ -17047,7 +17096,398 @@ managed_component_render_json() {
       rule_sets: [$components[] | enabled | select(.role == "rule_set") |
         .config + {type:.type, tag:.tag}],
       route_rules: [$components[] | enabled | (.route_rules // [])[]]
-    }' <<< "${state}"
+  }' <<< "${state}"
+}
+
+managed_component_redirect_host_policy_plan_for_record() {
+  local record=${1:-} component_id interface_name listen_port destination_ports management_ports
+  local digest policy_id chain marker
+  managed_component_redirect_host_policy_validate_record "${record}" || return 1
+  jq -e 'has("host_policy")' <<< "${record}" >/dev/null 2>&1 || return 2
+  component_id=$(jq -r '.id' <<< "${record}") || return 1
+  interface_name=$(jq -r '.host_policy.ingress_interface' <<< "${record}") || return 1
+  listen_port=$(jq -r '.config.listen_port' <<< "${record}") || return 1
+  destination_ports=$(jq -r '.host_policy.destination_ports | sort | map(tostring) | join(",")' <<< "${record}") || return 1
+  management_ports=$(jq -r '.host_policy.management_ports | sort | map(tostring) | join(",")' <<< "${record}") || return 1
+  digest=$(printf '%s\0' "${component_id}" "${interface_name}" "${destination_ports}" \
+    "${management_ports}" "${listen_port}" | sha256sum | awk '{print $1}') || return 1
+  [[ "${digest}" =~ ^[[:xdigit:]]{64}$ ]] || return 1
+  policy_id=${digest:0:20}
+  chain="${MANAGED_REDIRECT_POLICY_CHAIN_PREFIX}${policy_id}"
+  marker="${MANAGED_REDIRECT_POLICY_COMMENT_PREFIX}${policy_id}"
+  jq -cn --arg id "${component_id}" --arg tag "$(jq -r '.tag' <<< "${record}")" \
+    --arg interface "${interface_name}" --arg chain "${chain}" --arg marker "${marker}" \
+    --argjson listen_port "${listen_port}" \
+    --argjson destination_ports "$(jq -c '.host_policy.destination_ports | sort' <<< "${record}")" \
+    --argjson management_ports "$(jq -c '.host_policy.management_ports | sort' <<< "${record}")" \
+    '{id:$id,tag:$tag,chain:$chain,marker:$marker,interface:$interface,
+      destination_ports:$destination_ports,management_ports:$management_ports,
+      listen_port:$listen_port,family:"ipv4",transport:"tcp"}'
+}
+
+managed_component_redirect_host_policy_plan_json() {
+  local state=${1:-} record plan
+  local plans=()
+  managed_component_state_validate_json "${state}" || return 1
+  while IFS= read -r record; do
+    [[ -n "${record}" ]] || continue
+    jq -e 'has("host_policy") and .enabled == true' <<< "${record}" >/dev/null 2>&1 || continue
+    plan=$(managed_component_redirect_host_policy_plan_for_record "${record}") || return 1
+    plans+=("${plan}")
+  done < <(jq -c '.components[]' <<< "${state}")
+  if ((${#plans[@]} == 0)); then
+    printf '[]\n'
+  else
+    printf '%s\n' "${plans[@]}" | jq -sc 'sort_by(.id)'
+  fi
+}
+
+managed_component_redirect_host_policy_plan_validate_json() {
+  local plans=${1:-}
+  [[ -n "${plans}" ]] || return 1
+  jq -s -e '
+    length == 1 and
+    (.[0] | type == "array" and length <= 128 and
+      all(.[]; . as $plan |
+        ($plan | type == "object" and
+          ((keys - ["id","tag","chain","marker","interface","destination_ports","management_ports","listen_port","family","transport"]) | length == 0) and
+          (.id | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")) and
+          (.tag | type == "string" and length > 0 and length <= 128) and
+          (.chain | type == "string" and test("^SBVR_[a-f0-9]{20}$")) and
+          (.marker | type == "string" and test("^sbv-redirect-[a-f0-9]{20}$")) and
+          (.interface | type == "string" and length >= 1 and length <= 15 and test("^[A-Za-z0-9_.:-]+$")) and
+          (.destination_ports | type == "array" and length >= 1 and length <= 15 and
+            all(.[]; type == "number" and . == floor and . >= 1 and . <= 65535) and
+            (unique | length) == length) and
+          (.management_ports | type == "array" and length >= 1 and length <= 15 and
+            all(.[]; type == "number" and . == floor and . >= 1 and . <= 65535) and
+            (unique | length) == length) and
+          (.listen_port | type == "number" and . == floor and . >= 1 and . <= 65535) and
+          .family == "ipv4" and .transport == "tcp" and
+          (.chain | ltrimstr("SBVR_")) == (.marker | ltrimstr("sbv-redirect-"))) and
+        all($plan.destination_ports[]; . as $port | ($plan.management_ports | index($port)) == null) and
+        ($plan.destination_ports | index($plan.listen_port)) == null
+      ) and
+      ([.[].chain] | unique | length) == length and
+      ([.[].id] | unique | length) == length)
+  ' <<< "${plans}" >/dev/null 2>&1
+}
+
+managed_component_redirect_policy_plan_has_chain() {
+  local plans=${1:-} chain=${2:-}
+  jq -e --arg chain "${chain}" 'any(.[]; .chain == $chain)' <<< "${plans}" >/dev/null 2>&1
+}
+
+# Return one of absent/present/partial/conflict/unavailable.  Inspection uses
+# the complete nat table and exact `-C` probes; it never infers ownership from
+# a rule's port alone.
+managed_component_redirect_policy_probe() {
+  local plan=${1:-} rules chain chain_output interface_name destination_ports listen_port marker
+  local chain_count rule_count reference_count marker_count rule_status=1 jump_status=1 status
+  managed_component_redirect_host_policy_plan_validate_json "[$plan]" || { printf 'conflict\n'; return 0; }
+  command -v iptables >/dev/null 2>&1 || { printf 'unavailable\n'; return 0; }
+  chain=$(jq -r '.chain' <<< "${plan}") || return 1
+  interface_name=$(jq -r '.interface' <<< "${plan}") || return 1
+  destination_ports=$(jq -r '.destination_ports | sort | map(tostring) | join(",")' <<< "${plan}") || return 1
+  listen_port=$(jq -r '.listen_port' <<< "${plan}") || return 1
+  marker=$(jq -r '.marker' <<< "${plan}") || return 1
+  rules=$(iptables -t nat -S 2>/dev/null) || { printf 'unavailable\n'; return 0; }
+  chain_count=$(awk -v chain="${chain}" '$1 == "-N" && $2 == chain { count++ } END { print count+0 }' <<< "${rules}") || return 1
+  marker_count=$(awk -v marker="${marker}" 'index($0, marker) { count++ } END { print count+0 }' <<< "${rules}") || return 1
+  reference_count=$(awk -v chain="${chain}" '$1 == "-A" && $2 != chain && $NF == chain { count++ } END { print count+0 }' <<< "${rules}") || return 1
+  if [[ "${chain_count}" == 0 ]]; then
+    if [[ "${marker_count}" == 0 && "${reference_count}" == 0 ]]; then
+      printf 'absent\n'
+    else
+      printf 'conflict\n'
+    fi
+    return 0
+  fi
+  [[ "${chain_count}" == 1 ]] || { printf 'conflict\n'; return 0; }
+  chain_output=$(iptables -t nat -S "${chain}" 2>/dev/null) || { printf 'unavailable\n'; return 0; }
+  rule_count=$(awk '$1 == "-A" { count++ } END { print count+0 }' <<< "${chain_output}") || return 1
+  if iptables -t nat -C "${chain}" -i "${interface_name}" -p tcp -m multiport \
+    --dports "${destination_ports}" -j REDIRECT --to-ports "${listen_port}" >/dev/null 2>&1; then
+    rule_status=0
+  else
+    status=$?
+    [[ "${status}" == 1 ]] || { printf 'unavailable\n'; return 0; }
+  fi
+  if iptables -t nat -C PREROUTING -m comment --comment "${marker}" -j "${chain}" >/dev/null 2>&1; then
+    jump_status=0
+  else
+    status=$?
+    [[ "${status}" == 1 ]] || { printf 'unavailable\n'; return 0; }
+  fi
+  if [[ "${marker_count}" == 1 && "${reference_count}" == 1 && "${rule_count}" == 1 &&
+        "${rule_status}" == 0 && "${jump_status}" == 0 ]]; then
+    printf 'present\n'
+  elif [[ "${marker_count}" == 0 && "${reference_count}" == 0 &&
+          ( "${rule_count}" == 0 || ( "${rule_count}" == 1 && "${rule_status}" == 0 ) ) ]]; then
+    printf 'partial\n'
+  else
+    printf 'conflict\n'
+  fi
+}
+
+managed_component_redirect_policy_ensure_plan() {
+  local plan=${1:-} allow_partial=${2:-false} status chain interface_name destination_ports listen_port marker
+  managed_component_redirect_host_policy_plan_validate_json "[$plan]" || return 1
+  status=$(managed_component_redirect_policy_probe "${plan}") || return 1
+  case "${status}" in
+    present) return 0 ;;
+    absent) ;;
+    partial)
+      [[ "${allow_partial}" == true ]] || return 1
+      ;;
+    *) return 1 ;;
+  esac
+  chain=$(jq -r '.chain' <<< "${plan}") || return 1
+  interface_name=$(jq -r '.interface' <<< "${plan}") || return 1
+  destination_ports=$(jq -r '.destination_ports | sort | map(tostring) | join(",")' <<< "${plan}") || return 1
+  listen_port=$(jq -r '.listen_port' <<< "${plan}") || return 1
+  marker=$(jq -r '.marker' <<< "${plan}") || return 1
+  if [[ "${status}" == absent ]]; then
+    iptables -t nat -N "${chain}" || return 1
+  fi
+  if ! iptables -t nat -C "${chain}" -i "${interface_name}" -p tcp -m multiport \
+    --dports "${destination_ports}" -j REDIRECT --to-ports "${listen_port}" >/dev/null 2>&1; then
+    iptables -t nat -A "${chain}" -i "${interface_name}" -p tcp -m multiport \
+      --dports "${destination_ports}" -j REDIRECT --to-ports "${listen_port}" || return 1
+  fi
+  if ! iptables -t nat -C PREROUTING -m comment --comment "${marker}" -j "${chain}" >/dev/null 2>&1; then
+    iptables -t nat -A PREROUTING -m comment --comment "${marker}" -j "${chain}" || return 1
+  fi
+  [[ "$(managed_component_redirect_policy_probe "${plan}")" == present ]]
+}
+
+managed_component_redirect_policy_remove_plan() {
+  local plan=${1:-} allow_partial=${2:-false} status chain marker
+  managed_component_redirect_host_policy_plan_validate_json "[$plan]" || return 1
+  status=$(managed_component_redirect_policy_probe "${plan}") || return 1
+  [[ "${status}" == absent ]] && return 0
+  [[ "${status}" == present || ( "${status}" == partial && "${allow_partial}" == true ) ]] || return 1
+  chain=$(jq -r '.chain' <<< "${plan}") || return 1
+  marker=$(jq -r '.marker' <<< "${plan}") || return 1
+  if [[ "${status}" == present ]]; then
+    iptables -t nat -D PREROUTING -m comment --comment "${marker}" -j "${chain}" || return 1
+  fi
+  iptables -t nat -F "${chain}" || return 1
+  iptables -t nat -X "${chain}" || return 1
+  [[ "$(managed_component_redirect_policy_probe "${plan}")" == absent ]]
+}
+
+managed_component_redirect_policy_precedence_json() {
+  local plan=${1:-} marker rules preceding status
+  managed_component_redirect_host_policy_plan_validate_json "[${plan}]" || return 1
+  marker=$(jq -r '.marker' <<< "${plan}") || return 1
+  if ! command -v iptables >/dev/null 2>&1 ||
+     ! rules=$(iptables -t nat -S PREROUTING 2>/dev/null); then
+    jq -cn '{status:"unavailable",preceding_rule_count:null}'
+    return 0
+  fi
+  preceding=$(awk -v marker="${marker}" '
+    $1 == "-A" && $2 == "PREROUTING" {
+      if (index($0, marker)) { found=1; exit }
+      count++
+    }
+    END { if (!found) exit 1; print count+0 }
+  ' <<< "${rules}") || {
+    jq -cn '{status:"unavailable",preceding_rule_count:null}'
+    return 0
+  }
+  if [[ "${preceding}" == 0 ]]; then
+    status=unshadowed_in_observed_order
+  else
+    status=not_assessed_earlier_rules_present
+  fi
+  jq -cn --arg status "${status}" --argjson count "${preceding}" \
+    '{status:$status,preceding_rule_count:$count}'
+}
+
+managed_component_redirect_policy_preflight() {
+  local before=${1:-} after=${2:-} plan status interface_name
+  managed_component_redirect_host_policy_plan_validate_json "${before}" || return 1
+  managed_component_redirect_host_policy_plan_validate_json "${after}" || return 1
+  if ((${#after} > 2)); then
+    command -v iptables >/dev/null 2>&1 || return 1
+    iptables -t nat -S >/dev/null 2>&1 || return 1
+  fi
+  while IFS= read -r plan; do
+    [[ -n "${plan}" ]] || continue
+    status=$(managed_component_redirect_policy_probe "${plan}") || return 1
+    [[ "${status}" == present ]] || return 1
+  done < <(jq -c '.[]' <<< "${before}")
+  while IFS= read -r plan; do
+    [[ -n "${plan}" ]] || continue
+    if managed_component_redirect_policy_plan_has_chain "${before}" "$(jq -r '.chain' <<< "${plan}")"; then
+      continue
+    fi
+    status=$(managed_component_redirect_policy_probe "${plan}") || return 1
+    [[ "${status}" == absent ]] || return 1
+    interface_name=$(jq -r '.interface' <<< "${plan}") || return 1
+    command -v ip >/dev/null 2>&1 || return 1
+    ip link show dev "${interface_name}" >/dev/null 2>&1 || return 1
+  done < <(jq -c '.[]' <<< "${after}")
+}
+
+managed_component_redirect_policy_journal_path_valid() {
+  local journal_file=${1:-}
+  [[ "${journal_file}" == "${SB_COMPONENT_TRANSACTION_DIR}/snapshot/component-redirect-policy.json" &&
+     -d "${SB_COMPONENT_TRANSACTION_DIR}/snapshot" &&
+     ! -L "${SB_COMPONENT_TRANSACTION_DIR}" && ! -L "${SB_COMPONENT_TRANSACTION_DIR}/snapshot" ]] || return 1
+}
+
+managed_component_redirect_policy_journal_validate() {
+  local journal_file=${1:-} before after
+  managed_component_redirect_policy_journal_path_valid "${journal_file}" || return 1
+  [[ -f "${journal_file}" && ! -L "${journal_file}" && -r "${journal_file}" ]] || return 1
+  [[ "$(stat -c '%a' "${journal_file}")" == 600 ]] || return 1
+  if ! jq -ce '
+    type == "object" and ((keys - ["schema_version","status","before","after"]) | length == 0) and
+    .schema_version == 1 and (.status | IN("prepared","applying","applied","rolling_back","rolled_back")) and
+    (.before | type == "array") and (.after | type == "array") and
+    true
+  ' "${journal_file}" >/dev/null 2>&1; then
+    return 1
+  fi
+  before=$(jq -c '.before' "${journal_file}") || return 1
+  after=$(jq -c '.after' "${journal_file}") || return 1
+  managed_component_redirect_host_policy_plan_validate_json "${before}" || return 1
+  managed_component_redirect_host_policy_plan_validate_json "${after}"
+}
+
+managed_component_redirect_policy_journal_write() {
+  local journal_file=${1:-} before=${2:-} after=${3:-} candidate payload
+  managed_component_redirect_policy_journal_path_valid "${journal_file}" || return 1
+  [[ ! -e "${journal_file}" && ! -L "${journal_file}" ]] || return 1
+  managed_component_redirect_host_policy_plan_validate_json "${before}" || return 1
+  managed_component_redirect_host_policy_plan_validate_json "${after}" || return 1
+  payload=$(jq -cn --argjson before "${before}" --argjson after "${after}" \
+    '{schema_version:1,status:"prepared",before:$before,after:$after}') || return 1
+  candidate=$(mktemp "${journal_file%/*}/.component-redirect-policy.XXXXXX") || return 1
+  if ! printf '%s\n' "${payload}" > "${candidate}" || ! chmod 600 "${candidate}" ||
+     ! mv -f -- "${candidate}" "${journal_file}"; then
+    rm -f -- "${candidate}"
+    return 1
+  fi
+  managed_component_redirect_policy_journal_validate "${journal_file}"
+}
+
+managed_component_redirect_policy_journal_set_status() {
+  local journal_file=${1:-} status=${2:-} candidate
+  managed_component_redirect_policy_journal_validate "${journal_file}" || return 1
+  [[ "${status}" =~ ^(prepared|applying|applied|rolling_back|rolled_back)$ ]] || return 1
+  candidate=$(mktemp "${journal_file%/*}/.component-redirect-policy.XXXXXX") || return 1
+  if ! jq --arg status "${status}" '.status=$status' "${journal_file}" > "${candidate}" ||
+     ! chmod 600 "${candidate}" || ! mv -f -- "${candidate}" "${journal_file}"; then
+    rm -f -- "${candidate}"
+    return 1
+  fi
+  managed_component_redirect_policy_journal_validate "${journal_file}"
+}
+
+managed_component_redirect_policy_apply_journal() {
+  local journal_file=${1:-} before after plan
+  managed_component_redirect_policy_journal_validate "${journal_file}" || return 1
+  before=$(jq -c '.before' "${journal_file}") || return 1
+  after=$(jq -c '.after' "${journal_file}") || return 1
+  managed_component_redirect_policy_journal_set_status "${journal_file}" applying || return 1
+  while IFS= read -r plan; do
+    [[ -n "${plan}" ]] || continue
+    managed_component_redirect_policy_ensure_plan "${plan}" false || return 1
+  done < <(jq -c '.[]' <<< "${after}")
+  while IFS= read -r plan; do
+    [[ -n "${plan}" ]] || continue
+    if ! managed_component_redirect_policy_plan_has_chain "${after}" "$(jq -r '.chain' <<< "${plan}")"; then
+      managed_component_redirect_policy_remove_plan "${plan}" || return 1
+    fi
+  done < <(jq -c '.[]' <<< "${before}")
+  managed_component_redirect_policy_journal_set_status "${journal_file}" applied
+}
+
+managed_component_redirect_policy_remove_delta() {
+  local journal_file=${1:-} status before after plan
+  managed_component_redirect_policy_journal_validate "${journal_file}" || return 1
+  status=$(jq -r '.status' "${journal_file}") || return 1
+  [[ "${status}" == prepared || "${status}" == rolled_back ]] && return 0
+  managed_component_redirect_policy_journal_set_status "${journal_file}" rolling_back || return 1
+  before=$(jq -c '.before' "${journal_file}") || return 1
+  after=$(jq -c '.after' "${journal_file}") || return 1
+  while IFS= read -r plan; do
+    [[ -n "${plan}" ]] || continue
+    if ! managed_component_redirect_policy_plan_has_chain "${before}" "$(jq -r '.chain' <<< "${plan}")"; then
+      managed_component_redirect_policy_remove_plan "${plan}" true || return 1
+    fi
+  done < <(jq -c '.[]' <<< "${after}")
+}
+
+managed_component_redirect_policy_restore_before() {
+  local journal_file=${1:-} status before plan
+  managed_component_redirect_policy_journal_validate "${journal_file}" || return 1
+  status=$(jq -r '.status' "${journal_file}") || return 1
+  [[ "${status}" == prepared || "${status}" == rolled_back ]] && return 0
+  before=$(jq -c '.before' "${journal_file}") || return 1
+  while IFS= read -r plan; do
+    [[ -n "${plan}" ]] || continue
+    managed_component_redirect_policy_ensure_plan "${plan}" true || return 1
+  done < <(jq -c '.[]' <<< "${before}")
+  managed_component_redirect_policy_journal_set_status "${journal_file}" rolled_back
+}
+
+managed_component_redirect_policy_diagnose_json() {
+  local state=${1:-} plans plan status precedence row resources_json
+  local resources=() operators='[]' overall=available
+  plans=$(managed_component_redirect_host_policy_plan_json "${state}") || return 1
+  managed_component_redirect_host_policy_plan_validate_json "${plans}" || return 1
+  while IFS= read -r plan; do
+    [[ -n "${plan}" ]] || continue
+    status=$(managed_component_redirect_policy_probe "${plan}") || return 1
+    precedence=$(managed_component_redirect_policy_precedence_json "${plan}") || return 1
+    [[ "${status}" == present ]] || overall=unavailable
+    row=$(jq -cn --argjson plan "${plan}" --arg status "${status}" \
+      --argjson precedence "${precedence}" \
+      '$plan + {resource_scope:"installer_owned_ipv4_tcp_prerouting",status:$status,
+        precedence:$precedence.status,preceding_rule_count:$precedence.preceding_rule_count}') || return 1
+    resources+=("${row}")
+  done < <(jq -c '.[]' <<< "${plans}")
+  if ((${#resources[@]} > 0)); then
+    resources_json=$(printf '%s\n' "${resources[@]}" | jq -sc '.') || return 1
+  else
+    resources_json='[]'
+    [[ "${overall}" == available ]] && overall=not_configured
+  fi
+  operators=$(jq -c '[.components[] | select(.enabled == true and .role == "inbound" and .type == "tproxy") |
+    {id,tag,type,resource_scope:"operator_policy_required",status:"not_managed"}]' <<< "${state}") || return 1
+  jq -cn --arg status "${overall}" --argjson resources "${resources_json}" --argjson operators "${operators}" \
+    '{status:$status,managed_backend:"iptables",managed_family:"ipv4",managed_transport:"tcp",
+      ordering:"append_after_existing_prerouting_rules",
+      resources:$resources,operator_managed:$operators,
+      limitations:["only explicit Redirect IPv4/TCP policies are installer-owned","TProxy policy remains operator-managed","management ports are protected by exact destination-port allowlists","earlier PREROUTING rules may change effective precedence; effectiveness is not assessed when such rules exist"]}'
+}
+
+managed_component_redirect_policy_uninstall() {
+  local plans=${1:-} plan status nat_rules
+  managed_component_redirect_host_policy_plan_validate_json "${plans}" || return 1
+  if [[ "${plans}" == '[]' ]] && command -v iptables >/dev/null 2>&1 &&
+     nat_rules=$(iptables -t nat -S 2>/dev/null); then
+    if grep -E 'SBVR_[a-f0-9]{20}|sbv-redirect-[a-f0-9]{20}' <<< "${nat_rules}" >/dev/null; then
+      printf '[ERROR] 检测到缺少 state 所属记录的 Redirect 受管链；拒绝卸载以避免遗留或误删主机规则。\n' >&2
+      return 1
+    fi
+  fi
+  while IFS= read -r plan; do
+    [[ -n "${plan}" ]] || continue
+    status=$(managed_component_redirect_policy_probe "${plan}") || return 1
+    case "${status}" in
+      absent|present|partial) ;;
+      *) return 1 ;;
+    esac
+  done < <(jq -c '.[]' <<< "${plans}")
+  while IFS= read -r plan; do
+    [[ -n "${plan}" ]] || continue
+    managed_component_redirect_policy_remove_plan "${plan}" true || return 1
+  done < <(jq -c '.[]' <<< "${plans}")
 }
 
 # An auto-routed TUN must have an explicit host-route loop guard.  The
@@ -17167,7 +17607,7 @@ managed_component_transparent_resources_json() (
   system_endpoint_count=$(jq -r '[.[] | select(.system_interface == true)] | length' <<< "${records}") || return 1
   if [[ "${service_state}" != active ]]; then
     jq -cn --arg status "${status}" --arg reason "${reason}" --argjson resources "${records}" \
-      '{status:$status,reason:$reason,service_active:false,resources:($resources | map({tag,type,listen,listen_port,interface_name:(if .system_interface then .interface_name else null end),resource_scope:(if .type == "tun" or .type == "bridge" or .system_interface then "core_owned" else "operator_policy_required" end),status:"not_assessed",reason:"service_inactive"})),limitations:["redirect/tproxy host policy rules are not installer-owned","TUN/bridge/system endpoint interfaces are core-owned resources and require a running core"]}'
+      '{status:$status,reason:$reason,service_active:false,resources:($resources | map({tag,type,listen,listen_port,interface_name:(if .system_interface then .interface_name else null end),resource_scope:(if .type == "tun" or .type == "bridge" or .system_interface then "core_owned" elif .type == "redirect" then "host_policy_reported_separately" else "operator_policy_required" end),status:"not_assessed",reason:"service_inactive"})),limitations:["Redirect policy ownership is reported separately under redirect_host_policy","TProxy host policy remains operator-managed","TUN/bridge/system endpoint interfaces are core-owned resources and require a running core"]}'
     return 0
   fi
   if (( tun_count == 0 && bridge_count == 0 && system_endpoint_count == 0 )) && ! jq -e 'any(.[]; .type == "redirect" or .type == "tproxy")' <<< "${records}" >/dev/null 2>&1; then
@@ -17176,11 +17616,11 @@ managed_component_transparent_resources_json() (
   fi
   if (( tun_count == 0 && bridge_count == 0 && system_endpoint_count == 0 )); then
     jq -cn --argjson resources "${records}" \
-      '{status:"not_assessed",reason:"host_policy_rules_not_managed",service_active:true,
+      '{status:"not_assessed",reason:"host_policy_not_observed_here",service_active:true,
         resources:($resources | map({tag,type,listen,listen_port,
-          resource_scope:"operator_policy_required",status:"not_assessed",
-          reason:"host_policy_rules_not_managed"})),
-        limitations:["redirect/tproxy host policy rules are not installer-owned"]}'
+          resource_scope:(if .type == "redirect" then "host_policy_reported_separately" else "operator_policy_required" end),
+          status:"not_assessed",reason:"host_policy_not_observed_here"})),
+        limitations:["Redirect policy ownership is reported separately under redirect_host_policy","TProxy host policy remains operator-managed"]}'
     return 0
   fi
   status=available
@@ -17439,9 +17879,9 @@ managed_component_transparent_resources_json() (
     if [[ "${type}" != tun ]]; then
       resources=$(jq -c --argjson item "${record}" '. + [($item | {
         tag,type,listen,listen_port,
-        resource_scope:"operator_policy_required",status:"not_assessed",
-        reason:"host_policy_rules_not_managed"})]' <<< "${resources}") || return 1
-      [[ "${status}" == available ]] && { status=not_assessed; reason=host_policy_rules_not_managed; }
+        resource_scope:(if .type == "redirect" then "host_policy_reported_separately" else "operator_policy_required" end),
+        status:"not_assessed",reason:"host_policy_not_observed_here"})]' <<< "${resources}") || return 1
+      [[ "${status}" == available ]] && { status=not_assessed; reason=host_policy_not_observed_here; }
       continue
     fi
     interface_name=$(jq -r '.interface_name' <<< "${record}") || return 1
@@ -17503,7 +17943,7 @@ managed_component_transparent_resources_json() (
   done < <(jq -c '.[]' <<< "${records}")
   jq -cn --arg status "${status}" --arg reason "${reason}" --argjson resources "${resources}" \
     '{status:$status,reason:(if $reason == "" then null else $reason end),service_active:true,resources:$resources,
-      limitations:["redirect/tproxy host policy rules are not installer-owned","bridge forwarding/NAT policy is core-dynamic and observation only","system endpoint interfaces, addresses and MTU are observed but routes and packet payload are not claimed","reported core-owned state is observation only"]}'
+      limitations:["Redirect policy ownership is reported separately under redirect_host_policy","TProxy host policy remains operator-managed","bridge forwarding/NAT policy is core-dynamic and observation only","system endpoint interfaces, addresses and MTU are observed but routes and packet payload are not claimed","reported core-owned state is observation only"]}'
 )
 
 managed_component_transparent_runtime_healthy() {
@@ -17842,8 +18282,9 @@ managed_component_takeover_preserves_live_config() {
 managed_component_requires_public_confirmation() {
   local record=${1:-}
   jq -e '
-    if .role == "inbound" then
-      (.type == "tun" or .type == "cloudflared" or
+    if .enabled != true then false
+    elif .role == "inbound" then
+      (.type == "tun" or .type == "cloudflared" or has("host_policy") or
        (((.config.listen // "") != "127.0.0.1") and
         ((.config.listen // "") != "::1") and
        ((.config.listen // "") != "localhost")))
@@ -17915,7 +18356,11 @@ managed_component_inventory_json() {
          instance_environment:(first($instance_environments[] |
            select(.id == $component.id) | .environment) // $entry.environment),
          minimum_project_core:$entry.minimum_project_core,
-         config_keys:($component.config | keys), route_rule_count:(($component.route_rules // []) | length)} |
+         config_keys:($component.config | keys), route_rule_count:(($component.route_rules // []) | length),
+         host_policy:(if ($component | has("host_policy")) then
+           {backend:"iptables",family:"ipv4",transport:"tcp",ingress_interface:$component.host_policy.ingress_interface,
+            destination_ports:$component.host_policy.destination_ports,management_ports:$component.host_policy.management_ports}
+           else null end)} |
         if (.role == "outbound" and .type == "ssh") then
           . + {host_key_verification:(
             if (($component.config.host_key? // null) |
@@ -17937,13 +18382,15 @@ managed_component_inventory_json() {
 }
 
 managed_component_diagnose_json() {
-  local state inventory config_status graph_status listener_status core_status
+  local state inventory config_status graph_status listener_status core_status redirect_host_policy
   local config_present=false service_state=unknown firewall_status=not_configured firewall_rules=0
   local instance_pending=false component_pending=false component_transaction_phase=none ledger
   local transparent_resources='{"status":"not_assessed","reason":"config_missing","service_active":false,"resources":[],"limitations":[]}'
 
   state=$(managed_component_state_json) || return 1
   inventory=$(managed_component_inventory_json) || return 1
+  redirect_host_policy=$(managed_component_redirect_policy_diagnose_json "${state}") || \
+    redirect_host_policy='{"status":"unavailable","resources":[],"operator_managed":[]}'
 
   if [[ ! -e "${SINGBOX_CONFIG_FILE}" ]]; then
     config_status=missing
@@ -18015,6 +18462,7 @@ managed_component_diagnose_json() {
     --argjson firewall_rules "${firewall_rules}" --argjson instance_pending "${instance_pending}" \
     --argjson component_pending "${component_pending}" --arg component_phase "${component_transaction_phase}" \
     --argjson inventory "${inventory}" --argjson transparent_resources "${transparent_resources}" \
+    --argjson redirect_host_policy "${redirect_host_policy}" \
     '{schema:$schema,action:"component-diagnose",
       state:{revision:($revision|tonumber),component_count:$component_count,valid:true},
       config:{status:$config_status,present:$config_present,graph:$graph_status,listener_resources:$listener_status,core_check:$core_status},
@@ -18023,6 +18471,7 @@ managed_component_diagnose_json() {
       transactions:{instance_write_pending:$instance_pending,component_write_pending:$component_pending,
         component_write_phase:$component_phase},
       transparent_resources:$transparent_resources,
+      redirect_host_policy:$redirect_host_policy,
       components:$inventory.components,supported:$inventory.supported}'
 }
 
@@ -18440,9 +18889,11 @@ managed_component_state_apply() {
   local operation=${1:-} expected=${2:-} input=${3:-} target_id=${4:-} allow_public=${5:-n}
   local state current_revision record candidate snapshot service_restarted=false state_changed=true
   local role type tag result_record old_config old_listener_plan new_listener_plan
+  local old_redirect_policy_plan='[]' new_redirect_policy_plan='[]' redirect_policy_journal=''
   local takeover_records takeover_status result_count=0
   local firewall_journal=""
   local firewall_summary='{"status":"not_attempted","backends":[],"diagnostics":[]}'
+  local redirect_policy_summary='{"status":"not_configured","resources":[],"operator_managed":[]}'
   local result_id candidate_revision lock_dir="${SB_COMPONENT_TRANSACTION_DIR}" before_active=false owner_pid owner_start=""
   local inventory_state_file=""
   MANAGED_COMPONENT_LAST_ERROR=""
@@ -18544,6 +18995,26 @@ managed_component_state_apply() {
     MANAGED_COMPONENT_LAST_ERROR=component_feature_unsupported
     return 1
   fi
+  old_redirect_policy_plan=$(managed_component_redirect_host_policy_plan_json "${state}") || {
+    MANAGED_COMPONENT_LAST_ERROR=host_policy_state_invalid; return 1;
+  }
+  new_redirect_policy_plan=$(managed_component_redirect_host_policy_plan_json "${candidate}") || {
+    MANAGED_COMPONENT_LAST_ERROR=host_policy_state_invalid; return 1;
+  }
+  if [[ "${old_redirect_policy_plan}" != "${new_redirect_policy_plan}" ||
+        "${old_redirect_policy_plan}" != '[]' ]]; then
+    if [[ "${old_redirect_policy_plan}" != "${new_redirect_policy_plan}" &&
+          "${before_active}" != true && "${old_redirect_policy_plan}" == '[]' &&
+          "${new_redirect_policy_plan}" != '[]' ]]; then
+      MANAGED_COMPONENT_LAST_ERROR=host_policy_requires_active_service
+      return 1
+    fi
+    if ! managed_component_redirect_policy_preflight \
+      "${old_redirect_policy_plan}" "${new_redirect_policy_plan}"; then
+      MANAGED_COMPONENT_LAST_ERROR=host_policy_preflight_failed
+      return 1
+    fi
+  fi
   if ! managed_component_transaction_begin "${lock_dir}" "${operation}" "${expected}" \
     "${before_active}" "${owner_pid}" "${owner_start}"; then
     MANAGED_COMPONENT_LAST_ERROR=component_transaction_begin_failed
@@ -18621,15 +19092,20 @@ managed_component_state_apply() {
   else
     old_listener_plan='[]'
   fi
-  if [[ "${old_listener_plan}" != "${new_listener_plan}" ]]; then
-    if ! managed_component_transaction_set_firewall_expected "${lock_dir}" true ||
-       ! managed_component_transaction_checkpoint "${lock_dir}" resources; then
-      managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件事务资源阶段记录失败" || :
-      MANAGED_COMPONENT_LAST_ERROR=component_transaction_write_failed
+  if [[ "${old_redirect_policy_plan}" != "${new_redirect_policy_plan}" ]]; then
+    redirect_policy_journal="${snapshot}/component-redirect-policy.json"
+    if ! managed_component_redirect_policy_journal_write "${redirect_policy_journal}" \
+      "${old_redirect_policy_plan}" "${new_redirect_policy_plan}"; then
+      managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "Redirect 主机策略事务日志准备失败" || :
+      MANAGED_COMPONENT_LAST_ERROR=host_policy_journal_failed
       return 1
     fi
-  elif ! managed_component_transaction_set_firewall_expected "${lock_dir}" false ||
-       ! managed_component_transaction_checkpoint "${lock_dir}" resources; then
+  fi
+  if ! managed_component_transaction_set_firewall_expected \
+       "${lock_dir}" "$([[ "${old_listener_plan}" != "${new_listener_plan}" ]] && printf true || printf false)" ||
+     ! managed_component_transaction_set_redirect_policy_expected \
+       "${lock_dir}" "$([[ "${old_redirect_policy_plan}" != "${new_redirect_policy_plan}" ]] && printf true || printf false)" ||
+     ! managed_component_transaction_checkpoint "${lock_dir}" resources; then
     managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件事务资源阶段记录失败" || :
     MANAGED_COMPONENT_LAST_ERROR=component_transaction_write_failed
     return 1
@@ -18735,6 +19211,27 @@ managed_component_state_apply() {
       return 1
     fi
   fi
+  if [[ "${old_redirect_policy_plan}" != "${new_redirect_policy_plan}" ]]; then
+    if ! managed_component_redirect_policy_apply_journal "${redirect_policy_journal}"; then
+      managed_component_abort_transaction_with_resources "${lock_dir}" \
+        "高级组件 Redirect 主机策略应用失败" || return 1
+      MANAGED_COMPONENT_LAST_ERROR=host_policy_apply_failed
+      return 1
+    fi
+  fi
+  redirect_policy_summary=$(managed_component_redirect_policy_diagnose_json "${candidate}") || {
+    managed_component_abort_transaction_with_resources "${lock_dir}" \
+      "高级组件 Redirect 主机策略 postcheck 失败" || return 1
+    MANAGED_COMPONENT_LAST_ERROR=host_policy_postcheck_failed
+    return 1
+  }
+  if [[ "${new_redirect_policy_plan}" != '[]' ]] &&
+     ! jq -e '.status == "available"' <<< "${redirect_policy_summary}" >/dev/null 2>&1; then
+    managed_component_abort_transaction_with_resources "${lock_dir}" \
+      "高级组件 Redirect 主机策略 postcheck 缺少受管规则" || return 1
+    MANAGED_COMPONENT_LAST_ERROR=host_policy_postcheck_failed
+    return 1
+  fi
   if [[ -n "${firewall_journal}" ]]; then
     if ! instance_firewall_commit "${firewall_journal}"; then
       firewall_summary=$(instance_transaction_firewall_summary "${firewall_journal}")
@@ -18794,12 +19291,14 @@ managed_component_state_apply() {
     --argjson count "${result_count}" \
     --argjson service_restarted "${service_restarted}" \
     --argjson firewall "${firewall_summary}" \
+    --argjson redirect_policy "${redirect_policy_summary}" \
     '{action:"component-apply",operation:$operation,revision:($revision|tonumber),
       id:(if $id == "" then null else $id end),
       role:(if $role == "" then null else $role end),
       type:(if $type == "" then null else $type end),
       tag:(if $tag == "" then null else $tag end),
-      config_check:"passed",service_restarted:$service_restarted,firewall:$firewall} +
+      config_check:"passed",service_restarted:$service_restarted,firewall:$firewall,
+      redirect_host_policy:$redirect_policy} +
       (if $operation == "takeover" then {count:$count} else {} end)')
   return 0
 }
@@ -19022,7 +19521,7 @@ managed_component_transaction_begin() {
     --argjson before "${before_active}" \
     '{schema_version:1,operation:$operation,expected_revision:$expected,
       owner_pid:$pid,owner_start:$start,before_active:$before,phase:"prepare",
-      new_revision:null,firewall_expected:false}' > "${transaction_next}"; then
+      new_revision:null,firewall_expected:false,redirect_policy_expected:false}' > "${transaction_next}"; then
     rm -rf -- "${lock_dir}"
     return 1
   fi
@@ -19084,8 +19583,24 @@ managed_component_transaction_set_firewall_expected() {
   mv -f -- "${transaction_next}" "${lock_dir}/transaction.json"
 }
 
+managed_component_transaction_set_redirect_policy_expected() {
+  local lock_dir=${1:-} expected=${2:-false} transaction_next
+
+  managed_component_transaction_path_is_trusted "${lock_dir}" || return 1
+  [[ -f "${lock_dir}/transaction.json" && ! -L "${lock_dir}/transaction.json" &&
+     ("${expected}" == true || "${expected}" == false) ]] || return 1
+  transaction_next="${lock_dir}/transaction.next"
+  if ! jq --argjson expected "${expected}" '.redirect_policy_expected=$expected' \
+    "${lock_dir}/transaction.json" > "${transaction_next}"; then
+    rm -f -- "${transaction_next}"
+    return 1
+  fi
+  chmod 600 "${transaction_next}" || return 1
+  mv -f -- "${transaction_next}" "${lock_dir}/transaction.json"
+}
+
 managed_component_transaction_restore() {
-  local lock_dir=${1:-} before_active firewall_expected firewall_journal
+  local lock_dir=${1:-} before_active firewall_expected firewall_journal redirect_expected redirect_journal
   local status=0 service_state
   MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=""
 
@@ -19105,6 +19620,10 @@ managed_component_transaction_restore() {
     MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=component_rollback_failed
     return 1
   }
+  redirect_expected=$(jq -r '.redirect_policy_expected // false' "${lock_dir}/transaction.json") || {
+    MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=component_rollback_failed
+    return 1
+  }
   firewall_journal="${lock_dir}/snapshot/component-firewall.json"
   if [[ -e "${firewall_journal}" || -L "${firewall_journal}" ]]; then
     if [[ ! -f "${firewall_journal}" || -L "${firewall_journal}" ]]; then
@@ -19120,6 +19639,29 @@ managed_component_transaction_restore() {
     MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=firewall_rollback_failed
     status=1
   fi
+
+  redirect_journal="${lock_dir}/snapshot/component-redirect-policy.json"
+  if [[ -e "${redirect_journal}" || -L "${redirect_journal}" ]]; then
+    if [[ ! -f "${redirect_journal}" || -L "${redirect_journal}" ]] ||
+       ! managed_component_redirect_policy_journal_validate "${redirect_journal}"; then
+      MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=redirect_policy_rollback_failed
+      status=1
+    elif [[ "${redirect_expected}" == true ]]; then
+      if ! managed_component_redirect_policy_remove_delta "${redirect_journal}"; then
+        MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=redirect_policy_rollback_failed
+        status=1
+      fi
+    elif [[ "$(jq -r '.status' "${redirect_journal}")" != prepared ]]; then
+      printf '[ERROR] 高级组件事务 Redirect 策略日志未经授权进入变更阶段；外部状态未自动修改。\n' >&2
+      MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=redirect_policy_rollback_failed
+      status=1
+    fi
+  elif [[ "${redirect_expected}" == true ]]; then
+    printf '[ERROR] 高级组件事务 Redirect 策略日志缺失；无法证明外部状态已恢复。\n' >&2
+    MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=redirect_policy_rollback_failed
+    status=1
+  fi
+  [[ "${MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR}" != redirect_policy_rollback_failed ]] || return 1
 
   if ! managed_state_snapshot_is_valid "${lock_dir}/snapshot" ||
      ! restore_managed_state_snapshot "${lock_dir}/snapshot"; then
@@ -19151,7 +19693,43 @@ managed_component_transaction_restore() {
         ;;
     esac
   fi
+  if [[ "${redirect_expected}" == true && -f "${redirect_journal}" && ! -L "${redirect_journal}" ]]; then
+    if ! managed_component_redirect_policy_restore_before "${redirect_journal}"; then
+      MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=redirect_policy_rollback_failed
+      status=1
+    fi
+  fi
   return "${status}"
+}
+
+managed_component_abort_transaction_with_resources() {
+  local lock_dir=${1:-} failure_message=${2:-} restore_error
+  if ! managed_component_transaction_restore "${lock_dir}"; then
+    restore_error=${MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR:-component_rollback_failed}
+    case "${restore_error}" in
+      firewall_rollback_failed)
+        MANAGED_COMPONENT_LAST_ERROR=firewall_rollback_failed
+        printf '[ERROR] %s，监听防火墙资源回滚不确定；事务目录保留在 %s。\n' \
+          "${failure_message}" "${lock_dir}" >&2 ;;
+      redirect_policy_rollback_failed)
+        MANAGED_COMPONENT_LAST_ERROR=redirect_policy_rollback_failed
+        printf '[ERROR] %s，Redirect 主机策略回滚不确定；事务目录保留在 %s。\n' \
+          "${failure_message}" "${lock_dir}" >&2 ;;
+      *)
+        MANAGED_COMPONENT_LAST_ERROR=component_rollback_failed
+        printf '[ERROR] %s，事务回滚不确定；事务目录保留在 %s。\n' \
+          "${failure_message}" "${lock_dir}" >&2 ;;
+    esac
+    return 1
+  fi
+  if ! rm -rf -- "${lock_dir}"; then
+    MANAGED_COMPONENT_LAST_ERROR=component_cleanup_failed
+    printf '[ERROR] %s，资源与配置已恢复，但事务目录清理失败：%s。\n' \
+      "${failure_message}" "${lock_dir}" >&2
+    return 1
+  fi
+  printf '[ERROR] %s，监听防火墙、Redirect 策略、配置和服务活动状态均已恢复。\n' \
+    "${failure_message}" >&2
 }
 
 managed_component_restore_service_activity() {
@@ -19180,11 +19758,45 @@ managed_component_restore_service_activity() {
 
 managed_component_abort_component_transaction() {
   local lock_dir=${1:-} snapshot_dir=${2:-} failure_message=${3:-} restore_service=${4:-n}
+  local redirect_expected=false redirect_journal redirect_status
+
+  redirect_journal="${lock_dir}/snapshot/component-redirect-policy.json"
+  if [[ -f "${lock_dir}/transaction.json" && ! -L "${lock_dir}/transaction.json" ]]; then
+    redirect_expected=$(jq -r '.redirect_policy_expected // false' "${lock_dir}/transaction.json") || redirect_expected=false
+  fi
+  if [[ -e "${redirect_journal}" || -L "${redirect_journal}" ]]; then
+    if [[ ! -f "${redirect_journal}" || -L "${redirect_journal}" ]] ||
+       ! managed_component_redirect_policy_journal_validate "${redirect_journal}"; then
+      printf '[ERROR] %s，Redirect 策略事务日志不可信；事务目录保留在 %s。\n' \
+        "${failure_message}" "${lock_dir}" >&2
+      return 1
+    fi
+    redirect_status=$(jq -r '.status' "${redirect_journal}") || return 1
+    if [[ "${redirect_expected}" == true ]]; then
+      if ! managed_component_redirect_policy_remove_delta "${redirect_journal}"; then
+        printf '[ERROR] %s，Redirect 策略回滚不确定；事务目录保留在 %s。\n' \
+          "${failure_message}" "${lock_dir}" >&2
+        return 1
+      fi
+    elif [[ "${redirect_status}" != prepared ]]; then
+      printf '[ERROR] %s，Redirect 策略日志未经授权进入变更阶段；事务目录保留在 %s。\n' \
+        "${failure_message}" "${lock_dir}" >&2
+      return 1
+    fi
+  elif [[ "${redirect_expected}" == true ]]; then
+    printf '[ERROR] %s，Redirect 策略日志缺失；事务目录保留在 %s。\n' \
+      "${failure_message}" "${lock_dir}" >&2
+    return 1
+  fi
 
   if [[ -n "${snapshot_dir}" ]] && managed_state_snapshot_is_valid "${snapshot_dir}" &&
      restore_managed_state_snapshot "${snapshot_dir}"; then
     if [[ "${restore_service}" == y ]] && ! managed_component_restore_service_activity "${lock_dir}"; then
       printf '[ERROR] %s，配置状态已恢复但服务活动状态恢复失败；事务目录保留在 %s。\n' \
+        "${failure_message}" "${lock_dir}" >&2
+    elif [[ "${redirect_expected}" == true ]] &&
+         ! managed_component_redirect_policy_restore_before "${redirect_journal}"; then
+      printf '[ERROR] %s，配置状态已恢复但 Redirect 策略回滚不确定；事务目录保留在 %s。\n' \
         "${failure_message}" "${lock_dir}" >&2
     elif rm -rf -- "${lock_dir}"; then
       printf '[ERROR] %s，已恢复变更前的配置状态。\n' "${failure_message}" >&2
@@ -19276,7 +19888,8 @@ managed_component_recover_transaction() {
     (.before_active | type == "boolean") and
     (.phase | IN("prepare","snapshot","publish","resources","service","committed")) and
     (.new_revision == null or (.new_revision | type == "number" and . == floor and . >= 0 and . <= 9007199254740991)) and
-    (.firewall_expected | type == "boolean")
+    (.firewall_expected | type == "boolean") and
+    ((has("redirect_policy_expected") | not) or (.redirect_policy_expected | type == "boolean"))
   ' "${lock_dir}/transaction.json" >/dev/null 2>&1; then
     MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_recovery_untrusted
     agent_json_error component_recovery_untrusted "高级组件事务日志无法验证；请保留目录人工检查。"
@@ -19363,6 +19976,8 @@ managed_component_recover_transaction() {
     case "${recovery_error}" in
       firewall_rollback_failed)
         agent_json_error firewall_rollback_failed "组件事务状态已尝试恢复，但防火墙外部资源仍不确定；事务目录已保留。" ;;
+      redirect_policy_rollback_failed)
+        agent_json_error redirect_policy_rollback_failed "组件事务状态已尝试恢复，但 Redirect 主机策略仍不确定；事务目录已保留。" ;;
       *)
         agent_json_error component_rollback_failed "组件事务自动回滚失败；事务目录已保留供人工恢复。" ;;
     esac
@@ -19954,9 +20569,43 @@ generate_config() {
 }
 
 # --- Uninstaller ---
-perform_singbox_runtime_uninstall() {
-  local lib_path expected_hash actual_hash
+managed_uninstall_report_error() {
+  local message=${1:-}
+  printf '%b[ERROR]%b %s\n' "${RED}" "${NC}" "${message}" >&2
+}
 
+managed_uninstall_acquire_guard() {
+  acquire_managed_write_lock || {
+    managed_uninstall_report_error "另一个管理事务正在执行，未开始卸载。"
+    return 1
+  }
+  if [[ -e "${SB_COMPONENT_TRANSACTION_DIR}" || -L "${SB_COMPONENT_TRANSACTION_DIR}" ]]; then
+    managed_uninstall_report_error "存在未完成的高级组件事务，未开始卸载；请先执行 component recover。"
+    return 1
+  fi
+  if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" || -L "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
+    managed_uninstall_report_error "存在未完成的实例事务，未开始卸载；请先恢复或检查该事务。"
+    return 1
+  fi
+  return 0
+}
+
+perform_singbox_runtime_uninstall() {
+  local lib_path expected_hash actual_hash component_state redirect_policy_plan
+
+  managed_uninstall_acquire_guard || return 1
+  component_state=$(managed_component_state_json) || {
+    managed_uninstall_report_error "高级组件 state 无法安全读取，未开始卸载；请先检查 ${SB_COMPONENT_STATE_FILE}。"
+    return 1
+  }
+  redirect_policy_plan=$(managed_component_redirect_host_policy_plan_json "${component_state}") || {
+    managed_uninstall_report_error "Redirect 主机策略计划无法安全读取，未开始卸载。"
+    return 1
+  }
+  if ! managed_component_redirect_policy_uninstall "${redirect_policy_plan}"; then
+    managed_uninstall_report_error "Redirect 主机策略清理无法确认；服务、二进制和配置目录未改动，已清理的精确受管规则可能是部分状态，请先运行组件诊断。"
+    return 1
+  fi
   log_info "正在彻底卸载 sing-box 环境..."
   if command -v tc >/dev/null 2>&1; then
     clear_vless_reality_qos_rules
@@ -19988,7 +20637,8 @@ perform_singbox_runtime_uninstall() {
 }
 
 perform_full_uninstall() {
-  perform_singbox_runtime_uninstall
+  managed_uninstall_acquire_guard || return 1
+  perform_singbox_runtime_uninstall || return 1
   rm -f "${SBV_BIN_PATH}"
   print_success "全局命令 sbv 已删除。"
 }
@@ -20002,7 +20652,7 @@ uninstall_singbox() {
     return 0
   fi
 
-  perform_singbox_runtime_uninstall
+  perform_singbox_runtime_uninstall || return 1
   exit 0
 }
 
@@ -20011,7 +20661,21 @@ uninstall_script() {
   local deleted_cfg="n"
   read -rp "是否同时删除项目配置文件目录 (/root/sing-box-vps)? [y/N]: " del_cfg
   if [[ "${del_cfg}" =~ ^[Yy]$ ]]; then
-    rm -rf "${SB_PROJECT_DIR}"
+    local component_state redirect_policy_plan
+    managed_uninstall_acquire_guard || return 1
+    component_state=$(managed_component_state_json) || {
+      managed_uninstall_report_error "高级组件 state 无法安全读取，未删除项目目录。"
+      return 1
+    }
+    redirect_policy_plan=$(managed_component_redirect_host_policy_plan_json "${component_state}") || {
+      managed_uninstall_report_error "Redirect 主机策略计划无法安全读取，未删除项目目录。"
+      return 1
+    }
+    if ! managed_component_redirect_policy_uninstall "${redirect_policy_plan}"; then
+      managed_uninstall_report_error "Redirect 主机策略清理无法确认，未删除项目目录。"
+      return 1
+    fi
+    rm -rf -- "${SB_PROJECT_DIR}" || return 1
     deleted_cfg="y"
     print_info "配置文件目录已删除。"
   fi
@@ -26920,7 +27584,7 @@ agent_capabilities_json() {
           recovery_operations: ["recover"],
           read_only_operations: ["list", "diagnose", "export"],
           sensitive_operations: ["export"],
-          diagnosis_fields: ["state", "config", "service", "firewall", "transactions", "transparent_resources"],
+          diagnosis_fields: ["state", "config", "service", "firewall", "transactions", "transparent_resources", "redirect_host_policy"],
           expected_revision_required: true,
           plaintext_public_confirmation: "--allow-public",
           registry: $components,
@@ -30467,6 +31131,10 @@ agent_component_cli() {
       component_transaction_begin_failed|component_transaction_write_failed) agent_json_error component_transaction_failed "高级组件持久事务日志写入失败；未报告成功。" ;;
       component_cleanup_failed) agent_json_error component_cleanup_failed "组件已提交，但持久事务目录清理失败；请执行 component recover。" ;;
       component_feature_unsupported) agent_json_error component_feature_unsupported "当前 sing-box 核心版本未知或不支持远程规则集 http_client；未修改。" ;;
+      host_policy_state_invalid|host_policy_preflight_failed) agent_json_error host_policy_preflight_failed "Redirect 主机策略状态或 iptables/接口预检失败；未修改。" ;;
+      host_policy_requires_active_service) agent_json_error host_policy_requires_active_service "首次启用 Redirect 主机策略前必须已有 active sing-box 服务；未修改。" ;;
+      host_policy_journal_failed) agent_json_error host_policy_journal_failed "Redirect 主机策略事务日志准备失败；未报告成功。" ;;
+      host_policy_apply_failed|host_policy_postcheck_failed) agent_json_error host_policy_apply_failed "Redirect 主机策略应用或 postcheck 失败；已尝试事务回滚，必要时请执行 component recover。" ;;
       public_confirmation_required) agent_json_error confirmation_required "现有接管对象包含公开监听或 OpenVPN server；请明确传入 --allow-public。" ;;
       component_live_missing) agent_json_error component_live_missing "当前配置没有可接管的已注册高级入站或 Endpoint。" ;;
       component_live_untrusted) agent_json_error component_live_untrusted "当前配置对象或组件状态无法安全读取；未修改。" ;;
@@ -30478,6 +31146,7 @@ agent_component_cli() {
       firewall_apply_failed) agent_json_error firewall_apply_failed "组件接管已回滚；防火墙资源应用失败。" ;;
       firewall_commit_failed) agent_json_error firewall_commit_failed "组件接管已回滚；防火墙资源提交失败。" ;;
       firewall_rollback_failed) agent_json_error firewall_rollback_failed "防火墙外部资源回滚不确定；已保留事务快照供恢复。" ;;
+      redirect_policy_rollback_failed) agent_json_error redirect_policy_rollback_failed "Redirect 主机策略回滚不确定；已保留事务快照供恢复。" ;;
       *) agent_json_error component_takeover_failed "组件接管失败，状态已回滚或保留快照待恢复。" ;;
     esac
     return 1
@@ -30503,6 +31172,10 @@ agent_component_cli() {
       component_transaction_begin_failed|component_transaction_write_failed) agent_json_error component_transaction_failed "高级组件持久事务日志写入失败；未报告成功。" ;;
       component_cleanup_failed) agent_json_error component_cleanup_failed "组件已提交，但持久事务目录清理失败；请执行 component recover。" ;;
       component_feature_unsupported) agent_json_error component_feature_unsupported "当前 sing-box 核心版本未知或不支持远程规则集 http_client；未修改。" ;;
+      host_policy_state_invalid|host_policy_preflight_failed) agent_json_error host_policy_preflight_failed "Redirect 主机策略状态或 iptables/接口预检失败；未修改。" ;;
+      host_policy_requires_active_service) agent_json_error host_policy_requires_active_service "首次启用 Redirect 主机策略前必须已有 active sing-box 服务；未修改。" ;;
+      host_policy_journal_failed) agent_json_error host_policy_journal_failed "Redirect 主机策略事务日志准备失败；未报告成功。" ;;
+      host_policy_apply_failed|host_policy_postcheck_failed) agent_json_error host_policy_apply_failed "Redirect 主机策略应用或 postcheck 失败；已尝试事务回滚，必要时请执行 component recover。" ;;
       config_check_failed) agent_json_error config_check_failed "组件重建已回滚；生成的配置未通过图校验、监听校验或 sing-box check。" ;;
       service_restart_failed) agent_json_error service_restart_failed "组件重建已回滚；服务重启失败。" ;;
       transparent_resource_check_failed) agent_json_error transparent_resource_check_failed "组件重建已回滚；core-owned 透明资源未就绪。" ;;
@@ -30510,6 +31183,7 @@ agent_component_cli() {
       firewall_apply_failed) agent_json_error firewall_apply_failed "组件重建已回滚；防火墙资源应用失败。" ;;
       firewall_commit_failed) agent_json_error firewall_commit_failed "组件重建已回滚；防火墙资源提交失败。" ;;
       firewall_rollback_failed) agent_json_error firewall_rollback_failed "防火墙外部资源回滚不确定；已保留事务快照供恢复。" ;;
+      redirect_policy_rollback_failed) agent_json_error redirect_policy_rollback_failed "Redirect 主机策略回滚不确定；已保留事务快照供恢复。" ;;
       *) agent_json_error component_apply_failed "组件重建失败，状态已回滚或保留快照待恢复。" ;;
     esac
     return 1
@@ -30546,6 +31220,10 @@ agent_component_cli() {
     instance_transaction_pending) agent_json_error instance_transaction_pending "存在未完成的实例事务；请先完成 instance recover。" ;;
     public_confirmation_required) agent_json_error confirmation_required "公开监听或隧道组件需要 --allow-public；未修改。" ;;
     component_feature_unsupported) agent_json_error component_feature_unsupported "当前 sing-box 核心版本未知或不支持远程规则集 http_client；未修改。" ;;
+    host_policy_state_invalid|host_policy_preflight_failed) agent_json_error host_policy_preflight_failed "Redirect 主机策略状态或 iptables/接口预检失败；未修改。" ;;
+    host_policy_requires_active_service) agent_json_error host_policy_requires_active_service "首次启用 Redirect 主机策略前必须已有 active sing-box 服务；未修改。" ;;
+    host_policy_journal_failed) agent_json_error host_policy_journal_failed "Redirect 主机策略事务日志准备失败；未报告成功。" ;;
+    host_policy_apply_failed|host_policy_postcheck_failed) agent_json_error host_policy_apply_failed "Redirect 主机策略应用或 postcheck 失败；已尝试事务回滚，必要时请执行 component recover。" ;;
     component_referenced_or_missing) agent_json_error component_referenced "组件仍被 route/group/detour 引用，或目标不存在；未修改。" ;;
     record_invalid|component_conflict) agent_json_error invalid_component "组件记录无效、类型不受支持或 tag/id 冲突；未修改。" ;;
     service_restart_failed) agent_json_error service_restart_failed "组件已回滚；服务重启失败。" ;;
@@ -30560,6 +31238,7 @@ agent_component_cli() {
     firewall_apply_failed) agent_json_error firewall_apply_failed "组件已回滚；防火墙资源应用失败。" ;;
     firewall_commit_failed) agent_json_error firewall_commit_failed "组件已回滚；防火墙资源提交失败。" ;;
     firewall_rollback_failed) agent_json_error firewall_rollback_failed "防火墙外部资源回滚不确定；已保留事务快照供恢复。" ;;
+    redirect_policy_rollback_failed) agent_json_error redirect_policy_rollback_failed "Redirect 主机策略回滚不确定；已保留事务快照供恢复。" ;;
     *) agent_json_error component_apply_failed "组件事务失败，状态已回滚或保留快照待恢复。" ;;
   esac
   return 1
@@ -36231,7 +36910,7 @@ main() {
       --internal-uninstall-purge)
         check_root
         if [[ "${2:-}" == "--yes" ]]; then
-          perform_full_uninstall
+          perform_full_uninstall || exit 1
         else
           uninstall_singbox
         fi

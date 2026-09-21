@@ -271,7 +271,7 @@ verification_scenario_multi_protocol_coexistence() {
   local naive_http3_journal_artifact=''
 
   verification_prepare_remote_local_tree
-  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_marker_pid:-}" ]]; then kill "${direct_marker_pid}" 2>/dev/null || true; wait "${direct_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_udp_marker_pid:-}" ]]; then kill "${direct_udp_marker_pid}" 2>/dev/null || true; wait "${direct_udp_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${sshd_pid:-}" ]]; then kill "${sshd_pid}" 2>/dev/null || true; wait "${sshd_pid}" 2>/dev/null || true; fi; if [[ -n "${ssh_marker_pid:-}" ]]; then kill "${ssh_marker_pid}" 2>/dev/null || true; wait "${ssh_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_upstream_pid:-}" ]]; then kill "${socks_upstream_pid}" 2>/dev/null || true; wait "${socks_upstream_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_udp_upstream_pid:-}" ]]; then kill "${socks_udp_upstream_pid}" 2>/dev/null || true; wait "${socks_udp_upstream_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_outbound_marker_pid:-}" ]]; then kill "${socks_outbound_marker_pid}" 2>/dev/null || true; wait "${socks_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_udp_client_pid:-}" ]]; then kill "${vless_outbound_udp_client_pid}" 2>/dev/null || true; wait "${vless_outbound_udp_client_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_server_pid:-}" ]]; then kill "${vless_outbound_server_pid}" 2>/dev/null || true; wait "${vless_outbound_server_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_server_dir:-}" ]]; then rm -rf -- "${vless_outbound_server_dir}"; fi; if [[ -n "${shadowtls_outbound_server_pid:-}" ]]; then kill "${shadowtls_outbound_server_pid}" 2>/dev/null || true; wait "${shadowtls_outbound_server_pid}" 2>/dev/null || true; fi; if [[ -n "${shadowtls_outbound_server_dir:-}" ]]; then rm -rf -- "${shadowtls_outbound_server_dir}"; fi; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
+  trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_proxy_pid:-}" ]]; then kill "${http_outbound_proxy_pid}" 2>/dev/null || true; wait "${http_outbound_proxy_pid}" 2>/dev/null || true; fi; if [[ -n "${http_outbound_marker_pid:-}" ]]; then kill "${http_outbound_marker_pid}" 2>/dev/null || true; wait "${http_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_marker_pid:-}" ]]; then kill "${direct_marker_pid}" 2>/dev/null || true; wait "${direct_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${direct_udp_marker_pid:-}" ]]; then kill "${direct_udp_marker_pid}" 2>/dev/null || true; wait "${direct_udp_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${sshd_pid:-}" ]]; then kill "${sshd_pid}" 2>/dev/null || true; wait "${sshd_pid}" 2>/dev/null || true; fi; if [[ -n "${ssh_marker_pid:-}" ]]; then kill "${ssh_marker_pid}" 2>/dev/null || true; wait "${ssh_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_upstream_pid:-}" ]]; then kill "${socks_upstream_pid}" 2>/dev/null || true; wait "${socks_upstream_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_udp_upstream_pid:-}" ]]; then kill "${socks_udp_upstream_pid}" 2>/dev/null || true; wait "${socks_udp_upstream_pid}" 2>/dev/null || true; fi; if [[ -n "${socks_outbound_marker_pid:-}" ]]; then kill "${socks_outbound_marker_pid}" 2>/dev/null || true; wait "${socks_outbound_marker_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_udp_client_pid:-}" ]]; then kill "${vless_outbound_udp_client_pid}" 2>/dev/null || true; wait "${vless_outbound_udp_client_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_server_pid:-}" ]]; then kill "${vless_outbound_server_pid}" 2>/dev/null || true; wait "${vless_outbound_server_pid}" 2>/dev/null || true; fi; if [[ -n "${vless_outbound_server_dir:-}" ]]; then rm -rf -- "${vless_outbound_server_dir}"; fi; if [[ -n "${shadowtls_outbound_server_pid:-}" ]]; then kill "${shadowtls_outbound_server_pid}" 2>/dev/null || true; wait "${shadowtls_outbound_server_pid}" 2>/dev/null || true; fi; if [[ -n "${shadowtls_outbound_server_dir:-}" ]]; then rm -rf -- "${shadowtls_outbound_server_dir}"; fi; verification_cleanup_redirect_policy_fixture; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
   # Keep the certificate paths valid for the following runtime_smoke scenario.
   # The Docker container is disposable, so this test-only directory cannot
   # outlive the verification run or affect a host installation.
@@ -948,17 +948,21 @@ PY
     "${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound-udp.result.env" \
     'COMPONENT=direct-inbound' 'RESULT=success' 'DATA_PLANE=direct_udp_override_loopback'
 
-  # Redirect and TProxy are transparent inbounds: unlike direct, they must be
-  # exercised through temporary host policy. The policy is deliberately
-  # created only inside this privileged verification container and is removed
-  # before the component records are deleted; it is not installer-owned.
+  # Redirect and TProxy need distinct host-policy paths. Redirect uses an
+  # installer-managed, explicitly scoped IPv4/TCP PREROUTING chain; TProxy
+  # continues to use disposable operator-style policy only in this container.
+  verification_prepare_redirect_policy_fixture VERIFY_REDIRECT_MARKER_PID
   local redirect_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/redirect-record.json"
-  (umask 077; jq -n '{id:"redirect-inbound-verification",role:"inbound",type:"redirect",
-    tag:"redirect-inbound-verification",enabled:true,route_rules:[],
-    config:{listen:"127.0.0.1",listen_port:1094}}' > "${redirect_record}")
+  (umask 077; jq -n --arg interface "${VERIFY_REDIRECT_HOST_VETH}" \
+    --argjson destination_port "${VERIFY_REDIRECT_MARKER_PORT}" \
+    '{id:"redirect-inbound-verification",role:"inbound",type:"redirect",
+      tag:"redirect-inbound-verification",enabled:true,route_rules:[],
+      config:{listen:"0.0.0.0",listen_port:1094},
+      host_policy:{ingress_interface:$interface,destination_ports:[$destination_port],
+        management_ports:[22,2222,1094]}}' > "${redirect_record}")
   local redirect_create_status=0
   set +e
-  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
+  bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes --allow-public \
     --expected-revision 3 --file "${redirect_record}" \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/redirect-create.json"
   redirect_create_status=$?
@@ -969,12 +973,18 @@ PY
   [[ "${redirect_create_status}" == 0 ]]
   jq -e '.ok==true and .operation=="create" and .revision==4 and .type=="redirect"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/redirect-create.json" >/dev/null
+  jq -e '.redirect_host_policy.status == "available" and
+    (.redirect_host_policy.resources | length) == 1 and
+    .redirect_host_policy.resources[0].status == "present" and
+    .redirect_host_policy.resources[0].resource_scope == "installer_owned_ipv4_tcp_prerouting"' \
+    "${VERIFY_REMOTE_LOCAL_TREE_DIR}/redirect-create.json" >/dev/null
   verification_mark_step redirect-inbound-component-created
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/redirect-inbound-check.txt" \
     sing-box check -c /root/sing-box-vps/config.json
-  verification_execute_redirect_probe /root/sing-box-vps/config.json 1094
+  verification_execute_redirect_probe /root/sing-box-vps/config.json 1094 \
+    "${VERIFY_REDIRECT_MARKER_PORT}" "${VERIFY_REDIRECT_MARKER}"
   verification_mark_step redirect-inbound-probe-complete
 
   local tproxy_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/tproxy-record.json"
@@ -1009,6 +1019,10 @@ PY
     "${transparent_diagnose}"
   jq -e '
     .ok == true and
+    .data.redirect_host_policy.status == "available" and
+    (.data.redirect_host_policy.resources | length) == 1 and
+    .data.redirect_host_policy.resources[0].status == "present" and
+    any(.data.redirect_host_policy.operator_managed[]; .id == "tproxy-inbound-verification") and
     any(.data.components[]; .id == "redirect-inbound-verification" and
       .instance_environment.requirements.requires_root == true and
       .instance_environment.requirements.requires_tun_device == false) and
@@ -1043,6 +1057,13 @@ PY
   [[ "${redirect_delete_status}" == 0 ]]
   jq -e '.ok==true and .operation=="delete" and .revision==7 and .id=="redirect-inbound-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/redirect-delete.json" >/dev/null
+  verification_assert_redirect_policy_removed
+  verification_cleanup_redirect_policy_fixture
+  if ip link show dev sbv-rph0 >/dev/null 2>&1 ||
+     ip netns list | awk '$1 == "sbv-rpc" { found=1 } END { exit !found }'; then
+    printf '[ERROR] Redirect verification veth/netns cleanup was incomplete.\n' >&2
+    return 1
+  fi
   verification_mark_step transparent-components-deleted
   jq -e '
     ([.inbounds[] | select(.type == "redirect" and .tag == "redirect-inbound-verification")] | length) == 0 and

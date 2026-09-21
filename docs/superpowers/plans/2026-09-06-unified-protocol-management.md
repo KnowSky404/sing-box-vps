@@ -1476,3 +1476,13 @@ local 与 remote 创建、三者 CAS 删除及 `managed-route-rule-sets-removed`
 `SINGBOX_BINARY_113/114` 未配置，宿主双版本核心检查仍按规则 skip；Docker 中目标核心
 1.14.1 的规则集 check 与真实 remote fetch 已通过。未触及生产 VPS、SubMan 或外部同步；
 全协议总目标仍未完成。
+
+### 2026-09-21：Redirect IPv4/TCP PREROUTING host policy
+
+为 Redirect inbound 增加可选、component-owned `host_policy`：只接受显式 ingress interface、目标端口白名单与独立 management ports；启用时要求非回环监听和 `--allow-public`，disabled policy 不申请公网确认或生成主机规则。每个策略使用组件 ID 派生的专用 NAT 链与精确 PREROUTING marker，采用追加式顺序保留已有规则；诊断可报告前置规则顺序，但存在更早 NAT rules 时不声称该策略有效。TProxy 与没有 `host_policy` 的 Redirect 仍归操作员管理。
+
+策略 journal、校验、应用、postcheck、失败补偿、启动恢复、组件替换/删除、实例与运行时卸载均接入已有事务边界；失败会恢复配置、状态、服务以及先前的 listener firewall/Redirect policy。新增的合同测试覆盖 disabled `false`、环境要求、management/listener port 冲突、单 JSON framing、坏状态 fail-closed 与组件事务中 PREROUTING apply 故障回滚。
+
+验证按默认入口完整运行 `bash dev/verification/run.sh`，目录 `dev/verification-runs/20260921031904`：本地门禁及远程 Docker 退出 0，16/16 场景 `STATUS=success`/`EXIT_STATUS=0`。`multi_protocol_coexistence` 使用固定 `sing-box 1.14.1`：Redirect create revision 4 报告 `installer_owned_ipv4_tcp_prerouting`/`present`；隔离 veth 的实际 TCP marker 记录为 `redirect-inbound-probe-complete`；与仍为 operator-managed 的 TProxy 探测分开执行；随后 Redirect revision 7 删除后状态 `not_configured`、资源为空，`transparent-components-deleted` 与 `cleanup.result.env` 通过专属链和 veth/network namespace 清理断言。升级、升级回滚、runtime smoke、卸载重装场景亦全部成功。提取 artifact 位于 `dev/verification-runs/20260921031904/remote-artifacts`。
+
+本轮不触碰生产 VPS、SubMan 或外部同步；脚本与 README 版本保持本逻辑任务此前递增后的 `2026092003`，全协议总目标仍未完成。

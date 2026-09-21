@@ -26,7 +26,9 @@ jq -e '
   ([.resources[] | select(.tag == "tun-probe" and .status == "not_assessed" and
     .resource_scope == "core_owned")] | length == 1) and
   ([.resources[] | select(.type == "redirect" or .type == "tproxy") |
-    .resource_scope == "operator_policy_required" and .reason == "service_inactive"] | all)
+    (.type == "redirect" and .resource_scope == "host_policy_reported_separately" or
+     .type == "tproxy" and .resource_scope == "operator_policy_required") and
+    .reason == "service_inactive"] | all)
 ' <<< "${inactive}" >/dev/null
 
 # The probe treats the core's own default Linux values (table 2022 and rule
@@ -89,13 +91,15 @@ jq '.inbounds[0].iproute2_table_index = 0 |
 mv -f "${config_file}.next" "${config_file}"
 active=$(managed_component_transparent_resources_json "${config_file}" active)
 jq -e '
-  .status == "not_assessed" and .reason == "host_policy_rules_not_managed" and
+  .status == "not_assessed" and .reason == "host_policy_not_observed_here" and
   .service_active == true and
   ([.resources[] | select(.tag == "tun-probe") |
     .interface.status == "present" and .policy_routing.status == "present" and
     .rule.status == "present" and .auto_redirect_rules.status == "not_required"] | all) and
   ([.resources[] | select(.type == "redirect" or .type == "tproxy") |
-    .resource_scope == "operator_policy_required" and .reason == "host_policy_rules_not_managed"] | all)
+    (.type == "redirect" and .resource_scope == "host_policy_reported_separately" or
+     .type == "tproxy" and .resource_scope == "operator_policy_required") and
+    .reason == "host_policy_not_observed_here"] | all)
 ' <<< "${active}" >/dev/null
 
 # A running service with a missing TUN interface must be a hard diagnostic
@@ -291,8 +295,8 @@ exit 42
 EOF
 chmod 0755 "${TMP_DIR}/bin/ip"
 redirect_only=$(managed_component_transparent_resources_json "${config_file}" active)
-jq -e '.status == "not_assessed" and .reason == "host_policy_rules_not_managed" and
-  ([.resources[] | .resource_scope == "operator_policy_required" and
-    .reason == "host_policy_rules_not_managed"] | all)' <<< "${redirect_only}" >/dev/null
+jq -e '.status == "not_assessed" and .reason == "host_policy_not_observed_here" and
+  ([.resources[] | .resource_scope == "host_policy_reported_separately" and
+    .reason == "host_policy_not_observed_here"] | all)' <<< "${redirect_only}" >/dev/null
 
 printf '%s\n' 'managed transparent resource probes passed'

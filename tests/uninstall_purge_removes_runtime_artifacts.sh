@@ -39,6 +39,23 @@ export PATH="${TMP_DIR}/stub-bin:${PATH}"
 # shellcheck disable=SC1090
 source "${TESTABLE_INSTALL}"
 
+mkdir -m 700 "${SB_COMPONENT_TRANSACTION_DIR}"
+if perform_full_uninstall; then
+  printf 'uninstall unexpectedly proceeded with a pending component transaction\n' >&2
+  exit 1
+fi
+for runtime_path in "${PROJECT_DIR}/config.json" "${SINGBOX_BIN_PATH}" "${SBV_BIN_PATH}" "${SINGBOX_SERVICE_FILE}"; do
+  if [[ ! -e "${runtime_path}" ]]; then
+    printf 'pending transaction uninstall removed runtime artifact: %s\n' "${runtime_path}" >&2
+    exit 1
+  fi
+done
+if [[ -e "${TMP_DIR}/systemctl.log" ]]; then
+  printf 'pending transaction uninstall unexpectedly called systemctl\n' >&2
+  exit 1
+fi
+rmdir "${SB_COMPONENT_TRANSACTION_DIR}"
+
 perform_full_uninstall
 
 if [[ -e "${PROJECT_DIR}" ]]; then

@@ -87,6 +87,7 @@ source "${TESTABLE_INSTALL}"
 export SBV_TRANSPARENT_SYSTEMCTL_STATE="${TMP_DIR}/systemctl.state"
 export SBV_TRANSPARENT_SYSTEMCTL_COUNT="${TMP_DIR}/systemctl.count"
 export SBV_TRANSPARENT_LINK_PROBE_COUNT="${TMP_DIR}/link-probe.count"
+export SBV_TRANSPARENT_FIREWALL_ROLLBACKS="${TMP_DIR}/firewall-rollbacks.txt"
 printf '%s\n' active > "${SBV_TRANSPARENT_SYSTEMCTL_STATE}"
 printf '%s\n' 0 > "${SBV_TRANSPARENT_SYSTEMCTL_COUNT}"
 printf '%s\n' 0 > "${SBV_TRANSPARENT_LINK_PROBE_COUNT}"
@@ -113,7 +114,9 @@ instance_firewall_prepare() {
     operations:[],backend_statuses:[],diagnostics:[]}' > "${3}"
 }
 instance_firewall_apply() { :; }
-instance_firewall_rollback() { :; }
+instance_firewall_rollback() {
+  printf '%s\n' "${1:-missing}" >> "${SBV_TRANSPARENT_FIREWALL_ROLLBACKS}"
+}
 instance_firewall_commit() { :; }
 instance_transaction_firewall_summary() {
   jq -cn '{status:"not_attempted",backends:[],diagnostics:[]}'
@@ -188,5 +191,133 @@ jq -e '.revision == 3 and any(.components[]; .id == "openconnect-system-health")
   "${SB_COMPONENT_STATE_FILE}" >/dev/null
 jq -e 'any(.endpoints[]; .type == "openconnect" and .system == true and
   .name == "sbv-oc")' "${SINGBOX_CONFIG_FILE}" >/dev/null
+
+# Keep the injected Redirect failure independent of the system-endpoint
+# readiness fixture above; the Redirect transaction only needs an active
+# service and a disposable ingress interface.
+delete_openconnect=$(agent_cli component delete --json --yes --expected-revision 3 \
+  --id openconnect-system-health)
+jq -e '.ok == true and .data.operation == "delete" and .data.revision == 4' \
+  <<< "${delete_openconnect}" >/dev/null
+
+# A Redirect policy failure after listener-firewall application must roll back
+# both externally managed resources, then restore the old config and service.
+REDIRECT_TEST_CHAIN=''
+REDIRECT_TEST_RULE=false
+REDIRECT_TEST_JUMP_RULE=''
+REDIRECT_TEST_FAIL_JUMP=true
+iptables() {
+  [[ "${1:-}" == -t && "${2:-}" == nat ]] || return 2
+  shift 2
+  local operation=${1:-} target
+  shift || true
+  case "${operation}" in
+    -S)
+      target=${1:-}
+      if [[ -z "${target}" ]]; then
+        [[ -n "${REDIRECT_TEST_CHAIN}" ]] && printf -- '-N %s\n' "${REDIRECT_TEST_CHAIN}"
+        if [[ "${REDIRECT_TEST_RULE}" == true ]]; then
+          printf -- '-A %s -i sbv-rph0 -p tcp -m multiport --dports 18081 -j REDIRECT --to-ports 19094\n' \
+            "${REDIRECT_TEST_CHAIN}"
+        fi
+        [[ -n "${REDIRECT_TEST_JUMP_RULE}" ]] && printf -- '-A %s\n' "${REDIRECT_TEST_JUMP_RULE}"
+      elif [[ "${target}" == PREROUTING ]]; then
+        printf -- '-N PREROUTING\n'
+        [[ -n "${REDIRECT_TEST_JUMP_RULE}" ]] && printf -- '-A %s\n' "${REDIRECT_TEST_JUMP_RULE}"
+      elif [[ "${target}" == "${REDIRECT_TEST_CHAIN}" && -n "${REDIRECT_TEST_CHAIN}" ]]; then
+        printf -- '-N %s\n' "${REDIRECT_TEST_CHAIN}"
+        if [[ "${REDIRECT_TEST_RULE}" == true ]]; then
+          printf -- '-A %s -i sbv-rph0 -p tcp -m multiport --dports 18081 -j REDIRECT --to-ports 19094\n' \
+            "${REDIRECT_TEST_CHAIN}"
+        fi
+      else
+        return 1
+      fi
+      :
+      ;;
+    -N)
+      REDIRECT_TEST_CHAIN=${1:-}
+      ;;
+    -C)
+      target=${1:-}
+      shift || true
+      if [[ "${target}" == "${REDIRECT_TEST_CHAIN}" && "${REDIRECT_TEST_RULE}" == true ]]; then
+        return 0
+      elif [[ "${target}" == PREROUTING && "${REDIRECT_TEST_JUMP_RULE}" == "PREROUTING $*" ]]; then
+        return 0
+      fi
+      return 1
+      ;;
+    -A)
+      target=${1:-}
+      shift || true
+      if [[ "${target}" == PREROUTING ]]; then
+        if [[ "${REDIRECT_TEST_FAIL_JUMP}" == true ]]; then
+          return 1
+        fi
+        REDIRECT_TEST_JUMP_RULE="PREROUTING $*"
+      elif [[ "${target}" == "${REDIRECT_TEST_CHAIN}" ]]; then
+        REDIRECT_TEST_RULE=true
+      else
+        return 1
+      fi
+      ;;
+    -F)
+      REDIRECT_TEST_RULE=false
+      ;;
+    -X)
+      REDIRECT_TEST_CHAIN=''
+      ;;
+    -D)
+      REDIRECT_TEST_JUMP_RULE=''
+      ;;
+    *) return 2 ;;
+  esac
+}
+
+cat > "${TMP_DIR}/bin/ip" <<'EOF_IP'
+#!/usr/bin/env bash
+if [[ "${1:-}" == link && "${2:-}" == show && "${3:-}" == dev && "${4:-}" == sbv-rph0 ]]; then
+  exit 0
+fi
+exit 64
+EOF_IP
+chmod 0755 "${TMP_DIR}/bin/ip"
+: > "${SBV_TRANSPARENT_FIREWALL_ROLLBACKS}"
+redirect_record="${TMP_DIR}/redirect-policy-transaction.json"
+jq -n '{id:"redirect-policy-transaction",role:"inbound",type:"redirect",
+  tag:"redirect-policy-transaction",enabled:true,route_rules:[],
+  config:{listen:"0.0.0.0",listen_port:19094},
+  host_policy:{ingress_interface:"sbv-rph0",destination_ports:[18081],management_ports:[22,19094]}}' \
+  > "${redirect_record}"
+inactive_before_state=$(cat "${SB_COMPONENT_STATE_FILE}")
+inactive_before_config=$(cat "${SINGBOX_CONFIG_FILE}")
+printf '%s\n' inactive > "${SBV_TRANSPARENT_SYSTEMCTL_STATE}"
+if failed=$(agent_cli component create --json --yes --allow-public \
+  --expected-revision 4 --file "${redirect_record}"); then
+  printf 'first Redirect host policy unexpectedly succeeded while sing-box was inactive\n' >&2
+  exit 1
+fi
+jq -e '.ok == false and .error == "host_policy_requires_active_service"' <<< "${failed}" >/dev/null
+[[ "$(cat "${SB_COMPONENT_STATE_FILE}")" == "${inactive_before_state}" ]]
+[[ "$(cat "${SINGBOX_CONFIG_FILE}")" == "${inactive_before_config}" ]]
+[[ ! -e "${SB_COMPONENT_TRANSACTION_DIR}" ]]
+printf '%s\n' active > "${SBV_TRANSPARENT_SYSTEMCTL_STATE}"
+before_state=$(cat "${SB_COMPONENT_STATE_FILE}")
+before_config=$(cat "${SINGBOX_CONFIG_FILE}")
+current_revision=$(jq -r '.revision' "${SB_COMPONENT_STATE_FILE}")
+if failed=$(agent_cli component create --json --yes --allow-public \
+  --expected-revision "${current_revision}" --file "${redirect_record}"); then
+  printf 'Redirect transaction unexpectedly succeeded after injected PREROUTING jump failure\n' >&2
+  exit 1
+fi
+jq -e '.ok == false and .error == "host_policy_apply_failed" and
+  .data.ok == false and .data.error == "host_policy_apply_failed"' <<< "${failed}" >/dev/null
+[[ "$(cat "${SB_COMPONENT_STATE_FILE}")" == "${before_state}" ]]
+[[ "$(cat "${SINGBOX_CONFIG_FILE}")" == "${before_config}" ]]
+[[ -z "${REDIRECT_TEST_CHAIN}" && "${REDIRECT_TEST_RULE}" == false &&
+   -z "${REDIRECT_TEST_JUMP_RULE}" ]]
+[[ "$(wc -l < "${SBV_TRANSPARENT_FIREWALL_ROLLBACKS}")" -eq 1 ]]
+[[ ! -e "${SB_COMPONENT_TRANSACTION_DIR}" ]]
 
 printf '%s\n' 'managed transparent transaction checks passed'
