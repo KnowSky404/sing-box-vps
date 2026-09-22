@@ -1520,7 +1520,7 @@ TCP 与 UDP TProxy marker，连续应用两次 managed policy revision，删除�
 出站、Endpoint 与 route rule-set 行，要求矩阵头部明确列出 upstream/implemented/available/
 validated、D/T/E/R、导出/分享/SubMan 和限制/证据栏，避免回到单一 `supported=true` 清单。
 
-同步刷新矩阵审阅日期、当前脚本版本 `2026092202`、1.14.1 ARM64 稳定版摘要和 TProxy 最新
+同步刷新矩阵审阅日期、当前脚本版本 `2026092203`、1.14.1 ARM64 稳定版摘要和 TProxy 最新
 隔离 Docker 证据；README 改正旧的 TProxy“仍由操作员管理”表述，仅将未配置 `host_policy`
 的记录保留为操作员边界。该门禁只证明文档与机器注册表不漂移，不把 `validated=not_assessed`、
 外部认证、公网、生产或真实 SubMan 同步改写成通过；全协议总目标仍未完成。
@@ -1563,3 +1563,16 @@ dev/verification/common.sh tests/protocol_coverage_contract.sh`，运行目录�
 因此宿主 real-core 检查仍按契约为 `SKIP/unavailable`；Docker 1.14.1 核心 check、实际协议
 探针与 rule-set HTTP fixture 证据均保持独立通过。五个组合依赖服务没有伪造 ACME、DBus、宿主
 namespace 或公网/生产证据；SubMan 仍为本地 mock 边界，真实外部控制面与生产 VPS 未触及。
+
+### 2026-09-22：敏感诊断输出脱敏
+
+审计发现 WireGuard/REALITY 密钥生成失败路径曾把 sing-box 原始输出写入 `sbv.log`，Warp
+注册路径也曾把 API 原始响应（可能包含私钥、token、client_id 或错误回显）写入日志。现已移除
+这些原文日志：生成器失败只记录退出码与“原始输出未记录”，Warp 只记录响应已收到且敏感原文
+未记录，API 错误统一归类为稳定错误文本；进程内仍保留原文用于解析和持久化，成功状态文件的
+凭据边界不变。`tests/secret_diagnostics_redaction.sh` 覆盖生成器失败、Warp 成功响应和 API
+错误响应，检查日志与错误输出均不含私钥、token、client_id 或错误回显。
+
+本轮脚本版本递增并同步 README、Agent 索引与覆盖文档为 `2026092203`。本项只收紧诊断信息
+边界，不改变协议配置、远程资源、生产 VPS、外部认证或真实 SubMan 状态；完整协议总目标仍未
+完成，后续审计继续保持这些边界。

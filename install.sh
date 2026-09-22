@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026092202
+# Version: 2026092203
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026092202"
+readonly SCRIPT_VERSION="2026092203"
 readonly SB_SUPPORT_MAX_VERSION="1.14.1"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -367,7 +367,7 @@ register_warp() {
   pub_key=$(extract_generated_key_value "${keypair}" "public")
   
   if [[ -z "${priv_key}" || -z "${pub_key}" || ${#priv_key} -lt 40 ]]; then
-    log_info "无法从 sing-box 提取合法密钥。原始输出: ${keypair}" >> "${SBV_LOG_FILE}"
+    log_info "无法从 sing-box 提取合法密钥（原始输出未记录）。" >> "${SBV_LOG_FILE}"
     log_error "WireGuard 密钥生成失败（格式非法），请查看 ${SBV_LOG_FILE}"
   fi
 
@@ -385,7 +385,7 @@ register_warp() {
     -H "Content-Type: application/json" \
     -d "${payload}")
 
-  log_info "Warp 注册原始响应: ${response}" >> "${SBV_LOG_FILE}"
+  log_info "Warp 注册 API 已返回（敏感响应原文未记录）。" >> "${SBV_LOG_FILE}"
 
   if [[ -z "${response}" ]]; then
     log_error "Cloudflare API 无响应，请查看 ${SBV_LOG_FILE}"
@@ -394,9 +394,8 @@ register_warp() {
   # Check success by existence of "id" field
   local warp_id=$(echo "${response}" | jq -r '.id // empty')
   if [[ -z "${warp_id}" || "${warp_id}" == "null" ]]; then
-    local err_msg=$(echo "${response}" | jq -r '.errors[0].message // "未知错误"')
     log_warn "收到非预期响应，详情请查看日志: ${SBV_LOG_FILE}"
-    log_error "Warp 注册失败: ${err_msg}"
+    log_error "Warp 注册失败（API 返回错误），请查看 ${SBV_LOG_FILE}"
   fi
 
   local warp_token warp_v4 warp_v6 warp_client_id
@@ -620,12 +619,15 @@ run_singbox_generate_command() {
   local label=$2
   local output
 
-  if ! output=$("${SINGBOX_BIN_PATH}" generate "${subcommand}" 2>&1); then
-    log_info "${label}生成原始输出: ${output}" >> "${SBV_LOG_FILE}"
-    log_error "${label}生成失败，请查看 ${SBV_LOG_FILE}" >&2
+  if output=$("${SINGBOX_BIN_PATH}" generate "${subcommand}" 2>&1); then
+    printf '%s' "${output}"
+    return 0
+  else
+    local command_status=$?
   fi
 
-  printf '%s' "${output}"
+  log_info "${label}生成失败（退出码 ${command_status}；原始输出未记录）。" >> "${SBV_LOG_FILE}"
+  log_error "${label}生成失败，请查看 ${SBV_LOG_FILE}" >&2
 }
 
 validate_warp_route_mode() {
@@ -11828,7 +11830,7 @@ ensure_vless_reality_materials() {
     SB_PRIVATE_KEY=$(extract_generated_key_value "${keypair}" "private")
     SB_PUBLIC_KEY=$(extract_generated_key_value "${keypair}" "public")
     if [[ -z "${SB_PRIVATE_KEY}" || -z "${SB_PUBLIC_KEY}" ]]; then
-      log_info "REALITY 密钥生成原始输出: ${keypair}" >> "${SBV_LOG_FILE}"
+      log_info "REALITY 密钥生成输出格式非法（原始输出未记录）。" >> "${SBV_LOG_FILE}"
       log_error "REALITY 密钥生成失败（输出格式非法），请查看 ${SBV_LOG_FILE}"
     fi
     {
