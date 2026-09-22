@@ -113,6 +113,8 @@ Redirect `host_policy` applies only to enabled components. `destination_ports` a
 
 2026-09-22 TProxy `host_policy` 验收：定向 Docker 门禁 `dev/verification-runs/20260922061000` 的 `multi_protocol_coexistence` 与 `runtime_smoke` 均为 `STATUS=success`，固定 `sing-box 1.14.1` 在隔离 client/marker network namespace 中回读 TProxy TCP+UDP marker；同一组件连续应用两次 policy revision，删除后确认 mangle 链、fwmark、policy rule、local route table 与 veth/namespace 均清理。该证据只覆盖显式 IPv4 ingress/目标端口的 verification-container 资源，不代表宿主机通用策略、公网、生产或 SubMan；未配置 `host_policy` 的记录仍归操作员管理。
 
+2026-09-22 本机双版本核心复核：在 ARM64 VPS 的 `/tmp` 中校验官方 `sing-box-1.13.18-linux-arm64.tar.gz`（SHA-256 `a894f6152cade4a2c9d062762d54dea0c1aee673ab4759e0829e19cace932719`）与 `sing-box-1.14.1-linux-arm64.tar.gz`（SHA-256 `6060b42fa84c5dcaeae1799af7f61b0f1ae4855d9d5ddc9e02baba17154b3ae2`），并执行 `VERIFY_SKIP_REMOTE=1 SINGBOX_BINARY_113=... SINGBOX_BINARY_114=... bash dev/verification/run.sh --changed-file install.sh dev/verification/common.sh tests/protocol_coverage_contract.sh`；本地生命周期、导出、SubMan mock、目标核心 check 和协议探针门禁退出 0，运行目录为 `dev/verification-runs/20260922113827`。该复核仍明确保留 HTTPUpgrade/WS early-data 不可靠路径、宿主 `/dev/net/tun` 依赖和真实外部控制面为 blocked/skipped 边界；未执行生产、真实 SubMan 或公网操作。
+
 ## 🚀 一键安装
 
 在您的 VPS 上运行以下安全 Bootstrap 即可开始安装。它会先完整下载到权限为 `0600` 的临时文件，再执行语法和项目身份校验；下载、校验或脚本执行的退出码会原样返回。整个流程运行在子 Shell 中，不会用 `exit` 关闭当前 SSH 登录 Shell。

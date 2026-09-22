@@ -1532,3 +1532,14 @@ dev/verification/common.sh tests/protocol_coverage_contract.sh`：本地门禁�
 多协议、TProxy、outbound、rule-set、升级回滚、runtime smoke 与卸载重装路径。宿主机双核心
 1.13/1.14 检查因未提供对应二进制而保持 `SKIP/unavailable`；没有把该缺失证据扩展为宿主、生产、
 公网或真实 SubMan 证明。
+
+随后补齐本机核心证据：在 ARM64 VPS 的 `/tmp/sing-box-v1.13.18-cache` 与
+`/tmp/sing-box-v1.14.1-cache` 下载并校验官方归档，SHA-256 分别为
+`a894f6152cade4a2c9d062762d54dea0c1aee673ab4759e0829e19cace932719` 与
+`6060b42fa84c5dcaeae1799af7f61b0f1ae4855d9d5ddc9e02baba17154b3ae2`。随后执行
+`VERIFY_SKIP_REMOTE=1 SINGBOX_BINARY_113=… SINGBOX_BINARY_114=… bash dev/verification/run.sh
+--changed-file install.sh dev/verification/common.sh tests/protocol_coverage_contract.sh`，
+运行目录 `dev/verification-runs/20260922113827`，本地协议生命周期、双版本配置/export
+check、SubMan mock、协议探针和组件合同均退出 0。输出中 HTTPUpgrade/WS early-data 仍按
+不可靠运行时路径显式 blocked，宿主 `/dev/net/tun`/隔离 IPv6 条件按契约 skip；这补强了
+本机目标核心证据，但没有改变外部认证、公网、生产或真实 SubMan 的边界。

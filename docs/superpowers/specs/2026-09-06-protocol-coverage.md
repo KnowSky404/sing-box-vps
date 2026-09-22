@@ -14,6 +14,14 @@
 `6060b42fa84c5dcaeae1799af7f61b0f1ae4855d9d5ddc9e02baba17154b3ae2`）；历史
 `v1.14.0` 源码提交仍作为矩阵基线，1.14.1 的发布资产与运行时版本核对记录在实施计划中。
 
+2026-09-22 本机核心复核：ARM64 VPS 在 `/tmp` 校验并使用官方 `1.13.18`（SHA-256
+`a894f6152cade4a2c9d062762d54dea0c1aee673ab4759e0829e19cace932719`）与 `1.14.1`
+（SHA-256 `6060b42fa84c5dcaeae1799af7f61b0f1ae4855d9d5ddc9e02baba17154b3ae2`）执行
+本地双版本门禁；运行目录为 `dev/verification-runs/20260922113827`，核心生命周期、
+导出、SubMan mock、配置 check 和协议探针均通过。该 run 使用 `VERIFY_SKIP_REMOTE=1`，
+因此不替代 Docker/隔离网络证据；HTTPUpgrade/WS early-data、宿主 TUN 权限和外部
+控制面仍按各自契约标记 blocked/skipped，不能扩大为公网、生产或真实 SubMan 证明。
+
 本文是上游能力核对，不能把上游已注册等同于 sing-box-vps 已实现。矩阵的四种状态分别表示：
 
 - `upstream`：目标版本源码中是否有该角色和 type 的注册实现；`conditional` 表示构建 tag、平台、CGO 或外部控制面有条件。
