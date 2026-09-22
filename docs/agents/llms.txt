@@ -7,7 +7,7 @@ Runtime source of truth: install.sh.
 Remote verification: Docker-based, auto-builds sing-box-vps-verify image.
 Agent protocol contract revision: 2026091205.
 
-Current script version: 2026092101. The managed component registry now has
+Current script version: 2026092201. The managed component registry now has
 typed inline/local/remote route rule-set roles in the same schema-1 CAS,
 render, takeover, rebuild, drift-guard, and sensitive-export lifecycle. Inline
 rules are bounded matchers, local paths are external references, and remote

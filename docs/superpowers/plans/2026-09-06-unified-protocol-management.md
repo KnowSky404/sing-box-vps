@@ -1510,3 +1510,25 @@ TCP 与 UDP TProxy marker，连续应用两次 managed policy revision，删除�
 变体与 inline/local/remote rule-set CAS 矩阵也全部通过。相关 fixture cleanup artifact 明确
 为 disposable verification-container 资源；本轮没有生产 VPS、宿主机规则、外部认证、SubMan
 同步或公网数据面证据。脚本与 README 版本同步为 `2026092101`，全协议总目标仍未完成。
+
+### 2026-09-22：覆盖矩阵与注册表一致性门禁
+
+在 TProxy host policy 之后补齐覆盖交付的自动一致性边界：新增
+`tests/protocol_coverage_contract.sh`，从当前 `install.sh` 读取协议与组件注册表，逐项校验
+`core_supported`、`implemented`、静态 `available`、`validated`、生命周期和 handler 字段，
+并确认 Agent `managed_registry` 与两个注册表的 ID 集合一致。测试同时逐项检查覆盖矩阵的入站、
+出站、Endpoint 与 route rule-set 行，要求矩阵头部明确列出 upstream/implemented/available/
+validated、D/T/E/R、导出/分享/SubMan 和限制/证据栏，避免回到单一 `supported=true` 清单。
+
+同步刷新矩阵审阅日期、当前脚本版本 `2026092201`、1.14.1 ARM64 稳定版摘要和 TProxy 最新
+隔离 Docker 证据；README 改正旧的 TProxy“仍由操作员管理”表述，仅将未配置 `host_policy`
+的记录保留为操作员边界。该门禁只证明文档与机器注册表不漂移，不把 `validated=not_assessed`、
+外部认证、公网、生产或真实 SubMan 同步改写成通过；全协议总目标仍未完成。
+
+本轮变更按安装脚本触发规则运行完整 `bash dev/verification/run.sh --changed-file install.sh
+dev/verification/common.sh tests/protocol_coverage_contract.sh`：本地门禁通过，特权 Docker
+远程 `dev/verification-runs/20260922081745/summary.log` 报告 `remote_status=success`，提取的
+16 个场景 artifact 均为 `STATUS=success`/`EXIT_STATUS=0`，包括本轮覆盖矩阵合同测试所触发的
+多协议、TProxy、outbound、rule-set、升级回滚、runtime smoke 与卸载重装路径。宿主机双核心
+1.13/1.14 检查因未提供对应二进制而保持 `SKIP/unavailable`；没有把该缺失证据扩展为宿主、生产、
+公网或真实 SubMan 证明。

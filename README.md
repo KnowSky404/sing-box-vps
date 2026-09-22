@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026092101`
+- 脚本版本：`2026092201`
 
 - sing-box 适配版本：`1.14.1`
 
@@ -109,7 +109,9 @@ Snell outbound 已按 sing-box 1.14 的 `SnellOutboundOptions` 接入 typed comp
 
 Redirect `host_policy` applies only to enabled components. `destination_ports` and `management_ports` must be disjoint, and the listener port cannot be captured; the first enabled policy also requires sing-box to be active. Its dedicated jump is appended after existing IPv4 PREROUTING rules, so `component diagnose` reports observed ordering and marks effectiveness unassessed when earlier rules exist. This remains an explicit IPv4/TCP opt-in, not general host firewall management.
 
-2026-09-21 Redirect `host_policy` 验收：默认完整门禁 `bash dev/verification/run.sh`（`dev/verification-runs/20260921031904`）退出 0，Docker 远程 16/16 场景成功。`multi_protocol_coexistence` 在固定 `sing-box 1.14.1` 下创建受管 PREROUTING 链并经隔离 veth 回读 TCP marker；artifact 记录 `redirect-inbound-probe-complete`。随后 Redirect 删除 revision 7 返回 `not_configured`/空资源，`transparent-components-deleted` 与 `cleanup.result.env` 证明专属规则链及测试 veth/network namespace 清理断言通过。此项验证只覆盖隔离 Docker 内明确接口/目标端口的策略，不代表宿主机通用防火墙策略、公网或生产部署；TProxy 仍为操作员管理，全协议目标尚未完成。
+2026-09-21 Redirect `host_policy` 验收：默认完整门禁 `bash dev/verification/run.sh`（`dev/verification-runs/20260921031904`）退出 0，Docker 远程 16/16 场景成功。`multi_protocol_coexistence` 在固定 `sing-box 1.14.1` 下创建受管 PREROUTING 链并经隔离 veth 回读 TCP marker；artifact 记录 `redirect-inbound-probe-complete`。随后 Redirect 删除 revision 7 返回 `not_configured`/空资源，`transparent-components-deleted` 与 `cleanup.result.env` 证明专属规则链及测试 veth/network namespace 清理断言通过。此项验证只覆盖隔离 Docker 内明确接口/目标端口的策略，不代表宿主机通用防火墙策略、公网或生产部署；未配置 `host_policy` 的 TProxy/Redirect 仍归操作员管理，全协议目标尚未完成。
+
+2026-09-22 TProxy `host_policy` 验收：定向 Docker 门禁 `dev/verification-runs/20260922061000` 的 `multi_protocol_coexistence` 与 `runtime_smoke` 均为 `STATUS=success`，固定 `sing-box 1.14.1` 在隔离 client/marker network namespace 中回读 TProxy TCP+UDP marker；同一组件连续应用两次 policy revision，删除后确认 mangle 链、fwmark、policy rule、local route table 与 veth/namespace 均清理。该证据只覆盖显式 IPv4 ingress/目标端口的 verification-container 资源，不代表宿主机通用策略、公网、生产或 SubMan；未配置 `host_policy` 的记录仍归操作员管理。
 
 ## 🚀 一键安装
 

@@ -69,6 +69,7 @@ resolve_local_tests() {
       tests/bootstrap_download.sh \
       tests/cli_update_commands.sh \
       tests/protocol_registry_contract.sh \
+      tests/protocol_coverage_contract.sh \
       tests/protocol_instance_adapter.sh \
       tests/structured_instance_store.sh \
       tests/managed_listener_resources.sh \
