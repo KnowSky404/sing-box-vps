@@ -1486,3 +1486,27 @@ local 与 remote 创建、三者 CAS 删除及 `managed-route-rule-sets-removed`
 验证按默认入口完整运行 `bash dev/verification/run.sh`，目录 `dev/verification-runs/20260921031904`：本地门禁及远程 Docker 退出 0，16/16 场景 `STATUS=success`/`EXIT_STATUS=0`。`multi_protocol_coexistence` 使用固定 `sing-box 1.14.1`：Redirect create revision 4 报告 `installer_owned_ipv4_tcp_prerouting`/`present`；隔离 veth 的实际 TCP marker 记录为 `redirect-inbound-probe-complete`；与仍为 operator-managed 的 TProxy 探测分开执行；随后 Redirect revision 7 删除后状态 `not_configured`、资源为空，`transparent-components-deleted` 与 `cleanup.result.env` 通过专属链和 veth/network namespace 清理断言。升级、升级回滚、runtime smoke、卸载重装场景亦全部成功。提取 artifact 位于 `dev/verification-runs/20260921031904/remote-artifacts`。
 
 本轮不触碰生产 VPS、SubMan 或外部同步；脚本与 README 版本保持本逻辑任务此前递增后的 `2026092003`，全协议总目标仍未完成。
+
+### 2026-09-22：TProxy IPv4/TCP+UDP PREROUTING host policy
+
+在 Redirect host policy 之后补齐可选、component-owned 的 TProxy host policy：记录必须显式声明
+ingress interface、TCP/UDP 目标端口白名单和包含 SSH/监听端口的 management ports；启用时要求
+`0.0.0.0` 监听、`--allow-public` 及已有 active sing-box 服务。每个策略由稳定摘要派生专用
+mangle 链、marker、fwmark、优先级和 `local` route table，只匹配指定 ingress interface 与目标
+端口，不默认捕获全机流量、DNS 或未声明协议。Redirect 计划明确过滤 `type=redirect`，TProxy
+不会误生成 NAT REDIRECT 规则；没有启用 `host_policy` 的 TProxy/Redirect 仍归操作员管理。
+
+TProxy 资源通过独立 journal 接入组件 create/replace/delete、rebuild、recover、运行时卸载和
+失败补偿：应用前进行 iptables/iproute2/interface 预检，postcheck 同时核对 mangle 链、跳转、
+fwmark 规则和 local route，失败时按 before/after delta 回滚，检测到不属于当前 state 的遗留
+资源则 fail closed。诊断返回资源状态、可观察的 firewall/policy-rule 前置顺序和限制，不把
+顺序观察扩大为宿主完整策略有效性。
+
+最终特权 Docker 验证目录为 `dev/verification-runs/20260922061000`，`summary.log` 的
+`remote_status=success`，`multi_protocol_coexistence` 与 `runtime_smoke` 均为
+`STATUS=success/EXIT_STATUS=0`。共存场景用隔离 client/marker network namespaces 做真实
+TCP 与 UDP TProxy marker，连续应用两次 managed policy revision，删除组件后确认 mangle
+链、policy rule、route table 和 fixture 均清理；随后完整 outbound、ShadowTLS、Tor、UDP
+变体与 inline/local/remote rule-set CAS 矩阵也全部通过。相关 fixture cleanup artifact 明确
+为 disposable verification-container 资源；本轮没有生产 VPS、宿主机规则、外部认证、SubMan
+同步或公网数据面证据。脚本与 README 版本同步为 `2026092101`，全协议总目标仍未完成。
