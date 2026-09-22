@@ -16,8 +16,8 @@ grep -Fq 'interval:"1s"' "${SCENARIO_FILE}"
 grep -Fq 'DATA_PLANE=urltest_direct_loopback' "${SCENARIO_FILE}"
 grep -Fq 'HEALTHCHECK=loopback_http' "${SCENARIO_FILE}"
 grep -Fq 'urltest-outbound.result.env' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 13 --file "${urltest_record}"' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 14 --id urltest-outbound-verification' "${SCENARIO_FILE}"
+grep -Fq -- '--expected-revision 15 --file "${urltest_record}"' "${SCENARIO_FILE}"
+grep -Fq -- '--expected-revision 16 --id urltest-outbound-verification' "${SCENARIO_FILE}"
 
 if grep -Fq 'POLICY_OWNERSHIP=managed' "${SCENARIO_FILE}"; then
   printf 'URLTest verification must not claim managed host policy ownership\n' >&2

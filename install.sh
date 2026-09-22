@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026092003
+# Version: 2026092101
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026092003"
+readonly SCRIPT_VERSION="2026092101"
 readonly SB_SUPPORT_MAX_VERSION="1.14.1"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -33,6 +33,8 @@ readonly SB_COMPONENT_TRANSACTION_DIR="${SB_PROJECT_DIR}.component-write.lock"
 readonly SB_COMPONENT_STATE_SCHEMA_VERSION="1"
 readonly MANAGED_REDIRECT_POLICY_CHAIN_PREFIX="SBVR_"
 readonly MANAGED_REDIRECT_POLICY_COMMENT_PREFIX="sbv-redirect-"
+readonly MANAGED_TPROXY_POLICY_CHAIN_PREFIX="SBVT_"
+readonly MANAGED_TPROXY_POLICY_COMMENT_PREFIX="sbv-tproxy-"
 readonly SB_REALITY_QOS_FILTER_STATE_FILE="${SB_PROJECT_DIR}/reality-qos.filters"
 readonly SB_REALITY_QOS_FILTER_PREF_START="32001"
 readonly SB_REALITY_QOS_BURST="512k"
@@ -98,7 +100,7 @@ readonly SB_COMPONENT_REGISTRY=(
   'direct-inbound|inbound|direct|Direct inbound|1.13.0|builtin|{"listen":true,"network":["tcp","udp"],"loop_prevention":true}'
   'tun-inbound|inbound|tun|TUN inbound|1.13.0|builtin|{"l3":true,"auto_route":true,"strict_route":true,"loop_prevention":true}'
   'redirect-inbound|inbound|redirect|Redirect inbound|1.13.0|builtin|{"listen":true,"linux_macos":true,"loop_prevention":true,"optional_host_policy":{"backend":"iptables","family":"ipv4","transport":["tcp"],"scope":"explicit_interface_and_destination_ports"}}'
-  'tproxy-inbound|inbound|tproxy|TProxy inbound|1.13.0|builtin|{"listen":true,"network":["tcp","udp"],"linux":true,"loop_prevention":true}'
+  'tproxy-inbound|inbound|tproxy|TProxy inbound|1.13.0|builtin|{"listen":true,"network":["tcp","udp"],"linux":true,"loop_prevention":true,"optional_host_policy":{"backend":"iptables+iproute2","family":"ipv4","transport":["tcp","udp"],"scope":"explicit_interface_and_destination_ports"}}'
   'cloudflared-inbound|inbound|cloudflared|Cloudflared inbound|1.14.0|with_cloudflared|{"tunnel":true,"token_required":true,"account_mutation":false}'
   'wireguard-endpoint|endpoint|wireguard|WireGuard endpoint|1.11.0|with_wireguard|{"endpoint":true,"modern_endpoint":true,"typed_config":true,"peers":true,"allowed_ips":true,"udp_nat":true,"dialer":true,"listen_network":["udp"]}'
   'tailscale-endpoint|endpoint|tailscale|Tailscale endpoint|1.12.0|with_tailscale|{"endpoint":true,"typed_config":true,"auth_external":true,"routes":true,"relay":true,"ssh_server":true,"dialer":true,"listen_network":["udp"]}'
@@ -1712,14 +1714,40 @@ managed_component_instance_environment_json() {
   fi
 
   if jq -e 'has("host_policy") and (.enabled == true)' <<< "${record}" >/dev/null 2>&1; then
-    local host_policy_interface
+    local host_policy_interface host_policy_type
     host_policy_interface=$(jq -r '.host_policy.ingress_interface' <<< "${record}") || return 1
+    host_policy_type=$(jq -r '.type' <<< "${record}") || return 1
     if [[ "$(uname -s 2>/dev/null || printf unknown)" != Linux ]]; then
-      instance_add_dependency host_policy_platform unavailable redirect_host_policy_linux_only || return 1
-    elif command -v iptables >/dev/null 2>&1 && iptables -t nat -S >/dev/null 2>&1; then
-      instance_add_dependency iptables_nat available '' || return 1
+      instance_add_dependency host_policy_platform unavailable host_policy_linux_only || return 1
+    elif [[ "${host_policy_type}" == redirect ]]; then
+      if command -v iptables >/dev/null 2>&1 && iptables -t nat -S >/dev/null 2>&1; then
+        instance_add_dependency iptables_nat available '' || return 1
+      else
+        instance_add_dependency iptables_nat unavailable iptables_nat_unavailable || return 1
+      fi
+    elif [[ "${host_policy_type}" == tproxy ]]; then
+      if command -v iptables >/dev/null 2>&1 && iptables -t mangle -S >/dev/null 2>&1; then
+        instance_add_dependency iptables_mangle available '' || return 1
+      else
+        instance_add_dependency iptables_mangle unavailable iptables_mangle_unavailable || return 1
+      fi
+      if command -v iptables >/dev/null 2>&1 && iptables -j TPROXY -h >/dev/null 2>&1; then
+        instance_add_dependency iptables_tproxy_target available '' || return 1
+      else
+        instance_add_dependency iptables_tproxy_target unavailable iptables_tproxy_target_unavailable || return 1
+      fi
+      if command -v iptables >/dev/null 2>&1 && iptables -m multiport -h >/dev/null 2>&1; then
+        instance_add_dependency iptables_multiport_match available '' || return 1
+      else
+        instance_add_dependency iptables_multiport_match unavailable iptables_multiport_match_unavailable || return 1
+      fi
+      if command -v ip >/dev/null 2>&1 && ip -4 rule show >/dev/null 2>&1; then
+        instance_add_dependency iproute2_policy_routing available '' || return 1
+      else
+        instance_add_dependency iproute2_policy_routing unavailable iproute2_policy_routing_unavailable || return 1
+      fi
     else
-      instance_add_dependency iptables_nat unavailable iptables_nat_unavailable || return 1
+      instance_add_dependency host_policy_type unavailable host_policy_type_unavailable || return 1
     fi
     if command -v ip >/dev/null 2>&1 && ip link show dev "${host_policy_interface}" >/dev/null 2>&1; then
       instance_add_dependency ingress_interface available '' || return 1
@@ -1730,11 +1758,14 @@ managed_component_instance_environment_json() {
 
   requirements=$(jq -cn --arg mode "${system_mode}" --argjson root "${requires_root}" \
     --argjson tun "${requires_tun_device}" --argjson gvisor "${requires_gvisor}" \
-    --argjson redirect_policy "$(jq -r 'has("host_policy") and (.enabled == true)' <<< "${record}")" \
+    --argjson redirect_policy "$(jq -r '.type == "redirect" and has("host_policy") and (.enabled == true)' <<< "${record}")" \
+    --argjson tproxy_policy "$(jq -r '.type == "tproxy" and has("host_policy") and (.enabled == true)' <<< "${record}")" \
     '{system_interface:($mode == "system"),system_mode:$mode,requires_root:$root,
       requires_tun_device:$tun,requires_gvisor:$gvisor,
       managed_redirect_host_policy:$redirect_policy,
-      redirect_host_policy_scope:(if $redirect_policy then "ipv4_tcp_prerouting" else null end)}') || return 1
+      redirect_host_policy_scope:(if $redirect_policy then "ipv4_tcp_prerouting" else null end),
+      managed_tproxy_host_policy:$tproxy_policy,
+      tproxy_host_policy_scope:(if $tproxy_policy then "ipv4_tcp_udp_prerouting_policy_route" else null end)}') || return 1
   jq -cn --argjson base "${base}" --arg status "${status}" --arg reason "${reason}" \
     --argjson dependencies "${dependencies}" --argjson requirements "${requirements}" \
     '$base + {status:$status,reason:(if $reason == "" then null else $reason end),
@@ -16824,7 +16855,7 @@ managed_component_redirect_host_policy_validate_record() {
   local record=${1:-}
   [[ -n "${record}" ]] || return 1
   jq -e '
-    if has("host_policy") then
+    if has("host_policy") and .type == "redirect" then
       . as $record | .host_policy as $policy |
       ($record.role == "inbound" and $record.type == "redirect" and
        ($record.enabled | type == "boolean") and
@@ -16839,7 +16870,36 @@ managed_component_redirect_host_policy_validate_record() {
           (unique | length) == length) and
         (.management_ports | type == "array" and length >= 1 and length <= 15 and
           all(.[]; type == "number" and . == floor and . >= 1 and . <= 65535) and
+          (unique | length) == length and (index(22) != null)) and
+        (($policy.destination_ports | index($record.config.listen_port)) == null) and
+        all(.destination_ports[]; . as $port | ($policy.management_ports | index($port)) == null))
+    else true end
+  ' <<< "${record}" >/dev/null 2>&1
+}
+
+managed_component_tproxy_host_policy_validate_record() {
+  local record=${1:-}
+  [[ -n "${record}" ]] || return 1
+  jq -e '
+    if has("host_policy") and .type == "tproxy" then
+      . as $record | .host_policy as $policy |
+      ($record.role == "inbound" and $record.type == "tproxy" and
+       ($record.enabled | type == "boolean") and
+       $record.config.listen == "0.0.0.0" and
+       ($record.config.listen_port | type == "number" and . == floor and . >= 1 and . <= 65535) and
+       ($record.config.network | type == "array" and length >= 1 and length <= 2 and
+         all(.[]; type == "string" and IN("tcp","udp")) and
+         (unique | length) == length)) and
+      ($policy | type == "object" and
+        ((keys - ["ingress_interface","destination_ports","management_ports"]) | length == 0) and
+        (.ingress_interface | type == "string" and length >= 1 and length <= 15 and
+          test("^[A-Za-z0-9_.:-]+$")) and
+        (.destination_ports | type == "array" and length >= 1 and length <= 15 and
+          all(.[]; type == "number" and . == floor and . >= 1 and . <= 65535) and
           (unique | length) == length) and
+        (.management_ports | type == "array" and length >= 1 and length <= 15 and
+          all(.[]; type == "number" and . == floor and . >= 1 and . <= 65535) and
+          (unique | length) == length and (index(22) != null)) and
         (($policy.destination_ports | index($record.config.listen_port)) == null) and
         all(.destination_ports[]; . as $port | ($policy.management_ports | index($port)) == null))
     else true end
@@ -16870,6 +16930,11 @@ managed_component_state_validate_record() {
   jq -e '.config | type == "object" and (has("type") | not) and (has("tag") | not)' \
     <<< "${record}" >/dev/null 2>&1 || return 1
   managed_component_redirect_host_policy_validate_record "${record}" || return 1
+  managed_component_tproxy_host_policy_validate_record "${record}" || return 1
+  if jq -e 'has("host_policy") and (.type | IN("redirect","tproxy") | not)' \
+    <<< "${record}" >/dev/null 2>&1; then
+    return 1
+  fi
   route_rules=$(jq -c '.route_rules // []' <<< "${record}") || return 1
   managed_component_route_rules_validate_json "${route_rules}" || return 1
   config=$(jq -c '.config' <<< "${record}") || return 1
@@ -17131,7 +17196,8 @@ managed_component_redirect_host_policy_plan_json() {
   managed_component_state_validate_json "${state}" || return 1
   while IFS= read -r record; do
     [[ -n "${record}" ]] || continue
-    jq -e 'has("host_policy") and .enabled == true' <<< "${record}" >/dev/null 2>&1 || continue
+    jq -e 'has("host_policy") and .enabled == true and .type == "redirect"' \
+      <<< "${record}" >/dev/null 2>&1 || continue
     plan=$(managed_component_redirect_host_policy_plan_for_record "${record}") || return 1
     plans+=("${plan}")
   done < <(jq -c '.components[]' <<< "${state}")
@@ -17457,13 +17523,13 @@ managed_component_redirect_policy_diagnose_json() {
     resources_json='[]'
     [[ "${overall}" == available ]] && overall=not_configured
   fi
-  operators=$(jq -c '[.components[] | select(.enabled == true and .role == "inbound" and .type == "tproxy") |
+  operators=$(jq -c '[.components[] | select(.enabled == true and .role == "inbound" and .type == "tproxy" and (has("host_policy") | not)) |
     {id,tag,type,resource_scope:"operator_policy_required",status:"not_managed"}]' <<< "${state}") || return 1
   jq -cn --arg status "${overall}" --argjson resources "${resources_json}" --argjson operators "${operators}" \
     '{status:$status,managed_backend:"iptables",managed_family:"ipv4",managed_transport:"tcp",
       ordering:"append_after_existing_prerouting_rules",
       resources:$resources,operator_managed:$operators,
-      limitations:["only explicit Redirect IPv4/TCP policies are installer-owned","TProxy policy remains operator-managed","management ports are protected by exact destination-port allowlists","earlier PREROUTING rules may change effective precedence; effectiveness is not assessed when such rules exist"]}'
+      limitations:["only explicit Redirect IPv4/TCP policies are installer-owned","TProxy policies are reported separately","management ports are protected by exact destination-port allowlists","earlier PREROUTING rules may change effective precedence; effectiveness is not assessed when such rules exist"]}'
 }
 
 managed_component_redirect_policy_uninstall() {
@@ -17487,6 +17553,615 @@ managed_component_redirect_policy_uninstall() {
   while IFS= read -r plan; do
     [[ -n "${plan}" ]] || continue
     managed_component_redirect_policy_remove_plan "${plan}" true || return 1
+  done < <(jq -c '.[]' <<< "${plans}")
+}
+
+managed_component_tproxy_host_policy_plan_for_record() {
+  local record=${1:-} component_id interface_name listen_port destination_ports management_ports networks
+  local digest policy_id chain marker mark route_table rule_priority
+  managed_component_tproxy_host_policy_validate_record "${record}" || return 1
+  jq -e 'has("host_policy")' <<< "${record}" >/dev/null 2>&1 || return 2
+  component_id=$(jq -r '.id' <<< "${record}") || return 1
+  interface_name=$(jq -r '.host_policy.ingress_interface' <<< "${record}") || return 1
+  listen_port=$(jq -r '.config.listen_port' <<< "${record}") || return 1
+  destination_ports=$(jq -r '.host_policy.destination_ports | sort | map(tostring) | join(",")' <<< "${record}") || return 1
+  management_ports=$(jq -r '.host_policy.management_ports | sort | map(tostring) | join(",")' <<< "${record}") || return 1
+  networks=$(jq -r '.config.network | sort | join(",")' <<< "${record}") || return 1
+  digest=$(printf '%s\0' "${component_id}" "${interface_name}" "${destination_ports}" \
+    "${management_ports}" "${listen_port}" "${networks}" | sha256sum | awk '{print $1}') || return 1
+  [[ "${digest}" =~ ^[[:xdigit:]]{64}$ ]] || return 1
+  policy_id=${digest:0:20}
+  chain="${MANAGED_TPROXY_POLICY_CHAIN_PREFIX}${policy_id}"
+  marker="${MANAGED_TPROXY_POLICY_COMMENT_PREFIX}${policy_id}"
+  mark="0x5b${digest:20:6}"
+  route_table=$((10000 + (16#${digest:6:8} % 2000000000)))
+  # Keep the fwmark lookup ahead of Linux's default `main` rule (32766).
+  # A hash-selected priority avoids owning a single global preference while
+  # retaining a deterministic plan; collisions with existing rules fail closed.
+  rule_priority=$((10000 + (16#${digest:14:8} % 20000)))
+  jq -cn --arg id "${component_id}" --arg tag "$(jq -r '.tag' <<< "${record}")" \
+    --arg interface "${interface_name}" --arg chain "${chain}" --arg marker "${marker}" \
+    --arg mark "${mark}" --argjson route_table "${route_table}" \
+    --argjson rule_priority "${rule_priority}" --argjson listen_port "${listen_port}" \
+    --argjson destination_ports "$(jq -c '.host_policy.destination_ports | sort' <<< "${record}")" \
+    --argjson management_ports "$(jq -c '.host_policy.management_ports | sort' <<< "${record}")" \
+    --argjson networks "$(jq -c '.config.network | sort' <<< "${record}")" \
+    '{id:$id,tag:$tag,chain:$chain,marker:$marker,interface:$interface,
+      destination_ports:$destination_ports,management_ports:$management_ports,
+      listen_port:$listen_port,networks:$networks,family:"ipv4",mark:$mark,
+      mark_mask:"0xffffffff",route_table:$route_table,rule_priority:$rule_priority}'
+}
+
+managed_component_tproxy_host_policy_plan_json() {
+  local state=${1:-} record plan
+  local plans=()
+  managed_component_state_validate_json "${state}" || return 1
+  while IFS= read -r record; do
+    [[ -n "${record}" ]] || continue
+    jq -e '.type == "tproxy" and has("host_policy") and .enabled == true' \
+      <<< "${record}" >/dev/null 2>&1 || continue
+    plan=$(managed_component_tproxy_host_policy_plan_for_record "${record}") || return 1
+    plans+=("${plan}")
+  done < <(jq -c '.components[]' <<< "${state}")
+  if ((${#plans[@]} == 0)); then
+    printf '[]\n'
+  else
+    printf '%s\n' "${plans[@]}" | jq -sc 'sort_by(.id)'
+  fi
+}
+
+managed_component_tproxy_host_policy_plan_validate_json() {
+  local plans=${1:-} plan digest component_id interface_name destination_ports management_ports
+  local listen_port networks policy_id expected_chain expected_marker expected_mark expected_table expected_priority
+  [[ -n "${plans}" ]] || return 1
+  jq -s -e '
+    length == 1 and
+    (.[0] | type == "array" and length <= 128 and
+      all(.[]; . as $plan |
+        ($plan | type == "object" and
+          ((keys - ["id","tag","chain","marker","interface","destination_ports","management_ports",
+            "listen_port","networks","family","mark","mark_mask","route_table","rule_priority"]) | length == 0) and
+          (.id | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")) and
+          (.tag | type == "string" and length > 0 and length <= 128) and
+          (.chain | type == "string" and test("^SBVT_[a-f0-9]{20}$")) and
+          (.marker | type == "string" and test("^sbv-tproxy-[a-f0-9]{20}$")) and
+          (.interface | type == "string" and length >= 1 and length <= 15 and test("^[A-Za-z0-9_.:-]+$")) and
+          (.destination_ports | type == "array" and length >= 1 and length <= 15 and
+            all(.[]; type == "number" and . == floor and . >= 1 and . <= 65535) and
+            (unique | length) == length) and
+          (.management_ports | type == "array" and length >= 1 and length <= 15 and
+            all(.[]; type == "number" and . == floor and . >= 1 and . <= 65535) and
+            (unique | length) == length) and
+          (.listen_port | type == "number" and . == floor and . >= 1 and . <= 65535) and
+          (.networks | type == "array" and length >= 1 and length <= 2 and
+            all(.[]; type == "string" and IN("tcp","udp")) and (unique | length) == length) and
+          .family == "ipv4" and .mark_mask == "0xffffffff" and
+          (.mark | type == "string" and test("^0x5b[0-9a-f]{6}$")) and
+          (.route_table | type == "number" and . == floor and . >= 10000 and . <= 2000010000) and
+          (.rule_priority | type == "number" and . == floor and . >= 10000 and . < 30000)) and
+        all($plan.destination_ports[]; . as $port | ($plan.management_ports | index($port)) == null) and
+        ($plan.destination_ports | index($plan.listen_port)) == null
+      ) and
+      ([.[].chain] | unique | length) == length and
+      ([.[].marker] | unique | length) == length and
+      ([.[].mark] | unique | length) == length and
+      ([.[].route_table] | unique | length) == length and
+      ([.[].rule_priority] | unique | length) == length and
+      ([.[].id] | unique | length) == length)
+  ' <<< "${plans}" >/dev/null 2>&1 || return 1
+
+  while IFS= read -r plan; do
+    [[ -n "${plan}" ]] || continue
+    component_id=$(jq -r '.id' <<< "${plan}") || return 1
+    interface_name=$(jq -r '.interface' <<< "${plan}") || return 1
+    destination_ports=$(jq -r '.destination_ports | sort | map(tostring) | join(",")' <<< "${plan}") || return 1
+    management_ports=$(jq -r '.management_ports | sort | map(tostring) | join(",")' <<< "${plan}") || return 1
+    listen_port=$(jq -r '.listen_port' <<< "${plan}") || return 1
+    networks=$(jq -r '.networks | sort | join(",")' <<< "${plan}") || return 1
+    digest=$(printf '%s\0' "${component_id}" "${interface_name}" "${destination_ports}" \
+      "${management_ports}" "${listen_port}" "${networks}" | sha256sum | awk '{print $1}') || return 1
+    [[ "${digest}" =~ ^[[:xdigit:]]{64}$ ]] || return 1
+    policy_id=${digest:0:20}
+    expected_chain="${MANAGED_TPROXY_POLICY_CHAIN_PREFIX}${policy_id}"
+    expected_marker="${MANAGED_TPROXY_POLICY_COMMENT_PREFIX}${policy_id}"
+    expected_mark="0x5b${digest:20:6}"
+    expected_table=$((10000 + (16#${digest:6:8} % 2000000000)))
+    expected_priority=$((10000 + (16#${digest:14:8} % 20000)))
+    [[ "$(jq -r '.chain' <<< "${plan}")" == "${expected_chain}" &&
+       "$(jq -r '.marker' <<< "${plan}")" == "${expected_marker}" &&
+       "$(jq -r '.mark' <<< "${plan}")" == "${expected_mark}" &&
+       "$(jq -r '.route_table' <<< "${plan}")" == "${expected_table}" &&
+       "$(jq -r '.rule_priority' <<< "${plan}")" == "${expected_priority}" ]] || return 1
+  done < <(jq -c '.[]' <<< "${plans}")
+}
+
+managed_component_tproxy_policy_plan_has_chain() {
+  local plans=${1:-} chain=${2:-}
+  jq -e --arg chain "${chain}" 'any(.[]; .chain == $chain)' <<< "${plans}" >/dev/null 2>&1
+}
+
+managed_component_tproxy_policy_route_rule_status() {
+  local plan=${1:-} rules priority mark mask table status
+  managed_component_tproxy_host_policy_plan_validate_json "[${plan}]" || { printf 'conflict\n'; return 0; }
+  command -v ip >/dev/null 2>&1 || { printf 'unavailable\n'; return 0; }
+  rules=$(ip -4 rule show) || { printf 'unavailable\n'; return 0; }
+  priority=$(jq -r '.rule_priority' <<< "${plan}") || return 1
+  mark=$(jq -r '.mark' <<< "${plan}") || return 1
+  mask=$(jq -r '.mark_mask' <<< "${plan}") || return 1
+  table=$(jq -r '.route_table' <<< "${plan}") || return 1
+  status=$(awk -v priority="${priority}:" -v mark="${mark}" -v mask="${mask}" -v table="${table}" '
+    $1 == priority {
+      lines++
+      if (NF == 7 && $2 == "from" && $3 == "all" && $4 == "fwmark" &&
+          ($5 == mark || $5 == mark "/" mask) &&
+          ($6 == "lookup" || $6 == "table") && $7 == table) exact++
+    }
+    END {
+      if (lines == 0) print "absent"
+      else if (lines == 1 && exact == 1) print "present"
+      else print "conflict"
+    }' <<< "${rules}") || return 1
+  printf '%s\n' "${status}"
+}
+
+managed_component_tproxy_policy_route_status() {
+  local plan=${1:-} routes table status
+  managed_component_tproxy_host_policy_plan_validate_json "[${plan}]" || { printf 'conflict\n'; return 0; }
+  command -v ip >/dev/null 2>&1 || { printf 'unavailable\n'; return 0; }
+  table=$(jq -r '.route_table' <<< "${plan}") || return 1
+  # Querying a route table by ID fails on iproute2 when that table does not
+  # exist yet. Enumerating all IPv4 routes lets an empty owned table be
+  # distinguished from an unavailable route query without parsing stderr.
+  routes=$(ip -4 route show table all) || { printf 'unavailable\n'; return 0; }
+  status=$(awk -v table="${table}" '
+    NF > 0 {
+      route_table=""
+      for (i=1; i<NF; i++) {
+        if ($i == "table") {
+          route_table=$(i+1)
+          break
+        }
+      }
+      if (route_table != table) next
+      lines++
+      if ($1 == "local" && ($2 == "default" || $2 == "0.0.0.0/0") &&
+          $3 == "dev" && $4 == "lo") exact++
+    }
+    END {
+      if (lines == 0) print "absent"
+      else if (lines == 1 && exact == 1) print "present"
+      else print "conflict"
+    }' <<< "${routes}") || return 1
+  printf '%s\n' "${status}"
+}
+
+managed_component_tproxy_policy_probe() {
+  local plan=${1:-} rules chain_output chain marker interface_name destination_ports listen_port
+  local mark mask table priority network chain_count marker_count reference_count rule_count exact_count
+  local route_rule_status route_status mangle_status=absent status jump_status=1 check_status
+  managed_component_tproxy_host_policy_plan_validate_json "[${plan}]" || { printf 'conflict\n'; return 0; }
+  command -v iptables >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 || { printf 'unavailable\n'; return 0; }
+  rules=$(iptables -t mangle -S) || { printf 'unavailable\n'; return 0; }
+  chain=$(jq -r '.chain' <<< "${plan}") || return 1
+  marker=$(jq -r '.marker' <<< "${plan}") || return 1
+  interface_name=$(jq -r '.interface' <<< "${plan}") || return 1
+  destination_ports=$(jq -r '.destination_ports | sort | map(tostring) | join(",")' <<< "${plan}") || return 1
+  listen_port=$(jq -r '.listen_port' <<< "${plan}") || return 1
+  mark=$(jq -r '.mark' <<< "${plan}") || return 1
+  mask=$(jq -r '.mark_mask' <<< "${plan}") || return 1
+  table=$(jq -r '.route_table' <<< "${plan}") || return 1
+  priority=$(jq -r '.rule_priority' <<< "${plan}") || return 1
+  chain_count=$(awk -v chain="${chain}" '$1 == "-N" && $2 == chain { count++ } END { print count+0 }' <<< "${rules}") || return 1
+  marker_count=$(awk -v marker="${marker}" 'index($0, marker) { count++ } END { print count+0 }' <<< "${rules}") || return 1
+  reference_count=$(awk -v chain="${chain}" '$1 == "-A" && $2 != chain && $NF == chain { count++ } END { print count+0 }' <<< "${rules}") || return 1
+  if [[ "${chain_count}" == 1 ]]; then
+    chain_output=$(iptables -t mangle -S "${chain}") || { printf 'unavailable\n'; return 0; }
+    rule_count=$(awk '$1 == "-A" { count++ } END { print count+0 }' <<< "${chain_output}") || return 1
+    exact_count=0
+    while IFS= read -r network; do
+      [[ -n "${network}" ]] || continue
+      if iptables -t mangle -C "${chain}" -i "${interface_name}" -p "${network}" \
+        -m multiport --dports "${destination_ports}" -j TPROXY --on-ip 0.0.0.0 \
+        --on-port "${listen_port}" --tproxy-mark "${mark}/${mask}" >/dev/null 2>&1; then
+        exact_count=$((exact_count + 1))
+      else
+        check_status=$?
+        [[ "${check_status}" == 1 ]] || { printf 'unavailable\n'; return 0; }
+      fi
+    done < <(jq -r '.networks[]' <<< "${plan}")
+    if (( exact_count == $(jq -r '.networks | length' <<< "${plan}") )) &&
+       [[ "${rule_count}" == "$(jq -r '.networks | length' <<< "${plan}")" ]]; then
+      mangle_status=present
+    elif (( exact_count == rule_count )) && (( rule_count <= $(jq -r '.networks | length' <<< "${plan}") )); then
+      mangle_status=partial
+    else
+      mangle_status=conflict
+    fi
+  elif [[ "${chain_count}" == 0 && "${marker_count}" == 0 && "${reference_count}" == 0 ]]; then
+    mangle_status=absent
+  else
+    mangle_status=conflict
+  fi
+  if [[ "${chain_count}" == 1 ]]; then
+    if iptables -t mangle -C PREROUTING -m comment --comment "${marker}" -j "${chain}" >/dev/null 2>&1; then
+      jump_status=0
+    else
+      check_status=$?
+      [[ "${check_status}" == 1 ]] || { printf 'unavailable\n'; return 0; }
+    fi
+  elif [[ "${marker_count}" != 0 || "${reference_count}" != 0 ]]; then
+    mangle_status=conflict
+  fi
+  if [[ "${mangle_status}" == present && "${marker_count}" == 1 &&
+        "${reference_count}" == 1 && "${jump_status}" == 0 ]]; then
+    mangle_status=present
+  elif [[ "${mangle_status}" == absent && "${marker_count}" == 0 &&
+          "${reference_count}" == 0 && "${jump_status}" == 1 ]]; then
+    mangle_status=absent
+  elif [[ "${mangle_status}" != conflict &&
+          "${marker_count}" -le 1 && "${reference_count}" -le 1 ]]; then
+    mangle_status=partial
+  else
+    mangle_status=conflict
+  fi
+  route_rule_status=$(managed_component_tproxy_policy_route_rule_status "${plan}") || return 1
+  route_status=$(managed_component_tproxy_policy_route_status "${plan}") || return 1
+  if [[ "${mangle_status}" == conflict || "${route_rule_status}" == conflict ||
+        "${route_status}" == conflict ]]; then
+    status=conflict
+  elif [[ "${mangle_status}" == unavailable || "${route_rule_status}" == unavailable ||
+          "${route_status}" == unavailable ]]; then
+    status=unavailable
+  elif [[ "${mangle_status}" == absent && "${route_rule_status}" == absent &&
+          "${route_status}" == absent ]]; then
+    status=absent
+  elif [[ "${mangle_status}" == present && "${route_rule_status}" == present &&
+          "${route_status}" == present ]]; then
+    status=present
+  else
+    status=partial
+  fi
+  printf '%s\n' "${status}"
+}
+
+managed_component_tproxy_policy_ensure_plan() {
+  local plan=${1:-} allow_partial=${2:-false} status chain marker interface_name destination_ports
+  local listen_port mark mask table priority network route_rule_status route_status rule_status
+  managed_component_tproxy_host_policy_plan_validate_json "[${plan}]" || return 1
+  status=$(managed_component_tproxy_policy_probe "${plan}") || return 1
+  [[ "${status}" == present ]] && return 0
+  [[ "${status}" == absent || ( "${status}" == partial && "${allow_partial}" == true ) ]] || return 1
+  chain=$(jq -r '.chain' <<< "${plan}") || return 1
+  marker=$(jq -r '.marker' <<< "${plan}") || return 1
+  interface_name=$(jq -r '.interface' <<< "${plan}") || return 1
+  destination_ports=$(jq -r '.destination_ports | sort | map(tostring) | join(",")' <<< "${plan}") || return 1
+  listen_port=$(jq -r '.listen_port' <<< "${plan}") || return 1
+  mark=$(jq -r '.mark' <<< "${plan}") || return 1
+  mask=$(jq -r '.mark_mask' <<< "${plan}") || return 1
+  table=$(jq -r '.route_table' <<< "${plan}") || return 1
+  priority=$(jq -r '.rule_priority' <<< "${plan}") || return 1
+  route_rule_status=$(managed_component_tproxy_policy_route_rule_status "${plan}") || return 1
+  route_status=$(managed_component_tproxy_policy_route_status "${plan}") || return 1
+  case "${route_rule_status}:${route_status}" in
+    absent:absent)
+      ip -4 route add local 0.0.0.0/0 dev lo table "${table}" || return 1
+      ip -4 rule add priority "${priority}" fwmark "${mark}/${mask}" table "${table}" || return 1 ;;
+    present:present) ;;
+    absent:present)
+      ip -4 rule add priority "${priority}" fwmark "${mark}/${mask}" table "${table}" || return 1 ;;
+    present:absent)
+      ip -4 route add local 0.0.0.0/0 dev lo table "${table}" || return 1 ;;
+    *) return 1 ;;
+  esac
+  status=$(managed_component_tproxy_policy_probe "${plan}") || return 1
+  [[ "${status}" == partial ]] || return 1
+  local rules chain_count marker_count reference_count
+  rules=$(iptables -t mangle -S) || return 1
+  chain_count=$(awk -v chain="${chain}" '$1 == "-N" && $2 == chain { count++ } END { print count+0 }' <<< "${rules}") || return 1
+  marker_count=$(awk -v marker="${marker}" 'index($0, marker) { count++ } END { print count+0 }' <<< "${rules}") || return 1
+  reference_count=$(awk -v chain="${chain}" '$1 == "-A" && $2 != chain && $NF == chain { count++ } END { print count+0 }' <<< "${rules}") || return 1
+  [[ "${chain_count}" == 1 || "${chain_count}" == 0 ]] || return 1
+  if [[ "${chain_count}" == 0 ]]; then iptables -t mangle -N "${chain}" || return 1; fi
+  while IFS= read -r network; do
+    [[ -n "${network}" ]] || continue
+    if ! iptables -t mangle -C "${chain}" -i "${interface_name}" -p "${network}" \
+      -m multiport --dports "${destination_ports}" -j TPROXY --on-ip 0.0.0.0 \
+      --on-port "${listen_port}" --tproxy-mark "${mark}/${mask}" >/dev/null 2>&1; then
+      iptables -t mangle -A "${chain}" -i "${interface_name}" -p "${network}" \
+        -m multiport --dports "${destination_ports}" -j TPROXY --on-ip 0.0.0.0 \
+        --on-port "${listen_port}" --tproxy-mark "${mark}/${mask}" || return 1
+    fi
+  done < <(jq -r '.networks[]' <<< "${plan}")
+  if [[ "${marker_count}" == 0 && "${reference_count}" == 0 ]]; then
+    iptables -t mangle -A PREROUTING -m comment --comment "${marker}" -j "${chain}" || return 1
+  elif [[ "${marker_count}" != 1 || "${reference_count}" != 1 ]]; then
+    return 1
+  fi
+  [[ "$(managed_component_tproxy_policy_probe "${plan}")" == present ]]
+}
+
+managed_component_tproxy_policy_remove_plan() {
+  local plan=${1:-} allow_partial=${2:-false} status chain marker mark mask table priority network
+  local route_rule_status route_status rule_status check_status rules chain_count
+  managed_component_tproxy_host_policy_plan_validate_json "[${plan}]" || return 1
+  status=$(managed_component_tproxy_policy_probe "${plan}") || return 1
+  [[ "${status}" == absent ]] && return 0
+  [[ "${status}" == present || ( "${status}" == partial && "${allow_partial}" == true ) ]] || return 1
+  chain=$(jq -r '.chain' <<< "${plan}") || return 1
+  marker=$(jq -r '.marker' <<< "${plan}") || return 1
+  mark=$(jq -r '.mark' <<< "${plan}") || return 1
+  mask=$(jq -r '.mark_mask' <<< "${plan}") || return 1
+  table=$(jq -r '.route_table' <<< "${plan}") || return 1
+  priority=$(jq -r '.rule_priority' <<< "${plan}") || return 1
+  rules=$(iptables -t mangle -S) || return 1
+  chain_count=$(awk -v chain="${chain}" '$1 == "-N" && $2 == chain { count++ } END { print count+0 }' <<< "${rules}") || return 1
+  if iptables -t mangle -C PREROUTING -m comment --comment "${marker}" -j "${chain}" >/dev/null 2>&1; then
+    iptables -t mangle -D PREROUTING -m comment --comment "${marker}" -j "${chain}" || return 1
+  else
+    check_status=$?
+    [[ "${check_status}" == 1 ]] || return 1
+  fi
+  if [[ "${chain_count}" == 1 ]]; then
+    while IFS= read -r network; do
+      [[ -n "${network}" ]] || continue
+      if iptables -t mangle -C "${chain}" -i "$(jq -r '.interface' <<< "${plan}")" -p "${network}" \
+        -m multiport --dports "$(jq -r '.destination_ports | sort | map(tostring) | join(",")' <<< "${plan}")" \
+        -j TPROXY --on-ip 0.0.0.0 --on-port "$(jq -r '.listen_port' <<< "${plan}")" \
+        --tproxy-mark "${mark}/${mask}" >/dev/null 2>&1; then
+        iptables -t mangle -D "${chain}" -i "$(jq -r '.interface' <<< "${plan}")" -p "${network}" \
+          -m multiport --dports "$(jq -r '.destination_ports | sort | map(tostring) | join(",")' <<< "${plan}")" \
+          -j TPROXY --on-ip 0.0.0.0 --on-port "$(jq -r '.listen_port' <<< "${plan}")" \
+          --tproxy-mark "${mark}/${mask}" || return 1
+      else
+        check_status=$?
+        [[ "${check_status}" == 1 ]] || return 1
+      fi
+    done < <(jq -r '.networks[]' <<< "${plan}")
+    iptables -t mangle -F "${chain}" || return 1
+    iptables -t mangle -X "${chain}" || return 1
+  fi
+  route_rule_status=$(managed_component_tproxy_policy_route_rule_status "${plan}") || return 1
+  route_status=$(managed_component_tproxy_policy_route_status "${plan}") || return 1
+  if [[ "${route_rule_status}" == present ]]; then
+    ip -4 rule del priority "${priority}" fwmark "${mark}/${mask}" table "${table}" || return 1
+  elif [[ "${route_rule_status}" != absent ]]; then
+    return 1
+  fi
+  if [[ "${route_status}" == present ]]; then
+    ip -4 route del local 0.0.0.0/0 dev lo table "${table}" || return 1
+  elif [[ "${route_status}" != absent ]]; then
+    return 1
+  fi
+  [[ "$(managed_component_tproxy_policy_probe "${plan}")" == absent ]]
+}
+
+managed_component_tproxy_policy_preflight() {
+  local before=${1:-} after=${2:-} plan status interface_name
+  managed_component_tproxy_host_policy_plan_validate_json "${before}" || return 1
+  managed_component_tproxy_host_policy_plan_validate_json "${after}" || return 1
+  if ((${#after} > 2)); then
+    command -v iptables >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 || return 1
+    iptables -t mangle -S >/dev/null 2>&1 || return 1
+    iptables -j TPROXY -h >/dev/null 2>&1 || return 1
+    iptables -m multiport -h >/dev/null 2>&1 || return 1
+    ip -4 rule show >/dev/null 2>&1 || return 1
+  fi
+  while IFS= read -r plan; do
+    [[ -n "${plan}" ]] || continue
+    status=$(managed_component_tproxy_policy_probe "${plan}") || return 1
+    [[ "${status}" == present ]] || return 1
+  done < <(jq -c '.[]' <<< "${before}")
+  while IFS= read -r plan; do
+    [[ -n "${plan}" ]] || continue
+    if managed_component_tproxy_policy_plan_has_chain "${before}" "$(jq -r '.chain' <<< "${plan}")"; then
+      continue
+    fi
+    status=$(managed_component_tproxy_policy_probe "${plan}") || return 1
+    [[ "${status}" == absent ]] || return 1
+    interface_name=$(jq -r '.interface' <<< "${plan}") || return 1
+    ip link show dev "${interface_name}" >/dev/null 2>&1 || return 1
+  done < <(jq -c '.[]' <<< "${after}")
+}
+
+managed_component_tproxy_policy_journal_path_valid() {
+  local journal_file=${1:-}
+  [[ "${journal_file}" == "${SB_COMPONENT_TRANSACTION_DIR}/snapshot/component-tproxy-policy.json" &&
+     -d "${SB_COMPONENT_TRANSACTION_DIR}/snapshot" &&
+     ! -L "${SB_COMPONENT_TRANSACTION_DIR}" && ! -L "${SB_COMPONENT_TRANSACTION_DIR}/snapshot" ]] || return 1
+}
+
+managed_component_tproxy_policy_journal_validate() {
+  local journal_file=${1:-} before after
+  managed_component_tproxy_policy_journal_path_valid "${journal_file}" || return 1
+  [[ -f "${journal_file}" && ! -L "${journal_file}" && -r "${journal_file}" ]] || return 1
+  [[ "$(stat -c '%a' "${journal_file}")" == 600 ]] || return 1
+  jq -ce 'type == "object" and ((keys - ["schema_version","status","before","after"]) | length == 0) and
+    .schema_version == 1 and (.status | IN("prepared","applying","applied","rolling_back","rolled_back")) and
+    (.before | type == "array") and (.after | type == "array")' "${journal_file}" >/dev/null 2>&1 || return 1
+  before=$(jq -c '.before' "${journal_file}") || return 1
+  after=$(jq -c '.after' "${journal_file}") || return 1
+  managed_component_tproxy_host_policy_plan_validate_json "${before}" || return 1
+  managed_component_tproxy_host_policy_plan_validate_json "${after}"
+}
+
+managed_component_tproxy_policy_journal_write() {
+  local journal_file=${1:-} before=${2:-} after=${3:-} candidate payload
+  managed_component_tproxy_policy_journal_path_valid "${journal_file}" || return 1
+  [[ ! -e "${journal_file}" && ! -L "${journal_file}" ]] || return 1
+  managed_component_tproxy_host_policy_plan_validate_json "${before}" || return 1
+  managed_component_tproxy_host_policy_plan_validate_json "${after}" || return 1
+  payload=$(jq -cn --argjson before "${before}" --argjson after "${after}" \
+    '{schema_version:1,status:"prepared",before:$before,after:$after}') || return 1
+  candidate=$(mktemp "${journal_file%/*}/.component-tproxy-policy.XXXXXX") || return 1
+  if ! printf '%s\n' "${payload}" > "${candidate}" || ! chmod 600 "${candidate}" ||
+     ! mv -f -- "${candidate}" "${journal_file}"; then
+    rm -f -- "${candidate}"
+    return 1
+  fi
+  managed_component_tproxy_policy_journal_validate "${journal_file}"
+}
+
+managed_component_tproxy_policy_journal_set_status() {
+  local journal_file=${1:-} status=${2:-} candidate
+  managed_component_tproxy_policy_journal_validate "${journal_file}" || return 1
+  [[ "${status}" =~ ^(prepared|applying|applied|rolling_back|rolled_back)$ ]] || return 1
+  candidate=$(mktemp "${journal_file%/*}/.component-tproxy-policy.XXXXXX") || return 1
+  if ! jq --arg status "${status}" '.status=$status' "${journal_file}" > "${candidate}" ||
+     ! chmod 600 "${candidate}" || ! mv -f -- "${candidate}" "${journal_file}"; then
+    rm -f -- "${candidate}"
+    return 1
+  fi
+  managed_component_tproxy_policy_journal_validate "${journal_file}"
+}
+
+managed_component_tproxy_policy_apply_journal() {
+  local journal_file=${1:-} before after plan
+  managed_component_tproxy_policy_journal_validate "${journal_file}" || return 1
+  before=$(jq -c '.before' "${journal_file}") || return 1
+  after=$(jq -c '.after' "${journal_file}") || return 1
+  managed_component_tproxy_policy_journal_set_status "${journal_file}" applying || return 1
+  while IFS= read -r plan; do
+    [[ -n "${plan}" ]] || continue
+    managed_component_tproxy_policy_ensure_plan "${plan}" false || return 1
+  done < <(jq -c '.[]' <<< "${after}")
+  while IFS= read -r plan; do
+    [[ -n "${plan}" ]] || continue
+    if ! managed_component_tproxy_policy_plan_has_chain "${after}" "$(jq -r '.chain' <<< "${plan}")"; then
+      managed_component_tproxy_policy_remove_plan "${plan}" || return 1
+    fi
+  done < <(jq -c '.[]' <<< "${before}")
+  managed_component_tproxy_policy_journal_set_status "${journal_file}" applied
+}
+
+managed_component_tproxy_policy_remove_delta() {
+  local journal_file=${1:-} status before after plan
+  managed_component_tproxy_policy_journal_validate "${journal_file}" || return 1
+  status=$(jq -r '.status' "${journal_file}") || return 1
+  [[ "${status}" == prepared || "${status}" == rolled_back ]] && return 0
+  managed_component_tproxy_policy_journal_set_status "${journal_file}" rolling_back || return 1
+  before=$(jq -c '.before' "${journal_file}") || return 1
+  after=$(jq -c '.after' "${journal_file}") || return 1
+  while IFS= read -r plan; do
+    [[ -n "${plan}" ]] || continue
+    if ! managed_component_tproxy_policy_plan_has_chain "${before}" "$(jq -r '.chain' <<< "${plan}")"; then
+      managed_component_tproxy_policy_remove_plan "${plan}" true || return 1
+    fi
+  done < <(jq -c '.[]' <<< "${after}")
+}
+
+managed_component_tproxy_policy_restore_before() {
+  local journal_file=${1:-} status before plan
+  managed_component_tproxy_policy_journal_validate "${journal_file}" || return 1
+  status=$(jq -r '.status' "${journal_file}") || return 1
+  [[ "${status}" == prepared || "${status}" == rolled_back ]] && return 0
+  before=$(jq -c '.before' "${journal_file}") || return 1
+  while IFS= read -r plan; do
+    [[ -n "${plan}" ]] || continue
+    managed_component_tproxy_policy_ensure_plan "${plan}" true || return 1
+  done < <(jq -c '.[]' <<< "${before}")
+  managed_component_tproxy_policy_journal_set_status "${journal_file}" rolled_back
+}
+
+managed_component_tproxy_policy_precedence_json() {
+  local plan=${1:-} marker rules preceding status route_rules=''
+  local rule_priority route_preceding=null route_status=unavailable
+  managed_component_tproxy_host_policy_plan_validate_json "[${plan}]" || return 1
+  marker=$(jq -r '.marker' <<< "${plan}") || return 1
+  rule_priority=$(jq -r '.rule_priority' <<< "${plan}") || return 1
+  if ! command -v iptables >/dev/null 2>&1 || ! rules=$(iptables -t mangle -S PREROUTING 2>/dev/null); then
+    jq -cn '{status:"unavailable",preceding_rule_count:null,
+      policy_routing_status:"unavailable",preceding_policy_rule_count:null}'
+    return 0
+  fi
+  preceding=$(awk -v marker="${marker}" '
+    $1 == "-A" && $2 == "PREROUTING" {
+      if (index($0, marker)) { found=1; exit }
+      count++
+    }
+    END { if (!found) exit 1; print count+0 }
+  ' <<< "${rules}") || { jq -cn '{status:"unavailable",preceding_rule_count:null,
+    policy_routing_status:"unavailable",preceding_policy_rule_count:null}'; return 0; }
+  if [[ "${preceding}" == 0 ]]; then status=unshadowed_in_observed_order; else status=not_assessed_earlier_rules_present; fi
+  if command -v ip >/dev/null 2>&1 && route_rules=$(ip -4 rule show 2>/dev/null); then
+    route_preceding=$(awk -v target="${rule_priority}:" '
+      $1 == target { found=1; exit }
+      $1 ~ /^[0-9]+:$/ {
+        value=$1; sub(/:$/, "", value)
+        if (value != 0) count++
+      }
+      END { if (!found) exit 1; print count+0 }
+    ' <<< "${route_rules}") || {
+      route_preceding=null
+      route_status=unavailable
+    }
+    if [[ "${route_preceding}" != null ]]; then
+      if [[ "${route_preceding}" == 0 ]]; then route_status=unshadowed_in_observed_order
+      else route_status=not_assessed_earlier_rules_present
+      fi
+    fi
+  fi
+  jq -cn --arg status "${status}" --argjson count "${preceding}" \
+    --arg route_status "${route_status}" --argjson route_count "${route_preceding}" \
+    '{status:$status,preceding_rule_count:$count,policy_routing_status:$route_status,
+      preceding_policy_rule_count:$route_count}'
+}
+
+managed_component_tproxy_policy_diagnose_json() {
+  local state=${1:-} plans plan status precedence row resources_json
+  local resources=() operators='[]' overall=available
+  plans=$(managed_component_tproxy_host_policy_plan_json "${state}") || return 1
+  managed_component_tproxy_host_policy_plan_validate_json "${plans}" || return 1
+  while IFS= read -r plan; do
+    [[ -n "${plan}" ]] || continue
+    status=$(managed_component_tproxy_policy_probe "${plan}") || return 1
+    precedence=$(managed_component_tproxy_policy_precedence_json "${plan}") || return 1
+    [[ "${status}" == present ]] || overall=unavailable
+    row=$(jq -cn --argjson plan "${plan}" --arg status "${status}" --argjson precedence "${precedence}" \
+      '$plan + {resource_scope:"installer_owned_ipv4_tcp_udp_prerouting_policy_route",status:$status,
+        precedence:$precedence.status,preceding_rule_count:$precedence.preceding_rule_count,
+        policy_routing_precedence:$precedence.policy_routing_status,
+        preceding_policy_rule_count:$precedence.preceding_policy_rule_count}') || return 1
+    resources+=("${row}")
+  done < <(jq -c '.[]' <<< "${plans}")
+  if ((${#resources[@]} > 0)); then
+    resources_json=$(printf '%s\n' "${resources[@]}" | jq -sc '.') || return 1
+  else
+    resources_json='[]'
+    [[ "${overall}" == available ]] && overall=not_configured
+  fi
+  operators=$(jq -c '[.components[] | select(.enabled == true and .role == "inbound" and .type == "tproxy" and (has("host_policy") | not)) |
+    {id,tag,type,resource_scope:"operator_policy_required",status:"not_managed"}]' <<< "${state}") || return 1
+  jq -cn --arg status "${overall}" --argjson resources "${resources_json}" --argjson operators "${operators}" \
+    '{status:$status,managed_backend:"iptables+iproute2",managed_family:"ipv4",
+      managed_transports:["tcp","udp"],ordering:"append_after_existing_mangle_prerouting_rules",
+      policy_routing_ordering:"priority_after_local_before_main",
+      resources:$resources,operator_managed:$operators,
+      limitations:["only explicit IPv4/TCP+UDP policies are installer-owned","TProxy packets are limited to the configured ingress interface and destination ports","earlier mangle PREROUTING or ip rules may change effective precedence; effectiveness is not assessed when such rules exist"]}'
+}
+
+managed_component_tproxy_policy_uninstall() {
+  local plans=${1:-} plan status mangle_rules ip_rules
+  managed_component_tproxy_host_policy_plan_validate_json "${plans}" || return 1
+  if [[ "${plans}" == '[]' ]]; then
+    if command -v iptables >/dev/null 2>&1 && mangle_rules=$(iptables -t mangle -S 2>/dev/null) &&
+       grep -E 'SBVT_[a-f0-9]{20}|sbv-tproxy-[a-f0-9]{20}' <<< "${mangle_rules}" >/dev/null; then
+      printf '[ERROR] 检测到缺少 state 所属记录的 TProxy 受管 mangle 链；拒绝卸载以避免遗留或误删主机规则。\n' >&2
+      return 1
+    fi
+    if command -v ip >/dev/null 2>&1 && ip_rules=$(ip -4 rule show) &&
+       grep -E 'fwmark 0x5b[0-9a-f]{6}(/0xffffffff)?([[:space:]]|$)' <<< "${ip_rules}" >/dev/null; then
+      printf '[ERROR] 检测到保留 TProxy fwmark 前缀的策略规则，但没有对应 state；拒绝卸载。\n' >&2
+      return 1
+    fi
+  fi
+  while IFS= read -r plan; do
+    [[ -n "${plan}" ]] || continue
+    status=$(managed_component_tproxy_policy_probe "${plan}") || return 1
+    case "${status}" in absent|present|partial) ;; *) return 1 ;; esac
+  done < <(jq -c '.[]' <<< "${plans}")
+  while IFS= read -r plan; do
+    [[ -n "${plan}" ]] || continue
+    managed_component_tproxy_policy_remove_plan "${plan}" true || return 1
   done < <(jq -c '.[]' <<< "${plans}")
 }
 
@@ -17607,7 +18282,7 @@ managed_component_transparent_resources_json() (
   system_endpoint_count=$(jq -r '[.[] | select(.system_interface == true)] | length' <<< "${records}") || return 1
   if [[ "${service_state}" != active ]]; then
     jq -cn --arg status "${status}" --arg reason "${reason}" --argjson resources "${records}" \
-      '{status:$status,reason:$reason,service_active:false,resources:($resources | map({tag,type,listen,listen_port,interface_name:(if .system_interface then .interface_name else null end),resource_scope:(if .type == "tun" or .type == "bridge" or .system_interface then "core_owned" elif .type == "redirect" then "host_policy_reported_separately" else "operator_policy_required" end),status:"not_assessed",reason:"service_inactive"})),limitations:["Redirect policy ownership is reported separately under redirect_host_policy","TProxy host policy remains operator-managed","TUN/bridge/system endpoint interfaces are core-owned resources and require a running core"]}'
+      '{status:$status,reason:$reason,service_active:false,resources:($resources | map({tag,type,listen,listen_port,interface_name:(if .system_interface then .interface_name else null end),resource_scope:(if .type == "tun" or .type == "bridge" or .system_interface then "core_owned" elif .type == "redirect" or .type == "tproxy" then "host_policy_reported_separately" else "operator_policy_required" end),status:"not_assessed",reason:"service_inactive"})),limitations:["Redirect policy ownership is reported separately under redirect_host_policy","TProxy policy ownership is reported separately under tproxy_host_policy; inbounds without an enabled policy remain operator-managed","TUN/bridge/system endpoint interfaces are core-owned resources and require a running core"]}'
     return 0
   fi
   if (( tun_count == 0 && bridge_count == 0 && system_endpoint_count == 0 )) && ! jq -e 'any(.[]; .type == "redirect" or .type == "tproxy")' <<< "${records}" >/dev/null 2>&1; then
@@ -17618,9 +18293,9 @@ managed_component_transparent_resources_json() (
     jq -cn --argjson resources "${records}" \
       '{status:"not_assessed",reason:"host_policy_not_observed_here",service_active:true,
         resources:($resources | map({tag,type,listen,listen_port,
-          resource_scope:(if .type == "redirect" then "host_policy_reported_separately" else "operator_policy_required" end),
+          resource_scope:(if .type == "redirect" or .type == "tproxy" then "host_policy_reported_separately" else "operator_policy_required" end),
           status:"not_assessed",reason:"host_policy_not_observed_here"})),
-        limitations:["Redirect policy ownership is reported separately under redirect_host_policy","TProxy host policy remains operator-managed"]}'
+        limitations:["Redirect policy ownership is reported separately under redirect_host_policy","TProxy policy ownership is reported separately under tproxy_host_policy; inbounds without an enabled policy remain operator-managed"]}'
     return 0
   fi
   status=available
@@ -17879,7 +18554,7 @@ managed_component_transparent_resources_json() (
     if [[ "${type}" != tun ]]; then
       resources=$(jq -c --argjson item "${record}" '. + [($item | {
         tag,type,listen,listen_port,
-        resource_scope:(if .type == "redirect" then "host_policy_reported_separately" else "operator_policy_required" end),
+        resource_scope:(if .type == "redirect" or .type == "tproxy" then "host_policy_reported_separately" else "operator_policy_required" end),
         status:"not_assessed",reason:"host_policy_not_observed_here"})]' <<< "${resources}") || return 1
       [[ "${status}" == available ]] && { status=not_assessed; reason=host_policy_not_observed_here; }
       continue
@@ -17943,7 +18618,7 @@ managed_component_transparent_resources_json() (
   done < <(jq -c '.[]' <<< "${records}")
   jq -cn --arg status "${status}" --arg reason "${reason}" --argjson resources "${resources}" \
     '{status:$status,reason:(if $reason == "" then null else $reason end),service_active:true,resources:$resources,
-      limitations:["Redirect policy ownership is reported separately under redirect_host_policy","TProxy host policy remains operator-managed","bridge forwarding/NAT policy is core-dynamic and observation only","system endpoint interfaces, addresses and MTU are observed but routes and packet payload are not claimed","reported core-owned state is observation only"]}'
+      limitations:["Redirect policy ownership is reported separately under redirect_host_policy","TProxy policy ownership is reported separately under tproxy_host_policy; inbounds without an enabled policy remain operator-managed","bridge forwarding/NAT policy is core-dynamic and observation only","system endpoint interfaces, addresses and MTU are observed but routes and packet payload are not claimed","reported core-owned state is observation only"]}'
 )
 
 managed_component_transparent_runtime_healthy() {
@@ -18382,7 +19057,7 @@ managed_component_inventory_json() {
 }
 
 managed_component_diagnose_json() {
-  local state inventory config_status graph_status listener_status core_status redirect_host_policy
+  local state inventory config_status graph_status listener_status core_status redirect_host_policy tproxy_host_policy
   local config_present=false service_state=unknown firewall_status=not_configured firewall_rules=0
   local instance_pending=false component_pending=false component_transaction_phase=none ledger
   local transparent_resources='{"status":"not_assessed","reason":"config_missing","service_active":false,"resources":[],"limitations":[]}'
@@ -18391,6 +19066,8 @@ managed_component_diagnose_json() {
   inventory=$(managed_component_inventory_json) || return 1
   redirect_host_policy=$(managed_component_redirect_policy_diagnose_json "${state}") || \
     redirect_host_policy='{"status":"unavailable","resources":[],"operator_managed":[]}'
+  tproxy_host_policy=$(managed_component_tproxy_policy_diagnose_json "${state}") || \
+    tproxy_host_policy='{"status":"unavailable","resources":[],"operator_managed":[]}'
 
   if [[ ! -e "${SINGBOX_CONFIG_FILE}" ]]; then
     config_status=missing
@@ -18463,6 +19140,7 @@ managed_component_diagnose_json() {
     --argjson component_pending "${component_pending}" --arg component_phase "${component_transaction_phase}" \
     --argjson inventory "${inventory}" --argjson transparent_resources "${transparent_resources}" \
     --argjson redirect_host_policy "${redirect_host_policy}" \
+    --argjson tproxy_host_policy "${tproxy_host_policy}" \
     '{schema:$schema,action:"component-diagnose",
       state:{revision:($revision|tonumber),component_count:$component_count,valid:true},
       config:{status:$config_status,present:$config_present,graph:$graph_status,listener_resources:$listener_status,core_check:$core_status},
@@ -18472,6 +19150,7 @@ managed_component_diagnose_json() {
         component_write_phase:$component_phase},
       transparent_resources:$transparent_resources,
       redirect_host_policy:$redirect_host_policy,
+      tproxy_host_policy:$tproxy_host_policy,
       components:$inventory.components,supported:$inventory.supported}'
 }
 
@@ -18890,10 +19569,12 @@ managed_component_state_apply() {
   local state current_revision record candidate snapshot service_restarted=false state_changed=true
   local role type tag result_record old_config old_listener_plan new_listener_plan
   local old_redirect_policy_plan='[]' new_redirect_policy_plan='[]' redirect_policy_journal=''
+  local old_tproxy_policy_plan='[]' new_tproxy_policy_plan='[]' tproxy_policy_journal=''
   local takeover_records takeover_status result_count=0
   local firewall_journal=""
   local firewall_summary='{"status":"not_attempted","backends":[],"diagnostics":[]}'
   local redirect_policy_summary='{"status":"not_configured","resources":[],"operator_managed":[]}'
+  local tproxy_policy_summary='{"status":"not_configured","resources":[],"operator_managed":[]}'
   local result_id candidate_revision lock_dir="${SB_COMPONENT_TRANSACTION_DIR}" before_active=false owner_pid owner_start=""
   local inventory_state_file=""
   MANAGED_COMPONENT_LAST_ERROR=""
@@ -19015,6 +19696,26 @@ managed_component_state_apply() {
       return 1
     fi
   fi
+  old_tproxy_policy_plan=$(managed_component_tproxy_host_policy_plan_json "${state}") || {
+    MANAGED_COMPONENT_LAST_ERROR=tproxy_host_policy_state_invalid; return 1;
+  }
+  new_tproxy_policy_plan=$(managed_component_tproxy_host_policy_plan_json "${candidate}") || {
+    MANAGED_COMPONENT_LAST_ERROR=tproxy_host_policy_state_invalid; return 1;
+  }
+  if [[ "${old_tproxy_policy_plan}" != "${new_tproxy_policy_plan}" ||
+        "${old_tproxy_policy_plan}" != '[]' ]]; then
+    if [[ "${old_tproxy_policy_plan}" != "${new_tproxy_policy_plan}" &&
+          "${before_active}" != true && "${old_tproxy_policy_plan}" == '[]' &&
+          "${new_tproxy_policy_plan}" != '[]' ]]; then
+      MANAGED_COMPONENT_LAST_ERROR=tproxy_host_policy_requires_active_service
+      return 1
+    fi
+    if ! managed_component_tproxy_policy_preflight \
+      "${old_tproxy_policy_plan}" "${new_tproxy_policy_plan}"; then
+      MANAGED_COMPONENT_LAST_ERROR=tproxy_host_policy_preflight_failed
+      return 1
+    fi
+  fi
   if ! managed_component_transaction_begin "${lock_dir}" "${operation}" "${expected}" \
     "${before_active}" "${owner_pid}" "${owner_start}"; then
     MANAGED_COMPONENT_LAST_ERROR=component_transaction_begin_failed
@@ -19101,10 +19802,21 @@ managed_component_state_apply() {
       return 1
     fi
   fi
+  if [[ "${old_tproxy_policy_plan}" != "${new_tproxy_policy_plan}" ]]; then
+    tproxy_policy_journal="${snapshot}/component-tproxy-policy.json"
+    if ! managed_component_tproxy_policy_journal_write "${tproxy_policy_journal}" \
+      "${old_tproxy_policy_plan}" "${new_tproxy_policy_plan}"; then
+      managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "TProxy 主机策略事务日志准备失败" || :
+      MANAGED_COMPONENT_LAST_ERROR=tproxy_host_policy_journal_failed
+      return 1
+    fi
+  fi
   if ! managed_component_transaction_set_firewall_expected \
        "${lock_dir}" "$([[ "${old_listener_plan}" != "${new_listener_plan}" ]] && printf true || printf false)" ||
      ! managed_component_transaction_set_redirect_policy_expected \
        "${lock_dir}" "$([[ "${old_redirect_policy_plan}" != "${new_redirect_policy_plan}" ]] && printf true || printf false)" ||
+     ! managed_component_transaction_set_tproxy_policy_expected \
+       "${lock_dir}" "$([[ "${old_tproxy_policy_plan}" != "${new_tproxy_policy_plan}" ]] && printf true || printf false)" ||
      ! managed_component_transaction_checkpoint "${lock_dir}" resources; then
     managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件事务资源阶段记录失败" || :
     MANAGED_COMPONENT_LAST_ERROR=component_transaction_write_failed
@@ -19219,6 +19931,14 @@ managed_component_state_apply() {
       return 1
     fi
   fi
+  if [[ "${old_tproxy_policy_plan}" != "${new_tproxy_policy_plan}" ]]; then
+    if ! managed_component_tproxy_policy_apply_journal "${tproxy_policy_journal}"; then
+      managed_component_abort_transaction_with_resources "${lock_dir}" \
+        "高级组件 TProxy 主机策略应用失败" || return 1
+      MANAGED_COMPONENT_LAST_ERROR=tproxy_host_policy_apply_failed
+      return 1
+    fi
+  fi
   redirect_policy_summary=$(managed_component_redirect_policy_diagnose_json "${candidate}") || {
     managed_component_abort_transaction_with_resources "${lock_dir}" \
       "高级组件 Redirect 主机策略 postcheck 失败" || return 1
@@ -19230,6 +19950,19 @@ managed_component_state_apply() {
     managed_component_abort_transaction_with_resources "${lock_dir}" \
       "高级组件 Redirect 主机策略 postcheck 缺少受管规则" || return 1
     MANAGED_COMPONENT_LAST_ERROR=host_policy_postcheck_failed
+    return 1
+  fi
+  tproxy_policy_summary=$(managed_component_tproxy_policy_diagnose_json "${candidate}") || {
+    managed_component_abort_transaction_with_resources "${lock_dir}" \
+      "高级组件 TProxy 主机策略 postcheck 失败" || return 1
+    MANAGED_COMPONENT_LAST_ERROR=tproxy_host_policy_postcheck_failed
+    return 1
+  }
+  if [[ "${new_tproxy_policy_plan}" != '[]' ]] &&
+     ! jq -e '.status == "available"' <<< "${tproxy_policy_summary}" >/dev/null 2>&1; then
+    managed_component_abort_transaction_with_resources "${lock_dir}" \
+      "高级组件 TProxy 主机策略 postcheck 缺少受管规则" || return 1
+    MANAGED_COMPONENT_LAST_ERROR=tproxy_host_policy_postcheck_failed
     return 1
   fi
   if [[ -n "${firewall_journal}" ]]; then
@@ -19292,13 +20025,14 @@ managed_component_state_apply() {
     --argjson service_restarted "${service_restarted}" \
     --argjson firewall "${firewall_summary}" \
     --argjson redirect_policy "${redirect_policy_summary}" \
+    --argjson tproxy_policy "${tproxy_policy_summary}" \
     '{action:"component-apply",operation:$operation,revision:($revision|tonumber),
       id:(if $id == "" then null else $id end),
       role:(if $role == "" then null else $role end),
       type:(if $type == "" then null else $type end),
       tag:(if $tag == "" then null else $tag end),
       config_check:"passed",service_restarted:$service_restarted,firewall:$firewall,
-      redirect_host_policy:$redirect_policy} +
+      redirect_host_policy:$redirect_policy,tproxy_host_policy:$tproxy_policy} +
       (if $operation == "takeover" then {count:$count} else {} end)')
   return 0
 }
@@ -19521,7 +20255,8 @@ managed_component_transaction_begin() {
     --argjson before "${before_active}" \
     '{schema_version:1,operation:$operation,expected_revision:$expected,
       owner_pid:$pid,owner_start:$start,before_active:$before,phase:"prepare",
-      new_revision:null,firewall_expected:false,redirect_policy_expected:false}' > "${transaction_next}"; then
+      new_revision:null,firewall_expected:false,redirect_policy_expected:false,
+      tproxy_policy_expected:false}' > "${transaction_next}"; then
     rm -rf -- "${lock_dir}"
     return 1
   fi
@@ -19599,8 +20334,25 @@ managed_component_transaction_set_redirect_policy_expected() {
   mv -f -- "${transaction_next}" "${lock_dir}/transaction.json"
 }
 
+managed_component_transaction_set_tproxy_policy_expected() {
+  local lock_dir=${1:-} expected=${2:-false} transaction_next
+
+  managed_component_transaction_path_is_trusted "${lock_dir}" || return 1
+  [[ -f "${lock_dir}/transaction.json" && ! -L "${lock_dir}/transaction.json" &&
+     ("${expected}" == true || "${expected}" == false) ]] || return 1
+  transaction_next="${lock_dir}/transaction.next"
+  if ! jq --argjson expected "${expected}" '.tproxy_policy_expected=$expected' \
+    "${lock_dir}/transaction.json" > "${transaction_next}"; then
+    rm -f -- "${transaction_next}"
+    return 1
+  fi
+  chmod 600 "${transaction_next}" || return 1
+  mv -f -- "${transaction_next}" "${lock_dir}/transaction.json"
+}
+
 managed_component_transaction_restore() {
   local lock_dir=${1:-} before_active firewall_expected firewall_journal redirect_expected redirect_journal
+  local tproxy_expected tproxy_journal
   local status=0 service_state
   MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=""
 
@@ -19621,6 +20373,10 @@ managed_component_transaction_restore() {
     return 1
   }
   redirect_expected=$(jq -r '.redirect_policy_expected // false' "${lock_dir}/transaction.json") || {
+    MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=component_rollback_failed
+    return 1
+  }
+  tproxy_expected=$(jq -r '.tproxy_policy_expected // false' "${lock_dir}/transaction.json") || {
     MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=component_rollback_failed
     return 1
   }
@@ -19663,6 +20419,29 @@ managed_component_transaction_restore() {
   fi
   [[ "${MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR}" != redirect_policy_rollback_failed ]] || return 1
 
+  tproxy_journal="${lock_dir}/snapshot/component-tproxy-policy.json"
+  if [[ -e "${tproxy_journal}" || -L "${tproxy_journal}" ]]; then
+    if [[ ! -f "${tproxy_journal}" || -L "${tproxy_journal}" ]] ||
+       ! managed_component_tproxy_policy_journal_validate "${tproxy_journal}"; then
+      MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=tproxy_policy_rollback_failed
+      status=1
+    elif [[ "${tproxy_expected}" == true ]]; then
+      if ! managed_component_tproxy_policy_remove_delta "${tproxy_journal}"; then
+        MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=tproxy_policy_rollback_failed
+        status=1
+      fi
+    elif [[ "$(jq -r '.status' "${tproxy_journal}")" != prepared ]]; then
+      printf '[ERROR] 高级组件事务 TProxy 策略日志未经授权进入变更阶段；外部状态未自动修改。\n' >&2
+      MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=tproxy_policy_rollback_failed
+      status=1
+    fi
+  elif [[ "${tproxy_expected}" == true ]]; then
+    printf '[ERROR] 高级组件事务 TProxy 策略日志缺失；无法证明外部状态已恢复。\n' >&2
+    MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=tproxy_policy_rollback_failed
+    status=1
+  fi
+  [[ "${MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR}" != tproxy_policy_rollback_failed ]] || return 1
+
   if ! managed_state_snapshot_is_valid "${lock_dir}/snapshot" ||
      ! restore_managed_state_snapshot "${lock_dir}/snapshot"; then
     printf '[ERROR] 高级组件事务状态快照恢复失败；事务目录已保留供人工处理。\n' >&2
@@ -19699,6 +20478,12 @@ managed_component_transaction_restore() {
       status=1
     fi
   fi
+  if [[ "${tproxy_expected}" == true && -f "${tproxy_journal}" && ! -L "${tproxy_journal}" ]]; then
+    if ! managed_component_tproxy_policy_restore_before "${tproxy_journal}"; then
+      MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=tproxy_policy_rollback_failed
+      status=1
+    fi
+  fi
   return "${status}"
 }
 
@@ -19715,6 +20500,10 @@ managed_component_abort_transaction_with_resources() {
         MANAGED_COMPONENT_LAST_ERROR=redirect_policy_rollback_failed
         printf '[ERROR] %s，Redirect 主机策略回滚不确定；事务目录保留在 %s。\n' \
           "${failure_message}" "${lock_dir}" >&2 ;;
+      tproxy_policy_rollback_failed)
+        MANAGED_COMPONENT_LAST_ERROR=tproxy_policy_rollback_failed
+        printf '[ERROR] %s，TProxy 主机策略及路由回滚不确定；事务目录保留在 %s。\n' \
+          "${failure_message}" "${lock_dir}" >&2 ;;
       *)
         MANAGED_COMPONENT_LAST_ERROR=component_rollback_failed
         printf '[ERROR] %s，事务回滚不确定；事务目录保留在 %s。\n' \
@@ -19728,7 +20517,7 @@ managed_component_abort_transaction_with_resources() {
       "${failure_message}" "${lock_dir}" >&2
     return 1
   fi
-  printf '[ERROR] %s，监听防火墙、Redirect 策略、配置和服务活动状态均已恢复。\n' \
+  printf '[ERROR] %s，监听防火墙、Redirect/TProxy 策略、配置和服务活动状态均已恢复。\n' \
     "${failure_message}" >&2
 }
 
@@ -19759,6 +20548,7 @@ managed_component_restore_service_activity() {
 managed_component_abort_component_transaction() {
   local lock_dir=${1:-} snapshot_dir=${2:-} failure_message=${3:-} restore_service=${4:-n}
   local redirect_expected=false redirect_journal redirect_status
+  local tproxy_expected=false tproxy_journal tproxy_status
 
   redirect_journal="${lock_dir}/snapshot/component-redirect-policy.json"
   if [[ -f "${lock_dir}/transaction.json" && ! -L "${lock_dir}/transaction.json" ]]; then
@@ -19789,6 +20579,35 @@ managed_component_abort_component_transaction() {
     return 1
   fi
 
+  tproxy_journal="${lock_dir}/snapshot/component-tproxy-policy.json"
+  if [[ -f "${lock_dir}/transaction.json" && ! -L "${lock_dir}/transaction.json" ]]; then
+    tproxy_expected=$(jq -r '.tproxy_policy_expected // false' "${lock_dir}/transaction.json") || tproxy_expected=false
+  fi
+  if [[ -e "${tproxy_journal}" || -L "${tproxy_journal}" ]]; then
+    if [[ ! -f "${tproxy_journal}" || -L "${tproxy_journal}" ]] ||
+       ! managed_component_tproxy_policy_journal_validate "${tproxy_journal}"; then
+      printf '[ERROR] %s，TProxy 策略事务日志不可信；事务目录保留在 %s。\n' \
+        "${failure_message}" "${lock_dir}" >&2
+      return 1
+    fi
+    tproxy_status=$(jq -r '.status' "${tproxy_journal}") || return 1
+    if [[ "${tproxy_expected}" == true ]]; then
+      if ! managed_component_tproxy_policy_remove_delta "${tproxy_journal}"; then
+        printf '[ERROR] %s，TProxy 策略及路由回滚不确定；事务目录保留在 %s。\n' \
+          "${failure_message}" "${lock_dir}" >&2
+        return 1
+      fi
+    elif [[ "${tproxy_status}" != prepared ]]; then
+      printf '[ERROR] %s，TProxy 策略日志未经授权进入变更阶段；事务目录保留在 %s。\n' \
+        "${failure_message}" "${lock_dir}" >&2
+      return 1
+    fi
+  elif [[ "${tproxy_expected}" == true ]]; then
+    printf '[ERROR] %s，TProxy 策略日志缺失；事务目录保留在 %s。\n' \
+      "${failure_message}" "${lock_dir}" >&2
+    return 1
+  fi
+
   if [[ -n "${snapshot_dir}" ]] && managed_state_snapshot_is_valid "${snapshot_dir}" &&
      restore_managed_state_snapshot "${snapshot_dir}"; then
     if [[ "${restore_service}" == y ]] && ! managed_component_restore_service_activity "${lock_dir}"; then
@@ -19797,6 +20616,10 @@ managed_component_abort_component_transaction() {
     elif [[ "${redirect_expected}" == true ]] &&
          ! managed_component_redirect_policy_restore_before "${redirect_journal}"; then
       printf '[ERROR] %s，配置状态已恢复但 Redirect 策略回滚不确定；事务目录保留在 %s。\n' \
+        "${failure_message}" "${lock_dir}" >&2
+    elif [[ "${tproxy_expected}" == true ]] &&
+         ! managed_component_tproxy_policy_restore_before "${tproxy_journal}"; then
+      printf '[ERROR] %s，配置状态已恢复但 TProxy 策略及路由回滚不确定；事务目录保留在 %s。\n' \
         "${failure_message}" "${lock_dir}" >&2
     elif rm -rf -- "${lock_dir}"; then
       printf '[ERROR] %s，已恢复变更前的配置状态。\n' "${failure_message}" >&2
@@ -19889,7 +20712,8 @@ managed_component_recover_transaction() {
     (.phase | IN("prepare","snapshot","publish","resources","service","committed")) and
     (.new_revision == null or (.new_revision | type == "number" and . == floor and . >= 0 and . <= 9007199254740991)) and
     (.firewall_expected | type == "boolean") and
-    ((has("redirect_policy_expected") | not) or (.redirect_policy_expected | type == "boolean"))
+    ((has("redirect_policy_expected") | not) or (.redirect_policy_expected | type == "boolean")) and
+    ((has("tproxy_policy_expected") | not) or (.tproxy_policy_expected | type == "boolean"))
   ' "${lock_dir}/transaction.json" >/dev/null 2>&1; then
     MANAGED_COMPONENT_RECOVERY_LAST_ERROR=component_recovery_untrusted
     agent_json_error component_recovery_untrusted "高级组件事务日志无法验证；请保留目录人工检查。"
@@ -19978,6 +20802,8 @@ managed_component_recover_transaction() {
         agent_json_error firewall_rollback_failed "组件事务状态已尝试恢复，但防火墙外部资源仍不确定；事务目录已保留。" ;;
       redirect_policy_rollback_failed)
         agent_json_error redirect_policy_rollback_failed "组件事务状态已尝试恢复，但 Redirect 主机策略仍不确定；事务目录已保留。" ;;
+      tproxy_policy_rollback_failed)
+        agent_json_error tproxy_policy_rollback_failed "组件事务状态已尝试恢复，但 TProxy 主机策略及路由仍不确定；事务目录已保留。" ;;
       *)
         agent_json_error component_rollback_failed "组件事务自动回滚失败；事务目录已保留供人工恢复。" ;;
     esac
@@ -20591,7 +21417,7 @@ managed_uninstall_acquire_guard() {
 }
 
 perform_singbox_runtime_uninstall() {
-  local lib_path expected_hash actual_hash component_state redirect_policy_plan
+  local lib_path expected_hash actual_hash component_state redirect_policy_plan tproxy_policy_plan
 
   managed_uninstall_acquire_guard || return 1
   component_state=$(managed_component_state_json) || {
@@ -20604,6 +21430,14 @@ perform_singbox_runtime_uninstall() {
   }
   if ! managed_component_redirect_policy_uninstall "${redirect_policy_plan}"; then
     managed_uninstall_report_error "Redirect 主机策略清理无法确认；服务、二进制和配置目录未改动，已清理的精确受管规则可能是部分状态，请先运行组件诊断。"
+    return 1
+  fi
+  tproxy_policy_plan=$(managed_component_tproxy_host_policy_plan_json "${component_state}") || {
+    managed_uninstall_report_error "TProxy 主机策略计划无法安全读取，未开始卸载。"
+    return 1
+  }
+  if ! managed_component_tproxy_policy_uninstall "${tproxy_policy_plan}"; then
+    managed_uninstall_report_error "TProxy 主机策略清理无法确认；服务、二进制和配置目录未改动，已清理的精确受管规则可能是部分状态，请先运行组件诊断。"
     return 1
   fi
   log_info "正在彻底卸载 sing-box 环境..."
@@ -20661,7 +21495,7 @@ uninstall_script() {
   local deleted_cfg="n"
   read -rp "是否同时删除项目配置文件目录 (/root/sing-box-vps)? [y/N]: " del_cfg
   if [[ "${del_cfg}" =~ ^[Yy]$ ]]; then
-    local component_state redirect_policy_plan
+    local component_state redirect_policy_plan tproxy_policy_plan
     managed_uninstall_acquire_guard || return 1
     component_state=$(managed_component_state_json) || {
       managed_uninstall_report_error "高级组件 state 无法安全读取，未删除项目目录。"
@@ -20673,6 +21507,14 @@ uninstall_script() {
     }
     if ! managed_component_redirect_policy_uninstall "${redirect_policy_plan}"; then
       managed_uninstall_report_error "Redirect 主机策略清理无法确认，未删除项目目录。"
+      return 1
+    fi
+    tproxy_policy_plan=$(managed_component_tproxy_host_policy_plan_json "${component_state}") || {
+      managed_uninstall_report_error "TProxy 主机策略计划无法安全读取，未删除项目目录。"
+      return 1
+    }
+    if ! managed_component_tproxy_policy_uninstall "${tproxy_policy_plan}"; then
+      managed_uninstall_report_error "TProxy 主机策略清理无法确认，未删除项目目录。"
       return 1
     fi
     rm -rf -- "${SB_PROJECT_DIR}" || return 1
@@ -31135,6 +31977,10 @@ agent_component_cli() {
       host_policy_requires_active_service) agent_json_error host_policy_requires_active_service "首次启用 Redirect 主机策略前必须已有 active sing-box 服务；未修改。" ;;
       host_policy_journal_failed) agent_json_error host_policy_journal_failed "Redirect 主机策略事务日志准备失败；未报告成功。" ;;
       host_policy_apply_failed|host_policy_postcheck_failed) agent_json_error host_policy_apply_failed "Redirect 主机策略应用或 postcheck 失败；已尝试事务回滚，必要时请执行 component recover。" ;;
+      tproxy_host_policy_state_invalid|tproxy_host_policy_preflight_failed) agent_json_error tproxy_host_policy_preflight_failed "TProxy 主机策略状态、iptables mangle、iproute2 或接口预检失败；未修改。" ;;
+      tproxy_host_policy_requires_active_service) agent_json_error tproxy_host_policy_requires_active_service "首次启用 TProxy 主机策略前必须已有 active sing-box 服务；未修改。" ;;
+      tproxy_host_policy_journal_failed) agent_json_error tproxy_host_policy_journal_failed "TProxy 主机策略事务日志准备失败；未报告成功。" ;;
+      tproxy_host_policy_apply_failed|tproxy_host_policy_postcheck_failed) agent_json_error tproxy_host_policy_apply_failed "TProxy 主机策略应用或 postcheck 失败；已尝试回滚 mangle、策略规则和路由，必要时请执行 component recover。" ;;
       public_confirmation_required) agent_json_error confirmation_required "现有接管对象包含公开监听或 OpenVPN server；请明确传入 --allow-public。" ;;
       component_live_missing) agent_json_error component_live_missing "当前配置没有可接管的已注册高级入站或 Endpoint。" ;;
       component_live_untrusted) agent_json_error component_live_untrusted "当前配置对象或组件状态无法安全读取；未修改。" ;;
@@ -31147,6 +31993,7 @@ agent_component_cli() {
       firewall_commit_failed) agent_json_error firewall_commit_failed "组件接管已回滚；防火墙资源提交失败。" ;;
       firewall_rollback_failed) agent_json_error firewall_rollback_failed "防火墙外部资源回滚不确定；已保留事务快照供恢复。" ;;
       redirect_policy_rollback_failed) agent_json_error redirect_policy_rollback_failed "Redirect 主机策略回滚不确定；已保留事务快照供恢复。" ;;
+      tproxy_policy_rollback_failed) agent_json_error tproxy_policy_rollback_failed "TProxy mangle、策略规则或路由回滚不确定；已保留事务快照供恢复。" ;;
       *) agent_json_error component_takeover_failed "组件接管失败，状态已回滚或保留快照待恢复。" ;;
     esac
     return 1
@@ -31176,6 +32023,10 @@ agent_component_cli() {
       host_policy_requires_active_service) agent_json_error host_policy_requires_active_service "首次启用 Redirect 主机策略前必须已有 active sing-box 服务；未修改。" ;;
       host_policy_journal_failed) agent_json_error host_policy_journal_failed "Redirect 主机策略事务日志准备失败；未报告成功。" ;;
       host_policy_apply_failed|host_policy_postcheck_failed) agent_json_error host_policy_apply_failed "Redirect 主机策略应用或 postcheck 失败；已尝试事务回滚，必要时请执行 component recover。" ;;
+      tproxy_host_policy_state_invalid|tproxy_host_policy_preflight_failed) agent_json_error tproxy_host_policy_preflight_failed "TProxy 主机策略状态、iptables mangle、iproute2 或接口预检失败；未修改。" ;;
+      tproxy_host_policy_requires_active_service) agent_json_error tproxy_host_policy_requires_active_service "首次启用 TProxy 主机策略前必须已有 active sing-box 服务；未修改。" ;;
+      tproxy_host_policy_journal_failed) agent_json_error tproxy_host_policy_journal_failed "TProxy 主机策略事务日志准备失败；未报告成功。" ;;
+      tproxy_host_policy_apply_failed|tproxy_host_policy_postcheck_failed) agent_json_error tproxy_host_policy_apply_failed "TProxy 主机策略应用或 postcheck 失败；已尝试回滚 mangle、策略规则和路由，必要时请执行 component recover。" ;;
       config_check_failed) agent_json_error config_check_failed "组件重建已回滚；生成的配置未通过图校验、监听校验或 sing-box check。" ;;
       service_restart_failed) agent_json_error service_restart_failed "组件重建已回滚；服务重启失败。" ;;
       transparent_resource_check_failed) agent_json_error transparent_resource_check_failed "组件重建已回滚；core-owned 透明资源未就绪。" ;;
@@ -31184,6 +32035,7 @@ agent_component_cli() {
       firewall_commit_failed) agent_json_error firewall_commit_failed "组件重建已回滚；防火墙资源提交失败。" ;;
       firewall_rollback_failed) agent_json_error firewall_rollback_failed "防火墙外部资源回滚不确定；已保留事务快照供恢复。" ;;
       redirect_policy_rollback_failed) agent_json_error redirect_policy_rollback_failed "Redirect 主机策略回滚不确定；已保留事务快照供恢复。" ;;
+      tproxy_policy_rollback_failed) agent_json_error tproxy_policy_rollback_failed "TProxy mangle、策略规则或路由回滚不确定；已保留事务快照供恢复。" ;;
       *) agent_json_error component_apply_failed "组件重建失败，状态已回滚或保留快照待恢复。" ;;
     esac
     return 1
@@ -31224,6 +32076,10 @@ agent_component_cli() {
     host_policy_requires_active_service) agent_json_error host_policy_requires_active_service "首次启用 Redirect 主机策略前必须已有 active sing-box 服务；未修改。" ;;
     host_policy_journal_failed) agent_json_error host_policy_journal_failed "Redirect 主机策略事务日志准备失败；未报告成功。" ;;
     host_policy_apply_failed|host_policy_postcheck_failed) agent_json_error host_policy_apply_failed "Redirect 主机策略应用或 postcheck 失败；已尝试事务回滚，必要时请执行 component recover。" ;;
+    tproxy_host_policy_state_invalid|tproxy_host_policy_preflight_failed) agent_json_error tproxy_host_policy_preflight_failed "TProxy 主机策略状态、iptables mangle、iproute2 或接口预检失败；未修改。" ;;
+    tproxy_host_policy_requires_active_service) agent_json_error tproxy_host_policy_requires_active_service "首次启用 TProxy 主机策略前必须已有 active sing-box 服务；未修改。" ;;
+    tproxy_host_policy_journal_failed) agent_json_error tproxy_host_policy_journal_failed "TProxy 主机策略事务日志准备失败；未报告成功。" ;;
+    tproxy_host_policy_apply_failed|tproxy_host_policy_postcheck_failed) agent_json_error tproxy_host_policy_apply_failed "TProxy 主机策略应用或 postcheck 失败；已尝试回滚 mangle、策略规则和路由，必要时请执行 component recover。" ;;
     component_referenced_or_missing) agent_json_error component_referenced "组件仍被 route/group/detour 引用，或目标不存在；未修改。" ;;
     record_invalid|component_conflict) agent_json_error invalid_component "组件记录无效、类型不受支持或 tag/id 冲突；未修改。" ;;
     service_restart_failed) agent_json_error service_restart_failed "组件已回滚；服务重启失败。" ;;
@@ -31239,6 +32095,7 @@ agent_component_cli() {
     firewall_commit_failed) agent_json_error firewall_commit_failed "组件已回滚；防火墙资源提交失败。" ;;
     firewall_rollback_failed) agent_json_error firewall_rollback_failed "防火墙外部资源回滚不确定；已保留事务快照供恢复。" ;;
     redirect_policy_rollback_failed) agent_json_error redirect_policy_rollback_failed "Redirect 主机策略回滚不确定；已保留事务快照供恢复。" ;;
+    tproxy_policy_rollback_failed) agent_json_error tproxy_policy_rollback_failed "TProxy mangle、策略规则或路由回滚不确定；已保留事务快照供恢复。" ;;
     *) agent_json_error component_apply_failed "组件事务失败，状态已回滚或保留快照待恢复。" ;;
   esac
   return 1

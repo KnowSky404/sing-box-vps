@@ -14,8 +14,8 @@ grep -Fq 'selector-outbound-verification' "${SCENARIO_FILE}"
 grep -Fq 'outbounds:["direct"]' "${SCENARIO_FILE}"
 grep -Fq 'DATA_PLANE=selector_direct_loopback' "${SCENARIO_FILE}"
 grep -Fq 'selector-outbound.result.env' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 11 --file "${selector_record}"' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 12 --id selector-outbound-verification' "${SCENARIO_FILE}"
+grep -Fq -- '--expected-revision 13 --file "${selector_record}"' "${SCENARIO_FILE}"
+grep -Fq -- '--expected-revision 14 --id selector-outbound-verification' "${SCENARIO_FILE}"
 
 if grep -Fq 'POLICY_OWNERSHIP=managed' "${SCENARIO_FILE}"; then
   printf 'selector verification must not claim managed host policy ownership\n' >&2

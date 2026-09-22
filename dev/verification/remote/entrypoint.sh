@@ -2301,9 +2301,10 @@ PY
 
 verification_assert_redirect_policy_removed() {
   local probe_dir="${VERIFY_CURRENT_SCENARIO_DIR}/transparent/redirect"
+  local after_relative_path="${probe_dir}/iptables.after-delete.txt"
   local after_artifact
-  after_artifact=$(verification_artifact_path "${probe_dir}/iptables.after-delete.txt")
-  verification_capture_command "${after_artifact}" iptables-save -t nat
+  verification_capture_command "${after_relative_path}" iptables-save -t nat
+  after_artifact=$(verification_artifact_path "${after_relative_path}")
   if grep -E 'SBVR_[a-f0-9]{20}|sbv-redirect-[a-f0-9]{20}' "${after_artifact}" >/dev/null; then
     printf '[ERROR] Redirect managed policy remains after component delete.\n' >&2
     return 1
@@ -2312,21 +2313,31 @@ verification_assert_redirect_policy_removed() {
     'RESULT=success' 'OWNED_CHAIN=absent' 'OWNED_PREROUTING_JUMP=absent'
 }
 
-# Exercise a TProxy inbound from an isolated network namespace. The veth,
-# policy route, mark and mangle rules are disposable and are never treated as
-# installer-owned firewall state. TCP and UDP clients both cross PREROUTING.
+# Exercise a TProxy inbound between isolated client and remote marker
+# namespaces. The veths and namespaces are disposable fixtures; managed mode
+# creates only the explicitly scoped installer-owned host policy. TCP and UDP
+# clients cross PREROUTING, and UDP write-back targets a non-local destination.
 verification_execute_tproxy_probe() (
   set -euo pipefail
   local config_file=$1 listener_port=$2
+  local policy_mode=${3:-operator} managed_revision=${4:-5}
   local probe_dir="${VERIFY_CURRENT_SCENARIO_DIR}/transparent/tproxy"
   local check_artifact tcp_response_artifact udp_response_artifact client_stderr_artifact
   local tcp_marker_stdout_artifact tcp_marker_stderr_artifact udp_marker_stdout_artifact
-  local udp_marker_stderr_artifact marker_before_artifact marker_after_artifact
-  local rule_before_artifact rule_after_artifact result_artifact temp_dir
-  local netns host_veth peer_veth host_ip='198.18.0.1' peer_ip='198.18.0.2'
+  local udp_marker_stderr_artifact tcp_marker_event_artifact udp_marker_event_artifact
+  local filter_input_artifact service_journal_artifact client_status_artifact
+  local tcp_packet_capture_artifact tcp_packet_capture_stderr_artifact
+  local marker_before_artifact marker_after_artifact
+  local rule_before_artifact rule_after_artifact result_artifact temp_dir policy_record_file fixture_artifact
+  local netns host_veth peer_veth marker_netns marker_host_veth marker_peer_veth
+  local host_ip='198.18.0.1' peer_ip='198.18.0.2'
+  local marker_host_ip='198.18.1.1' marker_ip='198.18.1.2'
   local table mark mark_mask='255' tcp_port udp_port marker tcp_marker udp_marker
-  local port_file marker_pid='' tcp_rule_added=false udp_rule_added=false
-  local netns_added=false veth_added=false policy_added=false probe_status=1
+  local port_file marker_pid='' tcp_packet_capture_pid='' tcp_rule_added=false udp_rule_added=false
+  local netns_added=false veth_added=false marker_netns_added=false marker_veth_added=false
+  local policy_added=false probe_status=1
+  local managed_policy_created=false policy_update_output failure_cleanup_artifact
+  local keep_fixture=false
 
   probe_dir="${VERIFY_CURRENT_SCENARIO_DIR}/transparent/tproxy"
   check_artifact=$(verification_artifact_path "${probe_dir}/sing-box-check.txt")
@@ -2337,24 +2348,73 @@ verification_execute_tproxy_probe() (
   tcp_marker_stderr_artifact=$(verification_artifact_path "${probe_dir}/tcp-marker.stderr.txt")
   udp_marker_stdout_artifact=$(verification_artifact_path "${probe_dir}/udp-marker.stdout.txt")
   udp_marker_stderr_artifact=$(verification_artifact_path "${probe_dir}/udp-marker.stderr.txt")
+  tcp_marker_event_artifact=$(verification_artifact_path "${probe_dir}/tcp-marker-events.txt")
+  udp_marker_event_artifact=$(verification_artifact_path "${probe_dir}/udp-marker-events.txt")
+  filter_input_artifact=$(verification_artifact_path "${probe_dir}/filter-input.after-tcp-client.txt")
+  service_journal_artifact=$(verification_artifact_path "${probe_dir}/tproxy-service-journal.after-tcp-client.txt")
+  client_status_artifact=$(verification_artifact_path "${probe_dir}/client-status.env")
+  tcp_packet_capture_artifact=$(verification_artifact_path "${probe_dir}/tcp-packets.after-client.txt")
+  tcp_packet_capture_stderr_artifact=$(verification_artifact_path "${probe_dir}/tcp-packets.stderr.txt")
   marker_before_artifact=$(verification_artifact_path "${probe_dir}/resources.before.txt")
   marker_after_artifact=$(verification_artifact_path "${probe_dir}/resources.after.txt")
   rule_before_artifact=$(verification_artifact_path "${probe_dir}/iptables.before.txt")
   rule_after_artifact=$(verification_artifact_path "${probe_dir}/iptables.with-tproxy.txt")
   result_artifact=$(verification_artifact_path "${probe_dir}/result.env")
+  fixture_artifact=$(verification_artifact_path "${probe_dir}/fixture.json")
+  policy_record_file="${VERIFY_REMOTE_LOCAL_TREE_DIR:-/tmp}/tproxy-host-policy-record.json"
+  [[ "${policy_mode}" == operator || "${policy_mode}" == managed ]] || return 2
   rm -f -- "${check_artifact}" "${tcp_response_artifact}" "${udp_response_artifact}" \
     "${client_stderr_artifact}" "${tcp_marker_stdout_artifact}" "${tcp_marker_stderr_artifact}" \
     "${udp_marker_stdout_artifact}" "${udp_marker_stderr_artifact}" "${marker_before_artifact}" \
+    "${tcp_marker_event_artifact}" "${udp_marker_event_artifact}" \
+    "${filter_input_artifact}" "${service_journal_artifact}" "${client_status_artifact}" \
+    "${tcp_packet_capture_artifact}" "${tcp_packet_capture_stderr_artifact}" \
     "${marker_after_artifact}" "${rule_before_artifact}" "${rule_after_artifact}" \
-    "${result_artifact}"
+    "${result_artifact}" "${fixture_artifact}"
 
   cleanup_tproxy_probe() {
     local status=$? cleanup_status=0
+    local managed_cleanup_status=0
     set +e
     if [[ -n "${marker_pid}" ]]; then
       kill "${marker_pid}" 2>/dev/null || true
       wait "${marker_pid}" 2>/dev/null || true
       marker_pid=''
+    fi
+    if [[ -n "${tcp_packet_capture_pid}" ]]; then
+      kill "${tcp_packet_capture_pid}" 2>/dev/null || true
+      wait "${tcp_packet_capture_pid}" 2>/dev/null || true
+      tcp_packet_capture_pid=''
+    fi
+    if [[ "${status}" != 0 && "${managed_policy_created}" == true ]]; then
+      if [[ -n "${VERIFY_REMOTE_INSTALL_SCRIPT:-}" && -f "${VERIFY_REMOTE_INSTALL_SCRIPT}" ]]; then
+        failure_cleanup_artifact=$(verification_artifact_path \
+          "${probe_dir}/managed-policy-failure-cleanup.json")
+        bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
+          --expected-revision "${managed_revision}" --id tproxy-inbound-verification \
+          > "${failure_cleanup_artifact}"
+        managed_cleanup_status=$?
+      else
+        managed_cleanup_status=1
+      fi
+      if [[ "${managed_cleanup_status}" == 0 ]]; then
+        managed_policy_created=false
+      else
+        printf '[ERROR] Managed TProxy policy cleanup failed after probe error; revision %s may require recovery.\n' \
+          "${managed_revision}" >&2
+        cleanup_status=1
+      fi
+    fi
+    if [[ "${status}" == 0 && "${probe_status}" == 0 && "${policy_mode}" == managed ]]; then
+      if jq -cn --arg host_veth "${host_veth}" --arg netns "${netns}" \
+        --arg marker_host_veth "${marker_host_veth}" --arg marker_netns "${marker_netns}" \
+        '{schema_version:2,host_veth:$host_veth,netns:$netns,
+          marker_host_veth:$marker_host_veth,marker_netns:$marker_netns}' > "${fixture_artifact}" &&
+         chmod 600 "${fixture_artifact}"; then
+        keep_fixture=true
+      else
+        status=1
+      fi
     fi
     if [[ "${tcp_rule_added}" == true ]]; then
       if ! iptables -t mangle -D PREROUTING -i "${host_veth}" -p tcp \
@@ -2373,11 +2433,19 @@ verification_execute_tproxy_probe() (
       ip rule del fwmark "${mark}/${mark_mask}" table "${table}" || cleanup_status=1
       policy_added=false
     fi
-    if [[ "${veth_added}" == true ]]; then
+    if [[ "${marker_veth_added}" == true && "${keep_fixture}" != true ]]; then
+      ip link del "${marker_host_veth}" || cleanup_status=1
+      marker_veth_added=false
+    fi
+    if [[ "${veth_added}" == true && "${keep_fixture}" != true ]]; then
       ip link del "${host_veth}" || cleanup_status=1
       veth_added=false
     fi
-    if [[ "${netns_added}" == true ]]; then
+    if [[ "${marker_netns_added}" == true && "${keep_fixture}" != true ]]; then
+      ip netns del "${marker_netns}" || cleanup_status=1
+      marker_netns_added=false
+    fi
+    if [[ "${netns_added}" == true && "${keep_fixture}" != true ]]; then
       ip netns del "${netns}" || cleanup_status=1
       netns_added=false
     fi
@@ -2390,19 +2458,61 @@ verification_execute_tproxy_probe() (
     if [[ "${status}" == 0 && "${probe_status}" == 0 ]]; then
       verification_write_artifact "${probe_dir}/result.env" \
         'COMPONENT=tproxy-inbound' 'RESULT=success' \
-        'DATA_PLANE=tproxy_tcp_udp_netns' \
+        'DATA_PLANE=tproxy_tcp_udp_client_and_marker_netns' \
         'POLICY_SCOPE=verification_container_only' \
-        'POLICY_OWNERSHIP=not_managed'
+        "POLICY_OWNERSHIP=$([[ "${policy_mode}" == managed ]] && printf installer_managed || printf not_managed)"
     else
       verification_write_artifact "${probe_dir}/result.env" \
         'COMPONENT=tproxy-inbound' 'RESULT=failure' \
-        'DATA_PLANE=tproxy_tcp_udp_netns' \
+        'DATA_PLANE=tproxy_tcp_udp_client_and_marker_netns' \
         'POLICY_SCOPE=verification_container_only' \
-        'POLICY_OWNERSHIP=not_managed'
+        "POLICY_OWNERSHIP=$([[ "${policy_mode}" == managed ]] && printf installer_managed || printf not_managed)"
     fi
     exit "${status}"
   }
   trap 'cleanup_tproxy_probe' EXIT
+
+  apply_managed_tproxy_host_policy() {
+    local destination_ports_json=${1:-} expected=${2:-} status=0 result_file artifact_file
+    local result_revision
+    [[ -n "${destination_ports_json}" && "${expected}" =~ ^[0-9]+$ &&
+       -n "${VERIFY_REMOTE_INSTALL_SCRIPT:-}" && -f "${VERIFY_REMOTE_INSTALL_SCRIPT}" ]] || return 1
+    result_file="${VERIFY_REMOTE_LOCAL_TREE_DIR:-${temp_dir}}/tproxy-host-policy-revision-${expected}.json"
+    artifact_file="${probe_dir}/managed-host-policy-revision-${expected}.json"
+    (umask 077; jq -n --arg interface "${host_veth}" --argjson listen_port "${listener_port}" \
+      --argjson destination_ports "${destination_ports_json}" \
+      '{id:"tproxy-inbound-verification",role:"inbound",type:"tproxy",
+        tag:"tproxy-inbound-verification",enabled:true,route_rules:[],
+        config:{listen:"0.0.0.0",listen_port:$listen_port,network:["tcp","udp"]},
+        host_policy:{ingress_interface:$interface,destination_ports:$destination_ports,
+          management_ports:[22,2222,$listen_port]}}' > "${policy_record_file}")
+    chmod 600 "${policy_record_file}"
+    set +e
+    bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component replace --json --yes --allow-public \
+      --expected-revision "${expected}" --file "${policy_record_file}" > "${result_file}"
+    status=$?
+    set -e
+    if [[ "${status}" == 0 ]]; then
+      # Arm failure cleanup as soon as the mutating command succeeds, before
+      # validating its response payload. A malformed success envelope must not
+      # leave an installed component/policy behind in the probe container.
+      managed_policy_created=true
+      managed_revision=$((expected + 1))
+    fi
+    verification_capture_file_if_present "${result_file}" "${artifact_file}"
+    [[ "${status}" == 0 ]]
+    jq -e '.ok == true and .operation == "replace" and .type == "tproxy" and
+      .tproxy_host_policy.status == "available" and
+      (.tproxy_host_policy.resources | length) == 1 and
+      .tproxy_host_policy.resources[0].status == "present" and
+      .tproxy_host_policy.resources[0].resource_scope == "installer_owned_ipv4_tcp_udp_prerouting_policy_route"' \
+      "${result_file}" >/dev/null
+    result_revision=$(jq -r '.revision' "${result_file}") || return 1
+    [[ "${result_revision}" == "${managed_revision}" ]] || return 1
+    [[ "${managed_revision}" =~ ^[0-9]+$ && "${managed_revision}" -gt "${expected}" ]] || return 1
+    policy_update_output=${result_file}
+    verification_mark_step tproxy-managed-host-policy-applied
+  }
 
   verification_capture_command "${probe_dir}/sing-box-check.txt" \
     sing-box check -c "${config_file}"
@@ -2411,52 +2521,71 @@ verification_execute_tproxy_probe() (
   netns="sbvtns-${BASHPID}"
   host_veth="sbvth${BASHPID}"
   peer_veth="sbvtp${BASHPID}"
+  marker_netns="sbvtnm-${BASHPID}"
+  marker_host_veth="sbvhm${BASHPID}"
+  marker_peer_veth="sbvmp${BASHPID}"
   table=$((1000 + (BASHPID % 2000)))
   mark=$((1 + (BASHPID % 200)))
   ip netns add "${netns}"
   netns_added=true
   ip link add "${host_veth}" type veth peer name "${peer_veth}"
-  ip link set "${peer_veth}" netns "${netns}"
   veth_added=true
+  ip link set "${peer_veth}" netns "${netns}"
   ip addr add "${host_ip}/24" dev "${host_veth}"
   ip link set "${host_veth}" up
   ip netns exec "${netns}" ip addr add "${peer_ip}/24" dev "${peer_veth}"
   ip netns exec "${netns}" ip link set lo up
   ip netns exec "${netns}" ip link set "${peer_veth}" up
+  ip netns exec "${netns}" ip route add default via "${host_ip}"
+  ip netns add "${marker_netns}"
+  marker_netns_added=true
+  ip link add "${marker_host_veth}" type veth peer name "${marker_peer_veth}"
+  marker_veth_added=true
+  ip link set "${marker_peer_veth}" netns "${marker_netns}"
+  ip addr add "${marker_host_ip}/30" dev "${marker_host_veth}"
+  ip link set "${marker_host_veth}" up
+  ip netns exec "${marker_netns}" ip addr add "${marker_ip}/30" dev "${marker_peer_veth}"
+  ip netns exec "${marker_netns}" ip link set lo up
+  ip netns exec "${marker_netns}" ip link set "${marker_peer_veth}" up
   verification_capture_best_effort_command "${probe_dir}/resources.before.txt" \
     ip -j addr show "${host_veth}"
   verification_capture_best_effort_command "${probe_dir}/iptables.before.txt" \
     iptables-save -t mangle
 
-  ip rule add fwmark "${mark}/${mark_mask}" table "${table}"
-  policy_added=true
-  ip route add local 0.0.0.0/0 dev lo table "${table}"
-  iptables -t mangle -A PREROUTING -i "${host_veth}" -p tcp \
-    -j TPROXY --on-ip 0.0.0.0 --on-port "${listener_port}" \
-    --tproxy-mark "${mark}/${mark_mask}"
-  tcp_rule_added=true
-  iptables -t mangle -A PREROUTING -i "${host_veth}" -p udp \
-    -j TPROXY --on-ip 0.0.0.0 --on-port "${listener_port}" \
-    --tproxy-mark "${mark}/${mark_mask}"
-  udp_rule_added=true
-  verification_capture_command "${probe_dir}/iptables.with-tproxy.txt" \
-    iptables-save -t mangle
-  verification_capture_best_effort_command "${probe_dir}/resources.with-tproxy.txt" \
-    sh -c 'ip rule show; ip route show table '"${table}"
+  if [[ "${policy_mode}" == operator ]]; then
+    ip rule add fwmark "${mark}/${mark_mask}" table "${table}"
+    policy_added=true
+    ip route add local 0.0.0.0/0 dev lo table "${table}"
+    iptables -t mangle -A PREROUTING -i "${host_veth}" -p tcp \
+      -j TPROXY --on-ip 0.0.0.0 --on-port "${listener_port}" \
+      --tproxy-mark "${mark}/${mark_mask}"
+    tcp_rule_added=true
+    iptables -t mangle -A PREROUTING -i "${host_veth}" -p udp \
+      -j TPROXY --on-ip 0.0.0.0 --on-port "${listener_port}" \
+      --tproxy-mark "${mark}/${mark_mask}"
+    udp_rule_added=true
+    verification_capture_command "${probe_dir}/iptables.with-tproxy.txt" \
+      iptables-save -t mangle
+    verification_capture_best_effort_command "${probe_dir}/resources.with-tproxy.txt" \
+      sh -c 'ip rule show; ip route show table '"${table}"
+  fi
 
   tcp_marker="sing-box-vps-tproxy-tcp-ok-$(date +%s)-$$"
   port_file="${temp_dir}/tcp.port"
-  python3 - "${port_file}" "${host_ip}" "${tcp_marker}" \
+  ip netns exec "${marker_netns}" python3 - "${port_file}" "${marker_ip}" "${tcp_marker}" \
+    "${tcp_marker_event_artifact}" \
     > "${tcp_marker_stdout_artifact}" 2> "${tcp_marker_stderr_artifact}" <<'PY' &
 import http.server
 import pathlib
 import socketserver
 import sys
 
-port_file, bind_address, marker = sys.argv[1:]
+port_file, bind_address, marker, event_file = sys.argv[1:]
 
 class MarkerHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        with pathlib.Path(event_file).open("a", encoding="utf-8") as events:
+            events.write(f"GET received from {self.client_address[0]}:{self.client_address[1]}\n")
         body = (marker + "\n").encode()
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
@@ -2483,14 +2612,101 @@ PY
   [[ -s "${port_file}" ]]
   tcp_port=$(cat "${port_file}")
   [[ "${tcp_port}" =~ ^[0-9]+$ && "${tcp_port}" -ge 1 && "${tcp_port}" -le 65535 ]]
+  if [[ "${policy_mode}" == managed ]]; then
+    apply_managed_tproxy_host_policy "[${tcp_port}]" "${managed_revision}"
+    verification_capture_command "${probe_dir}/iptables.with-tproxy.txt" iptables-save -t mangle
+    table=$(jq -r '.tproxy_host_policy.resources[0].route_table' "${policy_update_output}")
+    mark=$(jq -r '.tproxy_host_policy.resources[0].mark' "${policy_update_output}")
+    verification_capture_best_effort_command "${probe_dir}/resources.with-tproxy.txt" \
+      sh -c 'ip -4 rule show; ip -4 route show table '"${table}"
+    verification_capture_best_effort_command "${probe_dir}/marked-route-get.txt" \
+      ip -4 route get "${marker_ip}" from "${peer_ip}" iif "${host_veth}" mark "${mark}"
+    verification_capture_best_effort_command "${probe_dir}/runtime-config-structure.json" \
+      jq -c '{tproxy_inbounds:[.inbounds[] | select(.tag=="tproxy-inbound-verification") |
+        {type,tag,listen,listen_port,network,keys:(keys|sort)}],
+        route:{final:.route.final,rules:[.route.rules[]? | {action,inbound,outbound,domain}]},
+        outbounds:[.outbounds[]? | {type,tag}]}' "${config_file}"
+    verification_wait_for_service_active sing-box
+    verification_capture_command "${probe_dir}/sing-box-check-managed-policy.txt" \
+      sing-box check -c "${config_file}"
+    verification_capture_best_effort_command "${probe_dir}/tproxy-service-socket.ss-lntp.txt" \
+      ss -lntp "sport = :${listener_port}"
+    verification_capture_best_effort_command "${probe_dir}/tproxy-service-capabilities.txt" \
+      systemctl show sing-box -p MainPID -p User -p AmbientCapabilities -p CapabilityBoundingSet \
+        -p PrivateNetwork -p IPAddressAllow -p IPAddressDeny -p RestrictAddressFamilies
+    verification_capture_best_effort_command "${probe_dir}/tproxy-kernel-routing-sysctls.txt" \
+      sh -c 'sysctl net.ipv4.conf.all.rp_filter net.ipv4.conf.default.rp_filter \
+        net.ipv4.conf.all.src_valid_mark; sysctl -n net.ipv4.conf.'"${host_veth}"'.rp_filter'
+  fi
+  verification_capture_best_effort_command \
+    "${probe_dir}/tcp-marker-listener.ss-lntp.txt" \
+    ip netns exec "${marker_netns}" ss -lntp "sport = :${tcp_port}"
+  if [[ "${policy_mode}" == managed ]]; then
+    # Capture packets on the fixture ingress interface. This records
+    # whether the kernel emits a TCP SYN/ACK or RST after TPROXY matching,
+    # without adding a tcpdump dependency to the verification image.
+    python3 -u - "${host_veth}" "${tcp_port}" "${listener_port}" \
+      > "${tcp_packet_capture_artifact}" 2> "${tcp_packet_capture_stderr_artifact}" <<'PY' &
+import select
+import socket
+import struct
+import sys
+import time
+
+interfaces = sys.argv[1:2]
+ports = {int(value) for value in sys.argv[2:]}
+sockets = []
+for interface in interfaces:
+    packet_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
+    packet_socket.bind((interface, 0))
+    packet_socket.setblocking(False)
+    sockets.append(packet_socket)
+
+deadline = time.monotonic() + 8
+written = 0
+while written < 40 and time.monotonic() < deadline:
+    ready, _, _ = select.select(sockets, [], [], 0.2)
+    for packet_socket in ready:
+        frame, address = packet_socket.recvfrom(65535)
+        if len(frame) < 14:
+            continue
+        offset = 14
+        protocol = struct.unpack_from("!H", frame, 12)[0]
+        if protocol in (0x8100, 0x88A8) and len(frame) >= 18:
+            protocol = struct.unpack_from("!H", frame, 16)[0]
+            offset = 18
+        if protocol != 0x0800 or len(frame) < offset + 20:
+            continue
+        header_length = (frame[offset] & 0x0F) * 4
+        if frame[offset + 9] != 6 or len(frame) < offset + header_length + 20:
+            continue
+        source = socket.inet_ntoa(frame[offset + 12:offset + 16])
+        destination = socket.inet_ntoa(frame[offset + 16:offset + 20])
+        tcp_offset = offset + header_length
+        source_port, destination_port = struct.unpack_from("!HH", frame, tcp_offset)
+        if not ({source_port, destination_port} & ports):
+            continue
+        flags_value = frame[tcp_offset + 13]
+        flags = "".join(name for bit, name in (
+            (0x02, "S"), (0x10, "A"), (0x01, "F"), (0x04, "R"),
+            (0x08, "P"), (0x20, "U"), (0x40, "E"), (0x80, "C")) if flags_value & bit)
+        direction = "OUT" if len(address) > 2 and address[2] == 4 else "IN"
+        print(f"{address[0]} {direction} {source}:{source_port}>{destination}:{destination_port} flags={flags}", flush=True)
+        written += 1
+for packet_socket in sockets:
+    packet_socket.close()
+PY
+    tcp_packet_capture_pid=$!
+    sleep 0.1
+  fi
   set +e
-  ip netns exec "${netns}" python3 - "${tcp_port}" "${tcp_marker}" \
+  ip netns exec "${netns}" python3 - "${marker_ip}" "${tcp_port}" "${tcp_marker}" \
     > "${tcp_response_artifact}" 2> "${client_stderr_artifact}" <<'PY'
 import socket
 import sys
 
-port, marker = int(sys.argv[1]), sys.argv[2].encode()
-with socket.create_connection(("198.18.0.1", port), timeout=5) as conn:
+address, port, marker = sys.argv[1], int(sys.argv[2]), sys.argv[3].encode()
+with socket.create_connection((address, port), timeout=5) as conn:
     conn.settimeout(5)
     conn.sendall(b"GET / HTTP/1.1\r\nHost: tproxy.invalid\r\nConnection: close\r\n\r\n")
     payload = b""
@@ -2506,25 +2722,58 @@ if body != marker + b"\n":
 PY
   local tcp_status=$?
   set -e
-  [[ "${tcp_status}" == 0 ]]
-  grep -Fqx "${tcp_marker}" "${tcp_response_artifact}"
+  if [[ -n "${tcp_packet_capture_pid}" ]]; then
+    kill "${tcp_packet_capture_pid}" 2>/dev/null || true
+    wait "${tcp_packet_capture_pid}" 2>/dev/null || true
+    tcp_packet_capture_pid=''
+  fi
+  verification_capture_best_effort_command \
+    "${probe_dir}/iptables.after-tcp-client.txt" iptables-save -c -t mangle
+  if [[ "${policy_mode}" == managed ]]; then
+    local managed_chain
+    managed_chain=$(jq -r '.tproxy_host_policy.resources[0].chain' "${policy_update_output}")
+    verification_capture_best_effort_command \
+      "${probe_dir}/tproxy-chain-counters.after-tcp-client.txt" \
+      iptables -t mangle -nvxL "${managed_chain}"
+  fi
+  verification_capture_best_effort_command \
+    "${probe_dir}/tproxy-host-interface-counters.after-tcp-client.txt" \
+    ip -s link show dev "${host_veth}"
+  verification_capture_best_effort_command \
+    "${probe_dir}/tproxy-peer-interface-counters.after-tcp-client.txt" \
+    ip netns exec "${netns}" ip -s link show dev "${peer_veth}"
+  verification_capture_best_effort_command "${probe_dir}/filter-input.after-tcp-client.txt" \
+    iptables -t filter -nvxL INPUT
+  verification_capture_best_effort_command \
+    "${probe_dir}/tproxy-service-journal.after-tcp-client.txt" \
+    sh -c 'journalctl -u sing-box -n 300 --no-pager | grep -E "198\\.18\\.0\\.2|inbound connection from|tproxy"'
+  verification_capture_best_effort_command \
+    "${probe_dir}/resources.after-tcp-client.txt" \
+    sh -c 'ip -4 rule show; ip -4 route show table '"${table}"
+  if [[ "${tcp_status}" == 0 ]] && ! grep -Fqx "${tcp_marker}" "${tcp_response_artifact}"; then
+    tcp_status=1
+  fi
   kill "${marker_pid}" 2>/dev/null || true
   wait "${marker_pid}" 2>/dev/null || true
   marker_pid=''
 
   udp_marker="sing-box-vps-tproxy-udp-ok-$(date +%s)-$$"
   port_file="${temp_dir}/udp.port"
-  python3 - "${port_file}" "${host_ip}" \
+  ip netns exec "${marker_netns}" python3 - "${port_file}" "${marker_ip}" \
+    "${udp_marker_event_artifact}" \
     > "${udp_marker_stdout_artifact}" 2> "${udp_marker_stderr_artifact}" <<'PY' &
 import pathlib
 import socket
 import sys
 
-port_file, bind_address = sys.argv[1:]
+port_file, bind_address, event_file = sys.argv[1:]
 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server:
     server.bind((bind_address, 0))
     pathlib.Path(port_file).write_text(str(server.getsockname()[1]), encoding="ascii")
     payload, address = server.recvfrom(65535)
+    pathlib.Path(event_file).write_text(
+        f"datagram received from {address[0]}:{address[1]} bytes={len(payload)}\n",
+        encoding="utf-8")
     server.sendto(payload, address)
 PY
   marker_pid=$!
@@ -2536,16 +2785,29 @@ PY
   [[ -s "${port_file}" ]]
   udp_port=$(cat "${port_file}")
   [[ "${udp_port}" =~ ^[0-9]+$ && "${udp_port}" -ge 1 && "${udp_port}" -le 65535 ]]
+  verification_capture_best_effort_command \
+    "${probe_dir}/udp-marker-listener.ss-lunp.txt" \
+    ip netns exec "${marker_netns}" ss -lunp "sport = :${udp_port}"
+  if [[ "${policy_mode}" == managed ]]; then
+    apply_managed_tproxy_host_policy "[${tcp_port},${udp_port}]" "${managed_revision}"
+    verification_capture_command "${probe_dir}/iptables.after-policy-update.txt" iptables-save -t mangle
+    table=$(jq -r '.tproxy_host_policy.resources[0].route_table' "${policy_update_output}")
+    verification_capture_best_effort_command "${probe_dir}/resources.after-policy-update.txt" \
+      sh -c 'ip -4 rule show; ip -4 route show table '"${table}"
+    verification_wait_for_service_active sing-box
+    verification_capture_command "${probe_dir}/sing-box-check-managed-policy-update.txt" \
+      sing-box check -c "${config_file}"
+  fi
   set +e
-  ip netns exec "${netns}" python3 - "${udp_port}" "${udp_marker}" \
+  ip netns exec "${netns}" python3 - "${marker_ip}" "${udp_port}" "${udp_marker}" \
     > "${udp_response_artifact}" 2>> "${client_stderr_artifact}" <<'PY'
 import socket
 import sys
 
-port, marker = int(sys.argv[1]), sys.argv[2].encode()
+address, port, marker = sys.argv[1], int(sys.argv[2]), sys.argv[3].encode()
 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
     client.settimeout(5)
-    client.sendto(marker, ("198.18.0.1", port))
+    client.sendto(marker, (address, port))
     payload, _ = client.recvfrom(65535)
 sys.stdout.buffer.write(payload)
 if payload != marker:
@@ -2553,13 +2815,115 @@ if payload != marker:
 PY
   local udp_status=$?
   set -e
-  [[ "${udp_status}" == 0 ]]
-  grep -Fqx "${udp_marker}" "${udp_response_artifact}"
+  if [[ "${udp_status}" == 0 ]] && ! grep -Fqx "${udp_marker}" "${udp_response_artifact}"; then
+    udp_status=1
+  fi
+  verification_write_artifact "${probe_dir}/client-status.env" \
+    "TCP_CLIENT_EXIT=${tcp_status}" "UDP_CLIENT_EXIT=${udp_status}"
+  if [[ "${tcp_status}" != 0 || "${udp_status}" != 0 ]]; then
+    return 1
+  fi
   kill "${marker_pid}" 2>/dev/null || true
   wait "${marker_pid}" 2>/dev/null || true
   marker_pid=''
   probe_status=0
 )
+
+verification_cleanup_tproxy_probe_fixture() {
+  local probe_dir="${VERIFY_CURRENT_SCENARIO_DIR}/transparent/tproxy"
+  local fixture host_veth netns marker_host_veth='' marker_netns=''
+  local cleanup_step='validate_fixture'
+  fixture=$(verification_artifact_path "${probe_dir}/fixture.json")
+  if [[ ! -f "${fixture}" || -L "${fixture}" || ! -r "${fixture}" ]]; then
+    printf '[ERROR] TProxy fixture cleanup could not read its fixture.\n' >&2
+    verification_write_artifact "${probe_dir}/fixture-cleanup.result.env" \
+      'RESULT=failure' "STEP=${cleanup_step}"
+    return 1
+  fi
+  jq -e 'type == "object" and (.schema_version == 1 or .schema_version == 2) and
+    (.host_veth | type == "string" and test("^sbvth[0-9]+$")) and
+    (.netns | type == "string" and test("^sbvtns-[0-9]+$")) and
+    (if .schema_version == 2 then
+      (.marker_host_veth | type == "string" and test("^sbvhm[0-9]+$")) and
+      (.marker_netns | type == "string" and test("^sbvtnm-[0-9]+$"))
+    else true end)' \
+    "${fixture}" >/dev/null || {
+      printf '[ERROR] TProxy fixture cleanup rejected its fixture schema.\n' >&2
+      verification_write_artifact "${probe_dir}/fixture-cleanup.result.env" \
+        'RESULT=failure' "STEP=${cleanup_step}"
+      return 1
+    }
+  host_veth=$(jq -r '.host_veth' "${fixture}") || return 1
+  netns=$(jq -r '.netns' "${fixture}") || return 1
+  if [[ "$(jq -r '.schema_version' "${fixture}")" == 2 ]]; then
+    marker_host_veth=$(jq -r '.marker_host_veth' "${fixture}") || return 1
+    marker_netns=$(jq -r '.marker_netns' "${fixture}") || return 1
+  fi
+  if ! command -v ip >/dev/null 2>&1; then
+    printf '[ERROR] TProxy fixture cleanup requires iproute2.\n' >&2
+    verification_write_artifact "${probe_dir}/fixture-cleanup.result.env" \
+      'RESULT=failure' 'STEP=command_ip'
+    return 1
+  fi
+  cleanup_link() {
+    local name=$1
+    [[ -n "${name}" ]] || return 0
+    if ! ip link show dev "${name}" >/dev/null 2>&1; then
+      return 0
+    fi
+    if ip link del "${name}"; then
+      return 0
+    fi
+    if ip link show dev "${name}" >/dev/null 2>&1; then
+      printf '[ERROR] TProxy fixture cleanup could not remove veth %s.\n' "${name}" >&2
+      return 1
+    fi
+    return 0
+  }
+  cleanup_netns() {
+    local name=$1 namespaces
+    [[ -n "${name}" ]] || return 0
+    namespaces=$(ip netns list) || return 1
+    if ! awk -v name="${name}" '$1 == name { found=1 } END { exit !found }' <<< "${namespaces}"; then
+      return 0
+    fi
+    if ip netns del "${name}"; then
+      return 0
+    fi
+    namespaces=$(ip netns list) || return 1
+    if awk -v name="${name}" '$1 == name { found=1 } END { exit !found }' <<< "${namespaces}"; then
+      printf '[ERROR] TProxy fixture cleanup could not remove netns %s.\n' "${name}" >&2
+      return 1
+    fi
+    return 0
+  }
+  cleanup_step='marker_host_veth'
+  cleanup_link "${marker_host_veth}" || {
+    verification_write_artifact "${probe_dir}/fixture-cleanup.result.env" \
+      'RESULT=failure' "STEP=${cleanup_step}"
+    return 1
+  }
+  cleanup_step='host_veth'
+  cleanup_link "${host_veth}" || {
+    verification_write_artifact "${probe_dir}/fixture-cleanup.result.env" \
+      'RESULT=failure' "STEP=${cleanup_step}"
+    return 1
+  }
+  cleanup_step='marker_netns'
+  cleanup_netns "${marker_netns}" || {
+    verification_write_artifact "${probe_dir}/fixture-cleanup.result.env" \
+      'RESULT=failure' "STEP=${cleanup_step}"
+    return 1
+  }
+  cleanup_step='netns'
+  cleanup_netns "${netns}" || {
+    verification_write_artifact "${probe_dir}/fixture-cleanup.result.env" \
+      'RESULT=failure' "STEP=${cleanup_step}"
+    return 1
+  }
+  verification_write_artifact "${probe_dir}/fixture-cleanup.result.env" \
+    'RESULT=success' 'FIXTURE_SCOPE=disposable_client_veth_and_network_namespace'
+}
 
 verification_execute_single_protocol_probe() {
   local protocol=$1

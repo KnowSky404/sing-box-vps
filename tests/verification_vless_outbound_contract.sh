@@ -15,9 +15,9 @@ grep -Fq 'vless-outbound-upstream' "${SCENARIO_FILE}"
 grep -Fq 'DATA_PLANE=vless_tcp_loopback' "${SCENARIO_FILE}"
 grep -Fq 'UPSTREAM=vless_loopback_server' "${SCENARIO_FILE}"
 grep -Fq 'vless-outbound.result.env' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 21 --file "${vless_outbound_record}"' \
+grep -Fq -- '--expected-revision 23 --file "${vless_outbound_record}"' \
   "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 22 --id vless-outbound-verification' \
+grep -Fq -- '--expected-revision 24 --id vless-outbound-verification' \
   "${SCENARIO_FILE}"
 grep -Fq 'config:{server:"127.0.0.1",server_port:$server_port,uuid:$uuid,' \
   "${SCENARIO_FILE}"

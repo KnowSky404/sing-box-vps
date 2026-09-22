@@ -21,8 +21,8 @@ grep -Fq 'socks5h://socks-user:socks-pass@127.0.0.1:1081' "${SCENARIO_FILE}"
 grep -Fq 'ssh-outbound.result.env' "${SCENARIO_FILE}"
 grep -Fq "'DATA_PLANE=ssh_direct_tcpip_loopback'" "${SCENARIO_FILE}"
 grep -Fq "'HOST_KEY_VERIFICATION=pinned'" "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 7 --file "${ssh_record}"' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 8 --id ssh-outbound-verification' "${SCENARIO_FILE}"
+grep -Fq -- '--expected-revision 9 --file "${ssh_record}"' "${SCENARIO_FILE}"
+grep -Fq -- '--expected-revision 10 --id ssh-outbound-verification' "${SCENARIO_FILE}"
 
 # The marker is intentionally loopback-only and the scenario does not mutate
 # the installer firewall ledger or claim public/production reachability.

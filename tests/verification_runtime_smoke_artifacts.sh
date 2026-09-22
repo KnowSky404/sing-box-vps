@@ -1455,7 +1455,7 @@ verification_execute_tproxy_probe() {
   local config_file=\$1 listener_port=\$2
   verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/transparent/tproxy/result.env" \
     'COMPONENT=tproxy-inbound' 'RESULT=success' \
-    'DATA_PLANE=tproxy_tcp_udp_netns' \
+    'DATA_PLANE=tproxy_tcp_udp_client_netns_local_marker' \
     'POLICY_SCOPE=verification_container_only' \
     'POLICY_OWNERSHIP=not_managed'
   verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/transparent/tproxy/tcp-response.txt" \

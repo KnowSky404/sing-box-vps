@@ -17,9 +17,9 @@ grep -Fq 'This browser is configured to use Tor' "${SCENARIO_FILE}"
 grep -Fq 'DATA_PLANE=tor_external_tcp' "${SCENARIO_FILE}"
 grep -Fq 'TARGET=check.torproject.org' "${SCENARIO_FILE}"
 grep -Fq 'tor-outbound.result.env' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 23 --file "${tor_outbound_record}"' \
+grep -Fq -- '--expected-revision 25 --file "${tor_outbound_record}"' \
   "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 24 --id tor-outbound-verification' \
+grep -Fq -- '--expected-revision 26 --id tor-outbound-verification' \
   "${SCENARIO_FILE}"
 grep -Fq '.torrc.ClientOnly == "1"' "${SCENARIO_FILE}"
 

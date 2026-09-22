@@ -948,9 +948,9 @@ PY
     "${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound-udp.result.env" \
     'COMPONENT=direct-inbound' 'RESULT=success' 'DATA_PLANE=direct_udp_override_loopback'
 
-  # Redirect and TProxy need distinct host-policy paths. Redirect uses an
-  # installer-managed, explicitly scoped IPv4/TCP PREROUTING chain; TProxy
-  # continues to use disposable operator-style policy only in this container.
+  # Redirect and TProxy use separate installer-managed host-policy paths.
+  # Each owns an explicitly scoped IPv4 PREROUTING chain and isolated fixture
+  # state inside this verification container.
   verification_prepare_redirect_policy_fixture VERIFY_REDIRECT_MARKER_PID
   local redirect_record="${VERIFY_REMOTE_LOCAL_TREE_DIR}/redirect-record.json"
   (umask 077; jq -n --arg interface "${VERIFY_REDIRECT_HOST_VETH}" \
@@ -1009,7 +1009,7 @@ PY
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/tproxy-inbound-check.txt" \
     sing-box check -c /root/sing-box-vps/config.json
-  verification_execute_tproxy_probe /root/sing-box-vps/config.json 1095
+  verification_execute_tproxy_probe /root/sing-box-vps/config.json 1095 managed 5
   verification_mark_step tproxy-inbound-probe-complete
 
   local transparent_diagnose
@@ -1022,7 +1022,11 @@ PY
     .data.redirect_host_policy.status == "available" and
     (.data.redirect_host_policy.resources | length) == 1 and
     .data.redirect_host_policy.resources[0].status == "present" and
-    any(.data.redirect_host_policy.operator_managed[]; .id == "tproxy-inbound-verification") and
+    .data.tproxy_host_policy.status == "available" and
+    (.data.tproxy_host_policy.resources | length) == 1 and
+    .data.tproxy_host_policy.resources[0].status == "present" and
+    .data.tproxy_host_policy.resources[0].resource_scope == "installer_owned_ipv4_tcp_udp_prerouting_policy_route" and
+    all(.data.tproxy_host_policy.operator_managed[]; .id != "tproxy-inbound-verification") and
     any(.data.components[]; .id == "redirect-inbound-verification" and
       .instance_environment.requirements.requires_root == true and
       .instance_environment.requirements.requires_tun_device == false) and
@@ -1032,9 +1036,24 @@ PY
   ' <<< "${transparent_diagnose}" >/dev/null
 
   local tproxy_delete_status=0
+  local tproxy_revision tproxy_chain tproxy_marker tproxy_route_table tproxy_rule_priority
+  local tproxy_policy_artifact tproxy_mangle_after_delete_artifact
+  tproxy_policy_artifact=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/transparent/tproxy/managed-host-policy-revision-6.json")
+  tproxy_revision=$(jq -r '.revision' \
+    "${tproxy_policy_artifact}")
+  tproxy_chain=$(jq -r '.tproxy_host_policy.resources[0].chain' \
+    "${tproxy_policy_artifact}")
+  tproxy_marker=$(jq -r '.tproxy_host_policy.resources[0].marker' \
+    "${tproxy_policy_artifact}")
+  tproxy_route_table=$(jq -r '.tproxy_host_policy.resources[0].route_table' \
+    "${tproxy_policy_artifact}")
+  tproxy_rule_priority=$(jq -r '.tproxy_host_policy.resources[0].rule_priority' \
+    "${tproxy_policy_artifact}")
+  [[ "${tproxy_revision}" == 7 ]]
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
-    --expected-revision 5 --id tproxy-inbound-verification \
+    --expected-revision "${tproxy_revision}" --id tproxy-inbound-verification \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tproxy-delete.json"
   tproxy_delete_status=$?
   set -e
@@ -1042,12 +1061,33 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tproxy-delete.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/tproxy-delete.json"
   [[ "${tproxy_delete_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="delete" and .revision==6 and .id=="tproxy-inbound-verification"' \
+  jq -e '.ok==true and .operation=="delete" and .revision==8 and .id=="tproxy-inbound-verification" and
+    .tproxy_host_policy.status == "not_configured" and
+    (.tproxy_host_policy.resources | length) == 0' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tproxy-delete.json" >/dev/null
+  verification_capture_command \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/transparent/tproxy/mangle.after-delete.txt" \
+    iptables -t mangle -S
+  tproxy_mangle_after_delete_artifact=$(verification_artifact_path \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/transparent/tproxy/mangle.after-delete.txt")
+  if grep -F -- "${tproxy_chain}" "${tproxy_mangle_after_delete_artifact}" >/dev/null ||
+     grep -F -- "${tproxy_marker}" "${tproxy_mangle_after_delete_artifact}" >/dev/null; then
+    printf '[ERROR] Managed TProxy mangle resources remained after component deletion.\n' >&2
+    return 1
+  fi
+  if ip -4 rule show | awk -v priority="${tproxy_rule_priority}:" '$1 == priority { found=1 } END { exit !found }'; then
+    printf '[ERROR] Managed TProxy policy rule remained after component deletion.\n' >&2
+    return 1
+  fi
+  if [[ -n "$(ip -4 route show table "${tproxy_route_table}")" ]]; then
+    printf '[ERROR] Managed TProxy route table remained populated after component deletion.\n' >&2
+    return 1
+  fi
+  verification_cleanup_tproxy_probe_fixture
   local redirect_delete_status=0
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
-    --expected-revision 6 --id redirect-inbound-verification \
+    --expected-revision 8 --id redirect-inbound-verification \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/redirect-delete.json"
   redirect_delete_status=$?
   set -e
@@ -1055,7 +1095,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/redirect-delete.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/redirect-delete.json"
   [[ "${redirect_delete_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="delete" and .revision==7 and .id=="redirect-inbound-verification"' \
+  jq -e '.ok==true and .operation=="delete" and .revision==9 and .id=="redirect-inbound-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/redirect-delete.json" >/dev/null
   verification_assert_redirect_policy_removed
   verification_cleanup_redirect_policy_fixture
@@ -1179,7 +1219,7 @@ PY
   ' > "${ssh_record}")
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
-    --expected-revision 7 --file "${ssh_record}" \
+    --expected-revision 9 --file "${ssh_record}" \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/ssh-create.json"
   ssh_create_status=$?
   set -e
@@ -1187,7 +1227,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/ssh-create.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/ssh-create.json"
   [[ "${ssh_create_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="create" and .revision==8 and .type=="ssh"' \
+  jq -e '.ok==true and .operation=="create" and .revision==10 and .type=="ssh"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/ssh-create.json" >/dev/null
   verification_mark_step ssh-outbound-component-created
   verification_wait_for_service_active sing-box
@@ -1225,7 +1265,7 @@ PY
 
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
-    --expected-revision 8 --id ssh-outbound-verification \
+    --expected-revision 10 --id ssh-outbound-verification \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/ssh-delete.json"
   ssh_delete_status=$?
   set -e
@@ -1233,7 +1273,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/ssh-delete.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/ssh-delete.json"
   [[ "${ssh_delete_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="delete" and .revision==9 and .id=="ssh-outbound-verification"' \
+  jq -e '.ok==true and .operation=="delete" and .revision==11 and .id=="ssh-outbound-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/ssh-delete.json" >/dev/null
   verification_mark_step ssh-outbound-component-deleted
   jq -e '
@@ -1429,7 +1469,7 @@ PY
   ' > "${socks_outbound_record}")
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
-    --expected-revision 9 --file "${socks_outbound_record}" \
+    --expected-revision 11 --file "${socks_outbound_record}" \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-create.json"
   socks_outbound_create_status=$?
   set -e
@@ -1437,7 +1477,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-create.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-create.json"
   [[ "${socks_outbound_create_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="create" and .revision==10 and .type=="socks"' \
+  jq -e '.ok==true and .operation=="create" and .revision==12 and .type=="socks"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-create.json" >/dev/null
   verification_mark_step socks-outbound-component-created
   verification_wait_for_service_active sing-box
@@ -1479,7 +1519,7 @@ PY
 
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
-    --expected-revision 10 --id socks-outbound-verification \
+    --expected-revision 12 --id socks-outbound-verification \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-delete.json"
   socks_outbound_delete_status=$?
   set -e
@@ -1487,7 +1527,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-delete.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-delete.json"
   [[ "${socks_outbound_delete_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="delete" and .revision==11 and .id=="socks-outbound-verification"' \
+  jq -e '.ok==true and .operation=="delete" and .revision==13 and .id=="socks-outbound-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-delete.json" >/dev/null
   verification_mark_step socks-outbound-component-deleted
   jq -e '
@@ -1510,7 +1550,7 @@ PY
   ' > "${selector_record}")
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
-    --expected-revision 11 --file "${selector_record}" \
+    --expected-revision 13 --file "${selector_record}" \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/selector-outbound-create.json"
   selector_create_status=$?
   set -e
@@ -1518,7 +1558,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/selector-outbound-create.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/selector-outbound-create.json"
   [[ "${selector_create_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="create" and .revision==12 and .type=="selector"' \
+  jq -e '.ok==true and .operation=="create" and .revision==14 and .type=="selector"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/selector-outbound-create.json" >/dev/null
   verification_mark_step selector-outbound-component-created
   verification_wait_for_service_active sing-box
@@ -1555,7 +1595,7 @@ PY
 
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
-    --expected-revision 12 --id selector-outbound-verification \
+    --expected-revision 14 --id selector-outbound-verification \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/selector-outbound-delete.json"
   selector_delete_status=$?
   set -e
@@ -1563,7 +1603,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/selector-outbound-delete.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/selector-outbound-delete.json"
   [[ "${selector_delete_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="delete" and .revision==13 and .id=="selector-outbound-verification"' \
+  jq -e '.ok==true and .operation=="delete" and .revision==15 and .id=="selector-outbound-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/selector-outbound-delete.json" >/dev/null
   verification_mark_step selector-outbound-component-deleted
   jq -e '
@@ -1588,7 +1628,7 @@ PY
   ' > "${urltest_record}")
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
-    --expected-revision 13 --file "${urltest_record}" \
+    --expected-revision 15 --file "${urltest_record}" \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/urltest-outbound-create.json"
   urltest_create_status=$?
   set -e
@@ -1596,7 +1636,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/urltest-outbound-create.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/urltest-outbound-create.json"
   [[ "${urltest_create_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="create" and .revision==14 and .type=="urltest"' \
+  jq -e '.ok==true and .operation=="create" and .revision==16 and .type=="urltest"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/urltest-outbound-create.json" >/dev/null
   verification_mark_step urltest-outbound-component-created
   verification_wait_for_service_active sing-box
@@ -1642,7 +1682,7 @@ PY
 
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
-    --expected-revision 14 --id urltest-outbound-verification \
+    --expected-revision 16 --id urltest-outbound-verification \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/urltest-outbound-delete.json"
   urltest_delete_status=$?
   set -e
@@ -1650,7 +1690,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/urltest-outbound-delete.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/urltest-outbound-delete.json"
   [[ "${urltest_delete_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="delete" and .revision==15 and .id=="urltest-outbound-verification"' \
+  jq -e '.ok==true and .operation=="delete" and .revision==17 and .id=="urltest-outbound-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/urltest-outbound-delete.json" >/dev/null
   verification_mark_step urltest-outbound-component-deleted
   jq -e '
@@ -1943,7 +1983,7 @@ PY
   ' > "${shadowsocks_outbound_record}")
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
-    --expected-revision 15 --file "${shadowsocks_outbound_record}" \
+    --expected-revision 17 --file "${shadowsocks_outbound_record}" \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-create.json"
   shadowsocks_outbound_create_status=$?
   set -e
@@ -1951,7 +1991,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-create.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-create.json"
   [[ "${shadowsocks_outbound_create_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="create" and .revision==16 and
+  jq -e '.ok==true and .operation=="create" and .revision==18 and
     .type=="shadowsocks" and .id=="shadowsocks-outbound-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-create.json" >/dev/null
   verification_mark_step shadowsocks-outbound-component-created
@@ -1997,7 +2037,7 @@ PY
 
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
-    --expected-revision 16 --id shadowsocks-outbound-verification \
+    --expected-revision 18 --id shadowsocks-outbound-verification \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-delete.json"
   shadowsocks_outbound_delete_status=$?
   set -e
@@ -2005,7 +2045,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-delete.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-delete.json"
   [[ "${shadowsocks_outbound_delete_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="delete" and .revision==17 and
+  jq -e '.ok==true and .operation=="delete" and .revision==19 and
     .id=="shadowsocks-outbound-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-delete.json" >/dev/null
   verification_mark_step shadowsocks-outbound-component-deleted
@@ -2041,7 +2081,7 @@ PY
   ' > "${direct_outbound_record}")
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
-    --expected-revision 17 --file "${direct_outbound_record}" \
+    --expected-revision 19 --file "${direct_outbound_record}" \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-outbound-create.json"
   direct_outbound_create_status=$?
   set -e
@@ -2049,7 +2089,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-outbound-create.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/direct-outbound-create.json"
   [[ "${direct_outbound_create_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="create" and .revision==18 and
+  jq -e '.ok==true and .operation=="create" and .revision==20 and
     .type=="direct" and .id=="direct-outbound-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-outbound-create.json" >/dev/null
   verification_mark_step direct-outbound-component-created
@@ -2199,7 +2239,7 @@ PY
 
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
-    --expected-revision 18 --id direct-outbound-verification \
+    --expected-revision 20 --id direct-outbound-verification \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-outbound-delete.json"
   direct_outbound_delete_status=$?
   set -e
@@ -2207,7 +2247,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-outbound-delete.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/direct-outbound-delete.json"
   [[ "${direct_outbound_delete_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="delete" and .revision==19 and
+  jq -e '.ok==true and .operation=="delete" and .revision==21 and
     .id=="direct-outbound-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/direct-outbound-delete.json" >/dev/null
   verification_mark_step direct-outbound-component-deleted
@@ -2231,7 +2271,7 @@ PY
   ' > "${block_outbound_record}")
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
-    --expected-revision 19 --file "${block_outbound_record}" \
+    --expected-revision 21 --file "${block_outbound_record}" \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/block-outbound-create.json"
   block_outbound_create_status=$?
   set -e
@@ -2239,7 +2279,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/block-outbound-create.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/block-outbound-create.json"
   [[ "${block_outbound_create_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="create" and .revision==20 and
+  jq -e '.ok==true and .operation=="create" and .revision==22 and
     .type=="block" and .id=="block-outbound-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/block-outbound-create.json" >/dev/null
   verification_mark_step block-outbound-component-created
@@ -2283,7 +2323,7 @@ PY
 
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
-    --expected-revision 20 --id block-outbound-verification \
+    --expected-revision 22 --id block-outbound-verification \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/block-outbound-delete.json"
   block_outbound_delete_status=$?
   set -e
@@ -2291,7 +2331,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/block-outbound-delete.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/block-outbound-delete.json"
   [[ "${block_outbound_delete_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="delete" and .revision==21 and
+  jq -e '.ok==true and .operation=="delete" and .revision==23 and
     .id=="block-outbound-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/block-outbound-delete.json" >/dev/null
   verification_mark_step block-outbound-component-deleted
@@ -2375,7 +2415,7 @@ PY
   ' > "${vless_outbound_record}")
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
-    --expected-revision 21 --file "${vless_outbound_record}" \
+    --expected-revision 23 --file "${vless_outbound_record}" \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/vless-outbound-create.json"
   vless_outbound_create_status=$?
   set -e
@@ -2383,7 +2423,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/vless-outbound-create.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound-create.json"
   [[ "${vless_outbound_create_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="create" and .revision==22 and
+  jq -e '.ok==true and .operation=="create" and .revision==24 and
     .type=="vless" and .id=="vless-outbound-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/vless-outbound-create.json" >/dev/null
   verification_mark_step vless-outbound-component-created
@@ -2574,7 +2614,7 @@ PY
 
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
-    --expected-revision 22 --id vless-outbound-verification \
+    --expected-revision 24 --id vless-outbound-verification \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/vless-outbound-delete.json"
   vless_outbound_delete_status=$?
   set -e
@@ -2582,7 +2622,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/vless-outbound-delete.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound-delete.json"
   [[ "${vless_outbound_delete_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="delete" and .revision==23 and
+  jq -e '.ok==true and .operation=="delete" and .revision==25 and
     .id=="vless-outbound-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/vless-outbound-delete.json" >/dev/null
   verification_mark_step vless-outbound-component-deleted
@@ -2615,7 +2655,7 @@ PY
   ' > "${tor_outbound_record}")
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
-    --expected-revision 23 --file "${tor_outbound_record}" \
+    --expected-revision 25 --file "${tor_outbound_record}" \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tor-outbound-create.json"
   tor_outbound_create_status=$?
   set -e
@@ -2623,7 +2663,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tor-outbound-create.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/tor-outbound-create.json"
   [[ "${tor_outbound_create_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="create" and .revision==24 and
+  jq -e '.ok==true and .operation=="create" and .revision==26 and
     .type=="tor" and .id=="tor-outbound-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tor-outbound-create.json" >/dev/null
   verification_mark_step tor-outbound-component-created
@@ -2676,7 +2716,7 @@ PY
 
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
-    --expected-revision 24 --id tor-outbound-verification \
+    --expected-revision 26 --id tor-outbound-verification \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tor-outbound-delete.json"
   tor_outbound_delete_status=$?
   set -e
@@ -2684,7 +2724,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tor-outbound-delete.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/tor-outbound-delete.json"
   [[ "${tor_outbound_delete_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="delete" and .revision==25 and
+  jq -e '.ok==true and .operation=="delete" and .revision==27 and
     .id=="tor-outbound-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/tor-outbound-delete.json" >/dev/null
   verification_mark_step tor-outbound-component-deleted
@@ -2772,7 +2812,7 @@ PY
   ' > "${shadowtls_outbound_record}")
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
-    --expected-revision 25 --file "${shadowtls_outbound_record}" \
+    --expected-revision 27 --file "${shadowtls_outbound_record}" \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-create.json"
   shadowtls_outbound_create_status=$?
   set -e
@@ -2780,7 +2820,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-create.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-outbound-create.json"
   [[ "${shadowtls_outbound_create_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="create" and .revision==26 and
+  jq -e '.ok==true and .operation=="create" and .revision==28 and
     .type=="shadowtls" and .id=="shadowtls-outbound-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-create.json" >/dev/null
   verification_mark_step shadowtls-outbound-component-created
@@ -2796,7 +2836,7 @@ PY
   ' > "${shadowtls_outbound_http_record}")
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
-    --expected-revision 26 --file "${shadowtls_outbound_http_record}" \
+    --expected-revision 28 --file "${shadowtls_outbound_http_record}" \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-http-create.json"
   shadowtls_outbound_http_create_status=$?
   set -e
@@ -2804,7 +2844,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-http-create.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-outbound-http-create.json"
   [[ "${shadowtls_outbound_http_create_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="create" and .revision==27 and
+  jq -e '.ok==true and .operation=="create" and .revision==29 and
     .type=="http" and .id=="shadowtls-outbound-http"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-http-create.json" >/dev/null
   verification_mark_step shadowtls-outbound-http-component-created
@@ -2870,7 +2910,7 @@ PY
 
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
-    --expected-revision 27 --id shadowtls-outbound-http \
+    --expected-revision 29 --id shadowtls-outbound-http \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-http-delete.json"
   shadowtls_outbound_http_delete_status=$?
   set -e
@@ -2878,7 +2918,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-http-delete.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-outbound-http-delete.json"
   [[ "${shadowtls_outbound_http_delete_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="delete" and .revision==28 and
+  jq -e '.ok==true and .operation=="delete" and .revision==30 and
     .id=="shadowtls-outbound-http"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-http-delete.json" >/dev/null
   verification_mark_step shadowtls-outbound-http-component-deleted
@@ -2891,7 +2931,7 @@ PY
 
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
-    --expected-revision 28 --id shadowtls-outbound-verification \
+    --expected-revision 30 --id shadowtls-outbound-verification \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-delete.json"
   shadowtls_outbound_delete_status=$?
   set -e
@@ -2899,7 +2939,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-delete.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-outbound-delete.json"
   [[ "${shadowtls_outbound_delete_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="delete" and .revision==29 and
+  jq -e '.ok==true and .operation=="delete" and .revision==31 and
     .id=="shadowtls-outbound-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowtls-outbound-delete.json" >/dev/null
   verification_mark_step shadowtls-outbound-component-deleted
@@ -2944,7 +2984,7 @@ PY
   ' > "${shadowsocks_outbound_udp_record}")
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
-    --expected-revision 29 --file "${shadowsocks_outbound_udp_record}" \
+    --expected-revision 31 --file "${shadowsocks_outbound_udp_record}" \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-udp-create.json"
   shadowsocks_outbound_udp_create_status=$?
   set -e
@@ -2952,7 +2992,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-udp-create.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-udp-create.json"
   [[ "${shadowsocks_outbound_udp_create_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="create" and .revision==30 and
+  jq -e '.ok==true and .operation=="create" and .revision==32 and
     .type=="shadowsocks" and .id=="shadowsocks-outbound-udp-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-udp-create.json" >/dev/null
   verification_mark_step shadowsocks-outbound-udp-component-created
@@ -3081,7 +3121,7 @@ PY
 
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
-    --expected-revision 30 --id shadowsocks-outbound-udp-verification \
+    --expected-revision 32 --id shadowsocks-outbound-udp-verification \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-udp-delete.json"
   shadowsocks_outbound_udp_delete_status=$?
   set -e
@@ -3089,7 +3129,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-udp-delete.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-udp-delete.json"
   [[ "${shadowsocks_outbound_udp_delete_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="delete" and .revision==31 and
+  jq -e '.ok==true and .operation=="delete" and .revision==33 and
     .id=="shadowsocks-outbound-udp-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/shadowsocks-outbound-udp-delete.json" >/dev/null
   verification_mark_step shadowsocks-outbound-udp-component-deleted
@@ -3315,7 +3355,7 @@ PY
   ' > "${socks_outbound_udp_record}")
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component create --json --yes \
-    --expected-revision 31 --file "${socks_outbound_udp_record}" \
+    --expected-revision 33 --file "${socks_outbound_udp_record}" \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-udp-create.json"
   socks_outbound_udp_create_status=$?
   set -e
@@ -3323,7 +3363,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-udp-create.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-udp-create.json"
   [[ "${socks_outbound_udp_create_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="create" and .revision==32 and
+  jq -e '.ok==true and .operation=="create" and .revision==34 and
     .type=="socks" and .id=="socks-outbound-udp-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-udp-create.json" >/dev/null
   verification_mark_step socks-outbound-udp-component-created
@@ -3460,7 +3500,7 @@ PY
 
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
-    --expected-revision 32 --id socks-outbound-udp-verification \
+    --expected-revision 34 --id socks-outbound-udp-verification \
     > "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-udp-delete.json"
   socks_outbound_udp_delete_status=$?
   set -e
@@ -3468,7 +3508,7 @@ PY
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-udp-delete.json" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-udp-delete.json"
   [[ "${socks_outbound_udp_delete_status}" == 0 ]]
-  jq -e '.ok==true and .operation=="delete" and .revision==33 and
+  jq -e '.ok==true and .operation=="delete" and .revision==35 and
     .id=="socks-outbound-udp-verification"' \
     "${VERIFY_REMOTE_LOCAL_TREE_DIR}/socks-outbound-udp-delete.json" >/dev/null
   verification_mark_step socks-outbound-udp-component-deleted
@@ -3481,5 +3521,5 @@ PY
   kill "${socks_udp_upstream_pid}" 2>/dev/null || true
   wait "${socks_udp_upstream_pid}" 2>/dev/null || true
   socks_udp_upstream_pid=''
-  verification_scenario_managed_rule_sets 33
+  verification_scenario_managed_rule_sets 35
 }

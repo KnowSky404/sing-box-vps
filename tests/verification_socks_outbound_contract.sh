@@ -18,8 +18,8 @@ grep -Fq 'AUTHENTICATED' "${SCENARIO_FILE}"
 grep -Fq 'DESTINATION=${socks_outbound_target_domain}:${socks_outbound_marker_port}' "${SCENARIO_FILE}"
 grep -Fq 'socks5_connect_loopback' "${SCENARIO_FILE}"
 grep -Fq 'socks-outbound.result.env' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 9 --file "${socks_outbound_record}"' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 10 --id socks-outbound-verification' "${SCENARIO_FILE}"
+grep -Fq -- '--expected-revision 11 --file "${socks_outbound_record}"' "${SCENARIO_FILE}"
+grep -Fq -- '--expected-revision 12 --id socks-outbound-verification' "${SCENARIO_FILE}"
 
 # The same typed outbound must also prove native UDP through a real
 # authenticated SOCKS5 UDP ASSOCIATE and remove its route/component by CAS.
@@ -32,9 +32,9 @@ grep -Fq 'socks-outbound-udp-upstream.request.txt' "${SCENARIO_FILE}"
 grep -Fq 'UDP_ASSOCIATE' "${SCENARIO_FILE}"
 grep -Fq 'network:["udp"]' "${SCENARIO_FILE}"
 grep -Fq 'network == ["udp"]' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 31 --file "${socks_outbound_udp_record}"' \
+grep -Fq -- '--expected-revision 33 --file "${socks_outbound_udp_record}"' \
   "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 32 --id socks-outbound-udp-verification' \
+grep -Fq -- '--expected-revision 34 --id socks-outbound-udp-verification' \
   "${SCENARIO_FILE}"
 grep -Fq 'inbound:["socks-in"],network:["udp"],port:$marker_port' \
   "${SCENARIO_FILE}"

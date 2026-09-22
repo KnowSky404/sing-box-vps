@@ -7,7 +7,7 @@ Runtime source of truth: install.sh.
 Remote verification: Docker-based, auto-builds sing-box-vps-verify image.
 Agent protocol contract revision: 2026091205.
 
-Current script version: 2026092003. The managed component registry now has
+Current script version: 2026092101. The managed component registry now has
 typed inline/local/remote route rule-set roles in the same schema-1 CAS,
 render, takeover, rebuild, drift-guard, and sensitive-export lifecycle. Inline
 rules are bounded matchers, local paths are external references, and remote
@@ -46,7 +46,7 @@ Script 2026091205 adds a typed component route-rule contract. Component-owned ro
 
 Script 2026091402 adds bounded OpenVPN endpoint TCP and UDP closure probes. The privileged Docker `fresh_install_vless` scenario creates separate synthetic `system:false` OpenVPN server/client pairs with short-lived SAN/serverAuth certificate and username/password, routes managed direct inbounds through each client endpoint to a disposable marker, verifies peer/tunnel establishment, exact payload and target-core `check`, then deletes all components through revision CAS and confirms listener/resource cleanup in `dev/verification-runs/20260914151532`. The local `tests/managed_openvpn_endpoint_runtime.sh` runs the same TCP+UDP fixtures when `SINGBOX_BINARY_114` is configured and explicitly skips otherwise. The same scenario now also records named `system:true` OpenVPN core-owned interface/address/MTU and tunnel closure in `dev/verification-runs/20260914210913`; the read-only transparent resource probe additionally handles named `system:true` WireGuard/OpenConnect and named `system_interface:true` Tailscale interfaces, observing configured addresses where present and configured MTU where non-zero. This is resource/tunnel evidence only, with no host route, transparent forwarding, packet payload, external VPN control-plane, public reachability, production deployment, SubMan or full-protocol claim.
 
-The current component transaction also performs a core-owned resource postcheck after restarting an already-active service. If the candidate contains TUN, every core-owned interface must be present; auto-route must expose its iproute2 rule/table/route and auto-redirect must expose an nftables ruleset. Named `system:true` WireGuard/OpenConnect/OpenVPN endpoints and named `system_interface:true` Tailscale endpoints must expose their exact interface, configured address/prefix where present and configured MTU where non-zero; unnamed system endpoints remain `not_assessed`. Missing resources roll back applied managed firewall changes and restore the prior state/config/service with `transparent_resource_check_failed`; TProxy policy and Redirect records without `host_policy` remain operator-managed.
+The current component transaction also performs a core-owned resource postcheck after restarting an already-active service. If the candidate contains TUN, every core-owned interface must be present; auto-route must expose its iproute2 rule/table/route and auto-redirect must expose an nftables ruleset. Named `system:true` WireGuard/OpenConnect/OpenVPN endpoints and named `system_interface:true` Tailscale endpoints must expose their exact interface, configured address/prefix where present and configured MTU where non-zero; unnamed system endpoints remain `not_assessed`. Missing resources roll back applied managed firewall changes and restore the prior state/config/service with `transparent_resource_check_failed`; enabled TProxy and Redirect `host_policy` records use their own exact-resource journals, while records without an enabled policy remain operator-managed.
 
 Script 2026091101 adds a typed Hysteria2 outbound component contract: fixed 1.14 `Hysteria2OutboundOptions` covers server with mutually exclusive server-port or server-port ranges, port hopping, bandwidth, salamander/gecko obfs, TCP/UDP network, required outbound TLS, QUIC fields, BBR profile, Chrome QUIC control, Shared Dial Fields and the optional Hysteria Realm rendezvous object. Realm server/STUN/port-mapping/HTTP-client shapes and the distinction from Hysteria v1 fields fail closed before state/CAS or takeover publication. Credentials remain export-only; target-core `check` does not prove a remote QUIC handshake or UDP data plane. This increment does not complete the full protocol goal.
 
@@ -68,7 +68,11 @@ The component environment observation now parses the target binary's `Tags:` lin
 persisted component. It refines the type-level environment with typed config
 requirements: system-mode VPN/Tailscale endpoints add root and applicable
 `/dev/net/tun` checks, internal-mode endpoints add `with_gvisor`, and TUN,
-bridge, redirect and TProxy records expose their host prerequisites. Missing
+bridge, redirect and TProxy records expose their host prerequisites. Enabled
+TProxy policy separately observes the mangle table, userspace TPROXY target,
+`multiport` match, iproute2 policy-rule access and configured interface; this
+read-only check cannot guarantee the target kernel module will load at apply
+time. Missing
 host/build prerequisites are `unavailable`; an unreported build-tag result is
 `not_assessed`. This remains read-only preflight metadata and does not perform
 login, interface, route, DNS, firewall or data-plane operations.
@@ -82,13 +86,18 @@ explicit ingress interface, destination-port allowlist, protected management
 ports, a non-loopback listener, and `--allow-public`. Its dedicated chain is
 reconciled through the component transaction/recovery path and removed on
 component delete or runtime uninstall. `redirect_host_policy` reports this
-resource; TProxy policy and unconfigured Redirect policy remain operator-owned.
-This policy is applied only when the component is enabled, requires the
-sing-box service to be active when creating the first enabled policy, and
-appends its jump after existing PREROUTING rules. Diagnostics report observed
-ordering and leave effectiveness unassessed if earlier rules exist. This is a
-bounded transparent data-plane path, not full host policy-routing, DNS
-interception, public reachability, or production evidence.
+resource. Optional TProxy `host_policy` separately owns explicit IPv4 TCP/UDP
+mangle PREROUTING rules, a fwmark policy rule before the default `main` lookup,
+and a `local` route table. Both policy types require an ingress interface,
+destination-port allowlist, protected management ports, a non-loopback
+listener, and `--allow-public`; their component journals cover apply, rollback,
+recovery, deletion, and runtime uninstall. First activation requires an active
+sing-box service. Their jumps append after existing PREROUTING rules, while
+diagnostics report observed order and leave effectiveness unassessed if
+earlier firewall or policy-routing rules exist. Policies without an enabled
+`host_policy` remain operator-owned. These are bounded transparent data-plane
+paths, not full host policy-routing, DNS interception, public reachability, or
+production evidence.
 The privileged Docker `fresh_install_vless` scenario additionally creates and
 deletes a managed `sbv-tun`, observes the core-owned interface and
 priority-9000/table-2022 resources, and records post-delete cleanup; it does

@@ -27,7 +27,7 @@ jq -e '
     .resource_scope == "core_owned")] | length == 1) and
   ([.resources[] | select(.type == "redirect" or .type == "tproxy") |
     (.type == "redirect" and .resource_scope == "host_policy_reported_separately" or
-     .type == "tproxy" and .resource_scope == "operator_policy_required") and
+     .type == "tproxy" and .resource_scope == "host_policy_reported_separately") and
     .reason == "service_inactive"] | all)
 ' <<< "${inactive}" >/dev/null
 
@@ -98,7 +98,7 @@ jq -e '
     .rule.status == "present" and .auto_redirect_rules.status == "not_required"] | all) and
   ([.resources[] | select(.type == "redirect" or .type == "tproxy") |
     (.type == "redirect" and .resource_scope == "host_policy_reported_separately" or
-     .type == "tproxy" and .resource_scope == "operator_policy_required") and
+     .type == "tproxy" and .resource_scope == "host_policy_reported_separately") and
     .reason == "host_policy_not_observed_here"] | all)
 ' <<< "${active}" >/dev/null
 

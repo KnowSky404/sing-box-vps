@@ -20,13 +20,13 @@ grep -Fq 'block-outbound-curl-rejected' "${SCENARIO_FILE}"
 grep -Fq 'direct-outbound.result.env' "${SCENARIO_FILE}"
 grep -Fq 'direct-outbound-udp.result.env' "${SCENARIO_FILE}"
 grep -Fq 'block-outbound.result.env' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 17 --file "${direct_outbound_record}"' \
+grep -Fq -- '--expected-revision 19 --file "${direct_outbound_record}"' \
   "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 18 --id direct-outbound-verification' \
+grep -Fq -- '--expected-revision 20 --id direct-outbound-verification' \
   "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 19 --file "${block_outbound_record}"' \
+grep -Fq -- '--expected-revision 21 --file "${block_outbound_record}"' \
   "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 20 --id block-outbound-verification' \
+grep -Fq -- '--expected-revision 22 --id block-outbound-verification' \
   "${SCENARIO_FILE}"
 grep -Fq 'override_address:"127.0.0.1"' "${SCENARIO_FILE}"
 grep -Fq 'override_port:$marker_port' "${SCENARIO_FILE}"

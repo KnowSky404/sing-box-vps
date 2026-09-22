@@ -4,7 +4,7 @@
 
 ## 📌 当前版本信息
 
-- 脚本版本：`2026092003`
+- 脚本版本：`2026092101`
 
 - sing-box 适配版本：`1.14.1`
 
@@ -67,6 +67,8 @@ Direct inbound 的 typed component 现在额外校验 `network`、`override_addr
 
 组件环境探针还会读取目标 `sing-box version` 的 `Tags:` 行：已报告的构建 tag 缺失时条件组件为 `unavailable`，包装器或旧二进制未报告 tag 时为 `not_assessed`；这只说明构建条件，不代表外部认证、系统路由/防火墙或真实数据面已通过。`component list --json` 另外为每个持久化记录返回 `instance_environment`：它根据该记录选择的 system/internal 模式补充 root、`/dev/net/tun` 与 `with_gvisor` 依赖，并保留类型级 `environment` 作为对照；这是配置/主机前置条件观察，不执行登录、接口或路由变更。
 
+启用 TProxy `host_policy` 时，`instance_environment.dependencies` 分别观察 `iptables_mangle`、用户态 TPROXY target、`multiport` match、iproute2 policy routing 和 ingress interface；这是只读预检，不能保证目标内核模块稍后一定能加载，实际应用仍由事务 postcheck 验证并在失败时补偿。
+
 Shadowsocks outbound 已按 sing-box 1.14 的 method/password、SS2022 严格 Base64 密钥长度、TCP/UDP network、SIP003 插件、UDP-over-TCP、multiplex 和共享 Dial Fields 建立 typed allowlist；未知/弃用字段、错误方法/密钥长度、插件或嵌套类型及控制字符会在状态/CAS 与接管前拒绝，凭据仅通过敏感 component export 返回，不生成伪分享链接或 SubMan 载荷。
 
 VMess 与 Trojan outbound 已按 sing-box 1.14 的必需认证字段、TCP/UDP network、TLS、V2Ray transport、multiplex 和共享 Dial Fields 接入统一 typed component state；VMess 保留 UUID、security、alter_id、packet encoding 等字段，Trojan 保留 password。HTTP、WebSocket（无 early data）、gRPC 与 TLS-only QUIC 按固定字段校验，HTTPUpgrade、WebSocket early data、明文 QUIC 与 lite gRPC 的 `permit_without_stream` 会在状态/CAS 与接管前拒绝；凭据仅通过敏感 component export 返回，核心 `check` 不等于远端握手或出站数据面证据。
@@ -97,7 +99,7 @@ OpenVPN endpoint 现在另有受限的真实 TCP 与 UDP 闭环：固定官方 A
 
 Snell outbound 已按 sing-box 1.14 的 `SnellOutboundOptions` 接入 typed component state；版本仅允许 v4（HTTP obfs）或 v6（traffic shaping），并保留 PSK、可选 userkey/reuse、TCP/UDP network 和共享 Dial Fields。v4/v6 字段不可交叉，v6 PSK 至少 12 字节；Snell v5 QUIC proxy 不作为独立 outbound 提供，UDP 业务由 Snell 的 TCP packet API 承载。凭据仅通过敏感 component export 返回，1.14 核心 `check` 不代表远端 Snell 握手或 TCP/UDP 数据面，1.13.18 核心明确不注册该 type。
 
-透明组件诊断现在额外返回 `transparent_resources`：服务 active 时只读检查 TUN 接口、iproute2 规则/路由及 auto-redirect 的 nftables 观测，并对命名 `system:true` WireGuard/OpenConnect/OpenVPN 与命名 `system_interface:true` Tailscale 核对 core-owned 接口、配置地址（如有）和 MTU；缺失的 core-owned 资源会报告 `unavailable`。当活动服务重启包含这些组件的事务时，同一组 core-owned 资源检查作为 postcheck 执行，失败会先补偿受管防火墙并恢复变更前的 state/config/service，返回 `transparent_resource_check_failed`。特权隔离 Docker 的 `fresh_install_vless` 场景已实际创建并删除受管 TUN，回读 `sbv-tun`、table 2022/priority 9000 规则和路由，确认删除后的清理；OpenVPN 的命名系统接口/隧道资源证据见下文；这仍不代表 VPN 外部认证或宿主完整策略已完成。可选 Redirect `host_policy` 由独立的 `redirect_host_policy` 诊断和事务日志管理；当前仅支持显式 IPv4/TCP PREROUTING 链、指定 ingress interface 与目标端口，要求非回环监听并显式 `--allow-public`。TProxy 策略仍由操作员管理；没有默认端口捕获、全机路由或 DNS 劫持。
+透明组件诊断现在额外返回 `transparent_resources`：服务 active 时只读检查 TUN 接口、iproute2 规则/路由及 auto-redirect 的 nftables 观测，并对命名 `system:true` WireGuard/OpenConnect/OpenVPN 与命名 `system_interface:true` Tailscale 核对 core-owned 接口、配置地址（如有）和 MTU；缺失的 core-owned 资源会报告 `unavailable`。当活动服务重启包含这些组件的事务时，同一组 core-owned 资源检查作为 postcheck 执行，失败会先补偿受管防火墙并恢复变更前的 state/config/service，返回 `transparent_resource_check_failed`。特权隔离 Docker 的 `fresh_install_vless` 场景已实际创建并删除受管 TUN，回读 `sbv-tun`、table 2022/priority 9000 规则和路由，确认删除后的清理；OpenVPN 的命名系统接口/隧道资源证据见下文；这仍不代表 VPN 外部认证或宿主完整策略已完成。可选 Redirect `host_policy` 仅拥有显式 ingress interface 与目标端口的 IPv4/TCP PREROUTING 链；可选 TProxy `host_policy` 仅拥有显式 ingress interface 与目标端口的 IPv4/TCP+UDP TPROXY 链、fwmark 策略规则及 `local` 路由表。两者均要求非回环监听、独立保护管理端口和显式 `--allow-public`，并通过事务日志应用、恢复与删除；诊断会披露前置规则，不能据此宣称更早的防火墙/路由规则不会改变实际效果。没有默认端口捕获、全机路由或 DNS 劫持。
 
 2026-09-15 Redirect/TProxy 透明数据面增量：特权隔离 Docker 的 `multi_protocol_coexistence` 场景（`dev/verification-runs/20260915013127`）创建 redirect revision 4 与 TProxy revision 5，固定官方 ARM64 `sing-box 1.14.0` `check` 通过；验证容器内临时 owner-scoped `OUTPUT REDIRECT` TCP marker，以及独立 veth/network namespace、fwmark policy route 和 `PREROUTING TPROXY` 的 TCP+UDP marker。`transparent/*/result.env`、精确 response、iptables/iproute2 before/with/after-cleanup artifact 均成功，`component diagnose` 同时确认两实例需要 root 但不需要 TUN；随后按 revision 删除至 6/7 并清理策略。临时规则明确为 `POLICY_OWNERSHIP=not_managed`，不宣称宿主规则所有权、公网、生产、外部认证、SubMan 或完整协议目标完成。
 

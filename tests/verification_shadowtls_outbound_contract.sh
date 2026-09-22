@@ -19,13 +19,13 @@ grep -Fq 'shadowtls_v3_loopback' "${SCENARIO_FILE}"
 grep -Fq 'shadowtls-outbound-response.txt' "${SCENARIO_FILE}"
 grep -Fq 'shadowtls_outbound_server_stderr' "${SCENARIO_FILE}"
 grep -Fq 'outbound/http[shadowtls-outbound-http]' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 25 --file "${shadowtls_outbound_record}"' \
+grep -Fq -- '--expected-revision 27 --file "${shadowtls_outbound_record}"' \
   "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 26 --file "${shadowtls_outbound_http_record}"' \
+grep -Fq -- '--expected-revision 28 --file "${shadowtls_outbound_http_record}"' \
   "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 27 --id shadowtls-outbound-http' \
+grep -Fq -- '--expected-revision 29 --id shadowtls-outbound-http' \
   "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 28 --id shadowtls-outbound-verification' \
+grep -Fq -- '--expected-revision 30 --id shadowtls-outbound-verification' \
   "${SCENARIO_FILE}"
 grep -Fq '.server_port == 1095 and .version == 3' "${SCENARIO_FILE}"
 grep -Fq '.detour == "shadowtls-outbound-verification"' "${SCENARIO_FILE}"

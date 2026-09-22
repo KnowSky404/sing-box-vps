@@ -15,9 +15,9 @@ grep -Fq '2022-blake3-aes-128-gcm' "${SCENARIO_FILE}"
 grep -Fq 'DATA_PLANE=shadowsocks2022_connect_loopback' "${SCENARIO_FILE}"
 grep -Fq 'AUTHENTICATION=ss2022_psk' "${SCENARIO_FILE}"
 grep -Fq 'shadowsocks-outbound.result.env' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 15 --file "${shadowsocks_outbound_record}"' \
+grep -Fq -- '--expected-revision 17 --file "${shadowsocks_outbound_record}"' \
   "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 16 --id shadowsocks-outbound-verification' \
+grep -Fq -- '--expected-revision 18 --id shadowsocks-outbound-verification' \
   "${SCENARIO_FILE}"
 grep -Fq 'inbound:["socks-in"]' "${SCENARIO_FILE}"
 grep -Fq 'inbound:["ss-in"]' "${SCENARIO_FILE}"
@@ -30,9 +30,9 @@ grep -Fq 'shadowsocks-outbound-udp-response.txt' "${SCENARIO_FILE}"
 grep -Fq 'shadowsocks-outbound-udp-journal.txt' "${SCENARIO_FILE}"
 grep -Fq 'network:["udp"]' "${SCENARIO_FILE}"
 grep -Fq 'network == ["udp"]' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 29 --file "${shadowsocks_outbound_udp_record}"' \
+grep -Fq -- '--expected-revision 31 --file "${shadowsocks_outbound_udp_record}"' \
   "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 30 --id shadowsocks-outbound-udp-verification' \
+grep -Fq -- '--expected-revision 32 --id shadowsocks-outbound-udp-verification' \
   "${SCENARIO_FILE}"
 grep -Fq 'network:["udp"],port:$marker_port' "${SCENARIO_FILE}"
 
