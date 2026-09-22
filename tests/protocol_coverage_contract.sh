@@ -50,6 +50,11 @@ done
 for row_id in route-rule-set-inline route-rule-set-local route-rule-set-remote; do
   assert_coverage_row "${row_id}"
 done
+for row_id in \
+  certificate-provider-acme http-client-shared resolved-service \
+  network-namespace-default network-namespace-unshare; do
+  assert_coverage_row "${row_id}"
+done
 
 matrix_header='| ID | 官方 type / 角色 | 版本、构建和平台条件 | TCP/UDP/主要约束 | upstream | available（官方 ARM64 包） | implemented；D/T/E/R | 导出 / 分享 / SubMan | validated |'
 [[ "$(grep -Fc "${matrix_header}" "${COVERAGE_DOC}")" -ge 3 ]]

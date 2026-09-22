@@ -8,7 +8,7 @@
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026092201`，`SB_SUPPORT_MAX_VERSION=1.14.1`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026092202`，`SB_SUPPORT_MAX_VERSION=1.14.1`
 
 最新稳定版漂移核对：`v1.14.1`（2026-09-15，Linux ARM64 发布包 SHA-256
 `6060b42fa84c5dcaeae1799af7f61b0f1ae4855d9d5ddc9e02baba17154b3ae2`）；历史
@@ -221,6 +221,19 @@ Endpoint 同时具有接入和出站行为，不能塞进普通 `inbounds`/`outb
 | openvpn-server | `openvpn-server` / endpoint | 自 1.14.0；`with_openvpn`；`system:false` 还要求 `with_gvisor`；证书/密钥和端口资源是部署条件 | TCP 或 UDP，每个 endpoint 只服务一种 network；TLS/static_key union、address pool/family、users/push 与 control-wrap 约束不同 | conditional | yes（tag 已含；system:false 需 gVisor；证书/密钥仍需） | typed component state/config；yes/yes/yes/yes* | 敏感 endpoint JSON / 不属于普通分享节点 / no current SubMan | `project-real-openvpn-tcp+udp`；同一隔离 Docker 场景分别验证 server 监听、peer connected、client tunnel、marker TCP/UDP payload 和删除后的端口/资源清理；另有 `project-real-openvpn-system-resources`（Docker `20260914210913`）验证命名 `system:true` server/client 的 core-owned 接口、地址/MTU、隧道日志、diagnose 与 CAS 删除清理，并由 `project-real-openvpn-system-tcp`（Docker `20260916083525`）验证独立 network namespace marker 的 system-interface TCP payload，`project-real-openvpn-system-tcp+udp`（Docker `20260916104745`）再验证同类 system-interface TCP+UDP payload 与 marker/namespace 清理；不证明外部证书部署、公网/生产、宿主路由或 SubMan |
 
 Endpoint 表中仍保留 `none` 的历史行表示没有专用分享/节点适配；2026-09-09 增量新增的 `components.json` 状态/config/CAS 管理切片等价于组件生命周期 `yes/yes/yes/yes*`，但不等同外部 VPN/Tailscale/WireGuard 数据面已验证。`*` 表示配置组合、目标核心 check 和回滚边界已接入，外部认证、系统接口、路由/防火墙及公网业务仍需独立证据。
+
+## 组合依赖与运行时服务矩阵
+
+这些记录是协议运行所需的组合依赖或系统服务，不进入普通代理节点索引，也不应被误报为
+可分享的代理协议。
+
+| ID | 官方 type / role | 最低核心与构建条件 | 运行/引用约束 | upstream | available（官方 ARM64 包） | implemented；D/T/E/R | 导出 / 分享 / SubMan | validated |
+|---|---|---|---|---|---|---|---|---|
+| certificate-provider-acme | `acme` / certificate_provider | 1.14+；内建 provider | 域名、邮箱、DNS-01、外部账户、挑战端口和 HTTP client 引用；签发会产生外部副作用 | yes | yes（Linux；DNS/账户仍需） | typed state/CAS/render；yes/yes/yes/yes | 敏感 provider JSON / 不属于节点 / no current SubMan | 官方 1.14.1 最小配置 `check`；未执行真实签发或账户操作 |
+| http-client-shared | `http_client` / shared client | 1.14+；内建 | v1/v2/v3、HTTP2/HTTP3、TLS、resolver 与 Dial Fields；只能被受管引用者绑定 | yes | yes（Linux） | typed state/CAS/render/reference guard；yes/yes/yes/yes | 敏感 client JSON / 不属于节点 / no current SubMan | 官方 1.14.1 v1/v2/v3 minimal check、引用图与 drift guard；未宣称远端 HTTP 可达 |
+| resolved-service | `resolved` / service | 1.13+；Linux system DBus | 默认 `127.0.0.53:53` TCP+UDP；公开监听需 `--allow-public`；依赖 system bus | yes | yes（Linux；DBus/监听权限仍需） | typed state/CAS/render；yes/yes/yes/yes | 敏感 service JSON / 不属于节点 / no current SubMan | 官方 1.14.1 最小配置 `check` 与本地生命周期；未执行 DBus 注册或真实 DNS 请求 |
+| network-namespace-default | `default` / network_namespace | 1.14+；Linux namespace path | 必须是绝对路径；组件不接管路径所有权或外部路由 | yes | yes（Linux；路径/权限仍需） | typed state/CAS/render；yes/yes/yes/yes | 敏感 namespace JSON / 不属于节点 / no current SubMan | 官方 1.14.1 最小配置 `check` 与路径/引用保护；未执行宿主 namespace 变更 |
+| network-namespace-unshare | `unshare` / network_namespace | 1.14+；Linux | 配置为空，由核心创建隔离 namespace；外部路由和权限仍需单独管理 | yes | yes（Linux；root/内核能力仍需） | typed state/CAS/render；yes/yes/yes/yes | 敏感 namespace JSON / 不属于节点 / no current SubMan | 官方 1.14.1 最小配置 `check` 与生命周期回滚；未宣称宿主网络策略或公网数据面 |
 
 2026-09-11 WireGuard 增量：managed endpoint 按固定 1.14.0 `WireGuardEndpointOptions` 建立 typed allowlist，校验标准 Base64 32-byte key、CIDR address/allowed_ips、peer keepalive/reserved、MTU/listen/workers、UDP NAT 和 Dial Fields；live takeover 继续排除生成器自有 `warp-ep`，旧 wireguard outbound 仍由核心 removed stub 拒绝。固定 1.14.0 全字段与 1.13.18 基础字段 `check` 通过，未将其扩大为系统接口权限、peer 握手或 UDP 数据面证据。
 

@@ -1520,7 +1520,7 @@ TCP 与 UDP TProxy marker，连续应用两次 managed policy revision，删除�
 出站、Endpoint 与 route rule-set 行，要求矩阵头部明确列出 upstream/implemented/available/
 validated、D/T/E/R、导出/分享/SubMan 和限制/证据栏，避免回到单一 `supported=true` 清单。
 
-同步刷新矩阵审阅日期、当前脚本版本 `2026092201`、1.14.1 ARM64 稳定版摘要和 TProxy 最新
+同步刷新矩阵审阅日期、当前脚本版本 `2026092202`、1.14.1 ARM64 稳定版摘要和 TProxy 最新
 隔离 Docker 证据；README 改正旧的 TProxy“仍由操作员管理”表述，仅将未配置 `host_policy`
 的记录保留为操作员边界。该门禁只证明文档与机器注册表不漂移，不把 `validated=not_assessed`、
 外部认证、公网、生产或真实 SubMan 同步改写成通过；全协议总目标仍未完成。
@@ -1543,3 +1543,23 @@ dev/verification/common.sh tests/protocol_coverage_contract.sh`：本地门禁�
 check、SubMan mock、协议探针和组件合同均退出 0。输出中 HTTPUpgrade/WS early-data 仍按
 不可靠运行时路径显式 blocked，宿主 `/dev/net/tun`/隔离 IPv6 条件按契约 skip；这补强了
 本机目标核心证据，但没有改变外部认证、公网、生产或真实 SubMan 的边界。
+### 2026-09-22：组合依赖与运行时服务矩阵收口
+
+完成审计时发现注册表已有的 `certificate-provider-acme`、`http-client-shared`、
+`resolved-service`、`network-namespace-default` 与 `network-namespace-unshare` 只在正文
+散文中出现，未作为覆盖矩阵行呈现。新增“组合依赖与运行时服务矩阵”表，逐项列出官方
+角色、核心/平台条件、依赖引用、D/T/E/R、敏感导出、分享/SubMan 边界及真实验证限制；
+这些记录仍明确不是普通代理节点。
+
+`tests/protocol_coverage_contract.sh` 现在强制检查五个矩阵 ID，并将版本同步提升为
+`2026092202`。该门禁保证新增 registry component 不会只存在于机器清单而漏出覆盖审计。
+
+本轮验证使用特权 Docker 入口
+`VERIFY_SKIP_LOCAL_TESTS=1 bash dev/verification/run.sh --changed-file install.sh
+dev/verification/common.sh tests/protocol_coverage_contract.sh`，运行目录为
+`dev/verification-runs/20260922125446`。`summary.log` 报告 `remote_status=success`；提取的
+16/16 场景均为 `STATUS=success`、`EXIT_STATUS=0`，包含本轮合同门禁触发的多协议共存、透明
+代理、outbound、升级/回滚、runtime smoke 与卸载重装路径。宿主机未提供双版本核心二进制，
+因此宿主 real-core 检查仍按契约为 `SKIP/unavailable`；Docker 1.14.1 核心 check、实际协议
+探针与 rule-set HTTP fixture 证据均保持独立通过。五个组合依赖服务没有伪造 ACME、DBus、宿主
+namespace 或公网/生产证据；SubMan 仍为本地 mock 边界，真实外部控制面与生产 VPS 未触及。
