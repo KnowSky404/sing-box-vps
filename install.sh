@@ -348,6 +348,35 @@ warp_client_id_to_reserved_json() {
   printf '%s' "${reserved_json}"
 }
 
+write_warp_credentials_atomic() (
+  umask 077
+  local warp_id=${1:-}
+  local warp_token=${2:-}
+  local warp_priv_key=${3:-}
+  local warp_pub_key=${4:-}
+  local warp_v4=${5:-}
+  local warp_v6=${6:-}
+  local warp_client_id=${7:-}
+  local candidate
+
+  candidate=$(mktemp "${SB_PROJECT_DIR}/.warp.key.XXXXXX") || return 1
+  trap 'rm -f -- "${candidate}"' EXIT
+  if ! {
+    printf 'WARP_ID=%s\n' "${warp_id}"
+    printf 'WARP_TOKEN=%s\n' "${warp_token}"
+    printf 'WARP_PRIV_KEY=%s\n' "${warp_priv_key}"
+    printf 'WARP_PUB_KEY=%s\n' "${warp_pub_key}"
+    printf 'WARP_V4=%s\n' "${warp_v4}"
+    printf 'WARP_V6=%s\n' "${warp_v6}"
+    printf 'WARP_CLIENT_ID=%s\n' "${warp_client_id}"
+  } > "${candidate}"; then
+    return 1
+  fi
+  chmod 600 "${candidate}" || return 1
+  mv -f -- "${candidate}" "${SB_WARP_KEY_FILE}" || return 1
+  trap - EXIT
+)
+
 # Register Cloudflare Warp account
 register_warp() {
   if [[ -f "${SB_WARP_KEY_FILE}" ]]; then
@@ -357,7 +386,6 @@ register_warp() {
     fi
 
     log_warn "发现旧版 Warp 账户信息缺少 client_id，正在自动重新注册..."
-    rm -f "${SB_WARP_KEY_FILE}"
   fi
 
   log_info "正在注册 Cloudflare Warp 免费账户..."
@@ -380,10 +408,30 @@ register_warp() {
   log_info "Warp 注册请求 URL: ${url}"
   log_info "Warp 注册请求 Data (已脱敏): {\"install_id\":\"${install_id}\", ...}" >> "${SBV_LOG_FILE}"
 
-  local response=$(curl -sX POST "${url}" \
+  local response curl_status curl_stderr_file
+  curl_stderr_file=$(mktemp "${TMPDIR:-/tmp}/sbv-warp-curl.XXXXXX") || {
+    log_error "Cloudflare API 请求准备失败，请查看 ${SBV_LOG_FILE}"
+  }
+  chmod 600 "${curl_stderr_file}" || {
+    rm -f -- "${curl_stderr_file}"
+    log_error "Cloudflare API 请求准备失败，请查看 ${SBV_LOG_FILE}"
+  }
+  if response=$(curl -sS --connect-timeout 10 --max-time 30 --retry 2 --retry-delay 1 \
+    -X POST "${url}" \
     -H "User-Agent: okhttp/4.12.0" \
     -H "Content-Type: application/json" \
-    -d "${payload}")
+    -d "${payload}" 2>"${curl_stderr_file}"); then
+    curl_status=0
+  else
+    curl_status=$?
+  fi
+  if ! rm -f -- "${curl_stderr_file}"; then
+    log_error "Cloudflare API 请求清理失败，请查看 ${SBV_LOG_FILE}"
+  fi
+  if [[ ${curl_status} -ne 0 ]]; then
+    log_info "Warp 注册 API 请求失败（退出码 ${curl_status}；原始输出未记录）。" >> "${SBV_LOG_FILE}"
+    log_error "Cloudflare API 请求失败，请查看 ${SBV_LOG_FILE}"
+  fi
 
   log_info "Warp 注册 API 已返回（敏感响应原文未记录）。" >> "${SBV_LOG_FILE}"
 
@@ -408,15 +456,11 @@ register_warp() {
     log_error "Warp 注册响应缺少 client_id，请查看 ${SBV_LOG_FILE}"
   fi
 
-  cat > "${SB_WARP_KEY_FILE}" <<EOF
-WARP_ID=${warp_id}
-WARP_TOKEN=${warp_token}
-WARP_PRIV_KEY=${priv_key}
-WARP_PUB_KEY=${pub_key}
-WARP_V4=${warp_v4}
-WARP_V6=${warp_v6}
-WARP_CLIENT_ID=${warp_client_id}
-EOF
+  if ! write_warp_credentials_atomic \
+    "${warp_id}" "${warp_token}" "${priv_key}" "${pub_key}" \
+    "${warp_v4}" "${warp_v6}" "${warp_client_id}"; then
+    log_error "Warp 账户信息保存失败，请查看 ${SBV_LOG_FILE}"
+  fi
   log_success "Warp 账户注册成功。"
 }
 RED='\033[0;31m'

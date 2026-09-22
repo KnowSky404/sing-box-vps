@@ -45,6 +45,10 @@ EOF_KEYS
 }
 
 curl() {
+  if [[ "${WARP_RESPONSE_MODE:-success}" == "transport" ]]; then
+    printf '%s\n' 'curl-transport-secret' >&2
+    return 28
+  fi
   if [[ "${WARP_RESPONSE_MODE:-success}" == "error" ]]; then
     printf '%s\n' '{"errors":[{"message":"warp-error-secret"}]}'
     return 0
@@ -62,6 +66,27 @@ if grep -Fq 'warp-token-secret' "${SBV_LOG_FILE}" ||
   exit 1
 fi
 grep -Fq '敏感响应原文未记录' "${SBV_LOG_FILE}"
+
+cat > "${SB_WARP_KEY_FILE}" <<'EOF_LEGACY_WARP'
+WARP_ID=keep-id
+WARP_TOKEN=keep-token
+WARP_PRIV_KEY=keep-private
+WARP_PUB_KEY=keep-public
+WARP_V4=172.16.0.2
+WARP_V6=2606:4700:110:8cde:1234:5678:90ab:cdef
+EOF_LEGACY_WARP
+export WARP_RESPONSE_MODE=transport
+if (register_warp >/dev/null 2>"${TMP_DIR}/warp-transport.stderr"); then
+  printf 'expected Warp transport failure to return non-zero\n' >&2
+  exit 1
+fi
+if grep -Fq 'curl-transport-secret' "${SBV_LOG_FILE}" ||
+   grep -Fq 'curl-transport-secret' "${TMP_DIR}/warp-transport.stderr"; then
+  printf 'failed Warp transport diagnostics leaked curl output\n' >&2
+  exit 1
+fi
+grep -Fq 'Warp 注册 API 请求失败' "${SBV_LOG_FILE}"
+grep -Fqx 'WARP_TOKEN=keep-token' "${SB_WARP_KEY_FILE}"
 
 rm -f "${SB_WARP_KEY_FILE}"
 export WARP_RESPONSE_MODE=error
