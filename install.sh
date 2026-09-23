@@ -18731,8 +18731,35 @@ managed_component_state_candidate() {
         else error("missing") end
       elif $operation == "delete" then
         ([$state.components[] | select(.id == $target)] | first) as $existing |
+        def ref_values:
+          if type == "string" then [.] elif type == "array" then
+            map(select(type == "string"))
+          else [] end;
+        def component_references:
+          . as $component |
+          ($component.config // {}) as $config |
+          ([(($component.route_rules // [])[]? | .. | objects | to_entries[] |
+              select(.key | IN("inbound", "outbound", "rule_set")) | .value)] +
+           [
+             $config.detour?,
+             $config.netns?,
+             $config.tls.certificate_provider?,
+             $config.realm.http_client?,
+             $config.control_dialer.detour?,
+             $config.control_dialer.netns?,
+             $config.tunnel_dialer.detour?,
+             $config.tunnel_dialer.netns?,
+             (if $component.role == "certificate_provider" or
+                    $component.role == "rule_set" then $config.http_client? else empty end),
+             (if $component.role == "outbound" and
+                    ($component.type == "selector" or $component.type == "urltest") then
+                $config.outbounds?, $config.default?
+              else empty end)
+           ]) |
+          map(ref_values) | add // [] | unique;
         if $existing == null then error("missing")
-        elif any($state.components[] | select(.id != $target); [.. | strings | select(. == $existing.tag)] | length > 0) then error("referenced")
+        elif any($state.components[] | select(.id != $target);
+                 component_references | index($existing.tag) != null) then error("referenced")
         else $state | .components |= map(select(.id != $target)) | .revision = (.revision + 1) end
       else error("operation") end
     ' <<< "${state}" 2>/dev/null); then

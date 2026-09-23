@@ -1147,6 +1147,19 @@ jq -e '(.components | length == 1) and
   .components[0].host_key_verification == "unverified" and
   (.components[0].config_keys | index("password")) != null' <<< "${ssh_unverified_inventory}" >/dev/null
 
+# Delete reference protection must follow typed reference fields, not scan
+# arbitrary credential values. A password that happens to equal another
+# component tag is data, while a selector member remains a real dependency.
+ssh_password_tag_collision=$(jq -c '.config.password = "direct-local-in"' <<< "${ssh_record}")
+password_collision_state=$(managed_component_state_candidate \
+  "$(managed_component_state_default_json)" create "${direct_record}")
+password_collision_state=$(managed_component_state_candidate \
+  "${password_collision_state}" create "${ssh_password_tag_collision}")
+password_collision_after_delete=$(managed_component_state_candidate \
+  "${password_collision_state}" delete "" "direct-local")
+jq -e '.components | length == 1 and .[0].id == "ssh-local"' \
+  <<< "${password_collision_after_delete}" >/dev/null
+
 # Tor is a runtime-backed outbound rather than a server node.  The typed
 # contract preserves the upstream external/embedded forms, torrc string map,
 # extra arguments and Dial Fields while rejecting deprecated/unsafe shapes.
