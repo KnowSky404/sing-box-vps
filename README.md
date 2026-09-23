@@ -234,7 +234,7 @@ VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh
 默认工作流已做分层优化：
 - 核心脚本改动默认只跑协议探测快测
 - 仅在改动 `dev/verification/run.sh`、`dev/verification/common.sh` 或 `dev/verification/remote/` 时，才追加远程调度与远程框架回归
-- 远程验证默认优先收敛到 `runtime_smoke`；安装/重配相关改动会扩到全新安装、接管、重配和已有协议共存，以及真实的 `upgrade_1_13_to_1_14` 成功升级和 `upgrade_rollback_1_13_to_1_14` 故障回滚场景；NaiveProxy 与 ShadowTLS 当前由本地结构化生命周期与目标 1.14 `check` 专项覆盖，尚未纳入既有 Docker 协议探针场景。
+- 远程验证默认优先收敛到 `runtime_smoke`；安装/重配相关改动会扩到全新安装、接管、重配和已有协议共存，以及真实的 `upgrade_1_13_to_1_14` 成功升级和 `upgrade_rollback_1_13_to_1_14` 故障回滚场景；NaiveProxy 与 ShadowTLS 已纳入 `multi_protocol_coexistence` 的 Docker 协议探针，Naive 的 UoT/HTTP3 分支与 ShadowTLS 组合链路仍按各自证据边界记录。
 
 命中远程验证时，测试机会额外执行协议级闭环探测：先用目标 `sing-box` 校验客户端配置，再启动临时客户端连接本机服务端入站，并通过客户端 SOCKS 代理访问本机 HTTP 标记服务。HTTP 增量已通过 75 项本地门禁，修正测试断言后 Docker 重跑为 11/11 场景、16/16 TCP 探测成功；普通 VLESS 阶段的最终本地门禁运行目录为 `dev/verification-runs/20260908141403`，108/108 项通过；最终 Docker 运行目录 `dev/verification-runs/20260908144031` 为 15/15 场景、22/22 协议探针成功，包含普通 VLESS 新装、十协议共存和升级回滚产物。HTTP TLS 另以 1.13.18/1.14.0 与实际 Bash 4.2 完成本地正反向连接测试。SOCKS UoT 的 UDP 证据限于回环测试，不代表公网原生 UDP 可达。未知协议会在产物中标记为 `unsupported`。详细命令、失败记录、重跑范围与证据见[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)。
 

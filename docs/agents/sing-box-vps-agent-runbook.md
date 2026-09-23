@@ -1381,6 +1381,16 @@ TCP proxy leg；专用 UDP helper 继续覆盖 QUIC/UDP listener 上的 native U
 证据仅限固定 ARM64 sing-box 1.14.1、特权隔离 Docker 与 loopback，不代表公网、生产、
 外部认证、真实 SubMan 或完整协议目标。
 
+## 2026-09-23：Tor outbound listener readiness
+
+`multi_protocol_coexistence` 在 Tor outbound 重启后先等待最多 120 秒的真实
+`127.0.0.1:1081` listener，并保存 `tor-socks-listener.ss-lntp.txt`。这是启动同步
+条件，不是数据面通过条件；随后仍必须由 `check.torproject.org` marker、Tor journal
+以及 `tor-outbound.result.env` 的 `DATA_PLANE=tor_external_tcp` 共同证明业务路径。
+完整门禁 `dev/verification-runs/20260923194712` 的两个顶层场景均为
+`STATUS=success`/`EXIT_STATUS=0`。证据仅限固定 ARM64 sing-box 1.14.1、特权 Docker
+与 loopback/外部 Tor circuit，不覆盖公网、生产、外部认证、真实 SubMan 或完整协议目标。
+
 ## External Documentation
 
 When current `sing-box` configuration syntax, migration behavior, or version compatibility is needed, use Context7 first. If Context7 cannot provide enough detail, use official `sing-box` documentation or the official repository before relying on third-party posts.

@@ -1610,3 +1610,18 @@ artifact 均为 success。随后只重跑共存与 runtime smoke，目录
 `http-response.txt` 与 `udp-response.txt` 保留精确 loopback marker。固定 ARM64
 sing-box 1.14.1、隔离特权 Docker 与回环数据面均通过；没有把该证据扩张为公网、生产、
 外部认证、真实 SubMan 或完整协议目标证明。
+
+### 2026-09-23：Tor outbound listener readiness 收口
+
+在 TUIC 探针注册修正的完整安装器门禁中，Tor outbound 重启后曾出现一次性
+`127.0.0.1:1081` listener 尚未建立即开始 curl 的 readiness race。场景现于真实数据面
+请求前增加最多 120 秒的 `verification_port_is_listening 1081` 等待，并保存
+`tor-socks-listener.ss-lntp.txt` 快照；端口存在只作为启动条件，随后仍必须通过
+`check.torproject.org` 的真实 Tor circuit marker，未将 listener 检查冒充业务成功。
+
+匹配当前源码的完整门禁 `dev/verification-runs/20260923194712` 为
+`remote_status=success`；`multi_protocol_coexistence` 与 `runtime_smoke` 均为
+`STATUS=success`/`EXIT_STATUS=0`，Tor artifact 的 `tor-socks-listener-ready`、
+`tor-outbound.result.env`（`DATA_PLANE=tor_external_tcp`）和监听快照均已提取。
+该修复只收紧隔离特权 Docker 的启动同步；证据仍不代表公网、生产、外部认证、真实
+SubMan 或完整协议目标完成。

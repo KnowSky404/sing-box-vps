@@ -557,3 +557,17 @@ UDP 精确 marker 分别保留在 `http-response.txt`、`udp-response.txt`。完
 `dev/verification-runs/20260923141825` 曾因既有 Tor `127.0.0.1:1081` readiness race
 退出，不能冒充全量通过；重跑已隔离该竞态。证据限定在固定 ARM64 sing-box 1.14.1、
 特权隔离 Docker 与 loopback，不代表公网、生产、外部认证、真实 SubMan 或全协议目标。
+
+### 2026-09-23：Tor outbound listener readiness 收口
+
+针对 Tor outbound 重启后立即请求造成的偶发 `127.0.0.1:1081` 连接失败，
+`multi_protocol_coexistence` 在 curl 前增加最多 120 秒的真实 listener 等待，并把
+`ss -lntp` 快照保存为 `tor-socks-listener.ss-lntp.txt`。该等待只解决进程启动同步；
+随后仍执行 `check.torproject.org` 页面 marker 与 Tor journal 检查，业务结果继续由
+`tor-outbound.result.env` 的 `DATA_PLANE=tor_external_tcp` 定义。
+
+匹配源码的完整安装器门禁 `dev/verification-runs/20260923194712` 报告
+`remote_status=success`，`multi_protocol_coexistence`、`runtime_smoke` 均为
+`STATUS=success`/`EXIT_STATUS=0`，并记录 `tor-socks-listener-ready`。证据限定在固定
+ARM64 sing-box 1.14.1、特权隔离 Docker 与 loopback/外部 Tor circuit；不代表公网稳定性、
+生产部署、外部认证、真实 SubMan 或完整协议目标。
