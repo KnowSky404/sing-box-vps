@@ -18721,42 +18721,50 @@ managed_component_state_candidate() {
   if ! candidate=$(jq -c --arg operation "${operation}" --arg target "${target_id}" \
     --argjson record "${record:-null}" '
       . as $state |
+      def ref_values:
+        if type == "string" then [.] elif type == "array" then
+          map(select(type == "string"))
+        else [] end;
+      def component_references:
+        . as $component |
+        ($component.config // {}) as $config |
+        ([(($component.route_rules // [])[]? | .. | objects | to_entries[] |
+            select(.key | IN("inbound", "outbound", "rule_set")) | .value)] +
+         [
+           $config.detour?,
+           $config.netns?,
+           $config.tls.certificate_provider?,
+           $config.realm.http_client?,
+           $config.control_dialer.detour?,
+           $config.control_dialer.netns?,
+           $config.tunnel_dialer.detour?,
+           $config.tunnel_dialer.netns?,
+           (if $component.role == "certificate_provider" or
+                  $component.role == "rule_set" then $config.http_client? else empty end),
+           (if $component.role == "outbound" and
+                  ($component.type == "selector" or $component.type == "urltest") then
+              $config.outbounds?, $config.default?
+            else empty end)
+         ]) |
+        map(ref_values) | add // [] | unique;
       if $operation == "create" then
         if any($state.components[]; .id == $record.id or .tag == $record.tag) then error("duplicate")
         else $state | .components += [$record] | .revision = (.revision + 1) end
       elif $operation == "replace" then
-        if any($state.components[]; .id == $record.id) then
+        ([$state.components[] | select(.id == $record.id)] | first) as $existing |
+        if $existing == null then error("missing")
+        elif any($state.components[]; .id != $record.id and .tag == $record.tag) then
+          error("duplicate")
+        elif ($existing.tag != $record.tag and
+              any($state.components[] | select(.id != $record.id);
+                  component_references | index($existing.tag) != null)) then
+          error("referenced")
+        else
           $state | .components |= map(if .id == $record.id then $record else . end) |
           .revision = (.revision + 1)
-        else error("missing") end
+        end
       elif $operation == "delete" then
         ([$state.components[] | select(.id == $target)] | first) as $existing |
-        def ref_values:
-          if type == "string" then [.] elif type == "array" then
-            map(select(type == "string"))
-          else [] end;
-        def component_references:
-          . as $component |
-          ($component.config // {}) as $config |
-          ([(($component.route_rules // [])[]? | .. | objects | to_entries[] |
-              select(.key | IN("inbound", "outbound", "rule_set")) | .value)] +
-           [
-             $config.detour?,
-             $config.netns?,
-             $config.tls.certificate_provider?,
-             $config.realm.http_client?,
-             $config.control_dialer.detour?,
-             $config.control_dialer.netns?,
-             $config.tunnel_dialer.detour?,
-             $config.tunnel_dialer.netns?,
-             (if $component.role == "certificate_provider" or
-                    $component.role == "rule_set" then $config.http_client? else empty end),
-             (if $component.role == "outbound" and
-                    ($component.type == "selector" or $component.type == "urltest") then
-                $config.outbounds?, $config.default?
-              else empty end)
-           ]) |
-          map(ref_values) | add // [] | unique;
         if $existing == null then error("missing")
         elif any($state.components[] | select(.id != $target);
                  component_references | index($existing.tag) != null) then error("referenced")

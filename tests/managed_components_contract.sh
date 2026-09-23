@@ -2489,6 +2489,21 @@ if managed_component_state_candidate "${state}" delete "" direct-local >/dev/nul
   exit 1
 fi
 
+# Replacing a component with a different tag is a graph rename, not a free
+# metadata edit.  Keep dependents from retaining a dangling old tag, while
+# allowing an unreferenced component to be renamed normally.
+retagged_direct_record=$(jq -c '.tag = "direct-renamed"' <<< "${direct_record}")
+if managed_component_state_candidate "${state}" replace "${retagged_direct_record}" >/dev/null 2>&1; then
+  printf 'referenced component retag unexpectedly bypassed dependency guard\n' >&2
+  exit 1
+fi
+renamed_direct_state=$(managed_component_state_candidate \
+  "$(managed_component_state_default_json)" create "${direct_record}")
+renamed_direct_state=$(managed_component_state_candidate \
+  "${renamed_direct_state}" replace "${retagged_direct_record}")
+jq -e '.components | length == 1 and .[0].tag == "direct-renamed" and .[0].id == "direct-local"' \
+  <<< "${renamed_direct_state}" >/dev/null
+
 if managed_component_requires_public_confirmation "${direct_record}"; then
   printf 'loopback direct component unexpectedly required public confirmation\n' >&2
   exit 1
