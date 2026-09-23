@@ -571,3 +571,17 @@ UDP 精确 marker 分别保留在 `http-response.txt`、`udp-response.txt`。完
 `STATUS=success`/`EXIT_STATUS=0`，并记录 `tor-socks-listener-ready`。证据限定在固定
 ARM64 sing-box 1.14.1、特权隔离 Docker 与 loopback/外部 Tor circuit；不代表公网稳定性、
 生产部署、外部认证、真实 SubMan 或完整协议目标。
+
+## 2026-09-24：双版本官方核心本地门禁
+
+使用已校验的官方 ARM64 sing-box 1.13.18 与 1.14.1 二进制运行
+`VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh --changed-file install.sh
+tests/protocol_coverage_contract.sh`（通过 `SINGBOX_BINARY_113` 与 `SINGBOX_BINARY_114`
+传入两个核心），运行目录为 `dev/verification-runs/20260923232318`。本地输出覆盖两版
+核心的配置 `check`、export、启动、TCP/UDP marker、实例生命周期和兼容路径；Mixed、
+SOCKS、HTTP、Shadowsocks、V2Ray transport、Trojan、VMess、VLESS plain、AnyTLS 及已实现
+组件合同均完成，未将预期 negative guard 当作失败。
+
+本次命令按设计跳过 Docker 远程阶段；远程/隔离容器证据仍引用
+`dev/verification-runs/20260923194712`。OpenVPN 系统/TUN、宿主透明策略、外部认证、公网、
+生产、真实 SubMan 及 HTTPUpgrade/WS early-data 的 blocked/不可用路径仍保持原有边界。

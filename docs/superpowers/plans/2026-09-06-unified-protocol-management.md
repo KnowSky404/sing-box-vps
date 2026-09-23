@@ -1625,3 +1625,20 @@ sing-box 1.14.1、隔离特权 Docker 与回环数据面均通过；没有把该
 `tor-outbound.result.env`（`DATA_PLANE=tor_external_tcp`）和监听快照均已提取。
 该修复只收紧隔离特权 Docker 的启动同步；证据仍不代表公网、生产、外部认证、真实
 SubMan 或完整协议目标完成。
+
+### 2026-09-24：双版本官方核心本地门禁
+
+在 ARM64 VPS 上使用已校验的官方 sing-box 1.13.18 与 1.14.1 二进制，执行
+`SINGBOX_BINARY_113=/tmp/sing-box-v1.13.18-cache/sing-box-1.13.18-linux-arm64/sing-box
+SINGBOX_BINARY_114=/tmp/sing-box-v1.14.1-cache/sing-box-1.14.1-linux-arm64/sing-box
+VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh --changed-file install.sh
+tests/protocol_coverage_contract.sh`。运行目录为
+`dev/verification-runs/20260923232318`；本地阶段完成了双核心的 check、export、启动、
+TCP/UDP marker、实例生命周期与版本兼容路径，覆盖 Mixed、SOCKS、HTTP、Shadowsocks、
+V2Ray transport、Trojan、VMess、VLESS plain、AnyTLS 及其余已实现协议/组件合同。
+`summary.log` 明确记录本轮仅跳过远程阶段；已观察到的本地门禁输出未出现失败，远程 Docker
+证据仍以匹配源码的 `dev/verification-runs/20260923194712` 为准。
+
+本轮仍不宣称 Docker 远程阶段、OpenVPN 系统/TUN、宿主透明控制、外部认证、公网/生产、
+真实 SubMan 或完整协议目标；HTTPUpgrade 与 WS early-data 继续按运行时前置条件显式
+blocked，未把 skip/blocked 当作成功。

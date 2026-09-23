@@ -1391,6 +1391,26 @@ TCP proxy leg；专用 UDP helper 继续覆盖 QUIC/UDP listener 上的 native U
 `STATUS=success`/`EXIT_STATUS=0`。证据仅限固定 ARM64 sing-box 1.14.1、特权 Docker
 与 loopback/外部 Tor circuit，不覆盖公网、生产、外部认证、真实 SubMan 或完整协议目标。
 
+## 2026-09-24：双版本官方核心本地门禁
+
+如需复核协议适配而不触发 Docker 远程阶段，可使用已校验的官方 ARM64 核心：
+
+```bash
+SINGBOX_BINARY_113=/tmp/sing-box-v1.13.18-cache/sing-box-1.13.18-linux-arm64/sing-box \
+SINGBOX_BINARY_114=/tmp/sing-box-v1.14.1-cache/sing-box-1.14.1-linux-arm64/sing-box \
+VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh \
+  --changed-file install.sh tests/protocol_coverage_contract.sh
+```
+
+本轮运行目录为 `dev/verification-runs/20260923232318`。两版核心均参与配置 check、
+export、启动、TCP/UDP marker、实例生命周期和版本兼容路径；Mixed、SOCKS、HTTP、
+Shadowsocks、V2Ray transport、Trojan、VMess、VLESS plain、AnyTLS 及已实现组件合同的
+本地输出均通过。该命令的 `summary.log` 只表示远程阶段被显式跳过；需要 Docker 远程证据
+时继续参考 `dev/verification-runs/20260923194712`。
+
+不要把这次本地结果扩展为 OpenVPN 系统/TUN、宿主透明控制、外部认证、公网/生产或真实
+SubMan 证明；HTTPUpgrade 与 WS early-data 仍按运行时限制记录为 blocked。
+
 ## External Documentation
 
 When current `sing-box` configuration syntax, migration behavior, or version compatibility is needed, use Context7 first. If Context7 cannot provide enough detail, use official `sing-box` documentation or the official repository before relying on third-party posts.
