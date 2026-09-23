@@ -18756,7 +18756,8 @@ managed_component_state_candidate() {
         elif any($state.components[]; .id != $record.id and .tag == $record.tag) then
           error("duplicate")
         elif ($existing.tag != $record.tag and
-              any($state.components[] | select(.id != $record.id);
+              any($state.components[] |
+                  if .id == $record.id then $record else . end;
                   component_references | index($existing.tag) != null)) then
           error("referenced")
         else

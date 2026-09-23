@@ -2504,6 +2504,23 @@ renamed_direct_state=$(managed_component_state_candidate \
 jq -e '.components | length == 1 and .[0].tag == "direct-renamed" and .[0].id == "direct-local"' \
   <<< "${renamed_direct_state}" >/dev/null
 
+# A replacement must also account for references retained by the component
+# itself.  Selector/urltest route rules commonly target their own tag; a tag
+# rename is only valid when that self-reference is updated in the same CAS.
+retagged_selector_record=$(jq -c '.tag = "selector-renamed"' <<< "${selector_record}")
+if managed_component_state_candidate "${state}" replace "${retagged_selector_record}" >/dev/null 2>&1; then
+  printf 'self-referencing component retag unexpectedly bypassed dependency guard\n' >&2
+  exit 1
+fi
+retagged_selector_record=$(jq -c \
+  '.tag = "selector-renamed" | .route_rules[0].outbound = "selector-renamed"' \
+  <<< "${selector_record}")
+renamed_selector_state=$(managed_component_state_candidate \
+  "${state}" replace "${retagged_selector_record}")
+jq -e 'any(.components[]; .id == "selector-local" and .tag == "selector-renamed" and
+  .route_rules[0].outbound == "selector-renamed")' \
+  <<< "${renamed_selector_state}" >/dev/null
+
 if managed_component_requires_public_confirmation "${direct_record}"; then
   printf 'loopback direct component unexpectedly required public confirmation\n' >&2
   exit 1
