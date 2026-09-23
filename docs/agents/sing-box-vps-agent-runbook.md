@@ -1364,6 +1364,23 @@ runtime smoke 均成功，并保留 `inbound UoT connection` journal 行。该�
 覆盖固定 1.14.0、隔离 Docker/loopback 和受管客户端导出，不能推出公网可达、
 生产部署、外部认证、SubMan 或完整协议目标完成。
 
+## 2026-09-23：TUIC TCP/UDP 探针注册修正与验证边界
+
+TUIC 的受管 exporter 已经输出 `network:["tcp","udp"]`。协议 registry 的常规
+probe 从 `quic_loopback` 修正为可执行的 `tcp_loopback`，共享 HTTP marker 因而覆盖
+TCP proxy leg；专用 UDP helper 继续覆盖 QUIC/UDP listener 上的 native UDP leg。
+`tests/protocol_coverage_contract.sh` 现在锁定该 registry 映射，避免 exporter、探针和
+覆盖矩阵再次漂移。
+
+完整安装器门禁 `dev/verification-runs/20260923141825` 的本地阶段通过，但远程
+`multi_protocol_coexistence` 在 Tor outbound 首次启动遇到既有的
+`127.0.0.1:1081` readiness race，整轮 `remote_status=failure`，不得作为全量通过。
+随后定向 Docker run `dev/verification-runs/20260923165440`（共存与 runtime smoke）
+`remote_status=success`，2/2 顶层场景、33 个 `result.env` 成功；TUIC 的
+`protocol-probes/tuic/result.env`、`udp.result.env` 及精确 HTTP/UDP marker 均通过。
+证据仅限固定 ARM64 sing-box 1.14.1、特权隔离 Docker 与 loopback，不代表公网、生产、
+外部认证、真实 SubMan 或完整协议目标。
+
 ## External Documentation
 
 When current `sing-box` configuration syntax, migration behavior, or version compatibility is needed, use Context7 first. If Context7 cannot provide enough detail, use official `sing-box` documentation or the official repository before relying on third-party posts.

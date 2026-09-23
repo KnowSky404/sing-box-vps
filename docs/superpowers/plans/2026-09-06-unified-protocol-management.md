@@ -1591,3 +1591,22 @@ stderr 只进入临时 root-only 文件并在处理后删除，失败日志只�
 `dev/verification-runs/20260923105522`；本地门禁与特权 Docker 远程均退出 0，15/15 场景
 `STATUS=success`/`EXIT_STATUS=0`，54 个结果 artifact 均已提取。协议探针除按既有边界标记
 `TUIC=unsupported` 外均为 success；真实 SubMan 控制面、外部认证、生产 VPS 与公网数据面仍未触及。
+
+### 2026-09-23：TUIC TCP/UDP 双数据面探针收口
+
+审计发现 TUIC exporter 已输出 `network:["tcp","udp"]`，但协议注册表仍把常规探针
+标为 `quic_loopback`。统一验证器只执行 `tcp_loopback`，因此此前会把一个真实可执行的
+TUIC TCP proxy data plane 错误记录为 `RESULT=unsupported`，而专用 UDP helper 已经成功。
+现将 TUIC registry probe 改为 `tcp_loopback`，保留独立 UDP probe，并在
+`tests/protocol_coverage_contract.sh` 增加 registry assertion，防止两条数据面再次漂移。
+
+本轮完整安装器门禁为 `dev/verification-runs/20260923141825`：本地门禁通过，特权 Docker
+执行到 `multi_protocol_coexistence` 的 Tor outbound 时遇到既有的一次性 `127.0.0.1:1081`
+readiness race，故整轮 `remote_status=failure`，不能记为全量绿；此前已完成的 TUIC TCP/UDP
+artifact 均为 success。随后只重跑共存与 runtime smoke，目录
+`dev/verification-runs/20260923165440`，`remote_status=success`，2/2 顶层场景、33 个
+`result.env` 均成功；TUIC artifact
+`protocol-probes/tuic/result.env`、`udp.result.env` 均为 `RESULT=success`，对应
+`http-response.txt` 与 `udp-response.txt` 保留精确 loopback marker。固定 ARM64
+sing-box 1.14.1、隔离特权 Docker 与回环数据面均通过；没有把该证据扩张为公网、生产、
+外部认证、真实 SubMan 或完整协议目标证明。

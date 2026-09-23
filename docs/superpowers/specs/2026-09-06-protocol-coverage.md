@@ -540,3 +540,20 @@ live projection、state matching、接管与重生成均要求服务对象与启
 system DBus socket；官方 ARM64 `sing-box 1.14.1` 最小 resolved 配置 `check` 通过，但
 未执行 DBus 名称注册、真实 DNS 请求、公网监听或生产验证。因此该切片不等同于完整
 service 协议覆盖，当前脚本版本为 `2026091801`。
+
+## 2026-09-23：TUIC 常规 TCP 探针注册修正
+
+TUIC inbound 仍使用 QUIC/UDP listener，但其受管 client exporter 明确输出
+`network:["tcp","udp"]`：常规共享 HTTP marker probe 覆盖 TCP proxy leg，专用
+SOCKS5 UDP ASSOCIATE probe 覆盖 native UDP leg。此前 registry 的 `quic_loopback`
+probe 元数据不被统一验证器执行，导致 TCP leg 被错误分类为 `unsupported`；现已改为
+`tcp_loopback`，并由 `tests/protocol_coverage_contract.sh` 锁定这一映射。历史段落中
+记录的旧 `unsupported` 结果保留为历史事实，不覆盖本次修正。
+
+定向 Docker run `dev/verification-runs/20260923165440` 的
+`multi_protocol_coexistence` 与 `runtime_smoke` 均 `STATUS=success`；共存 artifact
+中 `protocol-probes/tuic/result.env`、`udp.result.env` 均为 `RESULT=success`，HTTP 与
+UDP 精确 marker 分别保留在 `http-response.txt`、`udp-response.txt`。完整安装器门禁
+`dev/verification-runs/20260923141825` 曾因既有 Tor `127.0.0.1:1081` readiness race
+退出，不能冒充全量通过；重跑已隔离该竞态。证据限定在固定 ARM64 sing-box 1.14.1、
+特权隔离 Docker 与 loopback，不代表公网、生产、外部认证、真实 SubMan 或全协议目标。

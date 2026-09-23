@@ -78,6 +78,13 @@ jq -e '
     ["anytls","http","hy2","hysteria","mixed","naive","shadowsocks","shadowtls","snell","socks","trojan","tuic","vless-plain","vless-reality","vmess"]
 ' <<< "${protocol_registry}" >/dev/null
 
+# TUIC carries both proxy TCP and UDP traffic over its QUIC/UDP listener.  The
+# client exporter and the shared HTTP marker probe cover the TCP leg, while the
+# dedicated UDP probe covers the native UDP leg; keep the registry wired to the
+# executable TCP probe instead of silently classifying it as unsupported.
+jq -e 'any(.[]; .state_id == "tuic" and .probe == "tcp_loopback")' \
+  <<< "${protocol_registry}" >/dev/null
+
 jq -e '
   length == 38 and
   ([.[].state_id] | unique | length) == 38 and
