@@ -23920,6 +23920,16 @@ subman_type_for_protocol() {
   printf '%s' "${type}"
 }
 
+subman_unsupported_protocol_warning_json() {
+  local protocol=${1:-}
+  [[ -n "${protocol}" ]] || return 1
+  jq -cn --arg protocol "${protocol}" '[{
+    code: "subman_protocol_unsupported",
+    protocol: $protocol,
+    message: ($protocol + " 当前没有可保真 SubMan 载荷，已跳过。")
+  }]'
+}
+
 subman_external_key_for_protocol() {
   local protocol prefix instance_id address_label stack_suffix key
   protocol=$(normalize_protocol_id "$1")
@@ -31181,7 +31191,8 @@ agent_push_nodes_to_subman_json() {
   local address_entry address_label public_ip
   local instance_attempted instance_synced instance_stacked_synced
   local synced_count skipped_count failed_count shadowsocks_skipped_count trojan_skipped_count vmess_skipped_count vless_plain_skipped_count hy2_skipped_count ok_json
-  local last_error_code last_error_disposition last_http_status last_retry_after
+  local last_error_code last_error_disposition last_http_status last_retry_after unsupported_warning_json
+  local subman_supported_protocol_count
   local compatibility_warnings_json
   local installed_protocols=()
 
@@ -31194,6 +31205,7 @@ agent_push_nodes_to_subman_json() {
   vmess_skipped_count=0
   vless_plain_skipped_count=0
   hy2_skipped_count=0
+  subman_supported_protocol_count=0
   last_error_code=""
   last_error_disposition=""
   last_http_status=""
@@ -31215,8 +31227,14 @@ agent_push_nodes_to_subman_json() {
 
     if ! subman_type_for_protocol "${protocol}" >/dev/null; then
       skipped_count=$((skipped_count + 1))
+      unsupported_warning_json=$(subman_unsupported_protocol_warning_json "${protocol}") || return 1
+      compatibility_warnings_json=$(jq -cn \
+        --argjson existing "${compatibility_warnings_json}" \
+        --argjson addition "${unsupported_warning_json}" \
+        '$existing + $addition') || return 1
       continue
     fi
+    subman_supported_protocol_count=$((subman_supported_protocol_count + 1))
 
     if ! protocol_state_exists "${protocol}"; then
       skipped_count=$((skipped_count + 1))
@@ -31405,7 +31423,7 @@ agent_push_nodes_to_subman_json() {
     load_protocol_state "${original_protocol_state}"
   fi
 
-  if (( synced_count == 0 && shadowsocks_skipped_count == 0 && trojan_skipped_count == 0 && vmess_skipped_count == 0 && vless_plain_skipped_count == 0 && hy2_skipped_count == 0 && failed_count == 0 )); then
+  if (( synced_count == 0 && shadowsocks_skipped_count == 0 && trojan_skipped_count == 0 && vmess_skipped_count == 0 && vless_plain_skipped_count == 0 && hy2_skipped_count == 0 && failed_count == 0 && subman_supported_protocol_count > 0 )); then
     agent_json_error "public_ip_unavailable" "未获取到公网 IP，无法生成 SubMan 节点链接。"
     return 1
   fi
@@ -32445,6 +32463,7 @@ push_nodes_to_subman() {
   local address_entry address_label public_ip
   local instance_attempted instance_synced instance_stacked_synced
   local synced_count skipped_count failed_count shadowsocks_skipped_count trojan_skipped_count vmess_skipped_count vless_plain_skipped_count hy2_skipped_count trojan_status
+  local subman_supported_protocol_count
   local installed_protocols=()
 
   prompt_subman_config_if_needed
@@ -32457,6 +32476,7 @@ push_nodes_to_subman() {
   vmess_skipped_count=0
   vless_plain_skipped_count=0
   hy2_skipped_count=0
+  subman_supported_protocol_count=0
 
   mapfile -t installed_protocols < <(list_installed_protocols)
   if [[ ${#installed_protocols[@]} -eq 0 ]]; then
@@ -32477,6 +32497,7 @@ push_nodes_to_subman() {
       skipped_count=$((skipped_count + 1))
       continue
     fi
+    subman_supported_protocol_count=$((subman_supported_protocol_count + 1))
 
     if ! protocol_state_exists "${protocol}"; then
       print_warn "协议状态文件缺失，已跳过 SubMan 推送: ${protocol}"
@@ -32590,7 +32611,7 @@ push_nodes_to_subman() {
     load_protocol_state "${original_protocol_state}"
   fi
 
-  if (( synced_count == 0 && shadowsocks_skipped_count == 0 && trojan_skipped_count == 0 && vmess_skipped_count == 0 && vless_plain_skipped_count == 0 && hy2_skipped_count == 0 && failed_count == 0 )); then
+  if (( synced_count == 0 && shadowsocks_skipped_count == 0 && trojan_skipped_count == 0 && vmess_skipped_count == 0 && vless_plain_skipped_count == 0 && hy2_skipped_count == 0 && failed_count == 0 && subman_supported_protocol_count > 0 )); then
     log_warn "未获取到公网 IP，无法生成 SubMan 节点链接。"
     return 1
   fi

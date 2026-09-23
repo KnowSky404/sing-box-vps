@@ -390,3 +390,26 @@ http_output=$(push_nodes_to_subman 2>&1)
 jq -es 'length == 2 and all(.[]; .type == "vless" or .type == "hysteria2")' \
   "${PUSH_PAYLOADS_FILE}" >/dev/null
 [[ "$(sha256sum "${SB_PROTOCOL_STATE_DIR}/instances/http.json")" == "${http_state_hash}" ]]
+
+# Unsupported-only Agent sync must preserve the per-protocol skip reason.  It
+# must not misclassify a truthful zero-sync result as public-IP discovery
+# failure, because no URI construction was attempted for either protocol.
+write_protocol_index "http,anytls"
+get_public_ip() { printf ''; }
+set +e
+unsupported_only_agent=$(agent_push_nodes_to_subman_json)
+unsupported_only_status=$?
+set -e
+if [[ "${unsupported_only_status}" -eq 0 ]]; then
+  printf 'expected unsupported-only Agent sync to remain unsuccessful\n' >&2
+  exit 1
+fi
+jq -e '
+  .ok == false and .synced == 0 and .skipped == 2 and .failed == 0
+  and (.error // "") != "public_ip_unavailable"
+  and ([.warnings[]? | select(.code == "subman_protocol_unsupported") | .protocol] | sort)
+      == ["anytls", "http"]
+' <<< "${unsupported_only_agent}" >/dev/null || {
+  printf 'expected per-protocol unsupported warnings, got:\n%s\n' "${unsupported_only_agent}" >&2
+  exit 1
+}

@@ -1581,3 +1581,13 @@ namespace 或公网/生产证据；SubMan 仍为本地 mock 边界，真实外�
 stderr 只进入临时 root-only 文件并在处理后删除，失败日志只保留退出码；旧版缺少
 `client_id` 的状态文件在注册失败时保留，成功凭据通过同目录 `0600` staging 文件原子替换。
 回归同时注入传输失败并确认旧 token 保留；这仍不是 Cloudflare 账户或生产控制面的授权验证。
+
+### 2026-09-23：SubMan unsupported-only 同步诊断
+
+修复 Agent 与交互式 SubMan 推送在协议索引只包含当前没有可保真 SubMan 载荷的协议时的诊断边界：每个被跳过的协议现在追加结构化 `subman_protocol_unsupported` warning，`skipped` 计数仍保留；只有存在至少一个 SubMan 支持协议、但没有可用公网地址时，才返回 `public_ip_unavailable`。因此 unsupported-only 结果不会被误报为公网 IP 发现失败，也不会触发 URI 构造或外部请求。
+
+新增回归覆盖 `http,anytls` unsupported-only Agent sync，并保留既有 supported/unsupported 混合、Shadowsocks、Trojan、VMess、VLESS plain 与 Hysteria2 SubMan mock 合同。针对本轮 install/test 变更运行完整
+`bash dev/verification/run.sh --changed-file install.sh tests/subman_sync_orchestration.sh`，目录
+`dev/verification-runs/20260923105522`；本地门禁与特权 Docker 远程均退出 0，15/15 场景
+`STATUS=success`/`EXIT_STATUS=0`，54 个结果 artifact 均已提取。协议探针除按既有边界标记
+`TUIC=unsupported` 外均为 success；真实 SubMan 控制面、外部认证、生产 VPS 与公网数据面仍未触及。
