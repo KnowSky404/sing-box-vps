@@ -2687,6 +2687,18 @@ PY
   local tor_outbound_response="${VERIFY_CURRENT_SCENARIO_DIR}/tor-outbound-response.html"
   local tor_outbound_curl_stderr="${VERIFY_CURRENT_SCENARIO_DIR}/tor-outbound-curl.stderr.txt"
   local tor_outbound_journal="${VERIFY_CURRENT_SCENARIO_DIR}/tor-outbound-journal.txt"
+  local tor_socks_listener_ready=0
+  for _ in {1..120}; do
+    if verification_port_is_listening 1081; then
+      tor_socks_listener_ready=1
+      break
+    fi
+    sleep 1
+  done
+  verification_capture_listener_snapshot \
+    "${VERIFY_CURRENT_SCENARIO_DIR}/tor-socks-listener.ss-lntp.txt"
+  [[ "${tor_socks_listener_ready}" == 1 ]]
+  verification_mark_step tor-socks-listener-ready
   for _ in {1..24}; do
     set +e
     curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \

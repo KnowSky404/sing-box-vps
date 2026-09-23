@@ -17,6 +17,10 @@ grep -Fq 'This browser is configured to use Tor' "${SCENARIO_FILE}"
 grep -Fq 'DATA_PLANE=tor_external_tcp' "${SCENARIO_FILE}"
 grep -Fq 'TARGET=check.torproject.org' "${SCENARIO_FILE}"
 grep -Fq 'tor-outbound.result.env' "${SCENARIO_FILE}"
+grep -Fq 'for _ in {1..120}; do' "${SCENARIO_FILE}"
+grep -Fq 'verification_port_is_listening 1081' "${SCENARIO_FILE}"
+grep -Fq 'tor-socks-listener-ready' "${SCENARIO_FILE}"
+grep -Fq 'tor-socks-listener.ss-lntp.txt' "${SCENARIO_FILE}"
 grep -Fq -- '--expected-revision 25 --file "${tor_outbound_record}"' \
   "${SCENARIO_FILE}"
 grep -Fq -- '--expected-revision 26 --id tor-outbound-verification' \
