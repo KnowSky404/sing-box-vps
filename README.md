@@ -115,6 +115,8 @@ Redirect `host_policy` applies only to enabled components. `destination_ports` a
 
 2026-09-22 本机双版本核心复核：在 ARM64 VPS 的 `/tmp` 中校验官方 `sing-box-1.13.18-linux-arm64.tar.gz`（SHA-256 `a894f6152cade4a2c9d062762d54dea0c1aee673ab4759e0829e19cace932719`）与 `sing-box-1.14.1-linux-arm64.tar.gz`（SHA-256 `6060b42fa84c5dcaeae1799af7f61b0f1ae4855d9d5ddc9e02baba17154b3ae2`），并执行 `VERIFY_SKIP_REMOTE=1 SINGBOX_BINARY_113=... SINGBOX_BINARY_114=... bash dev/verification/run.sh --changed-file install.sh dev/verification/common.sh tests/protocol_coverage_contract.sh`；本地生命周期、导出、SubMan mock、目标核心 check 和协议探针门禁退出 0，运行目录为 `dev/verification-runs/20260922113827`。该复核仍明确保留 HTTPUpgrade/WS early-data 不可靠路径、宿主 `/dev/net/tun` 依赖和真实外部控制面为 blocked/skipped 边界；未执行生产、真实 SubMan 或公网操作。
 
+2026-09-23 TUIC 探针收口：TUIC 注册表现已将常规 TCP 数据面接入共享 HTTP marker probe，并保留独立 UDP ASSOCIATE marker probe；定向 Docker 验证目录 `dev/verification-runs/20260923165440` 中两条 `result.env` 均为 `RESULT=success`，固定 ARM64 `sing-box 1.14.1`、特权隔离容器和回环业务路径均通过。更早运行中出现的 TUIC `unsupported` 结果是探针元数据错误的历史 artifact，不代表当前注册状态；该证据仍不涵盖公网、生产、外部认证或真实 SubMan。
+
 ## 🚀 一键安装
 
 在您的 VPS 上运行以下安全 Bootstrap 即可开始安装。它会先完整下载到权限为 `0600` 的临时文件，再执行语法和项目身份校验；下载、校验或脚本执行的退出码会原样返回。整个流程运行在子 Shell 中，不会用 `exit` 关闭当前 SSH 登录 Shell。
