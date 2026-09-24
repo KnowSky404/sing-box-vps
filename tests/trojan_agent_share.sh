@@ -113,7 +113,7 @@ mv "${TMP_DIR}/trusted-live.json" "${SINGBOX_CONFIG_FILE}"
 capabilities=$(agent_cli capabilities --json)
 jq -e '
   (.features.plain_proxy_instances.protocols|index("trojan")) != null and
-  .features.plain_proxy_instances.operations_by_protocol.trojan == ["create","replace","delete","default","recover"] and
+  .features.plain_proxy_instances.operations_by_protocol.trojan == ["create","replace","delete","default","rebuild","takeover","recover"] and
   (.commands.instance.protocols|index("trojan")) != null and
   any(.protocol_registry[]; .agent_id == "trojan" and .client_export == true and .multi_instance == true)
 ' <<< "${capabilities}" >/dev/null

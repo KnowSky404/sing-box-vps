@@ -130,6 +130,36 @@ jq -e '
   and any(.nodes[]; .instance_id == "edge" and (.links.vless | contains(":8443?")) and .outbound_policy == "warp")
 ' <<< "${links_json}" >/dev/null
 
+instance_view_json=$(agent_cli instance view vless-reality --json --id main --expected-revision 0)
+jq -e '
+  .ok == true
+  and .data.action == "instance-view"
+  and .data.sensitive == false
+  and .data.instance_id == "main"
+  and .data.revision == null
+  and .data.record.authentication.uuid == null
+  and .data.record.tls.short_id == null
+' <<< "${instance_view_json}" >/dev/null
+if ! instance_diagnose_json=$(agent_cli instance diagnose vless-reality --json --id main --expected-revision 0); then
+  :
+fi
+jq -e '
+  .ok == false
+  and .data.action == "instance-diagnose"
+  and .data.sensitive == false
+  and .data.check.ok == true
+  and .data.state.matches_config == false
+  and .data.record.authentication.uuid == null
+' <<< "${instance_diagnose_json}" >/dev/null
+instance_export_json=$(agent_cli instance export vless-reality --json --id main --expected-revision 0)
+jq -e '
+  .ok == true
+  and .data.action == "instance-export"
+  and .data.sensitive == true
+  and .data.record.authentication.uuid == "11111111-1111-4111-8111-111111111111"
+  and .data.record.tls.short_id == ["aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb"]
+' <<< "${instance_export_json}" >/dev/null
+
 status_json=$(agent_cli status --json)
 jq -e '
   .network_stack.host == "dual"

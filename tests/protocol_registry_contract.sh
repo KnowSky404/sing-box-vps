@@ -91,29 +91,33 @@ capabilities=$(agent_capabilities_json)
 jq -e '
   .features.plain_proxy_instances as $plain |
   ($plain.operations | index("migrate") == null) and
+  ($plain.read_only_operations == ["view", "diagnose", "export"]) and
   ($plain.operations_by_protocol.mixed | index("migrate") != null) and
-  ($plain.operations_by_protocol.socks == ["create", "replace", "delete", "default", "recover"]) and
+  ($plain.operations_by_protocol.socks == ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"]) and
   ($plain.protocols | index("http") != null) and
-  ($plain.operations_by_protocol.http == ["create", "replace", "delete", "default", "recover"]) and
+  ($plain.operations_by_protocol.http == ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"]) and
   ($plain.protocols | index("trojan") != null) and
-  ($plain.operations_by_protocol.trojan == ["create", "replace", "delete", "default", "recover"]) and
+  ($plain.operations_by_protocol.trojan == ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"]) and
   ($plain.protocols | index("vmess") != null) and
-  ($plain.operations_by_protocol.vmess == ["create", "replace", "delete", "default", "recover"]) and
+  ($plain.operations_by_protocol.vmess == ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"]) and
   ($plain.protocols | index("vless-plain") != null) and
-  ($plain.operations_by_protocol["vless-plain"] == ["create", "replace", "delete", "default", "recover"]) and
+  ($plain.operations_by_protocol["vless-plain"] == ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"]) and
   ($plain.protocols | index("anytls") != null) and
-  ($plain.operations_by_protocol.anytls == ["create", "replace", "delete", "default", "recover"]) and
+  ($plain.operations_by_protocol.anytls == ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"]) and
   ($plain.protocols | index("snell") != null) and
-  ($plain.operations_by_protocol.snell == ["create", "replace", "delete", "default", "recover"]) and
+  ($plain.operations_by_protocol.snell == ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"]) and
   ($plain.protocols | index("tuic") != null) and
-  ($plain.operations_by_protocol.tuic == ["create", "replace", "delete", "default", "recover"]) and
+  ($plain.operations_by_protocol.tuic == ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"]) and
   ($plain.protocols | index("hysteria") != null) and
-  ($plain.operations_by_protocol.hysteria == ["create", "replace", "delete", "default", "recover"]) and
+  ($plain.operations_by_protocol.hysteria == ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"]) and
   ($plain.protocols | index("naive") != null) and
-  ($plain.operations_by_protocol.naive == ["create", "replace", "delete", "default", "recover"]) and
+  ($plain.operations_by_protocol.naive == ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"]) and
   ($plain.protocols | index("shadowtls") != null) and
-  ($plain.operations_by_protocol.shadowtls == ["create", "replace", "delete", "default", "recover"]) and
+  ($plain.operations_by_protocol.shadowtls == ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"]) and
   .features.mixed_instances.operations == $plain.operations_by_protocol.mixed
+  and .features.mixed_instances.read_only_operations == ["view", "diagnose", "export"]
+  and .commands.instance.read_only_operations == ["view", "diagnose", "export"]
+  and (.commands.instance.read_only_protocols | index("vless-reality") != null)
 ' >/dev/null <<< "${capabilities}"
 jq -e --argjson registry "${registry}" '
   .protocols == ($registry | map({key: .agent_id, value: .legacy_capabilities}) | from_entries) and

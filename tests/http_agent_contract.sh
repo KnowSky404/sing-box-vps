@@ -78,7 +78,7 @@ jq -e '
 ' <<< "${capabilities}" >/dev/null
 jq -e '
   .features.plain_proxy_instances.operations_by_protocol.http ==
-    ["create", "replace", "delete", "default", "recover"] and
+    ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"] and
   (.commands.instance.protocols | index("http") != null)
 ' <<< "${capabilities}" >/dev/null
 

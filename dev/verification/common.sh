@@ -83,6 +83,7 @@ resolve_local_tests() {
       tests/mixed_instance_menu.sh \
       tests/plain_proxy_structured_store.sh \
       tests/socks_instance_lifecycle.sh \
+      tests/instance_rebuild_takeover.sh \
       tests/socks_instance_lifecycle_runtime.sh \
       tests/socks_instance_menu.sh \
       tests/socks_structured_takeover.sh \

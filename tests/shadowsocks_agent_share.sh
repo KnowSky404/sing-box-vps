@@ -156,7 +156,7 @@ capabilities=$(agent_capabilities_json)
 jq -e '
   (.features.plain_proxy_instances.protocols | index("shadowsocks")) != null and
   .features.plain_proxy_instances.operations_by_protocol.shadowsocks ==
-    ["create", "replace", "delete", "default", "recover"] and
+    ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"] and
   (.commands.instance.protocols | index("shadowsocks")) != null
 ' <<< "${capabilities}" >/dev/null
 

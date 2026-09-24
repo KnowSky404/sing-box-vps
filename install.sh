@@ -628,6 +628,7 @@ print_cli_help() {
   sbv agent component takeover --json --yes --expected-revision N [--allow-public]
   sbv agent component rebuild --json --yes --expected-revision N
   sbv agent component create|replace|delete ...
+  sbv agent instance view|diagnose|export vless-reality|mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json [--id ID] [--expected-revision N]
   sbv agent upgrade-check --json x.y.z
   sbv agent upgrade --json x.y.z --yes
   sbv uninstall
@@ -639,6 +640,8 @@ print_cli_help() {
   update-sing-box [version]  update sing-box 的短别名，版本可为 latest 或 x.y.z。
   agent                      输出适合自动化读取的 JSON 状态、节点、能力和受保护升级结果。
   agent component            管理高级入站、Endpoint 与可复用出站/分组组件。
+  agent instance view/diagnose/export
+                             只读查看、诊断或敏感导出受管代理实例；不会迁移或重写状态。
 EOF
 }
 
@@ -28240,8 +28243,11 @@ agent_print_help() {
   sbv agent component rebuild --json --yes --expected-revision N
   sbv agent component create|replace --json --yes --expected-revision N --file component.json [--allow-public]
   sbv agent component delete --json --yes --expected-revision N --id ID
+  sbv agent instance view|diagnose|export vless-reality|mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json [--id ID] [--expected-revision N]
   sbv agent instance create|replace mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N --file record.json [--allow-public]
   sbv agent instance delete|default mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N --id ID
+  sbv agent instance rebuild mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N
+  sbv agent instance takeover mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision 0 [--allow-public]
   sbv agent instance migrate mixed --json --yes --expected-revision N
   sbv agent instance recover mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N
 
@@ -28259,7 +28265,7 @@ agent_print_help() {
   doctor        输出只读诊断信息和配置校验结果。
   service       执行带 --yes 保护的服务操作，目前支持 restart。
   subman-sync   非交互推送节点到 SubMan，缺少配置时返回结构化错误。
-  instance      Mixed/SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS/AnyTLS/Hysteria2/Snell/TUIC/Hysteria/NaiveProxy/ShadowTLS 实例事务；仅 Mixed 支持 legacy migration；recover 使用待恢复事务原 revision。
+  instance      Mixed/SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS/AnyTLS/Hysteria2/Snell/TUIC/Hysteria/NaiveProxy/ShadowTLS 实例事务；支持 view/diagnose/export 只读入口，以及 create/replace/delete/default/rebuild/takeover/recover 写入口，且仅 Mixed 支持 legacy migration；rebuild 修复受管配置漂移并递增 revision，takeover 以 revision 0 接管无 typed state 的可无损 live 配置。
 EOF
 }
 
@@ -28470,7 +28476,8 @@ agent_capabilities_json() {
         mixed_instances: {
           state_schema: 2,
           store_schema: 1,
-          operations: ["create", "replace", "delete", "default", "migrate", "recover"],
+          operations: ["create", "replace", "delete", "default", "rebuild", "takeover", "migrate", "recover"],
+          read_only_operations: ["view", "diagnose", "export"],
           expected_revision_required: true,
           plaintext_public_confirmation: "--allow-public",
           default_new_listener: "127.0.0.1",
@@ -28487,22 +28494,23 @@ agent_capabilities_json() {
           legacy_migration_protocols: ["mixed"],
           state_schema: 2,
           store_schema: 1,
-          operations: ["create", "replace", "delete", "default", "recover"],
+          operations: ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"],
+          read_only_operations: ["view", "diagnose", "export"],
           operations_by_protocol: {
-            mixed: ["create", "replace", "delete", "default", "migrate", "recover"],
-            socks: ["create", "replace", "delete", "default", "recover"],
-            http: ["create", "replace", "delete", "default", "recover"],
-            shadowsocks: ["create", "replace", "delete", "default", "recover"],
-            trojan: ["create", "replace", "delete", "default", "recover"],
-            vmess: ["create", "replace", "delete", "default", "recover"],
-            "vless-plain": ["create", "replace", "delete", "default", "recover"],
-            anytls: ["create", "replace", "delete", "default", "recover"],
-            hy2: ["create", "replace", "delete", "default", "recover"],
-            snell: ["create", "replace", "delete", "default", "recover"],
-            tuic: ["create", "replace", "delete", "default", "recover"],
-            hysteria: ["create", "replace", "delete", "default", "recover"],
-            naive: ["create", "replace", "delete", "default", "recover"],
-            shadowtls: ["create", "replace", "delete", "default", "recover"]
+            mixed: ["create", "replace", "delete", "default", "rebuild", "takeover", "migrate", "recover"],
+            socks: ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"],
+            http: ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"],
+            shadowsocks: ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"],
+            trojan: ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"],
+            vmess: ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"],
+            "vless-plain": ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"],
+            anytls: ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"],
+            hy2: ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"],
+            snell: ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"],
+            tuic: ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"],
+            hysteria: ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"],
+            naive: ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"],
+            shadowtls: ["create", "replace", "delete", "default", "rebuild", "takeover", "recover"]
           },
           expected_revision_required: true,
           plaintext_public_confirmation: "--allow-public",
@@ -28540,7 +28548,7 @@ agent_capabilities_json() {
         doctor: {mutation: false, sensitive: false},
         "upgrade-check": {mutation: false, sensitive: false},
         upgrade: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart"},
-        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic", "hysteria", "naive", "shadowtls"]},
+        instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic", "hysteria", "naive", "shadowtls"], read_only_operations: ["view", "diagnose", "export"], read_only_protocols: ["vless-reality", "mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic", "hysteria", "naive", "shadowtls"]},
         component: {mutation: true, sensitive: true, confirmation: "--yes", service_impact: "restart_if_active", roles: ["inbound", "endpoint", "outbound", "certificate_provider", "http_client", "service", "network_namespace", "rule_set"]},
         "export-client": {mutation: true, sensitive: true},
         "service restart": {mutation: true, sensitive: false, confirmation: "--yes"},
@@ -31855,10 +31863,38 @@ apply_plain_proxy_instance_change() (
     '{schema_version:1,protocol:$protocol,operation:$operation,expected_revision:$expected,owner_pid:$pid,owner_start:$start,before_active:$before,phase:"prepare"}' \
     > "${lock_dir}/transaction.next" || return $?
   mv -f -- "${lock_dir}/transaction.next" "${lock_dir}/transaction.json" || return $?
+  if [[ "${operation}" == takeover ]] && plain_proxy_structured_state_active "${instance_protocol}"; then
+    # Takeover is only for a live protocol that has not already been adopted
+    # into the typed store.  Reusing an active store would silently replace
+    # stable IDs/metadata and defeat the explicit CAS boundary.
+    return 1
+  fi
   if plain_proxy_structured_state_active "${instance_protocol}"; then
-    plain_proxy_structured_state_matches_config "${instance_protocol}" || return 1
+    # Rebuild intentionally repairs drift in the managed protocol projection;
+    # all other mutations require the live config to match before preparation.
+    if [[ "${operation}" != rebuild ]]; then
+      plain_proxy_structured_state_matches_config "${instance_protocol}" || return 1
+    fi
     structured_instance_store_snapshot_json "${instance_protocol}" "$(plain_proxy_structured_store_file "${instance_protocol}")" > "${lock_dir}/before.json" || return $?
     current_revision=$(jq -r .revision "${lock_dir}/before.json") || return $?
+  elif [[ "${operation}" == takeover ]]; then
+    # A takeover starts from a virtual revision-zero store and imports the
+    # complete, losslessly representable live inventory.  Existing typed
+    # artifacts are never overwritten by this path: an orphan or malformed
+    # store requires explicit recovery instead of an identity reset.
+    local takeover_store_file takeover_state_file takeover_count
+    takeover_store_file=$(plain_proxy_structured_store_file "${instance_protocol}") || return $?
+    takeover_state_file=$(protocol_state_file "${instance_protocol}") || return $?
+    [[ ! -e "${takeover_store_file}" && ! -L "${takeover_store_file}" ]] || return 1
+    if plain_proxy_structured_marker_is_valid "${takeover_state_file}"; then
+      return 1
+    fi
+    if ! takeover_count=$(config_protocol_inbound_count "${instance_protocol}" "${SINGBOX_CONFIG_FILE}"); then
+      return 1
+    fi
+    [[ "${takeover_count}" =~ ^[0-9]+$ && "${takeover_count}" -gt 0 ]] || return 1
+    structured_instance_store_empty_json "${instance_protocol}" > "${lock_dir}/before.json" || return $?
+    current_revision=0
   elif protocol_state_exists "${instance_protocol}"; then
     if [[ "${instance_protocol}" == mixed ]]; then
       [[ ! -e "$(mixed_structured_store_file)" ]] || return 1
@@ -31899,6 +31935,16 @@ apply_plain_proxy_instance_change() (
       revision=${current_revision}; noop=y; return 0
     fi
     jq '.revision=1' "${lock_dir}/before.json" > "${lock_dir}/after.json" || return $?
+  elif [[ "${operation}" == rebuild ]]; then
+    [[ "${current_revision}" -lt 9007199254740991 ]] || return 1
+    jq --argjson revision "$((current_revision + 1))" '.revision=$revision' \
+      "${lock_dir}/before.json" > "${lock_dir}/after.json" || return $?
+  elif [[ "${operation}" == takeover ]]; then
+    plain_proxy_config_store_candidate "${instance_protocol}" "${SINGBOX_CONFIG_FILE}" > "${lock_dir}/after.json" || return $?
+    if [[ "${allow_public}" != y ]]; then
+      jq -e 'all(.instances[]; .listen.address == "::1" or (.listen.address | test("^127\\.")))' \
+        "${lock_dir}/after.json" >/dev/null 2>&1 || return 1
+    fi
   else
     if [[ "${operation}" == create || "${operation}" == replace ]]; then
       [[ -f "${input}" && ! -L "${input}" ]] || return 1
@@ -31919,8 +31965,16 @@ apply_plain_proxy_instance_change() (
   if [[ "${revision}" == "${current_revision}" ]]; then noop=y; return 0; fi
   jq --argjson revision "${revision}" '.new_revision=$revision' "${lock_dir}/transaction.json" > "${lock_dir}/transaction.next" || return $?
   mv -f "${lock_dir}/transaction.next" "${lock_dir}/transaction.json" || return $?
-  plain_proxy_instance_config_candidate "${instance_protocol}" "${SINGBOX_CONFIG_FILE}" "${lock_dir}/before.json" "${lock_dir}/after.json" \
-    > "${lock_dir}/config.json" || return $?
+  if [[ "${operation}" == takeover ]]; then
+    # Import never rewrites the live configuration.  The collector above has
+    # already rejected lossy fields; keeping the byte-identical candidate
+    # makes takeover an auditable state adoption rather than a regeneration.
+    cp -p -- "${SINGBOX_CONFIG_FILE}" "${lock_dir}/config.json" || return $?
+    [[ "$(stat -c %s "${lock_dir}/config.json")" -le 4194304 ]] || return 1
+  else
+    plain_proxy_instance_config_candidate "${instance_protocol}" "${SINGBOX_CONFIG_FILE}" "${lock_dir}/before.json" "${lock_dir}/after.json" \
+      > "${lock_dir}/config.json" || return $?
+  fi
   validate_managed_component_graph "${lock_dir}/config.json" || return $?
   validate_managed_listener_resources "${lock_dir}/config.json" || return $?
   "${SINGBOX_BIN_PATH}" check -c "${lock_dir}/config.json" >&2 || return $?
@@ -31939,7 +31993,8 @@ apply_plain_proxy_instance_change() (
     persist_file_backup "$(protocol_state_file "${instance_protocol}")" "$(protocol_state_file "${instance_protocol}").bak" || return $?
     rm -f -- "$(protocol_state_file "${instance_protocol}")" || return $?
   else
-    publish_structured_instance_store "${instance_protocol}" "${lock_dir}/after.json" "${current_revision}" || return $?
+    publish_structured_instance_store "${instance_protocol}" "${lock_dir}/after.json" "${current_revision}" \
+      "$([[ "${operation}" == rebuild ]] && printf rebuild || printf '')" || return $?
     save_plain_proxy_structured_marker "${instance_protocol}" || return $?
   fi
   # Match the live config's protocol ordering, retaining every non-Mixed role.
@@ -32201,9 +32256,195 @@ agent_component_cli() {
   return 1
 }
 
+agent_instance_protocol_supported() {
+  case "${1:-}" in
+    vless-reality|mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+agent_instance_store_record_json() {
+  local protocol=${1:-} instance_id=${2:-} schema store_file inbound_json address port tag
+
+  protocol=$(normalize_protocol_id "${protocol}") || return 1
+  schema=$(protocol_instance_state_schema "${protocol}") || return 1
+  if [[ "${schema}" == 2 && "${protocol}" != vless-reality ]]; then
+    store_file=$(plain_proxy_structured_store_file "${protocol}") || return 1
+    jq -ce --arg id "${instance_id}" '.instances[] | select(.id == $id)' "${store_file}"
+    return $?
+  fi
+  if [[ "${protocol}" == vless-reality ]]; then
+    tag=${SB_VLESS_INBOUND_TAG:-}
+    [[ -n "${tag}" ]] || tag=$(vless_reality_inbound_tag_for_instance "${instance_id}") || return 1
+    inbound_json=$(jq -c --arg tag "${tag}" '.inbounds[]? | select(.tag == $tag)' "${SINGBOX_CONFIG_FILE}") || return 1
+    address=$(jq -r '.listen // ""' <<< "${inbound_json}") || return 1
+    port=$(jq -r '.listen_port // 0' <<< "${inbound_json}") || return 1
+    jq -cn \
+      --arg id "${SB_VLESS_INSTANCE_ID:-${instance_id}}" \
+      --arg name "${SB_NODE_NAME:-}" \
+      --arg tag "${tag}" \
+      --arg address "${address}" \
+      --arg port "${port}" \
+      --arg uuid "${SB_UUID:-}" \
+      --arg sni "${SB_SNI:-}" \
+      --arg short_id_1 "${SB_SHORT_ID_1:-}" \
+      --arg short_id_2 "${SB_SHORT_ID_2:-}" \
+      --arg policy "${SB_OUTBOUND_POLICY:-default}" \
+      '{id:$id,name:$name,protocol:"vless-reality",tag:$tag,listen:{address:$address,port:($port|tonumber)},authentication:{uuid:$uuid},tls:{server_name:$sni,short_id:[$short_id_1,$short_id_2]},outbound_policy:$policy}'
+    return $?
+  fi
+  jq -cn --arg id "${instance_id}" --arg protocol "${protocol}" \
+    '{id:$id,protocol:$protocol,legacy_state:true}'
+}
+
+agent_instance_safe_record_json() {
+  local protocol=${1:-} instance_id=${2:-} record
+
+  record=$(agent_instance_store_record_json "${protocol}" "${instance_id}") || return 1
+  jq -c '
+    del(
+      .authentication.password,
+      .authentication.psk,
+      .authentication.username,
+      .authentication.uuid,
+      .authentication.users[]?.password,
+      .authentication.users[]?.username,
+      .authentication.users[]?.uuid,
+      .authentication.users[]?.auth_str,
+      .authentication.users[]?.userkey,
+      .authentication.users[]?.private_key,
+      .tls.key_path,
+      .tls.short_id,
+      .client_tls.key_path
+    )
+  ' <<< "${record}"
+}
+
+agent_instance_current_revision_json() {
+  local protocol=${1:-} schema store_file
+
+  protocol=$(normalize_protocol_id "${protocol}") || return 1
+  schema=$(protocol_instance_state_schema "${protocol}") || return 1
+  if [[ "${schema}" == 2 && "${protocol}" != vless-reality ]]; then
+    store_file=$(plain_proxy_structured_store_file "${protocol}") || return 1
+    jq -er '.revision' "${store_file}"
+  else
+    printf 'null\n'
+  fi
+}
+
+agent_instance_read_cli() {
+  local operation=${1:-} protocol=${2:-} expected="" instance_id="" json=n
+  local indexed_protocols current_revision summary safe_record check_json check_status=0
+  local state_matches=false api_protocol record_json connection_json service_state
+  local indexed_protocol_array=()
+
+  shift 2
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) [[ "${json}" == n ]] || break; json=y; shift ;;
+      --expected-revision) [[ $# -ge 2 && -z "${expected}" ]] || break; expected=$2; shift 2 ;;
+      --id) [[ $# -ge 2 && -z "${instance_id}" ]] || break; instance_id=$2; shift 2 ;;
+      *) break ;;
+    esac
+  done
+  protocol=$(normalize_protocol_id "${protocol}") || {
+    agent_json_error invalid_arguments "实例协议无效；未读取。"; return 1;
+  }
+  agent_instance_protocol_supported "${protocol}" || {
+    agent_json_error invalid_arguments "实例协议不支持该只读入口；未读取。"; return 1;
+  }
+  [[ $# -eq 0 && "${json}" == y ]] || {
+    agent_json_error invalid_arguments "用法: instance view|diagnose|export 协议 --json [--id ID] [--expected-revision N]"; return 1;
+  }
+  if [[ -n "${expected}" && ! "${expected}" =~ ^(0|[1-9][0-9]{0,15})$ ]]; then
+    agent_json_error invalid_arguments "revision 格式无效；未读取。"; return 1
+  fi
+  if ! structured_instance_store_revision_arg "${expected:-0}" >/dev/null; then
+    agent_json_error invalid_arguments "revision 超出安全整数范围；未读取。"; return 1;
+  fi
+  indexed_protocols=$(agent_trusted_indexed_protocols_raw) || {
+    agent_json_error protocol_state_untrusted "协议索引或 live 配置无法完整读取；未读取实例。"; return 1;
+  }
+  mapfile -t indexed_protocol_array <<< "${indexed_protocols}"
+  protocol_array_contains "${protocol}" "${indexed_protocol_array[@]}" || {
+    agent_json_error protocol_not_installed "协议未安装或未被当前索引信任；未读取。"; return 1;
+  }
+  if [[ -z "${instance_id}" ]]; then
+    instance_id=$(protocol_default_instance_id "${protocol}") || {
+      agent_json_error instance_not_found "未找到该协议的默认实例；未读取。"; return 1;
+    }
+  fi
+  load_protocol_instance_state "${protocol}" "${instance_id}" || {
+    agent_json_error instance_not_found "实例不存在或状态无法安全读取；未读取。"; return 1;
+  }
+  current_revision=$(agent_instance_current_revision_json "${protocol}") || {
+    agent_json_error protocol_state_untrusted "实例 revision 无法安全读取；未读取。"; return 1;
+  }
+  if [[ -n "${expected}" && "${current_revision}" != null && "${expected}" != "${current_revision}" ]]; then
+    agent_json_error revision_mismatch "实例 state revision 不匹配；未读取。"; return 1;
+  fi
+  if [[ -n "${expected}" && "${current_revision}" == null && "${expected}" != 0 ]]; then
+    agent_json_error revision_mismatch "该实例没有可比较的 typed revision；未读取。"; return 1;
+  fi
+  api_protocol=$(agent_protocol_id "${protocol}") || return 1
+  summary=$(agent_node_summary_json_for_current_protocol "127.0.0.1") || {
+    agent_json_error instance_view_failed "实例摘要无法安全读取；未返回部分凭据。"; return 1;
+  }
+  safe_record=$(agent_instance_safe_record_json "${protocol}" "${instance_id}") || {
+    agent_json_error instance_view_failed "实例记录无法安全读取；未返回部分凭据。"; return 1;
+  }
+  case "${operation}" in
+    view)
+      jq -n --arg protocol "${api_protocol}" --arg id "${instance_id}" \
+        --argjson revision "${current_revision}" --argjson summary "${summary}" \
+        --argjson record "${safe_record}" \
+        '{action:"instance-view",protocol:$protocol,instance_id:$id,revision:$revision,instance:$summary,record:$record,sensitive:false}'
+      ;;
+    export)
+      connection_json=$(agent_link_json_for_current_protocol "127.0.0.1") || {
+        agent_json_error instance_export_failed "实例连接材料无法安全生成；未返回部分导出。"; return 1;
+      }
+      record_json=$(agent_instance_store_record_json "${protocol}" "${instance_id}") || {
+        agent_json_error instance_export_failed "实例敏感记录无法安全读取；未返回部分导出。"; return 1;
+      }
+      jq -n --arg protocol "${api_protocol}" --arg id "${instance_id}" \
+        --argjson revision "${current_revision}" --argjson record "${record_json}" \
+        --argjson connection "${connection_json}" \
+        '{action:"instance-export",protocol:$protocol,instance_id:$id,revision:$revision,sensitive:true,record:$record,connection:$connection}'
+      ;;
+    diagnose)
+      if check_json=$(agent_singbox_check_json); then check_status=0; else check_status=$?; fi
+      if protocol_state_matches_config "${protocol}" >/dev/null 2>&1; then state_matches=true; fi
+      if service_state=$(systemctl is-active sing-box 2>/dev/null); then
+        :
+      else
+        service_state=${service_state:-unknown}
+      fi
+      jq -n --arg protocol "${api_protocol}" --arg id "${instance_id}" \
+        --argjson revision "${current_revision}" --argjson summary "${summary}" \
+        --argjson record "${safe_record}" --argjson check "${check_json}" \
+        --arg service_state "${service_state}" --argjson state_matches "${state_matches}" \
+        --argjson check_status "${check_status}" \
+        '{action:"instance-diagnose",protocol:$protocol,instance_id:$id,revision:$revision,instance:$summary,record:$record,state:{matches_config:$state_matches},service:{active_state:$service_state},check:$check,check_exit_code:$check_status,sensitive:false}'
+      [[ "${check_status}" == 0 && "${state_matches}" == true ]]
+      ;;
+    *)
+      agent_json_error invalid_arguments "未知实例只读操作；未读取。"; return 1 ;;
+  esac
+}
+
 agent_instance_cli() {
   local operation=${1:-} protocol=${2:-} expected="" input="" instance_id="" json=n confirmed=n allow_public=n
-  [[ $# -ge 2 ]] || { agent_json_error invalid_arguments "用法: instance 操作 mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N [--file 文件 | --id ID]"; return 1; }
+  if [[ "${operation}" == view || "${operation}" == diagnose || "${operation}" == export ]]; then
+    agent_instance_read_cli "${operation}" "${protocol}" "${@:3}"
+    return $?
+  fi
+  [[ $# -ge 2 ]] || { agent_json_error invalid_arguments "用法: instance 操作 mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json [--yes --expected-revision N] [--file 文件 | --id ID]"; return 1; }
   shift 2
   protocol=$(normalize_protocol_id "${protocol}") || {
     agent_json_error invalid_arguments "实例协议无效；未修改。"; return 1;
@@ -32229,11 +32470,20 @@ agent_instance_cli() {
     agent_json_error invalid_arguments "只有 Mixed 提供 legacy schema 1 迁移；SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS/AnyTLS/Hysteria2/Snell/TUIC/Hysteria/NaiveProxy/ShadowTLS 使用 schema 2，已有 live 配置请使用接管入口。"
     return 1
   fi
+  if [[ "${operation}" == rebuild || "${operation}" == takeover ]]; then
+    [[ -n "${expected}" ]] || {
+      agent_json_error invalid_arguments "rebuild/takeover 需要 --expected-revision N。"; return 1;
+    }
+  fi
+  if [[ "${operation}" == rebuild && "${allow_public}" == y ]]; then
+    agent_json_error invalid_arguments "rebuild 不改变监听暴露，不接收 --allow-public。"; return 1
+  fi
   [[ "${confirmed}" == y ]] || { agent_json_error confirmation_required "实例写操作需要 --yes；非回环入口另需 --allow-public。"; return 1; }
   case "${operation}" in
     create|replace) [[ -n "${input}" && -z "${instance_id}" ]] || { agent_json_error invalid_arguments "create/replace 需要 --file 类型化实例记录。"; return 1; } ;;
     delete|default) [[ -z "${input}" && -n "${instance_id}" && "${allow_public}" == n ]] || { agent_json_error invalid_arguments "delete/default 需要 --id。"; return 1; }; input=${instance_id} ;;
-    migrate|recover) [[ -z "${input}${instance_id}" && "${allow_public}" == n ]] || { agent_json_error invalid_arguments "migrate/recover 不接收实例参数。"; return 1; } ;;
+    migrate|recover|rebuild) [[ -z "${input}${instance_id}" && "${allow_public}" == n ]] || { agent_json_error invalid_arguments "migrate/recover/rebuild 不接收实例参数。"; return 1; } ;;
+    takeover) [[ -z "${input}${instance_id}" ]] || { agent_json_error invalid_arguments "takeover 不接收 --file 或 --id；可选 --allow-public。"; return 1; } ;;
     *) agent_json_error invalid_arguments "未知实例操作。"; return 1 ;;
   esac
   if [[ "${operation}" == recover ]]; then
@@ -32385,7 +32635,22 @@ agent_dispatch() {
   fi
 
   case "${1:-}" in
-    instance) agent_cli "$@" ;;
+    instance)
+      case "${2:-}" in
+        view|diagnose|export)
+          (
+            if ! acquire_managed_write_lock shared; then
+              agent_cli_error "instance" instance_write_busy "配置正在被管理进程使用，未返回部分实例状态。"; return 1
+            fi
+            if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
+              agent_cli_error "instance" instance_transaction_pending "存在未完成的实例事务；请先检查并恢复。"; return 1
+            fi
+            agent_cli "$@"
+          )
+          ;;
+        *) agent_cli "$@" ;;
+      esac
+      ;;
     component)
       case "${2:-}" in
         diagnose) (
@@ -34613,7 +34878,12 @@ publish_structured_instance_store() (
   old_semantics=$(jq -cS '{default_instance_id,instances}' <<< "${current_json}") || return $?
   new_semantics=$(jq -cS '{default_instance_id,instances}' "${staged}") || return $?
   if [[ "${old_semantics}" == "${new_semantics}" ]]; then
-    if [[ "${activation}" == legacy-empty-activation && "${had_target}" == n &&
+    if [[ "${activation}" == rebuild ]]; then
+      # A rebuild is an intentional repair transaction.  It keeps the typed
+      # semantics byte-for-byte stable while advancing the CAS revision so
+      # observers can distinguish the repaired config from the drifted one.
+      :
+    elif [[ "${activation}" == legacy-empty-activation && "${had_target}" == n &&
           "${current_revision}" == 0 && "${candidate_revision}" == 1 ]] &&
        protocol_state_exists mixed && [[ "$(protocol_instance_state_schema mixed)" == 1 ]]; then
       # Deleting a legacy singleton is a real external lifecycle change even
