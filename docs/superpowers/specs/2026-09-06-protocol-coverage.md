@@ -585,3 +585,23 @@ SOCKS、HTTP、Shadowsocks、V2Ray transport、Trojan、VMess、VLESS plain、An
 本次命令按设计跳过 Docker 远程阶段；远程/隔离容器证据仍引用
 `dev/verification-runs/20260923194712`。OpenVPN 系统/TUN、宿主透明策略、外部认证、公网、
 生产、真实 SubMan 及 HTTPUpgrade/WS early-data 的 blocked/不可用路径仍保持原有边界。
+
+## 2026-09-24：结构化实例统一生命周期契约
+
+普通代理实例的覆盖矩阵新增统一 Agent 生命周期列：
+
+| 角色 | 协议范围 | 只读查看/诊断/导出 | 写入生命周期 | 状态与安全边界 |
+|---|---|---|---|---|
+| structured inbound | Mixed、SOCKS、HTTP、Shadowsocks、Trojan、VMess、VLESS plain、AnyTLS、Hysteria2、Snell、TUIC、Hysteria v1、NaiveProxy、ShadowTLS | `instance view|diagnose|export <protocol> --json [--id ID] [--expected-revision N]`；view/diagnose 脱敏，export 标记 sensitive | `create/replace/delete/default/rebuild/takeover/recover`；Mixed 另有 `migrate` | schema-2 marker + schema-1 JSON store；所有写入精确 CAS、状态快照、candidate graph/listener check、目标核心 `sing-box check`、受管 firewall journal、服务 postcheck 与持久 result；rebuild 修复漂移并递增 revision；takeover 仅 revision 0 接管没有 active typed marker/store 的可无损 live inventory，非回环需 `--allow-public` |
+
+`view` 和 `diagnose` 通过共享管理锁读取单实例，不触发 legacy migration、凭据生成或 live
+配置重写；diagnose 还返回当前实例的状态/配置匹配、服务活动状态和 `sing-box check` 结果。
+`export` 返回 typed record 与连接材料，属于敏感操作；不会返回服务端私钥。`rebuild` 明确
+跳过 live-match 前置条件但不放宽字段/引用/核心校验，发布前仍必须通过原子状态/config/
+资源事务。`takeover` 拒绝 active store、孤立或符号链接状态、空 inventory、公开监听确认缺失
+及任何 adapter 无法保真的字段；成功时保持 live `config.json` 字节不变，只发布 typed state
+和协议 marker/index。新增回归 `tests/instance_rebuild_takeover.sh` 覆盖公开确认、凭据保留、
+revision 修复、active takeover/stale CAS 失败以及 read-only 脱敏/export；VLESS + REALITY 的
+回归还检查 UUID/short ID 脱敏。最终双版本本地矩阵位于 `dev/verification-runs/20260924084053`，
+Docker 远程 16 场景位于 `dev/verification-runs/20260924062005`；这些证据属于本地/隔离
+事务与协议验证，不替代公网、生产、外部认证、真实 SubMan 或完整协议数据面验证。

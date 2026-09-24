@@ -1642,3 +1642,30 @@ V2Ray transport、Trojan、VMess、VLESS plain、AnyTLS 及其余已实现协议
 本轮仍不宣称 Docker 远程阶段、OpenVPN 系统/TUN、宿主透明控制、外部认证、公网/生产、
 真实 SubMan 或完整协议目标；HTTPUpgrade 与 WS early-data 继续按运行时前置条件显式
 blocked，未把 skip/blocked 当作成功。
+
+### 2026-09-24：普通代理实例 rebuild/takeover 与 read-only surface
+
+审计统一实例生命周期时发现结构化普通代理已经具备 create/replace/delete/default/recover，
+但缺少与高级 component 对齐的显式 `rebuild`/`takeover` 事务入口，且 Agent 只能通过全局
+`nodes`/`links` 读取实例。现新增 `sbv agent instance view|diagnose|export`：view 与 diagnose
+在共享管理锁下读取单实例并脱敏，diagnose 额外返回该实例的状态/配置匹配、服务活动状态和
+当前配置 `sing-box check`，export 明确标记敏感并返回完整 typed record 与连接材料。只读路径
+不会迁移 legacy 状态、重写 live 配置或生成凭据；typed revision 可作为可选 CAS 读条件。
+
+`rebuild` 只允许 active typed state，跳过 live projection 的匹配前置条件，从受管记录重建
+配置并递增 revision；候选 listener/reference/core check、防火墙 journal、状态快照、服务
+重启、失败回滚和持久 result 仍复用现有 `apply_plain_proxy_instance_change`。`takeover` 只
+允许无 active marker/store 的 live plain-proxy inventory，从虚拟 revision 0 收集每个可无损
+表达的 inbound，默认只接受 loopback；非回环必须 `--allow-public`。它拒绝已有 active typed
+身份、孤立/符号链接 store、空 inventory 和未知/不可表达字段，接管成功时保留 live
+`config.json` 字节并只发布 typed state/index/marker，再经过同一 graph/listener/check/resource/
+service postcheck。active takeover 与 stale revision 均 fail closed。
+
+新增 `tests/instance_rebuild_takeover.sh` 覆盖：无确认的公开接管不变更且不泄漏凭据；带
+`--allow-public` 的 revision 0 takeover 保留密码和配置字节；live 端口漂移由 rebuild 修复
+并提交 revision 2；active takeover 和旧 revision rebuild 均拒绝；view/diagnose 不返回密码，
+敏感 export 返回 typed record。VLESS + REALITY 的只读回归还验证 UUID/short ID 脱敏与敏感
+export。该脚本使用 stub 1.14.1 core，是本地事务/安全证据；最终双版本本地门禁位于
+`dev/verification-runs/20260924084053`，Docker 远程 16 场景位于
+`dev/verification-runs/20260924062005`。没有因此宣称公网、生产、外部认证、真实 SubMan
+或全协议目标完成。

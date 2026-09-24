@@ -494,7 +494,7 @@ Unknown state IDs or future schema versions block reconstruction while preservin
 
 Instance identity is scoped by protocol and instance ID. Shared read-only adapters expose legacy singleton files as `main` and retain REALITY's existing IDs/default. Agent nodes/links and client rendering for Mixed, standalone SOCKS, HTTP, Shadowsocks, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy and ShadowTLS expose each structured instance and its revision without migrating legacy state or preparing credentials. Existing public Agent fields remain unchanged; the documented SOCKS, HTTP, Shadowsocks, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy and ShadowTLS lifecycle/runtime surfaces are covered by the focused evidence below.
 
-The structured stores under `protocols/instances/<protocol>.json` have typed Mixed, standalone SOCKS, HTTP, Shadowsocks, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy and ShadowTLS validators/renderers and are connected to the guarded instance lifecycle. Use `sbv agent instance create|replace|delete|default|migrate|recover mixed --json --yes --expected-revision N` for Mixed; standalone SOCKS, HTTP, Shadowsocks, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy and ShadowTLS support the same operations except `migrate`, which is rejected because they have no legacy `.env` migration path. Existing live SOCKS/HTTP/Shadowsocks/Trojan/VMess configuration uses takeover; Hysteria2 and AnyTLS takeover accepts only the typed manual-TLS subset and preserves ACME/provider legacy state when that subset is not lossless; Hysteria v1 takeover accepts only the typed manual-TLS QUIC subset; Snell takeover accepts only its typed v5/v6 fields; TUIC takeover accepts only the typed manual-TLS QUIC subset; NaiveProxy takeover accepts only the typed manual-TLS TCP/UDP subset; ShadowTLS takeover accepts only the typed composite outer-plus-loopback-Mixed subset. Create/replace require a complete private `--file` record and delete/default require `--id`. Do not hand-edit stores or treat file rollback as a complete service/resource transaction; lifecycle writes use the managed-state snapshot, configuration publication, listener/resource checks and persistent recovery boundaries. See the [implementation record](../superpowers/plans/2026-09-06-unified-protocol-management.md) for the evidence boundary and its limits.
+The structured stores under `protocols/instances/<protocol>.json` have typed Mixed, standalone SOCKS, HTTP, Shadowsocks, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy and ShadowTLS validators/renderers and are connected to the guarded instance lifecycle. Read operations use `sbv agent instance view|diagnose|export <protocol> --json [--id ID] [--expected-revision N]`; `view` and `diagnose` use a shared lock and redact credentials, while `export` is sensitive and returns the typed record plus connection material. Use `sbv agent instance create|replace|delete|default|rebuild|takeover|migrate|recover mixed --json --yes --expected-revision N` for Mixed; standalone SOCKS, HTTP, Shadowsocks, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy and ShadowTLS support the same write operations except `migrate`, which is rejected because they have no legacy `.env` migration path. `rebuild` repairs a managed projection drift through the normal candidate, listener/resource, target-core check, firewall journal, service and rollback phases, while `takeover` starts at revision 0 only when no active typed marker/store exists and imports the complete losslessly representable live inventory; non-loopback takeover requires `--allow-public`. Existing live SOCKS/HTTP/Shadowsocks/Trojan/VMess configuration uses takeover; Hysteria2 and AnyTLS takeover accepts only the typed manual-TLS subset and preserves ACME/provider legacy state when that subset is not lossless; Hysteria v1 takeover accepts only the typed manual-TLS QUIC subset; Snell takeover accepts only its typed v5/v6 fields; TUIC takeover accepts only the typed manual-TLS QUIC subset; NaiveProxy takeover accepts only the typed manual-TLS TCP/UDP subset; ShadowTLS takeover accepts only the typed composite outer-plus-loopback-Mixed subset. Create/replace require a complete private `--file` record and delete/default require `--id`. Do not hand-edit stores or treat file rollback as a complete service/resource transaction; lifecycle writes use the managed-state snapshot, configuration publication, listener/resource checks and persistent recovery boundaries. See the [implementation record](../superpowers/plans/2026-09-06-unified-protocol-management.md) for the evidence boundary and its limits.
 
 Client export includes Mixed and standalone SOCKS as SOCKS5 outbounds with explicit UoT v2, HTTP CONNECT as documented in its own section, and Shadowsocks as full JSON preserving its network/authentication fields. It preserves stored authentication mode and credentials; missing or invalid port/authentication state aborts the whole export without rotating the existing file or backup. `nodes.client_exportable` and `capabilities` reflect this. Export responses include a plaintext transport warning where applicable: SOCKS5 credentials and unencrypted application traffic are exposed on the proxy hop without TLS, so use a trusted network or protected tunnel. UoT encapsulates UDP over TCP, does not encrypt it, and requires no additional fixed server UDP listener. Standalone SOCKS has no HTTP/TLS surface or SubMan sync; its lifecycle/runtime/export paths passed the final gate, while public native UDP remains unverified. The final Shadowsocks export/runtime evidence covers its typed full-JSON path and documented warnings; it does not imply unsupported fields.
 
@@ -658,7 +658,7 @@ Keep historical functions in scope when planning or documenting a change:
 
 | Area | Current capability | Agent route |
 |---|---|---|
-| Protocols | VLESS REALITY, Mixed HTTP/SOCKS, standalone SOCKS, standalone HTTP, Shadowsocks, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy, ShadowTLS; protocols can coexist | Discover with `capabilities`; summaries with `nodes`; general installation uses menus; typed Mixed/SOCKS/HTTP/Shadowsocks/Trojan/VMess/Hysteria2/Hysteria v1/AnyTLS/Snell/TUIC/NaiveProxy/ShadowTLS have Agent instance create/replace/delete/default/recover commands (Mixed additionally supports migrate) |
+| Protocols | VLESS REALITY, Mixed HTTP/SOCKS, standalone SOCKS, standalone HTTP, Shadowsocks, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy, ShadowTLS; protocols can coexist | Discover with `capabilities`; summaries with `nodes`; general installation uses menus; typed Mixed/SOCKS/HTTP/Shadowsocks/Trojan/VMess/Hysteria2/Hysteria v1/AnyTLS/Snell/TUIC/NaiveProxy/ShadowTLS have shared instance `view|diagnose|export` reads plus Agent `create/replace/delete/default/rebuild/takeover/recover` writes (Mixed additionally supports migrate) |
 | REALITY | Multiple instances, independent ports/ShortID/names, per-instance outbound policy and optional upload/download QoS | Read with `nodes`; mutate through the interactive protocol menu |
 | TLS | Hysteria2/AnyTLS ACME HTTP-01, Cloudflare DNS-01, or manual certificate paths; Hysteria v1, NaiveProxy, standalone HTTP, Trojan and TUIC use manual certificate paths; Trojan/TUIC/Hysteria v1/NaiveProxy explicitly select certificate or system client trust | Read warnings/check output; mutate interactively |
 | Warp | Account registration, enable/disable, all/selective routing, built-in/custom domains, local/remote rule sets | Read with `warp`; mutate through menu 13 |
@@ -738,6 +738,12 @@ sbv agent doctor --json
 sbv agent service restart --json --yes
 sbv agent warp --json
 sbv agent subman-sync --json
+sbv agent instance view vless-reality --json --id ID [--expected-revision N]
+sbv agent instance view socks --json --id ID [--expected-revision N]
+sbv agent instance diagnose socks --json --id ID [--expected-revision N]
+sbv agent instance export socks --json --id ID [--expected-revision N]
+sbv agent instance rebuild socks --json --yes --expected-revision N
+sbv agent instance takeover socks --json --yes --expected-revision 0 [--allow-public]
 sbv agent instance create mixed|socks|http|shadowsocks|trojan|vmess|hy2|hysteria|anytls|snell|tuic --json --yes --expected-revision N --file record.json
 sbv agent instance replace mixed|socks|http|shadowsocks|trojan|vmess|hy2|hysteria|anytls|snell|tuic --json --yes --expected-revision N --file record.json
 sbv agent instance delete mixed|socks|http|shadowsocks|trojan|vmess|hy2|hysteria|anytls|snell|tuic --json --yes --expected-revision N --id ID
@@ -820,6 +826,12 @@ sing-box check -c /root/sing-box-vps/config.json
 Use `nodes --json` for log-safe summaries. Use `links --json` only in trusted contexts because it includes full share links. If QoS or instance membership changes on production, use the production gate before running the interactive menu or guarded service mutations.
 
 ## Standalone SOCKS Inbound
+
+All structured protocol sections below inherit the common Agent read/write surface:
+`view|diagnose|export` are read-only/sensitive reads, while `create|replace|delete|default|rebuild|takeover|recover`
+are revision/CAS-guarded writes. A section's shorter command block lists its protocol-specific
+record shape; it does not remove the common rebuild/takeover or read-only operations. Only Mixed
+also accepts `migrate`.
 
 Mixed/SOCKS URI userinfo is percent-encoded, preserving reserved characters and UTF-8 bytes without changing stored credentials. HTTP Basic excludes colon-containing usernames and ASCII control characters ([RFC 7617, section 2](https://www.rfc-editor.org/rfc/rfc7617#section-2)); for such Mixed credentials, `links.http` is absent and `warnings[].code=mixed_http_auth_unrepresentable`. SOCKS5 remains available. The additive `socks5_uri_transport_options_omitted` warning means a SOCKS5 URI does not carry UoT v2 client options; use `export-client` JSON instead of treating a URI as a full configuration. Percent encoding is not encryption, and links remain sensitive.
 
@@ -1410,6 +1422,40 @@ Shadowsocks、V2Ray transport、Trojan、VMess、VLESS plain、AnyTLS 及已实�
 
 不要把这次本地结果扩展为 OpenVPN 系统/TUN、宿主透明控制、外部认证、公网/生产或真实
 SubMan 证明；HTTPUpgrade 与 WS early-data 仍按运行时限制记录为 blocked。
+
+## 2026-09-24：统一实例 read/rebuild/takeover 生命周期
+
+普通代理实例的 Agent 只读入口与组件入口保持相同的 stdout envelope：
+
+```bash
+sbv agent instance view socks --json --id ID [--expected-revision N]
+sbv agent instance diagnose socks --json --id ID [--expected-revision N]
+sbv agent instance export socks --json --id ID [--expected-revision N]
+```
+
+`view` 返回不含密码、UUID、PSK、私钥或用户认证材料的实例摘要和安全记录；`diagnose`
+在共享锁下额外执行当前配置的 `sing-box check`、实例状态/配置匹配和服务活动状态，失败时
+保留结构化非零 envelope；`export` 标记 `sensitive:true`，返回完整 typed record 与该实例的
+连接材料，只能在受信上下文使用。连接材料以 `127.0.0.1` 为本地基线，不代表公网地址或
+可达性。三者均不会隐式迁移 legacy 状态、重写配置或生成凭据。
+
+写入口的统一语义如下：
+
+```bash
+sbv agent instance rebuild socks --json --yes --expected-revision N
+sbv agent instance takeover socks --json --yes --expected-revision 0 [--allow-public]
+```
+
+`rebuild` 只对已 active 的 typed store 工作，跳过“live projection 必须先匹配”的前置条件，
+从受管记录重新渲染并递增 revision；其余写操作仍要求状态与 live 配置匹配。`takeover` 拒绝
+已 active 的 marker/store、孤立或符号链接状态、缺少协议入站和不能由 typed adapter 无损表达
+的字段；默认只接受 `127.0.0.0/8` 与 `::1`，公开监听必须显式 `--allow-public`。接管成功时
+候选配置保持现有 `config.json` 字节不变，仅通过完整校验、状态快照、监听/防火墙 journal、
+服务 postcheck 和 CAS 发布 typed store。`tests/instance_rebuild_takeover.sh` 覆盖公开确认、
+凭据保留、revision 修复、active takeover/stale CAS 拒绝、read-only 脱敏与敏感 export；这
+是本地 stub 核心证据；最终双版本本地门禁为 `dev/verification-runs/20260924084053`，
+Docker 远程 16 场景为 `dev/verification-runs/20260924062005`。两者均不代表公网、生产、
+外部认证或真实 SubMan。
 
 ## External Documentation
 
