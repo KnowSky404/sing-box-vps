@@ -56,8 +56,12 @@
 - 错误日志和提示必须脱敏，不得记录 Token、密码、完整 Authorization Header 或完整分享链接；信号中断也必须清理临时文件并说明目标是否发生变化。
 
 ## 5. 文件组织结构
+- `bootstrap.sh`: 远程安装/卸载入口；负责在私有临时目录中下载、校验并启动对应运行时脚本。
 - `install.sh`: 用户分发的一体化安装与管理脚本主入口，也是运行时单一真源。
+- `uninstall.sh`: 独立卸载入口；彻底卸载服务、核心、配置和全局 `sbv`。
 - `docs/`: 存放设计文档、实现计划等研发过程资料。
+- `docs/agents/`: Agent 能力索引、操作 runbook 和升级演练手册；命令面以 `sbv agent capabilities --json` 为准。
+- `skills/sing-box-vps-operator/`: 面向自动化操作者的读取顺序、生产门禁、验证和回滚规则。
 - `configs/`: 存放配置模板。
 - `utils/`: 存放通用工具函数（如颜色输出、系统检查）。
 

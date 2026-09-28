@@ -5,14 +5,21 @@ Purpose: one-script install and management tool for deploying sing-box on Linux 
 Primary language: Bash.
 Runtime source of truth: install.sh.
 Remote verification: Docker-based, auto-builds sing-box-vps-verify image.
-Agent protocol contract revision: 2026091205.
+Runtime baseline: script `2026092801`, sing-box support through `1.14.1`; use
+`sbv agent capabilities --json` and its `script_version` as the live contract
+authority.
 
-Current script version: 2026092203. The managed component registry now has
+Current script version: 2026092801. The managed component registry now has
 typed inline/local/remote route rule-set roles in the same schema-1 CAS,
 render, takeover, rebuild, drift-guard, and sensitive-export lifecycle. Inline
 rules are bounded matchers, local paths are external references, and remote
 HTTP(S) URLs may resolve to an enabled shared HTTP client on 1.14+. Rule sets
 are not share-link, ordinary client-export, or SubMan objects.
+
+The canonical remote entry is `bootstrap.sh`: it accepts `install` or
+`uninstall`, stages the selected runtime script in a private temporary
+directory, validates Bash syntax and project identity, then executes it. Use
+the staged flow from `README.md`; do not replace it with `curl | bash`.
 
 Script 2026091007 adds typed selector/urltest outbound-group contracts to the managed component generator, alongside the Tor/SSH contracts, TUN auto-route loop guard, durable crash recovery for managed advanced-component takeover/export/rebuild and CAS writes on top of the existing Hysteria v1/NaiveProxy/ShadowTLS adapters. Selector and URLTest records allow only their sing-box 1.14 member and group fields, require a non-empty unique outbound list, require selector `default` to name one of those members, bound URLTest `tolerance` to uint16, and expose only a redacted `member_count` in inventory. Tor records allow only the sing-box 1.14 `executable_path`, `extra_args`, `data_directory`, string-valued `torrc` map and Dial Fields; inventory reports `runtime_mode=external` or `embedded_unverified`, because embedded Tor requires a separately built `with_embedded_tor`+CGO binary. SSH records allow only the sing-box 1.14 SSH and Dial Fields, require password/private_key/private_key_path authentication, reject deprecated or unknown fields, and expose only `pinned`/`unverified` host-key status in metadata. An empty `host_key` remains upstream-compatible (sing-box accepts any host key) but is never presented as pinned. When an enabled TUN sets `auto_route=true`, generation adds `route.auto_detect_interface=true` unless an explicit safe `route.default_interface` or guard already exists; an explicit false guard without a default interface fails closed. This is a config-level guard, not a claim that host policy routing, nftables, or the transparent data plane is managed. Hysteria provides manual-TLS QUIC/UDP multi-instance and multi-user lifecycle, Agent-safe summaries, independent bandwidth/obfs/QUIC options, and per-user client outbound JSON; NaiveProxy provides manual-TLS TCP/UDP multi-instance and multi-user lifecycle, Agent-safe summaries, Naive/QUIC client options, and per-user client outbound JSON. ShadowTLS provides a composite ShadowTLS outer plus private loopback Mixed detour, v1/v2/v3 authentication, handshake mappings, and per-user outbound JSON. Hysteria v1 uses `auth_str` and a string obfs password; it is never flattened into Hysteria2 fields. Naive outbound requires an official `with_naive_outbound` build and runtime `libcronet.so`; its standard URI/QR/SubMan surfaces are intentionally unavailable. ShadowTLS has no lossless standard URI, QR, or SubMan path. Shared CAS lifecycle and menu/Agent integration preserve legacy AnyTLS ACME/provider and Hysteria2 ACME/provider state without lossy migration. Hysteria, AnyTLS, Snell, TUIC, NaiveProxy, and ShadowTLS have no standard URI or SubMan sync path. Plain VLESS remains unmanaged. HTTPUpgrade and WebSocket early data remain runtime-blocked. SOCKS outbound components now use a typed sing-box 1.14 server/version/auth, TCP/UDP network, UDP-over-TCP and shared Dial Field allowlist; deprecated `domain_strategy`, unknown fields, invalid versions/networks/ports and control characters are rejected before state/CAS or takeover publication, while credentials remain confined to sensitive component export. HTTP outbound components now enforce the sing-box 1.14 server/port/auth, TCP-only path/headers, outbound TLS (including nested ECH/uTLS/REALITY shapes), and shared Dial Field allowlist; unknown or deprecated nested fields and control characters fail before state/CAS or takeover publication, and credentials remain export-only. This increment does not complete the full protocol goal.
 
@@ -167,20 +174,26 @@ Agent CLI:
 - sbv agent warp --json: read-only Warp/account/routing summary.
 - sbv agent service restart --json --yes: guarded restart after config validation; production use requires approval.
 - sbv agent subman-sync --json: non-interactive SubMan node push; treat as sensitive and require configured /root/sing-box-vps/subman.env.
+- sbv agent component list|diagnose --json: read-only advanced-component inventory and diagnostics; output is metadata-only.
+- sbv agent component export --json --id ID [--expected-revision N]: sensitive complete component record for trusted callers.
+- sbv agent component recover|takeover|rebuild --json --yes --expected-revision N [--allow-public]: guarded component recovery or reconciliation; takeover/rebuild can affect the service.
+- sbv agent component create|replace|delete --json --yes --expected-revision N ...: choose one operation; guarded schema-1 component writes use persistent transactions and CAS.
+- sbv agent instance view|diagnose|export <protocol> --json [--id ID] [--expected-revision N]: typed instance reads; export is sensitive.
+- sbv agent instance create|replace|delete|default|rebuild|takeover|recover <protocol> --json --yes --expected-revision N ...: choose one operation; guarded typed instance lifecycle; `migrate` is supported only for `mixed`.
 
 Capability safety labels:
 - read-only: status, capabilities, upgrade-check, check, doctor, nodes, warp.
-- mutating: upgrade, service restart, export-client, subman-sync, component takeover/rebuild/create/replace/delete.
-- sensitive: links, export-client, subman-sync, component export; these may expose usable credentials or external node data.
+- mutating: upgrade, service restart, export-client, subman-sync, component recover/takeover/rebuild/create/replace/delete, and typed instance lifecycle writes.
+- sensitive: links, instance/component export, export-client, subman-sync; these may expose usable credentials or external node data.
 - instance <operation> socks|http|shadowsocks|trojan|vmess|hy2|hysteria|anytls|snell|tuic|naive|shadowtls: mutating, service-impacting and revision/CAS guarded. The typed SOCKS, HTTP, Shadowsocks, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy, and ShadowTLS lifecycle surfaces are covered by the recorded focused evidence; this does not mean the full protocol goal is complete.
-- interactive-only: fresh install, protocol changes, REALITY instance/QoS changes, Warp changes, BBR/system changes, media checks, takeover/repair, uninstall.
+- interactive-only: fresh install, general protocol changes, REALITY instance/QoS changes, Warp changes, BBR/system changes, media checks, and uninstall. Typed instance and advanced-component lifecycle commands are guarded JSON mutations with `--yes` and revision/CAS checks; they still require the same operator approval and production gate.
 
 Capability domains to preserve in documentation and tests:
 - protocols: VLESS REALITY, Mixed HTTP/SOCKS, standalone SOCKS, standalone HTTP, Shadowsocks, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy, ShadowTLS, coexistence; each listed surface remains bounded by its documented fields and evidence.
 - REALITY: multi-instance, per-instance port/ShortID/name/outbound, upload/download QoS.
 - TLS: ACME HTTP-01, Cloudflare DNS-01, manual certificates, Hysteria2 Ed25519 client warning.
 - routing/system: Warp all/selective routing, custom and local/remote rule sets, IPv4/IPv6/dual stack, DNS/outbound strategy, BBR.
-- operations: service lifecycle/logs, node/link/QR output, client export, SubMan, takeover/repair, core/script upgrade, core/script uninstall, typed Hysteria/Snell/TUIC/NaiveProxy/ShadowTLS instance transactions.
+- operations: service lifecycle/logs, node/link/QR output, client export, SubMan, typed instance and advanced-component takeover/rebuild/recovery, core/script upgrade, core/script uninstall, and typed Hysteria/Snell/TUIC/NaiveProxy/ShadowTLS instance transactions.
 
 SSH aliases:
 - sing-box-test: test VPS for validation.
@@ -230,3 +243,4 @@ Protocol registry:
 - Live inbound discovery is all-or-nothing. Unknown types, non-REALITY VLESS, duplicate single-instance protocols, or duplicate explicit tags make the instance incomplete and block reconciliation, takeover, regeneration, and partial Agent status/node/link output. The three Agent commands return `live_inbound_inventory_untrusted` without exposing a partial list. They also require an exact live-config/index set match and a complete base-state inventory, returning `protocol_index_untrusted` or `protocol_state_untrusted`; `nodes`/`links` additionally reject incomplete REALITY instance enumeration and discard rendered nodes if any later load or state restoration fails. This is an inbound-inventory guard, not proof that custom fields, outbounds, endpoints, or routes are losslessly managed.
 - Full-scope progress: docs/superpowers/plans/2026-09-06-unified-protocol-management.md; upstream evidence: docs/superpowers/specs/2026-09-06-protocol-coverage.md.
 - 2026-09-24 lifecycle evidence: final dual-core local matrix is dev/verification-runs/20260924084053 and the Docker remote 16-scenario run is dev/verification-runs/20260924062005; both retain the public/production/external-auth/real-SubMan boundaries.
+- 2026-09-28 runtime baseline: `install.sh` is `2026092801`, supports sing-box through `1.14.1`, and `bootstrap.sh` provides staged install and uninstall entry points. Component and typed-instance Agent writes use explicit confirmation, revision/CAS checks and persistent transaction recovery; local/Docker evidence remains separate from public reachability, production changes and real external sync.

@@ -7,7 +7,7 @@
 - 只读：`capabilities`, `upgrade-check`, `status`, `check`, `doctor`, `nodes`, `warp`。
 - 有副作用：`upgrade`, 服务重启、客户端导出、SubMan 同步。
 - 敏感：`links`, 客户端导出和 SubMan 输出包含可用连接材料。
-- 仅交互：安装/追加/修改/移除协议，REALITY 多实例与 QoS，Warp、BBR、媒体检测，接管/修复和卸载。
+- 仅交互：安装/追加/修改/移除一般协议，REALITY 多实例与 QoS，Warp、BBR、媒体检测和卸载。typed instance/component 的 takeover、rebuild、recover、create、replace、delete 是带 `--yes` 与 revision/CAS 的 Agent 变更，仍需同样的批准和生产门禁。
 
 生产主机必须先提交 operation plan 并等待明确批准。未知主机按生产处理。
 
@@ -28,6 +28,7 @@
 | BBR | 系统管理菜单 | 交互/变更 | sysctl 变更需计划与证据 |
 | 媒体检测 | 菜单 12 | 交互/外部网络 | 仅在获批环境执行，记录出口模式和结果 |
 | 接管/修复 | 菜单/交互 | 交互/高风险 | 先 check、备份，再恢复 service/binary/state |
+| 高级组件 | `agent component list|diagnose|export`；`create|replace|delete|takeover|rebuild|recover` | 读操作；导出敏感；写操作有副作用 | schema-1 revision/CAS、引用/监听校验、目标核心 check、持久事务恢复；导出不得写入共享日志 |
 | 客户端导出 | `agent export-client --json` | 变更+敏感 | 写文件、覆盖前备份、check 通过；不改 server config |
 | SubMan 同步 | `agent subman-sync --json` | 外部变更+敏感 | 需要凭据；记录稳定错误/重试语义，不记录 token/raw |
 | 服务 start/stop/restart | 菜单；`agent service restart --json --yes` | 变更 | restart 前 check；必须记录前后状态 |
@@ -48,7 +49,10 @@ sbv update sbv
 sbv agent capabilities --json | jq -e '.ok == true and (.script_version | tonumber) >= 2026090202'
 ```
 
-若旧脚本没有 `update sbv`、更新来源不可验证、版本仍低于 `2026090202`，立即停止，不要退回交互式核心升级。应由操作者先通过仓库 README 中的官方入口更新 `sbv`。
+若旧脚本没有 `update sbv`、更新来源不可验证、版本仍低于本演练所需的
+`2026090202`，立即停止，不要退回交互式核心升级。应由操作者先通过仓库
+README 中的官方入口更新 `sbv`；当前仓库基线为 `2026092801`，实际运行时
+应记录 `capabilities.script_version`，不要把手册中的最低门槛当成当前版本。
 
 ## 1. 只读预检
 
@@ -65,7 +69,7 @@ sbv agent check --json
 sbv agent doctor --json
 ```
 
-预检必须确认：实例 healthy、当前为 1.13.x、目标为 1.14.0、`ready=true`、`blockers=[]`、当前配置 check 通过、没有未处理的残缺状态，并记录完整 JSON 输出。`upgrade-check` 不下载目标二进制，所以此时 `target_binary_validation.performed=false` 是预期值；目标 1.14 校验在有备份的升级事务中、重启服务前完成。若命令不存在、输出不是合法 JSON、服务非 active、当前 check 失败或出现 blocker，立即终止。
+预检必须确认：实例 healthy、当前为 1.13.x、目标为固定演练版本 1.14.0、`ready=true`、`blockers=[]`、当前配置 check 通过、没有未处理的残缺状态，并记录完整 JSON 输出。当前脚本支持到 1.14.1，但本文件固定使用 1.14.0 复现升级路径。`upgrade-check` 不下载目标二进制，所以此时 `target_binary_validation.performed=false` 是预期值；目标 1.14 校验在有备份的升级事务中、重启服务前完成。若命令不存在、输出不是合法 JSON、服务非 active、当前 check 失败或出现 blocker，立即终止。
 
 ## 2. 升级前证据与批准门
 

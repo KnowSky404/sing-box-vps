@@ -9,7 +9,13 @@
 - 未预期异常：命令返回了未处理的非零状态，或状态机无法继续。事务 trap 记录阶段和退出码，但不记录完整 `BASH_COMMAND`；随后按是否已提交决定清理或回滚。
 - 信号中断：`INT`、`TERM`、`HUP` 分别按 `130`、`143`、`129` 传播。提交前只清理 staging；提交后先尝试回滚。trap 防重入，不调用会 `exit` 的旧 `log_error`。
 
-Bootstrap 与运行时是两个边界。Bootstrap 负责下载完整脚本、执行 `bash -n` 和项目身份校验；校验通过后才启动 `install.sh` 或 `uninstall.sh`。脚本未启动时，脚本内部 trap 不可能处理下载错误，因此 Bootstrap 必须自行返回 curl/校验退出码，并明确说明系统未发生变更。
+Bootstrap 与运行时是两个边界。`bootstrap.sh` 根据 `install` 或
+`uninstall` 选择完整脚本，在私有 `mktemp -d` 目录中下载，执行 `bash -n`
+和项目身份校验，校验通过后才启动 `install.sh` 或 `uninstall.sh`。脚本未
+启动时，脚本内部 trap 不可能处理下载错误，因此 Bootstrap 必须自行返回
+curl/校验退出码，并明确说明系统未发生变更。菜单里的“卸载 sing-box”只
+删除服务、核心和配置并保留 `sbv`；独立卸载脚本的 purge 还会删除全局
+`sbv`。
 
 ## `sbv` 自更新状态机
 
@@ -73,7 +79,7 @@ PRECHECK
 
 | 类型 | 当前调用 | 本轮边界 |
 | --- | --- | --- |
-| README Bootstrap | 下载到受控临时文件，执行 `bash -n` 和项目身份校验，最后才执行临时文件；不直接写安装最终路径 |
+| `bootstrap.sh` remote entry | 按 `install`/`uninstall` 选择脚本，下载到受控临时目录，执行 `bash -n` 和项目身份校验，最后才执行临时文件；不直接写安装最终路径 |
 | 运行时可执行 artifact | `stage_sbv_candidate_from_url()`、`download_shell_artifact_atomically()` | 已迁移到同目录 staging、校验和原子替换；不直接写最终执行路径 |
 | 只读 best-effort 查询 | `check_script_status()`、`probe_reality_sni_candidate()`、`get_public_ipv4()`、`get_public_ipv6()` | 不应改变配置；失败分别降级为无法检测、探测失败或空结果 |
 | API 读请求 | `get_latest_version()`、`subman_api_request()` 的 GET | 保留为后续迁移项；应补充统一 timeout、HTTP/JSON 分类和 unavailable 语义 |

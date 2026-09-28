@@ -19,7 +19,7 @@ bash -c 'set -euo pipefail; umask 077; t=$(mktemp); trap '\''rm -f -- "$t"'\'' E
 
 首段命令先把仓库内的 [bootstrap.sh](bootstrap.sh) 下载到权限受限的临时文件，检查 Bash 语法和项目身份，然后运行它。Bootstrap 再下载并校验 [install.sh](install.sh)，校验失败不会执行安装器；两层临时文件都会清理。下载来源是仓库 `main` 分支；如需先审查源码，可克隆仓库后运行 `sudo bash install.sh`。
 
-安装完成后，在任意目录输入 `sbv` 打开管理菜单。要彻底卸载，可从克隆的仓库运行 `sudo bash uninstall.sh --yes`；菜单里的“卸载 sing-box”会保留 `sbv` 管理命令。
+安装完成后，在任意目录输入 `sbv` 打开管理菜单。要彻底卸载，可从克隆的仓库运行 `sudo bash uninstall.sh --yes` 或 `sudo bash bootstrap.sh uninstall --yes`；菜单里的“卸载 sing-box”会删除服务、核心和配置，但会保留 `sbv` 管理命令，独立卸载脚本还会删除全局 `sbv`。
 
 ## 常用命令
 
@@ -96,55 +96,33 @@ sbv agent doctor --json
 sbv agent service restart --json --yes
 sbv agent warp --json
 sbv agent subman-sync --json
-sbv agent instance view vless-reality --json --id ID [--expected-revision N]
-sbv agent instance view socks --json --id ID [--expected-revision N]
-sbv agent instance diagnose socks --json --id ID [--expected-revision N]
-sbv agent instance export socks --json --id ID [--expected-revision N]  # 敏感输出
-sbv agent instance migrate mixed --json --yes --expected-revision 0
-sbv agent instance create mixed --json --yes --expected-revision N --file record.json [--allow-public]
-sbv agent instance replace mixed --json --yes --expected-revision N --file record.json [--allow-public]
-sbv agent instance delete mixed --json --yes --expected-revision N --id ID
-sbv agent instance default mixed --json --yes --expected-revision N --id ID
-sbv agent instance recover mixed --json --yes --expected-revision N
-sbv agent instance create socks --json --yes --expected-revision N --file record.json
-sbv agent instance replace socks --json --yes --expected-revision N --file record.json
-sbv agent instance delete socks --json --yes --expected-revision N --id ID
-sbv agent instance default socks --json --yes --expected-revision N --id ID
-sbv agent instance recover socks --json --yes --expected-revision N
-sbv agent instance create snell --json --yes --expected-revision N --file record.json [--allow-public]
-sbv agent instance replace snell --json --yes --expected-revision N --file record.json [--allow-public]
-sbv agent instance delete snell --json --yes --expected-revision N --id ID
-sbv agent instance default snell --json --yes --expected-revision N --id ID
-sbv agent instance recover snell --json --yes --expected-revision N
-sbv agent instance create tuic --json --yes --expected-revision N --file record.json [--allow-public]
-sbv agent instance replace tuic --json --yes --expected-revision N --file record.json [--allow-public]
-sbv agent instance delete tuic --json --yes --expected-revision N --id ID
-sbv agent instance default tuic --json --yes --expected-revision N --id ID
-sbv agent instance recover tuic --json --yes --expected-revision N
-sbv agent instance create hysteria --json --yes --expected-revision N --file record.json [--allow-public]
-sbv agent instance replace hysteria --json --yes --expected-revision N --file record.json [--allow-public]
-sbv agent instance delete hysteria --json --yes --expected-revision N --id ID
-sbv agent instance default hysteria --json --yes --expected-revision N --id ID
-sbv agent instance recover hysteria --json --yes --expected-revision N
-sbv agent instance create naive --json --yes --expected-revision N --file record.json [--allow-public]
-sbv agent instance replace naive --json --yes --expected-revision N --file record.json [--allow-public]
-sbv agent instance delete naive --json --yes --expected-revision N --id ID
-sbv agent instance default naive --json --yes --expected-revision N --id ID
-sbv agent instance recover naive --json --yes --expected-revision N
-sbv agent instance create shadowtls --json --yes --expected-revision N --file record.json [--allow-public]
-sbv agent instance replace shadowtls --json --yes --expected-revision N --file record.json [--allow-public]
-sbv agent instance default shadowtls --json --yes --expected-revision N --id ID
-sbv agent instance delete shadowtls --json --yes --expected-revision N --id ID
-sbv agent instance recover shadowtls --json --yes --expected-revision N
-sbv agent instance create vmess --json --yes --expected-revision N --file record.json [--allow-public]
-sbv agent instance replace vmess --json --yes --expected-revision N --file record.json [--allow-public]
-sbv agent instance delete vmess --json --yes --expected-revision N --id ID
-sbv agent instance default vmess --json --yes --expected-revision N --id ID
-sbv agent instance recover vmess --json --yes --expected-revision N
+sbv agent component list --json
+sbv agent component diagnose --json
+sbv agent component export --json --id ID [--expected-revision N]  # 敏感输出
+sbv agent component recover --json --yes --expected-revision N
+sbv agent component takeover --json --yes --expected-revision N [--allow-public]
+sbv agent component rebuild --json --yes --expected-revision N
+sbv agent component create|replace --json --yes --expected-revision N --file component.json [--allow-public]
+sbv agent component delete --json --yes --expected-revision N --id ID
+sbv agent instance view <protocol> --json [--id ID] [--expected-revision N]
+sbv agent instance diagnose <protocol> --json [--id ID] [--expected-revision N]
+sbv agent instance export <protocol> --json [--id ID] [--expected-revision N]  # 敏感输出
+sbv agent instance create|replace <protocol> --json --yes --expected-revision N --file record.json [--allow-public]
+sbv agent instance delete|default <protocol> --json --yes --expected-revision N --id ID
+sbv agent instance rebuild <protocol> --json --yes --expected-revision N
+sbv agent instance takeover <protocol> --json --yes --expected-revision 0 [--allow-public]
+sbv agent instance migrate mixed --json --yes --expected-revision N
+sbv agent instance recover <protocol> --json --yes --expected-revision N
 sbv update sbv
 sbv update sing-box latest
 sbv update sing-box 1.14.1
 ```
+
+代码块中的 `create|replace`、`delete|default` 只是二选一记法，实际执行时
+只保留一个操作词；`<protocol>` 替换为支持的协议 ID，并从同一状态快照
+读取 `--expected-revision`。
+
+其中 `<protocol>` 的只读入口支持 `vless-reality`、`mixed`、`socks`、`http`、`shadowsocks`、`trojan`、`vmess`、`vless-plain`、`anytls`、`hy2`、`snell`、`tuic`、`hysteria`、`naive` 和 `shadowtls`；写入口支持除 `vless-reality` 外的其余协议，只有 `mixed` 支持 `migrate`。`view` 和 `diagnose` 默认脱敏，`export`、`links`、`export-client` 与 `subman-sync` 应只在受信上下文使用。
 
 - `capabilities`：输出协议、历史功能入口与 `mutation` / `sensitive` / 确认要求，Agent 应先据此选择操作。旧 `protocol_registry` 保持兼容，并为每个协议增加只读 `environment` 核心版本/构建依赖观察；`managed_registry` 将普通协议与高级组件按 role 合并，使用 `registry_kind` 区分来源。协议级 `available=null` 仍表示尚未完成实例预检，`validated.status=not_assessed` 表示没有该实例的数据面验证；环境依赖满足不等于已部署或连接通过。
 - `upgrade-check`：只读检查固定目标版本的升级资格，返回 `ready`、`blockers[]`、当前核心校验、配置 hash、已知弃用项和兼容性 warning；不会协调或迁移协议状态，也不下载目标二进制，真正的目标版本 `sing-box check` 在 `upgrade` 替换服务进程前执行。
@@ -159,6 +137,7 @@ sbv update sing-box 1.14.1
 - `service restart`：必须显式传入 `--yes`，先校验配置，通过后才重启服务，并返回重启前后的服务状态。
 - `subman-sync`：非交互推送节点到 SubMan；配置缺失时返回结构化错误，不进入交互提示。API 失败时会在 `last_error` 返回稳定的 `code`、`disposition`、HTTP 状态与可用的 `Retry-After`，传输结果不确定时不会盲目重放写请求。Hysteria2、Trojan 与 VMess 使用独立逐实例/用户路径，Hysteria v1、TUIC、AnyTLS、Snell、NaiveProxy 明确跳过并返回原因；仅 TLS 系统信任且 URI 可无损表达的条目进入同步。
 - `instance`：管理结构化 Mixed/SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS plain/AnyTLS/Hysteria2/Snell/TUIC/Hysteria/NaiveProxy/ShadowTLS 实例。`view`/`diagnose` 是共享锁保护的只读入口，默认脱敏；`export` 是敏感入口，返回完整 typed record 与连接材料。Agent 的连接材料按 `127.0.0.1` 生成，仅表示本机/受信上下文的连接基线，不是公网地址或可达性证明。`rebuild` 在精确 CAS 下修复受管配置漂移并递增 revision；`takeover` 只接管无 active typed state 的可无损 live inventory，默认拒绝公网监听，必须显式 `--allow-public`。`migrate` 仅把 Mixed legacy schema 1 转成 revision 1；`create`/`replace`/`delete`/`default` 使用 `--expected-revision`，凭据通过私有文件输入；删除最后一个实例后保留 revision tombstone，下一次写入不能把 CAS 重置为 0；`recover` 只处理可验证的未完成事务。首次全新安装仍写 legacy schema 1，直到显式迁移。
+- `component`：管理高级入站、Endpoint、可复用出站/分组、ACME provider、shared `http_client`、network namespace 和 typed `route.rule_set`。`list`/`diagnose` 只返回元数据、环境/资源和事务摘要；`export` 按 ID 返回完整记录，是敏感操作。`create`/`replace`/`delete`/`takeover`/`rebuild`/`recover` 使用独立 schema 1 revision/CAS 和持久事务目录 `/root/sing-box-vps.component-write.lock`，候选会执行引用图、监听资源与目标核心 `sing-box check`；非回环监听、TUN、隧道和 OpenVPN server 需要 `--allow-public`。高级组件不进入普通节点分享、客户端导出或 SubMan 同步。
 - `instance <operation> socks`：使用 `view`/`diagnose`/敏感 `export` 读取，以及 `create`/`replace`/`delete`/`default`/`rebuild`/`takeover`/`recover`、`--expected-revision`、typed record、共享事务和回滚边界管理独立 SOCKS；记录只表达 SOCKS 入站的监听/认证，不含 HTTP 或 TLS。`migrate socks` 明确返回 invalid arguments；已有 live SOCKS 配置应使用 takeover，不把 legacy `.env` migration 语义套到该预设。实例生命周期、两核心 check/runtime、菜单、接管和 Agent/export 回归及最终 Docker/TCP 门禁已通过，但不应从注册表存在推断为全协议目标完成。
 - `instance <operation> http`：操作与 SOCKS 相同，但完整记录必须包含 `tls: {enabled:false}` 或手工 TLS 的 `enabled/server_name/certificate_path/key_path`。非回环写入须显式 `--allow-public`，无 legacy migration。记录示例与限制见 [Agent Runbook](docs/agents/sing-box-vps-agent-runbook.md)。HTTP TLS 节点的 `shareable=false`、`client_exportable=true`，不将空链接视为可用 URI。
 - `instance <operation> shadowsocks`：支持 `create`/`replace`/`delete`/`default`/`recover` 与 revision CAS，拒绝 `migrate`；记录包含 `listen.network` 和 `authentication`，完整示例见 [Agent Runbook](docs/agents/sing-box-vps-agent-runbook.md#shadowsocks-inbound)。`nodes` 不输出密钥；敏感的 `links` 返回逐用户 URI、outbounds 与限制 warning。
@@ -284,6 +263,8 @@ Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码
 - **ShadowTLS 结构化实例状态**: `/root/sing-box-vps/protocols/instances/shadowtls.json`（schema 1 store，`shadowtls.env` 为 schema 2 active marker；记录 v1/v2/v3 凭据、握手映射、strict/wildcard SNI、loopback Mixed detour 和客户端信任；无标准 URI/SubMan 同步）
 - **Mixed 结构化实例状态**: `/root/sing-box-vps/protocols/instances/mixed.json`（显式迁移或实例写入后启用）
 - **Mixed 事务恢复材料**: `/root/sing-box-vps.instance-write.lock`、`/root/sing-box-vps.instance-transactions/`
+- **高级组件状态**: `/root/sing-box-vps/components.json`（schema 1、独立 revision；list/diagnose 脱敏，export 敏感）
+- **高级组件事务材料**: `/root/sing-box-vps.component-write.lock`（持久 journal、快照与外部资源恢复材料）
 - **REALITY QoS 状态**: `/root/sing-box-vps/reality-qos.filters`
 - **Warp 分流域名**: `/root/sing-box-vps/warp-domains.txt`
 - **Warp 本地规则集目录**: `/root/sing-box-vps/rule-set/warp/`

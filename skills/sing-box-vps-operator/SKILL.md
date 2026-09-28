@@ -72,6 +72,17 @@ No production-changing commands will be executed until approved.
 - Remote verification runs in Docker locally, auto-building sing-box-vps-verify image. No external SSH target required.
 - Use `sing-box-test` for test validation and `sing-box-prod` only after the production gate.
 
+## Staged Bootstrap
+
+Use `bash bootstrap.sh` as the public local or reviewed remote entry point. It accepts `install` or
+`uninstall`, downloads the selected `install.sh` or `uninstall.sh` into a
+private `mktemp -d` directory, validates Bash syntax and the project identity,
+then executes the validated file. Temporary files are removed on exit. An
+interrupt before the runtime script starts reports that the system is
+unchanged; an interrupt after start requires a state check. Use the complete
+staged command in `README.md` and never replace it with `curl | bash` or
+process substitution.
+
 ## Agent-Friendly CLI
 
 Prefer non-interactive JSON commands for AI automation:
@@ -89,6 +100,17 @@ sbv agent doctor --json
 sbv agent service restart --json --yes
 sbv agent warp --json
 sbv agent subman-sync --json
+sbv agent component list --json
+sbv agent component diagnose --json
+sbv agent component export --json --id ID [--expected-revision N]
+sbv agent component recover --json --yes --expected-revision N
+sbv agent component takeover --json --yes --expected-revision N [--allow-public]
+sbv agent component rebuild --json --yes --expected-revision N
+sbv agent component create|replace --json --yes --expected-revision N --file component.json [--allow-public]
+sbv agent component delete --json --yes --expected-revision N --id ID
+sbv agent instance view|diagnose|export <protocol> --json [--id ID] [--expected-revision N]
+sbv agent instance create|replace|delete|default|rebuild|takeover|recover <protocol> --json --yes --expected-revision N
+sbv agent instance migrate mixed --json --yes --expected-revision N
 sbv update sbv
 sbv update sing-box latest
 ```
@@ -98,9 +120,18 @@ reusable outbounds/groups:
 
 ```bash
 sbv agent component list --json
+sbv agent component diagnose --json
+sbv agent component export --json --id ID [--expected-revision N]
+sbv agent component recover --json --yes --expected-revision N
+sbv agent component takeover --json --yes --expected-revision N [--allow-public]
+sbv agent component rebuild --json --yes --expected-revision N
 sbv agent component create|replace --json --yes --expected-revision N --file component.json [--allow-public]
 sbv agent component delete --json --yes --expected-revision N --id COMPONENT_ID
 ```
+
+In this command notation, `create|replace` means choose one operation before
+execution. Read the exact component revision from `list` or `diagnose`; export
+is sensitive, and component writes require `--yes` plus CAS.
 
 Component state is stored in `/root/sing-box-vps/components.json` with an
 independent schema-1 revision. `list` returns only metadata and config keys;
@@ -136,6 +167,16 @@ reachability remain separate operator-reviewed gates. The registry keeps
 static `available:null` separate from its per-read `environment` observation;
 inspect `environment.status`, dependency reasons and `validated` before
 claiming a component is usable.
+
+The component read surface is `list`, `diagnose`, and sensitive `export`.
+`recover`, `takeover`, `rebuild`, `create`, `replace`, and `delete` are guarded
+JSON mutations. They require `--yes`, exact `--expected-revision`, and the
+same production gate as other service-impacting operations; persistent
+component transactions are recovered with `component recover`. The typed
+instance API uses the same read and lifecycle shape for `mixed`, `socks`,
+`http`, `shadowsocks`, `trojan`, `vmess`, `vless-plain`, `anytls`, `hy2`,
+`snell`, `tuic`, `hysteria`, `naive`, and `shadowtls`; `vless-reality` is read
+only, and only `mixed` supports `migrate`.
 
 VMess and Trojan outbound components enforce the sing-box 1.14 authentication,
 TCP/UDP, TLS, guarded V2Ray transport, multiplex and shared Dial Field shapes;
@@ -233,7 +274,7 @@ TCP data-plane proof.
 - Use `service restart --json --yes` only after confirming the target is safe to mutate. It validates config before restart.
 - Use `warp --json` to inspect Cloudflare Warp status: enabled state, route mode, account health, custom domain counts, rule-set counts, and builtin AI/streaming rule tallies. Safe for routine diagnostics.
 - Use `subman-sync --json` only in trusted contexts with configured SubMan credentials; it pushes only eligible URI-backed node material. NaiveProxy, Hysteria v1, Snell, TUIC, AnyTLS, and ShadowTLS are explicitly unsupported and skipped.
-- Safety labels: `status`, `capabilities`, `upgrade-check`, `check`, `doctor`, `nodes`, and `warp` are read-only; `upgrade`, service restart, export, and SubMan sync are mutating; `links`, export, and SubMan sync are sensitive; installation, protocol edits, Warp/BBR/media changes, takeover/repair, and uninstall remain interactive-only.
+- Safety labels: `status`, `capabilities`, `upgrade-check`, `check`, `doctor`, `nodes`, and `warp` are read-only; `upgrade`, service restart, export, SubMan sync, typed instance writes, and component writes are mutating; `links`, instance/component export, export-client, and SubMan sync are sensitive. Fresh install, general protocol edits, REALITY/QoS, Warp/BBR/media changes, and uninstall remain interactive-only; typed instance/component takeover, rebuild, recovery, create, replace, and delete are guarded JSON mutations that still require approval and the production gate.
 - Use `update sbv` to refresh `/usr/local/bin/sbv`; alias: `sbv update-sbv`.
 - Use `update sing-box [latest|x.y.z]` to update a healthy managed sing-box instance non-interactively. It preserves config, runs `sing-box check`, and restarts only after validation passes. Alias: `sbv update-sing-box [latest|x.y.z]`.
 - If `update sing-box` reports an incomplete or missing instance, switch to the interactive `sbv` menu for repair, takeover, or fresh install.

@@ -2,7 +2,7 @@
 
 This runbook is for AI agents operating the `sing-box-vps` repository and remote VPS hosts. It is written for Hermes, OpenClaw, Codex, Claude Code, and other automation agents.
 
-The additive `protocol_registry` in `sbv agent capabilities --json` describes each managed protocol family, preset, component role, state ID, public Agent ID and capability. The legacy `protocols` object and JSON envelopes retain their existing meanings. Each protocol's read-only `environment` reports current core/version/build-tag prerequisites; it does not prove that a particular instance is configured or reachable. `available=null` remains an instance-readiness placeholder, while `validated.status=not_assessed` means no instance-specific validation evidence is attached. The additive top-level `managed_registry` merges protocol and advanced-component records and marks each with `registry_kind`; existing registry fields remain compatible. Never treat an implemented adapter or an available environment as deployment approval or successful runtime evidence. The legacy alias `vless` continues to mean VLESS REALITY, the Hysteria2 state ID remains `hy2`, standalone SOCKS is registry/menu item 5 with state and Agent ID `socks`, standalone HTTP is registry/menu item 6 with state and Agent ID `http`, Shadowsocks is registry/menu item 7 with state and Agent ID `shadowsocks` plus alias `ss`, Trojan is registry/menu preset 8 with state/Agent ID `trojan` and management menu 21, VMess is registry/menu preset 9 with state/Agent ID `vmess` and management menu 22, AnyTLS uses state/Agent ID `anytls` with management menu 24, structured Hysteria2 uses Agent ID `hysteria2` with management menu 25, Snell uses state/Agent ID `snell` with registry preset 11 and management menu 26, TUIC uses state/Agent ID `tuic` with registry preset 12 and management menu 27, Hysteria v1 uses Agent ID `hysteria` with registry preset 13 and management menu 28, NaiveProxy uses Agent ID `naive` with registry preset 14 and management menu 29, and ShadowTLS uses state/Agent ID `shadowtls` with management menu 30. SOCKS, HTTP, Shadowsocks, VLESS outbound, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy, ShadowTLS, and the typed WireGuard, Tailscale, OpenConnect, and OpenVPN endpoints are covered by the focused evidence recorded below. The full protocol goal remains unfinished. The current protocol contract revision is `2026091205`; the Shadowsocks-specific section retains its historical `2026090802` evidence.
+The additive `protocol_registry` in `sbv agent capabilities --json` describes each managed protocol family, preset, component role, state ID, public Agent ID and capability. The legacy `protocols` object and JSON envelopes retain their existing meanings. Each protocol's read-only `environment` reports current core/version/build-tag prerequisites; it does not prove that a particular instance is configured or reachable. `available=null` remains an instance-readiness placeholder, while `validated.status=not_assessed` means no instance-specific validation evidence is attached. The additive top-level `managed_registry` merges protocol and advanced-component records and marks each with `registry_kind`; existing registry fields remain compatible. Never treat an implemented adapter or an available environment as deployment approval or successful runtime evidence. The legacy alias `vless` continues to mean VLESS REALITY, the Hysteria2 state ID remains `hy2`, standalone SOCKS is registry/menu item 5 with state and Agent ID `socks`, standalone HTTP is registry/menu item 6 with state and Agent ID `http`, Shadowsocks is registry/menu item 7 with state and Agent ID `shadowsocks` plus alias `ss`, Trojan is registry/menu preset 8 with state/Agent ID `trojan` and management menu 21, VMess is registry/menu preset 9 with state/Agent ID `vmess` and management menu 22, AnyTLS uses state/Agent ID `anytls` with management menu 24, structured Hysteria2 uses Agent ID `hysteria2` with management menu 25, Snell uses state/Agent ID `snell` with registry preset 11 and management menu 26, TUIC uses state/Agent ID `tuic` with registry preset 12 and management menu 27, Hysteria v1 uses Agent ID `hysteria` with registry preset 13 and management menu 28, NaiveProxy uses Agent ID `naive` with registry preset 14 and management menu 29, and ShadowTLS uses state/Agent ID `shadowtls` with management menu 30. SOCKS, HTTP, Shadowsocks, VLESS outbound, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy, ShadowTLS, and the typed WireGuard, Tailscale, OpenConnect, and OpenVPN endpoints are covered by the focused evidence recorded below. The full protocol goal remains unfinished. This checkout's runtime baseline is script `2026092801` with sing-box support through `1.14.1`; treat `sbv agent capabilities --json` and its `script_version` as the live contract authority. The Shadowsocks-specific section retains its historical `2026090802` evidence.
 
 ## Managed advanced components
 
@@ -28,8 +28,9 @@ ordinary regeneration. Rule sets have no ordinary client export, share-link or
 SubMan surface; full configuration, including remote URLs, is available only
 from the explicitly sensitive component export, never list/diagnose.
 
-The current component contract revision is `2026091205`. Component-owned
-`route_rules` use a typed sing-box 1.14 default/logical matcher and
+Component state uses schema version `1` and the current runtime baseline is
+script `2026092801` with sing-box support through `1.14.1`; there is no separate
+manual component contract revision. Component-owned `route_rules` use a typed sing-box 1.14 default/logical matcher and
 route-action allowlist; nested rules are match-only and unknown fields/actions
 are rejected before state/CAS or takeover. This closes the arbitrary route JSON
 passthrough path without claiming general host policy-routing, nftables or
@@ -638,9 +639,13 @@ For production or unknown hosts, use the production plan gate first.
 
 Canonical public install command:
 
-Use the complete staged Bootstrap in `README.md`. It downloads to a `mktemp`
-file, validates the script before execution, and must not be replaced with
-`curl | bash` or process substitution.
+Use the complete staged Bootstrap in `README.md`. `bash bootstrap.sh install`
+and `bash bootstrap.sh uninstall --yes` select the matching runtime script, download it
+into a private `mktemp -d` directory, run Bash syntax and project-identity
+checks, and only then execute it. The temporary directory is cleaned on normal
+exit and signal; an interrupt before the runtime script starts reports that the
+system is unchanged. Do not replace this flow with `curl | bash` or process
+substitution.
 
 Post-install checks:
 
@@ -663,10 +668,11 @@ Keep historical functions in scope when planning or documenting a change:
 | TLS | Hysteria2/AnyTLS ACME HTTP-01, Cloudflare DNS-01, or manual certificate paths; Hysteria v1, NaiveProxy, standalone HTTP, Trojan and TUIC use manual certificate paths; Trojan/TUIC/Hysteria v1/NaiveProxy explicitly select certificate or system client trust | Read warnings/check output; mutate interactively |
 | Warp | Account registration, enable/disable, all/selective routing, built-in/custom domains, local/remote rule sets | Read with `warp`; mutate through menu 13 |
 | Route rule sets | Typed `inline`/`local`/`remote` lifecycle through component CAS; local files are references, remote URLs and named HTTP-client references are sensitive | `component create|replace|delete|takeover|rebuild`; no ordinary node export, share link or SubMan |
+| Advanced components | Typed inbounds, endpoints, outbounds/groups, certificate providers, shared HTTP clients and network namespaces with schema-1 revision/CAS, drift checks and durable recovery | `component list|diagnose|export`; guarded `create|replace|delete|takeover|rebuild|recover`; export is sensitive |
 | Network/system | IPv4/IPv6/dual inbound stack, outbound/DNS strategy, BBR | Read config/doctor; mutate through menu 14 |
 | Node material | Links/QR, bare-core client export, dual-stack labels | `nodes` is log-safe; `links` and `export-client` are sensitive |
 | SubMan | Idempotent VLESS/Hysteria2 sync; Trojan and VMess sync only losslessly representable TLS/system-trust users and report per-user skips; revision/error/retry semantics; only encrypted dual-network Shadowsocks entries use the dedicated path, while single-network and `none` entries are skipped; Hysteria v1, Snell, TUIC, NaiveProxy, AnyTLS and ShadowTLS remain explicitly unsupported | `subman-sync` is sensitive and externally mutating; same-snapshot mock passed for VMess (`synced=3`, `skipped=1`, `failed=0`), and no unauthorized real sync |
-| Lifecycle | start/stop/restart/status/logs, managed-instance takeover/repair, core/script upgrade, two uninstall scopes | Status/check/doctor are read-only; restart, fixed core upgrade and typed Mixed/SOCKS/HTTP/Shadowsocks/Trojan/VMess/Hysteria2/Hysteria v1/AnyTLS/Snell/TUIC/NaiveProxy/ShadowTLS instance mutations are guarded Agent mutations |
+| Lifecycle | start/stop/restart/status/logs, managed-instance and component takeover/rebuild/recovery, core/script upgrade, two uninstall scopes | Status/check/doctor are read-only; restart, fixed core upgrade, typed instance mutations and component mutations are guarded Agent writes with exact confirmation/CAS where applicable |
 | Verification | VMess: native 1.13.18/1.14.0 generated none/http/ws/grpc/quic two-user exports and server/client checks; Hysteria2: typed multi-user lifecycle, independent bandwidth, Agent/share/client-export and SubMan contract; Hysteria v1: typed multi-user manual-TLS QUIC lifecycle, independent bandwidth/obfs, Agent redaction/share and outbound JSON contract; AnyTLS: typed multi-instance lifecycle, Agent credential-safe summary/share and client-export contract; Snell: typed v5/v6 lifecycle, takeover, Agent summary/share and outbound JSON contract; TUIC: typed multi-user manual-TLS QUIC lifecycle, Agent redaction/share and per-user outbound JSON contract; NaiveProxy: typed multi-user manual-TLS TCP/UDP lifecycle, Agent redaction/share and per-user outbound JSON contract with libcronet warning; ShadowTLS: typed composite outer/loopback-detour lifecycle, v1/v2/v3 validation, Agent redaction/share and per-user outbound JSON contract; focused takeover/lifecycle/Agent/share/SubMan/probe tests passed; Docker fresh-install and coexistence evidence is run below | Local VMess/Hysteria2/Hysteria v1/AnyTLS/Snell/TUIC/NaiveProxy/ShadowTLS tests pass, with Hysteria v1/Snell/TUIC/NaiveProxy/ShadowTLS target-core check when configured; SubMan is mock-only, no production or real SubMan sync proof |
 
 Do not invent non-interactive mutations for features marked interactive-only. Use the menu after the appropriate safety gate or stop and ask for operator approval.
@@ -738,21 +744,36 @@ sbv agent doctor --json
 sbv agent service restart --json --yes
 sbv agent warp --json
 sbv agent subman-sync --json
-sbv agent instance view vless-reality --json --id ID [--expected-revision N]
-sbv agent instance view socks --json --id ID [--expected-revision N]
-sbv agent instance diagnose socks --json --id ID [--expected-revision N]
-sbv agent instance export socks --json --id ID [--expected-revision N]
-sbv agent instance rebuild socks --json --yes --expected-revision N
-sbv agent instance takeover socks --json --yes --expected-revision 0 [--allow-public]
-sbv agent instance create mixed|socks|http|shadowsocks|trojan|vmess|hy2|hysteria|anytls|snell|tuic --json --yes --expected-revision N --file record.json
-sbv agent instance replace mixed|socks|http|shadowsocks|trojan|vmess|hy2|hysteria|anytls|snell|tuic --json --yes --expected-revision N --file record.json
-sbv agent instance delete mixed|socks|http|shadowsocks|trojan|vmess|hy2|hysteria|anytls|snell|tuic --json --yes --expected-revision N --id ID
-sbv agent instance default mixed|socks|http|shadowsocks|trojan|vmess|hy2|hysteria|anytls|snell|tuic --json --yes --expected-revision N --id ID
+sbv agent component list --json
+sbv agent component diagnose --json
+sbv agent component export --json --id ID [--expected-revision N]
+sbv agent component recover --json --yes --expected-revision N
+sbv agent component takeover --json --yes --expected-revision N [--allow-public]
+sbv agent component rebuild --json --yes --expected-revision N
+sbv agent component create|replace --json --yes --expected-revision N --file component.json [--allow-public]
+sbv agent component delete --json --yes --expected-revision N --id ID
+sbv agent instance view <protocol> --json [--id ID] [--expected-revision N]
+sbv agent instance diagnose <protocol> --json [--id ID] [--expected-revision N]
+sbv agent instance export <protocol> --json [--id ID] [--expected-revision N]
+sbv agent instance create|replace <protocol> --json --yes --expected-revision N --file record.json [--allow-public]
+sbv agent instance delete|default <protocol> --json --yes --expected-revision N --id ID
+sbv agent instance rebuild <protocol> --json --yes --expected-revision N
+sbv agent instance takeover <protocol> --json --yes --expected-revision 0 [--allow-public]
 sbv agent instance migrate mixed --json --yes --expected-revision N
-sbv agent instance recover mixed|socks|http|shadowsocks|trojan|vmess|hy2|hysteria|anytls|snell|tuic --json --yes --expected-revision N
+sbv agent instance recover <protocol> --json --yes --expected-revision N
 sbv update sbv
 sbv update sing-box latest
 ```
+
+The `create|replace` and `delete|default` forms are alternatives for
+documentation; execute one operation word at a time. Replace `<protocol>` and
+read `--expected-revision` from the same state snapshot before a write.
+
+`<protocol>` read operations support `vless-reality`, `mixed`, `socks`, `http`,
+`shadowsocks`, `trojan`, `vmess`, `vless-plain`, `anytls`, `hy2`, `snell`,
+`tuic`, `hysteria`, `naive` and `shadowtls`. Instance writes support every ID
+except `vless-reality`; only `mixed` supports `migrate`. `view` and `diagnose`
+are redacted reads, while `export` and component export are sensitive.
 
 - `status --json` is safe for routine diagnostics. It reports script/core/service/path/protocol state plus inbound/outbound stack modes, BBR, REALITY instance/QoS counts, and whether client export/SubMan files exist; it does not return credentials.
 - `capabilities --json` is read-only and returns the supported protocol/feature matrix plus safety labels. `upgrade-check --json 1.14.0` is read-only and must precede an upgrade; require `ready=true` and `blockers=[]`. Its `target_binary_validation.performed=false` means target validation is deferred to the guarded apply transaction, not that compatibility was already proven.
@@ -766,7 +787,7 @@ sbv update sing-box latest
 - `subman-sync --json` pushes eligible nodes to SubMan without prompting. Missing SubMan config is reported as structured JSON. Shadowsocks uses its dedicated integration only for encrypted entries whose network is `["tcp","udp"]`; single-network entries are skipped with `shadowsocks_uri_network_omitted`, while `none` with an empty password is parser-rejected and skipped with `shadowsocks_subman_none_unsupported`. Trojan, VMess and Hysteria2 use dedicated multi-instance, per-user paths: only lossless TLS/system-trust URIs are eligible; plaintext, certificate trust, unrepresentable transport, partial options and oversized URIs retain explicit skipped counts/warnings, including when every user is skipped. Hysteria v1, Snell, AnyTLS, TUIC, NaiveProxy and ShadowTLS are explicitly unsupported and are never sent as SubMan `other`; use outbound JSON from `links` or `export-client`. Same-snapshot mock coverage passed for VMess (`synced=3`, `skipped=1`, `failed=0`) and Hysteria2 (`synced=2`, `skipped=0`, `failed=0`); do not perform real sync without explicit authorization.
 - `update sbv` updates `/usr/local/bin/sbv` from the project main branch.
 - `update sing-box [latest|x.y.z]` updates only the sing-box binary, preserves the current server config byte-for-byte, validates it with `sing-box check`, and restarts the service only after validation passes. The aliases are `sbv update-sbv` and `sbv update-sing-box [latest|x.y.z]`.
-- `upgrade --json 1.14.0 --yes` is the auditable Hermes path: it is mutating and service-impacting, persists a backup under `/root/sing-box-vps-backups/`, preserves `config.json` byte-for-byte, validates before restart, and attempts automatic binary recovery on failure. For an actual change, require `transaction.result_persisted=true`, then retain the referenced root-only `transaction-result.json`; it records `backup_ready` plus the terminal `success`, `rolled_back`, or `rollback_failed` state, and terminal records include `failure_reason` plus `operation_exit_code` when applicable. If the target is already installed, the no-op response instead has `changed=false`, `transaction.status=not_attempted`, `transaction.reason=already_installed`, and no backup or result file. Recovery is complete only when both `rolled_back` and `rollback_ok` are true; `error=rollback_failed` plus `manual_intervention_required=true` is a hard stop. It never silently rewrites configuration for migration. All public Agent protocol IDs include `vless-reality`, `mixed`, `socks`, `http`, `shadowsocks`, `trojan`, `vmess`, `hysteria2`, `hysteria`, `anytls`, `snell`, `tuic`, `naive` and `shadowtls`; the internal Hysteria2 state filename remains `hy2.env`. `instance` mutations for Mixed, standalone SOCKS, HTTP, Shadowsocks, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy and ShadowTLS require `--yes` and exact `--expected-revision`; `migrate shadowsocks`, `migrate vmess`, `migrate hy2`, `migrate hysteria`, `migrate anytls`, `migrate snell`, `migrate tuic`, `migrate naive` and `migrate shadowtls` are unsupported. `export-client` and `subman-sync` are also mutating; `links`, export, and SubMan output are sensitive. Installation, protocol edits, REALITY/QoS, Warp, BBR, media checks, takeover/repair, and uninstall remain interactive-only.
+- `upgrade --json 1.14.0 --yes` is the auditable Hermes path: it is mutating and service-impacting, persists a backup under `/root/sing-box-vps-backups/`, preserves `config.json` byte-for-byte, validates before restart, and attempts automatic binary recovery on failure. For an actual change, require `transaction.result_persisted=true`, then retain the referenced root-only `transaction-result.json`; it records `backup_ready` plus the terminal `success`, `rolled_back`, or `rollback_failed` state, and terminal records include `failure_reason` plus `operation_exit_code` when applicable. If the target is already installed, the no-op response instead has `changed=false`, `transaction.status=not_attempted`, `transaction.reason=already_installed`, and no backup or result file. Recovery is complete only when both `rolled_back` and `rollback_ok` are true; `error=rollback_failed` plus `manual_intervention_required=true` is a hard stop. It never silently rewrites configuration for migration. All public Agent protocol IDs include `vless-reality`, `mixed`, `socks`, `http`, `shadowsocks`, `trojan`, `vmess`, `hysteria2`, `hysteria`, `anytls`, `snell`, `tuic`, `naive` and `shadowtls`; the internal Hysteria2 state filename remains `hy2.env`. `instance` mutations for Mixed, standalone SOCKS, HTTP, Shadowsocks, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy and ShadowTLS require `--yes` and exact `--expected-revision`; `migrate shadowsocks`, `migrate vmess`, `migrate hy2`, `migrate hysteria`, `migrate anytls`, `migrate snell`, `migrate tuic`, `migrate naive` and `migrate shadowtls` are unsupported. `component` mutations use the same confirmation/CAS boundary for advanced state and persistent recovery; `component export` is sensitive. `export-client` and `subman-sync` are also mutating; `links`, instance/component export, and SubMan output are sensitive. Installation, general protocol edits, REALITY/QoS, Warp, BBR, media checks, and uninstall remain interactive-only; typed instance/component takeover, rebuild and recovery are guarded JSON mutations and still require operator approval.
 
 ## sing-box 1.14 Compatibility
 
