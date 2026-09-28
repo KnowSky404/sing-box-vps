@@ -66,11 +66,16 @@ while (($# > 0)); do
 done
 
 [[ "${connect_timeout}" == '10' && "${max_time}" == '60' && \
-  "${retry_count}" == '2' && "${retry_delay}" == '1' && \
-  "${url}" == "${BOOTSTRAP_EXPECTED_URL:?}" ]] || {
+  "${retry_count}" == '2' && "${retry_delay}" == '1' ]] || {
   printf 'bootstrap curl received unexpected arguments\n' >&2
   exit 97
 }
+if [[ "${url}" == 'https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/bootstrap.sh' ]]; then
+  printf '%s\n' "${output_file}" > "${BOOTSTRAP_FIRST_PATH_FILE:?}"
+  cp "${BOOTSTRAP_ENTRY_SOURCE:?}" "${output_file}"
+  exit 0
+fi
+[[ "${url}" == "${BOOTSTRAP_EXPECTED_URL:?}" ]] || exit 97
 [[ "${output_file}" == "${TMPDIR:?}"/sing-box-vps-bootstrap.* ]] || {
   printf 'bootstrap curl did not receive a TMPDIR candidate path\n' >&2
   exit 98
@@ -83,6 +88,11 @@ case "${BOOTSTRAP_CURL_MODE:-valid}" in
     printf '#!/usr/bin/env bash\npartial transfer\n' > "${output_file}"
     printf 'curl: (28) simulated timeout\n' >&2
     exit 28
+    ;;
+  signal)
+    printf '#!/usr/bin/env bash\npartial transfer\n' > "${output_file}"
+    kill -TERM "${PPID}"
+    exit 143
     ;;
   syntax)
     cp "${BOOTSTRAP_SYNTAX_SOURCE:?}" "${output_file}"
@@ -139,24 +149,26 @@ export BOOTSTRAP_OUTPUT_PATH_FILE="${TMP_DIR}/output-path"
 export BOOTSTRAP_OUTPUT_MODE_FILE="${TMP_DIR}/output-mode"
 export BOOTSTRAP_UMASK_FILE="${TMP_DIR}/umask"
 export BOOTSTRAP_MARKER="${TMP_DIR}/executed"
+export BOOTSTRAP_ENTRY_SOURCE="${REPO_ROOT}/bootstrap.sh"
+export BOOTSTRAP_FIRST_PATH_FILE="${TMP_DIR}/first-path"
 
 run_block() {
   local block=$1
   local mode=$2
   local expected_status=$3
   local output status output_path
-  local expected_url
+  local expected_url operation=$4
 
   rm -f "${BOOTSTRAP_MARKER}" "${BOOTSTRAP_OUTPUT_PATH_FILE}" "${BOOTSTRAP_OUTPUT_MODE_FILE}"
-  case "${block##*/}" in
-    install-bootstrap.sh) expected_url='https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh' ;;
-    uninstall-bootstrap.sh) expected_url='https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/uninstall.sh' ;;
+  case "${operation}" in
+    install) expected_url='https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh' ;;
+    uninstall) expected_url='https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/uninstall.sh' ;;
     *) exit 1 ;;
   esac
   set +e
-  output=$(BOOTSTRAP_CURL_MODE="${mode}" BOOTSTRAP_SCRIPT_EXIT="${4:-0}" \
+  output=$(BOOTSTRAP_CURL_MODE="${mode}" BOOTSTRAP_SCRIPT_EXIT="${5:-0}" \
     BOOTSTRAP_EXPECTED_URL="${expected_url}" \
-    bash "${block}" 2>&1)
+    bash "${block}" "${operation}" 2>&1)
   status=$?
   set -e
   [[ "${status}" -eq "${expected_status}" ]] || {
@@ -180,30 +192,44 @@ run_block() {
   printf '%s\n' "${output}"
 }
 
-extract_bootstrap_block 1 "${TMP_DIR}/install-bootstrap.sh"
-extract_bootstrap_block 2 "${TMP_DIR}/uninstall-bootstrap.sh"
+extract_bootstrap_block 1 "${TMP_DIR}/readme-install.sh"
+[[ "$(wc -l < "${TMP_DIR}/readme-install.sh")" -eq 1 ]]
 
-for block in "${TMP_DIR}/install-bootstrap.sh" "${TMP_DIR}/uninstall-bootstrap.sh"; do
-  failure_output=$(run_block "${block}" fail 28)
+for operation in install uninstall; do
+  failure_output=$(run_block "${REPO_ROOT}/bootstrap.sh" fail 28 "${operation}")
   [[ ! -e "${BOOTSTRAP_MARKER}" ]] || exit 1
   [[ "${failure_output}" == *'curl 退出码: 28'* ]] || exit 1
   [[ "${failure_output}" == *'脚本尚未执行，系统未发生变更'* ]] || exit 1
 
-  syntax_output=$(run_block "${block}" syntax 2)
+  signal_output=$(run_block "${REPO_ROOT}/bootstrap.sh" signal 143 "${operation}")
+  [[ ! -e "${BOOTSTRAP_MARKER}" ]] || exit 1
+  [[ "${signal_output}" == *'安装器尚未启动，系统未发生变更'* ]] || exit 1
+
+  syntax_output=$(run_block "${REPO_ROOT}/bootstrap.sh" syntax 2 "${operation}")
   [[ ! -e "${BOOTSTRAP_MARKER}" ]] || exit 1
   [[ "${syntax_output}" == *'Bash 语法无效'* ]] || exit 1
 
-  identity_output=$(run_block "${block}" identity 2)
+  identity_output=$(run_block "${REPO_ROOT}/bootstrap.sh" identity 2 "${operation}")
   [[ ! -e "${BOOTSTRAP_MARKER}" ]] || exit 1
   [[ "${identity_output}" == *'项目身份不匹配'* ]] || exit 1
 
-  identity_url_output=$(run_block "${block}" identity-url 2)
+  identity_url_output=$(run_block "${REPO_ROOT}/bootstrap.sh" identity-url 2 "${operation}")
   [[ ! -e "${BOOTSTRAP_MARKER}" ]] || exit 1
   [[ "${identity_url_output}" == *'项目身份不匹配'* ]] || exit 1
 
-  success_output=$(run_block "${block}" valid 37 37)
+  success_output=$(run_block "${REPO_ROOT}/bootstrap.sh" valid 37 "${operation}" 37)
   [[ -e "${BOOTSTRAP_MARKER}" ]] || exit 1
 done
+
+rm -f "${BOOTSTRAP_MARKER}" "${BOOTSTRAP_FIRST_PATH_FILE}"
+set +e
+BOOTSTRAP_EXPECTED_URL='https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh' \
+  BOOTSTRAP_SCRIPT_EXIT=37 bash "${TMP_DIR}/readme-install.sh" > "${TMP_DIR}/readme-output" 2>&1
+readme_status=$?
+set -e
+[[ "${readme_status}" -eq 37 && -e "${BOOTSTRAP_MARKER}" ]]
+[[ ! -e "$(<"${BOOTSTRAP_FIRST_PATH_FILE}")" ]]
+[[ ! -e "$(<"${BOOTSTRAP_OUTPUT_PATH_FILE}")" ]]
 
 if grep -Fq 'bash <(curl' "${REPO_ROOT}/README.md"; then
   exit 1

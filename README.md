@@ -1,121 +1,46 @@
 # sing-box-vps
 
-面向 VPS 的 sing-box 一键安装与管理脚本，侧重稳定部署、安全更新和多协议管理。当前适配 **sing-box 1.14.x**，并保留显式固定 1.13.x 时的配置兼容能力。
+面向 VPS 的 sing-box 安装与管理脚本。通过交互菜单部署协议、维护服务、导出客户端配置；安装器会校验配置并保留关键变更的备份。
 
-## 📌 当前版本信息
-
-- 脚本版本：`2026092203`
+- **当前适配：1.14.1**；显式固定 1.13.x 时保留对应配置生成路径。
+- 脚本版本：`2026092801`
 - sing-box 适配版本：`1.14.1`
+- **运行环境：** Debian 11+、Ubuntu 20.04+、CentOS 7+/Stream、AlmaLinux、Rocky Linux；需要 root 权限。
 
-支持 VLESS + REALITY、普通 VLESS、Mixed、独立 SOCKS/HTTP、Shadowsocks、Trojan、VMess、Hysteria2、Hysteria v1、AnyTLS、Snell、TUIC、NaiveProxy 和 ShadowTLS 入站。完整的功能与限制见下文[项目特性](#项目特性)；高级组件和 Agent 操作见[运维手册](docs/agents/sing-box-vps-agent-runbook.md)。
+[快速安装](#快速安装) · [常用命令](#常用命令) · [项目特性](#项目特性) · [Agent 命令](#agent-非交互命令) · [功能菜单](#功能菜单) · [能力矩阵](docs/superpowers/specs/2026-09-06-protocol-coverage.md)
 
-项目开发进度、协议覆盖范围与隔离环境验证证据分别记录在[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)和[能力矩阵](docs/superpowers/specs/2026-09-06-protocol-coverage.md)。配置检查与容器探针不代表公网或生产环境已验证。
+## 快速安装
 
-## 🚀 一键安装
-
-在您的 VPS 上运行以下安全 Bootstrap 即可开始安装。它会先完整下载到权限为 `0600` 的临时文件，再执行语法和项目身份校验；下载、校验或脚本执行的退出码会原样返回。整个流程运行在子 Shell 中，不会用 `exit` 关闭当前 SSH 登录 Shell。
-
-```bash
-(
-  set -euo pipefail
-  umask 077
-  temp_file=$(mktemp "${TMPDIR:-/tmp}/sing-box-vps-bootstrap.XXXXXX")
-  trap 'rm -f "${temp_file}"' EXIT
-  curl_exit_code=0
-  if curl -fsSL \
-    --connect-timeout 10 \
-    --max-time 60 \
-    --retry 2 \
-    --retry-delay 1 \
-    -o "${temp_file}" \
-    https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh; then
-    curl_exit_code=0
-  else
-    curl_exit_code=$?
-  fi
-  if (( curl_exit_code != 0 )); then
-    printf '[ERROR] sing-box-vps Bootstrap 下载失败，curl 退出码: %s；脚本尚未执行，系统未发生变更。\n' \
-      "${curl_exit_code}" >&2
-    exit "${curl_exit_code}"
-  fi
-  if ! bash -n "${temp_file}"; then
-    printf '[ERROR] sing-box-vps Bootstrap 校验失败：Bash 语法无效；脚本尚未执行，系统未发生变更。\n' >&2
-    exit 2
-  fi
-  if ! grep -Fqx 'readonly PROJECT_AUTHOR="KnowSky404"' "${temp_file}" || \
-    ! grep -Fqx 'readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"' "${temp_file}"; then
-    printf '[ERROR] sing-box-vps Bootstrap 校验失败：项目身份不匹配；脚本尚未执行，系统未发生变更。\n' >&2
-    exit 2
-  fi
-  script_exit_code=0
-  bash "${temp_file}" || script_exit_code=$?
-  exit "${script_exit_code}"
-)
-```
-
-如需独立执行彻底卸载，可运行：
+在 VPS 上复制这一行：
 
 ```bash
-(
-  set -euo pipefail
-  umask 077
-  temp_file=$(mktemp "${TMPDIR:-/tmp}/sing-box-vps-bootstrap.XXXXXX")
-  trap 'rm -f "${temp_file}"' EXIT
-  curl_exit_code=0
-  if curl -fsSL \
-    --connect-timeout 10 \
-    --max-time 60 \
-    --retry 2 \
-    --retry-delay 1 \
-    -o "${temp_file}" \
-    https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/uninstall.sh; then
-    curl_exit_code=0
-  else
-    curl_exit_code=$?
-  fi
-  if (( curl_exit_code != 0 )); then
-    printf '[ERROR] sing-box-vps Bootstrap 下载失败，curl 退出码: %s；脚本尚未执行，系统未发生变更。\n' \
-      "${curl_exit_code}" >&2
-    exit "${curl_exit_code}"
-  fi
-  if ! bash -n "${temp_file}"; then
-    printf '[ERROR] sing-box-vps Bootstrap 校验失败：Bash 语法无效；脚本尚未执行，系统未发生变更。\n' >&2
-    exit 2
-  fi
-  if ! grep -Fqx 'readonly PROJECT_AUTHOR="KnowSky404"' "${temp_file}" || \
-    ! grep -Fqx 'readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"' "${temp_file}"; then
-    printf '[ERROR] sing-box-vps Bootstrap 校验失败：项目身份不匹配；脚本尚未执行，系统未发生变更。\n' >&2
-    exit 2
-  fi
-  script_exit_code=0
-  bash "${temp_file}" --yes || script_exit_code=$?
-  exit "${script_exit_code}"
-)
+bash -c 'set -euo pipefail; umask 077; t=$(mktemp); trap '\''rm -f -- "$t"'\'' EXIT; curl -fsSL --connect-timeout 10 --max-time 60 --retry 2 --retry-delay 1 -o "$t" https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/bootstrap.sh; bash -n "$t"; grep -Fqx '\''readonly PROJECT_AUTHOR="KnowSky404"'\'' "$t"; grep -Fqx '\''readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"'\'' "$t"; bash "$t" install'
 ```
 
-Bootstrap 的临时文件在下载和校验阶段都不会执行；网络失败时尤其不会把空内容、部分传输或错误页交给 Bash。示例中的 `curl` 参数兼容 Debian 11、Ubuntu 20.04、CentOS 7 及其后续发行版，并继续尊重标准 `HTTPS_PROXY` 等环境变量。
+首段命令先把仓库内的 [bootstrap.sh](bootstrap.sh) 下载到权限受限的临时文件，检查 Bash 语法和项目身份，然后运行它。Bootstrap 再下载并校验 [install.sh](install.sh)，校验失败不会执行安装器；两层临时文件都会清理。下载来源是仓库 `main` 分支；如需先审查源码，可克隆仓库后运行 `sudo bash install.sh`。
 
-## 开发验证工作流
+安装完成后，在任意目录输入 `sbv` 打开管理菜单。要彻底卸载，可从克隆的仓库运行 `sudo bash uninstall.sh --yes`；菜单里的“卸载 sing-box”会保留 `sbv` 管理命令。
 
-修改安装器、卸载器、配置模板、工具函数或验证框架后，运行：
+## 常用命令
 
-```bash
-bash dev/verification/run.sh
-```
+| 操作 | 命令 |
+| --- | --- |
+| 打开交互菜单 | `sbv` |
+| 查看状态 | `sbv agent status --json` |
+| 检查运行配置 | `sbv agent check --json` |
+| 查看 Agent 能力 | `sbv agent capabilities --json` |
+| 检查指定核心版本的升级条件 | `sbv agent upgrade-check --json 1.14.0` |
 
-验证框架使用本地 Docker 特权容器执行需运行环境的场景；仅检查本地调度与触发规则时，可设置 `VERIFY_SKIP_REMOTE=1`。测试范围与历史证据见[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)。
+主要支持 VLESS + REALITY、普通 VLESS、Mixed、SOCKS、HTTP、Shadowsocks、Trojan、VMess、Hysteria2、Hysteria v1、AnyTLS、Snell、TUIC、NaiveProxy 和 ShadowTLS 入站。每种协议的运行条件、导出和验证范围见[能力矩阵](docs/superpowers/specs/2026-09-06-protocol-coverage.md)。
 
----
+## 项目特性
 
-## 🎮 快速管理
+- 15 个入站预设，支持多实例和按协议管理。
+- 生成和修改配置时运行 `sing-box check`，并为关键变更保留备份与回滚路径。
+- 提供交互菜单与 `sbv agent` JSON 命令；客户端配置可导出并校验。
 
-安装完成后，您可以在任何目录下直接输入 `sbv` 来打开交互式管理菜单：
-
-```bash
-sbv
-```
-
-## ✨ 项目特性
+<details>
+<summary>查看详细能力与协议限制</summary>
 
 - **Agent 友好命令行**：提供 `sbv agent ... --json` 非交互命令，方便 Hermes、OpenClaw、Codex 等 AI Agent 发现完整能力、获取状态与节点信息、导出客户端配置，并执行带预检、确认、持久备份和自动回滚的固定版本升级。所有 `--json` 响应采用 `schema_version: "1.0"` 统一 envelope，同时保留兼容字段 `schema: "1"`；对外协议 ID 统一使用 `vless-reality`、`vless-plain`、`mixed`、`socks`、`http`、`shadowsocks`、`trojan`、`vmess`、`hysteria2`、`hysteria`、`anytls`、`snell`、`tuic`、`naive`、`shadowtls`。
 - **1.14.x 深度适配**：继续采用 **Endpoint（端点化）** 架构，并适配顶层 ACME `certificate_providers`、可复用 `http_clients`、远程规则集 `http_client` 与 Hysteria2 `disable_chrome_parrot`。
@@ -126,16 +51,17 @@ sbv
 - **Mixed 多实例管理**：schema 2 支持多个稳定 ID/tag、独立监听地址/端口、独立认证和默认实例；Agent 提供 `create`、`replace`、`delete`、`default`、`migrate`、`recover`，交互菜单 17 提供逐实例管理。非回环明文监听需要显式公网暴露确认；跨协议批量删除会拒绝并要求逐实例处理 Mixed。
 - **VLESS REALITY 多实例**：可在安装菜单追加多个 REALITY 实例，每个实例拥有独立端口、ShortID、节点名称、可选上下行限速和实例级出站策略；节点展示和 SubMan 同步会逐实例输出。
 - **REALITY QoS 限速**：为设置了上下行 Mbps 的 REALITY 实例自动规划并应用 `tc` 端口级限速规则，重建配置、更新协议或移除实例时会同步刷新规则，避免遗留过滤器影响新配置。
-- **Cloudflare Warp 集成**：支持一键开启/关闭 Warp 出站，自动注册免费账户，完美解决 VPS **“送中”** 问题并解锁 Netflix/Disney+ 等流媒体。
+- **Cloudflare Warp 集成**：支持一键开启/关闭 Warp 出站，自动注册免费账户，为选定流量提供 Warp 出口；流媒体可用性取决于网络与服务策略。
 - **Warp 路由分层**：支持 `全量走 Warp` 与 `选择性分流` 两种模式，默认采用更稳妥的 `选择性分流`，内置主流 AI / 流媒体域名规则，并支持用户追加自定义域名、本地规则集和远程规则集；VLESS REALITY 实例还可单独选择跟随全局、强制 direct 或强制 Warp 出口。
 - **单一真源**：统一以 `install.sh` 作为安装与维护入口，避免历史旧入口与当前实现漂移。
+- **透明入站宿主策略**：可选 TProxy `host_policy` 仅拥有显式 ingress interface 与目标端口的 IPv4/TCP+UDP 规则、专用 fwmark 策略路由和 local route table；未配置 `host_policy` 的 TProxy/Redirect 仍归操作员管理。2026-09-22 TProxy `host_policy` 验收仅覆盖特权隔离 Docker 中的回环探针，不代表公网或生产环境已验证。
 - **托管实例自修复**：当协议状态层与运行中的 `config.json` 发生漂移时，会优先按协议状态自动重建运行配置，降低 `mixed` 等附加协议意外丢失的风险。
 - **配置事务发布**：交互式新增、修改、协议栈、Warp 与删除操作会先快照完整托管状态；服务端配置写入同目录 candidate，并依次通过 `jq` 与当前 sing-box 核心的 `check`，仅在校验成功后保留上一版 `config.json.bak` 并原子替换 live config。生成器、certificate provider 或状态写入失败会恢复配置与协议状态。
 - **环境自适应**：支持架构探测（amd64/arm64）及主流发行版（Debian, Ubuntu, CentOS, AlmaLinux, Rocky Linux）。
-- **极简且安全**：默认开启流量嗅探、uTLS 指纹、多 ShortID 随机化及持久化密钥管理。
-- **性能增强**：集成 **BBR** 一键开启功能，显著提升网络吞吐。
+- **默认安全设置**：默认开启流量嗅探、uTLS 指纹、多 ShortID 随机化及持久化密钥管理。
+- **性能增强**：集成 **BBR** 一键开启功能，可按需调整 TCP 拥塞控制。
 - **Mixed 防火墙事务**：启用 UFW 时仅通过 UFW 管理归属规则；没有活动防火墙前端时才直接管理 `iptables`/`ip6tables`。firewalld 仅执行只读外部预检，不由实例事务 add/delete/reload；UFW 与 firewalld 同时活动或已有账本与当前后端冲突时拒绝写入，要求人工处理。
-- **工业级配置生成**：采用 **`jq` 安全注入** 模式生成 JSON，彻底规避特殊字符导致的转义错误。
+- **配置生成**：采用 **`jq` 安全注入** 模式生成 JSON，彻底规避特殊字符导致的转义错误。
 - **协议级展示**：终端可按协议查看节点信息，支持 `VLESS`、`VMess` 与 `Hysteria2` 链接/ANSI 二维码展示，为 `Mixed` 和独立 `SOCKS` 输出代理链接与二维码提示，并为 `Hysteria`、`AnyTLS`、`Snell`、`TUIC`、`NaiveProxy`、`ShadowTLS` 输出逐实例参数摘要和 sing-box outbound JSON（无标准 URI）；多 REALITY、普通 VLESS、Mixed、SOCKS、Trojan、VMess、Hysteria2、Hysteria、AnyTLS、Snell、TUIC、NaiveProxy、ShadowTLS 实例会显示实例 ID、端口和限速摘要。
 - **裸核客户端导出**：可从交互菜单或 `sbv agent export-client --json` 生成 `/root/sing-box-vps/client/sing-box-client.json`，支持当前十五个预设，覆盖前自动备份，并在输出前执行 `sing-box check`。Mixed 和独立 SOCKS 使用 SOCKS5 outbound 与 UoT v2，VMess/Trojan/普通 VLESS/Hysteria2/Hysteria/AnyTLS/Snell/TUIC/NaiveProxy/ShadowTLS 按用户保留认证、TLS 与传输；Naive outbound 依赖官方 `with_naive_outbound` 构建和运行时 `libcronet.so`，缺失或无效的端口/认证字段会阻断整份导出，保留原导出及备份，不自动生成密码或降级认证。
 - **Mixed 安全边界**：Mixed 服务端和其导出的 SOCKS5/UoT 链路不提供 TLS；公网明文监听必须经过单独确认，不能把它当作独立的 TLS SOCKS 服务端。Mixed 当前也不新增 SubMan 同步能力。
@@ -148,9 +74,14 @@ sbv
 - **SubMan 同步**：按 SubMan OpenAPI 1.0.0 契约将 VLESS + REALITY、普通 VLESS、Hysteria2、双网络加密 Shadowsocks，以及 TLS 系统信任且 URI 无损表达的 Trojan/VMess 用户幂等推送到节点库；Hysteria v1、Snell、TUIC、NaiveProxy、AnyTLS 与 ShadowTLS 因无标准无损 URI，明确保持 unsupported，不伪装成 `other`。各协议按实例/用户使用稳定外部键，从同一快照生成身份与凭据，无法表达的 TLS、传输、证书信任或 URI 大小条目明确跳过。Hysteria2 的带宽和 masquerade、Hysteria v1 的带宽/obfs/QUIC 选项在完整客户端 JSON 中保留，标准 URI 无法携带时仅以 warning 披露，不伪造 SubMan 字段。仅在 Workspace 已远端提交并回读验证后报告成功，并识别 revision、稳定错误分类和安全重试提示。集成测试使用 mock，不代表已授权或执行真实同步；全部跳过不报告同步成功。
 - **规范存储**：统一使用 `/root/sing-box-vps/` 存放配置、密钥及持久化参数。
 
+</details>
+
 ## Agent 非交互命令
 
-适合 Hermes、OpenClaw、Codex 等 Agent 在 SSH 会话中直接调用：
+适合在 SSH 会话中查询状态、导出配置或执行受控操作。常用只读命令见上方；完整命令和事务语义如下。
+
+<details>
+<summary>查看完整 Agent 命令与升级说明</summary>
 
 ```bash
 sbv agent capabilities --json
@@ -286,7 +217,12 @@ Agent/Hermes 文档入口：
 - [Hermes 单主机 1.13→1.14 演练](docs/agents/sing-box-1.13-to-1.14-upgrade-test.md)
 - [可安装 Operator Skill](skills/sing-box-vps-operator/SKILL.md)
 
-## 🛠️ 功能菜单
+</details>
+
+## 功能菜单
+
+<details>
+<summary>查看 30 项管理菜单与分享链接说明</summary>
 
 Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码，避免 `@`、`#`、`%`、空格或换行改变链接结构；服务端凭据保持不变。HTTP Basic 无法表达含冒号的用户名或含 ASCII 控制字符的认证：此时 Mixed 的 Agent `links` 只提供 SOCKS5，并返回 `mixed_http_auth_unrepresentable`，不生成不可用的 HTTP 链接。SOCKS5 URI 不携带 UoT v2 等客户端选项，返回 `socks5_uri_transport_options_omitted`；需要完整配置时使用 `export-client` JSON。百分号编码不是加密，链接仍是敏感材料。
 
@@ -323,7 +259,12 @@ Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码
 
 当脚本发现二进制、service、配置或协议状态层不完整时，会进入接管/修复流程，而不是把残缺实例直接当作全新安装覆盖。
 
-## 📂 关键路径
+</details>
+
+## 关键路径
+
+<details>
+<summary>查看运行文件与备份位置</summary>
 
 - **工作目录**: `/root/sing-box-vps/`
 - **配置文件**: `/root/sing-box-vps/config.json`
@@ -352,8 +293,11 @@ Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码
 - **Agent 升级备份**: `/root/sing-box-vps-backups/`（包含敏感运行材料，仅 root 可读）
 - **全局命令**: `/usr/local/bin/sbv`
 
-## ⚠️ 注意事项
+</details>
 
+## 注意事项
+
+- 配置检查与隔离容器探针不证明公网可达或生产环境运行。具体测试范围见[能力矩阵](docs/superpowers/specs/2026-09-06-protocol-coverage.md)。
 - 本脚本必须以 `root` 用户身份运行。
 - 脚本默认适配最佳稳定性版本，手动选择 `latest` 可能存在不兼容风险。
 - `Mixed` 代理默认建议启用用户名密码认证；若关闭认证，请务必确认防火墙和来源访问控制策略。当前 Mixed 入口及导出 SOCKS5 链路未启用 TLS，用户名密码和非加密业务可能暴露，仅应在可信网络或受保护隧道内使用；UoT v2 只把 UDP 封装在 TCP 中，不提供加密，也不要求开放额外的服务端固定 UDP 端口。
@@ -364,10 +308,15 @@ Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码
 
 ---
 
-## 👨‍💻 作者
+## 作者
 
 **KnowSky404**
+
 - 项目地址: [https://github.com/KnowSky404/sing-box-vps](https://github.com/KnowSky404/sing-box-vps)
+
+## 开发验证
+
+修改安装器、卸载器、配置模板、工具函数或验证框架后，运行 `bash dev/verification/run.sh`。验证框架在本地 Docker 特权容器中执行运行场景；历史证据见[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)。
 
 ## 开源协议
 
