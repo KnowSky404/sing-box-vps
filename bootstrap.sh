@@ -8,8 +8,16 @@ readonly RAW_BASE_URL="https://raw.githubusercontent.com/KnowSky404/sing-box-vps
 
 bootstrap_main() (
   local operation=${1:-install}
-  local script_name temp_file curl_status script_status
+  local script_name temp_dir='' temp_file='' curl_status script_status
   local script_started=0
+  cleanup_bootstrap_temp() {
+    if [[ -n "${temp_file}" ]]; then
+      rm -f -- "${temp_file}"
+    fi
+    if [[ -n "${temp_dir}" ]]; then
+      rmdir -- "${temp_dir}"
+    fi
+  }
   handle_interrupt() {
     local signal_status=$1
     if (( script_started )); then
@@ -33,13 +41,18 @@ bootstrap_main() (
   esac
 
   umask 077
-  temp_file=$(mktemp "${TMPDIR:-/tmp}/sing-box-vps-bootstrap.XXXXXX") || {
-    printf '[ERROR] 无法创建临时文件；脚本尚未执行。\n' >&2
-    return 1
-  }
-  trap 'rm -f -- "${temp_file}"' EXIT
+  trap 'cleanup_bootstrap_temp' EXIT
   trap 'handle_interrupt 130' INT
   trap 'handle_interrupt 143' TERM
+  temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/sing-box-vps-bootstrap.XXXXXX") || {
+    printf '[ERROR] 无法创建临时目录；脚本尚未执行。\n' >&2
+    return 1
+  }
+  temp_file="${temp_dir}/${script_name}"
+  if ! : > "${temp_file}"; then
+    printf '[ERROR] 无法创建临时文件；脚本尚未执行。\n' >&2
+    return 1
+  fi
 
   if curl -fsSL --connect-timeout 10 --max-time 60 --retry 2 --retry-delay 1 \
     -o "${temp_file}" "${RAW_BASE_URL}/${script_name}"; then

@@ -181,6 +181,10 @@ run_block() {
     printf 'bootstrap temporary file was not cleaned: %s\n' "${output_path}" >&2
     exit 1
   }
+  [[ ! -d "${output_path%/*}" ]] || {
+    printf 'bootstrap temporary directory was not cleaned: %s\n' "${output_path%/*}" >&2
+    exit 1
+  }
   [[ "$(<"${BOOTSTRAP_OUTPUT_MODE_FILE}")" == '600' ]] || {
     printf 'bootstrap temporary file was not created with mode 600\n' >&2
     exit 1
