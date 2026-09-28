@@ -1,123 +1,15 @@
 # sing-box-vps
 
-可能是最简单的 sing-box VPS 一键安装脚本，专为稳定性和安全性设计。当前适配 **sing-box 1.14.x**，并保留显式固定 1.13.x 时的配置兼容能力。
+面向 VPS 的 sing-box 一键安装与管理脚本，侧重稳定部署、安全更新和多协议管理。当前适配 **sing-box 1.14.x**，并保留显式固定 1.13.x 时的配置兼容能力。
 
 ## 📌 当前版本信息
 
 - 脚本版本：`2026092203`
-
 - sing-box 适配版本：`1.14.1`
 
-组件重生成会在发布前拒绝未归属的 Endpoint，避免静默丢弃 live 配置；详见实施记录中的
-`2026-09-17` 验证边界。
+支持 VLESS + REALITY、普通 VLESS、Mixed、独立 SOCKS/HTTP、Shadowsocks、Trojan、VMess、Hysteria2、Hysteria v1、AnyTLS、Snell、TUIC、NaiveProxy 和 ShadowTLS 入站。完整的功能与限制见下文[项目特性](#项目特性)；高级组件和 Agent 操作见[运维手册](docs/agents/sing-box-vps-agent-runbook.md)。
 
-当前组件 registry 还将 ACME `certificate_provider`、可复用的 `http_client` 以及
-`default`/`unshare` `network_namespace` 纳入同一套 schema-1 状态、CAS、渲染、接管与
-重建流程；ACME 状态接受已建模的域名、DNS-01、外部账户、挑战端口和 shared HTTP
-client 引用，其他未建模 provider 扩展仍保持 fail-closed。每个已登记的
-provider/http-client/namespace 在 live 投影时必须与状态对象逐字段一致，避免普通协议
-重生成静默覆盖手工修改。
-
-Shared HTTP clients follow sing-box 1.14 `HTTPClientOptions`: version 1/2/3, HTTP/2 or
-QUIC fields, outbound TLS and shared Dial Fields are validated before CAS/takeover;
-`route.default_http_client` and ACME references resolve only to enabled managed tags.
-Credentials and external certificate issuance remain separate operator boundaries.
-
-NaiveProxy 的 TCP-capable listener（`network:["tcp"]` 或双网络）会为客户端导出 UDP-over-TCP v2；UDP-only listener 保留 QUIC/HTTP/3 传输并省略 TCP-only UoT。
-
-Trojan 为第八个入站预设，支持多实例、多用户，以及独立建模的 TLS 与传输设置；VMess 为第九个入站预设；普通 VLESS 为第十个入站预设，使用独立的 `vless-plain` ID，与旧 `vless`/REALITY alias 分开，支持多实例、多用户、TLS、V2Ray transport、分享和 SubMan 边界。Hysteria2 现支持 schema 2 多实例、多用户、手动 TLS、带宽、Salamander obfs、masquerade、客户端导出、Agent 与 SubMan 逐用户路径；legacy Hysteria2 的 ACME/provider 状态仍保留原路径。Snell 为第十一个入站预设，支持 schema 2 多实例、多用户、Snell v5/v6、v5 HTTP obfs、v6 shaping、客户端 outbound JSON 与 Agent 事务；Snell 没有安全的标准分享 URI，也不进入 SubMan 同步。TUIC 为第十二个入站预设，使用 schema 2 多实例、多用户、手动证书 TLS、QUIC/UDP 监听与客户端 outbound JSON；`udp_relay_mode` 和 `udp_over_stream` 仅用于客户端出站，服务端入站不会渲染这两个字段。TUIC 没有安全的标准分享 URI、二维码或 SubMan 同步。Hysteria v1 为第十三个入站预设，使用 schema 2 多实例、多用户、手动 TLS、带宽、obfs 与 QUIC 参数；它没有安全的标准分享 URI、二维码或 SubMan 同步，客户端使用完整 outbound JSON。NaiveProxy 为第十四个入站预设，使用 schema 2 多实例、多用户、手动 TLS、TCP/UDP 入站选择和 Naive/QUIC 客户端选项；客户端输出完整 outbound JSON，并明确提示官方 `with_naive_outbound`/`libcronet.so` 运行时条件。NaiveProxy 没有安全的标准分享 URI、二维码或 SubMan 同步。ShadowTLS 为第十五个入站预设，使用 schema 2 多实例、多用户与 ShadowTLS v1/v2/v3 外层 + loopback Mixed 内层组合，保留握手映射、strict/wildcard SNI、客户端信任与完整 outbound JSON；它没有安全的标准分享 URI、二维码或 SubMan 同步。新入口默认回环监听；公开监听须明确确认。Shadowsocks 仍为第七预设，保留实例级 TCP/UDP 选择。全协议目标仍在推进，不能由当前预设推断其他上游协议已接入。
-
-Trojan 可管理原生 TCP、HTTP、WebSocket（无 early data）、gRPC 和 TLS QUIC；QUIC 使用 UDP 监听，不限制代理业务只能走 UDP。VMess 同样按用户保留凭据，支持原生 TCP、HTTP、WebSocket（无 early data）、gRPC 和 TLS QUIC，并保留 `security`/`alter_id` 等 V2Ray 字段。普通 VLESS 使用独立的 `vless-plain` 状态/实例库，支持原生 TCP、HTTP、WebSocket、gRPC、QUIC、可选 TLS，以及按用户的 `flow`；客户端导出、VLESS URI、Agent、实例 CAS、接管/重建和 SubMan 均从同一快照生成。Hysteria v1 服务端使用 QUIC/UDP 与 h3 TLS，用户凭据为 `auth_str`，带宽与 QUIC 窗口在服务端/客户端配置中保持一致，obfs 只在启用时输出为密码字符串。客户端按用户导出完整 Hysteria outbound JSON，明确选择系统信任或公开证书，绝不导出服务器私钥或自动关闭证书校验。TUIC 服务端使用 QUIC/UDP 与 h3 TLS，用户凭据为 UUID/密码；客户端按用户导出含 `network: ["tcp", "udp"]`、拥塞控制、relay 或 udp-over-stream 选项的完整 outbound JSON。NaiveProxy 服务端使用 Naive TLS 入站，`network` 可选 TCP、UDP 或两者；客户端按用户导出完整 Naive outbound JSON，保留 QUIC 拥塞控制、窗口、并发和额外 header。ShadowTLS 服务端由 ShadowTLS 外层和 loopback Mixed 内层组成，v1/v2/v3 凭据与握手映射在同一 typed record 中管理；客户端按用户输出由 ShadowTLS transport 与 HTTP detour 组成的完整 outbound JSON，selector 只引用 HTTP primary tag。客户端导出按明确选择使用系统信任或公开证书，绝不导出服务器私钥或自动关闭证书校验。分享/SubMan 仅同步具备标准无损 URI 的协议；Hysteria v1、TUIC、NaiveProxy、ShadowTLS 因无安全标准 URI 均返回结构化 warning。Naive outbound 还依赖构建时 `with_naive_outbound` 与运行时 `libcronet.so`，脚本不会伪装成已完成该运行时条件。HTTPUpgrade 与 WebSocket early data 因真实连接失败仍被阻断，未计作已支持。接口与范围见[Trojan 契约](docs/agents/sing-box-vps-agent-runbook.md#trojan-typed-instance-contract)、[VMess 契约](docs/agents/sing-box-vps-agent-runbook.md#vmess-typed-instance-contract)、[Hysteria 契约](docs/agents/sing-box-vps-agent-runbook.md#hysteria-typed-instance-contract)、[TUIC 契约](docs/agents/sing-box-vps-agent-runbook.md#tuic-typed-instance-contract)、[NaiveProxy 契约](docs/agents/sing-box-vps-agent-runbook.md#naiveproxy-typed-instance-contract)与[ShadowTLS 契约](docs/agents/sing-box-vps-agent-runbook.md#shadowtls-typed-instance-contract)。
-
-高级接入和上游组件通过独立的 `components.json` 状态库管理，不会混入普通分享节点索引。`sbv agent component list --json` 只返回组件元数据和配置键，`sbv agent component diagnose --json` 只读返回状态、配置图/监听/core 校验、服务状态和受管防火墙账本摘要；`sbv agent component export --json --id ID` 是按稳定 ID 读取完整敏感组件记录，`sbv agent component takeover --json --yes --expected-revision N [--allow-public]` 从当前 live 配置无损接管已注册高级入站、Endpoint、自定义 outbound/group、certificate provider、shared HTTP client、resolved service 和 network namespace（保留对象字段及引用它们的路由规则）；`sbv agent component rebuild --json --yes --expected-revision N` 从同一受管状态重建组合配置并复用资源/服务回滚事务；若进程在发布或资源阶段中断，使用 `sbv agent component recover --json --yes --expected-revision N` 按持久 journal 恢复到变更前状态。只读诊断和清单不返回 Cloudflared token、密钥或密码，`export` 明确标记为敏感。`create`/`replace`/`delete` 使用独立 revision CAS、引用保护和配置图校验，固定监听变化还会复用受管防火墙归属账本，按 prepare→apply→commit 事务执行并在服务失败时回滚，结果中的 `firewall` 字段披露后端状态；Agent 的结构化 stdout 始终只包含一个 JSON envelope，进度日志写入 stderr，组件重生成前会从 live config 保留高级路由和 Warp 开关。当前 registry 覆盖 direct、TUN、redirect、TProxy、Cloudflared inbound，WireGuard/Tailscale/OpenConnect/OpenVPN endpoint，shared HTTP client、resolved service，以及 SSH、Tor、direct、bridge、selector、urltest、block 和协议 outbounds。`resolved` service 使用官方 fake systemd-resolved DBus 服务，默认监听 `127.0.0.53:53` 的 TCP+UDP；Linux 系统总线是运行时依赖，公开监听仍需 `--allow-public`。TUN 与 bridge outbound 的 core-owned Linux 接口、iproute2 rule/route 现在会在活动服务诊断和组件事务 postcheck 中逐项观察；特权 Docker `fresh_install_vless` 的 `20260916064328` 以 disposable veth/network namespace 和 `auto_route` 回读了 core-owned TUN 的 L3 TCP+UDP marker，`20260916071546` 又经两组 disposable veth/network namespace 回读了 TUN→bridge 动态 netfilter→egress 的 L3 TCP+UDP marker。两条探针只属于固定核心、隔离容器和 network namespace，不证明宿主策略、DNS/防火墙接管、公网、外部 bridge 接口或生产。SSH outbound 已按 sing-box 1.14 的字段与 Dial Fields 建立 allowlist，必须提供 password、private_key 或 private_key_path 之一；password/private key 只在敏感 `export` 返回，清单仅显示配置键与 `host_key_verification`（`pinned` 或上游兼容的 `unverified`）。Tor outbound 已按 sing-box 1.14 的 `executable_path`、`extra_args`、`data_directory`、字符串值 `torrc` 与 Dial Fields 建立 allowlist；清单显示 `runtime_mode=external` 或 `embedded_unverified`，不会把默认构建缺少 embedded Tor 的状态伪装成可用。Selector/urltest group 已按 sing-box 1.14 的成员、default/探测 URL、interval/tolerance/idle_timeout 和中断连接字段建立 allowlist，成员必须唯一且 selector default 必须指向成员；清单只显示脱敏 `member_count`。SOCKS outbound 已按 sing-box 1.14 的 server/version/auth、TCP/UDP network、UDP-over-TCP 与共享 Dial Fields 建立 allowlist，deprecated `domain_strategy`、未知字段、错误版本/网络/端口和控制字符会在状态/CAS 与接管前拒绝；敏感凭据只通过 `component export` 返回。接管会保留已识别组件对象及其绑定路由规则；内建 `direct`/`block` 和生成器自有的 `warp-ep` endpoint 不登记为组件，未知 outbound type、保留 tag 冲突或未归属的全局规则会拒绝接管。启用 TUN `auto_route` 时，生成器会补上 `route.auto_detect_interface=true`；已有配置若明确关闭该保护且未设置 `route.default_interface` 会拒绝发布。TUN、隧道、OpenVPN server 与非回环监听需要 `--allow-public`。静态 `available:null` 与每次读取的 `environment.status`（目标核心、平台、工具/运行库和外部认证依赖观察）分开，外部控制面、构建 tag、系统路由/nftables、防火墙未覆盖的动态资源和真实数据面仍需按 `validated` 及人工资源步骤核实，本阶段不把状态层或 `sing-box check` 写成全协议完成。
-
-本轮将真实 TCP 数据面探针扩展到受管 Snell v6、Snell v5 HTTP obfs 与 AnyTLS UoT UDP，并保留此前 Trojan、TUIC、SS2022、VMess 与普通 VLESS 的 QUIC/UDP 证据：`multi_protocol_coexistence` 通过固定 1.14.0 核心客户端分别回读 Snell v6 TCP/packet-API UDP marker、Snell v5（入站 v5 → 客户端出站 v4）TCP/packet-API UDP marker，以及 AnyTLS TCP/UoT UDP marker。Snell 的 UDP 业务经认证 TCP 会话承载，AnyTLS 的 UDP 业务经 UoT adapter 承载；两者都不是原生 UDP listener。定向 Docker artifact 仍只覆盖隔离容器和 loopback，不是公网可达性、生产、外部认证、SubMan 或全协议目标完成证明。
-
-ShadowTLS composite 现在也有真实的容器内 TCP 数据面证据：`multi_protocol_coexistence` 与 `runtime_smoke` 在门禁 `dev/verification-runs/20260912001650` 中都生成完整的 ShadowTLS transport + HTTP detour 客户端链，固定 1.14.0 核心 `check` 通过后由临时 TLS cover 提供握手，再经 outer ShadowTLS、loopback Mixed 和 direct 访问 HTTP marker；ShadowTLS 与 AnyTLS 的 `result.env` 均为 `RESULT=success`。cover 证书、握手地址和端口只属于隔离 Docker/loopback fixture，不能推出公网可达、外部握手服务、生产部署、SubMan 或全协议目标完成。
-
-NaiveProxy 现有隔离容器内的 TCP、UoT UDP 与 UDP-only HTTP/3 数据面证据：定向特权 Docker 门禁 `dev/verification-runs/20260915184405` 使用固定 1.14.0 核心、官方 `with_naive_outbound`/`libcronet.so` 和 SAN 证书，先以 TCP listener 通过 Naive HTTP/2 marker，再由同一认证实例的导出 outbound 经 UDP-over-TCP v2 完成真实 SOCKS5 UDP ASSOCIATE marker；对应 `protocol-probes/naive-tcp-uot` 与 `naive-udp-journal.txt` 保存 result/config/journal。随后以实例 CAS `1→2` 替换为 UDP-only listener，导出 `quic:true` 客户端经认证 Naive HTTP/3/QUIC 访问 TCP marker，client stderr 记录 `protocol: quic/1+spdy/3`，对应 artifact 为 `protocol-probes/naive-udp-http3` 与 `naive-http3-journal.txt`。安装器仍从官方归档原子 staging `/usr/local/lib/libcronet.so`，写入 hash marker 并刷新 loader cache；核心升级会把该库和 marker 纳入独立备份，配置/check/服务失败时一起回滚；未受管同名库不会覆盖，卸载仅删除 hash 仍匹配的受管库。该证据明确只证明 TCP-capable Naive 的 UoT UDP，以及 UDP-only Naive 的 HTTP/3 TCP transport；不证明 UDP-only listener 上的原生 UDP payload、公网、生产、外部认证、SubMan 或全协议目标完成。
-
-HTTP outbound 已按 sing-box 1.14 的 server/port、认证、path、headers、outbound TLS 与共享 Dial Fields 建立递归 allowlist；它固定为 TCP 上游代理，未知/弃用字段、错误 TLS 嵌套类型和控制字符会在状态/CAS 与接管前拒绝，凭据仅通过敏感 component export 返回。Docker run `dev/verification-runs/20260912051138` 在 `multi_protocol_coexistence` 中创建 typed HTTP outbound，先通过目标核心 `check` 和服务 active，再由受认证的 loopback HTTP proxy 接收 SOCKS5 发出的 CONNECT；artifact 核对精确 `Proxy-Authorization`、自定义 header、配置 route 和 marker 响应，`http-outbound.result.env` 为 `RESULT=success`。该数据面证据只属于固定 1.14.0、隔离容器和回环 fixture，不代表公网可达、外部代理、生产部署或全协议目标完成。
-
-SSH outbound 现有固定的 1.14 字段 allowlist、主机密钥 pinned/unverified 元数据和敏感 export 边界；本轮 `multi_protocol_coexistence` 在特权 Docker 中启动一次性 OpenSSH 服务，创建带 pinned host key 的 typed SSH outbound，经既有 SOCKS5 入口和 `localhost` route 回读 loopback HTTP marker，并保存核心 `check`、sshd password-accept 日志、精确响应和 CAS 删除 artifact。验证运行 `dev/verification-runs/20260915051357` 的 `ssh-outbound.result.env` 为 `RESULT=success`，标签为 `ssh_direct_tcpip_loopback`；这只证明隔离容器内的 SSH direct-tcpip TCP 路径，不代表外部 SSH 服务、密码/密钥部署、公网、生产、SubMan 或完整协议目标完成。
-
-SOCKS outbound 现有固定的 1.14 字段 allowlist、凭据脱敏和敏感 export 边界；同一 `multi_protocol_coexistence` 在特权 Docker 中启动一次性认证 SOCKS5 upstream，经 typed component route 由既有 SOCKS5 入口回读 loopback HTTP marker，并保存 upstream authentication/destination、核心 `check`、精确响应和 CAS 删除 artifact。验证运行 `dev/verification-runs/20260915053927` 的 `socks-outbound.result.env` 为 `RESULT=success`，标签为 `socks5_connect_loopback`；这只证明隔离容器内的 SOCKS5 TCP CONNECT 路径，不代表外部 proxy、公网、生产、UDP、SubMan 或完整协议目标完成。
-
-同一 SOCKS outbound 现在还覆盖原生 UDP：特权 Docker 运行 `dev/verification-runs/20260915152726` 的 `multi_protocol_coexistence` 创建 `socks-outbound-udp-verification`，以 `network:["udp"]` 经独立认证 SOCKS5 UDP ASSOCIATE upstream 回读 direct UDP marker。artifact 保存了目标核心 `check`、上游认证/ASSOCIATE/destination/payload 日志、精确响应、`outbound/socks[...]` journal 和 revision 31→32 创建、32→33 删除；结果标签为 `DATA_PLANE=socks5_native_udp_loopback`、`AUTHENTICATION=upstream_username_password`。这仍只属于隔离容器/回环证据，不代表外部 proxy、公网、生产、SubMan 或完整协议目标完成。
-
-Selector group 现有固定的成员/default/中断连接 allowlist 和图依赖校验；验证运行 `dev/verification-runs/20260915060132` 在特权 Docker 中创建仅含内建 `direct` 成员的 typed selector，经 route 由既有 SOCKS5 入口回读 loopback marker，保存核心 `check`、精确响应和 revision 12→13 CAS 删除 artifact。`selector-outbound.result.env` 为 `RESULT=success`、`selector_direct_loopback`；这只证明单成员 selector 的隔离容器 TCP 选择路径，不代表多成员故障切换、URLTest 探测、公网、生产、SubMan 或完整协议目标完成。
-
-URLTest group 现有固定的成员/探测 URL/interval/tolerance/idle_timeout allowlist 和图依赖校验；验证运行 `dev/verification-runs/20260915062630` 在特权 Docker 中创建仅含内建 `direct` 成员、`interval:"1s"` 和 loopback health URL 的 typed urltest，经 route 由既有 SOCKS5 入口回读精确 marker，保存核心 `check`、配置、revision 14→15 CAS 删除 artifact。`urltest-outbound.result.env` 为 `RESULT=success`、`DATA_PLANE=urltest_direct_loopback`、`HEALTHCHECK=loopback_http`；这只证明单成员 URLTest 健康探测/路由选择的隔离容器 TCP 路径，不代表多成员故障切换、外部 URL、公网、生产、UDP、SubMan 或完整协议目标完成。
-
-Shadowsocks outbound 现有固定的 1.14 字段 allowlist、SS2022 密钥校验和敏感 export 边界；验证运行 `dev/verification-runs/20260915065946` 在特权 Docker 中创建 `shadowsocks-outbound-verification`，以 16-byte SS2022 PSK、`network:["tcp"]` 和既有 SS2022 inbound/upstream 组成 typed route，经认证 SOCKS5 入口回读 direct loopback marker，并保存目标核心 `check`、渲染 outbound/route、`AUTHENTICATION=ss2022_psk`、精确响应和 revision 16→17 CAS 删除 artifact。`shadowsocks-outbound.result.env` 为 `RESULT=success`、`DATA_PLANE=shadowsocks2022_connect_loopback`；这只证明一次性隔离容器内的 SS2022 TCP 路径，不代表外部 Shadowsocks、公网、生产、UDP、SubMan 或完整协议目标完成。
-
-同一共存场景还验证了 Shadowsocks outbound 的原生 UDP 数据面：运行 `dev/verification-runs/20260915121419` 创建 `shadowsocks-outbound-udp-verification`，以 `network:["udp"]` 和同一 SS2022 inbound 作为加密上游，经认证 SOCKS5 UDP ASSOCIATE 回读 direct UDP echo marker。artifact 保存目标核心 `check`、精确 `shadowsocks-outbound-udp-response.txt`、`outbound/shadowsocks[...]` 与 `inbound/shadowsocks[ss-in]` journal，以及 revision 29→30 创建、30→31 删除；`shadowsocks-outbound-udp.result.env` 为 `RESULT=success`、`DATA_PLANE=shadowsocks2022_udp_loopback`、`AUTHENTICATION=ss2022_psk`。证据仅限一次性隔离容器/回环，不代表外部 Shadowsocks、公网、生产、SubMan 或完整协议目标完成。
-
-Direct 与 block outbound 现有固定的空配置 typed component 边界；验证运行 `dev/verification-runs/20260915073540` 在特权 Docker 中以 route `override_address/override_port` 将自定义 direct outbound 送到既有 loopback marker，并以自定义 block outbound 预期拒绝同类请求，分别完成 revision 18→19 与 20→21 CAS 删除。两项结果分别为 `DATA_PLANE=direct_route_override_loopback` 与 `DATA_PLANE=block_reject_loopback`；证据仅限隔离容器/回环，不代表宿主策略、公网、生产、UDP、SubMan 或完整协议目标完成。
-
-VLESS outbound 现有固定的 UUID、flow、TCP/UDP、TLS/transport 与共享拨号字段边界；验证运行 `dev/verification-runs/20260915081600` 在特权 Docker 中启动一次性本地 VLESS upstream，创建 `vless-outbound-verification` typed component，经既有认证 SOCKS5 route 完成真实明文 VLESS TCP 握手并回读 loopback marker，再完成 revision 22→23 CAS 删除。随后特权 Docker gate `dev/verification-runs/20260915235706` 从渲染 outbound 保留 `network:["tcp","udp"]`，省略 `packet_encoding`（默认 xudp），经 SOCKS5 UDP ASSOCIATE 和一次性 VLESS upstream 回读精确 UDP marker；client `sing-box check`、`vless-outbound-udp.result.env` 与 revision 21→23 CAS 清理均通过。结果为 `project-real-vless-tcp+udp`（TCP 与 `DATA_PLANE=vless_udp_xudp_loopback`）；证据仅限隔离容器/回环明文 VLESS，不代表外部 VLESS、TLS/REALITY、公网、生产、SubMan 或完整协议目标完成。
-
-Tor outbound 现有固定的外部 executable、torrc 与共享拨号字段边界；验证运行 `dev/verification-runs/20260915090437` 在特权 Docker 中使用镜像内 `/usr/bin/tor`，创建 `tor-outbound-verification` typed component，经既有认证 SOCKS5 route 访问 `check.torproject.org`，响应确认真实 Tor circuit，再完成 revision 24→25 CAS 删除。结果为 `DATA_PLANE=tor_external_tcp`、`TARGET=check.torproject.org`；证据仅证明本次隔离容器经外部 Tor 网络的 TCP 路径，不代表 Tor 公网稳定性、生产配置、匿名性保证、SubMan 或完整协议目标完成。
-
-ShadowTLS outbound 现有固定的 v3/password/TLS typed component 边界；验证运行 `dev/verification-runs/20260915104124` 在同一特权 Docker 中启动一次性 ShadowTLS v3 server 与证书 cover，通过 managed HTTP detour 完成真实 ShadowTLS TCP 握手并回读 loopback marker，保存 server stderr、主服务 journal 与核心 `check`，再完成 revision 25→29 的双组件 CAS 清理。结果为 `DATA_PLANE=shadowtls_tcp_composite`、`UPSTREAM=shadowtls_v3_loopback`；证据仅证明 HTTP-over-ShadowTLS 的隔离容器组合路径，不代表独立 ShadowTLS transport 可直接承载任意应用、公网、生产、UDP、SubMan 或完整协议目标完成。
-
-Direct inbound 的 typed component 现在额外校验 `network`、`override_address` 和 `override_port` 的类型、控制字符与端口边界。共存场景在同一组件 CAS/服务事务中创建回环 `direct-inbound-verification` 与 UDP 对应实例，固定 1.14.0 `check` 后由真实 TCP/UDP 请求经 direct inbound 转发到一次性 loopback marker/echo；Docker run `dev/verification-runs/20260912073323` 的 `direct-inbound.result.env`、`direct-inbound-udp.result.env`、渲染配置、监听快照和精确 marker 均成功。该证据只证明 direct 的 TCP/UDP override loopback 路径，不代表透明路由、主机防火墙、公网部署或全协议目标完成。
-
-组件 `route_rules` 现在也使用 sing-box 1.14 default/logical matcher 与 route-action typed allowlist；逻辑子规则只允许 match 字段，递归和列表大小有界，未知字段/动作、对象 matcher、重复列表成员和 action 交叉字段在 CAS/接管前拒绝。合法规则仍由统一 renderer 原样组合进顶层 route；这关闭了任意 route JSON 透传缺口，但不代表主机策略路由、nftables、透明数据面或全协议目标已完成。
-
-组件环境探针还会读取目标 `sing-box version` 的 `Tags:` 行：已报告的构建 tag 缺失时条件组件为 `unavailable`，包装器或旧二进制未报告 tag 时为 `not_assessed`；这只说明构建条件，不代表外部认证、系统路由/防火墙或真实数据面已通过。`component list --json` 另外为每个持久化记录返回 `instance_environment`：它根据该记录选择的 system/internal 模式补充 root、`/dev/net/tun` 与 `with_gvisor` 依赖，并保留类型级 `environment` 作为对照；这是配置/主机前置条件观察，不执行登录、接口或路由变更。
-
-启用 TProxy `host_policy` 时，`instance_environment.dependencies` 分别观察 `iptables_mangle`、用户态 TPROXY target、`multiport` match、iproute2 policy routing 和 ingress interface；这是只读预检，不能保证目标内核模块稍后一定能加载，实际应用仍由事务 postcheck 验证并在失败时补偿。
-
-Shadowsocks outbound 已按 sing-box 1.14 的 method/password、SS2022 严格 Base64 密钥长度、TCP/UDP network、SIP003 插件、UDP-over-TCP、multiplex 和共享 Dial Fields 建立 typed allowlist；未知/弃用字段、错误方法/密钥长度、插件或嵌套类型及控制字符会在状态/CAS 与接管前拒绝，凭据仅通过敏感 component export 返回，不生成伪分享链接或 SubMan 载荷。
-
-VMess 与 Trojan outbound 已按 sing-box 1.14 的必需认证字段、TCP/UDP network、TLS、V2Ray transport、multiplex 和共享 Dial Fields 接入统一 typed component state；VMess 保留 UUID、security、alter_id、packet encoding 等字段，Trojan 保留 password。HTTP、WebSocket（无 early data）、gRPC 与 TLS-only QUIC 按固定字段校验，HTTPUpgrade、WebSocket early data、明文 QUIC 与 lite gRPC 的 `permit_without_stream` 会在状态/CAS 与接管前拒绝；凭据仅通过敏感 component export 返回，核心 `check` 不等于远端握手或出站数据面证据。
-
-VLESS outbound 已按 sing-box 1.14 的 UUID、flow、TCP/UDP network、packet encoding、TLS、V2Ray transport、multiplex 和共享 Dial Fields 接入同一 typed component state；省略 `packet_encoding` 保留上游默认 xudp，Vision flow 只允许 TLS 直连且不与 V2Ray transport 叠加。HTTP、无 early data 的 WebSocket、gRPC 与 TLS-only QUIC 可表达，HTTPUpgrade、WS early data、明文 QUIC、lite gRPC `permit_without_stream`、无 TLS/带 transport 的 Vision flow 均在状态/CAS 与接管前拒绝；凭据仅通过敏感 component export 返回，不生成服务端分享 URI 或 SubMan 载荷。
-
-AnyTLS outbound 已按 sing-box 1.14 的 `AnyTLSOutboundOptions` 接入 typed component state；`server`、`server_port`、非空 `password` 与启用的 outbound TLS 必填，`idle_session_check_interval`、`idle_session_timeout`、`min_idle_session` 和 `client_metadata` 可选，共享 Dial Fields 仍逐项校验。AnyTLS 没有可配置的 `network`、transport 或 multiplex 字段；TCP 与 UDP 由 adapter（UDP 使用 UoT）统一承载，目标核心的 `tcp_fast_open=true` 也会在状态/CAS 与接管前拒绝。凭据仅通过敏感 component export 返回，固定核心 `check` 不等于远端握手；定向 Docker 已额外证明 AnyTLS TCP + UoT UDP marker 回环。
-
-Hysteria2 outbound 已按 sing-box 1.14 的 `Hysteria2OutboundOptions` 接入 typed component state；支持 server 与互斥的 server_port/server_ports、port hopping、up/down Mbps、salamander/gecko obfs、TCP/UDP network、必需 outbound TLS、QUIC fields、BBR profile、Chrome QUIC fingerprint 控制和可选 Hysteria Realm。Realm 的 server、STUN、端口映射与 HTTP client 字段按分型校验，v1 Hysteria 的 auth/旧窗口字段不会混入；凭据仅通过敏感 component export 返回，目标核心 `check` 不代表远端 QUIC 握手或 UDP 数据面。
-
-Hysteria v1 outbound 已按 sing-box 1.14 的 `HysteriaOutboundOptions` 接入 typed component state；支持互斥的 server_port/server_ports、hop_interval、`up`/`down` 网络带宽兼容字段、up_mbps/down_mbps、字符串 obfs、auth/auth_str、TCP/UDP network、必需 outbound TLS、QUIC fields 与 shared Dial Fields。Hysteria v1 的认证和字段不会与 Hysteria2 的 password、Salamander、BBR 或 Realm 混用；凭据仅通过敏感 component export 返回，固定核心 `check` 不代表远端 Hysteria 握手或 UDP 数据面。
-
-TUIC outbound 已按 sing-box 1.14 的 `TUICOutboundOptions` 接入 typed component state；支持 server/server_port、UUID/password、cubic/new_reno/bbr 拥塞控制、native/quic UDP relay、可选 UDP-over-stream、0-RTT、heartbeat、TCP/UDP network、必需 outbound TLS、QUIC fields 与 shared Dial Fields。`udp_relay_mode` 与 `udp_over_stream` 冲突时在 state/CAS 前拒绝；1.13.18 兼容子集会省略 1.14 QUIC 字段。凭据仅通过敏感 component export 返回，固定核心 `check` 不代表远端 TUIC 握手或 UDP 数据面。
-
-NaiveProxy outbound 已按 sing-box 1.14 的 `NaiveOutboundOptions` 接入 typed component state；支持 server/port、username/password、额外 headers、HTTP/2 与 QUIC、UDP-over-TCP、流窗口、限定的 server_name/certificate/certificate_path/ECH TLS 字段及 shared Dial Fields。QUIC 不允许与 insecure_concurrency 同时启用；官方 `with_naive_outbound` 与运行时 `libcronet.so` 仍由环境能力单独门控，核心 `check` 不代表库加载或远端数据面。
-
-ShadowTLS outbound 已按 sing-box 1.14 的 `ShadowTLSOutboundOptions` 接入 typed component state；支持 TCP-only wrapper 的 server/port、v1/v2/v3、password、必需 outbound TLS 与 shared Dial Fields，并与本项目 ShadowTLS 入站的 outer + loopback Mixed 组合保持角色隔离。组件级 ShadowTLS wrapper 不生成伪分享 URI 或 SubMan 载荷；入站客户端导出则额外生成经 detour 指向 ShadowTLS transport 的 HTTP primary，核心 `check` 不代表独立上游 wrapper 的远端握手或 TCP 数据面。
-
-WireGuard endpoint 已按 sing-box 1.14 的 `WireGuardEndpointOptions` 接入 typed component state；使用现代 endpoint（不恢复已移除的 wireguard outbound），校验 32-byte 标准 Base64 private/public/PSK、CIDR address/allowed_ips、peer keepalive/reserved、listen/MTU/workers、UDP NAT 与 shared Dial Fields。1.14 全字段和 1.13.18 基础 endpoint 子集通过固定核心 `check`。
-
-WireGuard endpoint 现在另有受限的真实 UDP 闭环：固定官方 ARM64 `sing-box 1.14.0` 的特权隔离 Docker 场景 `dev/verification-runs/20260915230110` 使用镜像内 `wireguard-tools` 创建 disposable kernel peer（仅作验证 fixture），再经 `system:false`/gVisor endpoint 和受管 UDP direct inbound 完成真实 peer handshake 与精确 marker 回环；artifact 保存了脱敏配置、目标核心 `check`、journal、`latest-handshakes`/transfer 及 endpoint/proxy/kernel peer 的 CAS 删除清理，验证标签为 `project-real-wireguard-udp`。证据仅覆盖隔离容器/回环和内部 endpoint，不代表 `system:true` 接口、公网、外部 peer、生产或 SubMan。
-
-Tailscale endpoint 现在按 `TailscaleEndpointOptions` 接入 typed state/render，校验持久化 state/auth/control 字段、advertise/accept routes、relay AddrPort、exit-node 互斥、可选 SSH 服务和 shared Dial Fields；OpenConnect endpoint 按 1.14 client-only 选项校验 flavor、token secret/path、mobile identity、CSD/HIP/TNCC、TLS material、form entries、UDP NAT 与 keepalive/compression 约束；OpenVPN client/server endpoint 分别按 TLS/static_key discriminated union 校验 remote、address pool、peer family、证书/key、control wrap、users、push DNS/routes 和 TCP/UDP 约束。透明资源诊断现在对命名 `system:true` WireGuard/OpenConnect 以及命名 `system_interface:true` Tailscale 同样只读核对接口、配置地址（如有）和 MTU；新增测试覆盖组件状态、渲染、固定核心配置边界，以及隔离 Docker 中命名 `system:true` OpenVPN 的接口/隧道资源生命周期。外部 VPN/Tailscale 控制面、证书文件、公网路由/策略与真实数据面仍未验证，不能将这些 endpoint 写成已完成公网部署。
-
-OpenVPN endpoint 现在另有受限的真实 TCP 与 UDP 闭环：固定官方 ARM64 `sing-box 1.14.0` 的特权隔离 Docker 场景 `dev/verification-runs/20260914151532` 分别创建 `system:false` 的 OpenVPN server/client endpoint（临时 SAN 证书、用户名/密码），再创建受管 direct inbound 将请求路由到对应 client endpoint；日志确认 `peer connected`/`tunnel established`，marker 返回精确 payload，目标核心 `check` 通过，随后按 revision 删除 proxy/client/server 并确认监听与资源清理。配置了 `SINGBOX_BINARY_114` 时，`tests/managed_openvpn_endpoint_runtime.sh` 在本机顺序执行同样的 TCP+UDP marker 闭环；没有该二进制或依赖时明确 `SKIP`。证据只覆盖 `system:false`、合成 server/client 与隔离容器/本机网络，不包括外部 VPN 控制面、公网、生产或 SubMan。
-
-同一 `fresh_install_vless` 特权 Docker 场景 `dev/verification-runs/20260914210913` 先创建命名 `system:true` 的 OpenVPN server/client（`sbv-ovpn-srv`/`sbv-ovpn-cli`），回读真实 TUN 接口、`10.79.0.1/24` 与 `10.79.0.2/24` 地址、MTU、`peer connected`/`tunnel established` 日志及 `component diagnose`，再按 revision 删除并确认两个接口清理。随后 gate `dev/verification-runs/20260916083525` 在同类特权容器中为该 pair 增加受管 direct inbound，使用独立 disposable veth/network namespace 的 marker（`198.18.20.2`）经 `system:true` client 完成真实 TCP marker round trip；artifact 同时保存目标核心 `check`、路由、接口/地址、journal、diagnose、CAS 删除，以及 marker veth/namespace 清理断言，验证标签为 `project-real-openvpn-system-tcp`。最新 gate `dev/verification-runs/20260916104745` 在相同隔离容器中保留该 TCP 证据，并新增独立的 `system:true` UDP server/client（`sbv-ovpn-us`/`sbv-ovpn-uc`，11997/15095）和同一 disposable marker，精确回读 TCP+UDP payload 后按 revision 删除全部组件与 marker veth/network namespace；结果标签为 `project-real-openvpn-system-tcp+udp`。该证据只覆盖固定 1.14.0、隔离容器/network namespace 内的 core-owned system interface TCP/UDP 数据面；不宣称宿主路由、透明转发、公网、生产、外部控制面或 SubMan。事务 postcheck 对命名 `system:true` OpenVPN endpoint 同样 fail-closed；未命名接口保持 `not_assessed`。
-
-Snell outbound 已按 sing-box 1.14 的 `SnellOutboundOptions` 接入 typed component state；版本仅允许 v4（HTTP obfs）或 v6（traffic shaping），并保留 PSK、可选 userkey/reuse、TCP/UDP network 和共享 Dial Fields。v4/v6 字段不可交叉，v6 PSK 至少 12 字节；Snell v5 QUIC proxy 不作为独立 outbound 提供，UDP 业务由 Snell 的 TCP packet API 承载。凭据仅通过敏感 component export 返回，1.14 核心 `check` 不代表远端 Snell 握手或 TCP/UDP 数据面，1.13.18 核心明确不注册该 type。
-
-透明组件诊断现在额外返回 `transparent_resources`：服务 active 时只读检查 TUN 接口、iproute2 规则/路由及 auto-redirect 的 nftables 观测，并对命名 `system:true` WireGuard/OpenConnect/OpenVPN 与命名 `system_interface:true` Tailscale 核对 core-owned 接口、配置地址（如有）和 MTU；缺失的 core-owned 资源会报告 `unavailable`。当活动服务重启包含这些组件的事务时，同一组 core-owned 资源检查作为 postcheck 执行，失败会先补偿受管防火墙并恢复变更前的 state/config/service，返回 `transparent_resource_check_failed`。特权隔离 Docker 的 `fresh_install_vless` 场景已实际创建并删除受管 TUN，回读 `sbv-tun`、table 2022/priority 9000 规则和路由，确认删除后的清理；OpenVPN 的命名系统接口/隧道资源证据见下文；这仍不代表 VPN 外部认证或宿主完整策略已完成。可选 Redirect `host_policy` 仅拥有显式 ingress interface 与目标端口的 IPv4/TCP PREROUTING 链；可选 TProxy `host_policy` 仅拥有显式 ingress interface 与目标端口的 IPv4/TCP+UDP TPROXY 链、fwmark 策略规则及 `local` 路由表。两者均要求非回环监听、独立保护管理端口和显式 `--allow-public`，并通过事务日志应用、恢复与删除；诊断会披露前置规则，不能据此宣称更早的防火墙/路由规则不会改变实际效果。没有默认端口捕获、全机路由或 DNS 劫持。
-
-2026-09-15 Redirect/TProxy 透明数据面增量：特权隔离 Docker 的 `multi_protocol_coexistence` 场景（`dev/verification-runs/20260915013127`）创建 redirect revision 4 与 TProxy revision 5，固定官方 ARM64 `sing-box 1.14.0` `check` 通过；验证容器内临时 owner-scoped `OUTPUT REDIRECT` TCP marker，以及独立 veth/network namespace、fwmark policy route 和 `PREROUTING TPROXY` 的 TCP+UDP marker。`transparent/*/result.env`、精确 response、iptables/iproute2 before/with/after-cleanup artifact 均成功，`component diagnose` 同时确认两实例需要 root 但不需要 TUN；随后按 revision 删除至 6/7 并清理策略。临时规则明确为 `POLICY_OWNERSHIP=not_managed`，不宣称宿主规则所有权、公网、生产、外部认证、SubMan 或完整协议目标完成。
-
-2026-09-14 Snell/AnyTLS UDP adapter 增量：定向 Docker run `dev/verification-runs/20260914165733` 的 `multi_protocol_coexistence` 与 `runtime_smoke` 均成功；共存场景复用受管 Snell v6 exporter（明确输出 `network:["tcp","udp"]`）和 AnyTLS outbound（无 configurable `network`），在固定 1.14.0 核心 `check` 后分别回读 Snell TCP + packet API UDP marker、AnyTLS TCP + UoT UDP marker，相关 `result.env`/`udp.result.env` 均为 `RESULT=success`，并保留 `inbound UoT connection` journal 行。这不是原生 UDP listener、外部认证、公网、生产、SubMan 或全协议目标完成证明。
-
-2026-09-14 Snell v5 adapter 增量：定向 Docker run `dev/verification-runs/20260914185411` 的 `multi_protocol_coexistence` 与 `runtime_smoke` 均成功。共存场景先保留 v6 的四项 TCP/packet-API UDP artifact，再通过 `agent instance replace snell --expected-revision 1` 原子替换为 v5 HTTP obfs 实例（提交 revision 2）；`snell-v5-config.json` 通过固定 1.14.0 `check`，typed store 保留 `obfs_host`，客户端 exporter 正确映射为 version 4、`obfs_mode:"http"`、`network:["tcp","udp"]`。v5 TCP 与 packet-API UDP marker、精确响应、客户端 check 和 journal 均为成功。该证据仍只覆盖隔离容器/回环，不是原生 UDP listener、公网、生产、外部认证、SubMan 或全协议目标完成证明。
-
-Redirect `host_policy` applies only to enabled components. `destination_ports` and `management_ports` must be disjoint, and the listener port cannot be captured; the first enabled policy also requires sing-box to be active. Its dedicated jump is appended after existing IPv4 PREROUTING rules, so `component diagnose` reports observed ordering and marks effectiveness unassessed when earlier rules exist. This remains an explicit IPv4/TCP opt-in, not general host firewall management.
-
-2026-09-21 Redirect `host_policy` 验收：默认完整门禁 `bash dev/verification/run.sh`（`dev/verification-runs/20260921031904`）退出 0，Docker 远程 16/16 场景成功。`multi_protocol_coexistence` 在固定 `sing-box 1.14.1` 下创建受管 PREROUTING 链并经隔离 veth 回读 TCP marker；artifact 记录 `redirect-inbound-probe-complete`。随后 Redirect 删除 revision 7 返回 `not_configured`/空资源，`transparent-components-deleted` 与 `cleanup.result.env` 证明专属规则链及测试 veth/network namespace 清理断言通过。此项验证只覆盖隔离 Docker 内明确接口/目标端口的策略，不代表宿主机通用防火墙策略、公网或生产部署；未配置 `host_policy` 的 TProxy/Redirect 仍归操作员管理，全协议目标尚未完成。
-
-2026-09-22 TProxy `host_policy` 验收：定向 Docker 门禁 `dev/verification-runs/20260922061000` 的 `multi_protocol_coexistence` 与 `runtime_smoke` 均为 `STATUS=success`，固定 `sing-box 1.14.1` 在隔离 client/marker network namespace 中回读 TProxy TCP+UDP marker；同一组件连续应用两次 policy revision，删除后确认 mangle 链、fwmark、policy rule、local route table 与 veth/namespace 均清理。该证据只覆盖显式 IPv4 ingress/目标端口的 verification-container 资源，不代表宿主机通用策略、公网、生产或 SubMan；未配置 `host_policy` 的记录仍归操作员管理。
-
-2026-09-22 本机双版本核心复核：在 ARM64 VPS 的 `/tmp` 中校验官方 `sing-box-1.13.18-linux-arm64.tar.gz`（SHA-256 `a894f6152cade4a2c9d062762d54dea0c1aee673ab4759e0829e19cace932719`）与 `sing-box-1.14.1-linux-arm64.tar.gz`（SHA-256 `6060b42fa84c5dcaeae1799af7f61b0f1ae4855d9d5ddc9e02baba17154b3ae2`），并执行 `VERIFY_SKIP_REMOTE=1 SINGBOX_BINARY_113=... SINGBOX_BINARY_114=... bash dev/verification/run.sh --changed-file install.sh dev/verification/common.sh tests/protocol_coverage_contract.sh`；本地生命周期、导出、SubMan mock、目标核心 check 和协议探针门禁退出 0，运行目录为 `dev/verification-runs/20260922113827`。该复核仍明确保留 HTTPUpgrade/WS early-data 不可靠路径、宿主 `/dev/net/tun` 依赖和真实外部控制面为 blocked/skipped 边界；未执行生产、真实 SubMan 或公网操作。
-
-2026-09-23 TUIC 探针收口：TUIC 注册表已将常规 TCP 数据面接入共享 HTTP marker probe，并保留独立 UDP ASSOCIATE marker probe；定向 Docker 验证目录 `dev/verification-runs/20260923165440` 中两条 `result.env` 均为 `RESULT=success`，固定 ARM64 `sing-box 1.14.1`、特权隔离容器和回环业务路径均通过。更早运行中出现的 TUIC `unsupported` 结果是探针元数据错误的历史 artifact，不代表当前注册状态；该证据仍不涵盖公网、生产、外部认证或真实 SubMan。
-
-2026-09-24 实例生命周期收口：普通代理实例事务新增 `rebuild` 与 `takeover`。`rebuild` 在精确 revision CAS 下从受管 typed state 重建漂移的 live projection，继续执行候选配置、监听/引用、目标核心 `sing-box check`、防火墙 journal、服务重启和失败回滚；`takeover` 仅接受尚无 active typed marker/store 的 live plain-proxy inventory，以 revision 0 导入可无损表达的全部实例，默认拒绝非回环监听，`--allow-public` 才能明确接管公网监听，并保持现有 `config.json` 字节不变。新增 `tests/instance_rebuild_takeover.sh` 覆盖公开确认、凭据保留、revision 1→2 修复、active takeover/stale CAS 拒绝及 read-only `view`/`diagnose`/敏感 `export` 脱敏边界；VLESS + REALITY 的只读回归同时覆盖 UUID/short ID 脱敏。最终双版本本地矩阵为 `dev/verification-runs/20260924084053`，Docker 远程 16 场景为 `dev/verification-runs/20260924062005`，两者均未宣称公网、生产、外部认证或真实 SubMan。
+项目开发进度、协议覆盖范围与隔离环境验证证据分别记录在[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)和[能力矩阵](docs/superpowers/specs/2026-09-06-protocol-coverage.md)。配置检查与容器探针不代表公网或生产环境已验证。
 
 ## 🚀 一键安装
 
@@ -205,46 +97,13 @@ Bootstrap 的临时文件在下载和校验阶段都不会执行；网络失败�
 
 ## 开发验证工作流
 
-Docker 验证镜像自动管理，无需额外配置。
-
-REALITY 显式接管/状态重建按既有 inbound tag 关联实例，保留稳定 ID、节点名称、上下行限速和默认实例；连接字段继续从现有配置恢复，旧公钥仅在私钥一致时复用。存在歧义的身份映射会阻断重建，状态写入失败会恢复原协议状态目录。
-
-Agent 节点/分享列表与 REALITY、VMess、普通 VLESS、Hysteria2、Hysteria v1、AnyTLS、Snell、TUIC、NaiveProxy、ShadowTLS 客户端导出共用只读实例接口：旧单实例状态内部映射为 `main`，REALITY、VMess、普通 VLESS、Hysteria2、Hysteria v1、AnyTLS、Snell、TUIC、NaiveProxy 与 ShadowTLS 保留原实例身份；读取和客户端渲染不自动迁移旧状态或生成凭据。其他协议的多实例持久化仍在实施中。
-
-Mixed 已接入结构化实例状态（schema 2）和完整的实例管理链路：显式迁移会把旧单实例 `.env` 的稳定身份、tag、监听地址/端口和认证材料带入 `protocols/instances/mixed.json`；首次全新安装仍沿用兼容的 schema 1 路径，不会隐式迁移。Agent 与菜单支持查看、诊断、敏感导出、创建、替换、删除、设置默认实例、重建、接管、显式迁移和事务恢复，写入均使用 revision 条件。该入口只管理 Mixed，不代表全协议目标已经完成。
-
-服务端候选和结构化状态现在共用固定监听资源预检：区分 TCP/UDP，识别 IPv4 通配、IPv6 等价地址和双栈重叠；冲突时保留原配置。防火墙开放取自完整已发布配置的实际监听传输；删除根据旧配置备份和剩余入站保护仍被引用的规则，不再同时操作无关 TCP/UDP。Mixed 实例事务初次创建也先在目标同目录 staging 后原子发布，并为文件/config、受管 UFW/iptables/ip6tables 规则和服务恢复保存持久 journal/result；同时以共享 `flock` 串行化管理写入。firewalld 仅作只读外部预检，禁止在事务中 add/delete/reload，缺少所需 allow 或既有归属账本时会在变更前失败并要求人工规则。故障时不把文件恢复冒充为外部防火墙已恢复。全量删除必须先确认服务已停止；清单缺失或无法解释时拒绝清理。后端失败返回非零并明确披露已提交配置、尚未执行重启或可能存在的部分外部变更。这仍不是完整防火墙归属账本或系统资源事务，不追溯删除未归属的历史宽规则，也不检查其他进程抢占端口、动态 UDP relay 和 ACME 临时监听。
-
-全协议改造按[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)推进；[上游能力矩阵](docs/superpowers/specs/2026-09-06-protocol-coverage.md)区分上游支持与项目已实现能力。当前运行时注册表位于独立分发的 `install.sh` 中，现有十五个入站预设的菜单编号、公开 ID、导出候选、SubMan 类型和验证器元数据均从这里读取；普通 VLESS 使用独立 `vless-plain` preset，旧 `vless` alias 仍表示 REALITY。未知索引/状态版本或生成器返回的无效片段会阻断重建并保留原文件。现有配置的入站清单也会全量预检：未知类型、非 REALITY 的 VLESS、重复的单实例协议和重复显式 tag 会阻断自动重建/接管，不再仅识别第一个受支持入站。Agent 的 `status`、`nodes`、`links` 还要求索引、基础状态和 live 协议集合完全对应；REALITY、普通 VLESS、Hysteria v1、Snell、TUIC、NaiveProxy、ShadowTLS 的状态必须包含完整连接字段，多实例状态的清单、文件名、内部 ID 和 inbound tag 必须与 live 入站集合一一对应，否则只返回结构化错误而不输出部分结果。服务端与客户端候选还会检查组件 tag、引用和显式依赖环，然后继续执行目标核心 `check`；组件接管覆盖已注册的高级 inbound/endpoint 与自定义 outbound/group，并对现有对象及其绑定路由规则做无损保护；未知 outbound、保留 tag 冲突、未归属全局规则及任意未建模顶层字段仍阻断接管，不表示新增协议已完成。
+修改安装器、卸载器、配置模板、工具函数或验证框架后，运行：
 
 ```bash
 bash dev/verification/run.sh
 ```
 
-独立 SOCKS（协议注册表第 5 项、安装选择菜单 5）已纳入最终门禁并通过：使用 `socks` 入站和 active `CONFIG_SCHEMA_VERSION=2` marker 配合 JSON `schema_version: 1` typed store，沿用与 Mixed 相同的认证记录、实例 ID/tag、监听与 revision CAS。它只提供 SOCKS4/4a/5 代理入口，不提供 HTTP 或 TLS；客户端导出使用 SOCKS5 outbound 和 UoT v2。Agent 实例接口为 `view`、`diagnose`、敏感 `export` 以及 `create`、`replace`、`delete`、`default`、`rebuild`、`takeover`、`recover`，命令形式与 Mixed 相同但协议参数为 `socks`；`migrate socks` 明确拒绝，已有 live SOCKS 配置应走 takeover。实例生命周期、两核心 runtime/check、菜单、接管和 Agent/export 回归及最终验证框架已通过；完整协议目标仍未完成。详细证据见[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)。
-
-Shadowsocks 增量已通过最终源码的 12/12 Docker 场景、18/18 TCP 探针，以及原生 Bash / 实际 Bash 4.2 × 1.13.18 / 1.14.0 的四组回环业务测试（每组 7 TCP、7 UDP）。九种方法均通过核心配置检查，不把 check 等同于所有方法的业务实测。SubMan 仅有 mock 证据；公网 UDP 和生产部署未验证。本地回归的首次失败、修复与分阶段重跑范围见[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)。
-
-只想验证本地调度与触发规则时，可运行：
-
-```bash
-VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh
-```
-
-核心脚本改动会自动触发远程验证；仅修改 `tests/`、`docs/`、`README.md` 不会占用测试机。
-
-默认工作流已做分层优化：
-- 核心脚本改动默认只跑协议探测快测
-- 仅在改动 `dev/verification/run.sh`、`dev/verification/common.sh` 或 `dev/verification/remote/` 时，才追加远程调度与远程框架回归
-- 远程验证默认优先收敛到 `runtime_smoke`；安装/重配相关改动会扩到全新安装、接管、重配和已有协议共存，以及真实的 `upgrade_1_13_to_1_14` 成功升级和 `upgrade_rollback_1_13_to_1_14` 故障回滚场景；NaiveProxy 与 ShadowTLS 已纳入 `multi_protocol_coexistence` 的 Docker 协议探针，Naive 的 UoT/HTTP3 分支与 ShadowTLS 组合链路仍按各自证据边界记录。
-
-命中远程验证时，测试机会额外执行协议级闭环探测：先用目标 `sing-box` 校验客户端配置，再启动临时客户端连接本机服务端入站，并通过客户端 SOCKS 代理访问本机 HTTP 标记服务。HTTP 增量已通过 75 项本地门禁，修正测试断言后 Docker 重跑为 11/11 场景、16/16 TCP 探测成功；普通 VLESS 阶段的最终本地门禁运行目录为 `dev/verification-runs/20260908141403`，108/108 项通过；最终 Docker 运行目录 `dev/verification-runs/20260908144031` 为 15/15 场景、22/22 协议探针成功，包含普通 VLESS 新装、十协议共存和升级回滚产物。HTTP TLS 另以 1.13.18/1.14.0 与实际 Bash 4.2 完成本地正反向连接测试。SOCKS UoT 的 UDP 证据限于回环测试，不代表公网原生 UDP 可达。未知协议会在产物中标记为 `unsupported`。详细命令、失败记录、重跑范围与证据见[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)。
-
-脚本会自动：
-1. 安装所有必要依赖（curl, wget, jq, qrencode 等）。
-2. 下载并配置适配的 `sing-box` (当前适配：1.14.1)。
-3. 生成 **VLESS + REALITY**、普通 **VLESS**、**Mixed (HTTP/HTTPS/SOCKS)**、独立 **SOCKS**、独立 **HTTP**、**Shadowsocks**、**Trojan**、**VMess**、**Hysteria2**、**Hysteria v1**、**AnyTLS**、**Snell**、**TUIC**、**NaiveProxy** 或 **ShadowTLS** 配置，并支持多协议共存；其中 VLESS REALITY、普通 VLESS、VMess、Hysteria2、Hysteria v1、AnyTLS、Snell、TUIC、NaiveProxy 与 ShadowTLS 支持多实例，VLESS REALITY 还支持独立端口和可选上下行限速。HTTP/SOCKS 明文入口仅适合可信网络或受保护隧道。
-4. 以 **`install.sh`** 作为唯一安装与维护真源，并将自己安装为全局命令 **`sbv`**，方便您随时管理。
+验证框架使用本地 Docker 特权容器执行需运行环境的场景；仅检查本地调度与触发规则时，可设置 `VERIFY_SKIP_REMOTE=1`。测试范围与历史证据见[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)。
 
 ---
 
@@ -258,7 +117,7 @@ sbv
 
 ## ✨ 项目特性
 
-- **Agent 友好命令行**：提供 `sbv agent ... --json` 非交互命令，方便 Hermes、OpenClaw、Codex 等 AI Agent 发现完整能力、获取状态与节点信息、导出客户端配置，并执行带预检、确认、持久备份和自动回滚的固定版本升级。所有 `--json` 响应采用 `schema_version: "1.0"` 统一 envelope，同时保留兼容字段 `schema: "1"`；对外协议 ID 统一使用 `vless-reality`、`vless-plain`、`mixed`、`socks`、`http`、`shadowsocks`、`trojan`、`vmess`、`hysteria2`、`hysteria`、`anytls`、`snell`、`tuic`、`naive`、`shadowtls`，独立 SOCKS、VMess、普通 VLESS、Hysteria2、Hysteria v1、Snell、TUIC、NaiveProxy 与 ShadowTLS 生命周期已通过定向门禁。
+- **Agent 友好命令行**：提供 `sbv agent ... --json` 非交互命令，方便 Hermes、OpenClaw、Codex 等 AI Agent 发现完整能力、获取状态与节点信息、导出客户端配置，并执行带预检、确认、持久备份和自动回滚的固定版本升级。所有 `--json` 响应采用 `schema_version: "1.0"` 统一 envelope，同时保留兼容字段 `schema: "1"`；对外协议 ID 统一使用 `vless-reality`、`vless-plain`、`mixed`、`socks`、`http`、`shadowsocks`、`trojan`、`vmess`、`hysteria2`、`hysteria`、`anytls`、`snell`、`tuic`、`naive`、`shadowtls`。
 - **1.14.x 深度适配**：继续采用 **Endpoint（端点化）** 架构，并适配顶层 ACME `certificate_providers`、可复用 `http_clients`、远程规则集 `http_client` 与 Hysteria2 `disable_chrome_parrot`。
 - **跨版本配置生成**：目标核心为 1.14+ 时生成新版配置结构；显式固定或运行 1.13.x 时继续生成内联 `tls.acme` 与旧版远程规则集结构。受管 shared `http_client` 只在 1.14+ 顶层配置中渲染；接管或重建时会保留可内联表达的 ACME 扩展字段，未注册或发生 drift 的 shared client 会拒绝重写。仅更新二进制时不会重写现有配置。
 - **托管 route rule-set**：高级组件 Agent 现在可用同一 revision/CAS 事务管理 inline、local、remote 三种 `route.rule_set`；inline 只接受有界 matcher rules，local 文件按引用使用且不会随删除清理，remote URL 与 1.14+ named `http_client` 引用受控校验。生成、接管、删除保护和 live drift 检查复用组件生命周期；规则集不作为普通代理节点导出、分享或同步 SubMan，URL 等完整配置只经敏感 component export 返回。
@@ -280,18 +139,13 @@ sbv
 - **协议级展示**：终端可按协议查看节点信息，支持 `VLESS`、`VMess` 与 `Hysteria2` 链接/ANSI 二维码展示，为 `Mixed` 和独立 `SOCKS` 输出代理链接与二维码提示，并为 `Hysteria`、`AnyTLS`、`Snell`、`TUIC`、`NaiveProxy`、`ShadowTLS` 输出逐实例参数摘要和 sing-box outbound JSON（无标准 URI）；多 REALITY、普通 VLESS、Mixed、SOCKS、Trojan、VMess、Hysteria2、Hysteria、AnyTLS、Snell、TUIC、NaiveProxy、ShadowTLS 实例会显示实例 ID、端口和限速摘要。
 - **裸核客户端导出**：可从交互菜单或 `sbv agent export-client --json` 生成 `/root/sing-box-vps/client/sing-box-client.json`，支持当前十五个预设，覆盖前自动备份，并在输出前执行 `sing-box check`。Mixed 和独立 SOCKS 使用 SOCKS5 outbound 与 UoT v2，VMess/Trojan/普通 VLESS/Hysteria2/Hysteria/AnyTLS/Snell/TUIC/NaiveProxy/ShadowTLS 按用户保留认证、TLS 与传输；Naive outbound 依赖官方 `with_naive_outbound` 构建和运行时 `libcronet.so`，缺失或无效的端口/认证字段会阻断整份导出，保留原导出及备份，不自动生成密码或降级认证。
 - **Mixed 安全边界**：Mixed 服务端和其导出的 SOCKS5/UoT 链路不提供 TLS；公网明文监听必须经过单独确认，不能把它当作独立的 TLS SOCKS 服务端。Mixed 当前也不新增 SubMan 同步能力。
-- **独立 SOCKS（已验证边界）**：注册表菜单项 5 使用 `socks` state/Agent ID，active marker 为 schema 2、JSON store 为 `schema_version: 1`，支持同认证 typed record、共享事务与实例级 CAS；服务端无 HTTP/TLS，客户端导出为 SOCKS5 + UoT v2。Docker `20260916022721` 通过真实 SOCKS5 UDP ASSOCIATE 回读 UoT v2 UDP marker；这不等于原生 UDP listener、TLS、HTTP、SubMan、公网或全协议目标已完成。证据见[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)。
+- **独立 SOCKS**：注册表菜单项 5 使用 `socks` state/Agent ID，active marker 为 schema 2、JSON store 为 `schema_version: 1`，支持同认证 typed record、共享事务与实例级 CAS；服务端无 HTTP/TLS，客户端导出为 SOCKS5 + UoT v2；不提供原生 UDP listener、TLS、HTTP 或 SubMan 同步。
 - **独立 HTTP**：菜单项 6、管理菜单 19，使用 `http` state/Agent ID 与 schema 2 共享实例事务。默认回环监听并启用认证，可选择明文或手工证书 TLS；证书文件由用户维护，实例操作不申请或删除它们。客户端导出为 TCP-only HTTP CONNECT；TLS 导出仅嵌入公开证书信任与 SNI，不读取私钥。明文 URI 返回 `http_plaintext_transport`；TLS 无可保真 URI，返回 `http_tls_uri_unrepresentable` 并使用完整 JSON。访问 HTTPS 目标不等于代理入口已加密；不支持 HTTP SubMan 同步。
 - **Shadowsocks**：安装菜单 7、管理菜单 20，协议 ID `shadowsocks`（别名 `ss`），使用 schema 2 marker 与 schema 1 JSON 实例库。支持九种入站方法、可用方法的多用户、实例出站策略和 TCP/UDP 独立选择；默认回环监听，非回环写入需确认。`none` 是明文，2022 ChaCha 不支持多用户；不接管未建模的 relay、mux 或 plugin。完整 JSON 保留网络限制；SIP002 无法表达单网络限制时返回 warning。长 2022 PSK 在客户端按核心规则派生等效定长密钥，原始状态不变。
 - **VMess**：安装菜单 9、管理菜单 22，协议 ID `vmess`，使用 schema 2 marker 与 schema 1 JSON 实例库。支持 1–128 个唯一用户、`security`/`alter_id`、TLS 信任和 none/http/ws/grpc/quic typed transport；WS early data 与 HTTPUpgrade 仍按已知 runtime guard 阻断。客户端导出和 `vmess://` 分享保留可表达字段，不读取服务器私钥；SubMan 仅同步 TLS 系统信任且 URI 无损可表达的用户。
 - **普通 VLESS**：安装菜单 10、管理菜单 23，协议 ID `vless-plain`（运行时 type 仍为 `vless`），使用独立 schema 2 marker 与 schema 1 JSON 实例库。支持 1–128 个用户、按用户 `flow`、TLS 信任和 none/http/ws/grpc/quic typed transport；客户端导出和 `vless://` 分享不读取服务器私钥，SubMan 仅同步 TLS 系统信任且 URI 无损可表达的用户。旧 `vless` alias 不会被重新解释，仍表示 VLESS + REALITY。
 - **Hysteria v1**：安装菜单 13、管理菜单 28，协议 ID `hysteria`，使用 schema 2 marker 与 schema 1 JSON 实例库。支持 1–128 个唯一 `name`/`auth_str` 用户、必需手工 TLS、`certificate`/`system` 客户端信任、独立上下行带宽、字符串 obfs 与 QUIC 窗口/MTU/并发流参数；服务端只渲染 Hysteria v1 字段，不混入 Hysteria2 的密码或 masquerade。客户端按用户导出完整 outbound JSON，`links` 返回 `hysteria_standard_uri_unavailable`，不执行 SubMan 同步；非回环监听仍须显式确认。
 - **SubMan 同步**：按 SubMan OpenAPI 1.0.0 契约将 VLESS + REALITY、普通 VLESS、Hysteria2、双网络加密 Shadowsocks，以及 TLS 系统信任且 URI 无损表达的 Trojan/VMess 用户幂等推送到节点库；Hysteria v1、Snell、TUIC、NaiveProxy、AnyTLS 与 ShadowTLS 因无标准无损 URI，明确保持 unsupported，不伪装成 `other`。各协议按实例/用户使用稳定外部键，从同一快照生成身份与凭据，无法表达的 TLS、传输、证书信任或 URI 大小条目明确跳过。Hysteria2 的带宽和 masquerade、Hysteria v1 的带宽/obfs/QUIC 选项在完整客户端 JSON 中保留，标准 URI 无法携带时仅以 warning 披露，不伪造 SubMan 字段。仅在 Workspace 已远端提交并回读验证后报告成功，并识别 revision、稳定错误分类和安全重试提示。集成测试使用 mock，不代表已授权或执行真实同步；全部跳过不报告同步成功。
-- **TCP 入口 UDP 业务探针**：Docker `20260916022721` 对 VLESS REALITY、Mixed 和独立 SOCKS 分别回读真实 UDP marker；REALITY 使用 Vision/xudp 默认，Mixed 验证原生 SOCKS UDP，独立 SOCKS 验证显式 UoT v2。证据限定于固定核心、隔离容器和回环，不代表原生 UDP listener、公网、生产或外部客户端。
-- **TUN L3 业务探针**：特权 Docker `20260916064328` 在 `fresh_install_vless` 中以 disposable veth/network namespace 将 TCP+UDP marker 送入 core-owned TUN 的 `auto_route` 路径，目标核心 `check`、精确响应与资源清理均成功；这只证明隔离容器/network namespace L3 数据面，不代表宿主策略、DNS/防火墙接管、公网或生产。
-- **Bridge L3 业务探针**：特权 Docker `20260916071546` 在 `fresh_install_vless` 中以两组 disposable veth/network namespace 将 TCP+UDP marker 经 core-owned TUN 的 `auto_route` 和 bridge 动态 TUN/netfilter 送至隔离 egress，目标核心 `check`、精确响应、route/rule/diagnose 及 CAS/接口清理均成功；这只证明隔离容器/network namespace 的 `project-real-bridge-l3-tcp+udp` 数据面，不代表宿主策略、外部 bridge 接口、公网或生产。
-- **OpenVPN `system:true` TCP+UDP 数据面探针**：特权 Docker `20260916104745` 在 `fresh_install_vless` 中保留 `20260916083525` 的 TCP marker，并新增 `sbv-ovpn-us`/`sbv-ovpn-uc` UDP pair（11997）与 direct UDP inbound（15095），均经命名 core-owned TUN 接口回送到独立 disposable veth/network namespace；目标核心 `check`、journal/diagnose、精确 TCP/UDP payload 与 CAS/接口/namespace 清理均成功，结果为 `project-real-openvpn-system-tcp+udp`。证据仅限隔离容器/network namespace，不代表宿主路由、透明策略、公网、生产、外部控制面或 SubMan。
-- **WireGuard `system:true` UDP 数据面探针**：特权 Docker `fresh_install_vless` 使用镜像内 `wireguard-tools` 创建 disposable kernel peer，并将 peer 移入与 marker 相邻的 disposable network namespace，通过 host/namespace veth 连接；命名 `sbv-wg-sys` system endpoint 再经一次性 `/32` marker route 访问独立 loopback UDP echo。namespace 内的 peer route 让解密请求和加密响应不与宿主 TUN 地址冲突；目标核心 `check`、接口地址/MTU、diagnose、精确 payload、kernel peer 的 WireGuard handshake/transfer 计数与 CAS/route/interface/namespace 清理均作为 artifact 保存。system endpoint 是 core-owned TUN 载体，不假定它暴露内核 `wg` 设备统计；结果标签为 `project-real-wireguard-system-udp`。route 与 namespace/veth 只属于验证夹具，不代表宿主策略接管；证据仅限隔离容器、固定核心与回环，不代表公网、外部 peer、生产、SubMan 或完整协议目标。
 - **规范存储**：统一使用 `/root/sing-box-vps/` 存放配置、密钥及持久化参数。
 
 ## Agent 非交互命令
@@ -452,7 +306,7 @@ Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码
 14. **系统管理**：BBR，以及入站监听栈和出站/DNS 策略。
 15. **更新管理脚本 `sbv`**。
 16. **卸载管理脚本 `sbv`**。
-17. **管理 Mixed 实例**：创建、修改、删除、设置默认实例、迁移 legacy 状态和恢复未完成事务；完整门禁证据见实施记录。
+17. **管理 Mixed 实例**：创建、修改、删除、设置默认实例、迁移 legacy 状态和恢复未完成事务。
 18. **管理 SOCKS 实例**：创建、修改、删除、设置默认实例和恢复未完成事务；使用独立 SOCKS 的 schema 2 typed store，不提供 legacy `.env` migration。
 19. **管理 HTTP 实例**：创建、修改、删除、设置默认实例和恢复未完成事务；入口可选明文或手工证书 TLS，使用共享事务，不提供 legacy migration。
 20. **管理 Shadowsocks 实例**：逐实例管理认证、监听网络、默认实例与事务恢复，不提供 legacy migration。
