@@ -51,7 +51,7 @@ sbv agent capabilities --json | jq -e '.ok == true and (.script_version | tonumb
 
 若旧脚本没有 `update sbv`、更新来源不可验证、版本仍低于本演练所需的
 `2026090202`，立即停止，不要退回交互式核心升级。应由操作者先通过仓库
-README 中的官方入口更新 `sbv`；当前仓库基线为 `2026092801`，实际运行时
+README 中的官方入口更新 `sbv`；当前仓库基线为 `2026093001`，实际运行时
 应记录 `capabilities.script_version`，不要把手册中的最低门槛当成当前版本。
 
 ## 1. 只读预检
@@ -69,7 +69,7 @@ sbv agent check --json
 sbv agent doctor --json
 ```
 
-预检必须确认：实例 healthy、当前为 1.13.x、目标为固定演练版本 1.14.0、`ready=true`、`blockers=[]`、当前配置 check 通过、没有未处理的残缺状态，并记录完整 JSON 输出。当前脚本支持到 1.14.1，但本文件固定使用 1.14.0 复现升级路径。`upgrade-check` 不下载目标二进制，所以此时 `target_binary_validation.performed=false` 是预期值；目标 1.14 校验在有备份的升级事务中、重启服务前完成。若命令不存在、输出不是合法 JSON、服务非 active、当前 check 失败或出现 blocker，立即终止。
+预检必须确认：实例 healthy、当前为 1.13.x、目标为固定演练版本 1.14.0、`ready=true`、`blockers=[]`、当前配置 check 通过、没有未处理的残缺状态，并记录完整 JSON 输出。当前脚本支持到 1.14.2，但本文件固定使用 1.14.0 复现升级路径。`upgrade-check` 不下载目标二进制，所以此时 `target_binary_validation.performed=false` 是预期值；目标 1.14 校验在有备份的升级事务中、重启服务前完成。若命令不存在、输出不是合法 JSON、服务非 active、当前 check 失败或出现 blocker，立即终止。
 
 ## 2. 升级前证据与批准门
 

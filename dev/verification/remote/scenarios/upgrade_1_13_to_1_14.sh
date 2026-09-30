@@ -53,12 +53,12 @@ EOF
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/before.check.txt" sing-box check -c /root/sing-box-vps/config.json
 
   preflight_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/upgrade-check.json")
-  sbv agent upgrade-check --json 1.14.0 > "${preflight_path}"
+  sbv agent upgrade-check --json 1.14.2 > "${preflight_path}"
   jq -e '
     .ready == true
     and .blockers == []
     and .current == "1.13.18"
-    and .target == "1.14.0"
+    and .target == "1.14.2"
     and .apply == false
     and .target_binary_validation.performed == false
     and .current_check.ok == true
@@ -66,7 +66,7 @@ EOF
   verification_mark_step upgrade_preflight_ready
 
   upgrade_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/upgrade.json")
-  sbv agent upgrade --json 1.14.0 --yes > "${upgrade_path}"
+  sbv agent upgrade --json 1.14.2 --yes > "${upgrade_path}"
   jq -e '
     .ok == true
     and .changed == true
@@ -75,7 +75,7 @@ EOF
     and .transaction.result_persisted == true
     and .transaction.status == "success"
     and .config_preserved == true
-    and .installed == "1.14.0"
+    and .installed == "1.14.2"
     and (.backup | type == "string" and length > 0)
     and .check.ok == true
     and .service.after == "active"
@@ -88,7 +88,7 @@ EOF
   verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/service.after.sha256" "${after_service_hash}"
   [[ "${after_hash}" == "${before_hash}" ]]
   [[ "${after_service_hash}" == "${before_service_hash}" ]]
-  grep -Fqx 'sing-box version 1.14.0' <(sing-box version)
+  grep -Fqx 'sing-box version 1.14.2' <(sing-box version)
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/after.check.txt" sing-box check -c /root/sing-box-vps/config.json
   verification_wait_for_service_active sing-box
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/systemctl.status.txt" systemctl status sing-box --no-pager
@@ -104,7 +104,7 @@ EOF
     .schema_version == "1.0" and
     .status == "success" and
     .old_version == "1.13.18" and
-    .new_version == "1.14.0" and
+    .new_version == "1.14.2" and
     .rollback.attempted == false and
     .rollback.result == "not_attempted" and
     .failure_reason == null and

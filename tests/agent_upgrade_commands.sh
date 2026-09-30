@@ -155,7 +155,7 @@ jq -e '
 
 state_hash_before=$(protocol_state_tree_hash)
 state_files_before=$(find "${SB_PROTOCOL_STATE_DIR}" -type f -printf '%P\n' | sort)
-check_json=$(agent_cli upgrade-check --json 1.14.0)
+check_json=$(agent_cli upgrade-check --json 1.14.2)
 state_hash_after=$(protocol_state_tree_hash)
 state_files_after=$(find "${SB_PROTOCOL_STATE_DIR}" -type f -printf '%P\n' | sort)
 [[ "${state_hash_after}" == "${state_hash_before}" ]]
@@ -169,7 +169,7 @@ jq -e '
   and .ready == true
   and .blockers == []
   and .current == "1.13.18"
-  and .target == "1.14.0"
+  and .target == "1.14.2"
   and .service.active_state == "active"
   and .managed_instance_state == "healthy"
   and .current_check.ok == true
@@ -183,13 +183,13 @@ jq -e '
   and .apply == false
 ' <<< "${check_json}" >/dev/null
 
-if upgrade_json=$(agent_cli upgrade --json 1.14.0 2>/dev/null); then
+if upgrade_json=$(agent_cli upgrade --json 1.14.2 2>/dev/null); then
   printf 'upgrade without --yes should fail\n' >&2
   exit 1
 fi
 jq -e '.ok == false and .error == "confirmation_required"' <<< "${upgrade_json}" >/dev/null
 
-if upgrade_json=$(agent_cli upgrade --json 9.9.9 --yes 2>/dev/null); then
+if upgrade_json=$(agent_cli upgrade --json 1.14.3 --yes 2>/dev/null); then
   printf 'unsupported upgrade target should fail\n' >&2
   exit 1
 fi
@@ -217,7 +217,7 @@ original_transaction_result_function=$(declare -f write_agent_upgrade_transactio
 write_agent_upgrade_transaction_result() {
   return 1
 }
-if upgrade_json=$(agent_cli upgrade --json 1.14.0 --yes 2>/dev/null); then
+if upgrade_json=$(agent_cli upgrade --json 1.14.2 --yes 2>/dev/null); then
   printf 'backup-ready transaction record failure should return non-zero\n' >&2
   exit 1
 fi
@@ -242,7 +242,7 @@ mktemp() {
   fi
   command mktemp "$@"
 }
-if upgrade_json=$(agent_cli upgrade --json 1.14.0 --yes 2>/dev/null); then
+if upgrade_json=$(agent_cli upgrade --json 1.14.2 --yes 2>/dev/null); then
   printf 'operation-log allocation failure should return non-zero\n' >&2
   exit 1
 fi
@@ -275,7 +275,7 @@ mktemp() {
   fi
   command mktemp "$@"
 }
-if upgrade_json=$(agent_cli upgrade --json 1.14.0 --yes 2>/dev/null); then
+if upgrade_json=$(agent_cli upgrade --json 1.14.2 --yes 2>/dev/null); then
   printf 'operation-log and terminal record failure should return non-zero\n' >&2
   exit 1
 fi
@@ -292,7 +292,7 @@ eval "${original_upgrade_check_function}"
 
 original_hash=$(agent_file_sha256 "${SINGBOX_CONFIG_FILE}")
 touch "${TARGET_CHECK_FAIL_FILE}"
-if upgrade_json=$(agent_cli upgrade --json 1.14.0 --yes 2>/dev/null); then
+if upgrade_json=$(agent_cli upgrade --json 1.14.2 --yes 2>/dev/null); then
   printf 'target config-check failure should return non-zero\n' >&2
   exit 1
 fi
@@ -319,7 +319,7 @@ jq -e '
   .schema_version == "1.0"
   and (.transaction_id | length > 0)
   and .old_version == "1.13.18"
-  and .new_version == "1.14.0"
+  and .new_version == "1.14.2"
   and .status == "rolled_back"
   and .rollback.attempted == true
   and .rollback.result == "success"
@@ -334,7 +334,7 @@ jq -e '
 rm -f "${TARGET_CHECK_FAIL_FILE}"
 
 touch "${SERVICE_RESTART_FAIL_FILE}"
-if upgrade_json=$(agent_cli upgrade --json 1.14.0 --yes 2>/dev/null); then
+if upgrade_json=$(agent_cli upgrade --json 1.14.2 --yes 2>/dev/null); then
   printf 'service restart failure should return non-zero\n' >&2
   exit 1
 fi
@@ -363,7 +363,7 @@ restore_agent_upgrade_backup() {
   return 1
 }
 touch "${TARGET_CHECK_FAIL_FILE}"
-if upgrade_json=$(agent_cli upgrade --json 1.14.0 --yes 2>/dev/null); then
+if upgrade_json=$(agent_cli upgrade --json 1.14.2 --yes 2>/dev/null); then
   printf 'rollback failure should return non-zero\n' >&2
   exit 1
 fi
@@ -377,7 +377,7 @@ jq -e '
   and .rolled_back == false
   and .rollback_ok == false
   and .manual_intervention_required == true
-  and .installed == "1.14.0"
+  and .installed == "1.14.2"
 ' <<< "${upgrade_json}" >/dev/null
 rollback_result_file=$(jq -r '.transaction.result_path' <<< "${upgrade_json}")
 jq -e '
@@ -399,7 +399,7 @@ write_agent_upgrade_transaction_result() {
   fi
   write_agent_upgrade_transaction_result_real "$@"
 }
-if upgrade_json=$(agent_cli upgrade --json 1.14.0 --yes 2>/dev/null); then
+if upgrade_json=$(agent_cli upgrade --json 1.14.2 --yes 2>/dev/null); then
   printf 'terminal transaction record failure should return non-zero\n' >&2
   exit 1
 fi
@@ -409,7 +409,7 @@ jq -e '
   and (.backup | length > 0)
   and .transaction.status == "success"
   and .transaction.result_persisted == false
-  and .installed == "1.14.0"
+  and .installed == "1.14.2"
   and .config_preserved == true
 ' <<< "${upgrade_json}" >/dev/null
 failed_terminal_result_file=$(jq -r '.transaction.result_path' <<< "${upgrade_json}")
@@ -418,7 +418,7 @@ unset -f write_agent_upgrade_transaction_result_real
 eval "${original_transaction_result_function}"
 write_singbox_stub "1.13.18"
 
-upgrade_json=$(agent_cli upgrade --json 1.14.0 --yes)
+upgrade_json=$(agent_cli upgrade --json 1.14.2 --yes)
 jq -e '
   .schema == "1"
   and .schema_version == "1.0"
@@ -428,7 +428,7 @@ jq -e '
   and .changed == true
   and .restarted == true
   and .rolled_back == false
-  and .installed == "1.14.0"
+  and .installed == "1.14.2"
   and .config_preserved == true
   and (.backup | length > 0)
   and (.transaction.id | length > 0)
@@ -452,7 +452,7 @@ backup_dir=$(jq -r '.backup' <<< "${upgrade_json}")
 jq -e '
   (.transaction_id | length > 0)
   and .old_version == "1.13.18"
-  and .new_version == "1.14.0"
+  and .new_version == "1.14.2"
   and (.manifest_path | endswith("/SHA256SUMS"))
   and (.external_runtime.library_path | endswith("/lib/libcronet.so"))
   and (.external_runtime.marker_path | endswith("/libcronet.sha256"))
@@ -481,7 +481,7 @@ grep -Fq '  metadata.json' "${backup_dir}/SHA256SUMS"
 (cd "${backup_dir}" && sha256sum -c SHA256SUMS >/dev/null)
 
 backup_count_before=$(find "${SB_UPGRADE_BACKUP_ROOT}" -mindepth 1 -maxdepth 1 -type d | wc -l)
-noop_json=$(agent_cli upgrade --json 1.14.0 --yes)
+noop_json=$(agent_cli upgrade --json 1.14.2 --yes)
 backup_count_after=$(find "${SB_UPGRADE_BACKUP_ROOT}" -mindepth 1 -maxdepth 1 -type d | wc -l)
 jq -e '
   .schema == "1"
@@ -515,7 +515,7 @@ fi
 unset -f mv
 
 touch "${CURRENT_CHECK_FAIL_FILE}"
-if upgrade_json=$(agent_cli upgrade --json 1.14.0 --yes 2>/dev/null); then
+if upgrade_json=$(agent_cli upgrade --json 1.14.2 --yes 2>/dev/null); then
   printf 'current config-check failure should return non-zero\n' >&2
   exit 1
 fi
@@ -585,7 +585,7 @@ sha256sum() {
   fi
   command sha256sum "$@"
 }
-if create_agent_upgrade_backup "1.13.18" "1.14.0" >/dev/null; then
+if create_agent_upgrade_backup "1.13.18" "1.14.2" >/dev/null; then
   printf 'expected a runtime file hash failure to cancel backup creation\n' >&2
   exit 1
 fi

@@ -420,7 +420,7 @@ verification_scenario_fresh_install_vless_plain() {
 
 verification_scenario_upgrade_1_13_to_1_14() {
   printf 'SCENARIO=upgrade_1_13_to_1_14\n'
-  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/upgrade.json" '{"ok":true,"installed":"1.14.0","transaction":{"status":"success","result_persisted":true}}'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/upgrade.json" '{"ok":true,"installed":"1.14.2","transaction":{"status":"success","result_persisted":true}}'
   verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/transaction-result.json" '{"schema_version":"1.0","status":"success"}'
 }
 

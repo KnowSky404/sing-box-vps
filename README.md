@@ -2,9 +2,9 @@
 
 面向 VPS 的 sing-box 安装与管理脚本。通过交互菜单部署协议、维护服务、导出客户端配置；安装器会校验配置并保留关键变更的备份。
 
-- **当前适配：1.14.1**；显式固定 1.13.x 时保留对应配置生成路径。
-- 脚本版本：`2026092801`
-- sing-box 适配版本：`1.14.1`
+- **当前适配：1.14.2**；显式固定 1.13.x 时保留对应配置生成路径。
+- 脚本版本：`2026093001`
+- sing-box 适配版本：`1.14.2`
 - **运行环境：** Debian 11+、Ubuntu 20.04+、CentOS 7+/Stream、AlmaLinux、Rocky Linux；需要 root 权限。
 
 [快速安装](#快速安装) · [常用命令](#常用命令) · [项目特性](#项目特性) · [Agent 命令](#agent-非交互命令) · [功能菜单](#功能菜单) · [能力矩阵](docs/superpowers/specs/2026-09-06-protocol-coverage.md)
@@ -115,7 +115,7 @@ sbv agent instance migrate mixed --json --yes --expected-revision N
 sbv agent instance recover <protocol> --json --yes --expected-revision N
 sbv update sbv
 sbv update sing-box latest
-sbv update sing-box 1.14.1
+sbv update sing-box 1.14.2
 ```
 
 代码块中的 `create|replace`、`delete|default` 只是二选一记法，实际执行时

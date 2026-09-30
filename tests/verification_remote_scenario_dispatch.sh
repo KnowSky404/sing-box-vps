@@ -1069,8 +1069,8 @@ sing-box() {
     version)
       case "${VERIFY_CURRENT_SCENARIO:-}" in
         upgrade_rollback_1_13_to_1_14) printf 'sing-box version 1.13.18\n' ;;
-        upgrade_1_13_to_1_14) printf 'sing-box version 1.14.0\n' ;;
-        *) printf 'sing-box version 1.14.1\n' ;;
+        upgrade_1_13_to_1_14) printf 'sing-box version 1.14.2\n' ;;
+        *) printf 'sing-box version 1.14.2\n' ;;
       esac
       return 0
       ;;
@@ -1267,7 +1267,7 @@ awk '
 [[ -f "${ARTIFACT_DIR}/meta/scenarios.txt" ]]
 [[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_vless/protocols/index.env" ]]
 [[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_vless/listeners.ss-lntp.txt" ]]
-grep -Fqx 'sing-box version 1.14.1' "${ARTIFACT_DIR}/scenarios/fresh_install_vless/sing-box.version.txt"
+grep -Fqx 'sing-box version 1.14.2' "${ARTIFACT_DIR}/scenarios/fresh_install_vless/sing-box.version.txt"
 [[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_vless/wireguard-endpoint-system/result.env" ]]
 grep -Fqx 'RESULT=blocked' \
   "${ARTIFACT_DIR}/scenarios/fresh_install_vless/wireguard-endpoint-system/result.env"
@@ -1285,7 +1285,7 @@ grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/legacy_takeover_export/pro
 jq -e '.outbounds[0] | has("flow") | not' \
   "${ARTIFACT_DIR}/scenarios/legacy_takeover_export/protocol-probes/vless-reality/client.json" >/dev/null
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_anytls/protocol-probes/anytls/result.env"
-grep -Fqx 'sing-box version 1.14.1' "${ARTIFACT_DIR}/scenarios/fresh_install_anytls/sing-box.version.txt"
+grep -Fqx 'sing-box version 1.14.2' "${ARTIFACT_DIR}/scenarios/fresh_install_anytls/sing-box.version.txt"
 [[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_socks/config.json" ]]
 [[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_socks/protocols/instances/socks.json" ]]
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_socks/protocol-probes/socks/result.env"

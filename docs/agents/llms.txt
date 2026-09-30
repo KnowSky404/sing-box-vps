@@ -5,11 +5,11 @@ Purpose: one-script install and management tool for deploying sing-box on Linux 
 Primary language: Bash.
 Runtime source of truth: install.sh.
 Remote verification: Docker-based, auto-builds sing-box-vps-verify image.
-Runtime baseline: script `2026092801`, sing-box support through `1.14.1`; use
+Runtime baseline: script `2026093001`, sing-box support through `1.14.2`; use
 `sbv agent capabilities --json` and its `script_version` as the live contract
 authority.
 
-Current script version: 2026092801. The managed component registry now has
+Current script version: 2026093001. The managed component registry now has
 typed inline/local/remote route rule-set roles in the same schema-1 CAS,
 render, takeover, rebuild, drift-guard, and sensitive-export lifecycle. Inline
 rules are bounded matchers, local paths are external references, and remote

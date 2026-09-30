@@ -4,15 +4,38 @@
 
 矩阵基线稳定版：`v1.14.0`
 
-当前支持上限：`v1.14.1`（官方最新稳定版，2026-09-15 发布）
+当前支持上限：`v1.14.2`（官方最新稳定版，2026-09-24 发布）
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026092801`，`SB_SUPPORT_MAX_VERSION=1.14.1`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026093001`，`SB_SUPPORT_MAX_VERSION=1.14.2`
 
-最新稳定版漂移核对：`v1.14.1`（2026-09-15，Linux ARM64 发布包 SHA-256
+历史稳定版漂移核对：`v1.14.1`（2026-09-15，Linux ARM64 发布包 SHA-256
 `6060b42fa84c5dcaeae1799af7f61b0f1ae4855d9d5ddc9e02baba17154b3ae2`）；历史
 `v1.14.0` 源码提交仍作为矩阵基线，1.14.1 的发布资产与运行时版本核对记录在实施计划中。
+
+2026-09-30 稳定版适配：先通过 Context7 查询 1.14 迁移文档，再核对官方
+[v1.14.2 Release](https://github.com/SagerNet/sing-box/releases/tag/v1.14.2) 与
+[v1.14.1...v1.14.2 源码差异](https://github.com/SagerNet/sing-box/compare/v1.14.1...v1.14.2)。
+未发现本项目受管配置字段需要新增迁移，因此保留既有 1.14 renderer、1.13 配置读取
+兼容路径及 HTTPUpgrade/WS early-data 的限制，只提升支持上限与版本相关门禁。
+官方 Linux ARM64 1.14.2 发布包 SHA-256 为
+`b43a1fb1bda131c6653576741ce527eb2bdeab7c9308ca90ee8b972abb7e4a7f`，
+已按官方资产 digest 核对。使用该精确目标二进制完成服务端生成、客户端导出和既有
+1.13 配置的 `sing-box check`；旧配置也通过官方 1.13.18 的对应 check。
+本地选中的 144 个回归脚本最终全部通过：修正两个旧版本 fixture 后重跑，另一个共享
+验证锁冲突仅在串行重跑后计为通过。可选本地 runtime 检查的 skip 不计作真实核心证据。
+另以精确 1.14.2 核心补跑 V2Ray transport：27 组 TCP、27 组 UDP 业务路径及错误
+认证/SNI 拒绝检查通过；HTTPUpgrade 与 WS early-data 仍标记 blocked，未扩大支持声明。
+Mixed 导出另完成 1.13.18/1.14.2 同版本及双向跨版本四组检查，包含完整配置 check、
+认证/无认证 TCP/UDP marker 与错误认证拒绝；这些业务监听仅位于本机 loopback。
+Docker 门禁运行目录为 `dev/verification-runs/20260930042708`：15 个场景均为
+`STATUS=success`/`EXIT_STATUS=0`，覆盖新装、多协议共存、受管 rule-set、固定
+1.13.18 → 1.14.2 升级与目标服务启动失败后的真实回滚。升级与回滚均保留配置/服务
+哈希，回滚恢复 1.13.18 与 active 服务状态。宿主采集会话曾以 143 结束，但容器内
+entrypoint 独立完成并返回 0；完成结果通过容器内保留副本回读，恢复方法见
+`remote-recovery-summary.log`，不将原采集命令冒充为退出 0。证据限于 ARM64、
+Debian 特权隔离 Docker 与测试数据路径，不代表生产部署、完整公网可达或真实 SubMan。
 
 2026-09-22 本机核心复核：ARM64 VPS 在 `/tmp` 校验并使用官方 `1.13.18`（SHA-256
 `a894f6152cade4a2c9d062762d54dea0c1aee673ab4759e0829e19cace932719`）与 `1.14.1`
