@@ -346,6 +346,39 @@ if validate_subman_node_request valid-key "${reserved_tag_payload}"; then
   exit 1
 fi
 
+# Match ECMAScript String.trim exactly: all 25 specified whitespace codepoints
+# are stripped, while U+0085 NEL remains part of a tag or display name.
+js_trim_whitespace=$(jq -cn '([range(9; 14)] + [32, 160, 5760] + [range(8192; 8203)] + [8232, 8233, 8239, 8287, 12288, 65279]) | implode')
+whitespace_tags_payload=$(jq -c --argjson whitespace "${js_trim_whitespace}" \
+  '.tags += [($whitespace + "tag-0" + $whitespace)]' <<< "${tags_63_payload}")
+validate_subman_node_request valid-key "${whitespace_tags_payload}"
+nel_tags_payload=$(jq -c '.tags += ["tag-0\u0085"]' <<< "${tags_63_payload}")
+if validate_subman_node_request valid-key "${nel_tags_payload}"; then
+  printf 'expected NEL to remain distinct when counting caller tags\n' >&2
+  exit 1
+fi
+before_whitespace_calls=$(wc -l < "${CURL_CALLS_FILE}")
+for reserved_whitespace_case in feff all-js-whitespace object-id; do
+  case "${reserved_whitespace_case}" in
+    feff)
+      reserved_tag_payload=$(jq -c '.tags = ["\uFEFFexternal:caller-owned\uFEFF"]' <<< "${payload_json}")
+      ;;
+    all-js-whitespace)
+      reserved_tag_payload=$(jq -c --argjson whitespace "${js_trim_whitespace}" \
+        '.tags = [($whitespace + "ExTeRnAl:caller-owned" + $whitespace)]' <<< "${payload_json}")
+      ;;
+    object-id)
+      reserved_tag_payload=$(jq -c '.tags = [{id: "\uFEFFexternal:caller-owned\uFEFF", label: "ordinary"}]' <<< "${payload_json}")
+      ;;
+  esac
+  if push_subman_node valid-key "${reserved_tag_payload}" > "${TMP_DIR}/reserved-${reserved_whitespace_case}.txt" 2>&1; then
+    printf 'expected JS-trimmed external namespace rejection: %s\n' "${reserved_whitespace_case}" >&2
+    exit 1
+  fi
+  [[ "${SUBMAN_LAST_ERROR_CODE}" == invalid_node_payload ]]
+  [[ "$(wc -l < "${CURL_CALLS_FILE}")" -eq "${before_whitespace_calls}" ]]
+done
+
 rm -f "${CURL_RESPONSE_DIR}"/GET.[0-9]* "${CURL_RESPONSE_DIR}"/DELETE.[0-9]*
 reset_method_counts
 set_mock_response GET "" 200 "${preflight_body}" "${preflight_headers}"
@@ -471,7 +504,7 @@ done
 # proves a collision. Its committedAt timestamp is also the node updatedAt.
 collision_before=$(jq -c '.data = [{id: "ipv4-node", name: "edge-1", tags: [{label: "external:other-ipv4-key"}]}]' <<< "${preflight_body}")
 collision_after=$(jq -c '.data[0].name = "edge-1 2026-07-30 00:00"' <<< "${reconciled_list_body}")
-for name_case in timestamp counter-2 counter-3 wrong-counter wrong-timestamp arbitrary-rename unproven-collision; do
+for name_case in timestamp counter-2 counter-3 wrong-counter wrong-timestamp arbitrary-rename unproven-collision feff-collision whitespace-collision nel-no-collision nel-false-collision; do
   reset_method_counts
   snapshot_before=${collision_before}
   snapshot_after=${collision_after}
@@ -502,6 +535,21 @@ for name_case in timestamp counter-2 counter-3 wrong-counter wrong-timestamp arb
     unproven-collision)
       snapshot_before=${preflight_body}
       should_reconcile=n
+      ;;
+    feff-collision)
+      snapshot_before=$(jq -c '.data[0].name = "\uFEFFedge-1\uFEFF"' <<< "${snapshot_before}")
+      ;;
+    whitespace-collision)
+      snapshot_before=$(jq -c --argjson whitespace "${js_trim_whitespace}" \
+        '.data[0].name = $whitespace + "edge-1" + $whitespace' <<< "${snapshot_before}")
+      ;;
+    nel-no-collision|nel-false-collision)
+      snapshot_before=$(jq -c '.data[0].name = "\u0085edge-1\u0085"' <<< "${snapshot_before}")
+      if [[ "${name_case}" == nel-no-collision ]]; then
+        snapshot_after=$(jq -c '.data[0].name = "edge-1"' <<< "${snapshot_after}")
+      else
+        should_reconcile=n
+      fi
       ;;
   esac
   set_mock_response GET 1 200 "${snapshot_before}" "${preflight_headers}"

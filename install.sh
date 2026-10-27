@@ -25401,7 +25401,7 @@ validate_subman_node_request() {
   fi
 
   if ! jq -e '
-    def trim_label: gsub("^\\s+|\\s+$"; "");
+    def trim_label: gsub("^[\u0009-\u000D\u0020\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]+|[\u0009-\u000D\u0020\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]+$"; "");
     def tag_label: if type == "string" then . else .label end | trim_label;
     type == "object"
     and (.name | type == "string" and utf8bytelength > 0 and utf8bytelength <= 256)
@@ -25672,7 +25672,7 @@ reconcile_subman_node_after_uncertain_write() {
   if preflight_subman_workspace; then
     if matching_node=$(printf '%s\n%s\n' "${SUBMAN_LAST_RESPONSE_BODY}" "${preflight_snapshot}" | \
       jq -sce --arg external_label "external:${external_key}" --argjson desired "${payload_json}" '
-      def trim_value: gsub("^\\s+|\\s+$"; "");
+      def trim_value: gsub("^[\u0009-\u000D\u0020\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]+|[\u0009-\u000D\u0020\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]+$"; "");
       def tag_labels: map(if type == "string" then . else .label end | trim_value) | unique;
       # SubMan resolves duplicate display names against the prewrite inventory.
       # Its timestamp is the same UTC committedAt stored in node.updatedAt.
