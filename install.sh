@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026093001
+# Version: 2026102701
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026093001"
+readonly SCRIPT_VERSION="2026102701"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -268,12 +268,15 @@ SB_WARP_RULE_SET_TAGS_JSON='[]'
 SUBMAN_API_URL=""
 SUBMAN_API_TOKEN=""
 SUBMAN_NODE_PREFIX=""
+SUBMAN_EXPECTED_GIST_ID=""
 SUBMAN_LAST_HTTP_STATUS=""
 SUBMAN_LAST_ERROR_CODE=""
 SUBMAN_LAST_ERROR_DISPOSITION=""
 SUBMAN_LAST_RETRY_AFTER=""
 SUBMAN_LAST_REVISION=""
 SUBMAN_LAST_NODE_ID=""
+SUBMAN_LAST_GIST_ID=""
+SUBMAN_LAST_OUTCOME=""
 
 # --- Return-based update transaction context ---
 SBV_UPDATE_OPERATION=""
@@ -2874,6 +2877,7 @@ load_subman_config() {
   SUBMAN_API_URL=""
   SUBMAN_API_TOKEN=""
   SUBMAN_NODE_PREFIX=""
+  SUBMAN_EXPECTED_GIST_ID=""
 
   [[ -f "${config_file}" ]] || return 0
 
@@ -2882,26 +2886,48 @@ load_subman_config() {
   SUBMAN_API_URL=$(normalize_subman_api_url "${SUBMAN_API_URL:-}")
   SUBMAN_API_TOKEN=${SUBMAN_API_TOKEN:-}
   SUBMAN_NODE_PREFIX=$(trim_whitespace "${SUBMAN_NODE_PREFIX:-}")
+  SUBMAN_EXPECTED_GIST_ID=$(trim_whitespace "${SUBMAN_EXPECTED_GIST_ID:-}")
 }
 
 write_subman_config() {
   local config_file config_dir tmp_file
+  SUBMAN_EXPECTED_GIST_ID=$(trim_whitespace "${SUBMAN_EXPECTED_GIST_ID:-}")
+  if [[ -z "${SUBMAN_EXPECTED_GIST_ID}" ]]; then
+    log_warn "预期 Workspace Gist ID 不能为空；SubMan 配置未修改。"
+    return 1
+  fi
   config_file=$(subman_config_file_path)
   config_dir=$(dirname "${config_file}")
-  mkdir -p "${config_dir}"
-  tmp_file=$(mktemp "${config_dir}/.subman.env.tmp.XXXXXX")
-  chmod 600 "${tmp_file}"
-  {
-    write_env_assignment "SUBMAN_API_URL" "${SUBMAN_API_URL}"
-    write_env_assignment "SUBMAN_API_TOKEN" "${SUBMAN_API_TOKEN}"
-    write_env_assignment "SUBMAN_NODE_PREFIX" "${SUBMAN_NODE_PREFIX}"
-  } > "${tmp_file}"
-  mv "${tmp_file}" "${config_file}"
+  mkdir -p "${config_dir}" || return 1
+  tmp_file=$(mktemp "${config_dir}/.subman.env.tmp.XXXXXX") || return 1
+  if ! chmod 600 "${tmp_file}"; then
+    rm -f -- "${tmp_file}"
+    return 1
+  fi
+  if ! {
+    write_env_assignment "SUBMAN_API_URL" "${SUBMAN_API_URL}" &&
+    write_env_assignment "SUBMAN_API_TOKEN" "${SUBMAN_API_TOKEN}" &&
+    write_env_assignment "SUBMAN_NODE_PREFIX" "${SUBMAN_NODE_PREFIX}" &&
+    write_env_assignment "SUBMAN_EXPECTED_GIST_ID" "${SUBMAN_EXPECTED_GIST_ID}"
+  } > "${tmp_file}"; then
+    rm -f -- "${tmp_file}"
+    return 1
+  fi
+  if [[ -f "${config_file}" ]]; then
+    if ! cp -p -- "${config_file}" "${config_file}.bak" || ! chmod 600 "${config_file}.bak"; then
+      rm -f -- "${tmp_file}"
+      return 1
+    fi
+  fi
+  if ! mv -- "${tmp_file}" "${config_file}"; then
+    rm -f -- "${tmp_file}"
+    return 1
+  fi
   chmod 600 "${config_file}"
 }
 
 prompt_subman_config_if_needed() {
-  local input_url input_token input_prefix
+  local input_url input_token input_prefix input_gist_id
 
   load_subman_config
 
@@ -2922,6 +2948,12 @@ prompt_subman_config_if_needed() {
     SUBMAN_NODE_PREFIX=$(trim_whitespace "${input_prefix}")
     [[ -z "${SUBMAN_NODE_PREFIX}" ]] && SUBMAN_NODE_PREFIX=$(hostname)
   fi
+
+  while [[ -z "${SUBMAN_EXPECTED_GIST_ID}" ]]; do
+    read -rp "预期 SubMan Workspace Gist ID（从目标 Workspace 核对）: " input_gist_id || return 1
+    SUBMAN_EXPECTED_GIST_ID=$(trim_whitespace "${input_gist_id}")
+    [[ -z "${SUBMAN_EXPECTED_GIST_ID}" ]] && log_warn "预期 Workspace Gist ID 不能为空；请从目标 SubMan Workspace 核对。"
+  done
 
   write_subman_config
 }
@@ -23909,6 +23941,52 @@ build_hy2_link() {
     "${node_name}"
 }
 
+# Keep per-node metadata across requests without retaining raw connection data.
+push_subman_node_with_result() {
+  local external_key=$1 payload_json=$2 status=0 outcome
+  reset_subman_api_result
+  if push_subman_node "${external_key}" "${payload_json}"; then
+    outcome=${SUBMAN_LAST_OUTCOME:-committed}
+    [[ "${outcome}" == "committed" || "${outcome}" == "reconciled" ]] || outcome=committed
+  else
+    status=$?
+    outcome=${SUBMAN_LAST_OUTCOME:-failed}
+  fi
+  SUBMAN_LAST_OUTCOME=${outcome}
+  record_subman_node_result "${external_key}" || return 1
+  return "${status}"
+}
+
+record_subman_node_result() {
+  local external_key=${1:-} outcome=${SUBMAN_LAST_OUTCOME:-failed}
+  SUBMAN_NODE_RESULTS_JSON=$(jq -cn \
+    --argjson results "${SUBMAN_NODE_RESULTS_JSON:-[]}" \
+    --arg key "${external_key}" --arg protocol "${2:-}" \
+    --arg instance_id "${3:-}" --arg address_label "${4:-}" --arg node_id "${SUBMAN_LAST_NODE_ID:-}" \
+    --arg outcome "${outcome}" --arg gist_id "${SUBMAN_LAST_GIST_ID:-}" \
+    --arg revision "${SUBMAN_LAST_REVISION:-}" \
+    --arg code "${SUBMAN_LAST_ERROR_CODE:-}" \
+    --arg disposition "${SUBMAN_LAST_ERROR_DISPOSITION:-}" \
+    --arg http_status "${SUBMAN_LAST_HTTP_STATUS:-}" \
+    --arg retry_after "${SUBMAN_LAST_RETRY_AFTER:-}" '
+      $results + [{external_key:(if $key == "" then null else $key end), node_id:(if $node_id == "" then null else $node_id end),
+        outcome:$outcome, gist_id:(if $gist_id == "" then null else $gist_id end),
+        revision:(if $revision == "" then null else ($revision|tonumber) end)}
+        + (if $protocol == "" then {} else {protocol:$protocol,instance_id:$instance_id,address_label:$address_label} end)
+        + (if $code == "" then {} else {error:{code:$code,disposition:$disposition,
+          http_status:(if $http_status == "" then null else $http_status end),
+          retry_after:(if $retry_after == "" then null else $retry_after end)}} end)]') || return 1
+}
+
+record_subman_key_failure() {
+  local protocol=$1 instance_id=${2:-} address_label=${3:-} quiet=${4:-n}
+  reset_subman_api_result
+  subman_set_client_error "invalid_external_key" "invalid-request"
+  record_subman_node_result "" "${protocol}" "${instance_id}" "${address_label}" || return 1
+  [[ "${quiet}" == y ]] || print_warn "SubMan 外部键生成失败或超过 119 UTF-8 字节: ${protocol}/${instance_id}；请缩短节点前缀并明确处理旧身份。"
+  return 0
+}
+
 subman_node_prefix() {
   local prefix
   prefix=$(trim_whitespace "${SUBMAN_NODE_PREFIX:-}")
@@ -23933,6 +24011,13 @@ subman_unsupported_protocol_warning_json() {
   }]'
 }
 
+subman_external_key_is_valid() {
+  local external_key=${1:-} key_bytes
+  [[ -n "${external_key}" ]] || return 1
+  key_bytes=$(printf '%s' "${external_key}" | wc -c | tr -d '[:space:]') || return 1
+  [[ "${key_bytes}" =~ ^[0-9]+$ && "${key_bytes}" -le 119 ]]
+}
+
 subman_external_key_for_protocol() {
   local protocol prefix instance_id address_label stack_suffix key
   protocol=$(normalize_protocol_id "$1")
@@ -23951,12 +24036,13 @@ subman_external_key_for_protocol() {
     key="${key}:${stack_suffix}"
   fi
 
+  subman_external_key_is_valid "${key}" || return 1
   printf '%s' "${key}"
 }
 
 subman_external_key_for_shadowsocks_user() {
   local instance_id=${1:-} user_name=${2:-} address_label=${3:-}
-  local prefix digest key stack_suffix key_bytes
+  local prefix digest key stack_suffix
 
   structured_instance_store_validate_id "${instance_id}" || return 1
   prefix=$(subman_node_prefix)
@@ -23967,8 +24053,7 @@ subman_external_key_for_shadowsocks_user() {
   if [[ -n "${stack_suffix}" ]]; then
     key="${key}:${stack_suffix}"
   fi
-  key_bytes=$(printf '%s' "${key}" | wc -c | tr -d '[:space:]') || return 1
-  [[ "${key_bytes}" =~ ^[0-9]+$ && "${key_bytes}" -gt 0 && "${key_bytes}" -le 256 ]] || return 1
+  subman_external_key_is_valid "${key}" || return 1
   printf '%s' "${key}"
 }
 
@@ -24201,7 +24286,7 @@ build_trojan_share_warnings_json() {
 
 subman_external_key_for_trojan_user() {
   local instance_id=${1:-} user_name=${2-} address_label=${3:-}
-  local prefix digest key stack_suffix key_bytes
+  local prefix digest key stack_suffix
   structured_instance_store_validate_id "${instance_id}" || return 1
   prefix=$(subman_node_prefix) || return 1
   digest=$(printf '%s' "${user_name}" | sha256sum) || return 1
@@ -24209,8 +24294,7 @@ subman_external_key_for_trojan_user() {
   key="sing-box-vps:${prefix}:trojan:${instance_id}:user-${digest}"
   stack_suffix=$(network_stack_suffix_from_label "${address_label}") || return 1
   [[ -z "${stack_suffix}" ]] || key="${key}:${stack_suffix}"
-  key_bytes=$(printf '%s' "${key}" | wc -c) || return 1
-  [[ "${key_bytes}" =~ ^[0-9]+$ && "${key_bytes}" -le 256 ]] || return 1
+  subman_external_key_is_valid "${key}" || return 1
   printf '%s' "${key}"
 }
 
@@ -24307,11 +24391,11 @@ push_subman_trojan_instance() {
       fi
       continue
     fi
-    external_key=$(subman_external_key_for_trojan_user "${instance_id}" "${user_name}" "${address_label}") || { failed=$((failed + 1)); continue; }
+    external_key=$(subman_external_key_for_trojan_user "${instance_id}" "${user_name}" "${address_label}") || { record_subman_key_failure trojan "${instance_id}" "${address_label}" "${quiet}"; failed=$((failed + 1)); continue; }
     payload_json=$(build_subman_trojan_node_payload "${raw_link}" "${node_name}") || { failed=$((failed + 1)); continue; }
     if [[ "${quiet}" == y ]]; then
-      if push_subman_node "${external_key}" "${payload_json}" >/dev/null; then synced=$((synced + 1)); else failed=$((failed + 1)); fi
-    elif push_subman_node "${external_key}" "${payload_json}"; then
+      if push_subman_node_with_result "${external_key}" "${payload_json}" >/dev/null; then synced=$((synced + 1)); else failed=$((failed + 1)); fi
+    elif push_subman_node_with_result "${external_key}" "${payload_json}"; then
       synced=$((synced + 1))
     else
       failed=$((failed + 1))
@@ -24440,14 +24524,13 @@ build_vmess_subman_links_and_warnings_json() (
 )
 
 subman_external_key_for_vmess_user() {
-  local instance_id=${1:-} user_name=${2-} address_label=${3:-} prefix digest key stack_suffix key_bytes
+  local instance_id=${1:-} user_name=${2-} address_label=${3:-} prefix digest key stack_suffix
   structured_instance_store_validate_id "${instance_id}" || return 1
   prefix=$(subman_node_prefix) || return 1; digest=$(printf '%s' "${user_name}" | sha256sum); digest=${digest%% *}
   key="sing-box-vps:${prefix}:vmess:${instance_id}:user-${digest}"
   stack_suffix=$(network_stack_suffix_from_label "${address_label}") || return 1
   [[ -z "${stack_suffix}" ]] || key="${key}:${stack_suffix}"
-  key_bytes=$(printf '%s' "${key}" | wc -c) || return 1
-  [[ "${key_bytes}" =~ ^[0-9]+$ && "${key_bytes}" -le 256 ]] || return 1
+  subman_external_key_is_valid "${key}" || return 1
   printf '%s' "${key}"
 }
 
@@ -24480,9 +24563,9 @@ push_subman_vmess_instance() {
     [[ -n "${user_name}" ]] || continue
     node_name=$(subman_vmess_node_name "${instance_id}" "${user_name}") || { failed=$((failed + 1)); continue; }
     if raw_link=$(build_vmess_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name}"); then
-      external_key=$(subman_external_key_for_vmess_user "${instance_id}" "${user_name}" "${address_label}") || { failed=$((failed + 1)); continue; }
+      external_key=$(subman_external_key_for_vmess_user "${instance_id}" "${user_name}" "${address_label}") || { record_subman_key_failure vmess "${instance_id}" "${address_label}" "${quiet}"; failed=$((failed + 1)); continue; }
       payload_json=$(build_subman_vmess_node_payload "${raw_link}" "${node_name}") || { failed=$((failed + 1)); continue; }
-      if [[ "${quiet}" == y ]]; then push_subman_node "${external_key}" "${payload_json}" >/dev/null && synced=$((synced + 1)) || failed=$((failed + 1)); else push_subman_node "${external_key}" "${payload_json}" && synced=$((synced + 1)) || failed=$((failed + 1)); fi
+      if [[ "${quiet}" == y ]]; then push_subman_node_with_result "${external_key}" "${payload_json}" >/dev/null && synced=$((synced + 1)) || failed=$((failed + 1)); else push_subman_node_with_result "${external_key}" "${payload_json}" && synced=$((synced + 1)) || failed=$((failed + 1)); fi
     else
       status=$?
       if [[ "${status}" == 31 || "${status}" == 32 ]]; then
@@ -24621,14 +24704,13 @@ build_vless_plain_links_json_for_instance() {
 }
 
 subman_external_key_for_vless_plain_user() {
-  local instance_id=${1:-} user_name=${2-} address_label=${3:-} prefix digest key stack_suffix key_bytes
+  local instance_id=${1:-} user_name=${2-} address_label=${3:-} prefix digest key stack_suffix
   structured_instance_store_validate_id "${instance_id}" || return 1
   prefix=$(subman_node_prefix) || return 1; digest=$(printf '%s' "${user_name}" | sha256sum); digest=${digest%% *}
   key="sing-box-vps:${prefix}:vless-plain:${instance_id}:user-${digest}"
   stack_suffix=$(network_stack_suffix_from_label "${address_label}") || return 1
   [[ -z "${stack_suffix}" ]] || key="${key}:${stack_suffix}"
-  key_bytes=$(printf '%s' "${key}" | wc -c) || return 1
-  [[ "${key_bytes}" =~ ^[0-9]+$ && "${key_bytes}" -le 256 ]] || return 1
+  subman_external_key_is_valid "${key}" || return 1
   printf '%s' "${key}"
 }
 
@@ -24661,9 +24743,9 @@ push_subman_vless_plain_instance() {
     [[ -n "${user_name}" ]] || continue
     node_name=$(subman_vless_plain_node_name "${instance_id}" "${user_name}") || { failed=$((failed + 1)); continue; }
     if raw_link=$(build_vless_plain_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name}"); then
-      external_key=$(subman_external_key_for_vless_plain_user "${instance_id}" "${user_name}" "${address_label}") || { failed=$((failed + 1)); continue; }
+      external_key=$(subman_external_key_for_vless_plain_user "${instance_id}" "${user_name}" "${address_label}") || { record_subman_key_failure vless-plain "${instance_id}" "${address_label}" "${quiet}"; failed=$((failed + 1)); continue; }
       payload_json=$(build_subman_vless_plain_node_payload "${raw_link}" "${node_name}") || { failed=$((failed + 1)); continue; }
-      if [[ "${quiet}" == y ]]; then push_subman_node "${external_key}" "${payload_json}" >/dev/null && synced=$((synced + 1)) || failed=$((failed + 1)); else push_subman_node "${external_key}" "${payload_json}" && synced=$((synced + 1)) || failed=$((failed + 1)); fi
+      if [[ "${quiet}" == y ]]; then push_subman_node_with_result "${external_key}" "${payload_json}" >/dev/null && synced=$((synced + 1)) || failed=$((failed + 1)); else push_subman_node_with_result "${external_key}" "${payload_json}" && synced=$((synced + 1)) || failed=$((failed + 1)); fi
     else
       status=$?
       if [[ "${status}" == 31 || "${status}" == 32 || "${status}" == 33 ]]; then
@@ -24796,6 +24878,7 @@ push_subman_shadowsocks_instance() {
       continue
     fi
     if ! external_key=$(subman_external_key_for_shadowsocks_user "${instance_id}" "${user_name}" "${address_label}"); then
+      record_subman_key_failure shadowsocks "${instance_id}" "${address_label}" "${quiet}"
       SUBMAN_SHADOWSOCKS_FAILED=$((SUBMAN_SHADOWSOCKS_FAILED + 1))
       continue
     fi
@@ -24808,12 +24891,12 @@ push_subman_shadowsocks_instance() {
       continue
     }
     if [[ "${quiet}" == y ]]; then
-      if push_subman_node "${external_key}" "${payload_json}" >/dev/null; then
+      if push_subman_node_with_result "${external_key}" "${payload_json}" >/dev/null; then
         SUBMAN_SHADOWSOCKS_SYNCED=$((SUBMAN_SHADOWSOCKS_SYNCED + 1))
       else
         SUBMAN_SHADOWSOCKS_FAILED=$((SUBMAN_SHADOWSOCKS_FAILED + 1))
       fi
-    elif push_subman_node "${external_key}" "${payload_json}"; then
+    elif push_subman_node_with_result "${external_key}" "${payload_json}"; then
       SUBMAN_SHADOWSOCKS_SYNCED=$((SUBMAN_SHADOWSOCKS_SYNCED + 1))
     else
       SUBMAN_SHADOWSOCKS_FAILED=$((SUBMAN_SHADOWSOCKS_FAILED + 1))
@@ -24984,7 +25067,7 @@ build_hy2_subman_links_json_for_instance() {
 }
 
 subman_external_key_for_hy2_user() {
-  local instance_id=${1:-} user_name=${2-} address_label=${3:-} prefix digest key stack_suffix key_bytes
+  local instance_id=${1:-} user_name=${2-} address_label=${3:-} prefix digest key stack_suffix
   structured_instance_store_validate_id "${instance_id}" || return 1
   prefix=$(subman_node_prefix) || return 1
   digest=$(printf '%s' "${user_name}" | sha256sum) || return 1
@@ -24992,8 +25075,7 @@ subman_external_key_for_hy2_user() {
   key="sing-box-vps:${prefix}:hy2:${instance_id}:user-${digest}"
   stack_suffix=$(network_stack_suffix_from_label "${address_label}") || return 1
   [[ -z "${stack_suffix}" ]] || key="${key}:${stack_suffix}"
-  key_bytes=$(printf '%s' "${key}" | wc -c) || return 1
-  [[ "${key_bytes}" =~ ^[0-9]+$ && "${key_bytes}" -le 256 ]] || return 1
+  subman_external_key_is_valid "${key}" || return 1
   printf '%s' "${key}"
 }
 
@@ -25041,11 +25123,11 @@ push_subman_hy2_instance() {
     [[ -n "${user_name}" ]] || continue
     node_name=$(subman_hy2_node_name "${instance_id}" "${user_name}") || { failed=$((failed + 1)); continue; }
     if raw_link=$(build_hy2_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name}"); then
-      external_key=$(subman_external_key_for_hy2_user "${instance_id}" "${user_name}" "${address_label}") || { failed=$((failed + 1)); continue; }
+      external_key=$(subman_external_key_for_hy2_user "${instance_id}" "${user_name}" "${address_label}") || { record_subman_key_failure hy2 "${instance_id}" "${address_label}" "${quiet}"; failed=$((failed + 1)); continue; }
       payload_json=$(build_subman_hy2_node_payload "${raw_link}" "${node_name}") || { failed=$((failed + 1)); continue; }
       if [[ "${quiet}" == y ]]; then
-        if push_subman_node "${external_key}" "${payload_json}" >/dev/null; then synced=$((synced + 1)); else failed=$((failed + 1)); fi
-      elif push_subman_node "${external_key}" "${payload_json}"; then
+        if push_subman_node_with_result "${external_key}" "${payload_json}" >/dev/null; then synced=$((synced + 1)); else failed=$((failed + 1)); fi
+      elif push_subman_node_with_result "${external_key}" "${payload_json}"; then
         synced=$((synced + 1))
       else
         failed=$((failed + 1))
@@ -25247,7 +25329,7 @@ push_subman_protocol_instance() {
     return $?
   fi
   if ! external_key=$(subman_external_key_for_protocol "${protocol}" "${instance_id}" "${address_label}"); then
-    [[ "${quiet}" == "y" ]] || print_warn "生成 SubMan 外部键失败: ${protocol}"
+    record_subman_key_failure "${protocol}" "${instance_id}" "${address_label}" "${quiet}"
     return 1
   fi
 
@@ -25257,9 +25339,9 @@ push_subman_protocol_instance() {
   fi
 
   if [[ "${quiet}" == "y" ]]; then
-    push_subman_node "${external_key}" "${payload_json}" >/dev/null
+    push_subman_node_with_result "${external_key}" "${payload_json}" >/dev/null
   else
-    push_subman_node "${external_key}" "${payload_json}"
+    push_subman_node_with_result "${external_key}" "${payload_json}"
   fi
 }
 
@@ -25270,9 +25352,12 @@ reset_subman_api_result() {
   SUBMAN_LAST_RETRY_AFTER=""
   SUBMAN_LAST_REVISION=""
   SUBMAN_LAST_NODE_ID=""
+  SUBMAN_LAST_GIST_ID=""
+  SUBMAN_LAST_OUTCOME="failed"
   SUBMAN_LAST_RESPONSE_BODY=""
   SUBMAN_LAST_RESPONSE_ETAG=""
   SUBMAN_LAST_RESPONSE_REVISION=""
+  SUBMAN_LAST_RESPONSE_CACHE_CONTROL=""
 }
 
 subman_set_client_error() {
@@ -25286,32 +25371,50 @@ validate_subman_node_request() {
   local external_key_bytes
 
   external_key_bytes=$(printf '%s' "${external_key}" | wc -c | tr -d '[:space:]')
-  if [[ -z "${external_key}" || "${external_key_bytes}" -gt 256 ]]; then
+  if [[ -z "${external_key}" || "${external_key_bytes}" -gt 119 ]]; then
     subman_set_client_error "invalid_external_key" "invalid-request"
     return 1
   fi
 
   if ! jq -e '
+    def trim_label: gsub("^\\s+|\\s+$"; "");
+    def tag_label: if type == "string" then . else .label end | trim_label;
     type == "object"
     and (.name | type == "string" and utf8bytelength > 0 and utf8bytelength <= 256)
     and (.type | type == "string" and IN("vless", "vmess", "trojan", "ss", "ssr", "hysteria2", "tuic", "anytls", "other"))
     and (.raw | type == "string" and utf8bytelength > 0 and utf8bytelength <= 16384)
-    and ((.enabled // true) | type == "boolean")
+    and (if has("enabled") then (.enabled | type == "boolean") else true end)
     and ((.source // "single") | IN("single", "subscription"))
-    and ((.tags // []) | type == "array" and length <= 64)
+    and ((.tags // []) | type == "array")
     and all((.tags // [])[];
       if type == "string" then
-        utf8bytelength > 0 and utf8bytelength <= 128 and (ascii_downcase | startswith("external:") | not)
+        trim_label | utf8bytelength > 0 and utf8bytelength <= 128 and (ascii_downcase | startswith("external:") | not)
       elif type == "object" then
-        (.label | type == "string" and utf8bytelength > 0 and utf8bytelength <= 128 and (ascii_downcase | startswith("external:") | not))
+        (.label | type == "string" and (trim_label | utf8bytelength > 0 and utf8bytelength <= 128 and (ascii_downcase | startswith("external:") | not)))
+        and (if (.id | type) == "string" then (.id | trim_label | ascii_downcase | startswith("external:") | not) else true end)
       else
         false
       end
     )
+    and ((.tags // []) | map(tag_label) | unique | length <= 63)
   ' >/dev/null 2>&1 <<< "${payload_json}"; then
     subman_set_client_error "invalid_node_payload" "invalid-request"
     return 1
   fi
+}
+
+subman_response_header() {
+  local headers_file=$1
+  local header_name=$2
+  awk -v header="${header_name}" '
+    /^HTTP\// { value="" }
+    tolower($0) ~ ("^" header ":") {
+      sub(/\r$/, ""); sub(/^[^:]*:[[:space:]]*/, ""); sub(/[[:space:]]*$/, "")
+      if (header == "cache-control" && value != "") value=value "," $0
+      else value=$0
+    }
+    END { print value }
+  ' "${headers_file}"
 }
 
 subman_api_request() {
@@ -25387,7 +25490,7 @@ subman_api_request() {
   fi
 
   if [[ -n "${payload_json}" ]]; then
-    if http_status=$(curl -sS --config "${config_file}" -X "${method}" "${endpoint}" \
+    if http_status=$(curl -sS --connect-timeout 15 --max-time 60 --config "${config_file}" -X "${method}" "${endpoint}" \
       --data-binary "@${payload_file}" -D "${headers_file}" -o "${body_file}" \
       -w '%{http_code}' 2> "${stderr_file}"); then
       curl_status=0
@@ -25395,7 +25498,7 @@ subman_api_request() {
       curl_status=$?
     fi
   else
-    if http_status=$(curl -sS --config "${config_file}" -X "${method}" "${endpoint}" \
+    if http_status=$(curl -sS --connect-timeout 15 --max-time 60 --config "${config_file}" -X "${method}" "${endpoint}" \
       -D "${headers_file}" -o "${body_file}" -w '%{http_code}' 2> "${stderr_file}"); then
       curl_status=0
     else
@@ -25405,12 +25508,14 @@ subman_api_request() {
 
   SUBMAN_LAST_HTTP_STATUS=${http_status:-000}
   SUBMAN_LAST_RESPONSE_BODY=$(cat "${body_file}")
-  SUBMAN_LAST_RESPONSE_ETAG=$(awk 'BEGIN { IGNORECASE=1 } /^ETag:/ { sub(/\r$/, ""); sub(/^[^:]*:[[:space:]]*/, ""); value=$0 } END { print value }' "${headers_file}")
-  SUBMAN_LAST_RESPONSE_REVISION=$(awk 'BEGIN { IGNORECASE=1 } /^X-SubMan-Revision:/ { sub(/\r$/, ""); sub(/^[^:]*:[[:space:]]*/, ""); value=$0 } END { print value }' "${headers_file}")
-  SUBMAN_LAST_RETRY_AFTER=$(awk 'BEGIN { IGNORECASE=1 } /^Retry-After:/ { sub(/\r$/, ""); sub(/^[^:]*:[[:space:]]*/, ""); value=$0 } END { print value }' "${headers_file}")
+  SUBMAN_LAST_RESPONSE_ETAG=$(subman_response_header "${headers_file}" etag)
+  SUBMAN_LAST_RESPONSE_REVISION=$(subman_response_header "${headers_file}" x-subman-revision)
+  SUBMAN_LAST_RETRY_AFTER=$(subman_response_header "${headers_file}" retry-after)
+  SUBMAN_LAST_RESPONSE_CACHE_CONTROL=$(subman_response_header "${headers_file}" cache-control)
   [[ "${SUBMAN_LAST_RETRY_AFTER}" =~ ^[0-9]+$ ]] || SUBMAN_LAST_RETRY_AFTER=""
   if ! rm -rf -- "${request_dir}"; then
     subman_set_client_error "temporary_cleanup_failed" "operator-repair"
+    [[ "${method}" == "GET" ]] || SUBMAN_LAST_OUTCOME="unknown-outcome"
     return 1
   fi
 
@@ -25438,7 +25543,7 @@ report_subman_api_failure() {
     detail="${detail}, Retry-After ${SUBMAN_LAST_RETRY_AFTER}s"
   fi
   print_warn "SubMan ${action}失败: ${detail}"
-  if [[ "${SUBMAN_LAST_ERROR_DISPOSITION}" == "unknown-outcome" ]]; then
+  if [[ "${SUBMAN_LAST_ERROR_DISPOSITION}" == "unknown-outcome" || "${SUBMAN_LAST_OUTCOME:-}" == "unknown-outcome" ]]; then
     print_warn "请求结果不确定；请先在 SubMan 查询节点状态，不要直接盲目重试。"
   fi
 }
@@ -25465,9 +25570,20 @@ validate_subman_workspace_response() {
       ;;
   esac
 
-  if ! jq -e "${jq_filter} and (.workspace.file == \"subman.json\") and (.workspace.revision | type == \"number\" and . >= 0 and floor == .)" \
+  if [[ -z "${SUBMAN_EXPECTED_GIST_ID:-}" ]]; then
+    subman_set_client_error "workspace_gist_required" "operator-repair"
+    return 1
+  fi
+
+  if ! jq -e "${jq_filter} and (.workspace.file == \"subman.json\") and (.workspace.gistId | type == \"string\" and length > 0) and (.workspace.revision | type == \"number\" and . >= 0 and floor == .)" \
     >/dev/null 2>&1 <<< "${SUBMAN_LAST_RESPONSE_BODY}"; then
     subman_set_client_error "unexpected_response" "operator-repair"
+    return 1
+  fi
+
+  SUBMAN_LAST_GIST_ID=$(jq -r '.workspace.gistId' <<< "${SUBMAN_LAST_RESPONSE_BODY}")
+  if [[ "${SUBMAN_LAST_GIST_ID}" != "${SUBMAN_EXPECTED_GIST_ID}" ]]; then
+    subman_set_client_error "workspace_gist_mismatch" "operator-repair"
     return 1
   fi
 
@@ -25478,10 +25594,16 @@ validate_subman_workspace_response() {
     return 1
   fi
 
+  if ! jq -en --arg cache_control "${SUBMAN_LAST_RESPONSE_CACHE_CONTROL}" \
+    '$cache_control | test("(^|,)\\s*no-store\\s*(,|$)"; "i")' >/dev/null; then
+    subman_set_client_error "cache_contract_mismatch" "operator-repair"
+    return 1
+  fi
+
   if [[ "${response_kind}" == "node" && -n "${expected_external_key}" ]]; then
     external_label="external:${expected_external_key}"
-    if ! jq -e --arg label "${external_label}" '
-      any(.data.tags[]?; (if type == "string" then . else .label end) == $label)
+    if ! jq -e --arg external_label "${external_label}" '
+      any(.data.tags[]?; (if type == "string" then . else .label end) == $external_label)
     ' >/dev/null 2>&1 <<< "${SUBMAN_LAST_RESPONSE_BODY}"; then
       subman_set_client_error "external_key_contract_mismatch" "operator-repair"
       return 1
@@ -25494,10 +25616,66 @@ validate_subman_workspace_response() {
   fi
 }
 
+preflight_subman_workspace() {
+  if [[ -z "${SUBMAN_EXPECTED_GIST_ID:-}" ]]; then
+    reset_subman_api_result
+    subman_set_client_error "workspace_gist_required" "operator-repair"
+    return 1
+  fi
+  subman_api_request "GET" "/api/nodes" || return 1
+  if [[ "${SUBMAN_LAST_HTTP_STATUS}" != "200" ]]; then
+    capture_subman_api_error
+    return 1
+  fi
+  validate_subman_workspace_response "list"
+}
+
+reconcile_subman_node_after_uncertain_write() {
+  local external_key=$1
+  local payload_json=$2
+  local previous_http_status=${SUBMAN_LAST_HTTP_STATUS}
+  local previous_error_code=${SUBMAN_LAST_ERROR_CODE}
+  local previous_error_disposition=${SUBMAN_LAST_ERROR_DISPOSITION}
+  local previous_retry_after=${SUBMAN_LAST_RETRY_AFTER}
+  local matching_node
+
+  if preflight_subman_workspace; then
+    if matching_node=$(jq -ce --arg external_label "external:${external_key}" --argjson desired "${payload_json}" '
+      def trim_value: gsub("^\\s+|\\s+$"; "");
+      def tag_labels: map(if type == "string" then . else .label end | trim_value) | unique;
+      [.data[]
+        | select(any(.tags[]?; (if type == "string" then . else .label end) == $external_label))
+      ]
+      | select(length == 1) | .[0]
+      | select((.id | type == "string" and length > 0)
+        and .name == ($desired.name | trim_value)
+        and .type == $desired.type
+        and .raw == ($desired.raw | trim_value)
+        and .enabled == (if $desired | has("enabled") then $desired.enabled else true end)
+        and .source == (($desired.source // "single") | trim_value)
+        and ((.tags | tag_labels) == ((($desired.tags // []) | tag_labels) + [$external_label] | unique)))
+    ' <<< "${SUBMAN_LAST_RESPONSE_BODY}"); then
+      SUBMAN_LAST_NODE_ID=$(jq -r '.id' <<< "${matching_node}")
+      SUBMAN_LAST_OUTCOME="reconciled"
+      return 0
+    fi
+  fi
+
+  # The read cannot prove that the PUT committed the desired state. Retain its
+  # original failure metadata, and never replay the mutation automatically.
+  reset_subman_api_result
+  SUBMAN_LAST_HTTP_STATUS=${previous_http_status}
+  SUBMAN_LAST_ERROR_CODE=${previous_error_code}
+  SUBMAN_LAST_ERROR_DISPOSITION=${previous_error_disposition}
+  SUBMAN_LAST_RETRY_AFTER=${previous_retry_after}
+  SUBMAN_LAST_OUTCOME="unknown-outcome"
+  return 1
+}
+
 push_subman_node() {
   local external_key=$1
   local payload_json=$2
-  local encoded_key
+  local encoded_key if_match
 
   reset_subman_api_result
   if ! validate_subman_node_request "${external_key}" "${payload_json}"; then
@@ -25505,21 +25683,39 @@ push_subman_node() {
     return 1
   fi
 
+  if ! preflight_subman_workspace; then
+    report_subman_api_failure "Workspace 预检"
+    return 1
+  fi
+  if_match=${SUBMAN_LAST_RESPONSE_ETAG}
   encoded_key=$(jq -rn --arg value "${external_key}" '$value | @uri')
-  if ! subman_api_request "PUT" "/api/nodes/by-key/${encoded_key}" "${payload_json}"; then
+  if ! subman_api_request "PUT" "/api/nodes/by-key/${encoded_key}" "${payload_json}" "${if_match}"; then
+    if [[ "${SUBMAN_LAST_ERROR_DISPOSITION}" == "unknown-outcome" ]] && \
+      reconcile_subman_node_after_uncertain_write "${external_key}" "${payload_json}"; then
+      print_success "SubMan 节点回读确认: HTTP 200, Workspace revision ${SUBMAN_LAST_REVISION}"
+      return 0
+    fi
     report_subman_api_failure "节点推送"
     return 1
   fi
   if [[ "${SUBMAN_LAST_HTTP_STATUS}" != "200" ]]; then
     capture_subman_api_error
+    if [[ "${SUBMAN_LAST_HTTP_STATUS}" == 5* || "${SUBMAN_LAST_ERROR_DISPOSITION}" == "unknown-outcome" ]]; then
+      if reconcile_subman_node_after_uncertain_write "${external_key}" "${payload_json}"; then
+        print_success "SubMan 节点回读确认: HTTP 200, Workspace revision ${SUBMAN_LAST_REVISION}"
+        return 0
+      fi
+    fi
     report_subman_api_failure "节点推送"
     return 1
   fi
   if ! validate_subman_workspace_response "node" "${external_key}"; then
+    SUBMAN_LAST_OUTCOME="unknown-outcome"
     report_subman_api_failure "节点推送"
     return 1
   fi
 
+  SUBMAN_LAST_OUTCOME="committed"
   print_success "SubMan 节点推送成功: HTTP 200, Workspace revision ${SUBMAN_LAST_REVISION}"
 }
 
@@ -25530,7 +25726,7 @@ delete_subman_node_by_external_key() {
 
   external_label="external:${external_key}"
   for attempt in 1 2; do
-    if ! subman_api_request "GET" "/api/nodes"; then
+    if ! preflight_subman_workspace; then
       [[ "${quiet}" == "y" ]] || report_subman_api_failure "旧节点查询"
       return 1
     fi
@@ -25544,9 +25740,9 @@ delete_subman_node_by_external_key() {
       return 1
     fi
 
-    node_count=$(jq -r --arg label "${external_label}" '[
+    node_count=$(jq -r --arg external_label "${external_label}" '[
       .data[]
-      | select(any(.tags[]?; (if type == "string" then . else .label end) == $label))
+      | select(any(.tags[]?; (if type == "string" then . else .label end) == $external_label))
       | .id
     ] | unique | length' <<< "${SUBMAN_LAST_RESPONSE_BODY}")
     if [[ "${node_count}" -eq 0 ]]; then
@@ -25559,21 +25755,25 @@ delete_subman_node_by_external_key() {
       return 1
     fi
 
-    node_id=$(jq -r --arg label "${external_label}" '
-      [.data[] | select(any(.tags[]?; (if type == "string" then . else .label end) == $label)) | .id]
+    node_id=$(jq -r --arg external_label "${external_label}" '
+      [.data[] | select(any(.tags[]?; (if type == "string" then . else .label end) == $external_label)) | .id]
       | unique[0]
     ' <<< "${SUBMAN_LAST_RESPONSE_BODY}")
     if_match=${SUBMAN_LAST_RESPONSE_ETAG}
     encoded_node_id=$(jq -rn --arg value "${node_id}" '$value | @uri')
     if ! subman_api_request "DELETE" "/api/nodes/${encoded_node_id}" "" "${if_match}"; then
+      [[ "${SUBMAN_LAST_ERROR_DISPOSITION}" != "unknown-outcome" ]] || SUBMAN_LAST_OUTCOME="unknown-outcome"
       [[ "${quiet}" == "y" ]] || report_subman_api_failure "旧节点清理"
       return 1
     fi
     if [[ "${SUBMAN_LAST_HTTP_STATUS}" == "200" ]]; then
       if validate_subman_workspace_response "delete"; then
+        SUBMAN_LAST_NODE_ID=${node_id}
+        SUBMAN_LAST_OUTCOME="committed"
         [[ "${quiet}" == "y" ]] || print_success "SubMan 旧节点已删除: ${external_key}, Workspace revision ${SUBMAN_LAST_REVISION}"
         return 0
       fi
+      SUBMAN_LAST_OUTCOME="unknown-outcome"
       [[ "${quiet}" == "y" ]] || report_subman_api_failure "旧节点清理"
       return 1
     fi
@@ -31204,6 +31404,7 @@ agent_push_nodes_to_subman_json() {
   local compatibility_warnings_json
   local installed_protocols=()
 
+  SUBMAN_NODE_RESULTS_JSON='[]'
   original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
   synced_count=0
   skipped_count=0
@@ -31451,11 +31652,13 @@ agent_push_nodes_to_subman_json() {
     --arg http_status "${last_http_status}" \
     --arg retry_after "${last_retry_after}" \
     --argjson warnings "${compatibility_warnings_json}" \
+    --argjson results "${SUBMAN_NODE_RESULTS_JSON:-[]}" \
     '{
       ok: $ok,
       synced: $synced,
       skipped: $skipped,
-      failed: $failed
+      failed: $failed,
+      results: $results
     }
     + (if ($warnings | length) > 0 then {
         warnings: $warnings
@@ -31484,8 +31687,8 @@ agent_subman_sync_json() {
   fi
 
   load_subman_config
-  if [[ -z "${SUBMAN_API_URL}" || -z "${SUBMAN_API_TOKEN}" ]]; then
-    agent_json_error "subman_config_missing" "SubMan API URL 或 Token 为空。"
+  if [[ -z "${SUBMAN_API_URL}" || -z "${SUBMAN_API_TOKEN}" || -z "${SUBMAN_EXPECTED_GIST_ID:-}" ]]; then
+    agent_json_error "subman_config_missing" "SubMan API URL、Token 或预期 Workspace Gist ID 为空；请在交互菜单中补全配置。"
     return 1
   fi
 
@@ -32731,7 +32934,8 @@ push_nodes_to_subman() {
   local subman_supported_protocol_count
   local installed_protocols=()
 
-  prompt_subman_config_if_needed
+  prompt_subman_config_if_needed || return 1
+  SUBMAN_NODE_RESULTS_JSON='[]'
   original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
   synced_count=0
   skipped_count=0

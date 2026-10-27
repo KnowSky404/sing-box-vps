@@ -191,11 +191,16 @@ push_subman_node() {
   local payload_json=$2
 
   if [[ "${external_key}" == *":v6" ]]; then
+    SUBMAN_LAST_OUTCOME="unknown-outcome"
     SUBMAN_LAST_ERROR_CODE="gist_write_failed"
     SUBMAN_LAST_ERROR_DISPOSITION="retryable-upstream"
     SUBMAN_LAST_HTTP_STATUS="502"
     return 1
   fi
+  SUBMAN_LAST_NODE_ID="node-${external_key##*:}"
+  SUBMAN_LAST_GIST_ID="gist-1"
+  SUBMAN_LAST_REVISION="23"
+  SUBMAN_LAST_OUTCOME="committed"
   printf '%s\n' "${external_key}" >> "${PUSH_KEYS_FILE}"
   printf '%s\n' "${payload_json}" >> "${PUSH_PAYLOADS_FILE}"
 }
@@ -213,6 +218,7 @@ if [[ -s "${CLEANUP_KEYS_FILE}" ]]; then
   exit 1
 fi
 
+SUBMAN_NODE_PREFIX="edge-1"
 set +e
 partial_agent_json=$(agent_push_nodes_to_subman_json)
 partial_agent_status=$?
@@ -224,6 +230,14 @@ fi
 if ! jq -e '
   .ok == false
   and .failed == 1
+  and (.results | length == 3)
+  and ([.results[] | select(.outcome == "committed")] | length == 2)
+  and any(.results[]; .external_key == "sing-box-vps:edge-1:vless-reality:v4"
+    and .node_id == "node-v4" and .gist_id == "gist-1" and .revision == 23)
+  and any(.results[]; .external_key == "sing-box-vps:edge-1:vless-reality:v6"
+    and .outcome == "unknown-outcome" and .node_id == null
+    and .error.code == "gist_write_failed")
+  and all(.results[]; has("raw") | not)
   and .last_error.code == "gist_write_failed"
   and .last_error.disposition == "retryable-upstream"
   and .last_error.http_status == "502"
@@ -413,3 +427,21 @@ jq -e '
   printf 'expected per-protocol unsupported warnings, got:\n%s\n' "${unsupported_only_agent}" >&2
   exit 1
 }
+
+# A generated key that cannot fit the server marker budget is a local failure,
+# with enough metadata to identify the node and no attempted write.
+(
+  SUBMAN_NODE_PREFIX=$(printf 'x%.0s' {1..120})
+  SUBMAN_NODE_RESULTS_JSON='[]'
+  : > "${PUSH_KEYS_FILE}"
+  if push_subman_protocol_instance vless-reality 198.51.100.20 main y IPv4; then
+    printf 'expected oversized generated key to fail before a write\n' >&2
+    exit 1
+  fi
+  [[ ! -s "${PUSH_KEYS_FILE}" ]]
+  [[ "${SUBMAN_LAST_ERROR_CODE}" == invalid_external_key ]]
+  jq -e 'length == 1 and .[0].external_key == null and .[0].outcome == "failed"
+    and .[0].protocol == "vless-reality" and .[0].instance_id == "main"
+    and .[0].address_label == "IPv4" and .[0].error.code == "invalid_external_key"' \
+    <<< "${SUBMAN_NODE_RESULTS_JSON}" >/dev/null
+)

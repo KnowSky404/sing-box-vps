@@ -977,7 +977,50 @@ Use SubMan sync only when `/root/sing-box-vps/subman.env` is configured and the 
 sbv agent subman-sync --json
 ```
 
-SubMan sync is non-interactive for agents and pushes VLESS REALITY and Hysteria2 nodes idempotently, plus SIP002-representable encrypted Shadowsocks dual-network entries through its dedicated path; single-network entries are skipped and `none` with an empty password returns `shadowsocks_subman_none_unsupported`. Missing API configuration is reported as structured JSON rather than prompting. Same-snapshot mock coverage passed with `synced=2`, `skipped=2`, `failed=0`; real synchronization still requires explicit authorization.
+Configure `SUBMAN_API_URL` (the SubMan origin), `SUBMAN_API_TOKEN`, a stable
+`SUBMAN_NODE_PREFIX`, and `SUBMAN_EXPECTED_GIST_ID` in that protected file. Obtain
+the expected Gist ID from the intended SubMan Workspace. Existing configurations
+without this field stop the Agent with a configuration error; interactive sync
+prompts for the missing ID and preserves the old configuration in `.bak` before
+saving it with mode `600`. Discovery is never automatically accepted as the
+intended identity.
+
+Before each write, the caller reads `/api/nodes`, validates the expected Gist and
+observed revision, and uses the ETag as `If-Match`. Every successful node response
+must agree on Gist ID, `subman.json`, revision/ETag and `Cache-Control: no-store`;
+upserts also require the exact external-key marker. Header parsing supports
+lowercase and mixed-case names with portable awk. The API has no parameter that
+atomically pins discovery to a Gist; the preflight and response checks do not
+eliminate a target change between requests.
+
+The complete unencoded external key must fit **119 UTF-8 bytes**, including the
+prefix, instance ID, full user digest and address suffix. By-key PUT accepts at
+most **63 distinct ordinary labels**, reserving one slot for the server-owned
+`external:` marker. Existing identity formats are retained; oversized keys are
+rejected, never truncated. Shorten the configured prefix only as an explicit
+identity migration, with cleanup of obsolete nodes planned separately.
+
+After transport loss or an uncertain upstream write, GET and compare the exact
+key and desired writable state. A matching readback can confirm the current
+state; otherwise retain the uncertain result and investigate before retrying.
+Writes are not blindly replayed and `Idempotency-Key` is unsupported. Agent
+JSON `results` retains each attempted `external_key`, returned `node_id`,
+`gist_id`, `revision` and `outcome` (`committed`, `reconciled`, `failed` or
+`unknown-outcome`) alongside aggregate counts, so a later failure does not erase
+earlier successes. A key-generation failure has a null `external_key`, protocol,
+instance/address context and `invalid_external_key`; no request was sent for it.
+Multiple node requests are not one transaction. Updating nodes does not regenerate published
+subscriptions or sing-box files; review and publish affected outputs in SubMan.
+
+SubMan sync is non-interactive for agents and pushes VLESS REALITY, ordinary
+VLESS, Hysteria2 and representable Trojan/VMess users, plus SIP002-representable
+encrypted Shadowsocks dual-network entries through their dedicated paths.
+Single-network Shadowsocks entries are skipped and `none` with an empty password
+returns `shadowsocks_subman_none_unsupported`. Unsupported protocols and settings
+remain explicit skips instead of lossy `other` nodes. Missing API configuration
+is reported as structured JSON rather than prompting. Integration verification
+uses local synthetic responses and mock APIs; it does not prove real Gist
+writes, production deployment or authorized live synchronization.
 
 ## Rollback And Recovery
 

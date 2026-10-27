@@ -126,3 +126,34 @@ if [[ "$(subman_external_key_for_protocol "hy2")" != "sing-box-vps:edge-1:hy2" ]
   printf 'expected stable hy2 external key\n' >&2
   exit 1
 fi
+
+check_subman_key_byte_boundary() {
+  local builder=$1
+  shift
+  local base_key prefix_bytes key expected_key
+
+  SUBMAN_NODE_PREFIX=a
+  base_key=$("${builder}" "$@")
+  prefix_bytes=$((119 - $(printf '%s' "${base_key}" | wc -c) + 1))
+  SUBMAN_NODE_PREFIX="é$(printf '%*s' "$((prefix_bytes - 2))" '' | tr ' ' x)"
+  expected_key=${base_key/sing-box-vps:a:/sing-box-vps:${SUBMAN_NODE_PREFIX}:}
+  key=$("${builder}" "$@")
+  if [[ "${key}" != "${expected_key}" || "$(printf '%s' "${key}" | wc -c)" -ne 119 ]]; then
+    printf 'expected unchanged complete 119-byte key from %s\n' "${builder}" >&2
+    exit 1
+  fi
+
+  SUBMAN_NODE_PREFIX="${SUBMAN_NODE_PREFIX}x"
+  if key=$("${builder}" "$@"); then
+    printf 'expected complete 120-byte key to be rejected by %s\n' "${builder}" >&2
+    exit 1
+  fi
+  [[ -z "${key}" ]]
+}
+
+check_subman_key_byte_boundary subman_external_key_for_protocol vless-reality alternate IPv6
+check_subman_key_byte_boundary subman_external_key_for_shadowsocks_user main alice IPv4
+check_subman_key_byte_boundary subman_external_key_for_trojan_user main alice IPv6
+check_subman_key_byte_boundary subman_external_key_for_vmess_user main alice IPv4
+check_subman_key_byte_boundary subman_external_key_for_vless_plain_user main alice IPv6
+check_subman_key_byte_boundary subman_external_key_for_hy2_user main alice IPv4

@@ -13,8 +13,9 @@ setup_menu_test_env() {
 
   TESTABLE_INSTALL="${TMP_DIR}/install-testable.sh"
 
+  # install.sh already guards main when sourced. Avoid an unneeded full-file
+  # whitespace regex scan before rewriting the fixture paths.
   perl -0pe '
-    s/^\s*main "\$@"\s*$//m;
     s|readonly SB_PROJECT_DIR="/root/sing-box-vps"|readonly SB_PROJECT_DIR="'"${TMP_DIR}"'/project"|;
     s|readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"|readonly SINGBOX_BIN_PATH="'"${TMP_DIR}"'/bin/sing-box"|;
     s|readonly SBV_BIN_PATH="/usr/local/bin/sbv"|readonly SBV_BIN_PATH="'"${TMP_DIR}"'/bin/sbv"|;
