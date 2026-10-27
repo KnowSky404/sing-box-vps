@@ -1001,13 +1001,18 @@ rejected, never truncated. Shorten the configured prefix only as an explicit
 identity migration, with cleanup of obsolete nodes planned separately.
 
 After transport loss or an uncertain upstream write, GET and compare the exact
-key and desired writable state. A matching readback can confirm the current
-state; otherwise retain the uncertain result and investigate before retrying.
+key and desired writable state. Reconstruct server name deduplication from the
+validated preflight inventory and the returned commit timestamp; arbitrary name
+changes remain uncertain. A matching readback can confirm the current state;
+otherwise retain the uncertain result and investigate before retrying.
 Writes are not blindly replayed and `Idempotency-Key` is unsupported. Agent
-JSON `results` retains each attempted `external_key`, returned `node_id`,
-`gist_id`, `revision` and `outcome` (`committed`, `reconciled`, `failed` or
-`unknown-outcome`) alongside aggregate counts, so a later failure does not erase
-earlier successes. A key-generation failure has a null `external_key`, protocol,
+JSON `results` retains each `operation` (`upsert` or `delete`), attempted
+`external_key`, returned `node_id`, `gist_id`, `revision` and `outcome`
+(`committed`, `reconciled`, `failed`, `unknown-outcome`, or `absent` for an
+already missing cleanup target) alongside aggregate counts. Legacy deletion
+receipts retain their key/target ID even when uncertain, so a later cleanup
+failure does not erase earlier successes. Preflight GET transport failures are
+retryable reads; they do not imply an uncertain mutation. A key-generation failure has a null `external_key`, protocol,
 instance/address context and `invalid_external_key`; no request was sent for it.
 Multiple node requests are not one transaction. Updating nodes does not regenerate published
 subscriptions or sing-box files; review and publish affected outputs in SubMan.

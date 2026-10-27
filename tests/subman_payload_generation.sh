@@ -157,3 +157,18 @@ check_subman_key_byte_boundary subman_external_key_for_trojan_user main alice IP
 check_subman_key_byte_boundary subman_external_key_for_vmess_user main alice IPv4
 check_subman_key_byte_boundary subman_external_key_for_vless_plain_user main alice IPv6
 check_subman_key_byte_boundary subman_external_key_for_hy2_user main alice IPv4
+
+# JSON-stream selection must work when the intended user is not last under
+# jq 1.6, and must reject missing or ambiguous credential identity.
+stream_fixture='{"tag":"alice","uuid":"alice-only"}
+{"tag":"bob","uuid":"bob-only"}'
+selected=$(select_subman_outbound_by_tag alice <<< "${stream_fixture}")
+jq -e '.tag == "alice" and .uuid == "alice-only"' <<< "${selected}" >/dev/null
+if select_subman_outbound_by_tag missing <<< "${stream_fixture}" > /dev/null 2>&1; then
+  printf 'missing SubMan outbound identity was accepted\n' >&2
+  exit 1
+fi
+if printf '%s\n%s\n' "${stream_fixture}" "${stream_fixture}" | select_subman_outbound_by_tag alice > /dev/null 2>&1; then
+  printf 'ambiguous SubMan outbound identity was accepted\n' >&2
+  exit 1
+fi

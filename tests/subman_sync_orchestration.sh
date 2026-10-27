@@ -445,3 +445,67 @@ jq -e '
     and .[0].address_label == "IPv4" and .[0].error.code == "invalid_external_key"' \
     <<< "${SUBMAN_NODE_RESULTS_JSON}" >/dev/null
 )
+
+# A lost or invalid cleanup receipt must retain the legacy key/ID and mutation
+# outcome alongside the preceding successful dual-stack upserts.
+(
+  write_protocol_index vless-reality
+  SUBMAN_NODE_PREFIX=edge-1
+  SB_INBOUND_STACK_MODE=dual_stack
+  get_public_ip() { printf '198.51.100.20\n'; }
+  get_public_ipv4() { printf '198.51.100.20\n'; }
+  get_public_ipv6() { printf '2001:db8::20\n'; }
+  push_subman_node() {
+    SUBMAN_LAST_NODE_ID="node-${1##*:}"
+    SUBMAN_LAST_GIST_ID=gist-1
+    SUBMAN_LAST_REVISION=24
+    SUBMAN_LAST_OUTCOME=committed
+  }
+  delete_subman_node_by_external_key() {
+    SUBMAN_LAST_NODE_ID=legacy-node
+    SUBMAN_LAST_HTTP_STATUS=200
+    SUBMAN_LAST_ERROR_CODE=revision_contract_mismatch
+    SUBMAN_LAST_ERROR_DISPOSITION=operator-repair
+    SUBMAN_LAST_OUTCOME=unknown-outcome
+    return 1
+  }
+  if cleanup_json=$(agent_push_nodes_to_subman_json); then
+    printf 'expected uncertain legacy deletion to fail the batch\n' >&2
+    exit 1
+  fi
+  jq -e '.ok == false and .synced == 2 and .failed == 1
+    and (.results | length == 3)
+    and ([.results[] | select(.operation == "upsert" and .outcome == "committed")] | length == 2)
+    and any(.results[]; .operation == "delete" and .external_key == "sing-box-vps:edge-1:vless-reality"
+      and .node_id == "legacy-node" and .outcome == "unknown-outcome"
+      and .error.code == "revision_contract_mismatch")' <<< "${cleanup_json}" >/dev/null
+)
+
+# Batch results can exceed Linux's per-argument limit. Preserve all earlier
+# successes when appending metadata and rendering the final Agent response.
+(
+  bulk_results=$(jq -cn '[range(0;2000) | {operation:"upsert",external_key:("bulk-"+tostring),node_id:("node-"+tostring),outcome:"committed",gist_id:"gist-1",revision:1}]')
+  [[ "$(printf '%s' "${bulk_results}" | wc -c)" -gt 131072 ]]
+  list_installed_protocols() { printf 'vless-plain\n'; }
+  protocol_state_exists() { return 0; }
+  load_protocol_state() { return 0; }
+  push_subman_vless_plain_protocol() {
+    SUBMAN_NODE_RESULTS_JSON=${bulk_results}
+    SUBMAN_LAST_OUTCOME=committed
+    SUBMAN_LAST_NODE_ID=final-node
+    SUBMAN_LAST_GIST_ID=gist-1
+    SUBMAN_LAST_REVISION=2
+    SUBMAN_LAST_ERROR_CODE=''
+    record_subman_node_result final-key || return 1
+    SUBMAN_VLESS_PLAIN_SYNCED=2001
+    SUBMAN_VLESS_PLAIN_SKIPPED=0
+    SUBMAN_VLESS_PLAIN_FAILED=0
+    SUBMAN_VLESS_PLAIN_WARNINGS_JSON='[]'
+  }
+  bulk_response=$(agent_push_nodes_to_subman_json)
+  jq -e '.ok == true and .synced == 2001 and .failed == 0
+    and (.results | length == 2001)
+    and .results[0].external_key == "bulk-0"
+    and .results[-1].external_key == "final-key"
+    and .results[-1].node_id == "final-node"' <<< "${bulk_response}" >/dev/null
+)

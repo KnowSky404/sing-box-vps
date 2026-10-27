@@ -23957,25 +23957,39 @@ push_subman_node_with_result() {
   return "${status}"
 }
 
+delete_subman_node_with_result() {
+  local external_key=$1 quiet=${2:-n} status=0 outcome
+  reset_subman_api_result
+  if delete_subman_node_by_external_key "${external_key}" "${quiet}"; then
+    outcome=${SUBMAN_LAST_OUTCOME:-absent}
+    case "${outcome}" in committed|reconciled|absent) ;; *) outcome=absent ;; esac
+  else
+    status=$?
+    outcome=${SUBMAN_LAST_OUTCOME:-failed}
+  fi
+  SUBMAN_LAST_OUTCOME=${outcome}
+  record_subman_node_result "${external_key}" "" "" "" delete || return 1
+  return "${status}"
+}
+
 record_subman_node_result() {
   local external_key=${1:-} outcome=${SUBMAN_LAST_OUTCOME:-failed}
-  SUBMAN_NODE_RESULTS_JSON=$(jq -cn \
-    --argjson results "${SUBMAN_NODE_RESULTS_JSON:-[]}" \
+  SUBMAN_NODE_RESULTS_JSON=$(jq -c \
     --arg key "${external_key}" --arg protocol "${2:-}" \
     --arg instance_id "${3:-}" --arg address_label "${4:-}" --arg node_id "${SUBMAN_LAST_NODE_ID:-}" \
-    --arg outcome "${outcome}" --arg gist_id "${SUBMAN_LAST_GIST_ID:-}" \
+    --arg operation "${5:-upsert}" --arg outcome "${outcome}" --arg gist_id "${SUBMAN_LAST_GIST_ID:-}" \
     --arg revision "${SUBMAN_LAST_REVISION:-}" \
     --arg code "${SUBMAN_LAST_ERROR_CODE:-}" \
     --arg disposition "${SUBMAN_LAST_ERROR_DISPOSITION:-}" \
     --arg http_status "${SUBMAN_LAST_HTTP_STATUS:-}" \
     --arg retry_after "${SUBMAN_LAST_RETRY_AFTER:-}" '
-      $results + [{external_key:(if $key == "" then null else $key end), node_id:(if $node_id == "" then null else $node_id end),
-        outcome:$outcome, gist_id:(if $gist_id == "" then null else $gist_id end),
+      . + [{external_key:(if $key == "" then null else $key end), node_id:(if $node_id == "" then null else $node_id end),
+        operation:$operation, outcome:$outcome, gist_id:(if $gist_id == "" then null else $gist_id end),
         revision:(if $revision == "" then null else ($revision|tonumber) end)}
         + (if $protocol == "" then {} else {protocol:$protocol,instance_id:$instance_id,address_label:$address_label} end)
         + (if $code == "" then {} else {error:{code:$code,disposition:$disposition,
           http_status:(if $http_status == "" then null else $http_status end),
-          retry_after:(if $retry_after == "" then null else $retry_after end)}} end)]') || return 1
+          retry_after:(if $retry_after == "" then null else $retry_after end)}} end)]' <<< "${SUBMAN_NODE_RESULTS_JSON:-[]}") || return 1
 }
 
 record_subman_key_failure() {
@@ -23985,6 +23999,16 @@ record_subman_key_failure() {
   record_subman_node_result "" "${protocol}" "${instance_id}" "${address_label}" || return 1
   [[ "${quiet}" == y ]] || print_warn "SubMan 外部键生成失败或超过 119 UTF-8 字节: ${protocol}/${instance_id}；请缩短节点前缀并明确处理旧身份。"
   return 0
+}
+
+select_subman_outbound_by_tag() {
+  local tag=${1:-}
+  [[ -n "${tag}" ]] || return 1
+  # jq 1.6 can return failure when a later stream record does not match.
+  # Select once from the complete stream and reject missing/ambiguous identity.
+  jq -cse --arg tag "${tag}" '
+    map(select(.tag == $tag))
+    | if length == 1 then .[0] else error("SubMan outbound tag must match exactly one record") end'
 }
 
 subman_node_prefix() {
@@ -24479,7 +24503,7 @@ build_vmess_subman_uri_from_store() (
   trap 'rm -f -- "${filtered_file}"' EXIT
   jq -e --arg id "${instance_id}" '.instances |= map(select(.id == $id)) | .default_instance_id=$id' \
     <<< "${snapshot}" > "${filtered_file}" || return 1
-  outbound=$(build_vmess_client_outbounds_from_store "${filtered_file}" "${server}" | jq -ce --arg tag "${tag}" 'select(.tag == $tag)') || return 1
+  outbound=$(build_vmess_client_outbounds_from_store "${filtered_file}" "${server}" | select_subman_outbound_by_tag "${tag}") || return 1
   uri=$(build_vmess_uri_from_outbound "${outbound}" "${node_name}") || return 1
   uri_bytes=$(printf '%s' "${uri}" | wc -c) || return 1
   [[ "${uri_bytes}" =~ ^[0-9]+$ && "${uri_bytes}" -le 16384 ]] || {
@@ -24659,7 +24683,7 @@ build_vless_plain_subman_uri_from_store() (
   filtered_file=$(mktemp) || return 1
   trap 'rm -f -- "${filtered_file}"' EXIT
   jq -e --arg id "${instance_id}" '.instances |= map(select(.id == $id)) | .default_instance_id=$id' <<< "${snapshot}" > "${filtered_file}" || return 1
-  outbound=$(build_vless_plain_client_outbounds_from_store "${filtered_file}" "${server}" | jq -ce --arg tag "${tag}" 'select(.tag == $tag)') || return 1
+  outbound=$(build_vless_plain_client_outbounds_from_store "${filtered_file}" "${server}" | select_subman_outbound_by_tag "${tag}") || return 1
   uri=$(build_vless_plain_uri_from_outbound "${outbound}" "${node_name}") || return 1
   uri_bytes=$(printf '%s' "${uri}" | wc -c) || return 1
   [[ "${uri_bytes}" =~ ^[0-9]+$ && "${uri_bytes}" -le 16384 ]] || {
@@ -24990,7 +25014,7 @@ build_hy2_subman_uri_from_store() (
   jq -e --arg id "${instance_id}" \
     '.instances |= map(select(.id == $id)) | .default_instance_id=$id' \
     <<< "${snapshot}" > "${filtered_file}" || return 1
-  outbound=$(build_client_hy2_outbounds "${server}" "${filtered_file}" | jq -ce --arg tag "${tag}" 'select(.tag == $tag)') || return 1
+  outbound=$(build_client_hy2_outbounds "${server}" "${filtered_file}" | select_subman_outbound_by_tag "${tag}") || return 1
   uri=$(build_hy2_uri_from_outbound "${outbound}" "${node_name}") || return 1
   uri_bytes=$(printf '%s' "${uri}" | wc -c) || return 1
   [[ "${uri_bytes}" =~ ^[0-9]+$ && "${uri_bytes}" -le 16384 ]] || {
@@ -25520,7 +25544,12 @@ subman_api_request() {
   fi
 
   if [[ "${curl_status}" -ne 0 ]]; then
-    subman_set_client_error "transport_error" "unknown-outcome"
+    if [[ "${method}" == "GET" ]]; then
+      subman_set_client_error "transport_error" "retryable-upstream"
+    else
+      subman_set_client_error "transport_error" "unknown-outcome"
+      SUBMAN_LAST_OUTCOME="unknown-outcome"
+    fi
     return 1
   fi
 }
@@ -25633,6 +25662,7 @@ preflight_subman_workspace() {
 reconcile_subman_node_after_uncertain_write() {
   local external_key=$1
   local payload_json=$2
+  local preflight_snapshot=$3
   local previous_http_status=${SUBMAN_LAST_HTTP_STATUS}
   local previous_error_code=${SUBMAN_LAST_ERROR_CODE}
   local previous_error_disposition=${SUBMAN_LAST_ERROR_DISPOSITION}
@@ -25640,21 +25670,49 @@ reconcile_subman_node_after_uncertain_write() {
   local matching_node
 
   if preflight_subman_workspace; then
-    if matching_node=$(jq -ce --arg external_label "external:${external_key}" --argjson desired "${payload_json}" '
+    if matching_node=$(printf '%s\n%s\n' "${SUBMAN_LAST_RESPONSE_BODY}" "${preflight_snapshot}" | \
+      jq -sce --arg external_label "external:${external_key}" --argjson desired "${payload_json}" '
       def trim_value: gsub("^\\s+|\\s+$"; "");
       def tag_labels: map(if type == "string" then . else .label end | trim_value) | unique;
+      # SubMan resolves duplicate display names against the prewrite inventory.
+      # Its timestamp is the same UTC committedAt stored in node.updatedAt.
+      def server_name($base; $taken; $updated_at):
+        if ($taken | index($base)) == null then $base
+        else
+          ($updated_at
+            | select(type == "string")
+            | select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"))
+            | .[0:16] | sub("T"; " ")) as $timestamp
+          | ($base + " " + $timestamp) as $timestamped
+          | if ($taken | index($timestamped)) == null then $timestamped
+            else first(range(2; ($taken | length) + 3)
+              | ($timestamped + " #" + tostring) as $candidate
+              | select(($taken | index($candidate)) == null) | $candidate)
+            end
+        end;
+      select(length == 2) | .[1] as $before | .[0]
+      | [$before.data[]
+        | select(any(.tags[]?; (if type == "string" then . else .label end) == $external_label))
+      ] as $prior_targets
+      | select(($prior_targets | length) <= 1)
+      | ($prior_targets[0].id // null) as $prior_id
+      | [$before.data[] | select(.id != $prior_id) | .name | trim_value] as $taken
+      | ($desired.name | trim_value) as $base
+      |
       [.data[]
         | select(any(.tags[]?; (if type == "string" then . else .label end) == $external_label))
       ]
       | select(length == 1) | .[0]
+      | select($prior_id == null or .id == $prior_id)
+      | server_name($base; $taken; .updatedAt) as $expected_name
       | select((.id | type == "string" and length > 0)
-        and .name == ($desired.name | trim_value)
+        and .name == $expected_name
         and .type == $desired.type
         and .raw == ($desired.raw | trim_value)
         and .enabled == (if $desired | has("enabled") then $desired.enabled else true end)
         and .source == (($desired.source // "single") | trim_value)
         and ((.tags | tag_labels) == ((($desired.tags // []) | tag_labels) + [$external_label] | unique)))
-    ' <<< "${SUBMAN_LAST_RESPONSE_BODY}"); then
+    ' 2>/dev/null); then
       SUBMAN_LAST_NODE_ID=$(jq -r '.id' <<< "${matching_node}")
       SUBMAN_LAST_OUTCOME="reconciled"
       return 0
@@ -25675,7 +25733,7 @@ reconcile_subman_node_after_uncertain_write() {
 push_subman_node() {
   local external_key=$1
   local payload_json=$2
-  local encoded_key if_match
+  local encoded_key if_match preflight_snapshot
 
   reset_subman_api_result
   if ! validate_subman_node_request "${external_key}" "${payload_json}"; then
@@ -25688,10 +25746,11 @@ push_subman_node() {
     return 1
   fi
   if_match=${SUBMAN_LAST_RESPONSE_ETAG}
+  preflight_snapshot=${SUBMAN_LAST_RESPONSE_BODY}
   encoded_key=$(jq -rn --arg value "${external_key}" '$value | @uri')
   if ! subman_api_request "PUT" "/api/nodes/by-key/${encoded_key}" "${payload_json}" "${if_match}"; then
     if [[ "${SUBMAN_LAST_ERROR_DISPOSITION}" == "unknown-outcome" ]] && \
-      reconcile_subman_node_after_uncertain_write "${external_key}" "${payload_json}"; then
+      reconcile_subman_node_after_uncertain_write "${external_key}" "${payload_json}" "${preflight_snapshot}"; then
       print_success "SubMan 节点回读确认: HTTP 200, Workspace revision ${SUBMAN_LAST_REVISION}"
       return 0
     fi
@@ -25701,7 +25760,7 @@ push_subman_node() {
   if [[ "${SUBMAN_LAST_HTTP_STATUS}" != "200" ]]; then
     capture_subman_api_error
     if [[ "${SUBMAN_LAST_HTTP_STATUS}" == 5* || "${SUBMAN_LAST_ERROR_DISPOSITION}" == "unknown-outcome" ]]; then
-      if reconcile_subman_node_after_uncertain_write "${external_key}" "${payload_json}"; then
+      if reconcile_subman_node_after_uncertain_write "${external_key}" "${payload_json}" "${preflight_snapshot}"; then
         print_success "SubMan 节点回读确认: HTTP 200, Workspace revision ${SUBMAN_LAST_REVISION}"
         return 0
       fi
@@ -25746,6 +25805,7 @@ delete_subman_node_by_external_key() {
       | .id
     ] | unique | length' <<< "${SUBMAN_LAST_RESPONSE_BODY}")
     if [[ "${node_count}" -eq 0 ]]; then
+      SUBMAN_LAST_OUTCOME="absent"
       [[ "${quiet}" == "y" ]] || print_info "SubMan 旧节点无需清理: ${external_key}"
       return 0
     fi
@@ -25762,10 +25822,12 @@ delete_subman_node_by_external_key() {
     if_match=${SUBMAN_LAST_RESPONSE_ETAG}
     encoded_node_id=$(jq -rn --arg value "${node_id}" '$value | @uri')
     if ! subman_api_request "DELETE" "/api/nodes/${encoded_node_id}" "" "${if_match}"; then
+      SUBMAN_LAST_NODE_ID=${node_id}
       [[ "${SUBMAN_LAST_ERROR_DISPOSITION}" != "unknown-outcome" ]] || SUBMAN_LAST_OUTCOME="unknown-outcome"
       [[ "${quiet}" == "y" ]] || report_subman_api_failure "旧节点清理"
       return 1
     fi
+    SUBMAN_LAST_NODE_ID=${node_id}
     if [[ "${SUBMAN_LAST_HTTP_STATUS}" == "200" ]]; then
       if validate_subman_workspace_response "delete"; then
         SUBMAN_LAST_NODE_ID=${node_id}
@@ -25779,11 +25841,16 @@ delete_subman_node_by_external_key() {
     fi
 
     capture_subman_api_error
+    [[ "${SUBMAN_LAST_HTTP_STATUS}" != 5* ]] || SUBMAN_LAST_OUTCOME="unknown-outcome"
+    if [[ "${SUBMAN_LAST_ERROR_CODE}" == "entity_not_found" || "${SUBMAN_LAST_ERROR_CODE}" == "entity_deleted" || "${SUBMAN_LAST_ERROR_CODE}" == "not_found" ]]; then
+      SUBMAN_LAST_ERROR_CODE=""
+      SUBMAN_LAST_ERROR_DISPOSITION=""
+      SUBMAN_LAST_RETRY_AFTER=""
+      SUBMAN_LAST_OUTCOME="absent"
+      return 0
+    fi
     if [[ "${attempt}" -eq 1 && "${SUBMAN_LAST_ERROR_DISPOSITION}" == "state-conflict" ]]; then
       continue
-    fi
-    if [[ "${SUBMAN_LAST_ERROR_CODE}" == "entity_not_found" || "${SUBMAN_LAST_ERROR_CODE}" == "entity_deleted" || "${SUBMAN_LAST_ERROR_CODE}" == "not_found" ]]; then
-      return 0
     fi
     [[ "${quiet}" == "y" ]] || report_subman_api_failure "旧节点清理"
     return 1
@@ -25801,7 +25868,7 @@ push_subman_legacy_protocol_key_cleanup() {
     return 1
   fi
 
-  delete_subman_node_by_external_key "${external_key}" "${quiet}"
+  delete_subman_node_with_result "${external_key}" "${quiet}"
 }
 
 subman_instance_ready_for_legacy_cleanup() {
@@ -31642,7 +31709,7 @@ agent_push_nodes_to_subman_json() {
     ok_json=true
   fi
 
-  jq -n \
+  jq \
     --argjson ok "${ok_json}" \
     --argjson synced "${synced_count}" \
     --argjson skipped "${skipped_count}" \
@@ -31652,8 +31719,7 @@ agent_push_nodes_to_subman_json() {
     --arg http_status "${last_http_status}" \
     --arg retry_after "${last_retry_after}" \
     --argjson warnings "${compatibility_warnings_json}" \
-    --argjson results "${SUBMAN_NODE_RESULTS_JSON:-[]}" \
-    '{
+    '. as $results | {
       ok: $ok,
       synced: $synced,
       skipped: $skipped,
@@ -31670,7 +31736,7 @@ agent_push_nodes_to_subman_json() {
           http_status: (if $http_status == "" then null else $http_status end),
           retry_after: (if $retry_after == "" then null else $retry_after end)
         }
-      } else {} end)'
+      } else {} end)' <<< "${SUBMAN_NODE_RESULTS_JSON:-[]}"
 
   if [[ "${ok_json}" != "true" ]]; then
     return 1

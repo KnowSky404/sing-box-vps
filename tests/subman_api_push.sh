@@ -373,6 +373,19 @@ if delete_subman_node_by_external_key legacy-key y; then
 fi
 [[ "$(wc -l < "${CURL_CALLS_FILE}")" -eq $((before_guard_calls + 2)) ]]
 
+reset_method_counts
+set_mock_response GET "" 000 "" "" 28
+if push_subman_node "sing-box-vps:edge-1:vless-reality" "${payload_json}" > "${TMP_DIR}/preflight-transport.txt" 2>&1; then
+  printf 'expected failed GET preflight to stop before writing\n' >&2
+  exit 1
+fi
+[[ "${SUBMAN_LAST_ERROR_CODE}" == transport_error && "${SUBMAN_LAST_ERROR_DISPOSITION}" == retryable-upstream && "${SUBMAN_LAST_OUTCOME}" == failed ]]
+[[ "$(cat "${CURL_METHOD_COUNT_DIR}/GET")" -eq 1 && ! -e "${CURL_METHOD_COUNT_DIR}/PUT" ]]
+if grep -Fq '请求结果不确定' "${TMP_DIR}/preflight-transport.txt"; then
+  printf 'expected safe GET failure not to report an uncertain mutation\n' >&2
+  exit 1
+fi
+
 # Force mawk when available to reproduce the old IGNORECASE portability bug.
 if command -v mawk >/dev/null 2>&1; then
   ln -s "$(command -v mawk)" "${TMP_DIR}/bin/awk"
@@ -454,6 +467,69 @@ for changed_field in raw name enabled source tags marker; do
   [[ "$(cat "${CURL_METHOD_COUNT_DIR}/PUT")" -eq 1 ]]
 done
 
+# Reproduce the server display-name algorithm only when the guarded preflight
+# proves a collision. Its committedAt timestamp is also the node updatedAt.
+collision_before=$(jq -c '.data = [{id: "ipv4-node", name: "edge-1", tags: [{label: "external:other-ipv4-key"}]}]' <<< "${preflight_body}")
+collision_after=$(jq -c '.data[0].name = "edge-1 2026-07-30 00:00"' <<< "${reconciled_list_body}")
+for name_case in timestamp counter-2 counter-3 wrong-counter wrong-timestamp arbitrary-rename unproven-collision; do
+  reset_method_counts
+  snapshot_before=${collision_before}
+  snapshot_after=${collision_after}
+  should_reconcile=y
+  case "${name_case}" in
+    timestamp) ;;
+    counter-2)
+      snapshot_before=$(jq -c '.data += [{id: "taken-timestamp", name: "edge-1 2026-07-30 00:00", tags: []}]' <<< "${snapshot_before}")
+      snapshot_after=$(jq -c '.data[0].name += " #2"' <<< "${snapshot_after}")
+      ;;
+    counter-3|wrong-counter)
+      snapshot_before=$(jq -c '.data += [{id: "taken-timestamp", name: "edge-1 2026-07-30 00:00", tags: []}, {id: "taken-counter", name: "edge-1 2026-07-30 00:00 #2", tags: []}]' <<< "${snapshot_before}")
+      if [[ "${name_case}" == counter-3 ]]; then
+        snapshot_after=$(jq -c '.data[0].name += " #3"' <<< "${snapshot_after}")
+      else
+        snapshot_after=$(jq -c '.data[0].name += " #4"' <<< "${snapshot_after}")
+        should_reconcile=n
+      fi
+      ;;
+    wrong-timestamp)
+      snapshot_after=$(jq -c '.data[0].name = "edge-1 2026-07-30 00:01"' <<< "${snapshot_after}")
+      should_reconcile=n
+      ;;
+    arbitrary-rename)
+      snapshot_after=$(jq -c '.data[0].name = "unrelated manual name"' <<< "${snapshot_after}")
+      should_reconcile=n
+      ;;
+    unproven-collision)
+      snapshot_before=${preflight_body}
+      should_reconcile=n
+      ;;
+  esac
+  set_mock_response GET 1 200 "${snapshot_before}" "${preflight_headers}"
+  set_mock_response GET 2 200 "${snapshot_after}" "${success_headers}"
+  if push_subman_node "sing-box-vps:edge-1:vless-reality" "${payload_json}" > "${TMP_DIR}/name-${name_case}.txt" 2>&1; then
+    [[ "${should_reconcile}" == y && "${SUBMAN_LAST_OUTCOME}" == reconciled ]]
+  else
+    [[ "${should_reconcile}" == n && "${SUBMAN_LAST_OUTCOME}" == unknown-outcome ]]
+  fi
+  [[ "$(cat "${CURL_METHOD_COUNT_DIR}/PUT")" -eq 1 ]]
+done
+
+# Existing key nodes exclude their own display name, and large inventories must
+# enter jq through stdin rather than a single argv limited to about 128 KiB.
+reset_method_counts
+set_mock_response GET 1 200 "${reconciled_list_body}" "${success_headers}"
+set_mock_response GET 2 200 "${reconciled_list_body}" "${success_headers}"
+push_subman_node "sing-box-vps:edge-1:vless-reality" "${payload_json}" > "${TMP_DIR}/same-key-name.txt" 2>&1
+[[ "${SUBMAN_LAST_OUTCOME}" == reconciled ]]
+large_inventory=$(jq -cn '{data: [range(0; 2200) | {id: ("inventory-node-" + tostring), name: ("Inventory node " + tostring), type: "vless", raw: ("vless://inventory-" + tostring), enabled: true, source: "single", tags: []}], workspace: {gistId: "gist-1", file: "subman.json", revision: 12}}')
+[[ "${#large_inventory}" -gt 131072 ]]
+reset_method_counts
+set_mock_response GET 1 200 "${large_inventory}" "${preflight_headers}"
+set_mock_response GET 2 200 "${reconciled_list_body}" "${success_headers}"
+push_subman_node "sing-box-vps:edge-1:vless-reality" "${payload_json}" > "${TMP_DIR}/large-inventory-reconciled.txt" 2>&1
+[[ "${SUBMAN_LAST_OUTCOME}" == reconciled ]]
+set_mock_response GET 1 200 "${preflight_body}" "${preflight_headers}"
+
 reset_method_counts
 set_mock_response GET 2 200 "${reconciled_list_body}" "${success_headers}"
 set_mock_response PUT "" 503 "${error_body}" 'HTTP/2 503\r\nRetry-After: 19\r\n\r\n'
@@ -491,6 +567,29 @@ unset -f rm
 [[ "${cleanup_failure_status}" -ne 0 && "${SUBMAN_LAST_ERROR_CODE}" == temporary_cleanup_failed && "${SUBMAN_LAST_OUTCOME}" == unknown-outcome ]]
 [[ "$(cat "${CURL_METHOD_COUNT_DIR}/GET")" -eq 1 && "$(cat "${CURL_METHOD_COUNT_DIR}/PUT")" -eq 1 ]]
 
+rm -f "${CURL_RESPONSE_DIR}"/GET.[0-9]* "${CURL_RESPONSE_DIR}"/DELETE.[0-9]*
+reset_method_counts
+set_mock_response GET "" 200 "${list_body}" "${list_headers}"
+set_mock_response DELETE "" 000 "" "" 28
+if delete_subman_node_by_external_key "sing-box-vps:edge-1:vless-reality" y; then
+  printf 'expected a lost DELETE receipt to remain uncertain\n' >&2
+  exit 1
+fi
+[[ "${SUBMAN_LAST_OUTCOME}" == unknown-outcome && "${SUBMAN_LAST_NODE_ID}" == legacy-node ]]
+set_mock_response DELETE "" 200 "${delete_body}" 'HTTP/2 200\r\n\r\n'
+if delete_subman_node_by_external_key "sing-box-vps:edge-1:vless-reality" y; then
+  printf 'expected an invalid DELETE receipt to remain uncertain\n' >&2
+  exit 1
+fi
+[[ "${SUBMAN_LAST_OUTCOME}" == unknown-outcome && "${SUBMAN_LAST_NODE_ID}" == legacy-node ]]
+set_mock_response GET "" 200 "${preflight_body}" "${preflight_headers}"
+delete_subman_node_by_external_key "sing-box-vps:edge-1:vless-reality" y
+[[ "${SUBMAN_LAST_OUTCOME}" == absent && "${SUBMAN_LAST_NODE_ID}" == "" ]]
+set_mock_response GET "" 200 "${list_body}" "${list_headers}"
+set_mock_response DELETE "" 404 '{"error":{"code":"entity_not_found","disposition":"state-conflict"}}' 'HTTP/2 404\r\nCache-Control: no-store\r\n\r\n'
+delete_subman_node_by_external_key "sing-box-vps:edge-1:vless-reality" y
+[[ "${SUBMAN_LAST_OUTCOME}" == absent && "${SUBMAN_LAST_NODE_ID}" == legacy-node && "${SUBMAN_LAST_ERROR_CODE}" == "" && "${SUBMAN_LAST_ERROR_DISPOSITION}" == "" ]]
+
 # Use a disposable local HTTP server and the real curl executable as a separate
 # wire-level check of lowercase headers, conditional writes, and lost receipts.
 cat > "${TMP_DIR}/subman-http-mock.py" <<'PY'
@@ -500,6 +599,7 @@ import pathlib
 import socket
 import sys
 import urllib.parse
+from datetime import datetime, timezone
 
 root = pathlib.Path(sys.argv[1])
 nodes = {}
@@ -545,11 +645,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
       return
     key = urllib.parse.unquote(self.path[len("/api/nodes/by-key/"):])
     payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+    committed_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    taken_names = {node["name"].strip() for other_key, node in nodes.items() if other_key != key}
+    base_name = payload["name"].strip()
+    resolved_name = base_name
+    if resolved_name in taken_names:
+      timestamped = base_name + " " + committed_at[:16].replace("T", " ")
+      resolved_name = timestamped
+      counter = 2
+      while resolved_name in taken_names:
+        resolved_name = timestamped + " #" + str(counter)
+        counter += 1
+    payload["name"] = resolved_name
+    payload["updatedAt"] = committed_at
     payload["id"] = "http-fixture-" + key
     payload["tags"] = [{"label": tag} for tag in payload["tags"]] + [{"label": "external:" + key}]
     nodes[key] = payload
     revision += 1
-    if key == "live-lost-response":
+    if key == "live-user-ipv6":
       self.close_connection = True
       self.connection.shutdown(socket.SHUT_RDWR)
       self.connection.close()
@@ -571,9 +684,10 @@ done
 SUBMAN_API_URL="http://127.0.0.1:$(cat "${TMP_DIR}/http-port.txt")"
 SUBMAN_EXPECTED_GIST_ID="gist-live-fixture"
 curl() { "${REAL_CURL_BIN}" --noproxy '*' "$@"; }
-push_subman_node live-success "${payload_json}" > "${TMP_DIR}/http-success.txt" 2>&1
+push_subman_node live-user-ipv4 "${payload_json}" > "${TMP_DIR}/http-success.txt" 2>&1
 [[ "${SUBMAN_LAST_OUTCOME}" == committed && "${SUBMAN_LAST_REVISION}" == 13 ]]
-push_subman_node live-lost-response "${payload_json}" > "${TMP_DIR}/http-reconciled.txt" 2>&1
-[[ "${SUBMAN_LAST_OUTCOME}" == reconciled && "${SUBMAN_LAST_NODE_ID}" == http-fixture-live-lost-response && "${SUBMAN_LAST_REVISION}" == 14 ]]
+ipv6_payload=$(jq -c '.raw = "vless://fixture@[2001:db8::1]:443"' <<< "${payload_json}")
+push_subman_node live-user-ipv6 "${ipv6_payload}" > "${TMP_DIR}/http-reconciled.txt" 2>&1
+[[ "${SUBMAN_LAST_OUTCOME}" == reconciled && "${SUBMAN_LAST_NODE_ID}" == http-fixture-live-user-ipv6 && "${SUBMAN_LAST_REVISION}" == 14 ]]
 [[ "$(wc -l < "${TMP_DIR}/http-requests.txt")" -eq 5 ]]
 [[ "$(grep -c '^PUT ' "${TMP_DIR}/http-requests.txt")" -eq 2 ]]
