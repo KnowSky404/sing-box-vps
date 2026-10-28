@@ -38,6 +38,13 @@ EOF
 
 output=$(cat "${OUTPUT_FILE}")
 
+expected_order=$(printf '%s\n' {1..15})
+actual_order=$(printf '%s\n' "${output}" | sed -n 's/^\([1-9][0-9]*\)\. .*/\1/p')
+if [[ "${actual_order}" != "${expected_order}" ]]; then
+  printf 'expected numeric protocol menu order 1 through 15, got:\n%s\n' "${actual_order}" >&2
+  exit 1
+fi
+
 if [[ "${SELECTED_PROTOCOLS_CSV}" != "vless-reality,vless-plain,mixed,hy2,anytls,socks,http,shadowsocks,trojan,vmess,snell,tuic,hysteria,naive,shadowtls" ]]; then
   printf 'expected blank selection to install all available protocols, got %s\n' "${SELECTED_PROTOCOLS_CSV}" >&2
   exit 1
@@ -67,3 +74,14 @@ if [[ "${output}" != *"15. ShadowTLS"* ]]; then
   printf 'expected menu item 15 to identify ShadowTLS, got:\n%s\n' "${output}" >&2
   exit 1
 fi
+
+# Existing REALITY installs keep their add-node entry, and option 10 keeps
+# selecting ordinary VLESS after sorting the visible list.
+list_installed_protocols() { printf 'vless-reality\n'; }
+prompt_protocol_install_selection additional >"${OUTPUT_FILE}" 2>&1 <<'EOF'
+10
+EOF
+[[ "${SELECTED_PROTOCOLS_CSV}" == vless-plain ]]
+grep -Fq '1. 新增 VLESS + REALITY 节点' "${OUTPUT_FILE}"
+actual_order=$(sed -n 's/^\([1-9][0-9]*\)\. .*/\1/p' "${OUTPUT_FILE}")
+[[ "${actual_order}" == "${expected_order}" ]]

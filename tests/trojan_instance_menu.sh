@@ -102,7 +102,7 @@ SCRIPT_VER_STATUS=''
 prompt_choice() {
   if [[ ! -e "${main_dispatch_marker}.entered" ]]; then
     : > "${main_dispatch_marker}.entered"
-    printf '21\n'
+    printf '2\n'
   else
     printf '0\n'
   fi
@@ -110,6 +110,8 @@ prompt_choice() {
 trojan_instance_management_menu() {
   printf 'main %s\n' "${1:-}" > "${main_dispatch_marker}"
 }
+load_current_config_state() { :; }
+prompt_installed_protocol_selection() { SELECTED_PROTOCOL=trojan; }
 exit_script() { exit 0; }
 set +e
 ( main ) >/dev/null 2>"${TMP_DIR}/main.stderr"
@@ -131,9 +133,9 @@ prompt_installed_protocol_selection() {
   SELECTED_PROTOCOL=trojan
   return 0
 }
-trojan_instance_management_menu() { printf '%s\n' "${1:-}" >> "${route_calls}"; }
+trojan_instance_management_menu() { printf '%s\n' "${1:-menu}" >> "${route_calls}"; }
 update_config_only >/dev/null
-grep -Fq 'replace' "${route_calls}"
+grep -Fxq 'menu' "${route_calls}"
 list_installed_protocols() { printf 'trojan\n'; }
 plain_proxy_structured_state_active() { [[ "${1:-}" == trojan ]]; }
 printf '1\n' | remove_protocol_menu >/dev/null

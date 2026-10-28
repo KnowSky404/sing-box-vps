@@ -284,9 +284,9 @@ TCP data-plane proof.
 
 For a 1.13 to 1.14 rehearsal, follow `docs/agents/sing-box-1.13-to-1.14-upgrade-test.md`. Inline `tls.acme` and legacy `download_detour` are deprecated in 1.14 but remain accepted for compatibility; they are scheduled for removal in 1.16. Hysteria2 Ed25519 handling is a client-side compatibility boundary: share links cannot carry the required Chrome QUIC override, while generated 1.14 client exports can.
 
-NaiveProxy is registry preset 14 and management menu 29. Use the typed manual-TLS TCP/UDP instance lifecycle and `export-client` for per-user outbound JSON. The outbound requires an official `with_naive_outbound` build and runtime `libcronet.so`; links return `naive_standard_uri_unavailable` and `naive_libcronet_required`, and no SubMan sync is attempted.
+NaiveProxy is registry preset 14 and protocol management via main menu 2. Use the typed manual-TLS TCP/UDP instance lifecycle and `export-client` for per-user outbound JSON. The outbound requires an official `with_naive_outbound` build and runtime `libcronet.so`; links return `naive_standard_uri_unavailable` and `naive_libcronet_required`, and no SubMan sync is attempted.
 
-ShadowTLS is registry preset 15 and management menu 30. Use the typed composite lifecycle: each instance owns a ShadowTLS outer listener and a private loopback Mixed detour, with v1/v2/v3 authentication, handshake mappings, explicit client trust, and per-user outbound JSON. Links return `shadowtls_standard_uri_unavailable`; ShadowTLS has no SubMan path. Non-loopback writes require explicit `--allow-public` consent.
+ShadowTLS is registry preset 15 and protocol management via main menu 2. Use the typed composite lifecycle: each instance owns a ShadowTLS outer listener and a private loopback Mixed detour, with v1/v2/v3 authentication, handshake mappings, explicit client trust, and per-user outbound JSON. Links return `shadowtls_standard_uri_unavailable`; ShadowTLS has no SubMan path. Non-loopback writes require explicit `--allow-public` consent.
 
 ## VLESS REALITY Operations
 

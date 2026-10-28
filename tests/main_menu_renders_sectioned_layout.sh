@@ -53,6 +53,12 @@ EOF
 
 plain_output=$(strip_ansi "${output}")
 
+if [[ "${plain_output}" == *"实例与状态"* ]] ||
+   printf '%s\n' "${plain_output}" | grep -Eq '^[[:space:]]*(1[7-9]|2[0-9]|30)\.'; then
+  printf 'expected instance tools to be consolidated under protocol management, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
 if [[ "${plain_output}" != *"部署管理"* ]]; then
   printf 'expected future deployment section label in main menu, got:\n%s\n' "${output}" >&2
   exit 1

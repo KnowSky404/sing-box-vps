@@ -3,7 +3,7 @@
 面向 VPS 的 sing-box 安装与管理脚本。通过交互菜单部署协议、维护服务、导出客户端配置；安装器会校验配置并保留关键变更的备份。
 
 - **当前适配：1.14.2**；显式固定 1.13.x 时保留对应配置生成路径。
-- 脚本版本：`2026102801`
+- 脚本版本：`2026102802`
 - sing-box 适配版本：`1.14.2`
 - **运行环境：** Debian 11+、Ubuntu 20.04+、CentOS 7+/Stream、AlmaLinux、Rocky Linux；需要 root 权限。
 
@@ -48,7 +48,7 @@ bash -c 'set -euo pipefail; umask 077; t=$(mktemp); trap '\''rm -f -- "$t"'\'' E
 - **托管 route rule-set**：高级组件 Agent 现在可用同一 revision/CAS 事务管理 inline、local、remote 三种 `route.rule_set`；inline 只接受有界 matcher rules，local 文件按引用使用且不会随删除清理，remote URL 与 1.14+ named `http_client` 引用受控校验。生成、接管、删除保护和 live drift 检查复用组件生命周期；规则集不作为普通代理节点导出、分享或同步 SubMan，URL 等完整配置只经敏感 component export 返回。
 - **可审计升级**：`upgrade-check` 会报告实例健康度、当前配置校验、配置 SHA-256、1.14 已知弃用项和阻断原因；`upgrade` 只接受固定版本与 `--yes`，先在 `/root/sing-box-vps-backups/` 创建 root-only 备份，并原子维护 `transaction-result.json`（事务 ID、旧/新版本、状态历史、manifest hash 与回滚结果）。目标核心校验失败时尝试恢复旧二进制并返回非零；若恢复未通过最终校验，会明确返回 `rollback_failed` 和人工介入标记。
 - **多协议支持**：支持 **VLESS + REALITY**、普通 **VLESS**、**Mixed (HTTP/HTTPS/SOCKS)**、**独立 SOCKS**、**独立 HTTP（可选入口 TLS）**、**Shadowsocks**、**Trojan**、**VMess**、**Hysteria2**、**Hysteria v1**、**AnyTLS**、**Snell**、**TUIC**、**NaiveProxy** 与 **ShadowTLS** 十五个入站预设。已有服务新增 HTTP、Shadowsocks、Trojan、VMess、普通 VLESS、Hysteria2、Hysteria v1、AnyTLS、Snell、TUIC、NaiveProxy 或 ShadowTLS 时单独进入共享实例事务，不与其他协议合并追加；全协议目标仍未完成。
-- **Mixed 多实例管理**：schema 2 支持多个稳定 ID/tag、独立监听地址/端口、独立认证和默认实例；Agent 提供 `create`、`replace`、`delete`、`default`、`migrate`、`recover`，交互菜单 17 提供逐实例管理。非回环明文监听需要显式公网暴露确认；跨协议批量删除会拒绝并要求逐实例处理 Mixed。
+- **Mixed 多实例管理**：schema 2 支持多个稳定 ID/tag、独立监听地址/端口、独立认证和默认实例；Agent 提供 `create`、`replace`、`delete`、`default`、`migrate`、`recover`，交互菜单 2 选择 Mixed 后提供逐实例管理。非回环明文监听需要显式公网暴露确认；跨协议批量删除会拒绝并要求逐实例处理 Mixed。
 - **VLESS REALITY 多实例**：可在安装菜单追加多个 REALITY 实例，每个实例拥有独立端口、ShortID、节点名称、可选上下行限速和实例级出站策略；节点展示和 SubMan 同步会逐实例输出。
 - **REALITY QoS 限速**：为设置了上下行 Mbps 的 REALITY 实例自动规划并应用 `tc` 端口级限速规则，重建配置、更新协议或移除实例时会同步刷新规则，避免遗留过滤器影响新配置。
 - **Cloudflare Warp 集成**：支持一键开启/关闭 Warp 出站，自动注册免费账户，为选定流量提供 Warp 出口；流媒体可用性取决于网络与服务策略。
@@ -203,12 +203,12 @@ Agent/Hermes 文档入口：
 ## 功能菜单
 
 <details>
-<summary>查看 30 项管理菜单与分享链接说明</summary>
+<summary>查看 16 项管理菜单与分享链接说明</summary>
 
 Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码，避免 `@`、`#`、`%`、空格或换行改变链接结构；服务端凭据保持不变。HTTP Basic 无法表达含冒号的用户名或含 ASCII 控制字符的认证：此时 Mixed 的 Agent `links` 只提供 SOCKS5，并返回 `mixed_http_auth_unrepresentable`，不生成不可用的 HTTP 链接。SOCKS5 URI 不携带 UoT v2 等客户端选项，返回 `socks5_uri_transport_options_omitted`；需要完整配置时使用 `export-client` JSON。百分号编码不是加密，链接仍是敏感材料。
 
 1. **安装新协议**：首次安装或向现有实例追加 VLESS REALITY、Mixed、独立 SOCKS、独立 HTTP、Shadowsocks、Trojan、VMess、Hysteria2、Hysteria v1、AnyTLS、Snell、TUIC、NaiveProxy、ShadowTLS；协议选择注册表第 5 项为 SOCKS，第 6 项为 HTTP，第 9 项为 VMess，第 11 项为 Snell，第 12 项为 TUIC，第 13 项为 Hysteria v1，第 14 项为 NaiveProxy，第 15 项为 ShadowTLS。
-2. **修改已安装协议配置**：只修改选中的协议/REALITY 实例，并重建、校验整体配置。
+2. **修改已安装协议配置**：选择协议后进入对应实例管理，支持修改、设置默认实例等操作；legacy ACME/provider 保留原配置编辑流程。检测到未完成事务时，此入口直接进入恢复流程。
 3. **移除已安装协议**：移除指定协议或 REALITY 实例；存在多个 REALITY 实例时会明确询问“单实例”或“整个 VLESS 协议”，并同步清理 QoS 与已移除端口的防火墙放行。
 4. **更新 sing-box 版本**：保留配置的核心更新；目标 `sing-box check` 通过才重启。
 5. **卸载 sing-box**：清理核心、服务与运行配置，保留管理命令 `sbv`。
@@ -223,20 +223,10 @@ Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码
 14. **系统管理**：BBR，以及入站监听栈和出站/DNS 策略。
 15. **更新管理脚本 `sbv`**。
 16. **卸载管理脚本 `sbv`**。
-17. **管理 Mixed 实例**：创建、修改、删除、设置默认实例、迁移 legacy 状态和恢复未完成事务。
-18. **管理 SOCKS 实例**：创建、修改、删除、设置默认实例和恢复未完成事务；使用独立 SOCKS 的 schema 2 typed store，不提供 legacy `.env` migration。
-19. **管理 HTTP 实例**：创建、修改、删除、设置默认实例和恢复未完成事务；入口可选明文或手工证书 TLS，使用共享事务，不提供 legacy migration。
-20. **管理 Shadowsocks 实例**：逐实例管理认证、监听网络、默认实例与事务恢复，不提供 legacy migration。
-21. **管理 Trojan 实例**：逐实例创建、修改、删除、设置默认和恢复；显式管理多用户、TLS 信任及传输，使用共享 CAS 事务，不提供 legacy migration。
-22. **管理 VMess 实例**：逐实例创建、修改、删除、设置默认和恢复；显式管理多用户、TLS 信任、V2Ray transport、`security` 与 `alter_id`，使用共享 CAS 事务，不提供 legacy migration。
-23. **管理 VLESS 实例**：逐实例创建、修改、删除、设置默认和恢复；显式管理普通 VLESS 用户、TLS 信任和 V2Ray transport，使用共享 CAS 事务，不提供 legacy migration。
-24. **管理 AnyTLS 实例**：逐实例创建、修改、删除、设置默认和恢复；显式管理多用户、手工 TLS 证书和客户端信任，使用共享 CAS 事务。legacy AnyTLS 仍沿用原 ACME/provider 更新路径，不自动扁平化迁移。
-25. **管理 Hysteria2 实例**：逐实例创建、修改、删除、设置默认和恢复；显式管理多用户、手工 TLS、带宽、Salamander obfs、masquerade 与客户端信任。legacy Hysteria2 仍沿用原 ACME/provider 更新路径，不自动扁平化迁移。
-26. **管理 Snell 实例**：逐实例创建、修改、删除、设置默认和恢复；显式管理 Snell v5/v6、PSK、用户 key、v5 HTTP obfs 或 v6 shaping。Snell 仅输出完整 outbound JSON，不生成标准分享 URI，也不执行 SubMan 同步。
-27. **管理 TUIC 实例**：逐实例创建、修改、删除、设置默认和恢复；显式管理 UUID/密码用户、手工证书 TLS、拥塞控制、auth timeout、heartbeat、zero-rtt，以及仅客户端出站使用的 relay/udp-over-stream。TUIC 仅输出完整 outbound JSON，不生成标准分享 URI，也不执行 SubMan 同步。
-28. **管理 Hysteria 实例**：逐实例创建、修改、删除、设置默认和恢复；显式管理 `name`/`auth_str` 用户、手工证书 TLS、客户端信任、上下行带宽、字符串 obfs 与 QUIC 参数。Hysteria 仅输出完整 outbound JSON，不生成标准分享 URI，也不执行 SubMan 同步。
-29. **管理 NaiveProxy 实例**：逐实例创建、修改、删除、设置默认和恢复；显式管理用户名/密码用户、手工证书 TLS、客户端信任、TCP/UDP 监听、QUIC 拥塞控制、窗口、并发与额外 headers。NaiveProxy 仅输出完整 outbound JSON，依赖 `with_naive_outbound`/`libcronet.so`，不生成标准分享 URI，也不执行 SubMan 同步。
-30. **管理 ShadowTLS 实例**：逐实例创建、修改、删除、设置默认和恢复；显式管理 v1/v2/v3 凭据、握手及 SNI 映射、strict/wildcard SNI、客户端信任和 loopback Mixed 内层。ShadowTLS 仅输出完整 outbound JSON，不生成标准分享 URI，也不执行 SubMan 同步。
+
+原“实例与状态”分组已合并到现有协议入口：菜单 1 安装、菜单 2 管理、菜单 3 移除，主菜单不再重复列出每种协议。协议安装列表按编号 1–15 排列，原有编号和留空选择行为保持不变。
+
+Hysteria2 新增实例使用已有手动证书：`server_name / SNI` 必填，填写与证书匹配的名称（如 `hy2.example.com`），不带 URL 前缀或路径；证书与私钥填写本机绝对路径。自签名证书选择“信任此证书”，受信任 CA 证书可使用系统证书库。监听地址默认 `127.0.0.1`，仅允许本机连接；带宽可留空表示不限制，混淆与伪装网站均为可选项。首次部署还支持 ACME 自动签发，邮箱可留空；表单会显示验证方式所需条件。
 
 当脚本发现二进制、service、配置或协议状态层不完整时，会进入接管/修复流程，而不是把残缺实例直接当作全新安装覆盖。
 
