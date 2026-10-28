@@ -21,7 +21,7 @@ cleanup() {
   local pid
   for pid in "${client_pid}" "${http_pid}" "${pebble_pid}"; do
     [[ -z "${pid}" ]] || { kill "${pid}"; wait "${pid}" || [[ $? == 143 ]]; }
- done
+  done
 }
 trap cleanup EXIT
 trap 'printf "HY2 ACME runtime failure at line %s\n" "${LINENO}" >&2' ERR
@@ -107,7 +107,6 @@ python3 -m http.server 19081 --bind 127.0.0.1 --directory "${ARTIFACT_DIR}" > "$
 http_pid=$!
 container_ip=$(hostname -I | awk '{print $1}')
 [[ -n "${container_ip}" && "${container_ip}" != 127.* ]]
-ss -lun > "${ARTIFACT_DIR}/listeners.txt"
 jq -e 'all(.inbounds[]; .listen=="0.0.0.0")' "${SINGBOX_CONFIG_FILE}" >/dev/null
 outbounds=$(build_client_hy2_outbounds "${container_ip}" | jq -s .)
 for index in 0 1; do
@@ -121,12 +120,15 @@ for index in 0 1; do
     if curl --silent --show-error --fail --max-time 3 --noproxy '' --proxy socks5h://127.0.0.1:19080 \
       http://127.0.0.1:19081/marker.txt > "${ARTIFACT_DIR}/transfer-${index}.txt" 2>"${ARTIFACT_DIR}/transfer-${index}.stderr"; then break; fi
     sleep 0.2
- done
+  done
   cmp "${ARTIFACT_DIR}/marker.txt" "${ARTIFACT_DIR}/transfer-${index}.txt"
   kill "${client_pid}"
   wait "${client_pid}" || [[ $? == 143 ]]
   client_pid=""
 done
+ss -lun > "${ARTIFACT_DIR}/listeners.txt"
+grep -Fq '0.0.0.0:48443' "${ARTIFACT_DIR}/listeners.txt"
+grep -Fq '0.0.0.0:48444' "${ARTIFACT_DIR}/listeners.txt"
 apply_plain_proxy_instance_change hy2 delete "${current_revision}" two n > "${ARTIFACT_DIR}/delete-two.json"
 plain_proxy_structured_state_matches_config hy2
 systemctl is-active --quiet sing-box
