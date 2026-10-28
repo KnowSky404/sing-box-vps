@@ -50,6 +50,8 @@ PRECHECK
 - `unchanged`：没有提交过变更；通常意味着候选下载/校验失败，或提交前失败。
 - `no-op`：健康目标已经是候选版本，没有备份、提交或无意义覆盖。
 
+菜单 15 只在更新事务成功并完成清理后，通过 `exec` 启动全局 `sbv` 的新版菜单，沿用当前管理锁及其文件描述符，避免旧进程继续运行旧函数。目标文件为 no-op 但运行时版本落后时同样切换；运行时和目标都已是最新版时保留当前菜单。CLI 更新不启动菜单。若 `exec` 本身失败，保留当前菜单并报告自动切换失败，已提交的更新不回滚；更新事务失败时不尝试切换。
+
 ## 高级组件持久事务
 
 组件 `create`、`replace`、`delete`、`rebuild` 和 `takeover` 在 `${SB_PROJECT_DIR}.component-write.lock` 中原子发布 `transaction.json`，再写入同目录的状态快照。`phase` 按 `prepare`、`snapshot`、`publish`、`resources`、`service`、`committed` 前进；监听资源变化时，防火墙 journal 与快照绑定，并记录 `firewall_expected`。正常提交先写 `committed` 再清理目录，故障或不可捕获中断不会把临时目录当作成功。

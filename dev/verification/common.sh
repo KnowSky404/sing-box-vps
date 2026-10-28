@@ -66,6 +66,7 @@ resolve_local_tests() {
   if [[ "${needs_protocol_probe_tests}" == "1" ]]; then
     append_unique_lines \
       tests/sbv_update_transactions.sh \
+      tests/sbv_menu_reloads_updated_script.sh \
       tests/bootstrap_download.sh \
       tests/cli_update_commands.sh \
       tests/protocol_registry_contract.sh \
