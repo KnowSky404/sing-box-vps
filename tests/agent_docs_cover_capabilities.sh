@@ -4,10 +4,8 @@ set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 AGENT_DOCS=(
-  "${REPO_ROOT}/README.md"
-  "${REPO_ROOT}/docs/agents/llms.txt"
-  "${REPO_ROOT}/docs/agents/sing-box-vps-agent-runbook.md"
-  "${REPO_ROOT}/skills/sing-box-vps-operator/SKILL.md"
+  "${REPO_ROOT}/docs/wiki/Agent-CLI.md"
+  "${REPO_ROOT}/docs/wiki/Agent-Runbook.md"
 )
 
 for doc in "${AGENT_DOCS[@]}"; do
@@ -18,14 +16,13 @@ for doc in "${AGENT_DOCS[@]}"; do
 done
 
 for doc in \
-  "${REPO_ROOT}/README.md" \
-  "${REPO_ROOT}/docs/agents/llms.txt" \
-  "${REPO_ROOT}/docs/agents/sing-box-vps-agent-runbook.md"; do
+  "${REPO_ROOT}/docs/wiki/Agent-CLI.md" \
+  "${REPO_ROOT}/docs/wiki/Agent-Runbook.md"; do
   grep -Fq 'managed_registry' "${doc}"
   grep -Fq 'validated.status=not_assessed' "${doc}"
 done
 
-UPGRADE_DOC="${REPO_ROOT}/docs/agents/sing-box-1.13-to-1.14-upgrade-test.md"
+UPGRADE_DOC="${REPO_ROOT}/docs/wiki/Upgrade-Rehearsal.md"
 for feature in \
   'VLESS + REALITY' \
   'Mixed HTTP/SOCKS' \
@@ -54,9 +51,9 @@ grep -Fq 'manual_intervention_required=true' "${UPGRADE_DOC}"
 grep -Fq 'inline `tls.acme`' "${UPGRADE_DOC}"
 grep -Fq '`download_detour`' "${UPGRADE_DOC}"
 
-LLMS_DOC="${REPO_ROOT}/docs/agents/llms.txt"
-grep -Fq 'transaction.result_persisted=true' "${LLMS_DOC}"
-grep -Fq 'transaction.status=not_attempted' "${LLMS_DOC}"
-grep -Fq 'transaction.reason=already_installed' "${LLMS_DOC}"
+UPGRADE_CONTRACT="${REPO_ROOT}/docs/wiki/Agent-CLI.md"
+grep -Fq 'transaction.result_persisted=true' "${UPGRADE_CONTRACT}"
+grep -Fq 'transaction.status=not_attempted' "${UPGRADE_CONTRACT}"
+grep -Fq 'transaction.reason=already_installed' "${UPGRADE_CONTRACT}"
 
 printf '%s\n' 'agent documentation capability coverage passed'
