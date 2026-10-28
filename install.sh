@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026102701
+# Version: 2026102801
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026102701"
+readonly SCRIPT_VERSION="2026102801"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -10182,11 +10182,45 @@ manual_update_script() {
     if [[ "${SBV_UPDATE_NOOP}" == 'true' ]]; then
       log_info "当前 sbv 已是最新版本。"
     else
-      log_success "脚本已原子更新到 ${SBV_UPDATE_CANDIDATE_VERSION}，请重新运行 sbv。"
+      log_success "脚本已原子更新到 ${SBV_UPDATE_CANDIDATE_VERSION}。"
     fi
     return 0
   else
     result_status=$?
+  fi
+  return "${result_status}"
+}
+
+reload_sbv_menu_after_update() {
+  local result_status=0
+  local execfail_was_set='false'
+  local errexit_was_set='false'
+
+  # A disk no-op can still leave an older runtime in memory.
+  if [[ "${SBV_UPDATE_NOOP}" == 'true' && \
+    "${SBV_UPDATE_CANDIDATE_VERSION}" == "${SCRIPT_VERSION}" ]]; then
+    return 0
+  fi
+
+  log_info "正在切换到更新后的 sbv 管理菜单..."
+  # Keep the existing flock and its descriptor across exec. Opening a second
+  # descriptor in the new runtime would conflict with our own inherited lock.
+  export SB_MANAGEMENT_LOCK_FD SB_MANAGEMENT_LOCK_MODE
+  if shopt -q execfail; then
+    execfail_was_set='true'
+  fi
+  if [[ $- == *e* ]]; then
+    errexit_was_set='true'
+  fi
+  # Bash errexit can terminate even a conditional exec despite execfail.
+  shopt -s execfail
+  set +e
+  exec "${BASH}" "${SBV_BIN_PATH}" || result_status=$?
+  if [[ "${errexit_was_set}" == 'true' ]]; then
+    set -e
+  fi
+  if [[ "${execfail_was_set}" != 'true' ]]; then
+    shopt -u execfail
   fi
   return "${result_status}"
 }
@@ -38500,7 +38534,12 @@ main() {
       14) system_management_menu ;;
       15)
         if manual_update_script; then
-          :
+          if reload_sbv_menu_after_update; then
+            :
+          else
+            update_status=$?
+            log_warn "sbv 已更新，但管理菜单自动切换失败（退出码 ${update_status}）；当前菜单继续运行，请退出后重新运行 sbv。"
+          fi
         else
           update_status=$?
           log_warn "sbv 自更新失败（退出码 ${update_status}），已返回管理菜单。"
