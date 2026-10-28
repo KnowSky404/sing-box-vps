@@ -3765,9 +3765,40 @@ migrate_legacy_single_protocol_state_if_needed() {
   migrate_vless_reality_state_to_instances_if_needed
 }
 
+list_retained_instance_protocols() {
+  local protocol
+  while IFS= read -r protocol; do
+    structured_instance_store_protocol "${protocol}" >/dev/null || continue
+    if plain_proxy_inactive_store_snapshot "${protocol}" >/dev/null 2>&1; then
+      printf '%s\n' "${protocol}"
+    fi
+  done < <(list_registered_protocols)
+}
+
+instance_management_empty_config_baseline() {
+  local state_file indexed
+  [[ -f "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" ]] || return 1
+  jq -e 'type == "object" and .inbounds == []' "${SINGBOX_CONFIG_FILE}" >/dev/null || return 1
+  validate_protocol_index_for_rebuild || return 1
+  indexed=$(list_indexed_protocols_raw) || return 1
+  [[ -z "${indexed}" ]] || return 1
+  for state_file in "${SB_PROTOCOL_STATE_DIR}"/*.env; do
+    [[ -e "${state_file}" ]] || continue
+    [[ "${state_file}" == "${SB_PROTOCOL_INDEX_FILE}" ]] || return 1
+  done
+}
+
 prompt_installed_protocol_selection() {
-  local protocols=() choice selected_protocol index
-  mapfile -t protocols < <(list_installed_protocols)
+  local protocols=() retained_protocols=() choice selected_protocol index protocol
+  if [[ "${2:-n}" != y ]]; then
+    mapfile -t protocols < <(list_installed_protocols)
+  fi
+  IFS=',' read -r -a retained_protocols <<< "${1:-}"
+  for protocol in ${retained_protocols[@]+"${retained_protocols[@]}"}; do
+    if ! protocol_array_contains "${protocol}" ${protocols[@]+"${protocols[@]}"}; then
+      protocols+=("${protocol}")
+    fi
+  done
 
   if [[ ${#protocols[@]} -eq 0 ]]; then
     log_error "当前未检测到已安装协议。"
@@ -3777,7 +3808,11 @@ prompt_installed_protocol_selection() {
     echo -e "\n${BLUE}--- 已安装协议 ---${NC}"
     for index in "${!protocols[@]}"; do
       selected_protocol=$(state_protocol_to_runtime "${protocols[$index]}")
-      echo "$((index + 1)). $(protocol_display_name "${selected_protocol}")"
+      if protocol_array_contains "${protocols[$index]}" ${retained_protocols[@]+"${retained_protocols[@]}"}; then
+        echo "$((index + 1)). $(protocol_display_name "${selected_protocol}")（暂无实例，可重新创建）"
+      else
+        echo "$((index + 1)). $(protocol_display_name "${selected_protocol}")"
+      fi
     done
     echo "0. 返回"
     choice=$(prompt_choice "请选择 [0-${#protocols[@]}]: " 0 "${#protocols[@]}" "")
@@ -22808,6 +22843,7 @@ view_status() {
 # New function: Update config only
 update_config_only() {
   local selected_protocol selected_instance snapshot_dir
+  local retained_protocols=() retained_csv empty_baseline=n
 
   # Recovery must remain reachable before reading potentially interrupted state.
   if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
@@ -22824,21 +22860,30 @@ update_config_only() {
     log_error "未找到配置文件或协议状态，请先执行安装流程。"
   fi
 
-  migrate_legacy_single_protocol_state_if_needed
-
-  log_info "正在读取当前配置..."
-  load_current_config_state
+  mapfile -t retained_protocols < <(list_retained_instance_protocols)
+  retained_csv=$(IFS=,; printf '%s' "${retained_protocols[*]-}")
+  if [[ ${#retained_protocols[@]} -gt 0 ]] && instance_management_empty_config_baseline; then
+    # The last delete keeps revisioned stores but has no active protocol to
+    # load or migrate. The instance transaction validates the recreate later.
+    empty_baseline=y
+  else
+    migrate_legacy_single_protocol_state_if_needed
+    log_info "正在读取当前配置..."
+    load_current_config_state
+  fi
 
   echo -e "\n${BLUE}--- 进入配置修改模式 ---${NC}"
   SELECTED_PROTOCOL=""
-  if ! prompt_installed_protocol_selection; then
+  if ! prompt_installed_protocol_selection "${retained_csv}" "${empty_baseline}"; then
     return 0
   fi
   selected_protocol="${SELECTED_PROTOCOL}"
+  [[ -n "${selected_protocol}" ]] || return 0
 
   # Consolidate the instance tools under the existing protocol entry. Keep
   # legacy ACME/provider state on its original edit path.
-  if [[ "${selected_protocol}" == mixed || "${selected_protocol}" == socks ||
+  if protocol_array_contains "${selected_protocol}" ${retained_protocols[@]+"${retained_protocols[@]}"} ||
+     [[ "${selected_protocol}" == mixed || "${selected_protocol}" == socks ||
         "${selected_protocol}" == http || "${selected_protocol}" == shadowsocks ||
         "${selected_protocol}" == trojan || "${selected_protocol}" == vmess ]] ||
      plain_proxy_structured_state_active "${selected_protocol}"; then
