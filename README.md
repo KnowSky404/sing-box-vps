@@ -300,6 +300,8 @@ Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码
 
 修改安装器、卸载器、配置模板、工具函数或验证框架后，运行 `bash dev/verification/run.sh`。验证框架在本地 Docker 特权容器中执行运行场景；历史证据见[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)。
 
+功能迭代和 Bug 修复使用独立 worktree 和 PR，经审查后以 rebase 方式合并；完整流程见[开发工作流](docs/development-workflow.md)。
+
 ## 开源协议
 
 基于 [GNU Affero General Public License v3.0](LICENSE) 开源。
