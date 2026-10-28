@@ -803,8 +803,8 @@ Common paths:
 - Shadowsocks instance state: `/root/sing-box-vps/protocols/instances/shadowsocks.json` (active marker schema 2, JSON `schema_version: 1`; use the typed Agent lifecycle and bounded export contract below)
 - Trojan instance state: `/root/sing-box-vps/protocols/instances/trojan.json` (active marker `/root/sing-box-vps/protocols/trojan.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle)
 - VMess instance state: `/root/sing-box-vps/protocols/instances/vmess.json` (active marker `/root/sing-box-vps/protocols/vmess.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle)
-- AnyTLS instance state: `/root/sing-box-vps/protocols/instances/anytls.json` (active marker `/root/sing-box-vps/protocols/anytls.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for the manual-TLS subset)
-- Hysteria2 instance state: `/root/sing-box-vps/protocols/instances/hy2.json` (active marker `/root/sing-box-vps/protocols/hy2.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for the manual-TLS subset)
+- AnyTLS instance state: `/root/sing-box-vps/protocols/instances/anytls.json` (active marker `/root/sing-box-vps/protocols/anytls.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for manual TLS and ACME)
+- Hysteria2 instance state: `/root/sing-box-vps/protocols/instances/hy2.json` (active marker `/root/sing-box-vps/protocols/hy2.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for manual TLS and ACME)
 - Hysteria v1 instance state: `/root/sing-box-vps/protocols/instances/hysteria.json` (active marker `/root/sing-box-vps/protocols/hysteria.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for the manual-TLS QUIC subset)
 - NaiveProxy instance state: `/root/sing-box-vps/protocols/instances/naive.json` (active marker `/root/sing-box-vps/protocols/naive.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for the manual-TLS TCP/UDP subset; outbound requires `with_naive_outbound` and runtime `libcronet.so`)
 - ShadowTLS instance state: `/root/sing-box-vps/protocols/instances/shadowtls.json` (active marker `/root/sing-box-vps/protocols/shadowtls.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for the composite outer/loopback-Mixed subset; no standard URI or SubMan path)
@@ -1152,7 +1152,7 @@ Authentication accepts 1–128 users with unique names and passwords. TLS is alw
 
 ## Hysteria2 typed instance contract
 
-Hysteria2 uses public Agent ID `hysteria2`, internal/state ID `hy2`, preset 3 and protocol management via main menu 2. Its active marker is `protocols/hy2.env` with `CONFIG_SCHEMA_VERSION=2`; the typed store is `protocols/instances/hy2.json` with `schema_version:1`. Legacy schema-1 Hysteria2 remains available for ACME HTTP-01, Cloudflare DNS-01 and certificate-provider configurations. Takeover preserves that legacy path; the typed store is used only when the live inbound is a lossless manual-TLS representation or when multiple Hysteria2 inbounds require structured identity.
+Hysteria2 uses public Agent ID `hysteria2`, internal/state ID `hy2`, preset 3 and protocol management via main menu 2. Its active marker is `protocols/hy2.env` with `CONFIG_SCHEMA_VERSION=2`; the typed store is `protocols/instances/hy2.json` with `schema_version:1`. Each typed instance supports manual TLS or ACME HTTP-01 / Cloudflare DNS-01. Legacy schema-1 nodes remain readable; creating an additional instance imports the existing bounded, losslessly representable ACME/provider options in the same CAS transaction. Unsupported fields, ambiguous provider references and orphaned stores abort the operation without changing the existing node.
 
 ```bash
 sbv agent instance create hy2 --json --yes --expected-revision N --file record.json [--allow-public]
@@ -1162,7 +1162,7 @@ sbv agent instance delete hy2 --json --yes --expected-revision N --id main
 sbv agent instance recover hy2 --json --yes --expected-revision N
 ```
 
-The private record contains the common `id`, `name`, `tag`, `listen`, `outbound_policy` and `dependencies` fields plus Hysteria2 authentication, manual TLS, client trust, bandwidth, obfuscation and masquerade:
+The private record contains the common `id`, `name`, `tag`, `listen`, `outbound_policy` and `dependencies` fields plus Hysteria2 authentication, TLS, client trust, bandwidth, obfuscation and masquerade:
 
 ```json
 {
@@ -1186,7 +1186,26 @@ The private record contains the common `id`, `name`, `tag`, `listen`, `outbound_
 }
 ```
 
-Authentication accepts 1–128 unique names and passwords. TLS is always enabled and manual in schema 2; certificate paths remain administrator-owned and are never copied into a URI, issued, or deleted by lifecycle operations. `up_mbps` and `down_mbps` are independently optional positive integers. `obfs` is either disabled with empty fields or enabled as Salamander. The typed renderer emits UDP Hysteria2 inbounds with `alpn:["h3"]` and preserves bandwidth, obfs and masquerade.
+Authentication accepts 1–128 unique names and passwords. TLS is always enabled. Manual certificate paths remain administrator-owned and are never copied into a URI or deleted by lifecycle operations. For automatic issuance, replace the entire `tls` object with the following, and use `client_trust:"system"`:
+
+```json
+{
+  "enabled": true,
+  "server_name": "proxy.example.com",
+  "acme": {
+    "domain": ["proxy.example.com"],
+    "data_directory": "/root/sing-box-vps/acme",
+    "disable_http_challenge": false,
+    "disable_tls_alpn_challenge": true
+  }
+}
+```
+
+The additional-install and instance-creation menus default to ACME and listen address `0.0.0.0` for external IPv4 clients. Editing an existing instance keeps its current TLS mode and listen address by default. HTTP-01 needs the domain to resolve to this VPS and public TCP 80 available for validation and renewal. This port is separate from the HY2 UDP listener; the menu does not claim to verify provider firewalls or public reachability. For Cloudflare DNS-01, add `dns01_challenge:{"provider":"cloudflare","api_token":"replace-with-a-private-token"}` inside `acme`. This mode requires DNS edit permissions, does not require TCP 80 or A/AAAA records pointing to the VPS, and prompts for the token without echoing it. The optional `zone_token` is retained when supplied in an Agent record. Email is optional.
+
+State stores ACME options per instance. Runtime rendering uses an inline `tls.certificate_provider` object on 1.14+ and inline `tls.acme` on 1.13.x, preserving certificate domains, storage, account and supported HTTP-client options. Shared provider references are resolved only when unique. Unknown or conflicting TLS/ACME fields are rejected. sing-box handles issuance, cache and renewal; deleting an instance retains its ACME cache. Config checks and an active service do not prove that a public CA issued a certificate.
+
+`up_mbps` and `down_mbps` are independently optional positive integers. `obfs` is either disabled with empty fields or enabled as Salamander. The typed renderer emits UDP Hysteria2 inbounds with `alpn:["h3"]` and preserves bandwidth, obfs and masquerade.
 
 Client exports contain one Hysteria2 outbound per user. `client_trust:"certificate"` embeds only the public certificate; `system` uses system trust. On 1.14+ an Ed25519 manual certificate adds `disable_chrome_parrot:true` to the client outbound and returns a structured compatibility warning for share links. Standard `hy2://` links are generated per user when system trust is selected; certificate trust, oversized URIs, and options that a standard URI cannot fully carry are reported as explicit warnings. `nodes` is credential-free, while `links`, `export-client` and SubMan payloads are sensitive.
 

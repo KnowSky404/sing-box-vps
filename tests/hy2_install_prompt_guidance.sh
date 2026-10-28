@@ -18,17 +18,17 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
 # Non-terminal outbound policy keeps its default without consuming a line.
 # Leave display/identity/listen/auth defaults blank, retry blank SNI, then use
 # a self-signed certificate with explicit certificate trust.
-printf '%s\n' '' '' '' '' 48443 '' '' '' '' hy2.example.com \
-  "${TMP_DIR}/hy2.pem" "${TMP_DIR}/hy2.key" 1 '' '' '' '' > "${TMP_DIR}/input"
+printf '%s\n' '' '' '' '' 48443 '' '' '' 2 '' hy2.example.com \
+  "${TMP_DIR}/hy2.pem" "${TMP_DIR}/hy2.key" 1 '' '' '' '' y > "${TMP_DIR}/input"
 hy2_management_build_record "${snapshot}" create '' "${record}" \
   < "${TMP_DIR}/input" >"${TMP_DIR}/stdout" 2>"${guidance}"
 [[ ! -s "${TMP_DIR}/stdout" ]]
-for description in 'ID 用于区分实例' '仅本机可连' '密码用于客户端连接认证' \
+for description in 'ID 用于区分实例' '默认监听 0.0.0.0' '密码用于客户端连接认证' \
   '已有的手动证书' 'server_name / SNI' '必填且需与证书匹配' '自签名证书' \
   '系统证书库' '带宽为可选项' '留空不限制' '新建默认关闭' '新建留空则不启用'; do
   grep -Fq "${description}" "${guidance}"
 done
-jq -e '.listen.address=="127.0.0.1" and .listen.port==48443 and
+jq -e '.listen.address=="0.0.0.0" and .listen.port==48443 and
   .tls.server_name=="hy2.example.com" and .client_trust=="certificate" and
   (.authentication.users|length)==1 and (.authentication.users[0].password|length)>0 and
   .bandwidth=={up_mbps:null,down_mbps:null} and .obfs.enabled==false and .masquerade==""' "${record}" >/dev/null
