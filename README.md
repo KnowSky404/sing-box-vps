@@ -300,7 +300,9 @@ Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码
 
 ## 开发验证
 
-修改安装器、卸载器、配置模板、工具函数或验证框架后，运行 `bash dev/verification/run.sh`。验证框架在本地 Docker 特权容器中执行运行场景；历史证据见[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)。
+按 [AGENTS.md](AGENTS.md) 第 4.2 节，根据实际行为影响选择测试：文档、版本展示和菜单改动执行对应轻量检查；配置变动对受影响配置执行 `sing-box check`；服务、网络及生命周期变动执行对应 Docker 运行场景。核心版本或格式迁移、共享逻辑广泛影响或范围无法可靠界定、明确要求全量或完整发布验收时才执行全量回归。
+
+现有 `bash dev/verification/run.sh` 仍按文件路径粗粒度选择测试，改造前可按上述边界手动选择现有测试和必要场景并记录理由。验证框架在本地 Docker 特权容器中执行运行场景；历史证据见[实施记录](docs/superpowers/plans/2026-09-06-unified-protocol-management.md)。
 
 功能迭代和 Bug 修复使用独立 worktree 和 PR，经审查后以 rebase 方式合并；完整流程见[开发工作流](docs/development-workflow.md)。
 

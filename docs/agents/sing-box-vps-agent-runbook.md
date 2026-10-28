@@ -593,20 +593,11 @@ For code or script changes:
 1. Inspect the current repository state with `git status --short`.
 2. Read the affected files before editing.
 3. Keep edits scoped to the task.
-4. If `install.sh`, `uninstall.sh`, `configs/`, `utils/`, or `dev/verification/` changes, run:
-
-```bash
-bash dev/verification/run.sh
-```
-
-5. If only local dispatch rules need validation, use:
-
-```bash
-VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh
-```
-
-6. When runtime behavior changes, update `SCRIPT_VERSION` in `install.sh` and the version shown in `README.md`.
-7. Commit atomically with a conventional commit message after verification.
+4. Select the smallest sufficient verification set using [AGENTS.md](../../AGENTS.md), section 4.2, and explain the actual behavioral impact. Documentation, version-display and menu-only edits do not require broad regression because of their file path. Configuration changes require `sing-box check` on affected outputs; service, network and lifecycle changes require corresponding real Docker scenarios.
+5. Run changed standalone tests and callers of changed helpers. Include Bootstrap download/validation tests when affected. Full regression is required for core-version adaptation or config/state migrations, broadly affected shared logic or uncertain impact, or an explicit full-test/release-acceptance requirement. Reuse prior passing results only under section 4.2's unchanged-input conditions, with the original evidence and reason recorded; after fixes, rerun failed and affected checks.
+6. The current runner still uses coarse file-path selection. Until grouped selection is implemented, manually select existing tests and necessary scenarios, prepare their prerequisites and record commands, reasons and omissions. After committing, inspect the full branch diff against its base; the runner's default working-tree diff does not cover committed changes. `--plan` and `--base` are planned, unavailable options; `VERIFY_SKIP_REMOTE=1` only skips Docker and does not prove runtime validation.
+7. For code or script changes, update `SCRIPT_VERSION` and the README version once per conversation turn as required by AGENTS.md.
+8. Commit atomically with a conventional commit message after verification and follow the worktree/PR review and merge workflow.
 
 Documentation-only changes do not require `SCRIPT_VERSION` updates.
 
@@ -622,7 +613,7 @@ Run:
 bash dev/verification/run.sh
 ```
 
-The verification runner decides whether remote scenarios are required based on changed files. It writes artifacts under the run directory printed as `run_dir=...`.
+Use this broad entry point when its selected scope is required by section 4.2. Its current file-path rules do not distinguish menu text from runtime logic, and a successful exit is not proof of full regression. Otherwise select existing tests and required scenarios manually as described above. It writes artifacts under the run directory printed as `run_dir=...`; preserve the actual scope and results. Docker evidence does not establish public reachability, real external-provider behavior or production acceptance.
 
 When remote validation fails:
 
