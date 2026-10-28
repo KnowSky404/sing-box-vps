@@ -10,7 +10,7 @@ source "${TESTS_DIR}/menu_test_helper.sh"
 setup_menu_test_env 120
 source_testable_install
 
-COVERAGE_DOC="${REPO_ROOT}/docs/superpowers/specs/2026-09-06-protocol-coverage.md"
+COVERAGE_DOC="${REPO_ROOT}/docs/wiki/Protocol-Coverage.md"
 README_DOC="${REPO_ROOT}/README.md"
 
 assert_coverage_row() {
@@ -21,12 +21,9 @@ assert_coverage_row() {
   }
 }
 
-# Keep the prose matrix tied to the installer's current release metadata. This
-# prevents a later protocol increment from silently leaving an old worktree
-# version at the top of the audit document.
+# Keep current support metadata in sync; historical audit versions are snapshots.
 grep -Fq '审阅日期：2026-09-22' "${COVERAGE_DOC}"
-grep -Fq "当前支持上限：\`v${SB_SUPPORT_MAX_VERSION}\`" "${COVERAGE_DOC}"
-grep -Fq "当前交付工作区已提升为 \`SCRIPT_VERSION=${SCRIPT_VERSION}\`" "${COVERAGE_DOC}"
+grep -Fq "当前项目支持上限：\`v${SB_SUPPORT_MAX_VERSION}\`" "${COVERAGE_DOC}"
 grep -Fq "脚本版本：\`${SCRIPT_VERSION}\`" "${README_DOC}"
 grep -Fq "sing-box 适配版本：\`${SB_SUPPORT_MAX_VERSION}\`" "${README_DOC}"
 
@@ -114,10 +111,10 @@ jq -e --argjson protocols "${protocol_registry}" --argjson components "${compone
     ($components | map(.state_id) | sort)
 ' <<< "${capabilities}" >/dev/null
 
-# The current README must describe the newly component-owned TProxy policy;
+# The maintained feature guide must describe the newly component-owned TProxy policy;
 # the operator-managed boundary applies only when host_policy is absent.
-grep -Fq '可选 TProxy `host_policy` 仅拥有显式 ingress interface 与目标端口的 IPv4/TCP+UDP' "${README_DOC}"
-grep -Fq '未配置 `host_policy` 的 TProxy/Redirect 仍归操作员管理' "${README_DOC}"
-grep -Fq '2026-09-22 TProxy `host_policy` 验收' "${README_DOC}"
+grep -Fq '可选 TProxy `host_policy` 仅拥有显式 ingress interface 与目标端口的 IPv4/TCP+UDP' "${REPO_ROOT}/docs/wiki/Features.md"
+grep -Fq '未配置 `host_policy` 的 TProxy/Redirect 仍归操作员管理' "${REPO_ROOT}/docs/wiki/Features.md"
+grep -Fq '2026-09-22 TProxy `host_policy` 验收' "${REPO_ROOT}/docs/wiki/Features.md"
 
 printf '%s\n' 'protocol coverage matrix contract passed'

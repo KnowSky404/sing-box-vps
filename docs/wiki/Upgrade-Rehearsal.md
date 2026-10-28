@@ -51,7 +51,7 @@ sbv agent capabilities --json | jq -e '.ok == true and (.script_version | tonumb
 
 若旧脚本没有 `update sbv`、更新来源不可验证、版本仍低于本演练所需的
 `2026090202`，立即停止，不要退回交互式核心升级。应由操作者先通过仓库
-README 中的官方入口更新 `sbv`；当前仓库基线为 `2026093001`，实际运行时
+[快速开始](https://github.com/KnowSky404/sing-box-vps/wiki/Getting-Started) 中的官方入口更新 `sbv`；当前脚本版本见 [README](https://github.com/KnowSky404/sing-box-vps); 实际运行时
 应记录 `capabilities.script_version`，不要把手册中的最低门槛当成当前版本。
 
 ## 1. 只读预检

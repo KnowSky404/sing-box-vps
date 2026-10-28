@@ -20,7 +20,7 @@ extract_bootstrap_block() {
     }
     inside && /^```$/ { exit }
     inside { print }
-  ' "${REPO_ROOT}/README.md" > "${block_file}"
+  ' "${REPO_ROOT}/docs/wiki/Getting-Started.md" > "${block_file}"
   [[ -s "${block_file}" ]] || exit 1
   bash -n "${block_file}"
 }
@@ -235,7 +235,7 @@ set -e
 [[ ! -e "$(<"${BOOTSTRAP_FIRST_PATH_FILE}")" ]]
 [[ ! -e "$(<"${BOOTSTRAP_OUTPUT_PATH_FILE}")" ]]
 
-if grep -Fq 'bash <(curl' "${REPO_ROOT}/README.md"; then
+if grep -Fq 'bash <(curl' "${REPO_ROOT}/docs/wiki/Getting-Started.md"; then
   exit 1
 fi
 printf 'bootstrap download regression tests passed\n'

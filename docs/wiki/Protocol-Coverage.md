@@ -1,18 +1,22 @@
 # sing-box 1.14.x 协议能力核对矩阵
 
+本文保留历史能力审计及后续增量。带日期的运行结果、上游版本查询、源码路径和临时缓存均属于当时快照，不表示本轮重新验证或当前环境仍有相同文件。当前命令面以 `sbv agent capabilities --json` 为准。
+
+[入站](#入站矩阵) · [出站](#出站及组合组件矩阵) · [Endpoint](#endpoint-矩阵) · [组合依赖](#组合依赖与运行时服务矩阵)
+
 审阅日期：2026-09-22
 
 矩阵基线稳定版：`v1.14.0`
 
-当前支持上限：`v1.14.2`（官方最新稳定版，2026-09-24 发布）
+当前项目支持上限：`v1.14.2`（版本信息以仓库为准，本文不跟踪上游最新版本）
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
-审计起点脚本：`SCRIPT_VERSION=2026090402`；当前交付工作区已提升为 `SCRIPT_VERSION=2026102801`，`SB_SUPPORT_MAX_VERSION=1.14.2`
+审计起点脚本：`SCRIPT_VERSION=2026090402`；当前脚本版本见 [README](https://github.com/KnowSky404/sing-box-vps)，运行时以 `capabilities.script_version` 为准。
 
 历史稳定版漂移核对：`v1.14.1`（2026-09-15，Linux ARM64 发布包 SHA-256
 `6060b42fa84c5dcaeae1799af7f61b0f1ae4855d9d5ddc9e02baba17154b3ae2`）；历史
-`v1.14.0` 源码提交仍作为矩阵基线，1.14.1 的发布资产与运行时版本核对记录在实施计划中。
+`v1.14.0` 源码提交仍作为矩阵基线，1.14.1 的发布资产与运行时版本核对保留在 Git 历史中的旧实施计划中。
 
 2026-09-30 稳定版适配：先通过 Context7 查询 1.14 迁移文档，再核对官方
 [v1.14.2 Release](https://github.com/SagerNet/sing-box/releases/tag/v1.14.2) 与
@@ -346,7 +350,7 @@ Warp 是当前项目的 Cloudflare 专用注册与 WireGuard endpoint 路径，�
 
 对每个从 `none` 变成 `implemented` 的协议，至少需要：协议/预设/角色和实例 ID；状态读写迁移与未知配置保护；合法组合的 builder；依赖、端口、证书和路由归属；目标版本 `sing-box check`；部署/接管/编辑/删除事务；客户端配置和可表达性 warning；真实 TCP/UDP 或 endpoint 数据面探针；Agent、节点摘要、敏感输出和 SubMan 的明确 `unsupported/skipped/warning` 分支。组合协议必须连同内层代理或 endpoint 一起回滚，不能只保存一个孤立 JSON 片段。
 
-Mixed 与独立 SOCKS 的实现边界仍然明确：服务端及导出的 SOCKS5/UoT 链路没有 TLS，独立 SOCKS 也没有 HTTP surface；两者均没有当前 SubMan 同步。独立 SOCKS 的共享实例管理、客户端导出、两核心 check/runtime 与最终 Docker/TCP 门禁均已通过，证据见[实施记录](../plans/2026-09-06-unified-protocol-management.md)。这些 SOCKS 结果不覆盖公网原生 UDP、TLS/HTTP/SubMan 或其他未实现协议；独立 HTTP 的入口 TLS 与 HTTP CONNECT 客户端证据另列于该记录。当前已接入预设及本节明确的组件实例管理范围仍是分阶段实现，全协议目标仍未完成，不能把 `sing-box check` 通过写成所有协议生命周期已完成。
+Mixed 与独立 SOCKS 的实现边界仍然明确：服务端及导出的 SOCKS5/UoT 链路没有 TLS，独立 SOCKS 也没有 HTTP surface；两者均没有当前 SubMan 同步。独立 SOCKS 的共享实例管理、客户端导出、两核心 check/runtime 与最终 Docker/TCP 门禁均已通过，证据见[实施记录](https://github.com/KnowSky404/sing-box-vps/wiki/Verification-History)。这些 SOCKS 结果不覆盖公网原生 UDP、TLS/HTTP/SubMan 或其他未实现协议；独立 HTTP 的入口 TLS 与 HTTP CONNECT 客户端证据另列于该记录。当前已接入预设及本节明确的组件实例管理范围仍是分阶段实现，全协议目标仍未完成，不能把 `sing-box check` 通过写成所有协议生命周期已完成。
 
 本审阅没有访问生产 VPS、Cloudflare/Tailscale/OpenConnect/OpenVPN 账户，也没有执行真实外部控制面认证；因此这些条件性能力保持 `registry-check` 或未验证，不能在交付说明中写成已通过。后续实现应继续保留当前显式固定的 1.13.x 兼容路径，并在使用 1.14-only type（Snell、Cloudflared、Bridge、OpenConnect、OpenVPN）时以目标版本门控阻断，而不是只提高 `SB_SUPPORT_MAX_VERSION`。
 

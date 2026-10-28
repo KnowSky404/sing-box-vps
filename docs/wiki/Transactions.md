@@ -108,7 +108,7 @@ PRECHECK
 
 ## 后续迁移清单
 
-本轮只迁移了 `sbv` 自更新、`ensure_sbv_command_installed()` 的脚本候选安装，以及媒体检测后端的远程 Shell artifact 下载。以下路径仍需按相同原则逐步迁移，避免扩大本轮回归面：
+已采用本节事务边界的路径包括 `sbv` 自更新、`ensure_sbv_command_installed()` 的脚本候选安装，以及媒体检测后端的远程 Shell artifact 下载。以下为待统一路径的历史检查清单，实施前须重新核对当前代码，并按影响选择回归范围：
 
 - `install.sh:register_warp()`：Cloudflare API 写请求仍需独立的 timeout、错误分类和凭据安全日志策略。
 - `install.sh:probe_reality_sni_candidate()`、`get_public_ipv4()`、`get_public_ipv6()`：只读 best-effort 查询应统一 unavailable 语义和 timeout。

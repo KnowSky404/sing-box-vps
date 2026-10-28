@@ -13,7 +13,7 @@ install_support_version=$(sed -n 's/^readonly SB_SUPPORT_MAX_VERSION="\([^\"]*\)
   exit 1
 }
 
-grep -q "当前适配：${EXPECTED_VERSION}" "${README_FILE}" || {
+grep -Fq "sing-box 适配版本：\`${EXPECTED_VERSION}\`" "${README_FILE}" || {
   printf 'README.md should mention current supported version %s\n' "${EXPECTED_VERSION}" >&2
   exit 1
 }

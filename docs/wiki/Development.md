@@ -1,9 +1,9 @@
 # 开发工作流
 
-本流程适用于所有功能迭代和 Bug 修复。项目规约以 [AGENTS.md](../AGENTS.md) 为准；纯文档等其他改动也可使用相同流程。
+本流程适用于所有功能迭代和 Bug 修复。项目规约以 [AGENTS.md](https://github.com/KnowSky404/sing-box-vps/blob/main/AGENTS.md) 为准；纯文档等其他改动也可使用相同流程。
 
 1. **准备**：检查当前工作区、已有 worktree 和分支，保留其他工作。获取远程默认分支的最新状态，从该基线为本次任务创建独立分支和 worktree；不要在默认分支直接开发或推送。
-2. **实现与验证**：在任务 worktree 中完成修改，按 [AGENTS.md](../AGENTS.md) 第 4.2 节的测试边界，根据实际行为影响选择最小充分验证集合，先说明选择依据。普通文档、版本展示和菜单文案不因位于安装器内就触发大范围回归；配置变化必须对受影响配置执行 `sing-box check`，服务、网络和生命周期变化必须覆盖对应真实运行态。仅在核心版本或格式迁移、共享逻辑广泛影响或范围无法可靠界定、明确要求全量或完整发布验收时执行全量。记录实际命令、通过、失败、未执行项及原因；符合复用条件的既有结果可复用。
+2. **实现与验证**：在任务 worktree 中完成修改，按 [AGENTS.md](https://github.com/KnowSky404/sing-box-vps/blob/main/AGENTS.md) 第 4.2 节的测试边界，根据实际行为影响选择最小充分验证集合，先说明选择依据。普通文档、版本展示和菜单文案不因位于安装器内就触发大范围回归；配置变化必须对受影响配置执行 `sing-box check`，服务、网络和生命周期变化必须覆盖对应真实运行态。仅在核心版本或格式迁移、共享逻辑广泛影响或范围无法可靠界定、明确要求全量或完整发布验收时执行全量。记录实际命令、通过、失败、未执行项及原因；符合复用条件的既有结果可复用。
 3. **提交与本地审查**：只提交本次任务相关内容，使用原子的 Conventional Commits。每次原子提交后立即运行 `/review`；如果当前环境没有该入口，审查对应提交的实际差异并记录这是等效审查。先修复审查发现的问题，再继续。脚本版本和 README 版本按项目规约同步。
 4. **PR 与审查**：推送任务分支，创建面向默认分支的 PR，说明变更和验证结果。检查当前 PR head 的检查、审查记录、审查线程和合并状态。等待 Codex 机器人针对当前 head 的代码审查和安全审查完成，处理所有意见和其他已触发的审查；失败、取消或无法确认的审查需要排查并如实报告，不能视为通过。若机器人未触发，排查并记录，不能把空的检查列表当作机器人已审查。
 5. **更新与合并**：解决必要的审查意见和检查失败；如果产生新提交，重新验证受影响内容，确认最新 head 的审查和检查已完成，必要时重新触发审查。门禁满足后直接使用 GitHub 的 rebase 合并，无需再次请求合并确认。若默认分支变化造成冲突或要求更新，先安全解决，再重新验证和确认审查。
@@ -14,3 +14,32 @@
 现有验证入口仍按文件路径粗粒度调度，尚未实现 `--plan`、`--base` 和完整的测试分组；在改造完成前按第 4.2 节手动选择现有测试和必要场景，保留选择理由与执行记录。提交后的任务需核对分支相对基线的完整差异，不能依赖默认工作区差异识别。仅设置 `VERIFY_SKIP_REMOTE=1` 不代表完成所需验证；场景独立执行前必须补齐安装基线等前置依赖。失败后重跑失败项和受修复影响的范围，无新证据不重复扩大测试。
 
 GitHub 对 `main` 启用 PR、线性历史和已解决审查对话保护，并对管理员生效，禁止强推和删除。仓库仅允许 rebase 合并，并自动删除已合并的远程分支。Codex 的审查结果目前写入 PR 评论，而非 GitHub 必需状态检查；GitHub 设置本身不会阻止在机器人审查完成前合并，因此执行者必须主动核对当前 head 的审查状态。
+
+## 文档维护与 Wiki 发布
+
+`docs/wiki/*.md` 是 Wiki 的维护源。README 只保留项目简介、版本、主要能力、文档导航和许可证；安装命令、操作步骤、协议契约及验证边界写入对应 Wiki 页面。`AGENTS.md` 和 Operator Skill 保留自动化约束，`docs/agents/llms.txt` 只提供索引。历史计划、设计稿和提示词流水可通过 Git 历史查询，不再作为当前操作手册维护。
+
+新增或修改页面时，同步 `Home.md`、`_Sidebar.md` 和受影响链接。Wiki 页面之间使用完整 Wiki URL，仓库源码链接使用 GitHub `blob/main` URL，便于在两处阅读。发布前在仓库根目录执行：
+
+```bash
+bash tests/wiki_documentation.sh
+bash tests/agent_docs_cover_capabilities.sh
+bash tests/bootstrap_download.sh
+bash tests/protocol_coverage_contract.sh
+bash tests/readme_mentions_current_versions.sh
+bash tests/version_metadata_is_consistent.sh
+```
+
+这些检查覆盖文档链接、命令入口、Bootstrap 下载校验与元数据，不代表重新取得服务或公网验收。开发验证工具中有本地未跟踪文件；使用前确认 `dev/verification/run.sh` 及依赖实际存在，缺失时不能报告对应场景通过。
+
+主仓库 PR 按上文完成审查并合并后，从已合并的 `main` 发布 Wiki。示例在仓库根目录运行：
+
+```bash
+wiki_checkout=$(mktemp -d /tmp/sing-box-vps-wiki.XXXXXXXX)
+git clone https://github.com/KnowSky404/sing-box-vps.wiki.git "$wiki_checkout"
+cp docs/wiki/*.md "$wiki_checkout/"
+git -C "$wiki_checkout" diff --check
+git -C "$wiki_checkout" diff --stat
+```
+
+检查完整差异后，在 Wiki checkout 中仅暂存本次管理的页面，用 Conventional Commits 提交并正常推送。保留额外页面，不要强推；移除或重命名页面时需明确处理旧页面和链接，不能只复制新文件。无差异时不创建空提交。另行 fresh clone，逐文件比较已发布页面和 `docs/wiki/` 的内容，并回读首页及关键页面。主仓库合并和 Wiki 发布是两个独立结果，分别记录提交号。
