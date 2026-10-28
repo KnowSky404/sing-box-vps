@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026102801
+# Version: 2026102802
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026102801"
+readonly SCRIPT_VERSION="2026102802"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -4784,6 +4784,7 @@ anytls_prompt_users() {
 
 hy2_prompt_users() {
   local current=${1:-'[]'} count i name password old_name old_password users='[]' answer
+  echo '[Hysteria2] 用户名称用于区分凭据；密码用于客户端连接认证，留空可自动生成。' >&2
   count=$(jq -r 'length' <<< "${current}" 2>/dev/null || printf 0)
   [[ "${count}" =~ ^[1-9][0-9]{0,2}$ && "${count}" -le 128 ]] || count=1
   read -rp "[Hysteria2] 用户数量 (1-128，默认 ${count}): " answer || return 1
@@ -5664,7 +5665,7 @@ prompt_protocol_install_selection() {
   fi
 
   echo "可安装协议:"
-  for index in "${menu_indices[@]}"; do
+  while IFS= read -r index; do
     protocol=$(protocol_option_to_id "${index}") || continue
     if protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
       if [[ "${install_mode}" == "additional" && "${protocol}" == "vless-reality" ]]; then
@@ -5693,7 +5694,7 @@ prompt_protocol_install_selection() {
       continue
     fi
     echo "${index}. $(protocol_display_name "${protocol}")"
-  done
+  done < <(printf '%s\n' "${menu_indices[@]}" | sort -n)
 
   echo "0. 返回上一级"
   echo "留空则安装全部可用协议。"
@@ -5866,13 +5867,15 @@ prompt_hy2_install() {
 
   set_protocol_defaults "hy2"
   echo -e "\n${BLUE}--- 配置 Hysteria2 ---${NC}"
+  echo '[Hysteria2] 域名为必填项，用作 TLS server_name / SNI（客户端校验证书的名称），需与证书匹配。' >&2
+  echo '[Hysteria2] 填写纯域名，如 hy2.example.com，不带 https:// 或路径；脚本会检查解析是否指向本机。' >&2
 
   while [[ -z "${SB_HY2_DOMAIN}" ]]; do
     if [[ -n "${SB_SHARED_TLS_DOMAIN:-}" ]]; then
       read -rp "[Hysteria2] 域名 (默认 ${SB_SHARED_TLS_DOMAIN}): " in_domain
       in_domain=${in_domain:-$SB_SHARED_TLS_DOMAIN}
     else
-      read -rp "[Hysteria2] 域名: " in_domain
+      read -rp "[Hysteria2] 域名（必填）: " in_domain
     fi
     SB_HY2_DOMAIN=$(trim_whitespace "${in_domain}")
     [[ -z "${SB_HY2_DOMAIN}" ]] && log_warn "域名不能为空。"
@@ -5890,9 +5893,11 @@ prompt_hy2_install() {
   read -rp "[Hysteria2] 用户名标识 (默认 ${SB_HY2_USER_NAME}): " in_user_name
   SB_HY2_USER_NAME=${in_user_name:-$SB_HY2_USER_NAME}
 
+  echo '[Hysteria2] 带宽为可选项，单位 Mbps；上行为服务端发送，下行为服务端接收，留空不限制。' >&2
   SB_HY2_UP_MBPS=$(prompt_optional_positive_integer "[Hysteria2] 上行带宽 Mbps (留空表示不限制): " "" "上行带宽")
   SB_HY2_DOWN_MBPS=$(prompt_optional_positive_integer "[Hysteria2] 下行带宽 Mbps (留空表示不限制): " "" "下行带宽")
 
+  echo '[Hysteria2] Salamander 混淆为可选项；启用后，客户端也必须启用并填写相同的混淆密码。' >&2
   SB_HY2_OBFS_ENABLED=$(prompt_yes_no "[Hysteria2] 是否启用 obfs / Salamander 混淆 [y/n] (默认 y): " "y")
   if [[ "${SB_HY2_OBFS_ENABLED}" == "y" ]]; then
     SB_HY2_OBFS_TYPE="salamander"
@@ -5901,8 +5906,8 @@ prompt_hy2_install() {
   fi
 
   echo "TLS 模式:"
-  echo "1. ACME 自动签发"
-  echo "2. 手动证书路径"
+  echo "1. ACME 自动签发（无需提前准备证书）"
+  echo "2. 手动证书路径（需已有 PEM 证书与私钥）"
   in_tls_mode=$(prompt_choice "[Hysteria2] 请选择 [1-2] (默认 1): " 1 2 1)
   case "${in_tls_mode}" in
     2) SB_HY2_TLS_MODE="manual" ;;
@@ -5911,8 +5916,8 @@ prompt_hy2_install() {
 
   if [[ "${SB_HY2_TLS_MODE}" == "acme" ]]; then
     echo "ACME 验证方式:"
-    echo "1. HTTP-01"
-    echo "2. DNS-01 (Cloudflare)"
+    echo "1. HTTP-01（域名需解析到本机，公网 TCP 80 端口需可达）"
+    echo "2. DNS-01 (Cloudflare，需有该域名的 DNS 编辑权限)"
     in_acme_mode=$(prompt_choice "[Hysteria2] 请选择 [1-2] (默认 1): " 1 2 1)
     case "${in_acme_mode}" in
       2) SB_HY2_ACME_MODE="dns" ;;
@@ -5920,22 +5925,23 @@ prompt_hy2_install() {
     esac
 
     SB_HY2_ACME_EMAIL=$(prompt_optional_email "[Hysteria2] ACME 邮箱 (可留空，用于证书通知): " "")
-    SB_HY2_ACME_DOMAIN=$(prompt_optional_domain "[Hysteria2] ACME 域名 (默认 ${SB_HY2_DOMAIN}): " "${SB_HY2_DOMAIN}")
+    SB_HY2_ACME_DOMAIN=$(prompt_optional_domain "[Hysteria2] ACME 证书域名 (留空使用 ${SB_HY2_DOMAIN}，证书需覆盖上面的 SNI): " "${SB_HY2_DOMAIN}")
 
     if [[ "${SB_HY2_ACME_MODE}" == "dns" ]]; then
-      read -rp "[Hysteria2] Cloudflare API Token: " in_cf_api_token
+      read -rp "[Hysteria2] Cloudflare API Token（DNS-01 必填，需有该域名的 DNS 编辑权限）: " in_cf_api_token
       SB_HY2_CF_API_TOKEN="${in_cf_api_token}"
     fi
   else
     while [[ -z "${SB_HY2_CERT_PATH}" ]]; do
-      SB_HY2_CERT_PATH=$(prompt_required_path "[Hysteria2] 证书路径: ")
+      SB_HY2_CERT_PATH=$(prompt_required_path "[Hysteria2] 证书绝对路径（必填，如 /etc/ssl/certs/hy2.pem）: ")
     done
 
     while [[ -z "${SB_HY2_KEY_PATH}" ]]; do
-      SB_HY2_KEY_PATH=$(prompt_required_path "[Hysteria2] 私钥路径: ")
+      SB_HY2_KEY_PATH=$(prompt_required_path "[Hysteria2] 私钥绝对路径（必填，如 /etc/ssl/private/hy2.key）: ")
     done
   fi
 
+  echo '[Hysteria2] 伪装地址是未通过认证的 HTTP/3 请求所看到的网站，可留空使用默认地址。' >&2
   read -rp "[Hysteria2] 伪装地址 (默认 ${SB_HY2_MASQUERADE}，留空使用默认): " in_masquerade
   [[ -n "${in_masquerade}" ]] && SB_HY2_MASQUERADE="${in_masquerade}"
 
@@ -6075,6 +6081,7 @@ plain_proxy_management_label() {
     snell) printf 'Snell' ;;
     tuic) printf 'TUIC' ;;
     hysteria) printf 'Hysteria' ;;
+    naive) printf 'NaiveProxy' ;;
     shadowtls) printf 'ShadowTLS' ;;
     *) return 1 ;;
   esac
@@ -6550,6 +6557,8 @@ hy2_management_build_record() {
     address=127.0.0.1; port=443; users='[]'; tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'
     trust=system; up_mbps=""; down_mbps=""; obfs='{"enabled":false,"type":"","password":""}'; masquerade=""
   fi
+  echo '[Hysteria2] 实例名称用于显示；ID 用于区分实例，tag 用于配置中的入口标识，均可留空使用当前值或默认值。' >&2
+  echo '[Hysteria2] 监听地址默认 127.0.0.1，仅本机可连；如需外部连接，可填写 0.0.0.0（IPv4）或 ::（IPv6），随后需确认开放。' >&2
   read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1; [[ -z "${answer}" ]] || name=$(trim_whitespace "${answer}")
   if [[ "${operation}" == create ]]; then
     read -rp "实例 ID（默认 ${id}）: " answer || return 1; [[ -z "${answer}" ]] || id=$(trim_whitespace "${answer}"); structured_instance_store_validate_id "${id}" || return 1
@@ -6563,15 +6572,21 @@ hy2_management_build_record() {
   server_name=$(jq -r '.server_name // empty' <<< "${tls}") || return 1
   certificate_path=$(jq -r '.certificate_path // empty' <<< "${tls}") || return 1
   key_path=$(jq -r '.key_path // empty' <<< "${tls}") || return 1
-  while [[ -z "${server_name}" ]]; do read -rp '[Hysteria2] TLS server name: ' answer || return 1; server_name=$(trim_whitespace "${answer}"); done
-  certificate_path=$(prompt_required_path "[Hysteria2] TLS 证书绝对路径（当前 ${certificate_path}）: " "${certificate_path}") || return 1
-  key_path=$(prompt_required_path "[Hysteria2] TLS 私钥绝对路径（当前 ${key_path}）: " "${key_path}") || return 1
+  echo '[Hysteria2] 此入口使用已有的手动证书；证书和私钥文件必须已存在于本机。' >&2
+  echo '[Hysteria2] server_name / SNI 是客户端校验证书的名称，必填且需与证书匹配，如 hy2.example.com；不带 https:// 或路径。' >&2
+  [[ -z "${server_name}" ]] || printf '[Hysteria2] 保留当前 server_name / SNI：%s\n' "${server_name}" >&2
+  while [[ -z "${server_name}" ]]; do read -rp '[Hysteria2] server_name / SNI（必填）: ' answer || return 1; server_name=$(trim_whitespace "${answer}"); done
+  certificate_path=$(prompt_required_path "[Hysteria2] TLS 证书绝对路径（必填，如 /etc/ssl/certs/hy2.pem；当前 ${certificate_path}，已有值可留空保持）: " "${certificate_path}") || return 1
+  key_path=$(prompt_required_path "[Hysteria2] TLS 私钥绝对路径（必填，如 /etc/ssl/private/hy2.key；当前 ${key_path}，已有值可留空保持）: " "${key_path}") || return 1
   tls=$(jq -cn --arg server_name "${server_name}" --arg certificate_path "${certificate_path}" --arg key_path "${key_path}" '{enabled:true,server_name:$server_name,certificate_path:$certificate_path,key_path:$key_path}') || return 1
-  trust_choice=$(prompt_choice '[Hysteria2] 客户端证书信任 [1=certificate,2=system] (默认保持): ' 1 2 "$([[ "${trust}" == system ]] && printf 2 || printf 1)") || return 1
+  echo '[Hysteria2] 证书信任：1=信任此证书（适合自签名证书，客户端导出会携带公开证书）；2=系统证书库（适合受信任 CA 签发的证书）。' >&2
+  trust_choice=$(prompt_choice "[Hysteria2] 客户端证书信任 [1-2]（当前 ${trust}，留空保持；新建默认 2）: " 1 2 "$([[ "${trust}" == system ]] && printf 2 || printf 1)") || return 1
   [[ "${trust_choice}" == 2 ]] && trust=system || trust=certificate
+  echo '[Hysteria2] 带宽为可选项，单位 Mbps；上行为服务端发送，下行为服务端接收，留空不限制（修改时会清空原限制）。' >&2
   up_mbps=$(prompt_update_optional_positive_integer "[Hysteria2] 上行带宽 Mbps（当前: ${up_mbps:-未限制}，留空清空）: " "上行带宽") || return 1
   down_mbps=$(prompt_update_optional_positive_integer "[Hysteria2] 下行带宽 Mbps（当前: ${down_mbps:-未限制}，留空清空）: " "下行带宽") || return 1
   enabled=$(jq -r '.enabled' <<< "${obfs}") || return 1
+  echo '[Hysteria2] Salamander 混淆为可选项，新建默认关闭；启用后客户端须使用相同的混淆密码，密码留空可自动生成。' >&2
   enabled=$(prompt_yes_no "[Hysteria2] 是否启用 Salamander obfs [y/n]（当前: ${enabled}，默认保持）: " "$([[ "${enabled}" == true ]] && printf y || printf n)") || return 1
   if [[ "${enabled}" == y ]]; then
     obfs_type=salamander; obfs_password=$(jq -r '.password // empty' <<< "${obfs}") || return 1
@@ -6579,7 +6594,8 @@ hy2_management_build_record() {
     [[ -z "${answer}" ]] || obfs_password=${answer}; [[ -n "${obfs_password}" ]] || obfs_password=$(trojan_generate_password) || return 1
     obfs=$(jq -cn --arg password "${obfs_password}" '{enabled:true,type:"salamander",password:$password}') || return 1
   else obfs='{"enabled":false,"type":"","password":""}'; fi
-  read -rp "[Hysteria2] masquerade URL（当前: ${masquerade}，留空保持）: " answer || return 1; [[ -z "${answer}" ]] || masquerade=${answer}
+  echo '[Hysteria2] masquerade 为可选的伪装网站 URL，如 https://www.cloudflare.com，用于未通过认证的 HTTP/3 请求；新建留空则不启用，修改留空保持。' >&2
+  read -rp "[Hysteria2] 伪装网站 URL（当前: ${masquerade:-未启用}，留空保持）: " answer || return 1; [[ -z "${answer}" ]] || masquerade=${answer}
   answer=$(plain_proxy_management_prompt_public_consent hy2 "${address}" "${tls}") || return 1
   if [[ "${address}" != 127.* && "${address}" != ::1 && "${answer}" != y ]]; then log_info '未确认公网暴露，已取消 Hysteria2 实例变更。'; return 2; fi
   PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC=${answer}; MIXED_MANAGEMENT_ALLOW_PUBLIC=${answer}
@@ -7334,6 +7350,12 @@ shadowtls_instance_management_menu() {
   plain_proxy_instance_management_menu shadowtls "$@"
 }
 
+protocol_instance_management_menu() {
+  local protocol
+  protocol=$(structured_instance_store_protocol "${1:-}") || return 1
+  "${protocol//-/_}_instance_management_menu"
+}
+
 plain_proxy_instance_management_menu() (
   local protocol=${1:-} requested_operation=${2:-} temp_dir choice snapshot revision target result status one_shot=n
   local record_file label confirmation
@@ -7458,7 +7480,7 @@ install_protocols_interactive() {
     prompt_protocol_install_selection "fresh" || return 0
     IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
     if protocol_array_contains mixed "${selected_protocols[@]}" && mixed_inactive_store_snapshot >/dev/null 2>&1; then
-      log_warn "Mixed 已保留 revision；请通过主菜单 17 创建 Mixed 实例，或本次仅选择其他协议。"
+      log_warn "Mixed 已保留 revision；请通过协议实例管理创建 Mixed 实例，或本次仅选择其他协议。"
       return 1
     fi
     if protocol_array_contains socks "${selected_protocols[@]}" && plain_proxy_inactive_store_snapshot socks >/dev/null 2>&1; then
@@ -7467,12 +7489,12 @@ install_protocols_interactive() {
     fi
     if plain_proxy_inactive_store_snapshot http >/dev/null 2>&1 &&
        protocol_array_contains http "${selected_protocols[@]}"; then
-      log_warn "HTTP 已保留 revision；请通过主菜单 19 创建 HTTP 实例，或本次仅选择其他协议。"
+      log_warn "HTTP 已保留 revision；请通过协议实例管理创建 HTTP 实例，或本次仅选择其他协议。"
       return 1
     fi
     if plain_proxy_inactive_store_snapshot shadowsocks >/dev/null 2>&1 &&
        protocol_array_contains shadowsocks "${selected_protocols[@]}"; then
-      log_warn "Shadowsocks 已保留 revision；请通过主菜单 20 创建 Shadowsocks 实例，或本次仅选择其他协议。"
+      log_warn "Shadowsocks 已保留 revision；请通过协议实例管理创建 Shadowsocks 实例，或本次仅选择其他协议。"
       return 1
     fi
     if plain_proxy_inactive_store_snapshot trojan >/dev/null 2>&1 &&
@@ -7517,7 +7539,7 @@ install_protocols_interactive() {
     fi
     if plain_proxy_inactive_store_snapshot shadowtls >/dev/null 2>&1 &&
        protocol_array_contains shadowtls "${selected_protocols[@]}"; then
-      log_warn "ShadowTLS 已保留 revision；请通过主菜单 30 创建 ShadowTLS 实例，或本次仅选择其他协议。"
+      log_warn "ShadowTLS 已保留 revision；请通过协议实例管理创建 ShadowTLS 实例，或本次仅选择其他协议。"
       return 1
     fi
     snapshot_dir=$(create_managed_state_snapshot) || {
@@ -22787,6 +22809,17 @@ view_status() {
 update_config_only() {
   local selected_protocol selected_instance snapshot_dir
 
+  # Recovery must remain reachable before reading potentially interrupted state.
+  if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
+    if selected_protocol=$(jq -er '.protocol // "mixed"' "${SB_PROJECT_DIR}.instance-write.lock/transaction.json") &&
+       plain_proxy_management_pending_revision "${selected_protocol}" >/dev/null; then
+      protocol_instance_management_menu "${selected_protocol}"
+      return $?
+    fi
+    log_warn "无法验证未完成的实例事务；已保留现场，请使用 Agent 恢复入口或人工检查。"
+    return 1
+  fi
+
   if [[ ! -f "${SINGBOX_CONFIG_FILE}" && ! -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
     log_error "未找到配置文件或协议状态，请先执行安装流程。"
   fi
@@ -22803,51 +22836,13 @@ update_config_only() {
   fi
   selected_protocol="${SELECTED_PROTOCOL}"
 
-  # Mixed schema 2 (and an explicitly managed legacy singleton) uses the
-  # instance CAS lifecycle.  Return before the legacy save/generate path: that
-  # path writes mixed.env and would otherwise flatten the JSON inventory.
-  if [[ "${selected_protocol}" == mixed ]]; then
-    mixed_instance_replace_interactive
-    return $?
-  fi
-  if [[ "${selected_protocol}" == socks ]]; then
-    socks_instance_management_menu replace
-    return $?
-  fi
-  if [[ "${selected_protocol}" == http ]]; then
-    http_instance_management_menu replace
-    return $?
-  fi
-  if [[ "${selected_protocol}" == shadowsocks ]]; then
-    shadowsocks_instance_management_menu replace
-    return $?
-  fi
-  if [[ "${selected_protocol}" == trojan ]]; then
-    trojan_instance_management_menu replace
-    return $?
-  fi
-  if [[ "${selected_protocol}" == vmess ]]; then
-    vmess_instance_management_menu replace
-    return $?
-  fi
-  if [[ "${selected_protocol}" == anytls ]] && plain_proxy_structured_state_active anytls; then
-    anytls_instance_management_menu replace
-    return $?
-  fi
-  if [[ "${selected_protocol}" == hy2 ]] && plain_proxy_structured_state_active hy2; then
-    hy2_instance_management_menu replace
-    return $?
-  fi
-  if [[ "${selected_protocol}" == snell ]] && plain_proxy_structured_state_active snell; then
-    snell_instance_management_menu replace
-    return $?
-  fi
-  if [[ "${selected_protocol}" == tuic ]] && plain_proxy_structured_state_active tuic; then
-    tuic_instance_management_menu replace
-    return $?
-  fi
-  if [[ "${selected_protocol}" == hysteria ]] && plain_proxy_structured_state_active hysteria; then
-    hysteria_instance_management_menu replace
+  # Consolidate the instance tools under the existing protocol entry. Keep
+  # legacy ACME/provider state on its original edit path.
+  if [[ "${selected_protocol}" == mixed || "${selected_protocol}" == socks ||
+        "${selected_protocol}" == http || "${selected_protocol}" == shadowsocks ||
+        "${selected_protocol}" == trojan || "${selected_protocol}" == vmess ]] ||
+     plain_proxy_structured_state_active "${selected_protocol}"; then
+    protocol_instance_management_menu "${selected_protocol}"
     return $?
   fi
 
@@ -38456,7 +38451,7 @@ main() {
   show_banner
   check_root
   if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
-    log_warn "存在待恢复的实例事务；仅开放只读诊断与菜单 17/18 恢复入口。"
+    log_warn "存在待恢复的实例事务；仅开放只读诊断与菜单 2 恢复入口。"
   elif ! ensure_sbv_command_installed; then
     log_warn "全局命令 sbv 未能完成同步；当前管理菜单继续运行，请稍后手动重试。"
   fi
@@ -38491,29 +38486,14 @@ main() {
     render_section_title "脚本维护"
     render_menu_item "15" "更新管理脚本 (sbv)" "" "${SCRIPT_VER_STATUS}"
     render_menu_item "16" "卸载管理脚本 (sbv)"
-    render_section_title "实例与状态"
-    render_menu_item "17" "管理 Mixed 实例"
-    render_menu_item "18" "管理 SOCKS 实例"
-    render_menu_item "19" "管理 HTTP 实例"
-    render_menu_item "20" "管理 Shadowsocks 实例"
-    render_menu_item "21" "管理 Trojan 实例"
-    render_menu_item "22" "管理 VMess 实例"
-    render_menu_item "23" "管理 VLESS 实例"
-    render_menu_item "24" "管理 AnyTLS 实例"
-    render_menu_item "25" "管理 Hysteria2 实例"
-    render_menu_item "26" "管理 Snell 实例"
-    render_menu_item "27" "管理 TUIC 实例"
-    render_menu_item "28" "管理 Hysteria 实例"
-    render_menu_item "29" "管理 NaiveProxy 实例"
-    render_menu_item "30" "管理 ShadowTLS 实例"
     echo "0. 退出"
     render_main_menu_footer
-    choice=$(prompt_choice "请选择 [0-30]: " 0 30 "")
+    choice=$(prompt_choice "请选择 [0-16]: " 0 16 "")
 
     if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
       case "${choice}" in
-        0|9|10|12|17|18|19|20|21|22|23|24|25|26|27|28|29|30) ;;
-        *) log_warn "请先通过菜单 17–30 恢复对应协议未完成的实例事务；本次未执行其他写操作。"; continue ;;
+        0|2|9|10|12) ;;
+        *) log_warn "请先通过菜单 2 恢复未完成的实例事务；本次未执行其他写操作。"; continue ;;
       esac
     fi
 
@@ -38546,20 +38526,6 @@ main() {
         fi
         ;;
       16) uninstall_script ;;
-      17) mixed_instance_management_menu ;;
-      18) socks_instance_management_menu ;;
-      19) http_instance_management_menu ;;
-      20) shadowsocks_instance_management_menu ;;
-      21) trojan_instance_management_menu ;;
-      22) vmess_instance_management_menu ;;
-      23) vless_plain_instance_management_menu ;;
-      24) anytls_instance_management_menu ;;
-      25) hy2_instance_management_menu ;;
-      26) snell_instance_management_menu ;;
-      27) tuic_instance_management_menu ;;
-      28) hysteria_instance_management_menu ;;
-      29) naive_instance_management_menu ;;
-      30) shadowtls_instance_management_menu ;;
       0) exit_script ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac

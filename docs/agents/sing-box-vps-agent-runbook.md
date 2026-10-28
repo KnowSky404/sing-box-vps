@@ -2,7 +2,7 @@
 
 This runbook is for AI agents operating the `sing-box-vps` repository and remote VPS hosts. It is written for Hermes, OpenClaw, Codex, Claude Code, and other automation agents.
 
-The additive `protocol_registry` in `sbv agent capabilities --json` describes each managed protocol family, preset, component role, state ID, public Agent ID and capability. The legacy `protocols` object and JSON envelopes retain their existing meanings. Each protocol's read-only `environment` reports current core/version/build-tag prerequisites; it does not prove that a particular instance is configured or reachable. `available=null` remains an instance-readiness placeholder, while `validated.status=not_assessed` means no instance-specific validation evidence is attached. The additive top-level `managed_registry` merges protocol and advanced-component records and marks each with `registry_kind`; existing registry fields remain compatible. Never treat an implemented adapter or an available environment as deployment approval or successful runtime evidence. The legacy alias `vless` continues to mean VLESS REALITY, the Hysteria2 state ID remains `hy2`, standalone SOCKS is registry/menu item 5 with state and Agent ID `socks`, standalone HTTP is registry/menu item 6 with state and Agent ID `http`, Shadowsocks is registry/menu item 7 with state and Agent ID `shadowsocks` plus alias `ss`, Trojan is registry/menu preset 8 with state/Agent ID `trojan` and management menu 21, VMess is registry/menu preset 9 with state/Agent ID `vmess` and management menu 22, AnyTLS uses state/Agent ID `anytls` with management menu 24, structured Hysteria2 uses Agent ID `hysteria2` with management menu 25, Snell uses state/Agent ID `snell` with registry preset 11 and management menu 26, TUIC uses state/Agent ID `tuic` with registry preset 12 and management menu 27, Hysteria v1 uses Agent ID `hysteria` with registry preset 13 and management menu 28, NaiveProxy uses Agent ID `naive` with registry preset 14 and management menu 29, and ShadowTLS uses state/Agent ID `shadowtls` with management menu 30. SOCKS, HTTP, Shadowsocks, VLESS outbound, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy, ShadowTLS, and the typed WireGuard, Tailscale, OpenConnect, and OpenVPN endpoints are covered by the focused evidence recorded below. The full protocol goal remains unfinished. This checkout's runtime baseline is script `2026093001` with sing-box support through `1.14.2`; treat `sbv agent capabilities --json` and its `script_version` as the live contract authority. The Shadowsocks-specific section retains its historical `2026090802` evidence.
+The additive `protocol_registry` in `sbv agent capabilities --json` describes each managed protocol family, preset, component role, state ID, public Agent ID and capability. The legacy `protocols` object and JSON envelopes retain their existing meanings. Each protocol's read-only `environment` reports current core/version/build-tag prerequisites; it does not prove that a particular instance is configured or reachable. `available=null` remains an instance-readiness placeholder, while `validated.status=not_assessed` means no instance-specific validation evidence is attached. The additive top-level `managed_registry` merges protocol and advanced-component records and marks each with `registry_kind`; existing registry fields remain compatible. Never treat an implemented adapter or an available environment as deployment approval or successful runtime evidence. The legacy alias `vless` continues to mean VLESS REALITY, the Hysteria2 state ID remains `hy2`, standalone SOCKS is registry/menu item 5 with state and Agent ID `socks`, standalone HTTP is registry/menu item 6 with state and Agent ID `http`, Shadowsocks is registry/menu item 7 with state and Agent ID `shadowsocks` plus alias `ss`, Trojan is registry/menu preset 8 with state/Agent ID `trojan` and protocol management via main menu 2, VMess is registry/menu preset 9 with state/Agent ID `vmess` and protocol management via main menu 2, AnyTLS uses state/Agent ID `anytls` with protocol management via main menu 2, structured Hysteria2 uses Agent ID `hysteria2` with protocol management via main menu 2, Snell uses state/Agent ID `snell` with registry preset 11 and protocol management via main menu 2, TUIC uses state/Agent ID `tuic` with registry preset 12 and protocol management via main menu 2, Hysteria v1 uses Agent ID `hysteria` with registry preset 13 and protocol management via main menu 2, NaiveProxy uses Agent ID `naive` with registry preset 14 and protocol management via main menu 2, and ShadowTLS uses state/Agent ID `shadowtls` with protocol management via main menu 2. SOCKS, HTTP, Shadowsocks, VLESS outbound, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy, ShadowTLS, and the typed WireGuard, Tailscale, OpenConnect, and OpenVPN endpoints are covered by the focused evidence recorded below. The full protocol goal remains unfinished. This checkout's runtime baseline is script `2026093001` with sing-box support through `1.14.2`; treat `sbv agent capabilities --json` and its `script_version` as the live contract authority. The Shadowsocks-specific section retains its historical `2026090802` evidence.
 
 ## Managed advanced components
 
@@ -801,15 +801,15 @@ Common paths:
 - Standalone SOCKS instance state: `/root/sing-box-vps/protocols/instances/socks.json` (active marker schema 2, JSON `schema_version: 1`; lifecycle/export/runtime passed the final verification gate)
 - Standalone HTTP instance state: `/root/sing-box-vps/protocols/instances/http.json` (active marker schema 2, JSON `schema_version: 1`; use the typed Agent lifecycle and manual TLS contract below)
 - Shadowsocks instance state: `/root/sing-box-vps/protocols/instances/shadowsocks.json` (active marker schema 2, JSON `schema_version: 1`; use the typed Agent lifecycle and bounded export contract below)
-- Trojan instance state: `/root/sing-box-vps/protocols/instances/trojan.json` (active marker `/root/sing-box-vps/protocols/trojan.env`, schema 2; JSON `schema_version: 1`; management menu 21 and typed Agent lifecycle)
-- VMess instance state: `/root/sing-box-vps/protocols/instances/vmess.json` (active marker `/root/sing-box-vps/protocols/vmess.env`, schema 2; JSON `schema_version: 1`; management menu 22 and typed Agent lifecycle)
-- AnyTLS instance state: `/root/sing-box-vps/protocols/instances/anytls.json` (active marker `/root/sing-box-vps/protocols/anytls.env`, schema 2; JSON `schema_version: 1`; management menu 24 and typed Agent lifecycle for the manual-TLS subset)
-- Hysteria2 instance state: `/root/sing-box-vps/protocols/instances/hy2.json` (active marker `/root/sing-box-vps/protocols/hy2.env`, schema 2; JSON `schema_version: 1`; management menu 25 and typed Agent lifecycle for the manual-TLS subset)
-- Hysteria v1 instance state: `/root/sing-box-vps/protocols/instances/hysteria.json` (active marker `/root/sing-box-vps/protocols/hysteria.env`, schema 2; JSON `schema_version: 1`; management menu 28 and typed Agent lifecycle for the manual-TLS QUIC subset)
-- NaiveProxy instance state: `/root/sing-box-vps/protocols/instances/naive.json` (active marker `/root/sing-box-vps/protocols/naive.env`, schema 2; JSON `schema_version: 1`; management menu 29 and typed Agent lifecycle for the manual-TLS TCP/UDP subset; outbound requires `with_naive_outbound` and runtime `libcronet.so`)
-- ShadowTLS instance state: `/root/sing-box-vps/protocols/instances/shadowtls.json` (active marker `/root/sing-box-vps/protocols/shadowtls.env`, schema 2; JSON `schema_version: 1`; management menu 30 and typed Agent lifecycle for the composite outer/loopback-Mixed subset; no standard URI or SubMan path)
-- Snell instance state: `/root/sing-box-vps/protocols/instances/snell.json` (active marker `/root/sing-box-vps/protocols/snell.env`, schema 2; JSON `schema_version: 1`; management menu 26; typed v5/v6 lifecycle and outbound JSON, no standard URI or SubMan path)
-- TUIC instance state: `/root/sing-box-vps/protocols/instances/tuic.json` (active marker `/root/sing-box-vps/protocols/tuic.env`, schema 2; JSON `schema_version: 1`; management menu 27; typed manual-TLS QUIC lifecycle and outbound JSON, no standard URI or SubMan path)
+- Trojan instance state: `/root/sing-box-vps/protocols/instances/trojan.json` (active marker `/root/sing-box-vps/protocols/trojan.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle)
+- VMess instance state: `/root/sing-box-vps/protocols/instances/vmess.json` (active marker `/root/sing-box-vps/protocols/vmess.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle)
+- AnyTLS instance state: `/root/sing-box-vps/protocols/instances/anytls.json` (active marker `/root/sing-box-vps/protocols/anytls.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for the manual-TLS subset)
+- Hysteria2 instance state: `/root/sing-box-vps/protocols/instances/hy2.json` (active marker `/root/sing-box-vps/protocols/hy2.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for the manual-TLS subset)
+- Hysteria v1 instance state: `/root/sing-box-vps/protocols/instances/hysteria.json` (active marker `/root/sing-box-vps/protocols/hysteria.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for the manual-TLS QUIC subset)
+- NaiveProxy instance state: `/root/sing-box-vps/protocols/instances/naive.json` (active marker `/root/sing-box-vps/protocols/naive.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for the manual-TLS TCP/UDP subset; outbound requires `with_naive_outbound` and runtime `libcronet.so`)
+- ShadowTLS instance state: `/root/sing-box-vps/protocols/instances/shadowtls.json` (active marker `/root/sing-box-vps/protocols/shadowtls.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for the composite outer/loopback-Mixed subset; no standard URI or SubMan path)
+- Snell instance state: `/root/sing-box-vps/protocols/instances/snell.json` (active marker `/root/sing-box-vps/protocols/snell.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2; typed v5/v6 lifecycle and outbound JSON, no standard URI or SubMan path)
+- TUIC instance state: `/root/sing-box-vps/protocols/instances/tuic.json` (active marker `/root/sing-box-vps/protocols/tuic.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2; typed manual-TLS QUIC lifecycle and outbound JSON, no standard URI or SubMan path)
 - VLESS REALITY QoS state: `/root/sing-box-vps/reality-qos.filters`
 - Client export: `/root/sing-box-vps/client/sing-box-client.json`. Trojan exports one full outbound per user, preserving transport and explicit public-certificate/system trust; never exports the private key or disables verification.
 - SubMan config: `/root/sing-box-vps/subman.env`
@@ -913,7 +913,7 @@ Recorded verification boundary: final script hash `8d24fa6e`; the focused two-co
 
 ## Standalone HTTP Inbound
 
-`http` is registry preset 6 and management menu 19, separate from Mixed and SOCKS. Its schema-2 marker references `protocols/instances/http.json` (`schema_version:1`). Use the same `instance create|replace|delete|default|recover http --json --yes --expected-revision N` contract; create/replace require `--file`, delete/default require `--id`. No legacy `migrate http` exists. Takeover preserves supported live HTTP authentication, tags, listener, policy and TLS references, and rejects unsupported fields rather than discarding them.
+`http` is registry preset 6 and protocol management via main menu 2, separate from Mixed and SOCKS. Its schema-2 marker references `protocols/instances/http.json` (`schema_version:1`). Use the same `instance create|replace|delete|default|recover http --json --yes --expected-revision N` contract; create/replace require `--file`, delete/default require `--id`. No legacy `migrate http` exists. Takeover preserves supported live HTTP authentication, tags, listener, policy and TLS references, and rejects unsupported fields rather than discarding them.
 
 The complete record has the common instance fields plus a required `tls` object. Plain example:
 
@@ -1040,7 +1040,7 @@ systemctl status sing-box --no-pager
 
 ## Trojan typed instance contract
 
-Trojan uses public/state ID `trojan`, preset 8, management menu 21 and the shared instance transaction. It is separate from VMess and the legacy VLESS REALITY alias. The store is `protocols/instances/trojan.json` (`schema_version:1`) with the standard active `CONFIG_SCHEMA_VERSION=2` marker. There is no legacy Trojan migration operation; unsupported live fields must block lossy takeover. Generic edit/remove menus route Trojan through this same instance transaction, never the legacy singleton rewrite path.
+Trojan uses public/state ID `trojan`, preset 8, protocol management via main menu 2 and the shared instance transaction. It is separate from VMess and the legacy VLESS REALITY alias. The store is `protocols/instances/trojan.json` (`schema_version:1`) with the standard active `CONFIG_SCHEMA_VERSION=2` marker. There is no legacy Trojan migration operation; unsupported live fields must block lossy takeover. Generic edit/remove menus route Trojan through this same instance transaction, never the legacy singleton rewrite path.
 
 ```bash
 sbv agent instance create trojan --json --yes --expected-revision 0 --file record.json
@@ -1080,7 +1080,7 @@ Managed transport types are internal `none` (omitted from core JSON), HTTP, WebS
 
 ## VMess typed instance contract
 
-VMess uses public/state ID `vmess`, preset 9, management menu 22 and the shared instance transaction. It is separate from the legacy VLESS REALITY alias. The store is `protocols/instances/vmess.json` (`schema_version:1`) with the active `CONFIG_SCHEMA_VERSION=2` marker in `vmess.env`; there is no legacy VMess migration operation. Unsupported live fields block takeover rather than being discarded.
+VMess uses public/state ID `vmess`, preset 9, protocol management via main menu 2 and the shared instance transaction. It is separate from the legacy VLESS REALITY alias. The store is `protocols/instances/vmess.json` (`schema_version:1`) with the active `CONFIG_SCHEMA_VERSION=2` marker in `vmess.env`; there is no legacy VMess migration operation. Unsupported live fields block takeover rather than being discarded.
 
 ```bash
 sbv agent instance create vmess --json --yes --expected-revision 0 --file record.json
@@ -1117,7 +1117,7 @@ SubMan synchronization is a dedicated per-instance/per-user path. Only enabled T
 
 ## AnyTLS typed instance contract
 
-AnyTLS uses public/state ID `anytls`, preset 4 and management menu 24. Its active marker is `protocols/anytls.env` with `CONFIG_SCHEMA_VERSION=2`; the typed store is `protocols/instances/anytls.json` with `schema_version:1`. The legacy schema-1 state remains available for ACME HTTP-01, Cloudflare DNS-01 and manual certificate generation. Typed instance takeover is intentionally limited to a lossless manual-TLS representation; an ACME/provider inbound is rejected and left untouched rather than flattened into an incomplete record.
+AnyTLS uses public/state ID `anytls`, preset 4 and protocol management via main menu 2. Its active marker is `protocols/anytls.env` with `CONFIG_SCHEMA_VERSION=2`; the typed store is `protocols/instances/anytls.json` with `schema_version:1`. The legacy schema-1 state remains available for ACME HTTP-01, Cloudflare DNS-01 and manual certificate generation. Typed instance takeover is intentionally limited to a lossless manual-TLS representation; an ACME/provider inbound is rejected and left untouched rather than flattened into an incomplete record.
 
 ```bash
 sbv agent instance create anytls --json --yes --expected-revision N --file record.json [--allow-public]
@@ -1152,7 +1152,7 @@ Authentication accepts 1–128 users with unique names and passwords. TLS is alw
 
 ## Hysteria2 typed instance contract
 
-Hysteria2 uses public Agent ID `hysteria2`, internal/state ID `hy2`, preset 3 and management menu 25. Its active marker is `protocols/hy2.env` with `CONFIG_SCHEMA_VERSION=2`; the typed store is `protocols/instances/hy2.json` with `schema_version:1`. Legacy schema-1 Hysteria2 remains available for ACME HTTP-01, Cloudflare DNS-01 and certificate-provider configurations. Takeover preserves that legacy path; the typed store is used only when the live inbound is a lossless manual-TLS representation or when multiple Hysteria2 inbounds require structured identity.
+Hysteria2 uses public Agent ID `hysteria2`, internal/state ID `hy2`, preset 3 and protocol management via main menu 2. Its active marker is `protocols/hy2.env` with `CONFIG_SCHEMA_VERSION=2`; the typed store is `protocols/instances/hy2.json` with `schema_version:1`. Legacy schema-1 Hysteria2 remains available for ACME HTTP-01, Cloudflare DNS-01 and certificate-provider configurations. Takeover preserves that legacy path; the typed store is used only when the live inbound is a lossless manual-TLS representation or when multiple Hysteria2 inbounds require structured identity.
 
 ```bash
 sbv agent instance create hy2 --json --yes --expected-revision N --file record.json [--allow-public]
@@ -1194,7 +1194,7 @@ SubMan synchronization is a dedicated per-instance/per-user path. Only system-tr
 
 ## Hysteria typed instance contract
 
-Hysteria v1 uses public/state/Agent ID `hysteria`, registry preset 13 and management menu 28. Its active marker is `protocols/hysteria.env` with `CONFIG_SCHEMA_VERSION=2`; the typed store is `protocols/instances/hysteria.json` with `schema_version:1`. There is no legacy Hysteria `.env` migration path, so `migrate hysteria` is rejected; existing live Hysteria configuration is accepted only when every modeled field is losslessly representable by the typed manual-TLS QUIC record. Hysteria v1 is separate from Hysteria2: its users use `auth_str`, its obfs is a string password, and it does not use Hysteria2's `masquerade` or Salamander object.
+Hysteria v1 uses public/state/Agent ID `hysteria`, registry preset 13 and protocol management via main menu 2. Its active marker is `protocols/hysteria.env` with `CONFIG_SCHEMA_VERSION=2`; the typed store is `protocols/instances/hysteria.json` with `schema_version:1`. There is no legacy Hysteria `.env` migration path, so `migrate hysteria` is rejected; existing live Hysteria configuration is accepted only when every modeled field is losslessly representable by the typed manual-TLS QUIC record. Hysteria v1 is separate from Hysteria2: its users use `auth_str`, its obfs is a string password, and it does not use Hysteria2's `masquerade` or Salamander object.
 
 ```bash
 sbv agent instance create hysteria --json --yes --expected-revision N --file record.json [--allow-public]
@@ -1240,7 +1240,7 @@ Client export contains one Hysteria outbound per user with `auth_str`, bandwidth
 
 ## NaiveProxy typed instance contract
 
-NaiveProxy uses public/state/Agent ID `naive`, registry preset 14 and management menu 29. Its active marker is `protocols/naive.env` with `CONFIG_SCHEMA_VERSION=2`; the typed store is `protocols/instances/naive.json` with `schema_version:1`. There is no legacy NaiveProxy `.env` migration path, so `migrate naive` is rejected; existing live Naive configuration is accepted only when every modeled field is losslessly representable by the typed manual-TLS TCP/UDP record. The server and client roles are deliberately separate: Naive inbound needs TLS, while Naive outbound additionally requires an official build with `with_naive_outbound` and the `libcronet.so` runtime library.
+NaiveProxy uses public/state/Agent ID `naive`, registry preset 14 and protocol management via main menu 2. Its active marker is `protocols/naive.env` with `CONFIG_SCHEMA_VERSION=2`; the typed store is `protocols/instances/naive.json` with `schema_version:1`. There is no legacy NaiveProxy `.env` migration path, so `migrate naive` is rejected; existing live Naive configuration is accepted only when every modeled field is losslessly representable by the typed manual-TLS TCP/UDP record. The server and client roles are deliberately separate: Naive inbound needs TLS, while Naive outbound additionally requires an official build with `with_naive_outbound` and the `libcronet.so` runtime library.
 
 ```bash
 sbv agent instance create naive --json --yes --expected-revision N --file record.json [--allow-public]
@@ -1290,7 +1290,7 @@ Client export contains one Naive outbound per user with server, port, username/p
 
 ## ShadowTLS typed instance contract
 
-ShadowTLS uses public/state/Agent ID `shadowtls`, registry preset 15 and management menu 30 with a schema-1 JSON store and schema-2 active marker. It is a composite inbound: each typed instance renders one `type:"shadowtls"` outer listener and one private loopback `type:"mixed"` detour whose tag is `shadowtls-inner-<id>`. The typed lifecycle supports `create`/`replace`/`delete`/`default`/`recover` with exact revision CAS; `migrate shadowtls` is rejected because there is no legacy singleton state path.
+ShadowTLS uses public/state/Agent ID `shadowtls`, registry preset 15 and protocol management via main menu 2 with a schema-1 JSON store and schema-2 active marker. It is a composite inbound: each typed instance renders one `type:"shadowtls"` outer listener and one private loopback `type:"mixed"` detour whose tag is `shadowtls-inner-<id>`. The typed lifecycle supports `create`/`replace`/`delete`/`default`/`recover` with exact revision CAS; `migrate shadowtls` is rejected because there is no legacy singleton state path.
 
 ```bash
 sbv agent instance create shadowtls --json --yes --expected-revision N --file record.json [--allow-public]
@@ -1326,7 +1326,7 @@ Client export contains a two-part chain per user: a ShadowTLS transport outbound
 
 ## TUIC typed instance contract
 
-TUIC uses public/state/Agent ID `tuic`, registry preset 12 and management menu 27. Its active marker is `protocols/tuic.env` with `CONFIG_SCHEMA_VERSION=2`; the typed store is `protocols/instances/tuic.json` with `schema_version:1`. There is no legacy TUIC `.env` migration path, so `migrate tuic` is rejected; existing live TUIC configuration is accepted only when every modeled field is losslessly representable by the typed manual-TLS QUIC record.
+TUIC uses public/state/Agent ID `tuic`, registry preset 12 and protocol management via main menu 2. Its active marker is `protocols/tuic.env` with `CONFIG_SCHEMA_VERSION=2`; the typed store is `protocols/instances/tuic.json` with `schema_version:1`. There is no legacy TUIC `.env` migration path, so `migrate tuic` is rejected; existing live TUIC configuration is accepted only when every modeled field is losslessly representable by the typed manual-TLS QUIC record.
 
 ```bash
 sbv agent instance create tuic --json --yes --expected-revision N --file record.json [--allow-public]
@@ -1371,7 +1371,7 @@ Client export contains one TUIC outbound per user with `network:["tcp","udp"]`, 
 
 ## Snell typed instance contract
 
-Snell uses public/state/Agent ID `snell`, registry preset 11 and management menu 26. Its active marker is `protocols/snell.env` with `CONFIG_SCHEMA_VERSION=2`; the typed store is `protocols/instances/snell.json` with `schema_version:1`. Snell is a sing-box 1.14-only inbound in this project: the listener is TCP, and UDP proxy traffic relies on Snell's packet API over the TCP session. There is no legacy Snell `.env` migration path, so `migrate snell` is rejected; existing live Snell configuration is accepted only when every field is losslessly representable by the typed record.
+Snell uses public/state/Agent ID `snell`, registry preset 11 and protocol management via main menu 2. Its active marker is `protocols/snell.env` with `CONFIG_SCHEMA_VERSION=2`; the typed store is `protocols/instances/snell.json` with `schema_version:1`. Snell is a sing-box 1.14-only inbound in this project: the listener is TCP, and UDP proxy traffic relies on Snell's packet API over the TCP session. There is no legacy Snell `.env` migration path, so `migrate snell` is rejected; existing live Snell configuration is accepted only when every field is losslessly representable by the typed record.
 
 ```bash
 sbv agent instance create snell --json --yes --expected-revision N --file record.json [--allow-public]
