@@ -3,7 +3,7 @@
 面向 VPS 的 sing-box 安装与管理脚本。通过交互菜单部署协议、维护服务、导出客户端配置；安装器会校验配置并保留关键变更的备份。
 
 - **当前适配：1.14.2**；显式固定 1.13.x 时保留对应配置生成路径。
-- 脚本版本：`2026102803`
+- 脚本版本：`2026102804`
 - sing-box 适配版本：`1.14.2`
 - **运行环境：** Debian 11+、Ubuntu 20.04+、CentOS 7+/Stream、AlmaLinux、Rocky Linux；需要 root 权限。
 
@@ -143,7 +143,7 @@ sbv update sing-box 1.14.2
 - `instance <operation> shadowsocks`：支持 `create`/`replace`/`delete`/`default`/`recover` 与 revision CAS，拒绝 `migrate`；记录包含 `listen.network` 和 `authentication`，完整示例见 [Agent Runbook](docs/agents/sing-box-vps-agent-runbook.md#shadowsocks-inbound)。`nodes` 不输出密钥；敏感的 `links` 返回逐用户 URI、outbounds 与限制 warning。
 - `instance <operation> vmess`：支持 `create`/`replace`/`delete`/`default`/`recover` 与 revision CAS，拒绝 `migrate`；记录包含 1–128 个唯一 `name`/UUID/`security`/`alter_id` 用户、TLS 信任和 typed V2Ray transport（none/http/ws/grpc/quic）。分享和 SubMan 仅接受 TLS 系统信任且 URI 可无损表达的用户；完整边界见 [VMess 契约](docs/agents/sing-box-vps-agent-runbook.md#vmess-typed-instance-contract)。
 - `instance <operation> anytls`：支持 `create`/`replace`/`delete`/`default`/`recover` 与 revision CAS，拒绝 `migrate`；记录包含 1–128 个唯一用户名/密码、必需手工 TLS 证书路径、server name、客户端 `certificate`/`system` 信任和出站策略。AnyTLS 没有标准分享 URI，`links` 返回凭据 outbound JSON 与 `anytls_standard_uri_unavailable` warning；`nodes` 不返回密码。legacy AnyTLS 的 ACME/provider 配置不自动迁移到 typed store，接管会拒绝无法无损表达的字段；完整边界见 [AnyTLS 契约](docs/agents/sing-box-vps-agent-runbook.md#anytls-typed-instance-contract)。
-- `instance <operation> hy2`：支持 `create`/`replace`/`delete`/`default`/`recover` 与 revision CAS，拒绝 `migrate`；记录包含 1–128 个唯一用户名/密码、必需手工 TLS、`certificate`/`system` 客户端信任、可独立设置的 `up_mbps`/`down_mbps`、Salamander obfs、masquerade 和出站策略。legacy Hysteria2 的 ACME/provider 配置不自动扁平化；标准 Hysteria2 URI 按用户生成，证书信任、URI 大小、带宽/masquerade 和 Ed25519 客户端开关均返回结构化 warning；完整边界见 [Hysteria2 契约](docs/agents/sing-box-vps-agent-runbook.md#hysteria2-typed-instance-contract)。
+- `instance <operation> hy2`：支持 `create`/`replace`/`delete`/`default`/`recover` 与 revision CAS，拒绝 `migrate`；记录包含 1–128 个唯一用户名/密码、ACME 自动签发或手工 TLS、`certificate`/`system` 客户端信任、可独立设置的 `up_mbps`/`down_mbps`、Salamander obfs、masquerade 和出站策略。新增协议和实例创建默认提供 ACME HTTP-01 / Cloudflare DNS-01；自动证书使用系统信任，已有 ACME/provider 参数在新增实例时无损保留；标准 Hysteria2 URI 按用户生成，证书信任、URI 大小、带宽/masquerade 和 Ed25519 客户端开关均返回结构化 warning；完整边界见 [Hysteria2 契约](docs/agents/sing-box-vps-agent-runbook.md#hysteria2-typed-instance-contract)。
 - `instance <operation> hysteria`：支持 `create`/`replace`/`delete`/`default`/`recover` 与 revision CAS，拒绝 `migrate`；记录包含 1–128 个唯一 `name`/`auth_str` 用户、必需手工 TLS、`certificate`/`system` 客户端信任、上下行 `up_mbps`/`down_mbps`、字符串 obfs 与 QUIC 参数。服务端渲染为 `type: hysteria` 的 UDP/QUIC 入站并自动加入 `alpn:["h3"]`；客户端按用户输出完整 outbound JSON，`links` 返回 `hysteria_standard_uri_unavailable`，不执行 SubMan 同步。完整边界见 [Hysteria 契约](docs/agents/sing-box-vps-agent-runbook.md#hysteria-typed-instance-contract)。
 - `instance <operation> snell`：支持 `create`/`replace`/`delete`/`default`/`recover` 与 revision CAS，拒绝 `migrate`；记录包含版本 `5`/`6`、PSK、0–128 个唯一用户 key、v5 `none/http` obfs（HTTP host 作为客户端元数据）或 v6 `default/unshaped/unsafe-raw` shaping。Snell listener 固定 TCP，UDP 业务依赖 packet API；客户端导出逐用户保留 `network:["tcp","udp"]` outbound JSON，`links` 返回 `snell_standard_uri_unavailable`，不执行 SubMan 同步。完整边界见 [Snell 契约](docs/agents/sing-box-vps-agent-runbook.md#snell-typed-instance-contract)。
 - `instance <operation> tuic`：支持 `create`/`replace`/`delete`/`default`/`recover` 与 revision CAS，拒绝 `migrate`；记录包含 1–128 个 UUID/密码用户、手工证书 TLS、客户端 `certificate`/`system` 信任、拥塞控制、auth timeout、heartbeat 和 zero-rtt。服务端是 QUIC/UDP 入站，`udp_relay_mode` (`native`/`quic`) 与 `udp_over_stream` 只在客户端出站生效，不会写入入站。客户端按用户输出完整 TUIC outbound JSON，`links` 返回 `tuic_standard_uri_unavailable`，不执行 SubMan 同步。完整边界见 [TUIC 契约](docs/agents/sing-box-vps-agent-runbook.md#tuic-typed-instance-contract)。
@@ -228,7 +228,7 @@ Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码
 
 删除最后一个实例后，菜单 2 仍会显示保留的协议，并标注“暂无实例，可重新创建”；选择后可沿用保留的版本记录创建新实例。
 
-Hysteria2 新增实例使用已有手动证书：`server_name / SNI` 必填，填写与证书匹配的名称（如 `hy2.example.com`），不带 URL 前缀或路径；证书与私钥填写本机绝对路径。自签名证书选择“信任此证书”，受信任 CA 证书可使用系统证书库。监听地址默认 `127.0.0.1`，仅允许本机连接；带宽可留空表示不限制，混淆与伪装网站均为可选项。首次部署还支持 ACME 自动签发，邮箱可留空；表单会显示验证方式所需条件。
+Hysteria2 新增协议和创建实例默认提供 ACME 自动签发，也可选择已有手动证书。`server_name / SNI` 必填，填写与证书匹配的域名（如 `hy2.example.com`），不带 URL 前缀或路径。HTTP-01 需要域名解析到 VPS 且公网 TCP 80 可用于验证和续期；Cloudflare DNS-01 需要 DNS 编辑权限，无需开放 TCP 80，邮箱可留空。手动模式填写证书与私钥的本机绝对路径，自签名证书选择“信任此证书”。新建实例默认监听 `0.0.0.0`，接受外部 IPv4 连接；修改时留空保留原地址。HY2 服务端口需要允许 UDP，带宽、混淆与伪装网站均为可选项。
 
 当脚本发现二进制、service、配置或协议状态层不完整时，会进入接管/修复流程，而不是把残缺实例直接当作全新安装覆盖。
 

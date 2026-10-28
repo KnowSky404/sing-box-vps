@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026102803
+# Version: 2026102804
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026102803"
+readonly SCRIPT_VERSION="2026102804"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -6134,9 +6134,7 @@ plain_proxy_management_capture_snapshot() {
   elif [[ "${protocol}" == anytls ]] && protocol_state_exists anytls; then
     plain_proxy_config_store_candidate anytls | jq -c '.revision=0' > "${destination}" || return 1
   elif [[ "${protocol}" == hy2 ]] && protocol_state_exists hy2; then
-    # Hysteria2 schema 1 may still carry ACME/provider fields.  The candidate
-    # builder deliberately rejects those, so management remains fail-closed
-    # until the operator explicitly uses a manual-TLS schema-2 record.
+    # Import the complete legacy TLS settings before the lifecycle CAS write.
     plain_proxy_config_store_candidate hy2 | jq -c '.revision=0' > "${destination}" || return 1
   elif [[ "${protocol}" == shadowtls ]] && [[ -f "${SINGBOX_CONFIG_FILE}" ]] &&
        [[ "$(config_protocol_inbound_count shadowtls "${SINGBOX_CONFIG_FILE}" 2>/dev/null || printf 0)" -gt 0 ]]; then
@@ -6570,6 +6568,7 @@ hy2_management_build_record() {
   local snapshot=${1:-} operation=${2:-create} target=${3:-} destination=${4:-}
   local id name tag address port policy answer users tls trust trust_choice edit_users
   local server_name certificate_path key_path up_mbps down_mbps obfs enabled obfs_type obfs_password masquerade
+  local tls_choice tls_default=1 acme acme_choice acme_default=1 email api_token
   [[ -f "${snapshot}" && ! -L "${snapshot}" && -n "${destination}" ]] || return 1
   if [[ "${operation}" == replace ]]; then
     jq -e --arg id "${target}" 'any(.instances[]; .id == $id)' "${snapshot}" >/dev/null 2>&1 || return 1
@@ -6589,11 +6588,11 @@ hy2_management_build_record() {
   else
     id=$(plain_proxy_management_next_id hy2 "${snapshot}") || return 1
     name="Hysteria2 ${id}"; tag=$(plain_proxy_management_next_tag hy2 "${snapshot}") || return 1
-    address=127.0.0.1; port=443; users='[]'; tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'
+    address=0.0.0.0; port=443; users='[]'; tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'
     trust=system; up_mbps=""; down_mbps=""; obfs='{"enabled":false,"type":"","password":""}'; masquerade=""
   fi
   echo '[Hysteria2] 实例名称用于显示；ID 用于区分实例，tag 用于配置中的入口标识，均可留空使用当前值或默认值。' >&2
-  echo '[Hysteria2] 监听地址默认 127.0.0.1，仅本机可连；如需外部连接，可填写 0.0.0.0（IPv4）或 ::（IPv6），随后需确认开放。' >&2
+  echo '[Hysteria2] 新建默认监听 0.0.0.0，接受外部 IPv4 连接；可填写 :: 使用 IPv6，或 127.0.0.1 仅允许本机连接。修改时留空保留原地址。' >&2
   read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1; [[ -z "${answer}" ]] || name=$(trim_whitespace "${answer}")
   if [[ "${operation}" == create ]]; then
     read -rp "实例 ID（默认 ${id}）: " answer || return 1; [[ -z "${answer}" ]] || id=$(trim_whitespace "${answer}"); structured_instance_store_validate_id "${id}" || return 1
@@ -6607,16 +6606,56 @@ hy2_management_build_record() {
   server_name=$(jq -r '.server_name // empty' <<< "${tls}") || return 1
   certificate_path=$(jq -r '.certificate_path // empty' <<< "${tls}") || return 1
   key_path=$(jq -r '.key_path // empty' <<< "${tls}") || return 1
-  echo '[Hysteria2] 此入口使用已有的手动证书；证书和私钥文件必须已存在于本机。' >&2
+  if [[ "${operation}" == replace ]] && ! jq -e 'has("acme")' <<< "${tls}" >/dev/null; then tls_default=2; fi
+  echo '[Hysteria2] TLS 模式：1=ACME 自动签发与续期（无需提前准备证书）；2=已有的手动证书。' >&2
+  tls_choice=$(prompt_choice "[Hysteria2] TLS 模式 [1-2]（留空保持；新建默认 1）: " 1 2 "${tls_default}") || return 1
   echo '[Hysteria2] server_name / SNI 是客户端校验证书的名称，必填且需与证书匹配，如 hy2.example.com；不带 https:// 或路径。' >&2
   [[ -z "${server_name}" ]] || printf '[Hysteria2] 保留当前 server_name / SNI：%s\n' "${server_name}" >&2
-  while [[ -z "${server_name}" ]]; do read -rp '[Hysteria2] server_name / SNI（必填）: ' answer || return 1; server_name=$(trim_whitespace "${answer}"); done
-  certificate_path=$(prompt_required_path "[Hysteria2] TLS 证书绝对路径（必填，如 /etc/ssl/certs/hy2.pem；当前 ${certificate_path}，已有值可留空保持）: " "${certificate_path}") || return 1
-  key_path=$(prompt_required_path "[Hysteria2] TLS 私钥绝对路径（必填，如 /etc/ssl/private/hy2.key；当前 ${key_path}，已有值可留空保持）: " "${key_path}") || return 1
-  tls=$(jq -cn --arg server_name "${server_name}" --arg certificate_path "${certificate_path}" --arg key_path "${key_path}" '{enabled:true,server_name:$server_name,certificate_path:$certificate_path,key_path:$key_path}') || return 1
-  echo '[Hysteria2] 证书信任：1=信任此证书（适合自签名证书，客户端导出会携带公开证书）；2=系统证书库（适合受信任 CA 签发的证书）。' >&2
-  trust_choice=$(prompt_choice "[Hysteria2] 客户端证书信任 [1-2]（当前 ${trust}，留空保持；新建默认 2）: " 1 2 "$([[ "${trust}" == system ]] && printf 2 || printf 1)") || return 1
-  [[ "${trust_choice}" == 2 ]] && trust=system || trust=certificate
+  while [[ -z "${server_name}" ]]; do
+    server_name=$(prompt_optional_domain '[Hysteria2] server_name / SNI（必填）: ' "${SB_SHARED_TLS_DOMAIN:-}") || return 1
+    [[ -n "${server_name}" ]] || log_warn 'server_name / SNI 不能为空。' >&2
+  done
+  if [[ "${tls_choice}" == 1 ]]; then
+    acme=$(jq -c '.acme // {}' <<< "${tls}") || return 1
+    if jq -e 'has("dns01_challenge")' <<< "${acme}" >/dev/null; then acme_default=2; fi
+    echo '[Hysteria2] ACME 验证：1=HTTP-01（域名需解析到本机，公网 TCP 80 需可达且可用于验证）；2=Cloudflare DNS-01（需该域名的 DNS 编辑权限，无需开放 TCP 80）。' >&2
+    acme_choice=$(prompt_choice '[Hysteria2] ACME 验证方式 [1-2]（留空保持；新建默认 1）: ' 1 2 "${acme_default}") || return 1
+    if [[ "${acme_choice}" == 1 ]]; then
+      validate_tls_domain_points_to_server Hysteria2 "${server_name}" || return 1
+    fi
+    email=$(jq -r '.email // ""' <<< "${acme}") || return 1
+    email=$(prompt_optional_email '[Hysteria2] ACME 邮箱（可留空，已有值留空保持，用于证书通知）: ' "${email}") || return 1
+    acme=$(jq -c --arg domain "${server_name}" --arg email "${email}" --arg directory "${SB_ACME_DATA_DIR}" '
+      if has("domain") then . else .domain=[$domain] end |
+      if has("data_directory") then . else .data_directory=$directory end |
+      if $email == "" then del(.email) else .email=$email end
+    ' <<< "${acme}") || return 1
+    if [[ "${acme_choice}" == 2 ]]; then
+      api_token=$(jq -r '.dns01_challenge.api_token // ""' <<< "${acme}") || return 1
+      while true; do
+        read -rsp '[Hysteria2] Cloudflare API Token（DNS 编辑权限，已有值可留空保持）: ' answer || return 1
+        printf '\n' >&2
+        [[ -z "${answer}" ]] || api_token=${answer}
+        [[ -n "${api_token}" && "${api_token}" != *[[:space:][:cntrl:]]* ]] && break
+        log_warn 'Cloudflare API Token 不能为空或含空白字符。' >&2
+      done
+      acme=$(jq -c --arg token "${api_token}" '.dns01_challenge=((.dns01_challenge // {}) + {provider:"cloudflare",api_token:$token})' <<< "${acme}") || return 1
+    else
+      if [[ "${operation}" == create || "${tls_default}" == 2 || "${acme_default}" == 2 ]]; then
+        acme=$(jq -c 'del(.dns01_challenge) | .disable_http_challenge=false | .disable_tls_alpn_challenge=true' <<< "${acme}") || return 1
+      fi
+    fi
+    tls=$(jq -cn --arg server_name "${server_name}" --argjson acme "${acme}" '{enabled:true,server_name:$server_name,acme:$acme}') || return 1
+    trust=system
+  else
+    echo '[Hysteria2] 手动模式：证书和私钥文件必须已存在于本机。' >&2
+    certificate_path=$(prompt_required_path "[Hysteria2] TLS 证书绝对路径（必填，如 /etc/ssl/certs/hy2.pem；当前 ${certificate_path}，已有值可留空保持）: " "${certificate_path}") || return 1
+    key_path=$(prompt_required_path "[Hysteria2] TLS 私钥绝对路径（必填，如 /etc/ssl/private/hy2.key；当前 ${key_path}，已有值可留空保持）: " "${key_path}") || return 1
+    tls=$(jq -cn --arg server_name "${server_name}" --arg certificate_path "${certificate_path}" --arg key_path "${key_path}" '{enabled:true,server_name:$server_name,certificate_path:$certificate_path,key_path:$key_path}') || return 1
+    echo '[Hysteria2] 证书信任：1=信任此证书（适合自签名证书，客户端导出会携带公开证书）；2=系统证书库（适合受信任 CA 签发的证书）。' >&2
+    trust_choice=$(prompt_choice "[Hysteria2] 客户端证书信任 [1-2]（当前 ${trust}，留空保持；新建默认 2）: " 1 2 "$([[ "${trust}" == system ]] && printf 2 || printf 1)") || return 1
+    [[ "${trust_choice}" == 2 ]] && trust=system || trust=certificate
+  fi
   echo '[Hysteria2] 带宽为可选项，单位 Mbps；上行为服务端发送，下行为服务端接收，留空不限制（修改时会清空原限制）。' >&2
   up_mbps=$(prompt_update_optional_positive_integer "[Hysteria2] 上行带宽 Mbps（当前: ${up_mbps:-未限制}，留空清空）: " "上行带宽") || return 1
   down_mbps=$(prompt_update_optional_positive_integer "[Hysteria2] 下行带宽 Mbps（当前: ${down_mbps:-未限制}，留空清空）: " "下行带宽") || return 1
@@ -7358,10 +7397,6 @@ anytls_instance_management_menu() {
 }
 
 hy2_instance_management_menu() {
-  if protocol_state_exists hy2 && ! plain_proxy_structured_state_active hy2; then
-    log_warn '当前 Hysteria2 仍是 legacy schema 1；请使用配置更新入口保留原有 ACME/provider 配置，不能直接进入 schema 2 实例管理。' >&2
-    return 1
-  fi
   plain_proxy_instance_management_menu hy2 "$@"
 }
 
@@ -7434,7 +7469,7 @@ plain_proxy_instance_management_menu() (
       elif [[ "${protocol}" == anytls ]]; then
         echo "字段：用户凭据、TLS、client_trust（均为类型化输入）"
       elif [[ "${protocol}" == hy2 ]]; then
-        echo "字段：用户凭据、手动 TLS、client_trust、带宽、Salamander obfs、masquerade（均为类型化输入）"
+        echo "字段：用户凭据、ACME 自动签发或手动 TLS、client_trust、带宽、Salamander obfs、masquerade"
       elif [[ "${protocol}" == snell ]]; then
         echo "字段：Snell 版本、PSK、用户 key、v5 obfs 或 v6 shaping（均为类型化输入）"
       elif [[ "${protocol}" == tuic ]]; then
@@ -12585,6 +12620,8 @@ build_hy2_acme_json() {
 build_hy2_certificate_provider_json() {
   local acme_json
 
+  # Structured instances render their own inline providers, with no shared tag.
+  if [[ "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active hy2; then return 0; fi
   if [[ "${SB_HY2_TLS_MODE}" != "acme" ]] || ! singbox_config_supports_1_14; then
     return 0
   fi
@@ -25123,7 +25160,7 @@ build_hy2_subman_links_and_warnings_json() (
   instance_id=${2:-$(jq -er '.default_instance_id' <<< "${snapshot}")}
   instance=$(jq -ce --arg id "${instance_id}" '.instances[] | select(.id == $id)' <<< "${snapshot}") || return 1
   node_name=$(jq -r '.name' <<< "${instance}") || return 1
-  certificate_path=$(jq -er '.tls.certificate_path' <<< "${instance}") || return 1
+  certificate_path=$(jq -r '.tls.certificate_path // ""' <<< "${instance}") || return 1
   ed25519_warning=$(hy2_ed25519_share_warning_json "${certificate_path}") || return 1
   users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || return 1
   while IFS= read -r user_name; do
@@ -25212,7 +25249,7 @@ push_subman_hy2_instance() {
     0.0.0.0|::) ;;
     *) server=$(jq -r '.listen.address' <<< "${instance}") ;;
   esac
-  certificate_path=$(jq -er '.tls.certificate_path' <<< "${instance}") || { SUBMAN_HY2_FAILED=1; return 1; }
+  certificate_path=$(jq -r '.tls.certificate_path // ""' <<< "${instance}") || { SUBMAN_HY2_FAILED=1; return 1; }
   ed25519_warning=$(hy2_ed25519_share_warning_json "${certificate_path}") || { SUBMAN_HY2_FAILED=1; return 1; }
   snapshot_file=$(mktemp) || { SUBMAN_HY2_FAILED=1; return 1; }
   printf '%s\n' "${snapshot}" > "${snapshot_file}" || { rm -f -- "${snapshot_file}"; SUBMAN_HY2_FAILED=1; return 1; }
@@ -26262,7 +26299,7 @@ build_client_hy2_outbounds() (
       tls_json=$(jq -ec '._tls' <<< "${raw_outbound}") || return 1
       server_name=$(jq -er '._tls.server_name' <<< "${raw_outbound}") || return 1
       trust=$(jq -er '._client_trust' <<< "${raw_outbound}") || return 1
-      certificate_path=$(jq -er '._tls.certificate_path' <<< "${raw_outbound}") || return 1
+      certificate_path=$(jq -r '._tls.certificate_path // ""' <<< "${raw_outbound}") || return 1
       case "${trust}" in
         system)
           tls_json=$(jq -cn --arg server_name "${server_name}" '{enabled:true,server_name:$server_name}') || return 1
@@ -30693,11 +30730,11 @@ agent_hy2_node_json() {
     --arg tag "${SB_MIXED_INBOUND_TAG:-}" --arg address "${SB_MIXED_LISTEN_ADDRESS:-}" \
     --arg port "${SB_PORT:-}" --arg revision "${SB_MIXED_STORE_REVISION:-0}" \
     --arg server "${server}" --arg server_name "$(jq -r '.server_name' <<< "${tls_json}")" \
-    --arg trust "${SB_HY2_CLIENT_TRUST:-system}" --arg policy "${SB_OUTBOUND_POLICY:-default}" \
+    --arg tls_mode "${SB_HY2_TLS_MODE:-manual}" --arg trust "${SB_HY2_CLIENT_TRUST:-system}" --arg policy "${SB_OUTBOUND_POLICY:-default}" \
     --arg up "${SB_HY2_UP_MBPS:-}" --arg down "${SB_HY2_DOWN_MBPS:-}" \
     --argjson user_count "${user_count}" --argjson shareable "${shareable}" \
     --argjson obfs_enabled "$([[ "${SB_HY2_OBFS_ENABLED:-n}" == y ]] && printf true || printf false)" \
-    '{protocol:"hysteria2",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},server:$server,user_count:$user_count,auth_enabled:true,tls_enabled:true,server_name:$server_name,tls_mode:"manual",client_trust:$trust,outbound_policy:$policy,shareable:$shareable,client_exportable:true,obfs_enabled:$obfs_enabled,rate_limit:{up_mbps:(if $up=="" then null else ($up|tonumber) end),down_mbps:(if $down=="" then null else ($down|tonumber) end)}}'
+    '{protocol:"hysteria2",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},server:$server,user_count:$user_count,auth_enabled:true,tls_enabled:true,server_name:$server_name,tls_mode:$tls_mode,client_trust:$trust,outbound_policy:$policy,shareable:$shareable,client_exportable:true,obfs_enabled:$obfs_enabled,rate_limit:{up_mbps:(if $up=="" then null else ($up|tonumber) end),down_mbps:(if $down=="" then null else ($down|tonumber) end)}}'
 }
 
 agent_hy2_link_json() (
@@ -30717,7 +30754,7 @@ agent_hy2_link_json() (
   esac
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   summary=$(agent_hy2_node_json "${public_ip}") || return 1
-  certificate_path=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .tls.certificate_path' <<< "${snapshot}") || return 1
+  certificate_path=$(jq -r --arg id "${instance_id}" '.instances[] | select(.id == $id) | .tls.certificate_path // ""' <<< "${snapshot}") || return 1
   compatibility_warnings=$(hy2_ed25519_share_warning_json "${certificate_path}") || return 1
   warnings=$(jq -cn --argjson existing "${warnings}" --argjson additions "${compatibility_warnings}" \
     --arg instance_id "${instance_id}" \
@@ -31862,8 +31899,10 @@ plain_proxy_instance_config_candidate() {
         "shadowtls"
       elif .type == "vless" then
         (if .tls.reality? != null then "vless-reality" else "vless-plain" end)
+      elif .type == "hysteria2" then "hy2"
       else .type end;
     ($old[0].instances | map(.tag) + (if $protocol == "shadowtls" then map(.detour.tag) else [] end)) as $old_tags |
+    (any(.inbounds[]?; .type == "hysteria2" and .tls.certificate_provider? == "hy2-cert-provider")) as $had_legacy_hy2_provider |
     def owned_rule:
       (.inbound | type) == "string" and (.inbound as $tag | $old_tags | index($tag) != null) and
       ((.action == "sniff" and (keys | sort) == ["action","inbound"]) or
@@ -31891,7 +31930,13 @@ plain_proxy_instance_config_candidate() {
       + $retained.rules
       + [$rules[] | select(.action == "route") |
         select([.inbound,.action] as $key | $positioned | index([$key]) == null)]
-    )
+    ) |
+    # Remove only the generator-owned legacy provider after all references
+    # have gone. Shared component providers and other protocols stay intact.
+    if $protocol == "hy2" and $had_legacy_hy2_provider and
+       ([.. | objects | .certificate_provider? | select(. == "hy2-cert-provider")] | length) == 0 then
+      .certificate_providers |= map(select(.tag != "hy2-cert-provider" or .type != "acme"))
+    else . end
   ' "${old_config}"
 }
 
@@ -33650,7 +33695,43 @@ structured_instance_store_validate_address() {
   done
 }
 
+hy2_acme_record_jq_filter() {
+  cat <<'JQ'
+    def hy2_safe_string:
+      type == "string" and utf8bytelength <= 8192 and (test("[\u0000-\u001F\u007F]") | not);
+    def hy2_acme_options:
+      type == "object" and
+      ((keys - ["domain","data_directory","default_server_name","email","provider","account_key",
+        "disable_http_challenge","disable_tls_alpn_challenge","alternative_http_port","alternative_tls_port",
+        "external_account","dns01_challenge","key_type","profile","http_client"]) | length == 0) and
+      (.domain | type == "array" and length > 0 and length <= 128 and
+        all(.[]; hy2_safe_string and length > 0 and length <= 253 and (test("\\s") | not))) and
+      (to_entries | all(.[] | select(.key | IN("data_directory","default_server_name","email","provider","account_key","key_type","profile")); .value | hy2_safe_string)) and
+      (to_entries | all(.[] | select(.key | IN("disable_http_challenge","disable_tls_alpn_challenge")); .value | type == "boolean")) and
+      (to_entries | all(.[] | select(.key | IN("alternative_http_port","alternative_tls_port")); .value | type == "number" and floor == . and . >= 0 and . <= 65535)) and
+      ((has("external_account") | not) or
+        (.external_account | type == "object" and (keys|sort)==["key_id","mac_key"] and all(.[]; hy2_safe_string and length > 0))) and
+      ((has("dns01_challenge") | not) or
+        (.dns01_challenge | type == "object" and
+          ((keys - ["provider","api_token","zone_token"]) | length == 0) and
+          .provider == "cloudflare" and (.api_token | hy2_safe_string and length > 0 and (test("\\s") | not)) and
+          ((has("zone_token") | not) or (.zone_token | hy2_safe_string and length > 0)))) and
+      ((has("http_client") | not) or (.http_client | (hy2_safe_string and length > 0) or type == "object"));
+    def valid_hy2_tls($trust):
+      type == "object" and .enabled == true and
+      (.server_name | hy2_safe_string and length > 0) and
+      (if has("acme") then
+        (keys|sort)==["acme","enabled","server_name"] and $trust == "system" and (.acme | hy2_acme_options)
+       else
+        (keys|sort)==["certificate_path","enabled","key_path","server_name"] and
+        (.certificate_path | hy2_safe_string and startswith("/")) and
+        (.key_path | hy2_safe_string and startswith("/"))
+       end);
+JQ
+}
+
 structured_instance_record_jq_filter() {
+  hy2_acme_record_jq_filter
   cat <<'JQ'
     def ss_key($method):
       type == "string" and utf8bytelength <= 4096 and
@@ -33805,7 +33886,8 @@ structured_instance_record_jq_filter() {
        else true end) and
       (.outbound_policy|IN("default","direct","warp")) and
       (.dependencies|type == "array" and length == 0) and
-      (if $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "hy2" or $protocol == "tuic" or $protocol == "hysteria" or $protocol == "naive" then (.tls|type == "object" and
+      (if $protocol == "hy2" then (.client_trust as $trust | .tls | valid_hy2_tls($trust))
+       elif $protocol == "http" or $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "anytls" or $protocol == "tuic" or $protocol == "hysteria" or $protocol == "naive" then (.tls|type == "object" and
          (if .enabled == false then ($protocol != "anytls" and $protocol != "hy2" and $protocol != "tuic" and $protocol != "hysteria" and $protocol != "naive" and (keys|sort)==["enabled"])
           elif .enabled == true then
             (keys|sort)==["certificate_path","enabled","key_path","server_name"] and
@@ -33935,6 +34017,14 @@ structured_instance_store_validate_common_json() {
              (if .transport.type == "quic" then ["udp"] else ["tcp"] end)
            else (.listen.network // ["tcp"]) end)]|@json)|unique|length)==length))
   ' --arg protocol "${protocol}" "${file}" >/dev/null 2>&1 || return 1
+  if [[ "${protocol}" == hy2 ]]; then
+    local acme_records acme_record
+    acme_records=$(jq -c '.instances[] | .tls.acme // empty' "${file}") || return 1
+    while IFS= read -r acme_record; do
+      [[ -n "${acme_record}" ]] || continue
+      normalize_acme_extra_json "${acme_record}" >/dev/null || return 1
+    done <<< "${acme_records}"
+  fi
   if [[ "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" ]]; then
     transport_list=$(jq -c '.instances[] | [.transport, .tls.enabled, (.authentication.users | map(.flow // ""))]' "${file}") || return 1
     while IFS= read -r transport_record; do
@@ -34002,10 +34092,27 @@ validate_structured_instance_store() {
   : "${protocol}"
 }
 
-# Build a complete typed plain-proxy inventory from the live configuration.  This is
-# intentionally a read-only candidate builder: it never sources JSON as shell
-# state and it never writes the root .env or the instance store.  The takeover
-# transaction owns publication of the returned document.
+hy2_normalize_config_acme() {
+  # State stores ACME options in one version-independent shape. Resolve a
+  # provider only when its mapping is unique; retain every option for validation.
+  jq '
+    . as $root | .inbounds |= map(
+      if .type == "hysteria2" and (.tls | has("certificate_provider")) then
+        if (.tls | has("acme")) then error("ambiguous Hysteria2 TLS") else . end |
+        .tls.certificate_provider as $reference |
+        (if ($reference | type) == "object" then $reference
+         elif ($reference | type) == "string" then
+           [$root.certificate_providers[]? | select(.tag == $reference)] |
+           if length == 1 then .[0] else error("ambiguous ACME provider") end
+         else error("invalid ACME provider") end) as $provider |
+        if $provider.type != "acme" then error("unsupported certificate provider") else . end |
+        .tls.acme = ($provider | del(.type,.tag)) | del(.tls.certificate_provider)
+      else . end)
+  ' "$1"
+}
+
+# Build a complete typed plain-proxy inventory from the live configuration. This
+# read-only collector never writes state; the transaction owns publication.
 plain_proxy_config_store_candidate() (
   umask 077
   local protocol config_file existing_file protocol_label
@@ -34074,6 +34181,13 @@ plain_proxy_config_store_candidate() (
     printf '[ERROR] %s_store_candidate: live inbound inventory is not trusted.\n' "${protocol}" >&2
     return 1
   fi
+  if [[ "${protocol}" == hy2 ]]; then
+    if ! hy2_normalize_config_acme "${config_file}" > "${temp_dir}/hy2-normalized.json" 2>"${temp_dir}/normalize.stderr"; then
+      printf '[ERROR] hy2_store_candidate: 无法无损读取 ACME/provider 配置；已保留原配置。\n' >&2
+      return 1
+    fi
+    config_file="${temp_dir}/hy2-normalized.json"
+  fi
 
   # Reject fields that this typed schema cannot reproduce.  In particular,
   # TLS, multiple users, and listen options must never disappear during a
@@ -34083,9 +34197,10 @@ plain_proxy_config_store_candidate() (
     printf '[ERROR] %s_store_candidate: no plain-proxy inbound found.\n' "${protocol}" >&2
     return 1
   fi
-  if ! jq -e '
+  if ! jq -e "$(hy2_acme_record_jq_filter)"'
     def target:
       if $protocol == "vless-plain" then (.type == "vless" and (.tls.reality? == null))
+      elif $protocol == "hy2" then .type == "hysteria2"
       else .type == $protocol end;
     def valid_snell_obfs_host:
       if . == "" then true
@@ -34239,10 +34354,14 @@ plain_proxy_config_store_candidate() (
                   (if .tls.enabled == false then
                     ($protocol != "anytls" and $protocol != "hy2" and $protocol != "tuic" and $protocol != "hysteria" and $protocol != "naive" and (.tls | keys_unsorted | sort) == ["enabled"])
                   elif .tls.enabled == true then
+                    (if $protocol == "hy2" then
+                      (.tls | (del(.alpn) | valid_hy2_tls("system")) and ((.alpn // ["h3"]) == ["h3"]))
+                     else
                     ((.tls | (if $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" or $protocol == "tuic" or $protocol == "hysteria" or $protocol == "naive" then del(.alpn) else . end) | keys_unsorted | sort) == ["certificate_path", "enabled", "key_path", "server_name"]) and
                     (.tls.server_name | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
                     (.tls.certificate_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not)) and
                     (.tls.key_path | type == "string" and startswith("/") and (test("[\u0000-\u001F\u007F]") | not))
+                     end)
                   else false end)
                 else $protocol != "anytls" end))
              else
@@ -34262,7 +34381,8 @@ plain_proxy_config_store_candidate() (
   state_file=$(protocol_state_file "${protocol}") || return 1
   if [[ -f "${state_file}" ]] &&
      grep -Eq "^[[:space:]]*CONFIG_SCHEMA_VERSION=" "${state_file}"; then
-    if [[ "${protocol}" == "mixed" ]]; then
+    if [[ "${protocol}" == "mixed" ]] || { [[ "${protocol}" == hy2 ]] &&
+       ! grep -Eq "^[[:space:]]*CONFIG_SCHEMA_VERSION=(2|\"2\"|'2')[[:space:]]*$" "${state_file}"; }; then
       validate_protocol_state_schema "${protocol}" "${state_file}" || return 1
     else
       plain_proxy_structured_marker_is_valid "${state_file}" || return 1
@@ -34464,10 +34584,6 @@ plain_proxy_config_store_candidate() (
     elif [[ "${protocol}" == "hy2" ]]; then
       hy2_users_json=$(jq -c '.users' <<< "${inbound_json}") || return 1
       hy2_tls_json=$(jq -c '.tls' <<< "${inbound_json}") || return 1
-      jq -e '(.enabled == true) and ((del(.alpn) | keys_unsorted | sort) == ["certificate_path","enabled","key_path","server_name"]) and ((.alpn // ["h3"]) == ["h3"])' <<< "${hy2_tls_json}" >/dev/null 2>&1 || {
-        printf '[ERROR] %s_store_candidate: Hysteria2 ACME/provider or unsupported TLS cannot be represented by the typed state.\n' "${protocol}" >&2
-        return 1
-      }
       hy2_tls_json=$(jq -c 'del(.alpn)' <<< "${hy2_tls_json}") || return 1
       hy2_bandwidth_json=$(jq -c '{up_mbps:(.up_mbps // null),down_mbps:(.down_mbps // null)}' <<< "${inbound_json}") || return 1
       hy2_obfs_json=$(jq -c 'if .obfs == null then {enabled:false,type:"",password:""} else {enabled:true,type:(.obfs.type // ""),password:(.obfs.password // "")} end' <<< "${inbound_json}") || return 1
@@ -34970,7 +35086,7 @@ plain_proxy_validate_state_inventory() (
   config_count=$(config_protocol_inbound_count "${protocol}" "${SINGBOX_CONFIG_FILE}") || return 1
   store_count=$(jq -r '.instances | length' "${store_file}") || return 1
   [[ "${config_count}" =~ ^[0-9]+$ && "${config_count}" == "${store_count}" ]] || return 1
-  config_tags=$(jq -c --arg protocol "${protocol}" '[.inbounds[]? | select((if $protocol == "vless-plain" then (.type == "vless" and (.tls.reality? == null)) else .type == $protocol end)) | .tag] | sort' "${SINGBOX_CONFIG_FILE}") || return 1
+  config_tags=$(jq -c --arg protocol "${protocol}" '[.inbounds[]? | select((if $protocol == "vless-plain" then (.type == "vless" and (.tls.reality? == null)) elif $protocol == "hy2" then .type == "hysteria2" else .type == $protocol end)) | .tag] | sort' "${SINGBOX_CONFIG_FILE}") || return 1
   store_tags=$(jq -c '[.instances[].tag] | sort' "${store_file}") || return 1
   [[ "${config_tags}" == "${store_tags}" ]]
 )
@@ -35301,6 +35417,7 @@ structured_instance_store_snapshot_json() (
 
 render_structured_instance_inbounds() {
   local protocol snapshot transport_json tls_mode transport_list transport_record flow flow_list
+  local use_certificate_provider=n
   protocol=$(structured_instance_store_protocol "${1:-}") || { structured_instance_store_error render_inbounds unsupported_protocol; return 1; }
   snapshot=$(structured_instance_store_snapshot_json "${protocol}" "${2:-}") || return $?
   if [[ "${protocol}" == shadowtls ]]; then
@@ -35331,7 +35448,8 @@ render_structured_instance_inbounds() {
       done <<< "${flow_list}"
     done <<< "${transport_list}"
   fi
-  jq -c --arg protocol "${protocol}" '
+  if [[ "${protocol}" == hy2 ]] && singbox_config_supports_1_14; then use_certificate_provider=y; fi
+  jq -c --arg protocol "${protocol}" --arg use_certificate_provider "${use_certificate_provider}" '
     .instances[] |
     ({type:(if $protocol == "vless-plain" then "vless" elif $protocol == "hy2" then "hysteria2" else $protocol end),tag:.tag,listen:.listen.address,listen_port:.listen.port} +
       (if $protocol == "shadowsocks" then
@@ -35361,7 +35479,10 @@ render_structured_instance_inbounds() {
        elif $protocol == "anytls" then
          {tls:.tls}
        elif $protocol == "hy2" then
-         {tls:(.tls + {alpn:["h3"]})}
+         {tls:(.tls + {alpn:["h3"]} |
+           if has("acme") and $use_certificate_provider == "y" then
+             .certificate_provider=(.acme + {type:"acme"}) | del(.acme)
+           else . end)}
        elif $protocol == "tuic" then
          {tls:(.tls + {alpn:["h3"]})}
       elif $protocol == "hysteria" then
@@ -35664,6 +35785,16 @@ load_plain_proxy_structured_instance() {
     SB_HY2_ACME_EXTRA_JSON='{}'
     SB_HY2_DNS_PROVIDER=cloudflare
     SB_HY2_CF_API_TOKEN=""
+    if jq -e 'has("acme")' <<< "${SB_HY2_TLS_JSON}" >/dev/null; then
+      SB_HY2_TLS_MODE=acme
+      SB_HY2_ACME_EMAIL=$(jq -r '.acme.email // ""' <<< "${SB_HY2_TLS_JSON}") || return 1
+      SB_HY2_ACME_DOMAIN=$(jq -r '.acme.domain[0]' <<< "${SB_HY2_TLS_JSON}") || return 1
+      SB_HY2_ACME_EXTRA_JSON=$(normalize_acme_extra_json "$(jq -c '.acme' <<< "${SB_HY2_TLS_JSON}")") || return 1
+      if jq -e '.acme | has("dns01_challenge")' <<< "${SB_HY2_TLS_JSON}" >/dev/null; then
+        SB_HY2_ACME_MODE=dns
+        SB_HY2_CF_API_TOKEN=$(jq -r '.acme.dns01_challenge.api_token' <<< "${SB_HY2_TLS_JSON}") || return 1
+      fi
+    fi
     SB_HY2_CERT_PATH=$(jq -r '.certificate_path // empty' <<< "${fields[9]}") || return 1
     SB_HY2_KEY_PATH=$(jq -r '.key_path // empty' <<< "${fields[9]}") || return 1
     SB_HY2_AUTH_JSON=${fields[12]}
