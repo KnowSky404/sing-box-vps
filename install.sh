@@ -4235,13 +4235,53 @@ prepare_reality_target_checker() {
   mv -- "${staged}" "${destination}" || return 1
 }
 
-run_reality_target_check() {
-  local checker=$1 domain=$2 report=$3 checker_dir
-  checker_dir=$(dirname -- "${checker}") || return 1
-  # Own the checker's nested temp files even if the deadline escalates to KILL.
-  TMPDIR="${checker_dir}" timeout --signal=TERM --kill-after=2 90 \
-    bash "${checker}" check "${domain}" --json --timeout 3 > "${report}"
+# Stop only the running checker's own descendants, including the separate
+# process groups created by its per-operation GNU timeout commands.
+stop_reality_checker_process_tree() {
+  local process_id=$1 child children_file
+  local children=()
+  [[ "${process_id}" =~ ^[1-9][0-9]*$ ]] || return 1
+  children_file="/proc/${process_id}/task/${process_id}/children"
+  if [[ -r "${children_file}" ]]; then
+    # proc's children record has no trailing newline; read still fills the array.
+    if read -r -a children < "${children_file}"; then :; fi
+  fi
+  if kill -0 "${process_id}" 2>/dev/null; then
+    if ! kill -TERM "${process_id}" 2>/dev/null; then
+      if kill -0 "${process_id}" 2>/dev/null; then
+        log_warn "SNI 探测子进程无法终止，SNI 未变更。" >&2
+        return 1
+      fi
+    fi
+  fi
+  for child in "${children[@]}"; do
+    stop_reality_checker_process_tree "${child}" || return 1
+  done
 }
+
+run_reality_target_check() (
+  local checker=$1 domain=$2 report=$3 checker_dir checker_pid="" signal_status=0 result=0
+  checker_dir=$(dirname -- "${checker}") || return 1
+  trap 'signal_status=130; if [[ -n "${checker_pid}" ]]; then stop_reality_checker_process_tree "${checker_pid}"; fi' INT
+  trap 'signal_status=143; if [[ -n "${checker_pid}" ]]; then stop_reality_checker_process_tree "${checker_pid}"; fi' TERM
+  trap 'signal_status=129; if [[ -n "${checker_pid}" ]]; then stop_reality_checker_process_tree "${checker_pid}"; fi' HUP
+  # Own nested temp files even if the deadline escalates to KILL. Waiting on a
+  # background child lets traps run immediately on terminal cancellation.
+  (( signal_status == 0 )) || return "${signal_status}"
+  TMPDIR="${checker_dir}" timeout --signal=TERM --kill-after=2 90 \
+    bash "${checker}" check "${domain}" --json --timeout 3 > "${report}" &
+  checker_pid=$!
+  if (( signal_status != 0 )); then
+    stop_reality_checker_process_tree "${checker_pid}" || return 1
+  fi
+  wait "${checker_pid}" || result=$?
+  if (( signal_status != 0 )); then
+    # The first wait can be interrupted before timeout has reaped the checker.
+    if wait "${checker_pid}"; then :; fi
+    return "${signal_status}"
+  fi
+  return "${result}"
+)
 
 validate_reality_target_report() {
   local report=$1 domain=$2 status=$3

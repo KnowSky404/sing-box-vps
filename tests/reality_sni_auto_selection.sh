@@ -138,6 +138,152 @@ selector_workdir=$(cat "${TMP_DIR}/hard-timeout-parent")
 [[ "${checker_workdir}" == "${selector_workdir}/"* ]] || fail 'checker temporary directory escaped selector ownership'
 [[ ! -e "${checker_workdir}" && ! -e "${selector_workdir}" ]] || fail 'hard timeout left checker or selector temporary files'
 
+# Exercise terminal-generated Ctrl+C with the real runner. GNU timeout and the
+# checker's nested timeout each create a process group; all owned probes must
+# stop even though the terminal signals only the installer's foreground group.
+mkdir -p "${TMP_DIR}/pty"
+cat > "${TMP_DIR}/pty/run.sh" <<'PTY_SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$1"
+export RTC_PTY_TEST_DIR=$2
+SB_SNI=unchanged.example.com
+selected=''
+trap 'status=$?; printf "%s\n" "${status}" > "${RTC_PTY_TEST_DIR}/status"; printf "%s\n" "${selected}" > "${RTC_PTY_TEST_DIR}/selected"; printf "%s\n" "${SB_SNI}" > "${RTC_PTY_TEST_DIR}/saved-sni"' EXIT
+prepare_reality_target_checker() {
+  printf '%s\n' "$(dirname "$1")" > "${RTC_PTY_TEST_DIR}/selector-dir"
+  cat > "$1" <<'CHECKER'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$$" > "${RTC_PTY_TEST_DIR}/checker.pid"
+workdir=$(mktemp -d "${TMPDIR:-/tmp}/rtc-terminal.XXXXXXXX")
+printf '%s\n' "${workdir}" > "${RTC_PTY_TEST_DIR}/checker-dir"
+trap 'rm -rf -- "${workdir}"' EXIT
+trap 'exit 143' TERM
+timeout --signal=TERM --kill-after=1 30 bash -c 'printf "%s\n" "$$" > "${RTC_PTY_TEST_DIR}/sleep.pid"; exec sleep 30'
+CHECKER
+}
+status=0
+selected=$(select_reality_sni_candidate terminal.example.com) || status=$?
+[[ "${status}" != 0 ]] || SB_SNI=${selected}
+exit "${status}"
+PTY_SCRIPT
+python3 - "${TMP_DIR}/pty/run.sh" "${TMP_DIR}/install.sh" "${TMP_DIR}/pty" <<'PYTHON'
+import errno
+import os
+from pathlib import Path
+import pty
+import select
+import shutil
+import signal
+import sys
+import time
+
+script, installer, fixture_name = sys.argv[1:]
+fixture = Path(fixture_name)
+child, terminal = pty.fork()
+if child == 0:
+    os.execvp("bash", ["bash", script, installer, fixture_name])
+
+output = bytearray()
+tracked = set()
+reaped = False
+
+def drain():
+    while select.select([terminal], [], [], 0)[0]:
+        try:
+            chunk = os.read(terminal, 4096)
+        except OSError as error:
+            if error.errno == errno.EIO:
+                break
+            raise
+        if not chunk:
+            break
+        output.extend(chunk)
+
+
+def read_pid(name):
+    return int((fixture / name).read_text().strip())
+
+
+def exists(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+try:
+    deadline = time.monotonic() + 5
+    while not (fixture / "sleep.pid").exists():
+        drain()
+        found, _ = os.waitpid(child, os.WNOHANG)
+        if found:
+            reaped = True
+            raise AssertionError("terminal fixture exited before starting nested probe")
+        if time.monotonic() > deadline:
+            raise AssertionError("terminal fixture did not start its nested probe")
+        time.sleep(0.02)
+    checker = read_pid("checker.pid")
+    sleeper = read_pid("sleep.pid")
+    tracked.update([checker, sleeper])
+    # Retain every owned descendant for failure cleanup, including processes in
+    # timeout's separate process groups, rather than killing by executable name.
+    pending = [child]
+    visited = set()
+    while pending:
+        parent = pending.pop()
+        if parent in visited:
+            continue
+        visited.add(parent)
+        try:
+            descendants = Path(f"/proc/{parent}/task/{parent}/children").read_text().split()
+        except FileNotFoundError:
+            continue
+        for descendant in map(int, descendants):
+            pending.append(descendant)
+            tracked.add(descendant)
+    started = time.monotonic()
+    os.write(terminal, b"\x03")
+    deadline = started + 3
+    while True:
+        drain()
+        found, status = os.waitpid(child, os.WNOHANG)
+        if found:
+            reaped = True
+            break
+        if time.monotonic() > deadline:
+            raise AssertionError("terminal Ctrl+C did not stop the checker promptly")
+        time.sleep(0.02)
+    assert time.monotonic() - started < 3, "terminal cancellation exceeded three seconds"
+    terminal_status = os.waitstatus_to_exitcode(status)
+    assert terminal_status in (130, -signal.SIGINT), f"terminal cancellation returned {terminal_status}"
+    assert not exists(checker), "terminal cancellation left checker running"
+    assert not exists(sleeper), "terminal cancellation left nested sleep running"
+    assert (fixture / "selected").read_text().strip() == "", "terminal cancellation selected a target"
+    assert (fixture / "saved-sni").read_text().strip() == "unchanged.example.com", "terminal cancellation persisted an SNI"
+    for name in ["selector-dir", "checker-dir"]:
+        assert not Path((fixture / name).read_text().strip()).exists(), f"terminal cancellation leaked {name}"
+except Exception:
+    sys.stderr.write(output.decode(errors="replace"))
+    raise
+finally:
+    for name in ["checker.pid", "sleep.pid"]:
+        if (fixture / name).exists():
+            tracked.add(read_pid(name))
+    for pid in tracked | {child}:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    if not reaped:
+        os.waitpid(child, 0)
+    os.close(terminal)
+    if (fixture / "selector-dir").exists():
+        shutil.rmtree((fixture / "selector-dir").read_text().strip(), ignore_errors=True)
+PYTHON
+
 prepare_reality_target_checker() { return 1; }
 if selected=$(select_reality_sni_candidate good.example.com); then
   fail 'download failure must stop target selection'
