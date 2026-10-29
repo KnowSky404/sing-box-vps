@@ -2169,8 +2169,10 @@ prompt_hy2_masquerade_url() {
     read -rp "${prompt}" value || return 1
     value=$(trim_whitespace "${value}")
     value=${value:-${current}}
-    if [[ -z "${value}" ]] || validate_http_url "${value}" ||
-      [[ "${value}" == file:///* && "${value}" != *[[:space:][:cntrl:]]* ]]; then
+    # Schemes are case-insensitive. Normalize only the validation input;
+    # preserve the administrator's URL, including case-sensitive paths.
+    if [[ -z "${value}" ]] || validate_http_url "${value,,}" ||
+      [[ "${value,,}" == file:///* && "${value}" != *[[:cntrl:]]* ]]; then
       printf '%s' "${value}"
       return 0
     fi

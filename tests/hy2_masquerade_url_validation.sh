@@ -8,7 +8,7 @@ setup_menu_test_env 120
 source "${TESTABLE_INSTALL}"
 trap 'printf "HY2 masquerade regression failed at line %s\n" "${LINENO}" >&2' ERR
 core=${SINGBOX_BINARY_114:-/usr/local/bin/sing-box}
-mkdir -p "${SB_PROTOCOL_STATE_DIR}" "${TMP_DIR}/website"
+mkdir -p "${SB_PROTOCOL_STATE_DIR}" "${TMP_DIR}/website with spaces"
 ln -s "${core}" "${SINGBOX_BIN_PATH}"
 openssl req -x509 -newkey ed25519 -nodes -days 1 -subj /CN=hy2.example.com \
   -keyout "${TMP_DIR}/hy2.key" -out "${TMP_DIR}/hy2.pem" > "${TMP_DIR}/openssl.log" 2>&1
@@ -37,7 +37,9 @@ INPUT
 [[ "$(prompt_hy2_masquerade_url 'URL: ' '' <<< '')" == '' ]]
 [[ "$(prompt_hy2_masquerade_url 'URL: ' https://example.com <<< '')" == https://example.com ]]
 [[ "$(prompt_hy2_masquerade_url 'URL: ' '' <<< http://example.com)" == http://example.com ]]
-[[ "$(prompt_hy2_masquerade_url 'URL: ' '' <<< "file://${TMP_DIR}/website")" == "file://${TMP_DIR}/website" ]]
+[[ "$(prompt_hy2_masquerade_url 'URL: ' '' <<< 'hTtPs://example.com/CaseSensitive')" == hTtPs://example.com/CaseSensitive ]]
+[[ "$(prompt_hy2_masquerade_url 'URL: ' 'HTTPS://example.com/CaseSensitive' <<< '')" == HTTPS://example.com/CaseSensitive ]]
+[[ "$(prompt_hy2_masquerade_url 'URL: ' '' <<< "FILE://${TMP_DIR}/website with spaces")" == "FILE://${TMP_DIR}/website with spaces" ]]
 if prompt_hy2_masquerade_url 'URL: ' '' <<< example.com > "${TMP_DIR}/eof.out" 2> "${TMP_DIR}/eof.log"; then
   printf 'invalid input followed by EOF unexpectedly succeeded\n' >&2; exit 1
 fi
@@ -75,12 +77,13 @@ hy2_management_build_record "${snapshot}" create '' "${record}" \
 jq -e '.masquerade=="https://example.com"' "${record}" >/dev/null
 grep -Fq '请重新输入' "${TMP_DIR}/create.log"
 jq -n --slurpfile record "${record}" \
-  '{schema_version:1,protocol:"hy2",revision:1,default_instance_id:$record[0].id,instances:$record}' > "${snapshot}"
+  '{schema_version:1,protocol:"hy2",revision:1,default_instance_id:$record[0].id,instances:$record} |
+   .instances[0].masquerade="HTTPS://example.com/CaseSensitive"' > "${snapshot}"
 id=$(jq -r '.id' "${record}")
 printf '%s\n' '' '' '' n '' '' '' '' 1 '' '' n '' > "${TMP_DIR}/replace.input"
 hy2_management_build_record "${snapshot}" replace "${id}" "${record}" \
   < "${TMP_DIR}/replace.input" > "${TMP_DIR}/replace.out" 2> "${TMP_DIR}/replace.log"
-jq -e '.masquerade=="https://example.com"' "${record}" >/dev/null
+jq -e '.masquerade=="HTTPS://example.com/CaseSensitive"' "${record}" >/dev/null
 
 # Generate the actual VLESS + HY2 configuration, including valid REALITY
 # keys, and check both renderers and the disabled/file variants with the core.
@@ -103,7 +106,8 @@ jq -e '(.inbounds|length)==2 and any(.inbounds[]; .type=="vless") and
   any(.inbounds[]; .type=="hysteria2" and .masquerade=="https://example.com")' "${SINGBOX_CONFIG_FILE}" >/dev/null
 "${core}" check -c "${SINGBOX_CONFIG_FILE}"
 SB_VERSION=1.14.2
-for url in '' https://example.com http://example.com "file://${TMP_DIR}/website"; do
+for url in '' https://example.com http://example.com HTTPS://example.com/CaseSensitive \
+  hTtPs://example.com/CaseSensitive "FILE://${TMP_DIR}/website with spaces"; do
   jq --arg url "${url}" '.instances[0].masquerade=$url' "${snapshot}" > "${TMP_DIR}/variant.json"
   render_structured_instance_inbounds hy2 "${TMP_DIR}/variant.json" | jq -s \
     '{inbounds:.,outbounds:[{type:"direct",tag:"direct"}],route:{final:"direct"}}' > "${TMP_DIR}/server.json"
