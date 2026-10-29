@@ -27,12 +27,12 @@ write_fixture() {
 EOF
       ;;
     unknown)
-      # Core-valid but not registered for managed lifecycle. Keep this
-      # distinct from malformed/unknown-to-core JSON for the check controls.
+      # An unregistered type remains fail-closed. Valid manual direct
+      # inbounds are covered separately by managed_config_coexistence.sh.
       cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
 {"inbounds":[
   {"type":"mixed","tag":"mixed-in","listen":"127.0.0.1","listen_port":1080},
-      {"type":"direct","tag":"unknown-in","listen":"127.0.0.1","listen_port":8388}
+      {"type":"unregistered","tag":"unknown-in","listen":"127.0.0.1","listen_port":8388}
 ]}
 EOF
       ;;
@@ -507,7 +507,8 @@ for secret in CONFIG-PASSWORD-DO-NOT-LOG STATE-PASSWORD-DO-NOT-LOG config-user s
 done
 grep -Fq '已省略原始值' "${TMP_DIR}/diagnostic.all"
 
-write_fixture unknown
+printf '%s\n' '{"inbounds":[{"type":"direct","tag":"manual-direct","listen":"127.0.0.1","listen_port":8388}]}' > "${SINGBOX_CONFIG_FILE}"
+validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}"
 real_core_checks=0
 for core in "${SINGBOX_BINARY_113:-}" "${SINGBOX_BINARY_114:-}"; do
   [[ -n "${core}" ]] || continue

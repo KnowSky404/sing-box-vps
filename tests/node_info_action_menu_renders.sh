@@ -30,3 +30,5 @@ if ! (( section_line < view_line && view_line < export_line && export_line < sub
   printf 'expected node info action menu options to stay grouped under the action section, got:\n%s\n' "${output}" >&2
   exit 1
 fi
+
+[[ "${plain_output}" == *"4. 设置或修改 SubMan 连接"* ]]

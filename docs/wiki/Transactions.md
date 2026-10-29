@@ -117,3 +117,9 @@ PRECHECK
 - `install.sh:replace_singbox_binary_atomically()` 与 Agent upgrade：继续保持现有配置、服务活动状态和回滚契约，后续迁移时必须复用真实回归和 Docker 验证。
 - `systemctl`、防火墙、QoS、ACME、Warp、SubMan API 写入和配置重建：按操作边界分别补充 prepare/validate/commit/postcheck/rollback，不用全局替换旧 `log_error`。
 - `uninstall.sh` 的本地 `exec` 委托：当前没有远程下载最终路径问题；若未来增加远程 fallback，必须复用 Bootstrap 的完整下载和身份校验。
+
+## 生成基线与手工扩展
+
+`managed-config.generated.json` 记录最近一次完整生成的受管投影，不包含合并后新增的手工扩展。全局生成先做三方合并，再校验完整候选并备份、发布；生成基线和 `.bak` 同处项目目录，纳入现有整目录快照及失败恢复。tag 冲突、无效基线、无法合并的同时修改均在发布前失败。实例操作从现场配置构造候选，仅替换原 store 中归属明确的 tag，不按协议类型批量删除手工入口。
+
+计时提示只写 stderr，不改变成功/失败状态，也不改变事务的信号处理与回滚责任。计时进程关闭继承的管理锁描述符，避免操作完成后仍占锁。

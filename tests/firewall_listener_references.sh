@@ -169,7 +169,7 @@ unset UFW_FAILURE
 base_registry=$(protocol_registry_json | jq 'map(select(.state_id!="shadowsocks"))')
 fixture_registry=$(jq '. + [{state_id:"shadowsocks",type:"shadowsocks",
   listen_networks:["tcp","udp"],features:{listen_network_selection:true}}]' <<< "${base_registry}")
-protocol_registry_json() { printf '%s\n' "${fixture_registry}"; }
+protocol_registry_static_json() { printf '%s\n' "${fixture_registry}"; }
 protocol_registry_field() {
   [[ "$2" == listen_networks ]] || return 98
   jq -er --arg protocol "$1" '.[] | select(.state_id==$protocol) | .listen_networks | join(",")' <<< "${fixture_registry}"

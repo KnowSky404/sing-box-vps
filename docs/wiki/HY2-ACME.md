@@ -30,3 +30,7 @@ SBV_HY2_ACME_RUNTIME=1 PEBBLE_BINARY=/usr/local/bin/pebble \
 ```
 
 The test uses a private HTTPS trust file, a local CA, actual HTTP-01 validation on port 80, two HY2 instances, verified QUIC/TLS proxy transfers through the container non-loopback IPv4 address, cache reuse after restart, and deletion isolation. It never disables certificate verification or uses a public CA or real Cloudflare token. Keep `/tmp/hy2-acme-runtime` as the artifact bundle before removing the container. Set `HY2_ACME_LEGACY_BASELINE=1` for the legacy-provider adoption variant. This proves isolated issuance and data flow; real Cloudflare DNS-01 issuance, public reachability and production deployment remain separate acceptance boundaries.
+
+## 等待提示
+
+公网监听确认后，实例事务会立即显示开始信息，并在等待期间每 5 秒报告已耗时；备份、发布、监听/防火墙同步及服务检查分别显示阶段。服务重启提示 ACME 签发或 DNS 验证可能耗时，最终显示完成或失败；具体证书诊断可通过主菜单 10 查看。进度提示不会输出 DNS Token 或完整配置。

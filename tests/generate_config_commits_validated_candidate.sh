@@ -113,55 +113,29 @@ if [[ "${checked_candidate}" == "${SINGBOX_CONFIG_FILE}" || "${checked_candidate
   exit 1
 fi
 
-# A normal protocol candidate must fail before resource preparation when a
-# live root namespace is outside the generator's ownership model.
-unknown_root_config=$(cat "${SINGBOX_CONFIG_FILE}")
-unknown_root_backup=$(cat "${SINGBOX_CONFIG_FILE}.bak")
-jq '.experimental = {must_preserve:true}' "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next"
-mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
-unknown_root_input=$(cat "${SINGBOX_CONFIG_FILE}")
-if generate_config_candidate >"${TMP_DIR}/unknown-root.out" 2>"${TMP_DIR}/unknown-root.err"; then
-  printf 'expected unknown top-level namespace to abort normal candidate generation\n' >&2
-  exit 1
-fi
-[[ "$(cat "${SINGBOX_CONFIG_FILE}")" == "${unknown_root_input}" ]]
-[[ "$(cat "${SINGBOX_CONFIG_FILE}.bak")" == "${unknown_root_backup}" ]]
-grep -Fq '未建模的顶层或投影字段' "${TMP_DIR}/unknown-root.out"
-printf '%s\n' "${unknown_root_config}" > "${SINGBOX_CONFIG_FILE}"
-
-assert_projection_rejected() {
-  local label=$1
-  local input backup candidate_input
-  input=$(cat "${SINGBOX_CONFIG_FILE}")
-  backup=$(cat "${SINGBOX_CONFIG_FILE}.bak")
-  case "${label}" in
-    dns)
-      jq '.dns.servers += [{type:"udp",tag:"unowned-dns",server:"1.1.1.1"}]' \
-        "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next" ;;
-    route)
-      jq '.route.default_domain_resolver = "unowned-dns"' \
-        "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next" ;;
-    certificate)
-      jq '.certificate_providers = [{type:"acme",tag:"unowned-cert",domain:["unowned.example"]}]' \
-        "${SINGBOX_CONFIG_FILE}" > "${SINGBOX_CONFIG_FILE}.next" ;;
-    *) return 1 ;;
+# Operator namespaces and DNS/certificate extensions now survive generation.
+# The complete candidate still goes through the core and graph checks.
+original_generated=$(cat "${SINGBOX_CONFIG_FILE}")
+for extension in root dns certificate; do
+  case "${extension}" in
+    root) filter='.experimental={cache_file:{enabled:true}}' ;;
+    dns) filter='.dns.servers += [{type:"udp",tag:"unowned-dns",server:"1.1.1.1"}]' ;;
+    certificate) filter='.certificate_providers=[{type:"acme",tag:"unowned-cert",domain:["unowned.example"]}]' ;;
   esac
-  mv -f "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
-  candidate_input=$(cat "${SINGBOX_CONFIG_FILE}")
-  if generate_config_candidate >"${TMP_DIR}/${label}-projection.out" \
-    2>"${TMP_DIR}/${label}-projection.err"; then
-    printf 'expected %s projection drift to abort candidate generation\n' "${label}" >&2
-    exit 1
-  fi
-  [[ "$(cat "${SINGBOX_CONFIG_FILE}")" == "${candidate_input}" ]]
-  [[ "$(cat "${SINGBOX_CONFIG_FILE}.bak")" == "${backup}" ]]
-  grep -Fq '未建模的顶层或投影字段' "${TMP_DIR}/${label}-projection.out"
-  printf '%s\n' "${input}" > "${SINGBOX_CONFIG_FILE}"
-}
-
-assert_projection_rejected dns
-assert_projection_rejected route
-assert_projection_rejected certificate
+  jq "${filter}" "${SINGBOX_CONFIG_FILE}" >"${SINGBOX_CONFIG_FILE}.next"
+  mv "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+  before=$(jq -cS . "${SINGBOX_CONFIG_FILE}")
+  generate_config >/dev/null
+  [[ "$(jq -cS . "${SINGBOX_CONFIG_FILE}")" == "${before}" ]]
+done
+# An unresolved custom route remains an error; never erase it to pass check.
+jq '.route.default_domain_resolver="missing-resolver"' "${SINGBOX_CONFIG_FILE}" >"${SINGBOX_CONFIG_FILE}.next"
+mv "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
+before=$(cat "${SINGBOX_CONFIG_FILE}")
+if generate_config >/dev/null 2>"${TMP_DIR}/route-projection.err"; then exit 1; fi
+[[ "$(cat "${SINGBOX_CONFIG_FILE}")" == "${before}" ]]
+grep -Fq component_graph "${TMP_DIR}/route-projection.err"
+printf '%s\n' "${original_generated}" >"${SINGBOX_CONFIG_FILE}"
 
 # Exercise the production jq assembly rather than only the helper contract:
 # an auto-routed managed TUN must add the loop guard to the published route,
@@ -197,6 +171,9 @@ unset managed_component_render_json_definition
 eval "${validate_live_inbound_inventory_definition}"
 unset validate_live_inbound_inventory_definition
 
+# A new fixture needs a new ownership baseline; otherwise replacing the
+# complete config is correctly rejected as concurrent deletion of owned data.
+rm -f "${SB_PROJECT_DIR}/managed-config.generated.json"
 printf '%s\n' '{"keep":"check-failure"}' > "${SINGBOX_CONFIG_FILE}"
 rm -f "${SINGBOX_CONFIG_FILE}.bak"
 touch "${CHECK_FAIL_FILE}"
@@ -219,6 +196,7 @@ fi
 # The mock core accepts these candidates. The real graph preflight must reject
 # them before check/backup/publication and restore all builder side effects.
 for GRAPH_FAILURE in duplicate reference listener; do
+  rm -f "${SB_PROJECT_DIR}/managed-config.generated.json"
   printf '%s\n' '{"keep":"graph-failure"}' > "${SINGBOX_CONFIG_FILE}"
   printf '%s\n' '{"keep":"previous-backup"}' > "${SINGBOX_CONFIG_FILE}.bak"
   checked_before=$(wc -l < "${CHECK_LOG}")

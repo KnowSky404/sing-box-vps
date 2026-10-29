@@ -534,14 +534,14 @@ fi
 
 reset_protocol_state_artifacts
 write_certificate_provider_config shared-http-client
-if rebuild_protocol_state_from_config; then
-  printf 'expected provider referencing a shared http_client to fail closed during state rebuild\n' >&2
-  exit 1
-fi
-if [[ -e "$(protocol_state_file anytls)" || -e "${SB_PROTOCOL_INDEX_FILE}" ]]; then
-  printf 'shared http_client provider must not leave rewritten protocol state\n' >&2
-  exit 1
-fi
+cp "${SINGBOX_CONFIG_FILE}" "${TMP_DIR}/shared-http.before.json"
+rebuild_protocol_state_from_config
+cmp "${TMP_DIR}/shared-http.before.json" "${SINGBOX_CONFIG_FILE}"
+[[ -f "$(protocol_state_file anytls)" && -f "${SB_PROTOCOL_INDEX_FILE}" ]]
+(
+  source "$(protocol_state_file anytls)"
+  jq -e '.http_client=="shared-acme-http"' <<< "${ACME_EXTRA_JSON}" >/dev/null
+)
 
 reset_protocol_state_artifacts
 write_multi_protocol_config
