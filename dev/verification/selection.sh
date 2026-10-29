@@ -243,25 +243,34 @@ verification_group_test_candidates() {
 
 verification_group_tests() {
   local group=${1:-}
-  local root candidates file
+  local root candidates file count=0
   local seen=$'\n'
   root=$(verification_selection_repo_root) || return 1
   candidates=$(verification_group_test_candidates "${group}") || return "$?"
 
   while IFS= read -r file; do
-    [[ -n "${file}" && -f "${root}/${file}" ]] || continue
+    [[ -n "${file}" ]] || continue
     case "${file}" in
       tests/*_helper.sh|tests/hy2_instance_acme_runtime.sh) continue ;;
     esac
     case "${group}:${file}" in
       protocol:vless:tests/*vless_plain*|protocol:vless-reality:tests/*vless_plain*) continue ;;
     esac
+    if [[ ! -f "${root}/${file}" ]]; then
+      printf 'registered host test is missing: %s\n' "${file}" >&2
+      return 2
+    fi
     case "${seen}" in
       *$'\n'"${file}"$'\n'*) continue ;;
     esac
     printf '%s\n' "${file}"
+    count=$((count + 1))
     seen+="${file}"$'\n'
   done <<< "${candidates}"
+  if [[ "${count}" -eq 0 ]]; then
+    printf 'no host tests available for group: %s\n' "${group}" >&2
+    return 2
+  fi
 }
 
 verification_list_scenarios() {

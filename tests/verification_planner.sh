@@ -200,6 +200,12 @@ assert_error_2 --plan --scenario no-such-planner-scenario
 assert_error_2 --plan --base "${BASE}" --changed-file README.md
 assert_no_planning_side_effects
 
+# A stale explicit manifest must fail rather than silently omit its required test.
+mv "${FIXTURE}/tests/version_metadata_is_consistent.sh" "${TMP_DIR}/version-test.saved"
+assert_error_2 --plan --changed-file README.md --group version
+mv "${TMP_DIR}/version-test.saved" "${FIXTURE}/tests/version_metadata_is_consistent.sh"
+assert_no_planning_side_effects
+
 # Dependencies are ordered before their consumer and unrelated protocols stay out.
 plan=$(fixture_run --plan --scenario reconfigure_existing_install)
 scenarios=$(sed -n 's/^scenario=//p' <<<"${plan}" | paste -sd, -)
