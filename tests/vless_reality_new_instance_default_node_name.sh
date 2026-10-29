@@ -90,3 +90,21 @@ if [[ "${duplicate_check_seen}" != "y" ]]; then
   printf 'FAIL: duplicate bandwidth check was not reached\n' >&2
   exit 1
 fi
+
+# Outbound policy is the final input before a new instance can be persisted.
+# Failure must stop creation even when the caller is checking its exit status.
+prompt_instance_outbound_policy() { return 1; }
+duplicate_check_seen="n"
+if prompt_vless_reality_instance_create <<'EOF'
+
+
+445
+EOF
+then
+  printf 'FAIL: outbound input failure did not cancel REALITY creation\n' >&2
+  exit 1
+fi
+if [[ "${duplicate_check_seen}" != n ]]; then
+  printf 'FAIL: creation continued after failed outbound input\n' >&2
+  exit 1
+fi
