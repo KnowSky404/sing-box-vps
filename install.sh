@@ -19866,6 +19866,17 @@ merge_generated_config_with_live() {
     --argjson bootstrap "$([[ "${baseline}" == "${generated}" ]] && printf true || printf false)" '
     def tagged: type == "array" and all(.[]; type == "object" and (.tag | type == "string" and length > 0));
     def collision: error("managed_config_conflict");
+    def bootstrap_auth_matches($model; $existing):
+      if ($model | type) == "object" and ($existing | type) == "object" then
+        all($model | keys[]; . as $key |
+          if ($key | IN("users","username","uuid","psk","auth","auth_str","authentication","obfs","short_id") or
+              test("(^|_)(password|passwords|passwd|passphrase|secret|token|key)($|_)")) then
+            $model[$key] == $existing[$key]
+          else bootstrap_auth_matches($model[$key]; $existing[$key]) end)
+      elif ($model | type) == "array" and ($existing | type) == "array" then
+        all(range(0; $model | length); . as $index |
+          bootstrap_auth_matches($model[$index]; $existing[$index]))
+      else true end;
     def seed_record($model; $existing):
       if ($model | type) == "object" and ($existing | type) == "object" then
         reduce ($model | keys[]) as $key ({};
@@ -19928,7 +19939,8 @@ merge_generated_config_with_live() {
       reduce ["inbounds","outbounds","endpoints","services","http_clients","certificate_providers","network_namespaces"][] as $field ($next;
         if $live | has($field) then
           .[$field] = [$next[$field][]? as $record | $live[$field][]? | select(.tag == $record.tag) |
-          if (.type // "shared") == ($record.type // "shared") then seed_record($record; .) else collision end]
+          if (.type // "shared") == ($record.type // "shared") and bootstrap_auth_matches($record; .)
+          then seed_record($record; .) else collision end]
         else del(.[$field]) end) |
       if $live | has("dns") then
         # A legacy DNS tag does not prove ownership of its live settings.
