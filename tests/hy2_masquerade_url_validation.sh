@@ -28,10 +28,11 @@ ftp://example.com
 https://
 https:///example.com
 https://example.com/with space
-  https://example.com/path?x=1&y=2  
+https://example.com/path?x=1&y=2
 INPUT
 )
 [[ "${result}" == 'https://example.com/path?x=1&y=2' ]]
+[[ "$(prompt_hy2_masquerade_url 'URL: ' '' <<< $'  https://example.com/path?x=1&y=2  ')" == 'https://example.com/path?x=1&y=2' ]]
 [[ "$(grep -c '请重新输入' "${TMP_DIR}/retry.log")" == 5 ]]
 ! grep -Fq 'ftp://example.com' "${TMP_DIR}/retry.log"
 [[ "$(prompt_hy2_masquerade_url 'URL: ' '' <<< '')" == '' ]]
@@ -40,6 +41,11 @@ INPUT
 [[ "$(prompt_hy2_masquerade_url 'URL: ' '' <<< 'hTtPs://example.com/CaseSensitive')" == hTtPs://example.com/CaseSensitive ]]
 [[ "$(prompt_hy2_masquerade_url 'URL: ' 'HTTPS://example.com/CaseSensitive' <<< '')" == HTTPS://example.com/CaseSensitive ]]
 [[ "$(prompt_hy2_masquerade_url 'URL: ' '' <<< "FILE://${TMP_DIR}/website with spaces")" == "FILE://${TMP_DIR}/website with spaces" ]]
+for url in "file:${TMP_DIR}/website with spaces" "file://localhost${TMP_DIR}/website with spaces"; do
+  [[ "$(prompt_hy2_masquerade_url 'URL: ' '' <<< "${url}")" == "${url}" ]]
+  [[ "$(prompt_hy2_masquerade_url 'URL: ' "${url}" <<< '')" == "${url}" ]]
+done
+[[ "$(prompt_hy2_masquerade_url 'URL: ' 'https://example.com/with space' <<< '')" == 'https://example.com/with space' ]]
 if prompt_hy2_masquerade_url 'URL: ' '' <<< example.com > "${TMP_DIR}/eof.out" 2> "${TMP_DIR}/eof.log"; then
   printf 'invalid input followed by EOF unexpectedly succeeded\n' >&2; exit 1
 fi
@@ -107,7 +113,9 @@ jq -e '(.inbounds|length)==2 and any(.inbounds[]; .type=="vless") and
 "${core}" check -c "${SINGBOX_CONFIG_FILE}"
 SB_VERSION=1.14.2
 for url in '' https://example.com http://example.com HTTPS://example.com/CaseSensitive \
-  hTtPs://example.com/CaseSensitive "FILE://${TMP_DIR}/website with spaces"; do
+  hTtPs://example.com/CaseSensitive "FILE://${TMP_DIR}/website with spaces" \
+  "file:${TMP_DIR}/website with spaces" "file://localhost${TMP_DIR}/website with spaces" \
+  'https://example.com/with space'; do
   jq --arg url "${url}" '.instances[0].masquerade=$url' "${snapshot}" > "${TMP_DIR}/variant.json"
   render_structured_instance_inbounds hy2 "${TMP_DIR}/variant.json" | jq -s \
     '{inbounds:.,outbounds:[{type:"direct",tag:"direct"}],route:{final:"direct"}}' > "${TMP_DIR}/server.json"
