@@ -62,6 +62,7 @@ save_warp_route_settings() { :; }
 validate_config_file() { return 0; }
 refresh_vless_reality_qos_rules() { printf 'qos refreshed\n' > "${TMP_DIR}/qos.called"; }
 prompt_reality_sni_install() { SB_SNI="${SB_SNI:-apple.com}"; }
+probe_reality_sni_tls() { return 0; }
 prompt_vless_reality_advanced_update_fields() {
   SB_VLESS_ALPN_MODE="off"
   SB_VLESS_TCP_FAST_OPEN="n"
@@ -95,9 +96,9 @@ RATE_LIMIT_UP_MBPS=
 RATE_LIMIT_DOWN_MBPS=
 EOF
 
-cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
-{ "inbounds": [], "route": { "rules": [] } }
-EOF
+# Existing managed state must have its corresponding live configuration so the
+# additional-install baseline can validate ownership before adding an instance.
+generate_config
 
 install_protocols_interactive additional <<'EOF'
 1
@@ -108,7 +109,6 @@ not-a-port
 8443
 3
 manual.example.com
-y
 y
 
 10

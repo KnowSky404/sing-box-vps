@@ -114,6 +114,7 @@ update_config_only <<'EOF'
 
 
 2
+speed.example.com
 
 
 

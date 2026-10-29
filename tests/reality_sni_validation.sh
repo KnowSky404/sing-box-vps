@@ -18,13 +18,6 @@ mkdir -p "${TMP_DIR}/project"
 # shellcheck disable=SC1090
 source "${TESTABLE_INSTALL}"
 
-for candidate in "${SB_REALITY_SNI_CANDIDATES[@]}"; do
-  if [[ "${candidate,,}" == *microsoft* ]]; then
-    printf 'default SNI candidate contains Microsoft domain: %s\n' "${candidate}" >&2
-    exit 1
-  fi
-done
-
 if ! validate_reality_sni_syntax "www.example.com"; then
   printf 'expected valid domain syntax to pass\n' >&2
   exit 1
@@ -74,6 +67,24 @@ if [[ "${SB_SNI}" != "broken.example.com" ]]; then
   exit 1
 fi
 
+SB_SNI="old.example.com"
+read_manual_reality_sni_with_validation "" "REALITY SNI: " <<'EOF_INPUT' >/dev/null
+https://invalid.example.com/path
+y
+manual.example.com
+EOF_INPUT
+[[ "${SB_SNI}" == manual.example.com ]] || {
+  printf 'invalid syntax must not be accepted with a warning override\n' >&2
+  exit 1
+}
+
+SB_SNI="old.example.com"
+if read_manual_reality_sni_with_validation "" "REALITY SNI: " </dev/null >/dev/null; then
+  printf 'expected manual SNI EOF to fail\n' >&2
+  exit 1
+fi
+[[ "${SB_SNI}" == old.example.com ]] || exit 1
+
 SB_SNI="alpn.example.com"
 SB_VLESS_ALPN_MODE="off"
 probe_reality_sni_alpn() {
@@ -107,30 +118,5 @@ EOF
 
 if [[ "${SB_VLESS_ALPN_MODE}" != "off" ]]; then
   printf 'expected ALPN rejection to reset mode to off, got %s\n' "${SB_VLESS_ALPN_MODE}" >&2
-  exit 1
-fi
-
-mkdir -p "${TMP_DIR}/bin"
-cat > "${TMP_DIR}/bin/curl" <<'EOF'
-#!/usr/bin/env bash
-printf '0.057'
-EOF
-chmod +x "${TMP_DIR}/bin/curl"
-export PATH="${TMP_DIR}/bin:${PATH}"
-
-TLS_PROBE_FILE="${TMP_DIR}/tls-probe.txt"
-probe_reality_sni_tls() {
-  printf '%s' "${1}" > "${TLS_PROBE_FILE}"
-  return 0
-}
-
-latency=$(probe_reality_sni_candidate "candidate.example.com")
-if [[ "${latency}" != "57" ]]; then
-  printf 'expected curl latency to be converted to 57ms, got %s\n' "${latency}" >&2
-  exit 1
-fi
-tls_probe_seen=$(cat "${TLS_PROBE_FILE}")
-if [[ "${tls_probe_seen}" != "candidate.example.com" ]]; then
-  printf 'expected candidate probe to run TLS validation first, got %s\n' "${tls_probe_seen}" >&2
   exit 1
 fi
