@@ -104,7 +104,7 @@ PRECHECK
 - [ ] 每个提交后失败分支都有验证过的 rollback；rollback 失败保留人工恢复材料。
 - [ ] INT/TERM/HUP 不会留下锁或无用候选，不会把未完成变更报告成成功。
 - [ ] CLI 返回非零，交互动作返回菜单；没有用 `2>/dev/null || true` 隐藏变更错误。
-- [ ] 运行 `bash -n install.sh`、相关离线故障注入测试、全部适用本地测试和 `bash dev/verification/run.sh`。
+- [ ] 按 [AGENTS.md 第 4.2 节](https://github.com/KnowSky404/sing-box-vps/blob/main/AGENTS.md) 运行语法检查及受影响事务的离线故障注入测试；仅在服务、网络或生命周期行为变化时追加对应真实 Docker 场景。该清单不要求固定运行粗粒度 `run.sh` 或无关协议回归。
 
 ## 后续迁移清单
 

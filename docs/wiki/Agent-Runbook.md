@@ -115,6 +115,8 @@ For code or script changes:
 7. For code or script changes, update `SCRIPT_VERSION` and the README version once per conversation turn as required by AGENTS.md.
 8. Commit atomically with a conventional commit message after verification and follow the worktree/PR review and merge workflow.
 
+Record expected duration and stop after the selected required checks pass unless new evidence changes the scope. Run focused test scripts directly for low-impact edits: `VERIFY_SKIP_REMOTE=1` still runs the entire selected local suite before skipping Docker. Section 4.2 defines planning thresholds and result-reuse conditions; review waiting time is separate. For read-only security review, start with [SECURITY.md](https://github.com/KnowSky404/sing-box-vps/blob/main/SECURITY.md); review alone does not require implementation or regression testing.
+
 Every delivered repository change, including documentation, increments `SCRIPT_VERSION` once per conversation turn; synchronize the header and README as required by AGENTS.md.
 
 ## Test VPS Verification

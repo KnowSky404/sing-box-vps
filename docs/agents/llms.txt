@@ -5,6 +5,7 @@ Wiki: https://github.com/KnowSky404/sing-box-vps/wiki
 Runtime authority: install.sh and sbv agent capabilities --json
 
 Read AGENTS.md and skills/sing-box-vps-operator/SKILL.md before repository or VPS operations.
+Security reviewers: read SECURITY.md for the threat model, review priorities and finding format. Read-only review does not trigger implementation or broad testing.
 Use sing-box-test for test hosts; production is sing-box-prod. Unknown hosts are production until clarified. Production mutations require an approved operation plan.
 
 Documentation sources (also available offline):
