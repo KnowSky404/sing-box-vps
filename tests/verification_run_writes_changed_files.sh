@@ -5,9 +5,27 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TMP_DIR=$(mktemp -d)
 REAL_BASH=$(command -v bash)
+REAL_GIT=$(command -v git)
 VALID_REALITY_PRIVATE_KEY="IEwVBb_qLcYr1L_CTI5exTWbT7qRgZnr43xP8nC0dkM"
 VALID_REALITY_PUBLIC_KEY="u9nRBiDRTmyxLQLkiVq-kYFPhRyeZkSo8p9c7s8Dfjo"
 trap 'rm -rf "${TMP_DIR}"' EXIT
+
+assert_full_scenario_set() {
+  local file=$1
+  local expected actual
+  expected=$(printf '%s\n' \
+    fresh_install_vless reconfigure_existing_install legacy_takeover_export \
+    fresh_install_anytls fresh_install_socks fresh_install_http \
+    fresh_install_shadowsocks fresh_install_trojan fresh_install_vmess \
+    fresh_install_hysteria fresh_install_vless_plain multi_protocol_coexistence \
+    upgrade_1_13_to_1_14 upgrade_rollback_1_13_to_1_14 \
+    uninstall_and_reinstall runtime_smoke | LC_ALL=C sort -u)
+  actual=$(LC_ALL=C sort -u "${file}")
+  if [[ "${actual}" != "${expected}" ]]; then
+    printf 'unexpected full scenario set:\n%s\n' "${actual}" >&2
+    exit 1
+  fi
+}
 
 REMOTE_PORT_FILE="${TMP_DIR}/remote-port"
 REMOTE_UUID_FILE="${TMP_DIR}/remote-uuid"
@@ -30,7 +48,7 @@ REMOTE_ASSERT_LOG_FILE="${TMP_DIR}/remote-assert.log"
 INSTALL_COUNT_FILE="${TMP_DIR}/install-count"
 INSTALL_VERSION_LINE=$(sed -n 's/^readonly SCRIPT_VERSION="[^"]*"$/&/p' "${REPO_ROOT}/install.sh" | head -n 1)
 
-export REPO_ROOT TMP_DIR REAL_BASH
+export REPO_ROOT TMP_DIR REAL_BASH REAL_GIT
 export REMOTE_PORT_FILE REMOTE_UUID_FILE REMOTE_SNI_FILE REMOTE_CONFIG_FILE
 export REMOTE_LEGACY_KEY_FILE REMOTE_EXPORT_FILE REMOTE_LEGACY_SERVICE_FILE
 export REMOTE_PROTOCOLS_DIR REMOTE_CONFIG_PRESENT_FILE REMOTE_SERVICE_FILE_PRESENT_FILE
@@ -91,10 +109,10 @@ if [[ "${1:-}" == "diff" && "${2:-}" == "--name-only" ]]; then
 fi
 if [[ "${1:-}" == "ls-files" && "${2:-}" == "--others" && "${3:-}" == "--exclude-standard" ]]; then
   if [[ -n "${VERIFY_EMPTY_CHANGES:-}" ]]; then exit 0; fi
-  printf 'tests/new_untracked_case.sh\n'
+  printf 'tests/verification_trigger_rules.sh\n'
   exit 0
 fi
-printf 'unexpected git call: %s\n' "$*" >&2; exit 1
+exec "${REAL_GIT}" "$@"
 GIT_EOF
 chmod +x "${TMP_DIR}/git"
 
@@ -443,6 +461,13 @@ verification_scenario_upgrade_rollback_1_13_to_1_14() {
   verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/after-rollback.check.txt" 'config ok'
 }
 
+# This test covers transport/artifact dispatch; lifecycle mutations belong in Docker.
+# Full selection now includes uninstall, so keep it inside the fixture boundary.
+verification_scenario_uninstall_and_reinstall() {
+  printf 'SCENARIO=uninstall_and_reinstall\n'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/fixture.txt" 'uninstall dispatch fixture'
+}
+
 verification_scenario_runtime_smoke() {
   printf 'SCENARIO=runtime_smoke\n'
   verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" 'config ok'
@@ -490,19 +515,17 @@ chmod +x "${TMP_DIR}/docker"
 # Run the verification
 env -u VERIFY_SKIP_LOCAL_TESTS \
   PATH="${TMP_DIR}:${PATH}" \
-  bash "${REPO_ROOT}/dev/verification/run.sh" > "${TMP_DIR}/stdout.txt"
+  bash "${REPO_ROOT}/dev/verification/run.sh" --full --changed-file install.sh README.md tests/verification_trigger_rules.sh > "${TMP_DIR}/stdout.txt"
 
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout.txt")
 # Check changed files
 grep -Fqx 'install.sh' "${run_dir}/changed-files.txt"
 grep -Fqx 'README.md' "${run_dir}/changed-files.txt"
-grep -Fqx 'tests/new_untracked_case.sh' "${run_dir}/changed-files.txt"
+grep -Fqx 'tests/verification_trigger_rules.sh' "${run_dir}/changed-files.txt"
 
 # Check scenarios
 scenarios=$(paste -sd, "${run_dir}/scenarios.txt")
-[[ "${scenarios}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,fresh_install_trojan,fresh_install_vmess,fresh_install_hysteria,fresh_install_vless_plain,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" ]] || {
-  printf 'unexpected scenarios: %s\n' "${scenarios}" >&2; exit 1
-}
+assert_full_scenario_set "${run_dir}/scenarios.txt"
 
 # Check stdout.log from remote execution
 grep -Fq 'SCENARIO=runtime_smoke' "${run_dir}/remote.stdout.log"
@@ -545,6 +568,7 @@ grep -Fq 'remote_target=docker:test-container' "${TMP_DIR}/stdout.txt"
 [[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/transaction-result.json" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/upgrade_rollback_1_13_to_1_14/after-rollback.check.txt" ]]
 [[ -f "${run_dir}/remote-artifacts/scenarios/runtime_smoke/sing-box-check.txt" ]]
+[[ -f "${run_dir}/remote-artifacts/scenarios/uninstall_and_reinstall/fixture.txt" ]]
 
 # Check payload content (script vars are in emitted payload)
 grep -Fq "${INSTALL_VERSION_LINE}" "${TMP_DIR}/remote-script.sh"
@@ -635,23 +659,21 @@ grep -Fqx 'tests/hysteria_instance_lifecycle.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/naive_instance_lifecycle.sh|1' "${TMP_DIR}/local-tests.log"
 
 default_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
-expected_local_test_count=$(bash -c 'source "$1"; resolve_local_tests install.sh | wc -l' _ "${REPO_ROOT}/dev/verification/common.sh")
+expected_local_test_count=$(bash -c 'source "$1"; source "$2"; verification_group_tests full | wc -l' _ "${REPO_ROOT}/dev/verification/common.sh" "${REPO_ROOT}/dev/verification/selection.sh")
 [[ "${default_local_test_count}" -eq "${expected_local_test_count}" ]] || {
   printf 'expected %d local tests, got %d\n' "${expected_local_test_count}" "${default_local_test_count}" >&2; exit 1
 }
 
 # Test VERIFY_SKIP_LOCAL_TESTS=1 — still runs remote
 PATH="${TMP_DIR}:${PATH}" VERIFY_SKIP_LOCAL_TESTS=1 \
-  bash "${REPO_ROOT}/dev/verification/run.sh" > "${TMP_DIR}/stdout-skip.txt"
+  bash "${REPO_ROOT}/dev/verification/run.sh" --full --changed-file install.sh README.md tests/verification_trigger_rules.sh > "${TMP_DIR}/stdout-skip.txt"
 
 run_dir_skip=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout-skip.txt")
 grep -Fqx 'install.sh' "${run_dir_skip}/changed-files.txt"
 grep -Fqx 'README.md' "${run_dir_skip}/changed-files.txt"
-grep -Fqx 'tests/new_untracked_case.sh' "${run_dir_skip}/changed-files.txt"
+grep -Fqx 'tests/verification_trigger_rules.sh' "${run_dir_skip}/changed-files.txt"
 scenarios_skip=$(paste -sd, "${run_dir_skip}/scenarios.txt")
-[[ "${scenarios_skip}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,fresh_install_trojan,fresh_install_vmess,fresh_install_hysteria,fresh_install_vless_plain,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke" ]] || {
-  printf 'unexpected scenarios for skip run: %s\n' "${scenarios_skip}" >&2; exit 1
-}
+assert_full_scenario_set "${run_dir_skip}/scenarios.txt"
 skip_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
 [[ "${skip_local_test_count}" -eq "${default_local_test_count}" ]] || {
   printf 'expected skip run count to match default: before=%s after=%s\n' "${default_local_test_count}" "${skip_local_test_count}" >&2; exit 1
@@ -661,13 +683,11 @@ skip_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
 env -u VERIFY_SKIP_LOCAL_TESTS \
   PATH="${TMP_DIR}:${PATH}" VERIFY_SKIP_REMOTE=1 \
   bash "${REPO_ROOT}/dev/verification/run.sh" \
-  --changed-file dev/verification/remote/entrypoint.sh > "${TMP_DIR}/stdout-remote-framework.txt"
+  --full --changed-file dev/verification/remote/entrypoint.sh > "${TMP_DIR}/stdout-remote-framework.txt"
 
 run_dir_remote_framework=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout-remote-framework.txt")
 scenarios_remote_framework=$(paste -sd, "${run_dir_remote_framework}/scenarios.txt")
-[[ "${scenarios_remote_framework}" == "fresh_install_vless,reconfigure_existing_install,legacy_takeover_export,fresh_install_anytls,fresh_install_socks,fresh_install_http,fresh_install_shadowsocks,fresh_install_trojan,fresh_install_vmess,fresh_install_hysteria,fresh_install_vless_plain,multi_protocol_coexistence,upgrade_1_13_to_1_14,upgrade_rollback_1_13_to_1_14,runtime_smoke,uninstall_and_reinstall" ]] || {
-  printf 'unexpected scenarios for remote framework change: %s\n' "${scenarios_remote_framework}" >&2; exit 1
-}
+assert_full_scenario_set "${run_dir_remote_framework}/scenarios.txt"
 grep -Fqx 'tests/verification_artifact_dir_layout.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_trigger_rules.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_scenario_mapping.sh|1' "${TMP_DIR}/local-tests.log"
@@ -679,12 +699,7 @@ grep -Fqx 'tests/verification_tests_only_stays_local.sh|1' "${TMP_DIR}/local-tes
 grep -Fqx 'tests/verification_runtime_smoke_artifacts.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/verification_remote_scenario_dispatch.sh|1' "${TMP_DIR}/local-tests.log"
 
-# Test empty changes (local mode)
-PATH="${TMP_DIR}:${PATH}" VERIFY_SKIP_LOCAL_TESTS=1 VERIFY_EMPTY_CHANGES=1 \
-  bash "${REPO_ROOT}/dev/verification/run.sh" > "${TMP_DIR}/stdout-empty.txt"
-
-run_dir_empty=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout-empty.txt")
-[[ ! -s "${run_dir_empty}/changed-files.txt" ]] || { printf 'expected empty change snapshot\n' >&2; exit 1; }
-[[ ! -e "${run_dir_empty}/scenarios.txt" ]] || { printf 'did not expect scenarios.txt for local mode\n' >&2; exit 1; }
+# Clean-tree/default-base behavior is covered with a real temporary Git repository
+# in verification_planner.sh rather than this transport mock.
 
 printf 'All assertions passed\n'

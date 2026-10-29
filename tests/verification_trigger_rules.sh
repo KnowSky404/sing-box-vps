@@ -4,44 +4,28 @@ set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
-# shellcheck disable=SC1091
-source "${REPO_ROOT}/dev/verification/common.sh"
-
-assert_decision() {
+assert_mode() {
   local expected=$1
   shift
-  local actual
-  actual=$(determine_verification_mode "$@")
-  if [[ "${actual}" != "${expected}" ]]; then
-    printf 'expected %s, got %s for files: %s\n' "${expected}" "${actual}" "$*" >&2
+  local plan
+  plan=$(bash "${REPO_ROOT}/dev/verification/run.sh" --plan "$@")
+  if ! grep -Fqx "mode=${expected}" <<<"${plan}"; then
+    printf 'expected mode=%s for %s, got:\n%s\n' "${expected}" "$*" "${plan}" >&2
     exit 1
   fi
 }
 
-assert_decision remote install.sh
-assert_decision remote uninstall.sh
-assert_decision remote utils/common.sh
-assert_decision remote configs/example.json
-assert_decision local tests/install_hy2_protocol_creates_state.sh
-assert_decision local tests/mixed_active_state.sh
-assert_decision local tests/mixed_instance_lifecycle.sh
-assert_decision local tests/mixed_instance_lifecycle_runtime.sh
-assert_decision local tests/mixed_structured_takeover.sh
-assert_decision local tests/instance_firewall_ledger.sh
-assert_decision local tests/mixed_instance_menu.sh
-assert_decision local tests/plain_proxy_structured_store.sh
-assert_decision local tests/socks_instance_lifecycle.sh
-assert_decision local tests/socks_instance_lifecycle_runtime.sh
-assert_decision local tests/socks_instance_menu.sh
-assert_decision local tests/socks_structured_takeover.sh
-assert_decision local tests/socks_export_client.sh
-assert_decision local tests/plain_proxy_share_links.sh
-assert_decision local tests/plain_proxy_share_runtime.sh
-assert_decision local tests/http_structured_instance_store.sh
-assert_decision local tests/http_structured_takeover.sh
-assert_decision local tests/http_instance_lifecycle.sh
-assert_decision local tests/http_instance_menu.sh
-assert_decision local tests/http_export_client.sh
-assert_decision local tests/http_export_runtime.sh
-assert_decision local tests/http_agent_contract.sh
-assert_decision local docs/superpowers/specs/2026-04-22-remote-validation-workflow-design.md
+assert_mode local --changed-file README.md
+assert_mode local --changed-file SECURITY.md
+assert_mode local --changed-file AGENTS.md
+assert_mode local --changed-file tests/install_hy2_protocol_creates_state.sh
+assert_mode local --changed-file tests/mixed_active_state.sh
+assert_mode local --changed-file tests/mixed_instance_lifecycle.sh
+assert_mode local --changed-file tests/instance_firewall_ledger.sh
+assert_mode local --changed-file tests/plain_proxy_structured_store.sh
+assert_mode local --changed-file tests/socks_instance_lifecycle.sh
+assert_mode local --changed-file tests/http_instance_lifecycle.sh
+assert_mode remote --scenario fresh_install_http
+assert_mode remote --scenario reconfigure_existing_install
+
+printf 'Verification mode selection passed\n'

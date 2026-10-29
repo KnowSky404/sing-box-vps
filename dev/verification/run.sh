@@ -6,53 +6,37 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/common.sh"
 
-list_changed_files() {
-  local seen_list=''
-  local file
-  local files=()
-
-  while IFS= read -r file; do
-    [[ -n "${file}" ]] || continue
-    if [[ ",${seen_list}," != *",${file},"* ]]; then
-      files+=("${file}")
-      seen_list="${seen_list},${file}"
-    fi
-  done < <(
-    git diff --name-only HEAD
-    git ls-files --others --exclude-standard
-  )
-
-  if [[ "${#files[@]}" -gt 0 ]]; then
-    printf '%s\n' "${files[@]}"
-  fi
-}
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/planner.sh"
 
 run_local_tests() {
-  local changed_files=("$@")
-  local test_file
-  local tests_to_run=()
-
-  if [[ "${VERIFY_SKIP_LOCAL_TESTS:-0}" == "1" ]]; then
-    return 0
-  fi
-
-  mapfile -t tests_to_run < <(resolve_local_tests "${changed_files[@]}")
-
-  for test_file in "${tests_to_run[@]}"; do
-    env -u VERIFY_SKIP_REMOTE VERIFY_SKIP_LOCAL_TESTS=1 bash "${test_file}"
+  local run_dir=$1 test_file syntax_file status started
+  for syntax_file in "${VERIFY_PLAN_SYNTAX[@]}"; do
+    bash -n "${REPO_ROOT}/${syntax_file}" || return $?
   done
-}
-
-resolve_changed_files() {
-  if [[ "${1:-}" == "--changed-file" ]]; then
-    shift
-    if [[ "$#" -gt 0 ]]; then
-      printf '%s\n' "$@"
-    fi
+  if [[ "${VERIFY_SKIP_LOCAL_TESTS:-0}" == 1 ]]; then
+    printf 'local_status=skipped\n' >> "${run_dir}/summary.log"
     return 0
   fi
-
-  list_changed_files
+  mkdir -p "${run_dir}/local-tests" || return $?
+  printf 'test\tstatus\telapsed_seconds\n' > "${run_dir}/local-tests/results.tsv" || return $?
+  for test_file in "${VERIFY_PLAN_TESTS[@]}"; do
+    started=${SECONDS}
+    printf 'local_test=%s\n' "${test_file}"
+    if env -u VERIFY_SKIP_REMOTE VERIFY_SKIP_LOCAL_TESTS=1 bash "${test_file}" \
+      > "${run_dir}/local-tests/${test_file##*/}.log" 2>&1; then
+      printf '%s\tpassed\t%s\n' "${test_file}" "$((SECONDS - started))" >> "${run_dir}/local-tests/results.tsv"
+      printf 'local_test_passed=%s elapsed_seconds=%s\n' "${test_file}" "$((SECONDS - started))"
+    else
+      status=$?
+      printf '%s\tfailed:%s\t%s\n' "${test_file}" "${status}" "$((SECONDS - started))" >> "${run_dir}/local-tests/results.tsv"
+      printf 'local_test_failed=%s status=%s\n' "${test_file}" "${status}" >&2
+      tail -n 40 "${run_dir}/local-tests/${test_file##*/}.log" >&2
+      printf 'local_status=failed\n' >> "${run_dir}/summary.log"
+      return "${status}"
+    fi
+  done
+  printf 'local_status=passed\n' >> "${run_dir}/summary.log"
 }
 
 emit_remote_payload() {
@@ -111,50 +95,54 @@ EOF
 }
 
 main() {
-  local mode
-  local run_dir
-  local changed_files=()
-  local scenarios=()
-  local status=0
-  local artifact_status=1
+  local run_dir status=0 artifact_status=1
 
-  mapfile -t changed_files < <(resolve_changed_files "$@")
-  mode=$(determine_verification_mode "${changed_files[@]}")
+  cd "${REPO_ROOT}"
+  verification_parse_options "$@" || return 2
+  if [[ "${VERIFY_PLAN_HELP}" == 1 ]]; then
+    verification_usage
+    return 0
+  fi
+  verification_build_plan || return 2
+  verification_print_plan
+  if [[ "${VERIFY_PLAN_ONLY}" == 1 ]]; then
+    return 0
+  fi
+  if [[ "${VERIFY_PLAN_STATUS}" != ready ]]; then
+    verification_plan_error 'impact needs an explicit --group and/or --scenario, or --full; inspect --plan first'
+    return 2
+  fi
+
   run_dir=$(create_run_dir)
-  if [[ "${#changed_files[@]}" -gt 0 ]]; then
-    printf '%s\n' "${changed_files[@]}" > "${run_dir}/changed-files.txt"
-  else
-    : > "${run_dir}/changed-files.txt"
+  verification_print_plan > "${run_dir}/plan.txt"
+  : > "${run_dir}/changed-files.txt"
+  if [[ "${#VERIFY_CHANGED_FILES[@]}" -gt 0 ]]; then
+    printf '%s\n' "${VERIFY_CHANGED_FILES[@]}" > "${run_dir}/changed-files.txt"
   fi
-  printf 'mode=%s\n' "${mode}" > "${run_dir}/summary.log"
-
-  printf 'mode=%s\nrun_dir=%s\n' "${mode}" "${run_dir}"
-  run_local_tests "${changed_files[@]}"
-
-  if [[ "${mode}" == "remote" ]]; then
-    resolve_remote_scenarios "${changed_files[@]}" > "${run_dir}/scenarios.txt"
-    mapfile -t scenarios < "${run_dir}/scenarios.txt"
+  : > "${run_dir}/scenarios.txt"
+  if [[ "${#VERIFY_PLAN_SCENARIOS[@]}" -gt 0 ]]; then
+    printf '%s\n' "${VERIFY_PLAN_SCENARIOS[@]}" > "${run_dir}/scenarios.txt"
   fi
+  printf 'mode=%s\n' "${VERIFY_PLAN_MODE}" > "${run_dir}/summary.log"
+  printf 'run_dir=%s\n' "${run_dir}"
+  run_local_tests "${run_dir}" || return $?
 
-  if [[ "${VERIFY_SKIP_REMOTE:-0}" == "1" ]]; then
-    printf 'remote execution skipped by VERIFY_SKIP_REMOTE\n' >> "${run_dir}/summary.log"
-    exit 0
+  if [[ "${VERIFY_SKIP_REMOTE:-0}" == 1 ]]; then
+    printf 'remote execution skipped by VERIFY_SKIP_REMOTE\nremote_status=skipped\n' >> "${run_dir}/summary.log"
+    return 0
   fi
-
-  if [[ "${mode}" == "remote" ]]; then
-    require_docker_env
+  if [[ "${VERIFY_PLAN_MODE}" == remote ]]; then
+    require_docker_env || return $?
     printf 'remote_target=docker:%s\n' "${VERIFY_DOCKER_CONTAINER}"
     printf 'remote_target=docker:%s\n' "${VERIFY_DOCKER_CONTAINER}" >> "${run_dir}/summary.log"
-    # Trap cleanup even on failure
     trap 'require_docker_cleanup' EXIT
-    if { trap - EXIT; emit_remote_payload; } | docker exec -i "${VERIFY_DOCKER_CONTAINER}" bash -s -- "${scenarios[@]}" \
+    if { trap - EXIT; emit_remote_payload; } | docker exec -i "${VERIFY_DOCKER_CONTAINER}" bash -s -- "${VERIFY_PLAN_SCENARIOS[@]}" \
       > "${run_dir}/remote.stdout.log" \
       2> "${run_dir}/remote.stderr.log"; then
       status=0
     else
       status=$?
     fi
-
     if extract_remote_artifacts "${run_dir}/remote.stdout.log" "${run_dir}"; then
       artifact_status=0
       printf 'remote_artifacts=extracted\n' >> "${run_dir}/summary.log"
@@ -162,23 +150,19 @@ main() {
       artifact_status=$?
       printf 'remote_artifacts=%s\n' "${artifact_status}" >> "${run_dir}/summary.log"
     fi
-
-    if [[ "${status}" == "0" && "${artifact_status}" != "0" ]]; then
+    if [[ "${status}" == 0 && "${artifact_status}" != 0 ]]; then
       printf 'remote_status=failure\n' >> "${run_dir}/summary.log"
       printf 'remote artifact bundle missing or invalid\n' >&2
       return 24
     fi
-
-    if [[ "${status}" == "0" ]]; then
+    if [[ "${status}" == 0 ]]; then
       printf 'remote_status=success\n' >> "${run_dir}/summary.log"
       return 0
     fi
-
     printf 'remote_status=failure\n' >> "${run_dir}/summary.log"
     cat "${run_dir}/remote.stderr.log" >&2
     return "${status}"
   fi
-
   printf 'remote_status=not_required\n' >> "${run_dir}/summary.log"
 }
 
