@@ -34,7 +34,7 @@ check_config_valid() { :; }
 setup_service() { :; }
 open_firewall_port() { :; }
 display_status_summary() { :; }
-systemctl() { :; }
+systemctl() { printf '%s\n' "$*" >> "${TMP_DIR}/service.calls"; }
 check_port_conflict() { :; }
 load_current_config_state() {
   SB_ADVANCED_ROUTE="n"
@@ -44,6 +44,7 @@ load_current_config_state() {
 select_reality_sni_candidate() {
   printf 'speed.example.com'
 }
+probe_reality_sni_tls() { return 0; }
 
 write_base_state() {
   rm -rf "${SB_PROTOCOL_STATE_DIR}"
@@ -130,9 +131,56 @@ update_config_only <<'EOF'
 
 3
 custom.example.com
-y
+1
 
 
 
 EOF
 assert_state_sni "custom.example.com"
+
+# Interruption after a selected SNI must leave all saved instance fields intact,
+# including fields already changed in memory before a later prompt hits EOF.
+for interrupted_stage in rates advanced; do
+  write_base_state
+  migrate_vless_reality_state_to_instances_if_needed
+  instance_state="${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env"
+  sed -i \
+    -e 's/^RATE_LIMIT_UP_MBPS=.*/RATE_LIMIT_UP_MBPS=100/' \
+    -e 's/^RATE_LIMIT_DOWN_MBPS=.*/RATE_LIMIT_DOWN_MBPS=50/' \
+    -e 's/^TCP_FAST_OPEN=.*/TCP_FAST_OPEN=y/' \
+    "${instance_state}"
+  grep -Fqx 'RATE_LIMIT_UP_MBPS=100' "${instance_state}"
+  grep -Fqx 'RATE_LIMIT_DOWN_MBPS=50' "${instance_state}"
+  grep -Fqx 'TCP_FAST_OPEN=y' "${instance_state}"
+  cp -- "${instance_state}" "${TMP_DIR}/instance-before"
+  cp -- "${SINGBOX_CONFIG_FILE}" "${TMP_DIR}/config-before"
+  : > "${TMP_DIR}/service.calls"
+
+  printf '%s\n' 1 1 renamed-node '' '' 2 candidate.example.com > "${TMP_DIR}/truncated-input"
+  case "${interrupted_stage}" in
+    rates) printf '%s\n' 2 5 >> "${TMP_DIR}/truncated-input" ;;
+    advanced) printf '%s\n' 3 2 >> "${TMP_DIR}/truncated-input" ;;
+  esac
+  status=0
+  # The production abort boundary exits; isolate it so the regression can inspect
+  # the restored files and service calls after that nonzero exit.
+  (update_config_only < "${TMP_DIR}/truncated-input") > "${TMP_DIR}/truncated-output" 2>&1 || status=$?
+  if [[ "${status}" -eq 0 ]]; then
+    printf 'expected interrupted %s prompts to reject the REALITY update\n' "${interrupted_stage}" >&2
+    exit 1
+  fi
+  grep -Fq '已选择 Reality SNI: speed.example.com' "${TMP_DIR}/truncated-output" || {
+    printf 'interruption fixture did not reach SNI selection\n' >&2
+    exit 1
+  }
+  cmp "${TMP_DIR}/instance-before" "${instance_state}" || {
+    printf 'interrupted %s prompts changed saved SNI/rates/TFO or other instance fields\n' "${interrupted_stage}" >&2
+    exit 1
+  }
+  cmp "${TMP_DIR}/config-before" "${SINGBOX_CONFIG_FILE}" || exit 1
+  if grep -Eq '(^|[[:space:]])restart([[:space:]]|$)' "${TMP_DIR}/service.calls"; then
+    printf 'interrupted %s prompts restarted the service\n' "${interrupted_stage}" >&2
+    exit 1
+  fi
+done
+printf 'REALITY SNI updates and interrupted-input rollback tests passed.\n'

@@ -31,7 +31,8 @@ source "${TESTABLE_INSTALL}"
 
 get_os_info() { :; }
 get_arch() { ARCH="amd64"; }
-install_dependencies() { :; }
+DEPENDENCIES_PREPARED=0
+install_dependencies() { DEPENDENCIES_PREPARED=$((DEPENDENCIES_PREPARED + 1)); }
 get_latest_version() { :; }
 install_binary() {
   cat > "${SINGBOX_BIN_PATH}" <<'EOF'
@@ -50,7 +51,13 @@ setup_service() { :; }
 open_firewall_port() { :; }
 systemctl() { :; }
 check_port_conflict() { :; }
-prompt_reality_sni_install() { SB_SNI="www.apple.com"; }
+prompt_reality_sni_install() {
+  [[ "${DEPENDENCIES_PREPARED}" == 1 ]] || {
+    printf 'REALITY probe prompts must run after preparing dependencies once\n' >&2
+    return 1
+  }
+  SB_SNI="www.apple.com"
+}
 prompt_vless_reality_advanced_update_fields() {
   SB_VLESS_ALPN_MODE="off"
   SB_VLESS_TCP_FAST_OPEN="n"
@@ -95,6 +102,11 @@ n
 y
 1
 EOF
+
+[[ "${DEPENDENCIES_PREPARED}" == 1 ]] || {
+  printf 'fresh REALITY installation prepared dependencies more than once\n' >&2
+  exit 1
+}
 
 if ! grep -Fq 'REALITY_PUBLIC_KEY=public-key' "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"; then
   printf 'expected vless state file to persist generated REALITY public key, got:\n%s\n' "$(cat "${SB_PROTOCOL_STATE_DIR}/vless-reality.env")" >&2
