@@ -45,10 +45,27 @@ printf 'INSTANCE_ID=second\nINBOUND_TAG=custom-second\n' > "$(vless_reality_inst
 printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2\n' > "$(protocol_state_file shadowtls)"
 printf '{"instances":[{"tag":"shadowtls-in","detour":{"tag":"shadowtls-inner"}}]}' > "$(plain_proxy_structured_store_file shadowtls)"
 VLESS_REALITY_DEFAULT_INSTANCE_ID=stale
-owners=$(managed_firewall_owner_tags_json)
-jq -e '.==["custom-second","owned-direct","shadowtls-in","shadowtls-inner","typed-mixed","vless-in"]' <<< "${owners}" >/dev/null
+owners=$(managed_firewall_owners_json)
+jq -e 'map(.tag)|sort==["custom-second","owned-direct","shadowtls-in","shadowtls-inner","typed-mixed","vless-in"]' <<< "${owners}" >/dev/null
 [[ "${VLESS_REALITY_DEFAULT_INSTANCE_ID}" == stale ]]
 printf 'INSTALLED_PROTOCOLS=mixed\n' > "${SB_PROTOCOL_INDEX_FILE}"
+# Service and proxy tags occupy separate graph namespaces. A service must
+# never authorize an inbound with the same text, or the reverse.
+cp "${SB_COMPONENT_STATE_FILE}" "${TMP_DIR}/components.before"
+cp "${SINGBOX_CONFIG_FILE}" "${TMP_DIR}/namespace.before"
+jq '.components += [{id:"owned-service",role:"service",type:"resolved",tag:"manual-mixed",enabled:true,
+  config:{listen:"0.0.0.0",listen_port:30011},route_rules:[]}]' "${SB_COMPONENT_STATE_FILE}" > "${TMP_DIR}/namespace-state"
+cp "${TMP_DIR}/namespace-state" "${SB_COMPONENT_STATE_FILE}"
+jq '.services += [{type:"resolved",tag:"manual-mixed",listen:"0.0.0.0",listen_port:30011},
+  {type:"resolved",tag:"typed-mixed",listen:"0.0.0.0",listen_port:30012}]' "${SINGBOX_CONFIG_FILE}" > "${TMP_DIR}/namespace-config"
+cp "${TMP_DIR}/namespace-config" "${SINGBOX_CONFIG_FILE}"
+plan=$(instance_firewall_plan_file "${SINGBOX_CONFIG_FILE}" '["manual-resolved"]')
+jq -e 'any(.[]; .owner=="manual-mixed" and .role=="service") and
+  any(.[]; .owner=="typed-mixed" and .role=="inbound") and
+  all(.[]; (.owner!="manual-mixed" or .role=="service") and
+    (.owner!="typed-mixed" or .role=="inbound") and .owner!="manual-resolved")' <<< "${plan}" >/dev/null
+cp "${TMP_DIR}/components.before" "${SB_COMPONENT_STATE_FILE}"
+cp "${TMP_DIR}/namespace.before" "${SINGBOX_CONFIG_FILE}"
 # The legacy apply path must use scoped reconciliation, never a broad allow
 # for a port also used by a manual listener on another local address.
 open_firewall_port() { printf 'unexpected broad allow\n' >> "${TMP_DIR}/broad"; }

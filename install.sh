@@ -10753,19 +10753,19 @@ managed_listener_plan_json() {
        [$components[] | select(.role == "inbound" and .type == $inbound.type) | . + {advanced:true}]) |
       require(length == 1) | .[0] as $entry |
       networks($inbound; $entry)[] |
-      {owner:$inbound.tag, protocol:($entry.state_id // $entry.type), address:($inbound.listen // "127.0.0.1"),
+      {owner:$inbound.tag, role:"inbound", protocol:($entry.state_id // $entry.type), address:($inbound.listen // "127.0.0.1"),
        transport:., port:$inbound.listen_port})
       ) +
       [($root.endpoints // [])[] | select((.listen_port // 0) > 0) |
-       {owner:.tag, protocol:(.type + "-endpoint"), address:(.listen // "0.0.0.0"),
+       {owner:.tag, role:"endpoint", protocol:(.type + "-endpoint"), address:(.listen // "0.0.0.0"),
         transport:(if .type == "openvpn-server" then (.network // "udp") else "udp" end),
         port:.listen_port}] +
       [($root.services // [])[] | . as $service |
-       {owner:$service.tag, protocol:("resolved-service"),
+       {owner:$service.tag, role:"service", protocol:("resolved-service"),
         address:(if (($service.listen // "") == "") then "127.0.0.53" else $service.listen end),
         transport:"tcp",
         port:(if (($service.listen_port // 0) == 0) then 53 else $service.listen_port end)},
-       {owner:$service.tag, protocol:("resolved-service"),
+       {owner:$service.tag, role:"service", protocol:("resolved-service"),
         address:(if (($service.listen // "") == "") then "127.0.0.53" else $service.listen end),
         transport:"udp",
         port:(if (($service.listen_port // 0) == 0) then 53 else $service.listen_port end)}]
@@ -10984,12 +10984,13 @@ instance_firewall_read_ledger() {
   instance_firewall_ledger_validate < "${ledger_file}"
 }
 
-managed_firewall_owner_tags_json() (
+managed_firewall_owners_json() (
   trap - EXIT ERR RETURN DEBUG
   local explicit=${1:-'[]'} tags protocols protocol state_file store_file instance_id tag instance_ids component_tags
-  tags=$(jq -ce 'select(type=="array" and all(.[]; type=="string" and length>0)) | unique' <<< "${explicit}") || return 1
+  tags=$(jq -ce 'select(type=="array" and all(.[]; type=="string" and length>0)) |
+    map({role:"inbound",tag:.}) | unique' <<< "${explicit}") || return 1
   component_tags=$(managed_component_state_json | jq -ce '[.components[] |
-    select(.enabled==true and (.role | IN("inbound","endpoint","service"))) | .tag]') || return 1
+    select(.enabled==true and (.role | IN("inbound","endpoint","service"))) | {role,tag}]') || return 1
   tags=$(jq -c --argjson components "${component_tags}" '. + $components' <<< "${tags}") || return 1
   protocols=$(list_indexed_protocols_raw) || return 1
   while IFS= read -r protocol; do
@@ -11003,7 +11004,7 @@ managed_firewall_owner_tags_json() (
         while IFS= read -r instance_id; do
           load_vless_reality_instance_state "${instance_id}" || return 1
           tag=$(vless_reality_inbound_tag_for_instance "${instance_id}") || return 1
-          tags=$(jq -c --arg tag "${tag}" '. + [$tag]' <<< "${tags}") || return 1
+          tags=$(jq -c --arg tag "${tag}" '. + [{role:"inbound",tag:$tag}]' <<< "${tags}") || return 1
         done <<< "${instance_ids}"
         continue
       fi
@@ -11013,21 +11014,22 @@ managed_firewall_owner_tags_json() (
         [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
         [[ "$(protocol_instance_state_schema "${protocol}")" == 2 ]] || return 1
         component_tags=$(jq -ce '.instances | select(type=="array") | [.[] | .tag, (.detour.tag? // empty)] |
-          select(all(.[]; type=="string" and length>0))' "${store_file}") || return 1
+          select(all(.[]; type=="string" and length>0)) | map({role:"inbound",tag:.})' "${store_file}") || return 1
         tags=$(jq -c --argjson instances "${component_tags}" '. + $instances' <<< "${tags}") || return 1
         continue
       fi
     fi
     tag=$(protocol_registry_field "${protocol}" default_tag) || return 1
-    tags=$(jq -c --arg tag "${tag}" '. + [$tag]' <<< "${tags}") || return 1
+    tags=$(jq -c --arg tag "${tag}" '. + [{role:"inbound",tag:$tag}]' <<< "${tags}") || return 1
   done <<< "${protocols}"
   jq -c 'unique' <<< "${tags}"
 )
 
 filter_owned_firewall_plan_json() {
   local plan=$1 explicit=${2:-'[]'} tags
-  tags=$(managed_firewall_owner_tags_json "${explicit}") || return 1
-  jq -c --argjson tags "${tags}" 'map(select(.owner as $owner | $tags | index($owner) != null))' <<< "${plan}"
+  tags=$(managed_firewall_owners_json "${explicit}") || return 1
+  jq -c --argjson owners "${tags}" 'map(select(. as $listener |
+    any($owners[]; .role == $listener.role and .tag == $listener.owner)))' <<< "${plan}"
 }
 
 instance_firewall_plan_file() {
@@ -19974,12 +19976,22 @@ merge_generated_config_with_live() {
       if type == "array" then map(if type == "object" then
         del(.name,.flow) | if has("uuid") then .alterId=(.alterId // 0) else . end
         else . end) else . end;
+    def bootstrap_security_options_match($model; $existing):
+      if ($model | type) == "object" and ($existing | type) == "object" then
+        all($model | keys[]; . as $key |
+          if $key == "insecure" then $model[$key] == ($existing[$key] // false)
+          else ($existing | has($key)) and
+            bootstrap_security_options_match($model[$key]; $existing[$key]) end)
+      else $model == $existing end;
     def bootstrap_sensitive_matches($model; $existing):
       if ($model | type) == "object" and ($existing | type) == "object" then
         all($model | keys[]; . as $key |
           if $key == "listen" then $model[$key] == ($existing[$key] // "127.0.0.1")
           elif $key == "listen_port" then $model[$key] == $existing[$key]
           elif $key == "users" then ($model[$key] | auth_users) == ($existing[$key] | auth_users)
+          elif ($key | IN("tls","transport","detour","network","udp_over_tcp") or
+              test("(^|_)(server|address|port|ports)($|_)")) then
+            bootstrap_security_options_match($model[$key]; $existing[$key])
           elif ($key | IN("username","uuid","psk","auth","auth_str","authentication","obfs","short_id") or
               test("(^|_)(password|passwords|passwd|passphrase|secret|token|key)($|_)")) then
             $model[$key] == $existing[$key]
@@ -20052,12 +20064,16 @@ merge_generated_config_with_live() {
     . as $live | $generated[0] as $next |
     (if $bootstrap then
       # Legacy installs have no baseline. Adopt only matching generated tags,
-      # using their live value as the old owned value. Other tags stay manual.
+      # using their live value as the old owned value. Outbound option drift
+      # stays a live override; security-sensitive drift is rejected first.
+      # Other tags stay manual.
       reduce ["inbounds","outbounds","endpoints","services","http_clients","certificate_providers","network_namespaces"][] as $field (seed_defaults($next; $live);
         if $live | has($field) then
           .[$field] = [$next[$field][]? as $record | $live[$field][]? | select(.tag == $record.tag) |
           if (.type // "shared") == ($record.type // "shared") and bootstrap_sensitive_matches($record; .)
-          then seed_record($record; .) else collision end]
+          then if $field == "outbounds" then seed_defaults($record; .)
+            else seed_record($record; .) end
+          else collision end]
         else del(.[$field]) end) |
       if $live | has("dns") then
         # A legacy DNS tag does not prove ownership of its live settings.

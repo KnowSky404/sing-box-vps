@@ -125,21 +125,21 @@ jq -n --arg secret "${SECRET}" '
 expect_accept base "${base_config}"
 jq -e '
   length == 4 and
-  .[0] == {owner:"mixed-default",protocol:"mixed",address:"127.0.0.1",family:"ipv4",transport:"tcp",port:21001,dual_stack:false} and
-  .[1] == {owner:"vless-ipv6",protocol:"vless-reality",address:"0000:0000:0000:0000:0000:0000:0000:0001",family:"ipv6",transport:"tcp",port:21002,dual_stack:false} and
-  .[2] == {owner:"anytls-ipv6",protocol:"anytls",address:"2001:0db8:0000:0000:0000:0000:0000:00ab",family:"ipv6",transport:"tcp",port:21003,dual_stack:false} and
-  .[3] == {owner:"hy2-udp",protocol:"hy2",address:"0.0.0.0",family:"ipv4",transport:"udp",port:21004,dual_stack:false}
+  .[0] == {role:"inbound",owner:"mixed-default",protocol:"mixed",address:"127.0.0.1",family:"ipv4",transport:"tcp",port:21001,dual_stack:false} and
+  .[1] == {role:"inbound",owner:"vless-ipv6",protocol:"vless-reality",address:"0000:0000:0000:0000:0000:0000:0000:0001",family:"ipv6",transport:"tcp",port:21002,dual_stack:false} and
+  .[2] == {role:"inbound",owner:"anytls-ipv6",protocol:"anytls",address:"2001:0db8:0000:0000:0000:0000:0000:00ab",family:"ipv6",transport:"tcp",port:21003,dual_stack:false} and
+  .[3] == {role:"inbound",owner:"hy2-udp",protocol:"hy2",address:"0.0.0.0",family:"ipv4",transport:"udp",port:21004,dual_stack:false}
 ' "${TMP_DIR}/base.plan.json" >/dev/null
 
 jq '.inbounds=[{type:"mixed",tag:"mapped-ipv6",listen:"::ffff:192.0.2.7",listen_port:21005}]' \
   "${base_config}" >"${TMP_DIR}/mapped.json"
 expect_accept mapped "${TMP_DIR}/mapped.json"
-jq -e '.[0] == {owner:"mapped-ipv6",protocol:"mixed",address:"192.0.2.7",family:"ipv4",transport:"tcp",port:21005,dual_stack:false}' \
+jq -e '.[0] == {role:"inbound",owner:"mapped-ipv6",protocol:"mixed",address:"192.0.2.7",family:"ipv4",transport:"tcp",port:21005,dual_stack:false}' \
   "${TMP_DIR}/mapped.plan.json" >/dev/null
 jq '.inbounds=[{type:"mixed",tag:"mapped-ipv6-full",listen:"0:0:0:0:0:ffff:192.0.2.7",listen_port:21006}]' \
   "${base_config}" >"${TMP_DIR}/mapped-full.json"
 expect_accept mapped-full "${TMP_DIR}/mapped-full.json"
-jq -e '.[0] == {owner:"mapped-ipv6-full",protocol:"mixed",address:"192.0.2.7",family:"ipv4",transport:"tcp",port:21006,dual_stack:false}' \
+jq -e '.[0] == {role:"inbound",owner:"mapped-ipv6-full",protocol:"mixed",address:"192.0.2.7",family:"ipv4",transport:"tcp",port:21006,dual_stack:false}' \
   "${TMP_DIR}/mapped-full.plan.json" >/dev/null
 
 invalid_index=0
