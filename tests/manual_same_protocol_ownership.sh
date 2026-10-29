@@ -114,6 +114,52 @@ for protocol in mixed socks http; do
     wait "${server_pid}" || [[ $? == 143 ]]
     server_pid=""
   fi
+  if [[ "${protocol}" == mixed ]]; then
+    # Simulate a pre-baseline operator disabling egress by deleting the
+    # per-instance direct rule and selecting an unavailable local proxy.
+    rm "${SB_PROJECT_DIR}/managed-config.generated.json"
+    jq --arg tag "owned-mixed" '.outbounds += [{type:"socks",tag:"blocked",server:"127.0.0.1",server_port:19999}] |
+      .route.final="blocked" | .route.rules |= map(select((.inbound==$tag and .action=="route")|not))' \
+      "${SINGBOX_CONFIG_FILE}" > "${TMP_DIR}/disabled.json"
+    cp "${TMP_DIR}/disabled.json" "${SINGBOX_CONFIG_FILE}"
+    "${core}" check -c "${SINGBOX_CONFIG_FILE}"
+    generate_config >"${TMP_DIR}/disabled-generate.log"
+    jq -e '.route.final=="blocked" and all(.route.rules[]?;
+      (.inbound!="owned-mixed" or .action!="route"))' "${SINGBOX_CONFIG_FILE}" >/dev/null
+    "${core}" check -c "${SINGBOX_CONFIG_FILE}"
+    if [[ "${runtime}" == 1 ]]; then
+      "${core}" run -c "${SINGBOX_CONFIG_FILE}" >"${TMP_DIR}/disabled-runtime.log" 2>&1 &
+      server_pid=$!
+      for ((attempt=0; attempt<50; attempt++)); do
+        if ss -ltn | grep -Fq "0.0.0.0:${managed_port}"; then break; fi
+        sleep 0.1
+      done
+      ss -ltn | grep -Fq "0.0.0.0:${managed_port}"
+      if curl --silent --show-error --fail --max-time 5 --noproxy '' \
+        --proxy "http://${container_ip}:${managed_port}" --proxy-user fixture-user:fixture-password \
+        http://127.0.0.1:19081/marker.txt >"${TMP_DIR}/disabled-transfer" 2>"${TMP_DIR}/disabled-curl.log"; then
+        printf 'deleted egress rule was restored\n' >&2; exit 1
+      fi
+      grep -Fq '127.0.0.1:19999' "${TMP_DIR}/disabled-runtime.log"
+      assert_manual_blocked
+      kill "${server_pid}"
+      wait "${server_pid}" || [[ $? == 143 ]]
+      server_pid=""
+    fi
+    printf 'deleted-route egress remains disabled; runtime=%s\n' "${runtime}"
+    rm "${SB_PROJECT_DIR}/managed-config.generated.json"
+    jq '.inbounds |= map(select(.tag!="owned-mixed")) |
+      .route.rules |= map(select(.inbound!="owned-mixed"))' "${SINGBOX_CONFIG_FILE}" > "${TMP_DIR}/deleted-listener.json"
+    cp "${TMP_DIR}/deleted-listener.json" "${SINGBOX_CONFIG_FILE}"
+    cp "${store}" "${TMP_DIR}/deleted-listener.store"
+    "${core}" check -c "${SINGBOX_CONFIG_FILE}"
+    if generate_config >"${TMP_DIR}/deleted-listener.out" 2>"${TMP_DIR}/deleted-listener.err"; then
+      printf 'deleted managed listener was recreated\n' >&2; exit 1
+    fi
+    cmp "${SINGBOX_CONFIG_FILE}" "${TMP_DIR}/deleted-listener.json"
+    cmp "${store}" "${TMP_DIR}/deleted-listener.store"
+    [[ ! -e "${SB_PROJECT_DIR}/managed-config.generated.json" ]]
+  fi
   printf 'protocol=%s owned=1 manual-excluded=yes runtime=%s\n' "${protocol}" "${runtime}"
 done
 # A singleton legacy Mixed state owns its reserved tag, not every Mixed

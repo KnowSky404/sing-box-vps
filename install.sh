@@ -20101,8 +20101,19 @@ merge_generated_config_with_live() {
               .seen += [$key] | .rules += [$merged[$key] // empty] end) | .rules
         end
       else collision end;
-    . as $live | $generated[0] as $next |
+    $generated[0] as $next |
+    # Missing rules mean no rules. An omitted final uses the first outbound,
+    # not the stale state final; make that existing fallback explicit.
+    (if $bootstrap and ($next.route | type)=="object" then
+      .route=(.route // {}) | .route.rules=(.route.rules // []) |
+      if (.route.final // "")=="" and (.outbounds[0].tag | type)=="string" and
+         (.outbounds[0].tag | length)>0 then .route.final=.outbounds[0].tag else . end
+    else . end) as $live |
     (if $bootstrap then
+      # Existing state cannot silently recreate an operator-deleted listener.
+      # New listeners must establish the old baseline before changing state.
+      if any($next.inbounds[]?; .tag as $tag |
+        any($live.inbounds[]?; .tag==$tag) | not) then collision else . end |
       # Legacy installs have no baseline. Adopt only matching generated tags,
       # seeding generated defaults only where live fields exist. Live option
       # drift stays an operator override; sensitive drift is rejected first.
@@ -20122,11 +20133,9 @@ merge_generated_config_with_live() {
             $live.dns.servers[]? | select(.tag == $server.tag) | $server]
         else del(.dns.servers) end
       else del(.dns) end |
-      if $live | has("route") then
-        if $live.route | has("rules") then
-          .route.rules = [($next.route.rules // [])[] as $rule | $live.route.rules[]? | select(. == $rule)]
-        else del(.route.rules) end
-      else del(.route) end |
+      # Keep generated routing policy as the old baseline. A live deletion
+      # must never turn a stale permission rule into an apparently new rule.
+      if $next | has("route") then .route=$next.route else del(.route) end |
       with_entries(select(.key as $key | $live | has($key)))
     else $baseline[0] end) as $base |
     merge($base; $live; $next)
@@ -20500,8 +20509,7 @@ managed_component_state_apply() {
     MANAGED_COMPONENT_LAST_ERROR=config_check_failed
     return 1
   fi
-  if [[ ! -e "${SB_PROJECT_DIR}/managed-config.generated.json" ]] &&
-     jq -e '.components | length > 0' <<< "${state}" >/dev/null; then
+  if [[ ! -e "${SB_PROJECT_DIR}/managed-config.generated.json" && -f "${SINGBOX_CONFIG_FILE}" ]]; then
     if ! ensure_existing_generated_config_baseline; then
       managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "旧组件生成基线无法建立" || :
       MANAGED_COMPONENT_LAST_ERROR=component_transaction_write_failed
