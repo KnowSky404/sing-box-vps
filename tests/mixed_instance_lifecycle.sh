@@ -487,6 +487,19 @@ rm -f -- "${SB_PROTOCOL_STATE_DIR}/instances/mixed.json"
 printf '%s\n' INSTALLED=1 CONFIG_SCHEMA_VERSION=1 NODE_NAME=legacy PORT=2083 \
   AUTH_ENABLED=y USERNAME=public-user PASSWORD=public-password \
   > "${SB_PROTOCOL_STATE_DIR}/mixed.env"
+# A schema-1 record has no custom-tag ownership metadata. It must not claim
+# the former typed public tag just because its protocol happens to match.
+cp "${SINGBOX_CONFIG_FILE}" "${TMP_DIR}/unowned-legacy.before.json"
+cp "${SB_PROTOCOL_STATE_DIR}/mixed.env" "${TMP_DIR}/unowned-legacy.before.env"
+expect_failure unowned_legacy_custom_tag delete mixed --json --yes --expected-revision 0 --id main
+cmp "${SINGBOX_CONFIG_FILE}" "${TMP_DIR}/unowned-legacy.before.json"
+cmp "${SB_PROTOCOL_STATE_DIR}/mixed.env" "${TMP_DIR}/unowned-legacy.before.env"
+# Build a representable singleton legacy fixture using its reserved tag.
+legacy_tag=$(jq -r '.tag' "${TMP_DIR}/public.json")
+jq --arg old "${legacy_tag}" '(.inbounds[] | select(.tag==$old).tag)="mixed-in" |
+  .route.rules |= map(if .inbound==$old then .inbound="mixed-in" else . end)' \
+  "${SINGBOX_CONFIG_FILE}" > "${TMP_DIR}/reserved-legacy.json"
+cp "${TMP_DIR}/reserved-legacy.json" "${SINGBOX_CONFIG_FILE}"
 expect_success delete_legacy_directly 1 delete mixed --json --yes --expected-revision 0 --id main >/dev/null
 jq -e '.revision==1 and .instances==[]' "${SB_PROTOCOL_STATE_DIR}/instances/mixed.json" >/dev/null
 [[ ! -e "${SB_PROTOCOL_STATE_DIR}/mixed.env" ]]
