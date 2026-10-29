@@ -15,7 +15,7 @@ refresh_warp_route_assets() {
 ensure_stack_mode_state_loaded() { :; }
 mkdir -p "${SB_PROTOCOL_STATE_DIR}"
 set_protocol_defaults mixed
-SB_PORT=18080 SB_MIXED_AUTH_ENABLED=n SB_ADVANCED_ROUTE=n SB_ENABLE_WARP=n
+SB_PORT=18080 SB_MIXED_AUTH_ENABLED=y SB_MIXED_USERNAME=managed-user SB_MIXED_PASSWORD=managed-secret SB_ADVANCED_ROUTE=n SB_ENABLE_WARP=n
 save_mixed_state
 write_protocol_index mixed
 generate_config >"${TMP_DIR}/initial.log"
@@ -36,6 +36,16 @@ jq '(.outbounds[]|select(.tag=="direct").bind_interface)="lo" |
 cp "${TMP_DIR}/custom.json" "${SINGBOX_CONFIG_FILE}"
 "${core}" check -c "${SINGBOX_CONFIG_FILE}"
 [[ "$(list_config_protocols)" == mixed ]]
+# A live-only credential rotation must never be reverted from stale state
+# while establishing the first baseline, even alongside manual extensions.
+jq '(.inbounds[]|select(.tag=="mixed-in").users[0].password)="rotated-secret"' \
+  "${SINGBOX_CONFIG_FILE}" >"${TMP_DIR}/rotated.json"
+cp "${TMP_DIR}/rotated.json" "${SINGBOX_CONFIG_FILE}"
+if generate_config >"${TMP_DIR}/rotated.out" 2>"${TMP_DIR}/rotated.err"; then exit 1; fi
+cmp "${TMP_DIR}/rotated.json" "${SINGBOX_CONFIG_FILE}"
+[[ ! -e "${baseline}" ]]
+if grep -Eq 'managed-secret|rotated-secret' "${TMP_DIR}/rotated.out" "${TMP_DIR}/rotated.err"; then exit 1; else [[ "$?" == 1 ]]; fi
+cp "${TMP_DIR}/custom.json" "${SINGBOX_CONFIG_FILE}"
 generate_config >"${TMP_DIR}/legacy.log"
 assert_manual_unchanged() {
   jq -S '{dns,experimental,client:[.inbounds[]|select(.tag=="manual-client" or .tag=="manual-socks")],
@@ -149,6 +159,12 @@ printf '{"inbounds":[{"type":"mixed","tag":"shared","users":[{"username":"u","pa
 printf '{"inbounds":[{"type":"mixed","tag":"shared","users":[{"username":"u","password":"new"}]}]}' >"${TMP_DIR}/auth.next"
 chmod 600 "${TMP_DIR}/auth.base"
 if merge_generated_config_with_live "${TMP_DIR}/auth.next" "${TMP_DIR}/auth.live" "${TMP_DIR}/auth.base" >"${TMP_DIR}/result" 2>/dev/null; then exit 1; fi
+if merge_generated_config_with_live "${TMP_DIR}/auth.next" "${TMP_DIR}/auth.live" "${TMP_DIR}/no-baseline" >"${TMP_DIR}/result" 2>/dev/null; then exit 1; fi
+for credential in password uuid psk auth auth_str short_id mac_key api_token private_key; do
+  jq -n --arg credential "${credential}" '{inbounds:[{type:"mixed",tag:"owned",($credential):"revoked"}]}' >"${TMP_DIR}/credential.next"
+  jq -n --arg credential "${credential}" '{inbounds:[{type:"mixed",tag:"owned",($credential):"replacement"}]}' >"${TMP_DIR}/credential.live"
+  if merge_generated_config_with_live "${TMP_DIR}/credential.next" "${TMP_DIR}/credential.live" "${TMP_DIR}/no-baseline" >"${TMP_DIR}/result" 2>/dev/null; then exit 1; fi
+done
 printf '{"inbounds":[],"route":{"rules":[{"inbound":"owned","action":"route","outbound":"direct"}]}}' >"${TMP_DIR}/rule.base"
 printf '{"inbounds":[],"route":{"rules":[{"inbound":"owned","action":"route","outbound":"manual"}]}}' >"${TMP_DIR}/rule.live"
 printf '{"inbounds":[],"route":{"rules":[{"inbound":"owned","action":"route","outbound":"warp-ep"}]}}' >"${TMP_DIR}/rule.next"
