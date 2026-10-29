@@ -30,4 +30,11 @@ for ((attempt=0; attempt<100; attempt++)); do [[ ! -f "${TMP_DIR}/ready" ]] || b
 kill -TERM "$(cat "${TMP_DIR}/ready")"
 wait "${wrapper}" && exit 1 || [[ $? == 143 ]]
 [[ "$(cat "${TMP_DIR}/rollback")" == rolled-back ]]
+# A caller cleanup trap must run once in its owner, never in the timer.
+(
+  trap 'printf "%s\n" caller-cleanup >> "${TMP_DIR}/caller-exit"' EXIT
+  run_with_progress 'EXIT 隔离测试' sleep 2 >"${TMP_DIR}/exit.out" 2>"${TMP_DIR}/exit.err"
+  [[ ! -e "${TMP_DIR}/caller-exit" ]]
+)
+[[ "$(wc -l < "${TMP_DIR}/caller-exit")" == 1 ]]
 printf 'operation progress: heartbeat, stdout, exit status, stdin and signal cleanup passed\n'

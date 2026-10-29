@@ -254,6 +254,14 @@ KEY_PATH=
 EOF
 rm -f "${SB_PROTOCOL_STATE_DIR}/vless-reality.env" "${SB_PROTOCOL_STATE_DIR}/mixed.env"
 
+# This case verifies the preserving generator boundary, not the earlier
+# fixture generator that intentionally replaces the whole configuration.
+generate_config() {
+  local current_count
+  current_count=$(cat "${GENERATE_CONFIG_COUNT_FILE}")
+  printf '%s\n' "$((current_count + 1))" > "${GENERATE_CONFIG_COUNT_FILE}"
+  return 1
+}
 printf '0\n' > "${GENERATE_CONFIG_COUNT_FILE}"
 protected_config_hash=$(sha256sum "${SINGBOX_CONFIG_FILE}" | awk '{print $1}')
 state=$(detect_existing_instance_state)
