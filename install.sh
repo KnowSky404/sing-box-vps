@@ -19878,12 +19878,20 @@ merge_generated_config_with_live() {
         reduce (($base + $live + $next) | keys[]) as $key ({};
           if ($base | has($key)) then
             if ($next | has($key) | not) then
-              if ($live | has($key)) and $live[$key] != $base[$key] then collision else . end
+              if ($live | has($key)) then
+                if ($base[$key] | tagged) and ($live[$key] | tagged) then
+                  merge($base[$key]; $live[$key]; []) as $remaining |
+                  if ($remaining | length) > 0 then .[$key] = $remaining else . end
+                elif $live[$key] != $base[$key] then collision else . end
+              else . end
             elif ($live | has($key) | not) then
               if $next[$key] == $base[$key] then . else collision end
             else .[$key] = merge($base[$key]; $live[$key]; $next[$key]) end
           elif ($live | has($key)) and ($next | has($key)) then
-            if $live[$key] == $next[$key] then .[$key] = $live[$key] else collision end
+            if $live[$key] == $next[$key] then .[$key] = $live[$key]
+            elif ($live[$key] | tagged) and ($next[$key] | tagged) then
+              .[$key] = merge([]; $live[$key]; $next[$key])
+            else collision end
           elif ($next | has($key)) then .[$key] = $next[$key]
           else .[$key] = $live[$key] end)
       elif ($base | tagged) and ($live | tagged) and ($next | tagged) then

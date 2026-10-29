@@ -105,6 +105,36 @@ managed_component_state_apply delete 1 "" owned n >"${TMP_DIR}/component-delete.
 jq -e 'all(.outbounds[]; .tag!="owned-extra")' "${SINGBOX_CONFIG_FILE}" >/dev/null
 [[ "$(assert_manual_unchanged "${SINGBOX_CONFIG_FILE}")" == "$(assert_manual_unchanged "${TMP_DIR}/custom.json")" ]]
 "${core}" check -c "${SINGBOX_CONFIG_FILE}"
+# The first managed optional collection coexists with an existing manual
+# client, and deleting the final managed entry keeps the manual collection.
+jq '.http_clients=[{tag:"manual-http",engine:"go"}]' "${SINGBOX_CONFIG_FILE}" >"${TMP_DIR}/first-http.json"
+cp "${TMP_DIR}/first-http.json" "${SINGBOX_CONFIG_FILE}"
+jq -n '{id:"first-http",role:"http_client",type:"shared",tag:"managed-http",enabled:true,
+  config:{engine:"go"},route_rules:[]}' >"${TMP_DIR}/first-http-record.json"
+managed_component_state_apply create 2 "${TMP_DIR}/first-http-record.json" "" n >"${TMP_DIR}/http-create.out" 2>"${TMP_DIR}/http-create.err"
+jq -e '.http_clients==[{tag:"manual-http",engine:"go"},{tag:"managed-http",engine:"go"}]' "${SINGBOX_CONFIG_FILE}" >/dev/null
+"${core}" check -c "${SINGBOX_CONFIG_FILE}"
+managed_component_state_apply delete 3 "" first-http n >"${TMP_DIR}/http-delete.out" 2>"${TMP_DIR}/http-delete.err"
+jq -e '.http_clients==[{tag:"manual-http",engine:"go"}]' "${SINGBOX_CONFIG_FILE}" >/dev/null
+"${core}" check -c "${SINGBOX_CONFIG_FILE}"
+# Optional tag collections use an empty absent baseline, but retain strict
+# same-tag collision handling and remove only the last owned object.
+for field in http_clients services certificate_providers network_namespaces endpoints; do
+  printf '{"inbounds":[]}' >"${TMP_DIR}/optional.base"
+  jq -n --arg field "${field}" '{inbounds:[],($field):[{tag:"manual",value:1}]}' >"${TMP_DIR}/optional.live"
+  jq -n --arg field "${field}" '{inbounds:[],($field):[{tag:"managed",value:2}]}' >"${TMP_DIR}/optional.next"
+  chmod 600 "${TMP_DIR}/optional.base"
+  merge_generated_config_with_live "${TMP_DIR}/optional.next" "${TMP_DIR}/optional.live" "${TMP_DIR}/optional.base" >"${TMP_DIR}/optional.result"
+  jq -e --arg field "${field}" '.[$field]==[{tag:"manual",value:1},{tag:"managed",value:2}]' "${TMP_DIR}/optional.result" >/dev/null
+  cp "${TMP_DIR}/optional.next" "${TMP_DIR}/optional.base"
+  cp "${TMP_DIR}/optional.result" "${TMP_DIR}/optional.live"
+  printf '{"inbounds":[]}' >"${TMP_DIR}/optional.next"
+  merge_generated_config_with_live "${TMP_DIR}/optional.next" "${TMP_DIR}/optional.live" "${TMP_DIR}/optional.base" >"${TMP_DIR}/optional.result"
+  jq -e --arg field "${field}" '.[$field]==[{tag:"manual",value:1}]' "${TMP_DIR}/optional.result" >/dev/null
+  printf '{"inbounds":[]}' >"${TMP_DIR}/optional.base"
+  jq -n --arg field "${field}" '{inbounds:[],($field):[{tag:"manual",value:2}]}' >"${TMP_DIR}/optional.next"
+  if merge_generated_config_with_live "${TMP_DIR}/optional.next" "${TMP_DIR}/optional.live" "${TMP_DIR}/optional.base" >"${TMP_DIR}/optional.result" 2>/dev/null; then exit 1; fi
+done
 # New tags may not steal a pre-existing manual component of the same name.
 printf '{"inbounds":[],"outbounds":[{"type":"direct","tag":"shared"}]}' >"${TMP_DIR}/base.json"
 printf '{"inbounds":[],"outbounds":[{"type":"direct","tag":"shared"},{"type":"direct","tag":"manual"}]}' >"${TMP_DIR}/live.json"
