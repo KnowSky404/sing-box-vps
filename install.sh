@@ -19989,6 +19989,8 @@ merge_generated_config_with_live() {
           if $key == "listen" then $model[$key] == ($existing[$key] // "127.0.0.1")
           elif $key == "listen_port" then $model[$key] == $existing[$key]
           elif $key == "users" then ($model[$key] | auth_users) == ($existing[$key] | auth_users)
+          elif $key == "strict_mode" then $model[$key] == ($existing[$key] // false)
+          elif $key == "wildcard_sni" then $model[$key] == ($existing[$key] // "off")
           elif ($key | IN("tls","transport","detour","network","udp_over_tcp") or
               test("(^|_)(server|address|port|ports)($|_)")) then
             bootstrap_security_options_match($model[$key]; $existing[$key])
@@ -20004,13 +20006,14 @@ merge_generated_config_with_live() {
     def seed_defaults($model; $existing):
       if ($model | type) == "object" and ($existing | type) == "object" then
         reduce ($model | keys[]) as $key ({};
-          if $existing | has($key) then .[$key] = seed_defaults($model[$key]; $existing[$key]) else . end)
+          if $existing | has($key) then
+            if $key == "users" and ($model[$key] | type) == "array" and
+               ($existing[$key] | type) == "array" and
+               ($model[$key] | auth_users) == ($existing[$key] | auth_users)
+            then .[$key] = $existing[$key]
+            else .[$key] = seed_defaults($model[$key]; $existing[$key]) end
+          else . end)
       else $model end;
-    def seed_record($model; $existing):
-      if ($model | type) == "object" and ($existing | type) == "object" then
-        reduce ($model | keys[]) as $key ({};
-          if $existing | has($key) then .[$key] = seed_record($model[$key]; $existing[$key]) else . end)
-      else $existing end;
     def merge($base; $live; $next):
       if $live == $base or $live == $next then $next
       elif $next == $base then $live
@@ -20064,16 +20067,15 @@ merge_generated_config_with_live() {
     . as $live | $generated[0] as $next |
     (if $bootstrap then
       # Legacy installs have no baseline. Adopt only matching generated tags,
-      # using their live value as the old owned value. Outbound option drift
-      # stays a live override; security-sensitive drift is rejected first.
-      # Other tags stay manual.
+      # seeding generated defaults only where live fields exist. Live option
+      # drift stays an operator override; sensitive drift is rejected first.
+      # Credential-equivalent user metadata may normalize to generated form.
+      # Never adopt other changed live options as proof that stale state owns it.
       reduce ["inbounds","outbounds","endpoints","services","http_clients","certificate_providers","network_namespaces"][] as $field (seed_defaults($next; $live);
         if $live | has($field) then
           .[$field] = [$next[$field][]? as $record | $live[$field][]? | select(.tag == $record.tag) |
           if (.type // "shared") == ($record.type // "shared") and bootstrap_sensitive_matches($record; .)
-          then if $field == "outbounds" then seed_defaults($record; .)
-            else seed_record($record; .) end
-          else collision end]
+          then seed_defaults($record; .) else collision end]
         else del(.[$field]) end) |
       if $live | has("dns") then
         # A legacy DNS tag does not prove ownership of its live settings.

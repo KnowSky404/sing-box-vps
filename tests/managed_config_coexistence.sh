@@ -209,6 +209,27 @@ printf '{"inbounds":[],"outbounds":[{"type":"selector","tag":"owned","outbounds"
 printf '{"inbounds":[],"outbounds":[{"type":"selector","tag":"owned","outbounds":["new"],"default":"new","interrupt_exist_connections":true}]}' > "${TMP_DIR}/security.live"
 merge_generated_config_with_live "${TMP_DIR}/security.next" "${TMP_DIR}/security.live" "${TMP_DIR}/no-baseline" >"${TMP_DIR}/result"
 [[ "$(jq -c . "${TMP_DIR}/security.live")" == "$(jq -c . "${TMP_DIR}/result")" ]]
+# ShadowTLS hardening must not reopen wildcard unauthenticated forwarding.
+for change in '.strict_mode=true' '.wildcard_sni="off"' '.strict_mode=true | .wildcard_sni="off"'; do
+  jq -n '{inbounds:[{type:"shadowtls",tag:"owned",listen:"127.0.0.1",listen_port:18444,
+    version:3,users:[{name:"test",password:"shadow-secret"}],handshake:{server:"cover.example.com",server_port:443},
+    strict_mode:false,wildcard_sni:"all",detour:"inner"},
+    {type:"http",tag:"inner",listen:"127.0.0.1",listen_port:18445}],
+    outbounds:[{type:"direct",tag:"direct"}]}' > "${TMP_DIR}/policy.next"
+  jq ".inbounds[0] |= (${change}) | .experimental={cache_file:{enabled:false}}" \
+    "${TMP_DIR}/policy.next" > "${TMP_DIR}/policy.live"
+  "${core}" check -c "${TMP_DIR}/policy.next"
+  "${core}" check -c "${TMP_DIR}/policy.live"
+  if merge_generated_config_with_live "${TMP_DIR}/policy.next" "${TMP_DIR}/policy.live" "${TMP_DIR}/no-baseline" >"${TMP_DIR}/result" 2>/dev/null; then exit 1; fi
+done
+# Modelled live options are never adopted as an old baseline then overwritten,
+# even for an option outside the explicitly rejected security fields.
+for field in inbounds endpoints services; do
+  jq -n --arg field "${field}" '{inbounds:[],($field):[{tag:"owned",tcp_fast_open:false}]}' > "${TMP_DIR}/policy.next"
+  jq --arg field "${field}" '.[$field][0].tcp_fast_open=true' "${TMP_DIR}/policy.next" > "${TMP_DIR}/policy.live"
+  merge_generated_config_with_live "${TMP_DIR}/policy.next" "${TMP_DIR}/policy.live" "${TMP_DIR}/no-baseline" >"${TMP_DIR}/result"
+  [[ "$(jq -c . "${TMP_DIR}/policy.live")" == "$(jq -c . "${TMP_DIR}/result")" ]]
+done
 for credential in password uuid psk auth auth_str short_id mac_key api_token private_key; do
   jq -n --arg credential "${credential}" '{inbounds:[{type:"mixed",tag:"owned",($credential):"revoked"}]}' >"${TMP_DIR}/credential.next"
   jq -n --arg credential "${credential}" '{inbounds:[{type:"mixed",tag:"owned",($credential):"replacement"}]}' >"${TMP_DIR}/credential.live"
