@@ -16,6 +16,10 @@ generate_config() {
   local current_count
   current_count=$(cat "${GENERATE_CONFIG_COUNT_FILE}")
   printf '%s\n' "$((current_count + 1))" > "${GENERATE_CONFIG_COUNT_FILE}"
+  # Model the baseline persisted by a successful real generation, so only
+  # the first legacy removal needs the additional pre-change generation.
+  printf '{}' > "${SB_PROJECT_DIR}/managed-config.generated.json"
+  chmod 600 "${SB_PROJECT_DIR}/managed-config.generated.json"
 }
 
 setup_service() { :; }
@@ -151,8 +155,8 @@ grep -Fq 'INSTALLED_PROTOCOLS=vless-reality,hy2' "${SB_PROTOCOL_INDEX_FILE}"
 test -f "${TMP_DIR}/qos.called"
 grep -Fqx '8443' "${TMP_DIR}/closed-ports"
 
-if [[ "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" != "1" ]]; then
-  printf 'expected remove flow to regenerate config exactly once, got %s\n' "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" >&2
+if [[ "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" != "2" ]]; then
+  printf 'expected legacy baseline generation plus one remove regeneration, got %s\n' "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" >&2
   exit 1
 fi
 
@@ -252,7 +256,7 @@ grep -Fq 'INSTANCE_IDS=main' "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"
 grep -Fq 'INSTALLED_PROTOCOLS=vless-reality' "${SB_PROTOCOL_INDEX_FILE}"
 test -f "${TMP_DIR}/qos.called"
 
-if [[ "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" != "3" ]]; then
-  printf 'expected all removal flows to regenerate config exactly once, got %s total\n' "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" >&2
+if [[ "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" != "4" ]]; then
+  printf 'expected one legacy baseline plus three removal regenerations, got %s total\n' "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" >&2
   exit 1
 fi

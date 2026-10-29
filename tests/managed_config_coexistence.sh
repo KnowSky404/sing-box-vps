@@ -66,6 +66,19 @@ rebuild_protocol_state_from_config
 [[ ! -e "$(protocol_state_file socks)" ]]
 [[ "$(list_indexed_protocols_raw)" == mixed ]]
 [[ "$(assert_manual_unchanged "${SINGBOX_CONFIG_FILE}")" == "$(assert_manual_unchanged "${TMP_DIR}/custom.json")" ]]
+# A valid operator-owned HTTP client is retained, while dangling references
+# and unsupported endpoint types still fail the inventory boundary.
+cp "${SINGBOX_CONFIG_FILE}" "${TMP_DIR}/before-client-guards.json"
+jq '.http_clients=[{tag:"manual-http",engine:"go"}] | .route.default_http_client="manual-http"' \
+  "${SINGBOX_CONFIG_FILE}" >"${TMP_DIR}/manual-http.json"
+cp "${TMP_DIR}/manual-http.json" "${SINGBOX_CONFIG_FILE}"
+managed_component_state_matches_live_config "${SINGBOX_CONFIG_FILE}"
+"${core}" check -c "${SINGBOX_CONFIG_FILE}"
+jq '.route.default_http_client="missing-http"' "${SINGBOX_CONFIG_FILE}" >"${TMP_DIR}/dangling-http.json"
+if managed_component_state_matches_live_config "${TMP_DIR}/dangling-http.json"; then exit 1; fi
+jq '.endpoints=[{type:"future-endpoint",tag:"unsupported"}]' "${SINGBOX_CONFIG_FILE}" >"${TMP_DIR}/unknown-endpoint.json"
+if managed_component_state_matches_live_config "${TMP_DIR}/unknown-endpoint.json"; then exit 1; fi
+cp "${TMP_DIR}/before-client-guards.json" "${SINGBOX_CONFIG_FILE}"
 # A component create may not claim an existing operator-owned outbound.
 jq -n '{id:"claim-manual",role:"outbound",type:"socks",tag:"manual-proxy",enabled:true,
   config:{server:"127.0.0.1",server_port:19090},route_rules:[]}' >"${TMP_DIR}/claim.json"

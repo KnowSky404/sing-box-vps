@@ -2655,6 +2655,9 @@ generate_config() {
     --argjson route_rules "${route_rules}" \
     '{inbounds:$inbounds,endpoints:$endpoints,outbounds:([{type:"direct",tag:"direct"},{type:"block",tag:"block"}] + $outbounds),route:{final:"direct",rules:$route_rules}}' \
     > "${SINGBOX_CONFIG_FILE}"
+  # Successful real generation now persists its ownership baseline as well.
+  cp "${SINGBOX_CONFIG_FILE}" "${SB_PROJECT_DIR}/managed-config.generated.json"
+  chmod 600 "${SB_PROJECT_DIR}/managed-config.generated.json"
 }
 
 generate_config

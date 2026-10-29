@@ -513,35 +513,65 @@ log_error() {
 # Keep stdout available for JSON/command substitution. Labels are fixed caller
 # text: never echo command arguments, URLs, credentials or provider responses.
 run_with_progress() {
-  local label=$1 status=0 timer elapsed=0 interval=${SB_PROGRESS_INTERVAL_SECONDS:-5}
+  local label=$1 status=0 timer interval=${SB_PROGRESS_INTERVAL_SECONDS:-5}
   local progress_owner=${BASHPID:-$$}
   shift
   [[ "${interval}" =~ ^[1-9][0-9]*$ ]] || interval=5
   printf '[INFO] %s：开始。\n' "${label}" >&2
-  (
-    # A timer must never retain the caller transaction lock. Keep the command
-    # in the foreground so its state, stdin, exit/signal and recovery traps
-    # keep their existing semantics.
-    if [[ "${SB_MANAGEMENT_LOCK_FD:-}" =~ ^[0-9]+$ ]]; then
-      exec {SB_MANAGEMENT_LOCK_FD}>&-
+  # A fresh Bash prevents the timer from inheriting a caller EXIT trap (for
+  # example transaction rollback or the installer's private-directory cleanup).
+  # Wait on a private ready pipe before a fast command can terminate it.
+  # Its argv contains only the fixed label, interval and process/descriptor IDs.
+  local progress_ready_fd progress_ready
+  exec {progress_ready_fd}< <(
+    trap - EXIT ERR RETURN DEBUG
+    BASH_ENV=/dev/null exec "${BASH}" --noprofile --norc -s -- \
+    "${progress_owner}" "${interval}" "${label}" "${SB_MANAGEMENT_LOCK_FD:-}" <<'SBV_PROGRESS_TIMER'
+  set -euo pipefail
+  PROGRESS_OWNER=$1
+  PROGRESS_INTERVAL=$2
+  PROGRESS_LABEL=$3
+  PROGRESS_LOCK_FD=${4:-}
+  PROGRESS_ELAPSED=0
+  PROGRESS_SLEEPER=""
+  if [[ "${PROGRESS_LOCK_FD}" =~ ^[0-9]+$ ]]; then
+    exec {PROGRESS_LOCK_FD}>&-
+  fi
+  progress_finish() {
+    trap - EXIT INT TERM HUP
+    if [[ -n "${PROGRESS_SLEEPER}" ]]; then
+      kill "${PROGRESS_SLEEPER}" 2>/dev/null || :
+      wait "${PROGRESS_SLEEPER}" 2>/dev/null || :
     fi
-    local sleeper=""
-    trap 'if [[ -n "${sleeper}" ]]; then kill "${sleeper}" 2>/dev/null || :; wait "${sleeper}" 2>/dev/null || :; fi; exit 0' TERM INT HUP
-    while kill -0 "${progress_owner}" 2>/dev/null; do
-      sleep "${interval}" &
-      sleeper=$!
-      wait "${sleeper}" || exit 0
-      sleeper=""
-      elapsed=$((elapsed + interval))
-      if kill -0 "${progress_owner}" 2>/dev/null; then
-        printf '[INFO] %s：仍在执行，已等待 %s 秒。\n' "${label}" "${elapsed}" >&2
-      fi
-    done
-  ) >&2 &
+  }
+  trap progress_finish EXIT
+  trap 'exit 0' TERM INT HUP
+  printf 'ready\n' || exit 1
+  while kill -0 "${PROGRESS_OWNER}" 2>/dev/null; do
+    sleep "${PROGRESS_INTERVAL}" &
+    PROGRESS_SLEEPER=$!
+    wait "${PROGRESS_SLEEPER}" || exit 0
+    PROGRESS_SLEEPER=""
+    PROGRESS_ELAPSED=$((PROGRESS_ELAPSED + PROGRESS_INTERVAL))
+    if kill -0 "${PROGRESS_OWNER}" 2>/dev/null; then
+      printf '[INFO] %s：仍在执行，已等待 %s 秒。\n' "${PROGRESS_LABEL}" "${PROGRESS_ELAPSED}" >&2
+    fi
+  done
+SBV_PROGRESS_TIMER
+  )
   timer=$!
+  IFS= read -r progress_ready <&"${progress_ready_fd}" || progress_ready=unavailable
+  exec {progress_ready_fd}<&-
+  if [[ "${progress_ready}" != ready ]]; then
+    wait "${timer}" 2>/dev/null || :
+    timer=""
+    printf '[WARN] 进度计时器无法启动，操作继续执行。\n' >&2
+  fi
   "$@" || status=$?
-  kill "${timer}" 2>/dev/null || :
-  wait "${timer}" 2>/dev/null || :
+  if [[ -n "${timer}" ]]; then
+    kill "${timer}" 2>/dev/null || :
+    wait "${timer}" 2>/dev/null || :
+  fi
   if [[ "${status}" == 0 ]]; then
     printf '[SUCCESS] %s：完成。\n' "${label}" >&2
   else
@@ -19765,23 +19795,27 @@ managed_component_live_config_projection_supported() {
 # Exclude operator-owned components from the ownership comparison. They remain
 # in the actual candidate and are checked by the core and graph validators.
 coexisting_component_projection() {
-  local config_file=$1 state=$2
-  jq --argjson state "${state}" '
+  local config_file=$1 state=$2 registry
+  registry=$(component_registry_static_json) || return 1
+  jq --argjson state "${state}" --argjson registry "${registry}" '
+    def known($role): . as $record |
+      any($registry[]; .role == $role and .type == $record.type);
     def owns($role): . as $record |
       any($state.components[]?; .role == $role and .tag == $record.tag);
     if has("inbounds") then .inbounds |= map(select(
       (.type | IN("direct","tun","redirect","tproxy","cloudflared") | not) or owns("inbound"))) else . end |
     if has("outbounds") then .outbounds |= map(select(
-      (.tag | IN("direct","block","warp-ep")) or owns("outbound"))) else . end |
-    if has("endpoints") then .endpoints |= map(select(.tag == "warp-ep" or owns("endpoint"))) else . end |
-    if has("services") then .services |= map(select(owns("service"))) else . end |
-    if has("network_namespaces") then .network_namespaces |= map(select(owns("network_namespace"))) else . end |
-    if has("http_clients") then .http_clients |= map(select(owns("http_client"))) else . end |
+      (.tag | IN("direct","block","warp-ep")) or owns("outbound") or (known("outbound") | not))) else . end |
+    if has("endpoints") then .endpoints |= map(select(.tag == "warp-ep" or owns("endpoint") or (known("endpoint") | not))) else . end |
+    if has("services") then .services |= map(select(owns("service") or (known("service") | not))) else . end |
+    if has("network_namespaces") then .network_namespaces |= map(select(owns("network_namespace") or (known("network_namespace") | not))) else . end |
     if has("certificate_providers") then .certificate_providers |= map(select(
-      (.tag | IN("hy2-cert-provider","anytls-cert-provider")) or owns("certificate_provider"))) else . end |
+      (.tag | IN("hy2-cert-provider","anytls-cert-provider")) or owns("certificate_provider") or (known("certificate_provider") | not))) else . end |
     if .route.default_http_client? != null and
-       ((.route.default_http_client as $client | any($state.components[]?; .role == "http_client" and .tag == $client)) | not) then
+       ((.route.default_http_client as $client | any($state.components[]?; .role == "http_client" and .tag == $client)) | not) and
+       (.route.default_http_client as $client | [.http_clients[]? | select(.tag == $client)] | length == 1) then
       del(.route.default_http_client) else . end |
+    if has("http_clients") then .http_clients |= map(select(owns("http_client") or has("type"))) else . end |
     if .route.rule_set? != null then .route.rule_set |= map(select(
       ((.tag // "") | startswith("warp-local-") or startswith("warp-remote-")) or owns("rule_set"))) else . end
   ' "${config_file}"

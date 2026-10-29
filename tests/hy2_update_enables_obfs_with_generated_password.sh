@@ -139,7 +139,7 @@ if [[ ${#generated_obfs_password} -lt 24 ]]; then
   exit 1
 fi
 
-if [[ "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" != "1" ]]; then
-  printf 'expected update flow to regenerate config exactly once, got %s\n' "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" >&2
+if [[ "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" != "2" ]]; then
+  printf 'expected legacy baseline plus one updated configuration, got %s\n' "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" >&2
   exit 1
 fi
