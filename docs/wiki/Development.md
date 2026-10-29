@@ -13,24 +13,37 @@
 
 现有验证入口仍按文件路径粗粒度调度，尚未实现 `--plan`、`--base` 和完整的测试分组；在改造完成前按第 4.2 节手动选择现有测试和必要场景，保留选择理由与执行记录。提交后的任务需核对分支相对基线的完整差异，不能依赖默认工作区差异识别。仅设置 `VERIFY_SKIP_REMOTE=1` 不代表完成所需验证；场景独立执行前必须补齐安装基线等前置依赖。失败后重跑失败项和受修复影响的范围，无新证据不重复扩大测试。
 
+### 小改动的执行与停止条件
+
+测试范围以 `AGENTS.md` 第 4.2 节为单一规则源。开始前简短说明“行为变化 → 必要检查/场景与前置依赖 → 不执行范围及理由 → 预计耗时”。文档和版本变更以数分钟内完成为目标；本地测试预计超过 10 分钟、Docker 预计超过 20 分钟时先说明慢项和必要性。这些是调整计划的软预算，必要验证未完成仍需明确报告。
+
+当前调度器会把 `install.sh` 的版本递增也当成安装器变更，选入大量本地测试及安装、共存、升级 Docker 场景。低影响变更应直接运行选定的 `bash tests/<相关测试>.sh`，不要因路径调用粗粒度入口；`VERIFY_SKIP_REMOTE=1` 是本地测试全部执行后才跳过 Docker，不是轻量模式。单个协议的运行态验证也不自动要求其他协议、共存或升级场景。
+
+选定检查通过、完整差异已核对且无新增风险证据后，停止测试并进入提交/审查；同一 HEAD 的一次本地审查可以同时记录原子提交和分支完整差异，无需重复启动。提交号变化、仅追加文档或进入 PR 审查，不使未改变的受测内容自动失效。慢项先定位，不盲目重启全套。安全审查等待单独记录；待审时保留 PR 并报告，不反复跑测试，也不绕过合并门禁。
+
 GitHub 对 `main` 启用 PR、线性历史和已解决审查对话保护，并对管理员生效，禁止强推和删除。仓库仅允许 rebase 合并，并自动删除已合并的远程分支。Codex 的审查结果目前写入 PR 评论，而非 GitHub 必需状态检查；GitHub 设置本身不会阻止在机器人审查完成前合并，因此执行者必须主动核对本地审查通过、当前 head 的远程安全审查完成且无未解决问题，远程代码审查不作为等待条件。
 
 ## 文档维护与 Wiki 发布
 
 `docs/wiki/*.md` 是 Wiki 的维护源。README 只保留项目简介、版本、主要能力、文档导航和许可证；安装命令、操作步骤、协议契约及验证边界写入对应 Wiki 页面。`AGENTS.md` 和 Operator Skill 保留自动化约束，`docs/agents/llms.txt` 只提供索引。历史计划、设计稿和提示词流水可通过 Git 历史查询，不再作为当前操作手册维护。
 
-新增或修改页面时，同步 `Home.md`、`_Sidebar.md` 和受影响链接。Wiki 页面之间使用完整 Wiki URL，仓库源码链接使用 GitHub `blob/main` URL，便于在两处阅读。发布前在仓库根目录执行：
+新增、移除或重命名页面时，同步 `Home.md`、`_Sidebar.md` 和受影响链接；仅修改已有页面内容时只更新受影响的导航。Wiki 页面之间使用完整 Wiki URL，仓库源码链接使用 GitHub `blob/main` URL，便于在两处阅读。文档基础检查在仓库根目录执行：
 
 ```bash
 bash tests/wiki_documentation.sh
-bash tests/agent_docs_cover_capabilities.sh
-bash tests/bootstrap_download.sh
-bash tests/protocol_coverage_contract.sh
-bash tests/readme_mentions_current_versions.sh
-bash tests/version_metadata_is_consistent.sh
 ```
 
-这些检查覆盖文档链接、命令入口、Bootstrap 下载校验与元数据，不代表重新取得服务或公网验收。开发验证工具中有本地未跟踪文件；使用前确认 `dev/verification/run.sh` 及依赖实际存在，缺失时不能报告对应场景通过。
+其余检查按实际变化追加，不把下表当作每次发布的固定集合：
+
+| 实际变化 | 追加检查 |
+| --- | --- |
+| 同步脚本版本或版本展示 | `bash -n install.sh`、`bash tests/readme_mentions_current_versions.sh`、`bash tests/version_metadata_is_consistent.sh` |
+| Agent 命令或能力说明 | `bash tests/agent_docs_cover_capabilities.sh` |
+| 可执行安装命令或 Bootstrap 下载/校验逻辑 | `bash tests/bootstrap_download.sh` |
+| 协议能力矩阵或协议契约说明 | `bash tests/protocol_coverage_contract.sh` |
+| 其他可执行行为 | 按第 4.2 节选择相关测试、配置检查及必要运行态场景 |
+
+例如，只调整约束文件、审查指南和 Wiki 文案并同步版本时，执行差异、链接、版本和语法检查即可，不需要 Bootstrap、协议契约或 Docker。以上检查不代表重新取得服务或公网验收；使用开发验证工具前确认所需脚本及依赖实际存在，缺失时不能报告对应场景通过。
 
 主仓库 PR 按上文完成审查并合并后，从已合并的 `main` 发布 Wiki。示例在仓库根目录运行：
 
@@ -43,3 +56,9 @@ git -C "$wiki_checkout" diff --stat
 ```
 
 检查完整差异后，在 Wiki checkout 中仅暂存本次管理的页面，用 Conventional Commits 提交；同样先完成对应 Wiki 提交的本地 `/review` 并解决问题，再正常推送，无入口时记录等效本地审查。保留额外页面，不要强推；移除或重命名页面时需明确处理旧页面和链接，不能只复制新文件。无差异时不创建空提交。另行 fresh clone，逐文件比较已发布页面和 `docs/wiki/` 的内容，并回读首页及关键页面。主仓库合并和 Wiki 发布是两个独立结果，分别记录提交号。
+
+## 云端安全审查上下文
+
+根目录 [SECURITY.md](https://github.com/KnowSky404/sing-box-vps/blob/main/SECURITY.md) 维护英文安全审查指南，供本地和云端 Codex 读取；`AGENTS.md`、Operator Skill 和 Agent 索引均指向它。指南涵盖 root 安装器的信任模型、输入到命令/文件的边界、下载与原子替换、凭据、CAS/锁、网络资源归属、SubMan 写入对账和发现报告要求。
+
+云端安全审查任务应明确要求：“先读 `AGENTS.md` 与 `SECURITY.md`，审查指定 base 到当前 head 的完整差异及必要调用上下文；按指南报告可达且有证据的安全问题，并注明 head SHA。默认静态分析，确有必要时才做最小隔离复现。”新增指南不代表已配置云端任务或完成审计；生产、真实外部服务和敏感凭据不属于普通 PR 安全审查的授权范围。

@@ -68,14 +68,17 @@ No production-changing commands will be executed until approved.
 ## Verification Rules
 
 - Follow the impact-based test boundaries in [AGENTS.md](../../AGENTS.md), section 4.2. Explain the selected scope before running tests; do not select a broad suite solely because `install.sh` or another runtime file changed.
+- Section 4.2 is the single authority for test scope. Record a short plan with affected behavior, required checks/prerequisites, exclusions and expected duration. Investigate local runs expected to exceed 10 minutes or Docker runs expected to exceed 20 minutes before proceeding; these are planning thresholds, not permission to skip required checks. Stop when the required checks pass unless new evidence changes the scope.
 - Run `sing-box check` on affected generated or modified server/client configurations. Run related real Docker scenarios for service, network or lifecycle behavior changes, with their prerequisites prepared.
 - Documentation, version-display and menu-only changes need their focused checks. Run changed standalone tests and callers of changed helpers; Bootstrap changes need the download/validation tests.
 - Require full regression for core-version adaptation or config/state migrations, broadly affected shared logic or uncertain impact, or an explicit full-test/release-acceptance requirement. Reuse passing results only when the tested code, configuration, tests, dependencies, core version and relevant environment are unchanged; record the original evidence and reason. After a fix, rerun failed and affected checks.
-- The current runner still selects by file path and lacks `--plan`, `--base` and complete test groups. Until it is updated, manually select existing tests and required scenarios under section 4.2 and record commands, reasons and omissions. Check the full branch diff after committing; the default runner only detects working-tree changes. `VERIFY_SKIP_REMOTE=1` is not runtime-validation evidence.
+- The current runner still selects by file path and lacks `--plan`, `--base` and complete test groups. Run focused test scripts directly for low-impact changes, including version-only edits to `install.sh`; prepare required scenarios separately under section 4.2. Check the full branch diff after committing; the default runner only detects working-tree changes. `VERIFY_SKIP_REMOTE=1` skips Docker only after the selected local suite has run; it is not a lightweight mode or runtime-validation evidence.
 - Remote verification runs in Docker locally, auto-building sing-box-vps-verify image. No external SSH target required.
 - Use `sing-box-test` for test validation and `sing-box-prod` only after the production gate.
 
 ## Documentation
+
+For read-only security reviews, start with [SECURITY.md](../../SECURITY.md). Review the full change and relevant callers statically; use only a necessary, isolated reproduction. A review alone does not require tests, version changes, commits or production operations. Security-review waiting time is separate from test time and does not justify rerunning tests or bypassing the merge gate.
 
 Detailed commands, install steps, recovery procedures and capability boundaries live in the [Wiki](https://github.com/KnowSky404/sing-box-vps/wiki). Repository sources are under `docs/wiki/`; read those files when offline. Start with `Agent-Runbook.md`, then follow `Agent-CLI.md`, `Protocol-Instances.md`, `Advanced-Components.md` or `Upgrade-Rehearsal.md` as needed. Use the staged Bootstrap command in `Getting-Started.md` without replacing it with a download-and-execute pipe.
 
