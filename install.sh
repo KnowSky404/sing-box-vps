@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026102905
+# Version: 2026102906
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026102905"
+readonly SCRIPT_VERSION="2026102906"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -2160,6 +2160,22 @@ validate_non_empty_path() {
 validate_http_url() {
   local value=$1
   [[ "${value}" =~ ^https?://[^[:space:]/$.?#][^[:space:]]*$ ]]
+}
+
+prompt_hy2_masquerade_url() {
+  local prompt=$1 current=${2:-} value
+
+  while true; do
+    read -rp "${prompt}" value || return 1
+    value=$(trim_whitespace "${value}")
+    value=${value:-${current}}
+    if [[ -z "${value}" ]] || validate_http_url "${value}" ||
+      [[ "${value}" == file:///* && "${value}" != *[[:space:][:cntrl:]]* ]]; then
+      printf '%s' "${value}"
+      return 0
+    fi
+    log_warn '伪装网站 URL 必须包含 http:// 或 https://，例如 https://www.cloudflare.com；本地目录使用 file:///绝对路径。请重新输入。' >&2
+  done
 }
 
 validate_update_interval() {
@@ -4655,8 +4671,8 @@ prompt_hy2_update() {
     SB_HY2_CF_API_TOKEN=""
   fi
 
-  read -rp "伪装地址 (当前: ${SB_HY2_MASQUERADE}, 留空保持): " in_masquerade
-  [[ -n "${in_masquerade}" ]] && SB_HY2_MASQUERADE="${in_masquerade}"
+  in_masquerade=$(prompt_hy2_masquerade_url "伪装地址 (当前: ${SB_HY2_MASQUERADE}, 留空保持): " "${SB_HY2_MASQUERADE}") || return 1
+  SB_HY2_MASQUERADE=${in_masquerade}
 
   ensure_hy2_materials
 }
@@ -6279,9 +6295,9 @@ prompt_hy2_install() {
     done
   fi
 
-  echo '[Hysteria2] 伪装地址是未通过认证的 HTTP/3 请求所看到的网站，可留空使用默认地址。' >&2
-  read -rp "[Hysteria2] 伪装地址 (默认 ${SB_HY2_MASQUERADE}，留空使用默认): " in_masquerade
-  [[ -n "${in_masquerade}" ]] && SB_HY2_MASQUERADE="${in_masquerade}"
+  echo '[Hysteria2] 伪装地址是未通过认证的 HTTP/3 请求所看到的网站，须填写完整 URL（如 https://www.cloudflare.com），可留空使用默认地址。' >&2
+  in_masquerade=$(prompt_hy2_masquerade_url "[Hysteria2] 伪装地址 (默认 ${SB_HY2_MASQUERADE}，留空使用默认): " "${SB_HY2_MASQUERADE}") || return 1
+  SB_HY2_MASQUERADE=${in_masquerade}
 
   ensure_hy2_materials
 }
@@ -6971,8 +6987,8 @@ hy2_management_build_record() {
     [[ -z "${answer}" ]] || obfs_password=${answer}; [[ -n "${obfs_password}" ]] || obfs_password=$(trojan_generate_password) || return 1
     obfs=$(jq -cn --arg password "${obfs_password}" '{enabled:true,type:"salamander",password:$password}') || return 1
   else obfs='{"enabled":false,"type":"","password":""}'; fi
-  echo '[Hysteria2] masquerade 为可选的伪装网站 URL，如 https://www.cloudflare.com，用于未通过认证的 HTTP/3 请求；新建留空则不启用，修改留空保持。' >&2
-  read -rp "[Hysteria2] 伪装网站 URL（当前: ${masquerade:-未启用}，留空保持）: " answer || return 1; [[ -z "${answer}" ]] || masquerade=${answer}
+  echo '[Hysteria2] masquerade 为可选的伪装网站 URL，须包含 http:// 或 https://，如 https://www.cloudflare.com，用于未通过认证的 HTTP/3 请求；新建留空则不启用，修改留空保持。' >&2
+  masquerade=$(prompt_hy2_masquerade_url "[Hysteria2] 伪装网站 URL（当前: ${masquerade:-未启用}，留空保持）: " "${masquerade}") || return 1
   answer=$(plain_proxy_management_prompt_public_consent hy2 "${address}" "${tls}") || return 1
   if [[ "${address}" != 127.* && "${address}" != ::1 && "${answer}" != y ]]; then log_info '未确认公网暴露，已取消 Hysteria2 实例变更。'; return 2; fi
   PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC=${answer}; MIXED_MANAGEMENT_ALLOW_PUBLIC=${answer}
