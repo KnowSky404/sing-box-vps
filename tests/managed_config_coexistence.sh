@@ -239,6 +239,25 @@ done
 printf '{"inbounds":[],"endpoints":[{"type":"wireguard","tag":"owned","peers":[{"public_key":"revoked"}]}]}' >"${TMP_DIR}/credential.next"
 printf '{"inbounds":[],"endpoints":[{"type":"wireguard","tag":"owned","peers":[]}]}' >"${TMP_DIR}/credential.live"
 if merge_generated_config_with_live "${TMP_DIR}/credential.next" "${TMP_DIR}/credential.live" "${TMP_DIR}/no-baseline" >"${TMP_DIR}/result" 2>/dev/null; then exit 1; fi
+# Legacy operator deletions and implicit first-outbound fallbacks remain
+# effective; neither a missing rule key nor a missing route object is new policy.
+for variant in rules key route implicit empty; do
+  jq -n '{inbounds:[{type:"mixed",tag:"owned",listen:"127.0.0.1",listen_port:18446}],
+    outbounds:[{type:"direct",tag:"direct"},{type:"socks",tag:"blocked",server:"127.0.0.1",server_port:19999}],
+    route:{final:"direct",rules:[{inbound:"owned",action:"route",outbound:"direct"}]}}' > "${TMP_DIR}/deleted-rule.next"
+  jq --arg variant "${variant}" '.experimental={cache_file:{enabled:false}} |
+    if $variant=="rules" then .route.rules=[] | .route.final="blocked"
+    elif $variant=="key" then del(.route.rules) | .route.final="blocked"
+    elif $variant=="route" then del(.route) | .outbounds|=reverse
+    elif $variant=="implicit" then del(.route.rules,.route.final) | .outbounds|=reverse
+    else .route.rules=[] | .route.final="" | .outbounds|=reverse end' \
+    "${TMP_DIR}/deleted-rule.next" > "${TMP_DIR}/deleted-rule.live"
+  "${core}" check -c "${TMP_DIR}/deleted-rule.live"
+  merge_generated_config_with_live "${TMP_DIR}/deleted-rule.next" "${TMP_DIR}/deleted-rule.live" "${TMP_DIR}/no-baseline" > "${TMP_DIR}/result"
+  jq -e '.route.final=="blocked" and (.route.rules|length)==0 and
+    .experimental.cache_file.enabled==false' "${TMP_DIR}/result" >/dev/null
+  "${core}" check -c "${TMP_DIR}/result"
+done
 printf '{"inbounds":[],"route":{"rules":[{"inbound":"owned","action":"route","outbound":"direct"}]}}' >"${TMP_DIR}/rule.base"
 printf '{"inbounds":[],"route":{"rules":[{"inbound":"owned","action":"route","outbound":"manual"}]}}' >"${TMP_DIR}/rule.live"
 printf '{"inbounds":[],"route":{"rules":[{"inbound":"owned","action":"route","outbound":"warp-ep"}]}}' >"${TMP_DIR}/rule.next"
