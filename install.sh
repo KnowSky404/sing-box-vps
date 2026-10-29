@@ -19931,8 +19931,10 @@ merge_generated_config_with_live() {
           if (.type // "shared") == ($record.type // "shared") then seed_record($record; .) else collision end]
         else del(.[$field]) end) |
       if $live | has("dns") then
+        # A legacy DNS tag does not prove ownership of its live settings.
+        # Seed generated defaults so custom same-tag servers remain live.
         .dns.servers = [$next.dns.servers[]? as $server |
-          $live.dns.servers[]? | select(.tag == $server.tag)]
+          $live.dns.servers[]? | select(.tag == $server.tag) | $server]
       else del(.dns) end |
       if $live | has("route") then
         .route.rules = [($next.route.rules // [])[] as $rule | $live.route.rules[]? | select(. == $rule)]

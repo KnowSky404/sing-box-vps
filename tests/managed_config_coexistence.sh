@@ -25,6 +25,7 @@ baseline="${SB_PROJECT_DIR}/managed-config.generated.json"
 # Simulate a pre-upgrade installation with manual client-side extensions.
 rm "${baseline}"
 jq '(.outbounds[]|select(.tag=="direct").bind_interface)="lo" |
+  (.dns.servers[]|select(.tag=="local-dns"))={type:"udp",tag:"local-dns",server:"127.0.0.1",server_port:53535} |
   .dns.servers += [{type:"local",tag:"manual-dns"}] |
   .outbounds += [{type:"socks",tag:"manual-proxy",server:"127.0.0.1",server_port:19090}] |
   .inbounds += [{type:"socks",tag:"manual-socks",listen:"127.0.0.1",listen_port:18091},{type:"direct",tag:"manual-client",listen:"127.0.0.1",listen_port:18090,override_address:"127.0.0.1",override_port:19091}] |
