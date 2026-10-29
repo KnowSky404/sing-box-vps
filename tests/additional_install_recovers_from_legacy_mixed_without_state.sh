@@ -131,19 +131,13 @@ cp "${TMP_DIR}/config.before" "${SINGBOX_CONFIG_FILE}"
 SB_INBOUND_STACK_MODE=""
 SB_OUTBOUND_STACK_MODE=""
 
+# Verify recovery before handing off to the separately tested typed HY2 flow.
+hy2_instance_management_menu() {
+  [[ "$1" == create ]]
+  printf 'dispatched\n' > "${TMP_DIR}/hy2-dispatched"
+}
 install_protocols_interactive "additional" <<'EOF'
 3
-hy2.example.com
-8443
-hy2-pass
-hy2-user
-100
-50
-n
-2
-/etc/ssl/certs/hy2.pem
-/etc/ssl/private/hy2.key
-
 EOF
 
 cmp "${SINGBOX_CONFIG_FILE}" "${TMP_DIR}/config.before"
@@ -168,7 +162,9 @@ if ! grep -Fqx 'PASSWORD=legacy-pass' "${SB_PROTOCOL_STATE_DIR}/mixed.env"; then
   exit 1
 fi
 
-if ! grep -Fq 'INSTALLED_PROTOCOLS=mixed,hy2' "${SB_PROTOCOL_INDEX_FILE}"; then
-  printf 'expected protocol index to keep mixed and add hy2, got:\n%s\n' "$(cat "${SB_PROTOCOL_INDEX_FILE}")" >&2
+if ! grep -Fqx 'INSTALLED_PROTOCOLS=mixed' "${SB_PROTOCOL_INDEX_FILE}"; then
+  printf 'expected recovery to keep mixed before typed HY2 dispatch, got:\n%s\n' "$(cat "${SB_PROTOCOL_INDEX_FILE}")" >&2
   exit 1
 fi
+test -f "${TMP_DIR}/hy2-dispatched"
+test ! -e "${SB_PROTOCOL_STATE_DIR}/hy2.env"

@@ -148,7 +148,7 @@ if ! grep -Fq 'PORT=443' "${SB_PROTOCOL_STATE_DIR}/vless-reality.d/main.env"; th
   exit 1
 fi
 
-if [[ "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" != "1" ]]; then
-  printf 'expected update flow to regenerate config exactly once, got %s\n' "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" >&2
+if [[ "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" != "2" ]]; then
+  printf 'expected legacy baseline plus update regeneration, got %s\n' "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" >&2
   exit 1
 fi

@@ -100,19 +100,14 @@ SHORT_ID_1=aaaaaaaaaaaaaaaa
 SHORT_ID_2=bbbbbbbbbbbbbbbb
 EOF
 
+# Recovery and dispatch are the boundary here; typed HY2 prompts/lifecycle
+# have their own tests and no longer use the legacy singleton questionnaire.
+hy2_instance_management_menu() {
+  [[ "$1" == create ]]
+  printf 'dispatched\n' > "${TMP_DIR}/hy2-dispatched"
+}
 install_protocols_interactive "additional" <<'EOF'
 3
-hy2.example.com
-8443
-hy2-pass
-hy2-user
-100
-50
-n
-2
-/etc/ssl/certs/hy2.pem
-/etc/ssl/private/hy2.key
-
 EOF
 
 if grep -Fq 'mixed' "${SB_PROTOCOL_INDEX_FILE}"; then
@@ -120,12 +115,10 @@ if grep -Fq 'mixed' "${SB_PROTOCOL_INDEX_FILE}"; then
   exit 1
 fi
 
-if ! grep -Fq 'INSTALLED_PROTOCOLS=vless-reality,hy2' "${SB_PROTOCOL_INDEX_FILE}"; then
-  printf 'expected protocol index to keep vless-reality and add hy2, got:\n%s\n' "$(cat "${SB_PROTOCOL_INDEX_FILE}")" >&2
+if ! grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality' "${SB_PROTOCOL_INDEX_FILE}"; then
+  printf 'expected recovery to keep vless-reality before typed HY2 dispatch, got:\n%s\n' "$(cat "${SB_PROTOCOL_INDEX_FILE}")" >&2
   exit 1
 fi
 
-if [[ ! -f "${SB_PROTOCOL_STATE_DIR}/hy2.env" ]]; then
-  printf 'expected hy2 state file to be created during additional install\n' >&2
-  exit 1
-fi
+test -f "${TMP_DIR}/hy2-dispatched"
+test ! -e "${SB_PROTOCOL_STATE_DIR}/hy2.env"

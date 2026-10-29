@@ -37,4 +37,10 @@ wait "${wrapper}" && exit 1 || [[ $? == 143 ]]
   [[ ! -e "${TMP_DIR}/caller-exit" ]]
 )
 [[ "$(wc -l < "${TMP_DIR}/caller-exit")" == 1 ]]
+printf '{"inbounds":[]}\n' > "${SINGBOX_CONFIG_FILE}"
+generate_config() { slow_json; }
+[[ "$(ensure_existing_generated_config_baseline 2>"${TMP_DIR}/baseline-progress")" == '{"ok":true}' ]]
+grep -Fq '已等待 1 秒' "${TMP_DIR}/baseline-progress"
+generate_config() { return 29; }
+if ensure_existing_generated_config_baseline >"${TMP_DIR}/baseline.out" 2>"${TMP_DIR}/baseline.err"; then exit 1; else [[ $? == 29 ]]; fi
 printf 'operation progress: heartbeat, stdout, exit status, stdin and signal cleanup passed\n'
