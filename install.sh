@@ -786,7 +786,7 @@ prompt_instance_outbound_policy() {
   echo "1. 跟随全局路由" >&2
   echo "2. 强制 direct 出口" >&2
   echo "3. 强制 Warp 出口" >&2
-  choice=$(prompt_choice "${prompt} [1-3] (当前: $(outbound_policy_display_name "${current}")): " 1 3 "${default_choice}")
+  choice=$(prompt_choice "${prompt} [1-3] (当前: $(outbound_policy_display_name "${current}")): " 1 3 "${default_choice}") || return 1
   case "${choice}" in
     2) printf 'direct' ;;
     3) printf 'warp' ;;
@@ -4008,12 +4008,12 @@ prompt_installed_protocol_selection() {
 prompt_vless_reality_update() {
   local in_node in_p in_uuid current_port
 
-  read -rp "新节点名称 (当前: ${SB_NODE_NAME}, 留空保持): " in_node
+  read -rp "新节点名称 (当前: ${SB_NODE_NAME}, 留空保持): " in_node || return 1
   in_node=$(trim_whitespace "${in_node:-}")
   [[ -n "${in_node}" ]] && SB_NODE_NAME="${in_node}"
 
   current_port="${SB_PORT}"
-  in_p=$(prompt_port "新端口 (当前: ${SB_PORT}, 留空保持): " "${SB_PORT}")
+  in_p=$(prompt_port "新端口 (当前: ${SB_PORT}, 留空保持): " "${SB_PORT}") || return 1
   if [[ "${in_p}" != "${current_port}" ]]; then
     if [[ "${in_p}" != "${current_port}" ]] && port_in_configured_protocol_state "${in_p}"; then
       log_error "端口已被现有协议配置占用: ${in_p}"
@@ -4022,15 +4022,15 @@ prompt_vless_reality_update() {
     check_port_conflict "${SB_PORT}"
   fi
 
-  read -rp "新 UUID (当前: ${SB_UUID}, 留空保持): " in_uuid
+  read -rp "新 UUID (当前: ${SB_UUID}, 留空保持): " in_uuid || return 1
   in_uuid=$(trim_whitespace "${in_uuid:-}")
   [[ -n "${in_uuid}" ]] && SB_UUID="${in_uuid}"
 
   prompt_reality_sni_update || return 1
-  prompt_vless_reality_rate_limit_update_fields
-  prompt_vless_reality_advanced_update_fields
+  prompt_vless_reality_rate_limit_update_fields || return 1
+  prompt_vless_reality_advanced_update_fields || return 1
   validate_current_reality_sni_alpn_or_warn
-  SB_OUTBOUND_POLICY=$(prompt_instance_outbound_policy "新出站策略" "${SB_OUTBOUND_POLICY:-default}")
+  SB_OUTBOUND_POLICY=$(prompt_instance_outbound_policy "新出站策略" "${SB_OUTBOUND_POLICY:-default}") || return 1
 }
 
 validate_reality_sni_syntax() {
@@ -4236,8 +4236,10 @@ prepare_reality_target_checker() {
 }
 
 run_reality_target_check() {
-  local checker=$1 domain=$2 report=$3
-  timeout --signal=TERM --kill-after=2 90 \
+  local checker=$1 domain=$2 report=$3 checker_dir
+  checker_dir=$(dirname -- "${checker}") || return 1
+  # Own the checker's nested temp files even if the deadline escalates to KILL.
+  TMPDIR="${checker_dir}" timeout --signal=TERM --kill-after=2 90 \
     bash "${checker}" check "${domain}" --json --timeout 3 > "${report}"
 }
 
@@ -4410,15 +4412,15 @@ prompt_vless_reality_rate_limit_fields() {
   SB_VLESS_RATE_LIMIT_UP_MBPS="${SB_VLESS_RATE_LIMIT_UP_MBPS:-}"
   SB_VLESS_RATE_LIMIT_DOWN_MBPS="${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}"
 
-  in_limit=$(prompt_yes_no "[VLESS + REALITY] 是否配置限速 [y/n] (默认 n): " "n")
+  in_limit=$(prompt_yes_no "[VLESS + REALITY] 是否配置限速 [y/n] (默认 n): " "n") || return 1
   if [[ "${in_limit}" != "y" ]]; then
     SB_VLESS_RATE_LIMIT_UP_MBPS=""
     SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
     return 0
   fi
 
-  in_up=$(prompt_optional_positive_integer "[VLESS + REALITY] 上行带宽 Mbps (留空表示上行不限速): " "" "上行带宽")
-  in_down=$(prompt_optional_positive_integer "[VLESS + REALITY] 下行带宽 Mbps (留空表示下行不限速): " "" "下行带宽")
+  in_up=$(prompt_optional_positive_integer "[VLESS + REALITY] 上行带宽 Mbps (留空表示上行不限速): " "" "上行带宽") || return 1
+  in_down=$(prompt_optional_positive_integer "[VLESS + REALITY] 下行带宽 Mbps (留空表示下行不限速): " "" "下行带宽") || return 1
 
   SB_VLESS_RATE_LIMIT_UP_MBPS="${in_up}"
   SB_VLESS_RATE_LIMIT_DOWN_MBPS="${in_down}"
@@ -4441,12 +4443,12 @@ prompt_vless_reality_rate_limit_update_fields() {
   echo "1. 保留当前限速 (默认)"
   echo "2. 重新设置限速"
   echo "3. 清空限速"
-  choice=$(prompt_choice "请选择 [1-3] (默认 1): " 1 3 1)
+  choice=$(prompt_choice "请选择 [1-3] (默认 1): " 1 3 1) || return 1
 
   case "${choice}" in
     2)
-      in_up=$(prompt_optional_positive_integer "[VLESS + REALITY] 上行带宽 Mbps (留空表示上行不限速): " "" "上行带宽")
-      in_down=$(prompt_optional_positive_integer "[VLESS + REALITY] 下行带宽 Mbps (留空表示下行不限速): " "" "下行带宽")
+      in_up=$(prompt_optional_positive_integer "[VLESS + REALITY] 上行带宽 Mbps (留空表示上行不限速): " "" "上行带宽") || return 1
+      in_down=$(prompt_optional_positive_integer "[VLESS + REALITY] 下行带宽 Mbps (留空表示下行不限速): " "" "下行带宽") || return 1
 
       SB_VLESS_RATE_LIMIT_UP_MBPS="${in_up}"
       SB_VLESS_RATE_LIMIT_DOWN_MBPS="${in_down}"
@@ -4481,7 +4483,7 @@ prompt_vless_reality_advanced_update_fields() {
   echo "2. 关闭"
   echo "3. h2 + http/1.1"
   echo "4. http/1.1"
-  choice=$(prompt_choice "请选择 ALPN [1-4] (默认 1): " 1 4 1)
+  choice=$(prompt_choice "请选择 ALPN [1-4] (默认 1): " 1 4 1) || return 1
   case "${choice}" in
     2) SB_VLESS_ALPN_MODE="off" ;;
     3) SB_VLESS_ALPN_MODE="h2_http1" ;;
@@ -4489,7 +4491,7 @@ prompt_vless_reality_advanced_update_fields() {
     *) ;;
   esac
 
-  tfo_choice=$(prompt_yes_no "是否启用 TCP Fast Open [y/n] (当前: ${SB_VLESS_TCP_FAST_OPEN}, 留空保持): " "${SB_VLESS_TCP_FAST_OPEN}")
+  tfo_choice=$(prompt_yes_no "是否启用 TCP Fast Open [y/n] (当前: ${SB_VLESS_TCP_FAST_OPEN}, 留空保持): " "${SB_VLESS_TCP_FAST_OPEN}") || return 1
   SB_VLESS_TCP_FAST_OPEN="${tfo_choice}"
 }
 
@@ -6066,8 +6068,8 @@ prompt_vless_reality_install() {
   check_port_conflict "${SB_PORT}"
 
   prompt_reality_sni_install || return 1
-  prompt_vless_reality_rate_limit_fields
-  prompt_vless_reality_advanced_update_fields
+  prompt_vless_reality_rate_limit_fields || return 1
+  prompt_vless_reality_advanced_update_fields || return 1
   validate_current_reality_sni_alpn_or_warn
   SB_OUTBOUND_POLICY=$(prompt_instance_outbound_policy "[VLESS + REALITY] 出站策略" "${SB_OUTBOUND_POLICY:-default}")
 }
@@ -6124,8 +6126,8 @@ prompt_vless_reality_instance_create() {
   SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
   SB_VLESS_ALPN_MODE="off"
   SB_VLESS_TCP_FAST_OPEN="n"
-  prompt_vless_reality_rate_limit_fields
-  prompt_vless_reality_advanced_update_fields
+  prompt_vless_reality_rate_limit_fields || return 1
+  prompt_vless_reality_advanced_update_fields || return 1
   validate_current_reality_sni_alpn_or_warn
   SB_OUTBOUND_POLICY=$(prompt_instance_outbound_policy "[VLESS + REALITY] 出站策略" "${SB_OUTBOUND_POLICY:-default}")
   if vless_reality_bandwidth_profile_exists "${SB_VLESS_RATE_LIMIT_UP_MBPS}" "${SB_VLESS_RATE_LIMIT_DOWN_MBPS}" "${SB_VLESS_INSTANCE_ID}"; then
@@ -7873,6 +7875,11 @@ install_protocols_interactive() {
       log_warn "ShadowTLS 已保留 revision；请通过协议实例管理创建 ShadowTLS 实例，或本次仅选择其他协议。"
       return 1
     fi
+    # REALITY checks run during its input prompts and need dig/jq/TLS tools.
+    # Prepare them before those prompts; other protocols keep their order.
+    if protocol_array_contains vless-reality "${selected_protocols[@]}"; then
+      install_dependencies || return $?
+    fi
     snapshot_dir=$(create_managed_state_snapshot) || {
       log_error "无法创建配置状态事务快照。"
       return 1
@@ -7889,7 +7896,9 @@ install_protocols_interactive() {
       abort_managed_state_transaction "${snapshot_dir}" "全局选项或协议索引保存失败"
       return 1
     fi
-    install_dependencies
+    if ! protocol_array_contains vless-reality "${selected_protocols[@]}"; then
+      install_dependencies || return $?
+    fi
     get_latest_version
     install_binary
   else
@@ -11904,11 +11913,11 @@ install_dependencies() {
   log_info "正在安装必要的基础依赖..."
   case "${OS_NAME}" in
     debian|ubuntu)
-      run_with_progress "更新软件源" apt-get update -y
-      run_with_progress "安装基础依赖" apt-get install -y curl wget jq tar openssl uuid-runtime qrencode iproute2 dnsutils ca-certificates
+      run_with_progress "更新软件源" apt-get update -y || return $?
+      run_with_progress "安装基础依赖" apt-get install -y curl wget jq tar openssl uuid-runtime qrencode iproute2 dnsutils ca-certificates || return $?
       ;;
     centos|almalinux|rocky)
-      run_with_progress "安装基础依赖" yum install -y curl wget jq tar openssl util-linux qrencode iproute bind-utils ca-certificates
+      run_with_progress "安装基础依赖" yum install -y curl wget jq tar openssl util-linux qrencode iproute bind-utils ca-certificates || return $?
       ;;
   esac
   log_success "基础依赖安装完成。"
@@ -23574,9 +23583,13 @@ update_config_only() {
   fi
   ensure_existing_generated_config_baseline || return 1
   snapshot_dir=$(create_managed_state_snapshot) || log_error "无法创建配置状态事务快照。"
-  if ! prompt_protocol_update_fields "${selected_protocol}"; then
-    abort_managed_state_transaction "${snapshot_dir}" "协议输入已取消或未完成"
-    return 1
+  if [[ "${selected_protocol}" == vless-reality ]]; then
+    if ! prompt_protocol_update_fields "${selected_protocol}"; then
+      abort_managed_state_transaction "${snapshot_dir}" "协议输入已取消或未完成"
+      return 1
+    fi
+  else
+    prompt_protocol_update_fields "${selected_protocol}"
   fi
   if ! save_protocol_state "${selected_protocol}" || ! generate_config; then
     abort_managed_state_transaction "${snapshot_dir}" "协议配置生成或校验失败"

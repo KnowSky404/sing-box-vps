@@ -10,6 +10,7 @@ sed -e "s|readonly SB_PROJECT_DIR=\"/root/sing-box-vps\"|readonly SB_PROJECT_DIR
 mkdir -p "${TMP_DIR}/project"
 # shellcheck disable=SC1090
 source "${TMP_DIR}/install.sh"
+REAL_CHECKER_RUNNER=$(declare -f run_reality_target_check)
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
@@ -98,6 +99,44 @@ selected=$(select_reality_sni_candidate interrupted.example.com good.example.com
 prepared=$(tail -n 1 "${TMP_DIR}/prepared")
 [[ ! -e "$(dirname "${prepared}")" ]] || fail 'signal left its private temporary directory'
 [[ -z "${selected}" ]] || fail 'signal produced an SNI'
+
+# The checker may be SIGKILLed before its own EXIT cleanup while waiting for a
+# nested three-second network timeout. Its private workdirs must remain owned
+# by the selector cleanup even when no checker trap can run.
+eval "${REAL_CHECKER_RUNNER}"
+export RTC_TEST_TIMEOUT_EVIDENCE="${TMP_DIR}/hard-timeout-workdir"
+export RTC_TEST_TIMEOUT_PROBED="${TMP_DIR}/hard-timeout-probed"
+timeout() {
+  local arg args=()
+  for arg in "$@"; do
+    [[ "${arg}" != 90 ]] || arg=0.1
+    args+=("${arg}")
+  done
+  command timeout "${args[@]}"
+}
+prepare_reality_target_checker() {
+  printf '%s\n' "$(dirname "$1")" > "${TMP_DIR}/hard-timeout-parent"
+  cat > "$1" <<'CHECKER'
+#!/usr/bin/env bash
+set -uo pipefail
+printf '%s\n' "$2" >> "${RTC_TEST_TIMEOUT_PROBED}"
+workdir=$(mktemp -d "${TMPDIR:-/tmp}/rtc-hard-timeout.XXXXXXXX")
+printf '%s\n' "${workdir}" > "${RTC_TEST_TIMEOUT_EVIDENCE}"
+trap 'rm -rf -- "${workdir}"' EXIT
+trap 'exit 143' TERM
+timeout --signal=TERM --kill-after=1 3 sleep 3
+CHECKER
+}
+status=0
+selected=$(select_reality_sni_candidate slow.example.com later.example.com) || status=$?
+unset -f timeout
+[[ "${status}" -eq 137 ]] || fail "hard timeout did not propagate SIGKILL status: ${status}"
+[[ -z "${selected}" ]] || fail 'hard timeout selected an SNI'
+[[ "$(cat "${RTC_TEST_TIMEOUT_PROBED}")" == slow.example.com ]] || fail 'hard timeout continued to another candidate'
+checker_workdir=$(cat "${RTC_TEST_TIMEOUT_EVIDENCE}")
+selector_workdir=$(cat "${TMP_DIR}/hard-timeout-parent")
+[[ "${checker_workdir}" == "${selector_workdir}/"* ]] || fail 'checker temporary directory escaped selector ownership'
+[[ ! -e "${checker_workdir}" && ! -e "${selector_workdir}" ]] || fail 'hard timeout left checker or selector temporary files'
 
 prepare_reality_target_checker() { return 1; }
 if selected=$(select_reality_sni_candidate good.example.com); then
