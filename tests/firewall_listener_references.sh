@@ -9,8 +9,8 @@ source "${TESTABLE_INSTALL}"
 trap 'printf "firewall reference test failed at line %s\n" "${LINENO}" >&2' ERR
 # The fixtures in this backend contract test are explicitly managed. Owner
 # discovery and manual exclusions are covered by firewall_listener_ownership.
-managed_firewall_owner_tags_json() {
-  jq -c '[(.inbounds[]?,.endpoints[]?,.services[]?) | .tag] | unique' "${SINGBOX_CONFIG_FILE}"
+managed_firewall_owners_json() {
+  jq -c '[(.inbounds[]? | {role:"inbound",tag}),(.endpoints[]? | {role:"endpoint",tag}),(.services[]? | {role:"service",tag})] | unique' "${SINGBOX_CONFIG_FILE}"
 }
 
 # These are backend call-contract tests. Never invoke a host firewall backend.

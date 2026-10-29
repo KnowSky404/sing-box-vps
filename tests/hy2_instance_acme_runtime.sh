@@ -42,8 +42,14 @@ for ((attempt=0; attempt<60; attempt++)); do
 done
 openssl x509 -in "${ARTIFACT_DIR}/root.crt" -noout -subject > "${ARTIFACT_DIR}/root-subject.txt"
 printf 'INSTALLED_PROTOCOLS=\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
+# An existing registered service may share a textual tag with a manually
+# added inbound: the config graph treats these as distinct namespaces.
+managed_component_state_default_json | jq '.components=[{id:"owned-resolver",role:"service",type:"resolved",
+  tag:"manual-client",enabled:true,config:{listen:"0.0.0.0",listen_port:18092},route_rules:[]}]' > "${SB_COMPONENT_STATE_FILE}"
+chmod 600 "${SB_COMPONENT_STATE_FILE}"
 jq -n '{log:{level:"info"},
   inbounds:[{type:"mixed",tag:"manual-client",listen:"0.0.0.0",listen_port:18090}],
+  services:[{type:"resolved",tag:"manual-client",listen:"0.0.0.0",listen_port:18092}],
   dns:{servers:[{type:"local",tag:"manual-dns"}]},
   outbounds:[{type:"direct",tag:"direct"},{type:"direct",tag:"manual-direct"},
     {type:"socks",tag:"manual-proxy",server:"127.0.0.1",server_port:19999}],
@@ -95,7 +101,7 @@ PY
     [[ $? == 10 ]]
   fi
   if [[ -f "${INSTANCE_FIREWALL_LEDGER_FILE}" ]]; then
-    jq -e 'all(.rules[].refs[]?; .owner!="manual-client")' "${INSTANCE_FIREWALL_LEDGER_FILE}" >/dev/null
+    jq -e 'all(.rules[].refs[]?; .owner!="manual-client" or .protocol=="resolved-service")' "${INSTANCE_FIREWALL_LEDGER_FILE}" >/dev/null
   fi
 }
 assert_manual_public_port_blocked
@@ -185,7 +191,14 @@ curl --silent --show-error --fail --max-time 5 --noproxy '*' \
 cmp "${ARTIFACT_DIR}/marker.txt" "${ARTIFACT_DIR}/component-transfer.txt"
 assert_manual_public_port_blocked
 managed_component_state_apply delete 1 "" owned-direct n > "${ARTIFACT_DIR}/component-delete.json"
-jq -e 'all(.rules[].refs[]?; .owner!="owned-direct" and .owner!="manual-client")' "${INSTANCE_FIREWALL_LEDGER_FILE}" >/dev/null
+jq -e 'all(.rules[].refs[]?; .owner!="owned-direct" and
+  (.owner!="manual-client" or .protocol=="resolved-service"))' "${INSTANCE_FIREWALL_LEDGER_FILE}" >/dev/null
+assert_manual_public_port_blocked
+sing-box check -c "${SINGBOX_CONFIG_FILE}"
+jq -e 'any(.rules[].refs[]?; .owner=="manual-client" and .protocol=="resolved-service") and
+  all(.rules[].refs[]?; .owner!="manual-client" or .protocol=="resolved-service")' "${INSTANCE_FIREWALL_LEDGER_FILE}" >/dev/null
+assert_manual_public_port_blocked
+managed_component_state_apply delete 2 "" owned-resolver n > "${ARTIFACT_DIR}/service-delete.json"
 assert_manual_public_port_blocked
 jq -e 'all(.inbounds[]|select(.type=="hysteria2"); .listen=="0.0.0.0")' "${SINGBOX_CONFIG_FILE}" >/dev/null
 outbounds=$(build_client_hy2_outbounds "${container_ip}" | jq -s .)

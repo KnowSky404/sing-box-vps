@@ -154,8 +154,8 @@ new_config="${TMP_DIR}/new.json"
 journal="${TMP_DIR}/transaction.json"
 # This suite tests ledger/backend transitions for explicitly owned fixtures.
 # Production owner discovery has its own regression, including manual tags.
-managed_firewall_owner_tags_json() {
-  jq -cs '[.[] | (.inbounds[]?,.endpoints[]?,.services[]?) | .tag] | unique' "${old_config}" "${new_config}"
+managed_firewall_owners_json() {
+  jq -cs '[.[] | (.inbounds[]? | {role:"inbound",tag}),(.endpoints[]? | {role:"endpoint",tag}),(.services[]? | {role:"service",tag})] | unique' "${old_config}" "${new_config}"
 }
 jq -n '{inbounds:[]}' > "${old_config}"
 jq -n '{inbounds:[

@@ -52,6 +52,25 @@ if generate_config >"${TMP_DIR}/rotated.out" 2>"${TMP_DIR}/rotated.err"; then ex
 cmp "${TMP_DIR}/rotated.json" "${SINGBOX_CONFIG_FILE}"
 [[ ! -e "${baseline}" ]]
 if grep -Eq 'managed-secret|rotated-secret' "${TMP_DIR}/rotated.out" "${TMP_DIR}/rotated.err"; then exit 1; else [[ "$?" == 1 ]]; fi
+# A legacy managed outbound may have been hardened or moved manually. Do
+# not re-enable insecure TLS or send traffic back to its former destination.
+managed_component_state_default_json | jq '.components=[{id:"owned-upstream",role:"outbound",type:"trojan",
+  tag:"owned-upstream",enabled:true,route_rules:[],config:{server:"192.0.2.10",server_port:443,
+    password:"upstream-secret",tls:{enabled:true,server_name:"upstream.example",insecure:true}}}]' > "${SB_COMPONENT_STATE_FILE}"
+chmod 600 "${SB_COMPONENT_STATE_FILE}"
+for drift in tls destination; do
+  jq --arg drift "${drift}" '.outbounds += [{type:"trojan",tag:"owned-upstream",server:"192.0.2.10",server_port:443,
+    password:"upstream-secret",tls:{enabled:true,server_name:"upstream.example",insecure:true}}] |
+    if $drift=="tls" then (.outbounds[-1].tls.insecure)=false else (.outbounds[-1].server)="198.51.100.20" end' \
+    "${TMP_DIR}/custom.json" > "${TMP_DIR}/outbound-drift.json"
+  cp "${TMP_DIR}/outbound-drift.json" "${SINGBOX_CONFIG_FILE}"
+  "${core}" check -c "${SINGBOX_CONFIG_FILE}"
+  if generate_config >"${TMP_DIR}/outbound-drift.out" 2>"${TMP_DIR}/outbound-drift.err"; then exit 1; fi
+  cmp "${TMP_DIR}/outbound-drift.json" "${SINGBOX_CONFIG_FILE}"
+  [[ ! -e "${baseline}" ]]
+  if grep -Fq 'upstream-secret' "${TMP_DIR}/outbound-drift.out" "${TMP_DIR}/outbound-drift.err"; then exit 1; else [[ $? == 1 ]]; fi
+done
+rm "${SB_COMPONENT_STATE_FILE}"
 cp "${TMP_DIR}/custom.json" "${SINGBOX_CONFIG_FILE}"
 generate_config >"${TMP_DIR}/legacy.log"
 assert_manual_unchanged() {
@@ -171,6 +190,25 @@ printf '{"inbounds":[{"type":"vless","tag":"owned","users":[{"name":"main","uuid
 printf '{"inbounds":[{"type":"vless","tag":"owned","users":[{"uuid":"unchanged"}]}]}' >"${TMP_DIR}/metadata.live"
 merge_generated_config_with_live "${TMP_DIR}/metadata.next" "${TMP_DIR}/metadata.live" "${TMP_DIR}/no-baseline" >"${TMP_DIR}/result"
 jq -e '.inbounds[0].users==[{name:"main",uuid:"unchanged",flow:"xtls-rprx-vision"}]' "${TMP_DIR}/result" >/dev/null
+for change in '.server="new.example"' '.server_port=8443' '.tls.insecure=false' 'del(.tls.insecure)' '.tls.server_name="new.example"' '.tls.certificate=["new-pin"]' '.transport.path="/new"' '.detour="new-hop"'; do
+  jq -n '{inbounds:[],outbounds:[{type:"trojan",tag:"owned",server:"old.example",server_port:443,
+    tls:{enabled:true,insecure:true,server_name:"old.example",certificate:["old-pin"]},
+    transport:{type:"ws",path:"/old"},detour:"old-hop"}]}' > "${TMP_DIR}/security.next"
+  jq ".outbounds[0] |= (${change})" \
+    "${TMP_DIR}/security.next" > "${TMP_DIR}/security.live"
+  if merge_generated_config_with_live "${TMP_DIR}/security.next" "${TMP_DIR}/security.live" "${TMP_DIR}/no-baseline" >"${TMP_DIR}/result" 2>/dev/null; then exit 1; fi
+done
+# Omitting the default insecure:false is safe; unmodelled TLS extensions stay.
+printf '{"inbounds":[],"outbounds":[{"tag":"owned","tls":{"enabled":true,"insecure":false}}]}' > "${TMP_DIR}/security.next"
+printf '{"inbounds":[],"outbounds":[{"tag":"owned","tls":{"enabled":true,"alpn":["h2"]}}]}' > "${TMP_DIR}/security.live"
+merge_generated_config_with_live "${TMP_DIR}/security.next" "${TMP_DIR}/security.live" "${TMP_DIR}/no-baseline" >"${TMP_DIR}/result"
+jq -e '.outbounds[0].tls.alpn==["h2"] and .outbounds[0].tls.insecure==false' "${TMP_DIR}/result" >/dev/null
+# Other modeled outbound options, including group member/default selection,
+# remain operator overrides instead of becoming owned live baseline values.
+printf '{"inbounds":[],"outbounds":[{"type":"selector","tag":"owned","outbounds":["old"],"default":"old","interrupt_exist_connections":false}]}' > "${TMP_DIR}/security.next"
+printf '{"inbounds":[],"outbounds":[{"type":"selector","tag":"owned","outbounds":["new"],"default":"new","interrupt_exist_connections":true}]}' > "${TMP_DIR}/security.live"
+merge_generated_config_with_live "${TMP_DIR}/security.next" "${TMP_DIR}/security.live" "${TMP_DIR}/no-baseline" >"${TMP_DIR}/result"
+[[ "$(jq -c . "${TMP_DIR}/security.live")" == "$(jq -c . "${TMP_DIR}/result")" ]]
 for credential in password uuid psk auth auth_str short_id mac_key api_token private_key; do
   jq -n --arg credential "${credential}" '{inbounds:[{type:"mixed",tag:"owned",($credential):"revoked"}]}' >"${TMP_DIR}/credential.next"
   jq -n --arg credential "${credential}" '{inbounds:[{type:"mixed",tag:"owned",($credential):"replacement"}]}' >"${TMP_DIR}/credential.live"
