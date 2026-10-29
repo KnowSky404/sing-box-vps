@@ -3072,16 +3072,18 @@ configure_subman_interactive() (
   printf 'SubMan 连接设置（留空保留原值；新目标会在保存前只读校验）。\n'
   read -rp "SubMan 部署地址（留空保留）: " input_url || return 1
   if [[ -n "${input_url}" ]]; then SUBMAN_API_URL=$(normalize_subman_api_url "${input_url}"); fi
-  read -rsp "SubMan API Token（隐藏输入；留空保留）: " input_token || return 1
+  if [[ "${SUBMAN_API_URL}" != "${old_url}" ]]; then
+    # Never send a saved credential to a different deployment during preflight.
+    SUBMAN_API_TOKEN=""
+    SUBMAN_EXPECTED_GIST_ID=""
+    printf '[INFO] 部署地址已改变，请重新填写 Token 和目标 Gist ID。\n' >&2
+  fi
+  read -rsp "SubMan API Token（隐藏输入；地址未变时留空保留）: " input_token || return 1
   printf '\n' >&2
   if [[ -n "${input_token}" ]]; then SUBMAN_API_TOKEN=$(trim_whitespace "${input_token}"); fi
   read -rp "节点前缀（留空保留）: " input_prefix || return 1
   if [[ -n "${input_prefix}" ]]; then SUBMAN_NODE_PREFIX=$(trim_whitespace "${input_prefix}"); fi
   SUBMAN_NODE_PREFIX=${SUBMAN_NODE_PREFIX:-$(hostname)}
-  if [[ "${SUBMAN_API_URL}" != "${old_url}" ]]; then
-    # A different deployment must never inherit the old Workspace identity.
-    SUBMAN_EXPECTED_GIST_ID=""
-  fi
   read -rp "目标 Workspace Gist ID（地址改变时必须重新填写；否则留空保留）: " input_gist_id || return 1
   if [[ -n "${input_gist_id}" ]]; then SUBMAN_EXPECTED_GIST_ID=$(trim_whitespace "${input_gist_id}"); fi
   validate_subman_connection_settings || return 1
