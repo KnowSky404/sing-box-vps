@@ -291,4 +291,22 @@ core_check() {
 core_check "core-namespaces" "${TEST_DIR}/core-namespaces.json"
 core_check "core-mixed-rules" "${TEST_DIR}/core-mixed-rules.json"
 
+write_case ownership-namespaces '{"inbounds":[{"type":"mixed","tag":"shared","listen_port":2080}]}'
+empty_state='{"components":[]}'
+for role in http_client certificate_provider service network_namespace rule_set; do
+  [[ "$(managed_component_unowned_tag_collision "${role}" shared "${empty_state}" "${TEST_DIR}/ownership-namespaces.json")" == false ]]
+done
+for role in inbound outbound endpoint; do
+  [[ "$(managed_component_unowned_tag_collision "${role}" shared "${empty_state}" "${TEST_DIR}/ownership-namespaces.json")" == true ]]
+done
+# An owned tag in another namespace cannot authorize claiming this manual
+# component; an existing owner in the same namespace may update its record.
+other_state='{"components":[{"role":"http_client","tag":"shared"}]}'
+[[ "$(managed_component_unowned_tag_collision outbound shared "${other_state}" "${TEST_DIR}/ownership-namespaces.json")" == true ]]
+write_case ownership-http '{"http_clients":[{"tag":"shared","engine":"go"}]}'
+[[ "$(managed_component_unowned_tag_collision http_client shared "${empty_state}" "${TEST_DIR}/ownership-http.json")" == true ]]
+[[ "$(managed_component_unowned_tag_collision http_client shared "${other_state}" "${TEST_DIR}/ownership-http.json")" == false ]]
+write_case ownership-rule-alias '{"route":{"rule_set":[{"tag":["shared","alias"],"type":"inline","rules":[]}]}}'
+[[ "$(managed_component_unowned_tag_collision rule_set alias "${empty_state}" "${TEST_DIR}/ownership-rule-alias.json")" == true ]]
+
 printf 'managed component graph tests passed: %s\n' "${pass_count}"

@@ -146,10 +146,11 @@ jq -e 'all(.outbounds[]; .tag!="owned-extra")' "${SINGBOX_CONFIG_FILE}" >/dev/nu
 # client, and deleting the final managed entry keeps the manual collection.
 jq '.http_clients=[{tag:"manual-http",engine:"go"}]' "${SINGBOX_CONFIG_FILE}" >"${TMP_DIR}/first-http.json"
 cp "${TMP_DIR}/first-http.json" "${SINGBOX_CONFIG_FILE}"
-jq -n '{id:"first-http",role:"http_client",type:"shared",tag:"managed-http",enabled:true,
+jq -n '{id:"first-http",role:"http_client",type:"shared",tag:"mixed-in",enabled:true,
   config:{engine:"go"},route_rules:[]}' >"${TMP_DIR}/first-http-record.json"
 managed_component_state_apply create 2 "${TMP_DIR}/first-http-record.json" "" n >"${TMP_DIR}/http-create.out" 2>"${TMP_DIR}/http-create.err"
-jq -e '.http_clients==[{tag:"manual-http",engine:"go"},{tag:"managed-http",engine:"go"}]' "${SINGBOX_CONFIG_FILE}" >/dev/null
+jq -e '.http_clients==[{tag:"manual-http",engine:"go"},{tag:"mixed-in",engine:"go"}] and
+  any(.inbounds[]; .tag=="mixed-in" and .type=="mixed")' "${SINGBOX_CONFIG_FILE}" >/dev/null
 "${core}" check -c "${SINGBOX_CONFIG_FILE}"
 managed_component_state_apply delete 3 "" first-http n >"${TMP_DIR}/http-delete.out" 2>"${TMP_DIR}/http-delete.err"
 jq -e '.http_clients==[{tag:"manual-http",engine:"go"}]' "${SINGBOX_CONFIG_FILE}" >/dev/null

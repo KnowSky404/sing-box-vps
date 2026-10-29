@@ -20294,6 +20294,27 @@ managed_component_state_core_features_supported() {
   singbox_version_at_least "${core_version}" "${minimum}"
 }
 
+managed_component_unowned_tag_collision() {
+  local role=$1 tag=$2 state=$3 config_file=$4
+  [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
+  jq -c --arg role "${role}" --arg tag "${tag}" --slurpfile live "${config_file}" '
+    def namespace:
+      if IN("inbound","outbound","endpoint") then "component" else . end;
+    if ($live | length) != 1 or ($live[0] | type) != "object" then error("invalid_config")
+    elif any(.components[]; .tag==$tag and (.role|namespace)==($role|namespace)) then false
+    else $live[0] |
+      (if ($role|namespace)=="component" then [.inbounds[]?,.outbounds[]?,.endpoints[]?]
+       elif $role=="certificate_provider" then [.certificate_providers[]?]
+       elif $role=="http_client" then [.http_clients[]?]
+       elif $role=="service" then [.services[]?]
+       elif $role=="network_namespace" then [.network_namespaces[]?]
+       elif $role=="rule_set" then [.route.rule_set[]?]
+       else error("invalid_namespace") end) |
+      any(.[]; if (.tag|type)=="array" then (.tag|index($tag))!=null else .tag==$tag end)
+    end
+  ' <<< "${state}" 2>/dev/null
+}
+
 managed_component_state_apply() {
   local operation=${1:-} expected=${2:-} input=${3:-} target_id=${4:-} allow_public=${5:-n}
   local state current_revision record candidate snapshot service_restarted=false state_changed=true
@@ -20342,13 +20363,16 @@ managed_component_state_apply() {
       record=$(managed_component_normalize_input_file "${input}") || { MANAGED_COMPONENT_LAST_ERROR=record_invalid; return 1; }
       result_record="${record}"
       tag=$(jq -r '.tag' <<< "${record}") || { MANAGED_COMPONENT_LAST_ERROR=record_invalid; return 1; }
-      if [[ -f "${SINGBOX_CONFIG_FILE}" ]] &&
-         ! jq -e --arg tag "${tag}" 'any(.components[]; .tag == $tag)' <<< "${state}" >/dev/null &&
-         jq -e --arg tag "${tag}" '[.inbounds[]?,.outbounds[]?,.endpoints[]?,.services[]?,
-           .certificate_providers[]?,.http_clients[]?,.network_namespaces[]?,.route.rule_set[]?] |
-           any(.[]; .tag == $tag)' "${SINGBOX_CONFIG_FILE}" >/dev/null; then
-        MANAGED_COMPONENT_LAST_ERROR=component_conflict
-        return 1
+      if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
+        local incoming_role collision
+        incoming_role=$(jq -r '.role' <<< "${record}") || { MANAGED_COMPONENT_LAST_ERROR=record_invalid; return 1; }
+        collision=$(managed_component_unowned_tag_collision "${incoming_role}" "${tag}" "${state}" "${SINGBOX_CONFIG_FILE}") || {
+          MANAGED_COMPONENT_LAST_ERROR=component_live_untrusted; return 1;
+        }
+        if [[ "${collision}" == true ]]; then
+          MANAGED_COMPONENT_LAST_ERROR=component_conflict
+          return 1
+        fi
       fi
       if managed_component_requires_public_confirmation "${record}" && [[ "${allow_public}" != y ]]; then
         MANAGED_COMPONENT_LAST_ERROR=public_confirmation_required
