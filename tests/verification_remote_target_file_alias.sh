@@ -46,7 +46,7 @@ DOCKER_EOF
 chmod +x "${TMP_DIR}/docker"
 
 PATH="${TMP_DIR}:${PATH}" VERIFY_SKIP_LOCAL_TESTS=1 \
-  bash "${REPO_ROOT}/dev/verification/run.sh" --changed-file install.sh > "${TMP_DIR}/stdout.txt" 2> "${TMP_DIR}/stderr.txt"
+  bash "${REPO_ROOT}/dev/verification/run.sh" --changed-file README.md --scenario fresh_install_http > "${TMP_DIR}/stdout.txt" 2> "${TMP_DIR}/stderr.txt"
 
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout.txt")
 grep -Fqx 'test-container-built' "${TMP_DIR}/image-built" 2>/dev/null && {

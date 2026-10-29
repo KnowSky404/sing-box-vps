@@ -2,6 +2,7 @@
 *
 !.gitignore
 !verification/
+!verification/*.sh
 !verification/docker/
 !verification/docker/Dockerfile
 !verification/remote/

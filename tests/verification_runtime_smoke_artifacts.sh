@@ -1530,6 +1530,14 @@ verification_scenario_fresh_install_vless_plain() {
   verification_execute_protocol_udp_probe vless-plain /root/sing-box-vps/config.json
 }
 
+# Full selection also dispatches uninstall. The artifact fixture must never
+# invoke its real installer/uninstaller against the host.
+verification_scenario_uninstall_and_reinstall() {
+  printf 'SCENARIO=uninstall_and_reinstall\n'
+  printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
+  verification_write_artifact "\${VERIFY_CURRENT_SCENARIO_DIR}/fixture.txt" 'uninstall dispatch fixture'
+}
+
 verification_scenario_upgrade_rollback_1_13_to_1_14() {
   printf 'SCENARIO=upgrade_rollback_1_13_to_1_14\n'
   printf '%s\n' "\${VERIFY_CURRENT_SCENARIO}" >> "\${REMOTE_DISPATCH_LOG_FILE}"
@@ -1603,7 +1611,7 @@ DOCKER_EOF
 chmod +x "${TMP_DIR}/docker"
 
 PATH="${TMP_DIR}:${PATH}" VERIFY_SKIP_LOCAL_TESTS=1 \
-  bash "${REPO_ROOT}/dev/verification/run.sh" --changed-file install.sh > "${TMP_DIR}/stdout.txt"
+  bash "${REPO_ROOT}/dev/verification/run.sh" --full --changed-file install.sh > "${TMP_DIR}/stdout.txt"
 
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout.txt")
 grep -Fq 'runtime_smoke' "${run_dir}/scenarios.txt"
@@ -1737,6 +1745,7 @@ grep -Fqx 'fresh_install_hysteria' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'fresh_install_vless_plain' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'upgrade_1_13_to_1_14' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'runtime_smoke' "${REMOTE_DISPATCH_LOG_FILE}"
+grep -Fqx 'uninstall_and_reinstall' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'multi_protocol_coexistence' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'upgrade_rollback_1_13_to_1_14' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.d/imported-1.env' "${REMOTE_ASSERT_LOG_FILE}"
@@ -1745,7 +1754,7 @@ grep -Fqx 'jq:-r|.inbounds[0].listen_port // empty|/root/sing-box-vps/config.jso
 grep -Fqx 'UUID=11111111-1111-1111-1111-111111111111' "${REMOTE_INSTANCE_STATE_FILE}"
 
 if PATH="${TMP_DIR}:${PATH}" VERIFY_SKIP_LOCAL_TESTS=1 VERIFY_FAIL_SINGBOX_CHECK=1 \
-  bash "${REPO_ROOT}/dev/verification/run.sh" --changed-file install.sh > "${TMP_DIR}/stdout-fail.txt" 2> "${TMP_DIR}/stderr-fail.txt"; then
+  bash "${REPO_ROOT}/dev/verification/run.sh" --full --changed-file install.sh > "${TMP_DIR}/stdout-fail.txt" 2> "${TMP_DIR}/stderr-fail.txt"; then
   printf 'expected runtime smoke to fail when sing-box check fails\n' >&2
   exit 1
 fi

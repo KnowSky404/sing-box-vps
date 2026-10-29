@@ -11,15 +11,49 @@
 
 本地提交审查、PR 机器人审查、测试和实际部署是不同的证据；其中某项未执行或未完成时，不能用其他项代替。若权限、检查或审查阻塞合并，保留 PR 和工作区并说明阻塞原因。
 
-现有验证入口仍按文件路径粗粒度调度，尚未实现 `--plan`、`--base` 和完整的测试分组；在改造完成前按第 4.2 节手动选择现有测试和必要场景，保留选择理由与执行记录。提交后的任务需核对分支相对基线的完整差异，不能依赖默认工作区差异识别。仅设置 `VERIFY_SKIP_REMOTE=1` 不代表完成所需验证；场景独立执行前必须补齐安装基线等前置依赖。失败后重跑失败项和受修复影响的范围，无新证据不重复扩大测试。
+验证入口支持计划预览、分支基线差异、本地测试组和显式 Docker 场景。选测仍以第 4.2 节的实际行为影响为准；自动映射无法判定的运行时改动必须先明确范围。提交后的任务使用 `--base` 并核对完整分支差异。失败后只重跑失败项和受修复影响的范围。
 
 ### 小改动的执行与停止条件
 
 测试范围以 `AGENTS.md` 第 4.2 节为单一规则源。开始前简短说明“行为变化 → 必要检查/场景与前置依赖 → 不执行范围及理由 → 预计耗时”。文档和版本变更以数分钟内完成为目标；本地测试预计超过 10 分钟、Docker 预计超过 20 分钟时先说明慢项和必要性。这些是调整计划的软预算，必要验证未完成仍需明确报告。
 
-当前调度器会把 `install.sh` 的版本递增也当成安装器变更，选入大量本地测试及安装、共存、升级 Docker 场景。低影响变更应直接运行选定的 `bash tests/<相关测试>.sh`，不要因路径调用粗粒度入口；`VERIFY_SKIP_REMOTE=1` 是本地测试全部执行后才跳过 Docker，不是轻量模式。单个协议的运行态验证也不自动要求其他协议、共存或升级场景。
+调度器比较完整安装器内容，仅 `# Version` 和 `SCRIPT_VERSION` 元数据变化时只选择本地版本与语法检查。其他运行时影响不能仅凭文件名猜测；先用 `--plan`，再明确必要的本地组和 Docker 场景。也可直接运行相关 `bash tests/<测试>.sh`。`VERIFY_SKIP_REMOTE=1` 是选中的本地测试执行后才跳过 Docker，不是轻量模式。单个协议不自动要求所有协议、共存或升级场景。
 
 选定检查通过、完整差异已核对且无新增风险证据后，停止测试并进入提交/审查；同一 HEAD 的一次本地审查可以同时记录原子提交和分支完整差异，无需重复启动。提交号变化、仅追加文档或进入 PR 审查，不使未改变的受测内容自动失效。慢项先定位，不盲目重启全套。安全审查等待单独记录；待审时保留 PR 并报告，不反复跑测试，也不绕过合并门禁。
+
+
+### 调度器命令与计划
+
+在仓库根目录运行。先预览，确认测试和场景满足本次影响，再去掉 `--plan` 执行同一组参数：
+
+```bash
+# 分支全部已提交改动 + 暂存/未暂存修改 + 未跟踪文件，只预览
+bash dev/verification/run.sh --plan --base origin/main
+
+# 菜单或自更新：明确本地回归组，按实际影响追加场景
+bash dev/verification/run.sh --plan --base origin/main --group menu --group self-update
+
+# 单协议本地检查；若改动影响运行态，再显式追加对应场景
+bash dev/verification/run.sh --plan --base origin/main --group protocol:http --scenario fresh_install_http
+
+# 调度器/传输变更：框架回归 + 轻量真实 Docker 安装与最终 smoke
+bash dev/verification/run.sh --plan --base origin/main --group verification --scenario fresh_install_http
+
+# 明确需要完整验收时才选已注册的全量集合
+bash dev/verification/run.sh --plan --base origin/main --full
+```
+
+`--help` 列出支持的组和场景。组包括 `docs`、`version`、`bootstrap`、`menu`、`self-update`、`subman`、`verification` 和 `protocol:<协议>`。组只选择本地测试；服务、网络或生命周期变更仍需 `--scenario`。多个组/场景可重复指定，本地测试去重。`protocol:hy2` 与 `protocol:hysteria` 分别指 Hysteria2 和 Hysteria v1。
+
+`--base` 比较 `merge-base(ref, HEAD)` 到当前工作区，保留分支已提交改动以及暂存、未暂存、未跟踪文件；不会把仅上游新增的改动算作任务差异。默认不带 `--base` 时只看相对 HEAD 的工作区差异。`--changed-file <路径>...` 是工具显式输入，可重复，与 `--base` 互斥，不代表已经覆盖完整分支。
+
+自动映射涵盖文档、版本元数据、Bootstrap、修改的独立宿主测试、以文件名静态引用的 helper 调用方，以及验证框架的相关测试。新增独立测试不会被漏掉；helper 自身不作为用例执行。动态构造的依赖、共享配置/系统操作及未映射的运行时逻辑需要人工影响判定。显式组/场景表示操作者做出了该判断，并不证明选择一定充分。
+
+计划输出 `base`、`file`、`group`、`syntax`、`test`、`scenario` 和选择理由/未映射影响。`plan_status=needs_scope` 时预览仍成功，实际执行返回 2，且不运行任何测试或 Docker；错误参数、无效 ref 或未知组/场景同样在执行前返回 2。`--plan` 不运行测试、不探测 Docker、不创建结果目录。执行后保存 `dev/verification-runs/<时间>/plan.txt`、逐测试日志/耗时以及场景产物，首个失败立即返回，不自动重复全套。
+
+场景根据本次运行已建立的状态补齐前置：独立 `runtime_smoke` 使用较轻的 `fresh_install_http`；VLESS 重配置需要 `fresh_install_vless` 基线；卸载验证先建立可核对旧 UUID 的 VLESS 安装；最终 smoke 在所有变更场景之后。若中途其他场景替换了安装，会重新准备必要基线，计划可能包含重复安装。现有大型场景尚未拆分，需在计划中确认额外覆盖，不能仅凭名称推断耗时很短。
+
+`--full` 运行的是 `selection.sh` 中的显式宿主安全清单和已注册场景，不等同于执行 `tests/` 下所有脚本，也不自动证明公网或外部服务行为。独立 `hy2_instance_acme_runtime.sh` 是 Pebble/私有 CA 容器 fixture，现有注册场景不调用它；直接修改它或静态引用它的 helper 时，调度器保持 `needs_scope`，即使 `--full` 也不能代替其独立隔离运行。保留该未完成边界并按专属容器流程验证，不要在宿主执行它。
 
 GitHub 对 `main` 启用 PR、线性历史和已解决审查对话保护，并对管理员生效，禁止强推和删除。仓库仅允许 rebase 合并，并自动删除已合并的远程分支。Codex 的审查结果目前写入 PR 评论，而非 GitHub 必需状态检查；GitHub 设置本身不会阻止在机器人审查完成前合并，因此执行者必须主动核对本地审查通过、当前 head 的远程安全审查完成且无未解决问题，远程代码审查不作为等待条件。
 

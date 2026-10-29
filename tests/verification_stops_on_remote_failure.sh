@@ -34,7 +34,7 @@ DOCKER_EOF
 chmod +x "${TMP_DIR}/docker"
 
 if PATH="${TMP_DIR}:${PATH}" VERIFY_SKIP_LOCAL_TESTS=1 \
-  bash "${REPO_ROOT}/dev/verification/run.sh" --changed-file install.sh > "${TMP_DIR}/stdout.txt" 2> "${TMP_DIR}/stderr.txt"; then
+  bash "${REPO_ROOT}/dev/verification/run.sh" --changed-file README.md --scenario fresh_install_http > "${TMP_DIR}/stdout.txt" 2> "${TMP_DIR}/stderr.txt"; then
   printf 'expected docker exec failure to propagate\n' >&2
   exit 1
 fi
