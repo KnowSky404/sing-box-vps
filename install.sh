@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026102904
+# Version: 2026102905
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026102904"
+readonly SCRIPT_VERSION="2026102905"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -71,7 +71,10 @@ readonly MEDIA_CHECK_BACKEND_REPO_URL="https://github.com/1-stream/RegionRestric
 readonly MEDIA_CHECK_BACKEND_SCRIPT_URL="https://raw.githubusercontent.com/1-stream/RegionRestrictionCheck/main/check.sh"
 readonly SB_HIGH_PORT_MIN="60000"
 readonly SB_HIGH_PORT_MAX="65535"
-readonly SB_REALITY_SNI_FALLBACK="www.apple.com"
+readonly SB_REALITY_CHECKER_VERSION="0.1.0"
+readonly SB_REALITY_CHECKER_COMMIT="bd25e0f636b3faccce855f4447f99327415f2077"
+readonly SB_REALITY_CHECKER_SHA256="b07d64452974fd140b6623fbb8efaba35ef5a6f44e84b90b2bedcb05901767dd"
+readonly SB_REALITY_CHECKER_URL="https://raw.githubusercontent.com/KnowSky404/reality-target-checker/${SB_REALITY_CHECKER_COMMIT}/reality-target-checker.sh"
 # Runtime capability source of truth. Fields are decoded by protocol_registry_json.
 # IDs/aliases are data; dispatch below always calls explicit, literal handlers.
 # The legacy vless alias intentionally remains the REALITY preset.
@@ -136,16 +139,6 @@ readonly SB_COMPONENT_REGISTRY=(
   'route-rule-set-local|rule_set|local|Local route rule set|1.13.0|builtin|{"format":["source","binary"],"path_reference":true,"owns_file":false,"max_tags_per_record":1}'
   'route-rule-set-remote|rule_set|remote|Remote route rule set|1.13.0|builtin|{"format":["source","binary"],"http_url":true,"initial_path":true,"update_interval":true,"http_client_reference":true,"http_client_reference_minimum_core":"1.14.0","download_detour":false,"max_tags_per_record":1}'
 )
-SB_REALITY_SNI_CANDIDATES=(
-  "www.apple.com"
-  "www.cloudflare.com"
-  "www.amazon.com"
-  "www.bing.com"
-  "www.github.com"
-  "www.ubuntu.com"
-  "www.debian.org"
-)
-
 # --- Global Variables ---
 SB_VERSION="${SB_SUPPORT_MAX_VERSION}"
 SB_PROTOCOL="vless+reality"
@@ -157,7 +150,7 @@ SB_PUBLIC_KEY=""
 SB_PRIVATE_KEY=""
 SB_SHORT_ID_1=""
 SB_SHORT_ID_2=""
-SB_SNI="${SB_REALITY_SNI_FALLBACK}"
+SB_SNI=""
 SB_MIXED_AUTH_ENABLED="y"
 SB_MIXED_USERNAME=""
 SB_MIXED_PASSWORD=""
@@ -4033,7 +4026,7 @@ prompt_vless_reality_update() {
   in_uuid=$(trim_whitespace "${in_uuid:-}")
   [[ -n "${in_uuid}" ]] && SB_UUID="${in_uuid}"
 
-  prompt_reality_sni_update
+  prompt_reality_sni_update || return 1
   prompt_vless_reality_rate_limit_update_fields
   prompt_vless_reality_advanced_update_fields
   validate_current_reality_sni_alpn_or_warn
@@ -4043,7 +4036,7 @@ prompt_vless_reality_update() {
 validate_reality_sni_syntax() {
   local domain=${1:-}
 
-  [[ -n "${domain}" ]] || return 1
+  [[ -n "${domain}" && ${#domain} -le 253 ]] || return 1
   [[ "${domain}" != *"://"* ]] || return 1
   [[ "${domain}" != *"/"* ]] || return 1
   [[ "${domain}" != *":"* ]] || return 1
@@ -4170,10 +4163,14 @@ read_manual_reality_sni_with_validation() {
   local manual_sni reason
 
   while true; do
-    read -rp "${prompt}" manual_sni
+    read -rp "${prompt}" manual_sni || return 1
     manual_sni=$(trim_whitespace "${manual_sni:-}")
     manual_sni=${manual_sni:-${default_sni}}
 
+    if ! validate_reality_sni_syntax "${manual_sni}"; then
+      log_warn "SNI 必须是纯域名，不含 URL、端口或路径；请重新输入。" >&2
+      continue
+    fi
     if reason=$(probe_reality_sni_tls "${manual_sni}"); then
       SB_SNI="${manual_sni}"
       return 0
@@ -4207,130 +4204,204 @@ validate_current_reality_sni_alpn_or_warn() {
   fi
 }
 
-probe_reality_sni_candidate() {
-  local domain=$1
-  local time_total reason
-
-  if ! reason=$(probe_reality_sni_tls "${domain}"); then
-    log_warn "Reality SNI TLS 校验失败: ${domain} (${reason})" >&2
+# The checker is pinned to reviewed source until its first Release is published.
+# A fixed digest verifies the downloaded bytes before any code is executed.
+prepare_reality_target_checker() {
+  local destination=$1 staged digest dependency
+  staged="${destination}.part"
+  if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 3) )); then
+    log_warn "reality-target-checker 需要 Bash >= 4.3；可改用手动 SNI 校验。" >&2
     return 1
   fi
-
-  time_total=$(curl -o /dev/null -sS -L \
-    --connect-timeout 3 \
-    --max-time 6 \
-    --retry 0 \
-    --write-out '%{time_appconnect}' \
-    "https://${domain}/" 2>/dev/null) || return 1
-
-  awk -v value="${time_total}" 'BEGIN {
-    if (value <= 0) {
-      exit 1
-    }
-    printf "%d\n", value * 1000
-  }'
-}
-
-select_reality_sni_candidate() {
-  local domain latency best_domain best_latency
-
-  best_domain=""
-  best_latency=""
-
-  for domain in "${SB_REALITY_SNI_CANDIDATES[@]}"; do
-    if latency=$(probe_reality_sni_candidate "${domain}"); then
-      log_info "Reality SNI 探测可用: ${domain} (${latency}ms)" >&2
-      if [[ -z "${best_latency}" || "${latency}" -lt "${best_latency}" ]]; then
-        best_domain="${domain}"
-        best_latency="${latency}"
-      fi
-    else
-      log_warn "Reality SNI 探测失败: ${domain}" >&2
+  for dependency in bash curl openssl dig jq timeout sha256sum mktemp date; do
+    if ! command -v "${dependency}" >/dev/null 2>&1; then
+      log_warn "SNI 探测缺少依赖 ${dependency}（dig 由 Debian/Ubuntu 的 dnsutils 或 RHEL 系的 bind-utils 提供）。可安装依赖后重试或手动输入。" >&2
+      return 1
     fi
   done
-
-  if [[ -n "${best_domain}" ]]; then
-    printf '%s' "${best_domain}"
-    return 0
+  if ! curl --disable --fail --silent --show-error --location --max-redirs 3 \
+    --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 60 \
+    --retry 2 --output "${staged}" "${SB_REALITY_CHECKER_URL}" 2>/dev/null; then
+    log_warn "SNI 探测器下载失败，未执行远程内容，SNI 未变更。" >&2
+    rm -f -- "${staged}" || return 1
+    return 1
   fi
+  digest=$(sha256sum -- "${staged}") || { rm -f -- "${staged}"; return 1; }
+  if [[ "${digest%% *}" != "${SB_REALITY_CHECKER_SHA256}" ]] || ! bash -n "${staged}"; then
+    log_warn "SNI 探测器完整性或语法校验失败，未执行远程内容，SNI 未变更。" >&2
+    rm -f -- "${staged}" || return 1
+    return 1
+  fi
+  mv -- "${staged}" "${destination}" || return 1
+}
 
-  log_warn "所有候选 Reality SNI 探测失败，回退到 ${SB_REALITY_SNI_FALLBACK}。" >&2
-  printf '%s' "${SB_REALITY_SNI_FALLBACK}"
+run_reality_target_check() {
+  local checker=$1 domain=$2 report=$3
+  timeout --signal=TERM --kill-after=2 90 \
+    bash "${checker}" check "${domain}" --json --timeout 3 > "${report}"
+}
+
+validate_reality_target_report() {
+  local report=$1 domain=$2 status=$3
+  [[ "${status}" == 0 || "${status}" == 3 ]] || return 1
+  jq -s -e --arg domain "${domain}" --arg version "${SB_REALITY_CHECKER_VERSION}" --argjson status "${status}" '
+    length == 1 and (.[0] |
+    .schema_version == "1.0" and .tool_version == $version and
+    .target == $domain and .sni == $domain and .port == 443 and
+    .summary.exit_code == $status and
+    .summary.status == (if $status == 0 then "PASS" else "WARN" end) and
+    .summary.basic_tls == "PASS" and .summary.compatibility == "PASS" and
+    .selection.scope == "dns" and .selection.complete == true and
+    (.risks | type == "array") and (.unknowns | type == "array") and
+    (.endpoints | type == "array" and length > 0 and length <= 16 and
+      all(.[]; . as $endpoint |
+        (.checks | type == "array") and
+        all(["tcp443", "tls13", "cert_chain", "cert_san", "cert_validity", "alpn_h2", "x25519"][];
+          . as $id | [$endpoint.checks[] | select(.id == $id)] |
+          length == 1 and .[0].status == "PASS"))) and
+    (if $status == 0 then (.risks | length == 0) and (.unknowns | length == 0) else true end))
+  ' "${report}" >/dev/null 2>&1
+}
+
+select_reality_sni_candidate() (
+  # Subshell-local traps leave the installer's management/transaction traps intact.
+  umask 077
+  local temp_dir domain status choice risk_ids interrupted_status=0
+  [[ $# -gt 0 && $# -le 5 ]] || return 1
+  for domain in "$@"; do
+    validate_reality_sni_syntax "${domain}" || return 1
+  done
+  temp_dir=$(mktemp -d) || return 1
+  trap 'rm -rf -- "${temp_dir}"' EXIT
+  trap 'interrupted_status=130; log_warn "SNI 探测中断，SNI 未变更。" >&2; return 130' INT
+  trap 'interrupted_status=143; log_warn "SNI 探测中断，SNI 未变更。" >&2; return 143' TERM
+  trap 'interrupted_status=129; log_warn "SNI 探测中断，SNI 未变更。" >&2; return 129' HUP
+  prepare_reality_target_checker "${temp_dir}/checker.sh" || return $?
+  (( interrupted_status == 0 )) || return "${interrupted_status}"
+  for domain in "$@"; do
+    domain=${domain,,}
+    log_info "reality-target-checker 探测 ${domain}（A/AAAA，每个域名最多 90 秒）..." >&2
+    status=0
+    run_reality_target_check "${temp_dir}/checker.sh" "${domain}" "${temp_dir}/report.json" \
+      2> "${temp_dir}/checker.stderr" || status=$?
+    (( interrupted_status == 0 )) || return "${interrupted_status}"
+    case "${status}" in 129|130|137|143) return "${status}" ;; esac
+    if ! validate_reality_target_report "${temp_dir}/report.json" "${domain}" "${status}"; then
+      log_warn "${domain} 未通过探测或报告无效（退出码 ${status}），未选择该域名。" >&2
+      continue
+    fi
+    if [[ "${status}" == 3 ]]; then
+      # Only render bounded check IDs, never network-supplied reason/redirect text.
+      risk_ids=$(jq -r '[.risks[], .unknowns[]] | map(.id | select(type == "string" and test("^[a-zA-Z0-9_]{1,40}$"))) | unique | join(", ")' "${temp_dir}/report.json") || return 1
+      log_warn "${domain} 基础 TLS 和 h2/X25519 通过；附加风险或未知项: ${risk_ids:-unavailable}。ASN/CDN 检测不能保证目标不存在共享网络风险。" >&2
+      choice=$(prompt_yes_no "是否接受这些附加风险并使用 ${domain} [y/n] (默认 n): " "n") || return 1
+      [[ "${choice}" == y ]] || continue
+    fi
+    (( interrupted_status == 0 )) || return "${interrupted_status}"
+    printf '%s' "${domain}"
+    return 0
+  done
+  log_warn "没有通过并获接受的候选 SNI；SNI 未变更，不回退固定域名。" >&2
+  return 1
+)
+
+prompt_reality_target_candidates() {
+  local input domain selected_sni
+  local candidates=()
+  echo "checker 只检测提供的域名，不自动发现域名；按输入顺序选择首个通过并获接受的目标。"
+  echo "探测包括 TLS/证书/h2/X25519，以及通过 DNS 查询的 ASN/CDN 线索。"
+  read -rp "[VLESS + REALITY] 候选域名（空格或逗号分隔，最多 5 个；留空取消）: " input || return 1
+  input=${input//,/ }
+  read -r -a candidates <<< "${input}"
+  if [[ ${#candidates[@]} -eq 0 || ${#candidates[@]} -gt 5 ]]; then
+    log_warn "请输入 1 至 5 个候选域名；SNI 未变更。"
+    return 1
+  fi
+  for domain in "${candidates[@]}"; do
+    if ! validate_reality_sni_syntax "${domain}"; then
+      log_warn "候选必须为纯域名，不含 URL、端口或路径；SNI 未变更。"
+      return 1
+    fi
+  done
+  if selected_sni=$(select_reality_sni_candidate "${candidates[@]}"); then
+    SB_SNI="${selected_sni}"
+    log_success "已选择 Reality SNI: ${SB_SNI}"
+    return 0
+  else
+    return $?
+  fi
 }
 
 prompt_reality_sni_install() {
-  local choice selected_sni
-
-  echo "[VLESS + REALITY] REALITY 域名选择:"
-  echo "1. 自动探测推荐 SNI (默认)"
-  echo "2. 手动输入"
-  choice=$(prompt_choice "请选择 [1-2] (默认 1): " 1 2 1)
-
-  case "${choice}" in
-    2)
-      read_manual_reality_sni_with_validation "${SB_REALITY_SNI_FALLBACK}" \
-        "[VLESS + REALITY] REALITY 域名 (默认 ${SB_REALITY_SNI_FALLBACK}): "
-      ;;
-    *)
-      selected_sni=$(select_reality_sni_candidate)
-      SB_SNI="${selected_sni}"
-      log_success "已选择 Reality SNI: ${SB_SNI}"
-      ;;
-  esac
+  local choice status
+  while true; do
+    echo "[VLESS + REALITY] REALITY 域名选择:"
+    echo "1. 使用 reality-target-checker 探测候选 SNI (默认)"
+    echo "2. 手动输入（TLS 校验）"
+    choice=$(prompt_choice "请选择 [1-2] (默认 1): " 1 2 1) || return 1
+    case "${choice}" in
+      2)
+        read_manual_reality_sni_with_validation "" \
+          "[VLESS + REALITY] REALITY 域名（必填，无固定默认值）: " || return 1
+        return 0
+        ;;
+      *)
+        if prompt_reality_target_candidates; then return 0; else status=$?; fi
+        [[ "${status}" == 1 ]] || return "${status}"
+        log_warn "尚未选择 SNI，请重试探测或手动输入。"
+        ;;
+    esac
+  done
 }
 
 prompt_reality_sni_update() {
-  local choice selected_sni
-
-  echo "[VLESS + REALITY] REALITY SNI 更新方式:"
-  echo "1. 保留当前 SNI: ${SB_SNI} (默认)"
-  echo "2. 自动探测推荐 SNI"
-  echo "3. 手动输入"
-  choice=$(prompt_choice "请选择 [1-3] (默认 1): " 1 3 1)
-
-  case "${choice}" in
-    2)
-      selected_sni=$(select_reality_sni_candidate)
-      SB_SNI="${selected_sni}"
-      log_success "已选择 Reality SNI: ${SB_SNI}"
-      ;;
-    3)
-      read_manual_reality_sni_with_validation "${SB_SNI}" \
-        "[VLESS + REALITY] 新 REALITY SNI (当前: ${SB_SNI}, 留空保持): "
-      ;;
-    *)
-      log_info "保留当前 Reality SNI: ${SB_SNI}"
-      ;;
-  esac
+  local choice status
+  while true; do
+    echo "[VLESS + REALITY] REALITY SNI 更新方式:"
+    echo "1. 保留当前 SNI: ${SB_SNI} (默认)"
+    echo "2. 使用 reality-target-checker 探测候选 SNI"
+    echo "3. 手动输入（TLS 校验）"
+    choice=$(prompt_choice "请选择 [1-3] (默认 1): " 1 3 1) || return 1
+    case "${choice}" in
+      2)
+        if prompt_reality_target_candidates; then return 0; else status=$?; fi
+        [[ "${status}" == 1 ]] || return "${status}"
+        ;;
+      3)
+        read_manual_reality_sni_with_validation "${SB_SNI}" \
+          "[VLESS + REALITY] 新 REALITY SNI (当前: ${SB_SNI}, 留空保持): " || return 1
+        return 0
+        ;;
+      *) log_info "保留当前 Reality SNI: ${SB_SNI}"; return 0 ;;
+    esac
+  done
 }
 
 prompt_reality_sni_for_new_instance() {
-  local default_sni=$1
-  local choice selected_sni
-
-  default_sni=${default_sni:-${SB_REALITY_SNI_FALLBACK}}
-
-  echo "[VLESS + REALITY] REALITY SNI 选择:"
-  echo "1. 复用现有 SNI: ${default_sni} (默认)"
-  echo "2. 自动探测推荐 SNI"
-  echo "3. 手动输入"
-  choice=$(prompt_choice "请选择 [1-3] (默认 1): " 1 3 1)
-
-  case "${choice}" in
-    2)
-      selected_sni=$(select_reality_sni_candidate)
-      SB_SNI="${selected_sni}"
-      log_success "已选择 Reality SNI: ${SB_SNI}"
-      ;;
-    3)
-      read_manual_reality_sni_with_validation "${default_sni}" \
-        "[VLESS + REALITY] REALITY SNI (默认 ${default_sni}): "
-      ;;
-    *)
-      SB_SNI="${default_sni}"
-      log_info "复用 Reality SNI: ${SB_SNI}"
-      ;;
-  esac
+  local default_sni=${1:-} choice status
+  if ! validate_reality_sni_syntax "${default_sni}"; then
+    prompt_reality_sni_install || return 1
+    return $?
+  fi
+  while true; do
+    echo "[VLESS + REALITY] REALITY SNI 选择:"
+    echo "1. 复用现有 SNI: ${default_sni} (默认)"
+    echo "2. 使用 reality-target-checker 探测候选 SNI"
+    echo "3. 手动输入（TLS 校验）"
+    choice=$(prompt_choice "请选择 [1-3] (默认 1): " 1 3 1) || return 1
+    case "${choice}" in
+      2)
+        if prompt_reality_target_candidates; then return 0; else status=$?; fi
+        [[ "${status}" == 1 ]] || return "${status}"
+        ;;
+      3)
+        read_manual_reality_sni_with_validation "${default_sni}" \
+          "[VLESS + REALITY] REALITY SNI (默认 ${default_sni}): " || return 1
+        return 0
+        ;;
+      *) SB_SNI="${default_sni}"; log_info "复用 Reality SNI: ${SB_SNI}"; return 0 ;;
+    esac
+  done
 }
 
 prompt_vless_reality_rate_limit_fields() {
@@ -5994,7 +6065,7 @@ prompt_vless_reality_install() {
   SB_PORT=$(prompt_port "[VLESS + REALITY] 端口 (默认 ${SB_PORT}): " "${SB_PORT}")
   check_port_conflict "${SB_PORT}"
 
-  prompt_reality_sni_install
+  prompt_reality_sni_install || return 1
   prompt_vless_reality_rate_limit_fields
   prompt_vless_reality_advanced_update_fields
   validate_current_reality_sni_alpn_or_warn
@@ -6044,7 +6115,7 @@ prompt_vless_reality_instance_create() {
   SB_VLESS_INBOUND_TAG=""
   SB_NODE_NAME="${selected_node}"
   SB_PORT="${selected_port}"
-  prompt_reality_sni_for_new_instance "${default_sni:-${SB_REALITY_SNI_FALLBACK}}"
+  prompt_reality_sni_for_new_instance "${default_sni}" || return 1
 
   SB_UUID=""
   SB_SHORT_ID_1=""
@@ -8382,7 +8453,7 @@ set_protocol_defaults() {
       SB_PROTOCOL="vless+reality"
       SB_NODE_NAME="$(default_node_name_for_protocol "vless+reality")"
       SB_PORT="443"
-      SB_SNI="${SB_REALITY_SNI_FALLBACK}"
+      SB_SNI=""
       SB_VLESS_ALPN_MODE="off"
       SB_VLESS_TCP_FAST_OPEN="n"
       SB_MIXED_AUTH_ENABLED="y"
@@ -11834,10 +11905,10 @@ install_dependencies() {
   case "${OS_NAME}" in
     debian|ubuntu)
       run_with_progress "更新软件源" apt-get update -y
-      run_with_progress "安装基础依赖" apt-get install -y curl wget jq tar openssl uuid-runtime qrencode iproute2
+      run_with_progress "安装基础依赖" apt-get install -y curl wget jq tar openssl uuid-runtime qrencode iproute2 dnsutils ca-certificates
       ;;
     centos|almalinux|rocky)
-      run_with_progress "安装基础依赖" yum install -y curl wget jq tar openssl util-linux qrencode iproute
+      run_with_progress "安装基础依赖" yum install -y curl wget jq tar openssl util-linux qrencode iproute bind-utils ca-certificates
       ;;
   esac
   log_success "基础依赖安装完成。"
@@ -12103,7 +12174,7 @@ load_protocol_state() {
       SB_NODE_NAME="${NODE_NAME:-${SB_NODE_NAME:-$(default_node_name_for_protocol "vless+reality")}}"
       SB_PORT="${PORT:-${SB_PORT:-443}}"
       SB_UUID="${UUID:-${SB_UUID:-}}"
-      SB_SNI="${SNI:-${SB_SNI:-$SB_REALITY_SNI_FALLBACK}}"
+      SB_SNI="${SNI:-${SB_SNI:-}}"
       SB_PRIVATE_KEY="${REALITY_PRIVATE_KEY:-${SB_PRIVATE_KEY:-}}"
       SB_PUBLIC_KEY="${REALITY_PUBLIC_KEY:-${SB_PUBLIC_KEY:-}}"
       SB_SHORT_ID_1="${SHORT_ID_1:-${SB_SHORT_ID_1:-}}"
@@ -23503,7 +23574,10 @@ update_config_only() {
   fi
   ensure_existing_generated_config_baseline || return 1
   snapshot_dir=$(create_managed_state_snapshot) || log_error "无法创建配置状态事务快照。"
-  prompt_protocol_update_fields "${selected_protocol}"
+  if ! prompt_protocol_update_fields "${selected_protocol}"; then
+    abort_managed_state_transaction "${snapshot_dir}" "协议输入已取消或未完成"
+    return 1
+  fi
   if ! save_protocol_state "${selected_protocol}" || ! generate_config; then
     abort_managed_state_transaction "${snapshot_dir}" "协议配置生成或校验失败"
   fi
@@ -37042,7 +37116,7 @@ render_expected_protocol_state_snapshot() {
         printf 'INSTANCE_%s_TAG=%s\n' "$((instance_index + 1))" "${VLESS_CONFIG_INSTANCE_TAGS[${instance_index}]}"
         printf 'INSTANCE_%s_PORT=%s\n' "$((instance_index + 1))" "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")"
         printf 'INSTANCE_%s_UUID=%s\n' "$((instance_index + 1))" "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].uuid // ""' "${SINGBOX_CONFIG_FILE}")"
-        printf 'INSTANCE_%s_SNI=%s\n' "$((instance_index + 1))" "$(jq -r --argjson idx "${inbound_index}" --arg fallback "${SB_REALITY_SNI_FALLBACK}" '.inbounds[$idx].tls.server_name // $fallback' "${SINGBOX_CONFIG_FILE}")"
+        printf 'INSTANCE_%s_SNI=%s\n' "$((instance_index + 1))" "$(jq -r --argjson idx "${inbound_index}" --arg fallback "" '.inbounds[$idx].tls.server_name // $fallback' "${SINGBOX_CONFIG_FILE}")"
         printf 'INSTANCE_%s_SHORT_ID_1=%s\n' "$((instance_index + 1))" "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[0] // ""' "${SINGBOX_CONFIG_FILE}")"
         printf 'INSTANCE_%s_SHORT_ID_2=%s\n' "$((instance_index + 1))" "$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[1] // ""' "${SINGBOX_CONFIG_FILE}")"
         printf 'INSTANCE_%s_ALPN_MODE=%s\n' "$((instance_index + 1))" "$(jq -r --argjson idx "${inbound_index}" '(.inbounds[$idx].tls.alpn // []) | if . == ["h2", "http/1.1"] then "h2_http1" elif . == ["http/1.1"] then "http1" else "off" end' "${SINGBOX_CONFIG_FILE}")"
@@ -38374,7 +38448,7 @@ rebuild_protocol_state_from_config() {
         SB_NODE_NAME="$(default_node_name_for_protocol "vless+reality")"
         SB_PORT=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].listen_port // "443"' "${SINGBOX_CONFIG_FILE}")
         SB_UUID=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].users[0].uuid // ""' "${SINGBOX_CONFIG_FILE}")
-        SB_SNI=$(jq -r --argjson idx "${inbound_index}" --arg fallback "${SB_REALITY_SNI_FALLBACK}" '.inbounds[$idx].tls.server_name // $fallback' "${SINGBOX_CONFIG_FILE}")
+        SB_SNI=$(jq -r --argjson idx "${inbound_index}" --arg fallback "" '.inbounds[$idx].tls.server_name // $fallback' "${SINGBOX_CONFIG_FILE}")
         SB_PRIVATE_KEY=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.private_key // ""' "${SINGBOX_CONFIG_FILE}")
         SB_SHORT_ID_1=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[0] // ""' "${SINGBOX_CONFIG_FILE}")
         SB_SHORT_ID_2=$(jq -r --argjson idx "${inbound_index}" '.inbounds[$idx].tls.reality.short_id[1] // ""' "${SINGBOX_CONFIG_FILE}")
