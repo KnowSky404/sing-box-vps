@@ -1985,7 +1985,7 @@ config_inbound_protocol() {
 }
 
 config_protocol_jq_filter() {
-  local filter
+  local filter protocol=${1:-} config_file=${2:-${SINGBOX_CONFIG_FILE:-}} excluded
   case "${1:-}" in
     vless-reality) filter='.type == "vless" and (.tls.reality? != null)' ;;
     vless-plain) filter='.type == "vless" and (.tls.reality? == null)' ;;
@@ -1995,16 +1995,38 @@ config_protocol_jq_filter() {
     *) printf -v filter '.type == "%s"' "${1:-}" ;;
   esac
   # Rebuild captures manual ownership before clearing the old state files.
+  excluded=${SB_UNMANAGED_CLIENT_TAGS_JSON:-'[]'}
+  if [[ -z "${SB_UNMANAGED_CLIENT_TAGS_JSON+x}" && -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
+    case "${protocol}" in
+      mixed|socks|http)
+        excluded=$(unmanaged_client_tags_for_config_json "${config_file}" "${filter}") || return 1 ;;
+    esac
+  fi
   printf '(%s) and (.tag as $candidate | (%s) | index($candidate) == null)' \
-    "${filter}" "${SB_UNMANAGED_CLIENT_TAGS_JSON:-[]}"
+    "${filter}" "${excluded}"
 }
+
+unmanaged_client_tags_for_config_json() (
+  trap - EXIT ERR RETURN DEBUG
+  local config_file=$1 filter=$2 inbounds inbound tag tags='[]'
+  [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
+  inbounds=$(jq -c ".inbounds[]? | select(${filter})" "${config_file}") || return 1
+  while IFS= read -r inbound; do
+    [[ -n "${inbound}" ]] || continue
+    if manual_client_inbound_is_unmanaged "${inbound}"; then
+      tag=$(jq -r '.tag' <<< "${inbound}") || return 1
+      tags=$(jq -c --arg tag "${tag}" '. + [$tag]' <<< "${tags}") || return 1
+    fi
+  done <<< "${inbounds}"
+  printf '%s\n' "${tags}"
+)
 
 # An existing managed inventory does not implicitly adopt a manually named
 # local proxy frontend. Reserved default tags and indexed/missing state keep
 # their existing fail-closed ownership checks; takeover without an index is
 # still an explicit import of the complete live inventory.
 manual_client_inbound_is_unmanaged() {
-  local inbound=$1 protocol tag default_tag indexed
+  local inbound=$1 protocol tag default_tag indexed state_file store_file schema owned_tags
   [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]] || return 1
   protocol=$(jq -r '.type' <<< "${inbound}") || return 1
   case "${protocol}" in mixed|socks|http) ;; *) return 1 ;; esac
@@ -2012,20 +2034,35 @@ manual_client_inbound_is_unmanaged() {
   [[ -n "${tag}" ]] || return 1
   default_tag=$(protocol_registry_field "${protocol}" default_tag) || return 1
   [[ "${tag}" != "${default_tag}" ]] || return 1
-  [[ ! -e "$(protocol_state_file "${protocol}")" ]] || return 1
   indexed=$(extract_protocols_from_index) || return 1
+  state_file=$(protocol_state_file "${protocol}") || return 1
+  if [[ -e "${state_file}" || -L "${state_file}" ]]; then
+    [[ -f "${state_file}" && ! -L "${state_file}" && ",${indexed}," == *",${protocol},"* ]] || return 1
+    schema=$(protocol_instance_state_schema "${protocol}") || return 1
+    store_file=$(plain_proxy_structured_store_file "${protocol}") || return 1
+    if [[ "${schema}" == 2 ]]; then
+      [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+      owned_tags=$(jq -ce --arg protocol "${protocol}" 'select(.schema_version==1 and .protocol==$protocol) |
+        .instances | select(type=="array") | map(.tag) |
+        select(all(.[]; type=="string" and length>0) and (unique|length)==length)' "${store_file}") || return 1
+      if jq -e --arg tag "${tag}" 'index($tag)!=null' <<< "${owned_tags}" >/dev/null; then return 1; fi
+      return 0
+    fi
+    [[ "${schema}" == 1 && ! -e "${store_file}" && ! -L "${store_file}" ]] || return 1
+    return 0
+  fi
   [[ ",${indexed}," != *",${protocol},"* ]]
 }
 
 config_protocol_inbound_count() {
   local protocol=${1:-} config_file=${2:-${SINGBOX_CONFIG_FILE:-}} filter
-  filter=$(config_protocol_jq_filter "${protocol}") || return 1
+  filter=$(config_protocol_jq_filter "${protocol}" "${config_file}") || return 1
   jq -r "[(.inbounds[]? | select(${filter}))] | length" "${config_file}"
 }
 
 config_protocol_inbounds_jsonl() {
   local protocol=${1:-} config_file=${2:-${SINGBOX_CONFIG_FILE:-}} filter
-  filter=$(config_protocol_jq_filter "${protocol}") || return 1
+  filter=$(config_protocol_jq_filter "${protocol}" "${config_file}") || return 1
   jq -c "[.inbounds[]? | select(${filter})][]" "${config_file}"
 }
 
@@ -35616,7 +35653,7 @@ plain_proxy_validate_state_inventory() (
   config_count=$(config_protocol_inbound_count "${protocol}" "${SINGBOX_CONFIG_FILE}") || return 1
   store_count=$(jq -r '.instances | length' "${store_file}") || return 1
   [[ "${config_count}" =~ ^[0-9]+$ && "${config_count}" == "${store_count}" ]] || return 1
-  config_tags=$(jq -c --arg protocol "${protocol}" '[.inbounds[]? | select((if $protocol == "vless-plain" then (.type == "vless" and (.tls.reality? == null)) elif $protocol == "hy2" then .type == "hysteria2" else .type == $protocol end)) | .tag] | sort' "${SINGBOX_CONFIG_FILE}") || return 1
+  config_tags=$(config_protocol_inbounds_jsonl "${protocol}" "${SINGBOX_CONFIG_FILE}" | jq -sc 'map(.tag) | sort') || return 1
   store_tags=$(jq -c '[.instances[].tag] | sort' "${store_file}") || return 1
   [[ "${config_tags}" == "${store_tags}" ]]
 )
