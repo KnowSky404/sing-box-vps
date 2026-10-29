@@ -43,7 +43,7 @@ done
 openssl x509 -in "${ARTIFACT_DIR}/root.crt" -noout -subject > "${ARTIFACT_DIR}/root-subject.txt"
 printf 'INSTALLED_PROTOCOLS=\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
 jq -n '{log:{level:"info"},
-  inbounds:[{type:"mixed",tag:"manual-client",listen:"127.0.0.1",listen_port:18090}],
+  inbounds:[{type:"mixed",tag:"manual-client",listen:"0.0.0.0",listen_port:18090}],
   dns:{servers:[{type:"local",tag:"manual-dns"}]},
   outbounds:[{type:"direct",tag:"direct"},{type:"direct",tag:"manual-direct"},
     {type:"socks",tag:"manual-proxy",server:"127.0.0.1",server_port:19999}],
@@ -66,6 +66,39 @@ printf '[Service]\nExecStartPre=/bin/sleep 2\n' > /etc/systemd/system/sing-box.s
 export SB_PROGRESS_INTERVAL_SECONDS=1
 systemctl daemon-reload
 systemctl start sing-box
+container_ip=$(hostname -I | awk '{print $1}')
+[[ -n "${container_ip}" && "${container_ip}" != 127.* ]]
+# This operator listener is public but deliberately blocked. Neither instance
+# transactions nor legacy global settings may insert an allow above this rule.
+iptables -I INPUT 1 -d "${container_ip}/32" -p tcp --dport 18090 \
+  -m comment --comment sbv-manual-policy-fixture -j DROP
+assert_manual_public_port_blocked() {
+  local ready_attempt
+  for ((ready_attempt=0; ready_attempt<50; ready_attempt++)); do
+    ss -ltn > "${ARTIFACT_DIR}/manual-listener.txt"
+    if grep -Fq '0.0.0.0:18090' "${ARTIFACT_DIR}/manual-listener.txt"; then break; fi
+    sleep 0.1
+  done
+  grep -Fq '0.0.0.0:18090' "${ARTIFACT_DIR}/manual-listener.txt"
+  if python3 - "${container_ip}" >>"${ARTIFACT_DIR}/manual-firewall-probe.log" 2>&1 <<'PY'
+import socket,sys
+try:
+    connection=socket.create_connection((sys.argv[1],18090),timeout=1)
+    connection.close()
+except TimeoutError:
+    sys.exit(10)
+PY
+  then
+    printf 'manual public port was unexpectedly opened\n' >&2
+    return 1
+  else
+    [[ $? == 10 ]]
+  fi
+  if [[ -f "${INSTANCE_FIREWALL_LEDGER_FILE}" ]]; then
+    jq -e 'all(.rules[].refs[]?; .owner!="manual-client")' "${INSTANCE_FIREWALL_LEDGER_FILE}" >/dev/null
+  fi
+}
+assert_manual_public_port_blocked
 
 make_record() {
   local id=$1 domain=$2 port=$3
@@ -125,6 +158,7 @@ jq -e '.dns.strategy=="ipv4_only" and
   any(.outbounds[]; .tag=="direct" and .domain_resolver.strategy=="ipv4_only")' "${SINGBOX_CONFIG_FILE}" >/dev/null
 manual_projection > "${ARTIFACT_DIR}/manual.after-stack.json"
 cmp "${ARTIFACT_DIR}/manual.before.json" "${ARTIFACT_DIR}/manual.after-stack.json"
+assert_manual_public_port_blocked
 jq -e '((.certificate_providers // [])|length)==0' "${SINGBOX_CONFIG_FILE}" >/dev/null
 for ((attempt=0; attempt<120; attempt++)); do
   certificate_count=$(find "${SB_ACME_DATA_DIR}" -type f -name '*.crt' | wc -l)
@@ -142,8 +176,17 @@ sha256sum -c "${ARTIFACT_DIR}/certificates.before.sha256" > "${ARTIFACT_DIR}/cac
 printf 'hy2-acme-runtime-transfer-ok\n' > "${ARTIFACT_DIR}/marker.txt"
 python3 -m http.server 19081 --bind 127.0.0.1 --directory "${ARTIFACT_DIR}" > "${ARTIFACT_DIR}/http.log" 2>&1 &
 http_pid=$!
-container_ip=$(hostname -I | awk '{print $1}')
-[[ -n "${container_ip}" && "${container_ip}" != 127.* ]]
+component_file="${ARTIFACT_DIR}/owned-direct.json"
+jq -n '{id:"owned-direct",role:"inbound",type:"direct",tag:"owned-direct",enabled:true,
+  config:{listen:"0.0.0.0",listen_port:18091,network:"tcp",override_address:"127.0.0.1",override_port:19081},route_rules:[]}' > "${component_file}"
+managed_component_state_apply create 0 "${component_file}" "" y > "${ARTIFACT_DIR}/component-create.json"
+curl --silent --show-error --fail --max-time 5 --noproxy '*' \
+  "http://${container_ip}:18091/marker.txt" > "${ARTIFACT_DIR}/component-transfer.txt"
+cmp "${ARTIFACT_DIR}/marker.txt" "${ARTIFACT_DIR}/component-transfer.txt"
+assert_manual_public_port_blocked
+managed_component_state_apply delete 1 "" owned-direct n > "${ARTIFACT_DIR}/component-delete.json"
+jq -e 'all(.rules[].refs[]?; .owner!="owned-direct" and .owner!="manual-client")' "${INSTANCE_FIREWALL_LEDGER_FILE}" >/dev/null
+assert_manual_public_port_blocked
 jq -e 'all(.inbounds[]|select(.type=="hysteria2"); .listen=="0.0.0.0")' "${SINGBOX_CONFIG_FILE}" >/dev/null
 outbounds=$(build_client_hy2_outbounds "${container_ip}" | jq -s .)
 for index in 0 1; do
@@ -175,5 +218,8 @@ cmp "${ARTIFACT_DIR}/manual.before.json" "${ARTIFACT_DIR}/manual.after-delete.js
 plain_proxy_structured_state_matches_config hy2
 systemctl is-active --quiet sing-box
 sing-box check -c "${SINGBOX_CONFIG_FILE}"
+assert_manual_public_port_blocked
+iptables -C INPUT -d "${container_ip}/32" -p tcp --dport 18090 \
+  -m comment --comment sbv-manual-policy-fixture -j DROP
 journalctl -u sing-box --no-pager > "${ARTIFACT_DIR}/service.log"
-printf 'HY2 ACME Docker runtime passed: actual HTTP-01 issuance=2, verified TLS transfers via container IPv4=2, cache reuse, delete isolation, manual client coexistence, global rebuild and slow-service progress\n'
+printf 'HY2 ACME Docker runtime passed: actual HTTP-01 issuance=2, verified TLS transfers via container IPv4=2, cache reuse, delete isolation, manual client/DNS/firewall coexistence, global rebuild, stack change and slow-service progress\n'
