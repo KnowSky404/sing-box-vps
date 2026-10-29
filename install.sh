@@ -5714,8 +5714,16 @@ prompt_vmess_update() {
 }
 
 open_all_protocol_ports() {
-  local plan entries protocol port transport
+  local plan owned_plan entries protocol port transport
   plan=$(managed_listener_plan "${SINGBOX_CONFIG_FILE}") || return $?
+  owned_plan=$(filter_owned_firewall_plan_json "${plan}") || return $?
+  if [[ "${owned_plan}" != "${plan}" ]]; then
+    # Coexisting listeners require address-scoped rules; a coarse port allow
+    # could otherwise expose an unowned listener on another local address.
+    run_with_progress "同步托管监听的防火墙规则" open_scoped_protocol_ports
+    return $?
+  fi
+  plan=$(instance_firewall_targets_json "${owned_plan}") || return $?
   entries=$(jq -r 'unique_by([.protocol,.port,.transport])[] | [.protocol,.port,.transport] | @tsv' <<< "${plan}") || return $?
   while IFS=$'\t' read -r protocol port transport; do
     [[ -n "${protocol}" ]] || continue
@@ -10976,11 +10984,102 @@ instance_firewall_read_ledger() {
   instance_firewall_ledger_validate < "${ledger_file}"
 }
 
-instance_firewall_plan_file() {
-  local config_file=${1:-}
-  [[ -f "${config_file}" && ! -L "${config_file}" && -r "${config_file}" ]] || return 1
-  managed_listener_plan "${config_file}"
+managed_firewall_owner_tags_json() (
+  trap - EXIT ERR RETURN DEBUG
+  local explicit=${1:-'[]'} tags protocols protocol state_file store_file instance_id tag instance_ids component_tags
+  tags=$(jq -ce 'select(type=="array" and all(.[]; type=="string" and length>0)) | unique' <<< "${explicit}") || return 1
+  component_tags=$(managed_component_state_json | jq -ce '[.components[] |
+    select(.enabled==true and (.role | IN("inbound","endpoint","service"))) | .tag]') || return 1
+  tags=$(jq -c --argjson components "${component_tags}" '. + $components' <<< "${tags}") || return 1
+  protocols=$(list_indexed_protocols_raw) || return 1
+  while IFS= read -r protocol; do
+    [[ -n "${protocol}" ]] || continue
+    state_file=$(protocol_state_file "${protocol}") || return 1
+    [[ -f "${state_file}" && ! -L "${state_file}" ]] || continue
+    if [[ "${protocol}" == vless-reality ]]; then
+      load_vless_reality_protocol_state || return 1
+      instance_ids=$(list_vless_reality_instance_ids) || return 1
+      if [[ -n "${instance_ids}" ]]; then
+        while IFS= read -r instance_id; do
+          load_vless_reality_instance_state "${instance_id}" || return 1
+          tag=$(vless_reality_inbound_tag_for_instance "${instance_id}") || return 1
+          tags=$(jq -c --arg tag "${tag}" '. + [$tag]' <<< "${tags}") || return 1
+        done <<< "${instance_ids}"
+        continue
+      fi
+    else
+      store_file=$(plain_proxy_structured_store_file "${protocol}") || return 1
+      if [[ -e "${store_file}" || -L "${store_file}" ]]; then
+        [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
+        [[ "$(protocol_instance_state_schema "${protocol}")" == 2 ]] || return 1
+        component_tags=$(jq -ce '.instances | select(type=="array") | [.[] | .tag, (.detour.tag? // empty)] |
+          select(all(.[]; type=="string" and length>0))' "${store_file}") || return 1
+        tags=$(jq -c --argjson instances "${component_tags}" '. + $instances' <<< "${tags}") || return 1
+        continue
+      fi
+    fi
+    tag=$(protocol_registry_field "${protocol}" default_tag) || return 1
+    tags=$(jq -c --arg tag "${tag}" '. + [$tag]' <<< "${tags}") || return 1
+  done <<< "${protocols}"
+  jq -c 'unique' <<< "${tags}"
+)
+
+filter_owned_firewall_plan_json() {
+  local plan=$1 explicit=${2:-'[]'} tags
+  tags=$(managed_firewall_owner_tags_json "${explicit}") || return 1
+  jq -c --argjson tags "${tags}" 'map(select(.owner as $owner | $tags | index($owner) != null))' <<< "${plan}"
 }
+
+instance_firewall_plan_file() {
+  local config_file=${1:-} explicit=${2:-'[]'} plan
+  [[ -f "${config_file}" && ! -L "${config_file}" && -r "${config_file}" ]] || return 1
+  plan=$(managed_listener_plan "${config_file}") || return 1
+  filter_owned_firewall_plan_json "${plan}" "${explicit}"
+}
+
+open_scoped_protocol_ports() (
+  trap - EXIT ERR RETURN DEBUG
+  local journal="" status=0 keep_journal=n prepared=n reason
+  umask 077
+  trap 'if [[ -n "${journal}" && "${keep_journal}" != y ]]; then rm -f -- "${journal}"; fi' EXIT
+  firewall_reconcile_interrupt() {
+    local code=$1
+    trap - INT TERM HUP
+    if [[ "${prepared}" != y ]]; then
+      printf '[WARN] firewall_reconcile: interrupted_before_apply; rules_unchanged\n' >&2
+    elif ! instance_firewall_rollback "${journal}"; then
+      keep_journal=y
+      printf '[ERROR] firewall_reconcile: interrupted; rollback_failed; firewall_may_be_partial; journal=%s\n' "${journal}" >&2
+    else
+      printf '[WARN] firewall_reconcile: interrupted; firewall_rolled_back\n' >&2
+    fi
+    exit "${code}"
+  }
+  trap 'firewall_reconcile_interrupt 130' INT
+  trap 'firewall_reconcile_interrupt 143' TERM
+  trap 'firewall_reconcile_interrupt 129' HUP
+  journal=$(mktemp "${SB_PROJECT_DIR}.firewall-reconcile.XXXXXX") || return 1
+  if instance_firewall_prepare "" "${SINGBOX_CONFIG_FILE}" "${journal}"; then
+    prepared=y
+  else
+    status=$?
+    if reason=$(jq -r '[.diagnostics[]?.code] | unique | join(",")' "${journal}" 2>/dev/null); then :; else reason=unavailable; fi
+    printf '[ERROR] firewall_reconcile: prepare_failed; rules_unchanged; reason=%s\n' "${reason:-unavailable}" >&2
+    return "${status}"
+  fi
+  if instance_firewall_apply "${journal}" && instance_firewall_commit "${journal}"; then
+    return 0
+  else
+    status=$?
+    if ! instance_firewall_rollback "${journal}"; then
+      keep_journal=y
+      printf '[ERROR] firewall_reconcile: rollback_failed; firewall_may_be_partial; journal=%s\n' "${journal}" >&2
+    else
+      printf '[ERROR] firewall_reconcile: apply_or_commit_failed; firewall_rolled_back\n' >&2
+    fi
+  fi
+  return "${status}"
+)
 
 instance_firewall_targets_json() {
   local plan_json=${1:-}
@@ -11285,7 +11384,7 @@ instance_firewall_prepare_failure() {
 }
 
 instance_firewall_prepare() {
-  local old_config=${1:-} new_config=${2:-} journal_file=${3:-}
+  local old_config=${1:-} new_config=${2:-} journal_file=${3:-} explicit_tags=${4:-'[]'}
   local old_plan new_plan old_targets new_targets before_ledger
   local backend state backend_statuses='[]' diagnostics='[]' candidates selected_frontend=raw
   local ufw_state firewalld_state
@@ -11298,13 +11397,13 @@ instance_firewall_prepare() {
 
   instance_firewall_journal_path_valid "${journal_file}" || return 1
   if [[ -n "${old_config}" && -e "${old_config}" ]]; then
-    old_plan=$(instance_firewall_plan_file "${old_config}") || {
+    old_plan=$(instance_firewall_plan_file "${old_config}" "${explicit_tags}") || {
       instance_firewall_prepare_failure "${journal_file}" invalid_old_plan || :; return 1;
     }
   else
     old_plan='[]'
   fi
-  new_plan=$(instance_firewall_plan_file "${new_config}") || {
+  new_plan=$(instance_firewall_plan_file "${new_config}" "${explicit_tags}") || {
     instance_firewall_prepare_failure "${journal_file}" invalid_new_plan || :; return 1;
   }
   old_targets=$(instance_firewall_targets_json "${old_plan}") || {
@@ -32773,7 +32872,9 @@ apply_plain_proxy_instance_change() (
   validate_managed_component_graph "${lock_dir}/config.json" || return $?
   validate_managed_listener_resources "${lock_dir}/config.json" || return $?
   "${SINGBOX_BIN_PATH}" check -c "${lock_dir}/config.json" >&2 || return $?
-  instance_firewall_prepare "${SINGBOX_CONFIG_FILE}" "${lock_dir}/config.json" "${lock_dir}/firewall.json" || return $?
+  local firewall_tags
+  firewall_tags=$(jq -cs '[.[].instances[] | .tag, (.detour.tag? // empty)] | unique' "${lock_dir}/before.json" "${lock_dir}/after.json") || return $?
+  instance_firewall_prepare "${SINGBOX_CONFIG_FILE}" "${lock_dir}/config.json" "${lock_dir}/firewall.json" "${firewall_tags}" || return $?
   phase=snapshot
   instance_transaction_checkpoint "${lock_dir}" "${phase}" || return $?
   snapshot_file=$(create_managed_state_snapshot "${lock_dir}/snapshot") || return $?

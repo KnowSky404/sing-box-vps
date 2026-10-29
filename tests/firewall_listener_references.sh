@@ -7,6 +7,11 @@ source "${TESTS_DIR}/menu_test_helper.sh"
 setup_menu_test_env 120
 source "${TESTABLE_INSTALL}"
 trap 'printf "firewall reference test failed at line %s\n" "${LINENO}" >&2' ERR
+# The fixtures in this backend contract test are explicitly managed. Owner
+# discovery and manual exclusions are covered by firewall_listener_ownership.
+managed_firewall_owner_tags_json() {
+  jq -c '[(.inbounds[]?,.endpoints[]?,.services[]?) | .tag] | unique' "${SINGBOX_CONFIG_FILE}"
+}
 
 # These are backend call-contract tests. Never invoke a host firewall backend.
 BACKEND_LOG="${TMP_DIR}/backends.log"
@@ -151,6 +156,15 @@ unset IPTABLES_CHECK_STATUS
 # state/instance. It does not change the active protocol or regenerate state.
 config "[${tcp},${udp},${other_tcp}]" "${SINGBOX_CONFIG_FILE}"
 : > "${BACKEND_LOG}"
+open_all_protocol_ports >/dev/null
+[[ ! -s "${BACKEND_LOG}" ]]
+# Public fixtures exercise transport selection; loopback listeners above
+# deliberately need no external firewall grant.
+tcp=$(jq -c '.listen="192.0.2.10"' <<< "${tcp}")
+udp=$(jq -c '.listen="192.0.2.10"' <<< "${udp}")
+other_tcp=$(jq -c '.listen="192.0.2.20"' <<< "${other_tcp}")
+config "[${tcp},${udp},${other_tcp}]" "${SINGBOX_CONFIG_FILE}"
+: > "${BACKEND_LOG}"
 original_protocol=${SB_PROTOCOL}
 open_all_protocol_ports >/dev/null
 [[ "${SB_PROTOCOL}" == "${original_protocol}" ]]
@@ -174,7 +188,7 @@ protocol_registry_field() {
   [[ "$2" == listen_networks ]] || return 98
   jq -er --arg protocol "$1" '.[] | select(.state_id==$protocol) | .listen_networks | join(",")' <<< "${fixture_registry}"
 }
-ss='{"type":"shadowsocks","tag":"private-tag-ss","listen":"127.0.0.1","listen_port":32100}'
+ss='{"type":"shadowsocks","tag":"private-tag-ss","listen":"192.0.2.10","listen_port":32100}'
 for network in tcp udp; do
   config "[${ss}]" "${SINGBOX_CONFIG_FILE}.base"
   jq --arg network "${network}" '.inbounds[0].network=$network' "${SINGBOX_CONFIG_FILE}.base" > "${SINGBOX_CONFIG_FILE}"
@@ -198,7 +212,7 @@ done
 # owners across addresses, but do not collapse the UDP owner into TCP.
 jq -n --argjson ss "${ss}" '{inbounds:[
   ($ss + {network:"tcp"}),
-  ($ss + {tag:"second-tcp",listen:"127.0.0.2",network:"tcp"}),
+  ($ss + {tag:"second-tcp",listen:"192.0.2.20",network:"tcp"}),
   ($ss + {tag:"udp",network:"udp"})]}' > "${SINGBOX_CONFIG_FILE}"
 : > "${BACKEND_LOG}"
 open_all_protocol_ports >/dev/null

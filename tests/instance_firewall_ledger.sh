@@ -152,6 +152,11 @@ FIREWALLD_MOCK_INACTIVE=1
 old_config="${TMP_DIR}/old.json"
 new_config="${TMP_DIR}/new.json"
 journal="${TMP_DIR}/transaction.json"
+# This suite tests ledger/backend transitions for explicitly owned fixtures.
+# Production owner discovery has its own regression, including manual tags.
+managed_firewall_owner_tags_json() {
+  jq -cs '[.[] | (.inbounds[]?,.endpoints[]?,.services[]?) | .tag] | unique' "${old_config}" "${new_config}"
+}
 jq -n '{inbounds:[]}' > "${old_config}"
 jq -n '{inbounds:[
   {type:"mixed",tag:"public-v4",listen:"192.0.2.10",listen_port:32100},
