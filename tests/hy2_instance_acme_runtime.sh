@@ -117,6 +117,14 @@ generate_config > "${ARTIFACT_DIR}/global-rebuild.log" 2>&1
 systemctl restart sing-box
 manual_projection > "${ARTIFACT_DIR}/manual.after-rebuild.json"
 cmp "${ARTIFACT_DIR}/manual.before.json" "${ARTIFACT_DIR}/manual.after-rebuild.json"
+# Simulate the first global settings change after a legacy script upgrade.
+rm "${SB_PROJECT_DIR}/managed-config.generated.json"
+SB_OUTBOUND_STACK_MODE=ipv4_only
+apply_stack_mode_changes > "${ARTIFACT_DIR}/stack-mode.log" 2>&1
+jq -e '.dns.strategy=="ipv4_only" and
+  any(.outbounds[]; .tag=="direct" and .domain_resolver.strategy=="ipv4_only")' "${SINGBOX_CONFIG_FILE}" >/dev/null
+manual_projection > "${ARTIFACT_DIR}/manual.after-stack.json"
+cmp "${ARTIFACT_DIR}/manual.before.json" "${ARTIFACT_DIR}/manual.after-stack.json"
 jq -e '((.certificate_providers // [])|length)==0' "${SINGBOX_CONFIG_FILE}" >/dev/null
 for ((attempt=0; attempt<120; attempt++)); do
   certificate_count=$(find "${SB_ACME_DATA_DIR}" -type f -name '*.crt' | wc -l)

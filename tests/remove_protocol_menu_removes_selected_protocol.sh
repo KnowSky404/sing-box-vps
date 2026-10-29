@@ -137,8 +137,8 @@ if ! compgen -G "$(protocol_state_file hy2).bak.*" >/dev/null; then
   exit 1
 fi
 
-if [[ "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" != "1" ]]; then
-  printf 'expected remove flow to regenerate config exactly once, got %s\n' "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" >&2
+if [[ "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" != "2" ]]; then
+  printf 'expected legacy baseline plus remove regeneration, got %s\n' "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" >&2
   exit 1
 fi
 

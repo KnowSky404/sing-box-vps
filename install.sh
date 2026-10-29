@@ -7964,6 +7964,11 @@ install_protocols_interactive() {
       return 1
     }
 
+    if ! ensure_existing_generated_config_baseline; then
+      abort_managed_state_transaction "${snapshot_dir}" "新增协议前的生成基线无法建立"
+      return 1
+    fi
+
     for protocol in "${selected_protocols[@]}"; do
       if [[ "${protocol}" == "vless-reality" ]] && protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
         if ! prompt_vless_reality_instance_create; then
@@ -19866,17 +19871,30 @@ merge_generated_config_with_live() {
     --argjson bootstrap "$([[ "${baseline}" == "${generated}" ]] && printf true || printf false)" '
     def tagged: type == "array" and all(.[]; type == "object" and (.tag | type == "string" and length > 0));
     def collision: error("managed_config_conflict");
-    def bootstrap_auth_matches($model; $existing):
+    def auth_users:
+      if type == "array" then map(if type == "object" then
+        del(.name,.flow) | if has("uuid") then .alterId=(.alterId // 0) else . end
+        else . end) else . end;
+    def bootstrap_sensitive_matches($model; $existing):
       if ($model | type) == "object" and ($existing | type) == "object" then
         all($model | keys[]; . as $key |
-          if ($key | IN("users","username","uuid","psk","auth","auth_str","authentication","obfs","short_id") or
+          if $key == "listen" then $model[$key] == ($existing[$key] // "127.0.0.1")
+          elif $key == "listen_port" then $model[$key] == $existing[$key]
+          elif $key == "users" then ($model[$key] | auth_users) == ($existing[$key] | auth_users)
+          elif ($key | IN("username","uuid","psk","auth","auth_str","authentication","obfs","short_id") or
               test("(^|_)(password|passwords|passwd|passphrase|secret|token|key)($|_)")) then
             $model[$key] == $existing[$key]
-          else bootstrap_auth_matches($model[$key]; $existing[$key]) end)
+          else bootstrap_sensitive_matches($model[$key]; $existing[$key]) end)
       elif ($model | type) == "array" and ($existing | type) == "array" then
+        ($model | length) == ($existing | length) and
         all(range(0; $model | length); . as $index |
-          bootstrap_auth_matches($model[$index]; $existing[$index]))
+          bootstrap_sensitive_matches($model[$index]; $existing[$index]))
       else true end;
+    def seed_defaults($model; $existing):
+      if ($model | type) == "object" and ($existing | type) == "object" then
+        reduce ($model | keys[]) as $key ({};
+          if $existing | has($key) then .[$key] = seed_defaults($model[$key]; $existing[$key]) else . end)
+      else $model end;
     def seed_record($model; $existing):
       if ($model | type) == "object" and ($existing | type) == "object" then
         reduce ($model | keys[]) as $key ({};
@@ -19936,20 +19954,24 @@ merge_generated_config_with_live() {
     (if $bootstrap then
       # Legacy installs have no baseline. Adopt only matching generated tags,
       # using their live value as the old owned value. Other tags stay manual.
-      reduce ["inbounds","outbounds","endpoints","services","http_clients","certificate_providers","network_namespaces"][] as $field ($next;
+      reduce ["inbounds","outbounds","endpoints","services","http_clients","certificate_providers","network_namespaces"][] as $field (seed_defaults($next; $live);
         if $live | has($field) then
           .[$field] = [$next[$field][]? as $record | $live[$field][]? | select(.tag == $record.tag) |
-          if (.type // "shared") == ($record.type // "shared") and bootstrap_auth_matches($record; .)
+          if (.type // "shared") == ($record.type // "shared") and bootstrap_sensitive_matches($record; .)
           then seed_record($record; .) else collision end]
         else del(.[$field]) end) |
       if $live | has("dns") then
         # A legacy DNS tag does not prove ownership of its live settings.
         # Seed generated defaults so custom same-tag servers remain live.
-        .dns.servers = [$next.dns.servers[]? as $server |
-          $live.dns.servers[]? | select(.tag == $server.tag) | $server]
+        if $live.dns | has("servers") then
+          .dns.servers = [$next.dns.servers[]? as $server |
+            $live.dns.servers[]? | select(.tag == $server.tag) | $server]
+        else del(.dns.servers) end
       else del(.dns) end |
       if $live | has("route") then
-        .route.rules = [($next.route.rules // [])[] as $rule | $live.route.rules[]? | select(. == $rule)]
+        if $live.route | has("rules") then
+          .route.rules = [($next.route.rules // [])[] as $rule | $live.route.rules[]? | select(. == $rule)]
+        else del(.route.rules) end
       else del(.route) end |
       with_entries(select(.key as $key | $live | has($key)))
     else $baseline[0] end) as $base |
@@ -20293,6 +20315,13 @@ managed_component_state_apply() {
     fi
     return 1
   fi
+  # Capture old global settings before either the baseline or component state
+  # changes; fresh Agent shells otherwise still contain default route flags.
+  if ! load_config_generation_settings "${SINGBOX_CONFIG_FILE}"; then
+    managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "现有全局配置设置无法读取" || :
+    MANAGED_COMPONENT_LAST_ERROR=config_check_failed
+    return 1
+  fi
   if [[ ! -e "${SB_PROJECT_DIR}/managed-config.generated.json" ]] &&
      jq -e '.components | length > 0' <<< "${state}" >/dev/null; then
     if ! ensure_existing_generated_config_baseline; then
@@ -20325,13 +20354,6 @@ managed_component_state_apply() {
   if [[ "${operation}" != takeover ]]; then
     inventory_state_file="${snapshot}/project/components.json"
   fi
-
-  # Agent component writes can start in a fresh shell that has not gone
-  # through the interactive config-state loader. Preserve route toggles from
-  # the live config before regeneration; otherwise a component-only change
-  # would silently re-enable the default private-address reject rule or drop
-  # an existing Warp endpoint.
-  load_config_generation_settings "${SINGBOX_CONFIG_FILE}"
 
   if ! generate_config "${inventory_state_file}" ||
      [[ ! -f "${SINGBOX_CONFIG_FILE}" || -L "${SINGBOX_CONFIG_FILE}" ]]; then
@@ -21965,7 +21987,7 @@ ensure_existing_generated_config_baseline() {
   # Legacy removals need the old owned tags before changing any state. A
   # regular generation safely preserves extensions and records that baseline.
   [[ -f "${SINGBOX_CONFIG_FILE}" && ! -e "${SB_PROJECT_DIR}/managed-config.generated.json" ]] || return 0
-  generate_config
+  run_with_progress "建立现有配置的生成基线（校验及备份）" generate_config
 }
 
 generate_config() {
@@ -22423,6 +22445,11 @@ apply_stack_mode_changes() {
 
   if [[ -f "${SINGBOX_CONFIG_FILE}" || -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
     load_current_config_state
+    snapshot_dir=$(create_managed_state_snapshot) || log_error "无法创建配置状态事务快照。"
+    if ! ensure_existing_generated_config_baseline; then
+      abort_managed_state_transaction "${snapshot_dir}" "协议栈变更前的生成基线无法建立"
+      return 1
+    fi
     SB_INBOUND_STACK_MODE="${selected_inbound}"
     SB_OUTBOUND_STACK_MODE="${selected_outbound}"
   fi
@@ -22433,7 +22460,6 @@ apply_stack_mode_changes() {
     return 0
   fi
 
-  snapshot_dir=$(create_managed_state_snapshot) || log_error "无法创建配置状态事务快照。"
   if ! save_stack_mode_state || ! generate_config; then
     abort_managed_state_transaction "${snapshot_dir}" "协议栈配置生成或校验失败"
   fi
@@ -23130,6 +23156,11 @@ warp_management() {
     esac
 
     snapshot_dir=$(create_managed_state_snapshot) || log_error "无法创建配置状态事务快照。"
+
+    if ! ensure_existing_generated_config_baseline; then
+      abort_managed_state_transaction "${snapshot_dir}" "Warp 变更前的生成基线无法建立"
+      return 1
+    fi
 
     case "${w_choice}" in
       1)
