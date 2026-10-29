@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026102901
+# Version: 2026102902
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026102901"
+readonly SCRIPT_VERSION="2026102902"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -508,6 +508,46 @@ log_error() {
   mkdir -p "${SB_PROJECT_DIR}"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $1" >> "${SBV_LOG_FILE}"
   exit 1
+}
+
+# Keep stdout available for JSON/command substitution. Labels are fixed caller
+# text: never echo command arguments, URLs, credentials or provider responses.
+run_with_progress() {
+  local label=$1 status=0 timer elapsed=0 interval=${SB_PROGRESS_INTERVAL_SECONDS:-5}
+  local progress_owner=${BASHPID:-$$}
+  shift
+  [[ "${interval}" =~ ^[1-9][0-9]*$ ]] || interval=5
+  printf '[INFO] %s：开始。\n' "${label}" >&2
+  (
+    # A timer must never retain the caller transaction lock. Keep the command
+    # in the foreground so its state, stdin, exit/signal and recovery traps
+    # keep their existing semantics.
+    if [[ "${SB_MANAGEMENT_LOCK_FD:-}" =~ ^[0-9]+$ ]]; then
+      exec {SB_MANAGEMENT_LOCK_FD}>&-
+    fi
+    local sleeper=""
+    trap 'if [[ -n "${sleeper}" ]]; then kill "${sleeper}" 2>/dev/null || :; wait "${sleeper}" 2>/dev/null || :; fi; exit 0' TERM INT HUP
+    while kill -0 "${progress_owner}" 2>/dev/null; do
+      sleep "${interval}" &
+      sleeper=$!
+      wait "${sleeper}" || exit 0
+      sleeper=""
+      elapsed=$((elapsed + interval))
+      if kill -0 "${progress_owner}" 2>/dev/null; then
+        printf '[INFO] %s：仍在执行，已等待 %s 秒。\n' "${label}" "${elapsed}" >&2
+      fi
+    done
+  ) >&2 &
+  timer=$!
+  "$@" || status=$?
+  kill "${timer}" 2>/dev/null || :
+  wait "${timer}" 2>/dev/null || :
+  if [[ "${status}" == 0 ]]; then
+    printf '[SUCCESS] %s：完成。\n' "${label}" >&2
+  else
+    printf '[WARN] %s：失败或中断（状态 %s）；请查看事务结果。\n' "${label}" "${status}" >&2
+  fi
+  return "${status}"
 }
 
 print_info() {
@@ -1915,14 +1955,36 @@ config_inbound_protocol() {
 }
 
 config_protocol_jq_filter() {
+  local filter
   case "${1:-}" in
-    vless-reality) printf '.type == "vless" and (.tls.reality? != null)' ;;
-    vless-plain) printf '.type == "vless" and (.tls.reality? == null)' ;;
-    hy2) printf '.type == "hysteria2"' ;;
-    shadowtls) printf '.type == "shadowtls"' ;;
-    mixed) printf '.type == "mixed" and ((.tag // "") | startswith("shadowtls-inner-") | not)' ;;
-    *) printf '.type == "%s"' "${1:-}" ;;
+    vless-reality) filter='.type == "vless" and (.tls.reality? != null)' ;;
+    vless-plain) filter='.type == "vless" and (.tls.reality? == null)' ;;
+    hy2) filter='.type == "hysteria2"' ;;
+    shadowtls) filter='.type == "shadowtls"' ;;
+    mixed) filter='.type == "mixed" and ((.tag // "") | startswith("shadowtls-inner-") | not)' ;;
+    *) printf -v filter '.type == "%s"' "${1:-}" ;;
   esac
+  # Rebuild captures manual ownership before clearing the old state files.
+  printf '(%s) and (.tag as $candidate | (%s) | index($candidate) == null)' \
+    "${filter}" "${SB_UNMANAGED_CLIENT_TAGS_JSON:-[]}"
+}
+
+# An existing managed inventory does not implicitly adopt a manually named
+# local proxy frontend. Reserved default tags and indexed/missing state keep
+# their existing fail-closed ownership checks; takeover without an index is
+# still an explicit import of the complete live inventory.
+manual_client_inbound_is_unmanaged() {
+  local inbound=$1 protocol tag default_tag indexed
+  [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]] || return 1
+  protocol=$(jq -r '.type' <<< "${inbound}") || return 1
+  case "${protocol}" in mixed|socks|http) ;; *) return 1 ;; esac
+  tag=$(jq -r '.tag // ""' <<< "${inbound}") || return 1
+  [[ -n "${tag}" ]] || return 1
+  default_tag=$(protocol_registry_field "${protocol}" default_tag) || return 1
+  [[ "${tag}" != "${default_tag}" ]] || return 1
+  [[ ! -e "$(protocol_state_file "${protocol}")" ]] || return 1
+  indexed=$(extract_protocols_from_index) || return 1
+  [[ ",${indexed}," != *",${protocol},"* ]]
 }
 
 config_protocol_inbound_count() {
@@ -2867,7 +2929,19 @@ normalize_subman_api_url() {
   while [[ "${url}" == */ ]]; do
     url=${url%/}
   done
+  # Accept the deployment address and the common API/node endpoint pastes.
+  url=${url%/api/nodes}
+  url=${url%/api}
   printf '%s' "${url}"
+}
+
+validate_subman_connection_settings() {
+  [[ "${SUBMAN_API_URL:-}" =~ ^https?://[^/[:space:]?#@]+(/[^[:space:]?#]*)?$ &&
+     -n "${SUBMAN_API_TOKEN:-}" && -n "${SUBMAN_EXPECTED_GIST_ID:-}" &&
+     "${SUBMAN_API_TOKEN}" != *$'\n'* && "${SUBMAN_API_TOKEN}" != *$'\r'* ]] || {
+    printf '[WARN] SubMan 设置无效：请输入不含账号、查询参数或片段的 HTTP(S) 部署地址，以及 Token 和目标 Gist ID。\n' >&2
+    return 1
+  }
 }
 
 load_subman_config() {
@@ -2896,6 +2970,8 @@ write_subman_config() {
     log_warn "预期 Workspace Gist ID 不能为空；SubMan 配置未修改。"
     return 1
   fi
+  SUBMAN_API_URL=$(normalize_subman_api_url "${SUBMAN_API_URL:-}")
+  validate_subman_connection_settings || return 1
   config_file=$(subman_config_file_path)
   config_dir=$(dirname "${config_file}")
   mkdir -p "${config_dir}" || return 1
@@ -2932,19 +3008,20 @@ prompt_subman_config_if_needed() {
   load_subman_config
 
   while [[ -z "${SUBMAN_API_URL}" ]]; do
-    read -rp "SubMan API 地址: " input_url
+    read -rp "SubMan 部署地址（如 https://subman.example.com）: " input_url || return 1
     SUBMAN_API_URL=$(normalize_subman_api_url "${input_url}")
     [[ -z "${SUBMAN_API_URL}" ]] && log_warn "SubMan API 地址不能为空。"
   done
 
   while [[ -z "${SUBMAN_API_TOKEN}" ]]; do
-    read -rp "SubMan API Token: " input_token
+    read -rsp "SubMan API Token（输入隐藏）: " input_token || return 1
+    printf '\n' >&2
     SUBMAN_API_TOKEN=$(trim_whitespace "${input_token}")
     [[ -z "${SUBMAN_API_TOKEN}" ]] && log_warn "SubMan API Token 不能为空。"
   done
 
   if [[ -z "${SUBMAN_NODE_PREFIX}" ]]; then
-    read -rp "SubMan 节点前缀 (默认: $(hostname)): " input_prefix
+    read -rp "SubMan 节点前缀 (默认: $(hostname)): " input_prefix || return 1
     SUBMAN_NODE_PREFIX=$(trim_whitespace "${input_prefix}")
     [[ -z "${SUBMAN_NODE_PREFIX}" ]] && SUBMAN_NODE_PREFIX=$(hostname)
   fi
@@ -2957,6 +3034,39 @@ prompt_subman_config_if_needed() {
 
   write_subman_config
 }
+
+configure_subman_interactive() (
+  local input_url input_token input_prefix input_gist_id old_url old_prefix
+  load_subman_config
+  old_url=${SUBMAN_API_URL} old_prefix=${SUBMAN_NODE_PREFIX}
+  printf 'SubMan 连接设置（留空保留原值；新目标会在保存前只读校验）。\n'
+  read -rp "SubMan 部署地址（留空保留）: " input_url || return 1
+  if [[ -n "${input_url}" ]]; then SUBMAN_API_URL=$(normalize_subman_api_url "${input_url}"); fi
+  read -rsp "SubMan API Token（隐藏输入；留空保留）: " input_token || return 1
+  printf '\n' >&2
+  if [[ -n "${input_token}" ]]; then SUBMAN_API_TOKEN=$(trim_whitespace "${input_token}"); fi
+  read -rp "节点前缀（留空保留）: " input_prefix || return 1
+  if [[ -n "${input_prefix}" ]]; then SUBMAN_NODE_PREFIX=$(trim_whitespace "${input_prefix}"); fi
+  SUBMAN_NODE_PREFIX=${SUBMAN_NODE_PREFIX:-$(hostname)}
+  if [[ "${SUBMAN_API_URL}" != "${old_url}" ]]; then
+    # A different deployment must never inherit the old Workspace identity.
+    SUBMAN_EXPECTED_GIST_ID=""
+  fi
+  read -rp "目标 Workspace Gist ID（地址改变时必须重新填写；否则留空保留）: " input_gist_id || return 1
+  if [[ -n "${input_gist_id}" ]]; then SUBMAN_EXPECTED_GIST_ID=$(trim_whitespace "${input_gist_id}"); fi
+  validate_subman_connection_settings || return 1
+  if [[ -n "${old_prefix}" && "${SUBMAN_NODE_PREFIX}" != "${old_prefix}" ]]; then
+    printf '[INFO] 更换前缀会使用新的 externalKey；旧节点保留，必要时在原目标手动清理。\n' >&2
+  fi
+  reset_subman_api_result
+  if ! preflight_subman_workspace; then
+    report_subman_api_failure "连接校验"
+    printf '[WARN] 连接或目标 Workspace 校验失败；原 SubMan 设置未修改。\n' >&2
+    return 1
+  fi
+  write_subman_config || return 1
+  printf '[SUCCESS] SubMan 设置已保存；原设置备份为 subman.env.bak，未推送或删除任何节点。\n'
+)
 
 write_protocol_index() {
   local recorded_version
@@ -3776,9 +3886,12 @@ list_retained_instance_protocols() {
 }
 
 instance_management_empty_config_baseline() {
-  local state_file indexed
+  local state_file indexed inbound
   [[ -f "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" ]] || return 1
-  jq -e 'type == "object" and .inbounds == []' "${SINGBOX_CONFIG_FILE}" >/dev/null || return 1
+  jq -e 'type == "object" and (.inbounds | type == "array")' "${SINGBOX_CONFIG_FILE}" >/dev/null || return 1
+  while IFS= read -r inbound; do
+    manual_client_inbound_is_unmanaged "${inbound}" || return 1
+  done < <(jq -c '.inbounds[]' "${SINGBOX_CONFIG_FILE}")
   validate_protocol_index_for_rebuild || return 1
   indexed=$(list_indexed_protocols_raw) || return 1
   [[ -z "${indexed}" ]] || return 1
@@ -7451,7 +7564,7 @@ plain_proxy_instance_management_menu() (
         choice=$(prompt_choice "仅可恢复该事务；恢复 [1]，返回 [0]: " 0 1 0) || return 1
         [[ "${choice}" == 1 ]] || return 0
         [[ "$(mixed_management_confirm "确认执行事务恢复")" == y ]] || return 0
-        result=$(recover_plain_proxy_instance_transaction "${protocol}" "${revision}") || {
+        result=$(run_with_progress "${label} 事务恢复" recover_plain_proxy_instance_transaction "${protocol}" "${revision}") || {
           status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; return "${status}"
         }
         [[ -n "${result}" ]] && printf '%s\n' "${result}"
@@ -7488,7 +7601,7 @@ plain_proxy_instance_management_menu() (
       revision=$(plain_proxy_management_pending_revision "${protocol}" 2>/dev/null || true)
       if [[ -n "${revision}" ]]; then
         [[ "$(mixed_management_confirm "确认执行事务恢复")" == y ]] || { [[ "${one_shot}" == y ]] && return 0 || continue; }
-        result=$(recover_plain_proxy_instance_transaction "${protocol}" "${revision}") || { status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; [[ "${one_shot}" == y ]] && return "${status}" || continue; }
+        result=$(run_with_progress "${label} 事务恢复" recover_plain_proxy_instance_transaction "${protocol}" "${revision}") || { status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; [[ "${one_shot}" == y ]] && return "${status}" || continue; }
         [[ -n "${result}" ]] && printf '%s\n' "${result}"
       else log_warn "当前没有可验证的待恢复事务。"; fi
       [[ "${one_shot}" == y ]] && return 0
@@ -7510,7 +7623,7 @@ plain_proxy_instance_management_menu() (
           [[ "${one_shot}" == y ]] && return "${status}"
           continue
         }
-        result=$(apply_plain_proxy_instance_change "${protocol}" "$([[ "${choice}" == 1 ]] && printf create || printf replace)" "${revision}" "${record_file}" "${PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC:-n}") || { status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; [[ "${one_shot}" == y ]] && return "${status}" || continue; }
+        result=$(run_with_progress "${label} 实例事务（校验、备份、发布及服务检查）" apply_plain_proxy_instance_change "${protocol}" "$([[ "${choice}" == 1 ]] && printf create || printf replace)" "${revision}" "${record_file}" "${PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC:-n}") || { status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; [[ "${one_shot}" == y ]] && return "${status}" || continue; }
         [[ -n "${result}" ]] && printf '%s\n' "${result}"
         [[ "${one_shot}" == y ]] && return 0
         ;;
@@ -7522,7 +7635,7 @@ plain_proxy_instance_management_menu() (
           confirmation="确认将 ${target} 设为默认实例"
         fi
         [[ "$(mixed_management_confirm "${confirmation}")" == y ]] || { [[ "${one_shot}" == y ]] && return 0 || continue; }
-        result=$(apply_plain_proxy_instance_change "${protocol}" "$([[ "${choice}" == 3 ]] && printf delete || printf default)" "${revision}" "${target}" n) || { status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; [[ "${one_shot}" == y ]] && return "${status}" || continue; }
+        result=$(run_with_progress "${label} 实例事务（校验、备份、发布及服务检查）" apply_plain_proxy_instance_change "${protocol}" "$([[ "${choice}" == 3 ]] && printf delete || printf default)" "${revision}" "${target}" n) || { status=$?; [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2; [[ "${one_shot}" == y ]] && return "${status}" || continue; }
         [[ -n "${result}" ]] && printf '%s\n' "${result}"
         [[ "${one_shot}" == y ]] && return 0
         ;;
@@ -7857,7 +7970,7 @@ install_protocols_interactive() {
     load_protocol_state "${first_selected_protocol}"
   fi
   open_committed_protocol_ports || return $?
-  systemctl restart sing-box
+  run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box
   log_info "连接信息未自动展示，如需查看请进入菜单 11。"
 }
 
@@ -10515,7 +10628,7 @@ canonical_listener_address() {
 
 managed_listener_plan_json() {
   local registry components projected addresses address canonical normalized='[]' result
-  registry=$(protocol_registry_json) || return 1
+  registry=$(protocol_registry_static_json) || return 1
   components=$(component_registry_static_json) || return 1
   # Parse once, project only non-secret resource fields, and capture all output
   # before emission. Input is bounded by the file wrapper or the typed store.
@@ -11545,11 +11658,11 @@ install_dependencies() {
   log_info "正在安装必要的基础依赖..."
   case "${OS_NAME}" in
     debian|ubuntu)
-      apt-get update -y
-      apt-get install -y curl wget jq tar openssl uuid-runtime qrencode iproute2
+      run_with_progress "更新软件源" apt-get update -y
+      run_with_progress "安装基础依赖" apt-get install -y curl wget jq tar openssl uuid-runtime qrencode iproute2
       ;;
     centos|almalinux|rocky)
-      yum install -y curl wget jq tar openssl util-linux qrencode iproute
+      run_with_progress "安装基础依赖" yum install -y curl wget jq tar openssl util-linux qrencode iproute
       ;;
   esac
   log_success "基础依赖安装完成。"
@@ -11559,7 +11672,8 @@ install_dependencies() {
 get_latest_version() {
   if [[ "${SB_VERSION}" == "latest" ]]; then
     log_info "正在获取最新版本号..."
-    local latest_tag=$(curl -s "https://api.github.com/repos/SagerNet/sing-box/releases/latest" | jq -r .tag_name | sed 's/^v//')
+    local latest_tag
+    latest_tag=$(run_with_progress "获取 sing-box 版本信息" curl -fsS --connect-timeout 10 --max-time 30 "https://api.github.com/repos/SagerNet/sing-box/releases/latest" | jq -r .tag_name | sed 's/^v//') || latest_tag=""
     if [[ -z "${latest_tag}" || "${latest_tag}" == "null" ]]; then
       SB_VERSION="${SB_SUPPORT_MAX_VERSION}"
     else
@@ -19648,7 +19762,144 @@ managed_component_live_config_projection_supported() {
   ' "${config_file}" >/dev/null 2>&1 || return 1
 }
 
-managed_component_state_matches_live_config() {
+# Exclude operator-owned components from the ownership comparison. They remain
+# in the actual candidate and are checked by the core and graph validators.
+coexisting_component_projection() {
+  local config_file=$1 state=$2
+  jq --argjson state "${state}" '
+    def owns($role): . as $record |
+      any($state.components[]?; .role == $role and .tag == $record.tag);
+    if has("inbounds") then .inbounds |= map(select(
+      (.type | IN("direct","tun","redirect","tproxy","cloudflared") | not) or owns("inbound"))) else . end |
+    if has("outbounds") then .outbounds |= map(select(
+      (.tag | IN("direct","block","warp-ep")) or owns("outbound"))) else . end |
+    if has("endpoints") then .endpoints |= map(select(.tag == "warp-ep" or owns("endpoint"))) else . end |
+    if has("services") then .services |= map(select(owns("service"))) else . end |
+    if has("network_namespaces") then .network_namespaces |= map(select(owns("network_namespace"))) else . end |
+    if has("http_clients") then .http_clients |= map(select(owns("http_client"))) else . end |
+    if has("certificate_providers") then .certificate_providers |= map(select(
+      (.tag | IN("hy2-cert-provider","anytls-cert-provider")) or owns("certificate_provider"))) else . end |
+    if .route.default_http_client? != null and
+       ((.route.default_http_client as $client | any($state.components[]?; .role == "http_client" and .tag == $client)) | not) then
+      del(.route.default_http_client) else . end |
+    if .route.rule_set? != null then .route.rule_set |= map(select(
+      ((.tag // "") | startswith("warp-local-") or startswith("warp-remote-")) or owns("rule_set"))) else . end
+  ' "${config_file}"
+}
+
+managed_component_state_matches_live_config() (
+  local config_file=${1:-} state_file=${2:-} allow_legacy=${3:-false} state projected
+  [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
+  if [[ -n "${state_file}" ]]; then
+    managed_state_snapshot_is_valid "${state_file%/project/components.json}" || return 1
+    if [[ -f "${state_file}" && ! -L "${state_file}" ]]; then state=$(cat "${state_file}") || return 1
+    elif [[ ! -e "${state_file}" ]]; then state=$(managed_component_state_default_json) || return 1
+    else return 1; fi
+  else state=$(managed_component_state_json) || return 1; fi
+  managed_component_state_validate_json "${state}" || return 1
+  umask 077
+  projected=$(mktemp) || return 1
+  trap 'rm -f -- "${projected}"' EXIT
+  coexisting_component_projection "${config_file}" "${state}" > "${projected}" || return 1
+  managed_component_owned_projection_matches "${projected}" "${state_file}" "${allow_legacy}"
+)
+
+# Three-way merge: generated baseline vs live config vs new generated config.
+# Tag-keyed records have explicit ownership; all other operator content stays
+# in the live tree. A changed owned value is a conflict unless it already
+# matches the new state. Never resolve a conflict by overwriting operator work.
+merge_generated_config_with_live() {
+  local generated=$1 live=$2 baseline=$3 merge_input
+  [[ -f "${live}" && ! -L "${live}" && ! -L "${baseline}" ]] || return 1
+  if [[ -e "${baseline}" ]]; then
+    [[ -f "${baseline}" && "$(stat -c %a "${baseline}")" == 600 ]] || return 1
+    jq -e 'type == "object" and (.inbounds | type == "array")' "${baseline}" >/dev/null || return 1
+  else
+    baseline=${generated}
+  fi
+  for merge_input in "${generated}" "${live}" "${baseline}"; do
+    jq -e '
+      all([.inbounds,.outbounds,.endpoints,.services,.http_clients,.certificate_providers,.network_namespaces][];
+        . == null or (type == "array" and ([.[]?.tag // empty] | length) == ([.[]?.tag // empty] | unique | length)))
+    ' "${merge_input}" >/dev/null || {
+      printf '[ERROR] component_graph: duplicate tag; 配置未发布。\n' >&2
+      return 1
+    }
+  done
+  jq --slurpfile generated "${generated}" --slurpfile baseline "${baseline}" \
+    --argjson bootstrap "$([[ "${baseline}" == "${generated}" ]] && printf true || printf false)" '
+    def tagged: type == "array" and all(.[]; type == "object" and (.tag | type == "string" and length > 0));
+    def collision: error("managed_config_conflict");
+    def seed_record($model; $existing):
+      if ($model | type) == "object" and ($existing | type) == "object" then
+        reduce ($model | keys[]) as $key ({};
+          if $existing | has($key) then .[$key] = seed_record($model[$key]; $existing[$key]) else . end)
+      else $existing end;
+    def merge($base; $live; $next):
+      if $live == $base or $live == $next then $next
+      elif $next == $base then $live
+      elif ($base | type) == "object" and ($live | type) == "object" and ($next | type) == "object" then
+        reduce (($base + $live + $next) | keys[]) as $key ({};
+          if ($base | has($key)) then
+            if ($next | has($key) | not) then
+              if ($live | has($key)) and $live[$key] != $base[$key] then collision else . end
+            elif ($live | has($key) | not) then
+              if $next[$key] == $base[$key] then . else collision end
+            else .[$key] = merge($base[$key]; $live[$key]; $next[$key]) end
+          elif ($live | has($key)) and ($next | has($key)) then
+            if $live[$key] == $next[$key] then .[$key] = $live[$key] else collision end
+          elif ($next | has($key)) then .[$key] = $next[$key]
+          else .[$key] = $live[$key] end)
+      elif ($base | tagged) and ($live | tagged) and ($next | tagged) then
+        def keyed: map({key:.tag,value:.}) | from_entries;
+        merge(($base|keyed); ($live|keyed); ($next|keyed)) as $merged |
+        reduce ($live + $next)[] as $record ({seen:[],records:[]};
+          if (.seen | index($record.tag)) != null then . else
+            .seen += [$record.tag] | .records += [$merged[$record.tag] // empty] end) | .records
+      elif ($base | type) == "array" and ($live | type) == "array" and ($next | type) == "array" and
+           all(($base + $live + $next)[]; type == "object" and (has("action") or has("outbound"))) then
+        # Non-tagged arrays are ordered. Retain custom entries in place and
+        # replace/remove exact baseline entries; append only new generated
+        # entries. Pure generated lists took the first branch above.
+        def rule_key:
+          if (.inbound | type) == "string" and
+             ((.action == "sniff" and (keys | sort) == ["action","inbound"]) or
+              (.action == "route" and (keys | sort) == ["action","inbound","outbound"])) then
+            ["inbound-rule",.inbound,.action] | tojson
+          else tojson end;
+        def keyed_rules: map({key:rule_key,value:.}) | from_entries;
+        if any([$base,$live,$next][];
+          (map(rule_key) | unique | length) != length) then collision else
+          merge(($base|keyed_rules); ($live|keyed_rules); ($next|keyed_rules)) as $merged |
+          reduce ($live + $next)[] as $rule ({seen:[],rules:[]};
+            ($rule | rule_key) as $key |
+            if (.seen | index($key)) != null then . else
+              .seen += [$key] | .rules += [$merged[$key] // empty] end) | .rules
+        end
+      else collision end;
+    . as $live | $generated[0] as $next |
+    (if $bootstrap then
+      # Legacy installs have no baseline. Adopt only matching generated tags,
+      # using their live value as the old owned value. Other tags stay manual.
+      reduce ["inbounds","outbounds","endpoints","services","http_clients","certificate_providers","network_namespaces"][] as $field ($next;
+        if $live | has($field) then
+          .[$field] = [$next[$field][]? as $record | $live[$field][]? | select(.tag == $record.tag) |
+          if (.type // "shared") == ($record.type // "shared") then seed_record($record; .) else collision end]
+        else del(.[$field]) end) |
+      if $live | has("dns") then
+        .dns.servers = [$next.dns.servers[]? as $server |
+          $live.dns.servers[]? | select(.tag == $server.tag)]
+      else del(.dns) end |
+      if $live | has("route") then
+        .route.rules = [($next.route.rules // [])[] as $rule | $live.route.rules[]? | select(. == $rule)]
+      else del(.route) end |
+      with_entries(select(.key as $key | $live | has($key)))
+    else $baseline[0] end) as $base |
+    merge($base; $live; $next)
+  ' "${live}"
+}
+
+managed_component_owned_projection_matches() {
   local config_file=${1:-} state_file=${2:-} allow_legacy_download_detour=${3:-false} state registry endpoint_types outbound_types
   local certificate_provider_types http_client_types service_types namespace_types snapshot_dir
   [[ -f "${config_file}" && ! -L "${config_file}" ]] || return 1
@@ -19856,6 +20107,15 @@ managed_component_state_apply() {
     create|replace)
       record=$(managed_component_normalize_input_file "${input}") || { MANAGED_COMPONENT_LAST_ERROR=record_invalid; return 1; }
       result_record="${record}"
+      tag=$(jq -r '.tag' <<< "${record}") || { MANAGED_COMPONENT_LAST_ERROR=record_invalid; return 1; }
+      if [[ -f "${SINGBOX_CONFIG_FILE}" ]] &&
+         ! jq -e --arg tag "${tag}" 'any(.components[]; .tag == $tag)' <<< "${state}" >/dev/null &&
+         jq -e --arg tag "${tag}" '[.inbounds[]?,.outbounds[]?,.endpoints[]?,.services[]?,
+           .certificate_providers[]?,.http_clients[]?,.network_namespaces[]?,.route.rule_set[]?] |
+           any(.[]; .tag == $tag)' "${SINGBOX_CONFIG_FILE}" >/dev/null; then
+        MANAGED_COMPONENT_LAST_ERROR=component_conflict
+        return 1
+      fi
       if managed_component_requires_public_confirmation "${record}" && [[ "${allow_public}" != y ]]; then
         MANAGED_COMPONENT_LAST_ERROR=public_confirmation_required
         return 1
@@ -19974,6 +20234,14 @@ managed_component_state_apply() {
       MANAGED_COMPONENT_LAST_ERROR=snapshot_failed
     fi
     return 1
+  fi
+  if [[ ! -e "${SB_PROJECT_DIR}/managed-config.generated.json" ]] &&
+     jq -e '.components | length > 0' <<< "${state}" >/dev/null; then
+    if ! ensure_existing_generated_config_baseline; then
+      managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "旧组件生成基线无法建立" || :
+      MANAGED_COMPONENT_LAST_ERROR=component_transaction_write_failed
+      return 1
+    fi
   fi
   candidate_revision=$(jq -r '.revision' <<< "${candidate}") || {
     managed_component_abort_component_transaction "${lock_dir}" "${snapshot}" "高级组件事务 revision 读取失败" || :
@@ -20113,7 +20381,7 @@ managed_component_state_apply() {
     return 1
   fi
   if [[ "${before_active}" == true ]]; then
-    if ! systemctl restart sing-box >/dev/null 2>&1 ||
+    if ! run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box >/dev/null ||
        [[ "$(systemctl is-active sing-box 2>/dev/null || true)" != active ]]; then
       if [[ -n "${firewall_journal}" ]]; then
         if ! instance_firewall_rollback "${firewall_journal}"; then
@@ -20696,7 +20964,7 @@ managed_component_transaction_restore() {
 
   if [[ "${before_active}" == true ]]; then
     if [[ ! -f "${SINGBOX_SERVICE_FILE}" ]] ||
-       ! systemctl restart sing-box >/dev/null 2>&1 ||
+       ! run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box >/dev/null ||
        ! systemctl is-active --quiet sing-box; then
       MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR=${MANAGED_COMPONENT_TRANSACTION_RESTORE_ERROR:-component_rollback_failed}
       status=1
@@ -20774,7 +21042,7 @@ managed_component_restore_service_activity() {
   before_active=$(jq -r '.before_active' "${lock_dir}/transaction.json") || return 1
   if [[ "${before_active}" == true ]]; then
     [[ -f "${SINGBOX_SERVICE_FILE}" ]] || return 1
-    systemctl restart sing-box >/dev/null 2>&1 || return 1
+    run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box >/dev/null || return 1
     systemctl is-active --quiet sing-box
     return $?
   fi
@@ -21325,7 +21593,7 @@ publish_managed_config_candidate() (
 generate_config_candidate() {
   local inventory_state_file=${1:-}
   local inbound_file="" provider_file="" protocol_rule_file="" instance_outbound_rule_file=""
-  local config_candidate="" backup_candidate="" protocol
+  local config_candidate="" backup_candidate="" generated_candidate="" baseline_file="${SB_PROJECT_DIR}/managed-config.generated.json" protocol
   local exit_cleanup_command effective_protocols
   local inbounds_json certificate_providers_json protocol_rules_json instance_outbound_rules_json
   local managed_components_json managed_route_options_json existing_default_http_client=""
@@ -21344,11 +21612,6 @@ generate_config_candidate() {
   # Inspect the complete live inventory before discovery or resource creation.
   # A supported first inbound is not evidence that the rest can be rebuilt.
   validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" "${inventory_state_file}" || return 1
-  if [[ -e "${SINGBOX_CONFIG_FILE}" ]] &&
-     ! managed_component_live_config_projection_supported "${SINGBOX_CONFIG_FILE}" "${inventory_state_file}"; then
-    log_warn "当前配置包含生成器未建模的顶层或投影字段，禁止有损重建；请先迁移或备份后人工处理。"
-    return 1
-  fi
 
   # Capture discovery before resource preparation; process substitution hides
   # its failure status and could otherwise publish an empty/partial config.
@@ -21616,13 +21879,35 @@ generate_config_candidate() {
     return 1
   fi
 
+  generated_candidate=$(mktemp "${SINGBOX_CONFIG_DIR}/.generated-config.XXXXXX") || return 1
+  trap "${exit_cleanup_command}; rm -f -- \"${generated_candidate}\"" EXIT
+  cp -- "${config_candidate}" "${generated_candidate}" || return 1
+  chmod 600 "${generated_candidate}" || return 1
+  if [[ -e "${SINGBOX_CONFIG_FILE}" ]]; then
+    if ! merge_generated_config_with_live "${generated_candidate}" "${SINGBOX_CONFIG_FILE}" "${baseline_file}" > "${config_candidate}"; then
+      printf '[ERROR] 配置归属冲突或生成基线无效；配置未发布，请先检查手工修改与托管字段。\n' >&2
+      return 1
+    fi
+  fi
+
   if ! publish_managed_config_candidate "${config_candidate}"; then
     rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
     return 1
   fi
 
+  if [[ -f "${baseline_file}" ]]; then
+    persist_file_backup "${baseline_file}" "${baseline_file}.bak" || return 1
+  fi
+  mv -f -- "${generated_candidate}" "${baseline_file}" || return 1
   rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}" "${config_candidate}"
   trap - EXIT
+}
+
+ensure_existing_generated_config_baseline() {
+  # Legacy removals need the old owned tags before changing any state. A
+  # regular generation safely preserves extensions and records that baseline.
+  [[ -f "${SINGBOX_CONFIG_FILE}" && ! -e "${SB_PROJECT_DIR}/managed-config.generated.json" ]] || return 0
+  generate_config
 }
 
 generate_config() {
@@ -22100,7 +22385,7 @@ apply_stack_mode_changes() {
   refresh_vless_reality_qos_rules
   setup_service
   open_committed_protocol_ports || return $?
-  systemctl restart sing-box
+  run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box
   log_success "协议栈设置已保存并重启服务。"
 }
 
@@ -22862,7 +23147,7 @@ warp_management() {
       log_warn "Warp 配置已提交，但临时事务快照未能删除: ${snapshot_dir}。"
     fi
     setup_service
-    systemctl restart sing-box
+    run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box
     log_success "Warp 配置已更新并重启服务。"
 
     load_current_config_state
@@ -22941,6 +23226,7 @@ update_config_only() {
   else
     echo -e "当前正在修改: $(protocol_display_name "${SB_PROTOCOL}")"
   fi
+  ensure_existing_generated_config_baseline || return 1
   snapshot_dir=$(create_managed_state_snapshot) || log_error "无法创建配置状态事务快照。"
   prompt_protocol_update_fields "${selected_protocol}"
   if ! save_protocol_state "${selected_protocol}" || ! generate_config; then
@@ -22955,7 +23241,7 @@ update_config_only() {
   setup_service
   open_committed_protocol_ports || return $?
   load_protocol_state "${selected_protocol}"
-  systemctl restart sing-box
+  run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box
   log_success "配置及服务文件已更新并重启服务。"
   log_info "连接信息未自动展示，如需查看请进入菜单 11。"
 }
@@ -23159,6 +23445,7 @@ remove_protocol_menu() {
       [[ -f "${instance_state_file}" ]] || log_error "未找到 REALITY 实例状态文件: ${instance_state_file}"
       [[ -f "${state_file}" ]] || log_error "未找到协议状态文件: ${state_file}"
 
+      ensure_existing_generated_config_baseline || return 1
       transaction_dir=$(create_managed_state_snapshot) || log_error "无法创建配置状态事务快照。"
       backup_instance_state_file="${instance_state_file}.bak.$(date +%Y%m%d%H%M%S)"
       if ! mv "${instance_state_file}" "${backup_instance_state_file}"; then
@@ -23186,7 +23473,7 @@ remove_protocol_menu() {
       load_protocol_state "vless-reality"
       open_committed_protocol_ports || return $?
       refresh_vless_reality_qos_rules
-      systemctl restart sing-box
+      run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box
       close_firewall_port "${removed_instance_port}" || return $?
       log_success "已移除 REALITY 实例: ${selected_instance}。原状态已备份到: ${backup_instance_state_file}"
       return 0
@@ -23204,6 +23491,13 @@ remove_protocol_menu() {
     return 0
   fi
 
+  ensure_existing_generated_config_baseline || return 1
+  if [[ ${#selected_protocols[@]} -eq ${#protocols[@]} &&
+        -f "${SB_PROJECT_DIR}/managed-config.generated.json" ]] &&
+     [[ "$(jq -cS . "${SINGBOX_CONFIG_FILE}")" != "$(jq -cS . "${SB_PROJECT_DIR}/managed-config.generated.json")" ]]; then
+    log_warn "配置包含手工扩展；legacy 整体移除会删除共享配置，已取消。请使用对应协议的实例事务移除，或先人工迁移扩展。"
+    return 1
+  fi
   transaction_dir=$(create_managed_state_snapshot) || log_error "无法创建配置状态事务快照。"
   if [[ ${#selected_protocols[@]} -eq ${#protocols[@]} ]]; then
     if ! persist_file_backup "${SINGBOX_CONFIG_FILE}" "${SINGBOX_CONFIG_FILE}.bak" ||
@@ -23323,7 +23617,7 @@ remove_protocol_menu() {
   load_protocol_state "${first_remaining}"
   open_committed_protocol_ports || return $?
   refresh_vless_reality_qos_rules
-  systemctl restart sing-box
+  run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box
   for removed_port in "${removed_ports[@]}"; do
     if [[ -n "${removed_port}" ]]; then
       close_firewall_port "${removed_port}" || return $?
@@ -23337,11 +23631,11 @@ get_public_ip() {
 }
 
 get_public_ipv4() {
-  curl -4 -s https://api.ip.sb/ip 2>/dev/null || curl -4 -s https://ifconfig.me 2>/dev/null || true
+  curl -4 -s --connect-timeout 5 --max-time 10 https://api.ip.sb/ip 2>/dev/null || curl -4 -s --connect-timeout 5 --max-time 10 https://ifconfig.me 2>/dev/null || true
 }
 
 get_public_ipv6() {
-  curl -6 -s https://api.ip.sb/ip 2>/dev/null || curl -6 -s https://ifconfig.me 2>/dev/null || true
+  curl -6 -s --connect-timeout 5 --max-time 10 https://api.ip.sb/ip 2>/dev/null || curl -6 -s --connect-timeout 5 --max-time 10 https://ifconfig.me 2>/dev/null || true
 }
 
 normalize_ip_list() {
@@ -25552,6 +25846,18 @@ subman_response_header() {
   ' "${headers_file}"
 }
 
+subman_curl_with_progress() {
+  local error_file=$1
+  shift
+  run_with_progress "SubMan API 请求" subman_curl_private "${error_file}" "$@"
+}
+
+subman_curl_private() {
+  local error_file=$1
+  shift
+  curl "$@" 2> "${error_file}"
+}
+
 subman_api_request() {
   local method=$1
   local path=$2
@@ -25571,6 +25877,11 @@ subman_api_request() {
     return 1
   fi
 
+  SUBMAN_API_URL=${api_url}
+  if ! validate_subman_connection_settings; then
+    subman_set_client_error "invalid_connection_settings" "invalid-request"
+    return 1
+  fi
   endpoint="${api_url}${path}"
   tmp_dir=${TMPDIR:-/tmp}
   if ! request_dir=$(mktemp -d "${tmp_dir%/}/subman-api.XXXXXX"); then
@@ -25625,16 +25936,16 @@ subman_api_request() {
   fi
 
   if [[ -n "${payload_json}" ]]; then
-    if http_status=$(curl -sS --connect-timeout 15 --max-time 60 --config "${config_file}" -X "${method}" "${endpoint}" \
+    if http_status=$(subman_curl_with_progress "${stderr_file}" -sS --connect-timeout 15 --max-time 60 --config "${config_file}" -X "${method}" "${endpoint}" \
       --data-binary "@${payload_file}" -D "${headers_file}" -o "${body_file}" \
-      -w '%{http_code}' 2> "${stderr_file}"); then
+      -w '%{http_code}'); then
       curl_status=0
     else
       curl_status=$?
     fi
   else
-    if http_status=$(curl -sS --connect-timeout 15 --max-time 60 --config "${config_file}" -X "${method}" "${endpoint}" \
-      -D "${headers_file}" -o "${body_file}" -w '%{http_code}' 2> "${stderr_file}"); then
+    if http_status=$(subman_curl_with_progress "${stderr_file}" -sS --connect-timeout 15 --max-time 60 --config "${config_file}" -X "${method}" "${endpoint}" \
+      -D "${headers_file}" -o "${body_file}" -w '%{http_code}'); then
       curl_status=0
     else
       curl_status=$?
@@ -29430,7 +29741,7 @@ restore_agent_upgrade_backup() {
     return 1
   fi
   if [[ "${service_was_active}" == "y" ]]; then
-    systemctl restart sing-box >/dev/null 2>&1 || status=1
+    run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box >/dev/null || status=1
   else
     systemctl stop sing-box >/dev/null 2>&1 || status=1
   fi
@@ -31529,7 +31840,7 @@ agent_service_cli() {
     return 1
   fi
 
-  if systemctl restart sing-box; then
+  if run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box; then
     restart_status=0
   else
     restart_status=$?
@@ -31909,8 +32220,8 @@ plain_proxy_instance_config_candidate() {
        (.action == "route" and (.outbound == "direct" or .outbound == "warp-ep") and
         (keys | sort) == ["action","inbound","outbound"]));
     (.inbounds // []) as $previous |
-    ([$previous | to_entries[] | select((.value | protocol_id) == $protocol) | .key][0] // ($previous|length)) as $at |
-    .inbounds = ($previous[:$at] + $added + [$previous[$at:][] | select((. | protocol_id) != $protocol)]) |
+    ([$previous | to_entries[] | select(.value.tag as $tag | $old_tags | index($tag) != null) | .key][0] // ($previous|length)) as $at |
+    .inbounds = ($previous[:$at] + $added + [$previous[$at:][] | select(.tag as $tag | $old_tags | index($tag) == null)]) |
     (.route.rules // []) as $prior_rules |
     ([$prior_rules[] | select(owned_rule) | [.inbound,.action]] | unique) as $positioned |
     # Keep existing managed rules in place: moving a direct/Warp rule ahead
@@ -31969,7 +32280,14 @@ acquire_managed_write_lock() {
 instance_transaction_checkpoint() {
   local lock_dir=$1 phase=$2
   jq --arg phase "${phase}" '.phase=$phase' "${lock_dir}/transaction.json" > "${lock_dir}/transaction.next" || return $?
-  mv -f "${lock_dir}/transaction.next" "${lock_dir}/transaction.json"
+  mv -f "${lock_dir}/transaction.next" "${lock_dir}/transaction.json" || return $?
+  case "${phase}" in
+    snapshot) printf '[INFO] 实例事务：备份当前配置及状态。\n' >&2 ;;
+    publish) printf '[INFO] 实例事务：发布已校验的配置。\n' >&2 ;;
+    resources) printf '[INFO] 实例事务：同步受管监听及防火墙规则。\n' >&2 ;;
+    service) printf '[INFO] 实例事务：检查服务；ACME 签发可能需要较长时间。\n' >&2 ;;
+    committed) printf '[SUCCESS] 实例事务：提交完成。\n' >&2 ;;
+  esac
 }
 
 instance_transaction_restore() {
@@ -31989,7 +32307,7 @@ instance_transaction_restore() {
       return 1
     fi
     if [[ "${before_active}" == true ]]; then
-      if systemctl restart sing-box >/dev/null 2>&1 && systemctl is-active --quiet sing-box; then :; else status=1; fi
+      if run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box >/dev/null && systemctl is-active --quiet sing-box; then :; else status=1; fi
     else
       if systemctl stop sing-box >/dev/null 2>&1 && singbox_service_confirmed_stopped; then :; else status=1; fi
     fi
@@ -32397,6 +32715,7 @@ apply_plain_proxy_instance_change() (
       # the share-link protocol index.
       continue
     fi
+    if manual_client_inbound_is_unmanaged "${inbound_json}"; then continue; fi
     protocol=$(config_inbound_protocol "${inbound_json}") || return 1
     if ! protocol_array_contains "${protocol}" ${protocols[@]+"${protocols[@]}"}; then
       protocols+=("${protocol}")
@@ -32415,7 +32734,7 @@ apply_plain_proxy_instance_change() (
   phase=service
   instance_transaction_checkpoint "${lock_dir}" "${phase}" || return $?
   if [[ "${before_active}" == true ]]; then
-    systemctl restart sing-box >/dev/null 2>&1 || return $?
+    run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box >/dev/null || return $?
     systemctl is-active --quiet sing-box || return $?
   fi
   phase=committed
@@ -33285,13 +33604,15 @@ show_node_info_action_menu() {
     render_menu_item "1" "查看连接链接 / 二维码"
     render_menu_item "2" "导出 sing-box 裸核客户端配置"
     render_menu_item "3" "推送节点到 SubMan"
+    render_menu_item "4" "设置或修改 SubMan 连接"
     echo "0. 返回"
-    node_info_choice=$(prompt_choice "请选择 [0-3]: " 0 3 "")
+    node_info_choice=$(prompt_choice "请选择 [0-4]: " 0 4 "")
 
     case "${node_info_choice}" in
       1) show_connection_info_menu ;;
       2) export_singbox_client_config || true ;;
       3) push_nodes_to_subman || true ;;
+      4) configure_subman_interactive || true ;;
       0) return ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac
@@ -33323,7 +33644,7 @@ validate_live_inbound_inventory() {
 
   [[ -e "${config_file}" || -L "${config_file}" ]] || return 0
   [[ "${allow_legacy_download_detour}" == true || "${allow_legacy_download_detour}" == false ]] || return 1
-  registry=$(protocol_registry_json) || return 1
+  registry=$(protocol_registry_static_json) || return 1
   advanced_types=$(component_registry_inbound_types_json) || return 1
   if plain_proxy_structured_state_active hy2 >/dev/null 2>&1; then
     allow_structured_hy2=true
@@ -33439,6 +33760,7 @@ list_config_protocols() {
       # pollute the share-link protocol index.
       continue
     fi
+    if manual_client_inbound_is_unmanaged "${inbound_json}"; then continue; fi
     protocol=$(config_inbound_protocol "${inbound_json}") || return 1
 
     if ! protocol_array_contains "${protocol}" ${protocols[@]+"${protocols[@]}"}; then
@@ -36292,6 +36614,8 @@ collect_vless_reality_config_instances() {
 
   for ((inbound_index = 0; inbound_index < inbound_count; inbound_index++)); do
     inbound_json=$(jq -c --argjson idx "${inbound_index}" '.inbounds[$idx]' "${SINGBOX_CONFIG_FILE}") || return 1
+    if jq -e '.type | IN("direct","tun","redirect","tproxy","cloudflared")' <<< "${inbound_json}" >/dev/null; then continue; fi
+    if manual_client_inbound_is_unmanaged "${inbound_json}"; then continue; fi
     if ! protocol=$(config_inbound_protocol "${inbound_json}" 2>/dev/null); then
       return 1
     fi
@@ -37080,6 +37404,7 @@ rebuild_protocol_state_from_config() {
   validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" || return 1
   [[ -f "${SINGBOX_CONFIG_FILE}" ]] || return 0
 
+  local SB_UNMANAGED_CLIENT_TAGS_JSON='[]' unmanaged_inbound unmanaged_tags=()
   local rebuilt_protocols=()
   local inbound_count inbound_index inbound_type inbound_json protocol
   local vless_instance_index=0 instance_id key_file_private state_index=""
@@ -37114,6 +37439,15 @@ rebuild_protocol_state_from_config() {
       rm -rf "${backup_dir}"
       return 1
     fi
+  fi
+
+  while IFS= read -r unmanaged_inbound; do
+    if manual_client_inbound_is_unmanaged "${unmanaged_inbound}"; then
+      unmanaged_tags+=("$(jq -r '.tag' <<< "${unmanaged_inbound}")")
+    fi
+  done < <(jq -c '.inbounds[]?' "${SINGBOX_CONFIG_FILE}")
+  if (( ${#unmanaged_tags[@]} > 0 )); then
+    SB_UNMANAGED_CLIENT_TAGS_JSON=$(printf '%s\n' "${unmanaged_tags[@]}" | jq -Rsc 'split("\n")[:-1]') || return 1
   fi
 
   if ! collect_vless_reality_config_instances; then
@@ -37225,7 +37559,7 @@ rebuild_protocol_state_from_config() {
 
   # SOCKS is structured-only. Capture its complete typed candidate while the
   # old metadata is still available; the clear below removes root env files.
-  socks_inbound_count=$(jq -r '[.inbounds[]? | select(.type == "socks")] | length' "${SINGBOX_CONFIG_FILE}") || {
+  socks_inbound_count=$(config_protocol_inbound_count socks "${SINGBOX_CONFIG_FILE}") || {
     abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
     return 1
   }
@@ -37273,7 +37607,7 @@ rebuild_protocol_state_from_config() {
 
   # HTTP is structured-only. Capture its complete typed candidate while the
   # old metadata is still available; the clear below removes root .env files.
-  http_inbound_count=$(jq -r '[.inbounds[]? | select(.type == "http")] | length' "${SINGBOX_CONFIG_FILE}") || {
+  http_inbound_count=$(config_protocol_inbound_count http "${SINGBOX_CONFIG_FILE}") || {
     abort_protocol_state_rebuild "${backup_dir}" "${state_dir_existed}"
     return 1
   }
@@ -37753,6 +38087,7 @@ rebuild_protocol_state_from_config() {
 
   for ((inbound_index = 0; inbound_index < inbound_count; inbound_index++)); do
     inbound_json=$(jq -c --argjson idx "${inbound_index}" '.inbounds[$idx]' "${SINGBOX_CONFIG_FILE}")
+    if jq -e --argjson tags "${SB_UNMANAGED_CLIENT_TAGS_JSON}" '.tag as $tag | $tags | index($tag) != null' <<< "${inbound_json}" >/dev/null; then continue; fi
     protocol=$(config_inbound_protocol "${inbound_json}" 2>/dev/null || true)
     [[ -n "${protocol}" ]] || continue
 
@@ -38284,7 +38619,7 @@ restore_runtime_artifacts_for_takeover() {
 }
 
 restart_service_after_takeover() {
-  systemctl restart sing-box
+  run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box
 }
 
 install_or_reconfigure_singbox() {
@@ -38376,14 +38711,14 @@ update_singbox_binary_preserving_config() {
     return 1
   fi
   log_success "现有配置通过 sing-box ${SB_VERSION} 校验。"
-  if ! systemctl restart sing-box || [[ "$(systemctl is-active sing-box 2>/dev/null || true)" != "active" ]]; then
+  if ! run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box || [[ "$(systemctl is-active sing-box 2>/dev/null || true)" != "active" ]]; then
     log_warn "sing-box 服务重启失败或未保持 active。"
     if ! restore_singbox_update_artifacts "${binary_backup}" "${library_backup_dir}"; then
       log_warn "自动恢复旧 sing-box 二进制或 NaiveProxy 运行库失败，请从备份 ${binary_backup} 和 ${library_backup_dir} 手动恢复。"
       return 1
     fi
     if [[ "${before_service_state}" == "active" ]]; then
-      if ! systemctl restart sing-box >/dev/null 2>&1 ||
+      if ! run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box >/dev/null ||
          [[ "$(systemctl is-active sing-box 2>/dev/null || true)" != "active" ]]; then
         restore_status=1
       fi
@@ -38679,9 +39014,9 @@ main() {
       3) remove_protocol_menu ;;
       4) update_singbox_version_menu ;;
       5) uninstall_singbox ;;
-      6) systemctl start sing-box && log_success "服务已启动。" ;;
+      6) run_with_progress "启动 sing-box" systemctl start sing-box && log_success "服务已启动。" ;;
       7) systemctl stop sing-box && log_success "服务已停止。" ;;
-      8) systemctl restart sing-box && log_success "服务已重启。" ;;
+      8) run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box && log_success "服务已重启。" ;;
       9) view_status ;;
       10) journalctl -u sing-box -f || true ;;
       11) view_node_info ;;

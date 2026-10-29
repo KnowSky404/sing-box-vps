@@ -3,6 +3,7 @@
 
 - **工作目录**: `/root/sing-box-vps/`
 - **配置文件**: `/root/sing-box-vps/config.json`
+- **脚本生成基线及其备份**: `/root/sing-box-vps/managed-config.generated.json` / `managed-config.generated.json.bak`（权限 600，包含敏感运行材料）
 - **上一版配置备份**: `/root/sing-box-vps/config.json.bak`
 - **最后协议删除前的索引备份**: `/root/sing-box-vps/protocols/index.env.bak`
 - **协议状态目录**: `/root/sing-box-vps/protocols/`

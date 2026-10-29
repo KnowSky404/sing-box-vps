@@ -57,7 +57,7 @@ expect_rejected
 fixture_registry=$(jq '. + [{state_id:"shadowsocks",type:"shadowsocks",
   listen_networks:["tcp","udp"],traffic_networks:["tcp","udp"],
   features:{listen_network_selection:true}}]' <<<"${base_registry}")
-protocol_registry_json() { printf '%s\n' "${fixture_registry}"; }
+protocol_registry_static_json() { printf '%s\n' "${fixture_registry}"; }
 
 for selection in 'null' '[]' '"tcp"' '"udp"' '["tcp","udp"]' '["udp","tcp"]'; do
   jq -n --argjson selection "${selection}" '{inbounds:[{

@@ -259,11 +259,11 @@ protected_config_hash=$(sha256sum "${SINGBOX_CONFIG_FILE}" | awk '{print $1}')
 state=$(detect_existing_instance_state)
 
 if [[ "${state}" != "incomplete" ]]; then
-  printf 'expected unrepresentable shared ACME http_client to require takeover, got %s\n' "${state}" >&2
+  printf 'expected the injected generation failure to retain an incomplete state, got %s\n' "${state}" >&2
   exit 1
 fi
-if [[ "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" != "0" ]]; then
-  printf 'shared ACME http_client must block automatic config regeneration\n' >&2
+if [[ "$(cat "${GENERATE_CONFIG_COUNT_FILE}")" == "0" ]]; then
+  printf 'supported shared ACME http_client must reach the preserving config generator\n' >&2
   exit 1
 fi
 if [[ "$(sha256sum "${SINGBOX_CONFIG_FILE}" | awk '{print $1}')" != "${protected_config_hash}" ]]; then

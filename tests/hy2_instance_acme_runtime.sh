@@ -42,10 +42,28 @@ for ((attempt=0; attempt<60; attempt++)); do
 done
 openssl x509 -in "${ARTIFACT_DIR}/root.crt" -noout -subject > "${ARTIFACT_DIR}/root-subject.txt"
 printf 'INSTALLED_PROTOCOLS=\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
-printf '{"log":{"level":"info"},"inbounds":[],"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct"}}\n' > "${SINGBOX_CONFIG_FILE}"
+jq -n '{log:{level:"info"},
+  inbounds:[{type:"mixed",tag:"manual-client",listen:"127.0.0.1",listen_port:18090}],
+  dns:{servers:[{type:"local",tag:"manual-dns"}]},
+  outbounds:[{type:"direct",tag:"direct"},{type:"direct",tag:"manual-direct"},
+    {type:"socks",tag:"manual-proxy",server:"127.0.0.1",server_port:19999}],
+  route:{final:"direct",rules:[{inbound:"manual-client",action:"route",outbound:"manual-direct"}],
+    default_domain_resolver:"manual-dns"},experimental:{cache_file:{enabled:false}}}' > "${SINGBOX_CONFIG_FILE}"
+manual_projection() {
+  jq -cS '{inbound:[.inbounds[]|select(.tag=="manual-client")],
+    outbounds:[.outbounds[]|select(.tag=="manual-direct" or .tag=="manual-proxy")],
+    rules:[.route.rules[]|select(.inbound=="manual-client")],
+    dns:{servers:[.dns.servers[]|select(.tag=="manual-dns")]},experimental,
+    resolver:.route.default_domain_resolver}' "${SINGBOX_CONFIG_FILE}"
+}
+manual_projection > "${ARTIFACT_DIR}/manual.before.json"
+
 setup_service > "${ARTIFACT_DIR}/setup.log" 2>&1
 mkdir -p /etc/systemd/system/sing-box.service.d
 printf '[Service]\nEnvironment="SSL_CERT_FILE=%s/https.crt"\n' "${ARTIFACT_DIR}" > /etc/systemd/system/sing-box.service.d/acme-test.conf
+# A slow pre-start proves that progress remains visible during systemd waits.
+printf '[Service]\nExecStartPre=/bin/sleep 2\n' > /etc/systemd/system/sing-box.service.d/progress-test.conf
+export SB_PROGRESS_INTERVAL_SECONDS=1
 systemctl daemon-reload
 systemctl start sing-box
 
@@ -74,7 +92,7 @@ if [[ "${HY2_ACME_LEGACY_BASELINE:-0}" == 1 ]]; then
   jq --slurpfile record "${ARTIFACT_DIR}/one.json" '
     $record[0] as $one |
     .certificate_providers=[$one.tls.acme+{type:"acme",tag:"hy2-cert-provider"}] |
-    .inbounds=[{type:"hysteria2",tag:$one.tag,listen:$one.listen.address,listen_port:$one.listen.port,
+    .inbounds += [{type:"hysteria2",tag:$one.tag,listen:$one.listen.address,listen_port:$one.listen.port,
       users:$one.authentication.users,tls:{enabled:true,server_name:$one.tls.server_name,
         alpn:["h3"],certificate_provider:"hy2-cert-provider"}}]
   ' "${SINGBOX_CONFIG_FILE}" > "${ARTIFACT_DIR}/legacy-config.json"
@@ -86,8 +104,19 @@ else
   apply_plain_proxy_instance_change hy2 create 0 "${ARTIFACT_DIR}/one.json" y > "${ARTIFACT_DIR}/create-one.json"
   current_revision=1
 fi
-apply_plain_proxy_instance_change hy2 create "${current_revision}" "${ARTIFACT_DIR}/two.json" y > "${ARTIFACT_DIR}/create-two.json"
+apply_plain_proxy_instance_change hy2 create "${current_revision}" "${ARTIFACT_DIR}/two.json" y > "${ARTIFACT_DIR}/create-two.json" 2> "${ARTIFACT_DIR}/create-two.progress.log"
 current_revision=$((current_revision + 1))
+grep -Fq '已等待 1 秒' "${ARTIFACT_DIR}/create-two.progress.log"
+manual_projection > "${ARTIFACT_DIR}/manual.after-instance.json"
+cmp "${ARTIFACT_DIR}/manual.before.json" "${ARTIFACT_DIR}/manual.after-instance.json"
+# The isolated marker is private; disable the optional private-IP reject
+# policy explicitly so this local data-plane probe can reach its fixture.
+SB_ADVANCED_ROUTE=n
+# Global rebuild must preserve the same unowned client configuration too.
+generate_config > "${ARTIFACT_DIR}/global-rebuild.log" 2>&1
+systemctl restart sing-box
+manual_projection > "${ARTIFACT_DIR}/manual.after-rebuild.json"
+cmp "${ARTIFACT_DIR}/manual.before.json" "${ARTIFACT_DIR}/manual.after-rebuild.json"
 jq -e '((.certificate_providers // [])|length)==0' "${SINGBOX_CONFIG_FILE}" >/dev/null
 for ((attempt=0; attempt<120; attempt++)); do
   certificate_count=$(find "${SB_ACME_DATA_DIR}" -type f -name '*.crt' | wc -l)
@@ -107,7 +136,7 @@ python3 -m http.server 19081 --bind 127.0.0.1 --directory "${ARTIFACT_DIR}" > "$
 http_pid=$!
 container_ip=$(hostname -I | awk '{print $1}')
 [[ -n "${container_ip}" && "${container_ip}" != 127.* ]]
-jq -e 'all(.inbounds[]; .listen=="0.0.0.0")' "${SINGBOX_CONFIG_FILE}" >/dev/null
+jq -e 'all(.inbounds[]|select(.type=="hysteria2"); .listen=="0.0.0.0")' "${SINGBOX_CONFIG_FILE}" >/dev/null
 outbounds=$(build_client_hy2_outbounds "${container_ip}" | jq -s .)
 for index in 0 1; do
   jq -n --argjson outbounds "${outbounds}" --argjson index "${index}" --arg root "${ARTIFACT_DIR}/root.crt" \
@@ -126,12 +155,17 @@ for index in 0 1; do
   wait "${client_pid}" || [[ $? == 143 ]]
   client_pid=""
 done
+curl --silent --show-error --fail --max-time 5 --noproxy '' \
+  --proxy socks5h://127.0.0.1:18090 http://127.0.0.1:19081/marker.txt > "${ARTIFACT_DIR}/manual-client-transfer.txt"
+cmp "${ARTIFACT_DIR}/marker.txt" "${ARTIFACT_DIR}/manual-client-transfer.txt"
 ss -lun > "${ARTIFACT_DIR}/listeners.txt"
 grep -Fq '0.0.0.0:48443' "${ARTIFACT_DIR}/listeners.txt"
 grep -Fq '0.0.0.0:48444' "${ARTIFACT_DIR}/listeners.txt"
 apply_plain_proxy_instance_change hy2 delete "${current_revision}" two n > "${ARTIFACT_DIR}/delete-two.json"
+manual_projection > "${ARTIFACT_DIR}/manual.after-delete.json"
+cmp "${ARTIFACT_DIR}/manual.before.json" "${ARTIFACT_DIR}/manual.after-delete.json"
 plain_proxy_structured_state_matches_config hy2
 systemctl is-active --quiet sing-box
 sing-box check -c "${SINGBOX_CONFIG_FILE}"
 journalctl -u sing-box --no-pager > "${ARTIFACT_DIR}/service.log"
-printf 'HY2 ACME Docker runtime passed: actual HTTP-01 issuance=2, verified TLS transfers via container IPv4=2, cache reuse, delete isolation\n'
+printf 'HY2 ACME Docker runtime passed: actual HTTP-01 issuance=2, verified TLS transfers via container IPv4=2, cache reuse, delete isolation, manual client coexistence, global rebuild and slow-service progress\n'
