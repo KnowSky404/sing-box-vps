@@ -46,9 +46,14 @@ EOF
 }
 
 curl() {
-  cat <<'EOF'
+  local output=''
+  while [[ $# -gt 0 ]]; do
+    case $1 in -o) output=$2; shift 2 ;; *) shift ;; esac
+  done
+  cat > "${output}" <<'EOF'
 {"id":"new-id","token":"new-token","config":{"client_id":"hCaJ","interface":{"addresses":{"v4":"172.16.0.2","v6":"2606:4700:110:8cde:1234:5678:90ab:cdef"}}}}
 EOF
+  printf 200
 }
 
 register_warp

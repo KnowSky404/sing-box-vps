@@ -16,7 +16,7 @@ verification_selection_repo_root() {
 
 verification_list_groups() {
   printf '%s\n' \
-    docs version bootstrap menu self-update subman verification \
+    docs version bootstrap menu self-update binary-install warp subman verification \
     protocol:vless protocol:vless-plain protocol:mixed protocol:hy2 \
     protocol:anytls protocol:socks protocol:http protocol:shadowsocks \
     protocol:trojan protocol:vmess protocol:hysteria protocol:tuic \
@@ -29,6 +29,11 @@ tests/sbv_update_transactions.sh
 tests/sbv_menu_reloads_updated_script.sh
 tests/bootstrap_download.sh
 tests/cli_update_commands.sh
+tests/binary_install_transactions.sh
+tests/binary_update_transactions.sh
+tests/binary_namespace_guard.sh
+tests/latest_version_lookup.sh
+tests/warp_registration_transactions.sh
 tests/protocol_registry_contract.sh
 tests/protocol_coverage_contract.sh
 tests/protocol_instance_adapter.sh
@@ -103,6 +108,8 @@ tests/managed_openvpn_endpoint_runtime.sh
 tests/managed_transparent_resources.sh
 tests/managed_transparent_transaction.sh
 tests/managed_component_availability.sh
+tests/component_namespace_preflight.sh
+tests/namespace_runtime_build_guard.sh
 tests/verification_ssh_outbound_contract.sh
 tests/verification_socks_outbound_contract.sh
 tests/verification_selector_outbound_contract.sh
@@ -190,6 +197,16 @@ verification_group_test_candidates() {
         tests/ensure_sbv_command_updates_stale_existing_script.sh \
         tests/initial_exit_installs_sbv_command.sh
       ;;
+    binary-install)
+      printf '%s\n' tests/binary_install_transactions.sh tests/binary_update_transactions.sh \
+        tests/binary_namespace_guard.sh tests/latest_version_lookup.sh tests/update_binary_path_initializes_system_info.sh \
+        tests/update_rolls_back_binary_when_restart_fails.sh tests/update_rolls_back_binary_when_config_invalid.sh \
+        tests/update_keeps_existing_config.sh tests/update_skips_restart_when_config_invalid.sh tests/agent_upgrade_commands.sh
+      ;;
+    warp)
+      printf '%s\n' tests/warp_registration_transactions.sh tests/register_warp_reregisters_when_client_id_missing.sh \
+        tests/secret_diagnostics_redaction.sh tests/fresh_vless_warp_install_persists_reality_public_key.sh
+      ;;
     subman)
       patterns=('tests/subman_*.sh')
       ;;
@@ -251,7 +268,7 @@ verification_group_tests() {
   while IFS= read -r file; do
     [[ -n "${file}" ]] || continue
     case "${file}" in
-      tests/*_helper.sh|tests/hy2_instance_acme_runtime.sh) continue ;;
+      tests/*_helper.sh|tests/hy2_instance_acme_runtime.sh|tests/component_runtime_acceptance.sh|tests/selector_urltest_runtime.sh|tests/acme_component_runtime.sh|tests/cloudflared_runtime.sh|tests/tailscale_openconnect_runtime.sh|tests/namespace_core_runtime.sh) continue ;;
     esac
     case "${group}:${file}" in
       protocol:vless:tests/*vless_plain*|protocol:vless-reality:tests/*vless_plain*) continue ;;

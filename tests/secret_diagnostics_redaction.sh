@@ -45,16 +45,22 @@ EOF_KEYS
 }
 
 curl() {
+  local output=''
+  while [[ $# -gt 0 ]]; do
+    case $1 in -o) output=$2; shift 2 ;; *) shift ;; esac
+  done
   if [[ "${WARP_RESPONSE_MODE:-success}" == "transport" ]]; then
     printf '%s\n' 'curl-transport-secret' >&2
     return 28
   fi
   if [[ "${WARP_RESPONSE_MODE:-success}" == "error" ]]; then
-    printf '%s\n' '{"errors":[{"message":"warp-error-secret"}]}'
+    printf '%s\n' '{"errors":[{"message":"warp-error-secret"}]}' > "${output}"
+    printf 400
     return 0
   fi
 
-  printf '%s\n' '{"id":"new-id","token":"warp-token-secret","config":{"client_id":"warp-client-id","interface":{"addresses":{"v4":"172.16.0.2","v6":"2606:4700:110:8cde:1234:5678:90ab:cdef"}}}}'
+  printf '%s\n' '{"id":"new-id","token":"warp-token-secret","config":{"client_id":"c2Vj","interface":{"addresses":{"v4":"172.16.0.2","v6":"2606:4700:110:8cde:1234:5678:90ab:cdef"}}}}' > "${output}"
+  printf 200
 }
 
 register_warp >/dev/null
@@ -85,10 +91,10 @@ if grep -Fq 'curl-transport-secret' "${SBV_LOG_FILE}" ||
   printf 'failed Warp transport diagnostics leaked curl output\n' >&2
   exit 1
 fi
-grep -Fq 'Warp 注册 API 请求失败' "${SBV_LOG_FILE}"
+grep -Fq 'transport_28' "${SBV_LOG_FILE}"
 grep -Fqx 'WARP_TOKEN=keep-token' "${SB_WARP_KEY_FILE}"
 
-rm -f "${SB_WARP_KEY_FILE}"
+rm -f "${SB_WARP_KEY_FILE}" "${SB_PROJECT_DIR}.warp-registration.pending.json"
 export WARP_RESPONSE_MODE=error
 if (register_warp >/dev/null 2>"${TMP_DIR}/warp-error.stderr"); then
   printf 'expected Warp registration error to return non-zero\n' >&2
@@ -100,7 +106,7 @@ if grep -Fq 'warp-error-secret' "${SBV_LOG_FILE}" ||
   printf 'failed Warp diagnostics leaked API error material\n' >&2
   exit 1
 fi
-grep -Fq 'Warp 注册失败（API 返回错误）' "${SBV_LOG_FILE}"
+grep -Fq 'http_400' "${SBV_LOG_FILE}"
 
 if grep -Fq '生成原始输出:' "${TESTS_DIR}/../install.sh" ||
    grep -Fq '注册原始响应:' "${TESTS_DIR}/../install.sh"; then

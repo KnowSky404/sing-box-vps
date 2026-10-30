@@ -1,6 +1,6 @@
 # 异常处理与变更事务
 
-本文定义 `sing-box-vps` 中可恢复变更的错误传播、远程内容处理和回滚边界。`install.sh` 仍是运行时单一真源；本文不改变未迁移旧路径的既有接口。
+本文说明 `sing-box-vps` 可恢复变更的错误传播、远程内容处理和回滚边界。`install.sh` 是运行时单一真源。二进制安装、受管核心升级、WARP 注册和最新版本查询已完成有限范围的实现与验收，英文契约及中译见 [Runtime transaction SPEC](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/runtime-transactions.md)；实际结果与生产、真实提供商验收分别记录。
 
 ## 失败分类
 
@@ -52,6 +52,32 @@ PRECHECK
 
 菜单 15 只在更新事务成功并完成清理后，通过 `exec` 启动全局 `sbv` 的新版菜单，沿用当前管理锁及其文件描述符，避免旧进程继续运行旧函数。目标文件为 no-op 但运行时版本落后时同样切换；运行时和目标都已是最新版时保留当前菜单。CLI 更新不启动菜单。若 `exec` 本身失败，保留当前菜单并报告自动切换失败，已提交的更新不回滚；更新事务失败时不尝试切换。
 
+## 二进制安装与核心升级
+
+`install_binary()` 使用目标目录内的私有随机 workspace 和同文件系统候选文件，不再清空固定 `/tmp/sing-box-install`，也不再使用无界 `wget`。官方归档下载设置连接/总时限、有限重试和重试预算；stderr 持续消费但只保留配置上限内的内容，错误提示不打印原文。
+
+解压前检查完整 manifest：只接受预期版本/架构目录、唯一普通文件 `sing-box`、最多一个普通文件 `libcronet.so` 和安全相对路径；拒绝路径穿越、符号链接、硬链接、重复核心及特殊文件。仅解压选定成员，候选通过有界 `version` 检查且精确匹配目标版本后才允许发布。本地 hash 用于完整性核对，不代表远端发布者签名。
+
+二进制、可选受管运行库和 marker 全部准备并备份旧状态后，才逐文件原子 rename。保留未由 sbv 管理的运行库，发布后验证版本/hash/权限/owner 及 marker。三个文件是操作级回滚组，不是一次文件系统级原子提交。提交失败或信号会恢复并验证旧文件，包括原先不存在的运行库/marker；rename 后信号窗口也受覆盖。回滚失败保留私有材料并要求人工处理；已校验提交后的清理失败明确说明已提交和恢复路径。
+
+`update_singbox_binary_preserving_config()` 显式处理依赖和安装错误，在条件调用中也不会继续重启。变更前备份二进制、运行库和配置；配置意外变化、目标版本不符或配置校验失败均在目标重启前终止。服务重启失败恢复旧文件和此前的活动状态，回滚后检查内容及元数据，信号按真实状态传播并恢复调用方原 trap。apt/yum 自身的软件包变更不属于二进制回滚的承诺范围。
+
+Agent upgrade 保留预检、私有 manifest 与持久化事务结果：成功需要目标版本、配置 hash 不变、目标核心校验和服务 active；失败区分完整回滚、回滚失败及结果落盘失败。Agent 预检继续拒绝降级，不能把已装 1.14.2 后请求 1.14.0 当作成功升级场景。各接口的 `changed` 按其自身契约解释，不能把 `sbv` 自更新“曾提交”字段直接套用为 Agent 的最终状态字段。
+
+## WARP 注册与凭据恢复
+
+注册前在 `${SB_PROJECT_DIR}.warp-registration.pending.json` 写入私有 `sent` receipt；路径位于项目快照之外，避免配置回滚丢失外部写入结果。POST 不自动重试。DNS/建连失败或明确 HTTP 4xx 拒绝可清理 receipt；超时、请求可能已发送、响应异常或服务端失败保留现场，再次调用不会重复 POST。不确定结果需要操作者对账，不能盲目删 receipt。此保护是客户端防重发，不是提供商的分布式 exactly-once 保证。
+
+合法 HTTP/JSON 响应必须包含正确类型的必要字段、同族地址和三字节 client ID，随后原子保存为 `received`。本地保存失败后，再次调用先校验恢复密钥及响应，只重试本地保存，不重新注册。
+
+凭据以安全 Bash 数据序列化到私有候选文件，经语法校验和 `.bak` 备份后原子发布，再核对 hash 和权限。提交后校验失败及 rename 后信号恢复旧凭据；保留真实 writer/信号状态和 received 恢复材料。日志不记录 Token、私钥或响应正文。
+
+## 最新版本查询
+
+`query_latest_singbox_release()` 使用私有临时文件、连接/总时限、响应大小限制和有界诊断，只接受单个 JSON 对象中的稳定数字 release tag。传输、HTTP、错误/多个 JSON 文档、错误类型和预发布 tag 分别按结果分类。
+
+`get_latest_version()` 对普通查询失败显示 `unavailable` 并回退 `SB_SUPPORT_MAX_VERSION`；只在成功结果确实更高时警告。HUP/INT/TERM 及 curl 对应状态直接返回 129/130/143，保留 `SB_VERSION=latest`，调用方取消后不能继续按回退版本安装。查询的 best-effort 回退和变更操作失败是不同边界。
+
 ## 高级组件持久事务
 
 组件 `create`、`replace`、`delete`、`rebuild` 和 `takeover` 在 `${SB_PROJECT_DIR}.component-write.lock` 中原子发布 `transaction.json`，再写入同目录的状态快照。`phase` 按 `prepare`、`snapshot`、`publish`、`resources`、`service`、`committed` 前进；监听资源变化时，防火墙 journal 与快照绑定，并记录 `firewall_expected`。正常提交先写 `committed` 再清理目录，故障或不可捕获中断不会把临时目录当作成功。
@@ -60,9 +86,11 @@ PRECHECK
 
 实例写入/恢复与组件写入/恢复共享同一管理锁；任一持久事务目录 pending 时，另一类变更都会被拒绝，避免后续快照回滚覆盖已经提交的不同资源。
 
-标准错误上下文至少包含：`operation`、`stage`、`code`、`message`、`detail`、`command_exit_code`、`hint`、`changed`、`rollback_attempted`、`rolled_back`、`rollback_ok`、`manual_intervention_required`、`current_version`、`candidate_version`、`target_path` 和 `log_file`。人类提示写 stderr；错误详情最多保留有限长度，并过滤 URL 用户信息、Token、密码和 Authorization 字段。
+`sbv` 自更新的结构化错误上下文包含：`operation`、`stage`、`code`、`message`、`detail`、`command_exit_code`、`hint`、`changed`、`rollback_attempted`、`rolled_back`、`rollback_ok`、`manual_intervention_required`、`current_version`、`candidate_version`、`target_path` 和 `log_file`。人类提示写 stderr；错误详情最多保留有限长度，并过滤 URL 用户信息、Token、密码和 Authorization 字段。二进制、WARP、版本查询分别使用各自的 `operation`/`stage`/`code` 诊断和真实退出状态，Agent upgrade 保持既有 JSON 结果；不宣称所有历史函数采用相同的全局输出 schema。
 
 ## 下载错误分类
+
+下表用于 `sbv` 和二进制下载；WARP 使用 `transport_<状态>` / `http_<状态>`，版本查询使用自身查询分类和 `signal_interrupted`，调用方仍保留真实退出码。
 
 | curl 状态 | 稳定代码 | 含义 |
 | ---: | --- | --- |
@@ -81,42 +109,50 @@ PRECHECK
 
 | 类型 | 当前调用 | 当前边界 |
 | --- | --- | --- |
-| `bootstrap.sh` remote entry | 按 `install`/`uninstall` 选择脚本，下载到受控临时目录，执行 `bash -n` 和项目身份校验，最后才执行临时文件；不直接写安装最终路径 |
+| 远程入口 | `bootstrap.sh` | 按 `install`/`uninstall` 选择脚本，私有目录完整下载后执行 `bash -n` 和项目身份校验，最后才启动临时文件；不直接写安装最终路径 |
 | 运行时可执行 artifact | `stage_sbv_candidate_from_url()`、`download_shell_artifact_atomically()` | 已迁移到同目录 staging、校验和原子替换；不直接写最终执行路径 |
 | 只读 best-effort 查询 | `check_script_status()`、`get_public_ipv4()`、`get_public_ipv6()` | 均有请求时限；IP 探测仅接受合法同族地址，全部端点失败时返回非零且不输出候选；更新查询失败显示无法检测 |
 | REALITY 候选探测 | `select_reality_sni_candidate()`、`run_reality_target_check()` | 校验固定 checker 下载与 JSON 报告，每个域名设总时限；失败不选择域名，信号清理受管子进程；附加风险须明确确认 |
-| API 读请求 | `get_latest_version()`、`subman_api_request()` 的 GET | GitHub 查询已有连接/总时限，失败回退适配版本；SubMan 请求已有连接/总时限、私有凭据文件及错误分类，调用方验证 HTTP/JSON 与 Workspace 契约 |
-| API 写请求 | `register_warp()`、`subman_api_request()` 的 PUT/DELETE | WARP 已有限时请求和脱敏日志，但仍需独立操作边界；SubMan 已区分传输结果不确定与服务端拒绝，条件写入及读回对账见下文引用 |
-| 软件包或二进制安装 | `install_dependencies()` 的 apt/yum、`install_binary()` 的临时 `wget` | 二进制下载不写最终执行路径，但下载时限、stderr 限长和 return-based 错误上下文仍需统一 |
+| API 读请求 | `get_latest_version()`、`subman_api_request()` 的 GET | GitHub 查询有连接/总时限、响应大小及单文档校验，普通失败明确回退，信号取消传播；SubMan 有私有凭据文件、HTTP/JSON/Workspace 校验和错误分类 |
+| API 写请求 | `register_warp()`、`subman_api_request()` 的 PUT/DELETE | WARP 有界且无自动重试，以 sent/received receipt 防重发并恢复本地保存；SubMan 区分传输结果不确定与服务端拒绝，条件写入及读回对账见下文引用 |
+| 二进制安装 | `install_binary()` 的有界 `curl` | 私有 staging、完整归档/精确版本校验、全部候选准备、逐文件原子提交、postcheck/rollback 和信号清理 |
+| 系统软件包 | `install_dependencies()` 的 apt/yum | 保留包管理器状态并由调用方显式处理；不宣称 OS 软件包可由二进制备份回滚 |
 | 验证探针 | `dev/verification/remote/entrypoint.sh` 的本地代理 `curl` | 仅用于 Docker 运行时探测，不是生产安装路径 |
 
 `uninstall.sh` 当前没有远程 `curl`/`wget` 调用。SubMan 的条件写入、结果不确定时读回对账及真实服务验收边界见[使用注意事项](https://github.com/KnowSky404/sing-box-vps/wiki/Notes)与[地址选择规范](https://github.com/KnowSky404/sing-box-vps/wiki/SubMan-Address-Selection)。这些已实现保护不等于全部路径都采用同一套下载事务。
 
 ## 变更操作检查清单
 
-提交涉及关键路径的改动前，确认：
+以下用于审查未来变更，不是本轮未完成任务。提交涉及关键路径的改动前，按操作边界确认：
 
-- [ ] 识别目标的不存在、普通文件、符号链接和特殊文件状态。
-- [ ] 远程内容只进入同目录 staging，且有 timeout、有限重试和 stderr 脱敏。
-- [ ] 候选完成大小、格式、语法、身份、版本和内容校验。
-- [ ] 已记录原版本、hash、权限、owner，并在提交前创建可恢复备份。
-- [ ] 最终提交使用原子替换；`changed` 只在替换成功后设置。
-- [ ] postcheck 覆盖候选版本、hash、语法、身份和执行权限。
-- [ ] 每个提交后失败分支都有验证过的 rollback；rollback 失败保留人工恢复材料。
-- [ ] INT/TERM/HUP 不会留下锁或无用候选，不会把未完成变更报告成成功。
-- [ ] CLI 返回非零，交互动作返回菜单；没有用 `2>/dev/null || true` 隐藏变更错误。
-- [ ] 按 [AGENTS.md 第 4.2 节](https://github.com/KnowSky404/sing-box-vps/blob/main/AGENTS.md) 运行语法检查及受影响事务的离线故障注入测试；仅在服务、网络或生命周期行为变化时追加对应真实 Docker 场景。该清单不要求固定运行粗粒度 `run.sh` 或无关协议回归。
+- 识别目标的不存在、普通文件、符号链接和特殊文件状态。
+- 远程内容只进入受控 staging，关键文件在目标同文件系统原子发布；请求有 timeout、有限重试或明确禁止自动重试，并保护 stderr。
+- 候选完成大小、格式、语法、身份、版本和内容校验。
+- 已记录原版本、hash、权限、owner，并在提交前创建可恢复备份。
+- 最终提交使用原子替换；`changed` 只在替换成功后设置。
+- postcheck 覆盖候选版本、hash、语法、身份和执行权限。
+- 每个提交后失败分支都有验证过的 rollback；rollback 失败保留人工恢复材料。
+- INT/TERM/HUP 不会留下锁或无用候选，不会把未完成变更报告成成功。
+- CLI 返回非零，交互动作返回菜单；没有用 `2>/dev/null || true` 隐藏变更错误。
+- 按 [AGENTS.md 第 4.2 节](https://github.com/KnowSky404/sing-box-vps/blob/main/AGENTS.md) 运行语法检查及受影响事务的离线故障注入测试；仅在服务、网络或生命周期行为变化时追加对应真实 Docker 场景。该清单不要求固定运行粗粒度 `run.sh` 或无关协议回归。
 
-## 后续迁移清单
+## 已完成验收与持续维护
 
-已采用本节事务边界的路径包括 `sbv` 自更新、`ensure_sbv_command_installed()` 的脚本候选安装，以及媒体检测后端的远程 Shell artifact 下载。REALITY checker 已有固定内容校验、时限和信号清理；公网 IP 探测与 SubMan API 的既有保护见上表。以下保留尚需统一或持续维护的边界，实施前须重新核对当前代码，并按影响选择回归范围：
+原迁移清单已收敛为 [运行时事务 SPEC](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/runtime-transactions.zh-CN.md) 的 RT-01 至 RT-04：二进制下载与发布、受管升级、WARP 注册/保存、版本查询已实现并取得对应证据。`sbv` 自更新、全局命令候选安装、媒体检测 Shell artifact、REALITY checker、公网 IP 和 SubMan 的既有保护继续保留。
 
-- `install.sh:register_warp()`：已有连接/总时限和脱敏 stderr；仍需按完整注册操作统一 HTTP/JSON 错误分类、返回状态及失败后的状态保存边界。
-- `install.sh:get_latest_version()`：GitHub API 读请求应明确 HTTP/JSON/网络失败分类。
-- `install.sh:install_binary()`：`wget` 软件包/二进制安装已有临时目录和二进制原子替换，但还需统一 timeout、stderr 限长和 return-based 错误上下文。
-- `install.sh:replace_singbox_binary_atomically()` 与 Agent upgrade：继续保持现有配置、服务活动状态和回滚契约，后续迁移时必须复用真实回归和 Docker 验证。
-- `systemctl`、防火墙、QoS、ACME、Warp、SubMan API 写入和配置重建：按操作边界分别补充 prepare/validate/commit/postcheck/rollback，不用全局替换旧 `log_error`。
-- `uninstall.sh` 的本地 `exec` 委托：当前没有远程下载最终路径问题；若未来增加远程 fallback，必须复用 Bootstrap 的完整下载和身份校验。
+本轮结果：
+
+| 层次 | 已取得证据 |
+| --- | --- |
+| 本地故障注入 | 二进制下载/归档/版本/prepare/commit/postcheck/信号/rollback；更新依赖和安装错误、配置保持；Agent upgrade 结果记录；WARP 不确定结果防重发、received 恢复、安全序列化、保存和信号回滚；版本 HTTP/JSON/传输分类及取消。对应 `tests/binary_install_transactions.sh`、`tests/binary_update_transactions.sh`、`tests/warp_registration_transactions.sh`、`tests/latest_version_lookup.sh` 与受影响既有回归均通过。 |
+| 多平台 | Ubuntu 22.04 与 Rocky Linux 8 一次性容器的四项新增事务测试通过；Rocky 覆盖 Bash 4.4.20 / GNU coreutils 8.30。WARP/版本修复另行重跑，后续 writer 状态分支由定向本地检查覆盖。 |
+| 真实 Docker 生命周期 | HTTP 1.14.2 首装、拒绝 Agent 降级、实际 1.14.0→1.14.2 升级及精确 HTTP marker；注入目标版本重启失败后完整回滚到 1.14.0，配置 hash 不变、服务 active、Agent 事务结果落盘，再次 HTTP marker 通过。容器已删除。 |
+
+最终 Docker 受测运行时 SHA-256 为 `420ea43d54daa0001dac04bacd917fb7beaadd53e8d32572ffbfe27dedeb81d1`，核对时与工作区逐字一致。私有本地产物位于 `/tmp/sbv-spec-binary-docker-v2/`，`result.env` 为 `lifecycle_exit=0`；Agent 摘要位于 `agent-results/`，升级和回滚 probe bundle 位于 `upgraded/`、`rolled-back/`。多平台日志为 `/tmp/sbv-platform-ubuntu.log`、`/tmp/sbv-platform-rocky-final.log` 和两份 `*-updated.log`，修复重跑 hash 为 `adf3ca63eff293eea1abcf576884781a6b0f98f6fe411925a7fa4f61c0d9d11d`。这些是本轮本地证据，不是已发布的 Wiki 附件或永久存储。
+
+真实 WARP 账户写入、生产升级、公网效果、主仓库审查/合并和 Wiki 发布保持独立，不能由 mock、容器成功或本页状态代替。此有限事务契约不要求执行真实账户注册或生产变更。
+
+持续维护按影响选择：改动服务、防火墙、QoS、ACME、Warp、SubMan 或配置时，保留其已有操作事务，补足实际新增分支及调用方验证；不要把完成状态扩张成“全仓 systemctl 已全局重构”的承诺，也不要全局替换旧 `log_error`。卸载脚本目前没有远程 fallback，若以后增加，必须复用 Bootstrap 的完整下载与身份校验。版本元数据或文档变更只有满足 AGENTS.md 第 4.2 节才可复用先前证据。
 
 ## 生成基线与手工扩展
 

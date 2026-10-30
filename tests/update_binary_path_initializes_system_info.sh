@@ -7,46 +7,36 @@ TESTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${TESTS_DIR}/menu_test_helper.sh"
 
 setup_menu_test_env 120
-perl -0pi -e 's|local temp_dir="/tmp/sing-box-install"|local temp_dir="'"${TMP_DIR}"'/download"|' "${TESTABLE_INSTALL}"
 source_testable_install
 
-ATOMIC_RENAME_SOURCE=""
-ATOMIC_RENAME_MODE=""
-
-wget() {
-  [[ "${1:-}" == "-O" && -n "${2:-}" ]]
-  : > "${2}"
-}
-
-tar() {
-  local extracted_dir="${TMP_DIR}/download/extracted"
-
-  mkdir -p "${extracted_dir}"
-  cat > "${extracted_dir}/sing-box" <<'EOF'
+fixture_root="sing-box-1.14.0-linux-amd64"
+mkdir -p "${TMP_DIR}/archive/${fixture_root}"
+cat > "${TMP_DIR}/archive/${fixture_root}/sing-box" <<'EOF_BINARY'
 #!/usr/bin/env bash
+case "${1:-}" in
+  version) printf 'sing-box version 1.14.0\n' ;;
+  marker) printf 'atomically-installed\n' ;;
+esac
+EOF_BINARY
+printf 'libcronet-test\n' > "${TMP_DIR}/archive/${fixture_root}/libcronet.so"
+tar -czf "${TMP_DIR}/release.tar.gz" -C "${TMP_DIR}/archive" "${fixture_root}"
 
-if [[ "${1:-}" == "marker" ]]; then
-  printf 'atomically-installed\n'
-fi
-EOF
-  chmod 0644 "${extracted_dir}/sing-box"
-  printf 'libcronet-test\n' > "${extracted_dir}/libcronet.so"
-  chmod 0644 "${extracted_dir}/libcronet.so"
+curl() {
+  local destination=''
+  while (($#)); do
+    if [[ "$1" == -o ]]; then destination=$2; shift 2; else shift; fi
+  done
+  [[ -n "${destination}" ]] || return 1
+  cp "${TMP_DIR}/release.tar.gz" "${destination}"
 }
-
-LD_CONFIG_CALLS=0
-ldconfig() {
-  LD_CONFIG_CALLS=$((LD_CONFIG_CALLS + 1))
-}
-
+ldconfig() { printf 'refresh\n' >> "${TMP_DIR}/ldconfig.calls"; }
 mv() {
-  local args=("$@")
-  local source_arg=${args[${#args[@]}-2]}
-  local destination_arg=${args[${#args[@]}-1]}
-
+  local args=("$@") source_arg destination_arg
+  source_arg=${args[${#args[@]}-2]}
+  destination_arg=${args[${#args[@]}-1]}
   if [[ "${destination_arg}" == "${SINGBOX_BIN_PATH}" ]]; then
-    ATOMIC_RENAME_SOURCE=${source_arg}
-    ATOMIC_RENAME_MODE=$(stat -c '%a' "${source_arg}")
+    printf '%s\n' "${source_arg}" > "${TMP_DIR}/rename.source"
+    stat -c '%a' "${source_arg}" > "${TMP_DIR}/rename.mode"
   fi
   command mv "$@"
 }
@@ -54,47 +44,19 @@ mv() {
 SB_VERSION="1.14.0"
 ARCH="amd64"
 install_binary >/dev/null
-
-if [[ "${ATOMIC_RENAME_SOURCE}" != "${TMP_DIR}/bin/.sing-box.restore."* ]]; then
-  printf 'expected install to stage the binary in its target directory, got %s\n' "${ATOMIC_RENAME_SOURCE:-<none>}" >&2
-  exit 1
-fi
-if [[ "${ATOMIC_RENAME_MODE}" != "755" ]]; then
-  printf 'expected staged install binary mode 755 before rename, got %s\n' "${ATOMIC_RENAME_MODE:-<none>}" >&2
-  exit 1
-fi
-if [[ "$("${SINGBOX_BIN_PATH}" marker)" != "atomically-installed" ]]; then
-  printf 'expected atomically installed binary at the final path\n' >&2
-  exit 1
-fi
-
-if [[ "$(cat "$(singbox_library_path)")" != "libcronet-test" ]]; then
-  printf 'expected libcronet.so to be installed beside the binary family\n' >&2
-  exit 1
-fi
-if [[ "$(cat "${SB_NAIVE_LIBRARY_MARKER}")" != "$(sha256sum "$(singbox_library_path)" | awk '{print $1}')" ]]; then
-  printf 'expected the managed libcronet.so marker to contain its committed hash\n' >&2
-  exit 1
-fi
-if (( LD_CONFIG_CALLS != 1 )); then
-  printf 'expected install to refresh the dynamic loader cache once, got %s\n' "${LD_CONFIG_CALLS}" >&2
-  exit 1
-fi
+[[ "$(cat "${TMP_DIR}/rename.source")" == "${TMP_DIR}/bin/.sing-box.restore."* ]]
+[[ "$(cat "${TMP_DIR}/rename.mode")" == 755 ]]
+[[ "$("${SINGBOX_BIN_PATH}" marker)" == atomically-installed ]]
+[[ "$(cat "$(singbox_library_path)")" == libcronet-test ]]
+[[ "$(cat "${SB_NAIVE_LIBRARY_MARKER}")" == "$(sha256sum "$(singbox_library_path)" | awk '{print $1}')" ]]
+[[ "$(wc -l < "${TMP_DIR}/ldconfig.calls")" == 1 ]]
 
 printf 'unowned-libcronet\n' > "$(singbox_library_path)"
-rm -f "${SB_NAIVE_LIBRARY_MARKER}"
-LD_CONFIG_CALLS=0
+rm -f "${SB_NAIVE_LIBRARY_MARKER}" "${TMP_DIR}/ldconfig.calls"
 install_binary >/dev/null
-if [[ "$(cat "$(singbox_library_path)")" != "unowned-libcronet" ]]; then
-  printf 'expected an unowned libcronet.so to remain untouched during reinstall\n' >&2
-  exit 1
-fi
-if (( LD_CONFIG_CALLS != 0 )); then
-  printf 'expected reinstall to skip loader refresh for an unowned library, got %s\n' "${LD_CONFIG_CALLS}" >&2
-  exit 1
-fi
-
-unset -f wget tar mv
+[[ "$(cat "$(singbox_library_path)")" == unowned-libcronet ]]
+[[ ! -e "${TMP_DIR}/ldconfig.calls" ]]
+unset -f curl mv ldconfig
 
 write_singbox_binary() {
   cat > "${SINGBOX_BIN_PATH}" <<'EOF'

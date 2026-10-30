@@ -2,11 +2,11 @@
 
 [简体中文](unified-node-naming.zh-CN.md)
 
-Status: implemented, with local/mock and target-core verification recorded in
-section 9. This remains the maintained behavior contract. Real SubMan node-ID and
-aggregate preservation, production acceptance and Wiki publication are separate
-evidence; the local results do not establish their completion. See the
-[SPEC status index](README.md) for scope and remaining acceptance boundaries.
+Status: implemented and accepted against this contract. Historical local/mock and
+target-core checks are recorded in section 9; actual application/storage and
+explicitly authorized production SubMan identity/aggregate acceptance are recorded
+in section 10. See the [SPEC status index](README.md) for the separate protocol and
+transaction contracts.
 
 ## 1. Problem and outcome
 
@@ -324,3 +324,43 @@ The prepared digest-context, structured sharing and default-name code is unchang
 from the 21-check follow-up, so those results are reused. Syntax and documentation
 checks also passed. Final complete-branch review and remote security evidence are
 recorded against their exact head in the PR.
+
+## 10. Application-backed and authorized production acceptance
+
+The naming and address-selection acceptance was completed on 2026-10-30 with
+`tests/integration_subman_app.sh`, its private helper, and the explicitly guarded
+`tests/integration_subman_production.mjs`.
+
+The isolated integration runs the actual SubMan Worker HTTP routes and SQLite
+Durable Object from SubMan commit
+`ed6fa5a9b353fb7cf355552eff16c63b417c01c2`. The GitHub Gist transport is isolated;
+this is an application/storage integration, not a live GitHub claim. Five protocols
+(Shadowsocks, Trojan, VMess, plain VLESS and HY2), two users and IPv4/IPv6/concrete
+listener cases produce 30 application-assigned nodes. Renaming and synchronizing
+preserves all 30 node IDs and external keys, the exact aggregate membership,
+Unicode URI/payload/storage name parity and existing publication bytes. Revision
+62 and 61 provider patches were observed; no unexpected outbound Worker request
+occurred. Worker bundle SHA-256:
+`c4799325e1060a4cfd8cc5cf1ee67f342119d89948b41a3ebcdf3d838613662c`.
+
+The owner separately authorized testing the existing production Workspace. The
+harness first verified the exact Workspace identity, strong revision ETag and
+GitHub ownership, then created six uniquely prefixed VMess user/address candidates
+and one separate test aggregate. Actual by-key rename synchronization preserved
+all six remote IDs/external keys and the aggregate membership. Original business
+records and published file contents stayed unchanged. Only the test aggregate and
+six test nodes were removed afterwards; the original aggregate remained. Revision
+advanced from 19 to 39 and legitimate mutation tombstones remained. This proves
+production API/Gist behavior for that representative VMess path; it is not a
+production proxy/VPS deployment or all-protocol public-connectivity claim.
+
+Both integrations used frozen runtime SHA-256
+`657ea370f56523445d4be5ecd8ce22d98b7864e3949fb8153a384d4ab87efaac`.
+Subsequent transaction and namespace changes do not alter the tested naming,
+address selection or synchronization functions, so their results are reused under
+AGENTS.md section 4.2. Private acceptance reports are retained at
+`/tmp/sbv-subman-app-acceptance-20261030-final/acceptance.json` and
+`/tmp/sbv-subman-production-acceptance-20261030/acceptance.json`; credentials and
+complete share material are not publication artifacts. The production helper is
+never selected by ordinary test groups and requires explicit target, credential
+file and production-acceptance flags before mutation.

@@ -50,3 +50,38 @@ SOCKS outbound component records are typed against sing-box 1.14 `SOCKSOutboundO
 HTTP outbound component records are typed against sing-box 1.14 `HTTPOutboundOptions`: TCP-only server/port/auth/path, HTTP header map, recursive outbound TLS (including ECH/uTLS/REALITY) and shared Dial Fields. Unknown or deprecated nested fields, invalid scalar/list values and control characters are rejected before state/CAS or takeover publication; component export is sensitive and does not imply an upstream HTTP proxy handshake.
 
 Redirect host-policy details: `host_policy` is applied only for enabled records and is limited to IPv4/TCP iptables. `destination_ports` must not overlap `management_ports`, and the Redirect listener port must not appear in the destination allowlist. Creating the first enabled policy requires the sing-box service to be active. The transaction appends its dedicated jump after existing PREROUTING rules; `component diagnose` reports the observed position and reports `not_assessed_earlier_rules_present` when prior rules could affect precedence. Neither an empty preceding-rule count nor a successful marker in the disposable Docker fixture proves public reachability or the behavior of unrelated host firewall policy.
+
+An enabled `network_namespace:default` record additionally requires an accessible
+Linux network-namespace handle. Component mutations, takeover and rebuild check
+candidate handles with a bounded `nsenter` before starting a transaction; absent
+tools, a missing/nonregular path or insufficient permissions return
+`network_namespace_unavailable` without publishing state/config or restarting the
+service. Typed/offline state validation remains separate. Removing a broken
+record is allowed when the remaining candidate has no inaccessible namespace.
+The component never creates or deletes the operator-owned namespace path.
+
+The reproduced **Linux ARM64 / sing-box 1.14.2 / `with_purego`** build crashes
+in namespace thread handling. Namespace records and component `netns` references
+are refused before publication with `namespace_runtime_unsafe_build` on that
+exact combination. Missing build tags on that platform/version remain
+`not_assessed` in inventory and refuse writes as
+`namespace_runtime_build_not_assessed`; they are not labeled a confirmed crash.
+The official same-version glibc build passed isolated namespace data and lifecycle
+acceptance on Debian 12/glibc 2.36. Operators must supply a verified compatible
+build; the installer does not silently switch its default core asset. Rocky 8's
+glibc 2.28 is outside this result. See the
+[completion contract](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/full-protocol-completion.md)
+for exact build hashes, positive/negative cases and cleanup evidence.
+Core installation/update also checks the staged candidate's bounded version/build
+metadata when the existing server config uses namespace declarations or known
+namespace Dial fields. Known-unsafe and exact-platform unassessed candidates are
+refused before binary/library/marker replacement; ordinary header keys are not
+treated as namespace use. A compatible operator-installed core is not silently
+replaced by the unsafe default asset during an update or repair.
+
+The `resolved` service needs a system DBus policy that permits its runtime user to
+own `org.freedesktop.resolve1`, with no conflicting owner already active. A DBus
+socket alone does not establish this permission. Keep the distribution's resolver
+and bus policies under operator control; the installer does not grant this name
+or replace an existing system resolver. Disposable runtime tests supply their
+own narrow root ownership policy inside their container.

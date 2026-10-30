@@ -2,6 +2,8 @@
 
 本文保留历史能力审计及后续增量。带日期的运行结果、上游版本查询、源码路径和临时缓存均属于当时快照，不表示本轮重新验证或当前环境仍有相同文件。当前命令面以 `sbv agent capabilities --json` 为准。
 
+2026-10-30 的有限验收项、最新结果及保留的兼容/对端条件统一见[协议与组件完成契约](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/full-protocol-completion.zh-CN.md)（[English](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/full-protocol-completion.md)）。下文历史“未完成”或“仅 check”记录须结合该契约与后续切片阅读，不能据旧记录重复实现已具备的适配器，也不能把一次隔离结果扩展为所有厂商或生产链路。
+
 [入站](#入站矩阵) · [出站](#出站及组合组件矩阵) · [Endpoint](#endpoint-矩阵) · [组合依赖](#组合依赖与运行时服务矩阵)
 
 审阅日期：2026-09-22

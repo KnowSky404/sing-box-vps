@@ -2,7 +2,7 @@
 
 [简体中文](README.zh-CN.md)
 
-Inventory checked against repository baseline `c652169` on 2026-10-30. The two
+Inventory checked against repository baseline `f498234` on 2026-10-30. The two
 `unified-node-naming` documents describe one feature in English and Chinese;
 they are maintained contracts, not two unfinished implementation plans. The
 address-selection contract is maintained in the Wiki source instead of duplicated
@@ -10,10 +10,10 @@ here.
 
 | Contract or goal | Implementation status | Evidence and remaining boundary |
 | --- | --- | --- |
-| [Unified node naming](unified-node-naming.md) ([中文](unified-node-naming.zh-CN.md)) | Implemented, including review fixes | Section 9 records the selected local/mock suite, affected follow-up checks and real sing-box 1.14.2 configuration checks. Its final runtime SHA-256 matches the baseline `install.sh`. Real SubMan node-ID/aggregate preservation and production acceptance were not performed by that suite. |
-| [SubMan address selection](../wiki/SubMan-Address-Selection.md) | Implemented; the listener/address-family contract remains active | `public_ip_detection.sh`, `subman_address_selection.sh` and affected SubMan payload/API/orchestration tests cover isolated inputs and failures. Naming section 9 includes historical SubMan regression results. Candidate selection does not prove public connectivity or real SubMan synchronization. |
-| [Full protocol/component goal](../wiki/Protocol-Coverage.md) | Partially verified; no blanket completion claim | Lifecycle and data-plane evidence is recorded per row and dated slice. Tailscale/OpenConnect and other external-control-plane paths retain their authentication and runtime prerequisites; public and production acceptance remain separate. |
-| [Transaction follow-ups](../wiki/Transactions.md#后续迁移清单) | Some paths remain to be unified | Binary-download bounds and error context, WARP operation boundaries and remaining failure classification must be assessed against their current callers before further changes. Existing implemented protections are not pending work. |
+| [Unified node naming](unified-node-naming.md) ([中文](unified-node-naming.zh-CN.md)) | Implemented and accepted within the recorded scope | Section 9 preserves the original local/core evidence. Section 10 adds the actual SubMan application/storage integration (30 nodes across five protocols) and owner-authorized production VMess API/Gist acceptance (six test candidates and one test aggregate), with identity/membership preservation and cleanup. This is not production proxy-VPS or every-protocol public-connectivity acceptance. |
+| [SubMan address selection](../wiki/SubMan-Address-Selection.md) | Implemented and accepted within the recorded scope | Isolated family/failure regressions and the application/storage integration cover IPv4, IPv6 and concrete listener cases. Naming section 10 records the representative production VMess test separately; address selection does not certify public proxy connectivity. |
+| [Full protocol/component acceptance](full-protocol-completion.md) ([中文](full-protocol-completion.zh-CN.md)) | 15 presets and 38 component adapters implemented; FP-01–FP-11 scoped acceptance complete | The finite FP-01–FP-11 matrix records local component/group, authorized Cloudflare and controlled Headscale/ocserv acceptance, plus namespace build restrictions. Original lifecycle and data-plane evidence remains in the [upstream matrix](../wiki/Protocol-Coverage.md); public and production acceptance remain separate. |
+| [Runtime transactions](runtime-transactions.md) ([中文](runtime-transactions.zh-CN.md)) | RT-01–RT-04 implementation and scoped acceptance complete | The runtime contract records bounded binary download/update, WARP registration and latest-version lookup behavior, failure/rollback tests and the corresponding isolated runtime evidence. External accounts and production proxy-host changes remain separate. |
 
 Keep the naming SPEC because it defines identity preservation, snapshot consistency,
 collision handling and error propagation that future changes must preserve. Old
