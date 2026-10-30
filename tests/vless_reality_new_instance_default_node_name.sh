@@ -21,6 +21,10 @@ load_vless_reality_protocol_state() {
   return 0
 }
 
+list_vless_reality_instance_ids() {
+  return 0
+}
+
 validate_vless_reality_instance_id() {
   return 0
 }
@@ -63,8 +67,8 @@ prompt_vless_reality_advanced_update_fields() {
 duplicate_check_seen="n"
 
 vless_reality_bandwidth_profile_exists() {
-  if [[ "${SB_NODE_NAME}" != "test-host-vless" ]]; then
-    printf 'FAIL: expected default node name test-host-vless, got %s\n' "${SB_NODE_NAME}" >&2
+  if [[ "${SB_NODE_NAME}" != "test-host-vless-reality-01" ]]; then
+    printf 'FAIL: expected default node name test-host-vless-reality-01, got %s\n' "${SB_NODE_NAME}" >&2
     exit 1
   fi
   if [[ "$1" != "40" || "$2" != "100" || "$3" != "${SB_VLESS_INSTANCE_ID}" ]]; then

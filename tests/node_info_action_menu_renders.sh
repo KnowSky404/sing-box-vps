@@ -32,3 +32,12 @@ if ! (( section_line < view_line && view_line < export_line && export_line < sub
 fi
 
 [[ "${plain_output}" == *"4. 设置或修改 SubMan 连接"* ]]
+[[ "${plain_output}" == *"5. 设置新实例的主机显示标签"* ]]
+
+configure_node_naming_interactive() { printf 'naming-settings-opened\n'; }
+settings_output=$(show_node_info_action_menu <<'EOF'
+5
+0
+EOF
+)
+[[ "${settings_output}" == *naming-settings-opened* ]]

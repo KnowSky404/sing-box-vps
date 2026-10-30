@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026103002
+# Version: 2026103003
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026103002"
+readonly SCRIPT_VERSION="2026103003"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -1021,6 +1021,208 @@ protocol_display_name() {
   protocol_registry_field "$1" display_name || printf '%s' "$1"
 }
 
+node_naming_config_file_path() {
+  printf '%s/node-naming.json' "${SB_PROJECT_DIR}"
+}
+
+validate_node_host_label() {
+  local label=${1:-}
+  [[ "${label}" == "$(trim_whitespace "${label}")" ]] || return 1
+  jq -en --arg label "${label}" '$label | length > 0 and utf8bytelength <= 128 and
+    (test("[\u0000-\u001F\u007F]") | not)' >/dev/null
+}
+
+node_name_host_label() {
+  local config_file label
+  config_file=$(node_naming_config_file_path) || return 1
+  [[ ! -L "${config_file}" ]] || return 1
+  if [[ -e "${config_file}" ]]; then
+    [[ -f "${config_file}" ]] || return 1
+    # Validate JSON before shell extraction: Bash cannot retain a NUL byte.
+    jq -e 'type == "object" and keys == ["host_label"] and
+      (.host_label | type == "string" and length > 0 and utf8bytelength <= 128 and
+        (test("[\u0000-\u001F\u007F]") | not))' "${config_file}" >/dev/null || return 1
+    label=$(jq -er 'select(type == "object" and keys == ["host_label"]) | .host_label | select(type == "string")' "${config_file}") || return 1
+  else
+    label=$(hostname) || return 1
+  fi
+  validate_node_host_label "${label}" || return 1
+  printf '%s' "${label}"
+}
+
+write_node_naming_config() (
+  local label=${1:-} config_file config_dir tmp_file='' had_original=n phase=prepare committed=n
+  label=$(trim_whitespace "${label}") || return 1
+  validate_node_host_label "${label}" || return 1
+  config_file=$(node_naming_config_file_path) || return 1
+  [[ ! -L "${config_file}" && ! -L "${config_file}.bak" ]] || return 1
+  [[ ! -e "${config_file}" || -f "${config_file}" ]] || return 1
+  [[ ! -e "${config_file}.bak" || -f "${config_file}.bak" ]] || return 1
+  config_dir=$(dirname "${config_file}") || return 1
+  mkdir -p "${config_dir}" || return 1
+  trap '[[ -z "${tmp_file}" ]] || rm -f -- "${tmp_file}"' EXIT
+  trap 'printf "[WARN] 显示标签设置已中断 (phase=%s, committed=%s)；请回读设置确认最终状态。\n" "${phase}" "${committed}" >&2; exit 1' HUP INT TERM
+  tmp_file=$(mktemp "${config_dir}/.node-naming.XXXXXX") || return 1
+  chmod 600 "${tmp_file}" || return 1
+  jq -n --arg label "${label}" '{host_label:$label}' > "${tmp_file}" || return 1
+  jq -e --arg label "${label}" '. == {host_label:$label}' "${tmp_file}" >/dev/null || return 1
+  if [[ -e "${config_file}" ]]; then
+    phase=backup
+    had_original=y
+    cp -p -- "${config_file}" "${config_file}.bak" || return 1
+    chmod 600 "${config_file}.bak" || return 1
+  fi
+  phase=commit
+  mv -- "${tmp_file}" "${config_file}" || return 1
+  committed=y
+  tmp_file=''
+  phase=postcheck
+  if [[ "$(node_name_host_label)" != "${label}" ]]; then
+    phase=rollback
+    if [[ "${had_original}" == y ]]; then
+      tmp_file=$(mktemp "${config_dir}/.node-naming.XXXXXX") || return 1
+      cp -p -- "${config_file}.bak" "${tmp_file}" || return 1
+      mv -- "${tmp_file}" "${config_file}" || return 1
+      tmp_file=''
+    else
+      rm -f -- "${config_file}" || return 1
+    fi
+    printf '[WARN] 显示标签回读失败，已恢复原设置。\n' >&2
+    return 1
+  fi
+)
+
+configure_node_naming_interactive() {
+  local current answer
+  current=$(node_name_host_label) || { log_warn '显示标签设置无法读取，请检查 node-naming.json。'; return 1; }
+  printf '主机显示标签只用于新实例的默认名称；已有实例名称、同步身份和运行配置保持不变。\n'
+  read -rp "主机显示标签（当前: ${current}，留空保持）: " answer || return 1
+  [[ -n "${answer}" ]] || return 0
+  if ! write_node_naming_config "${answer}"; then
+    log_warn '主机显示标签未保存；请输入不含控制字符、最多 128 UTF-8 字节的非空名称。'
+    return 1
+  fi
+  log_success '主机显示标签已保存；未重启服务或推送节点。'
+}
+
+default_instance_node_name() {
+  local protocol=${1:-} snapshot=${2:-} host_label prefix candidate ordinal index=1
+  protocol=$(normalize_protocol_id "${protocol}") || return 1
+  [[ -n "${snapshot}" ]] || snapshot='{"instances":[]}'
+  jq -e 'type == "object" and (.instances | type == "array") and
+    all(.instances[]; .name | type == "string")' <<< "${snapshot}" >/dev/null || return 1
+  host_label=$(node_name_host_label) || {
+    printf '[WARN] 无法读取主机显示标签，未生成默认名称；请检查 node-naming.json。\n' >&2
+    return 1
+  }
+  prefix="${host_label}-${protocol}"
+  while true; do
+    printf -v ordinal '%02d' "${index}"
+    candidate="${prefix}-${ordinal}"
+    if ! jq -e --arg name "${candidate}" 'any(.instances[]; .name == $name)' <<< "${snapshot}" >/dev/null; then
+      printf '%s' "${candidate}"
+      return 0
+    fi
+    index=$((index + 1))
+  done
+}
+
+default_instance_node_name_from_file() {
+  local protocol=${1:-} snapshot_file=${2:-} snapshot
+  [[ -f "${snapshot_file}" && ! -L "${snapshot_file}" ]] || return 1
+  snapshot=$(cat -- "${snapshot_file}") || return 1
+  default_instance_node_name "${protocol}" "${snapshot}"
+}
+
+# Display composition only: no instance, user, external-key or technical-tag writes.
+format_node_display_name() {
+  local base=${1:-} user_suffix=${2:-} up=${3:-} down=${4:-} label=${5:-}
+  local suffix='' bandwidth stack digest
+  base=$(trim_node_display_base "${base}") || return 1
+  [[ -z "${user_suffix}" ]] || suffix="-${user_suffix}"
+  bandwidth=$(bandwidth_limit_name_suffix "${up}" "${down}") || return 1
+  [[ -z "${bandwidth}" ]] || suffix="${suffix}-${bandwidth}"
+  stack=$(network_stack_suffix_from_label "${label}") || return 1
+  [[ -z "${stack}" ]] || suffix="${suffix}-${stack}"
+  digest=$(printf '%s' "${base}${suffix}" | sha256sum) || return 1
+  digest=${digest%% *}
+  jq -ern --arg base "${base}" --arg suffix "${suffix}" --arg digest "${digest:0:12}" '
+    select(($base | length > 0 and (test("[\u0000-\u001F\u007F]") | not)) and
+      ($suffix | test("[\u0000-\u001F\u007F]") | not)) |
+    if (($base + $suffix) | utf8bytelength) <= 256 then $base + $suffix
+    else ("-n-" + $digest + $suffix) as $tail |
+      (256 - ($tail | utf8bytelength)) as $budget | select($budget > 0) |
+      ($base[0:256] | until(utf8bytelength <= $budget; .[0:-1])) + $tail
+    end'
+}
+
+trim_node_display_base() {
+  jq -ern --arg value "${1:-}" '$value |
+    gsub("^[\u0009-\u000D\u0020\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]+|[\u0009-\u000D\u0020\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]+$"; "") |
+    select(length > 0 and (test("[\u0000-\u001F\u007F]") | not))'
+}
+
+node_display_address_label() {
+  local listener=${1:-} server=${2:-}
+  if listener_address_is_wildcard "${listener}"; then
+    if [[ "${server}" == *:* ]]; then printf 'IPv6'
+    elif [[ "${server}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then printf 'IPv4'; fi
+  else
+    printf '监听地址'
+  fi
+}
+
+structured_node_display_name() {
+  local protocol=${1:-} snapshot=${2:-} instance_id=${3:-} user_name=${4-} label=${5:-}
+  local record base count duplicates users_text other digest other_digest token_length=12 unique=y
+  local user_suffix='' instance_suffix='' up='' down=''
+  protocol=$(normalize_protocol_id "${protocol}") || return 1
+  record=$(jq -ce --arg id "${instance_id}" '
+    [.instances[] | select(.id == $id)] | select(length == 1) | .[0]' <<< "${snapshot}") || return 1
+  base=$(jq -er '.name | select(type == "string" and length > 0 and
+    (test("[\u0000-\u001F\u007F]") | not))' <<< "${record}") || return 1
+  base=$(trim_node_display_base "${base}") || return 1
+  count=$(jq -er '(.authentication.users // []) | length' <<< "${record}") || return 1
+  if [[ "${count}" -gt 0 ]]; then
+    jq -e --arg user "${user_name}" 'any(.authentication.users[]; .name == $user)' <<< "${record}" >/dev/null || return 1
+  elif [[ "${protocol}" != shadowsocks || -n "${user_name}" ]]; then
+    return 1
+  fi
+  duplicates=$(jq -er --arg base "${base}" '[.instances[] |
+    select((.name | gsub("^[\u0009-\u000D\u0020\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]+|[\u0009-\u000D\u0020\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]+$"; "")) == $base)] | length' <<< "${snapshot}") || return 1
+  if [[ "${duplicates}" -gt 1 ]]; then
+    digest=$(printf '%s' "${protocol}:${instance_id}" | sha256sum) || return 1
+    digest=${digest%% *}
+    instance_suffix="i-${digest:0:12}"
+  fi
+  if [[ "${count}" -gt 1 ]]; then
+    digest=$(printf '%s' "${user_name}" | sha256sum) || return 1
+    digest=${digest%% *}
+    users_text=$(jq -r '.authentication.users[].name' <<< "${record}") || return 1
+    while true; do
+      unique=y
+      while IFS= read -r other; do
+        [[ "${other}" != "${user_name}" ]] || continue
+        other_digest=$(printf '%s' "${other}" | sha256sum) || return 1
+        other_digest=${other_digest%% *}
+        if [[ "${digest:0:${token_length}}" == "${other_digest:0:${token_length}}" ]]; then unique=n; break; fi
+      done <<< "${users_text}"
+      [[ "${unique}" != y ]] || break
+      [[ "${token_length}" -lt 64 ]] || return 1
+      token_length=$((token_length + 4))
+    done
+    user_suffix="u-${digest:0:${token_length}}"
+  fi
+  if [[ -n "${instance_suffix}" ]]; then
+    user_suffix="${instance_suffix}${user_suffix:+-${user_suffix}}"
+  fi
+  if [[ "${protocol}" == hy2 ]]; then
+    up=$(jq -r '.bandwidth.up_mbps // empty' <<< "${record}") || return 1
+    down=$(jq -r '.bandwidth.down_mbps // empty' <<< "${record}") || return 1
+  fi
+  format_node_display_name "${base}" "${user_suffix}" "${up}" "${down}" "${label}"
+}
+
 default_node_name_for_protocol() {
   local protocol suffix
 
@@ -1106,7 +1308,7 @@ display_node_name_for_protocol() {
   local protocol=$1
   local base_name=${2:-}
   local address_label=${3:-}
-  local up_mbps="" down_mbps="" bandwidth_suffix="" node_name
+  local up_mbps="" down_mbps=""
 
   protocol=$(normalize_protocol_id "${protocol}" 2>/dev/null || printf '%s' "${protocol}")
   base_name=$(normalize_node_name "${base_name}")
@@ -1126,13 +1328,7 @@ display_node_name_for_protocol() {
       ;;
   esac
 
-  bandwidth_suffix=$(bandwidth_limit_name_suffix "${up_mbps}" "${down_mbps}")
-  node_name="${base_name}"
-  if [[ -n "${bandwidth_suffix}" ]]; then
-    node_name="${node_name}-${bandwidth_suffix}"
-  fi
-
-  node_name_for_network_stack "${node_name}" "${address_label}"
+  format_node_display_name "${base_name}" '' "${up_mbps}" "${down_mbps}" "${address_label}"
 }
 
 vless_reality_display_node_name() {
@@ -3102,7 +3298,7 @@ prompt_subman_config_if_needed() {
   done
 
   if [[ -z "${SUBMAN_NODE_PREFIX}" ]]; then
-    read -rp "SubMan 节点前缀 (默认: $(hostname)): " input_prefix || return 1
+    read -rp "SubMan 同步身份前缀 (默认: $(hostname)): " input_prefix || return 1
     SUBMAN_NODE_PREFIX=$(trim_whitespace "${input_prefix}")
     [[ -z "${SUBMAN_NODE_PREFIX}" ]] && SUBMAN_NODE_PREFIX=$(hostname)
   fi
@@ -3132,7 +3328,7 @@ configure_subman_interactive() (
   read -rsp "SubMan API Token（隐藏输入；地址未变时留空保留）: " input_token || return 1
   printf '\n' >&2
   if [[ -n "${input_token}" ]]; then SUBMAN_API_TOKEN=$(trim_whitespace "${input_token}"); fi
-  read -rp "节点前缀（留空保留）: " input_prefix || return 1
+  read -rp "同步身份前缀（留空保留；修改会建立新节点身份）: " input_prefix || return 1
   if [[ -n "${input_prefix}" ]]; then SUBMAN_NODE_PREFIX=$(trim_whitespace "${input_prefix}"); fi
   SUBMAN_NODE_PREFIX=${SUBMAN_NODE_PREFIX:-$(hostname)}
   read -rp "目标 Workspace Gist ID（地址改变时必须重新填写；否则留空保留）: " input_gist_id || return 1
@@ -4781,6 +4977,7 @@ prompt_snell_update() {
 prompt_snell_install() {
   local in_version in_psk in_obfs in_host in_mode
   set_protocol_defaults snell
+  SB_NODE_NAME=$(default_instance_node_name "snell") || return 1
   SB_PORT=$(prompt_port "[Snell] 端口 (默认 ${SB_PORT}): " "${SB_PORT}") || return 1
   check_port_conflict "${SB_PORT}"
   in_version=$(prompt_choice "[Snell] 版本 [1=v5,2=v6] (默认 2): " 1 2 2) || return 1
@@ -4988,6 +5185,7 @@ prompt_plain_proxy_install() {
   local protocol=${1:-} label in_user in_pass
   label=$(plain_proxy_management_label "${protocol}") || return 1
   set_protocol_defaults "${protocol}"
+  SB_NODE_NAME=$(default_instance_node_name "${protocol}") || return 1
   echo -e "\n${BLUE}--- 配置 ${label} ---${NC}"
   SB_PORT=$(prompt_port "[${label}] 端口 (默认 ${SB_PORT}): " "${SB_PORT}") || return 1
   check_port_conflict "${SB_PORT}"
@@ -5049,6 +5247,7 @@ prompt_http_update() {
 prompt_shadowsocks_install() {
   local method current_auth
   set_protocol_defaults shadowsocks
+  SB_NODE_NAME=$(default_instance_node_name "shadowsocks") || return 1
   echo -e "\n${BLUE}--- 配置 Shadowsocks ---${NC}"
   SB_PORT=$(prompt_port '[Shadowsocks] 端口（默认当前值）: ' "${SB_PORT}") || return 1
   method=$(shadowsocks_prompt_method '2022-blake3-aes-128-gcm') || return 1
@@ -5331,6 +5530,7 @@ prompt_hysteria_update() {
 prompt_hysteria_install() {
   local answer server_name certificate_path key_path trust_choice
   set_protocol_defaults hysteria
+  SB_NODE_NAME=$(default_instance_node_name "hysteria") || return 1
   echo -e '\n'"${BLUE}"'--- 配置 Hysteria ---'"${NC}" >&2
   SB_PORT=$(prompt_port '[Hysteria] 端口（默认当前值）: ' "${SB_PORT}") || return 1
   check_port_conflict "${SB_PORT}"
@@ -5443,6 +5643,7 @@ prompt_naive_update() {
 prompt_naive_install() {
   local answer server_name certificate_path key_path trust_choice
   set_protocol_defaults naive
+  SB_NODE_NAME=$(default_instance_node_name "naive") || return 1
   echo -e '\n'"${BLUE}"'--- 配置 NaiveProxy ---'"${NC}" >&2
   SB_PORT=$(prompt_port '[NaiveProxy] 端口（默认当前值）: ' "${SB_PORT}") || return 1
   check_port_conflict "${SB_PORT}"
@@ -5562,6 +5763,7 @@ prompt_shadowtls_update() {
 prompt_shadowtls_install() {
   local choice answer trust_choice
   set_protocol_defaults shadowtls
+  SB_NODE_NAME=$(default_instance_node_name "shadowtls") || return 1
   echo -e '\n'"${BLUE}"'--- 配置 ShadowTLS ---'"${NC}" >&2
   SB_PORT=$(prompt_port '[ShadowTLS] 外层监听端口（默认当前值）: ' "${SB_PORT}") || return 1
   check_port_conflict "${SB_PORT}"
@@ -5607,6 +5809,7 @@ prompt_tuic_update() {
 prompt_tuic_install() {
   local answer server_name certificate_path key_path trust_choice
   set_protocol_defaults tuic
+  SB_NODE_NAME=$(default_instance_node_name "tuic") || return 1
   SB_PORT=$(prompt_port '[TUIC] 端口 (默认当前值): ' "${SB_PORT}") || return 1
   check_port_conflict "${SB_PORT}"
   tuic_prompt_users '[]' || return 1
@@ -5641,6 +5844,7 @@ trojan_prompt_transport() {
 prompt_trojan_install() {
   local tls_choice trust_choice cert_path key_path
   set_protocol_defaults trojan
+  SB_NODE_NAME=$(default_instance_node_name "trojan") || return 1
   echo -e '\n'"${BLUE}"'--- 配置 Trojan ---'"${NC}" >&2
   SB_PORT=$(prompt_port '[Trojan] 端口 (默认当前值): ' "${SB_PORT}") || return 1
   trojan_prompt_users '[]' || return 1
@@ -5846,6 +6050,7 @@ vless_plain_prompt_tls() {
 
 prompt_vless_plain_install() {
   set_protocol_defaults vless-plain
+  SB_NODE_NAME=$(default_instance_node_name "vless-plain") || return 1
   echo -e '\n'"${BLUE}"'--- 配置普通 VLESS ---'"${NC}" >&2
   SB_PORT=$(prompt_port '[VLESS] 端口 (默认当前值): ' "${SB_PORT}") || return 1
   vless_plain_prompt_users '[]' || return 1
@@ -5866,6 +6071,7 @@ prompt_vless_plain_update() {
 
 prompt_vmess_install() {
   set_protocol_defaults vmess
+  SB_NODE_NAME=$(default_instance_node_name "vmess") || return 1
   echo -e '\n'"${BLUE}"'--- 配置 VMess ---'"${NC}" >&2
   SB_PORT=$(prompt_port '[VMess] 端口 (默认当前值): ' "${SB_PORT}") || return 1
   vmess_prompt_users '[]' || return 1
@@ -6119,7 +6325,7 @@ prompt_vless_reality_install() {
   set_protocol_defaults "vless+reality"
   SB_VLESS_INSTANCE_ID="main"
   SB_VLESS_INBOUND_TAG=""
-  SB_NODE_NAME="$(default_node_name_for_protocol "vless+reality")"
+  SB_NODE_NAME=$(default_instance_node_name vless-reality) || return 1
   echo -e "\n${BLUE}--- 配置 VLESS + REALITY ---${NC}"
   read -rp "[VLESS + REALITY] 节点名称 (默认 ${SB_NODE_NAME}): " in_node
   in_node=$(trim_whitespace "${in_node:-}")
@@ -6135,8 +6341,20 @@ prompt_vless_reality_install() {
   SB_OUTBOUND_POLICY=$(prompt_instance_outbound_policy "[VLESS + REALITY] 出站策略" "${SB_OUTBOUND_POLICY:-default}")
 }
 
+vless_reality_naming_snapshot() {
+  local ids instance_id name snapshot='{"instances":[]}'
+  ids=$(list_vless_reality_instance_ids) || return 1
+  while IFS= read -r instance_id; do
+    [[ -n "${instance_id}" ]] || continue
+    name=$(load_vless_reality_instance_state "${instance_id}" && printf '%s' "${SB_NODE_NAME}") || return 1
+    snapshot=$(jq -c --arg id "${instance_id}" --arg name "${name}" \
+      '.instances += [{id:$id,name:$name}]' <<< "${snapshot}") || return 1
+  done <<< "${ids}"
+  printf '%s' "${snapshot}"
+}
+
 prompt_vless_reality_instance_create() {
-  local in_id in_node in_port default_id default_sni selected_id selected_node selected_port
+  local in_id in_node in_port default_id default_sni selected_id selected_node selected_port naming_snapshot
 
   migrate_vless_reality_state_to_instances_if_needed
   load_vless_reality_protocol_state
@@ -6157,7 +6375,8 @@ prompt_vless_reality_instance_create() {
   done
   selected_id="${SB_VLESS_INSTANCE_ID}"
 
-  SB_NODE_NAME="$(default_node_name_for_protocol "vless+reality")"
+  naming_snapshot=$(vless_reality_naming_snapshot) || return 1
+  SB_NODE_NAME=$(default_instance_node_name vless-reality "${naming_snapshot}") || return 1
   read -rp "[VLESS + REALITY] 节点名称 (默认 ${SB_NODE_NAME}): " in_node
   SB_NODE_NAME=$(trim_whitespace "${in_node:-${SB_NODE_NAME}}")
   selected_node="${SB_NODE_NAME}"
@@ -6205,6 +6424,7 @@ prompt_mixed_install() {
   local in_p in_auth in_user in_pass
 
   set_protocol_defaults "mixed"
+  SB_NODE_NAME=$(default_instance_node_name "mixed") || return 1
   echo -e "\n${BLUE}--- 配置 Mixed ---${NC}"
   SB_PORT=$(prompt_port "[Mixed] 端口 (默认 ${SB_PORT}): " "${SB_PORT}")
   check_port_conflict "${SB_PORT}"
@@ -6225,6 +6445,7 @@ prompt_hy2_install() {
   local in_domain in_p in_password in_user_name in_up in_down in_obfs in_obfs_password in_tls_mode in_acme_mode in_acme_email in_acme_domain in_cf_api_token in_cert_path in_key_path in_masquerade
 
   set_protocol_defaults "hy2"
+  SB_NODE_NAME=$(default_instance_node_name "hy2") || return 1
   echo -e "\n${BLUE}--- 配置 Hysteria2 ---${NC}"
   echo '[Hysteria2] 域名为必填项，用作 TLS server_name / SNI（客户端校验证书的名称），需与证书匹配。' >&2
   echo '[Hysteria2] 填写纯域名，如 hy2.example.com，不带 https:// 或路径；脚本会检查解析是否指向本机。' >&2
@@ -6311,6 +6532,7 @@ prompt_anytls_install() {
   local in_domain in_p in_password in_user_name in_tls_mode in_acme_mode in_acme_email in_acme_domain in_cf_api_token in_cert_path in_key_path
 
   set_protocol_defaults "anytls"
+  SB_NODE_NAME=$(default_instance_node_name "anytls") || return 1
   echo -e "\n${BLUE}--- 配置 AnyTLS ---${NC}"
 
   while [[ -z "${SB_ANYTLS_DOMAIN}" ]]; do
@@ -6544,7 +6766,7 @@ shadowsocks_management_build_record() {
     current_network=$(jq -c --arg id "${target}" '.instances[] | select(.id == $id) | .listen.network' "${snapshot}") || return 1
   else
     id=$(plain_proxy_management_next_id shadowsocks "${snapshot}") || return 1
-    name="Shadowsocks ${id}"
+    name=$(default_instance_node_name_from_file shadowsocks "${snapshot}") || return 1
     tag=$(plain_proxy_management_next_tag shadowsocks "${snapshot}") || return 1
     address=127.0.0.1; port=1080; policy=default
     current_auth='{"method":"2022-blake3-aes-128-gcm","password":"","users":[]}'
@@ -6600,7 +6822,7 @@ trojan_management_build_record() {
     trust=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.client_trust' "${snapshot}") || return 1
     policy=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.outbound_policy' "${snapshot}") || return 1
   else
-    id=$(plain_proxy_management_next_id trojan "${snapshot}") || return 1; name="Trojan ${id}"
+    id=$(plain_proxy_management_next_id trojan "${snapshot}") || return 1; name=$(default_instance_node_name_from_file trojan "${snapshot}") || return 1
     tag=$(plain_proxy_management_next_tag trojan "${snapshot}") || return 1; address=127.0.0.1; port=443
     users='[]'; tls='{"enabled":false}'; transport='{"type":"none"}'; trust=certificate; policy=default
   fi
@@ -6676,7 +6898,7 @@ vmess_management_build_record() {
     policy=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.outbound_policy' "${snapshot}") || return 1
   else
     id=$(plain_proxy_management_next_id vmess "${snapshot}") || return 1
-    name="VMess ${id}"; tag=$(plain_proxy_management_next_tag vmess "${snapshot}") || return 1
+    name=$(default_instance_node_name_from_file vmess "${snapshot}") || return 1; tag=$(plain_proxy_management_next_tag vmess "${snapshot}") || return 1
     address=127.0.0.1; port=1080; users='[]'; tls='{"enabled":false}'; transport='{"type":"none"}'; trust=system; policy=default
   fi
   read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1; [[ -z "${answer}" ]] || name=$(trim_whitespace "${answer}")
@@ -6730,7 +6952,7 @@ vless_plain_management_build_record() {
     policy=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.outbound_policy' "${snapshot}") || return 1
   else
     id=$(plain_proxy_management_next_id vless-plain "${snapshot}") || return 1
-    name="VLESS ${id}"; tag=$(plain_proxy_management_next_tag vless-plain "${snapshot}") || return 1
+    name=$(default_instance_node_name_from_file vless-plain "${snapshot}") || return 1; tag=$(plain_proxy_management_next_tag vless-plain "${snapshot}") || return 1
     address=127.0.0.1; port=1080; users='[]'; tls='{"enabled":false}'; transport='{"type":"none"}'; trust=system; policy=default
   fi
   read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1; [[ -z "${answer}" ]] || name=$(trim_whitespace "${answer}")
@@ -6782,7 +7004,7 @@ anytls_management_build_record() {
     policy=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.outbound_policy' "${snapshot}") || return 1
   else
     id=$(plain_proxy_management_next_id anytls "${snapshot}") || return 1
-    name="AnyTLS ${id}"
+    name=$(default_instance_node_name_from_file anytls "${snapshot}") || return 1
     tag=$(plain_proxy_management_next_tag anytls "${snapshot}") || return 1
     address=127.0.0.1; port=443; users='[]'; tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'; trust=system; policy=default
   fi
@@ -6911,7 +7133,7 @@ hy2_management_build_record() {
     masquerade=$(jq -j --arg id "${id}" '.instances[]|select(.id==$id)|.masquerade,"\u0001"' "${snapshot}") || return 1; masquerade=${masquerade%$'\1'}
   else
     id=$(plain_proxy_management_next_id hy2 "${snapshot}") || return 1
-    name="Hysteria2 ${id}"; tag=$(plain_proxy_management_next_tag hy2 "${snapshot}") || return 1
+    name=$(default_instance_node_name_from_file hy2 "${snapshot}") || return 1; tag=$(plain_proxy_management_next_tag hy2 "${snapshot}") || return 1
     address=0.0.0.0; port=443; users='[]'; tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'
     trust=system; up_mbps=""; down_mbps=""; obfs='{"enabled":false,"type":"","password":""}'; masquerade=""
   fi
@@ -7022,7 +7244,7 @@ snell_management_build_record() {
     policy=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.outbound_policy' "${snapshot}") || return 1
   else
     id=$(plain_proxy_management_next_id snell "${snapshot}") || return 1
-    name="Snell ${id}"; tag=$(plain_proxy_management_next_tag snell "${snapshot}") || return 1
+    name=$(default_instance_node_name_from_file snell "${snapshot}") || return 1; tag=$(plain_proxy_management_next_tag snell "${snapshot}") || return 1
     address=127.0.0.1; port=1080; version=6; psk=$(generate_snell_psk) || return 1
     users='[]'; obfs_mode=""; obfs_host=""; mode=default; policy=default
   fi
@@ -7095,7 +7317,7 @@ tuic_management_build_record() {
     policy=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.outbound_policy' "${snapshot}") || return 1
   else
     id=$(plain_proxy_management_next_id tuic "${snapshot}") || return 1
-    name="TUIC ${id}"; tag=$(plain_proxy_management_next_tag tuic "${snapshot}") || return 1
+    name=$(default_instance_node_name_from_file tuic "${snapshot}") || return 1; tag=$(plain_proxy_management_next_tag tuic "${snapshot}") || return 1
     address=127.0.0.1; port=443
     users=$(jq -cn --arg uuid "$(tuic_generate_uuid)" --arg password "$(trojan_generate_password)" '[{name:"tuic-user-1",uuid:$uuid,password:$password}]') || return 1
     tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'
@@ -7161,7 +7383,7 @@ hysteria_management_build_record() {
     policy=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.outbound_policy' "${snapshot}") || return 1
   else
     id=$(plain_proxy_management_next_id hysteria "${snapshot}") || return 1
-    name="Hysteria ${id}"; tag=$(plain_proxy_management_next_tag hysteria "${snapshot}") || return 1
+    name=$(default_instance_node_name_from_file hysteria "${snapshot}") || return 1; tag=$(plain_proxy_management_next_tag hysteria "${snapshot}") || return 1
     address=127.0.0.1; port=443
     users=$(jq -cn --arg auth_str "$(trojan_generate_password)" '[{name:"hysteria-user-1",auth_str:$auth_str}]') || return 1
     tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'
@@ -7230,7 +7452,7 @@ naive_management_build_record() {
     policy=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.outbound_policy' "${snapshot}") || return 1
   else
     id=$(plain_proxy_management_next_id naive "${snapshot}") || return 1
-    name="NaiveProxy ${id}"; tag=$(plain_proxy_management_next_tag naive "${snapshot}") || return 1
+    name=$(default_instance_node_name_from_file naive "${snapshot}") || return 1; tag=$(plain_proxy_management_next_tag naive "${snapshot}") || return 1
     address=127.0.0.1; port=1080
     users=$(jq -cn --arg password "$(trojan_generate_password)" '[{name:"naive-user-1",username:"naive-user-1",password:$password}]') || return 1
     tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'
@@ -7290,7 +7512,7 @@ shadowtls_management_build_record() {
     policy=$(jq -r --arg id "${id}" '.instances[] | select(.id == $id) | .outbound_policy' "${snapshot}") || return 1
   else
     id=$(plain_proxy_management_next_id shadowtls "${snapshot}") || return 1
-    name="ShadowTLS ${id}"
+    name=$(default_instance_node_name_from_file shadowtls "${snapshot}") || return 1
     tag=$(plain_proxy_management_next_tag shadowtls "${snapshot}") || return 1
     address=127.0.0.1; port=8443; version=3; password=""
     users=$(jq -cn --arg password "$(trojan_generate_password)" '[{name:"shadowtls-user-1",password:$password}]') || return 1
@@ -7436,7 +7658,7 @@ plain_proxy_management_build_record() {
     fi
   else
     id=$(plain_proxy_management_next_id "${protocol}" "${snapshot}") || return 1
-    name="${label} ${id}"; tag=$(plain_proxy_management_next_tag "${protocol}" "${snapshot}") || return 1
+    name=$(default_instance_node_name_from_file "${protocol}" "${snapshot}") || return 1; tag=$(plain_proxy_management_next_tag "${protocol}" "${snapshot}") || return 1
     address=127.0.0.1; port=1080; auth=y; username=""; password=""; policy=default; tls_json='{"enabled":false}'
   fi
 
@@ -12967,11 +13189,28 @@ build_shadowsocks_uri() {
 
 build_shadowsocks_links_json() {
   local server=${1:-} instance_id=${2:-${SB_INSTANCE_ID:-}} outbounds outbound uri key result='{}'
+  local store_file snapshot end_snapshot binding candidate_id user_name node_name address_label
+  store_file=$(plain_proxy_structured_store_file shadowsocks) || return 1
+  snapshot=$(structured_instance_store_snapshot_json shadowsocks "${store_file}") || return 1
   outbounds=$(build_shadowsocks_instance_outbounds "${instance_id}" "${server}") || return 1
+  end_snapshot=$(structured_instance_store_snapshot_json shadowsocks "${store_file}") || return 1
+  [[ "${snapshot}" == "${end_snapshot}" ]] || return 1
   while IFS= read -r outbound; do
     [[ -n "${outbound}" ]] || continue
     key=$(jq -er '.tag' <<< "${outbound}") || return 1
-    uri=$(build_shadowsocks_uri "${outbound}" "${SB_NODE_NAME:-Shadowsocks} ${key}") || return 1
+    binding=$(jq -ce --arg key "${key}" '
+      [.instances[] as $instance |
+       ($instance.authentication.users | if length == 0 then [{name:"",single:true}]
+        else map(. + {single:false}) end)[] as $user |
+       select(("shadowsocks-" + $instance.id + "-" +
+         (if $user.single then "single" else "user-" + ($user.name | @base64) end)) == $key) |
+       {instance_id:$instance.id,user_name:$user.name,listen_address:$instance.listen.address}] |
+      select(length == 1) | .[0]' <<< "${snapshot}") || return 1
+    candidate_id=$(jq -r '.instance_id' <<< "${binding}") || return 1
+    user_name=$(jq -r '.user_name' <<< "${binding}") || return 1
+    address_label=$(node_display_address_label "$(jq -r '.listen_address' <<< "${binding}")" "$(jq -r '.server' <<< "${outbound}")") || return 1
+    node_name=$(structured_node_display_name shadowsocks "${snapshot}" "${candidate_id}" "${user_name}" "${address_label}") || return 1
+    uri=$(build_shadowsocks_uri "${outbound}" "${node_name}") || return 1
     result=$(jq -cn --argjson result "${result}" --arg key "${key}" --arg uri "${uri}" '$result+{($key):$uri}') || return 1
   done <<< "${outbounds}"
   jq -e 'length>0' <<< "${result}" >/dev/null || return 1
@@ -24943,24 +25182,6 @@ subman_external_key_for_shadowsocks_user() {
   printf '%s' "${key}"
 }
 
-subman_shadowsocks_node_name() {
-  local instance_id=${1:-} user_name=${2:-} prefix digest suffix name name_bytes
-
-  prefix=$(subman_node_prefix)
-  digest=$(printf '%s' "${user_name}" | sha256sum) || return 1
-  digest=${digest%% *}
-  if [[ -n "${user_name}" ]]; then
-    suffix="user-${digest:0:12}"
-  else
-    suffix="single-${digest:0:12}"
-  fi
-  name="${prefix} Shadowsocks ${instance_id} ${suffix}"
-  name_bytes=$(printf '%s' "${name}" | wc -c | tr -d '[:space:]') || return 1
-  if [[ ! "${name_bytes}" =~ ^[0-9]+$ || "${name_bytes}" -gt 256 ]]; then
-    name="Shadowsocks ${instance_id} ${suffix}"
-  fi
-  printf '%s' "${name}"
-}
 
 build_subman_shadowsocks_node_payload() {
   local outbound=${1:-} name=${2:-} node_type prefix raw_link
@@ -25127,7 +25348,7 @@ trojan_share_warning_for_status() {
 
 build_trojan_subman_links_and_warnings_json() (
   local server=${1:-} instance_id=${2:-} store_file snapshot snapshot_file instance node_name user_name tag uri status
-  local links='{}' warnings='[]' warning users_text
+  local links='{}' warnings='[]' warning users_text address_label
   [[ $# -ge 1 && $# -le 2 ]] || return 1
   store_file=$(plain_proxy_structured_store_file trojan) || return 1
   snapshot=$(structured_instance_store_snapshot_json trojan "${store_file}") || return 1
@@ -25136,12 +25357,13 @@ build_trojan_subman_links_and_warnings_json() (
   printf '%s\n' "${snapshot}" > "${snapshot_file}" || return 1
   instance_id=${2:-$(jq -er '.default_instance_id' <<< "${snapshot}")}
   instance=$(jq -ce --arg id "${instance_id}" '.instances[] | select(.id == $id)' <<< "${snapshot}") || return 1
-  node_name=$(jq -r '.name' <<< "${instance}") || return 1
+  address_label=$(node_display_address_label "$(jq -r '.listen.address' <<< "${instance}")" "${server}") || return 1
   users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || return 1
   while IFS= read -r user_name; do
     [[ -n "${user_name}" ]] || continue
     tag=$(jq -r --arg user "${user_name}" '"trojan-" + .id + "-user-" + ($user | @base64)' <<< "${instance}") || return 1
-    if uri=$(build_trojan_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name} ${tag}"); then
+    node_name=$(structured_node_display_name trojan "${snapshot}" "${instance_id}" "${user_name}" "${address_label}") || return 1
+    if uri=$(build_trojan_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name}"); then
       links=$(jq -cn --argjson links "${links}" --arg tag "${tag}" --arg uri "${uri}" '$links + {($tag):$uri}') || return 1
     else
       status=$?
@@ -25184,19 +25406,6 @@ subman_external_key_for_trojan_user() {
   printf '%s' "${key}"
 }
 
-subman_trojan_node_name() {
-  local instance_id=${1:-} user_name=${2-} prefix digest suffix name name_bytes
-  prefix=$(subman_node_prefix) || return 1
-  digest=$(printf '%s' "${user_name}" | sha256sum) || return 1
-  digest=${digest%% *}
-  suffix="user-${digest:0:12}"
-  name="${prefix} Trojan ${instance_id} ${suffix}"
-  name_bytes=$(printf '%s' "${name}" | wc -c) || return 1
-  if [[ ! "${name_bytes}" =~ ^[0-9]+$ || "${name_bytes}" -gt 256 ]]; then
-    name="Trojan ${instance_id} ${suffix}"
-  fi
-  printf '%s' "${name}"
-}
 
 build_subman_trojan_node_payload() {
   local raw_link=${1:-} name=${2:-} node_type prefix
@@ -25255,8 +25464,7 @@ push_subman_trojan_instance() {
   users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || { rm -f -- "${snapshot_file}"; SUBMAN_TROJAN_FAILED=1; return 1; }
   while IFS= read -r user_name; do
     [[ -n "${user_name}" ]] || continue
-    node_name=$(subman_trojan_node_name "${instance_id}" "${user_name}") || { failed=$((failed + 1)); continue; }
-    node_name=$(node_name_for_network_stack "${node_name}" "${address_label}") || { failed=$((failed + 1)); continue; }
+    node_name=$(structured_node_display_name trojan "${snapshot}" "${instance_id}" "${user_name}" "${address_label}") || { failed=$((failed + 1)); continue; }
     if raw_link=$(build_trojan_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name}"); then
       :
     else
@@ -25388,19 +25596,20 @@ vmess_share_warning_for_status() {
 
 build_vmess_subman_links_and_warnings_json() (
   local server=${1:-} instance_id=${2:-} store_file snapshot snapshot_file instance user_name node_name tag uri status warning
-  local links='{}' warnings='[]' users_text
+  local links='{}' warnings='[]' users_text address_label
   store_file=$(plain_proxy_structured_store_file vmess) || return 1
   snapshot=$(structured_instance_store_snapshot_json vmess "${store_file}") || return 1
   snapshot_file=$(mktemp) || return 1; trap 'rm -f -- "${snapshot_file}"' EXIT
   printf '%s\n' "${snapshot}" > "${snapshot_file}" || return 1
   instance_id=${2:-$(jq -er '.default_instance_id' <<< "${snapshot}")}
   instance=$(jq -ce --arg id "${instance_id}" '.instances[] | select(.id == $id)' <<< "${snapshot}") || return 1
-  node_name=$(jq -r '.name' <<< "${instance}") || return 1
+  address_label=$(node_display_address_label "$(jq -r '.listen.address' <<< "${instance}")" "${server}") || return 1
   users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || return 1
   while IFS= read -r user_name; do
     [[ -n "${user_name}" ]] || continue
     tag=$(jq -r --arg user "${user_name}" '"vmess-" + .id + "-user-" + ($user | @base64)' <<< "${instance}") || return 1
-    if uri=$(build_vmess_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name} ${tag}"); then
+    node_name=$(structured_node_display_name vmess "${snapshot}" "${instance_id}" "${user_name}" "${address_label}") || return 1
+    if uri=$(build_vmess_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name}"); then
       links=$(jq -cn --argjson links "${links}" --arg tag "${tag}" --arg uri "${uri}" '$links + {($tag):$uri}') || return 1
     else
       status=$?
@@ -25424,11 +25633,6 @@ subman_external_key_for_vmess_user() {
   printf '%s' "${key}"
 }
 
-subman_vmess_node_name() {
-  local instance_id=${1:-} user_name=${2-} prefix digest suffix
-  prefix=$(subman_node_prefix) || return 1; digest=$(printf '%s' "${user_name}" | sha256sum); digest=${digest%% *}; suffix="user-${digest:0:12}"
-  printf '%s VMess %s %s' "${prefix}" "${instance_id}" "${suffix}"
-}
 
 build_subman_vmess_node_payload() {
   local raw_link=${1:-} name=${2:-} node_type prefix
@@ -25453,8 +25657,7 @@ push_subman_vmess_instance() {
   users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || { rm -f -- "${snapshot_file}"; SUBMAN_VMESS_FAILED=1; return 1; }
   while IFS= read -r user_name; do
     [[ -n "${user_name}" ]] || continue
-    node_name=$(subman_vmess_node_name "${instance_id}" "${user_name}") || { failed=$((failed + 1)); continue; }
-    node_name=$(node_name_for_network_stack "${node_name}" "${address_label}") || { failed=$((failed + 1)); continue; }
+    node_name=$(structured_node_display_name vmess "${snapshot}" "${instance_id}" "${user_name}" "${address_label}") || { failed=$((failed + 1)); continue; }
     if raw_link=$(build_vmess_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name}"); then
       external_key=$(subman_external_key_for_vmess_user "${instance_id}" "${user_name}" "${address_label}") || { record_subman_key_failure vmess "${instance_id}" "${address_label}" "${quiet}"; failed=$((failed + 1)); continue; }
       payload_json=$(build_subman_vmess_node_payload "${raw_link}" "${node_name}") || { failed=$((failed + 1)); continue; }
@@ -25567,7 +25770,7 @@ build_vless_plain_subman_uri_from_store() (
 
 build_vless_plain_subman_links_and_warnings_json() (
   local server=${1:-} instance_id=${2:-} store_file snapshot snapshot_file instance node_name user_name tag uri status warning
-  local links='{}' warnings='[]' users_text
+  local links='{}' warnings='[]' users_text address_label
   [[ $# -ge 1 && $# -le 2 ]] || return 1
   store_file=$(plain_proxy_structured_store_file vless-plain) || return 1
   snapshot=$(structured_instance_store_snapshot_json vless-plain "${store_file}") || return 1
@@ -25575,12 +25778,13 @@ build_vless_plain_subman_links_and_warnings_json() (
   printf '%s\n' "${snapshot}" > "${snapshot_file}" || return 1
   instance_id=${2:-$(jq -er '.default_instance_id' <<< "${snapshot}")}
   instance=$(jq -ce --arg id "${instance_id}" '.instances[] | select(.id == $id)' <<< "${snapshot}") || return 1
-  node_name=$(jq -r '.name' <<< "${instance}") || return 1
+  address_label=$(node_display_address_label "$(jq -r '.listen.address' <<< "${instance}")" "${server}") || return 1
   users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || return 1
   while IFS= read -r user_name; do
     [[ -n "${user_name}" ]] || continue
     tag=$(jq -r --arg user "${user_name}" '"vless-plain-" + .id + "-user-" + ($user | @base64)' <<< "${instance}") || return 1
-    if uri=$(build_vless_plain_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name} ${tag}"); then
+    node_name=$(structured_node_display_name vless-plain "${snapshot}" "${instance_id}" "${user_name}" "${address_label}") || return 1
+    if uri=$(build_vless_plain_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name}"); then
       links=$(jq -cn --argjson links "${links}" --arg tag "${tag}" --arg uri "${uri}" '$links + {($tag):$uri}') || return 1
     else
       status=$?
@@ -25611,11 +25815,6 @@ subman_external_key_for_vless_plain_user() {
   printf '%s' "${key}"
 }
 
-subman_vless_plain_node_name() {
-  local instance_id=${1:-} user_name=${2-} prefix digest suffix
-  prefix=$(subman_node_prefix) || return 1; digest=$(printf '%s' "${user_name}" | sha256sum); digest=${digest%% *}; suffix="user-${digest:0:12}"
-  printf '%s VLESS %s %s' "${prefix}" "${instance_id}" "${suffix}"
-}
 
 build_subman_vless_plain_node_payload() {
   local raw_link=${1:-} name=${2:-} node_type prefix
@@ -25640,8 +25839,7 @@ push_subman_vless_plain_instance() {
   users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || { rm -f -- "${snapshot_file}"; SUBMAN_VLESS_PLAIN_FAILED=1; return 1; }
   while IFS= read -r user_name; do
     [[ -n "${user_name}" ]] || continue
-    node_name=$(subman_vless_plain_node_name "${instance_id}" "${user_name}") || { failed=$((failed + 1)); continue; }
-    node_name=$(node_name_for_network_stack "${node_name}" "${address_label}") || { failed=$((failed + 1)); continue; }
+    node_name=$(structured_node_display_name vless-plain "${snapshot}" "${instance_id}" "${user_name}" "${address_label}") || { failed=$((failed + 1)); continue; }
     if raw_link=$(build_vless_plain_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name}"); then
       external_key=$(subman_external_key_for_vless_plain_user "${instance_id}" "${user_name}" "${address_label}") || { record_subman_key_failure vless-plain "${instance_id}" "${address_label}" "${quiet}"; failed=$((failed + 1)); continue; }
       payload_json=$(build_subman_vless_plain_node_payload "${raw_link}" "${node_name}") || { failed=$((failed + 1)); continue; }
@@ -25785,11 +25983,7 @@ push_subman_shadowsocks_instance() {
       SUBMAN_SHADOWSOCKS_FAILED=$((SUBMAN_SHADOWSOCKS_FAILED + 1))
       continue
     fi
-    node_name=$(subman_shadowsocks_node_name "${instance_id}" "${user_name}") || {
-      SUBMAN_SHADOWSOCKS_FAILED=$((SUBMAN_SHADOWSOCKS_FAILED + 1))
-      continue
-    }
-    node_name=$(node_name_for_network_stack "${node_name}" "${address_label}") || {
+    node_name=$(structured_node_display_name shadowsocks "${snapshot}" "${instance_id}" "${user_name}" "${address_label}") || {
       SUBMAN_SHADOWSOCKS_FAILED=$((SUBMAN_SHADOWSOCKS_FAILED + 1))
       continue
     }
@@ -25922,7 +26116,7 @@ hy2_subman_partial_options_warning() {
 
 build_hy2_subman_links_and_warnings_json() (
   local server=${1:-} instance_id=${2:-} store_file snapshot snapshot_file instance node_name user_name tag uri status warning certificate_path ed25519_warning
-  local links='{}' warnings='[]' users_text
+  local links='{}' warnings='[]' users_text address_label
 
   [[ $# -ge 1 && $# -le 2 ]] || return 1
   store_file=$(plain_proxy_structured_store_file hy2) || return 1
@@ -25932,14 +26126,15 @@ build_hy2_subman_links_and_warnings_json() (
   printf '%s\n' "${snapshot}" > "${snapshot_file}" || return 1
   instance_id=${2:-$(jq -er '.default_instance_id' <<< "${snapshot}")}
   instance=$(jq -ce --arg id "${instance_id}" '.instances[] | select(.id == $id)' <<< "${snapshot}") || return 1
-  node_name=$(jq -r '.name' <<< "${instance}") || return 1
+  address_label=$(node_display_address_label "$(jq -r '.listen.address' <<< "${instance}")" "${server}") || return 1
   certificate_path=$(jq -r '.tls.certificate_path // ""' <<< "${instance}") || return 1
   ed25519_warning=$(hy2_ed25519_share_warning_json "${certificate_path}") || return 1
   users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || return 1
   while IFS= read -r user_name; do
     [[ -n "${user_name}" ]] || continue
     tag=$(jq -r --arg user "${user_name}" '"hy2-" + .id + "-user-" + ($user | @base64)' <<< "${instance}") || return 1
-    if uri=$(build_hy2_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name} ${tag}"); then
+    node_name=$(structured_node_display_name hy2 "${snapshot}" "${instance_id}" "${user_name}" "${address_label}") || return 1
+    if uri=$(build_hy2_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name}"); then
       links=$(jq -cn --argjson links "${links}" --arg tag "${tag}" --arg uri "${uri}" '$links + {($tag):$uri}') || return 1
       if jq -e '.bandwidth.up_mbps != null or .bandwidth.down_mbps != null or .masquerade != ""' <<< "${instance}" >/dev/null; then
         warning=$(hy2_subman_partial_options_warning) || return 1
@@ -25987,14 +26182,6 @@ subman_external_key_for_hy2_user() {
   printf '%s' "${key}"
 }
 
-subman_hy2_node_name() {
-  local instance_id=${1:-} user_name=${2-} prefix digest suffix
-  prefix=$(subman_node_prefix) || return 1
-  digest=$(printf '%s' "${user_name}" | sha256sum) || return 1
-  digest=${digest%% *}
-  suffix="user-${digest:0:12}"
-  printf '%s Hysteria2 %s %s' "${prefix}" "${instance_id}" "${suffix}"
-}
 
 build_subman_hy2_node_payload() {
   local raw_link=${1:-} name=${2:-} node_type prefix
@@ -26028,8 +26215,7 @@ push_subman_hy2_instance() {
   users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || { rm -f -- "${snapshot_file}"; SUBMAN_HY2_FAILED=1; return 1; }
   while IFS= read -r user_name; do
     [[ -n "${user_name}" ]] || continue
-    node_name=$(subman_hy2_node_name "${instance_id}" "${user_name}") || { failed=$((failed + 1)); continue; }
-    node_name=$(node_name_for_network_stack "${node_name}" "${address_label}") || { failed=$((failed + 1)); continue; }
+    node_name=$(structured_node_display_name hy2 "${snapshot}" "${instance_id}" "${user_name}" "${address_label}") || { failed=$((failed + 1)); continue; }
     if raw_link=$(build_hy2_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name}"); then
       external_key=$(subman_external_key_for_hy2_user "${instance_id}" "${user_name}" "${address_label}") || { record_subman_key_failure hy2 "${instance_id}" "${address_label}" "${quiet}"; failed=$((failed + 1)); continue; }
       payload_json=$(build_subman_hy2_node_payload "${raw_link}" "${node_name}") || { failed=$((failed + 1)); continue; }
@@ -26109,12 +26295,45 @@ push_subman_hy2_protocol() {
   (( total_failed == 0 && (total_synced > 0 || total_skipped > 0) ))
 }
 
-build_subman_raw_for_protocol() {
+build_subman_raw_for_protocol() (
   local protocol public_ip address_label instance_id store_file snapshot user_name node_name
-  protocol=$(normalize_protocol_id "$1")
+  local instance listen_address snapshot_file
+  protocol=$(normalize_protocol_id "$1") || return 1
   public_ip=$2
   address_label=${3:-}
   instance_id=${4:-}
+  snapshot=${5:-}
+
+  if [[ "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == vless-plain ]] ||
+     { [[ "${protocol}" == hy2 ]] && { [[ -n "${snapshot}" ]] ||
+       { [[ "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active hy2; }; }; }; then
+    if [[ -z "${snapshot}" ]]; then
+      store_file=$(plain_proxy_structured_store_file "${protocol}") || return 1
+      snapshot=$(structured_instance_store_snapshot_json "${protocol}" "${store_file}") || return 1
+    fi
+    instance_id=${instance_id:-${SB_INSTANCE_ID:-}}
+    [[ -n "${instance_id}" ]] || instance_id=$(jq -er '.default_instance_id' <<< "${snapshot}") || return 1
+    instance=$(jq -ce --arg id "${instance_id}" '[.instances[] | select(.id == $id)] | select(length == 1) | .[0]' <<< "${snapshot}") || return 1
+    listen_address=$(jq -er '.listen.address' <<< "${instance}") || return 1
+    if ! listener_address_is_wildcard "${listen_address}"; then
+      public_ip=${listen_address}
+      address_label='监听地址'
+    elif [[ -z "${address_label}" ]]; then
+      address_label=$(node_display_address_label "${listen_address}" "${public_ip}") || return 1
+    fi
+    user_name=$(jq -er '.authentication.users[0].name' <<< "${instance}") || return 1
+    node_name=$(structured_node_display_name "${protocol}" "${snapshot}" "${instance_id}" "${user_name}" "${address_label}") || return 1
+    snapshot_file=$(mktemp) || return 1
+    trap 'rm -f -- "${snapshot_file}"' EXIT
+    printf '%s\n' "${snapshot}" > "${snapshot_file}" || return 1
+    case "${protocol}" in
+      trojan) build_trojan_subman_uri_from_store "${snapshot_file}" "${public_ip}" "${instance_id}" "${user_name}" "${node_name}" ;;
+      vmess) build_vmess_subman_uri_from_store "${snapshot_file}" "${public_ip}" "${instance_id}" "${user_name}" "${node_name}" ;;
+      vless-plain) build_vless_plain_subman_uri_from_store "${snapshot_file}" "${public_ip}" "${instance_id}" "${user_name}" "${node_name}" ;;
+      hy2) build_hy2_subman_uri_from_store "${snapshot_file}" "${public_ip}" "${instance_id}" "${user_name}" "${node_name}" ;;
+    esac
+    return $?
+  fi
 
   case "${protocol}" in
     vless-reality)
@@ -26124,77 +26343,49 @@ build_subman_raw_for_protocol() {
         build_vless_link "${public_ip}" "${address_label}"
       fi
       ;;
-    trojan)
-      store_file=$(plain_proxy_structured_store_file trojan) || return 1
-      snapshot=$(structured_instance_store_snapshot_json trojan "${store_file}") || return 1
-      instance_id=${instance_id:-${SB_INSTANCE_ID:-}}
-      [[ -n "${instance_id}" ]] || instance_id=$(jq -er '.default_instance_id' <<< "${snapshot}") || return 1
-      case "${SB_MIXED_LISTEN_ADDRESS:-}" in
-        0.0.0.0|::) ;;
-        "") ;;
-        *) public_ip=${SB_MIXED_LISTEN_ADDRESS} ;;
-      esac
-      user_name=$(jq -er --arg id "${instance_id}" \
-        '.instances[] | select(.id == $id) | .authentication.users[0].name' <<< "${snapshot}") || return 1
-      node_name=$(display_node_name_for_protocol trojan "${SB_NODE_NAME:-Trojan}" "${address_label}") || return 1
-      build_trojan_subman_uri_from_store "${store_file}" "${public_ip}" "${instance_id}" "${user_name}" "${node_name}"
-      ;;
-    vmess)
-      store_file=$(plain_proxy_structured_store_file vmess) || return 1
-      snapshot=$(structured_instance_store_snapshot_json vmess "${store_file}") || return 1
-      instance_id=${instance_id:-${SB_INSTANCE_ID:-}}
-      [[ -n "${instance_id}" ]] || instance_id=$(jq -er '.default_instance_id' <<< "${snapshot}") || return 1
-      case "${SB_MIXED_LISTEN_ADDRESS:-}" in 0.0.0.0|::) ;; "") ;; *) public_ip=${SB_MIXED_LISTEN_ADDRESS} ;; esac
-      user_name=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .authentication.users[0].name' <<< "${snapshot}") || return 1
-      node_name=$(display_node_name_for_protocol vmess "${SB_NODE_NAME:-VMess}" "${address_label}") || return 1
-      build_vmess_subman_uri_from_store "${store_file}" "${public_ip}" "${instance_id}" "${user_name}" "${node_name}"
-      ;;
-    vless-plain)
-      store_file=$(plain_proxy_structured_store_file vless-plain) || return 1
-      snapshot=$(structured_instance_store_snapshot_json vless-plain "${store_file}") || return 1
-      instance_id=${instance_id:-${SB_INSTANCE_ID:-}}
-      [[ -n "${instance_id}" ]] || instance_id=$(jq -er '.default_instance_id' <<< "${snapshot}") || return 1
-      case "${SB_MIXED_LISTEN_ADDRESS:-}" in 0.0.0.0|::) ;; "") ;; *) public_ip=${SB_MIXED_LISTEN_ADDRESS} ;; esac
-      user_name=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .authentication.users[0].name' <<< "${snapshot}") || return 1
-      node_name=$(display_node_name_for_protocol vless-plain "${SB_NODE_NAME:-VLESS}" "${address_label}") || return 1
-      build_vless_plain_subman_uri_from_store "${store_file}" "${public_ip}" "${instance_id}" "${user_name}" "${node_name}"
-      ;;
-    hy2)
-      if [[ "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active hy2; then
-        store_file=$(plain_proxy_structured_store_file hy2) || return 1
-        snapshot=$(structured_instance_store_snapshot_json hy2 "${store_file}") || return 1
-        instance_id=${instance_id:-${SB_INSTANCE_ID:-}}
-        [[ -n "${instance_id}" ]] || instance_id=$(jq -er '.default_instance_id' <<< "${snapshot}") || return 1
-        case "${SB_MIXED_LISTEN_ADDRESS:-}" in 0.0.0.0|::) ;; "") ;; *) public_ip=${SB_MIXED_LISTEN_ADDRESS} ;; esac
-        user_name=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .authentication.users[0].name' <<< "${snapshot}") || return 1
-        node_name=$(display_node_name_for_protocol hy2 "${SB_NODE_NAME:-Hysteria2}" "${address_label}") || return 1
-        build_hy2_subman_uri_from_store "${store_file}" "${public_ip}" "${instance_id}" "${user_name}" "${node_name}"
-      else
-        build_hy2_link "${public_ip}" "${address_label}" "${public_ip}"
-      fi
-      ;;
+    hy2) build_hy2_link "${public_ip}" "${address_label}" "${public_ip}" ;;
     *) return 1 ;;
   esac
-}
+)
 
 build_subman_node_payload() {
   local protocol public_ip address_label instance_id node_type raw_link node_name prefix
-  protocol=$(normalize_protocol_id "$1")
+  local store_file snapshot instance user_name listen_address
+  protocol=$(normalize_protocol_id "$1") || return 1
   public_ip=$2
   address_label=${3:-}
   instance_id=${4:-}
-  if [[ "${protocol}" == "vless-reality" && -n "${instance_id}" ]]; then
-    load_vless_reality_protocol_state
-    load_vless_reality_instance_state "${instance_id}" || return 1
-  fi
   node_type=$(subman_type_for_protocol "${protocol}") || return 1
-  raw_link=$(build_subman_raw_for_protocol "${protocol}" "${public_ip}" "${address_label}" "${instance_id}") || return 1
-  if [[ "${protocol}" == "vless-reality" && -n "${instance_id}" ]]; then
-    load_vless_reality_protocol_state
-    load_vless_reality_instance_state "${instance_id}" || return 1
+  if [[ "${protocol}" == trojan || "${protocol}" == vmess || "${protocol}" == vless-plain ]] ||
+     { [[ "${protocol}" == hy2 && "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active hy2; }; then
+    store_file=$(plain_proxy_structured_store_file "${protocol}") || return 1
+    snapshot=$(structured_instance_store_snapshot_json "${protocol}" "${store_file}") || return 1
+    instance_id=${instance_id:-${SB_INSTANCE_ID:-}}
+    [[ -n "${instance_id}" ]] || instance_id=$(jq -er '.default_instance_id' <<< "${snapshot}") || return 1
+    instance=$(jq -ce --arg id "${instance_id}" '[.instances[] | select(.id == $id)] | select(length == 1) | .[0]' <<< "${snapshot}") || return 1
+    listen_address=$(jq -er '.listen.address' <<< "${instance}") || return 1
+    if ! listener_address_is_wildcard "${listen_address}"; then
+      public_ip=${listen_address}
+      address_label='监听地址'
+    elif [[ -z "${address_label}" ]]; then
+      address_label=$(node_display_address_label "${listen_address}" "${public_ip}") || return 1
+    fi
+    user_name=$(jq -er '.authentication.users[0].name' <<< "${instance}") || return 1
+    node_name=$(structured_node_display_name "${protocol}" "${snapshot}" "${instance_id}" "${user_name}" "${address_label}") || return 1
+    raw_link=$(build_subman_raw_for_protocol "${protocol}" "${public_ip}" "${address_label}" "${instance_id}" "${snapshot}") || return 1
+  else
+    if [[ "${protocol}" == vless-reality && -n "${instance_id}" ]]; then
+      load_vless_reality_protocol_state
+      load_vless_reality_instance_state "${instance_id}" || return 1
+    fi
+    raw_link=$(build_subman_raw_for_protocol "${protocol}" "${public_ip}" "${address_label}" "${instance_id}") || return 1
+    if [[ "${protocol}" == vless-reality && -n "${instance_id}" ]]; then
+      load_vless_reality_protocol_state
+      load_vless_reality_instance_state "${instance_id}" || return 1
+    fi
+    node_name=$(trim_whitespace "$(display_node_name_for_protocol "${protocol}" "${SB_NODE_NAME:-}" "${address_label}")") || return 1
   fi
-  prefix=$(subman_node_prefix)
-  node_name=$(trim_whitespace "$(display_node_name_for_protocol "${protocol}" "${SB_NODE_NAME:-}" "${address_label}")")
+  prefix=$(subman_node_prefix) || return 1
   [[ -z "${node_name}" ]] && node_name="${prefix} ${protocol}"
 
   jq -n \
@@ -26808,11 +26999,20 @@ build_anytls_outbound_example() {
 }
 
 client_outbound_tag_for_protocol() {
-  local protocol address_label=${2:-}
+  local protocol address_label=${2:-} base suffix up='' down=''
   protocol=$(normalize_protocol_id "$1")
   if [[ -n "${SB_NODE_NAME:-}" ]]; then
-    display_node_name_for_protocol "${protocol}" "${SB_NODE_NAME}" "${address_label}"
-    return 0
+    # Preserve historical technical tags, including long tags. Display-name
+    # shortening must not change selectors or route references in client JSON.
+    base=$(normalize_node_name "${SB_NODE_NAME}") || return 1
+    case "${protocol}" in
+      vless-reality) up=${SB_VLESS_RATE_LIMIT_UP_MBPS:-}; down=${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-} ;;
+      hy2) up=${SB_HY2_UP_MBPS:-}; down=${SB_HY2_DOWN_MBPS:-} ;;
+    esac
+    suffix=$(bandwidth_limit_name_suffix "${up}" "${down}") || return 1
+    [[ -z "${suffix}" ]] || base="${base}-${suffix}"
+    node_name_for_network_stack "${base}" "${address_label}"
+    return $?
   fi
 
   printf '%s' "$(default_node_name_for_protocol "$(state_protocol_to_runtime "${protocol}")")"
@@ -27734,12 +27934,26 @@ build_vless_plain_uri_from_outbound() {
 
 build_vless_plain_links_json() {
   local server=${1:-} instance_id=${2:-${SB_INSTANCE_ID:-}} outbounds outbound uri key result='{}'
+  local store_file snapshot end_snapshot binding candidate_id user_name node_name address_label
+  store_file=$(plain_proxy_structured_store_file vless-plain) || return 1
+  snapshot=$(structured_instance_store_snapshot_json vless-plain "${store_file}") || return 1
   outbounds=$(build_client_vless_plain_outbounds "${server}") || return 1
+  end_snapshot=$(structured_instance_store_snapshot_json vless-plain "${store_file}") || return 1
+  [[ "${snapshot}" == "${end_snapshot}" ]] || return 1
   while IFS= read -r outbound; do
     [[ -n "${outbound}" ]] || continue
     key=$(jq -er '.tag' <<< "${outbound}") || return 1
     if [[ -n "${instance_id}" && "${key}" != "vless-plain-${instance_id}-user-"* ]]; then continue; fi
-    uri=$(build_vless_plain_uri_from_outbound "${outbound}" "${SB_NODE_NAME:-VLESS} ${key}") || return 1
+    binding=$(jq -ce --arg key "${key}" '
+      [.instances[] as $instance | $instance.authentication.users[] as $user |
+       select(("vless-plain-" + $instance.id + "-user-" + ($user.name | @base64)) == $key) |
+       {instance_id:$instance.id,user_name:$user.name,listen_address:$instance.listen.address}] |
+      select(length == 1) | .[0]' <<< "${snapshot}") || return 1
+    candidate_id=$(jq -r '.instance_id' <<< "${binding}") || return 1
+    user_name=$(jq -r '.user_name' <<< "${binding}") || return 1
+    address_label=$(node_display_address_label "$(jq -r '.listen_address' <<< "${binding}")" "$(jq -r '.server' <<< "${outbound}")") || return 1
+    node_name=$(structured_node_display_name vless-plain "${snapshot}" "${candidate_id}" "${user_name}" "${address_label}") || return 1
+    uri=$(build_vless_plain_uri_from_outbound "${outbound}" "${node_name}") || return 1
     result=$(jq -cn --argjson result "${result}" --arg key "${key}" --arg uri "${uri}" '$result+{($key):$uri}') || return 1
   done <<< "${outbounds}"
   jq -e 'length > 0' <<< "${result}" >/dev/null || return 1
@@ -27772,12 +27986,26 @@ build_vmess_uri_from_outbound() {
 
 build_vmess_links_json() {
   local server=${1:-} instance_id=${2:-${SB_INSTANCE_ID:-}} outbounds outbound uri key result='{}'
+  local store_file snapshot end_snapshot binding candidate_id user_name node_name address_label
+  store_file=$(plain_proxy_structured_store_file vmess) || return 1
+  snapshot=$(structured_instance_store_snapshot_json vmess "${store_file}") || return 1
   outbounds=$(build_client_vmess_outbounds "${server}") || return 1
+  end_snapshot=$(structured_instance_store_snapshot_json vmess "${store_file}") || return 1
+  [[ "${snapshot}" == "${end_snapshot}" ]] || return 1
   while IFS= read -r outbound; do
     [[ -n "${outbound}" ]] || continue
     key=$(jq -er '.tag' <<< "${outbound}") || return 1
     if [[ -n "${instance_id}" && "${key}" != "vmess-${instance_id}-user-"* ]]; then continue; fi
-    uri=$(build_vmess_uri_from_outbound "${outbound}" "${SB_NODE_NAME:-VMess} ${key}") || return 1
+    binding=$(jq -ce --arg key "${key}" '
+      [.instances[] as $instance | $instance.authentication.users[] as $user |
+       select(("vmess-" + $instance.id + "-user-" + ($user.name | @base64)) == $key) |
+       {instance_id:$instance.id,user_name:$user.name,listen_address:$instance.listen.address}] |
+      select(length == 1) | .[0]' <<< "${snapshot}") || return 1
+    candidate_id=$(jq -r '.instance_id' <<< "${binding}") || return 1
+    user_name=$(jq -r '.user_name' <<< "${binding}") || return 1
+    address_label=$(node_display_address_label "$(jq -r '.listen_address' <<< "${binding}")" "$(jq -r '.server' <<< "${outbound}")") || return 1
+    node_name=$(structured_node_display_name vmess "${snapshot}" "${candidate_id}" "${user_name}" "${address_label}") || return 1
+    uri=$(build_vmess_uri_from_outbound "${outbound}" "${node_name}") || return 1
     result=$(jq -cn --argjson result "${result}" --arg key "${key}" --arg uri "${uri}" '$result+{($key):$uri}') || return 1
   done <<< "${outbounds}"
   jq -e 'length > 0' <<< "${result}" >/dev/null || return 1
@@ -31530,12 +31758,14 @@ agent_hy2_node_json() {
 agent_hy2_link_json() (
   umask 077
   local public_ip=${1:-$(get_public_ip)} store_file snapshot end_snapshot instance_id server outbounds links='{}' warnings='[]' summary key uri certificate_path compatibility_warnings
+  local instance user_name node_name address_label outbound
   [[ "${CONFIG_SCHEMA_VERSION:-1}" == "2" ]] || return 1
   store_file=$(plain_proxy_structured_store_file hy2) || return 1
   snapshot=$(structured_instance_store_snapshot_json hy2 "${store_file}") || return 1
   instance_id=${SB_INSTANCE_ID:-}
   [[ -n "${instance_id}" ]] || instance_id=$(jq -er '.default_instance_id' <<< "${snapshot}") || return 1
   jq -e --arg id "${instance_id}" 'any(.instances[]; .id == $id)' <<< "${snapshot}" >/dev/null || return 1
+  instance=$(jq -ce --arg id "${instance_id}" '.instances[] | select(.id == $id)' <<< "${snapshot}") || return 1
   [[ "$(jq -r '.revision|tostring' <<< "${snapshot}")" == "${SB_MIXED_STORE_REVISION:-}" ]] || return 1
   case "${SB_MIXED_LISTEN_ADDRESS:-}" in
     0.0.0.0|::) server=${public_ip} ;;
@@ -31555,7 +31785,13 @@ agent_hy2_link_json() (
   if [[ "${SB_HY2_CLIENT_TRUST:-system}" == system ]]; then
     while IFS= read -r outbound; do
       key=$(jq -er '.tag' <<< "${outbound}") || return 1
-      uri=$(build_hy2_uri_from_outbound "${outbound}" "${SB_NODE_NAME:-Hysteria2} ${key}") || return 1
+      user_name=$(jq -er --arg key "${key}" '
+        .id as $id |
+        [.authentication.users[] | select(("hy2-" + $id + "-user-" + (.name | @base64)) == $key)] |
+        select(length == 1) | .[0].name' <<< "${instance}") || return 1
+      address_label=$(node_display_address_label "$(jq -r '.listen.address' <<< "${instance}")" "$(jq -r '.server' <<< "${outbound}")") || return 1
+      node_name=$(structured_node_display_name hy2 "${snapshot}" "${instance_id}" "${user_name}" "${address_label}") || return 1
+      uri=$(build_hy2_uri_from_outbound "${outbound}" "${node_name}") || return 1
       links=$(jq -cn --argjson links "${links}" --arg key "${key}" --arg uri "${uri}" '$links + {($key):$uri}') || return 1
     done < <(jq -c '.[]' <<< "${outbounds}")
   else
@@ -34110,14 +34346,16 @@ show_node_info_action_menu() {
     render_menu_item "2" "导出 sing-box 裸核客户端配置"
     render_menu_item "3" "推送节点到 SubMan"
     render_menu_item "4" "设置或修改 SubMan 连接"
+    render_menu_item "5" "设置新实例的主机显示标签"
     echo "0. 返回"
-    node_info_choice=$(prompt_choice "请选择 [0-4]: " 0 4 "")
+    node_info_choice=$(prompt_choice "请选择 [0-5]: " 0 5 "")
 
     case "${node_info_choice}" in
       1) show_connection_info_menu ;;
       2) export_singbox_client_config || true ;;
       3) push_nodes_to_subman || true ;;
       4) configure_subman_interactive || true ;;
+      5) configure_node_naming_interactive || true ;;
       0) return ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac

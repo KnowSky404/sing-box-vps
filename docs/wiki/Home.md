@@ -10,6 +10,7 @@
 | 查询状态、更新或自动化操作 | [Agent 命令](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-CLI) · [运维手册](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-Runbook) |
 | 管理协议实例和高级组件 | [协议实例](https://github.com/KnowSky404/sing-box-vps/wiki/Protocol-Instances) · [高级组件](https://github.com/KnowSky404/sing-box-vps/wiki/Advanced-Components) |
 | 查找配置、日志、备份或排查故障 | [运行目录](https://github.com/KnowSky404/sing-box-vps/wiki/Runtime-Paths) · [注意事项](https://github.com/KnowSky404/sing-box-vps/wiki/Notes) · [事务与回滚](https://github.com/KnowSky404/sing-box-vps/wiki/Transactions) |
+| 规划实例、分享和 SubMan 节点名称 | [实例与节点命名](https://github.com/KnowSky404/sing-box-vps/wiki/Node-Naming.zh-CN) · [English](https://github.com/KnowSky404/sing-box-vps/wiki/Node-Naming) |
 | 确认节点 IPv4 / IPv6 选择规则 | [SubMan 地址选择规则与 spec](https://github.com/KnowSky404/sing-box-vps/wiki/SubMan-Address-Selection) |
 | 理解验证范围 | [数据面验证](https://github.com/KnowSky404/sing-box-vps/wiki/Data-Plane-Verification) · [历史验证记录](https://github.com/KnowSky404/sing-box-vps/wiki/Verification-History) |
 | 贡献代码、维护文档 | [开发工作流](https://github.com/KnowSky404/sing-box-vps/wiki/Development) |

@@ -6,6 +6,8 @@
 - [交互管理](https://github.com/KnowSky404/sing-box-vps/wiki/Management)
 - [Agent 命令](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-CLI)
 - [运维手册](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-Runbook)
+- [实例与节点命名](https://github.com/KnowSky404/sing-box-vps/wiki/Node-Naming.zh-CN)
+- [Instance and node naming](https://github.com/KnowSky404/sing-box-vps/wiki/Node-Naming)
 - [协议实例](https://github.com/KnowSky404/sing-box-vps/wiki/Protocol-Instances)
 - [高级组件](https://github.com/KnowSky404/sing-box-vps/wiki/Advanced-Components)
 - [HY2 自动证书](https://github.com/KnowSky404/sing-box-vps/wiki/HY2-ACME)
