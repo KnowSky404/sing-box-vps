@@ -2,7 +2,7 @@
 
 [English](unified-node-naming.md)
 
-状态：已实现，本地/mock 与目标核心验证记录见第 9 节。本文继续作为维护中的行为契约；真实 SubMan 节点 ID 与聚合成员保留、生产验收及 Wiki 发布是独立证据，本地结果不能证明其完成。范围和剩余验收边界见 [SPEC 状态索引](README.zh-CN.md)。
+状态：已实现并通过本文契约验收。第 9 节保留历史本地/mock 和目标核心检查，第 10 节记录真实应用/存储联调及已明确授权的生产 SubMan 身份与聚合保留验收。协议与事务契约分别见 [SPEC 状态索引](README.zh-CN.md)。
 
 ## 1. 问题与目标
 
@@ -185,3 +185,32 @@ snapshot 为调用方已经捕获、校验的不可变清单；不得逐用户�
 
 摘要上下文、结构化分享和默认名代码与 21 项补充检查对应内容未变，复用其结果。
 语法和文档检查也通过。最终完整分支审查和远程安全证据按精确 head 记录在 PR。
+
+## 10. 真实应用与已授权生产验收
+
+2026-10-30 使用 `tests/integration_subman_app.sh`、私密 helper 和带显式生产门禁的
+`tests/integration_subman_production.mjs` 完成命名及地址选择验收。
+
+隔离联调运行 SubMan 提交 `ed6fa5a9b353fb7cf355552eff16c63b417c01c2` 的真实 Worker
+HTTP 路由和 SQLite Durable Object，只有 GitHub Gist 传输使用隔离对端，不将其称为真实
+GitHub 联调。Shadowsocks、Trojan、VMess、普通 VLESS、HY2 五协议，各覆盖两个用户及
+IPv4/IPv6/具体监听地址，共生成 30 个由应用分配 ID 的节点。改名并同步后，30 个节点
+ID、外部键和聚合成员完全保持，Unicode URI/payload/存储名称一致，已有发布文件不变。
+观测到 revision 62、61 次 provider patch，没有非预期外部请求。Worker bundle SHA-256：
+`c4799325e1060a4cfd8cc5cf1ee67f342119d89948b41a3ebcdf3d838613662c`。
+
+所有者另行授权在既有生产 Workspace 验收。脚本先核对准确 Workspace、强 revision ETag
+及 GitHub 所有权，再创建六个带唯一前缀的 VMess 用户/地址候选和一个独立测试聚合。
+真实 by-key 改名同步后，六个远端 ID、外部键和聚合成员保持不变，原业务记录与发布文件
+内容不变。验收后只删除测试聚合和六个测试节点，原聚合保留。revision 从 19 增至 39，
+正常变更 tombstone 保留。该证据覆盖代表性的生产 VMess API/Gist 路径，不是生产代理
+VPS 部署，也不声称所有协议公网连接已通过。
+
+两个联调使用的冻结运行时 SHA-256 为
+`657ea370f56523445d4be5ecd8ce22d98b7864e3949fb8153a384d4ab87efaac`。
+之后的事务及 namespace 修改未改变命名、地址选择和同步函数，按 AGENTS.md 第 4.2 节
+复用这些结果。私密验收报告保留在
+`/tmp/sbv-subman-app-acceptance-20261030-final/acceptance.json` 与
+`/tmp/sbv-subman-production-acceptance-20261030/acceptance.json`；凭据和完整分享材料
+不是发布产物。生产 helper 不由普通测试组选择，写入前必须提供显式目标、私密凭据文件
+及生产验收标志。

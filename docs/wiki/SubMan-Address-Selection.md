@@ -86,3 +86,5 @@ HY2 使用同一套监听和地址族选择规则，不再通过通用“IPv4 �
 按 [AGENTS.md 第 4.2 节](https://github.com/KnowSky404/sing-box-vps/blob/main/AGENTS.md#42-测试边界与执行策略) 选择最小充分集合：公网 IP 探测的隔离测试、地址选择矩阵、受影响协议的 payload 与同步编排、SubMan API mock、语法、文档链接及版本一致性。修改配置生成或客户端导出内容时，对受影响输出执行 `sing-box check`；只有实际改变监听、网络或生命周期时才追加对应真实 Docker 场景。
 
 本地 mock、配置检查、隔离 Docker、真实 SubMan、公网链路和生产验收分别记录。此规范不是对真实 VPS 或 SubMan 数据的验收报告，也不以创建 PR 或更新版本为理由要求全量协议回归。
+
+2026-10-30 的补充验收已覆盖真实 SubMan 应用/SQLite 存储中的五协议、30 个用户/地址候选，以及明确授权的生产 Workspace 中六个 VMess 候选和独立测试聚合。改名后节点 ID、外部键及聚合成员保持，原业务和发布文件不变，临时数据已清理；具体监听、IPv4/IPv6 选择与本地 URI 名称一致性同时核对。冻结运行时、应用提交、生产范围及证据边界见[统一命名验收记录](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/unified-node-naming.zh-CN.md#10-真实应用与已授权生产验收)。该结果仍不代表生产代理主机或所有公网协议链路已部署验收。

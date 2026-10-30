@@ -1,5 +1,11 @@
 # 数据面验证
 
+Latest tracked acceptance and the exact namespace build limitation are recorded
+in the [2026-10-30 completion contract](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/full-protocol-completion.md)
+([中文](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/full-protocol-completion.zh-CN.md)).
+The dated slices below remain historical evidence rather than current blanket
+completion or missing-implementation claims.
+
 以下为各能力取得的历史验证证据及范围；不表示本轮重新执行。涉及本地开发工具的命令须在仓库根目录运行，先确认所需工具存在。
 
 ## HTTP outbound data-plane verification

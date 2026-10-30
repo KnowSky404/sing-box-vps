@@ -182,14 +182,28 @@ assert_line 'test=tests/fixture_source_test.sh' "${plan}"
 ! grep -Fqx 'test=tests/fixture_helper.sh' <<<"${plan}"
 assert_no_planning_side_effects
 
-# A container-only fixture cannot be reclassified as host-safe by a local group.
-plan=$(fixture_run --plan --changed-file tests/hy2_instance_acme_runtime.sh --group docs)
-assert_line 'plan_status=needs_scope' "${plan}"
-! grep -Fqx 'test=tests/hy2_instance_acme_runtime.sh' <<<"${plan}"
-plan=$(fixture_run --plan --changed-file tests/hy2_instance_acme_runtime.sh --scenario multi_protocol_coexistence)
-assert_line 'plan_status=needs_scope' "${plan}"
-plan=$(fixture_run --plan --changed-file tests/hy2_instance_acme_runtime.sh --full)
-assert_line 'plan_status=needs_scope' "${plan}"
+# Container-only fixtures must not reach the host through any selector.
+for fixture in tests/hy2_instance_acme_runtime.sh tests/component_runtime_acceptance.sh \
+  tests/selector_urltest_runtime.sh tests/acme_component_runtime.sh \
+  tests/cloudflared_runtime.sh tests/tailscale_openconnect_runtime.sh tests/namespace_core_runtime.sh; do
+  plan=$(fixture_run --plan --changed-file "${fixture}" --group docs)
+  assert_line 'plan_status=needs_scope' "${plan}"
+  ! grep -Fqx "test=${fixture}" <<<"${plan}"
+  plan=$(fixture_run --plan --changed-file "${fixture}" --scenario multi_protocol_coexistence)
+  assert_line 'plan_status=needs_scope' "${plan}"
+  plan=$(fixture_run --plan --changed-file "${fixture}" --full)
+  assert_line 'plan_status=needs_scope' "${plan}"
+  ! grep -Fqx "test=${fixture}" <<<"${plan}"
+done
+assert_no_planning_side_effects
+
+plan=$(fixture_run --plan --changed-file README.md --group binary-install --group warp)
+assert_line 'test=tests/binary_install_transactions.sh' "${plan}"
+assert_line 'test=tests/binary_update_transactions.sh' "${plan}"
+assert_line 'test=tests/binary_namespace_guard.sh' "${plan}"
+assert_line 'test=tests/latest_version_lookup.sh' "${plan}"
+assert_line 'test=tests/warp_registration_transactions.sh' "${plan}"
+! grep -q '^scenario=' <<<"${plan}"
 assert_no_planning_side_effects
 
 # Invalid selectors must fail before producing artifacts or executing any work.

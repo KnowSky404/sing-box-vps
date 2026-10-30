@@ -48,6 +48,8 @@ export PATH="${TMP_DIR}/bin:${PATH}"
 # shellcheck disable=SC1090
 source "${TESTABLE_INSTALL}"
 
+printf '{"inbounds":[]}\n' > "${SINGBOX_CONFIG_FILE}"
+
 get_os_info() { OS_NAME=debian; }
 get_arch() { ARCH=amd64; }
 install_dependencies() { :; }

@@ -45,6 +45,8 @@ export PATH="${TMP_DIR}/bin:${PATH}"
 # shellcheck disable=SC1090
 source "${TESTABLE_INSTALL}"
 
+printf '{"inbounds":[]}\n' > "${SINGBOX_CONFIG_FILE}"
+
 RESTART_COUNT=0
 SERVICE_STATE=active
 RECOVERY_RESTART_FAIL=n

@@ -43,7 +43,7 @@ bash dev/verification/run.sh --plan --base origin/main --group verification --sc
 bash dev/verification/run.sh --plan --base origin/main --full
 ```
 
-`--help` 列出支持的组和场景。组包括 `docs`、`version`、`bootstrap`、`menu`、`self-update`、`subman`、`verification` 和 `protocol:<协议>`。组只选择本地测试；服务、网络或生命周期变更仍需 `--scenario`。多个组/场景可重复指定，本地测试去重。`protocol:hy2` 与 `protocol:hysteria` 分别指 Hysteria2 和 Hysteria v1。
+`--help` 列出支持的组和场景。组包括 `docs`、`version`、`bootstrap`、`menu`、`self-update`、`binary-install`、`warp`、`subman`、`verification` 和 `protocol:<协议>`。`binary-install` 覆盖核心下载、版本查询及升级/回滚故障注入，`warp` 覆盖注册结果不确定、恢复和凭据保护。组只选择本地测试；服务、网络或生命周期变更仍需对应 Docker 验收。多个组/场景可重复指定，本地测试去重。`protocol:hy2` 与 `protocol:hysteria` 分别指 Hysteria2 和 Hysteria v1。
 
 `--base` 比较 `merge-base(ref, HEAD)` 到当前工作区，保留分支已提交改动以及暂存、未暂存、未跟踪文件；不会把仅上游新增的改动算作任务差异。默认不带 `--base` 时只看相对 HEAD 的工作区差异。`--changed-file <路径>...` 是工具显式输入，可重复，与 `--base` 互斥，不代表已经覆盖完整分支。
 
@@ -54,6 +54,10 @@ bash dev/verification/run.sh --plan --base origin/main --full
 场景根据本次运行已建立的状态补齐前置：独立 `runtime_smoke` 使用较轻的 `fresh_install_http`；VLESS 重配置需要 `fresh_install_vless` 基线；卸载验证先建立可核对旧 UUID 的 VLESS 安装；最终 smoke 在所有变更场景之后。若中途其他场景替换了安装，会重新准备必要基线，计划可能包含重复安装。现有大型场景尚未拆分，需在计划中确认额外覆盖，不能仅凭名称推断耗时很短。
 
 `--full` 运行的是 `selection.sh` 中的显式宿主安全清单和已注册场景，不等同于执行 `tests/` 下所有脚本，也不自动证明公网或外部服务行为。独立 `hy2_instance_acme_runtime.sh` 是 Pebble/私有 CA 容器 fixture，现有注册场景不调用它；直接修改它或静态引用它的 helper 时，调度器保持 `needs_scope`，即使 `--full` 也不能代替其独立隔离运行。保留该未完成边界并按专属容器流程验证，不要在宿主执行它。
+
+同样的宿主保护适用于 `component_runtime_acceptance.sh`、`selector_urltest_runtime.sh`、`acme_component_runtime.sh`、`namespace_core_runtime.sh`、`tailscale_openconnect_runtime.sh` 和 `cloudflared_runtime.sh`。它们要求新的可丢弃 Docker、显式标志及各自对端；生产 Cloudflared 还需要事先授权的专用临时资源和私密凭据文件。脚本或其 helper 发生变化时，计划保留独立隔离运行要求，普通组及 `--full` 均不能把它们当作宿主测试。具体范围、证据和条件见 [协议完成契约](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/full-protocol-completion.zh-CN.md)。
+
+`bash tests/integration_subman_app.sh` 使用 `SUBMAN_SOURCE_DIR` 指定的 SubMan 已提交源码及其锁定依赖，在 `/tmp` 构建隔离 Worker/SQLite 联调，GitHub 对端保持隔离。`integration_subman_production.mjs` 不由普通测试入口执行；必须明确授权目标、私密凭据文件和生产验收标志，只创建、修改和清理本轮独有测试节点/聚合，使用条件写入并核对原业务与发布文件。凭据与完整分享材料不进入公开证据。
 
 GitHub 对 `main` 启用 PR、线性历史和已解决审查对话保护，并对管理员生效，禁止强推和删除。仓库仅允许 rebase 合并，并自动删除已合并的远程分支。Codex 的审查结果目前写入 PR 评论，而非 GitHub 必需状态检查；GitHub 设置本身不会阻止在机器人审查完成前合并，因此执行者必须主动核对本地审查通过、当前 head 的远程安全审查完成且无未解决问题，远程代码审查不作为等待条件。
 

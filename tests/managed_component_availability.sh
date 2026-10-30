@@ -37,7 +37,11 @@ jq -e '
   any(.[]; .state_id == "hysteria-outbound" and .status == "available" and
     any(.dependencies[]; .name == "build_tag_with_quic" and .status == "available")) and
   any(.[]; .state_id == "cloudflared-inbound" and
-    .status == "unavailable" and .reason == "cloudflared_missing") and
+    .status == "not_assessed" and .reason == "external_auth_required" and
+    all(.dependencies[]; .name != "cloudflared")) and
+  any(.[]; .state_id == "tailscale-endpoint" and
+    .status == "not_assessed" and .reason == "external_auth_required" and
+    all(.dependencies[]; .name != "tailscale_daemon")) and
   any(.[]; .state_id == "openconnect-endpoint" and
     .status == "not_assessed" and .reason == "external_auth_required") and
   all(.[]; .static_availability != null)

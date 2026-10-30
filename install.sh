@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026103004
+# Version: 2026103005
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026103004"
+readonly SCRIPT_VERSION="2026103005"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -19,6 +19,7 @@ readonly SB_PROJECT_DIR="/root/sing-box-vps"
 readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
 readonly SB_KEY_FILE="${SB_PROJECT_DIR}/reality.key"
 readonly SB_WARP_KEY_FILE="${SB_PROJECT_DIR}/warp.key"
+readonly SB_WARP_REGISTRATION_PENDING_FILE="${SB_PROJECT_DIR}.warp-registration.pending.json"
 readonly SB_WARP_ROUTE_SETTINGS_FILE="${SB_PROJECT_DIR}/warp-routing.env"
 readonly SB_WARP_DOMAINS_FILE="${SB_PROJECT_DIR}/warp-domains.txt"
 readonly SB_WARP_REMOTE_RULESETS_FILE="${SB_PROJECT_DIR}/warp-remote-rule-sets.txt"
@@ -346,119 +347,218 @@ warp_client_id_to_reserved_json() {
 
 write_warp_credentials_atomic() (
   umask 077
-  local warp_id=${1:-}
-  local warp_token=${2:-}
-  local warp_priv_key=${3:-}
-  local warp_pub_key=${4:-}
-  local warp_v4=${5:-}
-  local warp_v6=${6:-}
-  local warp_client_id=${7:-}
-  local candidate
-
-  candidate=$(mktemp "${SB_PROJECT_DIR}/.warp.key.XXXXXX") || return 1
-  trap 'rm -f -- "${candidate}"' EXIT
-  if ! {
-    printf 'WARP_ID=%s\n' "${warp_id}"
-    printf 'WARP_TOKEN=%s\n' "${warp_token}"
-    printf 'WARP_PRIV_KEY=%s\n' "${warp_priv_key}"
-    printf 'WARP_PUB_KEY=%s\n' "${warp_pub_key}"
-    printf 'WARP_V4=%s\n' "${warp_v4}"
-    printf 'WARP_V6=%s\n' "${warp_v6}"
-    printf 'WARP_CLIENT_ID=%s\n' "${warp_client_id}"
-  } > "${candidate}"; then
-    return 1
+  local warp_id=${1:-} warp_token=${2:-} warp_priv_key=${3:-} warp_pub_key=${4:-}
+  local warp_v4=${5:-} warp_v6=${6:-} warp_client_id=${7:-}
+  local candidate='' backup_candidate='' rollback_candidate='' expected_hash old_hash='' committed=n complete=n target candidate_inode=''
+  warp_credentials_cleanup() {
+    local result=$?
+    if [[ "${committed}" != y && -n "${candidate_inode}" && -f "${SB_WARP_KEY_FILE}" && ! -L "${SB_WARP_KEY_FILE}" ]] &&
+       [[ "$(stat -c '%d:%i' "${SB_WARP_KEY_FILE}")" == "${candidate_inode}" ]]; then
+      committed=y
+    fi
+    if [[ "${committed}" == y && "${complete}" != y ]]; then
+      if [[ -n "${old_hash}" ]]; then
+        rollback_candidate=$(mktemp "${SB_PROJECT_DIR}/.warp.restore.XXXXXXXX") || return 2
+        if cp -- "${SB_WARP_KEY_FILE}.bak" "${rollback_candidate}" && chmod 600 "${rollback_candidate}" &&
+           mv -f -- "${rollback_candidate}" "${SB_WARP_KEY_FILE}" &&
+           [[ "$(sha256sum "${SB_WARP_KEY_FILE}")" == "${old_hash}" ]]; then
+          printf '[WARN] operation=warp_register stage=rollback rolled_back=true\n' >&2
+        else
+          printf '[ERROR] operation=warp_register stage=rollback rollback_ok=false manual_intervention_required=true\n' >&2
+          return 2
+        fi
+      else
+        rm -f -- "${SB_WARP_KEY_FILE}" || return 2
+      fi
+    fi
+    for target in "${candidate}" "${backup_candidate}" "${rollback_candidate}"; do
+      [[ -z "${target}" ]] || rm -f -- "${target}"
+    done
+    return "${result}"
+  }
+  trap warp_credentials_cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+  for target in "${SB_WARP_KEY_FILE}" "${SB_WARP_KEY_FILE}.bak"; do
+    [[ ! -L "${target}" && ( ! -e "${target}" || -f "${target}" ) ]] || return 1
+  done
+  candidate=$(mktemp "${SB_PROJECT_DIR}/.warp.key.XXXXXXXX") || return 1
+  {
+    printf 'WARP_ID=%q\n' "${warp_id}"
+    printf 'WARP_TOKEN=%q\n' "${warp_token}"
+    printf 'WARP_PRIV_KEY=%q\n' "${warp_priv_key}"
+    printf 'WARP_PUB_KEY=%q\n' "${warp_pub_key}"
+    printf 'WARP_V4=%q\n' "${warp_v4}"
+    printf 'WARP_V6=%q\n' "${warp_v6}"
+    printf 'WARP_CLIENT_ID=%q\n' "${warp_client_id}"
+  } > "${candidate}" || return 1
+  chmod 600 "${candidate}" && bash -n "${candidate}" || return 1
+  expected_hash=$(sha256sum < "${candidate}") || return 1
+  if [[ -f "${SB_WARP_KEY_FILE}" ]]; then
+    old_hash=$(sha256sum "${SB_WARP_KEY_FILE}") || return 1
+    backup_candidate=$(mktemp "${SB_PROJECT_DIR}/.warp.backup.XXXXXXXX") || return 1
+    cp -- "${SB_WARP_KEY_FILE}" "${backup_candidate}" && chmod 600 "${backup_candidate}" &&
+      mv -f -- "${backup_candidate}" "${SB_WARP_KEY_FILE}.bak" || return 1
   fi
-  chmod 600 "${candidate}" || return 1
+  candidate_inode=$(stat -c '%d:%i' "${candidate}") || return 1
   mv -f -- "${candidate}" "${SB_WARP_KEY_FILE}" || return 1
-  trap - EXIT
+  committed=y
+  [[ "$(sha256sum < "${SB_WARP_KEY_FILE}")" == "${expected_hash}" && "$(stat -c %a "${SB_WARP_KEY_FILE}")" == 600 ]] || return 1
+  complete=y
 )
 
-# Register Cloudflare Warp account
-register_warp() {
-  if [[ -f "${SB_WARP_KEY_FILE}" ]]; then
-    if grep -q '^WARP_CLIENT_ID=' "${SB_WARP_KEY_FILE}"; then
-      log_info "发现现有 Warp 账户信息，正在加载..."
-      return 0
-    fi
-
-    log_warn "发现旧版 Warp 账户信息缺少 client_id，正在自动重新注册..."
-  fi
-
-  log_info "正在注册 Cloudflare Warp 免费账户..."
-  local keypair priv_key pub_key
-  keypair=$(run_singbox_generate_command "wg-keypair" "WireGuard 密钥") || exit 1
-  priv_key=$(extract_generated_key_value "${keypair}" "private")
-  pub_key=$(extract_generated_key_value "${keypair}" "public")
-  
-  if [[ -z "${priv_key}" || -z "${pub_key}" || ${#priv_key} -lt 40 ]]; then
-    log_info "无法从 sing-box 提取合法密钥（原始输出未记录）。" >> "${SBV_LOG_FILE}"
-    log_error "WireGuard 密钥生成失败（格式非法），请查看 ${SBV_LOG_FILE}"
-  fi
-
-  local install_id=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
-  local tos_date=$(date -u +%FT%T.000Z)
-  
-  local url="https://api.cloudflareclient.com/v0a2445/reg"
-  local payload="{\"key\":\"${pub_key}\",\"install_id\":\"${install_id}\",\"fcm_token\":\"\",\"referrer\":\"\",\"warp_enabled\":false,\"tos\":\"${tos_date}\",\"type\":\"Linux\",\"locale\":\"en_US\"}"
-  
-  log_info "Warp 注册请求 URL: ${url}"
-  log_info "Warp 注册请求 Data (已脱敏): {\"install_id\":\"${install_id}\", ...}" >> "${SBV_LOG_FILE}"
-
-  local response curl_status curl_stderr_file
-  curl_stderr_file=$(mktemp "${TMPDIR:-/tmp}/sbv-warp-curl.XXXXXX") || {
-    log_error "Cloudflare API 请求准备失败，请查看 ${SBV_LOG_FILE}"
-  }
-  chmod 600 "${curl_stderr_file}" || {
-    rm -f -- "${curl_stderr_file}"
-    log_error "Cloudflare API 请求准备失败，请查看 ${SBV_LOG_FILE}"
-  }
-  if response=$(curl -sS --connect-timeout 10 --max-time 30 --retry 2 --retry-delay 1 \
-    -X POST "${url}" \
-    -H "User-Agent: okhttp/4.12.0" \
-    -H "Content-Type: application/json" \
-    -d "${payload}" 2>"${curl_stderr_file}"); then
-    curl_status=0
-  else
-    curl_status=$?
-  fi
-  if ! rm -f -- "${curl_stderr_file}"; then
-    log_error "Cloudflare API 请求清理失败，请查看 ${SBV_LOG_FILE}"
-  fi
-  if [[ ${curl_status} -ne 0 ]]; then
-    log_info "Warp 注册 API 请求失败（退出码 ${curl_status}；原始输出未记录）。" >> "${SBV_LOG_FILE}"
-    log_error "Cloudflare API 请求失败，请查看 ${SBV_LOG_FILE}"
-  fi
-
-  log_info "Warp 注册 API 已返回（敏感响应原文未记录）。" >> "${SBV_LOG_FILE}"
-
-  if [[ -z "${response}" ]]; then
-    log_error "Cloudflare API 无响应，请查看 ${SBV_LOG_FILE}"
-  fi
-
-  # Check success by existence of "id" field
-  local warp_id=$(echo "${response}" | jq -r '.id // empty')
-  if [[ -z "${warp_id}" || "${warp_id}" == "null" ]]; then
-    log_warn "收到非预期响应，详情请查看日志: ${SBV_LOG_FILE}"
-    log_error "Warp 注册失败（API 返回错误），请查看 ${SBV_LOG_FILE}"
-  fi
-
-  local warp_token warp_v4 warp_v6 warp_client_id
-  warp_token=$(echo "${response}" | jq -r '.token')
-  warp_v4=$(echo "${response}" | jq -r '.config.interface.addresses.v4')
-  warp_v6=$(echo "${response}" | jq -r '.config.interface.addresses.v6')
-  warp_client_id=$(echo "${response}" | jq -r '.config.client_id // empty')
-
-  if [[ -z "${warp_client_id}" || "${warp_client_id}" == "null" ]]; then
-    log_error "Warp 注册响应缺少 client_id，请查看 ${SBV_LOG_FILE}"
-  fi
-
-  if ! write_warp_credentials_atomic \
-    "${warp_id}" "${warp_token}" "${priv_key}" "${pub_key}" \
-    "${warp_v4}" "${warp_v6}" "${warp_client_id}"; then
-    log_error "Warp 账户信息保存失败，请查看 ${SBV_LOG_FILE}"
-  fi
-  log_success "Warp 账户注册成功。"
+warp_registration_response_valid() {
+  local response_file=$1 address client_id decoded
+  jq -e '
+    def bounded: type == "string" and length > 0 and utf8bytelength <= 4096 and
+      (test("[\\x00-\\x1f\\x7f]") | not);
+    type == "object" and (.id | bounded) and (.token | bounded) and
+    (.config.client_id | bounded) and
+    (.config.interface.addresses.v4 | bounded) and
+    (.config.interface.addresses.v6 | bounded)
+  ' "${response_file}" >/dev/null 2>&1 || return 1
+  address=$(jq -r '.config.interface.addresses.v4' "${response_file}") || return 1
+  [[ "${address}" != *:* ]] && structured_instance_store_validate_address "${address}" || return 1
+  address=$(jq -r '.config.interface.addresses.v6' "${response_file}") || return 1
+  [[ "${address}" == *:* ]] && structured_instance_store_validate_address "${address}" || return 1
+  client_id=$(jq -r '.config.client_id' "${response_file}") || return 1
+  decoded=$(printf '%s' "${client_id}" | base64 -d 2>/dev/null | od -An -t u1 -v) || return 1
+  [[ $(wc -w <<< "${decoded}") -eq 3 ]]
 }
+
+# The receipt lives beside the managed project so a configuration rollback
+# cannot discard evidence of a possibly completed external POST.
+register_warp() (
+  umask 077
+  local receipt="${SB_WARP_REGISTRATION_PENDING_FILE}"
+  local temp_dir='' keypair priv_key pub_key install_id tos_date http_status curl_status=0 phase
+  local response_file warp_id warp_token warp_v4 warp_v6 warp_client_id candidate='' target save_status
+    warp_registration_error() {
+    printf '[ERROR] operation=warp_register stage=%s code=%s changed=%s; %s\n' "$1" "$2" "${4:-false}" "$3" >&2
+    log_info "Warp 注册失败: $2（敏感响应原文未记录）。" >> "${SBV_LOG_FILE}"
+  }
+  warp_registration_cleanup() {
+    local result=$?
+    [[ -z "${candidate}" ]] || rm -f -- "${candidate}"
+    [[ -z "${temp_dir}" ]] || rm -rf -- "${temp_dir}"
+    return "${result}"
+  }
+  trap warp_registration_cleanup EXIT
+  trap 'warp_registration_error interrupted signal_interrupted "注册被中断；若请求已发送，恢复材料保留在 ${receipt}，禁止自动重复注册。"; exit 130' INT
+  trap 'warp_registration_error interrupted signal_interrupted "注册被中断；若请求已发送，恢复材料保留在 ${receipt}，禁止自动重复注册。"; exit 143' TERM
+  trap 'warp_registration_error interrupted signal_interrupted "注册被中断；若请求已发送，恢复材料保留在 ${receipt}，禁止自动重复注册。"; exit 129' HUP
+
+  for target in "${SB_WARP_KEY_FILE}" "${SB_WARP_KEY_FILE}.bak" "${receipt}"; do
+    if [[ -L "${target}" || ( -e "${target}" && ! -f "${target}" ) ]]; then
+      warp_registration_error precheck unsafe_target '凭据或恢复路径不是普通文件，未发送请求。'
+      return 1
+    fi
+  done
+  candidate=''
+  mkdir -p -- "${SB_PROJECT_DIR}" || return $?
+  if [[ ! -e "${receipt}" && -f "${SB_WARP_KEY_FILE}" ]] && grep -Eq '^WARP_CLIENT_ID=.+$' "${SB_WARP_KEY_FILE}"; then
+    warp_client_id=$(sed -n 's/^WARP_CLIENT_ID=//p' "${SB_WARP_KEY_FILE}") || return 1
+    if [[ ! "${warp_client_id}" =~ ^[A-Za-z0-9+/]{4}$ ]]; then
+      warp_registration_error precheck invalid_saved_credentials '现有 client_id 无效；未发送注册请求。'
+      return 1
+    fi
+    log_info '发现现有 Warp 账户信息，正在加载...'
+    return 0
+  fi
+  temp_dir=$(mktemp -d "${SB_PROJECT_DIR}.warp-register.XXXXXXXX") || return $?
+  response_file="${temp_dir}/response.json"
+  if [[ -f "${receipt}" ]]; then
+    phase=$(jq -er 'select(.schema == 1) | .phase' "${receipt}" 2>/dev/null) || phase=unknown
+    if [[ "${phase}" != received ]]; then
+      warp_registration_error precheck remote_outcome_unknown "已有未对账注册请求；保留 ${receipt}，本次没有重复 POST。"
+      return 1
+    fi
+    priv_key=$(jq -er '.private_key | strings | select(length > 0)' "${receipt}") || return 1
+    pub_key=$(jq -er '.public_key | strings | select(length > 0)' "${receipt}") || return 1
+    [[ ${#priv_key} -eq 44 && ${#pub_key} -eq 44 && "${priv_key}" =~ ^[A-Za-z0-9+/]+=$ && "${pub_key}" =~ ^[A-Za-z0-9+/]+=$ ]] || {
+      warp_registration_error validate invalid_recovery '恢复密钥格式无效，保留现场且没有重复 POST。'; return 1;
+    }
+    jq -e '.response' "${receipt}" > "${response_file}" || return 1
+    warp_registration_response_valid "${response_file}" || {
+      warp_registration_error validate invalid_recovery '恢复材料无效，保留现场且没有重复 POST。'; return 1;
+    }
+    log_info '正在恢复已收到的 Warp 注册结果；本次没有重复 POST。'
+  else
+    if [[ -f "${SB_WARP_KEY_FILE}" ]]; then
+      log_warn '发现旧版 Warp 账户信息缺少 client_id，正在重新注册...'
+    fi
+    keypair=$(run_singbox_generate_command wg-keypair 'WireGuard 密钥') || return $?
+    priv_key=$(extract_generated_key_value "${keypair}" private) || return 1
+    pub_key=$(extract_generated_key_value "${keypair}" public) || return 1
+    [[ ${#priv_key} -eq 44 && ${#pub_key} -eq 44 && "${priv_key}" =~ ^[A-Za-z0-9+/]+=$ && "${pub_key}" =~ ^[A-Za-z0-9+/]+=$ ]] || {
+      warp_registration_error prepare invalid_keypair 'WireGuard 密钥格式无效，未发送请求。'; return 1;
+    }
+    install_id=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid) || return 1
+    tos_date=$(date -u +%FT%T.000Z) || return 1
+    jq -cn --arg key "${pub_key}" --arg id "${install_id}" --arg tos "${tos_date}" \
+      '{key:$key,install_id:$id,fcm_token:"",referrer:"",warp_enabled:false,tos:$tos,type:"Linux",locale:"en_US"}' \
+      > "${temp_dir}/request.json" || return 1
+    jq -cn --arg private "${priv_key}" --arg public "${pub_key}" --arg id "${install_id}" \
+      '{schema:1,phase:"sent",private_key:$private,public_key:$public,install_id:$id}' \
+      > "${temp_dir}/receipt.json" || return 1
+    # noclobber serializes registration attempts without replacing recovery data.
+    if (set -o noclobber; cat "${temp_dir}/receipt.json" > "${receipt}") 2>/dev/null; then
+      :
+    else
+      warp_registration_error prepare registration_pending '已有注册请求，未发送第二次请求。'; return 1
+    fi
+    log_info '正在注册 Cloudflare Warp 免费账户...'
+    # POST is deliberately never automatically retried: timeout/5xx may follow
+    # an accepted registration. Keep the receipt for operator reconciliation.
+    http_status=$(curl -sS --connect-timeout 10 --max-time 30 --max-filesize 1048576 \
+      -X POST 'https://api.cloudflareclient.com/v0a2445/reg' \
+      -H 'User-Agent: okhttp/4.12.0' -H 'Content-Type: application/json' \
+      --data-binary "@${temp_dir}/request.json" -o "${response_file}" -w '%{http_code}' \
+      2> >(head -c "${SBV_CURL_STDERR_MAX_BYTES}" > "${temp_dir}/curl.stderr"; cat >/dev/null)) || curl_status=$?
+    if [[ ${curl_status} -ne 0 ]]; then
+      # DNS/connect failure cannot have sent an HTTP request. Other outcomes are
+      # uncertain, so the receipt survives to prevent accidental duplicate POSTs.
+      if [[ ${curl_status} -eq 6 || ${curl_status} -eq 7 ]]; then
+        rm -f -- "${receipt}" || return 1
+      fi
+      warp_registration_error request "transport_${curl_status}" 'Warp 注册 API 请求失败；未更改凭据，原始输出未记录，结果不确定时保留恢复材料。'
+      return "${curl_status}"
+    fi
+    if [[ ! "${http_status}" =~ ^2[0-9][0-9]$ ]]; then
+      if [[ "${http_status}" =~ ^4[0-9][0-9]$ ]]; then rm -f -- "${receipt}" || return 1; fi
+      warp_registration_error request "http_${http_status:-unavailable}" 'Warp 注册失败（API 返回错误）；未更改凭据，敏感响应原文未记录。'
+      return 1
+    fi
+    if ! warp_registration_response_valid "${response_file}"; then
+      warp_registration_error validate invalid_response '注册响应缺失或不完整；未更改凭据，保留恢复材料且禁止自动重复 POST。'
+      return 1
+    fi
+    candidate=$(mktemp "${receipt}.XXXXXXXX") || return 1
+    jq --slurpfile response "${response_file}" '.phase="received" | .response=$response[0]' \
+      "${receipt}" > "${candidate}" || return 1
+    chmod 600 "${candidate}" && mv -f -- "${candidate}" "${receipt}" || return 1
+    candidate=''
+  fi
+  warp_id=$(jq -r '.id' "${response_file}") || return 1
+  warp_token=$(jq -r '.token' "${response_file}") || return 1
+  warp_v4=$(jq -r '.config.interface.addresses.v4' "${response_file}") || return 1
+  warp_v6=$(jq -r '.config.interface.addresses.v6' "${response_file}") || return 1
+  warp_client_id=$(jq -r '.config.client_id' "${response_file}") || return 1
+  if write_warp_credentials_atomic "${warp_id}" "${warp_token}" "${priv_key}" "${pub_key}" "${warp_v4}" "${warp_v6}" "${warp_client_id}"; then
+    :
+  else
+    save_status=$?
+    warp_registration_error commit credentials_save_failed "请检查凭据最终状态；注册结果已保留在 ${receipt}，再次执行将仅重试保存。" unknown
+    return "${save_status}"
+  fi
+  if ! rm -f -- "${receipt}"; then
+    printf '[ERROR] operation=warp_register stage=cleanup code=cleanup_failed changed=true; 凭据已提交，恢复材料尚未清理。\n' >&2
+    return 1
+  fi
+  log_info 'Warp 注册 API 已返回（敏感响应原文未记录）。' >> "${SBV_LOG_FILE}"
+  log_success 'Warp 账户注册成功。'
+)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -1532,6 +1632,49 @@ component_environment_dependency_json() {
       (if $reason == "" then {} else {reason:$reason} end)'
 }
 
+namespace_runtime_build_dependency_json() {
+  local platform=${1:-} architecture=${2:-} version=${3:-} tags_status=${4:-} tags=${5:-'[]'}
+  local status=available reason=''
+  # This is the exact build reproduced with SIGSEGV on locked-thread exit.
+  # Unknown tags remain unassessed; do not infer the purego tag from CGO alone.
+  if [[ "${platform}" == Linux && ( "${architecture}" == aarch64 || "${architecture}" == arm64 ) && "${version}" == 1.14.2 ]]; then
+    if [[ "${tags_status}" != available ]]; then
+      status=not_assessed; reason=namespace_runtime_build_not_assessed
+    elif jq -en --argjson tags "${tags}" '$tags | index("with_purego") != null' >/dev/null; then
+      status=unavailable; reason=namespace_runtime_unsafe_build
+    fi
+  fi
+  component_environment_dependency_json namespace_runtime_build "${status}" "${reason}" true
+}
+
+managed_component_record_uses_namespace() {
+  jq -e '.enabled == true and
+    ((.role == "network_namespace" and (.type == "default" or .type == "unshare")) or
+     any([.config.netns?, .config.control_dialer.netns?, .config.tunnel_dialer.netns?,
+           .config.http_client.netns?, .config.realm.http_client.netns?][];
+       type == "string" and length > 0))' >/dev/null <<< "${1:-}"
+}
+
+managed_component_namespace_runtime_safe() {
+  local state=${1:-} version tags='[]' tags_status=not_assessed dependency
+  if ! jq -e 'any(.components[]; .enabled == true and
+      ((.role == "network_namespace" and (.type == "default" or .type == "unshare")) or
+       any([.config.netns?, .config.control_dialer.netns?, .config.tunnel_dialer.netns?,
+             .config.http_client.netns?, .config.realm.http_client.netns?][];
+         type == "string" and length > 0)))' >/dev/null <<< "${state}"; then return 0; fi
+  version=$(detect_installed_singbox_version 2>/dev/null || true)
+  if tags=$(detect_installed_singbox_build_tags_json 2>/dev/null); then tags_status=available; else tags='[]'; fi
+  dependency=$(namespace_runtime_build_dependency_json "$(uname -s)" "$(uname -m)" "${version}" "${tags_status}" "${tags}") || return 1
+  case "$(jq -r .status <<< "${dependency}")" in
+    unavailable)
+      printf '[ERROR] namespace_runtime_unsafe_build: 当前核心构建的 namespace 路径存在已复现崩溃；配置未发布，请使用已验证的兼容构建。\n' >&2
+      return 1 ;;
+    not_assessed)
+      printf '[ERROR] namespace_runtime_build_not_assessed: 无法确认当前核心构建的 namespace 兼容性；配置未发布。\n' >&2
+      return 3 ;;
+  esac
+}
+
 component_runtime_library_available() {
   local search_path candidate managed_library_path
   managed_library_path=$(singbox_library_path) || return 1
@@ -1593,6 +1736,7 @@ detect_installed_singbox_build_tags_json() {
 component_registry_environment_probe() {
   local state_id=${1:-} role=${2:-} type=${3:-} minimum=${4:-} availability=${5:-}
   local platform core_version core_status=unavailable core_reason=sing_box_binary_missing
+  local namespace_dependency
   local overall=unavailable overall_reason=sing_box_binary_missing dependency_rows=()
   local root_status=available
   local command_status command_reason build_tag build_tags_json='[]'
@@ -1685,20 +1829,8 @@ component_registry_environment_probe() {
         component_add_dependency platform unavailable tproxy_linux_only true || return 1
       fi
       ;;
-    cloudflared)
-      if command -v cloudflared >/dev/null 2>&1; then
-        component_add_dependency cloudflared available '' true || return 1
-      else
-        component_add_dependency cloudflared unavailable cloudflared_missing true || return 1
-      fi
-      ;;
-    tailscale)
-      if command -v tailscale >/dev/null 2>&1; then
-        command_status=available; command_reason=''
-      else
-        command_status=unavailable; command_reason=tailscale_binary_missing
-      fi
-      component_add_dependency tailscale_daemon "${command_status}" "${command_reason}" true || return 1
+    cloudflared|tailscale)
+      # Both runtimes are embedded in the core behind their build tags.
       component_add_dependency external_auth not_assessed external_auth_required true || return 1
       ;;
     openconnect)
@@ -1720,6 +1852,13 @@ component_registry_environment_probe() {
         component_add_dependency libcronet available '' true || return 1
       else
         component_add_dependency libcronet unavailable libcronet_missing true || return 1
+      fi
+      ;;
+    default|unshare)
+      if [[ "${role}" == network_namespace ]]; then
+        namespace_dependency=$(namespace_runtime_build_dependency_json "${platform}" "$(uname -m)" "${core_version}" "${build_tags_status}" "${build_tags_json}") || return 1
+        component_add_dependency namespace_runtime_build "$(jq -r .status <<< "${namespace_dependency}")" \
+          "$(jq -r '.reason // ""' <<< "${namespace_dependency}")" true || return 1
       fi
       ;;
     resolved)
@@ -1777,9 +1916,9 @@ component_registry_environment_probe() {
 }
 
 component_registry_environment_bulk_json() {
-  local static platform core_version core_probe_reason
-  local root_ok=false ip_ok=false transparent_ok=false cloudflared_ok=false
-  local tailscale_ok=false tor_ok=false libcronet_ok=false
+  local static platform core_version core_probe_reason namespace_dependency
+  local root_ok=false ip_ok=false transparent_ok=false
+  local tor_ok=false libcronet_ok=false
   local dbus_ok=false
   local core_tags_json='[]' core_tags_status=unavailable core_tags_reason=sing_box_binary_missing tag_status
 
@@ -1819,17 +1958,16 @@ component_registry_environment_bulk_json() {
   [[ "${EUID}" -eq 0 ]] && root_ok=true
   command -v ip >/dev/null 2>&1 && ip_ok=true
   (command -v iptables >/dev/null 2>&1 || command -v nft >/dev/null 2>&1) && transparent_ok=true
-  command -v cloudflared >/dev/null 2>&1 && cloudflared_ok=true
-  command -v tailscale >/dev/null 2>&1 && tailscale_ok=true
   command -v tor >/dev/null 2>&1 && tor_ok=true
   component_runtime_library_available && libcronet_ok=true || :
   [[ -S /run/dbus/system_bus_socket || -S /var/run/dbus/system_bus_socket ]] && dbus_ok=true
 
+  namespace_dependency=$(namespace_runtime_build_dependency_json "${platform}" "$(uname -m)" "${core_version}" "${core_tags_status}" "${core_tags_json}") || return 1
   jq -cn --argjson registry "${static}" --arg platform "${platform}" \
+    --argjson namespace_dependency "${namespace_dependency}" \
     --arg core_version "${core_version}" --arg core_probe_reason "${core_probe_reason}" \
     --argjson root_ok "${root_ok}" --argjson ip_ok "${ip_ok}" \
-    --argjson transparent_ok "${transparent_ok}" --argjson cloudflared_ok "${cloudflared_ok}" \
-    --argjson tailscale_ok "${tailscale_ok}" --argjson tor_ok "${tor_ok}" \
+    --argjson transparent_ok "${transparent_ok}" --argjson tor_ok "${tor_ok}" \
     --argjson libcronet_ok "${libcronet_ok}" --argjson dbus_ok "${dbus_ok}" \
     --arg tags_status "${core_tags_status}" \
     --arg tags_reason "${core_tags_reason}" --argjson core_tags "${core_tags_json}" '
@@ -1887,12 +2025,7 @@ component_registry_environment_bulk_json() {
          else unavailable("transparent_rule_tool"; "transparent_rule_tool_missing"; true) end),
         (if .type == "tproxy" and $platform != "Linux" then
            [unavailable("platform"; "tproxy_linux_only"; true)] else [] end)
-      elif .type == "cloudflared" then
-        (if $cloudflared_ok then available("cloudflared"; true)
-         else unavailable("cloudflared"; "cloudflared_missing"; true) end)
-      elif .type == "tailscale" then
-        (if $tailscale_ok then available("tailscale_daemon"; true)
-         else unavailable("tailscale_daemon"; "tailscale_binary_missing"; true) end),
+      elif .type == "cloudflared" or .type == "tailscale" then
         not_assessed("external_auth"; "external_auth_required"; true)
       elif .type == "openconnect" or .type == "openvpn-client" or .type == "openvpn-server" then
         not_assessed("external_auth"; "external_auth_required"; true)
@@ -1902,6 +2035,8 @@ component_registry_environment_bulk_json() {
       elif .role == "outbound" and .type == "naive" then
         (if $libcronet_ok then available("libcronet"; true)
          else unavailable("libcronet"; "libcronet_missing"; true) end)
+      elif .role == "network_namespace" then
+        $namespace_dependency
       elif .type == "resolved" then
         (if $platform == "Linux" then []
          else [unavailable("platform"; "resolved_linux_only"; true)] end),
@@ -1947,6 +2082,7 @@ component_registry_environment_json() {
 # remain not_assessed in the base observation.
 managed_component_instance_environment_json() {
   local record=${1:-} base=${2:-} role type config state_id registry_record minimum availability
+  local namespace_dependency
   local dependencies status reason system_mode=internal requires_root=false
   local requires_tun_device=false requires_gvisor=false tags_status tags_reason tags='[]'
   local dependency_name dependency_status dependency_reason dependency_item requirements
@@ -2032,6 +2168,13 @@ managed_component_instance_environment_json() {
     fi
   }
 
+  if [[ "${role}" != network_namespace ]] && managed_component_record_uses_namespace "${record}"; then
+    namespace_dependency=$(namespace_runtime_build_dependency_json \
+      "$(jq -r '.platform.name // "unknown"' <<< "${base}")" "$(uname -m)" \
+      "$(jq -r '.core.version // ""' <<< "${base}")" "${tags_status}" "${tags}") || return 1
+    instance_add_dependency namespace_runtime_build "$(jq -r .status <<< "${namespace_dependency}")" \
+      "$(jq -r '.reason // ""' <<< "${namespace_dependency}")" || return 1
+  fi
   if [[ "${requires_root}" == true ]]; then
     if [[ "${EUID}" -eq 0 ]]; then
       instance_add_dependency root available '' || return 1
@@ -8187,8 +8330,16 @@ install_protocols_interactive() {
     if ! protocol_array_contains vless-reality "${selected_protocols[@]}"; then
       install_dependencies || return $?
     fi
-    get_latest_version
-    install_binary
+    local lookup_status=0
+    get_latest_version || lookup_status=$?
+    if [[ ${lookup_status} -ne 0 ]]; then
+      rollback_managed_state_snapshot "${snapshot_dir}" || log_warn '版本查询中断且状态恢复失败，请检查事务快照。'
+      return "${lookup_status}"
+    fi
+    if ! install_binary; then
+      abort_managed_state_transaction "${snapshot_dir}" "sing-box 核心准备或安装失败"
+      return 1
+    fi
   else
     migrate_legacy_single_protocol_state_if_needed recover-incomplete-index || return 1
     load_current_config_state
@@ -8881,7 +9032,7 @@ create_media_check_warp_proxy_config() {
   local proxy_port=$2
   local w_key w_v4 w_v6 w_client_id w_reserved='[]'
 
-  register_warp
+  register_warp || return $?
 
   w_key=$(grep "WARP_PRIV_KEY" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
   w_v4=$(grep "WARP_V4" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
@@ -12204,137 +12355,406 @@ install_dependencies() {
 }
 
 # --- Sing-box Manager ---
-get_latest_version() {
-  if [[ "${SB_VERSION}" == "latest" ]]; then
-    log_info "正在获取最新版本号..."
-    local latest_tag
-    latest_tag=$(run_with_progress "获取 sing-box 版本信息" curl -fsS --connect-timeout 10 --max-time 30 "https://api.github.com/repos/SagerNet/sing-box/releases/latest" | jq -r .tag_name | sed 's/^v//') || latest_tag=""
-    if [[ -z "${latest_tag}" || "${latest_tag}" == "null" ]]; then
-      SB_VERSION="${SB_SUPPORT_MAX_VERSION}"
-    else
-      SB_VERSION="${latest_tag}"
-      if [[ "${SB_VERSION}" != "${SB_SUPPORT_MAX_VERSION}" ]]; then
-        log_warn "注意：最新版本 (${SB_VERSION}) 高于适配版本 (${SB_SUPPORT_MAX_VERSION})，可能存在兼容性风险。"
-        sleep 2
-      fi
+query_latest_singbox_release() (
+  umask 077
+  local temp_dir='' http_status='' curl_status=0 latest_tag='' failure=''
+  trap '[[ -z "${temp_dir}" ]] || rm -rf -- "${temp_dir}"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+  temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/sbv-version-query.XXXXXXXX") || return 1
+  if http_status=$(curl -sS --connect-timeout 10 --max-time 30 --max-filesize 1048576 \
+    -o "${temp_dir}/response.json" -w '%{http_code}' \
+    'https://api.github.com/repos/SagerNet/sing-box/releases/latest' \
+    2> >(head -c "${SBV_CURL_STDERR_MAX_BYTES}" > "${temp_dir}/curl.stderr"; cat >/dev/null)); then
+    if [[ ! "${http_status}" =~ ^2[0-9][0-9]$ ]]; then
+      failure="http_${http_status:-unavailable}"
+    elif ! latest_tag=$(jq -ser 'select(length == 1) | .[0] | select(type == "object") | .tag_name | strings | select(test("^v?[0-9]+\\.[0-9]+\\.[0-9]+$"))' "${temp_dir}/response.json" 2>/dev/null); then
+      failure=invalid_release_response
     fi
+  else
+    curl_status=$?
+    case "${curl_status}" in
+      129|130|143) return "${curl_status}" ;;
+      6) failure=dns_failure ;;
+      7) failure=connection_failed ;;
+      18) failure=partial_transfer ;;
+      28) failure=timeout ;;
+      *) failure="transport_${curl_status}" ;;
+    esac
+  fi
+  if ! rm -rf -- "${temp_dir}"; then failure=cleanup_failed; fi
+  temp_dir=''
+  jq -cn --arg version "${latest_tag#v}" --arg code "${failure}" --arg http "${http_status}" \
+    '{version:$version,code:$code,http_status:$http}'
+)
+
+get_latest_version() {
+  [[ "${SB_VERSION}" == latest ]] || return 0
+  local result failure='' query_status=0
+  SB_LATEST_VERSION_LOOKUP_STATUS=unavailable
+  SB_LATEST_VERSION_LOOKUP_CODE=prepare_failed
+  SB_LATEST_VERSION_LOOKUP_HTTP_STATUS=''
+  result=$(query_latest_singbox_release) || query_status=$?
+  case "${query_status}" in
+    129|130|143)
+      SB_LATEST_VERSION_LOOKUP_CODE=signal_interrupted
+      printf '[WARN] operation=version_lookup code=signal_interrupted changed=false; 已取消，未选择安装版本。\n' >&2
+      return "${query_status}"
+      ;;
+    0)
+      failure=$(jq -er '.code | strings' <<< "${result}") || failure=invalid_query_result
+      SB_LATEST_VERSION_LOOKUP_HTTP_STATUS=$(jq -r '.http_status' <<< "${result}") || return 1
+      ;;
+    *) failure=prepare_failed ;;
+  esac
+  if [[ -n "${failure}" ]]; then
+    SB_LATEST_VERSION_LOOKUP_CODE=${failure}
+    SB_VERSION="${SB_SUPPORT_MAX_VERSION}"
+    log_warn "版本查询 unavailable: ${failure}；使用适配版本 ${SB_SUPPORT_MAX_VERSION}，响应原文未记录。"
+    return 0
+  fi
+  SB_VERSION=$(jq -er '.version | strings' <<< "${result}") || return 1
+  SB_LATEST_VERSION_LOOKUP_STATUS=available
+  SB_LATEST_VERSION_LOOKUP_CODE=''
+  if [[ "${SB_VERSION}" != "${SB_SUPPORT_MAX_VERSION}" ]] && singbox_version_at_least "${SB_VERSION}" "${SB_SUPPORT_MAX_VERSION}"; then
+    log_warn "最新版本 (${SB_VERSION}) 高于适配版本 (${SB_SUPPORT_MAX_VERSION})，可能存在兼容性风险。"
   fi
 }
 
 replace_singbox_binary_atomically() {
-  local source_file=$1
-  local target_dir
-  local staged_binary=""
+  singbox_atomic_file_copy "${1:-}" "${SINGBOX_BIN_PATH}" "${2:-0755}"
+}
 
-  [[ -f "${source_file}" ]] || return 1
-  target_dir=$(dirname "${SINGBOX_BIN_PATH}")
-  [[ -d "${target_dir}" ]] || return 1
-  staged_binary=$(mktemp "${target_dir}/.sing-box.restore.XXXXXXXX") || return 1
+singbox_atomic_file_copy() (
+  local source_file=${1:-} target_file=${2:-} mode=${3:-0755} staged=''
+  [[ -f "${source_file}" && ! -L "${source_file}" ]] || return 1
+  [[ ! -e "${target_file}" || -f "${target_file}" ]] && [[ ! -L "${target_file}" ]] || return 1
+  [[ -d "$(dirname "${target_file}")" ]] || return 1
+  staged=$(mktemp "$(dirname "${target_file}")/.$(basename "${target_file}").restore.XXXXXXXX") || return 1
+  trap '[[ -z "${staged}" ]] || rm -f -- "${staged}"' EXIT
+  cp -p -- "${source_file}" "${staged}" || return $?
+  chmod "${mode}" "${staged}" || return $?
+  mv -f -- "${staged}" "${target_file}" || return $?
+  staged=''
+)
 
-  if ! cp -p -- "${source_file}" "${staged_binary}" ||
-     ! chmod 0755 "${staged_binary}" ||
-     ! mv -f -- "${staged_binary}" "${SINGBOX_BIN_PATH}"; then
-    rm -f -- "${staged_binary}"
-    return 1
-  fi
+singbox_file_matches_backup() {
+  local target=$1 backup=$2
+  [[ -f "${target}" && ! -L "${target}" && -f "${backup}" ]] || return 1
+  cmp -s -- "${target}" "${backup}" || return 1
+  [[ "$(stat -c '%a:%u:%g' -- "${target}")" == "$(stat -c '%a:%u:%g' -- "${backup}")" ]]
 }
 
 restore_singbox_update_artifacts() {
-  local binary_backup=$1
-  local library_backup_dir=$2
-  local status=0
-
-  if ! replace_singbox_binary_atomically "${binary_backup}"; then
+  local binary_backup=$1 library_backup_dir=$2 mode status=0 lib_path state target backup
+  mode=$(stat -c '%a' -- "${binary_backup}") || return 1
+  if ! replace_singbox_binary_atomically "${binary_backup}" "${mode}" ||
+     ! singbox_file_matches_backup "${SINGBOX_BIN_PATH}" "${binary_backup}"; then
     status=1
   fi
   if ! singbox_library_restore_snapshot "${library_backup_dir}"; then
     status=1
   fi
+  lib_path=$(singbox_library_path) || return 1
+  for target in "${lib_path}" "${SB_NAIVE_LIBRARY_MARKER}"; do
+    if [[ "${target}" == "${lib_path}" ]]; then
+      state=$(cat "${library_backup_dir}/library.state") || return 1
+      backup="${library_backup_dir}/libcronet.so"
+    else
+      state=$(cat "${library_backup_dir}/marker.state") || return 1
+      backup="${library_backup_dir}/libcronet.sha256"
+    fi
+    case "${state}" in
+      present)
+        mode=$(stat -c '%a' "${backup}") || return 1
+        if ! singbox_atomic_file_copy "${backup}" "${target}" "${mode}" ||
+           ! singbox_file_matches_backup "${target}" "${backup}"; then status=1; fi
+        ;;
+      absent) [[ ! -e "${target}" && ! -L "${target}" ]] || status=1 ;;
+      unmanaged) ;;
+      *) return 1 ;;
+    esac
+  done
   return "${status}"
 }
 
-install_binary() {
-  local download_url="https://github.com/SagerNet/sing-box/releases/download/v${SB_VERSION}/sing-box-${SB_VERSION}-linux-${ARCH}.tar.gz"
-  local temp_dir="/tmp/sing-box-install"
-  local bin_path
-  local lib_source
-  local lib_path
-  local lib_dir
-  local staged_lib
-  local staged_marker
-  
-  # Ensure we are in a valid directory before cleanup/extraction
-  cd /tmp
-  
-  # Cleanup before start
-  rm -rf "${temp_dir}"
-  mkdir -p "${temp_dir}"
-  
-  log_info "开始下载 sing-box ${SB_VERSION}..."
-  if ! wget -O "${temp_dir}/sb.tar.gz" "${download_url}"; then
-    log_error "下载 sing-box 失败。"
-  fi
-  
-  log_info "正在解压并安装..."
-  if ! tar -xzf "${temp_dir}/sb.tar.gz" -C "${temp_dir}"; then
-    log_error "解压失败。"
-  fi
-  
-  bin_path=$(find "${temp_dir}" -name "sing-box" -type f -print -quit)
-  if [[ -z "${bin_path}" ]]; then
-    log_error "找不到 sing-box 二进制文件。"
-  fi
-  
-  if ! replace_singbox_binary_atomically "${bin_path}"; then
-    log_error "安装 sing-box 二进制失败。"
-  fi
+validate_singbox_release_archive() {
+  local archive=$1 root=$2 manifest=$3 verbose=$4 entry kind binary_count=0 library_count=0
+  tar -tzf "${archive}" > "${manifest}" 2>/dev/null || return 1
+  tar -tvzf "${archive}" > "${verbose}" 2>/dev/null || return 1
+  while IFS= read -r entry; do
+    [[ "${entry}" == "${root}/" || "${entry}" == "${root}" ||
+       ( "${entry}" == "${root}/"* && "${entry#"${root}/"}" =~ ^[A-Za-z0-9._/-]+$ ) ]] || return 1
+    [[ "/${entry}/" != *'/../'* && "/${entry}/" != *'/./'* && "${entry}" != *'//'* ]] || return 1
+    [[ "${entry}" != "${root}/sing-box" ]] || binary_count=$((binary_count + 1))
+    [[ "${entry}" != "${root}/libcronet.so" ]] || library_count=$((library_count + 1))
+  done < "${manifest}"
+  while IFS= read -r entry; do
+    kind=${entry:0:1}
+    [[ "${kind}" == - || "${kind}" == d ]] || return 1
+  done < "${verbose}"
+  [[ "${binary_count}" == 1 && "${library_count}" -le 1 ]]
+}
 
-  # Official Linux pure-Go archives include the optional libcronet runtime
-  # beside the binary.  Keep a managed copy in the sibling lib directory so
-  # NaiveProxy client outbounds can load it without relying on an extracted
-  # temporary archive.  An unowned existing library is never overwritten.
-  lib_source=$(find "${temp_dir}" -name "libcronet.so" -type f -print -quit)
-  if [[ -n "${lib_source}" ]]; then
-    lib_path=$(singbox_library_path) || log_error "无法确定 libcronet.so 安装路径。"
-    lib_dir=$(dirname "${lib_path}")
+singbox_binary_version_matches() {
+  local binary=$1 expected=$2 output first_line
+  [[ -f "${binary}" && ! -L "${binary}" && -x "${binary}" ]] || return 1
+  output=$(timeout 10 "${binary}" version 2>/dev/null) || return 1
+  first_line=${output%%$'\n'*}
+  [[ "${first_line}" == "sing-box version ${expected}" ]]
+}
+
+# Validate the candidate, rather than the old installed core, before an update
+# can replace a compatible namespace runtime with a known-crashing build.
+singbox_candidate_namespace_runtime_safe() {
+  local binary=$1 version=$2 namespace_use output tags_line tags='[]' tags_status=not_assessed dependency probe_status=0
+  [[ -e "${SINGBOX_CONFIG_FILE}" ]] || return 0
+  [[ -f "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" ]] || return 3
+  namespace_use=$(jq -sr 'if length != 1 or (.[0] | type) != "object" then error("invalid_configuration") else .[0] |
+    (((.network_namespaces // []) | length) > 0 or
+     any([.inbounds[]?, .outbounds[]?, .endpoints[]?, .http_clients[]?,
+           .dns.servers[]?, .services[]?, .route.rule_set[]?, .certificate_providers[]?][];
+       any([.netns?, .control_dialer.netns?, .tunnel_dialer.netns?, .http_client.netns?,
+             .realm.http_client.netns?][];
+         type == "string" and length > 0))) end' \
+    "${SINGBOX_CONFIG_FILE}" 2>/dev/null) || return 3
+  [[ "${namespace_use}" == true ]] || return 0
+  [[ "$(uname -s)" == Linux && ( "$(uname -m)" == aarch64 || "$(uname -m)" == arm64 ) && "${version}" == 1.14.2 ]] || return 0
+  output=$(timeout 10 "${binary}" version 2>/dev/null) || probe_status=$?
+  case "${probe_status}" in 129|130|143) return "${probe_status}" ;; esac
+  if [[ "${probe_status}" == 0 ]]; then
+    tags_line=$(printf '%s\n' "${output}" | sed -n 's/^Tags:[[:space:]]*//p') || return 2
+    if [[ "${output}" == *$'\nTags:'* && "${tags_line}" != *$'\n'* ]] &&
+       tags=$(jq -enc --arg line "${tags_line}" '$line |
+         if . == "" then [] else split(",") | map(gsub("^[[:space:]]+|[[:space:]]+$"; "")) end |
+         select(all(.[]; test("^[A-Za-z0-9][A-Za-z0-9_.+\\-]{0,127}$"))) |
+         select(length == (unique | length))'); then
+      tags_status=available
+    fi
+  fi
+  dependency=$(namespace_runtime_build_dependency_json Linux arm64 "${version}" "${tags_status}" "${tags}") || return 2
+  case "$(jq -r .status <<< "${dependency}")" in
+    available) return 0 ;;
+    unavailable) return 1 ;;
+    *) return 2 ;;
+  esac
+}
+
+install_binary() (
+  umask 077
+  local expected_version=${SB_VERSION#v} root download_url target_dir temp_dir=''
+  local staged_binary='' staged_lib='' staged_marker='' lib_path='' lib_dir=''
+  local binary_before=n lib_before=n marker_before=n manage_library=n publish_started=n changed=false
+  local stage=prepare failure_code=install_failed rollback_ok=true preserve=false status=0
+  local curl_pid='' collector_pid='' curl_status=0 candidate_hash='' library_hash='' mode
+  local binary_metadata='' library_metadata='' marker_metadata='' binary_identity=''
+  local current_version=unavailable version_output='' namespace_status=0
+
+  binary_install_finish() {
+    local operation_status=$1 cleanup_status=0 rollback_status=0 path
+    trap - EXIT INT TERM HUP
+    for path in "${curl_pid}" "${collector_pid}"; do
+      if [[ -n "${path}" ]] && kill -0 "${path}" 2>/dev/null; then
+        if kill "${path}" 2>/dev/null; then :; fi
+        if wait "${path}" 2>/dev/null; then :; fi
+      fi
+    done
+    if [[ "${operation_status}" != 0 && "${publish_started}" == y ]]; then
+      if [[ "${binary_before}" == y ]]; then
+        if ! singbox_file_matches_backup "${SINGBOX_BIN_PATH}" "${temp_dir}/binary.before" ||
+           [[ "$(stat -c '%d:%i' "${SINGBOX_BIN_PATH}" 2>/dev/null)" != "${binary_identity}" ]]; then changed=true; fi
+        mode=$(stat -c '%a' "${temp_dir}/binary.before") || rollback_status=1
+        if ! replace_singbox_binary_atomically "${temp_dir}/binary.before" "${mode:-0755}" ||
+           ! singbox_file_matches_backup "${SINGBOX_BIN_PATH}" "${temp_dir}/binary.before"; then rollback_status=1; fi
+      elif [[ -e "${SINGBOX_BIN_PATH}" || -L "${SINGBOX_BIN_PATH}" ]]; then
+        changed=true
+        rm -f -- "${SINGBOX_BIN_PATH}" || rollback_status=1
+      fi
+      if [[ "${manage_library}" == y ]]; then
+        for path in "${lib_path}" "${SB_NAIVE_LIBRARY_MARKER}"; do
+          if [[ "${path}" == "${lib_path}" ]]; then
+            mode=0644
+            if [[ "${lib_before}" == y ]]; then
+              mode=$(stat -c '%a' "${temp_dir}/library.before") || rollback_status=1
+              if ! singbox_atomic_file_copy "${temp_dir}/library.before" "${path}" "${mode}" ||
+                 ! singbox_file_matches_backup "${path}" "${temp_dir}/library.before"; then rollback_status=1; fi
+            else rm -f -- "${path}" || rollback_status=1; fi
+          else
+            mode=0600
+            if [[ "${marker_before}" == y ]]; then
+              mode=$(stat -c '%a' "${temp_dir}/marker.before") || rollback_status=1
+              if ! singbox_atomic_file_copy "${temp_dir}/marker.before" "${path}" "${mode}" ||
+                 ! singbox_file_matches_backup "${path}" "${temp_dir}/marker.before"; then rollback_status=1; fi
+            else rm -f -- "${path}" || rollback_status=1; fi
+          fi
+        done
+      fi
+      if [[ "${rollback_status}" != 0 ]]; then rollback_ok=false; preserve=true; fi
+    fi
+    for path in "${staged_binary}" "${staged_lib}" "${staged_marker}"; do
+      [[ -z "${path}" ]] || rm -f -- "${path}" || cleanup_status=1
+    done
+    if [[ -n "${temp_dir}" && "${preserve}" != true ]]; then
+      rm -rf -- "${temp_dir}" || cleanup_status=1
+    fi
+    if [[ "${operation_status}" != 0 ]]; then
+      printf '[ERROR] operation=install_binary stage=%s code=%s command_exit_code=%s changed=%s rollback_attempted=%s rolled_back=%s rollback_ok=%s manual_intervention_required=%s current_version=%s candidate_version=%s target_path=%s log_file=%s message=安装事务失败 detail=诊断原文未记录 hint=检查阶段和错误代码，回滚失败时使用保留的恢复材料\n' \
+        "${stage}" "${failure_code}" "${operation_status}" "${changed}" \
+        "$([[ "${publish_started}" == y ]] && printf true || printf false)" \
+        "$([[ "${changed}" == true && "${publish_started}" == y && "${rollback_ok}" == true ]] && printf true || printf false)" \
+        "$([[ "${publish_started}" == y && "${rollback_ok}" == true ]] && printf true || printf false)" \
+        "${preserve}" "${current_version}" \
+        "$([[ "${expected_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && printf '%s' "${expected_version}" || printf unavailable)" \
+        "${SINGBOX_BIN_PATH}" "${SBV_LOG_FILE}" >&2
+      [[ "${preserve}" != true ]] || printf '[ERROR] binary recovery material: %s\n' "${temp_dir}" >&2
+    elif [[ "${cleanup_status}" != 0 ]]; then
+      printf '[ERROR] operation=install_binary stage=cleanup code=cleanup_failed changed=%s recovery=%s\n' "${changed}" "${temp_dir}" >&2
+      operation_status=1
+    else
+      log_success "二进制文件安装成功并已清理临时文件。"
+    fi
+    exit "${operation_status}"
+  }
+  trap 'binary_install_finish "$?"' EXIT
+  trap 'failure_code=signal_interrupted; exit 130' INT
+  trap 'failure_code=signal_interrupted; exit 143' TERM
+  trap 'failure_code=signal_interrupted; exit 129' HUP
+
+  [[ "${expected_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "${ARCH:-}" =~ ^(amd64|arm64)$ ]] || { failure_code=invalid_release; return 1; }
+  target_dir=$(dirname "${SINGBOX_BIN_PATH}") || return 1
+  [[ -d "${target_dir}" && ! -L "${SINGBOX_BIN_PATH}" ]] || { failure_code=unsafe_binary_target; return 1; }
+  [[ ! -e "${SINGBOX_BIN_PATH}" || -f "${SINGBOX_BIN_PATH}" ]] || { failure_code=unsafe_binary_target; return 1; }
+  if [[ -x "${SINGBOX_BIN_PATH}" ]] && version_output=$(timeout 10 "${SINGBOX_BIN_PATH}" version 2>/dev/null); then
+    version_output=${version_output%%$'\n'*}
+    if [[ "${version_output}" =~ ^sing-box\ version\ ([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then current_version=${BASH_REMATCH[1]}; fi
+  fi
+  temp_dir=$(mktemp -d "${target_dir}/.sing-box-install.XXXXXXXX") || return 1
+  root="sing-box-${expected_version}-linux-${ARCH}"
+  download_url="https://github.com/SagerNet/sing-box/releases/download/v${expected_version}/${root}.tar.gz"
+  stage=download
+  log_info "开始下载 sing-box ${expected_version}..."
+  mkfifo "${temp_dir}/stderr.pipe" || return 1
+  (head -c "${SBV_CURL_STDERR_MAX_BYTES}" > "${temp_dir}/download.stderr"; cat >/dev/null) < "${temp_dir}/stderr.pipe" &
+  collector_pid=$!
+  curl -fsSL --connect-timeout "${SBV_CURL_CONNECT_TIMEOUT}" --max-time "${SBV_CURL_MAX_TIME}" \
+    --retry "${SBV_CURL_RETRY_COUNT}" --retry-delay "${SBV_CURL_RETRY_DELAY}" --retry-max-time "${SBV_CURL_MAX_TIME}" \
+    -o "${temp_dir}/release.tar.gz" "${download_url}" 2> "${temp_dir}/stderr.pipe" &
+  curl_pid=$!
+  if wait "${curl_pid}"; then curl_status=0; else curl_status=$?; fi
+  curl_pid=''
+  if ! wait "${collector_pid}"; then failure_code=diagnostic_capture_failed; return 1; fi
+  collector_pid=''
+  if [[ "${curl_status}" != 0 ]]; then
+    failure_code=$(classify_sbv_download_error "${curl_status}")
+    return "${curl_status}"
+  fi
+  stage=validate
+  failure_code=invalid_archive
+  [[ -s "${temp_dir}/release.tar.gz" ]] || return 1
+  validate_singbox_release_archive "${temp_dir}/release.tar.gz" "${root}" "${temp_dir}/manifest" "${temp_dir}/verbose" || return 1
+  mkdir "${temp_dir}/extract" || return 1
+  tar -xzf "${temp_dir}/release.tar.gz" -C "${temp_dir}/extract" --no-same-owner --no-same-permissions \
+    -- "${root}/sing-box" 2>/dev/null || return 1
+  [[ -f "${temp_dir}/extract/${root}/sing-box" && ! -L "${temp_dir}/extract/${root}/sing-box" ]] || return 1
+  staged_binary=$(mktemp "${target_dir}/.sing-box.restore.XXXXXXXX") || return 1
+  cp -- "${temp_dir}/extract/${root}/sing-box" "${staged_binary}" || return 1
+  chmod 0755 "${staged_binary}" || return 1
+  failure_code=unexpected_binary_version
+  singbox_binary_version_matches "${staged_binary}" "${expected_version}" || return 1
+  singbox_candidate_namespace_runtime_safe "${staged_binary}" "${expected_version}" || namespace_status=$?
+  if [[ "${namespace_status}" != 0 ]]; then
+    case "${namespace_status}" in
+      1) failure_code=namespace_runtime_unsafe_build ;;
+      2) failure_code=namespace_runtime_build_not_assessed ;;
+      129|130|143) failure_code=signal_interrupted ;;
+      *) failure_code=namespace_configuration_unavailable ;;
+    esac
+    return "${namespace_status}"
+  fi
+  candidate_hash=$(sha256sum "${staged_binary}") || return 1
+  candidate_hash=${candidate_hash%% *}
+  lib_path=$(singbox_library_path) || return 1
+  lib_dir=$(dirname "${lib_path}") || return 1
+  if grep -Fqx "${root}/libcronet.so" "${temp_dir}/manifest"; then
     if [[ -e "${lib_path}" && ! -f "${SB_NAIVE_LIBRARY_MARKER}" ]]; then
       log_warn "发现未由 sbv 管理的 ${lib_path}，保留现有文件并跳过 libcronet.so 替换。"
     else
-      if ! mkdir -p "${lib_dir}"; then
-        log_error "创建 libcronet.so 目录失败。"
-      fi
-      staged_lib=$(mktemp "${lib_dir}/.libcronet.XXXXXXXX") || \
-        log_error "创建 libcronet.so staging 文件失败。"
-      if ! cp -p -- "${lib_source}" "${staged_lib}" ||
-         ! chmod 0644 "${staged_lib}" ||
-         ! mv -f -- "${staged_lib}" "${lib_path}"; then
-        rm -f -- "${staged_lib}"
-        log_error "安装 libcronet.so 失败。"
-      fi
-      staged_marker=$(mktemp "${SB_NAIVE_LIBRARY_MARKER}.XXXXXXXX") || \
-        log_error "创建 libcronet.so 标记文件失败。"
-      if ! sha256sum "${lib_path}" | awk '{print $1}' > "${staged_marker}" ||
-         ! chmod 600 "${staged_marker}" ||
-         ! mv -f -- "${staged_marker}" "${SB_NAIVE_LIBRARY_MARKER}"; then
-        rm -f -- "${staged_marker}"
-        log_error "提交 libcronet.so 标记文件失败。"
-      fi
-      if command -v ldconfig >/dev/null 2>&1; then
-        if ! ldconfig; then
-          log_warn "ldconfig 未能刷新 libcronet.so 缓存；运行 NaiveProxy 客户端时请设置 LD_LIBRARY_PATH=${lib_dir}。"
-        fi
-      else
-        log_warn "未找到 ldconfig；运行 NaiveProxy 客户端时请设置 LD_LIBRARY_PATH=${lib_dir}。"
-      fi
+      failure_code=unsafe_library_target
+      [[ ! -L "${lib_path}" && ! -L "${SB_NAIVE_LIBRARY_MARKER}" ]] || return 1
+      [[ ! -e "${lib_path}" || -f "${lib_path}" ]] || return 1
+      [[ ! -e "${SB_NAIVE_LIBRARY_MARKER}" || -f "${SB_NAIVE_LIBRARY_MARKER}" ]] || return 1
+      mkdir -p "${lib_dir}" "${SB_PROJECT_DIR}" || return 1
+      tar -xzf "${temp_dir}/release.tar.gz" -C "${temp_dir}/extract" --no-same-owner --no-same-permissions \
+        -- "${root}/libcronet.so" 2>/dev/null || return 1
+      [[ -s "${temp_dir}/extract/${root}/libcronet.so" && ! -L "${temp_dir}/extract/${root}/libcronet.so" ]] || return 1
+      staged_lib=$(mktemp "${lib_dir}/.libcronet.install.XXXXXXXX") || return 1
+      cp -- "${temp_dir}/extract/${root}/libcronet.so" "${staged_lib}" || return 1
+      chmod 0644 "${staged_lib}" || return 1
+      library_hash=$(sha256sum "${staged_lib}") || return 1
+      library_hash=${library_hash%% *}
+      staged_marker=$(mktemp "${SB_PROJECT_DIR}/.libcronet-marker.install.XXXXXXXX") || return 1
+      printf '%s\n' "${library_hash}" > "${staged_marker}" || return 1
+      chmod 0600 "${staged_marker}" || return 1
+      manage_library=y
     fi
   else
     log_warn "下载归档未包含 libcronet.so；NaiveProxy 客户端运行时依赖仍不可用。"
   fi
-
-  # Final Cleanup
-  rm -rf "${temp_dir}"
-  log_success "二进制文件安装成功并已清理临时文件。"
-}
+  stage=backup
+  failure_code=backup_failed
+  if [[ -f "${SINGBOX_BIN_PATH}" ]]; then
+    cp -p -- "${SINGBOX_BIN_PATH}" "${temp_dir}/binary.before" || return 1
+    singbox_file_matches_backup "${SINGBOX_BIN_PATH}" "${temp_dir}/binary.before" || return 1
+    chown --reference="${temp_dir}/binary.before" "${staged_binary}" || return 1
+    binary_identity=$(stat -c '%d:%i' "${SINGBOX_BIN_PATH}") || return 1
+    binary_before=y
+  fi
+  if [[ "${manage_library}" == y ]]; then
+    if [[ -f "${lib_path}" ]]; then
+      cp -p -- "${lib_path}" "${temp_dir}/library.before" || return 1
+      singbox_file_matches_backup "${lib_path}" "${temp_dir}/library.before" || return 1
+      chown --reference="${temp_dir}/library.before" "${staged_lib}" || return 1
+      lib_before=y
+    fi
+    if [[ -f "${SB_NAIVE_LIBRARY_MARKER}" ]]; then
+      cp -p -- "${SB_NAIVE_LIBRARY_MARKER}" "${temp_dir}/marker.before" || return 1
+      singbox_file_matches_backup "${SB_NAIVE_LIBRARY_MARKER}" "${temp_dir}/marker.before" || return 1
+      chown --reference="${temp_dir}/marker.before" "${staged_marker}" || return 1
+      marker_before=y
+    fi
+    library_metadata=$(stat -c '%a:%u:%g' "${staged_lib}") || return 1
+    marker_metadata=$(stat -c '%a:%u:%g' "${staged_marker}") || return 1
+  fi
+  binary_metadata=$(stat -c '%a:%u:%g' "${staged_binary}") || return 1
+  stage=commit
+  failure_code=publish_failed
+  publish_started=y
+  mv -f -- "${staged_binary}" "${SINGBOX_BIN_PATH}" || return 1
+  changed=true
+  if [[ "${manage_library}" == y ]]; then
+    mv -f -- "${staged_lib}" "${lib_path}" || return 1
+    mv -f -- "${staged_marker}" "${SB_NAIVE_LIBRARY_MARKER}" || return 1
+  fi
+  stage=postcheck
+  failure_code=postcheck_failed
+  [[ ! -L "${SINGBOX_BIN_PATH}" && "$(sha256sum "${SINGBOX_BIN_PATH}" | awk '{print $1}')" == "${candidate_hash}" &&
+     "$(stat -c '%a:%u:%g' "${SINGBOX_BIN_PATH}")" == "${binary_metadata}" ]] || return 1
+  singbox_binary_version_matches "${SINGBOX_BIN_PATH}" "${expected_version}" || return 1
+  if [[ "${manage_library}" == y ]]; then
+    [[ ! -L "${lib_path}" && ! -L "${SB_NAIVE_LIBRARY_MARKER}" &&
+       "$(sha256sum "${lib_path}" | awk '{print $1}')" == "${library_hash}" &&
+       "$(cat "${SB_NAIVE_LIBRARY_MARKER}")" == "${library_hash}" &&
+       "$(stat -c '%a:%u:%g' "${lib_path}")" == "${library_metadata}" &&
+       "$(stat -c '%a:%u:%g' "${SB_NAIVE_LIBRARY_MARKER}")" == "${marker_metadata}" ]] || return 1
+    if command -v ldconfig >/dev/null 2>&1; then
+      if ! ldconfig; then log_warn "ldconfig 未能刷新 libcronet.so 缓存；运行 NaiveProxy 客户端时请设置 LD_LIBRARY_PATH=${lib_dir}。"; fi
+    else
+      log_warn "未找到 ldconfig；运行 NaiveProxy 客户端时请设置 LD_LIBRARY_PATH=${lib_dir}。"
+    fi
+  fi
+  stage=cleanup
+)
 
 setup_service() {
   log_info "配置 systemd 服务..."
@@ -20703,6 +21123,24 @@ managed_component_unowned_tag_collision() {
   ' <<< "${state}" 2>/dev/null
 }
 
+managed_component_network_namespaces_accessible() {
+  local state=${1:-} paths path
+  paths=$(jq -r '.components[] | select(.enabled == true and .role == "network_namespace" and .type == "default") | .config.path' <<< "${state}") || return 1
+  [[ -n "${paths}" ]] || return 0
+  if ! command -v nsenter >/dev/null 2>&1 || ! command -v timeout >/dev/null 2>&1; then
+    printf '[ERROR] network_namespace_unavailable: namespace 预检工具不可用；配置未发布。\n' >&2
+    return 1
+  fi
+  while IFS= read -r path; do
+    # Reject FIFOs/devices before opening an operator-supplied path. A valid
+    # namespace handle (including /proc/PID/ns/net) is a regular nsfs file.
+    if [[ ! -f "${path}" ]] || ! timeout 5 nsenter --net="${path}" -- /bin/true >/dev/null 2>&1; then
+      printf '[ERROR] network_namespace_unavailable: namespace 不存在或无法访问；配置未发布。\n' >&2
+      return 1
+    fi
+  done <<< "${paths}"
+}
+
 managed_component_state_apply() {
   local operation=${1:-} expected=${2:-} input=${3:-} target_id=${4:-} allow_public=${5:-n}
   local state current_revision record candidate snapshot service_restarted=false state_changed=true
@@ -20825,6 +21263,23 @@ managed_component_state_apply() {
 
   if ! managed_component_state_core_features_supported "${candidate}"; then
     MANAGED_COMPONENT_LAST_ERROR=component_feature_unsupported
+    return 1
+  fi
+  local namespace_build_status=0
+  managed_component_namespace_runtime_safe "${candidate}" || namespace_build_status=$?
+  if [[ "${namespace_build_status}" != 0 ]]; then
+    if [[ "${namespace_build_status}" == 3 ]]; then
+      MANAGED_COMPONENT_LAST_ERROR=namespace_runtime_build_not_assessed
+    else
+      MANAGED_COMPONENT_LAST_ERROR=namespace_runtime_unsafe_build
+    fi
+    return 1
+  fi
+  # check accepts unresolved namespace paths. Verify only the enabled candidate
+  # before journaling/publishing so an inaccessible path cannot stop the core.
+  # A delete may still remove an unavailable namespace from the candidate.
+  if ! managed_component_network_namespaces_accessible "${candidate}"; then
+    MANAGED_COMPONENT_LAST_ERROR=network_namespace_unavailable
     return 1
   fi
   old_redirect_policy_plan=$(managed_component_redirect_host_policy_plan_json "${state}") || {
@@ -33456,6 +33911,9 @@ agent_component_cli() {
       component_transaction_begin_failed|component_transaction_write_failed) agent_json_error component_transaction_failed "高级组件持久事务日志写入失败；未报告成功。" ;;
       component_cleanup_failed) agent_json_error component_cleanup_failed "组件已提交，但持久事务目录清理失败；请执行 component recover。" ;;
       component_feature_unsupported) agent_json_error component_feature_unsupported "当前 sing-box 核心版本未知或不支持远程规则集 http_client；未修改。" ;;
+      network_namespace_unavailable) agent_json_error network_namespace_unavailable "默认 network namespace 不存在、无法访问或预检工具缺失；未修改配置或状态。" ;;
+      namespace_runtime_unsafe_build) agent_json_error namespace_runtime_unsafe_build "当前核心构建的 namespace 路径存在已复现崩溃；请安装已验证的兼容构建，配置和状态未修改。" ;;
+      namespace_runtime_build_not_assessed) agent_json_error namespace_runtime_build_not_assessed "无法确认当前核心构建的 namespace 兼容性；请提供可解析的构建信息，配置和状态未修改。" ;;
       host_policy_state_invalid|host_policy_preflight_failed) agent_json_error host_policy_preflight_failed "Redirect 主机策略状态或 iptables/接口预检失败；未修改。" ;;
       host_policy_requires_active_service) agent_json_error host_policy_requires_active_service "首次启用 Redirect 主机策略前必须已有 active sing-box 服务；未修改。" ;;
       host_policy_journal_failed) agent_json_error host_policy_journal_failed "Redirect 主机策略事务日志准备失败；未报告成功。" ;;
@@ -33502,6 +33960,9 @@ agent_component_cli() {
       component_transaction_begin_failed|component_transaction_write_failed) agent_json_error component_transaction_failed "高级组件持久事务日志写入失败；未报告成功。" ;;
       component_cleanup_failed) agent_json_error component_cleanup_failed "组件已提交，但持久事务目录清理失败；请执行 component recover。" ;;
       component_feature_unsupported) agent_json_error component_feature_unsupported "当前 sing-box 核心版本未知或不支持远程规则集 http_client；未修改。" ;;
+      network_namespace_unavailable) agent_json_error network_namespace_unavailable "默认 network namespace 不存在、无法访问或预检工具缺失；未修改配置或状态。" ;;
+      namespace_runtime_unsafe_build) agent_json_error namespace_runtime_unsafe_build "当前核心构建的 namespace 路径存在已复现崩溃；请安装已验证的兼容构建，配置和状态未修改。" ;;
+      namespace_runtime_build_not_assessed) agent_json_error namespace_runtime_build_not_assessed "无法确认当前核心构建的 namespace 兼容性；请提供可解析的构建信息，配置和状态未修改。" ;;
       host_policy_state_invalid|host_policy_preflight_failed) agent_json_error host_policy_preflight_failed "Redirect 主机策略状态或 iptables/接口预检失败；未修改。" ;;
       host_policy_requires_active_service) agent_json_error host_policy_requires_active_service "首次启用 Redirect 主机策略前必须已有 active sing-box 服务；未修改。" ;;
       host_policy_journal_failed) agent_json_error host_policy_journal_failed "Redirect 主机策略事务日志准备失败；未报告成功。" ;;
@@ -33555,6 +34016,9 @@ agent_component_cli() {
     instance_transaction_pending) agent_json_error instance_transaction_pending "存在未完成的实例事务；请先完成 instance recover。" ;;
     public_confirmation_required) agent_json_error confirmation_required "公开监听或隧道组件需要 --allow-public；未修改。" ;;
     component_feature_unsupported) agent_json_error component_feature_unsupported "当前 sing-box 核心版本未知或不支持远程规则集 http_client；未修改。" ;;
+    network_namespace_unavailable) agent_json_error network_namespace_unavailable "默认 network namespace 不存在、无法访问或预检工具缺失；未修改配置或状态。" ;;
+    namespace_runtime_unsafe_build) agent_json_error namespace_runtime_unsafe_build "当前核心构建的 namespace 路径存在已复现崩溃；请安装已验证的兼容构建，配置和状态未修改。" ;;
+    namespace_runtime_build_not_assessed) agent_json_error namespace_runtime_build_not_assessed "无法确认当前核心构建的 namespace 兼容性；请提供可解析的构建信息，配置和状态未修改。" ;;
     host_policy_state_invalid|host_policy_preflight_failed) agent_json_error host_policy_preflight_failed "Redirect 主机策略状态或 iptables/接口预检失败；未修改。" ;;
     host_policy_requires_active_service) agent_json_error host_policy_requires_active_service "首次启用 Redirect 主机策略前必须已有 active sing-box 服务；未修改。" ;;
     host_policy_journal_failed) agent_json_error host_policy_journal_failed "Redirect 主机策略事务日志准备失败；未报告成功。" ;;
@@ -39230,8 +39694,8 @@ ensure_takeover_validation_binary() {
     resolve_takeover_binary_repair_version
     get_os_info
     get_arch
-    install_dependencies
-    install_binary
+    install_dependencies || return $?
+    install_binary || return $?
   fi
 }
 
@@ -39256,120 +39720,115 @@ install_or_reconfigure_singbox() {
 }
 
 update_singbox_binary_preserving_config() {
-  local installed_ver
-  local installed_target_ver
-  local reinstall_choice
-  local binary_backup=""
-  local library_backup_dir=""
-  local before_service_state
-  local restore_status=0
+  local installed_ver installed_target_ver reinstall_choice before_service_state
+  local backup_dir='' binary_backup='' library_backup_dir='' status=0 rollback_status=0
+  local previous_int previous_term previous_hup update_signal_status=0 service_attempted=n changed=false
+  local stage=prepare failure_code=update_failed mode library_path library_state marker_state
 
-  installed_ver=$("${SINGBOX_BIN_PATH}" version | head -n1 | awk '{print $3}')
-  get_os_info
-  get_arch
-  install_dependencies
-  if config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; then
-    SB_ENABLE_WARP="y"
-  else
-    SB_ENABLE_WARP="n"
-  fi
-  load_warp_route_settings
-
+  installed_ver=$(detect_installed_singbox_version) || return 1
+  [[ "${installed_ver}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  get_os_info || return $?
+  get_arch || return $?
+  install_dependencies || return $?
+  if config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; then SB_ENABLE_WARP=y; else SB_ENABLE_WARP=n; fi
+  load_warp_route_settings || return $?
   log_info "检测到现有安装，默认仅更新 sing-box 二进制并保留当前配置。"
-  echo -e "当前版本: ${installed_ver}"
-
-  if [[ -z "${SB_VERSION:-}" ]]; then
-    prompt_singbox_version
+  printf '当前版本: %s\n' "${installed_ver}"
+  if [[ -z "${SB_VERSION:-}" ]]; then prompt_singbox_version || return $?; fi
+  get_latest_version || return $?
+  if [[ "${SB_VERSION#v}" == "${installed_ver}" ]]; then
+    read -rp "目标版本与当前版本一致 (${installed_ver})，是否仍重新安装二进制? [y/N]: " reinstall_choice || return 1
+    [[ "${reinstall_choice}" =~ ^[Yy]$ ]] || return 0
   fi
-  get_latest_version
-
-  if [[ "${SB_VERSION}" == "${installed_ver}" ]]; then
-    read -rp "目标版本与当前版本一致 (${installed_ver})，是否仍重新安装二进制? [y/N]: " reinstall_choice
-    if [[ ! "${reinstall_choice}" =~ ^[Yy]$ ]]; then
-      return 0
-    fi
-  fi
-
   before_service_state=$(systemctl is-active sing-box 2>/dev/null || true)
-
-  if ! binary_backup=$(mktemp); then
-    log_error "创建 sing-box 二进制临时备份失败，已取消更新。"
-  fi
-  if ! cp -p "${SINGBOX_BIN_PATH}" "${binary_backup}"; then
-    rm -f "${binary_backup}"
-    log_error "备份现有 sing-box 二进制失败，已取消更新。"
-  fi
-  if ! library_backup_dir=$(mktemp -d); then
-    rm -f "${binary_backup}"
-    log_error "创建 libcronet.so 临时备份失败，已取消更新。"
-  fi
-  if ! singbox_library_snapshot "${library_backup_dir}"; then
-    rm -f "${binary_backup}"
-    rm -rf "${library_backup_dir}"
-    log_error "备份 libcronet.so 运行时状态失败，已取消更新。"
-  fi
-
-  install_binary
-
-  installed_target_ver=$(detect_installed_singbox_version)
-  installed_target_ver=${installed_target_ver#v}
-  if [[ -z "${installed_target_ver}" || "${installed_target_ver}" != "${SB_VERSION#v}" ]]; then
-    log_warn "安装后的 sing-box 版本 (${installed_target_ver:-未知}) 与目标版本 ${SB_VERSION#v} 不一致，服务未重启。"
-    if restore_singbox_update_artifacts "${binary_backup}" "${library_backup_dir}"; then
-      rm -f "${binary_backup}"
-      rm -rf "${library_backup_dir}"
-      log_warn "已自动恢复更新前的 sing-box 二进制和 NaiveProxy 运行库。"
-    else
-      log_warn "自动恢复旧 sing-box 二进制或 NaiveProxy 运行库失败，请从备份 ${binary_backup} 和 ${library_backup_dir} 手动恢复。"
-    fi
+  backup_dir=$(mktemp -d "$(dirname "${SINGBOX_BIN_PATH}")/.sing-box-update.XXXXXXXX") || return 1
+  binary_backup="${backup_dir}/sing-box"
+  library_backup_dir="${backup_dir}/library"
+  if ! cp -p -- "${SINGBOX_BIN_PATH}" "${binary_backup}" ||
+     ! cp -p -- "${SINGBOX_CONFIG_FILE}" "${backup_dir}/config.json" ||
+     ! singbox_library_snapshot "${library_backup_dir}"; then
+    if ! rm -rf -- "${backup_dir}"; then log_warn "更新准备失败；临时备份保留在 ${backup_dir}。"; fi
     return 1
   fi
+  previous_int=$(trap -p INT)
+  previous_term=$(trap -p TERM)
+  previous_hup=$(trap -p HUP)
+  trap 'update_signal_status=130' INT
+  trap 'update_signal_status=143' TERM
+  trap 'update_signal_status=129' HUP
 
-  log_info "正在使用 sing-box ${SB_VERSION} 校验现有配置..."
-  if ! validate_config_file; then
-    log_warn "现有配置未通过 sing-box ${SB_VERSION} 校验。配置已保留，服务未重启。"
-    log_warn "这通常意味着新版本存在 breaking changes，请按 sing-box migration 文档迁移配置后再重载服务。"
-    if restore_singbox_update_artifacts "${binary_backup}" "${library_backup_dir}"; then
-      log_warn "已自动恢复更新前的 sing-box 二进制和 NaiveProxy 运行库。"
-    else
-      log_warn "自动恢复旧 sing-box 二进制或 NaiveProxy 运行库失败，请从备份 ${binary_backup} 和 ${library_backup_dir} 手动恢复。"
+  singbox_update_apply() {
+    stage=install
+    failure_code=binary_install_failed
+    install_binary || return $?
+    [[ "${update_signal_status}" == 0 ]] || return "${update_signal_status}"
+    stage=validate
+    failure_code=target_version_not_installed
+    installed_target_ver=$(detect_installed_singbox_version) || return 1
+    if [[ "${installed_target_ver#v}" != "${SB_VERSION#v}" ]]; then
+      log_warn "安装后的 sing-box 版本 (${installed_target_ver:-未知}) 与目标版本 ${SB_VERSION#v} 不一致，服务未重启。"
       return 1
     fi
-    rm -f "${binary_backup}"
-    rm -rf "${library_backup_dir}"
-    return 1
+    failure_code=config_changed
+    cmp -s -- "${backup_dir}/config.json" "${SINGBOX_CONFIG_FILE}" || return 1
+    failure_code=config_check_failed
+    log_info "正在使用 sing-box ${SB_VERSION} 校验现有配置..."
+    if ! validate_config_file; then
+      log_warn "现有配置未通过 sing-box ${SB_VERSION} 校验。配置已保留，服务未重启。"
+      return 1
+    fi
+    [[ "${update_signal_status}" == 0 ]] || return "${update_signal_status}"
+    stage=service
+    failure_code=service_not_active
+    service_attempted=y
+    if ! run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box ||
+       [[ "$(systemctl is-active sing-box 2>/dev/null || true)" != active ]]; then
+      log_warn "sing-box 服务重启失败或未保持 active。"
+      return 1
+    fi
+    [[ "${update_signal_status}" == 0 ]] || return "${update_signal_status}"
+    failure_code=config_changed
+    cmp -s -- "${backup_dir}/config.json" "${SINGBOX_CONFIG_FILE}" || return 1
+  }
+  if singbox_update_apply; then status=0; else status=$?; fi
+  if [[ "${update_signal_status}" != 0 ]]; then status=${update_signal_status}; failure_code=signal_interrupted; fi
+  if ! singbox_file_matches_backup "${SINGBOX_BIN_PATH}" "${binary_backup}"; then changed=true; fi
+  if [[ "${status}" != 0 ]]; then
+    if ! restore_singbox_update_artifacts "${binary_backup}" "${library_backup_dir}"; then rollback_status=1; fi
+    if ! cmp -s -- "${backup_dir}/config.json" "${SINGBOX_CONFIG_FILE}"; then
+      mode=$(stat -c '%a' "${backup_dir}/config.json") || rollback_status=1
+      if ! singbox_atomic_file_copy "${backup_dir}/config.json" "${SINGBOX_CONFIG_FILE}" "${mode:-0600}" ||
+         ! singbox_file_matches_backup "${SINGBOX_CONFIG_FILE}" "${backup_dir}/config.json"; then rollback_status=1; fi
+    fi
+    if [[ "${service_attempted}" == y && "${rollback_status}" == 0 ]]; then
+      if [[ "${before_service_state}" == active ]]; then
+        if ! run_with_progress "恢复更新前 sing-box 服务" systemctl restart sing-box >/dev/null ||
+           [[ "$(systemctl is-active sing-box 2>/dev/null || true)" != active ]]; then rollback_status=1; fi
+      elif ! systemctl stop sing-box >/dev/null 2>&1 ||
+           [[ "$(systemctl is-active sing-box 2>/dev/null || true)" == active ]]; then rollback_status=1; fi
+    fi
   fi
-  log_success "现有配置通过 sing-box ${SB_VERSION} 校验。"
-  if ! run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box || [[ "$(systemctl is-active sing-box 2>/dev/null || true)" != "active" ]]; then
-    log_warn "sing-box 服务重启失败或未保持 active。"
-    if ! restore_singbox_update_artifacts "${binary_backup}" "${library_backup_dir}"; then
-      log_warn "自动恢复旧 sing-box 二进制或 NaiveProxy 运行库失败，请从备份 ${binary_backup} 和 ${library_backup_dir} 手动恢复。"
-      return 1
+  trap - INT TERM HUP
+  [[ -z "${previous_int}" ]] || eval "${previous_int}"
+  [[ -z "${previous_term}" ]] || eval "${previous_term}"
+  [[ -z "${previous_hup}" ]] || eval "${previous_hup}"
+  unset -f singbox_update_apply
+  if [[ "${status}" != 0 ]]; then
+    printf '[ERROR] operation=sing_box_update stage=%s code=%s command_exit_code=%s changed=%s rolled_back=%s rollback_ok=%s manual_intervention_required=%s\n' \
+      "${stage}" "${failure_code}" "${status}" "${changed}" \
+      "$([[ "${rollback_status}" == 0 ]] && printf true || printf false)" \
+      "$([[ "${rollback_status}" == 0 ]] && printf true || printf false)" \
+      "$([[ "${rollback_status}" == 0 ]] && printf false || printf true)" >&2
+    if [[ "${rollback_status}" != 0 ]]; then
+      log_warn "自动恢复旧 sing-box 二进制、运行库或服务状态失败；备份保留在 ${backup_dir}。"
+      return "${status}"
     fi
-    if [[ "${before_service_state}" == "active" ]]; then
-      if ! run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box >/dev/null ||
-         [[ "$(systemctl is-active sing-box 2>/dev/null || true)" != "active" ]]; then
-        restore_status=1
-      fi
-    else
-      if ! systemctl stop sing-box >/dev/null 2>&1 ||
-         [[ "$(systemctl is-active sing-box 2>/dev/null || true)" == "active" ]]; then
-        restore_status=1
-      fi
-    fi
-    if [[ "${restore_status}" != "0" ]]; then
-      log_warn "恢复更新前 sing-box 服务状态失败，请手动检查服务状态；旧二进制备份保留在 ${binary_backup}，运行库备份保留在 ${library_backup_dir}。"
-      return 1
-    fi
-    rm -f "${binary_backup}"
-    rm -rf "${library_backup_dir}"
-    log_warn "已恢复更新前的 sing-box 二进制、NaiveProxy 运行库及服务状态。"
-    return 1
+    if ! rm -rf -- "${backup_dir}"; then log_warn "更新已回滚；临时备份未能清理: ${backup_dir}。"; fi
+    return "${status}"
   fi
-  rm -f "${binary_backup}"
-  rm -rf "${library_backup_dir}"
+  if ! rm -rf -- "${backup_dir}"; then log_warn "更新已提交；临时备份未能清理: ${backup_dir}。"; return 1; fi
   log_success "sing-box 已更新到 ${SB_VERSION}，当前配置已保留。"
-  display_status_summary
+  display_status_summary || return $?
   log_info "连接信息未自动展示，如需查看请进入菜单 11。"
 }
 
