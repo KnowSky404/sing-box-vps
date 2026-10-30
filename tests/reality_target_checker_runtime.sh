@@ -104,8 +104,8 @@ chmod +x "${TMP_DIR}/bin/dig"
 
 # Exercise the actual fixed-source download and digest validation before use.
 mkdir -m 700 "${TMP_DIR}/checker"
-prepare_reality_target_checker "${TMP_DIR}/checker/reality-target-checker.sh"
-printf 'checker_download=verified\n'
+prepare_reality_target_discovery "${TMP_DIR}/checker"
+printf 'checker_and_discovery_downloads=verified\n'
 
 FIXTURE_DOMAIN='reality-runtime.example.test'
 printf '127.0.0.1 %s\n' "${FIXTURE_DOMAIN}" >> /etc/hosts
@@ -156,6 +156,16 @@ PY
 COVER_PID=$!
 wait_for_port 443 "${COVER_PID}"
 
+DISCOVERY_STATUS=0
+run_reality_target_discovery "${TMP_DIR}/checker/reality-target-checker.sh" \
+  "${TMP_DIR}/discovery.json" scan 127.0.0.1/32 || DISCOVERY_STATUS=$?
+validate_reality_discovery_report "${TMP_DIR}/discovery.json" 127.0.0.1/32 "${DISCOVERY_STATUS}"
+jq -e --arg sni "${FIXTURE_DOMAIN}" '
+  .scan.complete == true and
+  any(.candidates[]; .eligible == true and .sni == $sni and .ip == "127.0.0.1")
+' "${TMP_DIR}/discovery.json" >/dev/null
+printf 'discovery_real_san_ptr_fixed_ip=passed\n'
+
 CHECKER_STATUS=0
 run_reality_target_check "${TMP_DIR}/checker/reality-target-checker.sh" \
   "${FIXTURE_DOMAIN}" "${TMP_DIR}/report.json" 2>"${TMP_DIR}/checker.stderr" || CHECKER_STATUS=$?
@@ -167,8 +177,8 @@ jq -e '.selection.complete == true and .summary.basic_tls == "PASS" and
   "${TMP_DIR}/report.json" >/dev/null
 printf 'checker_real_tls13_h2_x25519=passed\n'
 
-# The automatic chooser must use the report and explicit WARN consent.
-SELECTED_SNI=$(select_reality_sni_candidate "${FIXTURE_DOMAIN}" <<'EOF'
+# A discovered fixed-IP candidate must pass the full DNS chooser and WARN consent.
+SELECTED_SNI=$(select_reality_sni_discovery cidr 127.0.0.1/32 <<'EOF'
 y
 EOF
 )

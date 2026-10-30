@@ -11,7 +11,7 @@ mkdir -p "${TMP_DIR}/project" "${TMP_DIR}/download"
 # downloading or executing the external checker in the host regression suite.
 cat > "${TMP_DIR}/payload.sh" <<'SCRIPT'
 #!/usr/bin/env bash
-VERSION=0.1.0
+VERSION=0.3.0
 printf 'unexpected execution\n' > "${RTC_EXECUTION_MARKER}"
 SCRIPT
 FIXTURE_SHA256=$(sha256sum "${TMP_DIR}/payload.sh")
@@ -25,7 +25,7 @@ source "${TMP_DIR}/install.sh"
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
 jq -n '
-  {schema_version:"1.0",tool_version:"0.1.0",target:"good.example.com",sni:"good.example.com",port:443,
+  {schema_version:"1.0",tool_version:"0.3.0",target:"good.example.com",sni:"good.example.com",port:443,
    selection:{scope:"dns",complete:true,limit:16},
    endpoints:[{ip:"192.0.2.1",family:4,checks:
      (["tcp443","tls13","cert_chain","cert_san","cert_validity","alpn_h2","x25519"] |
