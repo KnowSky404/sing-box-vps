@@ -128,7 +128,8 @@ snapshot 为调用方已经捕获、校验的不可变清单；不得逐用户�
 
 本次实现版本为 `2026103003`，基线为 `061bc8e8f3c68b574b3ee6ad902abaa2b8761077`。
 此前已验证运行时 SHA-256：`93eeb20a4869e089fb3b9db4f904c337f4b04600cf6748a96db5e250851df465`。
-审查修复后的最终运行时 SHA-256：`ac37a4caf8cc242937e3dafd2626d6110f57a175567897b9c1fc911b7041d556`。
+第一次审查修复后的运行时 SHA-256：`ac37a4caf8cc242937e3dafd2626d6110f57a175567897b9c1fc911b7041d556`。
+最终运行时 SHA-256：`bbff3f359dc53538c7e45eafab75d61ad22628200db737cf583735920eb81103`。
 
 选定本地检查 **35/35 通过**，合计 608 秒：
 
@@ -157,7 +158,7 @@ snapshot 为调用方已经捕获、校验的不可变清单；不得逐用户�
 ### 本地审查后的补充验证
 
 对 `ff125e9` 的本地审查确认三项问题：首次安装 Mixed 时默认名提前依赖 `jq`、128 用户重复计算其他用户摘要，以及合法首尾制表符在清理前被拒绝。
-三项均已修复，**21 项受影响检查在上述最终运行时通过**：
+三项均已修复，**21 项受影响检查在上述第一次审查修复后的运行时通过**：
 
 - 父代理执行六个 `node_naming_*.sh`（含新增 `node_naming_fresh_dependencies.sh`）、五项原默认名/展示/交互检查，以及三项文档/版本检查。
 - 独立执行 `subman_shadowsocks_sync.sh`、`subman_trojan_sync.sh`、`subman_vmess_sync.sh`、`subman_vless_plain_sync.sh`、`subman_sync_orchestration.sh`、`shadowsocks_agent_share.sh`、`structured_hy2_instance_management.sh`，对应同一份冻结运行时。
@@ -167,3 +168,20 @@ snapshot 为调用方已经捕获、校验的不可变清单；不得逐用户�
 
 复用此前核心配置检查：本次修复只调整默认名计算、显示名准备和空白处理，未改变客户端 JSON 序列化器或技术 tag 构造。
 推送前仍须对最终 HEAD 重新本地审查；结果及远程安全门禁记录在 PR。
+
+### 旧路径错误传递验证
+
+对 `fa4d33a` 的审查又复现一项旧路径问题：名称被拒绝后，调用方仍可能生成空 URI 备注或回退 payload 名称。
+最终运行时在旧 REALITY、schema-1 HY2 的 URI 构建器、通用 payload/Agent、链接/二维码菜单和组合展示模式传递失败。
+被拒绝的 URI 不会传给 `qrencode`，也不会写入 SubMan。
+
+以下八项检查在最终运行时
+`bbff3f359dc53538c7e45eafab75d61ad22628200db737cf583735920eb81103` 通过：
+`node_naming_legacy_failures.sh`、`unified_node_display_names.sh`、`subman_payload_generation.sh`、
+`subman_sync_orchestration.sh`、`agent_cli_outputs_machine_readable_node_info.sh`、
+`agent_cli_multi_instance_status.sh`、`vless_reality_node_info_shows_instances.sh` 和
+`export_client_config_1_14_compatibility.sh`（再次使用真实 sing-box 1.14.2）。
+新增回归对每个旧协议覆盖有效名称及五种拒绝名称、条件调用中显式失败、机器输出不部分成功、无无效同步写入，以及链接/二维码/组合菜单行为。
+
+摘要上下文、结构化分享和默认名代码与 21 项补充检查对应内容未变，复用其结果。
+语法和文档检查也通过。最终完整分支审查和远程安全证据按精确 head 记录在 PR。
