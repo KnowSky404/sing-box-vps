@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+# Run this same selector regression with Bash 4.3 and the current system Bash;
+# first-candidate selection must remain valid with nounset and an empty array.
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf -- "${TMP_DIR}"' EXIT

@@ -4683,9 +4683,12 @@ stop_reality_checker_process_tree() {
       fi
     fi
   fi
-  for child in "${children[@]}"; do
-    stop_reality_checker_process_tree "${child}" || return 1
-  done
+  # Bash 4.3 treats an empty array expansion as unset under nounset.
+  if (( ${#children[@]} > 0 )); then
+    for child in "${children[@]}"; do
+      stop_reality_checker_process_tree "${child}" || return 1
+    done
+  fi
 }
 
 run_reality_target_check() (
@@ -5032,7 +5035,9 @@ select_reality_sni_discovery() (
   while IFS= read -r domain; do
     domain=${domain,,}
     validate_reality_sni_syntax "${domain}" || continue
-    [[ " ${candidates[*]} " != *" ${domain} "* ]] || continue
+    if (( ${#candidates[@]} > 0 )) && [[ " ${candidates[*]} " == *" ${domain} "* ]]; then
+      continue
+    fi
     candidates+=("${domain}")
     [[ ${#candidates[@]} -lt 5 ]] || break
   done <<< "${names}"

@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+# Also run under Bash 4.3: even a fast checker result must clean a heartbeat
+# whose process tree can contain an empty children array under nounset.
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf -- "${TMP_DIR}"' EXIT
@@ -50,7 +52,7 @@ curl() {
 }
 export -f dig curl
 run_preparation() {
-  bash -c 'source "$1"; prepare_reality_target_discovery "$2"' _ "$1" "$2"
+  "${BASH}" -c 'source "$1"; prepare_reality_target_discovery "$2"' _ "$1" "$2"
 }
 mkdir "${TMP_DIR}/valid"
 run_preparation "${TMP_DIR}/install.sh" "${TMP_DIR}/valid" || fail 'valid discovery bundle rejected'
@@ -90,7 +92,7 @@ fi
 
 downloads_before=$(wc -l < "${TMP_DIR}/downloads")
 mkdir "${TMP_DIR}/missing-python"
-if bash -c 'source "$1"; python3() { return 1; }; prepare_reality_target_discovery "$2"' \
+if "${BASH}" -c 'source "$1"; python3() { return 1; }; prepare_reality_target_discovery "$2"' \
   _ "${TMP_DIR}/install.sh" "${TMP_DIR}/missing-python"; then
   fail 'unavailable Python was accepted'
 fi
@@ -159,7 +161,7 @@ rc=0
 run_reality_target_discovery "$2" "$3" scan 192.0.2.1/32 || rc=$?
 exit "${rc}"
 SH
-python3 - "${TMP_DIR}" <<'PY'
+python3 - "${TMP_DIR}" "${BASH}" <<'PY'
 from pathlib import Path
 import os
 import signal
@@ -168,7 +170,8 @@ import sys
 import time
 
 root = Path(sys.argv[1])
-process = subprocess.Popen(['bash', str(root / 'cancel-runner.sh'),
+current_bash = sys.argv[2]
+process = subprocess.Popen([current_bash, str(root / 'cancel-runner.sh'),
     str(root / 'install.sh'), str(root / 'cancel-checker.sh'), str(root / 'cancel.json')],
     stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
 tracked = []
@@ -186,6 +189,11 @@ try:
     os.kill(runner_pid, signal.SIGTERM)
     output, errors = process.communicate(timeout=3)
     assert process.returncode == 143, (process.returncode, output, errors)
+    # Pipe closure can precede /proc removal by a scheduler turn; require all
+    # tracked children to disappear within one second, including zombie entries.
+    reap_deadline = min(started + 3, time.monotonic() + 1)
+    while any(Path(f'/proc/{pid}').exists() for pid in tracked) and time.monotonic() < reap_deadline:
+        time.sleep(0.01)
     assert time.monotonic() - started < 3, 'cancellation waited for heartbeat'
     for pid in tracked:
         assert not Path(f'/proc/{pid}').exists(), f'discovery cancellation left process {pid}'
@@ -244,7 +252,7 @@ printf '%s\n' "${selected}" > "${RTC_DISCOVERY_FIXTURE}/selected"
 printf '%s\n' "${SB_SNI}" > "${RTC_DISCOVERY_FIXTURE}/saved-sni"
 exit "${rc}"
 SH
-python3 - "${TMP_DIR}" <<'PY'
+python3 - "${TMP_DIR}" "${BASH}" <<'PY'
 from pathlib import Path
 import os
 import signal
@@ -253,6 +261,7 @@ import sys
 import time
 
 root = Path(sys.argv[1])
+current_bash = sys.argv[2]
 
 def children(pid):
     result = {pid}
@@ -272,7 +281,7 @@ def children(pid):
 for phase in ('prepare', 'scan', 'dns'):
     fixture = root / ('selector-' + phase)
     fixture.mkdir()
-    process = subprocess.Popen(['bash', str(root / 'cancel-selector.sh'),
+    process = subprocess.Popen([current_bash, str(root / 'cancel-selector.sh'),
         str(root / 'install.sh'), str(fixture), phase],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
     tracked = set()
@@ -288,6 +297,9 @@ for phase in ('prepare', 'scan', 'dns'):
         os.kill(selector, signal.SIGTERM)
         output, errors = process.communicate(timeout=3)
         assert process.returncode == 143, (phase, process.returncode, output, errors)
+        reap_deadline = min(started + 3, time.monotonic() + 1)
+        while any(Path(f'/proc/{pid}').exists() for pid in tracked) and time.monotonic() < reap_deadline:
+            time.sleep(0.01)
         assert time.monotonic() - started < 3, f'{phase}: selector cancellation was delayed'
         assert (fixture / 'selected').read_text().strip() == '', f'{phase}: cancellation selected a domain'
         assert (fixture / 'saved-sni').read_text().strip() == 'unchanged.example.test'
@@ -306,7 +318,7 @@ for phase in ('prepare', 'scan', 'dns'):
 
 fixture = root / 'selector-consent'
 fixture.mkdir()
-completed = subprocess.run(['bash', str(root / 'cancel-selector.sh'),
+completed = subprocess.run([current_bash, str(root / 'cancel-selector.sh'),
     str(root / 'install.sh'), str(fixture), 'consent'], input='y\n', text=True,
     capture_output=True, timeout=3)
 assert completed.returncode == 0, (completed.returncode, completed.stderr)
