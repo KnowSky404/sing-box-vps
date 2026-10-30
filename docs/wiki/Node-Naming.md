@@ -30,7 +30,9 @@ instance defaults. The optional private setting is
 
 The trimmed label must be nonempty, contain no control characters and fit 128
 UTF-8 bytes. Without the file, defaults use the current hostname. An invalid
-existing file is reported explicitly. Saving backs up the previous file as
+existing file is reported explicitly. Fresh defaults without a preference or
+inventory work before `jq` is installed; reading either existing JSON input
+requires `jq` and reports its absence explicitly. Saving backs up the previous file as
 `node-naming.json.bak` before atomic replacement. This setting does not rename
 existing instances, restart sing-box, or push nodes to SubMan.
 
@@ -38,7 +40,9 @@ existing instances, restart sing-box, or push nodes to SubMan.
 
 For rendering, the saved base is trimmed at its ends using ECMAScript
 `String.prototype.trim()` whitespace, matching SubMan. Interior characters and
-the saved value are preserved. U+FEFF is trimmed; U+0085 is retained. A base that
+the saved value are preserved. Trimming precedes the remaining control-character
+check: surrounding tabs in `"\tCustom\t"` produce `Custom`, while an interior
+tab is rejected. U+FEFF is trimmed; U+0085 is retained. A base that
 becomes empty is rejected. The generated display name follows this order:
 
 ```text
