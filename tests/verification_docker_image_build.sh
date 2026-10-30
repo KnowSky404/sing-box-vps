@@ -17,8 +17,8 @@ if [[ "\${1:-}" == "image" && "\${2:-}" == "inspect" ]]; then
   exit 1
 fi
 if [[ "\${1:-}" == "build" ]]; then
-  printf '' > "${TMP_DIR}/image-built"
-  printf 'built-%s\n' "\${4:-}" > "${TMP_DIR}/build-dockerfile.txt"
+  : > "${TMP_DIR}/image-built"
+  printf '%s\\n' "\$@" > "${TMP_DIR}/build-arguments.txt"
   exit 0
 fi
 if [[ "\${1:-}" == "run" && "\${2:-}" == "-d" && "\${3:-}" == "--privileged" ]]; then
@@ -45,12 +45,13 @@ exit 1
 DOCKER_EOF
 chmod +x "${TMP_DIR}/docker"
 
-PATH="${TMP_DIR}:${PATH}" VERIFY_SKIP_LOCAL_TESTS=1 \
+PATH="${TMP_DIR}:${PATH}" VERIFY_SKIP_LOCAL_TESTS=1 VERIFY_DOCKER_IMAGE=fixture-build-image \
   bash "${REPO_ROOT}/dev/verification/run.sh" --changed-file README.md --scenario fresh_install_http > "${TMP_DIR}/stdout.txt" 2> "${TMP_DIR}/stderr.txt"
 
-run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/stdout.txt")
-grep -Fqx 'test-container-built' "${TMP_DIR}/image-built" 2>/dev/null && {
-  printf 'expected image to be built via Dockerfile\n' >&2
-}
+[[ -f "${TMP_DIR}/image-built" ]]
+printf '%s\n' build -t fixture-build-image -f \
+  "${REPO_ROOT}/dev/verification/docker/Dockerfile" "${REPO_ROOT}" \
+  > "${TMP_DIR}/expected-build-arguments.txt"
+diff -u "${TMP_DIR}/expected-build-arguments.txt" "${TMP_DIR}/build-arguments.txt"
 grep -Fq 'remote_target=docker:test-container-built' "${TMP_DIR}/stdout.txt"
 printf 'Docker image build + run test PASSED\n'

@@ -8,36 +8,26 @@ readonly REMOTE_ARTIFACT_BUNDLE_BEGIN='__SING_BOX_VPS_REMOTE_ARTIFACT_BUNDLE_BEG
 readonly REMOTE_ARTIFACT_BUNDLE_END='__SING_BOX_VPS_REMOTE_ARTIFACT_BUNDLE_END__'
 readonly DEFAULT_DOCKER_IMAGE="sing-box-vps-verify:2026091501-ssh"
 
-append_unique_lines() {
-  local line
-  local existing=${APPEND_UNIQUE_LINES_SEEN:-}
-
-  for line in "$@"; do
-    [[ -n "${line}" ]] || continue
-    if [[ ",${existing}," == *",${line},"* ]]; then
-      continue
-    fi
-    printf '%s\n' "${line}"
-    existing="${existing},${line}"
-  done
-
-  APPEND_UNIQUE_LINES_SEEN="${existing}"
-}
-
 create_run_dir() {
   local root=${1:-"${REPO_ROOT}/dev/verification-runs"}
   local base_epoch
   local offset=0
-  local stamp
+  local stamp status
 
-  mkdir -p "${root}"
-  base_epoch=$(date '+%s')
+  mkdir -p -- "${root}" || return $?
+  base_epoch=$(date '+%s') || return $?
 
   while true; do
-    stamp=$(date -d "@$((base_epoch + offset))" '+%Y%m%d%H%M%S')
-    if mkdir "${root}/${stamp}" 2>/dev/null; then
+    stamp=$(date -d "@$((base_epoch + offset))" '+%Y%m%d%H%M%S') || return $?
+    if mkdir -- "${root}/${stamp}" 2>/dev/null; then
       printf '%s\n' "${root}/${stamp}"
       return 0
+    else
+      status=$?
+    fi
+    if [[ ! -d "${root}/${stamp}" ]]; then
+      printf 'ERROR: 无法创建验证产物目录 %s。\n' "${root}/${stamp}" >&2
+      return "${status}"
     fi
     offset=$((offset + 1))
   done

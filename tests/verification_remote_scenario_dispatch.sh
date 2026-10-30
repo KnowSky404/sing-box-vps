@@ -743,8 +743,17 @@ EXPORT_EOF
       return 1
       ;;
     "${VERIFY_REMOTE_UNINSTALL_SCRIPT:-__missing_uninstall__}")
-      reset_runtime_artifacts
-      return 0
+      if [[ "${1:-}" == --keep-config ]]; then
+        return 1
+      fi
+      local confirmation=''
+      read -r confirmation || return 1
+      printf 'uninstall-confirm:%s\n' "${confirmation}" >> "${CALLS_FILE}"
+      case "${confirmation}" in
+        n) return 0 ;;
+        y) reset_runtime_artifacts; return 0 ;;
+        *) return 1 ;;
+      esac
       ;;
     /root/Clouds/sing-box-vps/install.sh|/root/Clouds/sing-box-vps/uninstall.sh)
       printf 'unexpected stale remote checkout path: %s\n' "${target}" >&2
@@ -1044,6 +1053,14 @@ stat() {
   command stat "$@"
 }
 
+sha256sum() {
+  if [[ "$#" -eq 1 && "$1" == /root/sing-box-vps/config.json ]]; then
+    command sha256sum "${CONFIG_FILE}"
+    return
+  fi
+  command sha256sum "$@"
+}
+
 systemctl() {
   if [[ "${1:-}" == "is-active" && "${2:-}" == "--quiet" && "${3:-}" == "sing-box" ]]; then
     [[ $(cat "${SERVICE_ACTIVE_FILE}") == "1" ]]
@@ -1339,6 +1356,9 @@ grep -Fqx 'grep:-Fqx PASSWORD=anytls-pass /root/sing-box-vps/protocols/anytls.en
 grep -Fqx 'UUID=44444444-4444-4444-8444-444444444444' "${INSTANCE_STATE_FILE}"
 grep -Fq "bash:${EMBEDDED_INSTALL_SCRIPT} " "${CALLS_FILE}"
 grep -Fq 'bash:/usr/local/bin/sbv ' "${CALLS_FILE}"
-grep -Fq "bash:${EMBEDDED_UNINSTALL_SCRIPT} --yes" "${CALLS_FILE}"
+grep -Fqx "bash:${EMBEDDED_UNINSTALL_SCRIPT} --keep-config --purge" "${CALLS_FILE}"
+grep -Fqx 'uninstall-confirm:n' "${CALLS_FILE}"
+grep -Fqx 'uninstall-confirm:y' "${CALLS_FILE}"
+! grep -Fq "bash:${EMBEDDED_UNINSTALL_SCRIPT} --yes" "${CALLS_FILE}"
 ! grep -Fq '/root/Clouds/sing-box-vps/install.sh' "${CALLS_FILE}"
 ! grep -Fq '/root/Clouds/sing-box-vps/uninstall.sh' "${CALLS_FILE}"

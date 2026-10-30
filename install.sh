@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026103003
+# Version: 2026103004
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026103003"
+readonly SCRIPT_VERSION="2026103004"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -2152,14 +2152,6 @@ component_registry_json() {
 
 component_registry_inbound_types_json() {
   component_registry_static_json | jq -c '[.[] | select(.role == "inbound") | .type]'
-}
-
-component_registry_endpoint_types_json() {
-  component_registry_static_json | jq -c '[.[] | select(.role == "endpoint") | .type]'
-}
-
-component_registry_outbound_types_json() {
-  component_registry_static_json | jq -c '[.[] | select(.role == "outbound") | .type]'
 }
 
 list_registered_protocols() {
@@ -7759,9 +7751,6 @@ plain_proxy_management_build_record() {
 # in the shared plain-proxy helpers above.
 mixed_management_capture_snapshot() { plain_proxy_management_capture_snapshot mixed "$@"; }
 mixed_management_prompt_target() { plain_proxy_management_prompt_target mixed "$@"; }
-mixed_management_next_id() { plain_proxy_management_next_id mixed "$@"; }
-mixed_management_next_tag() { plain_proxy_management_next_tag mixed "$@"; }
-mixed_management_prompt_public_consent() { plain_proxy_management_prompt_public_consent mixed "$@"; }
 mixed_management_build_record() { plain_proxy_management_build_record mixed "$@"; }
 
 plain_proxy_management_pending_revision() {
@@ -7774,28 +7763,6 @@ plain_proxy_management_pending_revision() {
   ' "${transaction_file}" >/dev/null 2>&1 || return 1
   jq -er '.expected_revision' "${transaction_file}" 2>/dev/null
 }
-
-mixed_instance_replace_interactive() (
-  local snapshot_dir snapshot revision target record_file result status allow_public=n
-  umask 077
-  snapshot_dir=$(mktemp -d) || return 1
-  trap 'rm -rf -- "${snapshot_dir}"' EXIT
-  mixed_management_capture_snapshot "${snapshot_dir}/before.json" || {
-    log_error "Mixed 状态无法安全读取，已取消修改。"
-    return 1
-  }
-  target=$(mixed_management_prompt_target "${snapshot_dir}/before.json" "请选择要修改的 Mixed 实例") || return 0
-  revision=$(jq -r '.revision' "${snapshot_dir}/before.json") || return 1
-  record_file="${snapshot_dir}/record.json"
-  mixed_management_build_record "${snapshot_dir}/before.json" replace "${target}" "${record_file}" || return $?
-  allow_public=${MIXED_MANAGEMENT_ALLOW_PUBLIC:-n}
-  result=$(apply_mixed_instance_change replace "${revision}" "${record_file}" "${allow_public}") || {
-    status=$?
-    [[ -n "${result:-}" ]] && printf '%s\n' "${result}" >&2
-    return "${status}"
-  }
-  [[ -n "${result}" ]] && printf '%s\n' "${result}"
-)
 
 mixed_instance_create_interactive() (
   local temp_dir revision result status allow_public=n
@@ -11725,14 +11692,6 @@ instance_firewall_refs_for_rule() {
   else
     instance_firewall_targets_for_rule "${targets}" "${backend}" "${family}" "${address}" "${transport}" "${port}"
   fi
-}
-
-instance_firewall_ledger_rule_json() {
-  local backend=$1 family=$2 address=$3 transport=$4 port=$5 comment=$6 refs=$7
-  jq -cn --arg backend "${backend}" --arg family "${family}" --arg address "${address}" \
-    --arg transport "${transport}" --argjson port "${port}" --arg comment "${comment}" \
-    --argjson refs "${refs}" \
-    '{backend:$backend,family:$family,address:$address,transport:$transport,port:$port,comment:$comment,refs:$refs}'
 }
 
 instance_firewall_journal_write() {
@@ -21402,22 +21361,6 @@ abort_managed_state_transaction() {
   return 1
 }
 
-# Agent component writes must return a machine-readable error envelope.  The
-# legacy abort helper intentionally calls log_error (which exits) for menu
-# entrypoints, so keep a non-exiting equivalent for this API boundary.
-managed_component_abort_state_transaction() {
-  local snapshot_dir=$1
-  local failure_message=$2
-
-  if rollback_managed_state_snapshot "${snapshot_dir}" >/dev/null; then
-    printf '[ERROR] %s，已恢复变更前的配置状态。\n' "${failure_message}" >&2
-  else
-    printf '[ERROR] %s，且自动回滚失败；事务快照保留在 %s。\n' \
-      "${failure_message}" "${snapshot_dir}" >&2
-  fi
-  return 1
-}
-
 # Advanced component mutations use a durable journal.  The management flock
 # serializes live writers, while this directory survives an abrupt process or
 # host interruption and gives the next operator a bounded recovery path.
@@ -22841,43 +22784,6 @@ estimate_text_width() {
 
   extra_bytes=$((byte_count - char_count))
   printf '%s' "$((char_count + (extra_bytes / 2)))"
-}
-
-print_centered_text() {
-  local text=$1
-  local color=${2:-}
-  local width text_length padding
-
-  width=$(term_columns)
-  padding=0
-  text_length=$(estimate_text_width "${text}")
-
-  if (( width > text_length )); then
-    padding=$(((width - text_length) / 2))
-  fi
-
-  printf '%*s' "${padding}" ''
-  if [[ -n "${color}" ]]; then
-    printf '%b%s%b\n' "${color}" "${text}" "${NC}"
-  else
-    printf '%s\n' "${text}"
-  fi
-}
-
-render_page_header() {
-  local title=$1
-  local subtitle=${2:-}
-  local width divider
-
-  width=$(compact_ui_width)
-  divider=$(repeat_char "═" "${width}")
-
-  echo -e "${BLUE}${divider}${NC}"
-  echo -e "${GREEN}${title}${NC}"
-  if [[ -n "${subtitle}" ]]; then
-    echo -e "${BLUE}${subtitle}${NC}"
-  fi
-  echo -e "${BLUE}${divider}${NC}"
 }
 
 render_section_title() {
@@ -25422,13 +25328,6 @@ build_trojan_subman_links_and_warnings_json() (
   jq -cn --argjson links "${links}" --argjson warnings "${warnings}" '{links:$links,warnings:$warnings}'
 )
 
-build_trojan_subman_links_json() (
-  local result
-  result=$(build_trojan_subman_links_and_warnings_json "$@") || return $?
-  jq -e '.links | length > 0' <<< "${result}" >/dev/null || return 1
-  jq -c '.links' <<< "${result}"
-)
-
 build_trojan_share_warnings_json() {
   local code=${1:-trojan_uri_unrepresentable} message=${2:-Trojan 当前配置无法无损转换为 SubMan raw URI。}
   jq -cn --arg code "${code}" --arg message "${message}" '[{code:$code,message:$message}]'
@@ -25638,36 +25537,6 @@ vmess_share_warning_for_status() {
   esac
 }
 
-build_vmess_subman_links_and_warnings_json() (
-  local node_name_digests
-  local server=${1:-} instance_id=${2:-} store_file snapshot snapshot_file instance user_name node_name tag uri status warning
-  local links='{}' warnings='[]' users_text address_label
-  store_file=$(plain_proxy_structured_store_file vmess) || return 1
-  snapshot=$(structured_instance_store_snapshot_json vmess "${store_file}") || return 1
-  snapshot_file=$(mktemp) || return 1; trap 'rm -f -- "${snapshot_file}"' EXIT
-  printf '%s\n' "${snapshot}" > "${snapshot_file}" || return 1
-  instance_id=${2:-$(jq -er '.default_instance_id' <<< "${snapshot}")}
-  instance=$(jq -ce --arg id "${instance_id}" '.instances[] | select(.id == $id)' <<< "${snapshot}") || return 1
-  node_name_digests=$(structured_node_user_digests "${snapshot}" "${instance_id}") || return 1
-  address_label=$(node_display_address_label "$(jq -r '.listen.address' <<< "${instance}")" "${server}") || return 1
-  users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || return 1
-  while IFS= read -r user_name; do
-    [[ -n "${user_name}" ]] || continue
-    tag=$(jq -r --arg user "${user_name}" '"vmess-" + .id + "-user-" + ($user | @base64)' <<< "${instance}") || return 1
-    node_name=$(structured_node_display_name vmess "${snapshot}" "${instance_id}" "${user_name}" "${address_label}" "${node_name_digests}") || return 1
-    if uri=$(build_vmess_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name}"); then
-      links=$(jq -cn --argjson links "${links}" --arg tag "${tag}" --arg uri "${uri}" '$links + {($tag):$uri}') || return 1
-    else
-      status=$?
-      if [[ "${status}" == 31 || "${status}" == 32 ]]; then
-        warning=$(vmess_share_warning_for_status "${status}") || return 1
-        warnings=$(jq -cn --argjson warnings "${warnings}" --argjson warning "${warning}" --arg instance_id "${instance_id}" --arg tag "${tag}" '$warnings + ($warning | map(. + {instance_id:$instance_id,outbound_tag:$tag}))') || return 1
-      else return "${status}"; fi
-    fi
-  done <<< "${users_text}"
-  jq -cn --argjson links "${links}" --argjson warnings "${warnings}" '{links:$links,warnings:$warnings}'
-)
-
 subman_external_key_for_vmess_user() {
   local instance_id=${1:-} user_name=${2-} address_label=${3:-} prefix digest key stack_suffix
   structured_instance_store_validate_id "${instance_id}" || return 1
@@ -25815,44 +25684,6 @@ build_vless_plain_subman_uri_from_store() (
   }
   printf '%s' "${uri}"
 )
-
-build_vless_plain_subman_links_and_warnings_json() (
-  local node_name_digests
-  local server=${1:-} instance_id=${2:-} store_file snapshot snapshot_file instance node_name user_name tag uri status warning
-  local links='{}' warnings='[]' users_text address_label
-  [[ $# -ge 1 && $# -le 2 ]] || return 1
-  store_file=$(plain_proxy_structured_store_file vless-plain) || return 1
-  snapshot=$(structured_instance_store_snapshot_json vless-plain "${store_file}") || return 1
-  snapshot_file=$(mktemp) || return 1; trap 'rm -f -- "${snapshot_file}"' EXIT
-  printf '%s\n' "${snapshot}" > "${snapshot_file}" || return 1
-  instance_id=${2:-$(jq -er '.default_instance_id' <<< "${snapshot}")}
-  instance=$(jq -ce --arg id "${instance_id}" '.instances[] | select(.id == $id)' <<< "${snapshot}") || return 1
-  node_name_digests=$(structured_node_user_digests "${snapshot}" "${instance_id}") || return 1
-  address_label=$(node_display_address_label "$(jq -r '.listen.address' <<< "${instance}")" "${server}") || return 1
-  users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || return 1
-  while IFS= read -r user_name; do
-    [[ -n "${user_name}" ]] || continue
-    tag=$(jq -r --arg user "${user_name}" '"vless-plain-" + .id + "-user-" + ($user | @base64)' <<< "${instance}") || return 1
-    node_name=$(structured_node_display_name vless-plain "${snapshot}" "${instance_id}" "${user_name}" "${address_label}" "${node_name_digests}") || return 1
-    if uri=$(build_vless_plain_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name}"); then
-      links=$(jq -cn --argjson links "${links}" --arg tag "${tag}" --arg uri "${uri}" '$links + {($tag):$uri}') || return 1
-    else
-      status=$?
-      if [[ "${status}" == 31 || "${status}" == 32 || "${status}" == 33 ]]; then
-        warning=$(vless_plain_share_warning_for_status "${status}") || return 1
-        warnings=$(jq -cn --argjson warnings "${warnings}" --argjson warning "${warning}" --arg instance_id "${instance_id}" --arg tag "${tag}" '$warnings + ($warning | map(. + {instance_id:$instance_id,outbound_tag:$tag}))') || return 1
-      else return "${status}"; fi
-    fi
-  done <<< "${users_text}"
-  jq -cn --argjson links "${links}" --argjson warnings "${warnings}" '{links:$links,warnings:$warnings}'
-)
-
-build_vless_plain_links_json_for_instance() {
-  local result
-  result=$(build_vless_plain_subman_links_and_warnings_json "$@") || return $?
-  jq -e '.links | length > 0' <<< "${result}" >/dev/null || return 1
-  jq -c '.links' <<< "${result}"
-}
 
 subman_external_key_for_vless_plain_user() {
   local instance_id=${1:-} user_name=${2-} address_label=${3:-} prefix digest key stack_suffix
@@ -26220,13 +26051,6 @@ build_hy2_subman_links_and_warnings_json() (
   done <<< "${users_text}"
   jq -cn --argjson links "${links}" --argjson warnings "${warnings}" '{links:$links,warnings:$warnings}'
 )
-
-build_hy2_subman_links_json_for_instance() {
-  local result
-  result=$(build_hy2_subman_links_and_warnings_json "$@") || return $?
-  jq -e '.links | length > 0' <<< "${result}" >/dev/null || return 1
-  jq -c '.links' <<< "${result}"
-}
 
 subman_external_key_for_hy2_user() {
   local instance_id=${1:-} user_name=${2-} address_label=${3:-} prefix digest key stack_suffix
@@ -27126,16 +26950,6 @@ build_client_vless_reality_outbound() {
     }
     | if $tcp_fast_open == "y" then . + { "tcp_fast_open": true } else . end
     | if $alpn == null then . else .tls += { "alpn": $alpn } end'
-}
-
-build_client_vless_reality_outbound_for_instance() {
-  local instance_id=$1
-  local public_ip=${2:-$(get_public_ip)}
-  local outbound_tag=${3:-}
-
-  load_vless_reality_protocol_state
-  load_vless_reality_instance_state "${instance_id}" || return 1
-  build_client_vless_reality_outbound "${public_ip}" "${outbound_tag:-$(client_outbound_tag_for_protocol "vless-reality")}"
 }
 
 vless_reality_client_tag_is_used() {
@@ -33005,10 +32819,6 @@ plain_proxy_inactive_store_snapshot() {
   printf '%s\n' "${snapshot}"
 }
 
-mixed_instance_config_candidate() {
-  plain_proxy_instance_config_candidate mixed "$@"
-}
-
 plain_proxy_instance_config_candidate() {
   local protocol=$1 old_config=$2 old_store=$3 new_store=$4 inbounds rules
   inbounds=$(render_structured_instance_inbounds "${protocol}" "${new_store}" | jq -s '.') || return $?
@@ -36042,10 +35852,6 @@ mixed_config_store_candidate() {
 
 shadowsocks_config_store_candidate() {
   plain_proxy_config_store_candidate shadowsocks "$@"
-}
-
-trojan_config_store_candidate() {
-  plain_proxy_config_store_candidate trojan "$@"
 }
 
 vmess_config_store_candidate() {

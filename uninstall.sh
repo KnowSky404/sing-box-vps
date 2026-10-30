@@ -55,17 +55,15 @@ resolve_install_script() {
 main() {
   check_root
 
-  local mode="purge"
   local assume_yes="n"
   local install_script=""
 
   while (($# > 0)); do
     case "$1" in
       --purge)
-        mode="purge"
         ;;
       --keep-config)
-        mode="keep-config"
+        print_error "保留配置的卸载模式尚未实现；未执行卸载。"
         ;;
       --yes)
         assume_yes="y"
@@ -79,23 +77,6 @@ main() {
 
   if ! install_script=$(resolve_install_script); then
     print_error "未找到可用的管理脚本，无法继续卸载。请确认已安装 sing-box-vps，或改用 sbv 菜单卸载。"
-  fi
-
-  if [[ "${assume_yes}" != "y" ]]; then
-    echo "卸载模式:"
-    echo "1. 彻底删除（默认，已实现）"
-    echo "2. 保留配置（预留，暂未实现）"
-    read -rp "请选择 [1/2，默认 1]: " choice
-    case "${choice:-1}" in
-      1) mode="purge" ;;
-      2) mode="keep-config" ;;
-      *) print_error "无效选项。" ;;
-    esac
-  fi
-
-  if [[ "${mode}" == "keep-config" ]]; then
-    print_warn "保留配置的卸载模式尚未实现，请先使用彻底删除模式。"
-    exit 1
   fi
 
   if [[ "${assume_yes}" != "y" ]]; then
