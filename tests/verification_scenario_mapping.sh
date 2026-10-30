@@ -105,7 +105,7 @@ assert_scenarios() {
   local expected=$1
   shift
   local plan actual
-  plan=$(bash "${REPO_ROOT}/dev/verification/run.sh" --plan "$@")
+  plan=$(bash "${REPO_ROOT}/dev/verification/run.sh" --plan --changed-file README.md "$@")
   actual=$(sed -n 's/^scenario=//p' <<<"${plan}" | paste -sd, -)
   if [[ "${actual}" != "${expected}" ]]; then
     printf 'expected scenarios %s, got %s\n' "${expected}" "${actual}" >&2

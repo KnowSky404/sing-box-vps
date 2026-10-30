@@ -8,12 +8,23 @@ verification_scenario_uninstall_and_reinstall() {
   local status_output_path
   local expected_port=443
   local expected_sni="www.cloudflare.com"
+  local before_config_hash
 
   verification_prepare_remote_local_tree
   trap 'verification_cleanup_remote_local_tree; trap - RETURN' RETURN
   printf 'SCENARIO=uninstall_and_reinstall\n'
   before_uuid=$(jq -r '.inbounds[0].users[0].uuid // empty' /root/sing-box-vps/config.json 2>/dev/null || true)
-  bash "${VERIFY_REMOTE_UNINSTALL_SCRIPT}" --yes || bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" --internal-uninstall-purge --yes
+  before_config_hash=$(sha256sum /root/sing-box-vps/config.json)
+  if bash "${VERIFY_REMOTE_UNINSTALL_SCRIPT}" --keep-config --purge < /dev/null; then
+    printf 'unsupported keep-config mode unexpectedly succeeded\n' >&2
+    return 1
+  fi
+  printf 'n\n' | bash "${VERIFY_REMOTE_UNINSTALL_SCRIPT}"
+  [[ "$(sha256sum /root/sing-box-vps/config.json)" == "${before_config_hash}" ]]
+  test -f /etc/systemd/system/sing-box.service
+  test -x /usr/local/bin/sbv
+  systemctl is-active --quiet sing-box
+  printf 'y\n' | bash "${VERIFY_REMOTE_UNINSTALL_SCRIPT}"
   test ! -e /root/sing-box-vps/config.json
   test ! -e /etc/systemd/system/sing-box.service
   test ! -e /usr/local/bin/sbv

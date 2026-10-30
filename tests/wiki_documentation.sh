@@ -13,8 +13,9 @@ import unicodedata
 root = Path(sys.argv[1])
 wiki = root / 'docs/wiki'
 base = 'https://github.com/KnowSky404/sing-box-vps/'
-files = [root / 'README.md', root / 'AGENTS.md',
-         root / 'skills/sing-box-vps-operator/SKILL.md', *wiki.glob('*.md')]
+files = [root / 'README.md', root / 'AGENTS.md', root / 'SECURITY.md',
+         root / 'skills/sing-box-vps-operator/SKILL.md',
+         *sorted((root / 'docs/specs').glob('*.md')), *sorted(wiki.glob('*.md'))]
 errors = []
 
 def prose(text):
@@ -54,7 +55,7 @@ for page in files:
             errors.append(f'{page.relative_to(root)}: missing anchor {url}')
 
 # Keep the offline Agent index tied to files that still exist.
-for path in re.findall(r'docs/wiki/[A-Za-z0-9_-]+\.md',
+for path in re.findall(r'docs/(?:wiki|specs)/[A-Za-z0-9_.-]+\.md',
                        (root / 'docs/agents/llms.txt').read_text()):
     if not (root / path).is_file():
         errors.append(f'llms.txt: missing target {path}')

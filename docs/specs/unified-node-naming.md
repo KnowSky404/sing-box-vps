@@ -2,9 +2,11 @@
 
 [简体中文](unified-node-naming.zh-CN.md)
 
-Status: implementation contract for the unified naming change. This document defines
-expected behavior and acceptance criteria; a completed implementation or successful
-production synchronization must be recorded separately.
+Status: implemented, with local/mock and target-core verification recorded in
+section 9. This remains the maintained behavior contract. Real SubMan node-ID and
+aggregate preservation, production acceptance and Wiki publication are separate
+evidence; the local results do not establish their completion. See the
+[SPEC status index](README.md) for scope and remaining acceptance boundaries.
 
 ## 1. Problem and outcome
 

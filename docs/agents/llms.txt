@@ -19,5 +19,6 @@ Documentation sources (also available offline):
 - docs/wiki/HY2-ACME.md: automatic certificates and focused verification.
 - docs/wiki/Upgrade-Rehearsal.md: fixed-version upgrade rehearsal.
 - docs/wiki/Development.md: contribution, validation and Wiki publication.
+- docs/specs/README.md: implementation contracts, completion evidence and outstanding acceptance boundaries.
 
 Never print credentials or full links in shared logs. Config changes require sing-box check. Local/mock, Docker, public, external-provider and production evidence are independent.

@@ -2,7 +2,7 @@
 
 面向 VPS 的 sing-box 安装与管理脚本，提供交互菜单和 Agent 命令，用于部署协议、维护服务和导出客户端配置。
 
-- 脚本版本：`2026103003`
+- 脚本版本：`2026103004`
 - sing-box 适配版本：`1.14.2`
 
 ## 主要能力
@@ -38,6 +38,7 @@ sbv
 [交互管理](https://github.com/KnowSky404/sing-box-vps/wiki/Management) · [Agent 命令](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-CLI) · [运维与排错](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-Runbook) · [开发工作流](https://github.com/KnowSky404/sing-box-vps/wiki/Development)
 
 安全审查上下文与报告要求见 [SECURITY.md](SECURITY.md)。
+实现契约、完成状态与待验收边界见 [SPEC 索引](docs/specs/README.zh-CN.md)（[English](docs/specs/README.md)）。
 
 ## 开源协议
 

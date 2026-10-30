@@ -77,19 +77,20 @@ PRECHECK
 
 ## `curl`/`wget` 调用清单
 
-本轮按调用用途盘点了 `install.sh`、`uninstall.sh`、`utils/` 和验证脚本：
+以下按调用用途列出运行时和验证脚本的当前边界：
 
-| 类型 | 当前调用 | 本轮边界 |
+| 类型 | 当前调用 | 当前边界 |
 | --- | --- | --- |
 | `bootstrap.sh` remote entry | 按 `install`/`uninstall` 选择脚本，下载到受控临时目录，执行 `bash -n` 和项目身份校验，最后才执行临时文件；不直接写安装最终路径 |
 | 运行时可执行 artifact | `stage_sbv_candidate_from_url()`、`download_shell_artifact_atomically()` | 已迁移到同目录 staging、校验和原子替换；不直接写最终执行路径 |
-| 只读 best-effort 查询 | `check_script_status()`、`probe_reality_sni_candidate()`、`get_public_ipv4()`、`get_public_ipv6()` | 不应改变配置；失败分别降级为无法检测、探测失败或空结果 |
-| API 读请求 | `get_latest_version()`、`subman_api_request()` 的 GET | 保留为后续迁移项；应补充统一 timeout、HTTP/JSON 分类和 unavailable 语义 |
-| API 写请求 | `register_warp()`、`subman_api_request()` 的 PUT/DELETE | 保留为后续迁移项；必须继续保护凭据并区分传输结果不确定与服务端拒绝 |
-| 软件包或二进制安装 | `install_dependencies()` 的 apt/yum、`install_binary()` 的临时 `wget` | 不属于本轮 `sbv` 脚本修复；二进制下载不写脚本最终路径，但仍需后续统一 timeout、stderr 限长和回滚上下文 |
+| 只读 best-effort 查询 | `check_script_status()`、`get_public_ipv4()`、`get_public_ipv6()` | 均有请求时限；IP 探测仅接受合法同族地址，全部端点失败时返回非零且不输出候选；更新查询失败显示无法检测 |
+| REALITY 候选探测 | `select_reality_sni_candidate()`、`run_reality_target_check()` | 校验固定 checker 下载与 JSON 报告，每个域名设总时限；失败不选择域名，信号清理受管子进程；附加风险须明确确认 |
+| API 读请求 | `get_latest_version()`、`subman_api_request()` 的 GET | GitHub 查询已有连接/总时限，失败回退适配版本；SubMan 请求已有连接/总时限、私有凭据文件及错误分类，调用方验证 HTTP/JSON 与 Workspace 契约 |
+| API 写请求 | `register_warp()`、`subman_api_request()` 的 PUT/DELETE | WARP 已有限时请求和脱敏日志，但仍需独立操作边界；SubMan 已区分传输结果不确定与服务端拒绝，条件写入及读回对账见下文引用 |
+| 软件包或二进制安装 | `install_dependencies()` 的 apt/yum、`install_binary()` 的临时 `wget` | 二进制下载不写最终执行路径，但下载时限、stderr 限长和 return-based 错误上下文仍需统一 |
 | 验证探针 | `dev/verification/remote/entrypoint.sh` 的本地代理 `curl` | 仅用于 Docker 运行时探测，不是生产安装路径 |
 
-`uninstall.sh` 和 `utils/` 当前没有远程 `curl`/`wget` 调用。除上述已迁移的可执行 artifact 外，本轮不扩大到 API、软件包、二进制升级或配置写入事务。
+`uninstall.sh` 当前没有远程 `curl`/`wget` 调用。SubMan 的条件写入、结果不确定时读回对账及真实服务验收边界见[使用注意事项](https://github.com/KnowSky404/sing-box-vps/wiki/Notes)与[地址选择规范](https://github.com/KnowSky404/sing-box-vps/wiki/SubMan-Address-Selection)。这些已实现保护不等于全部路径都采用同一套下载事务。
 
 ## 变更操作检查清单
 
@@ -108,10 +109,9 @@ PRECHECK
 
 ## 后续迁移清单
 
-已采用本节事务边界的路径包括 `sbv` 自更新、`ensure_sbv_command_installed()` 的脚本候选安装，以及媒体检测后端的远程 Shell artifact 下载。以下为待统一路径的历史检查清单，实施前须重新核对当前代码，并按影响选择回归范围：
+已采用本节事务边界的路径包括 `sbv` 自更新、`ensure_sbv_command_installed()` 的脚本候选安装，以及媒体检测后端的远程 Shell artifact 下载。REALITY checker 已有固定内容校验、时限和信号清理；公网 IP 探测与 SubMan API 的既有保护见上表。以下保留尚需统一或持续维护的边界，实施前须重新核对当前代码，并按影响选择回归范围：
 
-- `install.sh:register_warp()`：Cloudflare API 写请求仍需独立的 timeout、错误分类和凭据安全日志策略。
-- `install.sh:probe_reality_sni_candidate()`、`get_public_ipv4()`、`get_public_ipv6()`：只读 best-effort 查询应统一 unavailable 语义和 timeout。
+- `install.sh:register_warp()`：已有连接/总时限和脱敏 stderr；仍需按完整注册操作统一 HTTP/JSON 错误分类、返回状态及失败后的状态保存边界。
 - `install.sh:get_latest_version()`：GitHub API 读请求应明确 HTTP/JSON/网络失败分类。
 - `install.sh:install_binary()`：`wget` 软件包/二进制安装已有临时目录和二进制原子替换，但还需统一 timeout、stderr 限长和 return-based 错误上下文。
 - `install.sh:replace_singbox_binary_atomically()` 与 Agent upgrade：继续保持现有配置、服务活动状态和回滚契约，后续迁移时必须复用真实回归和 Docker 验证。

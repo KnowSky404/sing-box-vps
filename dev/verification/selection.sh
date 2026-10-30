@@ -199,7 +199,7 @@ verification_group_test_candidates() {
         tests/verification_trigger_rules.sh \
         tests/verification_scenario_mapping.sh \
         tests/verification_requires_remote_env.sh \
-        tests/verification_remote_target_file_alias.sh \
+        tests/verification_docker_image_build.sh \
         tests/verification_stops_on_remote_failure.sh \
         tests/verification_run_writes_changed_files.sh \
         tests/verification_tests_only_stays_local.sh \

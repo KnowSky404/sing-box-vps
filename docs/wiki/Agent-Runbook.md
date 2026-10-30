@@ -125,13 +125,13 @@ Use the repository workflow unless the user asks for a direct manual test.
 
 Remote verification runs via Docker locally.
 
-Run:
+Preview the complete task-branch difference before selecting tests:
 
 ```bash
-bash dev/verification/run.sh
+bash dev/verification/run.sh --plan --base origin/main
 ```
 
-Use this broad entry point when its selected scope is required by section 4.2. Its current file-path rules do not distinguish menu text from runtime logic, and a successful exit is not proof of full regression. Otherwise select existing tests and required scenarios manually as described above. It writes artifacts under the run directory printed as `run_dir=...`; preserve the actual scope and results. Docker evidence does not establish public reachability, real external-provider behavior or production acceptance.
+The planner maps documentation, version metadata, Bootstrap and changed standalone tests; unmapped runtime changes require an explicit local `--group`, Docker `--scenario`, or `--full` selection under section 4.2. Groups do not request Docker by themselves. Review the plan, then remove `--plan` to execute the same selection, or run the necessary tests directly. See [Development](https://github.com/KnowSky404/sing-box-vps/wiki/Development#调度器命令与计划) for scope and prerequisites. Execution writes artifacts under the run directory printed as `run_dir=...`; preserve the actual scope and results. A successful exit does not establish full regression, public reachability, real external-provider behavior or production acceptance.
 
 When remote validation fails:
 
@@ -321,7 +321,7 @@ Common paths:
 - Shadowsocks instance state: `/root/sing-box-vps/protocols/instances/shadowsocks.json` (active marker schema 2, JSON `schema_version: 1`; use the typed Agent lifecycle and bounded export contract below)
 - Trojan instance state: `/root/sing-box-vps/protocols/instances/trojan.json` (active marker `/root/sing-box-vps/protocols/trojan.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle)
 - VMess instance state: `/root/sing-box-vps/protocols/instances/vmess.json` (active marker `/root/sing-box-vps/protocols/vmess.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle)
-- AnyTLS instance state: `/root/sing-box-vps/protocols/instances/anytls.json` (active marker `/root/sing-box-vps/protocols/anytls.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for manual TLS and ACME)
+- AnyTLS instance state: `/root/sing-box-vps/protocols/instances/anytls.json` (active marker `/root/sing-box-vps/protocols/anytls.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for manual TLS; legacy ACME/provider configuration retains its existing configuration-update path)
 - Hysteria2 instance state: `/root/sing-box-vps/protocols/instances/hy2.json` (active marker `/root/sing-box-vps/protocols/hy2.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for manual TLS and ACME)
 - Hysteria v1 instance state: `/root/sing-box-vps/protocols/instances/hysteria.json` (active marker `/root/sing-box-vps/protocols/hysteria.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for the manual-TLS QUIC subset)
 - NaiveProxy instance state: `/root/sing-box-vps/protocols/instances/naive.json` (active marker `/root/sing-box-vps/protocols/naive.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for the manual-TLS TCP/UDP subset; outbound requires `with_naive_outbound` and runtime `libcronet.so`)

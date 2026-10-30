@@ -6,7 +6,7 @@
 !verification/docker/
 !verification/docker/Dockerfile
 !verification/remote/
+!verification/remote/entrypoint.sh
 !verification/remote/scenarios/
-!verification/remote/scenarios/multi_protocol_coexistence.sh
-!verification/remote/scenarios/upgrade_rollback_1_13_to_1_14.sh
+!verification/remote/scenarios/*.sh
 verification-runs/

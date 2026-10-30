@@ -201,7 +201,7 @@ verification_install_metadata_only() {
   git cat-file -e "${VERIFY_PLAN_BASE}:install.sh" 2>/dev/null || return 1
   # Only the two fixed header locations are metadata. Similar lines inside a
   # function/heredoc, or moving the constant, must remain behavioral differences.
-  diff -q \
+  diff \
     <(git show "${VERIFY_PLAN_BASE}:install.sh" | sed '4s/^# Version: [0-9]\{10\}$/# Version: __VERSION__/; 11s/^readonly SCRIPT_VERSION="[0-9]\{10\}"$/readonly SCRIPT_VERSION="__VERSION__"/') \
     <(sed '4s/^# Version: [0-9]\{10\}$/# Version: __VERSION__/; 11s/^readonly SCRIPT_VERSION="[0-9]\{10\}"$/readonly SCRIPT_VERSION="__VERSION__"/' "${REPO_ROOT}/install.sh") >/dev/null
 }
