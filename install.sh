@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026103006
+# Version: 2026103007
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026103006"
+readonly SCRIPT_VERSION="2026103007"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -78,6 +78,31 @@ readonly SB_REALITY_CHECKER_SHA256="f2446d5bc75ed77289a29adf8d85bc87efdbfa289e6a
 readonly SB_REALITY_CHECKER_URL="https://raw.githubusercontent.com/KnowSky404/reality-target-checker/${SB_REALITY_CHECKER_COMMIT}/reality-target-checker.sh"
 readonly SB_REALITY_DISCOVER_SHA256="f806106efff7f3cbe219175d4f0c09f388d5304158d0e0d43e9220fefea6374d"
 readonly SB_REALITY_SOURCES_SHA256="de028f4eec658eba6f789b30a51d558d9565337fccb02c2358ae76643f0ff33c"
+# Institution locations, not hosting/IP guarantees. Every candidate still needs
+# a fresh DNS-scoped checker result and explicit consent for ancillary warnings.
+# Fields: region|category|institution|domain. Official sources live in the Wiki.
+readonly SB_REALITY_REGION_CANDIDATES=(
+  'HK|bank|中国银行（香港）|www.bochk.com'
+  'HK|bank|东亚银行|www.hkbea.com'
+  'HK|government|香港政府一站通|www.gov.hk'
+  'HK|university|香港大学|www.hku.hk'
+  'HK|university|香港中文大学|www.cuhk.edu.hk'
+  'US-LAX|bank|City National Bank|www.cnb.com'
+  'US-LAX|bank|Preferred Bank|www.preferredbank.com'
+  'US-LAX|government|City of Los Angeles|lacity.gov'
+  'US-LAX|university|UCLA|www.ucla.edu'
+  'US-LAX|university|University of Southern California|www.usc.edu'
+  'DE-FRA|bank|Frankfurter Sparkasse|www.frankfurter-sparkasse.de'
+  'DE-FRA|bank|Frankfurter Volksbank Rhein/Main|www.frankfurter-volksbank.de'
+  'DE-FRA|government|Stadt Frankfurt am Main|frankfurt.de'
+  'DE-FRA|university|Goethe University Frankfurt|www.uni-frankfurt.de'
+  'DE-FRA|university|Frankfurt University of Applied Sciences|www.frankfurt-university.de'
+  'JP-TYO|bank|三井住友银行|www.smbc.co.jp'
+  'JP-TYO|bank|瑞穗银行|www.mizuhobank.co.jp'
+  'JP-TYO|government|东京都政府|www.metro.tokyo.lg.jp'
+  'JP-TYO|university|东京大学|www.u-tokyo.ac.jp'
+  'JP-TYO|university|早稻田大学|www.waseda.jp'
+)
 # Runtime capability source of truth. Fields are decoded by protocol_registry_json.
 # IDs/aliases are data; dispatch below always calls explicit, literal handlers.
 # The legacy vless alias intentionally remains the REALITY preset.
@@ -5078,6 +5103,57 @@ prompt_reality_target_discovery() {
   fi
 }
 
+reality_region_candidate_records() {
+  local region=${1:-} record
+  case "${region}" in HK|US-LAX|DE-FRA|JP-TYO) ;; *) return 1 ;; esac
+  for record in "${SB_REALITY_REGION_CANDIDATES[@]}"; do
+    if [[ "${record}" == "${region}|"* ]]; then
+      printf '%s\n' "${record}"
+    fi
+  done
+}
+
+prompt_reality_region_candidates() {
+  local choice region records record_region category institution domain category_label selected_sni
+  local candidates=()
+  echo "地区按机构所在地分组；实际解析 IP / ASN 或 CDN 节点可能位于其他地区。"
+  echo "1. HK 香港"
+  echo "2. US-LAX 洛杉矶"
+  echo "3. DE-FRA 法兰克福"
+  echo "4. JP-TYO 东京"
+  echo "0. 返回"
+  choice=$(prompt_choice "请选择地区 [0-4] (默认 0): " 0 4 0) || return 1
+  case "${choice}" in
+    1) region=HK ;;
+    2) region=US-LAX ;;
+    3) region=DE-FRA ;;
+    4) region=JP-TYO ;;
+    *) return 1 ;;
+  esac
+  records=$(reality_region_candidate_records "${region}") || return 1
+  echo "${region} 候选官网（仍须检测；不代表已通过或适合 REALITY）:"
+  while IFS='|' read -r record_region category institution domain; do
+    [[ "${record_region}" == "${region}" ]] && validate_reality_sni_syntax "${domain}" || return 1
+    case "${category}" in
+      bank) category_label=银行 ;;
+      government) category_label=政府 ;;
+      university) category_label=学校 ;;
+      *) return 1 ;;
+    esac
+    printf '  [%s] %s: %s\n' "${category_label}" "${institution}" "${domain}"
+    candidates+=("${domain}")
+  done <<< "${records}"
+  [[ ${#candidates[@]} -gt 0 && ${#candidates[@]} -le 5 ]] || return 1
+  echo "按以上顺序检测，选择首个通过并获接受的域名；附加风险默认拒绝。"
+  if selected_sni=$(select_reality_sni_candidate "${candidates[@]}"); then
+    SB_SNI="${selected_sni}"
+    log_success "已选择 Reality SNI: ${SB_SNI}"
+    return 0
+  else
+    return $?
+  fi
+}
+
 prompt_reality_target_candidates() {
   local input domain selected_sni
   local candidates=()
@@ -5112,8 +5188,14 @@ prompt_reality_sni_install() {
     echo "1. 使用 reality-target-checker 探测候选 SNI (默认)"
     echo "2. 手动输入（TLS 校验）"
     echo "3. 从明确的网段 / ASN 发现候选 SNI"
-    choice=$(prompt_choice "请选择 [1-3] (默认 1): " 1 3 1) || return 1
+    echo "4. 检测地区内置候选（银行 / 政府 / 学校）"
+    choice=$(prompt_choice "请选择 [1-4] (默认 1): " 1 4 1) || return 1
     case "${choice}" in
+      4)
+        if prompt_reality_region_candidates; then return 0; else status=$?; fi
+        [[ "${status}" == 1 ]] || return "${status}"
+        log_warn "尚未选择 SNI，请重试或选择其他输入方式。"
+        ;;
       3)
         if prompt_reality_target_discovery; then return 0; else status=$?; fi
         [[ "${status}" == 1 ]] || return "${status}"
@@ -5141,8 +5223,13 @@ prompt_reality_sni_update() {
     echo "2. 使用 reality-target-checker 探测候选 SNI"
     echo "3. 手动输入（TLS 校验）"
     echo "4. 从明确的网段 / ASN 发现候选 SNI"
-    choice=$(prompt_choice "请选择 [1-4] (默认 1): " 1 4 1) || return 1
+    echo "5. 检测地区内置候选（银行 / 政府 / 学校）"
+    choice=$(prompt_choice "请选择 [1-5] (默认 1): " 1 5 1) || return 1
     case "${choice}" in
+      5)
+        if prompt_reality_region_candidates; then return 0; else status=$?; fi
+        [[ "${status}" == 1 ]] || return "${status}"
+        ;;
       4)
         if prompt_reality_target_discovery; then return 0; else status=$?; fi
         [[ "${status}" == 1 ]] || return "${status}"
@@ -5173,8 +5260,13 @@ prompt_reality_sni_for_new_instance() {
     echo "2. 使用 reality-target-checker 探测候选 SNI"
     echo "3. 手动输入（TLS 校验）"
     echo "4. 从明确的网段 / ASN 发现候选 SNI"
-    choice=$(prompt_choice "请选择 [1-4] (默认 1): " 1 4 1) || return 1
+    echo "5. 检测地区内置候选（银行 / 政府 / 学校）"
+    choice=$(prompt_choice "请选择 [1-5] (默认 1): " 1 5 1) || return 1
     case "${choice}" in
+      5)
+        if prompt_reality_region_candidates; then return 0; else status=$?; fi
+        [[ "${status}" == 1 ]] || return "${status}"
+        ;;
       4)
         if prompt_reality_target_discovery; then return 0; else status=$?; fi
         [[ "${status}" == 1 ]] || return "${status}"
