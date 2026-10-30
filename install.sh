@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026102906
+# Version: 2026103001
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026102906"
+readonly SCRIPT_VERSION="2026103001"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -24050,15 +24050,40 @@ remove_protocol_menu() {
 }
 
 get_public_ip() {
-  get_public_ipv4 || get_public_ipv6
+  local address
+  if address=$(get_public_ipv4) && [[ -n "${address}" ]]; then
+    printf '%s' "${address}"
+  elif address=$(get_public_ipv6) && [[ -n "${address}" ]]; then
+    printf '%s' "${address}"
+  else
+    return 1
+  fi
 }
 
 get_public_ipv4() {
-  curl -4 -s --connect-timeout 5 --max-time 10 https://api.ip.sb/ip 2>/dev/null || curl -4 -s --connect-timeout 5 --max-time 10 https://ifconfig.me 2>/dev/null || true
+  get_public_address_for_family 4
 }
 
 get_public_ipv6() {
-  curl -6 -s --connect-timeout 5 --max-time 10 https://api.ip.sb/ip 2>/dev/null || curl -6 -s --connect-timeout 5 --max-time 10 https://ifconfig.me 2>/dev/null || true
+  get_public_address_for_family 6
+}
+
+get_public_address_for_family() {
+  local family=${1:-} endpoint address
+  [[ "${family}" == 4 || "${family}" == 6 ]] || return 1
+  for endpoint in https://api.ip.sb/ip https://ifconfig.me; do
+    if ! address=$(curl "-${family}" -fsS --connect-timeout 5 --max-time 10 "${endpoint}" 2>/dev/null); then
+      continue
+    fi
+    address=$(trim_whitespace "${address}") || return 1
+    structured_instance_store_validate_address "${address}" || continue
+    if listener_address_is_wildcard "${address}"; then continue; fi
+    if [[ "${family}" == 4 && "${address}" != *:* || "${family}" == 6 && "${address}" == *:* ]]; then
+      printf '%s' "${address}"
+      return 0
+    fi
+  done
+  return 1
 }
 
 normalize_ip_list() {
@@ -24753,7 +24778,7 @@ build_hy2_link() {
   local public_ip=$1
   local address_label=${2:-}
   local server_host query node_name
-  server_host=${SB_HY2_DOMAIN:-${public_ip}}
+  server_host=${3:-${SB_HY2_DOMAIN:-${public_ip}}}
   node_name=$(display_node_name_for_protocol "hy2" "${SB_NODE_NAME}" "${address_label}")
   query="sni=${SB_HY2_DOMAIN:-${server_host}}"
 
@@ -24826,6 +24851,15 @@ record_subman_key_failure() {
   subman_set_client_error "invalid_external_key" "invalid-request"
   record_subman_node_result "" "${protocol}" "${instance_id}" "${address_label}" || return 1
   [[ "${quiet}" == y ]] || print_warn "SubMan 外部键生成失败或超过 119 UTF-8 字节: ${protocol}/${instance_id}；请缩短节点前缀并明确处理旧身份。"
+  return 0
+}
+
+record_subman_address_failure() {
+  local protocol=$1 instance_id=${2:-} quiet=${3:-n}
+  reset_subman_api_result
+  subman_set_client_error "public_ip_unavailable" "retryable-upstream"
+  record_subman_node_result "" "${protocol}" "${instance_id}" "" || return 1
+  [[ "${quiet}" == y ]] || print_warn "未获取到与监听地址匹配的公网 IP，无法生成 SubMan 节点链接: ${protocol}/${instance_id}。"
   return 0
 }
 
@@ -25188,10 +25222,9 @@ push_subman_trojan_instance() {
   store_file=$(plain_proxy_structured_store_file trojan) || { SUBMAN_TROJAN_FAILED=1; return 1; }
   snapshot=$(structured_instance_store_snapshot_json trojan "${store_file}") || { SUBMAN_TROJAN_FAILED=1; return 1; }
   instance=$(jq -ce --arg id "${instance_id}" '.instances[] | select(.id == $id)' <<< "${snapshot}") || { SUBMAN_TROJAN_FAILED=1; return 1; }
-  case "$(jq -r '.listen.address' <<< "${instance}")" in
-    0.0.0.0|::) ;;
-    *) server=$(jq -r '.listen.address' <<< "${instance}") ;;
-  esac
+  if ! listener_address_is_wildcard "$(jq -r '.listen.address' <<< "${instance}")"; then
+    server=$(jq -r '.listen.address' <<< "${instance}") || return 1
+  fi
   # Run the same complete outbound producer used by export-client before any
   # SubMan mutation. Certificate-trust users are intentionally excluded here:
   # their URI is skipped because SubMan cannot carry the custom trust, while
@@ -25223,6 +25256,7 @@ push_subman_trojan_instance() {
   while IFS= read -r user_name; do
     [[ -n "${user_name}" ]] || continue
     node_name=$(subman_trojan_node_name "${instance_id}" "${user_name}") || { failed=$((failed + 1)); continue; }
+    node_name=$(node_name_for_network_stack "${node_name}" "${address_label}") || { failed=$((failed + 1)); continue; }
     if raw_link=$(build_trojan_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name}"); then
       :
     else
@@ -25272,7 +25306,11 @@ push_subman_trojan_protocol() {
   while IFS= read -r instance_id; do
     [[ -n "${instance_id}" ]] || continue
     load_protocol_instance_state trojan "${instance_id}" || { total_failed=$((total_failed + 1)); continue; }
-    address_entries=$(list_subman_addresses_for_current_protocol) || { total_failed=$((total_failed + 1)); continue; }
+    if ! address_entries=$(list_subman_addresses_for_current_protocol) || [[ -z "${address_entries}" ]]; then
+      record_subman_address_failure trojan "${instance_id}" "${quiet}" || return 1
+      total_failed=$((total_failed + 1))
+      continue
+    fi
     while IFS= read -r address_entry; do
       [[ -n "${address_entry}" ]] || continue
       address_label=${address_entry%%|*}
@@ -25408,12 +25446,15 @@ push_subman_vmess_instance() {
   store_file=$(plain_proxy_structured_store_file vmess) || { SUBMAN_VMESS_FAILED=1; return 1; }
   snapshot=$(structured_instance_store_snapshot_json vmess "${store_file}") || { SUBMAN_VMESS_FAILED=1; return 1; }
   instance=$(jq -ce --arg id "${instance_id}" '.instances[] | select(.id == $id)' <<< "${snapshot}") || { SUBMAN_VMESS_FAILED=1; return 1; }
-  case "$(jq -r '.listen.address' <<< "${instance}")" in 0.0.0.0|::) ;; *) server=$(jq -r '.listen.address' <<< "${instance}") ;; esac
+  if ! listener_address_is_wildcard "$(jq -r '.listen.address' <<< "${instance}")"; then
+    server=$(jq -r '.listen.address' <<< "${instance}") || return 1
+  fi
   snapshot_file=$(mktemp) || { SUBMAN_VMESS_FAILED=1; return 1; }; printf '%s\n' "${snapshot}" > "${snapshot_file}" || { rm -f -- "${snapshot_file}"; SUBMAN_VMESS_FAILED=1; return 1; }
   users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || { rm -f -- "${snapshot_file}"; SUBMAN_VMESS_FAILED=1; return 1; }
   while IFS= read -r user_name; do
     [[ -n "${user_name}" ]] || continue
     node_name=$(subman_vmess_node_name "${instance_id}" "${user_name}") || { failed=$((failed + 1)); continue; }
+    node_name=$(node_name_for_network_stack "${node_name}" "${address_label}") || { failed=$((failed + 1)); continue; }
     if raw_link=$(build_vmess_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name}"); then
       external_key=$(subman_external_key_for_vmess_user "${instance_id}" "${user_name}" "${address_label}") || { record_subman_key_failure vmess "${instance_id}" "${address_label}" "${quiet}"; failed=$((failed + 1)); continue; }
       payload_json=$(build_subman_vmess_node_payload "${raw_link}" "${node_name}") || { failed=$((failed + 1)); continue; }
@@ -25440,7 +25481,11 @@ push_subman_vmess_protocol() {
   while IFS= read -r instance_id; do
     [[ -n "${instance_id}" ]] || continue
     load_protocol_instance_state vmess "${instance_id}" || { total_failed=$((total_failed + 1)); continue; }
-    address_entries=$(list_subman_addresses_for_current_protocol) || { total_failed=$((total_failed + 1)); continue; }
+    if ! address_entries=$(list_subman_addresses_for_current_protocol) || [[ -z "${address_entries}" ]]; then
+      record_subman_address_failure vmess "${instance_id}" "${quiet}" || return 1
+      total_failed=$((total_failed + 1))
+      continue
+    fi
     while IFS= read -r address_entry; do
       [[ -n "${address_entry}" ]] || continue; address_label=${address_entry%%|*}; public_ip=${address_entry#*|}
       push_subman_vmess_instance "${instance_id}" "${public_ip}" "${quiet}" "${address_label}" || :
@@ -25588,12 +25633,15 @@ push_subman_vless_plain_instance() {
   store_file=$(plain_proxy_structured_store_file vless-plain) || { SUBMAN_VLESS_PLAIN_FAILED=1; return 1; }
   snapshot=$(structured_instance_store_snapshot_json vless-plain "${store_file}") || { SUBMAN_VLESS_PLAIN_FAILED=1; return 1; }
   instance=$(jq -ce --arg id "${instance_id}" '.instances[] | select(.id == $id)' <<< "${snapshot}") || { SUBMAN_VLESS_PLAIN_FAILED=1; return 1; }
-  case "$(jq -r '.listen.address' <<< "${instance}")" in 0.0.0.0|::) ;; *) server=$(jq -r '.listen.address' <<< "${instance}") ;; esac
+  if ! listener_address_is_wildcard "$(jq -r '.listen.address' <<< "${instance}")"; then
+    server=$(jq -r '.listen.address' <<< "${instance}") || return 1
+  fi
   snapshot_file=$(mktemp) || { SUBMAN_VLESS_PLAIN_FAILED=1; return 1; }; printf '%s\n' "${snapshot}" > "${snapshot_file}" || { rm -f -- "${snapshot_file}"; SUBMAN_VLESS_PLAIN_FAILED=1; return 1; }
   users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || { rm -f -- "${snapshot_file}"; SUBMAN_VLESS_PLAIN_FAILED=1; return 1; }
   while IFS= read -r user_name; do
     [[ -n "${user_name}" ]] || continue
     node_name=$(subman_vless_plain_node_name "${instance_id}" "${user_name}") || { failed=$((failed + 1)); continue; }
+    node_name=$(node_name_for_network_stack "${node_name}" "${address_label}") || { failed=$((failed + 1)); continue; }
     if raw_link=$(build_vless_plain_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name}"); then
       external_key=$(subman_external_key_for_vless_plain_user "${instance_id}" "${user_name}" "${address_label}") || { record_subman_key_failure vless-plain "${instance_id}" "${address_label}" "${quiet}"; failed=$((failed + 1)); continue; }
       payload_json=$(build_subman_vless_plain_node_payload "${raw_link}" "${node_name}") || { failed=$((failed + 1)); continue; }
@@ -25620,7 +25668,11 @@ push_subman_vless_plain_protocol() {
   while IFS= read -r instance_id; do
     [[ -n "${instance_id}" ]] || continue
     load_protocol_instance_state vless-plain "${instance_id}" || { total_failed=$((total_failed + 1)); continue; }
-    address_entries=$(list_subman_addresses_for_current_protocol) || { total_failed=$((total_failed + 1)); continue; }
+    if ! address_entries=$(list_subman_addresses_for_current_protocol) || [[ -z "${address_entries}" ]]; then
+      record_subman_address_failure vless-plain "${instance_id}" "${quiet}" || return 1
+      total_failed=$((total_failed + 1))
+      continue
+    fi
     while IFS= read -r address_entry; do
       [[ -n "${address_entry}" ]] || continue; address_label=${address_entry%%|*}; public_ip=${address_entry#*|}
       push_subman_vless_plain_instance "${instance_id}" "${public_ip}" "${quiet}" "${address_label}" || :
@@ -25662,10 +25714,9 @@ push_subman_shadowsocks_instance() {
     SUBMAN_SHADOWSOCKS_FAILED=1
     return 1
   fi
-  case "${instance_address}" in
-    0.0.0.0|::) ;;
-    *) server=${instance_address} ;;
-  esac
+  if ! listener_address_is_wildcard "${instance_address}"; then
+    server=${instance_address}
+  fi
   if ! outbounds_text=$(
     temporary=$(mktemp) || exit 1
     cleanup_snapshot_file() {
@@ -25738,6 +25789,10 @@ push_subman_shadowsocks_instance() {
       SUBMAN_SHADOWSOCKS_FAILED=$((SUBMAN_SHADOWSOCKS_FAILED + 1))
       continue
     }
+    node_name=$(node_name_for_network_stack "${node_name}" "${address_label}") || {
+      SUBMAN_SHADOWSOCKS_FAILED=$((SUBMAN_SHADOWSOCKS_FAILED + 1))
+      continue
+    }
     payload_json=$(build_subman_shadowsocks_node_payload "${outbound}" "${node_name}") || {
       SUBMAN_SHADOWSOCKS_FAILED=$((SUBMAN_SHADOWSOCKS_FAILED + 1))
       continue
@@ -25781,7 +25836,8 @@ push_subman_shadowsocks_protocol() {
         --argjson existing "${SUBMAN_SHADOWSOCKS_WARNINGS_JSON}" \
         --argjson additions "${warnings}" '$existing + $additions') || return 1
     fi
-    if ! address_text=$(list_subman_addresses_for_current_protocol); then
+    if ! address_text=$(list_subman_addresses_for_current_protocol) || [[ -z "${address_text}" ]]; then
+      record_subman_address_failure shadowsocks "${instance_id}" "${quiet}" || return 1
       total_failed=$((total_failed + 1))
       continue
     fi
@@ -25962,10 +26018,9 @@ push_subman_hy2_instance() {
   store_file=$(plain_proxy_structured_store_file hy2) || { SUBMAN_HY2_FAILED=1; return 1; }
   snapshot=$(structured_instance_store_snapshot_json hy2 "${store_file}") || { SUBMAN_HY2_FAILED=1; return 1; }
   instance=$(jq -ce --arg id "${instance_id}" '.instances[] | select(.id == $id)' <<< "${snapshot}") || { SUBMAN_HY2_FAILED=1; return 1; }
-  case "$(jq -r '.listen.address' <<< "${instance}")" in
-    0.0.0.0|::) ;;
-    *) server=$(jq -r '.listen.address' <<< "${instance}") ;;
-  esac
+  if ! listener_address_is_wildcard "$(jq -r '.listen.address' <<< "${instance}")"; then
+    server=$(jq -r '.listen.address' <<< "${instance}") || return 1
+  fi
   certificate_path=$(jq -r '.tls.certificate_path // ""' <<< "${instance}") || { SUBMAN_HY2_FAILED=1; return 1; }
   ed25519_warning=$(hy2_ed25519_share_warning_json "${certificate_path}") || { SUBMAN_HY2_FAILED=1; return 1; }
   snapshot_file=$(mktemp) || { SUBMAN_HY2_FAILED=1; return 1; }
@@ -25974,6 +26029,7 @@ push_subman_hy2_instance() {
   while IFS= read -r user_name; do
     [[ -n "${user_name}" ]] || continue
     node_name=$(subman_hy2_node_name "${instance_id}" "${user_name}") || { failed=$((failed + 1)); continue; }
+    node_name=$(node_name_for_network_stack "${node_name}" "${address_label}") || { failed=$((failed + 1)); continue; }
     if raw_link=$(build_hy2_subman_uri_from_store "${snapshot_file}" "${server}" "${instance_id}" "${user_name}" "${node_name}"); then
       external_key=$(subman_external_key_for_hy2_user "${instance_id}" "${user_name}" "${address_label}") || { record_subman_key_failure hy2 "${instance_id}" "${address_label}" "${quiet}"; failed=$((failed + 1)); continue; }
       payload_json=$(build_subman_hy2_node_payload "${raw_link}" "${node_name}") || { failed=$((failed + 1)); continue; }
@@ -26028,7 +26084,11 @@ push_subman_hy2_protocol() {
   while IFS= read -r instance_id; do
     [[ -n "${instance_id}" ]] || continue
     load_protocol_instance_state hy2 "${instance_id}" || { total_failed=$((total_failed + 1)); continue; }
-    address_entries=$(list_subman_addresses_for_current_protocol) || { total_failed=$((total_failed + 1)); continue; }
+    if ! address_entries=$(list_subman_addresses_for_current_protocol) || [[ -z "${address_entries}" ]]; then
+      record_subman_address_failure hy2 "${instance_id}" "${quiet}" || return 1
+      total_failed=$((total_failed + 1))
+      continue
+    fi
     while IFS= read -r address_entry; do
       [[ -n "${address_entry}" ]] || continue
       address_label=${address_entry%%|*}
@@ -26110,7 +26170,7 @@ build_subman_raw_for_protocol() {
         node_name=$(display_node_name_for_protocol hy2 "${SB_NODE_NAME:-Hysteria2}" "${address_label}") || return 1
         build_hy2_subman_uri_from_store "${store_file}" "${public_ip}" "${instance_id}" "${user_name}" "${node_name}"
       else
-        build_hy2_link "${public_ip}" "${address_label}"
+        build_hy2_link "${public_ip}" "${address_label}" "${public_ip}"
       fi
       ;;
     *) return 1 ;;
@@ -27011,14 +27071,17 @@ build_client_hy2_outbounds() (
     instance_file=$(mktemp "${tmpdir}/store.XXXXXX") || return 1
     jq --arg id "${instance_id}" '. as $root | ($root.instances | map(select(.id == $id))) as $instances | $root | .default_instance_id=$id | .instances=$instances' <<< "${snapshot}" > "${instance_file}" || return 1
     listen_address=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .listen.address' <<< "${snapshot}") || return 1
-    case "${listen_address}" in
-      0.0.0.0|::) server_address=${public_ip} ;;
-      127.*|::1)
-        server_address=${listen_address}
-        printf '[WARN] Hysteria2 实例 %s 绑定回环地址 %s；导出仅供本机使用，未宣称公网可达。\n' "${instance_id}" "${listen_address}" >&2
-        ;;
-      *) server_address=${listen_address} ;;
-    esac
+    if listener_address_is_wildcard "${listen_address}"; then
+      server_address=${public_ip}
+    else
+      case "${listen_address}" in
+        127.*|::1)
+          server_address=${listen_address}
+          printf '[WARN] Hysteria2 实例 %s 绑定回环地址 %s；导出仅供本机使用，未宣称公网可达。\n' "${instance_id}" "${listen_address}" >&2
+          ;;
+        *) server_address=${listen_address} ;;
+      esac
+    fi
     [[ -n "${server_address}" ]] || return 1
     raw_file=$(mktemp "${tmpdir}/raw.XXXXXX") || return 1
     jq -c --arg server "${server_address}" '
@@ -28785,8 +28848,13 @@ show_qr_info() {
 
 show_connection_details() {
   local mode=$1
-  local public_ip=${2:-$(get_public_ip)}
+  local public_ip=${2:-}
   local address_label=${3-}
+
+  if [[ -z "${public_ip}" ]] && ! public_ip=$(get_public_ip); then
+    print_warn "未获取到公网 IP，暂时无法展示连接信息，请稍后重试。"
+    return 0
+  fi
 
   if [[ $# -lt 3 && -z "${address_label}" ]]; then
     if [[ "${public_ip}" == *:* ]]; then
@@ -28814,32 +28882,29 @@ show_connection_details() {
   esac
 }
 
-list_public_addresses_for_current_stack() {
-  local ipv4_address ipv6_address fallback_address
-
-  ensure_stack_mode_state_loaded
-
-  case "${SB_INBOUND_STACK_MODE}" in
-    ipv4_only)
-      ipv4_address=$(get_public_ipv4)
-      [[ -n "${ipv4_address}" ]] && printf 'IPv4|%s\n' "${ipv4_address}"
-      ;;
-    ipv6_only)
-      ipv6_address=$(get_public_ipv6)
-      [[ -n "${ipv6_address}" ]] && printf 'IPv6|%s\n' "${ipv6_address}"
-      ;;
-    *)
-      ipv4_address=$(get_public_ipv4)
-      ipv6_address=$(get_public_ipv6)
-      [[ -n "${ipv4_address}" ]] && printf 'IPv4|%s\n' "${ipv4_address}"
-      [[ -n "${ipv6_address}" ]] && printf 'IPv6|%s\n' "${ipv6_address}"
-      ;;
-  esac
-
-  if [[ -z "${ipv4_address:-}" && -z "${ipv6_address:-}" ]]; then
-    fallback_address=$(get_public_ip)
-    [[ -n "${fallback_address}" ]] && printf '地址|%s\n' "${fallback_address}"
+list_public_addresses_for_stack_mode() {
+  local mode=${1:-} ipv4_address='' ipv6_address=''
+  validate_inbound_stack_mode "${mode}" || return 1
+  if [[ "${mode}" != ipv6_only ]]; then
+    ipv4_address=$(get_public_ipv4) || ipv4_address=''
   fi
+  if [[ "${mode}" != ipv4_only ]]; then
+    ipv6_address=$(get_public_ipv6) || ipv6_address=''
+  fi
+  [[ -n "${ipv4_address}" || -n "${ipv6_address}" ]] || return 1
+  if [[ -n "${ipv4_address}" ]]; then printf 'IPv4|%s\n' "${ipv4_address}"; fi
+  if [[ -n "${ipv6_address}" ]]; then printf 'IPv6|%s\n' "${ipv6_address}"; fi
+}
+
+list_public_addresses_for_current_stack() {
+  ensure_stack_mode_state_loaded || return 1
+  list_public_addresses_for_stack_mode "${SB_INBOUND_STACK_MODE}"
+}
+
+listener_address_is_wildcard() {
+  local canonical
+  canonical=$(canonical_listener_address "${1:-}") || return 1
+  [[ "${canonical}" == 0.0.0.0 || "${canonical}" == 0000:0000:0000:0000:0000:0000:0000:0000 ]]
 }
 
 protocol_uses_domain_connection_material() {
@@ -28850,39 +28915,27 @@ protocol_uses_domain_connection_material() {
 }
 
 list_subman_addresses_for_current_protocol() {
-  local public_ip address_entries=() bound_address protocol
+  local bound_address canonical protocol
 
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL:-}" 2>/dev/null || true)
   case "${protocol}" in
     mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls)
       if plain_proxy_structured_state_active "${protocol}" >/dev/null 2>&1; then
         bound_address=${SB_MIXED_LISTEN_ADDRESS:-}
-        case "${bound_address}" in
-          ""|0.0.0.0|::) ;;
-          *) printf '监听地址|%s\n' "${bound_address}"; return 0 ;;
+        canonical=$(canonical_listener_address "${bound_address}") || return 1
+        # Structured stores render their own listener verbatim. Global stack
+        # preferences cannot broaden or narrow that existing socket.
+        case "${canonical}" in
+          0.0.0.0) list_public_addresses_for_stack_mode ipv4_only ;;
+          0000:0000:0000:0000:0000:0000:0000:0000) list_public_addresses_for_stack_mode dual_stack ;;
+          *) printf '监听地址|%s\n' "${bound_address}" ;;
         esac
+        return $?
       fi
       ;;
   esac
 
-  if protocol_uses_domain_connection_material; then
-    public_ip=$(get_public_ip)
-    if [[ -n "${public_ip}" ]]; then
-      printf '地址|%s\n' "${public_ip}"
-    fi
-    return 0
-  fi
-
-  mapfile -t address_entries < <(list_public_addresses_for_current_stack)
-  if [[ ${#address_entries[@]} -eq 0 ]]; then
-    public_ip=$(get_public_ip)
-    if [[ -n "${public_ip}" ]]; then
-      printf '地址|%s\n' "${public_ip}"
-    fi
-    return 0
-  fi
-
-  printf '%s\n' "${address_entries[@]}"
+  list_public_addresses_for_current_stack
 }
 
 show_connection_details_for_detected_addresses() {
@@ -28899,7 +28952,10 @@ show_connection_details_for_detected_addresses() {
   fi
 
   if protocol_uses_domain_connection_material; then
-    public_ip=$(get_public_ip)
+    if ! public_ip=$(get_public_ip); then
+      print_warn "未获取到公网 IP，暂时无法展示连接信息，请稍后重试。"
+      return 0
+    fi
     if [[ "${public_ip}" == *:* ]]; then
       label="IPv6"
     elif [[ "${public_ip}" == *.* ]]; then
@@ -32308,7 +32364,7 @@ agent_service_cli() {
 
 agent_push_nodes_to_subman_json() {
   local original_protocol_state protocol instance_id
-  local address_entry address_label public_ip
+  local address_entry address_label public_ip address_entries
   local instance_attempted instance_synced instance_stacked_synced
   local synced_count skipped_count failed_count shadowsocks_skipped_count trojan_skipped_count vmess_skipped_count vless_plain_skipped_count hy2_skipped_count ok_json
   local last_error_code last_error_disposition last_http_status last_retry_after unsupported_warning_json
@@ -32373,6 +32429,13 @@ agent_push_nodes_to_subman_json() {
         instance_attempted=0
         instance_synced=0
         instance_stacked_synced=0
+        if ! address_entries=$(list_subman_addresses_for_current_protocol) || [[ -z "${address_entries}" ]]; then
+          record_subman_address_failure "${protocol}" "${instance_id}" y || return 1
+          failed_count=$((failed_count + 1))
+          last_error_code=${SUBMAN_LAST_ERROR_CODE}
+          last_error_disposition=${SUBMAN_LAST_ERROR_DISPOSITION}
+          continue
+        fi
         while IFS= read -r address_entry; do
           [[ -z "${address_entry}" ]] && continue
           address_label=${address_entry%%|*}
@@ -32391,7 +32454,7 @@ agent_push_nodes_to_subman_json() {
             last_http_status=${SUBMAN_LAST_HTTP_STATUS:-}
             last_retry_after=${SUBMAN_LAST_RETRY_AFTER:-}
           fi
-        done < <(list_subman_addresses_for_current_protocol)
+        done <<< "${address_entries}"
         if subman_instance_ready_for_legacy_cleanup "${instance_attempted}" "${instance_synced}" "${instance_stacked_synced}" && \
           push_subman_legacy_protocol_key_cleanup "${protocol}" "${instance_id}" "y"; then
           :
@@ -32524,6 +32587,13 @@ agent_push_nodes_to_subman_json() {
       continue
     fi
 
+    if ! address_entries=$(list_subman_addresses_for_current_protocol) || [[ -z "${address_entries}" ]]; then
+      record_subman_address_failure "${protocol}" "" y || return 1
+      failed_count=$((failed_count + 1))
+      last_error_code=${SUBMAN_LAST_ERROR_CODE}
+      last_error_disposition=${SUBMAN_LAST_ERROR_DISPOSITION}
+      continue
+    fi
     while IFS= read -r address_entry; do
       [[ -z "${address_entry}" ]] && continue
       address_label=${address_entry%%|*}
@@ -32537,7 +32607,7 @@ agent_push_nodes_to_subman_json() {
         last_http_status=${SUBMAN_LAST_HTTP_STATUS:-}
         last_retry_after=${SUBMAN_LAST_RETRY_AFTER:-}
       fi
-    done < <(list_subman_addresses_for_current_protocol)
+    done <<< "${address_entries}"
   done
 
   if [[ -n "${original_protocol_state}" ]] && protocol_state_exists "${original_protocol_state}"; then
@@ -33857,7 +33927,7 @@ agent_dispatch() {
 
 push_nodes_to_subman() {
   local original_protocol_state protocol instance_id
-  local address_entry address_label public_ip
+  local address_entry address_label public_ip address_entries
   local instance_attempted instance_synced instance_stacked_synced
   local synced_count skipped_count failed_count shadowsocks_skipped_count trojan_skipped_count vmess_skipped_count vless_plain_skipped_count hy2_skipped_count trojan_status
   local subman_supported_protocol_count
@@ -33919,6 +33989,11 @@ push_nodes_to_subman() {
         instance_attempted=0
         instance_synced=0
         instance_stacked_synced=0
+        if ! address_entries=$(list_subman_addresses_for_current_protocol) || [[ -z "${address_entries}" ]]; then
+          record_subman_address_failure "${protocol}" "${instance_id}" n || return 1
+          failed_count=$((failed_count + 1))
+          continue
+        fi
         while IFS= read -r address_entry; do
           [[ -z "${address_entry}" ]] && continue
           address_label=${address_entry%%|*}
@@ -33933,7 +34008,7 @@ push_nodes_to_subman() {
           else
             failed_count=$((failed_count + 1))
           fi
-        done < <(list_subman_addresses_for_current_protocol)
+        done <<< "${address_entries}"
         if subman_instance_ready_for_legacy_cleanup "${instance_attempted}" "${instance_synced}" "${instance_stacked_synced}" && \
           push_subman_legacy_protocol_key_cleanup "${protocol}" "${instance_id}" "n"; then
           :
@@ -33993,6 +34068,11 @@ push_nodes_to_subman() {
       continue
     fi
 
+    if ! address_entries=$(list_subman_addresses_for_current_protocol) || [[ -z "${address_entries}" ]]; then
+      record_subman_address_failure "${protocol}" "" n || return 1
+      failed_count=$((failed_count + 1))
+      continue
+    fi
     while IFS= read -r address_entry; do
       [[ -z "${address_entry}" ]] && continue
       address_label=${address_entry%%|*}
@@ -34002,7 +34082,7 @@ push_nodes_to_subman() {
       else
         failed_count=$((failed_count + 1))
       fi
-    done < <(list_subman_addresses_for_current_protocol)
+    done <<< "${address_entries}"
   done
 
   if [[ -n "${original_protocol_state}" ]] && protocol_state_exists "${original_protocol_state}"; then
