@@ -1352,8 +1352,7 @@ display_node_name_for_protocol() {
   protocol=$(normalize_protocol_id "${protocol}" 2>/dev/null || printf '%s' "${protocol}")
   base_name=$(normalize_node_name "${base_name}")
   if [[ -z "${base_name}" ]]; then
-    printf ''
-    return 0
+    return 1
   fi
 
   case "${protocol}" in
@@ -24476,7 +24475,7 @@ build_vless_link() {
   local address_label=${2:-}
   local share_host node_name advanced_query alpn_value
   share_host=$(format_share_host "${public_ip}")
-  node_name=$(vless_reality_display_node_name "${SB_NODE_NAME}" "${address_label}")
+  node_name=$(vless_reality_display_node_name "${SB_NODE_NAME}" "${address_label}") || return 1
   advanced_query=""
   alpn_value=$(vless_reality_alpn_link_value_for_mode "${SB_VLESS_ALPN_MODE:-off}")
   [[ -n "${alpn_value}" ]] && advanced_query="${advanced_query}&alpn=${alpn_value}"
@@ -25059,7 +25058,7 @@ build_hy2_link() {
   local address_label=${2:-}
   local server_host query node_name
   server_host=${3:-${SB_HY2_DOMAIN:-${public_ip}}}
-  node_name=$(display_node_name_for_protocol "hy2" "${SB_NODE_NAME}" "${address_label}")
+  node_name=$(display_node_name_for_protocol "hy2" "${SB_NODE_NAME}" "${address_label}") || return 1
   query="sni=${SB_HY2_DOMAIN:-${server_host}}"
 
   if [[ "${SB_HY2_OBFS_ENABLED}" == "y" ]]; then
@@ -26452,7 +26451,7 @@ build_subman_node_payload() {
       load_vless_reality_protocol_state
       load_vless_reality_instance_state "${instance_id}" || return 1
     fi
-    node_name=$(trim_whitespace "$(display_node_name_for_protocol "${protocol}" "${SB_NODE_NAME:-}" "${address_label}")") || return 1
+    node_name=$(display_node_name_for_protocol "${protocol}" "${SB_NODE_NAME:-}" "${address_label}") || return 1
   fi
   prefix=$(subman_node_prefix) || return 1
   [[ -z "${node_name}" ]] && node_name="${prefix} ${protocol}"
@@ -28886,7 +28885,7 @@ show_link_info() {
       echo "实例 ID: ${SB_VLESS_INSTANCE_ID}"
       echo "端口: ${SB_PORT}"
       echo "限速: ${rate_summary}"
-      build_vless_link "${public_ip}" "${address_label}"
+      build_vless_link "${public_ip}" "${address_label}" || return 1
       echo ""
       rendered_count=$((rendered_count + 1))
     done < <(list_vless_reality_instance_ids)
@@ -28907,7 +28906,7 @@ show_link_info() {
       echo "实例 ID: ${SB_VLESS_INSTANCE_ID:-main}"
       echo "端口: ${SB_PORT}"
       echo "限速: ${rate_summary}"
-      build_vless_link "${public_ip}" "${address_label}"
+      build_vless_link "${public_ip}" "${address_label}" || return 1
       echo ""
     fi
     return 0
@@ -28925,7 +28924,7 @@ show_link_info() {
       return $?
     fi
     echo "1. Hysteria2 协议链接"
-    build_hy2_link "${public_ip}" "${address_label}"
+    build_hy2_link "${public_ip}" "${address_label}" || return 1
     echo ""
     print_hy2_compatibility_warnings "share"
     return 0
@@ -29034,7 +29033,7 @@ show_link_info() {
 show_qr_info() {
   local public_ip=$1
   local address_label=${2:-}
-  local instance_id
+  local instance_id share_link
   local header_label
 
   if [[ "${SB_PROTOCOL}" == trojan || "${SB_PROTOCOL}" == vmess || "${SB_PROTOCOL}" == vless || "${SB_PROTOCOL}" == vless-plain || "${SB_PROTOCOL}" == shadowtls ]]; then
@@ -29101,7 +29100,8 @@ show_qr_info() {
       return 0
     fi
     echo "1. Hysteria2 协议二维码"
-    qrencode -t ansiutf8 "$(build_hy2_link "${public_ip}" "${address_label}")"
+    share_link=$(build_hy2_link "${public_ip}" "${address_label}") || return 1
+    qrencode -t ansiutf8 "${share_link}" || return 1
     return 0
   fi
 
@@ -29124,7 +29124,8 @@ show_qr_info() {
       load_vless_reality_instance_state "${instance_id}" || continue
       echo "REALITY 实例二维码"
       echo "实例 ID: ${SB_VLESS_INSTANCE_ID}"
-      qrencode -t ansiutf8 "$(build_vless_link "${public_ip}" "${address_label}")"
+      share_link=$(build_vless_link "${public_ip}" "${address_label}") || return 1
+      qrencode -t ansiutf8 "${share_link}" || return 1
       rendered_count=$((rendered_count + 1))
     done < <(list_vless_reality_instance_ids)
     load_vless_reality_protocol_state
@@ -29141,7 +29142,8 @@ show_qr_info() {
       SB_OUTBOUND_POLICY="${fallback_outbound_policy}"
       echo "REALITY 实例二维码"
       echo "实例 ID: ${SB_VLESS_INSTANCE_ID:-main}"
-      qrencode -t ansiutf8 "$(build_vless_link "${public_ip}" "${address_label}")"
+      share_link=$(build_vless_link "${public_ip}" "${address_label}") || return 1
+      qrencode -t ansiutf8 "${share_link}" || return 1
     fi
     return 0
   fi
@@ -29167,14 +29169,14 @@ show_connection_details() {
 
   case "${mode}" in
     link)
-      show_link_info "${public_ip}" "${address_label}"
+      show_link_info "${public_ip}" "${address_label}" || return 1
       ;;
     qr)
-      show_qr_info "${public_ip}" "${address_label}"
+      show_qr_info "${public_ip}" "${address_label}" || return 1
       ;;
     both)
-      show_link_info "${public_ip}" "${address_label}"
-      show_qr_info "${public_ip}" "${address_label}"
+      show_link_info "${public_ip}" "${address_label}" || return 1
+      show_qr_info "${public_ip}" "${address_label}" || return 1
       ;;
     *)
       log_warn "未知的连接信息展示模式: ${mode}"
@@ -32157,7 +32159,6 @@ agent_node_summary_json_for_current_protocol() {
   protocol=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
   api_protocol=$(agent_protocol_id "${protocol}" 2>/dev/null || printf '%s' "${protocol}")
   public_ip=${1:-$(get_public_ip)}
-  node_name=$(display_node_name_for_protocol "${protocol}" "${SB_NODE_NAME}" "")
   if [[ "${protocol}" == shadowsocks ]]; then agent_shadowsocks_node_json; return $?; fi
   if [[ "${protocol}" == trojan ]]; then agent_trojan_node_json "${public_ip}"; return $?; fi
   if [[ "${protocol}" == vmess ]]; then agent_vmess_node_json "${public_ip}"; return $?; fi
@@ -32183,6 +32184,8 @@ agent_node_summary_json_for_current_protocol() {
   if [[ "${protocol}" == shadowtls && "${CONFIG_SCHEMA_VERSION:-1}" == 2 ]] && plain_proxy_structured_state_active shadowtls; then
     agent_shadowtls_node_json "${public_ip}"; return $?
   fi
+
+  node_name=$(display_node_name_for_protocol "${protocol}" "${SB_NODE_NAME}" "") || return 1
 
   case "${protocol}" in
     vless-reality)
@@ -32292,7 +32295,7 @@ agent_node_summary_json_for_current_protocol() {
 }
 
 agent_link_json_for_current_protocol() {
-  local protocol api_protocol public_ip link_json outbound_json
+  local protocol api_protocol public_ip link_json outbound_json raw_link
   local address_label
   local node_name instance_id="" inbound_tag="" listen_address="" mixed_link_address="" instance_revision="0" rate_up="" rate_down="" outbound_policy="" http_tls_json http_tls_enabled
   local compatibility_warnings_json='[]' share_warnings
@@ -32332,7 +32335,7 @@ agent_link_json_for_current_protocol() {
   else
     address_label=""
   fi
-  node_name=$(display_node_name_for_protocol "${protocol}" "${SB_NODE_NAME}" "${address_label}")
+  node_name=$(display_node_name_for_protocol "${protocol}" "${SB_NODE_NAME}" "${address_label}") || return 1
 
   case "${protocol}" in
     vless-reality)
@@ -32340,7 +32343,8 @@ agent_link_json_for_current_protocol() {
       rate_up="${SB_VLESS_RATE_LIMIT_UP_MBPS:-}"
       rate_down="${SB_VLESS_RATE_LIMIT_DOWN_MBPS:-}"
       outbound_policy="${SB_OUTBOUND_POLICY:-default}"
-      link_json=$(jq -n --arg vless "$(build_vless_link "${public_ip}" "${address_label}")" '{"vless": $vless}')
+      raw_link=$(build_vless_link "${public_ip}" "${address_label}") || return 1
+      link_json=$(jq -n --arg vless "${raw_link}" '{"vless": $vless}') || return 1
       ;;
     mixed)
       instance_id="${SB_MIXED_INSTANCE_ID:-}"
@@ -32391,7 +32395,8 @@ agent_link_json_for_current_protocol() {
       link_json=$(build_plain_proxy_links_json http "${mixed_link_address}") || return 1
       ;;
     hy2)
-      link_json=$(jq -n --arg hy2 "$(build_hy2_link "${public_ip}" "${address_label}")" '{"hy2": $hy2}')
+      raw_link=$(build_hy2_link "${public_ip}" "${address_label}") || return 1
+      link_json=$(jq -n --arg hy2 "${raw_link}" '{"hy2": $hy2}') || return 1
       compatibility_warnings_json=$(build_hy2_compatibility_warnings_json "share")
       ;;
     anytls)

@@ -236,7 +236,8 @@ that any of those checks or remote operations have completed.
 
 Implemented in script version `2026103003`, based on `061bc8e8f3c68b574b3ee6ad902abaa2b8761077`.
 Previously verified runtime SHA-256: `93eeb20a4869e089fb3b9db4f904c337f4b04600cf6748a96db5e250851df465`.
-Final post-review runtime SHA-256: `ac37a4caf8cc242937e3dafd2626d6110f57a175567897b9c1fc911b7041d556`.
+Runtime after the first review fixes: `ac37a4caf8cc242937e3dafd2626d6110f57a175567897b9c1fc911b7041d556`.
+Final runtime SHA-256: `bbff3f359dc53538c7e45eafab75d61ad22628200db737cf583735920eb81103`.
 
 The selected local suite passed **35/35** checks (608 seconds):
 
@@ -274,7 +275,7 @@ not itself change the reviewed head.
 The local review of `ff125e9` identified three concrete findings: fresh Mixed
 defaults before `jq` installation, repeated sibling hashing for 128-user instances,
 and rejecting valid surrounding tabs before trimming. All three were fixed, then
-**21 affected checks passed** against the final runtime hash above:
+**21 affected checks passed** against the first-review-fix runtime hash above:
 
 - The six `node_naming_*.sh` tests, including the new
   `node_naming_fresh_dependencies.sh`, plus five existing default/display/interaction
@@ -297,3 +298,27 @@ The earlier core-check result is reused: these fixes change default computation,
 display-name preparation and whitespace handling, with no changes to client JSON
 serializers or technical tag construction. Local review must be rerun for the final
 HEAD before push; its result and the remote security gate are recorded in the PR.
+
+### Legacy failure-propagation verification
+
+The review of `fa4d33a` reproduced a further legacy error-path issue: a rejected
+name could still produce an empty URI remark or a fallback payload name. The
+final runtime propagates formatter failures through legacy REALITY/schema-1 HY2
+URI builders, generic payload/Agent callers, link/QR menus and combined mode.
+A rejected URI is never passed to `qrencode` or a SubMan write.
+
+Eight affected checks passed against final runtime
+`bbff3f359dc53538c7e45eafab75d61ad22628200db737cf583735920eb81103`:
+`node_naming_legacy_failures.sh`, `unified_node_display_names.sh`,
+`subman_payload_generation.sh`, `subman_sync_orchestration.sh`,
+`agent_cli_outputs_machine_readable_node_info.sh`,
+`agent_cli_multi_instance_status.sh`, `vless_reality_node_info_shows_instances.sh`
+and `export_client_config_1_14_compatibility.sh` (again with actual sing-box
+1.14.2). The new regression covers valid names plus five rejected names per
+legacy protocol, explicit failure under conditional callers, no partial machine
+output, no invalid sync write, and link/QR/combined menu behavior.
+
+The prepared digest-context, structured sharing and default-name code is unchanged
+from the 21-check follow-up, so those results are reused. Syntax and documentation
+checks also passed. Final complete-branch review and remote security evidence are
+recorded against their exact head in the PR.
