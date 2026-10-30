@@ -26,6 +26,7 @@ short_digest() {
 # IDs and export tags never become part of the base name through this boundary.
 assert_name "$(format_node_display_name '德国备用' '' '' '' '')" '德国备用' 'custom name is the base'
 assert_name "$(format_node_display_name ' Custom ' '' '' '' IPv4)" Custom-v4 'display base matches SubMan whitespace trimming'
+assert_name "$(format_node_display_name $'\tCustom\t' '' '' '' IPv4)" Custom-v4 'edge tabs are render-only whitespace'
 assert_name "$(format_node_display_name $'\ufeff\tCustom\u00a0' '' '' '' IPv4)" Custom-v4 'ECMAScript Unicode whitespace is trimmed'
 assert_name "$(format_node_display_name $'\u0085Custom\u0085' '' '' '' '')" $'\u0085Custom\u0085' 'NEL is not ECMAScript whitespace'
 assert_name "$(format_node_display_name '德国备用' '' '' '' IPv4)" '德国备用-v4' 'IPv4 suffix'
@@ -103,6 +104,17 @@ assert_name "$(structured_node_display_name hy2 "${snapshot}" main alice IPv4)" 
 snapshot='{"instances":[{"id":"main","name":" Custom ","authentication":{"users":[{"name":"alice"}]}},{"id":"second","name":"Custom","authentication":{"users":[{"name":"alice"}]}}]}'
 assert_name "$(structured_node_display_name trojan "${snapshot}" main alice IPv4)" \
   "Custom-i-$(short_digest trojan:main)-v4" 'duplicate names are compared after shared whitespace trimming'
+snapshot=$(jq -cn --arg name $'\tCustom\t' '{instances:[{id:"main",name:$name,authentication:{users:[{name:"alice"}]}}]}')
+assert_name "$(structured_node_display_name trojan "${snapshot}" main alice IPv4)" \
+  Custom-v4 'structured entrypoint trims edge tabs before rejecting interior controls'
+for invalid_json_name in '"bad\u0000name"' '"bad\tname"' '"bad\nname"'; do
+  invalid_snapshot=$(jq -cn --argjson name "${invalid_json_name}" '{instances:[{id:"main",name:$name,authentication:{users:[{name:"alice"}]}}]}')
+  if structured_node_display_name trojan "${invalid_snapshot}" main alice IPv4 >"${TMP_DIR}/invalid-structured-name.out" 2>"${TMP_DIR}/invalid-structured-name.err"; then
+    printf 'structured name containing NUL or interior controls unexpectedly accepted\n' >&2
+    exit 1
+  fi
+  [[ ! -s "${TMP_DIR}/invalid-structured-name.out" ]]
+done
 snapshot='{"instances":[{"id":"main","name":"SS single","authentication":{"users":[]}}]}'
 assert_name "$(structured_node_display_name shadowsocks "${snapshot}" main '' IPv4)" \
   'SS single-v4' 'single-credential Shadowsocks omits empty-user digest'
@@ -126,6 +138,46 @@ assert_name "$(structured_node_display_name trojan "${snapshot}" main bob IPv4)"
 reordered=$(jq -c '.instances[0].authentication.users |= reverse' <<< "${snapshot}")
 assert_name "$(structured_node_display_name trojan "${reordered}" main alice IPv4)" \
   Collision-u-aaaaaaaaaaaa1111-v4 'digest collision handling ignores order'
+unset -f sha256sum
+
+# Preparing a large instance hashes each identity once. Rendering all users
+# from that prepared map must not hash the complete sibling set for each user.
+# Count subprocess inputs rather than elapsed time or machine performance.
+snapshot=$(jq -cn '{instances:[{id:"main",name:"Large",authentication:{users:[range(0;128) | {name:("user-" + ("00" + tostring)[-3:])}]}}]}')
+hash_calls="${TMP_DIR}/prepared-user-hashes"
+: > "${hash_calls}"
+sha256sum() {
+  local value
+  value=$(cat) || return 1
+  case "${value}" in
+    user-[0-9][0-9][0-9]) printf '%s\n' "${value}" >> "${hash_calls}" ;;
+  esac
+  printf '%s' "${value}" | command sha256sum "$@"
+}
+digest_map=$(structured_node_user_digests "${snapshot}" main)
+jq -e 'length == 128 and all(.[]; test("^[0-9a-f]{64}$"))' <<< "${digest_map}" >/dev/null
+[[ "$(wc -l < "${hash_calls}")" -eq 128 ]]
+[[ "$(sort -u "${hash_calls}" | wc -l)" -eq 128 ]]
+: > "${hash_calls}"
+: > "${TMP_DIR}/prepared-user-names"
+while IFS= read -r prepared_user; do
+  prepared_name=$(structured_node_display_name trojan "${snapshot}" main "${prepared_user}" IPv4 "${digest_map}")
+  [[ "${prepared_name}" == Large-u-*-v4 ]]
+  printf '%s\n' "${prepared_name}" >> "${TMP_DIR}/prepared-user-names"
+done < <(jq -r '.instances[0].authentication.users[].name' <<< "${snapshot}")
+[[ ! -s "${hash_calls}" ]]
+[[ "$(wc -l < "${TMP_DIR}/prepared-user-names")" -eq 128 ]]
+[[ "$(sort -u "${TMP_DIR}/prepared-user-names" | wc -l)" -eq 128 ]]
+reordered=$(jq -c '.instances[0].authentication.users |= reverse' <<< "${snapshot}")
+assert_name "$(structured_node_display_name trojan "${reordered}" main user-000 IPv4 "${digest_map}")" \
+  "$(head -n 1 "${TMP_DIR}/prepared-user-names")" 'prepared digests are stable across user order'
+for invalid_map in "$(jq -c 'del(.["user-127"])' <<< "${digest_map}")" "$(jq -c '.["user-127"]="malformed-digest"' <<< "${digest_map}")"; do
+  if structured_node_display_name trojan "${snapshot}" main user-000 IPv4 "${invalid_map}" >"${TMP_DIR}/invalid-map.out" 2>"${TMP_DIR}/invalid-map.err"; then
+    printf 'prepared map with missing or malformed sibling digest unexpectedly accepted\n' >&2
+    exit 1
+  fi
+  [[ ! -s "${TMP_DIR}/invalid-map.out" ]]
+done
 unset -f sha256sum
 
 # Renaming a display label, changing bandwidth, or shortening the displayed

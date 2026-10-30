@@ -71,7 +71,11 @@ The optional `/root/sing-box-vps/node-naming.json` setting has this shape:
 The object accepts only the `host_label` field. The host label is trimmed,
 nonempty UTF-8, contains no control characters and fits 128 UTF-8 bytes. If no setting exists, use the current hostname. A present malformed
 or unsafe setting must produce an explicit failure, rather than silently choosing a
-new default. Main menu **11 → 5** exposes **设置新实例的主机显示标签** independently
+new default. A fresh installation with neither this file nor an existing inventory
+must compute its first default name using the shell and hostname only; it must not
+require `jq` before the existing dependency-installation stage. Reading an existing
+JSON preference or inventory explicitly requires `jq`, with a clear dependency
+error when it is unavailable. This feature does not reorder dependency installation. Main menu **11 → 5** exposes **设置新实例的主机显示标签** independently
 of SubMan connection settings at **11 → 4**.
 
 Saving the setting stages and validates JSON, backs up an existing file as `.bak`,
@@ -84,12 +88,17 @@ rewrite existing instances, restart the core, or contact SubMan.
 The shared structured formatter receives explicit inputs:
 
 ```text
-structured_node_display_name(protocol, snapshot_json, instance_id, user_name, address_label)
+structured_node_display_name(protocol, snapshot_json, instance_id, user_name, address_label[, prepared_context])
 ```
 
 The snapshot is the immutable, validated inventory already captured by its caller.
 The formatter must not reread mutable stores per user, load another instance, or use
-unrelated `SB_*` globals to obtain structured bandwidth values.
+unrelated `SB_*` globals to obtain structured bandwidth values. An optional sixth
+argument carries a prepared naming context derived from that same snapshot and
+selected instance. Prepare the user-digest map once and reuse it for all candidates
+in the instance; do not rehash every sibling in each per-user loop. The context
+keeps identity and normalization data explicit, introduces no mutable global cache,
+and must not be reused with a different snapshot or instance.
 
 Compose fields in this order:
 
@@ -99,8 +108,10 @@ Compose fields in this order:
 
 - **Base:** derive the base from the saved instance `name`, trimming only its
   leading and trailing ECMAScript `String.prototype.trim()` whitespace, matching
-  SubMan. Preserve all interior characters and the saved value. Reject a base
-  that becomes empty. The exact trim set is U+0009–U+000D, U+0020, U+00A0, U+1680,
+  SubMan. Trim before checking the remaining base for ASCII control characters.
+  A saved `"\tCustom\t"` therefore renders as `Custom`; an interior tab still
+  fails. Preserve interior characters of accepted names and the saved value.
+  Reject a base that becomes empty. The exact trim set is U+0009–U+000D, U+0020, U+00A0, U+1680,
   U+2000–U+200A, U+2028, U+2029, U+202F, U+205F, U+3000 and U+FEFF; U+0085 is
   retained. Do not replace the base with the SubMan prefix, protocol label, ID or
   technical tag.
@@ -185,6 +196,10 @@ does not automatically republish previously generated subscription/client output
 Required assertions:
 
 - New-instance defaults distinguish protocol and instance and use the host label.
+- Fresh defaults without a preference or inventory work before `jq` is installed;
+  an existing JSON preference/inventory explicitly reports a missing parser.
+- Prepared digest context is reused across a 128-user instance, preserves the
+  unprepared formatter's output, and avoids repeated per-candidate sibling hashing.
 - Changing the host label changes future defaults only; missing configuration uses
   hostname, invalid configuration fails, and failed saves preserve the previous file.
 - Existing custom names become the base of actual local share and SubMan names.
@@ -220,7 +235,8 @@ that any of those checks or remote operations have completed.
 ## 9. Implementation and verification record
 
 Implemented in script version `2026103003`, based on `061bc8e8f3c68b574b3ee6ad902abaa2b8761077`.
-Final runtime SHA-256: `93eeb20a4869e089fb3b9db4f904c337f4b04600cf6748a96db5e250851df465`.
+Previously verified runtime SHA-256: `93eeb20a4869e089fb3b9db4f904c337f4b04600cf6748a96db5e250851df465`.
+Final post-review runtime SHA-256: `ac37a4caf8cc242937e3dafd2626d6110f57a175567897b9c1fc911b7041d556`.
 
 The selected local suite passed **35/35** checks (608 seconds):
 
@@ -236,11 +252,11 @@ The selected local suite passed **35/35** checks (608 seconds):
 
 The suite initially covered runtime SHA-256
 `bc957b86801f7510d821ebb78c273ea1eb7f05785e746e8128b69e30c4322673`.
-A final settings-only correction rejects nonregular configuration/backup targets
-and reports an invalid stored label when generating a default. The contract,
-settings and creation-default tests passed again against the final runtime above;
-other results are reused because their affected naming/share/API code and
-dependencies did not change. The existing prompt fixture lacked its final
+Before review, a settings-only correction rejected nonregular configuration/backup
+targets and reported an invalid stored label when generating a default. The contract,
+settings and creation-default tests passed again against the previously verified
+runtime above. At that stage, other results were reused because their affected
+naming/share/API code and dependencies had not changed. The existing prompt fixture lacked its final
 masquerade response on the base branch too; the fixture now supplies that response.
 
 Docker runtime, real SubMan writes, preservation of actual remote node IDs and
@@ -252,3 +268,32 @@ Record the exact-HEAD local review, remote security review and merge in the
 associated PR, and Wiki publication in its own commit. Those gate records remain
 separate from this behavioral evidence so recording a reviewed commit's SHA does
 not itself change the reviewed head.
+
+### Local-review follow-up verification
+
+The local review of `ff125e9` identified three concrete findings: fresh Mixed
+defaults before `jq` installation, repeated sibling hashing for 128-user instances,
+and rejecting valid surrounding tabs before trimming. All three were fixed, then
+**21 affected checks passed** against the final runtime hash above:
+
+- The six `node_naming_*.sh` tests, including the new
+  `node_naming_fresh_dependencies.sh`, plus five existing default/display/interaction
+  tests and the three documentation/version checks passed in the parent run.
+- `subman_shadowsocks_sync.sh`, `subman_trojan_sync.sh`, `subman_vmess_sync.sh`,
+  `subman_vless_plain_sync.sh`, `subman_sync_orchestration.sh`,
+  `shadowsocks_agent_share.sh` and `structured_hy2_instance_management.sh` passed
+  in the independent focused run against the same frozen runtime.
+- The 128-user contract counts exactly 128 raw-user digest computations during
+  preparation and zero additional raw-user computations across 128 candidate
+  renders. It checks unique names, reordered users and invalid context rejection.
+- Actual four-protocol generic share/payload fixtures preserve saved tab-wrapped
+  names while rendering trimmed names; NUL and interior controls remain rejected.
+- A separate name-only synthetic benchmark produced 128 unique names with 256 SHA
+  calls total: 128 user hashes and 128 final display hashes. Preparation plus
+  rendering took **10.539 seconds**, compared with approximately **110 seconds**
+  in the review reproduction. This is not end-to-end synchronization timing.
+
+The earlier core-check result is reused: these fixes change default computation,
+display-name preparation and whitespace handling, with no changes to client JSON
+serializers or technical tag construction. Local review must be rerun for the final
+HEAD before push; its result and the remote security gate are recorded in the PR.
