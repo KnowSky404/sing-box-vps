@@ -29,7 +29,7 @@ run_reality_target_check() {
     warn.example.com) status=3 ;;
   esac
   jq -n --arg domain "${domain}" --argjson status "${status}" '
-    {schema_version:"1.0",tool_version:"0.1.0",target:$domain,sni:$domain,port:443,
+    {schema_version:"1.0",tool_version:"0.3.0",target:$domain,sni:$domain,port:443,
      selection:{scope:"dns",complete:true,limit:16},
      endpoints:[{ip:"192.0.2.1",family:4,checks:
        (["tcp443","tls13","cert_chain","cert_san","cert_validity","alpn_h2","x25519"] |

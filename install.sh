@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026103005
+# Version: 2026103006
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026103005"
+readonly SCRIPT_VERSION="2026103006"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -72,10 +72,12 @@ readonly MEDIA_CHECK_BACKEND_REPO_URL="https://github.com/1-stream/RegionRestric
 readonly MEDIA_CHECK_BACKEND_SCRIPT_URL="https://raw.githubusercontent.com/1-stream/RegionRestrictionCheck/main/check.sh"
 readonly SB_HIGH_PORT_MIN="60000"
 readonly SB_HIGH_PORT_MAX="65535"
-readonly SB_REALITY_CHECKER_VERSION="0.1.0"
-readonly SB_REALITY_CHECKER_COMMIT="bd25e0f636b3faccce855f4447f99327415f2077"
-readonly SB_REALITY_CHECKER_SHA256="b07d64452974fd140b6623fbb8efaba35ef5a6f44e84b90b2bedcb05901767dd"
+readonly SB_REALITY_CHECKER_VERSION="0.3.0"
+readonly SB_REALITY_CHECKER_COMMIT="fc1c06ef4f46b81ad05b0aa2bf24378c64833682"
+readonly SB_REALITY_CHECKER_SHA256="f2446d5bc75ed77289a29adf8d85bc87efdbfa289e6a926f806b54b0fd79c1a3"
 readonly SB_REALITY_CHECKER_URL="https://raw.githubusercontent.com/KnowSky404/reality-target-checker/${SB_REALITY_CHECKER_COMMIT}/reality-target-checker.sh"
+readonly SB_REALITY_DISCOVER_SHA256="f806106efff7f3cbe219175d4f0c09f388d5304158d0e0d43e9220fefea6374d"
+readonly SB_REALITY_SOURCES_SHA256="de028f4eec658eba6f789b30a51d558d9565337fccb02c2358ae76643f0ff33c"
 # Runtime capability source of truth. Fields are decoded by protocol_registry_json.
 # IDs/aliases are data; dispatch below always calls explicit, literal handlers.
 # The legacy vless alias intentionally remains the REALITY preset.
@@ -4625,6 +4627,43 @@ prepare_reality_target_checker() {
   mv -- "${staged}" "${destination}" || return 1
 }
 
+# Discovery is opt-in. Check-only use neither downloads nor requires Python.
+# The caller owns this private directory and never executes a partial bundle.
+prepare_reality_target_discovery() {
+  local directory=$1 filename expected staged digest
+  if ! command -v python3 >/dev/null 2>&1 ||
+    ! python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 9))' 2>/dev/null; then
+    log_warn "候选发现需要 Python >= 3.9；可安装后重试，或使用候选域名检测/手动 SNI 校验。" >&2
+    return 1
+  fi
+  [[ -d "${directory}" && ! -L "${directory}" ]] || return 1
+  prepare_reality_target_checker "${directory}/reality-target-checker.sh" || return $?
+  for filename in reality-target-discover.py reality-target-sources.py; do
+    case "${filename}" in
+      reality-target-discover.py) expected=${SB_REALITY_DISCOVER_SHA256} ;;
+      reality-target-sources.py) expected=${SB_REALITY_SOURCES_SHA256} ;;
+    esac
+    staged="${directory}/${filename}.part"
+    if ! curl --disable --fail --silent --show-error --location --max-redirs 3 \
+      --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 60 \
+      --retry 2 --output "${staged}" \
+      "https://raw.githubusercontent.com/KnowSky404/reality-target-checker/${SB_REALITY_CHECKER_COMMIT}/${filename}" 2>/dev/null; then
+      log_warn "候选发现模块下载失败，未执行远程内容，SNI 未变更。" >&2
+      rm -f -- "${staged}" || return 1
+      return 1
+    fi
+    digest=$(sha256sum -- "${staged}") || { rm -f -- "${staged}"; return 1; }
+    # Parsing Python syntax must not import or execute downloaded top-level code.
+    if [[ "${digest%% *}" != "${expected}" ]] ||
+      ! python3 -c 'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_bytes(), filename=sys.argv[1])' "${staged}" 2>/dev/null; then
+      log_warn "候选发现模块完整性或语法校验失败，未执行远程内容，SNI 未变更。" >&2
+      rm -f -- "${staged}" || return 1
+      return 1
+    fi
+    mv -- "${staged}" "${directory}/${filename}" || return 1
+  done
+}
+
 # Stop only the running checker's own descendants, including the separate
 # process groups created by its per-operation GNU timeout commands.
 stop_reality_checker_process_tree() {
@@ -4670,6 +4709,69 @@ run_reality_target_check() (
     if wait "${checker_pid}"; then :; fi
     return "${signal_status}"
   fi
+  return "${result}"
+)
+
+run_reality_target_discovery() (
+  local checker=$1 report=$2 mode=$3 scope=$4 asn=${5:-}
+  local checker_dir checker_pid="" timer_pid="" signal_status=0 result=0 deadline
+  local args=(discover)
+  case "${mode}" in
+    plan)
+      [[ "${scope}" =~ ^[1-9][0-9]{0,9}$ && -z "${asn}" ]] || return 2
+      (( 10#${scope} <= 4294967295 )) || return 2
+      args+=(--asn "${scope}" --plan-only)
+      deadline=30
+      ;;
+    scan)
+      [[ "${scope}" =~ ^[0-9.]+/[0-9]+$ ]] || return 2
+      args+=("${scope}")
+      if [[ -n "${asn}" ]]; then
+        [[ "${asn}" =~ ^[1-9][0-9]{0,9}$ ]] || return 2
+        (( 10#${asn} <= 4294967295 )) || return 2
+        args+=(--asn "${asn}")
+      fi
+      deadline=315
+      ;;
+    *) return 2 ;;
+  esac
+  args+=(--json --timeout 3 --max-hosts 256 --concurrency 8 --rate 10
+    --max-candidates 256 --samples 1 --deadline 300)
+  checker_dir=$(dirname -- "${checker}") || return 1
+  trap 'signal_status=130; if [[ -n "${checker_pid}" ]]; then stop_reality_checker_process_tree "${checker_pid}"; fi' INT
+  trap 'signal_status=143; if [[ -n "${checker_pid}" ]]; then stop_reality_checker_process_tree "${checker_pid}"; fi' TERM
+  trap 'signal_status=129; if [[ -n "${checker_pid}" ]]; then stop_reality_checker_process_tree "${checker_pid}"; fi' HUP
+  (( signal_status == 0 )) || return "${signal_status}"
+  TMPDIR="${checker_dir}" PYTHONDONTWRITEBYTECODE=1 \
+    timeout --signal=TERM --kill-after=2 "${deadline}" \
+    bash "${checker}" "${args[@]}" > "${report}" 2>"${report}.stderr" &
+  checker_pid=$!
+  # Timer output stays on stderr, and the parent stops/reaps it immediately
+  # after the checker; a fast result never waits for a heartbeat interval.
+  (
+    trap - EXIT ERR RETURN DEBUG INT TERM HUP
+    local elapsed=0
+    while kill -0 "${checker_pid}" 2>/dev/null; do
+      sleep 1
+      elapsed=$((elapsed + 1))
+      if (( elapsed % 10 == 0 )) && kill -0 "${checker_pid}" 2>/dev/null; then
+        log_info "候选发现仍在执行，已等待 ${elapsed} 秒。" >&2
+      fi
+    done
+  ) &
+  timer_pid=$!
+  if (( signal_status != 0 )); then
+    stop_reality_checker_process_tree "${checker_pid}" || result=1
+  fi
+  wait "${checker_pid}" || result=$?
+  if (( signal_status != 0 )); then
+    if wait "${checker_pid}"; then :; fi
+  fi
+  stop_reality_checker_process_tree "${timer_pid}" || result=1
+  if wait "${timer_pid}"; then :; else
+    case $? in 143) ;; *) result=1 ;; esac
+  fi
+  (( signal_status == 0 )) || return "${signal_status}"
   return "${result}"
 )
 
@@ -4737,10 +4839,244 @@ select_reality_sni_candidate() (
   return 1
 )
 
+validate_reality_discovery_cidr() {
+  local cidr=$1 plan=${2:-}
+  python3 - "${cidr}" "${plan}" <<'PY'
+import ipaddress
+import json
+import re
+import sys
+
+try:
+    value, plan = sys.argv[1:]
+    if not re.fullmatch(r"[0-9.]+/(?:2[4-9]|3[0-2])", value):
+        raise ValueError
+    network = ipaddress.IPv4Network(value, strict=True)
+    if plan:
+        with open(plan, encoding="utf-8") as source:
+            prefixes = json.load(source)["asn"]["prefixes_v4"]
+        if not any(network.subnet_of(ipaddress.IPv4Network(prefix, strict=True)) for prefix in prefixes):
+            raise ValueError
+except (ValueError, KeyError, TypeError, OSError):
+    sys.exit(1)
+PY
+}
+
+validate_reality_discovery_plan() {
+  local report=$1 asn=$2 status=$3
+  [[ "${status}" == 0 ]] || return 1
+  jq -s -e --arg version "${SB_REALITY_CHECKER_VERSION}" --argjson asn "${asn}" '
+    length == 1 and (.[0] |
+      .schema_version == "1.0" and .tool_version == $version and
+      .report_type == "discovery_plan" and .requires_selection == true and
+      .asn.asn == $asn and .asn.status == "PASS" and
+      .summary.status == "PASS" and .summary.exit_code == 0 and
+      .scope.selection == "cidr_hosts" and .scope.prefixes == [] and
+      .scope.host_count == 0 and .targets == [] and .seeds == [])
+  ' "${report}" >/dev/null 2>&1 || return 1
+  # Validate every prefix before displaying provider-supplied data or using it
+  # as a scope constraint. The plan itself never authorizes an active scan.
+  python3 - "${report}" <<'PY'
+import ipaddress
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as source:
+        prefixes = json.load(source)["asn"]["prefixes_v4"]
+    if not isinstance(prefixes, list) or not 0 < len(prefixes) <= 65536:
+        raise ValueError
+    for value in prefixes:
+        if not isinstance(value, str) or str(ipaddress.IPv4Network(value, strict=True)) != value:
+            raise ValueError
+except (ValueError, KeyError, TypeError, OSError):
+    sys.exit(1)
+PY
+}
+
+validate_reality_discovery_report() {
+  local report=$1 cidr=$2 status=$3 asn=${4:-}
+  [[ "${status}" == 0 || "${status}" == 3 ]] || return 1
+  jq -s -e --arg version "${SB_REALITY_CHECKER_VERSION}" --arg cidr "${cidr}" \
+    --arg asn "${asn}" --argjson status "${status}" '
+    length == 1 and (.[0] |
+      .schema_version == "1.0" and .tool_version == $version and .report_type == "discovery" and
+      .summary.exit_code == $status and
+      .summary.status == (if $status == 0 then "PASS" else "WARN" end) and
+      .scope.cidr == $cidr and .scope.prefixes == [$cidr] and
+      .scope.selection == "cidr_hosts" and .scope.within_budget == true and
+      .scope.requires_known_ipv6 == false and
+      .scope.limits.max_hosts == 256 and .scope.limits.samples == 1 and
+      .scan.complete == true and .scan.reasons == [] and
+      (.candidates | type == "array" and length > 0 and length <= 256 and
+        all(.[]; (.eligible | type == "boolean") and (.sni | type == "string"))) and
+      (if $asn == "" then true else
+        .plan.asn.status == "PASS" and (.plan.asn.asn | tostring) == $asn end))
+  ' "${report}" >/dev/null 2>&1 || return 1
+  # Fixed-IP verdicts are only domain seeds. Check scope membership here, then
+  # rerun a complete DNS-scoped check before the domain can become an SNI.
+  python3 - "${report}" "${cidr}" <<'PY'
+import ipaddress
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as source:
+        report = json.load(source)
+    network = ipaddress.IPv4Network(sys.argv[2], strict=True)
+    count = network.num_addresses if network.prefixlen >= 31 else network.num_addresses - 2
+    hosts = report["hosts"]
+    if (type(report["scope"]["host_count"]) is not int or not 1 <= count <= 256
+            or report["scope"]["host_count"] != count or not isinstance(hosts, list)
+            or len(hosts) != count or report["scan"]["hosts_completed"] != count):
+        raise ValueError
+    expected = {str(ip) for ip in network.hosts()}
+    if {host["ip"] for host in hosts} != expected or any(host["completed"] is not True for host in hosts):
+        raise ValueError
+    for candidate in report["candidates"]:
+        if candidate["ip"] not in expected:
+            raise ValueError
+except (ValueError, KeyError, TypeError, OSError):
+    sys.exit(1)
+PY
+}
+
+select_reality_sni_discovery() (
+  umask 077
+  local mode=${1:-} scope=${2:-} cidr=${3:-} asn="" temp_dir status domain names selected_sni
+  local runner_pid="" interrupted_status=0
+  local candidates=()
+  # Every potentially blocking phase has an owned child. This lets a signal
+  # sent only to the selector (not its process group) cancel downloads, discovery
+  # and final DNS checks without waiting for their individual network deadlines.
+  run_reality_discovery_owned_phase() {
+    local phase_status=0
+    (( interrupted_status == 0 )) || return "${interrupted_status}"
+    (
+      trap - EXIT ERR RETURN DEBUG INT TERM HUP
+      "$@"
+    ) <&0 &
+    runner_pid=$!
+    if (( interrupted_status != 0 )); then
+      stop_reality_checker_process_tree "${runner_pid}" || phase_status=1
+    fi
+    wait "${runner_pid}" || phase_status=$?
+    if (( interrupted_status != 0 )); then
+      if wait "${runner_pid}"; then :; fi
+    fi
+    runner_pid=""
+    (( interrupted_status == 0 )) || return "${interrupted_status}"
+    return "${phase_status}"
+  }
+  case "${mode}" in
+    cidr) cidr=${scope} ;;
+    asn)
+      asn=${scope^^}
+      asn=${asn#AS}
+      [[ "${asn}" =~ ^[1-9][0-9]{0,9}$ ]] && (( 10#${asn} <= 4294967295 )) || {
+        log_warn "ASN 必须为 1 至 4294967295 的整数，可带 AS 前缀；SNI 未变更。" >&2
+        return 1
+      }
+      ;;
+    *) return 1 ;;
+  esac
+  if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))'; then
+    log_warn "候选发现需要 Python >= 3.9；可改用候选域名检测或手动输入。" >&2
+    return 1
+  fi
+  if [[ "${mode}" == cidr || -n "${cidr}" ]] && ! validate_reality_discovery_cidr "${cidr}"; then
+    log_warn "请输入严格对齐的 IPv4 CIDR（/24 至 /32，最多 256 个主机）；SNI 未变更。" >&2
+    return 1
+  fi
+  temp_dir=$(mktemp -d) || return 1
+  trap 'rm -rf -- "${temp_dir}"' EXIT
+  trap 'interrupted_status=130; if [[ -n "${runner_pid}" ]]; then stop_reality_checker_process_tree "${runner_pid}"; fi; log_warn "候选发现中断，SNI 未变更。" >&2' INT
+  trap 'interrupted_status=143; if [[ -n "${runner_pid}" ]]; then stop_reality_checker_process_tree "${runner_pid}"; fi; log_warn "候选发现中断，SNI 未变更。" >&2' TERM
+  trap 'interrupted_status=129; if [[ -n "${runner_pid}" ]]; then stop_reality_checker_process_tree "${runner_pid}"; fi; log_warn "候选发现中断，SNI 未变更。" >&2' HUP
+  run_reality_discovery_owned_phase prepare_reality_target_discovery "${temp_dir}" || return $?
+  if [[ "${mode}" == asn ]]; then
+    log_info "查询 AS${asn} 的 IPv4 公告计划（尚未扫描目标端口）..." >&2
+    status=0
+    run_reality_discovery_owned_phase run_reality_target_discovery \
+      "${temp_dir}/reality-target-checker.sh" "${temp_dir}/plan.json" plan "${asn}" || status=$?
+    case "${status}" in 129|130|137|143) return "${status}" ;; esac
+    if ! validate_reality_discovery_plan "${temp_dir}/plan.json" "${asn}" "${status}"; then
+      log_warn "ASN 计划不可用或没有可用 IPv4 公告，未开始扫描；SNI 未变更。" >&2
+      return 1
+    fi
+    log_info "公告前缀（最多显示 20 项；可输入其中更小的子网；公告快照不保证实时独占归属）:" >&2
+    jq -r '.asn.prefixes_v4[:20][]' "${temp_dir}/plan.json" >&2 || return 1
+    if [[ -z "${cidr}" ]]; then
+      read -rp "明确选择要扫描的 IPv4 CIDR（/24 至 /32；留空取消）: " cidr || {
+        (( interrupted_status == 0 )) || return "${interrupted_status}"
+        return 1
+      }
+      cidr=$(trim_whitespace "${cidr}")
+    fi
+    if ! validate_reality_discovery_cidr "${cidr}" "${temp_dir}/plan.json"; then
+      log_warn "网段无效、超出主机预算或不在本次 ASN 公告内，未开始扫描；SNI 未变更。" >&2
+      return 1
+    fi
+  fi
+  log_info "发现范围 ${cidr}：最多 256 主机、并发 8、每秒启动 10 个任务、总预算 300 秒。" >&2
+  status=0
+  run_reality_discovery_owned_phase run_reality_target_discovery \
+    "${temp_dir}/reality-target-checker.sh" "${temp_dir}/discovery.json" scan "${cidr}" "${asn}" || status=$?
+  case "${status}" in 129|130|137|143) return "${status}" ;; esac
+  if ! validate_reality_discovery_report "${temp_dir}/discovery.json" "${cidr}" "${status}" "${asn}"; then
+    log_warn "候选发现没有完整可用报告（退出码 ${status}），SNI 未变更。" >&2
+    return 1
+  fi
+  names=$(jq -r '.candidates[] | select(.eligible == true) | .sni |
+    select(test("^[a-zA-Z0-9.-]{1,253}\\z"))' "${temp_dir}/discovery.json") || return 1
+  while IFS= read -r domain; do
+    domain=${domain,,}
+    validate_reality_sni_syntax "${domain}" || continue
+    [[ " ${candidates[*]} " != *" ${domain} "* ]] || continue
+    candidates+=("${domain}")
+    [[ ${#candidates[@]} -lt 5 ]] || break
+  done <<< "${names}"
+  if [[ ${#candidates[@]} == 0 ]]; then
+    log_warn "本次有限发现没有可复核的候选域名；SNI 未变更。" >&2
+    return 1
+  fi
+  log_info "对前 ${#candidates[@]} 个去重候选重新执行完整 DNS 检测；固定 IP 发现结果不能替代域名检查。" >&2
+  if run_reality_discovery_owned_phase select_reality_sni_candidate "${candidates[@]}" > "${temp_dir}/selected-sni"; then
+    selected_sni=$(cat -- "${temp_dir}/selected-sni") || return 1
+    (( interrupted_status == 0 )) || return "${interrupted_status}"
+    printf '%s' "${selected_sni}"
+  else
+    return $?
+  fi
+)
+
+prompt_reality_target_discovery() {
+  local choice scope selected_sni
+  echo "候选发现只扫描明确选择的 IPv4 网段（/24 至 /32）；ASN 查询先生成计划，再选择网段。"
+  echo "1. 输入 IPv4 CIDR (默认)"
+  echo "2. 查询 ASN 公告后选择 IPv4 CIDR"
+  choice=$(prompt_choice "请选择 [1-2] (默认 1): " 1 2 1) || return 1
+  if [[ "${choice}" == 2 ]]; then
+    read -rp "ASN（例如 AS64500；留空取消）: " scope || return 1
+    choice=asn
+  else
+    read -rp "要扫描的 IPv4 CIDR（最多 256 主机；留空取消）: " scope || return 1
+    choice=cidr
+  fi
+  scope=$(trim_whitespace "${scope}")
+  [[ -n "${scope}" ]] || return 1
+  if selected_sni=$(select_reality_sni_discovery "${choice}" "${scope}"); then
+    SB_SNI="${selected_sni}"
+    log_success "已选择 Reality SNI: ${SB_SNI}"
+  else
+    return $?
+  fi
+}
+
 prompt_reality_target_candidates() {
   local input domain selected_sni
   local candidates=()
-  echo "checker 只检测提供的域名，不自动发现域名；按输入顺序选择首个通过并获接受的目标。"
+  echo "本方式只检测提供的域名；按输入顺序选择首个通过并获接受的目标。"
   echo "探测包括 TLS/证书/h2/X25519，以及通过 DNS 查询的 ASN/CDN 线索。"
   read -rp "[VLESS + REALITY] 候选域名（空格或逗号分隔，最多 5 个；留空取消）: " input || return 1
   input=${input//,/ }
@@ -4770,8 +5106,14 @@ prompt_reality_sni_install() {
     echo "[VLESS + REALITY] REALITY 域名选择:"
     echo "1. 使用 reality-target-checker 探测候选 SNI (默认)"
     echo "2. 手动输入（TLS 校验）"
-    choice=$(prompt_choice "请选择 [1-2] (默认 1): " 1 2 1) || return 1
+    echo "3. 从明确的网段 / ASN 发现候选 SNI"
+    choice=$(prompt_choice "请选择 [1-3] (默认 1): " 1 3 1) || return 1
     case "${choice}" in
+      3)
+        if prompt_reality_target_discovery; then return 0; else status=$?; fi
+        [[ "${status}" == 1 ]] || return "${status}"
+        log_warn "尚未选择 SNI，请重试或选择其他输入方式。"
+        ;;
       2)
         read_manual_reality_sni_with_validation "" \
           "[VLESS + REALITY] REALITY 域名（必填，无固定默认值）: " || return 1
@@ -4793,8 +5135,13 @@ prompt_reality_sni_update() {
     echo "1. 保留当前 SNI: ${SB_SNI} (默认)"
     echo "2. 使用 reality-target-checker 探测候选 SNI"
     echo "3. 手动输入（TLS 校验）"
-    choice=$(prompt_choice "请选择 [1-3] (默认 1): " 1 3 1) || return 1
+    echo "4. 从明确的网段 / ASN 发现候选 SNI"
+    choice=$(prompt_choice "请选择 [1-4] (默认 1): " 1 4 1) || return 1
     case "${choice}" in
+      4)
+        if prompt_reality_target_discovery; then return 0; else status=$?; fi
+        [[ "${status}" == 1 ]] || return "${status}"
+        ;;
       2)
         if prompt_reality_target_candidates; then return 0; else status=$?; fi
         [[ "${status}" == 1 ]] || return "${status}"
@@ -4812,7 +5159,7 @@ prompt_reality_sni_update() {
 prompt_reality_sni_for_new_instance() {
   local default_sni=${1:-} choice status
   if ! validate_reality_sni_syntax "${default_sni}"; then
-    prompt_reality_sni_install || return 1
+    prompt_reality_sni_install || return $?
     return $?
   fi
   while true; do
@@ -4820,8 +5167,13 @@ prompt_reality_sni_for_new_instance() {
     echo "1. 复用现有 SNI: ${default_sni} (默认)"
     echo "2. 使用 reality-target-checker 探测候选 SNI"
     echo "3. 手动输入（TLS 校验）"
-    choice=$(prompt_choice "请选择 [1-3] (默认 1): " 1 3 1) || return 1
+    echo "4. 从明确的网段 / ASN 发现候选 SNI"
+    choice=$(prompt_choice "请选择 [1-4] (默认 1): " 1 4 1) || return 1
     case "${choice}" in
+      4)
+        if prompt_reality_target_discovery; then return 0; else status=$?; fi
+        [[ "${status}" == 1 ]] || return "${status}"
+        ;;
       2)
         if prompt_reality_target_candidates; then return 0; else status=$?; fi
         [[ "${status}" == 1 ]] || return "${status}"
