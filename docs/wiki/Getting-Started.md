@@ -14,7 +14,40 @@ bash -c 'set -euo pipefail; umask 077; t=$(mktemp); trap '\''rm -f -- "$t"'\'' E
 
 ## REALITY SNI 探测
 
-安装 VLESS + REALITY 使用 [reality-target-checker v0.3.0](https://github.com/KnowSky404/reality-target-checker) 选择候选 SNI。默认仍为检测自行提供的域名：输入 1–5 个纯域名，以空格或逗号分隔，按输入顺序选择首个检查通过且获接受的域名。安装时的 SNI 菜单选项 3 可改用网段/ASN 候选发现；更新和新增实例的选项 4 提供相同入口，默认仍保留或复用已有 SNI。手动输入和 TLS 校验路径仍可使用。安装器没有固定推荐域名，失败或取消时不填入默认域名、不修改当前 SNI。
+安装 VLESS + REALITY 使用 [reality-target-checker v0.3.0](https://github.com/KnowSky404/reality-target-checker) 选择候选 SNI。默认仍为检测自行提供的域名：输入 1–5 个纯域名，以空格或逗号分隔，按输入顺序选择首个检查通过且获接受的域名。安装时的 SNI 菜单选项 3 可改用网段/ASN 候选发现，选项 4 使用内置地区候选；更新和新增实例分别以选项 4 和 5 提供这两个入口，默认仍保留或复用已有 SNI。手动输入和 TLS 校验路径仍可使用。内置列表只提供待检查域名，失败或取消时不填入默认域名、不修改当前 SNI。
+
+### 内置地区候选
+
+选择内置地区候选后，子菜单提供 `1. HK`、`2. US-LAX`、`3. DE-FRA`、`4. JP-TYO`，默认 `0` 取消。每区共 5 个域名，覆盖银行、政府和学校官网，按下表顺序交给现有 DNS checker，选择首个通过检查且获接受的域名。基础条件返回 FAIL/UNKNOWN 时跳过；WARN 仍须明确确认，默认拒绝。全部失败、拒绝或取消时不选用固定域名，已有 SNI 保持不变。
+
+地区标签按机构所在地归类；站点可能使用 CDN 或其他地区的托管服务，因此标签不保证连接 IP、ASN、机房或延迟属于该地区。官方身份与学校、银行、政府类别不能证明 REALITY 适用性，也不能代替从实际 VPS 网络运行 checker。此入口只检测域名，不扫描网段、不查询 ASN，也不需要 Python。
+
+以下官方来源用于核实机构身份与所在地；候选表于 2026-10-30 核对。表中域名不表示已经通过公网 checker 验收。
+
+| 地区 | 类别 | 机构 | 候选域名 | 官方来源 |
+| --- | --- | --- | --- | --- |
+| HK | 银行 | 中银香港（BOCHK） | `www.bochk.com` | [联系地址](https://www.bochk.com/en/aboutus/ir/contact.html) |
+| HK | 银行 | 东亚银行（BEA） | `www.hkbea.com` | [公司简介](https://www.hkbea.com/html/en/bea-about-bea-company-profile.html) |
+| HK | 政府 | GovHK 香港政府一站通 | `www.gov.hk` | [政府对 GovHK 的介绍](https://www.digitalpolicy.gov.hk/en/our_work/data_governance/common_data_platforms/govhk/) |
+| HK | 学校 | 香港大学 | `www.hku.hk` | [联系资料](https://www.hku.hk/en/contact-us) |
+| HK | 学校 | 香港中文大学 | `www.cuhk.edu.hk` | [联系资料](https://www.cuhk.edu.hk/english/contact.html) |
+| US-LAX | 银行 | City National Bank | `www.cnb.com` | [官方新闻：洛杉矶总部](https://www.cnb.com/about-us/media/press-releases/2025/la-galaxy-soccer-jersey-partnership-founding-sports-park.html) |
+| US-LAX | 银行 | Preferred Bank | `www.preferredbank.com` | [银行历史与总部](https://www.preferredbank.com/about-us/our-history) |
+| US-LAX | 政府 | City of Los Angeles | `lacity.gov` | [洛杉矶市政府官网](https://lacity.gov/) |
+| US-LAX | 学校 | University of California, Los Angeles（UCLA） | `www.ucla.edu` | [学校介绍](https://www.ucla.edu/about) |
+| US-LAX | 学校 | University of Southern California（USC） | `www.usc.edu` | [学校联系地址](https://arr.usc.edu/contact-us/) |
+| DE-FRA | 银行 | Frankfurter Sparkasse | `www.frankfurter-sparkasse.de` | [机构与地址](https://www.frankfurter-sparkasse.de/de/home/toolbar/impressum.html) |
+| DE-FRA | 银行 | Frankfurter Volksbank Rhein/Main | `www.frankfurter-volksbank.de` | [机构与地址](https://www.frankfurter-volksbank.de/rechtliches/impressum.html) |
+| DE-FRA | 政府 | Stadt Frankfurt am Main | `frankfurt.de` | [法兰克福市政府官网](https://frankfurt.de/) |
+| DE-FRA | 学校 | Goethe University Frankfurt | `www.uni-frankfurt.de` | [学校与地址](https://www.uni-frankfurt.de/de/impressum) |
+| DE-FRA | 学校 | Frankfurt University of Applied Sciences | `www.frankfurt-university.de` | [校区位置与地址](https://www.frankfurt-university.de/de/hochschule/lageplan-und-anfahrt/) |
+| JP-TYO | 银行 | 三井住友银行（SMBC） | `www.smbc.co.jp` | [银行简介与总部](https://www.smbc.co.jp/global/aboutus/profile/company.html) |
+| JP-TYO | 银行 | 瑞穗银行（Mizuho Bank） | `www.mizuhobank.co.jp` | [银行简介与总部](https://www.mizuhobank.co.jp/company/info/profile/index.html) |
+| JP-TYO | 政府 | 东京都政府 | `www.metro.tokyo.lg.jp` | [东京都政府官网](https://www.metro.tokyo.lg.jp/) |
+| JP-TYO | 学校 | 东京大学 | `www.u-tokyo.ac.jp` | [校区位置](https://www.u-tokyo.ac.jp/en/about/access.html) |
+| JP-TYO | 学校 | 早稻田大学 | `www.waseda.jp` | [校区位置](https://www.waseda.jp/top/en/access) |
+
+### 网段 / ASN 发现
 
 发现模式需要明确输入一个严格对齐的 IPv4 CIDR，前缀长度限 `/24`–`/32`，主机预算为 256；例如文档地址 `192.0.2.0/24` 仅用于说明，执行时应替换为自己明确选择的实际范围。也可输入十进制 ASN：安装器先查询并展示 RIPE 公告快照，这一步不探测目标端口；之后必须明确选择公告 IPv4 前缀内的一个 `/24`–`/32` 子网，才开始发现。执行时继续携带 ASN 重新检查范围，不自动扫描整个 ASN。ASN/BGP 快照不保证实时或独占归属，也不证明目标在同机房、路由相邻或延迟更低。
 
@@ -22,7 +55,9 @@ bash -c 'set -euo pipefail; umask 077; t=$(mktemp); trap '\''rm -f -- "$t"'\'' E
 
 只有完整完成且返回 PASS/WARN 的发现报告才进入选择；超时、截断、UNKNOWN 或异常报告均停止，不使用其中的部分候选。安装器取合格候选中前 5 个有效且去重的 SNI，重新执行下面的完整 DNS 域名检查。固定 IP/SNI 的探测成功不等于通过域名连接时仍到达同一 IP，因此安装器不会直接采用发现报告或把发现 IP 写成握手目标；最终使用通过域名复核且获接受的 SNI。
 
-每个域名检测 DNS A/AAAA 返回的地址、TLS 1.3、证书链/SAN/有效期、h2 和 X25519，并记录 ASN/CDN 等附加线索。默认检查两个地址族；无 IPv6 出站而目标有 AAAA 时可能无法完成，不能视为通过。每项网络操作最多 3 秒，每个域名整体最多 90 秒，达到上限、报告不完整、返回 FAIL/UNKNOWN 或下载校验失败均不选中。最多 5 个候选的探测上限约 7.5 分钟，另加一次下载；可改为手动输入并执行原有 TLS 校验。
+### 检查与风险确认
+
+每个域名检测 DNS A/AAAA 返回的地址、TLS 1.3、证书链/SAN/有效期、h2 和 X25519，并记录 ASN/CDN 等附加线索。自行提供的域名、内置地区候选和发现后的域名复核使用同一检查流程。默认检查两个地址族；无 IPv6 出站而目标有 AAAA 时可能无法完成，不能视为通过。每项网络操作最多 3 秒，每个域名整体最多 90 秒，达到上限、报告不完整、返回 FAIL/UNKNOWN 或下载校验失败均不选中。最多 5 个候选的探测上限约 7.5 分钟，另加一次下载；可改为手动输入并执行原有 TLS 校验。
 
 WARN 表示基础和候选兼容性通过，但存在附加风险或未知项，例如未确认源 IP 的同 ASN 判断、CDN 线索或证书临近到期。安装器显示检查 ID，需要明确输入 `y` 才使用，默认拒绝；不会因非交互环境自动接受。发现后的域名复核同样遵循此规则。该检测不能证明不存在 CDN，也不能保证抗封锁或长期可用。DNS 和 Team Cymru ASN 查询通过系统解析器进行；ASN 计划还会向 RIPEstat 查询输入的 ASN。发现会让所选范围内的站点获知扫描端地址，检测不上传代理 UUID、密码或密钥。
 

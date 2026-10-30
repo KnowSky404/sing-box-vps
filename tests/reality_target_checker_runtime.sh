@@ -31,6 +31,11 @@ setup_menu_test_env 120
 cp -p "${CORE_BINARY}" "${TMP_DIR}/bin/sing-box"
 source "${TESTABLE_INSTALL}"
 
+FIXTURE_DOMAIN=$(reality_region_candidate_records HK | awk -F'|' 'NR == 1 {print $4}')
+validate_reality_sni_syntax "${FIXTURE_DOMAIN}"
+export RTC_RUNTIME_DOMAIN="${FIXTURE_DOMAIN}"
+printf 'regional_fixture_domain=%s (remapped to local TLS fixture; not a public-site check)\n' "${FIXTURE_DOMAIN}"
+
 COVER_PID=''
 SERVER_PID=''
 CLIENT_PID=''
@@ -95,7 +100,7 @@ args=("$@")
 name=${args[${#args[@]} - 2]%.}
 type=${args[${#args[@]} - 1]}
 printf ';; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1\n'
-if [[ "${name}" == reality-runtime.example.test && "${type}" == A ]]; then
+if [[ "${name}" == "${RTC_RUNTIME_DOMAIN}" && "${type}" == A ]]; then
   printf '%s. 60 IN A 127.0.0.1\n' "${name}"
 fi
 SH
@@ -107,7 +112,6 @@ mkdir -m 700 "${TMP_DIR}/checker"
 prepare_reality_target_discovery "${TMP_DIR}/checker"
 printf 'checker_and_discovery_downloads=verified\n'
 
-FIXTURE_DOMAIN='reality-runtime.example.test'
 printf '127.0.0.1 %s\n' "${FIXTURE_DOMAIN}" >> /etc/hosts
 openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
   -keyout "${TMP_DIR}/cover.key" -out "${TMP_DIR}/cover.crt" \
@@ -183,7 +187,17 @@ y
 EOF
 )
 [[ "${SELECTED_SNI}" == "${FIXTURE_DOMAIN}" ]]
-SB_SNI="${SELECTED_SNI}"
+
+# Reach a real preset through the actual installer menus. The official hostname
+# is locally remapped above; this proves menu/checker wiring, not bank reachability.
+SB_SNI=unchanged.example.test
+prompt_reality_sni_install <<'EOF'
+4
+1
+y
+EOF
+[[ "${SB_SNI}" == "${FIXTURE_DOMAIN}" ]]
+printf 'region_install_menu_hk_checker_consent=passed (local fixture only)\n'
 SB_PORT=18443
 SB_VLESS_INSTANCE_ID=main
 SB_NODE_NAME=reality-runtime
