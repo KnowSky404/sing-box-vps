@@ -122,13 +122,13 @@ delete_subman_node_by_external_key() {
 SB_INBOUND_STACK_MODE="dual_stack"
 output=$(push_nodes_to_subman 2>&1)
 
-if [[ "${output}" != *"SubMan 推送完成：已同步: 3，已跳过: 2，失败: 0"* ]]; then
-  printf 'expected push summary for 3 synced, 2 skipped, 0 failed, got:\n%s\n' "${output}" >&2
+if [[ "${output}" != *"SubMan 推送完成：已同步: 4，已跳过: 2，失败: 0"* ]]; then
+  printf 'expected push summary for 4 synced, 2 skipped, 0 failed, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
-if [[ "$(wc -l < "${PUSH_KEYS_FILE}")" -ne 3 ]]; then
-  printf 'expected exactly 3 node upserts, got keys:\n%s\n' "$(cat "${PUSH_KEYS_FILE}")" >&2
+if [[ "$(wc -l < "${PUSH_KEYS_FILE}")" -ne 4 ]]; then
+  printf 'expected exactly 4 node upserts, got keys:\n%s\n' "$(cat "${PUSH_KEYS_FILE}")" >&2
   exit 1
 fi
 
@@ -147,8 +147,9 @@ if ! grep -Fxq "sing-box-vps:edge-1:vless-reality" "${CLEANUP_KEYS_FILE}"; then
   exit 1
 fi
 
-if ! grep -Fxq "sing-box-vps:edge-1:hy2" "${PUSH_KEYS_FILE}"; then
-  printf 'expected hy2 external key, got:\n%s\n' "$(cat "${PUSH_KEYS_FILE}")" >&2
+if ! grep -Fxq "sing-box-vps:edge-1:hy2:v4" "${PUSH_KEYS_FILE}" ||
+   ! grep -Fxq "sing-box-vps:edge-1:hy2:v6" "${PUSH_KEYS_FILE}"; then
+  printf 'expected family-specific hy2 external keys, got:\n%s\n' "$(cat "${PUSH_KEYS_FILE}")" >&2
   exit 1
 fi
 
@@ -172,8 +173,19 @@ if jq -e 'select(.raw == "")' "${PUSH_PAYLOADS_FILE}" >/dev/null; then
   exit 1
 fi
 
-if [[ "$(jq -r 'select(.type == "hysteria2") | .raw' "${PUSH_PAYLOADS_FILE}")" != hy2://* ]]; then
-  printf 'expected hy2 payload raw link, got:\n%s\n' "$(cat "${PUSH_PAYLOADS_FILE}")" >&2
+if ! jq -se '
+  [.[] | select(.type == "hysteria2")] as $hy2 |
+  ($hy2 | length == 2)
+  and any($hy2[]; .name == "edge-hy2-v4"
+    and (.raw | startswith("hy2://hy2-password@203.0.113.10:8443?"))
+    and (.raw | contains("sni=hy2.example.com"))
+    and (.raw | endswith("#edge-hy2-v4")))
+  and any($hy2[]; .name == "edge-hy2-v6"
+    and (.raw | startswith("hy2://hy2-password@[2001:db8::10]:8443?"))
+    and (.raw | contains("sni=hy2.example.com"))
+    and (.raw | endswith("#edge-hy2-v6")))
+' "${PUSH_PAYLOADS_FILE}" >/dev/null; then
+  printf 'expected HY2 connection IPs to follow each family while preserving domain SNI, got:\n%s\n' "$(cat "${PUSH_PAYLOADS_FILE}")" >&2
   exit 1
 fi
 
@@ -209,7 +221,7 @@ set +e
 partial_output=$(push_nodes_to_subman 2>&1)
 partial_status=$?
 set -e
-if [[ "${partial_status}" -eq 0 || "${partial_output}" != *"已同步: 2，已跳过: 2，失败: 1"* ]]; then
+if [[ "${partial_status}" -eq 0 || "${partial_output}" != *"已同步: 2，已跳过: 2，失败: 2"* ]]; then
   printf 'expected partial dual-stack failure to be reported, got status=%s output:\n%s\n' "${partial_status}" "${partial_output}" >&2
   exit 1
 fi
@@ -229,12 +241,15 @@ if [[ "${partial_agent_status}" -eq 0 ]]; then
 fi
 if ! jq -e '
   .ok == false
-  and .failed == 1
-  and (.results | length == 3)
+  and .failed == 2
+  and (.results | length == 4)
   and ([.results[] | select(.outcome == "committed")] | length == 2)
   and any(.results[]; .external_key == "sing-box-vps:edge-1:vless-reality:v4"
     and .node_id == "node-v4" and .gist_id == "gist-1" and .revision == 23)
   and any(.results[]; .external_key == "sing-box-vps:edge-1:vless-reality:v6"
+    and .outcome == "unknown-outcome" and .node_id == null
+    and .error.code == "gist_write_failed")
+  and any(.results[]; .external_key == "sing-box-vps:edge-1:hy2:v6"
     and .outcome == "unknown-outcome" and .node_id == null
     and .error.code == "gist_write_failed")
   and all(.results[]; has("raw") | not)
@@ -259,6 +274,7 @@ printf '' > "${PUSH_PAYLOADS_FILE}"
 printf '' > "${CLEANUP_KEYS_FILE}"
 
 get_public_ip() {
+  printf 'unexpected generic IP fallback\n' >> "${TMP_DIR}/generic-ip-calls"
   printf '198.51.100.20\n'
 }
 
@@ -271,27 +287,71 @@ get_public_ipv6() {
 }
 
 load_protocol_state "mixed"
+set +e
 fallback_output=$(push_nodes_to_subman 2>&1)
+fallback_status=$?
+set -e
 
-if [[ "${fallback_output}" != *"SubMan 推送完成：已同步: 2，已跳过: 2，失败: 0"* ]]; then
-  printf 'expected fallback push summary for 2 synced, 2 skipped, 0 failed, got:\n%s\n' "${fallback_output}" >&2
+if [[ "${fallback_status}" -eq 0 || "${fallback_output}" != *"SubMan 推送完成：已同步: 0，已跳过: 2，失败: 2"* ]]; then
+  printf 'expected missing family candidates to fail both supported protocols, got status=%s output:\n%s\n' \
+    "${fallback_status}" "${fallback_output}" >&2
   exit 1
 fi
 
-if [[ "$(grep -Fxc "sing-box-vps:edge-1:vless-reality" "${PUSH_KEYS_FILE}")" -ne 1 ]]; then
-  printf 'expected fallback vless key to be pushed exactly once, got keys:\n%s\n' "$(cat "${PUSH_KEYS_FILE}")" >&2
-  exit 1
-fi
-
-if jq -e 'select(.type == "vless" and .enabled == false)' "${PUSH_PAYLOADS_FILE}" >/dev/null; then
-  printf 'expected fallback vless sync not to disable the same legacy key, got:\n%s\n' "$(cat "${PUSH_PAYLOADS_FILE}")" >&2
+if [[ -s "${PUSH_KEYS_FILE}" || -s "${PUSH_PAYLOADS_FILE}" || -s "${TMP_DIR}/generic-ip-calls" ]]; then
+  printf 'expected missing family candidates to prevent writes and generic fallback\n' >&2
   exit 1
 fi
 
 if [[ -s "${CLEANUP_KEYS_FILE}" ]]; then
-  printf 'expected single-address fallback not to delete its active legacy key, got:\n%s\n' "$(cat "${CLEANUP_KEYS_FILE}")" >&2
+  printf 'expected failed address discovery to preserve all legacy keys, got:\n%s\n' "$(cat "${CLEANUP_KEYS_FILE}")" >&2
   exit 1
 fi
+
+if missing_addresses_json=$(agent_push_nodes_to_subman_json); then
+  printf 'expected Agent sync without family candidates to fail\n' >&2
+  exit 1
+fi
+jq -e '.ok == false and .synced == 0 and .skipped == 2 and .failed == 2
+  and (.results | length == 2)
+  and ([.results[].protocol] | sort) == ["hy2", "vless-reality"]
+  and all(.results[]; .outcome == "failed" and .external_key == null
+    and .error.code == "public_ip_unavailable")
+  and .last_error.code == "public_ip_unavailable"' <<< "${missing_addresses_json}" >/dev/null
+
+# A failed selector for one protocol must remain a failure when another
+# protocol synchronizes successfully. Process-substitution loops used to lose
+# this status and could report the partial batch as successful.
+(
+  list_subman_addresses_for_current_protocol() {
+    case "${SB_PROTOCOL}" in
+      vless+reality|vless-reality) return 1 ;;
+      *) printf 'IPv4|198.51.100.20\n' ;;
+    esac
+  }
+  : > "${CLEANUP_KEYS_FILE}"
+  if selection_partial_output=$(push_nodes_to_subman 2>&1); then
+    printf 'expected one missing protocol address to fail a partially synchronized batch\n' >&2
+    exit 1
+  fi
+  [[ "${selection_partial_output}" == *'已同步: 1，已跳过: 2，失败: 1'* ]] || {
+    printf 'expected successful HY2 and failed REALITY discovery counts, got:\n%s\n' \
+      "${selection_partial_output}" >&2
+    exit 1
+  }
+  [[ ! -s "${CLEANUP_KEYS_FILE}" ]]
+  if selection_partial_json=$(agent_push_nodes_to_subman_json); then
+    printf 'expected Agent partial address-selection failure to remain unsuccessful\n' >&2
+    exit 1
+  fi
+  jq -e '.ok == false and .synced == 1 and .skipped == 2 and .failed == 1
+    and (.results | length == 2)
+    and any(.results[]; .protocol == "vless-reality" and .outcome == "failed"
+      and .error.code == "public_ip_unavailable")
+    and any(.results[]; .external_key == "sing-box-vps:edge-1:hy2:v4"
+      and .outcome == "committed")
+    and .last_error.code == "public_ip_unavailable"' <<< "${selection_partial_json}" >/dev/null
+)
 
 get_public_ip() {
   printf ''
@@ -390,6 +450,8 @@ jq -n '{schema_version:1,protocol:"http",revision:1,default_instance_id:"main",
   > "${SB_PROTOCOL_STATE_DIR}/instances/http.json"
 http_state_hash=$(sha256sum "${SB_PROTOCOL_STATE_DIR}/instances/http.json")
 get_public_ip() { printf '198.51.100.20\n'; }
+get_public_ipv4() { printf '198.51.100.20\n'; }
+get_public_ipv6() { printf ''; }
 push_subman_node() {
   printf '%s\n' "$1" >> "${PUSH_KEYS_FILE}"
   printf '%s\n' "$2" >> "${PUSH_PAYLOADS_FILE}"

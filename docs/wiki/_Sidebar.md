@@ -17,3 +17,4 @@
 - [验证记录](https://github.com/KnowSky404/sing-box-vps/wiki/Verification-History)
 - [升级演练](https://github.com/KnowSky404/sing-box-vps/wiki/Upgrade-Rehearsal)
 - [开发工作流](https://github.com/KnowSky404/sing-box-vps/wiki/Development)
+- [SubMan 地址选择](https://github.com/KnowSky404/sing-box-vps/wiki/SubMan-Address-Selection)
