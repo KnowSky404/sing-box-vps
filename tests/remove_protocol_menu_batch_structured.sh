@@ -392,4 +392,3 @@ grep -Eq '部分|已提交|停止' <<< "${output}"
 plain_proxy_structured_state_matches_config hy2
 "${core}" check -c "${SINGBOX_CONFIG_FILE}"
 printf 'batch protocol removal passed: cancellation=2 selection-orders=3 HY2-instances=2 multiple-REALITY=1 preserved-protocol=HTTP structured-only=1 partial-failure=1 pending-journals=4 config-drift=1 legacy-restart-failure=1 legacy-setup-failure=2\n'
-
