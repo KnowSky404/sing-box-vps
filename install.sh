@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026103007
+# Version: 2026103101
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026103007"
+readonly SCRIPT_VERSION="2026103101"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -13207,7 +13207,7 @@ install_binary() (
 
 setup_service() {
   log_info "配置 systemd 服务..."
-  cat > "${SINGBOX_SERVICE_FILE}" <<EOF
+  cat > "${SINGBOX_SERVICE_FILE}" <<EOF || return $?
 [Unit]
 Description=sing-box service
 After=network.target nss-lookup.target
@@ -13221,8 +13221,8 @@ LimitNOFILE=infinity
 [Install]
 WantedBy=multi-user.target
 EOF
-  systemctl daemon-reload
-  systemctl enable sing-box >/dev/null 2>&1
+  systemctl daemon-reload || return $?
+  systemctl enable sing-box >/dev/null 2>&1 || return $?
 
   if ! ensure_sbv_command_installed; then
     log_warn "全局命令 sbv 未能完成同步；当前安装流程继续，但请稍后手动重试。"
@@ -24758,6 +24758,85 @@ update_config_only() {
   log_info "连接信息未自动展示，如需查看请进入菜单 11。"
 }
 
+remove_protocol_batch() (
+  local selected_protocols=("$@") structured_protocols=() legacy_protocols=() ids=() labels=()
+  local protocol snapshot_dir snapshot revision instance_id result status confirm store_file
+  local completed_protocols=0 completed_instances=0
+  umask 077
+  acquire_managed_write_lock || return 1
+  if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" || -L "${SB_PROJECT_DIR}.instance-write.lock" ||
+        -e "${SB_COMPONENT_TRANSACTION_DIR}" || -L "${SB_COMPONENT_TRANSACTION_DIR}" ]]; then
+    log_warn "存在未完成的管理事务；请先恢复事务。本次未修改。"
+    return 1
+  fi
+  snapshot_dir=$(mktemp -d) || return 1
+  trap 'rm -rf -- "${snapshot_dir}"' EXIT
+  trap 'log_warn "批量移除已中断；此前已提交项保留，请检查最后一项事务的最终状态。"; exit 130' INT
+  trap 'log_warn "批量移除已中断；此前已提交项保留，请检查最后一项事务的最终状态。"; exit 143' TERM
+  trap 'log_warn "批量移除已中断；此前已提交项保留，请检查最后一项事务的最终状态。"; exit 129' HUP
+
+  # Capture every typed target before the first mutation. Delete only those
+  # IDs, using the captured revision and the existing per-instance journal.
+  for protocol in "${selected_protocols[@]}"; do
+    labels+=("$(protocol_display_name "${protocol}")")
+    if plain_proxy_structured_state_active "${protocol}"; then
+      snapshot="${snapshot_dir}/${protocol}.json"
+      if ! plain_proxy_structured_state_matches_config "${protocol}" ||
+         ! plain_proxy_management_capture_snapshot "${protocol}" "${snapshot}"; then
+        log_warn "$(protocol_display_name "${protocol}") 状态与配置无法核实；本次未修改。"
+        return 1
+      fi
+      structured_protocols+=("${protocol}")
+    else
+      if structured_instance_store_protocol "${protocol}" >/dev/null; then
+        store_file=$(plain_proxy_structured_store_file "${protocol}") || return 1
+        if [[ -e "${store_file}" || -L "${store_file}" ]]; then
+          log_warn "$(protocol_display_name "${protocol}") 实例状态异常；请先恢复。本次未修改。"
+          return 1
+        fi
+      fi
+      legacy_protocols+=("${protocol}")
+    fi
+  done
+  printf '将移除选中协议的全部实例: %s\n' "$(IFS=', '; printf '%s' "${labels[*]}")"
+  log_info "实例将逐项提交；中途失败会停止，并保留此前已完成的移除。"
+  read -rp "确认批量移除? [y/N]: " confirm || return 1
+  if [[ "${confirm}" != y && "${confirm}" != Y ]]; then
+    log_info "已取消移除协议。"
+    return 0
+  fi
+
+  # Legacy generation needs the still-active typed stores to preserve its
+  # generated baseline. Finish it first, then use typed deletion exclusively.
+  if [[ ${#legacy_protocols[@]} -gt 0 ]]; then
+    if (remove_protocol_menu --confirmed-legacy "${legacy_protocols[@]}"); then
+      completed_protocols=${#legacy_protocols[@]}
+    else
+      status=$?
+      log_warn "批量移除已停止；请检查上述协议移除结果，结构化实例尚未处理。"
+      return "${status}"
+    fi
+  fi
+  for protocol in "${structured_protocols[@]}"; do
+    snapshot="${snapshot_dir}/${protocol}.json"
+    revision=$(jq -er '.revision' "${snapshot}") || return 1
+    mapfile -t ids < <(jq -r '.instances[].id' "${snapshot}")
+    for instance_id in "${ids[@]}"; do
+      if result=$(apply_plain_proxy_instance_change "${protocol}" delete "${revision}" "${instance_id}" n); then
+        revision=$(jq -er '.revision' <<< "${result}") || return 1
+        completed_instances=$((completed_instances + 1))
+        log_success "已移除 $(protocol_display_name "${protocol}") 实例: ${instance_id}。"
+      else
+        status=$?
+        [[ -z "${result}" ]] || printf '%s\n' "${result}" >&2
+        log_warn "批量移除已停止：已完成 ${completed_protocols} 个协议、${completed_instances} 个实例；失败项 ${protocol}/${instance_id}，其余选中项未继续处理。请检查事务结果后重试。"
+        return "${status}"
+      fi
+    done
+  done
+  log_success "已移除协议: $(IFS=', '; printf '%s' "${labels[*]}")。"
+)
+
 remove_protocol_menu() {
   local protocols=() selected_protocols=() remaining_protocols=()
   local selected_protocol display_str confirm
@@ -24767,6 +24846,17 @@ remove_protocol_menu() {
   local selected_instance first_remaining_instance removed_instance_port
   local reality_remove_mode="instance" choice removed_port
   local removed_ports=() idx raw_choice raw_choices chosen_protocol display_list
+  local preconfirmed=n
+
+  # Internal batch continuation: the outer menu already confirmed the complete
+  # selection. Restrict this path to installed legacy protocols and force whole
+  # REALITY removal even when that protocol has multiple instances.
+  if [[ $# -gt 0 ]]; then
+    [[ "$1" == --confirmed-legacy && $# -gt 1 ]] || return 1
+    preconfirmed=y
+    shift
+    selected_protocols=("$@")
+  fi
 
   if [[ ! -f "${SINGBOX_CONFIG_FILE}" && ! -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
     log_error "未找到配置文件或协议状态，请先执行安装流程。"
@@ -24780,38 +24870,54 @@ remove_protocol_menu() {
     log_error "当前未检测到已安装协议。"
   fi
 
-  echo -e "\n${BLUE}--- 移除已安装协议 ---${NC}"
-  echo "可用协议:"
-  for idx in "${!protocols[@]}"; do
-    echo "$((idx + 1)). $(protocol_display_name "${protocols[$idx]}")"
-  done
-  echo "0. 返回"
-  echo "留空则移除所有已安装协议。"
-  read -rp "请选择一个或多个协议 [0-${#protocols[@]}]，逗号分隔: " choice
-
-  if [[ -z "$(trim_whitespace "${choice}")" ]]; then
-    selected_protocols=("${protocols[@]}")
-  elif [[ "$(trim_whitespace "${choice}")" == "0" ]]; then
-    return 0
-  else
-    IFS="," read -r -a raw_choices <<< "${choice}"
-    for raw_choice in "${raw_choices[@]}"; do
-      raw_choice=$(trim_whitespace "${raw_choice}")
-      [[ -z "${raw_choice}" ]] && continue
-      if [[ "${raw_choice}" =~ ^[1-9][0-9]*$ ]] && (( raw_choice >= 1 && raw_choice <= ${#protocols[@]} )); then
-        chosen_protocol="${protocols[$((raw_choice - 1))]}"
-        if ! protocol_array_contains "${chosen_protocol}" ${selected_protocols[@]+"${selected_protocols[@]}"}; then
-          selected_protocols+=("${chosen_protocol}")
-        fi
-      else
-        log_warn "跳过无效选项: ${raw_choice}"
-      fi
+  if [[ "${preconfirmed}" == y ]]; then
+    for selected_protocol in "${selected_protocols[@]}"; do
+      protocol_array_contains "${selected_protocol}" "${protocols[@]}" || return 1
+      if plain_proxy_structured_state_active "${selected_protocol}"; then return 1; fi
     done
+  else
+    echo -e "\n${BLUE}--- 移除已安装协议 ---${NC}"
+    echo "可用协议:"
+    for idx in "${!protocols[@]}"; do
+      echo "$((idx + 1)). $(protocol_display_name "${protocols[$idx]}")"
+    done
+    echo "0. 返回"
+    echo "留空则移除所有已安装协议。"
+    read -rp "请选择一个或多个协议 [0-${#protocols[@]}]，逗号分隔: " choice
+
+    if [[ -z "$(trim_whitespace "${choice}")" ]]; then
+      selected_protocols=("${protocols[@]}")
+    elif [[ "$(trim_whitespace "${choice}")" == "0" ]]; then
+      return 0
+    else
+      IFS="," read -r -a raw_choices <<< "${choice}"
+      for raw_choice in "${raw_choices[@]}"; do
+        raw_choice=$(trim_whitespace "${raw_choice}")
+        [[ -z "${raw_choice}" ]] && continue
+        if [[ "${raw_choice}" =~ ^[1-9][0-9]*$ ]] && (( raw_choice >= 1 && raw_choice <= ${#protocols[@]} )); then
+          chosen_protocol="${protocols[$((raw_choice - 1))]}"
+          if ! protocol_array_contains "${chosen_protocol}" ${selected_protocols[@]+"${selected_protocols[@]}"}; then
+            selected_protocols+=("${chosen_protocol}")
+          fi
+        else
+          log_warn "跳过无效选项: ${raw_choice}"
+        fi
+      done
+    fi
+
+    if [[ ${#selected_protocols[@]} -eq 0 ]]; then
+      log_info "未选择任何协议。"
+      return 0
+    fi
   fi
 
-  if [[ ${#selected_protocols[@]} -eq 0 ]]; then
-    log_info "未选择任何协议。"
-    return 0
+  if [[ ${#selected_protocols[@]} -gt 1 ]]; then
+    for selected_protocol in "${selected_protocols[@]}"; do
+      if plain_proxy_structured_state_active "${selected_protocol}"; then
+        remove_protocol_batch "${selected_protocols[@]}"
+        return $?
+      fi
+    done
   fi
 
   if mixed_structured_state_active && protocol_array_contains mixed "${selected_protocols[@]}"; then
@@ -24916,7 +25022,7 @@ remove_protocol_menu() {
   # flow when more than one managed instance exists, while still exposing an
   # explicit whole-protocol option. Multi-select and blank keep their newer
   # whole-protocol semantics.
-  if [[ ${#selected_protocols[@]} -eq 1 && "${selected_protocols[0]}" == "vless-reality" ]]; then
+  if [[ "${preconfirmed}" == n && ${#selected_protocols[@]} -eq 1 && "${selected_protocols[0]}" == "vless-reality" ]]; then
     migrate_vless_reality_state_to_instances_if_needed
     mapfile -t reality_instances < <(list_vless_reality_instance_ids)
     if [[ ${#reality_instances[@]} -gt 1 ]]; then
@@ -24997,7 +25103,10 @@ remove_protocol_menu() {
     display_list+=("$(protocol_display_name "${selected_protocol}")")
   done
   display_str=$(IFS=", "; printf "%s" "${display_list[*]}")
-  read -rp "确认移除下列协议: ${display_str}? [y/N]: " confirm
+  confirm=y
+  if [[ "${preconfirmed}" == n ]]; then
+    read -rp "确认移除下列协议: ${display_str}? [y/N]: " confirm
+  fi
   if [[ "${confirm}" != "y" && "${confirm}" != "Y" ]]; then
     log_info "已取消移除协议。"
     return 0
@@ -25124,12 +25233,12 @@ remove_protocol_menu() {
   if ! discard_managed_state_snapshot "${transaction_dir}"; then
     log_warn "协议移除已提交，但临时事务快照未能删除: ${transaction_dir}。"
   fi
-  setup_service
+  setup_service || return $?
   first_remaining="${remaining_protocols[0]}"
-  load_protocol_state "${first_remaining}"
+  load_protocol_state "${first_remaining}" || return $?
   open_committed_protocol_ports || return $?
-  refresh_vless_reality_qos_rules
-  run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box
+  refresh_vless_reality_qos_rules || return $?
+  run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box || return $?
   for removed_port in "${removed_ports[@]}"; do
     if [[ -n "${removed_port}" ]]; then
       close_firewall_port "${removed_port}" || return $?

@@ -54,6 +54,27 @@ The current status below preserves the original requirements. Local fixtures use
 | FP-10 | URLTest: use distinguishable healthy/unhealthy members and a local health URL, observe a failed member and recovery, and verify the selected marker path after a bounded wait. | Isolated local upstreams with controlled failure; keep existing single-member evidence. | Accepted: observed healthy → failed → recovered member routing |
 | FP-11 | Block outbound: send UDP traffic through the managed block route, verify no marker reaches the destination and a direct positive control succeeds; retain target-core and deletion evidence. | Isolated local UDP marker; a timeout without the positive control is insufficient. | Accepted: UDP rejection with successful direct positive control |
 
+## Batch removal from the protocol menu
+
+Multi-select and blank (all installed protocols) selections can include structured
+instances such as Hysteria2 together with REALITY. One confirmation covers every
+instance of the selected protocols; selecting a single structured protocol keeps
+its existing instance selection flow. Before applying a batch, reject pending
+management recovery and verify each selected structured store against live config.
+
+Legacy protocols are removed first so config generation retains the active typed
+stores. Structured instances then use the existing revision-checked delete
+transactions, including core validation, resource/service rollback and persistent
+results. Empty revisioned stores and an empty runtime config/index are retained
+when the final operation is a structured delete. Unselected protocols and unmanaged
+configuration follow the existing ownership rules.
+
+Each delete commits separately. A failure stops later work and reports prior
+completed items; earlier successful deletions remain committed. Cancellation
+before the batch confirmation changes no protocol, configuration or service.
+Regression: `bash tests/remove_protocol_menu_batch_structured.sh`; real-core
+Docker removal is recorded separately from public or production acceptance.
+
 ## Compatibility and external boundaries that remain explicit
 
 - HTTPUpgrade and WebSocket early data remain blocked by the current transport
