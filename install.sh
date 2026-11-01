@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026110104
+# Version: 2026110105
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026110104"
+readonly SCRIPT_VERSION="2026110105"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 # A single IPv6 wildcard socket accepts IPv4 and IPv6 in sing-box on Linux.
 readonly SB_DEFAULT_LISTEN_ADDRESS="::"
@@ -969,11 +969,13 @@ detect_host_ip_stack() {
   local has_ipv6="n"
 
   if command -v ip &>/dev/null; then
-    if ip -o -4 addr show scope global 2>/dev/null | grep -q .; then
+    # Drain each producer: grep -q can close the pipe before ip finishes,
+    # making pipefail mistake SIGPIPE for a missing address family.
+    if ip -o -4 addr show scope global 2>/dev/null | grep . >/dev/null; then
       has_ipv4="y"
     fi
 
-    if ip -o -6 addr show scope global 2>/dev/null | grep -q .; then
+    if ip -o -6 addr show scope global 2>/dev/null | grep . >/dev/null; then
       has_ipv6="y"
     fi
   fi
