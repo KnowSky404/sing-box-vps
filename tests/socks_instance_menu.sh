@@ -36,10 +36,10 @@ one_shot_listed=$(socks_instance_management_menu list)
 [[ "$(grep -c '^main' <<< "${one_shot_listed}")" -eq 1 ]]
 [[ "$(grep -c '^edge' <<< "${one_shot_listed}")" -eq 1 ]]
 
-# Creation defaults to loopback + authentication and carries the captured CAS.
-printf '%s\n' 1 '' '' '' '' '' '' '' '' 0 | socks_instance_management_menu >/dev/null
-grep -Fq 'socks create 7 n' "${calls}"
-grep -Fq '127.0.0.1' "${calls}"
+# Creation defaults to dual stack + authentication and requires public consent.
+printf '%s\n' 1 '' '' '' '' '' '' '' '' y 0 | socks_instance_management_menu >/dev/null
+grep -Fq 'socks create 7 y' "${calls}"
+grep -Fq '"address":"::"' "${calls}"
 grep -Eq 'enabled.*true' "${calls}"
 
 # Targeting by numeric index remains bounded and the replacement preserves

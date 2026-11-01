@@ -268,7 +268,7 @@ verification_group_tests() {
   while IFS= read -r file; do
     [[ -n "${file}" ]] || continue
     case "${file}" in
-      tests/*_helper.sh|tests/hy2_instance_acme_runtime.sh|tests/component_runtime_acceptance.sh|tests/selector_urltest_runtime.sh|tests/acme_component_runtime.sh|tests/cloudflared_runtime.sh|tests/tailscale_openconnect_runtime.sh|tests/namespace_core_runtime.sh) continue ;;
+      tests/*_helper.sh|tests/default_dual_stack_runtime.sh|tests/hy2_instance_acme_runtime.sh|tests/component_runtime_acceptance.sh|tests/selector_urltest_runtime.sh|tests/acme_component_runtime.sh|tests/cloudflared_runtime.sh|tests/tailscale_openconnect_runtime.sh|tests/namespace_core_runtime.sh) continue ;;
     esac
     case "${group}:${file}" in
       protocol:vless:tests/*vless_plain*|protocol:vless-reality:tests/*vless_plain*) continue ;;

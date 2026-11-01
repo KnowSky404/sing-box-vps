@@ -42,12 +42,12 @@ one_shot_listed=$(shadowsocks_instance_management_menu list)
 [[ "$(grep -c '^main' <<< "${one_shot_listed}")" -eq 1 ]]
 [[ "$(grep -c '^edge' <<< "${one_shot_listed}")" -eq 1 ]]
 
-# A new instance defaults to loopback, tcp+udp, and a generated 2022 AES-128
+# A new instance defaults to dual stack, tcp+udp, and a generated 2022 AES-128
 # PSK.  The mutator receives the captured revision and the Shadowsocks record.
 : > "${calls}"
-printf '%s\n' 1 '' '' '' '' '' 7 '' '' '' 0 | shadowsocks_instance_management_menu >/dev/null
-grep -Fq 'shadowsocks create 7 n' "${calls}"
-grep -Eq '"address":"127\.0\.0\.1"' "${calls}"
+printf '%s\n' 1 '' '' '' '' '' 7 '' '' '' y 0 | shadowsocks_instance_management_menu >/dev/null
+grep -Fq 'shadowsocks create 7 y' "${calls}"
+grep -Eq '"address":"::"' "${calls}"
 jq -e 'select(.authentication.method == "2022-blake3-aes-128-gcm") |
   .listen.network == ["tcp","udp"] and .authentication.password != "" and
   (.authentication.password | test("^[A-Za-z0-9+/]+={0,2}$")) and
@@ -56,7 +56,7 @@ jq -e 'select(.authentication.method == "2022-blake3-aes-128-gcm") |
 # Classic AEAD multi-user creation is interactive, not a raw JSON passthrough:
 # top-level password remains empty and each requested user is recorded.
 multi_record="${TMP_DIR}/classic-multi.json"
-printf '%s\n' '' '' '' '' '' 2 y 2 alice alice-pass bob bob-pass 2 | \
+printf '%s\n' '' '' '' '' '' 2 y 2 alice alice-pass bob bob-pass 2 y | \
   plain_proxy_management_build_record shadowsocks "${fixture}" create '' "${multi_record}"
 jq -e '.authentication.method == "aes-128-gcm" and .authentication.password == "" and
   .authentication.users == [{name:"alice",password:"alice-pass"},{name:"bob",password:"bob-pass"}] and

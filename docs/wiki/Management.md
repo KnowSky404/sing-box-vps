@@ -1,5 +1,6 @@
 # 交互管理
 
+14 个结构化代理协议的新建和追加安装默认单个 `::` 双栈监听；Linux sing-box 的该 socket 同时接受 IPv4/IPv6，不需在同端口另加 `0.0.0.0`。修改已有实例时留空保留地址，显式输入和 Agent 完整记录中的地址仍优先；公网暴露确认保持原规则。REALITY 和 legacy 配置继续遵循全局入站模式，已有显式模式及单栈回退保持。ShadowTLS 内部 detour、客户端本地监听不受影响。完整范围见[默认监听契约](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/default-dual-stack-listeners.zh-CN.md)。
 
 Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码，避免 `@`、`#`、`%`、空格或换行改变链接结构；服务端凭据保持不变。HTTP Basic 无法表达含冒号的用户名或含 ASCII 控制字符的认证：此时 Mixed 的 Agent `links` 只提供 SOCKS5，并返回 `mixed_http_auth_unrepresentable`，不生成不可用的 HTTP 链接。SOCKS5 URI 不携带 UoT v2 等客户端选项，返回 `socks5_uri_transport_options_omitted`；需要完整配置时使用 `export-client` JSON。百分号编码不是加密，链接仍是敏感材料。
 
@@ -26,7 +27,7 @@ Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码
 
 删除最后一个实例后，菜单 2 仍会显示保留的协议，并标注“暂无实例，可重新创建”；选择后可沿用保留的版本记录创建新实例。
 
-Hysteria2 新增协议和创建实例默认提供 ACME 自动签发，也可选择已有手动证书。`server_name / SNI` 必填，填写与证书匹配的域名（如 `hy2.example.com`），不带 URL 前缀或路径。HTTP-01 需要域名解析到 VPS 且公网 TCP 80 可用于验证和续期；Cloudflare DNS-01 需要 DNS 编辑权限，无需开放 TCP 80，邮箱可留空。手动模式填写证书与私钥的本机绝对路径，自签名证书选择“信任此证书”。新建实例默认监听 `0.0.0.0`，接受外部 IPv4 连接；修改时留空保留原地址。HY2 服务端口需要允许 UDP，带宽、混淆与伪装网站均为可选项。
+Hysteria2 新增协议和创建实例默认提供 ACME 自动签发，也可选择已有手动证书。`server_name / SNI` 必填，填写与证书匹配的域名（如 `hy2.example.com`），不带 URL 前缀或路径。HTTP-01 需要域名解析到 VPS 且公网 TCP 80 可用于验证和续期；Cloudflare DNS-01 需要 DNS 编辑权限，无需开放 TCP 80，邮箱可留空。手动模式填写证书与私钥的本机绝对路径，自签名证书选择“信任此证书”。新建实例默认监听单个 `::`，接受 IPv4/IPv6 连接；不要在同端口另加 `0.0.0.0` 监听。修改时留空保留原地址，首次安装的 legacy 配置仍按全局入站模式监听。HY2 服务端口需要允许 UDP，带宽、混淆与伪装网站均为可选项。
 
 当脚本发现二进制、service、配置或协议状态层不完整时，会进入接管/修复流程，而不是把残缺实例直接当作全新安装覆盖。
 

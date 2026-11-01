@@ -16,7 +16,7 @@ validate_tls_domain_points_to_server() { printf '%s\n' "$2" >> "${TMP_DIR}/http-
 printf '%s\n' '' '' '' '' 48443 '' '' '' '' hy2.example.com '' '' '' '' '' '' y > "${TMP_DIR}/http.input"
 hy2_management_build_record "${snapshot}" create '' "${record}" < "${TMP_DIR}/http.input" > "${TMP_DIR}/stdout" 2> "${TMP_DIR}/guidance"
 [[ ! -s "${TMP_DIR}/stdout" ]]
-jq -e '.listen.address=="0.0.0.0" and .tls.acme.domain==["hy2.example.com"] and .client_trust=="system" and
+jq -e '.listen.address=="::" and .tls.acme.domain==["hy2.example.com"] and .client_trust=="system" and
   .tls.acme.disable_tls_alpn_challenge==true and (.tls|has("certificate_path")|not)' "${record}" >/dev/null
 grep -Fxq hy2.example.com "${TMP_DIR}/http-domain-checks"
 
@@ -43,7 +43,7 @@ hy2_management_build_record "${snapshot}" replace "${id}" "${record}" < "${TMP_D
 ! grep -Fq fixture-menu-token "${TMP_DIR}/guidance"
 
 # An existing loopback address is explicit administrator state, and is kept
-# when editing even though new server instances now default to all IPv4.
+# when editing even though new server instances now default to dual stack.
 jq '.instances[0].listen.address="127.0.0.1"' "${snapshot}" > "${TMP_DIR}/loopback.json"
 hy2_management_build_record "${TMP_DIR}/loopback.json" replace "${id}" "${record}" < "${TMP_DIR}/replace.input" > "${TMP_DIR}/stdout" 2> "${TMP_DIR}/guidance"
 jq -e '.listen.address=="127.0.0.1"' "${record}" >/dev/null

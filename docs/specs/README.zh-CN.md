@@ -2,10 +2,11 @@
 
 [English](README.md)
 
-核对基线为 2026-10-30 的仓库提交 `f498234`。两份 `unified-node-naming` 文档是同一项功能的中英文契约，不是两个尚未实现的计划；地址选择规范维护在 Wiki 源文件中，不在这里重复保存。
+既有验收记录的核对基线为 2026-10-30 的仓库提交 `f498234`；新增的默认监听契约单列其验收要求。两份 `unified-node-naming` 文档是同一项功能的中英文契约，不是两个尚未实现的计划；地址选择规范维护在 Wiki 源文件中，不在这里重复保存。
 
 | 契约或目标 | 实现状态 | 证据与剩余边界 |
 | --- | --- | --- |
+| [默认双栈监听](default-dual-stack-listeners.zh-CN.md)（[English](default-dual-stack-listeners.md)） | 新建默认值契约；已定义验收要求 | 全部结构化实例新建默认单个 `::`；显式地址、已有实例及全局模式的 legacy 生成行为保持。须完成本地默认值矩阵、目标核心检查及代表性 TCP/UDP 双地址族运行态探针；本索引不宣称已完成验收或生产变更。 |
 | [统一节点命名](unified-node-naming.zh-CN.md)（[English](unified-node-naming.md)） | 已实现，并在记录范围内完成验收 | 第 9 节保留原本地/核心证据；第 10 节补充真实 SubMan 应用/存储联调（五协议 30 个节点）及所有者授权的生产 VMess API/Gist 验收（六个测试候选与一个测试聚合），确认身份/成员保留并清理测试记录。这不是生产代理 VPS 或所有协议公网验收。 |
 | [SubMan 地址选择](../wiki/SubMan-Address-Selection.md) | 已实现，并在记录范围内完成验收 | 隔离地址族/失败回归与应用/存储联调覆盖 IPv4、IPv6、具体监听地址；命名第 10 节单列代表性生产 VMess 测试，地址选择不证明公网代理连接。 |
 | [全协议/组件验收](full-protocol-completion.zh-CN.md)（[English](full-protocol-completion.md)） | 15 个预设和 38 个组件适配已实现；FP-01–FP-11 定向验收完成 | 有限 FP-01–FP-11 矩阵分别记录本地组件/分组、授权 Cloudflare、受控 Headscale/ocserv 验收与 namespace 构建限制。原生命周期和数据面证据保留在[上游矩阵](../wiki/Protocol-Coverage.md)，公网和生产验收分别记录。 |
