@@ -149,6 +149,23 @@ does not adopt them, and recreation advances the retained revision with only the
 new managed record. Reserved default tags, legacy state, missing or invalid
 stores, symlinks and nonempty orphaned stores retain their fail-closed checks.
 
+## Missing managed firewall rules
+
+The persistent firewall ledger can outlive kernel rules after a reboot or an
+external flush. During prepare, a confirmed absent owned rule emits the warning
+`owned_rule_missing`: obsolete entries leave the candidate ledger without a
+delete command, while remaining listeners use the normal rule-creation path.
+Prepare itself does not modify rules or the live ledger. Apply, postchecks and
+rollback retain their existing journal and ownership checks; unmarked rules are
+not deleted. Backend inspection errors, unavailable owned backends and UFW
+ownership-marker mismatches continue to fail closed. This reconciliation does
+not install firewall persistence or change the host's default policy.
+
+`tests/instance_firewall_ledger.sh` covers both IP families, removed UDP and
+retained TCP listeners, an empty final plan, rollback, unmarked rules and actual
+inspection errors. Real service/configuration behavior requires separate Docker
+or explicitly authorized host evidence.
+
 ## Verification record
 
 The final real-core Docker lifecycle used runtime SHA-256

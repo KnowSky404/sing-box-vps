@@ -60,6 +60,17 @@ DNS/建连失败或明确 HTTP 4xx 拒绝可以清理 receipt；请求可能已�
 
 有效的 active typed store 或 revision 大于零的空保留状态可证明归属边界时，未登记的自定义 tag HY2 监听在索引发布、枚举与重建实例期间始终保持未托管。删除后允许留下多个此类监听，但不写入 `INSTALLED_PROTOCOLS`；枚举不自动接管它们，重新创建仅添加新的受管记录并递增保留的 revision。保留默认 tag、legacy 状态、缺失或损坏的 store、符号链接及非空孤立 store 的原有 fail-closed 校验。
 
+## 受管防火墙规则缺失
+
+重启或外部清空规则后，持久账本可能仍然存在。prepare 确认受管规则已不存在时，记录
+`owned_rule_missing` 警告：废弃条目从候选账本移除，不执行删除命令；仍有监听引用的规则按
+普通创建路径处理。prepare 不修改规则或 live 账本，apply、后置校验与回滚继续使用原有事务
+日志和归属检查，不删除无标记规则。后端查询错误、受管后端不可用及 UFW 归属标记不匹配
+仍然中止。本修复不安装防火墙持久化服务，也不改变主机默认策略。
+
+`tests/instance_firewall_ledger.sh` 覆盖两个地址族、移除 UDP 且保留 TCP、最终空计划、回滚、
+无标记规则和真实查询错误。服务及配置行为仍需独立 Docker 或明确授权的节点验收证据。
+
 ## 验证记录
 
 最终真实核心 Docker 生命周期使用运行时 SHA-256：`420ea43d54daa0001dac04bacd917fb7beaadd53e8d32572ffbfe27dedeb81d1`，核对时与工作区逐字一致。后续仅版本元数据或文档变更，须满足 AGENTS.md 第 4.2 节才可复用结果。

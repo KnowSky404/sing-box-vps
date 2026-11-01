@@ -131,7 +131,10 @@ iptables_mock() {
   key="$*"
   printf '%s %s\n' "$(basename "${file}")" "${command} ${key}" >> "${BACKEND_LOG}"
   case "${command}" in
-    -C) grep -Fqx -- "${key}" "${file}" ;;
+    -C)
+      [[ "${IPTABLES_QUERY_FAILURE:-0}" == 0 ]] || return "${IPTABLES_QUERY_FAILURE}"
+      grep -Fqx -- "${key}" "${file}"
+      ;;
     -I) record_rule "${file}" "${key}" ;;
     -D) remove_rule "${file}" "${key}" ;;
     *) return 2 ;;
@@ -193,6 +196,84 @@ grep -Fqx '39999/tcp' "${FIREWALLD_RUNTIME_RULES}"
 
 instance_firewall_commit "${journal}"
 jq -e '.status == "committed"' "${journal}" >/dev/null
+
+# A reboot or external flush can leave a durable ledger with no live rules.
+# Reconcile both families: discard the removed UDP listener's stale entries,
+# recreate only the retained TCP listener, and preserve unmarked user rules.
+cp "${old_config}" "${TMP_DIR}/old.saved"
+cp "${new_config}" "${TMP_DIR}/new.saved"
+rm -f -- "${journal}" "${INSTANCE_FIREWALL_LEDGER_FILE}"
+jq -n '{inbounds:[
+  {type:"http",tag:"retained-http",listen:"::",listen_port:32130},
+  {type:"hysteria2",tag:"removed-hy2",listen:"::",listen_port:32131}
+]}' > "${new_config}"
+instance_firewall_prepare "${old_config}" "${new_config}" "${journal}"
+instance_firewall_apply "${journal}"
+instance_firewall_commit "${journal}"
+cp "${INSTANCE_FIREWALL_LEDGER_FILE}" "${TMP_DIR}/ledger.before-flush"
+cp "${new_config}" "${old_config}"
+jq '.inbounds |= map(select(.type != "hysteria2"))' "${old_config}" > "${new_config}"
+: > "${IPTABLES_RULES}"
+: > "${IP6TABLES_RULES}"
+for rule_file in "${IPTABLES_RULES}" "${IP6TABLES_RULES}"; do
+  record_rule "${rule_file}" 'INPUT -p udp --dport 32131 -j ACCEPT'
+done
+: > "${BACKEND_LOG}"
+instance_firewall_prepare "${old_config}" "${new_config}" "${journal}"
+! grep -Eq ' -I | -D ' "${BACKEND_LOG}"
+cmp "${INSTANCE_FIREWALL_LEDGER_FILE}" "${TMP_DIR}/ledger.before-flush"
+jq -e '
+  ([.diagnostics[] | select(.code == "owned_rule_missing" and .severity == "warning")] | length == 4) and
+  ([.operations[] | select(.action == "create")] | length == 2 and all(.port == 32130)) and
+  (.operations | all(.action == "create" or .action == "unavailable")) and
+  (.after_ledger.rules | length == 2 and all(.port == 32130))
+' "${journal}" >/dev/null
+instance_transaction_firewall_summary "${journal}" | jq -e '
+  [.diagnostics[] | select(.code == "owned_rule_missing")] | length == 4
+' >/dev/null
+instance_firewall_apply "${journal}"
+instance_firewall_rollback "${journal}"
+cmp "${INSTANCE_FIREWALL_LEDGER_FILE}" "${TMP_DIR}/ledger.before-flush"
+for rule_file in "${IPTABLES_RULES}" "${IP6TABLES_RULES}"; do
+  [[ "$(cat "${rule_file}")" == 'INPUT -p udp --dport 32131 -j ACCEPT' ]]
+done
+instance_firewall_prepare "${old_config}" "${new_config}" "${journal}"
+instance_firewall_apply "${journal}"
+instance_firewall_commit "${journal}"
+jq -e '.rules | length == 2 and all(.port == 32130)' "${INSTANCE_FIREWALL_LEDGER_FILE}" >/dev/null
+for rule_file in "${IPTABLES_RULES}" "${IP6TABLES_RULES}"; do
+  grep -Fqx 'INPUT -p udp --dport 32131 -j ACCEPT' "${rule_file}"
+done
+
+# Removing the last listener with already absent rules needs no backend write.
+cp "${new_config}" "${old_config}"
+jq -n '{inbounds:[]}' > "${new_config}"
+: > "${IPTABLES_RULES}"
+: > "${IP6TABLES_RULES}"
+: > "${BACKEND_LOG}"
+instance_firewall_prepare "${old_config}" "${new_config}" "${journal}"
+jq -e '.operations == [] and .after_ledger.rules == []' "${journal}" >/dev/null
+instance_firewall_apply "${journal}"
+instance_firewall_commit "${journal}"
+jq -e '.rules == []' "${INSTANCE_FIREWALL_LEDGER_FILE}" >/dev/null
+! grep -Eq ' -I | -D ' "${BACKEND_LOG}"
+
+# Actual inspection errors still fail before changing rules or the ledger.
+cp "${TMP_DIR}/ledger.before-flush" "${INSTANCE_FIREWALL_LEDGER_FILE}"
+for failure_code in 2 4; do
+  IPTABLES_QUERY_FAILURE=${failure_code}
+  : > "${BACKEND_LOG}"
+  if instance_firewall_prepare "${old_config}" "${new_config}" "${journal}"; then
+    printf 'expected owned-rule inspection failure %s\n' "${failure_code}" >&2
+    exit 1
+  fi
+  jq -e '.status == "prepare_failed" and .error_code == "owned_rule_inspection_failed"' "${journal}" >/dev/null
+  cmp "${INSTANCE_FIREWALL_LEDGER_FILE}" "${TMP_DIR}/ledger.before-flush"
+  ! grep -Eq ' -I | -D ' "${BACKEND_LOG}"
+done
+unset IPTABLES_QUERY_FAILURE
+cp "${TMP_DIR}/old.saved" "${old_config}"
+cp "${TMP_DIR}/new.saved" "${new_config}"
 
 # Selecting both UFW and firewalld is ambiguous and fails before any backend
 # inspection or mutation.
@@ -334,6 +415,29 @@ instance_firewall_rollback "${journal}"
 ! grep -Fq '32114/tcp' "${UFW_RULES}"
 grep -Fq 'ufw delete' "${BACKEND_LOG}"
 
+# A genuinely missing UFW rule can also be recreated, then discarded when its
+# listener is removed. No broad deletion or ownership adoption is needed.
+rm -f -- "${journal}" "${INSTANCE_FIREWALL_LEDGER_FILE}"
+instance_firewall_prepare "${old_config}" "${new_config}" "${journal}"
+instance_firewall_apply "${journal}"
+created_ufw_rule=$(grep -F '32114/tcp' "${UFW_RULES}")
+ufw_delete_rule "${UFW_RULES}" "${created_ufw_rule%% # *}"
+instance_firewall_prepare "${old_config}" "${new_config}" "${journal}"
+jq -e 'any(.diagnostics[]; .code=="owned_rule_missing" and .backend=="ufw") and
+  any(.operations[]; .backend=="ufw" and .action=="create")' "${journal}" >/dev/null
+instance_firewall_apply "${journal}"
+ufw_delete_rule "${UFW_RULES}" "${created_ufw_rule%% # *}"
+cp "${old_config}" "${TMP_DIR}/old.before-ufw-delete"
+cp "${new_config}" "${old_config}"
+jq -n '{inbounds:[]}' > "${new_config}"
+: > "${BACKEND_LOG}"
+instance_firewall_prepare "${old_config}" "${new_config}" "${journal}"
+instance_firewall_apply "${journal}"
+instance_firewall_commit "${journal}"
+jq -e '.rules==[]' "${INSTANCE_FIREWALL_LEDGER_FILE}" >/dev/null
+! grep -Eq 'ufw allow|ufw delete| -I | -D ' "${BACKEND_LOG}"
+cp "${TMP_DIR}/old.before-ufw-delete" "${old_config}"
+
 # If an owned rule is externally replaced with an unowned rule at the same
 # destination (including a changed comment), rollback must not delete it.
 rm -f -- "${journal}" "${SB_PROJECT_DIR}/managed-firewall.json"
@@ -347,6 +451,12 @@ created_ufw_rule=$(grep -F '32113/tcp' "${UFW_RULES}")
 ufw_delete_rule "${UFW_RULES}" "${created_ufw_rule%% # *}"
 ufw_upsert_rule "${UFW_RULES}" "${created_ufw_rule%%# *}# replacement"
 : > "${BACKEND_LOG}"
+if instance_firewall_prepare "${old_config}" "${new_config}" "${TMP_DIR}/replaced.prepare.json"; then
+  printf 'expected replaced-rule prepare failure\n' >&2
+  exit 1
+fi
+jq -e '.error_code=="owned_rule_inspection_failed"' "${TMP_DIR}/replaced.prepare.json" >/dev/null
+! grep -Eq 'ufw allow|ufw delete| -I | -D ' "${BACKEND_LOG}"
 if instance_firewall_rollback "${journal}"; then
   printf 'expected replaced-rule rollback uncertainty\n' >&2
   exit 1
