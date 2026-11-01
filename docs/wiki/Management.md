@@ -3,7 +3,7 @@
 
 Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码，避免 `@`、`#`、`%`、空格或换行改变链接结构；服务端凭据保持不变。HTTP Basic 无法表达含冒号的用户名或含 ASCII 控制字符的认证：此时 Mixed 的 Agent `links` 只提供 SOCKS5，并返回 `mixed_http_auth_unrepresentable`，不生成不可用的 HTTP 链接。SOCKS5 URI 不携带 UoT v2 等客户端选项，返回 `socks5_uri_transport_options_omitted`；需要完整配置时使用 `export-client` JSON。百分号编码不是加密，链接仍是敏感材料。
 
-1. **安装新协议**：首次安装或向现有实例追加 VLESS REALITY、Mixed、独立 SOCKS、独立 HTTP、Shadowsocks、Trojan、VMess、Hysteria2、Hysteria v1、AnyTLS、Snell、TUIC、NaiveProxy、ShadowTLS；协议选择注册表第 5 项为 SOCKS，第 6 项为 HTTP，第 9 项为 VMess，第 11 项为 Snell，第 12 项为 TUIC，第 13 项为 Hysteria v1，第 14 项为 NaiveProxy，第 15 项为 ShadowTLS。
+1. **安装新协议**：首次安装或向现有实例追加 VLESS（普通 VLESS 或 VLESS + REALITY）、Mixed、独立 SOCKS、独立 HTTP、Shadowsocks、Trojan、VMess、Hysteria2、Hysteria v1、AnyTLS、Snell、TUIC、NaiveProxy、ShadowTLS；协议安装主菜单第 1 项为 VLESS，进入后选择 VLESS + REALITY 或普通 VLESS；第 5 项为 SOCKS，第 6 项为 HTTP，第 9 项为 VMess，第 10 项为 Snell，第 11 项为 TUIC，第 12 项为 Hysteria v1，第 13 项为 NaiveProxy，第 14 项为 ShadowTLS。
 2. **修改已安装协议配置**：选择协议后进入对应实例管理，支持修改、设置默认实例等操作；legacy ACME/provider 保留原配置编辑流程。检测到未完成事务时，此入口直接进入恢复流程。
 3. **移除已安装协议**：移除指定协议或 REALITY 实例；存在多个 REALITY 实例时会明确询问“单实例”或“整个 VLESS 协议”，并同步清理 QoS 与已移除端口的防火墙放行。
 4. **更新 sing-box 版本**：保留配置的核心更新；目标 `sing-box check` 通过才重启。
@@ -20,7 +20,9 @@ Mixed/SOCKS 分享链接对用户名、密码按字节执行 URI 百分号编码
 15. **更新管理脚本 `sbv`**。
 16. **卸载管理脚本 `sbv`**。
 
-原“实例与状态”分组已合并到现有协议入口：菜单 1 安装、菜单 2 管理、菜单 3 移除，主菜单不再重复列出每种协议。协议安装列表按编号 1–15 排列，原有编号和留空选择行为保持不变。
+原“实例与状态”分组已合并到现有协议入口：菜单 1 安装、菜单 2 管理、菜单 3 移除，主菜单不再重复列出每种协议。协议安装主列表按编号 1–14 排列，统一显示协议名称；VLESS 的两种形式在子菜单中选择。主列表留空仍选择全部可用协议（包含两种 VLESS），子菜单留空默认选择 VLESS + REALITY，输入 0 取消本次选择。协议/Agent ID 和已有配置不变。
+
+“当前已安装协议”只列出活动协议。删除最后一个实例后留下的空实例库用于保留 revision，不算已安装；再次安装会复用实例事务创建，保留原 revision 和手工配置。合法空配置不进入残缺实例接管；真正缺少组件、状态不一致或校验失败的安装仍受原检查保护。
 
 删除最后一个实例后，菜单 2 仍会显示保留的协议，并标注“暂无实例，可重新创建”；选择后可沿用保留的版本记录创建新实例。
 

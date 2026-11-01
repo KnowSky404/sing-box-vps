@@ -75,6 +75,7 @@ display_info() { :; }
 install_protocols_interactive "fresh" <<'EOF'
 
 1
+1
 
 
 

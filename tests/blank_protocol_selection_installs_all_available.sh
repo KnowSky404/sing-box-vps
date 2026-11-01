@@ -38,10 +38,10 @@ EOF
 
 output=$(cat "${OUTPUT_FILE}")
 
-expected_order=$(printf '%s\n' {1..15})
+expected_order=$(printf '%s\n' {1..14})
 actual_order=$(printf '%s\n' "${output}" | sed -n 's/^\([1-9][0-9]*\)\. .*/\1/p')
 if [[ "${actual_order}" != "${expected_order}" ]]; then
-  printf 'expected numeric protocol menu order 1 through 15, got:\n%s\n' "${actual_order}" >&2
+  printf 'expected numeric protocol menu order 1 through 14, got:\n%s\n' "${actual_order}" >&2
   exit 1
 fi
 
@@ -55,33 +55,34 @@ if [[ "${output}" != *"留空则安装全部可用协议"* ]]; then
   exit 1
 fi
 
-if [[ "${output}" != *"10. VLESS"* || "${output}" == *"10. VLESS + REALITY"* ]]; then
-  printf 'expected menu item 10 to identify ordinary VLESS separately, got:\n%s\n' "${output}" >&2
+if [[ "${output}" != *"1. VLESS"* || "${output}" == *"VLESS + REALITY"* || "${output}" != *"10. Snell"* ]]; then
+  printf 'expected VLESS family and sequential Snell item, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
-if [[ "${output}" != *"13. Hysteria"* ]]; then
-  printf 'expected menu item 13 to identify Hysteria, got:\n%s\n' "${output}" >&2
+if [[ "${output}" != *"12. Hysteria"* ]]; then
+  printf 'expected menu item 12 to identify Hysteria, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
-if [[ "${output}" != *"14. NaiveProxy"* ]]; then
-  printf 'expected menu item 14 to identify NaiveProxy, got:\n%s\n' "${output}" >&2
+if [[ "${output}" != *"13. NaiveProxy"* ]]; then
+  printf 'expected menu item 13 to identify NaiveProxy, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
-if [[ "${output}" != *"15. ShadowTLS"* ]]; then
-  printf 'expected menu item 15 to identify ShadowTLS, got:\n%s\n' "${output}" >&2
+if [[ "${output}" != *"14. ShadowTLS"* ]]; then
+  printf 'expected menu item 14 to identify ShadowTLS, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
-# Existing REALITY installs keep their add-node entry, and option 10 keeps
-# selecting ordinary VLESS after sorting the visible list.
+# Existing REALITY installs retain the VLESS family entry, and its second
+# choice selects ordinary VLESS without changing protocol identities.
 list_installed_protocols() { printf 'vless-reality\n'; }
 prompt_protocol_install_selection additional >"${OUTPUT_FILE}" 2>&1 <<'EOF'
-10
+1
+2
 EOF
 [[ "${SELECTED_PROTOCOLS_CSV}" == vless-plain ]]
-grep -Fq '1. 新增 VLESS + REALITY 节点' "${OUTPUT_FILE}"
-actual_order=$(sed -n 's/^\([1-9][0-9]*\)\. .*/\1/p' "${OUTPUT_FILE}")
+grep -Fq '1. VLESS' "${OUTPUT_FILE}"
+actual_order=$(sed '/--- VLESS ---/,$d' "${OUTPUT_FILE}" | sed -n 's/^\([1-9][0-9]*\)\. .*/\1/p')
 [[ "${actual_order}" == "${expected_order}" ]]

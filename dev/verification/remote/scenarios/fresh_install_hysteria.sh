@@ -21,7 +21,7 @@ verification_scenario_fresh_install_hysteria() {
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" <<EOF
 1
 
-13
+12
 ${expected_port}
 1
 hysteria-user

@@ -102,6 +102,7 @@ generate_config
 
 install_protocols_interactive additional <<'EOF'
 1
+1
 limited-10m
 limited-node
 not-a-port

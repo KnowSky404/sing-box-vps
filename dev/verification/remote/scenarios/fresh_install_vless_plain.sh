@@ -13,7 +13,8 @@ verification_scenario_fresh_install_vless_plain() {
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" <<EOF
 1
 
-10
+1
+2
 ${expected_port}
 1
 probe

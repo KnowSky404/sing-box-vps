@@ -2792,6 +2792,7 @@ verification_scenario_fresh_install_vless() {
 1
 
 1
+1
 
 443
 2

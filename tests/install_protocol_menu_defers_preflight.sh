@@ -42,7 +42,7 @@ diff -ru "${TMP_DIR}/before" "${SB_PROJECT_DIR}"
 # A selected protocol gets the complete health check once, before dispatch.
 install_new_protocols_menu > "${TMP_DIR}/selected.output" 2> "${TMP_DIR}/selected.stderr" <<<'5'
 [[ "$(cat "${calls}")" == $'health healthy\ninstall additional socks' ]]
-grep -Fq '检查现有实例的配置及状态' "${TMP_DIR}/selected.stderr"
+grep -Fq '检查 sing-box 安装状态' "${TMP_DIR}/selected.stderr"
 
 # A valid index is only a preview: failed/incomplete health cannot authorize
 # an additional installation, and a fresh classification retains its route.
