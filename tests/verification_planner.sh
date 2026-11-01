@@ -183,7 +183,7 @@ assert_line 'test=tests/fixture_source_test.sh' "${plan}"
 assert_no_planning_side_effects
 
 # Container-only fixtures must not reach the host through any selector.
-for fixture in tests/hy2_instance_acme_runtime.sh tests/component_runtime_acceptance.sh \
+for fixture in tests/default_dual_stack_runtime.sh tests/hy2_instance_acme_runtime.sh tests/component_runtime_acceptance.sh \
   tests/selector_urltest_runtime.sh tests/acme_component_runtime.sh \
   tests/cloudflared_runtime.sh tests/tailscale_openconnect_runtime.sh tests/namespace_core_runtime.sh; do
   plan=$(fixture_run --plan --changed-file "${fixture}" --group docs)

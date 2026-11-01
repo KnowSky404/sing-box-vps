@@ -44,9 +44,9 @@ grep -Fq 'main' <<< "${listed}"
 grep -Fq 'edge' <<< "${listed}"
 ! grep -Fq 'keep-secret' <<< "${listed}"
 
-# Create with all defaults: loopback, auth enabled, and the captured revision.
-created=$(printf '%s\n' 1 '' '' '' '' '' '' '' '' 0 | mixed_instance_management_menu)
-grep -Eq '^create 7 n .*address.*127\.0\.0\.1' "${calls}"
+# Create with dual-stack/auth defaults, explicit public consent and the captured revision.
+created=$(printf '%s\n' 1 '' '' '' '' '' '' '' '' y 0 | mixed_instance_management_menu)
+grep -Eq '^create 7 y .*address.*::' "${calls}"
 grep -Eq 'enabled.*true' "${calls}"
 
 # Selecting an ID for replace preserves the tag and credentials when fields
@@ -130,8 +130,8 @@ jq -n '{schema_version:1,protocol:"mixed",revision:9,default_instance_id:"",inst
   > "${SB_PROTOCOL_STATE_DIR}/instances/mixed.json"
 source "${ORIGINAL_CAPTURE_FUNCTION_FILE}"
 : > "${calls}"
-printf '%s\n' 1 '' '' '' '' '' '' '' '' 0 | mixed_instance_management_menu >/dev/null
-grep -Eq '^create 9 n .*"id":"mixed-1".*"tag":"mixed-in-2"' "${calls}"
+printf '%s\n' 1 '' '' '' '' '' '' '' '' y 0 | mixed_instance_management_menu >/dev/null
+grep -Eq '^create 9 y .*"id":"mixed-1".*"tag":"mixed-in-2"' "${calls}"
 
 # No Mixed state and no tombstone but a valid config is the first-instance
 # baseline: it must produce virtual revision zero rather than clobbering the

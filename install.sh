@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026110102
+# Version: 2026110103
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026110102"
+readonly SCRIPT_VERSION="2026110103"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
+# A single IPv6 wildcard socket accepts IPv4 and IPv6 in sing-box on Linux.
+readonly SB_DEFAULT_LISTEN_ADDRESS="::"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
 readonly PROJECT_AUTHOR="KnowSky404"
@@ -4114,7 +4116,7 @@ save_plain_proxy_state() {
   elif [[ -e "${store_file}" || -L "${store_file}" ]]; then
     plain_proxy_inactive_store_snapshot "${protocol}" >/dev/null || return 1
   fi
-  [[ -n "${listen_address}" ]] || listen_address='127.0.0.1'
+  [[ -n "${listen_address}" ]] || listen_address=${SB_DEFAULT_LISTEN_ADDRESS}
   structured_instance_store_validate_id "${instance_id}" || return 1
   [[ -n "${tag}" ]] || return 1
   validate_port_number "${port}" || return 1
@@ -4250,7 +4252,7 @@ save_naive_state() {
 save_shadowtls_state() {
   local state_file store_file record_file candidate_file current_file current_revision expected_revision operation
   local instance_id=${SB_INSTANCE_ID:-main} tag=${SB_MIXED_INBOUND_TAG:-shadowtls-in} name=${SB_NODE_NAME:-ShadowTLS}
-  local address=${SB_MIXED_LISTEN_ADDRESS:-127.0.0.1} port=${SB_PORT:-443} policy=${SB_OUTBOUND_POLICY:-default}
+  local address=${SB_MIXED_LISTEN_ADDRESS:-${SB_DEFAULT_LISTEN_ADDRESS}} port=${SB_PORT:-443} policy=${SB_OUTBOUND_POLICY:-default}
   local version=${SB_SHADOWTLS_VERSION:-3} password=${SB_SHADOWTLS_PASSWORD:-} users=${SB_SHADOWTLS_AUTH_JSON:-[]}
   local handshake=${SB_SHADOWTLS_HANDSHAKE_JSON:-'{"server":"","server_port":443}'}
   local handshake_map=${SB_SHADOWTLS_HANDSHAKE_FOR_SERVER_NAME_JSON:-'{}'} strict_mode=${SB_SHADOWTLS_STRICT_MODE:-n}
@@ -7380,7 +7382,7 @@ shadowsocks_management_build_record() {
     id=$(plain_proxy_management_next_id shadowsocks "${snapshot}") || return 1
     name=$(default_instance_node_name_from_file shadowsocks "${snapshot}") || return 1
     tag=$(plain_proxy_management_next_tag shadowsocks "${snapshot}") || return 1
-    address=127.0.0.1; port=1080; policy=default
+    address=${SB_DEFAULT_LISTEN_ADDRESS}; port=1080; policy=default
     current_auth='{"method":"2022-blake3-aes-128-gcm","password":"","users":[]}'
     current_network='["tcp","udp"]'
   fi
@@ -7435,7 +7437,7 @@ trojan_management_build_record() {
     policy=$(jq -r --arg id "${id}" '.instances[]|select(.id==$id)|.outbound_policy' "${snapshot}") || return 1
   else
     id=$(plain_proxy_management_next_id trojan "${snapshot}") || return 1; name=$(default_instance_node_name_from_file trojan "${snapshot}") || return 1
-    tag=$(plain_proxy_management_next_tag trojan "${snapshot}") || return 1; address=127.0.0.1; port=443
+    tag=$(plain_proxy_management_next_tag trojan "${snapshot}") || return 1; address=${SB_DEFAULT_LISTEN_ADDRESS}; port=443
     users='[]'; tls='{"enabled":false}'; transport='{"type":"none"}'; trust=certificate; policy=default
   fi
   read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1; [[ -z "${answer}" ]] || name=${answer}
@@ -7511,7 +7513,7 @@ vmess_management_build_record() {
   else
     id=$(plain_proxy_management_next_id vmess "${snapshot}") || return 1
     name=$(default_instance_node_name_from_file vmess "${snapshot}") || return 1; tag=$(plain_proxy_management_next_tag vmess "${snapshot}") || return 1
-    address=127.0.0.1; port=1080; users='[]'; tls='{"enabled":false}'; transport='{"type":"none"}'; trust=system; policy=default
+    address=${SB_DEFAULT_LISTEN_ADDRESS}; port=1080; users='[]'; tls='{"enabled":false}'; transport='{"type":"none"}'; trust=system; policy=default
   fi
   read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1; [[ -z "${answer}" ]] || name=$(trim_whitespace "${answer}")
   if [[ "${operation}" == create ]]; then
@@ -7565,7 +7567,7 @@ vless_plain_management_build_record() {
   else
     id=$(plain_proxy_management_next_id vless-plain "${snapshot}") || return 1
     name=$(default_instance_node_name_from_file vless-plain "${snapshot}") || return 1; tag=$(plain_proxy_management_next_tag vless-plain "${snapshot}") || return 1
-    address=127.0.0.1; port=1080; users='[]'; tls='{"enabled":false}'; transport='{"type":"none"}'; trust=system; policy=default
+    address=${SB_DEFAULT_LISTEN_ADDRESS}; port=1080; users='[]'; tls='{"enabled":false}'; transport='{"type":"none"}'; trust=system; policy=default
   fi
   read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1; [[ -z "${answer}" ]] || name=$(trim_whitespace "${answer}")
   if [[ "${operation}" == create ]]; then
@@ -7618,7 +7620,7 @@ anytls_management_build_record() {
     id=$(plain_proxy_management_next_id anytls "${snapshot}") || return 1
     name=$(default_instance_node_name_from_file anytls "${snapshot}") || return 1
     tag=$(plain_proxy_management_next_tag anytls "${snapshot}") || return 1
-    address=127.0.0.1; port=443; users='[]'; tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'; trust=system; policy=default
+    address=${SB_DEFAULT_LISTEN_ADDRESS}; port=443; users='[]'; tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'; trust=system; policy=default
   fi
   read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1
   [[ -z "${answer}" ]] || name=$(trim_whitespace "${answer}")
@@ -7746,11 +7748,11 @@ hy2_management_build_record() {
   else
     id=$(plain_proxy_management_next_id hy2 "${snapshot}") || return 1
     name=$(default_instance_node_name_from_file hy2 "${snapshot}") || return 1; tag=$(plain_proxy_management_next_tag hy2 "${snapshot}") || return 1
-    address=0.0.0.0; port=443; users='[]'; tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'
+    address=${SB_DEFAULT_LISTEN_ADDRESS}; port=443; users='[]'; tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'
     trust=system; up_mbps=""; down_mbps=""; obfs='{"enabled":false,"type":"","password":""}'; masquerade=""
   fi
   echo '[Hysteria2] 实例名称用于显示；ID 用于区分实例，tag 用于配置中的入口标识，均可留空使用当前值或默认值。' >&2
-  echo '[Hysteria2] 新建默认监听 0.0.0.0，接受外部 IPv4 连接；可填写 :: 使用 IPv6，或 127.0.0.1 仅允许本机连接。修改时留空保留原地址。' >&2
+  echo '[Hysteria2] 新建默认监听 ::，同时接受外部 IPv4 / IPv6 连接；可填写 0.0.0.0 仅使用 IPv4，或 127.0.0.1 仅允许本机连接。修改时留空保留原地址。' >&2
   read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1; [[ -z "${answer}" ]] || name=$(trim_whitespace "${answer}")
   if [[ "${operation}" == create ]]; then
     read -rp "实例 ID（默认 ${id}）: " answer || return 1; [[ -z "${answer}" ]] || id=$(trim_whitespace "${answer}"); structured_instance_store_validate_id "${id}" || return 1
@@ -7857,7 +7859,7 @@ snell_management_build_record() {
   else
     id=$(plain_proxy_management_next_id snell "${snapshot}") || return 1
     name=$(default_instance_node_name_from_file snell "${snapshot}") || return 1; tag=$(plain_proxy_management_next_tag snell "${snapshot}") || return 1
-    address=127.0.0.1; port=1080; version=6; psk=$(generate_snell_psk) || return 1
+    address=${SB_DEFAULT_LISTEN_ADDRESS}; port=1080; version=6; psk=$(generate_snell_psk) || return 1
     users='[]'; obfs_mode=""; obfs_host=""; mode=default; policy=default
   fi
   read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1; [[ -z "${answer}" ]] || name=$(trim_whitespace "${answer}")
@@ -7930,7 +7932,7 @@ tuic_management_build_record() {
   else
     id=$(plain_proxy_management_next_id tuic "${snapshot}") || return 1
     name=$(default_instance_node_name_from_file tuic "${snapshot}") || return 1; tag=$(plain_proxy_management_next_tag tuic "${snapshot}") || return 1
-    address=127.0.0.1; port=443
+    address=${SB_DEFAULT_LISTEN_ADDRESS}; port=443
     users=$(jq -cn --arg uuid "$(tuic_generate_uuid)" --arg password "$(trojan_generate_password)" '[{name:"tuic-user-1",uuid:$uuid,password:$password}]') || return 1
     tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'
     trust=system; cc=bbr; auth_timeout=3; heartbeat=10; zero_rtt=n; relay=native; udp_over_stream=n; policy=default
@@ -7996,7 +7998,7 @@ hysteria_management_build_record() {
   else
     id=$(plain_proxy_management_next_id hysteria "${snapshot}") || return 1
     name=$(default_instance_node_name_from_file hysteria "${snapshot}") || return 1; tag=$(plain_proxy_management_next_tag hysteria "${snapshot}") || return 1
-    address=127.0.0.1; port=443
+    address=${SB_DEFAULT_LISTEN_ADDRESS}; port=443
     users=$(jq -cn --arg auth_str "$(trojan_generate_password)" '[{name:"hysteria-user-1",auth_str:$auth_str}]') || return 1
     tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'
     trust=system; up_mbps=100; down_mbps=100; obfs_enabled=n; obfs_password=""
@@ -8065,7 +8067,7 @@ naive_management_build_record() {
   else
     id=$(plain_proxy_management_next_id naive "${snapshot}") || return 1
     name=$(default_instance_node_name_from_file naive "${snapshot}") || return 1; tag=$(plain_proxy_management_next_tag naive "${snapshot}") || return 1
-    address=127.0.0.1; port=1080
+    address=${SB_DEFAULT_LISTEN_ADDRESS}; port=1080
     users=$(jq -cn --arg password "$(trojan_generate_password)" '[{name:"naive-user-1",username:"naive-user-1",password:$password}]') || return 1
     tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'
     trust=system; network='["tcp","udp"]'; cc=bbr; quic=n; insecure_concurrency=0; stream_window=""; session_window=""; headers='{}'; policy=default
@@ -8126,7 +8128,7 @@ shadowtls_management_build_record() {
     id=$(plain_proxy_management_next_id shadowtls "${snapshot}") || return 1
     name=$(default_instance_node_name_from_file shadowtls "${snapshot}") || return 1
     tag=$(plain_proxy_management_next_tag shadowtls "${snapshot}") || return 1
-    address=127.0.0.1; port=8443; version=3; password=""
+    address=${SB_DEFAULT_LISTEN_ADDRESS}; port=8443; version=3; password=""
     users=$(jq -cn --arg password "$(trojan_generate_password)" '[{name:"shadowtls-user-1",password:$password}]') || return 1
     handshake='{"server":"www.apple.com","server_port":443}'
     handshake_map='{}'; strict=n; wildcard=off; detour_port=$(pick_random_high_port) || return 1
@@ -8271,7 +8273,7 @@ plain_proxy_management_build_record() {
   else
     id=$(plain_proxy_management_next_id "${protocol}" "${snapshot}") || return 1
     name=$(default_instance_node_name_from_file "${protocol}" "${snapshot}") || return 1; tag=$(plain_proxy_management_next_tag "${protocol}" "${snapshot}") || return 1
-    address=127.0.0.1; port=1080; auth=y; username=""; password=""; policy=default; tls_json='{"enabled":false}'
+    address=${SB_DEFAULT_LISTEN_ADDRESS}; port=1080; auth=y; username=""; password=""; policy=default; tls_json='{"enabled":false}'
   fi
 
   read -rp "实例名称（当前: ${name}，留空保持）: " answer || return 1
@@ -9026,6 +9028,7 @@ install_protocols_interactive() {
 }
 
 set_protocol_defaults() {
+  SB_MIXED_LISTEN_ADDRESS=${SB_DEFAULT_LISTEN_ADDRESS}
   case "$1" in
     socks)
       SB_PROTOCOL="socks"
@@ -9043,7 +9046,6 @@ set_protocol_defaults() {
       SB_INSTANCE_ID=""
       SB_MIXED_INSTANCE_ID=""
       SB_MIXED_INBOUND_TAG="socks-in"
-      SB_MIXED_LISTEN_ADDRESS="127.0.0.1"
       SB_MIXED_STORE_REVISION="0"
       SB_OUTBOUND_POLICY="default"
       ;;
@@ -9054,7 +9056,7 @@ set_protocol_defaults() {
       SB_SNI=""; SB_UUID=""; SB_PUBLIC_KEY=""; SB_PRIVATE_KEY=""; SB_SHORT_ID_1=""; SB_SHORT_ID_2=""
       SB_MIXED_AUTH_ENABLED="n"; SB_MIXED_USERNAME=""; SB_MIXED_PASSWORD=""
       SB_INSTANCE_ID=""; SB_MIXED_INSTANCE_ID=""; SB_MIXED_INBOUND_TAG="shadowtls-in"
-      SB_MIXED_LISTEN_ADDRESS="$(stack_inbound_listen_address)"; SB_MIXED_STORE_REVISION="0"
+      SB_MIXED_STORE_REVISION="0"
       SB_SHADOWTLS_VERSION="3"; SB_SHADOWTLS_PASSWORD=""; SB_SHADOWTLS_AUTH_JSON='[]'
       SB_SHADOWTLS_HANDSHAKE_JSON='{"server":"","server_port":443}'
       SB_SHADOWTLS_HANDSHAKE_FOR_SERVER_NAME_JSON='{}'; SB_SHADOWTLS_STRICT_MODE="n"; SB_SHADOWTLS_WILDCARD_SNI="off"
@@ -9069,7 +9071,7 @@ set_protocol_defaults() {
       SB_SNI=""; SB_UUID=""; SB_PUBLIC_KEY=""; SB_PRIVATE_KEY=""; SB_SHORT_ID_1=""; SB_SHORT_ID_2=""
       SB_MIXED_AUTH_ENABLED="y"; SB_MIXED_USERNAME=""; SB_MIXED_PASSWORD=""
       SB_INSTANCE_ID=""; SB_MIXED_INSTANCE_ID=""; SB_MIXED_INBOUND_TAG="naive-in"
-      SB_MIXED_LISTEN_ADDRESS="127.0.0.1"; SB_MIXED_STORE_REVISION="0"
+      SB_MIXED_STORE_REVISION="0"
       SB_NAIVE_AUTH_JSON='[]'; SB_NAIVE_TLS_JSON='{"enabled":false}'; SB_NAIVE_CLIENT_TRUST="system"
       SB_NAIVE_NETWORK_JSON='["tcp","udp"]'; SB_NAIVE_QUIC_CONGESTION_CONTROL="bbr"; SB_NAIVE_QUIC="n"
       SB_NAIVE_INSECURE_CONCURRENCY="0"; SB_NAIVE_STREAM_RECEIVE_WINDOW=""; SB_NAIVE_QUIC_SESSION_RECEIVE_WINDOW=""; SB_NAIVE_EXTRA_HEADERS_JSON='{}'
@@ -9091,7 +9093,6 @@ set_protocol_defaults() {
       SB_INSTANCE_ID=""
       SB_MIXED_INSTANCE_ID=""
       SB_MIXED_INBOUND_TAG="tuic-in"
-      SB_MIXED_LISTEN_ADDRESS="127.0.0.1"
       SB_MIXED_STORE_REVISION="0"
       SB_TUIC_AUTH_JSON='[]'
       SB_TUIC_TLS_JSON='{"enabled":false}'
@@ -9111,7 +9112,7 @@ set_protocol_defaults() {
       SB_SNI=""; SB_UUID=""; SB_PUBLIC_KEY=""; SB_PRIVATE_KEY=""; SB_SHORT_ID_1=""; SB_SHORT_ID_2=""
       SB_MIXED_AUTH_ENABLED="y"; SB_MIXED_USERNAME=""; SB_MIXED_PASSWORD=""
       SB_INSTANCE_ID=""; SB_MIXED_INSTANCE_ID=""; SB_MIXED_INBOUND_TAG="hysteria-in"
-      SB_MIXED_LISTEN_ADDRESS="127.0.0.1"; SB_MIXED_STORE_REVISION="0"
+      SB_MIXED_STORE_REVISION="0"
       SB_HYSTERIA_AUTH_JSON='[]'; SB_HYSTERIA_TLS_JSON='{"enabled":false}'; SB_HYSTERIA_CLIENT_TRUST="system"
       SB_HYSTERIA_UP_MBPS="100"; SB_HYSTERIA_DOWN_MBPS="100"; SB_HYSTERIA_OBFS_ENABLED="n"; SB_HYSTERIA_OBFS_PASSWORD=""
       SB_HYSTERIA_QUIC_JSON='{"connection_receive_window":"","disable_path_mtu_discovery":false,"initial_packet_size":0,"max_concurrent_streams":0,"stream_receive_window":""}'
@@ -9133,7 +9134,6 @@ set_protocol_defaults() {
       SB_INSTANCE_ID=""
       SB_MIXED_INSTANCE_ID=""
       SB_MIXED_INBOUND_TAG="vless-plain-in"
-      SB_MIXED_LISTEN_ADDRESS="127.0.0.1"
       SB_MIXED_STORE_REVISION="0"
       SB_VLESS_PLAIN_AUTH_JSON='[]'
       SB_VLESS_PLAIN_TLS_JSON='{"enabled":false}'
@@ -9157,7 +9157,6 @@ set_protocol_defaults() {
       SB_INSTANCE_ID=""
       SB_MIXED_INSTANCE_ID=""
       SB_MIXED_INBOUND_TAG="vmess-in"
-      SB_MIXED_LISTEN_ADDRESS="127.0.0.1"
       SB_MIXED_STORE_REVISION="0"
       SB_VMESS_AUTH_JSON='[]'
       SB_VMESS_TLS_JSON='{"enabled":false}'
@@ -9181,7 +9180,6 @@ set_protocol_defaults() {
       SB_INSTANCE_ID=""
       SB_MIXED_INSTANCE_ID=""
       SB_MIXED_INBOUND_TAG="trojan-in"
-      SB_MIXED_LISTEN_ADDRESS="127.0.0.1"
       SB_MIXED_STORE_REVISION="0"
       SB_TROJAN_AUTH_JSON='[]'
       SB_TROJAN_TLS_JSON='{"enabled":false}'
@@ -9205,7 +9203,6 @@ set_protocol_defaults() {
       SB_INSTANCE_ID=""
       SB_MIXED_INSTANCE_ID=""
       SB_MIXED_INBOUND_TAG="http-in"
-      SB_MIXED_LISTEN_ADDRESS="127.0.0.1"
       SB_MIXED_STORE_REVISION="0"
       SB_HTTP_TLS_JSON='{"enabled":false}'
       SB_OUTBOUND_POLICY="default"
@@ -9226,7 +9223,6 @@ set_protocol_defaults() {
       SB_INSTANCE_ID=""
       SB_MIXED_INSTANCE_ID=""
       SB_MIXED_INBOUND_TAG="ss-in"
-      SB_MIXED_LISTEN_ADDRESS="127.0.0.1"
       SB_MIXED_STORE_REVISION="0"
       SB_SHADOWSOCKS_AUTH_JSON=""
       SB_SHADOWSOCKS_NETWORK_JSON='["tcp","udp"]'
@@ -9337,7 +9333,6 @@ set_protocol_defaults() {
       SB_INSTANCE_ID=""
       SB_MIXED_INSTANCE_ID=""
       SB_MIXED_INBOUND_TAG="snell-in"
-      SB_MIXED_LISTEN_ADDRESS="127.0.0.1"
       SB_MIXED_STORE_REVISION="0"
       SB_SNELL_VERSION="6"
       SB_SNELL_PSK=""
@@ -30660,6 +30655,7 @@ agent_capabilities_json() {
   jq -n \
     --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
     --arg script_version "${SCRIPT_VERSION}" \
+    --arg default_listener "${SB_DEFAULT_LISTEN_ADDRESS}" \
     --arg supported_version "${SB_SUPPORT_MAX_VERSION}" \
     --arg backup_root "${SB_UPGRADE_BACKUP_ROOT}" \
     --arg component_state_file "${SB_COMPONENT_STATE_FILE}" \
@@ -30704,7 +30700,7 @@ agent_capabilities_json() {
           read_only_operations: ["view", "diagnose", "export"],
           expected_revision_required: true,
           plaintext_public_confirmation: "--allow-public",
-          default_new_listener: "127.0.0.1",
+          default_new_listener: $default_listener,
           cross_protocol_bulk_delete: false,
           legacy_read_migration: false,
           firewall_ownership_ledger: true,
@@ -30738,7 +30734,7 @@ agent_capabilities_json() {
           },
           expected_revision_required: true,
           plaintext_public_confirmation: "--allow-public",
-          default_new_listener: "127.0.0.1",
+          default_new_listener: $default_listener,
           cross_protocol_bulk_delete: false
         },
         diagnostics: {config_check: true, doctor: true, media_check: true},

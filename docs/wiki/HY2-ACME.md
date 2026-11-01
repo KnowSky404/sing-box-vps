@@ -1,6 +1,6 @@
 # HY2 automatic certificates in instance management
 
-新增 HY2 协议、创建实例和修改实例支持 ACME HTTP-01、Cloudflare DNS-01 与手动证书。新建默认 ACME、监听 `0.0.0.0` 接受外部 IPv4 连接；修改默认保留已有模式和地址。DNS Token 隐藏输入，ACME 客户端使用系统信任；手动证书继续支持显式证书信任。
+新增 HY2 协议、创建实例和修改实例支持 ACME HTTP-01、Cloudflare DNS-01 与手动证书。新建结构化实例默认 ACME、监听单个 `::` 接受 IPv4/IPv6 连接；无需在同端口额外添加 `0.0.0.0` 监听。修改默认保留已有模式和地址，首次安装的 legacy 配置实际监听仍遵循全局入站模式。DNS Token 隐藏输入，ACME 客户端使用系统信任；手动证书继续支持显式证书信任。
 
 The existing schema-1 JSON store gains an optional ACME TLS variant without changing existing manual records. It stores `tls:{enabled:true,server_name,acme:{...}}` and requires `client_trust:"system"`. The renderer selects inline certificate providers on sing-box 1.14+ and inline ACME on 1.13.x. Each instance retains its own domains, challenge options and credentials. Exported clients and ordinary Agent summaries never include ACME credentials. No ACME process or package is installed separately.
 

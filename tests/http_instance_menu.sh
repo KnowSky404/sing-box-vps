@@ -38,12 +38,12 @@ one_shot_listed=$(http_instance_management_menu list)
 [[ "$(grep -c '^main' <<< "${one_shot_listed}")" -eq 1 ]]
 [[ "$(grep -c '^edge' <<< "${one_shot_listed}")" -eq 1 ]]
 
-# Plain HTTP defaults to loopback/authentication and records its protocol in
+# Plain HTTP defaults to dual stack/authentication and records its protocol in
 # the shared CAS call; it must not silently become a SOCKS record.
 : > "${calls}"
-printf '%s\n' 1 '' '' '' '' '' '' '' '' n 0 | http_instance_management_menu >/dev/null
-grep -Fq 'http create 7 n' "${calls}"
-grep -Eq '"address":"127\.0\.0\.1"' "${calls}"
+printf '%s\n' 1 '' '' '' '' '' '' '' '' n y 0 | http_instance_management_menu >/dev/null
+grep -Fq 'http create 7 y' "${calls}"
+grep -Eq '"address":"::"' "${calls}"
 grep -Eq '"tls":\{"enabled":false\}' "${calls}"
 
 # Replacing an HTTP record keeps credentials and immutable tag bytes, while

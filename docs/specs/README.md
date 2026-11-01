@@ -2,7 +2,8 @@
 
 [简体中文](README.zh-CN.md)
 
-Inventory checked against repository baseline `f498234` on 2026-10-30. The two
+Earlier acceptance entries were checked against repository baseline `f498234`
+on 2026-10-30; the new default-listener contract lists its own acceptance requirements. The two
 `unified-node-naming` documents describe one feature in English and Chinese;
 they are maintained contracts, not two unfinished implementation plans. The
 address-selection contract is maintained in the Wiki source instead of duplicated
@@ -10,6 +11,7 @@ here.
 
 | Contract or goal | Implementation status | Evidence and remaining boundary |
 | --- | --- | --- |
+| [Default dual-stack listeners](default-dual-stack-listeners.md) ([中文](default-dual-stack-listeners.zh-CN.md)) | Contract for new-instance defaults; acceptance requirements defined | All structured creation defaults use one `::` listener; explicit addresses, existing instances and global-mode legacy rendering are preserved. Local/default matrices, target-core checks and representative TCP/UDP dual-family runtime probes are required; this entry does not claim completed acceptance or production changes. |
 | [Unified node naming](unified-node-naming.md) ([中文](unified-node-naming.zh-CN.md)) | Implemented and accepted within the recorded scope | Section 9 preserves the original local/core evidence. Section 10 adds the actual SubMan application/storage integration (30 nodes across five protocols) and owner-authorized production VMess API/Gist acceptance (six test candidates and one test aggregate), with identity/membership preservation and cleanup. This is not production proxy-VPS or every-protocol public-connectivity acceptance. |
 | [SubMan address selection](../wiki/SubMan-Address-Selection.md) | Implemented and accepted within the recorded scope | Isolated family/failure regressions and the application/storage integration cover IPv4, IPv6 and concrete listener cases. Naming section 10 records the representative production VMess test separately; address selection does not certify public proxy connectivity. |
 | [Full protocol/component acceptance](full-protocol-completion.md) ([中文](full-protocol-completion.zh-CN.md)) | 15 presets and 38 component adapters implemented; FP-01–FP-11 scoped acceptance complete | The finite FP-01–FP-11 matrix records local component/group, authorized Cloudflare and controlled Headscale/ocserv acceptance, plus namespace build restrictions. Original lifecycle and data-plane evidence remains in the [upstream matrix](../wiki/Protocol-Coverage.md); public and production acceptance remain separate. |
