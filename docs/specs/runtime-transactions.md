@@ -123,6 +123,32 @@ is higher than that support version. HUP/INT/TERM, including matching curl exit
 codes, return 129/130/143 and leave `SB_VERSION=latest`; guarded install/update
 callers stop instead of proceeding with a cancellation fallback.
 
+## Hysteria2 final-instance deletion
+
+Deleting the final managed Hysteria2 instance may accept a changed live listen
+address when the requested ID resolves to exactly one stored instance and its
+tag identifies exactly one live `hysteria2` inbound. A private comparison restores
+only that target's stored listen address and must recover the same modeled
+record. Credential, TLS, port or other modeled drift still rejects the operation;
+so do missing or ambiguous target identity, another surviving managed instance,
+and operations other than deletion. This is explicit removal of the owned
+target, not equivalence between IPv4 and IPv6 listeners or automatic state repair.
+
+The candidate removes only the target and its generated routes. Other live
+inbounds, including unregistered Hysteria2 listeners, retain their configuration;
+administrator-owned certificate files and ACME caches remain intact. Existing
+revision CAS, configuration graph/listener checks, `sing-box check`, firewall
+ownership, snapshots, service checks and rollback remain mandatory. The focused
+regression is `tests/hy2_final_instance_delete_with_listener_drift.sh`.
+
+Unregistered custom-tag HY2 listeners remain unmanaged during index publication,
+enumeration and recreation when a validated active typed store or a positive
+empty retained revision proves their ownership boundary. Multiple such listeners
+may remain after deletion without entering `INSTALLED_PROTOCOLS`; enumeration
+does not adopt them, and recreation advances the retained revision with only the
+new managed record. Reserved default tags, legacy state, missing or invalid
+stores, symlinks and nonempty orphaned stores retain their fail-closed checks.
+
 ## Verification record
 
 The final real-core Docker lifecycle used runtime SHA-256

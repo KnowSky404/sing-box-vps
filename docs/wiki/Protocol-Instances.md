@@ -116,6 +116,10 @@ Authentication accepts 1–128 users with unique names and passwords. TLS is alw
 
 Hysteria2 uses public Agent ID `hysteria2`, internal/state ID `hy2`, preset 3 and protocol management via main menu 2. Its active marker is `protocols/hy2.env` with `CONFIG_SCHEMA_VERSION=2`; the typed store is `protocols/instances/hy2.json` with `schema_version:1`. Each typed instance supports manual TLS or ACME HTTP-01 / Cloudflare DNS-01. Legacy schema-1 nodes remain readable; creating an additional instance imports the existing bounded, losslessly representable ACME/provider options in the same CAS transaction. Unsupported fields, ambiguous provider references and orphaned stores abort the operation without changing the existing node.
 
+Deleting the final managed Hysteria2 instance permits only its live listen-address drift when the requested ID and unique live tag/type still match and every other modeled field agrees. The transaction removes that target while preserving remaining live listeners, including unregistered Hysteria2 inbounds, and certificate caches. Other drift, another surviving managed instance, and non-delete operations remain blocked; see the [transaction contract](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/runtime-transactions.md#hysteria2-final-instance-deletion).
+
+A valid active typed store or positive empty retained revision keeps unregistered custom-tag HY2 listeners outside the managed index, including when several remain after deletion. Listing protocols preserves that boundary, and creating another instance advances the retained revision without adopting those listeners. Reserved default tags and untrusted or legacy state retain their existing checks.
+
 ```bash
 sbv agent instance create hy2 --json --yes --expected-revision N --file record.json [--allow-public]
 sbv agent instance replace hy2 --json --yes --expected-revision N --file record.json [--allow-public]

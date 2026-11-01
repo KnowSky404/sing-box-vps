@@ -52,6 +52,14 @@ DNS/建连失败或明确 HTTP 4xx 拒绝可以清理 receipt；请求可能已�
 
 普通失败显示 `unavailable` 并选择 `SB_SUPPORT_MAX_VERSION`；成功时仅对高于适配版本的结果警告。HUP/INT/TERM 及对应 curl 状态返回 129/130/143，保持 `SB_VERSION=latest`；安装/更新调用方据此停止，不在取消后继续按回退版本安装。
 
+## Hysteria2 最后实例删除
+
+删除最后一个受管 Hysteria2 实例时，仅当所选 ID 对应唯一的存储实例，且其 tag 精确对应唯一的 live `hysteria2` 入站，才允许该目标的监听地址发生漂移。私有比较副本仅恢复目标的存储监听地址，随后必须还原相同的受管记录；认证、TLS、端口等其他受管字段漂移仍会拒绝。目标身份缺失或有歧义、仍有其他受管实例，以及删除以外的操作也继续拒绝。这是明确删除受管目标，不把 IPv4/IPv6 监听视作等价，也不自动修复现场状态。
+
+候选只移除目标及其生成路由；其他 live 入站（包括未登记的 Hysteria2 监听）保留原配置，操作员证书文件与 ACME 缓存不删除。revision CAS、配置图/监听校验、`sing-box check`、防火墙归属、快照、服务检查与回滚仍须通过。定向回归为 `tests/hy2_final_instance_delete_with_listener_drift.sh`。
+
+有效的 active typed store 或 revision 大于零的空保留状态可证明归属边界时，未登记的自定义 tag HY2 监听在索引发布、枚举与重建实例期间始终保持未托管。删除后允许留下多个此类监听，但不写入 `INSTALLED_PROTOCOLS`；枚举不自动接管它们，重新创建仅添加新的受管记录并递增保留的 revision。保留默认 tag、legacy 状态、缺失或损坏的 store、符号链接及非空孤立 store 的原有 fail-closed 校验。
+
 ## 验证记录
 
 最终真实核心 Docker 生命周期使用运行时 SHA-256：`420ea43d54daa0001dac04bacd917fb7beaadd53e8d32572ffbfe27dedeb81d1`，核对时与工作区逐字一致。后续仅版本元数据或文档变更，须满足 AGENTS.md 第 4.2 节才可复用结果。

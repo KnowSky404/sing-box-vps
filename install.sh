@@ -2387,7 +2387,7 @@ config_protocol_jq_filter() {
   excluded=${SB_UNMANAGED_CLIENT_TAGS_JSON:-'[]'}
   if [[ -z "${SB_UNMANAGED_CLIENT_TAGS_JSON+x}" && -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
     case "${protocol}" in
-      mixed|socks|http)
+      mixed|socks|http|hy2)
         excluded=$(unmanaged_client_tags_for_config_json "${config_file}" "${filter}") || return 1 ;;
     esac
   fi
@@ -2418,11 +2418,15 @@ manual_client_inbound_is_unmanaged() {
   local inbound=$1 protocol tag default_tag indexed state_file store_file schema owned_tags
   [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]] || return 1
   protocol=$(jq -r '.type' <<< "${inbound}") || return 1
-  case "${protocol}" in mixed|socks|http) ;; *) return 1 ;; esac
+  case "${protocol}" in mixed|socks|http|hysteria2) ;; *) return 1 ;; esac
   tag=$(jq -r '.tag // ""' <<< "${inbound}") || return 1
   [[ -n "${tag}" ]] || return 1
   default_tag=$(protocol_registry_field "${protocol}" default_tag) || return 1
   [[ "${tag}" != "${default_tag}" ]] || return 1
+  if [[ "${protocol}" == hysteria2 ]]; then
+    hy2_typed_inbound_is_unmanaged "${tag}"
+    return $?
+  fi
   indexed=$(extract_protocols_from_index) || return 1
   state_file=$(protocol_state_file "${protocol}") || return 1
   if [[ -e "${state_file}" || -L "${state_file}" ]]; then
@@ -2441,6 +2445,24 @@ manual_client_inbound_is_unmanaged() {
     return 0
   fi
   [[ ",${indexed}," != *",${protocol},"* ]]
+}
+
+# Only a trusted active store or a retained empty revision proves that a live
+# HY2 tag was not adopted. Legacy, missing and orphaned state remains managed
+# by the existing fail-closed inventory/takeover checks.
+hy2_typed_inbound_is_unmanaged() {
+  local tag=$1 state_file store_file snapshot
+  state_file=$(protocol_state_file hy2) || return 1
+  store_file=$(plain_proxy_structured_store_file hy2) || return 1
+  snapshot=$(structured_instance_store_snapshot_json hy2 "${store_file}") || return 1
+  if plain_proxy_structured_marker_is_valid "${state_file}"; then
+    jq -e '.instances | length > 0' <<< "${snapshot}" >/dev/null || return 1
+  else
+    [[ ! -e "${state_file}" && ! -L "${state_file}" ]] || return 1
+    jq -e '.instances==[] and .default_instance_id=="" and .revision>0' \
+      <<< "${snapshot}" >/dev/null || return 1
+  fi
+  jq -e --arg tag "${tag}" 'all(.instances[]; .tag != $tag)' <<< "${snapshot}" >/dev/null
 }
 
 config_protocol_inbound_count() {
@@ -3812,7 +3834,7 @@ validate_protocol_index_for_rebuild() {
 reconcile_protocol_index_if_needed() {
   local inventory_state_file=${1:-}
   local indexed_protocols=() valid_protocols=()
-  local protocol joined_protocols current_protocols
+  local protocol joined_protocols current_protocols config_protocols
 
   [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]] || return 0
   validate_protocol_index_for_rebuild || return 1
@@ -3844,6 +3866,13 @@ reconcile_protocol_index_if_needed() {
 
   if [[ ${#valid_protocols[@]} -eq 0 ]]; then
     if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
+      # A retained HY2 revision can coexist with explicitly unowned listeners.
+      # Enumerating an empty managed index must not adopt those listeners or
+      # erase the tombstone needed by a later create at the current revision.
+      if [[ -z "${current_protocols}" ]] && plain_proxy_inactive_store_snapshot hy2 >/dev/null 2>&1; then
+        config_protocols=$(list_config_protocols) || return 1
+        [[ -n "${config_protocols}" ]] || return 0
+      fi
       # Keep the original index in the rebuild snapshot. An empty/unrecognized
       # config or a failed state write must not erase it, even in an if/|| call.
       rebuild_protocol_state_from_config || return $?
@@ -33791,6 +33820,31 @@ plain_proxy_instance_config_candidate() {
   ' "${old_config}"
 }
 
+# Deleting the final HY2 instance does not regenerate a surviving managed
+# listener. Permit its address to drift only when its owned tag/type still
+# identify exactly one live inbound and every other modeled field matches.
+# The comparison changes a private candidate, never the live configuration.
+hy2_final_instance_delete_matches_config() {
+  local store_file=$1 instance_id=$2 config_file=$3 comparison_file=$4
+  if ! jq --slurpfile store "${store_file}" --arg id "${instance_id}" '
+    $store[0] as $store |
+    if ($store.instances | length) != 1 or $store.instances[0].id != $id then
+      error("not final instance")
+    else $store.instances[0] as $record |
+      [.inbounds[]? | select(.tag == $record.tag)] as $targets |
+      if ($targets | length) != 1 or $targets[0].type != "hysteria2" or
+         ($targets[0].listen | type) != "string" then
+        error("untrusted target")
+      else .inbounds |= map(if .tag == $record.tag then
+        .listen = $record.listen.address else . end)
+      end
+    end
+  ' "${config_file}" > "${comparison_file}" 2>/dev/null; then
+    return 1
+  fi
+  plain_proxy_structured_state_matches_config hy2 "${comparison_file}"
+}
+
 # Public mutation entrypoints share a kernel lock. The persistent instance
 # journal is a separate crash-recovery barrier, not a substitute for this lock.
 acquire_managed_write_lock() {
@@ -34116,13 +34170,21 @@ apply_plain_proxy_instance_change() (
     return 1
   fi
   if plain_proxy_structured_state_active "${instance_protocol}"; then
-    # Rebuild intentionally repairs drift in the managed protocol projection;
-    # all other mutations require the live config to match before preparation.
-    if [[ "${operation}" != rebuild ]]; then
-      plain_proxy_structured_state_matches_config "${instance_protocol}" || return 1
-    fi
     structured_instance_store_snapshot_json "${instance_protocol}" "$(plain_proxy_structured_store_file "${instance_protocol}")" > "${lock_dir}/before.json" || return $?
     current_revision=$(jq -r .revision "${lock_dir}/before.json") || return $?
+    # Rebuild intentionally repairs drift in the managed protocol projection;
+    # final HY2 deletion may remove an owned listener whose address drifted.
+    # All other mutations require the live config to match before preparation.
+    if [[ "${operation}" != rebuild ]]; then
+      if ! plain_proxy_structured_state_matches_config "${instance_protocol}" >/dev/null 2>&1; then
+        if [[ "${instance_protocol}" != hy2 || "${operation}" != delete ]] ||
+           ! hy2_final_instance_delete_matches_config "${lock_dir}/before.json" "${input}" \
+             "${SINGBOX_CONFIG_FILE}" "${lock_dir}/delete-comparison.json"; then
+          printf '[ERROR] 实例状态与运行配置不一致；未修改，请先检查受管配置漂移。\n' >&2
+          return 1
+        fi
+      fi
+    fi
   elif [[ "${operation}" == takeover ]]; then
     # A takeover starts from a virtual revision-zero store and imports the
     # complete, losslessly representable live inventory.  Existing typed
@@ -35209,7 +35271,8 @@ validate_live_inbound_inventory() {
   [[ "${allow_legacy_download_detour}" == true || "${allow_legacy_download_detour}" == false ]] || return 1
   registry=$(protocol_registry_static_json) || return 1
   advanced_types=$(component_registry_inbound_types_json) || return 1
-  if plain_proxy_structured_state_active hy2 >/dev/null 2>&1; then
+  if plain_proxy_structured_state_active hy2 >/dev/null 2>&1 ||
+     plain_proxy_inactive_store_snapshot hy2 >/dev/null 2>&1; then
     allow_structured_hy2=true
   fi
   # This is an inventory gate, not a full field/route round-trip validator.
@@ -36067,6 +36130,16 @@ plain_proxy_config_store_candidate() (
     return 1
   fi
   if [[ "${protocol}" == hy2 ]]; then
+    # Exclude only proven-unmanaged HY2 listeners before their private typed
+    # projection is normalized or validated. Their legal core-only fields
+    # remain in the live config and must not block a managed mutation.
+    local hy2_filter
+    hy2_filter=$(config_protocol_jq_filter hy2 "${config_file}") || return 1
+    if ! jq ".inbounds |= map(select(.type != \"hysteria2\" or (${hy2_filter})))" \
+      "${config_file}" > "${temp_dir}/hy2-managed.json"; then
+      return 1
+    fi
+    config_file="${temp_dir}/hy2-managed.json"
     if ! hy2_normalize_config_acme "${config_file}" > "${temp_dir}/hy2-normalized.json" 2>"${temp_dir}/normalize.stderr"; then
       printf '[ERROR] hy2_store_candidate: 无法无损读取 ACME/provider 配置；已保留原配置。\n' >&2
       return 1
