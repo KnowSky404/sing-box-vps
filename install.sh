@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026103007
+# Version: 2026110101
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026103007"
+readonly SCRIPT_VERSION="2026110101"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -6772,7 +6772,13 @@ prompt_protocol_install_selection() {
   SELECTED_PROTOCOLS_CSV=""
 
   if [[ "${install_mode}" != "fresh" ]]; then
-    installed_list=$(list_installed_protocols) || return 1
+    # A caller may supply its operation-local inventory, including an empty
+    # list. Standalone prompts still reconcile before reading the index.
+    if [[ $# -ge 2 ]]; then
+      installed_list=$2
+    else
+      installed_list=$(list_installed_protocols) || return 1
+    fi
     if [[ -n "${installed_list}" ]]; then
       mapfile -t installed_protocols <<< "${installed_list}"
     fi
@@ -8681,6 +8687,7 @@ plain_proxy_instance_management_menu() (
 
 install_protocols_interactive() {
   local install_mode=$1
+  local preselected_protocols=${2:-}
   local installed_protocols=() selected_protocols=()
   local protocol first_selected_protocol snapshot_dir installed_protocol_list
 
@@ -8791,8 +8798,8 @@ install_protocols_interactive() {
     fi
   else
     migrate_legacy_single_protocol_state_if_needed recover-incomplete-index || return 1
-    load_current_config_state
     installed_protocol_list=$(list_installed_protocols) || return 1
+    load_current_config_state "${installed_protocol_list}" || return 1
     if [[ -n "${installed_protocol_list}" ]]; then
       mapfile -t installed_protocols <<< "${installed_protocol_list}"
     fi
@@ -8848,7 +8855,11 @@ install_protocols_interactive() {
        ! protocol_array_contains shadowtls ${installed_protocols[@]+"${installed_protocols[@]}"}; then
       installed_protocols+=(shadowtls)
     fi
-    prompt_protocol_install_selection "additional" || return 0
+    if [[ -n "${preselected_protocols}" ]]; then
+      SELECTED_PROTOCOLS_CSV=${preselected_protocols}
+    else
+      prompt_protocol_install_selection "additional" "${installed_protocol_list}" || return 0
+    fi
     IFS=',' read -r -a selected_protocols <<< "${SELECTED_PROTOCOLS_CSV}"
 
     # An already-installed Mixed protocol must enter the instance lifecycle
@@ -24353,7 +24364,13 @@ load_current_config_state() {
   load_stack_mode_state
 
   if [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
-    mapfile -t installed_protocols < <(list_installed_protocols)
+    if [[ $# -ge 1 ]]; then
+      if [[ -n "$1" ]]; then
+        mapfile -t installed_protocols <<< "$1"
+      fi
+    else
+      mapfile -t installed_protocols < <(list_installed_protocols)
+    fi
     first_protocol="${installed_protocols[0]:-}"
     if [[ -n "${first_protocol}" ]]; then
       load_protocol_state "${first_protocol}"
@@ -40332,13 +40349,24 @@ prompt_incomplete_instance_action() {
 }
 
 install_new_protocols_menu() {
-  local existing_instance_state
+  local existing_instance_state installed_list preselected_protocols=""
 
-  existing_instance_state=$(detect_existing_instance_state)
+  # Display choices without reconstructing every installed protocol. This
+  # preview is never an authorization to write: the complete health check
+  # (including recovery/takeover dispatch) still runs after a selection.
+  if [[ -x "${SINGBOX_BIN_PATH}" && -f "${SINGBOX_SERVICE_FILE}" &&
+        -f "${SINGBOX_CONFIG_FILE}" && -f "${SB_PROTOCOL_INDEX_FILE}" ]] &&
+     validate_protocol_index_for_rebuild; then
+    installed_list=$(list_indexed_protocols_raw) || return 1
+    prompt_protocol_install_selection additional "${installed_list}" || return 0
+    preselected_protocols=${SELECTED_PROTOCOLS_CSV}
+  fi
+
+  existing_instance_state=$(run_with_progress "检查现有实例的配置及状态" detect_existing_instance_state) || return $?
 
   case "${existing_instance_state}" in
     healthy)
-      install_protocols_interactive "additional"
+      install_protocols_interactive additional "${preselected_protocols}"
       ;;
     incomplete)
       prompt_incomplete_instance_action
