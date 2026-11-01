@@ -95,6 +95,7 @@ get_public_ip() {
 install_protocols_interactive "fresh" <<'EOF'
 
 1
+1
 
 
 n

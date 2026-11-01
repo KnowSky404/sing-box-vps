@@ -32,6 +32,7 @@ verification_scenario_uninstall_and_reinstall() {
 1
 
 1
+1
 
 443
 2

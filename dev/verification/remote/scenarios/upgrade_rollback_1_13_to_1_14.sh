@@ -24,6 +24,7 @@ verification_scenario_upgrade_rollback_1_13_to_1_14() {
 1
 
 1
+1
 
 443
 2

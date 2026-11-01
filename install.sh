@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026110101
+# Version: 2026110102
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026110101"
+readonly SCRIPT_VERSION="2026110102"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
 readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
@@ -6791,18 +6791,58 @@ protocol_option_to_id() {
   return 1
 }
 
+protocol_install_menu_option_to_id() {
+  # UI groups the two VLESS presets without changing registry/Agent IDs.
+  case "$1" in
+    1) printf '%s' vless ;;
+    [2-9]) protocol_option_to_id "$1" ;;
+    10|11|12|13|14) protocol_option_to_id "$(( $1 + 1 ))" ;;
+    *) return 1 ;;
+  esac
+}
+
+protocol_install_allows_additional_instance() {
+  case "$1" in
+    vless-reality|mixed|socks|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+prompt_vless_install_selection() {
+  local plain_available=${1:-y} choice
+
+  SELECTED_VLESS_INSTALL_PROTOCOL=""
+  echo -e "\n${BLUE}--- VLESS ---${NC}"
+  echo '1. VLESS + REALITY'
+  [[ "${plain_available}" != y ]] || echo '2. 普通 VLESS'
+  echo '0. 返回上一级'
+  while true; do
+    read -rp '请选择 VLESS 类型 (默认 1): ' choice || return 1
+    choice=$(trim_whitespace "${choice}")
+    case "${choice:-1}" in
+      0) return 1 ;;
+      1) SELECTED_VLESS_INSTALL_PROTOCOL=vless-reality; return 0 ;;
+      2)
+        if [[ "${plain_available}" == y ]]; then
+          SELECTED_VLESS_INSTALL_PROTOCOL=vless-plain
+          return 0
+        fi
+        ;;
+    esac
+    log_warn '请选择菜单中列出的 VLESS 类型。'
+  done
+}
+
 prompt_protocol_install_selection() {
   local install_mode=${1:-additional}
-  local installed_protocols=() selected_protocols=()
-  local choice raw_choice protocol index installed_list
-  local menu_indices=() raw_choices=()
-  local mixed_tombstone=n socks_tombstone=n vless_plain_tombstone=n anytls_tombstone=n hy2_tombstone=n snell_tombstone=n tuic_tombstone=n hysteria_tombstone=n naive_tombstone=n shadowtls_tombstone=n
+  local installed_protocols=() selected_protocols=() raw_choices=()
+  local choice raw_choice protocol index installed_list vless_selection="" plain_available=y
 
   SELECTED_PROTOCOLS_CSV=""
 
-  if [[ "${install_mode}" != "fresh" ]]; then
-    # A caller may supply its operation-local inventory, including an empty
-    # list. Standalone prompts still reconcile before reading the index.
+  if [[ "${install_mode}" != fresh ]]; then
+    # Only active inventory is installed. Empty retained stores keep their
+    # revision for recreation, but must not become installed menu entries.
     if [[ $# -ge 2 ]]; then
       installed_list=$2
     else
@@ -6811,165 +6851,80 @@ prompt_protocol_install_selection() {
     if [[ -n "${installed_list}" ]]; then
       mapfile -t installed_protocols <<< "${installed_list}"
     fi
-    if mixed_inactive_store_snapshot >/dev/null 2>&1; then
-      mixed_tombstone=y
-      if ! protocol_array_contains mixed ${installed_protocols[@]+"${installed_protocols[@]}"}; then
-        installed_protocols+=(mixed)
-      fi
-    fi
-    if plain_proxy_inactive_store_snapshot socks >/dev/null 2>&1; then
-      socks_tombstone=y
-      if ! protocol_array_contains socks ${installed_protocols[@]+"${installed_protocols[@]}"}; then
-        installed_protocols+=(socks)
-      fi
-    fi
-    if plain_proxy_inactive_store_snapshot vless-plain >/dev/null 2>&1; then
-      vless_plain_tombstone=y
-      if ! protocol_array_contains vless-plain ${installed_protocols[@]+"${installed_protocols[@]}"}; then
-        installed_protocols+=(vless-plain)
-      fi
-    fi
-    if plain_proxy_inactive_store_snapshot anytls >/dev/null 2>&1; then
-      anytls_tombstone=y
-      if ! protocol_array_contains anytls ${installed_protocols[@]+"${installed_protocols[@]}"}; then
-        installed_protocols+=(anytls)
-      fi
-    fi
-    if plain_proxy_inactive_store_snapshot hy2 >/dev/null 2>&1; then
-      hy2_tombstone=y
-      if ! protocol_array_contains hy2 ${installed_protocols[@]+"${installed_protocols[@]}"}; then
-        installed_protocols+=(hy2)
-      fi
-    fi
-    if plain_proxy_inactive_store_snapshot snell >/dev/null 2>&1; then
-      snell_tombstone=y
-      if ! protocol_array_contains snell ${installed_protocols[@]+"${installed_protocols[@]}"}; then
-        installed_protocols+=(snell)
-      fi
-    fi
-    if plain_proxy_inactive_store_snapshot tuic >/dev/null 2>&1; then
-      tuic_tombstone=y
-      if ! protocol_array_contains tuic ${installed_protocols[@]+"${installed_protocols[@]}"}; then
-        installed_protocols+=(tuic)
-      fi
-    fi
-    if plain_proxy_inactive_store_snapshot hysteria >/dev/null 2>&1; then
-      hysteria_tombstone=y
-      if ! protocol_array_contains hysteria ${installed_protocols[@]+"${installed_protocols[@]}"}; then
-        installed_protocols+=(hysteria)
-      fi
-    fi
-    if plain_proxy_inactive_store_snapshot naive >/dev/null 2>&1; then
-      naive_tombstone=y
-      if ! protocol_array_contains naive ${installed_protocols[@]+"${installed_protocols[@]}"}; then
-        installed_protocols+=(naive)
-      fi
-    fi
-    if plain_proxy_inactive_store_snapshot shadowtls >/dev/null 2>&1; then
-      shadowtls_tombstone=y
-      if ! protocol_array_contains shadowtls ${installed_protocols[@]+"${installed_protocols[@]}"}; then
-        installed_protocols+=(shadowtls)
-      fi
-    fi
   fi
-  while IFS= read -r protocol; do
-    menu_indices+=("$(protocol_registry_field "${protocol}" menu_order)")
-  done < <(list_registered_protocols)
+  if protocol_array_contains vless-plain ${installed_protocols[@]+"${installed_protocols[@]}"}; then
+    plain_available=n
+  fi
 
   echo -e "\n${BLUE}--- 协议安装 ---${NC}"
   if [[ ${#installed_protocols[@]} -gt 0 ]]; then
-    echo "当前已安装协议:"
+    echo '当前已安装协议:'
     for protocol in "${installed_protocols[@]}"; do
       echo "- $(protocol_display_name "${protocol}")"
     done
   else
-    echo "当前已安装协议: 无"
+    echo '当前已安装协议: 无'
   fi
 
-  echo "可安装协议:"
-  while IFS= read -r index; do
-    protocol=$(protocol_option_to_id "${index}") || continue
-    if protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
-      if [[ "${install_mode}" == "additional" && "${protocol}" == "vless-reality" ]]; then
-        echo "${index}. 新增 VLESS + REALITY 节点"
-      elif [[ "${install_mode}" == "additional" && "${protocol}" == "mixed" && "${mixed_tombstone}" == y ]]; then
-        echo "${index}. 新增 Mixed 实例"
-      elif [[ "${install_mode}" == "additional" && "${protocol}" == "socks" && "${socks_tombstone}" == y ]]; then
-        echo "${index}. 新增 SOCKS 实例"
-      elif [[ "${install_mode}" == "additional" && "${protocol}" == "vless-plain" && "${vless_plain_tombstone}" == y ]]; then
-        echo "${index}. 新增 VLESS 实例"
-      elif [[ "${install_mode}" == "additional" && "${protocol}" == "anytls" && "${anytls_tombstone}" == y ]]; then
-        echo "${index}. 新增 AnyTLS 实例"
-      elif [[ "${install_mode}" == "additional" && "${protocol}" == "hy2" && "${hy2_tombstone}" == y ]]; then
-        echo "${index}. 新增 Hysteria2 实例"
-      elif [[ "${install_mode}" == "additional" && "${protocol}" == "snell" && "${snell_tombstone}" == y ]]; then
-        echo "${index}. 新增 Snell 实例"
-      elif [[ "${install_mode}" == "additional" && "${protocol}" == "tuic" && "${tuic_tombstone}" == y ]]; then
-        echo "${index}. 新增 TUIC 实例"
-      elif [[ "${install_mode}" == "additional" && "${protocol}" == "hysteria" && "${hysteria_tombstone}" == y ]]; then
-        echo "${index}. 新增 Hysteria 实例"
-      elif [[ "${install_mode}" == "additional" && "${protocol}" == "naive" && "${naive_tombstone}" == y ]]; then
-        echo "${index}. 新增 NaiveProxy 实例"
-      elif [[ "${install_mode}" == "additional" && "${protocol}" == "shadowtls" && "${shadowtls_tombstone}" == y ]]; then
-        echo "${index}. 新增 ShadowTLS 实例"
-      fi
-      continue
-    fi
-    echo "${index}. $(protocol_display_name "${protocol}")"
-  done < <(printf '%s\n' "${menu_indices[@]}" | sort -n)
-
-  echo "0. 返回上一级"
-  echo "留空则安装全部可用协议。"
-  read -rp "请选择一个或多个协议 [1-${#menu_indices[@]}]，逗号分隔: " choice
-
-  if [[ -z "$(trim_whitespace "${choice}")" ]]; then
-    for index in "${menu_indices[@]}"; do
-      protocol=$(protocol_option_to_id "${index}") || continue
-      if protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
-        if [[ "${install_mode}" == "additional" &&
-              ("${protocol}" == "vless-reality" || "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" || "${protocol}" == "shadowtls") ]]; then
-          selected_protocols+=("${protocol}")
-        fi
-        continue
-      fi
-      selected_protocols+=("${protocol}")
-    done
-  fi
-
-  if [[ "$(trim_whitespace "${choice}")" == "0" ]]; then
-    return 1
-  fi
-
-  IFS=',' read -r -a raw_choices <<< "${choice}"
-
-  for raw_choice in "${raw_choices[@]}"; do
-    raw_choice=$(trim_whitespace "${raw_choice}")
-    [[ -z "${raw_choice}" ]] && continue
-
-    protocol=$(protocol_option_to_id "${raw_choice}") || {
-      log_warn "跳过无效协议选项: ${raw_choice}"
-      continue
-    }
-
-    if protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
-      if [[ "${install_mode}" == "additional" &&
-            ("${protocol}" == "vless-reality" || "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" || "${protocol}" == "shadowtls") ]]; then
-        if ! protocol_array_contains "${protocol}" ${selected_protocols[@]+"${selected_protocols[@]}"}; then
-          selected_protocols+=("${protocol}")
-        fi
-        continue
-      fi
-      log_warn "协议已安装，跳过: $(protocol_display_name "${protocol}")"
-      continue
-    fi
-
-    if ! protocol_array_contains "${protocol}" ${selected_protocols[@]+"${selected_protocols[@]}"}; then
-      selected_protocols+=("${protocol}")
+  echo '可安装协议:'
+  for index in {1..14}; do
+    protocol=$(protocol_install_menu_option_to_id "${index}") || return 1
+    if [[ "${protocol}" == vless ]]; then
+      echo "${index}. VLESS"
+    elif ! protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
+      echo "${index}. $(protocol_display_name "${protocol}")"
     fi
   done
 
+  echo '0. 返回上一级'
+  echo '留空则安装全部可用协议。'
+  read -rp '请选择一个或多个协议 [1-14]，逗号分隔: ' choice || return 1
+  choice=$(trim_whitespace "${choice}")
+  [[ "${choice}" != 0 ]] || return 1
+
+  if [[ -z "${choice}" ]]; then
+    # Preserve the registry order and the original all-protocol selection;
+    # the VLESS family expands to both presets without a second prompt.
+    while IFS= read -r protocol; do
+      if protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
+        if [[ "${install_mode}" == additional ]] && protocol_install_allows_additional_instance "${protocol}"; then
+          selected_protocols+=("${protocol}")
+        fi
+      else
+        selected_protocols+=("${protocol}")
+      fi
+    done < <(list_registered_protocols)
+  else
+    IFS=',' read -r -a raw_choices <<< "${choice}"
+    for raw_choice in "${raw_choices[@]}"; do
+      raw_choice=$(trim_whitespace "${raw_choice}")
+      [[ -n "${raw_choice}" ]] || continue
+      protocol=$(protocol_install_menu_option_to_id "${raw_choice}") || {
+        log_warn "跳过无效协议选项: ${raw_choice}"
+        continue
+      }
+      if [[ "${protocol}" == vless ]]; then
+        if [[ -z "${vless_selection}" ]]; then
+          # Cancellation also discards earlier selections in a multi-select.
+          prompt_vless_install_selection "${plain_available}" || return 1
+          vless_selection=${SELECTED_VLESS_INSTALL_PROTOCOL}
+        fi
+        protocol=${vless_selection}
+      fi
+      if protocol_array_contains "${protocol}" ${installed_protocols[@]+"${installed_protocols[@]}"}; then
+        if [[ "${install_mode}" != additional ]] || ! protocol_install_allows_additional_instance "${protocol}"; then
+          log_warn "协议已安装，跳过: $(protocol_display_name "${protocol}")"
+          continue
+        fi
+      fi
+      if ! protocol_array_contains "${protocol}" ${selected_protocols[@]+"${selected_protocols[@]}"}; then
+        selected_protocols+=("${protocol}")
+      fi
+    done
+  fi
+
   if [[ ${#selected_protocols[@]} -eq 0 ]]; then
-    log_error "未选择任何可安装协议。"
+    log_error '未选择任何可安装协议。'
   fi
 
   SELECTED_PROTOCOLS_CSV=$(IFS=,; printf '%s' "${selected_protocols[*]}")
@@ -8826,8 +8781,14 @@ install_protocols_interactive() {
       return 1
     fi
   else
-    migrate_legacy_single_protocol_state_if_needed recover-incomplete-index || return 1
-    installed_protocol_list=$(list_installed_protocols) || return 1
+    # Removing the last managed instance leaves a valid empty configuration
+    # and revisioned stores. Do not rebuild an installed inventory from it.
+    if instance_management_empty_config_baseline; then
+      installed_protocol_list=""
+    else
+      migrate_legacy_single_protocol_state_if_needed recover-incomplete-index || return 1
+      installed_protocol_list=$(list_installed_protocols) || return 1
+    fi
     load_current_config_state "${installed_protocol_list}" || return 1
     if [[ -n "${installed_protocol_list}" ]]; then
       mapfile -t installed_protocols <<< "${installed_protocol_list}"
@@ -23165,6 +23126,7 @@ publish_managed_config_candidate() (
 
 generate_config_candidate() {
   local inventory_state_file=${1:-}
+  local allow_empty_protocols=${2:-false}
   local inbound_file="" provider_file="" protocol_rule_file="" instance_outbound_rule_file=""
   local config_candidate="" backup_candidate="" generated_candidate="" baseline_file="${SB_PROJECT_DIR}/managed-config.generated.json" protocol
   local exit_cleanup_command effective_protocols
@@ -23188,8 +23150,20 @@ generate_config_candidate() {
 
   # Capture discovery before resource preparation; process substitution hides
   # its failure status and could otherwise publish an empty/partial config.
-  effective_protocols=$(list_effective_protocols "${inventory_state_file}") || return 1
-  [[ -n "${effective_protocols}" ]] || return 1
+  case "${allow_empty_protocols}" in
+    true)
+      # Only the installer may seed the old generated baseline after the
+      # final managed protocol was removed. Unmanaged live content remains
+      # outside that baseline and is preserved by the normal merge.
+      instance_management_empty_config_baseline || return 1
+      effective_protocols=""
+      ;;
+    false)
+      effective_protocols=$(list_effective_protocols "${inventory_state_file}") || return 1
+      [[ -n "${effective_protocols}" ]] || return 1
+      ;;
+    *) return 1 ;;
+  esac
   managed_components_json=$(managed_component_render_json) || {
     log_warn "高级组件状态无效，禁止生成可能丢失组件的配置。"
     return 1
@@ -23480,15 +23454,19 @@ ensure_existing_generated_config_baseline() {
   # Legacy removals need the old owned tags before changing any state. A
   # regular generation safely preserves extensions and records that baseline.
   [[ -f "${SINGBOX_CONFIG_FILE}" && ! -e "${SB_PROJECT_DIR}/managed-config.generated.json" ]] || return 0
-  run_with_progress "建立现有配置的生成基线（校验及备份）" generate_config
+  if instance_management_empty_config_baseline; then
+    run_with_progress "建立空协议配置的生成基线（校验及备份）" generate_config "" true
+  else
+    run_with_progress "建立现有配置的生成基线（校验及备份）" generate_config
+  fi
 }
 
 generate_config() {
-  local inventory_state_file=${1:-} snapshot_dir
+  local inventory_state_file=${1:-} allow_empty_protocols=${2:-false} snapshot_dir
 
   validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}" "${inventory_state_file}" || return 1
   snapshot_dir=$(create_managed_state_snapshot) || return 1
-  if ! (generate_config_candidate "${inventory_state_file}"); then
+  if ! (generate_config_candidate "${inventory_state_file}" "${allow_empty_protocols}"); then
     rollback_managed_state_snapshot "${snapshot_dir}" || true
     return 1
   fi
@@ -24366,9 +24344,14 @@ load_certificate_provider_from_config() {
 
 load_current_config_state() {
   local first_protocol
+  local empty_baseline=n
   local installed_protocols=()
 
-  migrate_legacy_single_protocol_state_if_needed
+  if [[ $# -ge 1 && -z "$1" ]] && instance_management_empty_config_baseline; then
+    empty_baseline=y
+  else
+    migrate_legacy_single_protocol_state_if_needed || return $?
+  fi
 
   if [[ ! -f "${SINGBOX_CONFIG_FILE}" && ! -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
     log_error "未找到配置文件，请先安装。"
@@ -24405,6 +24388,12 @@ load_current_config_state() {
       load_protocol_state "${first_protocol}"
       return 0
     fi
+  fi
+
+  if [[ "${empty_baseline}" == y ]]; then
+    SB_PROTOCOL=""
+    SB_PORT=""
+    return 0
   fi
 
   if [[ ! -f "${SINGBOX_CONFIG_FILE}" ]]; then
@@ -40428,14 +40417,25 @@ install_new_protocols_menu() {
   # preview is never an authorization to write: the complete health check
   # (including recovery/takeover dispatch) still runs after a selection.
   if [[ -x "${SINGBOX_BIN_PATH}" && -f "${SINGBOX_SERVICE_FILE}" &&
-        -f "${SINGBOX_CONFIG_FILE}" && -f "${SB_PROTOCOL_INDEX_FILE}" ]] &&
+        -f "${SINGBOX_CONFIG_FILE}" ]] &&
+     { [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]] || instance_management_empty_config_baseline; } &&
      validate_protocol_index_for_rebuild; then
-    installed_list=$(list_indexed_protocols_raw) || return 1
+    installed_list=""
+    if [[ -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
+      installed_list=$(list_indexed_protocols_raw) || return 1
+    fi
     prompt_protocol_install_selection additional "${installed_list}" || return 0
     preselected_protocols=${SELECTED_PROTOCOLS_CSV}
   fi
 
-  existing_instance_state=$(run_with_progress "检查现有实例的配置及状态" detect_existing_instance_state) || return $?
+  if [[ -x "${SINGBOX_BIN_PATH}" && -f "${SINGBOX_SERVICE_FILE}" ]] &&
+     instance_management_empty_config_baseline; then
+    run_with_progress "校验未配置协议的 sing-box 安装" validate_config_file || return $?
+    install_protocols_interactive additional "${preselected_protocols}"
+    return $?
+  fi
+
+  existing_instance_state=$(run_with_progress "检查 sing-box 安装状态" detect_existing_instance_state) || return $?
 
   case "${existing_instance_state}" in
     healthy)
