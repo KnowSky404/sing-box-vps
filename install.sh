@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026110103
+# Version: 2026110104
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026110103"
+readonly SCRIPT_VERSION="2026110104"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 # A single IPv6 wildcard socket accepts IPv4 and IPv6 in sing-box on Linux.
 readonly SB_DEFAULT_LISTEN_ADDRESS="::"
@@ -12512,9 +12512,20 @@ instance_firewall_prepare() {
           fi
           query_status=0
           instance_firewall_rule_query "${backend}" "${local_rule_family}" "${rule_transport}" "${rule_port}" "${local_rule_address}" "${comment}" 1 || query_status=$?
-          if [[ ${query_status} -ne 0 ]]; then
+          if [[ ${query_status} -eq 1 ]]; then
+            # The durable ledger can outlive kernel rules after a reboot or
+            # external flush. An absent rule is no longer owned live state:
+            # drop obsolete entries or plan a normal create for remaining
+            # listeners. Never delete an unmarked replacement or recreate a
+            # removed listener merely to satisfy the old ledger.
+            diagnostics=$(jq -c --arg backend "${backend}" \
+              '. + [{code:"owned_rule_missing",backend:$backend,severity:"warning"}]' <<< "${diagnostics}") || return 1
+            ledger_rule=null
+          elif [[ ${query_status} -ne 0 ]]; then
             instance_firewall_prepare_failure "${journal_file}" owned_rule_inspection_failed || :; return 1
           fi
+        fi
+        if [[ "${ledger_rule}" != null ]]; then
           ownership=owned
           [[ "${refs_after}" == '[]' ]] && action=delete
         elif [[ "${refs_after}" != '[]' ]]; then
@@ -33903,7 +33914,7 @@ instance_transaction_firewall_summary() {
     def backend: IN("ufw","firewalld","iptables","ip6tables");
     def code: IN("backend_unavailable","backend_external_managed","backend_conflict",
       "backend_inspection_failed","backend_mutation_failed","backend_mutation_unconfirmed","owned_backend_unavailable",
-      "owned_rule_inspection_failed","rule_inspection_failed","firewalld_owned_unsupported",
+      "owned_rule_inspection_failed","owned_rule_missing","rule_inspection_failed","firewalld_owned_unsupported",
       "firewalld_requires_manual_setup","invalid_old_plan","invalid_new_plan",
       "invalid_old_targets","invalid_new_targets","invalid_ledger","invalid_candidates",
       "ledger_persist_failed","ledger_restore_failed","compensation_failed","external_state_uncertain");
