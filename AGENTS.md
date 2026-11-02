@@ -109,7 +109,9 @@
 
 ## 5. 文件组织结构
 - `bootstrap.sh`: 远程安装/卸载入口；负责在私有临时目录中下载、校验并启动对应运行时脚本。
-- `install.sh`: 用户分发的一体化安装与管理脚本主入口，也是运行时单一真源。
+- `src/install/`: 安装器维护源码，按 `manifest.txt` 的固定顺序构建；各模块是源码片段，不独立执行或运行时下载。
+- `scripts/build-install.sh`: 仅拼接和校验源码，不执行模块；无参数原子生成根 `install.sh`，`--check` 只读检查产物是否同步。
+- `install.sh`: 由模块源码生成并提交的单文件运行时与用户分发入口；不要直接编辑。修改模块后运行 `bash scripts/build-install.sh`，提交前运行 `bash scripts/build-install.sh --check`，同时提交源码与产物。Bootstrap、自更新和全局 `sbv` 继续只使用此文件。
 - `uninstall.sh`: 独立卸载入口；彻底卸载服务、核心、配置和全局 `sbv`。
 - `docs/wiki/`: Wiki 页面单一维护源；安装、操作、协议、验证和开发说明均在此维护。
 - `docs/specs/`: 当前实现契约及中英文状态索引；实现、本地验证和真实服务验收分别记录。

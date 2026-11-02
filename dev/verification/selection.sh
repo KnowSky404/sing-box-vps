@@ -25,6 +25,7 @@ verification_list_groups() {
 
 verification_full_test_manifest() {
   cat <<'EOF_TESTS'
+tests/install_build.sh
 tests/sbv_update_transactions.sh
 tests/sbv_menu_reloads_updated_script.sh
 tests/bootstrap_download.sh

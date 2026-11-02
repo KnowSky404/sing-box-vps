@@ -18,6 +18,12 @@ assert_mode() {
 assert_mode local --changed-file README.md
 assert_mode local --changed-file SECURITY.md
 assert_mode local --changed-file AGENTS.md
+assert_mode local --changed-file scripts/build-install.sh
+assert_mode local --changed-file src/install/manifest.txt
+for source_file in "${REPO_ROOT}"/src/install/*.sh; do
+  assert_mode local --changed-file "${source_file#"${REPO_ROOT}/"}"
+  break
+done
 assert_mode local --changed-file tests/install_hy2_protocol_creates_state.sh
 assert_mode local --changed-file tests/mixed_active_state.sh
 assert_mode local --changed-file tests/mixed_instance_lifecycle.sh
