@@ -63,12 +63,8 @@ prompt_vless_reality_advanced_update_fields() {
   SB_VLESS_TCP_FAST_OPEN="n"
 }
 register_warp() {
-  cat > "${SB_WARP_KEY_FILE}" <<'EOF'
-WARP_PRIV_KEY=warp-private-key
-WARP_V4=172.16.0.2
-WARP_V6=2606:4700:110:8cde:1234:5678:90ab:cdef
-WARP_CLIENT_ID=hCaJ
-EOF
+  printf 'fresh node installation attempted WARP registration\n' >&2
+  return 98
 }
 refresh_warp_route_assets() {
   SB_WARP_CUSTOM_DOMAINS_JSON='[]'
@@ -127,8 +123,9 @@ if [[ "${link}" == *'[密钥丢失，请更新配置]'* ]]; then
   exit 1
 fi
 
-if ! jq -e '.endpoints[0].peers[0].reserved == [132, 38, 137]' "${SINGBOX_CONFIG_FILE}" >/dev/null; then
-  printf 'expected generated warp endpoint reserved bytes [132,38,137], got:\n%s\n' \
-    "$(jq '.endpoints[0].peers[0]' "${SINGBOX_CONFIG_FILE}")" >&2
+if ! jq -e '(.endpoints | length) == 0 and .route.final == "direct"' "${SINGBOX_CONFIG_FILE}" >/dev/null; then
+  printf 'fresh node installation unexpectedly configured a WARP endpoint\n' >&2
   exit 1
 fi
+[[ ! -e "${SB_WARP_KEY_FILE}" && ! -e "${SB_WARP_ROUTE_SETTINGS_FILE}" && ! -e "${SB_ROUTING_POLICY_FILE}" ]]
+printf 'Fresh REALITY install persists its public key without configuring WARP\n'

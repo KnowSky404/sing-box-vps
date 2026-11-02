@@ -179,18 +179,11 @@ jq -s -e 'length == 1 and .[0].uuid == "11111111-1111-4111-8111-111111111111"' "
 [[ ! -d "${SB_PROTOCOL_STATE_DIR}/vless-reality.d" ]]
 get_public_ip() { printf '127.0.0.1'; }
 reconcile_protocol_index_if_needed() { printf 'reconciliation called during render\n' >&2; return 49; }
-build_singbox_client_config > "${TMP_DIR}/legacy-client.json"
-jq -e '[.outbounds[] | select(.type == "vless")] | length == 1' "${TMP_DIR}/legacy-client.json" >/dev/null
-[[ "$(tree_hash)" == "${before_hash}" ]]
-[[ ! -d "${SB_PROTOCOL_STATE_DIR}/vless-reality.d" ]]
-if [[ -n "${SINGBOX_BINARY_114:-}" ]]; then
-  "${SINGBOX_BINARY_114}" check -c "${TMP_DIR}/legacy-client.json"
-fi
 cp "${SB_PROTOCOL_INDEX_FILE}" "${TMP_DIR}/canonical-index.env"
 printf '%s\n' 'INSTALLED_PROTOCOLS=vless,mixed,hysteria2,anytls' 'PROTOCOL_STATE_VERSION=1' > "${SB_PROTOCOL_INDEX_FILE}"
 [[ "$(list_installed_protocols_read_only)" == $'vless-reality\nmixed\nhy2\nanytls' ]]
 index_hash=$(sha256sum "${SB_PROTOCOL_INDEX_FILE}")
-build_singbox_client_config > "${TMP_DIR}/alias-client.json"
+build_client_vless_reality_outbounds 127.0.0.1 > "${TMP_DIR}/alias-outbounds.jsonl"
 [[ "$(sha256sum "${SB_PROTOCOL_INDEX_FILE}")" == "${index_hash}" ]]
 printf '%s\n' 'INSTALLED_PROTOCOLS=vless,vless-reality,mixed,hy2,anytls' 'PROTOCOL_STATE_VERSION=1' > "${SB_PROTOCOL_INDEX_FILE}"
 assert_rejected_without_output list_installed_protocols_read_only

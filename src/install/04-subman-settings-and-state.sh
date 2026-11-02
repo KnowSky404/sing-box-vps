@@ -472,18 +472,6 @@ list_installed_protocols() {
   list_indexed_protocols_raw
 }
 
-list_exportable_client_protocols() {
-  local protocol protocols
-
-  protocols=$(list_installed_protocols) || return 1
-  while IFS= read -r protocol; do
-    [[ -n "${protocol}" ]] || continue
-    if [[ "$(protocol_registry_field "${protocol}" client_export)" == "true" ]]; then
-      printf '%s\n' "${protocol}"
-    fi
-  done <<< "${protocols}"
-}
-
 save_vless_reality_state() {
   if [[ -z "${SB_UUID}" ]]; then
     SB_UUID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)

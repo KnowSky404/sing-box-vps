@@ -12,7 +12,7 @@ routing_draft_edit() {
     chmod 600 "${next}" && mv -f -- "${next}" "${draft}"
   else
     rm -f -- "${next}"
-    routing_notice WARN '设置无效或广告规则源为空，草稿未修改。'
+    routing_notice WARN '设置无效，草稿未修改。'
     return 1
   fi
 }
@@ -21,37 +21,36 @@ routing_boolean_label() {
   case "${1:-false}" in true) printf '%b开启%b' "${GREEN}" "${NC}" ;; *) printf '%b关闭%b' "${YELLOW}" "${NC}" ;; esac
 }
 
+routing_policy_needs_adoption() {
+  [[ ! -f "${SB_ROUTING_POLICY_FILE}" ]] ||
+    jq -e '.schema_version != 2' "${SB_ROUTING_POLICY_FILE}" >/dev/null
+}
+
 routing_policy_overview() {
-  local draft=$1 nodes policy
-  policy=$(jq -c '.policy' "${draft}") || return 1
+  local draft=$1 nodes
   nodes=$(routing_nodes_json) || return 1
-  render_left_aligned_page_header '规则与分流管理' '服务器策略与客户端导出偏好分别管理；修改先保存为草稿'
-  render_summary_item '服务器作用范围' '本 VPS 中脚本管理的代理节点'
+  render_left_aligned_page_header '网络与分流' '只管理本 VPS 的服务端网络策略；修改先保存为草稿'
+  render_summary_item 'Block CN' "$(routing_boolean_label "$(jq -r '.policy.server.block_cn' "${draft}")")"
   render_summary_item '默认出口（草稿）' "$(jq -r 'if .warp.enabled then (if .warp.mode=="all" then "WARP 全量" else "原生默认 + WARP 选择性分流" end) else "原生出口" end' "${draft}")"
-  render_summary_item '全局 WARP 分流' "$(routing_boolean_label "$(jq -r '.warp.enabled' "${draft}")")"
-  render_summary_item '服务器私网地址控制' "$(routing_boolean_label "$(jq -r '.server.private_network_block' <<< "${policy}")")"
-  render_summary_item '服务器广告拦截' "$(routing_boolean_label "$(jq -r '.server.adblock' <<< "${policy}")")"
-  render_summary_item '客户端导出' "$(jq -r '"LAN直连="+(.client.lan_direct|tostring)+" / CN直连="+(.client.cn_direct|tostring)+" / 广告="+(.client.adblock|tostring)' <<< "${policy}")"
-  render_summary_item '现有独立出口节点数' "$(jq '[.[]|select(.policy!="default")]|length' <<< "${nodes}")"
-  render_summary_item '草稿中的节点策略修改' "$(jq '.node_overrides|length' "${draft}")"
-  render_summary_item '自定义规则 / 规则源' "$(jq -r '(.server.rules|length|tostring)+" / "+(.server.rule_sets|length|tostring)' <<< "${policy}")"
+  render_summary_item 'AI / 流媒体走 WARP' "$(jq -r '(.policy.server.warp_ai|tostring)+" / "+(.policy.server.warp_streaming|tostring)' "${draft}")"
+  render_summary_item '独立出口节点 / 待修改' "$(jq '[.[]|select(.policy!="default")]|length' <<< "${nodes}") / $(jq '.node_overrides|length' "${draft}")"
+  if routing_policy_needs_adoption; then
+    echo '应用时启用当前服务端策略格式，并清理脚本原先生成的广告与私网限制；取消不会修改现有配置。'
+  fi
   if jq -e '.warp.reregister' "${draft}" >/dev/null; then
     routing_notice WARN '应用时将重新注册 WARP；文件回滚不能撤销已发送的云端注册。'
   fi
-  echo '默认出口使用原生时，独立节点或自定义规则仍可能需要 WARP。'
-  echo '广告过滤依赖可识别的目标域名；白名单只排除广告拒绝。'
-  echo '客户端设置只影响重新导出的完整配置，普通分享链接不携带规则。'
 }
 
 routing_policy_preview() {
   local draft=$1
   routing_draft_validate "${draft}" || return 1
   routing_policy_overview "${draft}" || return 1
-  echo '受管规则顺序：嗅探/必要处理 → 私网控制 → 广告 → 节点独立出口 → 自定义 → 预设 → 默认。'
+  echo '受管规则顺序：嗅探 → Block CN（域名、解析、IP）→ 节点出口 → 自定义 → AI / 流媒体 → 默认出口。'
   jq -r '.policy.server.rules[] | "规则: \(.id) [\(.kind)] → \(.action) / enabled=\(.enabled)"' "${draft}"
   jq -r '.policy.server.rule_sets[] | "规则源: \(.tag) [\(.type),\(.format)] → \(.action) / enabled=\(.enabled)"' "${draft}"
   jq -r '.node_overrides[] | "节点出口: \(.protocol)/\(.id) → \(.policy)"' "${draft}"
-  echo '规则源 URL、账户密钥和节点凭据不在预览中展示。应用时再执行完整配置与服务检查。'
+  echo '规则源 URL、账户密钥和节点凭据不在预览中展示。应用时执行完整配置与服务检查。'
 }
 
 routing_default_outbound_menu() {
@@ -62,14 +61,20 @@ routing_default_outbound_menu() {
     render_menu_item 2 '原生默认，AI / 流媒体及自定义选择性使用 WARP'
     render_menu_item 3 '默认全部代理流量使用 WARP'
     render_menu_item 4 '设置 / 取消应用时重新注册 WARP 账户'
+    render_menu_item 5 '节点出口设置（跟随全局 / 原生 / WARP）'
+    render_menu_item 6 '高级：自定义服务端域名 / IP 分流'
+    render_menu_item 7 '高级：WARP 规则源与既有资产'
     echo '0. 返回'
-    choice=$(prompt_choice '请选择 [0-4]: ' 0 4 '') || return 0
+    choice=$(prompt_choice '请选择 [0-7]: ' 0 7 '') || return 0
     case "${choice}" in
       0) return ;;
       1) routing_draft_edit "${draft}" '.warp.enabled=false' || return 1 ;;
       2) routing_draft_edit "${draft}" '.warp.enabled=true | .warp.mode="selective"' || return 1 ;;
       3) routing_draft_edit "${draft}" '.warp.enabled=true | .warp.mode="all"' || return 1 ;;
       4) routing_draft_edit "${draft}" '.warp.reregister |= not' || return 1 ;;
+      5) routing_node_policy_menu "${draft}" || return 1 ;;
+      6) routing_collection_menu "${draft}" rules || return 1 ;;
+      7) routing_sources_menu "${draft}" || return 1 ;;
     esac
   done
 }
@@ -184,47 +189,6 @@ routing_collection_menu() {
   done
 }
 
-routing_adblock_menu() {
-  local draft=$1 choice value index count
-  while true; do
-    render_left_aligned_page_header '广告拦截' '服务端与客户端分别开启；广告例外不改变原出口'
-    render_menu_item 1 '切换服务端广告拦截' '' "$(jq -r '.policy.server.adblock' "${draft}")"
-    render_menu_item 2 '切换客户端广告拦截' '' "$(jq -r '.policy.client.adblock' "${draft}")"
-    render_menu_item 3 '设置 HTTPS 广告源（输入 - 清空，仅用内嵌域名）'
-    render_menu_item 4 '添加自定义广告域名后缀'
-    render_menu_item 5 '删除自定义广告域名后缀'
-    render_menu_item 6 '添加广告例外域名后缀'
-    render_menu_item 7 '删除广告例外域名后缀'
-    echo '0. 返回'
-    choice=$(prompt_choice '请选择 [0-7]: ' 0 7 '') || return 0
-    case "${choice}" in
-      0) return ;;
-      1) routing_draft_edit "${draft}" '.policy.server.adblock |= not' || continue ;;
-      2) routing_draft_edit "${draft}" '.policy.client.adblock |= not' || continue ;;
-      3)
-        read -rp 'HTTPS URL（留空保留，- 清空）: ' value || return 0
-        [[ -n "${value}" ]] || continue
-        [[ "${value}" != - ]] || value=''
-        routing_draft_edit "${draft}" '.policy.adblock.url=$value' --arg value "${value}" || continue
-        ;;
-      4|6)
-        read -rp '域名后缀（不带协议或路径）: ' value || return 0
-        if [[ "${choice}" == 4 ]]; then value=${value,,}; index=domains; else value=${value,,}; index=allow; fi
-        routing_draft_edit "${draft}" '.policy.adblock[$list] += [$value]' --arg list "${index}" --arg value "${value}" || continue
-        ;;
-      5|7)
-        if [[ "${choice}" == 5 ]]; then value=domains; else value=allow; fi
-        jq -r --arg list "${value}" '.policy.adblock[$list]|to_entries[]|"\(.key+1). \(.value)"' "${draft}"
-        count=$(jq --arg list "${value}" '.policy.adblock[$list]|length' "${draft}") || return 1
-        [[ "${count}" -gt 0 ]] || continue
-        index=$(prompt_choice '删除第几项（0 取消）: ' 0 "${count}" '') || return 0
-        [[ "${index}" != 0 ]] || continue
-        routing_draft_edit "${draft}" 'del(.policy.adblock[$list][$index])' --arg list "${value}" --argjson index "$((index-1))" || continue
-        ;;
-    esac
-  done
-}
-
 routing_node_policy_menu() {
   local draft=$1 nodes count index node protocol id policy revision choice
   nodes=$(routing_nodes_json) || return 1
@@ -245,24 +209,6 @@ routing_node_policy_menu() {
   routing_draft_edit "${draft}" '.node_overrides |= map(select(.protocol!=$p or .id!=$id)) |
     if $policy==$old then . else .node_overrides += [{protocol:$p,id:$id,policy:$policy,revision:$revision}] end' \
     --arg p "${protocol}" --arg id "${id}" --arg policy "${policy}" --arg old "$(jq -r '.policy' <<< "${node}")" --argjson revision "${revision}"
-}
-
-routing_client_menu() {
-  local draft=$1 choice
-  while true; do
-    render_left_aligned_page_header '客户端绕行规则' '只影响下一次导出的完整客户端配置'
-    render_menu_item 1 '切换局域网直连' '' "$(jq -r '.policy.client.lan_direct' "${draft}")"
-    render_menu_item 2 '切换国内域名 / IP 直连' '' "$(jq -r '.policy.client.cn_direct' "${draft}")"
-    render_menu_item 3 '切换客户端广告拦截' '' "$(jq -r '.policy.client.adblock' "${draft}")"
-    echo '0. 返回'
-    choice=$(prompt_choice '请选择 [0-3]: ' 0 3 '') || return 0
-    case "${choice}" in
-      0) return ;;
-      1) routing_draft_edit "${draft}" '.policy.client.lan_direct |= not' || continue ;;
-      2) routing_draft_edit "${draft}" '.policy.client.cn_direct |= not' || continue ;;
-      3) routing_draft_edit "${draft}" '.policy.client.adblock |= not' || continue ;;
-    esac
-  done
 }
 
 routing_legacy_assets_menu() {
@@ -328,18 +274,13 @@ routing_management_menu() (
   while true; do
     routing_policy_overview "${draft}" || return 1
     if cmp -s "${draft}" "${original}"; then echo '草稿状态: 无修改'; else echo '草稿状态: 有待应用修改'; fi
-    render_menu_item 1 '查看策略、规则顺序与作用范围'
-    render_menu_item 2 '默认出口与 WARP 管理'
-    render_menu_item 3 'AI / 流媒体分流'
-    render_menu_item 4 '自定义域名与 IP 规则'
-    render_menu_item 5 '广告拦截'
-    render_menu_item 6 '切换服务端私网地址访问控制'
-    render_menu_item 7 '节点独立出口策略'
-    render_menu_item 8 '客户端绕行规则（导出设置）'
-    render_menu_item 9 '本地 / 远程规则源管理'
-    render_menu_item 10 '预览、应用与恢复'
+    render_menu_item 1 'Block CN 开关（中国大陆域名与 IP）'
+    render_menu_item 2 'WARP 开关与节点出口设置'
+    render_menu_item 3 'AI / 流媒体设置'
+    render_menu_item 4 '流媒体与出口检测'
+    render_menu_item 5 '预览、应用与恢复'
     echo '0. 返回主菜单'
-    choice=$(prompt_choice '请选择 [0-10]: ' 0 10 '') || return 0
+    choice=$(prompt_choice '请选择 [0-5]: ' 0 5 '') || return 0
     case "${choice}" in
       0)
         if ! cmp -s "${draft}" "${original}"; then
@@ -347,22 +288,17 @@ routing_management_menu() (
         fi
         return 0
         ;;
-      1) routing_policy_preview "${draft}" || return 1 ;;
+      1) routing_draft_edit "${draft}" '.policy.server.block_cn |= not' || continue ;;
       2) routing_default_outbound_menu "${draft}" || return 1 ;;
       3) routing_presets_menu "${draft}" || return 1 ;;
-      4) routing_collection_menu "${draft}" rules || return 1 ;;
-      5) routing_adblock_menu "${draft}" || return 1 ;;
-      6) routing_draft_edit "${draft}" '.policy.server.private_network_block |= not' || continue ;;
-      7) routing_node_policy_menu "${draft}" || continue ;;
-      8) routing_client_menu "${draft}" || return 1 ;;
-      9) routing_sources_menu "${draft}" || return 1 ;;
-      10)
+      4) media_check_menu || routing_notice WARN '检测未完成，草稿和服务策略未修改。' ;;
+      5)
         routing_policy_preview "${draft}" || return 1
         echo '1. 应用草稿  2. 恢复上次应用前的配置  0. 返回'
         choice=$(prompt_choice '请选择 [0-2]: ' 0 2 '') || return 0
         case "${choice}" in
           1)
-            if cmp -s "${draft}" "${original}"; then routing_notice INFO '没有待应用的修改。'; continue; fi
+            if cmp -s "${draft}" "${original}" && ! routing_policy_needs_adoption; then routing_notice INFO '没有待应用的修改。'; continue; fi
             [[ "$(prompt_yes_no '应用全部草稿并检查服务 [y/n]（默认 n）: ' n)" == y ]] || continue
             routing_policy_apply "${draft}" || continue
             ;;

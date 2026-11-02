@@ -52,14 +52,14 @@ jq -n --arg cert "${TMP_DIR}/vless.crt" --arg key "${TMP_DIR}/vless.key" '
 chmod 600 "${SB_PROTOCOL_STATE_DIR}/vless-plain.env" "${SB_PROTOCOL_STATE_DIR}/instances/vless-plain.json"
 
 rendered=$(render_structured_instance_inbounds vless-plain "${SB_PROTOCOL_STATE_DIR}/instances/vless-plain.json" | jq -s .)
-jq --argjson inbounds "${rendered}" '{log:{disabled:true},inbounds:$inbounds,outbounds:[{type:"direct",tag:"direct"},{type:"direct",tag:"warp-ep"}],route:{final:"direct"}}' \
+jq -n --argjson inbounds "${rendered}" '{log:{disabled:true},inbounds:$inbounds,outbounds:[{type:"direct",tag:"direct"},{type:"direct",tag:"warp-ep"}],route:{final:"direct"}}' \
   > "${SINGBOX_CONFIG_FILE}"
 
 load_plain_proxy_structured_instance vless-plain public
 summary=$(agent_vless_plain_node_json 203.0.113.44)
 jq -e '.protocol=="vless-plain" and .instance_id=="public" and .user_count==2 and .tls_enabled==true and
   .client_trust=="system" and .transport_type=="ws" and .outbound_policy=="direct" and
-  .client_exportable==true and .shareable==true' <<< "${summary}" >/dev/null
+  (has("client_exportable")|not) and .shareable==true' <<< "${summary}" >/dev/null
 links=$(agent_vless_plain_link_json 203.0.113.44)
 jq -e '.protocol=="vless-plain" and (.links|length)==2 and (.outbounds|length)==2 and
 all(.links[]; startswith("vless://")) and
@@ -70,12 +70,6 @@ all(.links[]; startswith("vless://")) and
 
 one_link=$(jq -r '.links | to_entries[0].value' <<< "${links}")
 [[ "${one_link}" == vless://*"encryption=none"*"type=ws"*"security=tls"*"sni=vless-agent.example"*"path=%2Fvless"*"host=vless-agent.example"* ]]
-
-exported=$(agent_cli export-client --json)
-jq -e '.ok==true and .command=="export-client" and
-  ([.data.config.outbounds[]|select(.type=="vless")]|length)==3 and
-  all(.data.config.outbounds[]|select(.type=="vless"); (.server|type)=="string" and length>0) and
-  (tostring|contains("private key fixture")|not)' <<< "${exported}" >/dev/null
 
 # A revision changing between the two snapshots must not produce mixed links.
 original_snapshot=$(declare -f structured_instance_store_snapshot_json)
@@ -94,4 +88,4 @@ fi
 [[ ! -s "${TMP_DIR}/drift.out" ]]
 eval "$(declare -f original_vless_snapshot | sed '1s/^original_vless_snapshot /structured_instance_store_snapshot_json /')"
 
-printf 'VLESS Agent/share checks passed: links=2 export-outbounds=3\n'
+printf 'VLESS Agent/share checks passed: links=2 node-material=retained\n'

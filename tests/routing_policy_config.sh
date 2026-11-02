@@ -17,18 +17,45 @@ policy_file=$(routing_policy_file_path)
 policy=$(routing_policy_read_json)
 routing_policy_validate_json "${policy}"
 [[ ! -e "${policy_file}" ]] || fail 'reading defaults created policy state'
-jq -e '.server.private_network_block and (.server.adblock | not) and .client.lan_direct and .client.cn_direct' <<< "${policy}" >/dev/null
+jq -e '.schema_version==2 and (.server.block_cn|not) and (has("client")|not) and (has("adblock")|not)' <<< "${policy}" >/dev/null
+
+# Current policy renders only server-side China protection, scoped to managed
+# listener tags and placed before any per-node or custom outbound decision.
+blocked=$(jq -c '.server.block_cn=true | .server.rules=[
+  {id:"force-native",kind:"domain_suffix",value:"fixture.invalid",action:"direct",enabled:true}]' <<< "${policy}")
+rendered=$(routing_policy_render_server_json "${blocked}" '["node-a","node-b"]')
+jq -e '.rule_sets|length==2' <<< "${rendered}" >/dev/null
+jq -e '.protection_rules == [
+  {inbound:["node-a","node-b"],rule_set:["sbv-block-geosite-cn"],action:"reject"},
+  {inbound:["node-a","node-b"],action:"resolve",server:"local-dns"},
+  {inbound:["node-a","node-b"],rule_set:["sbv-block-geoip-cn"],action:"reject"}] and
+  .rules[3].outbound=="direct" and all(.rule_sets[];
+    .http_client.detour=="direct" and .format=="binary" and .update_interval=="1d" and
+    (.url|startswith("https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/"))) and
+  all(.rules[]; (has("ip_is_private")|not))' <<< "${rendered}" >/dev/null
+routing_policy_render_server_json "${blocked}" '[]' |
+  jq -e '.rules==[] and .rule_sets==[]' >/dev/null
+if [[ -n "${ROUTING_POLICY_TEST_REAL_CORE:-}" ]]; then
+  jq -n --argjson rendered "${rendered}" '{
+    dns:{servers:[{type:"local",tag:"local-dns"}]},
+    inbounds:[{type:"mixed",tag:"node-a",listen:"127.0.0.1",listen_port:14301},
+      {type:"mixed",tag:"node-b",listen:"127.0.0.1",listen_port:14302}],
+    outbounds:[{type:"direct",tag:"direct"}],
+    route:{rules:$rendered.rules,rule_set:$rendered.rule_sets,final:"direct",default_domain_resolver:"local-dns"}}
+  ' > "${TMP_DIR}/block-cn.json"
+  "${ROUTING_POLICY_TEST_REAL_CORE}" check -c "${TMP_DIR}/block-cn.json"
+fi
 
 # Fresh prompts must not require jq or silently enable external WARP setup.
 jq() { return 91; }
 routing_policy_prepare_install_defaults
-[[ "${SB_ADVANCED_ROUTE}:${SB_ENABLE_WARP}:${SB_OUTBOUND_POLICY}" == y:n:default ]]
+[[ "${SB_ADVANCED_ROUTE}:${SB_ENABLE_WARP}:${SB_OUTBOUND_POLICY}" == n:n:default ]]
 unset -f jq
 
 # A historical ads marker is not evidence of actual private-address protection.
 printf '%s\n' '{"route":{"rules":[{"geosite":"category-ads-all","action":"reject"}]}}' > "${SINGBOX_CONFIG_FILE}"
 inferred=$(routing_policy_read_json)
-jq -e '(.server.private_network_block | not) and (.server.adblock | not)' <<< "${inferred}" >/dev/null
+jq -e '.schema_version==2 and (.server.block_cn | not)' <<< "${inferred}" >/dev/null
 rm "${SINGBOX_CONFIG_FILE}"
 
 for mutation in \
@@ -48,14 +75,17 @@ ln -s "${TMP_DIR}/outside-policy.json" "${policy_file}"
 if routing_policy_read_json >/dev/null 2>&1; then fail 'symlinked policy accepted'; fi
 rm "${policy_file}"
 
+# Existing v1 files remain readable without changing their active protections.
+policy=$(jq -cn '{schema_version:1,
+ server:{private_network_block:true,adblock:false,warp_ai:true,warp_streaming:true,rules:[],rule_sets:[]},
+ client:{lan_direct:true,cn_direct:true,adblock:false},adblock:{url:"",domains:[],allow:[]}}')
+legacy_policy=${policy}
 policy=$(jq -c '.server.adblock=true | .adblock.url="" | .adblock.domains=["ads.example","tracking.example"] | .adblock.allow=["allow.ads.example"]' <<< "${policy}")
-ads=$(routing_policy_adblock_json "${policy}" server)
+ads=$(routing_policy_legacy_adblock_json "${policy}")
 jq -e '.rule_sets[0].tag == "sbv-adblock-inline" and
   .rules[0].type == "logical" and .rules[0].mode == "and" and
   .rules[0].rules[1].invert == true and .rules[0].action == "reject" and
   all(.rules[]; (.outbound // "") != "direct")' <<< "${ads}" >/dev/null
-client_ads=$(routing_policy_adblock_json "${policy}" client)
-jq -e '.rules == [] and .rule_sets == []' <<< "${client_ads}" >/dev/null
 
 cat > "${TMP_DIR}/bin/sing-box" <<'EOF'
 #!/usr/bin/env bash
@@ -147,6 +177,9 @@ WARP_V6=2606:4700:110:876a::2
 WARP_CLIENT_ID=AAAA
 EOF
 }
+# Existing prepared credentials are read by generation; provider registration
+# is owned exclusively by explicit network application.
+register_warp
 
 routing_policy_component_precedence_test() (
   local workspace base_state state rules action target before cases='[]' name fresh_policy
@@ -156,7 +189,7 @@ routing_policy_component_precedence_test() (
   trap 'rm -rf -- "${SB_PROJECT_DIR}"; mv -- "${workspace}/original-project" "${SB_PROJECT_DIR}"; rm -rf -- "${workspace}"' EXIT
   rm -rf -- "${SB_PROJECT_DIR}"
   mkdir -p -- "${SB_PROJECT_DIR}"
-  fresh_policy=$(routing_policy_read_json)
+  fresh_policy=${legacy_policy}
   printf '%s\n' "${fresh_policy}" > "${policy_file}"
   chmod 600 "${policy_file}"
   base_state=$(managed_component_state_default_json | jq -c '.components=[
@@ -505,7 +538,7 @@ while IFS= read -r manual_rule; do
     }
     printf '[Service]\nExecStart=fixture\n' > "${SINGBOX_SERVICE_FILE}"
     routing_draft_create "${TMP_DIR}/scope-draft.json"
-    jq '.policy.server.adblock=false' "${TMP_DIR}/scope-draft.json" > "${TMP_DIR}/scope-edit.json"
+    jq '.policy.server.block_cn=true' "${TMP_DIR}/scope-draft.json" > "${TMP_DIR}/scope-edit.json"
     before=$(routing_state_fingerprint)
     if routing_policy_apply "${TMP_DIR}/scope-edit.json" > "${TMP_DIR}/scope-apply.out" 2> "${TMP_DIR}/scope-apply.err"; then
       fail "draft apply accepted overlapping manual scope: ${manual_rule}"

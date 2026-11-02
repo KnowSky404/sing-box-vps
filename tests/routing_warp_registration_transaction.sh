@@ -53,9 +53,7 @@ systemctl() {
 run_with_progress() { shift; "$@"; }
 load_current_config_state() { :; }
 ensure_existing_generated_config_baseline() { :; }
-generate_config() { register_warp; }
-build_singbox_client_config() { printf '{}\n'; }
-validate_client_config_json() { :; }
+generate_config() { :; }
 
 cat > "${SINGBOX_BIN_PATH}" <<'CORE'
 #!/usr/bin/env bash
@@ -92,12 +90,11 @@ grep -Fq 'WARP_ID=fixture-id' "${SB_WARP_KEY_FILE}"
 jq -e '.phase=="committed" and (.warp_registration_deferred.receipt_sha256|length)==64' \
   "${SB_ROUTING_PREVIOUS_DIR}/transaction.json" >/dev/null
 
-# A client-only transaction has no custody over an unrelated unknown receipt.
+# An unchanged network transaction has no custody over an unrelated unknown receipt.
 printf '{"schema":1,"phase":"sent","private_key":"unrelated"}\n' > "${SB_WARP_REGISTRATION_PENDING_FILE}"
 chmod 600 "${SB_WARP_REGISTRATION_PENDING_FILE}"
 cp -p "${SB_WARP_REGISTRATION_PENDING_FILE}" "${TMP_DIR}/unknown-receipt"
 routing_draft_create "${TMP_DIR}/client.json"
-routing_draft_edit "${TMP_DIR}/client.json" '.policy.client.lan_direct |= not'
 routing_policy_apply "${TMP_DIR}/client.json" > "${TMP_DIR}/client.log" 2>&1
 cmp "${SB_WARP_REGISTRATION_PENDING_FILE}" "${TMP_DIR}/unknown-receipt"
 jq -e '.warp_registration_deferred==null and (.service_changed|not)' \

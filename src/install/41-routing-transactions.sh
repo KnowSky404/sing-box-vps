@@ -26,22 +26,6 @@ routing_managed_parent_is_safe() {
   return 1
 }
 
-routing_policy_seed_fresh_install() (
-  local policy candidate=''
-  if [[ -e "${SB_ROUTING_POLICY_FILE}" || -L "${SB_ROUTING_POLICY_FILE}" ]]; then
-    routing_policy_read_json >/dev/null
-    return $?
-  fi
-  case "${SB_ADVANCED_ROUTE}" in y|n) ;; *) return 1 ;; esac
-  umask 077
-  policy=$(routing_policy_read_json) || return 1
-  candidate=$(mktemp "${SB_PROJECT_DIR}/.routing-initial.XXXXXX") || return 1
-  trap 'rm -f -- "${candidate}"' EXIT
-  jq --arg private "${SB_ADVANCED_ROUTE}" '.server.private_network_block=($private=="y")' <<< "${policy}" > "${candidate}" || return 1
-  routing_policy_validate_json "$(cat "${candidate}")" || return 1
-  routing_publish_file "${candidate}" "${SB_ROUTING_POLICY_FILE}"
-)
-
 routing_path_is_managed() {
   local path=$1 relative protocol id
   relative=${path#"${SB_PROJECT_DIR}/"}
@@ -190,7 +174,7 @@ routing_draft_validate() {
         (.policy|IN("default","direct","warp")) and
         (.revision|type=="number" and floor==. and .>=0 and .<=9007199254740990)))
   ' "${file}" >/dev/null || return 1
-  policy=$(jq -c '.policy' "${file}") || return 1
+  policy=$(jq -c '.policy | select(.schema_version == 2)' "${file}") || return 1
   routing_policy_validate_json "${policy}"
 }
 
@@ -199,6 +183,7 @@ routing_draft_create() {
   [[ ! -L "${file}" ]] || return 1
   before=$(routing_state_fingerprint) || return 1
   policy=$(routing_policy_read_json) || return 1
+  policy=$(routing_policy_current_json "${policy}") || return 1
   domains=$(routing_asset_text_json "${SB_WARP_DOMAINS_FILE}") || return 1
   sources=$(routing_asset_text_json "${SB_WARP_REMOTE_RULESETS_FILE}") || return 1
   if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
@@ -419,8 +404,8 @@ routing_policy_recover() {
 
 routing_transaction_run() (
   local operation=$1 draft=${2:-} directory="${SB_ROUTING_TRANSACTION_DIR}"
-  local expected fingerprint external_fingerprint before_active policy previous_policy client_changed=false server_changed=true
-  local committed=n finished=n candidate=''
+  local expected fingerprint external_fingerprint before_active policy previous_policy server_changed=true
+  local committed=n finished=n candidate='' warp_activation_requested=false current_nodes='[]'
   local SB_ROUTING_DEFER_WARP_RECEIPT=n
   local SB_ROUTING_JOURNAL_LEGACY_BACKUP=n
   umask 077
@@ -443,15 +428,28 @@ routing_transaction_run() (
       [[ "${expected}" == "${fingerprint}" ]] || { routing_error '配置已在会话外变化，请重新载入草稿。'; return 1; }
       previous_policy=$(routing_policy_read_json) || return 1
       policy=$(jq -c '.policy' "${draft}") || return 1
-      client_changed=$(jq -n --argjson old "${previous_policy}" --argjson new "${policy}" \
-        '$old.client != $new.client or (($old.client.adblock or $new.client.adblock) and $old.adblock != $new.adblock)') || return 1
+      # A Block CN or preset edit does not authorize WARP account repair.
+      # Prepare credentials only for an explicit new WARP dependency/mode or
+      # re-registration request. Existing dependencies use read-only material.
+      if jq -e 'any(.node_overrides[]; .policy == "warp")' "${draft}" >/dev/null; then
+        current_nodes=$(routing_nodes_json) || return 1
+      fi
+      warp_activation_requested=$(jq -r --argjson old "${previous_policy}" --argjson nodes "${current_nodes}" \
+        --argjson enabled "$(config_has_warp_enabled "${SINGBOX_CONFIG_FILE}" && printf true || printf false)" \
+        --arg mode "$(load_warp_route_settings && printf '%s' "${SB_WARP_ROUTE_MODE}")" '
+        [($old.server.rules + $old.server.rule_sets)[] | select(.enabled and .action == "warp")] as $old_dependencies |
+        .warp.reregister or (.warp.enabled and (($enabled | not) or .warp.mode != $mode)) or
+        any(.node_overrides[]; . as $change | .policy == "warp" and
+          ([$nodes[] | select(.protocol == $change.protocol and .id == $change.id)][0].policy != "warp")) or
+        any((.policy.server.rules + .policy.server.rule_sets)[]; . as $dependency |
+          .enabled and .action == "warp" and ($old_dependencies | index($dependency)) == null)
+      ' "${draft}") || return 1
       if [[ -f "${SB_ROUTING_POLICY_FILE}" ]] &&
          jq -e --argjson old "${previous_policy}" --argjson enabled "$(config_has_warp_enabled "${SINGBOX_CONFIG_FILE}" && printf true || printf false)" \
            --arg mode "$(load_warp_route_settings && printf '%s' "${SB_WARP_ROUTE_MODE}")" \
            --argjson domains "$(routing_asset_text_json "${SB_WARP_DOMAINS_FILE}")" \
            --argjson sources "$(routing_asset_text_json "${SB_WARP_REMOTE_RULESETS_FILE}")" \
-           '.policy.server==$old.server and
-             ((.policy.server.adblock or $old.server.adblock | not) or .policy.adblock==$old.adblock) and
+           '.policy==$old and
              .warp.enabled==$enabled and .warp.mode==$mode and (.warp.reregister|not) and
              .node_overrides==[] and .legacy_domains==$domains and .legacy_sources==$sources' \
            "${draft}" >/dev/null; then
@@ -485,7 +483,7 @@ routing_transaction_run() (
         printf '[ERROR] 规则回滚未完成；恢复材料保留在 %s。\n' "${directory}" >&2
       fi
     elif [[ "${finished}" != y ]]; then
-      printf '[WARN] 规则已提交，恢复材料整理未完成；请从菜单 13 恢复。\n' >&2
+      printf '[WARN] 规则已提交，恢复材料整理未完成；请从菜单 12 恢复。\n' >&2
     fi
     [[ "${result}" -ne 0 || "${finished}" == y ]] || result=1
     exit "${result}"
@@ -512,13 +510,19 @@ routing_transaction_run() (
     routing_publish_file "${directory}/policy.json" "${SB_ROUTING_POLICY_FILE}" || return 1
     if [[ "${server_changed}" == true ]]; then
       jq -rj '.legacy_domains' "${draft}" > "${directory}/domains.txt" || return 1
-      routing_publish_file "${directory}/domains.txt" "${SB_WARP_DOMAINS_FILE}" || return 1
+      if [[ -e "${SB_WARP_DOMAINS_FILE}" || -s "${directory}/domains.txt" ]]; then
+        routing_publish_file "${directory}/domains.txt" "${SB_WARP_DOMAINS_FILE}" || return 1
+      fi
       jq -rj '.legacy_sources' "${draft}" > "${directory}/sources.txt" || return 1
-      routing_publish_file "${directory}/sources.txt" "${SB_WARP_REMOTE_RULESETS_FILE}" || return 1
+      if [[ -e "${SB_WARP_REMOTE_RULESETS_FILE}" || -s "${directory}/sources.txt" ]]; then
+        routing_publish_file "${directory}/sources.txt" "${SB_WARP_REMOTE_RULESETS_FILE}" || return 1
+      fi
       SB_ENABLE_WARP=$(jq -r 'if .warp.enabled then "y" else "n" end' "${draft}") || return 1
       SB_WARP_ROUTE_MODE=$(jq -r '.warp.mode' "${draft}") || return 1
       printf 'WARP_ROUTE_MODE=%s\nWARP_ENABLED=%s\n' "${SB_WARP_ROUTE_MODE}" "${SB_ENABLE_WARP}" > "${directory}/warp.env" || return 1
-      routing_publish_file "${directory}/warp.env" "${SB_WARP_ROUTE_SETTINGS_FILE}" || return 1
+      if [[ -e "${SB_WARP_ROUTE_SETTINGS_FILE}" || "${SB_ENABLE_WARP}" == y ]]; then
+        routing_publish_file "${directory}/warp.env" "${SB_WARP_ROUTE_SETTINGS_FILE}" || return 1
+      fi
       routing_apply_node_overrides "${draft}" "${directory}" || return 1
       if jq -e '.warp.reregister' "${draft}" >/dev/null; then
         if [[ "${SB_ENABLE_WARP}" != y ]] && ! instance_outbound_requires_warp && ! routing_policy_requires_warp "${policy}"; then
@@ -527,12 +531,15 @@ routing_transaction_run() (
         [[ ! -L "${SB_WARP_KEY_FILE}" ]] || return 1
         rm -f -- "${SB_WARP_KEY_FILE}" || return 1
       fi
+      # Network activation owns account/asset preparation. Node and component
+      # generation only consumes already prepared settings and credentials.
+      if [[ "${warp_activation_requested}" == true ]]; then
+        ensure_warp_routing_assets || return 1
+        register_warp || return 1
+      fi
       generate_config || return 1
     fi
-    if [[ "${client_changed}" == true ]]; then
-      candidate=$(build_singbox_client_config "${policy}") || return 1
-      validate_client_config_json "${candidate}" || return 1
-    fi
+
   fi
   routing_transaction_checkpoint publish || return 1
   if [[ "${before_active}" == true && "${server_changed}" == true ]]; then

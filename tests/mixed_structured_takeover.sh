@@ -27,6 +27,17 @@ cat > "$SINGBOX_CONFIG_FILE" <<'EOF'
 }
 EOF
 
+# An existing legacy inventory does not own arbitrary same-protocol tags.
+# Check that refusal first, then exercise explicit unindexed takeover.
+legacy_state_hash=$(sha256sum "$SB_PROTOCOL_STATE_DIR/mixed.env")
+legacy_index_hash=$(sha256sum "$SB_PROTOCOL_INDEX_FILE")
+if mixed_config_store_candidate > "$TMP_DIR/unowned-candidate.json" 2> "$TMP_DIR/unowned-candidate.stderr"; then
+  printf 'expected indexed legacy Mixed state to leave the custom listener unmanaged\n' >&2
+  exit 1
+fi
+[[ "$(sha256sum "$SB_PROTOCOL_STATE_DIR/mixed.env")" == "$legacy_state_hash" ]]
+[[ "$(sha256sum "$SB_PROTOCOL_INDEX_FILE")" == "$legacy_index_hash" ]]
+rm -- "$SB_PROTOCOL_INDEX_FILE"
 mixed_config_store_candidate > "$TMP_DIR/legacy-candidate.json"
 jq -e --arg name "$legacy_name" '
   .revision == 1 and .default_instance_id == "main" and
@@ -108,6 +119,9 @@ cat > "$SINGBOX_CONFIG_FILE" <<'EOF'
 }
 EOF
 
+# This is a new explicit import, rather than permission for a legacy index to
+# claim unrelated custom Mixed listeners by protocol alone.
+rm -- "$SB_PROTOCOL_INDEX_FILE"
 mixed_config_store_candidate > "$TMP_DIR/candidate.json"
 validate_structured_instance_store mixed "$TMP_DIR/candidate.json"
 jq -e '

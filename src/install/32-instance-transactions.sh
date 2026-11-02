@@ -95,7 +95,7 @@ managed_write_rules_barrier() {
   local rules_recovery=${1:-}
   if [[ ( -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ) &&
         "${rules_recovery}" != allow-rules-recovery ]]; then
-    printf '[ERROR] 存在未完成的规则事务；请先通过菜单 13 恢复。\n' >&2
+    printf '[ERROR] 存在未完成的规则事务；请先通过菜单 12 恢复。\n' >&2
     return 1
   fi
 }

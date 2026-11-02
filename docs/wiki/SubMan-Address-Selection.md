@@ -85,7 +85,7 @@ HY2 使用同一套监听和地址族选择规则，不再通过通用“IPv4 �
 
 ## 验证边界
 
-按 [AGENTS.md 第 4.2 节](https://github.com/KnowSky404/sing-box-vps/blob/main/AGENTS.md#42-测试边界与执行策略) 选择最小充分集合：公网 IP 探测的隔离测试、地址选择矩阵、受影响协议的 payload 与同步编排、SubMan API mock、语法、文档链接及版本一致性。修改配置生成或客户端导出内容时，对受影响输出执行 `sing-box check`；只有实际改变监听、网络或生命周期时才追加对应真实 Docker 场景。
+按 [AGENTS.md 第 4.2 节](https://github.com/KnowSky404/sing-box-vps/blob/main/AGENTS.md#42-测试边界与执行策略) 选择最小充分集合：公网 IP 探测的隔离测试、地址选择矩阵、受影响协议的 payload 与同步编排、SubMan API mock、语法、文档链接及版本一致性。修改配置生成或节点连接材料时，对受影响输出执行 `sing-box check`；只有实际改变监听、网络或生命周期时才追加对应真实 Docker 场景。
 
 本地 mock、配置检查、隔离 Docker、真实 SubMan、公网链路和生产验收分别记录。此规范不是对真实 VPS 或 SubMan 数据的验收报告，也不以创建 PR 或更新版本为理由要求全量协议回归。
 

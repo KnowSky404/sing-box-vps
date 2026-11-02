@@ -46,7 +46,7 @@ EOF
   jq -e --argjson port "${expected_port}" '
     .protocol=="vmess" and .revision==1 and (.instances|length)==1 and
     .instances[0].id=="main" and .instances[0].tag=="vmess-in" and
-    .instances[0].listen=={address:"127.0.0.1",port:$port} and
+    .instances[0].listen=={address:"::",port:$port} and
     (.instances[0].authentication.users|length)==2 and
     all(.instances[0].authentication.users[];
       (.name|type=="string" and length>0) and
@@ -60,7 +60,7 @@ EOF
   ' "${store_file}" >/dev/null
   jq -e --argjson port "${expected_port}" '
     (.inbounds|length)==1 and .inbounds[0].type=="vmess" and
-    .inbounds[0].listen=="127.0.0.1" and .inbounds[0].listen_port==$port and
+    .inbounds[0].listen=="::" and .inbounds[0].listen_port==$port and
     (.inbounds[0].users|length)==2 and
     all(.inbounds[0].users[]; has("name") and has("uuid") and has("alterId") and
       (.alterId|type=="number" and .==0)) and

@@ -115,7 +115,7 @@ jq -e '
   (.features.plain_proxy_instances.protocols|index("trojan")) != null and
   .features.plain_proxy_instances.operations_by_protocol.trojan == ["create","replace","delete","default","rebuild","takeover","recover"] and
   (.commands.instance.protocols|index("trojan")) != null and
-  any(.protocol_registry[]; .agent_id == "trojan" and .client_export == true and .multi_instance == true)
+  any(.protocol_registry[]; .agent_id == "trojan" and (has("client_export") | not) and .multi_instance == true)
 ' <<< "${capabilities}" >/dev/null
 
 load_plain_proxy_structured_instance trojan trojan-ws
@@ -137,10 +137,10 @@ jq -e '.protocol == "trojan" and (.links|length)==0 and (.outbounds|length)==1 a
 
 load_plain_proxy_structured_instance trojan trojan-plain
 plain_summary=$(agent_node_summary_json_for_current_protocol '203.0.113.44')
-jq -e '.shareable == false and .client_exportable == true' <<< "${plain_summary}" >/dev/null
+jq -e '.shareable == false and (has("client_exportable") | not)' <<< "${plain_summary}" >/dev/null
 load_plain_proxy_structured_instance trojan trojan-pinned
 pinned_summary=$(agent_node_summary_json_for_current_protocol '203.0.113.44')
-jq -e '.shareable == false and .client_exportable == true' <<< "${pinned_summary}" >/dev/null
+jq -e '.shareable == false and (has("client_exportable") | not)' <<< "${pinned_summary}" >/dev/null
 # Reordering users does not change stable link identities.
 load_plain_proxy_structured_instance trojan trojan-ws
 # Bash 4.2 can corrupt nested here-string input when command substitution
@@ -156,31 +156,6 @@ jq '.inbounds |= map(if .tag == "trojan-ws" then .users |= reverse else . end)' 
 mv "${TMP_DIR}/reordered-live.json" "${SINGBOX_CONFIG_FILE}"
 after_links=$(agent_link_json_for_current_protocol '203.0.113.44')
 jq -e --argjson before "${before_tags}" '([.outbounds[].tag] | sort) == $before and (.links|length)==2 and all(.outbounds[]; (.tag|startswith("trojan-trojan-ws-user-")))' <<< "${after_links}" >/dev/null
-
-export_output=$(agent_cli export-client --json 2>"${TMP_DIR}/export.stderr")
-jq -e --arg key "${key_file}" '
-  .ok == true and .command == "export-client" and ([.data.config.outbounds[]|select(.type=="trojan")]|length)==5 and
-  ([.data.config.outbounds[]|select(.type=="trojan")|.password]|length)==5 and
-  ([.data.config.outbounds[]|select(.type=="trojan")|select(.tls.certificate? != null)]|length)==1 and
-  (any(.data.config.outbounds[]; .type == "trojan" and .server_port == 33401 and (has("tls")|not))) and
-  (tostring|contains($key)|not) and (tostring|contains("trojan-private")|not)
-' <<< "${export_output}" >/dev/null
-if [[ -s "${TMP_DIR}/export.stderr" ]]; then ! grep -Fq 'ws-secret' "${TMP_DIR}/export.stderr"; fi
-
-# Export-client is transactional: a builder failure returns the stable
-# generation error and preserves the previously published file byte-for-byte.
-export_file=$(jq -r '.data.path' <<< "${export_output}")
-export_hash=$(sha256sum "${export_file}" | awk '{print $1}')
-original_client_builder=$(declare -f build_client_trojan_outbounds)
-build_client_trojan_outbounds() { return 73; }
-printf 'existing backup\n' > "${export_file}.bak"
-backup_hash=$(sha256sum "${export_file}.bak" | awk '{print $1}')
-failed_export=$(agent_cli export-client --json 2>"${TMP_DIR}/failed-export.stderr" || true)
-jq -e '.ok == false and .error == "client_config_generation_failed" and (.message|contains("原导出文件和备份未改变"))' <<< "${failed_export}" >/dev/null
-[[ "$(sha256sum "${export_file}" | awk '{print $1}')" == "${export_hash}" ]]
-[[ "$(sha256sum "${export_file}.bak" | awk '{print $1}')" == "${backup_hash}" ]]
-if [[ -s "${TMP_DIR}/failed-export.stderr" ]]; then ! grep -Fq 'ws-secret' "${TMP_DIR}/failed-export.stderr"; fi
-eval "${original_client_builder}"
 
 # A live-store replacement between the private snapshot and link rendering is
 # rejected instead of publishing a mixed-revision result.
@@ -222,4 +197,4 @@ load_plain_proxy_structured_instance trojan trojan-oversized
 all_oversized=$(agent_link_json_for_current_protocol '203.0.113.44')
 jq -e '.shareable == false and (.links|length)==0 and (.outbounds|length)==1 and .warnings[0].code == "trojan_uri_too_large"' <<< "${all_oversized}" >/dev/null
 
-printf 'Trojan Agent/share checks passed: nodes=4 links=2 export-outbounds=5 uri-too-large=1\n'
+printf 'Trojan Agent/share checks passed: nodes=4 links=2 node-material=retained uri-too-large=1\n'

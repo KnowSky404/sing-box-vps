@@ -17,7 +17,6 @@ SNI_FILE="${TMP_DIR}/sni"
 REMOTE_ROOT_DIR="${TMP_DIR}/remote-root"
 CONFIG_FILE="${REMOTE_ROOT_DIR}/root/sing-box-vps/config.json"
 LEGACY_KEY_FILE="${REMOTE_ROOT_DIR}/root/sing-box-vps/reality.key"
-EXPORT_FILE="${REMOTE_ROOT_DIR}/root/sing-box-vps/client/sing-box-client.json"
 LEGACY_SERVICE_FILE="${TMP_DIR}/legacy-sing-box.service"
 PROTOCOLS_DIR="${REMOTE_ROOT_DIR}/root/sing-box-vps/protocols"
 CONFIG_PRESENT_FILE="${TMP_DIR}/config-present"
@@ -153,7 +152,7 @@ CONFIG_EOF
 }
 
 write_legacy_vless_state() {
-  mkdir -p "$(dirname "${INSTANCE_STATE_FILE}")" "$(dirname "${EXPORT_FILE}")"
+  mkdir -p "$(dirname "${INSTANCE_STATE_FILE}")"
   cat > "${STATE_FILE}" <<STATE_EOF
 CONFIG_SCHEMA_VERSION=2
 DEFAULT_INSTANCE_ID=imported-1
@@ -255,7 +254,7 @@ write_socks_state() {
       "id": "main",
       "name": "SOCKS verification",
       "tag": "socks-in",
-      "listen": {"address": "127.0.0.1", "port": 1081},
+      "listen": {"address": "::", "port": 1081},
       "authentication": {"enabled": true, "username": "socks-user", "password": "socks-pass"},
       "outbound_policy": "default",
       "dependencies": []
@@ -269,7 +268,7 @@ STATE_EOF
     {
       "type": "socks",
       "tag": "socks-in",
-      "listen": "127.0.0.1",
+      "listen": "::",
       "listen_port": 1081,
       "users": [{"username": "socks-user", "password": "socks-pass"}]
     }
@@ -291,7 +290,7 @@ write_http_state() {
     "id": "main",
     "name": "HTTP verification",
     "tag": "http-in",
-    "listen": {"address": "127.0.0.1", "port": 1082},
+    "listen": {"address": "::", "port": 1082},
     "authentication": {"enabled": true, "username": "http-user", "password": "http-pass"},
     "outbound_policy": "default",
     "tls": {"enabled": false},
@@ -304,7 +303,7 @@ STATE_EOF
   "inbounds": [{
     "type": "http",
     "tag": "http-in",
-    "listen": "127.0.0.1",
+    "listen": "::",
     "listen_port": 1082,
     "users": [{"username": "http-user", "password": "http-pass"}]
   }]
@@ -325,7 +324,7 @@ write_shadowsocks_state() {
     "id": "main",
     "name": "Shadowsocks verification",
     "tag": "ss-in",
-    "listen": {"address": "127.0.0.1", "port": 1083, "network": ["tcp", "udp"]},
+    "listen": {"address": "::", "port": 1083, "network": ["tcp", "udp"]},
     "authentication": {"method": "2022-blake3-aes-128-gcm", "password": "MDEyMzQ1Njc4OWFiY2RlZg==", "users": []},
     "outbound_policy": "default",
     "dependencies": []
@@ -337,7 +336,7 @@ STATE_EOF
   "inbounds": [{
     "type": "shadowsocks",
     "tag": "ss-in",
-    "listen": "127.0.0.1",
+    "listen": "::",
     "listen_port": 1083,
     "network": ["tcp", "udp"],
     "method": "2022-blake3-aes-128-gcm",
@@ -364,7 +363,7 @@ write_trojan_state() {
     "id": "main",
     "name": "Trojan verification",
     "tag": "trojan-in",
-    "listen": {"address": "127.0.0.1", "port": 1084},
+    "listen": {"address": "::", "port": 1084},
     "authentication": {"users": [
       {"name": "first", "password": "trojan-first-password"},
       {"name": "second", "password": "trojan-second-password"}
@@ -383,7 +382,7 @@ STATE_EOF
   "inbounds": [{
     "type": "trojan",
     "tag": "trojan-in",
-    "listen": "127.0.0.1",
+    "listen": "::",
     "listen_port": 1084,
     "users": [
       {"name": "first", "password": "trojan-first-password"},
@@ -515,9 +514,11 @@ bash() {
           "${REAL_JQ}" -e '.protocol=="http" and .revision==2 and .instances==[]' \
             "${HTTP_STORE_FILE}" >/dev/null || return 1
           write_http_state
-          "${REAL_JQ}" --arg name "${actual_lines[2]}" '.revision=3 | .instances[0].name=$name' \
+          "${REAL_JQ}" --arg name "${actual_lines[2]}" '.revision=3 | .instances[0].name=$name | .instances[0].listen.address="127.0.0.1"' \
             "${HTTP_STORE_FILE}" > "${HTTP_STORE_FILE}.next" || return 1
           mv "${HTTP_STORE_FILE}.next" "${HTTP_STORE_FILE}" || return 1
+          "${REAL_JQ}" '.inbounds[0].listen="127.0.0.1"' "${CONFIG_FILE}" > "${CONFIG_FILE}.next" || return 1
+          mv "${CONFIG_FILE}.next" "${CONFIG_FILE}" || return 1
           printf 'INSTALLED_PROTOCOLS=http\nPROTOCOL_STATE_VERSION=1\n' > "${INDEX_FILE}"
           printf 'HTTP 实例已从 revision 2 重建。\n'
           return 0
@@ -716,29 +717,11 @@ INDEX_EOF
       return 1
       ;;
     /usr/local/bin/sbv)
-      mapfile -t actual_lines
-      if [[ "${actual_lines[0]:-}" == "11" && "${actual_lines[1]:-}" == "2" ]]; then
-        mkdir -p "$(dirname "${EXPORT_FILE}")"
-        cat > "${EXPORT_FILE}" <<'EXPORT_EOF'
-{
-  "outbounds": [
-    {
-      "type": "vless",
-      "tag": "cc-us-stl+vless",
-      "tls": {
-        "utls": {
-          "enabled": true,
-          "fingerprint": "chrome"
-        }
-      }
-    }
-  ]
-}
-EXPORT_EOF
-        printf 'sing-box 裸核客户端配置导出成功。\n'
-        printf '文件路径: /root/sing-box-vps/client/sing-box-client.json\n'
+      if [[ "${1:-}" == agent && "${2:-}" == links && "${3:-}" == --json ]]; then
+        printf '%s\n' '{"ok":true,"nodes":[{"protocol":"vless-reality","name":"cc-us-stl+vless","instance_id":"imported-1","links":{"vless":"vless://fixture@127.0.0.1:443"}}]}'
         return 0
       fi
+      mapfile -t actual_lines
 
       if [[ "${actual_lines[0]:-}" == "2" ]]; then
         if [[ "${#actual_lines[@]}" -ne 12 ]]; then
@@ -866,10 +849,6 @@ test() {
     return
   fi
 
-  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/client/sing-box-client.json" ]]; then
-    [[ -f "${EXPORT_FILE}" ]]
-    return
-  fi
 
   if [[ "${1:-}" == "-d" && "${2:-}" == "/root/sing-box-vps/protocols" ]]; then
     [[ -d "${PROTOCOLS_DIR}" ]]
@@ -919,9 +898,6 @@ jq() {
     args[$last_index]="${CONFIG_FILE}"
   fi
 
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/client/sing-box-client.json" ]]; then
-    args[$last_index]="${EXPORT_FILE}"
-  fi
 
   if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/socks.json" ]]; then
     args[$last_index]="${SOCKS_STORE_FILE}"
@@ -1001,9 +977,6 @@ cp() {
     args[$source_index]="${PROTOCOLS_DIR}/."
   fi
 
-  if [[ "${args[$source_index]}" == "/root/sing-box-vps/client/sing-box-client.json" ]]; then
-    args[$source_index]="${EXPORT_FILE}"
-  fi
 
   command cp "${args[@]}"
 }
@@ -1271,7 +1244,6 @@ CONFIG_FILE="${CONFIG_FILE}" \
 VERIFY_LEGACY_CONFIG_FILE="${CONFIG_FILE}" \
 VERIFY_LEGACY_KEY_FILE="${LEGACY_KEY_FILE}" \
 VERIFY_LEGACY_SERVICE_FILE="${LEGACY_SERVICE_FILE}" \
-EXPORT_FILE="${EXPORT_FILE}" \
 PROTOCOLS_DIR="${PROTOCOLS_DIR}" \
 SERVICE_FILE_PRESENT_FILE="${SERVICE_FILE_PRESENT_FILE}" \
 SBV_PRESENT_FILE="${SBV_PRESENT_FILE}" \
@@ -1350,8 +1322,8 @@ grep -Fqx 'REASON=privileged_resource_probe_disabled' \
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_vless/protocol-probes/vless-reality/result.env"
 [[ -f "${ARTIFACT_DIR}/scenarios/reconfigure_existing_install/config.diff.txt" ]]
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/reconfigure_existing_install/protocol-probes/vless-reality/result.env"
-[[ -f "${ARTIFACT_DIR}/scenarios/legacy_takeover_export/client/sing-box-client.json" ]]
-grep -Fq '"fingerprint": "chrome"' "${ARTIFACT_DIR}/scenarios/legacy_takeover_export/client/sing-box-client.json"
+jq -e '.ok and any(.nodes[]; .protocol == "vless-reality" and (.links.vless | startswith("vless://")))' \
+  "${ARTIFACT_DIR}/scenarios/legacy_takeover_export/node-links.json" >/dev/null
 jq -e '.inbounds[] | select(.type == "vless" and .tag == "legacy-vless-in") | .tls.enabled == true and .tls.reality.enabled == true and .tls.reality.handshake.server == "www.cloudflare.com" and .tls.reality.handshake.server_port == 443' \
   "${ARTIFACT_DIR}/scenarios/legacy_takeover_export/config.json" >/dev/null
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/legacy_takeover_export/protocol-probes/vless-reality/result.env"

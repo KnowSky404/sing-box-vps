@@ -33,7 +33,6 @@ REMOTE_SNI_FILE="${TMP_DIR}/remote-sni"
 REMOTE_ROOT_DIR="${TMP_DIR}/remote-root"
 REMOTE_CONFIG_FILE="${REMOTE_ROOT_DIR}/root/sing-box-vps/config.json"
 REMOTE_LEGACY_KEY_FILE="${REMOTE_ROOT_DIR}/root/sing-box-vps/reality.key"
-REMOTE_EXPORT_FILE="${REMOTE_ROOT_DIR}/root/sing-box-vps/client/sing-box-client.json"
 REMOTE_LEGACY_SERVICE_FILE="${TMP_DIR}/legacy-sing-box.service"
 REMOTE_PROTOCOLS_DIR="${REMOTE_ROOT_DIR}/root/sing-box-vps/protocols"
 REMOTE_CONFIG_PRESENT_FILE="${TMP_DIR}/remote-config-present"
@@ -50,7 +49,7 @@ INSTALL_VERSION_LINE=$(sed -n 's/^readonly SCRIPT_VERSION="[^"]*"$/&/p' "${REPO_
 
 export REPO_ROOT TMP_DIR REAL_BASH REAL_GIT
 export REMOTE_PORT_FILE REMOTE_UUID_FILE REMOTE_SNI_FILE REMOTE_CONFIG_FILE
-export REMOTE_LEGACY_KEY_FILE REMOTE_EXPORT_FILE REMOTE_LEGACY_SERVICE_FILE
+export REMOTE_LEGACY_KEY_FILE REMOTE_LEGACY_SERVICE_FILE
 export REMOTE_PROTOCOLS_DIR REMOTE_CONFIG_PRESENT_FILE REMOTE_SERVICE_FILE_PRESENT_FILE
 export REMOTE_SBV_PRESENT_FILE REMOTE_SERVICE_ACTIVE_FILE REMOTE_STATE_FILE
 export REMOTE_INSTANCE_STATE_FILE REMOTE_ANYTLS_STATE_FILE REMOTE_INDEX_FILE
@@ -215,7 +214,7 @@ CONFIG_EOF
 }
 
 write_legacy_vless_state() {
-  mkdir -p "$(dirname "${REMOTE_INSTANCE_STATE_FILE}")" "$(dirname "${REMOTE_EXPORT_FILE}")"
+  mkdir -p "$(dirname "${REMOTE_INSTANCE_STATE_FILE}")"
   cat > "${REMOTE_STATE_FILE}" <<STATE_EOF
 CONFIG_SCHEMA_VERSION=2
 DEFAULT_INSTANCE_ID=main
@@ -289,9 +288,6 @@ cp() {
   local source_index=$(( $# - 2 ))
   if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/index.env" ]]; then
     args[$last_index]="${REMOTE_INDEX_FILE}"
-  fi
-  if [[ "${args[$source_index]}" == "/root/sing-box-vps/client/sing-box-client.json" ]]; then
-    args[$source_index]="${REMOTE_EXPORT_FILE}"
   fi
   command cp "${args[@]}"
 }
@@ -495,7 +491,6 @@ WRAP_EOF
   VERIFY_LEGACY_CONFIG_FILE="${REMOTE_CONFIG_FILE}" \
   VERIFY_LEGACY_KEY_FILE="${REMOTE_LEGACY_KEY_FILE}" \
   VERIFY_LEGACY_SERVICE_FILE="${REMOTE_LEGACY_SERVICE_FILE}" \
-  REMOTE_EXPORT_FILE="${REMOTE_EXPORT_FILE}" \
   REMOTE_PROTOCOLS_DIR="${REMOTE_PROTOCOLS_DIR}" \
   REMOTE_STATE_FILE="${REMOTE_STATE_FILE}" \
   REMOTE_ANYTLS_STATE_FILE="${REMOTE_ANYTLS_STATE_FILE}" \
@@ -623,10 +618,6 @@ grep -Fqx 'tests/generate_config_commits_validated_candidate.sh|1' "${TMP_DIR}/l
 grep -Fqx 'tests/managed_component_graph.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/managed_component_graph_core_startup.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/live_inbound_inventory_guards.sh|1' "${TMP_DIR}/local-tests.log"
-grep -Fqx 'tests/export_client_config_validates_generated_config.sh|1' "${TMP_DIR}/local-tests.log"
-grep -Fqx 'tests/export_client_config_mixed_only.sh|1' "${TMP_DIR}/local-tests.log"
-grep -Fqx 'tests/export_client_config_mixed_auth.sh|1' "${TMP_DIR}/local-tests.log"
-grep -Fqx 'tests/export_client_config_mixed_runtime.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/managed_config_transactions.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/system_safety_guards.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/agent_upgrade_commands.sh|1' "${TMP_DIR}/local-tests.log"
@@ -634,7 +625,6 @@ grep -Fqx 'tests/agent_cli_multi_instance_status.sh|1' "${TMP_DIR}/local-tests.l
 grep -Fqx 'tests/agent_cli_ops_commands.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/agent_cli_outputs_machine_readable_node_info.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/agent_json_regression.sh|1' "${TMP_DIR}/local-tests.log"
-grep -Fqx 'tests/export_client_config_1_14_compatibility.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/agent_docs_cover_capabilities.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/version_metadata_is_consistent.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/vless_reality_instance_removal.sh|1' "${TMP_DIR}/local-tests.log"

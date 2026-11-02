@@ -92,14 +92,17 @@ SB_ENABLE_WARP="n"
 SB_WARP_ROUTE_MODE="selective"
 SB_OUTBOUND_STACK_MODE="prefer_ipv4"
 
-printf '%s\n' '{"old":true}' > "${SINGBOX_CONFIG_FILE}"
+# Bootstrap generation may adopt an existing matching managed listener; a state
+# record must never silently recreate a listener absent from the live config.
+initial_config='{"old":true,"inbounds":[{"type":"mixed","tag":"mixed-in","listen":"127.0.0.1","listen_port":1080}]}'
+printf '%s\n' "${initial_config}" > "${SINGBOX_CONFIG_FILE}"
 generate_config >/dev/null
 
 if ! jq -e '.inbounds[0].tag == "mixed-in"' "${SINGBOX_CONFIG_FILE}" >/dev/null; then
   printf 'expected validated candidate to replace the live config\n' >&2
   exit 1
 fi
-if [[ "$(cat "${SINGBOX_CONFIG_FILE}.bak")" != '{"old":true}' ]]; then
+if [[ "$(cat "${SINGBOX_CONFIG_FILE}.bak")" != "${initial_config}" ]]; then
   printf 'expected persistent backup to contain the previous live config\n' >&2
   exit 1
 fi
@@ -171,10 +174,12 @@ unset managed_component_render_json_definition
 eval "${validate_live_inbound_inventory_definition}"
 unset validate_live_inbound_inventory_definition
 
-# A new fixture needs a new ownership baseline; otherwise replacing the
-# complete config is correctly rejected as concurrent deletion of owned data.
-rm -f "${SB_PROJECT_DIR}/managed-config.generated.json"
-printf '%s\n' '{"keep":"check-failure"}' > "${SINGBOX_CONFIG_FILE}"
+# Each new fixture retains the existing listener and its matching baseline so
+# the intended core/graph failure is reached rather than ownership rejection.
+printf '%s\n' "${original_generated}" > "${SB_PROJECT_DIR}/managed-config.generated.json"
+chmod 600 "${SB_PROJECT_DIR}/managed-config.generated.json"
+check_failure_input=$(jq -c '. + {keep:"check-failure"}' <<< "${original_generated}")
+printf '%s\n' "${check_failure_input}" > "${SINGBOX_CONFIG_FILE}"
 rm -f "${SINGBOX_CONFIG_FILE}.bak"
 touch "${CHECK_FAIL_FILE}"
 MUTATE_DURING_BUILD="y"
@@ -184,7 +189,7 @@ if generate_config >/dev/null 2>&1; then
 fi
 MUTATE_DURING_BUILD="n"
 rm -f "${CHECK_FAIL_FILE}"
-if [[ "$(cat "${SINGBOX_CONFIG_FILE}")" != '{"keep":"check-failure"}' || -e "${SINGBOX_CONFIG_FILE}.bak" ]]; then
+if [[ "$(cat "${SINGBOX_CONFIG_FILE}")" != "${check_failure_input}" || -e "${SINGBOX_CONFIG_FILE}.bak" ]]; then
   printf 'expected validation failure to preserve live config without publishing a backup\n' >&2
   exit 1
 fi
@@ -196,8 +201,10 @@ fi
 # The mock core accepts these candidates. The real graph preflight must reject
 # them before check/backup/publication and restore all builder side effects.
 for GRAPH_FAILURE in duplicate reference listener; do
-  rm -f "${SB_PROJECT_DIR}/managed-config.generated.json"
-  printf '%s\n' '{"keep":"graph-failure"}' > "${SINGBOX_CONFIG_FILE}"
+  printf '%s\n' "${original_generated}" > "${SB_PROJECT_DIR}/managed-config.generated.json"
+  chmod 600 "${SB_PROJECT_DIR}/managed-config.generated.json"
+  graph_failure_input=$(jq -c '. + {keep:"graph-failure"}' <<< "${original_generated}")
+  printf '%s\n' "${graph_failure_input}" > "${SINGBOX_CONFIG_FILE}"
   printf '%s\n' '{"keep":"previous-backup"}' > "${SINGBOX_CONFIG_FILE}.bak"
   checked_before=$(wc -l < "${CHECK_LOG}")
   MUTATE_DURING_BUILD="y"
@@ -206,7 +213,7 @@ for GRAPH_FAILURE in duplicate reference listener; do
     exit 1
   fi
   MUTATE_DURING_BUILD="n"
-  [[ "$(<"${SINGBOX_CONFIG_FILE}")" == '{"keep":"graph-failure"}' ]]
+  [[ "$(<"${SINGBOX_CONFIG_FILE}")" == "${graph_failure_input}" ]]
   [[ "$(<"${SINGBOX_CONFIG_FILE}.bak")" == '{"keep":"previous-backup"}' ]]
   [[ ! -e "${SB_PROJECT_DIR}/builder-mutated.state" ]]
   [[ "$(wc -l < "${CHECK_LOG}")" == "${checked_before}" ]]

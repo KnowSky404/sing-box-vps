@@ -23,12 +23,12 @@ EOF
   grep -Fqx 'CONFIG_SCHEMA_VERSION=2' /root/sing-box-vps/protocols/socks.env
   [[ "$(stat -c %a "${store_file}")" == 600 ]]
   jq -e '.protocol=="socks" and .revision==1 and (.instances|length)==1 and
-    .instances[0].listen.address=="127.0.0.1" and
+    .instances[0].listen.address=="::" and
     .instances[0].authentication=={enabled:true,username:"socks-user",password:"socks-pass"}' \
     "${store_file}" >/dev/null
   jq -e --argjson port "${expected_port}" '
     (.inbounds|length)==1 and .inbounds[0].type=="socks" and
-    .inbounds[0].listen=="127.0.0.1" and .inbounds[0].listen_port==$port and
+    .inbounds[0].listen=="::" and .inbounds[0].listen_port==$port and
     .inbounds[0].users==[{username:"socks-user",password:"socks-pass"}] and
     (.inbounds[0]|has("tls")|not)' "${config_file}" >/dev/null
   verification_wait_for_service_active sing-box

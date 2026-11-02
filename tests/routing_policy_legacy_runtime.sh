@@ -193,7 +193,7 @@ legacy_config=$(sha256sum "${SINGBOX_CONFIG_FILE}")
 stage legacy-first-apply-failure
 failure_before=$(service_pid)
 routing_draft_create "${ARTIFACT_DIR}/failure-draft.json"
-jq '.policy.server.private_network_block=true' "${ARTIFACT_DIR}/failure-draft.json" > "${ARTIFACT_DIR}/failure-edit.json"
+jq '.policy.server.rules=[{id:"private-fixture",kind:"ip_cidr",value:"127.0.0.0/8",action:"reject",enabled:true}]' "${ARTIFACT_DIR}/failure-draft.json" > "${ARTIFACT_DIR}/failure-edit.json"
 if routing_policy_apply "${ARTIFACT_DIR}/failure-edit.json" > "${ARTIFACT_DIR}/failure-apply.log" 2>&1; then
   printf 'legacy migration unexpectedly committed after injected restart failure\n' >&2
   exit 1
@@ -216,7 +216,7 @@ cp -a -- "${SB_PROJECT_DIR}" "${ARTIFACT_DIR}/rollback-project"
 stage legacy-first-apply-success
 success_before=$(service_pid)
 routing_draft_create "${ARTIFACT_DIR}/success-draft.json"
-jq '.policy.server.private_network_block=true' "${ARTIFACT_DIR}/success-draft.json" > "${ARTIFACT_DIR}/success-edit.json"
+jq '.policy.server.rules=[{id:"private-fixture",kind:"ip_cidr",value:"127.0.0.0/8",action:"reject",enabled:true}]' "${ARTIFACT_DIR}/success-draft.json" > "${ARTIFACT_DIR}/success-edit.json"
 routing_policy_apply "${ARTIFACT_DIR}/success-edit.json" > "${ARTIFACT_DIR}/success-apply.log" 2>&1
 success_after=$(service_pid)
 [[ "$(restart_count legacy-first-apply-success)" == 1 && "${success_before}" != 0 &&
@@ -232,7 +232,7 @@ jq -e '.phase=="committed"' "${SB_ROUTING_PREVIOUS_DIR}/transaction.json" >/dev/
 cmp "${ARTIFACT_DIR}/legacy-original.env" "${SB_ROUTING_PREVIOUS_DIR}/legacy-vless-reality.env.bak"
 [[ "$(stat -c %a "${SB_ROUTING_PREVIOUS_DIR}/legacy-vless-reality.env.bak")" == 600 ]]
 cmp "${ARTIFACT_DIR}/legacy-original.env" "${SB_ROUTING_PREVIOUS_DIR}/snapshot/project/protocols/vless-reality.env"
-jq -e '.server.private_network_block==true' "${SB_ROUTING_POLICY_FILE}" >/dev/null
+jq -e '.schema_version==2 and .server.rules[0].id=="private-fixture"' "${SB_ROUTING_POLICY_FILE}" >/dev/null
 "${SINGBOX_BIN_PATH}" check -c "${SINGBOX_CONFIG_FILE}" > "${ARTIFACT_DIR}/migrated.check" 2>&1
 jq -S '[.inbounds[] | select(.type=="vless" and .tls.reality.enabled==true)]' \
   "${SINGBOX_CONFIG_FILE}" > "${ARTIFACT_DIR}/migrated-reality-inbound.json"

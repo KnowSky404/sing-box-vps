@@ -180,14 +180,14 @@ jq -e '
 rm -f "${SYSTEMCTL_RESTART_FAIL_FILE}"
 unset SYSTEMCTL_RESTART_FAIL_FILE
 
-# An export that cannot generate a candidate returns an actionable error envelope.
+# A removed command returns the standard unknown-command envelope.
 rm -f "${SB_PROTOCOL_INDEX_FILE}"
 if export_json=$(agent_cli export-client --json); then
-  printf 'expected export-client without protocols to return non-zero\n' >&2
+  printf 'expected removed export-client to return non-zero\n' >&2
   exit 1
 fi
 assert_envelope export-client false "${export_json}"
-jq -e '.error == "client_config_generation_failed" and .data.error == "client_config_generation_failed"' <<< "${export_json}" >/dev/null
+jq -e '.error == "unknown_command" and .data.error == "unknown_command"' <<< "${export_json}" >/dev/null
 
 # A helper that exits before producing JSON must still be represented by an envelope.
 empty_payload() { return 7; }

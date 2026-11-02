@@ -210,8 +210,9 @@ fi
 [[ "$(sha256sum "${SB_PROTOCOL_STATE_DIR}/socks.env")" == "${bad_state_hash}" ]]
 [[ "$(sha256sum "${store_file}")" == "${bad_store_hash}" ]]
 
-# A fresh SOCKS save with no explicit address uses the verified sing-box
-# loopback default and never widens to the public stack bind.
+# A newly created server node follows the explicit dual-stack product default.
+# This differs from importing an existing config with listen omitted, whose
+# actual core default remains loopback as checked above.
 cp -p "${store_file}" "${TMP_DIR}/store.saved"
 rm -f -- "${store_file}" "${SB_PROTOCOL_STATE_DIR}/socks.env"
 set_protocol_defaults socks
@@ -220,6 +221,10 @@ SB_PORT=33104
 SB_MIXED_AUTH_ENABLED=y
 SB_MIXED_USERNAME=fresh-user
 SB_MIXED_PASSWORD=fresh-password
+save_socks_state >/dev/null
+jq -e 'any(.instances[]; .tag == "socks-in" and .listen.address == "::" and .listen.port == 33104)' "${store_file}" >/dev/null
+# An explicitly selected local bind must remain local on the subsequent save.
+SB_MIXED_LISTEN_ADDRESS=127.0.0.1
 save_socks_state >/dev/null
 jq -e 'any(.instances[]; .tag == "socks-in" and .listen.address == "127.0.0.1" and .listen.port == 33104)' "${store_file}" >/dev/null
 rm -f -- "${store_file}" "${SB_PROTOCOL_STATE_DIR}/socks.env"

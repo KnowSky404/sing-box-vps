@@ -47,7 +47,7 @@ EOF
   jq -e --argjson port "${expected_port}" --arg cert "${cert_path}" --arg key "${key_path}" '
     .protocol=="hysteria" and .revision==1 and (.instances|length)==1 and
     .instances[0].id=="main" and .instances[0].tag=="hysteria-in" and
-    .instances[0].listen=={address:"127.0.0.1",port:$port} and
+    .instances[0].listen=={address:"::",port:$port} and
     .instances[0].authentication.users==[
       {name:"hysteria-user",auth_str:"hysteria-verification-auth"}] and
     .instances[0].tls=={enabled:true,server_name:"hysteria.verification.invalid",
@@ -61,7 +61,7 @@ EOF
   ' "${store_file}" >/dev/null
   jq -e --argjson port "${expected_port}" '
     (.inbounds|length)==1 and .inbounds[0].type=="hysteria" and
-    .inbounds[0].tag=="hysteria-in" and .inbounds[0].listen=="127.0.0.1" and
+    .inbounds[0].tag=="hysteria-in" and .inbounds[0].listen=="::" and
     .inbounds[0].listen_port==$port and .inbounds[0].users==[
       {name:"hysteria-user",auth_str:"hysteria-verification-auth"}] and
     .inbounds[0].tls.enabled==true and .inbounds[0].tls.alpn==["h3"] and

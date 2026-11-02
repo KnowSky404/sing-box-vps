@@ -26,7 +26,7 @@
 25-addresses-links-and-transport.sh
 26-subman-payload-and-api.sh
 27-client-outbounds.sh
-28-node-display-and-client-export.sh
+28-node-display.sh
 29-agent-upgrade.sh
 30-agent-status-and-nodes.sh
 31-agent-service-and-subman.sh

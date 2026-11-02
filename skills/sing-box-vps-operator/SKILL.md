@@ -1,6 +1,6 @@
 ---
 name: sing-box-vps-operator
-description: Use when installing or upgrading sing-box-vps, running local or remote verification, operating sing-box-test or sing-box-prod, troubleshooting sbv or sing-box service issues, retrieving node info for AI agents, managing VLESS REALITY instances or Warp/SubMan/client exports, modifying repository scripts or docs, validating sing-box configs, or creating rollback/recovery steps for this project.
+description: Use when installing or upgrading sing-box-vps, running local or remote verification, operating sing-box-test or sing-box-prod, troubleshooting sbv or sing-box service issues, retrieving node info for AI agents, managing VLESS REALITY instances or Warp/SubMan/node sharing, modifying repository scripts or docs, validating sing-box configs, or creating rollback/recovery steps for this project.
 ---
 
 # sing-box-vps Operator
@@ -69,7 +69,7 @@ No production-changing commands will be executed until approved.
 
 - Follow the impact-based test boundaries in [AGENTS.md](../../AGENTS.md), section 4.2. Explain the selected scope before running tests; do not select a broad suite solely because `install.sh` or another runtime file changed.
 - Section 4.2 is the single authority for test scope. Record a short plan with affected behavior, required checks/prerequisites, exclusions and expected duration. Investigate local runs expected to exceed 10 minutes or Docker runs expected to exceed 20 minutes before proceeding; these are planning thresholds, not permission to skip required checks. Stop when the required checks pass unless new evidence changes the scope.
-- Run `sing-box check` on affected generated or modified server/client configurations. Run related real Docker scenarios for service, network or lifecycle behavior changes, with their prerequisites prepared.
+- Run `sing-box check` on affected generated or modified server and protocol-probe configurations. Run related real Docker scenarios for service, network or lifecycle behavior changes, with their prerequisites prepared.
 - Documentation, version-display and menu-only changes need their focused checks. Run changed standalone tests and callers of changed helpers; Bootstrap changes need the download/validation tests.
 - Require full regression for core-version adaptation or config/state migrations, broadly affected shared logic or uncertain impact, or an explicit full-test/release-acceptance requirement. Reuse passing results only when the tested code, configuration, tests, dependencies, core version and relevant environment are unchanged; record the original evidence and reason. After a fix, rerun failed and affected checks.
 - Preview `bash dev/verification/run.sh --plan --base origin/main`. Base mode uses the merge base and includes committed, staged, unstaged and untracked changes. Without `--base`, only working-tree differences against HEAD are considered. Docs, version metadata, Bootstrap and changed host tests map automatically; unmapped runtime impact needs an explicit local `--group`, Docker `--scenario`, or `--full` before execution. Groups and scenarios are repeatable; choose runtime coverage separately when required. Full means the registered host-safe manifest and scenario set, not every script in tests/. Container-only fixtures stay out of host selection. See Development.md for examples and prerequisites.

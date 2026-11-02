@@ -539,10 +539,10 @@ plain_proxy_share_warnings_json() {
   if [[ "${protocol}" == mixed ]] && ! plain_proxy_http_auth_representable; then unavailable=true; fi
   jq -cn --argjson unavailable "${unavailable}" --argjson tls_uri_unavailable "${tls_uri_unavailable}" \
     --arg protocol "${protocol}" '
-    (if $protocol == "http" then [] else [{code:"socks5_uri_transport_options_omitted",message:"SOCKS5 URI 只携带代理地址和认证，不携带 UoT v2 等客户端选项；完整连接配置请使用 export-client JSON。"}] end)
+    (if $protocol == "http" then [] else [{code:"socks5_uri_transport_options_omitted",message:"SOCKS5 URI 只携带代理地址和认证，不携带 UoT v2 等客户端选项；UoT 等传输选项请在客户端自行设置。"}] end)
     + (if $protocol == "http" and ($tls_uri_unavailable | not) then [{code:"http_plaintext_transport",message:"HTTP 代理入口未启用 TLS，认证信息与非加密业务可能被读取；访问 HTTPS 目标不等于代理入口已加密。仅用于可信网络或受保护隧道。"}] else [] end)
-    + (if $protocol == "http" then [] else (if $unavailable then [{code:"mixed_http_auth_unrepresentable",message:"当前认证不符合 HTTP Basic 字段约束，未提供 HTTP 链接；SOCKS5 和客户端 JSON 仍可使用，原凭据未修改。"}] else [] end) end)
-    + (if $tls_uri_unavailable then [{code:"http_tls_uri_unrepresentable",message:"HTTP TLS 客户端配置包含证书信任或 SNI，分享 URI 无法安全表达；未提供 HTTP 链接，请使用客户端 JSON 导出。"}] else [] end)'
+    + (if $protocol == "http" then [] else (if $unavailable then [{code:"mixed_http_auth_unrepresentable",message:"当前认证不符合 HTTP Basic 字段约束，未提供 HTTP 链接；SOCKS5 仍可使用，原凭据未修改。"}] else [] end) end)
+    + (if $tls_uri_unavailable then [{code:"http_tls_uri_unrepresentable",message:"HTTP TLS 客户端配置包含证书信任或 SNI，分享 URI 无法安全表达；未提供 HTTP 链接，请按节点信息手动配置证书信任和 SNI。"}] else [] end)'
 }
 
 hy2_manual_certificate_algorithm() {
@@ -617,17 +617,8 @@ build_hy2_compatibility_warnings_json() {
     return 0
   fi
 
-  if [[ "${context}" == "export" ]]; then
-    if ! singbox_config_supports_1_14; then
-      printf '[]'
-      return 0
-    fi
-    code="hy2_ed25519_chrome_parrot_disabled"
-    message="检测到 Hysteria2 手动 Ed25519 证书；导出的 1.14+ 客户端配置已设置 disable_chrome_parrot=true。"
-  else
-    code="hy2_ed25519_share_link_requires_client_override"
-    message="检测到 Hysteria2 手动 Ed25519 证书；分享链接无法携带 disable_chrome_parrot，1.14+ 客户端必须手动启用该选项。"
-  fi
+  code="hy2_ed25519_share_link_requires_client_override"
+  message="检测到 Hysteria2 手动 Ed25519 证书；分享链接无法携带 disable_chrome_parrot，1.14+ 客户端必须手动启用该选项。"
 
   jq -n \
     --arg code "${code}" \
@@ -654,74 +645,6 @@ print_hy2_compatibility_warnings() {
   while IFS= read -r warning_message; do
     [[ -n "${warning_message}" ]] && log_warn "${warning_message}"
   done < <(jq -r '.[]?.message' <<< "${warnings_json}")
-}
-
-client_export_mixed_tags_json() (
-  local schema store_file instance_id
-
-  if ! protocol_state_exists "mixed"; then
-    printf '[]'
-    return 0
-  fi
-  schema=$(protocol_instance_state_schema "mixed" 2>/dev/null || true)
-  case "${schema}" in
-    2)
-      store_file=$(mixed_structured_store_file 2>/dev/null || true)
-      if [[ -f "${store_file}" && ! -L "${store_file}" ]]; then
-        jq -c '[.instances[]?.id | "mixed-" + .]' "${store_file}" 2>/dev/null || printf '[]'
-      else
-        printf '[]'
-      fi
-      ;;
-    1)
-      instance_id=$(protocol_default_instance_id "mixed" 2>/dev/null || true)
-      if [[ -n "${instance_id}" ]] && load_protocol_instance_state mixed "${instance_id}" >/dev/null 2>&1; then
-        jq -cn --arg tag "$(client_outbound_tag_for_protocol mixed)" '[ $tag ]'
-      else
-        printf '[]'
-      fi
-      ;;
-    *)
-      printf '[]'
-      ;;
-  esac
-)
-
-collect_client_export_warnings_json() {
-  local config_json=$1 hy2_warnings mixed_tags_json
-  hy2_warnings=$(collect_hy2_compatibility_warnings_json "export") || return 1
-  if ! mixed_tags_json=$(client_export_mixed_tags_json); then
-    mixed_tags_json='[]'
-  fi
-  jq --argjson warnings "${hy2_warnings}" --argjson mixed_tags "${mixed_tags_json}" '
-    def mixed_origin:
-      (.tag // "") as $tag |
-      (any($mixed_tags[]; . == $tag) or
-       (($tag | type) == "string" and ($tag | startswith("mixed-"))));
-    $warnings
-    + (if any(.outbounds[]?;
-        .type == "socks" and mixed_origin) then [{
-      code: "mixed_plaintext_transport",
-      message: "Mixed 导出使用明文 SOCKS5，代理链路未启用 TLS，认证信息与非加密业务可能被读取；仅用于可信网络或受保护隧道。UDP 经 UoT v2 承载，UoT 不提供加密。"
-    }] else [] end)
-    + (if any(.outbounds[]?;
-        .type == "socks" and (mixed_origin | not)) then [{
-      code: "socks_plaintext_transport",
-      message: "SOCKS5 导出使用明文代理链路，认证信息与非加密业务可能被读取；仅用于可信网络或受保护隧道。UoT 即使启用也不提供加密。"
-    }] else [] end)
-    + (if any(.outbounds[]?; .type == "http" and .tls.enabled != true) then [{
-      code: "http_plaintext_transport",
-      message: "HTTP 代理入口未启用 TLS，认证信息与非加密业务可能被读取；访问 HTTPS 目标不等于代理入口已加密。仅用于可信网络或受保护隧道。"
-    }] else [] end)
-    + (if any(.outbounds[]?; .type == "http" and .tls.enabled == true) then [{
-      code: "http_tls_certificate_embedded",
-      message: "HTTP TLS 导出仅嵌入公开证书信任与 server_name；服务端私钥未读取或写入客户端配置。"
-    }] else [] end)
-    + (if any(.outbounds[]?; .type == "shadowsocks" and .method == "none") then [{
-      code: "shadowsocks_plaintext_transport",
-      message: "Shadowsocks none 不提供加密或认证，只能用于可信网络或受保护隧道。"
-    }] else [] end)
-  ' <<< "${config_json}"
 }
 
 build_hy2_link() {

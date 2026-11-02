@@ -3,7 +3,7 @@ routing_policy_file_path() {
   printf '%s\n' "${SB_ROUTING_POLICY_FILE:-${SB_PROJECT_DIR}/routing-policy.json}"
 }
 
-routing_policy_validate_json() {
+routing_policy_legacy_validate_json() {
   local policy=${1:-}
   [[ -n "${policy}" && "${#policy}" -le 262144 ]] || return 1
   jq -e '
@@ -48,8 +48,39 @@ routing_policy_validate_json() {
   ' <<< "${policy}" >/dev/null 2>&1
 }
 
+# Current policy is server-only. Schema 1 is accepted only to preserve an
+# existing installation until its owner explicitly applies the network draft.
+routing_policy_validate_json() {
+  local policy=${1:-} legacy
+  [[ -n "${policy}" && "${#policy}" -le 262144 ]] || return 1
+  if jq -e '.schema_version == 1' <<< "${policy}" >/dev/null 2>&1; then
+    routing_policy_legacy_validate_json "${policy}"
+    return $?
+  fi
+  jq -e '
+    type == "object" and (keys | sort) == ["schema_version","server"] and .schema_version == 2 and
+    (.server | type == "object" and
+      (keys | sort) == ["block_cn","rule_sets","rules","warp_ai","warp_streaming"] and
+      ([.block_cn,.warp_ai,.warp_streaming] | all(.[]; type == "boolean")))
+  ' <<< "${policy}" >/dev/null 2>&1 || return 1
+  # Reuse the bounded matcher/source validator without exposing legacy fields
+  # in persisted current policy or in the user interface.
+  legacy=$(jq -c '{schema_version:1,
+    server:(.server | del(.block_cn) | . + {private_network_block:false,adblock:false}),
+    client:{lan_direct:false,cn_direct:false,adblock:false},adblock:{url:"",domains:[],allow:[]}}' <<< "${policy}") || return 1
+  routing_policy_legacy_validate_json "${legacy}"
+}
+
+routing_policy_current_json() {
+  local policy=${1:-}
+  routing_policy_validate_json "${policy}" || return 1
+  jq -c 'if .schema_version == 2 then . else
+    {schema_version:2,server:{block_cn:false,warp_ai:.server.warp_ai,warp_streaming:.server.warp_streaming,
+      rules:.server.rules,rule_sets:.server.rule_sets}} end' <<< "${policy}"
+}
+
 routing_policy_read_json() {
-  local file=${1:-} policy private_network=true
+  local file=${1:-} policy
   [[ -n "${file}" ]] || file=$(routing_policy_file_path) || return 1
   command -v jq >/dev/null 2>&1 || return 1
   if [[ -e "${file}" || -L "${file}" ]]; then
@@ -59,19 +90,7 @@ routing_policy_read_json() {
     printf '%s\n' "${policy}"
     return 0
   fi
-  if [[ -e "${SINGBOX_CONFIG_FILE}" || -L "${SINGBOX_CONFIG_FILE}" ]]; then
-    [[ -f "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" ]] || return 1
-    private_network=$(jq -er 'if type == "object" then
-      any(.route.rules[]?; .ip_is_private == true and .action == "reject")
-      else error("invalid_config") end' "${SINGBOX_CONFIG_FILE}") || {
-      [[ "${private_network}" == false ]] || return 1
-    }
-  fi
-  jq -cn --argjson private "${private_network}" '
-    {schema_version:1,
-     server:{private_network_block:$private,adblock:false,warp_ai:true,warp_streaming:true,rules:[],rule_sets:[]},
-     client:{lan_direct:true,cn_direct:true,adblock:false},
-     adblock:{url:"https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ads-all.srs",domains:[],allow:[]}}'
+  printf '%s\n' '{"schema_version":2,"server":{"block_cn":false,"warp_ai":true,"warp_streaming":true,"rules":[],"rule_sets":[]}}'
 }
 
 routing_policy_prepare_install_defaults() {
@@ -80,7 +99,7 @@ routing_policy_prepare_install_defaults() {
   SB_OUTBOUND_POLICY=default
   if [[ ! -e "${file}" && ! -L "${file}" && ! -e "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" ]]; then
     # Fresh-install prompts run before the dependency installer prepares jq.
-    SB_ADVANCED_ROUTE=y
+    SB_ADVANCED_ROUTE=n
     SB_ENABLE_WARP=n
     SB_WARP_ROUTE_MODE=selective
     return 0
@@ -105,13 +124,12 @@ routing_policy_requires_warp() {
   jq -e 'any((.server.rules + .server.rule_sets)[]; .enabled and .action == "warp")' <<< "${policy}" >/dev/null
 }
 
-routing_policy_adblock_json() {
-  local policy=${1:-} side=${2:-server} use_http_client=n
-  [[ "${side}" == server || "${side}" == client ]] || return 1
+routing_policy_legacy_adblock_json() {
+  local policy=${1:-} use_http_client=n
   routing_policy_validate_json "${policy}" || return 1
   if singbox_config_supports_1_14; then use_http_client=y; fi
-  jq -cn --argjson policy "${policy}" --arg side "${side}" --arg modern "${use_http_client}" '
-    if $policy[$side].adblock then
+  jq -cn --argjson policy "${policy}"  --arg modern "${use_http_client}" '
+    if $policy.schema_version == 1 and $policy.server.adblock then
       ([if $policy.adblock.url != "" then
           {type:"remote",tag:"sbv-adblock-remote",format:(if ($policy.adblock.url | test("\\.json(?:\\?.*)?$")) then "source" else "binary" end),
            url:$policy.adblock.url,update_interval:"1d"} +
@@ -134,7 +152,7 @@ routing_policy_render_server_json() {
   while IFS= read -r path; do
     [[ ! -L "${path}" ]] || return 1
   done < <(jq -r '.server.rule_sets[] | select(.enabled and .type == "local") | .path' <<< "${policy}")
-  adblock=$(routing_policy_adblock_json "${policy}" server) || return 1
+  adblock=$(routing_policy_legacy_adblock_json "${policy}") || return 1
   if singbox_config_supports_1_14; then use_http_client=y; fi
   jq -cn --argjson policy "${policy}" --argjson tags "${tags}" --argjson ads "${adblock}" --arg modern "${use_http_client}" '
     def action($value): if $value == "reject" then {action:"reject"} else
@@ -145,6 +163,13 @@ routing_policy_render_server_json() {
          {url:.url,update_interval:.update_interval} +
          (if $modern == "y" then {http_client:{detour:"direct"}} else {download_detour:"direct"} end) end)]) as $sets |
     {inbound:$tags,action:"resolve",server:"local-dns"} as $resolve |
+    (if $policy.server.block_cn then
+      ["geosite-cn","geoip-cn"] | map(. as $tag |
+        {type:"remote",tag:("sbv-block-" + $tag),format:"binary",
+         url:("https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/" +
+           (if $tag == "geosite-cn" then "geosite" else "geoip" end) + "/cn.srs"),update_interval:"1d"} +
+        (if $modern == "y" then {http_client:{detour:"direct"}} else {download_detour:"direct"} end))
+     else [] end) as $cn_sets |
     ((if $policy.server.private_network_block then
         [$resolve,
          {ip_is_private:true,action:"reject",inbound:$tags}]
@@ -153,6 +178,10 @@ routing_policy_render_server_json() {
         # domains. Resolve at this filtering stage before matching its set.
         [$resolve]
       else [] end) +
+      (if $policy.server.block_cn then
+         [{inbound:$tags,rule_set:["sbv-block-geosite-cn"],action:"reject"},$resolve,
+          {inbound:$tags,rule_set:["sbv-block-geoip-cn"],action:"reject"}]
+       else [] end) +
       [$ads.rules[] | if .type == "logical" then
          .rules = [{inbound:$tags}] + .rules
        else . + {inbound:$tags} end]) as $protection |
@@ -166,7 +195,7 @@ routing_policy_render_server_json() {
            .resolved = true | .rules += [$resolve,$rule]
          else .rules += [$rule] end) | .rules) as $custom |
     if ($tags | length) == 0 then {rule_sets:[],protection_rules:[],custom_rules:[],rules:[]} else
-      {rule_sets:($ads.rule_sets + $sets),protection_rules:$protection,custom_rules:$custom,rules:($protection + $custom)} end'
+      {rule_sets:($ads.rule_sets + $cn_sets + $sets),protection_rules:$protection,custom_rules:$custom,rules:($protection + $custom)} end'
 }
 
 routing_policy_owned_rule_sets_json() {
@@ -184,7 +213,7 @@ routing_policy_owned_rule_sets_json() {
   if [[ -e "${baseline_file}" || -L "${baseline_file}" ]]; then
     [[ -f "${baseline_file}" && ! -L "${baseline_file}" && "$(stat -c %a "${baseline_file}")" == 600 ]] || return 1
     baseline=$(jq -ce --argjson component_tags "${component_tags}" '[.route.rule_set[]? |
-      select((.tag // "") | test("^sbv-(adblock-(inline|remote)|rule-[a-z0-9][a-z0-9_-]{0,63})$")) |
+      select((.tag // "") | test("^sbv-(block-(geosite|geoip)-cn|adblock-(inline|remote)|rule-[a-z0-9][a-z0-9_-]{0,63})$")) |
       select(.tag as $tag | $component_tags | index($tag) == null)]' "${baseline_file}") || return 1
   fi
   jq -cn --argjson current "${current}" --argjson baseline "${baseline}" '$current + $baseline | unique'
@@ -538,7 +567,7 @@ routing_policy_validate_merged_order() {
     def scoped: routing_rule_tagged($tags);
     def terminal: routing_rule_terminal;
     def ad_match: (.rule_set // [] | if type == "string" then [.] else . end) as $sets |
-      any($sets[]; startswith("sbv-adblock-")) or any(.rules[]?; ad_match);
+      any($sets[]; startswith("sbv-adblock-") or startswith("sbv-block-")) or any(.rules[]?; ad_match);
     [$expected[0].route.rules[]? | select(scoped)] as $owned |
     def owned: . as $rule | ($owned | index($rule)) != null;
     [.route.rules[]? | select(owned)] == $owned and

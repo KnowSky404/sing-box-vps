@@ -117,12 +117,12 @@ for representation in schema1 config-with-key-sidecar; do
   if (SB_ROUTING_JOURNAL_LEGACY_BACKUP=y; routing_transaction_backup_legacy_reality_state "${SB_PROTOCOL_STATE_DIR}/vless-reality.env"); then
     printf 'legacy backup accepted an untrusted journal\n' >&2; exit 1
   fi
-  routing_draft_edit "${TMP_DIR}/draft.json" '.policy.server.private_network_block=true'
+  routing_draft_edit "${TMP_DIR}/draft.json" '.policy.server.block_cn=true'
   routing_policy_apply "${TMP_DIR}/draft.json" > "${TMP_DIR}/${representation}-apply.log" 2>&1 || {
     cat "${TMP_DIR}/${representation}-apply.log" >&2; exit 1;
   }
   [[ ! -e "${SB_ROUTING_TRANSACTION_DIR}" && "$(grep -c '^restart sing-box$' "${SERVICE_CALLS}")" == 1 ]]
-  jq -e 'any(.route.rules[]; .action=="resolve") and any(.route.rules[]; .ip_is_private==true)' "${SINGBOX_CONFIG_FILE}" >/dev/null
+  jq -e 'any(.route.rules[]; .action=="resolve") and any(.route.rules[]; .rule_set==["sbv-block-geoip-cn"] and .action=="reject")' "${SINGBOX_CONFIG_FILE}" >/dev/null
   jq -e --arg private "${private}" 'any(.inbounds[]; .tls.reality.private_key? == $private)' "${SINGBOX_CONFIG_FILE}" >/dev/null
   "${core}" check -c "${SINGBOX_CONFIG_FILE}"
   if [[ "${representation}" == schema1 ]]; then
@@ -141,7 +141,7 @@ for representation in schema1 config-with-key-sidecar; do
   reset_legacy "${representation}"
   before=$(routing_state_fingerprint)
   routing_draft_create "${TMP_DIR}/draft.json"
-  routing_draft_edit "${TMP_DIR}/draft.json" '.policy.server.private_network_block=true'
+  routing_draft_edit "${TMP_DIR}/draft.json" '.policy.server.block_cn=true'
   touch "${TMP_DIR}/restart-fail-once"
   if routing_policy_apply "${TMP_DIR}/draft.json" > "${TMP_DIR}/${representation}-rollback.log" 2>&1; then
     printf 'restart failure was accepted\n' >&2; exit 1
@@ -158,7 +158,7 @@ reset_legacy config-with-key-sidecar
 rm -- "${SB_KEY_FILE}"
 before=$(routing_state_fingerprint)
 routing_draft_create "${TMP_DIR}/draft.json"
-routing_draft_edit "${TMP_DIR}/draft.json" '.policy.server.private_network_block=true'
+routing_draft_edit "${TMP_DIR}/draft.json" '.policy.server.block_cn=true'
 if routing_policy_apply "${TMP_DIR}/draft.json" > "${TMP_DIR}/missing-material.log" 2>&1; then
   printf 'missing key material silently replaced the existing REALITY key\n' >&2; exit 1
 fi
@@ -180,7 +180,7 @@ cp() {
 reset_legacy schema1
 before=$(routing_state_fingerprint)
 routing_draft_create "${TMP_DIR}/draft.json"
-routing_draft_edit "${TMP_DIR}/draft.json" '.policy.server.private_network_block=true'
+routing_draft_edit "${TMP_DIR}/draft.json" '.policy.server.block_cn=true'
 touch "${TMP_DIR}/backup-fail"
 if routing_policy_apply "${TMP_DIR}/draft.json" > "${TMP_DIR}/backup-failure.log" 2>&1; then
   printf 'journal backup failure was masked by a later successful statement\n' >&2; exit 1

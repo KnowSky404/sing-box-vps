@@ -397,7 +397,7 @@ push_subman_trojan_instance() {
   if ! listener_address_is_wildcard "$(jq -r '.listen.address' <<< "${instance}")"; then
     server=$(jq -r '.listen.address' <<< "${instance}") || return 1
   fi
-  # Run the same complete outbound producer used by export-client before any
+  # Validate the complete node connection material before any
   # SubMan mutation. Certificate-trust users are intentionally excluded here:
   # their URI is skipped because SubMan cannot carry the custom trust, while
   # their certificate file must not become a sync prerequisite.

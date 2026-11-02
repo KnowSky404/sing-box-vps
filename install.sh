@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026110203
+# Version: 2026110204
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026110203"
+readonly SCRIPT_VERSION="2026110204"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 # A single IPv6 wildcard socket accepts IPv4 and IPv6 in sing-box on Linux.
 readonly SB_DEFAULT_LISTEN_ADDRESS="::"
@@ -64,13 +64,6 @@ readonly WARP_AI_ROUTE_DOMAINS_JSON='["gemini.google.com","aistudio.google.com",
 readonly WARP_AI_ROUTE_DOMAIN_SUFFIXES_JSON='["openai.com","chatgpt.com","oaistatic.com","oaiusercontent.com","anthropic.com","claude.ai","perplexity.ai","x.ai","cursor.com","cursor.sh","google.com","googleapis.com","gstatic.com","googleusercontent.com","gvt1.com","recaptcha.net"]'
 readonly WARP_STREAM_ROUTE_DOMAINS_JSON='[]'
 readonly WARP_STREAM_ROUTE_DOMAIN_SUFFIXES_JSON='["netflix.com","nflxvideo.net","nflximg.net","nflxext.com","nflxso.net","disneyplus.com","disney-plus.net","dssott.com","bamgrid.com","hulu.com","huluim.com","hulustream.com","max.com","primevideo.com","amazonvideo.com","media-amazon.com"]'
-readonly WARP_RECOMMENDED_RULESETS=(
-  "openai|https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/sing/geo/geosite/openai.srs|1d"
-  "google-gemini|https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/sing/geo/geosite/google-gemini.srs|1d"
-  "google|https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/sing/geo/geosite/google.srs|1d"
-  "googlefcm|https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/sing/geo/geosite/googlefcm.srs|1d"
-  "google-ip|https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/sing/geo/geoip/google.srs|1d"
-)
 readonly MEDIA_CHECK_BACKEND_NAME="RegionRestrictionCheck"
 readonly MEDIA_CHECK_BACKEND_AUTHOR="1-stream"
 readonly MEDIA_CHECK_BACKEND_REPO_URL="https://github.com/1-stream/RegionRestrictionCheck"
@@ -112,21 +105,21 @@ readonly SB_REALITY_REGION_CANDIDATES=(
 # IDs/aliases are data; dispatch below always calls explicit, literal handlers.
 # The legacy vless alias intentionally remains the REALITY preset.
 readonly SB_PROTOCOL_REGISTRY=(
-  'vless-reality|vless+reality|vless-reality|vless|reality|inbound|vless|VLESS + REALITY|vless-in|1|true|vless|tcp|tcp,udp|1.13.0|true|none|vless|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"qos":{"upload_mbps":true,"download_mbps":true},"share_link":true,"qr":true,"client_export":true,"subman_sync":true}|vless,vless+reality|build_vless_inbound_json,build_vless_reality_route_rules_json,build_client_vless_reality_outbounds,save_vless_reality_state,prompt_vless_reality_install,prompt_vless_reality_update'
-  'vless-plain|vless|vless-plain|vless|plain|inbound|vless|VLESS|vless-plain-in|10|true|vless|tcp,udp|tcp,udp|1.13.0|true|optional|vless|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"transports":["none","http","ws","grpc","quic"],"listen_transport_projection":true,"share_link":true,"client_export":true,"subman_sync":true}|vless-plain|build_vless_plain_inbound_json,build_vless_plain_route_rules_json,build_client_vless_plain_outbounds,save_vless_plain_state,prompt_vless_plain_install,prompt_vless_plain_update,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
-  'mixed|mixed|mixed|mixed|plain|inbound|mixed|Mixed (HTTP/HTTPS/SOCKS)|mixed-in|2|true||tcp|tcp,udp|1.13.0|true|none|http,socks5|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"http":true,"socks5":true,"authentication":true,"share_links":["http","socks5"],"qr":false,"client_export":true,"subman_sync":false}||build_mixed_inbound_json,save_mixed_state,prompt_mixed_install,prompt_mixed_update,build_client_mixed_outbounds,load_mixed_structured_instance,apply_mixed_instance_change'
-  'hy2|hy2|hysteria2|hysteria2|tls|inbound|hysteria2|Hysteria2|hy2-in|3|true|hysteria2|udp|tcp,udp|1.13.0|true|optional|hysteria2|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"tls_modes":["acme_http01","acme_cloudflare_dns01","manual"],"bandwidth":true,"obfs":true,"masquerade":true,"share_link":true,"qr":true,"client_export":true,"subman_sync":true,"structured_instance_management":true}|hysteria2|build_hy2_inbound_json,build_hy2_certificate_provider_json,build_client_hy2_outbound,save_hy2_state,prompt_hy2_install,prompt_hy2_update,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
-  'anytls|anytls|anytls|anytls|tls|inbound|anytls|AnyTLS|anytls-in|4|true||tcp|tcp,udp|1.13.0|true|optional||tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"tls_modes":["acme_http01","acme_cloudflare_dns01","manual"],"standard_share_uri":false,"outbound_example":true,"qr":false,"client_export":true,"subman_sync":false}||build_anytls_inbound_json,build_anytls_certificate_provider_json,build_client_anytls_outbound,save_anytls_state,prompt_anytls_install,prompt_anytls_update,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
-  'socks|socks|socks|socks|plain|inbound|socks|SOCKS|socks-in|5|true||tcp|tcp,udp|1.13.0|true|none|socks5|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"socks5":true,"authentication":true,"share_links":["socks5"],"qr":false,"client_export":true,"subman_sync":false}||build_socks_inbound_json,save_socks_state,prompt_socks_install,prompt_socks_update,build_client_socks_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
-  'http|http|http|http|plain-or-tls|inbound|http|HTTP Proxy|http-in|6|true||tcp|tcp|1.13.0|true|none|http|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"http":true,"tls":true,"tls_modes":["disabled","manual_certificate"],"tls_share_links":false,"authentication":true,"share_links":["http"],"qr":false,"client_export":true,"subman_sync":false}||build_http_inbound_json,save_http_state,prompt_http_install,prompt_http_update,build_client_http_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
-  'shadowsocks|shadowsocks|shadowsocks|shadowsocks|aead-and-2022|inbound|shadowsocks|Shadowsocks|ss-in|7|true|ss|tcp,udp|tcp,udp|1.13.0|true|none|ss|tcp_loopback|{"multi_instance":true,"multi_user":true,"listen_network_selection":true,"per_instance_outbound":["default","direct","warp"],"authentication":true,"share_links":["ss"],"qr":false,"client_export":true,"subman_sync":true}|ss|build_shadowsocks_inbound_json,save_shadowsocks_state,prompt_shadowsocks_install,prompt_shadowsocks_update,build_client_shadowsocks_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
-  'trojan|trojan|trojan|trojan|tls|inbound|trojan|Trojan|trojan-in|8|true|trojan|tcp,udp|tcp,udp|1.13.0|true|optional|trojan|tcp_loopback|{"multi_instance":true,"authentication":true,"tls":true,"transports":["none","http","ws","grpc","quic"],"listen_transport_projection":true,"client_export":true,"subman_sync":true}|trojan|build_trojan_inbound_json,save_trojan_state,prompt_trojan_install,prompt_trojan_update,build_client_trojan_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
-  'vmess|vmess|vmess|vmess|tls|inbound|vmess|VMess|vmess-in|9|true|vmess|tcp,udp|tcp,udp|1.13.0|true|optional|vmess|tcp_loopback|{"multi_instance":true,"authentication":true,"tls":true,"transports":["none","http","ws","grpc","quic"],"listen_transport_projection":true,"client_export":true,"subman_sync":true}|vmess|build_vmess_inbound_json,save_vmess_state,prompt_vmess_install,prompt_vmess_update,build_client_vmess_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
-  'snell|snell|snell|snell|psk|inbound|snell|Snell|snell-in|11|true||tcp|tcp|1.14.0|true|none|snell|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"versions":[5,6],"v5_obfs_modes":["none","http"],"v6_modes":["","default","unshaped","unsafe-raw"],"udp_via_tcp_packet_api":true,"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true}|snell|build_snell_inbound_json,save_snell_state,prompt_snell_install,prompt_snell_update,build_client_snell_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
-  'tuic|tuic|tuic|tuic|tls-quic|inbound|tuic|TUIC|tuic-in|12|true||udp|tcp,udp|1.13.0|true|optional|tuic|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"tls_modes":["manual_certificate"],"quic":true,"congestion_control":["cubic","new_reno","bbr"],"udp_relay_modes":["native","quic"],"udp_over_stream":true,"zero_rtt_handshake":true,"heartbeat":true,"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true}|tuic|build_tuic_inbound_json,save_tuic_state,prompt_tuic_install,prompt_tuic_update,build_client_tuic_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
-  'hysteria|hysteria|hysteria|hysteria|tls-quic|inbound|hysteria|Hysteria|hysteria-in|13|true||udp|tcp,udp|1.13.0|true|optional|hysteria|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"tls_modes":["manual_certificate"],"bandwidth":true,"obfs":true,"quic":true,"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true}|hysteria|build_hysteria_inbound_json,save_hysteria_state,prompt_hysteria_install,prompt_hysteria_update,build_client_hysteria_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
-  'naive|naive|naive|naive|tls-quic|inbound|naive|NaiveProxy|naive-in|14|true||tcp,udp|tcp,udp|1.13.0|true|optional|naive|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"network":["tcp","udp"],"listen_network_selection":true,"quic_congestion_control":["bbr","cubic","reno"],"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true,"outbound_runtime":"with_naive_outbound+libcronet"}|naive|build_naive_inbound_json,save_naive_state,prompt_naive_install,prompt_naive_update,build_client_naive_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
-  'shadowtls|shadowtls|shadowtls|shadowtls|tls-wrapper|inbound|shadowtls|ShadowTLS|shadowtls-in|15|true||tcp|tcp|1.13.0|true|optional|shadowtls|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"versions":[1,2,3],"handshake":true,"detour":true,"wildcard_sni":["off","authed","all"],"standard_share_uri":false,"qr":false,"client_export":true,"subman_sync":false,"structured_instance_management":true,"composite":true}|shadowtls|build_shadowtls_inbound_json,save_shadowtls_state,prompt_shadowtls_install,prompt_shadowtls_update,build_client_shadowtls_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'vless-reality|vless+reality|vless-reality|vless|reality|inbound|vless|VLESS + REALITY|vless-in|1||vless|tcp|tcp,udp|1.13.0|true|none|vless|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"qos":{"upload_mbps":true,"download_mbps":true},"share_link":true,"qr":true,"subman_sync":true}|vless,vless+reality|build_vless_inbound_json,build_vless_reality_route_rules_json,build_client_vless_reality_outbounds,save_vless_reality_state,prompt_vless_reality_install,prompt_vless_reality_update'
+  'vless-plain|vless|vless-plain|vless|plain|inbound|vless|VLESS|vless-plain-in|10||vless|tcp,udp|tcp,udp|1.13.0|true|optional|vless|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"transports":["none","http","ws","grpc","quic"],"listen_transport_projection":true,"share_link":true,"subman_sync":true}|vless-plain|build_vless_plain_inbound_json,build_vless_plain_route_rules_json,build_client_vless_plain_outbounds,save_vless_plain_state,prompt_vless_plain_install,prompt_vless_plain_update,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'mixed|mixed|mixed|mixed|plain|inbound|mixed|Mixed (HTTP/HTTPS/SOCKS)|mixed-in|2|||tcp|tcp,udp|1.13.0|true|none|http,socks5|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"http":true,"socks5":true,"authentication":true,"share_links":["http","socks5"],"qr":false,"subman_sync":false}||build_mixed_inbound_json,save_mixed_state,prompt_mixed_install,prompt_mixed_update,build_client_mixed_outbounds,load_mixed_structured_instance,apply_mixed_instance_change'
+  'hy2|hy2|hysteria2|hysteria2|tls|inbound|hysteria2|Hysteria2|hy2-in|3||hysteria2|udp|tcp,udp|1.13.0|true|optional|hysteria2|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"tls_modes":["acme_http01","acme_cloudflare_dns01","manual"],"bandwidth":true,"obfs":true,"masquerade":true,"share_link":true,"qr":true,"subman_sync":true,"structured_instance_management":true}|hysteria2|build_hy2_inbound_json,build_hy2_certificate_provider_json,build_client_hy2_outbound,save_hy2_state,prompt_hy2_install,prompt_hy2_update,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'anytls|anytls|anytls|anytls|tls|inbound|anytls|AnyTLS|anytls-in|4|||tcp|tcp,udp|1.13.0|true|optional||tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"tls_modes":["acme_http01","acme_cloudflare_dns01","manual"],"standard_share_uri":false,"outbound_example":true,"qr":false,"subman_sync":false}||build_anytls_inbound_json,build_anytls_certificate_provider_json,build_client_anytls_outbound,save_anytls_state,prompt_anytls_install,prompt_anytls_update,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'socks|socks|socks|socks|plain|inbound|socks|SOCKS|socks-in|5|||tcp|tcp,udp|1.13.0|true|none|socks5|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"socks5":true,"authentication":true,"share_links":["socks5"],"qr":false,"subman_sync":false}||build_socks_inbound_json,save_socks_state,prompt_socks_install,prompt_socks_update,build_client_socks_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'http|http|http|http|plain-or-tls|inbound|http|HTTP Proxy|http-in|6|||tcp|tcp|1.13.0|true|none|http|tcp_loopback|{"multi_instance":true,"per_instance_outbound":["default","direct","warp"],"http":true,"tls":true,"tls_modes":["disabled","manual_certificate"],"tls_share_links":false,"authentication":true,"share_links":["http"],"qr":false,"subman_sync":false}||build_http_inbound_json,save_http_state,prompt_http_install,prompt_http_update,build_client_http_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'shadowsocks|shadowsocks|shadowsocks|shadowsocks|aead-and-2022|inbound|shadowsocks|Shadowsocks|ss-in|7||ss|tcp,udp|tcp,udp|1.13.0|true|none|ss|tcp_loopback|{"multi_instance":true,"multi_user":true,"listen_network_selection":true,"per_instance_outbound":["default","direct","warp"],"authentication":true,"share_links":["ss"],"qr":false,"subman_sync":true}|ss|build_shadowsocks_inbound_json,save_shadowsocks_state,prompt_shadowsocks_install,prompt_shadowsocks_update,build_client_shadowsocks_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'trojan|trojan|trojan|trojan|tls|inbound|trojan|Trojan|trojan-in|8||trojan|tcp,udp|tcp,udp|1.13.0|true|optional|trojan|tcp_loopback|{"multi_instance":true,"authentication":true,"tls":true,"transports":["none","http","ws","grpc","quic"],"listen_transport_projection":true,"subman_sync":true}|trojan|build_trojan_inbound_json,save_trojan_state,prompt_trojan_install,prompt_trojan_update,build_client_trojan_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'vmess|vmess|vmess|vmess|tls|inbound|vmess|VMess|vmess-in|9||vmess|tcp,udp|tcp,udp|1.13.0|true|optional|vmess|tcp_loopback|{"multi_instance":true,"authentication":true,"tls":true,"transports":["none","http","ws","grpc","quic"],"listen_transport_projection":true,"subman_sync":true}|vmess|build_vmess_inbound_json,save_vmess_state,prompt_vmess_install,prompt_vmess_update,build_client_vmess_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'snell|snell|snell|snell|psk|inbound|snell|Snell|snell-in|11|||tcp|tcp|1.14.0|true|none|snell|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"versions":[5,6],"v5_obfs_modes":["none","http"],"v6_modes":["","default","unshaped","unsafe-raw"],"udp_via_tcp_packet_api":true,"standard_share_uri":false,"qr":false,"subman_sync":false,"structured_instance_management":true}|snell|build_snell_inbound_json,save_snell_state,prompt_snell_install,prompt_snell_update,build_client_snell_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'tuic|tuic|tuic|tuic|tls-quic|inbound|tuic|TUIC|tuic-in|12|||udp|tcp,udp|1.13.0|true|optional|tuic|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"tls_modes":["manual_certificate"],"quic":true,"congestion_control":["cubic","new_reno","bbr"],"udp_relay_modes":["native","quic"],"udp_over_stream":true,"zero_rtt_handshake":true,"heartbeat":true,"standard_share_uri":false,"qr":false,"subman_sync":false,"structured_instance_management":true}|tuic|build_tuic_inbound_json,save_tuic_state,prompt_tuic_install,prompt_tuic_update,build_client_tuic_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'hysteria|hysteria|hysteria|hysteria|tls-quic|inbound|hysteria|Hysteria|hysteria-in|13|||udp|tcp,udp|1.13.0|true|optional|hysteria|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"tls_modes":["manual_certificate"],"bandwidth":true,"obfs":true,"quic":true,"standard_share_uri":false,"qr":false,"subman_sync":false,"structured_instance_management":true}|hysteria|build_hysteria_inbound_json,save_hysteria_state,prompt_hysteria_install,prompt_hysteria_update,build_client_hysteria_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'naive|naive|naive|naive|tls-quic|inbound|naive|NaiveProxy|naive-in|14|||tcp,udp|tcp,udp|1.13.0|true|optional|naive|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"tls":true,"network":["tcp","udp"],"listen_network_selection":true,"quic_congestion_control":["bbr","cubic","reno"],"standard_share_uri":false,"qr":false,"subman_sync":false,"structured_instance_management":true,"outbound_runtime":"with_naive_outbound+libcronet"}|naive|build_naive_inbound_json,save_naive_state,prompt_naive_install,prompt_naive_update,build_client_naive_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
+  'shadowtls|shadowtls|shadowtls|shadowtls|tls-wrapper|inbound|shadowtls|ShadowTLS|shadowtls-in|15|||tcp|tcp|1.13.0|true|optional|shadowtls|tcp_loopback|{"multi_instance":true,"multi_user":true,"authentication":true,"versions":[1,2,3],"handshake":true,"detour":true,"wildcard_sni":["off","authed","all"],"standard_share_uri":false,"qr":false,"subman_sync":false,"structured_instance_management":true,"composite":true}|shadowtls|build_shadowtls_inbound_json,save_shadowtls_state,prompt_shadowtls_install,prompt_shadowtls_update,build_client_shadowtls_outbounds,load_plain_proxy_structured_instance,apply_plain_proxy_instance_change'
 )
 # Runtime component registry for the non-proxy protocol surface.  These
 # records deliberately remain separate from SB_PROTOCOL_REGISTRY: advanced
@@ -280,7 +273,7 @@ SB_ANYTLS_DNS_PROVIDER="cloudflare"
 SB_ANYTLS_CF_API_TOKEN=""
 SB_ANYTLS_CERT_PATH=""
 SB_ANYTLS_KEY_PATH=""
-SB_ADVANCED_ROUTE="y"
+SB_ADVANCED_ROUTE="n"
 SB_ENABLE_WARP="n"
 SB_WARP_ROUTE_MODE="selective"
 SB_OUTBOUND_POLICY="default"
@@ -1579,7 +1572,6 @@ protocol_registry_field() {
     display_name) index=7 ;;
     default_tag) index=8 ;;
     menu_order) index=9 ;;
-    client_export) index=10 ;;
     subman_type) index=11 ;;
     listen_networks) index=12 ;;
     traffic_networks) index=13 ;;
@@ -1606,7 +1598,7 @@ protocol_registry_static_json() {
       available: null, availability_reason: "requires_instance_preflight",
       validated: {status: "not_assessed", method: .[18]},
       lifecycle: {deploy: true, takeover: true, edit: true, remove: true},
-      client_export: (.[10] == "true"), subman_type: .[11],
+      subman_type: .[11],
       listen_networks: (.[12] | csv), traffic_networks: (.[13] | csv),
       multi_instance: (.[15] == "true"), certificate_contract: .[16],
       share_formats: (.[17] | csv), probe: .[18],
@@ -3928,18 +3920,6 @@ reconcile_protocol_index_if_needed() {
 list_installed_protocols() {
   reconcile_protocol_index_if_needed "${1:-}" || return $?
   list_indexed_protocols_raw
-}
-
-list_exportable_client_protocols() {
-  local protocol protocols
-
-  protocols=$(list_installed_protocols) || return 1
-  while IFS= read -r protocol; do
-    [[ -n "${protocol}" ]] || continue
-    if [[ "$(protocol_registry_field "${protocol}" client_export)" == "true" ]]; then
-      printf '%s\n' "${protocol}"
-    fi
-  done <<< "${protocols}"
 }
 
 save_vless_reality_state() {
@@ -7277,25 +7257,6 @@ prompt_protocol_install_fields() {
   esac
 }
 
-prompt_global_instance_options() {
-  local default_exit private_access
-
-  routing_policy_prepare_install_defaults || return 1
-  default_exit="原生直连（WARP 关闭）"
-  if [[ "${SB_ENABLE_WARP}" == y ]]; then
-    if [[ "${SB_WARP_ROUTE_MODE}" == all ]]; then
-      default_exit="WARP 全量出口"
-    else
-      default_exit="原生直连，命中分流规则时使用 WARP"
-    fi
-  fi
-  private_access="允许"
-  [[ "${SB_ADVANCED_ROUTE}" != y ]] || private_access="拒绝"
-  log_info "使用全局规则：${default_exit}；服务端私网访问：${private_access}。"
-  log_info "新节点跟随全局规则；请通过菜单 13「规则与分流管理」调整策略。"
-  return 0
-}
-
 # Interactive Mixed management deliberately captures one validated store
 # snapshot before prompting.  The revision from that snapshot is passed to
 # the lifecycle CAS operation after the user finishes, so a long prompt can
@@ -7847,7 +7808,7 @@ hy2_management_build_record() {
     certificate_path=$(prompt_required_path "[Hysteria2] TLS 证书绝对路径（必填，如 /etc/ssl/certs/hy2.pem；当前 ${certificate_path}，已有值可留空保持）: " "${certificate_path}") || return 1
     key_path=$(prompt_required_path "[Hysteria2] TLS 私钥绝对路径（必填，如 /etc/ssl/private/hy2.key；当前 ${key_path}，已有值可留空保持）: " "${key_path}") || return 1
     tls=$(jq -cn --arg server_name "${server_name}" --arg certificate_path "${certificate_path}" --arg key_path "${key_path}" '{enabled:true,server_name:$server_name,certificate_path:$certificate_path,key_path:$key_path}') || return 1
-    echo '[Hysteria2] 证书信任：1=信任此证书（适合自签名证书，客户端导出会携带公开证书）；2=系统证书库（适合受信任 CA 签发的证书）。' >&2
+    echo '[Hysteria2] 证书信任：1=信任此证书（适合自签名证书，节点连接材料会携带公开证书）；2=系统证书库（适合受信任 CA 签发的证书）。' >&2
     trust_choice=$(prompt_choice "[Hysteria2] 客户端证书信任 [1-2]（当前 ${trust}，留空保持；新建默认 2）: " 1 2 "$([[ "${trust}" == system ]] && printf 2 || printf 1)") || return 1
     [[ "${trust_choice}" == 2 ]] && trust=system || trust=certificate
   fi
@@ -8793,8 +8754,8 @@ install_protocols_interactive() {
       fi
     done
 
-    if ! prompt_global_instance_options || ! write_protocol_index "${SELECTED_PROTOCOLS_CSV}"; then
-      abort_managed_state_transaction "${snapshot_dir}" "全局策略载入或协议索引保存失败"
+    if ! routing_policy_prepare_install_defaults || ! write_protocol_index "${SELECTED_PROTOCOLS_CSV}"; then
+      abort_managed_state_transaction "${snapshot_dir}" "已有网络设置载入或协议索引保存失败"
       return 1
     fi
     if ! protocol_array_contains vless-reality "${selected_protocols[@]}"; then
@@ -9036,12 +8997,9 @@ install_protocols_interactive() {
     fi
   fi
 
-  if [[ "${install_mode}" == fresh ]] && ! routing_policy_seed_fresh_install; then
-    abort_managed_state_transaction "${snapshot_dir}" "默认规则策略准备失败"
-    return 1
-  fi
-  if ! save_warp_route_settings || ! generate_config; then
+  if ! generate_config; then
     abort_managed_state_transaction "${snapshot_dir}" "配置生成或校验失败"
+    return 1
   fi
   if ! discard_managed_state_snapshot "${snapshot_dir}"; then
     log_warn "安装配置已提交，但临时事务快照未能删除: ${snapshot_dir}。"
@@ -9056,7 +9014,6 @@ install_protocols_interactive() {
   fi
   open_committed_protocol_ports || return $?
   run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box
-  log_info "新节点已跟随全局规则；如需调整出口与分流，请进入菜单 13。"
   log_info "连接信息未自动展示，如需查看请进入菜单 11。"
 }
 
@@ -9505,49 +9462,58 @@ pick_free_local_port() {
   return 1
 }
 
-create_media_check_warp_proxy_config() {
-  local output_file=$1
-  local proxy_port=$2
+warp_endpoint_json_from_saved_credentials() {
   local w_key w_v4 w_v6 w_client_id w_reserved='[]'
+  [[ -f "${SB_WARP_KEY_FILE}" && ! -L "${SB_WARP_KEY_FILE}" &&
+     "$(wc -c < "${SB_WARP_KEY_FILE}")" -le 65536 ]] || return 1
+  # Saved credentials are data. Read only known single-line values; never source
+  # the file, repair it, or contact the provider from a node/diagnostic operation.
+  w_key=$(sed -n 's/^WARP_PRIV_KEY=//p' "${SB_WARP_KEY_FILE}") || return 1
+  w_v4=$(sed -n 's/^WARP_V4=//p' "${SB_WARP_KEY_FILE}") || return 1
+  w_v6=$(sed -n 's/^WARP_V6=//p' "${SB_WARP_KEY_FILE}") || return 1
+  w_client_id=$(sed -n 's/^WARP_CLIENT_ID=//p' "${SB_WARP_KEY_FILE}") || return 1
+  [[ "${w_key}" =~ ^[A-Za-z0-9+/]{43}=$ &&
+     "${w_client_id}" =~ ^[A-Za-z0-9+/]{4}$ &&
+     "${w_v4}" != *:* && "${w_v6}" == *:* ]] || return 1
+  structured_instance_store_validate_address "${w_v4}" || return 1
+  structured_instance_store_validate_address "${w_v6}" || return 1
+  w_reserved=$(warp_client_id_to_reserved_json "${w_client_id}") || return 1
+  jq -cn --arg key "${w_key}" --arg v4 "${w_v4}/32" --arg v6 "${w_v6}/128" \
+    --argjson reserved "${w_reserved}" \
+    '{type:"wireguard",tag:"warp-ep",address:[$v4,$v6],private_key:$key,
+      peers:[{address:"engage.cloudflareclient.com",port:2408,
+        public_key:"bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+        reserved:$reserved,allowed_ips:["0.0.0.0/0","::/0"]}],mtu:1280}'
+}
 
-  register_warp || return $?
-
-  w_key=$(grep "WARP_PRIV_KEY" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
-  w_v4=$(grep "WARP_V4" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
-  w_v6=$(grep "WARP_V6" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
-  w_client_id=$(grep "WARP_CLIENT_ID" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
-  w_reserved=$(warp_client_id_to_reserved_json "${w_client_id}")
-
-  if [[ -z "${w_key}" || -z "${w_v4}" || -z "${w_v6}" ]]; then
-    log_error "Warp 账户信息不完整，请尝试重新注册 Warp。"
+warp_endpoint_json_for_generation() {
+  if [[ -e "${SB_WARP_KEY_FILE}" || -L "${SB_WARP_KEY_FILE}" ]]; then
+    warp_endpoint_json_from_saved_credentials
+    return $?
   fi
+  # An existing endpoint can be retained exactly when its separate credential
+  # file is missing. Final sing-box check still validates it and its references.
+  [[ -f "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" ]] || return 1
+  jq -ce '[.endpoints[]? | select(.tag == "warp-ep")] |
+    select(length == 1) | .[0] | select(.type == "wireguard" and
+      (.private_key | type == "string" and test("^[A-Za-z0-9+/]{43}=$")) and
+      (.address | type == "array" and length > 0) and
+      (.peers | type == "array" and length > 0))' "${SINGBOX_CONFIG_FILE}" 2>/dev/null
+}
+
+create_media_check_warp_proxy_config() {
+  local output_file=$1 proxy_port=$2 warp_endpoint
+  warp_endpoint=$(warp_endpoint_json_for_generation) || {
+    log_warn 'WARP 凭据缺失或无效；请先在网络设置中配置 WARP，检测未修改账户。'
+    return 1
+  }
 
   jq -n \
     --arg proxy_port "${proxy_port}" \
-    --arg w_key "${w_key}" \
-    --arg w_v4 "${w_v4}/32" \
-    --arg w_v6 "${w_v6}/128" \
-    --argjson w_reserved "${w_reserved}" \
+    --argjson warp_endpoint "${warp_endpoint}" \
     '{
       "log": { "level": "warn", "timestamp": true },
-      "endpoints": [
-        {
-          "type": "wireguard",
-          "tag": "warp-ep",
-          "address": [ $w_v4, $w_v6 ],
-          "private_key": $w_key,
-          "peers": [
-            {
-              "address": "engage.cloudflareclient.com",
-              "port": 2408,
-              "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
-              "reserved": $w_reserved,
-              "allowed_ips": [ "0.0.0.0/0", "::/0" ]
-            }
-          ],
-          "mtu": 1280
-        }
-      ],
+      "endpoints": [$warp_endpoint],
       "inbounds": [
         {
           "type": "socks",
@@ -9565,7 +9531,8 @@ create_media_check_warp_proxy_config() {
         ],
         "final": "warp-ep"
       }
-    }' > "${output_file}"
+    }' > "${output_file}" || return 1
+  "${SINGBOX_BIN_PATH}" check -c "${output_file}" >&2
 }
 
 run_media_check_backend() {
@@ -9603,7 +9570,10 @@ run_media_check_via_warp() {
   proxy_log="${temp_dir}/media-check-warp.log"
   proxy_url="socks5h://127.0.0.1:${proxy_port}"
 
-  create_media_check_warp_proxy_config "${proxy_config}" "${proxy_port}"
+  if ! create_media_check_warp_proxy_config "${proxy_config}" "${proxy_port}"; then
+    rm -rf -- "${temp_dir}"
+    return 1
+  fi
 
   "${SINGBOX_BIN_PATH}" run -c "${proxy_config}" > "${proxy_log}" 2>&1 &
   proxy_pid=$!
@@ -9855,183 +9825,11 @@ build_warp_rule_set_tags_json() {
 }
 
 refresh_warp_route_assets() {
-  ensure_warp_routing_assets
-  build_custom_warp_domain_json
-  build_local_warp_rule_sets_json
-  build_remote_warp_rule_sets_json
+  # Rendering an existing network policy must not create or repair its assets.
+  build_custom_warp_domain_json || return 1
+  build_local_warp_rule_sets_json || return 1
+  build_remote_warp_rule_sets_json || return 1
   build_warp_rule_set_tags_json
-}
-
-show_warp_route_assets() {
-  ensure_warp_routing_assets
-  load_warp_route_settings
-
-  echo -e "\n${BLUE}--- Warp 分流资产 ---${NC}"
-  echo -e "当前模式: ${SB_WARP_ROUTE_MODE}"
-  echo -e "自定义域名: ${SB_WARP_DOMAINS_FILE}"
-  echo -e "本地规则集目录: ${SB_WARP_LOCAL_RULESET_DIR}"
-  echo -e "远程规则集列表: ${SB_WARP_REMOTE_RULESETS_FILE}"
-}
-
-print_json_string_array() {
-  local title=$1
-  local json=$2
-
-  echo "${title}:"
-  if jq -e 'length > 0' >/dev/null <<< "${json}"; then
-    jq -r '.[] | "  - " + .' <<< "${json}"
-  else
-    echo "  - 无"
-  fi
-}
-
-print_json_rule_set_array() {
-  local title=$1
-  local json=$2
-
-  echo "${title}:"
-  if jq -e 'length > 0' >/dev/null <<< "${json}"; then
-    jq -r '.[] | "  - [" + .tag + "] " + (.path // .url)' <<< "${json}"
-  else
-    echo "  - 无"
-  fi
-}
-
-show_effective_warp_route_sources() {
-  ensure_warp_routing_assets
-  load_current_config_state
-  load_warp_route_settings
-  refresh_warp_route_assets
-
-  echo -e "\n${BLUE}--- 当前生效的 Warp 分流来源 ---${NC}"
-  echo -e "当前模式: ${SB_WARP_ROUTE_MODE}"
-
-  if [[ "${SB_WARP_ROUTE_MODE}" == "all" ]]; then
-    echo "说明: 当前为全量 Warp 模式，默认所有代理流量走 Warp。"
-    if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
-      echo "例外: REALITY 握手域名仍直连；私网地址按高级路由规则处理。"
-    else
-      echo "例外: 私网地址按高级路由规则处理。"
-    fi
-  else
-    echo "说明: 当前为选择性 Warp 模式，仅命中以下来源的流量走 Warp。"
-  fi
-
-  print_json_string_array "内置 AI 精确域名" "${WARP_AI_ROUTE_DOMAINS_JSON}"
-  print_json_string_array "内置 AI 域名后缀" "${WARP_AI_ROUTE_DOMAIN_SUFFIXES_JSON}"
-  print_json_string_array "内置流媒体精确域名" "${WARP_STREAM_ROUTE_DOMAINS_JSON}"
-  print_json_string_array "内置流媒体域名后缀" "${WARP_STREAM_ROUTE_DOMAIN_SUFFIXES_JSON}"
-  print_json_string_array "自定义精确域名" "${SB_WARP_CUSTOM_DOMAINS_JSON}"
-  print_json_string_array "自定义域名后缀" "${SB_WARP_CUSTOM_DOMAIN_SUFFIXES_JSON}"
-  print_json_rule_set_array "本地规则集" "${SB_WARP_LOCAL_RULE_SETS_JSON}"
-  print_json_rule_set_array "远程规则集" "${SB_WARP_REMOTE_RULE_SETS_JSON}"
-}
-
-set_warp_route_mode_interactive() {
-  echo
-  render_left_aligned_page_header "Warp 路由模式" "选择当前实例的 Warp 出口策略"
-  render_section_title "当前设置"
-  render_summary_item "当前模式" "${SB_WARP_ROUTE_MODE}"
-  render_menu_group_start "模式选项"
-  render_menu_item "1" "全量流量走 Warp"
-  render_menu_item "2" "仅 AI/流媒体及自定义规则走 Warp"
-  if [[ "${SB_WARP_ROUTE_MODE}" == "all" ]]; then
-    mode_choice=$(prompt_choice "请选择 [1-2] (当前: ${SB_WARP_ROUTE_MODE}): " 1 2 1)
-  else
-    mode_choice=$(prompt_choice "请选择 [1-2] (当前: ${SB_WARP_ROUTE_MODE}): " 1 2 2)
-  fi
-
-  case "${mode_choice}" in
-    1) SB_WARP_ROUTE_MODE="all" ;;
-    2) SB_WARP_ROUTE_MODE="selective" ;;
-  esac
-
-  save_warp_route_settings
-  return 0
-}
-
-add_warp_domain_entry() {
-  ensure_warp_routing_assets
-
-  local domain_entry
-  read -rp "请输入域名（= 前缀表示精确匹配，其余默认 suffix 匹配）: " domain_entry
-  domain_entry=$(trim_whitespace "${domain_entry}")
-
-  if [[ -z "${domain_entry}" ]]; then
-    log_warn "域名为空，未写入。"
-    return 1
-  fi
-
-  if ! [[ "${domain_entry}" =~ ^=?[A-Za-z0-9._-]+$ ]]; then
-    log_warn "域名格式无效，未写入。"
-    return 1
-  fi
-
-  if grep -Fxq "${domain_entry}" "${SB_WARP_DOMAINS_FILE}" 2>/dev/null; then
-    log_warn "域名已存在于 Warp 分流列表。"
-    return 1
-  fi
-
-  printf '%s\n' "${domain_entry}" >> "${SB_WARP_DOMAINS_FILE}"
-  log_success "已写入 Warp 分流域名: ${domain_entry}"
-  return 0
-}
-
-add_remote_warp_rule_set() {
-  ensure_warp_routing_assets
-
-  local tag url update_interval
-  read -rp "请输入远程规则集标签: " tag
-  tag=$(sanitize_ruleset_tag "$(trim_whitespace "${tag}")")
-
-  if [[ -z "${tag}" ]]; then
-    log_warn "标签为空，未写入。"
-    return 1
-  fi
-
-  while true; do
-    read -rp "请输入远程规则集 URL: " url
-    url=$(trim_whitespace "${url}")
-    validate_http_url "${url}" && break
-    log_warn "远程规则集 URL 必须以 http:// 或 https:// 开头。"
-  done
-
-  while true; do
-    read -rp "请输入更新周期 (默认 1d): " update_interval
-    update_interval=$(trim_whitespace "${update_interval:-1d}")
-    validate_update_interval "${update_interval}" && break
-    log_warn "更新周期格式必须为正整数加单位 s/m/h/d，例如 1d。"
-  done
-
-  printf '%s|%s|%s\n' "${tag}" "${url}" "${update_interval:-1d}" >> "${SB_WARP_REMOTE_RULESETS_FILE}"
-  log_success "已写入远程 Warp 规则集: ${tag}"
-  return 0
-}
-
-import_recommended_warp_rule_sets() {
-  ensure_warp_routing_assets
-
-  local entry imported_count=0 skipped_count=0
-
-  for entry in "${WARP_RECOMMENDED_RULESETS[@]}"; do
-    if grep -Fxq "${entry}" "${SB_WARP_REMOTE_RULESETS_FILE}" 2>/dev/null; then
-      skipped_count=$((skipped_count + 1))
-      continue
-    fi
-
-    printf '%s\n' "${entry}" >> "${SB_WARP_REMOTE_RULESETS_FILE}"
-    imported_count=$((imported_count + 1))
-  done
-
-  if [[ ${imported_count} -gt 0 ]]; then
-    log_success "已导入 ${imported_count} 条推荐 Warp 规则源。"
-  fi
-
-  if [[ ${skipped_count} -gt 0 ]]; then
-    log_info "已跳过 ${skipped_count} 条已存在的推荐 Warp 规则源。"
-  fi
-
-  [[ ${imported_count} -gt 0 ]]
 }
 
 check_root() {
@@ -23183,6 +22981,7 @@ generate_config_candidate() {
   local exit_cleanup_command effective_protocols
   local inbounds_json certificate_providers_json protocol_rules_json instance_outbound_rules_json
   local managed_components_json managed_route_options_json existing_default_http_client=""
+  local legacy_advanced_route=${SB_ADVANCED_ROUTE}
   local routing_policy_active=n routing_policy_json='{}' routing_policy_rendered='{}' routing_policy_tags='[]' routing_policy_file
 
   # Force ensure jq is installed
@@ -23203,6 +23002,22 @@ generate_config_candidate() {
       return 1
     }
     routing_policy_active=y
+  fi
+
+  # A matching live rule is not ownership evidence. For existing installs
+  # without explicit policy state, only a trusted generated record may carry
+  # the old global private-address restriction into a new ownership baseline.
+  # Otherwise preserve that rule as operator content in the three-way merge.
+  if [[ "${routing_policy_active}" != y && -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    legacy_advanced_route=n
+    if [[ -e "${baseline_file}" || -L "${baseline_file}" ]]; then
+      [[ -f "${baseline_file}" && ! -L "${baseline_file}" &&
+         "$(stat -c %a "${baseline_file}")" == 600 ]] || return 1
+      if jq -e 'any(.route.rules[]?; . == {ip_is_private:true,action:"reject"})' \
+        "${baseline_file}" >/dev/null; then
+        legacy_advanced_route=y
+      fi
+    fi
   fi
 
   # Inspect the complete live inventory before discovery or resource creation.
@@ -23237,11 +23052,10 @@ generate_config_candidate() {
 
   log_info "正在生成配置 (目标 sing-box $(resolve_config_target_singbox_version)，Endpoint 架构 & 安全注入)..."
   mkdir -p "${SINGBOX_CONFIG_DIR}" || return 1
-  ensure_warp_routing_assets || return 1
   load_warp_route_settings || return 1
 
   # Endpoints Logic
-  local w_key="" w_v4="" w_v6="" w_client_id="" w_reserved='[]' enable_warp_endpoint
+  local warp_endpoint='null' enable_warp_endpoint
   enable_warp_endpoint="${SB_ENABLE_WARP}"
   if [[ "${enable_warp_endpoint}" != "y" ]] && instance_outbound_requires_warp; then
     enable_warp_endpoint="y"
@@ -23252,12 +23066,10 @@ generate_config_candidate() {
   fi
 
   if [[ "${enable_warp_endpoint}" == "y" ]]; then
-    register_warp || return 1
-    w_key=$(grep "WARP_PRIV_KEY" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
-    w_v4=$(grep "WARP_V4" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
-    w_v6=$(grep "WARP_V6" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
-    w_client_id=$(grep "WARP_CLIENT_ID" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
-    w_reserved=$(warp_client_id_to_reserved_json "${w_client_id}")
+    warp_endpoint=$(warp_endpoint_json_for_generation) || {
+      printf '[ERROR] WARP 凭据缺失或无效；请通过网络设置恢复 WARP，节点操作未注册或更改账户。\n' >&2
+      return 1
+    }
   fi
 
   refresh_warp_route_assets || return 1
@@ -23329,14 +23141,11 @@ generate_config_candidate() {
   fi
 
   if ! jq -n \
-    --arg adv_route "${SB_ADVANCED_ROUTE}" \
+    --arg adv_route "${legacy_advanced_route}" \
     --arg enable_warp "${SB_ENABLE_WARP}" \
     --arg enable_warp_endpoint "${enable_warp_endpoint}" \
     --arg warp_mode "${SB_WARP_ROUTE_MODE}" \
-    --arg w_key "${w_key}" \
-    --arg w_v4 "${w_v4}/32" \
-    --arg w_v6 "${w_v6}/128" \
-    --argjson w_reserved "${w_reserved}" \
+    --argjson warp_endpoint "${warp_endpoint}" \
     --arg outbound_stack_mode "${SB_OUTBOUND_STACK_MODE}" \
     --arg default_http_client "${existing_default_http_client}" \
     --argjson inbounds "${inbounds_json}" \
@@ -23365,24 +23174,8 @@ generate_config_candidate() {
         ],
         "strategy": $outbound_stack_mode
       },
-      "endpoints": ((if $enable_warp_endpoint == "y" then [
-        {
-          "type": "wireguard",
-          "tag": "warp-ep",
-          "address": [ $w_v4, $w_v6 ],
-          "private_key": $w_key,
-          "peers": [
-            {
-              "address": "engage.cloudflareclient.com",
-              "port": 2408,
-              "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
-              "reserved": $w_reserved,
-              "allowed_ips": [ "0.0.0.0/0", "::/0" ]
-            }
-          ],
-          "mtu": 1280
-        }
-      ] else [] end) + ($managed_components.endpoints // [])),
+      "endpoints": ((if $enable_warp_endpoint == "y" then [$warp_endpoint] else [] end) +
+        ($managed_components.endpoints // [])),
       "inbounds": ($inbounds + ($managed_components.inbounds // [])),
       "outbounds": ([
         {
@@ -25838,10 +25631,10 @@ plain_proxy_share_warnings_json() {
   if [[ "${protocol}" == mixed ]] && ! plain_proxy_http_auth_representable; then unavailable=true; fi
   jq -cn --argjson unavailable "${unavailable}" --argjson tls_uri_unavailable "${tls_uri_unavailable}" \
     --arg protocol "${protocol}" '
-    (if $protocol == "http" then [] else [{code:"socks5_uri_transport_options_omitted",message:"SOCKS5 URI 只携带代理地址和认证，不携带 UoT v2 等客户端选项；完整连接配置请使用 export-client JSON。"}] end)
+    (if $protocol == "http" then [] else [{code:"socks5_uri_transport_options_omitted",message:"SOCKS5 URI 只携带代理地址和认证，不携带 UoT v2 等客户端选项；UoT 等传输选项请在客户端自行设置。"}] end)
     + (if $protocol == "http" and ($tls_uri_unavailable | not) then [{code:"http_plaintext_transport",message:"HTTP 代理入口未启用 TLS，认证信息与非加密业务可能被读取；访问 HTTPS 目标不等于代理入口已加密。仅用于可信网络或受保护隧道。"}] else [] end)
-    + (if $protocol == "http" then [] else (if $unavailable then [{code:"mixed_http_auth_unrepresentable",message:"当前认证不符合 HTTP Basic 字段约束，未提供 HTTP 链接；SOCKS5 和客户端 JSON 仍可使用，原凭据未修改。"}] else [] end) end)
-    + (if $tls_uri_unavailable then [{code:"http_tls_uri_unrepresentable",message:"HTTP TLS 客户端配置包含证书信任或 SNI，分享 URI 无法安全表达；未提供 HTTP 链接，请使用客户端 JSON 导出。"}] else [] end)'
+    + (if $protocol == "http" then [] else (if $unavailable then [{code:"mixed_http_auth_unrepresentable",message:"当前认证不符合 HTTP Basic 字段约束，未提供 HTTP 链接；SOCKS5 仍可使用，原凭据未修改。"}] else [] end) end)
+    + (if $tls_uri_unavailable then [{code:"http_tls_uri_unrepresentable",message:"HTTP TLS 客户端配置包含证书信任或 SNI，分享 URI 无法安全表达；未提供 HTTP 链接，请按节点信息手动配置证书信任和 SNI。"}] else [] end)'
 }
 
 hy2_manual_certificate_algorithm() {
@@ -25916,17 +25709,8 @@ build_hy2_compatibility_warnings_json() {
     return 0
   fi
 
-  if [[ "${context}" == "export" ]]; then
-    if ! singbox_config_supports_1_14; then
-      printf '[]'
-      return 0
-    fi
-    code="hy2_ed25519_chrome_parrot_disabled"
-    message="检测到 Hysteria2 手动 Ed25519 证书；导出的 1.14+ 客户端配置已设置 disable_chrome_parrot=true。"
-  else
-    code="hy2_ed25519_share_link_requires_client_override"
-    message="检测到 Hysteria2 手动 Ed25519 证书；分享链接无法携带 disable_chrome_parrot，1.14+ 客户端必须手动启用该选项。"
-  fi
+  code="hy2_ed25519_share_link_requires_client_override"
+  message="检测到 Hysteria2 手动 Ed25519 证书；分享链接无法携带 disable_chrome_parrot，1.14+ 客户端必须手动启用该选项。"
 
   jq -n \
     --arg code "${code}" \
@@ -25953,74 +25737,6 @@ print_hy2_compatibility_warnings() {
   while IFS= read -r warning_message; do
     [[ -n "${warning_message}" ]] && log_warn "${warning_message}"
   done < <(jq -r '.[]?.message' <<< "${warnings_json}")
-}
-
-client_export_mixed_tags_json() (
-  local schema store_file instance_id
-
-  if ! protocol_state_exists "mixed"; then
-    printf '[]'
-    return 0
-  fi
-  schema=$(protocol_instance_state_schema "mixed" 2>/dev/null || true)
-  case "${schema}" in
-    2)
-      store_file=$(mixed_structured_store_file 2>/dev/null || true)
-      if [[ -f "${store_file}" && ! -L "${store_file}" ]]; then
-        jq -c '[.instances[]?.id | "mixed-" + .]' "${store_file}" 2>/dev/null || printf '[]'
-      else
-        printf '[]'
-      fi
-      ;;
-    1)
-      instance_id=$(protocol_default_instance_id "mixed" 2>/dev/null || true)
-      if [[ -n "${instance_id}" ]] && load_protocol_instance_state mixed "${instance_id}" >/dev/null 2>&1; then
-        jq -cn --arg tag "$(client_outbound_tag_for_protocol mixed)" '[ $tag ]'
-      else
-        printf '[]'
-      fi
-      ;;
-    *)
-      printf '[]'
-      ;;
-  esac
-)
-
-collect_client_export_warnings_json() {
-  local config_json=$1 hy2_warnings mixed_tags_json
-  hy2_warnings=$(collect_hy2_compatibility_warnings_json "export") || return 1
-  if ! mixed_tags_json=$(client_export_mixed_tags_json); then
-    mixed_tags_json='[]'
-  fi
-  jq --argjson warnings "${hy2_warnings}" --argjson mixed_tags "${mixed_tags_json}" '
-    def mixed_origin:
-      (.tag // "") as $tag |
-      (any($mixed_tags[]; . == $tag) or
-       (($tag | type) == "string" and ($tag | startswith("mixed-"))));
-    $warnings
-    + (if any(.outbounds[]?;
-        .type == "socks" and mixed_origin) then [{
-      code: "mixed_plaintext_transport",
-      message: "Mixed 导出使用明文 SOCKS5，代理链路未启用 TLS，认证信息与非加密业务可能被读取；仅用于可信网络或受保护隧道。UDP 经 UoT v2 承载，UoT 不提供加密。"
-    }] else [] end)
-    + (if any(.outbounds[]?;
-        .type == "socks" and (mixed_origin | not)) then [{
-      code: "socks_plaintext_transport",
-      message: "SOCKS5 导出使用明文代理链路，认证信息与非加密业务可能被读取；仅用于可信网络或受保护隧道。UoT 即使启用也不提供加密。"
-    }] else [] end)
-    + (if any(.outbounds[]?; .type == "http" and .tls.enabled != true) then [{
-      code: "http_plaintext_transport",
-      message: "HTTP 代理入口未启用 TLS，认证信息与非加密业务可能被读取；访问 HTTPS 目标不等于代理入口已加密。仅用于可信网络或受保护隧道。"
-    }] else [] end)
-    + (if any(.outbounds[]?; .type == "http" and .tls.enabled == true) then [{
-      code: "http_tls_certificate_embedded",
-      message: "HTTP TLS 导出仅嵌入公开证书信任与 server_name；服务端私钥未读取或写入客户端配置。"
-    }] else [] end)
-    + (if any(.outbounds[]?; .type == "shadowsocks" and .method == "none") then [{
-      code: "shadowsocks_plaintext_transport",
-      message: "Shadowsocks none 不提供加密或认证，只能用于可信网络或受保护隧道。"
-    }] else [] end)
-  ' <<< "${config_json}"
 }
 
 build_hy2_link() {
@@ -26441,7 +26157,7 @@ push_subman_trojan_instance() {
   if ! listener_address_is_wildcard "$(jq -r '.listen.address' <<< "${instance}")"; then
     server=$(jq -r '.listen.address' <<< "${instance}") || return 1
   fi
-  # Run the same complete outbound producer used by export-client before any
+  # Validate the complete node connection material before any
   # SubMan mutation. Certificate-trust users are intentionally excluded here:
   # their URI is skipped because SubMan cannot carry the custom trust, while
   # their certificate file must not become a sync prerequisite.
@@ -28119,7 +27835,7 @@ build_client_vless_reality_outbounds() {
     return "${status}"
   fi
   if (( count == 0 )); then
-    log_warn "未找到可用的 VLESS + REALITY 实例，已跳过客户端导出协议: vless-reality" >&2
+    log_warn "未找到可用的 VLESS + REALITY 实例，无法生成节点连接材料: vless-reality" >&2
     return 1
   fi
 
@@ -29460,12 +29176,6 @@ build_client_shadowtls_outbounds() (
   jq -c '.outbounds[]' <<< "${bundle_json}"
 )
 
-build_client_outbounds_for_current_protocol() {
-  local protocol=${1:-} public_ip=${2:-$(get_public_ip)} outbound_json
-  outbound_json=$(build_client_outbound_json_for_protocol "${protocol}" "${public_ip}") || return $?
-  printf '%s\n' "${outbound_json}"
-}
-
 build_client_outbound_json_for_protocol() {
   local protocol original_protocol_state original_instance_id outbound_json build_status restore_original_state public_ip
   local default_instance_id adapter_status
@@ -30217,375 +29927,6 @@ show_connection_info_menu() {
   done
 }
 
-client_export_file_path() {
-  printf '%s/client/sing-box-client.json' "${SB_PROJECT_DIR}"
-}
-
-build_singbox_client_config() {
-  local original_protocol_state original_instance_id clash_api_secret public_ip tmpdir
-  local installed_protocols_raw
-  local installed_protocols=() exportable_protocols=()
-  local remote_outbounds_json remote_tags_json
-  local protocol protocol_label outbound_json protocol_tags shadowtls_bundle_json usable_protocol_count
-  local routing_policy_json client_policy_json client_adblock_json
-  local use_rule_set_http_client="n"
-  local status=0
-
-  [[ "$#" -le 1 ]] || return 1
-  if [[ "$#" -eq 0 ]]; then
-    routing_policy_json=$(routing_policy_read_json) || return 1
-  else
-    routing_policy_json=$1
-  fi
-  routing_policy_validate_json "${routing_policy_json}" || return 1
-  client_policy_json=$(jq -c '.client' <<< "${routing_policy_json}") || return 1
-  client_adblock_json=$(routing_policy_adblock_json "${routing_policy_json}" client) || return 1
-
-  if singbox_config_supports_1_14; then
-    use_rule_set_http_client="y"
-  fi
-
-  original_protocol_state=$(runtime_protocol_to_state "${SB_PROTOCOL}" 2>/dev/null || true)
-  original_instance_id=""
-  if [[ -n "${original_protocol_state}" ]] && protocol_state_exists "${original_protocol_state}"; then
-    if original_instance_id=$(protocol_default_instance_id "${original_protocol_state}"); then
-      :
-    else
-      return $?
-    fi
-  fi
-  if ! installed_protocols_raw=$(list_installed_protocols_read_only); then
-    return 1
-  fi
-  if [[ -n "${installed_protocols_raw}" ]]; then
-    mapfile -t installed_protocols <<< "${installed_protocols_raw}"
-    for protocol in "${installed_protocols[@]}"; do
-      [[ "$(protocol_registry_field "${protocol}" client_export)" == "true" ]] || continue
-      exportable_protocols+=("${protocol}")
-    done
-  fi
-  if [[ ${#exportable_protocols[@]} -eq 0 ]]; then
-    if [[ ${#installed_protocols[@]} -gt 0 ]]; then
-      log_warn "当前无可导出的 sing-box 裸核客户端节点；已安装协议没有注册客户端导出能力。" >&2
-    else
-      log_warn "当前无可导出的 sing-box 裸核客户端节点；请先安装支持客户端导出的协议。" >&2
-    fi
-    return 1
-  fi
-
-  clash_api_secret=$(generate_random_token "clash-" 16)
-  public_ip=$(get_public_ip)
-  tmpdir=$(mktemp -d)
-  usable_protocol_count=0
-  trap '
-    if [[ -n "${original_protocol_state:-}" ]] && protocol_state_exists "${original_protocol_state}"; then
-      load_protocol_instance_state "${original_protocol_state}" "${original_instance_id}" >/dev/null 2>&1
-    fi
-    rm -rf "${tmpdir:-}"
-  ' RETURN
-
-  for protocol in "${exportable_protocols[@]}"; do
-    protocol_label=$(protocol_display_name "${protocol}") || return 1
-    if ! protocol_state_exists "${protocol}"; then
-      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" || "${protocol}" == "shadowtls" ]]; then
-        log_warn "${protocol_label} 状态缺失，已中止客户端导出；原导出文件保持不变。" >&2
-        status=1
-        break
-      fi
-      log_warn "协议状态文件缺失，已跳过客户端导出协议: ${protocol}" >&2
-      continue
-    fi
-
-    if [[ "${protocol}" == "shadowtls" ]]; then
-      if ! shadowtls_bundle_json=$(build_client_shadowtls_bundle_json "${public_ip}"); then
-        log_warn "${protocol_label} 客户端连接材料无效，已中止客户端导出；原导出文件保持不变。" >&2
-        status=1
-        break
-      fi
-      if ! outbound_json=$(jq -c '.outbounds[]' <<< "${shadowtls_bundle_json}") ||
-         ! protocol_tags=$(jq -r '.primary_tags[]' <<< "${shadowtls_bundle_json}"); then
-        log_warn "${protocol_label} 客户端组合连接材料无效，已中止客户端导出；原导出文件保持不变。" >&2
-        status=1
-        break
-      fi
-    elif ! outbound_json=$(build_client_outbounds_for_current_protocol "${protocol}" "${public_ip}"); then
-      if [[ "${protocol}" == "mixed" || "${protocol}" == "socks" || "${protocol}" == "http" || "${protocol}" == "shadowsocks" || "${protocol}" == "trojan" || "${protocol}" == "vmess" || "${protocol}" == "vless-plain" || "${protocol}" == "anytls" || "${protocol}" == "hy2" || "${protocol}" == "snell" || "${protocol}" == "tuic" || "${protocol}" == "hysteria" || "${protocol}" == "naive" || "${protocol}" == "shadowtls" ]]; then
-        log_warn "${protocol_label} 客户端连接材料无效，已中止客户端导出；原导出文件保持不变。" >&2
-        status=1
-        break
-      fi
-      log_warn "生成客户端导出协议失败，已跳过: ${protocol}" >&2
-      continue
-    else
-      if ! protocol_tags=$(jq -r '.tag' <<< "${outbound_json}"); then
-        log_warn "${protocol_label} 客户端连接材料标签无效，已中止客户端导出；原导出文件保持不变。" >&2
-        status=1
-        break
-      fi
-    fi
-
-    printf '%s\n' "${outbound_json}" >> "${tmpdir}/outbounds.jsonl"
-    printf '%s\n' "${protocol_tags}" >> "${tmpdir}/tags.txt"
-    usable_protocol_count=$((usable_protocol_count + 1))
-  done
-
-  if (( status != 0 )); then
-    :
-  elif (( usable_protocol_count == 0 )); then
-    log_warn "未找到可用的远程协议可供导出，请检查协议状态文件是否完整。" >&2
-    status=1
-  else
-    remote_outbounds_json=$(jq -s '.' "${tmpdir}/outbounds.jsonl")
-    remote_tags_json=$(jq -Rsc 'split("\n") | map(select(length > 0))' "${tmpdir}/tags.txt")
-
-    jq -n \
-      --argjson remote_outbounds "${remote_outbounds_json}" \
-      --argjson remote_tags "${remote_tags_json}" \
-      --arg clash_api_secret "${clash_api_secret}" \
-      --arg use_rule_set_http_client "${use_rule_set_http_client}" \
-      --argjson client_policy "${client_policy_json}" \
-      --argjson adblock "${client_adblock_json}" \
-      '{
-        "log": {
-          "level": "info",
-          "timestamp": true
-        },
-        "dns": {
-          "servers": [
-            {
-              "type": "https",
-              "tag": "cn-dns",
-              "server": "223.5.5.5",
-              "server_port": 443,
-              "path": "/dns-query"
-            },
-            {
-              "type": "https",
-              "tag": "remote-dns",
-              "server": "1.1.1.1",
-              "server_port": 443,
-              "path": "/dns-query",
-              "detour": "proxy"
-            }
-          ],
-          "rules": ($adblock.rules + (if $client_policy.cn_direct then [
-            {
-              "rule_set": "geosite-cn",
-              "server": "cn-dns"
-            },
-            {
-              "rule_set": "geosite-geolocation-!cn",
-              "server": "remote-dns"
-            }
-          ] else [] end)),
-          "final": "remote-dns",
-          "strategy": "prefer_ipv4"
-        },
-        "inbounds": [
-          {
-            "type": "mixed",
-            "tag": "mixed-in",
-            "listen": "127.0.0.1",
-            "listen_port": 2080,
-            "set_system_proxy": false
-          }
-        ],
-        "outbounds": (
-          [
-            {
-              "type": "selector",
-              "tag": "proxy",
-              "outbounds": (["auto"] + $remote_tags),
-              "default": "auto"
-            },
-            {
-              "type": "urltest",
-              "tag": "auto",
-              "outbounds": $remote_tags,
-              "url": "https://www.gstatic.com/generate_204",
-              "interval": "3m"
-            }
-          ] + $remote_outbounds + [
-            {
-              "type": "direct",
-              "tag": "direct"
-            }
-          ]
-        ),
-        "route": {
-          "rule_set": (
-            (if $client_policy.cn_direct then [
-              {
-                "tag": "geoip-cn",
-                "type": "remote",
-                "format": "binary",
-                "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.srs"
-              },
-              {
-                "tag": "geosite-cn",
-                "type": "remote",
-                "format": "binary",
-                "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/cn.srs"
-              },
-              {
-                "tag": "geosite-geolocation-!cn",
-                "type": "remote",
-                "format": "binary",
-                "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/geolocation-!cn.srs"
-              }
-            ] else [] end) + $adblock.rule_sets
-            | map(
-                if $use_rule_set_http_client == "y" and .type == "remote" then
-                  . + {"http_client": {"detour": "proxy"}}
-                elif .type == "remote" and has("download_detour") then
-                  .download_detour = "proxy"
-                else
-                  .
-                end
-              )
-          ),
-          "rules": ([
-            {
-              "action": "sniff"
-            },
-            {
-              "protocol": "dns",
-              "action": "hijack-dns"
-            }
-          ] + $adblock.rules + (if $client_policy.lan_direct then [
-            {
-              "ip_is_private": true,
-              "action": "route",
-              "outbound": "direct"
-            }
-          ] else [] end) + (if $client_policy.cn_direct then [
-            {
-              "rule_set": "geosite-cn",
-              "action": "route",
-              "outbound": "direct"
-            },
-            {
-              "rule_set": "geoip-cn",
-              "action": "route",
-              "outbound": "direct"
-            },
-            {
-              "rule_set": "geosite-geolocation-!cn",
-              "action": "route",
-              "outbound": "proxy"
-            }
-          ] else [] end)),
-          "final": "proxy",
-          "auto_detect_interface": true,
-          "default_domain_resolver": "cn-dns"
-        },
-        "experimental": {
-          "cache_file": {
-            "enabled": true,
-            "path": "cache.db"
-          },
-          "clash_api": {
-            "external_controller": "127.0.0.1:9090",
-            "secret": $clash_api_secret
-          }
-        }
-      }' || status=$?
-  fi
-
-  trap - RETURN
-  if [[ -n "${original_protocol_state}" ]] && protocol_state_exists "${original_protocol_state}"; then
-    load_protocol_instance_state "${original_protocol_state}" "${original_instance_id}" >/dev/null 2>&1 || status=1
-  fi
-  rm -rf "${tmpdir}"
-  return "${status}"
-}
-
-write_client_config_export() {
-  local config_json=$1
-  local export_path export_dir tmp_file backup_path backup_tmp
-
-  export_path=$(client_export_file_path)
-  export_dir=$(dirname "${export_path}")
-  mkdir -p "${export_dir}"
-  tmp_file=$(mktemp "${export_dir}/.sing-box-client.json.tmp.XXXXXX")
-  if ! printf '%s\n' "${config_json}" | jq '.' > "${tmp_file}"; then
-    rm -f "${tmp_file}"
-    return 1
-  fi
-
-  if [[ -f "${export_path}" ]]; then
-    backup_path="${export_path}.bak"
-    backup_tmp=$(mktemp "${export_dir}/.sing-box-client.json.bak.tmp.XXXXXX")
-    if ! cp "${export_path}" "${backup_tmp}"; then
-      rm -f "${tmp_file}" "${backup_tmp}"
-      return 1
-    fi
-    if ! mv "${backup_tmp}" "${backup_path}"; then
-      rm -f "${tmp_file}" "${backup_tmp}"
-      return 1
-    fi
-  fi
-  if ! mv "${tmp_file}" "${export_path}"; then
-    rm -f "${tmp_file}"
-    return 1
-  fi
-}
-
-validate_client_config_json() {
-  local config_json=$1
-  local tmp_file
-
-  tmp_file=$(mktemp)
-  if ! printf '%s\n' "${config_json}" | jq '.' > "${tmp_file}"; then
-    rm -f "${tmp_file}"
-    return 1
-  fi
-
-  if ! validate_managed_component_graph "${tmp_file}"; then
-    rm -f "${tmp_file}"
-    return 1
-  fi
-
-  if ! "${SINGBOX_BIN_PATH}" check -c "${tmp_file}" >&2; then
-    rm -f "${tmp_file}"
-    return 1
-  fi
-
-  rm -f "${tmp_file}"
-}
-
-export_singbox_client_config() {
-  local config_json export_path warnings_json warning_message
-
-  if ! config_json=$(build_singbox_client_config); then
-    log_warn "导出 sing-box 裸核客户端配置失败。" >&2
-    return 1
-  fi
-
-  if ! validate_client_config_json "${config_json}"; then
-    log_warn "导出的 sing-box 裸核客户端配置未通过引用或核心 check 校验。" >&2
-    return 1
-  fi
-
-  warnings_json=$(collect_client_export_warnings_json "${config_json}") || return 1
-
-  export_path=$(client_export_file_path)
-  if ! write_client_config_export "${config_json}"; then
-    log_warn "写入客户端配置文件失败: ${export_path}" >&2
-    return 1
-  fi
-
-  print_success "sing-box 裸核客户端配置导出成功。"
-  while IFS= read -r warning_message; do
-    [[ -n "${warning_message}" ]] && log_warn "${warning_message}"
-  done < <(jq -r '.[]?.message' <<< "${warnings_json}")
-  printf '文件路径: %s\n' "${export_path}"
-  printf 'WSL2 使用方式: 请将应用代理手动指向 127.0.0.1:2080\n'
-  printf '系统代理: 未启用（set_system_proxy=false）\n'
-  printf 'Clash API 地址: 127.0.0.1:9090\n'
-  printf '%s\n' "${config_json}"
-}
-
 agent_print_help() {
   cat <<'EOF'
 用法:
@@ -30596,7 +29937,6 @@ agent_print_help() {
   sbv agent status --json
   sbv agent nodes --json
   sbv agent links --json
-  sbv agent export-client --json
   sbv agent check --json
   sbv agent doctor --json
   sbv agent service restart --json --yes
@@ -30624,7 +29964,6 @@ agent_print_help() {
   status        输出服务、版本、路径和已安装协议。
   nodes         输出节点摘要，不包含完整分享链接或密码。
   links         输出完整连接材料，适合受信任 Agent 获取节点信息。
-  export-client 生成并校验 sing-box 裸核客户端配置，写入固定路径并输出 JSON。
   warp          输出 Cloudflare Warp 状态，包括启用/路由模式/账户/规则统计。
   component     管理 direct/tun/redirect/tproxy/cloudflared 入站、WireGuard/Tailscale/OpenConnect/OpenVPN endpoint、shared HTTP client 以及 SSH/Tor/分组等出站；list/diagnose 只读，export 仅按 ID 输出敏感配置，recover/takeover/rebuild/create/replace/delete 使用 CAS 与持久事务。
   check         执行 sing-box check 并输出结构化结果。
@@ -30833,7 +30172,7 @@ agent_capabilities_json() {
           outbound: ["ipv4_only", "ipv6_only", "prefer_ipv4", "prefer_ipv6"]
         },
         system: {bbr: true, firewall_port_management: true},
-        connection_material: {links: true, ansi_qr: true, bare_core_client_export: true},
+        connection_material: {links: true, ansi_qr: true},
         lifecycle: {
           service_start_stop_restart_status_logs: true,
           managed_instance_takeover_repair: true,
@@ -30917,7 +30256,6 @@ agent_capabilities_json() {
         upgrade: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart"},
         instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic", "hysteria", "naive", "shadowtls"], read_only_operations: ["view", "diagnose", "export"], read_only_protocols: ["vless-reality", "mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic", "hysteria", "naive", "shadowtls"]},
         component: {mutation: true, sensitive: true, confirmation: "--yes", service_impact: "restart_if_active", roles: ["inbound", "endpoint", "outbound", "certificate_provider", "http_client", "service", "network_namespace", "rule_set"]},
-        "export-client": {mutation: true, sensitive: true},
         "service restart": {mutation: true, sensitive: false, confirmation: "--yes"},
         "subman-sync": {mutation: true, sensitive: true, external_write: true}
       },
@@ -32238,7 +31576,7 @@ agent_installed_protocols_json() {
 agent_status_json() {
   local indexed_protocols installed_protocols_json active_state installed_version warload_mode warload_enabled
   local host_stack bbr_algorithm bbr_enabled inbound_stack_mode outbound_stack_mode
-  local reality_instance_count qos_filter_count subman_configured client_export_exists components_json
+  local reality_instance_count qos_filter_count subman_configured components_json
 
   if ! validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}"; then
     agent_json_error "live_inbound_inventory_untrusted" "现有配置包含无法完整识别的入站；未返回部分协议状态。"
@@ -32288,8 +31626,6 @@ agent_status_json() {
   fi
   subman_configured=false
   [[ -f "$(subman_config_file_path)" ]] && subman_configured=true
-  client_export_exists=false
-  [[ -f "$(client_export_file_path)" ]] && client_export_exists=true
 
   jq -n \
     --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
@@ -32300,7 +31636,6 @@ agent_status_json() {
     --arg project_dir "${SB_PROJECT_DIR}" \
     --arg config_file "${SINGBOX_CONFIG_FILE}" \
     --arg protocol_state_dir "${SB_PROTOCOL_STATE_DIR}" \
-    --arg client_export_path "$(client_export_file_path)" \
     --arg upgrade_backup_root "${SB_UPGRADE_BACKUP_ROOT}" \
     --arg stack_state_file "${SB_STACK_STATE_FILE}" \
     --arg qos_state_file "${SB_REALITY_QOS_FILTER_STATE_FILE}" \
@@ -32313,7 +31648,6 @@ agent_status_json() {
     --argjson reality_instance_count "${reality_instance_count}" \
     --argjson qos_filter_count "${qos_filter_count}" \
     --argjson subman_configured "${subman_configured}" \
-    --argjson client_export_exists "${client_export_exists}" \
     --argjson protocols "${installed_protocols_json}" \
     --argjson components "${components_json}" \
     --argjson warp_enabled "$([[ "${warload_enabled}" == true ]] && printf 'true' || printf 'false')" \
@@ -32334,7 +31668,6 @@ agent_status_json() {
         "project": $project_dir,
         "config": $config_file,
         "protocol_state_dir": $protocol_state_dir,
-        "client_export": $client_export_path,
         "upgrade_backups": $upgrade_backup_root,
         "stack_state": $stack_state_file,
         "reality_qos_state": $qos_state_file,
@@ -32356,8 +31689,7 @@ agent_status_json() {
         "qos_filters": $qos_filter_count
       },
       "integrations": {
-        "subman_configured": $subman_configured,
-        "client_export_exists": $client_export_exists
+        "subman_configured": $subman_configured
       },
       "warp": {
         "enabled": $warp_enabled,
@@ -32425,7 +31757,7 @@ agent_shadowsocks_node_json() {
        instance_revision:$revision,listen:{address:$address,port:$port,network:$network},
        outbound_policy:$policy,method:$auth.method,auth_enabled:($auth.method!="none"),
        user_count:(if ($auth.users|length)==0 then 1 else ($auth.users|length) end),
-       shareable:true,client_exportable:true}
+       shareable:true}
     '
 }
 
@@ -32487,7 +31819,7 @@ agent_trojan_node_json() {
       instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},
       user_count:$user_count,auth_enabled:($user_count > 0),tls_enabled:$tls_enabled,
       client_trust:$trust,transport_type:$transport_type,outbound_policy:$policy,
-      shareable:$shareable,client_exportable:true
+      shareable:$shareable
     } + (if $server_name == "" then {} else {server_name:$server_name} end)'
 }
 
@@ -32547,7 +31879,7 @@ agent_vmess_node_json() {
     --arg policy "${SB_OUTBOUND_POLICY:-default}" --arg trust "${SB_VMESS_CLIENT_TRUST:-system}" \
     --arg server_name "$(jq -r '.server_name // empty' <<< "${tls_json}")" --arg transport_type "${transport_type}" \
     --argjson tls_enabled "${tls_enabled}" --argjson user_count "${user_count}" --argjson shareable "${shareable}" \
-    '{protocol:"vmess",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},user_count:$user_count,auth_enabled:($user_count>0),tls_enabled:$tls_enabled,client_trust:$trust,transport_type:$transport_type,outbound_policy:$policy,shareable:$shareable,client_exportable:true} + (if $server_name=="" then {} else {server_name:$server_name} end)'
+    '{protocol:"vmess",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},user_count:$user_count,auth_enabled:($user_count>0),tls_enabled:$tls_enabled,client_trust:$trust,transport_type:$transport_type,outbound_policy:$policy,shareable:$shareable} + (if $server_name=="" then {} else {server_name:$server_name} end)'
 }
 
 agent_vmess_link_json() (
@@ -32585,7 +31917,7 @@ agent_vless_plain_node_json() {
     --arg policy "${SB_OUTBOUND_POLICY:-default}" --arg trust "${SB_VLESS_PLAIN_CLIENT_TRUST:-system}" \
     --arg server_name "$(jq -r '.server_name // empty' <<< "${tls_json}")" --arg transport_type "${transport_type}" \
     --argjson tls_enabled "${tls_enabled}" --argjson user_count "${user_count}" --argjson shareable "${shareable}" \
-    '{protocol:"vless-plain",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},user_count:$user_count,auth_enabled:($user_count>0),tls_enabled:$tls_enabled,client_trust:$trust,transport_type:$transport_type,outbound_policy:$policy,shareable:$shareable,client_exportable:true} + (if $server_name=="" then {} else {server_name:$server_name} end)'
+    '{protocol:"vless-plain",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},user_count:$user_count,auth_enabled:($user_count>0),tls_enabled:$tls_enabled,client_trust:$trust,transport_type:$transport_type,outbound_policy:$policy,shareable:$shareable} + (if $server_name=="" then {} else {server_name:$server_name} end)'
 }
 
 agent_vless_plain_link_json() (
@@ -32647,7 +31979,7 @@ agent_anytls_node_json() {
       instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},
       server:$server,user_count:$user_count,auth_enabled:($user_count>0),tls_enabled:true,
       server_name:$server_name,tls_mode:$tls_mode,client_trust:$trust,
-      outbound_policy:$policy,shareable:false,client_exportable:true}'
+      outbound_policy:$policy,shareable:false}'
 }
 
 agent_anytls_link_json() (
@@ -32723,7 +32055,7 @@ agent_hy2_node_json() {
     --arg up "${SB_HY2_UP_MBPS:-}" --arg down "${SB_HY2_DOWN_MBPS:-}" \
     --argjson user_count "${user_count}" --argjson shareable "${shareable}" \
     --argjson obfs_enabled "$([[ "${SB_HY2_OBFS_ENABLED:-n}" == y ]] && printf true || printf false)" \
-    '{protocol:"hysteria2",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},server:$server,user_count:$user_count,auth_enabled:true,tls_enabled:true,server_name:$server_name,tls_mode:$tls_mode,client_trust:$trust,outbound_policy:$policy,shareable:$shareable,client_exportable:true,obfs_enabled:$obfs_enabled,rate_limit:{up_mbps:(if $up=="" then null else ($up|tonumber) end),down_mbps:(if $down=="" then null else ($down|tonumber) end)}}'
+    '{protocol:"hysteria2",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},server:$server,user_count:$user_count,auth_enabled:true,tls_enabled:true,server_name:$server_name,tls_mode:$tls_mode,client_trust:$trust,outbound_policy:$policy,shareable:$shareable,obfs_enabled:$obfs_enabled,rate_limit:{up_mbps:(if $up=="" then null else ($up|tonumber) end),down_mbps:(if $down=="" then null else ($down|tonumber) end)}}'
 }
 
 agent_hy2_link_json() (
@@ -32793,7 +32125,7 @@ agent_snell_node_json() {
     --arg address "${SB_MIXED_LISTEN_ADDRESS:-}" --arg port "${SB_PORT:-}" --arg revision "${SB_MIXED_STORE_REVISION:-0}" \
     --arg server "${server}" --argjson version "${version}" --arg obfs_mode "${obfs_mode}" --arg mode "${mode}" \
     --arg policy "${SB_OUTBOUND_POLICY:-default}" --argjson user_count "${user_count}" \
-    '{protocol:"snell",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},server:$server,user_count:$user_count,auth_enabled:true,version:$version,obfs_mode:$obfs_mode,mode:$mode,udp_via_tcp_packet_api:true,outbound_policy:$policy,shareable:false,client_exportable:true}'
+    '{protocol:"snell",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},server:$server,user_count:$user_count,auth_enabled:true,version:$version,obfs_mode:$obfs_mode,mode:$mode,udp_via_tcp_packet_api:true,outbound_policy:$policy,shareable:false}'
 }
 
 agent_snell_link_json() (
@@ -32849,7 +32181,7 @@ agent_tuic_node_json() {
     --argjson shareable "${shareable}" \
     --argjson zero_rtt "$([[ "${SB_TUIC_ZERO_RTT_HANDSHAKE:-n}" == y ]] && printf true || printf false)" \
     --argjson udp_over_stream "$([[ "${SB_TUIC_UDP_OVER_STREAM:-n}" == y ]] && printf true || printf false)" \
-    '{protocol:"tuic",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber),network:["udp"]},server:$server,user_count:$user_count,auth_enabled:true,tls_enabled:true,server_name:$server_name,tls_mode:"manual",client_trust:$trust,congestion_control:$cc,auth_timeout_seconds:($auth_timeout|tonumber),heartbeat_seconds:($heartbeat|tonumber),udp_relay_mode:$relay,udp_over_stream:$udp_over_stream,zero_rtt_handshake:$zero_rtt,outbound_policy:$policy,shareable:$shareable,client_exportable:true}'
+    '{protocol:"tuic",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber),network:["udp"]},server:$server,user_count:$user_count,auth_enabled:true,tls_enabled:true,server_name:$server_name,tls_mode:"manual",client_trust:$trust,congestion_control:$cc,auth_timeout_seconds:($auth_timeout|tonumber),heartbeat_seconds:($heartbeat|tonumber),udp_relay_mode:$relay,udp_over_stream:$udp_over_stream,zero_rtt_handshake:$zero_rtt,outbound_policy:$policy,shareable:$shareable}'
 }
 
 agent_tuic_link_json() (
@@ -32896,7 +32228,7 @@ agent_hysteria_node_json() {
     *) server=${SB_MIXED_LISTEN_ADDRESS:-} ;;
   esac
   [[ -n "${server}" ]] || return 1
-  jq -n --arg name "${SB_NODE_NAME:-Hysteria}" --arg id "${SB_INSTANCE_ID:-}" --arg tag "${SB_MIXED_INBOUND_TAG:-}" --arg address "${SB_MIXED_LISTEN_ADDRESS:-}" --arg port "${SB_PORT:-}" --arg revision "${SB_MIXED_STORE_REVISION:-0}" --arg server "${server}" --arg server_name "$(jq -r '.server_name' <<< "${tls_json}")" --arg trust "${SB_HYSTERIA_CLIENT_TRUST:-system}" --arg up "${SB_HYSTERIA_UP_MBPS:-}" --arg down "${SB_HYSTERIA_DOWN_MBPS:-}" --arg obfs "$([[ "${SB_HYSTERIA_OBFS_ENABLED:-n}" == y ]] && printf true || printf false)" --arg policy "${SB_OUTBOUND_POLICY:-default}" --argjson user_count "${user_count}" '{protocol:"hysteria",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber),network:["udp"]},server:$server,user_count:$user_count,auth_enabled:true,tls_enabled:true,server_name:$server_name,tls_mode:"manual",client_trust:$trust,bandwidth:{up_mbps:($up|tonumber),down_mbps:($down|tonumber)},obfs_enabled:($obfs|fromjson),outbound_policy:$policy,shareable:false,client_exportable:true}'
+  jq -n --arg name "${SB_NODE_NAME:-Hysteria}" --arg id "${SB_INSTANCE_ID:-}" --arg tag "${SB_MIXED_INBOUND_TAG:-}" --arg address "${SB_MIXED_LISTEN_ADDRESS:-}" --arg port "${SB_PORT:-}" --arg revision "${SB_MIXED_STORE_REVISION:-0}" --arg server "${server}" --arg server_name "$(jq -r '.server_name' <<< "${tls_json}")" --arg trust "${SB_HYSTERIA_CLIENT_TRUST:-system}" --arg up "${SB_HYSTERIA_UP_MBPS:-}" --arg down "${SB_HYSTERIA_DOWN_MBPS:-}" --arg obfs "$([[ "${SB_HYSTERIA_OBFS_ENABLED:-n}" == y ]] && printf true || printf false)" --arg policy "${SB_OUTBOUND_POLICY:-default}" --argjson user_count "${user_count}" '{protocol:"hysteria",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber),network:["udp"]},server:$server,user_count:$user_count,auth_enabled:true,tls_enabled:true,server_name:$server_name,tls_mode:"manual",client_trust:$trust,bandwidth:{up_mbps:($up|tonumber),down_mbps:($down|tonumber)},obfs_enabled:($obfs|fromjson),outbound_policy:$policy,shareable:false}'
 }
 
 agent_hysteria_link_json() (
@@ -32967,7 +32299,7 @@ agent_naive_node_json() {
       quic:$quic,quic_congestion_control:$cc,insecure_concurrency:$insecure_concurrency,
       stream_receive_window:$stream_receive_window,quic_session_receive_window:$quic_session_receive_window,
       extra_headers_count:$extra_headers_count,outbound_runtime:$runtime,
-      outbound_policy:$policy,shareable:false,client_exportable:true}'
+      outbound_policy:$policy,shareable:false}'
 }
 
 agent_naive_link_json() (
@@ -33016,7 +32348,7 @@ agent_shadowtls_node_json() {
   trust=${SB_SHADOWTLS_CLIENT_TRUST:-system}
   case "${SB_MIXED_LISTEN_ADDRESS:-}" in 0.0.0.0|::) server=${public_ip} ;; *) server=${SB_MIXED_LISTEN_ADDRESS:-} ;; esac
   [[ -n "${server}" ]] || return 1
-  jq -n --arg name "${SB_NODE_NAME:-ShadowTLS}" --arg id "${SB_INSTANCE_ID:-}" --arg tag "${SB_MIXED_INBOUND_TAG:-}" --arg address "${SB_MIXED_LISTEN_ADDRESS:-}" --arg port "${SB_PORT:-}" --arg revision "${SB_MIXED_STORE_REVISION:-0}" --arg server "${server}" --arg handshake_server "${handshake}" --arg trust "${trust}" --arg wildcard "${wildcard}" --arg policy "${SB_OUTBOUND_POLICY:-default}" --arg detour "${SB_SHADOWTLS_DETOUR_TAG:-shadowtls-inner-${SB_INSTANCE_ID:-}}" --argjson version "${version}" --argjson user_count "${user_count}" --argjson strict "${strict}" '{protocol:"shadowtls",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},server:$server,version:$version,handshake_server:$handshake_server,user_count:(if $version == 3 then $user_count else 1 end),auth_enabled:($version != 1),wildcard_sni:$wildcard,strict_mode:$strict,detour_tag:$detour,client_trust:$trust,outbound_policy:$policy,shareable:false,client_exportable:true}'
+  jq -n --arg name "${SB_NODE_NAME:-ShadowTLS}" --arg id "${SB_INSTANCE_ID:-}" --arg tag "${SB_MIXED_INBOUND_TAG:-}" --arg address "${SB_MIXED_LISTEN_ADDRESS:-}" --arg port "${SB_PORT:-}" --arg revision "${SB_MIXED_STORE_REVISION:-0}" --arg server "${server}" --arg handshake_server "${handshake}" --arg trust "${trust}" --arg wildcard "${wildcard}" --arg policy "${SB_OUTBOUND_POLICY:-default}" --arg detour "${SB_SHADOWTLS_DETOUR_TAG:-shadowtls-inner-${SB_INSTANCE_ID:-}}" --argjson version "${version}" --argjson user_count "${user_count}" --argjson strict "${strict}" '{protocol:"shadowtls",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},server:$server,version:$version,handshake_server:$handshake_server,user_count:(if $version == 3 then $user_count else 1 end),auth_enabled:($version != 1),wildcard_sni:$wildcard,strict_mode:$strict,detour_tag:$detour,client_trust:$trust,outbound_policy:$policy,shareable:false}'
 }
 
 agent_shadowtls_link_json() (
@@ -33047,7 +32379,7 @@ agent_shadowtls_link_json() (
 )
 
 agent_node_summary_json_for_current_protocol() {
-  local protocol api_protocol public_ip shareable="true" client_exportable="false"
+  local protocol api_protocol public_ip shareable="true"
   local auth_enabled="false" server_name="" tls_enabled="false" http_tls_json
   local node_name instance_id="" inbound_tag="" listen_address="" instance_revision="0" rate_up="" rate_down="" outbound_policy=""
   local tls_mode="" acme_mode="" obfs_enabled="false"
@@ -33085,7 +32417,6 @@ agent_node_summary_json_for_current_protocol() {
 
   case "${protocol}" in
     vless-reality)
-      client_exportable="true"
       server_name="${SB_SNI}"
       instance_id="${SB_VLESS_INSTANCE_ID:-main}"
       rate_up="${SB_VLESS_RATE_LIMIT_UP_MBPS:-}"
@@ -33093,7 +32424,6 @@ agent_node_summary_json_for_current_protocol() {
       outbound_policy="${SB_OUTBOUND_POLICY:-default}"
       ;;
     mixed|socks)
-      client_exportable="true"
       [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]] && auth_enabled="true"
       instance_id="${SB_MIXED_INSTANCE_ID:-}"
       inbound_tag="${SB_MIXED_INBOUND_TAG:-}"
@@ -33101,7 +32431,6 @@ agent_node_summary_json_for_current_protocol() {
       instance_revision="${SB_MIXED_STORE_REVISION:-0}"
       ;;
     http)
-      client_exportable="true"
       [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]] && auth_enabled="true"
       instance_id="${SB_MIXED_INSTANCE_ID:-}"
       inbound_tag="${SB_MIXED_INBOUND_TAG:-}"
@@ -33113,7 +32442,6 @@ agent_node_summary_json_for_current_protocol() {
       [[ "${tls_enabled}" == true ]] && shareable="false"
       ;;
     hy2)
-      client_exportable="true"
       server_name="${SB_HY2_DOMAIN:-${public_ip}}"
       rate_up="${SB_HY2_UP_MBPS:-}"
       rate_down="${SB_HY2_DOWN_MBPS:-}"
@@ -33122,7 +32450,6 @@ agent_node_summary_json_for_current_protocol() {
       [[ "${SB_HY2_OBFS_ENABLED:-n}" == "y" ]] && obfs_enabled="true"
       ;;
     anytls)
-      client_exportable="true"
       server_name="${SB_ANYTLS_DOMAIN:-${public_ip}}"
       tls_mode="${SB_ANYTLS_TLS_MODE:-}"
       acme_mode="${SB_ANYTLS_ACME_MODE:-}"
@@ -33148,15 +32475,13 @@ agent_node_summary_json_for_current_protocol() {
     --arg acme_mode "${acme_mode}" \
     --argjson obfs_enabled "${obfs_enabled}" \
     --argjson shareable "${shareable}" \
-    --argjson client_exportable "${client_exportable}" \
     --argjson auth_enabled "${auth_enabled}" \
     --argjson tls_enabled "${tls_enabled}" \
     '{
       "protocol": $protocol,
       "name": $name,
       "port": ($port | tonumber),
-      "shareable": $shareable,
-      "client_exportable": $client_exportable
+      "shareable": $shareable
     }
     + (if $server_name != "" then {"server_name": $server_name} else {} end)
     + (if ($protocol == "mixed" or $protocol == "socks" or $protocol == "http") then {"auth_enabled": $auth_enabled} else {} end)
@@ -33458,38 +32783,6 @@ agent_collect_nodes_json() {
     }'
 
   return 0
-}
-
-agent_export_client_json() {
-  local config_json export_path compatibility_warnings_json
-
-  if ! config_json=$(build_singbox_client_config); then
-    agent_json_error "client_config_generation_failed" "客户端配置生成失败；请检查已安装协议的状态、端口与认证字段，原导出文件和备份未改变。"
-    return 1
-  fi
-
-  if ! validate_client_config_json "${config_json}"; then
-    agent_json_error "client_config_validation_failed" "客户端配置未通过引用或核心 check 校验，未发布导出文件。"
-    return 1
-  fi
-
-  compatibility_warnings_json=$(collect_client_export_warnings_json "${config_json}") || return 1
-
-  export_path=$(client_export_file_path)
-  if ! write_client_config_export "${config_json}"; then
-    log_warn "agent export-client 写入失败: ${export_path}" >&2
-    return 1
-  fi
-
-  jq -n \
-    --arg path "${export_path}" \
-    --argjson config "${config_json}" \
-    --argjson warnings "${compatibility_warnings_json}" \
-    '{
-      "path": $path,
-      "config": $config
-    }
-    + (if ($warnings | length) > 0 then {"warnings": $warnings} else {} end)'
 }
 
 agent_service_cli() {
@@ -33984,7 +33277,7 @@ managed_write_rules_barrier() {
   local rules_recovery=${1:-}
   if [[ ( -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ) &&
         "${rules_recovery}" != allow-rules-recovery ]]; then
-    printf '[ERROR] 存在未完成的规则事务；请先通过菜单 13 恢复。\n' >&2
+    printf '[ERROR] 存在未完成的规则事务；请先通过菜单 12 恢复。\n' >&2
     return 1
   fi
 }
@@ -35040,13 +34333,6 @@ agent_cli() {
       fi
       agent_cli_run "links" agent_collect_nodes_json "links"
       ;;
-    export-client)
-      if [[ $# -ne 1 || "${1:-}" != "--json" ]]; then
-        agent_cli_error "export-client" "invalid_arguments" "用法: sbv agent export-client --json"
-        return $?
-      fi
-      agent_cli_run "export-client" agent_export_client_json
-      ;;
     warp)
       if [[ $# -ne 1 || "${1:-}" != "--json" ]]; then
         agent_cli_error "warp" "invalid_arguments" "用法: sbv agent warp --json"
@@ -35116,7 +34402,7 @@ agent_dispatch() {
 
   command=$(agent_command_name_from_args "$@")
   if [[ "${command}" != capabilities && ( -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ) ]]; then
-    agent_cli_error "${command}" routing_transaction_pending "存在未完成的规则事务；请先通过交互菜单 13 恢复。"
+    agent_cli_error "${command}" routing_transaction_pending "存在未完成的规则事务；请先通过交互菜单 12 恢复。"
     return 1
   fi
   if ! agent_current_user_is_root; then
@@ -35198,7 +34484,7 @@ agent_dispatch() {
         agent_cli "$@"
       )
       ;;
-    upgrade|service|export-client|subman-sync)
+    upgrade|service|subman-sync)
       (
         if ! acquire_managed_write_lock; then
           agent_cli_error "${command}" instance_write_busy "另一个管理进程正在执行。"; return 1
@@ -35395,19 +34681,17 @@ show_node_info_action_menu() {
     render_left_aligned_page_header "节点与订阅" "选择要执行的节点信息操作"
     render_menu_group_start "操作选项"
     render_menu_item "1" "查看连接链接 / 二维码"
-    render_menu_item "2" "导出 sing-box 裸核客户端配置"
-    render_menu_item "3" "推送节点到 SubMan"
-    render_menu_item "4" "设置或修改 SubMan 连接"
-    render_menu_item "5" "设置新实例的主机显示标签"
+    render_menu_item "2" "推送节点到 SubMan"
+    render_menu_item "3" "设置或修改 SubMan 连接"
+    render_menu_item "4" "设置新实例的主机显示标签"
     echo "0. 返回"
-    node_info_choice=$(prompt_choice "请选择 [0-5]: " 0 5 "")
+    node_info_choice=$(prompt_choice "请选择 [0-4]: " 0 4 "")
 
     case "${node_info_choice}" in
       1) show_connection_info_menu ;;
-      2) export_singbox_client_config || true ;;
-      3) push_nodes_to_subman || true ;;
-      4) configure_subman_interactive || true ;;
-      5) configure_node_naming_interactive || true ;;
+      2) push_nodes_to_subman || true ;;
+      3) configure_subman_interactive || true ;;
+      4) configure_node_naming_interactive || true ;;
       0) return ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac
@@ -40785,7 +40069,7 @@ main() {
   show_banner
   check_root
   if [[ -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ]]; then
-    log_warn "存在待恢复的规则事务；请进入菜单 13 恢复。"
+    log_warn "存在待恢复的规则事务；请进入菜单 12 恢复。"
   elif [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
     log_warn "存在待恢复的实例事务；仅开放只读诊断与菜单 2 恢复入口。"
   elif ! ensure_sbv_command_installed; then
@@ -40811,30 +40095,29 @@ main() {
     render_menu_item "9" "运行状态摘要" "" "$(main_menu_service_status_summary)"
     render_menu_item "10" "查看实时日志"
 
-    render_section_title "节点与诊断"
+    render_section_title "节点与订阅"
     render_menu_item "11" "节点分享与订阅"
-    render_menu_item "12" "流媒体与出口检测"
 
     render_section_title "网络与系统"
-    render_menu_item "13" "规则与分流管理"
-    render_menu_item "14" "系统与网络设置"
+    render_menu_item "12" "网络与分流"
+    render_menu_item "13" "系统设置"
 
     render_section_title "脚本维护"
-    render_menu_item "15" "更新管理脚本 (sbv)" "" "${SCRIPT_VER_STATUS}"
-    render_menu_item "16" "卸载管理脚本 (sbv)"
+    render_menu_item "14" "更新管理脚本 (sbv)" "" "${SCRIPT_VER_STATUS}"
+    render_menu_item "15" "卸载管理脚本 (sbv)"
     echo "0. 退出"
     render_main_menu_footer
-    choice=$(prompt_choice "请选择 [0-16]: " 0 16 "")
+    choice=$(prompt_choice "请选择 [0-15]: " 0 15 "")
 
     if [[ -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ]]; then
       case "${choice}" in
-        0|10|13) ;;
-        *) log_warn "请先通过菜单 13 恢复规则事务；本次未执行其他操作。"; continue ;;
+        0|10|12) ;;
+        *) log_warn "请先通过菜单 12 恢复规则事务；本次未执行其他操作。"; continue ;;
       esac
     fi
     if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
       case "${choice}" in
-        0|2|9|10|12) ;;
+        0|2|9|10) ;;
         *) log_warn "请先通过菜单 2 恢复未完成的实例事务；本次未执行其他写操作。"; continue ;;
       esac
     fi
@@ -40851,10 +40134,9 @@ main() {
       9) view_status ;;
       10) journalctl -u sing-box -f || true ;;
       11) view_node_info ;;
-      12) media_check_menu ;;
-      13) routing_management_menu || log_warn '规则操作未完成，已返回主菜单。' ;;
-      14) system_management_menu ;;
-      15)
+      12) routing_management_menu || log_warn '规则操作未完成，已返回主菜单。' ;;
+      13) system_management_menu ;;
+      14)
         if manual_update_script; then
           if reload_sbv_menu_after_update; then
             :
@@ -40867,7 +40149,7 @@ main() {
           log_warn "sbv 自更新失败（退出码 ${update_status}），已返回管理菜单。"
         fi
         ;;
-      16) uninstall_script ;;
+      15) uninstall_script ;;
       0) exit_script ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac
@@ -40878,7 +40160,7 @@ routing_policy_file_path() {
   printf '%s\n' "${SB_ROUTING_POLICY_FILE:-${SB_PROJECT_DIR}/routing-policy.json}"
 }
 
-routing_policy_validate_json() {
+routing_policy_legacy_validate_json() {
   local policy=${1:-}
   [[ -n "${policy}" && "${#policy}" -le 262144 ]] || return 1
   jq -e '
@@ -40923,8 +40205,39 @@ routing_policy_validate_json() {
   ' <<< "${policy}" >/dev/null 2>&1
 }
 
+# Current policy is server-only. Schema 1 is accepted only to preserve an
+# existing installation until its owner explicitly applies the network draft.
+routing_policy_validate_json() {
+  local policy=${1:-} legacy
+  [[ -n "${policy}" && "${#policy}" -le 262144 ]] || return 1
+  if jq -e '.schema_version == 1' <<< "${policy}" >/dev/null 2>&1; then
+    routing_policy_legacy_validate_json "${policy}"
+    return $?
+  fi
+  jq -e '
+    type == "object" and (keys | sort) == ["schema_version","server"] and .schema_version == 2 and
+    (.server | type == "object" and
+      (keys | sort) == ["block_cn","rule_sets","rules","warp_ai","warp_streaming"] and
+      ([.block_cn,.warp_ai,.warp_streaming] | all(.[]; type == "boolean")))
+  ' <<< "${policy}" >/dev/null 2>&1 || return 1
+  # Reuse the bounded matcher/source validator without exposing legacy fields
+  # in persisted current policy or in the user interface.
+  legacy=$(jq -c '{schema_version:1,
+    server:(.server | del(.block_cn) | . + {private_network_block:false,adblock:false}),
+    client:{lan_direct:false,cn_direct:false,adblock:false},adblock:{url:"",domains:[],allow:[]}}' <<< "${policy}") || return 1
+  routing_policy_legacy_validate_json "${legacy}"
+}
+
+routing_policy_current_json() {
+  local policy=${1:-}
+  routing_policy_validate_json "${policy}" || return 1
+  jq -c 'if .schema_version == 2 then . else
+    {schema_version:2,server:{block_cn:false,warp_ai:.server.warp_ai,warp_streaming:.server.warp_streaming,
+      rules:.server.rules,rule_sets:.server.rule_sets}} end' <<< "${policy}"
+}
+
 routing_policy_read_json() {
-  local file=${1:-} policy private_network=true
+  local file=${1:-} policy
   [[ -n "${file}" ]] || file=$(routing_policy_file_path) || return 1
   command -v jq >/dev/null 2>&1 || return 1
   if [[ -e "${file}" || -L "${file}" ]]; then
@@ -40934,19 +40247,7 @@ routing_policy_read_json() {
     printf '%s\n' "${policy}"
     return 0
   fi
-  if [[ -e "${SINGBOX_CONFIG_FILE}" || -L "${SINGBOX_CONFIG_FILE}" ]]; then
-    [[ -f "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" ]] || return 1
-    private_network=$(jq -er 'if type == "object" then
-      any(.route.rules[]?; .ip_is_private == true and .action == "reject")
-      else error("invalid_config") end' "${SINGBOX_CONFIG_FILE}") || {
-      [[ "${private_network}" == false ]] || return 1
-    }
-  fi
-  jq -cn --argjson private "${private_network}" '
-    {schema_version:1,
-     server:{private_network_block:$private,adblock:false,warp_ai:true,warp_streaming:true,rules:[],rule_sets:[]},
-     client:{lan_direct:true,cn_direct:true,adblock:false},
-     adblock:{url:"https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ads-all.srs",domains:[],allow:[]}}'
+  printf '%s\n' '{"schema_version":2,"server":{"block_cn":false,"warp_ai":true,"warp_streaming":true,"rules":[],"rule_sets":[]}}'
 }
 
 routing_policy_prepare_install_defaults() {
@@ -40955,7 +40256,7 @@ routing_policy_prepare_install_defaults() {
   SB_OUTBOUND_POLICY=default
   if [[ ! -e "${file}" && ! -L "${file}" && ! -e "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" ]]; then
     # Fresh-install prompts run before the dependency installer prepares jq.
-    SB_ADVANCED_ROUTE=y
+    SB_ADVANCED_ROUTE=n
     SB_ENABLE_WARP=n
     SB_WARP_ROUTE_MODE=selective
     return 0
@@ -40980,13 +40281,12 @@ routing_policy_requires_warp() {
   jq -e 'any((.server.rules + .server.rule_sets)[]; .enabled and .action == "warp")' <<< "${policy}" >/dev/null
 }
 
-routing_policy_adblock_json() {
-  local policy=${1:-} side=${2:-server} use_http_client=n
-  [[ "${side}" == server || "${side}" == client ]] || return 1
+routing_policy_legacy_adblock_json() {
+  local policy=${1:-} use_http_client=n
   routing_policy_validate_json "${policy}" || return 1
   if singbox_config_supports_1_14; then use_http_client=y; fi
-  jq -cn --argjson policy "${policy}" --arg side "${side}" --arg modern "${use_http_client}" '
-    if $policy[$side].adblock then
+  jq -cn --argjson policy "${policy}"  --arg modern "${use_http_client}" '
+    if $policy.schema_version == 1 and $policy.server.adblock then
       ([if $policy.adblock.url != "" then
           {type:"remote",tag:"sbv-adblock-remote",format:(if ($policy.adblock.url | test("\\.json(?:\\?.*)?$")) then "source" else "binary" end),
            url:$policy.adblock.url,update_interval:"1d"} +
@@ -41009,7 +40309,7 @@ routing_policy_render_server_json() {
   while IFS= read -r path; do
     [[ ! -L "${path}" ]] || return 1
   done < <(jq -r '.server.rule_sets[] | select(.enabled and .type == "local") | .path' <<< "${policy}")
-  adblock=$(routing_policy_adblock_json "${policy}" server) || return 1
+  adblock=$(routing_policy_legacy_adblock_json "${policy}") || return 1
   if singbox_config_supports_1_14; then use_http_client=y; fi
   jq -cn --argjson policy "${policy}" --argjson tags "${tags}" --argjson ads "${adblock}" --arg modern "${use_http_client}" '
     def action($value): if $value == "reject" then {action:"reject"} else
@@ -41020,6 +40320,13 @@ routing_policy_render_server_json() {
          {url:.url,update_interval:.update_interval} +
          (if $modern == "y" then {http_client:{detour:"direct"}} else {download_detour:"direct"} end) end)]) as $sets |
     {inbound:$tags,action:"resolve",server:"local-dns"} as $resolve |
+    (if $policy.server.block_cn then
+      ["geosite-cn","geoip-cn"] | map(. as $tag |
+        {type:"remote",tag:("sbv-block-" + $tag),format:"binary",
+         url:("https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/" +
+           (if $tag == "geosite-cn" then "geosite" else "geoip" end) + "/cn.srs"),update_interval:"1d"} +
+        (if $modern == "y" then {http_client:{detour:"direct"}} else {download_detour:"direct"} end))
+     else [] end) as $cn_sets |
     ((if $policy.server.private_network_block then
         [$resolve,
          {ip_is_private:true,action:"reject",inbound:$tags}]
@@ -41028,6 +40335,10 @@ routing_policy_render_server_json() {
         # domains. Resolve at this filtering stage before matching its set.
         [$resolve]
       else [] end) +
+      (if $policy.server.block_cn then
+         [{inbound:$tags,rule_set:["sbv-block-geosite-cn"],action:"reject"},$resolve,
+          {inbound:$tags,rule_set:["sbv-block-geoip-cn"],action:"reject"}]
+       else [] end) +
       [$ads.rules[] | if .type == "logical" then
          .rules = [{inbound:$tags}] + .rules
        else . + {inbound:$tags} end]) as $protection |
@@ -41041,7 +40352,7 @@ routing_policy_render_server_json() {
            .resolved = true | .rules += [$resolve,$rule]
          else .rules += [$rule] end) | .rules) as $custom |
     if ($tags | length) == 0 then {rule_sets:[],protection_rules:[],custom_rules:[],rules:[]} else
-      {rule_sets:($ads.rule_sets + $sets),protection_rules:$protection,custom_rules:$custom,rules:($protection + $custom)} end'
+      {rule_sets:($ads.rule_sets + $cn_sets + $sets),protection_rules:$protection,custom_rules:$custom,rules:($protection + $custom)} end'
 }
 
 routing_policy_owned_rule_sets_json() {
@@ -41059,7 +40370,7 @@ routing_policy_owned_rule_sets_json() {
   if [[ -e "${baseline_file}" || -L "${baseline_file}" ]]; then
     [[ -f "${baseline_file}" && ! -L "${baseline_file}" && "$(stat -c %a "${baseline_file}")" == 600 ]] || return 1
     baseline=$(jq -ce --argjson component_tags "${component_tags}" '[.route.rule_set[]? |
-      select((.tag // "") | test("^sbv-(adblock-(inline|remote)|rule-[a-z0-9][a-z0-9_-]{0,63})$")) |
+      select((.tag // "") | test("^sbv-(block-(geosite|geoip)-cn|adblock-(inline|remote)|rule-[a-z0-9][a-z0-9_-]{0,63})$")) |
       select(.tag as $tag | $component_tags | index($tag) == null)]' "${baseline_file}") || return 1
   fi
   jq -cn --argjson current "${current}" --argjson baseline "${baseline}" '$current + $baseline | unique'
@@ -41413,7 +40724,7 @@ routing_policy_validate_merged_order() {
     def scoped: routing_rule_tagged($tags);
     def terminal: routing_rule_terminal;
     def ad_match: (.rule_set // [] | if type == "string" then [.] else . end) as $sets |
-      any($sets[]; startswith("sbv-adblock-")) or any(.rules[]?; ad_match);
+      any($sets[]; startswith("sbv-adblock-") or startswith("sbv-block-")) or any(.rules[]?; ad_match);
     [$expected[0].route.rules[]? | select(scoped)] as $owned |
     def owned: . as $rule | ($owned | index($rule)) != null;
     [.route.rules[]? | select(owned)] == $owned and
@@ -41494,22 +40805,6 @@ routing_managed_parent_is_safe() {
   done
   return 1
 }
-
-routing_policy_seed_fresh_install() (
-  local policy candidate=''
-  if [[ -e "${SB_ROUTING_POLICY_FILE}" || -L "${SB_ROUTING_POLICY_FILE}" ]]; then
-    routing_policy_read_json >/dev/null
-    return $?
-  fi
-  case "${SB_ADVANCED_ROUTE}" in y|n) ;; *) return 1 ;; esac
-  umask 077
-  policy=$(routing_policy_read_json) || return 1
-  candidate=$(mktemp "${SB_PROJECT_DIR}/.routing-initial.XXXXXX") || return 1
-  trap 'rm -f -- "${candidate}"' EXIT
-  jq --arg private "${SB_ADVANCED_ROUTE}" '.server.private_network_block=($private=="y")' <<< "${policy}" > "${candidate}" || return 1
-  routing_policy_validate_json "$(cat "${candidate}")" || return 1
-  routing_publish_file "${candidate}" "${SB_ROUTING_POLICY_FILE}"
-)
 
 routing_path_is_managed() {
   local path=$1 relative protocol id
@@ -41659,7 +40954,7 @@ routing_draft_validate() {
         (.policy|IN("default","direct","warp")) and
         (.revision|type=="number" and floor==. and .>=0 and .<=9007199254740990)))
   ' "${file}" >/dev/null || return 1
-  policy=$(jq -c '.policy' "${file}") || return 1
+  policy=$(jq -c '.policy | select(.schema_version == 2)' "${file}") || return 1
   routing_policy_validate_json "${policy}"
 }
 
@@ -41668,6 +40963,7 @@ routing_draft_create() {
   [[ ! -L "${file}" ]] || return 1
   before=$(routing_state_fingerprint) || return 1
   policy=$(routing_policy_read_json) || return 1
+  policy=$(routing_policy_current_json "${policy}") || return 1
   domains=$(routing_asset_text_json "${SB_WARP_DOMAINS_FILE}") || return 1
   sources=$(routing_asset_text_json "${SB_WARP_REMOTE_RULESETS_FILE}") || return 1
   if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
@@ -41888,8 +41184,8 @@ routing_policy_recover() {
 
 routing_transaction_run() (
   local operation=$1 draft=${2:-} directory="${SB_ROUTING_TRANSACTION_DIR}"
-  local expected fingerprint external_fingerprint before_active policy previous_policy client_changed=false server_changed=true
-  local committed=n finished=n candidate=''
+  local expected fingerprint external_fingerprint before_active policy previous_policy server_changed=true
+  local committed=n finished=n candidate='' warp_activation_requested=false current_nodes='[]'
   local SB_ROUTING_DEFER_WARP_RECEIPT=n
   local SB_ROUTING_JOURNAL_LEGACY_BACKUP=n
   umask 077
@@ -41912,15 +41208,28 @@ routing_transaction_run() (
       [[ "${expected}" == "${fingerprint}" ]] || { routing_error '配置已在会话外变化，请重新载入草稿。'; return 1; }
       previous_policy=$(routing_policy_read_json) || return 1
       policy=$(jq -c '.policy' "${draft}") || return 1
-      client_changed=$(jq -n --argjson old "${previous_policy}" --argjson new "${policy}" \
-        '$old.client != $new.client or (($old.client.adblock or $new.client.adblock) and $old.adblock != $new.adblock)') || return 1
+      # A Block CN or preset edit does not authorize WARP account repair.
+      # Prepare credentials only for an explicit new WARP dependency/mode or
+      # re-registration request. Existing dependencies use read-only material.
+      if jq -e 'any(.node_overrides[]; .policy == "warp")' "${draft}" >/dev/null; then
+        current_nodes=$(routing_nodes_json) || return 1
+      fi
+      warp_activation_requested=$(jq -r --argjson old "${previous_policy}" --argjson nodes "${current_nodes}" \
+        --argjson enabled "$(config_has_warp_enabled "${SINGBOX_CONFIG_FILE}" && printf true || printf false)" \
+        --arg mode "$(load_warp_route_settings && printf '%s' "${SB_WARP_ROUTE_MODE}")" '
+        [($old.server.rules + $old.server.rule_sets)[] | select(.enabled and .action == "warp")] as $old_dependencies |
+        .warp.reregister or (.warp.enabled and (($enabled | not) or .warp.mode != $mode)) or
+        any(.node_overrides[]; . as $change | .policy == "warp" and
+          ([$nodes[] | select(.protocol == $change.protocol and .id == $change.id)][0].policy != "warp")) or
+        any((.policy.server.rules + .policy.server.rule_sets)[]; . as $dependency |
+          .enabled and .action == "warp" and ($old_dependencies | index($dependency)) == null)
+      ' "${draft}") || return 1
       if [[ -f "${SB_ROUTING_POLICY_FILE}" ]] &&
          jq -e --argjson old "${previous_policy}" --argjson enabled "$(config_has_warp_enabled "${SINGBOX_CONFIG_FILE}" && printf true || printf false)" \
            --arg mode "$(load_warp_route_settings && printf '%s' "${SB_WARP_ROUTE_MODE}")" \
            --argjson domains "$(routing_asset_text_json "${SB_WARP_DOMAINS_FILE}")" \
            --argjson sources "$(routing_asset_text_json "${SB_WARP_REMOTE_RULESETS_FILE}")" \
-           '.policy.server==$old.server and
-             ((.policy.server.adblock or $old.server.adblock | not) or .policy.adblock==$old.adblock) and
+           '.policy==$old and
              .warp.enabled==$enabled and .warp.mode==$mode and (.warp.reregister|not) and
              .node_overrides==[] and .legacy_domains==$domains and .legacy_sources==$sources' \
            "${draft}" >/dev/null; then
@@ -41954,7 +41263,7 @@ routing_transaction_run() (
         printf '[ERROR] 规则回滚未完成；恢复材料保留在 %s。\n' "${directory}" >&2
       fi
     elif [[ "${finished}" != y ]]; then
-      printf '[WARN] 规则已提交，恢复材料整理未完成；请从菜单 13 恢复。\n' >&2
+      printf '[WARN] 规则已提交，恢复材料整理未完成；请从菜单 12 恢复。\n' >&2
     fi
     [[ "${result}" -ne 0 || "${finished}" == y ]] || result=1
     exit "${result}"
@@ -41981,13 +41290,19 @@ routing_transaction_run() (
     routing_publish_file "${directory}/policy.json" "${SB_ROUTING_POLICY_FILE}" || return 1
     if [[ "${server_changed}" == true ]]; then
       jq -rj '.legacy_domains' "${draft}" > "${directory}/domains.txt" || return 1
-      routing_publish_file "${directory}/domains.txt" "${SB_WARP_DOMAINS_FILE}" || return 1
+      if [[ -e "${SB_WARP_DOMAINS_FILE}" || -s "${directory}/domains.txt" ]]; then
+        routing_publish_file "${directory}/domains.txt" "${SB_WARP_DOMAINS_FILE}" || return 1
+      fi
       jq -rj '.legacy_sources' "${draft}" > "${directory}/sources.txt" || return 1
-      routing_publish_file "${directory}/sources.txt" "${SB_WARP_REMOTE_RULESETS_FILE}" || return 1
+      if [[ -e "${SB_WARP_REMOTE_RULESETS_FILE}" || -s "${directory}/sources.txt" ]]; then
+        routing_publish_file "${directory}/sources.txt" "${SB_WARP_REMOTE_RULESETS_FILE}" || return 1
+      fi
       SB_ENABLE_WARP=$(jq -r 'if .warp.enabled then "y" else "n" end' "${draft}") || return 1
       SB_WARP_ROUTE_MODE=$(jq -r '.warp.mode' "${draft}") || return 1
       printf 'WARP_ROUTE_MODE=%s\nWARP_ENABLED=%s\n' "${SB_WARP_ROUTE_MODE}" "${SB_ENABLE_WARP}" > "${directory}/warp.env" || return 1
-      routing_publish_file "${directory}/warp.env" "${SB_WARP_ROUTE_SETTINGS_FILE}" || return 1
+      if [[ -e "${SB_WARP_ROUTE_SETTINGS_FILE}" || "${SB_ENABLE_WARP}" == y ]]; then
+        routing_publish_file "${directory}/warp.env" "${SB_WARP_ROUTE_SETTINGS_FILE}" || return 1
+      fi
       routing_apply_node_overrides "${draft}" "${directory}" || return 1
       if jq -e '.warp.reregister' "${draft}" >/dev/null; then
         if [[ "${SB_ENABLE_WARP}" != y ]] && ! instance_outbound_requires_warp && ! routing_policy_requires_warp "${policy}"; then
@@ -41996,12 +41311,15 @@ routing_transaction_run() (
         [[ ! -L "${SB_WARP_KEY_FILE}" ]] || return 1
         rm -f -- "${SB_WARP_KEY_FILE}" || return 1
       fi
+      # Network activation owns account/asset preparation. Node and component
+      # generation only consumes already prepared settings and credentials.
+      if [[ "${warp_activation_requested}" == true ]]; then
+        ensure_warp_routing_assets || return 1
+        register_warp || return 1
+      fi
       generate_config || return 1
     fi
-    if [[ "${client_changed}" == true ]]; then
-      candidate=$(build_singbox_client_config "${policy}") || return 1
-      validate_client_config_json "${candidate}" || return 1
-    fi
+
   fi
   routing_transaction_checkpoint publish || return 1
   if [[ "${before_active}" == true && "${server_changed}" == true ]]; then
@@ -42042,7 +41360,7 @@ routing_draft_edit() {
     chmod 600 "${next}" && mv -f -- "${next}" "${draft}"
   else
     rm -f -- "${next}"
-    routing_notice WARN '设置无效或广告规则源为空，草稿未修改。'
+    routing_notice WARN '设置无效，草稿未修改。'
     return 1
   fi
 }
@@ -42051,37 +41369,36 @@ routing_boolean_label() {
   case "${1:-false}" in true) printf '%b开启%b' "${GREEN}" "${NC}" ;; *) printf '%b关闭%b' "${YELLOW}" "${NC}" ;; esac
 }
 
+routing_policy_needs_adoption() {
+  [[ ! -f "${SB_ROUTING_POLICY_FILE}" ]] ||
+    jq -e '.schema_version != 2' "${SB_ROUTING_POLICY_FILE}" >/dev/null
+}
+
 routing_policy_overview() {
-  local draft=$1 nodes policy
-  policy=$(jq -c '.policy' "${draft}") || return 1
+  local draft=$1 nodes
   nodes=$(routing_nodes_json) || return 1
-  render_left_aligned_page_header '规则与分流管理' '服务器策略与客户端导出偏好分别管理；修改先保存为草稿'
-  render_summary_item '服务器作用范围' '本 VPS 中脚本管理的代理节点'
+  render_left_aligned_page_header '网络与分流' '只管理本 VPS 的服务端网络策略；修改先保存为草稿'
+  render_summary_item 'Block CN' "$(routing_boolean_label "$(jq -r '.policy.server.block_cn' "${draft}")")"
   render_summary_item '默认出口（草稿）' "$(jq -r 'if .warp.enabled then (if .warp.mode=="all" then "WARP 全量" else "原生默认 + WARP 选择性分流" end) else "原生出口" end' "${draft}")"
-  render_summary_item '全局 WARP 分流' "$(routing_boolean_label "$(jq -r '.warp.enabled' "${draft}")")"
-  render_summary_item '服务器私网地址控制' "$(routing_boolean_label "$(jq -r '.server.private_network_block' <<< "${policy}")")"
-  render_summary_item '服务器广告拦截' "$(routing_boolean_label "$(jq -r '.server.adblock' <<< "${policy}")")"
-  render_summary_item '客户端导出' "$(jq -r '"LAN直连="+(.client.lan_direct|tostring)+" / CN直连="+(.client.cn_direct|tostring)+" / 广告="+(.client.adblock|tostring)' <<< "${policy}")"
-  render_summary_item '现有独立出口节点数' "$(jq '[.[]|select(.policy!="default")]|length' <<< "${nodes}")"
-  render_summary_item '草稿中的节点策略修改' "$(jq '.node_overrides|length' "${draft}")"
-  render_summary_item '自定义规则 / 规则源' "$(jq -r '(.server.rules|length|tostring)+" / "+(.server.rule_sets|length|tostring)' <<< "${policy}")"
+  render_summary_item 'AI / 流媒体走 WARP' "$(jq -r '(.policy.server.warp_ai|tostring)+" / "+(.policy.server.warp_streaming|tostring)' "${draft}")"
+  render_summary_item '独立出口节点 / 待修改' "$(jq '[.[]|select(.policy!="default")]|length' <<< "${nodes}") / $(jq '.node_overrides|length' "${draft}")"
+  if routing_policy_needs_adoption; then
+    echo '应用时启用当前服务端策略格式，并清理脚本原先生成的广告与私网限制；取消不会修改现有配置。'
+  fi
   if jq -e '.warp.reregister' "${draft}" >/dev/null; then
     routing_notice WARN '应用时将重新注册 WARP；文件回滚不能撤销已发送的云端注册。'
   fi
-  echo '默认出口使用原生时，独立节点或自定义规则仍可能需要 WARP。'
-  echo '广告过滤依赖可识别的目标域名；白名单只排除广告拒绝。'
-  echo '客户端设置只影响重新导出的完整配置，普通分享链接不携带规则。'
 }
 
 routing_policy_preview() {
   local draft=$1
   routing_draft_validate "${draft}" || return 1
   routing_policy_overview "${draft}" || return 1
-  echo '受管规则顺序：嗅探/必要处理 → 私网控制 → 广告 → 节点独立出口 → 自定义 → 预设 → 默认。'
+  echo '受管规则顺序：嗅探 → Block CN（域名、解析、IP）→ 节点出口 → 自定义 → AI / 流媒体 → 默认出口。'
   jq -r '.policy.server.rules[] | "规则: \(.id) [\(.kind)] → \(.action) / enabled=\(.enabled)"' "${draft}"
   jq -r '.policy.server.rule_sets[] | "规则源: \(.tag) [\(.type),\(.format)] → \(.action) / enabled=\(.enabled)"' "${draft}"
   jq -r '.node_overrides[] | "节点出口: \(.protocol)/\(.id) → \(.policy)"' "${draft}"
-  echo '规则源 URL、账户密钥和节点凭据不在预览中展示。应用时再执行完整配置与服务检查。'
+  echo '规则源 URL、账户密钥和节点凭据不在预览中展示。应用时执行完整配置与服务检查。'
 }
 
 routing_default_outbound_menu() {
@@ -42092,14 +41409,20 @@ routing_default_outbound_menu() {
     render_menu_item 2 '原生默认，AI / 流媒体及自定义选择性使用 WARP'
     render_menu_item 3 '默认全部代理流量使用 WARP'
     render_menu_item 4 '设置 / 取消应用时重新注册 WARP 账户'
+    render_menu_item 5 '节点出口设置（跟随全局 / 原生 / WARP）'
+    render_menu_item 6 '高级：自定义服务端域名 / IP 分流'
+    render_menu_item 7 '高级：WARP 规则源与既有资产'
     echo '0. 返回'
-    choice=$(prompt_choice '请选择 [0-4]: ' 0 4 '') || return 0
+    choice=$(prompt_choice '请选择 [0-7]: ' 0 7 '') || return 0
     case "${choice}" in
       0) return ;;
       1) routing_draft_edit "${draft}" '.warp.enabled=false' || return 1 ;;
       2) routing_draft_edit "${draft}" '.warp.enabled=true | .warp.mode="selective"' || return 1 ;;
       3) routing_draft_edit "${draft}" '.warp.enabled=true | .warp.mode="all"' || return 1 ;;
       4) routing_draft_edit "${draft}" '.warp.reregister |= not' || return 1 ;;
+      5) routing_node_policy_menu "${draft}" || return 1 ;;
+      6) routing_collection_menu "${draft}" rules || return 1 ;;
+      7) routing_sources_menu "${draft}" || return 1 ;;
     esac
   done
 }
@@ -42214,47 +41537,6 @@ routing_collection_menu() {
   done
 }
 
-routing_adblock_menu() {
-  local draft=$1 choice value index count
-  while true; do
-    render_left_aligned_page_header '广告拦截' '服务端与客户端分别开启；广告例外不改变原出口'
-    render_menu_item 1 '切换服务端广告拦截' '' "$(jq -r '.policy.server.adblock' "${draft}")"
-    render_menu_item 2 '切换客户端广告拦截' '' "$(jq -r '.policy.client.adblock' "${draft}")"
-    render_menu_item 3 '设置 HTTPS 广告源（输入 - 清空，仅用内嵌域名）'
-    render_menu_item 4 '添加自定义广告域名后缀'
-    render_menu_item 5 '删除自定义广告域名后缀'
-    render_menu_item 6 '添加广告例外域名后缀'
-    render_menu_item 7 '删除广告例外域名后缀'
-    echo '0. 返回'
-    choice=$(prompt_choice '请选择 [0-7]: ' 0 7 '') || return 0
-    case "${choice}" in
-      0) return ;;
-      1) routing_draft_edit "${draft}" '.policy.server.adblock |= not' || continue ;;
-      2) routing_draft_edit "${draft}" '.policy.client.adblock |= not' || continue ;;
-      3)
-        read -rp 'HTTPS URL（留空保留，- 清空）: ' value || return 0
-        [[ -n "${value}" ]] || continue
-        [[ "${value}" != - ]] || value=''
-        routing_draft_edit "${draft}" '.policy.adblock.url=$value' --arg value "${value}" || continue
-        ;;
-      4|6)
-        read -rp '域名后缀（不带协议或路径）: ' value || return 0
-        if [[ "${choice}" == 4 ]]; then value=${value,,}; index=domains; else value=${value,,}; index=allow; fi
-        routing_draft_edit "${draft}" '.policy.adblock[$list] += [$value]' --arg list "${index}" --arg value "${value}" || continue
-        ;;
-      5|7)
-        if [[ "${choice}" == 5 ]]; then value=domains; else value=allow; fi
-        jq -r --arg list "${value}" '.policy.adblock[$list]|to_entries[]|"\(.key+1). \(.value)"' "${draft}"
-        count=$(jq --arg list "${value}" '.policy.adblock[$list]|length' "${draft}") || return 1
-        [[ "${count}" -gt 0 ]] || continue
-        index=$(prompt_choice '删除第几项（0 取消）: ' 0 "${count}" '') || return 0
-        [[ "${index}" != 0 ]] || continue
-        routing_draft_edit "${draft}" 'del(.policy.adblock[$list][$index])' --arg list "${value}" --argjson index "$((index-1))" || continue
-        ;;
-    esac
-  done
-}
-
 routing_node_policy_menu() {
   local draft=$1 nodes count index node protocol id policy revision choice
   nodes=$(routing_nodes_json) || return 1
@@ -42275,24 +41557,6 @@ routing_node_policy_menu() {
   routing_draft_edit "${draft}" '.node_overrides |= map(select(.protocol!=$p or .id!=$id)) |
     if $policy==$old then . else .node_overrides += [{protocol:$p,id:$id,policy:$policy,revision:$revision}] end' \
     --arg p "${protocol}" --arg id "${id}" --arg policy "${policy}" --arg old "$(jq -r '.policy' <<< "${node}")" --argjson revision "${revision}"
-}
-
-routing_client_menu() {
-  local draft=$1 choice
-  while true; do
-    render_left_aligned_page_header '客户端绕行规则' '只影响下一次导出的完整客户端配置'
-    render_menu_item 1 '切换局域网直连' '' "$(jq -r '.policy.client.lan_direct' "${draft}")"
-    render_menu_item 2 '切换国内域名 / IP 直连' '' "$(jq -r '.policy.client.cn_direct' "${draft}")"
-    render_menu_item 3 '切换客户端广告拦截' '' "$(jq -r '.policy.client.adblock' "${draft}")"
-    echo '0. 返回'
-    choice=$(prompt_choice '请选择 [0-3]: ' 0 3 '') || return 0
-    case "${choice}" in
-      0) return ;;
-      1) routing_draft_edit "${draft}" '.policy.client.lan_direct |= not' || continue ;;
-      2) routing_draft_edit "${draft}" '.policy.client.cn_direct |= not' || continue ;;
-      3) routing_draft_edit "${draft}" '.policy.client.adblock |= not' || continue ;;
-    esac
-  done
 }
 
 routing_legacy_assets_menu() {
@@ -42358,18 +41622,13 @@ routing_management_menu() (
   while true; do
     routing_policy_overview "${draft}" || return 1
     if cmp -s "${draft}" "${original}"; then echo '草稿状态: 无修改'; else echo '草稿状态: 有待应用修改'; fi
-    render_menu_item 1 '查看策略、规则顺序与作用范围'
-    render_menu_item 2 '默认出口与 WARP 管理'
-    render_menu_item 3 'AI / 流媒体分流'
-    render_menu_item 4 '自定义域名与 IP 规则'
-    render_menu_item 5 '广告拦截'
-    render_menu_item 6 '切换服务端私网地址访问控制'
-    render_menu_item 7 '节点独立出口策略'
-    render_menu_item 8 '客户端绕行规则（导出设置）'
-    render_menu_item 9 '本地 / 远程规则源管理'
-    render_menu_item 10 '预览、应用与恢复'
+    render_menu_item 1 'Block CN 开关（中国大陆域名与 IP）'
+    render_menu_item 2 'WARP 开关与节点出口设置'
+    render_menu_item 3 'AI / 流媒体设置'
+    render_menu_item 4 '流媒体与出口检测'
+    render_menu_item 5 '预览、应用与恢复'
     echo '0. 返回主菜单'
-    choice=$(prompt_choice '请选择 [0-10]: ' 0 10 '') || return 0
+    choice=$(prompt_choice '请选择 [0-5]: ' 0 5 '') || return 0
     case "${choice}" in
       0)
         if ! cmp -s "${draft}" "${original}"; then
@@ -42377,22 +41636,17 @@ routing_management_menu() (
         fi
         return 0
         ;;
-      1) routing_policy_preview "${draft}" || return 1 ;;
+      1) routing_draft_edit "${draft}" '.policy.server.block_cn |= not' || continue ;;
       2) routing_default_outbound_menu "${draft}" || return 1 ;;
       3) routing_presets_menu "${draft}" || return 1 ;;
-      4) routing_collection_menu "${draft}" rules || return 1 ;;
-      5) routing_adblock_menu "${draft}" || return 1 ;;
-      6) routing_draft_edit "${draft}" '.policy.server.private_network_block |= not' || continue ;;
-      7) routing_node_policy_menu "${draft}" || continue ;;
-      8) routing_client_menu "${draft}" || return 1 ;;
-      9) routing_sources_menu "${draft}" || return 1 ;;
-      10)
+      4) media_check_menu || routing_notice WARN '检测未完成，草稿和服务策略未修改。' ;;
+      5)
         routing_policy_preview "${draft}" || return 1
         echo '1. 应用草稿  2. 恢复上次应用前的配置  0. 返回'
         choice=$(prompt_choice '请选择 [0-2]: ' 0 2 '') || return 0
         case "${choice}" in
           1)
-            if cmp -s "${draft}" "${original}"; then routing_notice INFO '没有待应用的修改。'; continue; fi
+            if cmp -s "${draft}" "${original}" && ! routing_policy_needs_adoption; then routing_notice INFO '没有待应用的修改。'; continue; fi
             [[ "$(prompt_yes_no '应用全部草稿并检查服务 [y/n]（默认 n）: ' n)" == y ]] || continue
             routing_policy_apply "${draft}" || continue
             ;;

@@ -38,7 +38,7 @@ sysctl() {
   return 1
 }
 
-mkdir -p "${SB_PROTOCOL_STATE_DIR}/vless-reality.d" "$(dirname "$(client_export_file_path)")"
+mkdir -p "${SB_PROTOCOL_STATE_DIR}/vless-reality.d"
 cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF_INDEX'
 INSTALLED_PROTOCOLS=vless-reality
 PROTOCOL_STATE_VERSION=1
@@ -96,7 +96,6 @@ OUTBOUND_STACK_MODE=prefer_ipv6
 EOF_STACK
 printf 'eth0|up|ip|10001|443|25\neth0|down|ip|10002|8443|50\n' > "${SB_REALITY_QOS_FILTER_STATE_FILE}"
 printf 'SUBMAN_API_URL=https://subman.example.test\n' > "$(subman_config_file_path)"
-printf '{}\n' > "$(client_export_file_path)"
 
 nodes_json=$(agent_cli nodes --json)
 jq -e '
@@ -170,7 +169,7 @@ jq -e '
   and .reality.instances == 2
   and .reality.qos_filters == 2
   and .integrations.subman_configured == true
-  and .integrations.client_export_exists == true
+  and (.integrations | has("client_export_exists") | not)
 ' <<< "${status_json}" >/dev/null
 
 # Read-only Agent commands must reject stale indexed state without reconciling

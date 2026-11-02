@@ -182,7 +182,7 @@ load_protocol_state tuic read-only
 [[ "${SB_PROTOCOL}" == tuic && "${SB_INSTANCE_ID}" == main && "${SB_PORT}" == 2091 ]]
 node_summary=$(agent_tuic_node_json 203.0.113.10)
 jq -e '.protocol=="tuic" and .instance_id=="main" and .user_count==1 and
-  .client_exportable==true and .shareable==false and .tls_mode=="manual" and
+  (has("client_exportable")|not) and .shareable==false and .tls_mode=="manual" and
   (. | tostring | contains("replaced-password") | not) and
   (. | tostring | contains("33333333-3333-4333-8333-333333333333") | not)' \
   <<< "${node_summary}" >/dev/null

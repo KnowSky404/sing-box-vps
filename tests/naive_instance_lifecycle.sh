@@ -162,7 +162,7 @@ load_protocol_state naive read-only
 [[ "${SB_PROTOCOL}" == naive && "${SB_INSTANCE_ID}" == main && "${SB_PORT}" == 2100 ]]
 node_summary=$(agent_naive_node_json 203.0.113.10)
 jq -e '.protocol=="naive" and .instance_id=="main" and .user_count==1 and
-  .client_exportable==true and .shareable==false and .outbound_runtime=="with_naive_outbound+libcronet" and
+  (has("client_exportable")|not) and .shareable==false and .outbound_runtime=="with_naive_outbound+libcronet" and
   (. | tostring | contains("replaced-password") | not)' <<< "${node_summary}" >/dev/null
 link_material=$(agent_naive_link_json 203.0.113.10)
 jq -e '.links=={} and (.outbounds|length)==1 and .outbounds[0].type=="naive" and

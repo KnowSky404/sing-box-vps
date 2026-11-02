@@ -51,12 +51,12 @@ jq -n --arg cert "${TMP_DIR}/vmess.crt" --arg key "${TMP_DIR}/vmess.key" '
 chmod 600 "${SB_PROTOCOL_STATE_DIR}/vmess.env" "${SB_PROTOCOL_STATE_DIR}/instances/vmess.json"
 
 rendered=$(render_structured_instance_inbounds vmess "${SB_PROTOCOL_STATE_DIR}/instances/vmess.json" | jq -s .)
-jq --argjson inbounds "${rendered}" '{log:{disabled:true},inbounds:$inbounds,outbounds:[{type:"direct",tag:"direct"}],route:{final:"direct"}}' \
+jq -n --argjson inbounds "${rendered}" '{log:{disabled:true},inbounds:$inbounds,outbounds:[{type:"direct",tag:"direct"}],route:{final:"direct"}}' \
   > "${SINGBOX_CONFIG_FILE}"
 
 load_plain_proxy_structured_instance vmess public
 summary=$(agent_vmess_node_json 203.0.113.44)
-jq -e '.protocol=="vmess" and .instance_id=="public" and .user_count==2 and .tls_enabled==true and .client_trust=="certificate" and .transport_type=="ws" and .client_exportable==true' \
+jq -e '.protocol=="vmess" and .instance_id=="public" and .user_count==2 and .tls_enabled==true and .client_trust=="certificate" and .transport_type=="ws" and (has("client_exportable")|not)' \
   <<< "${summary}" >/dev/null
 links=$(agent_vmess_link_json 203.0.113.44)
 jq -e '.protocol=="vmess" and (.links|length)==2 and (.outbounds|length)==2 and all(.links[]; startswith("vmess://")) and all(.outbounds[]; .type=="vmess" and .server=="203.0.113.44" and (.tls.certificate|contains("BEGIN CERTIFICATE")))' \
@@ -76,11 +76,6 @@ fi
 decoded=$(printf '%s' "${payload}" | base64 -d)
 jq -e '.v=="2" and .add=="203.0.113.44" and .net=="ws" and .tls=="tls" and .host=="vmess-agent.example" and .path=="/vmess" and (.id|type)=="string"' <<< "${decoded}" >/dev/null
 
-exported=$(agent_cli export-client --json)
-jq -e '.ok==true and .command=="export-client" and ([.data.config.outbounds[]|select(.type=="vmess")]|length)==3 and
-  all(.data.config.outbounds[]|select(.type=="vmess"); (.server|type)=="string" and length>0) and
-  (tostring|contains("private key fixture")|not)' <<< "${exported}" >/dev/null
-
 # A concurrent revision between the snapshot and link render must fail closed.
 original_snapshot=$(declare -f structured_instance_store_snapshot_json)
 eval "${original_snapshot/structured_instance_store_snapshot_json/original_vmess_snapshot}"
@@ -98,4 +93,4 @@ fi
 [[ ! -s "${TMP_DIR}/drift.out" ]]
 eval "$(declare -f original_vmess_snapshot | sed '1s/^original_vmess_snapshot /structured_instance_store_snapshot_json /')"
 
-printf 'VMess Agent/share checks passed: links=2 export-outbounds=3\n'
+printf 'VMess Agent/share checks passed: links=2 node-material=retained\n'

@@ -166,7 +166,7 @@ jq -e 'length==1 and .[0].type=="snell" and .[0].version==6 and .[0].network==["
 load_protocol_state snell read-only
 node_summary=$(agent_snell_node_json 203.0.113.10)
 jq -e '.protocol=="snell" and .version==6 and .user_count==1 and
-  .client_exportable==true and .shareable==false and
+  (has("client_exportable")|not) and .shareable==false and
   (tostring | contains("snell-v6-replaced-123456") | not) and
   (tostring | contains("alice-key") | not)' <<< "${node_summary}" >/dev/null
 link_material=$(agent_snell_link_json 203.0.113.10)

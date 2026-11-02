@@ -36,7 +36,7 @@ for feature in \
   'BBR' \
   '媒体检测' \
   '接管/修复' \
-  '客户端导出' \
+  '节点连接材料' \
   'SubMan 同步' \
   '服务 start/stop/restart' \
   'sing-box 升级' \

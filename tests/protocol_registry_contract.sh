@@ -31,17 +31,17 @@ jq -e '
     .subman_type == "vmess" and
     .features.multi_instance == true and
     .features.listen_transport_projection == true and
-    .features.client_export == true)
+    (.features | has("client_export") | not))
   and any(.[]; .state_id == "vless-plain" and
     .runtime_id == "vless" and .agent_id == "vless-plain" and
     .subman_type == "vless" and .features.multi_user == true and
     .features.listen_transport_projection == true and
-    .features.client_export == true and .features.subman_sync == true)
+    (.features | has("client_export") | not) and .features.subman_sync == true)
   and any(.[]; .state_id == "anytls" and
     .runtime_id == "anytls" and .agent_id == "anytls" and
     .features.multi_instance == true and .features.multi_user == true and
     .features.authentication == true and .features.tls == true and
-    .features.standard_share_uri == false and .features.client_export == true)
+    .features.standard_share_uri == false and (.features | has("client_export") | not))
   and any(.[]; .state_id == "snell" and
     .runtime_id == "snell" and .agent_id == "snell" and
     .features.multi_instance == true and .features.multi_user == true and
@@ -49,7 +49,7 @@ jq -e '
     .features.v5_obfs_modes == ["none", "http"] and
     .features.v6_modes == ["", "default", "unshaped", "unsafe-raw"] and
     .features.udp_via_tcp_packet_api == true and
-    .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
+    .features.standard_share_uri == false and .features.qr == false and (.features | has("client_export") | not) and
     .features.subman_sync == false)
   and any(.[]; .state_id == "tuic" and
     .runtime_id == "tuic" and .agent_id == "tuic" and
@@ -58,7 +58,7 @@ jq -e '
     .features.tls_modes == ["manual_certificate"] and .features.quic == true and
     .features.congestion_control == ["cubic", "new_reno", "bbr"] and
     .features.udp_relay_modes == ["native", "quic"] and .features.udp_over_stream == true and
-    .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
+    .features.standard_share_uri == false and .features.qr == false and (.features | has("client_export") | not) and
     .features.subman_sync == false)
   and any(.[]; .state_id == "hysteria" and
     .runtime_id == "hysteria" and .agent_id == "hysteria" and
@@ -66,7 +66,7 @@ jq -e '
     .features.authentication == true and .features.tls == true and
     .features.tls_modes == ["manual_certificate"] and .features.bandwidth == true and
     .features.obfs == true and .features.quic == true and
-    .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
+    .features.standard_share_uri == false and .features.qr == false and (.features | has("client_export") | not) and
     .features.subman_sync == false)
   and any(.[]; .state_id == "naive" and
     .runtime_id == "naive" and .agent_id == "naive" and
@@ -74,7 +74,7 @@ jq -e '
     .features.authentication == true and .features.tls == true and
     .features.network == ["tcp", "udp"] and .features.listen_network_selection == true and
     .features.quic_congestion_control == ["bbr", "cubic", "reno"] and
-    .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
+    .features.standard_share_uri == false and .features.qr == false and (.features | has("client_export") | not) and
     .features.subman_sync == false and
     .features.outbound_runtime == "with_naive_outbound+libcronet")
   and any(.[]; .state_id == "shadowtls" and
@@ -84,7 +84,7 @@ jq -e '
     .features.handshake == true and .features.detour == true and
     .features.wildcard_sni == ["off", "authed", "all"] and
     .features.standard_share_uri == false and .features.qr == false and
-    .features.client_export == true and .features.subman_sync == false and
+    (.features | has("client_export") | not) and .features.subman_sync == false and
     .features.composite == true)
 ' >/dev/null <<< "${registry}"
 capabilities=$(agent_capabilities_json)
@@ -146,28 +146,28 @@ jq -e --argjson registry "${registry}" '
     .capabilities.multi_user == true and .capabilities.subman_sync == true) and
   any(.protocol_registry[]; .state_id == "snell" and
     .features.multi_instance == true and .features.multi_user == true and
-    .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
+    .features.standard_share_uri == false and .features.qr == false and (.features | has("client_export") | not) and
     .capabilities.subman_sync == false) and
   any(.protocol_registry[]; .state_id == "tuic" and
     .features.multi_instance == true and .features.multi_user == true and
-    .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
+    .features.standard_share_uri == false and .features.qr == false and (.features | has("client_export") | not) and
     .capabilities.subman_sync == false) and
   any(.protocol_registry[]; .state_id == "hysteria" and
     .features.multi_instance == true and .features.multi_user == true and
     .features.bandwidth == true and .features.obfs == true and
-    .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
+    .features.standard_share_uri == false and .features.qr == false and (.features | has("client_export") | not) and
     .capabilities.subman_sync == false) and
   any(.protocol_registry[]; .state_id == "naive" and
     .features.multi_instance == true and .features.multi_user == true and
     .features.network == ["tcp", "udp"] and .features.listen_network_selection == true and
-    .features.standard_share_uri == false and .features.qr == false and .features.client_export == true and
+    .features.standard_share_uri == false and .features.qr == false and (.features | has("client_export") | not) and
     .capabilities.subman_sync == false and
     .features.outbound_runtime == "with_naive_outbound+libcronet") and
   any(.protocol_registry[]; .state_id == "shadowtls" and
     .features.multi_instance == true and .features.multi_user == true and
     .features.handshake == true and .features.detour == true and
     .features.standard_share_uri == false and .features.qr == false and
-    .features.client_export == true and .capabilities.subman_sync == false and
+    (.features | has("client_export") | not) and .capabilities.subman_sync == false and
     .features.composite == true) and
   (.features.subman.supported_protocols | index("trojan") != null) and
   .features.subman.supported_protocols == ($registry | map(select(.subman_type != "") | .agent_id))
@@ -524,11 +524,8 @@ VMESS_STORE_EOF
   fi
 done
 printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,snell,tuic,hysteria,naive,shadowtls,socks,http,shadowsocks,trojan,vmess,vless-plain\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
-[[ "$(list_exportable_client_protocols)" == $'vless-reality\nmixed\nhy2\nanytls\nsnell\ntuic\nhysteria\nnaive\nshadowtls\nsocks\nhttp\nshadowsocks\ntrojan\nvmess\nvless-plain' ]]
-[[ "$(protocol_registry_field mixed client_export)" == true ]]
 [[ "$(protocol_registry_field mixed multi_instance)" == true ]]
 [[ -z "$(protocol_registry_field mixed subman_type)" ]]
-[[ "$(protocol_registry_field socks client_export)" == true ]]
 [[ "$(protocol_registry_field socks multi_instance)" == true ]]
 [[ "$(protocol_registry_field socks menu_order)" == 5 ]]
 [[ "$(protocol_registry_field socks default_tag)" == socks-in ]]
@@ -546,7 +543,6 @@ printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,snell,tuic,hysteria,n
 [[ "$(protocol_registry_field snell agent_id)" == snell ]]
 [[ "$(protocol_registry_field snell runtime_id)" == snell ]]
 [[ "$(protocol_registry_field snell listen_networks)" == tcp ]]
-[[ "$(protocol_registry_field snell client_export)" == true ]]
 [[ -z "$(protocol_registry_field snell subman_type)" ]]
 [[ "$(protocol_registry_field snell handlers)" == *build_snell_inbound_json* ]]
 [[ "$(protocol_registry_field snell handlers)" == *build_client_snell_outbounds* ]]
@@ -559,7 +555,6 @@ printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,snell,tuic,hysteria,n
 [[ "$(protocol_registry_field tuic runtime_id)" == tuic ]]
 [[ "$(protocol_registry_field tuic listen_networks)" == udp ]]
 [[ "$(protocol_registry_field tuic traffic_networks)" == tcp,udp ]]
-[[ "$(protocol_registry_field tuic client_export)" == true ]]
 [[ -z "$(protocol_registry_field tuic subman_type)" ]]
 [[ "$(protocol_registry_field tuic handlers)" == *build_tuic_inbound_json* ]]
 [[ "$(protocol_registry_field tuic handlers)" == *build_client_tuic_outbounds* ]]
@@ -572,7 +567,6 @@ printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,snell,tuic,hysteria,n
 [[ "$(protocol_registry_field hysteria runtime_id)" == hysteria ]]
 [[ "$(protocol_registry_field hysteria listen_networks)" == udp ]]
 [[ "$(protocol_registry_field hysteria traffic_networks)" == tcp,udp ]]
-[[ "$(protocol_registry_field hysteria client_export)" == true ]]
 [[ -z "$(protocol_registry_field hysteria subman_type)" ]]
 [[ "$(protocol_registry_field hysteria handlers)" == *build_hysteria_inbound_json* ]]
 [[ "$(protocol_registry_field hysteria handlers)" == *build_client_hysteria_outbounds* ]]
@@ -585,7 +579,6 @@ printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,snell,tuic,hysteria,n
 [[ "$(protocol_registry_field naive runtime_id)" == naive ]]
 [[ "$(protocol_registry_field naive listen_networks)" == tcp,udp ]]
 [[ "$(protocol_registry_field naive traffic_networks)" == tcp,udp ]]
-[[ "$(protocol_registry_field naive client_export)" == true ]]
 [[ -z "$(protocol_registry_field naive subman_type)" ]]
 [[ "$(protocol_registry_field naive handlers)" == *build_naive_inbound_json* ]]
 [[ "$(protocol_registry_field naive handlers)" == *build_client_naive_outbounds* ]]
@@ -596,7 +589,6 @@ printf 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,snell,tuic,hysteria,n
 [[ "$(protocol_registry_field shadowtls state_id)" == shadowtls ]]
 [[ "$(protocol_registry_field shadowtls agent_id)" == shadowtls ]]
 [[ "$(protocol_registry_field shadowtls listen_networks)" == tcp ]]
-[[ "$(protocol_registry_field shadowtls client_export)" == true ]]
 [[ -z "$(protocol_registry_field shadowtls subman_type)" ]]
 [[ "$(protocol_registry_field shadowtls handlers)" == *build_shadowtls_inbound_json* ]]
 [[ "$(protocol_registry_field shadowtls handlers)" == *build_client_shadowtls_outbounds* ]]
@@ -807,7 +799,7 @@ for invalid in $'INSTALLED_PROTOCOLS=mixed,future-protocol\nPROTOCOL_STATE_VERSI
   $'INSTALLED_PROTOCOLS=mixed\nPROTOCOL_STATE_VERSION=9'; do
   printf '%s\n' "${invalid}" > "${SB_PROTOCOL_INDEX_FILE}"
   cp "${SB_PROTOCOL_INDEX_FILE}" "${TEST_DIR}/index.before"
-  for handler in reconcile_protocol_index_if_needed list_installed_protocols list_effective_protocols list_exportable_client_protocols rebuild_protocol_state_from_config; do
+  for handler in reconcile_protocol_index_if_needed list_installed_protocols list_effective_protocols rebuild_protocol_state_from_config; do
     if "${handler}" > "${TEST_DIR}/unknown.stdout" 2> "${TEST_DIR}/unknown.stderr"; then
       printf 'unknown state accepted by %s\n' "${handler}" >&2
       exit 1
