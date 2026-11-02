@@ -54,8 +54,6 @@ source "${TESTABLE_INSTALL}"
 SUMMARY_COUNT_FILE="${TMP_DIR}/summary.count"
 PROMPT_COUNT_FILE="${TMP_DIR}/prompt.count"
 DETAIL_CALLS_FILE="${TMP_DIR}/detail.calls"
-EXPORT_OUTPUT_FILE="${TMP_DIR}/export.output"
-EXPECTED_EXPORT_PATH="${SB_PROJECT_DIR}/client/sing-box-client.json"
 printf '0\n' > "${SUMMARY_COUNT_FILE}"
 printf '0\n' > "${PROMPT_COUNT_FILE}"
 : > "${DETAIL_CALLS_FILE}"
@@ -159,40 +157,5 @@ fi
 
 if ! grep -Fxq 'link:hy2' "${DETAIL_CALLS_FILE}"; then
   printf 'expected node info view to include hy2 link output, got:\n%s\n' "$(cat "${DETAIL_CALLS_FILE}")" >&2
-  exit 1
-fi
-
-view_node_info <<'EOF' > "${EXPORT_OUTPUT_FILE}" 2>&1
-2
-0
-EOF
-
-if grep -Fq 'command not found' "${EXPORT_OUTPUT_FILE}"; then
-  printf 'expected node info export action to avoid shell errors, got:\n%s\n' "$(cat "${EXPORT_OUTPUT_FILE}")" >&2
-  exit 1
-fi
-
-if ! grep -Fq 'sing-box 裸核客户端配置导出成功。' "${EXPORT_OUTPUT_FILE}"; then
-  printf 'expected node info export action to export client config successfully, got:\n%s\n' "$(cat "${EXPORT_OUTPUT_FILE}")" >&2
-  exit 1
-fi
-
-if ! grep -Fq "文件路径: ${EXPECTED_EXPORT_PATH}" "${EXPORT_OUTPUT_FILE}"; then
-  printf 'expected node info export action to print export path %s, got:\n%s\n' "${EXPECTED_EXPORT_PATH}" "$(cat "${EXPORT_OUTPUT_FILE}")" >&2
-  exit 1
-fi
-
-if ! grep -Fq 'WSL2 使用方式: 请将应用代理手动指向 127.0.0.1:2080' "${EXPORT_OUTPUT_FILE}"; then
-  printf 'expected node info export action to print WSL2 manual proxy guidance, got:\n%s\n' "$(cat "${EXPORT_OUTPUT_FILE}")" >&2
-  exit 1
-fi
-
-if ! grep -Fq '系统代理: 未启用（set_system_proxy=false）' "${EXPORT_OUTPUT_FILE}"; then
-  printf 'expected node info export action to print system proxy disabled guidance, got:\n%s\n' "$(cat "${EXPORT_OUTPUT_FILE}")" >&2
-  exit 1
-fi
-
-if [[ ! -f "${EXPECTED_EXPORT_PATH}" ]]; then
-  printf 'expected node info export action to create %s, got:\n%s\n' "${EXPECTED_EXPORT_PATH}" "$(cat "${EXPORT_OUTPUT_FILE}")" >&2
   exit 1
 fi

@@ -69,7 +69,7 @@ if [[ "${plain_output}" != *"服务控制"* ]]; then
   exit 1
 fi
 
-if [[ "${plain_output}" != *"节点与诊断"* ]]; then
+if [[ "${plain_output}" != *"节点与订阅"* ]]; then
   printf 'expected node and diagnostics section label in main menu, got:\n%s\n' "${output}" >&2
   exit 1
 fi
@@ -104,7 +104,7 @@ if [[ "${plain_output}" != *"4. 更新 sing-box 版本"* ]]; then
   exit 1
 fi
 
-if [[ "${plain_output}" != *"12. 流媒体与出口检测"* ]]; then
+if [[ "${plain_output}" != *"11. 节点分享与订阅"* ]]; then
   printf 'expected media check option in sectioned main menu, got:\n%s\n' "${output}" >&2
   exit 1
 fi
@@ -151,7 +151,7 @@ if [[ "${plain_output}" == *"--------------------------------"* ]]; then
 fi
 
 service_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "服务控制") { print NR; exit }')
-diagnostics_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "节点与诊断") { print NR; exit }')
+diagnostics_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "节点与订阅") { print NR; exit }')
 network_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "网络与系统") { print NR; exit }')
 maintenance_line=$(printf '%s\n' "${plain_output}" | awk 'index($0, "脚本维护") { print NR; exit }')
 
@@ -177,7 +177,7 @@ if ! printf '%s\n' "${plain_output}" | awk '
   index($0, "服务控制") { seen=1; next }
   seen && index($0, "9. 运行状态摘要 active / Warp 未开启") { found_status=1; next }
   seen && index($0, "10. 查看实时日志") { found_log=1; exit }
-  seen && index($0, "节点与诊断") { exit }
+  seen && index($0, "节点与订阅") { exit }
   END { exit(found_status && found_log ? 0 : 1) }
 '; then
   printf 'expected status summary and log options to stay within the service control section, got:\n%s\n' "${output}" >&2
@@ -185,8 +185,8 @@ if ! printf '%s\n' "${plain_output}" | awk '
 fi
 
 if ! printf '%s\n' "${plain_output}" | awk '
-  index($0, "节点与诊断") { seen=1; next }
-  seen && index($0, "12. 流媒体与出口检测") { found=1; exit }
+  index($0, "节点与订阅") { seen=1; next }
+  seen && index($0, "11. 节点分享与订阅") { found=1; exit }
   seen && index($0, "网络与系统") { exit }
   END { exit(found ? 0 : 1) }
 '; then
@@ -196,11 +196,16 @@ fi
 
 if ! printf '%s\n' "${plain_output}" | awk '
   index($0, "网络与系统") { seen=1; next }
-  seen && index($0, "13. 规则与分流管理") { found_rules=1; next }
-  seen && index($0, "14. 系统与网络设置") { found_system=1; exit }
+  seen && index($0, "12. 网络与分流") { found_rules=1; next }
+  seen && index($0, "13. 系统设置") { found_system=1; exit }
   seen && index($0, "脚本维护") { exit }
   END { exit(found_rules && found_system ? 0 : 1) }
 '; then
   printf 'expected routing and system options to stay within the network/system section, got:\n%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${plain_output}" == *"流媒体与出口检测"* || "${plain_output}" == *"16. "* ]]; then
+  printf "expected diagnostics nested under network and 15 top-level choices\n" >&2
   exit 1
 fi

@@ -173,7 +173,7 @@ load_protocol_state hysteria read-only
 [[ "${SB_PROTOCOL}" == hysteria && "${SB_INSTANCE_ID}" == main && "${SB_PORT}" == 2095 ]]
 node_summary=$(agent_hysteria_node_json 203.0.113.10)
 jq -e '.protocol=="hysteria" and .instance_id=="main" and .user_count==1 and
-  .client_exportable==true and .shareable==false and .tls_mode=="manual" and
+  (has("client_exportable")|not) and .shareable==false and .tls_mode=="manual" and
   (. | tostring | contains("replaced-auth") | not)' <<< "${node_summary}" >/dev/null
 link_material=$(agent_hysteria_link_json 203.0.113.10)
 jq -e '.links=={} and (.outbounds|length)==1 and .outbounds[0].type=="hysteria" and

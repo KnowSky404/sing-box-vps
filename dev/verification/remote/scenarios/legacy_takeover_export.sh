@@ -1,16 +1,14 @@
 verification_scenario_legacy_takeover_export() {
-  local export_stdout_path
+  local links_path
   local legacy_config_path=${VERIFY_LEGACY_CONFIG_FILE:-/root/sing-box-vps/config.json}
   local legacy_key_path=${VERIFY_LEGACY_KEY_FILE:-/root/sing-box-vps/reality.key}
   local legacy_service_path=${VERIFY_LEGACY_SERVICE_FILE:-/etc/systemd/system/sing-box.service}
-  local export_path=/root/sing-box-vps/client/sing-box-client.json
   local expected_port=443
   local expected_sni="www.cloudflare.com"
   local expected_uuid="11111111-1111-1111-1111-111111111111"
   local expected_private_key="IEwVBb_qLcYr1L_CTI5exTWbT7qRgZnr43xP8nC0dkM"
   local expected_public_key="u9nRBiDRTmyxLQLkiVq-kYFPhRyeZkSo8p9c7s8Dfjo"
   local instance_state_file=/root/sing-box-vps/protocols/vless-reality.d/imported-1.env
-  local exported_node_name
 
   verification_prepare_remote_local_tree
   trap 'verification_cleanup_remote_local_tree; trap - RETURN' RETURN
@@ -90,20 +88,10 @@ EOF
   verification_wait_for_service_active sing-box
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" sing-box check -c /root/sing-box-vps/config.json
 
-  export_stdout_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/sbv-export.txt")
-  bash /usr/local/bin/sbv > "${export_stdout_path}" 2>&1 <<'EOF'
-11
-2
-0
-0
-EOF
-
-  grep -Fq 'sing-box 裸核客户端配置导出成功。' "${export_stdout_path}"
-  grep -Fq "文件路径: ${export_path}" "${export_stdout_path}"
-  test -f "${export_path}"
-  verification_capture_file_if_present "${export_path}" "${VERIFY_CURRENT_SCENARIO_DIR}/client/sing-box-client.json"
-  exported_node_name=$(grep -m1 '^NODE_NAME=' "${instance_state_file}" | cut -d= -f2-)
-  test -n "${exported_node_name}"
-  jq -e --arg tag "${exported_node_name}" '.outbounds[] | select(.type == "vless" and .tag == $tag) | .tls.utls.enabled == true and .tls.utls.fingerprint == "chrome"' "${export_path}" >/dev/null
+  links_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/node-links.json")
+  bash /usr/local/bin/sbv agent links --json > "${links_path}"
+  jq -e '
+    .ok == true and any(.nodes[]; .protocol == "vless-reality" and .instance_id == "imported-1" and
+      (.links.vless | startswith("vless://")))' "${links_path}" >/dev/null
   verification_run_protocol_probes
 }

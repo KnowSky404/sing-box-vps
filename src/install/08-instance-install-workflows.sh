@@ -434,8 +434,8 @@ install_protocols_interactive() {
       fi
     done
 
-    if ! prompt_global_instance_options || ! write_protocol_index "${SELECTED_PROTOCOLS_CSV}"; then
-      abort_managed_state_transaction "${snapshot_dir}" "全局策略载入或协议索引保存失败"
+    if ! routing_policy_prepare_install_defaults || ! write_protocol_index "${SELECTED_PROTOCOLS_CSV}"; then
+      abort_managed_state_transaction "${snapshot_dir}" "已有网络设置载入或协议索引保存失败"
       return 1
     fi
     if ! protocol_array_contains vless-reality "${selected_protocols[@]}"; then
@@ -677,12 +677,9 @@ install_protocols_interactive() {
     fi
   fi
 
-  if [[ "${install_mode}" == fresh ]] && ! routing_policy_seed_fresh_install; then
-    abort_managed_state_transaction "${snapshot_dir}" "默认规则策略准备失败"
-    return 1
-  fi
-  if ! save_warp_route_settings || ! generate_config; then
+  if ! generate_config; then
     abort_managed_state_transaction "${snapshot_dir}" "配置生成或校验失败"
+    return 1
   fi
   if ! discard_managed_state_snapshot "${snapshot_dir}"; then
     log_warn "安装配置已提交，但临时事务快照未能删除: ${snapshot_dir}。"
@@ -697,6 +694,5 @@ install_protocols_interactive() {
   fi
   open_committed_protocol_ports || return $?
   run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box
-  log_info "新节点已跟随全局规则；如需调整出口与分流，请进入菜单 13。"
   log_info "连接信息未自动展示，如需查看请进入菜单 11。"
 }

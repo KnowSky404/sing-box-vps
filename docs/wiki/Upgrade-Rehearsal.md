@@ -5,8 +5,8 @@
 ## 安全分类
 
 - 只读：`capabilities`, `upgrade-check`, `status`, `check`, `doctor`, `nodes`, `warp`。
-- 有副作用：`upgrade`, 服务重启、客户端导出、SubMan 同步。
-- 敏感：`links`, 客户端导出和 SubMan 输出包含可用连接材料。
+- 有副作用：`upgrade`, 服务重启、节点连接材料、SubMan 同步。
+- 敏感：`links`, 节点连接材料和 SubMan 输出包含可用连接材料。
 - 仅交互：安装/追加/修改/移除一般协议，REALITY 多实例与 QoS，Warp、BBR、媒体检测和卸载。typed instance/component 的 takeover、rebuild、recover、create、replace、delete 是带 `--yes` 与 revision/CAS 的 Agent 变更，仍需同样的批准和生产门禁。
 
 生产主机必须先提交 operation plan 并等待明确批准。未知主机按生产处理。
@@ -23,17 +23,17 @@
 | NaiveProxy | 交互安装/修改；nodes/links/export | 修改交互；export/links 敏感 | 手工 TLS；TCP/UDP listener；`with_naive_outbound`/`libcronet.so` client prerequisite；无标准 URI/SubMan |
 | REALITY 多实例 | 交互菜单 | 交互/变更 | instance state、端口、ShortID、节点名逐实例一致 |
 | REALITY QoS | 交互菜单 | 交互/变更 | `tc` 规则与 `reality-qos.filters` 无残留 |
-| Warp | 菜单 13；`agent warp --json` | 查询只读；变更交互 | endpoint、路由模式、规则集、账户状态 |
+| Warp | 菜单 12；`agent warp --json` | 查询只读；变更交互 | endpoint、路由模式、规则集、账户状态 |
 | 入站/出站栈 | 系统管理菜单 | 交互/变更 | IPv4/IPv6 listen、DNS strategy、direct resolver |
 | BBR | 系统管理菜单 | 交互/变更 | sysctl 变更需计划与证据 |
 | 媒体检测 | 菜单 12 | 交互/外部网络 | 仅在获批环境执行，记录出口模式和结果 |
 | 接管/修复 | 菜单/交互 | 交互/高风险 | 先 check、备份，再恢复 service/binary/state |
 | 高级组件 | `agent component list|diagnose|export`；`create|replace|delete|takeover|rebuild|recover` | 读操作；导出敏感；写操作有副作用 | schema-1 revision/CAS、引用/监听校验、目标核心 check、持久事务恢复；导出不得写入共享日志 |
-| 客户端导出 | `agent export-client --json` | 变更+敏感 | 写文件、覆盖前备份、check 通过；不改 server config |
+| 节点连接材料 | `agent links --json` | 只读+敏感 | URI/二维码与单节点 outbound；不写完整客户端配置文件 |
 | SubMan 同步 | `agent subman-sync --json` | 外部变更+敏感 | 需要凭据；记录稳定错误/重试语义，不记录 token/raw |
 | 服务 start/stop/restart | 菜单；`agent service restart --json --yes` | 变更 | restart 前 check；必须记录前后状态 |
 | sing-box 升级 | `agent upgrade --json ... --yes` | 变更/服务影响 | 自动备份、逐字节保留 config、失败恢复 binary |
-| 卸载 | 菜单 5/16 | 破坏性变更/交互 | 必须单独批准；确认删除范围与备份可恢复性 |
+| 卸载 | 菜单 5/15 | 破坏性变更/交互 | 必须单独批准；确认删除范围与备份可恢复性 |
 
 ## 0. 更新 Agent 操作面
 
@@ -141,7 +141,7 @@ jq -e '.schema_version == "1.0" and .status == "success" and .rollback.attempted
 
 - ACME：1.14+ 新生成配置使用顶层 `certificate_providers`；旧 `tls.acme` 仅兼容，不应在本演练中自动迁移。
 - 远程规则集：1.14+ 新生成结构使用 `http_client.detour`；旧 `download_detour` 仍保留兼容性，但计划在 1.16 移除。
-- Hysteria2 Ed25519：这是客户端语义边界。1.14 client export 可设置顶层 `disable_chrome_parrot=true`；分享链接和 SubMan raw 不能表达该开关，必须读取结构化 warning。
+- Hysteria2 Ed25519：这是客户端语义边界。1.14 node connection materials 可设置顶层 `disable_chrome_parrot=true`；分享链接和 SubMan raw 不能表达该开关，必须读取结构化 warning。
 - Snell：1.14-only 的 v5/v6 入站与 v4/v6 出站版本映射、PSK 长度和 obfs/shaping 字段必须在目标核心 check 前核验；没有标准 URI 或 SubMan sync 路径。
 - VLESS Reality、Mixed、AnyTLS、Snell、WARP endpoint、DNS、路由、栈模式、BBR、媒体检测和 QoS 必须在升级后分别核验，不因 binary check 通过而推断业务可用。
 

@@ -401,7 +401,7 @@ agent_installed_protocols_json() {
 agent_status_json() {
   local indexed_protocols installed_protocols_json active_state installed_version warload_mode warload_enabled
   local host_stack bbr_algorithm bbr_enabled inbound_stack_mode outbound_stack_mode
-  local reality_instance_count qos_filter_count subman_configured client_export_exists components_json
+  local reality_instance_count qos_filter_count subman_configured components_json
 
   if ! validate_live_inbound_inventory "${SINGBOX_CONFIG_FILE}"; then
     agent_json_error "live_inbound_inventory_untrusted" "现有配置包含无法完整识别的入站；未返回部分协议状态。"
@@ -451,8 +451,6 @@ agent_status_json() {
   fi
   subman_configured=false
   [[ -f "$(subman_config_file_path)" ]] && subman_configured=true
-  client_export_exists=false
-  [[ -f "$(client_export_file_path)" ]] && client_export_exists=true
 
   jq -n \
     --arg schema "${AGENT_OUTPUT_SCHEMA_VERSION}" \
@@ -463,7 +461,6 @@ agent_status_json() {
     --arg project_dir "${SB_PROJECT_DIR}" \
     --arg config_file "${SINGBOX_CONFIG_FILE}" \
     --arg protocol_state_dir "${SB_PROTOCOL_STATE_DIR}" \
-    --arg client_export_path "$(client_export_file_path)" \
     --arg upgrade_backup_root "${SB_UPGRADE_BACKUP_ROOT}" \
     --arg stack_state_file "${SB_STACK_STATE_FILE}" \
     --arg qos_state_file "${SB_REALITY_QOS_FILTER_STATE_FILE}" \
@@ -476,7 +473,6 @@ agent_status_json() {
     --argjson reality_instance_count "${reality_instance_count}" \
     --argjson qos_filter_count "${qos_filter_count}" \
     --argjson subman_configured "${subman_configured}" \
-    --argjson client_export_exists "${client_export_exists}" \
     --argjson protocols "${installed_protocols_json}" \
     --argjson components "${components_json}" \
     --argjson warp_enabled "$([[ "${warload_enabled}" == true ]] && printf 'true' || printf 'false')" \
@@ -497,7 +493,6 @@ agent_status_json() {
         "project": $project_dir,
         "config": $config_file,
         "protocol_state_dir": $protocol_state_dir,
-        "client_export": $client_export_path,
         "upgrade_backups": $upgrade_backup_root,
         "stack_state": $stack_state_file,
         "reality_qos_state": $qos_state_file,
@@ -519,8 +514,7 @@ agent_status_json() {
         "qos_filters": $qos_filter_count
       },
       "integrations": {
-        "subman_configured": $subman_configured,
-        "client_export_exists": $client_export_exists
+        "subman_configured": $subman_configured
       },
       "warp": {
         "enabled": $warp_enabled,
@@ -588,7 +582,7 @@ agent_shadowsocks_node_json() {
        instance_revision:$revision,listen:{address:$address,port:$port,network:$network},
        outbound_policy:$policy,method:$auth.method,auth_enabled:($auth.method!="none"),
        user_count:(if ($auth.users|length)==0 then 1 else ($auth.users|length) end),
-       shareable:true,client_exportable:true}
+       shareable:true}
     '
 }
 
@@ -650,7 +644,7 @@ agent_trojan_node_json() {
       instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},
       user_count:$user_count,auth_enabled:($user_count > 0),tls_enabled:$tls_enabled,
       client_trust:$trust,transport_type:$transport_type,outbound_policy:$policy,
-      shareable:$shareable,client_exportable:true
+      shareable:$shareable
     } + (if $server_name == "" then {} else {server_name:$server_name} end)'
 }
 
@@ -710,7 +704,7 @@ agent_vmess_node_json() {
     --arg policy "${SB_OUTBOUND_POLICY:-default}" --arg trust "${SB_VMESS_CLIENT_TRUST:-system}" \
     --arg server_name "$(jq -r '.server_name // empty' <<< "${tls_json}")" --arg transport_type "${transport_type}" \
     --argjson tls_enabled "${tls_enabled}" --argjson user_count "${user_count}" --argjson shareable "${shareable}" \
-    '{protocol:"vmess",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},user_count:$user_count,auth_enabled:($user_count>0),tls_enabled:$tls_enabled,client_trust:$trust,transport_type:$transport_type,outbound_policy:$policy,shareable:$shareable,client_exportable:true} + (if $server_name=="" then {} else {server_name:$server_name} end)'
+    '{protocol:"vmess",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},user_count:$user_count,auth_enabled:($user_count>0),tls_enabled:$tls_enabled,client_trust:$trust,transport_type:$transport_type,outbound_policy:$policy,shareable:$shareable} + (if $server_name=="" then {} else {server_name:$server_name} end)'
 }
 
 agent_vmess_link_json() (
@@ -748,7 +742,7 @@ agent_vless_plain_node_json() {
     --arg policy "${SB_OUTBOUND_POLICY:-default}" --arg trust "${SB_VLESS_PLAIN_CLIENT_TRUST:-system}" \
     --arg server_name "$(jq -r '.server_name // empty' <<< "${tls_json}")" --arg transport_type "${transport_type}" \
     --argjson tls_enabled "${tls_enabled}" --argjson user_count "${user_count}" --argjson shareable "${shareable}" \
-    '{protocol:"vless-plain",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},user_count:$user_count,auth_enabled:($user_count>0),tls_enabled:$tls_enabled,client_trust:$trust,transport_type:$transport_type,outbound_policy:$policy,shareable:$shareable,client_exportable:true} + (if $server_name=="" then {} else {server_name:$server_name} end)'
+    '{protocol:"vless-plain",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},user_count:$user_count,auth_enabled:($user_count>0),tls_enabled:$tls_enabled,client_trust:$trust,transport_type:$transport_type,outbound_policy:$policy,shareable:$shareable} + (if $server_name=="" then {} else {server_name:$server_name} end)'
 }
 
 agent_vless_plain_link_json() (
@@ -810,7 +804,7 @@ agent_anytls_node_json() {
       instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},
       server:$server,user_count:$user_count,auth_enabled:($user_count>0),tls_enabled:true,
       server_name:$server_name,tls_mode:$tls_mode,client_trust:$trust,
-      outbound_policy:$policy,shareable:false,client_exportable:true}'
+      outbound_policy:$policy,shareable:false}'
 }
 
 agent_anytls_link_json() (
@@ -886,7 +880,7 @@ agent_hy2_node_json() {
     --arg up "${SB_HY2_UP_MBPS:-}" --arg down "${SB_HY2_DOWN_MBPS:-}" \
     --argjson user_count "${user_count}" --argjson shareable "${shareable}" \
     --argjson obfs_enabled "$([[ "${SB_HY2_OBFS_ENABLED:-n}" == y ]] && printf true || printf false)" \
-    '{protocol:"hysteria2",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},server:$server,user_count:$user_count,auth_enabled:true,tls_enabled:true,server_name:$server_name,tls_mode:$tls_mode,client_trust:$trust,outbound_policy:$policy,shareable:$shareable,client_exportable:true,obfs_enabled:$obfs_enabled,rate_limit:{up_mbps:(if $up=="" then null else ($up|tonumber) end),down_mbps:(if $down=="" then null else ($down|tonumber) end)}}'
+    '{protocol:"hysteria2",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},server:$server,user_count:$user_count,auth_enabled:true,tls_enabled:true,server_name:$server_name,tls_mode:$tls_mode,client_trust:$trust,outbound_policy:$policy,shareable:$shareable,obfs_enabled:$obfs_enabled,rate_limit:{up_mbps:(if $up=="" then null else ($up|tonumber) end),down_mbps:(if $down=="" then null else ($down|tonumber) end)}}'
 }
 
 agent_hy2_link_json() (
@@ -956,7 +950,7 @@ agent_snell_node_json() {
     --arg address "${SB_MIXED_LISTEN_ADDRESS:-}" --arg port "${SB_PORT:-}" --arg revision "${SB_MIXED_STORE_REVISION:-0}" \
     --arg server "${server}" --argjson version "${version}" --arg obfs_mode "${obfs_mode}" --arg mode "${mode}" \
     --arg policy "${SB_OUTBOUND_POLICY:-default}" --argjson user_count "${user_count}" \
-    '{protocol:"snell",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},server:$server,user_count:$user_count,auth_enabled:true,version:$version,obfs_mode:$obfs_mode,mode:$mode,udp_via_tcp_packet_api:true,outbound_policy:$policy,shareable:false,client_exportable:true}'
+    '{protocol:"snell",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},server:$server,user_count:$user_count,auth_enabled:true,version:$version,obfs_mode:$obfs_mode,mode:$mode,udp_via_tcp_packet_api:true,outbound_policy:$policy,shareable:false}'
 }
 
 agent_snell_link_json() (
@@ -1012,7 +1006,7 @@ agent_tuic_node_json() {
     --argjson shareable "${shareable}" \
     --argjson zero_rtt "$([[ "${SB_TUIC_ZERO_RTT_HANDSHAKE:-n}" == y ]] && printf true || printf false)" \
     --argjson udp_over_stream "$([[ "${SB_TUIC_UDP_OVER_STREAM:-n}" == y ]] && printf true || printf false)" \
-    '{protocol:"tuic",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber),network:["udp"]},server:$server,user_count:$user_count,auth_enabled:true,tls_enabled:true,server_name:$server_name,tls_mode:"manual",client_trust:$trust,congestion_control:$cc,auth_timeout_seconds:($auth_timeout|tonumber),heartbeat_seconds:($heartbeat|tonumber),udp_relay_mode:$relay,udp_over_stream:$udp_over_stream,zero_rtt_handshake:$zero_rtt,outbound_policy:$policy,shareable:$shareable,client_exportable:true}'
+    '{protocol:"tuic",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber),network:["udp"]},server:$server,user_count:$user_count,auth_enabled:true,tls_enabled:true,server_name:$server_name,tls_mode:"manual",client_trust:$trust,congestion_control:$cc,auth_timeout_seconds:($auth_timeout|tonumber),heartbeat_seconds:($heartbeat|tonumber),udp_relay_mode:$relay,udp_over_stream:$udp_over_stream,zero_rtt_handshake:$zero_rtt,outbound_policy:$policy,shareable:$shareable}'
 }
 
 agent_tuic_link_json() (
@@ -1059,7 +1053,7 @@ agent_hysteria_node_json() {
     *) server=${SB_MIXED_LISTEN_ADDRESS:-} ;;
   esac
   [[ -n "${server}" ]] || return 1
-  jq -n --arg name "${SB_NODE_NAME:-Hysteria}" --arg id "${SB_INSTANCE_ID:-}" --arg tag "${SB_MIXED_INBOUND_TAG:-}" --arg address "${SB_MIXED_LISTEN_ADDRESS:-}" --arg port "${SB_PORT:-}" --arg revision "${SB_MIXED_STORE_REVISION:-0}" --arg server "${server}" --arg server_name "$(jq -r '.server_name' <<< "${tls_json}")" --arg trust "${SB_HYSTERIA_CLIENT_TRUST:-system}" --arg up "${SB_HYSTERIA_UP_MBPS:-}" --arg down "${SB_HYSTERIA_DOWN_MBPS:-}" --arg obfs "$([[ "${SB_HYSTERIA_OBFS_ENABLED:-n}" == y ]] && printf true || printf false)" --arg policy "${SB_OUTBOUND_POLICY:-default}" --argjson user_count "${user_count}" '{protocol:"hysteria",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber),network:["udp"]},server:$server,user_count:$user_count,auth_enabled:true,tls_enabled:true,server_name:$server_name,tls_mode:"manual",client_trust:$trust,bandwidth:{up_mbps:($up|tonumber),down_mbps:($down|tonumber)},obfs_enabled:($obfs|fromjson),outbound_policy:$policy,shareable:false,client_exportable:true}'
+  jq -n --arg name "${SB_NODE_NAME:-Hysteria}" --arg id "${SB_INSTANCE_ID:-}" --arg tag "${SB_MIXED_INBOUND_TAG:-}" --arg address "${SB_MIXED_LISTEN_ADDRESS:-}" --arg port "${SB_PORT:-}" --arg revision "${SB_MIXED_STORE_REVISION:-0}" --arg server "${server}" --arg server_name "$(jq -r '.server_name' <<< "${tls_json}")" --arg trust "${SB_HYSTERIA_CLIENT_TRUST:-system}" --arg up "${SB_HYSTERIA_UP_MBPS:-}" --arg down "${SB_HYSTERIA_DOWN_MBPS:-}" --arg obfs "$([[ "${SB_HYSTERIA_OBFS_ENABLED:-n}" == y ]] && printf true || printf false)" --arg policy "${SB_OUTBOUND_POLICY:-default}" --argjson user_count "${user_count}" '{protocol:"hysteria",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber),network:["udp"]},server:$server,user_count:$user_count,auth_enabled:true,tls_enabled:true,server_name:$server_name,tls_mode:"manual",client_trust:$trust,bandwidth:{up_mbps:($up|tonumber),down_mbps:($down|tonumber)},obfs_enabled:($obfs|fromjson),outbound_policy:$policy,shareable:false}'
 }
 
 agent_hysteria_link_json() (
@@ -1130,7 +1124,7 @@ agent_naive_node_json() {
       quic:$quic,quic_congestion_control:$cc,insecure_concurrency:$insecure_concurrency,
       stream_receive_window:$stream_receive_window,quic_session_receive_window:$quic_session_receive_window,
       extra_headers_count:$extra_headers_count,outbound_runtime:$runtime,
-      outbound_policy:$policy,shareable:false,client_exportable:true}'
+      outbound_policy:$policy,shareable:false}'
 }
 
 agent_naive_link_json() (
@@ -1179,7 +1173,7 @@ agent_shadowtls_node_json() {
   trust=${SB_SHADOWTLS_CLIENT_TRUST:-system}
   case "${SB_MIXED_LISTEN_ADDRESS:-}" in 0.0.0.0|::) server=${public_ip} ;; *) server=${SB_MIXED_LISTEN_ADDRESS:-} ;; esac
   [[ -n "${server}" ]] || return 1
-  jq -n --arg name "${SB_NODE_NAME:-ShadowTLS}" --arg id "${SB_INSTANCE_ID:-}" --arg tag "${SB_MIXED_INBOUND_TAG:-}" --arg address "${SB_MIXED_LISTEN_ADDRESS:-}" --arg port "${SB_PORT:-}" --arg revision "${SB_MIXED_STORE_REVISION:-0}" --arg server "${server}" --arg handshake_server "${handshake}" --arg trust "${trust}" --arg wildcard "${wildcard}" --arg policy "${SB_OUTBOUND_POLICY:-default}" --arg detour "${SB_SHADOWTLS_DETOUR_TAG:-shadowtls-inner-${SB_INSTANCE_ID:-}}" --argjson version "${version}" --argjson user_count "${user_count}" --argjson strict "${strict}" '{protocol:"shadowtls",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},server:$server,version:$version,handshake_server:$handshake_server,user_count:(if $version == 3 then $user_count else 1 end),auth_enabled:($version != 1),wildcard_sni:$wildcard,strict_mode:$strict,detour_tag:$detour,client_trust:$trust,outbound_policy:$policy,shareable:false,client_exportable:true}'
+  jq -n --arg name "${SB_NODE_NAME:-ShadowTLS}" --arg id "${SB_INSTANCE_ID:-}" --arg tag "${SB_MIXED_INBOUND_TAG:-}" --arg address "${SB_MIXED_LISTEN_ADDRESS:-}" --arg port "${SB_PORT:-}" --arg revision "${SB_MIXED_STORE_REVISION:-0}" --arg server "${server}" --arg handshake_server "${handshake}" --arg trust "${trust}" --arg wildcard "${wildcard}" --arg policy "${SB_OUTBOUND_POLICY:-default}" --arg detour "${SB_SHADOWTLS_DETOUR_TAG:-shadowtls-inner-${SB_INSTANCE_ID:-}}" --argjson version "${version}" --argjson user_count "${user_count}" --argjson strict "${strict}" '{protocol:"shadowtls",name:$name,port:($port|tonumber),instance_id:$id,tag:$tag,instance_revision:($revision|tonumber),listen:{address:$address,port:($port|tonumber)},server:$server,version:$version,handshake_server:$handshake_server,user_count:(if $version == 3 then $user_count else 1 end),auth_enabled:($version != 1),wildcard_sni:$wildcard,strict_mode:$strict,detour_tag:$detour,client_trust:$trust,outbound_policy:$policy,shareable:false}'
 }
 
 agent_shadowtls_link_json() (
@@ -1210,7 +1204,7 @@ agent_shadowtls_link_json() (
 )
 
 agent_node_summary_json_for_current_protocol() {
-  local protocol api_protocol public_ip shareable="true" client_exportable="false"
+  local protocol api_protocol public_ip shareable="true"
   local auth_enabled="false" server_name="" tls_enabled="false" http_tls_json
   local node_name instance_id="" inbound_tag="" listen_address="" instance_revision="0" rate_up="" rate_down="" outbound_policy=""
   local tls_mode="" acme_mode="" obfs_enabled="false"
@@ -1248,7 +1242,6 @@ agent_node_summary_json_for_current_protocol() {
 
   case "${protocol}" in
     vless-reality)
-      client_exportable="true"
       server_name="${SB_SNI}"
       instance_id="${SB_VLESS_INSTANCE_ID:-main}"
       rate_up="${SB_VLESS_RATE_LIMIT_UP_MBPS:-}"
@@ -1256,7 +1249,6 @@ agent_node_summary_json_for_current_protocol() {
       outbound_policy="${SB_OUTBOUND_POLICY:-default}"
       ;;
     mixed|socks)
-      client_exportable="true"
       [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]] && auth_enabled="true"
       instance_id="${SB_MIXED_INSTANCE_ID:-}"
       inbound_tag="${SB_MIXED_INBOUND_TAG:-}"
@@ -1264,7 +1256,6 @@ agent_node_summary_json_for_current_protocol() {
       instance_revision="${SB_MIXED_STORE_REVISION:-0}"
       ;;
     http)
-      client_exportable="true"
       [[ "${SB_MIXED_AUTH_ENABLED}" == "y" ]] && auth_enabled="true"
       instance_id="${SB_MIXED_INSTANCE_ID:-}"
       inbound_tag="${SB_MIXED_INBOUND_TAG:-}"
@@ -1276,7 +1267,6 @@ agent_node_summary_json_for_current_protocol() {
       [[ "${tls_enabled}" == true ]] && shareable="false"
       ;;
     hy2)
-      client_exportable="true"
       server_name="${SB_HY2_DOMAIN:-${public_ip}}"
       rate_up="${SB_HY2_UP_MBPS:-}"
       rate_down="${SB_HY2_DOWN_MBPS:-}"
@@ -1285,7 +1275,6 @@ agent_node_summary_json_for_current_protocol() {
       [[ "${SB_HY2_OBFS_ENABLED:-n}" == "y" ]] && obfs_enabled="true"
       ;;
     anytls)
-      client_exportable="true"
       server_name="${SB_ANYTLS_DOMAIN:-${public_ip}}"
       tls_mode="${SB_ANYTLS_TLS_MODE:-}"
       acme_mode="${SB_ANYTLS_ACME_MODE:-}"
@@ -1311,15 +1300,13 @@ agent_node_summary_json_for_current_protocol() {
     --arg acme_mode "${acme_mode}" \
     --argjson obfs_enabled "${obfs_enabled}" \
     --argjson shareable "${shareable}" \
-    --argjson client_exportable "${client_exportable}" \
     --argjson auth_enabled "${auth_enabled}" \
     --argjson tls_enabled "${tls_enabled}" \
     '{
       "protocol": $protocol,
       "name": $name,
       "port": ($port | tonumber),
-      "shareable": $shareable,
-      "client_exportable": $client_exportable
+      "shareable": $shareable
     }
     + (if $server_name != "" then {"server_name": $server_name} else {} end)
     + (if ($protocol == "mixed" or $protocol == "socks" or $protocol == "http") then {"auth_enabled": $auth_enabled} else {} end)

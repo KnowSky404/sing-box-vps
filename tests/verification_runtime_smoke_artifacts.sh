@@ -15,7 +15,6 @@ REMOTE_SNI_FILE="${TMP_DIR}/remote-sni"
 REMOTE_ROOT_DIR="${TMP_DIR}/remote-root"
 REMOTE_CONFIG_FILE="${REMOTE_ROOT_DIR}/root/sing-box-vps/config.json"
 REMOTE_LEGACY_KEY_FILE="${REMOTE_ROOT_DIR}/root/sing-box-vps/reality.key"
-REMOTE_EXPORT_FILE="${REMOTE_ROOT_DIR}/root/sing-box-vps/client/sing-box-client.json"
 REMOTE_LEGACY_SERVICE_FILE="${TMP_DIR}/legacy-sing-box.service"
 REMOTE_PROTOCOLS_DIR="${REMOTE_ROOT_DIR}/root/sing-box-vps/protocols"
 REMOTE_CONFIG_PRESENT_FILE="${TMP_DIR}/remote-config-present"
@@ -253,7 +252,7 @@ STATE_EOF
     "id": "main",
     "name": "SOCKS verification",
     "tag": "socks-in",
-    "listen": {"address": "127.0.0.1", "port": 1081},
+    "listen": {"address": "::", "port": 1081},
     "authentication": {"enabled": true, "username": "socks-user", "password": "socks-pass"},
     "outbound_policy": "default",
     "dependencies": []
@@ -278,7 +277,7 @@ STATE_EOF
     "id": "main",
     "name": "HTTP verification",
     "tag": "http-in",
-    "listen": {"address": "127.0.0.1", "port": 1082},
+    "listen": {"address": "::", "port": 1082},
     "authentication": {"enabled": true, "username": "http-user", "password": "http-pass"},
     "outbound_policy": "default",
     "tls": {"enabled": false},
@@ -304,7 +303,7 @@ STATE_EOF
     "id": "main",
     "name": "Shadowsocks verification",
     "tag": "ss-in",
-    "listen": {"address": "127.0.0.1", "port": 1083, "network": ["tcp", "udp"]},
+    "listen": {"address": "::", "port": 1083, "network": ["tcp", "udp"]},
     "authentication": {"method": "2022-blake3-aes-128-gcm", "password": "MDEyMzQ1Njc4OWFiY2RlZg==", "users": []},
     "outbound_policy": "default",
     "dependencies": []
@@ -329,7 +328,7 @@ STATE_EOF
     "id": "main",
     "name": "Trojan verification",
     "tag": "trojan-in",
-    "listen": {"address": "127.0.0.1", "port": 1084},
+    "listen": {"address": "::", "port": 1084},
     "authentication": {"users": [{"name": "trojan-user", "password": "trojan-pass"}]},
     "tls": {"enabled": true, "server_name": "trojan.example",
       "certificate_path": "/root/sing-box-vps/trojan.crt",
@@ -359,7 +358,7 @@ STATE_EOF
     "id": "main",
     "name": "Hysteria verification",
     "tag": "hysteria-in",
-    "listen": {"address": "127.0.0.1", "port": 1086},
+    "listen": {"address": "::", "port": 1086},
     "authentication": {"users": [{"name": "hysteria-user", "auth_str": "hysteria-verification-auth"}]},
     "tls": {"enabled": true, "server_name": "hysteria.verification.invalid",
       "certificate_path": "/tmp/sing-box-vps-verification-hysteria.crt",
@@ -441,21 +440,21 @@ write_runtime_config() {
     {
       "type": "socks",
       "tag": "socks-in",
-      "listen": "127.0.0.1",
+      "listen": "::",
       "listen_port": 1081,
       "users": [{"username": "socks-user", "password": "socks-pass"}]
     },
     {
       "type": "http",
       "tag": "http-in",
-      "listen": "127.0.0.1",
+      "listen": "::",
       "listen_port": 1082,
       "users": [{"username": "http-user", "password": "http-pass"}]
     },
     {
       "type": "shadowsocks",
       "tag": "ss-in",
-      "listen": "127.0.0.1",
+      "listen": "::",
       "listen_port": 1083,
       "network": ["tcp", "udp"],
       "method": "2022-blake3-aes-128-gcm",
@@ -465,7 +464,7 @@ write_runtime_config() {
     {
       "type": "trojan",
       "tag": "trojan-in",
-      "listen": "127.0.0.1",
+      "listen": "::",
       "listen_port": 1084,
       "users": [{"name": "trojan-user", "password": "trojan-pass"}],
       "tls": {"enabled": true, "server_name": "trojan.example"},
@@ -474,7 +473,7 @@ write_runtime_config() {
     {
       "type": "hysteria",
       "tag": "hysteria-in",
-      "listen": "127.0.0.1",
+      "listen": "::",
       "listen_port": 1086,
       "users": [{"name": "hysteria-user", "auth_str": "hysteria-verification-auth"}],
       "tls": {"enabled": true, "server_name": "hysteria.verification.invalid", "alpn": ["h3"]},
@@ -547,7 +546,7 @@ CONFIG_EOF
 }
 
 write_legacy_vless_state() {
-  mkdir -p "\$(dirname "\${REMOTE_INSTANCE_STATE_FILE}")" "\$(dirname "\${REMOTE_EXPORT_FILE}")"
+  mkdir -p "\$(dirname "\${REMOTE_INSTANCE_STATE_FILE}")"
   cat > "\${REMOTE_STATE_FILE}" <<STATE_EOF
 CONFIG_SCHEMA_VERSION=2
 DEFAULT_INSTANCE_ID=imported-1
@@ -791,7 +790,7 @@ INDEX_EOF
   "inbounds": [{
     "type": "socks",
     "tag": "socks-in",
-    "listen": "127.0.0.1",
+    "listen": "::",
     "listen_port": 1081,
     "users": [{"username": "socks-user", "password": "socks-pass"}]
   }]
@@ -828,7 +827,7 @@ INDEX_EOF
   "inbounds": [{
     "type": "http",
     "tag": "http-in",
-    "listen": "127.0.0.1",
+    "listen": "::",
     "listen_port": 1082,
     "users": [{"username": "http-user", "password": "http-pass"}]
   }]
@@ -865,7 +864,7 @@ INDEX_EOF
   "inbounds": [{
     "type": "shadowsocks",
     "tag": "ss-in",
-    "listen": "127.0.0.1",
+    "listen": "::",
     "listen_port": 1083,
     "network": ["tcp", "udp"],
     "method": "2022-blake3-aes-128-gcm",
@@ -916,7 +915,7 @@ INDEX_EOF
   "inbounds": [{
     "type": "hysteria",
     "tag": "hysteria-in",
-    "listen": "127.0.0.1",
+    "listen": "::",
     "listen_port": 1086,
     "users": [{"name": "hysteria-user", "auth_str": "hysteria-verification-auth"}],
     "tls": {"enabled": true, "server_name": "hysteria.verification.invalid", "alpn": ["h3"]},
@@ -969,29 +968,11 @@ INDEX_EOF
       return 1
       ;;
     /usr/local/bin/sbv)
-      mapfile -t actual_lines
-      if [[ "\${actual_lines[0]:-}" == "11" && "\${actual_lines[1]:-}" == "2" ]]; then
-        mkdir -p "\$(dirname "\${REMOTE_EXPORT_FILE}")"
-        cat > "\${REMOTE_EXPORT_FILE}" <<'EXPORT_EOF'
-{
-  "outbounds": [
-    {
-      "type": "vless",
-      "tag": "cc-us-stl+vless",
-      "tls": {
-        "utls": {
-          "enabled": true,
-          "fingerprint": "chrome"
-        }
-      }
-    }
-  ]
-}
-EXPORT_EOF
-        printf 'sing-box 裸核客户端配置导出成功。\n'
-        printf '文件路径: /root/sing-box-vps/client/sing-box-client.json\n'
+      if [[ "\${1:-}" == agent && "\${2:-}" == links && "\${3:-}" == --json ]]; then
+        printf '%s\n' '{"ok":true,"nodes":[{"protocol":"vless-reality","name":"cc-us-stl+vless","instance_id":"imported-1","links":{"vless":"vless://fixture@127.0.0.1:443"}}]}'
         return 0
       fi
+      mapfile -t actual_lines
 
       if [[ "\${actual_lines[0]:-}" == "2" ]]; then
         [[ "\${#actual_lines[@]}" -eq 12 ]]
@@ -1121,10 +1102,6 @@ test() {
     return
   fi
 
-  if [[ "\${1:-}" == "-f" && "\${2:-}" == "/root/sing-box-vps/client/sing-box-client.json" ]]; then
-    [[ -f "\${REMOTE_EXPORT_FILE}" ]]
-    return
-  fi
 
   if [[ "\${1:-}" == "-d" && "\${2:-}" == "/root/sing-box-vps/protocols" ]]; then
     [[ -d "\${REMOTE_PROTOCOLS_DIR}" ]]
@@ -1198,9 +1175,6 @@ jq() {
     args[\$last_index]="\${REMOTE_CONFIG_FILE}"
   fi
 
-  if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/client/sing-box-client.json" ]]; then
-    args[\$last_index]="\${REMOTE_EXPORT_FILE}"
-  fi
 
   if [[ "\${args[\$last_index]:-}" == "/root/sing-box-vps/protocols/instances/socks.json" ]]; then
     args[\$last_index]="\${REMOTE_SOCKS_STORE_FILE}"
@@ -1276,9 +1250,6 @@ cp() {
     args[\$source_index]="\${REMOTE_PROTOCOLS_DIR}/."
   fi
 
-  if [[ "\${args[\$source_index]}" == "/root/sing-box-vps/client/sing-box-client.json" ]]; then
-    args[\$source_index]="\${REMOTE_EXPORT_FILE}"
-  fi
 
   command cp "\${args[@]}"
 }
@@ -1582,7 +1553,6 @@ REMOTE_CONFIG_FILE="${REMOTE_CONFIG_FILE}" \
 VERIFY_LEGACY_CONFIG_FILE="${REMOTE_CONFIG_FILE}" \
 VERIFY_LEGACY_KEY_FILE="${REMOTE_LEGACY_KEY_FILE}" \
 VERIFY_LEGACY_SERVICE_FILE="${REMOTE_LEGACY_SERVICE_FILE}" \
-REMOTE_EXPORT_FILE="${REMOTE_EXPORT_FILE}" \
 REMOTE_PROTOCOLS_DIR="${REMOTE_PROTOCOLS_DIR}" \
 REMOTE_STATE_FILE="${REMOTE_STATE_FILE}" \
 REMOTE_MIXED_STATE_FILE="${REMOTE_MIXED_STATE_FILE}" \

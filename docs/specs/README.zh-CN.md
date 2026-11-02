@@ -6,7 +6,7 @@
 
 | 契约或目标 | 实现状态 | 证据与剩余边界 |
 | --- | --- | --- |
-| [统一规则与分流管理](unified-routing-management.zh-CN.md)（[English](unified-routing-management.md)） | 已实现；定向验收完成 | 本地回归、真实 sing-box 1.14.2 候选/客户端八组合、隔离 HTTP/HY2 UDP 过滤、实例到全局连续流程、停止/失败服务状态及卸载通过；WARP 收据使用隔离对端测试，未宣称真实 WARP 或生产验收。 |
+| [服务端网络管理精简](server-only-network.zh-CN.md)（[English](server-only-network.md)） | 已实现；分范围记录证据 | 196 项宿主检查及三组隔离服务/核心验收通过；完整注册 Docker、当前 head 审查及交付状态在实施 PR 分别记录。 |
 | [默认双栈监听](default-dual-stack-listeners.zh-CN.md)（[English](default-dual-stack-listeners.md)） | 新建默认值契约；已定义验收要求 | 全部结构化实例新建默认单个 `::`；显式地址、已有实例及全局模式的 legacy 生成行为保持。须完成本地默认值矩阵、目标核心检查及代表性 TCP/UDP 双地址族运行态探针；本索引不宣称已完成验收或生产变更。 |
 | [统一节点命名](unified-node-naming.zh-CN.md)（[English](unified-node-naming.md)） | 已实现，并在记录范围内完成验收 | 第 9 节保留原本地/核心证据；第 10 节补充真实 SubMan 应用/存储联调（五协议 30 个节点）及所有者授权的生产 VMess API/Gist 验收（六个测试候选与一个测试聚合），确认身份/成员保留并清理测试记录。这不是生产代理 VPS 或所有协议公网验收。 |
 | [SubMan 地址选择](../wiki/SubMan-Address-Selection.md) | 已实现，并在记录范围内完成验收 | 隔离地址族/失败回归与应用/存储联调覆盖 IPv4、IPv6、具体监听地址；命名第 10 节单列代表性生产 VMess 测试，地址选择不证明公网代理连接。 |

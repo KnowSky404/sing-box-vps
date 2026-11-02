@@ -40,7 +40,7 @@ load_protocol_instance_state hy2 dns
 [[ "${SB_HY2_TLS_MODE}" == acme && "${SB_HY2_ACME_MODE}" == dns && "${SB_HY2_CF_API_TOKEN}" == fixture-dns-token ]]
 [[ -z "$(build_hy2_certificate_provider_json)" ]]
 summary=$(agent_hy2_node_json 198.51.100.2)
-jq -e '.tls_mode=="acme" and .shareable and .client_exportable and (tostring|contains("fixture-dns-token")|not)' <<< "${summary}" >/dev/null
+jq -e '.tls_mode=="acme" and .shareable and (has("client_exportable")|not) and (tostring|contains("fixture-dns-token")|not)' <<< "${summary}" >/dev/null
 links=$(agent_hy2_link_json 198.51.100.2)
 jq -e '(.links|length)==1 and (.outbounds|length)==1 and
   (.outbounds[0].tls|keys|sort)==["enabled","server_name"] and

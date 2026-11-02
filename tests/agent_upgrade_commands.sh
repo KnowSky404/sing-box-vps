@@ -127,19 +127,19 @@ jq -e '
   and .protocols.trojan.multi_instance == true
   and .protocols.trojan.subman_sync == true
   and .protocols.snell.multi_instance == true
-  and .protocols.snell.client_export == true
+  and (.protocols.snell | has("client_export") | not)
   and .protocols.snell.subman_sync == false
   and .protocols.tuic.multi_instance == true
-  and .protocols.tuic.client_export == true
+  and (.protocols.tuic | has("client_export") | not)
   and .protocols.tuic.subman_sync == false
   and .protocols.hysteria.multi_instance == true
-  and .protocols.hysteria.client_export == true
+  and (.protocols.hysteria | has("client_export") | not)
   and .protocols.hysteria.subman_sync == false
   and .protocols.naive.multi_instance == true
-  and .protocols.naive.client_export == true
+  and (.protocols.naive | has("client_export") | not)
   and .protocols.naive.subman_sync == false
   and .protocols.shadowtls.multi_instance == true
-  and .protocols.shadowtls.client_export == true
+  and (.protocols.shadowtls | has("client_export") | not)
   and .protocols.shadowtls.subman_sync == false
   and .features.network_stack.inbound == ["ipv4_only", "ipv6_only", "dual_stack"]
   and .features.subman.supported_protocols == ["vless-reality", "vless-plain", "hysteria2", "shadowsocks", "trojan", "vmess"]
@@ -147,7 +147,7 @@ jq -e '
   and (.commands.upgrade.mutation == true)
   and (.commands.links.sensitive == true)
   and (.commands.nodes.sensitive == false)
-  and (.commands["export-client"].mutation == true)
+  and (.commands | has("export-client") | not)
   and (.commands["subman-sync"].sensitive == true)
   and .upgrade.manifest_scope == "all_regular_runtime_files_and_control_files"
   and .upgrade.restores_previous_service_activity == true

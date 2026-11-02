@@ -12,6 +12,8 @@ bash -c 'set -euo pipefail; umask 077; t=$(mktemp); trap '\''rm -f -- "$t"'\'' E
 
 安装完成后，在任意目录输入 `sbv` 打开管理菜单。要彻底卸载，可从克隆的仓库运行 `sudo bash uninstall.sh --yes` 或 `sudo bash bootstrap.sh uninstall --yes`；菜单里的“卸载 sing-box”会删除服务、核心和配置，但会保留 `sbv` 管理命令，独立卸载脚本还会删除全局 `sbv`。
 
+安装只设置节点连接参数，不设置分流或注册 WARP。新节点继承已有服务端网络策略；需要 Block CN、WARP、节点出口或 AI/流媒体设置时，通过主菜单 **12「网络与分流」** 单独应用。节点链接/二维码与 SubMan 在菜单 **11**，不再生成完整客户端配置文件。
+
 ## REALITY SNI 探测
 
 安装 VLESS + REALITY 使用 [reality-target-checker v0.3.0](https://github.com/KnowSky404/reality-target-checker) 选择候选 SNI。默认仍为检测自行提供的域名：输入 1–5 个纯域名，以空格或逗号分隔，按输入顺序选择首个检查通过且获接受的域名。安装时的 SNI 菜单选项 3 可改用网段/ASN 候选发现，选项 4 使用内置地区候选；更新和新增实例分别以选项 4 和 5 提供这两个入口，默认仍保留或复用已有 SNI。手动输入和 TLS 校验路径仍可使用。内置列表只提供待检查域名，失败或取消时不填入默认域名、不修改当前 SNI。

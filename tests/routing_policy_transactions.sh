@@ -57,6 +57,12 @@ run_with_progress() { shift; "$@"; }
 load_current_config_state() { :; }
 ensure_existing_generated_config_baseline() { :; }
 get_public_ip() { printf '203.0.113.10\n'; }
+register_warp() {
+  if [[ -e "${TMP_DIR}/forbid-register" ]]; then
+    printf 'unexpected provider call\n' >> "${TMP_DIR}/provider-calls"
+    return 96
+  fi
+}
 generate_config() {
   local candidate="${TMP_DIR}/generated-candidate.json" inbounds rules
   inbounds=$(render_structured_instance_inbounds socks "${STORE_FILE}" | jq -s '.') || return 1
@@ -135,7 +141,7 @@ reset_case() {
 
 new_draft() {
   routing_draft_create "${TMP_DIR}/draft.json"
-  routing_draft_edit "${TMP_DIR}/draft.json" '.policy.server.private_network_block |= not'
+  routing_draft_edit "${TMP_DIR}/draft.json" '.policy.server.block_cn |= not'
 }
 
 expect_rejection() {
@@ -156,6 +162,23 @@ assert_clean_rollback() {
   [[ -z "$(find "${SB_PROJECT_DIR}" -name '.routing-write.*' -print)" ]]
   [[ -z "$(find "${TMP_DIR}" -maxdepth 1 \( -name '.project.restore.*' -o -name '.project.previous.*' \) -print)" ]]
 }
+
+# Even when global WARP is already enabled and its credential file is missing,
+# unrelated Block CN / preset edits must not register or repair an account.
+reset_case
+independent_policy=$(routing_policy_read_json)
+printf '%s\n' "${independent_policy}" > "${SB_ROUTING_POLICY_FILE}"
+chmod 600 "${SB_ROUTING_POLICY_FILE}"
+printf 'WARP_ROUTE_MODE=selective\nWARP_ENABLED=y\n' > "${SB_WARP_ROUTE_SETTINGS_FILE}"
+rm -- "${SB_WARP_KEY_FILE}"
+touch "${TMP_DIR}/forbid-register"
+for filter in '.policy.server.block_cn |= not' '.policy.server.warp_ai |= not'; do
+  routing_draft_create "${TMP_DIR}/independent.json"
+  routing_draft_edit "${TMP_DIR}/independent.json" "${filter}"
+  routing_policy_apply "${TMP_DIR}/independent.json" > "${TMP_DIR}/independent.out" 2> "${TMP_DIR}/independent.err"
+  [[ ! -e "${SB_WARP_KEY_FILE}" && ! -e "${TMP_DIR}/provider-calls" ]]
+done
+rm -- "${TMP_DIR}/forbid-register"
 
 reset_case
 # Atomic publication uses same-directory staging, private permissions and a
@@ -183,28 +206,17 @@ cmp "${TMP_DIR}/outside-before.json" "${TMP_DIR}/outside-publisher/state.json"
 [[ "$(find "${TMP_DIR}/outside-publisher" -mindepth 1 -maxdepth 1 | wc -l)" == 1 ]]
 
 reset_case
-# The fresh-install seeding step really persists the announced defaults before
-# the first config render. Existing explicit policy remains authoritative.
+# Reading fresh defaults cannot persist policy or initialize WARP.
 rm "${SINGBOX_CONFIG_FILE}" "${SB_PROJECT_DIR}/managed-config.generated.json"
-SB_ADVANCED_ROUTE=y
-routing_policy_seed_fresh_install
-jq -e '.server.private_network_block==true and .server.adblock==false and
-  .client=={lan_direct:true,cn_direct:true,adblock:false}' "${SB_ROUTING_POLICY_FILE}" >/dev/null
-[[ "$(stat -c %a "${SB_ROUTING_POLICY_FILE}")" == 600 ]]
-[[ -z "$(find "${SB_PROJECT_DIR}" -maxdepth 1 -name '.routing-initial.*' -print)" ]]
-jq '.server.private_network_block=false | .client.lan_direct=false' "${SB_ROUTING_POLICY_FILE}" > "${TMP_DIR}/existing-policy.json"
-routing_publish_file "${TMP_DIR}/existing-policy.json" "${SB_ROUTING_POLICY_FILE}"
-seed_before=$(sha256sum "${SB_ROUTING_POLICY_FILE}")
-seed_before_inode=$(stat -c %i "${SB_ROUTING_POLICY_FILE}")
-routing_policy_seed_fresh_install
-[[ "$(sha256sum "${SB_ROUTING_POLICY_FILE}")" == "${seed_before}" &&
-   "$(stat -c %i "${SB_ROUTING_POLICY_FILE}")" == "${seed_before_inode}" ]]
+policy=$(routing_policy_read_json)
+jq -e '.schema_version==2 and (.server.block_cn|not)' <<< "${policy}" >/dev/null
+[[ ! -e "${SB_ROUTING_POLICY_FILE}" ]]
 
 reset_case
 # A real menu edit followed by cancel never creates persistent policy/assets.
 BEFORE_TREE=$(tree_fingerprint "${SB_PROJECT_DIR}")
 routing_management_menu > "${TMP_DIR}/cancel.log" <<'EOF_CANCEL'
-6
+1
 0
 y
 EOF_CANCEL
@@ -323,19 +335,16 @@ routing_policy_apply "${TMP_DIR}/draft.json" > /dev/null 2> "${TMP_DIR}/inactive
 [[ "$(cat "${SERVICE_STATE_FILE}")" == inactive ]]
 ! grep -q '^restart\|^start' "${SERVICE_LOG}"
 
-# Once a policy is active, changing only client export preferences must not
-# regenerate or restart the server, including an undo of that client-only edit.
-new_draft
-routing_draft_edit "${TMP_DIR}/draft.json" '.policy.server.private_network_block |= not | .policy.client.lan_direct=false'
-server_before_client_edit=$(sha256sum "${SINGBOX_CONFIG_FILE}")
+# Reapplying an unchanged current policy does not regenerate or restart.
+routing_draft_create "${TMP_DIR}/draft.json"
+server_before_noop=$(sha256sum "${SINGBOX_CONFIG_FILE}")
 GENERATION_MODE=failure
 : > "${SERVICE_LOG}"
-routing_policy_apply "${TMP_DIR}/draft.json" > /dev/null 2> "${TMP_DIR}/client-only.stderr"
-[[ "$(sha256sum "${SINGBOX_CONFIG_FILE}")" == "${server_before_client_edit}" ]]
+routing_policy_apply "${TMP_DIR}/draft.json" > /dev/null 2> "${TMP_DIR}/noop.stderr"
+[[ "$(sha256sum "${SINGBOX_CONFIG_FILE}")" == "${server_before_noop}" ]]
 ! grep -q '^restart\|^start\|^stop' "${SERVICE_LOG}"
-routing_policy_restore_previous > /dev/null 2> "${TMP_DIR}/client-only-undo.stderr"
+routing_policy_restore_previous > /dev/null 2> "${TMP_DIR}/noop-undo.stderr"
 ! grep -q '^restart\|^start\|^stop' "${SERVICE_LOG}"
-jq -e '.client.lan_direct == true' "${SB_ROUTING_POLICY_FILE}" >/dev/null
 [[ "$(find "${SB_ROUTING_PREVIOUS_DIR}" -name snapshot.meta -print | wc -l)" == 1 ]]
 
 reset_case

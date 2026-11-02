@@ -62,8 +62,9 @@ USERNAME=
 PASSWORD=
 STATE
 policy_file=$(routing_policy_file_path)
-policy=$(routing_policy_read_json | jq -c '.server.private_network_block=false |
-  .server.adblock=true | .adblock.url="" | .adblock.domains=["ads.example"]')
+policy=$(jq -cn '{schema_version:1,
+ server:{private_network_block:false,adblock:true,warp_ai:true,warp_streaming:true,rules:[],rule_sets:[]},
+ client:{lan_direct:true,cn_direct:true,adblock:false},adblock:{url:"",domains:["ads.example"],allow:[]}}')
 printf '%s\n' "${policy}" > "${policy_file}"
 chmod 600 "${policy_file}"
 SB_ENABLE_WARP=n

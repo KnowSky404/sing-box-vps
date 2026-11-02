@@ -173,21 +173,6 @@ assert_equal 'Mixed capability listener default' \
 assert_equal 'Plain-proxy capability listener default' \
   "$(jq -r '.features.plain_proxy_instances.default_new_listener' "${TMP_DIR}/capabilities.json")" '::'
 
-# Server defaults must not expose the client's local proxy or controller. Keep
-# the real client template and isolate its independent remote-node collection.
-SB_PROTOCOL=''
-list_installed_protocols_read_only() { printf 'mixed\n'; }
-protocol_state_exists() { [[ "$1" == mixed ]]; }
-get_public_ip() { printf '203.0.113.10'; }
-build_client_outbounds_for_current_protocol() {
-  printf '%s\n' '{"type":"socks","tag":"fixture-remote","server":"203.0.113.10","server_port":1080,"version":"5"}'
-}
-build_singbox_client_config > "${TMP_DIR}/client.json"
-assert_equal 'Client proxy remains loopback' \
-  "$(jq -r '.inbounds[0].listen' "${TMP_DIR}/client.json")" 127.0.0.1
-assert_equal 'Client controller remains loopback' \
-  "$(jq -r '.experimental.clash_api.external_controller' "${TMP_DIR}/client.json")" 127.0.0.1:9090
-check_core_config 'client template' "${TMP_DIR}/client.json"
 if [[ -z "${SINGBOX_BINARY_114:-}" ]]; then
   printf 'sing-box check not run: set SINGBOX_BINARY_114 to the supported core\n'
 fi

@@ -444,49 +444,58 @@ pick_free_local_port() {
   return 1
 }
 
-create_media_check_warp_proxy_config() {
-  local output_file=$1
-  local proxy_port=$2
+warp_endpoint_json_from_saved_credentials() {
   local w_key w_v4 w_v6 w_client_id w_reserved='[]'
+  [[ -f "${SB_WARP_KEY_FILE}" && ! -L "${SB_WARP_KEY_FILE}" &&
+     "$(wc -c < "${SB_WARP_KEY_FILE}")" -le 65536 ]] || return 1
+  # Saved credentials are data. Read only known single-line values; never source
+  # the file, repair it, or contact the provider from a node/diagnostic operation.
+  w_key=$(sed -n 's/^WARP_PRIV_KEY=//p' "${SB_WARP_KEY_FILE}") || return 1
+  w_v4=$(sed -n 's/^WARP_V4=//p' "${SB_WARP_KEY_FILE}") || return 1
+  w_v6=$(sed -n 's/^WARP_V6=//p' "${SB_WARP_KEY_FILE}") || return 1
+  w_client_id=$(sed -n 's/^WARP_CLIENT_ID=//p' "${SB_WARP_KEY_FILE}") || return 1
+  [[ "${w_key}" =~ ^[A-Za-z0-9+/]{43}=$ &&
+     "${w_client_id}" =~ ^[A-Za-z0-9+/]{4}$ &&
+     "${w_v4}" != *:* && "${w_v6}" == *:* ]] || return 1
+  structured_instance_store_validate_address "${w_v4}" || return 1
+  structured_instance_store_validate_address "${w_v6}" || return 1
+  w_reserved=$(warp_client_id_to_reserved_json "${w_client_id}") || return 1
+  jq -cn --arg key "${w_key}" --arg v4 "${w_v4}/32" --arg v6 "${w_v6}/128" \
+    --argjson reserved "${w_reserved}" \
+    '{type:"wireguard",tag:"warp-ep",address:[$v4,$v6],private_key:$key,
+      peers:[{address:"engage.cloudflareclient.com",port:2408,
+        public_key:"bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+        reserved:$reserved,allowed_ips:["0.0.0.0/0","::/0"]}],mtu:1280}'
+}
 
-  register_warp || return $?
-
-  w_key=$(grep "WARP_PRIV_KEY" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
-  w_v4=$(grep "WARP_V4" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
-  w_v6=$(grep "WARP_V6" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
-  w_client_id=$(grep "WARP_CLIENT_ID" "${SB_WARP_KEY_FILE}" | cut -d'=' -f2- | tr -d '\r\n ')
-  w_reserved=$(warp_client_id_to_reserved_json "${w_client_id}")
-
-  if [[ -z "${w_key}" || -z "${w_v4}" || -z "${w_v6}" ]]; then
-    log_error "Warp 账户信息不完整，请尝试重新注册 Warp。"
+warp_endpoint_json_for_generation() {
+  if [[ -e "${SB_WARP_KEY_FILE}" || -L "${SB_WARP_KEY_FILE}" ]]; then
+    warp_endpoint_json_from_saved_credentials
+    return $?
   fi
+  # An existing endpoint can be retained exactly when its separate credential
+  # file is missing. Final sing-box check still validates it and its references.
+  [[ -f "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" ]] || return 1
+  jq -ce '[.endpoints[]? | select(.tag == "warp-ep")] |
+    select(length == 1) | .[0] | select(.type == "wireguard" and
+      (.private_key | type == "string" and test("^[A-Za-z0-9+/]{43}=$")) and
+      (.address | type == "array" and length > 0) and
+      (.peers | type == "array" and length > 0))' "${SINGBOX_CONFIG_FILE}" 2>/dev/null
+}
+
+create_media_check_warp_proxy_config() {
+  local output_file=$1 proxy_port=$2 warp_endpoint
+  warp_endpoint=$(warp_endpoint_json_for_generation) || {
+    log_warn 'WARP 凭据缺失或无效；请先在网络设置中配置 WARP，检测未修改账户。'
+    return 1
+  }
 
   jq -n \
     --arg proxy_port "${proxy_port}" \
-    --arg w_key "${w_key}" \
-    --arg w_v4 "${w_v4}/32" \
-    --arg w_v6 "${w_v6}/128" \
-    --argjson w_reserved "${w_reserved}" \
+    --argjson warp_endpoint "${warp_endpoint}" \
     '{
       "log": { "level": "warn", "timestamp": true },
-      "endpoints": [
-        {
-          "type": "wireguard",
-          "tag": "warp-ep",
-          "address": [ $w_v4, $w_v6 ],
-          "private_key": $w_key,
-          "peers": [
-            {
-              "address": "engage.cloudflareclient.com",
-              "port": 2408,
-              "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
-              "reserved": $w_reserved,
-              "allowed_ips": [ "0.0.0.0/0", "::/0" ]
-            }
-          ],
-          "mtu": 1280
-        }
-      ],
+      "endpoints": [$warp_endpoint],
       "inbounds": [
         {
           "type": "socks",
@@ -504,7 +513,8 @@ create_media_check_warp_proxy_config() {
         ],
         "final": "warp-ep"
       }
-    }' > "${output_file}"
+    }' > "${output_file}" || return 1
+  "${SINGBOX_BIN_PATH}" check -c "${output_file}" >&2
 }
 
 run_media_check_backend() {
@@ -542,7 +552,10 @@ run_media_check_via_warp() {
   proxy_log="${temp_dir}/media-check-warp.log"
   proxy_url="socks5h://127.0.0.1:${proxy_port}"
 
-  create_media_check_warp_proxy_config "${proxy_config}" "${proxy_port}"
+  if ! create_media_check_warp_proxy_config "${proxy_config}" "${proxy_port}"; then
+    rm -rf -- "${temp_dir}"
+    return 1
+  fi
 
   "${SINGBOX_BIN_PATH}" run -c "${proxy_config}" > "${proxy_log}" 2>&1 &
   proxy_pid=$!
@@ -794,181 +807,9 @@ build_warp_rule_set_tags_json() {
 }
 
 refresh_warp_route_assets() {
-  ensure_warp_routing_assets
-  build_custom_warp_domain_json
-  build_local_warp_rule_sets_json
-  build_remote_warp_rule_sets_json
+  # Rendering an existing network policy must not create or repair its assets.
+  build_custom_warp_domain_json || return 1
+  build_local_warp_rule_sets_json || return 1
+  build_remote_warp_rule_sets_json || return 1
   build_warp_rule_set_tags_json
-}
-
-show_warp_route_assets() {
-  ensure_warp_routing_assets
-  load_warp_route_settings
-
-  echo -e "\n${BLUE}--- Warp 分流资产 ---${NC}"
-  echo -e "当前模式: ${SB_WARP_ROUTE_MODE}"
-  echo -e "自定义域名: ${SB_WARP_DOMAINS_FILE}"
-  echo -e "本地规则集目录: ${SB_WARP_LOCAL_RULESET_DIR}"
-  echo -e "远程规则集列表: ${SB_WARP_REMOTE_RULESETS_FILE}"
-}
-
-print_json_string_array() {
-  local title=$1
-  local json=$2
-
-  echo "${title}:"
-  if jq -e 'length > 0' >/dev/null <<< "${json}"; then
-    jq -r '.[] | "  - " + .' <<< "${json}"
-  else
-    echo "  - 无"
-  fi
-}
-
-print_json_rule_set_array() {
-  local title=$1
-  local json=$2
-
-  echo "${title}:"
-  if jq -e 'length > 0' >/dev/null <<< "${json}"; then
-    jq -r '.[] | "  - [" + .tag + "] " + (.path // .url)' <<< "${json}"
-  else
-    echo "  - 无"
-  fi
-}
-
-show_effective_warp_route_sources() {
-  ensure_warp_routing_assets
-  load_current_config_state
-  load_warp_route_settings
-  refresh_warp_route_assets
-
-  echo -e "\n${BLUE}--- 当前生效的 Warp 分流来源 ---${NC}"
-  echo -e "当前模式: ${SB_WARP_ROUTE_MODE}"
-
-  if [[ "${SB_WARP_ROUTE_MODE}" == "all" ]]; then
-    echo "说明: 当前为全量 Warp 模式，默认所有代理流量走 Warp。"
-    if [[ "${SB_PROTOCOL}" == "vless+reality" ]]; then
-      echo "例外: REALITY 握手域名仍直连；私网地址按高级路由规则处理。"
-    else
-      echo "例外: 私网地址按高级路由规则处理。"
-    fi
-  else
-    echo "说明: 当前为选择性 Warp 模式，仅命中以下来源的流量走 Warp。"
-  fi
-
-  print_json_string_array "内置 AI 精确域名" "${WARP_AI_ROUTE_DOMAINS_JSON}"
-  print_json_string_array "内置 AI 域名后缀" "${WARP_AI_ROUTE_DOMAIN_SUFFIXES_JSON}"
-  print_json_string_array "内置流媒体精确域名" "${WARP_STREAM_ROUTE_DOMAINS_JSON}"
-  print_json_string_array "内置流媒体域名后缀" "${WARP_STREAM_ROUTE_DOMAIN_SUFFIXES_JSON}"
-  print_json_string_array "自定义精确域名" "${SB_WARP_CUSTOM_DOMAINS_JSON}"
-  print_json_string_array "自定义域名后缀" "${SB_WARP_CUSTOM_DOMAIN_SUFFIXES_JSON}"
-  print_json_rule_set_array "本地规则集" "${SB_WARP_LOCAL_RULE_SETS_JSON}"
-  print_json_rule_set_array "远程规则集" "${SB_WARP_REMOTE_RULE_SETS_JSON}"
-}
-
-set_warp_route_mode_interactive() {
-  echo
-  render_left_aligned_page_header "Warp 路由模式" "选择当前实例的 Warp 出口策略"
-  render_section_title "当前设置"
-  render_summary_item "当前模式" "${SB_WARP_ROUTE_MODE}"
-  render_menu_group_start "模式选项"
-  render_menu_item "1" "全量流量走 Warp"
-  render_menu_item "2" "仅 AI/流媒体及自定义规则走 Warp"
-  if [[ "${SB_WARP_ROUTE_MODE}" == "all" ]]; then
-    mode_choice=$(prompt_choice "请选择 [1-2] (当前: ${SB_WARP_ROUTE_MODE}): " 1 2 1)
-  else
-    mode_choice=$(prompt_choice "请选择 [1-2] (当前: ${SB_WARP_ROUTE_MODE}): " 1 2 2)
-  fi
-
-  case "${mode_choice}" in
-    1) SB_WARP_ROUTE_MODE="all" ;;
-    2) SB_WARP_ROUTE_MODE="selective" ;;
-  esac
-
-  save_warp_route_settings
-  return 0
-}
-
-add_warp_domain_entry() {
-  ensure_warp_routing_assets
-
-  local domain_entry
-  read -rp "请输入域名（= 前缀表示精确匹配，其余默认 suffix 匹配）: " domain_entry
-  domain_entry=$(trim_whitespace "${domain_entry}")
-
-  if [[ -z "${domain_entry}" ]]; then
-    log_warn "域名为空，未写入。"
-    return 1
-  fi
-
-  if ! [[ "${domain_entry}" =~ ^=?[A-Za-z0-9._-]+$ ]]; then
-    log_warn "域名格式无效，未写入。"
-    return 1
-  fi
-
-  if grep -Fxq "${domain_entry}" "${SB_WARP_DOMAINS_FILE}" 2>/dev/null; then
-    log_warn "域名已存在于 Warp 分流列表。"
-    return 1
-  fi
-
-  printf '%s\n' "${domain_entry}" >> "${SB_WARP_DOMAINS_FILE}"
-  log_success "已写入 Warp 分流域名: ${domain_entry}"
-  return 0
-}
-
-add_remote_warp_rule_set() {
-  ensure_warp_routing_assets
-
-  local tag url update_interval
-  read -rp "请输入远程规则集标签: " tag
-  tag=$(sanitize_ruleset_tag "$(trim_whitespace "${tag}")")
-
-  if [[ -z "${tag}" ]]; then
-    log_warn "标签为空，未写入。"
-    return 1
-  fi
-
-  while true; do
-    read -rp "请输入远程规则集 URL: " url
-    url=$(trim_whitespace "${url}")
-    validate_http_url "${url}" && break
-    log_warn "远程规则集 URL 必须以 http:// 或 https:// 开头。"
-  done
-
-  while true; do
-    read -rp "请输入更新周期 (默认 1d): " update_interval
-    update_interval=$(trim_whitespace "${update_interval:-1d}")
-    validate_update_interval "${update_interval}" && break
-    log_warn "更新周期格式必须为正整数加单位 s/m/h/d，例如 1d。"
-  done
-
-  printf '%s|%s|%s\n' "${tag}" "${url}" "${update_interval:-1d}" >> "${SB_WARP_REMOTE_RULESETS_FILE}"
-  log_success "已写入远程 Warp 规则集: ${tag}"
-  return 0
-}
-
-import_recommended_warp_rule_sets() {
-  ensure_warp_routing_assets
-
-  local entry imported_count=0 skipped_count=0
-
-  for entry in "${WARP_RECOMMENDED_RULESETS[@]}"; do
-    if grep -Fxq "${entry}" "${SB_WARP_REMOTE_RULESETS_FILE}" 2>/dev/null; then
-      skipped_count=$((skipped_count + 1))
-      continue
-    fi
-
-    printf '%s\n' "${entry}" >> "${SB_WARP_REMOTE_RULESETS_FILE}"
-    imported_count=$((imported_count + 1))
-  done
-
-  if [[ ${imported_count} -gt 0 ]]; then
-    log_success "已导入 ${imported_count} 条推荐 Warp 规则源。"
-  fi
-
-  if [[ ${skipped_count} -gt 0 ]]; then
-    log_info "已跳过 ${skipped_count} 条已存在的推荐 Warp 规则源。"
-  fi
-
-  [[ ${imported_count} -gt 0 ]]
 }

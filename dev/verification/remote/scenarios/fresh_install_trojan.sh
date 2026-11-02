@@ -40,13 +40,13 @@ EOF
   grep -Fqx 'INSTALLED_PROTOCOLS=trojan' /root/sing-box-vps/protocols/index.env
   jq -e '.protocol=="trojan" and .revision==1 and (.instances|length)==1 and
     .instances[0].id=="main" and .instances[0].tag=="trojan-in" and
-    .instances[0].listen=={address:"127.0.0.1",port:1084} and
+    .instances[0].listen=={address:"::",port:1084} and
     .instances[0].authentication.users==[
       {name:"first",password:"trojan-first-password"},{name:"second",password:"trojan-second-password"}] and
     .instances[0].tls.enabled==true and .instances[0].client_trust=="certificate" and
     .instances[0].transport=={type:"none"}' "${store_file}" >/dev/null
   jq -e '(.inbounds|length)==1 and .inbounds[0].type=="trojan" and
-    .inbounds[0].listen=="127.0.0.1" and .inbounds[0].listen_port==1084 and
+    .inbounds[0].listen=="::" and .inbounds[0].listen_port==1084 and
     (.inbounds[0].users|length)==2 and (.inbounds[0]|has("transport")|not) and
     .inbounds[0].tls.enabled==true' "${config_file}" >/dev/null
   verification_wait_for_service_active sing-box

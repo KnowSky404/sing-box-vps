@@ -51,20 +51,10 @@ jq -e '
   (has("version") | not) and (has("udp_over_tcp") | not) and (has("tls") | not)
 ' <<< "${plain_outbound}" >/dev/null
 
-full_config=$(build_singbox_client_config)
-printf '%s\n' "${full_config}" > "${TMP_DIR}/http-export-full.json"
-jq -e '[.outbounds[] | select(.type == "http")] | length == 1' \
-  "${TMP_DIR}/http-export-full.json" >/dev/null
-jq -e 'all(.outbounds[]?; .type != "socks" or (has("udp_over_tcp") and .udp_over_tcp.version == 2))' \
-  "${TMP_DIR}/http-export-full.json" >/dev/null
-
 plain_links=$(build_plain_proxy_links_json http 203.0.113.10)
 jq -e '.http == "http://http-user:http-pass@203.0.113.10:38111" and (keys | length) == 1' \
   <<< "${plain_links}" >/dev/null
 jq -e 'any(.[]; .code == "http_plaintext_transport")' <<< "$(plain_proxy_share_warnings_json http)" >/dev/null
-plain_export_config=$(jq -n --argjson outbound "${plain_outbound}" '{outbounds:[$outbound]}')
-jq -e 'any(.[]; .code == "http_plaintext_transport")' \
-  <<< "$(collect_client_export_warnings_json "${plain_export_config}")" >/dev/null
 
 # Mixed export owns only SOCKS/HTTP plaintext. A stale HTTP typed TLS value
 # must not suppress its plaintext HTTP share or leak an HTTP-TLS warning.
@@ -124,9 +114,6 @@ jq -e '
 jq -e 'length == 0' <<< "$(build_plain_proxy_links_json http 127.0.0.1)" >/dev/null
 jq -e 'any(.[]; .code == "http_tls_uri_unrepresentable")' \
   <<< "$(plain_proxy_share_warnings_json http)" >/dev/null
-tls_export_config=$(jq -n --argjson outbound "${tls_outbound}" '{outbounds:[$outbound]}')
-jq -e 'any(.[]; .code == "http_tls_certificate_embedded")' \
-  <<< "$(collect_client_export_warnings_json "${tls_export_config}")" >/dev/null
 
 bad_cert="${TMP_DIR}/bad.crt"
 printf '%s\n' '-----BEGIN CERTIFICATE-----' 'QUJD' '-----END CERTIFICATE-----' 'secret-suffix' > "${bad_cert}"
@@ -152,4 +139,4 @@ if read_public_certificate_pem "${bad_cert}" >/dev/null; then
   exit 1
 fi
 
-printf 'HTTP export client checks passed: full-export-check=1, plain-outbound=1, tls-outbound=1, uri=3, certificate-rejections=4\n'
+printf 'HTTP export client checks passed: plain-outbound=1, tls-outbound=1, uri=3, certificate-rejections=4\n'

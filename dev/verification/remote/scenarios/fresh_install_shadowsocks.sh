@@ -33,7 +33,7 @@ EOF
     .schema_version==1 and .protocol=="shadowsocks" and .revision==1 and
     (.instances|length)==1 and .instances[0].id=="main" and
     .instances[0].tag=="ss-in" and
-    .instances[0].listen=={address:"127.0.0.1",port:1083,network:["tcp","udp"]} and
+    .instances[0].listen=={address:"::",port:1083,network:["tcp","udp"]} and
     .instances[0].authentication=={
       method:"2022-blake3-aes-128-gcm",password:$key,users:[]}
   ' "${store_file}" >/dev/null
@@ -43,7 +43,7 @@ EOF
     (.inbounds|length)==1 and
     .inbounds[0].type=="shadowsocks" and
     .inbounds[0].tag=="ss-in" and
-    .inbounds[0].listen=="127.0.0.1" and
+    .inbounds[0].listen=="::" and
     .inbounds[0].listen_port==1083 and
     .inbounds[0].network==["tcp","udp"] and
     .inbounds[0].method=="2022-blake3-aes-128-gcm" and

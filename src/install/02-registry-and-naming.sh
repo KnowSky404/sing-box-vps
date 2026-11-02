@@ -407,7 +407,6 @@ protocol_registry_field() {
     display_name) index=7 ;;
     default_tag) index=8 ;;
     menu_order) index=9 ;;
-    client_export) index=10 ;;
     subman_type) index=11 ;;
     listen_networks) index=12 ;;
     traffic_networks) index=13 ;;
@@ -434,7 +433,7 @@ protocol_registry_static_json() {
       available: null, availability_reason: "requires_instance_preflight",
       validated: {status: "not_assessed", method: .[18]},
       lifecycle: {deploy: true, takeover: true, edit: true, remove: true},
-      client_export: (.[10] == "true"), subman_type: .[11],
+      subman_type: .[11],
       listen_networks: (.[12] | csv), traffic_networks: (.[13] | csv),
       multi_instance: (.[15] == "true"), certificate_contract: .[16],
       share_formats: (.[17] | csv), probe: .[18],

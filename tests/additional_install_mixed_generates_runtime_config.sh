@@ -74,6 +74,7 @@ cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
         "server_name": "apple.com",
         "reality": {
           "enabled": true,
+          "handshake": {"server": "apple.com", "server_port": 443},
           "private_key": "private-key",
           "short_id": [
             "aaaaaaaaaaaaaaaa",
@@ -96,6 +97,7 @@ cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
       "tls": {
         "enabled": true,
         "server_name": "hy2.example.com",
+        "alpn": ["h3"],
         "certificate_path": "/etc/ssl/certs/hy2.pem",
         "key_path": "/etc/ssl/private/hy2.key"
       }

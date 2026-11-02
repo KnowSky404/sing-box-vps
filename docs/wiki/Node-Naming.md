@@ -20,7 +20,7 @@ two digits and selects a free generated name in the protocol's current inventory
 Deleting an instance does not renumber surviving names. The saved name can be
 customized; existing names and legacy recovery defaults remain unchanged.
 
-Main menu **11 → 5「设置新实例的主机显示标签」** sets the label used for future
+Main menu **11 → 4「设置新实例的主机显示标签」** sets the label used for future
 instance defaults. The optional private setting is
 `/root/sing-box-vps/node-naming.json`, with only `host_label`:
 
@@ -87,7 +87,7 @@ explicit SubMan synchronization uses the original external key to update its nod
 when that node still exists. Do not delete and recreate nodes merely to rename
 them: deletion can remove aggregate references.
 
-Main menu **11 → 4** calls the saved `SUBMAN_NODE_PREFIX` setting **同步身份前缀**.
+Main menu **11 → 3** calls the saved `SUBMAN_NODE_PREFIX` setting **同步身份前缀**.
 Its value and key format are preserved. Changing it changes remote identity and
 leaves old nodes in place; the host display label is a separate setting. Saving
 settings does not synchronize nodes. Node API writes do not automatically

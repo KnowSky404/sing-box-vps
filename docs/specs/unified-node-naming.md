@@ -77,8 +77,8 @@ new default. A fresh installation with neither this file nor an existing invento
 must compute its first default name using the shell and hostname only; it must not
 require `jq` before the existing dependency-installation stage. Reading an existing
 JSON preference or inventory explicitly requires `jq`, with a clear dependency
-error when it is unavailable. This feature does not reorder dependency installation. Main menu **11 → 5** exposes **设置新实例的主机显示标签** independently
-of SubMan connection settings at **11 → 4**.
+error when it is unavailable. This feature does not reorder dependency installation. Main menu **11 → 4** exposes **设置新实例的主机显示标签** independently
+of SubMan connection settings at **11 → 3**.
 
 Saving the setting stages and validates JSON, backs up an existing file as `.bak`,
 and atomically replaces it with private permissions. Failure leaves the previous

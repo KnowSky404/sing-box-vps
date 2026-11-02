@@ -65,7 +65,7 @@ printf '[Service]\nExecStart=fixture\n' > "${SINGBOX_SERVICE_FILE}"
 printf 'INSTALLED_PROTOCOLS=mixed\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
 printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=1\nNODE_NAME=Legacy\nPORT=13090\nAUTH_ENABLED=n\nUSERNAME=\nPASSWORD=\n' \
   > "${SB_PROTOCOL_STATE_DIR}/mixed.env"
-policy=$(routing_policy_read_json | jq -c '.server.private_network_block=false')
+policy=$(routing_policy_read_json | jq -c '.server.block_cn=false')
 printf '%s\n' "${policy}" > "${SB_ROUTING_POLICY_FILE}"
 chmod 600 "${SB_ROUTING_POLICY_FILE}"
 SB_ENABLE_WARP=n SB_ADVANCED_ROUTE=n SB_WARP_ROUTE_MODE=selective
@@ -124,12 +124,12 @@ validate_managed_component_graph "${SINGBOX_CONFIG_FILE}"
 
 # A subsequent global policy edit must also retain the cross-ownership reference.
 routing_draft_create "${TMP_DIR}/draft.json"
-routing_draft_edit "${TMP_DIR}/draft.json" '.policy.server.private_network_block=true'
+routing_draft_edit "${TMP_DIR}/draft.json" '.policy.server.block_cn=true'
 if ! routing_policy_apply "${TMP_DIR}/draft.json" > "${TMP_DIR}/policy.log" 2>&1; then
   cat "${TMP_DIR}/policy.log" >&2; exit 1
 fi
 [[ "$(jq -cS '.outbounds[] | select(.tag=="operator-egress")' "${SINGBOX_CONFIG_FILE}")" == "${manual}" ]]
-jq -e 'any(.route.rules[]; .ip_is_private==true) and all(.outbounds[]; .tag!="operator-egress")' "${baseline}" >/dev/null
+jq -e 'any(.route.rules[]; .rule_set==["sbv-block-geoip-cn"] and .action=="reject") and all(.outbounds[]; .tag!="operator-egress")' "${baseline}" >/dev/null
 "${core}" check -c "${SINGBOX_CONFIG_FILE}"
 
 # Resolving references against the complete context must not allow dangling

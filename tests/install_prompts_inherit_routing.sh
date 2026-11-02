@@ -19,7 +19,7 @@ prompt_instance_outbound_policy() {
   return 98
 }
 
-# A bare VPS reaches its default summary without reading input or requiring jq.
+# A bare VPS loads neutral defaults without displaying routing or requiring jq.
 # Values left in memory from another operation must not replace fresh defaults.
 (
   jq() { printf 'called\n' >> "${TMP_DIR}/default-jq-calls"; return 127; }
@@ -28,25 +28,21 @@ prompt_instance_outbound_policy() {
   prompt_choice() { fail 'global defaults asked a routing choice'; }
   SB_ENABLE_WARP=y
   SB_ADVANCED_ROUTE=n
-  prompt_global_instance_options </dev/null > "${TMP_DIR}/default-summary"
-  [[ "${SB_ENABLE_WARP}" == n && "${SB_ADVANCED_ROUTE}" == y ]]
-  grep -Fq 'WARP 关闭' "${TMP_DIR}/default-summary"
-  grep -Fq '菜单 13' "${TMP_DIR}/default-summary"
+  routing_policy_prepare_install_defaults </dev/null > "${TMP_DIR}/default-summary"
+  [[ "${SB_ENABLE_WARP}" == n && "${SB_ADVANCED_ROUTE}" == n ]]
+  [[ ! -s "${TMP_DIR}/default-summary" && ! -e "${SB_ROUTING_POLICY_FILE}" &&
+     ! -e "${SB_WARP_ROUTE_SETTINGS_FILE}" ]]
   [[ ! -e "${TMP_DIR}/default-jq-calls" ]]
 )
 
-# The summary renders the policy loader's retained settings without asking or
-# changing them; the policy state tests cover loading persisted JSON itself.
+# Retained defaults are loaded without asking, displaying or changing settings.
 (
-  routing_policy_prepare_install_defaults() {
-    SB_ENABLE_WARP=y
-    SB_WARP_ROUTE_MODE=selective
-    SB_ADVANCED_ROUTE=n
-  }
+  printf '%s\n' '{"inbounds":[],"endpoints":[{"tag":"warp-ep"}],"route":{"final":"warp-ep"}}' > "${SINGBOX_CONFIG_FILE}"
   read() { fail 'retained policy attempted to read input'; }
-  prompt_global_instance_options </dev/null > "${TMP_DIR}/retained-summary"
-  [[ "${SB_ENABLE_WARP}" == y && "${SB_WARP_ROUTE_MODE}" == selective && "${SB_ADVANCED_ROUTE}" == n ]]
-  grep -Fq '命中分流规则时使用 WARP' "${TMP_DIR}/retained-summary"
+  routing_policy_prepare_install_defaults </dev/null > "${TMP_DIR}/retained-summary"
+  [[ "${SB_ENABLE_WARP}" == y && "${SB_WARP_ROUTE_MODE}" == all && "${SB_ADVANCED_ROUTE}" == n ]]
+  [[ ! -s "${TMP_DIR}/retained-summary" && ! -e "${SB_ROUTING_POLICY_FILE}" &&
+     ! -e "${SB_WARP_ROUTE_SETTINGS_FILE}" ]]
 )
 
 # Exercise real typed creation and replacement. Only unrelated credential and

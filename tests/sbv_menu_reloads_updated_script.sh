@@ -72,7 +72,7 @@ chmod +x "${TMP_DIR}/bin/curl"
 assert_reloaded() {
   local old_pid new_pid
   [[ "${output}" == *'menu_version=2026010101 '* ]] || fail 'old menu did not start'
-  [[ "${output}" == *'menu_version=2099010101 '* ]] || fail 'menu 15 did not enter the updated runtime'
+  [[ "${output}" == *'menu_version=2099010101 '* ]] || fail 'menu 14 did not enter the updated runtime'
   old_pid=$(sed -n 's/^menu_version=2026010101 pid=//p' <<< "${output}")
   new_pid=$(sed -n 's/^menu_version=2099010101 pid=//p' <<< "${output}")
   [[ "${old_pid}" == "${new_pid}" ]] || fail 'updated menu did not replace the old process'
@@ -83,14 +83,14 @@ assert_reloaded() {
 # Real atomic update, followed by a fresh runtime in the same process. The new
 # runtime acquires the inherited management lock and consumes the pending exit.
 cp -- "${OLD_RUNTIME}" "${TARGET_PATH}"
-output=$(timeout 20 bash "${TARGET_PATH}" <<<'15
+output=$(timeout 20 bash "${TARGET_PATH}" <<<'14
 0' 2>&1) || fail 'interactive update failed'
 assert_reloaded
 cmp -s "${NEW_RUNTIME}" "${TARGET_PATH}" || fail 'new script was not installed'
 
 # A healthy current runtime stays in its menu without re-executing on no-op.
 before_inode=$(stat -c '%i' "${TARGET_PATH}")
-output=$(timeout 20 bash "${TARGET_PATH}" <<<'15
+output=$(timeout 20 bash "${TARGET_PATH}" <<<'14
 0' 2>&1) || fail 'current-version menu update failed'
 [[ $(grep -c '^menu_version=' <<< "${output}") == 1 ]] || fail 'current-version no-op restarted the menu'
 [[ $(stat -c '%i' "${TARGET_PATH}") == "${before_inode}" ]] || fail 'no-op replaced the installed script'
@@ -101,14 +101,14 @@ output=$(timeout 20 bash -c '
   source "$1"
   ensure_sbv_command_installed() { :; }
   main
-' _ "${OLD_RUNTIME}" <<<'15
+' _ "${OLD_RUNTIME}" <<<'14
 0' 2>&1) || fail 'stale runtime no-op failed'
 assert_reloaded
 [[ $(stat -c '%i' "${TARGET_PATH}") == "${before_inode}" ]] || fail 'stale runtime no-op replaced the target'
 
 # A failed update must keep the original runtime and file, and allow exit.
 cp -- "${OLD_RUNTIME}" "${TARGET_PATH}"
-output=$(FAKE_CURL_FAIL=1 timeout 20 bash "${TARGET_PATH}" <<<'15
+output=$(FAKE_CURL_FAIL=1 timeout 20 bash "${TARGET_PATH}" <<<'14
 0' 2>&1) || fail 'download failure prevented returning to the menu'
 [[ "${output}" == *'已返回管理菜单'* ]] || fail 'download failure was not reported'
 [[ "${output}" != *'menu_version=2099010101 '* ]] || fail 'failed update launched another runtime'
@@ -130,7 +130,7 @@ output=$(timeout 20 bash -c '
   ensure_sbv_command_installed() { :; }
   BASH="$2"
   main
-' _ "${OLD_RUNTIME}" "${TMP_DIR}/missing-bash" <<<'15
+' _ "${OLD_RUNTIME}" "${TMP_DIR}/missing-bash" <<<'14
 0' 2>&1) || fail 'failed handoff terminated the menu'
 [[ "${output}" == *'自动切换失败'* ]] || fail 'failed handoff was not reported'
 [[ "${output}" != *'sbv 自更新失败'* ]] || fail 'failed handoff was reported as a failed update'

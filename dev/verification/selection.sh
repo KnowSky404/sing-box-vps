@@ -26,13 +26,16 @@ verification_list_groups() {
 verification_full_test_manifest() {
   cat <<'EOF_TESTS'
 tests/install_build.sh
+tests/server_only_node_sharing.sh
+tests/node_network_independence.sh
+tests/neutral_rebuild_defaults.sh
+tests/routing_policy_unproven_baseline.sh
 tests/install_prompts_inherit_routing.sh
 tests/routing_policy_config.sh
 tests/routing_policy_instance_baseline.sh
 tests/routing_policy_instance_ownership.sh
 tests/routing_policy_baseline_manual_references.sh
 tests/routing_policy_legacy_reality.sh
-tests/client_routing_policy.sh
 tests/routing_management_menu.sh
 tests/routing_policy_transactions.sh
 tests/routing_policy_lock_race.sh
@@ -160,11 +163,6 @@ tests/agent_cli_multi_instance_status.sh
 tests/agent_cli_ops_commands.sh
 tests/agent_cli_outputs_machine_readable_node_info.sh
 tests/agent_json_regression.sh
-tests/export_client_config_1_14_compatibility.sh
-tests/export_client_config_mixed_only.sh
-tests/export_client_config_mixed_auth.sh
-tests/export_client_config_mixed_runtime.sh
-tests/export_client_config_validates_generated_config.sh
 tests/agent_docs_cover_capabilities.sh
 tests/version_metadata_is_consistent.sh
 tests/vless_reality_instance_removal.sh
@@ -191,8 +189,8 @@ verification_group_test_candidates() {
 
   case "${group}" in
     routing)
-      printf '%s\n' tests/install_prompts_inherit_routing.sh tests/routing_policy_config.sh tests/routing_policy_instance_baseline.sh tests/routing_policy_instance_ownership.sh tests/routing_policy_baseline_manual_references.sh tests/routing_policy_legacy_reality.sh \
-        tests/client_routing_policy.sh tests/routing_management_menu.sh tests/routing_policy_transactions.sh tests/routing_policy_lock_race.sh \
+      printf '%s\n' tests/node_network_independence.sh tests/neutral_rebuild_defaults.sh tests/routing_policy_unproven_baseline.sh tests/install_prompts_inherit_routing.sh tests/routing_policy_config.sh tests/routing_policy_instance_baseline.sh tests/routing_policy_instance_ownership.sh tests/routing_policy_baseline_manual_references.sh tests/routing_policy_legacy_reality.sh \
+        tests/routing_management_menu.sh tests/routing_policy_transactions.sh tests/routing_policy_lock_race.sh \
         tests/routing_warp_registration_transaction.sh tests/uninstall_routing_previous.sh
       ;;
     docs)

@@ -181,19 +181,17 @@ show_node_info_action_menu() {
     render_left_aligned_page_header "节点与订阅" "选择要执行的节点信息操作"
     render_menu_group_start "操作选项"
     render_menu_item "1" "查看连接链接 / 二维码"
-    render_menu_item "2" "导出 sing-box 裸核客户端配置"
-    render_menu_item "3" "推送节点到 SubMan"
-    render_menu_item "4" "设置或修改 SubMan 连接"
-    render_menu_item "5" "设置新实例的主机显示标签"
+    render_menu_item "2" "推送节点到 SubMan"
+    render_menu_item "3" "设置或修改 SubMan 连接"
+    render_menu_item "4" "设置新实例的主机显示标签"
     echo "0. 返回"
-    node_info_choice=$(prompt_choice "请选择 [0-5]: " 0 5 "")
+    node_info_choice=$(prompt_choice "请选择 [0-4]: " 0 4 "")
 
     case "${node_info_choice}" in
       1) show_connection_info_menu ;;
-      2) export_singbox_client_config || true ;;
-      3) push_nodes_to_subman || true ;;
-      4) configure_subman_interactive || true ;;
-      5) configure_node_naming_interactive || true ;;
+      2) push_nodes_to_subman || true ;;
+      3) configure_subman_interactive || true ;;
+      4) configure_node_naming_interactive || true ;;
       0) return ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac

@@ -31,7 +31,7 @@ EOF
   jq -e --argjson port "${expected_port}" '
     .protocol=="vless-plain" and .revision==1 and (.instances|length)==1 and
     .instances[0].id=="main" and .instances[0].tag=="vless-plain-in" and
-    .instances[0].listen=={address:"127.0.0.1",port:$port} and
+    .instances[0].listen=={address:"::",port:$port} and
     .instances[0].authentication.users==[
       {name:"probe",uuid:"11111111-1111-4111-8111-111111111111",flow:""}] and
     .instances[0].tls=={enabled:false} and .instances[0].client_trust=="system" and
@@ -40,7 +40,7 @@ EOF
   jq -e --argjson port "${expected_port}" '
     ([.inbounds[] | select(.type=="vless" and (.tls.reality? == null))][0]) as $inbound |
     (.inbounds|length)==1 and $inbound.tag=="vless-plain-in" and
-    $inbound.listen=="127.0.0.1" and $inbound.listen_port==$port and
+    $inbound.listen=="::" and $inbound.listen_port==$port and
     $inbound.users==[{name:"probe",uuid:"11111111-1111-4111-8111-111111111111"}] and
     ($inbound|has("tls")|not) and ($inbound|has("transport")|not)
   ' "${config_file}" >/dev/null

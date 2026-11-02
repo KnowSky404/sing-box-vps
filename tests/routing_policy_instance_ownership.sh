@@ -130,7 +130,7 @@ two_protocol_fixture() {
   make_store socks "${socks_policy}" 33091
   make_store mixed "${mixed_policy}" 33092
   write_protocol_index socks,mixed
-  policy=$(routing_policy_read_json | jq -c '.server.private_network_block=false |
+  policy=$(routing_policy_read_json | jq -c '.server.block_cn=false |
     .server.warp_ai=false | .server.warp_streaming=false |
     .server.rules=[{id:"local-block",kind:"domain",value:"localhost",action:"reject",enabled:true}]')
   printf '%s\n' "${policy}" > "${SB_ROUTING_POLICY_FILE}"
@@ -330,7 +330,8 @@ for scope in global disjoint; do
     > "${TMP_DIR}/result.json" 2> "${TMP_DIR}/transaction.err"; then
     [[ "${scope}" == disjoint ]] || fail 'first-node activation accepted a global route ahead of filtering'
     jq -e '.route.rules[0]=={inbound:"operator-http",action:"route",outbound:"direct"}' "${SINGBOX_CONFIG_FILE}" >/dev/null
-    probe_node socks-one false
+    # A fresh server-only policy has no implicit private-network rejection.
+    probe_node socks-one true
     no_pending_journal
   else
     [[ "${scope}" == global ]] || { cat "${TMP_DIR}/transaction.err" >&2; fail 'disjoint first-node control rejected'; }

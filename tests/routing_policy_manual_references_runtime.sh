@@ -138,7 +138,7 @@ mkdir -p -- "${SB_PROTOCOL_STATE_DIR}"
 printf 'INSTALLED_PROTOCOLS=mixed\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
 printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=1\nNODE_NAME=RuntimeMixed\nPORT=%s\nAUTH_ENABLED=n\nUSERNAME=\nPASSWORD=\n' \
   "${MIXED_PORT}" > "${SB_PROTOCOL_STATE_DIR}/mixed.env"
-policy=$(routing_policy_read_json | jq '.server.private_network_block=false')
+policy=$(routing_policy_read_json | jq '.server.block_cn=false')
 printf '%s\n' "${policy}" > "${SB_ROUTING_POLICY_FILE}"
 chmod 600 "${SB_ROUTING_POLICY_FILE}"
 SB_ENABLE_WARP=n
@@ -247,7 +247,7 @@ printf 'success\tbefore=%s\tafter=%s\trestarts=1\n' "${success_before}" "${succe
 stage global-policy-apply
 global_before=$(service_pid)
 routing_draft_create "${ARTIFACT_DIR}/global-draft.json"
-jq '.policy.server.private_network_block=true' "${ARTIFACT_DIR}/global-draft.json" > "${ARTIFACT_DIR}/global-edit.json"
+jq '.policy.server.rules=[{id:"private-fixture",kind:"ip_cidr",value:"127.0.0.0/8",action:"reject",enabled:true}]' "${ARTIFACT_DIR}/global-draft.json" > "${ARTIFACT_DIR}/global-edit.json"
 routing_policy_apply "${ARTIFACT_DIR}/global-edit.json" > "${ARTIFACT_DIR}/global-apply.log" 2>&1
 global_after=$(service_pid)
 [[ "$(restart_count global-policy-apply)" == 1 && "${global_before}" != 0 &&
@@ -257,7 +257,7 @@ wait_listener "${ADDED_MIXED_PORT}"
 assert_manual_context global-context
 jq -S '.inbounds[] | select(.tag=="mixed-added")' "${SINGBOX_CONFIG_FILE}" > "${ARTIFACT_DIR}/global-added-inbound.json"
 cmp "${ARTIFACT_DIR}/typed-added-inbound.json" "${ARTIFACT_DIR}/global-added-inbound.json"
-jq -e '.server.private_network_block==true' "${SB_ROUTING_POLICY_FILE}" >/dev/null
+jq -e '.schema_version==2 and .server.rules[0].id=="private-fixture"' "${SB_ROUTING_POLICY_FILE}" >/dev/null
 http_probe "${ADDED_MIXED_PORT}" blocked global-managed-private-blocked
 http_probe "${OPERATOR_HTTP_PORT}" allowed global-operator-marker
 printf 'global\tbefore=%s\tafter=%s\trestarts=1\n' "${global_before}" "${global_after}" >> "${ARTIFACT_DIR}/service-pids.tsv"

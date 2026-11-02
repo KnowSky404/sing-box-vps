@@ -28,12 +28,12 @@ EOF
   grep -Fqx 'CONFIG_SCHEMA_VERSION=2' "${state_file}"
   jq -e '.protocol=="http" and .revision==1 and (.instances|length)==1 and
     .instances[0].id=="main" and .instances[0].tag=="http-in" and
-    .instances[0].listen=={address:"127.0.0.1",port:1082} and
+    .instances[0].listen=={address:"::",port:1082} and
     .instances[0].authentication=={enabled:true,username:"http-user",password:"http-pass"} and
     .instances[0].tls=={enabled:false}' "${store_file}" >/dev/null
   jq -e --argjson port "${expected_port}" '
     ([.inbounds[] | select(.type=="http")][0]) as $inbound |
-    $inbound.listen=="127.0.0.1" and $inbound.listen_port==$port and
+    $inbound.listen=="::" and $inbound.listen_port==$port and
     $inbound.users==[{username:"http-user",password:"http-pass"}] and
     ($inbound|has("tls")|not)' "${config_file}" >/dev/null
   grep -Fqx 'INSTALLED_PROTOCOLS=http' /root/sing-box-vps/protocols/index.env

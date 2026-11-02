@@ -187,7 +187,7 @@ build_client_vless_reality_outbounds() {
     return "${status}"
   fi
   if (( count == 0 )); then
-    log_warn "未找到可用的 VLESS + REALITY 实例，已跳过客户端导出协议: vless-reality" >&2
+    log_warn "未找到可用的 VLESS + REALITY 实例，无法生成节点连接材料: vless-reality" >&2
     return 1
   fi
 
@@ -1527,12 +1527,6 @@ build_client_shadowtls_outbounds() (
   bundle_json=$(build_client_shadowtls_bundle_json "$@") || return 1
   jq -c '.outbounds[]' <<< "${bundle_json}"
 )
-
-build_client_outbounds_for_current_protocol() {
-  local protocol=${1:-} public_ip=${2:-$(get_public_ip)} outbound_json
-  outbound_json=$(build_client_outbound_json_for_protocol "${protocol}" "${public_ip}") || return $?
-  printf '%s\n' "${outbound_json}"
-}
 
 build_client_outbound_json_for_protocol() {
   local protocol original_protocol_state original_instance_id outbound_json build_status restore_original_state public_ip

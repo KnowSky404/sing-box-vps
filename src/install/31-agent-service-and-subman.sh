@@ -111,38 +111,6 @@ agent_collect_nodes_json() {
   return 0
 }
 
-agent_export_client_json() {
-  local config_json export_path compatibility_warnings_json
-
-  if ! config_json=$(build_singbox_client_config); then
-    agent_json_error "client_config_generation_failed" "客户端配置生成失败；请检查已安装协议的状态、端口与认证字段，原导出文件和备份未改变。"
-    return 1
-  fi
-
-  if ! validate_client_config_json "${config_json}"; then
-    agent_json_error "client_config_validation_failed" "客户端配置未通过引用或核心 check 校验，未发布导出文件。"
-    return 1
-  fi
-
-  compatibility_warnings_json=$(collect_client_export_warnings_json "${config_json}") || return 1
-
-  export_path=$(client_export_file_path)
-  if ! write_client_config_export "${config_json}"; then
-    log_warn "agent export-client 写入失败: ${export_path}" >&2
-    return 1
-  fi
-
-  jq -n \
-    --arg path "${export_path}" \
-    --argjson config "${config_json}" \
-    --argjson warnings "${compatibility_warnings_json}" \
-    '{
-      "path": $path,
-      "config": $config
-    }
-    + (if ($warnings | length) > 0 then {"warnings": $warnings} else {} end)'
-}
-
 agent_service_cli() {
   local command=${1:-}
   local json_flag=${2:-}

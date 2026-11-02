@@ -11,6 +11,7 @@ TESTABLE_INSTALL="${TMP_DIR}/install-testable.sh"
 sed \
   -e "s|readonly SB_PROJECT_DIR=\"/root/sing-box-vps\"|readonly SB_PROJECT_DIR=\"${TMP_DIR}/project\"|" \
   -e "s|readonly SINGBOX_BIN_PATH=\"/usr/local/bin/sing-box\"|readonly SINGBOX_BIN_PATH=\"${TMP_DIR}/bin/sing-box\"|" \
+  -e "s|readonly SBV_BIN_PATH=\"/usr/local/bin/sbv\"|readonly SBV_BIN_PATH=\"${TMP_DIR}/bin/sbv\"|" \
   -e "s|readonly SINGBOX_SERVICE_FILE=\"/etc/systemd/system/sing-box.service\"|readonly SINGBOX_SERVICE_FILE=\"${TMP_DIR}/sing-box.service\"|" \
   "${REPO_ROOT}/install.sh" > "${TESTABLE_INSTALL}"
 
@@ -59,7 +60,7 @@ if [[ "${output}" != *"4. 更新 sing-box 版本"* ]]; then
   exit 1
 fi
 
-if [[ "${output}" != *"14. 系统管理"* ]]; then
+if [[ "${output}" != *"13. 系统设置"* ]]; then
   printf 'expected system management menu entry to render, got:\n%s\n' "${output}" >&2
   exit 1
 fi
@@ -74,12 +75,12 @@ if [[ "${output}" != *"9. 运行状态摘要"* ]]; then
   exit 1
 fi
 
-if [[ "${output}" != *"11. 查看节点信息"* ]]; then
+if [[ "${output}" != *"11. 节点分享与订阅"* ]]; then
   printf 'expected node info menu entry to render, got:\n%s\n' "${output}" >&2
   exit 1
 fi
 
-if [[ "${output}" != *"12. 流媒体验证检测"* ]]; then
-  printf 'expected media check menu entry to shift to 12, got:\n%s\n' "${output}" >&2
+if [[ "${output}" != *"12. 网络与分流"* ]]; then
+  printf 'expected consolidated network menu entry at 12, got:\n%s\n' "${output}" >&2
   exit 1
 fi

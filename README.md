@@ -1,15 +1,15 @@
 # sing-box-vps
 
-面向 VPS 的 sing-box 安装与管理脚本，提供交互菜单和 Agent 命令，用于部署协议、维护服务和导出客户端配置。
+面向 VPS 的 sing-box 安装与管理脚本，提供交互菜单和 Agent 命令，用于部署协议、维护服务和分享节点信息。
 
-- 脚本版本：`2026110203`
+- 脚本版本：`2026110204`
 - sing-box 适配版本：`1.14.2`
 
 ## 主要能力
 
 - 15 个入站预设，支持多协议、多实例管理。
 - 配置校验、关键变更备份与失败回滚。
-- 统一规则与分流管理、域名广告拦截、客户端导出和 SubMan 节点同步。
+- 服务端 Block CN、WARP 与节点出口、AI/流媒体分流；节点链接/二维码与 SubMan 同步。
 
 协议条件与验证范围见 [Wiki 能力矩阵](https://github.com/KnowSky404/sing-box-vps/wiki/Protocol-Coverage)。
 

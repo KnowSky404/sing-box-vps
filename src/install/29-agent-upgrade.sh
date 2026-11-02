@@ -9,7 +9,6 @@ agent_print_help() {
   sbv agent status --json
   sbv agent nodes --json
   sbv agent links --json
-  sbv agent export-client --json
   sbv agent check --json
   sbv agent doctor --json
   sbv agent service restart --json --yes
@@ -37,7 +36,6 @@ agent_print_help() {
   status        输出服务、版本、路径和已安装协议。
   nodes         输出节点摘要，不包含完整分享链接或密码。
   links         输出完整连接材料，适合受信任 Agent 获取节点信息。
-  export-client 生成并校验 sing-box 裸核客户端配置，写入固定路径并输出 JSON。
   warp          输出 Cloudflare Warp 状态，包括启用/路由模式/账户/规则统计。
   component     管理 direct/tun/redirect/tproxy/cloudflared 入站、WireGuard/Tailscale/OpenConnect/OpenVPN endpoint、shared HTTP client 以及 SSH/Tor/分组等出站；list/diagnose 只读，export 仅按 ID 输出敏感配置，recover/takeover/rebuild/create/replace/delete 使用 CAS 与持久事务。
   check         执行 sing-box check 并输出结构化结果。
@@ -246,7 +244,7 @@ agent_capabilities_json() {
           outbound: ["ipv4_only", "ipv6_only", "prefer_ipv4", "prefer_ipv6"]
         },
         system: {bbr: true, firewall_port_management: true},
-        connection_material: {links: true, ansi_qr: true, bare_core_client_export: true},
+        connection_material: {links: true, ansi_qr: true},
         lifecycle: {
           service_start_stop_restart_status_logs: true,
           managed_instance_takeover_repair: true,
@@ -330,7 +328,6 @@ agent_capabilities_json() {
         upgrade: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart"},
         instance: {mutation: true, sensitive: false, confirmation: "--yes", service_impact: "restart_if_active", protocols: ["mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic", "hysteria", "naive", "shadowtls"], read_only_operations: ["view", "diagnose", "export"], read_only_protocols: ["vless-reality", "mixed", "socks", "http", "shadowsocks", "trojan", "vmess", "vless-plain", "anytls", "hy2", "snell", "tuic", "hysteria", "naive", "shadowtls"]},
         component: {mutation: true, sensitive: true, confirmation: "--yes", service_impact: "restart_if_active", roles: ["inbound", "endpoint", "outbound", "certificate_provider", "http_client", "service", "network_namespace", "rule_set"]},
-        "export-client": {mutation: true, sensitive: true},
         "service restart": {mutation: true, sensitive: false, confirmation: "--yes"},
         "subman-sync": {mutation: true, sensitive: true, external_write: true}
       },

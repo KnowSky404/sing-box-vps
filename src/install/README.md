@@ -55,7 +55,7 @@ uses temporary storage outside the checkout and never publishes an artifact.
 | `14`–`19` | Component schemas, state and transparent-network resources |
 | `20`–`22` | Config ownership, transactions, graph validation, generation and uninstall |
 | `23`–`24` | Terminal UI, network menus and protocol management |
-| `25`–`28` | Addresses, share links, SubMan, client outbounds and exports |
+| `25`–`28` | Addresses, share links, SubMan, per-node outbound materials and display |
 | `29`–`33` | Agent upgrades, status, service commands, instance transactions and dispatch |
 | `34`–`38` | Node inventory, typed stores, adapters, snapshots, takeover and recovery |
 | `39` | Top-level installation and management entrypoints |

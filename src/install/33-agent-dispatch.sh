@@ -526,13 +526,6 @@ agent_cli() {
       fi
       agent_cli_run "links" agent_collect_nodes_json "links"
       ;;
-    export-client)
-      if [[ $# -ne 1 || "${1:-}" != "--json" ]]; then
-        agent_cli_error "export-client" "invalid_arguments" "用法: sbv agent export-client --json"
-        return $?
-      fi
-      agent_cli_run "export-client" agent_export_client_json
-      ;;
     warp)
       if [[ $# -ne 1 || "${1:-}" != "--json" ]]; then
         agent_cli_error "warp" "invalid_arguments" "用法: sbv agent warp --json"
@@ -602,7 +595,7 @@ agent_dispatch() {
 
   command=$(agent_command_name_from_args "$@")
   if [[ "${command}" != capabilities && ( -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ) ]]; then
-    agent_cli_error "${command}" routing_transaction_pending "存在未完成的规则事务；请先通过交互菜单 13 恢复。"
+    agent_cli_error "${command}" routing_transaction_pending "存在未完成的规则事务；请先通过交互菜单 12 恢复。"
     return 1
   fi
   if ! agent_current_user_is_root; then
@@ -684,7 +677,7 @@ agent_dispatch() {
         agent_cli "$@"
       )
       ;;
-    upgrade|service|export-client|subman-sync)
+    upgrade|service|subman-sync)
       (
         if ! acquire_managed_write_lock; then
           agent_cli_error "${command}" instance_write_busy "另一个管理进程正在执行。"; return 1

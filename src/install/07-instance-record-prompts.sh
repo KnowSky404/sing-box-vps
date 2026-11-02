@@ -1,23 +1,4 @@
 
-prompt_global_instance_options() {
-  local default_exit private_access
-
-  routing_policy_prepare_install_defaults || return 1
-  default_exit="原生直连（WARP 关闭）"
-  if [[ "${SB_ENABLE_WARP}" == y ]]; then
-    if [[ "${SB_WARP_ROUTE_MODE}" == all ]]; then
-      default_exit="WARP 全量出口"
-    else
-      default_exit="原生直连，命中分流规则时使用 WARP"
-    fi
-  fi
-  private_access="允许"
-  [[ "${SB_ADVANCED_ROUTE}" != y ]] || private_access="拒绝"
-  log_info "使用全局规则：${default_exit}；服务端私网访问：${private_access}。"
-  log_info "新节点跟随全局规则；请通过菜单 13「规则与分流管理」调整策略。"
-  return 0
-}
-
 # Interactive Mixed management deliberately captures one validated store
 # snapshot before prompting.  The revision from that snapshot is passed to
 # the lifecycle CAS operation after the user finishes, so a long prompt can
@@ -569,7 +550,7 @@ hy2_management_build_record() {
     certificate_path=$(prompt_required_path "[Hysteria2] TLS 证书绝对路径（必填，如 /etc/ssl/certs/hy2.pem；当前 ${certificate_path}，已有值可留空保持）: " "${certificate_path}") || return 1
     key_path=$(prompt_required_path "[Hysteria2] TLS 私钥绝对路径（必填，如 /etc/ssl/private/hy2.key；当前 ${key_path}，已有值可留空保持）: " "${key_path}") || return 1
     tls=$(jq -cn --arg server_name "${server_name}" --arg certificate_path "${certificate_path}" --arg key_path "${key_path}" '{enabled:true,server_name:$server_name,certificate_path:$certificate_path,key_path:$key_path}') || return 1
-    echo '[Hysteria2] 证书信任：1=信任此证书（适合自签名证书，客户端导出会携带公开证书）；2=系统证书库（适合受信任 CA 签发的证书）。' >&2
+    echo '[Hysteria2] 证书信任：1=信任此证书（适合自签名证书，节点连接材料会携带公开证书）；2=系统证书库（适合受信任 CA 签发的证书）。' >&2
     trust_choice=$(prompt_choice "[Hysteria2] 客户端证书信任 [1-2]（当前 ${trust}，留空保持；新建默认 2）: " 1 2 "$([[ "${trust}" == system ]] && printf 2 || printf 1)") || return 1
     [[ "${trust_choice}" == 2 ]] && trust=system || trust=certificate
   fi

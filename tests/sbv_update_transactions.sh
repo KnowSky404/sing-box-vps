@@ -963,7 +963,7 @@ done
 
 prepare_existing_target "${OLD_SCRIPT}"
 set +e
-menu_output=$(printf '15\n0\n' | FAKE_CURL_MODE=dns FAKE_CURL_SOURCE="${VALID_CANDIDATE}" \
+menu_output=$(printf '14\n0\n' | FAKE_CURL_MODE=dns FAKE_CURL_SOURCE="${VALID_CANDIDATE}" \
   bash -c "source '${TESTABLE_INSTALL}'; show_banner() { :; }; check_root() { :; }; ensure_sbv_command_installed() { :; }; check_script_status() { SCRIPT_VER_STATUS='(无法检测更新)'; }; check_sb_version() { SB_VER_STATUS=''; }; check_bbr_status() { :; }; main_menu_service_status_summary() { printf 'mock'; }; main" 2>&1)
 menu_status=$?
 set -e

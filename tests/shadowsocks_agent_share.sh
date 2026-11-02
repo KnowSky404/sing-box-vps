@@ -71,7 +71,7 @@ jq -e '
   .method == "chacha20-ietf-poly1305" and .user_count == 2 and
   .auth_enabled == true and .listen.network == ["udp"] and
   .instance_revision == 7 and .shareable == true and
-  .client_exportable == true and
+  (has("client_exportable") | not) and
   (tostring | contains("päss word@/?:%") | not) and
   (tostring | contains("alice") | not) and
   (tostring | contains("password") | not) and
@@ -103,7 +103,7 @@ load_protocol_instance_state shadowsocks ss-single
 none_summary=$(agent_node_summary_json_for_current_protocol 203.0.113.10)
 jq -e '
   .protocol == "shadowsocks" and .auth_enabled == false and .user_count == 1 and
-  .listen.network == ["tcp"] and .shareable == true and .client_exportable == true
+  .listen.network == ["tcp"] and .shareable == true and (has("client_exportable") | not)
 ' <<< "${none_summary}" >/dev/null
 none_links=$(agent_link_json_for_current_protocol '2001:db8::10')
 jq -e '
@@ -128,12 +128,6 @@ unset -f build_shadowsocks_links_json
 printf '%s\n' "${baseline_store}" > "${store_file}"
 chmod 600 "${store_file}"
 load_protocol_instance_state shadowsocks ss-single
-
-full_export_warnings=$(collect_client_export_warnings_json '{"outbounds":[{"type":"shadowsocks","method":"none"}]}' )
-jq -e '
-  any(.[]; .code == "shadowsocks_plaintext_transport") and
-  (any(.[]; .code == "shadowsocks_uri_network_omitted") | not)
-' <<< "${full_export_warnings}" >/dev/null
 
 SB_SHADOWSOCKS_NETWORK_JSON='["tcp","udp"]'
 SB_SHADOWSOCKS_AUTH_JSON=$(jq -cn --arg method '2022-blake3-aes-128-gcm' --arg password "${key_128}" \

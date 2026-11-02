@@ -45,7 +45,7 @@ load_protocol_instance_state http web
 
 summary=$(agent_node_summary_json_for_current_protocol 203.0.113.10)
 jq -e '
-  .protocol == "http" and .shareable == true and .client_exportable == true and
+  .protocol == "http" and .shareable == true and (has("client_exportable") | not) and
   .auth_enabled == true and .tls_enabled == false and .instance_id == "web" and
   .tag == "http-web" and .listen.address == "127.0.0.1" and .listen.port == 31808 and
   (has("username") | not) and (has("password") | not) and
@@ -93,7 +93,7 @@ jq '.inbounds[0].tls = {enabled:true,server_name:"proxy.example",certificate_pat
 mv "${SINGBOX_CONFIG_FILE}.next" "${SINGBOX_CONFIG_FILE}"
 load_protocol_instance_state http web
 summary=$(agent_node_summary_json_for_current_protocol 203.0.113.10)
-jq -e '.protocol == "http" and .shareable == false and .client_exportable == true and .tls_enabled == true and (tostring | contains("proxy.crt") | not)' <<< "${summary}" >/dev/null
+jq -e '.protocol == "http" and .shareable == false and (has("client_exportable") | not) and .tls_enabled == true and (tostring | contains("proxy.crt") | not)' <<< "${summary}" >/dev/null
 links=$(agent_link_json_for_current_protocol 203.0.113.10)
 jq -e '.protocol == "http" and (.links | length) == 0 and
   any(.warnings[]?; .code == "http_tls_uri_unrepresentable") and

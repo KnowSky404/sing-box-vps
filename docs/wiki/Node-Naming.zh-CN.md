@@ -14,7 +14,7 @@
 
 例如 `fra-01-hy2-01` 和 `fra-01-vless-reality-01`。序号至少两位，在协议当前清单中选择空闲生成名称。删除实例不重新编号其他实例。名称可以自定义；已有名称和旧状态恢复时的回退默认名不变。
 
-主菜单 **11 → 5「设置新实例的主机显示标签」** 设置后续默认名称使用的标签。可选私有文件为 `/root/sing-box-vps/node-naming.json`，仅含 `host_label`：
+主菜单 **11 → 4「设置新实例的主机显示标签」** 设置后续默认名称使用的标签。可选私有文件为 `/root/sing-box-vps/node-naming.json`，仅含 `host_label`：
 
 ```json
 {"host_label":"fra-01"}
@@ -55,6 +55,6 @@ fra-01-hy2-01-u-2bd806c97f0e-v6
 
 通过现有实例管理修改基础名。下一次明确执行 SubMan 同步时，如果原节点仍存在，使用原 externalKey 更新该节点。不要仅为改名先删除再重建，删除可能移除聚合引用。
 
-主菜单 **11 → 4** 将保存的 `SUBMAN_NODE_PREFIX` 称为 **同步身份前缀**，原值及键格式保留。修改它会改变远端身份、保留旧节点；主机显示标签是独立设置。保存设置不执行同步；节点 API 写入也不会自动重新发布以前生成的订阅或客户端产物。
+主菜单 **11 → 3** 将保存的 `SUBMAN_NODE_PREFIX` 称为 **同步身份前缀**，原值及键格式保留。修改它会改变远端身份、保留旧节点；主机显示标签是独立设置。保存设置不执行同步；节点 API 写入也不会自动重新发布以前生成的订阅或客户端产物。
 
 统一命名不新增协议支持、不改变分享和信任条件，也不联系生产服务。另见 [SubMan 地址选择](https://github.com/KnowSky404/sing-box-vps/wiki/SubMan-Address-Selection)、[交互管理](https://github.com/KnowSky404/sing-box-vps/wiki/Management) 和 [中文实现 SPEC](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/unified-node-naming.zh-CN.md)（[English SPEC](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/unified-node-naming.md)）。

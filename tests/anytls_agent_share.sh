@@ -59,7 +59,7 @@ jq -n --argjson inbounds "${rendered}" \
 load_plain_proxy_structured_instance anytls public
 summary=$(agent_anytls_node_json 203.0.113.44)
 jq -e '.protocol=="anytls" and .instance_id=="public" and .user_count==2 and .tls_enabled==true and
-  .client_trust=="certificate" and .client_exportable==true and .shareable==false and
+  .client_trust=="certificate" and (has("client_exportable")|not) and .shareable==false and
   (.password? == null) and (.users? == null)' <<< "${summary}" >/dev/null
 
 links=$(agent_anytls_link_json 203.0.113.44)
@@ -70,13 +70,6 @@ jq -e '.protocol=="anytls" and (.links|length)==0 and (.outbounds|length)==2 and
   <<< "${links}" >/dev/null
 ! grep -Fq "${TMP_DIR}/anytls.key" <<< "${links}"
 ! grep -Fq 'private key fixture' <<< "${links}"
-
-exported=$(agent_cli export-client --json)
-jq -e '.ok==true and .command=="export-client" and
-  ([.data.config.outbounds[]|select(.type=="anytls")]|length)==3 and
-  all(.data.config.outbounds[]|select(.type=="anytls"); (.server|type)=="string" and length>0 and
-    (.password|type)=="string") and (tostring|contains("private key fixture")|not)' \
-  <<< "${exported}" >/dev/null
 
 # System trust remains an explicit verified mode and still carries the warning
 # that AnyTLS has no lossless standard URI representation.
@@ -96,4 +89,4 @@ jq -e '.ok==true and ([.data.nodes[]|select(.protocol=="anytls")]|length)==2 and
   all(.data.nodes[]|select(.protocol=="anytls"); (.password? == null) and (.outbound? == null))' \
   <<< "${nodes}" >/dev/null
 
-printf 'AnyTLS Agent/share checks passed: links=2 export=secret-safe\n'
+printf 'AnyTLS Agent/share checks passed: links=2 node-material=secret-safe\n'

@@ -360,7 +360,7 @@ main() {
   show_banner
   check_root
   if [[ -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ]]; then
-    log_warn "存在待恢复的规则事务；请进入菜单 13 恢复。"
+    log_warn "存在待恢复的规则事务；请进入菜单 12 恢复。"
   elif [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
     log_warn "存在待恢复的实例事务；仅开放只读诊断与菜单 2 恢复入口。"
   elif ! ensure_sbv_command_installed; then
@@ -386,30 +386,29 @@ main() {
     render_menu_item "9" "运行状态摘要" "" "$(main_menu_service_status_summary)"
     render_menu_item "10" "查看实时日志"
 
-    render_section_title "节点与诊断"
+    render_section_title "节点与订阅"
     render_menu_item "11" "节点分享与订阅"
-    render_menu_item "12" "流媒体与出口检测"
 
     render_section_title "网络与系统"
-    render_menu_item "13" "规则与分流管理"
-    render_menu_item "14" "系统与网络设置"
+    render_menu_item "12" "网络与分流"
+    render_menu_item "13" "系统设置"
 
     render_section_title "脚本维护"
-    render_menu_item "15" "更新管理脚本 (sbv)" "" "${SCRIPT_VER_STATUS}"
-    render_menu_item "16" "卸载管理脚本 (sbv)"
+    render_menu_item "14" "更新管理脚本 (sbv)" "" "${SCRIPT_VER_STATUS}"
+    render_menu_item "15" "卸载管理脚本 (sbv)"
     echo "0. 退出"
     render_main_menu_footer
-    choice=$(prompt_choice "请选择 [0-16]: " 0 16 "")
+    choice=$(prompt_choice "请选择 [0-15]: " 0 15 "")
 
     if [[ -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ]]; then
       case "${choice}" in
-        0|10|13) ;;
-        *) log_warn "请先通过菜单 13 恢复规则事务；本次未执行其他操作。"; continue ;;
+        0|10|12) ;;
+        *) log_warn "请先通过菜单 12 恢复规则事务；本次未执行其他操作。"; continue ;;
       esac
     fi
     if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
       case "${choice}" in
-        0|2|9|10|12) ;;
+        0|2|9|10) ;;
         *) log_warn "请先通过菜单 2 恢复未完成的实例事务；本次未执行其他写操作。"; continue ;;
       esac
     fi
@@ -426,10 +425,9 @@ main() {
       9) view_status ;;
       10) journalctl -u sing-box -f || true ;;
       11) view_node_info ;;
-      12) media_check_menu ;;
-      13) routing_management_menu || log_warn '规则操作未完成，已返回主菜单。' ;;
-      14) system_management_menu ;;
-      15)
+      12) routing_management_menu || log_warn '规则操作未完成，已返回主菜单。' ;;
+      13) system_management_menu ;;
+      14)
         if manual_update_script; then
           if reload_sbv_menu_after_update; then
             :
@@ -442,7 +440,7 @@ main() {
           log_warn "sbv 自更新失败（退出码 ${update_status}），已返回管理菜单。"
         fi
         ;;
-      16) uninstall_script ;;
+      15) uninstall_script ;;
       0) exit_script ;;
       *) log_warn "无效选项，请重新选择。" ;;
     esac
