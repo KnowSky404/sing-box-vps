@@ -38,6 +38,8 @@ export PATH="${TMP_DIR}/stub-bin:${PATH}"
 
 # shellcheck disable=SC1090
 source "${TESTABLE_INSTALL}"
+source "${REPO_ROOT}/tests/uninstall_routing_previous_helper.sh"
+create_uninstall_routing_previous_snapshot
 
 mkdir -m 700 "${SB_COMPONENT_TRANSACTION_DIR}"
 if perform_full_uninstall; then
@@ -57,6 +59,11 @@ fi
 rmdir "${SB_COMPONENT_TRANSACTION_DIR}"
 
 perform_full_uninstall
+
+if [[ -e "${SB_ROUTING_PREVIOUS_DIR}" || -L "${SB_ROUTING_PREVIOUS_DIR}" ]]; then
+  printf 'expected the private routing snapshot to be removed during purge\n' >&2
+  exit 1
+fi
 
 if [[ -e "${PROJECT_DIR}" ]]; then
   printf 'expected project dir to be removed: %s\n' "${PROJECT_DIR}" >&2

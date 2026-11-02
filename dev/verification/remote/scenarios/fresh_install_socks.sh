@@ -15,8 +15,6 @@ ${expected_port}
 y
 socks-user
 socks-pass
-n
-n
 0
 EOF
   test -x /usr/local/bin/sbv

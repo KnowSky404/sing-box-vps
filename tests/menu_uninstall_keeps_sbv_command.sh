@@ -34,8 +34,15 @@ export PATH="${TMP_DIR}/stub-bin:${PATH}"
 
 # shellcheck disable=SC1090
 source "${TESTABLE_INSTALL}"
+source "${REPO_ROOT}/tests/uninstall_routing_previous_helper.sh"
+create_uninstall_routing_previous_snapshot
 
 perform_singbox_runtime_uninstall
+
+if [[ -e "${SB_ROUTING_PREVIOUS_DIR}" || -L "${SB_ROUTING_PREVIOUS_DIR}" ]]; then
+  printf 'expected menu runtime removal to clean the private routing snapshot\n' >&2
+  exit 1
+fi
 
 if [[ -e "${PROJECT_DIR}" ]]; then
   printf 'expected project dir to be removed: %s\n' "${PROJECT_DIR}" >&2

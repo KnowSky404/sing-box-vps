@@ -696,20 +696,22 @@ bash() {
         fi
 
         if [[ "\${actual_lines[2]:-}" == "1" ]]; then
-          [[ "\${#actual_lines[@]}" -eq 13 ]]
+          if [[ "\${#actual_lines[@]}" -ne 12 ]]; then
+            printf 'unexpected vless install input count: %s\n' "\${#actual_lines[@]}" >&2
+            return 1
+          fi
           [[ "\${actual_lines[0]}" == "1" ]]
           [[ "\${actual_lines[1]}" == "" ]]
           [[ "\${actual_lines[2]}" == "1" ]]
-          [[ "\${actual_lines[3]}" == "" ]]
-          [[ "\${actual_lines[4]}" == "443" ]]
-          [[ "\${actual_lines[5]}" == "2" ]]
-          [[ "\${actual_lines[6]}" == "www.cloudflare.com" ]]
-          [[ "\${actual_lines[7]}" == "n" ]]
-          [[ "\${actual_lines[8]}" == "1" ]]
-          [[ "\${actual_lines[9]}" == "n" ]]
+          [[ "\${actual_lines[3]}" == "1" ]]
+          [[ "\${actual_lines[4]}" == "" ]]
+          [[ "\${actual_lines[5]}" == "443" ]]
+          [[ "\${actual_lines[6]}" == "2" ]]
+          [[ "\${actual_lines[7]}" == "www.cloudflare.com" ]]
+          [[ "\${actual_lines[8]}" == "n" ]]
+          [[ "\${actual_lines[9]}" == "1" ]]
           [[ "\${actual_lines[10]}" == "n" ]]
-          [[ "\${actual_lines[11]}" == "n" ]]
-          [[ "\${actual_lines[12]}" == "0" ]]
+          [[ "\${actual_lines[11]}" == "0" ]]
           printf '443\n' > "\${REMOTE_PORT_FILE}"
           next_install_uuid > "\${REMOTE_UUID_FILE}"
           printf 'www.cloudflare.com\n' > "\${REMOTE_SNI_FILE}"
@@ -718,7 +720,10 @@ bash() {
         fi
 
         if [[ "\${actual_lines[2]:-}" == "4" ]]; then
-          [[ "\${#actual_lines[@]}" -eq 14 ]]
+          if [[ "\${#actual_lines[@]}" -ne 12 ]]; then
+            printf 'unexpected anytls install input count: %s\n' "\${#actual_lines[@]}" >&2
+            return 1
+          fi
           [[ "\${actual_lines[0]}" == "1" ]]
           [[ "\${actual_lines[1]}" == "" ]]
           [[ "\${actual_lines[2]}" == "4" ]]
@@ -730,9 +735,7 @@ bash() {
           [[ "\${actual_lines[8]}" == "2" ]]
           [[ -n "\${actual_lines[9]}" ]]
           [[ -n "\${actual_lines[10]}" ]]
-          [[ "\${actual_lines[11]}" == "n" ]]
-          [[ "\${actual_lines[12]}" == "n" ]]
-          [[ "\${actual_lines[13]}" == "0" ]]
+          [[ "\${actual_lines[11]}" == "0" ]]
           printf '9443\n' > "\${REMOTE_PORT_FILE}"
           printf '1\n' > "\${REMOTE_CONFIG_PRESENT_FILE}"
           printf '1\n' > "\${REMOTE_SERVICE_FILE_PRESENT_FILE}"
@@ -765,7 +768,10 @@ INDEX_EOF
         fi
 
         if [[ "\${actual_lines[2]:-}" == "5" ]]; then
-          [[ "\${#actual_lines[@]}" -eq 10 ]]
+          if [[ "\${#actual_lines[@]}" -ne 8 ]]; then
+            printf 'unexpected socks install input count: %s\n' "\${#actual_lines[@]}" >&2
+            return 1
+          fi
           [[ "\${actual_lines[0]}" == "1" ]]
           [[ "\${actual_lines[1]}" == "" ]]
           [[ "\${actual_lines[2]}" == "5" ]]
@@ -773,9 +779,7 @@ INDEX_EOF
           [[ "\${actual_lines[4]}" == "y" ]]
           [[ "\${actual_lines[5]}" == "socks-user" ]]
           [[ "\${actual_lines[6]}" == "socks-pass" ]]
-          [[ "\${actual_lines[7]}" == "n" ]]
-          [[ "\${actual_lines[8]}" == "n" ]]
-          [[ "\${actual_lines[9]}" == "0" ]]
+          [[ "\${actual_lines[7]}" == "0" ]]
           printf '1081\n' > "\${REMOTE_PORT_FILE}"
           printf '1\n' > "\${REMOTE_CONFIG_PRESENT_FILE}"
           printf '1\n' > "\${REMOTE_SERVICE_FILE_PRESENT_FILE}"
@@ -800,7 +804,10 @@ INDEX_EOF
         fi
 
         if [[ "\${actual_lines[2]:-}" == "6" ]]; then
-          [[ "\${#actual_lines[@]}" -eq 11 ]]
+          if [[ "\${#actual_lines[@]}" -ne 9 ]]; then
+            printf 'unexpected http install input count: %s\n' "\${#actual_lines[@]}" >&2
+            return 1
+          fi
           [[ "\${actual_lines[0]}" == "1" ]]
           [[ "\${actual_lines[1]}" == "" ]]
           [[ "\${actual_lines[2]}" == "6" ]]
@@ -809,9 +816,7 @@ INDEX_EOF
           [[ "\${actual_lines[5]}" == "http-user" ]]
           [[ "\${actual_lines[6]}" == "http-pass" ]]
           [[ "\${actual_lines[7]}" == "n" ]]
-          [[ "\${actual_lines[8]}" == "n" ]]
-          [[ "\${actual_lines[9]}" == "n" ]]
-          [[ "\${actual_lines[10]}" == "0" ]]
+          [[ "\${actual_lines[8]}" == "0" ]]
           printf '1082\n' > "\${REMOTE_PORT_FILE}"
           printf '1\n' > "\${REMOTE_CONFIG_PRESENT_FILE}"
           printf '1\n' > "\${REMOTE_SERVICE_FILE_PRESENT_FILE}"
@@ -836,7 +841,10 @@ INDEX_EOF
         fi
 
         if [[ "\${actual_lines[2]:-}" == "7" ]]; then
-          [[ "\${#actual_lines[@]}" -eq 11 ]]
+          if [[ "\${#actual_lines[@]}" -ne 9 ]]; then
+            printf 'unexpected shadowsocks install input count: %s\n' "\${#actual_lines[@]}" >&2
+            return 1
+          fi
           [[ "\${actual_lines[0]}" == "1" ]]
           [[ "\${actual_lines[1]}" == "" ]]
           [[ "\${actual_lines[2]}" == "7" ]]
@@ -845,9 +853,7 @@ INDEX_EOF
           [[ "\${actual_lines[5]}" == "n" ]]
           [[ "\${actual_lines[6]}" == "MDEyMzQ1Njc4OWFiY2RlZg==" ]]
           [[ "\${actual_lines[7]}" == "1" ]]
-          [[ "\${actual_lines[8]}" == "n" ]]
-          [[ "\${actual_lines[9]}" == "n" ]]
-          [[ "\${actual_lines[10]}" == "0" ]]
+          [[ "\${actual_lines[8]}" == "0" ]]
           printf '1083\n' > "\${REMOTE_PORT_FILE}"
           printf '1\n' > "\${REMOTE_CONFIG_PRESENT_FILE}"
           printf '1\n' > "\${REMOTE_SERVICE_FILE_PRESENT_FILE}"
@@ -874,11 +880,14 @@ INDEX_EOF
           return 0
         fi
 
-        if [[ "\${actual_lines[2]:-}" == "13" ]]; then
-          [[ "\${#actual_lines[@]}" -eq 22 ]]
+        if [[ "\${actual_lines[2]:-}" == "12" ]]; then
+          if [[ "\${#actual_lines[@]}" -ne 20 ]]; then
+            printf 'unexpected hysteria install input count: %s\n' "\${#actual_lines[@]}" >&2
+            return 1
+          fi
           [[ "\${actual_lines[0]}" == "1" ]]
           [[ "\${actual_lines[1]}" == "" ]]
-          [[ "\${actual_lines[2]}" == "13" ]]
+          [[ "\${actual_lines[2]}" == "12" ]]
           [[ "\${actual_lines[3]}" == "1086" ]]
           [[ "\${actual_lines[4]}" == "1" ]]
           [[ "\${actual_lines[5]}" == "hysteria-user" ]]
@@ -895,9 +904,7 @@ INDEX_EOF
           [[ "\${actual_lines[16]}" == "0" ]]
           [[ "\${actual_lines[17]}" == "" ]]
           [[ "\${actual_lines[18]}" == "" ]]
-          [[ "\${actual_lines[19]}" == "n" ]]
-          [[ "\${actual_lines[20]}" == "n" ]]
-          [[ "\${actual_lines[21]}" == "0" ]]
+          [[ "\${actual_lines[19]}" == "0" ]]
           printf '1086\n' > "\${REMOTE_PORT_FILE}"
           printf '1\n' > "\${REMOTE_CONFIG_PRESENT_FILE}"
           printf '1\n' > "\${REMOTE_SERVICE_FILE_PRESENT_FILE}"

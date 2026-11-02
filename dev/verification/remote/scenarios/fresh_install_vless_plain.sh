@@ -22,8 +22,6 @@ probe
 
 n
 1
-n
-n
 0
 EOF
   test -x /usr/local/bin/sbv

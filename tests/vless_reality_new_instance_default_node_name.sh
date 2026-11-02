@@ -47,6 +47,7 @@ check_port_conflict() {
 
 load_vless_reality_instance_state() {
   SB_SNI="www.cloudflare.com"
+  SB_OUTBOUND_POLICY="warp"
   return 0
 }
 
@@ -95,9 +96,12 @@ if [[ "${duplicate_check_seen}" != "y" ]]; then
   exit 1
 fi
 
-# Outbound policy is the final input before a new instance can be persisted.
-# Failure must stop creation even when the caller is checking its exit status.
-prompt_instance_outbound_policy() { return 1; }
+# An existing default instance's independent Warp override must not leak into
+# a new instance, and creating it no longer asks a routing question.
+prompt_instance_outbound_policy() {
+  printf 'FAIL: new instances must not ask an outbound-policy question\n' >&2
+  return 1
+}
 duplicate_check_seen="n"
 if prompt_vless_reality_instance_create <<'EOF'
 
@@ -105,10 +109,9 @@ if prompt_vless_reality_instance_create <<'EOF'
 445
 EOF
 then
-  printf 'FAIL: outbound input failure did not cancel REALITY creation\n' >&2
+  :
+else
+  printf 'FAIL: creation still depended on an outbound-policy question\n' >&2
   exit 1
 fi
-if [[ "${duplicate_check_seen}" != n ]]; then
-  printf 'FAIL: creation continued after failed outbound input\n' >&2
-  exit 1
-fi
+[[ "${duplicate_check_seen}" == y && "${SB_OUTBOUND_POLICY}" == default ]]

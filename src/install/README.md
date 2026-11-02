@@ -2,11 +2,12 @@
 
 [中文开发说明](../../docs/wiki/Development.md#模块化源码与单文件构建)
 
-Maintain the installer in these 40 Bash source fragments. The explicit order in
+Maintain the installer in these 44 Bash source fragments. The explicit order in
 `manifest.txt` preserves the original definitions, global state and entrypoint.
 Each fragment contains complete shell constructs and is under 2,000 lines at
 the initial split. Fragments are build inputs; do not execute or download them
-individually. The numbers indicate concatenation order, not runtime dependencies.
+individually. The manifest defines concatenation order; `43-launcher.sh` runs the
+entrypoint after all modules have been defined.
 
 The root `install.sh` is a committed, generated standalone artifact. Bootstrap,
 self-update, the global `sbv` command, tests and Docker continue to consume it
@@ -58,6 +59,8 @@ uses temporary storage outside the checkout and never publishes an artifact.
 | `29`–`33` | Agent upgrades, status, service commands, instance transactions and dispatch |
 | `34`–`38` | Node inventory, typed stores, adapters, snapshots, takeover and recovery |
 | `39` | Top-level installation and management entrypoints |
+| `40`–`42` | Routing policy, application/recovery transactions and the unified menu |
+| `43` | Final source-versus-execution guard |
 
 This first split intentionally preserves byte order and behavior. Functions may
 still call helpers in later modules; all definitions are assembled before the

@@ -14,7 +14,17 @@ setup_service() { :; }
 open_committed_protocol_ports() { :; }
 refresh_vless_reality_qos_rules() { :; }
 display_status_summary() { :; }
-systemctl() { :; }
+systemctl() {
+  case "${1:-}" in
+    is-active)
+      [[ "${2:-}" == --quiet ]] || printf 'active\n'
+      ;;
+    show) printf 'active\n' ;;
+    *) : ;;
+  esac
+}
+[[ "${SINGBOX_SERVICE_FILE}" == "${TMP_DIR}/sing-box.service" ]]
+printf '[Service]\nExecStart=/fixture/sing-box\n' > "${SINGBOX_SERVICE_FILE}"
 test_warp_key=$(openssl rand -base64 32)
 register_warp() {
   printf 'WARP_PRIV_KEY=%s\nWARP_V4=172.16.0.2\nWARP_V6=2606:4700:110:8cde::2\nWARP_CLIENT_ID=hCaJ\n' \
@@ -40,19 +50,29 @@ jq -e '.dns.strategy=="ipv4_only" and
   any(.outbounds[]; .tag=="direct" and .domain_resolver.strategy=="ipv4_only")' "${SINGBOX_CONFIG_FILE}" >/dev/null
 "${core}" check -c "${SINGBOX_CONFIG_FILE}"
 rm "${SB_PROJECT_DIR}/managed-config.generated.json"
-warp_management >"${TMP_DIR}/enable.log" 2>&1 <<'INPUT'
-1
+routing_draft_create "${TMP_DIR}/enable-draft.json"
+cp -p "${SINGBOX_CONFIG_FILE}" "${TMP_DIR}/before-enable.json"
+routing_default_outbound_menu "${TMP_DIR}/enable-draft.json" >"${TMP_DIR}/enable-draft.log" 2>&1 <<'INPUT'
+3
 0
 INPUT
+jq -e '.warp.enabled==true and .warp.mode=="all"' "${TMP_DIR}/enable-draft.json" >/dev/null
+cmp "${TMP_DIR}/before-enable.json" "${SINGBOX_CONFIG_FILE}"
+routing_policy_apply "${TMP_DIR}/enable-draft.json" >"${TMP_DIR}/enable.log" 2>&1
 jq -e '.route.final=="warp-ep" and any(.endpoints[]; .tag=="warp-ep") and
   any(.outbounds[]; .tag=="manual-direct" and .bind_interface=="lo")' "${SINGBOX_CONFIG_FILE}" >/dev/null
 "${core}" check -c "${SINGBOX_CONFIG_FILE}"
 rm "${SB_PROJECT_DIR}/managed-config.generated.json"
-warp_management >"${TMP_DIR}/disable.log" 2>&1 <<'INPUT'
-2
+routing_draft_create "${TMP_DIR}/disable-draft.json"
+cp -p "${SINGBOX_CONFIG_FILE}" "${TMP_DIR}/before-disable.json"
+routing_default_outbound_menu "${TMP_DIR}/disable-draft.json" >"${TMP_DIR}/disable-draft.log" 2>&1 <<'INPUT'
+1
 0
 INPUT
+jq -e '.warp.enabled==false' "${TMP_DIR}/disable-draft.json" >/dev/null
+cmp "${TMP_DIR}/before-disable.json" "${SINGBOX_CONFIG_FILE}"
+routing_policy_apply "${TMP_DIR}/disable-draft.json" >"${TMP_DIR}/disable.log" 2>&1
 jq -e '.route.final=="direct" and all(.endpoints[]?; .tag!="warp-ep") and
   any(.outbounds[]; .tag=="manual-direct" and .bind_interface=="lo")' "${SINGBOX_CONFIG_FILE}" >/dev/null
 "${core}" check -c "${SINGBOX_CONFIG_FILE}"
-printf 'Legacy global settings: stack and Warp enable/disable preserve manual records and pass real core checks\n'
+printf 'Legacy global settings: stack and explicit draft/apply preserve manual records and pass real core checks\n'

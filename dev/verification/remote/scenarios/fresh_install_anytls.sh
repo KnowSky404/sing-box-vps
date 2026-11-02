@@ -44,8 +44,6 @@ ${expected_password}
 2
 ${cert_path}
 ${key_path}
-n
-n
 0
 EOF
   test -f /root/sing-box-vps/config.json

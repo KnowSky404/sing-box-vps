@@ -5,37 +5,37 @@ set -euo pipefail
 TESTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091
 source "${TESTS_DIR}/menu_test_helper.sh"
-
 setup_menu_test_env 120
 source_testable_install
 
-load_current_config_state() {
-  SB_ENABLE_WARP="y"
-  SB_WARP_ROUTE_MODE="selective"
-}
+routing_nodes_json() { printf '[]\n'; }
+register_warp() { printf 'read-only status registered Warp\n' >&2; return 98; }
+systemctl() { printf 'read-only status controlled a service\n' >&2; return 98; }
+ensure_warp_routing_assets() { printf 'read-only status created routing assets\n' >&2; return 98; }
+routing_policy_apply() { printf 'read-only status applied settings\n' >&2; return 98; }
 
-ensure_warp_routing_assets() {
-  :
-}
-
+# The compatibility entry renders the unified overview from the live config,
+# even when a stale shell variable says the opposite.
+printf '%s\n' '{"inbounds":[],"endpoints":[{"type":"wireguard","tag":"warp-ep"}],"route":{"rules":[],"final":"warp-ep"}}' > "${SINGBOX_CONFIG_FILE}"
+SB_ENABLE_WARP=n
 output=$(warp_management <<'EOF'
 0
 EOF
 )
-
 plain_output=$(strip_ansi "${output}")
+[[ "${plain_output}" == *'规则与分流管理'* ]]
+[[ "${plain_output}" == *'全局 WARP 分流: 开启'* ]]
+[[ "${output}" == *$'\033[0;32m开启\033[0m'* ]]
+[[ "${output}" != *'\033[0;32m开启\033[0m'* ]]
 
-if [[ "${plain_output}" != *"当前状态: 已开启"* ]]; then
-  printf 'expected warp summary status text, got:\n%s\n' "${output}" >&2
-  exit 1
-fi
-
-if [[ "${output}" == *'\\033[0;32m已开启\\033[0m'* ]]; then
-  printf 'expected warp summary status to render ANSI color instead of literal escape text, got:\n%s\n' "${output}" >&2
-  exit 1
-fi
-
-if [[ "${output}" != *$'\033[0;32m已开启\033[0m'* ]]; then
-  printf 'expected warp summary status to contain rendered ANSI escapes, got:\n%s\n' "${output}" >&2
-  exit 1
-fi
+printf '%s\n' '{"inbounds":[],"outbounds":[{"type":"direct","tag":"direct"}],"route":{"rules":[],"final":"direct"}}' > "${SINGBOX_CONFIG_FILE}"
+SB_ENABLE_WARP=y
+output=$(warp_management <<'EOF'
+0
+EOF
+)
+plain_output=$(strip_ansi "${output}")
+[[ "${plain_output}" == *'全局 WARP 分流: 关闭'* ]]
+[[ "${output}" == *$'\033[0;33m关闭\033[0m'* ]]
+[[ ! -e "${SB_ROUTING_POLICY_FILE}" && ! -e "${SB_WARP_KEY_FILE}" ]]
+printf 'Unified WARP overview uses live state and rendered ANSI status colors\n'

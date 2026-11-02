@@ -24,7 +24,8 @@ prompt_vless_reality_update() {
   prompt_vless_reality_rate_limit_update_fields || return 1
   prompt_vless_reality_advanced_update_fields || return 1
   validate_current_reality_sni_alpn_or_warn
-  SB_OUTBOUND_POLICY=$(prompt_instance_outbound_policy "新出站策略" "${SB_OUTBOUND_POLICY:-default}") || return 1
+  # Node routing is edited from the unified rules menu; preserve this instance.
+  return 0
 }
 
 validate_reality_sni_syntax() {

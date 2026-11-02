@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026110202
+# Version: 2026110203
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026110202"
+readonly SCRIPT_VERSION="2026110203"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 # A single IPv6 wildcard socket accepts IPv4 and IPv6 in sing-box on Linux.
 readonly SB_DEFAULT_LISTEN_ADDRESS="::"
@@ -26,6 +26,9 @@ readonly SB_WARP_ROUTE_SETTINGS_FILE="${SB_PROJECT_DIR}/warp-routing.env"
 readonly SB_WARP_DOMAINS_FILE="${SB_PROJECT_DIR}/warp-domains.txt"
 readonly SB_WARP_REMOTE_RULESETS_FILE="${SB_PROJECT_DIR}/warp-remote-rule-sets.txt"
 readonly SB_WARP_LOCAL_RULESET_DIR="${SB_PROJECT_DIR}/rule-set/warp"
+readonly SB_ROUTING_POLICY_FILE="${SB_PROJECT_DIR}/routing-policy.json"
+readonly SB_ROUTING_TRANSACTION_DIR="${SB_PROJECT_DIR}.rules-write.lock"
+readonly SB_ROUTING_PREVIOUS_DIR="${SB_PROJECT_DIR}.rules-previous"
 readonly SB_STACK_STATE_FILE="${SB_PROJECT_DIR}/stack-mode.env"
 readonly SB_MEDIA_CHECK_DIR="${SB_PROJECT_DIR}/media-check"
 readonly SB_MEDIA_CHECK_SCRIPT="${SB_MEDIA_CHECK_DIR}/region_restriction_check.sh"
@@ -374,6 +377,11 @@ warp_client_id_to_reserved_json() {
   printf '%s' "${reserved_json}"
 }
 
+warp_credentials_content() {
+  printf 'WARP_ID=%q\nWARP_TOKEN=%q\nWARP_PRIV_KEY=%q\nWARP_PUB_KEY=%q\nWARP_V4=%q\nWARP_V6=%q\nWARP_CLIENT_ID=%q\n' \
+    "${1:-}" "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-}" "${7:-}"
+}
+
 write_warp_credentials_atomic() (
   umask 077
   local warp_id=${1:-} warp_token=${2:-} warp_priv_key=${3:-} warp_pub_key=${4:-}
@@ -413,15 +421,8 @@ write_warp_credentials_atomic() (
     [[ ! -L "${target}" && ( ! -e "${target}" || -f "${target}" ) ]] || return 1
   done
   candidate=$(mktemp "${SB_PROJECT_DIR}/.warp.key.XXXXXXXX") || return 1
-  {
-    printf 'WARP_ID=%q\n' "${warp_id}"
-    printf 'WARP_TOKEN=%q\n' "${warp_token}"
-    printf 'WARP_PRIV_KEY=%q\n' "${warp_priv_key}"
-    printf 'WARP_PUB_KEY=%q\n' "${warp_pub_key}"
-    printf 'WARP_V4=%q\n' "${warp_v4}"
-    printf 'WARP_V6=%q\n' "${warp_v6}"
-    printf 'WARP_CLIENT_ID=%q\n' "${warp_client_id}"
-  } > "${candidate}" || return 1
+  warp_credentials_content "${warp_id}" "${warp_token}" "${warp_priv_key}" "${warp_pub_key}" \
+    "${warp_v4}" "${warp_v6}" "${warp_client_id}" > "${candidate}" || return 1
   chmod 600 "${candidate}" && bash -n "${candidate}" || return 1
   expected_hash=$(sha256sum < "${candidate}") || return 1
   if [[ -f "${SB_WARP_KEY_FILE}" ]]; then
@@ -455,6 +456,30 @@ warp_registration_response_valid() {
   decoded=$(printf '%s' "${client_id}" | base64 -d 2>/dev/null | od -An -t u1 -v) || return 1
   [[ $(wc -w <<< "${decoded}") -eq 3 ]]
 }
+
+# Compare inert receipt data with the exact credential serialization. Never
+# source either file while deciding whether external recovery data can be lost.
+warp_registration_receipt_matches_credentials() (
+  local receipt=$1 workspace priv_key pub_key
+  [[ -f "${receipt}" && ! -L "${receipt}" && "$(stat -c %a "${receipt}")" == 600 &&
+     "$(wc -c < "${receipt}")" -le 1048576 && -f "${SB_WARP_KEY_FILE}" &&
+     ! -L "${SB_WARP_KEY_FILE}" && "$(stat -c %a "${SB_WARP_KEY_FILE}")" == 600 ]] || return 1
+  umask 077
+  workspace=$(mktemp -d /tmp/sbv-warp-receipt.XXXXXX) || return 1
+  trap 'rm -rf -- "${workspace}"' EXIT
+  jq -e 'select(.schema == 1 and .phase == "received") | .response' "${receipt}" > "${workspace}/response.json" || return 1
+  warp_registration_response_valid "${workspace}/response.json" || return 1
+  priv_key=$(jq -er '.private_key | strings' "${receipt}") || return 1
+  pub_key=$(jq -er '.public_key | strings' "${receipt}") || return 1
+  [[ ${#priv_key} -eq 44 && ${#pub_key} -eq 44 && "${priv_key}" =~ ^[A-Za-z0-9+/]+=$ &&
+     "${pub_key}" =~ ^[A-Za-z0-9+/]+=$ ]] || return 1
+  warp_credentials_content "$(jq -r '.id' "${workspace}/response.json")" \
+    "$(jq -r '.token' "${workspace}/response.json")" "${priv_key}" "${pub_key}" \
+    "$(jq -r '.config.interface.addresses.v4' "${workspace}/response.json")" \
+    "$(jq -r '.config.interface.addresses.v6' "${workspace}/response.json")" \
+    "$(jq -r '.config.client_id' "${workspace}/response.json")" > "${workspace}/expected.env" || return 1
+  cmp -s -- "${workspace}/expected.env" "${SB_WARP_KEY_FILE}"
+)
 
 # The receipt lives beside the managed project so a configuration rollback
 # cannot discard evidence of a possibly completed external POST.
@@ -581,7 +606,11 @@ register_warp() (
     warp_registration_error commit credentials_save_failed "请检查凭据最终状态；注册结果已保留在 ${receipt}，再次执行将仅重试保存。" unknown
     return "${save_status}"
   fi
-  if ! rm -f -- "${receipt}"; then
+  if [[ "${SB_ROUTING_DEFER_WARP_RECEIPT:-n}" == y ]]; then
+    # The enclosing rules transaction may still fail validation or activation.
+    # Keep received provider credentials until its durable committed boundary.
+    routing_transaction_defer_warp_registration "${receipt}" || return 1
+  elif ! rm -f -- "${receipt}"; then
     printf '[ERROR] operation=warp_register stage=cleanup code=cleanup_failed changed=true; 凭据已提交，恢复材料尚未清理。\n' >&2
     return 1
   fi
@@ -2943,8 +2972,14 @@ migrate_vless_reality_state_to_instances_if_needed() {
     return 0
   fi
 
-  backup_state_file="${state_file}.bak.$(date +%Y%m%d%H%M%S)"
-  cp "${state_file}" "${backup_state_file}"
+  if [[ "${SB_ROUTING_JOURNAL_LEGACY_BACKUP:-n}" == y ]]; then
+    # A surrounding rules transaction owns this migration. Keep its backup
+    # inside the durable journal, outside concurrent operator-file detection.
+    routing_transaction_backup_legacy_reality_state "${state_file}" || return 1
+  else
+    backup_state_file="${state_file}.bak.$(date +%Y%m%d%H%M%S)"
+    cp "${state_file}" "${backup_state_file}" || return 1
+  fi
 
   SB_PRIVATE_KEY="${REALITY_PRIVATE_KEY:-}"
   SB_PUBLIC_KEY="${REALITY_PUBLIC_KEY:-}"
@@ -4480,7 +4515,8 @@ prompt_vless_reality_update() {
   prompt_vless_reality_rate_limit_update_fields || return 1
   prompt_vless_reality_advanced_update_fields || return 1
   validate_current_reality_sni_alpn_or_warn
-  SB_OUTBOUND_POLICY=$(prompt_instance_outbound_policy "新出站策略" "${SB_OUTBOUND_POLICY:-default}") || return 1
+  # Node routing is edited from the unified rules menu; preserve this instance.
+  return 0
 }
 
 validate_reality_sni_syntax() {
@@ -6954,7 +6990,8 @@ prompt_vless_reality_install() {
   prompt_vless_reality_rate_limit_fields || return 1
   prompt_vless_reality_advanced_update_fields || return 1
   validate_current_reality_sni_alpn_or_warn
-  SB_OUTBOUND_POLICY=$(prompt_instance_outbound_policy "[VLESS + REALITY] 出站策略" "${SB_OUTBOUND_POLICY:-default}")
+  SB_OUTBOUND_POLICY="default"
+  return 0
 }
 
 vless_reality_naming_snapshot() {
@@ -7025,7 +7062,9 @@ prompt_vless_reality_instance_create() {
   prompt_vless_reality_rate_limit_fields || return 1
   prompt_vless_reality_advanced_update_fields || return 1
   validate_current_reality_sni_alpn_or_warn
-  SB_OUTBOUND_POLICY=$(prompt_instance_outbound_policy "[VLESS + REALITY] 出站策略" "${SB_OUTBOUND_POLICY:-default}") || return 1
+  # Loading the default instance above also loads its routing override. A new
+  # instance always inherits global rules instead of copying that override.
+  SB_OUTBOUND_POLICY="default"
   if vless_reality_bandwidth_profile_exists "${SB_VLESS_RATE_LIMIT_UP_MBPS}" "${SB_VLESS_RATE_LIMIT_DOWN_MBPS}" "${SB_VLESS_INSTANCE_ID}"; then
     log_warn "已存在相同类型且带宽配置完全相同的 VLESS + REALITY 节点，已取消创建。"
     return 0
@@ -7239,22 +7278,22 @@ prompt_protocol_install_fields() {
 }
 
 prompt_global_instance_options() {
-  local in_route in_warp in_warp_mode
+  local default_exit private_access
 
-  SB_ADVANCED_ROUTE=$(prompt_yes_no "是否开启高级路由规则 (广告拦截/局域网绕行) [y/n] (默认 y): " "y")
-  SB_ENABLE_WARP=$(prompt_yes_no "是否开启 Cloudflare Warp (用于解锁/防送中) [y/n] (默认 n): " "n")
-
-  if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
-    SB_WARP_ROUTE_MODE="selective"
-    echo "Warp 路由模式:"
-    echo "1. 全量流量走 Warp"
-    echo "2. 仅 AI/流媒体及自定义规则走 Warp"
-    in_warp_mode=$(prompt_choice "请选择 [1-2] (默认 2): " 1 2 2)
-    case "${in_warp_mode}" in
-      1) SB_WARP_ROUTE_MODE="all" ;;
-      *) SB_WARP_ROUTE_MODE="selective" ;;
-    esac
+  routing_policy_prepare_install_defaults || return 1
+  default_exit="原生直连（WARP 关闭）"
+  if [[ "${SB_ENABLE_WARP}" == y ]]; then
+    if [[ "${SB_WARP_ROUTE_MODE}" == all ]]; then
+      default_exit="WARP 全量出口"
+    else
+      default_exit="原生直连，命中分流规则时使用 WARP"
+    fi
   fi
+  private_access="允许"
+  [[ "${SB_ADVANCED_ROUTE}" != y ]] || private_access="拒绝"
+  log_info "使用全局规则：${default_exit}；服务端私网访问：${private_access}。"
+  log_info "新节点跟随全局规则；请通过菜单 13「规则与分流管理」调整策略。"
+  return 0
 }
 
 # Interactive Mixed management deliberately captures one validated store
@@ -7398,7 +7437,6 @@ shadowsocks_management_build_record() {
   read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}")
   structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy}") || return 1
   method=$(jq -r '.method' <<< "${current_auth}") || return 1
   method=$(shadowsocks_prompt_method "${method}") || return 1
   shadowsocks_prompt_auth "${method}" "${current_auth}" || return 1
@@ -7451,7 +7489,6 @@ trojan_management_build_record() {
   read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}")
   structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy}") || return 1
   if [[ "${operation}" == create ]]; then
     edit_users=y
   else
@@ -7526,7 +7563,6 @@ vmess_management_build_record() {
   read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}")
   structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy}") || return 1
   if [[ "${operation}" == create ]]; then edit_users=y; else edit_users=$(prompt_yes_no '[VMess] 是否重新编辑用户凭据 [y/n] (默认 n): ' n) || return 1; fi
   if [[ "${edit_users}" == y ]]; then vmess_prompt_users "${users}" || return 1; users=${SB_VMESS_AUTH_JSON}; fi
   vmess_prompt_tls "${tls}" || return 1; tls=${SB_VMESS_TLS_JSON}
@@ -7580,7 +7616,6 @@ vless_plain_management_build_record() {
   read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}")
   structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy}") || return 1
   if [[ "${operation}" == create ]]; then edit_users=y; else edit_users=$(prompt_yes_no '[VLESS] 是否重新编辑用户凭据 [y/n] (默认 n): ' n) || return 1; fi
   if [[ "${edit_users}" == y ]]; then vless_plain_prompt_users "${users}" || return 1; users=${SB_VLESS_PLAIN_AUTH_JSON}; fi
   vless_plain_prompt_tls "${tls}" || return 1; tls=${SB_VLESS_PLAIN_TLS_JSON}; trust=${SB_VLESS_PLAIN_CLIENT_TRUST:-system}
@@ -7637,7 +7672,6 @@ anytls_management_build_record() {
   [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}")
   structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy}") || return 1
   if [[ "${operation}" == create ]]; then
     edit_users=y
   else
@@ -7751,7 +7785,7 @@ hy2_management_build_record() {
     id=$(plain_proxy_management_next_id hy2 "${snapshot}") || return 1
     name=$(default_instance_node_name_from_file hy2 "${snapshot}") || return 1; tag=$(plain_proxy_management_next_tag hy2 "${snapshot}") || return 1
     address=${SB_DEFAULT_LISTEN_ADDRESS}; port=443; users='[]'; tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'
-    trust=system; up_mbps=""; down_mbps=""; obfs='{"enabled":false,"type":"","password":""}'; masquerade=""
+    trust=system; up_mbps=""; down_mbps=""; obfs='{"enabled":false,"type":"","password":""}'; masquerade=""; policy=default
   fi
   echo '[Hysteria2] 实例名称用于显示；ID 用于区分实例，tag 用于配置中的入口标识，均可留空使用当前值或默认值。' >&2
   echo '[Hysteria2] 新建默认监听 ::，同时接受外部 IPv4 / IPv6 连接；可填写 0.0.0.0 仅使用 IPv4，或 127.0.0.1 仅允许本机连接。修改时留空保留原地址。' >&2
@@ -7762,7 +7796,6 @@ hy2_management_build_record() {
   fi
   read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}"); structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy:-default}") || return 1
   if [[ "${operation}" == create ]]; then edit_users=y; else edit_users=$(prompt_yes_no '[Hysteria2] 是否重新编辑用户凭据 [y/n] (默认 n): ' n) || return 1; fi
   if [[ "${edit_users}" == y ]]; then hy2_prompt_users "${users}" || return 1; users=${SB_HY2_AUTH_JSON}; fi
   server_name=$(jq -r '.server_name // empty' <<< "${tls}") || return 1
@@ -7897,7 +7930,6 @@ snell_management_build_record() {
     snell_prompt_users "${users}" || return 1
     users=${SB_SNELL_USER_JSON}
   fi
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy:-default}") || return 1
   answer=$(plain_proxy_management_prompt_public_consent snell "${address}" '' ) || return 1
   if [[ "${address}" != 127.* && "${address}" != ::1 && "${answer}" != y ]]; then log_info '未确认公网暴露，已取消 Snell 实例变更。'; return 2; fi
   PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC=${answer}; MIXED_MANAGEMENT_ALLOW_PUBLIC=${answer}
@@ -7946,7 +7978,6 @@ tuic_management_build_record() {
   fi
   read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}"); structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy:-default}") || return 1
   if [[ "${operation}" == create ]]; then edit_users=y; else edit_users=$(prompt_yes_no '[TUIC] 是否重新编辑用户凭据 [y/n] (默认 n): ' n) || return 1; fi
   if [[ "${edit_users}" == y ]]; then tuic_prompt_users "${users}" || return 1; users=${SB_TUIC_AUTH_JSON}; fi
   server_name=$(jq -r '.server_name // empty' <<< "${tls}") || return 1
@@ -8014,7 +8045,6 @@ hysteria_management_build_record() {
   fi
   read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}"); structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy:-default}") || return 1
   if [[ "${operation}" == create ]]; then edit_users=y; else edit_users=$(prompt_yes_no '[Hysteria] 是否重新编辑用户凭据 [y/n] (默认 n): ' n) || return 1; fi
   if [[ "${edit_users}" == y ]]; then hysteria_prompt_users "${users}" || return 1; users=${SB_HYSTERIA_AUTH_JSON}; fi
   server_name=$(jq -r '.server_name // empty' <<< "${tls}") || return 1
@@ -8081,7 +8111,6 @@ naive_management_build_record() {
   fi
   read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}"); structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy:-default}") || return 1
   if [[ "${operation}" == create ]]; then edit_users=y; else edit_users=$(prompt_yes_no '[NaiveProxy] 是否重新编辑用户凭据 [y/n]（默认 n）: ' n) || return 1; fi
   if [[ "${edit_users}" == y ]]; then naive_prompt_users "${users}" || return 1; users=${SB_NAIVE_AUTH_JSON}; fi
   server_name=$(jq -r '.server_name // empty' <<< "${tls}") || return 1
@@ -8152,7 +8181,6 @@ shadowtls_management_build_record() {
   [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}")
   structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "外层监听端口（当前: ${port}）: " "${port}") || return 1
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy}") || return 1
 
   SB_SHADOWTLS_VERSION=${version}
   SB_SHADOWTLS_PASSWORD=${password}
@@ -8303,8 +8331,6 @@ plain_proxy_management_build_record() {
     ensure_mixed_auth_credentials || return 1
     username=${SB_MIXED_USERNAME}; password=${SB_MIXED_PASSWORD}
   else username=""; password=""; fi
-  policy=$(prompt_instance_outbound_policy "出站策略" "${policy}") || return 1
-  [[ "${operation}" == create || "${policy}" != "$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .outbound_policy' "${snapshot}")" ]] && policy_changed=y
   if [[ "${protocol}" == http ]]; then
     SB_HTTP_TLS_JSON=${tls_json}
     plain_proxy_management_prompt_tls http "${tls_json}" || return 1
@@ -8768,7 +8794,7 @@ install_protocols_interactive() {
     done
 
     if ! prompt_global_instance_options || ! write_protocol_index "${SELECTED_PROTOCOLS_CSV}"; then
-      abort_managed_state_transaction "${snapshot_dir}" "全局选项或协议索引保存失败"
+      abort_managed_state_transaction "${snapshot_dir}" "全局策略载入或协议索引保存失败"
       return 1
     fi
     if ! protocol_array_contains vless-reality "${selected_protocols[@]}"; then
@@ -9010,6 +9036,10 @@ install_protocols_interactive() {
     fi
   fi
 
+  if [[ "${install_mode}" == fresh ]] && ! routing_policy_seed_fresh_install; then
+    abort_managed_state_transaction "${snapshot_dir}" "默认规则策略准备失败"
+    return 1
+  fi
   if ! save_warp_route_settings || ! generate_config; then
     abort_managed_state_transaction "${snapshot_dir}" "配置生成或校验失败"
   fi
@@ -9026,6 +9056,7 @@ install_protocols_interactive() {
   fi
   open_committed_protocol_ports || return $?
   run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box
+  log_info "新节点已跟随全局规则；如需调整出口与分流，请进入菜单 13。"
   log_info "连接信息未自动展示，如需查看请进入菜单 11。"
 }
 
@@ -9654,6 +9685,7 @@ save_warp_route_settings() {
   mkdir -p "${SB_PROJECT_DIR}"
   cat > "${SB_WARP_ROUTE_SETTINGS_FILE}" <<EOF
 WARP_ROUTE_MODE=${SB_WARP_ROUTE_MODE}
+WARP_ENABLED=${SB_ENABLE_WARP}
 EOF
 }
 
@@ -13281,7 +13313,7 @@ load_protocol_state() {
   fi
   validate_protocol_state_schema "${protocol}" "${state_file}" || return 1
   if [[ "${protocol}" == "vless-reality" && "${state_mode}" != "read-only" ]]; then
-    migrate_vless_reality_state_to_instances_if_needed
+    migrate_vless_reality_state_to_instances_if_needed || return 1
   fi
   state_file=$(protocol_state_file "${protocol}")
 
@@ -13878,7 +13910,7 @@ build_vless_inbound_json_from_current_state() {
 build_vless_inbound_json() {
   local instance_id instance_ids=()
 
-  migrate_vless_reality_state_to_instances_if_needed
+  migrate_vless_reality_state_to_instances_if_needed || return 1
   validate_vless_reality_instance_tags || return 1
   mapfile -t instance_ids < <(list_vless_reality_instance_ids)
 
@@ -20983,16 +21015,19 @@ managed_component_live_config_root_fields_supported() {
 }
 
 managed_component_live_route_rule_sets_match_state() {
-  local config_file=${1:-} state=${2:-} allow_legacy_download_detour=${3:-false}
+  local config_file=${1:-} state=${2:-} allow_legacy_download_detour=${3:-false} policy_sets
   [[ -f "${config_file}" && ! -L "${config_file}" && -n "${state}" ]] || return 1
   [[ "${allow_legacy_download_detour}" == true || "${allow_legacy_download_detour}" == false ]] || return 1
   managed_component_state_validate_json "${state}" || return 1
-  jq -e --argjson state "${state}" --argjson allow_legacy_download_detour "${allow_legacy_download_detour}" '
+  policy_sets=$(routing_policy_owned_rule_sets_json "" "${state}") || return 1
+  jq -e --argjson state "${state}" --argjson policy_sets "${policy_sets}" \
+    --argjson allow_legacy_download_detour "${allow_legacy_download_detour}" '
     def safe_string:
       type == "string" and length <= 4096 and
       (any(explode[]; . < 32 or . == 127) | not);
     def warp_tag($tag):
       ($tag | startswith("warp-local-") or startswith("warp-remote-"));
+    def policy_owned: . as $set | any($policy_sets[]; . == $set);
     def legacy_download_detour($set):
       $allow_legacy_download_detour and
       ($set.type == "remote") and
@@ -21021,6 +21056,8 @@ managed_component_live_route_rule_sets_match_state() {
        end) and
       (if legacy_download_detour($set) then
          true
+       elif ($set | policy_owned) then
+         true
        elif warp_tag($set.tag) then
          ((($set.tag | startswith("warp-local-")) and $set.type == "local") or
           (($set.tag | startswith("warp-remote-")) and $set.type == "remote"))
@@ -21032,7 +21069,7 @@ managed_component_live_route_rule_sets_match_state() {
        end)) and
     ([$state.components[]? |
       select(.role == "rule_set" and .enabled == true)] | length) ==
-    ([$sets[] | select((warp_tag(.tag // "") | not) and (legacy_download_detour(.) | not))] | length)
+    ([$sets[] | select((warp_tag(.tag // "") | not) and (legacy_download_detour(.) | not) and (policy_owned | not))] | length)
   ' "${config_file}" >/dev/null 2>&1
 }
 
@@ -21197,9 +21234,10 @@ managed_component_live_config_projection_supported() {
 # Exclude operator-owned components from the ownership comparison. They remain
 # in the actual candidate and are checked by the core and graph validators.
 coexisting_component_projection() {
-  local config_file=$1 state=$2 registry
+  local config_file=$1 state=$2 registry policy_sets
   registry=$(component_registry_static_json) || return 1
-  jq --argjson state "${state}" --argjson registry "${registry}" '
+  policy_sets=$(routing_policy_owned_rule_sets_json "" "${state}") || return 1
+  jq --argjson state "${state}" --argjson registry "${registry}" --argjson policy_sets "${policy_sets}" '
     def known($role): . as $record |
       any($registry[]; .role == $role and .type == $record.type);
     def owns($role): . as $record |
@@ -21219,7 +21257,8 @@ coexisting_component_projection() {
       del(.route.default_http_client) else . end |
     if has("http_clients") then .http_clients |= map(select(owns("http_client") or has("type"))) else . end |
     if .route.rule_set? != null then .route.rule_set |= map(select(
-      ((.tag // "") | startswith("warp-local-") or startswith("warp-remote-")) or owns("rule_set"))) else . end
+      ((.tag // "") | startswith("warp-local-") or startswith("warp-remote-")) or owns("rule_set") or
+      (. as $set | any($policy_sets[]; . == $set)))) else . end
   ' "${config_file}"
 }
 
@@ -22113,7 +22152,9 @@ managed_state_snapshot_is_valid() {
 
   [[ "${snapshot_dir}" == /tmp/sing-box-vps-state.* ||
      "${snapshot_dir}" == "${SB_PROJECT_DIR}.instance-write.lock/snapshot" ||
-     "${snapshot_dir}" == "${SB_COMPONENT_TRANSACTION_DIR}/snapshot" ]] || return 1
+     "${snapshot_dir}" == "${SB_COMPONENT_TRANSACTION_DIR}/snapshot" ||
+     "${snapshot_dir}" == "${SB_ROUTING_TRANSACTION_DIR}/snapshot" ||
+     "${snapshot_dir}" == "${SB_ROUTING_PREVIOUS_DIR}/snapshot" ]] || return 1
   [[ ! -L "${snapshot_dir}" ]] || return 1
   [[ -d "${snapshot_dir}" && -f "${snapshot_dir}/snapshot.meta" ]] || return 1
   grep -Fqx 'SNAPSHOT_VERSION=1' "${snapshot_dir}/snapshot.meta" || return 1
@@ -22145,7 +22186,9 @@ create_managed_state_snapshot() {
     [[ ("$1" == "${SB_PROJECT_DIR}.instance-write.lock/snapshot" &&
         -d "${SB_PROJECT_DIR}.instance-write.lock" && ! -L "${SB_PROJECT_DIR}.instance-write.lock") ||
        ("$1" == "${SB_COMPONENT_TRANSACTION_DIR}/snapshot" &&
-        -d "${SB_COMPONENT_TRANSACTION_DIR}" && ! -L "${SB_COMPONENT_TRANSACTION_DIR}") ]] || return 1
+        -d "${SB_COMPONENT_TRANSACTION_DIR}" && ! -L "${SB_COMPONENT_TRANSACTION_DIR}") ||
+       ("$1" == "${SB_ROUTING_TRANSACTION_DIR}/snapshot" &&
+        -d "${SB_ROUTING_TRANSACTION_DIR}" && ! -L "${SB_ROUTING_TRANSACTION_DIR}") ]] || return 1
     snapshot_dir=$1
     mkdir -m 700 "${snapshot_dir}" || return 1
   else
@@ -23140,6 +23183,7 @@ generate_config_candidate() {
   local exit_cleanup_command effective_protocols
   local inbounds_json certificate_providers_json protocol_rules_json instance_outbound_rules_json
   local managed_components_json managed_route_options_json existing_default_http_client=""
+  local routing_policy_active=n routing_policy_json='{}' routing_policy_rendered='{}' routing_policy_tags='[]' routing_policy_file
 
   # Force ensure jq is installed
   if ! command -v jq &>/dev/null; then
@@ -23150,6 +23194,15 @@ generate_config_candidate() {
   if [[ ! -x "${SINGBOX_BIN_PATH}" ]]; then
     log_warn "无法生成配置：缺少可执行的 sing-box 二进制 ${SINGBOX_BIN_PATH}。"
     return 1
+  fi
+
+  routing_policy_file=$(routing_policy_file_path) || return 1
+  if [[ -e "${routing_policy_file}" || -L "${routing_policy_file}" ]]; then
+    routing_policy_json=$(routing_policy_read_json) || {
+      printf '[ERROR] 路由策略状态无效；配置未生成。\n' >&2
+      return 1
+    }
+    routing_policy_active=y
   fi
 
   # Inspect the complete live inventory before discovery or resource creation.
@@ -23191,6 +23244,10 @@ generate_config_candidate() {
   local w_key="" w_v4="" w_v6="" w_client_id="" w_reserved='[]' enable_warp_endpoint
   enable_warp_endpoint="${SB_ENABLE_WARP}"
   if [[ "${enable_warp_endpoint}" != "y" ]] && instance_outbound_requires_warp; then
+    enable_warp_endpoint="y"
+  fi
+  if [[ "${enable_warp_endpoint}" != "y" && "${routing_policy_active}" == y ]] &&
+     routing_policy_requires_warp "${routing_policy_json}"; then
     enable_warp_endpoint="y"
   fi
 
@@ -23436,13 +23493,63 @@ generate_config_candidate() {
 
   generated_candidate=$(mktemp "${SINGBOX_CONFIG_DIR}/.generated-config.XXXXXX") || return 1
   trap "${exit_cleanup_command}; rm -f -- \"${generated_candidate}\"" EXIT
-  cp -- "${config_candidate}" "${generated_candidate}" || return 1
+  if [[ "${routing_policy_active}" == y ]]; then
+    # Only protocol-generated traffic tags participate. Component/manual
+    # listeners and the outer ShadowTLS handshake keep their existing scope.
+    routing_policy_tags=$(jq -c '[.[] | select(.type != "shadowtls") | .tag] | unique' <<< "${inbounds_json}") || return 1
+    routing_policy_rendered=$(routing_policy_render_server_json "${routing_policy_json}" "${routing_policy_tags}") || return 1
+    jq --argjson policy "${routing_policy_json}" --argjson rendered "${routing_policy_rendered}" \
+      --argjson tags "${routing_policy_tags}" --argjson components "${managed_components_json}" \
+      --argjson protocols "${protocol_rules_json}" --argjson instance_rules "${instance_outbound_rules_json}" \
+      --arg enable_warp "${SB_ENABLE_WARP}" --arg warp_mode "${SB_WARP_ROUTE_MODE}" \
+      --argjson ai_domains "${WARP_AI_ROUTE_DOMAINS_JSON}" --argjson ai_suffixes "${WARP_AI_ROUTE_DOMAIN_SUFFIXES_JSON}" \
+      --argjson media_domains "${WARP_STREAM_ROUTE_DOMAINS_JSON}" --argjson media_suffixes "${WARP_STREAM_ROUTE_DOMAIN_SUFFIXES_JSON}" \
+      --argjson custom_domains "${SB_WARP_CUSTOM_DOMAINS_JSON}" --argjson custom_suffixes "${SB_WARP_CUSTOM_DOMAIN_SUFFIXES_JSON}" \
+      --argjson warp_sets "${SB_WARP_RULE_SET_TAGS_JSON}" '
+      def fixed: .action == "route" and (.inbound | type) == "string" and
+        (keys | sort) == ["action","inbound","outbound"];
+      .route.rule_set += $rendered.rule_sets |
+      .route.rules = (($components.route_rules // []) +
+        [$tags[] | {inbound:.,action:"sniff"}] + $rendered.protection_rules +
+        (($instance_rules + [$protocols[] | select(fixed)]) | sort_by(.inbound)) +
+        [$protocols[] | select(.action != "sniff" and (fixed | not))] +
+        $rendered.custom_rules +
+        (if $enable_warp == "y" and $warp_mode == "selective" and ($tags | length) > 0 then
+           (if ($custom_domains | length) > 0 or ($custom_suffixes | length) > 0 then
+              [{inbound:$tags,domain:$custom_domains,domain_suffix:$custom_suffixes,action:"route",outbound:"warp-ep"}]
+            else [] end) +
+           (if ($warp_sets | length) > 0 then
+              [{inbound:$tags,rule_set:$warp_sets,action:"route",outbound:"warp-ep"}]
+            else [] end) +
+           (if $policy.server.warp_ai then
+              [{inbound:$tags,domain:$ai_domains,domain_suffix:$ai_suffixes,action:"route",outbound:"warp-ep"}]
+            else [] end) +
+           (if $policy.server.warp_streaming then
+              [{inbound:$tags,domain:$media_domains,domain_suffix:$media_suffixes,action:"route",outbound:"warp-ep"}]
+            else [] end)
+         else [] end))
+      ' "${config_candidate}" > "${generated_candidate}" || return 1
+    cp -- "${generated_candidate}" "${config_candidate}" || return 1
+  else
+    cp -- "${config_candidate}" "${generated_candidate}" || return 1
+  fi
   chmod 600 "${generated_candidate}" || return 1
   if [[ -e "${SINGBOX_CONFIG_FILE}" ]]; then
     if ! merge_generated_config_with_live "${generated_candidate}" "${SINGBOX_CONFIG_FILE}" "${baseline_file}" > "${config_candidate}"; then
       printf '[ERROR] 配置归属冲突或生成基线无效；配置未发布，请先检查手工修改与托管字段。\n' >&2
       return 1
     fi
+  fi
+  if [[ "${routing_policy_active}" == y ]] &&
+     [[ -e "${SINGBOX_CONFIG_FILE}" ]]; then
+    # The fragment file is no longer needed after assembly; reuse its private
+    # staging path without ever writing the merged file while reading it.
+    routing_policy_place_new_generated_rules "${generated_candidate}" "${config_candidate}" \
+      "${baseline_file}" "${SINGBOX_CONFIG_FILE}" "${routing_policy_tags}" > "${inbound_file}" || return 1
+    cp -- "${inbound_file}" "${config_candidate}" || return 1
+  fi
+  if [[ "${routing_policy_active}" == y ]]; then
+    routing_policy_validate_merged_order "${generated_candidate}" "${config_candidate}" "${routing_policy_tags}" || return 1
   fi
 
   if ! publish_managed_config_candidate "${config_candidate}"; then
@@ -23489,6 +23596,33 @@ managed_uninstall_report_error() {
   printf '%b[ERROR]%b %s\n' "${RED}" "${NC}" "${message}" >&2
 }
 
+managed_uninstall_routing_previous_is_safe() {
+  [[ "${SB_ROUTING_PREVIOUS_DIR}" == "${SB_PROJECT_DIR}.rules-previous" ]] || return 1
+  if [[ -e "${SB_ROUTING_PREVIOUS_DIR}" || -L "${SB_ROUTING_PREVIOUS_DIR}" ]]; then
+    if ! routing_transaction_valid "${SB_ROUTING_PREVIOUS_DIR}" ||
+       [[ "$(jq -r '.phase' "${SB_ROUTING_PREVIOUS_DIR}/transaction.json")" != committed ]]; then
+      managed_uninstall_report_error '上次规则恢复快照不可信，未开始卸载；请保留现场并先检查该目录。'
+      return 1
+    fi
+  fi
+}
+
+managed_uninstall_remove_project_state() {
+  managed_uninstall_routing_previous_is_safe || return 1
+  if ! rm -rf -- "${SB_PROJECT_DIR}" || [[ -e "${SB_PROJECT_DIR}" || -L "${SB_PROJECT_DIR}" ]]; then
+    managed_uninstall_report_error '项目配置删除无法确认，规则恢复快照已保留。'
+    return 1
+  fi
+  if [[ -e "${SB_ROUTING_PREVIOUS_DIR}" || -L "${SB_ROUTING_PREVIOUS_DIR}" ]]; then
+    managed_uninstall_routing_previous_is_safe || return 1
+    if ! rm -rf -- "${SB_ROUTING_PREVIOUS_DIR}" ||
+       [[ -e "${SB_ROUTING_PREVIOUS_DIR}" || -L "${SB_ROUTING_PREVIOUS_DIR}" ]]; then
+      managed_uninstall_report_error '项目配置已删除，但上次规则恢复快照清理失败；请保留现场。'
+      return 1
+    fi
+  fi
+}
+
 managed_uninstall_acquire_guard() {
   acquire_managed_write_lock || {
     managed_uninstall_report_error "另一个管理事务正在执行，未开始卸载。"
@@ -23502,6 +23636,7 @@ managed_uninstall_acquire_guard() {
     managed_uninstall_report_error "存在未完成的实例事务，未开始卸载；请先恢复或检查该事务。"
     return 1
   fi
+  managed_uninstall_routing_previous_is_safe || return 1
   return 0
 }
 
@@ -23555,7 +23690,7 @@ perform_singbox_runtime_uninstall() {
       log_warn "检测到 libcronet.so 已被外部修改，保留 ${lib_path} 以避免误删。"
     fi
   fi
-  rm -rf "${SINGBOX_CONFIG_DIR}"
+  managed_uninstall_remove_project_state || return 1
   print_success "sing-box 服务、二进制和配置目录已彻底删除。"
 }
 
@@ -23582,10 +23717,10 @@ uninstall_singbox() {
 # Uninstall script itself
 uninstall_script() {
   local deleted_cfg="n"
+  managed_uninstall_acquire_guard || return 1
   read -rp "是否同时删除项目配置文件目录 (/root/sing-box-vps)? [y/N]: " del_cfg
   if [[ "${del_cfg}" =~ ^[Yy]$ ]]; then
     local component_state redirect_policy_plan tproxy_policy_plan
-    managed_uninstall_acquire_guard || return 1
     component_state=$(managed_component_state_json) || {
       managed_uninstall_report_error "高级组件 state 无法安全读取，未删除项目目录。"
       return 1
@@ -23606,7 +23741,7 @@ uninstall_script() {
       managed_uninstall_report_error "TProxy 主机策略清理无法确认，未删除项目目录。"
       return 1
     fi
-    rm -rf -- "${SB_PROJECT_DIR}" || return 1
+    managed_uninstall_remove_project_state || return 1
     deleted_cfg="y"
     print_info "配置文件目录已删除。"
   fi
@@ -24067,6 +24202,13 @@ system_management_menu() {
 # Prefer the current endpoint-based schema, but keep compatibility with older configs.
 config_has_warp_enabled() {
   local config_file=$1
+  local saved_enabled
+
+  if [[ "${config_file}" == "${SINGBOX_CONFIG_FILE}" && -f "${SB_ROUTING_POLICY_FILE}" &&
+        -f "${SB_WARP_ROUTE_SETTINGS_FILE}" && ! -L "${SB_WARP_ROUTE_SETTINGS_FILE}" ]]; then
+    saved_enabled=$(sed -n 's/^WARP_ENABLED=\([yn]\)$/\1/p' "${SB_WARP_ROUTE_SETTINGS_FILE}") || return 1
+    case "${saved_enabled}" in y) return 0 ;; n) return 1 ;; esac
+  fi
 
   jq -e '
     (
@@ -24393,7 +24535,7 @@ load_current_config_state() {
     fi
     first_protocol="${installed_protocols[0]:-}"
     if [[ -n "${first_protocol}" ]]; then
-      load_protocol_state "${first_protocol}"
+      load_protocol_state "${first_protocol}" || return 1
       return 0
     fi
   fi
@@ -24567,141 +24709,7 @@ load_current_config_state() {
 
 # Cloudflare Warp Management
 warp_management() {
-  local apply_change should_reload status warp_was_enabled snapshot_dir
-
-  while true; do
-    apply_change="n"
-    should_reload="n"
-
-    load_current_config_state
-    ensure_warp_routing_assets
-    warp_was_enabled="${SB_ENABLE_WARP}"
-
-    if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
-      status="${GREEN}已开启${NC}"
-    else
-      status="${YELLOW}未开启${NC}"
-    fi
-
-    echo
-    render_left_aligned_page_header "Cloudflare Warp 管理" "调整 Warp 出口与分流资产"
-    render_section_title "Warp 摘要"
-    render_summary_item "当前状态" "${status}"
-    render_summary_item "当前路由模式" "${SB_WARP_ROUTE_MODE}"
-    render_summary_item "域名列表文件" "${SB_WARP_DOMAINS_FILE}"
-    render_section_title "操作选项"
-    render_menu_item "1" "开启 Warp"
-    render_menu_item "2" "关闭 Warp"
-    render_menu_item "3" "重新注册 Warp 账户" "(获取新密钥和 IP)"
-    render_menu_item "4" "切换 Warp 路由模式"
-    render_menu_item "5" "添加自定义 Warp 域名"
-    render_menu_item "6" "添加远程 Warp 规则集"
-    render_menu_item "7" "查看 Warp 分流文件路径"
-    render_menu_item "8" "查看当前生效的 Warp 分流来源"
-    render_menu_item "9" "导入推荐 Warp 规则源"
-    echo "0. 返回主菜单"
-    w_choice=$(prompt_choice "请选择 [0-9]: " 0 9 "")
-
-    case "${w_choice}" in
-      7)
-        show_warp_route_assets
-        continue
-        ;;
-      8)
-        show_effective_warp_route_sources
-        continue
-        ;;
-      0) return ;;
-    esac
-
-    snapshot_dir=$(create_managed_state_snapshot) || log_error "无法创建配置状态事务快照。"
-
-    if ! ensure_existing_generated_config_baseline; then
-      abort_managed_state_transaction "${snapshot_dir}" "Warp 变更前的生成基线无法建立"
-      return 1
-    fi
-
-    case "${w_choice}" in
-      1)
-        SB_ENABLE_WARP="y"
-        log_info "正在开启 Warp..."
-        apply_change="y"
-        should_reload="y"
-        ;;
-      2)
-        SB_ENABLE_WARP="n"
-        log_info "正在关闭 Warp..."
-        apply_change="y"
-        should_reload="y"
-        ;;
-      3)
-        rm -f "${SB_WARP_KEY_FILE}"
-        SB_ENABLE_WARP="y"
-        log_info "正在重新注册 Warp..."
-        apply_change="y"
-        should_reload="y"
-        ;;
-      4)
-        if set_warp_route_mode_interactive; then
-          log_success "Warp 路由模式已更新为: ${SB_WARP_ROUTE_MODE}"
-          apply_change="y"
-          [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
-        fi
-        ;;
-      5)
-        if add_warp_domain_entry; then
-          apply_change="y"
-          [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
-        fi
-        ;;
-      6)
-        if add_remote_warp_rule_set; then
-          apply_change="y"
-          [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
-        fi
-        ;;
-      9)
-        if import_recommended_warp_rule_sets; then
-          apply_change="y"
-          [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
-        fi
-        ;;
-      *) log_warn "无效选项，请重新选择。" ;;
-    esac
-
-    if [[ "${apply_change}" == "n" ]]; then
-      if ! rollback_managed_state_snapshot "${snapshot_dir}"; then
-        log_error "取消 Warp 变更时无法恢复配置状态；事务快照保留在 ${snapshot_dir}。"
-      fi
-      continue
-    fi
-
-    if ! save_warp_route_settings; then
-      abort_managed_state_transaction "${snapshot_dir}" "Warp 设置写入失败"
-    fi
-
-    if [[ "${should_reload}" != "y" ]]; then
-      if ! discard_managed_state_snapshot "${snapshot_dir}"; then
-        log_warn "Warp 分流资产已保存，但临时事务快照未能删除: ${snapshot_dir}。"
-      fi
-      log_success "Warp 分流资产已更新，待下次开启 Warp 或重载配置时生效。"
-      continue
-    fi
-
-    if ! generate_config; then
-      abort_managed_state_transaction "${snapshot_dir}" "Warp 配置生成或校验失败"
-    fi
-    if ! discard_managed_state_snapshot "${snapshot_dir}"; then
-      log_warn "Warp 配置已提交，但临时事务快照未能删除: ${snapshot_dir}。"
-    fi
-    setup_service
-    run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box
-    log_success "Warp 配置已更新并重启服务。"
-
-    load_current_config_state
-    display_status_summary
-    log_info "连接信息未自动展示，如需查看请进入菜单 11。"
-  done
+  routing_management_menu
 }
 
 # Helper to extract config values and display info
@@ -30219,8 +30227,19 @@ build_singbox_client_config() {
   local installed_protocols=() exportable_protocols=()
   local remote_outbounds_json remote_tags_json
   local protocol protocol_label outbound_json protocol_tags shadowtls_bundle_json usable_protocol_count
+  local routing_policy_json client_policy_json client_adblock_json
   local use_rule_set_http_client="n"
   local status=0
+
+  [[ "$#" -le 1 ]] || return 1
+  if [[ "$#" -eq 0 ]]; then
+    routing_policy_json=$(routing_policy_read_json) || return 1
+  else
+    routing_policy_json=$1
+  fi
+  routing_policy_validate_json "${routing_policy_json}" || return 1
+  client_policy_json=$(jq -c '.client' <<< "${routing_policy_json}") || return 1
+  client_adblock_json=$(routing_policy_adblock_json "${routing_policy_json}" client) || return 1
 
   if singbox_config_supports_1_14; then
     use_rule_set_http_client="y"
@@ -30324,6 +30343,8 @@ build_singbox_client_config() {
       --argjson remote_tags "${remote_tags_json}" \
       --arg clash_api_secret "${clash_api_secret}" \
       --arg use_rule_set_http_client "${use_rule_set_http_client}" \
+      --argjson client_policy "${client_policy_json}" \
+      --argjson adblock "${client_adblock_json}" \
       '{
         "log": {
           "level": "info",
@@ -30347,7 +30368,7 @@ build_singbox_client_config() {
               "detour": "proxy"
             }
           ],
-          "rules": [
+          "rules": ($adblock.rules + (if $client_policy.cn_direct then [
             {
               "rule_set": "geosite-cn",
               "server": "cn-dns"
@@ -30356,7 +30377,7 @@ build_singbox_client_config() {
               "rule_set": "geosite-geolocation-!cn",
               "server": "remote-dns"
             }
-          ],
+          ] else [] end)),
           "final": "remote-dns",
           "strategy": "prefer_ipv4"
         },
@@ -30393,7 +30414,7 @@ build_singbox_client_config() {
         ),
         "route": {
           "rule_set": (
-            [
+            (if $client_policy.cn_direct then [
               {
                 "tag": "geoip-cn",
                 "type": "remote",
@@ -30412,28 +30433,32 @@ build_singbox_client_config() {
                 "format": "binary",
                 "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/geolocation-!cn.srs"
               }
-            ]
+            ] else [] end) + $adblock.rule_sets
             | map(
-                if $use_rule_set_http_client == "y" then
+                if $use_rule_set_http_client == "y" and .type == "remote" then
                   . + {"http_client": {"detour": "proxy"}}
+                elif .type == "remote" and has("download_detour") then
+                  .download_detour = "proxy"
                 else
                   .
                 end
               )
           ),
-          "rules": [
+          "rules": ([
             {
               "action": "sniff"
             },
             {
               "protocol": "dns",
               "action": "hijack-dns"
-            },
+            }
+          ] + $adblock.rules + (if $client_policy.lan_direct then [
             {
               "ip_is_private": true,
               "action": "route",
               "outbound": "direct"
-            },
+            }
+          ] else [] end) + (if $client_policy.cn_direct then [
             {
               "rule_set": "geosite-cn",
               "action": "route",
@@ -30449,7 +30474,7 @@ build_singbox_client_config() {
               "action": "route",
               "outbound": "proxy"
             }
-          ],
+          ] else [] end)),
           "final": "proxy",
           "auto_detect_interface": true,
           "default_domain_resolver": "cn-dns"
@@ -33878,6 +33903,7 @@ plain_proxy_inactive_store_snapshot() {
 
 plain_proxy_instance_config_candidate() {
   local protocol=$1 old_config=$2 old_store=$3 new_store=$4 inbounds rules
+  routing_policy_precheck_instance_candidate "${protocol}" "${old_config}" "${old_store}" "${new_store}" || return 1
   inbounds=$(render_structured_instance_inbounds "${protocol}" "${new_store}" | jq -s '.') || return $?
   rules=$(render_structured_instance_route_rules "${protocol}" "${new_store}") || return $?
   jq --arg protocol "${protocol}" --slurpfile old "${old_store}" --argjson added "${inbounds}" --argjson rules "${rules}" '
@@ -33924,7 +33950,7 @@ plain_proxy_instance_config_candidate() {
        ([.. | objects | .certificate_provider? | select(. == "hy2-cert-provider")] | length) == 0 then
       .certificate_providers |= map(select(.tag != "hy2-cert-provider" or .type != "acme"))
     else . end
-  ' "${old_config}"
+  ' "${old_config}" | routing_policy_project_instance_candidate "${protocol}" "${old_store}" "${new_store}"
 }
 
 # Deleting the final HY2 instance does not regenerate a surviving managed
@@ -33954,27 +33980,53 @@ hy2_final_instance_delete_matches_config() {
 
 # Public mutation entrypoints share a kernel lock. The persistent instance
 # journal is a separate crash-recovery barrier, not a substitute for this lock.
+managed_write_rules_barrier() {
+  local rules_recovery=${1:-}
+  if [[ ( -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ) &&
+        "${rules_recovery}" != allow-rules-recovery ]]; then
+    printf '[ERROR] 存在未完成的规则事务；请先通过菜单 13 恢复。\n' >&2
+    return 1
+  fi
+}
+
 acquire_managed_write_lock() {
   local lock_file="${SB_PROJECT_DIR}.management.flock" descriptor_target lock_mode=${1:-exclusive}
-  local lock_option=-x
+  local lock_option=-x lock_descriptor='' opened_descriptor=n
+  local rules_recovery=${2:-}
+  [[ -z "${rules_recovery}" || "${rules_recovery}" == allow-rules-recovery ]] || return 1
+  managed_write_rules_barrier "${rules_recovery}" || return 1
   case "${lock_mode}" in exclusive) ;; shared) lock_option=-s ;; *) return 1 ;; esac
   command -v flock >/dev/null 2>&1 || {
     printf '[ERROR] 写操作需要系统 flock 工具。\n' >&2; return 1;
   }
   [[ ! -L "${lock_file}" ]] || return 1
   if [[ "${SB_MANAGEMENT_LOCK_FD:-}" =~ ^[0-9]+$ ]]; then
+    lock_descriptor=${SB_MANAGEMENT_LOCK_FD}
     descriptor_target=$(readlink "/proc/${BASHPID:-$$}/fd/${SB_MANAGEMENT_LOCK_FD}") || return 1
     [[ "${descriptor_target}" == "${lock_file}" ]] || return 1
     if [[ "${lock_mode}" == shared && "${SB_MANAGEMENT_LOCK_MODE:-}" == exclusive ]]; then
+      managed_write_rules_barrier "${rules_recovery}" || return 1
       return 0
     fi
   else
     (umask 077; touch -- "${lock_file}") || return $?
-    exec {SB_MANAGEMENT_LOCK_FD}>"${lock_file}" || return $?
+    exec {lock_descriptor}>"${lock_file}" || return $?
+    opened_descriptor=y
   fi
-  flock -n "${lock_option}" "${SB_MANAGEMENT_LOCK_FD}" || {
+  if ! flock -n "${lock_option}" "${lock_descriptor}"; then
+    if [[ "${opened_descriptor}" == y ]]; then exec {lock_descriptor}>&- || return 1; fi
     printf '[ERROR] 另一个管理进程正在执行；本次未修改。\n' >&2; return 1;
-  }
+  fi
+  if [[ "${opened_descriptor}" != y ]]; then
+    # An upgrade changes the caller's existing open-file description. Retain
+    # that descriptor on rejection and record its actual acquired lock mode.
+    SB_MANAGEMENT_LOCK_MODE=${lock_mode}
+  fi
+  if ! managed_write_rules_barrier "${rules_recovery}"; then
+    if [[ "${opened_descriptor}" == y ]]; then exec {lock_descriptor}>&- || return 1; fi
+    return 1
+  fi
+  SB_MANAGEMENT_LOCK_FD=${lock_descriptor}
   SB_MANAGEMENT_LOCK_MODE=${lock_mode}
 }
 
@@ -34438,6 +34490,13 @@ apply_plain_proxy_instance_change() (
   cmp -s -- "${lock_dir}/config.json" "${SINGBOX_CONFIG_FILE}" || return 1
   if [[ "${count}" != 0 ]]; then
     plain_proxy_structured_state_matches_config "${instance_protocol}" || return 1
+  fi
+  # The snapshot also covers the generated baseline and its backup. Keep it
+  # aligned before resource/service effects; any later failure restores both.
+  # Takeover publishes byte-identical live content, so its generated facts
+  # also stay unchanged until an explicit global configuration application.
+  if [[ "${operation}" != takeover ]]; then
+    routing_policy_sync_instance_baseline "${instance_protocol}" "${lock_dir}/before.json" "${lock_dir}/after.json" || return $?
   fi
   phase=resources
   instance_transaction_checkpoint "${lock_dir}" "${phase}" || return $?
@@ -35056,6 +35115,10 @@ agent_dispatch() {
   esac
 
   command=$(agent_command_name_from_args "$@")
+  if [[ "${command}" != capabilities && ( -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ) ]]; then
+    agent_cli_error "${command}" routing_transaction_pending "存在未完成的规则事务；请先通过交互菜单 13 恢复。"
+    return 1
+  fi
   if ! agent_current_user_is_root; then
     agent_cli_error "${command}" "root_required" "Agent 命令必须以 root 用户执行。"
     return $?
@@ -40639,7 +40702,11 @@ main() {
     -h|--help|help|agent) ;;
     *)
       check_root
-      acquire_managed_write_lock || return $?
+      if [[ $# -eq 0 ]]; then
+        acquire_managed_write_lock exclusive allow-rules-recovery || return $?
+      else
+        acquire_managed_write_lock || return $?
+      fi
       if [[ $# -gt 0 && -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
         printf '[ERROR] 存在未完成的实例事务；先执行 sbv agent instance recover，未执行其他写操作。\n' >&2
         return 1
@@ -40717,7 +40784,9 @@ main() {
 
   show_banner
   check_root
-  if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
+  if [[ -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ]]; then
+    log_warn "存在待恢复的规则事务；请进入菜单 13 恢复。"
+  elif [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
     log_warn "存在待恢复的实例事务；仅开放只读诊断与菜单 2 恢复入口。"
   elif ! ensure_sbv_command_installed; then
     log_warn "全局命令 sbv 未能完成同步；当前管理菜单继续运行，请稍后手动重试。"
@@ -40730,7 +40799,7 @@ main() {
 
     render_section_title "部署管理"
     render_menu_item "1" "安装新协议"
-    render_menu_item "2" "修改已安装协议配置"
+    render_menu_item "2" "协议与实例配置"
     render_menu_item "3" "移除已安装协议"
     render_menu_item "4" "更新 sing-box 版本" "" "${SB_VER_STATUS}"
     render_menu_item "5" "卸载 sing-box"
@@ -40743,12 +40812,12 @@ main() {
     render_menu_item "10" "查看实时日志"
 
     render_section_title "节点与诊断"
-    render_menu_item "11" "查看节点信息"
-    render_menu_item "12" "流媒体验证检测"
+    render_menu_item "11" "节点分享与订阅"
+    render_menu_item "12" "流媒体与出口检测"
 
     render_section_title "网络与系统"
-    render_menu_item "13" "配置 Cloudflare Warp" "(解锁/防送中)"
-    render_menu_item "14" "系统管理"
+    render_menu_item "13" "规则与分流管理"
+    render_menu_item "14" "系统与网络设置"
 
     render_section_title "脚本维护"
     render_menu_item "15" "更新管理脚本 (sbv)" "" "${SCRIPT_VER_STATUS}"
@@ -40757,6 +40826,12 @@ main() {
     render_main_menu_footer
     choice=$(prompt_choice "请选择 [0-16]: " 0 16 "")
 
+    if [[ -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ]]; then
+      case "${choice}" in
+        0|10|13) ;;
+        *) log_warn "请先通过菜单 13 恢复规则事务；本次未执行其他操作。"; continue ;;
+      esac
+    fi
     if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
       case "${choice}" in
         0|2|9|10|12) ;;
@@ -40777,7 +40852,7 @@ main() {
       10) journalctl -u sing-box -f || true ;;
       11) view_node_info ;;
       12) media_check_menu ;;
-      13) warp_management ;;
+      13) routing_management_menu || log_warn '规则操作未完成，已返回主菜单。' ;;
       14) system_management_menu ;;
       15)
         if manual_update_script; then
@@ -40798,6 +40873,1539 @@ main() {
     esac
   done
 }
+# Supplemental policy is read as JSON data, never sourced or evaluated.
+routing_policy_file_path() {
+  printf '%s\n' "${SB_ROUTING_POLICY_FILE:-${SB_PROJECT_DIR}/routing-policy.json}"
+}
 
+routing_policy_validate_json() {
+  local policy=${1:-}
+  [[ -n "${policy}" && "${#policy}" -le 262144 ]] || return 1
+  jq -e '
+    def exact($names): type == "object" and (keys | sort) == ($names | sort);
+    def safe: type == "string" and (any(explode[]; . < 32 or . == 127) | not);
+    def slug: safe and test("^[a-z0-9][a-z0-9_-]{0,63}$");
+    def domain: safe and length <= 253 and
+      test("^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$");
+    def url: safe and length <= 2048 and
+      test("^https://[A-Za-z0-9][A-Za-z0-9.-]*(?::[0-9]{1,5})?(?:/[^[:space:]#]*)?$");
+    def path: safe and length <= 4096 and startswith("/") and . != "/" and
+      (test("(^|/)\\.\\.?(/|$)") | not);
+    def action: IN("direct","warp","reject");
+    def interval: safe and test("^[1-9][0-9]{0,7}[smhd]$");
+    exact(["schema_version","server","client","adblock"]) and .schema_version == 1 and
+    (.server | exact(["private_network_block","adblock","warp_ai","warp_streaming","rules","rule_sets"]) and
+      ([.private_network_block,.adblock,.warp_ai,.warp_streaming] | all(.[]; type == "boolean")) and
+      (.rules | type == "array" and length <= 128 and
+        (map(.id) | unique | length) == length and all(.[];
+          exact(["id","kind","value","action","enabled"]) and
+          (.id | slug) and (.enabled | type == "boolean") and (.action | action) and
+          (.kind | IN("domain","domain_suffix","ip_cidr")) and
+          (if .kind == "ip_cidr" then
+             (.value | safe and length <= 64 and
+               test("^(?:[0-9]{1,3}(?:\\.[0-9]{1,3}){3}/[0-9]{1,2}|[A-Fa-f0-9:]+/[0-9]{1,3})$"))
+           else (.value | domain) end))) and
+      (.rule_sets | type == "array" and length <= 64 and
+        (map(.tag) | unique | length) == length and all(.[];
+          (.tag | slug) and (.enabled | type == "boolean") and (.action | action) and
+          (.format | IN("binary","source")) and (.update_interval | interval) and
+          (if .type == "remote" then
+             exact(["tag","type","format","url","action","enabled","update_interval"]) and (.url | url)
+           elif .type == "local" then
+             exact(["tag","type","format","path","action","enabled","update_interval"]) and (.path | path)
+           else false end)))) and
+    (.client | exact(["lan_direct","cn_direct","adblock"]) and all(.[]; type == "boolean")) and
+    (.adblock | exact(["url","domains","allow"]) and
+      (.url == "" or (.url | url)) and
+      (.domains | type == "array" and length <= 256 and all(.[]; domain) and (unique | length) == length) and
+      (.allow | type == "array" and length <= 256 and all(.[]; domain) and (unique | length) == length)) and
+    (if .server.adblock or .client.adblock then (.adblock.url != "" or (.adblock.domains | length) > 0) else true end)
+  ' <<< "${policy}" >/dev/null 2>&1
+}
+
+routing_policy_read_json() {
+  local file=${1:-} policy private_network=true
+  [[ -n "${file}" ]] || file=$(routing_policy_file_path) || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  if [[ -e "${file}" || -L "${file}" ]]; then
+    [[ -f "${file}" && ! -L "${file}" && "$(wc -c < "${file}")" -le 262144 ]] || return 1
+    policy=$(jq -ces 'if length == 1 then .[0] else error("policy_document_count") end' "${file}") || return 1
+    routing_policy_validate_json "${policy}" || return 1
+    printf '%s\n' "${policy}"
+    return 0
+  fi
+  if [[ -e "${SINGBOX_CONFIG_FILE}" || -L "${SINGBOX_CONFIG_FILE}" ]]; then
+    [[ -f "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" ]] || return 1
+    private_network=$(jq -er 'if type == "object" then
+      any(.route.rules[]?; .ip_is_private == true and .action == "reject")
+      else error("invalid_config") end' "${SINGBOX_CONFIG_FILE}") || {
+      [[ "${private_network}" == false ]] || return 1
+    }
+  fi
+  jq -cn --argjson private "${private_network}" '
+    {schema_version:1,
+     server:{private_network_block:$private,adblock:false,warp_ai:true,warp_streaming:true,rules:[],rule_sets:[]},
+     client:{lan_direct:true,cn_direct:true,adblock:false},
+     adblock:{url:"https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ads-all.srs",domains:[],allow:[]}}'
+}
+
+routing_policy_prepare_install_defaults() {
+  local file policy
+  file=$(routing_policy_file_path) || return 1
+  SB_OUTBOUND_POLICY=default
+  if [[ ! -e "${file}" && ! -L "${file}" && ! -e "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" ]]; then
+    # Fresh-install prompts run before the dependency installer prepares jq.
+    SB_ADVANCED_ROUTE=y
+    SB_ENABLE_WARP=n
+    SB_WARP_ROUTE_MODE=selective
+    return 0
+  fi
+  policy=$(routing_policy_read_json) || return 1
+  SB_ADVANCED_ROUTE=$(jq -r 'if .server.private_network_block then "y" else "n" end' <<< "${policy}") || return 1
+  if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    if config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; then SB_ENABLE_WARP=y; else SB_ENABLE_WARP=n; fi
+    load_warp_route_settings || return 1
+  else
+    SB_ENABLE_WARP=n
+    SB_WARP_ROUTE_MODE=selective
+  fi
+}
+
+routing_policy_requires_warp() {
+  local policy=${1:-}
+  if [[ -z "${policy}" ]]; then
+    policy=$(routing_policy_read_json) || return 1
+  fi
+  routing_policy_validate_json "${policy}" || return 1
+  jq -e 'any((.server.rules + .server.rule_sets)[]; .enabled and .action == "warp")' <<< "${policy}" >/dev/null
+}
+
+routing_policy_adblock_json() {
+  local policy=${1:-} side=${2:-server} use_http_client=n
+  [[ "${side}" == server || "${side}" == client ]] || return 1
+  routing_policy_validate_json "${policy}" || return 1
+  if singbox_config_supports_1_14; then use_http_client=y; fi
+  jq -cn --argjson policy "${policy}" --arg side "${side}" --arg modern "${use_http_client}" '
+    if $policy[$side].adblock then
+      ([if $policy.adblock.url != "" then
+          {type:"remote",tag:"sbv-adblock-remote",format:(if ($policy.adblock.url | test("\\.json(?:\\?.*)?$")) then "source" else "binary" end),
+           url:$policy.adblock.url,update_interval:"1d"} +
+          (if $modern == "y" then {http_client:{detour:"direct"}} else {download_detour:"direct"} end)
+        else empty end,
+        if ($policy.adblock.domains | length) > 0 then
+          {type:"inline",tag:"sbv-adblock-inline",rules:[{domain_suffix:$policy.adblock.domains}]}
+        else empty end]) as $sets |
+      {rule_sets:$sets,rules:[
+        (if ($policy.adblock.allow | length) > 0 then
+           {type:"logical",mode:"and",rules:[{rule_set:($sets | map(.tag))},{domain_suffix:$policy.adblock.allow,invert:true}]}
+         else {rule_set:($sets | map(.tag))} end) + {action:"reject"}]}
+    else {rule_sets:[],rules:[]} end'
+}
+
+routing_policy_render_server_json() {
+  local policy=${1:-} tags=${2:-'[]'} adblock use_http_client=n path
+  routing_policy_validate_json "${policy}" || return 1
+  jq -e 'type == "array" and all(.[]; type == "string" and length > 0) and (unique | length) == length' <<< "${tags}" >/dev/null || return 1
+  while IFS= read -r path; do
+    [[ ! -L "${path}" ]] || return 1
+  done < <(jq -r '.server.rule_sets[] | select(.enabled and .type == "local") | .path' <<< "${policy}")
+  adblock=$(routing_policy_adblock_json "${policy}" server) || return 1
+  if singbox_config_supports_1_14; then use_http_client=y; fi
+  jq -cn --argjson policy "${policy}" --argjson tags "${tags}" --argjson ads "${adblock}" --arg modern "${use_http_client}" '
+    def action($value): if $value == "reject" then {action:"reject"} else
+      {action:"route",outbound:(if $value == "warp" then "warp-ep" else "direct" end)} end;
+    ([$policy.server.rule_sets[] | select(.enabled) |
+      {type:.type,tag:("sbv-rule-" + .tag),format:.format} +
+      (if .type == "local" then {path:.path} else
+         {url:.url,update_interval:.update_interval} +
+         (if $modern == "y" then {http_client:{detour:"direct"}} else {download_detour:"direct"} end) end)]) as $sets |
+    {inbound:$tags,action:"resolve",server:"local-dns"} as $resolve |
+    ((if $policy.server.private_network_block then
+        [$resolve,
+         {ip_is_private:true,action:"reject",inbound:$tags}]
+      elif $policy.server.adblock and $policy.adblock.url != "" then
+        # Remote content may include IP matchers, even if its name suggests
+        # domains. Resolve at this filtering stage before matching its set.
+        [$resolve]
+      else [] end) +
+      [$ads.rules[] | if .type == "logical" then
+         .rules = [{inbound:$tags}] + .rules
+       else . + {inbound:$tags} end]) as $protection |
+    ([$policy.server.rules[] | select(.enabled) | {inbound:$tags} + {(.kind):[.value]} + action(.action)] +
+      [$policy.server.rule_sets[] | select(.enabled) | {inbound:$tags,rule_set:["sbv-rule-" + .tag]} + action(.action)] |
+      # Keep earlier domain decisions ahead of DNS. Local/remote sets are
+      # opaque and can change content, so every set action needs resolved IPs.
+      reduce .[] as $rule
+        ({resolved:any($protection[]; .action == "resolve"),rules:[]};
+         if (.resolved | not) and ($rule | has("ip_cidr") or has("rule_set")) then
+           .resolved = true | .rules += [$resolve,$rule]
+         else .rules += [$rule] end) | .rules) as $custom |
+    if ($tags | length) == 0 then {rule_sets:[],protection_rules:[],custom_rules:[],rules:[]} else
+      {rule_sets:($ads.rule_sets + $sets),protection_rules:$protection,custom_rules:$custom,rules:($protection + $custom)} end'
+}
+
+routing_policy_owned_rule_sets_json() {
+  local policy=${1:-} component_state=${2:-} current='[]' baseline='[]' component_tags rendered
+  local baseline_file="${SB_PROJECT_DIR}/managed-config.generated.json"
+  if [[ -z "${policy}" ]]; then policy=$(routing_policy_read_json) || return 1; fi
+  if [[ -z "${component_state}" ]]; then component_state=$(managed_component_state_json) || return 1; fi
+  component_tags=$(jq -c '[.components[]? | select(.role == "rule_set") | .tag]' <<< "${component_state}") || return 1
+  rendered=$(routing_policy_render_server_json "${policy}" '["ownership-projection"]') || return 1
+  current=$(jq -c '.rule_sets' <<< "${rendered}") || return 1
+  # Existing component names remain valid even if they predate this namespace.
+  # A new policy declaration may not take over any registered component tag.
+  jq -e --argjson tags "${component_tags}" 'all(.[]; .tag as $tag | $tags | index($tag) == null)' \
+    <<< "${current}" >/dev/null || return 1
+  if [[ -e "${baseline_file}" || -L "${baseline_file}" ]]; then
+    [[ -f "${baseline_file}" && ! -L "${baseline_file}" && "$(stat -c %a "${baseline_file}")" == 600 ]] || return 1
+    baseline=$(jq -ce --argjson component_tags "${component_tags}" '[.route.rule_set[]? |
+      select((.tag // "") | test("^sbv-(adblock-(inline|remote)|rule-[a-z0-9][a-z0-9_-]{0,63})$")) |
+      select(.tag as $tag | $component_tags | index($tag) == null)]' "${baseline_file}") || return 1
+  fi
+  jq -cn --argjson current "${current}" --argjson baseline "${baseline}" '$current + $baseline | unique'
+}
+
+routing_policy_warp_rules_json() {
+  local policy=${1:-} tags=${2:-'[]'}
+  routing_policy_validate_json "${policy}" || return 1
+  jq -cn --argjson policy "${policy}" --argjson tags "${tags}" \
+    --arg enabled "${SB_ENABLE_WARP:-n}" --arg mode "${SB_WARP_ROUTE_MODE:-selective}" \
+    --argjson ai_domains "${WARP_AI_ROUTE_DOMAINS_JSON}" --argjson ai_suffixes "${WARP_AI_ROUTE_DOMAIN_SUFFIXES_JSON}" \
+    --argjson media_domains "${WARP_STREAM_ROUTE_DOMAINS_JSON}" --argjson media_suffixes "${WARP_STREAM_ROUTE_DOMAIN_SUFFIXES_JSON}" \
+    --argjson custom_domains "${SB_WARP_CUSTOM_DOMAINS_JSON:-[]}" --argjson custom_suffixes "${SB_WARP_CUSTOM_DOMAIN_SUFFIXES_JSON:-[]}" \
+    --argjson warp_sets "${SB_WARP_RULE_SET_TAGS_JSON:-[]}" '
+    if $enabled == "y" and $mode == "selective" and ($tags | length) > 0 then
+      (if ($custom_domains | length) > 0 or ($custom_suffixes | length) > 0 then
+         [{inbound:$tags,domain:$custom_domains,domain_suffix:$custom_suffixes,action:"route",outbound:"warp-ep"}]
+       else [] end) +
+      (if ($warp_sets | length) > 0 then
+         [{inbound:$tags,rule_set:$warp_sets,action:"route",outbound:"warp-ep"}]
+       else [] end) +
+      (if $policy.server.warp_ai then
+         [{inbound:$tags,domain:$ai_domains,domain_suffix:$ai_suffixes,action:"route",outbound:"warp-ep"}]
+       else [] end) +
+      (if $policy.server.warp_streaming then
+         [{inbound:$tags,domain:$media_domains,domain_suffix:$media_suffixes,action:"route",outbound:"warp-ep"}]
+       else [] end)
+    else [] end'
+}
+
+# A state record proves only the exact binding it declares. A same-tag route
+# with another outbound policy remains operator content, even in simple form.
+routing_policy_nodes_inventory_json() {
+  local nodes=$1
+  jq -ce '
+    select(type == "array" and all(.[];
+      (.tag | type == "string" and length > 0) and (.policy | IN("default","direct","warp"))) and
+      (map(.tag) | unique | length) == length) |
+    {tags:(map(.tag) | sort),bindings:[.[] | . as $node |
+      {inbound:$node.tag,action:"sniff"},
+      (if $node.policy == "default" then empty else
+         {inbound:$node.tag,action:"route",outbound:(if $node.policy == "warp" then "warp-ep" else "direct" end)} end)]}
+  ' <<< "${nodes}"
+}
+
+routing_policy_store_inventory_json() {
+  local protocol=$1 store=$2 nodes
+  [[ -f "${store}" && ! -L "${store}" ]] || return 1
+  nodes=$(jq -ce --arg protocol "${protocol}" '.instances | select(type == "array") |
+    map({tag:(if $protocol == "shadowtls" then .detour.tag else .tag end),policy:(.outbound_policy // "default")})' "${store}") || return 1
+  routing_policy_nodes_inventory_json "${nodes}"
+}
+
+# Virtual legacy imports derive policy from live rules; only a persisted store
+# (or its transaction snapshot) proves state authority. Otherwise fixed rules
+# need an exact prior generated record, excluding component-owned declarations.
+routing_policy_old_store_inventory_json() {
+  local protocol=$1 store=$2 inventory proof snapshot marker baseline component_rules='[]' baseline_rules='[]'
+  inventory=$(routing_policy_store_inventory_json "${protocol}" "${store}") || return 1
+  if jq -e 'all(.bindings[]; .action != "route")' <<< "${inventory}" >/dev/null; then
+    printf '%s\n' "${inventory}"
+    return 0
+  fi
+  proof=$(plain_proxy_structured_store_file "${protocol}") || return 1
+  if plain_proxy_structured_state_active "${protocol}" &&
+     jq -es 'length==2 and .[0]==.[1]' "${store}" "${proof}" >/dev/null; then
+    printf '%s\n' "${inventory}"
+    return 0
+  fi
+  snapshot="${SB_PROJECT_DIR}.instance-write.lock/snapshot"
+  proof="${snapshot}/project/protocols/instances/${protocol}.json"
+  marker="${snapshot}/project/protocols/${protocol}.env"
+  if managed_state_snapshot_is_valid "${snapshot}" && plain_proxy_structured_marker_is_valid "${marker}" &&
+     [[ -f "${proof}" && ! -L "${proof}" && "$(stat -c %a "${proof}")" == 600 ]] &&
+     validate_structured_instance_store "${protocol}" "${proof}" &&
+     jq -es 'length==2 and .[0]==.[1]' "${store}" "${proof}" >/dev/null; then
+    printf '%s\n' "${inventory}"
+    return 0
+  fi
+  baseline="${SB_PROJECT_DIR}/managed-config.generated.json"
+  if [[ -e "${baseline}" || -L "${baseline}" ]]; then
+    [[ -f "${baseline}" && ! -L "${baseline}" && "$(stat -c %a "${baseline}")" == 600 ]] || return 1
+    baseline_rules=$(jq -c '.route.rules // []' "${baseline}") || return 1
+  fi
+  component_rules=$(managed_component_render_json | jq -c '.route_rules') || return 1
+  jq -c --argjson baseline "${baseline_rules}" --argjson components "${component_rules}" '
+    .bindings |= map(. as $rule | select(.action == "sniff" or
+      (($baseline | index($rule)) != null and ($components | index($rule)) == null)))
+  ' <<< "${inventory}"
+}
+
+# Read only registered protocol state. Never infer ownership from an inbound
+# type or a user-selected tag prefix; another same-protocol listener is manual.
+routing_policy_registered_inventory_json() (
+  local skip=${1:-} protocol schema state_file snapshot ids instance_id tag
+  local protocols='' nodes='[]' fragment policy
+  protocols=$(list_installed_protocols_read_only) || return 1
+  while IFS= read -r protocol; do
+    [[ -n "${protocol}" && "${protocol}" != "${skip}" ]] || continue
+    schema=$(protocol_instance_state_schema "${protocol}") || return 1
+    case "${protocol}:${schema}" in
+      vless-reality:2)
+        ids=$(list_vless_reality_managed_instance_ids) || return 1
+        load_vless_reality_protocol_state || return 1
+        fragment='[]'
+        while IFS= read -r instance_id; do
+          [[ -n "${instance_id}" ]] || continue
+          load_vless_reality_instance_state "${instance_id}" || return 1
+          tag=$(vless_reality_inbound_tag_for_instance "${instance_id}") || return 1
+          policy=${SB_OUTBOUND_POLICY:-default}
+          fragment=$(jq -cn --argjson nodes "${fragment}" --arg tag "${tag}" --arg policy "${policy}" \
+            '$nodes + [{tag:$tag,policy:$policy}]') || return 1
+        done <<< "${ids}"
+        ;;
+      *:2)
+        state_file=$(plain_proxy_structured_store_file "${protocol}") || return 1
+        snapshot=$(structured_instance_store_snapshot_json "${protocol}" "${state_file}") || return 1
+        fragment=$(jq -c --arg protocol "${protocol}" '[.instances[] |
+          {tag:(if $protocol == "shadowtls" then .detour.tag else .tag end),policy:.outbound_policy}]' <<< "${snapshot}") || return 1
+        ;;
+      vless-reality:1|mixed:1|hy2:1|anytls:1)
+        tag=$(protocol_inbound_tag "${protocol}") || return 1
+        fragment=$(jq -cn --arg tag "${tag}" '[{tag:$tag,policy:"default"}]') || return 1
+        ;;
+      *) return 1 ;;
+    esac
+    nodes=$(jq -cn --argjson nodes "${nodes}" --argjson more "${fragment}" '$nodes + $more') || return 1
+  done <<< "${protocols}"
+  routing_policy_nodes_inventory_json "${nodes}"
+)
+
+routing_policy_registered_tags_json() {
+  local inventory
+  inventory=$(routing_policy_registered_inventory_json "${1:-}") || return 1
+  jq -c '.tags' <<< "${inventory}"
+}
+
+# The legacy producer below this boundary rewrites simple target bindings.
+# Refuse unknown/duplicate records before it can prune them, and refuse missing
+# declared bindings instead of recreating a foreign protocol's operator edit.
+routing_policy_precheck_instance_candidate() (
+  local protocol=$1 old_config=$2 old_store=$3 new_store=$4 file other old new policy tags rendered warp exceptions
+  file=$(routing_policy_file_path) || return 1
+  [[ -e "${file}" || -L "${file}" ]] || return 0
+  policy=$(routing_policy_read_json) || return 1
+  [[ -f "${old_config}" && ! -L "${old_config}" ]] || return 1
+  other=$(routing_policy_registered_inventory_json "${protocol}") || return 1
+  old=$(routing_policy_old_store_inventory_json "${protocol}" "${old_store}") || return 1
+  new=$(routing_policy_store_inventory_json "${protocol}" "${new_store}") || return 1
+  tags=$(jq -cn --argjson other "${other}" --argjson old "${old}" '$other.tags + $old.tags | unique') || return 1
+  rendered=$(routing_policy_render_server_json "${policy}" "${tags}") || return 1
+  routing_policy_projection_assets_load || return 1
+  warp=$(routing_policy_warp_rules_json "${policy}" "${tags}") || return 1
+  exceptions=$(routing_policy_baseline_protocol_rules_json) || return 1
+  jq -e --argjson other "${other}" --argjson old "${old}" --argjson new "${new}" \
+    --argjson tags "${tags}" --argjson rendered "${rendered}" --argjson warp "${warp}" --argjson exceptions "${exceptions}" '
+    def simple_binding:
+      (.inbound | type) == "string" and
+      ((.action == "sniff" and (keys | sort) == ["action","inbound"]) or
+       (.action == "route" and (.outbound | IN("direct","warp-ep")) and
+        (keys | sort) == ["action","inbound","outbound"]));
+    (.route.rules // []) as $rules |
+    ($other.bindings + $old.bindings) as $known |
+    ([$exceptions[] | . as $rule | select(($rules | index($rule)) != null)]) as $protocol_rules |
+    ($rendered.rules + $warp) as $policy_rules |
+    ([$tags[] | {inbound:.,action:"sniff"}] + $rendered.protection_rules +
+      ([$known[] | select(.action == "route")] | sort_by(.inbound)) +
+      $protocol_rules + $rendered.custom_rules + $warp) as $expected |
+    ($known + $policy_rules + $protocol_rules) as $owned |
+    ($old.tags + $new.tags | unique) as $affected |
+    (($other.tags + $old.tags | unique | length) == ($other.tags + $old.tags | length)) and
+    (($other.tags + $new.tags | unique | length) == ($other.tags + $new.tags | length)) and
+    all($known[]; . as $rule | [$rules[] | select(. == $rule)] | length == 1) and
+    all($policy_rules[]; . as $rule | [$rules[] | select(. == $rule)] | length == 1) and
+    ([$rules[] | . as $rule | select(($owned | index($rule)) != null)] == $expected) and
+    all($rules[] | select(simple_binding and (.inbound as $tag | $affected | index($tag) != null));
+      . as $rule | ($old.bindings | index($rule)) != null)
+  ' "${old_config}" >/dev/null || {
+    printf '[ERROR] routing_policy_instance_projection_conflict: 入口绑定归属缺失、重复或包含未声明手工规则；配置未发布。\n' >&2
+    return 1
+  }
+)
+
+routing_policy_projection_assets_load() {
+  # These readers update shell variables/private temporary files only.
+  load_config_generation_settings "${SINGBOX_CONFIG_FILE}" || return 1
+  build_custom_warp_domain_json || return 1
+  build_local_warp_rule_sets_json || return 1
+  build_remote_warp_rule_sets_json || return 1
+  build_warp_rule_set_tags_json || return 1
+}
+
+routing_policy_baseline_protocol_rules_json() {
+  local baseline="${SB_PROJECT_DIR}/managed-config.generated.json"
+  if [[ ! -e "${baseline}" && ! -L "${baseline}" ]]; then printf '[]\n'; return 0; fi
+  [[ -f "${baseline}" && ! -L "${baseline}" && "$(stat -c %a "${baseline}")" == 600 ]] || return 1
+  jq -c '[.route.rules[]? | select(.action == "direct" and (keys | sort) == ["action","domain"])]' "${baseline}"
+}
+
+# Tag labels enumerate generated rules; they do not prove an arbitrary manual
+# matcher is disjoint. Inversion negates all conditions, and logical children
+# may match managed traffic regardless of an apparent outer inbound label.
+routing_policy_rule_scope_jq() {
+  cat <<'JQ'
+    def routing_rule_action:
+      (.action // "") | if . == "" then "route" else . end;
+    def routing_rule_terminal:
+      routing_rule_action | IN("route","direct","reject","hijack-dns","bypass");
+    def routing_positive_inbound_tag($tags):
+      .inbound as $in |
+        if ($in | type) == "string" then ($tags | index($in)) != null
+        elif ($in | type) == "array" then any($in[]; . as $tag | ($tags | index($tag)) != null)
+        else false end;
+    def routing_rule_tagged($tags):
+      .invert != true and
+      (if .type == "logical" then
+         .mode == "and" and (.rules | type) == "array" and (.rules | length) > 0 and
+         (.rules[0] | (keys == ["inbound"]) and routing_positive_inbound_tag($tags))
+       else routing_positive_inbound_tag($tags) end);
+    def routing_rule_may_overlap($tags):
+      if ($tags | length) == 0 then false
+      elif .invert == true then true
+      elif .type == "logical" then
+        if (.rules | type) != "array" or (.rules | length) == 0 then true
+        elif .mode == "and" then all(.rules[]; routing_rule_may_overlap($tags))
+        elif .mode == "or" then any(.rules[]; routing_rule_may_overlap($tags))
+        else true end
+      elif (.type // "default" | IN("", "default") | not) then true
+      else .inbound as $in |
+        if ($in | type) == "string" and ($in | length) > 0 then ($tags | index($in)) != null
+        elif ($in | type) == "array" and ($in | length) > 0 and all($in[]; type == "string" and length > 0) then
+          any($in[]; . as $tag | ($tags | index($tag)) != null)
+        else true end
+      end;
+JQ
+}
+
+routing_policy_project_instance_candidate() (
+  local protocol=${1:-} old_store=${2:-} new_store=${3:-} file policy candidate other old new old_tags new_tags old_bindings new_bindings
+  local old_render new_render old_warp new_warp baseline_rules='[]'
+  file=$(routing_policy_file_path) || return 1
+  if [[ ! -e "${file}" && ! -L "${file}" ]]; then cat; return $?; fi
+  [[ -f "${old_store}" && ! -L "${old_store}" && -f "${new_store}" && ! -L "${new_store}" ]] || return 1
+  policy=$(routing_policy_read_json) || return 1
+  candidate=$(cat) || return 1
+  [[ "${#candidate}" -le 4194304 ]] || return 1
+  other=$(routing_policy_registered_inventory_json "${protocol}") || return 1
+  old=$(routing_policy_old_store_inventory_json "${protocol}" "${old_store}") || return 1
+  new=$(routing_policy_store_inventory_json "${protocol}" "${new_store}") || return 1
+  old_tags=$(jq -cn --argjson other "${other}" --argjson old "${old}" '$other.tags + $old.tags | unique') || return 1
+  new_tags=$(jq -cn --argjson other "${other}" --argjson new "${new}" '$other.tags + $new.tags | unique') || return 1
+  old_bindings=$(jq -cn --argjson other "${other}" --argjson old "${old}" '$other.bindings + $old.bindings') || return 1
+  new_bindings=$(jq -cn --argjson other "${other}" --argjson new "${new}" '$other.bindings + $new.bindings') || return 1
+  old_render=$(routing_policy_render_server_json "${policy}" "${old_tags}") || return 1
+  new_render=$(routing_policy_render_server_json "${policy}" "${new_tags}") || return 1
+  routing_policy_projection_assets_load || return 1
+  old_warp=$(routing_policy_warp_rules_json "${policy}" "${old_tags}") || return 1
+  new_warp=$(routing_policy_warp_rules_json "${policy}" "${new_tags}") || return 1
+  baseline_rules=$(routing_policy_baseline_protocol_rules_json) || return 1
+  jq --argjson old_tags "${old_tags}" --argjson new_tags "${new_tags}" \
+    --argjson old_bindings "${old_bindings}" --argjson new_bindings "${new_bindings}" \
+    --argjson old_render "${old_render}" --argjson new_render "${new_render}" \
+    --argjson old_warp "${old_warp}" --argjson new_warp "${new_warp}" --argjson exceptions "${baseline_rules}" "$(routing_policy_rule_scope_jq)"'
+    def conflict: error("routing_policy_instance_projection_conflict");
+    def binding:
+      . as $rule | ($old_bindings + $new_bindings | index($rule)) != null;
+    def overlaps: routing_rule_may_overlap($old_tags + $new_tags);
+    ($old_render.rules + $old_warp) as $old_policy_rules |
+    def owned:
+      . as $rule | binding or ($old_policy_rules | index($rule)) != null or ($exceptions | index($rule)) != null;
+    def existing_owned:
+      . as $rule |
+      ($old_bindings | index($rule)) != null or
+      ($old_policy_rules | index($rule)) != null or ($exceptions | index($rule)) != null;
+    (.route.rules // []) as $rules |
+    if all($old_policy_rules[]; . as $expected | [$rules[] | select(. == $expected)] | length == 1) | not then conflict else . end |
+    ($rules | to_entries) as $entries |
+    ([$entries[] | select(.value | existing_owned) | .key]) as $positions |
+    ($positions | min // ($rules | length)) as $at |
+    ($positions | max // -1) as $last |
+    if ($positions | length) == 0 and
+       any($entries[]; .key < $at and (.value | (owned | not) and routing_rule_terminal and overlaps)) then conflict else . end |
+    if any($entries[]; .key < $last and (.value | (owned | not) and routing_rule_terminal and overlaps)) then conflict else . end |
+    # Rebuilding one contiguous owned chain must not move an interleaved
+    # operator rule across an existing owned anchor, even for another listener.
+    if any($entries[]; .key > $at and .key < $last and (.value | owned | not)) then conflict else . end |
+    ([$rules[] | select(.action == "route" and (. as $rule | $new_bindings | index($rule) != null))]) as $fixed |
+    if ($fixed | map(.inbound) | unique | length) != ($fixed | length) then conflict else . end |
+    ([$rules[] | select(. as $rule | ($exceptions | index($rule)) != null)]) as $protocol_rules |
+    ([$new_tags[] | {inbound:.,action:"sniff"}] + $new_render.protection_rules +
+      ($fixed | sort_by(.inbound)) + $protocol_rules + $new_render.custom_rules + $new_warp) as $next_rules |
+    .route.rules = ([$rules[:$at][] | select(owned | not)] + $next_rules +
+      [$rules[$at:][] | select(owned | not)]) |
+    (.route.rule_set // []) as $sets |
+    if all($old_render.rule_sets[]; . as $expected | [$sets[] | select(. == $expected)] | length == 1) | not then conflict else . end |
+    ([$sets[] | select(. as $set | ($old_render.rule_sets | index($set)) == null)]) as $retained_sets |
+    if any($retained_sets[]; .tag as $tag | any($new_render.rule_sets[]; .tag == $tag)) then conflict else . end |
+    .route.rule_set = ($retained_sets + $new_render.rule_sets)
+  ' <<< "${candidate}" || {
+    printf '[ERROR] routing_policy_instance_projection_conflict: 节点变化无法保留现有规则归属和优先级；配置未发布。\n' >&2
+    return 1
+  }
+)
+
+# Ordered three-way merging appends previously unseen rules. Place only rules
+# absent from BOTH the trusted baseline and original live config at the nearest
+# existing generated anchor. Every original live rule keeps its relative order.
+routing_policy_place_new_generated_rules() {
+  local generated=$1 merged=$2 baseline=$3 live=$4 tags=$5
+  if [[ ! -e "${baseline}" && ! -L "${baseline}" ]]; then cat -- "${merged}"; return $?; fi
+  [[ -f "${baseline}" && ! -L "${baseline}" && "$(stat -c %a "${baseline}")" == 600 ]] || return 1
+  jq --slurpfile generated "${generated}" --slurpfile baseline "${baseline}" --slurpfile live "${live}" \
+    --argjson tags "${tags}" "$(routing_policy_rule_scope_jq)"'
+    def conflict: error("routing_policy_order_conflict");
+    def scoped: routing_rule_tagged($tags);
+    def terminal: routing_rule_terminal;
+    ($baseline[0].route.rules // []) as $prior |
+    ($live[0].route.rules // []) as $original |
+    [$generated[0].route.rules[]? | select(scoped)] as $expected |
+    [$expected[] | . as $rule | select(($prior | index($rule)) == null and ($original | index($rule)) == null)] as $new |
+    if ($new | length) == 0 then . else
+      # A manual terminal rule for managed traffic is a conflict regardless of
+      # its current position. Do not make it appear safe by inserting ahead.
+      if any($original[]; . as $rule | ($prior | index($rule)) == null and terminal and
+        routing_rule_may_overlap($tags)) then conflict else . end |
+      (.route.rules // []) as $merged |
+      if any($new[]; . as $rule | [$merged[] | select(. == $rule)] | length != 1) then conflict else . end |
+      [$merged[] | . as $rule | select(($new | index($rule)) == null)] as $retained |
+      if ([$retained[] | . as $rule | select(($expected | index($rule)) != null)]) !=
+         ([$expected[] | . as $rule | select(($new | index($rule)) == null)]) then conflict else . end |
+      .route.rules = (reduce range(0; $expected | length) as $i ($retained;
+        $expected[$i] as $rule |
+        if ($new | index($rule)) == null then . else
+          . as $current |
+          ([$expected[$i+1:][] | . as $next | $current | index($next) | select(. != null)][0]) as $next_at |
+          (if $next_at != null then $next_at else
+            ([$expected[:$i][] | . as $previous | $current | index($previous) | select(. != null)] | max // (($current | length) - 1)) + 1
+           end) as $at |
+          $current[:$at] + [$rule] + $current[$at:]
+        end))
+    end
+  ' "${merged}" || {
+    printf '[ERROR] routing_policy_order_conflict: 手工或组件规则与新增受管规则存在优先级冲突；配置未发布。\n' >&2
+    return 1
+  }
+}
+
+routing_policy_validate_merged_order() {
+  local generated=${1:-} merged=${2:-} tags=${3:-'[]'}
+  jq -e --slurpfile expected "${generated}" --argjson tags "${tags}" "$(routing_policy_rule_scope_jq)"'
+    def scoped: routing_rule_tagged($tags);
+    def terminal: routing_rule_terminal;
+    def ad_match: (.rule_set // [] | if type == "string" then [.] else . end) as $sets |
+      any($sets[]; startswith("sbv-adblock-")) or any(.rules[]?; ad_match);
+    [$expected[0].route.rules[]? | select(scoped)] as $owned |
+    def owned: . as $rule | ($owned | index($rule)) != null;
+    [.route.rules[]? | select(owned)] == $owned and
+    (.route.rules // [] | to_entries) as $entries |
+    ([$entries[] | select(.value | owned and .action == "reject" and (.ip_is_private == true or ad_match)) | .key] | max // -1) as $last_filter |
+    all($entries[] | select(.key < $last_filter);
+      .value as $rule |
+      (($rule | terminal) | not) or
+      # Ownership preserves a rule; it cannot let a component route managed
+      # traffic around protection. Rejection and DNS handling remain safe.
+      (($rule | owned) and ($rule | routing_rule_action | IN("reject","hijack-dns"))) or
+      (($rule | routing_rule_may_overlap($tags)) | not))
+  ' "${merged}" >/dev/null 2>&1 || {
+    printf '[ERROR] routing_policy_order_conflict: 手工或组件规则与受管节点的过滤优先级冲突；配置未发布。\n' >&2
+    return 1
+  }
+}
+
+# Typed mutations publish their own candidate instead of running generate_config.
+# Advance the pure generated projection in the same instance transaction so a
+# later global merge can distinguish the typed change from operator edits.
+# Never seed this record from live configuration: it may contain manual fields.
+routing_policy_sync_instance_baseline() (
+  local protocol=${1:-} old_store=${2:-} new_store=${3:-} file candidate='' validation_candidate=''
+  local baseline_file="${SB_PROJECT_DIR}/managed-config.generated.json"
+  file=$(routing_policy_file_path) || return 1
+  [[ -e "${file}" || -L "${file}" ]] || return 0
+  [[ -e "${baseline_file}" || -L "${baseline_file}" ]] || return 0
+  [[ -f "${baseline_file}" && ! -L "${baseline_file}" &&
+     "$(stat -c %a "${baseline_file}")" == 600 ]] || return 1
+  candidate=$(mktemp "${SB_PROJECT_DIR}/.managed-config.generated.candidate.XXXXXX") || return 1
+  trap '[[ -z "${candidate}" ]] || rm -f -- "${candidate}"; [[ -z "${validation_candidate}" ]] || rm -f -- "${validation_candidate}"' EXIT
+  plain_proxy_instance_config_candidate "${protocol}" "${baseline_file}" "${old_store}" "${new_store}" \
+    > "${candidate}" || return 1
+  # Generated facts may legitimately refer to operator objects omitted from
+  # this ownership record. Validate in the complete already-published context,
+  # while persisting only the pure projection below.
+  validation_candidate=$(mktemp "${SB_PROJECT_DIR}/.managed-config.validation.candidate.XXXXXX") || return 1
+  chmod 600 "${validation_candidate}" || return 1
+  merge_generated_config_with_live "${candidate}" "${SINGBOX_CONFIG_FILE}" "${baseline_file}" \
+    > "${validation_candidate}" || return 1
+  jq -es 'length == 2 and .[0] == .[1]' "${validation_candidate}" "${SINGBOX_CONFIG_FILE}" >/dev/null || {
+    printf '[ERROR] routing_policy_baseline_context_conflict: 生成基线与已校验运行配置的上下文不一致；基线未发布。\n' >&2
+    return 1
+  }
+  validate_managed_component_graph "${validation_candidate}" || return 1
+  validate_managed_listener_resources "${validation_candidate}" || return 1
+  "${SINGBOX_BIN_PATH}" check -c "${validation_candidate}" >&2 || return 1
+  chmod 600 "${candidate}" || return 1
+  persist_file_backup "${baseline_file}" "${baseline_file}.bak" || return 1
+  mv -f -- "${candidate}" "${baseline_file}" || return 1
+  candidate=''
+)
+# Routing drafts contain inert JSON and stay outside the installed project.
+routing_error() {
+  printf '[ERROR] %s\n' "$*" >&2
+  return 1
+}
+
+routing_asset_text_json() {
+  local file=$1
+  if [[ -e "${file}" || -L "${file}" ]]; then
+    [[ -f "${file}" && ! -L "${file}" && "$(wc -c < "${file}")" -le 1048576 ]] || return 1
+    jq -Rs '.' "${file}"
+  else
+    printf '""\n'
+  fi
+}
+
+routing_managed_parent_is_safe() {
+  local target=$1 parent
+  [[ "${target}" == "${SB_PROJECT_DIR}/"* && "${target}" != *'/../'* && "${target}" != *'/./'* ]] || return 1
+  parent=$(dirname -- "${target}") || return 1
+  while [[ "${parent}" == "${SB_PROJECT_DIR}" || "${parent}" == "${SB_PROJECT_DIR}/"* ]]; do
+    [[ -d "${parent}" && ! -L "${parent}" ]] || return 1
+    [[ "${parent}" != "${SB_PROJECT_DIR}" ]] || return 0
+    parent=$(dirname -- "${parent}") || return 1
+  done
+  return 1
+}
+
+routing_policy_seed_fresh_install() (
+  local policy candidate=''
+  if [[ -e "${SB_ROUTING_POLICY_FILE}" || -L "${SB_ROUTING_POLICY_FILE}" ]]; then
+    routing_policy_read_json >/dev/null
+    return $?
+  fi
+  case "${SB_ADVANCED_ROUTE}" in y|n) ;; *) return 1 ;; esac
+  umask 077
+  policy=$(routing_policy_read_json) || return 1
+  candidate=$(mktemp "${SB_PROJECT_DIR}/.routing-initial.XXXXXX") || return 1
+  trap 'rm -f -- "${candidate}"' EXIT
+  jq --arg private "${SB_ADVANCED_ROUTE}" '.server.private_network_block=($private=="y")' <<< "${policy}" > "${candidate}" || return 1
+  routing_policy_validate_json "$(cat "${candidate}")" || return 1
+  routing_publish_file "${candidate}" "${SB_ROUTING_POLICY_FILE}"
+)
+
+routing_path_is_managed() {
+  local path=$1 relative protocol id
+  relative=${path#"${SB_PROJECT_DIR}/"}
+  case "${relative}" in
+    config.json|config.json.bak|managed-config.generated.json|managed-config.generated.json.bak|routing-policy.json|routing-policy.json.bak|warp.key|warp.key.bak|warp-routing.env|warp-routing.env.bak|warp-domains.txt|warp-domains.txt.bak|warp-remote-rule-sets.txt|warp-remote-rule-sets.txt.bak|reality.key|reality.key.bak|stack-mode.env|stack-mode.env.bak|protocols/index.env|protocols/index.env.bak) return 0 ;;
+  esac
+  for protocol in vless-reality vless-plain mixed socks http shadowsocks trojan vmess anytls hy2 snell tuic hysteria naive shadowtls; do
+    case "${relative}" in
+      "protocols/${protocol}.env"|"protocols/${protocol}.env.bak"|"protocols/instances/${protocol}.json"|"protocols/instances/${protocol}.json.bak") return 0 ;;
+    esac
+  done
+  case "${relative}" in
+    protocols/vless-reality.d/*.env|protocols/vless-reality.d/*.env.bak)
+      id=${relative#protocols/vless-reality.d/}; id=${id%.bak}; id=${id%.env}
+      [[ "${id}" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$ ]] && return 0
+      ;;
+    protocols|protocols/instances|protocols/vless-reality.d|rule-set|rule-set/warp) return 0 ;;
+  esac
+  return 1
+}
+
+routing_state_fingerprint() (
+  local scope=${1:-all} workspace file count=0 kind mode
+  [[ "${scope}" == all || "${scope}" == external ]] || return 1
+  [[ ! -L "${SB_PROJECT_DIR}" ]] || return 1
+  umask 077
+  workspace=$(mktemp -d /tmp/sbv-routing-fingerprint.XXXXXX) || return 1
+  trap 'rm -rf -- "${workspace}"' EXIT
+  : > "${workspace}/paths"
+  if [[ -d "${SB_PROJECT_DIR}" ]]; then
+    find "${SB_PROJECT_DIR}" -mindepth 1 -print0 > "${workspace}/paths" || return 1
+  elif [[ -e "${SB_PROJECT_DIR}" ]]; then
+    return 1
+  fi
+  LC_ALL=C sort -z "${workspace}/paths" > "${workspace}/sorted" || return 1
+  : > "${workspace}/hashes"
+  if [[ -d "${SB_PROJECT_DIR}" ]]; then
+    printf 'root:directory:%s\n' "$(stat -c '%a:%u:%g' -- "${SB_PROJECT_DIR}")" >> "${workspace}/hashes" || return 1
+  else
+    printf 'root:absent\n' >> "${workspace}/hashes" || return 1
+  fi
+  while IFS= read -r -d '' file; do
+    # Runtime log messages are preserved separately during snapshot restoration.
+    [[ "${file}" != "${SBV_LOG_FILE}" ]] || continue
+    if [[ "${scope}" == external ]] && routing_path_is_managed "${file}"; then continue; fi
+    count=$((count + 1)); [[ "${count}" -le 4096 ]] || return 1
+    printf '%s\0' "${file#"${SB_PROJECT_DIR}/"}" >> "${workspace}/hashes" || return 1
+    mode=$(stat -c '%a:%u:%g' -- "${file}") || return 1
+    if [[ -L "${file}" ]]; then
+      printf 'link:%s:' "${mode}" >> "${workspace}/hashes" || return 1
+      readlink -- "${file}" >> "${workspace}/hashes" || return 1
+    elif [[ -f "${file}" ]]; then
+      printf 'file:%s:' "${mode}" >> "${workspace}/hashes" || return 1
+      sha256sum -- "${file}" >> "${workspace}/hashes" || return 1
+    elif [[ -d "${file}" ]]; then
+      printf 'directory:%s\n' "${mode}" >> "${workspace}/hashes" || return 1
+    else
+      return 1
+    fi
+  done < "${workspace}/sorted"
+  sha256sum "${workspace}/hashes" | cut -d' ' -f1
+)
+
+routing_restore_project_snapshot() (
+  local snapshot=$1 saved_log directory="${SB_ROUTING_TRANSACTION_DIR}" had_log=n
+  saved_log=$(mktemp "${directory}/.current-log.XXXXXX") || return 1
+  trap 'rm -f -- "${saved_log}"' EXIT
+  if [[ -e "${SBV_LOG_FILE}" || -L "${SBV_LOG_FILE}" ]]; then
+    [[ -f "${SBV_LOG_FILE}" && ! -L "${SBV_LOG_FILE}" ]] || return 1
+    cp -p -- "${SBV_LOG_FILE}" "${saved_log}" || return 1
+    had_log=y
+  fi
+  restore_managed_state_snapshot "${snapshot}" || return 1
+  if [[ -f "${snapshot}/project.existed" ]]; then
+    chmod --reference="${snapshot}/project" -- "${SB_PROJECT_DIR}" || return 1
+    chown --reference="${snapshot}/project" -- "${SB_PROJECT_DIR}" || return 1
+  fi
+  if [[ "${had_log}" == y ]]; then
+    [[ ! -L "${SBV_LOG_FILE}" ]] || return 1
+    cp -p -- "${saved_log}" "${SBV_LOG_FILE}" || return 1
+  else
+    rm -f -- "${SBV_LOG_FILE}" || return 1
+  fi
+)
+
+routing_nodes_json() (
+  local workspace protocols protocol store snapshot ids id
+  umask 077
+  workspace=$(mktemp -d /tmp/sbv-routing-nodes.XXXXXX) || return 1
+  trap 'rm -rf -- "${workspace}"' EXIT
+  : > "${workspace}/nodes"
+  if [[ ! -e "${SINGBOX_CONFIG_FILE}" && ! -e "${SB_PROTOCOL_INDEX_FILE}" ]]; then
+    printf '[]\n'
+    return 0
+  fi
+  protocols=$(list_installed_protocols_read_only) || return 1
+  while IFS= read -r protocol; do
+    [[ -n "${protocol}" ]] || continue
+    if [[ "${protocol}" == vless-reality ]]; then
+      load_vless_reality_protocol_state || return 1
+      if [[ "${CONFIG_SCHEMA_VERSION:-1}" != 2 ]]; then
+        jq -cn '{protocol:"vless-reality",id:"main",name:"VLESS + REALITY (legacy)",
+          tag:"vless-in",policy:"default",revision:0,editable:false}' >> "${workspace}/nodes" || return 1
+        continue
+      fi
+      ids=$(list_vless_reality_instance_ids) || return 1
+      while IFS= read -r id; do
+        [[ -n "${id}" ]] || continue
+        load_vless_reality_instance_state "${id}" || return 1
+        jq -cn --arg protocol "${protocol}" --arg id "${id}" \
+          --arg name "${SB_NODE_NAME:-${id}}" --arg tag "$(vless_reality_inbound_tag_for_instance "${id}")" \
+          --arg policy "${SB_OUTBOUND_POLICY:-default}" \
+          '{protocol:$protocol,id:$id,name:$name,tag:$tag,policy:$policy,revision:0,editable:true}' >> "${workspace}/nodes" || return 1
+      done <<< "${ids}"
+    elif plain_proxy_structured_state_active "${protocol}"; then
+      store=$(plain_proxy_structured_store_file "${protocol}") || return 1
+      snapshot=$(structured_instance_store_snapshot_json "${protocol}" "${store}") || return 1
+      jq -c --arg protocol "${protocol}" '.revision as $revision | .instances[] |
+        {protocol:$protocol,id:.id,name:.name,tag:.tag,policy:.outbound_policy,revision:$revision,editable:true}' \
+        <<< "${snapshot}" >> "${workspace}/nodes" || return 1
+    else
+      jq -cn --arg protocol "${protocol}" --arg tag "$(protocol_inbound_tag "${protocol}")" \
+        '{protocol:$protocol,id:"main",name:$protocol,tag:$tag,policy:"default",revision:0,editable:false}' \
+        >> "${workspace}/nodes" || return 1
+    fi
+  done <<< "${protocols}"
+  jq -s '.' "${workspace}/nodes"
+)
+
+routing_draft_validate() {
+  local file=$1 policy
+  [[ -f "${file}" && ! -L "${file}" && "$(wc -c < "${file}")" -le 2359296 ]] || return 1
+  jq -e '
+    def exact($keys): type=="object" and (keys|sort)==($keys|sort);
+    exact(["policy","warp","node_overrides","legacy_domains","legacy_sources","fingerprint"]) and
+    (.fingerprint|type=="string" and test("^[a-f0-9]{64}$")) and
+    (.legacy_domains|type=="string" and length<=1048576) and
+    (.legacy_sources|type=="string" and length<=1048576) and
+    (.warp|exact(["enabled","mode","reregister"]) and
+      (.enabled|type=="boolean") and (.reregister|type=="boolean") and (.mode|IN("all","selective"))) and
+    (.node_overrides|type=="array" and length<=128 and
+      (map([.protocol,.id])|unique|length)==length and all(.[];
+        exact(["protocol","id","policy","revision"]) and
+        (.protocol|type=="string" and test("^[a-z0-9-]+$")) and
+        (.id|type=="string" and test("^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")) and
+        (.policy|IN("default","direct","warp")) and
+        (.revision|type=="number" and floor==. and .>=0 and .<=9007199254740990)))
+  ' "${file}" >/dev/null || return 1
+  policy=$(jq -c '.policy' "${file}") || return 1
+  routing_policy_validate_json "${policy}"
+}
+
+routing_draft_create() {
+  local file=$1 before after policy domains sources enabled=false mode=selective
+  [[ ! -L "${file}" ]] || return 1
+  before=$(routing_state_fingerprint) || return 1
+  policy=$(routing_policy_read_json) || return 1
+  domains=$(routing_asset_text_json "${SB_WARP_DOMAINS_FILE}") || return 1
+  sources=$(routing_asset_text_json "${SB_WARP_REMOTE_RULESETS_FILE}") || return 1
+  if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    if config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; then enabled=true; fi
+    mode=$(load_warp_route_settings && printf '%s' "${SB_WARP_ROUTE_MODE}") || return 1
+  fi
+  after=$(routing_state_fingerprint) || return 1
+  [[ "${before}" == "${after}" ]] || { routing_error '规则读取期间状态已变化，请重新进入。'; return 1; }
+  (umask 077; jq -n --argjson policy "${policy}" --argjson enabled "${enabled}" --arg mode "${mode}" \
+    --argjson domains "${domains}" --argjson sources "${sources}" --arg fingerprint "${before}" \
+    '{policy:$policy,warp:{enabled:$enabled,mode:$mode,reregister:false},node_overrides:[],
+      legacy_domains:$domains,legacy_sources:$sources,fingerprint:$fingerprint}' > "${file}") || return 1
+  routing_draft_validate "${file}"
+}
+
+routing_publish_file() (
+  local source=$1 target=$2 candidate=''
+  [[ -f "${source}" && ! -L "${source}" && ! -L "${target}" ]] || return 1
+  routing_managed_parent_is_safe "${target}" || return 1
+  [[ ! -e "${target}.bak" || -f "${target}.bak" || -L "${target}.bak" ]] || return 1
+  if [[ -f "${target}" ]] && cmp -s "${source}" "${target}"; then return 0; fi
+  umask 077
+  mkdir -p "$(dirname "${target}")" || return 1
+  candidate=$(mktemp "$(dirname "${target}")/.routing-write.XXXXXX") || return 1
+  trap 'rm -f -- "${candidate}"' EXIT
+  cp -- "${source}" "${candidate}" && chmod 600 "${candidate}" || return 1
+  if [[ -e "${target}" ]]; then
+    [[ -f "${target}" ]] || return 1
+    persist_file_backup "${target}" "${target}.bak" || return 1
+  fi
+  mv -f -- "${candidate}" "${target}"
+)
+
+routing_apply_node_overrides() (
+  local draft=$1 work_dir=$2 protocols protocol changes revision store candidate ids id file
+  protocols=$(jq -r '.node_overrides | map(.protocol) | unique[]' "${draft}") || return 1
+  while IFS= read -r protocol; do
+    [[ -n "${protocol}" ]] || continue
+    changes=$(jq -c --arg p "${protocol}" '[.node_overrides[]|select(.protocol==$p)]' "${draft}") || return 1
+    if [[ "${protocol}" == vless-reality ]]; then
+      load_vless_reality_protocol_state || return 1
+      ids=$(list_vless_reality_instance_ids) || return 1
+      while IFS= read -r id; do
+        [[ -n "${id}" ]] || continue
+        grep -Fxq -- "${id}" <<< "${ids}" || return 1
+        load_vless_reality_instance_state "${id}" || return 1
+        file=$(vless_reality_instance_state_file "${id}") || return 1
+        [[ -f "${file}" && ! -L "${file}" ]] || return 1
+        candidate="${work_dir}/reality-policy.env"
+        awk '!/^OUTBOUND_POLICY=/' "${file}" > "${candidate}" || return 1
+        write_env_assignment OUTBOUND_POLICY "$(jq -r --arg id "${id}" '.[]|select(.id==$id)|.policy' <<< "${changes}")" >> "${candidate}" || return 1
+        bash -n "${candidate}" || return 1
+        routing_publish_file "${candidate}" "${file}" || return 1
+      done < <(jq -r '.[].id' <<< "${changes}")
+    else
+      structured_instance_store_protocol "${protocol}" >/dev/null || return 1
+      plain_proxy_structured_state_active "${protocol}" || return 1
+      plain_proxy_structured_state_matches_config "${protocol}" "${SINGBOX_CONFIG_FILE}" || return 1
+      store=$(plain_proxy_structured_store_file "${protocol}") || return 1
+      revision=$(jq -er '.revision' "${store}") || return 1
+      jq -e --argjson revision "${revision}" --slurpfile store "${store}" '
+        all(.[]; . as $change | .revision==$revision and any($store[0].instances[]; .id==$change.id))' \
+        <<< "${changes}" >/dev/null || return 1
+      candidate="${work_dir}/${protocol}.json"
+      jq --argjson changes "${changes}" '.revision += 1 | .instances |= map(. as $record |
+        ([$changes[]|select(.id==$record.id)][0] // null) as $change |
+        if $change==null then . else .outbound_policy=$change.policy end)' "${store}" > "${candidate}" || return 1
+      validate_structured_instance_store "${protocol}" "${candidate}" || return 1
+      publish_structured_instance_store "${protocol}" "${candidate}" "${revision}" >/dev/null || return 1
+    fi
+  done <<< "${protocols}"
+)
+
+routing_service_active_json() {
+  local activity
+  if activity=$(systemctl is-active sing-box); then
+    [[ "${activity}" == active ]] || return 1
+    printf true
+  else
+    case "${activity}" in inactive|failed) printf false ;; *) return 1 ;; esac
+  fi
+}
+
+routing_transaction_valid() {
+  local directory=$1
+  [[ "${directory}" == "${SB_ROUTING_TRANSACTION_DIR}" || "${directory}" == "${SB_ROUTING_PREVIOUS_DIR}" ]] || return 1
+  [[ -d "${directory}" && ! -L "${directory}" && "$(stat -c %a "${directory}")" == 700 &&
+     -f "${directory}/transaction.json" && ! -L "${directory}/transaction.json" &&
+     "$(stat -c %a "${directory}/transaction.json")" == 600 ]] || return 1
+  jq -e 'type=="object" and .schema_version==1 and (.before_active|type=="boolean") and
+    (.phase|IN("prepare","snapshot","publish","service","committed")) and
+    (.service_changed|type=="boolean") and
+    (.warp_registration_deferred == null or
+      (.warp_registration_deferred | type=="object" and
+        (keys|sort)==["credentials_sha256","receipt_sha256"] and
+        all(.[]; type=="string" and test("^[a-f0-9]{64}$")))) and
+    (.before_fingerprint|type=="string" and test("^[a-f0-9]{64}$")) and
+    (.external_fingerprint|type=="string" and test("^[a-f0-9]{64}$")) and
+    (.after_fingerprint|type=="string" and (.=="" or test("^[a-f0-9]{64}$")))' \
+    "${directory}/transaction.json" >/dev/null
+}
+
+routing_transaction_defer_warp_registration() {
+  local receipt=$1 directory="${SB_ROUTING_TRANSACTION_DIR}" receipt_hash credentials_hash
+  [[ "${SB_ROUTING_DEFER_WARP_RECEIPT:-n}" == y && "${receipt}" == "${SB_WARP_REGISTRATION_PENDING_FILE}" ]] || return 1
+  routing_transaction_valid "${directory}" || return 1
+  jq -e '.phase=="snapshot" and .service_changed' "${directory}/transaction.json" >/dev/null || return 1
+  warp_registration_receipt_matches_credentials "${receipt}" || return 1
+  receipt_hash=$(sha256sum < "${receipt}" | cut -d' ' -f1) || return 1
+  credentials_hash=$(sha256sum < "${SB_WARP_KEY_FILE}" | cut -d' ' -f1) || return 1
+  jq --arg receipt "${receipt_hash}" --arg credentials "${credentials_hash}" \
+    '.warp_registration_deferred={receipt_sha256:$receipt,credentials_sha256:$credentials}' \
+    "${directory}/transaction.json" > "${directory}/transaction.next" || return 1
+  chmod 600 "${directory}/transaction.next" && mv -f -- "${directory}/transaction.next" "${directory}/transaction.json"
+}
+
+routing_transaction_backup_legacy_reality_state() {
+  local source=$1 directory="${SB_ROUTING_TRANSACTION_DIR}" target
+  [[ "${SB_ROUTING_JOURNAL_LEGACY_BACKUP:-n}" == y &&
+     "${source}" == "$(protocol_state_file vless-reality)" &&
+     -f "${source}" && ! -L "${source}" ]] || return 1
+  routing_transaction_valid "${directory}" || return 1
+  jq -e '.phase=="snapshot" and .service_changed' "${directory}/transaction.json" >/dev/null || return 1
+  managed_state_snapshot_is_valid "${directory}/snapshot" || return 1
+  [[ -f "${directory}/snapshot/project.existed" && -d "${directory}/snapshot/project" &&
+     ! -L "${directory}/snapshot/project" ]] || return 1
+  target="${directory}/legacy-vless-reality.env.bak"
+  [[ ! -e "${target}" && ! -L "${target}" ]] || return 1
+  persist_file_backup "${source}" "${target}"
+}
+
+routing_transaction_finalize_warp_registration() {
+  local directory="${SB_ROUTING_TRANSACTION_DIR}" receipt="${SB_WARP_REGISTRATION_PENDING_FILE}" expected
+  routing_transaction_valid "${directory}" || return 1
+  jq -e '.phase=="committed"' "${directory}/transaction.json" >/dev/null || return 1
+  if jq -e '.warp_registration_deferred == null' "${directory}/transaction.json" >/dev/null; then return 0; fi
+  [[ -f "${SB_WARP_KEY_FILE}" && ! -L "${SB_WARP_KEY_FILE}" && "$(stat -c %a "${SB_WARP_KEY_FILE}")" == 600 ]] || return 1
+  expected=$(jq -r '.warp_registration_deferred.credentials_sha256' "${directory}/transaction.json") || return 1
+  [[ "$(sha256sum < "${SB_WARP_KEY_FILE}" | cut -d' ' -f1)" == "${expected}" ]] || return 1
+  # Absence is idempotent after cleanup succeeded but the process stopped
+  # before moving its committed journal to the previous snapshot directory.
+  [[ -e "${receipt}" || -L "${receipt}" ]] || return 0
+  expected=$(jq -r '.warp_registration_deferred.receipt_sha256' "${directory}/transaction.json") || return 1
+  [[ -f "${receipt}" && ! -L "${receipt}" &&
+     "$(sha256sum < "${receipt}" | cut -d' ' -f1)" == "${expected}" ]] || return 1
+  warp_registration_receipt_matches_credentials "${receipt}" || return 1
+  rm -f -- "${receipt}"
+}
+
+routing_transaction_checkpoint() {
+  local phase=$1 fingerprint=${2:-} directory="${SB_ROUTING_TRANSACTION_DIR}"
+  routing_transaction_valid "${directory}" || return 1
+  jq --arg phase "${phase}" --arg fingerprint "${fingerprint}" \
+    '.phase=$phase | if $fingerprint!="" then .after_fingerprint=$fingerprint else . end' \
+    "${directory}/transaction.json" > "${directory}/transaction.next" || return 1
+  chmod 600 "${directory}/transaction.next" && mv -f -- "${directory}/transaction.next" "${directory}/transaction.json"
+}
+
+routing_transaction_restore() {
+  local directory="${SB_ROUTING_TRANSACTION_DIR}" active expected actual
+  routing_transaction_valid "${directory}" || return 1
+  if [[ ! -f "${directory}/snapshot/snapshot.meta" ]]; then
+    [[ "$(jq -r '.phase' "${directory}/transaction.json")" == prepare ]] || return 1
+    rm -rf -- "${directory}"
+    return $?
+  fi
+  active=$(jq -r '.before_active' "${directory}/transaction.json") || return 1
+  expected=$(jq -r '.before_fingerprint' "${directory}/transaction.json") || return 1
+  [[ "$(routing_state_fingerprint external)" == "$(jq -r ' .external_fingerprint' "${directory}/transaction.json")" ]] || {
+    routing_error '事务期间手工文件或 ACME 状态已变化，未覆盖恢复；请保留日志人工核对。'; return 1;
+  }
+  routing_restore_project_snapshot "${directory}/snapshot" || return 1
+  actual=$(routing_state_fingerprint) || return 1
+  [[ "${actual}" == "${expected}" ]] || return 1
+  if [[ "$(jq -r '.service_changed' "${directory}/transaction.json")" == false ]]; then
+    [[ "$(routing_service_active_json)" == "${active}" ]] || return 1
+  elif [[ "${active}" == true ]]; then
+    run_with_progress '恢复原 sing-box 服务状态' systemctl restart sing-box >&2 || return 1
+    systemctl is-active --quiet sing-box || return 1
+  else
+    systemctl stop sing-box || return 1
+    singbox_service_confirmed_stopped || return 1
+  fi
+  rm -rf -- "${directory}"
+}
+
+routing_transaction_keep_previous() {
+  local directory="${SB_ROUTING_TRANSACTION_DIR}"
+  routing_transaction_valid "${directory}" || return 1
+  [[ "$(jq -r '.phase' "${directory}/transaction.json")" == committed ]] || return 1
+  routing_transaction_finalize_warp_registration || return 1
+  if [[ -e "${SB_ROUTING_PREVIOUS_DIR}" || -L "${SB_ROUTING_PREVIOUS_DIR}" ]]; then
+    routing_transaction_valid "${SB_ROUTING_PREVIOUS_DIR}" || return 1
+    rm -rf -- "${SB_ROUTING_PREVIOUS_DIR}" || return 1
+  fi
+  mv -- "${directory}" "${SB_ROUTING_PREVIOUS_DIR}"
+}
+
+routing_policy_recover() {
+  local fingerprint expected active
+  acquire_managed_write_lock exclusive allow-rules-recovery || return 1
+  routing_transaction_valid "${SB_ROUTING_TRANSACTION_DIR}" || { routing_error '规则恢复日志不可信，已保留现场。'; return 1; }
+  if [[ "$(jq -r '.phase' "${SB_ROUTING_TRANSACTION_DIR}/transaction.json")" == committed ]]; then
+    fingerprint=$(routing_state_fingerprint) || return 1
+    expected=$(jq -r '.after_fingerprint' "${SB_ROUTING_TRANSACTION_DIR}/transaction.json") || return 1
+    [[ "${fingerprint}" == "${expected}" ]] || { routing_error '已提交规则状态发生变化，无法自动完成清理。'; return 1; }
+    active=$(routing_service_active_json) || return 1
+    [[ "${active}" == "$(jq -r '.before_active' "${SB_ROUTING_TRANSACTION_DIR}/transaction.json")" ]] || return 1
+    routing_transaction_keep_previous || return 1
+    log_success '规则已提交；恢复材料整理完成。'
+  elif routing_transaction_restore; then
+    log_success '未完成规则事务已回滚，原配置及服务状态已恢复。'
+  else
+    routing_error "规则回滚未完成；请保留 ${SB_ROUTING_TRANSACTION_DIR}。"
+    return 1
+  fi
+}
+
+routing_transaction_run() (
+  local operation=$1 draft=${2:-} directory="${SB_ROUTING_TRANSACTION_DIR}"
+  local expected fingerprint external_fingerprint before_active policy previous_policy client_changed=false server_changed=true
+  local committed=n finished=n candidate=''
+  local SB_ROUTING_DEFER_WARP_RECEIPT=n
+  local SB_ROUTING_JOURNAL_LEGACY_BACKUP=n
+  umask 077
+  acquire_managed_write_lock || return 1
+  [[ ! -e "${directory}" && ! -L "${directory}" && ! -e "${SB_PROJECT_DIR}.instance-write.lock" &&
+     ! -e "${SB_COMPONENT_TRANSACTION_DIR}" && -f "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" &&
+     -f "${SINGBOX_SERVICE_FILE}" && -x "${SINGBOX_BIN_PATH}" && ! -L "${SBV_LOG_FILE}" ]] || {
+    routing_error '请先安装有效协议或恢复未完成事务；规则未修改。'; return 1;
+  }
+  [[ ! -L "${SB_PROTOCOL_STATE_DIR}" && ! -L "${SB_PROTOCOL_STATE_DIR}/instances" &&
+     ! -L "${SB_PROTOCOL_STATE_DIR}/vless-reality.d" && ! -L "${SB_PROJECT_DIR}/rule-set" &&
+     ! -L "${SB_WARP_LOCAL_RULESET_DIR}" ]] || { routing_error '受管状态目录含符号链接，未执行规则写入。'; return 1; }
+  fingerprint=$(routing_state_fingerprint) || return 1
+  external_fingerprint=$(routing_state_fingerprint external) || return 1
+  before_active=$(routing_service_active_json) || { routing_error '无法确认服务原状态，规则未修改。'; return 1; }
+  case "${operation}" in
+    apply)
+      routing_draft_validate "${draft}" || { routing_error '规则草稿无效，未修改。'; return 1; }
+      expected=$(jq -r '.fingerprint' "${draft}") || return 1
+      [[ "${expected}" == "${fingerprint}" ]] || { routing_error '配置已在会话外变化，请重新载入草稿。'; return 1; }
+      previous_policy=$(routing_policy_read_json) || return 1
+      policy=$(jq -c '.policy' "${draft}") || return 1
+      client_changed=$(jq -n --argjson old "${previous_policy}" --argjson new "${policy}" \
+        '$old.client != $new.client or (($old.client.adblock or $new.client.adblock) and $old.adblock != $new.adblock)') || return 1
+      if [[ -f "${SB_ROUTING_POLICY_FILE}" ]] &&
+         jq -e --argjson old "${previous_policy}" --argjson enabled "$(config_has_warp_enabled "${SINGBOX_CONFIG_FILE}" && printf true || printf false)" \
+           --arg mode "$(load_warp_route_settings && printf '%s' "${SB_WARP_ROUTE_MODE}")" \
+           --argjson domains "$(routing_asset_text_json "${SB_WARP_DOMAINS_FILE}")" \
+           --argjson sources "$(routing_asset_text_json "${SB_WARP_REMOTE_RULESETS_FILE}")" \
+           '.policy.server==$old.server and
+             ((.policy.server.adblock or $old.server.adblock | not) or .policy.adblock==$old.adblock) and
+             .warp.enabled==$enabled and .warp.mode==$mode and (.warp.reregister|not) and
+             .node_overrides==[] and .legacy_domains==$domains and .legacy_sources==$sources' \
+           "${draft}" >/dev/null; then
+        server_changed=false
+      fi
+      ;;
+    restore)
+      routing_transaction_valid "${SB_ROUTING_PREVIOUS_DIR}" || return 1
+      expected=$(jq -r '.after_fingerprint' "${SB_ROUTING_PREVIOUS_DIR}/transaction.json") || return 1
+      [[ "${expected}" == "${fingerprint}" && "${before_active}" == "$(jq -r '.before_active' "${SB_ROUTING_PREVIOUS_DIR}/transaction.json")" ]] || {
+        routing_error '上次应用后配置或服务已有其他变更，不能覆盖恢复。'; return 1;
+      }
+      server_changed=$(jq -r '.service_changed' "${SB_ROUTING_PREVIOUS_DIR}/transaction.json") || return 1
+      ;;
+    *) return 1 ;;
+  esac
+  mkdir -m 700 -- "${directory}" || return 1
+  if ! jq -n --argjson active "${before_active}" --arg fingerprint "${fingerprint}" --arg external "${external_fingerprint}" --argjson service "${server_changed}" \
+    '{schema_version:1,phase:"prepare",before_active:$active,service_changed:$service,warp_registration_deferred:null,before_fingerprint:$fingerprint,external_fingerprint:$external,after_fingerprint:""}' \
+    > "${directory}/transaction.json" || ! chmod 600 "${directory}/transaction.json"; then
+    rm -rf -- "${directory}" || return 1
+    return 1
+  fi
+  routing_transaction_exit() {
+    local result=$?
+    trap - EXIT INT TERM HUP
+    if [[ "${finished}" != y && "${committed}" != y ]]; then
+      if routing_transaction_restore; then
+        printf '[ERROR] 规则操作失败或中断；已回滚配置及原服务状态。\n' >&2
+      else
+        printf '[ERROR] 规则回滚未完成；恢复材料保留在 %s。\n' "${directory}" >&2
+      fi
+    elif [[ "${finished}" != y ]]; then
+      printf '[WARN] 规则已提交，恢复材料整理未完成；请从菜单 13 恢复。\n' >&2
+    fi
+    [[ "${result}" -ne 0 || "${finished}" == y ]] || result=1
+    exit "${result}"
+  }
+  trap routing_transaction_exit EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+  create_managed_state_snapshot "${directory}/snapshot" >/dev/null || return 1
+  chmod --reference="${SB_PROJECT_DIR}" -- "${directory}/snapshot/project" || return 1
+  chown --reference="${SB_PROJECT_DIR}" -- "${directory}/snapshot/project" || return 1
+  routing_transaction_checkpoint snapshot || return 1
+  if [[ "${operation}" == restore ]]; then
+    routing_restore_project_snapshot "${SB_ROUTING_PREVIOUS_DIR}/snapshot" || return 1
+    "${SINGBOX_BIN_PATH}" check -c "${SINGBOX_CONFIG_FILE}" >&2 || return 1
+  else
+    if [[ "${server_changed}" == true ]]; then
+      SB_ROUTING_DEFER_WARP_RECEIPT=y
+      SB_ROUTING_JOURNAL_LEGACY_BACKUP=y
+      load_current_config_state || return 1
+      ensure_existing_generated_config_baseline || return 1
+    fi
+    jq '.policy' "${draft}" > "${directory}/policy.json" || return 1
+    routing_publish_file "${directory}/policy.json" "${SB_ROUTING_POLICY_FILE}" || return 1
+    if [[ "${server_changed}" == true ]]; then
+      jq -rj '.legacy_domains' "${draft}" > "${directory}/domains.txt" || return 1
+      routing_publish_file "${directory}/domains.txt" "${SB_WARP_DOMAINS_FILE}" || return 1
+      jq -rj '.legacy_sources' "${draft}" > "${directory}/sources.txt" || return 1
+      routing_publish_file "${directory}/sources.txt" "${SB_WARP_REMOTE_RULESETS_FILE}" || return 1
+      SB_ENABLE_WARP=$(jq -r 'if .warp.enabled then "y" else "n" end' "${draft}") || return 1
+      SB_WARP_ROUTE_MODE=$(jq -r '.warp.mode' "${draft}") || return 1
+      printf 'WARP_ROUTE_MODE=%s\nWARP_ENABLED=%s\n' "${SB_WARP_ROUTE_MODE}" "${SB_ENABLE_WARP}" > "${directory}/warp.env" || return 1
+      routing_publish_file "${directory}/warp.env" "${SB_WARP_ROUTE_SETTINGS_FILE}" || return 1
+      routing_apply_node_overrides "${draft}" "${directory}" || return 1
+      if jq -e '.warp.reregister' "${draft}" >/dev/null; then
+        if [[ "${SB_ENABLE_WARP}" != y ]] && ! instance_outbound_requires_warp && ! routing_policy_requires_warp "${policy}"; then
+          routing_error '没有使用 WARP 的出口，未重新注册。'; return 1
+        fi
+        [[ ! -L "${SB_WARP_KEY_FILE}" ]] || return 1
+        rm -f -- "${SB_WARP_KEY_FILE}" || return 1
+      fi
+      generate_config || return 1
+    fi
+    if [[ "${client_changed}" == true ]]; then
+      candidate=$(build_singbox_client_config "${policy}") || return 1
+      validate_client_config_json "${candidate}" || return 1
+    fi
+  fi
+  routing_transaction_checkpoint publish || return 1
+  if [[ "${before_active}" == true && "${server_changed}" == true ]]; then
+    routing_transaction_checkpoint service || return 1
+    run_with_progress '应用合并后的规则并检查 sing-box 服务' systemctl restart sing-box >&2 || return 1
+    systemctl is-active --quiet sing-box || return 1
+  elif [[ "${before_active}" == false ]]; then
+    # A pre-existing failed unit is also known to be inactive. Rule editing
+    # must not require starting it or clearing that state; unknown states fail.
+    [[ "$(routing_service_active_json)" == false ]] || return 1
+  else
+    systemctl is-active --quiet sing-box || return 1
+  fi
+  [[ "$(routing_state_fingerprint external)" == "${external_fingerprint}" ]] || {
+    routing_error '事务期间手工文件或 ACME 状态发生变化，已保留事务供核对。'; return 1;
+  }
+  fingerprint=$(routing_state_fingerprint) || return 1
+  routing_transaction_checkpoint committed "${fingerprint}" || return 1
+  committed=y
+  routing_transaction_keep_previous || return 1
+  finished=y
+  printf '[SUCCESS] 规则已应用；配置校验通过，服务原状态已保持。\n' >&2
+)
+
+routing_policy_apply() { routing_transaction_run apply "$@"; }
+routing_policy_restore_previous() { routing_transaction_run restore; }
+routing_notice() {
+  local level=$1 message=$2 color="${BLUE}"
+  [[ "${level}" != WARN ]] || color="${YELLOW}"
+  printf '%b[%s]%b %s\n' "${color}" "${level}" "${NC}" "${message}" >&2
+}
+
+# Changes in this UI affect only a private draft until explicit application.
+routing_draft_edit() {
+  local draft=$1 filter=$2 next="${1}.next"
+  shift 2
+  if jq "$@" "${filter}" "${draft}" > "${next}" && routing_draft_validate "${next}"; then
+    chmod 600 "${next}" && mv -f -- "${next}" "${draft}"
+  else
+    rm -f -- "${next}"
+    routing_notice WARN '设置无效或广告规则源为空，草稿未修改。'
+    return 1
+  fi
+}
+
+routing_boolean_label() {
+  case "${1:-false}" in true) printf '%b开启%b' "${GREEN}" "${NC}" ;; *) printf '%b关闭%b' "${YELLOW}" "${NC}" ;; esac
+}
+
+routing_policy_overview() {
+  local draft=$1 nodes policy
+  policy=$(jq -c '.policy' "${draft}") || return 1
+  nodes=$(routing_nodes_json) || return 1
+  render_left_aligned_page_header '规则与分流管理' '服务器策略与客户端导出偏好分别管理；修改先保存为草稿'
+  render_summary_item '服务器作用范围' '本 VPS 中脚本管理的代理节点'
+  render_summary_item '默认出口（草稿）' "$(jq -r 'if .warp.enabled then (if .warp.mode=="all" then "WARP 全量" else "原生默认 + WARP 选择性分流" end) else "原生出口" end' "${draft}")"
+  render_summary_item '全局 WARP 分流' "$(routing_boolean_label "$(jq -r '.warp.enabled' "${draft}")")"
+  render_summary_item '服务器私网地址控制' "$(routing_boolean_label "$(jq -r '.server.private_network_block' <<< "${policy}")")"
+  render_summary_item '服务器广告拦截' "$(routing_boolean_label "$(jq -r '.server.adblock' <<< "${policy}")")"
+  render_summary_item '客户端导出' "$(jq -r '"LAN直连="+(.client.lan_direct|tostring)+" / CN直连="+(.client.cn_direct|tostring)+" / 广告="+(.client.adblock|tostring)' <<< "${policy}")"
+  render_summary_item '现有独立出口节点数' "$(jq '[.[]|select(.policy!="default")]|length' <<< "${nodes}")"
+  render_summary_item '草稿中的节点策略修改' "$(jq '.node_overrides|length' "${draft}")"
+  render_summary_item '自定义规则 / 规则源' "$(jq -r '(.server.rules|length|tostring)+" / "+(.server.rule_sets|length|tostring)' <<< "${policy}")"
+  if jq -e '.warp.reregister' "${draft}" >/dev/null; then
+    routing_notice WARN '应用时将重新注册 WARP；文件回滚不能撤销已发送的云端注册。'
+  fi
+  echo '默认出口使用原生时，独立节点或自定义规则仍可能需要 WARP。'
+  echo '广告过滤依赖可识别的目标域名；白名单只排除广告拒绝。'
+  echo '客户端设置只影响重新导出的完整配置，普通分享链接不携带规则。'
+}
+
+routing_policy_preview() {
+  local draft=$1
+  routing_draft_validate "${draft}" || return 1
+  routing_policy_overview "${draft}" || return 1
+  echo '受管规则顺序：嗅探/必要处理 → 私网控制 → 广告 → 节点独立出口 → 自定义 → 预设 → 默认。'
+  jq -r '.policy.server.rules[] | "规则: \(.id) [\(.kind)] → \(.action) / enabled=\(.enabled)"' "${draft}"
+  jq -r '.policy.server.rule_sets[] | "规则源: \(.tag) [\(.type),\(.format)] → \(.action) / enabled=\(.enabled)"' "${draft}"
+  jq -r '.node_overrides[] | "节点出口: \(.protocol)/\(.id) → \(.policy)"' "${draft}"
+  echo '规则源 URL、账户密钥和节点凭据不在预览中展示。应用时再执行完整配置与服务检查。'
+}
+
+routing_default_outbound_menu() {
+  local draft=$1 choice
+  while true; do
+    render_left_aligned_page_header '默认出口与 WARP 管理' '影响全局默认策略；独立节点和自定义 WARP 依赖会保留'
+    render_menu_item 1 '默认使用原生出口'
+    render_menu_item 2 '原生默认，AI / 流媒体及自定义选择性使用 WARP'
+    render_menu_item 3 '默认全部代理流量使用 WARP'
+    render_menu_item 4 '设置 / 取消应用时重新注册 WARP 账户'
+    echo '0. 返回'
+    choice=$(prompt_choice '请选择 [0-4]: ' 0 4 '') || return 0
+    case "${choice}" in
+      0) return ;;
+      1) routing_draft_edit "${draft}" '.warp.enabled=false' || return 1 ;;
+      2) routing_draft_edit "${draft}" '.warp.enabled=true | .warp.mode="selective"' || return 1 ;;
+      3) routing_draft_edit "${draft}" '.warp.enabled=true | .warp.mode="all"' || return 1 ;;
+      4) routing_draft_edit "${draft}" '.warp.reregister |= not' || return 1 ;;
+    esac
+  done
+}
+
+routing_presets_menu() {
+  local draft=$1 choice
+  while true; do
+    render_left_aligned_page_header 'AI / 流媒体分流' '只在全局选择性 WARP 模式下生效'
+    render_menu_item 1 '切换 AI 分流' '' "$(jq -r '.policy.server.warp_ai' "${draft}")"
+    render_menu_item 2 '切换流媒体分流' '' "$(jq -r '.policy.server.warp_streaming' "${draft}")"
+    echo '0. 返回'
+    choice=$(prompt_choice '请选择 [0-2]: ' 0 2 '') || return 0
+    case "${choice}" in
+      0) return ;;
+      1) routing_draft_edit "${draft}" '.policy.server.warp_ai |= not' || return 1 ;;
+      2) routing_draft_edit "${draft}" '.policy.server.warp_streaming |= not' || return 1 ;;
+    esac
+  done
+}
+
+routing_collection_index() {
+  local draft=$1 collection=$2 count choice
+  count=$(jq --arg collection "${collection}" '.policy.server[$collection]|length' "${draft}") || return 1
+  [[ "${count}" -gt 0 ]] || { routing_notice WARN '当前没有条目。' >&2; return 1; }
+  choice=$(prompt_choice "请选择条目 [1-${count}]，0 取消: " 0 "${count}" '') || return 1
+  [[ "${choice}" != 0 ]] || return 1
+  printf '%s' "$((choice - 1))"
+}
+
+routing_rule_record_prompt() {
+  local current=${1:-'{}'} id kind value action choice enabled=true
+  id=$(jq -r '.id // ""' <<< "${current}") || return 1
+  value=$(jq -r '.value // ""' <<< "${current}") || return 1
+  kind=$(jq -r '.kind // "domain_suffix"' <<< "${current}") || return 1
+  action=$(jq -r '.action // "warp"' <<< "${current}") || return 1
+  enabled=$(jq -r 'if has("enabled") then .enabled else true end' <<< "${current}") || return 1
+  read -rp '规则 ID（小写字母/数字/-/_，修改时留空保留）: ' choice || return 1
+  id=${choice:-${id}}
+  echo '匹配: 1 精确域名 / 2 域名后缀 / 3 IP CIDR' >&2
+  case "${kind}" in domain) choice=1 ;; ip_cidr) choice=3 ;; *) choice=2 ;; esac
+  choice=$(prompt_choice '匹配类型 [1-3]: ' 1 3 "${choice}") || return 1
+  case "${choice}" in 1) kind=domain ;; 2) kind=domain_suffix ;; 3) kind=ip_cidr ;; esac
+  read -rp '匹配值（纯域名或 CIDR，修改时留空保留）: ' choice || return 1
+  value=${choice:-${value}}
+  echo '动作: 1 原生 / 2 WARP / 3 拒绝' >&2
+  case "${action}" in direct) choice=1 ;; reject) choice=3 ;; *) choice=2 ;; esac
+  choice=$(prompt_choice '规则动作 [1-3]: ' 1 3 "${choice}") || return 1
+  case "${choice}" in 1) action=direct ;; 2) action=warp ;; 3) action=reject ;; esac
+  jq -cn --arg id "${id}" --arg kind "${kind}" --arg value "${value}" --arg action "${action}" --argjson enabled "${enabled}" \
+    '{id:$id,kind:$kind,value:$value,action:$action,enabled:$enabled}'
+}
+
+routing_source_record_prompt() {
+  local current=${1:-'{}'} tag type format location interval action choice enabled
+  tag=$(jq -r '.tag // ""' <<< "${current}") || return 1
+  type=$(jq -r '.type // "remote"' <<< "${current}") || return 1
+  format=$(jq -r '.format // "binary"' <<< "${current}") || return 1
+  location=$(jq -r '.url // .path // ""' <<< "${current}") || return 1
+  interval=$(jq -r '.update_interval // "1d"' <<< "${current}") || return 1
+  action=$(jq -r '.action // "warp"' <<< "${current}") || return 1
+  enabled=$(jq -r 'if has("enabled") then .enabled else true end' <<< "${current}") || return 1
+  read -rp '规则源标签（小写字母/数字/-/_，修改时留空保留）: ' choice || return 1
+  tag=${choice:-${tag}}
+  choice=$(prompt_choice '来源: 1 HTTPS 远程 / 2 本地文件: ' 1 2 "$([[ "${type}" == local ]] && printf 2 || printf 1)") || return 1
+  case "${choice}" in 1) type=remote ;; 2) type=local ;; esac
+  choice=$(prompt_choice '格式: 1 binary (.srs) / 2 source (.json): ' 1 2 "$([[ "${format}" == source ]] && printf 2 || printf 1)") || return 1
+  case "${choice}" in 1) format=binary ;; 2) format=source ;; esac
+  read -rp 'HTTPS URL 或本地绝对路径（修改时留空保留）: ' choice || return 1
+  location=${choice:-${location}}
+  read -rp '更新周期（如 1d，留空保留或使用 1d）: ' choice || return 1
+  interval=${choice:-${interval}}
+  case "${action}" in direct) choice=1 ;; reject) choice=3 ;; *) choice=2 ;; esac
+  choice=$(prompt_choice '动作: 1 原生 / 2 WARP / 3 拒绝: ' 1 3 "${choice}") || return 1
+  case "${choice}" in 1) action=direct ;; 2) action=warp ;; 3) action=reject ;; esac
+  jq -cn --arg tag "${tag}" --arg type "${type}" --arg format "${format}" --arg location "${location}" \
+    --arg interval "${interval}" --arg action "${action}" --argjson enabled "${enabled}" \
+    '{tag:$tag,type:$type,format:$format,update_interval:$interval,action:$action,enabled:$enabled} +
+      (if $type=="local" then {path:$location} else {url:$location} end)'
+}
+
+routing_collection_menu() {
+  local draft=$1 collection=$2 choice index current record
+  while true; do
+    render_left_aligned_page_header "$([[ "${collection}" == rules ]] && printf '自定义域名与 IP 规则' || printf '本地 / 远程规则源')" '按列表顺序处理，自定义规则在预设之前生效'
+    jq -r --arg collection "${collection}" '.policy.server[$collection]|to_entries[]|
+      "\(.key+1). \(.value.id // .value.tag) [\(.value.kind // .value.type)] → \(.value.action) / enabled=\(.value.enabled)"' "${draft}"
+    echo '1. 添加  2. 编辑  3. 启停  4. 删除  0. 返回'
+    choice=$(prompt_choice '请选择 [0-4]: ' 0 4 '') || return 0
+    [[ "${choice}" != 0 ]] || return 0
+    index=''
+    current='{}'
+    if [[ "${choice}" != 1 ]]; then
+      index=$(routing_collection_index "${draft}" "${collection}") || continue
+      current=$(jq -c --arg collection "${collection}" --argjson index "${index}" '.policy.server[$collection][$index]' "${draft}") || return 1
+    fi
+    case "${choice}" in
+      1|2)
+        if [[ "${collection}" == rules ]]; then
+          record=$(routing_rule_record_prompt "${current}") || continue
+        else
+          record=$(routing_source_record_prompt "${current}") || continue
+        fi
+        if [[ "${choice}" == 1 ]]; then
+          routing_draft_edit "${draft}" '.policy.server[$collection] += [$record]' --arg collection "${collection}" --argjson record "${record}" || continue
+        else
+          routing_draft_edit "${draft}" '.policy.server[$collection][$index]=$record' --arg collection "${collection}" --argjson index "${index}" --argjson record "${record}" || continue
+        fi
+        ;;
+      3) routing_draft_edit "${draft}" '.policy.server[$collection][$index].enabled |= not' --arg collection "${collection}" --argjson index "${index}" || continue ;;
+      4) routing_draft_edit "${draft}" 'del(.policy.server[$collection][$index])' --arg collection "${collection}" --argjson index "${index}" || continue ;;
+    esac
+  done
+}
+
+routing_adblock_menu() {
+  local draft=$1 choice value index count
+  while true; do
+    render_left_aligned_page_header '广告拦截' '服务端与客户端分别开启；广告例外不改变原出口'
+    render_menu_item 1 '切换服务端广告拦截' '' "$(jq -r '.policy.server.adblock' "${draft}")"
+    render_menu_item 2 '切换客户端广告拦截' '' "$(jq -r '.policy.client.adblock' "${draft}")"
+    render_menu_item 3 '设置 HTTPS 广告源（输入 - 清空，仅用内嵌域名）'
+    render_menu_item 4 '添加自定义广告域名后缀'
+    render_menu_item 5 '删除自定义广告域名后缀'
+    render_menu_item 6 '添加广告例外域名后缀'
+    render_menu_item 7 '删除广告例外域名后缀'
+    echo '0. 返回'
+    choice=$(prompt_choice '请选择 [0-7]: ' 0 7 '') || return 0
+    case "${choice}" in
+      0) return ;;
+      1) routing_draft_edit "${draft}" '.policy.server.adblock |= not' || continue ;;
+      2) routing_draft_edit "${draft}" '.policy.client.adblock |= not' || continue ;;
+      3)
+        read -rp 'HTTPS URL（留空保留，- 清空）: ' value || return 0
+        [[ -n "${value}" ]] || continue
+        [[ "${value}" != - ]] || value=''
+        routing_draft_edit "${draft}" '.policy.adblock.url=$value' --arg value "${value}" || continue
+        ;;
+      4|6)
+        read -rp '域名后缀（不带协议或路径）: ' value || return 0
+        if [[ "${choice}" == 4 ]]; then value=${value,,}; index=domains; else value=${value,,}; index=allow; fi
+        routing_draft_edit "${draft}" '.policy.adblock[$list] += [$value]' --arg list "${index}" --arg value "${value}" || continue
+        ;;
+      5|7)
+        if [[ "${choice}" == 5 ]]; then value=domains; else value=allow; fi
+        jq -r --arg list "${value}" '.policy.adblock[$list]|to_entries[]|"\(.key+1). \(.value)"' "${draft}"
+        count=$(jq --arg list "${value}" '.policy.adblock[$list]|length' "${draft}") || return 1
+        [[ "${count}" -gt 0 ]] || continue
+        index=$(prompt_choice '删除第几项（0 取消）: ' 0 "${count}" '') || return 0
+        [[ "${index}" != 0 ]] || continue
+        routing_draft_edit "${draft}" 'del(.policy.adblock[$list][$index])' --arg list "${value}" --argjson index "$((index-1))" || continue
+        ;;
+    esac
+  done
+}
+
+routing_node_policy_menu() {
+  local draft=$1 nodes count index node protocol id policy revision choice
+  nodes=$(routing_nodes_json) || return 1
+  count=$(jq 'length' <<< "${nodes}") || return 1
+  [[ "${count}" -gt 0 ]] || { routing_notice WARN '当前没有节点。'; return 0; }
+  jq -r 'to_entries[]|"\(.key+1). \(.value.name) [\(.value.protocol)/\(.value.id)] \(.value.policy)"+
+    (if .value.editable then "" else "（legacy 只读）" end)' <<< "${nodes}"
+  index=$(prompt_choice '选择节点（0 返回）: ' 0 "${count}" '') || return 0
+  [[ "${index}" != 0 ]] || return 0
+  node=$(jq -c --argjson index "$((index-1))" '.[$index]' <<< "${nodes}") || return 1
+  jq -e '.editable' <<< "${node}" >/dev/null || { routing_notice WARN '此 legacy 表示不支持无损独立出口编辑，请先通过实例管理处理。'; return 0; }
+  protocol=$(jq -r '.protocol' <<< "${node}"); id=$(jq -r '.id' <<< "${node}"); revision=$(jq -r '.revision' <<< "${node}")
+  policy=$(jq -r --arg p "${protocol}" --arg id "${id}" --argjson node "${node}" \
+    '([.node_overrides[]|select(.protocol==$p and .id==$id)][0].policy // $node.policy)' "${draft}") || return 1
+  case "${policy}" in direct) choice=2 ;; warp) choice=3 ;; *) choice=1 ;; esac
+  choice=$(prompt_choice '出口: 1 跟随全局 / 2 原生 / 3 WARP: ' 1 3 "${choice}") || return 0
+  case "${choice}" in 2) policy=direct ;; 3) policy=warp ;; *) policy=default ;; esac
+  routing_draft_edit "${draft}" '.node_overrides |= map(select(.protocol!=$p or .id!=$id)) |
+    if $policy==$old then . else .node_overrides += [{protocol:$p,id:$id,policy:$policy,revision:$revision}] end' \
+    --arg p "${protocol}" --arg id "${id}" --arg policy "${policy}" --arg old "$(jq -r '.policy' <<< "${node}")" --argjson revision "${revision}"
+}
+
+routing_client_menu() {
+  local draft=$1 choice
+  while true; do
+    render_left_aligned_page_header '客户端绕行规则' '只影响下一次导出的完整客户端配置'
+    render_menu_item 1 '切换局域网直连' '' "$(jq -r '.policy.client.lan_direct' "${draft}")"
+    render_menu_item 2 '切换国内域名 / IP 直连' '' "$(jq -r '.policy.client.cn_direct' "${draft}")"
+    render_menu_item 3 '切换客户端广告拦截' '' "$(jq -r '.policy.client.adblock' "${draft}")"
+    echo '0. 返回'
+    choice=$(prompt_choice '请选择 [0-3]: ' 0 3 '') || return 0
+    case "${choice}" in
+      0) return ;;
+      1) routing_draft_edit "${draft}" '.policy.client.lan_direct |= not' || continue ;;
+      2) routing_draft_edit "${draft}" '.policy.client.cn_direct |= not' || continue ;;
+      3) routing_draft_edit "${draft}" '.policy.client.adblock |= not' || continue ;;
+    esac
+  done
+}
+
+routing_legacy_assets_menu() {
+  local draft=$1 field=$2 choice count index
+  while true; do
+    echo '既有 WARP 资产按原文件保留；新增条目请使用自定义规则或规则源管理。'
+    jq -r --arg field "${field}" '.[$field]|split("\n")|to_entries[]|
+      select(.value!="" and (.value|startswith("#")|not))|
+      "行 \(.key+1): "+(if $field=="legacy_sources" then (.value|split("|")[0])+"（远程源）" else .value end)' "${draft}"
+    echo '1. 删除指定行  0. 返回'
+    choice=$(prompt_choice '请选择 [0-1]: ' 0 1 '') || return 0
+    [[ "${choice}" != 0 ]] || return 0
+    count=$(jq --arg field "${field}" '.[$field]|split("\n")|length' "${draft}") || return 1
+    index=$(prompt_choice '原文件行号（0 取消）: ' 0 "${count}" '') || return 0
+    [[ "${index}" != 0 ]] || continue
+    routing_draft_edit "${draft}" '.[$field] |= (split("\n")|del(.[$index])|join("\n"))' \
+      --arg field "${field}" --argjson index "$((index-1))" || continue
+  done
+}
+
+routing_sources_menu() {
+  local draft=$1 choice
+  while true; do
+    render_left_aligned_page_header '规则源管理' '来源、动作、更新周期及启停统一维护'
+    echo '1. 本地 / 远程规则源增删改与启停'
+    echo '2. 管理既有 WARP 域名列表'
+    echo '3. 管理既有 WARP 远程源列表'
+    echo '4. 查看资产路径与现有本地 WARP 文件'
+    echo '0. 返回'
+    choice=$(prompt_choice '请选择 [0-4]: ' 0 4 '') || return 0
+    case "${choice}" in
+      0) return ;;
+      1) routing_collection_menu "${draft}" rule_sets || return 1 ;;
+      2) routing_legacy_assets_menu "${draft}" legacy_domains || return 1 ;;
+      3) routing_legacy_assets_menu "${draft}" legacy_sources || return 1 ;;
+      4)
+        printf '策略: %s\n既有域名: %s\n既有远程源: %s\n本地目录: %s\n' \
+          "${SB_ROUTING_POLICY_FILE}" "${SB_WARP_DOMAINS_FILE}" "${SB_WARP_REMOTE_RULESETS_FILE}" "${SB_WARP_LOCAL_RULESET_DIR}"
+        if [[ -d "${SB_WARP_LOCAL_RULESET_DIR}" && ! -L "${SB_WARP_LOCAL_RULESET_DIR}" ]]; then
+          find "${SB_WARP_LOCAL_RULESET_DIR}" -maxdepth 1 -type f -print
+        fi
+        ;;
+    esac
+  done
+}
+
+routing_management_menu() (
+  local workspace draft original choice
+  umask 077
+  if [[ -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ]]; then
+    echo '检测到未完成的规则事务；先恢复后才能管理。'
+    [[ "$(prompt_yes_no '恢复规则事务 [y/n]（默认 n）: ' n)" == y ]] || return 0
+    routing_policy_recover || return 1
+  fi
+  command -v jq >/dev/null 2>&1 || { routing_notice WARN '规则管理需要 jq；请先安装协议以准备依赖。'; return 0; }
+  workspace=$(mktemp -d /tmp/sbv-routing-menu.XXXXXX) || return 1
+  trap 'rm -rf -- "${workspace}"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+  draft="${workspace}/draft.json"; original="${workspace}/original.json"
+  routing_draft_create "${draft}" && cp "${draft}" "${original}" || return 1
+  while true; do
+    routing_policy_overview "${draft}" || return 1
+    if cmp -s "${draft}" "${original}"; then echo '草稿状态: 无修改'; else echo '草稿状态: 有待应用修改'; fi
+    render_menu_item 1 '查看策略、规则顺序与作用范围'
+    render_menu_item 2 '默认出口与 WARP 管理'
+    render_menu_item 3 'AI / 流媒体分流'
+    render_menu_item 4 '自定义域名与 IP 规则'
+    render_menu_item 5 '广告拦截'
+    render_menu_item 6 '切换服务端私网地址访问控制'
+    render_menu_item 7 '节点独立出口策略'
+    render_menu_item 8 '客户端绕行规则（导出设置）'
+    render_menu_item 9 '本地 / 远程规则源管理'
+    render_menu_item 10 '预览、应用与恢复'
+    echo '0. 返回主菜单'
+    choice=$(prompt_choice '请选择 [0-10]: ' 0 10 '') || return 0
+    case "${choice}" in
+      0)
+        if ! cmp -s "${draft}" "${original}"; then
+          [[ "$(prompt_yes_no '放弃未应用的草稿 [y/n]（默认 n）: ' n)" == y ]] || continue
+        fi
+        return 0
+        ;;
+      1) routing_policy_preview "${draft}" || return 1 ;;
+      2) routing_default_outbound_menu "${draft}" || return 1 ;;
+      3) routing_presets_menu "${draft}" || return 1 ;;
+      4) routing_collection_menu "${draft}" rules || return 1 ;;
+      5) routing_adblock_menu "${draft}" || return 1 ;;
+      6) routing_draft_edit "${draft}" '.policy.server.private_network_block |= not' || continue ;;
+      7) routing_node_policy_menu "${draft}" || continue ;;
+      8) routing_client_menu "${draft}" || return 1 ;;
+      9) routing_sources_menu "${draft}" || return 1 ;;
+      10)
+        routing_policy_preview "${draft}" || return 1
+        echo '1. 应用草稿  2. 恢复上次应用前的配置  0. 返回'
+        choice=$(prompt_choice '请选择 [0-2]: ' 0 2 '') || return 0
+        case "${choice}" in
+          1)
+            if cmp -s "${draft}" "${original}"; then routing_notice INFO '没有待应用的修改。'; continue; fi
+            [[ "$(prompt_yes_no '应用全部草稿并检查服务 [y/n]（默认 n）: ' n)" == y ]] || continue
+            routing_policy_apply "${draft}" || continue
+            ;;
+          2)
+            [[ "$(prompt_yes_no '放弃草稿并恢复上次配置 [y/n]（默认 n）: ' n)" == y ]] || continue
+            routing_policy_restore_previous || continue
+            ;;
+          *) continue ;;
+        esac
+        routing_draft_create "${draft}" && cp "${draft}" "${original}" || return 1
+        ;;
+    esac
+  done
+)
 
 [[ "${BASH_SOURCE[0]}" != "$0" ]] || main "$@"

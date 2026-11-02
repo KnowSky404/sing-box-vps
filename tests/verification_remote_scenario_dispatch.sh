@@ -481,8 +481,47 @@ bash() {
 
   case "${target}" in
     "${VERIFY_REMOTE_INSTALL_SCRIPT:-__missing_install__}")
+      if [[ "$#" -eq 10 && "$*" == 'agent instance delete http --json --yes --expected-revision 1 --id main' ]]; then
+        "${REAL_JQ}" -e '.protocol=="http" and .revision==1 and .default_instance_id=="main" and
+          (.instances|length)==1 and .instances[0].id=="main"' "${HTTP_STORE_FILE}" >/dev/null || return 1
+        "${REAL_JQ}" '.revision=2 | .default_instance_id="" | .instances=[]' \
+          "${HTTP_STORE_FILE}" > "${HTTP_STORE_FILE}.next" || return 1
+        mv "${HTTP_STORE_FILE}.next" "${HTTP_STORE_FILE}" || return 1
+        "${REAL_JQ}" '.inbounds=[]' "${CONFIG_FILE}" > "${CONFIG_FILE}.next" || return 1
+        mv "${CONFIG_FILE}.next" "${CONFIG_FILE}" || return 1
+        rm -f "${HTTP_STATE_FILE}" || return 1
+        printf 'INSTALLED_PROTOCOLS=\nPROTOCOL_STATE_VERSION=1\n' > "${INDEX_FILE}"
+        printf '{"ok":true,"revision":2}\n'
+        return 0
+      fi
       if [[ "$#" -eq 0 ]]; then
         mapfile -t actual_lines
+        if [[ "${actual_lines[0]:-}" == 1 && "${actual_lines[1]:-}" == 0 ]]; then
+          [[ "${#actual_lines[@]}" -eq 3 && "${actual_lines[2]}" == 0 ]] || return 1
+          [[ ! -e "${INDEX_FILE}" && ! -e "${HTTP_STATE_FILE}" ]] || return 1
+          "${REAL_JQ}" -e '.protocol=="http" and .revision==2 and .instances==[]' \
+            "${HTTP_STORE_FILE}" >/dev/null || return 1
+          printf '当前已安装协议: 无\n'
+          return 0
+        fi
+        if [[ "${actual_lines[0]:-}" == 1 && "${actual_lines[1]:-}" == 6 ]]; then
+          [[ "${#actual_lines[@]}" -eq 12 ]] || return 1
+          [[ "${actual_lines[2]}" == 'Recreated HTTP' && "${actual_lines[3]}" == main &&
+             "${actual_lines[4]}" == http-in && "${actual_lines[5]}" == 127.0.0.1 &&
+             "${actual_lines[6]}" == 1082 && "${actual_lines[7]}" == y &&
+             "${actual_lines[8]}" == http-user && "${actual_lines[9]}" == http-pass &&
+             "${actual_lines[10]}" == n && "${actual_lines[11]}" == 0 ]] || return 1
+          [[ ! -e "${INDEX_FILE}" && ! -e "${HTTP_STATE_FILE}" ]] || return 1
+          "${REAL_JQ}" -e '.protocol=="http" and .revision==2 and .instances==[]' \
+            "${HTTP_STORE_FILE}" >/dev/null || return 1
+          write_http_state
+          "${REAL_JQ}" --arg name "${actual_lines[2]}" '.revision=3 | .instances[0].name=$name' \
+            "${HTTP_STORE_FILE}" > "${HTTP_STORE_FILE}.next" || return 1
+          mv "${HTTP_STORE_FILE}.next" "${HTTP_STORE_FILE}" || return 1
+          printf 'INSTALLED_PROTOCOLS=http\nPROTOCOL_STATE_VERSION=1\n' > "${INDEX_FILE}"
+          printf 'HTTP 实例已从 revision 2 重建。\n'
+          return 0
+        fi
         if [[ "${actual_lines[0]:-}" == "1" && "${actual_lines[1]:-}" == "1" ]]; then
           if [[ "${#actual_lines[@]}" -ne 2 && "${#actual_lines[@]}" -ne 3 ]]; then
             printf 'unexpected takeover input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
@@ -504,22 +543,22 @@ bash() {
         fi
 
         if [[ "${actual_lines[2]:-}" == "1" ]]; then
-          if [[ "${#actual_lines[@]}" -ne 13 ]]; then
-            printf 'unexpected vless install input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
+          if [[ "${#actual_lines[@]}" -ne 12 ]]; then
+            printf 'unexpected vless install input count: %s\n' "${#actual_lines[@]}" >&2
             return 1
           fi
           [[ "${actual_lines[0]}" == "1" ]]
+          [[ "${actual_lines[1]}" == "" ]]
           [[ "${actual_lines[2]}" == "1" ]]
-          [[ "${actual_lines[3]}" == "" ]]
-          [[ "${actual_lines[4]}" == "443" ]]
-          [[ "${actual_lines[5]}" == "2" ]]
-          [[ "${actual_lines[6]}" == "www.cloudflare.com" ]]
-          [[ "${actual_lines[7]}" == "n" ]]
-          [[ "${actual_lines[8]}" == "1" ]]
-          [[ "${actual_lines[9]}" == "n" ]]
+          [[ "${actual_lines[3]}" == "1" ]]
+          [[ "${actual_lines[4]}" == "" ]]
+          [[ "${actual_lines[5]}" == "443" ]]
+          [[ "${actual_lines[6]}" == "2" ]]
+          [[ "${actual_lines[7]}" == "www.cloudflare.com" ]]
+          [[ "${actual_lines[8]}" == "n" ]]
+          [[ "${actual_lines[9]}" == "1" ]]
           [[ "${actual_lines[10]}" == "n" ]]
-          [[ "${actual_lines[11]}" == "n" ]]
-          [[ "${actual_lines[12]}" == "0" ]]
+          [[ "${actual_lines[11]}" == "0" ]]
           printf '443\n' > "${PORT_FILE}"
           next_install_uuid > "${UUID_FILE}"
           printf 'www.cloudflare.com\n' > "${SNI_FILE}"
@@ -528,8 +567,8 @@ bash() {
         fi
 
         if [[ "${actual_lines[2]:-}" == "4" ]]; then
-          if [[ "${#actual_lines[@]}" -ne 14 ]]; then
-            printf 'unexpected anytls install input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
+          if [[ "${#actual_lines[@]}" -ne 12 ]]; then
+            printf 'unexpected anytls install input count: %s\n' "${#actual_lines[@]}" >&2
             return 1
           fi
           [[ "${actual_lines[0]}" == "1" ]]
@@ -543,9 +582,7 @@ bash() {
           [[ "${actual_lines[8]}" == "2" ]]
           [[ -n "${actual_lines[9]}" ]]
           [[ -n "${actual_lines[10]}" ]]
-          [[ "${actual_lines[11]}" == "n" ]]
-          [[ "${actual_lines[12]}" == "n" ]]
-          [[ "${actual_lines[13]}" == "0" ]]
+          [[ "${actual_lines[11]}" == "0" ]]
           printf '9443\n' > "${PORT_FILE}"
           printf '1\n' > "${CONFIG_PRESENT_FILE}"
           printf '1\n' > "${SERVICE_FILE_PRESENT_FILE}"
@@ -559,8 +596,8 @@ INDEX_EOF
         fi
 
         if [[ "${actual_lines[2]:-}" == "5" ]]; then
-          if [[ "${#actual_lines[@]}" -ne 10 ]]; then
-            printf 'unexpected socks install input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
+          if [[ "${#actual_lines[@]}" -ne 8 ]]; then
+            printf 'unexpected socks install input count: %s\n' "${#actual_lines[@]}" >&2
             return 1
           fi
           [[ "${actual_lines[0]}" == "1" ]]
@@ -570,9 +607,7 @@ INDEX_EOF
           [[ "${actual_lines[4]}" == "y" ]]
           [[ "${actual_lines[5]}" == "socks-user" ]]
           [[ "${actual_lines[6]}" == "socks-pass" ]]
-          [[ "${actual_lines[7]}" == "n" ]]
-          [[ "${actual_lines[8]}" == "n" ]]
-          [[ "${actual_lines[9]}" == "0" ]]
+          [[ "${actual_lines[7]}" == "0" ]]
           printf '1081\n' > "${PORT_FILE}"
           printf '1\n' > "${CONFIG_PRESENT_FILE}"
           printf '1\n' > "${SERVICE_FILE_PRESENT_FILE}"
@@ -586,8 +621,8 @@ INDEX_EOF
         fi
 
         if [[ "${actual_lines[2]:-}" == "6" ]]; then
-          if [[ "${#actual_lines[@]}" -ne 11 ]]; then
-            printf 'unexpected http install input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
+          if [[ "${#actual_lines[@]}" -ne 9 ]]; then
+            printf 'unexpected http install input count: %s\n' "${#actual_lines[@]}" >&2
             return 1
           fi
           [[ "${actual_lines[0]}" == "1" ]]
@@ -598,9 +633,7 @@ INDEX_EOF
           [[ "${actual_lines[5]}" == "http-user" ]]
           [[ "${actual_lines[6]}" == "http-pass" ]]
           [[ "${actual_lines[7]}" == "n" ]]
-          [[ "${actual_lines[8]}" == "n" ]]
-          [[ "${actual_lines[9]}" == "n" ]]
-          [[ "${actual_lines[10]}" == "0" ]]
+          [[ "${actual_lines[8]}" == "0" ]]
           printf '1082\n' > "${PORT_FILE}"
           printf '1\n' > "${CONFIG_PRESENT_FILE}"
           printf '1\n' > "${SERVICE_FILE_PRESENT_FILE}"
@@ -614,8 +647,8 @@ INDEX_EOF
         fi
 
         if [[ "${actual_lines[2]:-}" == "7" ]]; then
-          if [[ "${#actual_lines[@]}" -ne 11 ]]; then
-            printf 'unexpected shadowsocks install input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
+          if [[ "${#actual_lines[@]}" -ne 9 ]]; then
+            printf 'unexpected shadowsocks install input count: %s\n' "${#actual_lines[@]}" >&2
             return 1
           fi
           [[ "${actual_lines[0]}" == "1" ]]
@@ -626,9 +659,7 @@ INDEX_EOF
           [[ "${actual_lines[5]}" == "n" ]]
           [[ "${actual_lines[6]}" == "MDEyMzQ1Njc4OWFiY2RlZg==" ]]
           [[ "${actual_lines[7]}" == "1" ]]
-          [[ "${actual_lines[8]}" == "n" ]]
-          [[ "${actual_lines[9]}" == "n" ]]
-          [[ "${actual_lines[10]}" == "0" ]]
+          [[ "${actual_lines[8]}" == "0" ]]
           printf '1083\n' > "${PORT_FILE}"
           printf '1\n' > "${CONFIG_PRESENT_FILE}"
           printf '1\n' > "${SERVICE_FILE_PRESENT_FILE}"
@@ -642,8 +673,8 @@ INDEX_EOF
         fi
 
         if [[ "${actual_lines[2]:-}" == "8" ]]; then
-          if [[ "${#actual_lines[@]}" -ne 18 ]]; then
-            printf 'unexpected trojan install input count for %s: %s\n' "${target}" "${#actual_lines[@]}" >&2
+          if [[ "${#actual_lines[@]}" -ne 16 ]]; then
+            printf 'unexpected trojan install input count: %s\n' "${#actual_lines[@]}" >&2
             return 1
           fi
           [[ "${actual_lines[0]}" == "1" ]]
@@ -661,9 +692,7 @@ INDEX_EOF
           [[ "${actual_lines[12]}" == "trojan.verification.invalid" ]]
           [[ "${actual_lines[13]}" == "1" ]]
           [[ "${actual_lines[14]}" == "1" ]]
-          [[ "${actual_lines[15]}" == "n" ]]
-          [[ "${actual_lines[16]}" == "n" ]]
-          [[ "${actual_lines[17]}" == "0" ]]
+          [[ "${actual_lines[15]}" == "0" ]]
           printf '1084\n' > "${PORT_FILE}"
           printf '1\n' > "${CONFIG_PRESENT_FILE}"
           printf '1\n' > "${SERVICE_FILE_PRESENT_FILE}"
@@ -847,6 +876,11 @@ test() {
     return
   fi
 
+  if [[ "${1:-}" == "!" && "${2:-}" == "-e" && "${3:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
+    [[ ! -e "${INDEX_FILE}" ]]
+    return
+  fi
+
   if [[ "${1:-}" == "-x" && "${2:-}" == "/usr/local/bin/sbv" ]]; then
     [[ $(cat "${SBV_PRESENT_FILE}") == "1" ]]
     return
@@ -972,6 +1006,28 @@ cp() {
   fi
 
   command cp "${args[@]}"
+}
+
+cmp() {
+  local arg args=()
+  for arg in "$@"; do
+    case "${arg}" in
+      /root/sing-box-vps/config.json) args+=("${CONFIG_FILE}") ;;
+      *) args+=("${arg}") ;;
+    esac
+  done
+  command cmp "${args[@]}"
+}
+
+rm() {
+  local arg args=()
+  for arg in "$@"; do
+    case "${arg}" in
+      /root/sing-box-vps/protocols/index.env) args+=("${INDEX_FILE}") ;;
+      *) args+=("${arg}") ;;
+    esac
+  done
+  command rm "${args[@]}"
 }
 
 grep() {
@@ -1308,6 +1364,12 @@ grep -Fqx 'sing-box version 1.14.2' "${ARTIFACT_DIR}/scenarios/fresh_install_any
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_socks/protocol-probes/socks/result.env"
 [[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_http/config.json" ]]
 [[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_http/protocols/instances/http.json" ]]
+"${REAL_JQ}" -e '.revision==3 and .instances[0].id=="main" and
+  .instances[0].name=="Recreated HTTP"' \
+  "${ARTIFACT_DIR}/scenarios/fresh_install_http/protocols/instances/http.json" >/dev/null
+"${REAL_JQ}" -e '.ok==true and .revision==2' \
+  "${ARTIFACT_DIR}/scenarios/fresh_install_http/empty-delete.json" >/dev/null
+grep -Fq '当前已安装协议: 无' "${ARTIFACT_DIR}/scenarios/fresh_install_http/empty-cancel.txt"
 grep -Fqx 'RESULT=success' "${ARTIFACT_DIR}/scenarios/fresh_install_http/protocol-probes/http/result.env"
 [[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_shadowsocks/config.json" ]]
 [[ -f "${ARTIFACT_DIR}/scenarios/fresh_install_shadowsocks/protocols/instances/shadowsocks.json" ]]
@@ -1355,6 +1417,7 @@ grep -Fqx 'grep:-Fqx DOMAIN=anytls.example.com /root/sing-box-vps/protocols/anyt
 grep -Fqx 'grep:-Fqx PASSWORD=anytls-pass /root/sing-box-vps/protocols/anytls.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'UUID=44444444-4444-4444-8444-444444444444' "${INSTANCE_STATE_FILE}"
 grep -Fq "bash:${EMBEDDED_INSTALL_SCRIPT} " "${CALLS_FILE}"
+grep -Fqx "bash:${EMBEDDED_INSTALL_SCRIPT} agent instance delete http --json --yes --expected-revision 1 --id main" "${CALLS_FILE}"
 grep -Fq 'bash:/usr/local/bin/sbv ' "${CALLS_FILE}"
 grep -Fqx "bash:${EMBEDDED_UNINSTALL_SCRIPT} --keep-config --purge" "${CALLS_FILE}"
 grep -Fqx 'uninstall-confirm:n' "${CALLS_FILE}"

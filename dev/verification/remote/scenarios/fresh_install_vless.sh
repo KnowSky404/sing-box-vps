@@ -2800,8 +2800,6 @@ www.cloudflare.com
 n
 1
 n
-n
-n
 0
 EOF
   verification_mark_step fresh_install_vless_after_install

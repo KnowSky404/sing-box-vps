@@ -23,16 +23,19 @@ managed_component_live_config_root_fields_supported() {
 }
 
 managed_component_live_route_rule_sets_match_state() {
-  local config_file=${1:-} state=${2:-} allow_legacy_download_detour=${3:-false}
+  local config_file=${1:-} state=${2:-} allow_legacy_download_detour=${3:-false} policy_sets
   [[ -f "${config_file}" && ! -L "${config_file}" && -n "${state}" ]] || return 1
   [[ "${allow_legacy_download_detour}" == true || "${allow_legacy_download_detour}" == false ]] || return 1
   managed_component_state_validate_json "${state}" || return 1
-  jq -e --argjson state "${state}" --argjson allow_legacy_download_detour "${allow_legacy_download_detour}" '
+  policy_sets=$(routing_policy_owned_rule_sets_json "" "${state}") || return 1
+  jq -e --argjson state "${state}" --argjson policy_sets "${policy_sets}" \
+    --argjson allow_legacy_download_detour "${allow_legacy_download_detour}" '
     def safe_string:
       type == "string" and length <= 4096 and
       (any(explode[]; . < 32 or . == 127) | not);
     def warp_tag($tag):
       ($tag | startswith("warp-local-") or startswith("warp-remote-"));
+    def policy_owned: . as $set | any($policy_sets[]; . == $set);
     def legacy_download_detour($set):
       $allow_legacy_download_detour and
       ($set.type == "remote") and
@@ -61,6 +64,8 @@ managed_component_live_route_rule_sets_match_state() {
        end) and
       (if legacy_download_detour($set) then
          true
+       elif ($set | policy_owned) then
+         true
        elif warp_tag($set.tag) then
          ((($set.tag | startswith("warp-local-")) and $set.type == "local") or
           (($set.tag | startswith("warp-remote-")) and $set.type == "remote"))
@@ -72,7 +77,7 @@ managed_component_live_route_rule_sets_match_state() {
        end)) and
     ([$state.components[]? |
       select(.role == "rule_set" and .enabled == true)] | length) ==
-    ([$sets[] | select((warp_tag(.tag // "") | not) and (legacy_download_detour(.) | not))] | length)
+    ([$sets[] | select((warp_tag(.tag // "") | not) and (legacy_download_detour(.) | not) and (policy_owned | not))] | length)
   ' "${config_file}" >/dev/null 2>&1
 }
 
@@ -237,9 +242,10 @@ managed_component_live_config_projection_supported() {
 # Exclude operator-owned components from the ownership comparison. They remain
 # in the actual candidate and are checked by the core and graph validators.
 coexisting_component_projection() {
-  local config_file=$1 state=$2 registry
+  local config_file=$1 state=$2 registry policy_sets
   registry=$(component_registry_static_json) || return 1
-  jq --argjson state "${state}" --argjson registry "${registry}" '
+  policy_sets=$(routing_policy_owned_rule_sets_json "" "${state}") || return 1
+  jq --argjson state "${state}" --argjson registry "${registry}" --argjson policy_sets "${policy_sets}" '
     def known($role): . as $record |
       any($registry[]; .role == $role and .type == $record.type);
     def owns($role): . as $record |
@@ -259,7 +265,8 @@ coexisting_component_projection() {
       del(.route.default_http_client) else . end |
     if has("http_clients") then .http_clients |= map(select(owns("http_client") or has("type"))) else . end |
     if .route.rule_set? != null then .route.rule_set |= map(select(
-      ((.tag // "") | startswith("warp-local-") or startswith("warp-remote-")) or owns("rule_set"))) else . end
+      ((.tag // "") | startswith("warp-local-") or startswith("warp-remote-")) or owns("rule_set") or
+      (. as $set | any($policy_sets[]; . == $set)))) else . end
   ' "${config_file}"
 }
 

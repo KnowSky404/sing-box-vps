@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026110202
+# Version: 2026110203
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026110202"
+readonly SCRIPT_VERSION="2026110203"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 # A single IPv6 wildcard socket accepts IPv4 and IPv6 in sing-box on Linux.
 readonly SB_DEFAULT_LISTEN_ADDRESS="::"
@@ -26,6 +26,9 @@ readonly SB_WARP_ROUTE_SETTINGS_FILE="${SB_PROJECT_DIR}/warp-routing.env"
 readonly SB_WARP_DOMAINS_FILE="${SB_PROJECT_DIR}/warp-domains.txt"
 readonly SB_WARP_REMOTE_RULESETS_FILE="${SB_PROJECT_DIR}/warp-remote-rule-sets.txt"
 readonly SB_WARP_LOCAL_RULESET_DIR="${SB_PROJECT_DIR}/rule-set/warp"
+readonly SB_ROUTING_POLICY_FILE="${SB_PROJECT_DIR}/routing-policy.json"
+readonly SB_ROUTING_TRANSACTION_DIR="${SB_PROJECT_DIR}.rules-write.lock"
+readonly SB_ROUTING_PREVIOUS_DIR="${SB_PROJECT_DIR}.rules-previous"
 readonly SB_STACK_STATE_FILE="${SB_PROJECT_DIR}/stack-mode.env"
 readonly SB_MEDIA_CHECK_DIR="${SB_PROJECT_DIR}/media-check"
 readonly SB_MEDIA_CHECK_SCRIPT="${SB_MEDIA_CHECK_DIR}/region_restriction_check.sh"

@@ -1025,7 +1025,8 @@ prompt_vless_reality_install() {
   prompt_vless_reality_rate_limit_fields || return 1
   prompt_vless_reality_advanced_update_fields || return 1
   validate_current_reality_sni_alpn_or_warn
-  SB_OUTBOUND_POLICY=$(prompt_instance_outbound_policy "[VLESS + REALITY] 出站策略" "${SB_OUTBOUND_POLICY:-default}")
+  SB_OUTBOUND_POLICY="default"
+  return 0
 }
 
 vless_reality_naming_snapshot() {
@@ -1096,7 +1097,9 @@ prompt_vless_reality_instance_create() {
   prompt_vless_reality_rate_limit_fields || return 1
   prompt_vless_reality_advanced_update_fields || return 1
   validate_current_reality_sni_alpn_or_warn
-  SB_OUTBOUND_POLICY=$(prompt_instance_outbound_policy "[VLESS + REALITY] 出站策略" "${SB_OUTBOUND_POLICY:-default}") || return 1
+  # Loading the default instance above also loads its routing override. A new
+  # instance always inherits global rules instead of copying that override.
+  SB_OUTBOUND_POLICY="default"
   if vless_reality_bandwidth_profile_exists "${SB_VLESS_RATE_LIMIT_UP_MBPS}" "${SB_VLESS_RATE_LIMIT_DOWN_MBPS}" "${SB_VLESS_INSTANCE_ID}"; then
     log_warn "已存在相同类型且带宽配置完全相同的 VLESS + REALITY 节点，已取消创建。"
     return 0

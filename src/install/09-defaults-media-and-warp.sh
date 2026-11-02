@@ -624,6 +624,7 @@ save_warp_route_settings() {
   mkdir -p "${SB_PROJECT_DIR}"
   cat > "${SB_WARP_ROUTE_SETTINGS_FILE}" <<EOF
 WARP_ROUTE_MODE=${SB_WARP_ROUTE_MODE}
+WARP_ENABLED=${SB_ENABLE_WARP}
 EOF
 }
 

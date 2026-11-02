@@ -36,7 +36,7 @@ load_protocol_state() {
   fi
   validate_protocol_state_schema "${protocol}" "${state_file}" || return 1
   if [[ "${protocol}" == "vless-reality" && "${state_mode}" != "read-only" ]]; then
-    migrate_vless_reality_state_to_instances_if_needed
+    migrate_vless_reality_state_to_instances_if_needed || return 1
   fi
   state_file=$(protocol_state_file "${protocol}")
 
@@ -633,7 +633,7 @@ build_vless_inbound_json_from_current_state() {
 build_vless_inbound_json() {
   local instance_id instance_ids=()
 
-  migrate_vless_reality_state_to_instances_if_needed
+  migrate_vless_reality_state_to_instances_if_needed || return 1
   validate_vless_reality_instance_tags || return 1
   mapfile -t instance_ids < <(list_vless_reality_instance_ids)
 
