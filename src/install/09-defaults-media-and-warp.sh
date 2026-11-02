@@ -477,16 +477,6 @@ warp_endpoint_json_from_live_config() {
       (.peers | type == "array" and length > 0))' "${SINGBOX_CONFIG_FILE}" 2>/dev/null
 }
 
-warp_endpoint_json_for_diagnostic() {
-  if [[ -e "${SB_WARP_KEY_FILE}" || -L "${SB_WARP_KEY_FILE}" ]]; then
-    warp_endpoint_json_from_saved_credentials
-  else
-    # A temporary diagnostic can reuse the complete live endpoint without
-    # making any ownership claim or persisting it in the generated baseline.
-    warp_endpoint_json_from_live_config
-  fi
-}
-
 warp_endpoint_json_for_generation() {
   if [[ -e "${SB_WARP_KEY_FILE}" || -L "${SB_WARP_KEY_FILE}" ]]; then
     if warp_endpoint_json_from_saved_credentials; then return 0; fi
@@ -517,7 +507,7 @@ warp_endpoint_json_for_generation() {
 
 create_media_check_warp_proxy_config() {
   local output_file=$1 proxy_port=$2 warp_endpoint
-  warp_endpoint=$(warp_endpoint_json_for_diagnostic) || {
+  warp_endpoint=$(warp_endpoint_json_from_saved_credentials) || {
     log_warn 'WARP 凭据缺失或无效；请先在网络设置中配置 WARP，检测未修改账户。'
     return 1
   }

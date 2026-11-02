@@ -108,7 +108,9 @@ existing effective server policy until the owner explicitly applies network
 settings. Draft creation converts v1 to v2 in memory and marks this cleanup as
 pending even if no toggle is changed. Application removes only old rules proven
 to belong to the script by the generated baseline and exact policy projection.
-Do not claim operator rules by their shape, protocol or tag prefix. Preserve
+When the live config is absent, a trusted generated baseline still carries its
+existing restrictions through recovery; neutral fresh defaults must not erase
+them. Do not claim operator rules by their shape, protocol or tag prefix. Preserve
 unknown/manual rules or refuse a conflicting/lossy application.
 
 Opening, previewing, cancelling or leaving the network menu does not write state.

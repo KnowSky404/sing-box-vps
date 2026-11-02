@@ -56,12 +56,16 @@ generate_config_candidate() {
   # A matching live rule is not ownership evidence. For existing installs
   # without explicit policy state, only a trusted generated record may carry
   # the old global private-address restriction into a new ownership baseline.
-  # Otherwise preserve that rule as operator content in the three-way merge.
-  if [[ "${routing_policy_active}" != y && -f "${SINGBOX_CONFIG_FILE}" ]]; then
+  # Consult the retained baseline even if recovery must recreate a missing live
+  # config. Otherwise preserve unproven live rules as operator content in merge.
+  if [[ "${routing_policy_active}" != y &&
+        ( -f "${SINGBOX_CONFIG_FILE}" || -e "${baseline_file}" || -L "${baseline_file}" ) ]]; then
     legacy_advanced_route=n
     if [[ -e "${baseline_file}" || -L "${baseline_file}" ]]; then
       [[ -f "${baseline_file}" && ! -L "${baseline_file}" &&
          "$(stat -c %a "${baseline_file}")" == 600 ]] || return 1
+      jq -e 'type == "object" and (.inbounds | type == "array")' \
+        "${baseline_file}" >/dev/null || return 1
       if jq -e 'any(.route.rules[]?; . == {ip_is_private:true,action:"reject"})' \
         "${baseline_file}" >/dev/null; then
         legacy_advanced_route=y
