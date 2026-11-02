@@ -107,13 +107,22 @@ jq -c '.endpoints[] | select(.tag == "warp-ep")' "${SINGBOX_CONFIG_FILE}" > "${T
 cmp "${TMP_DIR}/endpoint.before" "${TMP_DIR}/endpoint.after"
 "${core}" check -c "${SINGBOX_CONFIG_FILE}"
 
-# Diagnostics use existing credentials and check their private temporary config.
+# Diagnostics use saved credentials and canonical transport settings. They
+# must not inherit a live service's explicit WireGuard listener port or MTU.
+jq '(.endpoints[] | select(.tag=="warp-ep")) |= (.listen_port=51821 | .mtu=1420)' \
+  "${SINGBOX_CONFIG_FILE}" > "${TMP_DIR}/operator-warp.json"
+mv -- "${TMP_DIR}/operator-warp.json" "${SINGBOX_CONFIG_FILE}"
+"${core}" check -c "${SINGBOX_CONFIG_FILE}"
+server_before_media=$(sha256sum "${SINGBOX_CONFIG_FILE}" "${SB_PROJECT_DIR}/managed-config.generated.json")
 create_media_check_warp_proxy_config "${TMP_DIR}/media.json" 19080
+jq -e '.endpoints[] | select(.tag=="warp-ep") | .mtu==1280 and (has("listen_port")|not)' \
+  "${TMP_DIR}/media.json" >/dev/null
+[[ "$(sha256sum "${SINGBOX_CONFIG_FILE}" "${SB_PROJECT_DIR}/managed-config.generated.json")" == "${server_before_media}" ]]
 network_fingerprint > "${TMP_DIR}/network.after-media"
 cmp "${TMP_DIR}/network.before" "${TMP_DIR}/network.after-media"
 
-# Missing credentials cannot make node generation claim live-only endpoint
-# fields. Read-only diagnostics may reuse that endpoint in a temporary config.
+# Missing credentials cannot make node generation claim live-only options or
+# make diagnostics start another instance with the service's listener port.
 mv "${SB_WARP_KEY_FILE}" "${TMP_DIR}/saved-warp.key"
 before=$(sha256sum "${SINGBOX_CONFIG_FILE}" "${SB_PROJECT_DIR}/managed-config.generated.json")
 if generate_config > "${TMP_DIR}/missing-key.log" 2>&1; then
@@ -121,9 +130,11 @@ if generate_config > "${TMP_DIR}/missing-key.log" 2>&1; then
 fi
 [[ ! -e "${SB_WARP_KEY_FILE}" &&
    "$(sha256sum "${SINGBOX_CONFIG_FILE}" "${SB_PROJECT_DIR}/managed-config.generated.json")" == "${before}" ]]
-create_media_check_warp_proxy_config "${TMP_DIR}/media-reused.json" 19081
-jq -c '.endpoints[] | select(.tag == "warp-ep")' "${TMP_DIR}/media-reused.json" > "${TMP_DIR}/endpoint.reused"
-cmp "${TMP_DIR}/endpoint.before" "${TMP_DIR}/endpoint.reused"
+if create_media_check_warp_proxy_config "${TMP_DIR}/media-missing.json" 19081 > "${TMP_DIR}/media-missing.log" 2>&1; then
+  printf 'missing WARP credentials unexpectedly accepted by diagnostics\n' >&2; exit 1
+fi
+[[ ! -e "${TMP_DIR}/media-missing.json" && ! -e "${SB_WARP_KEY_FILE}" &&
+   "$(sha256sum "${SINGBOX_CONFIG_FILE}" "${SB_PROJECT_DIR}/managed-config.generated.json")" == "${before}" ]]
 printf 'WARP_PRIV_KEY=invalid\n' > "${SB_WARP_KEY_FILE}"
 before=$(sha256sum "${SINGBOX_CONFIG_FILE}")
 if generate_config > "${TMP_DIR}/invalid-key.log" 2>&1; then

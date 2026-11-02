@@ -9495,16 +9495,6 @@ warp_endpoint_json_from_live_config() {
       (.peers | type == "array" and length > 0))' "${SINGBOX_CONFIG_FILE}" 2>/dev/null
 }
 
-warp_endpoint_json_for_diagnostic() {
-  if [[ -e "${SB_WARP_KEY_FILE}" || -L "${SB_WARP_KEY_FILE}" ]]; then
-    warp_endpoint_json_from_saved_credentials
-  else
-    # A temporary diagnostic can reuse the complete live endpoint without
-    # making any ownership claim or persisting it in the generated baseline.
-    warp_endpoint_json_from_live_config
-  fi
-}
-
 warp_endpoint_json_for_generation() {
   if [[ -e "${SB_WARP_KEY_FILE}" || -L "${SB_WARP_KEY_FILE}" ]]; then
     if warp_endpoint_json_from_saved_credentials; then return 0; fi
@@ -9535,7 +9525,7 @@ warp_endpoint_json_for_generation() {
 
 create_media_check_warp_proxy_config() {
   local output_file=$1 proxy_port=$2 warp_endpoint
-  warp_endpoint=$(warp_endpoint_json_for_diagnostic) || {
+  warp_endpoint=$(warp_endpoint_json_from_saved_credentials) || {
     log_warn 'WARP 凭据缺失或无效；请先在网络设置中配置 WARP，检测未修改账户。'
     return 1
   }
@@ -23039,12 +23029,16 @@ generate_config_candidate() {
   # A matching live rule is not ownership evidence. For existing installs
   # without explicit policy state, only a trusted generated record may carry
   # the old global private-address restriction into a new ownership baseline.
-  # Otherwise preserve that rule as operator content in the three-way merge.
-  if [[ "${routing_policy_active}" != y && -f "${SINGBOX_CONFIG_FILE}" ]]; then
+  # Consult the retained baseline even if recovery must recreate a missing live
+  # config. Otherwise preserve unproven live rules as operator content in merge.
+  if [[ "${routing_policy_active}" != y &&
+        ( -f "${SINGBOX_CONFIG_FILE}" || -e "${baseline_file}" || -L "${baseline_file}" ) ]]; then
     legacy_advanced_route=n
     if [[ -e "${baseline_file}" || -L "${baseline_file}" ]]; then
       [[ -f "${baseline_file}" && ! -L "${baseline_file}" &&
          "$(stat -c %a "${baseline_file}")" == 600 ]] || return 1
+      jq -e 'type == "object" and (.inbounds | type == "array")' \
+        "${baseline_file}" >/dev/null || return 1
       if jq -e 'any(.route.rules[]?; . == {ip_is_private:true,action:"reject"})' \
         "${baseline_file}" >/dev/null; then
         legacy_advanced_route=y

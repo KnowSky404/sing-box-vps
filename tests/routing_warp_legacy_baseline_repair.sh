@@ -129,9 +129,11 @@ rm -- "${SB_WARP_KEY_FILE}"
 before=$(routing_state_fingerprint)
 if generate_config > "${TMP_DIR}/missing-key-node.log" 2>&1; then fail 'node generation adopted a live endpoint'; fi
 [[ "$(routing_state_fingerprint)" == "${before}" && ! -e "${TMP_DIR}/provider-calls" ]]
-create_media_check_warp_proxy_config "${TMP_DIR}/readonly-mtu.json" 19082 > "${TMP_DIR}/readonly-mtu.log" 2>&1
-jq -e '.endpoints[]|select(.tag=="warp-ep")|.mtu==1420' "${TMP_DIR}/readonly-mtu.json" >/dev/null
-[[ "$(routing_state_fingerprint)" == "${before}" ]]
+if create_media_check_warp_proxy_config "${TMP_DIR}/readonly-mtu.json" 19082 > "${TMP_DIR}/readonly-mtu.log" 2>&1; then
+  fail 'missing credentials were reused by diagnostics'
+fi
+[[ ! -e "${TMP_DIR}/readonly-mtu.json" && "$(routing_state_fingerprint)" == "${before}" &&
+   ! -e "${TMP_DIR}/provider-calls" ]]
 routing_draft_create "${TMP_DIR}/trusted-repair.json"
 routing_draft_edit "${TMP_DIR}/trusted-repair.json" '.warp.reregister=true'
 routing_policy_apply "${TMP_DIR}/trusted-repair.json" > "${TMP_DIR}/trusted-repair.log" 2>&1

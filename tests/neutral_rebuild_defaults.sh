@@ -42,7 +42,9 @@ rm -- "${SINGBOX_CONFIG_FILE}"
 cp -a -- "${SB_PROJECT_DIR}" "${TMP_DIR}/retained-neutral"
 
 # Negative control: the former initial flag reproduces the unintended rule
-# through the same public Agent operation, without touching the real script.
+# through the same public Agent operation when neither live config nor a
+# generated ownership record exists, without touching the real script.
+rm -- "${SB_PROJECT_DIR}/managed-config.generated.json"
 sed 's/^SB_ADVANCED_ROUTE="n"$/SB_ADVANCED_ROUTE="y"/' "${TESTABLE_INSTALL}" > "${TMP_DIR}/old-default.sh"
 if ! bash "${TMP_DIR}/old-default.sh" agent component rebuild --json --yes --expected-revision 0 \
   > "${TMP_DIR}/old-result.json" 2> "${TMP_DIR}/old-result.stderr"; then
@@ -75,6 +77,32 @@ for path in "${SB_ROUTING_POLICY_FILE}" "${SB_WARP_KEY_FILE}" "${SB_WARP_ROUTE_S
   [[ ! -e "${path}" && ! -L "${path}" ]]
 done
 
+# A trusted legacy generated restriction survives losing only the live config.
+# Changing the fresh default must not weaken a retained protection during actual
+# Agent recovery, or replace its pure ownership record with a neutral baseline.
+rm -rf -- "${SB_PROJECT_DIR}"
+cp -a -- "${TMP_DIR}/retained-neutral" "${SB_PROJECT_DIR}"
+baseline_file="${SB_PROJECT_DIR}/managed-config.generated.json"
+jq '.route.rules += [{ip_is_private:true,action:"reject"}]' "${baseline_file}" \
+  > "${TMP_DIR}/retained-private-baseline.json"
+cp -- "${TMP_DIR}/retained-private-baseline.json" "${baseline_file}"
+chmod 600 "${baseline_file}"
+[[ ! -e "${SINGBOX_CONFIG_FILE}" && ! -e "${SB_ROUTING_POLICY_FILE}" ]]
+if ! bash "${TESTABLE_INSTALL}" agent component rebuild --json --yes --expected-revision 0 \
+  > "${TMP_DIR}/legacy-result.json" 2> "${TMP_DIR}/legacy-result.stderr"; then
+  cat "${TMP_DIR}/legacy-result.json" "${TMP_DIR}/legacy-result.stderr" >&2
+  exit 1
+fi
+jq -e '.ok and .operation == "rebuild" and .revision == 0 and (.service_restarted | not)' \
+  "${TMP_DIR}/legacy-result.json" >/dev/null
+for file in "${SINGBOX_CONFIG_FILE}" "${baseline_file}"; do
+  jq -e 'any(.route.rules[]; . == {ip_is_private:true,action:"reject"})' "${file}" >/dev/null
+  "${core}" check -c "${file}"
+done
+sha256sum "${SB_PROTOCOL_STATE_DIR}/mixed.env" "${SB_PROTOCOL_INDEX_FILE}" "${store_file}" > "${TMP_DIR}/legacy-nodes.after"
+cmp "${TMP_DIR}/nodes.before" "${TMP_DIR}/legacy-nodes.after"
+[[ ! -e "${SB_ROUTING_POLICY_FILE}" && ! -e "${SB_WARP_KEY_FILE}" && ! -e "${SB_WARP_ROUTE_SETTINGS_FILE}" ]]
+
 # A neutral initial value must not prevent reading explicitly retained legacy
 # private protection. Full legacy rendering/runtime coverage is separate.
 jq '.route.rules += [{ip_is_private:true,action:"reject"}]' "${SINGBOX_CONFIG_FILE}" \
@@ -82,4 +110,4 @@ jq '.route.rules += [{ip_is_private:true,action:"reject"}]' "${SINGBOX_CONFIG_FI
 "${core}" check -c "${TMP_DIR}/legacy-private.json"
 load_config_generation_settings "${TMP_DIR}/legacy-private.json"
 [[ "${SB_ADVANCED_ROUTE}" == y ]]
-printf 'Fresh Agent neutral rebuild passed sing-box 1.14.2 check; old-default regression reproduced; explicit legacy setting retained\n'
+printf 'Fresh Agent neutral/retained-private rebuild passed sing-box 1.14.2 check; old-default regression reproduced; explicit legacy setting retained\n'
