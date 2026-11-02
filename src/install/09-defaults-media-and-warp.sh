@@ -468,13 +468,7 @@ warp_endpoint_json_from_saved_credentials() {
         reserved:$reserved,allowed_ips:["0.0.0.0/0","::/0"]}],mtu:1280}'
 }
 
-warp_endpoint_json_for_generation() {
-  if [[ -e "${SB_WARP_KEY_FILE}" || -L "${SB_WARP_KEY_FILE}" ]]; then
-    warp_endpoint_json_from_saved_credentials
-    return $?
-  fi
-  # An existing endpoint can be retained exactly when its separate credential
-  # file is missing. Final sing-box check still validates it and its references.
+warp_endpoint_json_from_live_config() {
   [[ -f "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" ]] || return 1
   jq -ce '[.endpoints[]? | select(.tag == "warp-ep")] |
     select(length == 1) | .[0] | select(.type == "wireguard" and
@@ -483,9 +477,47 @@ warp_endpoint_json_for_generation() {
       (.peers | type == "array" and length > 0))' "${SINGBOX_CONFIG_FILE}" 2>/dev/null
 }
 
+warp_endpoint_json_for_diagnostic() {
+  if [[ -e "${SB_WARP_KEY_FILE}" || -L "${SB_WARP_KEY_FILE}" ]]; then
+    warp_endpoint_json_from_saved_credentials
+  else
+    # A temporary diagnostic can reuse the complete live endpoint without
+    # making any ownership claim or persisting it in the generated baseline.
+    warp_endpoint_json_from_live_config
+  fi
+}
+
+warp_endpoint_json_for_generation() {
+  if [[ -e "${SB_WARP_KEY_FILE}" || -L "${SB_WARP_KEY_FILE}" ]]; then
+    if warp_endpoint_json_from_saved_credentials; then return 0; fi
+  fi
+  # Never copy arbitrary live endpoint options into a pure ownership record.
+  # Only explicit network baseline preparation may bridge legacy credentials,
+  # and only with the exact generated transport defaults. A later account
+  # registration may replace key/address/reserved material, not operator MTU,
+  # listen ports or other custom endpoint options.
+  [[ "${SB_ROUTING_BASELINE_WARP_FALLBACK:-n}" == y ]] || return 1
+  routing_transaction_valid "${SB_ROUTING_TRANSACTION_DIR}" || return 1
+  jq -e '.phase=="snapshot" and .service_changed' \
+    "${SB_ROUTING_TRANSACTION_DIR}/transaction.json" >/dev/null || return 1
+  warp_endpoint_json_from_live_config | jq -ce '
+    select((.address | length) == 2 and (.peers | length) == 1 and
+      (.peers[0].reserved | type == "array" and length == 3 and
+        all(.[]; type == "number" and floor == . and . >= 0 and . <= 255))) |
+    . as $endpoint |
+    {type:"wireguard",tag:"warp-ep",address:$endpoint.address,private_key:$endpoint.private_key,
+     peers:[{address:"engage.cloudflareclient.com",port:2408,
+       public_key:"bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+       reserved:$endpoint.peers[0].reserved,allowed_ips:["0.0.0.0/0","::/0"]}],mtu:1280} |
+    select(. == $endpoint)' || {
+    printf '[ERROR] 现有 WARP Endpoint 含自定义传输设置或格式无法确认，不能安全建立旧配置归属；请恢复有效凭据或可信生成基线后重试。\n' >&2
+    return 1
+  }
+}
+
 create_media_check_warp_proxy_config() {
   local output_file=$1 proxy_port=$2 warp_endpoint
-  warp_endpoint=$(warp_endpoint_json_for_generation) || {
+  warp_endpoint=$(warp_endpoint_json_for_diagnostic) || {
     log_warn 'WARP 凭据缺失或无效；请先在网络设置中配置 WARP，检测未修改账户。'
     return 1
   }

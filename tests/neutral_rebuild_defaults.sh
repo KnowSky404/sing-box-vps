@@ -5,7 +5,7 @@ set -euo pipefail
 TESTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${TESTS_DIR}/menu_test_helper.sh"
 setup_menu_test_env 120
-core=${SINGBOX_BINARY_114:-/tmp/sbv-ts-oc-20261030/sing-box}
+core=${ROUTING_POLICY_TEST_REAL_CORE:-${SINGBOX_BINARY_114:-/usr/local/bin/sing-box}}
 [[ -x "${core}" ]] || { printf 'real sing-box 1.14.2 core required\n' >&2; exit 1; }
 [[ "$("${core}" version | head -n 1)" == 'sing-box version 1.14.2' ]]
 ln -s "${core}" "${TMP_DIR}/bin/sing-box"

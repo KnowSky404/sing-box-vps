@@ -112,12 +112,17 @@ create_media_check_warp_proxy_config "${TMP_DIR}/media.json" 19080
 network_fingerprint > "${TMP_DIR}/network.after-media"
 cmp "${TMP_DIR}/network.before" "${TMP_DIR}/network.after-media"
 
-# Missing separate credentials can retain the exact working live endpoint;
-# invalid material must fail without account repair or config publication.
+# Missing credentials cannot make node generation claim live-only endpoint
+# fields. Read-only diagnostics may reuse that endpoint in a temporary config.
 mv "${SB_WARP_KEY_FILE}" "${TMP_DIR}/saved-warp.key"
-generate_config > "${TMP_DIR}/missing-key.log" 2>&1
-[[ ! -e "${SB_WARP_KEY_FILE}" ]]
-jq -c '.endpoints[] | select(.tag == "warp-ep")' "${SINGBOX_CONFIG_FILE}" > "${TMP_DIR}/endpoint.reused"
+before=$(sha256sum "${SINGBOX_CONFIG_FILE}" "${SB_PROJECT_DIR}/managed-config.generated.json")
+if generate_config > "${TMP_DIR}/missing-key.log" 2>&1; then
+  printf 'missing WARP credentials unexpectedly accepted by generation\n' >&2; exit 1
+fi
+[[ ! -e "${SB_WARP_KEY_FILE}" &&
+   "$(sha256sum "${SINGBOX_CONFIG_FILE}" "${SB_PROJECT_DIR}/managed-config.generated.json")" == "${before}" ]]
+create_media_check_warp_proxy_config "${TMP_DIR}/media-reused.json" 19081
+jq -c '.endpoints[] | select(.tag == "warp-ep")' "${TMP_DIR}/media-reused.json" > "${TMP_DIR}/endpoint.reused"
 cmp "${TMP_DIR}/endpoint.before" "${TMP_DIR}/endpoint.reused"
 printf 'WARP_PRIV_KEY=invalid\n' > "${SB_WARP_KEY_FILE}"
 before=$(sha256sum "${SINGBOX_CONFIG_FILE}")
