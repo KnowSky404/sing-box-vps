@@ -160,4 +160,73 @@ for override in mtu listen_port; do
      ! -e "${SB_ROUTING_TRANSACTION_DIR}" ]]
   "${core}" check -c "${SINGBOX_CONFIG_FILE}"
 done
+# Global WARP can be off while one custom rule or one node still needs its
+# endpoint. Removing that last dependency is a network edit, not registration;
+# it must work with missing/legacy credentials and without an old baseline.
+for dependency in custom node; do
+  reset_legacy_fixture
+  printf 'WARP_CLIENT_ID=AAAA\n' >> "${SB_WARP_KEY_FILE}"
+  SB_ENABLE_WARP=n SB_WARP_ROUTE_MODE=selective
+  save_warp_route_settings
+  if [[ "${dependency}" == custom ]]; then
+    jq -n '{schema_version:1,
+      server:{private_network_block:false,adblock:false,warp_ai:true,warp_streaming:true,
+        rules:[{id:"only-warp",kind:"domain",value:"fixture.invalid",action:"warp",enabled:true}],rule_sets:[]},
+      client:{lan_direct:true,cn_direct:true,adblock:false},adblock:{url:"",domains:[],allow:[]}}' > "${SB_ROUTING_POLICY_FILE}"
+  else
+    policy=$(routing_policy_read_json)
+    printf '%s\n' "${policy}" > "${SB_ROUTING_POLICY_FILE}"
+    mkdir -p "${SB_PROTOCOL_STATE_DIR}/instances"
+    jq -n '{schema_version:1,protocol:"mixed",revision:1,default_instance_id:"main",instances:[
+      {id:"main",name:"Legacy node",tag:"mixed-in",listen:{address:"127.0.0.1",port:13090},
+       authentication:{enabled:false,username:"",password:""},outbound_policy:"warp",dependencies:[]}]}' \
+      > "$(plain_proxy_structured_store_file mixed)"
+    chmod 600 "$(plain_proxy_structured_store_file mixed)"
+    save_plain_proxy_structured_marker mixed
+  fi
+  chmod 600 "${SB_ROUTING_POLICY_FILE}"
+  # Prepare a fresh scoped fixture before discarding its generated baseline;
+  # do not model a deleted live rule by replacing policy on an old config.
+  rm -- "${SINGBOX_CONFIG_FILE}"
+  rm -f -- "${SINGBOX_CONFIG_FILE}.bak"
+  generate_config > "${TMP_DIR}/${dependency}-initial.log" 2>&1
+  jq -e '.route.final=="direct" and any(.endpoints[]; .tag=="warp-ep")' "${SINGBOX_CONFIG_FILE}" >/dev/null
+  rm -- "${SB_PROJECT_DIR}/managed-config.generated.json"
+  rm -f -- "${SB_PROJECT_DIR}/managed-config.generated.json.bak"
+  if [[ "${dependency}" == custom ]]; then
+    sed '/^WARP_CLIENT_ID=/d' "${SB_WARP_KEY_FILE}" > "${TMP_DIR}/scoped-key"
+    cp -- "${TMP_DIR}/scoped-key" "${SB_WARP_KEY_FILE}"
+    chmod 600 "${SB_WARP_KEY_FILE}"
+  else
+    rm -- "${SB_WARP_KEY_FILE}"
+  fi
+  # Leaving the dependency unchanged cannot turn a Block CN edit into repair.
+  routing_draft_create "${TMP_DIR}/${dependency}-block.json"
+  routing_draft_edit "${TMP_DIR}/${dependency}-block.json" '.policy.server.block_cn=true'
+  before=$(routing_state_fingerprint)
+  if routing_policy_apply "${TMP_DIR}/${dependency}-block.json" > "${TMP_DIR}/${dependency}-block.log" 2>&1; then
+    fail "Block CN repaired the unchanged ${dependency} WARP dependency"
+  fi
+  [[ "$(routing_state_fingerprint)" == "${before}" && ! -e "${TMP_DIR}/provider-calls" &&
+     ! -e "${SB_ROUTING_TRANSACTION_DIR}" ]]
+  routing_draft_create "${TMP_DIR}/${dependency}-remove.json"
+  if [[ "${dependency}" == custom ]]; then
+    routing_draft_edit "${TMP_DIR}/${dependency}-remove.json" '.policy.server.rules=[]'
+  else
+    routing_draft_edit "${TMP_DIR}/${dependency}-remove.json" \
+      '.node_overrides=[{protocol:"mixed",id:"main",policy:"default",revision:1}]'
+  fi
+  routing_policy_apply "${TMP_DIR}/${dependency}-remove.json" > "${TMP_DIR}/${dependency}-remove.log" 2>&1
+  [[ ! -e "${TMP_DIR}/provider-calls" ]]
+  jq -e '.route.final=="direct" and all(.endpoints[]; .tag!="warp-ep")' "${SINGBOX_CONFIG_FILE}" >/dev/null
+  if [[ "${dependency}" == custom ]]; then
+    cmp "${SB_WARP_KEY_FILE}" "${TMP_DIR}/scoped-key"
+  else
+    [[ ! -e "${SB_WARP_KEY_FILE}" ]]
+    jq -e '.revision==2 and .instances[0].outbound_policy=="default"' \
+      "$(plain_proxy_structured_store_file mixed)" >/dev/null
+  fi
+  "${core}" check -c "${SINGBOX_CONFIG_FILE}"
+  printf 'Last %s WARP dependency removed without provider contact\n' "${dependency}"
+done
 printf 'Explicit legacy WARP repair/disable, strict readers and single-receipt retry passed\n'

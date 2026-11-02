@@ -147,8 +147,9 @@ Cloudflare WARP handshake/egress. Actual SubMan writes, real account registratio
 public connectivity, production rollout, local review, remote security review,
 merge and Wiki publication are separate evidence boundaries.
 
-Expected time: host regression roughly 10–20 minutes; registered Docker scenarios
-may exceed 20 minutes because they prepare protocol/core/certificate baselines.
+Estimate time from the selected manifest before execution. The full host and
+registered Docker runs include large existing component matrices and can exceed
+one hour in this environment, in addition to protocol/core/certificate setup.
 Inspect specific slow/failing cases before retrying. Reuse unchanged passing
 results and rerun only failures and tests affected by repairs.
 
@@ -176,11 +177,12 @@ projection and have targeted actual-core regressions with negative controls.
 
 Follow-up review fixes cover explicit legacy WARP credential repair before
 baseline generation, retention of operator endpoint options, and media diagnostic
-cache changes within an open draft. Dedicated regressions exercise provider
+cache changes within an open draft. Scoped WARP dependency removal and component
+generation preserve the correct old-state inventory context. Dedicated regressions exercise provider
 receipts/retries, exact rollback, ordinary node/diagnostic isolation, and CAS
 rejection of concurrent non-cache changes.
 
-The 198-entry full host manifest completed, including scoped repairs and valid
+The 199-entry full host manifest completed, including scoped repairs and valid
 result reuse; the reconciled record is
 `/tmp/sbv-server-only-delivery/host-results.json`. The registered Docker scope is
 all 16 scenarios; per-scenario results, artifact bundles, current-head reviews and
