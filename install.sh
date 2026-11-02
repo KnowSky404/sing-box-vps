@@ -9486,13 +9486,7 @@ warp_endpoint_json_from_saved_credentials() {
         reserved:$reserved,allowed_ips:["0.0.0.0/0","::/0"]}],mtu:1280}'
 }
 
-warp_endpoint_json_for_generation() {
-  if [[ -e "${SB_WARP_KEY_FILE}" || -L "${SB_WARP_KEY_FILE}" ]]; then
-    warp_endpoint_json_from_saved_credentials
-    return $?
-  fi
-  # An existing endpoint can be retained exactly when its separate credential
-  # file is missing. Final sing-box check still validates it and its references.
+warp_endpoint_json_from_live_config() {
   [[ -f "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" ]] || return 1
   jq -ce '[.endpoints[]? | select(.tag == "warp-ep")] |
     select(length == 1) | .[0] | select(.type == "wireguard" and
@@ -9501,9 +9495,47 @@ warp_endpoint_json_for_generation() {
       (.peers | type == "array" and length > 0))' "${SINGBOX_CONFIG_FILE}" 2>/dev/null
 }
 
+warp_endpoint_json_for_diagnostic() {
+  if [[ -e "${SB_WARP_KEY_FILE}" || -L "${SB_WARP_KEY_FILE}" ]]; then
+    warp_endpoint_json_from_saved_credentials
+  else
+    # A temporary diagnostic can reuse the complete live endpoint without
+    # making any ownership claim or persisting it in the generated baseline.
+    warp_endpoint_json_from_live_config
+  fi
+}
+
+warp_endpoint_json_for_generation() {
+  if [[ -e "${SB_WARP_KEY_FILE}" || -L "${SB_WARP_KEY_FILE}" ]]; then
+    if warp_endpoint_json_from_saved_credentials; then return 0; fi
+  fi
+  # Never copy arbitrary live endpoint options into a pure ownership record.
+  # Only explicit network baseline preparation may bridge legacy credentials,
+  # and only with the exact generated transport defaults. A later account
+  # registration may replace key/address/reserved material, not operator MTU,
+  # listen ports or other custom endpoint options.
+  [[ "${SB_ROUTING_BASELINE_WARP_FALLBACK:-n}" == y ]] || return 1
+  routing_transaction_valid "${SB_ROUTING_TRANSACTION_DIR}" || return 1
+  jq -e '.phase=="snapshot" and .service_changed' \
+    "${SB_ROUTING_TRANSACTION_DIR}/transaction.json" >/dev/null || return 1
+  warp_endpoint_json_from_live_config | jq -ce '
+    select((.address | length) == 2 and (.peers | length) == 1 and
+      (.peers[0].reserved | type == "array" and length == 3 and
+        all(.[]; type == "number" and floor == . and . >= 0 and . <= 255))) |
+    . as $endpoint |
+    {type:"wireguard",tag:"warp-ep",address:$endpoint.address,private_key:$endpoint.private_key,
+     peers:[{address:"engage.cloudflareclient.com",port:2408,
+       public_key:"bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+       reserved:$endpoint.peers[0].reserved,allowed_ips:["0.0.0.0/0","::/0"]}],mtu:1280} |
+    select(. == $endpoint)' || {
+    printf '[ERROR] 现有 WARP Endpoint 含自定义传输设置或格式无法确认，不能安全建立旧配置归属；请恢复有效凭据或可信生成基线后重试。\n' >&2
+    return 1
+  }
+}
+
 create_media_check_warp_proxy_config() {
   local output_file=$1 proxy_port=$2 warp_endpoint
-  warp_endpoint=$(warp_endpoint_json_for_generation) || {
+  warp_endpoint=$(warp_endpoint_json_for_diagnostic) || {
     log_warn 'WARP 凭据缺失或无效；请先在网络设置中配置 WARP，检测未修改账户。'
     return 1
   }
@@ -40829,7 +40861,7 @@ routing_path_is_managed() {
 
 routing_state_fingerprint() (
   local scope=${1:-all} workspace file count=0 kind mode
-  [[ "${scope}" == all || "${scope}" == external ]] || return 1
+  [[ "${scope}" == all || "${scope}" == external || "${scope}" == without_media_cache ]] || return 1
   [[ ! -L "${SB_PROJECT_DIR}" ]] || return 1
   umask 077
   workspace=$(mktemp -d /tmp/sbv-routing-fingerprint.XXXXXX) || return 1
@@ -40851,6 +40883,18 @@ routing_state_fingerprint() (
     # Runtime log messages are preserved separately during snapshot restoration.
     [[ "${file}" != "${SBV_LOG_FILE}" ]] || continue
     if [[ "${scope}" == external ]] && routing_path_is_managed "${file}"; then continue; fi
+    # This comparison-only scope supports a diagnostic within an open draft.
+    # Ordinary transaction and external-state hashes still include the cache.
+    # Unknown children, links and unexpected object types remain observable.
+    if [[ "${scope}" == without_media_cache ]]; then
+      if [[ "${file}" == "${SB_MEDIA_CHECK_DIR}" && -d "${file}" && ! -L "${file}" ]]; then
+        continue
+      fi
+      if [[ ( "${file}" == "${SB_MEDIA_CHECK_SCRIPT}" || "${file}" == "${SB_MEDIA_CHECK_SCRIPT}.bak" ) &&
+            -f "${file}" && ! -L "${file}" ]]; then
+        continue
+      fi
+    fi
     count=$((count + 1)); [[ "${count}" -le 4096 ]] || return 1
     printf '%s\0' "${file#"${SB_PROJECT_DIR}/"}" >> "${workspace}/hashes" || return 1
     mode=$(stat -c '%a:%u:%g' -- "${file}") || return 1
@@ -41188,6 +41232,7 @@ routing_transaction_run() (
   local committed=n finished=n candidate='' warp_activation_requested=false current_nodes='[]'
   local SB_ROUTING_DEFER_WARP_RECEIPT=n
   local SB_ROUTING_JOURNAL_LEGACY_BACKUP=n
+  local SB_ROUTING_BASELINE_WARP_FALLBACK=n
   umask 077
   acquire_managed_write_lock || return 1
   [[ ! -e "${directory}" && ! -L "${directory}" && ! -e "${SB_PROJECT_DIR}.instance-write.lock" &&
@@ -41284,7 +41329,12 @@ routing_transaction_run() (
       SB_ROUTING_DEFER_WARP_RECEIPT=y
       SB_ROUTING_JOURNAL_LEGACY_BACKUP=y
       load_current_config_state || return 1
+      if [[ "${warp_activation_requested}" == true ]] ||
+         { jq -e '.warp.enabled | not' "${draft}" >/dev/null && config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; }; then
+        SB_ROUTING_BASELINE_WARP_FALLBACK=y
+      fi
       ensure_existing_generated_config_baseline || return 1
+      SB_ROUTING_BASELINE_WARP_FALLBACK=n
     fi
     jq '.policy' "${draft}" > "${directory}/policy.json" || return 1
     routing_publish_file "${directory}/policy.json" "${SB_ROUTING_POLICY_FILE}" || return 1
@@ -41603,6 +41653,43 @@ routing_sources_menu() {
   done
 }
 
+# Only the diagnostic backend cache may update a live session's CAS token.
+# Bracket both control-state reads with full hashes; an already stale draft or
+# any concurrent policy/unknown-file change must retain its original token.
+routing_media_check_with_draft() (
+  local draft=$1 original=$2 ready=n status=0 expected='' before='' before_check=''
+  local before_control='' after='' after_control='' after_check=''
+  local next_draft="${1}.media-cache.next" next_original="${2}.media-cache.next"
+  umask 077
+  trap 'rm -f -- "${next_draft}" "${next_original}"' EXIT
+  if routing_draft_validate "${draft}" && routing_draft_validate "${original}" &&
+     expected=$(jq -r '.fingerprint' "${draft}") &&
+     before=$(routing_state_fingerprint) &&
+     before_control=$(routing_state_fingerprint without_media_cache) &&
+     before_check=$(routing_state_fingerprint) &&
+     [[ "${before}" == "${before_check}" && "${before}" == "${expected}" &&
+        "$(jq -r '.fingerprint' "${original}")" == "${expected}" ]]; then
+    ready=y
+  fi
+  media_check_menu || status=$?
+  if [[ "${ready}" == y ]] &&
+     after=$(routing_state_fingerprint) &&
+     after_control=$(routing_state_fingerprint without_media_cache) &&
+     after_check=$(routing_state_fingerprint) &&
+     [[ "${after}" == "${after_check}" && "${after_control}" == "${before_control}" ]]; then
+    if ! jq --arg fingerprint "${after}" '.fingerprint=$fingerprint' "${draft}" > "${next_draft}" ||
+       ! jq --arg fingerprint "${after}" '.fingerprint=$fingerprint' "${original}" > "${next_original}" ||
+       ! routing_draft_validate "${next_draft}" || ! routing_draft_validate "${next_original}" ||
+       ! mv -f -- "${next_draft}" "${draft}" || ! mv -f -- "${next_original}" "${original}"; then
+      routing_notice WARN '检测后无法更新草稿校验记录；现有设置草稿已保留。'
+      return 1
+    fi
+  else
+    routing_notice WARN '检测缓存之外的状态发生变化；保留原草稿校验记录，应用前需核对外部变更。'
+  fi
+  return "${status}"
+)
+
 routing_management_menu() (
   local workspace draft original choice
   umask 077
@@ -41639,7 +41726,7 @@ routing_management_menu() (
       1) routing_draft_edit "${draft}" '.policy.server.block_cn |= not' || continue ;;
       2) routing_default_outbound_menu "${draft}" || return 1 ;;
       3) routing_presets_menu "${draft}" || return 1 ;;
-      4) media_check_menu || routing_notice WARN '检测未完成，草稿和服务策略未修改。' ;;
+      4) routing_media_check_with_draft "${draft}" "${original}" || routing_notice WARN '检测未完成，草稿和服务策略未修改。' ;;
       5)
         routing_policy_preview "${draft}" || return 1
         echo '1. 应用草稿  2. 恢复上次应用前的配置  0. 返回'

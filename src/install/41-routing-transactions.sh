@@ -49,7 +49,7 @@ routing_path_is_managed() {
 
 routing_state_fingerprint() (
   local scope=${1:-all} workspace file count=0 kind mode
-  [[ "${scope}" == all || "${scope}" == external ]] || return 1
+  [[ "${scope}" == all || "${scope}" == external || "${scope}" == without_media_cache ]] || return 1
   [[ ! -L "${SB_PROJECT_DIR}" ]] || return 1
   umask 077
   workspace=$(mktemp -d /tmp/sbv-routing-fingerprint.XXXXXX) || return 1
@@ -71,6 +71,18 @@ routing_state_fingerprint() (
     # Runtime log messages are preserved separately during snapshot restoration.
     [[ "${file}" != "${SBV_LOG_FILE}" ]] || continue
     if [[ "${scope}" == external ]] && routing_path_is_managed "${file}"; then continue; fi
+    # This comparison-only scope supports a diagnostic within an open draft.
+    # Ordinary transaction and external-state hashes still include the cache.
+    # Unknown children, links and unexpected object types remain observable.
+    if [[ "${scope}" == without_media_cache ]]; then
+      if [[ "${file}" == "${SB_MEDIA_CHECK_DIR}" && -d "${file}" && ! -L "${file}" ]]; then
+        continue
+      fi
+      if [[ ( "${file}" == "${SB_MEDIA_CHECK_SCRIPT}" || "${file}" == "${SB_MEDIA_CHECK_SCRIPT}.bak" ) &&
+            -f "${file}" && ! -L "${file}" ]]; then
+        continue
+      fi
+    fi
     count=$((count + 1)); [[ "${count}" -le 4096 ]] || return 1
     printf '%s\0' "${file#"${SB_PROJECT_DIR}/"}" >> "${workspace}/hashes" || return 1
     mode=$(stat -c '%a:%u:%g' -- "${file}") || return 1
@@ -408,6 +420,7 @@ routing_transaction_run() (
   local committed=n finished=n candidate='' warp_activation_requested=false current_nodes='[]'
   local SB_ROUTING_DEFER_WARP_RECEIPT=n
   local SB_ROUTING_JOURNAL_LEGACY_BACKUP=n
+  local SB_ROUTING_BASELINE_WARP_FALLBACK=n
   umask 077
   acquire_managed_write_lock || return 1
   [[ ! -e "${directory}" && ! -L "${directory}" && ! -e "${SB_PROJECT_DIR}.instance-write.lock" &&
@@ -504,7 +517,12 @@ routing_transaction_run() (
       SB_ROUTING_DEFER_WARP_RECEIPT=y
       SB_ROUTING_JOURNAL_LEGACY_BACKUP=y
       load_current_config_state || return 1
+      if [[ "${warp_activation_requested}" == true ]] ||
+         { jq -e '.warp.enabled | not' "${draft}" >/dev/null && config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; }; then
+        SB_ROUTING_BASELINE_WARP_FALLBACK=y
+      fi
       ensure_existing_generated_config_baseline || return 1
+      SB_ROUTING_BASELINE_WARP_FALLBACK=n
     fi
     jq '.policy' "${draft}" > "${directory}/policy.json" || return 1
     routing_publish_file "${directory}/policy.json" "${SB_ROUTING_POLICY_FILE}" || return 1

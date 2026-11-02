@@ -255,6 +255,43 @@ routing_sources_menu() {
   done
 }
 
+# Only the diagnostic backend cache may update a live session's CAS token.
+# Bracket both control-state reads with full hashes; an already stale draft or
+# any concurrent policy/unknown-file change must retain its original token.
+routing_media_check_with_draft() (
+  local draft=$1 original=$2 ready=n status=0 expected='' before='' before_check=''
+  local before_control='' after='' after_control='' after_check=''
+  local next_draft="${1}.media-cache.next" next_original="${2}.media-cache.next"
+  umask 077
+  trap 'rm -f -- "${next_draft}" "${next_original}"' EXIT
+  if routing_draft_validate "${draft}" && routing_draft_validate "${original}" &&
+     expected=$(jq -r '.fingerprint' "${draft}") &&
+     before=$(routing_state_fingerprint) &&
+     before_control=$(routing_state_fingerprint without_media_cache) &&
+     before_check=$(routing_state_fingerprint) &&
+     [[ "${before}" == "${before_check}" && "${before}" == "${expected}" &&
+        "$(jq -r '.fingerprint' "${original}")" == "${expected}" ]]; then
+    ready=y
+  fi
+  media_check_menu || status=$?
+  if [[ "${ready}" == y ]] &&
+     after=$(routing_state_fingerprint) &&
+     after_control=$(routing_state_fingerprint without_media_cache) &&
+     after_check=$(routing_state_fingerprint) &&
+     [[ "${after}" == "${after_check}" && "${after_control}" == "${before_control}" ]]; then
+    if ! jq --arg fingerprint "${after}" '.fingerprint=$fingerprint' "${draft}" > "${next_draft}" ||
+       ! jq --arg fingerprint "${after}" '.fingerprint=$fingerprint' "${original}" > "${next_original}" ||
+       ! routing_draft_validate "${next_draft}" || ! routing_draft_validate "${next_original}" ||
+       ! mv -f -- "${next_draft}" "${draft}" || ! mv -f -- "${next_original}" "${original}"; then
+      routing_notice WARN '检测后无法更新草稿校验记录；现有设置草稿已保留。'
+      return 1
+    fi
+  else
+    routing_notice WARN '检测缓存之外的状态发生变化；保留原草稿校验记录，应用前需核对外部变更。'
+  fi
+  return "${status}"
+)
+
 routing_management_menu() (
   local workspace draft original choice
   umask 077
@@ -291,7 +328,7 @@ routing_management_menu() (
       1) routing_draft_edit "${draft}" '.policy.server.block_cn |= not' || continue ;;
       2) routing_default_outbound_menu "${draft}" || return 1 ;;
       3) routing_presets_menu "${draft}" || return 1 ;;
-      4) media_check_menu || routing_notice WARN '检测未完成，草稿和服务策略未修改。' ;;
+      4) routing_media_check_with_draft "${draft}" "${original}" || routing_notice WARN '检测未完成，草稿和服务策略未修改。' ;;
       5)
         routing_policy_preview "${draft}" || return 1
         echo '1. 应用草稿  2. 恢复上次应用前的配置  0. 返回'

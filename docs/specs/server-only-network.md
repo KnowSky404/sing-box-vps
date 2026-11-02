@@ -39,7 +39,10 @@ and status fields, and obsolete full-export tests. Existing exported files are
 not deleted as a side effect of upgrading the script.
 
 Media checks must not register/re-register WARP, change routes, or modify node
-credentials. WARP checks require already prepared valid account material.
+credentials. WARP checks require already prepared valid account material. Running
+diagnostics after editing a draft must preserve pending choices. Only proven
+diagnostic-cache changes may refresh private draft fingerprints; an already stale
+draft or any unrelated concurrent change must retain the normal CAS rejection.
 
 ## 3. Installation and lifecycle isolation
 
@@ -132,7 +135,7 @@ Required focused coverage before the full pass:
 | Install/edit | No routing questions; neutral fresh defaults; policy/key/env/domain/source fingerprints unchanged; no implicit WARP registration |
 | Policy | Strict v1/v2 validation, v1 read preservation, explicit v2 cleanup, Block CN domain/IP ordering and managed-listener scope |
 | Lifecycle | New-node inheritance, retained overrides, typed/global baseline continuity, manual-config preservation/refusal |
-| Transactions | Cancel/no-op, stale draft/lock, apply once, stopped/failed service, validation/restart failure and signal rollback, recovery/restore |
+| Transactions | Cancel/no-op, stale draft/lock, edit → diagnose → apply without lost choices, cache-only refresh with race checks, apply once, stopped/failed service, explicit legacy WARP repair, validation/restart failure and signal rollback, recovery/restore |
 | Sharing | SubMan payload/mock/orchestration and URI/QR regressions; internal per-node builders/probes retained |
 | Real core/runtime | sing-box 1.14.2 check, fresh install, Block CN TCP/UDP rejection with isolated local rule fixtures, non-CN allowance, install-after-policy isolation and legacy cleanup/rollback |
 
@@ -169,7 +172,13 @@ private-block initial default, and absent policy/baseline could claim a manual
 private rejection by shape. Both are fixed in the neutral default/common ownership
 projection and have targeted actual-core regressions with negative controls.
 
-The 196-entry full host manifest completed, including scoped repairs and valid
+Follow-up review fixes cover explicit legacy WARP credential repair before
+baseline generation, retention of operator endpoint options, and media diagnostic
+cache changes within an open draft. Dedicated regressions exercise provider
+receipts/retries, exact rollback, ordinary node/diagnostic isolation, and CAS
+rejection of concurrent non-cache changes.
+
+The 198-entry full host manifest completed, including scoped repairs and valid
 result reuse; the reconciled record is
 `/tmp/sbv-server-only-delivery/host-results.json`. The registered Docker scope is
 all 16 scenarios; per-scenario results, artifact bundles, current-head reviews and
