@@ -2,7 +2,7 @@
 
 面向 VPS 的 sing-box 安装与管理脚本，提供交互菜单和 Agent 命令，用于部署协议、维护服务和导出客户端配置。
 
-- 脚本版本：`2026110105`
+- 脚本版本：`2026110201`
 - sing-box 适配版本：`1.14.2`
 
 ## 主要能力
@@ -39,6 +39,7 @@ sbv
 
 安全审查上下文与报告要求见 [SECURITY.md](SECURITY.md)。
 实现契约、完成状态与待验收边界见 [SPEC 索引](docs/specs/README.zh-CN.md)（[English](docs/specs/README.md)）。
+开发时维护 [模块化源码](src/install/README.md)，通过构建脚本生成独立运行的 `install.sh`。
 
 ## 开源协议
 

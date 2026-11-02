@@ -9,9 +9,12 @@ summary is in [Development](docs/wiki/Development.md#云端安全审查上下文
 
 sing-box-vps is a root-operated Linux installer and manager. Intended operations
 include installing executables, managing systemd and configuration, and changing
-explicitly requested firewall and routing resources. The runtime source of truth
-is `install.sh`; `bootstrap.sh` downloads and starts the selected runtime, and
-`uninstall.sh` delegates removal to an available local runtime.
+explicitly requested firewall and routing resources. The runtime artifact is the
+standalone `install.sh`, generated from the maintained `src/install/` modules by
+`scripts/build-install.sh`. The builder validates and concatenates files without
+executing them. Review source changes together with the generated artifact and
+check their consistency. `bootstrap.sh` downloads and starts the selected runtime,
+and `uninstall.sh` delegates removal to an available local runtime.
 
 Review the complete PR diff and affected callers first. Expand inspection only
 as needed to establish reachability, existing defenses or shared impact.

@@ -189,7 +189,7 @@ verification_add_group() {
       done
       ;;
     full)
-      for test in install.sh uninstall.sh bootstrap.sh dev/verification/{run,common,planner,selection}.sh; do
+      for test in install.sh uninstall.sh bootstrap.sh scripts/build-install.sh dev/verification/{run,common,planner,selection}.sh; do
         verification_plan_append VERIFY_PLAN_SYNTAX "${test}"
       done
       ;;
@@ -242,12 +242,19 @@ verification_classify_file() {
   case "${file}" in
     install.sh)
       verification_plan_append VERIFY_PLAN_SYNTAX install.sh
+      verification_plan_append VERIFY_PLAN_SYNTAX scripts/build-install.sh
+      verification_plan_append VERIFY_PLAN_TESTS tests/install_build.sh
       if verification_install_metadata_only; then
         verification_add_group version || return 2
         verification_plan_append VERIFY_PLAN_REASONS 'install.sh: only script-version metadata changed'
       else
         verification_plan_append VERIFY_PLAN_UNRESOLVED 'install.sh: choose --group and/or --scenario for the affected behavior, or --full'
       fi
+      ;;
+    scripts/build-install.sh|src/install/manifest.txt|src/install/*.sh)
+      verification_plan_append VERIFY_PLAN_SYNTAX scripts/build-install.sh
+      verification_plan_append VERIFY_PLAN_TESTS tests/install_build.sh
+      verification_plan_append VERIFY_PLAN_REASONS "${file}: verify the standalone installer matches its modular sources"
       ;;
     bootstrap.sh) verification_add_group bootstrap || return 2 ;;
     tests/default_dual_stack_runtime.sh|tests/hy2_instance_acme_runtime.sh|tests/component_runtime_acceptance.sh|tests/selector_urltest_runtime.sh|tests/acme_component_runtime.sh|tests/cloudflared_runtime.sh|tests/tailscale_openconnect_runtime.sh|tests/namespace_core_runtime.sh|tests/component_runtime_http.py|tests/tailscale_openconnect_marker.py)

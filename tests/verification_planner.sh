@@ -11,6 +11,7 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 mkdir -p "${FIXTURE}/dev" "${TMP_DIR}/bin"
 cp -R "${REPO_ROOT}/dev/verification" "${FIXTURE}/dev/"
 cp -R "${REPO_ROOT}/tests" "${FIXTURE}/"
+cp -R "${REPO_ROOT}/scripts" "${REPO_ROOT}/src" "${FIXTURE}/"
 cp "${REPO_ROOT}/install.sh" "${REPO_ROOT}/README.md" \
   "${REPO_ROOT}/bootstrap.sh" "${REPO_ROOT}/SECURITY.md" "${FIXTURE}/"
 mkdir -p "${FIXTURE}/docs/wiki"
@@ -40,6 +41,8 @@ git -C "${FIXTURE}" config user.name 'Planner regression fixture'
 git -C "${FIXTURE}" add .
 git -C "${FIXTURE}" -c commit.gpgsign=false commit -qm 'test: establish planner baseline'
 BASE=$(git -C "${FIXTURE}" rev-parse HEAD)
+SOURCE_MODULE=$(git -C "${FIXTURE}" ls-files 'src/install/*.sh' | sed -n '1p')
+[[ -n "${SOURCE_MODULE}" ]]
 # Give the requested comparison branch its own commit, then return to a task
 # branch at the original baseline. Its unrelated test must never enter our plan.
 git -C "${FIXTURE}" checkout -qb planner-upstream
@@ -121,7 +124,10 @@ plan=$(fixture_run --plan --base "${BASE}")
 assert_line 'mode=local' "${plan}"
 assert_line 'plan_status=ready' "${plan}"
 assert_line 'syntax=install.sh' "${plan}"
+assert_line 'syntax=scripts/build-install.sh' "${plan}"
+assert_line 'test=tests/install_build.sh' "${plan}"
 assert_line 'test=tests/version_metadata_is_consistent.sh' "${plan}"
+assert_line 'local_test_count=3' "${plan}"
 ! grep -q '^scenario=' <<<"${plan}"
 assert_no_planning_side_effects
 
@@ -130,7 +136,12 @@ assert_no_planning_side_effects
 sed -i 's/2000010101/2000010102/g' "${FIXTURE}/install.sh"
 plan=$(fixture_run --plan --base "${BASE}")
 assert_line 'plan_status=needs_scope' "${plan}"
+assert_line 'test=tests/install_build.sh' "${plan}"
 assert_error_2 --base "${BASE}"
+assert_no_planning_side_effects
+plan=$(fixture_run --plan --changed-file install.sh --changed-file "${SOURCE_MODULE}")
+assert_line 'plan_status=needs_scope' "${plan}"
+[[ $(grep -Fxc 'test=tests/install_build.sh' <<<"${plan}") -eq 1 ]]
 assert_no_planning_side_effects
 plan=$(fixture_run --plan --base "${BASE}" --group menu)
 assert_line 'plan_status=ready' "${plan}"
@@ -139,6 +150,35 @@ assert_line 'mode=local' "${plan}"
 
 # Restore only this disposable fixture file before testing independent mappings.
 git -C "${FIXTURE}" show "${BASE}:install.sh" > "${FIXTURE}/install.sh"
+
+# Modular edits require a fresh standalone artifact, without selecting unrelated
+# protocol regressions or running a build during a read-only plan.
+for file in scripts/build-install.sh src/install/manifest.txt "${SOURCE_MODULE}"; do
+  plan=$(fixture_run --plan --changed-file "${file}")
+  assert_line 'mode=local' "${plan}"
+  assert_line 'plan_status=ready' "${plan}"
+  assert_line 'syntax=scripts/build-install.sh' "${plan}"
+  assert_line 'test=tests/install_build.sh' "${plan}"
+  assert_line 'local_test_count=1' "${plan}"
+  ! grep -q '^scenario=' <<<"${plan}"
+  assert_no_planning_side_effects
+done
+plan=$(fixture_run --plan --changed-file scripts/build-install.sh \
+  --changed-file src/install/manifest.txt --changed-file "${SOURCE_MODULE}" \
+  --changed-file install.sh)
+assert_line 'test=tests/install_build.sh' "${plan}"
+[[ $(grep -Fxc 'test=tests/install_build.sh' <<<"${plan}") -eq 1 ]]
+assert_no_planning_side_effects
+
+printf '# source-only fixture edit\n' >> "${FIXTURE}/${SOURCE_MODULE}"
+plan=$(fixture_run --plan --base "${BASE}")
+assert_line "file=${SOURCE_MODULE}" "${plan}"
+assert_line 'plan_status=ready' "${plan}"
+assert_line 'local_test_count=1' "${plan}"
+assert_line 'test=tests/install_build.sh' "${plan}"
+assert_no_planning_side_effects
+git -C "${FIXTURE}" show "${BASE}:${SOURCE_MODULE}" > "${FIXTURE}/${SOURCE_MODULE}"
+
 plan=$(fixture_run --plan --changed-file bootstrap.sh)
 assert_line 'test=tests/bootstrap_download.sh' "${plan}"
 assert_line 'mode=local' "${plan}"
@@ -234,6 +274,9 @@ assert_no_planning_side_effects
 
 # Full mode remains explicit and excludes a known container-only host-mutating fixture.
 plan=$(fixture_run --plan --full)
+assert_line 'test=tests/install_build.sh' "${plan}"
+assert_line 'syntax=scripts/build-install.sh' "${plan}"
+[[ $(grep -Fxc 'test=tests/install_build.sh' <<<"${plan}") -eq 1 ]]
 ! grep -Fqx 'test=tests/hy2_instance_acme_runtime.sh' <<<"${plan}"
 assert_no_planning_side_effects
 

@@ -61,6 +61,30 @@ bash dev/verification/run.sh --plan --base origin/main --full
 
 GitHub 对 `main` 启用 PR、线性历史和已解决审查对话保护，并对管理员生效，禁止强推和删除。仓库仅允许 rebase 合并，并自动删除已合并的远程分支。Codex 的审查结果目前写入 PR 评论，而非 GitHub 必需状态检查；GitHub 设置本身不会阻止在机器人审查完成前合并，因此执行者必须主动核对本地审查通过、当前 head 的远程安全审查完成且无未解决问题，远程代码审查不作为等待条件。
 
+## 模块化源码与单文件构建
+
+安装器维护源码位于 [`src/install/`](https://github.com/KnowSky404/sing-box-vps/blob/main/src/install/README.md)，分为 40 个 Bash 源码片段，首次拆分时每个片段少于 2,000 行。`manifest.txt` 明确规定拼接顺序；片段包含完整函数和 Shell 结构，但不独立运行。模块说明中的编号对应源码顺序，函数仍可引用后续模块的 helper。
+
+根目录 `install.sh` 是生成后提交的独立运行产物。Bootstrap、自更新、全局 `sbv`、测试及 Docker 继续使用此文件；用户无需下载模块或安装额外构建依赖。不要直接编辑生成文件，也不要改成运行时下载或 `source` 远程模块。
+
+```bash
+# 修改对应 src/install 模块后，在仓库根目录生成单文件产物
+bash scripts/build-install.sh
+
+# 只读检查：源码与提交的 install.sh 必须完全一致
+bash scripts/build-install.sh --check
+
+# 构建失败保护、清单校验及发布行为的隔离回归
+bash tests/install_build.sh
+
+# 确认本次分支影响及必要行为验证范围
+bash dev/verification/run.sh --plan --base origin/main
+```
+
+版本在 `src/install/00-preamble.sh` 的文件头和 `SCRIPT_VERSION` 中更新，与根 README 同步；构建脚本原样复制到 `install.sh`。同一轮交付仍只递增一次。提交时包含模块和生成产物；新增或拆分片段时同时更新清单。构建检查会拒绝缺失、重复、遗漏或越界的模块路径及符号链接，不执行源码或清单中的内容。完整语法检查通过后才同目录原子替换产物，失败保持原文件，相同产物不重复写入；`--check` 不写工作区。
+
+验证调度器在根安装器、源码模块、清单或构建脚本变化时选择构建一致性回归。源码改变但遗漏重新生成会失败；生成文件存在实际运行逻辑差异时，仍需按第 4.2 节明确选择受影响测试和必要 Docker 场景，不因拆分源码自动全量。首次纯拆分以归一化版本后的字节等价确认运行代码未变，再验证构建、入口、自更新、菜单、文档和调度兼容性；这不代表新取得协议、公网或生产验收。
+
 ## 文档维护与 Wiki 发布
 
 `docs/wiki/*.md` 是 Wiki 的维护源。README 只保留项目简介、版本、主要能力、文档导航和许可证；安装命令、操作步骤、协议契约及验证边界写入对应 Wiki 页面。`AGENTS.md` 和 Operator Skill 保留自动化约束，`docs/agents/llms.txt` 只提供索引。历史计划、设计稿和提示词流水可通过 Git 历史查询，不再作为当前操作手册维护。
