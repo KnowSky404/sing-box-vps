@@ -23,6 +23,11 @@ warp_client_id_to_reserved_json() {
   printf '%s' "${reserved_json}"
 }
 
+warp_credentials_content() {
+  printf 'WARP_ID=%q\nWARP_TOKEN=%q\nWARP_PRIV_KEY=%q\nWARP_PUB_KEY=%q\nWARP_V4=%q\nWARP_V6=%q\nWARP_CLIENT_ID=%q\n' \
+    "${1:-}" "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-}" "${7:-}"
+}
+
 write_warp_credentials_atomic() (
   umask 077
   local warp_id=${1:-} warp_token=${2:-} warp_priv_key=${3:-} warp_pub_key=${4:-}
@@ -62,15 +67,8 @@ write_warp_credentials_atomic() (
     [[ ! -L "${target}" && ( ! -e "${target}" || -f "${target}" ) ]] || return 1
   done
   candidate=$(mktemp "${SB_PROJECT_DIR}/.warp.key.XXXXXXXX") || return 1
-  {
-    printf 'WARP_ID=%q\n' "${warp_id}"
-    printf 'WARP_TOKEN=%q\n' "${warp_token}"
-    printf 'WARP_PRIV_KEY=%q\n' "${warp_priv_key}"
-    printf 'WARP_PUB_KEY=%q\n' "${warp_pub_key}"
-    printf 'WARP_V4=%q\n' "${warp_v4}"
-    printf 'WARP_V6=%q\n' "${warp_v6}"
-    printf 'WARP_CLIENT_ID=%q\n' "${warp_client_id}"
-  } > "${candidate}" || return 1
+  warp_credentials_content "${warp_id}" "${warp_token}" "${warp_priv_key}" "${warp_pub_key}" \
+    "${warp_v4}" "${warp_v6}" "${warp_client_id}" > "${candidate}" || return 1
   chmod 600 "${candidate}" && bash -n "${candidate}" || return 1
   expected_hash=$(sha256sum < "${candidate}") || return 1
   if [[ -f "${SB_WARP_KEY_FILE}" ]]; then
@@ -104,6 +102,30 @@ warp_registration_response_valid() {
   decoded=$(printf '%s' "${client_id}" | base64 -d 2>/dev/null | od -An -t u1 -v) || return 1
   [[ $(wc -w <<< "${decoded}") -eq 3 ]]
 }
+
+# Compare inert receipt data with the exact credential serialization. Never
+# source either file while deciding whether external recovery data can be lost.
+warp_registration_receipt_matches_credentials() (
+  local receipt=$1 workspace priv_key pub_key
+  [[ -f "${receipt}" && ! -L "${receipt}" && "$(stat -c %a "${receipt}")" == 600 &&
+     "$(wc -c < "${receipt}")" -le 1048576 && -f "${SB_WARP_KEY_FILE}" &&
+     ! -L "${SB_WARP_KEY_FILE}" && "$(stat -c %a "${SB_WARP_KEY_FILE}")" == 600 ]] || return 1
+  umask 077
+  workspace=$(mktemp -d /tmp/sbv-warp-receipt.XXXXXX) || return 1
+  trap 'rm -rf -- "${workspace}"' EXIT
+  jq -e 'select(.schema == 1 and .phase == "received") | .response' "${receipt}" > "${workspace}/response.json" || return 1
+  warp_registration_response_valid "${workspace}/response.json" || return 1
+  priv_key=$(jq -er '.private_key | strings' "${receipt}") || return 1
+  pub_key=$(jq -er '.public_key | strings' "${receipt}") || return 1
+  [[ ${#priv_key} -eq 44 && ${#pub_key} -eq 44 && "${priv_key}" =~ ^[A-Za-z0-9+/]+=$ &&
+     "${pub_key}" =~ ^[A-Za-z0-9+/]+=$ ]] || return 1
+  warp_credentials_content "$(jq -r '.id' "${workspace}/response.json")" \
+    "$(jq -r '.token' "${workspace}/response.json")" "${priv_key}" "${pub_key}" \
+    "$(jq -r '.config.interface.addresses.v4' "${workspace}/response.json")" \
+    "$(jq -r '.config.interface.addresses.v6' "${workspace}/response.json")" \
+    "$(jq -r '.config.client_id' "${workspace}/response.json")" > "${workspace}/expected.env" || return 1
+  cmp -s -- "${workspace}/expected.env" "${SB_WARP_KEY_FILE}"
+)
 
 # The receipt lives beside the managed project so a configuration rollback
 # cannot discard evidence of a possibly completed external POST.
@@ -230,7 +252,11 @@ register_warp() (
     warp_registration_error commit credentials_save_failed "请检查凭据最终状态；注册结果已保留在 ${receipt}，再次执行将仅重试保存。" unknown
     return "${save_status}"
   fi
-  if ! rm -f -- "${receipt}"; then
+  if [[ "${SB_ROUTING_DEFER_WARP_RECEIPT:-n}" == y ]]; then
+    # The enclosing rules transaction may still fail validation or activation.
+    # Keep received provider credentials until its durable committed boundary.
+    routing_transaction_defer_warp_registration "${receipt}" || return 1
+  elif ! rm -f -- "${receipt}"; then
     printf '[ERROR] operation=warp_register stage=cleanup code=cleanup_failed changed=true; 凭据已提交，恢复材料尚未清理。\n' >&2
     return 1
   fi

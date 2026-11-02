@@ -37,8 +37,6 @@ ${cert_path}
 ${key_path}
 1
 1
-n
-n
 0
 EOF
   test -x /usr/local/bin/sbv

@@ -226,7 +226,7 @@ verification_add_test_callers() {
       [[ "${candidate}" != "${current}" ]] || continue
       case "${candidate}" in
         *_helper.sh) pending+=("${candidate}") ;;
-        tests/default_dual_stack_runtime.sh|tests/hy2_instance_acme_runtime.sh|tests/component_runtime_acceptance.sh|tests/selector_urltest_runtime.sh|tests/acme_component_runtime.sh|tests/cloudflared_runtime.sh|tests/tailscale_openconnect_runtime.sh|tests/namespace_core_runtime.sh)
+        tests/routing_policy_runtime.sh|tests/routing_policy_legacy_runtime.sh|tests/routing_policy_manual_references_runtime.sh|tests/default_dual_stack_runtime.sh|tests/hy2_instance_acme_runtime.sh|tests/component_runtime_acceptance.sh|tests/selector_urltest_runtime.sh|tests/acme_component_runtime.sh|tests/cloudflared_runtime.sh|tests/tailscale_openconnect_runtime.sh|tests/namespace_core_runtime.sh)
           verification_plan_append VERIFY_PLAN_REASONS "container-only fixture ${candidate} requires a separate isolated run"
           VERIFY_PLAN_RUNTIME_REQUIRED=1
           ;;
@@ -257,7 +257,10 @@ verification_classify_file() {
       verification_plan_append VERIFY_PLAN_REASONS "${file}: verify the standalone installer matches its modular sources"
       ;;
     bootstrap.sh) verification_add_group bootstrap || return 2 ;;
-    tests/default_dual_stack_runtime.sh|tests/hy2_instance_acme_runtime.sh|tests/component_runtime_acceptance.sh|tests/selector_urltest_runtime.sh|tests/acme_component_runtime.sh|tests/cloudflared_runtime.sh|tests/tailscale_openconnect_runtime.sh|tests/namespace_core_runtime.sh|tests/component_runtime_http.py|tests/tailscale_openconnect_marker.py)
+    tests/routing_policy_private_runtime.py)
+      verification_plan_append VERIFY_PLAN_TESTS tests/routing_policy_config.sh
+      ;;
+    tests/routing_policy_runtime.sh|tests/routing_policy_legacy_runtime.sh|tests/routing_policy_manual_references_runtime.sh|tests/default_dual_stack_runtime.sh|tests/hy2_instance_acme_runtime.sh|tests/component_runtime_acceptance.sh|tests/selector_urltest_runtime.sh|tests/acme_component_runtime.sh|tests/cloudflared_runtime.sh|tests/tailscale_openconnect_runtime.sh|tests/namespace_core_runtime.sh|tests/component_runtime_http.py|tests/tailscale_openconnect_marker.py)
       VERIFY_PLAN_RUNTIME_REQUIRED=1
       verification_plan_append VERIFY_PLAN_UNRESOLVED "container-only fixture ${file} requires its separate isolated run; no registered scenario executes it"
       ;;

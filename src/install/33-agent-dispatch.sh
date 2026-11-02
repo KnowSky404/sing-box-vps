@@ -601,6 +601,10 @@ agent_dispatch() {
   esac
 
   command=$(agent_command_name_from_args "$@")
+  if [[ "${command}" != capabilities && ( -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ) ]]; then
+    agent_cli_error "${command}" routing_transaction_pending "存在未完成的规则事务；请先通过交互菜单 13 恢复。"
+    return 1
+  fi
   if ! agent_current_user_is_root; then
     agent_cli_error "${command}" "root_required" "Agent 命令必须以 root 用户执行。"
     return $?

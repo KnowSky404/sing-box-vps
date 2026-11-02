@@ -40,8 +40,6 @@ www.cloudflare.com
 n
 1
 n
-n
-n
 0
 EOF
   test -f /root/sing-box-vps/config.json

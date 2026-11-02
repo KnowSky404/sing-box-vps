@@ -32,8 +32,6 @@ ${key_path}
 trojan.verification.invalid
 1
 1
-n
-n
 0
 EOF
   test -x /usr/local/bin/sbv

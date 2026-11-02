@@ -574,8 +574,19 @@ build_singbox_client_config() {
   local installed_protocols=() exportable_protocols=()
   local remote_outbounds_json remote_tags_json
   local protocol protocol_label outbound_json protocol_tags shadowtls_bundle_json usable_protocol_count
+  local routing_policy_json client_policy_json client_adblock_json
   local use_rule_set_http_client="n"
   local status=0
+
+  [[ "$#" -le 1 ]] || return 1
+  if [[ "$#" -eq 0 ]]; then
+    routing_policy_json=$(routing_policy_read_json) || return 1
+  else
+    routing_policy_json=$1
+  fi
+  routing_policy_validate_json "${routing_policy_json}" || return 1
+  client_policy_json=$(jq -c '.client' <<< "${routing_policy_json}") || return 1
+  client_adblock_json=$(routing_policy_adblock_json "${routing_policy_json}" client) || return 1
 
   if singbox_config_supports_1_14; then
     use_rule_set_http_client="y"
@@ -679,6 +690,8 @@ build_singbox_client_config() {
       --argjson remote_tags "${remote_tags_json}" \
       --arg clash_api_secret "${clash_api_secret}" \
       --arg use_rule_set_http_client "${use_rule_set_http_client}" \
+      --argjson client_policy "${client_policy_json}" \
+      --argjson adblock "${client_adblock_json}" \
       '{
         "log": {
           "level": "info",
@@ -702,7 +715,7 @@ build_singbox_client_config() {
               "detour": "proxy"
             }
           ],
-          "rules": [
+          "rules": ($adblock.rules + (if $client_policy.cn_direct then [
             {
               "rule_set": "geosite-cn",
               "server": "cn-dns"
@@ -711,7 +724,7 @@ build_singbox_client_config() {
               "rule_set": "geosite-geolocation-!cn",
               "server": "remote-dns"
             }
-          ],
+          ] else [] end)),
           "final": "remote-dns",
           "strategy": "prefer_ipv4"
         },
@@ -748,7 +761,7 @@ build_singbox_client_config() {
         ),
         "route": {
           "rule_set": (
-            [
+            (if $client_policy.cn_direct then [
               {
                 "tag": "geoip-cn",
                 "type": "remote",
@@ -767,28 +780,32 @@ build_singbox_client_config() {
                 "format": "binary",
                 "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/geolocation-!cn.srs"
               }
-            ]
+            ] else [] end) + $adblock.rule_sets
             | map(
-                if $use_rule_set_http_client == "y" then
+                if $use_rule_set_http_client == "y" and .type == "remote" then
                   . + {"http_client": {"detour": "proxy"}}
+                elif .type == "remote" and has("download_detour") then
+                  .download_detour = "proxy"
                 else
                   .
                 end
               )
           ),
-          "rules": [
+          "rules": ([
             {
               "action": "sniff"
             },
             {
               "protocol": "dns",
               "action": "hijack-dns"
-            },
+            }
+          ] + $adblock.rules + (if $client_policy.lan_direct then [
             {
               "ip_is_private": true,
               "action": "route",
               "outbound": "direct"
-            },
+            }
+          ] else [] end) + (if $client_policy.cn_direct then [
             {
               "rule_set": "geosite-cn",
               "action": "route",
@@ -804,7 +821,7 @@ build_singbox_client_config() {
               "action": "route",
               "outbound": "proxy"
             }
-          ],
+          ] else [] end)),
           "final": "proxy",
           "auto_detect_interface": true,
           "default_domain_resolver": "cn-dns"

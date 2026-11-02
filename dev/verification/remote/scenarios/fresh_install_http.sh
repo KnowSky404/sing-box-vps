@@ -20,8 +20,6 @@ y
 http-user
 http-pass
 n
-n
-n
 0
 EOF
 
@@ -83,7 +81,6 @@ ${expected_port}
 y
 http-user
 http-pass
-1
 n
 0
 EOF

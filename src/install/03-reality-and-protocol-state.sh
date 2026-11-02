@@ -453,8 +453,14 @@ migrate_vless_reality_state_to_instances_if_needed() {
     return 0
   fi
 
-  backup_state_file="${state_file}.bak.$(date +%Y%m%d%H%M%S)"
-  cp "${state_file}" "${backup_state_file}"
+  if [[ "${SB_ROUTING_JOURNAL_LEGACY_BACKUP:-n}" == y ]]; then
+    # A surrounding rules transaction owns this migration. Keep its backup
+    # inside the durable journal, outside concurrent operator-file detection.
+    routing_transaction_backup_legacy_reality_state "${state_file}" || return 1
+  else
+    backup_state_file="${state_file}.bak.$(date +%Y%m%d%H%M%S)"
+    cp "${state_file}" "${backup_state_file}" || return 1
+  fi
 
   SB_PRIVATE_KEY="${REALITY_PRIVATE_KEY:-}"
   SB_PUBLIC_KEY="${REALITY_PUBLIC_KEY:-}"

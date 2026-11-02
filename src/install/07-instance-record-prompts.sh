@@ -1,21 +1,21 @@
 
 prompt_global_instance_options() {
-  local in_route in_warp in_warp_mode
+  local default_exit private_access
 
-  SB_ADVANCED_ROUTE=$(prompt_yes_no "是否开启高级路由规则 (广告拦截/局域网绕行) [y/n] (默认 y): " "y")
-  SB_ENABLE_WARP=$(prompt_yes_no "是否开启 Cloudflare Warp (用于解锁/防送中) [y/n] (默认 n): " "n")
-
-  if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
-    SB_WARP_ROUTE_MODE="selective"
-    echo "Warp 路由模式:"
-    echo "1. 全量流量走 Warp"
-    echo "2. 仅 AI/流媒体及自定义规则走 Warp"
-    in_warp_mode=$(prompt_choice "请选择 [1-2] (默认 2): " 1 2 2)
-    case "${in_warp_mode}" in
-      1) SB_WARP_ROUTE_MODE="all" ;;
-      *) SB_WARP_ROUTE_MODE="selective" ;;
-    esac
+  routing_policy_prepare_install_defaults || return 1
+  default_exit="原生直连（WARP 关闭）"
+  if [[ "${SB_ENABLE_WARP}" == y ]]; then
+    if [[ "${SB_WARP_ROUTE_MODE}" == all ]]; then
+      default_exit="WARP 全量出口"
+    else
+      default_exit="原生直连，命中分流规则时使用 WARP"
+    fi
   fi
+  private_access="允许"
+  [[ "${SB_ADVANCED_ROUTE}" != y ]] || private_access="拒绝"
+  log_info "使用全局规则：${default_exit}；服务端私网访问：${private_access}。"
+  log_info "新节点跟随全局规则；请通过菜单 13「规则与分流管理」调整策略。"
+  return 0
 }
 
 # Interactive Mixed management deliberately captures one validated store
@@ -159,7 +159,6 @@ shadowsocks_management_build_record() {
   read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}")
   structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy}") || return 1
   method=$(jq -r '.method' <<< "${current_auth}") || return 1
   method=$(shadowsocks_prompt_method "${method}") || return 1
   shadowsocks_prompt_auth "${method}" "${current_auth}" || return 1
@@ -212,7 +211,6 @@ trojan_management_build_record() {
   read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}")
   structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy}") || return 1
   if [[ "${operation}" == create ]]; then
     edit_users=y
   else
@@ -287,7 +285,6 @@ vmess_management_build_record() {
   read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}")
   structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy}") || return 1
   if [[ "${operation}" == create ]]; then edit_users=y; else edit_users=$(prompt_yes_no '[VMess] 是否重新编辑用户凭据 [y/n] (默认 n): ' n) || return 1; fi
   if [[ "${edit_users}" == y ]]; then vmess_prompt_users "${users}" || return 1; users=${SB_VMESS_AUTH_JSON}; fi
   vmess_prompt_tls "${tls}" || return 1; tls=${SB_VMESS_TLS_JSON}
@@ -341,7 +338,6 @@ vless_plain_management_build_record() {
   read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}")
   structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy}") || return 1
   if [[ "${operation}" == create ]]; then edit_users=y; else edit_users=$(prompt_yes_no '[VLESS] 是否重新编辑用户凭据 [y/n] (默认 n): ' n) || return 1; fi
   if [[ "${edit_users}" == y ]]; then vless_plain_prompt_users "${users}" || return 1; users=${SB_VLESS_PLAIN_AUTH_JSON}; fi
   vless_plain_prompt_tls "${tls}" || return 1; tls=${SB_VLESS_PLAIN_TLS_JSON}; trust=${SB_VLESS_PLAIN_CLIENT_TRUST:-system}
@@ -398,7 +394,6 @@ anytls_management_build_record() {
   [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}")
   structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy}") || return 1
   if [[ "${operation}" == create ]]; then
     edit_users=y
   else
@@ -512,7 +507,7 @@ hy2_management_build_record() {
     id=$(plain_proxy_management_next_id hy2 "${snapshot}") || return 1
     name=$(default_instance_node_name_from_file hy2 "${snapshot}") || return 1; tag=$(plain_proxy_management_next_tag hy2 "${snapshot}") || return 1
     address=${SB_DEFAULT_LISTEN_ADDRESS}; port=443; users='[]'; tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'
-    trust=system; up_mbps=""; down_mbps=""; obfs='{"enabled":false,"type":"","password":""}'; masquerade=""
+    trust=system; up_mbps=""; down_mbps=""; obfs='{"enabled":false,"type":"","password":""}'; masquerade=""; policy=default
   fi
   echo '[Hysteria2] 实例名称用于显示；ID 用于区分实例，tag 用于配置中的入口标识，均可留空使用当前值或默认值。' >&2
   echo '[Hysteria2] 新建默认监听 ::，同时接受外部 IPv4 / IPv6 连接；可填写 0.0.0.0 仅使用 IPv4，或 127.0.0.1 仅允许本机连接。修改时留空保留原地址。' >&2
@@ -523,7 +518,6 @@ hy2_management_build_record() {
   fi
   read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}"); structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy:-default}") || return 1
   if [[ "${operation}" == create ]]; then edit_users=y; else edit_users=$(prompt_yes_no '[Hysteria2] 是否重新编辑用户凭据 [y/n] (默认 n): ' n) || return 1; fi
   if [[ "${edit_users}" == y ]]; then hy2_prompt_users "${users}" || return 1; users=${SB_HY2_AUTH_JSON}; fi
   server_name=$(jq -r '.server_name // empty' <<< "${tls}") || return 1
@@ -658,7 +652,6 @@ snell_management_build_record() {
     snell_prompt_users "${users}" || return 1
     users=${SB_SNELL_USER_JSON}
   fi
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy:-default}") || return 1
   answer=$(plain_proxy_management_prompt_public_consent snell "${address}" '' ) || return 1
   if [[ "${address}" != 127.* && "${address}" != ::1 && "${answer}" != y ]]; then log_info '未确认公网暴露，已取消 Snell 实例变更。'; return 2; fi
   PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC=${answer}; MIXED_MANAGEMENT_ALLOW_PUBLIC=${answer}
@@ -707,7 +700,6 @@ tuic_management_build_record() {
   fi
   read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}"); structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy:-default}") || return 1
   if [[ "${operation}" == create ]]; then edit_users=y; else edit_users=$(prompt_yes_no '[TUIC] 是否重新编辑用户凭据 [y/n] (默认 n): ' n) || return 1; fi
   if [[ "${edit_users}" == y ]]; then tuic_prompt_users "${users}" || return 1; users=${SB_TUIC_AUTH_JSON}; fi
   server_name=$(jq -r '.server_name // empty' <<< "${tls}") || return 1
@@ -775,7 +767,6 @@ hysteria_management_build_record() {
   fi
   read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}"); structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy:-default}") || return 1
   if [[ "${operation}" == create ]]; then edit_users=y; else edit_users=$(prompt_yes_no '[Hysteria] 是否重新编辑用户凭据 [y/n] (默认 n): ' n) || return 1; fi
   if [[ "${edit_users}" == y ]]; then hysteria_prompt_users "${users}" || return 1; users=${SB_HYSTERIA_AUTH_JSON}; fi
   server_name=$(jq -r '.server_name // empty' <<< "${tls}") || return 1
@@ -842,7 +833,6 @@ naive_management_build_record() {
   fi
   read -rp "监听地址（默认 ${address}）: " answer || return 1; [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}"); structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "监听端口（当前: ${port}）: " "${port}") || return 1
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy:-default}") || return 1
   if [[ "${operation}" == create ]]; then edit_users=y; else edit_users=$(prompt_yes_no '[NaiveProxy] 是否重新编辑用户凭据 [y/n]（默认 n）: ' n) || return 1; fi
   if [[ "${edit_users}" == y ]]; then naive_prompt_users "${users}" || return 1; users=${SB_NAIVE_AUTH_JSON}; fi
   server_name=$(jq -r '.server_name // empty' <<< "${tls}") || return 1
@@ -913,7 +903,6 @@ shadowtls_management_build_record() {
   [[ -z "${answer}" ]] || address=$(trim_whitespace "${answer}")
   structured_instance_store_validate_address "${address}" || return 1
   port=$(prompt_port "外层监听端口（当前: ${port}）: " "${port}") || return 1
-  policy=$(prompt_instance_outbound_policy '出站策略' "${policy}") || return 1
 
   SB_SHADOWTLS_VERSION=${version}
   SB_SHADOWTLS_PASSWORD=${password}
@@ -1064,8 +1053,6 @@ plain_proxy_management_build_record() {
     ensure_mixed_auth_credentials || return 1
     username=${SB_MIXED_USERNAME}; password=${SB_MIXED_PASSWORD}
   else username=""; password=""; fi
-  policy=$(prompt_instance_outbound_policy "出站策略" "${policy}") || return 1
-  [[ "${operation}" == create || "${policy}" != "$(jq -r --arg id "${target}" '.instances[] | select(.id == $id) | .outbound_policy' "${snapshot}")" ]] && policy_changed=y
   if [[ "${protocol}" == http ]]; then
     SB_HTTP_TLS_JSON=${tls_json}
     plain_proxy_management_prompt_tls http "${tls_json}" || return 1

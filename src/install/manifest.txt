@@ -38,3 +38,7 @@
 37-instance-adapters-and-snapshots.sh
 38-takeover-and-recovery.sh
 39-entrypoints.sh
+40-routing-policy.sh
+41-routing-transactions.sh
+42-routing-menu.sh
+43-launcher.sh

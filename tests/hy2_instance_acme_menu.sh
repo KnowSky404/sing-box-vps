@@ -11,12 +11,16 @@ snapshot="${TMP_DIR}/snapshot.json"
 record="${TMP_DIR}/record.json"
 structured_instance_store_empty_json hy2 > "${snapshot}"
 validate_tls_domain_points_to_server() { printf '%s\n' "$2" >> "${TMP_DIR}/http-domain-checks"; }
+prompt_instance_outbound_policy() {
+  printf 'HY2 installation and editing must not ask a routing question\n' >&2
+  return 98
+}
 
 # The default is HTTP-01; no certificate path is requested or pre-created.
 printf '%s\n' '' '' '' '' 48443 '' '' '' '' hy2.example.com '' '' '' '' '' '' y > "${TMP_DIR}/http.input"
 hy2_management_build_record "${snapshot}" create '' "${record}" < "${TMP_DIR}/http.input" > "${TMP_DIR}/stdout" 2> "${TMP_DIR}/guidance"
 [[ ! -s "${TMP_DIR}/stdout" ]]
-jq -e '.listen.address=="::" and .tls.acme.domain==["hy2.example.com"] and .client_trust=="system" and
+jq -e '.outbound_policy=="default" and .listen.address=="::" and .tls.acme.domain==["hy2.example.com"] and .client_trust=="system" and
   .tls.acme.disable_tls_alpn_challenge==true and (.tls|has("certificate_path")|not)' "${record}" >/dev/null
 grep -Fxq hy2.example.com "${TMP_DIR}/http-domain-checks"
 
@@ -33,7 +37,7 @@ grep -Fq 'Token 不能为空' "${TMP_DIR}/guidance"
 
 # Leaving fields unchanged while replacing preserves DNS mode, existing
 # credentials, alternate certificate domains, storage and zone-token settings.
-jq '.tls.acme.domain += ["alternate.example.com"] | .tls.acme.dns01_challenge.zone_token="fixture-zone-token"' "${record}" > "${TMP_DIR}/original.json"
+jq '.outbound_policy="warp" | .tls.acme.domain += ["alternate.example.com"] | .tls.acme.dns01_challenge.zone_token="fixture-zone-token"' "${record}" > "${TMP_DIR}/original.json"
 jq -n --slurpfile record "${TMP_DIR}/original.json" \
   '{schema_version:1,protocol:"hy2",revision:5,default_instance_id:$record[0].id,instances:$record}' > "${snapshot}"
 id=$(jq -r '.id' "${record}")

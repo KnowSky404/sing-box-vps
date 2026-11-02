@@ -21,8 +21,6 @@ ${expected_port}
 n
 ${expected_key}
 1
-n
-n
 0
 EOF
 

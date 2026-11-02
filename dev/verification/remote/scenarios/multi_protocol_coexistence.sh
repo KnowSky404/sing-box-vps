@@ -327,8 +327,6 @@ anytls-pass
 2
 ${cert_path}
 ${key_path}
-n
-n
 0
 EOF
 

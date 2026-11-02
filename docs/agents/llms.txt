@@ -11,6 +11,7 @@ Use sing-box-test for test hosts; production is sing-box-prod. Unknown hosts are
 
 Documentation sources (also available offline):
 - docs/wiki/Home.md: navigation.
+- docs/wiki/Management.md: unified routing menu, draft application/recovery and client export scope.
 - docs/wiki/Getting-Started.md: staged installation and uninstallation.
 - docs/wiki/Agent-CLI.md: commands, confirmation, revision/CAS and sensitive output.
 - docs/wiki/Agent-Runbook.md: operations, upgrade, troubleshooting and recovery.

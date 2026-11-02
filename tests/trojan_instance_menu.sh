@@ -48,7 +48,10 @@ grep -Fq 'users=2' <<< "${listed}"
 # transport, tag, and outbound policy.  Prompt stubs model the same choices
 # when the implementation offers the editable typed fields.
 prompt_port() { printf '33602'; }
-prompt_instance_outbound_policy() { printf 'direct'; }
+prompt_instance_outbound_policy() {
+  printf 'Trojan editing must preserve routing policy without prompting\n' >&2
+  return 98
+}
 prompt_yes_no() { printf y; }
 prompt_choice() { printf 2; }
 trojan_prompt_users() { SB_TROJAN_AUTH_JSON=$(jq -c '.instances[1].authentication.users' "${store_file}"); }

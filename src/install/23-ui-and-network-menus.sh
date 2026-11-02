@@ -441,6 +441,13 @@ system_management_menu() {
 # Prefer the current endpoint-based schema, but keep compatibility with older configs.
 config_has_warp_enabled() {
   local config_file=$1
+  local saved_enabled
+
+  if [[ "${config_file}" == "${SINGBOX_CONFIG_FILE}" && -f "${SB_ROUTING_POLICY_FILE}" &&
+        -f "${SB_WARP_ROUTE_SETTINGS_FILE}" && ! -L "${SB_WARP_ROUTE_SETTINGS_FILE}" ]]; then
+    saved_enabled=$(sed -n 's/^WARP_ENABLED=\([yn]\)$/\1/p' "${SB_WARP_ROUTE_SETTINGS_FILE}") || return 1
+    case "${saved_enabled}" in y) return 0 ;; n) return 1 ;; esac
+  fi
 
   jq -e '
     (
@@ -767,7 +774,7 @@ load_current_config_state() {
     fi
     first_protocol="${installed_protocols[0]:-}"
     if [[ -n "${first_protocol}" ]]; then
-      load_protocol_state "${first_protocol}"
+      load_protocol_state "${first_protocol}" || return 1
       return 0
     fi
   fi
@@ -941,141 +948,7 @@ load_current_config_state() {
 
 # Cloudflare Warp Management
 warp_management() {
-  local apply_change should_reload status warp_was_enabled snapshot_dir
-
-  while true; do
-    apply_change="n"
-    should_reload="n"
-
-    load_current_config_state
-    ensure_warp_routing_assets
-    warp_was_enabled="${SB_ENABLE_WARP}"
-
-    if [[ "${SB_ENABLE_WARP}" == "y" ]]; then
-      status="${GREEN}已开启${NC}"
-    else
-      status="${YELLOW}未开启${NC}"
-    fi
-
-    echo
-    render_left_aligned_page_header "Cloudflare Warp 管理" "调整 Warp 出口与分流资产"
-    render_section_title "Warp 摘要"
-    render_summary_item "当前状态" "${status}"
-    render_summary_item "当前路由模式" "${SB_WARP_ROUTE_MODE}"
-    render_summary_item "域名列表文件" "${SB_WARP_DOMAINS_FILE}"
-    render_section_title "操作选项"
-    render_menu_item "1" "开启 Warp"
-    render_menu_item "2" "关闭 Warp"
-    render_menu_item "3" "重新注册 Warp 账户" "(获取新密钥和 IP)"
-    render_menu_item "4" "切换 Warp 路由模式"
-    render_menu_item "5" "添加自定义 Warp 域名"
-    render_menu_item "6" "添加远程 Warp 规则集"
-    render_menu_item "7" "查看 Warp 分流文件路径"
-    render_menu_item "8" "查看当前生效的 Warp 分流来源"
-    render_menu_item "9" "导入推荐 Warp 规则源"
-    echo "0. 返回主菜单"
-    w_choice=$(prompt_choice "请选择 [0-9]: " 0 9 "")
-
-    case "${w_choice}" in
-      7)
-        show_warp_route_assets
-        continue
-        ;;
-      8)
-        show_effective_warp_route_sources
-        continue
-        ;;
-      0) return ;;
-    esac
-
-    snapshot_dir=$(create_managed_state_snapshot) || log_error "无法创建配置状态事务快照。"
-
-    if ! ensure_existing_generated_config_baseline; then
-      abort_managed_state_transaction "${snapshot_dir}" "Warp 变更前的生成基线无法建立"
-      return 1
-    fi
-
-    case "${w_choice}" in
-      1)
-        SB_ENABLE_WARP="y"
-        log_info "正在开启 Warp..."
-        apply_change="y"
-        should_reload="y"
-        ;;
-      2)
-        SB_ENABLE_WARP="n"
-        log_info "正在关闭 Warp..."
-        apply_change="y"
-        should_reload="y"
-        ;;
-      3)
-        rm -f "${SB_WARP_KEY_FILE}"
-        SB_ENABLE_WARP="y"
-        log_info "正在重新注册 Warp..."
-        apply_change="y"
-        should_reload="y"
-        ;;
-      4)
-        if set_warp_route_mode_interactive; then
-          log_success "Warp 路由模式已更新为: ${SB_WARP_ROUTE_MODE}"
-          apply_change="y"
-          [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
-        fi
-        ;;
-      5)
-        if add_warp_domain_entry; then
-          apply_change="y"
-          [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
-        fi
-        ;;
-      6)
-        if add_remote_warp_rule_set; then
-          apply_change="y"
-          [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
-        fi
-        ;;
-      9)
-        if import_recommended_warp_rule_sets; then
-          apply_change="y"
-          [[ "${warp_was_enabled}" == "y" || "${SB_ENABLE_WARP}" == "y" ]] && should_reload="y"
-        fi
-        ;;
-      *) log_warn "无效选项，请重新选择。" ;;
-    esac
-
-    if [[ "${apply_change}" == "n" ]]; then
-      if ! rollback_managed_state_snapshot "${snapshot_dir}"; then
-        log_error "取消 Warp 变更时无法恢复配置状态；事务快照保留在 ${snapshot_dir}。"
-      fi
-      continue
-    fi
-
-    if ! save_warp_route_settings; then
-      abort_managed_state_transaction "${snapshot_dir}" "Warp 设置写入失败"
-    fi
-
-    if [[ "${should_reload}" != "y" ]]; then
-      if ! discard_managed_state_snapshot "${snapshot_dir}"; then
-        log_warn "Warp 分流资产已保存，但临时事务快照未能删除: ${snapshot_dir}。"
-      fi
-      log_success "Warp 分流资产已更新，待下次开启 Warp 或重载配置时生效。"
-      continue
-    fi
-
-    if ! generate_config; then
-      abort_managed_state_transaction "${snapshot_dir}" "Warp 配置生成或校验失败"
-    fi
-    if ! discard_managed_state_snapshot "${snapshot_dir}"; then
-      log_warn "Warp 配置已提交，但临时事务快照未能删除: ${snapshot_dir}。"
-    fi
-    setup_service
-    run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box
-    log_success "Warp 配置已更新并重启服务。"
-
-    load_current_config_state
-    display_status_summary
-    log_info "连接信息未自动展示，如需查看请进入菜单 11。"
-  done
+  routing_management_menu
 }
 
 # Helper to extract config values and display info

@@ -14,6 +14,7 @@ plain_proxy_inactive_store_snapshot() {
 
 plain_proxy_instance_config_candidate() {
   local protocol=$1 old_config=$2 old_store=$3 new_store=$4 inbounds rules
+  routing_policy_precheck_instance_candidate "${protocol}" "${old_config}" "${old_store}" "${new_store}" || return 1
   inbounds=$(render_structured_instance_inbounds "${protocol}" "${new_store}" | jq -s '.') || return $?
   rules=$(render_structured_instance_route_rules "${protocol}" "${new_store}") || return $?
   jq --arg protocol "${protocol}" --slurpfile old "${old_store}" --argjson added "${inbounds}" --argjson rules "${rules}" '
@@ -60,7 +61,7 @@ plain_proxy_instance_config_candidate() {
        ([.. | objects | .certificate_provider? | select(. == "hy2-cert-provider")] | length) == 0 then
       .certificate_providers |= map(select(.tag != "hy2-cert-provider" or .type != "acme"))
     else . end
-  ' "${old_config}"
+  ' "${old_config}" | routing_policy_project_instance_candidate "${protocol}" "${old_store}" "${new_store}"
 }
 
 # Deleting the final HY2 instance does not regenerate a surviving managed
@@ -90,27 +91,53 @@ hy2_final_instance_delete_matches_config() {
 
 # Public mutation entrypoints share a kernel lock. The persistent instance
 # journal is a separate crash-recovery barrier, not a substitute for this lock.
+managed_write_rules_barrier() {
+  local rules_recovery=${1:-}
+  if [[ ( -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ) &&
+        "${rules_recovery}" != allow-rules-recovery ]]; then
+    printf '[ERROR] 存在未完成的规则事务；请先通过菜单 13 恢复。\n' >&2
+    return 1
+  fi
+}
+
 acquire_managed_write_lock() {
   local lock_file="${SB_PROJECT_DIR}.management.flock" descriptor_target lock_mode=${1:-exclusive}
-  local lock_option=-x
+  local lock_option=-x lock_descriptor='' opened_descriptor=n
+  local rules_recovery=${2:-}
+  [[ -z "${rules_recovery}" || "${rules_recovery}" == allow-rules-recovery ]] || return 1
+  managed_write_rules_barrier "${rules_recovery}" || return 1
   case "${lock_mode}" in exclusive) ;; shared) lock_option=-s ;; *) return 1 ;; esac
   command -v flock >/dev/null 2>&1 || {
     printf '[ERROR] 写操作需要系统 flock 工具。\n' >&2; return 1;
   }
   [[ ! -L "${lock_file}" ]] || return 1
   if [[ "${SB_MANAGEMENT_LOCK_FD:-}" =~ ^[0-9]+$ ]]; then
+    lock_descriptor=${SB_MANAGEMENT_LOCK_FD}
     descriptor_target=$(readlink "/proc/${BASHPID:-$$}/fd/${SB_MANAGEMENT_LOCK_FD}") || return 1
     [[ "${descriptor_target}" == "${lock_file}" ]] || return 1
     if [[ "${lock_mode}" == shared && "${SB_MANAGEMENT_LOCK_MODE:-}" == exclusive ]]; then
+      managed_write_rules_barrier "${rules_recovery}" || return 1
       return 0
     fi
   else
     (umask 077; touch -- "${lock_file}") || return $?
-    exec {SB_MANAGEMENT_LOCK_FD}>"${lock_file}" || return $?
+    exec {lock_descriptor}>"${lock_file}" || return $?
+    opened_descriptor=y
   fi
-  flock -n "${lock_option}" "${SB_MANAGEMENT_LOCK_FD}" || {
+  if ! flock -n "${lock_option}" "${lock_descriptor}"; then
+    if [[ "${opened_descriptor}" == y ]]; then exec {lock_descriptor}>&- || return 1; fi
     printf '[ERROR] 另一个管理进程正在执行；本次未修改。\n' >&2; return 1;
-  }
+  fi
+  if [[ "${opened_descriptor}" != y ]]; then
+    # An upgrade changes the caller's existing open-file description. Retain
+    # that descriptor on rejection and record its actual acquired lock mode.
+    SB_MANAGEMENT_LOCK_MODE=${lock_mode}
+  fi
+  if ! managed_write_rules_barrier "${rules_recovery}"; then
+    if [[ "${opened_descriptor}" == y ]]; then exec {lock_descriptor}>&- || return 1; fi
+    return 1
+  fi
+  SB_MANAGEMENT_LOCK_FD=${lock_descriptor}
   SB_MANAGEMENT_LOCK_MODE=${lock_mode}
 }
 
@@ -574,6 +601,13 @@ apply_plain_proxy_instance_change() (
   cmp -s -- "${lock_dir}/config.json" "${SINGBOX_CONFIG_FILE}" || return 1
   if [[ "${count}" != 0 ]]; then
     plain_proxy_structured_state_matches_config "${instance_protocol}" || return 1
+  fi
+  # The snapshot also covers the generated baseline and its backup. Keep it
+  # aligned before resource/service effects; any later failure restores both.
+  # Takeover publishes byte-identical live content, so its generated facts
+  # also stay unchanged until an explicit global configuration application.
+  if [[ "${operation}" != takeover ]]; then
+    routing_policy_sync_instance_baseline "${instance_protocol}" "${lock_dir}/before.json" "${lock_dir}/after.json" || return $?
   fi
   phase=resources
   instance_transaction_checkpoint "${lock_dir}" "${phase}" || return $?

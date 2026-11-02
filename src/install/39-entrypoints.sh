@@ -277,7 +277,11 @@ main() {
     -h|--help|help|agent) ;;
     *)
       check_root
-      acquire_managed_write_lock || return $?
+      if [[ $# -eq 0 ]]; then
+        acquire_managed_write_lock exclusive allow-rules-recovery || return $?
+      else
+        acquire_managed_write_lock || return $?
+      fi
       if [[ $# -gt 0 && -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
         printf '[ERROR] 存在未完成的实例事务；先执行 sbv agent instance recover，未执行其他写操作。\n' >&2
         return 1
@@ -355,7 +359,9 @@ main() {
 
   show_banner
   check_root
-  if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
+  if [[ -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ]]; then
+    log_warn "存在待恢复的规则事务；请进入菜单 13 恢复。"
+  elif [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
     log_warn "存在待恢复的实例事务；仅开放只读诊断与菜单 2 恢复入口。"
   elif ! ensure_sbv_command_installed; then
     log_warn "全局命令 sbv 未能完成同步；当前管理菜单继续运行，请稍后手动重试。"
@@ -368,7 +374,7 @@ main() {
 
     render_section_title "部署管理"
     render_menu_item "1" "安装新协议"
-    render_menu_item "2" "修改已安装协议配置"
+    render_menu_item "2" "协议与实例配置"
     render_menu_item "3" "移除已安装协议"
     render_menu_item "4" "更新 sing-box 版本" "" "${SB_VER_STATUS}"
     render_menu_item "5" "卸载 sing-box"
@@ -381,12 +387,12 @@ main() {
     render_menu_item "10" "查看实时日志"
 
     render_section_title "节点与诊断"
-    render_menu_item "11" "查看节点信息"
-    render_menu_item "12" "流媒体验证检测"
+    render_menu_item "11" "节点分享与订阅"
+    render_menu_item "12" "流媒体与出口检测"
 
     render_section_title "网络与系统"
-    render_menu_item "13" "配置 Cloudflare Warp" "(解锁/防送中)"
-    render_menu_item "14" "系统管理"
+    render_menu_item "13" "规则与分流管理"
+    render_menu_item "14" "系统与网络设置"
 
     render_section_title "脚本维护"
     render_menu_item "15" "更新管理脚本 (sbv)" "" "${SCRIPT_VER_STATUS}"
@@ -395,6 +401,12 @@ main() {
     render_main_menu_footer
     choice=$(prompt_choice "请选择 [0-16]: " 0 16 "")
 
+    if [[ -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ]]; then
+      case "${choice}" in
+        0|10|13) ;;
+        *) log_warn "请先通过菜单 13 恢复规则事务；本次未执行其他操作。"; continue ;;
+      esac
+    fi
     if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
       case "${choice}" in
         0|2|9|10|12) ;;
@@ -415,7 +427,7 @@ main() {
       10) journalctl -u sing-box -f || true ;;
       11) view_node_info ;;
       12) media_check_menu ;;
-      13) warp_management ;;
+      13) routing_management_menu || log_warn '规则操作未完成，已返回主菜单。' ;;
       14) system_management_menu ;;
       15)
         if manual_update_script; then
@@ -436,6 +448,3 @@ main() {
     esac
   done
 }
-
-
-[[ "${BASH_SOURCE[0]}" != "$0" ]] || main "$@"

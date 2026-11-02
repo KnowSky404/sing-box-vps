@@ -38,8 +38,6 @@ n
 0
 
 
-n
-n
 0
 EOF
   test -x /usr/local/bin/sbv

@@ -16,7 +16,7 @@ verification_selection_repo_root() {
 
 verification_list_groups() {
   printf '%s\n' \
-    docs version bootstrap menu self-update binary-install warp subman verification \
+    docs version bootstrap menu routing self-update binary-install warp subman verification \
     protocol:vless protocol:vless-plain protocol:mixed protocol:hy2 \
     protocol:anytls protocol:socks protocol:http protocol:shadowsocks \
     protocol:trojan protocol:vmess protocol:hysteria protocol:tuic \
@@ -26,6 +26,18 @@ verification_list_groups() {
 verification_full_test_manifest() {
   cat <<'EOF_TESTS'
 tests/install_build.sh
+tests/install_prompts_inherit_routing.sh
+tests/routing_policy_config.sh
+tests/routing_policy_instance_baseline.sh
+tests/routing_policy_instance_ownership.sh
+tests/routing_policy_baseline_manual_references.sh
+tests/routing_policy_legacy_reality.sh
+tests/client_routing_policy.sh
+tests/routing_management_menu.sh
+tests/routing_policy_transactions.sh
+tests/routing_policy_lock_race.sh
+tests/routing_warp_registration_transaction.sh
+tests/uninstall_routing_previous.sh
 tests/sbv_update_transactions.sh
 tests/sbv_menu_reloads_updated_script.sh
 tests/bootstrap_download.sh
@@ -178,6 +190,11 @@ verification_group_test_candidates() {
   root=$(verification_selection_repo_root) || return 1
 
   case "${group}" in
+    routing)
+      printf '%s\n' tests/install_prompts_inherit_routing.sh tests/routing_policy_config.sh tests/routing_policy_instance_baseline.sh tests/routing_policy_instance_ownership.sh tests/routing_policy_baseline_manual_references.sh tests/routing_policy_legacy_reality.sh \
+        tests/client_routing_policy.sh tests/routing_management_menu.sh tests/routing_policy_transactions.sh tests/routing_policy_lock_race.sh \
+        tests/routing_warp_registration_transaction.sh tests/uninstall_routing_previous.sh
+      ;;
     docs)
       printf '%s\n' tests/wiki_documentation.sh tests/agent_docs_cover_capabilities.sh
       ;;

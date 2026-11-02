@@ -30,6 +30,7 @@ generate_config_candidate() {
   local exit_cleanup_command effective_protocols
   local inbounds_json certificate_providers_json protocol_rules_json instance_outbound_rules_json
   local managed_components_json managed_route_options_json existing_default_http_client=""
+  local routing_policy_active=n routing_policy_json='{}' routing_policy_rendered='{}' routing_policy_tags='[]' routing_policy_file
 
   # Force ensure jq is installed
   if ! command -v jq &>/dev/null; then
@@ -40,6 +41,15 @@ generate_config_candidate() {
   if [[ ! -x "${SINGBOX_BIN_PATH}" ]]; then
     log_warn "无法生成配置：缺少可执行的 sing-box 二进制 ${SINGBOX_BIN_PATH}。"
     return 1
+  fi
+
+  routing_policy_file=$(routing_policy_file_path) || return 1
+  if [[ -e "${routing_policy_file}" || -L "${routing_policy_file}" ]]; then
+    routing_policy_json=$(routing_policy_read_json) || {
+      printf '[ERROR] 路由策略状态无效；配置未生成。\n' >&2
+      return 1
+    }
+    routing_policy_active=y
   fi
 
   # Inspect the complete live inventory before discovery or resource creation.
@@ -81,6 +91,10 @@ generate_config_candidate() {
   local w_key="" w_v4="" w_v6="" w_client_id="" w_reserved='[]' enable_warp_endpoint
   enable_warp_endpoint="${SB_ENABLE_WARP}"
   if [[ "${enable_warp_endpoint}" != "y" ]] && instance_outbound_requires_warp; then
+    enable_warp_endpoint="y"
+  fi
+  if [[ "${enable_warp_endpoint}" != "y" && "${routing_policy_active}" == y ]] &&
+     routing_policy_requires_warp "${routing_policy_json}"; then
     enable_warp_endpoint="y"
   fi
 
@@ -326,13 +340,63 @@ generate_config_candidate() {
 
   generated_candidate=$(mktemp "${SINGBOX_CONFIG_DIR}/.generated-config.XXXXXX") || return 1
   trap "${exit_cleanup_command}; rm -f -- \"${generated_candidate}\"" EXIT
-  cp -- "${config_candidate}" "${generated_candidate}" || return 1
+  if [[ "${routing_policy_active}" == y ]]; then
+    # Only protocol-generated traffic tags participate. Component/manual
+    # listeners and the outer ShadowTLS handshake keep their existing scope.
+    routing_policy_tags=$(jq -c '[.[] | select(.type != "shadowtls") | .tag] | unique' <<< "${inbounds_json}") || return 1
+    routing_policy_rendered=$(routing_policy_render_server_json "${routing_policy_json}" "${routing_policy_tags}") || return 1
+    jq --argjson policy "${routing_policy_json}" --argjson rendered "${routing_policy_rendered}" \
+      --argjson tags "${routing_policy_tags}" --argjson components "${managed_components_json}" \
+      --argjson protocols "${protocol_rules_json}" --argjson instance_rules "${instance_outbound_rules_json}" \
+      --arg enable_warp "${SB_ENABLE_WARP}" --arg warp_mode "${SB_WARP_ROUTE_MODE}" \
+      --argjson ai_domains "${WARP_AI_ROUTE_DOMAINS_JSON}" --argjson ai_suffixes "${WARP_AI_ROUTE_DOMAIN_SUFFIXES_JSON}" \
+      --argjson media_domains "${WARP_STREAM_ROUTE_DOMAINS_JSON}" --argjson media_suffixes "${WARP_STREAM_ROUTE_DOMAIN_SUFFIXES_JSON}" \
+      --argjson custom_domains "${SB_WARP_CUSTOM_DOMAINS_JSON}" --argjson custom_suffixes "${SB_WARP_CUSTOM_DOMAIN_SUFFIXES_JSON}" \
+      --argjson warp_sets "${SB_WARP_RULE_SET_TAGS_JSON}" '
+      def fixed: .action == "route" and (.inbound | type) == "string" and
+        (keys | sort) == ["action","inbound","outbound"];
+      .route.rule_set += $rendered.rule_sets |
+      .route.rules = (($components.route_rules // []) +
+        [$tags[] | {inbound:.,action:"sniff"}] + $rendered.protection_rules +
+        (($instance_rules + [$protocols[] | select(fixed)]) | sort_by(.inbound)) +
+        [$protocols[] | select(.action != "sniff" and (fixed | not))] +
+        $rendered.custom_rules +
+        (if $enable_warp == "y" and $warp_mode == "selective" and ($tags | length) > 0 then
+           (if ($custom_domains | length) > 0 or ($custom_suffixes | length) > 0 then
+              [{inbound:$tags,domain:$custom_domains,domain_suffix:$custom_suffixes,action:"route",outbound:"warp-ep"}]
+            else [] end) +
+           (if ($warp_sets | length) > 0 then
+              [{inbound:$tags,rule_set:$warp_sets,action:"route",outbound:"warp-ep"}]
+            else [] end) +
+           (if $policy.server.warp_ai then
+              [{inbound:$tags,domain:$ai_domains,domain_suffix:$ai_suffixes,action:"route",outbound:"warp-ep"}]
+            else [] end) +
+           (if $policy.server.warp_streaming then
+              [{inbound:$tags,domain:$media_domains,domain_suffix:$media_suffixes,action:"route",outbound:"warp-ep"}]
+            else [] end)
+         else [] end))
+      ' "${config_candidate}" > "${generated_candidate}" || return 1
+    cp -- "${generated_candidate}" "${config_candidate}" || return 1
+  else
+    cp -- "${config_candidate}" "${generated_candidate}" || return 1
+  fi
   chmod 600 "${generated_candidate}" || return 1
   if [[ -e "${SINGBOX_CONFIG_FILE}" ]]; then
     if ! merge_generated_config_with_live "${generated_candidate}" "${SINGBOX_CONFIG_FILE}" "${baseline_file}" > "${config_candidate}"; then
       printf '[ERROR] 配置归属冲突或生成基线无效；配置未发布，请先检查手工修改与托管字段。\n' >&2
       return 1
     fi
+  fi
+  if [[ "${routing_policy_active}" == y ]] &&
+     [[ -e "${SINGBOX_CONFIG_FILE}" ]]; then
+    # The fragment file is no longer needed after assembly; reuse its private
+    # staging path without ever writing the merged file while reading it.
+    routing_policy_place_new_generated_rules "${generated_candidate}" "${config_candidate}" \
+      "${baseline_file}" "${SINGBOX_CONFIG_FILE}" "${routing_policy_tags}" > "${inbound_file}" || return 1
+    cp -- "${inbound_file}" "${config_candidate}" || return 1
+  fi
+  if [[ "${routing_policy_active}" == y ]]; then
+    routing_policy_validate_merged_order "${generated_candidate}" "${config_candidate}" "${routing_policy_tags}" || return 1
   fi
 
   if ! publish_managed_config_candidate "${config_candidate}"; then
@@ -379,6 +443,33 @@ managed_uninstall_report_error() {
   printf '%b[ERROR]%b %s\n' "${RED}" "${NC}" "${message}" >&2
 }
 
+managed_uninstall_routing_previous_is_safe() {
+  [[ "${SB_ROUTING_PREVIOUS_DIR}" == "${SB_PROJECT_DIR}.rules-previous" ]] || return 1
+  if [[ -e "${SB_ROUTING_PREVIOUS_DIR}" || -L "${SB_ROUTING_PREVIOUS_DIR}" ]]; then
+    if ! routing_transaction_valid "${SB_ROUTING_PREVIOUS_DIR}" ||
+       [[ "$(jq -r '.phase' "${SB_ROUTING_PREVIOUS_DIR}/transaction.json")" != committed ]]; then
+      managed_uninstall_report_error '上次规则恢复快照不可信，未开始卸载；请保留现场并先检查该目录。'
+      return 1
+    fi
+  fi
+}
+
+managed_uninstall_remove_project_state() {
+  managed_uninstall_routing_previous_is_safe || return 1
+  if ! rm -rf -- "${SB_PROJECT_DIR}" || [[ -e "${SB_PROJECT_DIR}" || -L "${SB_PROJECT_DIR}" ]]; then
+    managed_uninstall_report_error '项目配置删除无法确认，规则恢复快照已保留。'
+    return 1
+  fi
+  if [[ -e "${SB_ROUTING_PREVIOUS_DIR}" || -L "${SB_ROUTING_PREVIOUS_DIR}" ]]; then
+    managed_uninstall_routing_previous_is_safe || return 1
+    if ! rm -rf -- "${SB_ROUTING_PREVIOUS_DIR}" ||
+       [[ -e "${SB_ROUTING_PREVIOUS_DIR}" || -L "${SB_ROUTING_PREVIOUS_DIR}" ]]; then
+      managed_uninstall_report_error '项目配置已删除，但上次规则恢复快照清理失败；请保留现场。'
+      return 1
+    fi
+  fi
+}
+
 managed_uninstall_acquire_guard() {
   acquire_managed_write_lock || {
     managed_uninstall_report_error "另一个管理事务正在执行，未开始卸载。"
@@ -392,6 +483,7 @@ managed_uninstall_acquire_guard() {
     managed_uninstall_report_error "存在未完成的实例事务，未开始卸载；请先恢复或检查该事务。"
     return 1
   fi
+  managed_uninstall_routing_previous_is_safe || return 1
   return 0
 }
 
@@ -445,7 +537,7 @@ perform_singbox_runtime_uninstall() {
       log_warn "检测到 libcronet.so 已被外部修改，保留 ${lib_path} 以避免误删。"
     fi
   fi
-  rm -rf "${SINGBOX_CONFIG_DIR}"
+  managed_uninstall_remove_project_state || return 1
   print_success "sing-box 服务、二进制和配置目录已彻底删除。"
 }
 
@@ -472,10 +564,10 @@ uninstall_singbox() {
 # Uninstall script itself
 uninstall_script() {
   local deleted_cfg="n"
+  managed_uninstall_acquire_guard || return 1
   read -rp "是否同时删除项目配置文件目录 (/root/sing-box-vps)? [y/N]: " del_cfg
   if [[ "${del_cfg}" =~ ^[Yy]$ ]]; then
     local component_state redirect_policy_plan tproxy_policy_plan
-    managed_uninstall_acquire_guard || return 1
     component_state=$(managed_component_state_json) || {
       managed_uninstall_report_error "高级组件 state 无法安全读取，未删除项目目录。"
       return 1
@@ -496,7 +588,7 @@ uninstall_script() {
       managed_uninstall_report_error "TProxy 主机策略清理无法确认，未删除项目目录。"
       return 1
     fi
-    rm -rf -- "${SB_PROJECT_DIR}" || return 1
+    managed_uninstall_remove_project_state || return 1
     deleted_cfg="y"
     print_info "配置文件目录已删除。"
   fi

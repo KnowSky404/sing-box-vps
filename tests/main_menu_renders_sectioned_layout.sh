@@ -89,7 +89,7 @@ if [[ "${plain_output}" != *"1. 安装新协议"* ]]; then
   exit 1
 fi
 
-if [[ "${plain_output}" != *"2. 修改已安装协议配置"* ]]; then
+if [[ "${plain_output}" != *"2. 协议与实例配置"* ]]; then
   printf 'expected top-level protocol update option in deployment section, got:\n%s\n' "${output}" >&2
   exit 1
 fi
@@ -104,7 +104,7 @@ if [[ "${plain_output}" != *"4. 更新 sing-box 版本"* ]]; then
   exit 1
 fi
 
-if [[ "${plain_output}" != *"12. 流媒体验证检测"* ]]; then
+if [[ "${plain_output}" != *"12. 流媒体与出口检测"* ]]; then
   printf 'expected media check option in sectioned main menu, got:\n%s\n' "${output}" >&2
   exit 1
 fi
@@ -163,7 +163,7 @@ fi
 if ! printf '%s\n' "${plain_output}" | awk '
   index($0, "部署管理") { seen=1; next }
   seen && index($0, "1. 安装新协议") { found_install=1; next }
-  seen && index($0, "2. 修改已安装协议配置") { found_config=1; next }
+  seen && index($0, "2. 协议与实例配置") { found_config=1; next }
   seen && index($0, "3. 移除已安装协议") { found_remove=1; next }
   seen && index($0, "4. 更新 sing-box 版本") { found_update=1; exit }
   seen && index($0, "服务控制") { exit }
@@ -186,7 +186,7 @@ fi
 
 if ! printf '%s\n' "${plain_output}" | awk '
   index($0, "节点与诊断") { seen=1; next }
-  seen && index($0, "12. 流媒体验证检测") { found=1; exit }
+  seen && index($0, "12. 流媒体与出口检测") { found=1; exit }
   seen && index($0, "网络与系统") { exit }
   END { exit(found ? 0 : 1) }
 '; then
@@ -196,11 +196,11 @@ fi
 
 if ! printf '%s\n' "${plain_output}" | awk '
   index($0, "网络与系统") { seen=1; next }
-  seen && index($0, "13. 配置 Cloudflare Warp") { found_warp=1; next }
-  seen && index($0, "14. 系统管理") { found_system=1; exit }
+  seen && index($0, "13. 规则与分流管理") { found_rules=1; next }
+  seen && index($0, "14. 系统与网络设置") { found_system=1; exit }
   seen && index($0, "脚本维护") { exit }
-  END { exit(found_warp && found_system ? 0 : 1) }
+  END { exit(found_rules && found_system ? 0 : 1) }
 '; then
-  printf 'expected Warp and system options to stay within the network/system section, got:\n%s\n' "${output}" >&2
+  printf 'expected routing and system options to stay within the network/system section, got:\n%s\n' "${output}" >&2
   exit 1
 fi

@@ -4,7 +4,9 @@ managed_state_snapshot_is_valid() {
 
   [[ "${snapshot_dir}" == /tmp/sing-box-vps-state.* ||
      "${snapshot_dir}" == "${SB_PROJECT_DIR}.instance-write.lock/snapshot" ||
-     "${snapshot_dir}" == "${SB_COMPONENT_TRANSACTION_DIR}/snapshot" ]] || return 1
+     "${snapshot_dir}" == "${SB_COMPONENT_TRANSACTION_DIR}/snapshot" ||
+     "${snapshot_dir}" == "${SB_ROUTING_TRANSACTION_DIR}/snapshot" ||
+     "${snapshot_dir}" == "${SB_ROUTING_PREVIOUS_DIR}/snapshot" ]] || return 1
   [[ ! -L "${snapshot_dir}" ]] || return 1
   [[ -d "${snapshot_dir}" && -f "${snapshot_dir}/snapshot.meta" ]] || return 1
   grep -Fqx 'SNAPSHOT_VERSION=1' "${snapshot_dir}/snapshot.meta" || return 1
@@ -36,7 +38,9 @@ create_managed_state_snapshot() {
     [[ ("$1" == "${SB_PROJECT_DIR}.instance-write.lock/snapshot" &&
         -d "${SB_PROJECT_DIR}.instance-write.lock" && ! -L "${SB_PROJECT_DIR}.instance-write.lock") ||
        ("$1" == "${SB_COMPONENT_TRANSACTION_DIR}/snapshot" &&
-        -d "${SB_COMPONENT_TRANSACTION_DIR}" && ! -L "${SB_COMPONENT_TRANSACTION_DIR}") ]] || return 1
+        -d "${SB_COMPONENT_TRANSACTION_DIR}" && ! -L "${SB_COMPONENT_TRANSACTION_DIR}") ||
+       ("$1" == "${SB_ROUTING_TRANSACTION_DIR}/snapshot" &&
+        -d "${SB_ROUTING_TRANSACTION_DIR}" && ! -L "${SB_ROUTING_TRANSACTION_DIR}") ]] || return 1
     snapshot_dir=$1
     mkdir -m 700 "${snapshot_dir}" || return 1
   else
