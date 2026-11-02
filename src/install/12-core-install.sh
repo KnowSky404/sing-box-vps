@@ -418,7 +418,7 @@ install_binary() (
 
 setup_service() {
   log_info "配置 systemd 服务..."
-  cat > "${SINGBOX_SERVICE_FILE}" <<EOF
+  cat > "${SINGBOX_SERVICE_FILE}" <<EOF || return $?
 [Unit]
 Description=sing-box service
 After=network.target nss-lookup.target
@@ -432,8 +432,8 @@ LimitNOFILE=infinity
 [Install]
 WantedBy=multi-user.target
 EOF
-  systemctl daemon-reload
-  systemctl enable sing-box >/dev/null 2>&1
+  systemctl daemon-reload || return $?
+  systemctl enable sing-box >/dev/null 2>&1 || return $?
 
   if ! ensure_sbv_command_installed; then
     log_warn "全局命令 sbv 未能完成同步；当前安装流程继续，但请稍后手动重试。"
