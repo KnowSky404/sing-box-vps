@@ -32,6 +32,7 @@ tests/neutral_rebuild_defaults.sh
 tests/routing_policy_unproven_baseline.sh
 tests/routing_media_draft_independence.sh
 tests/routing_warp_legacy_baseline_repair.sh
+tests/component_generation_inventory_context.sh
 tests/install_prompts_inherit_routing.sh
 tests/routing_policy_config.sh
 tests/routing_policy_instance_baseline.sh
@@ -191,7 +192,7 @@ verification_group_test_candidates() {
 
   case "${group}" in
     routing)
-      printf '%s\n' tests/node_network_independence.sh tests/neutral_rebuild_defaults.sh tests/routing_policy_unproven_baseline.sh tests/routing_media_draft_independence.sh tests/routing_warp_legacy_baseline_repair.sh tests/install_prompts_inherit_routing.sh tests/routing_policy_config.sh tests/routing_policy_instance_baseline.sh tests/routing_policy_instance_ownership.sh tests/routing_policy_baseline_manual_references.sh tests/routing_policy_legacy_reality.sh \
+      printf '%s\n' tests/node_network_independence.sh tests/neutral_rebuild_defaults.sh tests/routing_policy_unproven_baseline.sh tests/routing_media_draft_independence.sh tests/routing_warp_legacy_baseline_repair.sh tests/component_generation_inventory_context.sh tests/install_prompts_inherit_routing.sh tests/routing_policy_config.sh tests/routing_policy_instance_baseline.sh tests/routing_policy_instance_ownership.sh tests/routing_policy_baseline_manual_references.sh tests/routing_policy_legacy_reality.sh \
         tests/routing_management_menu.sh tests/routing_policy_transactions.sh tests/routing_policy_lock_race.sh \
         tests/routing_warp_registration_transaction.sh tests/uninstall_routing_previous.sh
       ;;

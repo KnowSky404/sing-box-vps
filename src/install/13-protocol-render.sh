@@ -1267,7 +1267,7 @@ vless_reality_has_warp_outbound_policy() {
 }
 
 instance_outbound_requires_warp() {
-  local protocol state_file schema store_file
+  local inventory_state_file=${1:-} protocol state_file schema store_file
 
   while IFS= read -r protocol; do
     [[ -z "${protocol}" ]] && continue
@@ -1287,7 +1287,7 @@ instance_outbound_requires_warp() {
         fi
         ;;
     esac
-  done < <(list_effective_protocols)
+  done < <(list_effective_protocols "${inventory_state_file}")
 
   return 1
 }

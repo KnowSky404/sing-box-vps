@@ -110,7 +110,7 @@ generate_config_candidate() {
   # Endpoints Logic
   local warp_endpoint='null' enable_warp_endpoint
   enable_warp_endpoint="${SB_ENABLE_WARP}"
-  if [[ "${enable_warp_endpoint}" != "y" ]] && instance_outbound_requires_warp; then
+  if [[ "${enable_warp_endpoint}" != "y" ]] && instance_outbound_requires_warp "${inventory_state_file}"; then
     enable_warp_endpoint="y"
   fi
   if [[ "${enable_warp_endpoint}" != "y" && "${routing_policy_active}" == y ]] &&

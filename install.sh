@@ -14364,7 +14364,7 @@ vless_reality_has_warp_outbound_policy() {
 }
 
 instance_outbound_requires_warp() {
-  local protocol state_file schema store_file
+  local inventory_state_file=${1:-} protocol state_file schema store_file
 
   while IFS= read -r protocol; do
     [[ -z "${protocol}" ]] && continue
@@ -14384,7 +14384,7 @@ instance_outbound_requires_warp() {
         fi
         ;;
     esac
-  done < <(list_effective_protocols)
+  done < <(list_effective_protocols "${inventory_state_file}")
 
   return 1
 }
@@ -23083,7 +23083,7 @@ generate_config_candidate() {
   # Endpoints Logic
   local warp_endpoint='null' enable_warp_endpoint
   enable_warp_endpoint="${SB_ENABLE_WARP}"
-  if [[ "${enable_warp_endpoint}" != "y" ]] && instance_outbound_requires_warp; then
+  if [[ "${enable_warp_endpoint}" != "y" ]] && instance_outbound_requires_warp "${inventory_state_file}"; then
     enable_warp_endpoint="y"
   fi
   if [[ "${enable_warp_endpoint}" != "y" && "${routing_policy_active}" == y ]] &&
@@ -41323,10 +41323,11 @@ routing_transaction_run() (
       SB_ROUTING_DEFER_WARP_RECEIPT=y
       SB_ROUTING_JOURNAL_LEGACY_BACKUP=y
       load_current_config_state || return 1
-      if [[ "${warp_activation_requested}" == true ]] ||
-         { jq -e '.warp.enabled | not' "${draft}" >/dev/null && config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; }; then
-        SB_ROUTING_BASELINE_WARP_FALLBACK=y
-      fi
+      # Read the canonical old endpoint only while establishing this explicit
+      # transaction's baseline. This also permits removing the last custom or
+      # per-node WARP dependency. It neither registers an account nor relaxes
+      # final generation when the requested policy still requires WARP.
+      SB_ROUTING_BASELINE_WARP_FALLBACK=y
       ensure_existing_generated_config_baseline || return 1
       SB_ROUTING_BASELINE_WARP_FALLBACK=n
     fi
