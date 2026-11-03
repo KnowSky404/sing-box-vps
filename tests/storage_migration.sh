@@ -221,9 +221,9 @@ case_implicit_module_state() {
   jq '.outbounds=[{type:"tor",tag:"legacy-tor"}]' "${SB_LEGACY_PROJECT_DIR}/config.json" > "${STORAGE_CASE_DIR}/implicit.json"
   cp "${STORAGE_CASE_DIR}/implicit.json" "${SB_LEGACY_PROJECT_DIR}/config.json"
   expect_failure storage_migrate
-  jq '.outbounds=[]|.endpoints=[{type:"tailscale",tag:"legacy-tail",state_directory:"/external/explicit"}]' "${SB_LEGACY_PROJECT_DIR}/config.json" > "${STORAGE_CASE_DIR}/explicit.json"
+  jq '.outbounds=[]|.endpoints=[{type:"tailscale",tag:"legacy-tail",state_directory:"/external/explicit",taildrop_directory:"/external/taildrop"}]' "${SB_LEGACY_PROJECT_DIR}/config.json" > "${STORAGE_CASE_DIR}/explicit.json"
   storage_migration_explicit_paths "${STORAGE_CASE_DIR}/explicit.json"
-  jq -n '{components:[{type:"tailscale",config:{state_directory:"/external/explicit"}},{type:"tor",config:{data_directory:"/external/explicit"}}]}' > "${STORAGE_CASE_DIR}/components-explicit.json"
+  jq -n '{components:[{type:"tailscale",config:{state_directory:"/external/explicit",taildrop_directory:"/external/taildrop"}},{type:"tor",config:{data_directory:"/external/explicit"}}]}' > "${STORAGE_CASE_DIR}/components-explicit.json"
   storage_migration_explicit_paths "${STORAGE_CASE_DIR}/components-explicit.json"
   [[ -f "${SB_LEGACY_PROJECT_DIR}/config.json" && ! -e "${SB_STORAGE_MIGRATION_DIR}" ]]
   jq '.outbounds=[]|.endpoints=[{type:"tailscale",tag:"legacy-tail",state_directory:"relative-state"}]' "${SB_LEGACY_PROJECT_DIR}/config.json" > "${STORAGE_CASE_DIR}/implicit.json"
@@ -571,7 +571,97 @@ case_dns_hosts_paths() {
   storage_migration_explicit_paths "${STORAGE_CASE_DIR}/default-hosts.json"
 }
 
-for case_name in status_read_only migrate_active migrate_stopped_and_history conflict pending untrusted env_no_execution env_literal_roundtrip implicit_module_state check_failure_rollback service_failure_rollback lock_and_handoff library cli_confirmation recover_interrupted recover_after_archive recovery_ownership_conflict precise_path_contexts custom_service_directory manager_only_migration sidecar_ownership stale_unit_references relative_runtime_source dns_hosts_paths; do
+case_object_masquerade_and_option_paths() {
+  local document selector
+  legacy_fixture
+  mkdir -m 700 "${SB_LEGACY_PROJECT_DIR}/site" "${STORAGE_CASE_DIR}/external/site"
+  printf 'owned file masquerade\n' > "${SB_LEGACY_PROJECT_DIR}/site/index.html"
+  jq --arg old "${SB_LEGACY_PROJECT_DIR}" --arg external "${STORAGE_CASE_DIR}/external/site" \
+    '.inbounds=[{type:"hysteria2",masquerade:{type:"file",directory:($old+"/site")}},
+      {type:"hysteria2",masquerade:{type:"file",directory:$external}}] |
+      .unrelated={type:"file",directory:($old+"/unchanged")}' \
+    "${SB_LEGACY_PROJECT_DIR}/config.json" > "${STORAGE_CASE_DIR}/object-config.json"
+  cp "${STORAGE_CASE_DIR}/object-config.json" "${SB_LEGACY_PROJECT_DIR}/config.json"
+  cp "${STORAGE_CASE_DIR}/object-config.json" "${SB_LEGACY_PROJECT_DIR}/managed-config.generated.json"
+  storage_migrate
+  jq -e --arg old "${SB_LEGACY_PROJECT_DIR}" --arg new "${SB_PROJECT_DIR}" --arg external "${STORAGE_CASE_DIR}/external/site" \
+    '.inbounds[0].masquerade.directory==($new+"/site") and .inbounds[1].masquerade.directory==$external and
+     .unrelated.directory==($old+"/unchanged")' "${SINGBOX_CONFIG_FILE}" >/dev/null
+  [[ -f "${SB_PROJECT_DIR}/site/index.html" && ! -e "${SB_LEGACY_PROJECT_DIR}" ]]
+  grep -Fqx "Environment=\"XDG_CACHE_HOME=${SB_PROJECT_DIR}/.cache\" \"XDG_CONFIG_HOME=${SB_PROJECT_DIR}/.config\" \"XDG_STATE_HOME=${SB_PROJECT_DIR}/.local/state\" \"XDG_DATA_HOME=${SB_PROJECT_DIR}/.local/share\"" "${SINGBOX_SERVICE_FILE}"
+  for document in \
+    '{"inbounds":[{"masquerade":{"type":"file","directory":"relative"}}]}' \
+    '{"inbounds":[{"masquerade":{"type":"file","directory":""}}]}' \
+    '{"inbounds":[{"masquerade":{"type":"file"}}]}' \
+    '{"inbounds":[{"masquerade":"file:relative-site"}]}' \
+    '{"inbounds":[{"masquerade":"file://"}]}' \
+    '{"inbounds":[{"masquerade":"file:"}]}'; do
+    printf '%s\n' "${document}" > "${STORAGE_CASE_DIR}/ambiguous-file.json"
+    expect_failure storage_migration_explicit_paths "${STORAGE_CASE_DIR}/ambiguous-file.json"
+  done
+  jq -n --arg old "${SB_LEGACY_PROJECT_DIR}" --arg external "${STORAGE_CASE_DIR}/external/site" '
+    {certificate:{certificate_directory_path:[$old+"/certificates",$external],store:"system"},
+     route:{dhcp_lease_files:[$old+"/leases",$external]},
+     services:[{type:"derp",mesh_psk_file:($old+"/mesh.key")},
+       {type:"ssm-api",cache_path:($old+"/cache")},
+       {type:"ocm",credential_path:($old+"/credentials"),usages_path:($old+"/usages")},
+       {type:"ccm",credential_path:$external,usages_path:$external},
+       {type:"api",dashboard:($old+"/dashboard")},
+       {type:"api",dashboard:{enabled:true,path:($old+"/dashboard")}},
+       {type:"api",dashboard:false},{type:"api",dashboard:{enabled:false}}],
+     network_namespaces:[{tag:"omitted",path:($old+"/ns")},{tag:"empty",type:"",path:($old+"/ns")},
+       {tag:"holder",type:"unshare",pid_file:($old+"/pid")},{tag:($old+"/logical-tag"),path:"stable-name"}],
+     inbounds:[{netns:($old+"/namespace-file")},{netns:($old+"/logical-tag")},{netns:"stable-name"}],
+     experimental:{cache_file:{enabled:false}}}' > "${STORAGE_CASE_DIR}/option-paths.json"
+  storage_rewrite_path_json < "${STORAGE_CASE_DIR}/option-paths.json" > "${STORAGE_CASE_DIR}/option-paths-relocated.json"
+  jq -e --arg old "${SB_LEGACY_PROJECT_DIR}" --arg new "${SB_PROJECT_DIR}" --arg external "${STORAGE_CASE_DIR}/external/site" '
+    .certificate.certificate_directory_path==[$new+"/certificates",$external] and .certificate.store=="system" and
+    .route.dhcp_lease_files==[$new+"/leases",$external] and .services[0].mesh_psk_file==($new+"/mesh.key") and
+    .services[1].cache_path==($new+"/cache") and .services[2].credential_path==($new+"/credentials") and
+    .services[2].usages_path==($new+"/usages") and .services[3].credential_path==$external and
+    .services[3].usages_path==$external and .services[4].dashboard==($new+"/dashboard") and
+    .services[5].dashboard.path==($new+"/dashboard") and .services[6].dashboard==false and
+    .services[7].dashboard=={enabled:false} and .network_namespaces[0].path==($new+"/ns") and
+    .network_namespaces[1].path==($new+"/ns") and .network_namespaces[2].pid_file==($new+"/pid") and
+    .network_namespaces[3].path=="stable-name" and .network_namespaces[3].tag==($old+"/logical-tag") and
+    .inbounds[0].netns==($new+"/namespace-file") and .inbounds[1].netns==($old+"/logical-tag") and
+    .inbounds[2].netns=="stable-name"' "${STORAGE_CASE_DIR}/option-paths-relocated.json" >/dev/null
+  storage_migration_explicit_paths "${STORAGE_CASE_DIR}/option-paths-relocated.json"
+  for selector in '.certificate.certificate_directory_path=["relative"]' '.route.dhcp_lease_files=["relative"]' \
+    '.services[0].mesh_psk_file="relative"' '.services[1].cache_path="relative"' \
+    '.services[2].credential_path="relative"' '.services[2].usages_path="relative"' \
+    '.services[4].dashboard="relative"' '.services[5].dashboard.path="relative"' \
+    '.network_namespaces[2].pid_file="relative"'; do
+    jq "${selector}" "${STORAGE_CASE_DIR}/option-paths.json" > "${STORAGE_CASE_DIR}/relative-option.json"
+    expect_failure storage_migration_explicit_paths "${STORAGE_CASE_DIR}/relative-option.json"
+  done
+  for document in \
+    '{"services":[{"type":"api","dashboard":true}]}' \
+    '{"services":[{"type":"api","dashboard":""}]}' \
+    '{"services":[{"type":"api","dashboard":{"enabled":true}}]}' \
+    '{"endpoints":[{"type":"tailscale","state_directory":"/explicit"}]}' \
+    '{"certificate_providers":[{"type":"acme"}]}' \
+    '{"certificate_providers":[{"type":"cloudflare-origin-ca"}]}' \
+    '{"inbounds":[{"tls":{"enabled":true,"acme":{"domain":["fixture.invalid"]}}}]}'; do
+    printf '%s\n' "${document}" > "${STORAGE_CASE_DIR}/implicit-option.json"
+    expect_failure storage_migration_explicit_paths "${STORAGE_CASE_DIR}/implicit-option.json"
+  done
+  printf '{"services":[{"type":"api","dashboard":false},{"type":"api","dashboard":{"enabled":false}}],"inbounds":[{"tls":{"enabled":false,"acme":{"domain":["fixture.invalid"]},"certificate_provider":{"type":"acme","domain":["fixture.invalid"]}}},{"tls":{"enabled":true,"acme":{"domain":[]}}}],"components":[{"role":"certificate_provider","type":"acme","enabled":false,"config":{"domain":["fixture.invalid"]}},{"role":"service","type":"api","enabled":false,"config":{"dashboard":true}}]}\n' > "${STORAGE_CASE_DIR}/disabled-options.json"
+  storage_migration_explicit_paths "${STORAGE_CASE_DIR}/disabled-options.json"
+  for selector in '.data_directory=($old+"/../certmagic")' '.data_directory=($old+"/./acme")' \
+    '.data_directory=($old|sub("/sing-box-vps$";"/./sing-box-vps/acme"))' \
+    '.certificate.certificate_directory_path=[$old+"/../certificates"]' \
+    '.dns.servers=[{type:"hosts",path:[$old+"/../hosts"]}]' \
+    '.route.rule_set=[{type:"local",path:($old+"/../rules")}]' \
+    '.inbounds=[{masquerade:{type:"file",directory:($old+"/../site")}}]' \
+    '.services=[{type:"api",dashboard:($old+"/../dashboard")}]' \
+    '.log.output=($old+"/../log")' '.experimental.cache_file.path=($old+"/../cache")'; do
+    jq -n --arg old "${SB_LEGACY_PROJECT_DIR}" "${selector}" > "${STORAGE_CASE_DIR}/ambiguous-material.json"
+    expect_failure storage_migration_explicit_paths "${STORAGE_CASE_DIR}/ambiguous-material.json"
+  done
+}
+
+for case_name in status_read_only migrate_active migrate_stopped_and_history conflict pending untrusted env_no_execution env_literal_roundtrip implicit_module_state check_failure_rollback service_failure_rollback lock_and_handoff library cli_confirmation recover_interrupted recover_after_archive recovery_ownership_conflict precise_path_contexts custom_service_directory manager_only_migration sidecar_ownership stale_unit_references relative_runtime_source dns_hosts_paths object_masquerade_and_option_paths; do
   CASE_NUMBER=$((CASE_NUMBER+1))
   printf 'storage_migration_case=%s\n' "${case_name}"
   (fixture; "case_${case_name}")
