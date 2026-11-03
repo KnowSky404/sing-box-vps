@@ -35737,11 +35737,11 @@ command_catalog_json() {
       "summary": "安装新协议",
       "automation": "interactive_only",
       "mutation": true,
-      "sensitive": false,
+      "sensitive": true,
       "confirmation": null,
       "concurrency": "interactive",
       "input_contract": null,
-      "service_impact": "none",
+      "service_impact": "start_or_restart",
       "docs": "Agent-CLI.md#操作目录",
       "reason": "fresh install requires dependency, TLS and credential prompts",
       "menu": "1",
@@ -35749,7 +35749,7 @@ command_catalog_json() {
       "cas": "none",
       "output": {
         "format": "terminal",
-        "sensitive": false
+        "sensitive": true
       },
       "external_write": false,
       "external_write_possible": false,
@@ -35763,11 +35763,11 @@ command_catalog_json() {
       "summary": "REALITY 实例、名称与 QoS 写操作",
       "automation": "interactive_only",
       "mutation": true,
-      "sensitive": false,
+      "sensitive": true,
       "confirmation": null,
       "concurrency": "interactive",
       "input_contract": null,
-      "service_impact": "none",
+      "service_impact": "restart_possible",
       "docs": "Agent-CLI.md#操作目录",
       "reason": "legacy REALITY writes do not implement typed revision/CAS transactions",
       "menu": "2",
@@ -35775,7 +35775,7 @@ command_catalog_json() {
       "cas": "none",
       "output": {
         "format": "terminal",
-        "sensitive": false
+        "sensitive": true
       },
       "external_write": false,
       "external_write_possible": false,
@@ -35793,7 +35793,7 @@ command_catalog_json() {
       "confirmation": null,
       "concurrency": "interactive",
       "input_contract": null,
-      "service_impact": "none",
+      "service_impact": "restart_or_stop",
       "docs": "Agent-CLI.md#操作目录",
       "reason": "use typed instance delete when supported; bulk legacy removal remains interactive",
       "menu": "3",
@@ -35819,7 +35819,7 @@ command_catalog_json() {
       "confirmation": null,
       "concurrency": "interactive",
       "input_contract": null,
-      "service_impact": "none",
+      "service_impact": "stop_and_remove",
       "docs": "Agent-CLI.md#操作目录",
       "reason": "destructive removal has no stable structured result contract",
       "menu": "5",
@@ -35897,7 +35897,7 @@ command_catalog_json() {
       "confirmation": null,
       "concurrency": "interactive",
       "input_contract": null,
-      "service_impact": "none",
+      "service_impact": "restart",
       "docs": "Agent-CLI.md#操作目录",
       "reason": "host and listener changes lack a unified persistent rollback contract",
       "menu": "13",
@@ -35923,7 +35923,7 @@ command_catalog_json() {
       "confirmation": null,
       "concurrency": "interactive",
       "input_contract": null,
-      "service_impact": "none",
+      "service_impact": "host_network",
       "docs": "Agent-CLI.md#操作目录",
       "reason": "host sysctl mutation has no structured transaction interface",
       "menu": "13",
@@ -35944,15 +35944,15 @@ command_catalog_json() {
       "usage": "sbv",
       "summary": "媒体解锁测试",
       "automation": "interactive_only",
-      "mutation": false,
+      "mutation": true,
       "sensitive": false,
       "confirmation": null,
       "concurrency": "interactive",
       "input_contract": null,
       "service_impact": "none",
       "docs": "Agent-CLI.md#操作目录",
-      "reason": "external executable probe has no stable structured result contract",
-      "menu": "13",
+      "reason": "external executable probe may download/update its local backend and launch temporary processes; no stable structured result",
+      "menu": "12 -> 4",
       "parameters": [],
       "cas": "none",
       "output": {
@@ -35961,7 +35961,8 @@ command_catalog_json() {
       },
       "external_write": false,
       "external_write_possible": false,
-      "aliases": []
+      "aliases": [],
+      "executes_remote_code": true
     },
     {
       "id": "script.uninstall",
@@ -35975,7 +35976,7 @@ command_catalog_json() {
       "confirmation": null,
       "concurrency": "interactive",
       "input_contract": null,
-      "service_impact": "none",
+      "service_impact": "configuration_removal_possible",
       "docs": "Agent-CLI.md#操作目录",
       "reason": "destructive self-removal remains interactive",
       "menu": "15",
@@ -43334,7 +43335,7 @@ agent_routing_input_snapshot() {
 
 agent_routing_cli() (
   local operation=${1:-} json=n confirmed=n input='' expected=''
-  local workspace draft fingerprint nodes before after='' status=0 recovery=false
+  local workspace draft fingerprint before after='' status=0 recovery=false
   shift || true
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -43423,32 +43424,32 @@ agent_routing_cli() (
         jq '{ok:true,action:"routing_export",sensitive:true,fingerprint:.fingerprint,draft:.}' "${draft}"
         return $?
       fi
-      if ! nodes=$(routing_nodes_json) || [[ "${fingerprint}" != "$(routing_state_fingerprint)" ]]; then
+      if ! routing_nodes_json > "${workspace}/nodes.json" || [[ "${fingerprint}" != "$(routing_state_fingerprint)" ]]; then
         agent_json_error routing_read_failed '规则清单在读取期间变化；未返回部分状态。'
         return 1
       fi
       # Explicit allowlist: URLs, source paths, legacy texts and credentials
       # must never leak through this non-sensitive discovery operation.
-      jq --argjson nodes "${nodes}" '{ok:true,action:"routing_view",fingerprint:.fingerprint,
+      jq --slurpfile nodes "${workspace}/nodes.json" '{ok:true,action:"routing_view",fingerprint:.fingerprint,
         policy:{schema_version:.policy.schema_version,server:{
           block_cn:.policy.server.block_cn,warp_ai:.policy.server.warp_ai,
           warp_streaming:.policy.server.warp_streaming,
           rules:[.policy.server.rules[]|{id,kind,action,enabled}],
           rule_sets:[.policy.server.rule_sets[]|{tag,type,format,action,enabled,update_interval}]}},
         warp:{enabled:.warp.enabled,mode:.warp.mode},
-        nodes:[$nodes[]|{protocol,id,name,tag,policy,revision,editable}],
+        nodes:[$nodes[0][]|{protocol,id,name,tag,policy,revision,editable}],
         legacy_assets:{domains_present:(.legacy_domains!=""),sources_present:(.legacy_sources!="")}}' "${draft}"
       return $?
       ;;
     nodes)
-      if ! fingerprint=$(routing_state_fingerprint) || ! nodes=$(routing_nodes_json) ||
+      if ! fingerprint=$(routing_state_fingerprint) || ! routing_nodes_json > "${workspace}/nodes.json" ||
          [[ "${fingerprint}" != "$(routing_state_fingerprint)" ]]; then
         agent_json_error routing_read_failed '无法取得一致的节点出口清单；未返回部分状态。'
         return 1
       fi
-      jq -n --arg fingerprint "${fingerprint}" --argjson nodes "${nodes}" \
+      jq -n --arg fingerprint "${fingerprint}" --slurpfile nodes "${workspace}/nodes.json" \
         '{ok:true,action:"routing_nodes",fingerprint:$fingerprint,
-          nodes:[$nodes[]|{protocol,id,name,tag,policy,revision,editable}]}'
+          nodes:[$nodes[0][]|{protocol,id,name,tag,policy,revision,editable}]}'
       return $?
       ;;
   esac

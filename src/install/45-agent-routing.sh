@@ -29,7 +29,7 @@ agent_routing_input_snapshot() {
 
 agent_routing_cli() (
   local operation=${1:-} json=n confirmed=n input='' expected=''
-  local workspace draft fingerprint nodes before after='' status=0 recovery=false
+  local workspace draft fingerprint before after='' status=0 recovery=false
   shift || true
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -118,32 +118,32 @@ agent_routing_cli() (
         jq '{ok:true,action:"routing_export",sensitive:true,fingerprint:.fingerprint,draft:.}' "${draft}"
         return $?
       fi
-      if ! nodes=$(routing_nodes_json) || [[ "${fingerprint}" != "$(routing_state_fingerprint)" ]]; then
+      if ! routing_nodes_json > "${workspace}/nodes.json" || [[ "${fingerprint}" != "$(routing_state_fingerprint)" ]]; then
         agent_json_error routing_read_failed '规则清单在读取期间变化；未返回部分状态。'
         return 1
       fi
       # Explicit allowlist: URLs, source paths, legacy texts and credentials
       # must never leak through this non-sensitive discovery operation.
-      jq --argjson nodes "${nodes}" '{ok:true,action:"routing_view",fingerprint:.fingerprint,
+      jq --slurpfile nodes "${workspace}/nodes.json" '{ok:true,action:"routing_view",fingerprint:.fingerprint,
         policy:{schema_version:.policy.schema_version,server:{
           block_cn:.policy.server.block_cn,warp_ai:.policy.server.warp_ai,
           warp_streaming:.policy.server.warp_streaming,
           rules:[.policy.server.rules[]|{id,kind,action,enabled}],
           rule_sets:[.policy.server.rule_sets[]|{tag,type,format,action,enabled,update_interval}]}},
         warp:{enabled:.warp.enabled,mode:.warp.mode},
-        nodes:[$nodes[]|{protocol,id,name,tag,policy,revision,editable}],
+        nodes:[$nodes[0][]|{protocol,id,name,tag,policy,revision,editable}],
         legacy_assets:{domains_present:(.legacy_domains!=""),sources_present:(.legacy_sources!="")}}' "${draft}"
       return $?
       ;;
     nodes)
-      if ! fingerprint=$(routing_state_fingerprint) || ! nodes=$(routing_nodes_json) ||
+      if ! fingerprint=$(routing_state_fingerprint) || ! routing_nodes_json > "${workspace}/nodes.json" ||
          [[ "${fingerprint}" != "$(routing_state_fingerprint)" ]]; then
         agent_json_error routing_read_failed '无法取得一致的节点出口清单；未返回部分状态。'
         return 1
       fi
-      jq -n --arg fingerprint "${fingerprint}" --argjson nodes "${nodes}" \
+      jq -n --arg fingerprint "${fingerprint}" --slurpfile nodes "${workspace}/nodes.json" \
         '{ok:true,action:"routing_nodes",fingerprint:$fingerprint,
-          nodes:[$nodes[]|{protocol,id,name,tag,policy,revision,editable}]}'
+          nodes:[$nodes[0][]|{protocol,id,name,tag,policy,revision,editable}]}'
       return $?
       ;;
   esac

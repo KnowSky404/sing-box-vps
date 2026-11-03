@@ -22,7 +22,10 @@ jq -e '
     any($ops[]; .id=="instance.export" and .sensitive) and
     any($ops[]; .id=="routing.export" and .sensitive) and
     any($ops[]; .id=="service.logs" and .sensitive) and
-    any($ops[]; .id=="reality.write" and .automation=="interactive_only"))
+    any($ops[]; .id=="reality.write" and .automation=="interactive_only" and .service_impact=="restart_possible") and
+    any($ops[]; .id=="system.media" and .menu=="12 -> 4" and .mutation and .executes_remote_code) and
+    any($ops[]; .id=="core.uninstall" and .service_impact=="stop_and_remove") and
+    any($ops[]; .id=="system.stack" and .service_impact=="restart"))
 ' <<< "${catalog}" >/dev/null
 
 # Discovery remains available without installed service, root or clean journals.

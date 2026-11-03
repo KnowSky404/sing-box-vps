@@ -94,11 +94,11 @@ for op in operations:
 print("## 交互操作边界\n")
 print("下列遗留操作尚无结构化写入口。使用所列菜单并遵守目标环境的操作授权；")
 print("不要通过拼接提示答案或直接改状态文件绕过这些边界。\n")
-print("| 操作 ID | 操作 | 菜单 / 手工入口 | 限制原因 |\n| --- | --- | --- | --- |")
+print("| 操作 ID | 操作 | 菜单 / 手工入口 | 副作用 / 服务影响 | 限制原因 |\n| --- | --- | --- | --- | --- |")
 for op in operations:
     if op["automation"] == "interactive_only":
         print("| " + " | ".join((code(op["id"]), cell(op["summary"]),
-                                  code(op["menu"]), cell(op["reason"]))) + " |")
+                                  code(op["menu"]), code({"mutation": op["mutation"], "sensitive": op["sensitive"], "service_impact": op["service_impact"]}), cell(op["reason"]))) + " |")
 
 print("\n## 既有文本命令\n")
 print("这些入口可直接调用，仍使用文本结果；不要将其 stdout 当作结构化 JSON。\n")
