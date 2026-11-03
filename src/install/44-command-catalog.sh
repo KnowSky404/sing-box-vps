@@ -5,6 +5,117 @@ command_catalog_json() {
   "schema_version": 1,
   "operations": [
     {
+      "id": "storage.status",
+      "command": "storage status",
+      "agent_command": "storage status",
+      "usage": "sbv storage status --json",
+      "summary": "存储布局、迁移状态与阻塞信息",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "none",
+      "input_contract": "fixed owned legacy paths; no arbitrary source/destination",
+      "service_impact": "none",
+      "docs": "Storage-Layout.md",
+      "reason": null,
+      "menu": "启动时迁移/恢复入口",
+      "parameters": [
+        {
+          "name": "--json",
+          "type": "boolean",
+          "required": true,
+          "description": "single JSON envelope"
+        }
+      ],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "storage.migrate",
+      "command": "storage migrate",
+      "agent_command": "storage migrate",
+      "usage": "sbv storage migrate --json --yes",
+      "summary": "迁移旧布局至统一私有目录",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "legacy_and_storage_exclusive",
+      "input_contract": "fixed owned legacy paths; no arbitrary source/destination",
+      "service_impact": "restart_possible",
+      "docs": "Storage-Layout.md",
+      "reason": null,
+      "menu": "启动时迁移/恢复入口",
+      "parameters": [
+        {
+          "name": "--json",
+          "type": "boolean",
+          "required": true,
+          "description": "single JSON envelope"
+        },
+        {
+          "name": "--yes",
+          "type": "boolean",
+          "required": true,
+          "description": "confirm migration and possible service restart"
+        }
+      ],
+      "cas": "journal",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "storage.recover",
+      "command": "storage recover",
+      "agent_command": "storage recover",
+      "usage": "sbv storage recover --json --yes",
+      "summary": "恢复未完成的目录迁移",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "legacy_and_storage_exclusive",
+      "input_contract": "fixed owned legacy paths; no arbitrary source/destination",
+      "service_impact": "restart_possible",
+      "docs": "Storage-Layout.md",
+      "reason": null,
+      "menu": "启动时迁移/恢复入口",
+      "parameters": [
+        {
+          "name": "--json",
+          "type": "boolean",
+          "required": true,
+          "description": "single JSON envelope"
+        },
+        {
+          "name": "--yes",
+          "type": "boolean",
+          "required": true,
+          "description": "confirm migration and possible service restart"
+        }
+      ],
+      "cas": "journal",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
       "id": "capabilities",
       "command": "capabilities",
       "agent_command": "capabilities",

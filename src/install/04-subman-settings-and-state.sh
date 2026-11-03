@@ -55,7 +55,7 @@ write_subman_config() {
   config_file=$(subman_config_file_path)
   config_dir=$(dirname "${config_file}")
   mkdir -p "${config_dir}" || return 1
-  tmp_file=$(mktemp "${config_dir}/.subman.env.tmp.XXXXXX") || return 1
+  tmp_file=$(storage_mktemp "${config_dir}/.subman.env.tmp.XXXXXX") || return 1
   if ! chmod 600 "${tmp_file}"; then
     rm -f -- "${tmp_file}"
     return 1
@@ -255,7 +255,7 @@ singbox_library_restore_snapshot() {
       [[ -f "${snapshot_dir}/libcronet.so" && ! -L "${snapshot_dir}/libcronet.so" ]] || return 1
       [[ ! -L "${lib_path}" && ! -d "${lib_path}" ]] || return 1
       mkdir -p "${lib_dir}" || return 1
-      staged=$(mktemp "${lib_dir}/.libcronet.restore.XXXXXXXX") || return 1
+      staged=$(storage_mktemp "${lib_dir}/.libcronet.restore.XXXXXXXX") || return 1
       if ! cp -p -- "${snapshot_dir}/libcronet.so" "${staged}" ||
          ! chmod 0644 "${staged}" ||
          ! mv -f -- "${staged}" "${lib_path}"; then
@@ -291,7 +291,7 @@ singbox_library_restore_snapshot() {
       [[ -f "${snapshot_dir}/libcronet.sha256" && ! -L "${snapshot_dir}/libcronet.sha256" ]] || return 1
       [[ ! -L "${SB_NAIVE_LIBRARY_MARKER}" && ! -d "${SB_NAIVE_LIBRARY_MARKER}" ]] || return 1
       mkdir -p "${SB_PROJECT_DIR}" || return 1
-      staged=$(mktemp "${SB_NAIVE_LIBRARY_MARKER}.restore.XXXXXXXX") || return 1
+      staged=$(storage_mktemp "${SB_NAIVE_LIBRARY_MARKER}.restore.XXXXXXXX") || return 1
       if ! cp -p -- "${snapshot_dir}/libcronet.sha256" "${staged}" ||
          ! chmod 600 "${staged}" ||
          ! mv -f -- "${staged}" "${SB_NAIVE_LIBRARY_MARKER}"; then
@@ -318,6 +318,9 @@ singbox_library_restore_snapshot() {
      [[ "$(dirname "${lib_path}")" == "/usr/local/lib" ]] &&
      command -v ldconfig >/dev/null 2>&1; then
     ldconfig || status=1
+  fi
+  if [[ "${lib_state}" == present || "${lib_state}" == absent ]]; then
+    storage_publish_library_link || status=1
   fi
   return "${status}"
 }
@@ -510,8 +513,8 @@ save_mixed_state() {
     fi
     structured_instance_store_validate_id "${instance_id}" || return 1
     current_revision=$(structured_instance_store_revision "${store_file}") || return 1
-    record_file=$(mktemp) || return 1
-    candidate_file=$(mktemp) || {
+    record_file=$(storage_mktemp) || return 1
+    candidate_file=$(storage_mktemp) || {
       rm -f -- "${record_file}"
       return 1
     }
@@ -701,8 +704,8 @@ save_plain_proxy_state() {
     jq -e 'type == "object"' <<< "${tls_json}" >/dev/null 2>&1 || return 1
   fi
 
-  record_file=$(mktemp) || return 1
-  candidate_file=$(mktemp) || { rm -f -- "${record_file}"; return 1; }
+  record_file=$(storage_mktemp) || return 1
+  candidate_file=$(storage_mktemp) || { rm -f -- "${record_file}"; return 1; }
   if ! jq -n -cS --arg id "${instance_id}" --arg name "${name}" --arg tag "${tag}" \
       --arg address "${listen_address}" --argjson port "${port}" \
       --argjson enabled "$([[ "${auth_enabled}" == y ]] && printf true || printf false)" \
@@ -871,8 +874,8 @@ save_shadowtls_state() {
   [[ -n "${current_file:-}" ]] || current_file="${store_file}"
   if [[ ! -f "${current_file}" ]]; then current_file=""; fi
 
-  record_file=$(mktemp) || return 1
-  candidate_file=$(mktemp) || { rm -f -- "${record_file}"; return 1; }
+  record_file=$(storage_mktemp) || return 1
+  candidate_file=$(storage_mktemp) || { rm -f -- "${record_file}"; return 1; }
   if ! jq -n -cS --arg id "${instance_id}" --arg name "${name}" --arg tag "${tag}" --arg address "${address}" --argjson port "${port}" \
       --argjson version "${version}" --arg password "${password}" --argjson users "${users}" --argjson handshake "${handshake}" \
       --argjson handshake_map "${handshake_map}" --argjson strict_mode "$([[ "${strict_mode}" == y ]] && printf true || printf false)" \

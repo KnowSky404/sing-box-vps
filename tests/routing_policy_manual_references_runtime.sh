@@ -10,8 +10,8 @@ if [[ "${SBV_MANUAL_REFERENCE_RUNTIME_ACCEPTANCE:-}" != 1 || ! -f /.dockerenv ||
   printf 'manual-reference runtime requires its explicitly prepared disposable systemd container\n' >&2
   exit 64
 fi
-if [[ -e /root/sing-box-vps || -e /root/sing-box-vps.rules-write.lock ||
-      -e /root/sing-box-vps.rules-previous || -e /root/sing-box-vps.instance-write.lock ||
+if [[ -e /root/.sing-box-vps/runtime || -e /root/.sing-box-vps/runtime.rules-write.lock ||
+      -e /root/.sing-box-vps/runtime.rules-previous || -e /root/.sing-box-vps/runtime.instance-write.lock ||
       -e /etc/sing-box/config.json || -e /usr/local/etc/sing-box/config.json ||
       -e /etc/systemd/system/sing-box.service || ! -x /usr/local/bin/sing-box ||
       ! -f /tmp/install.sh || ! "${SBV_MANUAL_REFERENCE_RUNTIME_INSTALL_SHA:-}" =~ ^[a-f0-9]{64}$ ]] ||
@@ -44,11 +44,11 @@ runtime_cleanup() {
     command systemctl status sing-box --no-pager > "${ARTIFACT_DIR}/service-final.txt" 2>&1 || result=1
     command journalctl -u sing-box --no-pager > "${ARTIFACT_DIR}/service-journal.txt" 2>&1 || result=1
   fi
-  if [[ -d /root/sing-box-vps ]]; then
-    cp -a /root/sing-box-vps "${ARTIFACT_DIR}/project-final" || result=1
+  if [[ -d /root/.sing-box-vps/runtime ]]; then
+    cp -a /root/.sing-box-vps/runtime "${ARTIFACT_DIR}/project-final" || result=1
   fi
-  if [[ -d /root/sing-box-vps.rules-previous ]]; then
-    cp -a /root/sing-box-vps.rules-previous "${ARTIFACT_DIR}/previous-final" || result=1
+  if [[ -d /root/.sing-box-vps/runtime.rules-previous ]]; then
+    cp -a /root/.sing-box-vps/runtime.rules-previous "${ARTIFACT_DIR}/previous-final" || result=1
   fi
   printf 'status=%s\nlast_phase=%s\n' "${result}" "${RUNTIME_PHASE}" > "${ARTIFACT_DIR}/result.env"
   exit "${result}"
@@ -107,6 +107,8 @@ assert_manual_context() {
 grep -Fqx 'sing-box version 1.14.2' "${ARTIFACT_DIR}/core-version.txt"
 sha256sum /tmp/install.sh /usr/local/bin/sing-box "${BASH_SOURCE[0]}" > "${ARTIFACT_DIR}/sources.sha256"
 source /tmp/install.sh
+source "$(dirname "${BASH_SOURCE[0]}")/prepare_storage_runtime_helper.sh"
+prepare_storage_runtime_core
 SB_VERSION=1.14.2
 ensure_sbv_command_installed() { :; }
 get_public_ip() { printf '203.0.113.10'; }

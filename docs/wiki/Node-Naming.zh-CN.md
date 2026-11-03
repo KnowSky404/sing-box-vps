@@ -14,7 +14,7 @@
 
 例如 `fra-01-hy2-01` 和 `fra-01-vless-reality-01`。序号至少两位，在协议当前清单中选择空闲生成名称。删除实例不重新编号其他实例。名称可以自定义；已有名称和旧状态恢复时的回退默认名不变。
 
-主菜单 **11 → 4「设置新实例的主机显示标签」** 设置后续默认名称使用的标签。可选私有文件为 `/root/sing-box-vps/node-naming.json`，仅含 `host_label`：
+主菜单 **11 → 4「设置新实例的主机显示标签」** 设置后续默认名称使用的标签。可选私有文件为 `/root/.sing-box-vps/runtime/node-naming.json`，仅含 `host_label`：
 
 ```json
 {"host_label":"fra-01"}

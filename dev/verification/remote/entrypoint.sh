@@ -197,8 +197,8 @@ EOF
 verification_capture_common_artifacts() {
   local base_dir=$1
 
-  verification_capture_file_if_present /root/sing-box-vps/config.json "${base_dir}/config.json"
-  verification_capture_tree_if_present /root/sing-box-vps/protocols "${base_dir}/protocols"
+  verification_capture_file_if_present /root/.sing-box-vps/runtime/config.json "${base_dir}/config.json"
+  verification_capture_tree_if_present /root/.sing-box-vps/runtime/protocols "${base_dir}/protocols"
   verification_capture_best_effort_command "${base_dir}/systemctl.status.txt" systemctl status sing-box --no-pager
   verification_capture_best_effort_command "${base_dir}/journalctl.txt" journalctl -u sing-box -n 100 --no-pager
   verification_capture_listener_snapshot "${base_dir}/listeners.ss-lntp.txt"
@@ -236,7 +236,7 @@ verification_finalize_scenario() {
 }
 
 read_installed_protocols() {
-  local index_file=/root/sing-box-vps/protocols/index.env
+  local index_file=/root/.sing-box-vps/runtime/protocols/index.env
   local protocols=''
   local raw_protocol protocol
   local protocol_entries=()
@@ -1335,7 +1335,7 @@ verification_generate_protocol_probe_client_config() {
 
   case "${protocol}" in
     vless-reality)
-      state_file=/root/sing-box-vps/protocols/vless-reality.env
+      state_file=/root/.sing-box-vps/runtime/protocols/vless-reality.env
       output_path=$(verification_artifact_path \
         "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
       temp_output_path="${output_path}.tmp.$$"
@@ -1413,7 +1413,7 @@ verification_generate_protocol_probe_client_config() {
       fi
       ;;
     hy2)
-      state_file=/root/sing-box-vps/protocols/hy2.env
+      state_file=/root/.sing-box-vps/runtime/protocols/hy2.env
       output_path=$(verification_artifact_path \
         "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
       temp_output_path="${output_path}.tmp.$$"
@@ -1517,8 +1517,8 @@ verification_generate_protocol_probe_client_config() {
       fi
       ;;
     http)
-      state_file=/root/sing-box-vps/protocols/http.env
-      store_file=/root/sing-box-vps/protocols/instances/http.json
+      state_file=/root/.sing-box-vps/runtime/protocols/http.env
+      store_file=/root/.sing-box-vps/runtime/protocols/instances/http.json
       output_path=$(verification_artifact_path \
         "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
       temp_output_path="${output_path}.tmp.$$"
@@ -1615,8 +1615,8 @@ verification_generate_protocol_probe_client_config() {
       verification_generate_tuic_probe_client "${config_file}" "${output_path}" || return 1
       ;;
     vless-plain)
-      vless_plain_state_file=/root/sing-box-vps/protocols/vless-plain.env
-      vless_plain_store_file=/root/sing-box-vps/protocols/instances/vless-plain.json
+      vless_plain_state_file=/root/.sing-box-vps/runtime/protocols/vless-plain.env
+      vless_plain_store_file=/root/.sing-box-vps/runtime/protocols/instances/vless-plain.json
       output_path=$(verification_artifact_path \
         "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
       temp_output_path="${output_path}.tmp.${BASHPID}"
@@ -1686,8 +1686,8 @@ verification_generate_protocol_probe_client_config() {
       fi
       ;;
     shadowsocks)
-      state_file=/root/sing-box-vps/protocols/shadowsocks.env
-      store_file=/root/sing-box-vps/protocols/instances/shadowsocks.json
+      state_file=/root/.sing-box-vps/runtime/protocols/shadowsocks.env
+      store_file=/root/.sing-box-vps/runtime/protocols/instances/shadowsocks.json
       output_path=$(verification_artifact_path \
         "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
       temp_output_path="${output_path}.tmp.${BASHPID}"
@@ -1741,7 +1741,7 @@ verification_generate_protocol_probe_client_config() {
       chmod 600 "${temp_output_path}" && mv "${temp_output_path}" "${output_path}"
       ;;
     mixed)
-      state_file=/root/sing-box-vps/protocols/mixed.env
+      state_file=/root/.sing-box-vps/runtime/protocols/mixed.env
       output_path=$(verification_artifact_path \
         "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
       temp_output_path="${output_path}.tmp.$$"
@@ -1815,7 +1815,7 @@ verification_generate_protocol_probe_client_config() {
       fi
       ;;
     anytls)
-      state_file=/root/sing-box-vps/protocols/anytls.env
+      state_file=/root/.sing-box-vps/runtime/protocols/anytls.env
       output_path=$(verification_artifact_path \
         "${VERIFY_CURRENT_SCENARIO_DIR}/protocol-probes/${protocol}/client.json")
       temp_output_path="${output_path}.tmp.$$"
@@ -2139,7 +2139,7 @@ PY
 }
 
 verification_cleanup_redirect_policy_fixture() {
-  local status=0 component_state_file=/root/sing-box-vps/components.json revision delete_status
+  local status=0 component_state_file=/root/.sing-box-vps/runtime/components.json revision delete_status
   local delete_artifact="${VERIFY_CURRENT_SCENARIO_DIR}/redirect-cleanup-delete.json"
   local state_valid=false redirect_record_present=false
   local restore_errexit=false
@@ -3098,7 +3098,7 @@ PY
 }
 
 verification_run_protocol_probes() {
-  local config_file=/root/sing-box-vps/config.json
+  local config_file=/root/.sing-box-vps/runtime/config.json
   local protocol
   local protocols_output=''
   local discovery_status=0
@@ -3235,6 +3235,9 @@ for scenario in "$@"; do
       ;;
     uninstall_and_reinstall)
       run_verification_scenario uninstall_and_reinstall verification_scenario_uninstall_and_reinstall
+      ;;
+    storage_migration)
+      run_verification_scenario storage_migration verification_scenario_storage_migration
       ;;
     runtime_smoke)
       run_verification_scenario runtime_smoke verification_scenario_runtime_smoke

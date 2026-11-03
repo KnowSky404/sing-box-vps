@@ -173,13 +173,13 @@ PY
   verification_mark_step fresh_install_vless_openvpn_endpoint_proxy_created
   verification_wait_for_service_active sing-box
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint/config.check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint/config.json" \
     jq -c '{endpoints:[.endpoints[] | select(.tag == "openvpn-endpoint-server-verification" or
       .tag == "openvpn-endpoint-client-verification")],inbounds:[.inbounds[] |
       select(.tag == "openvpn-endpoint-proxy-verification")],route:{rules:[.route.rules[] |
       select(.outbound == "openvpn-endpoint-client-verification")]}}' \
-    /root/sing-box-vps/config.json
+    /root/.sing-box-vps/runtime/config.json
   jq -e '.endpoints | length == 2 and
     any(.[]; .type=="openvpn-server" and .system==false) and
     any(.[]; .type=="openvpn-client" and .system==false)' \
@@ -245,7 +245,7 @@ PY
   verification_assert_port_not_listening 11994 \
     "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint/server-after-delete.ss-lntp.txt"
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint/after-delete.check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint/after-delete.env" \
     'RESULT=success' 'RESOURCES=managed_components_removed'
   verification_mark_step fresh_install_vless_openvpn_endpoint_resources_cleaned
@@ -326,13 +326,13 @@ PY
   verification_mark_step fresh_install_vless_openvpn_endpoint_udp_proxy_created
   verification_wait_for_service_active sing-box
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/config.check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/config.json" \
     jq -c '{endpoints:[.endpoints[] | select(.tag == "openvpn-endpoint-udp-server-verification" or
       .tag == "openvpn-endpoint-udp-client-verification")],inbounds:[.inbounds[] |
       select(.tag == "openvpn-endpoint-udp-proxy-verification")],route:{rules:[.route.rules[] |
       select(.outbound == "openvpn-endpoint-udp-client-verification")]}}' \
-    /root/sing-box-vps/config.json
+    /root/.sing-box-vps/runtime/config.json
   jq -e '.endpoints | length == 2 and
     any(.[]; .type=="openvpn-server" and .system==false and .network=="udp") and
     any(.[]; .type=="openvpn-client" and .system==false and .network=="udp")' \
@@ -402,7 +402,7 @@ PY
     verification_ss_udp_output
   ! verification_udp_port_is_listening 11995
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/after-delete.check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-udp/after-delete.env" \
     'RESULT=success' 'RESOURCES=managed_components_removed'
   verification_mark_step fresh_install_vless_openvpn_endpoint_udp_resources_cleaned
@@ -679,13 +679,13 @@ PY
   verification_mark_step fresh_install_vless_openvpn_endpoint_system_proxy_created
   verification_wait_for_service_active sing-box
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/config.after-proxy.check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/config.after-proxy.json" \
     jq -c '{endpoints:[.endpoints[] | select(.tag == "openvpn-endpoint-system-server-verification" or
       .tag == "openvpn-endpoint-system-client-verification")],inbounds:[.inbounds[] |
       select(.tag == "openvpn-endpoint-system-proxy-verification")],route:{rules:[.route.rules[] |
       select(.outbound == "openvpn-endpoint-system-client-verification")]}}' \
-    /root/sing-box-vps/config.json
+    /root/.sing-box-vps/runtime/config.json
   jq -e '
     (.endpoints | length == 2) and
     any(.endpoints[]; .type=="openvpn-server" and .system==true and .name=="sbv-ovpn-srv") and
@@ -713,11 +713,11 @@ PY
   grep -Fqx "${system_marker}" "${system_marker_response}"
   grep -Fqx '/' "${system_marker_access}"
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/config.check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/config.json" \
     jq -c '{endpoints:[.endpoints[] | select(.tag == "openvpn-endpoint-system-server-verification" or
       .tag == "openvpn-endpoint-system-client-verification")]}' \
-    /root/sing-box-vps/config.json
+    /root/.sing-box-vps/runtime/config.json
   jq -e '
     (.endpoints | length == 2) and
     any(.endpoints[]; .type=="openvpn-server" and .system==true and .name=="sbv-ovpn-srv" and
@@ -827,7 +827,7 @@ PY
   ! jq -e 'any(.[]; .dev=="sbv-ovpn-srv" or .dev=="sbv-ovpn-cli")' \
     "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/routes-after-delete.json")" >/dev/null
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/after-delete.check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   bash /usr/local/bin/sbv agent component diagnose --json > "${system_after_delete_diagnose}"
   verification_capture_file_if_present "${system_after_delete_diagnose}" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system/after-delete-diagnose.json"
@@ -896,13 +896,13 @@ PY
   verification_mark_step fresh_install_vless_openvpn_endpoint_system_udp_proxy_created
   verification_wait_for_service_active sing-box
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system-udp/config.check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system-udp/config.json" \
     jq -c '{endpoints:[.endpoints[] | select(.tag == "openvpn-endpoint-system-udp-server-verification" or
       .tag == "openvpn-endpoint-system-udp-client-verification")],inbounds:[.inbounds[] |
       select(.tag == "openvpn-endpoint-system-udp-proxy-verification")],route:{rules:[.route.rules[] |
       select(.outbound == "openvpn-endpoint-system-udp-client-verification")]}}' \
-    /root/sing-box-vps/config.json
+    /root/.sing-box-vps/runtime/config.json
   jq -e '
     (.endpoints | length == 2) and
     any(.endpoints[]; .type=="openvpn-server" and .system==true and .network=="udp" and
@@ -1070,7 +1070,7 @@ PY
   ! jq -e 'any(.[]; .dev=="sbv-ovpn-us" or .dev=="sbv-ovpn-uc")' \
     "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system-udp/routes-after-delete.json")" >/dev/null
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system-udp/after-delete.check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   bash /usr/local/bin/sbv agent component diagnose --json > "${system_udp_after_delete_diagnose}"
   verification_capture_file_if_present "${system_udp_after_delete_diagnose}" \
     "${VERIFY_CURRENT_SCENARIO_DIR}/openvpn-endpoint-system-udp/after-delete-diagnose.json"
@@ -1355,7 +1355,7 @@ PY
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint/config.check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint/config.json")
   jq -c --arg endpoint_tag "${endpoint_tag}" --arg proxy_tag "${proxy_tag}" '
@@ -1363,7 +1363,7 @@ PY
       .private_key = "<redacted>"],
      inbounds:[.inbounds[] | select(.tag == $proxy_tag)],
      route:{rules:[.route.rules[] | select(.inbound == [$proxy_tag])]}}' \
-    /root/sing-box-vps/config.json > "${config_path}"
+    /root/.sing-box-vps/runtime/config.json > "${config_path}"
   jq -e --arg endpoint_tag "${endpoint_tag}" --arg proxy_tag "${proxy_tag}" \
     --arg server_public_key "${server_public_key}" --arg client_address "${client_address}" \
     --argjson marker_port "${marker_port}" --argjson proxy_port "${proxy_port}" '
@@ -1485,7 +1485,7 @@ PY
   ! verification_udp_port_is_listening "${client_port}"
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint/after-delete.check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
 
   ip link del "${peer_interface}"
   peer_interface_created=0
@@ -1893,14 +1893,14 @@ PY
   verification_mark_step fresh_install_vless_wireguard_system_endpoint_resources_observed
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/config.check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/config.json")
   jq -c --arg endpoint_tag "${endpoint_tag}" --arg proxy_tag "${proxy_tag}" \
     '{endpoints:[.endpoints[] | select(.tag == $endpoint_tag) |
       .private_key = "<redacted>"],inbounds:[.inbounds[] | select(.tag == $proxy_tag)],
       route:{rules:[.route.rules[] | select(.inbound == [$proxy_tag])]}}' \
-    /root/sing-box-vps/config.json > "${config_path}"
+    /root/.sing-box-vps/runtime/config.json > "${config_path}"
   jq -e --arg endpoint_tag "${endpoint_tag}" --arg proxy_tag "${proxy_tag}" \
     --arg marker_address "${marker_address}" \
     --arg marker_host_address "${marker_host_address}" \
@@ -2113,7 +2113,7 @@ PY
   ! verification_udp_port_is_listening "${client_port}"
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/wireguard-endpoint-system/after-delete.check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
 
   ip netns exec "${marker_netns}" ip link del "${peer_interface}"
   peer_interface_created=0
@@ -2171,7 +2171,7 @@ PY
 verification_run_tun_l3_probe() (
   set -euo pipefail
 
-  local config_file=${1:-/root/sing-box-vps/config.json}
+  local config_file=${1:-/root/.sing-box-vps/runtime/config.json}
   local probe_dir="${VERIFY_CURRENT_SCENARIO_DIR}/tun-data-plane"
   local response_artifact http_client_stderr_artifact udp_response_artifact
   local marker_stdout_artifact marker_stderr_artifact udp_marker_stdout_artifact
@@ -2384,7 +2384,7 @@ verification_run_bridge_l3_probe() (
   local tun_create_revision=$((expected_revision + 2))
   local tun_delete_revision=$((expected_revision + 3))
   local bridge_delete_revision=$((expected_revision + 4))
-  local config_file=${2:-/root/sing-box-vps/config.json}
+  local config_file=${2:-/root/.sing-box-vps/runtime/config.json}
   local probe_dir="${VERIFY_CURRENT_SCENARIO_DIR}/bridge-data-plane"
   local fixture_dir='' client_netns='' server_netns=''
   local client_host_veth='' client_peer_veth=''
@@ -2773,7 +2773,7 @@ PY
 verification_scenario_fresh_install_vless() {
   local config_uuid
   local env_uuid
-  local instance_state_file=/root/sing-box-vps/protocols/vless-reality.d/main.env
+  local instance_state_file=/root/.sing-box-vps/runtime/protocols/vless-reality.d/main.env
   local current_port
   local expected_port=443
   local status_output_path
@@ -2785,7 +2785,7 @@ verification_scenario_fresh_install_vless() {
   trap 'set +e; if [[ -n "${OPENVPN_ENDPOINT_MARKER_PID:-}" ]]; then kill "${OPENVPN_ENDPOINT_MARKER_PID}" 2>/dev/null || true; wait "${OPENVPN_ENDPOINT_MARKER_PID}" 2>/dev/null || true; fi; rm -rf -- /tmp/sing-box-vps-verification-openvpn; verification_cleanup_remote_local_tree; trap - RETURN' RETURN
   printf 'SCENARIO=fresh_install_vless\n'
   bash "${VERIFY_REMOTE_UNINSTALL_SCRIPT}" --yes || bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" --internal-uninstall-purge --yes
-  test ! -e /root/sing-box-vps/config.json
+  test ! -e /root/.sing-box-vps/runtime/config.json
   test ! -e /etc/systemd/system/sing-box.service
   test ! -e /usr/local/bin/sbv
   SB_REALITY_SNI_VALIDATION_ASSUME_YES=1 bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" <<'EOF'
@@ -2803,22 +2803,22 @@ n
 0
 EOF
   verification_mark_step fresh_install_vless_after_install
-  test -f /root/sing-box-vps/config.json
+  test -f /root/.sing-box-vps/runtime/config.json
   test -f /etc/systemd/system/sing-box.service
   test -x /usr/local/bin/sbv
-  test -f /root/sing-box-vps/protocols/index.env
-  test -f /root/sing-box-vps/protocols/vless-reality.env
+  test -f /root/.sing-box-vps/runtime/protocols/index.env
+  test -f /root/.sing-box-vps/runtime/protocols/vless-reality.env
   test -f "${instance_state_file}"
   verification_mark_step fresh_install_vless_files_present
-  current_port=$(jq -r '.inbounds[0].listen_port // empty' /root/sing-box-vps/config.json)
-  config_uuid=$(jq -r '.inbounds[0].users[0].uuid // empty' /root/sing-box-vps/config.json)
+  current_port=$(jq -r '.inbounds[0].listen_port // empty' /root/.sing-box-vps/runtime/config.json)
+  config_uuid=$(jq -r '.inbounds[0].users[0].uuid // empty' /root/.sing-box-vps/runtime/config.json)
   env_uuid=$(grep '^UUID=' "${instance_state_file}" | cut -d'=' -f2- || true)
   verification_mark_step fresh_install_vless_values_loaded
   [[ "${current_port}" == "${expected_port}" ]]
-  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality' /root/sing-box-vps/protocols/index.env
-  grep -Fqx 'CONFIG_SCHEMA_VERSION=2' /root/sing-box-vps/protocols/vless-reality.env
-  grep -Fqx 'DEFAULT_INSTANCE_ID=main' /root/sing-box-vps/protocols/vless-reality.env
-  grep -Fqx 'INSTANCE_IDS=main' /root/sing-box-vps/protocols/vless-reality.env
+  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality' /root/.sing-box-vps/runtime/protocols/index.env
+  grep -Fqx 'CONFIG_SCHEMA_VERSION=2' /root/.sing-box-vps/runtime/protocols/vless-reality.env
+  grep -Fqx 'DEFAULT_INSTANCE_ID=main' /root/.sing-box-vps/runtime/protocols/vless-reality.env
+  grep -Fqx 'INSTANCE_IDS=main' /root/.sing-box-vps/runtime/protocols/vless-reality.env
   grep -Fqx 'PORT=443' "${instance_state_file}"
   grep -Fqx 'SNI=www.cloudflare.com' "${instance_state_file}"
   verification_mark_step fresh_install_vless_static_asserts
@@ -2836,7 +2836,7 @@ EOF
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box.version.txt" sing-box version
   grep -Fqx "sing-box version ${expected_core_version}" "${version_output_path}"
   verification_mark_step fresh_install_vless_version_checked
-  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" sing-box check -c /root/sing-box-vps/config.json
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" sing-box check -c /root/.sing-box-vps/runtime/config.json
   verification_mark_step fresh_install_vless_config_checked
   verification_assert_port_listening "${expected_port}" "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.ss-lntp.txt"
   verification_mark_step fresh_install_vless_port_listening
@@ -2845,7 +2845,7 @@ EOF
   grep -Fq '运行状态摘要' "${status_output_path}"
   grep -Fq 'sing-box: active' "${status_output_path}"
   grep -Fq 'Warp: 未开启' "${status_output_path}"
-  grep -Fq '配置文件: /root/sing-box-vps/config.json' "${status_output_path}"
+  grep -Fq '配置文件: /root/.sing-box-vps/runtime/config.json' "${status_output_path}"
   ! grep -Fq '协议:' "${status_output_path}"
   ! grep -Fq '地址:' "${status_output_path}"
   ! grep -Fq '端口:' "${status_output_path}"
@@ -2902,7 +2902,7 @@ EOF
   verification_mark_step fresh_install_vless_tun_component_created
   verification_wait_for_service_active sing-box
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/tun-resource-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/tun-interface.json" \
     ip -j link show dev sbv-tun
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/tun-rules.json" \
@@ -2924,7 +2924,7 @@ EOF
       .interface.status=="present" and .policy_routing.status=="present" and
       .rule.status=="present")] | length == 1)' "${tun_diagnose_json}" >/dev/null
   verification_mark_step fresh_install_vless_tun_resources_observed
-  verification_run_tun_l3_probe /root/sing-box-vps/config.json
+  verification_run_tun_l3_probe /root/.sing-box-vps/runtime/config.json
   verification_mark_step fresh_install_vless_tun_l3_probe_complete
 
   bash /usr/local/bin/sbv agent component delete --json --yes \
@@ -2979,7 +2979,7 @@ EOF
   verification_mark_step fresh_install_vless_bridge_component_created
   verification_wait_for_service_active sing-box
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/bridge-resource-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/bridge-rules.json" \
     ip -j rule show
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/bridge-routes.json" \

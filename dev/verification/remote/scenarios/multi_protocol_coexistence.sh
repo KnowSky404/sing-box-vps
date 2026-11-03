@@ -173,11 +173,11 @@ PY
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/managed-rule-sets-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   local managed_rule_sets_config
   managed_rule_sets_config=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/managed-rule-sets-config.json")
-  cp /root/sing-box-vps/config.json "${managed_rule_sets_config}"
+  cp /root/.sing-box-vps/runtime/config.json "${managed_rule_sets_config}"
   jq -e --arg source_path "${source_file}" \
     --arg remote_url "http://127.0.0.1:${server_port}/remote-route-rules.json" '
     (.route.rule_set | length == 3) and
@@ -233,10 +233,10 @@ PY
   done
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/managed-rule-sets-final-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   jq -e '
     ([.route.rule_set[]? | select(.tag | startswith("verification-"))] | length) == 0
-  ' /root/sing-box-vps/config.json >/dev/null
+  ' /root/.sing-box-vps/runtime/config.json >/dev/null
   [[ -f "${source_file}" && "${revision}" == "$((expected_revision + 7))" ]]
   verification_mark_step managed-route-rule-sets-removed
 }
@@ -700,10 +700,10 @@ PY
   verification_mark_step http-outbound-service-active
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/http-outbound-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   verification_mark_step http-outbound-config-checked
   config_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/config.json")
-  cp /root/sing-box-vps/config.json "${config_path}"
+  cp /root/.sing-box-vps/runtime/config.json "${config_path}"
   jq -e --arg domain "${http_outbound_target_domain}" --argjson proxy_port "${http_outbound_proxy_port}" '
     ([.outbounds[] | select(.type == "http" and .tag == "http-outbound-verification" and
       .server == "127.0.0.1" and .server_port == $proxy_port and
@@ -816,11 +816,11 @@ PY
   verification_mark_step direct-inbound-service-active
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   verification_mark_step direct-inbound-config-checked
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound-config.json")
-  cp /root/sing-box-vps/config.json "${config_path}"
+  cp /root/.sing-box-vps/runtime/config.json "${config_path}"
   jq -e --argjson marker_port "${direct_marker_port}" '
     ([.inbounds[] | select(.type == "direct" and .tag == "direct-inbound-verification" and
       .listen == "127.0.0.1" and .listen_port == 1092 and .network == "tcp" and
@@ -910,11 +910,11 @@ PY
   verification_mark_step direct-udp-inbound-service-active
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound-udp-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   verification_mark_step direct-udp-inbound-config-checked
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/direct-inbound-udp-config.json")
-  cp /root/sing-box-vps/config.json "${config_path}"
+  cp /root/.sing-box-vps/runtime/config.json "${config_path}"
   jq -e --argjson marker_port "${direct_udp_marker_port}" '
     ([.inbounds[] | select(.type == "direct" and .tag == "direct-udp-inbound-verification" and
       .listen == "127.0.0.1" and .listen_port == 1093 and .network == "udp" and
@@ -981,8 +981,8 @@ PY
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/redirect-inbound-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
-  verification_execute_redirect_probe /root/sing-box-vps/config.json 1094 \
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
+  verification_execute_redirect_probe /root/.sing-box-vps/runtime/config.json 1094 \
     "${VERIFY_REDIRECT_MARKER_PORT}" "${VERIFY_REDIRECT_MARKER}"
   verification_mark_step redirect-inbound-probe-complete
 
@@ -1007,8 +1007,8 @@ PY
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/tproxy-inbound-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
-  verification_execute_tproxy_probe /root/sing-box-vps/config.json 1095 managed 5
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
+  verification_execute_tproxy_probe /root/.sing-box-vps/runtime/config.json 1095 managed 5
   verification_mark_step tproxy-inbound-probe-complete
 
   local transparent_diagnose
@@ -1107,7 +1107,7 @@ PY
   jq -e '
     ([.inbounds[] | select(.type == "redirect" and .tag == "redirect-inbound-verification")] | length) == 0 and
     ([.inbounds[] | select(.type == "tproxy" and .tag == "tproxy-inbound-verification")] | length) == 0
-  ' /root/sing-box-vps/config.json >/dev/null
+  ' /root/.sing-box-vps/runtime/config.json >/dev/null
 
   # SSH is an outbound-only adapter.  Prove its real direct-tcpip path with a
   # disposable OpenSSH server and loopback marker, while keeping the route
@@ -1232,10 +1232,10 @@ PY
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/ssh-outbound-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/ssh-outbound-config.json")
-  cp /root/sing-box-vps/config.json "${config_path}"
+  cp /root/.sing-box-vps/runtime/config.json "${config_path}"
   jq -e --arg host_key "${ssh_host_key_public}" --argjson ssh_port "${ssh_port}" '
     ([.outbounds[] | select(.type == "ssh" and .tag == "ssh-outbound-verification" and
       .server == "127.0.0.1" and .server_port == $ssh_port and
@@ -1278,7 +1278,7 @@ PY
   jq -e '
     ([.outbounds[] | select(.tag == "ssh-outbound-verification")] | length) == 0 and
     ([.route.rules[] | select(.outbound == "ssh-outbound-verification")] | length) == 0
-  ' /root/sing-box-vps/config.json >/dev/null
+  ' /root/.sing-box-vps/runtime/config.json >/dev/null
 
   # SOCKS is a managed outbound adapter rather than another inbound preset.
   # Prove its authenticated SOCKS5 CONNECT path with a disposable upstream
@@ -1482,10 +1482,10 @@ PY
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-config.json")
-  cp /root/sing-box-vps/config.json "${config_path}"
+  cp /root/.sing-box-vps/runtime/config.json "${config_path}"
   jq -e --arg domain "${socks_outbound_target_domain}" \
     --argjson upstream_port "${socks_upstream_port}" '
     ([.outbounds[] | select(.type == "socks" and .tag == "socks-outbound-verification" and
@@ -1532,7 +1532,7 @@ PY
   jq -e '
     ([.outbounds[] | select(.tag == "socks-outbound-verification")] | length) == 0 and
     ([.route.rules[] | select(.outbound == "socks-outbound-verification")] | length) == 0
-  ' /root/sing-box-vps/config.json >/dev/null
+  ' /root/.sing-box-vps/runtime/config.json >/dev/null
 
   # Selector groups must exercise their member resolution, not only parse as
   # arbitrary JSON.  Reuse the disposable direct loopback marker with a
@@ -1563,10 +1563,10 @@ PY
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/selector-outbound-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/selector-outbound-config.json")
-  cp /root/sing-box-vps/config.json "${config_path}"
+  cp /root/.sing-box-vps/runtime/config.json "${config_path}"
   jq -e '
     ([.outbounds[] | select(.type == "selector" and .tag == "selector-outbound-verification" and
       .outbounds == ["direct"] and .default == "direct" and
@@ -1608,7 +1608,7 @@ PY
   jq -e '
     ([.outbounds[] | select(.tag == "selector-outbound-verification")] | length) == 0 and
     ([.route.rules[] | select(.outbound == "selector-outbound-verification")] | length) == 0
-  ' /root/sing-box-vps/config.json >/dev/null
+  ' /root/.sing-box-vps/runtime/config.json >/dev/null
 
   # URLTest groups share the same typed member graph but add an active health
   # URL.  Give it the single direct member and the existing marker URL so the
@@ -1641,10 +1641,10 @@ PY
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/urltest-outbound-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/urltest-outbound-config.json")
-  cp /root/sing-box-vps/config.json "${config_path}"
+  cp /root/.sing-box-vps/runtime/config.json "${config_path}"
   jq -e --arg url "${urltest_probe_url}" '
     ([.outbounds[] | select(.type == "urltest" and .tag == "urltest-outbound-verification" and
       .outbounds == ["direct"] and .url == $url and .interval == "1s" and
@@ -1695,7 +1695,7 @@ PY
   jq -e '
     ([.outbounds[] | select(.tag == "urltest-outbound-verification")] | length) == 0 and
     ([.route.rules[] | select(.outbound == "urltest-outbound-verification")] | length) == 0
-  ' /root/sing-box-vps/config.json >/dev/null
+  ' /root/.sing-box-vps/runtime/config.json >/dev/null
 
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/config.json")
@@ -1704,8 +1704,8 @@ PY
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/libcronet.sha256.txt" \
     sha256sum /usr/local/lib/libcronet.so
-  cp /root/sing-box-vps/config.json "${config_path}"
-  cp /root/sing-box-vps/protocols/index.env "${index_path}"
+  cp /root/.sing-box-vps/runtime/config.json "${config_path}"
+  cp /root/.sing-box-vps/runtime/protocols/index.env "${index_path}"
   grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan,tuic,vmess,snell,shadowtls,naive' "${index_path}"
   jq -e '
     ([.inbounds[] | .type] | sort) == ["anytls", "direct", "direct", "http", "hysteria2", "mixed", "mixed", "naive", "shadowsocks", "shadowtls", "snell", "socks", "trojan", "tuic", "vless", "vmess"] and
@@ -1735,18 +1735,18 @@ PY
     ([.inbounds[] | select(.type == "naive" and .tag == "naive-in" and
       .listen == "127.0.0.1" and .listen_port == 1091 and .network == "tcp" and
       .users[0].username == "naive-user" and .tls.server_name == "sing-box-vps-verification.invalid")] | length == 1)
-  ' /root/sing-box-vps/config.json >/dev/null
+  ' /root/.sing-box-vps/runtime/config.json >/dev/null
   expected_core_version=$(verification_supported_core_version)
   grep -Fqx "sing-box version ${expected_core_version}" <(sing-box version)
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   while IFS= read -r protocol; do
     port=$(verification_config_inbound_port_for_protocol \
-      "${protocol}" /root/sing-box-vps/config.json)
+      "${protocol}" /root/.sing-box-vps/runtime/config.json)
     configured_network=$(verification_config_inbound_network_for_protocol \
-      "${protocol}" /root/sing-box-vps/config.json)
+      "${protocol}" /root/.sing-box-vps/runtime/config.json)
     if [[ "${configured_network}" == "tcp" ]]; then
       verification_assert_port_listening "${port}" \
         "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.${protocol}.ss-lntp.txt"
@@ -1769,14 +1769,14 @@ PY
   # the shared SOCKS5 UDP ASSOCIATE probe after the regular TCP probes; the
   # protocol-specific client generators preserve REALITY/XUDP defaults and
   # standalone SOCKS UoT v2 instead of treating a TCP listener as native UDP.
-  verification_execute_protocol_udp_probe vless-reality /root/sing-box-vps/config.json
-  verification_execute_protocol_udp_probe mixed /root/sing-box-vps/config.json
-  verification_execute_protocol_udp_probe socks /root/sing-box-vps/config.json
+  verification_execute_protocol_udp_probe vless-reality /root/.sing-box-vps/runtime/config.json
+  verification_execute_protocol_udp_probe mixed /root/.sing-box-vps/runtime/config.json
+  verification_execute_protocol_udp_probe socks /root/.sing-box-vps/runtime/config.json
 
   # Naive outbound carries UDP through its explicit UDP-over-TCP adapter when
   # the managed listener has a TCP leg.  Preserve the initial TCP probe tree
   # before replacing the same instance with a UDP-only listener below.
-  verification_execute_protocol_udp_probe naive /root/sing-box-vps/config.json
+  verification_execute_protocol_udp_probe naive /root/.sing-box-vps/runtime/config.json
   naive_udp_journal_artifact=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/naive-udp-journal.txt")
   for _ in {1..20}; do
@@ -1834,10 +1834,10 @@ PY
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/naive-http3-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/naive-http3-config.json")
-  cp /root/sing-box-vps/config.json "${config_path}"
+  cp /root/.sing-box-vps/runtime/config.json "${config_path}"
   jq -e '
     ([.inbounds[] | select(.type == "naive" and .tag == "naive-in" and
       .listen == "127.0.0.1" and .listen_port == 1091 and .network == "udp" and
@@ -1845,7 +1845,7 @@ PY
       .tls.server_name == "sing-box-vps-verification.invalid")] | length == 1)
   ' "${config_path}" >/dev/null
   verification_mark_step naive-http3-config-asserted
-  verification_execute_single_protocol_probe naive /root/sing-box-vps/config.json
+  verification_execute_single_protocol_probe naive /root/.sing-box-vps/runtime/config.json
   jq -e '
     .outbounds | length == 1 and .[0].type == "naive" and
     .[0].quic == true and (.[0] | has("udp_over_tcp") | not)
@@ -1872,7 +1872,7 @@ PY
 
   # AnyTLS keeps a TCP listener; this shared SOCKS5 UDP probe exercises its
   # authenticated UDP-over-AnyTLS (UoT) adapter without calling it native UDP.
-  verification_execute_protocol_udp_probe anytls /root/sing-box-vps/config.json
+  verification_execute_protocol_udp_probe anytls /root/.sing-box-vps/runtime/config.json
   anytls_udp_journal_artifact=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/anytls-udp-journal.txt")
   for _ in {1..20}; do
@@ -1885,12 +1885,12 @@ PY
   done
   grep -Fq 'inbound/anytls[anytls-in]: inbound UoT connection' \
     "${anytls_udp_journal_artifact}"
-  verification_execute_protocol_udp_probe hy2 /root/sing-box-vps/config.json
-  verification_execute_protocol_udp_probe shadowsocks /root/sing-box-vps/config.json
-  verification_execute_protocol_udp_probe trojan /root/sing-box-vps/config.json
-  verification_execute_protocol_udp_probe tuic /root/sing-box-vps/config.json
-  verification_execute_protocol_udp_probe vmess /root/sing-box-vps/config.json
-  verification_execute_protocol_udp_probe snell /root/sing-box-vps/config.json
+  verification_execute_protocol_udp_probe hy2 /root/.sing-box-vps/runtime/config.json
+  verification_execute_protocol_udp_probe shadowsocks /root/.sing-box-vps/runtime/config.json
+  verification_execute_protocol_udp_probe trojan /root/.sing-box-vps/runtime/config.json
+  verification_execute_protocol_udp_probe tuic /root/.sing-box-vps/runtime/config.json
+  verification_execute_protocol_udp_probe vmess /root/.sing-box-vps/runtime/config.json
+  verification_execute_protocol_udp_probe snell /root/.sing-box-vps/runtime/config.json
 
   # The server v5 wire protocol is exported as a sing-box v4 outbound.  Keep
   # the v6 evidence above intact, then replace the same typed instance through
@@ -1927,10 +1927,10 @@ PY
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/snell-v5-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/snell-v5-config.json")
-  cp /root/sing-box-vps/config.json "${config_path}"
+  cp /root/.sing-box-vps/runtime/config.json "${config_path}"
   jq -e '
     ([.inbounds[] | select(.type == "snell" and .tag == "snell-in" and
       .listen == "127.0.0.1" and .listen_port == 1086 and .version == 5 and
@@ -1945,10 +1945,10 @@ PY
       .obfs_mode == "http" and .obfs_host == "snell-v5.example.com" and
       .mode == "" and .authentication.psk == "snell-v5-psk-123456" and
       .authentication.users[0].userkey == "snell-v5-user-key")] | length == 1)
-  ' /root/sing-box-vps/protocols/instances/snell.json >/dev/null
+  ' /root/.sing-box-vps/runtime/protocols/instances/snell.json >/dev/null
   verification_mark_step snell-v5-config-asserted
-  verification_execute_single_protocol_probe snell /root/sing-box-vps/config.json
-  verification_execute_protocol_udp_probe snell /root/sing-box-vps/config.json
+  verification_execute_single_protocol_probe snell /root/.sing-box-vps/runtime/config.json
+  verification_execute_protocol_udp_probe snell /root/.sing-box-vps/runtime/config.json
   jq -e '
     .outbounds | length == 1 and .[0].type == "snell" and .[0].version == 4 and
     .[0].network == ["tcp", "udp"] and .[0].obfs_mode == "http" and
@@ -1997,10 +1997,10 @@ PY
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-config.json")
-  cp /root/sing-box-vps/config.json "${config_path}"
+  cp /root/.sing-box-vps/runtime/config.json "${config_path}"
   jq -e --arg domain "${shadowsocks_outbound_target_domain}" \
     --argjson marker_port "${direct_marker_port}" '
     ([.outbounds[] | select(.type == "shadowsocks" and
@@ -2052,7 +2052,7 @@ PY
     ([.outbounds[] | select(.tag == "shadowsocks-outbound-verification")] | length) == 0 and
     ([.route.rules[] | select(.outbound == "shadowsocks-outbound-verification" or
       (.inbound == ["ss-in"] and .domain == ["sbv-shadowsocks-outbound.invalid"]))] | length) == 0
-  ' /root/sing-box-vps/config.json >/dev/null
+  ' /root/.sing-box-vps/runtime/config.json >/dev/null
 
   # Direct outbound destination overrides belong to route options in sing-box
   # 1.14.  Exercise a custom direct component through the existing SOCKS5
@@ -2095,10 +2095,10 @@ PY
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/direct-outbound-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/direct-outbound-config.json")
-  cp /root/sing-box-vps/config.json "${config_path}"
+  cp /root/.sing-box-vps/runtime/config.json "${config_path}"
   jq -e --arg domain "${direct_outbound_target_domain}" \
     --argjson marker_port "${direct_marker_port}" \
     --argjson udp_marker_port "${direct_udp_marker_port}" \
@@ -2253,7 +2253,7 @@ PY
   jq -e '
     ([.outbounds[] | select(.tag == "direct-outbound-verification")] | length) == 0 and
     ([.route.rules[] | select(.outbound == "direct-outbound-verification")] | length) == 0
-  ' /root/sing-box-vps/config.json >/dev/null
+  ' /root/.sing-box-vps/runtime/config.json >/dev/null
 
   # The block component has no options and must reject the routed request.  A
   # non-zero curl status is the data-plane assertion; a successful marker would
@@ -2285,10 +2285,10 @@ PY
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/block-outbound-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/block-outbound-config.json")
-  cp /root/sing-box-vps/config.json "${config_path}"
+  cp /root/.sing-box-vps/runtime/config.json "${config_path}"
   jq -e --arg domain "${block_outbound_target_domain}" '
     ([.outbounds[] | select(.type == "block" and
       .tag == "block-outbound-verification")] | length == 1) and
@@ -2337,7 +2337,7 @@ PY
   jq -e '
     ([.outbounds[] | select(.tag == "block-outbound-verification")] | length) == 0 and
     ([.route.rules[] | select(.outbound == "block-outbound-verification")] | length) == 0
-  ' /root/sing-box-vps/config.json >/dev/null
+  ' /root/.sing-box-vps/runtime/config.json >/dev/null
 
   # A managed VLESS outbound must complete a real VLESS handshake before its
   # route is considered covered.  The disposable upstream is another
@@ -2429,10 +2429,10 @@ PY
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/vless-outbound-config.json")
-  cp /root/sing-box-vps/config.json "${config_path}"
+  cp /root/.sing-box-vps/runtime/config.json "${config_path}"
   jq -e --arg domain "${vless_outbound_target_domain}" \
     --arg uuid "${vless_outbound_server_uuid}" \
     --argjson server_port "${vless_outbound_server_port}" \
@@ -2494,7 +2494,7 @@ PY
   vless_outbound_udp_marker="sing-box-vps-vless-outbound-udp-loopback-ok-$(date +%s)-$$"
   vless_outbound_udp_rendered=$(jq -ce \
     '.outbounds[] | select(.tag == "vless-outbound-verification")' \
-    /root/sing-box-vps/config.json)
+    /root/.sing-box-vps/runtime/config.json)
   (umask 077; jq -n --argjson outbound "${vless_outbound_udp_rendered}" '
     {log:{disabled:true},
      inbounds:[{type:"socks",tag:"vless-outbound-udp-probe-in",listen:"127.0.0.1",
@@ -2628,7 +2628,7 @@ PY
   jq -e '
     ([.outbounds[] | select(.tag == "vless-outbound-verification")] | length) == 0 and
     ([.route.rules[] | select(.outbound == "vless-outbound-verification")] | length) == 0
-  ' /root/sing-box-vps/config.json >/dev/null
+  ' /root/.sing-box-vps/runtime/config.json >/dev/null
   kill "${vless_outbound_server_pid}" 2>/dev/null || true
   wait "${vless_outbound_server_pid}" 2>/dev/null || true
   vless_outbound_server_pid=''
@@ -2669,10 +2669,10 @@ PY
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/tor-outbound-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   config_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/tor-outbound-config.json")
-  cp /root/sing-box-vps/config.json "${config_path}"
+  cp /root/.sing-box-vps/runtime/config.json "${config_path}"
   jq -e '
     ([.outbounds[] | select(.type == "tor" and
       .tag == "tor-outbound-verification" and
@@ -2742,7 +2742,7 @@ PY
   jq -e '
     ([.outbounds[] | select(.tag == "tor-outbound-verification")] | length) == 0 and
     ([.route.rules[] | select(.outbound == "tor-outbound-verification")] | length) == 0
-  ' /root/sing-box-vps/config.json >/dev/null
+  ' /root/.sing-box-vps/runtime/config.json >/dev/null
 
   # ShadowTLS outbound is a transport, so prove its real v3 handshake through
   # the typed HTTP detour that carries the application request.  The
@@ -2862,10 +2862,10 @@ PY
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-outbound-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   shadowtls_outbound_config=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/shadowtls-outbound-config.json")
-  cp /root/sing-box-vps/config.json "${shadowtls_outbound_config}"
+  cp /root/.sing-box-vps/runtime/config.json "${shadowtls_outbound_config}"
   jq -e --arg domain "${shadowtls_outbound_target_domain}" \
     --argjson inner_port "${shadowtls_outbound_inner_port}" '
     ([.outbounds[] | select(.type == "shadowtls" and
@@ -2938,7 +2938,7 @@ PY
     ([.route.rules[] | select(.outbound == "shadowtls-outbound-http" or
       .domain == [$domain])] | length == 0) and
     ([.outbounds[] | select(.tag == "shadowtls-outbound-verification")] | length == 1)
-  ' /root/sing-box-vps/config.json >/dev/null
+  ' /root/.sing-box-vps/runtime/config.json >/dev/null
 
   set +e
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" agent component delete --json --yes \
@@ -2957,7 +2957,7 @@ PY
   jq -e '
     ([.outbounds[] | select(.tag == "shadowtls-outbound-verification")] | length == 0) and
     ([.route.rules[] | select(.outbound == "shadowtls-outbound-verification")] | length == 0)
-  ' /root/sing-box-vps/config.json >/dev/null
+  ' /root/.sing-box-vps/runtime/config.json >/dev/null
   kill "${shadowtls_outbound_server_pid}" 2>/dev/null || true
   wait "${shadowtls_outbound_server_pid}" 2>/dev/null || true
   shadowtls_outbound_server_pid=''
@@ -3010,10 +3010,10 @@ PY
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-udp-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   shadowsocks_outbound_udp_config=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/shadowsocks-outbound-udp-config.json")
-  cp /root/sing-box-vps/config.json "${shadowsocks_outbound_udp_config}"
+  cp /root/.sing-box-vps/runtime/config.json "${shadowsocks_outbound_udp_config}"
   jq -e --argjson marker_port "${direct_udp_marker_port}" '
     ([.outbounds[] | select(.type == "shadowsocks" and
       .tag == "shadowsocks-outbound-udp-verification" and
@@ -3149,7 +3149,7 @@ PY
       length) == 0 and
     ([.route.rules[] | select(.outbound ==
       "shadowsocks-outbound-udp-verification")] | length) == 0
-  ' /root/sing-box-vps/config.json >/dev/null
+  ' /root/.sing-box-vps/runtime/config.json >/dev/null
 
   # SOCKS outbound UDP is a separate upstream contract from SS2022 UDP.  A
   # disposable SOCKS5 server below implements UDP ASSOCIATE and relays only
@@ -3381,10 +3381,10 @@ PY
   verification_wait_for_service_active sing-box
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-udp-check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   socks_outbound_udp_config=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/socks-outbound-udp-config.json")
-  cp /root/sing-box-vps/config.json "${socks_outbound_udp_config}"
+  cp /root/.sing-box-vps/runtime/config.json "${socks_outbound_udp_config}"
   jq -e --arg domain "${socks_outbound_udp_target_domain}" \
     --argjson upstream_port "${socks_outbound_udp_upstream_port}" \
     --argjson marker_port "${direct_udp_marker_port}" '
@@ -3528,7 +3528,7 @@ PY
       length) == 0 and
     ([.route.rules[] | select(.outbound ==
       "socks-outbound-udp-verification")] | length) == 0
-  ' /root/sing-box-vps/config.json >/dev/null
+  ' /root/.sing-box-vps/runtime/config.json >/dev/null
   kill "${socks_udp_upstream_pid}" 2>/dev/null || true
   wait "${socks_udp_upstream_pid}" 2>/dev/null || true
   socks_udp_upstream_pid=''

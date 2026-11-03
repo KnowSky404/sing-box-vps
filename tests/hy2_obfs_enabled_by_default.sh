@@ -10,7 +10,8 @@ TESTABLE_INSTALL="${TMP_DIR}/install-testable.sh"
 
 sed \
   -e 's|main "\$@"|:|' \
-  "${REPO_ROOT}/install.sh" > "${TESTABLE_INSTALL}"
+  <(bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --source) > "${TESTABLE_INSTALL}"
+bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --isolate "${TESTABLE_INSTALL}"
 
 # shellcheck disable=SC1090
 source "${TESTABLE_INSTALL}"

@@ -68,8 +68,9 @@ setup_service() {
 [Unit]
 Description=sing-box service
 [Service]
-ExecStart=${SINGBOX_BIN_PATH} run -c ${SINGBOX_CONFIG_FILE}
+ExecStart="${SINGBOX_BIN_PATH}" run -c "${SINGBOX_CONFIG_FILE}"
 EOF
+  storage_publish_system_links service
 }
 
 restart_service_after_takeover() {
@@ -170,7 +171,7 @@ EOF
 }
 
 reset_instance_artifacts() {
-  rm -f "${SINGBOX_BIN_PATH}" "${SINGBOX_SERVICE_FILE}" "${SBV_BIN_PATH}" "${SINGBOX_CONFIG_FILE}" "${SB_PROTOCOL_INDEX_FILE}"
+  rm -f "${SINGBOX_BIN_PATH}" "${SINGBOX_SERVICE_FILE}" "${SINGBOX_SERVICE_LINK_PATH}" "${SBV_BIN_PATH}" "${SINGBOX_CONFIG_FILE}" "${SB_PROTOCOL_INDEX_FILE}"
   rm -rf "${SB_PROTOCOL_STATE_DIR}"
 }
 
@@ -371,7 +372,7 @@ scenario_invalid_existing_service_is_repaired() {
   assert_counter_equals "${TMP_DIR}/setup-service-calls" "1" "invalid-existing-service"
   assert_counter_equals "${TMP_DIR}/restart-service-calls" "1" "invalid-existing-service"
 
-  if ! grep -Fqx "ExecStart=${SINGBOX_BIN_PATH} run -c ${SINGBOX_CONFIG_FILE}" "${SINGBOX_SERVICE_FILE}"; then
+  if ! grep -Fqx "ExecStart=\"${SINGBOX_BIN_PATH}\" run -c \"${SINGBOX_CONFIG_FILE}\"" "${SINGBOX_SERVICE_FILE}"; then
     printf 'expected takeover to rewrite invalid service file, got:\n%s\n' "$(cat "${SINGBOX_SERVICE_FILE}")" >&2
     exit 1
   fi

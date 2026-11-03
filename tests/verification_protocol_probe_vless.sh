@@ -14,7 +14,7 @@ REMOTE_ROOT="${TMP_DIR}/remote-root"
 TESTABLE_ENTRYPOINT="${TMP_DIR}/entrypoint-testable.sh"
 EXPECTED_CONFIG_PATH="${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/vless-reality/client.json"
 
-mkdir -p "${REMOTE_ROOT}/root/sing-box-vps/protocols"
+mkdir -p "${REMOTE_ROOT}/root/.sing-box-vps/runtime/protocols"
 setup_protocol_probe_command_stubs
 
 awk '
@@ -23,14 +23,14 @@ awk '
   }
   { print }
 ' "${REPO_ROOT}/dev/verification/remote/entrypoint.sh" \
-  | perl -0pe 's|/root/sing-box-vps/protocols/vless-reality.env|'"${REMOTE_ROOT}"'/root/sing-box-vps/protocols/vless-reality.env|g' \
+  | perl -0pe 's|/root/.sing-box-vps/runtime/protocols/vless-reality.env|'"${REMOTE_ROOT}"'/root/.sing-box-vps/runtime/protocols/vless-reality.env|g' \
   > "${TESTABLE_ENTRYPOINT}"
 
-cat > "${REMOTE_ROOT}/root/sing-box-vps/protocols/vless-reality.env" <<'EOF'
+cat > "${REMOTE_ROOT}/root/.sing-box-vps/runtime/protocols/vless-reality.env" <<'EOF'
 REALITY_PUBLIC_KEY=public-key-from-state
 EOF
 
-cat > "${REMOTE_ROOT}/root/sing-box-vps/config.json" <<'EOF'
+cat > "${REMOTE_ROOT}/root/.sing-box-vps/runtime/config.json" <<'EOF'
 {
   "inbounds": [
     {
@@ -77,7 +77,7 @@ VERIFY_CURRENT_SCENARIO_DIR="scenarios/\${VERIFY_CURRENT_SCENARIO}"
 
 verification_generate_protocol_probe_client_config \
   vless-reality \
-  "${REMOTE_ROOT}/root/sing-box-vps/config.json"
+  "${REMOTE_ROOT}/root/.sing-box-vps/runtime/config.json"
 EOF
 chmod +x "${TMP_DIR}/run-vless.sh"
 
@@ -95,7 +95,7 @@ if ! bash -c '
   VERIFY_CURRENT_SCENARIO_DIR="scenarios/${VERIFY_CURRENT_SCENARIO}"
   verification_execute_single_protocol_probe \
     vless-reality \
-    "'"${REMOTE_ROOT}"'/root/sing-box-vps/config.json"
+    "'"${REMOTE_ROOT}"'/root/.sing-box-vps/runtime/config.json"
 '; then
   printf 'expected vless probe execution to succeed with command stubs\n' >&2
   exit 1
@@ -147,7 +147,7 @@ cat > "${TMP_DIR}/run-blank-public-key.sh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
-cat > "${REMOTE_ROOT}/root/sing-box-vps/protocols/vless-reality.env" <<'STATE_EOF'
+cat > "${REMOTE_ROOT}/root/.sing-box-vps/runtime/protocols/vless-reality.env" <<'STATE_EOF'
 REALITY_PUBLIC_KEY=
 STATE_EOF
 
@@ -159,7 +159,7 @@ VERIFY_CURRENT_SCENARIO_DIR="scenarios/\${VERIFY_CURRENT_SCENARIO}"
 
 verification_generate_protocol_probe_client_config \
   vless-reality \
-  "${REMOTE_ROOT}/root/sing-box-vps/config.json"
+  "${REMOTE_ROOT}/root/.sing-box-vps/runtime/config.json"
 EOF
 chmod +x "${TMP_DIR}/run-blank-public-key.sh"
 
@@ -178,7 +178,7 @@ cat > "${TMP_DIR}/run-missing-public-key.sh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
-cat > "${REMOTE_ROOT}/root/sing-box-vps/protocols/vless-reality.env" <<'STATE_EOF'
+cat > "${REMOTE_ROOT}/root/.sing-box-vps/runtime/protocols/vless-reality.env" <<'STATE_EOF'
 UUID=unused
 STATE_EOF
 
@@ -190,7 +190,7 @@ VERIFY_CURRENT_SCENARIO_DIR="scenarios/\${VERIFY_CURRENT_SCENARIO}"
 
 verification_generate_protocol_probe_client_config \
   vless-reality \
-  "${REMOTE_ROOT}/root/sing-box-vps/config.json"
+  "${REMOTE_ROOT}/root/.sing-box-vps/runtime/config.json"
 EOF
 chmod +x "${TMP_DIR}/run-missing-public-key.sh"
 
@@ -209,7 +209,7 @@ cat > "${TMP_DIR}/run-missing-state-file.sh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
-rm -f "${REMOTE_ROOT}/root/sing-box-vps/protocols/vless-reality.env"
+rm -f "${REMOTE_ROOT}/root/.sing-box-vps/runtime/protocols/vless-reality.env"
 
 source "${TESTABLE_ENTRYPOINT}"
 
@@ -219,7 +219,7 @@ VERIFY_CURRENT_SCENARIO_DIR="scenarios/\${VERIFY_CURRENT_SCENARIO}"
 
 verification_generate_protocol_probe_client_config \
   vless-reality \
-  "${REMOTE_ROOT}/root/sing-box-vps/config.json"
+  "${REMOTE_ROOT}/root/.sing-box-vps/runtime/config.json"
 EOF
 chmod +x "${TMP_DIR}/run-missing-state-file.sh"
 
@@ -323,7 +323,7 @@ VERIFY_CURRENT_SCENARIO_DIR="scenarios/\${VERIFY_CURRENT_SCENARIO}"
 
 verification_generate_protocol_probe_client_config \
   vless-reality \
-  "${REMOTE_ROOT}/root/sing-box-vps/config.json"
+  "${REMOTE_ROOT}/root/.sing-box-vps/runtime/config.json"
 EOF
 chmod +x "${TMP_DIR}/run-render-failure.sh"
 
@@ -352,7 +352,7 @@ VERIFY_CURRENT_SCENARIO_DIR="scenarios/\${VERIFY_CURRENT_SCENARIO}"
 
 verification_generate_protocol_probe_client_config \
   mystery-protocol \
-  "${REMOTE_ROOT}/root/sing-box-vps/config.json"
+  "${REMOTE_ROOT}/root/.sing-box-vps/runtime/config.json"
 EOF
 chmod +x "${TMP_DIR}/run-unsupported.sh"
 

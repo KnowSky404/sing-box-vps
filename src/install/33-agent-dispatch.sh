@@ -471,6 +471,9 @@ agent_cli() {
   local service_command
 
   case "${command}" in
+    storage)
+      storage_cli "$@"
+      ;;
     help|-h|--help)
       if [[ $# -ne 0 ]]; then
         agent_cli_error "help" "invalid_arguments" "用法: sbv agent help"
@@ -608,7 +611,9 @@ agent_dispatch() {
   command=$(agent_command_name_from_args "$@")
   case "${1:-}" in
     capabilities|commands|schema) agent_cli "$@"; return $? ;;
+    storage) storage_cli "${@:2}"; return $? ;;
   esac
+  storage_require_current || return $?
   if [[ -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ]]; then
     if [[ "${1:-}" != routing || "${2:-}" != recover ]]; then
       agent_cli_error "${command}" routing_transaction_pending "存在未完成的规则事务；请先执行 sbv routing recover --json --yes。"

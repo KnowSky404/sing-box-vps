@@ -24,8 +24,8 @@ awk '
   }
   { print }
 ' "${REPO_ROOT}/dev/verification/remote/entrypoint.sh" \
-  | perl -0pe 's|/root/sing-box-vps/protocols/http.env|'"${HTTP_STATE_FILE}"'|g' \
-  | perl -0pe 's|/root/sing-box-vps/protocols/instances/http.json|'"${HTTP_STORE_FILE}"'|g' \
+  | perl -0pe 's|/root/.sing-box-vps/runtime/protocols/http.env|'"${HTTP_STATE_FILE}"'|g' \
+  | perl -0pe 's|/root/.sing-box-vps/runtime/protocols/instances/http.json|'"${HTTP_STORE_FILE}"'|g' \
   > "${ENTRYPOINT_FILE}"
 
 cat > "${HTTP_STATE_FILE}" <<'EOF_STATE'

@@ -25,8 +25,8 @@ awk '
   }
   { print }
 ' "${REPO_ROOT}/dev/verification/remote/entrypoint.sh" \
-  | perl -0pe 's|/root/sing-box-vps/protocols/shadowsocks.env|'"${STATE_FILE}"'|g' \
-  | perl -0pe 's|/root/sing-box-vps/protocols/instances/shadowsocks.json|'"${STORE_FILE}"'|g' \
+  | perl -0pe 's|/root/.sing-box-vps/runtime/protocols/shadowsocks.env|'"${STATE_FILE}"'|g' \
+  | perl -0pe 's|/root/.sing-box-vps/runtime/protocols/instances/shadowsocks.json|'"${STORE_FILE}"'|g' \
   > "${ENTRYPOINT_FILE}"
 
 cat > "${STATE_FILE}" <<'EOF_STATE'

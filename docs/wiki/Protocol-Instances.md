@@ -162,7 +162,7 @@ Authentication accepts 1–128 unique names and passwords. TLS is always enabled
   "server_name": "proxy.example.com",
   "acme": {
     "domain": ["proxy.example.com"],
-    "data_directory": "/root/sing-box-vps/acme",
+    "data_directory": "/root/.sing-box-vps/runtime/acme",
     "disable_http_challenge": false,
     "disable_tls_alpn_challenge": true
   }

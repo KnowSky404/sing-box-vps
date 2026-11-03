@@ -1,5 +1,7 @@
 # sing-box-vps Agent Runbook
 
+统一目录及旧版迁移见 [目录迁移](https://github.com/KnowSky404/sing-box-vps/wiki/Storage-Layout)。先执行 `sbv storage status --json`；迁移或恢复需显式 `--yes`，普通操作不会静默迁移。
+
 This runbook is for AI agents operating the `sing-box-vps` repository and remote VPS hosts. It is written for Hermes, OpenClaw, Codex, Claude Code, and other automation agents.
 
 The additive `protocol_registry` in `sbv agent capabilities --json` describes each managed protocol family, preset, component role, state ID, public Agent ID and capability. The legacy `protocols` object and JSON envelopes retain their existing meanings. Each protocol's read-only `environment` reports current core/version/build-tag prerequisites; it does not prove that a particular instance is configured or reachable. `available=null` remains an instance-readiness placeholder, while `validated.status=not_assessed` means no instance-specific validation evidence is attached. The additive top-level `managed_registry` merges protocol and advanced-component records and marks each with `registry_kind`; existing registry fields remain compatible. Never treat an implemented adapter or an available environment as deployment approval or successful runtime evidence. The legacy alias `vless` continues to mean VLESS REALITY, the Hysteria2 state ID remains `hy2`, standalone SOCKS is registry/menu item 5 with state and Agent ID `socks`, standalone HTTP is registry/menu item 6 with state and Agent ID `http`, Shadowsocks is registry/menu item 7 with state and Agent ID `shadowsocks` plus alias `ss`, Trojan is registry/menu preset 8 with state/Agent ID `trojan` and protocol management via main menu 2, VMess is registry/menu preset 9 with state/Agent ID `vmess` and protocol management via main menu 2, AnyTLS uses state/Agent ID `anytls` with protocol management via main menu 2, structured Hysteria2 uses Agent ID `hysteria2` with protocol management via main menu 2, Snell uses state/Agent ID `snell` with registry preset 11 and protocol management via main menu 2, TUIC uses state/Agent ID `tuic` with registry preset 12 and protocol management via main menu 2, Hysteria v1 uses Agent ID `hysteria` with registry preset 13 and protocol management via main menu 2, NaiveProxy uses Agent ID `naive` with registry preset 14 and protocol management via main menu 2, and ShadowTLS uses state/Agent ID `shadowtls` with protocol management via main menu 2. SOCKS, HTTP, Shadowsocks, VLESS outbound, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy, ShadowTLS, and the typed WireGuard, Tailscale, OpenConnect, and OpenVPN endpoints are covered by the focused evidence recorded below. Current tracked acceptance and compatibility boundaries are recorded in the [completion contract](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/full-protocol-completion.md). The supported sing-box baseline is `1.14.2`; treat `sbv agent capabilities --json` and its `script_version` as the live contract authority. The Shadowsocks-specific section retains its historical `2026090802` evidence.
@@ -72,7 +74,7 @@ Production-changing commands include:
 - Service restart, stop, disable, enable, or reload.
 - Config rewrite, protocol change, Warp change, or firewall change.
 - Uninstall, purge, cleanup, or deletion of runtime files.
-- Overwriting `/usr/local/bin/sbv`, `/root/sing-box-vps/`, or sing-box systemd units.
+- Overwriting `/usr/local/bin/sbv`, `/root/.sing-box-vps/runtime/`, or sing-box systemd units.
 
 Read-only checks may be used to prepare the plan:
 
@@ -80,7 +82,7 @@ Read-only checks may be used to prepare the plan:
 ssh sing-box-prod 'hostname; uptime; command -v sbv || true; command -v sing-box || true'
 ssh sing-box-prod 'systemctl status sing-box --no-pager || true'
 ssh sing-box-prod 'sing-box version || true'
-ssh sing-box-prod 'ls -la /root/sing-box-vps /usr/local/bin/sbv 2>/dev/null || true'
+ssh sing-box-prod 'ls -la /root/.sing-box-vps/runtime /usr/local/bin/sbv 2>/dev/null || true'
 ```
 
 Do not run state-changing production commands until the user approves the plan.
@@ -179,7 +181,7 @@ Post-install checks:
 ```bash
 command -v sbv
 systemctl status sing-box --no-pager
-sing-box check -c /root/sing-box-vps/config.json
+sing-box check -c /root/.sing-box-vps/runtime/config.json
 ```
 
 If the install generates or displays credentials, summarize that credentials were generated without pasting secrets into logs.
@@ -230,7 +232,7 @@ After upgrade:
 
 ```bash
 sing-box version
-sing-box check -c /root/sing-box-vps/config.json
+sing-box check -c /root/.sing-box-vps/runtime/config.json
 systemctl status sing-box --no-pager
 ```
 
@@ -252,8 +254,8 @@ sbv agent check --json
 sbv agent doctor --json
 systemctl status sing-box --no-pager
 journalctl -u sing-box --no-pager -n 200
-sing-box check -c /root/sing-box-vps/config.json
-ls -la /root/sing-box-vps /root/sing-box-vps/protocols
+sing-box check -c /root/.sing-box-vps/runtime/config.json
+ls -la /root/.sing-box-vps/runtime /root/.sing-box-vps/runtime/protocols
 ```
 
 Use the non-interactive Agent interface when automation needs stable output:
@@ -312,7 +314,7 @@ are redacted reads, while `export` and component export are sensitive.
 - `subman-sync --json` pushes eligible nodes to SubMan without prompting. Missing SubMan config is reported as structured JSON. Shadowsocks uses its dedicated integration only for encrypted entries whose network is `["tcp","udp"]`; single-network entries are skipped with `shadowsocks_uri_network_omitted`, while `none` with an empty password is parser-rejected and skipped with `shadowsocks_subman_none_unsupported`. Trojan, VMess and Hysteria2 use dedicated multi-instance, per-user paths: only lossless TLS/system-trust URIs are eligible; plaintext, certificate trust, unrepresentable transport, partial options and oversized URIs retain explicit skipped counts/warnings, including when every user is skipped. Hysteria v1, Snell, AnyTLS, TUIC, NaiveProxy and ShadowTLS are explicitly unsupported and are never sent as SubMan `other`; use outbound JSON from `links`. Same-snapshot mock coverage passed for VMess (`synced=3`, `skipped=1`, `failed=0`) and Hysteria2 (`synced=2`, `skipped=0`, `failed=0`); do not perform real sync without explicit authorization.
 - `update sbv` updates `/usr/local/bin/sbv` from the project main branch.
 - `update sing-box [latest|x.y.z]` updates only the sing-box binary, preserves the current server config byte-for-byte, validates it with `sing-box check`, and restarts the service only after validation passes. The aliases are `sbv update-sbv` and `sbv update-sing-box [latest|x.y.z]`.
-- `upgrade --json 1.14.0 --yes` is the auditable Hermes path: it is mutating and service-impacting, persists a backup under `/root/sing-box-vps-backups/`, preserves `config.json` byte-for-byte, validates before restart, and attempts automatic binary recovery on failure. For an actual change, require `transaction.result_persisted=true`, then retain the referenced root-only `transaction-result.json`; it records `backup_ready` plus the terminal `success`, `rolled_back`, or `rollback_failed` state, and terminal records include `failure_reason` plus `operation_exit_code` when applicable. If the target is already installed, the no-op response instead has `changed=false`, `transaction.status=not_attempted`, `transaction.reason=already_installed`, and no backup or result file. Recovery is complete only when both `rolled_back` and `rollback_ok` are true; `error=rollback_failed` plus `manual_intervention_required=true` is a hard stop. It never silently rewrites configuration for migration. All public Agent protocol IDs include `vless-reality`, `mixed`, `socks`, `http`, `shadowsocks`, `trojan`, `vmess`, `hysteria2`, `hysteria`, `anytls`, `snell`, `tuic`, `naive` and `shadowtls`; the internal Hysteria2 state filename remains `hy2.env`. `instance` mutations for Mixed, standalone SOCKS, HTTP, Shadowsocks, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy and ShadowTLS require `--yes` and exact `--expected-revision`; `migrate shadowsocks`, `migrate vmess`, `migrate hy2`, `migrate hysteria`, `migrate anytls`, `migrate snell`, `migrate tuic`, `migrate naive` and `migrate shadowtls` are unsupported. `component` mutations use the same confirmation/CAS boundary for advanced state and persistent recovery; `component export` is sensitive. `subman-sync` are also mutating; `links`, instance/component export, and SubMan output are sensitive. Fresh installation, legacy general protocol edits, REALITY/QoS writes, host stack/BBR changes, media checks, SubMan settings, and uninstall remain interactive-only; unified WARP/routing writes use the guarded routing API; typed instance/component takeover, rebuild and recovery are guarded JSON mutations and still require operator approval.
+- `upgrade --json 1.14.0 --yes` is the auditable Hermes path: it is mutating and service-impacting, persists a backup under `/root/.sing-box-vps/backups/upgrades/`, preserves `config.json` byte-for-byte, validates before restart, and attempts automatic binary recovery on failure. For an actual change, require `transaction.result_persisted=true`, then retain the referenced root-only `transaction-result.json`; it records `backup_ready` plus the terminal `success`, `rolled_back`, or `rollback_failed` state, and terminal records include `failure_reason` plus `operation_exit_code` when applicable. If the target is already installed, the no-op response instead has `changed=false`, `transaction.status=not_attempted`, `transaction.reason=already_installed`, and no backup or result file. Recovery is complete only when both `rolled_back` and `rollback_ok` are true; `error=rollback_failed` plus `manual_intervention_required=true` is a hard stop. It never silently rewrites configuration for migration. All public Agent protocol IDs include `vless-reality`, `mixed`, `socks`, `http`, `shadowsocks`, `trojan`, `vmess`, `hysteria2`, `hysteria`, `anytls`, `snell`, `tuic`, `naive` and `shadowtls`; the internal Hysteria2 state filename remains `hy2.env`. `instance` mutations for Mixed, standalone SOCKS, HTTP, Shadowsocks, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy and ShadowTLS require `--yes` and exact `--expected-revision`; `migrate shadowsocks`, `migrate vmess`, `migrate hy2`, `migrate hysteria`, `migrate anytls`, `migrate snell`, `migrate tuic`, `migrate naive` and `migrate shadowtls` are unsupported. `component` mutations use the same confirmation/CAS boundary for advanced state and persistent recovery; `component export` is sensitive. `subman-sync` are also mutating; `links`, instance/component export, and SubMan output are sensitive. Fresh installation, legacy general protocol edits, REALITY/QoS writes, host stack/BBR changes, media checks, SubMan settings, and uninstall remain interactive-only; unified WARP/routing writes use the guarded routing API; typed instance/component takeover, rebuild and recovery are guarded JSON mutations and still require operator approval.
 
 ## sing-box 1.14 Compatibility
 
@@ -327,29 +329,29 @@ For the complete single-host rehearsal, including stop conditions, evidence requ
 
 Common paths:
 
-- Runtime directory: `/root/sing-box-vps/`
-- Main config: `/root/sing-box-vps/config.json`
-- Protocol state: `/root/sing-box-vps/protocols/`
-- VLESS REALITY instance state: `/root/sing-box-vps/protocols/vless-reality.d/`
-- Mixed instance state: `/root/sing-box-vps/protocols/instances/mixed.json`
-- Standalone SOCKS instance state: `/root/sing-box-vps/protocols/instances/socks.json` (active marker schema 2, JSON `schema_version: 1`; lifecycle/export/runtime passed the final verification gate)
-- Standalone HTTP instance state: `/root/sing-box-vps/protocols/instances/http.json` (active marker schema 2, JSON `schema_version: 1`; use the typed Agent lifecycle and manual TLS contract below)
-- Shadowsocks instance state: `/root/sing-box-vps/protocols/instances/shadowsocks.json` (active marker schema 2, JSON `schema_version: 1`; use the typed Agent lifecycle and bounded export contract below)
-- Trojan instance state: `/root/sing-box-vps/protocols/instances/trojan.json` (active marker `/root/sing-box-vps/protocols/trojan.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle)
-- VMess instance state: `/root/sing-box-vps/protocols/instances/vmess.json` (active marker `/root/sing-box-vps/protocols/vmess.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle)
-- AnyTLS instance state: `/root/sing-box-vps/protocols/instances/anytls.json` (active marker `/root/sing-box-vps/protocols/anytls.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for manual TLS; legacy ACME/provider configuration retains its existing configuration-update path)
-- Hysteria2 instance state: `/root/sing-box-vps/protocols/instances/hy2.json` (active marker `/root/sing-box-vps/protocols/hy2.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for manual TLS and ACME)
-- Hysteria v1 instance state: `/root/sing-box-vps/protocols/instances/hysteria.json` (active marker `/root/sing-box-vps/protocols/hysteria.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for the manual-TLS QUIC subset)
-- NaiveProxy instance state: `/root/sing-box-vps/protocols/instances/naive.json` (active marker `/root/sing-box-vps/protocols/naive.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for the manual-TLS TCP/UDP subset; outbound requires `with_naive_outbound` and runtime `libcronet.so`)
-- ShadowTLS instance state: `/root/sing-box-vps/protocols/instances/shadowtls.json` (active marker `/root/sing-box-vps/protocols/shadowtls.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for the composite outer/loopback-Mixed subset; no standard URI or SubMan path)
-- Snell instance state: `/root/sing-box-vps/protocols/instances/snell.json` (active marker `/root/sing-box-vps/protocols/snell.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2; typed v5/v6 lifecycle and outbound JSON, no standard URI or SubMan path)
-- TUIC instance state: `/root/sing-box-vps/protocols/instances/tuic.json` (active marker `/root/sing-box-vps/protocols/tuic.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2; typed manual-TLS QUIC lifecycle and outbound JSON, no standard URI or SubMan path)
-- VLESS REALITY QoS state: `/root/sing-box-vps/reality-qos.filters`
+- Runtime directory: `/root/.sing-box-vps/runtime/`
+- Main config: `/root/.sing-box-vps/runtime/config.json`
+- Protocol state: `/root/.sing-box-vps/runtime/protocols/`
+- VLESS REALITY instance state: `/root/.sing-box-vps/runtime/protocols/vless-reality.d/`
+- Mixed instance state: `/root/.sing-box-vps/runtime/protocols/instances/mixed.json`
+- Standalone SOCKS instance state: `/root/.sing-box-vps/runtime/protocols/instances/socks.json` (active marker schema 2, JSON `schema_version: 1`; lifecycle/export/runtime passed the final verification gate)
+- Standalone HTTP instance state: `/root/.sing-box-vps/runtime/protocols/instances/http.json` (active marker schema 2, JSON `schema_version: 1`; use the typed Agent lifecycle and manual TLS contract below)
+- Shadowsocks instance state: `/root/.sing-box-vps/runtime/protocols/instances/shadowsocks.json` (active marker schema 2, JSON `schema_version: 1`; use the typed Agent lifecycle and bounded export contract below)
+- Trojan instance state: `/root/.sing-box-vps/runtime/protocols/instances/trojan.json` (active marker `/root/.sing-box-vps/runtime/protocols/trojan.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle)
+- VMess instance state: `/root/.sing-box-vps/runtime/protocols/instances/vmess.json` (active marker `/root/.sing-box-vps/runtime/protocols/vmess.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle)
+- AnyTLS instance state: `/root/.sing-box-vps/runtime/protocols/instances/anytls.json` (active marker `/root/.sing-box-vps/runtime/protocols/anytls.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for manual TLS; legacy ACME/provider configuration retains its existing configuration-update path)
+- Hysteria2 instance state: `/root/.sing-box-vps/runtime/protocols/instances/hy2.json` (active marker `/root/.sing-box-vps/runtime/protocols/hy2.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for manual TLS and ACME)
+- Hysteria v1 instance state: `/root/.sing-box-vps/runtime/protocols/instances/hysteria.json` (active marker `/root/.sing-box-vps/runtime/protocols/hysteria.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for the manual-TLS QUIC subset)
+- NaiveProxy instance state: `/root/.sing-box-vps/runtime/protocols/instances/naive.json` (active marker `/root/.sing-box-vps/runtime/protocols/naive.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for the manual-TLS TCP/UDP subset; outbound requires `with_naive_outbound` and runtime `libcronet.so`)
+- ShadowTLS instance state: `/root/.sing-box-vps/runtime/protocols/instances/shadowtls.json` (active marker `/root/.sing-box-vps/runtime/protocols/shadowtls.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2 and typed Agent lifecycle for the composite outer/loopback-Mixed subset; no standard URI or SubMan path)
+- Snell instance state: `/root/.sing-box-vps/runtime/protocols/instances/snell.json` (active marker `/root/.sing-box-vps/runtime/protocols/snell.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2; typed v5/v6 lifecycle and outbound JSON, no standard URI or SubMan path)
+- TUIC instance state: `/root/.sing-box-vps/runtime/protocols/instances/tuic.json` (active marker `/root/.sing-box-vps/runtime/protocols/tuic.env`, schema 2; JSON `schema_version: 1`; protocol management via main menu 2; typed manual-TLS QUIC lifecycle and outbound JSON, no standard URI or SubMan path)
+- VLESS REALITY QoS state: `/root/.sing-box-vps/runtime/reality-qos.filters`
 - Node connection materials: `sbv agent links --json`. Trojan exports one full outbound per user, preserving transport and explicit public-certificate/system trust; never exports the private key or disables verification.
-- SubMan config: `/root/sing-box-vps/subman.env`
-- Warp domains: `/root/sing-box-vps/warp-domains.txt`
+- SubMan config: `/root/.sing-box-vps/runtime/subman.env`
+- Warp domains: `/root/.sing-box-vps/runtime/warp-domains.txt`
 - Global command: `/usr/local/bin/sbv`
-- Agent upgrade backups: `/root/sing-box-vps-backups/` (sensitive, root-only)
+- Agent upgrade backups: `/root/.sing-box-vps/backups/upgrades/` (sensitive, root-only)
 - systemd service: `sing-box`
 
 For config problems, do not guess from symptoms alone. Run `sing-box check`, inspect the generated JSON, and compare protocol state files to the runtime config.
@@ -364,9 +366,9 @@ When diagnosing REALITY:
 
 ```bash
 sbv agent nodes --json
-ls -la /root/sing-box-vps/protocols/vless-reality.d 2>/dev/null || true
-cat /root/sing-box-vps/reality-qos.filters 2>/dev/null || true
-sing-box check -c /root/sing-box-vps/config.json
+ls -la /root/.sing-box-vps/runtime/protocols/vless-reality.d 2>/dev/null || true
+cat /root/.sing-box-vps/runtime/reality-qos.filters 2>/dev/null || true
+sing-box check -c /root/.sing-box-vps/runtime/config.json
 ```
 
 Use `nodes --json` for log-safe summaries. Use `links --json` only in trusted contexts because it includes full share links. If QoS or instance membership changes on production, use the production gate before running the interactive menu or guarded service mutations.
@@ -383,7 +385,7 @@ Mixed/SOCKS URI userinfo is percent-encoded, preserving reserved characters and 
 
 Standalone SOCKS is the fifth protocol-registry preset (`state_id=socks`, `agent_id=socks`, menu order 5). It is separate from the Mixed HTTP/SOCKS preset: the server record describes only a SOCKS4/4a/5 inbound, its listen address/port, authentication and outbound policy; it does not add HTTP or TLS. It has no legacy `.env` migration operation; a pre-existing live SOCKS configuration is handled through takeover.
 
-The shared plain-proxy adapter uses `build_socks_inbound_json`, `save_socks_state`, `load_plain_proxy_structured_instance`, and `apply_plain_proxy_instance_change`. Its active marker is schema 2 and its JSON store (`schema_version: 1`) is `/root/sing-box-vps/protocols/instances/socks.json`; there is no `migrate socks` operation. Public Agent mutations are:
+The shared plain-proxy adapter uses `build_socks_inbound_json`, `save_socks_state`, `load_plain_proxy_structured_instance`, and `apply_plain_proxy_instance_change`. Its active marker is schema 2 and its JSON store (`schema_version: 1`) is `/root/.sing-box-vps/runtime/protocols/instances/socks.json`; there is no `migrate socks` operation. Public Agent mutations are:
 
 ```bash
 sbv agent instance create socks --json --yes --expected-revision N --file record.json
@@ -399,7 +401,7 @@ Standalone SOCKS integration passed the final local/runtime verification gate. T
 
 ## Shadowsocks Inbound
 
-Shadowsocks is the registry/menu preset 7 with public protocol and Agent ID `shadowsocks`; `ss` is its public alias. This section is the `2026090802` contract for the integrated surface. Final evidence covers two core targets, all 9 methods in config checks, and four native Bash/Bash 4.2 runtime groups across 1.13.18 and 1.14, each with 7 TCP plus 7 UDP cases, including long-PSK derivation. The Docker rerun recorded 12/12 scenarios, 18/18 TCP probes, `rolled_back` and `success` rollback outcomes, and matching script/container hashes. Its active marker is `CONFIG_SCHEMA_VERSION=2`, while the typed JSON store remains `schema_version: 1` at `/root/sing-box-vps/protocols/instances/shadowsocks.json`. A live pre-existing inbound is handled by takeover; `migrate shadowsocks` is deliberately unsupported and must be rejected rather than routed through the Mixed legacy path.
+Shadowsocks is the registry/menu preset 7 with public protocol and Agent ID `shadowsocks`; `ss` is its public alias. This section is the `2026090802` contract for the integrated surface. Final evidence covers two core targets, all 9 methods in config checks, and four native Bash/Bash 4.2 runtime groups across 1.13.18 and 1.14, each with 7 TCP plus 7 UDP cases, including long-PSK derivation. The Docker rerun recorded 12/12 scenarios, 18/18 TCP probes, `rolled_back` and `success` rollback outcomes, and matching script/container hashes. Its active marker is `CONFIG_SCHEMA_VERSION=2`, while the typed JSON store remains `schema_version: 1` at `/root/.sing-box-vps/runtime/protocols/instances/shadowsocks.json`. A live pre-existing inbound is handled by takeover; `migrate shadowsocks` is deliberately unsupported and must be rejected rather than routed through the Mixed legacy path.
 
 The public Agent lifecycle is revision/CAS guarded and uses the same transaction boundaries as the other typed plain-proxy stores:
 
@@ -528,7 +530,7 @@ Complete client configuration files and device routing preferences are removed.
 The command does not write files. A URI may omit client-specific transport
 options; configure those explicitly in the chosen client.
 
-Use SubMan sync only when `/root/sing-box-vps/subman.env` is configured and the output context is trusted:
+Use SubMan sync only when `/root/.sing-box-vps/runtime/subman.env` is configured and the output context is trusted:
 
 ```bash
 sbv agent subman-sync --json
@@ -592,14 +594,14 @@ Manual recovery is only for `rollback_ok=false`. Validate the returned path pref
 
 ```bash
 systemctl stop sing-box
-backup=/root/sing-box-vps-backups/upgrade-EXACT-DIRECTORY-FROM-JSON
-case "${backup}" in /root/sing-box-vps-backups/upgrade-*) ;; *) exit 1 ;; esac
+backup=/root/.sing-box-vps/backups/upgrades/upgrade-EXACT-DIRECTORY-FROM-JSON
+case "${backup}" in /root/.sing-box-vps/backups/upgrades/upgrade-*) ;; *) exit 1 ;; esac
 (cd "${backup}" && sha256sum -c SHA256SUMS)
 install -m 0755 "${backup}/sing-box" /usr/local/bin/sing-box
 install -m 0644 "${backup}/sing-box.service" /etc/systemd/system/sing-box.service
-install -m 0600 "${backup}/runtime/config.json" /root/sing-box-vps/config.json
+install -m 0600 "${backup}/runtime/config.json" /root/.sing-box-vps/runtime/config.json
 systemctl daemon-reload
-/usr/local/bin/sing-box check -c /root/sing-box-vps/config.json
+/usr/local/bin/sing-box check -c /root/.sing-box-vps/runtime/config.json
 systemctl start sing-box
 systemctl status sing-box --no-pager
 ```

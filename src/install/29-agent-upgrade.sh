@@ -548,7 +548,7 @@ create_agent_upgrade_backup() {
   if ! mkdir -p "${SB_UPGRADE_BACKUP_ROOT}" || ! chmod 700 "${SB_UPGRADE_BACKUP_ROOT}"; then
     return 1
   fi
-  backup_dir=$(mktemp -d "${SB_UPGRADE_BACKUP_ROOT}/upgrade-${current_version}-to-${target_version}.XXXXXXXX") || return 1
+  backup_dir=$(storage_mktemp -d "${SB_UPGRADE_BACKUP_ROOT}/upgrade-${current_version}-to-${target_version}.XXXXXXXX") || return 1
   if ! chmod 700 "${backup_dir}"; then
     rm -rf -- "${backup_dir}"
     return 1
@@ -697,7 +697,7 @@ write_agent_upgrade_transaction_result() {
     --argjson history "${status_history_json}" \
     '$history + [{status: $status, at: $at}]' <<< '{}') || return 1
 
-  temp_file=$(mktemp "${backup_dir}/.transaction-result.XXXXXXXX") || return 1
+  temp_file=$(storage_mktemp "${backup_dir}/.transaction-result.XXXXXXXX") || return 1
   if ! jq -n \
     --arg schema_version "1.0" \
     --arg transaction_id "${transaction_id}" \
@@ -943,7 +943,7 @@ agent_upgrade_cli() {
     return 1
   fi
 
-  if ! operation_log=$(mktemp); then
+  if ! operation_log=$(storage_mktemp); then
     transaction_status="failed"
     transaction_rollback_result="not_attempted"
     if write_agent_upgrade_transaction_result \

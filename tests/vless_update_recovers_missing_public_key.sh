@@ -13,7 +13,8 @@ sed \
   -e "s|readonly SINGBOX_BIN_PATH=\"/usr/local/bin/sing-box\"|readonly SINGBOX_BIN_PATH=\"${TMP_DIR}/bin/sing-box\"|" \
   -e "s|readonly SINGBOX_SERVICE_FILE=\"/etc/systemd/system/sing-box.service\"|readonly SINGBOX_SERVICE_FILE=\"${TMP_DIR}/sing-box.service\"|" \
   -e 's|main \"\$@\"|:|' \
-  "${REPO_ROOT}/install.sh" > "${TESTABLE_INSTALL}"
+  <(bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --source) > "${TESTABLE_INSTALL}"
+bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --isolate "${TESTABLE_INSTALL}"
 
 mkdir -p "${TMP_DIR}/project" "${TMP_DIR}/project/protocols" "${TMP_DIR}/bin"
 
@@ -74,6 +75,10 @@ cat > "${SINGBOX_CONFIG_FILE}" <<'EOF'
 }
 EOF
 
+# A managed installation has an ownership baseline before key recovery.
+cp "${SINGBOX_CONFIG_FILE}" "${SB_PROJECT_DIR}/managed-config.generated.json"
+chmod 600 "${SB_PROJECT_DIR}/managed-config.generated.json"
+
 cat > "${SB_PROTOCOL_INDEX_FILE}" <<'EOF'
 INSTALLED_PROTOCOLS=vless-reality
 PROTOCOL_STATE_VERSION=1
@@ -86,14 +91,14 @@ NODE_NAME=vless_reality_test-host
 PORT=443
 UUID=11111111-1111-1111-1111-111111111111
 SNI=apple.com
-REALITY_PRIVATE_KEY=private-key-from-state
+REALITY_PRIVATE_KEY=private-key-from-config
 REALITY_PUBLIC_KEY=
 SHORT_ID_1=aaaaaaaaaaaaaaaa
 SHORT_ID_2=bbbbbbbbbbbbbbbb
 EOF
 
 cat > "${SB_KEY_FILE}" <<'EOF'
-PRIVATE_KEY=private-key-from-key-file
+PRIVATE_KEY=private-key-from-config
 EOF
 
 generate_keypair_count_file="${TMP_DIR}/generate-keypair.count"

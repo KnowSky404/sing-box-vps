@@ -1,8 +1,8 @@
 verification_scenario_fresh_install_http() {
   local expected_port=1082
-  local config_file=/root/sing-box-vps/config.json
-  local state_file=/root/sing-box-vps/protocols/http.env
-  local store_file=/root/sing-box-vps/protocols/instances/http.json
+  local config_file=/root/.sing-box-vps/runtime/config.json
+  local state_file=/root/.sing-box-vps/runtime/protocols/http.env
+  local store_file=/root/.sing-box-vps/runtime/protocols/instances/http.json
   local empty_artifact_dir
 
   verification_prepare_remote_local_tree
@@ -36,7 +36,7 @@ EOF
     $inbound.listen=="::" and $inbound.listen_port==$port and
     $inbound.users==[{username:"http-user",password:"http-pass"}] and
     ($inbound|has("tls")|not)' "${config_file}" >/dev/null
-  grep -Fqx 'INSTALLED_PROTOCOLS=http' /root/sing-box-vps/protocols/index.env
+  grep -Fqx 'INSTALLED_PROTOCOLS=http' /root/.sing-box-vps/runtime/protocols/index.env
   jq -e '(.inbounds|length)==1 and .inbounds[0].type=="http"' \
     "${config_file}" >/dev/null
   verification_wait_for_service_active sing-box
@@ -58,7 +58,7 @@ EOF
   cp "${config_file}" "${VERIFY_REMOTE_LOCAL_TREE_DIR}/empty-config.json"
   cp "${store_file}" "${VERIFY_REMOTE_LOCAL_TREE_DIR}/empty-store.json"
   # Older installs may have removed the empty index entirely.
-  rm -f /root/sing-box-vps/protocols/index.env
+  rm -f /root/.sing-box-vps/runtime/protocols/index.env
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" > "${empty_artifact_dir}/empty-cancel.txt" 2>&1 <<'EOF'
 1
 0
@@ -68,7 +68,7 @@ EOF
   ! grep -Fq '检测到残缺的现有实例' "${empty_artifact_dir}/empty-cancel.txt"
   cmp "${config_file}" "${VERIFY_REMOTE_LOCAL_TREE_DIR}/empty-config.json"
   cmp "${store_file}" "${VERIFY_REMOTE_LOCAL_TREE_DIR}/empty-store.json"
-  test ! -e /root/sing-box-vps/protocols/index.env
+  test ! -e /root/.sing-box-vps/runtime/protocols/index.env
 
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" > "${empty_artifact_dir}/empty-recreate.txt" 2>&1 <<EOF
 1
@@ -86,7 +86,7 @@ n
 EOF
   ! grep -Fq '检测到残缺的现有实例' "${empty_artifact_dir}/empty-recreate.txt"
   jq -e '.revision==3 and (.instances|length)==1 and .instances[0].id=="main"' "${store_file}" >/dev/null
-  grep -Fqx 'INSTALLED_PROTOCOLS=http' /root/sing-box-vps/protocols/index.env
+  grep -Fqx 'INSTALLED_PROTOCOLS=http' /root/.sing-box-vps/runtime/protocols/index.env
   verification_wait_for_service_active sing-box
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/recreated-sing-box-check.txt" \
     sing-box check -c "${config_file}"

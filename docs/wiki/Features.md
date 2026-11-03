@@ -10,7 +10,7 @@
 - **1.14.x 深度适配**：继续采用 **Endpoint（端点化）** 架构，并适配顶层 ACME `certificate_providers`、可复用 `http_clients`、远程规则集 `http_client` 与 Hysteria2 `disable_chrome_parrot`。
 - **跨版本配置生成**：目标核心为 1.14+ 时生成新版配置结构；显式固定或运行 1.13.x 时继续生成内联 `tls.acme` 与旧版远程规则集结构。受管 shared `http_client` 只在 1.14+ 顶层配置中渲染；接管或重建时会保留可内联表达的 ACME 扩展字段，未注册或发生 drift 的 shared client 会拒绝重写。仅更新二进制时不会重写现有配置。
 - **托管 route rule-set**：高级组件 Agent 现在可用同一 revision/CAS 事务管理 inline、local、remote 三种 `route.rule_set`；inline 只接受有界 matcher rules，local 文件按引用使用且不会随删除清理，remote URL 与 1.14+ named `http_client` 引用受控校验。生成、接管、删除保护和 live drift 检查复用组件生命周期；规则集不作为普通代理节点导出、分享或同步 SubMan，URL 等完整配置只经敏感 component export 返回。
-- **可审计升级**：`upgrade-check` 会报告实例健康度、当前配置校验、配置 SHA-256、1.14 已知弃用项和阻断原因；`upgrade` 只接受固定版本与 `--yes`，先在 `/root/sing-box-vps-backups/` 创建 root-only 备份，并原子维护 `transaction-result.json`（事务 ID、旧/新版本、状态历史、manifest hash 与回滚结果）。目标核心校验失败时尝试恢复旧二进制并返回非零；若恢复未通过最终校验，会明确返回 `rollback_failed` 和人工介入标记。
+- **可审计升级**：`upgrade-check` 会报告实例健康度、当前配置校验、配置 SHA-256、1.14 已知弃用项和阻断原因；`upgrade` 只接受固定版本与 `--yes`，先在 `/root/.sing-box-vps/backups/upgrades/` 创建 root-only 备份，并原子维护 `transaction-result.json`（事务 ID、旧/新版本、状态历史、manifest hash 与回滚结果）。目标核心校验失败时尝试恢复旧二进制并返回非零；若恢复未通过最终校验，会明确返回 `rollback_failed` 和人工介入标记。
 - **多协议支持**：支持 **VLESS + REALITY**、普通 **VLESS**、**Mixed (HTTP/HTTPS/SOCKS)**、**独立 SOCKS**、**独立 HTTP（可选入口 TLS）**、**Shadowsocks**、**Trojan**、**VMess**、**Hysteria2**、**Hysteria v1**、**AnyTLS**、**Snell**、**TUIC**、**NaiveProxy** 与 **ShadowTLS** 十五个入站预设。已有服务新增 HTTP、Shadowsocks、Trojan、VMess、普通 VLESS、Hysteria2、Hysteria v1、AnyTLS、Snell、TUIC、NaiveProxy 或 ShadowTLS 时单独进入共享实例事务，不与其他协议合并追加；全协议目标仍未完成。
 - **Mixed 多实例管理**：schema 2 支持多个稳定 ID/tag、独立监听地址/端口、独立认证和默认实例；Agent 提供 `create`、`replace`、`delete`、`default`、`migrate`、`recover`，交互菜单 2 选择 Mixed 后提供逐实例管理。非回环明文监听需要显式公网暴露确认；跨协议批量删除会拒绝并要求逐实例处理 Mixed。
 - **VLESS REALITY 多实例**：可在安装菜单追加多个 REALITY 实例，每个实例拥有独立端口、ShortID、节点名称、可选上下行限速和实例级出站策略；节点展示和 SubMan 同步会逐实例输出。
@@ -36,6 +36,6 @@
 - **普通 VLESS**：安装菜单 10、主菜单 2 中选择普通 VLESS 管理，协议 ID `vless-plain`（运行时 type 仍为 `vless`），使用独立 schema 2 marker 与 schema 1 JSON 实例库。支持 1–128 个用户、按用户 `flow`、TLS 信任和 none/http/ws/grpc/quic typed transport；节点连接材料和 `vless://` 分享不读取服务器私钥，SubMan 仅同步 TLS 系统信任且 URI 无损可表达的用户。旧 `vless` alias 不会被重新解释，仍表示 VLESS + REALITY。
 - **Hysteria v1**：安装菜单 13、主菜单 2 中选择 Hysteria v1 管理，协议 ID `hysteria`，使用 schema 2 marker 与 schema 1 JSON 实例库。支持 1–128 个唯一 `name`/`auth_str` 用户、必需手工 TLS、`certificate`/`system` 客户端信任、独立上下行带宽、字符串 obfs 与 QUIC 窗口/MTU/并发流参数；服务端只渲染 Hysteria v1 字段，不混入 Hysteria2 的密码或 masquerade。客户端按用户导出完整 outbound JSON，`links` 返回 `hysteria_standard_uri_unavailable`，不执行 SubMan 同步；非回环监听仍须显式确认。
 - **SubMan 同步**：按 SubMan OpenAPI 1.0.0 契约将 VLESS + REALITY、普通 VLESS、Hysteria2、双网络加密 Shadowsocks，以及 TLS 系统信任且 URI 无损表达的 Trojan/VMess 用户幂等推送到节点库；Hysteria v1、Snell、TUIC、NaiveProxy、AnyTLS 与 ShadowTLS 因无标准无损 URI，明确保持 unsupported，不伪装成 `other`。各协议按实例/用户使用稳定外部键，从同一快照生成身份与凭据，无法表达的 TLS、传输、证书信任或 URI 大小条目明确跳过。Hysteria2 的带宽和 masquerade、Hysteria v1 的带宽/obfs/QUIC 选项在单节点 outbound JSON 中保留，标准 URI 无法携带时仅以 warning 披露，不伪造 SubMan 字段。仅在 Workspace 已远端提交并回读验证后报告成功，并识别 revision、稳定错误分类和安全重试提示。集成测试使用 mock，不代表已授权或执行真实同步；全部跳过不报告同步成功。
-- **规范存储**：统一使用 `/root/sing-box-vps/` 存放配置、密钥及持久化参数。
+- **规范存储**：统一使用 `/root/.sing-box-vps/runtime/` 存放配置、密钥及持久化参数。
 
 网络功能集中于主菜单 12：Block CN、WARP/节点出口、AI/流媒体与出口检测。安装节点不修改已有网络策略；旧广告/私网规则仅在明确应用网络设置时清理脚本拥有的部分。完整客户端配置文件导出和客户端分流已移除。

@@ -19,7 +19,7 @@ assert_full_scenario_set() {
     fresh_install_shadowsocks fresh_install_trojan fresh_install_vmess \
     fresh_install_hysteria fresh_install_vless_plain multi_protocol_coexistence \
     upgrade_1_13_to_1_14 upgrade_rollback_1_13_to_1_14 \
-    uninstall_and_reinstall runtime_smoke | LC_ALL=C sort -u)
+    uninstall_and_reinstall storage_migration runtime_smoke | LC_ALL=C sort -u)
   actual=$(LC_ALL=C sort -u "${file}")
   if [[ "${actual}" != "${expected}" ]]; then
     printf 'unexpected full scenario set:\n%s\n' "${actual}" >&2
@@ -31,10 +31,10 @@ REMOTE_PORT_FILE="${TMP_DIR}/remote-port"
 REMOTE_UUID_FILE="${TMP_DIR}/remote-uuid"
 REMOTE_SNI_FILE="${TMP_DIR}/remote-sni"
 REMOTE_ROOT_DIR="${TMP_DIR}/remote-root"
-REMOTE_CONFIG_FILE="${REMOTE_ROOT_DIR}/root/sing-box-vps/config.json"
-REMOTE_LEGACY_KEY_FILE="${REMOTE_ROOT_DIR}/root/sing-box-vps/reality.key"
+REMOTE_CONFIG_FILE="${REMOTE_ROOT_DIR}/root/.sing-box-vps/runtime/config.json"
+REMOTE_LEGACY_KEY_FILE="${REMOTE_ROOT_DIR}/root/.sing-box-vps/runtime/reality.key"
 REMOTE_LEGACY_SERVICE_FILE="${TMP_DIR}/legacy-sing-box.service"
-REMOTE_PROTOCOLS_DIR="${REMOTE_ROOT_DIR}/root/sing-box-vps/protocols"
+REMOTE_PROTOCOLS_DIR="${REMOTE_ROOT_DIR}/root/.sing-box-vps/runtime/protocols"
 REMOTE_CONFIG_PRESENT_FILE="${TMP_DIR}/remote-config-present"
 REMOTE_SERVICE_FILE_PRESENT_FILE="${TMP_DIR}/remote-service-file-present"
 REMOTE_SBV_PRESENT_FILE="${TMP_DIR}/remote-sbv-present"
@@ -286,7 +286,7 @@ cp() {
   local args=("$@")
   local last_index=$(( $# - 1 ))
   local source_index=$(( $# - 2 ))
-  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/index.env" ]]; then
+  if [[ "${args[$last_index]}" == "/root/.sing-box-vps/runtime/protocols/index.env" ]]; then
     args[$last_index]="${REMOTE_INDEX_FILE}"
   fi
   command cp "${args[@]}"
@@ -295,16 +295,16 @@ cp() {
 sed() {
   local args=("$@")
   local last_index=$(( $# - 1 ))
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/vless-reality.env" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/vless-reality.env" ]]; then
     args[$last_index]="${REMOTE_STATE_FILE}"
   fi
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/vless-reality.d/main.env" ]]; then
     args[$last_index]="${REMOTE_INSTANCE_STATE_FILE}"
   fi
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/anytls.env" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/anytls.env" ]]; then
     args[$last_index]="${REMOTE_ANYTLS_STATE_FILE}"
   fi
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/index.env" ]]; then
     args[$last_index]="${REMOTE_INDEX_FILE}"
   fi
   command sed "${args[@]}"
@@ -314,16 +314,16 @@ grep() {
   local args=("$@")
   local last_index=$(( $# - 1 ))
   printf 'grep:%s\n' "$*" >> "${REMOTE_ASSERT_LOG_FILE}"
-  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/vless-reality.env" ]]; then
+  if [[ "${args[$last_index]}" == "/root/.sing-box-vps/runtime/protocols/vless-reality.env" ]]; then
     args[$last_index]="${REMOTE_STATE_FILE}"
   fi
-  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" ]]; then
+  if [[ "${args[$last_index]}" == "/root/.sing-box-vps/runtime/protocols/vless-reality.d/main.env" ]]; then
     args[$last_index]="${REMOTE_INSTANCE_STATE_FILE}"
   fi
-  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/anytls.env" ]]; then
+  if [[ "${args[$last_index]}" == "/root/.sing-box-vps/runtime/protocols/anytls.env" ]]; then
     args[$last_index]="${REMOTE_ANYTLS_STATE_FILE}"
   fi
-  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/index.env" ]]; then
+  if [[ "${args[$last_index]}" == "/root/.sing-box-vps/runtime/protocols/index.env" ]]; then
     args[$last_index]="${REMOTE_INDEX_FILE}"
   fi
   command grep "${args[@]}"
@@ -365,8 +365,8 @@ verification_scenario_fresh_install_vless() {
   printf 'SCENARIO=fresh_install_vless\n'
   verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/index.env" 'INSTALLED_PROTOCOLS=vless-reality'
   printf '%s\n' \
-    'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.d/main.env' \
-    'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.d/main.env' \
+    'grep:-Fqx PORT=443 /root/.sing-box-vps/runtime/protocols/vless-reality.d/main.env' \
+    'grep:-Fqx SNI=www.cloudflare.com /root/.sing-box-vps/runtime/protocols/vless-reality.d/main.env' \
     >> "${REMOTE_ASSERT_LOG_FILE}"
 }
 
@@ -382,7 +382,7 @@ verification_scenario_legacy_takeover_export() {
 verification_scenario_fresh_install_anytls() {
   printf 'SCENARIO=fresh_install_anytls\n'
   verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" 'config ok'
-  printf '%s\n' 'grep:-Fqx DOMAIN=anytls.example.com /root/sing-box-vps/protocols/anytls.env' >> "${REMOTE_ASSERT_LOG_FILE}"
+  printf '%s\n' 'grep:-Fqx DOMAIN=anytls.example.com /root/.sing-box-vps/runtime/protocols/anytls.env' >> "${REMOTE_ASSERT_LOG_FILE}"
   printf '%s\n' 'PASSWORD=anytls-pass' > "${REMOTE_ANYTLS_STATE_FILE}"
 }
 
@@ -462,6 +462,11 @@ verification_scenario_upgrade_rollback_1_13_to_1_14() {
 verification_scenario_uninstall_and_reinstall() {
   printf 'SCENARIO=uninstall_and_reinstall\n'
   verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/fixture.txt" 'uninstall dispatch fixture'
+}
+
+verification_scenario_storage_migration() {
+  printf 'SCENARIO=storage_migration\n'
+  verification_fixture_write_file "${VERIFY_CURRENT_SCENARIO_DIR}/fixture.txt" 'storage migration dispatch fixture'
 }
 
 verification_scenario_runtime_smoke() {
@@ -571,9 +576,9 @@ grep -Fq "${INSTALL_VERSION_LINE}" "${TMP_DIR}/remote-script.sh"
 grep -Fq 'remote_artifacts=extracted' "${run_dir}/summary.log"
 
 # Check grep assertions from scenario execution
-grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.d/main.env' "${REMOTE_ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.d/main.env' "${REMOTE_ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx DOMAIN=anytls.example.com /root/sing-box-vps/protocols/anytls.env' "${REMOTE_ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx PORT=443 /root/.sing-box-vps/runtime/protocols/vless-reality.d/main.env' "${REMOTE_ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/.sing-box-vps/runtime/protocols/vless-reality.d/main.env' "${REMOTE_ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx DOMAIN=anytls.example.com /root/.sing-box-vps/runtime/protocols/anytls.env' "${REMOTE_ASSERT_LOG_FILE}"
 grep -Fqx 'PASSWORD=anytls-pass' "${REMOTE_ANYTLS_STATE_FILE}"
 
 # Check local test routing

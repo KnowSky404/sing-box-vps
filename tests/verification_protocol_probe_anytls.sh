@@ -18,7 +18,7 @@ EXPECTED_CLIENT_PATH_ARTIFACT="${ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-
 ESCAPED_DOMAIN='anytls.example.com ${EDGE_HOST}'
 ESCAPED_PASSWORD='anytls password with spaces & $? []'
 
-mkdir -p "${REMOTE_ROOT}/root/sing-box-vps/protocols"
+mkdir -p "${REMOTE_ROOT}/root/.sing-box-vps/runtime/protocols"
 setup_protocol_probe_command_stubs
 
 write_anytls_state() {
@@ -28,14 +28,14 @@ write_anytls_state() {
   {
     printf 'DOMAIN=%q\n' "${domain}"
     printf 'PASSWORD=%q\n' "${password}"
-  } > "${REMOTE_ROOT}/root/sing-box-vps/protocols/anytls.env"
+  } > "${REMOTE_ROOT}/root/.sing-box-vps/runtime/protocols/anytls.env"
 }
 
 append_anytls_state_assignment() {
   local key=$1
   local value=${2-}
 
-  printf '%s=%q\n' "${key}" "${value}" >> "${REMOTE_ROOT}/root/sing-box-vps/protocols/anytls.env"
+  printf '%s=%q\n' "${key}" "${value}" >> "${REMOTE_ROOT}/root/.sing-box-vps/runtime/protocols/anytls.env"
 }
 
 awk '
@@ -44,7 +44,7 @@ awk '
   }
   { print }
 ' "${REPO_ROOT}/dev/verification/remote/entrypoint.sh" \
-  | perl -0pe 's|/root/sing-box-vps/protocols/anytls.env|'"${REMOTE_ROOT}"'/root/sing-box-vps/protocols/anytls.env|g' \
+  | perl -0pe 's|/root/.sing-box-vps/runtime/protocols/anytls.env|'"${REMOTE_ROOT}"'/root/.sing-box-vps/runtime/protocols/anytls.env|g' \
   > "${TESTABLE_ENTRYPOINT}"
 
 write_anytls_state \
@@ -52,7 +52,7 @@ write_anytls_state \
   "${ESCAPED_PASSWORD}"
 append_anytls_state_assignment 'UNRELATED_STATE_KEY' 'state value that must not leak'
 
-cat > "${REMOTE_ROOT}/root/sing-box-vps/config.json" <<'EOF'
+cat > "${REMOTE_ROOT}/root/.sing-box-vps/runtime/config.json" <<'EOF'
 {
   "inbounds": [
     {
@@ -88,7 +88,7 @@ VERIFY_CURRENT_SCENARIO_DIR="scenarios/\${VERIFY_CURRENT_SCENARIO}"
 
 verification_generate_protocol_probe_client_config \
   anytls \
-  "${REMOTE_ROOT}/root/sing-box-vps/config.json"
+  "${REMOTE_ROOT}/root/.sing-box-vps/runtime/config.json"
 EOF
 chmod +x "${TMP_DIR}/run-anytls-generate.sh"
 
@@ -106,7 +106,7 @@ domain=''
 unset UNRELATED_STATE_KEY || true
 
 verification_load_anytls_probe_state \
-  "${REMOTE_ROOT}/root/sing-box-vps/protocols/anytls.env" \
+  "${REMOTE_ROOT}/root/.sing-box-vps/runtime/protocols/anytls.env" \
   password \
   domain
 
@@ -188,7 +188,7 @@ VERIFY_CURRENT_SCENARIO_DIR="scenarios/\${VERIFY_CURRENT_SCENARIO}"
 
 verification_execute_single_protocol_probe \
   anytls \
-  "${REMOTE_ROOT}/root/sing-box-vps/config.json"
+  "${REMOTE_ROOT}/root/.sing-box-vps/runtime/config.json"
 EOF
 chmod +x "${TMP_DIR}/run-anytls-execute.sh"
 

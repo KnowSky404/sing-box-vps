@@ -40,12 +40,12 @@ awk '
   }
   { print }
 ' "${REPO_ROOT}/dev/verification/remote/entrypoint.sh" \
-  | perl -0pe 's|/root/sing-box-vps/protocols/index.env|'"${INDEX_FILE}"'|g' \
-  | perl -0pe 's|/root/sing-box-vps/protocols/mixed.env|'"${MIXED_STATE_FILE}"'|g' \
-  | perl -0pe 's|/root/sing-box-vps/protocols/http.env|'"${HTTP_STATE_FILE}"'|g' \
-  | perl -0pe 's|/root/sing-box-vps/protocols/instances/http.json|'"${HTTP_STORE_FILE}"'|g' \
-  | perl -0pe 's|/root/sing-box-vps/protocols/shadowsocks.env|'"${SHADOWSOCKS_STATE_FILE}"'|g' \
-  | perl -0pe 's|/root/sing-box-vps/protocols/instances/shadowsocks.json|'"${SHADOWSOCKS_STORE_FILE}"'|g' \
+  | perl -0pe 's|/root/.sing-box-vps/runtime/protocols/index.env|'"${INDEX_FILE}"'|g' \
+  | perl -0pe 's|/root/.sing-box-vps/runtime/protocols/mixed.env|'"${MIXED_STATE_FILE}"'|g' \
+  | perl -0pe 's|/root/.sing-box-vps/runtime/protocols/http.env|'"${HTTP_STATE_FILE}"'|g' \
+  | perl -0pe 's|/root/.sing-box-vps/runtime/protocols/instances/http.json|'"${HTTP_STORE_FILE}"'|g' \
+  | perl -0pe 's|/root/.sing-box-vps/runtime/protocols/shadowsocks.env|'"${SHADOWSOCKS_STATE_FILE}"'|g' \
+  | perl -0pe 's|/root/.sing-box-vps/runtime/protocols/instances/shadowsocks.json|'"${SHADOWSOCKS_STORE_FILE}"'|g' \
   > "${TESTABLE_ENTRYPOINT}"
 
 cat > "${LISTENER_HARNESS}" <<EOF_LISTENER
@@ -176,12 +176,12 @@ if bash "${TMP_DIR}/probe-harness-supported-failure.sh" \
   exit 1
 fi
 
-grep -Fqx 'vless-reality|/root/sing-box-vps/config.json' "${FAILURE_CALLS_FILE}"
-grep -Fqx 'vless-plain|/root/sing-box-vps/config.json' "${FAILURE_CALLS_FILE}"
-grep -Fqx 'mixed|/root/sing-box-vps/config.json' "${FAILURE_CALLS_FILE}"
-grep -Fqx 'hy2|/root/sing-box-vps/config.json' "${FAILURE_CALLS_FILE}"
-grep -Fqx 'anytls|/root/sing-box-vps/config.json' "${FAILURE_CALLS_FILE}"
-grep -Fqx 'shadowsocks|/root/sing-box-vps/config.json' "${FAILURE_CALLS_FILE}"
+grep -Fqx 'vless-reality|/root/.sing-box-vps/runtime/config.json' "${FAILURE_CALLS_FILE}"
+grep -Fqx 'vless-plain|/root/.sing-box-vps/runtime/config.json' "${FAILURE_CALLS_FILE}"
+grep -Fqx 'mixed|/root/.sing-box-vps/runtime/config.json' "${FAILURE_CALLS_FILE}"
+grep -Fqx 'hy2|/root/.sing-box-vps/runtime/config.json' "${FAILURE_CALLS_FILE}"
+grep -Fqx 'anytls|/root/.sing-box-vps/runtime/config.json' "${FAILURE_CALLS_FILE}"
+grep -Fqx 'shadowsocks|/root/.sing-box-vps/runtime/config.json' "${FAILURE_CALLS_FILE}"
 grep -Fqx 'RESULT=success' \
   "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/vless-reality/result.env"
 grep -Fqx 'RESULT=failure' \
@@ -537,12 +537,12 @@ bash "${TMP_DIR}/probe-harness-green.sh" \
   > "${TMP_DIR}/stdout-green.txt" \
   2> "${TMP_DIR}/stderr-green.txt"
 
-grep -Fqx 'vless-reality|/root/sing-box-vps/config.json' "${GREEN_CALLS_FILE}"
-grep -Fqx 'vless-plain|/root/sing-box-vps/config.json' "${GREEN_CALLS_FILE}"
-grep -Fqx 'mixed|/root/sing-box-vps/config.json' "${GREEN_CALLS_FILE}"
-grep -Fqx 'hy2|/root/sing-box-vps/config.json' "${GREEN_CALLS_FILE}"
-grep -Fqx 'anytls|/root/sing-box-vps/config.json' "${GREEN_CALLS_FILE}"
-grep -Fqx 'shadowsocks|/root/sing-box-vps/config.json' "${GREEN_CALLS_FILE}"
+grep -Fqx 'vless-reality|/root/.sing-box-vps/runtime/config.json' "${GREEN_CALLS_FILE}"
+grep -Fqx 'vless-plain|/root/.sing-box-vps/runtime/config.json' "${GREEN_CALLS_FILE}"
+grep -Fqx 'mixed|/root/.sing-box-vps/runtime/config.json' "${GREEN_CALLS_FILE}"
+grep -Fqx 'hy2|/root/.sing-box-vps/runtime/config.json' "${GREEN_CALLS_FILE}"
+grep -Fqx 'anytls|/root/.sing-box-vps/runtime/config.json' "${GREEN_CALLS_FILE}"
+grep -Fqx 'shadowsocks|/root/.sing-box-vps/runtime/config.json' "${GREEN_CALLS_FILE}"
 grep -Fqx 'RESULT=success' \
   "${GREEN_ARTIFACT_DIR}/scenarios/runtime_smoke/protocol-probes/vless-reality/result.env"
 grep -Fqx 'RESULT=success' \

@@ -319,7 +319,7 @@ build_trojan_subman_links_and_warnings_json() (
   [[ $# -ge 1 && $# -le 2 ]] || return 1
   store_file=$(plain_proxy_structured_store_file trojan) || return 1
   snapshot=$(structured_instance_store_snapshot_json trojan "${store_file}") || return 1
-  snapshot_file=$(mktemp) || return 1
+  snapshot_file=$(storage_mktemp) || return 1
   trap 'rm -f -- "${snapshot_file}"' EXIT
   printf '%s\n' "${snapshot}" > "${snapshot_file}" || return 1
   instance_id=${2:-$(jq -er '.default_instance_id' <<< "${snapshot}")}
@@ -401,7 +401,7 @@ push_subman_trojan_instance() {
   # SubMan mutation. Certificate-trust users are intentionally excluded here:
   # their URI is skipped because SubMan cannot carry the custom trust, while
   # their certificate file must not become a sync prerequisite.
-  producer_file=$(mktemp) || { SUBMAN_TROJAN_FAILED=1; return 1; }
+  producer_file=$(storage_mktemp) || { SUBMAN_TROJAN_FAILED=1; return 1; }
   jq --arg id "${instance_id}" \
     '. as $root | ($root.instances | map(select(.id == $id and .client_trust == "system"))) as $instances |
      $root | .default_instance_id=$id | .instances=$instances' <<< "${snapshot}" > "${producer_file}" || {
@@ -422,7 +422,7 @@ push_subman_trojan_instance() {
     fi
   fi
   rm -f -- "${producer_file}" || { SUBMAN_TROJAN_FAILED=1; return 1; }
-  snapshot_file=$(mktemp) || { SUBMAN_TROJAN_FAILED=1; return 1; }
+  snapshot_file=$(storage_mktemp) || { SUBMAN_TROJAN_FAILED=1; return 1; }
   printf '%s\n' "${snapshot}" > "${snapshot_file}" || { rm -f -- "${snapshot_file}"; SUBMAN_TROJAN_FAILED=1; return 1; }
   users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || { rm -f -- "${snapshot_file}"; SUBMAN_TROJAN_FAILED=1; return 1; }
   while IFS= read -r user_name; do
@@ -536,7 +536,7 @@ build_vmess_subman_uri_from_store() (
     return 31
   fi
   tag=$(jq -r --arg user "${user_name}" '"vmess-" + .id + "-user-" + ($user | @base64)' <<< "${instance}") || return 1
-  filtered_file=$(mktemp) || return 1
+  filtered_file=$(storage_mktemp) || return 1
   trap 'rm -f -- "${filtered_file}"' EXIT
   jq -e --arg id "${instance_id}" '.instances |= map(select(.id == $id)) | .default_instance_id=$id' \
     <<< "${snapshot}" > "${filtered_file}" || return 1
@@ -590,7 +590,7 @@ push_subman_vmess_instance() {
   if ! listener_address_is_wildcard "$(jq -r '.listen.address' <<< "${instance}")"; then
     server=$(jq -r '.listen.address' <<< "${instance}") || return 1
   fi
-  snapshot_file=$(mktemp) || { SUBMAN_VMESS_FAILED=1; return 1; }; printf '%s\n' "${snapshot}" > "${snapshot_file}" || { rm -f -- "${snapshot_file}"; SUBMAN_VMESS_FAILED=1; return 1; }
+  snapshot_file=$(storage_mktemp) || { SUBMAN_VMESS_FAILED=1; return 1; }; printf '%s\n' "${snapshot}" > "${snapshot_file}" || { rm -f -- "${snapshot_file}"; SUBMAN_VMESS_FAILED=1; return 1; }
   users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || { rm -f -- "${snapshot_file}"; SUBMAN_VMESS_FAILED=1; return 1; }
   while IFS= read -r user_name; do
     [[ -n "${user_name}" ]] || continue
@@ -693,7 +693,7 @@ build_vless_plain_subman_uri_from_store() (
     return 32
   fi
   tag=$(jq -r --arg user "${user_name}" '"vless-plain-" + .id + "-user-" + ($user | @base64)' <<< "${instance}") || return 1
-  filtered_file=$(mktemp) || return 1
+  filtered_file=$(storage_mktemp) || return 1
   trap 'rm -f -- "${filtered_file}"' EXIT
   jq -e --arg id "${instance_id}" '.instances |= map(select(.id == $id)) | .default_instance_id=$id' <<< "${snapshot}" > "${filtered_file}" || return 1
   outbound=$(build_vless_plain_client_outbounds_from_store "${filtered_file}" "${server}" | select_subman_outbound_by_tag "${tag}") || return 1
@@ -738,7 +738,7 @@ push_subman_vless_plain_instance() {
   if ! listener_address_is_wildcard "$(jq -r '.listen.address' <<< "${instance}")"; then
     server=$(jq -r '.listen.address' <<< "${instance}") || return 1
   fi
-  snapshot_file=$(mktemp) || { SUBMAN_VLESS_PLAIN_FAILED=1; return 1; }; printf '%s\n' "${snapshot}" > "${snapshot_file}" || { rm -f -- "${snapshot_file}"; SUBMAN_VLESS_PLAIN_FAILED=1; return 1; }
+  snapshot_file=$(storage_mktemp) || { SUBMAN_VLESS_PLAIN_FAILED=1; return 1; }; printf '%s\n' "${snapshot}" > "${snapshot_file}" || { rm -f -- "${snapshot_file}"; SUBMAN_VLESS_PLAIN_FAILED=1; return 1; }
   users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || { rm -f -- "${snapshot_file}"; SUBMAN_VLESS_PLAIN_FAILED=1; return 1; }
   while IFS= read -r user_name; do
     [[ -n "${user_name}" ]] || continue
@@ -824,7 +824,7 @@ push_subman_shadowsocks_instance() {
     server=${instance_address}
   fi
   if ! outbounds_text=$(
-    temporary=$(mktemp) || exit 1
+    temporary=$(storage_mktemp) || exit 1
     cleanup_snapshot_file() {
       local cleanup_status=$?
       rm -f -- "${temporary}"
@@ -995,7 +995,7 @@ build_hy2_subman_uri_from_store() (
     return 41
   fi
   tag=$(jq -r --arg user "${user_name}" '"hy2-" + .id + "-user-" + ($user | @base64)' <<< "${instance}") || return 1
-  filtered_file=$(mktemp) || return 1
+  filtered_file=$(storage_mktemp) || return 1
   trap 'rm -f -- "${filtered_file}"' EXIT
   jq -e --arg id "${instance_id}" \
     '.instances |= map(select(.id == $id)) | .default_instance_id=$id' \
@@ -1030,7 +1030,7 @@ build_hy2_subman_links_and_warnings_json() (
   [[ $# -ge 1 && $# -le 2 ]] || return 1
   store_file=$(plain_proxy_structured_store_file hy2) || return 1
   snapshot=$(structured_instance_store_snapshot_json hy2 "${store_file}") || return 1
-  snapshot_file=$(mktemp) || return 1
+  snapshot_file=$(storage_mktemp) || return 1
   trap 'rm -f -- "${snapshot_file}"' EXIT
   printf '%s\n' "${snapshot}" > "${snapshot_file}" || return 1
   instance_id=${2:-$(jq -er '.default_instance_id' <<< "${snapshot}")}
@@ -1115,7 +1115,7 @@ push_subman_hy2_instance() {
   fi
   certificate_path=$(jq -r '.tls.certificate_path // ""' <<< "${instance}") || { SUBMAN_HY2_FAILED=1; return 1; }
   ed25519_warning=$(hy2_ed25519_share_warning_json "${certificate_path}") || { SUBMAN_HY2_FAILED=1; return 1; }
-  snapshot_file=$(mktemp) || { SUBMAN_HY2_FAILED=1; return 1; }
+  snapshot_file=$(storage_mktemp) || { SUBMAN_HY2_FAILED=1; return 1; }
   printf '%s\n' "${snapshot}" > "${snapshot_file}" || { rm -f -- "${snapshot_file}"; SUBMAN_HY2_FAILED=1; return 1; }
   users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || { rm -f -- "${snapshot_file}"; SUBMAN_HY2_FAILED=1; return 1; }
   while IFS= read -r user_name; do
@@ -1233,7 +1233,7 @@ build_subman_raw_for_protocol() (
       node_name_digests=$(structured_node_user_digests "${snapshot}" "${instance_id}") || return 1
     fi
     node_name=$(structured_node_display_name "${protocol}" "${snapshot}" "${instance_id}" "${user_name}" "${address_label}" "${node_name_digests}") || return 1
-    snapshot_file=$(mktemp) || return 1
+    snapshot_file=$(storage_mktemp) || return 1
     trap 'rm -f -- "${snapshot_file}"' EXIT
     printf '%s\n' "${snapshot}" > "${snapshot_file}" || return 1
     case "${protocol}" in
@@ -1469,8 +1469,8 @@ subman_api_request() {
     return 1
   fi
   endpoint="${api_url}${path}"
-  tmp_dir=${TMPDIR:-/tmp}
-  if ! request_dir=$(mktemp -d "${tmp_dir%/}/subman-api.XXXXXX"); then
+  tmp_dir="${SB_DATA_ROOT}/tmp"
+  if ! request_dir=$(storage_mktemp -d "${tmp_dir%/}/subman-api.XXXXXX"); then
     subman_set_client_error "temporary_file_failed" "operator-repair"
     return 1
   fi

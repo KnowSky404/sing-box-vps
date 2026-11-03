@@ -57,8 +57,10 @@ routing_default_outbound_menu "${TMP_DIR}/enable-draft.json" >"${TMP_DIR}/enable
 0
 INPUT
 jq -e '.warp.enabled==true and .warp.mode=="all"' "${TMP_DIR}/enable-draft.json" >/dev/null
-cmp "${TMP_DIR}/before-enable.json" "${SINGBOX_CONFIG_FILE}"
-routing_policy_apply "${TMP_DIR}/enable-draft.json" >"${TMP_DIR}/enable.log" 2>&1
+if cmp -s "${TMP_DIR}/before-enable.json" "${SINGBOX_CONFIG_FILE}"; then
+  printf 'WARP menu change did not immediately publish configuration\n' >&2
+  exit 1
+fi
 jq -e '.route.final=="warp-ep" and any(.endpoints[]; .tag=="warp-ep") and
   any(.outbounds[]; .tag=="manual-direct" and .bind_interface=="lo")' "${SINGBOX_CONFIG_FILE}" >/dev/null
 "${core}" check -c "${SINGBOX_CONFIG_FILE}"
@@ -70,9 +72,11 @@ routing_default_outbound_menu "${TMP_DIR}/disable-draft.json" >"${TMP_DIR}/disab
 0
 INPUT
 jq -e '.warp.enabled==false' "${TMP_DIR}/disable-draft.json" >/dev/null
-cmp "${TMP_DIR}/before-disable.json" "${SINGBOX_CONFIG_FILE}"
-routing_policy_apply "${TMP_DIR}/disable-draft.json" >"${TMP_DIR}/disable.log" 2>&1
+if cmp -s "${TMP_DIR}/before-disable.json" "${SINGBOX_CONFIG_FILE}"; then
+  printf 'native-outbound menu change did not immediately publish configuration\n' >&2
+  exit 1
+fi
 jq -e '.route.final=="direct" and all(.endpoints[]?; .tag!="warp-ep") and
   any(.outbounds[]; .tag=="manual-direct" and .bind_interface=="lo")' "${SINGBOX_CONFIG_FILE}" >/dev/null
 "${core}" check -c "${SINGBOX_CONFIG_FILE}"
-printf 'Legacy global settings: stack and explicit draft/apply preserve manual records and pass real core checks\n'
+printf 'Legacy global settings: stack and immediate routing menu changes preserve manual records and pass real core checks\n'

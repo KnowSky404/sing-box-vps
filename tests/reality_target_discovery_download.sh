@@ -30,7 +30,8 @@ sed -e "s|readonly SB_PROJECT_DIR=\"/root/sing-box-vps\"|readonly SB_PROJECT_DIR
   -e "s|^readonly SB_REALITY_CHECKER_SHA256=.*|readonly SB_REALITY_CHECKER_SHA256=\"${CHECKER_SHA%% *}\"|" \
   -e "s|^readonly SB_REALITY_DISCOVER_SHA256=.*|readonly SB_REALITY_DISCOVER_SHA256=\"${DISCOVER_SHA%% *}\"|" \
   -e "s|^readonly SB_REALITY_SOURCES_SHA256=.*|readonly SB_REALITY_SOURCES_SHA256=\"${SOURCES_SHA%% *}\"|" \
-  "${REPO_ROOT}/install.sh" > "${TMP_DIR}/install.sh"
+  <(bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --source) > "${TMP_DIR}/install.sh"
+bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --isolate "${TMP_DIR}/install.sh"
 
 # A complete preparation must validate all three artifacts without executing
 # either shell or Python top-level code. Each file is downloaded to staging.
@@ -157,6 +158,14 @@ cat > "${TMP_DIR}/cancel-runner.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 source "$1"
+# Force the scheduler window where TERM has already ended a parent before a
+# top-down traversal could inspect its children. Keep the original deadlines.
+kill() {
+  local status=0
+  command kill "$@" || status=$?
+  if [[ "${1:-}" == -TERM ]]; then command sleep 0.03; fi
+  return "${status}"
+}
 rc=0
 run_reality_target_discovery "$2" "$3" scan 192.0.2.1/32 || rc=$?
 exit "${rc}"

@@ -4,7 +4,7 @@ publish_managed_config_candidate() (
   local source_file=${1:-} candidate="" backup_candidate=""
   umask 077
   [[ -f "${source_file}" && ! -L "${source_file}" && -x "${SINGBOX_BIN_PATH}" ]] || return 1
-  candidate=$(mktemp "${SINGBOX_CONFIG_DIR}/.config.json.candidate.XXXXXX") || return $?
+  candidate=$(storage_mktemp "${SINGBOX_CONFIG_DIR}/.config.json.candidate.XXXXXX") || return $?
   trap 'rm -f -- "${candidate}" "${backup_candidate}"' EXIT
   head -c 4194305 -- "${source_file}" > "${candidate}" || return $?
   [[ "$(wc -c < "${candidate}")" -le 4194304 ]] || return 1
@@ -14,7 +14,7 @@ publish_managed_config_candidate() (
   "${SINGBOX_BIN_PATH}" check -c "${candidate}" >&2 || return $?
   chmod 600 "${candidate}" || return $?
   if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
-    backup_candidate=$(mktemp "${SINGBOX_CONFIG_DIR}/.config.json.backup.XXXXXX") || return $?
+    backup_candidate=$(storage_mktemp "${SINGBOX_CONFIG_DIR}/.config.json.backup.XXXXXX") || return $?
     cp -p "${SINGBOX_CONFIG_FILE}" "${backup_candidate}" || return $?
     chmod 600 "${backup_candidate}" || return $?
     mv -f "${backup_candidate}" "${SINGBOX_CONFIG_FILE}.bak" || return $?
@@ -128,20 +128,20 @@ generate_config_candidate() {
   refresh_warp_route_assets || return 1
   ensure_stack_mode_state_loaded || return 1
 
-  inbound_file=$(mktemp) || return 1
-  if ! provider_file=$(mktemp); then
+  inbound_file=$(storage_mktemp) || return 1
+  if ! provider_file=$(storage_mktemp); then
     rm -f "${inbound_file}"
     return 1
   fi
-  if ! protocol_rule_file=$(mktemp); then
+  if ! protocol_rule_file=$(storage_mktemp); then
     rm -f "${inbound_file}" "${provider_file}"
     return 1
   fi
-  if ! instance_outbound_rule_file=$(mktemp); then
+  if ! instance_outbound_rule_file=$(storage_mktemp); then
     rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}"
     return 1
   fi
-  if ! config_candidate=$(mktemp "${SINGBOX_CONFIG_DIR}/.config.json.candidate.XXXXXX"); then
+  if ! config_candidate=$(storage_mktemp "${SINGBOX_CONFIG_DIR}/.config.json.candidate.XXXXXX"); then
     rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
     return 1
   fi
@@ -337,7 +337,7 @@ generate_config_candidate() {
     return 1
   fi
 
-  generated_candidate=$(mktemp "${SINGBOX_CONFIG_DIR}/.generated-config.XXXXXX") || return 1
+  generated_candidate=$(storage_mktemp "${SINGBOX_CONFIG_DIR}/.generated-config.XXXXXX") || return 1
   trap "${exit_cleanup_command}; rm -f -- \"${generated_candidate}\"" EXIT
   if [[ "${routing_policy_active}" == y ]]; then
     # Only protocol-generated traffic tags participate. Component/manual
@@ -490,6 +490,12 @@ perform_singbox_runtime_uninstall() {
   local lib_path expected_hash actual_hash component_state redirect_policy_plan tproxy_policy_plan
 
   managed_uninstall_acquire_guard || return 1
+  storage_system_link_is_owned "${SINGBOX_LINK_PATH}" "${SINGBOX_BIN_PATH}" &&
+    storage_system_link_is_owned "${SINGBOX_SERVICE_LINK_PATH}" "${SINGBOX_SERVICE_FILE}" &&
+    storage_system_link_is_owned "${SB_DATA_ROOT}/bin/libcronet.so" "${SB_DATA_ROOT}/lib/libcronet.so" || {
+      managed_uninstall_report_error '系统核心或服务入口不属于当前安装，未开始卸载。'
+      return 1
+    }
   component_state=$(managed_component_state_json) || {
     managed_uninstall_report_error "高级组件 state 无法安全读取，未开始卸载；请先检查 ${SB_COMPONENT_STATE_FILE}。"
     return 1
@@ -516,6 +522,9 @@ perform_singbox_runtime_uninstall() {
   fi
   systemctl stop sing-box &>/dev/null || true
   systemctl disable sing-box &>/dev/null || true
+  storage_remove_system_link "${SINGBOX_SERVICE_LINK_PATH}" "${SINGBOX_SERVICE_FILE}" || return 1
+  storage_remove_system_link "${SINGBOX_LINK_PATH}" "${SINGBOX_BIN_PATH}" || return 1
+  storage_remove_system_link "${SB_DATA_ROOT}/bin/libcronet.so" "${SB_DATA_ROOT}/lib/libcronet.so" || return 1
   rm -f "${SINGBOX_SERVICE_FILE}"
   systemctl daemon-reload
   rm -f "${SINGBOX_BIN_PATH}"
@@ -537,14 +546,23 @@ perform_singbox_runtime_uninstall() {
     fi
   fi
   managed_uninstall_remove_project_state || return 1
+  [[ ! -L "${SB_DATA_ROOT}/modules" ]] || return 1
+  rm -rf -- "${SB_DATA_ROOT}/modules" || return 1
   print_success "sing-box 服务、二进制和配置目录已彻底删除。"
+  print_info "管理命令、日志及恢复备份仍保留在 ${SB_DATA_ROOT}。"
 }
 
 perform_full_uninstall() {
   managed_uninstall_acquire_guard || return 1
+  storage_system_link_is_owned "${SBV_LINK_PATH}" "${SBV_BIN_PATH}" || {
+    managed_uninstall_report_error '全局 sbv 入口不属于当前安装，未开始卸载。'
+    return 1
+  }
   perform_singbox_runtime_uninstall || return 1
+  storage_remove_system_link "${SBV_LINK_PATH}" "${SBV_BIN_PATH}" || return 1
   rm -f "${SBV_BIN_PATH}"
   print_success "全局命令 sbv 已删除。"
+  print_info "迁移记录、日志与恢复备份保留在 ${SB_DATA_ROOT}；需要时可人工归档后删除。"
 }
 
 uninstall_singbox() {
@@ -564,7 +582,12 @@ uninstall_singbox() {
 uninstall_script() {
   local deleted_cfg="n"
   managed_uninstall_acquire_guard || return 1
-  read -rp "是否同时删除项目配置文件目录 (/root/sing-box-vps)? [y/N]: " del_cfg
+  storage_system_link_is_owned "${SBV_LINK_PATH}" "${SBV_BIN_PATH}" || {
+    managed_uninstall_report_error "全局 sbv 入口不属于当前安装，未开始卸载。"
+    return 1
+  }
+  print_warn "删除配置会影响保留服务的下次启动；默认只删除管理脚本。"
+  read -rp "是否同时删除项目配置文件目录 (${SB_PROJECT_DIR})? [y/N]: " del_cfg
   if [[ "${del_cfg}" =~ ^[Yy]$ ]]; then
     local component_state redirect_policy_plan tproxy_policy_plan
     component_state=$(managed_component_state_json) || {
@@ -597,6 +620,7 @@ uninstall_script() {
   else
     log_info "正在删除全局命令 sbv..."
   fi
+  storage_remove_system_link "${SBV_LINK_PATH}" "${SBV_BIN_PATH}" || return 1
   rm -f "${SBV_BIN_PATH}"
   if [[ "${deleted_cfg}" == "y" ]]; then
     print_success "管理脚本已卸载。"

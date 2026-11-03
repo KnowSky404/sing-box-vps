@@ -40,11 +40,15 @@ append_sbv_update_log() {
   local level=$1
   local message=$2
 
-  if ! mkdir -p "${SB_PROJECT_DIR}" 2>/dev/null; then
+  if ! storage_private_directory "$(dirname -- "${SBV_LOG_FILE}")"; then
     return 1
   fi
+  [[ ! -L "${SBV_LOG_FILE}" &&
+     ( ! -e "${SBV_LOG_FILE}" || -f "${SBV_LOG_FILE}" ) ]] || return 1
+  (umask 077; : >> "${SBV_LOG_FILE}") || return 1
+  chmod 0600 -- "${SBV_LOG_FILE}" || return 1
   printf '[%s] [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${level}" "${message}" \
-    >> "${SBV_LOG_FILE}" 2>/dev/null
+    >> "${SBV_LOG_FILE}"
 }
 
 reset_sbv_update_context() {
@@ -364,13 +368,18 @@ prepare_sbv_update() {
   local lock_status=0
 
   SBV_UPDATE_STAGE='precheck'
+  storage_initialize || {
+    set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'precheck' 'storage_unavailable' \
+      '私有存储目录无法安全初始化' '目录权限或所有者不可信' 1 '检查统一根目录；目标未发生变更'
+    return 1
+  }
   target_dir=$(dirname -- "${SBV_BIN_PATH}")
   SBV_UPDATE_LOCK_PATH="${target_dir}/.sbv-update.lock"
 
   if [[ ! -d "${target_dir}" ]]; then
     set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'precheck' 'target_directory_missing' \
       'sbv 目标目录不存在' "目标目录: ${target_dir}" 1 \
-      '确认 /usr/local/bin 存在且当前用户具有 root 权限'
+      '确认私有 bin 目录存在且当前用户具有 root 权限'
     return 1
   fi
   if [[ -L "${SBV_BIN_PATH}" ]]; then
@@ -423,7 +432,7 @@ prepare_sbv_update() {
     if ! get_sbv_file_metadata "${SBV_BIN_PATH}"; then
       set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'precheck' 'target_metadata_failed' \
         '无法读取现有 sbv 的权限或所有者' "目标路径: ${SBV_BIN_PATH}" 1 \
-        '检查目标文件及 /usr/local/bin 的权限'
+        '检查目标文件及私有 bin 目录的权限'
       return 1
     fi
     if ! SBV_UPDATE_TARGET_HASH=$(calculate_sbv_sha256 "${SBV_BIN_PATH}"); then
@@ -448,13 +457,13 @@ create_sbv_candidate() {
   local target_dir
 
   target_dir=$(dirname -- "${SBV_BIN_PATH}")
-  if ! SBV_UPDATE_CANDIDATE_PATH=$(mktemp "${target_dir}/.sbv-candidate.XXXXXXXXXX"); then
+  if ! SBV_UPDATE_CANDIDATE_PATH=$(storage_mktemp "${target_dir}/.sbv-candidate.XXXXXXXXXX"); then
     set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'stage' 'candidate_create_failed' \
       '无法创建同目录候选文件' "候选目录: ${target_dir}" 1 \
       '检查目标目录的磁盘空间和权限'
     return 1
   fi
-  if ! SBV_UPDATE_CURL_STDERR_PATH=$(mktemp "${target_dir}/.sbv-curl-stderr.XXXXXXXXXX"); then
+  if ! SBV_UPDATE_CURL_STDERR_PATH=$(storage_mktemp "${target_dir}/.sbv-curl-stderr.XXXXXXXXXX"); then
     set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'stage' 'diagnostic_file_create_failed' \
       '无法创建下载诊断文件' "诊断目录: ${target_dir}" 1 \
       '检查目标目录的磁盘空间和权限'
@@ -587,7 +596,7 @@ create_sbv_backup() {
     return 0
   fi
   target_dir=$(dirname -- "${SBV_BIN_PATH}")
-  if ! SBV_UPDATE_BACKUP_PATH=$(mktemp "${target_dir}/.sbv-backup.XXXXXXXXXX"); then
+  if ! SBV_UPDATE_BACKUP_PATH=$(storage_mktemp "${target_dir}/.sbv-backup.XXXXXXXXXX"); then
     set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'backup' 'backup_create_failed' \
       '无法创建受保护的 sbv 备份' "备份目录: ${target_dir}" 1 \
       '检查目标目录的磁盘空间和权限；原脚本未发生变更'
@@ -744,7 +753,7 @@ restore_sbv_backup() {
     return 0
   fi
   [[ -f "${SBV_UPDATE_BACKUP_PATH}" ]] || return 1
-  if ! restore_path=$(mktemp "${target_dir}/.sbv-rollback.XXXXXXXXXX"); then
+  if ! restore_path=$(storage_mktemp "${target_dir}/.sbv-rollback.XXXXXXXXXX"); then
     return 1
   fi
   SBV_UPDATE_ROLLBACK_PATH=${restore_path}
@@ -797,7 +806,7 @@ preserve_sbv_recovery_artifacts() {
   SBV_UPDATE_PRESERVE_ARTIFACTS='true'
   target_dir=$(dirname -- "${SBV_BIN_PATH}")
   if [[ -f "${SBV_BIN_PATH}" ]]; then
-    if retained_candidate=$(mktemp "${target_dir}/.sbv-candidate-retained.XXXXXXXXXX"); then
+    if retained_candidate=$(storage_mktemp "${target_dir}/.sbv-candidate-retained.XXXXXXXXXX"); then
       if cp -p -- "${SBV_BIN_PATH}" "${retained_candidate}" && \
         chmod 0600 "${retained_candidate}" && chown 0:0 "${retained_candidate}"; then
         SBV_UPDATE_CANDIDATE_PATH=${retained_candidate}
@@ -868,6 +877,12 @@ finish_sbv_update_failure() {
 }
 
 finish_sbv_update_success() {
+  if ! storage_publish_system_links sbv; then
+    set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'postcheck' 'system_entry_conflict' \
+      '全局 sbv 入口无法安全发布' '入口可能属于其他安装，已拒绝覆盖' 1 '检查受管链接及迁移状态'
+    finish_sbv_update_failure 1
+    return $?
+  fi
   cleanup_sbv_update
   restore_sbv_update_traps
   if [[ "${SBV_UPDATE_NOOP}" == 'true' ]]; then
@@ -1089,14 +1104,14 @@ download_shell_artifact_atomically() {
   fi
 
   SBV_UPDATE_STAGE='stage'
-  if ! SBV_UPDATE_CANDIDATE_PATH=$(mktemp "${target_dir}/.${target_name}.candidate.XXXXXXXXXX"); then
+  if ! SBV_UPDATE_CANDIDATE_PATH=$(storage_mktemp "${target_dir}/.${target_name}.candidate.XXXXXXXXXX"); then
     set_sbv_update_error "${operation}" 'stage' 'candidate_create_failed' \
       '无法创建可执行 artifact 候选文件' "候选目录: ${target_dir}" 1 \
       '检查目标目录的磁盘空间和权限'
     finish_sbv_artifact_failure 1 || return $?
     return 0
   fi
-  if ! SBV_UPDATE_CURL_STDERR_PATH=$(mktemp "${target_dir}/.${target_name}.stderr.XXXXXXXXXX"); then
+  if ! SBV_UPDATE_CURL_STDERR_PATH=$(storage_mktemp "${target_dir}/.${target_name}.stderr.XXXXXXXXXX"); then
     set_sbv_update_error "${operation}" 'stage' 'diagnostic_file_create_failed' \
       '无法创建下载诊断文件' "诊断目录: ${target_dir}" 1 \
       '检查目标目录的磁盘空间和权限'
@@ -1206,7 +1221,7 @@ download_shell_artifact_atomically() {
       SBV_UPDATE_TARGET_VERSION='unknown'
     fi
     SBV_UPDATE_CURRENT_VERSION=${SBV_UPDATE_TARGET_VERSION}
-    if ! SBV_UPDATE_BACKUP_PATH=$(mktemp "${target_dir}/.${target_name}.backup.XXXXXXXXXX"); then
+    if ! SBV_UPDATE_BACKUP_PATH=$(storage_mktemp "${target_dir}/.${target_name}.backup.XXXXXXXXXX"); then
       set_sbv_update_error "${operation}" 'backup' 'backup_create_failed' \
         '无法创建现有 artifact 的受保护备份' "目标目录: ${target_dir}" 1 \
         '原文件未发生变更；检查目标目录的权限'
@@ -1335,7 +1350,7 @@ download_shell_artifact_atomically() {
 
   SBV_UPDATE_ROLLBACK_ATTEMPTED='true'
   if [[ "${target_existed}" == 'true' ]]; then
-    if SBV_UPDATE_ROLLBACK_PATH=$(mktemp "${target_dir}/.${target_name}.rollback.XXXXXXXXXX") && \
+    if SBV_UPDATE_ROLLBACK_PATH=$(storage_mktemp "${target_dir}/.${target_name}.rollback.XXXXXXXXXX") && \
       cp -p -- "${SBV_UPDATE_BACKUP_PATH}" "${SBV_UPDATE_ROLLBACK_PATH}" && \
       chmod "${old_mode}" "${SBV_UPDATE_ROLLBACK_PATH}" && \
       chown "${old_uid}:${old_gid}" "${SBV_UPDATE_ROLLBACK_PATH}" && \
@@ -1370,7 +1385,7 @@ download_shell_artifact_atomically() {
   fi
 
   if [[ -f "${target}" && ! -L "${target}" ]]; then
-    if retained_candidate=$(mktemp "${target_dir}/.${target_name}.candidate-retained.XXXXXXXXXX") && \
+    if retained_candidate=$(storage_mktemp "${target_dir}/.${target_name}.candidate-retained.XXXXXXXXXX") && \
       cp -p -- "${target}" "${retained_candidate}" && \
       chmod 0600 "${retained_candidate}" && chown 0:0 "${retained_candidate}"; then
       SBV_UPDATE_CANDIDATE_PATH=${retained_candidate}
@@ -1478,14 +1493,22 @@ reload_sbv_menu_after_update() {
 ensure_sbv_command_installed() {
   local source_file=$0
   local result_status=0
+  storage_initialize || return 1
+
+  if [[ "${source_file}" == "${SBV_LINK_PATH}" && -L "${source_file}" &&
+        "$(readlink -- "${source_file}")" == "${SBV_BIN_PATH}" ]]; then
+    source_file=${SBV_BIN_PATH}
+  fi
 
   if [[ "${source_file}" == "${SBV_BIN_PATH}" || "${source_file}" == 'sbv' ]]; then
-    return 0
+    storage_publish_system_links sbv
+    return $?
   fi
 
   if [[ -f "${source_file}" && ! -L "${source_file}" ]]; then
     log_info "正在同步全局命令: sbv..."
     if sbv_update_transaction 'ensure_sbv_local' file "${source_file}"; then
+      storage_publish_system_links sbv || return 1
       log_success "全局命令 sbv 已同步为当前脚本版本。"
       return 0
     else
@@ -1496,6 +1519,7 @@ ensure_sbv_command_installed() {
 
   log_info "正在安装全局命令: sbv..."
   if sbv_update_transaction 'ensure_sbv_remote' url "${SBV_UPDATE_URL}"; then
+    storage_publish_system_links sbv || return 1
     log_success "全局命令 sbv 安装成功。"
     return 0
   else

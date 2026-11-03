@@ -23,8 +23,8 @@ awk '
   }
   { print }
 ' "${REPO_ROOT}/dev/verification/remote/entrypoint.sh" \
-  | perl -0pe 's|/root/sing-box-vps/protocols/vless-plain.env|'"${STATE_FILE}"'|g' \
-  | perl -0pe 's|/root/sing-box-vps/protocols/instances/vless-plain.json|'"${STORE_FILE}"'|g' \
+  | perl -0pe 's|/root/.sing-box-vps/runtime/protocols/vless-plain.env|'"${STATE_FILE}"'|g' \
+  | perl -0pe 's|/root/.sing-box-vps/runtime/protocols/instances/vless-plain.json|'"${STORE_FILE}"'|g' \
   > "${ENTRYPOINT_FILE}"
 
 cat > "${STATE_FILE}" <<'EOF_STATE'

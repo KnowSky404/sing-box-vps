@@ -20,7 +20,8 @@ setup_menu_test_env() {
     s|readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"|readonly SINGBOX_BIN_PATH="'"${TMP_DIR}"'/bin/sing-box"|;
     s|readonly SBV_BIN_PATH="/usr/local/bin/sbv"|readonly SBV_BIN_PATH="'"${TMP_DIR}"'/bin/sbv"|;
     s|readonly SINGBOX_SERVICE_FILE="/etc/systemd/system/sing-box.service"|readonly SINGBOX_SERVICE_FILE="'"${TMP_DIR}"'/sing-box.service"|;
-  ' "${REPO_ROOT}/install.sh" > "${TESTABLE_INSTALL}"
+  ' <(bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --source) > "${TESTABLE_INSTALL}"
+  bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --isolate "${TESTABLE_INSTALL}"
 
   if ! grep -Fq "readonly SB_PROJECT_DIR=\"${TMP_DIR}/project\"" "${TESTABLE_INSTALL}"; then
     printf 'failed to rewrite SB_PROJECT_DIR in %s\n' "${TESTABLE_INSTALL}" >&2

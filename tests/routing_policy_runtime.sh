@@ -8,7 +8,7 @@ if [[ "${SBV_ROUTING_RUNTIME_ACCEPTANCE:-}" != 1 || ! -f /.dockerenv ||
   printf 'routing runtime requires its explicitly prepared disposable systemd container\n' >&2
   exit 64
 fi
-if [[ -e /root/sing-box-vps || -e /etc/systemd/system/sing-box.service ||
+if [[ -e /root/.sing-box-vps/runtime || -e /etc/systemd/system/sing-box.service ||
       ! -x /usr/local/bin/sing-box || ! -f /tmp/install.sh ]] ||
    command systemctl cat sing-box >/dev/null 2>&1; then
   printf 'routing runtime refuses an existing or unprepared installation\n' >&2
@@ -26,8 +26,8 @@ runtime_cleanup() {
     wait "${pid}" || { [[ "$?" == 143 ]] || result=1; }
   done
   command journalctl -u sing-box --no-pager > "${ARTIFACT_DIR}/service-journal.txt" || result=1
-  if [[ -d /root/sing-box-vps ]]; then
-    cp -a /root/sing-box-vps "${ARTIFACT_DIR}/project-final" || result=1
+  if [[ -d /root/.sing-box-vps/runtime ]]; then
+    cp -a /root/.sing-box-vps/runtime "${ARTIFACT_DIR}/project-final" || result=1
   fi
   printf 'status=%s\nlast_phase=%s\n' "${result}" "${RUNTIME_PHASE}" > "${ARTIFACT_DIR}/result.env"
   exit "${result}"
@@ -38,6 +38,8 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 stage() { RUNTIME_PHASE=$1; printf '[runtime] %s\n' "$1"; }
 source /tmp/install.sh
+source "$(dirname "${BASH_SOURCE[0]}")/prepare_storage_runtime_helper.sh"
+prepare_storage_runtime_core
 /usr/local/bin/sing-box version > "${ARTIFACT_DIR}/core-version.txt"
 grep -Fxq 'sing-box version 1.14.2' "${ARTIFACT_DIR}/core-version.txt"
 sha256sum /tmp/install.sh /usr/local/bin/sing-box "${BASH_SOURCE[0]}" > "${ARTIFACT_DIR}/sources.sha256"

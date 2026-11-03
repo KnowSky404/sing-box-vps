@@ -9,7 +9,8 @@ trap 'rm -rf "${TEST_DIR}"' EXIT
 
 sed -e "s|readonly SB_PROJECT_DIR=\"/root/sing-box-vps\"|readonly SB_PROJECT_DIR=\"${TEST_DIR}/project\"|" \
   -e "s|readonly SINGBOX_BIN_PATH=\"/usr/local/bin/sing-box\"|readonly SINGBOX_BIN_PATH=\"${TEST_DIR}/sing-box\"|" \
-  "${REPO_ROOT}/install.sh" > "${TEST_DIR}/install.sh"
+  <(bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --source) > "${TEST_DIR}/install.sh"
+bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --isolate "${TEST_DIR}/install.sh"
 source "${TEST_DIR}/install.sh"
 
 registry=$(protocol_registry_json)

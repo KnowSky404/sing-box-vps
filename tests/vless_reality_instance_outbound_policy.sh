@@ -13,7 +13,8 @@ sed \
   -e "s|readonly SINGBOX_BIN_PATH=\"/usr/local/bin/sing-box\"|readonly SINGBOX_BIN_PATH=\"${TMP_DIR}/bin/sing-box\"|" \
   -e "s|readonly SINGBOX_SERVICE_FILE=\"/etc/systemd/system/sing-box.service\"|readonly SINGBOX_SERVICE_FILE=\"${TMP_DIR}/sing-box.service\"|" \
   -e 's|main "\$@"|:|' \
-  "${REPO_ROOT}/install.sh" > "${TESTABLE_INSTALL}"
+  <(bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --source) > "${TESTABLE_INSTALL}"
+bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --isolate "${TESTABLE_INSTALL}"
 
 mkdir -p "${TMP_DIR}/project/protocols/vless-reality.d" "${TMP_DIR}/bin"
 
@@ -46,7 +47,7 @@ register_warp() {
   cat > "${SB_WARP_KEY_FILE}" <<'EOF'
 WARP_ID=test
 WARP_TOKEN=test
-WARP_PRIV_KEY=warp-private-key
+WARP_PRIV_KEY=8DcUSmPINFuK1xkA1TncAJh46Ra8Mq8o42XL3b+rT2s=
 WARP_PUB_KEY=warp-public-key
 WARP_V4=172.16.0.2
 WARP_V6=2606:4700:110:8f00::2
@@ -104,6 +105,11 @@ RATE_LIMIT_UP_MBPS=
 RATE_LIMIT_DOWN_MBPS=10
 OUTBOUND_POLICY=warp
 EOF
+
+# Instance rendering consumes explicitly prepared credentials without registration.
+register_warp
+chmod 600 "${SB_WARP_KEY_FILE}"
+register_warp() { printf 'unexpected account registration\n' >&2; return 98; }
 
 SB_ENABLE_WARP="y"
 SB_WARP_ROUTE_MODE="selective"

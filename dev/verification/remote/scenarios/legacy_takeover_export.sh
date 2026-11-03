@@ -1,14 +1,14 @@
 verification_scenario_legacy_takeover_export() {
-  local links_path
-  local legacy_config_path=${VERIFY_LEGACY_CONFIG_FILE:-/root/sing-box-vps/config.json}
-  local legacy_key_path=${VERIFY_LEGACY_KEY_FILE:-/root/sing-box-vps/reality.key}
+  local links_path managed_service_path
+  local legacy_config_path=${VERIFY_LEGACY_CONFIG_FILE:-/root/.sing-box-vps/runtime/config.json}
+  local legacy_key_path=${VERIFY_LEGACY_KEY_FILE:-/root/.sing-box-vps/runtime/reality.key}
   local legacy_service_path=${VERIFY_LEGACY_SERVICE_FILE:-/etc/systemd/system/sing-box.service}
   local expected_port=443
   local expected_sni="www.cloudflare.com"
   local expected_uuid="11111111-1111-1111-1111-111111111111"
   local expected_private_key="IEwVBb_qLcYr1L_CTI5exTWbT7qRgZnr43xP8nC0dkM"
   local expected_public_key="u9nRBiDRTmyxLQLkiVq-kYFPhRyeZkSo8p9c7s8Dfjo"
-  local instance_state_file=/root/sing-box-vps/protocols/vless-reality.d/imported-1.env
+  local instance_state_file=/root/.sing-box-vps/runtime/protocols/vless-reality.d/imported-1.env
 
   verification_prepare_remote_local_tree
   trap 'verification_cleanup_remote_local_tree; trap - RETURN' RETURN
@@ -55,15 +55,17 @@ EOF
 PRIVATE_KEY=IEwVBb_qLcYr1L_CTI5exTWbT7qRgZnr43xP8nC0dkM
 PUBLIC_KEY=u9nRBiDRTmyxLQLkiVq-kYFPhRyeZkSo8p9c7s8Dfjo
 EOF
-  mkdir -p "$(dirname "${legacy_service_path}")"
-  cat > "${legacy_service_path}" <<'EOF'
+  managed_service_path="${legacy_config_path%/runtime/config.json}/systemd/sing-box.service"
+  mkdir -p "$(dirname "${legacy_service_path}")" "$(dirname "${managed_service_path}")"
+  ln -s "${managed_service_path}" "${legacy_service_path}"
+  cat > "${managed_service_path}" <<'EOF'
 [Unit]
 Description=sing-box
 EOF
 
   test -f "${legacy_config_path}"
   test -f "${legacy_service_path}"
-  test ! -f /root/sing-box-vps/protocols/index.env
+  test ! -f /root/.sing-box-vps/runtime/protocols/index.env
 
   bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" <<'EOF'
 1
@@ -71,22 +73,22 @@ EOF
 0
 EOF
 
-  test -f /root/sing-box-vps/protocols/index.env
-  test -f /root/sing-box-vps/protocols/vless-reality.env
+  test -f /root/.sing-box-vps/runtime/protocols/index.env
+  test -f /root/.sing-box-vps/runtime/protocols/vless-reality.env
   test -f "${instance_state_file}"
-  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality' /root/sing-box-vps/protocols/index.env
-  grep -Fqx 'CONFIG_SCHEMA_VERSION=2' /root/sing-box-vps/protocols/vless-reality.env
-  grep -Fqx 'DEFAULT_INSTANCE_ID=imported-1' /root/sing-box-vps/protocols/vless-reality.env
-  grep -Fqx 'INSTANCE_IDS=imported-1' /root/sing-box-vps/protocols/vless-reality.env
+  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality' /root/.sing-box-vps/runtime/protocols/index.env
+  grep -Fqx 'CONFIG_SCHEMA_VERSION=2' /root/.sing-box-vps/runtime/protocols/vless-reality.env
+  grep -Fqx 'DEFAULT_INSTANCE_ID=imported-1' /root/.sing-box-vps/runtime/protocols/vless-reality.env
+  grep -Fqx 'INSTANCE_IDS=imported-1' /root/.sing-box-vps/runtime/protocols/vless-reality.env
   grep -Fqx "PORT=${expected_port}" "${instance_state_file}"
   grep -Fqx "UUID=${expected_uuid}" "${instance_state_file}"
   grep -Fqx "SNI=${expected_sni}" "${instance_state_file}"
-  grep -Fqx "REALITY_PRIVATE_KEY=${expected_private_key}" /root/sing-box-vps/protocols/vless-reality.env
-  grep -Fqx "REALITY_PUBLIC_KEY=${expected_public_key}" /root/sing-box-vps/protocols/vless-reality.env
+  grep -Fqx "REALITY_PRIVATE_KEY=${expected_private_key}" /root/.sing-box-vps/runtime/protocols/vless-reality.env
+  grep -Fqx "REALITY_PUBLIC_KEY=${expected_public_key}" /root/.sing-box-vps/runtime/protocols/vless-reality.env
   jq -e '.inbounds[] | select(.type == "vless" and .tag == "legacy-vless-in") | .tls.enabled == true and .tls.reality.enabled == true and .tls.reality.handshake.server == "www.cloudflare.com" and .tls.reality.handshake.server_port == 443' \
     "${legacy_config_path}" >/dev/null
   verification_wait_for_service_active sing-box
-  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" sing-box check -c /root/sing-box-vps/config.json
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" sing-box check -c /root/.sing-box-vps/runtime/config.json
 
   links_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/node-links.json")
   bash /usr/local/bin/sbv agent links --json > "${links_path}"

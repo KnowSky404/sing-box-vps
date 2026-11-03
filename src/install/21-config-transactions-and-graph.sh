@@ -2,7 +2,7 @@
 managed_state_snapshot_is_valid() {
   local snapshot_dir=$1
 
-  [[ "${snapshot_dir}" == /tmp/sing-box-vps-state.* ||
+  [[ "${snapshot_dir}" == "${SB_DATA_ROOT}/tmp/"sing-box-vps-state.* ||
      "${snapshot_dir}" == "${SB_PROJECT_DIR}.instance-write.lock/snapshot" ||
      "${snapshot_dir}" == "${SB_COMPONENT_TRANSACTION_DIR}/snapshot" ||
      "${snapshot_dir}" == "${SB_ROUTING_TRANSACTION_DIR}/snapshot" ||
@@ -22,7 +22,7 @@ persist_file_backup() {
   backup_dir=$(dirname "${backup_file}")
   backup_name=$(basename "${backup_file}")
   mkdir -p "${backup_dir}" || return 1
-  backup_candidate=$(mktemp "${backup_dir}/.${backup_name}.candidate.XXXXXX") || return 1
+  backup_candidate=$(storage_mktemp "${backup_dir}/.${backup_name}.candidate.XXXXXX") || return 1
   if ! cp -p "${source_file}" "${backup_candidate}" ||
      ! chmod 600 "${backup_candidate}" ||
      ! mv -f "${backup_candidate}" "${backup_file}"; then
@@ -48,7 +48,7 @@ create_managed_state_snapshot() {
       printf '[ERROR] 存在未完成的实例事务；先执行 instance recover，未开始其他写操作。\n' >&2
       return 1
     fi
-    snapshot_dir=$(mktemp -d /tmp/sing-box-vps-state.XXXXXX) || return 1
+    snapshot_dir=$(storage_mktemp -d "${SB_DATA_ROOT}/tmp/sing-box-vps-state.XXXXXX") || return 1
   fi
   chmod 700 "${snapshot_dir}" || {
     rm -rf "${snapshot_dir}"
@@ -98,7 +98,7 @@ restore_managed_state_snapshot() {
   project_base=$(basename "${SB_PROJECT_DIR}")
   mkdir -p "${project_parent}" || return 1
 
-  restore_candidate=$(mktemp -d "${project_parent}/.${project_base}.restore.XXXXXX") || return 1
+  restore_candidate=$(storage_mktemp -d "${project_parent}/.${project_base}.restore.XXXXXX") || return 1
   if [[ -f "${snapshot_dir}/project.existed" ]]; then
     if ! cp -a "${snapshot_dir}/project/." "${restore_candidate}/"; then
       rm -rf "${restore_candidate}"
@@ -106,7 +106,7 @@ restore_managed_state_snapshot() {
     fi
   fi
 
-  restore_previous=$(mktemp -d "${project_parent}/.${project_base}.previous.XXXXXX") || {
+  restore_previous=$(storage_mktemp -d "${project_parent}/.${project_base}.previous.XXXXXX") || {
     rm -rf "${restore_candidate}"
     return 1
   }

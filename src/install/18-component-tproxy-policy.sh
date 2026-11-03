@@ -435,7 +435,7 @@ managed_component_tproxy_policy_journal_write() {
   managed_component_tproxy_host_policy_plan_validate_json "${after}" || return 1
   payload=$(jq -cn --argjson before "${before}" --argjson after "${after}" \
     '{schema_version:1,status:"prepared",before:$before,after:$after}') || return 1
-  candidate=$(mktemp "${journal_file%/*}/.component-tproxy-policy.XXXXXX") || return 1
+  candidate=$(storage_mktemp "${journal_file%/*}/.component-tproxy-policy.XXXXXX") || return 1
   if ! printf '%s\n' "${payload}" > "${candidate}" || ! chmod 600 "${candidate}" ||
      ! mv -f -- "${candidate}" "${journal_file}"; then
     rm -f -- "${candidate}"
@@ -448,7 +448,7 @@ managed_component_tproxy_policy_journal_set_status() {
   local journal_file=${1:-} status=${2:-} candidate
   managed_component_tproxy_policy_journal_validate "${journal_file}" || return 1
   [[ "${status}" =~ ^(prepared|applying|applied|rolling_back|rolled_back)$ ]] || return 1
-  candidate=$(mktemp "${journal_file%/*}/.component-tproxy-policy.XXXXXX") || return 1
+  candidate=$(storage_mktemp "${journal_file%/*}/.component-tproxy-policy.XXXXXX") || return 1
   if ! jq --arg status "${status}" '.status=$status' "${journal_file}" > "${candidate}" ||
      ! chmod 600 "${candidate}" || ! mv -f -- "${candidate}" "${journal_file}"; then
     rm -f -- "${candidate}"

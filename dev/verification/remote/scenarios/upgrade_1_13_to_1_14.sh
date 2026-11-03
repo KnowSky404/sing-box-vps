@@ -34,10 +34,10 @@ EOF
 
   verification_mark_step upgrade_legacy_1_13_installed
   grep -Fqx 'sing-box version 1.13.18' <(sing-box version)
-  test -f /root/sing-box-vps/config.json
+  test -f /root/.sing-box-vps/runtime/config.json
   verification_capture_best_effort_command "${VERIFY_CURRENT_SCENARIO_DIR}/legacy-sbv-version.txt" \
     grep -m1 '^readonly SCRIPT_VERSION=' /usr/local/bin/sbv
-  install -m 0755 "${VERIFY_REMOTE_INSTALL_SCRIPT}" /usr/local/bin/sbv
+  install -m 0755 "${VERIFY_REMOTE_INSTALL_SCRIPT}" /root/.sing-box-vps/bin/sbv
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/current-sbv-version.txt" \
     grep -m1 '^readonly SCRIPT_VERSION=' /usr/local/bin/sbv
   sbv agent capabilities --json \
@@ -46,12 +46,12 @@ EOF
     "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/capabilities.json")" >/dev/null
   verification_mark_step upgrade_current_agent_surface_installed
 
-  before_hash=$(sha256sum /root/sing-box-vps/config.json | awk '{print $1}')
+  before_hash=$(sha256sum /root/.sing-box-vps/runtime/config.json | awk '{print $1}')
   before_service_hash=$(sha256sum /etc/systemd/system/sing-box.service | awk '{print $1}')
   verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/config.before.sha256" "${before_hash}"
   verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/service.before.sha256" "${before_service_hash}"
   verification_capture_best_effort_command "${VERIFY_CURRENT_SCENARIO_DIR}/before.version.txt" sing-box version
-  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/before.check.txt" sing-box check -c /root/sing-box-vps/config.json
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/before.check.txt" sing-box check -c /root/.sing-box-vps/runtime/config.json
 
   preflight_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/upgrade-check.json")
   sbv agent upgrade-check --json 1.14.2 > "${preflight_path}"
@@ -83,19 +83,19 @@ EOF
   ' "${upgrade_path}" >/dev/null
   verification_mark_step upgrade_applied
 
-  after_hash=$(sha256sum /root/sing-box-vps/config.json | awk '{print $1}')
+  after_hash=$(sha256sum /root/.sing-box-vps/runtime/config.json | awk '{print $1}')
   after_service_hash=$(sha256sum /etc/systemd/system/sing-box.service | awk '{print $1}')
   verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/config.after.sha256" "${after_hash}"
   verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/service.after.sha256" "${after_service_hash}"
   [[ "${after_hash}" == "${before_hash}" ]]
   [[ "${after_service_hash}" == "${before_service_hash}" ]]
   grep -Fqx 'sing-box version 1.14.2' <(sing-box version)
-  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/after.check.txt" sing-box check -c /root/sing-box-vps/config.json
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/after.check.txt" sing-box check -c /root/.sing-box-vps/runtime/config.json
   verification_wait_for_service_active sing-box
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/systemctl.status.txt" systemctl status sing-box --no-pager
   backup_path=$(jq -r '.backup' "${upgrade_path}")
   case "${backup_path}" in
-    /root/sing-box-vps-backups/upgrade-*) ;;
+    /root/.sing-box-vps/backups/upgrades/upgrade-*) ;;
     *) return 1 ;;
   esac
   transaction_result_path=$(jq -r '.transaction.result_path' "${upgrade_path}")

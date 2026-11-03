@@ -262,7 +262,7 @@ managed_listener_plan() (
     printf '[ERROR] listener_resources: unreadable_config\n' >&2; return 1;
   }
   # No credentials in argv, no unbounded reads and no reread after validation.
-  snapshot=$(mktemp /tmp/sbv-listener-plan.XXXXXX) || return 1
+  snapshot=$(storage_mktemp "${SB_DATA_ROOT}/tmp/sbv-listener-plan.XXXXXX") || return 1
   trap 'if ! rm -f -- "${snapshot}"; then printf "[ERROR] listener_resources: cleanup_failed\n" >&2; fi' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
@@ -396,7 +396,7 @@ instance_firewall_write_json_atomic() {
   [[ -d "${destination_dir}" && ! -L "${destination_dir}" ]] || return 1
   [[ ! -e "${destination}" || ! -L "${destination}" ]] || return 1
   jq -e . >/dev/null 2>&1 <<< "${payload}" || return 1
-  candidate=$(mktemp "${destination_dir}/.$(basename -- "${destination}").candidate.XXXXXX") || return 1
+  candidate=$(storage_mktemp "${destination_dir}/.$(basename -- "${destination}").candidate.XXXXXX") || return 1
   if ! printf '%s\n' "${payload}" > "${candidate}" ||
      ! chmod 600 "${candidate}" ||
      ! mv -f -- "${candidate}" "${destination}"; then
@@ -525,7 +525,7 @@ open_scoped_protocol_ports() (
   trap 'firewall_reconcile_interrupt 130' INT
   trap 'firewall_reconcile_interrupt 143' TERM
   trap 'firewall_reconcile_interrupt 129' HUP
-  journal=$(mktemp "${SB_PROJECT_DIR}.firewall-reconcile.XXXXXX") || return 1
+  journal=$(storage_mktemp "${SB_PROJECT_DIR}.firewall-reconcile.XXXXXX") || return 1
   if instance_firewall_prepare "" "${SINGBOX_CONFIG_FILE}" "${journal}"; then
     prepared=y
   else

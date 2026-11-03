@@ -41,7 +41,7 @@ write_warp_credentials_atomic() (
     fi
     if [[ "${committed}" == y && "${complete}" != y ]]; then
       if [[ -n "${old_hash}" ]]; then
-        rollback_candidate=$(mktemp "${SB_PROJECT_DIR}/.warp.restore.XXXXXXXX") || return 2
+        rollback_candidate=$(storage_mktemp "${SB_PROJECT_DIR}/.warp.restore.XXXXXXXX") || return 2
         if cp -- "${SB_WARP_KEY_FILE}.bak" "${rollback_candidate}" && chmod 600 "${rollback_candidate}" &&
            mv -f -- "${rollback_candidate}" "${SB_WARP_KEY_FILE}" &&
            [[ "$(sha256sum "${SB_WARP_KEY_FILE}")" == "${old_hash}" ]]; then
@@ -66,14 +66,14 @@ write_warp_credentials_atomic() (
   for target in "${SB_WARP_KEY_FILE}" "${SB_WARP_KEY_FILE}.bak"; do
     [[ ! -L "${target}" && ( ! -e "${target}" || -f "${target}" ) ]] || return 1
   done
-  candidate=$(mktemp "${SB_PROJECT_DIR}/.warp.key.XXXXXXXX") || return 1
+  candidate=$(storage_mktemp "${SB_PROJECT_DIR}/.warp.key.XXXXXXXX") || return 1
   warp_credentials_content "${warp_id}" "${warp_token}" "${warp_priv_key}" "${warp_pub_key}" \
     "${warp_v4}" "${warp_v6}" "${warp_client_id}" > "${candidate}" || return 1
   chmod 600 "${candidate}" && bash -n "${candidate}" || return 1
   expected_hash=$(sha256sum < "${candidate}") || return 1
   if [[ -f "${SB_WARP_KEY_FILE}" ]]; then
     old_hash=$(sha256sum "${SB_WARP_KEY_FILE}") || return 1
-    backup_candidate=$(mktemp "${SB_PROJECT_DIR}/.warp.backup.XXXXXXXX") || return 1
+    backup_candidate=$(storage_mktemp "${SB_PROJECT_DIR}/.warp.backup.XXXXXXXX") || return 1
     cp -- "${SB_WARP_KEY_FILE}" "${backup_candidate}" && chmod 600 "${backup_candidate}" &&
       mv -f -- "${backup_candidate}" "${SB_WARP_KEY_FILE}.bak" || return 1
   fi
@@ -111,7 +111,7 @@ warp_registration_receipt_matches_credentials() (
      "$(wc -c < "${receipt}")" -le 1048576 && -f "${SB_WARP_KEY_FILE}" &&
      ! -L "${SB_WARP_KEY_FILE}" && "$(stat -c %a "${SB_WARP_KEY_FILE}")" == 600 ]] || return 1
   umask 077
-  workspace=$(mktemp -d /tmp/sbv-warp-receipt.XXXXXX) || return 1
+  workspace=$(storage_mktemp -d "${SB_DATA_ROOT}/tmp/sbv-warp-receipt.XXXXXX") || return 1
   trap 'rm -rf -- "${workspace}"' EXIT
   jq -e 'select(.schema == 1 and .phase == "received") | .response' "${receipt}" > "${workspace}/response.json" || return 1
   warp_registration_response_valid "${workspace}/response.json" || return 1
@@ -166,7 +166,7 @@ register_warp() (
     log_info '发现现有 Warp 账户信息，正在加载...'
     return 0
   fi
-  temp_dir=$(mktemp -d "${SB_PROJECT_DIR}.warp-register.XXXXXXXX") || return $?
+  temp_dir=$(storage_mktemp -d "${SB_PROJECT_DIR}.warp-register.XXXXXXXX") || return $?
   response_file="${temp_dir}/response.json"
   if [[ -f "${receipt}" ]]; then
     phase=$(jq -er 'select(.schema == 1) | .phase' "${receipt}" 2>/dev/null) || phase=unknown
@@ -234,7 +234,7 @@ register_warp() (
       warp_registration_error validate invalid_response '注册响应缺失或不完整；未更改凭据，保留恢复材料且禁止自动重复 POST。'
       return 1
     fi
-    candidate=$(mktemp "${receipt}.XXXXXXXX") || return 1
+    candidate=$(storage_mktemp "${receipt}.XXXXXXXX") || return 1
     jq --slurpfile response "${response_file}" '.phase="received" | .response=$response[0]' \
       "${receipt}" > "${candidate}" || return 1
     chmod 600 "${candidate}" && mv -f -- "${candidate}" "${receipt}" || return 1
@@ -275,7 +275,8 @@ log_info() {
   else
     echo -e "${BLUE}[INFO]${NC} $1"
   fi
-  mkdir -p "${SB_PROJECT_DIR}"
+  storage_private_directory "${SB_DATA_ROOT}/logs" || return 1
+  [[ ! -L "${SBV_LOG_FILE}" && ( ! -e "${SBV_LOG_FILE}" || -f "${SBV_LOG_FILE}" ) ]] || return 1
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $1" >> "${SBV_LOG_FILE}"
 }
 log_success() {
@@ -284,7 +285,8 @@ log_success() {
   else
     echo -e "${GREEN}[SUCCESS]${NC} $1"
   fi
-  mkdir -p "${SB_PROJECT_DIR}"
+  storage_private_directory "${SB_DATA_ROOT}/logs" || return 1
+  [[ ! -L "${SBV_LOG_FILE}" && ( ! -e "${SBV_LOG_FILE}" || -f "${SBV_LOG_FILE}" ) ]] || return 1
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUCCESS] $1" >> "${SBV_LOG_FILE}"
 }
 log_warn() {
@@ -293,7 +295,8 @@ log_warn() {
   else
     echo -e "${YELLOW}[WARN]${NC} $1"
   fi
-  mkdir -p "${SB_PROJECT_DIR}"
+  storage_private_directory "${SB_DATA_ROOT}/logs" || return 1
+  [[ ! -L "${SBV_LOG_FILE}" && ( ! -e "${SBV_LOG_FILE}" || -f "${SBV_LOG_FILE}" ) ]] || return 1
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARN] $1" >> "${SBV_LOG_FILE}"
 }
 log_error() {
@@ -302,7 +305,8 @@ log_error() {
   else
     echo -e "${RED}[ERROR]${NC} $1"
   fi
-  mkdir -p "${SB_PROJECT_DIR}"
+  storage_private_directory "${SB_DATA_ROOT}/logs" || return 1
+  [[ ! -L "${SBV_LOG_FILE}" && ( ! -e "${SBV_LOG_FILE}" || -f "${SBV_LOG_FILE}" ) ]] || return 1
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $1" >> "${SBV_LOG_FILE}"
   exit 1
 }

@@ -8,7 +8,7 @@ if [[ "${SBV_AGENT_RUNTIME_ACCEPTANCE:-}" != 1 || ! -f /.dockerenv ||
   printf 'agent runtime requires its explicitly prepared disposable systemd container\n' >&2
   exit 64
 fi
-if [[ -e /root/sing-box-vps || -e /etc/systemd/system/sing-box.service ||
+if [[ -e /root/.sing-box-vps/runtime || -e /etc/systemd/system/sing-box.service ||
       ! -x /usr/local/bin/sing-box || ! -f /tmp/install.sh ]] ||
    command systemctl cat sing-box >/dev/null 2>&1; then
   printf 'agent runtime refuses an existing or unprepared installation\n' >&2
@@ -26,7 +26,7 @@ runtime_cleanup() {
     wait "${http_pid}" || { [[ "$?" == 143 ]] || result=1; }
   fi
   command journalctl -u sing-box --no-pager > "${ARTIFACT_DIR}/service-journal.txt" || result=1
-  if [[ -d /root/sing-box-vps ]]; then cp -a /root/sing-box-vps "${ARTIFACT_DIR}/project-final" || result=1; fi
+  if [[ -d /root/.sing-box-vps/runtime ]]; then cp -a /root/.sing-box-vps/runtime "${ARTIFACT_DIR}/project-final" || result=1; fi
   printf 'status=%s\nlast_phase=%s\n' "${result}" "${RUNTIME_PHASE}" > "${ARTIFACT_DIR}/result.env"
   exit "${result}"
 }
@@ -36,6 +36,8 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 stage() { RUNTIME_PHASE=$1; printf '[runtime] %s\n' "$1"; }
 source /tmp/install.sh
+source "$(dirname "${BASH_SOURCE[0]}")/prepare_storage_runtime_helper.sh"
+prepare_storage_runtime_core
 /usr/local/bin/sing-box version > "${ARTIFACT_DIR}/core-version.txt"
 grep -Fxq 'sing-box version 1.14.2' "${ARTIFACT_DIR}/core-version.txt"
 sha256sum /tmp/install.sh /usr/local/bin/sing-box "${BASH_SOURCE[0]}" > "${ARTIFACT_DIR}/sources.sha256"
@@ -97,7 +99,7 @@ probe() {
   if [[ "${expected}" == allow ]]; then [[ "${result}" == 0 && "${response}" == sbv-agent-marker ]]; else [[ "${result}" != 0 ]]; fi
 }
 assert_core() {
-  /usr/local/bin/sing-box check -c /root/sing-box-vps/config.json > "${ARTIFACT_DIR}/${RUNTIME_PHASE}-check.log" 2>&1
+  /usr/local/bin/sing-box check -c /root/.sing-box-vps/runtime/config.json > "${ARTIFACT_DIR}/${RUNTIME_PHASE}-check.log" 2>&1
   command systemctl is-active --quiet sing-box
   wait_listener 19082
 }
@@ -143,7 +145,7 @@ jq '.draft | .policy.server.warp_ai=false | .policy.server.warp_streaming=false 
   "${ARTIFACT_DIR}/routing-export.json" > "${ARTIFACT_DIR}/draft.json"
 json_call routing-validate routing validate --json --file "${ARTIFACT_DIR}/draft.json"
 jq -e '.valid and (.config_check_performed|not)' "${ARTIFACT_DIR}/routing-validate.json" >/dev/null
-sha256sum /root/sing-box-vps/config.json > "${ARTIFACT_DIR}/before-apply.sha256"
+sha256sum /root/.sing-box-vps/runtime/config.json > "${ARTIFACT_DIR}/before-apply.sha256"
 json_failure apply-unconfirmed confirmation_required routing apply --json --file "${ARTIFACT_DIR}/draft.json"
 sha256sum --check "${ARTIFACT_DIR}/before-apply.sha256" >/dev/null
 

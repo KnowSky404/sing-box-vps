@@ -7,7 +7,7 @@ TESTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${TESTS_DIR}/menu_test_helper.sh"
 setup_menu_test_env 120
 
-perl -0pi -e 's|/root/sing-box-vps-backups|'"${TMP_DIR}"'/sing-box-vps-backups|g' "${TESTABLE_INSTALL}"
+perl -0pi -e 's|/root/.sing-box-vps/backups/upgrades|'"${TMP_DIR}"'/sing-box-vps-backups|g' "${TESTABLE_INSTALL}"
 source_testable_install
 
 mkdir -p "$(dirname "$(singbox_library_path)")"
@@ -237,7 +237,7 @@ agent_upgrade_check_json() {
   printf '%s\n' "${check_json}"
 }
 mktemp() {
-  if [[ $# -eq 0 ]]; then
+  if [[ $# -eq 0 || ( $# -eq 1 && "${1:-}" == "${SB_DATA_ROOT}/tmp/tmp."* ) ]]; then
     return 73
   fi
   command mktemp "$@"
@@ -270,7 +270,7 @@ write_agent_upgrade_transaction_result() {
   write_agent_upgrade_transaction_result_real "$@"
 }
 mktemp() {
-  if [[ $# -eq 0 ]]; then
+  if [[ $# -eq 0 || ( $# -eq 1 && "${1:-}" == "${SB_DATA_ROOT}/tmp/tmp."* ) ]]; then
     return 73
   fi
   command mktemp "$@"

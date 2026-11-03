@@ -12,6 +12,92 @@
 完整用法中的占位符需要替换为实际值；`--json` 的 stdout 只返回一个 JSON 对象。
 命令具体输入、并发和服务影响与同一操作描述共同维护。
 
+### storage.status
+
+存储布局、迁移状态与阻塞信息
+
+```bash
+sbv storage status --json
+```
+
+| 契约 | 值 |
+| --- | --- |
+| 命令 | `sbv storage status` |
+| Agent 兼容入口 | `sbv agent storage status` |
+| 变更状态 | `false` |
+| 敏感输出 | `false` |
+| 确认 | `—` |
+| 并发条件 | `none` |
+| CAS | `none` |
+| 输入契约 | `fixed owned legacy paths; no arbitrary source/destination` |
+| 服务影响 | `none` |
+| 外部写入 | `false` |
+| 可能涉及外部写入 | `false` |
+
+| 参数 | 类型 | 必需 | 说明与约束 |
+| --- | --- | --- | --- |
+| `--json` | `boolean` | `true` | `{"description":"single JSON envelope"}` |
+
+[操作说明](Storage-Layout.md)
+
+### storage.migrate
+
+迁移旧布局至统一私有目录
+
+```bash
+sbv storage migrate --json --yes
+```
+
+| 契约 | 值 |
+| --- | --- |
+| 命令 | `sbv storage migrate` |
+| Agent 兼容入口 | `sbv agent storage migrate` |
+| 变更状态 | `true` |
+| 敏感输出 | `false` |
+| 确认 | `--yes` |
+| 并发条件 | `legacy_and_storage_exclusive` |
+| CAS | `journal` |
+| 输入契约 | `fixed owned legacy paths; no arbitrary source/destination` |
+| 服务影响 | `restart_possible` |
+| 外部写入 | `false` |
+| 可能涉及外部写入 | `false` |
+
+| 参数 | 类型 | 必需 | 说明与约束 |
+| --- | --- | --- | --- |
+| `--json` | `boolean` | `true` | `{"description":"single JSON envelope"}` |
+| `--yes` | `boolean` | `true` | `{"description":"confirm migration and possible service restart"}` |
+
+[操作说明](Storage-Layout.md)
+
+### storage.recover
+
+恢复未完成的目录迁移
+
+```bash
+sbv storage recover --json --yes
+```
+
+| 契约 | 值 |
+| --- | --- |
+| 命令 | `sbv storage recover` |
+| Agent 兼容入口 | `sbv agent storage recover` |
+| 变更状态 | `true` |
+| 敏感输出 | `false` |
+| 确认 | `--yes` |
+| 并发条件 | `legacy_and_storage_exclusive` |
+| CAS | `journal` |
+| 输入契约 | `fixed owned legacy paths; no arbitrary source/destination` |
+| 服务影响 | `restart_possible` |
+| 外部写入 | `false` |
+| 可能涉及外部写入 | `false` |
+
+| 参数 | 类型 | 必需 | 说明与约束 |
+| --- | --- | --- | --- |
+| `--json` | `boolean` | `true` | `{"description":"single JSON envelope"}` |
+| `--yes` | `boolean` | `true` | `{"description":"confirm migration and possible service restart"}` |
+
+[操作说明](Storage-Layout.md)
+
 ### capabilities
 
 协议、环境及操作能力

@@ -135,7 +135,7 @@ restore_protocol_state_layer_from_backup() {
   local state_dir_existed=$2
   local restore_candidate restore_previous
 
-  restore_candidate=$(mktemp -d "${SB_PROJECT_DIR}/.protocol-state-restore.XXXXXX") || return 1
+  restore_candidate=$(storage_mktemp -d "${SB_PROJECT_DIR}/.protocol-state-restore.XXXXXX") || return 1
   if [[ "${state_dir_existed}" == "y" ]]; then
     if ! cp -a "${backup_dir}/." "${restore_candidate}/"; then
       rm -rf "${restore_candidate}"
@@ -216,7 +216,7 @@ rebuild_protocol_state_from_config() {
   local shadowtls_inbound_count=0 shadowtls_candidate_file="" shadowtls_candidate_revision=0 shadowtls_state_file shadowtls_state_schema
   local backup_state_dir
 
-  backup_dir=$(mktemp -d) || return 1
+  backup_dir=$(storage_mktemp -d) || return 1
   backup_state_dir="${backup_dir}/state"
   if ! mkdir -p "${backup_state_dir}"; then
     rm -rf "${backup_dir}"

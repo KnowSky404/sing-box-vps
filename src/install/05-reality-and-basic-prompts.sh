@@ -270,13 +270,30 @@ prepare_reality_target_discovery() {
 # Stop only the running checker's own descendants, including the separate
 # process groups created by its per-operation GNU timeout commands.
 stop_reality_checker_process_tree() {
-  local process_id=$1 child children_file
+  local process_id=$1 child children_file attempt children_pending
   local children=()
   [[ "${process_id}" =~ ^[1-9][0-9]*$ ]] || return 1
   children_file="/proc/${process_id}/task/${process_id}/children"
   if [[ -r "${children_file}" ]]; then
     # proc's children record has no trailing newline; read still fills the array.
     if read -r -a children < "${children_file}"; then :; fi
+  fi
+  # Bash 4.3 treats an empty array expansion as unset under nounset.
+  if (( ${#children[@]} > 0 )); then
+    for child in "${children[@]}"; do
+      stop_reality_checker_process_tree "${child}" || return 1
+    done
+    # Keep the owner alive long enough to reap its children. Terminating a
+    # timeout/group leader first can kill the Bash checker before its nested
+    # timeout tree is inspected, leaving a live grandchild behind.
+    for ((attempt=0;attempt<20;attempt++)); do
+      children_pending=n
+      for child in "${children[@]}"; do
+        [[ ! -e "/proc/${child}" ]] || children_pending=y
+      done
+      [[ "${children_pending}" == y ]] || break
+      command sleep 0.01 || return 1
+    done
   fi
   if kill -0 "${process_id}" 2>/dev/null; then
     if ! kill -TERM "${process_id}" 2>/dev/null; then
@@ -285,12 +302,6 @@ stop_reality_checker_process_tree() {
         return 1
       fi
     fi
-  fi
-  # Bash 4.3 treats an empty array expansion as unset under nounset.
-  if (( ${#children[@]} > 0 )); then
-    for child in "${children[@]}"; do
-      stop_reality_checker_process_tree "${child}" || return 1
-    done
   fi
 }
 
@@ -303,6 +314,7 @@ run_reality_target_check() (
   # Own nested temp files even if the deadline escalates to KILL. Waiting on a
   # background child lets traps run immediately on terminal cancellation.
   (( signal_status == 0 )) || return "${signal_status}"
+  storage_enter_module_workspace "${checker_dir}" || return 1
   TMPDIR="${checker_dir}" timeout --signal=TERM --kill-after=2 90 \
     bash "${checker}" check "${domain}" --json --timeout 3 > "${report}" &
   checker_pid=$!
@@ -348,6 +360,7 @@ run_reality_target_discovery() (
   trap 'signal_status=143; if [[ -n "${checker_pid}" ]]; then stop_reality_checker_process_tree "${checker_pid}"; fi' TERM
   trap 'signal_status=129; if [[ -n "${checker_pid}" ]]; then stop_reality_checker_process_tree "${checker_pid}"; fi' HUP
   (( signal_status == 0 )) || return "${signal_status}"
+  storage_enter_module_workspace "${checker_dir}" || return 1
   TMPDIR="${checker_dir}" PYTHONDONTWRITEBYTECODE=1 \
     timeout --signal=TERM --kill-after=2 "${deadline}" \
     bash "${checker}" "${args[@]}" > "${report}" 2>"${report}.stderr" &
@@ -364,6 +377,9 @@ run_reality_target_discovery() (
         log_info "候选发现仍在执行，已等待 ${elapsed} 秒。" >&2
       fi
     done
+    # Child-first cleanup can interrupt a logging child while the checker
+    # finishes; normal timer completion must not inherit that child's status.
+    return 0
   ) &
   timer_pid=$!
   if (( signal_status != 0 )); then
@@ -411,7 +427,7 @@ select_reality_sni_candidate() (
   for domain in "$@"; do
     validate_reality_sni_syntax "${domain}" || return 1
   done
-  temp_dir=$(mktemp -d) || return 1
+  temp_dir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${temp_dir}"' EXIT
   trap 'interrupted_status=130; log_warn "SNI 探测中断，SNI 未变更。" >&2; return 130' INT
   trap 'interrupted_status=143; log_warn "SNI 探测中断，SNI 未变更。" >&2; return 143' TERM
@@ -594,7 +610,7 @@ select_reality_sni_discovery() (
     log_warn "请输入严格对齐的 IPv4 CIDR（/24 至 /32，最多 256 个主机）；SNI 未变更。" >&2
     return 1
   fi
-  temp_dir=$(mktemp -d) || return 1
+  temp_dir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${temp_dir}"' EXIT
   trap 'interrupted_status=130; if [[ -n "${runner_pid}" ]]; then stop_reality_checker_process_tree "${runner_pid}"; fi; log_warn "候选发现中断，SNI 未变更。" >&2' INT
   trap 'interrupted_status=143; if [[ -n "${runner_pid}" ]]; then stop_reality_checker_process_tree "${runner_pid}"; fi; log_warn "候选发现中断，SNI 未变更。" >&2' TERM

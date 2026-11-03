@@ -22,7 +22,7 @@ customized; existing names and legacy recovery defaults remain unchanged.
 
 Main menu **11 → 4「设置新实例的主机显示标签」** sets the label used for future
 instance defaults. The optional private setting is
-`/root/sing-box-vps/node-naming.json`, with only `host_label`:
+`/root/.sing-box-vps/runtime/node-naming.json`, with only `host_label`:
 
 ```json
 {"host_label":"fra-01"}

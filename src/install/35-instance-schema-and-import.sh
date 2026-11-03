@@ -555,7 +555,7 @@ plain_proxy_config_store_candidate() (
     return 1
   }
 
-  temp_dir=$(mktemp -d) || return $?
+  temp_dir=$(storage_mktemp -d) || return $?
   trap 'rm -rf -- "${temp_dir}"' EXIT
   trap 'return 130' INT
   trap 'return 143' TERM
@@ -1330,7 +1330,7 @@ shadowtls_config_store_candidate() (
   local config_file=${1:-${SINGBOX_CONFIG_FILE:-}} existing_file=${2:-} temp_dir inbound_json tag detour detour_id detour_port id name policy trust cert_path client_server_name
   local default_id="" old_revision=0 candidate_revision=0 existing_match base digest suffix existing_semantics new_semantics candidate_json
   [[ -n "${config_file}" && -f "${config_file}" && ! -L "${config_file}" ]] || return 1
-  temp_dir=$(mktemp -d) || return $?
+  temp_dir=$(storage_mktemp -d) || return $?
   trap 'rm -rf -- "${temp_dir}"' EXIT
   trap 'return 130' INT
   trap 'return 143' TERM
@@ -1439,7 +1439,7 @@ plain_proxy_structured_state_matches_config() (
   store_file=$(plain_proxy_structured_store_file "${protocol}" 2>/dev/null) || return 1
   [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
   validate_structured_instance_store "${protocol}" "${store_file}" || return 1
-  temp_dir=$(mktemp -d) || return $?
+  temp_dir=$(storage_mktemp -d) || return $?
   trap 'rm -rf -- "${temp_dir}"' EXIT
   current=$(jq -cS '{default_instance_id,instances:(.instances | sort_by(.tag))}' "${store_file}") || return 1
   expected=$(plain_proxy_config_store_candidate "${protocol}" "${config_file}" "${store_file}") || return 1

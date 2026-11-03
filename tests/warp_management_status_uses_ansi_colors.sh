@@ -23,10 +23,10 @@ output=$(warp_management <<'EOF'
 EOF
 )
 plain_output=$(strip_ansi "${output}")
-[[ "${plain_output}" == *'规则与分流管理'* ]]
-[[ "${plain_output}" == *'全局 WARP 分流: 开启'* ]]
-[[ "${output}" == *$'\033[0;32m开启\033[0m'* ]]
-[[ "${output}" != *'\033[0;32m开启\033[0m'* ]]
+[[ "${plain_output}" == *'网络与分流'* ]]
+[[ "${plain_output}" == *'WARP 开关与节点出口设置 开启（全量出口）'* ]]
+[[ "${output}" == *$'\033[0;32m开启（全量出口）'* ]]
+[[ "${output}" != *'\033[0;32m开启（全量出口）'* ]]
 
 printf '%s\n' '{"inbounds":[],"outbounds":[{"type":"direct","tag":"direct"}],"route":{"rules":[],"final":"direct"}}' > "${SINGBOX_CONFIG_FILE}"
 SB_ENABLE_WARP=y
@@ -35,7 +35,7 @@ output=$(warp_management <<'EOF'
 EOF
 )
 plain_output=$(strip_ansi "${output}")
-[[ "${plain_output}" == *'全局 WARP 分流: 关闭'* ]]
-[[ "${output}" == *$'\033[0;33m关闭\033[0m'* ]]
+[[ "${plain_output}" == *'WARP 开关与节点出口设置 关闭（原生默认）'* ]]
+[[ "${output}" == *$'\033[0;32m关闭（原生默认）'* ]]
 [[ ! -e "${SB_ROUTING_POLICY_FILE}" && ! -e "${SB_WARP_KEY_FILE}" ]]
 printf 'Unified WARP overview uses live state and rendered ANSI status colors\n'

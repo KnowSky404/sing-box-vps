@@ -20,7 +20,7 @@ plain_proxy_management_pending_revision() {
 mixed_instance_create_interactive() (
   local temp_dir revision result status allow_public=n
   umask 077
-  temp_dir=$(mktemp -d) || return 1
+  temp_dir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${temp_dir}"' EXIT
   mixed_management_capture_snapshot "${temp_dir}/before.json" || {
     log_error "Mixed 状态无法安全读取，已取消创建。"
@@ -54,7 +54,7 @@ mixed_instance_management_menu() (
     delete) one_shot=y ;;
     *) log_warn "不支持的 Mixed 管理操作: ${requested_operation}" >&2; return 1 ;;
   esac
-  temp_dir=$(mktemp -d) || return 1
+  temp_dir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${temp_dir}"' EXIT
   while true; do
     # Recovery is intentionally offered before reading live config/store: an
@@ -246,7 +246,7 @@ plain_proxy_instance_management_menu() (
     list) choice=7; one_shot=y ;;
     *) log_warn "不支持的 ${label} 管理操作: ${requested_operation}" >&2; return 1 ;;
   esac
-  temp_dir=$(mktemp -d) || return 1
+  temp_dir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${temp_dir}"' EXIT
   while true; do
     if [[ -d "${SB_PROJECT_DIR}.instance-write.lock" ]]; then

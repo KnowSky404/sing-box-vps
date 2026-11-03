@@ -26,6 +26,9 @@ verification_list_groups() {
 verification_full_test_manifest() {
   cat <<'EOF_TESTS'
 tests/install_build.sh
+tests/storage_layout.sh
+tests/module_storage.sh
+tests/storage_migration.sh
 tests/server_only_node_sharing.sh
 tests/node_network_independence.sh
 tests/neutral_rebuild_defaults.sh
@@ -326,6 +329,7 @@ verification_list_scenarios() {
     upgrade_1_13_to_1_14 \
     upgrade_rollback_1_13_to_1_14 \
     uninstall_and_reinstall \
+    storage_migration \
     runtime_smoke
 }
 
@@ -338,7 +342,7 @@ verification_expand_scenarios() {
   # Validate the entire request before emitting a partial executable plan.
   for scenario in "${requested_scenarios[@]}"; do
     case "${scenario}" in
-      fresh_install_vless|reconfigure_existing_install|legacy_takeover_export|fresh_install_anytls|fresh_install_socks|fresh_install_http|fresh_install_shadowsocks|fresh_install_trojan|fresh_install_vmess|fresh_install_hysteria|fresh_install_vless_plain|multi_protocol_coexistence|upgrade_1_13_to_1_14|upgrade_rollback_1_13_to_1_14|uninstall_and_reinstall|runtime_smoke)
+      fresh_install_vless|reconfigure_existing_install|legacy_takeover_export|fresh_install_anytls|fresh_install_socks|fresh_install_http|fresh_install_shadowsocks|fresh_install_trojan|fresh_install_vmess|fresh_install_hysteria|fresh_install_vless_plain|multi_protocol_coexistence|upgrade_1_13_to_1_14|upgrade_rollback_1_13_to_1_14|uninstall_and_reinstall|storage_migration|runtime_smoke)
         if [[ ! -f "${root}/dev/verification/remote/scenarios/${scenario}.sh" ]]; then
           printf 'verification scenario file is missing: %s\n' "${scenario}" >&2
           return 2

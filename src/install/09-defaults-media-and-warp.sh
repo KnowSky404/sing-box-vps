@@ -539,7 +539,7 @@ create_media_check_warp_proxy_config() {
   "${SINGBOX_BIN_PATH}" check -c "${output_file}" >&2
 }
 
-run_media_check_backend() {
+run_media_check_backend() (
   local proxy_url=${1:-}
   local result_status=0
 
@@ -550,6 +550,9 @@ run_media_check_backend() {
     return "${result_status}"
   fi
   show_media_check_backend_info
+  storage_prepare_tmp || return 1
+  storage_enter_module_workspace "${SB_MEDIA_CHECK_DIR}" || return 1
+  export TMPDIR="${SB_DATA_ROOT}/tmp"
 
   if [[ -n "${proxy_url}" ]]; then
     log_info "正在通过代理执行流媒体验证: ${proxy_url}"
@@ -558,7 +561,7 @@ run_media_check_backend() {
     log_info "正在使用本机直出执行流媒体验证..."
     bash "${SB_MEDIA_CHECK_SCRIPT}"
   fi
-}
+)
 
 run_media_check_via_warp() {
   local temp_dir proxy_config proxy_log proxy_port proxy_pid proxy_url ready="n"
@@ -569,7 +572,7 @@ run_media_check_via_warp() {
   fi
 
   proxy_port=$(pick_free_local_port) || log_error "未找到可用的本地临时代理端口。"
-  temp_dir=$(mktemp -d)
+  temp_dir=$(storage_mktemp -d)
   proxy_config="${temp_dir}/media-check-warp.json"
   proxy_log="${temp_dir}/media-check-warp.log"
   proxy_url="socks5h://127.0.0.1:${proxy_port}"
@@ -707,8 +710,8 @@ load_warp_route_settings() {
 
 build_custom_warp_domain_json() {
   local exact_file suffix_file raw_line line
-  exact_file=$(mktemp)
-  suffix_file=$(mktemp)
+  exact_file=$(storage_mktemp)
+  suffix_file=$(storage_mktemp)
 
   if [[ -f "${SB_WARP_DOMAINS_FILE}" ]]; then
     while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
@@ -742,7 +745,7 @@ build_custom_warp_domain_json() {
 
 build_local_warp_rule_sets_json() {
   local object_file file base_name tag format
-  object_file=$(mktemp)
+  object_file=$(storage_mktemp)
   SB_WARP_LOCAL_RULE_SETS_JSON='[]'
 
   if [[ -d "${SB_WARP_LOCAL_RULESET_DIR}" ]]; then
@@ -768,7 +771,7 @@ build_local_warp_rule_sets_json() {
 build_remote_warp_rule_sets_json() {
   local object_file raw_line line raw_tag raw_url raw_interval tag url update_interval format
   local use_http_client="n"
-  object_file=$(mktemp)
+  object_file=$(storage_mktemp)
   SB_WARP_REMOTE_RULE_SETS_JSON='[]'
 
   if singbox_config_supports_1_14; then

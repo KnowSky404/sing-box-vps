@@ -7,7 +7,9 @@ source "${TESTS_DIR}/menu_test_helper.sh"
 setup_menu_test_env 122
 source "${TESTABLE_INSTALL}"
 trap 'printf "Trojan instance menu failed at line %s\n" "${LINENO}" >&2' ERR
-agent_print_help | grep -Fq 'mixed|socks|http|shadowsocks|trojan'
+# Canonical help advertises the shared protocol argument rather than an old subset.
+help_output=$(agent_print_help)
+grep -Fq 'sbv instance' <<< "${help_output}"
 
 mkdir -p "${SB_PROTOCOL_STATE_DIR}/instances"
 store_file="${SB_PROTOCOL_STATE_DIR}/instances/trojan.json"

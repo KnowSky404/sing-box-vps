@@ -52,7 +52,7 @@ routing_state_fingerprint() (
   [[ "${scope}" == all || "${scope}" == external || "${scope}" == without_media_cache ]] || return 1
   [[ ! -L "${SB_PROJECT_DIR}" ]] || return 1
   umask 077
-  workspace=$(mktemp -d /tmp/sbv-routing-fingerprint.XXXXXX) || return 1
+  workspace=$(storage_mktemp -d "${SB_DATA_ROOT}/tmp/sbv-routing-fingerprint.XXXXXX") || return 1
   trap 'rm -rf -- "${workspace}"' EXIT
   : > "${workspace}/paths"
   if [[ -d "${SB_PROJECT_DIR}" ]]; then
@@ -103,7 +103,7 @@ routing_state_fingerprint() (
 
 routing_restore_project_snapshot() (
   local snapshot=$1 saved_log directory="${SB_ROUTING_TRANSACTION_DIR}" had_log=n
-  saved_log=$(mktemp "${directory}/.current-log.XXXXXX") || return 1
+  saved_log=$(storage_mktemp "${directory}/.current-log.XXXXXX") || return 1
   trap 'rm -f -- "${saved_log}"' EXIT
   if [[ -e "${SBV_LOG_FILE}" || -L "${SBV_LOG_FILE}" ]]; then
     [[ -f "${SBV_LOG_FILE}" && ! -L "${SBV_LOG_FILE}" ]] || return 1
@@ -126,7 +126,7 @@ routing_restore_project_snapshot() (
 routing_nodes_json() (
   local workspace protocols protocol store snapshot ids id
   umask 077
-  workspace=$(mktemp -d /tmp/sbv-routing-nodes.XXXXXX) || return 1
+  workspace=$(storage_mktemp -d "${SB_DATA_ROOT}/tmp/sbv-routing-nodes.XXXXXX") || return 1
   trap 'rm -rf -- "${workspace}"' EXIT
   : > "${workspace}/nodes"
   if [[ ! -e "${SINGBOX_CONFIG_FILE}" && ! -e "${SB_PROTOCOL_INDEX_FILE}" ]]; then
@@ -219,7 +219,7 @@ routing_publish_file() (
   if [[ -f "${target}" ]] && cmp -s "${source}" "${target}"; then return 0; fi
   umask 077
   mkdir -p "$(dirname "${target}")" || return 1
-  candidate=$(mktemp "$(dirname "${target}")/.routing-write.XXXXXX") || return 1
+  candidate=$(storage_mktemp "$(dirname "${target}")/.routing-write.XXXXXX") || return 1
   trap 'rm -f -- "${candidate}"' EXIT
   cp -- "${source}" "${candidate}" && chmod 600 "${candidate}" || return 1
   if [[ -e "${target}" ]]; then

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026110302
+# Version: 2026110303
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026110302"
+readonly SCRIPT_VERSION="2026110303"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 # A single IPv6 wildcard socket accepts IPv4 and IPv6 in sing-box on Linux.
 readonly SB_DEFAULT_LISTEN_ADDRESS="::"
@@ -17,8 +17,15 @@ readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
 readonly UI_COMPACT_MAX_WIDTH=72
-readonly SB_PROJECT_DIR="/root/sing-box-vps"
-readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
+# Resolve the account home independently of sudo/HOME and systemd environments.
+SB_ROOT_HOME=$(getent passwd 0 | cut -d: -f6)
+readonly SB_ROOT_HOME
+readonly SB_DATA_ROOT="${SB_ROOT_HOME}/.sing-box-vps"
+readonly SB_PROJECT_DIR="${SB_DATA_ROOT}/runtime"
+readonly SBV_LINK_PATH="/usr/local/bin/sbv"
+readonly SINGBOX_LINK_PATH="/usr/local/bin/sing-box"
+readonly SINGBOX_SERVICE_LINK_PATH="/etc/systemd/system/sing-box.service"
+readonly SBV_LOG_FILE="${SB_DATA_ROOT}/logs/sbv.log"
 readonly SB_KEY_FILE="${SB_PROJECT_DIR}/reality.key"
 readonly SB_WARP_KEY_FILE="${SB_PROJECT_DIR}/warp.key"
 readonly SB_WARP_REGISTRATION_PENDING_FILE="${SB_PROJECT_DIR}.warp-registration.pending.json"
@@ -30,7 +37,7 @@ readonly SB_ROUTING_POLICY_FILE="${SB_PROJECT_DIR}/routing-policy.json"
 readonly SB_ROUTING_TRANSACTION_DIR="${SB_PROJECT_DIR}.rules-write.lock"
 readonly SB_ROUTING_PREVIOUS_DIR="${SB_PROJECT_DIR}.rules-previous"
 readonly SB_STACK_STATE_FILE="${SB_PROJECT_DIR}/stack-mode.env"
-readonly SB_MEDIA_CHECK_DIR="${SB_PROJECT_DIR}/media-check"
+readonly SB_MEDIA_CHECK_DIR="${SB_DATA_ROOT}/modules/media-check"
 readonly SB_MEDIA_CHECK_SCRIPT="${SB_MEDIA_CHECK_DIR}/region_restriction_check.sh"
 readonly SB_PROTOCOL_STATE_DIR="${SB_PROJECT_DIR}/protocols"
 readonly SB_PROTOCOL_INDEX_FILE="${SB_PROTOCOL_STATE_DIR}/index.env"
@@ -45,9 +52,9 @@ readonly SB_REALITY_QOS_FILTER_STATE_FILE="${SB_PROJECT_DIR}/reality-qos.filters
 readonly SB_REALITY_QOS_FILTER_PREF_START="32001"
 readonly SB_REALITY_QOS_BURST="512k"
 readonly SB_ACME_DATA_DIR="${SB_PROJECT_DIR}/acme"
-readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
+readonly SINGBOX_BIN_PATH="${SB_DATA_ROOT}/bin/sing-box"
 readonly SB_NAIVE_LIBRARY_MARKER="${SB_PROJECT_DIR}/libcronet.sha256"
-readonly SBV_BIN_PATH="/usr/local/bin/sbv"
+readonly SBV_BIN_PATH="${SB_DATA_ROOT}/bin/sbv"
 readonly SBV_UPDATE_URL="https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh"
 readonly SBV_SCRIPT_MIN_SIZE="1024"
 readonly SBV_ARTIFACT_MIN_SIZE="128"
@@ -58,8 +65,8 @@ readonly SBV_CURL_RETRY_DELAY="1"
 readonly SBV_CURL_STDERR_MAX_BYTES="4096"
 readonly SINGBOX_CONFIG_DIR="${SB_PROJECT_DIR}"
 readonly SINGBOX_CONFIG_FILE="${SB_PROJECT_DIR}/config.json"
-readonly SINGBOX_SERVICE_FILE="/etc/systemd/system/sing-box.service"
-readonly SB_UPGRADE_BACKUP_ROOT="/root/sing-box-vps-backups"
+readonly SINGBOX_SERVICE_FILE="${SB_DATA_ROOT}/systemd/sing-box.service"
+readonly SB_UPGRADE_BACKUP_ROOT="${SB_DATA_ROOT}/backups/upgrades"
 readonly WARP_AI_ROUTE_DOMAINS_JSON='["gemini.google.com","aistudio.google.com","generativelanguage.googleapis.com","copilot.microsoft.com"]'
 readonly WARP_AI_ROUTE_DOMAIN_SUFFIXES_JSON='["openai.com","chatgpt.com","oaistatic.com","oaiusercontent.com","anthropic.com","claude.ai","perplexity.ai","x.ai","cursor.com","cursor.sh","google.com","googleapis.com","gstatic.com","googleusercontent.com","gvt1.com","recaptcha.net"]'
 readonly WARP_STREAM_ROUTE_DOMAINS_JSON='[]'

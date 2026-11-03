@@ -6,6 +6,7 @@
 
 | 契约或目标 | 实现状态 | 证据与剩余边界 |
 | --- | --- | --- |
+| [统一存储与迁移](unified-storage.zh-CN.md)（[English](unified-storage.md)） | 已实现 | 私有统一根、旧布局迁移/恢复及专用运行态验收；不代表生产已迁移。 |
 | [AI Native 操作架构](ai-native-operations.zh-CN.md)（[English](ai-native-operations.md)） | 统一操作目录与安全接口已实现；定向验收通过 | 结构化分流/服务入口、生成命令参考与开发同步门禁；定向本地/运行态证据在契约中记录，审查、Wiki 和生产状态分别核对。 |
 | [服务端网络管理精简](server-only-network.zh-CN.md)（[English](server-only-network.md)） | 已实现；分范围记录证据 | 199 项宿主检查及三组隔离服务/核心验收通过；完整注册 Docker、当前 head 审查及交付状态在实施 PR 分别记录。 |
 | [默认双栈监听](default-dual-stack-listeners.zh-CN.md)（[English](default-dual-stack-listeners.md)） | 新建默认值契约；已定义验收要求 | 全部结构化实例新建默认单个 `::`；显式地址、已有实例及全局模式的 legacy 生成行为保持。须完成本地默认值矩阵、目标核心检查及代表性 TCP/UDP 双地址族运行态探针；本索引不宣称已完成验收或生产变更。 |

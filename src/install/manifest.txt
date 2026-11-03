@@ -43,4 +43,7 @@
 41-routing-transactions.sh
 42-routing-menu.sh
 45-agent-routing.sh
+46-storage-layout.sh
+47-storage-migration.sh
+48-storage-entrypoints.sh
 43-launcher.sh
