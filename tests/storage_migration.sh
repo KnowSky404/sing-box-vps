@@ -32,6 +32,21 @@ fixture() {
   source "${REPO_ROOT}/src/install/46-storage-layout.sh"
   source <(sed -e "s|^readonly SB_LEGACY_PROJECT_DIR=.*|readonly SB_LEGACY_PROJECT_DIR=\"${SB_ROOT_HOME}/sing-box-vps\"|" "${REPO_ROOT}/src/install/47-storage-migration.sh")
   agent_current_user_is_root() { [[ "${EUID}" == 0 ]]; }
+  # Policy commands are tested by the storage layout fixture. Never mutate the
+  # host policy from migration fixtures, including on an enforcing test host.
+  storage_selinux_prepare() {
+    if [[ -f "${STORAGE_CASE_DIR}/active" ]]; then printf 'prepare active\n'; else printf 'prepare stopped\n'; fi >> "${STORAGE_CASE_DIR}/selinux.log"
+    [[ ! -f "${STORAGE_CASE_DIR}/fail-selinux-prepare" ]]
+  }
+  storage_selinux_label() {
+    [[ -e "$1" && ! -L "$1" ]] || return 1
+    printf 'label %s -> %s\n' "$1" "${2:-$1}" >> "${STORAGE_CASE_DIR}/selinux.log"
+  }
+  storage_selinux_restore_system_path() {
+    [[ -f "$1" && ! -L "$1" ]] || return 1
+    printf 'restore %s\n' "$1" >> "${STORAGE_CASE_DIR}/selinux.log"
+    [[ ! -f "${STORAGE_CASE_DIR}/fail-selinux-restore" ]]
+  }
   # State validators are integration dependencies. Their detailed protocol
   # semantics are covered by the existing real validators and Docker fixture.
   validate_structured_instance_store() { jq -e '.revision>=0 and (.instances|type)=="array" and all(.instances[];(.id|type)=="string")' "$2" >/dev/null; }
@@ -139,6 +154,10 @@ case_migrate_active() {
   [[ -f "${STORAGE_CASE_DIR}/active" && ! -e "${SB_LEGACY_PROJECT_DIR}" && ! -e "${SB_LEGACY_BACKUP_DIR}" && ! -e "${SB_STORAGE_MIGRATION_DIR}" ]]
   [[ -L "${SBV_LINK_PATH}" && -L "${SINGBOX_LINK_PATH}" && -L "${SINGBOX_SERVICE_LINK_PATH}" ]]
   [[ -f "${backup}/legacy-runtime/config.json" && -f "${backup}/legacy-siblings/management.flock" ]]
+  grep -Fqx 'prepare active' "${STORAGE_CASE_DIR}/selinux.log"
+  grep -Fq " -> ${SINGBOX_BIN_PATH}" "${STORAGE_CASE_DIR}/selinux.log"
+  grep -Fq " -> ${SINGBOX_SERVICE_FILE}" "${STORAGE_CASE_DIR}/selinux.log"
+  grep -Fqx "label ${SB_PROJECT_DIR} -> ${SB_PROJECT_DIR}" "${STORAGE_CASE_DIR}/selinux.log"
   [[ "$(stat -c %a "${SB_PROJECT_DIR}")" == 700 && "$(stat -c %a "${backup}/legacy-runtime")" == 755 ]]
   [[ "$(sha256sum "${SB_PROJECT_DIR}/unknown-file" | cut -d' ' -f1)" == "${source_hash}" ]]
   cmp -s "${backup}/legacy-runtime/config.json.storage-next" "${SB_PROJECT_DIR}/config.json.storage-next"
@@ -234,7 +253,12 @@ case_implicit_module_state() {
 case_check_failure_rollback() {
   local original
   legacy_fixture
-  touch "${STORAGE_CASE_DIR}/active" "${STORAGE_CASE_DIR}/fail-check"
+  touch "${STORAGE_CASE_DIR}/active" "${STORAGE_CASE_DIR}/fail-selinux-prepare"
+  expect_failure storage_migrate
+  [[ -f "${STORAGE_CASE_DIR}/active" && ! -e "${SB_STORAGE_MIGRATION_DIR}" && ! -L "${SINGBOX_LINK_PATH}" ]]
+  if grep -Fxq stop "${STORAGE_CASE_DIR}/systemctl.log"; then return 1; fi
+  rm "${STORAGE_CASE_DIR}/fail-selinux-prepare"
+  touch "${STORAGE_CASE_DIR}/fail-check"
   original=$(sha256sum "${SB_LEGACY_PROJECT_DIR}/config.json" | cut -d' ' -f1)
   expect_failure storage_migrate
   [[ ! -e "${SB_STORAGE_MIGRATION_DIR}" && ! -e "${SINGBOX_CONFIG_FILE}" && -f "${STORAGE_CASE_DIR}/active" && ! -L "${SBV_LINK_PATH}" ]]
@@ -248,6 +272,9 @@ case_service_failure_rollback() {
   touch "${STORAGE_CASE_DIR}/active" "${STORAGE_CASE_DIR}/fail-new-start"
   expect_failure storage_migrate
   [[ -f "${STORAGE_CASE_DIR}/active" && -f "${SB_LEGACY_PROJECT_DIR}/config.json" && ! -L "${SINGBOX_LINK_PATH}" && ! -e "${SB_STORAGE_MIGRATION_DIR}" ]]
+  grep -Fqx "restore ${SBV_LINK_PATH}" "${STORAGE_CASE_DIR}/selinux.log"
+  grep -Fqx "restore ${SINGBOX_LINK_PATH}" "${STORAGE_CASE_DIR}/selinux.log"
+  grep -Fqx "restore ${SINGBOX_SERVICE_LINK_PATH}" "${STORAGE_CASE_DIR}/selinux.log"
 }
 
 case_lock_and_handoff() {
@@ -315,6 +342,10 @@ case_recover_interrupted() {
   expect_failure storage_recover
   jq -e '.phase=="rollback_failed"' "${SB_STORAGE_MIGRATION_DIR}/journal.json" >/dev/null
   rm "${STORAGE_CASE_DIR}/fail-stop"
+  touch "${STORAGE_CASE_DIR}/fail-selinux-restore"
+  expect_failure storage_recover
+  jq -e '.phase=="rollback_failed"' "${SB_STORAGE_MIGRATION_DIR}/journal.json" >/dev/null
+  rm "${STORAGE_CASE_DIR}/fail-selinux-restore"
   storage_recover
   [[ ! -e "${SB_STORAGE_MIGRATION_DIR}" && -f "${STORAGE_CASE_DIR}/active" && ! -L "${SBV_LINK_PATH}" && -f "${SB_LEGACY_PROJECT_DIR}/config.json" && -f "${backup}/journal/journal.json" ]]
 }
@@ -661,7 +692,27 @@ case_object_masquerade_and_option_paths() {
   done
 }
 
-for case_name in status_read_only migrate_active migrate_stopped_and_history conflict pending untrusted env_no_execution env_literal_roundtrip implicit_module_state check_failure_rollback service_failure_rollback lock_and_handoff library cli_confirmation recover_interrupted recover_after_archive recovery_ownership_conflict precise_path_contexts custom_service_directory manager_only_migration sidecar_ownership stale_unit_references relative_runtime_source dns_hosts_paths object_masquerade_and_option_paths; do
+case_instance_archive_bytes() {
+  local backup known_hash malformed_hash
+  legacy_fixture
+  mkdir -m 700 "${SB_LEGACY_PROJECT_DIR}/protocols/instances/archive"
+  cp "${SB_LEGACY_PROJECT_DIR}/protocols/instances/anytls.json" "${SB_LEGACY_PROJECT_DIR}/protocols/instances/archive/anytls.json"
+  printf 'historical non-JSON bytes\000do not parse\n' > "${SB_LEGACY_PROJECT_DIR}/protocols/instances/archive/hy2.json"
+  known_hash=$(sha256sum "${SB_LEGACY_PROJECT_DIR}/protocols/instances/archive/anytls.json" | cut -d' ' -f1)
+  malformed_hash=$(sha256sum "${SB_LEGACY_PROJECT_DIR}/protocols/instances/archive/hy2.json" | cut -d' ' -f1)
+  storage_migrate
+  backup=$(completed_backup)
+  [[ ! -e "${SB_LEGACY_PROJECT_DIR}" ]]
+  [[ "$(sha256sum "${SB_PROJECT_DIR}/protocols/instances/archive/anytls.json" | cut -d' ' -f1)" == "${known_hash}" ]]
+  [[ "$(sha256sum "${SB_PROJECT_DIR}/protocols/instances/archive/hy2.json" | cut -d' ' -f1)" == "${malformed_hash}" ]]
+  cmp -s "${backup}/legacy-runtime/protocols/instances/archive/anytls.json" "${SB_PROJECT_DIR}/protocols/instances/archive/anytls.json"
+  cmp -s "${backup}/legacy-runtime/protocols/instances/archive/hy2.json" "${SB_PROJECT_DIR}/protocols/instances/archive/hy2.json"
+  jq -e --arg new "${SB_PROJECT_DIR}" --arg old "${SB_LEGACY_PROJECT_DIR}" \
+    '.instances[0].tls.certificate_path==($new+"/cert.pem") and .instances[0].password==($old+"/not-a-path")' \
+    "${SB_PROJECT_DIR}/protocols/instances/anytls.json" >/dev/null
+}
+
+for case_name in status_read_only migrate_active migrate_stopped_and_history conflict pending untrusted env_no_execution env_literal_roundtrip implicit_module_state check_failure_rollback service_failure_rollback lock_and_handoff library cli_confirmation recover_interrupted recover_after_archive recovery_ownership_conflict precise_path_contexts custom_service_directory manager_only_migration sidecar_ownership stale_unit_references relative_runtime_source dns_hosts_paths object_masquerade_and_option_paths instance_archive_bytes; do
   CASE_NUMBER=$((CASE_NUMBER+1))
   printf 'storage_migration_case=%s\n' "${case_name}"
   (fixture; "case_${case_name}")

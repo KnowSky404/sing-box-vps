@@ -13,7 +13,7 @@
 | `runtime.*` | 管理锁、实例/组件/规则事务及结果 |
 | `systemd/` | 服务单元实际文件 |
 
-`/usr/local/bin/sbv`、`/usr/local/bin/sing-box` 和 `/etc/systemd/system/sing-box.service` 为系统入口，实际 payload 在统一根。系统包、journal、sysctl 与内核网络资源仍由系统管理；外部手工证书和输入文件保留原路径。
+`/usr/local/bin/sbv`、`/usr/local/bin/sing-box` 和 `/etc/systemd/system/sing-box.service` 为系统入口，实际 payload 在统一根。系统包、journal、sysctl、内核网络资源及项目专属 SELinux 标签规则元数据仍由系统管理；外部手工证书和输入文件保留原路径。
 
 ## 从旧版本升级
 
@@ -29,6 +29,10 @@ sbv storage migrate --json --yes
 受管路径随数据调整，密码、实例身份和外部引用保持。仅迁移已识别的旧目录旁文件，未知同前缀用户文件原位保留；旧树含符号链接或特殊文件时需先调和。历史升级备份按原字节归档，仅作为离线恢复材料，不能直接输入新布局的升级恢复流程。
 
 辅助检查模块使用私有 HOME/XDG/工作目录和临时目录；流媒体 Cookie 不会落在调用者当前目录。
+
+## SELinux 系统
+
+CentOS、AlmaLinux、Rocky Linux 等启用 SELinux 时，私有目录中的可执行文件需要正确的持久标签。安装器应使用项目专属规则并校验实际标签，保持 SELinux 启用；缺失依赖或管理员规则冲突时按具体提示处理后重试。不要通过关闭 SELinux 绕过启动失败。
 
 ## 故障恢复
 

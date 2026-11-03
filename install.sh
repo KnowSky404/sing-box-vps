@@ -10231,6 +10231,11 @@ prepare_sbv_update() {
       '私有存储目录无法安全初始化' '目录权限或所有者不可信' 1 '检查统一根目录；目标未发生变更'
     return 1
   }
+  storage_selinux_prepare || {
+    set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'precheck' 'selinux_setup_failed' \
+      'SELinux 文件上下文无法安全准备' '已保留管理员规则，未发布候选脚本' 1 '检查 SELinux 工具、规则和目录标签'
+    return 1
+  }
   target_dir=$(dirname -- "${SBV_BIN_PATH}")
   SBV_UPDATE_LOCK_PATH="${target_dir}/.sbv-update.lock"
 
@@ -10511,6 +10516,11 @@ prepare_sbv_candidate_for_commit() {
       '检查 chown 权限；原脚本未发生变更'
     return 1
   fi
+  storage_selinux_label "${SBV_UPDATE_CANDIDATE_PATH}" "${SBV_BIN_PATH}" || {
+    set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'commit' 'selinux_label_failed' \
+      '候选脚本的 SELinux 标签校验失败' '原脚本未发生变更' 1 '检查项目文件上下文规则'
+    return 1
+  }
   return 0
 }
 
@@ -10627,6 +10637,7 @@ restore_sbv_backup() {
     rm -f -- "${restore_path}" || true
     return 1
   fi
+  storage_selinux_label "${restore_path}" "${SBV_BIN_PATH}" || return 1
   if ! mv -f -- "${restore_path}" "${SBV_BIN_PATH}"; then
     rm -f -- "${restore_path}" || true
     return 1
@@ -11352,6 +11363,7 @@ ensure_sbv_command_installed() {
   local source_file=$0
   local result_status=0
   storage_initialize || return 1
+  storage_selinux_prepare || return 1
 
   if [[ "${source_file}" == "${SBV_LINK_PATH}" && -L "${source_file}" &&
         "$(readlink -- "${source_file}")" == "${SBV_BIN_PATH}" ]]; then
@@ -12678,6 +12690,7 @@ get_arch() {
 
 # --- System Check & Dependencies ---
 install_dependencies() {
+  local selinux_package=''
   log_info "正在安装必要的基础依赖..."
   case "${OS_NAME}" in
     debian|ubuntu)
@@ -12685,6 +12698,12 @@ install_dependencies() {
       run_with_progress "安装基础依赖" apt-get install -y curl wget jq tar openssl uuid-runtime qrencode iproute2 dnsutils ca-certificates || return $?
       ;;
     centos|almalinux|rocky)
+      if storage_selinux_active; then
+        if [[ "${OS_VERSION%%.*}" == 7 ]]; then selinux_package=policycoreutils-python
+        else selinux_package=policycoreutils-python-utils
+        fi
+        run_with_progress "安装 SELinux 文件上下文工具" yum install -y policycoreutils "${selinux_package}" || return $?
+      fi
       run_with_progress "安装基础依赖" yum install -y curl wget jq tar openssl util-linux qrencode iproute bind-utils ca-certificates || return $?
       ;;
   esac
@@ -12772,7 +12791,9 @@ singbox_atomic_file_copy() (
   trap '[[ -z "${staged}" ]] || rm -f -- "${staged}"' EXIT
   cp -p -- "${source_file}" "${staged}" || return $?
   chmod "${mode}" "${staged}" || return $?
+  storage_selinux_label "${staged}" "${target_file}" || return 1
   mv -f -- "${staged}" "${target_file}" || return $?
+  storage_selinux_label "${target_file}" || return 1
   staged=''
 )
 
@@ -12880,7 +12901,7 @@ singbox_candidate_namespace_runtime_safe() {
 
 install_binary() (
   umask 077
-  storage_initialize || return 1
+  storage_initialize && storage_selinux_prepare || return 1
   local expected_version=${SB_VERSION#v} root download_url target_dir temp_dir=''
   local staged_binary='' staged_lib='' staged_marker='' lib_path='' lib_dir=''
   local binary_before=n lib_before=n marker_before=n manage_library=n publish_started=n changed=false
@@ -13001,6 +13022,8 @@ install_binary() (
   staged_binary=$(storage_mktemp "${target_dir}/.sing-box.restore.XXXXXXXX") || return 1
   cp -- "${temp_dir}/extract/${root}/sing-box" "${staged_binary}" || return 1
   chmod 0755 "${staged_binary}" || return 1
+  failure_code=selinux_label_failed
+  storage_selinux_label "${staged_binary}" "${SINGBOX_BIN_PATH}" || return 1
   failure_code=unexpected_binary_version
   singbox_binary_version_matches "${staged_binary}" "${expected_version}" || return 1
   singbox_candidate_namespace_runtime_safe "${staged_binary}" "${expected_version}" || namespace_status=$?
@@ -13032,6 +13055,7 @@ install_binary() (
       staged_lib=$(storage_mktemp "${lib_dir}/.libcronet.install.XXXXXXXX") || return 1
       cp -- "${temp_dir}/extract/${root}/libcronet.so" "${staged_lib}" || return 1
       chmod 0644 "${staged_lib}" || return 1
+      storage_selinux_label "${staged_lib}" "${lib_path}" || return 1
       library_hash=$(sha256sum "${staged_lib}") || return 1
       library_hash=${library_hash%% *}
       staged_marker=$(storage_mktemp "${SB_PROJECT_DIR}/.libcronet-marker.install.XXXXXXXX") || return 1
@@ -13101,7 +13125,7 @@ install_binary() (
 setup_service() {
   local candidate=''
   log_info "配置 systemd 服务..."
-  storage_initialize || return 1
+  storage_initialize && storage_selinux_prepare || return 1
   [[ ! -L "${SINGBOX_SERVICE_FILE}" &&
      ( ! -e "${SINGBOX_SERVICE_FILE}" || -f "${SINGBOX_SERVICE_FILE}" ) ]] || return 1
   candidate=$(storage_mktemp "${SB_DATA_ROOT}/systemd/.sing-box.service.XXXXXXXX") || return 1
@@ -13132,6 +13156,7 @@ EOF
     rm -f -- "${candidate}" || return 1
     return 1
   fi
+  storage_selinux_label "${candidate}" "${SINGBOX_SERVICE_FILE}" || { rm -f -- "${candidate}"; return 1; }
   if ! mv -f -- "${candidate}" "${SINGBOX_SERVICE_FILE}"; then
     rm -f -- "${candidate}" || return 1
     return 1
@@ -43831,6 +43856,7 @@ storage_mktemp() {
 storage_publish_system_link() {
   local link=${1:-} target=${2:-} parent
   [[ "${target}" == "${SB_DATA_ROOT}/"* && -f "${target}" && ! -L "${target}" ]] || return 1
+  storage_selinux_label "${target}" || return 1
   parent=$(dirname -- "${link}") || return 1
   storage_directory_is_safe "${parent}" || return 1
   [[ -d "${parent}" ]] || return 1
@@ -43887,6 +43913,162 @@ storage_publish_library_link() {
   else
     return 1
   fi
+}
+
+# SELinux stays enabled. Local mappings belong only to this private subtree;
+# staging files receive the final path's context before an atomic rename.
+storage_selinux_active() {
+  local mode
+  if command -v getenforce >/dev/null 2>&1; then
+    mode=$(getenforce) || return 2
+    case "${mode}" in Enforcing|Permissive) return 0 ;; Disabled) return 1 ;; *) return 2 ;; esac
+  fi
+  [[ ! -e /sys/fs/selinux/enforce ]] || return 2
+  return 1
+}
+
+storage_selinux_tools() {
+  local tool
+  for tool in semanage restorecon matchpathcon chcon jq; do
+    command -v "${tool}" >/dev/null 2>&1 || {
+      printf '[ERROR] SELinux 工具缺失：%s；请先安装 policycoreutils 及当前发行版的 policycoreutils-python(-utils)，未更改 SELinux 模式。\n' "${tool}" >&2
+      return 1
+    }
+  done
+}
+
+storage_selinux_root_regex() {
+  local character result='' index
+  for ((index=0;index<${#SB_DATA_ROOT};index++)); do
+    character=${SB_DATA_ROOT:index:1}
+    case "${character}" in
+      '.'|'['|']'|'('|')'|'{'|'}'|'*'|'+'|'?'|'^'|'$'|'|'|'\') result+="\\${character}" ;;
+      *) result+="${character}" ;;
+    esac
+  done
+  printf '%s' "${result}"
+}
+
+storage_selinux_private_type() {
+  case "${1:-}" in
+    "${SB_DATA_ROOT}/bin"|"${SB_DATA_ROOT}/bin/"*) printf bin_t ;;
+    "${SB_DATA_ROOT}/lib"|"${SB_DATA_ROOT}/lib/"*) printf lib_t ;;
+    "${SB_DATA_ROOT}/systemd"|"${SB_DATA_ROOT}/systemd/"*) printf systemd_unit_file_t ;;
+    "${SB_DATA_ROOT}"|"${SB_DATA_ROOT}/"*) printf var_lib_t ;;
+    *) return 1 ;;
+  esac
+}
+
+storage_selinux_system_path() {
+  case "${1:-}" in
+    "${SBV_LINK_PATH}"|"${SINGBOX_LINK_PATH}"|"${SINGBOX_SERVICE_LINK_PATH}"|"$(dirname "$(dirname "${SINGBOX_LINK_PATH}")")/lib/libcronet.so") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+storage_selinux_prepare() (
+  local active_status=0 root_regex rules inventory records probes_file='' rule expression type directory
+  storage_selinux_active || active_status=$?
+  case "${active_status}" in 1) return 0 ;; 0) ;; *) return 1 ;; esac
+  storage_selinux_tools || return 1
+  storage_directory_is_safe "${SB_DATA_ROOT}" || return 1
+  root_regex=$(storage_selinux_root_regex) || return 1
+  rules=$(jq -cn --arg root "${root_regex}" '[
+    {spec:($root+"(/.*)?"),type:"var_lib_t"},
+    {spec:($root+"/bin(/.*)?"),type:"bin_t"},
+    {spec:($root+"/lib(/.*)?"),type:"lib_t"},
+    {spec:($root+"/systemd(/.*)?"),type:"systemd_unit_file_t"}]') || return 1
+  inventory=$(LC_ALL=C semanage fcontext -l -C) || return 1
+  # Read the stable C-locale table as data, including local equivalences. Never
+  # eval semanage's shell export or modify an administrator's existing mapping.
+  records=$(printf '%s\n' "${inventory}" | jq -Rsc '
+    split("\n") | map(select((test("^\\s*$")|not) and (test("^SELinux (fcontext|Local fcontext Equivalence)")|not))) |
+    map(if test(" = ") then (capture("^(?<destination>.+) = (?<source>.+)$") // error("invalid_fcontext_equivalence"))
+      else (capture("^(?<spec>.+?)\\s+(?<kind>all files|regular file|directory|character device|block device|socket|symbolic link|named pipe)\\s+(?<context>[^[:space:]]+:[^[:space:]]+:[^[:space:]]+:[^[:space:]]+)\\s*$") // error("invalid_fcontext_record")) end)') || return 1
+  # Local rules use newest-first matching. Adding the broad rule after an
+  # existing child rule would silently override that administrator mapping.
+  if ! jq -e --argjson rules "${rules}" '
+    any(.[]; .spec?==$rules[0].spec) or
+    all(.[]; . as $entry | all($rules[1:][]; .spec!=$entry.spec))' <<< "${records}" >/dev/null; then
+    printf '[ERROR] SELinux 已有项目子目录规则但缺少根规则；已保留原有效映射，未新增或重排规则。\n' >&2
+    return 1
+  fi
+  probes_file=$(mktemp "${SB_DATA_ROOT}/tmp/.selinux-probes.XXXXXXXX") || return 1
+  trap 'rm -f -- "${probes_file}"' EXIT
+  find "${SB_DATA_ROOT}" -xdev -print0 | jq -Rsc --arg root "${SB_DATA_ROOT}" '
+    split("\u0000") | map(select(length>0)) + [$root,$root+"/bin/sing-box",$root+"/lib/libcronet.so",$root+"/systemd/sing-box.service",$root+"/runtime/config.json"]' > "${probes_file}" || return 1
+  if ! jq -e --arg root "${SB_DATA_ROOT}" --arg escaped "${root_regex}" --argjson rules "${rules}" --slurpfile probes "${probes_file}" '
+    all(.[]; . as $entry |
+      if has("destination") then
+        ($entry.destination==$root or ($entry.destination|startswith($root+"/")) or ($root|startswith($entry.destination+"/"))) | not
+      elif any($rules[]; .spec==$entry.spec) then
+        .kind=="all files" and any($rules[]; .spec==$entry.spec and $entry.context==("system_u:object_r:"+.type+":s0"))
+      else
+        (($entry.spec|contains($root) or contains($escaped)) or any($probes[0][]; test("^(?:"+$entry.spec+")$"))) | not
+      end)' <<< "${records}" >/dev/null; then
+    printf '[ERROR] SELinux 本地文件上下文与项目目录冲突；已保留管理员规则，未覆盖。\n' >&2
+    return 1
+  fi
+  while IFS= read -r rule; do
+    expression=$(jq -r .spec <<< "${rule}") || return 1
+    type=$(jq -r .type <<< "${rule}") || return 1
+    if ! jq -e --arg expression "${expression}" 'any(.[]; .spec?==$expression)' <<< "${records}" >/dev/null; then
+      # Keep successful project-only additions if a later step fails: backups
+      # and recovery material may already need them, and retries are idempotent.
+      semanage fcontext -a -t "${type}" "${expression}" || return 1
+    fi
+  done < <(jq -c '.[]' <<< "${rules}")
+  for directory in "${SB_DATA_ROOT}" "${SB_DATA_ROOT}/bin" "${SB_DATA_ROOT}/lib" "${SB_DATA_ROOT}/systemd" "${SB_PROJECT_DIR}"; do
+    [[ ! -e "${directory}" ]] || storage_selinux_label "${directory}" "${directory}" directory-only || return 1
+  done
+)
+
+storage_selinux_label() {
+  local path=${1:-} final=${2:-${1:-}} scope=${3:-} active_status=0 expected type actual
+  storage_selinux_active || active_status=$?
+  case "${active_status}" in 1) return 0 ;; 0) ;; *) return 1 ;; esac
+  storage_selinux_tools || return 1
+  [[ "${path}" == "${SB_DATA_ROOT}" || "${path}" == "${SB_DATA_ROOT}/"* ]] || return 1
+  [[ ! -L "${path}" && ( -f "${path}" || -d "${path}" ) ]] || return 1
+  storage_directory_is_safe "$(dirname -- "${path}")" || return 1
+  [[ "${final}" != *'/../'* && "${final}" != *'/./'* && "${final}" != *$'\n'* && "${final}" != *$'\r'* ]] || return 1
+  if type=$(storage_selinux_private_type "${final}"); then :
+  elif storage_selinux_system_path "${final}"; then type=''
+  else return 1
+  fi
+  expected=$(matchpathcon -n "${final}") || return 1
+  [[ -n "${expected}" && "${expected}" != '<<none>>' ]] || return 1
+  if [[ -n "${type}" ]]; then
+    actual=${expected#*:*:}; actual=${actual%%:*}
+    [[ "${actual}" == "${type}" ]] || {
+      printf '[ERROR] SELinux 项目路径的有效上下文与受管规则不一致，未发布候选文件。\n' >&2
+      return 1
+    }
+  fi
+  if [[ "${path}" == "${final}" ]]; then
+    if [[ "${path}" == "${SB_PROJECT_DIR}" && "${scope}" != directory-only ]]; then
+      # Migration calls this only on a validated, link-free copied runtime.
+      [[ -z "$(find "${path}" -type l -print -quit)" ]] || return 1
+      restorecon -RF -- "${path}" || return 1
+    else restorecon -F -- "${path}" || return 1
+    fi
+    matchpathcon -V "${path}" >/dev/null || return 1
+  else
+    chcon "${expected}" -- "${path}" || return 1
+    actual=$(stat -c %C -- "${path}") || return 1
+    [[ "${actual}" == "${expected}" ]] || return 1
+  fi
+}
+
+storage_selinux_restore_system_path() {
+  local path=${1:-} active_status=0
+  storage_selinux_active || active_status=$?
+  case "${active_status}" in 1) return 0 ;; 0) ;; *) return 1 ;; esac
+  storage_selinux_tools || return 1
+  storage_selinux_system_path "${path}" || return 1
+  [[ -f "${path}" && ! -L "${path}" ]] || return 1
+  storage_directory_is_safe "$(dirname -- "${path}")" || return 1
+  restorecon -F -- "${path}" && matchpathcon -V "${path}" >/dev/null
 }
 # Historical releases used this literal path, including on custom-home hosts.
 readonly SB_LEGACY_PROJECT_DIR="/root/sing-box-vps"
@@ -44157,7 +44339,11 @@ storage_migration_rewrite() {
     case "${file#"${tree}/"}" in
       config.json|managed-config.generated.json|components.json|routing-policy.json|protocols/instances/*.json)
         if [[ "${file#"${tree}/"}" == protocols/instances/* ]]; then
-          protocol=${file##*/}; protocol=${protocol%.json}
+          protocol=${file#"${tree}/protocols/instances/"}
+          # Bash case wildcards cross directory separators. Historical nested
+          # files are opaque bytes, even when their basename is a known store.
+          [[ "${protocol}" != */* ]] || continue
+          protocol=${protocol%.json}
           case "${protocol}" in mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|hy2|anytls|snell|tuic|hysteria|naive|shadowtls) ;; *) continue ;; esac
         fi
         candidate=$(mktemp "${file}.storage-next.XXXXXXXX") || return 1
@@ -44349,6 +44535,7 @@ storage_migration_restore() {
     }
   fi
   storage_migration_phase rollback || return 1
+  storage_selinux_prepare || { storage_migration_phase rollback_failed; return 1; }
   # Stop any newly started service before restoring files; inability to stop
   # leaves all recovery material intact instead of deleting live artifacts.
   if jq -e '.touched.service_stop==true or .touched.links==true' "${directory}/journal.json" >/dev/null; then
@@ -44452,10 +44639,14 @@ storage_migration_restore_file() {
   storage_migration_trusted_path "$(dirname "${target}")" || return 1
   [[ "$(stat -c %d "$(dirname "${target}")")" == "$(stat -c %d "${SB_DATA_ROOT}/tmp")" ]] || return 1
   staged=$(mktemp "${SB_DATA_ROOT}/tmp/.storage-restore.XXXXXXXX") || return 1
-  if ! cp -p -- "${source}" "${staged}" || ! mv -f -- "${staged}" "${target}"; then
+  if ! cp -p -- "${source}" "${staged}" || ! storage_selinux_label "${staged}" "${target}" || ! mv -f -- "${staged}" "${target}"; then
     rm -f -- "${staged}"
     return 1
   fi
+  case "${target}" in
+    "${SB_DATA_ROOT}/"*) storage_selinux_label "${target}" ;;
+    *) storage_selinux_restore_system_path "${target}" ;;
+  esac
 }
 
 storage_recover() (
@@ -44603,6 +44794,9 @@ storage_migrate() (
   [[ "${bytes}" =~ ^[0-9]+$ && "${available}" =~ ^[0-9]+$ ]] && (( available > bytes )) || {
     storage_migration_error insufficient_staging_space; return 1;
   }
+  # Establish persistent labels before stopping the legacy service. A missing
+  # SELinux tool or policy conflict must leave the original service untouched.
+  storage_selinux_prepare || return 1
   mkdir -p -m 700 "${SB_DATA_ROOT}/backups/migrations" || return 1
   backup=$(mktemp -d "${SB_DATA_ROOT}/backups/migrations/migration-XXXXXXXX") || return 1
   journal_prepare=$(mktemp -d "${SB_DATA_ROOT}/migrations/.prepare-XXXXXXXX") || return 1
@@ -44678,9 +44872,13 @@ storage_migrate() (
       media) item="${SB_PROJECT_DIR}/media-check"; destination=${SB_MEDIA_CHECK_DIR} ;;
     esac
     [[ -e "${item}" ]] || continue
+    storage_selinux_label "${item}" "${destination}" || return 1
     storage_migration_mark "${name}" || return 1
     if [[ -d "${destination}" ]]; then rmdir -- "${destination}" || return 1; fi
     mv -- "${item}" "${destination}" || return 1
+    # cp -a retains the legacy tree labels; reapply the destination policy to
+    # every runtime entry before any core validation or service activation.
+    [[ "${name}" != runtime ]] || storage_selinux_label "${destination}" || return 1
   done
   storage_publish_library_link || return 1
   storage_migration_validate_state "${SB_PROJECT_DIR}" > "${directory}/state-check.log" 2>&1 || {
