@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026110204
+# Version: 2026110301
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026110204"
+readonly SCRIPT_VERSION="2026110301"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 # A single IPv6 wildcard socket accepts IPv4 and IPv6 in sing-box on Linux.
 readonly SB_DEFAULT_LISTEN_ADDRESS="::"
@@ -41242,9 +41242,9 @@ routing_transaction_run() (
   before_active=$(routing_service_active_json) || { routing_error '无法确认服务原状态，规则未修改。'; return 1; }
   case "${operation}" in
     apply)
-      routing_draft_validate "${draft}" || { routing_error '规则草稿无效，未修改。'; return 1; }
+      routing_draft_validate "${draft}" || { routing_error '规则候选无效，未修改。'; return 1; }
       expected=$(jq -r '.fingerprint' "${draft}") || return 1
-      [[ "${expected}" == "${fingerprint}" ]] || { routing_error '配置已在会话外变化，请重新载入草稿。'; return 1; }
+      [[ "${expected}" == "${fingerprint}" ]] || { routing_error '配置已在读取后变化，请重试本次设置。'; return 1; }
       previous_policy=$(routing_policy_read_json) || return 1
       policy=$(jq -c '.policy' "${draft}") || return 1
       # A Block CN or preset edit does not authorize WARP account repair.
@@ -41397,7 +41397,7 @@ routing_notice() {
   printf '%b[%s]%b %s\n' "${color}" "${level}" "${NC}" "${message}" >&2
 }
 
-# Changes in this UI affect only a private draft until explicit application.
+# Edit a private transaction candidate; UI actions apply it immediately below.
 routing_draft_edit() {
   local draft=$1 filter=$2 next="${1}.next"
   shift 2
@@ -41405,10 +41405,34 @@ routing_draft_edit() {
     chmod 600 "${next}" && mv -f -- "${next}" "${draft}"
   else
     rm -f -- "${next}"
-    routing_notice WARN '设置无效，草稿未修改。'
+    routing_notice WARN '设置无效，当前配置未修改。'
     return 1
   fi
 }
+
+# Each UI action owns one candidate. Never carry failed edits, revisions or
+# one-shot registration requests into the next action.
+routing_setting_apply() (
+  local current=$1 filter=$2 candidate="${1}.apply" status=0 fingerprint
+  shift 2
+  umask 077
+  trap 'rm -f -- "${candidate}" "${candidate}.next"' EXIT
+  cp -- "${current}" "${candidate}" || return 1
+  routing_draft_edit "${candidate}" "${filter}" "$@" || return 1
+  if cmp -s "${candidate}" "${current}"; then
+    fingerprint=$(routing_state_fingerprint) || return 1
+    if [[ "$(jq -r '.fingerprint' "${current}")" == "${fingerprint}" ]]; then
+      routing_notice INFO '当前已是此设置。'
+    else
+      routing_notice WARN '配置已在读取后变化，请重试本次设置。'
+      status=1
+    fi
+  else
+    routing_policy_apply "${candidate}" || status=$?
+  fi
+  routing_draft_create "${current}" || return 1
+  return "${status}"
+)
 
 routing_boolean_label() {
   case "${1:-false}" in true) printf '%b开启%b' "${GREEN}" "${NC}" ;; *) printf '%b关闭%b' "${YELLOW}" "${NC}" ;; esac
@@ -41419,52 +41443,58 @@ routing_policy_needs_adoption() {
     jq -e '.schema_version != 2' "${SB_ROUTING_POLICY_FILE}" >/dev/null
 }
 
+routing_legacy_cleanup_hint() {
+  if [[ -f "${SB_ROUTING_POLICY_FILE}" ]] && routing_policy_needs_adoption; then
+    printf '；修改设置时将清理旧版限制（广告与私网）'
+  fi
+}
+
+routing_warp_label() {
+  jq -r 'if .warp.enabled then
+    (if .warp.mode=="all" then "开启（全量出口）" else "开启（选择性分流）" end)
+    else "关闭（原生默认）" end' "$1"
+}
+
 routing_policy_overview() {
-  local draft=$1 nodes
-  nodes=$(routing_nodes_json) || return 1
-  render_left_aligned_page_header '网络与分流' '只管理本 VPS 的服务端网络策略；修改先保存为草稿'
-  render_summary_item 'Block CN' "$(routing_boolean_label "$(jq -r '.policy.server.block_cn' "${draft}")")"
-  render_summary_item '默认出口（草稿）' "$(jq -r 'if .warp.enabled then (if .warp.mode=="all" then "WARP 全量" else "原生默认 + WARP 选择性分流" end) else "原生出口" end' "${draft}")"
-  render_summary_item 'AI / 流媒体走 WARP' "$(jq -r '(.policy.server.warp_ai|tostring)+" / "+(.policy.server.warp_streaming|tostring)' "${draft}")"
-  render_summary_item '独立出口节点 / 待修改' "$(jq '[.[]|select(.policy!="default")]|length' <<< "${nodes}") / $(jq '.node_overrides|length' "${draft}")"
-  if routing_policy_needs_adoption; then
-    echo '应用时启用当前服务端策略格式，并清理脚本原先生成的广告与私网限制；取消不会修改现有配置。'
-  fi
-  if jq -e '.warp.reregister' "${draft}" >/dev/null; then
-    routing_notice WARN '应用时将重新注册 WARP；文件回滚不能撤销已发送的云端注册。'
-  fi
+  render_left_aligned_page_header '网络与分流' '只管理本 VPS 的服务端网络策略；设置修改后立即生效'
 }
 
 routing_policy_preview() {
-  local draft=$1
+  local draft=$1 nodes
   routing_draft_validate "${draft}" || return 1
-  routing_policy_overview "${draft}" || return 1
+  nodes=$(routing_nodes_json) || return 1
+  routing_policy_overview
   echo '受管规则顺序：嗅探 → Block CN（域名、解析、IP）→ 节点出口 → 自定义 → AI / 流媒体 → 默认出口。'
   jq -r '.policy.server.rules[] | "规则: \(.id) [\(.kind)] → \(.action) / enabled=\(.enabled)"' "${draft}"
   jq -r '.policy.server.rule_sets[] | "规则源: \(.tag) [\(.type),\(.format)] → \(.action) / enabled=\(.enabled)"' "${draft}"
-  jq -r '.node_overrides[] | "节点出口: \(.protocol)/\(.id) → \(.policy)"' "${draft}"
-  echo '规则源 URL、账户密钥和节点凭据不在预览中展示。应用时执行完整配置与服务检查。'
+  jq -r '.[] | select(.policy!="default") | "节点出口: \(.protocol)/\(.id) → \(.policy)"' <<< "${nodes}"
+  echo '规则源 URL、账户密钥和节点凭据不在此展示。每次设置都会执行完整配置与服务检查。'
 }
 
 routing_default_outbound_menu() {
-  local draft=$1 choice
+  local draft=$1 choice nodes
   while true; do
-    render_left_aligned_page_header '默认出口与 WARP 管理' '影响全局默认策略；独立节点和自定义 WARP 依赖会保留'
-    render_menu_item 1 '默认使用原生出口'
-    render_menu_item 2 '原生默认，AI / 流媒体及自定义选择性使用 WARP'
-    render_menu_item 3 '默认全部代理流量使用 WARP'
-    render_menu_item 4 '设置 / 取消应用时重新注册 WARP 账户'
-    render_menu_item 5 '节点出口设置（跟随全局 / 原生 / WARP）'
-    render_menu_item 6 '高级：自定义服务端域名 / IP 分流'
-    render_menu_item 7 '高级：WARP 规则源与既有资产'
+    nodes=$(routing_nodes_json) || return 1
+    render_left_aligned_page_header '默认出口与 WARP 管理' "影响全局默认策略；独立节点和自定义 WARP 依赖会保留$(routing_legacy_cleanup_hint)"
+    render_menu_item 1 '默认使用原生出口' '' "$(jq -r 'if .warp.enabled then "" else "当前" end' "${draft}")"
+    render_menu_item 2 '原生默认，AI / 流媒体及自定义选择性使用 WARP' '' "$(jq -r 'if .warp.enabled and .warp.mode=="selective" then "当前" else "" end' "${draft}")"
+    render_menu_item 3 '默认全部代理流量使用 WARP' '' "$(jq -r 'if .warp.enabled and .warp.mode=="all" then "当前" else "" end' "${draft}")"
+    render_menu_item 4 '重新注册 WARP 账户' '立即执行，需确认'
+    render_menu_item 5 '节点出口设置（跟随全局 / 原生 / WARP）' '' "独立出口 $(jq '[.[]|select(.policy!="default")]|length' <<< "${nodes}") 个"
+    render_menu_item 6 '高级：自定义服务端域名 / IP 分流' '' "$(jq '.policy.server.rules|length' "${draft}") 条"
+    render_menu_item 7 '高级：WARP 规则源与既有资产' '' "$(jq '.policy.server.rule_sets|length' "${draft}") 个规则源"
     echo '0. 返回'
     choice=$(prompt_choice '请选择 [0-7]: ' 0 7 '') || return 0
     case "${choice}" in
       0) return ;;
-      1) routing_draft_edit "${draft}" '.warp.enabled=false' || return 1 ;;
-      2) routing_draft_edit "${draft}" '.warp.enabled=true | .warp.mode="selective"' || return 1 ;;
-      3) routing_draft_edit "${draft}" '.warp.enabled=true | .warp.mode="all"' || return 1 ;;
-      4) routing_draft_edit "${draft}" '.warp.reregister |= not' || return 1 ;;
+      1) routing_setting_apply "${draft}" '.warp.enabled=false' || continue ;;
+      2) routing_setting_apply "${draft}" '.warp.enabled=true | .warp.mode="selective"' || continue ;;
+      3) routing_setting_apply "${draft}" '.warp.enabled=true | .warp.mode="all"' || continue ;;
+      4)
+        routing_notice WARN '重新注册会立即联系 WARP 服务；恢复文件不能撤销云端注册。'
+        [[ "$(prompt_yes_no '立即重新注册 WARP 账户 [y/n]（默认 n）: ' n)" == y ]] || continue
+        routing_setting_apply "${draft}" '.warp.reregister=true' || continue
+        ;;
       5) routing_node_policy_menu "${draft}" || return 1 ;;
       6) routing_collection_menu "${draft}" rules || return 1 ;;
       7) routing_sources_menu "${draft}" || return 1 ;;
@@ -41475,15 +41505,15 @@ routing_default_outbound_menu() {
 routing_presets_menu() {
   local draft=$1 choice
   while true; do
-    render_left_aligned_page_header 'AI / 流媒体分流' '只在全局选择性 WARP 模式下生效'
-    render_menu_item 1 '切换 AI 分流' '' "$(jq -r '.policy.server.warp_ai' "${draft}")"
-    render_menu_item 2 '切换流媒体分流' '' "$(jq -r '.policy.server.warp_streaming' "${draft}")"
+    render_left_aligned_page_header 'AI / 流媒体分流' "修改立即保存；预设只在全局选择性 WARP 模式下生效$(routing_legacy_cleanup_hint)"
+    render_menu_item 1 '切换 AI 分流' '' "$(routing_boolean_label "$(jq -r '.policy.server.warp_ai' "${draft}")")"
+    render_menu_item 2 '切换流媒体分流' '' "$(routing_boolean_label "$(jq -r '.policy.server.warp_streaming' "${draft}")")"
     echo '0. 返回'
     choice=$(prompt_choice '请选择 [0-2]: ' 0 2 '') || return 0
     case "${choice}" in
       0) return ;;
-      1) routing_draft_edit "${draft}" '.policy.server.warp_ai |= not' || return 1 ;;
-      2) routing_draft_edit "${draft}" '.policy.server.warp_streaming |= not' || return 1 ;;
+      1) routing_setting_apply "${draft}" '.policy.server.warp_ai |= not' || continue ;;
+      2) routing_setting_apply "${draft}" '.policy.server.warp_streaming |= not' || continue ;;
     esac
   done
 }
@@ -41551,7 +41581,7 @@ routing_source_record_prompt() {
 routing_collection_menu() {
   local draft=$1 collection=$2 choice index current record
   while true; do
-    render_left_aligned_page_header "$([[ "${collection}" == rules ]] && printf '自定义域名与 IP 规则' || printf '本地 / 远程规则源')" '按列表顺序处理，自定义规则在预设之前生效'
+    render_left_aligned_page_header "$([[ "${collection}" == rules ]] && printf '自定义域名与 IP 规则' || printf '本地 / 远程规则源')" "按列表顺序处理，自定义规则在预设之前生效$(routing_legacy_cleanup_hint)"
     jq -r --arg collection "${collection}" '.policy.server[$collection]|to_entries[]|
       "\(.key+1). \(.value.id // .value.tag) [\(.value.kind // .value.type)] → \(.value.action) / enabled=\(.value.enabled)"' "${draft}"
     echo '1. 添加  2. 编辑  3. 启停  4. 删除  0. 返回'
@@ -41571,13 +41601,13 @@ routing_collection_menu() {
           record=$(routing_source_record_prompt "${current}") || continue
         fi
         if [[ "${choice}" == 1 ]]; then
-          routing_draft_edit "${draft}" '.policy.server[$collection] += [$record]' --arg collection "${collection}" --argjson record "${record}" || continue
+          routing_setting_apply "${draft}" '.policy.server[$collection] += [$record]' --arg collection "${collection}" --argjson record "${record}" || continue
         else
-          routing_draft_edit "${draft}" '.policy.server[$collection][$index]=$record' --arg collection "${collection}" --argjson index "${index}" --argjson record "${record}" || continue
+          routing_setting_apply "${draft}" '.policy.server[$collection][$index]=$record' --arg collection "${collection}" --argjson index "${index}" --argjson record "${record}" || continue
         fi
         ;;
-      3) routing_draft_edit "${draft}" '.policy.server[$collection][$index].enabled |= not' --arg collection "${collection}" --argjson index "${index}" || continue ;;
-      4) routing_draft_edit "${draft}" 'del(.policy.server[$collection][$index])' --arg collection "${collection}" --argjson index "${index}" || continue ;;
+      3) routing_setting_apply "${draft}" '.policy.server[$collection][$index].enabled |= not' --arg collection "${collection}" --argjson index "${index}" || continue ;;
+      4) routing_setting_apply "${draft}" 'del(.policy.server[$collection][$index])' --arg collection "${collection}" --argjson index "${index}" || continue ;;
     esac
   done
 }
@@ -41599,7 +41629,7 @@ routing_node_policy_menu() {
   case "${policy}" in direct) choice=2 ;; warp) choice=3 ;; *) choice=1 ;; esac
   choice=$(prompt_choice '出口: 1 跟随全局 / 2 原生 / 3 WARP: ' 1 3 "${choice}") || return 0
   case "${choice}" in 2) policy=direct ;; 3) policy=warp ;; *) policy=default ;; esac
-  routing_draft_edit "${draft}" '.node_overrides |= map(select(.protocol!=$p or .id!=$id)) |
+  routing_setting_apply "${draft}" '.node_overrides |= map(select(.protocol!=$p or .id!=$id)) |
     if $policy==$old then . else .node_overrides += [{protocol:$p,id:$id,policy:$policy,revision:$revision}] end' \
     --arg p "${protocol}" --arg id "${id}" --arg policy "${policy}" --arg old "$(jq -r '.policy' <<< "${node}")" --argjson revision "${revision}"
 }
@@ -41607,7 +41637,7 @@ routing_node_policy_menu() {
 routing_legacy_assets_menu() {
   local draft=$1 field=$2 choice count index
   while true; do
-    echo '既有 WARP 资产按原文件保留；新增条目请使用自定义规则或规则源管理。'
+    echo "既有 WARP 资产按原文件保留；新增条目请使用自定义规则或规则源管理。$(routing_legacy_cleanup_hint)"
     jq -r --arg field "${field}" '.[$field]|split("\n")|to_entries[]|
       select(.value!="" and (.value|startswith("#")|not))|
       "行 \(.key+1): "+(if $field=="legacy_sources" then (.value|split("|")[0])+"（远程源）" else .value end)' "${draft}"
@@ -41617,7 +41647,7 @@ routing_legacy_assets_menu() {
     count=$(jq --arg field "${field}" '.[$field]|split("\n")|length' "${draft}") || return 1
     index=$(prompt_choice '原文件行号（0 取消）: ' 0 "${count}" '') || return 0
     [[ "${index}" != 0 ]] || continue
-    routing_draft_edit "${draft}" '.[$field] |= (split("\n")|del(.[$index])|join("\n"))' \
+    routing_setting_apply "${draft}" '.[$field] |= (split("\n")|del(.[$index])|join("\n"))' \
       --arg field "${field}" --argjson index "$((index-1))" || continue
   done
 }
@@ -41625,7 +41655,7 @@ routing_legacy_assets_menu() {
 routing_sources_menu() {
   local draft=$1 choice
   while true; do
-    render_left_aligned_page_header '规则源管理' '来源、动作、更新周期及启停统一维护'
+    render_left_aligned_page_header '规则源管理' "来源、动作、更新周期及启停统一维护$(routing_legacy_cleanup_hint)"
     echo '1. 本地 / 远程规则源增删改与启停'
     echo '2. 管理既有 WARP 域名列表'
     echo '3. 管理既有 WARP 远程源列表'
@@ -41648,45 +41678,38 @@ routing_sources_menu() {
   done
 }
 
-# Only the diagnostic backend cache may update a live session's CAS token.
-# Bracket both control-state reads with full hashes; an already stale draft or
-# any concurrent policy/unknown-file change must retain its original token.
-routing_media_check_with_draft() (
-  local draft=$1 original=$2 ready=n status=0 expected='' before='' before_check=''
-  local before_control='' after='' after_control='' after_check=''
-  local next_draft="${1}.media-cache.next" next_original="${2}.media-cache.next"
-  umask 077
-  trap 'rm -f -- "${next_draft}" "${next_original}"' EXIT
-  if routing_draft_validate "${draft}" && routing_draft_validate "${original}" &&
-     expected=$(jq -r '.fingerprint' "${draft}") &&
-     before=$(routing_state_fingerprint) &&
-     before_control=$(routing_state_fingerprint without_media_cache) &&
-     before_check=$(routing_state_fingerprint) &&
-     [[ "${before}" == "${before_check}" && "${before}" == "${expected}" &&
-        "$(jq -r '.fingerprint' "${original}")" == "${expected}" ]]; then
-    ready=y
-  fi
-  media_check_menu || status=$?
-  if [[ "${ready}" == y ]] &&
-     after=$(routing_state_fingerprint) &&
-     after_control=$(routing_state_fingerprint without_media_cache) &&
-     after_check=$(routing_state_fingerprint) &&
-     [[ "${after}" == "${after_check}" && "${after_control}" == "${before_control}" ]]; then
-    if ! jq --arg fingerprint "${after}" '.fingerprint=$fingerprint' "${draft}" > "${next_draft}" ||
-       ! jq --arg fingerprint "${after}" '.fingerprint=$fingerprint' "${original}" > "${next_original}" ||
-       ! routing_draft_validate "${next_draft}" || ! routing_draft_validate "${next_original}" ||
-       ! mv -f -- "${next_draft}" "${draft}" || ! mv -f -- "${next_original}" "${original}"; then
-      routing_notice WARN '检测后无法更新草稿校验记录；现有设置草稿已保留。'
-      return 1
+routing_inspection_menu() {
+  local current=$1 choice max_choice
+  while true; do
+    max_choice=2
+    render_left_aligned_page_header '查看规则与恢复' '每次修改已即时应用；恢复仅撤销上一次成功修改'
+    render_menu_item 1 '查看当前规则' '只读'
+    render_menu_item 2 '恢复上次修改前的配置' '需确认'
+    if [[ -f "${SB_ROUTING_POLICY_FILE}" ]] && routing_policy_needs_adoption; then
+      max_choice=3
+      render_menu_item 3 '清理旧版广告与私网限制' '转换为当前服务端策略，需确认'
     fi
-  else
-    routing_notice WARN '检测缓存之外的状态发生变化；保留原草稿校验记录，应用前需核对外部变更。'
-  fi
-  return "${status}"
-)
+    echo '0. 返回'
+    choice=$(prompt_choice "请选择 [0-${max_choice}]: " 0 "${max_choice}" '') || return 0
+    case "${choice}" in
+      0) return 0 ;;
+      1) routing_policy_preview "${current}" || return 1 ;;
+      2)
+        [[ "$(prompt_yes_no '恢复上次修改前的配置 [y/n]（默认 n）: ' n)" == y ]] || continue
+        routing_policy_restore_previous || { routing_draft_create "${current}" || return 1; continue; }
+        routing_draft_create "${current}" || return 1
+        ;;
+      3)
+        [[ "$(prompt_yes_no '清理脚本生成的旧版广告与私网限制 [y/n]（默认 n）: ' n)" == y ]] || continue
+        routing_policy_apply "${current}" || { routing_draft_create "${current}" || return 1; continue; }
+        routing_draft_create "${current}" || return 1
+        ;;
+    esac
+  done
+}
 
 routing_management_menu() (
-  local workspace draft original choice
+  local workspace current choice nodes inspection_hint
   umask 077
   if [[ -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ]]; then
     echo '检测到未完成的规则事务；先恢复后才能管理。'
@@ -41699,47 +41722,26 @@ routing_management_menu() (
   trap 'exit 130' INT
   trap 'exit 143' TERM
   trap 'exit 129' HUP
-  draft="${workspace}/draft.json"; original="${workspace}/original.json"
-  routing_draft_create "${draft}" && cp "${draft}" "${original}" || return 1
+  current="${workspace}/current.json"
   while true; do
-    routing_policy_overview "${draft}" || return 1
-    if cmp -s "${draft}" "${original}"; then echo '草稿状态: 无修改'; else echo '草稿状态: 有待应用修改'; fi
-    render_menu_item 1 'Block CN 开关（中国大陆域名与 IP）'
-    render_menu_item 2 'WARP 开关与节点出口设置'
-    render_menu_item 3 'AI / 流媒体设置'
-    render_menu_item 4 '流媒体与出口检测'
-    render_menu_item 5 '预览、应用与恢复'
+    routing_draft_create "${current}" || return 1
+    nodes=$(routing_nodes_json) || return 1
+    routing_policy_overview
+    render_menu_item 1 'Block CN 开关（中国大陆域名与 IP）' '' "$(routing_boolean_label "$(jq -r '.policy.server.block_cn' "${current}")")"
+    render_menu_item 2 'WARP 开关与节点出口设置' '' "$(routing_warp_label "${current}")；独立出口 $(jq '[.[]|select(.policy!="default")]|length' <<< "${nodes}") 个"
+    render_menu_item 3 'AI / 流媒体设置' '' "AI $(routing_boolean_label "$(jq -r '.policy.server.warp_ai' "${current}")") / 流媒体 $(routing_boolean_label "$(jq -r '.policy.server.warp_streaming' "${current}")")"
+    render_menu_item 4 '流媒体与出口检测' '原生 / WARP 出口'
+    inspection_hint="规则详情 / 撤销上次修改$(routing_legacy_cleanup_hint)"
+    render_menu_item 5 '查看规则与恢复' "${inspection_hint}"
     echo '0. 返回主菜单'
     choice=$(prompt_choice '请选择 [0-5]: ' 0 5 '') || return 0
     case "${choice}" in
-      0)
-        if ! cmp -s "${draft}" "${original}"; then
-          [[ "$(prompt_yes_no '放弃未应用的草稿 [y/n]（默认 n）: ' n)" == y ]] || continue
-        fi
-        return 0
-        ;;
-      1) routing_draft_edit "${draft}" '.policy.server.block_cn |= not' || continue ;;
-      2) routing_default_outbound_menu "${draft}" || return 1 ;;
-      3) routing_presets_menu "${draft}" || return 1 ;;
-      4) routing_media_check_with_draft "${draft}" "${original}" || routing_notice WARN '检测未完成，草稿和服务策略未修改。' ;;
-      5)
-        routing_policy_preview "${draft}" || return 1
-        echo '1. 应用草稿  2. 恢复上次应用前的配置  0. 返回'
-        choice=$(prompt_choice '请选择 [0-2]: ' 0 2 '') || return 0
-        case "${choice}" in
-          1)
-            if cmp -s "${draft}" "${original}" && ! routing_policy_needs_adoption; then routing_notice INFO '没有待应用的修改。'; continue; fi
-            [[ "$(prompt_yes_no '应用全部草稿并检查服务 [y/n]（默认 n）: ' n)" == y ]] || continue
-            routing_policy_apply "${draft}" || continue
-            ;;
-          2)
-            [[ "$(prompt_yes_no '放弃草稿并恢复上次配置 [y/n]（默认 n）: ' n)" == y ]] || continue
-            routing_policy_restore_previous || continue
-            ;;
-          *) continue ;;
-        esac
-        routing_draft_create "${draft}" && cp "${draft}" "${original}" || return 1
-        ;;
+      0) return 0 ;;
+      1) routing_setting_apply "${current}" '.policy.server.block_cn |= not' || continue ;;
+      2) routing_default_outbound_menu "${current}" || return 1 ;;
+      3) routing_presets_menu "${current}" || return 1 ;;
+      4) media_check_menu || routing_notice WARN '检测未完成，服务端网络设置未修改。' ;;
+      5) routing_inspection_menu "${current}" || return 1 ;;
     esac
   done
 )

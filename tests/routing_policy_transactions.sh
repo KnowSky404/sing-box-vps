@@ -213,12 +213,12 @@ jq -e '.schema_version==2 and (.server.block_cn|not)' <<< "${policy}" >/dev/null
 [[ ! -e "${SB_ROUTING_POLICY_FILE}" ]]
 
 reset_case
-# A real menu edit followed by cancel never creates persistent policy/assets.
+# Entering a submenu and returning without choosing a setting is read-only.
 BEFORE_TREE=$(tree_fingerprint "${SB_PROJECT_DIR}")
 routing_management_menu > "${TMP_DIR}/cancel.log" <<'EOF_CANCEL'
-1
+2
 0
-y
+0
 EOF_CANCEL
 [[ "$(tree_fingerprint "${SB_PROJECT_DIR}")" == "${BEFORE_TREE}" ]]
 [[ ! -e "${SB_ROUTING_POLICY_FILE}" && ! -e "${SB_ROUTING_TRANSACTION_DIR}" && ! -s "${SERVICE_LOG}" ]]

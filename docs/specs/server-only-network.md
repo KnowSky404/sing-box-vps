@@ -31,18 +31,26 @@ Keep deployment/service controls, then expose these independent functions:
 - **14/15 Script maintenance**: update/remove the management script.
 
 The network menu has three policy areas: Block CN, WARP (including node
-overrides and compatible advanced sources), and AI/streaming. Preview/apply/
-restore and diagnostics are operations, not additional routing features.
+overrides and compatible advanced sources), and AI/streaming. Show each area's
+current switches and egress hints after its menu label instead of a separate
+status block. Each completed setting is validated and applied immediately; there
+is no user draft, separate apply step or discard-on-return prompt. Read-only rule
+viewing, explicit restore and diagnostics remain operations. Item 5 is
+**View rules and restore**; old v1 policy cleanup is an explicit action there.
+When v1 policy exists, item 5's trailing hint and affected setting subpages explain
+that a real setting change also cleans up old advertising/private-address limits.
+WARP re-registration is an immediate action requiring explicit confirmation,
+rather than a pending switch.
 Remove advertising, LAN access control, client bypass and complete client
 configuration export. Remove `sbv agent export-client --json`, its discovery
 and status fields, and obsolete full-export tests. Existing exported files are
 not deleted as a side effect of upgrading the script.
 
 Media checks must not register/re-register WARP, change routes, or modify node
-credentials. WARP checks require already prepared valid account material. Running
-diagnostics after editing a draft must preserve pending choices. Only proven
-diagnostic-cache changes may refresh private draft fingerprints; an already stale
-draft or any unrelated concurrent change must retain the normal CAS rejection.
+credentials. WARP checks require already prepared valid account material. The next
+edit reads current state after diagnostics, including any updated diagnostic
+cache; there is no pending edit to reconcile. Every individual application still
+rejects a stale candidate or an unrelated concurrent change through normal CAS.
 
 ## 3. Installation and lifecycle isolation
 
@@ -98,46 +106,54 @@ and [remote rule-set HTTP clients](https://github.com/SagerNet/sing-box/blob/v1.
 WARP supports native default, selective AI/streaming/custom routing and full
 managed proxy traffic. Global native/off does not remove WARP still required by
 a node or explicit rule. Per-node choices are inherit/direct/WARP. Node and
-global controls share one transactional network apply; no node credential,
+global controls each use the transactional network apply; no node credential,
 identity, listener or SubMan object changes are implied.
 
 ## 5. Existing installations and transactions
 
 Read valid v1 policy without changing files. Node operations preserve its
 existing effective server policy until the owner explicitly applies network
-settings. Draft creation converts v1 to v2 in memory and marks this cleanup as
-pending even if no toggle is changed. Application removes only old rules proven
+settings. Reading menu state converts v1 to v2 only in the private read
+representation. An actual setting change or the explicit old-policy cleanup action
+commits this conversion; opening or returning from the menu does not. Selecting
+an already-current setting is a no-op even with absent or v1 policy: it does not
+apply, restart, create policy or trigger conversion. Application removes only old rules proven
 to belong to the script by the generated baseline and exact policy projection.
 When the live config is absent, a trusted generated baseline still carries its
 existing restrictions through recovery; neutral fresh defaults must not erase
 them. Do not claim operator rules by their shape, protocol or tag prefix. Preserve
 unknown/manual rules or refuse a conflicting/lossy application.
 
-Opening, previewing, cancelling or leaving the network menu does not write state.
-Apply uses existing lock/fingerprint checks, private snapshots, staged candidate
-validation, backups, atomic publication, one restart only if originally active,
-postchecks, rollback and interrupted-transaction recovery. Explicit restore
+Opening, viewing rules, cancelling input or leaving the network menu does not
+write state. Each completed setting creates a private candidate and immediately
+applies it using existing lock/fingerprint checks, private snapshots, staged
+candidate validation, backups, atomic publication, one restart only if originally
+active, postchecks, rollback and interrupted-transaction recovery. Failed settings
+are not retained for later application; subsequent choices reflect live state.
+Explicit restore
 restores prior policy and config together, including v1 if that was the snapshot.
 WARP registration is allowed only as part of an explicit network operation;
 registration receipts and unavoidable external side effects remain documented.
 
 ## 6. Test plan
 
-Because this changes persisted policy format and shared config rendering, run
-the explicit full host-test manifest and registered Docker scenario set from
-`bash dev/verification/run.sh --plan --base origin/main --full`. Inspect and save
-the expanded names; this is not every file under `tests/`. Container-only
+Select the smallest sufficient scope under AGENTS.md section 4.2. The initial
+server-only implementation changed persisted policy format and shared rendering,
+so its historical acceptance included the explicit full host manifest and
+registered Docker scenarios. The immediate-application menu follow-up changes no
+policy format or core version: cover menu interaction, affected transaction and
+diagnostic paths, plus isolated real-service application and rollback. Container-only
 fixtures require dedicated disposable containers and are not host tests.
 
-Required focused coverage before the full pass:
+Coverage requirements by affected area:
 
 | Area | Assertions |
 | --- | --- |
-| Menus and Agent | Three network policy areas, diagnostics nested, no client/ad/LAN UI, no export command/capability/status; URI/QR/SubMan remain |
+| Menus and Agent | Three network policy areas with inline status; each completed setting applies immediately; no draft/apply/discard workflow; read-only view/return, explicit restore and old-policy cleanup; no client/ad/LAN UI or export command/capability/status; URI/QR/SubMan remain |
 | Install/edit | No routing questions; neutral fresh defaults; policy/key/env/domain/source fingerprints unchanged; no implicit WARP registration |
 | Policy | Strict v1/v2 validation, v1 read preservation, explicit v2 cleanup, Block CN domain/IP ordering and managed-listener scope |
 | Lifecycle | New-node inheritance, retained overrides, typed/global baseline continuity, manual-config preservation/refusal |
-| Transactions | Cancel/no-op, stale draft/lock, edit → diagnose → apply without lost choices, cache-only refresh with race checks, apply once, stopped/failed service, explicit legacy WARP repair, validation/restart failure and signal rollback, recovery/restore |
+| Transactions | Cancel/no-op, stale candidate/lock, immediate edit → diagnose → next edit with fresh state, one transaction per change, no failed edit retained, stopped/failed service, explicitly confirmed WARP re-registration, legacy WARP repair, validation/restart failure and signal rollback, recovery/restore |
 | Sharing | SubMan payload/mock/orchestration and URI/QR regressions; internal per-node builders/probes retained |
 | Real core/runtime | sing-box 1.14.2 check, fresh install, Block CN TCP/UDP rejection with isolated local rule fixtures, non-CN allowance, install-after-policy isolation and legacy cleanup/rollback |
 
@@ -153,7 +169,7 @@ one hour in this environment, in addition to protocol/core/certificate setup.
 Inspect specific slow/failing cases before retrying. Reuse unchanged passing
 results and rerun only failures and tests affected by repairs.
 
-## 7. Delivery evidence
+## 7. Initial implementation evidence (2026-11-02)
 
 Completed isolated acceptance uses sing-box 1.14.2 and disposable systemd
 containers with external networking disabled:
