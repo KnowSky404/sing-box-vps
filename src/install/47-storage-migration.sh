@@ -236,7 +236,7 @@ storage_rewrite_path_json() {
         (["data_directory","state_directory","certificate_path","key_path","config_path","private_key_path","client_certificate_path","client_key_path","mca_certificate_path","mca_key_path","static_key_path","certificate_authority_path","crl_path","secret_path","taildrop_directory","executable_path","wrapper_path","initial_path","protect_path"] | index($key)) != null
         then .value |= relocated
         elif .key=="masquerade" then .value |= file_masquerade
-        elif .key=="path" and $object.type=="local" then .value |= relocated else . end) |
+        elif .key=="path" and ($object.type=="local" or $object.type=="hosts") then .value |= relocated else . end) |
         if (.role=="rule_set" and .type=="local") or (.role=="network_namespace" and .type=="default")
           then .config.path |= relocated else . end
       else . end) |
@@ -328,7 +328,7 @@ storage_migration_explicit_paths() {
       .value | if type=="array" then .[] else . end |
       select(type=="string" and length>0 and (startswith("/")|not))] | length==0
   ' "${file}" >/dev/null || return 1
-  jq -e '[..|objects|select(.type=="local" and (.path|type)=="string" and (.path|length)>0 and (.path|startswith("/")|not))]|length==0' "${file}" >/dev/null || return 1
+  jq -e '[..|objects|select(.type=="local" or .type=="hosts")|.path?|if type=="array" then .[] else . end|select(type=="string" and length>0 and (startswith("/")|not))]|length==0' "${file}" >/dev/null || return 1
   jq -e '[..|objects|select((.role=="rule_set" and .type=="local") or (.role=="network_namespace" and .type=="default"))|.config.path|select(type=="string" and length>0 and (startswith("/")|not))]|length==0' "${file}" >/dev/null || return 1
   jq -e '[.network_namespaces[]?|select(.type=="default")|.path|select(type=="string" and length>0 and (startswith("/")|not))]|length==0' "${file}" >/dev/null || return 1
   jq -e '(.log.output? // "") as $output | $output=="" or $output=="stdout" or $output=="stderr" or ($output|startswith("/"))' "${file}" >/dev/null || return 1

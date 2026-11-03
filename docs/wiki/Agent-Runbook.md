@@ -590,18 +590,17 @@ writes, production deployment or authorized live synchronization.
 
 The guarded Agent upgrade attempts to restore the old binary automatically when its target validation or postconditions fail. First inspect `error`, `failure_reason`, `rollback_attempted`, `rolled_back`, `rollback_ok`, `manual_intervention_required`, `installed`, `config_preserved`, `service`, the exact `backup` path, and `transaction.{id,result_path,status,result_persisted,manifest,rollback}` in its JSON result. Agent `--json` responses use `schema_version: "1.0"` while retaining top-level `schema: "1"` compatibility. For an actual change, a false `transaction.result_persisted` is a failed operation even if the runtime postconditions otherwise succeeded; an already-installed no-op is the explicit exception described above.
 
-Manual recovery is only for `rollback_ok=false`. Validate the returned path prefix and its manifest before copying anything; on production, present these exact commands in a new plan and wait for approval:
+Manual recovery is only for `rollback_ok=false`. Inspect the returned backup and manifest before preparing a restore plan. Resolve the root account home rather than inheriting HOME; the example below only reads the manifest and system entry targets:
 
 ```bash
-systemctl stop sing-box
-backup=/root/.sing-box-vps/backups/upgrades/upgrade-EXACT-DIRECTORY-FROM-JSON
-case "${backup}" in /root/.sing-box-vps/backups/upgrades/upgrade-*) ;; *) exit 1 ;; esac
+data_root="$(getent passwd 0 | cut -d: -f6)/.sing-box-vps"
+backup="${data_root}/backups/upgrades/upgrade-EXACT-DIRECTORY-FROM-JSON"
+case "${backup}" in "${data_root}"/backups/upgrades/upgrade-*) ;; *) exit 1 ;; esac
 (cd "${backup}" && sha256sum -c SHA256SUMS)
-install -m 0755 "${backup}/sing-box" /usr/local/bin/sing-box
-install -m 0644 "${backup}/sing-box.service" /etc/systemd/system/sing-box.service
-install -m 0600 "${backup}/runtime/config.json" /root/.sing-box-vps/runtime/config.json
-systemctl daemon-reload
-/usr/local/bin/sing-box check -c /root/.sing-box-vps/runtime/config.json
-systemctl start sing-box
-systemctl status sing-box --no-pager
+readlink /usr/local/bin/sing-box
+readlink /etc/systemd/system/sing-box.service
 ```
+
+The restore plan must target the actual internal artifacts: `${data_root}/bin/sing-box`, `${data_root}/systemd/sing-box.service`, and `${data_root}/runtime/`. Preserve the global links to those files; copying a binary over `/usr/local/bin/sing-box` would replace the link while systemd continues executing the internal binary. Include the manifest's other runtime files and optional `${data_root}/lib/libcronet.so`, its ownership marker and internal library link when applicable. Historical pre-layout backups remain offline recovery material and require path reconciliation.
+
+On production, present exact mutations, service impact, rollback and verification commands in a new plan and wait for approval. The approved procedure must prepare private staging, verify the manifest and affected configuration with the restored core and its matching libraries, retain `.bak` copies before replacement, stop an active service before committing, and atomically publish internal artifacts. Then reload systemd, check the final configuration with `${data_root}/bin/sing-box`, restore the intended service activity and verify the actual data plane. Retain recovery material if any postcheck fails; do not report a file copy as successful service recovery.
