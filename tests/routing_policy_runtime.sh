@@ -43,8 +43,9 @@ grep -Fxq 'sing-box version 1.14.2' "${ARTIFACT_DIR}/core-version.txt"
 sha256sum /tmp/install.sh /usr/local/bin/sing-box "${BASH_SOURCE[0]}" > "${ARTIFACT_DIR}/sources.sha256"
 cat > "${ARTIFACT_DIR}/proof-boundaries.txt" <<'EOF'
 Real: fresh installer orchestration, HTTP and SOCKS listeners, sing-box 1.14.2,
-systemd, managed firewall, CN domain/IP TCP and UDP filtering, node inheritance,
-network-file preservation, legacy cleanup and transactional service rollback.
+systemd, managed firewall, immediate network-menu changes, CN domain/IP TCP and
+UDP filtering, node inheritance, network-file preservation, menu-driven legacy
+cleanup/restore and transactional service rollback after a failed menu change.
 Prepared: node prompt answers, already installed dependencies/core, public-IP
 lookup and deterministic inline CN datasets (domain cn.fixture.invalid and
 127.0.0.2/32). No actual geo database/source download, Cloudflare WARP account,
@@ -125,6 +126,13 @@ network_fingerprint() {
     if [[ -f "${path}" ]]; then sha256sum "${path}"; else printf 'absent:%s\n' "${path}"; fi
   done
 }
+assert_single_restart() {
+  [[ "$(awk -F '\t' -v phase="${RUNTIME_PHASE}" '$1==phase && $2=="restart sing-box" {n++} END{print n+0}' "${ARTIFACT_DIR}/systemctl-calls.tsv")" == 1 ]]
+}
+assert_valid_active_config() {
+  "${SINGBOX_BIN_PATH}" check -c "${SINGBOX_CONFIG_FILE}" > "${ARTIFACT_DIR}/${RUNTIME_PHASE}-check.log" 2>&1
+  command systemctl is-active --quiet sing-box
+}
 stage fresh-install
 install_protocols_interactive fresh > "${ARTIFACT_DIR}/fresh-install.log" 2>&1 </dev/null
 wait_listener 19082
@@ -134,15 +142,42 @@ http_probe 127.0.0.1 allow
 http_probe 127.0.0.2 allow
 http_probe cn.fixture.invalid allow
 stage block-cn-apply
-routing_draft_create "${ARTIFACT_DIR}/draft.json"
-jq '.policy.server.block_cn=true' "${ARTIFACT_DIR}/draft.json" > "${ARTIFACT_DIR}/cn.json"
-routing_policy_apply "${ARTIFACT_DIR}/cn.json" > "${ARTIFACT_DIR}/cn-apply.log" 2>&1
+routing_management_menu > "${ARTIFACT_DIR}/cn-apply.log" 2>&1 <<'EOF'
+1
+0
+EOF
 wait_listener 19082
+jq -e '.server.block_cn' "${SB_ROUTING_POLICY_FILE}" >/dev/null
+assert_valid_active_config
 http_probe 127.0.0.1 allow
 http_probe 127.0.0.2 reject
 http_probe cn.fixture.invalid reject
 http_probe allowed.fixture.invalid allow
-[[ "$(awk -F '\t' '$1=="block-cn-apply" && $2=="restart sing-box" {n++} END{print n+0}' "${ARTIFACT_DIR}/systemctl-calls.tsv")" == 1 ]]
+assert_single_restart
+stage menu-disable-block-cn
+routing_management_menu > "${ARTIFACT_DIR}/cn-disable.log" 2>&1 <<'EOF'
+1
+0
+EOF
+wait_listener 19082
+jq -e '.server.block_cn|not' "${SB_ROUTING_POLICY_FILE}" >/dev/null
+assert_valid_active_config
+http_probe 127.0.0.1 allow
+http_probe 127.0.0.2 allow
+http_probe cn.fixture.invalid allow
+assert_single_restart
+stage menu-enable-block-cn
+routing_management_menu > "${ARTIFACT_DIR}/cn-enable.log" 2>&1 <<'EOF'
+1
+0
+EOF
+wait_listener 19082
+jq -e '.server.block_cn' "${SB_ROUTING_POLICY_FILE}" >/dev/null
+assert_valid_active_config
+http_probe 127.0.0.1 allow
+http_probe 127.0.0.2 reject
+http_probe cn.fixture.invalid reject
+assert_single_restart
 network_fingerprint > "${ARTIFACT_DIR}/network.before"
 stage add-node
 jq -n '{id:"added",name:"Added HTTP",tag:"http-added",listen:{address:"127.0.0.1",port:19083},
@@ -193,13 +228,26 @@ for dst,allowed in [('127.0.0.1',True),('127.0.0.2',False)]:
 PY
 stage restart-failure
 network_fingerprint > "${ARTIFACT_DIR}/before-failure"
-routing_draft_create "${ARTIFACT_DIR}/draft.json"
-jq '.policy.server.block_cn=false' "${ARTIFACT_DIR}/draft.json" > "${ARTIFACT_DIR}/off.json"
-if routing_policy_apply "${ARTIFACT_DIR}/off.json" > "${ARTIFACT_DIR}/failure.log" 2>&1; then exit 1; fi
+routing_management_menu > "${ARTIFACT_DIR}/failure.log" 2>&1 <<'EOF'
+1
+0
+EOF
+[[ -f "${ARTIFACT_DIR}/failed-once" && ! -e "${SB_ROUTING_TRANSACTION_DIR}" ]]
 network_fingerprint > "${ARTIFACT_DIR}/after-failure"
 cmp "${ARTIFACT_DIR}/before-failure" "${ARTIFACT_DIR}/after-failure"
-command systemctl is-active --quiet sing-box
+jq -e '.server.block_cn' "${SB_ROUTING_POLICY_FILE}" >/dev/null
+assert_valid_active_config
+wait_listener 19082
 http_probe 127.0.0.2 reject
+http_probe cn.fixture.invalid reject
+# Opening and returning after the failure must not retry a retained setting.
+stage menu-after-failure
+routing_management_menu > "${ARTIFACT_DIR}/after-failure-menu.log" 2>&1 <<'EOF'
+0
+EOF
+network_fingerprint > "${ARTIFACT_DIR}/after-failure-return"
+cmp "${ARTIFACT_DIR}/before-failure" "${ARTIFACT_DIR}/after-failure-return"
+[[ "$(awk -F '\t' '$1=="menu-after-failure" && $2=="restart sing-box" {n++} END{print n+0}' "${ARTIFACT_DIR}/systemctl-calls.tsv")" == 0 ]]
 stage legacy-preservation
 # Seed a previous release's valid state to test an existing installation, rather
 # than adding a removed feature through the new UI.
@@ -221,14 +269,29 @@ cmp "${ARTIFACT_DIR}/legacy.before" "${SB_ROUTING_POLICY_FILE}"
 jq -e 'any(.route.rules[]; .ip_is_private==true and .action=="reject") and any(.route.rule_set[]; .tag=="sbv-adblock-inline")' "${SINGBOX_CONFIG_FILE}" >/dev/null
 http_probe 127.0.0.1 reject
 stage explicit-cleanup
-routing_draft_create "${ARTIFACT_DIR}/draft.json"
-routing_policy_apply "${ARTIFACT_DIR}/draft.json" > "${ARTIFACT_DIR}/cleanup.log" 2>&1
+routing_management_menu > "${ARTIFACT_DIR}/cleanup.log" 2>&1 <<'EOF'
+5
+3
+y
+0
+0
+EOF
 jq -e '.schema_version==2 and (keys|sort)==["schema_version","server"]' "${SB_ROUTING_POLICY_FILE}" >/dev/null
 jq -e 'all(.route.rules[]; .ip_is_private!=true) and all(.route.rule_set[]; .tag!="sbv-adblock-inline")' "${SINGBOX_CONFIG_FILE}" >/dev/null
+assert_valid_active_config
+assert_single_restart
 http_probe 127.0.0.1 allow
 stage restore-legacy
-routing_policy_restore_previous > "${ARTIFACT_DIR}/restore.log" 2>&1
+routing_management_menu > "${ARTIFACT_DIR}/restore.log" 2>&1 <<'EOF'
+5
+2
+y
+0
+0
+EOF
 cmp "${ARTIFACT_DIR}/legacy.before" "${SB_ROUTING_POLICY_FILE}"
+assert_valid_active_config
+assert_single_restart
 http_probe 127.0.0.1 reject
 stage complete
 printf 'server-only network runtime passed\n'

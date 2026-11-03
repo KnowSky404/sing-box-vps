@@ -436,9 +436,9 @@ routing_transaction_run() (
   before_active=$(routing_service_active_json) || { routing_error '无法确认服务原状态，规则未修改。'; return 1; }
   case "${operation}" in
     apply)
-      routing_draft_validate "${draft}" || { routing_error '规则草稿无效，未修改。'; return 1; }
+      routing_draft_validate "${draft}" || { routing_error '规则候选无效，未修改。'; return 1; }
       expected=$(jq -r '.fingerprint' "${draft}") || return 1
-      [[ "${expected}" == "${fingerprint}" ]] || { routing_error '配置已在会话外变化，请重新载入草稿。'; return 1; }
+      [[ "${expected}" == "${fingerprint}" ]] || { routing_error '配置已在读取后变化，请重试本次设置。'; return 1; }
       previous_policy=$(routing_policy_read_json) || return 1
       policy=$(jq -c '.policy' "${draft}") || return 1
       # A Block CN or preset edit does not authorize WARP account repair.
