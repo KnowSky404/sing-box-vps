@@ -2,7 +2,7 @@
 
 Project: https://github.com/KnowSky404/sing-box-vps
 Wiki: https://github.com/KnowSky404/sing-box-vps/wiki
-Runtime authority: install.sh and sbv agent capabilities --json
+Runtime authority: install.sh; sbv commands --json for the versioned operation catalog, sbv schema <operation-id> --json for argument/safety/input contracts, and sbv agent capabilities --json for compatible product capabilities.
 Installer authoring: src/install/manifest.txt and source fragments; generate install.sh with bash scripts/build-install.sh, then check with --check.
 
 Read AGENTS.md and skills/sing-box-vps-operator/SKILL.md before repository or VPS operations.
@@ -13,6 +13,7 @@ Documentation sources (also available offline):
 - docs/wiki/Home.md: navigation.
 - docs/wiki/Management.md: server network menu, draft application/recovery and node-sharing scope.
 - docs/wiki/Getting-Started.md: staged installation and uninstallation.
+- docs/wiki/Command-Catalog.md: generated operation reference, exact usage, safety boundaries and explicit interactive-only limitations.
 - docs/wiki/Agent-CLI.md: commands, confirmation, revision/CAS and sensitive output.
 - docs/wiki/Agent-Runbook.md: operations, upgrade, troubleshooting and recovery.
 - docs/wiki/Protocol-Instances.md: typed protocol contracts.
@@ -22,5 +23,7 @@ Documentation sources (also available offline):
 - docs/wiki/Upgrade-Rehearsal.md: fixed-version upgrade rehearsal.
 - docs/wiki/Development.md: contribution, validation and Wiki publication.
 - docs/specs/README.md: implementation contracts, completion evidence and outstanding acceptance boundaries.
+
+Each added/changed feature must update its noninteractive command, embedded descriptor, focused tests, generated command reference and affected runbooks/Agent navigation. Build install.sh, generate the reference with scripts/build-command-docs.sh, and check both with --check plus tests/command_catalog_contract.sh. Do not automate prompt answers. Routing export input is the private raw .data.draft object, not the response envelope; preserve fingerprint CAS. Service logs and full routing drafts are sensitive.
 
 Never print credentials or full links in shared logs. Config changes require sing-box check. Local/mock, Docker, public, external-provider and production evidence are independent.

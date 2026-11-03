@@ -11,6 +11,7 @@ here.
 
 | Contract or goal | Implementation status | Evidence and remaining boundary |
 | --- | --- | --- |
+| [AI Native operations](ai-native-operations.md) ([中文](ai-native-operations.zh-CN.md)) | Unified operation catalog and safe adapters implemented; scoped acceptance passed | Structured routing/service entrypoints, generated reference and development synchronization gate; focused host/runtime evidence is recorded in the contract separately from review, Wiki and production status. |
 | [Server-only network management](server-only-network.md) ([中文](server-only-network.zh-CN.md)) | Implemented; per-scope evidence recorded | 199 host checks and three isolated server/core acceptance fixtures pass. Full registered Docker, exact-head reviews and delivery status are recorded separately in the implementation PR. |
 | [Default dual-stack listeners](default-dual-stack-listeners.md) ([中文](default-dual-stack-listeners.zh-CN.md)) | Contract for new-instance defaults; acceptance requirements defined | All structured creation defaults use one `::` listener; explicit addresses, existing instances and global-mode legacy rendering are preserved. Local/default matrices, target-core checks and representative TCP/UDP dual-family runtime probes are required; this entry does not claim completed acceptance or production changes. |
 | [Unified node naming](unified-node-naming.md) ([中文](unified-node-naming.zh-CN.md)) | Implemented and accepted within the recorded scope | Section 9 preserves the original local/core evidence. Section 10 adds the actual SubMan application/storage integration (30 nodes across five protocols) and owner-authorized production VMess API/Gist acceptance (six test candidates and one test aggregate), with identity/membership preservation and cleanup. This is not production proxy-VPS or every-protocol public-connectivity acceptance. |
@@ -23,7 +24,8 @@ collision handling and error propagation that future changes must preserve. Old
 implementation steps and intermediate hashes in section 9 are historical evidence;
 they are not the current script version or a request to repeat the entire suite.
 The current version is in the root [README](../../README.md), and command support
-comes from `sbv agent capabilities --json`.
+comes from `sbv commands --json` and `sbv schema <operation-id> --json`; product
+capabilities remain available through `sbv agent capabilities --json`.
 
 Completion records have separate scopes: local/mock tests, real-core configuration
 checks, isolated Docker probes, real external-service writes, public connectivity,

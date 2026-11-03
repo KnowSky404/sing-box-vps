@@ -197,7 +197,7 @@ verification_group_test_candidates() {
         tests/routing_warp_registration_transaction.sh tests/uninstall_routing_previous.sh
       ;;
     docs)
-      printf '%s\n' tests/wiki_documentation.sh tests/agent_docs_cover_capabilities.sh
+      printf '%s\n' tests/wiki_documentation.sh tests/agent_docs_cover_capabilities.sh tests/command_catalog_contract.sh
       ;;
     version)
       printf '%s\n' tests/readme_mentions_current_versions.sh tests/version_metadata_is_consistent.sh

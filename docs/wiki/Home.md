@@ -1,12 +1,13 @@
 # sing-box-vps 文档
 
-面向 VPS 的 sing-box 安装与管理脚本。本文档以当前项目实现为准；运行时能力请先读取 `sbv agent capabilities --json`。
+面向 VPS 的 sing-box 安装与管理脚本。本文档以当前项目实现为准；先用 `sbv commands --json` 发现操作与自动化边界，再用 `sbv agent capabilities --json` 查看产品能力。
 
 | 需要做什么 | 文档 |
 | --- | --- |
 | 安装、打开管理菜单、卸载 | [快速开始](https://github.com/KnowSky404/sing-box-vps/wiki/Getting-Started) |
 | 查看支持的功能和协议限制 | [功能与限制](https://github.com/KnowSky404/sing-box-vps/wiki/Features) · [能力矩阵](https://github.com/KnowSky404/sing-box-vps/wiki/Protocol-Coverage) |
 | 使用交互菜单、管理 HY2 证书 | [交互管理](https://github.com/KnowSky404/sing-box-vps/wiki/Management) · [HY2 自动证书](https://github.com/KnowSky404/sing-box-vps/wiki/HY2-ACME) |
+| 发现完整命令、参数和自动化边界 | [命令操作目录](https://github.com/KnowSky404/sing-box-vps/wiki/Command-Catalog)；运行 `sbv commands --json` 与 `sbv schema <operation-id> --json` |
 | 查询状态、更新或自动化操作 | [Agent 命令](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-CLI) · [运维手册](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-Runbook) |
 | 管理协议实例和高级组件 | [协议实例](https://github.com/KnowSky404/sing-box-vps/wiki/Protocol-Instances) · [高级组件](https://github.com/KnowSky404/sing-box-vps/wiki/Advanced-Components) |
 | 查找配置、日志、备份或排查故障 | [运行目录](https://github.com/KnowSky404/sing-box-vps/wiki/Runtime-Paths) · [注意事项](https://github.com/KnowSky404/sing-box-vps/wiki/Notes) · [事务与回滚](https://github.com/KnowSky404/sing-box-vps/wiki/Transactions) |

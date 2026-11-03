@@ -485,6 +485,18 @@ agent_cli() {
       fi
       agent_cli_run "capabilities" agent_capabilities_json
       ;;
+    commands)
+      if [[ $# -ne 1 || "${1:-}" != --json ]]; then
+        agent_cli_error commands invalid_arguments '用法: sbv commands --json'; return 1
+      fi
+      agent_cli_run commands agent_commands_json
+      ;;
+    schema)
+      agent_cli_run schema agent_schema_cli "$@"
+      ;;
+    routing)
+      agent_cli_run routing agent_routing_cli "$@"
+      ;;
     instance)
       agent_cli_run "instance" agent_instance_cli "$@"
       ;;
@@ -549,8 +561,8 @@ agent_cli() {
       ;;
     service)
       service_command=${1:-service}
-      if [[ $# -lt 1 || $# -gt 3 ]]; then
-        agent_cli_error "service ${service_command}" "invalid_arguments" "用法: sbv agent service restart --json --yes"
+      if [[ $# -lt 1 || $# -gt 4 ]]; then
+        agent_cli_error "service ${service_command}" "invalid_arguments" "用法: sbv service start|stop|restart|status|logs --json [--yes | --lines N]"
         return $?
       fi
       agent_cli_run "service ${service_command}" agent_service_cli "$@"
@@ -594,9 +606,14 @@ agent_dispatch() {
   esac
 
   command=$(agent_command_name_from_args "$@")
-  if [[ "${command}" != capabilities && ( -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ) ]]; then
-    agent_cli_error "${command}" routing_transaction_pending "存在未完成的规则事务；请先通过交互菜单 12 恢复。"
-    return 1
+  case "${1:-}" in
+    capabilities|commands|schema) agent_cli "$@"; return $? ;;
+  esac
+  if [[ -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ]]; then
+    if [[ "${1:-}" != routing || "${2:-}" != recover ]]; then
+      agent_cli_error "${command}" routing_transaction_pending "存在未完成的规则事务；请先执行 sbv routing recover --json --yes。"
+      return 1
+    fi
   fi
   if ! agent_current_user_is_root; then
     agent_cli_error "${command}" "root_required" "Agent 命令必须以 root 用户执行。"
@@ -604,6 +621,41 @@ agent_dispatch() {
   fi
 
   case "${1:-}" in
+    routing)
+      (
+        if [[ "${2:-}" == recover ]]; then
+          if ! acquire_managed_write_lock exclusive allow-rules-recovery; then
+            agent_cli_error routing instance_write_busy '另一个管理进程正在执行。'; return 1
+          fi
+        elif [[ "${2:-}" == apply || "${2:-}" == restore ]]; then
+          if ! acquire_managed_write_lock; then
+            agent_cli_error routing instance_write_busy '另一个管理进程正在执行。'; return 1
+          fi
+        elif ! acquire_managed_write_lock shared; then
+          agent_cli_error routing instance_write_busy '配置正在被管理进程使用。'; return 1
+        fi
+        if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" || -L "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
+          agent_cli_error routing instance_transaction_pending '请先完成 instance recover。'; return 1
+        fi
+        if [[ -e "${SB_COMPONENT_TRANSACTION_DIR}" || -L "${SB_COMPONENT_TRANSACTION_DIR}" ]]; then
+          agent_cli_error routing component_transaction_pending '请先完成 component recover。'; return 1
+        fi
+        agent_cli "$@"
+      )
+      ;;
+    service)
+      (
+        case "${2:-}" in status|logs) local service_lock=shared ;; *) local service_lock=exclusive ;; esac
+        if ! acquire_managed_write_lock "${service_lock}"; then
+          agent_cli_error "${command}" instance_write_busy '另一个管理进程正在执行。'; return 1
+        fi
+        if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" || -L "${SB_PROJECT_DIR}.instance-write.lock" ||
+              -e "${SB_COMPONENT_TRANSACTION_DIR}" || -L "${SB_COMPONENT_TRANSACTION_DIR}" ]]; then
+          agent_cli_error "${command}" transaction_pending '请先恢复未完成的实例或组件事务。'; return 1
+        fi
+        agent_cli "$@"
+      )
+      ;;
     instance)
       case "${2:-}" in
         view|diagnose|export)
@@ -677,7 +729,7 @@ agent_dispatch() {
         agent_cli "$@"
       )
       ;;
-    upgrade|service|subman-sync)
+    upgrade|subman-sync)
       (
         if ! acquire_managed_write_lock; then
           agent_cli_error "${command}" instance_write_busy "另一个管理进程正在执行。"; return 1

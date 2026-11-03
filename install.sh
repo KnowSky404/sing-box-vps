@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026110301
+# Version: 2026110302
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026110301"
+readonly SCRIPT_VERSION="2026110302"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 # A single IPv6 wildcard socket accepts IPv4 and IPv6 in sing-box on Linux.
 readonly SB_DEFAULT_LISTEN_ADDRESS="::"
@@ -829,37 +829,7 @@ singbox_config_supports_1_14() {
 }
 
 print_cli_help() {
-  cat <<'EOF'
-用法:
-  sbv
-  sbv --help
-  sbv update sbv
-  sbv update sing-box [latest|x.y.z]
-  sbv update-sbv
-  sbv update-sing-box [latest|x.y.z]
-  sbv agent help
-  sbv agent capabilities --json
-  sbv agent component list|diagnose --json
-  sbv agent component export --json --id ID [--expected-revision N]
-  sbv agent component recover --json --yes --expected-revision N
-  sbv agent component takeover --json --yes --expected-revision N [--allow-public]
-  sbv agent component rebuild --json --yes --expected-revision N
-  sbv agent component create|replace|delete ...
-  sbv agent instance view|diagnose|export vless-reality|mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json [--id ID] [--expected-revision N]
-  sbv agent upgrade-check --json x.y.z
-  sbv agent upgrade --json x.y.z --yes
-  sbv uninstall
-
-说明:
-  不带参数时打开交互式管理菜单。
-  update sbv                 更新管理脚本 /usr/local/bin/sbv。
-  update sing-box            更新 sing-box 二进制并保留现有配置。
-  update-sing-box [version]  update sing-box 的短别名，版本可为 latest 或 x.y.z。
-  agent                      输出适合自动化读取的 JSON 状态、节点、能力和受保护升级结果。
-  agent component            管理高级入站、Endpoint 与可复用出站/分组组件。
-  agent instance view/diagnose/export
-                             只读查看、诊断或敏感导出受管代理实例；不会迁移或重写状态。
-EOF
+  command_catalog_print_help
 }
 
 extract_generated_key_value() {
@@ -29954,50 +29924,7 @@ show_connection_info_menu() {
 }
 
 agent_print_help() {
-  cat <<'EOF'
-用法:
-  sbv agent help
-  sbv agent capabilities --json
-  sbv agent upgrade-check --json x.y.z
-  sbv agent upgrade --json x.y.z --yes
-  sbv agent status --json
-  sbv agent nodes --json
-  sbv agent links --json
-  sbv agent check --json
-  sbv agent doctor --json
-  sbv agent service restart --json --yes
-  sbv agent subman-sync --json
-  sbv agent warp --json
-  sbv agent component list|diagnose --json
-  sbv agent component export --json --id ID [--expected-revision N]
-  sbv agent component recover --json --yes --expected-revision N
-  sbv agent component takeover --json --yes --expected-revision N [--allow-public]
-  sbv agent component rebuild --json --yes --expected-revision N
-  sbv agent component create|replace --json --yes --expected-revision N --file component.json [--allow-public]
-  sbv agent component delete --json --yes --expected-revision N --id ID
-  sbv agent instance view|diagnose|export vless-reality|mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json [--id ID] [--expected-revision N]
-  sbv agent instance create|replace mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N --file record.json [--allow-public]
-  sbv agent instance delete|default mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N --id ID
-  sbv agent instance rebuild mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N
-  sbv agent instance takeover mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision 0 [--allow-public]
-  sbv agent instance migrate mixed --json --yes --expected-revision N
-  sbv agent instance recover mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N
-
-说明:
-  capabilities  输出协议、功能入口以及只读/变更/敏感分类。
-  upgrade-check 只读评估固定目标版本的升级就绪状态，不下载或替换二进制。
-  upgrade       创建持久备份并执行受 --yes 保护的二进制升级，输出结构化结果。
-  status        输出服务、版本、路径和已安装协议。
-  nodes         输出节点摘要，不包含完整分享链接或密码。
-  links         输出完整连接材料，适合受信任 Agent 获取节点信息。
-  warp          输出 Cloudflare Warp 状态，包括启用/路由模式/账户/规则统计。
-  component     管理 direct/tun/redirect/tproxy/cloudflared 入站、WireGuard/Tailscale/OpenConnect/OpenVPN endpoint、shared HTTP client 以及 SSH/Tor/分组等出站；list/diagnose 只读，export 仅按 ID 输出敏感配置，recover/takeover/rebuild/create/replace/delete 使用 CAS 与持久事务。
-  check         执行 sing-box check 并输出结构化结果。
-  doctor        输出只读诊断信息和配置校验结果。
-  service       执行带 --yes 保护的服务操作，目前支持 restart。
-  subman-sync   非交互推送节点到 SubMan，缺少配置时返回结构化错误。
-  instance      Mixed/SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS/AnyTLS/Hysteria2/Snell/TUIC/Hysteria/NaiveProxy/ShadowTLS 实例事务；支持 view/diagnose/export 只读入口，以及 create/replace/delete/default/rebuild/takeover/recover 写入口，且仅 Mixed 支持 legacy migration；rebuild 修复受管配置漂移并递增 revision，takeover 以 revision 0 接管无 typed state 的可无损 live 配置。
-EOF
+  command_catalog_print_help
 }
 
 agent_require_json_flag() {
@@ -30156,7 +30083,8 @@ detect_existing_instance_state_read_only() {
 }
 
 agent_capabilities_json() {
-  local registry components managed_registry
+  local registry components managed_registry catalog
+  catalog=$(command_catalog_json) || return 1
   registry=$(protocol_registry_json) || return 1
   components=$(component_registry_json) || return 1
   managed_registry=$(jq -cn --argjson protocols "${registry}" --argjson components "${components}" '
@@ -30175,11 +30103,13 @@ agent_capabilities_json() {
     --argjson registry "${registry}" \
     --argjson components "${components}" \
     --argjson managed_registry "${managed_registry}" \
+    --slurpfile operation_catalog /dev/stdin \
     '{
       schema: $schema,
       ok: true,
       action: "capabilities",
       script_version: $script_version,
+      operation_catalog: $operation_catalog[0],
       supported_sing_box_version: $supported_version,
       multi_protocol_coexistence: true,
       protocols: ($registry | map({key: .agent_id, value: .legacy_capabilities}) | from_entries),
@@ -30319,7 +30249,7 @@ agent_capabilities_json() {
         automatic_binary_rollback_on_failure: true,
         restores_previous_service_activity: true
       }
-    }'
+    }' <<< "${catalog}"
 }
 
 agent_config_compatibility_json() {
@@ -32812,85 +32742,98 @@ agent_collect_nodes_json() {
 }
 
 agent_service_cli() {
-  local command=${1:-}
-  local json_flag=${2:-}
-  local yes_flag=${3:-}
-  local before_state after_state check_json restart_status
+  local command=${1:-} json=n confirmed=n lines=100 lines_set=n
+  local before_state after_state check_json='null' operation_status=0 logs=''
+  [[ $# -eq 0 ]] || shift
 
-  if [[ "${command}" != "restart" ]]; then
-    agent_json_error "unknown_service_command" "未知 service 子命令: ${command}"
+  case "${command}" in
+    start|stop|restart|status|logs) ;;
+    *) agent_json_error unknown_service_command "未知 service 子命令。"; return 1 ;;
+  esac
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) [[ "${json}" == n ]] || break; json=y; shift ;;
+      --yes) [[ "${confirmed}" == n ]] || break; confirmed=y; shift ;;
+      --lines) [[ $# -ge 2 && "${lines_set}" == n ]] || break; lines=$2; lines_set=y; shift 2 ;;
+      *) break ;;
+    esac
+  done
+  if [[ $# -ne 0 || ( "${command}" != logs && "${lines_set}" == y ) ||
+        ( ( "${command}" == status || "${command}" == logs ) && "${confirmed}" == y ) ]]; then
+    agent_json_error invalid_arguments "service 参数无效；只接受该操作声明的参数。"
+    return 1
+  fi
+  [[ "${json}" == y ]] || { agent_require_json_flag ''; return 1; }
+  if [[ "${command}" == logs ]]; then
+    if [[ ! "${lines}" =~ ^[1-9][0-9]{0,3}$ ]] || (( lines > 1000 )); then
+      agent_json_error invalid_arguments "日志条数必须是 1 到 1000 的整数。"
+      return 1
+    fi
+    if logs=$(SYSTEMD_COLORS=0 journalctl --unit sing-box --no-pager --quiet --lines "${lines}" --output short-iso 2>/dev/null); then
+      operation_status=0
+    else
+      operation_status=$?
+      logs=''
+    fi
+    printf '%s' "${logs}" | jq -n --rawfile logs /dev/stdin \
+      --argjson lines "${lines}" --argjson exit_code "${operation_status}" '
+      {ok:($exit_code==0),action:"service_logs",sensitive:true,lines:$lines,
+       logs:$logs,journal_exit_code:$exit_code} +
+      (if $exit_code==0 then {} else {error:"service_logs_unavailable",message:"无法读取服务日志；未返回部分日志。"} end)' || return 1
+    [[ "${operation_status}" == 0 ]]
+    return $?
+  fi
+  if [[ "${command}" != status && "${confirmed}" != y ]]; then
+    agent_json_error confirmation_required "service ${command} 需要 --yes 确认。"
     return 1
   fi
 
-  agent_require_json_flag "${json_flag}" || return 1
-
-  if [[ "${yes_flag}" != "--yes" ]]; then
-    agent_json_error "confirmation_required" "service restart 需要 --yes 确认。"
+  if before_state=$(systemctl is-active sing-box 2>/dev/null); then :; else before_state=${before_state:-unknown}; fi
+  case "${before_state}" in
+    active|inactive|failed|activating|deactivating|reloading) ;;
+    *) before_state=unknown ;;
+  esac
+  if [[ "${command}" == status ]]; then
+    jq -n --arg state "${before_state}" '{
+      ok:($state!="unknown"),action:"service_status",sensitive:false,
+      service:{active_state:$state,active:($state=="active")}} +
+      (if $state=="unknown" then {error:"service_state_unavailable",message:"无法检测 sing-box 服务状态。"} else {} end)' || return 1
+    [[ "${before_state}" != unknown ]]
+    return $?
+  fi
+  if [[ "${before_state}" == unknown ]]; then
+    agent_json_error service_state_unavailable "无法检测 sing-box 服务原状态；未执行服务操作。"
+    return 1
+  fi
+  if [[ "${command}" != stop ]] && ! check_json=$(agent_singbox_check_json); then
+    if after_state=$(systemctl is-active sing-box 2>/dev/null); then :; else after_state=${after_state:-unknown}; fi
+    case "${after_state}" in active|inactive|failed|activating|deactivating|reloading) ;; *) after_state=unknown ;; esac
+    jq -n --arg action "service_${command}" --arg before "${before_state}" \
+      --arg after "${after_state}" --argjson check "${check_json}" '{
+      ok:false,action:$action,skipped:true,reason:"config_check_failed",error:"config_check_failed",
+      service:{before:$before,after:$after},check:$check}'
     return 1
   fi
 
-  before_state=$(systemctl is-active sing-box 2>/dev/null || true)
-  if ! check_json=$(agent_singbox_check_json); then
-    after_state=$(systemctl is-active sing-box 2>/dev/null || true)
-    jq -n \
-      --arg before "${before_state:-unknown}" \
-      --arg after "${after_state:-unknown}" \
-      --argjson check "${check_json}" \
-      '{
-        ok: false,
-        action: "service_restart",
-        skipped: true,
-        reason: "config_check_failed",
-        service: {
-          before: $before,
-          after: $after
-        },
-        check: $check
-      }'
-    return 1
-  fi
-
-  if run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box; then
-    restart_status=0
+  if run_with_progress "执行 sing-box ${command}（启动或重启时可能等待 ACME 签发）" systemctl "${command}" sing-box >&2; then
+    operation_status=0
   else
-    restart_status=$?
+    operation_status=$?
   fi
-  after_state=$(systemctl is-active sing-box 2>/dev/null || true)
-
-  if [[ "${restart_status}" != "0" || "${after_state}" != "active" ]]; then
-    jq -n \
-      --arg before "${before_state:-unknown}" \
-      --arg after "${after_state:-unknown}" \
-      --argjson exit_code "${restart_status}" \
-      --argjson check "${check_json}" \
-      '{
-        ok: false,
-        action: "service_restart",
-        error: "service_restart_failed",
-        skipped: false,
-        service: {
-          before: $before,
-          after: $after,
-          restart_exit_code: $exit_code
-        },
-        check: $check
-      }'
+  if after_state=$(systemctl is-active sing-box 2>/dev/null); then :; else after_state=${after_state:-unknown}; fi
+  case "${after_state}" in active|inactive|failed|activating|deactivating|reloading) ;; *) after_state=unknown ;; esac
+  if [[ "${operation_status}" != 0 ||
+        ( "${command}" == stop && "${after_state}" != inactive ) ||
+        ( "${command}" != stop && "${after_state}" != active ) ]]; then
+    jq -n --arg command "${command}" --arg before "${before_state}" --arg after "${after_state}" \
+      --argjson exit_code "${operation_status}" --argjson check "${check_json}" '{
+      ok:false,action:("service_"+$command),error:("service_"+$command+"_failed"),skipped:false,
+      service:({before:$before,after:$after} + {($command+"_exit_code"):$exit_code}),check:$check}'
     return 1
   fi
-
-  jq -n \
-    --arg before "${before_state:-unknown}" \
-    --arg after "${after_state:-unknown}" \
-    --argjson check "${check_json}" \
-    '{
-      ok: true,
-      action: "service_restart",
-      service: {
-        before: $before,
-        after: $after
-      },
-      check: $check
-    }'
+  jq -n --arg action "service_${command}" --arg before "${before_state}" \
+    --arg after "${after_state}" --argjson check "${check_json}" '{
+    ok:true,action:$action,service:{before:$before,after:$after},check:$check}'
 }
 
 agent_push_nodes_to_subman_json() {
@@ -34318,6 +34261,18 @@ agent_cli() {
       fi
       agent_cli_run "capabilities" agent_capabilities_json
       ;;
+    commands)
+      if [[ $# -ne 1 || "${1:-}" != --json ]]; then
+        agent_cli_error commands invalid_arguments '用法: sbv commands --json'; return 1
+      fi
+      agent_cli_run commands agent_commands_json
+      ;;
+    schema)
+      agent_cli_run schema agent_schema_cli "$@"
+      ;;
+    routing)
+      agent_cli_run routing agent_routing_cli "$@"
+      ;;
     instance)
       agent_cli_run "instance" agent_instance_cli "$@"
       ;;
@@ -34382,8 +34337,8 @@ agent_cli() {
       ;;
     service)
       service_command=${1:-service}
-      if [[ $# -lt 1 || $# -gt 3 ]]; then
-        agent_cli_error "service ${service_command}" "invalid_arguments" "用法: sbv agent service restart --json --yes"
+      if [[ $# -lt 1 || $# -gt 4 ]]; then
+        agent_cli_error "service ${service_command}" "invalid_arguments" "用法: sbv service start|stop|restart|status|logs --json [--yes | --lines N]"
         return $?
       fi
       agent_cli_run "service ${service_command}" agent_service_cli "$@"
@@ -34427,9 +34382,14 @@ agent_dispatch() {
   esac
 
   command=$(agent_command_name_from_args "$@")
-  if [[ "${command}" != capabilities && ( -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ) ]]; then
-    agent_cli_error "${command}" routing_transaction_pending "存在未完成的规则事务；请先通过交互菜单 12 恢复。"
-    return 1
+  case "${1:-}" in
+    capabilities|commands|schema) agent_cli "$@"; return $? ;;
+  esac
+  if [[ -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ]]; then
+    if [[ "${1:-}" != routing || "${2:-}" != recover ]]; then
+      agent_cli_error "${command}" routing_transaction_pending "存在未完成的规则事务；请先执行 sbv routing recover --json --yes。"
+      return 1
+    fi
   fi
   if ! agent_current_user_is_root; then
     agent_cli_error "${command}" "root_required" "Agent 命令必须以 root 用户执行。"
@@ -34437,6 +34397,41 @@ agent_dispatch() {
   fi
 
   case "${1:-}" in
+    routing)
+      (
+        if [[ "${2:-}" == recover ]]; then
+          if ! acquire_managed_write_lock exclusive allow-rules-recovery; then
+            agent_cli_error routing instance_write_busy '另一个管理进程正在执行。'; return 1
+          fi
+        elif [[ "${2:-}" == apply || "${2:-}" == restore ]]; then
+          if ! acquire_managed_write_lock; then
+            agent_cli_error routing instance_write_busy '另一个管理进程正在执行。'; return 1
+          fi
+        elif ! acquire_managed_write_lock shared; then
+          agent_cli_error routing instance_write_busy '配置正在被管理进程使用。'; return 1
+        fi
+        if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" || -L "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
+          agent_cli_error routing instance_transaction_pending '请先完成 instance recover。'; return 1
+        fi
+        if [[ -e "${SB_COMPONENT_TRANSACTION_DIR}" || -L "${SB_COMPONENT_TRANSACTION_DIR}" ]]; then
+          agent_cli_error routing component_transaction_pending '请先完成 component recover。'; return 1
+        fi
+        agent_cli "$@"
+      )
+      ;;
+    service)
+      (
+        case "${2:-}" in status|logs) local service_lock=shared ;; *) local service_lock=exclusive ;; esac
+        if ! acquire_managed_write_lock "${service_lock}"; then
+          agent_cli_error "${command}" instance_write_busy '另一个管理进程正在执行。'; return 1
+        fi
+        if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" || -L "${SB_PROJECT_DIR}.instance-write.lock" ||
+              -e "${SB_COMPONENT_TRANSACTION_DIR}" || -L "${SB_COMPONENT_TRANSACTION_DIR}" ]]; then
+          agent_cli_error "${command}" transaction_pending '请先恢复未完成的实例或组件事务。'; return 1
+        fi
+        agent_cli "$@"
+      )
+      ;;
     instance)
       case "${2:-}" in
         view|diagnose|export)
@@ -34510,7 +34505,7 @@ agent_dispatch() {
         agent_cli "$@"
       )
       ;;
-    upgrade|service|subman-sync)
+    upgrade|subman-sync)
       (
         if ! acquire_managed_write_lock; then
           agent_cli_error "${command}" instance_write_busy "另一个管理进程正在执行。"; return 1
@@ -34523,6 +34518,1534 @@ agent_dispatch() {
       ;;
     *) agent_cli "$@" ;;
   esac
+}
+# Embedded operation contract: shipped in the standalone runtime, never downloaded.
+command_catalog_json() {
+  cat <<'EOF_CATALOG'
+{
+  "schema_version": 1,
+  "operations": [
+    {
+      "id": "capabilities",
+      "command": "capabilities",
+      "agent_command": "capabilities",
+      "usage": "sbv capabilities --json",
+      "summary": "协议、环境及操作能力",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "none",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "commands",
+      "command": "commands",
+      "agent_command": "commands",
+      "usage": "sbv commands --json",
+      "summary": "完整操作目录及自动化边界",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "none",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "status",
+      "command": "status",
+      "agent_command": "status",
+      "usage": "sbv status --json",
+      "summary": "版本、服务和安装摘要",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "shared",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "nodes",
+      "command": "nodes",
+      "agent_command": "nodes",
+      "usage": "sbv nodes --json",
+      "summary": "脱敏节点摘要",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "shared",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "links",
+      "command": "links",
+      "agent_command": "links",
+      "usage": "sbv links --json",
+      "summary": "完整节点连接材料",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": true,
+      "confirmation": null,
+      "concurrency": "shared",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": true
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "check",
+      "command": "check",
+      "agent_command": "check",
+      "usage": "sbv check --json",
+      "summary": "检查运行配置",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "shared",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "doctor",
+      "command": "doctor",
+      "agent_command": "doctor",
+      "usage": "sbv doctor --json",
+      "summary": "只读诊断",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "shared",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "warp",
+      "command": "warp",
+      "agent_command": "warp",
+      "usage": "sbv warp --json",
+      "summary": "WARP 脱敏状态",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "shared",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "schema",
+      "command": "schema",
+      "agent_command": "schema",
+      "usage": "sbv schema <operation-id> --json",
+      "summary": "描述操作参数及安全契约",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "none",
+      "input_contract": "operation-id from commands.operations[].id",
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"operation-id","type":"string","required":true,"description":"stable ID from commands catalog"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "core.upgrade-check",
+      "command": "core upgrade-check",
+      "agent_command": "upgrade-check",
+      "usage": "sbv core upgrade-check --json x.y.z",
+      "summary": "固定版本核心升级预检",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "shared",
+      "input_contract": "exact x.y.z version; no implicit latest",
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"version","type":"string","required":true,"pattern":"^[0-9]+\\.[0-9]+\\.[0-9]+$","description":"exact target version"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "core.upgrade",
+      "command": "core upgrade",
+      "agent_command": "upgrade",
+      "usage": "sbv core upgrade --json x.y.z --yes",
+      "summary": "固定版本核心升级",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": "exact x.y.z version; no implicit latest",
+      "service_impact": "restart",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"},{"name":"version","type":"string","required":true,"pattern":"^[0-9]+\\.[0-9]+\\.[0-9]+$","description":"exact target version"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "instance.view",
+      "command": "instance view",
+      "agent_command": "instance view",
+      "usage": "sbv instance view <protocol> --json [--id ID] [--expected-revision N]",
+      "summary": "instance view",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "shared",
+      "input_contract": "typed protocol record; see Protocol-Instances.md; writes exclude vless-reality; migrate only mixed",
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--expected-revision","type":"integer","required":false,"description":"same-snapshot revision; recovery uses journal expected revision"},{"name":"--id","type":"string","required":false,"description":"existing managed identity"},{"name":"protocol","type":"enum","required":true,"description":"read: all managed protocols; write: excludes vless-reality; migrate: mixed only"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "instance.diagnose",
+      "command": "instance diagnose",
+      "agent_command": "instance diagnose",
+      "usage": "sbv instance diagnose <protocol> --json [--id ID] [--expected-revision N]",
+      "summary": "instance diagnose",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "shared",
+      "input_contract": "typed protocol record; see Protocol-Instances.md; writes exclude vless-reality; migrate only mixed",
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--expected-revision","type":"integer","required":false,"description":"same-snapshot revision; recovery uses journal expected revision"},{"name":"--id","type":"string","required":false,"description":"existing managed identity"},{"name":"protocol","type":"enum","required":true,"description":"read: all managed protocols; write: excludes vless-reality; migrate: mixed only"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "instance.export",
+      "command": "instance export",
+      "agent_command": "instance export",
+      "usage": "sbv instance export <protocol> --json [--id ID] [--expected-revision N]",
+      "summary": "instance export",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": true,
+      "confirmation": null,
+      "concurrency": "shared",
+      "input_contract": "typed protocol record; see Protocol-Instances.md; writes exclude vless-reality; migrate only mixed",
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--expected-revision","type":"integer","required":false,"description":"same-snapshot revision; recovery uses journal expected revision"},{"name":"--id","type":"string","required":false,"description":"existing managed identity"},{"name":"protocol","type":"enum","required":true,"description":"read: all managed protocols; write: excludes vless-reality; migrate: mixed only"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": true
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "instance.create",
+      "command": "instance create",
+      "agent_command": "instance create",
+      "usage": "sbv instance create <protocol> --json --yes --expected-revision N --file record.json [--allow-public]",
+      "summary": "instance create",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": "typed protocol record; see Protocol-Instances.md; writes exclude vless-reality; migrate only mixed",
+      "service_impact": "restart_if_active",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"},{"name":"--expected-revision","type":"integer","required":true,"description":"same-snapshot revision; recovery uses journal expected revision"},{"name":"--file","type":"path","required":true,"description":"complete private JSON input; credentials stay out of argv"},{"name":"--allow-public","type":"boolean","required":false,"description":"explicit consent for non-loopback exposure"},{"name":"protocol","type":"enum","required":true,"description":"read: all managed protocols; write: excludes vless-reality; migrate: mixed only"}],
+      "cas": "revision",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "instance.replace",
+      "command": "instance replace",
+      "agent_command": "instance replace",
+      "usage": "sbv instance replace <protocol> --json --yes --expected-revision N --file record.json [--allow-public]",
+      "summary": "instance replace",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": "typed protocol record; see Protocol-Instances.md; writes exclude vless-reality; migrate only mixed",
+      "service_impact": "restart_if_active",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"},{"name":"--expected-revision","type":"integer","required":true,"description":"same-snapshot revision; recovery uses journal expected revision"},{"name":"--file","type":"path","required":true,"description":"complete private JSON input; credentials stay out of argv"},{"name":"--allow-public","type":"boolean","required":false,"description":"explicit consent for non-loopback exposure"},{"name":"protocol","type":"enum","required":true,"description":"read: all managed protocols; write: excludes vless-reality; migrate: mixed only"}],
+      "cas": "revision",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "instance.delete",
+      "command": "instance delete",
+      "agent_command": "instance delete",
+      "usage": "sbv instance delete <protocol> --json --yes --expected-revision N --id ID",
+      "summary": "instance delete",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": "typed protocol record; see Protocol-Instances.md; writes exclude vless-reality; migrate only mixed",
+      "service_impact": "restart_if_active",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"},{"name":"--expected-revision","type":"integer","required":true,"description":"same-snapshot revision; recovery uses journal expected revision"},{"name":"--id","type":"string","required":true,"description":"existing managed identity"},{"name":"protocol","type":"enum","required":true,"description":"read: all managed protocols; write: excludes vless-reality; migrate: mixed only"}],
+      "cas": "revision",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "instance.default",
+      "command": "instance default",
+      "agent_command": "instance default",
+      "usage": "sbv instance default <protocol> --json --yes --expected-revision N --id ID",
+      "summary": "instance default",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": "typed protocol record; see Protocol-Instances.md; writes exclude vless-reality; migrate only mixed",
+      "service_impact": "restart_if_active",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"},{"name":"--expected-revision","type":"integer","required":true,"description":"same-snapshot revision; recovery uses journal expected revision"},{"name":"--id","type":"string","required":true,"description":"existing managed identity"},{"name":"protocol","type":"enum","required":true,"description":"read: all managed protocols; write: excludes vless-reality; migrate: mixed only"}],
+      "cas": "revision",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "instance.rebuild",
+      "command": "instance rebuild",
+      "agent_command": "instance rebuild",
+      "usage": "sbv instance rebuild <protocol> --json --yes --expected-revision N",
+      "summary": "instance rebuild",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": "typed protocol record; see Protocol-Instances.md; writes exclude vless-reality; migrate only mixed",
+      "service_impact": "restart_if_active",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"},{"name":"--expected-revision","type":"integer","required":true,"description":"same-snapshot revision; recovery uses journal expected revision"},{"name":"protocol","type":"enum","required":true,"description":"read: all managed protocols; write: excludes vless-reality; migrate: mixed only"}],
+      "cas": "revision",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "instance.takeover",
+      "command": "instance takeover",
+      "agent_command": "instance takeover",
+      "usage": "sbv instance takeover <protocol> --json --yes --expected-revision N [--allow-public]",
+      "summary": "instance takeover",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": "typed protocol record; see Protocol-Instances.md; writes exclude vless-reality; migrate only mixed",
+      "service_impact": "restart_if_active",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"},{"name":"--expected-revision","type":"integer","required":true,"description":"same-snapshot revision; recovery uses journal expected revision"},{"name":"--allow-public","type":"boolean","required":false,"description":"explicit consent for non-loopback exposure"},{"name":"protocol","type":"enum","required":true,"description":"read: all managed protocols; write: excludes vless-reality; migrate: mixed only"}],
+      "cas": "revision",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "instance.migrate",
+      "command": "instance migrate",
+      "agent_command": "instance migrate",
+      "usage": "sbv instance migrate <protocol> --json --yes --expected-revision N",
+      "summary": "instance migrate",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": "typed protocol record; see Protocol-Instances.md; writes exclude vless-reality; migrate only mixed",
+      "service_impact": "restart_if_active",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"},{"name":"--expected-revision","type":"integer","required":true,"description":"same-snapshot revision; recovery uses journal expected revision"},{"name":"protocol","type":"enum","required":true,"description":"read: all managed protocols; write: excludes vless-reality; migrate: mixed only"}],
+      "cas": "revision",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "instance.recover",
+      "command": "instance recover",
+      "agent_command": "instance recover",
+      "usage": "sbv instance recover <protocol> --json --yes --expected-revision N",
+      "summary": "instance recover",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": "typed protocol record; see Protocol-Instances.md; writes exclude vless-reality; migrate only mixed",
+      "service_impact": "restart_if_active",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"},{"name":"--expected-revision","type":"integer","required":true,"description":"same-snapshot revision; recovery uses journal expected revision"},{"name":"protocol","type":"enum","required":true,"description":"read: all managed protocols; write: excludes vless-reality; migrate: mixed only"}],
+      "cas": "revision",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "component.list",
+      "command": "component list",
+      "agent_command": "component list",
+      "usage": "sbv component list --json",
+      "summary": "component list",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "shared",
+      "input_contract": "typed component record; see Advanced-Components.md",
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "component.diagnose",
+      "command": "component diagnose",
+      "agent_command": "component diagnose",
+      "usage": "sbv component diagnose --json",
+      "summary": "component diagnose",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "shared",
+      "input_contract": "typed component record; see Advanced-Components.md",
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "component.export",
+      "command": "component export",
+      "agent_command": "component export",
+      "usage": "sbv component export --json --id ID [--expected-revision N]",
+      "summary": "component export",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": true,
+      "confirmation": null,
+      "concurrency": "shared",
+      "input_contract": "typed component record; see Advanced-Components.md",
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--expected-revision","type":"integer","required":false,"description":"same-snapshot revision; recovery uses journal expected revision"},{"name":"--id","type":"string","required":true,"description":"existing managed identity"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": true
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "component.create",
+      "command": "component create",
+      "agent_command": "component create",
+      "usage": "sbv component create --json --yes --expected-revision N --file record.json [--allow-public]",
+      "summary": "component create",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": "typed component record; see Advanced-Components.md",
+      "service_impact": "restart_if_active",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"},{"name":"--expected-revision","type":"integer","required":true,"description":"same-snapshot revision; recovery uses journal expected revision"},{"name":"--file","type":"path","required":true,"description":"complete private JSON input; credentials stay out of argv"},{"name":"--allow-public","type":"boolean","required":false,"description":"explicit consent for non-loopback exposure"}],
+      "cas": "revision",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "component.replace",
+      "command": "component replace",
+      "agent_command": "component replace",
+      "usage": "sbv component replace --json --yes --expected-revision N --file record.json [--allow-public]",
+      "summary": "component replace",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": "typed component record; see Advanced-Components.md",
+      "service_impact": "restart_if_active",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"},{"name":"--expected-revision","type":"integer","required":true,"description":"same-snapshot revision; recovery uses journal expected revision"},{"name":"--file","type":"path","required":true,"description":"complete private JSON input; credentials stay out of argv"},{"name":"--allow-public","type":"boolean","required":false,"description":"explicit consent for non-loopback exposure"}],
+      "cas": "revision",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "component.delete",
+      "command": "component delete",
+      "agent_command": "component delete",
+      "usage": "sbv component delete --json --yes --expected-revision N --id ID",
+      "summary": "component delete",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": "typed component record; see Advanced-Components.md",
+      "service_impact": "restart_if_active",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"},{"name":"--expected-revision","type":"integer","required":true,"description":"same-snapshot revision; recovery uses journal expected revision"},{"name":"--id","type":"string","required":true,"description":"existing managed identity"}],
+      "cas": "revision",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "component.rebuild",
+      "command": "component rebuild",
+      "agent_command": "component rebuild",
+      "usage": "sbv component rebuild --json --yes --expected-revision N",
+      "summary": "component rebuild",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": "typed component record; see Advanced-Components.md",
+      "service_impact": "restart_if_active",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"},{"name":"--expected-revision","type":"integer","required":true,"description":"same-snapshot revision; recovery uses journal expected revision"}],
+      "cas": "revision",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "component.takeover",
+      "command": "component takeover",
+      "agent_command": "component takeover",
+      "usage": "sbv component takeover --json --yes --expected-revision N [--allow-public]",
+      "summary": "component takeover",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": "typed component record; see Advanced-Components.md",
+      "service_impact": "restart_if_active",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"},{"name":"--expected-revision","type":"integer","required":true,"description":"same-snapshot revision; recovery uses journal expected revision"},{"name":"--allow-public","type":"boolean","required":false,"description":"explicit consent for non-loopback exposure"}],
+      "cas": "revision",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "component.recover",
+      "command": "component recover",
+      "agent_command": "component recover",
+      "usage": "sbv component recover --json --yes --expected-revision N",
+      "summary": "component recover",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": "typed component record; see Advanced-Components.md",
+      "service_impact": "restart_if_active",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"},{"name":"--expected-revision","type":"integer","required":true,"description":"same-snapshot revision; recovery uses journal expected revision"}],
+      "cas": "revision",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "service.status",
+      "command": "service status",
+      "agent_command": "service status",
+      "usage": "sbv service status --json",
+      "summary": "服务 status",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "shared",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "service.start",
+      "command": "service start",
+      "agent_command": "service start",
+      "usage": "sbv service start --json --yes",
+      "summary": "服务 start",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": null,
+      "service_impact": "start",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "service.stop",
+      "command": "service stop",
+      "agent_command": "service stop",
+      "usage": "sbv service stop --json --yes",
+      "summary": "服务 stop",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": null,
+      "service_impact": "stop",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "service.restart",
+      "command": "service restart",
+      "agent_command": "service restart",
+      "usage": "sbv service restart --json --yes",
+      "summary": "服务 restart",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": null,
+      "service_impact": "restart",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "service.logs",
+      "command": "service logs",
+      "agent_command": "service logs",
+      "usage": "sbv service logs --json [--lines N]",
+      "summary": "服务 logs",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": true,
+      "confirmation": null,
+      "concurrency": "shared",
+      "input_contract": "logs: 1 <= lines <= 1000; default 100; no follow",
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--lines","type":"integer","required":false,"description":"1..1000; default 100"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": true
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "routing.view",
+      "command": "routing view",
+      "agent_command": "routing view",
+      "usage": "sbv routing view --json",
+      "summary": "统一分流 view",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "shared",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "routing.export",
+      "command": "routing export",
+      "agent_command": "routing export",
+      "usage": "sbv routing export --json",
+      "summary": "统一分流 export",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": true,
+      "confirmation": null,
+      "concurrency": "shared",
+      "input_contract": "complete private routing draft with fingerprint; export .data.draft; see Agent-CLI.md",
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": true
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "routing.nodes",
+      "command": "routing nodes",
+      "agent_command": "routing nodes",
+      "usage": "sbv routing nodes --json",
+      "summary": "统一分流 nodes",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "shared",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "routing.validate",
+      "command": "routing validate",
+      "agent_command": "routing validate",
+      "usage": "sbv routing validate --json --file draft.json",
+      "summary": "统一分流 validate",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "shared",
+      "input_contract": "complete private routing draft with fingerprint; export .data.draft; see Agent-CLI.md",
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--file","type":"path","required":true,"description":"complete private JSON input; credentials stay out of argv"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "routing.apply",
+      "command": "routing apply",
+      "agent_command": "routing apply",
+      "usage": "sbv routing apply --json --yes --file draft.json",
+      "summary": "统一分流 apply",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": "complete private routing draft with fingerprint; export .data.draft; see Agent-CLI.md",
+      "service_impact": "restart_if_active",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"},{"name":"--file","type":"path","required":true,"description":"complete private JSON input; credentials stay out of argv"}],
+      "cas": "fingerprint",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": true,
+      "aliases": []
+    },
+    {
+      "id": "routing.restore",
+      "command": "routing restore",
+      "agent_command": "routing restore",
+      "usage": "sbv routing restore --json --yes --expected-fingerprint HASH",
+      "summary": "统一分流 restore",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": "current fingerprint SHA256 required",
+      "service_impact": "restart_if_active",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"},{"name":"--expected-fingerprint","type":"string","required":true,"description":"SHA256 of the state observed before changing it"}],
+      "cas": "fingerprint",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "routing.recover",
+      "command": "routing recover",
+      "agent_command": "routing recover",
+      "usage": "sbv routing recover --json --yes",
+      "summary": "统一分流 recover",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": "trusted journal owns recovery CAS",
+      "service_impact": "restart_if_active",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"}],
+      "cas": "journal",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": true,
+      "aliases": []
+    },
+    {
+      "id": "subman.sync",
+      "command": "subman sync",
+      "agent_command": "subman-sync",
+      "usage": "sbv subman sync --json --yes",
+      "summary": "推送节点到 SubMan；旧 agent subman-sync 无确认参数",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": true,
+      "confirmation": "--yes",
+      "concurrency": "exclusive",
+      "input_contract": "existing private SubMan settings; legacy command remains compatible",
+      "service_impact": "external_write",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": null,
+      "menu": null,
+      "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"}],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": true
+      },
+      "external_write": true,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "script.update",
+      "command": "update sbv",
+      "agent_command": null,
+      "usage": "sbv update sbv",
+      "summary": "事务更新管理脚本（旧 CLI 文本输出）",
+      "automation": "legacy_cli",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "exclusive",
+      "input_contract": "legacy CLI; structured result not available",
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": "existing transactional updater emits human text, not the Agent envelope",
+      "menu": "14",
+      "parameters": [],
+      "cas": "none",
+      "output": {
+        "format": "terminal",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": [
+        "sbv update-sbv",
+        "sbv update-script",
+        "sbv update script"
+      ]
+    },
+    {
+      "id": "core.update",
+      "command": "update sing-box",
+      "agent_command": null,
+      "usage": "sbv update sing-box [latest|x.y.z]",
+      "summary": "旧 CLI 核心更新入口；自动化优先使用固定版本 core upgrade",
+      "automation": "legacy_cli",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "exclusive",
+      "input_contract": "legacy optional latest or exact version; textual output",
+      "service_impact": "restart",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": "legacy updater supports implicit/latest version and human output; use core.upgrade for structured automation",
+      "menu": "4",
+      "parameters": [],
+      "cas": "none",
+      "output": {
+        "format": "terminal",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": [
+        "sbv update-sing-box [latest|x.y.z]",
+        "sbv update-singbox [latest|x.y.z]",
+        "sbv update singbox [latest|x.y.z]"
+      ]
+    },
+    {
+      "id": "install",
+      "command": null,
+      "agent_command": null,
+      "usage": "sbv",
+      "summary": "安装新协议",
+      "automation": "interactive_only",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "interactive",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": "fresh install requires dependency, TLS and credential prompts",
+      "menu": "1",
+      "parameters": [],
+      "cas": "none",
+      "output": {
+        "format": "terminal",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "reality.write",
+      "command": null,
+      "agent_command": null,
+      "usage": "sbv",
+      "summary": "REALITY 实例、名称与 QoS 写操作",
+      "automation": "interactive_only",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "interactive",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": "legacy REALITY writes do not implement typed revision/CAS transactions",
+      "menu": "2",
+      "parameters": [],
+      "cas": "none",
+      "output": {
+        "format": "terminal",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "protocol.remove",
+      "command": null,
+      "agent_command": null,
+      "usage": "sbv",
+      "summary": "按协议批量移除",
+      "automation": "interactive_only",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "interactive",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": "use typed instance delete when supported; bulk legacy removal remains interactive",
+      "menu": "3",
+      "parameters": [],
+      "cas": "none",
+      "output": {
+        "format": "terminal",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "core.uninstall",
+      "command": null,
+      "agent_command": null,
+      "usage": "sbv",
+      "summary": "卸载 sing-box",
+      "automation": "interactive_only",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "interactive",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": "destructive removal has no stable structured result contract",
+      "menu": "5",
+      "parameters": [],
+      "cas": "none",
+      "output": {
+        "format": "terminal",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "node.qr",
+      "command": null,
+      "agent_command": null,
+      "usage": "sbv",
+      "summary": "显示节点二维码",
+      "automation": "interactive_only",
+      "mutation": false,
+      "sensitive": true,
+      "confirmation": null,
+      "concurrency": "interactive",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": "terminal rendering; use sensitive links for machine connection material",
+      "menu": "11",
+      "parameters": [],
+      "cas": "none",
+      "output": {
+        "format": "terminal",
+        "sensitive": true
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "subman.settings",
+      "command": null,
+      "agent_command": null,
+      "usage": "sbv",
+      "summary": "SubMan 配置管理",
+      "automation": "interactive_only",
+      "mutation": true,
+      "sensitive": true,
+      "confirmation": null,
+      "concurrency": "interactive",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": "settings currently use interactive secret input",
+      "menu": "11",
+      "parameters": [],
+      "cas": "none",
+      "output": {
+        "format": "terminal",
+        "sensitive": true
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "system.stack",
+      "command": null,
+      "agent_command": null,
+      "usage": "sbv",
+      "summary": "入站/出站协议栈设置",
+      "automation": "interactive_only",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "interactive",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": "host and listener changes lack a unified persistent rollback contract",
+      "menu": "13",
+      "parameters": [],
+      "cas": "none",
+      "output": {
+        "format": "terminal",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "system.bbr",
+      "command": null,
+      "agent_command": null,
+      "usage": "sbv",
+      "summary": "BBR 设置",
+      "automation": "interactive_only",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "interactive",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": "host sysctl mutation has no structured transaction interface",
+      "menu": "13",
+      "parameters": [],
+      "cas": "none",
+      "output": {
+        "format": "terminal",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "system.media",
+      "command": null,
+      "agent_command": null,
+      "usage": "sbv",
+      "summary": "媒体解锁测试",
+      "automation": "interactive_only",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "interactive",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": "external executable probe has no stable structured result contract",
+      "menu": "13",
+      "parameters": [],
+      "cas": "none",
+      "output": {
+        "format": "terminal",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "script.uninstall",
+      "command": null,
+      "agent_command": null,
+      "usage": "sbv",
+      "summary": "卸载管理脚本",
+      "automation": "interactive_only",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "interactive",
+      "input_contract": null,
+      "service_impact": "none",
+      "docs": "Agent-CLI.md#操作目录",
+      "reason": "destructive self-removal remains interactive",
+      "menu": "15",
+      "parameters": [],
+      "cas": "none",
+      "output": {
+        "format": "terminal",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    }
+  ]
+}
+EOF_CATALOG
+}
+
+agent_commands_json() {
+  command_catalog_json | jq '{ok:true,action:"commands",catalog:.}'
+}
+
+agent_schema_cli() {
+  local operation_id=${1:-}
+  if [[ $# -ne 2 || "${2:-}" != --json || -z "${operation_id}" ]]; then
+    agent_json_error invalid_arguments '用法: sbv schema <operation-id> --json'; return 1
+  fi
+  command_catalog_json | jq --arg id "${operation_id}" '
+    [.operations[] | select(.id==$id)] |
+    if length==1 then {ok:true,action:"schema",operation:.[0]}
+    else {ok:false,error:"unknown_operation",message:"操作 ID 不存在；先读取 sbv commands --json。"} end'
+}
+
+command_catalog_print_help() {
+  printf '用法: sbv [menu] | sbv <资源> <操作> ... --json\n\n'
+  if command -v jq >/dev/null 2>&1; then
+    command_catalog_json | jq -r '.operations[] | select(.automation!="interactive_only") | ("  " + .usage + "  # " + .summary), (.aliases[]? | "    " + .)'
+  else
+    printf '结构化命令和完整帮助需要 jq；请先安装 jq，再运行 sbv commands --json。\n'
+  fi
+  printf '\n操作说明: sbv schema <operation-id> --json\n完整目录和限制: sbv commands --json\n兼容原有 sbv agent ...；无参数打开菜单。\n'
+}
+
+# Resolve only catalogued command prefixes. No eval, generated shell or arbitrary
+# handler names; all execution still enters the existing guarded Agent dispatcher.
+canonical_cli_dispatch() {
+  local mapping prefix_count arg command
+  mapping=$(command_catalog_json | jq -c --arg one "${1:-}" --arg two "${2:-}" '
+    [.operations[] | select(.automation=="structured") |
+      (.command|split(" ")) as $parts |
+      select($parts[0]==$one and (($parts|length)==1 or $parts[1]==$two))] |
+    sort_by(.command|length) | last // empty') || return 1
+  if [[ -z "${mapping}" ]]; then
+    agent_cli_error cli unknown_command '未知命令；运行 sbv --help 或 sbv commands --json。'; return 1
+  fi
+  command=$(jq -r '.agent_command' <<< "${mapping}") || return 1
+  prefix_count=$(jq -r '.command|split(" ")|length' <<< "${mapping}") || return 1
+  shift "${prefix_count}"
+  # A canonical external write requires confirmation. Keep the old Agent API's
+  # historical flags intact, without silently treating its presence as consent.
+  if [[ "${command}" == subman-sync ]]; then
+    if [[ $# -ne 2 || "${1:-}" != --json || "${2:-}" != --yes ]]; then
+      agent_cli_error subman-sync confirmation_required '用法: sbv subman sync --json --yes'; return 1
+    fi
+    agent_dispatch subman-sync --json
+    return $?
+  fi
+  local -a command_parts=()
+  read -r -a command_parts <<< "${command}"
+  agent_dispatch "${command_parts[@]}" "$@"
 }
 
 push_nodes_to_subman() {
@@ -40008,6 +41531,41 @@ install_or_update_singbox() {
 main() {
   local update_status=0
 
+  if [[ $# -gt 0 ]]; then
+    case "$1" in
+      menu)
+        if [[ $# -ne 1 ]]; then
+          agent_cli_error menu invalid_arguments '用法: sbv menu'; return 1
+        fi
+        shift
+        ;;
+      -h|--help|help)
+        if [[ $# -ne 1 ]]; then
+          agent_cli_error help invalid_arguments '用法: sbv --help'; return 1
+        fi
+        print_cli_help; return 0
+        ;;
+      agent) shift; agent_dispatch "$@"; return $? ;;
+      update)
+        case "${2:-}" in
+          sbv|script) [[ $# -eq 2 ]] || { agent_cli_error update invalid_arguments '用法: sbv update sbv'; return 1; } ;;
+          sing-box|singbox) [[ $# -ge 2 && $# -le 3 ]] || { agent_cli_error update invalid_arguments '用法: sbv update sing-box [latest|x.y.z]'; return 1; } ;;
+          *) agent_cli_error update unknown_command '未知 update 子命令。'; return 1 ;;
+        esac
+        ;;
+      update-sbv|update-script|uninstall)
+        [[ $# -eq 1 ]] || { agent_cli_error "$1" invalid_arguments '该命令不接收额外参数。'; return 1; }
+        ;;
+      update-sing-box|update-singbox)
+        [[ $# -le 2 ]] || { agent_cli_error update invalid_arguments '用法: sbv update-sing-box [latest|x.y.z]'; return 1; }
+        ;;
+      --internal-uninstall-purge)
+        [[ $# -eq 1 || ( $# -eq 2 && "${2:-}" == --yes ) ]] || { agent_cli_error uninstall invalid_arguments '卸载参数无效。'; return 1; }
+        ;;
+      *) canonical_cli_dispatch "$@"; return $? ;;
+    esac
+  fi
+
   case "${1:-}" in
     -h|--help|help|agent) ;;
     *)
@@ -41744,6 +43302,190 @@ routing_management_menu() (
       5) routing_inspection_menu "${current}" || return 1 ;;
     esac
   done
+)
+# Structured routing is an adapter over the menu's existing draft/transaction API.
+agent_routing_input_snapshot() {
+  local input=$1 snapshot=$2 input_fd metadata owner mode size
+  [[ -f "${input}" && ! -L "${input}" ]] || return 1
+  exec {input_fd}< "${input}" || return 1
+  if [[ ! -f "/proc/self/fd/${input_fd}" ]] ||
+     ! metadata=$(stat -Lc '%u:%a:%s' -- "/proc/self/fd/${input_fd}"); then
+    exec {input_fd}<&-
+    return 1
+  fi
+  IFS=: read -r owner mode size <<< "${metadata}"
+  if [[ "${owner}" != "${EUID}" || ! "${mode}" =~ ^[0-7]{3,4}$ ||
+        ! "${size}" =~ ^[0-9]+$ ]] ||
+     (( (8#${mode} & 077) != 0 || size < 1 || size > 2359296 )); then
+    exec {input_fd}<&-
+    return 1
+  fi
+  # Bound the read even if another root process appends after fstat. Consume the
+  # opened descriptor rather than reopening a possibly replaced input path.
+  if ! head -c 2359297 <&"${input_fd}" > "${snapshot}"; then
+    exec {input_fd}<&-
+    return 1
+  fi
+  exec {input_fd}<&-
+  [[ "$(wc -c < "${snapshot}")" -le 2359296 ]] &&
+    jq -s -e 'length==1 and (.[0]|type=="object")' "${snapshot}" >/dev/null &&
+    routing_draft_validate "${snapshot}"
+}
+
+agent_routing_cli() (
+  local operation=${1:-} json=n confirmed=n input='' expected=''
+  local workspace draft fingerprint nodes before after='' status=0 recovery=false
+  shift || true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) [[ "${json}" == n ]] || break; json=y; shift ;;
+      --yes) [[ "${confirmed}" == n ]] || break; confirmed=y; shift ;;
+      --file) [[ $# -ge 2 && -z "${input}" ]] || break; input=$2; shift 2 ;;
+      --expected-fingerprint) [[ $# -ge 2 && -z "${expected}" ]] || break; expected=$2; shift 2 ;;
+      *) break ;;
+    esac
+  done
+  if [[ $# -ne 0 || "${json}" != y ]]; then
+    agent_json_error invalid_arguments '用法: routing view|export|nodes|validate|apply|restore|recover --json [--yes] [--file 私有草稿] [--expected-fingerprint HASH]'
+    return 1
+  fi
+  case "${operation}" in
+    view|export|nodes)
+      [[ "${confirmed}" == n && -z "${input}${expected}" ]] || {
+        agent_json_error invalid_arguments 'routing 读取操作仅接收 --json。'; return 1;
+      }
+      ;;
+    validate|apply)
+      [[ -n "${input}" && -z "${expected}" ]] || {
+        agent_json_error invalid_arguments 'routing validate/apply 需要 --file，CAS 使用草稿内 fingerprint。'; return 1;
+      }
+      [[ "${operation}" != validate || "${confirmed}" == n ]] || {
+        agent_json_error invalid_arguments 'routing validate 不接收 --yes。'; return 1;
+      }
+      ;;
+    restore)
+      [[ -z "${input}" && "${expected}" =~ ^[a-f0-9]{64}$ ]] || {
+        agent_json_error invalid_arguments 'routing restore 需要 --expected-fingerprint HASH，且不接收 --file。'; return 1;
+      }
+      ;;
+    recover)
+      [[ -z "${input}${expected}" ]] || {
+        agent_json_error invalid_arguments 'routing recover 使用持久 journal，不接收 --file 或 fingerprint。'; return 1;
+      }
+      ;;
+    *) agent_json_error unknown_routing_command '未知 routing 操作。'; return 1 ;;
+  esac
+  case "${operation}" in
+    apply|restore|recover)
+      [[ "${confirmed}" == y ]] || {
+        agent_json_error confirmation_required 'routing 写操作需要显式 --yes。'; return 1;
+      }
+      ;;
+  esac
+  if [[ -e "${SB_PROJECT_DIR}.instance-write.lock" || -L "${SB_PROJECT_DIR}.instance-write.lock" ||
+        -e "${SB_COMPONENT_TRANSACTION_DIR}" || -L "${SB_COMPONENT_TRANSACTION_DIR}" ]]; then
+    agent_json_error transaction_pending '请先恢复实例或组件事务；规则未修改。'
+    return 1
+  fi
+  if [[ "${operation}" != recover && ( -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ) ]]; then
+    agent_json_error routing_transaction_pending '请先执行 sbv routing recover --json --yes。'
+    return 1
+  fi
+  umask 077
+  workspace=$(mktemp -d /tmp/sbv-agent-routing.XXXXXX) || {
+    agent_json_error staging_failed '无法建立私有规则工作目录。'; return 1;
+  }
+  trap 'rm -rf -- "${workspace}"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+  draft="${workspace}/draft.json"
+  case "${operation}" in
+    validate|apply)
+      if ! agent_routing_input_snapshot "${input}" "${draft}"; then
+        agent_json_error invalid_draft '草稿必须是当前用户拥有的私有普通 JSON 文件，且通过现有规则校验；未修改。'
+        return 1
+      fi
+      fingerprint=$(jq -r '.fingerprint' "${draft}") || return 1
+      if [[ "${operation}" == validate ]]; then
+        jq -n --arg fingerprint "${fingerprint}" '{ok:true,action:"routing_validate",valid:true,
+          fingerprint:$fingerprint,config_check_performed:false,mutation:false}'
+        return $?
+      fi
+      ;;
+    view|export)
+      if ! routing_draft_create "${draft}"; then
+        agent_json_error routing_read_failed '无法取得一致的规则快照；未返回部分草稿。'
+        return 1
+      fi
+      fingerprint=$(jq -r '.fingerprint' "${draft}") || return 1
+      if [[ "${operation}" == export ]]; then
+        jq '{ok:true,action:"routing_export",sensitive:true,fingerprint:.fingerprint,draft:.}' "${draft}"
+        return $?
+      fi
+      if ! nodes=$(routing_nodes_json) || [[ "${fingerprint}" != "$(routing_state_fingerprint)" ]]; then
+        agent_json_error routing_read_failed '规则清单在读取期间变化；未返回部分状态。'
+        return 1
+      fi
+      # Explicit allowlist: URLs, source paths, legacy texts and credentials
+      # must never leak through this non-sensitive discovery operation.
+      jq --argjson nodes "${nodes}" '{ok:true,action:"routing_view",fingerprint:.fingerprint,
+        policy:{schema_version:.policy.schema_version,server:{
+          block_cn:.policy.server.block_cn,warp_ai:.policy.server.warp_ai,
+          warp_streaming:.policy.server.warp_streaming,
+          rules:[.policy.server.rules[]|{id,kind,action,enabled}],
+          rule_sets:[.policy.server.rule_sets[]|{tag,type,format,action,enabled,update_interval}]}},
+        warp:{enabled:.warp.enabled,mode:.warp.mode},
+        nodes:[$nodes[]|{protocol,id,name,tag,policy,revision,editable}],
+        legacy_assets:{domains_present:(.legacy_domains!=""),sources_present:(.legacy_sources!="")}}' "${draft}"
+      return $?
+      ;;
+    nodes)
+      if ! fingerprint=$(routing_state_fingerprint) || ! nodes=$(routing_nodes_json) ||
+         [[ "${fingerprint}" != "$(routing_state_fingerprint)" ]]; then
+        agent_json_error routing_read_failed '无法取得一致的节点出口清单；未返回部分状态。'
+        return 1
+      fi
+      jq -n --arg fingerprint "${fingerprint}" --argjson nodes "${nodes}" \
+        '{ok:true,action:"routing_nodes",fingerprint:$fingerprint,
+          nodes:[$nodes[]|{protocol,id,name,tag,policy,revision,editable}]}'
+      return $?
+      ;;
+  esac
+
+  if ! before=$(routing_state_fingerprint); then
+    agent_json_error routing_read_failed '无法取得当前规则 fingerprint；未开始写入。'
+    return 1
+  fi
+  case "${operation}" in
+    apply)
+      [[ "${fingerprint}" == "${before}" ]] || {
+        agent_json_error revision_conflict '草稿 fingerprint 已过期；未修改。'; return 1;
+      }
+      routing_policy_apply "${draft}" >&2 || status=$?
+      ;;
+    restore)
+      [[ "${expected}" == "${before}" ]] || {
+        agent_json_error revision_conflict '当前 fingerprint 与预期不符；未修改。'; return 1;
+      }
+      routing_policy_restore_previous >&2 || status=$?
+      ;;
+    recover) routing_policy_recover >&2 || status=$? ;;
+  esac
+  [[ ! -e "${SB_ROUTING_TRANSACTION_DIR}" && ! -L "${SB_ROUTING_TRANSACTION_DIR}" ]] || recovery=true
+  after=$(routing_state_fingerprint) || status=1
+  if [[ "${recovery}" == true ]]; then status=1; fi
+  # A failed call does not by itself prove rollback. Preserve fingerprints and
+  # journal presence so the caller can distinguish unchanged state from damage.
+  jq -n --arg action "routing_${operation}" --arg before "${before}" --arg after "${after}" \
+    --argjson status "${status}" --argjson recovery "${recovery}" \
+    '{ok:($status==0),action:$action,fingerprint_before:$before,
+      fingerprint_after:(if $after=="" then null else $after end),
+      changed:(if $after=="" then null else $before!=$after end),
+      recovery_required:$recovery,
+      transaction_status:(if $recovery then "recovery_required" elif $status==0 then "completed" else "failed" end)}
+    + (if $status==0 then {} else {error:"routing_operation_failed"} end)'
+  [[ "${status}" == 0 ]]
 )
 
 [[ "${BASH_SOURCE[0]}" != "$0" ]] || main "$@"

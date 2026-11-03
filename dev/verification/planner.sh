@@ -226,7 +226,7 @@ verification_add_test_callers() {
       [[ "${candidate}" != "${current}" ]] || continue
       case "${candidate}" in
         *_helper.sh) pending+=("${candidate}") ;;
-        tests/routing_policy_runtime.sh|tests/routing_policy_legacy_runtime.sh|tests/routing_policy_manual_references_runtime.sh|tests/default_dual_stack_runtime.sh|tests/hy2_instance_acme_runtime.sh|tests/component_runtime_acceptance.sh|tests/selector_urltest_runtime.sh|tests/acme_component_runtime.sh|tests/cloudflared_runtime.sh|tests/tailscale_openconnect_runtime.sh|tests/namespace_core_runtime.sh)
+        tests/agent_operations_runtime.sh|tests/routing_policy_runtime.sh|tests/routing_policy_legacy_runtime.sh|tests/routing_policy_manual_references_runtime.sh|tests/default_dual_stack_runtime.sh|tests/hy2_instance_acme_runtime.sh|tests/component_runtime_acceptance.sh|tests/selector_urltest_runtime.sh|tests/acme_component_runtime.sh|tests/cloudflared_runtime.sh|tests/tailscale_openconnect_runtime.sh|tests/namespace_core_runtime.sh)
           verification_plan_append VERIFY_PLAN_REASONS "container-only fixture ${candidate} requires a separate isolated run"
           VERIFY_PLAN_RUNTIME_REQUIRED=1
           ;;
@@ -251,6 +251,10 @@ verification_classify_file() {
         verification_plan_append VERIFY_PLAN_UNRESOLVED 'install.sh: choose --group and/or --scenario for the affected behavior, or --full'
       fi
       ;;
+    scripts/build-command-docs.sh)
+      verification_plan_append VERIFY_PLAN_SYNTAX scripts/build-command-docs.sh
+      verification_add_group docs || return 2
+      ;;
     scripts/build-install.sh|src/install/manifest.txt|src/install/*.sh)
       verification_plan_append VERIFY_PLAN_SYNTAX scripts/build-install.sh
       verification_plan_append VERIFY_PLAN_TESTS tests/install_build.sh
@@ -260,7 +264,7 @@ verification_classify_file() {
     tests/routing_policy_private_runtime.py)
       verification_plan_append VERIFY_PLAN_TESTS tests/routing_policy_config.sh
       ;;
-    tests/routing_policy_runtime.sh|tests/routing_policy_legacy_runtime.sh|tests/routing_policy_manual_references_runtime.sh|tests/default_dual_stack_runtime.sh|tests/hy2_instance_acme_runtime.sh|tests/component_runtime_acceptance.sh|tests/selector_urltest_runtime.sh|tests/acme_component_runtime.sh|tests/cloudflared_runtime.sh|tests/tailscale_openconnect_runtime.sh|tests/namespace_core_runtime.sh|tests/component_runtime_http.py|tests/tailscale_openconnect_marker.py)
+    tests/agent_operations_runtime.sh|tests/routing_policy_runtime.sh|tests/routing_policy_legacy_runtime.sh|tests/routing_policy_manual_references_runtime.sh|tests/default_dual_stack_runtime.sh|tests/hy2_instance_acme_runtime.sh|tests/component_runtime_acceptance.sh|tests/selector_urltest_runtime.sh|tests/acme_component_runtime.sh|tests/cloudflared_runtime.sh|tests/tailscale_openconnect_runtime.sh|tests/namespace_core_runtime.sh|tests/component_runtime_http.py|tests/tailscale_openconnect_marker.py)
       VERIFY_PLAN_RUNTIME_REQUIRED=1
       verification_plan_append VERIFY_PLAN_UNRESOLVED "container-only fixture ${file} requires its separate isolated run; no registered scenario executes it"
       ;;
@@ -284,7 +288,7 @@ verification_classify_file() {
       verification_add_group verification || return 2
       verification_plan_append VERIFY_PLAN_UNRESOLVED "${file}: classify host/transport impact with an explicit group/scenario"
       ;;
-    README*.md|AGENTS.md|SECURITY.md|docs/*.md|docs/*.txt|skills/*.md|LICENSE|LICENSE.*)
+    README*.md|AGENTS.md|SECURITY.md|src/install/README.md|docs/*.md|docs/*.txt|skills/*.md|LICENSE|LICENSE.*)
       verification_add_group docs || return 2
       case "${file}" in
         README*.md) verification_add_group version || return 2 ;;

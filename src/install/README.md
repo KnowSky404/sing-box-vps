@@ -2,7 +2,7 @@
 
 [中文开发说明](../../docs/wiki/Development.md#模块化源码与单文件构建)
 
-Maintain the installer in these 44 Bash source fragments. The explicit order in
+Maintain the installer in these 46 Bash source fragments. The explicit order in
 `manifest.txt` preserves the original definitions, global state and entrypoint.
 Each fragment contains complete shell constructs and is under 2,000 lines at
 the initial split. Fragments are build inputs; do not execute or download them
@@ -61,6 +61,7 @@ uses temporary storage outside the checkout and never publishes an artifact.
 | `39` | Top-level installation and management entrypoints |
 | `40`–`42` | Routing policy, application/recovery transactions and the unified menu |
 | `43` | Final source-versus-execution guard |
+| `44`–`45` | Embedded operation catalog and guarded Agent routing commands (assembled before the launcher) |
 
 This first split intentionally preserves byte order and behavior. Functions may
 still call helpers in later modules; all definitions are assembled before the

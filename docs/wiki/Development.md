@@ -61,9 +61,29 @@ bash dev/verification/run.sh --plan --base origin/main --full
 
 GitHub 对 `main` 启用 PR、线性历史和已解决审查对话保护，并对管理员生效，禁止强推和删除。仓库仅允许 rebase 合并，并自动删除已合并的远程分支。Codex 的审查结果目前写入 PR 评论，而非 GitHub 必需状态检查；GitHub 设置本身不会阻止在机器人审查完成前合并，因此执行者必须主动核对本地审查通过、当前 head 的远程安全审查完成且无未解决问题，远程代码审查不作为等待条件。
 
+## AI Native 命令与手册同步
+
+每个新增或调整的功能同时维护对应非交互命令、嵌入式 operation descriptor、定向测试、命令说明和受影响的 Agent 操作手册。菜单和 CLI 调用相同的业务函数与事务；新增菜单能力默认提供结构化入口。遗留的仅交互操作登记 `automation=interactive_only`、限制原因和入口，新增例外必须在 SPEC 中解释并接受审查。规范命令是 `sbv <resource> <verb> ... --json`，既有 `sbv agent ...` 保留兼容。
+
+`sbv commands --json` 输出版本化目录；`sbv schema <operation-id> --json` 输出参数、确认、并发/CAS、输入契约、服务影响、敏感分类和文档位置。修改描述和实现后，按以下顺序更新和检查：
+
+```bash
+bash scripts/build-install.sh
+bash scripts/build-command-docs.sh
+bash scripts/build-install.sh --check
+bash scripts/build-command-docs.sh --check
+bash tests/command_catalog_contract.sh
+bash tests/agent_docs_cover_capabilities.sh
+bash tests/wiki_documentation.sh
+```
+
+[命令操作目录](https://github.com/KnowSky404/sing-box-vps/wiki/Command-Catalog) 由运行时嵌入式目录生成，不手工编辑。Agent-CLI 维护使用规则，Agent-Runbook 维护操作和恢复流程，`docs/agents/llms.txt` 与 operator skill 维护读取导航；按实际影响调整相关文档，不能用生成参考替代手写事务说明。具体契约见 [AI Native SPEC](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/ai-native-operations.md)。
+
+`docs` 验证组包含命令契约和文档同步检查；GitHub 的 `Command contract` 工作流运行构建一致性、命令目录、文档和版本检查。该轻量门禁不执行全协议或生产验证，也不替代行为变化所需的运行态验证、当前 HEAD 本地审查和远程安全审查。
+
 ## 模块化源码与单文件构建
 
-安装器维护源码位于 [`src/install/`](https://github.com/KnowSky404/sing-box-vps/blob/main/src/install/README.md)，当前分为 44 个 Bash 源码片段，首次拆分时每个片段少于 2,000 行。`manifest.txt` 明确规定拼接顺序；片段包含完整函数和 Shell 结构，但不独立运行。模块说明中的编号对应源码顺序，函数仍可引用后续模块的 helper。
+安装器维护源码位于 [`src/install/`](https://github.com/KnowSky404/sing-box-vps/blob/main/src/install/README.md)，当前分为 46 个 Bash 源码片段，首次拆分时每个片段少于 2,000 行。`manifest.txt` 明确规定拼接顺序；片段包含完整函数和 Shell 结构，但不独立运行。操作目录与 Agent 分流模块在 launcher 前拼接，函数仍可引用后续模块的 helper。
 
 根目录 `install.sh` 是生成后提交的独立运行产物。Bootstrap、自更新、全局 `sbv`、测试及 Docker 继续使用此文件；用户无需下载模块或安装额外构建依赖。不要直接编辑生成文件，也不要改成运行时下载或 `source` 远程模块。
 
