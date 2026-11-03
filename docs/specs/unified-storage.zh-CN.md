@@ -54,7 +54,7 @@ help、commands、schema 等发现操作保持只读可用。普通操作遇旧�
 7. **rollback/recover**：恢复旧入口、unit、原路径与服务状态。文件恢复不代表服务恢复成功；失败时保留 journal 和备份，明确 `rollback_failed`，允许显式 recover 重试。不得静默继续。
 8. **cleanup**：成功后旧内容归入统一根的迁移备份；不得留一套继续可写的旧数据。旧路径兼容需要单独记录，不允许依赖隐藏双写。仅删除已确认由该事务创建的 staging/入口。旧根旁的归档只接受 management.flock、instance-transactions、rules-previous，以及准确 6 位随机后缀的 firewall-reconcile 和 8 位后缀的 warp-register；未识别的同前缀用户文件保持原位。
 
-迁移要求旧数据、统一根与系统入口的父目录位于同一文件系统，以便使用可回滚的原子 rename；独立挂载的 `/usr/local` 等布局当前明确拒绝，不能以非原子复制冒充完成。对旧 Tor/Tailscale 状态与 Taildrop、ACME/OriginCA 证书存储、API dashboard 等缺省可写目录，以及无法确定原工作目录的相对受管路径，要求操作者先定位并配置明确路径后再迁移，不能静默创建新身份或新证书账户。文件路径审计以固定 1.14.2 官方配置结构为准，覆盖 DNS hosts/DHCP lease、CA 目录、DERP mesh PSK、SSM 缓存、OCM/CCM 凭据与用量、API dashboard、namespace 与 unshare pid 文件；网络 URL、HTTP/WS 路径、进程匹配条件和 certificate.store 枚举保持原义；namespace 逻辑名仍按核心语义解析，不误当作工作目录下的相对文件。含 . 或 .. 组件的文件路径需先规范化。
+迁移要求旧数据、统一根与系统入口的父目录位于同一文件系统，以便使用可回滚的原子 rename；独立挂载的 `/usr/local` 等布局当前明确拒绝，不能以非原子复制冒充完成。对旧 Tor/Tailscale 状态与 Taildrop、ACME/OriginCA 证书存储、API dashboard 等缺省可写目录，以及无法确定原工作目录的相对受管路径，要求操作者先定位并配置明确路径后再迁移，不能静默创建新身份或新证书账户。文件路径审计以固定 1.14.2 官方配置结构为准，覆盖 DNS hosts/DHCP lease、CA 目录、DERP mesh PSK、SSM 缓存、OCM/CCM 凭据与用量、API dashboard、namespace 与 unshare pid 文件；网络 URL、HTTP/WS 路径、任意 headers/extra_headers 及其他官方自由数据 map、进程匹配条件和 certificate.store 枚举保持原义；namespace 逻辑名仍按核心语义解析，不误当作工作目录下的相对文件。受管文件路径在归属匹配前规范化重复斜杠，外部路径保留原字符串；含 . 或 .. 组件的文件路径需先规范化。
 
 自定义旧 unit 的工作目录、文件系统视图或环境，以及任意有效 systemd drop-in，当前明确拒绝自动迁移；须由操作者先调和。不能保留会覆盖新目录设置的旧 directive 后仍报告迁移成功。读取 drop-in 信息失败同样拒绝，不能当作没有 drop-in。
 
@@ -96,7 +96,7 @@ Tailscale 的默认 state_directory 为相对的 tailscale，官方配置见 [Ta
 
 | 验证边界 | 已确认结果 |
 | --- | --- |
-| 迁移隔离测试 | 26 个场景通过：路径字段、密钥/摘要保留、冲突与权限、双锁/继承 FD、恢复入口 CAS、管理器残留、相对入口、DNS hosts、对象/URI 伪装目录、完整文件路径审计及故障恢复。 |
+| 迁移隔离测试 | 27 个场景通过：路径字段、密钥/摘要保留、冲突与权限、双锁/继承 FD、恢复入口 CAS、管理器残留、相对入口、DNS hosts、对象/URI 伪装目录、完整文件路径审计及故障恢复。 |
 | 迁移专用 Docker | 真实旧更新器交接、活动/停止服务、HY2 本地 file URI、真实 systemd 203/EXEC 故障回滚均通过；另有当前迁移模块的管理器残留与自定义 ExecStartPre 拒绝验证。 |
 | SELinux | AlmaLinux 9.5 独立内核 Enforcing 下复现未标记核心的 203/EXEC；项目标签修复后新服务、原子更新、失败回滚、标签漂移修复及活动旧布局迁移/归档后重启通过。最终入口与管理员规则保护的证据在交付 PR 单独记录。 |
 | 独立运行态 | Agent 操作、三组路由策略、组件 shared/resolved/default/unshare 通过；兼容构建差异单独记录。 |
