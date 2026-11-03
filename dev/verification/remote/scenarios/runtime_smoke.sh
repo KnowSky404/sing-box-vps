@@ -14,11 +14,11 @@ verification_scenario_runtime_smoke() {
 
   printf 'SCENARIO=runtime_smoke\n'
   trap 'set +e; if [[ -n "${shadowtls_handshake_pid:-}" ]]; then kill "${shadowtls_handshake_pid}" 2>/dev/null || true; wait "${shadowtls_handshake_pid}" 2>/dev/null || true; fi; trap - RETURN' RETURN
-  test -f /root/sing-box-vps/config.json
-  test -f /root/sing-box-vps/protocols/index.env
+  test -f /root/.sing-box-vps/runtime/config.json
+  test -f /root/.sing-box-vps/runtime/protocols/index.env
   test -x /usr/local/bin/sbv
-  current_port=$(jq -r '.inbounds[0].listen_port // empty' /root/sing-box-vps/config.json)
-  current_protocols=$(sed -n 's/^INSTALLED_PROTOCOLS=//p' /root/sing-box-vps/protocols/index.env | head -n 1)
+  current_port=$(jq -r '.inbounds[0].listen_port // empty' /root/.sing-box-vps/runtime/config.json)
+  current_protocols=$(sed -n 's/^INSTALLED_PROTOCOLS=//p' /root/.sing-box-vps/runtime/protocols/index.env | head -n 1)
   [[ -n "${current_port}" ]]
   [[ -n "${current_protocols}" ]]
   current_protocol=$(printf '%s\n' "${current_protocols}" | cut -d ',' -f 1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
@@ -32,16 +32,16 @@ verification_scenario_runtime_smoke() {
   if printf '%s\n' "${current_protocols}" | tr ',' '\n' | grep -Fxq shadowtls; then
     shadowtls_handshake_server=$(jq -er '
       [.inbounds[] | select(.type == "shadowtls")][0].handshake.server // empty
-    ' /root/sing-box-vps/config.json)
+    ' /root/.sing-box-vps/runtime/config.json)
     shadowtls_handshake_port=$(jq -er '
       [.inbounds[] | select(.type == "shadowtls")][0].handshake.server_port // empty
-    ' /root/sing-box-vps/config.json)
+    ' /root/.sing-box-vps/runtime/config.json)
     if [[ "${shadowtls_handshake_server}" == 127.* ||
           "${shadowtls_handshake_server}" == ::1 ||
           "${shadowtls_handshake_server}" == localhost ]]; then
       shadowtls_certificate_path=$(jq -er '
         [.instances[] | select(.tag == "shadowtls-in")][0].client_tls.certificate_path // empty
-      ' /root/sing-box-vps/protocols/instances/shadowtls.json)
+      ' /root/.sing-box-vps/runtime/protocols/instances/shadowtls.json)
       shadowtls_key_path="${shadowtls_certificate_path%/*}/key.pem"
       [[ -f "${shadowtls_certificate_path}" && -f "${shadowtls_key_path}" ]]
       if ! verification_port_is_listening "${shadowtls_handshake_port}"; then
@@ -72,7 +72,7 @@ verification_scenario_runtime_smoke() {
   cat "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/systemctl.status.txt")"
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/journalctl.txt" journalctl -u sing-box -n 100 --no-pager
   cat "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/journalctl.txt")"
-  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" sing-box check -c /root/sing-box-vps/config.json
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" sing-box check -c /root/.sing-box-vps/runtime/config.json
   if verification_protocol_metadata "${current_protocol}" | jq -e \
     '.listen_networks | type == "array" and index("udp") != null' >/dev/null; then
     listener_artifact="${VERIFY_CURRENT_SCENARIO_DIR}/listeners.ss-lunp.txt"
@@ -87,7 +87,7 @@ verification_scenario_runtime_smoke() {
   grep -Fq '运行状态摘要' "${status_output_path}"
   grep -Fq 'sing-box: active' "${status_output_path}"
   grep -Fq 'Warp:' "${status_output_path}"
-  grep -Fq '配置文件: /root/sing-box-vps/config.json' "${status_output_path}"
+  grep -Fq '配置文件: /root/.sing-box-vps/runtime/config.json' "${status_output_path}"
   ! grep -Fq '协议:' "${status_output_path}"
   ! grep -Fq '地址:' "${status_output_path}"
   ! grep -Fq '端口:' "${status_output_path}"

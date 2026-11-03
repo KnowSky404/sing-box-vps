@@ -6,7 +6,7 @@ verification_scenario_reconfigure_existing_install() {
   local before_config_path
   local after_config_path
   local diff_path
-  local instance_state_file=/root/sing-box-vps/protocols/vless-reality.d/main.env
+  local instance_state_file=/root/.sing-box-vps/runtime/protocols/vless-reality.d/main.env
   local status_output_path
   local diff_status=0
   local expected_port=8443
@@ -14,11 +14,11 @@ verification_scenario_reconfigure_existing_install() {
   local expected_sni="www.apple.com"
 
   printf 'SCENARIO=reconfigure_existing_install\n'
-  before_port=$(jq -r '.inbounds[0].listen_port // empty' /root/sing-box-vps/config.json)
+  before_port=$(jq -r '.inbounds[0].listen_port // empty' /root/.sing-box-vps/runtime/config.json)
   before_config_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/config.before.json")
   after_config_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/config.after.json")
   diff_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/config.diff.txt")
-  cp /root/sing-box-vps/config.json "${before_config_path}"
+  cp /root/.sing-box-vps/runtime/config.json "${before_config_path}"
   SB_REALITY_SNI_VALIDATION_ASSUME_YES=1 bash /usr/local/bin/sbv <<'EOF'
 2
 1
@@ -33,30 +33,30 @@ www.apple.com
 n
 0
 EOF
-  after_port=$(jq -r '.inbounds[0].listen_port // empty' /root/sing-box-vps/config.json)
-  after_uuid=$(jq -r '.inbounds[0].users[0].uuid // empty' /root/sing-box-vps/config.json)
-  after_sni=$(jq -r '.inbounds[0].tls.server_name // empty' /root/sing-box-vps/config.json)
-  cp /root/sing-box-vps/config.json "${after_config_path}"
+  after_port=$(jq -r '.inbounds[0].listen_port // empty' /root/.sing-box-vps/runtime/config.json)
+  after_uuid=$(jq -r '.inbounds[0].users[0].uuid // empty' /root/.sing-box-vps/runtime/config.json)
+  after_sni=$(jq -r '.inbounds[0].tls.server_name // empty' /root/.sing-box-vps/runtime/config.json)
+  cp /root/.sing-box-vps/runtime/config.json "${after_config_path}"
   diff -u "${before_config_path}" "${after_config_path}" > "${diff_path}" || diff_status=$?
   [[ "${diff_status}" == "1" ]]
   [[ -n "${before_port}" && "${before_port}" != "${after_port}" ]]
   [[ "${after_port}" == "${expected_port}" ]]
   [[ "${after_uuid}" == "${expected_uuid}" ]]
   [[ "${after_sni}" == "${expected_sni}" ]]
-  test -f /root/sing-box-vps/protocols/index.env
-  test -f /root/sing-box-vps/protocols/vless-reality.env
+  test -f /root/.sing-box-vps/runtime/protocols/index.env
+  test -f /root/.sing-box-vps/runtime/protocols/vless-reality.env
   test -f "${instance_state_file}"
-  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality' /root/sing-box-vps/protocols/index.env
-  grep -Fqx 'CONFIG_SCHEMA_VERSION=2' /root/sing-box-vps/protocols/vless-reality.env
-  grep -Fqx 'DEFAULT_INSTANCE_ID=main' /root/sing-box-vps/protocols/vless-reality.env
-  grep -Fqx 'INSTANCE_IDS=main' /root/sing-box-vps/protocols/vless-reality.env
+  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality' /root/.sing-box-vps/runtime/protocols/index.env
+  grep -Fqx 'CONFIG_SCHEMA_VERSION=2' /root/.sing-box-vps/runtime/protocols/vless-reality.env
+  grep -Fqx 'DEFAULT_INSTANCE_ID=main' /root/.sing-box-vps/runtime/protocols/vless-reality.env
+  grep -Fqx 'INSTANCE_IDS=main' /root/.sing-box-vps/runtime/protocols/vless-reality.env
   grep -Fqx "PORT=${expected_port}" "${instance_state_file}"
   grep -Fqx "UUID=${expected_uuid}" "${instance_state_file}"
   grep -Fqx "SNI=${expected_sni}" "${instance_state_file}"
   grep -Fqx 'ALPN_MODE=off' "${instance_state_file}"
   grep -Fqx 'TCP_FAST_OPEN=n' "${instance_state_file}"
   verification_wait_for_service_active sing-box
-  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" sing-box check -c /root/sing-box-vps/config.json
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" sing-box check -c /root/.sing-box-vps/runtime/config.json
   verification_assert_port_listening "${expected_port}" "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.ss-lntp.txt"
   verification_assert_port_not_listening "${before_port}" "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.old-port.ss-lntp.txt"
   verification_capture_status_menu "${VERIFY_CURRENT_SCENARIO_DIR}/sbv-status.txt"
@@ -64,7 +64,7 @@ EOF
   grep -Fq '运行状态摘要' "${status_output_path}"
   grep -Fq 'sing-box: active' "${status_output_path}"
   grep -Fq 'Warp: 未开启' "${status_output_path}"
-  grep -Fq '配置文件: /root/sing-box-vps/config.json' "${status_output_path}"
+  grep -Fq '配置文件: /root/.sing-box-vps/runtime/config.json' "${status_output_path}"
   ! grep -Fq '协议:' "${status_output_path}"
   ! grep -Fq '地址:' "${status_output_path}"
   ! grep -Fq '端口:' "${status_output_path}"

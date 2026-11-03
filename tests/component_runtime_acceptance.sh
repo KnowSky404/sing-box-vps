@@ -7,11 +7,13 @@ set -euo pipefail
 [[ "${SBV_COMPONENT_RUNTIME:-}" == 1 && -f /.dockerenv && -f /tmp/sbv-component-disposable ]] || {
   printf 'requires SBV_COMPONENT_RUNTIME=1 and disposable Docker marker\n' >&2; exit 64;
 }
-[[ ! -e /root/sing-box-vps && ! -e /etc/systemd/system/sing-box.service ]] || {
+[[ ! -e /root/.sing-box-vps/runtime && ! -e /etc/systemd/system/sing-box.service ]] || {
   printf 'refusing to overwrite an existing installation\n' >&2; exit 64;
 }
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "${REPO_ROOT}/install.sh"
+source "${REPO_ROOT}/tests/prepare_storage_runtime_helper.sh"
+prepare_storage_runtime_core
 ARTIFACT_DIR=${COMPONENT_RUNTIME_ARTIFACT_DIR:-/tmp/component-runtime-acceptance}
 mkdir -p "${ARTIFACT_DIR}" "${SB_PROTOCOL_STATE_DIR}/instances"
 chmod 700 "${ARTIFACT_DIR}"
@@ -50,6 +52,7 @@ ExecStart=${SINGBOX_BIN_PATH} run -c ${SINGBOX_CONFIG_FILE}
 [Install]
 WantedBy=multi-user.target
 UNIT
+storage_publish_system_links service
 systemctl daemon-reload
 mkdir -p /etc/dbus-1/system.d
 cat > /etc/dbus-1/system.d/sbv-component-resolved.conf <<'DBUS'

@@ -281,7 +281,7 @@ managed_component_state_matches_live_config() (
   else state=$(managed_component_state_json) || return 1; fi
   managed_component_state_validate_json "${state}" || return 1
   umask 077
-  projected=$(mktemp) || return 1
+  projected=$(storage_mktemp) || return 1
   trap 'rm -f -- "${projected}"' EXIT
   coexisting_component_projection "${config_file}" "${state}" > "${projected}" || return 1
   managed_component_owned_projection_matches "${projected}" "${state_file}" "${allow_legacy}"

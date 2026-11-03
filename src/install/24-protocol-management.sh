@@ -101,7 +101,7 @@ remove_protocol_batch() (
     log_warn "存在未完成的管理事务；请先恢复事务。本次未修改。"
     return 1
   fi
-  snapshot_dir=$(mktemp -d) || return 1
+  snapshot_dir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${snapshot_dir}"' EXIT
   trap 'log_warn "批量移除已中断；此前已提交项保留，请检查最后一项事务的最终状态。"; exit 130' INT
   trap 'log_warn "批量移除已中断；此前已提交项保留，请检查最后一项事务的最终状态。"; exit 143' TERM

@@ -6,9 +6,44 @@ readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
 readonly RAW_BASE_URL="https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main"
 
+bootstrap_prepare_storage() {
+  local root_home data_root current owner mode
+  [[ "${EUID}" == 0 ]] || {
+    printf '[ERROR] 本脚本必须以 root 身份运行。\n' >&2
+    return 1
+  }
+  root_home=$(getent passwd 0 | cut -d: -f6) || return 1
+  [[ -n "${root_home}" && "${root_home}" == /* && "${root_home}" != / &&
+     "${root_home}" != *'/../'* && "${root_home}" != *$'\n'* &&
+     "${root_home}" != *$'\r'* ]] || return 1
+  data_root="${root_home}/.sing-box-vps"
+  for current in "${root_home}" "${data_root}" "${data_root}/tmp"; do
+    if [[ -L "${current}" || ( -e "${current}" && ! -d "${current}" ) ]]; then return 1; fi
+    if [[ -d "${current}" ]]; then
+      owner=$(stat -c '%u' -- "${current}") || return 1
+      mode=$(stat -c '%a' -- "${current}") || return 1
+      [[ "${owner}" == 0 && "${mode}" =~ ^[0-7]{3,4}$ ]] || return 1
+      (( (8#${mode} & 0022) == 0 )) || return 1
+    fi
+  done
+  # Validate the home ancestors before mkdir can traverse them.
+  current=${root_home}
+  while [[ "${current}" != / ]]; do
+    [[ ! -L "${current}" && -d "${current}" ]] || return 1
+    owner=$(stat -c '%u' -- "${current}") || return 1
+    mode=$(stat -c '%a' -- "${current}") || return 1
+    [[ "${owner}" == 0 && "${mode}" =~ ^[0-7]{3,4}$ ]] || return 1
+    (( (8#${mode} & 0022) == 0 || (8#${mode} & 01000) != 0 )) || return 1
+    current=$(dirname -- "${current}") || return 1
+  done
+  (umask 077; mkdir -p -- "${data_root}/tmp") || return 1
+  chmod 0700 -- "${data_root}" "${data_root}/tmp" || return 1
+  printf '%s\n' "${data_root}/tmp"
+}
+
 bootstrap_main() (
   local operation=${1:-install}
-  local script_name temp_dir='' temp_file='' curl_status script_status
+  local script_name temp_dir='' temp_file='' storage_tmp='' curl_status script_status
   local script_started=0
   cleanup_bootstrap_temp() {
     if [[ -n "${temp_file}" ]]; then
@@ -44,7 +79,11 @@ bootstrap_main() (
   trap 'cleanup_bootstrap_temp' EXIT
   trap 'handle_interrupt 130' INT
   trap 'handle_interrupt 143' TERM
-  temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/sing-box-vps-bootstrap.XXXXXX") || {
+  storage_tmp=$(bootstrap_prepare_storage) || {
+    printf '[ERROR] 私有存储目录不可信或无法初始化；脚本尚未执行。\n' >&2
+    return 1
+  }
+  temp_dir=$(mktemp -d "${storage_tmp}/sing-box-vps-bootstrap.XXXXXX") || {
     printf '[ERROR] 无法创建临时目录；脚本尚未执行。\n' >&2
     return 1
   }
@@ -80,7 +119,7 @@ bootstrap_main() (
 
   script_status=0
   script_started=1
-  bash "${temp_file}" "$@" || script_status=$?
+  TMPDIR="${storage_tmp}" bash "${temp_file}" "$@" || script_status=$?
   return "${script_status}"
 )
 

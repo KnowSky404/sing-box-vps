@@ -15,10 +15,10 @@ PORT_FILE="${TMP_DIR}/port"
 UUID_FILE="${TMP_DIR}/uuid"
 SNI_FILE="${TMP_DIR}/sni"
 REMOTE_ROOT_DIR="${TMP_DIR}/remote-root"
-CONFIG_FILE="${REMOTE_ROOT_DIR}/root/sing-box-vps/config.json"
-LEGACY_KEY_FILE="${REMOTE_ROOT_DIR}/root/sing-box-vps/reality.key"
+CONFIG_FILE="${REMOTE_ROOT_DIR}/root/.sing-box-vps/runtime/config.json"
+LEGACY_KEY_FILE="${REMOTE_ROOT_DIR}/root/.sing-box-vps/runtime/reality.key"
 LEGACY_SERVICE_FILE="${TMP_DIR}/legacy-sing-box.service"
-PROTOCOLS_DIR="${REMOTE_ROOT_DIR}/root/sing-box-vps/protocols"
+PROTOCOLS_DIR="${REMOTE_ROOT_DIR}/root/.sing-box-vps/runtime/protocols"
 CONFIG_PRESENT_FILE="${TMP_DIR}/config-present"
 SERVICE_FILE_PRESENT_FILE="${TMP_DIR}/service-file-present"
 SBV_PRESENT_FILE="${TMP_DIR}/sbv-present"
@@ -58,8 +58,9 @@ printf '1\n' > "${SERVICE_ACTIVE_FILE}"
 : > "${REMOTE_DISPATCH_LOG_FILE}"
 printf '0\n' > "${INSTALL_COUNT_FILE}"
 mkdir -p "$(dirname "${EMBEDDED_INSTALL_SCRIPT}")"
-cp "${REPO_ROOT}/install.sh" "${EMBEDDED_INSTALL_SCRIPT}"
-perl -0pi -e 's|readonly SB_PROJECT_DIR="/root/sing-box-vps"|readonly SB_PROJECT_DIR="'"${REMOTE_ROOT_DIR}/root/sing-box-vps"'"|g' "${EMBEDDED_INSTALL_SCRIPT}"
+bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --source > "${EMBEDDED_INSTALL_SCRIPT}"
+perl -0pi -e 's|readonly SB_PROJECT_DIR="/root/sing-box-vps"|readonly SB_PROJECT_DIR="'"${REMOTE_ROOT_DIR}/root/.sing-box-vps/runtime"'"|g' "${EMBEDDED_INSTALL_SCRIPT}"
+bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --isolate "${EMBEDDED_INSTALL_SCRIPT}"
 mkdir -p "$(dirname "${INSTANCE_STATE_FILE}")"
 cat > "${STATE_FILE}" <<'EOF'
 CONFIG_SCHEMA_VERSION=2
@@ -349,8 +350,8 @@ CONFIG_EOF
 }
 
 write_trojan_state() {
-  local certificate_path=${1:-/root/sing-box-vps/trojan.crt}
-  local key_path=${2:-/root/sing-box-vps/trojan.key}
+  local certificate_path=${1:-/root/.sing-box-vps/runtime/trojan.crt}
+  local key_path=${2:-/root/.sing-box-vps/runtime/trojan.key}
   mkdir -p "$(dirname "${TROJAN_STORE_FILE}")"
   printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2\n' > "${TROJAN_STATE_FILE}"
   cat > "${TROJAN_STORE_FILE}" <<STATE_EOF
@@ -747,7 +748,7 @@ INDEX_EOF
       fi
 
       if [[ "${actual_lines[0]:-}" == "9" && "${actual_lines[1]:-}" == "0" ]]; then
-        printf '运行状态摘要：\nsing-box: active\nWarp: 未开启\n配置文件: /root/sing-box-vps/config.json\n'
+        printf '运行状态摘要：\nsing-box: active\nWarp: 未开启\n配置文件: /root/.sing-box-vps/runtime/config.json\n'
         return 0
       fi
 
@@ -779,7 +780,7 @@ INDEX_EOF
 test() {
   printf 'test:%s|%s|%s\n' "${1:-}" "${2:-}" "${3:-}" >> "${ASSERT_LOG_FILE}"
 
-  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/config.json" ]]; then
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/.sing-box-vps/runtime/config.json" ]]; then
     [[ $(cat "${CONFIG_PRESENT_FILE}") == "1" ]]
     return
   fi
@@ -789,73 +790,73 @@ test() {
     return
   fi
 
-  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/vless-reality.env" ]]; then
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/.sing-box-vps/runtime/protocols/vless-reality.env" ]]; then
     [[ -f "${STATE_FILE}" ]]
     return
   fi
 
-  if [[ "${1:-}" == "-f" && ( "${2:-}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" || "${2:-}" == "/root/sing-box-vps/protocols/vless-reality.d/imported-1.env" ) ]]; then
+  if [[ "${1:-}" == "-f" && ( "${2:-}" == "/root/.sing-box-vps/runtime/protocols/vless-reality.d/main.env" || "${2:-}" == "/root/.sing-box-vps/runtime/protocols/vless-reality.d/imported-1.env" ) ]]; then
     [[ -f "${INSTANCE_STATE_FILE}" ]]
     return
   fi
 
-  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/anytls.env" ]]; then
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/.sing-box-vps/runtime/protocols/anytls.env" ]]; then
     [[ -f "${ANYTLS_STATE_FILE}" ]]
     return
   fi
 
-  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/socks.env" ]]; then
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/.sing-box-vps/runtime/protocols/socks.env" ]]; then
     [[ -f "${SOCKS_STATE_FILE}" ]]
     return
   fi
 
-  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/instances/socks.json" ]]; then
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/.sing-box-vps/runtime/protocols/instances/socks.json" ]]; then
     [[ -f "${SOCKS_STORE_FILE}" ]]
     return
   fi
 
-  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/http.env" ]]; then
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/.sing-box-vps/runtime/protocols/http.env" ]]; then
     [[ -f "${HTTP_STATE_FILE}" ]]
     return
   fi
 
-  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/instances/http.json" ]]; then
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/.sing-box-vps/runtime/protocols/instances/http.json" ]]; then
     [[ -f "${HTTP_STORE_FILE}" ]]
     return
   fi
 
-  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/shadowsocks.env" ]]; then
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/.sing-box-vps/runtime/protocols/shadowsocks.env" ]]; then
     [[ -f "${SHADOWSOCKS_STATE_FILE}" ]]
     return
   fi
 
-  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/instances/shadowsocks.json" ]]; then
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/.sing-box-vps/runtime/protocols/instances/shadowsocks.json" ]]; then
     [[ -f "${SHADOWSOCKS_STORE_FILE}" ]]
     return
   fi
 
-  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/trojan.env" ]]; then
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/.sing-box-vps/runtime/protocols/trojan.env" ]]; then
     [[ -f "${TROJAN_STATE_FILE}" ]]
     return
   fi
 
-  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/instances/trojan.json" ]]; then
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/.sing-box-vps/runtime/protocols/instances/trojan.json" ]]; then
     [[ -f "${TROJAN_STORE_FILE}" ]]
     return
   fi
 
-  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
+  if [[ "${1:-}" == "-f" && "${2:-}" == "/root/.sing-box-vps/runtime/protocols/index.env" ]]; then
     [[ -f "${INDEX_FILE}" ]]
     return
   fi
 
 
-  if [[ "${1:-}" == "-d" && "${2:-}" == "/root/sing-box-vps/protocols" ]]; then
+  if [[ "${1:-}" == "-d" && "${2:-}" == "/root/.sing-box-vps/runtime/protocols" ]]; then
     [[ -d "${PROTOCOLS_DIR}" ]]
     return
   fi
 
-  if [[ "${1:-}" == "!" && "${2:-}" == "-e" && "${3:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
+  if [[ "${1:-}" == "!" && "${2:-}" == "-e" && "${3:-}" == "/root/.sing-box-vps/runtime/protocols/index.env" ]]; then
     [[ ! -e "${INDEX_FILE}" ]]
     return
   fi
@@ -865,7 +866,7 @@ test() {
     return
   fi
 
-  if [[ "${1:-}" == "!" && "${2:-}" == "-e" && "${3:-}" == "/root/sing-box-vps/config.json" ]]; then
+  if [[ "${1:-}" == "!" && "${2:-}" == "-e" && "${3:-}" == "/root/.sing-box-vps/runtime/config.json" ]]; then
     [[ $(cat "${CONFIG_PRESENT_FILE}") == "0" ]]
     return
   fi
@@ -880,7 +881,7 @@ test() {
     return
   fi
 
-  if [[ "${1:-}" == "!" && "${2:-}" == "-f" && "${3:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
+  if [[ "${1:-}" == "!" && "${2:-}" == "-f" && "${3:-}" == "/root/.sing-box-vps/runtime/protocols/index.env" ]]; then
     [[ ! -f "${INDEX_FILE}" ]]
     return
   fi
@@ -894,24 +895,24 @@ jq() {
 
   printf 'jq:%s|%s|%s\n' "${1:-}" "${2:-}" "${3:-}" >> "${ASSERT_LOG_FILE}"
 
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/config.json" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/config.json" ]]; then
     args[$last_index]="${CONFIG_FILE}"
   fi
 
 
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/socks.json" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/instances/socks.json" ]]; then
     args[$last_index]="${SOCKS_STORE_FILE}"
   fi
 
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/http.json" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/instances/http.json" ]]; then
     args[$last_index]="${HTTP_STORE_FILE}"
   fi
 
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/shadowsocks.json" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/instances/shadowsocks.json" ]]; then
     args[$last_index]="${SHADOWSOCKS_STORE_FILE}"
   fi
 
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/trojan.json" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/instances/trojan.json" ]]; then
     args[$last_index]="${TROJAN_STORE_FILE}"
   fi
 
@@ -922,43 +923,43 @@ sed() {
   local args=("$@")
   local last_index=$(( $# - 1 ))
 
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/vless-reality.env" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/vless-reality.env" ]]; then
     args[$last_index]="${STATE_FILE}"
   fi
 
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" || "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/vless-reality.d/imported-1.env" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/vless-reality.d/main.env" || "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/vless-reality.d/imported-1.env" ]]; then
     args[$last_index]="${INSTANCE_STATE_FILE}"
   fi
 
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/anytls.env" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/anytls.env" ]]; then
     args[$last_index]="${ANYTLS_STATE_FILE}"
   fi
 
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/socks.env" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/socks.env" ]]; then
     args[$last_index]="${SOCKS_STATE_FILE}"
   fi
 
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/http.env" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/http.env" ]]; then
     args[$last_index]="${HTTP_STATE_FILE}"
   fi
 
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/shadowsocks.env" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/shadowsocks.env" ]]; then
     args[$last_index]="${SHADOWSOCKS_STATE_FILE}"
   fi
 
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/trojan.env" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/trojan.env" ]]; then
     args[$last_index]="${TROJAN_STATE_FILE}"
   fi
 
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/socks.json" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/instances/socks.json" ]]; then
     args[$last_index]="${SOCKS_STORE_FILE}"
   fi
 
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/trojan.json" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/instances/trojan.json" ]]; then
     args[$last_index]="${TROJAN_STORE_FILE}"
   fi
 
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/index.env" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/index.env" ]]; then
     args[$last_index]="${INDEX_FILE}"
   fi
 
@@ -969,11 +970,11 @@ cp() {
   local args=("$@")
   local source_index=$(( ${#args[@]} - 2 ))
 
-  if [[ "${args[$source_index]}" == "/root/sing-box-vps/config.json" ]]; then
+  if [[ "${args[$source_index]}" == "/root/.sing-box-vps/runtime/config.json" ]]; then
     args[$source_index]="${CONFIG_FILE}"
   fi
 
-  if [[ "${args[$source_index]}" == "/root/sing-box-vps/protocols/." ]]; then
+  if [[ "${args[$source_index]}" == "/root/.sing-box-vps/runtime/protocols/." ]]; then
     args[$source_index]="${PROTOCOLS_DIR}/."
   fi
 
@@ -985,7 +986,7 @@ cmp() {
   local arg args=()
   for arg in "$@"; do
     case "${arg}" in
-      /root/sing-box-vps/config.json) args+=("${CONFIG_FILE}") ;;
+      /root/.sing-box-vps/runtime/config.json) args+=("${CONFIG_FILE}") ;;
       *) args+=("${arg}") ;;
     esac
   done
@@ -996,7 +997,7 @@ rm() {
   local arg args=()
   for arg in "$@"; do
     case "${arg}" in
-      /root/sing-box-vps/protocols/index.env) args+=("${INDEX_FILE}") ;;
+      /root/.sing-box-vps/runtime/protocols/index.env) args+=("${INDEX_FILE}") ;;
       *) args+=("${arg}") ;;
     esac
   done
@@ -1009,51 +1010,51 @@ grep() {
 
   printf 'grep:%s\n' "$*" >> "${ASSERT_LOG_FILE}"
 
-  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/vless-reality.env" ]]; then
+  if [[ "${args[$last_index]}" == "/root/.sing-box-vps/runtime/protocols/vless-reality.env" ]]; then
     args[$last_index]="${STATE_FILE}"
   fi
 
-  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/vless-reality.d/main.env" || "${args[$last_index]}" == "/root/sing-box-vps/protocols/vless-reality.d/imported-1.env" ]]; then
+  if [[ "${args[$last_index]}" == "/root/.sing-box-vps/runtime/protocols/vless-reality.d/main.env" || "${args[$last_index]}" == "/root/.sing-box-vps/runtime/protocols/vless-reality.d/imported-1.env" ]]; then
     args[$last_index]="${INSTANCE_STATE_FILE}"
   fi
 
-  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/anytls.env" ]]; then
+  if [[ "${args[$last_index]}" == "/root/.sing-box-vps/runtime/protocols/anytls.env" ]]; then
     args[$last_index]="${ANYTLS_STATE_FILE}"
   fi
 
-  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/socks.env" ]]; then
+  if [[ "${args[$last_index]}" == "/root/.sing-box-vps/runtime/protocols/socks.env" ]]; then
     args[$last_index]="${SOCKS_STATE_FILE}"
   fi
 
-  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/instances/socks.json" ]]; then
+  if [[ "${args[$last_index]}" == "/root/.sing-box-vps/runtime/protocols/instances/socks.json" ]]; then
     args[$last_index]="${SOCKS_STORE_FILE}"
   fi
 
-  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/http.env" ]]; then
+  if [[ "${args[$last_index]}" == "/root/.sing-box-vps/runtime/protocols/http.env" ]]; then
     args[$last_index]="${HTTP_STATE_FILE}"
   fi
 
-  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/instances/http.json" ]]; then
+  if [[ "${args[$last_index]}" == "/root/.sing-box-vps/runtime/protocols/instances/http.json" ]]; then
     args[$last_index]="${HTTP_STORE_FILE}"
   fi
 
-  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/shadowsocks.env" ]]; then
+  if [[ "${args[$last_index]}" == "/root/.sing-box-vps/runtime/protocols/shadowsocks.env" ]]; then
     args[$last_index]="${SHADOWSOCKS_STATE_FILE}"
   fi
 
-  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/trojan.env" ]]; then
+  if [[ "${args[$last_index]}" == "/root/.sing-box-vps/runtime/protocols/trojan.env" ]]; then
     args[$last_index]="${TROJAN_STATE_FILE}"
   fi
 
-  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/instances/shadowsocks.json" ]]; then
+  if [[ "${args[$last_index]}" == "/root/.sing-box-vps/runtime/protocols/instances/shadowsocks.json" ]]; then
     args[$last_index]="${SHADOWSOCKS_STORE_FILE}"
   fi
 
-  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/instances/trojan.json" ]]; then
+  if [[ "${args[$last_index]}" == "/root/.sing-box-vps/runtime/protocols/instances/trojan.json" ]]; then
     args[$last_index]="${TROJAN_STORE_FILE}"
   fi
 
-  if [[ "${args[$last_index]}" == "/root/sing-box-vps/protocols/index.env" ]]; then
+  if [[ "${args[$last_index]}" == "/root/.sing-box-vps/runtime/protocols/index.env" ]]; then
     args[$last_index]="${INDEX_FILE}"
   fi
 
@@ -1063,19 +1064,19 @@ grep() {
 stat() {
   local args=("$@")
   local last_index=$(( $# - 1 ))
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/socks.json" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/instances/socks.json" ]]; then
     printf '600\n'
     return 0
   fi
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/http.json" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/instances/http.json" ]]; then
     printf '600\n'
     return 0
   fi
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/shadowsocks.json" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/instances/shadowsocks.json" ]]; then
     printf '600\n'
     return 0
   fi
-  if [[ "${args[$last_index]:-}" == "/root/sing-box-vps/protocols/instances/trojan.json" ]]; then
+  if [[ "${args[$last_index]:-}" == "/root/.sing-box-vps/runtime/protocols/instances/trojan.json" ]]; then
     printf '600\n'
     return 0
   fi
@@ -1083,7 +1084,7 @@ stat() {
 }
 
 sha256sum() {
-  if [[ "$#" -eq 1 && "$1" == /root/sing-box-vps/config.json ]]; then
+  if [[ "$#" -eq 1 && "$1" == /root/.sing-box-vps/runtime/config.json ]]; then
     command sha256sum "${CONFIG_FILE}"
     return
   fi
@@ -1225,14 +1226,14 @@ awk -v wrapper_file="${PAYLOAD_FILE}.wrapper" '
   { print }
 ' "${PAYLOAD_FILE}" > "${PAYLOAD_FILE}.tmp"
 mv "${PAYLOAD_FILE}.tmp" "${PAYLOAD_FILE}"
-perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/vless-reality.env|state_file='"${STATE_FILE}"'|g' "${PAYLOAD_FILE}"
-perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/anytls.env|state_file='"${ANYTLS_STATE_FILE}"'|g' "${PAYLOAD_FILE}"
-perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/http.env|state_file='"${HTTP_STATE_FILE}"'|g' "${PAYLOAD_FILE}"
-perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/http.json|store_file='"${HTTP_STORE_FILE}"'|g' "${PAYLOAD_FILE}"
-perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/shadowsocks.env|state_file='"${SHADOWSOCKS_STATE_FILE}"'|g' "${PAYLOAD_FILE}"
-perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/shadowsocks.json|store_file='"${SHADOWSOCKS_STORE_FILE}"'|g' "${PAYLOAD_FILE}"
-perl -0pi -e 's|state_file=/root/sing-box-vps/protocols/trojan.env|state_file='"${TROJAN_STATE_FILE}"'|g' "${PAYLOAD_FILE}"
-perl -0pi -e 's|store_file=/root/sing-box-vps/protocols/instances/trojan.json|store_file='"${TROJAN_STORE_FILE}"'|g' "${PAYLOAD_FILE}"
+perl -0pi -e 's|state_file=/root/.sing-box-vps/runtime/protocols/vless-reality.env|state_file='"${STATE_FILE}"'|g' "${PAYLOAD_FILE}"
+perl -0pi -e 's|state_file=/root/.sing-box-vps/runtime/protocols/anytls.env|state_file='"${ANYTLS_STATE_FILE}"'|g' "${PAYLOAD_FILE}"
+perl -0pi -e 's|state_file=/root/.sing-box-vps/runtime/protocols/http.env|state_file='"${HTTP_STATE_FILE}"'|g' "${PAYLOAD_FILE}"
+perl -0pi -e 's|store_file=/root/.sing-box-vps/runtime/protocols/instances/http.json|store_file='"${HTTP_STORE_FILE}"'|g' "${PAYLOAD_FILE}"
+perl -0pi -e 's|state_file=/root/.sing-box-vps/runtime/protocols/shadowsocks.env|state_file='"${SHADOWSOCKS_STATE_FILE}"'|g' "${PAYLOAD_FILE}"
+perl -0pi -e 's|store_file=/root/.sing-box-vps/runtime/protocols/instances/shadowsocks.json|store_file='"${SHADOWSOCKS_STORE_FILE}"'|g' "${PAYLOAD_FILE}"
+perl -0pi -e 's|state_file=/root/.sing-box-vps/runtime/protocols/trojan.env|state_file='"${TROJAN_STATE_FILE}"'|g' "${PAYLOAD_FILE}"
+perl -0pi -e 's|store_file=/root/.sing-box-vps/runtime/protocols/instances/trojan.json|store_file='"${TROJAN_STORE_FILE}"'|g' "${PAYLOAD_FILE}"
 
 # The fake payload must not touch host TUN/bridge or endpoint resources.
 CALLS_FILE="${CALLS_FILE}" \
@@ -1365,28 +1366,28 @@ grep -Fq 'verification_scenario_fresh_install_trojan' "${PAYLOAD_FILE}"
 grep -Fq 'verification_scenario_fresh_install_vmess' "${PAYLOAD_FILE}"
 grep -Fq 'verification_scenario_fresh_install_vless_plain' "${PAYLOAD_FILE}"
 grep -Fq 'verification_scenario_upgrade_rollback_1_13_to_1_14' "${PAYLOAD_FILE}"
-! grep -Fq 'verification_execute_single_protocol_probe vless-reality /root/sing-box-vps/config.json' "${PAYLOAD_FILE}"
-grep -Fqx 'test:-f|/root/sing-box-vps/protocols/vless-reality.env|' "${ASSERT_LOG_FILE}"
-grep -Fqx 'test:-f|/root/sing-box-vps/protocols/vless-reality.d/imported-1.env|' "${ASSERT_LOG_FILE}"
-grep -Fqx 'test:-f|/root/sing-box-vps/protocols/anytls.env|' "${ASSERT_LOG_FILE}"
-grep -Fqx 'test:-f|/root/sing-box-vps/protocols/index.env|' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx CONFIG_SCHEMA_VERSION=2 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx DEFAULT_INSTANCE_ID=imported-1 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx INSTANCE_IDS=imported-1 /root/sing-box-vps/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx PORT=443 /root/sing-box-vps/protocols/vless-reality.d/imported-1.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/sing-box-vps/protocols/vless-reality.d/imported-1.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fq stale.example.com /root/sing-box-vps/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'jq:-r|.inbounds[0].users[0].uuid // empty|/root/sing-box-vps/config.json' "${ASSERT_LOG_FILE}"
-grep -Fqx 'jq:-r|.inbounds[0].tls.server_name // empty|/root/sing-box-vps/config.json' "${ASSERT_LOG_FILE}"
-grep -Fqx 'jq:-r|.inbounds[0].listen_port // empty|/root/sing-box-vps/config.json' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx PORT=8443 /root/sing-box-vps/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx UUID=22222222-2222-4222-8222-222222222222 /root/sing-box-vps/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx SNI=www.apple.com /root/sing-box-vps/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
-grep -Fqx "grep:-Fqx REALITY_PRIVATE_KEY=${VALID_REALITY_PRIVATE_KEY} /root/sing-box-vps/protocols/vless-reality.env" "${ASSERT_LOG_FILE}"
-grep -Fqx "grep:-Fqx REALITY_PUBLIC_KEY=${VALID_REALITY_PUBLIC_KEY} /root/sing-box-vps/protocols/vless-reality.env" "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx PORT=9443 /root/sing-box-vps/protocols/anytls.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx DOMAIN=anytls.example.com /root/sing-box-vps/protocols/anytls.env' "${ASSERT_LOG_FILE}"
-grep -Fqx 'grep:-Fqx PASSWORD=anytls-pass /root/sing-box-vps/protocols/anytls.env' "${ASSERT_LOG_FILE}"
+! grep -Fq 'verification_execute_single_protocol_probe vless-reality /root/.sing-box-vps/runtime/config.json' "${PAYLOAD_FILE}"
+grep -Fqx 'test:-f|/root/.sing-box-vps/runtime/protocols/vless-reality.env|' "${ASSERT_LOG_FILE}"
+grep -Fqx 'test:-f|/root/.sing-box-vps/runtime/protocols/vless-reality.d/imported-1.env|' "${ASSERT_LOG_FILE}"
+grep -Fqx 'test:-f|/root/.sing-box-vps/runtime/protocols/anytls.env|' "${ASSERT_LOG_FILE}"
+grep -Fqx 'test:-f|/root/.sing-box-vps/runtime/protocols/index.env|' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx CONFIG_SCHEMA_VERSION=2 /root/.sing-box-vps/runtime/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx DEFAULT_INSTANCE_ID=imported-1 /root/.sing-box-vps/runtime/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx INSTANCE_IDS=imported-1 /root/.sing-box-vps/runtime/protocols/vless-reality.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx PORT=443 /root/.sing-box-vps/runtime/protocols/vless-reality.d/imported-1.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx SNI=www.cloudflare.com /root/.sing-box-vps/runtime/protocols/vless-reality.d/imported-1.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fq stale.example.com /root/.sing-box-vps/runtime/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'jq:-r|.inbounds[0].users[0].uuid // empty|/root/.sing-box-vps/runtime/config.json' "${ASSERT_LOG_FILE}"
+grep -Fqx 'jq:-r|.inbounds[0].tls.server_name // empty|/root/.sing-box-vps/runtime/config.json' "${ASSERT_LOG_FILE}"
+grep -Fqx 'jq:-r|.inbounds[0].listen_port // empty|/root/.sing-box-vps/runtime/config.json' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx PORT=8443 /root/.sing-box-vps/runtime/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx UUID=22222222-2222-4222-8222-222222222222 /root/.sing-box-vps/runtime/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx SNI=www.apple.com /root/.sing-box-vps/runtime/protocols/vless-reality.d/main.env' "${ASSERT_LOG_FILE}"
+grep -Fqx "grep:-Fqx REALITY_PRIVATE_KEY=${VALID_REALITY_PRIVATE_KEY} /root/.sing-box-vps/runtime/protocols/vless-reality.env" "${ASSERT_LOG_FILE}"
+grep -Fqx "grep:-Fqx REALITY_PUBLIC_KEY=${VALID_REALITY_PUBLIC_KEY} /root/.sing-box-vps/runtime/protocols/vless-reality.env" "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx PORT=9443 /root/.sing-box-vps/runtime/protocols/anytls.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx DOMAIN=anytls.example.com /root/.sing-box-vps/runtime/protocols/anytls.env' "${ASSERT_LOG_FILE}"
+grep -Fqx 'grep:-Fqx PASSWORD=anytls-pass /root/.sing-box-vps/runtime/protocols/anytls.env' "${ASSERT_LOG_FILE}"
 grep -Fqx 'UUID=44444444-4444-4444-8444-444444444444' "${INSTANCE_STATE_FILE}"
 grep -Fq "bash:${EMBEDDED_INSTALL_SCRIPT} " "${CALLS_FILE}"
 grep -Fqx "bash:${EMBEDDED_INSTALL_SCRIPT} agent instance delete http --json --yes --expected-revision 1 --id main" "${CALLS_FILE}"

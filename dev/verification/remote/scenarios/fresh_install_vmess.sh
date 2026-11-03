@@ -1,8 +1,8 @@
 verification_scenario_fresh_install_vmess() {
   local expected_port=1085 cert_path key_path
-  local config_file=/root/sing-box-vps/config.json
-  local state_file=/root/sing-box-vps/protocols/vmess.env
-  local store_file=/root/sing-box-vps/protocols/instances/vmess.json
+  local config_file=/root/.sing-box-vps/runtime/config.json
+  local state_file=/root/.sing-box-vps/runtime/protocols/vmess.env
+  local store_file=/root/.sing-box-vps/runtime/protocols/instances/vmess.json
 
   verification_prepare_remote_local_tree
   trap 'verification_cleanup_remote_local_tree; trap - RETURN' RETURN
@@ -42,7 +42,7 @@ EOF
   test -x /usr/local/bin/sbv
   test -f /etc/systemd/system/sing-box.service
   grep -Fqx 'CONFIG_SCHEMA_VERSION=2' "${state_file}"
-  grep -Fqx 'INSTALLED_PROTOCOLS=vmess' /root/sing-box-vps/protocols/index.env
+  grep -Fqx 'INSTALLED_PROTOCOLS=vmess' /root/.sing-box-vps/runtime/protocols/index.env
   jq -e --argjson port "${expected_port}" '
     .protocol=="vmess" and .revision==1 and (.instances|length)==1 and
     .instances[0].id=="main" and .instances[0].tag=="vmess-in" and

@@ -48,6 +48,7 @@ if [[ "${1:-}" != --container ]]; then
   mkdir -p "${staging_dir}/tests"
   cp -- "${REPO_ROOT}/install.sh" "${staging_dir}/install.sh"
   cp -- "${REPO_ROOT}/tests/menu_test_helper.sh" \
+    "${REPO_ROOT}/tests/install_fixture_source_helper.sh" \
     "${REPO_ROOT}/tests/default_dual_stack_runtime.sh" "${staging_dir}/tests/"
   cp -- "${core}" "${staging_dir}/sing-box"
   container_id=$(docker_local create --network none \

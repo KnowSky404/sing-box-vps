@@ -420,7 +420,7 @@ validate_http_tls_state_json() {
 read_public_certificate_pem() {
   local certificate_path=${1:-} staged certificate_size certificate_pem
   [[ -n "${certificate_path}" && -f "${certificate_path}" && -r "${certificate_path}" ]] || return 1
-  staged=$(mktemp) || return 1
+  staged=$(storage_mktemp) || return 1
   if ! head -c 1048577 -- "${certificate_path}" > "${staged}"; then
     rm -f -- "${staged}"
     return 1

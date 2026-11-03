@@ -19,7 +19,8 @@ sed \
   -e "s|readonly SINGBOX_BIN_PATH=\"/usr/local/bin/sing-box\"|readonly SINGBOX_BIN_PATH=\"${SINGBOX_BIN_PATH}\"|" \
   -e "s|readonly SBV_BIN_PATH=\"/usr/local/bin/sbv\"|readonly SBV_BIN_PATH=\"${SBV_BIN_PATH}\"|" \
   -e "s|readonly SINGBOX_SERVICE_FILE=\"/etc/systemd/system/sing-box.service\"|readonly SINGBOX_SERVICE_FILE=\"${SINGBOX_SERVICE_FILE}\"|" \
-  "${REPO_ROOT}/install.sh" > "${TESTABLE_INSTALL}"
+  <(bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --source) > "${TESTABLE_INSTALL}"
+bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --isolate "${TESTABLE_INSTALL}"
 
 mkdir -p "${PROJECT_DIR}" "$(dirname "${SINGBOX_BIN_PATH}")" "$(dirname "${SINGBOX_SERVICE_FILE}")" "${TMP_DIR}/stub-bin"
 touch "${PROJECT_DIR}/config.json" "${SINGBOX_BIN_PATH}" "${SBV_BIN_PATH}" "${SINGBOX_SERVICE_FILE}"

@@ -41,7 +41,8 @@ sed \
   -e "s|readonly SINGBOX_SERVICE_FILE=\"/etc/systemd/system/sing-box.service\"|readonly SINGBOX_SERVICE_FILE=\"${TMP_DIR}/sing-box.service\"|" \
   -e "s|readonly SB_MEDIA_CHECK_DIR=\"\${SB_PROJECT_DIR}/media-check\"|readonly SB_MEDIA_CHECK_DIR=\"${TMP_DIR}/media-check\"|" \
   -e "s|readonly SB_MEDIA_CHECK_SCRIPT=\"\${SB_MEDIA_CHECK_DIR}/region_restriction_check.sh\"|readonly SB_MEDIA_CHECK_SCRIPT=\"${MEDIA_TARGET}\"|" \
-  "${REPO_ROOT}/install.sh" > "${TESTABLE_INSTALL}"
+  <(bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --source) > "${TESTABLE_INSTALL}"
+bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --isolate "${TESTABLE_INSTALL}"
 main_guard='[[ "${BASH_SOURCE[0]}" != "$0" ]] || main "$@"'
 grep -Fqx "${main_guard}" "${TESTABLE_INSTALL}" || {
   printf 'test fixture could not find the install.sh main guard\n' >&2
@@ -476,8 +477,8 @@ for mode in dns connect timeout partial empty html syntax identity identity-url 
     assert_not_contains "${mode_output}" 'secret-token'
     assert_not_contains "${mode_output}" 'secret-key'
     assert_not_contains "${mode_output}" 'https://user:pass@'
-    [[ -f "${PROJECT_DIR}/sbv.log" ]] || fail 'self-update error was not logged'
-    log_content=$(<"${PROJECT_DIR}/sbv.log")
+    [[ -f "${TMP_DIR}/logs/sbv.log" ]] || fail 'self-update error was not logged'
+    log_content=$(<"${TMP_DIR}/logs/sbv.log")
     assert_not_contains "${log_content}" 'secret-token'
     assert_not_contains "${log_content}" 'secret-key'
   fi

@@ -55,7 +55,7 @@ managed_component_transparent_resources_json() (
   local interface_status address_status mtu_status
   local link_file address_file rule_file route_file nft_file output_size
   [[ -f "${config_file}" && ! -L "${config_file}" && -r "${config_file}" ]] || return 1
-  snapshot=$(mktemp -d /tmp/sbv-transparent-resources.XXXXXX) || return 1
+  snapshot=$(storage_mktemp -d "${SB_DATA_ROOT}/tmp/sbv-transparent-resources.XXXXXX") || return 1
   trap 'rm -rf -- "${snapshot}"' EXIT INT TERM HUP
   head -c 4194305 -- "${config_file}" > "${snapshot}/config.json" || return 1
   [[ "$(wc -c < "${snapshot}/config.json")" -le 4194304 ]] || return 1
@@ -588,7 +588,7 @@ managed_component_live_takeover_records_json() (
   local records=() existing_id
   [[ -n "${state}" ]] || return 1
   [[ -f "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" && -r "${SINGBOX_CONFIG_FILE}" ]] || return 2
-  config_snapshot=$(mktemp /tmp/sbv-component-live.XXXXXX) || return 1
+  config_snapshot=$(storage_mktemp "${SB_DATA_ROOT}/tmp/sbv-component-live.XXXXXX") || return 1
   trap 'rm -f -- "${config_snapshot}"' EXIT
   head -c 4194305 -- "${SINGBOX_CONFIG_FILE}" > "${config_snapshot}" || return 4
   [[ "$(wc -c < "${config_snapshot}")" -le 4194304 ]] || return 4
@@ -849,12 +849,12 @@ managed_component_write_state() (
   [[ ! -L "${SB_PROJECT_DIR}" && ! -L "${SB_COMPONENT_STATE_FILE}" &&
      ! -L "${SB_COMPONENT_STATE_FILE}.bak" ]] || return 1
   mkdir -p "${SB_PROJECT_DIR}" || return 1
-  candidate=$(mktemp "${SB_PROJECT_DIR}/.components.json.candidate.XXXXXX") || return 1
+  candidate=$(storage_mktemp "${SB_PROJECT_DIR}/.components.json.candidate.XXXXXX") || return 1
   trap 'rm -f -- "${candidate}" "${backup:-}"' EXIT
   printf '%s\n' "${state}" > "${candidate}" || return 1
   chmod 600 "${candidate}" || return 1
   if [[ -f "${SB_COMPONENT_STATE_FILE}" ]]; then
-    backup=$(mktemp "${SB_PROJECT_DIR}/.components.json.backup.XXXXXX") || return 1
+    backup=$(storage_mktemp "${SB_PROJECT_DIR}/.components.json.backup.XXXXXX") || return 1
     cp -p "${SB_COMPONENT_STATE_FILE}" "${backup}" || return 1
     chmod 600 "${backup}" || return 1
     mv -f "${backup}" "${SB_COMPONENT_STATE_FILE}.bak" || return 1

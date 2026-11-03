@@ -12,6 +12,7 @@ Use sing-box-test for test hosts; production is sing-box-prod. Unknown hosts are
 Documentation sources (also available offline):
 - docs/wiki/Home.md: navigation.
 - docs/wiki/Management.md: server network menu, draft application/recovery and node-sharing scope.
+- docs/wiki/Storage-Layout.md: unified private root, legacy storage status/migrate/recover and service/backup boundaries.
 - docs/wiki/Getting-Started.md: staged installation and uninstallation.
 - docs/wiki/Command-Catalog.md: generated operation reference, exact usage, safety boundaries and explicit interactive-only limitations.
 - docs/wiki/Agent-CLI.md: commands, confirmation, revision/CAS and sensitive output.

@@ -55,7 +55,7 @@ write_node_naming_config() (
   mkdir -p "${config_dir}" || return 1
   trap '[[ -z "${tmp_file}" ]] || rm -f -- "${tmp_file}"' EXIT
   trap 'printf "[WARN] 显示标签设置已中断 (phase=%s, committed=%s)；请回读设置确认最终状态。\n" "${phase}" "${committed}" >&2; exit 1' HUP INT TERM
-  tmp_file=$(mktemp "${config_dir}/.node-naming.XXXXXX") || return 1
+  tmp_file=$(storage_mktemp "${config_dir}/.node-naming.XXXXXX") || return 1
   chmod 600 "${tmp_file}" || return 1
   jq -n --arg label "${label}" '{host_label:$label}' > "${tmp_file}" || return 1
   jq -e --arg label "${label}" '. == {host_label:$label}' "${tmp_file}" >/dev/null || return 1
@@ -73,7 +73,7 @@ write_node_naming_config() (
   if [[ "$(node_name_host_label)" != "${label}" ]]; then
     phase=rollback
     if [[ "${had_original}" == y ]]; then
-      tmp_file=$(mktemp "${config_dir}/.node-naming.XXXXXX") || return 1
+      tmp_file=$(storage_mktemp "${config_dir}/.node-naming.XXXXXX") || return 1
       cp -p -- "${config_file}.bak" "${tmp_file}" || return 1
       mv -- "${tmp_file}" "${config_file}" || return 1
       tmp_file=''

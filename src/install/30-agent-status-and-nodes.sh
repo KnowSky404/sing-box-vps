@@ -120,8 +120,8 @@ agent_warp_json() {
 agent_singbox_check_json() {
   local stdout_file stderr_file exit_code binary_version
 
-  stdout_file=$(mktemp)
-  stderr_file=$(mktemp)
+  stdout_file=$(storage_mktemp)
+  stderr_file=$(storage_mktemp)
 
   if "${SINGBOX_BIN_PATH}" check -c "${SINGBOX_CONFIG_FILE}" > "${stdout_file}" 2> "${stderr_file}"; then
     exit_code=0
@@ -669,7 +669,7 @@ agent_trojan_link_json() (
   links=$(jq -c '.links' <<< "${link_result}") || return 1
   warnings=$(jq -c '.warnings' <<< "${link_result}") || return 1
 
-  isolated_store=$(mktemp) || return 1
+  isolated_store=$(storage_mktemp) || return 1
   trap 'rm -f -- "${isolated_store}"' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
@@ -718,7 +718,7 @@ agent_vmess_link_json() (
   case "${SB_MIXED_LISTEN_ADDRESS:-}" in 0.0.0.0|::) ;; "") return 1 ;; *) server=${SB_MIXED_LISTEN_ADDRESS} ;; esac
   summary=$(agent_vmess_node_json "${server}") || return 1
   links=$(build_vmess_links_json "${server}" "${instance_id}") || return 1
-  isolated_store=$(mktemp) || return 1
+  isolated_store=$(storage_mktemp) || return 1
   trap 'rm -f -- "${isolated_store}"' EXIT
   jq --arg id "${instance_id}" '. as $root | ($root.instances | map(select(.id == $id))) as $instances | $root | .default_instance_id=$id | .instances=$instances' <<< "${snapshot}" > "${isolated_store}" || return 1
   outbounds=$(build_vmess_client_outbounds_from_store "${isolated_store}" "${server}") || return 1
@@ -756,7 +756,7 @@ agent_vless_plain_link_json() (
   case "${SB_MIXED_LISTEN_ADDRESS:-}" in 0.0.0.0|::) ;; "") return 1 ;; *) server=${SB_MIXED_LISTEN_ADDRESS} ;; esac
   summary=$(agent_vless_plain_node_json "${server}") || return 1
   links=$(build_vless_plain_links_json "${server}" "${instance_id}") || return 1
-  isolated_store=$(mktemp) || return 1
+  isolated_store=$(storage_mktemp) || return 1
   trap 'rm -f -- "${isolated_store}"' EXIT
   jq --arg id "${instance_id}" '. as $root | ($root.instances | map(select(.id == $id))) as $instances | $root | .default_instance_id=$id | .instances=$instances' <<< "${snapshot}" > "${isolated_store}" || return 1
   outbounds=$(build_vless_plain_client_outbounds_from_store "${isolated_store}" "${server}") || return 1
@@ -825,7 +825,7 @@ agent_anytls_link_json() (
   esac
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   summary=$(agent_anytls_node_json "${server}") || return 1
-  isolated_store=$(mktemp) || return 1
+  isolated_store=$(storage_mktemp) || return 1
   trap 'rm -f -- "${isolated_store}"' EXIT
   jq --arg id "${instance_id}" \
     '. as $root | ($root.instances | map(select(.id == $id))) as $instances |
@@ -969,7 +969,7 @@ agent_snell_link_json() (
   esac
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   summary=$(agent_snell_node_json "${public_ip}") || return 1
-  isolated_store=$(mktemp) || return 1
+  isolated_store=$(storage_mktemp) || return 1
   trap 'rm -f -- "${isolated_store}"' EXIT
   jq --arg id "${instance_id}" '. as $root | ($root.instances | map(select(.id == $id))) as $instances | $root | .default_instance_id=$id | .instances=$instances' <<< "${snapshot}" > "${isolated_store}" || return 1
   outbounds=$(build_client_snell_outbounds "${server}" "${isolated_store}") || return 1
@@ -1026,7 +1026,7 @@ agent_tuic_link_json() (
   esac
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   summary=$(agent_tuic_node_json "${public_ip}") || return 1
-  isolated_store=$(mktemp) || return 1
+  isolated_store=$(storage_mktemp) || return 1
   trap 'rm -f -- "${isolated_store}"' EXIT
   jq --arg id "${instance_id}" \
     '. as $root | ($root.instances | map(select(.id == $id))) as $instances |
@@ -1068,7 +1068,7 @@ agent_hysteria_link_json() (
   case "${SB_MIXED_LISTEN_ADDRESS:-}" in 0.0.0.0|::) server=${public_ip} ;; "") return 1 ;; *) server=${SB_MIXED_LISTEN_ADDRESS} ;; esac
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   summary=$(agent_hysteria_node_json "${public_ip}") || return 1
-  isolated_store=$(mktemp) || return 1
+  isolated_store=$(storage_mktemp) || return 1
   trap 'rm -f -- "${isolated_store}"' EXIT
   jq --arg id "${instance_id}" '. as $root | ($root.instances|map(select(.id==$id))) as $instances | $root|.default_instance_id=$id|.instances=$instances' <<< "${snapshot}" > "${isolated_store}" || return 1
   outbounds=$(build_client_hysteria_outbounds "${server}" "${isolated_store}") || return 1
@@ -1144,7 +1144,7 @@ agent_naive_link_json() (
   esac
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   summary=$(agent_naive_node_json "${public_ip}") || return 1
-  isolated_store=$(mktemp) || return 1
+  isolated_store=$(storage_mktemp) || return 1
   trap 'rm -f -- "${isolated_store}"' EXIT
   jq --arg id "${instance_id}" \
     '. as $root | ($root.instances | map(select(.id == $id))) as $instances |
@@ -1188,7 +1188,7 @@ agent_shadowtls_link_json() (
   case "${SB_MIXED_LISTEN_ADDRESS:-}" in 0.0.0.0|::) server=${public_ip} ;; "") return 1 ;; *) server=${SB_MIXED_LISTEN_ADDRESS} ;; esac
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   summary=$(agent_shadowtls_node_json "${public_ip}") || return 1
-  isolated_store=$(mktemp) || return 1
+  isolated_store=$(storage_mktemp) || return 1
   trap 'rm -f -- "${isolated_store}"' EXIT
   jq --arg id "${instance_id}" '. as $root | ($root.instances|map(select(.id==$id))) as $instances | $root|.default_instance_id=$id|.instances=$instances' <<< "${snapshot}" > "${isolated_store}" || return 1
   bundle_json=$(build_client_shadowtls_bundle_json "${server}" "${isolated_store}") || return 1

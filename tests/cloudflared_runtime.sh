@@ -4,7 +4,7 @@ umask 077
 [[ ${SBV_COMPONENT_RUNTIME:-} == 1 && -f /.dockerenv && -f /tmp/sbv-component-disposable ]] || {
   printf 'requires explicit disposable Docker guard\n' >&2; exit 64;
 }
-[[ ! -e /root/sing-box-vps && ! -e /etc/systemd/system/sing-box.service ]] || {
+[[ ! -e /root/.sing-box-vps/runtime && ! -e /etc/systemd/system/sing-box.service ]] || {
   printf 'refusing existing installation\n' >&2; exit 64;
 }
 [[ ${SBV_CF_PRODUCTION_ACCEPT:-} == 1 && -n ${SBV_CF_TEST_HOSTNAME:-} && -f ${SBV_CF_TUNNEL_TOKEN_FILE:-/nonexistent} ]] || {
@@ -12,6 +12,8 @@ umask 077
 }
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "${REPO_ROOT}/install.sh"
+source "${REPO_ROOT}/tests/prepare_storage_runtime_helper.sh"
+prepare_storage_runtime_core
 ARTIFACT_DIR=${CF_RUNTIME_ARTIFACT_DIR:-/tmp/cloudflared-acceptance}
 mkdir -p "${ARTIFACT_DIR}" "${SB_PROTOCOL_STATE_DIR}/instances"
 chmod 700 "${ARTIFACT_DIR}"
@@ -34,6 +36,7 @@ ExecStart=${SINGBOX_BIN_PATH} run -c ${SINGBOX_CONFIG_FILE}
 [Install]
 WantedBy=multi-user.target
 UNIT
+storage_publish_system_links service
 systemctl daemon-reload
 systemctl start sing-box
 marker="sbv-cloudflare-$(cat /proc/sys/kernel/random/uuid)"

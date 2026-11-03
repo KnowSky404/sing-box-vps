@@ -87,7 +87,7 @@ agent_routing_cli() (
     return 1
   fi
   umask 077
-  workspace=$(mktemp -d /tmp/sbv-agent-routing.XXXXXX) || {
+  workspace=$(storage_mktemp -d "${SB_DATA_ROOT}/tmp/sbv-agent-routing.XXXXXX") || {
     agent_json_error staging_failed '无法建立私有规则工作目录。'; return 1;
   }
   trap 'rm -rf -- "${workspace}"' EXIT

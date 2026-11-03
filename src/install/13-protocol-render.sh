@@ -788,7 +788,7 @@ build_shadowsocks_instance_outbounds() (
   structured_instance_store_validate_id "${instance_id}" || return 1
   snapshot=$(structured_instance_store_snapshot_json shadowsocks "$(plain_proxy_structured_store_file shadowsocks)") || return 1
   jq -e --arg id "${instance_id}" 'any(.instances[]; .id==$id)' <<< "${snapshot}" >/dev/null || return 1
-  temporary=$(mktemp) || return 1
+  temporary=$(storage_mktemp) || return 1
   trap 'rm -f -- "${temporary}"' EXIT
   jq -c --arg id "${instance_id}" '.instances |= map(select(.id==$id)) | .default_instance_id=$id' \
     <<< "${snapshot}" > "${temporary}" || return 1
@@ -1159,8 +1159,8 @@ build_inbound_for_protocol() {
 
 build_vless_reality_route_rules_json() {
   local tmp_rules tmp_snis instance_id inbound_tag sni instance_ids
-  tmp_rules=$(mktemp) || return 1
-  if ! tmp_snis=$(mktemp); then
+  tmp_rules=$(storage_mktemp) || return 1
+  if ! tmp_snis=$(storage_mktemp); then
     rm -f "${tmp_rules}"
     return 1
   fi
@@ -1205,7 +1205,7 @@ build_vless_reality_route_rules_json() {
 
 build_vless_reality_instance_outbound_rules_json() {
   local tmp_rules instance_id inbound_tag outbound instance_ids
-  tmp_rules=$(mktemp) || return 1
+  tmp_rules=$(storage_mktemp) || return 1
 
   if ! load_vless_reality_protocol_state; then
     rm -f "${tmp_rules}"

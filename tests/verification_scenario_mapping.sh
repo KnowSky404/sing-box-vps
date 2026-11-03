@@ -69,7 +69,7 @@ grep -Fq 'fresh_install_vless_wireguard_system_endpoint_resources_cleaned' "${wi
 grep -Fq 'verification_run_wireguard_system_endpoint_runtime_probe' "${wireguard_scenario}"
 grep -Fq 'wireguard-tools' "${wireguard_dockerfile}"
 grep -Fq 'verification_run_tun_l3_probe() (' "${wireguard_scenario}"
-grep -Fq 'verification_run_tun_l3_probe /root/sing-box-vps/config.json' "${wireguard_scenario}"
+grep -Fq 'verification_run_tun_l3_probe /root/.sing-box-vps/runtime/config.json' "${wireguard_scenario}"
 grep -Fq 'DATA_PLANE=tun_l3_tcp_udp_netns' "${wireguard_scenario}"
 grep -Fq 'ip -j route get 172.19.0.100' "${wireguard_scenario}"
 grep -Fq 'ip_cidr:["172.19.0.100/32"]' "${wireguard_scenario}"
@@ -97,9 +97,9 @@ grep -Fq '.network == ["tcp","udp"]' "${vless_scenario}"
 grep -Fq 'has("packet_encoding") | not' "${vless_scenario}"
 grep -Fq 'DATA_PLANE=vless_udp_xudp_loopback' "${vless_scenario}"
 grep -Fq 'CLIENT_TRANSPORT=xudp' "${vless_scenario}"
-grep -Fq 'verification_execute_protocol_udp_probe vless-reality /root/sing-box-vps/config.json' "${vless_scenario}"
-grep -Fq 'verification_execute_protocol_udp_probe mixed /root/sing-box-vps/config.json' "${vless_scenario}"
-grep -Fq 'verification_execute_protocol_udp_probe socks /root/sing-box-vps/config.json' "${vless_scenario}"
+grep -Fq 'verification_execute_protocol_udp_probe vless-reality /root/.sing-box-vps/runtime/config.json' "${vless_scenario}"
+grep -Fq 'verification_execute_protocol_udp_probe mixed /root/.sing-box-vps/runtime/config.json' "${vless_scenario}"
+grep -Fq 'verification_execute_protocol_udp_probe socks /root/.sing-box-vps/runtime/config.json' "${vless_scenario}"
 
 assert_scenarios() {
   local expected=$1

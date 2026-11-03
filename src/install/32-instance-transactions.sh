@@ -120,6 +120,7 @@ acquire_managed_write_lock() {
       return 0
     fi
   else
+    storage_prepare_tmp || return $?
     (umask 077; touch -- "${lock_file}") || return $?
     exec {lock_descriptor}>"${lock_file}" || return $?
     opened_descriptor=y
@@ -229,7 +230,7 @@ instance_transaction_persist_result() (
   umask 077
   [[ ! -L "${directory}" ]] || return 1
   mkdir -p "${directory}" && chmod 700 "${directory}" || return $?
-  result=$(mktemp "${directory}/result-$(date -u +%Y%m%dT%H%M%SZ).XXXXXX.json") || return $?
+  result=$(storage_mktemp "${directory}/result-$(date -u +%Y%m%dT%H%M%SZ).XXXXXX.json") || return $?
   if ! instance_transaction_update_result "${result}" "${payload}"; then
     rm -f -- "${result}" || return 1
     return 1
@@ -242,7 +243,7 @@ instance_transaction_update_result() (
   [[ "${result}" == "${SB_PROJECT_DIR}.instance-transactions/"result-*.json &&
      -f "${result}" && ! -L "${result}" ]] || return 1
   umask 077
-  stage=$(mktemp "${result}.candidate.XXXXXX") || return $?
+  stage=$(storage_mktemp "${result}.candidate.XXXXXX") || return $?
   trap 'rm -f -- "${stage}"' EXIT
   jq --arg path "${result}" \
     '.transaction.result_path=$path | .transaction.result_persisted=true' \

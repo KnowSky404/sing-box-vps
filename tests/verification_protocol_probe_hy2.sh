@@ -19,7 +19,7 @@ ESCAPED_DOMAIN='hy2.example.com ${EDGE_HOST}'
 ESCAPED_PASSWORD='hy2 password with spaces & $? []'
 ESCAPED_OBFS_PASSWORD='obfs password $(echo no) ;|#'
 
-mkdir -p "${REMOTE_ROOT}/root/sing-box-vps/protocols"
+mkdir -p "${REMOTE_ROOT}/root/.sing-box-vps/runtime/protocols"
 setup_protocol_probe_command_stubs
 
 write_hy2_state() {
@@ -31,14 +31,14 @@ write_hy2_state() {
     printf 'DOMAIN=%q\n' "${domain}"
     printf 'PASSWORD=%q\n' "${password}"
     printf 'OBFS_PASSWORD=%q\n' "${obfs_password}"
-  } > "${REMOTE_ROOT}/root/sing-box-vps/protocols/hy2.env"
+  } > "${REMOTE_ROOT}/root/.sing-box-vps/runtime/protocols/hy2.env"
 }
 
 append_hy2_state_assignment() {
   local key=$1
   local value=${2-}
 
-  printf '%s=%q\n' "${key}" "${value}" >> "${REMOTE_ROOT}/root/sing-box-vps/protocols/hy2.env"
+  printf '%s=%q\n' "${key}" "${value}" >> "${REMOTE_ROOT}/root/.sing-box-vps/runtime/protocols/hy2.env"
 }
 
 awk '
@@ -47,7 +47,7 @@ awk '
   }
   { print }
 ' "${REPO_ROOT}/dev/verification/remote/entrypoint.sh" \
-  | perl -0pe 's|/root/sing-box-vps/protocols/hy2.env|'"${REMOTE_ROOT}"'/root/sing-box-vps/protocols/hy2.env|g' \
+  | perl -0pe 's|/root/.sing-box-vps/runtime/protocols/hy2.env|'"${REMOTE_ROOT}"'/root/.sing-box-vps/runtime/protocols/hy2.env|g' \
   > "${TESTABLE_ENTRYPOINT}"
 
 write_hy2_state \
@@ -56,7 +56,7 @@ write_hy2_state \
   "${ESCAPED_OBFS_PASSWORD}"
 append_hy2_state_assignment 'UNRELATED_STATE_KEY' 'state value that must not leak'
 
-cat > "${REMOTE_ROOT}/root/sing-box-vps/config.json" <<'EOF'
+cat > "${REMOTE_ROOT}/root/.sing-box-vps/runtime/config.json" <<'EOF'
 {
   "inbounds": [
     {
@@ -96,7 +96,7 @@ VERIFY_CURRENT_SCENARIO_DIR="scenarios/\${VERIFY_CURRENT_SCENARIO}"
 
 verification_generate_protocol_probe_client_config \
   hy2 \
-  "${REMOTE_ROOT}/root/sing-box-vps/config.json"
+  "${REMOTE_ROOT}/root/.sing-box-vps/runtime/config.json"
 EOF
 chmod +x "${TMP_DIR}/run-hy2-generate.sh"
 
@@ -116,7 +116,7 @@ obfs_password=''
 unset UNRELATED_STATE_KEY || true
 
 verification_load_hy2_probe_state \
-  "${REMOTE_ROOT}/root/sing-box-vps/protocols/hy2.env" \
+  "${REMOTE_ROOT}/root/.sing-box-vps/runtime/protocols/hy2.env" \
   password \
   domain \
   obfs_password
@@ -202,7 +202,7 @@ VERIFY_CURRENT_SCENARIO_DIR="scenarios/\${VERIFY_CURRENT_SCENARIO}"
 
 verification_execute_single_protocol_probe \
   hy2 \
-  "${REMOTE_ROOT}/root/sing-box-vps/config.json"
+  "${REMOTE_ROOT}/root/.sing-box-vps/runtime/config.json"
 EOF
 chmod +x "${TMP_DIR}/run-hy2-execute.sh"
 

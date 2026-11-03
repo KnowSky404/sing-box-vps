@@ -37,10 +37,10 @@ n
 0
 EOF
   rm -f "${legacy_install}"
-  install -m 0755 "${VERIFY_REMOTE_INSTALL_SCRIPT}" /usr/local/bin/sbv
+  install -m 0755 "${VERIFY_REMOTE_INSTALL_SCRIPT}" /root/.sing-box-vps/bin/sbv
 
   grep -Fqx 'sing-box version 1.13.18' <(sing-box version)
-  before_hash=$(sha256sum /root/sing-box-vps/config.json | awk '{print $1}')
+  before_hash=$(sha256sum /root/.sing-box-vps/runtime/config.json | awk '{print $1}')
   before_service_hash=$(sha256sum /etc/systemd/system/sing-box.service | awk '{print $1}')
   verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/config.before.sha256" "${before_hash}"
   verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/service.before.sha256" "${before_service_hash}"
@@ -74,7 +74,7 @@ EOF_DROPIN
     (.operation_log | contains("服务重启失败或未保持 active"))
   ' "${upgrade_path}" >/dev/null
   transaction_result_path=$(jq -r '.transaction.result_path' "${upgrade_path}")
-  [[ "${transaction_result_path}" == /root/sing-box-vps-backups/upgrade-*/transaction-result.json ]]
+  [[ "${transaction_result_path}" == /root/.sing-box-vps/backups/upgrades/upgrade-*/transaction-result.json ]]
   [[ "$(stat -c '%a' "${transaction_result_path}")" == "600" ]]
   jq -e '
     .schema_version == "1.0" and
@@ -89,7 +89,7 @@ EOF_DROPIN
   transaction_manifest_path=$(jq -r '.manifest_path' "${transaction_result_path}")
   transaction_manifest_sha256=$(jq -r '.manifest_sha256' "${transaction_result_path}")
   case "${transaction_manifest_path}" in
-    /root/sing-box-vps-backups/upgrade-*/SHA256SUMS) ;;
+    /root/.sing-box-vps/backups/upgrades/upgrade-*/SHA256SUMS) ;;
     *) return 1 ;;
   esac
   [[ "${transaction_manifest_sha256}" == "$(sha256sum "${transaction_manifest_path}" | awk '{print $1}')" ]]
@@ -104,7 +104,7 @@ EOF_DROPIN
   test ! -e "${dropin_path}"
   verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/failure-injection-cleanup.txt" "removed"
   grep -Fqx 'sing-box version 1.13.18' <(sing-box version)
-  [[ "$(sha256sum /root/sing-box-vps/config.json | awk '{print $1}')" == "${before_hash}" ]]
+  [[ "$(sha256sum /root/.sing-box-vps/runtime/config.json | awk '{print $1}')" == "${before_hash}" ]]
   after_service_hash=$(sha256sum /etc/systemd/system/sing-box.service | awk '{print $1}')
   verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/config.after.sha256" "${before_hash}"
   verification_write_artifact "${VERIFY_CURRENT_SCENARIO_DIR}/service.after.sha256" "${after_service_hash}"
@@ -117,7 +117,7 @@ EOF_DROPIN
     systemctl status sing-box --no-pager
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/after-rollback.check.txt" \
-    sing-box check -c /root/sing-box-vps/config.json
+    sing-box check -c /root/.sing-box-vps/runtime/config.json
   verification_wait_for_service_active sing-box
   verification_run_protocol_probes
 }

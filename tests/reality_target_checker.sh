@@ -18,7 +18,8 @@ FIXTURE_SHA256=$(sha256sum "${TMP_DIR}/payload.sh")
 FIXTURE_SHA256=${FIXTURE_SHA256%% *}
 sed -e "s|readonly SB_PROJECT_DIR=\"/root/sing-box-vps\"|readonly SB_PROJECT_DIR=\"${TMP_DIR}/project\"|" \
   -e "s|^readonly SB_REALITY_CHECKER_SHA256=.*|readonly SB_REALITY_CHECKER_SHA256=\"${FIXTURE_SHA256}\"|" \
-  "${REPO_ROOT}/install.sh" > "${TMP_DIR}/install.sh"
+  <(bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --source) > "${TMP_DIR}/install.sh"
+bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --isolate "${TMP_DIR}/install.sh"
 # shellcheck disable=SC1090
 source "${TMP_DIR}/install.sh"
 

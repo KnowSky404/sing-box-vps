@@ -2,7 +2,7 @@
 
 面向 VPS 的 sing-box 安装与管理脚本，提供交互菜单和 Agent 命令，用于部署协议、维护服务和分享节点信息。
 
-- 脚本版本：`2026110302`
+- 脚本版本：`2026110303`
 - sing-box 适配版本：`1.14.2`
 
 ## 主要能力
@@ -18,7 +18,7 @@
 在 VPS 上以 root 用户执行以下命令（需已安装 `curl`）：
 
 ```bash
-bash -c 'set -euo pipefail; umask 077; t=$(mktemp); trap '\''rm -f -- "$t"'\'' EXIT; curl -fsSL --connect-timeout 10 --max-time 60 --retry 2 --retry-delay 1 -o "$t" https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/bootstrap.sh; bash -n "$t"; grep -Fqx '\''readonly PROJECT_AUTHOR="KnowSky404"'\'' "$t"; grep -Fqx '\''readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"'\'' "$t"; bash "$t" install'
+bash -c 'set -euo pipefail; umask 077; [[ $EUID -eq 0 ]]; h=$(getent passwd 0 | cut -d: -f6); [[ -n "$h" && "$h" == /* && "$h" != / && "$h" != *'"'"'/../'"'"'* ]]; for p in "$h" "$h/.sing-box-vps" "$h/.sing-box-vps/tmp"; do   [[ ! -L "$p" && ( ! -e "$p" || -d "$p" ) ]];   if [[ -e "$p" ]]; then     [[ $(stat -c %u -- "$p") == 0 ]];     m=$(stat -c %a -- "$p");     (( (8#$m & 0022) == 0 ));   fi; done; p=$h; while [[ "$p" != / ]]; do   [[ ! -L "$p" && -d "$p" && $(stat -c %u -- "$p") == 0 ]];   m=$(stat -c %a -- "$p");   (( (8#$m & 0022) == 0 || (8#$m & 01000) != 0 ));   p=$(dirname -- "$p"); done; mkdir -p -- "$h/.sing-box-vps/tmp"; chmod 700 -- "$h/.sing-box-vps" "$h/.sing-box-vps/tmp"; t=$(mktemp "$h/.sing-box-vps/tmp/bootstrap-entry.XXXXXXXX"); trap '"'"'rm -f -- "$t"'"'"' EXIT; curl -fsSL --connect-timeout 10 --max-time 60 --retry 2 --retry-delay 1 -o "$t" https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/bootstrap.sh; bash -n "$t"; grep -Fqx '"'"'readonly PROJECT_AUTHOR="KnowSky404"'"'"' "$t"; grep -Fqx '"'"'readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"'"'"' "$t"; bash "$t" install'
 ```
 
 命令会先下载并检查 [bootstrap.sh](https://github.com/KnowSky404/sing-box-vps/blob/main/bootstrap.sh)，再由它下载、检查并启动 [install.sh](https://github.com/KnowSky404/sing-box-vps/blob/main/install.sh)。

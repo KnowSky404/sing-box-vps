@@ -12,7 +12,7 @@ for doc in "${AGENT_DOCS[@]}"; do
   grep -Fq 'sbv agent capabilities --json' "${doc}"
   grep -Fq 'sbv agent upgrade-check --json 1.14.0' "${doc}"
   grep -Fq 'sbv agent upgrade --json 1.14.0 --yes' "${doc}"
-  grep -Fq '/root/sing-box-vps-backups/' "${doc}"
+  grep -Fq '/root/.sing-box-vps/backups/upgrades/' "${doc}"
 done
 
 for doc in \

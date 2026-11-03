@@ -274,7 +274,7 @@ build_client_hy2_outbounds() (
   public_ip=${public_ip:-$(get_public_ip)}
   [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
   snapshot=$(structured_instance_store_snapshot_json hy2 "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   instance_ids_file="${tmpdir}/instance-ids"
   output_file="${tmpdir}/outbounds.jsonl"
@@ -282,7 +282,7 @@ build_client_hy2_outbounds() (
   jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}" > "${instance_ids_file}" || return 1
   while IFS= read -r -d '' instance_id; do
     [[ -n "${instance_id}" ]] || return 1
-    instance_file=$(mktemp "${tmpdir}/store.XXXXXX") || return 1
+    instance_file=$(storage_mktemp "${tmpdir}/store.XXXXXX") || return 1
     jq --arg id "${instance_id}" '. as $root | ($root.instances | map(select(.id == $id))) as $instances | $root | .default_instance_id=$id | .instances=$instances' <<< "${snapshot}" > "${instance_file}" || return 1
     listen_address=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .listen.address' <<< "${snapshot}") || return 1
     if listener_address_is_wildcard "${listen_address}"; then
@@ -297,7 +297,7 @@ build_client_hy2_outbounds() (
       esac
     fi
     [[ -n "${server_address}" ]] || return 1
-    raw_file=$(mktemp "${tmpdir}/raw.XXXXXX") || return 1
+    raw_file=$(storage_mktemp "${tmpdir}/raw.XXXXXX") || return 1
     jq -c --arg server "${server_address}" '
       .instances[] as $instance | $instance.authentication.users[] as $user |
       {type:"hysteria2",tag:("hy2-" + $instance.id + "-user-" + ($user.name | @base64)),server:$server,
@@ -380,7 +380,7 @@ build_client_anytls_outbounds() (
   public_ip=${public_ip:-$(get_public_ip)}
   [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
   snapshot=$(structured_instance_store_snapshot_json anytls "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   instance_ids_file="${tmpdir}/instance-ids"
   output_file="${tmpdir}/outbounds.jsonl"
@@ -388,7 +388,7 @@ build_client_anytls_outbounds() (
   jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}" > "${instance_ids_file}" || return 1
   while IFS= read -r -d '' instance_id; do
     [[ -n "${instance_id}" ]] || return 1
-    instance_file=$(mktemp "${tmpdir}/store.XXXXXX") || return 1
+    instance_file=$(storage_mktemp "${tmpdir}/store.XXXXXX") || return 1
     jq --arg id "${instance_id}" '
       . as $root |
       ($root.instances | map(select(.id == $id))) as $instances |
@@ -427,8 +427,8 @@ build_anytls_client_outbounds_from_store() (
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   validate_structured_instance_store anytls "${store_file}" || return 1
   snapshot=$(structured_instance_store_snapshot_json anytls "${store_file}") || return 1
-  raw_file=$(mktemp) || return 1
-  output_file=$(mktemp) || {
+  raw_file=$(storage_mktemp) || return 1
+  output_file=$(storage_mktemp) || {
     rm -f -- "${raw_file}"
     return 1
   }
@@ -600,7 +600,7 @@ build_client_plain_proxy_outbounds() (
   [[ -n "${instance_ids_raw}" ]] || return 1
   mapfile -t instance_ids <<< "${instance_ids_raw}"
   [[ ${#instance_ids[@]} -gt 0 ]] || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
 
   for instance_id in "${instance_ids[@]}"; do
@@ -647,7 +647,7 @@ build_client_trojan_outbounds() (
 
   store_file=$(plain_proxy_structured_store_file trojan) || return 1
   snapshot=$(structured_instance_store_snapshot_json trojan "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   instance_ids_file="${tmpdir}/instance-ids"
   output_file="${tmpdir}/outbounds.jsonl"
@@ -655,7 +655,7 @@ build_client_trojan_outbounds() (
   jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}" > "${instance_ids_file}" || return 1
   while IFS= read -r -d '' instance_id; do
     [[ -n "${instance_id}" ]] || return 1
-    instance_file=$(mktemp "${tmpdir}/store.XXXXXX") || return 1
+    instance_file=$(storage_mktemp "${tmpdir}/store.XXXXXX") || return 1
     jq --arg id "${instance_id}" '
       . as $root |
       ($root.instances | map(select(.id == $id))) as $instances |
@@ -690,8 +690,8 @@ build_trojan_client_outbounds_from_store() (
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   validate_structured_instance_store trojan "${store_file}" || return 1
   snapshot=$(structured_instance_store_snapshot_json trojan "${store_file}") || return 1
-  raw_file=$(mktemp) || return 1
-  output_file=$(mktemp) || {
+  raw_file=$(storage_mktemp) || return 1
+  output_file=$(storage_mktemp) || {
     rm -f -- "${raw_file}"
     return 1
   }
@@ -762,14 +762,14 @@ build_client_vmess_outbounds() (
   local instance_id listen_address server_address expected_count output_count
   store_file=$(plain_proxy_structured_store_file vmess) || return 1
   snapshot=$(structured_instance_store_snapshot_json vmess "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   instance_ids_file="${tmpdir}/instance-ids"; output_file="${tmpdir}/outbounds.jsonl"
   : > "${output_file}" || return 1
   jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}" > "${instance_ids_file}" || return 1
   while IFS= read -r -d '' instance_id; do
     [[ -n "${instance_id}" ]] || return 1
-    instance_file=$(mktemp "${tmpdir}/store.XXXXXX") || return 1
+    instance_file=$(storage_mktemp "${tmpdir}/store.XXXXXX") || return 1
     jq --arg id "${instance_id}" '. as $root | ($root.instances | map(select(.id == $id))) as $instances | $root | .default_instance_id=$id | .instances=$instances' <<< "${snapshot}" > "${instance_file}" || return 1
     listen_address=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .listen.address' <<< "${snapshot}") || return 1
     case "${listen_address}" in 0.0.0.0|::) server_address=${public_ip:-$(get_public_ip)} ;; *) server_address=${listen_address} ;; esac
@@ -790,8 +790,8 @@ build_vmess_client_outbounds_from_store() (
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   validate_structured_instance_store vmess "${store_file}" || return 1
   snapshot=$(structured_instance_store_snapshot_json vmess "${store_file}") || return 1
-  raw_file=$(mktemp) || return 1
-  output_file=$(mktemp) || { rm -f -- "${raw_file}"; return 1; }
+  raw_file=$(storage_mktemp) || return 1
+  output_file=$(storage_mktemp) || { rm -f -- "${raw_file}"; return 1; }
   trap 'rm -f -- "${raw_file}" "${output_file}"' EXIT
   # V2Ray QUIC selects the transport socket, but does not turn a proxy
   # outbound into a UDP-only service.  Keep both proxy networks enabled; the
@@ -835,14 +835,14 @@ build_client_vless_plain_outbounds() (
   local instance_id listen_address server_address expected_count output_count
   store_file=$(plain_proxy_structured_store_file vless-plain) || return 1
   snapshot=$(structured_instance_store_snapshot_json vless-plain "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   instance_ids_file="${tmpdir}/instance-ids"; output_file="${tmpdir}/outbounds.jsonl"
   : > "${output_file}" || return 1
   jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}" > "${instance_ids_file}" || return 1
   while IFS= read -r -d '' instance_id; do
     [[ -n "${instance_id}" ]] || return 1
-    instance_file=$(mktemp "${tmpdir}/store.XXXXXX") || return 1
+    instance_file=$(storage_mktemp "${tmpdir}/store.XXXXXX") || return 1
     jq --arg id "${instance_id}" '. as $root | ($root.instances | map(select(.id == $id))) as $instances | $root | .default_instance_id=$id | .instances=$instances' <<< "${snapshot}" > "${instance_file}" || return 1
     listen_address=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .listen.address' <<< "${snapshot}") || return 1
     case "${listen_address}" in 0.0.0.0|::) server_address=${public_ip:-$(get_public_ip)} ;; *) server_address=${listen_address} ;; esac
@@ -863,8 +863,8 @@ build_vless_plain_client_outbounds_from_store() (
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   validate_structured_instance_store vless-plain "${store_file}" || return 1
   snapshot=$(structured_instance_store_snapshot_json vless-plain "${store_file}") || return 1
-  raw_file=$(mktemp) || return 1
-  output_file=$(mktemp) || { rm -f -- "${raw_file}"; return 1; }
+  raw_file=$(storage_mktemp) || return 1
+  output_file=$(storage_mktemp) || { rm -f -- "${raw_file}"; return 1; }
   trap 'rm -f -- "${raw_file}" "${output_file}"' EXIT
   # Like VMess, VLESS QUIC uses UDP for the transport socket while the proxy
   # outbound may still carry TCP streams and UDP packets.
@@ -1044,8 +1044,8 @@ shadowsocks_client_psk() (
   esac
   [[ -n "${psk}" ]] || return 1
   command -v openssl >/dev/null 2>&1 || return 1
-  decoded_file=$(mktemp) || return 1
-  digest_file=$(mktemp) || {
+  decoded_file=$(storage_mktemp) || return 1
+  digest_file=$(storage_mktemp) || {
     rm -f -- "${decoded_file}"
     return 1
   }
@@ -1067,7 +1067,7 @@ build_client_shadowsocks_outbounds() (
   store_file=$(plain_proxy_structured_store_file shadowsocks) || return 1
   [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
   snapshot=$(structured_instance_store_snapshot_json shadowsocks "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   instance_ids_file="${tmpdir}/instance-ids"
   output_file="${tmpdir}/outbounds.jsonl"
@@ -1075,7 +1075,7 @@ build_client_shadowsocks_outbounds() (
   jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}" > "${instance_ids_file}" || return 1
   while IFS= read -r -d '' instance_id; do
     [[ -n "${instance_id}" ]] || return 1
-    instance_file=$(mktemp "${tmpdir}/store.XXXXXX") || return 1
+    instance_file=$(storage_mktemp "${tmpdir}/store.XXXXXX") || return 1
     jq --arg id "${instance_id}" '
       . as $root |
       ($root.instances | map(select(.id == $id))) as $instances |
@@ -1099,8 +1099,8 @@ build_shadowsocks_client_outbounds_from_store() (
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   validate_structured_instance_store shadowsocks "${store_file}" || return 1
 
-  raw_file=$(mktemp) || return 1
-  output_file=$(mktemp) || {
+  raw_file=$(storage_mktemp) || return 1
+  output_file=$(storage_mktemp) || {
     rm -f -- "${raw_file}"
     return 1
   }
@@ -1166,7 +1166,7 @@ build_client_snell_outbounds() (
   public_ip=${public_ip:-$(get_public_ip)}
   [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
   snapshot=$(structured_instance_store_snapshot_json snell "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   instance_ids_file="${tmpdir}/instance-ids"; output_file="${tmpdir}/outbounds.jsonl"; : > "${output_file}" || return 1
   jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}" > "${instance_ids_file}" || return 1
@@ -1225,7 +1225,7 @@ build_client_tuic_outbounds() (
   public_ip=${public_ip:-$(get_public_ip)}
   [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
   snapshot=$(structured_instance_store_snapshot_json tuic "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   instance_ids_file="${tmpdir}/instance-ids"
   output_file="${tmpdir}/outbounds.jsonl"
@@ -1311,7 +1311,7 @@ build_client_hysteria_outbounds() (
   public_ip=${public_ip:-$(get_public_ip)}
   [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
   snapshot=$(structured_instance_store_snapshot_json hysteria "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   output_file="${tmpdir}/outbounds.jsonl"; : > "${output_file}" || return 1
   while IFS= read -r -d '' instance_id; do
@@ -1368,7 +1368,7 @@ build_client_naive_outbounds() (
   public_ip=${public_ip:-$(get_public_ip)}
   [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
   snapshot=$(structured_instance_store_snapshot_json naive "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   output_file="${tmpdir}/outbounds.jsonl"
   : > "${output_file}" || return 1
@@ -1467,7 +1467,7 @@ build_client_shadowtls_bundle_json() (
   public_ip=${public_ip:-$(get_public_ip)}
   [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
   snapshot=$(structured_instance_store_snapshot_json shadowtls "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   records_file="${tmpdir}/records.jsonl"
   bundle_file="${tmpdir}/bundle.json"

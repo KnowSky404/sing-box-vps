@@ -9,7 +9,8 @@ TMP_DIR=$(mktemp -d)
 trap 'rm -rf -- "${TMP_DIR}"' EXIT
 mkdir -p "${TMP_DIR}/project"
 sed -e "s|readonly SB_PROJECT_DIR=\"/root/sing-box-vps\"|readonly SB_PROJECT_DIR=\"${TMP_DIR}/project\"|" \
-  "${REPO_ROOT}/install.sh" > "${TMP_DIR}/install.sh"
+  <(bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --source) > "${TMP_DIR}/install.sh"
+bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --isolate "${TMP_DIR}/install.sh"
 # shellcheck disable=SC1090
 source "${TMP_DIR}/install.sh"
 

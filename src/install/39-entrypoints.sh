@@ -25,7 +25,7 @@ update_singbox_binary_preserving_config() {
     [[ "${reinstall_choice}" =~ ^[Yy]$ ]] || return 0
   fi
   before_service_state=$(systemctl is-active sing-box 2>/dev/null || true)
-  backup_dir=$(mktemp -d "$(dirname "${SINGBOX_BIN_PATH}")/.sing-box-update.XXXXXXXX") || return 1
+  backup_dir=$(storage_mktemp -d "$(dirname "${SINGBOX_BIN_PATH}")/.sing-box-update.XXXXXXXX") || return 1
   binary_backup="${backup_dir}/sing-box"
   library_backup_dir="${backup_dir}/library"
   if ! cp -p -- "${SINGBOX_BIN_PATH}" "${binary_backup}" ||
@@ -312,6 +312,11 @@ main() {
     -h|--help|help|agent) ;;
     *)
       check_root
+      if [[ $# -eq 0 ]]; then
+        storage_menu_gate || return $?
+      else
+        storage_require_current || return $?
+      fi
       if [[ $# -eq 0 ]]; then
         acquire_managed_write_lock exclusive allow-rules-recovery || return $?
       else

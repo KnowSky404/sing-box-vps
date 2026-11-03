@@ -15,6 +15,7 @@ CREATED=()
 case "${VPN_RUNTIME_SCOPE:-all}" in
   all) fixture_case=test ;;
   system-lifecycle) fixture_case=lifecycle ;;
+  storage) fixture_case=storage ;;
   *) printf 'unsupported VPN_RUNTIME_SCOPE\n' >&2; exit 2 ;;
 esac
 mkdir -p "${ARTIFACT_DIR}"
@@ -72,6 +73,7 @@ docker exec "${CLIENT}" touch /tmp/sbv-component-disposable
 docker cp "${ARTIFACT_DIR}/headscale" "${CLIENT}:/usr/local/bin/headscale"
 docker cp "${REPO_ROOT}/install.sh" "${CLIENT}:/workspace/install.sh"
 docker cp "${REPO_ROOT}/tests/tailscale_openconnect_test_helper.sh" "${CLIENT}:/workspace/tests/"
+docker cp "${REPO_ROOT}/tests/prepare_storage_runtime_helper.sh" "${CLIENT}:/workspace/tests/"
 docker cp "${REPO_ROOT}/tests/tailscale_openconnect_test_helper.sh" "${PEER}:/workspace/tests/"
 control_address=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${CLIENT}")
 vpn_address=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${PEER}")

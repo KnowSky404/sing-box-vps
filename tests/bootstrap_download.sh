@@ -76,8 +76,8 @@ if [[ "${url}" == 'https://raw.githubusercontent.com/KnowSky404/sing-box-vps/mai
   exit 0
 fi
 [[ "${url}" == "${BOOTSTRAP_EXPECTED_URL:?}" ]] || exit 97
-[[ "${output_file}" == "${TMPDIR:?}"/sing-box-vps-bootstrap.* ]] || {
-  printf 'bootstrap curl did not receive a TMPDIR candidate path\n' >&2
+[[ "${output_file}" == "${BOOTSTRAP_FIXTURE_HOME:?}"/.sing-box-vps/tmp/sing-box-vps-bootstrap.* ]] || {
+  printf 'bootstrap curl did not receive a private storage candidate path\n' >&2
   exit 98
 }
 
@@ -137,7 +137,17 @@ cat > "${TMP_DIR}/mktemp" <<'EOF'
 umask > "${BOOTSTRAP_UMASK_FILE:?}"
 exec /usr/bin/mktemp "$@"
 EOF
-chmod +x "${TMP_DIR}/mktemp"
+cat > "${TMP_DIR}/getent" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$*" == 'passwd 0' ]]; then
+  printf 'root:x:0:0:fixture:%s:/bin/bash\n' "${BOOTSTRAP_FIXTURE_HOME:?}"
+else
+  exec /usr/bin/getent "$@"
+fi
+EOF
+chmod +x "${TMP_DIR}/mktemp" "${TMP_DIR}/getent"
+mkdir -m 700 "${TMP_DIR}/home"
+export BOOTSTRAP_FIXTURE_HOME="${TMP_DIR}/home"
 
 export PATH="${TMP_DIR}:${PATH}"
 export TMPDIR="${TMP_DIR}"

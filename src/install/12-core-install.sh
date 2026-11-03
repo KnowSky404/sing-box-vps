@@ -22,7 +22,7 @@ query_latest_singbox_release() (
   trap 'exit 130' INT
   trap 'exit 143' TERM
   trap 'exit 129' HUP
-  temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/sbv-version-query.XXXXXXXX") || return 1
+  temp_dir=$(storage_mktemp -d "${SB_DATA_ROOT}/tmp/sbv-version-query.XXXXXXXX") || return 1
   if http_status=$(curl -sS --connect-timeout 10 --max-time 30 --max-filesize 1048576 \
     -o "${temp_dir}/response.json" -w '%{http_code}' \
     'https://api.github.com/repos/SagerNet/sing-box/releases/latest' \
@@ -91,7 +91,7 @@ singbox_atomic_file_copy() (
   [[ -f "${source_file}" && ! -L "${source_file}" ]] || return 1
   [[ ! -e "${target_file}" || -f "${target_file}" ]] && [[ ! -L "${target_file}" ]] || return 1
   [[ -d "$(dirname "${target_file}")" ]] || return 1
-  staged=$(mktemp "$(dirname "${target_file}")/.$(basename "${target_file}").restore.XXXXXXXX") || return 1
+  staged=$(storage_mktemp "$(dirname "${target_file}")/.$(basename "${target_file}").restore.XXXXXXXX") || return 1
   trap '[[ -z "${staged}" ]] || rm -f -- "${staged}"' EXIT
   cp -p -- "${source_file}" "${staged}" || return $?
   chmod "${mode}" "${staged}" || return $?
@@ -203,6 +203,7 @@ singbox_candidate_namespace_runtime_safe() {
 
 install_binary() (
   umask 077
+  storage_initialize || return 1
   local expected_version=${SB_VERSION#v} root download_url target_dir temp_dir=''
   local staged_binary='' staged_lib='' staged_marker='' lib_path='' lib_dir=''
   local binary_before=n lib_before=n marker_before=n manage_library=n publish_started=n changed=false
@@ -250,6 +251,7 @@ install_binary() (
           fi
         done
       fi
+      storage_publish_library_link || rollback_status=1
       if [[ "${rollback_status}" != 0 ]]; then rollback_ok=false; preserve=true; fi
     fi
     for path in "${staged_binary}" "${staged_lib}" "${staged_marker}"; do
@@ -282,6 +284,8 @@ install_binary() (
   trap 'failure_code=signal_interrupted; exit 129' HUP
 
   [[ "${expected_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "${ARCH:-}" =~ ^(amd64|arm64)$ ]] || { failure_code=invalid_release; return 1; }
+  failure_code=unsafe_library_link_target
+  storage_system_link_is_owned "${SB_DATA_ROOT}/bin/libcronet.so" "${SB_DATA_ROOT}/lib/libcronet.so" || return 1
   target_dir=$(dirname "${SINGBOX_BIN_PATH}") || return 1
   [[ -d "${target_dir}" && ! -L "${SINGBOX_BIN_PATH}" ]] || { failure_code=unsafe_binary_target; return 1; }
   [[ ! -e "${SINGBOX_BIN_PATH}" || -f "${SINGBOX_BIN_PATH}" ]] || { failure_code=unsafe_binary_target; return 1; }
@@ -289,7 +293,7 @@ install_binary() (
     version_output=${version_output%%$'\n'*}
     if [[ "${version_output}" =~ ^sing-box\ version\ ([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then current_version=${BASH_REMATCH[1]}; fi
   fi
-  temp_dir=$(mktemp -d "${target_dir}/.sing-box-install.XXXXXXXX") || return 1
+  temp_dir=$(storage_mktemp -d "${target_dir}/.sing-box-install.XXXXXXXX") || return 1
   root="sing-box-${expected_version}-linux-${ARCH}"
   download_url="https://github.com/SagerNet/sing-box/releases/download/v${expected_version}/${root}.tar.gz"
   stage=download
@@ -317,7 +321,7 @@ install_binary() (
   tar -xzf "${temp_dir}/release.tar.gz" -C "${temp_dir}/extract" --no-same-owner --no-same-permissions \
     -- "${root}/sing-box" 2>/dev/null || return 1
   [[ -f "${temp_dir}/extract/${root}/sing-box" && ! -L "${temp_dir}/extract/${root}/sing-box" ]] || return 1
-  staged_binary=$(mktemp "${target_dir}/.sing-box.restore.XXXXXXXX") || return 1
+  staged_binary=$(storage_mktemp "${target_dir}/.sing-box.restore.XXXXXXXX") || return 1
   cp -- "${temp_dir}/extract/${root}/sing-box" "${staged_binary}" || return 1
   chmod 0755 "${staged_binary}" || return 1
   failure_code=unexpected_binary_version
@@ -348,12 +352,12 @@ install_binary() (
       tar -xzf "${temp_dir}/release.tar.gz" -C "${temp_dir}/extract" --no-same-owner --no-same-permissions \
         -- "${root}/libcronet.so" 2>/dev/null || return 1
       [[ -s "${temp_dir}/extract/${root}/libcronet.so" && ! -L "${temp_dir}/extract/${root}/libcronet.so" ]] || return 1
-      staged_lib=$(mktemp "${lib_dir}/.libcronet.install.XXXXXXXX") || return 1
+      staged_lib=$(storage_mktemp "${lib_dir}/.libcronet.install.XXXXXXXX") || return 1
       cp -- "${temp_dir}/extract/${root}/libcronet.so" "${staged_lib}" || return 1
       chmod 0644 "${staged_lib}" || return 1
       library_hash=$(sha256sum "${staged_lib}") || return 1
       library_hash=${library_hash%% *}
-      staged_marker=$(mktemp "${SB_PROJECT_DIR}/.libcronet-marker.install.XXXXXXXX") || return 1
+      staged_marker=$(storage_mktemp "${SB_PROJECT_DIR}/.libcronet-marker.install.XXXXXXXX") || return 1
       printf '%s\n' "${library_hash}" > "${staged_marker}" || return 1
       chmod 0600 "${staged_marker}" || return 1
       manage_library=y
@@ -396,6 +400,7 @@ install_binary() (
     mv -f -- "${staged_lib}" "${lib_path}" || return 1
     mv -f -- "${staged_marker}" "${SB_NAIVE_LIBRARY_MARKER}" || return 1
   fi
+  storage_publish_library_link || return 1
   stage=postcheck
   failure_code=postcheck_failed
   [[ ! -L "${SINGBOX_BIN_PATH}" && "$(sha256sum "${SINGBOX_BIN_PATH}" | awk '{print $1}')" == "${candidate_hash}" &&
@@ -417,21 +422,44 @@ install_binary() (
 )
 
 setup_service() {
+  local candidate=''
   log_info "配置 systemd 服务..."
-  cat > "${SINGBOX_SERVICE_FILE}" <<EOF || return $?
+  storage_initialize || return 1
+  [[ ! -L "${SINGBOX_SERVICE_FILE}" &&
+     ( ! -e "${SINGBOX_SERVICE_FILE}" || -f "${SINGBOX_SERVICE_FILE}" ) ]] || return 1
+  candidate=$(storage_mktemp "${SB_DATA_ROOT}/systemd/.sing-box.service.XXXXXXXX") || return 1
+  if ! cat > "${candidate}" <<EOF
 [Unit]
 Description=sing-box service
 After=network.target nss-lookup.target
 [Service]
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
-ExecStart=${SINGBOX_BIN_PATH} run -c ${SINGBOX_CONFIG_FILE}
+WorkingDirectory=${SB_PROJECT_DIR}
+Environment="HOME=${SB_PROJECT_DIR}" "TMPDIR=${SB_DATA_ROOT}/tmp" "LD_LIBRARY_PATH=${SB_DATA_ROOT}/lib"
+ExecStart="${SINGBOX_BIN_PATH}" run -c "${SINGBOX_CONFIG_FILE}"
 Restart=on-failure
 RestartSec=10s
 LimitNOFILE=infinity
 [Install]
 WantedBy=multi-user.target
 EOF
+  then
+    rm -f -- "${candidate}" || return 1
+    return 1
+  fi
+  chmod 0600 -- "${candidate}" || { rm -f -- "${candidate}"; return 1; }
+  if [[ -f "${SINGBOX_SERVICE_FILE}" ]] &&
+     ! persist_file_backup "${SINGBOX_SERVICE_FILE}" "${SINGBOX_SERVICE_FILE}.bak"; then
+    rm -f -- "${candidate}" || return 1
+    return 1
+  fi
+  if ! mv -f -- "${candidate}" "${SINGBOX_SERVICE_FILE}"; then
+    rm -f -- "${candidate}" || return 1
+    return 1
+  fi
+  storage_publish_system_links sing-box || return 1
+  storage_publish_system_links service || return 1
   systemctl daemon-reload || return $?
   systemctl enable sing-box >/dev/null 2>&1 || return $?
 
@@ -442,6 +470,8 @@ EOF
 
 service_file_needs_repair() {
   [[ -f "${SINGBOX_SERVICE_FILE}" ]] || return 0
-  grep -Fqx "ExecStart=${SINGBOX_BIN_PATH} run -c ${SINGBOX_CONFIG_FILE}" "${SINGBOX_SERVICE_FILE}" || return 0
+  grep -Fqx "ExecStart=\"${SINGBOX_BIN_PATH}\" run -c \"${SINGBOX_CONFIG_FILE}\"" "${SINGBOX_SERVICE_FILE}" || return 0
+  [[ -L "${SINGBOX_SERVICE_LINK_PATH}" &&
+     "$(readlink -- "${SINGBOX_SERVICE_LINK_PATH}")" == "${SINGBOX_SERVICE_FILE}" ]] || return 0
   return 1
 }

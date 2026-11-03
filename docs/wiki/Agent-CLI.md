@@ -1,5 +1,7 @@
 # Agent 命令参考
 
+统一目录及旧版迁移见 [目录迁移](https://github.com/KnowSky404/sing-box-vps/wiki/Storage-Layout)。先执行 `sbv storage status --json`；迁移或恢复需显式 `--yes`，普通操作不会静默迁移。
+
 ## 操作目录
 
 先运行 `sbv commands --json` 获取当前脚本的完整操作目录，再以
@@ -117,7 +119,7 @@ sbv update sing-box 1.14.2
 - `service start|stop|restart`：必须显式传入 `--yes`；start/restart 先校验配置，再执行 systemd 操作并核对最终状态。`service status` 只读，`service logs` 有界读取敏感日志。完整参数见操作目录。
 - `subman-sync`：非交互推送节点到 SubMan；配置缺失时返回结构化错误，不进入交互提示。API 失败时会在 `last_error` 返回稳定的 `code`、`disposition`、HTTP 状态与可用的 `Retry-After`，传输结果不确定时不会盲目重放写请求。Hysteria2、Trojan 与 VMess 使用独立逐实例/用户路径，Hysteria v1、TUIC、AnyTLS、Snell、NaiveProxy 明确跳过并返回原因；仅 TLS 系统信任且 URI 可无损表达的条目进入同步。
 - `instance`：管理结构化 Mixed/SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS plain/AnyTLS/Hysteria2/Snell/TUIC/Hysteria/NaiveProxy/ShadowTLS 实例。`view`/`diagnose` 是共享锁保护的只读入口，默认脱敏；`export` 是敏感入口，返回完整 typed record 与连接材料。Agent 的连接材料按 `127.0.0.1` 生成，仅表示本机/受信上下文的连接基线，不是公网地址或可达性证明。`rebuild` 在精确 CAS 下修复受管配置漂移并递增 revision；`takeover` 只接管无 active typed state 的可无损 live inventory，默认拒绝公网监听，必须显式 `--allow-public`。`migrate` 仅把 Mixed legacy schema 1 转成 revision 1；`create`/`replace`/`delete`/`default` 使用 `--expected-revision`，凭据通过私有文件输入；删除最后一个实例后保留 revision tombstone，下一次写入不能把 CAS 重置为 0；`recover` 只处理可验证的未完成事务。首次全新安装仍写 legacy schema 1，直到显式迁移。
-- `component`：管理高级入站、Endpoint、可复用出站/分组、ACME provider、shared `http_client`、network namespace 和 typed `route.rule_set`。`list`/`diagnose` 只返回元数据、环境/资源和事务摘要；`export` 按 ID 返回完整记录，是敏感操作。`create`/`replace`/`delete`/`takeover`/`rebuild`/`recover` 使用独立 schema 1 revision/CAS 和持久事务目录 `/root/sing-box-vps.component-write.lock`，候选会执行引用图、监听资源与目标核心 `sing-box check`；非回环监听、TUN、隧道和 OpenVPN server 需要 `--allow-public`。高级组件不进入普通节点分享、节点连接材料或 SubMan 同步。
+- `component`：管理高级入站、Endpoint、可复用出站/分组、ACME provider、shared `http_client`、network namespace 和 typed `route.rule_set`。`list`/`diagnose` 只返回元数据、环境/资源和事务摘要；`export` 按 ID 返回完整记录，是敏感操作。`create`/`replace`/`delete`/`takeover`/`rebuild`/`recover` 使用独立 schema 1 revision/CAS 和持久事务目录 `/root/.sing-box-vps/runtime.component-write.lock`，候选会执行引用图、监听资源与目标核心 `sing-box check`；非回环监听、TUN、隧道和 OpenVPN server 需要 `--allow-public`。高级组件不进入普通节点分享、节点连接材料或 SubMan 同步。
 - `instance <operation> socks`：使用 `view`/`diagnose`/敏感 `export` 读取，以及 `create`/`replace`/`delete`/`default`/`rebuild`/`takeover`/`recover`、`--expected-revision`、typed record、共享事务和回滚边界管理独立 SOCKS；记录只表达 SOCKS 入站的监听/认证，不含 HTTP 或 TLS。`migrate socks` 明确返回 invalid arguments；已有 live SOCKS 配置应使用 takeover，不把 legacy `.env` migration 语义套到该预设。实例生命周期、两核心 check/runtime、菜单、接管和 Agent/export 回归及最终 Docker/TCP 门禁已通过，但不应从注册表存在推断为全协议目标完成。
 - `instance <operation> http`：操作与 SOCKS 相同，但完整记录必须包含 `tls: {enabled:false}` 或手工 TLS 的 `enabled/server_name/certificate_path/key_path`。非回环写入须显式 `--allow-public`，无 legacy migration。记录示例与限制见 [Agent Runbook](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-Runbook)。HTTP TLS 节点的 `shareable=false`，不将空链接视为可用 URI。
 - `instance <operation> shadowsocks`：支持 `create`/`replace`/`delete`/`default`/`recover` 与 revision CAS，拒绝 `migrate`；记录包含 `listen.network` 和 `authentication`，完整示例见 [Agent Runbook](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-Runbook#shadowsocks-inbound)。`nodes` 不输出密钥；敏感的 `links` 返回逐用户 URI、outbounds 与限制 warning。
@@ -167,7 +169,7 @@ Mixed 实例写入使用类型化记录文件；`create` 和 `replace` 必须通
 - 提交后 postcheck 失败：自动恢复备份，并再次校验旧版本、SHA-256、Bash 语法和执行权限，报告 `rolled_back=true`。
 - `rollback_failed`：自动恢复未通过，报告 `manual_intervention_required=true`，并保留 root-only 备份和候选恢复文件。请先按错误提示人工恢复并重新执行 `bash -n`、版本、SHA-256 与执行权限校验，再运行 `sbv`。
 
-交互菜单 14 更新成功后会自动切换到新版管理菜单；如果磁盘文件已是最新版、当前进程仍运行旧版，也会切换。当前进程和文件都已是最新版时继续当前菜单。CLI 更新成功后正常退出，下次运行 `sbv` 即使用新版。自动切换失败时会保留当前菜单并提示退出后重新运行 `sbv`，已安装的更新仍然有效。错误摘要和脱敏诊断会写入 `/root/sing-box-vps/sbv.log`；日志写入失败不会覆盖原始更新错误。
+交互菜单 14 更新成功后会自动切换到新版管理菜单；如果磁盘文件已是最新版、当前进程仍运行旧版，也会切换。当前进程和文件都已是最新版时继续当前菜单。CLI 更新成功后正常退出，下次运行 `sbv` 即使用新版。自动切换失败时会保留当前菜单并提示退出后重新运行 `sbv`，已安装的更新仍然有效。错误摘要和脱敏诊断会写入 `/root/.sing-box-vps/logs/sbv.log`；日志写入失败不会覆盖原始更新错误。
 
 首次从不含自动切换逻辑的旧版升级时，旧进程仍需退出后重新运行一次 `sbv`；进入新版后，后续菜单更新会自动切换。
 
@@ -180,4 +182,4 @@ Agent/Hermes 文档入口：
 
 ## 升级事务验收
 
-升级前在 `/root/sing-box-vps-backups/` 创建仅 root 可读的持久备份。实际升级只有 `transaction.result_persisted=true` 且 `transaction.status=success` 才能接受成功。目标已安装时是无变更结果：`transaction.status=not_attempted`、`transaction.reason=already_installed`，不要求不存在的事务文件。失败时按 `rolled_back` 与 `rollback_ok` 判断恢复结果，不以退出码代替回读。
+升级前在 `/root/.sing-box-vps/backups/upgrades/` 创建仅 root 可读的持久备份。实际升级只有 `transaction.result_persisted=true` 且 `transaction.status=success` 才能接受成功。目标已安装时是无变更结果：`transaction.status=not_attempted`、`transaction.reason=already_installed`，不要求不存在的事务文件。失败时按 `rolled_back` 与 `rollback_ok` 判断恢复结果，不以退出码代替回读。

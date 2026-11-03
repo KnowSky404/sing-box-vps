@@ -42,6 +42,10 @@ Agent runbooks/navigation. Build install.sh, run
 explicit SPEC rationale and review. Follow AGENTS.md section 4.2 for the remaining
 behavior verification; this contract does not require unrelated full regression.
 
+## Storage Layout
+
+Project payloads live under the root account home `.sing-box-vps`. Before operating an upgraded legacy host, use `sbv storage status --json`. Migration and recovery are explicit `sbv storage migrate|recover --json --yes` operations and may restart an active service. Pending migrations block ordinary operations. Read [Storage Layout](../../docs/wiki/Storage-Layout.md); production migrations still require the production gate.
+
 ## Classify The Target
 
 - **Local repository**: files in the workspace.
@@ -53,7 +57,7 @@ behavior verification; this contract does not require unrelated full regression.
 
 Before any production-changing command on `sing-box-prod` or an unknown host, present a plan and wait for explicit approval.
 
-Production-changing commands include install, upgrade, restart, stop, reload, uninstall, purge, config mutation, firewall mutation, service mutation, writing `/usr/local/bin/sbv`, or changing `/root/sing-box-vps/`.
+Production-changing commands include install, upgrade, restart, stop, reload, uninstall, purge, config mutation, firewall mutation, service mutation, writing `/usr/local/bin/sbv`, or changing `/root/.sing-box-vps/`.
 
 Read-only production checks are allowed to prepare the plan.
 

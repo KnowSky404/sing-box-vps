@@ -1,9 +1,9 @@
 verification_scenario_fresh_install_shadowsocks() {
   local expected_port=1083
   local expected_key=MDEyMzQ1Njc4OWFiY2RlZg==
-  local config_file=/root/sing-box-vps/config.json
-  local state_file=/root/sing-box-vps/protocols/shadowsocks.env
-  local store_file=/root/sing-box-vps/protocols/instances/shadowsocks.json
+  local config_file=/root/.sing-box-vps/runtime/config.json
+  local state_file=/root/.sing-box-vps/runtime/protocols/shadowsocks.env
+  local store_file=/root/.sing-box-vps/runtime/protocols/instances/shadowsocks.json
 
   verification_prepare_remote_local_tree
   trap 'verification_cleanup_remote_local_tree; trap - RETURN' RETURN
@@ -38,7 +38,7 @@ EOF
       method:"2022-blake3-aes-128-gcm",password:$key,users:[]}
   ' "${store_file}" >/dev/null
   grep -Fqx 'INSTALLED_PROTOCOLS=shadowsocks' \
-    /root/sing-box-vps/protocols/index.env
+    /root/.sing-box-vps/runtime/protocols/index.env
   jq -e --arg key "${expected_key}" '
     (.inbounds|length)==1 and
     .inbounds[0].type=="shadowsocks" and

@@ -59,7 +59,7 @@ structured_instance_store_candidate() (
   expected_revision=$(structured_instance_store_revision_arg "${5:-}") || {
     structured_instance_store_error candidate invalid_revision; return 1;
   }
-  temp_dir=$(mktemp -d) || return $?
+  temp_dir=$(storage_mktemp -d) || return $?
   trap 'if ! rm -rf -- "${temp_dir}"; then structured_instance_store_error candidate cleanup_failed; fi' EXIT
   trap 'return 130' INT
   trap 'return 143' TERM
@@ -219,14 +219,14 @@ publish_structured_instance_store() (
   [[ ! -e "${target}" || -f "${target}" ]] || return 1
   [[ ! -e "${backup}" || -f "${backup}" ]] || return 1
   phase=stage
-  staged=$(mktemp "${instance_dir}/.${protocol}.candidate.XXXXXX") || return $?
+  staged=$(storage_mktemp "${instance_dir}/.${protocol}.candidate.XXXXXX") || return $?
   temporary_files+=("${staged}")
   head -c 1048577 -- "${candidate_file}" > "${staged}" || return $?
   [[ "$(stat -c %s "${staged}")" -le 1048576 ]] || return 1
   validate_structured_instance_store "${protocol}" "${staged}" || return $?
   if [[ -f "${target}" ]]; then
     had_target=y
-    old_copy=$(mktemp "${instance_dir}/.${protocol}.previous.XXXXXX") || return $?
+    old_copy=$(storage_mktemp "${instance_dir}/.${protocol}.previous.XXXXXX") || return $?
     temporary_files+=("${old_copy}")
     cp -p -- "${target}" "${old_copy}" || return $?
     validate_structured_instance_store "${protocol}" "${old_copy}" || return $?
@@ -274,14 +274,14 @@ publish_structured_instance_store() (
   phase=backup
   if [[ -f "${backup}" ]]; then
     had_backup=y
-    old_backup_copy=$(mktemp "${instance_dir}/.${protocol}.previous-backup.XXXXXX") || return $?
+    old_backup_copy=$(storage_mktemp "${instance_dir}/.${protocol}.previous-backup.XXXXXX") || return $?
     temporary_files+=("${old_backup_copy}")
     cp -p -- "${backup}" "${old_backup_copy}" || return $?
   fi
   printf 'target=%s\nprevious=%s\nprevious_backup=%s\n' \
     "${target}" "${old_copy}" "${old_backup_copy}" > "${lock}/recovery" || return $?
   if [[ "${had_target}" == y ]]; then
-    backup_stage=$(mktemp "${instance_dir}/.${protocol}.backup.XXXXXX") || return $?
+    backup_stage=$(storage_mktemp "${instance_dir}/.${protocol}.backup.XXXXXX") || return $?
     temporary_files+=("${backup_stage}")
     cp -- "${old_copy}" "${backup_stage}" || return $?
     chmod 600 "${backup_stage}" || return $?
@@ -306,7 +306,7 @@ structured_instance_store_snapshot_json() (
   umask 077
   local protocol=${1:-} file=${2:-} staged snapshot status
   [[ -f "${file}" && ! -L "${file}" ]] || return 1
-  staged=$(mktemp) || return $?
+  staged=$(storage_mktemp) || return $?
   trap 'if ! rm -f -- "${staged}"; then structured_instance_store_error read cleanup_failed; fi' EXIT
   trap 'return 130' INT
   trap 'return 143' TERM
@@ -507,7 +507,7 @@ save_plain_proxy_structured_marker() {
   store_file=$(plain_proxy_structured_store_file "${protocol}") || return 1
   [[ -f "${store_file}" ]] || return 1
   validate_structured_instance_store "${protocol}" "${store_file}" || return 1
-  staged=$(mktemp "${state_file}.candidate.XXXXXX") || return 1
+  staged=$(storage_mktemp "${state_file}.candidate.XXXXXX") || return 1
   if ! {
     write_env_assignment "INSTALLED" "1"
     write_env_assignment "CONFIG_SCHEMA_VERSION" "2"
@@ -614,7 +614,7 @@ load_plain_proxy_structured_instance() {
 
   # NUL-delimited fields preserve embedded and trailing newlines in names and
   # credentials; the typed validator has already rejected NUL bytes.
-  stream_file=$(mktemp) || return 1
+  stream_file=$(storage_mktemp) || return 1
   if ! jq -j --arg id "${instance_id}" --arg protocol "${protocol}" '
       .instances[] | select(.id == $id) |
       [.id, .name, .tag, .listen.address, (.listen.port | tostring),

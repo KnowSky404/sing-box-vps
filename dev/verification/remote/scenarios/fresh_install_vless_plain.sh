@@ -1,8 +1,8 @@
 verification_scenario_fresh_install_vless_plain() {
   local expected_port=1086 cert_path key_path quic_record quic_result
-  local config_file=/root/sing-box-vps/config.json
-  local state_file=/root/sing-box-vps/protocols/vless-plain.env
-  local store_file=/root/sing-box-vps/protocols/instances/vless-plain.json
+  local config_file=/root/.sing-box-vps/runtime/config.json
+  local state_file=/root/.sing-box-vps/runtime/protocols/vless-plain.env
+  local store_file=/root/.sing-box-vps/runtime/protocols/instances/vless-plain.json
 
   verification_prepare_remote_local_tree
   trap 'verification_cleanup_remote_local_tree; trap - RETURN' RETURN
@@ -27,7 +27,7 @@ EOF
   test -x /usr/local/bin/sbv
   test -f /etc/systemd/system/sing-box.service
   grep -Fqx 'CONFIG_SCHEMA_VERSION=2' "${state_file}"
-  grep -Fqx 'INSTALLED_PROTOCOLS=vless-plain' /root/sing-box-vps/protocols/index.env
+  grep -Fqx 'INSTALLED_PROTOCOLS=vless-plain' /root/.sing-box-vps/runtime/protocols/index.env
   jq -e --argjson port "${expected_port}" '
     .protocol=="vless-plain" and .revision==1 and (.instances|length)==1 and
     .instances[0].id=="main" and .instances[0].tag=="vless-plain-in" and

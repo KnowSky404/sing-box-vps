@@ -18,7 +18,7 @@ else
 fi
 headscale_cli() { timeout 10 headscale -c "${HEADSCALE_CONFIG}" "$@"; }
 if [[ "${1:-}" == prepare ]]; then
-  [[ ! -e /root/sing-box-vps && ! -e /etc/systemd/system/sing-box.service ]]
+  [[ ! -e /root/.sing-box-vps/runtime && ! -e /etc/systemd/system/sing-box.service ]]
   openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=headscale-fixture \
     -addext "subjectAltName=IP:127.0.0.1,IP:${TAILSCALE_CONTROL_ADDRESS:?}" \
     -keyout "${ARTIFACT_DIR}/headscale/headscale.key" -out "${ARTIFACT_DIR}/headscale/headscale.crt" \
@@ -101,8 +101,10 @@ CONF
   printf '%s\n' "$!" > "${ARTIFACT_DIR}/marker.pid"
   exit 0
 fi
-[[ "${1:-}" == test || "${1:-}" == lifecycle ]]
+[[ "${1:-}" == test || "${1:-}" == lifecycle || "${1:-}" == storage ]]
 source "${REPO_ROOT}/install.sh"
+source "${REPO_ROOT}/tests/prepare_storage_runtime_helper.sh"
+prepare_storage_runtime_core
 mkdir -p "${SB_PROTOCOL_STATE_DIR}/instances"
 printf 'INSTALLED_PROTOCOLS=mixed\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
 printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=2\n' > "${SB_PROTOCOL_STATE_DIR}/mixed.env"
@@ -111,6 +113,11 @@ cat > "${SB_PROTOCOL_STATE_DIR}/instances/mixed.json" <<'JSON'
 JSON
 SB_VERSION=1.14.2
 generate_config > "${ARTIFACT_DIR}/baseline.log" 2>&1
+if [[ "${1:-}" == storage ]]; then
+  # Source under a neutral argv to preserve the standalone main guard, then
+  # give the real local updater the installer argv (Debian 12's Bash fixture).
+  bash -c 'source "$1"; BASH_ARGV0="$1"; setup_service' sbv-storage-fixture "${REPO_ROOT}/install.sh" > "${ARTIFACT_DIR}/service-setup.log" 2>&1
+else
 cat > "${SINGBOX_SERVICE_FILE}" <<UNIT
 [Unit]
 Description=Disposable managed VPN endpoint acceptance
@@ -120,6 +127,8 @@ ExecStart=${SINGBOX_BIN_PATH} run -c ${SINGBOX_CONFIG_FILE}
 [Install]
 WantedBy=multi-user.target
 UNIT
+storage_publish_system_links service
+fi
 systemctl daemon-reload
 systemctl start sing-box
 revision() { jq -r '.revision' "${SB_COMPONENT_STATE_FILE}" 2>/dev/null || printf 0; }
@@ -178,6 +187,69 @@ add_inputs() {
   mutate create "$(record "${prefix}-tcp" inbound direct "{\"listen\":\"127.0.0.1\",\"listen_port\":${tcp_port},\"network\":\"tcp\",\"override_address\":\"${target}\",\"override_port\":21910}" "[{\"inbound\":[\"${prefix}-tcp\"],\"action\":\"route\",\"outbound\":\"${endpoint}\"}]")"
   mutate create "$(record "${prefix}-udp" inbound direct "{\"listen\":\"127.0.0.1\",\"listen_port\":${udp_port},\"network\":\"udp\",\"override_address\":\"${target}\",\"override_port\":21911}" "[{\"inbound\":[\"${prefix}-udp\"],\"action\":\"route\",\"outbound\":\"${endpoint}\"}]")"
 }
+if [[ "${1:-}" == storage ]]; then
+  cat > "${ARTIFACT_DIR}/proof-boundaries.txt" <<'BOUNDARIES'
+Storage-scoped controlled VPN acceptance: four real component CAS transactions,
+target core checks, generated systemd unit and command links, Tailscale default
+state under the managed working directory, Headscale node identity after restart,
+OpenConnect authentication and one existing Mixed/SOCKS HTTP marker per endpoint.
+The full multi-listener, UDP and system-interface matrix is not run in this scope.
+No public provider accounts or production resources are modified.
+BOUNDARIES
+  for link in "${SINGBOX_LINK_PATH}" "${SBV_LINK_PATH}" "${SINGBOX_SERVICE_LINK_PATH}"; do
+    [[ -L "${link}" && "$(readlink "${link}")" == "${SB_DATA_ROOT}/"* ]]
+  done
+  grep -Fqx "WorkingDirectory=${SB_PROJECT_DIR}" "${SINGBOX_SERVICE_FILE}"
+  grep -Fqx "ExecStart=\"${SINGBOX_BIN_PATH}\" run -c \"${SINGBOX_CONFIG_FILE}\"" "${SINGBOX_SERVICE_FILE}"
+  systemctl show sing-box -p ExecStart -p WorkingDirectory -p Environment > "${ARTIFACT_DIR}/service-storage.txt"
+  key=$(jq -r .key "${ARTIFACT_DIR}/headscale-key.json")
+  ts_config=$(jq -cn --arg key "${key}" '{auth_key:$key,control_url:"https://127.0.0.1:21800",hostname:"fixture-managed-client",listen_port:21841}')
+  # Default state_directory is relative to the service working directory. Keep
+  # the same existing Mixed listener; route only the controlled endpoint CIDRs.
+  mutate create "$(record ts-client endpoint tailscale "${ts_config}" '[{"ip_cidr":["100.64.0.0/10"],"action":"route","outbound":"ts-client"}]')"
+  for ((attempt=0;attempt<100;attempt++)); do
+    headscale_cli nodes list -o json > "${ARTIFACT_DIR}/nodes.json"
+    if jq -e 'length==2 and any(.[];.name=="fixture-managed-client" and .online==true) and any(.[];.name=="fixture-peer" and .online==true)' "${ARTIFACT_DIR}/nodes.json" >/dev/null; then break; fi
+    sleep 0.2
+  done
+  peer_ip=$(jq -er '.[]|select(.name=="fixture-peer")|.ip_addresses[]|select(contains(":")|not)' "${ARTIFACT_DIR}/nodes.json")
+  node_id=$(jq -er '.[]|select(.name=="fixture-managed-client")|.id' "${ARTIFACT_DIR}/nodes.json")
+  state_path="${SB_PROJECT_DIR}/tailscale/tailscaled.state"
+  [[ -s "${state_path}" && "${state_path}" == "${SB_DATA_ROOT}/"* ]]
+  [[ ! -e /tailscale && ! -e /workspace/tailscale ]]
+  printf '%s\n' "${state_path}" > "${ARTIFACT_DIR}/tailscale-state-path.txt"
+  storage_probe() {
+    local target=$1 marker=$2 output=$3 prefix=$4 attempt
+    for ((attempt=0;attempt<16;attempt++)); do
+      if curl --silent --show-error --fail --max-time 5 --socks5-hostname 127.0.0.1:2080 --noproxy '' \
+        "http://${target}:21910/${marker}" > "${output}" 2> "${output}.err" && \
+        jq -e --arg marker "/${marker}" --arg prefix "${prefix}" '.marker==$marker and (.peer|startswith($prefix))' "${output}" >/dev/null; then return 0; fi
+      sleep 0.2
+    done
+    return 1
+  }
+  storage_probe "${peer_ip}" ts-storage "${ARTIFACT_DIR}/ts-storage-marker.json" 127.0.0.1
+  oc_config=$(jq -cn --arg ca "${ARTIFACT_DIR}/ocserv.crt" --arg server "https://${OPENCONNECT_SERVER_ADDRESS:?}:21843" '{server:$server,flavor:"anyconnect",username:"fixture",password:"fixture-password",tls:{certificate_authority_path:$ca}}')
+  mutate create "$(record oc-client endpoint openconnect "${oc_config}" '[{"ip_cidr":["10.91.0.0/24"],"action":"route","outbound":"oc-client"}]')"
+  storage_probe 10.91.0.1 oc-storage "${ARTIFACT_DIR}/oc-storage-marker.json" 10.91.0.
+  systemctl restart sing-box
+  systemctl is-active --quiet sing-box
+  headscale_cli nodes list -o json > "${ARTIFACT_DIR}/nodes-after-storage-restart.json"
+  jq -e --argjson id "${node_id}" 'length==2 and any(.[];.name=="fixture-managed-client" and .id==$id)' "${ARTIFACT_DIR}/nodes-after-storage-restart.json" >/dev/null
+  [[ -s "${state_path}" && ! -e /tailscale && ! -e /workspace/tailscale ]]
+  storage_probe "${peer_ip}" ts-storage-restarted "${ARTIFACT_DIR}/ts-storage-restarted.json" 127.0.0.1
+  storage_probe 10.91.0.1 oc-storage-restarted "${ARTIFACT_DIR}/oc-storage-restarted.json" 10.91.0.
+  mutate delete oc-client
+  mutate delete ts-client
+  jq -e '.components|length==0' "${SB_COMPONENT_STATE_FILE}" >/dev/null
+  [[ -s "${state_path}" ]]
+  journalctl -u sing-box --no-pager > "${ARTIFACT_DIR}/journal.log"
+  grep -Fq 'anyconnect tunnel established' "${ARTIFACT_DIR}/journal.log"
+  printf 'scope=storage\ntailscale_default_state_root=passed\ntailscale_restart_identity=passed\nopenconnect_controlled_authentication=passed\nsystem_entry_paths=passed\nmanaged_components_empty=passed\nfull_vpn_matrix=not_run\n' > "${ARTIFACT_DIR}/results.env"
+  sha256sum "${REPO_ROOT}/install.sh" "${SINGBOX_BIN_PATH}" /usr/local/bin/headscale > "${ARTIFACT_DIR}/hashes.txt"
+  printf 'Storage-scoped controlled VPN checks passed\n'
+  exit 0
+fi
 if [[ "${1:-}" == lifecycle ]]; then
   oc_config=$(jq -cn --arg ca "${ARTIFACT_DIR}/ocserv.crt" --arg server "https://${OPENCONNECT_SERVER_ADDRESS:?}:21843" '{server:$server,flavor:"anyconnect",username:"fixture",password:"fixture-password",system:true,name:"sbv-oc-test",tls:{certificate_authority_path:$ca}}')
   mutate create "$(record oc-client endpoint openconnect "${oc_config}")"

@@ -324,7 +324,7 @@ routing_management_menu() (
     routing_policy_recover || return 1
   fi
   command -v jq >/dev/null 2>&1 || { routing_notice WARN '规则管理需要 jq；请先安装协议以准备依赖。'; return 0; }
-  workspace=$(mktemp -d /tmp/sbv-routing-menu.XXXXXX) || return 1
+  workspace=$(storage_mktemp -d "${SB_DATA_ROOT}/tmp/sbv-routing-menu.XXXXXX") || return 1
   trap 'rm -rf -- "${workspace}"' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM

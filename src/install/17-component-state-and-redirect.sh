@@ -247,7 +247,7 @@ managed_component_state_json() (
     return 0
   fi
   [[ -f "${SB_COMPONENT_STATE_FILE}" && ! -L "${SB_COMPONENT_STATE_FILE}" && -r "${SB_COMPONENT_STATE_FILE}" ]] || return 1
-  snapshot=$(mktemp /tmp/sbv-components.XXXXXX) || return 1
+  snapshot=$(storage_mktemp "${SB_DATA_ROOT}/tmp/sbv-components.XXXXXX") || return 1
   trap 'rm -f -- "${snapshot}"' EXIT
   head -c 4194305 -- "${SB_COMPONENT_STATE_FILE}" > "${snapshot}" || return 1
   [[ "$(wc -c < "${snapshot}")" -le 4194304 ]] || return 1
@@ -259,7 +259,7 @@ managed_component_state_json() (
 managed_component_normalize_input_file() (
   local input=${1:-} snapshot result
   [[ -f "${input}" && ! -L "${input}" && -r "${input}" ]] || return 1
-  snapshot=$(mktemp /tmp/sbv-component-record.XXXXXX) || return 1
+  snapshot=$(storage_mktemp "${SB_DATA_ROOT}/tmp/sbv-component-record.XXXXXX") || return 1
   trap 'rm -f -- "${snapshot}"' EXIT
   head -c 1048577 -- "${input}" > "${snapshot}" || return 1
   [[ "$(wc -c < "${snapshot}")" -le 1048576 ]] || return 1
@@ -579,7 +579,7 @@ managed_component_redirect_policy_journal_write() {
   managed_component_redirect_host_policy_plan_validate_json "${after}" || return 1
   payload=$(jq -cn --argjson before "${before}" --argjson after "${after}" \
     '{schema_version:1,status:"prepared",before:$before,after:$after}') || return 1
-  candidate=$(mktemp "${journal_file%/*}/.component-redirect-policy.XXXXXX") || return 1
+  candidate=$(storage_mktemp "${journal_file%/*}/.component-redirect-policy.XXXXXX") || return 1
   if ! printf '%s\n' "${payload}" > "${candidate}" || ! chmod 600 "${candidate}" ||
      ! mv -f -- "${candidate}" "${journal_file}"; then
     rm -f -- "${candidate}"
@@ -592,7 +592,7 @@ managed_component_redirect_policy_journal_set_status() {
   local journal_file=${1:-} status=${2:-} candidate
   managed_component_redirect_policy_journal_validate "${journal_file}" || return 1
   [[ "${status}" =~ ^(prepared|applying|applied|rolling_back|rolled_back)$ ]] || return 1
-  candidate=$(mktemp "${journal_file%/*}/.component-redirect-policy.XXXXXX") || return 1
+  candidate=$(storage_mktemp "${journal_file%/*}/.component-redirect-policy.XXXXXX") || return 1
   if ! jq --arg status "${status}" '.status=$status' "${journal_file}" > "${candidate}" ||
      ! chmod 600 "${candidate}" || ! mv -f -- "${candidate}" "${journal_file}"; then
     rm -f -- "${candidate}"

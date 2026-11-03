@@ -14,7 +14,8 @@ sed \
   -e "s|readonly SINGBOX_BIN_PATH=\"/usr/local/bin/sing-box\"|readonly SINGBOX_BIN_PATH=\"${TMP_DIR}/bin/sing-box\"|" \
   -e "s|readonly SINGBOX_SERVICE_FILE=\"/etc/systemd/system/sing-box.service\"|readonly SINGBOX_SERVICE_FILE=\"${TMP_DIR}/sing-box.service\"|" \
   -e "s|/usr/local/bin/sbv|${SBV_BIN_PATH}|g" \
-  "${REPO_ROOT}/install.sh" > "${TESTABLE_INSTALL}"
+  <(bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --source) > "${TESTABLE_INSTALL}"
+bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --isolate "${TESTABLE_INSTALL}"
 
 mkdir -p "${TMP_DIR}/project" "${TMP_DIR}/bin"
 

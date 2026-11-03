@@ -13,7 +13,8 @@ sed \
   -e "s|readonly SINGBOX_BIN_PATH=\"/usr/local/bin/sing-box\"|readonly SINGBOX_BIN_PATH=\"${TMP_DIR}/bin/sing-box\"|" \
   -e "s|readonly SINGBOX_SERVICE_FILE=\"/etc/systemd/system/sing-box.service\"|readonly SINGBOX_SERVICE_FILE=\"${TMP_DIR}/sing-box.service\"|" \
   -e 's|main \"\$@\"|:|' \
-  "${REPO_ROOT}/install.sh" > "${TESTABLE_INSTALL}"
+  <(bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --source) > "${TESTABLE_INSTALL}"
+bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --isolate "${TESTABLE_INSTALL}"
 
 mkdir -p "${TMP_DIR}/bin" "${TMP_DIR}/project"
 
@@ -28,6 +29,14 @@ export PATH="${TMP_DIR}/bin:${PATH}"
 
 # shellcheck disable=SC1090
 source "${TESTABLE_INSTALL}"
+
+# Model the missing optional dependency independently of host packages.
+command() {
+  if [[ $# -eq 2 && "$1" == -v && "$2" == qrencode ]]; then
+    return 1
+  fi
+  builtin command "$@"
+}
 
 SB_PROTOCOL="vless+reality"
 SB_PORT="443"
@@ -48,3 +57,5 @@ if [[ "${output}" != *"未安装 qrencode"* ]]; then
   printf 'expected warning about missing qrencode, got:\n%s\n' "${output}" >&2
   exit 1
 fi
+
+printf 'Connection link remains visible when qrencode is unavailable\n'

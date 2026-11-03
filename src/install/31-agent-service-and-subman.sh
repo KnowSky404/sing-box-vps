@@ -51,7 +51,7 @@ agent_collect_nodes_json() {
     fi
   fi
   public_ip=$(get_public_ip)
-  tmpdir=$(mktemp -d)
+  tmpdir=$(storage_mktemp -d)
 
   trap 'rm -rf "${tmpdir:-}"' RETURN
 

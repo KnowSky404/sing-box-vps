@@ -3,8 +3,11 @@
 set -euo pipefail
 
 readonly SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-readonly SB_PROJECT_DIR="${SB_PROJECT_DIR:-/root/sing-box-vps}"
-readonly SBV_BIN_PATH="${SBV_BIN_PATH:-/usr/local/bin/sbv}"
+SB_ROOT_HOME=$(getent passwd 0 | cut -d: -f6)
+readonly SB_ROOT_HOME
+readonly SB_DATA_ROOT="${SB_ROOT_HOME}/.sing-box-vps"
+readonly SB_PROJECT_DIR="${SB_PROJECT_DIR:-${SB_DATA_ROOT}/runtime}"
+readonly SBV_BIN_PATH="${SBV_BIN_PATH:-${SB_DATA_ROOT}/bin/sbv}"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
 readonly RED='\033[0;31m'
@@ -40,9 +43,10 @@ resolve_install_script() {
   local candidate
 
   for candidate in \
+    "${SBV_BIN_PATH}" \
     "${SCRIPT_DIR}/install.sh" \
     "${SB_PROJECT_DIR}/install.sh" \
-    "${SBV_BIN_PATH}"; do
+    "/usr/local/bin/sbv"; do
     if [[ -f "${candidate}" ]]; then
       printf '%s\n' "${candidate}"
       return 0
@@ -80,7 +84,7 @@ main() {
   fi
 
   if [[ "${assume_yes}" != "y" ]]; then
-    print_warn "即将彻底删除 sing-box 服务、配置目录、密钥和全局命令 sbv。"
+    print_warn "即将删除 sing-box 服务、配置、密钥和全局命令 sbv；恢复备份和迁移记录保留在 ${SB_DATA_ROOT}。"
     read -rp "确认继续吗？[y/N]: " confirm
     if [[ ! "${confirm}" =~ ^[Yy]$ ]]; then
       print_info "已取消卸载。"

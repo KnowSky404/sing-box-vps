@@ -1,6 +1,6 @@
 verification_scenario_fresh_install_socks() {
-  local expected_port=1081 config_file=/root/sing-box-vps/config.json
-  local store_file=/root/sing-box-vps/protocols/instances/socks.json
+  local expected_port=1081 config_file=/root/.sing-box-vps/runtime/config.json
+  local store_file=/root/.sing-box-vps/runtime/protocols/instances/socks.json
   verification_prepare_remote_local_tree
   trap 'verification_cleanup_remote_local_tree; trap - RETURN' RETURN
   printf 'SCENARIO=fresh_install_socks\n'
@@ -19,8 +19,8 @@ socks-pass
 EOF
   test -x /usr/local/bin/sbv
   test -f /etc/systemd/system/sing-box.service
-  grep -Fqx 'INSTALLED_PROTOCOLS=socks' /root/sing-box-vps/protocols/index.env
-  grep -Fqx 'CONFIG_SCHEMA_VERSION=2' /root/sing-box-vps/protocols/socks.env
+  grep -Fqx 'INSTALLED_PROTOCOLS=socks' /root/.sing-box-vps/runtime/protocols/index.env
+  grep -Fqx 'CONFIG_SCHEMA_VERSION=2' /root/.sing-box-vps/runtime/protocols/socks.env
   [[ "$(stat -c %a "${store_file}")" == 600 ]]
   jq -e '.protocol=="socks" and .revision==1 and (.instances|length)==1 and
     .instances[0].listen.address=="::" and

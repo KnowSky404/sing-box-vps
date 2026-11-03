@@ -4,7 +4,7 @@ verification_scenario_uninstall_and_reinstall() {
   local after_uuid
   local after_sni
   local env_uuid
-  local instance_state_file=/root/sing-box-vps/protocols/vless-reality.d/main.env
+  local instance_state_file=/root/.sing-box-vps/runtime/protocols/vless-reality.d/main.env
   local status_output_path
   local expected_port=443
   local expected_sni="www.cloudflare.com"
@@ -13,19 +13,19 @@ verification_scenario_uninstall_and_reinstall() {
   verification_prepare_remote_local_tree
   trap 'verification_cleanup_remote_local_tree; trap - RETURN' RETURN
   printf 'SCENARIO=uninstall_and_reinstall\n'
-  before_uuid=$(jq -r '.inbounds[0].users[0].uuid // empty' /root/sing-box-vps/config.json 2>/dev/null || true)
-  before_config_hash=$(sha256sum /root/sing-box-vps/config.json)
+  before_uuid=$(jq -r '.inbounds[0].users[0].uuid // empty' /root/.sing-box-vps/runtime/config.json 2>/dev/null || true)
+  before_config_hash=$(sha256sum /root/.sing-box-vps/runtime/config.json)
   if bash "${VERIFY_REMOTE_UNINSTALL_SCRIPT}" --keep-config --purge < /dev/null; then
     printf 'unsupported keep-config mode unexpectedly succeeded\n' >&2
     return 1
   fi
   printf 'n\n' | bash "${VERIFY_REMOTE_UNINSTALL_SCRIPT}"
-  [[ "$(sha256sum /root/sing-box-vps/config.json)" == "${before_config_hash}" ]]
+  [[ "$(sha256sum /root/.sing-box-vps/runtime/config.json)" == "${before_config_hash}" ]]
   test -f /etc/systemd/system/sing-box.service
   test -x /usr/local/bin/sbv
   systemctl is-active --quiet sing-box
   printf 'y\n' | bash "${VERIFY_REMOTE_UNINSTALL_SCRIPT}"
-  test ! -e /root/sing-box-vps/config.json
+  test ! -e /root/.sing-box-vps/runtime/config.json
   test ! -e /etc/systemd/system/sing-box.service
   test ! -e /usr/local/bin/sbv
   SB_REALITY_SNI_VALIDATION_ASSUME_YES=1 bash "${VERIFY_REMOTE_INSTALL_SCRIPT}" <<'EOF'
@@ -42,26 +42,26 @@ n
 n
 0
 EOF
-  test -f /root/sing-box-vps/config.json
+  test -f /root/.sing-box-vps/runtime/config.json
   test -f /etc/systemd/system/sing-box.service
   test -x /usr/local/bin/sbv
-  test -f /root/sing-box-vps/protocols/index.env
-  after_port=$(jq -r '.inbounds[0].listen_port // empty' /root/sing-box-vps/config.json)
-  after_uuid=$(jq -r '.inbounds[0].users[0].uuid // empty' /root/sing-box-vps/config.json)
-  after_sni=$(jq -r '.inbounds[0].tls.server_name // empty' /root/sing-box-vps/config.json)
+  test -f /root/.sing-box-vps/runtime/protocols/index.env
+  after_port=$(jq -r '.inbounds[0].listen_port // empty' /root/.sing-box-vps/runtime/config.json)
+  after_uuid=$(jq -r '.inbounds[0].users[0].uuid // empty' /root/.sing-box-vps/runtime/config.json)
+  after_sni=$(jq -r '.inbounds[0].tls.server_name // empty' /root/.sing-box-vps/runtime/config.json)
   env_uuid=$(grep '^UUID=' "${instance_state_file}" | cut -d'=' -f2- || true)
   [[ "${after_port}" == "${expected_port}" ]]
   [[ -n "${after_uuid}" ]]
   [[ "${after_uuid}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]
   [[ "${after_sni}" == "${expected_sni}" ]]
-  test -f /root/sing-box-vps/protocols/vless-reality.env
+  test -f /root/.sing-box-vps/runtime/protocols/vless-reality.env
   test -f "${instance_state_file}"
   [[ -n "${env_uuid}" ]]
   [[ "${env_uuid}" == "${after_uuid}" ]]
-  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality' /root/sing-box-vps/protocols/index.env
-  grep -Fqx 'CONFIG_SCHEMA_VERSION=2' /root/sing-box-vps/protocols/vless-reality.env
-  grep -Fqx 'DEFAULT_INSTANCE_ID=main' /root/sing-box-vps/protocols/vless-reality.env
-  grep -Fqx 'INSTANCE_IDS=main' /root/sing-box-vps/protocols/vless-reality.env
+  grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality' /root/.sing-box-vps/runtime/protocols/index.env
+  grep -Fqx 'CONFIG_SCHEMA_VERSION=2' /root/.sing-box-vps/runtime/protocols/vless-reality.env
+  grep -Fqx 'DEFAULT_INSTANCE_ID=main' /root/.sing-box-vps/runtime/protocols/vless-reality.env
+  grep -Fqx 'INSTANCE_IDS=main' /root/.sing-box-vps/runtime/protocols/vless-reality.env
   grep -Fqx "PORT=${expected_port}" "${instance_state_file}"
   grep -Fqx "SNI=${expected_sni}" "${instance_state_file}"
   ! grep -Fqx 'PORT=8443' "${instance_state_file}"
@@ -71,14 +71,14 @@ EOF
     ! grep -Fqx "UUID=${before_uuid}" "${instance_state_file}"
   fi
   verification_wait_for_service_active sing-box
-  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" sing-box check -c /root/sing-box-vps/config.json
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/sing-box-check.txt" sing-box check -c /root/.sing-box-vps/runtime/config.json
   verification_assert_port_listening "${expected_port}" "${VERIFY_CURRENT_SCENARIO_DIR}/listeners.ss-lntp.txt"
   verification_capture_status_menu "${VERIFY_CURRENT_SCENARIO_DIR}/sbv-status.txt"
   status_output_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/sbv-status.txt")
   grep -Fq '运行状态摘要' "${status_output_path}"
   grep -Fq 'sing-box: active' "${status_output_path}"
   grep -Fq 'Warp: 未开启' "${status_output_path}"
-  grep -Fq '配置文件: /root/sing-box-vps/config.json' "${status_output_path}"
+  grep -Fq '配置文件: /root/.sing-box-vps/runtime/config.json' "${status_output_path}"
   ! grep -Fq '协议:' "${status_output_path}"
   ! grep -Fq '地址:' "${status_output_path}"
   ! grep -Fq '端口:' "${status_output_path}"

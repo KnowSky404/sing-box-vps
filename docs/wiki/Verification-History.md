@@ -1,5 +1,7 @@
 # 验证记录与边界
 
+历史记录中的旧目录保留原验收含义；当前布局和升级迁移见 [目录迁移](https://github.com/KnowSky404/sing-box-vps/wiki/Storage-Layout)。
+
 本页保留有用的历史探针、运行目录和失败边界，供追溯使用，不是当前安装步骤。旧实现计划和逐步任务清单已移除，可从 Git 历史查阅。当前范围以[能力矩阵](https://github.com/KnowSky404/sing-box-vps/wiki/Protocol-Coverage)和运行时 `sbv agent capabilities --json` 为准。以下命令包含历史核心路径，重新执行前须准备相应依赖。
 
 ## 2026-09-11：Hysteria v1/Hysteria2 Docker 数据面探针

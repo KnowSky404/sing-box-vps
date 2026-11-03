@@ -85,6 +85,28 @@ verification_cleanup_remote_local_tree() {
 
 EOF
 
+  # The storage rehearsal exercises the real old updater. Pin its complete
+  # source to the last pre-layout default-branch commit, never a network ref.
+  if [[ " ${VERIFY_PLAN_SCENARIOS[*]:-} " == *' storage_migration '* ]]; then
+    cat <<'EOF_LEGACY_PREPARE'
+verification_prepare_remote_legacy_script() {
+  verification_prepare_remote_local_tree
+  VERIFY_REMOTE_LEGACY_INSTALL_SCRIPT="${VERIFY_REMOTE_LOCAL_TREE_DIR}/legacy-install.sh"
+  cat > "${VERIFY_REMOTE_LEGACY_INSTALL_SCRIPT}" <<'VERIFY_PINNED_LEGACY_INSTALL_SH'
+EOF_LEGACY_PREPARE
+    git -C "${REPO_ROOT}" show c281649d5bd4150810455151b85ecbfe678fea87:install.sh || {
+      printf 'pinned legacy installer object is unavailable; storage rehearsal not executed\n' >&2
+      return 1
+    }
+    cat <<'EOF_LEGACY_PREPARE_END'
+VERIFY_PINNED_LEGACY_INSTALL_SH
+  chmod 700 "${VERIFY_REMOTE_LEGACY_INSTALL_SCRIPT}"
+  export VERIFY_REMOTE_LEGACY_INSTALL_SCRIPT
+}
+
+EOF_LEGACY_PREPARE_END
+  fi
+
   for scenario_file in "${REPO_ROOT}"/dev/verification/remote/scenarios/*.sh; do
     [[ -f "${scenario_file}" ]] || continue
     cat "${scenario_file}"

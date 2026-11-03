@@ -12,6 +12,7 @@
 - [协议实例](https://github.com/KnowSky404/sing-box-vps/wiki/Protocol-Instances)
 - [高级组件](https://github.com/KnowSky404/sing-box-vps/wiki/Advanced-Components)
 - [HY2 自动证书](https://github.com/KnowSky404/sing-box-vps/wiki/HY2-ACME)
+- [目录迁移](https://github.com/KnowSky404/sing-box-vps/wiki/Storage-Layout)
 - [运行目录](https://github.com/KnowSky404/sing-box-vps/wiki/Runtime-Paths)
 - [注意事项](https://github.com/KnowSky404/sing-box-vps/wiki/Notes)
 - [事务与回滚](https://github.com/KnowSky404/sing-box-vps/wiki/Transactions)

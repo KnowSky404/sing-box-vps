@@ -1,8 +1,8 @@
 verification_scenario_fresh_install_trojan() {
   local expected_port=1084 cert_path key_path
-  local config_file=/root/sing-box-vps/config.json
-  local state_file=/root/sing-box-vps/protocols/trojan.env
-  local store_file=/root/sing-box-vps/protocols/instances/trojan.json
+  local config_file=/root/.sing-box-vps/runtime/config.json
+  local state_file=/root/.sing-box-vps/runtime/protocols/trojan.env
+  local store_file=/root/.sing-box-vps/runtime/protocols/instances/trojan.json
   verification_prepare_remote_local_tree
   trap 'verification_cleanup_remote_local_tree; trap - RETURN' RETURN
   cert_path="${VERIFY_REMOTE_LOCAL_TREE_DIR}/trojan.crt"
@@ -37,7 +37,7 @@ EOF
   test -x /usr/local/bin/sbv
   test -f /etc/systemd/system/sing-box.service
   grep -Fqx 'CONFIG_SCHEMA_VERSION=2' "${state_file}"
-  grep -Fqx 'INSTALLED_PROTOCOLS=trojan' /root/sing-box-vps/protocols/index.env
+  grep -Fqx 'INSTALLED_PROTOCOLS=trojan' /root/.sing-box-vps/runtime/protocols/index.env
   jq -e '.protocol=="trojan" and .revision==1 and (.instances|length)==1 and
     .instances[0].id=="main" and .instances[0].tag=="trojan-in" and
     .instances[0].listen=={address:"::",port:1084} and

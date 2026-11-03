@@ -8,7 +8,8 @@ trap 'rm -rf "${TEST_DIR}"' EXIT
 # The core is intentionally absent; build compatibility has a separate fixture.
 sed -e "s|readonly SB_PROJECT_DIR=\"/root/sing-box-vps\"|readonly SB_PROJECT_DIR=\"${TEST_DIR}/project\"|" \
   -e "s|readonly SINGBOX_BIN_PATH=\"/usr/local/bin/sing-box\"|readonly SINGBOX_BIN_PATH=\"${TEST_DIR}/core\"|" \
-  "${REPO_ROOT}/install.sh" > "${TEST_DIR}/install.sh"
+  <(bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --source) > "${TEST_DIR}/install.sh"
+bash "${REPO_ROOT}/tests/install_fixture_source_helper.sh" --isolate "${TEST_DIR}/install.sh"
 source "${TEST_DIR}/install.sh"
 state=$(managed_component_state_default_json)
 namespace=$(jq -cn --arg path "${TEST_DIR}/namespace-handle" '{id:"test-ns",role:"network_namespace",type:"default",tag:"test-ns",enabled:true,config:{path:$path},route_rules:[]}')

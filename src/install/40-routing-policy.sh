@@ -598,14 +598,14 @@ routing_policy_sync_instance_baseline() (
   [[ -e "${baseline_file}" || -L "${baseline_file}" ]] || return 0
   [[ -f "${baseline_file}" && ! -L "${baseline_file}" &&
      "$(stat -c %a "${baseline_file}")" == 600 ]] || return 1
-  candidate=$(mktemp "${SB_PROJECT_DIR}/.managed-config.generated.candidate.XXXXXX") || return 1
+  candidate=$(storage_mktemp "${SB_PROJECT_DIR}/.managed-config.generated.candidate.XXXXXX") || return 1
   trap '[[ -z "${candidate}" ]] || rm -f -- "${candidate}"; [[ -z "${validation_candidate}" ]] || rm -f -- "${validation_candidate}"' EXIT
   plain_proxy_instance_config_candidate "${protocol}" "${baseline_file}" "${old_store}" "${new_store}" \
     > "${candidate}" || return 1
   # Generated facts may legitimately refer to operator objects omitted from
   # this ownership record. Validate in the complete already-published context,
   # while persisting only the pure projection below.
-  validation_candidate=$(mktemp "${SB_PROJECT_DIR}/.managed-config.validation.candidate.XXXXXX") || return 1
+  validation_candidate=$(storage_mktemp "${SB_PROJECT_DIR}/.managed-config.validation.candidate.XXXXXX") || return 1
   chmod 600 "${validation_candidate}" || return 1
   merge_generated_config_with_live "${candidate}" "${SINGBOX_CONFIG_FILE}" "${baseline_file}" \
     > "${validation_candidate}" || return 1

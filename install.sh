@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026110302
+# Version: 2026110303
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026110302"
+readonly SCRIPT_VERSION="2026110303"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 # A single IPv6 wildcard socket accepts IPv4 and IPv6 in sing-box on Linux.
 readonly SB_DEFAULT_LISTEN_ADDRESS="::"
@@ -17,8 +17,15 @@ readonly AGENT_OUTPUT_SCHEMA_VERSION="1"
 readonly PROJECT_AUTHOR="KnowSky404"
 readonly PROJECT_URL="https://github.com/KnowSky404/sing-box-vps"
 readonly UI_COMPACT_MAX_WIDTH=72
-readonly SB_PROJECT_DIR="/root/sing-box-vps"
-readonly SBV_LOG_FILE="${SB_PROJECT_DIR}/sbv.log"
+# Resolve the account home independently of sudo/HOME and systemd environments.
+SB_ROOT_HOME=$(getent passwd 0 | cut -d: -f6)
+readonly SB_ROOT_HOME
+readonly SB_DATA_ROOT="${SB_ROOT_HOME}/.sing-box-vps"
+readonly SB_PROJECT_DIR="${SB_DATA_ROOT}/runtime"
+readonly SBV_LINK_PATH="/usr/local/bin/sbv"
+readonly SINGBOX_LINK_PATH="/usr/local/bin/sing-box"
+readonly SINGBOX_SERVICE_LINK_PATH="/etc/systemd/system/sing-box.service"
+readonly SBV_LOG_FILE="${SB_DATA_ROOT}/logs/sbv.log"
 readonly SB_KEY_FILE="${SB_PROJECT_DIR}/reality.key"
 readonly SB_WARP_KEY_FILE="${SB_PROJECT_DIR}/warp.key"
 readonly SB_WARP_REGISTRATION_PENDING_FILE="${SB_PROJECT_DIR}.warp-registration.pending.json"
@@ -30,7 +37,7 @@ readonly SB_ROUTING_POLICY_FILE="${SB_PROJECT_DIR}/routing-policy.json"
 readonly SB_ROUTING_TRANSACTION_DIR="${SB_PROJECT_DIR}.rules-write.lock"
 readonly SB_ROUTING_PREVIOUS_DIR="${SB_PROJECT_DIR}.rules-previous"
 readonly SB_STACK_STATE_FILE="${SB_PROJECT_DIR}/stack-mode.env"
-readonly SB_MEDIA_CHECK_DIR="${SB_PROJECT_DIR}/media-check"
+readonly SB_MEDIA_CHECK_DIR="${SB_DATA_ROOT}/modules/media-check"
 readonly SB_MEDIA_CHECK_SCRIPT="${SB_MEDIA_CHECK_DIR}/region_restriction_check.sh"
 readonly SB_PROTOCOL_STATE_DIR="${SB_PROJECT_DIR}/protocols"
 readonly SB_PROTOCOL_INDEX_FILE="${SB_PROTOCOL_STATE_DIR}/index.env"
@@ -45,9 +52,9 @@ readonly SB_REALITY_QOS_FILTER_STATE_FILE="${SB_PROJECT_DIR}/reality-qos.filters
 readonly SB_REALITY_QOS_FILTER_PREF_START="32001"
 readonly SB_REALITY_QOS_BURST="512k"
 readonly SB_ACME_DATA_DIR="${SB_PROJECT_DIR}/acme"
-readonly SINGBOX_BIN_PATH="/usr/local/bin/sing-box"
+readonly SINGBOX_BIN_PATH="${SB_DATA_ROOT}/bin/sing-box"
 readonly SB_NAIVE_LIBRARY_MARKER="${SB_PROJECT_DIR}/libcronet.sha256"
-readonly SBV_BIN_PATH="/usr/local/bin/sbv"
+readonly SBV_BIN_PATH="${SB_DATA_ROOT}/bin/sbv"
 readonly SBV_UPDATE_URL="https://raw.githubusercontent.com/KnowSky404/sing-box-vps/main/install.sh"
 readonly SBV_SCRIPT_MIN_SIZE="1024"
 readonly SBV_ARTIFACT_MIN_SIZE="128"
@@ -58,8 +65,8 @@ readonly SBV_CURL_RETRY_DELAY="1"
 readonly SBV_CURL_STDERR_MAX_BYTES="4096"
 readonly SINGBOX_CONFIG_DIR="${SB_PROJECT_DIR}"
 readonly SINGBOX_CONFIG_FILE="${SB_PROJECT_DIR}/config.json"
-readonly SINGBOX_SERVICE_FILE="/etc/systemd/system/sing-box.service"
-readonly SB_UPGRADE_BACKUP_ROOT="/root/sing-box-vps-backups"
+readonly SINGBOX_SERVICE_FILE="${SB_DATA_ROOT}/systemd/sing-box.service"
+readonly SB_UPGRADE_BACKUP_ROOT="${SB_DATA_ROOT}/backups/upgrades"
 readonly WARP_AI_ROUTE_DOMAINS_JSON='["gemini.google.com","aistudio.google.com","generativelanguage.googleapis.com","copilot.microsoft.com"]'
 readonly WARP_AI_ROUTE_DOMAIN_SUFFIXES_JSON='["openai.com","chatgpt.com","oaistatic.com","oaiusercontent.com","anthropic.com","claude.ai","perplexity.ai","x.ai","cursor.com","cursor.sh","google.com","googleapis.com","gstatic.com","googleusercontent.com","gvt1.com","recaptcha.net"]'
 readonly WARP_STREAM_ROUTE_DOMAINS_JSON='[]'
@@ -388,7 +395,7 @@ write_warp_credentials_atomic() (
     fi
     if [[ "${committed}" == y && "${complete}" != y ]]; then
       if [[ -n "${old_hash}" ]]; then
-        rollback_candidate=$(mktemp "${SB_PROJECT_DIR}/.warp.restore.XXXXXXXX") || return 2
+        rollback_candidate=$(storage_mktemp "${SB_PROJECT_DIR}/.warp.restore.XXXXXXXX") || return 2
         if cp -- "${SB_WARP_KEY_FILE}.bak" "${rollback_candidate}" && chmod 600 "${rollback_candidate}" &&
            mv -f -- "${rollback_candidate}" "${SB_WARP_KEY_FILE}" &&
            [[ "$(sha256sum "${SB_WARP_KEY_FILE}")" == "${old_hash}" ]]; then
@@ -413,14 +420,14 @@ write_warp_credentials_atomic() (
   for target in "${SB_WARP_KEY_FILE}" "${SB_WARP_KEY_FILE}.bak"; do
     [[ ! -L "${target}" && ( ! -e "${target}" || -f "${target}" ) ]] || return 1
   done
-  candidate=$(mktemp "${SB_PROJECT_DIR}/.warp.key.XXXXXXXX") || return 1
+  candidate=$(storage_mktemp "${SB_PROJECT_DIR}/.warp.key.XXXXXXXX") || return 1
   warp_credentials_content "${warp_id}" "${warp_token}" "${warp_priv_key}" "${warp_pub_key}" \
     "${warp_v4}" "${warp_v6}" "${warp_client_id}" > "${candidate}" || return 1
   chmod 600 "${candidate}" && bash -n "${candidate}" || return 1
   expected_hash=$(sha256sum < "${candidate}") || return 1
   if [[ -f "${SB_WARP_KEY_FILE}" ]]; then
     old_hash=$(sha256sum "${SB_WARP_KEY_FILE}") || return 1
-    backup_candidate=$(mktemp "${SB_PROJECT_DIR}/.warp.backup.XXXXXXXX") || return 1
+    backup_candidate=$(storage_mktemp "${SB_PROJECT_DIR}/.warp.backup.XXXXXXXX") || return 1
     cp -- "${SB_WARP_KEY_FILE}" "${backup_candidate}" && chmod 600 "${backup_candidate}" &&
       mv -f -- "${backup_candidate}" "${SB_WARP_KEY_FILE}.bak" || return 1
   fi
@@ -458,7 +465,7 @@ warp_registration_receipt_matches_credentials() (
      "$(wc -c < "${receipt}")" -le 1048576 && -f "${SB_WARP_KEY_FILE}" &&
      ! -L "${SB_WARP_KEY_FILE}" && "$(stat -c %a "${SB_WARP_KEY_FILE}")" == 600 ]] || return 1
   umask 077
-  workspace=$(mktemp -d /tmp/sbv-warp-receipt.XXXXXX) || return 1
+  workspace=$(storage_mktemp -d "${SB_DATA_ROOT}/tmp/sbv-warp-receipt.XXXXXX") || return 1
   trap 'rm -rf -- "${workspace}"' EXIT
   jq -e 'select(.schema == 1 and .phase == "received") | .response' "${receipt}" > "${workspace}/response.json" || return 1
   warp_registration_response_valid "${workspace}/response.json" || return 1
@@ -513,7 +520,7 @@ register_warp() (
     log_info '发现现有 Warp 账户信息，正在加载...'
     return 0
   fi
-  temp_dir=$(mktemp -d "${SB_PROJECT_DIR}.warp-register.XXXXXXXX") || return $?
+  temp_dir=$(storage_mktemp -d "${SB_PROJECT_DIR}.warp-register.XXXXXXXX") || return $?
   response_file="${temp_dir}/response.json"
   if [[ -f "${receipt}" ]]; then
     phase=$(jq -er 'select(.schema == 1) | .phase' "${receipt}" 2>/dev/null) || phase=unknown
@@ -581,7 +588,7 @@ register_warp() (
       warp_registration_error validate invalid_response '注册响应缺失或不完整；未更改凭据，保留恢复材料且禁止自动重复 POST。'
       return 1
     fi
-    candidate=$(mktemp "${receipt}.XXXXXXXX") || return 1
+    candidate=$(storage_mktemp "${receipt}.XXXXXXXX") || return 1
     jq --slurpfile response "${response_file}" '.phase="received" | .response=$response[0]' \
       "${receipt}" > "${candidate}" || return 1
     chmod 600 "${candidate}" && mv -f -- "${candidate}" "${receipt}" || return 1
@@ -622,7 +629,8 @@ log_info() {
   else
     echo -e "${BLUE}[INFO]${NC} $1"
   fi
-  mkdir -p "${SB_PROJECT_DIR}"
+  storage_private_directory "${SB_DATA_ROOT}/logs" || return 1
+  [[ ! -L "${SBV_LOG_FILE}" && ( ! -e "${SBV_LOG_FILE}" || -f "${SBV_LOG_FILE}" ) ]] || return 1
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $1" >> "${SBV_LOG_FILE}"
 }
 log_success() {
@@ -631,7 +639,8 @@ log_success() {
   else
     echo -e "${GREEN}[SUCCESS]${NC} $1"
   fi
-  mkdir -p "${SB_PROJECT_DIR}"
+  storage_private_directory "${SB_DATA_ROOT}/logs" || return 1
+  [[ ! -L "${SBV_LOG_FILE}" && ( ! -e "${SBV_LOG_FILE}" || -f "${SBV_LOG_FILE}" ) ]] || return 1
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUCCESS] $1" >> "${SBV_LOG_FILE}"
 }
 log_warn() {
@@ -640,7 +649,8 @@ log_warn() {
   else
     echo -e "${YELLOW}[WARN]${NC} $1"
   fi
-  mkdir -p "${SB_PROJECT_DIR}"
+  storage_private_directory "${SB_DATA_ROOT}/logs" || return 1
+  [[ ! -L "${SBV_LOG_FILE}" && ( ! -e "${SBV_LOG_FILE}" || -f "${SBV_LOG_FILE}" ) ]] || return 1
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARN] $1" >> "${SBV_LOG_FILE}"
 }
 log_error() {
@@ -649,7 +659,8 @@ log_error() {
   else
     echo -e "${RED}[ERROR]${NC} $1"
   fi
-  mkdir -p "${SB_PROJECT_DIR}"
+  storage_private_directory "${SB_DATA_ROOT}/logs" || return 1
+  [[ ! -L "${SBV_LOG_FILE}" && ( ! -e "${SBV_LOG_FILE}" || -f "${SBV_LOG_FILE}" ) ]] || return 1
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $1" >> "${SBV_LOG_FILE}"
   exit 1
 }
@@ -1190,7 +1201,7 @@ write_node_naming_config() (
   mkdir -p "${config_dir}" || return 1
   trap '[[ -z "${tmp_file}" ]] || rm -f -- "${tmp_file}"' EXIT
   trap 'printf "[WARN] 显示标签设置已中断 (phase=%s, committed=%s)；请回读设置确认最终状态。\n" "${phase}" "${committed}" >&2; exit 1' HUP INT TERM
-  tmp_file=$(mktemp "${config_dir}/.node-naming.XXXXXX") || return 1
+  tmp_file=$(storage_mktemp "${config_dir}/.node-naming.XXXXXX") || return 1
   chmod 600 "${tmp_file}" || return 1
   jq -n --arg label "${label}" '{host_label:$label}' > "${tmp_file}" || return 1
   jq -e --arg label "${label}" '. == {host_label:$label}' "${tmp_file}" >/dev/null || return 1
@@ -1208,7 +1219,7 @@ write_node_naming_config() (
   if [[ "$(node_name_host_label)" != "${label}" ]]; then
     phase=rollback
     if [[ "${had_original}" == y ]]; then
-      tmp_file=$(mktemp "${config_dir}/.node-naming.XXXXXX") || return 1
+      tmp_file=$(storage_mktemp "${config_dir}/.node-naming.XXXXXX") || return 1
       cp -p -- "${config_file}.bak" "${tmp_file}" || return 1
       mv -- "${tmp_file}" "${config_file}" || return 1
       tmp_file=''
@@ -3224,7 +3235,7 @@ apply_vless_reality_qos_plan() {
   ensure_vless_reality_qos_clsact "${iface}" || return 0
 
   mkdir -p "$(dirname "${SB_REALITY_QOS_FILTER_STATE_FILE}")"
-  tmp_state=$(mktemp)
+  tmp_state=$(storage_mktemp)
   pref="${SB_REALITY_QOS_FILTER_PREF_START}"
   failures=0
 
@@ -3475,7 +3486,7 @@ write_subman_config() {
   config_file=$(subman_config_file_path)
   config_dir=$(dirname "${config_file}")
   mkdir -p "${config_dir}" || return 1
-  tmp_file=$(mktemp "${config_dir}/.subman.env.tmp.XXXXXX") || return 1
+  tmp_file=$(storage_mktemp "${config_dir}/.subman.env.tmp.XXXXXX") || return 1
   if ! chmod 600 "${tmp_file}"; then
     rm -f -- "${tmp_file}"
     return 1
@@ -3675,7 +3686,7 @@ singbox_library_restore_snapshot() {
       [[ -f "${snapshot_dir}/libcronet.so" && ! -L "${snapshot_dir}/libcronet.so" ]] || return 1
       [[ ! -L "${lib_path}" && ! -d "${lib_path}" ]] || return 1
       mkdir -p "${lib_dir}" || return 1
-      staged=$(mktemp "${lib_dir}/.libcronet.restore.XXXXXXXX") || return 1
+      staged=$(storage_mktemp "${lib_dir}/.libcronet.restore.XXXXXXXX") || return 1
       if ! cp -p -- "${snapshot_dir}/libcronet.so" "${staged}" ||
          ! chmod 0644 "${staged}" ||
          ! mv -f -- "${staged}" "${lib_path}"; then
@@ -3711,7 +3722,7 @@ singbox_library_restore_snapshot() {
       [[ -f "${snapshot_dir}/libcronet.sha256" && ! -L "${snapshot_dir}/libcronet.sha256" ]] || return 1
       [[ ! -L "${SB_NAIVE_LIBRARY_MARKER}" && ! -d "${SB_NAIVE_LIBRARY_MARKER}" ]] || return 1
       mkdir -p "${SB_PROJECT_DIR}" || return 1
-      staged=$(mktemp "${SB_NAIVE_LIBRARY_MARKER}.restore.XXXXXXXX") || return 1
+      staged=$(storage_mktemp "${SB_NAIVE_LIBRARY_MARKER}.restore.XXXXXXXX") || return 1
       if ! cp -p -- "${snapshot_dir}/libcronet.sha256" "${staged}" ||
          ! chmod 600 "${staged}" ||
          ! mv -f -- "${staged}" "${SB_NAIVE_LIBRARY_MARKER}"; then
@@ -3738,6 +3749,9 @@ singbox_library_restore_snapshot() {
      [[ "$(dirname "${lib_path}")" == "/usr/local/lib" ]] &&
      command -v ldconfig >/dev/null 2>&1; then
     ldconfig || status=1
+  fi
+  if [[ "${lib_state}" == present || "${lib_state}" == absent ]]; then
+    storage_publish_library_link || status=1
   fi
   return "${status}"
 }
@@ -3930,8 +3944,8 @@ save_mixed_state() {
     fi
     structured_instance_store_validate_id "${instance_id}" || return 1
     current_revision=$(structured_instance_store_revision "${store_file}") || return 1
-    record_file=$(mktemp) || return 1
-    candidate_file=$(mktemp) || {
+    record_file=$(storage_mktemp) || return 1
+    candidate_file=$(storage_mktemp) || {
       rm -f -- "${record_file}"
       return 1
     }
@@ -4121,8 +4135,8 @@ save_plain_proxy_state() {
     jq -e 'type == "object"' <<< "${tls_json}" >/dev/null 2>&1 || return 1
   fi
 
-  record_file=$(mktemp) || return 1
-  candidate_file=$(mktemp) || { rm -f -- "${record_file}"; return 1; }
+  record_file=$(storage_mktemp) || return 1
+  candidate_file=$(storage_mktemp) || { rm -f -- "${record_file}"; return 1; }
   if ! jq -n -cS --arg id "${instance_id}" --arg name "${name}" --arg tag "${tag}" \
       --arg address "${listen_address}" --argjson port "${port}" \
       --argjson enabled "$([[ "${auth_enabled}" == y ]] && printf true || printf false)" \
@@ -4291,8 +4305,8 @@ save_shadowtls_state() {
   [[ -n "${current_file:-}" ]] || current_file="${store_file}"
   if [[ ! -f "${current_file}" ]]; then current_file=""; fi
 
-  record_file=$(mktemp) || return 1
-  candidate_file=$(mktemp) || { rm -f -- "${record_file}"; return 1; }
+  record_file=$(storage_mktemp) || return 1
+  candidate_file=$(storage_mktemp) || { rm -f -- "${record_file}"; return 1; }
   if ! jq -n -cS --arg id "${instance_id}" --arg name "${name}" --arg tag "${tag}" --arg address "${address}" --argjson port "${port}" \
       --argjson version "${version}" --arg password "${password}" --argjson users "${users}" --argjson handshake "${handshake}" \
       --argjson handshake_map "${handshake_map}" --argjson strict_mode "$([[ "${strict_mode}" == y ]] && printf true || printf false)" \
@@ -4711,13 +4725,30 @@ prepare_reality_target_discovery() {
 # Stop only the running checker's own descendants, including the separate
 # process groups created by its per-operation GNU timeout commands.
 stop_reality_checker_process_tree() {
-  local process_id=$1 child children_file
+  local process_id=$1 child children_file attempt children_pending
   local children=()
   [[ "${process_id}" =~ ^[1-9][0-9]*$ ]] || return 1
   children_file="/proc/${process_id}/task/${process_id}/children"
   if [[ -r "${children_file}" ]]; then
     # proc's children record has no trailing newline; read still fills the array.
     if read -r -a children < "${children_file}"; then :; fi
+  fi
+  # Bash 4.3 treats an empty array expansion as unset under nounset.
+  if (( ${#children[@]} > 0 )); then
+    for child in "${children[@]}"; do
+      stop_reality_checker_process_tree "${child}" || return 1
+    done
+    # Keep the owner alive long enough to reap its children. Terminating a
+    # timeout/group leader first can kill the Bash checker before its nested
+    # timeout tree is inspected, leaving a live grandchild behind.
+    for ((attempt=0;attempt<20;attempt++)); do
+      children_pending=n
+      for child in "${children[@]}"; do
+        [[ ! -e "/proc/${child}" ]] || children_pending=y
+      done
+      [[ "${children_pending}" == y ]] || break
+      command sleep 0.01 || return 1
+    done
   fi
   if kill -0 "${process_id}" 2>/dev/null; then
     if ! kill -TERM "${process_id}" 2>/dev/null; then
@@ -4726,12 +4757,6 @@ stop_reality_checker_process_tree() {
         return 1
       fi
     fi
-  fi
-  # Bash 4.3 treats an empty array expansion as unset under nounset.
-  if (( ${#children[@]} > 0 )); then
-    for child in "${children[@]}"; do
-      stop_reality_checker_process_tree "${child}" || return 1
-    done
   fi
 }
 
@@ -4744,6 +4769,7 @@ run_reality_target_check() (
   # Own nested temp files even if the deadline escalates to KILL. Waiting on a
   # background child lets traps run immediately on terminal cancellation.
   (( signal_status == 0 )) || return "${signal_status}"
+  storage_enter_module_workspace "${checker_dir}" || return 1
   TMPDIR="${checker_dir}" timeout --signal=TERM --kill-after=2 90 \
     bash "${checker}" check "${domain}" --json --timeout 3 > "${report}" &
   checker_pid=$!
@@ -4789,6 +4815,7 @@ run_reality_target_discovery() (
   trap 'signal_status=143; if [[ -n "${checker_pid}" ]]; then stop_reality_checker_process_tree "${checker_pid}"; fi' TERM
   trap 'signal_status=129; if [[ -n "${checker_pid}" ]]; then stop_reality_checker_process_tree "${checker_pid}"; fi' HUP
   (( signal_status == 0 )) || return "${signal_status}"
+  storage_enter_module_workspace "${checker_dir}" || return 1
   TMPDIR="${checker_dir}" PYTHONDONTWRITEBYTECODE=1 \
     timeout --signal=TERM --kill-after=2 "${deadline}" \
     bash "${checker}" "${args[@]}" > "${report}" 2>"${report}.stderr" &
@@ -4805,6 +4832,9 @@ run_reality_target_discovery() (
         log_info "候选发现仍在执行，已等待 ${elapsed} 秒。" >&2
       fi
     done
+    # Child-first cleanup can interrupt a logging child while the checker
+    # finishes; normal timer completion must not inherit that child's status.
+    return 0
   ) &
   timer_pid=$!
   if (( signal_status != 0 )); then
@@ -4852,7 +4882,7 @@ select_reality_sni_candidate() (
   for domain in "$@"; do
     validate_reality_sni_syntax "${domain}" || return 1
   done
-  temp_dir=$(mktemp -d) || return 1
+  temp_dir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${temp_dir}"' EXIT
   trap 'interrupted_status=130; log_warn "SNI 探测中断，SNI 未变更。" >&2; return 130' INT
   trap 'interrupted_status=143; log_warn "SNI 探测中断，SNI 未变更。" >&2; return 143' TERM
@@ -5035,7 +5065,7 @@ select_reality_sni_discovery() (
     log_warn "请输入严格对齐的 IPv4 CIDR（/24 至 /32，最多 256 个主机）；SNI 未变更。" >&2
     return 1
   fi
-  temp_dir=$(mktemp -d) || return 1
+  temp_dir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${temp_dir}"' EXIT
   trap 'interrupted_status=130; if [[ -n "${runner_pid}" ]]; then stop_reality_checker_process_tree "${runner_pid}"; fi; log_warn "候选发现中断，SNI 未变更。" >&2' INT
   trap 'interrupted_status=143; if [[ -n "${runner_pid}" ]]; then stop_reality_checker_process_tree "${runner_pid}"; fi; log_warn "候选发现中断，SNI 未变更。" >&2' TERM
@@ -8310,7 +8340,7 @@ plain_proxy_management_pending_revision() {
 mixed_instance_create_interactive() (
   local temp_dir revision result status allow_public=n
   umask 077
-  temp_dir=$(mktemp -d) || return 1
+  temp_dir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${temp_dir}"' EXIT
   mixed_management_capture_snapshot "${temp_dir}/before.json" || {
     log_error "Mixed 状态无法安全读取，已取消创建。"
@@ -8344,7 +8374,7 @@ mixed_instance_management_menu() (
     delete) one_shot=y ;;
     *) log_warn "不支持的 Mixed 管理操作: ${requested_operation}" >&2; return 1 ;;
   esac
-  temp_dir=$(mktemp -d) || return 1
+  temp_dir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${temp_dir}"' EXIT
   while true; do
     # Recovery is intentionally offered before reading live config/store: an
@@ -8536,7 +8566,7 @@ plain_proxy_instance_management_menu() (
     list) choice=7; one_shot=y ;;
     *) log_warn "不支持的 ${label} 管理操作: ${requested_operation}" >&2; return 1 ;;
   esac
-  temp_dir=$(mktemp -d) || return 1
+  temp_dir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${temp_dir}"' EXIT
   while true; do
     if [[ -d "${SB_PROJECT_DIR}.instance-write.lock" ]]; then
@@ -9527,7 +9557,7 @@ create_media_check_warp_proxy_config() {
   "${SINGBOX_BIN_PATH}" check -c "${output_file}" >&2
 }
 
-run_media_check_backend() {
+run_media_check_backend() (
   local proxy_url=${1:-}
   local result_status=0
 
@@ -9538,6 +9568,9 @@ run_media_check_backend() {
     return "${result_status}"
   fi
   show_media_check_backend_info
+  storage_prepare_tmp || return 1
+  storage_enter_module_workspace "${SB_MEDIA_CHECK_DIR}" || return 1
+  export TMPDIR="${SB_DATA_ROOT}/tmp"
 
   if [[ -n "${proxy_url}" ]]; then
     log_info "正在通过代理执行流媒体验证: ${proxy_url}"
@@ -9546,7 +9579,7 @@ run_media_check_backend() {
     log_info "正在使用本机直出执行流媒体验证..."
     bash "${SB_MEDIA_CHECK_SCRIPT}"
   fi
-}
+)
 
 run_media_check_via_warp() {
   local temp_dir proxy_config proxy_log proxy_port proxy_pid proxy_url ready="n"
@@ -9557,7 +9590,7 @@ run_media_check_via_warp() {
   fi
 
   proxy_port=$(pick_free_local_port) || log_error "未找到可用的本地临时代理端口。"
-  temp_dir=$(mktemp -d)
+  temp_dir=$(storage_mktemp -d)
   proxy_config="${temp_dir}/media-check-warp.json"
   proxy_log="${temp_dir}/media-check-warp.log"
   proxy_url="socks5h://127.0.0.1:${proxy_port}"
@@ -9695,8 +9728,8 @@ load_warp_route_settings() {
 
 build_custom_warp_domain_json() {
   local exact_file suffix_file raw_line line
-  exact_file=$(mktemp)
-  suffix_file=$(mktemp)
+  exact_file=$(storage_mktemp)
+  suffix_file=$(storage_mktemp)
 
   if [[ -f "${SB_WARP_DOMAINS_FILE}" ]]; then
     while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
@@ -9730,7 +9763,7 @@ build_custom_warp_domain_json() {
 
 build_local_warp_rule_sets_json() {
   local object_file file base_name tag format
-  object_file=$(mktemp)
+  object_file=$(storage_mktemp)
   SB_WARP_LOCAL_RULE_SETS_JSON='[]'
 
   if [[ -d "${SB_WARP_LOCAL_RULESET_DIR}" ]]; then
@@ -9756,7 +9789,7 @@ build_local_warp_rule_sets_json() {
 build_remote_warp_rule_sets_json() {
   local object_file raw_line line raw_tag raw_url raw_interval tag url update_interval format
   local use_http_client="n"
-  object_file=$(mktemp)
+  object_file=$(storage_mktemp)
   SB_WARP_REMOTE_RULE_SETS_JSON='[]'
 
   if singbox_config_supports_1_14; then
@@ -9865,11 +9898,15 @@ append_sbv_update_log() {
   local level=$1
   local message=$2
 
-  if ! mkdir -p "${SB_PROJECT_DIR}" 2>/dev/null; then
+  if ! storage_private_directory "$(dirname -- "${SBV_LOG_FILE}")"; then
     return 1
   fi
+  [[ ! -L "${SBV_LOG_FILE}" &&
+     ( ! -e "${SBV_LOG_FILE}" || -f "${SBV_LOG_FILE}" ) ]] || return 1
+  (umask 077; : >> "${SBV_LOG_FILE}") || return 1
+  chmod 0600 -- "${SBV_LOG_FILE}" || return 1
   printf '[%s] [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${level}" "${message}" \
-    >> "${SBV_LOG_FILE}" 2>/dev/null
+    >> "${SBV_LOG_FILE}"
 }
 
 reset_sbv_update_context() {
@@ -10189,13 +10226,18 @@ prepare_sbv_update() {
   local lock_status=0
 
   SBV_UPDATE_STAGE='precheck'
+  storage_initialize || {
+    set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'precheck' 'storage_unavailable' \
+      '私有存储目录无法安全初始化' '目录权限或所有者不可信' 1 '检查统一根目录；目标未发生变更'
+    return 1
+  }
   target_dir=$(dirname -- "${SBV_BIN_PATH}")
   SBV_UPDATE_LOCK_PATH="${target_dir}/.sbv-update.lock"
 
   if [[ ! -d "${target_dir}" ]]; then
     set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'precheck' 'target_directory_missing' \
       'sbv 目标目录不存在' "目标目录: ${target_dir}" 1 \
-      '确认 /usr/local/bin 存在且当前用户具有 root 权限'
+      '确认私有 bin 目录存在且当前用户具有 root 权限'
     return 1
   fi
   if [[ -L "${SBV_BIN_PATH}" ]]; then
@@ -10248,7 +10290,7 @@ prepare_sbv_update() {
     if ! get_sbv_file_metadata "${SBV_BIN_PATH}"; then
       set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'precheck' 'target_metadata_failed' \
         '无法读取现有 sbv 的权限或所有者' "目标路径: ${SBV_BIN_PATH}" 1 \
-        '检查目标文件及 /usr/local/bin 的权限'
+        '检查目标文件及私有 bin 目录的权限'
       return 1
     fi
     if ! SBV_UPDATE_TARGET_HASH=$(calculate_sbv_sha256 "${SBV_BIN_PATH}"); then
@@ -10273,13 +10315,13 @@ create_sbv_candidate() {
   local target_dir
 
   target_dir=$(dirname -- "${SBV_BIN_PATH}")
-  if ! SBV_UPDATE_CANDIDATE_PATH=$(mktemp "${target_dir}/.sbv-candidate.XXXXXXXXXX"); then
+  if ! SBV_UPDATE_CANDIDATE_PATH=$(storage_mktemp "${target_dir}/.sbv-candidate.XXXXXXXXXX"); then
     set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'stage' 'candidate_create_failed' \
       '无法创建同目录候选文件' "候选目录: ${target_dir}" 1 \
       '检查目标目录的磁盘空间和权限'
     return 1
   fi
-  if ! SBV_UPDATE_CURL_STDERR_PATH=$(mktemp "${target_dir}/.sbv-curl-stderr.XXXXXXXXXX"); then
+  if ! SBV_UPDATE_CURL_STDERR_PATH=$(storage_mktemp "${target_dir}/.sbv-curl-stderr.XXXXXXXXXX"); then
     set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'stage' 'diagnostic_file_create_failed' \
       '无法创建下载诊断文件' "诊断目录: ${target_dir}" 1 \
       '检查目标目录的磁盘空间和权限'
@@ -10412,7 +10454,7 @@ create_sbv_backup() {
     return 0
   fi
   target_dir=$(dirname -- "${SBV_BIN_PATH}")
-  if ! SBV_UPDATE_BACKUP_PATH=$(mktemp "${target_dir}/.sbv-backup.XXXXXXXXXX"); then
+  if ! SBV_UPDATE_BACKUP_PATH=$(storage_mktemp "${target_dir}/.sbv-backup.XXXXXXXXXX"); then
     set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'backup' 'backup_create_failed' \
       '无法创建受保护的 sbv 备份' "备份目录: ${target_dir}" 1 \
       '检查目标目录的磁盘空间和权限；原脚本未发生变更'
@@ -10569,7 +10611,7 @@ restore_sbv_backup() {
     return 0
   fi
   [[ -f "${SBV_UPDATE_BACKUP_PATH}" ]] || return 1
-  if ! restore_path=$(mktemp "${target_dir}/.sbv-rollback.XXXXXXXXXX"); then
+  if ! restore_path=$(storage_mktemp "${target_dir}/.sbv-rollback.XXXXXXXXXX"); then
     return 1
   fi
   SBV_UPDATE_ROLLBACK_PATH=${restore_path}
@@ -10622,7 +10664,7 @@ preserve_sbv_recovery_artifacts() {
   SBV_UPDATE_PRESERVE_ARTIFACTS='true'
   target_dir=$(dirname -- "${SBV_BIN_PATH}")
   if [[ -f "${SBV_BIN_PATH}" ]]; then
-    if retained_candidate=$(mktemp "${target_dir}/.sbv-candidate-retained.XXXXXXXXXX"); then
+    if retained_candidate=$(storage_mktemp "${target_dir}/.sbv-candidate-retained.XXXXXXXXXX"); then
       if cp -p -- "${SBV_BIN_PATH}" "${retained_candidate}" && \
         chmod 0600 "${retained_candidate}" && chown 0:0 "${retained_candidate}"; then
         SBV_UPDATE_CANDIDATE_PATH=${retained_candidate}
@@ -10693,6 +10735,12 @@ finish_sbv_update_failure() {
 }
 
 finish_sbv_update_success() {
+  if ! storage_publish_system_links sbv; then
+    set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'postcheck' 'system_entry_conflict' \
+      '全局 sbv 入口无法安全发布' '入口可能属于其他安装，已拒绝覆盖' 1 '检查受管链接及迁移状态'
+    finish_sbv_update_failure 1
+    return $?
+  fi
   cleanup_sbv_update
   restore_sbv_update_traps
   if [[ "${SBV_UPDATE_NOOP}" == 'true' ]]; then
@@ -10914,14 +10962,14 @@ download_shell_artifact_atomically() {
   fi
 
   SBV_UPDATE_STAGE='stage'
-  if ! SBV_UPDATE_CANDIDATE_PATH=$(mktemp "${target_dir}/.${target_name}.candidate.XXXXXXXXXX"); then
+  if ! SBV_UPDATE_CANDIDATE_PATH=$(storage_mktemp "${target_dir}/.${target_name}.candidate.XXXXXXXXXX"); then
     set_sbv_update_error "${operation}" 'stage' 'candidate_create_failed' \
       '无法创建可执行 artifact 候选文件' "候选目录: ${target_dir}" 1 \
       '检查目标目录的磁盘空间和权限'
     finish_sbv_artifact_failure 1 || return $?
     return 0
   fi
-  if ! SBV_UPDATE_CURL_STDERR_PATH=$(mktemp "${target_dir}/.${target_name}.stderr.XXXXXXXXXX"); then
+  if ! SBV_UPDATE_CURL_STDERR_PATH=$(storage_mktemp "${target_dir}/.${target_name}.stderr.XXXXXXXXXX"); then
     set_sbv_update_error "${operation}" 'stage' 'diagnostic_file_create_failed' \
       '无法创建下载诊断文件' "诊断目录: ${target_dir}" 1 \
       '检查目标目录的磁盘空间和权限'
@@ -11031,7 +11079,7 @@ download_shell_artifact_atomically() {
       SBV_UPDATE_TARGET_VERSION='unknown'
     fi
     SBV_UPDATE_CURRENT_VERSION=${SBV_UPDATE_TARGET_VERSION}
-    if ! SBV_UPDATE_BACKUP_PATH=$(mktemp "${target_dir}/.${target_name}.backup.XXXXXXXXXX"); then
+    if ! SBV_UPDATE_BACKUP_PATH=$(storage_mktemp "${target_dir}/.${target_name}.backup.XXXXXXXXXX"); then
       set_sbv_update_error "${operation}" 'backup' 'backup_create_failed' \
         '无法创建现有 artifact 的受保护备份' "目标目录: ${target_dir}" 1 \
         '原文件未发生变更；检查目标目录的权限'
@@ -11160,7 +11208,7 @@ download_shell_artifact_atomically() {
 
   SBV_UPDATE_ROLLBACK_ATTEMPTED='true'
   if [[ "${target_existed}" == 'true' ]]; then
-    if SBV_UPDATE_ROLLBACK_PATH=$(mktemp "${target_dir}/.${target_name}.rollback.XXXXXXXXXX") && \
+    if SBV_UPDATE_ROLLBACK_PATH=$(storage_mktemp "${target_dir}/.${target_name}.rollback.XXXXXXXXXX") && \
       cp -p -- "${SBV_UPDATE_BACKUP_PATH}" "${SBV_UPDATE_ROLLBACK_PATH}" && \
       chmod "${old_mode}" "${SBV_UPDATE_ROLLBACK_PATH}" && \
       chown "${old_uid}:${old_gid}" "${SBV_UPDATE_ROLLBACK_PATH}" && \
@@ -11195,7 +11243,7 @@ download_shell_artifact_atomically() {
   fi
 
   if [[ -f "${target}" && ! -L "${target}" ]]; then
-    if retained_candidate=$(mktemp "${target_dir}/.${target_name}.candidate-retained.XXXXXXXXXX") && \
+    if retained_candidate=$(storage_mktemp "${target_dir}/.${target_name}.candidate-retained.XXXXXXXXXX") && \
       cp -p -- "${target}" "${retained_candidate}" && \
       chmod 0600 "${retained_candidate}" && chown 0:0 "${retained_candidate}"; then
       SBV_UPDATE_CANDIDATE_PATH=${retained_candidate}
@@ -11303,14 +11351,22 @@ reload_sbv_menu_after_update() {
 ensure_sbv_command_installed() {
   local source_file=$0
   local result_status=0
+  storage_initialize || return 1
+
+  if [[ "${source_file}" == "${SBV_LINK_PATH}" && -L "${source_file}" &&
+        "$(readlink -- "${source_file}")" == "${SBV_BIN_PATH}" ]]; then
+    source_file=${SBV_BIN_PATH}
+  fi
 
   if [[ "${source_file}" == "${SBV_BIN_PATH}" || "${source_file}" == 'sbv' ]]; then
-    return 0
+    storage_publish_system_links sbv
+    return $?
   fi
 
   if [[ -f "${source_file}" && ! -L "${source_file}" ]]; then
     log_info "正在同步全局命令: sbv..."
     if sbv_update_transaction 'ensure_sbv_local' file "${source_file}"; then
+      storage_publish_system_links sbv || return 1
       log_success "全局命令 sbv 已同步为当前脚本版本。"
       return 0
     else
@@ -11321,6 +11377,7 @@ ensure_sbv_command_installed() {
 
   log_info "正在安装全局命令: sbv..."
   if sbv_update_transaction 'ensure_sbv_remote' url "${SBV_UPDATE_URL}"; then
+    storage_publish_system_links sbv || return 1
     log_success "全局命令 sbv 安装成功。"
     return 0
   else
@@ -11622,7 +11679,7 @@ managed_listener_plan() (
     printf '[ERROR] listener_resources: unreadable_config\n' >&2; return 1;
   }
   # No credentials in argv, no unbounded reads and no reread after validation.
-  snapshot=$(mktemp /tmp/sbv-listener-plan.XXXXXX) || return 1
+  snapshot=$(storage_mktemp "${SB_DATA_ROOT}/tmp/sbv-listener-plan.XXXXXX") || return 1
   trap 'if ! rm -f -- "${snapshot}"; then printf "[ERROR] listener_resources: cleanup_failed\n" >&2; fi' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
@@ -11756,7 +11813,7 @@ instance_firewall_write_json_atomic() {
   [[ -d "${destination_dir}" && ! -L "${destination_dir}" ]] || return 1
   [[ ! -e "${destination}" || ! -L "${destination}" ]] || return 1
   jq -e . >/dev/null 2>&1 <<< "${payload}" || return 1
-  candidate=$(mktemp "${destination_dir}/.$(basename -- "${destination}").candidate.XXXXXX") || return 1
+  candidate=$(storage_mktemp "${destination_dir}/.$(basename -- "${destination}").candidate.XXXXXX") || return 1
   if ! printf '%s\n' "${payload}" > "${candidate}" ||
      ! chmod 600 "${candidate}" ||
      ! mv -f -- "${candidate}" "${destination}"; then
@@ -11885,7 +11942,7 @@ open_scoped_protocol_ports() (
   trap 'firewall_reconcile_interrupt 130' INT
   trap 'firewall_reconcile_interrupt 143' TERM
   trap 'firewall_reconcile_interrupt 129' HUP
-  journal=$(mktemp "${SB_PROJECT_DIR}.firewall-reconcile.XXXXXX") || return 1
+  journal=$(storage_mktemp "${SB_PROJECT_DIR}.firewall-reconcile.XXXXXX") || return 1
   if instance_firewall_prepare "" "${SINGBOX_CONFIG_FILE}" "${journal}"; then
     prepared=y
   else
@@ -12642,7 +12699,7 @@ query_latest_singbox_release() (
   trap 'exit 130' INT
   trap 'exit 143' TERM
   trap 'exit 129' HUP
-  temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/sbv-version-query.XXXXXXXX") || return 1
+  temp_dir=$(storage_mktemp -d "${SB_DATA_ROOT}/tmp/sbv-version-query.XXXXXXXX") || return 1
   if http_status=$(curl -sS --connect-timeout 10 --max-time 30 --max-filesize 1048576 \
     -o "${temp_dir}/response.json" -w '%{http_code}' \
     'https://api.github.com/repos/SagerNet/sing-box/releases/latest' \
@@ -12711,7 +12768,7 @@ singbox_atomic_file_copy() (
   [[ -f "${source_file}" && ! -L "${source_file}" ]] || return 1
   [[ ! -e "${target_file}" || -f "${target_file}" ]] && [[ ! -L "${target_file}" ]] || return 1
   [[ -d "$(dirname "${target_file}")" ]] || return 1
-  staged=$(mktemp "$(dirname "${target_file}")/.$(basename "${target_file}").restore.XXXXXXXX") || return 1
+  staged=$(storage_mktemp "$(dirname "${target_file}")/.$(basename "${target_file}").restore.XXXXXXXX") || return 1
   trap '[[ -z "${staged}" ]] || rm -f -- "${staged}"' EXIT
   cp -p -- "${source_file}" "${staged}" || return $?
   chmod "${mode}" "${staged}" || return $?
@@ -12823,6 +12880,7 @@ singbox_candidate_namespace_runtime_safe() {
 
 install_binary() (
   umask 077
+  storage_initialize || return 1
   local expected_version=${SB_VERSION#v} root download_url target_dir temp_dir=''
   local staged_binary='' staged_lib='' staged_marker='' lib_path='' lib_dir=''
   local binary_before=n lib_before=n marker_before=n manage_library=n publish_started=n changed=false
@@ -12870,6 +12928,7 @@ install_binary() (
           fi
         done
       fi
+      storage_publish_library_link || rollback_status=1
       if [[ "${rollback_status}" != 0 ]]; then rollback_ok=false; preserve=true; fi
     fi
     for path in "${staged_binary}" "${staged_lib}" "${staged_marker}"; do
@@ -12902,6 +12961,8 @@ install_binary() (
   trap 'failure_code=signal_interrupted; exit 129' HUP
 
   [[ "${expected_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "${ARCH:-}" =~ ^(amd64|arm64)$ ]] || { failure_code=invalid_release; return 1; }
+  failure_code=unsafe_library_link_target
+  storage_system_link_is_owned "${SB_DATA_ROOT}/bin/libcronet.so" "${SB_DATA_ROOT}/lib/libcronet.so" || return 1
   target_dir=$(dirname "${SINGBOX_BIN_PATH}") || return 1
   [[ -d "${target_dir}" && ! -L "${SINGBOX_BIN_PATH}" ]] || { failure_code=unsafe_binary_target; return 1; }
   [[ ! -e "${SINGBOX_BIN_PATH}" || -f "${SINGBOX_BIN_PATH}" ]] || { failure_code=unsafe_binary_target; return 1; }
@@ -12909,7 +12970,7 @@ install_binary() (
     version_output=${version_output%%$'\n'*}
     if [[ "${version_output}" =~ ^sing-box\ version\ ([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then current_version=${BASH_REMATCH[1]}; fi
   fi
-  temp_dir=$(mktemp -d "${target_dir}/.sing-box-install.XXXXXXXX") || return 1
+  temp_dir=$(storage_mktemp -d "${target_dir}/.sing-box-install.XXXXXXXX") || return 1
   root="sing-box-${expected_version}-linux-${ARCH}"
   download_url="https://github.com/SagerNet/sing-box/releases/download/v${expected_version}/${root}.tar.gz"
   stage=download
@@ -12937,7 +12998,7 @@ install_binary() (
   tar -xzf "${temp_dir}/release.tar.gz" -C "${temp_dir}/extract" --no-same-owner --no-same-permissions \
     -- "${root}/sing-box" 2>/dev/null || return 1
   [[ -f "${temp_dir}/extract/${root}/sing-box" && ! -L "${temp_dir}/extract/${root}/sing-box" ]] || return 1
-  staged_binary=$(mktemp "${target_dir}/.sing-box.restore.XXXXXXXX") || return 1
+  staged_binary=$(storage_mktemp "${target_dir}/.sing-box.restore.XXXXXXXX") || return 1
   cp -- "${temp_dir}/extract/${root}/sing-box" "${staged_binary}" || return 1
   chmod 0755 "${staged_binary}" || return 1
   failure_code=unexpected_binary_version
@@ -12968,12 +13029,12 @@ install_binary() (
       tar -xzf "${temp_dir}/release.tar.gz" -C "${temp_dir}/extract" --no-same-owner --no-same-permissions \
         -- "${root}/libcronet.so" 2>/dev/null || return 1
       [[ -s "${temp_dir}/extract/${root}/libcronet.so" && ! -L "${temp_dir}/extract/${root}/libcronet.so" ]] || return 1
-      staged_lib=$(mktemp "${lib_dir}/.libcronet.install.XXXXXXXX") || return 1
+      staged_lib=$(storage_mktemp "${lib_dir}/.libcronet.install.XXXXXXXX") || return 1
       cp -- "${temp_dir}/extract/${root}/libcronet.so" "${staged_lib}" || return 1
       chmod 0644 "${staged_lib}" || return 1
       library_hash=$(sha256sum "${staged_lib}") || return 1
       library_hash=${library_hash%% *}
-      staged_marker=$(mktemp "${SB_PROJECT_DIR}/.libcronet-marker.install.XXXXXXXX") || return 1
+      staged_marker=$(storage_mktemp "${SB_PROJECT_DIR}/.libcronet-marker.install.XXXXXXXX") || return 1
       printf '%s\n' "${library_hash}" > "${staged_marker}" || return 1
       chmod 0600 "${staged_marker}" || return 1
       manage_library=y
@@ -13016,6 +13077,7 @@ install_binary() (
     mv -f -- "${staged_lib}" "${lib_path}" || return 1
     mv -f -- "${staged_marker}" "${SB_NAIVE_LIBRARY_MARKER}" || return 1
   fi
+  storage_publish_library_link || return 1
   stage=postcheck
   failure_code=postcheck_failed
   [[ ! -L "${SINGBOX_BIN_PATH}" && "$(sha256sum "${SINGBOX_BIN_PATH}" | awk '{print $1}')" == "${candidate_hash}" &&
@@ -13037,21 +13099,44 @@ install_binary() (
 )
 
 setup_service() {
+  local candidate=''
   log_info "配置 systemd 服务..."
-  cat > "${SINGBOX_SERVICE_FILE}" <<EOF || return $?
+  storage_initialize || return 1
+  [[ ! -L "${SINGBOX_SERVICE_FILE}" &&
+     ( ! -e "${SINGBOX_SERVICE_FILE}" || -f "${SINGBOX_SERVICE_FILE}" ) ]] || return 1
+  candidate=$(storage_mktemp "${SB_DATA_ROOT}/systemd/.sing-box.service.XXXXXXXX") || return 1
+  if ! cat > "${candidate}" <<EOF
 [Unit]
 Description=sing-box service
 After=network.target nss-lookup.target
 [Service]
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
-ExecStart=${SINGBOX_BIN_PATH} run -c ${SINGBOX_CONFIG_FILE}
+WorkingDirectory=${SB_PROJECT_DIR}
+Environment="HOME=${SB_PROJECT_DIR}" "TMPDIR=${SB_DATA_ROOT}/tmp" "LD_LIBRARY_PATH=${SB_DATA_ROOT}/lib"
+ExecStart="${SINGBOX_BIN_PATH}" run -c "${SINGBOX_CONFIG_FILE}"
 Restart=on-failure
 RestartSec=10s
 LimitNOFILE=infinity
 [Install]
 WantedBy=multi-user.target
 EOF
+  then
+    rm -f -- "${candidate}" || return 1
+    return 1
+  fi
+  chmod 0600 -- "${candidate}" || { rm -f -- "${candidate}"; return 1; }
+  if [[ -f "${SINGBOX_SERVICE_FILE}" ]] &&
+     ! persist_file_backup "${SINGBOX_SERVICE_FILE}" "${SINGBOX_SERVICE_FILE}.bak"; then
+    rm -f -- "${candidate}" || return 1
+    return 1
+  fi
+  if ! mv -f -- "${candidate}" "${SINGBOX_SERVICE_FILE}"; then
+    rm -f -- "${candidate}" || return 1
+    return 1
+  fi
+  storage_publish_system_links sing-box || return 1
+  storage_publish_system_links service || return 1
   systemctl daemon-reload || return $?
   systemctl enable sing-box >/dev/null 2>&1 || return $?
 
@@ -13062,7 +13147,9 @@ EOF
 
 service_file_needs_repair() {
   [[ -f "${SINGBOX_SERVICE_FILE}" ]] || return 0
-  grep -Fqx "ExecStart=${SINGBOX_BIN_PATH} run -c ${SINGBOX_CONFIG_FILE}" "${SINGBOX_SERVICE_FILE}" || return 0
+  grep -Fqx "ExecStart=\"${SINGBOX_BIN_PATH}\" run -c \"${SINGBOX_CONFIG_FILE}\"" "${SINGBOX_SERVICE_FILE}" || return 0
+  [[ -L "${SINGBOX_SERVICE_LINK_PATH}" &&
+     "$(readlink -- "${SINGBOX_SERVICE_LINK_PATH}")" == "${SINGBOX_SERVICE_FILE}" ]] || return 0
   return 1
 }
 
@@ -13855,7 +13942,7 @@ build_shadowsocks_instance_outbounds() (
   structured_instance_store_validate_id "${instance_id}" || return 1
   snapshot=$(structured_instance_store_snapshot_json shadowsocks "$(plain_proxy_structured_store_file shadowsocks)") || return 1
   jq -e --arg id "${instance_id}" 'any(.instances[]; .id==$id)' <<< "${snapshot}" >/dev/null || return 1
-  temporary=$(mktemp) || return 1
+  temporary=$(storage_mktemp) || return 1
   trap 'rm -f -- "${temporary}"' EXIT
   jq -c --arg id "${instance_id}" '.instances |= map(select(.id==$id)) | .default_instance_id=$id' \
     <<< "${snapshot}" > "${temporary}" || return 1
@@ -14226,8 +14313,8 @@ build_inbound_for_protocol() {
 
 build_vless_reality_route_rules_json() {
   local tmp_rules tmp_snis instance_id inbound_tag sni instance_ids
-  tmp_rules=$(mktemp) || return 1
-  if ! tmp_snis=$(mktemp); then
+  tmp_rules=$(storage_mktemp) || return 1
+  if ! tmp_snis=$(storage_mktemp); then
     rm -f "${tmp_rules}"
     return 1
   fi
@@ -14272,7 +14359,7 @@ build_vless_reality_route_rules_json() {
 
 build_vless_reality_instance_outbound_rules_json() {
   local tmp_rules instance_id inbound_tag outbound instance_ids
-  tmp_rules=$(mktemp) || return 1
+  tmp_rules=$(storage_mktemp) || return 1
 
   if ! load_vless_reality_protocol_state; then
     rm -f "${tmp_rules}"
@@ -18676,7 +18763,7 @@ managed_component_state_json() (
     return 0
   fi
   [[ -f "${SB_COMPONENT_STATE_FILE}" && ! -L "${SB_COMPONENT_STATE_FILE}" && -r "${SB_COMPONENT_STATE_FILE}" ]] || return 1
-  snapshot=$(mktemp /tmp/sbv-components.XXXXXX) || return 1
+  snapshot=$(storage_mktemp "${SB_DATA_ROOT}/tmp/sbv-components.XXXXXX") || return 1
   trap 'rm -f -- "${snapshot}"' EXIT
   head -c 4194305 -- "${SB_COMPONENT_STATE_FILE}" > "${snapshot}" || return 1
   [[ "$(wc -c < "${snapshot}")" -le 4194304 ]] || return 1
@@ -18688,7 +18775,7 @@ managed_component_state_json() (
 managed_component_normalize_input_file() (
   local input=${1:-} snapshot result
   [[ -f "${input}" && ! -L "${input}" && -r "${input}" ]] || return 1
-  snapshot=$(mktemp /tmp/sbv-component-record.XXXXXX) || return 1
+  snapshot=$(storage_mktemp "${SB_DATA_ROOT}/tmp/sbv-component-record.XXXXXX") || return 1
   trap 'rm -f -- "${snapshot}"' EXIT
   head -c 1048577 -- "${input}" > "${snapshot}" || return 1
   [[ "$(wc -c < "${snapshot}")" -le 1048576 ]] || return 1
@@ -19008,7 +19095,7 @@ managed_component_redirect_policy_journal_write() {
   managed_component_redirect_host_policy_plan_validate_json "${after}" || return 1
   payload=$(jq -cn --argjson before "${before}" --argjson after "${after}" \
     '{schema_version:1,status:"prepared",before:$before,after:$after}') || return 1
-  candidate=$(mktemp "${journal_file%/*}/.component-redirect-policy.XXXXXX") || return 1
+  candidate=$(storage_mktemp "${journal_file%/*}/.component-redirect-policy.XXXXXX") || return 1
   if ! printf '%s\n' "${payload}" > "${candidate}" || ! chmod 600 "${candidate}" ||
      ! mv -f -- "${candidate}" "${journal_file}"; then
     rm -f -- "${candidate}"
@@ -19021,7 +19108,7 @@ managed_component_redirect_policy_journal_set_status() {
   local journal_file=${1:-} status=${2:-} candidate
   managed_component_redirect_policy_journal_validate "${journal_file}" || return 1
   [[ "${status}" =~ ^(prepared|applying|applied|rolling_back|rolled_back)$ ]] || return 1
-  candidate=$(mktemp "${journal_file%/*}/.component-redirect-policy.XXXXXX") || return 1
+  candidate=$(storage_mktemp "${journal_file%/*}/.component-redirect-policy.XXXXXX") || return 1
   if ! jq --arg status "${status}" '.status=$status' "${journal_file}" > "${candidate}" ||
      ! chmod 600 "${candidate}" || ! mv -f -- "${candidate}" "${journal_file}"; then
     rm -f -- "${candidate}"
@@ -19569,7 +19656,7 @@ managed_component_tproxy_policy_journal_write() {
   managed_component_tproxy_host_policy_plan_validate_json "${after}" || return 1
   payload=$(jq -cn --argjson before "${before}" --argjson after "${after}" \
     '{schema_version:1,status:"prepared",before:$before,after:$after}') || return 1
-  candidate=$(mktemp "${journal_file%/*}/.component-tproxy-policy.XXXXXX") || return 1
+  candidate=$(storage_mktemp "${journal_file%/*}/.component-tproxy-policy.XXXXXX") || return 1
   if ! printf '%s\n' "${payload}" > "${candidate}" || ! chmod 600 "${candidate}" ||
      ! mv -f -- "${candidate}" "${journal_file}"; then
     rm -f -- "${candidate}"
@@ -19582,7 +19669,7 @@ managed_component_tproxy_policy_journal_set_status() {
   local journal_file=${1:-} status=${2:-} candidate
   managed_component_tproxy_policy_journal_validate "${journal_file}" || return 1
   [[ "${status}" =~ ^(prepared|applying|applied|rolling_back|rolled_back)$ ]] || return 1
-  candidate=$(mktemp "${journal_file%/*}/.component-tproxy-policy.XXXXXX") || return 1
+  candidate=$(storage_mktemp "${journal_file%/*}/.component-tproxy-policy.XXXXXX") || return 1
   if ! jq --arg status "${status}" '.status=$status' "${journal_file}" > "${candidate}" ||
      ! chmod 600 "${candidate}" || ! mv -f -- "${candidate}" "${journal_file}"; then
     rm -f -- "${candidate}"
@@ -19798,7 +19885,7 @@ managed_component_transparent_resources_json() (
   local interface_status address_status mtu_status
   local link_file address_file rule_file route_file nft_file output_size
   [[ -f "${config_file}" && ! -L "${config_file}" && -r "${config_file}" ]] || return 1
-  snapshot=$(mktemp -d /tmp/sbv-transparent-resources.XXXXXX) || return 1
+  snapshot=$(storage_mktemp -d "${SB_DATA_ROOT}/tmp/sbv-transparent-resources.XXXXXX") || return 1
   trap 'rm -rf -- "${snapshot}"' EXIT INT TERM HUP
   head -c 4194305 -- "${config_file}" > "${snapshot}/config.json" || return 1
   [[ "$(wc -c < "${snapshot}/config.json")" -le 4194304 ]] || return 1
@@ -20331,7 +20418,7 @@ managed_component_live_takeover_records_json() (
   local records=() existing_id
   [[ -n "${state}" ]] || return 1
   [[ -f "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" && -r "${SINGBOX_CONFIG_FILE}" ]] || return 2
-  config_snapshot=$(mktemp /tmp/sbv-component-live.XXXXXX) || return 1
+  config_snapshot=$(storage_mktemp "${SB_DATA_ROOT}/tmp/sbv-component-live.XXXXXX") || return 1
   trap 'rm -f -- "${config_snapshot}"' EXIT
   head -c 4194305 -- "${SINGBOX_CONFIG_FILE}" > "${config_snapshot}" || return 4
   [[ "$(wc -c < "${config_snapshot}")" -le 4194304 ]] || return 4
@@ -20592,12 +20679,12 @@ managed_component_write_state() (
   [[ ! -L "${SB_PROJECT_DIR}" && ! -L "${SB_COMPONENT_STATE_FILE}" &&
      ! -L "${SB_COMPONENT_STATE_FILE}.bak" ]] || return 1
   mkdir -p "${SB_PROJECT_DIR}" || return 1
-  candidate=$(mktemp "${SB_PROJECT_DIR}/.components.json.candidate.XXXXXX") || return 1
+  candidate=$(storage_mktemp "${SB_PROJECT_DIR}/.components.json.candidate.XXXXXX") || return 1
   trap 'rm -f -- "${candidate}" "${backup:-}"' EXIT
   printf '%s\n' "${state}" > "${candidate}" || return 1
   chmod 600 "${candidate}" || return 1
   if [[ -f "${SB_COMPONENT_STATE_FILE}" ]]; then
-    backup=$(mktemp "${SB_PROJECT_DIR}/.components.json.backup.XXXXXX") || return 1
+    backup=$(storage_mktemp "${SB_PROJECT_DIR}/.components.json.backup.XXXXXX") || return 1
     cp -p "${SB_COMPONENT_STATE_FILE}" "${backup}" || return 1
     chmod 600 "${backup}" || return 1
     mv -f "${backup}" "${SB_COMPONENT_STATE_FILE}.bak" || return 1
@@ -21063,7 +21150,7 @@ managed_component_state_matches_live_config() (
   else state=$(managed_component_state_json) || return 1; fi
   managed_component_state_validate_json "${state}" || return 1
   umask 077
-  projected=$(mktemp) || return 1
+  projected=$(storage_mktemp) || return 1
   trap 'rm -f -- "${projected}"' EXIT
   coexisting_component_projection "${config_file}" "${state}" > "${projected}" || return 1
   managed_component_owned_projection_matches "${projected}" "${state_file}" "${allow_legacy}"
@@ -21940,7 +22027,7 @@ managed_component_state_apply() {
 managed_state_snapshot_is_valid() {
   local snapshot_dir=$1
 
-  [[ "${snapshot_dir}" == /tmp/sing-box-vps-state.* ||
+  [[ "${snapshot_dir}" == "${SB_DATA_ROOT}/tmp/"sing-box-vps-state.* ||
      "${snapshot_dir}" == "${SB_PROJECT_DIR}.instance-write.lock/snapshot" ||
      "${snapshot_dir}" == "${SB_COMPONENT_TRANSACTION_DIR}/snapshot" ||
      "${snapshot_dir}" == "${SB_ROUTING_TRANSACTION_DIR}/snapshot" ||
@@ -21960,7 +22047,7 @@ persist_file_backup() {
   backup_dir=$(dirname "${backup_file}")
   backup_name=$(basename "${backup_file}")
   mkdir -p "${backup_dir}" || return 1
-  backup_candidate=$(mktemp "${backup_dir}/.${backup_name}.candidate.XXXXXX") || return 1
+  backup_candidate=$(storage_mktemp "${backup_dir}/.${backup_name}.candidate.XXXXXX") || return 1
   if ! cp -p "${source_file}" "${backup_candidate}" ||
      ! chmod 600 "${backup_candidate}" ||
      ! mv -f "${backup_candidate}" "${backup_file}"; then
@@ -21986,7 +22073,7 @@ create_managed_state_snapshot() {
       printf '[ERROR] 存在未完成的实例事务；先执行 instance recover，未开始其他写操作。\n' >&2
       return 1
     fi
-    snapshot_dir=$(mktemp -d /tmp/sing-box-vps-state.XXXXXX) || return 1
+    snapshot_dir=$(storage_mktemp -d "${SB_DATA_ROOT}/tmp/sing-box-vps-state.XXXXXX") || return 1
   fi
   chmod 700 "${snapshot_dir}" || {
     rm -rf "${snapshot_dir}"
@@ -22036,7 +22123,7 @@ restore_managed_state_snapshot() {
   project_base=$(basename "${SB_PROJECT_DIR}")
   mkdir -p "${project_parent}" || return 1
 
-  restore_candidate=$(mktemp -d "${project_parent}/.${project_base}.restore.XXXXXX") || return 1
+  restore_candidate=$(storage_mktemp -d "${project_parent}/.${project_base}.restore.XXXXXX") || return 1
   if [[ -f "${snapshot_dir}/project.existed" ]]; then
     if ! cp -a "${snapshot_dir}/project/." "${restore_candidate}/"; then
       rm -rf "${restore_candidate}"
@@ -22044,7 +22131,7 @@ restore_managed_state_snapshot() {
     fi
   fi
 
-  restore_previous=$(mktemp -d "${project_parent}/.${project_base}.previous.XXXXXX") || {
+  restore_previous=$(storage_mktemp -d "${project_parent}/.${project_base}.previous.XXXXXX") || {
     rm -rf "${restore_candidate}"
     return 1
   }
@@ -22947,7 +23034,7 @@ publish_managed_config_candidate() (
   local source_file=${1:-} candidate="" backup_candidate=""
   umask 077
   [[ -f "${source_file}" && ! -L "${source_file}" && -x "${SINGBOX_BIN_PATH}" ]] || return 1
-  candidate=$(mktemp "${SINGBOX_CONFIG_DIR}/.config.json.candidate.XXXXXX") || return $?
+  candidate=$(storage_mktemp "${SINGBOX_CONFIG_DIR}/.config.json.candidate.XXXXXX") || return $?
   trap 'rm -f -- "${candidate}" "${backup_candidate}"' EXIT
   head -c 4194305 -- "${source_file}" > "${candidate}" || return $?
   [[ "$(wc -c < "${candidate}")" -le 4194304 ]] || return 1
@@ -22957,7 +23044,7 @@ publish_managed_config_candidate() (
   "${SINGBOX_BIN_PATH}" check -c "${candidate}" >&2 || return $?
   chmod 600 "${candidate}" || return $?
   if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
-    backup_candidate=$(mktemp "${SINGBOX_CONFIG_DIR}/.config.json.backup.XXXXXX") || return $?
+    backup_candidate=$(storage_mktemp "${SINGBOX_CONFIG_DIR}/.config.json.backup.XXXXXX") || return $?
     cp -p "${SINGBOX_CONFIG_FILE}" "${backup_candidate}" || return $?
     chmod 600 "${backup_candidate}" || return $?
     mv -f "${backup_candidate}" "${SINGBOX_CONFIG_FILE}.bak" || return $?
@@ -23071,20 +23158,20 @@ generate_config_candidate() {
   refresh_warp_route_assets || return 1
   ensure_stack_mode_state_loaded || return 1
 
-  inbound_file=$(mktemp) || return 1
-  if ! provider_file=$(mktemp); then
+  inbound_file=$(storage_mktemp) || return 1
+  if ! provider_file=$(storage_mktemp); then
     rm -f "${inbound_file}"
     return 1
   fi
-  if ! protocol_rule_file=$(mktemp); then
+  if ! protocol_rule_file=$(storage_mktemp); then
     rm -f "${inbound_file}" "${provider_file}"
     return 1
   fi
-  if ! instance_outbound_rule_file=$(mktemp); then
+  if ! instance_outbound_rule_file=$(storage_mktemp); then
     rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}"
     return 1
   fi
-  if ! config_candidate=$(mktemp "${SINGBOX_CONFIG_DIR}/.config.json.candidate.XXXXXX"); then
+  if ! config_candidate=$(storage_mktemp "${SINGBOX_CONFIG_DIR}/.config.json.candidate.XXXXXX"); then
     rm -f "${inbound_file}" "${provider_file}" "${protocol_rule_file}" "${instance_outbound_rule_file}"
     return 1
   fi
@@ -23280,7 +23367,7 @@ generate_config_candidate() {
     return 1
   fi
 
-  generated_candidate=$(mktemp "${SINGBOX_CONFIG_DIR}/.generated-config.XXXXXX") || return 1
+  generated_candidate=$(storage_mktemp "${SINGBOX_CONFIG_DIR}/.generated-config.XXXXXX") || return 1
   trap "${exit_cleanup_command}; rm -f -- \"${generated_candidate}\"" EXIT
   if [[ "${routing_policy_active}" == y ]]; then
     # Only protocol-generated traffic tags participate. Component/manual
@@ -23433,6 +23520,12 @@ perform_singbox_runtime_uninstall() {
   local lib_path expected_hash actual_hash component_state redirect_policy_plan tproxy_policy_plan
 
   managed_uninstall_acquire_guard || return 1
+  storage_system_link_is_owned "${SINGBOX_LINK_PATH}" "${SINGBOX_BIN_PATH}" &&
+    storage_system_link_is_owned "${SINGBOX_SERVICE_LINK_PATH}" "${SINGBOX_SERVICE_FILE}" &&
+    storage_system_link_is_owned "${SB_DATA_ROOT}/bin/libcronet.so" "${SB_DATA_ROOT}/lib/libcronet.so" || {
+      managed_uninstall_report_error '系统核心或服务入口不属于当前安装，未开始卸载。'
+      return 1
+    }
   component_state=$(managed_component_state_json) || {
     managed_uninstall_report_error "高级组件 state 无法安全读取，未开始卸载；请先检查 ${SB_COMPONENT_STATE_FILE}。"
     return 1
@@ -23459,6 +23552,9 @@ perform_singbox_runtime_uninstall() {
   fi
   systemctl stop sing-box &>/dev/null || true
   systemctl disable sing-box &>/dev/null || true
+  storage_remove_system_link "${SINGBOX_SERVICE_LINK_PATH}" "${SINGBOX_SERVICE_FILE}" || return 1
+  storage_remove_system_link "${SINGBOX_LINK_PATH}" "${SINGBOX_BIN_PATH}" || return 1
+  storage_remove_system_link "${SB_DATA_ROOT}/bin/libcronet.so" "${SB_DATA_ROOT}/lib/libcronet.so" || return 1
   rm -f "${SINGBOX_SERVICE_FILE}"
   systemctl daemon-reload
   rm -f "${SINGBOX_BIN_PATH}"
@@ -23480,14 +23576,23 @@ perform_singbox_runtime_uninstall() {
     fi
   fi
   managed_uninstall_remove_project_state || return 1
+  [[ ! -L "${SB_DATA_ROOT}/modules" ]] || return 1
+  rm -rf -- "${SB_DATA_ROOT}/modules" || return 1
   print_success "sing-box 服务、二进制和配置目录已彻底删除。"
+  print_info "管理命令、日志及恢复备份仍保留在 ${SB_DATA_ROOT}。"
 }
 
 perform_full_uninstall() {
   managed_uninstall_acquire_guard || return 1
+  storage_system_link_is_owned "${SBV_LINK_PATH}" "${SBV_BIN_PATH}" || {
+    managed_uninstall_report_error '全局 sbv 入口不属于当前安装，未开始卸载。'
+    return 1
+  }
   perform_singbox_runtime_uninstall || return 1
+  storage_remove_system_link "${SBV_LINK_PATH}" "${SBV_BIN_PATH}" || return 1
   rm -f "${SBV_BIN_PATH}"
   print_success "全局命令 sbv 已删除。"
+  print_info "迁移记录、日志与恢复备份保留在 ${SB_DATA_ROOT}；需要时可人工归档后删除。"
 }
 
 uninstall_singbox() {
@@ -23507,7 +23612,12 @@ uninstall_singbox() {
 uninstall_script() {
   local deleted_cfg="n"
   managed_uninstall_acquire_guard || return 1
-  read -rp "是否同时删除项目配置文件目录 (/root/sing-box-vps)? [y/N]: " del_cfg
+  storage_system_link_is_owned "${SBV_LINK_PATH}" "${SBV_BIN_PATH}" || {
+    managed_uninstall_report_error "全局 sbv 入口不属于当前安装，未开始卸载。"
+    return 1
+  }
+  print_warn "删除配置会影响保留服务的下次启动；默认只删除管理脚本。"
+  read -rp "是否同时删除项目配置文件目录 (${SB_PROJECT_DIR})? [y/N]: " del_cfg
   if [[ "${del_cfg}" =~ ^[Yy]$ ]]; then
     local component_state redirect_policy_plan tproxy_policy_plan
     component_state=$(managed_component_state_json) || {
@@ -23540,6 +23650,7 @@ uninstall_script() {
   else
     log_info "正在删除全局命令 sbv..."
   fi
+  storage_remove_system_link "${SBV_LINK_PATH}" "${SBV_BIN_PATH}" || return 1
   rm -f "${SBV_BIN_PATH}"
   if [[ "${deleted_cfg}" == "y" ]]; then
     print_success "管理脚本已卸载。"
@@ -24609,7 +24720,7 @@ remove_protocol_batch() (
     log_warn "存在未完成的管理事务；请先恢复事务。本次未修改。"
     return 1
   fi
-  snapshot_dir=$(mktemp -d) || return 1
+  snapshot_dir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${snapshot_dir}"' EXIT
   trap 'log_warn "批量移除已中断；此前已提交项保留，请检查最后一项事务的最终状态。"; exit 130' INT
   trap 'log_warn "批量移除已中断；此前已提交项保留，请检查最后一项事务的最终状态。"; exit 143' TERM
@@ -25508,7 +25619,7 @@ validate_http_tls_state_json() {
 read_public_certificate_pem() {
   local certificate_path=${1:-} staged certificate_size certificate_pem
   [[ -n "${certificate_path}" && -f "${certificate_path}" && -r "${certificate_path}" ]] || return 1
-  staged=$(mktemp) || return 1
+  staged=$(storage_mktemp) || return 1
   if ! head -c 1048577 -- "${certificate_path}" > "${staged}"; then
     rm -f -- "${staged}"
     return 1
@@ -26075,7 +26186,7 @@ build_trojan_subman_links_and_warnings_json() (
   [[ $# -ge 1 && $# -le 2 ]] || return 1
   store_file=$(plain_proxy_structured_store_file trojan) || return 1
   snapshot=$(structured_instance_store_snapshot_json trojan "${store_file}") || return 1
-  snapshot_file=$(mktemp) || return 1
+  snapshot_file=$(storage_mktemp) || return 1
   trap 'rm -f -- "${snapshot_file}"' EXIT
   printf '%s\n' "${snapshot}" > "${snapshot_file}" || return 1
   instance_id=${2:-$(jq -er '.default_instance_id' <<< "${snapshot}")}
@@ -26157,7 +26268,7 @@ push_subman_trojan_instance() {
   # SubMan mutation. Certificate-trust users are intentionally excluded here:
   # their URI is skipped because SubMan cannot carry the custom trust, while
   # their certificate file must not become a sync prerequisite.
-  producer_file=$(mktemp) || { SUBMAN_TROJAN_FAILED=1; return 1; }
+  producer_file=$(storage_mktemp) || { SUBMAN_TROJAN_FAILED=1; return 1; }
   jq --arg id "${instance_id}" \
     '. as $root | ($root.instances | map(select(.id == $id and .client_trust == "system"))) as $instances |
      $root | .default_instance_id=$id | .instances=$instances' <<< "${snapshot}" > "${producer_file}" || {
@@ -26178,7 +26289,7 @@ push_subman_trojan_instance() {
     fi
   fi
   rm -f -- "${producer_file}" || { SUBMAN_TROJAN_FAILED=1; return 1; }
-  snapshot_file=$(mktemp) || { SUBMAN_TROJAN_FAILED=1; return 1; }
+  snapshot_file=$(storage_mktemp) || { SUBMAN_TROJAN_FAILED=1; return 1; }
   printf '%s\n' "${snapshot}" > "${snapshot_file}" || { rm -f -- "${snapshot_file}"; SUBMAN_TROJAN_FAILED=1; return 1; }
   users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || { rm -f -- "${snapshot_file}"; SUBMAN_TROJAN_FAILED=1; return 1; }
   while IFS= read -r user_name; do
@@ -26292,7 +26403,7 @@ build_vmess_subman_uri_from_store() (
     return 31
   fi
   tag=$(jq -r --arg user "${user_name}" '"vmess-" + .id + "-user-" + ($user | @base64)' <<< "${instance}") || return 1
-  filtered_file=$(mktemp) || return 1
+  filtered_file=$(storage_mktemp) || return 1
   trap 'rm -f -- "${filtered_file}"' EXIT
   jq -e --arg id "${instance_id}" '.instances |= map(select(.id == $id)) | .default_instance_id=$id' \
     <<< "${snapshot}" > "${filtered_file}" || return 1
@@ -26346,7 +26457,7 @@ push_subman_vmess_instance() {
   if ! listener_address_is_wildcard "$(jq -r '.listen.address' <<< "${instance}")"; then
     server=$(jq -r '.listen.address' <<< "${instance}") || return 1
   fi
-  snapshot_file=$(mktemp) || { SUBMAN_VMESS_FAILED=1; return 1; }; printf '%s\n' "${snapshot}" > "${snapshot_file}" || { rm -f -- "${snapshot_file}"; SUBMAN_VMESS_FAILED=1; return 1; }
+  snapshot_file=$(storage_mktemp) || { SUBMAN_VMESS_FAILED=1; return 1; }; printf '%s\n' "${snapshot}" > "${snapshot_file}" || { rm -f -- "${snapshot_file}"; SUBMAN_VMESS_FAILED=1; return 1; }
   users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || { rm -f -- "${snapshot_file}"; SUBMAN_VMESS_FAILED=1; return 1; }
   while IFS= read -r user_name; do
     [[ -n "${user_name}" ]] || continue
@@ -26449,7 +26560,7 @@ build_vless_plain_subman_uri_from_store() (
     return 32
   fi
   tag=$(jq -r --arg user "${user_name}" '"vless-plain-" + .id + "-user-" + ($user | @base64)' <<< "${instance}") || return 1
-  filtered_file=$(mktemp) || return 1
+  filtered_file=$(storage_mktemp) || return 1
   trap 'rm -f -- "${filtered_file}"' EXIT
   jq -e --arg id "${instance_id}" '.instances |= map(select(.id == $id)) | .default_instance_id=$id' <<< "${snapshot}" > "${filtered_file}" || return 1
   outbound=$(build_vless_plain_client_outbounds_from_store "${filtered_file}" "${server}" | select_subman_outbound_by_tag "${tag}") || return 1
@@ -26494,7 +26605,7 @@ push_subman_vless_plain_instance() {
   if ! listener_address_is_wildcard "$(jq -r '.listen.address' <<< "${instance}")"; then
     server=$(jq -r '.listen.address' <<< "${instance}") || return 1
   fi
-  snapshot_file=$(mktemp) || { SUBMAN_VLESS_PLAIN_FAILED=1; return 1; }; printf '%s\n' "${snapshot}" > "${snapshot_file}" || { rm -f -- "${snapshot_file}"; SUBMAN_VLESS_PLAIN_FAILED=1; return 1; }
+  snapshot_file=$(storage_mktemp) || { SUBMAN_VLESS_PLAIN_FAILED=1; return 1; }; printf '%s\n' "${snapshot}" > "${snapshot_file}" || { rm -f -- "${snapshot_file}"; SUBMAN_VLESS_PLAIN_FAILED=1; return 1; }
   users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || { rm -f -- "${snapshot_file}"; SUBMAN_VLESS_PLAIN_FAILED=1; return 1; }
   while IFS= read -r user_name; do
     [[ -n "${user_name}" ]] || continue
@@ -26580,7 +26691,7 @@ push_subman_shadowsocks_instance() {
     server=${instance_address}
   fi
   if ! outbounds_text=$(
-    temporary=$(mktemp) || exit 1
+    temporary=$(storage_mktemp) || exit 1
     cleanup_snapshot_file() {
       local cleanup_status=$?
       rm -f -- "${temporary}"
@@ -26751,7 +26862,7 @@ build_hy2_subman_uri_from_store() (
     return 41
   fi
   tag=$(jq -r --arg user "${user_name}" '"hy2-" + .id + "-user-" + ($user | @base64)' <<< "${instance}") || return 1
-  filtered_file=$(mktemp) || return 1
+  filtered_file=$(storage_mktemp) || return 1
   trap 'rm -f -- "${filtered_file}"' EXIT
   jq -e --arg id "${instance_id}" \
     '.instances |= map(select(.id == $id)) | .default_instance_id=$id' \
@@ -26786,7 +26897,7 @@ build_hy2_subman_links_and_warnings_json() (
   [[ $# -ge 1 && $# -le 2 ]] || return 1
   store_file=$(plain_proxy_structured_store_file hy2) || return 1
   snapshot=$(structured_instance_store_snapshot_json hy2 "${store_file}") || return 1
-  snapshot_file=$(mktemp) || return 1
+  snapshot_file=$(storage_mktemp) || return 1
   trap 'rm -f -- "${snapshot_file}"' EXIT
   printf '%s\n' "${snapshot}" > "${snapshot_file}" || return 1
   instance_id=${2:-$(jq -er '.default_instance_id' <<< "${snapshot}")}
@@ -26871,7 +26982,7 @@ push_subman_hy2_instance() {
   fi
   certificate_path=$(jq -r '.tls.certificate_path // ""' <<< "${instance}") || { SUBMAN_HY2_FAILED=1; return 1; }
   ed25519_warning=$(hy2_ed25519_share_warning_json "${certificate_path}") || { SUBMAN_HY2_FAILED=1; return 1; }
-  snapshot_file=$(mktemp) || { SUBMAN_HY2_FAILED=1; return 1; }
+  snapshot_file=$(storage_mktemp) || { SUBMAN_HY2_FAILED=1; return 1; }
   printf '%s\n' "${snapshot}" > "${snapshot_file}" || { rm -f -- "${snapshot_file}"; SUBMAN_HY2_FAILED=1; return 1; }
   users_text=$(jq -r '.authentication.users[].name' <<< "${instance}") || { rm -f -- "${snapshot_file}"; SUBMAN_HY2_FAILED=1; return 1; }
   while IFS= read -r user_name; do
@@ -26989,7 +27100,7 @@ build_subman_raw_for_protocol() (
       node_name_digests=$(structured_node_user_digests "${snapshot}" "${instance_id}") || return 1
     fi
     node_name=$(structured_node_display_name "${protocol}" "${snapshot}" "${instance_id}" "${user_name}" "${address_label}" "${node_name_digests}") || return 1
-    snapshot_file=$(mktemp) || return 1
+    snapshot_file=$(storage_mktemp) || return 1
     trap 'rm -f -- "${snapshot_file}"' EXIT
     printf '%s\n' "${snapshot}" > "${snapshot_file}" || return 1
     case "${protocol}" in
@@ -27225,8 +27336,8 @@ subman_api_request() {
     return 1
   fi
   endpoint="${api_url}${path}"
-  tmp_dir=${TMPDIR:-/tmp}
-  if ! request_dir=$(mktemp -d "${tmp_dir%/}/subman-api.XXXXXX"); then
+  tmp_dir="${SB_DATA_ROOT}/tmp"
+  if ! request_dir=$(storage_mktemp -d "${tmp_dir%/}/subman-api.XXXXXX"); then
     subman_set_client_error "temporary_file_failed" "operator-repair"
     return 1
   fi
@@ -27918,7 +28029,7 @@ build_client_hy2_outbounds() (
   public_ip=${public_ip:-$(get_public_ip)}
   [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
   snapshot=$(structured_instance_store_snapshot_json hy2 "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   instance_ids_file="${tmpdir}/instance-ids"
   output_file="${tmpdir}/outbounds.jsonl"
@@ -27926,7 +28037,7 @@ build_client_hy2_outbounds() (
   jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}" > "${instance_ids_file}" || return 1
   while IFS= read -r -d '' instance_id; do
     [[ -n "${instance_id}" ]] || return 1
-    instance_file=$(mktemp "${tmpdir}/store.XXXXXX") || return 1
+    instance_file=$(storage_mktemp "${tmpdir}/store.XXXXXX") || return 1
     jq --arg id "${instance_id}" '. as $root | ($root.instances | map(select(.id == $id))) as $instances | $root | .default_instance_id=$id | .instances=$instances' <<< "${snapshot}" > "${instance_file}" || return 1
     listen_address=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .listen.address' <<< "${snapshot}") || return 1
     if listener_address_is_wildcard "${listen_address}"; then
@@ -27941,7 +28052,7 @@ build_client_hy2_outbounds() (
       esac
     fi
     [[ -n "${server_address}" ]] || return 1
-    raw_file=$(mktemp "${tmpdir}/raw.XXXXXX") || return 1
+    raw_file=$(storage_mktemp "${tmpdir}/raw.XXXXXX") || return 1
     jq -c --arg server "${server_address}" '
       .instances[] as $instance | $instance.authentication.users[] as $user |
       {type:"hysteria2",tag:("hy2-" + $instance.id + "-user-" + ($user.name | @base64)),server:$server,
@@ -28024,7 +28135,7 @@ build_client_anytls_outbounds() (
   public_ip=${public_ip:-$(get_public_ip)}
   [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
   snapshot=$(structured_instance_store_snapshot_json anytls "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   instance_ids_file="${tmpdir}/instance-ids"
   output_file="${tmpdir}/outbounds.jsonl"
@@ -28032,7 +28143,7 @@ build_client_anytls_outbounds() (
   jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}" > "${instance_ids_file}" || return 1
   while IFS= read -r -d '' instance_id; do
     [[ -n "${instance_id}" ]] || return 1
-    instance_file=$(mktemp "${tmpdir}/store.XXXXXX") || return 1
+    instance_file=$(storage_mktemp "${tmpdir}/store.XXXXXX") || return 1
     jq --arg id "${instance_id}" '
       . as $root |
       ($root.instances | map(select(.id == $id))) as $instances |
@@ -28071,8 +28182,8 @@ build_anytls_client_outbounds_from_store() (
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   validate_structured_instance_store anytls "${store_file}" || return 1
   snapshot=$(structured_instance_store_snapshot_json anytls "${store_file}") || return 1
-  raw_file=$(mktemp) || return 1
-  output_file=$(mktemp) || {
+  raw_file=$(storage_mktemp) || return 1
+  output_file=$(storage_mktemp) || {
     rm -f -- "${raw_file}"
     return 1
   }
@@ -28244,7 +28355,7 @@ build_client_plain_proxy_outbounds() (
   [[ -n "${instance_ids_raw}" ]] || return 1
   mapfile -t instance_ids <<< "${instance_ids_raw}"
   [[ ${#instance_ids[@]} -gt 0 ]] || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
 
   for instance_id in "${instance_ids[@]}"; do
@@ -28291,7 +28402,7 @@ build_client_trojan_outbounds() (
 
   store_file=$(plain_proxy_structured_store_file trojan) || return 1
   snapshot=$(structured_instance_store_snapshot_json trojan "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   instance_ids_file="${tmpdir}/instance-ids"
   output_file="${tmpdir}/outbounds.jsonl"
@@ -28299,7 +28410,7 @@ build_client_trojan_outbounds() (
   jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}" > "${instance_ids_file}" || return 1
   while IFS= read -r -d '' instance_id; do
     [[ -n "${instance_id}" ]] || return 1
-    instance_file=$(mktemp "${tmpdir}/store.XXXXXX") || return 1
+    instance_file=$(storage_mktemp "${tmpdir}/store.XXXXXX") || return 1
     jq --arg id "${instance_id}" '
       . as $root |
       ($root.instances | map(select(.id == $id))) as $instances |
@@ -28334,8 +28445,8 @@ build_trojan_client_outbounds_from_store() (
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   validate_structured_instance_store trojan "${store_file}" || return 1
   snapshot=$(structured_instance_store_snapshot_json trojan "${store_file}") || return 1
-  raw_file=$(mktemp) || return 1
-  output_file=$(mktemp) || {
+  raw_file=$(storage_mktemp) || return 1
+  output_file=$(storage_mktemp) || {
     rm -f -- "${raw_file}"
     return 1
   }
@@ -28406,14 +28517,14 @@ build_client_vmess_outbounds() (
   local instance_id listen_address server_address expected_count output_count
   store_file=$(plain_proxy_structured_store_file vmess) || return 1
   snapshot=$(structured_instance_store_snapshot_json vmess "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   instance_ids_file="${tmpdir}/instance-ids"; output_file="${tmpdir}/outbounds.jsonl"
   : > "${output_file}" || return 1
   jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}" > "${instance_ids_file}" || return 1
   while IFS= read -r -d '' instance_id; do
     [[ -n "${instance_id}" ]] || return 1
-    instance_file=$(mktemp "${tmpdir}/store.XXXXXX") || return 1
+    instance_file=$(storage_mktemp "${tmpdir}/store.XXXXXX") || return 1
     jq --arg id "${instance_id}" '. as $root | ($root.instances | map(select(.id == $id))) as $instances | $root | .default_instance_id=$id | .instances=$instances' <<< "${snapshot}" > "${instance_file}" || return 1
     listen_address=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .listen.address' <<< "${snapshot}") || return 1
     case "${listen_address}" in 0.0.0.0|::) server_address=${public_ip:-$(get_public_ip)} ;; *) server_address=${listen_address} ;; esac
@@ -28434,8 +28545,8 @@ build_vmess_client_outbounds_from_store() (
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   validate_structured_instance_store vmess "${store_file}" || return 1
   snapshot=$(structured_instance_store_snapshot_json vmess "${store_file}") || return 1
-  raw_file=$(mktemp) || return 1
-  output_file=$(mktemp) || { rm -f -- "${raw_file}"; return 1; }
+  raw_file=$(storage_mktemp) || return 1
+  output_file=$(storage_mktemp) || { rm -f -- "${raw_file}"; return 1; }
   trap 'rm -f -- "${raw_file}" "${output_file}"' EXIT
   # V2Ray QUIC selects the transport socket, but does not turn a proxy
   # outbound into a UDP-only service.  Keep both proxy networks enabled; the
@@ -28479,14 +28590,14 @@ build_client_vless_plain_outbounds() (
   local instance_id listen_address server_address expected_count output_count
   store_file=$(plain_proxy_structured_store_file vless-plain) || return 1
   snapshot=$(structured_instance_store_snapshot_json vless-plain "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   instance_ids_file="${tmpdir}/instance-ids"; output_file="${tmpdir}/outbounds.jsonl"
   : > "${output_file}" || return 1
   jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}" > "${instance_ids_file}" || return 1
   while IFS= read -r -d '' instance_id; do
     [[ -n "${instance_id}" ]] || return 1
-    instance_file=$(mktemp "${tmpdir}/store.XXXXXX") || return 1
+    instance_file=$(storage_mktemp "${tmpdir}/store.XXXXXX") || return 1
     jq --arg id "${instance_id}" '. as $root | ($root.instances | map(select(.id == $id))) as $instances | $root | .default_instance_id=$id | .instances=$instances' <<< "${snapshot}" > "${instance_file}" || return 1
     listen_address=$(jq -er --arg id "${instance_id}" '.instances[] | select(.id == $id) | .listen.address' <<< "${snapshot}") || return 1
     case "${listen_address}" in 0.0.0.0|::) server_address=${public_ip:-$(get_public_ip)} ;; *) server_address=${listen_address} ;; esac
@@ -28507,8 +28618,8 @@ build_vless_plain_client_outbounds_from_store() (
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   validate_structured_instance_store vless-plain "${store_file}" || return 1
   snapshot=$(structured_instance_store_snapshot_json vless-plain "${store_file}") || return 1
-  raw_file=$(mktemp) || return 1
-  output_file=$(mktemp) || { rm -f -- "${raw_file}"; return 1; }
+  raw_file=$(storage_mktemp) || return 1
+  output_file=$(storage_mktemp) || { rm -f -- "${raw_file}"; return 1; }
   trap 'rm -f -- "${raw_file}" "${output_file}"' EXIT
   # Like VMess, VLESS QUIC uses UDP for the transport socket while the proxy
   # outbound may still carry TCP streams and UDP packets.
@@ -28688,8 +28799,8 @@ shadowsocks_client_psk() (
   esac
   [[ -n "${psk}" ]] || return 1
   command -v openssl >/dev/null 2>&1 || return 1
-  decoded_file=$(mktemp) || return 1
-  digest_file=$(mktemp) || {
+  decoded_file=$(storage_mktemp) || return 1
+  digest_file=$(storage_mktemp) || {
     rm -f -- "${decoded_file}"
     return 1
   }
@@ -28711,7 +28822,7 @@ build_client_shadowsocks_outbounds() (
   store_file=$(plain_proxy_structured_store_file shadowsocks) || return 1
   [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
   snapshot=$(structured_instance_store_snapshot_json shadowsocks "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   instance_ids_file="${tmpdir}/instance-ids"
   output_file="${tmpdir}/outbounds.jsonl"
@@ -28719,7 +28830,7 @@ build_client_shadowsocks_outbounds() (
   jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}" > "${instance_ids_file}" || return 1
   while IFS= read -r -d '' instance_id; do
     [[ -n "${instance_id}" ]] || return 1
-    instance_file=$(mktemp "${tmpdir}/store.XXXXXX") || return 1
+    instance_file=$(storage_mktemp "${tmpdir}/store.XXXXXX") || return 1
     jq --arg id "${instance_id}" '
       . as $root |
       ($root.instances | map(select(.id == $id))) as $instances |
@@ -28743,8 +28854,8 @@ build_shadowsocks_client_outbounds_from_store() (
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   validate_structured_instance_store shadowsocks "${store_file}" || return 1
 
-  raw_file=$(mktemp) || return 1
-  output_file=$(mktemp) || {
+  raw_file=$(storage_mktemp) || return 1
+  output_file=$(storage_mktemp) || {
     rm -f -- "${raw_file}"
     return 1
   }
@@ -28810,7 +28921,7 @@ build_client_snell_outbounds() (
   public_ip=${public_ip:-$(get_public_ip)}
   [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
   snapshot=$(structured_instance_store_snapshot_json snell "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   instance_ids_file="${tmpdir}/instance-ids"; output_file="${tmpdir}/outbounds.jsonl"; : > "${output_file}" || return 1
   jq -j '.instances[] | .id, "\u0000"' <<< "${snapshot}" > "${instance_ids_file}" || return 1
@@ -28869,7 +28980,7 @@ build_client_tuic_outbounds() (
   public_ip=${public_ip:-$(get_public_ip)}
   [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
   snapshot=$(structured_instance_store_snapshot_json tuic "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   instance_ids_file="${tmpdir}/instance-ids"
   output_file="${tmpdir}/outbounds.jsonl"
@@ -28955,7 +29066,7 @@ build_client_hysteria_outbounds() (
   public_ip=${public_ip:-$(get_public_ip)}
   [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
   snapshot=$(structured_instance_store_snapshot_json hysteria "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   output_file="${tmpdir}/outbounds.jsonl"; : > "${output_file}" || return 1
   while IFS= read -r -d '' instance_id; do
@@ -29012,7 +29123,7 @@ build_client_naive_outbounds() (
   public_ip=${public_ip:-$(get_public_ip)}
   [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
   snapshot=$(structured_instance_store_snapshot_json naive "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   output_file="${tmpdir}/outbounds.jsonl"
   : > "${output_file}" || return 1
@@ -29111,7 +29222,7 @@ build_client_shadowtls_bundle_json() (
   public_ip=${public_ip:-$(get_public_ip)}
   [[ -n "${public_ip}" && "${public_ip}" != *[[:space:]@/?#%]* ]] || return 1
   snapshot=$(structured_instance_store_snapshot_json shadowtls "${store_file}") || return 1
-  tmpdir=$(mktemp -d) || return 1
+  tmpdir=$(storage_mktemp -d) || return 1
   trap 'rm -rf -- "${tmpdir}"' EXIT
   records_file="${tmpdir}/records.jsonl"
   bundle_file="${tmpdir}/bundle.json"
@@ -30472,7 +30583,7 @@ create_agent_upgrade_backup() {
   if ! mkdir -p "${SB_UPGRADE_BACKUP_ROOT}" || ! chmod 700 "${SB_UPGRADE_BACKUP_ROOT}"; then
     return 1
   fi
-  backup_dir=$(mktemp -d "${SB_UPGRADE_BACKUP_ROOT}/upgrade-${current_version}-to-${target_version}.XXXXXXXX") || return 1
+  backup_dir=$(storage_mktemp -d "${SB_UPGRADE_BACKUP_ROOT}/upgrade-${current_version}-to-${target_version}.XXXXXXXX") || return 1
   if ! chmod 700 "${backup_dir}"; then
     rm -rf -- "${backup_dir}"
     return 1
@@ -30621,7 +30732,7 @@ write_agent_upgrade_transaction_result() {
     --argjson history "${status_history_json}" \
     '$history + [{status: $status, at: $at}]' <<< '{}') || return 1
 
-  temp_file=$(mktemp "${backup_dir}/.transaction-result.XXXXXXXX") || return 1
+  temp_file=$(storage_mktemp "${backup_dir}/.transaction-result.XXXXXXXX") || return 1
   if ! jq -n \
     --arg schema_version "1.0" \
     --arg transaction_id "${transaction_id}" \
@@ -30867,7 +30978,7 @@ agent_upgrade_cli() {
     return 1
   fi
 
-  if ! operation_log=$(mktemp); then
+  if ! operation_log=$(storage_mktemp); then
     transaction_status="failed"
     transaction_rollback_result="not_attempted"
     if write_agent_upgrade_transaction_result \
@@ -31251,8 +31362,8 @@ agent_warp_json() {
 agent_singbox_check_json() {
   local stdout_file stderr_file exit_code binary_version
 
-  stdout_file=$(mktemp)
-  stderr_file=$(mktemp)
+  stdout_file=$(storage_mktemp)
+  stderr_file=$(storage_mktemp)
 
   if "${SINGBOX_BIN_PATH}" check -c "${SINGBOX_CONFIG_FILE}" > "${stdout_file}" 2> "${stderr_file}"; then
     exit_code=0
@@ -31800,7 +31911,7 @@ agent_trojan_link_json() (
   links=$(jq -c '.links' <<< "${link_result}") || return 1
   warnings=$(jq -c '.warnings' <<< "${link_result}") || return 1
 
-  isolated_store=$(mktemp) || return 1
+  isolated_store=$(storage_mktemp) || return 1
   trap 'rm -f -- "${isolated_store}"' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
@@ -31849,7 +31960,7 @@ agent_vmess_link_json() (
   case "${SB_MIXED_LISTEN_ADDRESS:-}" in 0.0.0.0|::) ;; "") return 1 ;; *) server=${SB_MIXED_LISTEN_ADDRESS} ;; esac
   summary=$(agent_vmess_node_json "${server}") || return 1
   links=$(build_vmess_links_json "${server}" "${instance_id}") || return 1
-  isolated_store=$(mktemp) || return 1
+  isolated_store=$(storage_mktemp) || return 1
   trap 'rm -f -- "${isolated_store}"' EXIT
   jq --arg id "${instance_id}" '. as $root | ($root.instances | map(select(.id == $id))) as $instances | $root | .default_instance_id=$id | .instances=$instances' <<< "${snapshot}" > "${isolated_store}" || return 1
   outbounds=$(build_vmess_client_outbounds_from_store "${isolated_store}" "${server}") || return 1
@@ -31887,7 +31998,7 @@ agent_vless_plain_link_json() (
   case "${SB_MIXED_LISTEN_ADDRESS:-}" in 0.0.0.0|::) ;; "") return 1 ;; *) server=${SB_MIXED_LISTEN_ADDRESS} ;; esac
   summary=$(agent_vless_plain_node_json "${server}") || return 1
   links=$(build_vless_plain_links_json "${server}" "${instance_id}") || return 1
-  isolated_store=$(mktemp) || return 1
+  isolated_store=$(storage_mktemp) || return 1
   trap 'rm -f -- "${isolated_store}"' EXIT
   jq --arg id "${instance_id}" '. as $root | ($root.instances | map(select(.id == $id))) as $instances | $root | .default_instance_id=$id | .instances=$instances' <<< "${snapshot}" > "${isolated_store}" || return 1
   outbounds=$(build_vless_plain_client_outbounds_from_store "${isolated_store}" "${server}") || return 1
@@ -31956,7 +32067,7 @@ agent_anytls_link_json() (
   esac
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   summary=$(agent_anytls_node_json "${server}") || return 1
-  isolated_store=$(mktemp) || return 1
+  isolated_store=$(storage_mktemp) || return 1
   trap 'rm -f -- "${isolated_store}"' EXIT
   jq --arg id "${instance_id}" \
     '. as $root | ($root.instances | map(select(.id == $id))) as $instances |
@@ -32100,7 +32211,7 @@ agent_snell_link_json() (
   esac
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   summary=$(agent_snell_node_json "${public_ip}") || return 1
-  isolated_store=$(mktemp) || return 1
+  isolated_store=$(storage_mktemp) || return 1
   trap 'rm -f -- "${isolated_store}"' EXIT
   jq --arg id "${instance_id}" '. as $root | ($root.instances | map(select(.id == $id))) as $instances | $root | .default_instance_id=$id | .instances=$instances' <<< "${snapshot}" > "${isolated_store}" || return 1
   outbounds=$(build_client_snell_outbounds "${server}" "${isolated_store}") || return 1
@@ -32157,7 +32268,7 @@ agent_tuic_link_json() (
   esac
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   summary=$(agent_tuic_node_json "${public_ip}") || return 1
-  isolated_store=$(mktemp) || return 1
+  isolated_store=$(storage_mktemp) || return 1
   trap 'rm -f -- "${isolated_store}"' EXIT
   jq --arg id "${instance_id}" \
     '. as $root | ($root.instances | map(select(.id == $id))) as $instances |
@@ -32199,7 +32310,7 @@ agent_hysteria_link_json() (
   case "${SB_MIXED_LISTEN_ADDRESS:-}" in 0.0.0.0|::) server=${public_ip} ;; "") return 1 ;; *) server=${SB_MIXED_LISTEN_ADDRESS} ;; esac
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   summary=$(agent_hysteria_node_json "${public_ip}") || return 1
-  isolated_store=$(mktemp) || return 1
+  isolated_store=$(storage_mktemp) || return 1
   trap 'rm -f -- "${isolated_store}"' EXIT
   jq --arg id "${instance_id}" '. as $root | ($root.instances|map(select(.id==$id))) as $instances | $root|.default_instance_id=$id|.instances=$instances' <<< "${snapshot}" > "${isolated_store}" || return 1
   outbounds=$(build_client_hysteria_outbounds "${server}" "${isolated_store}") || return 1
@@ -32275,7 +32386,7 @@ agent_naive_link_json() (
   esac
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   summary=$(agent_naive_node_json "${public_ip}") || return 1
-  isolated_store=$(mktemp) || return 1
+  isolated_store=$(storage_mktemp) || return 1
   trap 'rm -f -- "${isolated_store}"' EXIT
   jq --arg id "${instance_id}" \
     '. as $root | ($root.instances | map(select(.id == $id))) as $instances |
@@ -32319,7 +32430,7 @@ agent_shadowtls_link_json() (
   case "${SB_MIXED_LISTEN_ADDRESS:-}" in 0.0.0.0|::) server=${public_ip} ;; "") return 1 ;; *) server=${SB_MIXED_LISTEN_ADDRESS} ;; esac
   [[ -n "${server}" && "${server}" != *[[:space:]@/?#%]* ]] || return 1
   summary=$(agent_shadowtls_node_json "${public_ip}") || return 1
-  isolated_store=$(mktemp) || return 1
+  isolated_store=$(storage_mktemp) || return 1
   trap 'rm -f -- "${isolated_store}"' EXIT
   jq --arg id "${instance_id}" '. as $root | ($root.instances|map(select(.id==$id))) as $instances | $root|.default_instance_id=$id|.instances=$instances' <<< "${snapshot}" > "${isolated_store}" || return 1
   bundle_json=$(build_client_shadowtls_bundle_json "${server}" "${isolated_store}") || return 1
@@ -32681,7 +32792,7 @@ agent_collect_nodes_json() {
     fi
   fi
   public_ip=$(get_public_ip)
-  tmpdir=$(mktemp -d)
+  tmpdir=$(storage_mktemp -d)
 
   trap 'rm -rf "${tmpdir:-}"' RETURN
 
@@ -33271,6 +33382,7 @@ acquire_managed_write_lock() {
       return 0
     fi
   else
+    storage_prepare_tmp || return $?
     (umask 077; touch -- "${lock_file}") || return $?
     exec {lock_descriptor}>"${lock_file}" || return $?
     opened_descriptor=y
@@ -33380,7 +33492,7 @@ instance_transaction_persist_result() (
   umask 077
   [[ ! -L "${directory}" ]] || return 1
   mkdir -p "${directory}" && chmod 700 "${directory}" || return $?
-  result=$(mktemp "${directory}/result-$(date -u +%Y%m%dT%H%M%SZ).XXXXXX.json") || return $?
+  result=$(storage_mktemp "${directory}/result-$(date -u +%Y%m%dT%H%M%SZ).XXXXXX.json") || return $?
   if ! instance_transaction_update_result "${result}" "${payload}"; then
     rm -f -- "${result}" || return 1
     return 1
@@ -33393,7 +33505,7 @@ instance_transaction_update_result() (
   [[ "${result}" == "${SB_PROJECT_DIR}.instance-transactions/"result-*.json &&
      -f "${result}" && ! -L "${result}" ]] || return 1
   umask 077
-  stage=$(mktemp "${result}.candidate.XXXXXX") || return $?
+  stage=$(storage_mktemp "${result}.candidate.XXXXXX") || return $?
   trap 'rm -f -- "${stage}"' EXIT
   jq --arg path "${result}" \
     '.transaction.result_path=$path | .transaction.result_persisted=true' \
@@ -34247,6 +34359,9 @@ agent_cli() {
   local service_command
 
   case "${command}" in
+    storage)
+      storage_cli "$@"
+      ;;
     help|-h|--help)
       if [[ $# -ne 0 ]]; then
         agent_cli_error "help" "invalid_arguments" "用法: sbv agent help"
@@ -34384,7 +34499,9 @@ agent_dispatch() {
   command=$(agent_command_name_from_args "$@")
   case "${1:-}" in
     capabilities|commands|schema) agent_cli "$@"; return $? ;;
+    storage) storage_cli "${@:2}"; return $? ;;
   esac
+  storage_require_current || return $?
   if [[ -e "${SB_ROUTING_TRANSACTION_DIR}" || -L "${SB_ROUTING_TRANSACTION_DIR}" ]]; then
     if [[ "${1:-}" != routing || "${2:-}" != recover ]]; then
       agent_cli_error "${command}" routing_transaction_pending "存在未完成的规则事务；请先执行 sbv routing recover --json --yes。"
@@ -34525,6 +34642,117 @@ command_catalog_json() {
 {
   "schema_version": 1,
   "operations": [
+    {
+      "id": "storage.status",
+      "command": "storage status",
+      "agent_command": "storage status",
+      "usage": "sbv storage status --json",
+      "summary": "存储布局、迁移状态与阻塞信息",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "none",
+      "input_contract": "fixed owned legacy paths; no arbitrary source/destination",
+      "service_impact": "none",
+      "docs": "Storage-Layout.md",
+      "reason": null,
+      "menu": "启动时迁移/恢复入口",
+      "parameters": [
+        {
+          "name": "--json",
+          "type": "boolean",
+          "required": true,
+          "description": "single JSON envelope"
+        }
+      ],
+      "cas": "none",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "storage.migrate",
+      "command": "storage migrate",
+      "agent_command": "storage migrate",
+      "usage": "sbv storage migrate --json --yes",
+      "summary": "迁移旧布局至统一私有目录",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "legacy_and_storage_exclusive",
+      "input_contract": "fixed owned legacy paths; no arbitrary source/destination",
+      "service_impact": "restart_possible",
+      "docs": "Storage-Layout.md",
+      "reason": null,
+      "menu": "启动时迁移/恢复入口",
+      "parameters": [
+        {
+          "name": "--json",
+          "type": "boolean",
+          "required": true,
+          "description": "single JSON envelope"
+        },
+        {
+          "name": "--yes",
+          "type": "boolean",
+          "required": true,
+          "description": "confirm migration and possible service restart"
+        }
+      ],
+      "cas": "journal",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
+    {
+      "id": "storage.recover",
+      "command": "storage recover",
+      "agent_command": "storage recover",
+      "usage": "sbv storage recover --json --yes",
+      "summary": "恢复未完成的目录迁移",
+      "automation": "structured",
+      "mutation": true,
+      "sensitive": false,
+      "confirmation": "--yes",
+      "concurrency": "legacy_and_storage_exclusive",
+      "input_contract": "fixed owned legacy paths; no arbitrary source/destination",
+      "service_impact": "restart_possible",
+      "docs": "Storage-Layout.md",
+      "reason": null,
+      "menu": "启动时迁移/恢复入口",
+      "parameters": [
+        {
+          "name": "--json",
+          "type": "boolean",
+          "required": true,
+          "description": "single JSON envelope"
+        },
+        {
+          "name": "--yes",
+          "type": "boolean",
+          "required": true,
+          "description": "confirm migration and possible service restart"
+        }
+      ],
+      "cas": "journal",
+      "output": {
+        "format": "json_envelope",
+        "sensitive": false
+      },
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
     {
       "id": "capabilities",
       "command": "capabilities",
@@ -37115,7 +37343,7 @@ plain_proxy_config_store_candidate() (
     return 1
   }
 
-  temp_dir=$(mktemp -d) || return $?
+  temp_dir=$(storage_mktemp -d) || return $?
   trap 'rm -rf -- "${temp_dir}"' EXIT
   trap 'return 130' INT
   trap 'return 143' TERM
@@ -37890,7 +38118,7 @@ shadowtls_config_store_candidate() (
   local config_file=${1:-${SINGBOX_CONFIG_FILE:-}} existing_file=${2:-} temp_dir inbound_json tag detour detour_id detour_port id name policy trust cert_path client_server_name
   local default_id="" old_revision=0 candidate_revision=0 existing_match base digest suffix existing_semantics new_semantics candidate_json
   [[ -n "${config_file}" && -f "${config_file}" && ! -L "${config_file}" ]] || return 1
-  temp_dir=$(mktemp -d) || return $?
+  temp_dir=$(storage_mktemp -d) || return $?
   trap 'rm -rf -- "${temp_dir}"' EXIT
   trap 'return 130' INT
   trap 'return 143' TERM
@@ -37999,7 +38227,7 @@ plain_proxy_structured_state_matches_config() (
   store_file=$(plain_proxy_structured_store_file "${protocol}" 2>/dev/null) || return 1
   [[ -f "${store_file}" && ! -L "${store_file}" ]] || return 1
   validate_structured_instance_store "${protocol}" "${store_file}" || return 1
-  temp_dir=$(mktemp -d) || return $?
+  temp_dir=$(storage_mktemp -d) || return $?
   trap 'rm -rf -- "${temp_dir}"' EXIT
   current=$(jq -cS '{default_instance_id,instances:(.instances | sort_by(.tag))}' "${store_file}") || return 1
   expected=$(plain_proxy_config_store_candidate "${protocol}" "${config_file}" "${store_file}") || return 1
@@ -38113,7 +38341,7 @@ structured_instance_store_candidate() (
   expected_revision=$(structured_instance_store_revision_arg "${5:-}") || {
     structured_instance_store_error candidate invalid_revision; return 1;
   }
-  temp_dir=$(mktemp -d) || return $?
+  temp_dir=$(storage_mktemp -d) || return $?
   trap 'if ! rm -rf -- "${temp_dir}"; then structured_instance_store_error candidate cleanup_failed; fi' EXIT
   trap 'return 130' INT
   trap 'return 143' TERM
@@ -38273,14 +38501,14 @@ publish_structured_instance_store() (
   [[ ! -e "${target}" || -f "${target}" ]] || return 1
   [[ ! -e "${backup}" || -f "${backup}" ]] || return 1
   phase=stage
-  staged=$(mktemp "${instance_dir}/.${protocol}.candidate.XXXXXX") || return $?
+  staged=$(storage_mktemp "${instance_dir}/.${protocol}.candidate.XXXXXX") || return $?
   temporary_files+=("${staged}")
   head -c 1048577 -- "${candidate_file}" > "${staged}" || return $?
   [[ "$(stat -c %s "${staged}")" -le 1048576 ]] || return 1
   validate_structured_instance_store "${protocol}" "${staged}" || return $?
   if [[ -f "${target}" ]]; then
     had_target=y
-    old_copy=$(mktemp "${instance_dir}/.${protocol}.previous.XXXXXX") || return $?
+    old_copy=$(storage_mktemp "${instance_dir}/.${protocol}.previous.XXXXXX") || return $?
     temporary_files+=("${old_copy}")
     cp -p -- "${target}" "${old_copy}" || return $?
     validate_structured_instance_store "${protocol}" "${old_copy}" || return $?
@@ -38328,14 +38556,14 @@ publish_structured_instance_store() (
   phase=backup
   if [[ -f "${backup}" ]]; then
     had_backup=y
-    old_backup_copy=$(mktemp "${instance_dir}/.${protocol}.previous-backup.XXXXXX") || return $?
+    old_backup_copy=$(storage_mktemp "${instance_dir}/.${protocol}.previous-backup.XXXXXX") || return $?
     temporary_files+=("${old_backup_copy}")
     cp -p -- "${backup}" "${old_backup_copy}" || return $?
   fi
   printf 'target=%s\nprevious=%s\nprevious_backup=%s\n' \
     "${target}" "${old_copy}" "${old_backup_copy}" > "${lock}/recovery" || return $?
   if [[ "${had_target}" == y ]]; then
-    backup_stage=$(mktemp "${instance_dir}/.${protocol}.backup.XXXXXX") || return $?
+    backup_stage=$(storage_mktemp "${instance_dir}/.${protocol}.backup.XXXXXX") || return $?
     temporary_files+=("${backup_stage}")
     cp -- "${old_copy}" "${backup_stage}" || return $?
     chmod 600 "${backup_stage}" || return $?
@@ -38360,7 +38588,7 @@ structured_instance_store_snapshot_json() (
   umask 077
   local protocol=${1:-} file=${2:-} staged snapshot status
   [[ -f "${file}" && ! -L "${file}" ]] || return 1
-  staged=$(mktemp) || return $?
+  staged=$(storage_mktemp) || return $?
   trap 'if ! rm -f -- "${staged}"; then structured_instance_store_error read cleanup_failed; fi' EXIT
   trap 'return 130' INT
   trap 'return 143' TERM
@@ -38561,7 +38789,7 @@ save_plain_proxy_structured_marker() {
   store_file=$(plain_proxy_structured_store_file "${protocol}") || return 1
   [[ -f "${store_file}" ]] || return 1
   validate_structured_instance_store "${protocol}" "${store_file}" || return 1
-  staged=$(mktemp "${state_file}.candidate.XXXXXX") || return 1
+  staged=$(storage_mktemp "${state_file}.candidate.XXXXXX") || return 1
   if ! {
     write_env_assignment "INSTALLED" "1"
     write_env_assignment "CONFIG_SCHEMA_VERSION" "2"
@@ -38668,7 +38896,7 @@ load_plain_proxy_structured_instance() {
 
   # NUL-delimited fields preserve embedded and trailing newlines in names and
   # credentials; the typed validator has already rejected NUL bytes.
-  stream_file=$(mktemp) || return 1
+  stream_file=$(storage_mktemp) || return 1
   if ! jq -j --arg id "${instance_id}" --arg protocol "${protocol}" '
       .instances[] | select(.id == $id) |
       [.id, .name, .tag, .listen.address, (.listen.port | tostring),
@@ -39982,7 +40210,7 @@ restore_protocol_state_layer_from_backup() {
   local state_dir_existed=$2
   local restore_candidate restore_previous
 
-  restore_candidate=$(mktemp -d "${SB_PROJECT_DIR}/.protocol-state-restore.XXXXXX") || return 1
+  restore_candidate=$(storage_mktemp -d "${SB_PROJECT_DIR}/.protocol-state-restore.XXXXXX") || return 1
   if [[ "${state_dir_existed}" == "y" ]]; then
     if ! cp -a "${backup_dir}/." "${restore_candidate}/"; then
       rm -rf "${restore_candidate}"
@@ -40063,7 +40291,7 @@ rebuild_protocol_state_from_config() {
   local shadowtls_inbound_count=0 shadowtls_candidate_file="" shadowtls_candidate_revision=0 shadowtls_state_file shadowtls_state_schema
   local backup_state_dir
 
-  backup_dir=$(mktemp -d) || return 1
+  backup_dir=$(storage_mktemp -d) || return 1
   backup_state_dir="${backup_dir}/state"
   if ! mkdir -p "${backup_state_dir}"; then
     rm -rf "${backup_dir}"
@@ -41284,7 +41512,7 @@ update_singbox_binary_preserving_config() {
     [[ "${reinstall_choice}" =~ ^[Yy]$ ]] || return 0
   fi
   before_service_state=$(systemctl is-active sing-box 2>/dev/null || true)
-  backup_dir=$(mktemp -d "$(dirname "${SINGBOX_BIN_PATH}")/.sing-box-update.XXXXXXXX") || return 1
+  backup_dir=$(storage_mktemp -d "$(dirname "${SINGBOX_BIN_PATH}")/.sing-box-update.XXXXXXXX") || return 1
   binary_backup="${backup_dir}/sing-box"
   library_backup_dir="${backup_dir}/library"
   if ! cp -p -- "${SINGBOX_BIN_PATH}" "${binary_backup}" ||
@@ -41571,6 +41799,11 @@ main() {
     -h|--help|help|agent) ;;
     *)
       check_root
+      if [[ $# -eq 0 ]]; then
+        storage_menu_gate || return $?
+      else
+        storage_require_current || return $?
+      fi
       if [[ $# -eq 0 ]]; then
         acquire_managed_write_lock exclusive allow-rules-recovery || return $?
       else
@@ -42340,14 +42573,14 @@ routing_policy_sync_instance_baseline() (
   [[ -e "${baseline_file}" || -L "${baseline_file}" ]] || return 0
   [[ -f "${baseline_file}" && ! -L "${baseline_file}" &&
      "$(stat -c %a "${baseline_file}")" == 600 ]] || return 1
-  candidate=$(mktemp "${SB_PROJECT_DIR}/.managed-config.generated.candidate.XXXXXX") || return 1
+  candidate=$(storage_mktemp "${SB_PROJECT_DIR}/.managed-config.generated.candidate.XXXXXX") || return 1
   trap '[[ -z "${candidate}" ]] || rm -f -- "${candidate}"; [[ -z "${validation_candidate}" ]] || rm -f -- "${validation_candidate}"' EXIT
   plain_proxy_instance_config_candidate "${protocol}" "${baseline_file}" "${old_store}" "${new_store}" \
     > "${candidate}" || return 1
   # Generated facts may legitimately refer to operator objects omitted from
   # this ownership record. Validate in the complete already-published context,
   # while persisting only the pure projection below.
-  validation_candidate=$(mktemp "${SB_PROJECT_DIR}/.managed-config.validation.candidate.XXXXXX") || return 1
+  validation_candidate=$(storage_mktemp "${SB_PROJECT_DIR}/.managed-config.validation.candidate.XXXXXX") || return 1
   chmod 600 "${validation_candidate}" || return 1
   merge_generated_config_with_live "${candidate}" "${SINGBOX_CONFIG_FILE}" "${baseline_file}" \
     > "${validation_candidate}" || return 1
@@ -42417,7 +42650,7 @@ routing_state_fingerprint() (
   [[ "${scope}" == all || "${scope}" == external || "${scope}" == without_media_cache ]] || return 1
   [[ ! -L "${SB_PROJECT_DIR}" ]] || return 1
   umask 077
-  workspace=$(mktemp -d /tmp/sbv-routing-fingerprint.XXXXXX) || return 1
+  workspace=$(storage_mktemp -d "${SB_DATA_ROOT}/tmp/sbv-routing-fingerprint.XXXXXX") || return 1
   trap 'rm -rf -- "${workspace}"' EXIT
   : > "${workspace}/paths"
   if [[ -d "${SB_PROJECT_DIR}" ]]; then
@@ -42468,7 +42701,7 @@ routing_state_fingerprint() (
 
 routing_restore_project_snapshot() (
   local snapshot=$1 saved_log directory="${SB_ROUTING_TRANSACTION_DIR}" had_log=n
-  saved_log=$(mktemp "${directory}/.current-log.XXXXXX") || return 1
+  saved_log=$(storage_mktemp "${directory}/.current-log.XXXXXX") || return 1
   trap 'rm -f -- "${saved_log}"' EXIT
   if [[ -e "${SBV_LOG_FILE}" || -L "${SBV_LOG_FILE}" ]]; then
     [[ -f "${SBV_LOG_FILE}" && ! -L "${SBV_LOG_FILE}" ]] || return 1
@@ -42491,7 +42724,7 @@ routing_restore_project_snapshot() (
 routing_nodes_json() (
   local workspace protocols protocol store snapshot ids id
   umask 077
-  workspace=$(mktemp -d /tmp/sbv-routing-nodes.XXXXXX) || return 1
+  workspace=$(storage_mktemp -d "${SB_DATA_ROOT}/tmp/sbv-routing-nodes.XXXXXX") || return 1
   trap 'rm -rf -- "${workspace}"' EXIT
   : > "${workspace}/nodes"
   if [[ ! -e "${SINGBOX_CONFIG_FILE}" && ! -e "${SB_PROTOCOL_INDEX_FILE}" ]]; then
@@ -42584,7 +42817,7 @@ routing_publish_file() (
   if [[ -f "${target}" ]] && cmp -s "${source}" "${target}"; then return 0; fi
   umask 077
   mkdir -p "$(dirname "${target}")" || return 1
-  candidate=$(mktemp "$(dirname "${target}")/.routing-write.XXXXXX") || return 1
+  candidate=$(storage_mktemp "$(dirname "${target}")/.routing-write.XXXXXX") || return 1
   trap 'rm -f -- "${candidate}"' EXIT
   cp -- "${source}" "${candidate}" && chmod 600 "${candidate}" || return 1
   if [[ -e "${target}" ]]; then
@@ -43276,7 +43509,7 @@ routing_management_menu() (
     routing_policy_recover || return 1
   fi
   command -v jq >/dev/null 2>&1 || { routing_notice WARN '规则管理需要 jq；请先安装协议以准备依赖。'; return 0; }
-  workspace=$(mktemp -d /tmp/sbv-routing-menu.XXXXXX) || return 1
+  workspace=$(storage_mktemp -d "${SB_DATA_ROOT}/tmp/sbv-routing-menu.XXXXXX") || return 1
   trap 'rm -rf -- "${workspace}"' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
@@ -43393,7 +43626,7 @@ agent_routing_cli() (
     return 1
   fi
   umask 077
-  workspace=$(mktemp -d /tmp/sbv-agent-routing.XXXXXX) || {
+  workspace=$(storage_mktemp -d "${SB_DATA_ROOT}/tmp/sbv-agent-routing.XXXXXX") || {
     agent_json_error staging_failed '无法建立私有规则工作目录。'; return 1;
   }
   trap 'rm -rf -- "${workspace}"' EXIT
@@ -43488,5 +43721,1087 @@ agent_routing_cli() (
     + (if $status==0 then {} else {error:"routing_operation_failed"} end)'
   [[ "${status}" == 0 ]]
 )
+# The data root is never snapshotted or replaced as a unit. Only runtime/ is.
+SB_STORAGE_READY_ROOT=''
+
+storage_directory_is_safe() {
+  local directory=${1:-} current mode owner metadata
+  [[ "${directory}" == /* && "${directory}" != *'/../'* &&
+     "${directory}" != *'/./'* && "${directory}" != *$'\n'* &&
+     "${directory}" != *$'\r'* ]] || return 1
+  current=${directory}
+  while :; do
+    [[ ! -L "${current}" ]] || return 1
+    if [[ -e "${current}" ]]; then
+      [[ -d "${current}" ]] || return 1
+      metadata=$(stat -c '%u:%a' -- "${current}") || return 1
+      owner=${metadata%%:*}; mode=${metadata#*:}
+      [[ "${owner}" == 0 && "${mode}" =~ ^[0-7]{3,4}$ ]] || return 1
+      # A root-owned sticky ancestor (e.g. /tmp in isolated fixtures) cannot
+      # replace a protected root-owned child; the managed directory itself
+      # must always reject group/world writes.
+      if (( (8#${mode} & 0022) != 0 )); then
+        [[ "${current}" != "${directory}" ]] && (( (8#${mode} & 01000) != 0 )) || return 1
+      fi
+    fi
+    [[ "${current}" != / ]] || break
+    current=${current%/*}
+    [[ -n "${current}" ]] || current=/
+  done
+}
+
+storage_private_directory() {
+  local directory=${1:-}
+  [[ "${EUID}" == 0 ]] || return 1
+  storage_directory_is_safe "${directory}" || return 1
+  (umask 077; mkdir -p -- "${directory}") || return 1
+  storage_directory_is_safe "${directory}" || return 1
+  chmod 0700 -- "${directory}" || return 1
+}
+
+storage_prepare_tmp() {
+  local metadata entry
+  if [[ "${SB_STORAGE_READY_ROOT:-}" == "${SB_DATA_ROOT}" ]]; then
+    # These two directories and their ancestry were fully validated in this
+    # shell before caching. Root owns the non-writable ancestors; recheck the
+    # actual write boundary on every use in one stat invocation.
+    [[ ! -L "${SB_DATA_ROOT}" && ! -L "${SB_DATA_ROOT}/tmp" ]] || return 1
+    metadata=$(LC_ALL=C stat -c '%u:%a:%F' -- "${SB_DATA_ROOT}" "${SB_DATA_ROOT}/tmp") || return 1
+    while IFS= read -r entry; do [[ "${entry}" == '0:700:directory' ]] || return 1; done <<< "${metadata}"
+    return 0
+  fi
+  [[ -n "${SB_ROOT_HOME:-}" && "${SB_ROOT_HOME}" == /* &&
+     "${SB_ROOT_HOME}" != / && "${SB_ROOT_HOME}" != *'%'* &&
+     "${SB_ROOT_HOME}" != *'"'* && "${SB_ROOT_HOME}" != *'\'* ]] || return 1
+  storage_private_directory "${SB_DATA_ROOT}" || return 1
+  storage_private_directory "${SB_DATA_ROOT}/tmp" || return 1
+  SB_STORAGE_READY_ROOT=${SB_DATA_ROOT}
+}
+
+storage_initialize() {
+  local directory
+  storage_prepare_tmp || return 1
+  for directory in bin lib runtime modules logs backups backups/upgrades systemd migrations; do
+    storage_private_directory "${SB_DATA_ROOT}/${directory}" || return 1
+  done
+  export TMPDIR="${SB_DATA_ROOT}/tmp"
+}
+
+# Call only from a subshell/child runner: auxiliary tools must not inherit the
+# operator's home or working directory for their default caches and state.
+storage_enter_module_workspace() {
+  local workspace=$1
+  [[ "${workspace}" == "${SB_DATA_ROOT}" || "${workspace}" == "${SB_DATA_ROOT}/"* ]] || return 1
+  storage_private_directory "${workspace}" || return 1
+  export HOME="${workspace}"
+  export XDG_CACHE_HOME="${workspace}/.cache"
+  export XDG_CONFIG_HOME="${workspace}/.config"
+  export XDG_STATE_HOME="${workspace}/.local/state"
+  cd -- "${workspace}" || return 1
+}
+
+# Preserve explicit same-directory staging, but put anonymous and legacy /tmp
+# workspaces under the private data root. Keep the real mktemp command visible
+# so existing fault-injection fixtures can exercise it.
+storage_mktemp() {
+  local argument template='' has_template=n
+  local -a arguments=()
+  storage_prepare_tmp || return 1
+  for argument in "$@"; do
+    case "${argument}" in
+      "${SB_DATA_ROOT}/"*) has_template=y ;;
+      /tmp/sbv-*|/tmp/sing-box-vps-state.*|/tmp/subman-api.*)
+        argument="${SB_DATA_ROOT}/tmp/${argument#/tmp/}"; has_template=y ;;
+      /*) has_template=y ;;
+      -*) ;;
+      *) template=${argument}; has_template=y ;;
+    esac
+    arguments+=("${argument}")
+  done
+  if [[ "${has_template}" == n ]]; then
+    arguments+=("${SB_DATA_ROOT}/tmp/tmp.XXXXXXXXXX")
+  elif [[ -n "${template}" && "${template}" != */* ]]; then
+    arguments=("${arguments[@]:0:${#arguments[@]}-1}" "${SB_DATA_ROOT}/tmp/${template}")
+  fi
+  TMPDIR="${SB_DATA_ROOT}/tmp" mktemp "${arguments[@]}"
+}
+
+storage_publish_system_link() {
+  local link=${1:-} target=${2:-} parent
+  [[ "${target}" == "${SB_DATA_ROOT}/"* && -f "${target}" && ! -L "${target}" ]] || return 1
+  parent=$(dirname -- "${link}") || return 1
+  storage_directory_is_safe "${parent}" || return 1
+  [[ -d "${parent}" ]] || return 1
+  if [[ -L "${link}" ]]; then
+    [[ "$(readlink -- "${link}")" == "${target}" ]] || return 1
+    return 0
+  fi
+  # Legacy regular files are replaced only by the migration transaction after
+  # its ownership checks and backup, never by this publishing helper.
+  [[ ! -e "${link}" ]] || return 1
+  # Creating the final symlink with ln is atomic and refuses a racing existing
+  # destination; it needs neither executable staging nor cross-filesystem mv.
+  ln -sT -- "${target}" "${link}" || return 1
+  [[ -L "${link}" && "$(readlink -- "${link}")" == "${target}" ]]
+}
+
+storage_publish_system_links() {
+  case "${1:-all}" in
+    sbv) storage_publish_system_link "${SBV_LINK_PATH}" "${SBV_BIN_PATH}" ;;
+    sing-box) storage_publish_system_link "${SINGBOX_LINK_PATH}" "${SINGBOX_BIN_PATH}" ;;
+    service) storage_publish_system_link "${SINGBOX_SERVICE_LINK_PATH}" "${SINGBOX_SERVICE_FILE}" ;;
+    all)
+      storage_publish_system_links sbv && storage_publish_system_links sing-box && storage_publish_system_links service
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+storage_remove_system_link() {
+  local link=${1:-} target=${2:-}
+  [[ "${target}" == "${SB_DATA_ROOT}/"* ]] || return 1
+  if [[ -L "${link}" ]]; then
+    [[ "$(readlink -- "${link}")" == "${target}" ]] || return 1
+    rm -f -- "${link}" || return 1
+  elif [[ -e "${link}" ]]; then
+    printf '[ERROR] 系统入口不属于当前安装，已保留：%s\n' "${link}" >&2
+    return 1
+  fi
+}
+
+storage_system_link_is_owned() {
+  local link=${1:-} target=${2:-}
+  [[ "${target}" == "${SB_DATA_ROOT}/"* ]] || return 1
+  [[ ! -e "${link}" && ! -L "${link}" ]] ||
+    [[ -L "${link}" && "$(readlink -- "${link}")" == "${target}" ]]
+}
+
+storage_publish_library_link() {
+  local library="${SB_DATA_ROOT}/lib/libcronet.so" link="${SB_DATA_ROOT}/bin/libcronet.so"
+  if [[ -f "${library}" && ! -L "${library}" ]]; then
+    storage_publish_system_link "${link}" "${library}"
+  elif [[ ! -e "${library}" && ! -L "${library}" ]]; then
+    storage_remove_system_link "${link}" "${library}"
+  else
+    return 1
+  fi
+}
+# Historical releases used this literal path, including on custom-home hosts.
+readonly SB_LEGACY_PROJECT_DIR="/root/sing-box-vps"
+readonly SB_LEGACY_BACKUP_DIR="${SB_LEGACY_PROJECT_DIR}-backups"
+readonly SB_STORAGE_MIGRATION_DIR="${SB_DATA_ROOT}/migrations/pending"
+
+storage_needs_recovery() {
+  [[ -e "${SB_STORAGE_MIGRATION_DIR}" || -L "${SB_STORAGE_MIGRATION_DIR}" ]]
+}
+
+storage_needs_migration() {
+  local item found_sidecar=false
+  [[ -e "${SB_LEGACY_PROJECT_DIR}" || -L "${SB_LEGACY_PROJECT_DIR}" ||
+     -e "${SB_LEGACY_BACKUP_DIR}" || -L "${SB_LEGACY_BACKUP_DIR}" ]] && return 0
+  storage_legacy_pending && return 0
+  while IFS= read -r -d '' item; do found_sidecar=true; done < <(storage_legacy_sidecar_paths)
+  [[ "${found_sidecar}" == false ]] || return 0
+  storage_legacy_sbv_has_identity
+}
+
+storage_legacy_sbv_has_identity() {
+  [[ -f "${SBV_LINK_PATH}" && ! -L "${SBV_LINK_PATH}" ]] || return 1
+  grep -Fqx "readonly PROJECT_AUTHOR=\"${PROJECT_AUTHOR}\"" "${SBV_LINK_PATH}" &&
+    grep -Fqx "readonly PROJECT_URL=\"${PROJECT_URL}\"" "${SBV_LINK_PATH}"
+}
+
+# Only names actually created by historical source belong to this migration.
+# Neighbouring administrator files sharing the prefix remain outside its scope.
+storage_legacy_sidecar_paths() {
+  local path suffix
+  for path in "${SB_LEGACY_PROJECT_DIR}".*; do
+    [[ -e "${path}" || -L "${path}" ]] || continue
+    suffix=${path#"${SB_LEGACY_PROJECT_DIR}."}
+    case "${suffix}" in
+      management.flock|instance-transactions|rules-previous) printf '%s\0' "${path}" ;;
+      *)
+        if [[ "${suffix}" =~ ^firewall-reconcile\.[A-Za-z0-9]{6}$ ||
+              "${suffix}" =~ ^warp-register\.[A-Za-z0-9]{8}$ ]]; then printf '%s\0' "${path}"; fi
+        ;;
+    esac
+  done
+}
+
+storage_migration_error() {
+  printf '[ERROR] storage: %s\n' "$1" >&2
+  return 1
+}
+
+# Used for both source data and recovery material. Never follow source links or
+# accept writable non-root parents, devices, sockets or executable shell state
+# supplied through a less trusted account.
+storage_migration_trusted_path() {
+  local path=$1 node owner mode
+  [[ "${path}" == /* && "${path}" != *$'\n'* && "${path}" != *'/../'* &&
+     "${path}" != *'/./'* ]] || return 1
+  node=${path}
+  while [[ "${node}" != / ]]; do
+    [[ ! -L "${node}" ]] || return 1
+    if [[ -e "${node}" ]]; then
+      owner=$(stat -c %u -- "${node}") || return 1
+      mode=$(stat -c %a -- "${node}") || return 1
+      [[ "${owner}" == 0 && "${mode}" =~ ^[0-7]+$ ]] || return 1
+      if (( (8#${mode} & 0022) != 0 )); then
+        [[ "${node}" != "${path}" && -d "${node}" ]] && (( (8#${mode} & 01000) != 0 )) || return 1
+      fi
+    fi
+    node=$(dirname -- "${node}") || return 1
+  done
+}
+
+storage_migration_trusted_tree() {
+  local root=$1 invalid
+  storage_migration_trusted_path "${root}" || return 1
+  [[ -d "${root}" ]] || return 1
+  invalid=$(find "${root}" \( -type l -o ! -uid 0 -o -perm /022 -o \( ! -type d -a ! -type f \) \) -print -quit) || return 1
+  [[ -z "${invalid}" ]]
+}
+
+storage_migration_phase() {
+  local phase=$1 directory=${SB_STORAGE_MIGRATION_DIR}
+  jq --arg phase "${phase}" '.phase=$phase | if $phase=="rollback" then del(.last_error) else . end' "${directory}/journal.json" > "${directory}/journal.next" || return 1
+  chmod 600 "${directory}/journal.next" || return 1
+  mv -f -- "${directory}/journal.next" "${directory}/journal.json" || return 1
+  printf '[INFO] storage migration: %s\n' "${phase}" >&2
+}
+
+storage_migration_mark() {
+  local name=$1
+  jq --arg name "${name}" '.touched[$name]=true' "${SB_STORAGE_MIGRATION_DIR}/journal.json" > "${SB_STORAGE_MIGRATION_DIR}/journal.next" || return 1
+  chmod 600 "${SB_STORAGE_MIGRATION_DIR}/journal.next" || return 1
+  mv -f -- "${SB_STORAGE_MIGRATION_DIR}/journal.next" "${SB_STORAGE_MIGRATION_DIR}/journal.json"
+}
+
+storage_status_json() {
+  local legacy=false recovery=false phase=none backup='' pending=false conflict=false unsafe=false item
+  storage_needs_migration && legacy=true
+  if storage_needs_recovery; then
+    recovery=true
+    phase=untrusted
+    if storage_migration_trusted_path "${SB_STORAGE_MIGRATION_DIR}/journal.json" &&
+       [[ -f "${SB_STORAGE_MIGRATION_DIR}/journal.json" ]]; then
+      phase=$(jq -r '.phase // "invalid"' "${SB_STORAGE_MIGRATION_DIR}/journal.json" 2>/dev/null) || phase=invalid
+      backup=$(jq -r '.backup // ""' "${SB_STORAGE_MIGRATION_DIR}/journal.json" 2>/dev/null) || backup=''
+    fi
+  fi
+  if [[ "${legacy}" == false && "${recovery}" == false && -f "${SB_DATA_ROOT}/migrations/completed.json" ]] &&
+     storage_migration_trusted_path "${SB_DATA_ROOT}/migrations/completed.json"; then
+    phase=$(jq -r '.phase // "invalid"' "${SB_DATA_ROOT}/migrations/completed.json" 2>/dev/null) || phase=invalid
+    backup=$(jq -r '.backup // ""' "${SB_DATA_ROOT}/migrations/completed.json" 2>/dev/null) || backup=''
+  fi
+  storage_legacy_pending && pending=true
+  if [[ -d "${SB_PROJECT_DIR}" ]] && [[ -n "$(find "${SB_PROJECT_DIR}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+    [[ "${legacy}" != true ]] || conflict=true
+  fi
+  if [[ "${legacy}" == true ]]; then
+    for item in "${SBV_BIN_PATH}" "${SINGBOX_BIN_PATH}" "${SINGBOX_SERVICE_FILE}" "${SB_DATA_ROOT}/lib/libcronet.so" "${SBV_LOG_FILE}"; do
+      [[ ! -e "${item}" && ! -L "${item}" ]] || conflict=true
+    done
+    for item in "${SB_LEGACY_PROJECT_DIR}" "${SB_LEGACY_BACKUP_DIR}"; do
+      [[ ! -e "${item}" && ! -L "${item}" ]] || storage_migration_trusted_tree "${item}" || unsafe=true
+    done
+  fi
+  jq -n --arg root "${SB_DATA_ROOT}" --arg legacy_root "${SB_LEGACY_PROJECT_DIR}" \
+    --arg phase "${phase}" --arg backup "${backup}" --argjson legacy "${legacy}" \
+    --argjson recovery "${recovery}" --argjson pending "${pending}" --argjson conflict "${conflict}" --argjson unsafe "${unsafe}" \
+    '{layout_version:1,root:$root,legacy_root:$legacy_root,migration_required:$legacy,recovery_required:$recovery,phase:$phase,backup:$backup,legacy_pending:$pending,target_conflict:$conflict,blockers:[if $recovery then "storage_recovery_required" else empty end,if $pending then "legacy_transaction_requires_old_runtime_recovery" else empty end,if $conflict then "target_conflict" else empty end,if $unsafe then "untrusted_legacy_tree" else empty end]}'
+}
+
+storage_legacy_pending() {
+  local suffix
+  for suffix in .instance-write.lock .component-write.lock .rules-write.lock .warp-registration.pending.json; do
+    [[ ! -e "${SB_LEGACY_PROJECT_DIR}${suffix}" && ! -L "${SB_LEGACY_PROJECT_DIR}${suffix}" ]] || return 0
+  done
+  return 1
+}
+
+# Decode the literal forms produced by write_env_assignment without evaluating
+# shell substitutions. ANSI-C quoting is decoded as bytes, never shell code.
+storage_decode_env_literal() {
+  local text=$1 result='' state=plain char next index
+  local body digits limit number
+  if [[ "${text}" == \$\'* ]]; then
+    [[ "${text}" == *\' && ${#text} -ge 3 ]] || return 1
+    body=${text:2:${#text}-3}
+    for ((index=0; index<${#body}; index++)); do
+      char=${body:index:1}
+      if [[ "${char}" == "'" ]]; then return 1; fi
+      if [[ "${char}" != '\' ]]; then result+="${char}"; continue; fi
+      index=$((index+1)); (( index < ${#body} )) || return 1
+      next=${body:index:1}
+      case "${next}" in
+        "'"|'"'|'?'|'\') result+="${next}" ;;
+        a|b|e|E|f|n|r|t|v)
+          printf -v char '%b' "\\${next}" || return 1
+          result+="${char}" ;;
+        [0-7]|x|u|U)
+          digits=''
+          case "${next}" in
+            [0-7]) digits=${next}; limit=3 ;;
+            x) limit=2 ;;
+            u) limit=4 ;;
+            U) limit=8 ;;
+          esac
+          while (( index+1 < ${#body} && ${#digits} < limit )); do
+            char=${body:index+1:1}
+            if [[ "${next}" == [0-7] ]]; then [[ "${char}" == [0-7] ]] || break
+            else [[ "${char}" == [0-9a-fA-F] ]] || break
+            fi
+            digits+="${char}"; index=$((index+1))
+          done
+          [[ -n "${digits}" && ! "${digits}" =~ ^0+$ ]] || return 1
+          if [[ "${next}" == [0-7] ]]; then number="\\0${digits}"; else number="\\${next}${digits}"; fi
+          printf -v char '%b' "${number}" || return 1
+          [[ -n "${char}" ]] || return 1
+          result+="${char}" ;;
+        *) return 1 ;;
+      esac
+    done
+    printf '%s' "${result}"
+    return 0
+  fi
+  for ((index=0; index<${#text}; index++)); do
+    char=${text:index:1}
+    case "${state}:${char}" in
+      plain:\'|double:\')
+        if [[ "${state}" == plain ]]; then state=single; else result+="${char}"; fi ;;
+      single:\') state=plain ;;
+      plain:\"|double:\")
+        if [[ "${state}" == plain ]]; then state=double; else state=plain; fi ;;
+      single:*) result+="${char}" ;;
+      plain:\\|double:\\)
+        index=$((index+1)); (( index < ${#text} )) || return 1
+        next=${text:index:1}
+        if [[ "${state}" == double && "${next}" != ['\\$"`'] ]]; then result+='\'; fi
+        result+="${next}" ;;
+      plain:\$|double:\$|plain:\`|double:\`) return 1 ;;
+      plain:*)
+        [[ "${char}" != [[:space:]] && "${char}" != [';'\&\|\<\>\(\)] ]] || return 1
+        result+="${char}" ;;
+      double:*) result+="${char}" ;;
+    esac
+  done
+  [[ "${state}" == plain ]] || return 1
+  printf '%s' "${result}"
+}
+
+storage_rewrite_path_json() {
+  jq --arg old "${SB_LEGACY_PROJECT_DIR}" --arg new "${SB_PROJECT_DIR}" --arg log "${SBV_LOG_FILE}" --arg media "${SB_MEDIA_CHECK_DIR}" '
+    def relocated:
+      if type=="string" and .==($old+"/sbv.log") then $log
+      elif type=="string" and (.==($old+"/media-check") or startswith($old+"/media-check/")) then $media+.[(($old+"/media-check")|length):]
+      elif type=="string" and (.==$old or startswith($old+"/")) then $new+.[($old|length):]
+      elif type=="array" then map(relocated) else . end;
+    def old_related: .==$old or startswith($old+"/");
+    def normalized_path:
+      split("/") | reduce .[] as $part ([];
+        if $part=="" or $part=="." then .
+        elif $part==".." then .[0:([length-1,0]|max)] else .+[$part] end) | "/"+join("/");
+    def file_masquerade:
+      if type!="string" or (test("^file:";"i")|not) then . else
+        . as $original | capture("^(?<scheme>[Ff][Ii][Ll][Ee]:)(?<rest>.*)$";"s") as $parts |
+        ($parts.rest | capture("^(?<base>[^?#]*)(?<suffix>[?#].*)?$";"s")) as $tail |
+        (if ($tail.base|startswith("//")) then
+          ($tail.base[2:] | capture("^(?<authority>[^/]*)(?<path>/.*)?$";"s")) as $url |
+          {prefix:($parts.scheme+"//"+$url.authority),authority:$url.authority,path:($url.path // "")}
+         else {prefix:$parts.scheme,authority:null,path:$tail.base} end) as $url |
+        ($url.path | gsub("%(?<hex>[0-9A-Fa-f]{2})";("\"\\u00"+.hex+"\""|fromjson))) as $decoded |
+        ([$url.path,$decoded,($url.path|normalized_path),($decoded|normalized_path)] | any(.[];old_related)) as $related |
+        if ($related|not) then $original
+        elif ($url.authority!=null and $url.authority!="" and ($url.authority|ascii_downcase)!="localhost") or
+             ($url.path|contains("%") or contains("//") or test("(^|/)\\.\\.?(/|$)")) then
+          error("unsupported_legacy_file_masquerade_uri")
+        else $url.prefix+($url.path|relocated)+($tail.suffix // "") end
+      end;
+    walk(if type=="object" then
+      . as $object | with_entries(.key as $key | if
+        (["data_directory","state_directory","certificate_path","key_path","config_path","private_key_path","client_certificate_path","client_key_path","mca_certificate_path","mca_key_path","static_key_path","certificate_authority_path","crl_path","secret_path","taildrop_directory","executable_path","wrapper_path","initial_path","protect_path"] | index($key)) != null
+        then .value |= relocated
+        elif .key=="masquerade" then .value |= file_masquerade
+        elif .key=="path" and $object.type=="local" then .value |= relocated else . end) |
+        if (.role=="rule_set" and .type=="local") or (.role=="network_namespace" and .type=="default")
+          then .config.path |= relocated else . end
+      else . end) |
+    if (.network_namespaces? | type)=="array" then .network_namespaces |= map(if .type=="default" then .path |= relocated else . end) else . end |
+    if (.experimental.cache_file.path? | type)=="string" then .experimental.cache_file.path |= relocated else . end |
+    if (.log.output? | type)=="string" and .log.output!="stdout" and .log.output!="stderr" then .log.output |= relocated else . end |
+    if (.experimental.clash_api.external_ui? | type)=="string" then .experimental.clash_api.external_ui |= relocated else . end'
+}
+
+storage_migration_rewrite() {
+  local tree=$1 file candidate line key raw value protocol
+  while IFS= read -r -d '' file; do
+    case "${file#"${tree}/"}" in
+      config.json|managed-config.generated.json|components.json|routing-policy.json|protocols/instances/*.json)
+        if [[ "${file#"${tree}/"}" == protocols/instances/* ]]; then
+          protocol=${file##*/}; protocol=${protocol%.json}
+          case "${protocol}" in mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|hy2|anytls|snell|tuic|hysteria|naive|shadowtls) ;; *) continue ;; esac
+        fi
+        candidate=$(mktemp "${file}.storage-next.XXXXXXXX") || return 1
+        storage_rewrite_path_json < "${file}" > "${candidate}" || return 1
+        jq -e 'type=="object"' "${candidate}" >/dev/null || return 1
+        chmod --reference="${file}" "${candidate}" || return 1
+        mv -f -- "${candidate}" "${file}" || return 1 ;;
+      protocols/hy2.env|protocols/anytls.env)
+        candidate=$(mktemp "${file}.storage-next.XXXXXXXX") || return 1
+        : > "${candidate}" || return 1
+        while IFS= read -r line || [[ -n "${line}" ]]; do
+          key=${line%%=*}
+          case "${key}" in
+            CERT_PATH|KEY_PATH|ACME_EXTRA_JSON|MASQUERADE)
+              if [[ "${key}" == MASQUERADE && "${file#"${tree}/"}" != protocols/hy2.env ]]; then
+                printf '%s\n' "${line}" >> "${candidate}" || return 1
+                continue
+              fi
+              raw=${line#*=}
+              value=$(storage_decode_env_literal "${raw}") || return 1
+              if [[ "${key}" == MASQUERADE ]]; then
+                value=$(printf '%s' "${value}" | jq -Rs '{masquerade:.}' | storage_rewrite_path_json | jq -r .masquerade) || return 1
+              elif [[ "${key}" == ACME_EXTRA_JSON && -n "${value}" ]]; then
+                value=$(printf '%s' "${value}" | storage_rewrite_path_json) || return 1
+              elif [[ "${value}" == "${SB_LEGACY_PROJECT_DIR}" || "${value}" == "${SB_LEGACY_PROJECT_DIR}/"* ]]; then
+                value="${SB_PROJECT_DIR}${value#"${SB_LEGACY_PROJECT_DIR}"}"
+              fi
+              if [[ "${key}" != ACME_EXTRA_JSON ]]; then
+                [[ "${value}" != *[[:cntrl:]]* ]] || return 1
+              fi
+              printf '%s=%q\n' "${key}" "${value}" >> "${candidate}" || return 1 ;;
+            *) printf '%s\n' "${line}" >> "${candidate}" || return 1 ;;
+          esac
+        done < "${file}"
+        chmod --reference="${file}" "${candidate}" || return 1
+        mv -f -- "${candidate}" "${file}" || return 1 ;;
+    esac
+  done < <(find "${tree}" -type f -print0)
+}
+
+storage_migration_validate_state() {
+  local tree=$1 file protocol value
+  for file in "${tree}/protocols/instances/"*.json; do
+    [[ -f "${file}" ]] || continue
+    protocol=${file##*/}; protocol=${protocol%.json}
+    case "${protocol}" in
+      mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|hy2|anytls|snell|tuic|hysteria|naive|shadowtls)
+        validate_structured_instance_store "${protocol}" "${file}" || return 1 ;;
+    esac
+  done
+  if [[ -f "${tree}/components.json" ]]; then
+    value=$(cat "${tree}/components.json") || return 1
+    managed_component_state_validate_json "${value}" || return 1
+  fi
+  if [[ -f "${tree}/routing-policy.json" ]]; then
+    value=$(cat "${tree}/routing-policy.json") || return 1
+    routing_policy_validate_json "${value}" || return 1
+  fi
+}
+
+storage_migration_explicit_paths() {
+  local file=$1
+  # Changing systemd's working directory must not create a second Tailscale
+  # identity or Tor data directory, or reinterpret relative material paths.
+  jq -e '
+    [.. | objects |
+      select((.type=="tailscale" and (((.config // .).state_directory // "")|length)==0) or
+             (.type=="tor" and (((.config // .).data_directory // "")|length)==0))] | length==0
+  ' "${file}" >/dev/null || return 1
+  jq -e '
+    [.. | objects | to_entries[] |
+      .key as $key | select((["data_directory","state_directory","certificate_path","key_path","config_path","private_key_path","client_certificate_path","client_key_path","mca_certificate_path","mca_key_path","static_key_path","certificate_authority_path","crl_path","secret_path","taildrop_directory","executable_path","wrapper_path","initial_path","protect_path"]|index($key))!=null) |
+      .value | if type=="array" then .[] else . end |
+      select(type=="string" and length>0 and (startswith("/")|not))] | length==0
+  ' "${file}" >/dev/null || return 1
+  jq -e '[..|objects|select(.type=="local" and (.path|type)=="string" and (.path|length)>0 and (.path|startswith("/")|not))]|length==0' "${file}" >/dev/null || return 1
+  jq -e '[..|objects|select((.role=="rule_set" and .type=="local") or (.role=="network_namespace" and .type=="default"))|.config.path|select(type=="string" and length>0 and (startswith("/")|not))]|length==0' "${file}" >/dev/null || return 1
+  jq -e '[.network_namespaces[]?|select(.type=="default")|.path|select(type=="string" and length>0 and (startswith("/")|not))]|length==0' "${file}" >/dev/null || return 1
+  jq -e '(.log.output? // "") as $output | $output=="" or $output=="stdout" or $output=="stderr" or ($output|startswith("/"))' "${file}" >/dev/null || return 1
+  jq -e '(.experimental.clash_api.external_ui? // "") as $ui | $ui=="" or ($ui|startswith("/"))' "${file}" >/dev/null || return 1
+  jq -e 'if .experimental.cache_file.enabled?==true then (.experimental.cache_file.path|type)=="string" and (.experimental.cache_file.path|startswith("/")) else true end' "${file}" >/dev/null || return 1
+  storage_rewrite_path_json < "${file}" >/dev/null
+}
+
+storage_migration_legacy_service_is_supported() {
+  local dropins count line trimmed
+  # These custom settings can override the private directory/environment or
+  # filesystem view. Preserve them and require an operator to reconcile them.
+  if grep -Eq '^[[:space:]]*(WorkingDirectory|RootDirectory|RootImage|Environment|EnvironmentFile|PassEnvironment|UnsetEnvironment)[[:space:]]*=' "${SINGBOX_SERVICE_LINK_PATH}"; then
+    storage_migration_error unsupported_custom_service_directory; return 1
+  fi
+  count=$(grep -Ec '^[[:space:]]*ExecStart[[:space:]]*=' "${SINGBOX_SERVICE_LINK_PATH}") || return 1
+  [[ "${count}" == 1 ]] || { storage_migration_error unsupported_custom_service_directory; return 1; }
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    trimmed=${line#"${line%%[![:space:]]*}"}
+    case "${trimmed}" in ''|\#*|\;*) continue ;; esac
+    [[ "${line}" != "ExecStart=${SINGBOX_LINK_PATH} run -c ${SB_LEGACY_PROJECT_DIR}/config.json" ]] || continue
+    if [[ "${line}" == *"${SB_LEGACY_PROJECT_DIR}"* || "${line}" == *"${SB_LEGACY_BACKUP_DIR}"* ]]; then
+      storage_migration_error unsupported_legacy_service_reference; return 1
+    fi
+  done < "${SINGBOX_SERVICE_LINK_PATH}"
+  dropins=$(systemctl show --property=DropInPaths --value sing-box) || {
+    storage_migration_error service_dropins_unavailable; return 1;
+  }
+  [[ -z "${dropins}" ]] || { storage_migration_error unsupported_custom_service_directory; return 1; }
+}
+
+storage_migration_acquire_locks() {
+  local old_lock="${SB_LEGACY_PROJECT_DIR}.management.flock" new_lock="${SB_PROJECT_DIR}.management.flock"
+  local inherited='' lock_path descriptor backup=''
+  if [[ -f "${SB_STORAGE_MIGRATION_DIR}/journal.json" ]]; then
+    backup=$(jq -r '.backup // ""' "${SB_STORAGE_MIGRATION_DIR}/journal.json") || return 1
+    if [[ -f "${backup}/legacy-siblings/management.flock" && ! -e "${old_lock}" ]]; then
+      old_lock="${backup}/legacy-siblings/management.flock"
+    fi
+  fi
+  if [[ "${SB_MANAGEMENT_LOCK_FD:-}" =~ ^[0-9]+$ ]]; then
+    inherited=$(readlink "/proc/${BASHPID:-$$}/fd/${SB_MANAGEMENT_LOCK_FD}") || return 1
+    [[ "${inherited}" == "${old_lock}" || "${inherited}" == "${new_lock}" ]] || return 1
+  fi
+  for lock_path in "${old_lock}" "${new_lock}"; do
+    storage_migration_trusted_path "${lock_path}" || return 1
+    if [[ "${inherited}" == "${lock_path}" ]]; then
+      descriptor=${SB_MANAGEMENT_LOCK_FD}
+    else
+      [[ ! -e "${lock_path}" || -f "${lock_path}" ]] || return 1
+      (umask 077; touch -- "${lock_path}") || return 1
+      exec {descriptor}>"${lock_path}" || return 1
+    fi
+    flock -n -x "${descriptor}" || { storage_migration_error management_busy; return 1; }
+    if [[ "${lock_path}" == "${old_lock}" ]]; then
+      SB_STORAGE_OLD_LOCK_FD=${descriptor}
+    else
+      SB_STORAGE_NEW_LOCK_FD=${descriptor}
+    fi
+  done
+}
+
+storage_migration_journal_valid() {
+  local directory=${SB_STORAGE_MIGRATION_DIR} backup
+  storage_migration_trusted_tree "${directory}" || return 1
+  jq -e --arg root "${SB_DATA_ROOT}" --arg legacy "${SB_LEGACY_PROJECT_DIR}" '
+    .version==1 and .root==$root and .legacy==$legacy and
+    (.before_active|type=="boolean") and (.touched|type=="object") and
+    (.backup|type=="string") and (.id|test("^migration-[0-9A-Za-z-]+$")) and
+    .backup==($root+"/backups/migrations/"+.id)
+  ' "${directory}/journal.json" >/dev/null || return 1
+  backup=$(jq -r .backup "${directory}/journal.json") || return 1
+  storage_migration_trusted_tree "${backup}" || return 1
+}
+
+storage_migration_restore() {
+  local directory=${SB_STORAGE_MIGRATION_DIR} backup active name destination item owned_target status=0
+  storage_migration_journal_valid || { storage_migration_error untrusted_recovery_journal; return 1; }
+  backup=$(jq -r .backup "${directory}/journal.json") || return 1
+  active=$(jq -r .before_active "${directory}/journal.json") || return 1
+  # Recovery may be retried after an administrator repairs another failure.
+  # Refuse to overwrite entries replaced in the meantime by unrelated content.
+  if jq -e '.touched.links==true' "${directory}/journal.json" >/dev/null; then
+    for name in sbv sing-box service; do
+      case "${name}" in
+        sbv) destination=${SBV_LINK_PATH}; owned_target=${SBV_BIN_PATH} ;;
+        sing-box) destination=${SINGBOX_LINK_PATH}; owned_target=${SINGBOX_BIN_PATH} ;;
+        service) destination=${SINGBOX_SERVICE_LINK_PATH}; owned_target=${SINGBOX_SERVICE_FILE} ;;
+      esac
+      storage_migration_recovery_target_owned "${backup}/original-${name}" "${destination}" "${owned_target}" || {
+        storage_migration_recovery_conflict; return 1;
+      }
+    done
+  fi
+  if jq -e '.touched.legacy_library==true' "${directory}/journal.json" >/dev/null; then
+    destination="$(dirname "$(dirname "${SINGBOX_LINK_PATH}")")/lib/libcronet.so"
+    storage_migration_recovery_target_owned "${backup}/original-library" "${destination}" "${SB_DATA_ROOT}/lib/libcronet.so" || {
+      storage_migration_recovery_conflict; return 1;
+    }
+  fi
+  storage_migration_phase rollback || return 1
+  # Stop any newly started service before restoring files; inability to stop
+  # leaves all recovery material intact instead of deleting live artifacts.
+  if jq -e '.touched.service_stop==true or .touched.links==true' "${directory}/journal.json" >/dev/null; then
+    systemctl stop sing-box >> "${directory}/service.log" 2>&1 || { storage_migration_phase rollback_failed; return 1; }
+  fi
+  for name in legacy-runtime legacy-backups legacy-rules-previous legacy-instance-transactions; do
+    case "${name}" in
+      legacy-runtime) destination=${SB_LEGACY_PROJECT_DIR} ;;
+      legacy-backups) destination=${SB_LEGACY_BACKUP_DIR} ;;
+      legacy-rules-previous) destination="${SB_LEGACY_PROJECT_DIR}.rules-previous" ;;
+      legacy-instance-transactions) destination="${SB_LEGACY_PROJECT_DIR}.instance-transactions" ;;
+    esac
+    if [[ -e "${backup}/${name}" ]]; then
+      [[ ! -e "${destination}" && ! -L "${destination}" ]] || { status=1; continue; }
+      mv -- "${backup}/${name}" "${destination}" || status=1
+    fi
+  done
+  if [[ -d "${backup}/legacy-siblings" ]]; then
+    for item in "${backup}/legacy-siblings/"*; do
+      [[ -e "${item}" ]] || continue
+      destination="${SB_LEGACY_PROJECT_DIR}.${item##*/}"
+      [[ ! -e "${destination}" && ! -L "${destination}" ]] || { status=1; continue; }
+      mv -- "${item}" "${destination}" || status=1
+    done
+  fi
+  if jq -e '.touched.legacy_library==true' "${directory}/journal.json" >/dev/null; then
+    destination="$(dirname "$(dirname "${SINGBOX_LINK_PATH}")")/lib/libcronet.so"
+    if storage_migration_recovery_target_owned "${backup}/original-library" "${destination}" "${SB_DATA_ROOT}/lib/libcronet.so"; then
+      storage_migration_restore_file "${backup}/original-library" "${destination}" || status=1
+    else storage_migration_recovery_conflict; return 1
+    fi
+  fi
+  if jq -e '.touched.links==true' "${directory}/journal.json" >/dev/null; then
+    for name in sbv sing-box service; do
+      case "${name}" in sbv) destination=${SBV_LINK_PATH} ;; sing-box) destination=${SINGBOX_LINK_PATH} ;; service) destination=${SINGBOX_SERVICE_LINK_PATH} ;; esac
+      case "${name}" in sbv) owned_target=${SBV_BIN_PATH} ;; sing-box) owned_target=${SINGBOX_BIN_PATH} ;; service) owned_target=${SINGBOX_SERVICE_FILE} ;; esac
+      storage_migration_recovery_target_owned "${backup}/original-${name}" "${destination}" "${owned_target}" || {
+        storage_migration_recovery_conflict; return 1;
+      }
+      if [[ -f "${backup}/original-${name}" ]]; then
+        storage_migration_restore_file "${backup}/original-${name}" "${destination}" || status=1
+      elif [[ -L "${destination}" ]]; then
+        case "${name}" in sbv) [[ "$(readlink "${destination}")" == "${SBV_BIN_PATH}" ]] ;; sing-box) [[ "$(readlink "${destination}")" == "${SINGBOX_BIN_PATH}" ]] ;; service) [[ "$(readlink "${destination}")" == "${SINGBOX_SERVICE_FILE}" ]] ;; esac && rm -- "${destination}" || status=1
+      elif [[ -e "${destination}" ]]; then status=1
+      fi
+    done
+    systemctl daemon-reload >> "${directory}/service.log" 2>&1 || status=1
+  fi
+  for name in runtime sbv sing-box service library log media; do
+    jq -e --arg name "${name}" '.touched[$name]==true' "${directory}/journal.json" >/dev/null || continue
+    case "${name}" in
+      runtime) destination=${SB_PROJECT_DIR} ;;
+      sbv) destination=${SBV_BIN_PATH} ;;
+      sing-box) destination=${SINGBOX_BIN_PATH} ;;
+      service) destination=${SINGBOX_SERVICE_FILE} ;;
+      library) destination="${SB_DATA_ROOT}/lib/libcronet.so" ;;
+      log) destination=${SBV_LOG_FILE} ;;
+      media) destination=${SB_MEDIA_CHECK_DIR} ;;
+    esac
+    if (( status == 0 )); then rm -rf -- "${destination}" || status=1; fi
+  done
+  if jq -e '.touched.library==true' "${directory}/journal.json" >/dev/null && (( status == 0 )); then
+    storage_remove_system_link "${SB_DATA_ROOT}/bin/libcronet.so" "${SB_DATA_ROOT}/lib/libcronet.so" || status=1
+  fi
+  if [[ "${active}" == true ]]; then
+    systemctl start sing-box >> "${directory}/service.log" 2>&1 || status=1
+    systemctl is-active --quiet sing-box >> "${directory}/service.log" 2>&1 || status=1
+  fi
+  if (( status != 0 )); then storage_migration_phase rollback_failed; return 1; fi
+  storage_migration_phase rolled_back || return 1
+  rm -rf -- "${directory}/stage" || return 1
+  mv -- "${directory}" "${backup}/journal" || return 1
+  printf '[WARN] storage migration: rolled_back; recovery_material=%s\n' "${backup}" >&2
+}
+
+storage_migration_recovery_target_owned() {
+  local original=$1 target=$2 owned_target=$3
+  storage_migration_trusted_path "$(dirname "${target}")" || return 1
+  if [[ -L "${target}" ]]; then
+    [[ "$(stat -c %u -- "${target}")" == 0 && "$(readlink -- "${target}")" == "${owned_target}" ]]
+  elif [[ ! -e "${target}" ]]; then
+    return 0
+  else
+    [[ -f "${target}" && -f "${original}" && ! -L "${original}" ]] || return 1
+    storage_migration_trusted_path "${target}" || return 1
+    cmp -s -- "${original}" "${target}"
+  fi
+}
+
+storage_migration_recovery_conflict() {
+  local directory=${SB_STORAGE_MIGRATION_DIR}
+  jq '.last_error="ownership_conflict"' "${directory}/journal.json" > "${directory}/journal.next" || return 1
+  chmod 600 "${directory}/journal.next" || return 1
+  mv -f -- "${directory}/journal.next" "${directory}/journal.json" || return 1
+  storage_migration_phase rollback_failed || return 1
+  storage_migration_error ownership_conflict
+}
+
+storage_migration_restore_file() {
+  local source=$1 target=$2 staged
+  storage_migration_trusted_path "$(dirname "${target}")" || return 1
+  [[ "$(stat -c %d "$(dirname "${target}")")" == "$(stat -c %d "${SB_DATA_ROOT}/tmp")" ]] || return 1
+  staged=$(mktemp "${SB_DATA_ROOT}/tmp/.storage-restore.XXXXXXXX") || return 1
+  if ! cp -p -- "${source}" "${staged}" || ! mv -f -- "${staged}" "${target}"; then
+    rm -f -- "${staged}"
+    return 1
+  fi
+}
+
+storage_recover() (
+  umask 077
+  [[ ${EUID} -eq 0 ]] || { storage_migration_error root_required; return 1; }
+  storage_needs_recovery || { storage_migration_error no_pending_migration; return 1; }
+  storage_migration_journal_valid || { storage_migration_error untrusted_recovery_journal; return 1; }
+  storage_migration_acquire_locks || return 1
+  storage_migration_restore
+)
+
+storage_migrate() (
+  umask 077
+  local directory=${SB_STORAGE_MIGRATION_DIR} backup stage source_script core library expected actual
+  local before_active=false status suffix item destination name journal_created=false finished=false
+  local had_unit=false had_core=false bytes available journal_prepare source_parent
+  local -a space_sources=()
+  [[ ${EUID} -eq 0 ]] || { storage_migration_error root_required; return 1; }
+  storage_needs_recovery && { storage_migration_error storage_recovery_required; return 1; }
+  storage_needs_migration || return 0
+  command -v jq >/dev/null && command -v flock >/dev/null || return 1
+  if [[ -e "${SB_LEGACY_PROJECT_DIR}" || -L "${SB_LEGACY_PROJECT_DIR}" ]]; then
+    storage_migration_trusted_tree "${SB_LEGACY_PROJECT_DIR}" || { storage_migration_error untrusted_legacy_tree; return 1; }
+  fi
+  if [[ -e "${SB_LEGACY_BACKUP_DIR}" || -L "${SB_LEGACY_BACKUP_DIR}" ]]; then
+    storage_migration_trusted_tree "${SB_LEGACY_BACKUP_DIR}" || { storage_migration_error untrusted_legacy_backups; return 1; }
+  fi
+  storage_legacy_pending && { storage_migration_error legacy_transaction_requires_old_runtime_recovery; return 1; }
+  if [[ -e "${SB_LEGACY_PROJECT_DIR}.rules-previous" ]]; then
+    storage_migration_trusted_tree "${SB_LEGACY_PROJECT_DIR}.rules-previous" &&
+      jq -e '.phase=="committed"' "${SB_LEGACY_PROJECT_DIR}.rules-previous/transaction.json" >/dev/null || {
+        storage_migration_error legacy_rules_snapshot_requires_inspection; return 1;
+      }
+  fi
+  if [[ -e "${SB_LEGACY_PROJECT_DIR}.instance-transactions" ]]; then
+    storage_migration_trusted_tree "${SB_LEGACY_PROJECT_DIR}.instance-transactions" || return 1
+  fi
+  for item in "${SB_PROJECT_DIR}" "${SB_MEDIA_CHECK_DIR}"; do
+    [[ ! -e "${item}" || ( -d "${item}" && ! -L "${item}" && -z "$(find "${item}" -mindepth 1 -maxdepth 1 -print -quit)" ) ]] || { storage_migration_error target_data_conflict; return 1; }
+  done
+  for item in "${SBV_BIN_PATH}" "${SINGBOX_BIN_PATH}" "${SINGBOX_SERVICE_FILE}" "${SB_DATA_ROOT}/lib/libcronet.so" "${SB_DATA_ROOT}/bin/libcronet.so" "${SBV_LOG_FILE}"; do
+    [[ ! -e "${item}" && ! -L "${item}" ]] || { storage_migration_error target_artifact_conflict; return 1; }
+  done
+  [[ ! -L "${SB_DATA_ROOT}/migrations/completed.json" ]] || { storage_migration_error untrusted_completion_record; return 1; }
+  for item in "${SBV_LINK_PATH}" "${SINGBOX_LINK_PATH}" "${SINGBOX_SERVICE_LINK_PATH}"; do
+    storage_migration_trusted_path "${item}" || { storage_migration_error untrusted_system_entry; return 1; }
+    [[ ! -e "${item}" || -f "${item}" ]] || return 1
+  done
+  if [[ -f "${SBV_LINK_PATH}" ]]; then
+    bash -n "${SBV_LINK_PATH}" && grep -Fqx "readonly PROJECT_AUTHOR=\"${PROJECT_AUTHOR}\"" "${SBV_LINK_PATH}" &&
+      grep -Fqx "readonly PROJECT_URL=\"${PROJECT_URL}\"" "${SBV_LINK_PATH}" || { storage_migration_error unmanaged_sbv_entry; return 1; }
+  fi
+  core=${SINGBOX_LINK_PATH}
+  if [[ -f "${core}" ]]; then
+    [[ -x "${core}" ]] && timeout 10 "${core}" version 2>/dev/null | grep -q '^sing-box version ' || { storage_migration_error invalid_legacy_core; return 1; }
+    had_core=true
+  fi
+  if [[ -f "${SINGBOX_SERVICE_LINK_PATH}" ]]; then
+    grep -Fqx "ExecStart=${core} run -c ${SB_LEGACY_PROJECT_DIR}/config.json" "${SINGBOX_SERVICE_LINK_PATH}" || { storage_migration_error unmanaged_service_entry; return 1; }
+    [[ "${had_core}" == true && -f "${SB_LEGACY_PROJECT_DIR}/config.json" ]] || return 1
+    storage_migration_legacy_service_is_supported || return 1
+    had_unit=true
+  fi
+  if systemctl is-active --quiet sing-box >/dev/null 2>&1; then
+    [[ "${had_unit}" == true ]] || { storage_migration_error active_unmanaged_service; return 1; }
+    before_active=true
+  else
+    status=$?; [[ "${status}" == 3 || "${status}" == 4 ]] || { storage_migration_error service_status_unavailable; return 1; }
+  fi
+  source_script=${SB_STORAGE_SCRIPT_SOURCE:-${BASH_SOURCE[0]}}
+  [[ -f "${source_script}" && ! -L "${source_script}" ]] || { storage_migration_error invalid_current_runtime; return 1; }
+  source_parent=$(CDPATH= cd -- "$(dirname -- "${source_script}")" && pwd -P) || {
+    storage_migration_error invalid_current_runtime; return 1;
+  }
+  source_script="${source_parent}/$(basename -- "${source_script}")"
+  storage_migration_trusted_path "${source_script}" && [[ -f "${source_script}" && ! -L "${source_script}" ]] && bash -n "${source_script}" &&
+    grep -Fqx "readonly PROJECT_AUTHOR=\"${PROJECT_AUTHOR}\"" "${source_script}" &&
+    grep -Fqx "readonly PROJECT_URL=\"${PROJECT_URL}\"" "${source_script}" || { storage_migration_error invalid_current_runtime; return 1; }
+  for item in "${SB_LEGACY_PROJECT_DIR}/config.json" "${SB_LEGACY_PROJECT_DIR}/managed-config.generated.json" "${SB_LEGACY_PROJECT_DIR}/components.json"; do
+    [[ ! -f "${item}" ]] || storage_migration_explicit_paths "${item}" || { storage_migration_error legacy_implicit_or_relative_paths_require_operator; return 1; }
+  done
+  storage_initialize || return 1
+  # The rollback of old regular system artifacts must also be atomic while
+  # keeping its staging files inside the unified private root.
+  for item in "${SBV_LINK_PATH}" "${SINGBOX_LINK_PATH}" "${SINGBOX_SERVICE_LINK_PATH}"; do
+    [[ "$(stat -c %d "$(dirname "${item}")")" == "$(stat -c %d "${SB_DATA_ROOT}")" ]] || {
+      storage_migration_error cross_filesystem_system_rollback_unsupported; return 1;
+    }
+  done
+  library="$(dirname "$(dirname "${core}")")/lib/libcronet.so"
+  if [[ -f "${SB_LEGACY_PROJECT_DIR}/libcronet.sha256" ]]; then
+    storage_migration_trusted_path "${library}" && [[ -f "${library}" ]] || return 1
+    [[ "$(stat -c %d "$(dirname "${library}")")" == "$(stat -c %d "${SB_DATA_ROOT}")" ]] || {
+      storage_migration_error cross_filesystem_library_rollback_unsupported; return 1;
+    }
+  fi
+  storage_migration_acquire_locks || return 1
+  # Repeat conflict/legacy barriers while holding both old and new locks.
+  storage_needs_recovery && return 1
+  storage_legacy_pending && return 1
+  [[ ! -d "${SB_LEGACY_PROJECT_DIR}" ]] || storage_migration_trusted_tree "${SB_LEGACY_PROJECT_DIR}" || return 1
+  while IFS= read -r -d '' item; do
+    if [[ -d "${item}" && ! -L "${item}" ]]; then storage_migration_trusted_tree "${item}" || return 1
+    else storage_migration_trusted_path "${item}" && [[ -f "${item}" && ! -L "${item}" ]] || return 1
+    fi
+  done < <(storage_legacy_sidecar_paths)
+  for item in "${SB_LEGACY_PROJECT_DIR}" "${SB_LEGACY_BACKUP_DIR}"; do
+    [[ -e "${item}" ]] || continue
+    [[ "$(stat -c %d "${item}")" == "$(stat -c %d "${SB_DATA_ROOT}")" ]] || {
+      storage_migration_error cross_filesystem_legacy_move_unsupported; return 1;
+    }
+  done
+  while IFS= read -r -d '' item; do
+    [[ "$(stat -c %d "${item}")" == "$(stat -c %d "${SB_DATA_ROOT}")" ]] || {
+      storage_migration_error cross_filesystem_legacy_move_unsupported; return 1;
+    }
+  done < <(storage_legacy_sidecar_paths)
+  for item in "${SB_PROJECT_DIR}" "${SB_MEDIA_CHECK_DIR}"; do
+    [[ ! -e "${item}" || ( -d "${item}" && ! -L "${item}" && -z "$(find "${item}" -mindepth 1 -maxdepth 1 -print -quit)" ) ]] || return 1
+  done
+  for item in "${SBV_BIN_PATH}" "${SINGBOX_BIN_PATH}" "${SINGBOX_SERVICE_FILE}" "${SB_DATA_ROOT}/lib/libcronet.so" "${SB_DATA_ROOT}/bin/libcronet.so" "${SBV_LOG_FILE}"; do
+    [[ ! -e "${item}" && ! -L "${item}" ]] || return 1
+  done
+  for item in "${SBV_LINK_PATH}" "${SINGBOX_LINK_PATH}" "${SINGBOX_SERVICE_LINK_PATH}"; do
+    storage_migration_trusted_path "${item}" && [[ ! -e "${item}" || -f "${item}" ]] || return 1
+  done
+  if [[ "${had_unit}" == true ]]; then
+    grep -Fqx "ExecStart=${core} run -c ${SB_LEGACY_PROJECT_DIR}/config.json" "${SINGBOX_SERVICE_LINK_PATH}" || return 1
+    storage_migration_legacy_service_is_supported || return 1
+  fi
+  if systemctl is-active --quiet sing-box >/dev/null 2>&1; then
+    [[ "${had_unit}" == true ]] || return 1
+    before_active=true
+  else status=$?; [[ "${status}" == 3 || "${status}" == 4 ]] || return 1; before_active=false
+  fi
+  [[ "$(stat -c %d "${SB_DATA_ROOT}")" == "$(stat -c %d "$(dirname "${SB_LEGACY_PROJECT_DIR}")")" ]] || {
+    storage_migration_error cross_filesystem_legacy_move_unsupported; return 1;
+  }
+  space_sources=("${source_script}")
+  [[ "${had_core}" != true ]] || space_sources+=("${core}")
+  [[ ! -f "${SB_LEGACY_PROJECT_DIR}/libcronet.sha256" ]] || space_sources+=("${library}")
+  [[ ! -d "${SB_LEGACY_PROJECT_DIR}" ]] || space_sources+=("${SB_LEGACY_PROJECT_DIR}")
+  bytes=$(du -sk -- "${space_sources[@]}" | awk '{total+=$1} END {printf "%.0f", total*2+1024}') || return 1
+  available=$(df -Pk "${SB_DATA_ROOT}" | awk 'NR==2 {print $4}') || return 1
+  [[ "${bytes}" =~ ^[0-9]+$ && "${available}" =~ ^[0-9]+$ ]] && (( available > bytes )) || {
+    storage_migration_error insufficient_staging_space; return 1;
+  }
+  mkdir -p -m 700 "${SB_DATA_ROOT}/backups/migrations" || return 1
+  backup=$(mktemp -d "${SB_DATA_ROOT}/backups/migrations/migration-XXXXXXXX") || return 1
+  journal_prepare=$(mktemp -d "${SB_DATA_ROOT}/migrations/.prepare-XXXXXXXX") || return 1
+  mkdir -m 700 "${journal_prepare}/stage" || { rm -rf -- "${journal_prepare}"; return 1; }
+  jq -n --arg root "${SB_DATA_ROOT}" --arg legacy "${SB_LEGACY_PROJECT_DIR}" --arg backup "${backup}" \
+    --arg id "${backup##*/}" --argjson active "${before_active}" \
+    '{version:1,root:$root,legacy:$legacy,backup:$backup,id:$id,before_active:$active,phase:"prepare",touched:{}}' > "${journal_prepare}/journal.json" || { rm -rf -- "${journal_prepare}"; return 1; }
+  chmod 600 "${journal_prepare}/journal.json" || { rm -rf -- "${journal_prepare}"; return 1; }
+  mv -- "${journal_prepare}" "${directory}" || { rm -rf -- "${journal_prepare}"; return 1; }
+  stage="${directory}/stage"
+  journal_created=true
+  storage_migration_exit() {
+    local result=$?
+    trap - EXIT INT TERM
+    if [[ "${journal_created}" == true && "${finished}" != true ]]; then
+      if ! storage_migration_restore; then printf '[ERROR] storage migration: rollback_failed; run sbv storage recover --json --yes\n' >&2; fi
+    fi
+    exit "${result}"
+  }
+  trap storage_migration_exit EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  for name in sbv sing-box service; do
+    case "${name}" in sbv) item=${SBV_LINK_PATH} ;; sing-box) item=${SINGBOX_LINK_PATH} ;; service) item=${SINGBOX_SERVICE_LINK_PATH} ;; esac
+    [[ ! -f "${item}" ]] || cp -p -- "${item}" "${backup}/original-${name}" || return 1
+  done
+  if [[ "${before_active}" == true ]]; then
+    storage_migration_mark service_stop || return 1
+    systemctl stop sing-box > "${directory}/service.log" 2>&1 || return 1
+    if systemctl is-active --quiet sing-box >> "${directory}/service.log" 2>&1; then return 1; fi
+  fi
+  storage_migration_phase validate || return 1
+  mkdir -m 700 "${stage}/runtime" || return 1
+  [[ ! -d "${SB_LEGACY_PROJECT_DIR}" ]] || cp -a -- "${SB_LEGACY_PROJECT_DIR}/." "${stage}/runtime/" || return 1
+  chmod 700 "${stage}/runtime" || return 1
+  storage_migration_rewrite "${stage}/runtime" || { storage_migration_error unsupported_legacy_state; return 1; }
+  for item in "${stage}/runtime/config.json" "${stage}/runtime/managed-config.generated.json" "${stage}/runtime/components.json"; do
+    [[ ! -f "${item}" ]] || storage_migration_explicit_paths "${item}" || { storage_migration_error legacy_implicit_or_relative_paths_require_operator; return 1; }
+  done
+  cp -p -- "${source_script}" "${stage}/sbv" && chmod 700 "${stage}/sbv" || return 1
+  [[ "${had_core}" != true ]] || cp -p -- "${core}" "${stage}/sing-box" || return 1
+  library="$(dirname "$(dirname "${core}")")/lib/libcronet.so"
+  if [[ -f "${SB_LEGACY_PROJECT_DIR}/libcronet.sha256" ]]; then
+    storage_migration_trusted_path "${library}" && [[ -f "${library}" && ! -L "${library}" ]] || return 1
+    expected=$(tr -d '[:space:]' < "${SB_LEGACY_PROJECT_DIR}/libcronet.sha256") || return 1
+    actual=$(sha256sum "${library}" | awk '{print $1}') || return 1
+    [[ "${expected}" =~ ^[0-9a-f]{64}$ && "${expected}" == "${actual}" ]] || { storage_migration_error legacy_library_not_owned; return 1; }
+    cp -p -- "${library}" "${stage}/libcronet.so" || return 1
+  fi
+  if [[ "${had_unit}" == true ]]; then
+    while IFS= read -r item || [[ -n "${item}" ]]; do
+      case "${item}" in
+        ExecStart=*) printf 'ExecStart="%s" run -c "%s"\n' "${SINGBOX_BIN_PATH}" "${SINGBOX_CONFIG_FILE}" ;;
+        '[Service]') printf '[Service]\nWorkingDirectory=%s\nEnvironment="HOME=%s" "TMPDIR=%s/tmp" "LD_LIBRARY_PATH=%s/lib"\n' "${SB_PROJECT_DIR}" "${SB_PROJECT_DIR}" "${SB_DATA_ROOT}" "${SB_DATA_ROOT}" ;;
+        *) printf '%s\n' "${item}" ;;
+      esac
+    done < "${SINGBOX_SERVICE_LINK_PATH}" > "${stage}/service" || return 1
+    chmod 600 "${stage}/service" || return 1
+  fi
+  # Path checks require referenced files at their final candidate location.
+  # Publication is reversible and remains hidden behind the persistent journal.
+  storage_migration_phase commit || return 1
+  for name in runtime sbv sing-box service library log media; do
+    case "${name}" in
+      runtime) item="${stage}/runtime"; destination=${SB_PROJECT_DIR} ;;
+      sbv) item="${stage}/sbv"; destination=${SBV_BIN_PATH} ;;
+      sing-box) item="${stage}/sing-box"; destination=${SINGBOX_BIN_PATH} ;;
+      service) item="${stage}/service"; destination=${SINGBOX_SERVICE_FILE} ;;
+      library) item="${stage}/libcronet.so"; destination="${SB_DATA_ROOT}/lib/libcronet.so" ;;
+      log) item="${SB_PROJECT_DIR}/sbv.log"; destination=${SBV_LOG_FILE} ;;
+      media) item="${SB_PROJECT_DIR}/media-check"; destination=${SB_MEDIA_CHECK_DIR} ;;
+    esac
+    [[ -e "${item}" ]] || continue
+    storage_migration_mark "${name}" || return 1
+    if [[ -d "${destination}" ]]; then rmdir -- "${destination}" || return 1; fi
+    mv -- "${item}" "${destination}" || return 1
+  done
+  storage_publish_library_link || return 1
+  storage_migration_validate_state "${SB_PROJECT_DIR}" > "${directory}/state-check.log" 2>&1 || {
+    storage_migration_error candidate_state_validation_failed; return 1;
+  }
+  for item in "${SINGBOX_CONFIG_FILE}" "${SB_PROJECT_DIR}/managed-config.generated.json"; do
+    [[ -f "${item}" ]] || continue
+    [[ -x "${SINGBOX_BIN_PATH}" ]] || return 1
+    LD_LIBRARY_PATH="${SB_DATA_ROOT}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" "${SINGBOX_BIN_PATH}" check -c "${item}" >> "${directory}/check.log" 2>&1 || { storage_migration_error candidate_core_check_failed; return 1; }
+  done
+  storage_migration_mark links || return 1
+  for name in sbv sing-box service; do
+    case "${name}" in sbv) item=${SBV_LINK_PATH} ;; sing-box) item=${SINGBOX_LINK_PATH} ;; service) item=${SINGBOX_SERVICE_LINK_PATH} ;; esac
+    if [[ -f "${backup}/original-${name}" ]]; then
+      [[ -f "${item}" && ! -L "${item}" ]] && cmp -s -- "${backup}/original-${name}" "${item}" || return 1
+      rm -- "${item}" || return 1
+    fi
+  done
+  storage_publish_system_links sbv >&2 || return 1
+  [[ "${had_core}" != true ]] || storage_publish_system_links sing-box >&2 || return 1
+  [[ "${had_unit}" != true ]] || storage_publish_system_links service >&2 || return 1
+  for item in "${SBV_BIN_PATH}" "${SINGBOX_BIN_PATH}" "${SINGBOX_SERVICE_FILE}"; do
+    [[ ! -f "${item}" ]] || sha256sum -- "${item}" >> "${directory}/artifacts.sha256" || return 1
+  done
+  systemctl daemon-reload >> "${directory}/service.log" 2>&1 || return 1
+  storage_migration_phase postcheck || return 1
+  if [[ "${before_active}" == true ]]; then
+    systemctl start sing-box >> "${directory}/service.log" 2>&1 &&
+      systemctl is-active --quiet sing-box >> "${directory}/service.log" 2>&1 || { storage_migration_error migrated_service_failed; return 1; }
+  fi
+  [[ "$(readlink "${SBV_LINK_PATH}")" == "${SBV_BIN_PATH}" ]] || return 1
+  [[ "${had_core}" != true || "$(readlink "${SINGBOX_LINK_PATH}")" == "${SINGBOX_BIN_PATH}" ]] || return 1
+  [[ "${had_unit}" != true || "$(readlink "${SINGBOX_SERVICE_LINK_PATH}")" == "${SINGBOX_SERVICE_FILE}" ]] || return 1
+  sha256sum -c "${directory}/artifacts.sha256" >> "${directory}/check.log" 2>&1 || return 1
+  storage_migration_phase cleanup || return 1
+  for name in legacy-runtime legacy-backups legacy-rules-previous legacy-instance-transactions; do
+    case "${name}" in legacy-runtime) item=${SB_LEGACY_PROJECT_DIR} ;; legacy-backups) item=${SB_LEGACY_BACKUP_DIR} ;; legacy-rules-previous) item="${SB_LEGACY_PROJECT_DIR}.rules-previous" ;; legacy-instance-transactions) item="${SB_LEGACY_PROJECT_DIR}.instance-transactions" ;; esac
+    [[ ! -e "${item}" ]] || mv -- "${item}" "${backup}/${name}" || return 1
+  done
+  mkdir -m 700 "${backup}/legacy-siblings" || return 1
+  while IFS= read -r -d '' item; do
+    suffix=${item#"${SB_LEGACY_PROJECT_DIR}."}
+    mv -- "${item}" "${backup}/legacy-siblings/${suffix}" || return 1
+  done < <(storage_legacy_sidecar_paths)
+  if [[ -f "${stage}/libcronet.so" ]]; then return 1; fi
+  # Remove only the old library proven by its original marker and digest.
+  if [[ -f "${SB_DATA_ROOT}/lib/libcronet.so" && -f "${library}" ]]; then
+    actual=$(sha256sum "${library}" | awk '{print $1}') || return 1
+    [[ "${actual}" == "${expected}" ]] || return 1
+    cp -p -- "${library}" "${backup}/original-library" || return 1
+    storage_migration_mark legacy_library || return 1
+    rm -- "${library}" || return 1
+  fi
+  storage_migration_phase completed || return 1
+  [[ ! -L "${SB_DATA_ROOT}/migrations/completed.json" ]] || return 1
+  storage_migration_restore_file "${directory}/journal.json" "${SB_DATA_ROOT}/migrations/completed.json" || return 1
+  rm -rf -- "${stage}" || return 1
+  mv -- "${directory}" "${backup}/journal" || return 1
+  finished=true
+  printf '[SUCCESS] storage migration: completed; backup=%s\n' "${backup}" >&2
+)
+
+# The menu's old updater can exec the new runtime with its legacy flock still
+# open. Close that exact inherited file description only after a completed
+# migration; the subsequent normal dispatcher then acquires the new lock.
+storage_finish_legacy_handoff() {
+  local descriptor=${SB_MANAGEMENT_LOCK_FD:-} target backup=''
+  [[ "${descriptor}" =~ ^[0-9]+$ ]] || return 0
+  target=$(readlink "/proc/${BASHPID:-$$}/fd/${descriptor}") || return 1
+  if [[ -f "${SB_DATA_ROOT}/migrations/completed.json" ]]; then
+    storage_migration_trusted_path "${SB_DATA_ROOT}/migrations/completed.json" || return 1
+    backup=$(jq -r '.backup // ""' "${SB_DATA_ROOT}/migrations/completed.json") || return 1
+  fi
+  if [[ "${target}" == "${SB_LEGACY_PROJECT_DIR}.management.flock" ||
+        ( -n "${backup}" && "${target}" == "${backup}/legacy-siblings/management.flock" ) ]]; then
+    exec {descriptor}>&- || return 1
+    unset SB_MANAGEMENT_LOCK_FD SB_MANAGEMENT_LOCK_MODE
+  elif [[ "${target}" != "${SB_PROJECT_DIR}.management.flock" ]]; then
+    return 1
+  fi
+}
+
+storage_cli() {
+  local operation=${1:-} json=false yes=false status=0 code='' data payload
+  [[ $# -gt 0 ]] && shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) [[ "${json}" == false ]] || code=invalid_arguments; json=true ;;
+      --yes) [[ "${yes}" == false ]] || code=invalid_arguments; yes=true ;;
+      *) code=invalid_arguments ;;
+    esac
+    shift
+  done
+  [[ "${json}" == true ]] || code=json_required
+  case "${operation}" in status) [[ "${yes}" == false ]] || code=invalid_arguments ;; migrate|recover) [[ "${yes}" == true ]] || code=confirmation_required ;; *) code=unknown_storage_operation ;; esac
+  if [[ -n "${code}" ]]; then
+    agent_cli_error "storage.${operation}" "${code}" '存储命令参数无效；请先读取 sbv schema storage.status --json 或对应操作说明。'
+    return 1
+  fi
+  if ! agent_current_user_is_root; then
+    agent_cli_error "storage.${operation}" root_required '存储操作必须以 root 用户执行。'
+    return 1
+  fi
+  if [[ -z "${code}" ]]; then
+    case "${operation}" in
+      status) ;;
+      migrate) storage_migrate && storage_finish_legacy_handoff || { status=$?; code=migration_failed; } ;;
+      recover)
+        storage_recover || {
+          status=$?; code=recovery_failed
+          if storage_migration_journal_valid &&
+             jq -e '.last_error=="ownership_conflict"' "${SB_STORAGE_MIGRATION_DIR}/journal.json" >/dev/null; then code=ownership_conflict; fi
+        }
+        ;;
+    esac
+  fi
+  data=$(storage_status_json) || { printf '{"ok":false,"error":{"code":"storage_status_unavailable"}}\n'; return 1; }
+  payload=$(jq -n --arg code "${code}" --argjson status "${status}" --argjson data "${data}" \
+    '$data + {ok:($status==0),error:(if $status==0 then null else $code end)}') || return 1
+  agent_emit_json_envelope "storage.${operation}" "${status}" "${payload}"
+}
+# Layout checks do not initialize storage or silently migrate a read operation.
+storage_require_current() {
+  if storage_needs_recovery; then
+    agent_cli_error storage storage_recovery_required '目录迁移尚未完成；先执行 sbv storage recover --json --yes。'
+    return 1
+  fi
+  if storage_needs_migration; then
+    agent_cli_error storage storage_migration_required '检测到旧存储布局；先执行 sbv storage status --json 和 sbv storage migrate --json --yes。'
+    return 1
+  fi
+}
+
+storage_menu_gate() {
+  local action='' answer=''
+  if storage_needs_recovery; then
+    action=recover
+    printf '[WARN] 目录迁移未完成；需要恢复原布局和服务状态。\n' >&2
+  elif storage_needs_migration; then
+    action=migrate
+    printf '[INFO] 检测到旧目录，将迁移至 %s；活动服务可能重启，旧数据会保留为迁移备份。\n' "${SB_DATA_ROOT}" >&2
+  else
+    return 0
+  fi
+  printf '[INFO] 可先运行 sbv storage status --json 查看布局和阻塞信息。\n' >&2
+  if ! read -r -p '现在执行目录迁移/恢复？[y/N]: ' answer || [[ ! "${answer}" =~ ^[Yy]$ ]]; then
+    printf '[INFO] 未执行其他操作。\n' >&2
+    return 1
+  fi
+  storage_cli "${action}" --json --yes || return $?
+  # Recovery deliberately returns to the old layout. Let the operator inspect
+  # its result before attempting migration again.
+  if [[ "${action}" == recover ]]; then return 1; fi
+  storage_require_current || return $?
+}
 
 [[ "${BASH_SOURCE[0]}" != "$0" ]] || main "$@"

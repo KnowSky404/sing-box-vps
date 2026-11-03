@@ -2,9 +2,9 @@ verification_scenario_fresh_install_hysteria() {
   local expected_port=1086
   local cert_path=/tmp/sing-box-vps-verification-hysteria.crt
   local key_path=/tmp/sing-box-vps-verification-hysteria.key
-  local config_file=/root/sing-box-vps/config.json
-  local state_file=/root/sing-box-vps/protocols/hysteria.env
-  local store_file=/root/sing-box-vps/protocols/instances/hysteria.json
+  local config_file=/root/.sing-box-vps/runtime/config.json
+  local state_file=/root/.sing-box-vps/runtime/protocols/hysteria.env
+  local store_file=/root/.sing-box-vps/runtime/protocols/instances/hysteria.json
 
   verification_prepare_remote_local_tree
   trap 'verification_cleanup_remote_local_tree; trap - RETURN' RETURN
@@ -43,7 +43,7 @@ EOF
   test -x /usr/local/bin/sbv
   test -f /etc/systemd/system/sing-box.service
   grep -Fqx 'CONFIG_SCHEMA_VERSION=2' "${state_file}"
-  grep -Fqx 'INSTALLED_PROTOCOLS=hysteria' /root/sing-box-vps/protocols/index.env
+  grep -Fqx 'INSTALLED_PROTOCOLS=hysteria' /root/.sing-box-vps/runtime/protocols/index.env
   jq -e --argjson port "${expected_port}" --arg cert "${cert_path}" --arg key "${key_path}" '
     .protocol=="hysteria" and .revision==1 and (.instances|length)==1 and
     .instances[0].id=="main" and .instances[0].tag=="hysteria-in" and

@@ -73,11 +73,11 @@ sbv agent doctor --json
 
 ## 2. 升级前证据与批准门
 
-升级接口会自动持久化 root-only 备份至 `/root/sing-box-vps-backups/`，不需要再把完整运行目录打包到 `/tmp`。执行前只记录不泄密的校验信息：
+升级接口会自动持久化 root-only 备份至 `/root/.sing-box-vps/backups/upgrades/`，不需要再把完整运行目录打包到 `/tmp`。执行前只记录不泄密的校验信息：
 
 ```bash
-sha256sum /root/sing-box-vps/config.json /usr/local/bin/sing-box
-stat -c '%n %s %Y %a %U:%G' /root/sing-box-vps/config.json
+sha256sum /root/.sing-box-vps/runtime/config.json /usr/local/bin/sing-box
+stat -c '%n %s %Y %a %U:%G' /root/.sing-box-vps/runtime/config.json
 ```
 
 Hermes 此时应提交操作摘要：主机、当前/目标版本、`blockers`、warnings、预期服务重启、自动备份位置、成功条件与停止条件，并等待明确批准。不得把密钥、密码、完整 config、协议状态文件或 `links` 写入共享日志。备份包含敏感运行材料，不得复制到共享 artifact。
@@ -85,7 +85,7 @@ Hermes 此时应提交操作摘要：主机、当前/目标版本、`blockers`�
 ## 3. 结构化升级
 
 ```bash
-evidence_dir=$(mktemp -d /root/sing-box-vps-upgrade-evidence.XXXXXXXX)
+evidence_dir=$(mktemp -d /root/.sing-box-vps/runtime-upgrade-evidence.XXXXXXXX)
 chmod 700 "${evidence_dir}"
 set +e
 sbv agent upgrade --json 1.14.0 --yes \
@@ -96,7 +96,7 @@ set -e
 jq . "${evidence_dir}/upgrade.json"
 ```
 
-成功条件：命令退出码为 0，JSON 合法，`schema_version="1.0"`、`ok=true`，目标版本为 `1.14.0`，`rolled_back=false`，`config_preserved=true`，配置 hash 与升级前一致，目标 binary check 通过，服务明确报告 active。`transaction.result_persisted` 必须为 true，`transaction.status` 必须为 `success`，其 `result_path` 应位于 JSON 返回的 `backup` 目录。`backup` 必须位于 `/root/sing-box-vps-backups/upgrade-*`，且 `SHA256SUMS` 校验通过；该清单覆盖 runtime 中的全部普通文件，以及 binary、`sbv`、service unit 和备份元数据。权限 `0600` 的 `transaction-result.json` 不纳入该静态清单，而是反向记录清单路径与 SHA-256，并保留 `backup_ready` 到终态的历史。
+成功条件：命令退出码为 0，JSON 合法，`schema_version="1.0"`、`ok=true`，目标版本为 `1.14.0`，`rolled_back=false`，`config_preserved=true`，配置 hash 与升级前一致，目标 binary check 通过，服务明确报告 active。`transaction.result_persisted` 必须为 true，`transaction.status` 必须为 `success`，其 `result_path` 应位于 JSON 返回的 `backup` 目录。`backup` 必须位于 `/root/.sing-box-vps/backups/upgrades/upgrade-*`，且 `SHA256SUMS` 校验通过；该清单覆盖 runtime 中的全部普通文件，以及 binary、`sbv`、service unit 和备份元数据。权限 `0600` 的 `transaction-result.json` 不纳入该静态清单，而是反向记录清单路径与 SHA-256，并保留 `backup_ready` 到终态的历史。
 
 该操作只更新 binary；不得自动重写或迁移 `config.json`。1.13 的 inline `tls.acme` 与 `download_detour` 在 1.14 仍是弃用但兼容字段，计划在 1.16 移除。需要迁移时必须另行评审、备份和执行，不得把迁移伪装成 binary upgrade。
 
@@ -107,12 +107,12 @@ sing-box version
 sbv agent status --json
 sbv agent check --json
 sbv agent doctor --json
-sha256sum /root/sing-box-vps/config.json
+sha256sum /root/.sing-box-vps/runtime/config.json
 systemctl is-active sing-box
 journalctl -u sing-box -n 100 --no-pager
 backup=$(jq -r '.backup' "${evidence_dir}/upgrade.json")
 case "${backup}" in
-  /root/sing-box-vps-backups/upgrade-*) ;;
+  /root/.sing-box-vps/backups/upgrades/upgrade-*) ;;
   *) printf 'unexpected backup path: %s\n' "${backup}" >&2; exit 1 ;;
 esac
 (cd "${backup}" && sha256sum -c SHA256SUMS)

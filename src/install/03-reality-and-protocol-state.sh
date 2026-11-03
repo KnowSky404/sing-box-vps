@@ -743,7 +743,7 @@ apply_vless_reality_qos_plan() {
   ensure_vless_reality_qos_clsact "${iface}" || return 0
 
   mkdir -p "$(dirname "${SB_REALITY_QOS_FILTER_STATE_FILE}")"
-  tmp_state=$(mktemp)
+  tmp_state=$(storage_mktemp)
   pref="${SB_REALITY_QOS_FILTER_PREF_START}"
   failures=0
 
