@@ -90,7 +90,7 @@ Tailscale 的默认 state_directory 为相对的 tailscale，官方配置见 [Ta
 
 | 验证边界 | 已确认结果 |
 | --- | --- |
-| 迁移隔离测试 | 23 个场景通过：路径字段、密钥/摘要保留、冲突与权限、双锁/继承 FD、恢复入口 CAS、管理器残留、相对入口及故障恢复。 |
+| 迁移隔离测试 | 24 个场景通过：路径字段、密钥/摘要保留、冲突与权限、双锁/继承 FD、恢复入口 CAS、管理器残留、相对入口、DNS hosts 路径及故障恢复。 |
 | 迁移专用 Docker | 真实旧更新器交接、活动/停止服务、HY2 本地 file URI、真实 systemd 203/EXEC 故障回滚均通过；另有当前迁移模块的管理器残留与自定义 ExecStartPre 拒绝验证。 |
 | 独立运行态 | Agent 操作、三组路由策略、组件 shared/resolved/default/unshare 通过；兼容构建差异单独记录。 |
 | 模块目录与网络 | 媒体工具 HOME/cwd/XDG/TMPDIR 隔离测试通过；受控 Tailscale/OpenConnect 存储与重启身份通过；HTTP TCP/HY2 UDP 双栈通过；真实 REALITY checker/TLS/DNS/握手和信号清理通过。 |

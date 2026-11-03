@@ -547,7 +547,31 @@ case_relative_runtime_source() {
   cmp -s "${STORAGE_CASE_DIR}/new-install.sh" "${SBV_BIN_PATH}"
 }
 
-for case_name in status_read_only migrate_active migrate_stopped_and_history conflict pending untrusted env_no_execution env_literal_roundtrip implicit_module_state check_failure_rollback service_failure_rollback lock_and_handoff library cli_confirmation recover_interrupted recover_after_archive recovery_ownership_conflict precise_path_contexts custom_service_directory manager_only_migration sidecar_ownership stale_unit_references relative_runtime_source; do
+case_dns_hosts_paths() {
+  local external_hash
+  legacy_fixture
+  printf '192.0.2.10 managed.fixture.invalid\n' > "${SB_LEGACY_PROJECT_DIR}/dns-hosts"
+  printf '198.51.100.8 external.fixture.invalid\n' > "${STORAGE_CASE_DIR}/external/dns-hosts"
+  external_hash=$(sha256sum "${STORAGE_CASE_DIR}/external/dns-hosts" | cut -d' ' -f1)
+  jq --arg owned "${SB_LEGACY_PROJECT_DIR}/dns-hosts" --arg external "${STORAGE_CASE_DIR}/external/dns-hosts" \
+    '.dns={servers:[{type:"hosts",tag:"array-hosts",path:[$owned,$external]},{type:"hosts",tag:"scalar-hosts",path:$owned}],final:"array-hosts"}' \
+    "${SB_LEGACY_PROJECT_DIR}/config.json" > "${STORAGE_CASE_DIR}/dns-config.json"
+  cp "${STORAGE_CASE_DIR}/dns-config.json" "${SB_LEGACY_PROJECT_DIR}/config.json"
+  cp "${STORAGE_CASE_DIR}/dns-config.json" "${SB_LEGACY_PROJECT_DIR}/managed-config.generated.json"
+  storage_migrate
+  jq -e --arg owned "${SB_PROJECT_DIR}/dns-hosts" --arg external "${STORAGE_CASE_DIR}/external/dns-hosts" \
+    '.dns.servers[0].path==[$owned,$external] and .dns.servers[1].path==$owned' "${SINGBOX_CONFIG_FILE}" >/dev/null
+  [[ ! -e "${SB_LEGACY_PROJECT_DIR}" && -f "${SB_PROJECT_DIR}/dns-hosts" ]]
+  [[ "$(sha256sum "${STORAGE_CASE_DIR}/external/dns-hosts" | cut -d' ' -f1)" == "${external_hash}" ]]
+  printf '{"dns":{"servers":[{"type":"hosts","path":"relative-hosts"}]}}\n' > "${STORAGE_CASE_DIR}/relative-hosts.json"
+  expect_failure storage_migration_explicit_paths "${STORAGE_CASE_DIR}/relative-hosts.json"
+  printf '{"dns":{"servers":[{"type":"hosts","path":["/etc/hosts","relative-hosts"]}]}}\n' > "${STORAGE_CASE_DIR}/relative-hosts.json"
+  expect_failure storage_migration_explicit_paths "${STORAGE_CASE_DIR}/relative-hosts.json"
+  printf '{"dns":{"servers":[{"type":"hosts","tag":"default-hosts"}]}}\n' > "${STORAGE_CASE_DIR}/default-hosts.json"
+  storage_migration_explicit_paths "${STORAGE_CASE_DIR}/default-hosts.json"
+}
+
+for case_name in status_read_only migrate_active migrate_stopped_and_history conflict pending untrusted env_no_execution env_literal_roundtrip implicit_module_state check_failure_rollback service_failure_rollback lock_and_handoff library cli_confirmation recover_interrupted recover_after_archive recovery_ownership_conflict precise_path_contexts custom_service_directory manager_only_migration sidecar_ownership stale_unit_references relative_runtime_source dns_hosts_paths; do
   CASE_NUMBER=$((CASE_NUMBER+1))
   printf 'storage_migration_case=%s\n' "${case_name}"
   (fixture; "case_${case_name}")

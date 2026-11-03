@@ -1703,7 +1703,7 @@ PY
     "${VERIFY_CURRENT_SCENARIO_DIR}/protocols/index.env")
   verification_capture_command \
     "${VERIFY_CURRENT_SCENARIO_DIR}/libcronet.sha256.txt" \
-    sha256sum /usr/local/lib/libcronet.so
+    sha256sum /root/.sing-box-vps/lib/libcronet.so
   cp /root/.sing-box-vps/runtime/config.json "${config_path}"
   cp /root/.sing-box-vps/runtime/protocols/index.env "${index_path}"
   grep -Fqx 'INSTALLED_PROTOCOLS=vless-reality,mixed,hy2,anytls,socks,http,shadowsocks,trojan,tuic,vmess,snell,shadowtls,naive' "${index_path}"
