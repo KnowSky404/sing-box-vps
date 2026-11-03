@@ -17,6 +17,31 @@ Before operational work, read:
 
 For `sing-box` configuration syntax, version compatibility, migration notes, or official examples, use Context7 first.
 
+## Discover And Maintain Operations
+
+Run `sbv commands --json`, then `sbv schema <operation-id> --json` before choosing
+an operation. Compatible discovery commands use `sbv agent commands` and
+`sbv agent schema`. Read automation status, mutation/sensitivity, confirmation,
+concurrency/CAS, input contract and service impact; feature booleans do not imply
+an automated write or successful runtime acceptance. Use the generated
+[Command Catalog](../../docs/wiki/Command-Catalog.md) offline.
+
+Canonical commands and existing `sbv agent ...` commands share the same handlers
+and transaction guards. Do not synthesize prompt answers for an interactive-only
+operation or hand-edit managed state. Retained exceptions list their reason and
+menu entry in the catalog. For routing, save only `.data.draft` from sensitive
+`routing export` into an owned private 0400/0600 input file, preserve its
+fingerprint, validate it and use the guarded apply/recovery path. Service logs
+are bounded but sensitive.
+
+For repository changes, ship each added/adjusted feature with its noninteractive
+command, embedded descriptor, focused test, generated reference and affected
+Agent runbooks/navigation. Build install.sh, run
+`bash scripts/build-command-docs.sh`, check both builds with `--check`, and run
+`tests/command_catalog_contract.sh`. New interactive-only exceptions need an
+explicit SPEC rationale and review. Follow AGENTS.md section 4.2 for the remaining
+behavior verification; this contract does not require unrelated full regression.
+
 ## Classify The Target
 
 - **Local repository**: files in the workspace.
@@ -82,4 +107,4 @@ For read-only security reviews, start with [SECURITY.md](../../SECURITY.md). Rev
 
 Detailed commands, install steps, recovery procedures and capability boundaries live in the [Wiki](https://github.com/KnowSky404/sing-box-vps/wiki). Repository sources are under `docs/wiki/`; read those files when offline. Start with `Agent-Runbook.md`, then follow `Agent-CLI.md`, `Protocol-Instances.md`, `Advanced-Components.md` or `Upgrade-Rehearsal.md` as needed. Use the staged Bootstrap command in `Getting-Started.md` without replacing it with a download-and-execute pipe.
 
-The runtime authority remains `sbv agent capabilities --json`. Documentation publishing changes the separate Wiki Git repository and must preserve unrelated user pages. Follow `Development.md` for validation and publishing.
+The runtime operation authority is `sbv commands --json` and `sbv schema <operation-id> --json`; compatible product capabilities remain available through `sbv agent capabilities --json`. Documentation publishing changes the separate Wiki Git repository and must preserve unrelated user pages. Follow `Development.md` for validation and publishing.

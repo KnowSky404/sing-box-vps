@@ -1,5 +1,53 @@
 # Agent 命令参考
 
+## 操作目录
+
+先运行 `sbv commands --json` 获取当前脚本的完整操作目录，再以
+`sbv schema <operation-id> --json` 读取该操作的参数、确认、并发/CAS、
+输入契约、服务影响和敏感输出分类。兼容发现入口是
+`sbv agent commands --json` 和 `sbv agent schema <operation-id> --json`。
+离线阅读[生成的命令操作目录](https://github.com/KnowSky404/sing-box-vps/wiki/Command-Catalog)。
+
+规范入口使用 `sbv <resource> <verb> ... --json`，常用只读命令可用
+`sbv status --json`、`sbv nodes --json`、`sbv check --json` 等短命令。
+旧 `sbv agent ...` 保留相同结果和安全语义。`sbv` 或 `sbv menu` 打开菜单；
+显式未知命令或多余参数会失败，不进入交互菜单。
+
+目录中 `automation=structured` 才表示有结构化入口；
+`automation=interactive_only` 会给出遗留限制、原因与菜单位置；
+`automation=legacy_cli` 表示可执行但仍返回文本的既有入口。
+`features.*` 表示产品能力，不保证对应写操作可以自动化。发现命令可以在
+未安装服务或存在待恢复事务时使用；实际读写仍受权限、管理锁和事务保护。
+操作描述不是覆盖所有协议记录的通用 JSON Schema；typed record 继续由各协议验证器校验。
+
+所有机器命令显式带 `--json`，stdout 只输出一个 JSON 对象，进度写 stderr。
+应检查退出码及 `.ok`；敏感结果不得写入共享日志。生产变更仍按运维手册的目标授权执行。
+
+## 服务与分流命令
+
+```bash
+sbv service status --json
+sbv service start --json --yes
+sbv service stop --json --yes
+sbv service restart --json --yes
+sbv service logs --json --lines 100
+sbv routing view --json
+sbv routing nodes --json
+sbv routing export --json
+sbv routing validate --json --file draft.json
+sbv routing apply --json --yes --file draft.json
+sbv routing restore --json --yes --expected-fingerprint HASH
+sbv routing recover --json --yes
+```
+
+服务 start/restart 先校验配置并核对最终活动状态，stop 核对最终 inactive；
+日志读取非 follow，默认 100 行，允许 1–1000 行，是敏感输出。
+`routing view` 是脱敏摘要；`export` 返回敏感完整草稿，须从 `.data.draft`
+提取原始对象写入操作者拥有、权限 0400/0600 的私有文件。`validate` 只验证草稿结构，
+不替代实际 apply 中的目标核心配置与服务检查；apply 使用草稿 fingerprint 进行 CAS，
+restore 使用当前快照 fingerprint，recover 使用可信持久事务中的恢复条件。
+私有输入和完整流程见[运维手册](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-Runbook#routing-operations)。
+
 ## 常用命令
 
 | 操作 | 命令 |
@@ -14,7 +62,7 @@
 
 ## Agent 非交互命令
 
-适合在 SSH 会话中查询状态、读取节点信息或执行受控操作。常用只读命令见上方；完整命令和事务语义如下。
+适合在 SSH 会话中查询状态、读取节点信息或执行受控操作。常用只读命令见上方；以下保留兼容命令示例与事务语义，完整参数和支持边界见生成的操作目录。
 
 
 ```bash
@@ -66,12 +114,12 @@ sbv update sing-box 1.14.2
 - `warp`：输出 Cloudflare Warp 状态（启用/路由模式/账户/自定义域名规则集统计），安全用于日常诊断。
 - `check`：执行 `sing-box check` 校验服务端配置，并返回 stdout、stderr、退出码和是否通过。
 - `doctor`：输出只读诊断报告，包含服务状态、路径存在性、协议状态和嵌入的配置校验结果。
-- `service restart`：必须显式传入 `--yes`，先校验配置，通过后才重启服务，并返回重启前后的服务状态。
+- `service start|stop|restart`：必须显式传入 `--yes`；start/restart 先校验配置，再执行 systemd 操作并核对最终状态。`service status` 只读，`service logs` 有界读取敏感日志。完整参数见操作目录。
 - `subman-sync`：非交互推送节点到 SubMan；配置缺失时返回结构化错误，不进入交互提示。API 失败时会在 `last_error` 返回稳定的 `code`、`disposition`、HTTP 状态与可用的 `Retry-After`，传输结果不确定时不会盲目重放写请求。Hysteria2、Trojan 与 VMess 使用独立逐实例/用户路径，Hysteria v1、TUIC、AnyTLS、Snell、NaiveProxy 明确跳过并返回原因；仅 TLS 系统信任且 URI 可无损表达的条目进入同步。
 - `instance`：管理结构化 Mixed/SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS plain/AnyTLS/Hysteria2/Snell/TUIC/Hysteria/NaiveProxy/ShadowTLS 实例。`view`/`diagnose` 是共享锁保护的只读入口，默认脱敏；`export` 是敏感入口，返回完整 typed record 与连接材料。Agent 的连接材料按 `127.0.0.1` 生成，仅表示本机/受信上下文的连接基线，不是公网地址或可达性证明。`rebuild` 在精确 CAS 下修复受管配置漂移并递增 revision；`takeover` 只接管无 active typed state 的可无损 live inventory，默认拒绝公网监听，必须显式 `--allow-public`。`migrate` 仅把 Mixed legacy schema 1 转成 revision 1；`create`/`replace`/`delete`/`default` 使用 `--expected-revision`，凭据通过私有文件输入；删除最后一个实例后保留 revision tombstone，下一次写入不能把 CAS 重置为 0；`recover` 只处理可验证的未完成事务。首次全新安装仍写 legacy schema 1，直到显式迁移。
 - `component`：管理高级入站、Endpoint、可复用出站/分组、ACME provider、shared `http_client`、network namespace 和 typed `route.rule_set`。`list`/`diagnose` 只返回元数据、环境/资源和事务摘要；`export` 按 ID 返回完整记录，是敏感操作。`create`/`replace`/`delete`/`takeover`/`rebuild`/`recover` 使用独立 schema 1 revision/CAS 和持久事务目录 `/root/sing-box-vps.component-write.lock`，候选会执行引用图、监听资源与目标核心 `sing-box check`；非回环监听、TUN、隧道和 OpenVPN server 需要 `--allow-public`。高级组件不进入普通节点分享、节点连接材料或 SubMan 同步。
 - `instance <operation> socks`：使用 `view`/`diagnose`/敏感 `export` 读取，以及 `create`/`replace`/`delete`/`default`/`rebuild`/`takeover`/`recover`、`--expected-revision`、typed record、共享事务和回滚边界管理独立 SOCKS；记录只表达 SOCKS 入站的监听/认证，不含 HTTP 或 TLS。`migrate socks` 明确返回 invalid arguments；已有 live SOCKS 配置应使用 takeover，不把 legacy `.env` migration 语义套到该预设。实例生命周期、两核心 check/runtime、菜单、接管和 Agent/export 回归及最终 Docker/TCP 门禁已通过，但不应从注册表存在推断为全协议目标完成。
-- `instance <operation> http`：操作与 SOCKS 相同，但完整记录必须包含 `tls: {enabled:false}` 或手工 TLS 的 `enabled/server_name/certificate_path/key_path`。非回环写入须显式 `--allow-public`，无 legacy migration。记录示例与限制见 [Agent Runbook](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-Runbook)。HTTP TLS 节点的 `shareable=false`、`shareable=false`，不将空链接视为可用 URI。
+- `instance <operation> http`：操作与 SOCKS 相同，但完整记录必须包含 `tls: {enabled:false}` 或手工 TLS 的 `enabled/server_name/certificate_path/key_path`。非回环写入须显式 `--allow-public`，无 legacy migration。记录示例与限制见 [Agent Runbook](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-Runbook)。HTTP TLS 节点的 `shareable=false`，不将空链接视为可用 URI。
 - `instance <operation> shadowsocks`：支持 `create`/`replace`/`delete`/`default`/`recover` 与 revision CAS，拒绝 `migrate`；记录包含 `listen.network` 和 `authentication`，完整示例见 [Agent Runbook](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-Runbook#shadowsocks-inbound)。`nodes` 不输出密钥；敏感的 `links` 返回逐用户 URI、outbounds 与限制 warning。
 - `instance <operation> vmess`：支持 `create`/`replace`/`delete`/`default`/`recover` 与 revision CAS，拒绝 `migrate`；记录包含 1–128 个唯一 `name`/UUID/`security`/`alter_id` 用户、TLS 信任和 typed V2Ray transport（none/http/ws/grpc/quic）。分享和 SubMan 仅接受 TLS 系统信任且 URI 可无损表达的用户；完整边界见 [VMess 契约](https://github.com/KnowSky404/sing-box-vps/wiki/Protocol-Instances#vmess-typed-instance-contract)。
 - `instance <operation> anytls`：支持 `create`/`replace`/`delete`/`default`/`recover` 与 revision CAS，拒绝 `migrate`；记录包含 1–128 个唯一用户名/密码、必需手工 TLS 证书路径、server name、客户端 `certificate`/`system` 信任和出站策略。AnyTLS 没有标准分享 URI，`links` 返回凭据 outbound JSON 与 `anytls_standard_uri_unavailable` warning；`nodes` 不返回密码。legacy AnyTLS 的 ACME/provider 配置不自动迁移到 typed store，接管会拒绝无法无损表达的字段；完整边界见 [AnyTLS 契约](https://github.com/KnowSky404/sing-box-vps/wiki/Protocol-Instances#anytls-typed-instance-contract)。

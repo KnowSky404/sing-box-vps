@@ -482,37 +482,7 @@ singbox_config_supports_1_14() {
 }
 
 print_cli_help() {
-  cat <<'EOF'
-用法:
-  sbv
-  sbv --help
-  sbv update sbv
-  sbv update sing-box [latest|x.y.z]
-  sbv update-sbv
-  sbv update-sing-box [latest|x.y.z]
-  sbv agent help
-  sbv agent capabilities --json
-  sbv agent component list|diagnose --json
-  sbv agent component export --json --id ID [--expected-revision N]
-  sbv agent component recover --json --yes --expected-revision N
-  sbv agent component takeover --json --yes --expected-revision N [--allow-public]
-  sbv agent component rebuild --json --yes --expected-revision N
-  sbv agent component create|replace|delete ...
-  sbv agent instance view|diagnose|export vless-reality|mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json [--id ID] [--expected-revision N]
-  sbv agent upgrade-check --json x.y.z
-  sbv agent upgrade --json x.y.z --yes
-  sbv uninstall
-
-说明:
-  不带参数时打开交互式管理菜单。
-  update sbv                 更新管理脚本 /usr/local/bin/sbv。
-  update sing-box            更新 sing-box 二进制并保留现有配置。
-  update-sing-box [version]  update sing-box 的短别名，版本可为 latest 或 x.y.z。
-  agent                      输出适合自动化读取的 JSON 状态、节点、能力和受保护升级结果。
-  agent component            管理高级入站、Endpoint 与可复用出站/分组组件。
-  agent instance view/diagnose/export
-                             只读查看、诊断或敏感导出受管代理实例；不会迁移或重写状态。
-EOF
+  command_catalog_print_help
 }
 
 extract_generated_key_value() {

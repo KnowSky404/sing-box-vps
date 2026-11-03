@@ -112,85 +112,98 @@ agent_collect_nodes_json() {
 }
 
 agent_service_cli() {
-  local command=${1:-}
-  local json_flag=${2:-}
-  local yes_flag=${3:-}
-  local before_state after_state check_json restart_status
+  local command=${1:-} json=n confirmed=n lines=100 lines_set=n
+  local before_state after_state check_json='null' operation_status=0 logs=''
+  [[ $# -eq 0 ]] || shift
 
-  if [[ "${command}" != "restart" ]]; then
-    agent_json_error "unknown_service_command" "未知 service 子命令: ${command}"
+  case "${command}" in
+    start|stop|restart|status|logs) ;;
+    *) agent_json_error unknown_service_command "未知 service 子命令。"; return 1 ;;
+  esac
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) [[ "${json}" == n ]] || break; json=y; shift ;;
+      --yes) [[ "${confirmed}" == n ]] || break; confirmed=y; shift ;;
+      --lines) [[ $# -ge 2 && "${lines_set}" == n ]] || break; lines=$2; lines_set=y; shift 2 ;;
+      *) break ;;
+    esac
+  done
+  if [[ $# -ne 0 || ( "${command}" != logs && "${lines_set}" == y ) ||
+        ( ( "${command}" == status || "${command}" == logs ) && "${confirmed}" == y ) ]]; then
+    agent_json_error invalid_arguments "service 参数无效；只接受该操作声明的参数。"
+    return 1
+  fi
+  [[ "${json}" == y ]] || { agent_require_json_flag ''; return 1; }
+  if [[ "${command}" == logs ]]; then
+    if [[ ! "${lines}" =~ ^[1-9][0-9]{0,3}$ ]] || (( lines > 1000 )); then
+      agent_json_error invalid_arguments "日志条数必须是 1 到 1000 的整数。"
+      return 1
+    fi
+    if logs=$(SYSTEMD_COLORS=0 journalctl --unit sing-box --no-pager --quiet --lines "${lines}" --output short-iso 2>/dev/null); then
+      operation_status=0
+    else
+      operation_status=$?
+      logs=''
+    fi
+    printf '%s' "${logs}" | jq -n --rawfile logs /dev/stdin \
+      --argjson lines "${lines}" --argjson exit_code "${operation_status}" '
+      {ok:($exit_code==0),action:"service_logs",sensitive:true,lines:$lines,
+       logs:$logs,journal_exit_code:$exit_code} +
+      (if $exit_code==0 then {} else {error:"service_logs_unavailable",message:"无法读取服务日志；未返回部分日志。"} end)' || return 1
+    [[ "${operation_status}" == 0 ]]
+    return $?
+  fi
+  if [[ "${command}" != status && "${confirmed}" != y ]]; then
+    agent_json_error confirmation_required "service ${command} 需要 --yes 确认。"
     return 1
   fi
 
-  agent_require_json_flag "${json_flag}" || return 1
-
-  if [[ "${yes_flag}" != "--yes" ]]; then
-    agent_json_error "confirmation_required" "service restart 需要 --yes 确认。"
+  if before_state=$(systemctl is-active sing-box 2>/dev/null); then :; else before_state=${before_state:-unknown}; fi
+  case "${before_state}" in
+    active|inactive|failed|activating|deactivating|reloading) ;;
+    *) before_state=unknown ;;
+  esac
+  if [[ "${command}" == status ]]; then
+    jq -n --arg state "${before_state}" '{
+      ok:($state!="unknown"),action:"service_status",sensitive:false,
+      service:{active_state:$state,active:($state=="active")}} +
+      (if $state=="unknown" then {error:"service_state_unavailable",message:"无法检测 sing-box 服务状态。"} else {} end)' || return 1
+    [[ "${before_state}" != unknown ]]
+    return $?
+  fi
+  if [[ "${before_state}" == unknown ]]; then
+    agent_json_error service_state_unavailable "无法检测 sing-box 服务原状态；未执行服务操作。"
+    return 1
+  fi
+  if [[ "${command}" != stop ]] && ! check_json=$(agent_singbox_check_json); then
+    if after_state=$(systemctl is-active sing-box 2>/dev/null); then :; else after_state=${after_state:-unknown}; fi
+    case "${after_state}" in active|inactive|failed|activating|deactivating|reloading) ;; *) after_state=unknown ;; esac
+    jq -n --arg action "service_${command}" --arg before "${before_state}" \
+      --arg after "${after_state}" --argjson check "${check_json}" '{
+      ok:false,action:$action,skipped:true,reason:"config_check_failed",error:"config_check_failed",
+      service:{before:$before,after:$after},check:$check}'
     return 1
   fi
 
-  before_state=$(systemctl is-active sing-box 2>/dev/null || true)
-  if ! check_json=$(agent_singbox_check_json); then
-    after_state=$(systemctl is-active sing-box 2>/dev/null || true)
-    jq -n \
-      --arg before "${before_state:-unknown}" \
-      --arg after "${after_state:-unknown}" \
-      --argjson check "${check_json}" \
-      '{
-        ok: false,
-        action: "service_restart",
-        skipped: true,
-        reason: "config_check_failed",
-        service: {
-          before: $before,
-          after: $after
-        },
-        check: $check
-      }'
-    return 1
-  fi
-
-  if run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box; then
-    restart_status=0
+  if run_with_progress "执行 sing-box ${command}（启动或重启时可能等待 ACME 签发）" systemctl "${command}" sing-box >&2; then
+    operation_status=0
   else
-    restart_status=$?
+    operation_status=$?
   fi
-  after_state=$(systemctl is-active sing-box 2>/dev/null || true)
-
-  if [[ "${restart_status}" != "0" || "${after_state}" != "active" ]]; then
-    jq -n \
-      --arg before "${before_state:-unknown}" \
-      --arg after "${after_state:-unknown}" \
-      --argjson exit_code "${restart_status}" \
-      --argjson check "${check_json}" \
-      '{
-        ok: false,
-        action: "service_restart",
-        error: "service_restart_failed",
-        skipped: false,
-        service: {
-          before: $before,
-          after: $after,
-          restart_exit_code: $exit_code
-        },
-        check: $check
-      }'
+  if after_state=$(systemctl is-active sing-box 2>/dev/null); then :; else after_state=${after_state:-unknown}; fi
+  case "${after_state}" in active|inactive|failed|activating|deactivating|reloading) ;; *) after_state=unknown ;; esac
+  if [[ "${operation_status}" != 0 ||
+        ( "${command}" == stop && "${after_state}" != inactive ) ||
+        ( "${command}" != stop && "${after_state}" != active ) ]]; then
+    jq -n --arg command "${command}" --arg before "${before_state}" --arg after "${after_state}" \
+      --argjson exit_code "${operation_status}" --argjson check "${check_json}" '{
+      ok:false,action:("service_"+$command),error:("service_"+$command+"_failed"),skipped:false,
+      service:({before:$before,after:$after} + {($command+"_exit_code"):$exit_code}),check:$check}'
     return 1
   fi
-
-  jq -n \
-    --arg before "${before_state:-unknown}" \
-    --arg after "${after_state:-unknown}" \
-    --argjson check "${check_json}" \
-    '{
-      ok: true,
-      action: "service_restart",
-      service: {
-        before: $before,
-        after: $after
-      },
-      check: $check
-    }'
+  jq -n --arg action "service_${command}" --arg before "${before_state}" \
+    --arg after "${after_state}" --argjson check "${check_json}" '{
+    ok:true,action:$action,service:{before:$before,after:$after},check:$check}'
 }
 
 agent_push_nodes_to_subman_json() {

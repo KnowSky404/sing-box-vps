@@ -7,6 +7,22 @@ The additive `protocol_registry` in `sbv agent capabilities --json` describes ea
 
 运维入口：[命令参考](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-CLI) · [高级组件](https://github.com/KnowSky404/sing-box-vps/wiki/Advanced-Components) · [协议实例](https://github.com/KnowSky404/sing-box-vps/wiki/Protocol-Instances) · [数据面证据](https://github.com/KnowSky404/sing-box-vps/wiki/Data-Plane-Verification)
 
+## Operation Discovery
+
+Start each task with `sbv commands --json`, then inspect one stable operation ID
+with `sbv schema <operation-id> --json`. The compatible Agent forms are
+`sbv agent commands --json` and `sbv agent schema <operation-id> --json`.
+Use the [generated command catalog](https://github.com/KnowSky404/sing-box-vps/wiki/Command-Catalog)
+for offline reference. Its `automation`, mutation/sensitivity, confirmation,
+concurrency, input contract and service impact fields are part of the operation
+contract. Feature booleans alone do not establish automation coverage.
+
+Canonical `sbv <resource> <verb> ... --json` commands and compatible `sbv agent`
+commands share handlers, locks and transaction guards. Unknown explicit commands
+fail without opening a menu. Discovery remains available on a fresh host and
+while a transaction needs recovery. A descriptor explains an operation; it is
+not a generic JSON Schema validator for every protocol record.
+
 ## First Principles
 
 Creation and additional-install menus default new structured proxy instances to one `::` listener across all 14 supported instance protocols. On Linux the sing-box TCP/UDP dual-stack socket accepts IPv4 and IPv6; do not add a second `0.0.0.0` listener on the same port. Fresh defaults for the 15 presets use the same address, while REALITY and legacy singleton rendering retain global inbound-mode settings and single-stack fallback. Existing addresses, explicit Agent records, public-exposure confirmation, ShadowTLS inner detours and client-local loopback listeners keep their existing semantics. See the [default-listener contract](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/default-dual-stack-listeners.md).
@@ -110,7 +126,7 @@ For code or script changes:
 
 1. Inspect the current repository state with `git status --short`.
 2. Read the affected files before editing.
-3. Keep edits scoped to the task.
+3. Keep edits scoped to the task. For each added or changed operation, update its noninteractive command, embedded operation descriptor, focused tests, generated command reference and affected runbooks/Agent navigation together. Build `install.sh`, then run `bash scripts/build-command-docs.sh`; check both builds with `--check` and run `tests/command_catalog_contract.sh`. Document any retained interactive-only limitation and reason in the SPEC and catalog; do not automate prompt answers.
 4. Select the smallest sufficient verification set using [AGENTS.md](https://github.com/KnowSky404/sing-box-vps/blob/main/AGENTS.md), section 4.2, and explain the actual behavioral impact. Documentation, version-display and menu-only edits do not require broad regression because of their file path. Configuration changes require `sing-box check` on affected outputs; service, network and lifecycle changes require corresponding real Docker scenarios.
 5. Run changed standalone tests and callers of changed helpers. Include Bootstrap download/validation tests when affected. Full regression is required for core-version adaptation or config/state migrations, broadly affected shared logic or uncertain impact, or an explicit full-test/release-acceptance requirement. Reuse prior passing results only under section 4.2's unchanged-input conditions, with the original evidence and reason recorded; after fixes, rerun failed and affected checks.
 6. Preview the dispatcher with `bash dev/verification/run.sh --plan --base origin/main`. Use explicit local `--group` and Docker `--scenario` selections for unmapped runtime changes, or request the registered full set with `--full`. Review their scope under section 4.2; groups do not automatically request runtime coverage. The planner supplies scenario baselines and final smoke. Base mode includes committed and working-tree changes; the default without `--base` only sees working-tree differences against HEAD. `VERIFY_SKIP_REMOTE=1` only skips Docker and does not prove runtime validation.
@@ -177,13 +193,13 @@ Keep historical functions in scope when planning or documenting a change:
 | Protocols | VLESS REALITY, Mixed HTTP/SOCKS, standalone SOCKS, standalone HTTP, Shadowsocks, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy, ShadowTLS; protocols can coexist | Discover with `capabilities`; summaries with `nodes`; general installation uses menus; typed Mixed/SOCKS/HTTP/Shadowsocks/Trojan/VMess/Hysteria2/Hysteria v1/AnyTLS/Snell/TUIC/NaiveProxy/ShadowTLS have shared instance `view|diagnose|export` reads plus Agent `create/replace/delete/default/rebuild/takeover/recover` writes (Mixed additionally supports migrate) |
 | REALITY | Multiple instances, independent ports/ShortID/names, per-instance outbound policy and optional upload/download QoS | Read with `nodes`; mutate through the interactive protocol menu |
 | TLS | Hysteria2/AnyTLS ACME HTTP-01, Cloudflare DNS-01, or manual certificate paths; Hysteria v1, NaiveProxy, standalone HTTP, Trojan and TUIC use manual certificate paths; Trojan/TUIC/Hysteria v1/NaiveProxy explicitly select certificate or system client trust | Read warnings/check output; mutate interactively |
-| Warp | Account registration, enable/disable, all/selective routing, built-in/custom domains, local/remote rule sets | Read with `warp`; mutate through menu 12 |
+| Warp and routing | Global/native/WARP exits, per-node exits, Block CN, AI/streaming presets, custom domains/IP and local/remote rule sets, account registration | Safe `routing view|nodes`; sensitive `routing export`; guarded `routing validate|apply|restore|recover`; shared menu 12 workflow |
 | Route rule sets | Typed `inline`/`local`/`remote` lifecycle through component CAS; local files are references, remote URLs and named HTTP-client references are sensitive | `component create|replace|delete|takeover|rebuild`; no ordinary node export, share link or SubMan |
 | Advanced components | Typed inbounds, endpoints, outbounds/groups, certificate providers, shared HTTP clients and network namespaces with schema-1 revision/CAS, drift checks and durable recovery | `component list|diagnose|export`; guarded `create|replace|delete|takeover|rebuild|recover`; export is sensitive |
-| Network/system | IPv4/IPv6/dual inbound stack, outbound/DNS strategy, BBR | Read config/doctor; mutate through menu 13 |
+| Network/system | IPv4/IPv6/dual inbound stack, outbound/DNS strategy, BBR | Read config/doctor; stack and BBR mutations remain in menu 13; unified routing uses the routing API or menu 12 |
 | Node material | Links/QR, per-node connection materials, dual-stack labels | `nodes` is log-safe; `links` are sensitive |
 | SubMan | Idempotent VLESS/Hysteria2 sync; Trojan and VMess sync only losslessly representable TLS/system-trust users and report per-user skips; revision/error/retry semantics; only encrypted dual-network Shadowsocks entries use the dedicated path, while single-network and `none` entries are skipped; Hysteria v1, Snell, TUIC, NaiveProxy, AnyTLS and ShadowTLS remain explicitly unsupported | `subman-sync` is sensitive and externally mutating; same-snapshot mock passed for VMess (`synced=3`, `skipped=1`, `failed=0`), and no unauthorized real sync |
-| Lifecycle | start/stop/restart/status/logs, managed-instance and component takeover/rebuild/recovery, core/script upgrade, two uninstall scopes | Status/check/doctor are read-only; restart, fixed core upgrade, typed instance mutations and component mutations are guarded Agent writes with exact confirmation/CAS where applicable |
+| Lifecycle | start/stop/restart/status/logs, managed-instance and component takeover/rebuild/recovery, core/script upgrade, two uninstall scopes | `service status` is read-only; `service logs` is a bounded sensitive read; service start/stop/restart, fixed core upgrade, typed instance/component mutations are guarded writes; removal remains interactive |
 | Verification | VMess: native 1.13.18/1.14.0 generated none/http/ws/grpc/quic two-user exports and server/client checks; Hysteria2: typed multi-user lifecycle, independent bandwidth, Agent/share/client-export and SubMan contract; Hysteria v1: typed multi-user manual-TLS QUIC lifecycle, independent bandwidth/obfs, Agent redaction/share and outbound JSON contract; AnyTLS: typed multi-instance lifecycle, Agent credential-safe summary/share and client-export contract; Snell: typed v5/v6 lifecycle, takeover, Agent summary/share and outbound JSON contract; TUIC: typed multi-user manual-TLS QUIC lifecycle, Agent redaction/share and per-user outbound JSON contract; NaiveProxy: typed multi-user manual-TLS TCP/UDP lifecycle, Agent redaction/share and per-user outbound JSON contract with libcronet warning; ShadowTLS: typed composite outer/loopback-detour lifecycle, v1/v2/v3 validation, Agent redaction/share and per-user outbound JSON contract; focused takeover/lifecycle/Agent/share/SubMan/probe tests passed; Docker fresh-install and coexistence evidence is run below | Local VMess/Hysteria2/Hysteria v1/AnyTLS/Snell/TUIC/NaiveProxy/ShadowTLS tests pass, with Hysteria v1/Snell/TUIC/NaiveProxy/ShadowTLS target-core check when configured; SubMan is mock-only, no production or real SubMan sync proof |
 
 Do not invent non-interactive mutations for features marked interactive-only. Use the menu after the appropriate safety gate or stop and ask for operator approval.
@@ -291,12 +307,12 @@ are redacted reads, while `export` and component export are sensitive.
 - `links --json` returns the sharing formats supported by each protocol and instance. Mixed/SOCKS provide URIs without UoT options, HTTP TLS provides a warning without an outbound replacement, and REALITY/legacy Hysteria2 provide links rather than full outbounds; use instance parameters and manual client setup when the sharing format is insufficient. Treat its output as sensitive and avoid pasting it into public logs. A Shadowsocks response has `links: {"<stable-outbound-tag>": "<uri>"}`, `outbounds: [...]` and `warnings: [...]`; VMess responses contain `vmess://` links plus matching outbounds; AnyTLS returns per-user outbound JSON, `links:{}`, and `warnings[].code=anytls_standard_uri_unavailable` because no standard URI can carry the complete configuration. Snell returns per-user outbound JSON, `links:{}`, and `warnings[].code=snell_standard_uri_unavailable` because version, obfs/shaping and user keys have no lossless standard URI. TUIC returns per-user outbound JSON, `links:{}`, and `warnings[].code=tuic_standard_uri_unavailable` because no standard URI carries its QUIC and user fields. Hysteria v1 returns per-user outbound JSON, `links:{}`, and `warnings[].code=hysteria_standard_uri_unavailable`; NaiveProxy returns per-user outbound JSON, `links:{}`, `warnings[].code=naive_standard_uri_unavailable` and `naive_libcronet_required`; ShadowTLS returns per-user outbound JSON, `links:{}`, and `warnings[].code=shadowtls_standard_uri_unavailable`; Typed Hysteria2 returns per-user outbounds and also `hy2://` links when system trust is selected; legacy Hysteria2 returns only its URI and warnings, and explicit warnings for unrepresentable options; manual Ed25519 certificates include `warnings[].code=hy2_ed25519_share_link_requires_client_override` because the share URI cannot carry the required 1.14+ client option.
 - `check --json` validates the server config with `sing-box check` and returns stdout, stderr, exit code, and pass/fail state.
 - `doctor --json` is read-only. It returns status, path existence checks, protocol state, and embedded config-check output for first-pass agent diagnostics.
-- `service restart --json --yes` is a guarded mutation. It validates config first and skips restart when validation fails.
+- `service start|stop|restart --json --yes` are guarded mutations with final-state checks. Start/restart validate config before systemd; stop requires inactive afterwards. `service status --json` reads state and `service logs --json [--lines N]` reads 1–1000 sensitive journal lines without following. Do not put those logs in shared output.
 - `warp --json` reports Cloudflare Warp state: enabled/disabled, route mode (`all` or `selective`), account registration health, and counts for custom domains, local rule sets, remote rule sets, and builtin AI/streaming domain rules. Safe for routine diagnostics.
 - `subman-sync --json` pushes eligible nodes to SubMan without prompting. Missing SubMan config is reported as structured JSON. Shadowsocks uses its dedicated integration only for encrypted entries whose network is `["tcp","udp"]`; single-network entries are skipped with `shadowsocks_uri_network_omitted`, while `none` with an empty password is parser-rejected and skipped with `shadowsocks_subman_none_unsupported`. Trojan, VMess and Hysteria2 use dedicated multi-instance, per-user paths: only lossless TLS/system-trust URIs are eligible; plaintext, certificate trust, unrepresentable transport, partial options and oversized URIs retain explicit skipped counts/warnings, including when every user is skipped. Hysteria v1, Snell, AnyTLS, TUIC, NaiveProxy and ShadowTLS are explicitly unsupported and are never sent as SubMan `other`; use outbound JSON from `links`. Same-snapshot mock coverage passed for VMess (`synced=3`, `skipped=1`, `failed=0`) and Hysteria2 (`synced=2`, `skipped=0`, `failed=0`); do not perform real sync without explicit authorization.
 - `update sbv` updates `/usr/local/bin/sbv` from the project main branch.
 - `update sing-box [latest|x.y.z]` updates only the sing-box binary, preserves the current server config byte-for-byte, validates it with `sing-box check`, and restarts the service only after validation passes. The aliases are `sbv update-sbv` and `sbv update-sing-box [latest|x.y.z]`.
-- `upgrade --json 1.14.0 --yes` is the auditable Hermes path: it is mutating and service-impacting, persists a backup under `/root/sing-box-vps-backups/`, preserves `config.json` byte-for-byte, validates before restart, and attempts automatic binary recovery on failure. For an actual change, require `transaction.result_persisted=true`, then retain the referenced root-only `transaction-result.json`; it records `backup_ready` plus the terminal `success`, `rolled_back`, or `rollback_failed` state, and terminal records include `failure_reason` plus `operation_exit_code` when applicable. If the target is already installed, the no-op response instead has `changed=false`, `transaction.status=not_attempted`, `transaction.reason=already_installed`, and no backup or result file. Recovery is complete only when both `rolled_back` and `rollback_ok` are true; `error=rollback_failed` plus `manual_intervention_required=true` is a hard stop. It never silently rewrites configuration for migration. All public Agent protocol IDs include `vless-reality`, `mixed`, `socks`, `http`, `shadowsocks`, `trojan`, `vmess`, `hysteria2`, `hysteria`, `anytls`, `snell`, `tuic`, `naive` and `shadowtls`; the internal Hysteria2 state filename remains `hy2.env`. `instance` mutations for Mixed, standalone SOCKS, HTTP, Shadowsocks, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy and ShadowTLS require `--yes` and exact `--expected-revision`; `migrate shadowsocks`, `migrate vmess`, `migrate hy2`, `migrate hysteria`, `migrate anytls`, `migrate snell`, `migrate tuic`, `migrate naive` and `migrate shadowtls` are unsupported. `component` mutations use the same confirmation/CAS boundary for advanced state and persistent recovery; `component export` is sensitive. `subman-sync` are also mutating; `links`, instance/component export, and SubMan output are sensitive. Installation, general protocol edits, REALITY/QoS, Warp, BBR, media checks, and uninstall remain interactive-only; typed instance/component takeover, rebuild and recovery are guarded JSON mutations and still require operator approval.
+- `upgrade --json 1.14.0 --yes` is the auditable Hermes path: it is mutating and service-impacting, persists a backup under `/root/sing-box-vps-backups/`, preserves `config.json` byte-for-byte, validates before restart, and attempts automatic binary recovery on failure. For an actual change, require `transaction.result_persisted=true`, then retain the referenced root-only `transaction-result.json`; it records `backup_ready` plus the terminal `success`, `rolled_back`, or `rollback_failed` state, and terminal records include `failure_reason` plus `operation_exit_code` when applicable. If the target is already installed, the no-op response instead has `changed=false`, `transaction.status=not_attempted`, `transaction.reason=already_installed`, and no backup or result file. Recovery is complete only when both `rolled_back` and `rollback_ok` are true; `error=rollback_failed` plus `manual_intervention_required=true` is a hard stop. It never silently rewrites configuration for migration. All public Agent protocol IDs include `vless-reality`, `mixed`, `socks`, `http`, `shadowsocks`, `trojan`, `vmess`, `hysteria2`, `hysteria`, `anytls`, `snell`, `tuic`, `naive` and `shadowtls`; the internal Hysteria2 state filename remains `hy2.env`. `instance` mutations for Mixed, standalone SOCKS, HTTP, Shadowsocks, Trojan, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy and ShadowTLS require `--yes` and exact `--expected-revision`; `migrate shadowsocks`, `migrate vmess`, `migrate hy2`, `migrate hysteria`, `migrate anytls`, `migrate snell`, `migrate tuic`, `migrate naive` and `migrate shadowtls` are unsupported. `component` mutations use the same confirmation/CAS boundary for advanced state and persistent recovery; `component export` is sensitive. `subman-sync` are also mutating; `links`, instance/component export, and SubMan output are sensitive. Fresh installation, legacy general protocol edits, REALITY/QoS writes, host stack/BBR changes, media checks, SubMan settings, and uninstall remain interactive-only; unified WARP/routing writes use the guarded routing API; typed instance/component takeover, rebuild and recovery are guarded JSON mutations and still require operator approval.
 
 ## sing-box 1.14 Compatibility
 
@@ -461,12 +477,47 @@ This returns `enabled`, `route_mode`, account registration health, and routing a
 
 `status --json` also includes a `warp` block with `enabled` and `route_mode`.
 
-To change WARP state (enable/disable, mode switch, re-register, add domains or rule sets), use the interactive menu:
+To change WARP state, use the guarded routing workflow below or open menu 12,
+then item 2 (WARP and node exits). Block CN is item 1; AI/streaming presets are
+item 3, media/exit checks are item 4, and inspection/recovery is item 5.
+
+## Routing Operations
+
+Inspect `sbv routing view --json` and `sbv routing nodes --json` first. The safe
+view redacts source URLs, legacy source/domain text and account material. Export
+only in a trusted context and extract the raw draft from its JSON envelope:
 
 ```bash
-sbv
-# Navigate: 12 -> WARP
+umask 077
+routing_work_dir=$(mktemp -d)
+sbv routing export --json > "${routing_work_dir}/export.json"
+jq -e '.ok == true and (.data.draft | type == "object")' "${routing_work_dir}/export.json" >/dev/null
+jq '.data.draft' "${routing_work_dir}/export.json" > "${routing_work_dir}/draft.json"
+# Edit only the supported fields in this private draft, preserving fingerprint.
+sbv routing validate --json --file "${routing_work_dir}/draft.json"
+# After the requested change is authorized for this host:
+sbv routing apply --json --yes --file "${routing_work_dir}/draft.json"
+sbv routing view --json
 ```
+
+Keep the input owned by the invoking user with mode 0400 or 0600. Do not pass
+the complete export envelope as `--file`; the input must be `.data.draft` itself.
+Do not pass arbitrary jq filters or shell fragments to `sbv`. Draft validation
+checks the input structure only; apply uses the existing candidate transaction,
+fingerprint CAS, target-core configuration check and runtime/rollback boundaries.
+A stale fingerprint requires a fresh export and deliberate reapplication of the
+intended edit, not replacing the fingerprint in an old draft. The draft is
+sensitive and should be removed with its private working directory after it is
+no longer needed.
+
+Restore the previous snapshot only after reading the current fingerprint:
+`sbv routing restore --json --yes --expected-fingerprint HASH`.
+When a pending routing journal blocks other operations, discover the current
+contract and run `sbv routing recover --json --yes` for its trusted journal.
+Recovery does not authorize unrelated writes. If WARP registration has an
+uncertain external outcome, follow the returned recovery status; restoring local
+files cannot undo a remote account registration. No real WARP/SubMan write,
+public connectivity or production acceptance follows from local validation.
 
 On production, WARP mutations are production-changing operations. Use the production gate first.
 

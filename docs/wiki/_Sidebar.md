@@ -4,6 +4,7 @@
 - [快速开始](https://github.com/KnowSky404/sing-box-vps/wiki/Getting-Started)
 - [功能与限制](https://github.com/KnowSky404/sing-box-vps/wiki/Features)
 - [交互管理](https://github.com/KnowSky404/sing-box-vps/wiki/Management)
+- [命令操作目录](https://github.com/KnowSky404/sing-box-vps/wiki/Command-Catalog)
 - [Agent 命令](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-CLI)
 - [运维手册](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-Runbook)
 - [实例与节点命名](https://github.com/KnowSky404/sing-box-vps/wiki/Node-Naming.zh-CN)

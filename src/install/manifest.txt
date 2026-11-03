@@ -32,6 +32,7 @@
 31-agent-service-and-subman.sh
 32-instance-transactions.sh
 33-agent-dispatch.sh
+44-command-catalog.sh
 34-node-and-inventory.sh
 35-instance-schema-and-import.sh
 36-instance-store-and-render.sh
@@ -41,4 +42,5 @@
 40-routing-policy.sh
 41-routing-transactions.sh
 42-routing-menu.sh
+45-agent-routing.sh
 43-launcher.sh

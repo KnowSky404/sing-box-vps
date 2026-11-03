@@ -107,15 +107,25 @@
 - 只读审查默认静态分析，不自动进入开发、版本递增、提交或全量测试流程；仅在确认具体风险确需验证时运行最小隔离复现。发现报告与实际修复分开，不能凭推测要求全仓重构或全套回归。
 - `SECURITY.md` 提供审查上下文，不代表已完成安全审计，也不自动启用云端审查任务；PR 当前 head 的远程安全审查门禁仍按第 6 节执行。
 
+### 4.4 AI Native 操作契约
+
+- 菜单与命令共享经过验证的业务函数；新增功能或改变既有操作时，必须在同一变更中新增或调整对应的非交互 `sbv` 命令、嵌入式操作目录、定向测试、命令说明及受影响的 Agent 操作手册和导航，不得仅新增菜单入口。
+- `sbv commands --json` 是版本化操作目录，`sbv schema <operation-id> --json` 返回单项参数与安全边界；兼容的 `sbv agent ...` 必须继续进入相同 dispatcher、锁和事务。普通 `features.*` 布尔值不表示自动化可用或运行态验收通过。
+- 每项操作必须声明稳定 ID、命令和参数、结构化/仅交互支持状态、变更/敏感分类、确认条件、并发/CAS、输入契约、服务影响及文档位置。不得将有提示、缺少输入或未知命令降级到交互菜单；结构化输出仅在 stdout 返回一个 JSON 对象，进度写 stderr。
+- 新增操作默认提供结构化接口。确需保留仅交互限制时，在 SPEC 中说明缺失的验证、事务或恢复边界，并登记 `automation=interactive_only`、原因和菜单入口，交由审查确认；禁止自动输入提示答案来冒充非交互能力。
+- 修改嵌入式操作目录后，先构建 `install.sh`，再运行 `bash scripts/build-command-docs.sh` 更新生成的 `docs/wiki/Command-Catalog.md`，不得手改该目录。提交前执行两项构建的 `--check` 和 `tests/command_catalog_contract.sh`；验证范围仍以第 4.2 节为准。
+- 详细流程见 [AI Native 操作契约](docs/specs/ai-native-operations.md) 和 [Agent 命令](docs/wiki/Agent-CLI.md#操作目录)。
+
 ## 5. 文件组织结构
 - `bootstrap.sh`: 远程安装/卸载入口；负责在私有临时目录中下载、校验并启动对应运行时脚本。
 - `src/install/`: 安装器维护源码，按 `manifest.txt` 的固定顺序构建；各模块是源码片段，不独立执行或运行时下载。
+- `scripts/build-command-docs.sh`: 从嵌入式操作目录生成 Wiki 命令参考；`--check` 只读检查同步。
 - `scripts/build-install.sh`: 仅拼接和校验源码，不执行模块；无参数原子生成根 `install.sh`，`--check` 只读检查产物是否同步。
 - `install.sh`: 由模块源码生成并提交的单文件运行时与用户分发入口；不要直接编辑。修改模块后运行 `bash scripts/build-install.sh`，提交前运行 `bash scripts/build-install.sh --check`，同时提交源码与产物。Bootstrap、自更新和全局 `sbv` 继续只使用此文件。
 - `uninstall.sh`: 独立卸载入口；彻底卸载服务、核心、配置和全局 `sbv`。
 - `docs/wiki/`: Wiki 页面单一维护源；安装、操作、协议、验证和开发说明均在此维护。
 - `docs/specs/`: 当前实现契约及中英文状态索引；实现、本地验证和真实服务验收分别记录。
-- `docs/agents/llms.txt`: Agent 文档导航；详细手册在 Wiki，命令面以 `sbv agent capabilities --json` 为准。
+- `docs/agents/llms.txt`: Agent 文档导航；详细手册在 Wiki，操作面以 `sbv commands --json` 和 `sbv schema <operation-id> --json` 为准，产品能力保留 `sbv agent capabilities --json`。
 - `SECURITY.md`: 安全审查威胁模型、重点边界与发现报告要求，供本地和云端审查读取。
 - `skills/sing-box-vps-operator/`: 面向自动化操作者的读取顺序、生产门禁、验证和回滚规则。
 

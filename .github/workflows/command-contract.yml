@@ -1,0 +1,26 @@
+name: Command contract
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  command-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check runtime and generated operation reference
+        run: |
+          bash scripts/build-install.sh --check
+          bash scripts/build-command-docs.sh --check
+          bash tests/command_catalog_contract.sh
+          bash tests/agent_service_operations.sh
+          bash tests/agent_routing_operations.sh
+          bash tests/agent_cli_ops_commands.sh
+          bash tests/agent_docs_cover_capabilities.sh
+          bash tests/wiki_documentation.sh
+          bash tests/version_metadata_is_consistent.sh

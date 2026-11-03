@@ -1,49 +1,6 @@
 
 agent_print_help() {
-  cat <<'EOF'
-用法:
-  sbv agent help
-  sbv agent capabilities --json
-  sbv agent upgrade-check --json x.y.z
-  sbv agent upgrade --json x.y.z --yes
-  sbv agent status --json
-  sbv agent nodes --json
-  sbv agent links --json
-  sbv agent check --json
-  sbv agent doctor --json
-  sbv agent service restart --json --yes
-  sbv agent subman-sync --json
-  sbv agent warp --json
-  sbv agent component list|diagnose --json
-  sbv agent component export --json --id ID [--expected-revision N]
-  sbv agent component recover --json --yes --expected-revision N
-  sbv agent component takeover --json --yes --expected-revision N [--allow-public]
-  sbv agent component rebuild --json --yes --expected-revision N
-  sbv agent component create|replace --json --yes --expected-revision N --file component.json [--allow-public]
-  sbv agent component delete --json --yes --expected-revision N --id ID
-  sbv agent instance view|diagnose|export vless-reality|mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json [--id ID] [--expected-revision N]
-  sbv agent instance create|replace mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N --file record.json [--allow-public]
-  sbv agent instance delete|default mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N --id ID
-  sbv agent instance rebuild mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N
-  sbv agent instance takeover mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision 0 [--allow-public]
-  sbv agent instance migrate mixed --json --yes --expected-revision N
-  sbv agent instance recover mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|anytls|hy2|snell|tuic|hysteria|naive|shadowtls --json --yes --expected-revision N
-
-说明:
-  capabilities  输出协议、功能入口以及只读/变更/敏感分类。
-  upgrade-check 只读评估固定目标版本的升级就绪状态，不下载或替换二进制。
-  upgrade       创建持久备份并执行受 --yes 保护的二进制升级，输出结构化结果。
-  status        输出服务、版本、路径和已安装协议。
-  nodes         输出节点摘要，不包含完整分享链接或密码。
-  links         输出完整连接材料，适合受信任 Agent 获取节点信息。
-  warp          输出 Cloudflare Warp 状态，包括启用/路由模式/账户/规则统计。
-  component     管理 direct/tun/redirect/tproxy/cloudflared 入站、WireGuard/Tailscale/OpenConnect/OpenVPN endpoint、shared HTTP client 以及 SSH/Tor/分组等出站；list/diagnose 只读，export 仅按 ID 输出敏感配置，recover/takeover/rebuild/create/replace/delete 使用 CAS 与持久事务。
-  check         执行 sing-box check 并输出结构化结果。
-  doctor        输出只读诊断信息和配置校验结果。
-  service       执行带 --yes 保护的服务操作，目前支持 restart。
-  subman-sync   非交互推送节点到 SubMan，缺少配置时返回结构化错误。
-  instance      Mixed/SOCKS/HTTP/Shadowsocks/Trojan/VMess/VLESS/AnyTLS/Hysteria2/Snell/TUIC/Hysteria/NaiveProxy/ShadowTLS 实例事务；支持 view/diagnose/export 只读入口，以及 create/replace/delete/default/rebuild/takeover/recover 写入口，且仅 Mixed 支持 legacy migration；rebuild 修复受管配置漂移并递增 revision，takeover 以 revision 0 接管无 typed state 的可无损 live 配置。
-EOF
+  command_catalog_print_help
 }
 
 agent_require_json_flag() {
@@ -202,7 +159,8 @@ detect_existing_instance_state_read_only() {
 }
 
 agent_capabilities_json() {
-  local registry components managed_registry
+  local registry components managed_registry catalog
+  catalog=$(command_catalog_json) || return 1
   registry=$(protocol_registry_json) || return 1
   components=$(component_registry_json) || return 1
   managed_registry=$(jq -cn --argjson protocols "${registry}" --argjson components "${components}" '
@@ -221,11 +179,13 @@ agent_capabilities_json() {
     --argjson registry "${registry}" \
     --argjson components "${components}" \
     --argjson managed_registry "${managed_registry}" \
+    --slurpfile operation_catalog /dev/stdin \
     '{
       schema: $schema,
       ok: true,
       action: "capabilities",
       script_version: $script_version,
+      operation_catalog: $operation_catalog[0],
       supported_sing_box_version: $supported_version,
       multi_protocol_coexistence: true,
       protocols: ($registry | map({key: .agent_id, value: .legacy_capabilities}) | from_entries),
@@ -365,7 +325,7 @@ agent_capabilities_json() {
         automatic_binary_rollback_on_failure: true,
         restores_previous_service_activity: true
       }
-    }'
+    }' <<< "${catalog}"
 }
 
 agent_config_compatibility_json() {

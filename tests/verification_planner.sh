@@ -179,6 +179,22 @@ assert_line 'test=tests/install_build.sh' "${plan}"
 assert_no_planning_side_effects
 git -C "${FIXTURE}" show "${BASE}:${SOURCE_MODULE}" > "${FIXTURE}/${SOURCE_MODULE}"
 
+# The generated command reference builder and source guide select only their
+# documentation contracts; neither requires protocol or container execution.
+for file in scripts/build-command-docs.sh src/install/README.md; do
+  plan=$(fixture_run --plan --changed-file "${file}")
+  assert_line 'mode=local' "${plan}"
+  assert_line 'plan_status=ready' "${plan}"
+  assert_line 'group=docs' "${plan}"
+  assert_line 'test=tests/command_catalog_contract.sh' "${plan}"
+  assert_line 'test=tests/wiki_documentation.sh' "${plan}"
+  if [[ "${file}" == scripts/build-command-docs.sh ]]; then
+    assert_line 'syntax=scripts/build-command-docs.sh' "${plan}"
+  fi
+  ! grep -q '^scenario=' <<<"${plan}"
+  assert_no_planning_side_effects
+done
+
 plan=$(fixture_run --plan --changed-file bootstrap.sh)
 assert_line 'test=tests/bootstrap_download.sh' "${plan}"
 assert_line 'mode=local' "${plan}"
@@ -223,12 +239,14 @@ assert_line 'test=tests/fixture_source_test.sh' "${plan}"
 assert_no_planning_side_effects
 
 # Container-only fixtures must not reach the host through any selector.
-for fixture in tests/routing_policy_runtime.sh tests/routing_policy_legacy_runtime.sh tests/routing_policy_manual_references_runtime.sh tests/default_dual_stack_runtime.sh tests/hy2_instance_acme_runtime.sh tests/component_runtime_acceptance.sh \
+for fixture in tests/agent_operations_runtime.sh tests/routing_policy_runtime.sh tests/routing_policy_legacy_runtime.sh tests/routing_policy_manual_references_runtime.sh tests/default_dual_stack_runtime.sh tests/hy2_instance_acme_runtime.sh tests/component_runtime_acceptance.sh \
   tests/selector_urltest_runtime.sh tests/acme_component_runtime.sh \
   tests/cloudflared_runtime.sh tests/tailscale_openconnect_runtime.sh tests/namespace_core_runtime.sh; do
   plan=$(fixture_run --plan --changed-file "${fixture}" --group docs)
   assert_line 'plan_status=needs_scope' "${plan}"
   ! grep -Fqx "test=${fixture}" <<<"${plan}"
+  assert_line "unmapped=container-only fixture ${fixture} requires its separate isolated run; no registered scenario executes it" "${plan}"
+  assert_line 'unmapped=automatic execution cannot cover the changed isolated runtime fixture; run its dedicated container procedure separately' "${plan}"
   plan=$(fixture_run --plan --changed-file "${fixture}" --scenario multi_protocol_coexistence)
   assert_line 'plan_status=needs_scope' "${plan}"
   plan=$(fixture_run --plan --changed-file "${fixture}" --full)
@@ -236,6 +254,22 @@ for fixture in tests/routing_policy_runtime.sh tests/routing_policy_legacy_runti
   ! grep -Fqx "test=${fixture}" <<<"${plan}"
 done
 assert_no_planning_side_effects
+
+# A helper statically referenced only by the Agent runtime fixture must preserve
+# its isolation boundary too. Split the helper basename so this test itself is
+# not mistaken for a host-side caller by the textual dependency scanner.
+runtime_helper="tests/fixture_agent_runtime_""helper.sh"
+printf '#!/usr/bin/env bash\n: isolated-helper\n' > "${FIXTURE}/${runtime_helper}"
+printf '\n# %s\n' "${runtime_helper##*/}" >> "${FIXTURE}/tests/agent_operations_runtime.sh"
+plan=$(fixture_run --plan --changed-file "${runtime_helper}" --group docs)
+assert_line 'plan_status=needs_scope' "${plan}"
+assert_line 'reason=container-only fixture tests/agent_operations_runtime.sh requires a separate isolated run' "${plan}"
+assert_line 'unmapped=automatic execution cannot cover the changed isolated runtime fixture; run its dedicated container procedure separately' "${plan}"
+! grep -Fqx 'test=tests/agent_operations_runtime.sh' <<<"${plan}"
+assert_error_2 --changed-file tests/agent_operations_runtime.sh --group docs
+assert_no_planning_side_effects
+rm -f "${FIXTURE}/${runtime_helper}"
+git -C "${FIXTURE}" show "${BASE}:tests/agent_operations_runtime.sh" > "${FIXTURE}/tests/agent_operations_runtime.sh"
 
 plan=$(fixture_run --plan --changed-file README.md --group binary-install --group warp)
 assert_line 'test=tests/binary_install_transactions.sh' "${plan}"

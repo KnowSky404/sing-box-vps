@@ -273,6 +273,41 @@ install_or_update_singbox() {
 main() {
   local update_status=0
 
+  if [[ $# -gt 0 ]]; then
+    case "$1" in
+      menu)
+        if [[ $# -ne 1 ]]; then
+          agent_cli_error menu invalid_arguments '用法: sbv menu'; return 1
+        fi
+        shift
+        ;;
+      -h|--help|help)
+        if [[ $# -ne 1 ]]; then
+          agent_cli_error help invalid_arguments '用法: sbv --help'; return 1
+        fi
+        print_cli_help; return 0
+        ;;
+      agent) shift; agent_dispatch "$@"; return $? ;;
+      update)
+        case "${2:-}" in
+          sbv|script) [[ $# -eq 2 ]] || { agent_cli_error update invalid_arguments '用法: sbv update sbv'; return 1; } ;;
+          sing-box|singbox) [[ $# -ge 2 && $# -le 3 ]] || { agent_cli_error update invalid_arguments '用法: sbv update sing-box [latest|x.y.z]'; return 1; } ;;
+          *) agent_cli_error update unknown_command '未知 update 子命令。'; return 1 ;;
+        esac
+        ;;
+      update-sbv|update-script|uninstall)
+        [[ $# -eq 1 ]] || { agent_cli_error "$1" invalid_arguments '该命令不接收额外参数。'; return 1; }
+        ;;
+      update-sing-box|update-singbox)
+        [[ $# -le 2 ]] || { agent_cli_error update invalid_arguments '用法: sbv update-sing-box [latest|x.y.z]'; return 1; }
+        ;;
+      --internal-uninstall-purge)
+        [[ $# -eq 1 || ( $# -eq 2 && "${2:-}" == --yes ) ]] || { agent_cli_error uninstall invalid_arguments '卸载参数无效。'; return 1; }
+        ;;
+      *) canonical_cli_dispatch "$@"; return $? ;;
+    esac
+  fi
+
   case "${1:-}" in
     -h|--help|help|agent) ;;
     *)

@@ -2,7 +2,7 @@
 
 面向 VPS 的 sing-box 安装与管理脚本，提供交互菜单和 Agent 命令，用于部署协议、维护服务和分享节点信息。
 
-- 脚本版本：`2026110301`
+- 脚本版本：`2026110302`
 - sing-box 适配版本：`1.14.2`
 
 ## 主要能力
@@ -35,7 +35,7 @@ sbv
 
 **[Wiki 首页](https://github.com/KnowSky404/sing-box-vps/wiki)** · **[快速安装](https://github.com/KnowSky404/sing-box-vps/wiki/Getting-Started)**
 
-[交互管理](https://github.com/KnowSky404/sing-box-vps/wiki/Management) · [Agent 命令](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-CLI) · [运维与排错](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-Runbook) · [开发工作流](https://github.com/KnowSky404/sing-box-vps/wiki/Development)
+[交互管理](https://github.com/KnowSky404/sing-box-vps/wiki/Management) · [操作目录](https://github.com/KnowSky404/sing-box-vps/wiki/Command-Catalog) · [Agent 命令](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-CLI) · [运维与排错](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-Runbook) · [开发工作流](https://github.com/KnowSky404/sing-box-vps/wiki/Development)
 
 安全审查上下文与报告要求见 [SECURITY.md](SECURITY.md)。
 实现契约、完成状态与待验收边界见 [SPEC 索引](docs/specs/README.zh-CN.md)（[English](docs/specs/README.md)）。
