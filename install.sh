@@ -44275,13 +44275,39 @@ storage_decode_env_literal() {
   printf '%s' "${result}"
 }
 
+storage_migration_path_jq() {
+  local query=$1
+  shift
+  # These option maps contain arbitrary names and values, not option fields.
+  # ShadowTLS handshake-map values do contain DialerOptions, so descend into
+  # those values without interpreting their arbitrary SNI keys as fields.
+  jq "$@" '
+    def opaque_entry:
+      .key=="headers" or .key=="extra_headers" or .key=="torrc" or .key=="predefined" or
+      .key=="interface_address" or .key=="network_interface_address" or .key=="fallback_for_alpn" or
+      (.key=="servers" and (.value|type)=="object");
+    def path_walk(f):
+      if type=="object" then
+        with_entries(if opaque_entry then .
+          elif .key=="handshake_for_server_name" and (.value|type)=="object" then
+            .value |= with_entries(.value |= path_walk(f))
+          else .value |= path_walk(f) end) | f
+      elif type=="array" then map(path_walk(f)) | f else f end;
+    def path_view:
+      path_walk(if type=="object" then with_entries(select(opaque_entry|not)) else . end);
+  '"${query}"
+}
+
 storage_rewrite_path_json() {
-  jq --arg old "${SB_LEGACY_PROJECT_DIR}" --arg new "${SB_PROJECT_DIR}" --arg log "${SBV_LOG_FILE}" --arg media "${SB_MEDIA_CHECK_DIR}" '
+  storage_migration_path_jq '
     def relocated:
       if type=="string" and startswith("/") and test("(^|/)\\.\\.?(/|$)") then error("legacy_ambiguous_material_path")
-      elif type=="string" and .==($old+"/sbv.log") then $log
-      elif type=="string" and (.==($old+"/media-check") or startswith($old+"/media-check/")) then $media+.[(($old+"/media-check")|length):]
-      elif type=="string" and (.==$old or startswith($old+"/")) then $new+.[($old|length):]
+      elif type=="string" and startswith("/") then
+        . as $original | gsub("/+";"/") |
+        if .==($old+"/sbv.log") then $log
+        elif .==($old+"/media-check") or startswith($old+"/media-check/") then $media+.[(($old+"/media-check")|length):]
+        elif .==$old or startswith($old+"/") then $new+.[($old|length):]
+        else $original end
       elif type=="array" then map(relocated) else . end;
     def old_related: .==$old or startswith($old+"/");
     def normalized_path:
@@ -44312,7 +44338,7 @@ storage_rewrite_path_json() {
       if type=="string" then relocated
       elif type=="object" and has("path") then .path |= relocated else . end;
     ([.network_namespaces[]?.tag, (.components[]? | select(.role=="network_namespace") | .tag)] | map(select(type=="string"))) as $namespace_tags |
-    walk(if type=="object" then
+    path_walk(if type=="object" then
       . as $object | with_entries(.key as $key | if
         (["data_directory","state_directory","certificate_path","key_path","config_path","private_key_path","client_certificate_path","client_key_path","mca_certificate_path","mca_key_path","static_key_path","certificate_authority_path","crl_path","secret_path","taildrop_directory","executable_path","wrapper_path","initial_path","protect_path","certificate_directory_path","dhcp_lease_files","mesh_psk_file","cache_path","credential_path","usages_path","pid_file"] | index($key)) != null
         then .value |= relocated
@@ -44330,7 +44356,8 @@ storage_rewrite_path_json() {
     if (.network_namespaces? | type)=="array" then .network_namespaces |= map(if (.type // "")=="" or .type=="default" then .path |= relocated else . end) else . end |
     if (.experimental.cache_file.path? | type)=="string" then .experimental.cache_file.path |= relocated else . end |
     if (.log.output? | type)=="string" and .log.output!="stdout" and .log.output!="stderr" then .log.output |= relocated else . end |
-    if (.experimental.clash_api.external_ui? | type)=="string" then .experimental.clash_api.external_ui |= relocated else . end'
+    if (.experimental.clash_api.external_ui? | type)=="string" then .experimental.clash_api.external_ui |= relocated else . end' \
+    --arg old "${SB_LEGACY_PROJECT_DIR}" --arg new "${SB_PROJECT_DIR}" --arg log "${SBV_LOG_FILE}" --arg media "${SB_MEDIA_CHECK_DIR}"
 }
 
 storage_migration_rewrite() {
@@ -44368,8 +44395,8 @@ storage_migration_rewrite() {
                 value=$(printf '%s' "${value}" | jq -Rs '{masquerade:.}' | storage_rewrite_path_json | jq -r .masquerade) || return 1
               elif [[ "${key}" == ACME_EXTRA_JSON && -n "${value}" ]]; then
                 value=$(printf '%s' "${value}" | storage_rewrite_path_json) || return 1
-              elif [[ "${value}" == "${SB_LEGACY_PROJECT_DIR}" || "${value}" == "${SB_LEGACY_PROJECT_DIR}/"* ]]; then
-                value="${SB_PROJECT_DIR}${value#"${SB_LEGACY_PROJECT_DIR}"}"
+              else
+                value=$(printf '%s' "${value}" | jq -Rs '{certificate_path:.}' | storage_rewrite_path_json | jq -r .certificate_path) || return 1
               fi
               if [[ "${key}" != ACME_EXTRA_JSON ]]; then
                 [[ "${value}" != *[[:cntrl:]]* ]] || return 1
@@ -44405,7 +44432,8 @@ storage_migration_validate_state() {
 }
 
 storage_migration_explicit_paths() {
-  local file=$1
+  local file=$1 document
+  document=$(storage_migration_path_jq 'path_view' < "${file}") || return 1
   # Changing systemd's working directory must not create a second Tailscale
   # identity or Tor data directory, or reinterpret relative material paths.
   jq -e '
@@ -44422,24 +44450,24 @@ storage_migration_explicit_paths() {
              (.type=="api" and ((.config // .).dashboard as $dashboard |
                $dashboard==true or ($dashboard|type)=="string" and ($dashboard|length)==0 or
                ($dashboard|type)=="object" and $dashboard.enabled==true and (($dashboard.path // "")|length)==0)))] | length==0
-  ' "${file}" >/dev/null || return 1
+  ' <<< "${document}" >/dev/null || return 1
   jq -e '
     [.. | objects | to_entries[] |
       .key as $key | select((["data_directory","state_directory","certificate_path","key_path","config_path","private_key_path","client_certificate_path","client_key_path","mca_certificate_path","mca_key_path","static_key_path","certificate_authority_path","crl_path","secret_path","taildrop_directory","executable_path","wrapper_path","initial_path","protect_path","certificate_directory_path","dhcp_lease_files","mesh_psk_file","cache_path","credential_path","usages_path","pid_file"]|index($key))!=null) |
       .value | if type=="array" then .[] else . end |
       select(type=="string" and length>0 and (startswith("/")|not))] | length==0
-  ' "${file}" >/dev/null || return 1
-  jq -e '[..|objects|select(.type=="local" or .type=="hosts")|.path?|if type=="array" then .[] else . end|select(type=="string" and length>0 and (startswith("/")|not))]|length==0' "${file}" >/dev/null || return 1
-  jq -e '[..|objects|select(.role=="rule_set" and .type=="local")|.config.path|select(type=="string" and length>0 and (startswith("/")|not))]|length==0' "${file}" >/dev/null || return 1
+  ' <<< "${document}" >/dev/null || return 1
+  jq -e '[..|objects|select(.type=="local" or .type=="hosts")|.path?|if type=="array" then .[] else . end|select(type=="string" and length>0 and (startswith("/")|not))]|length==0' <<< "${document}" >/dev/null || return 1
+  jq -e '[..|objects|select(.role=="rule_set" and .type=="local")|.config.path|select(type=="string" and length>0 and (startswith("/")|not))]|length==0' <<< "${document}" >/dev/null || return 1
   # Default netns names resolve under /run/netns in the core, independent of
   # cwd. Preserve those names; only absolute managed paths are relocated.
   jq -e '[..|objects|select(.type=="api")|(.config // .).dashboard|
     if type=="string" then . elif type=="object" and .enabled==true then .path else empty end|
-    select(type=="string" and length>0 and (startswith("/")|not))]|length==0' "${file}" >/dev/null || return 1
-  jq -e '(.log.output? // "") as $output | $output=="" or $output=="stdout" or $output=="stderr" or ($output|startswith("/"))' "${file}" >/dev/null || return 1
-  jq -e '(.experimental.clash_api.external_ui? // "") as $ui | $ui=="" or ($ui|startswith("/"))' "${file}" >/dev/null || return 1
-  jq -e 'if .experimental.cache_file.enabled?==true then (.experimental.cache_file.path|type)=="string" and (.experimental.cache_file.path|startswith("/")) else true end' "${file}" >/dev/null || return 1
-  storage_rewrite_path_json < "${file}" >/dev/null
+    select(type=="string" and length>0 and (startswith("/")|not))]|length==0' <<< "${document}" >/dev/null || return 1
+  jq -e '(.log.output? // "") as $output | $output=="" or $output=="stdout" or $output=="stderr" or ($output|startswith("/"))' <<< "${document}" >/dev/null || return 1
+  jq -e '(.experimental.clash_api.external_ui? // "") as $ui | $ui=="" or ($ui|startswith("/"))' <<< "${document}" >/dev/null || return 1
+  jq -e 'if .experimental.cache_file.enabled?==true then (.experimental.cache_file.path|type)=="string" and (.experimental.cache_file.path|startswith("/")) else true end' <<< "${document}" >/dev/null || return 1
+  storage_rewrite_path_json <<< "${document}" >/dev/null
 }
 
 storage_migration_legacy_service_is_supported() {

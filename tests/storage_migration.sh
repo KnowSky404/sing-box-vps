@@ -712,7 +712,55 @@ case_instance_archive_bytes() {
     "${SB_PROJECT_DIR}/protocols/instances/anytls.json" >/dev/null
 }
 
-for case_name in status_read_only migrate_active migrate_stopped_and_history conflict pending untrusted env_no_execution env_literal_roundtrip implicit_module_state check_failure_rollback service_failure_rollback lock_and_handoff library cli_confirmation recover_interrupted recover_after_archive recovery_ownership_conflict precise_path_contexts custom_service_directory manager_only_migration sidecar_ownership stale_unit_references relative_runtime_source dns_hosts_paths object_masquerade_and_option_paths instance_archive_bytes; do
+case_separator_alias_and_opaque_maps() {
+  local owned_alias external_alias headers value
+  legacy_fixture
+  owned_alias=${SB_LEGACY_PROJECT_DIR//\//\/\/}
+  external_alias="${STORAGE_CASE_DIR}//external/key.pem"
+  [[ -f "${owned_alias}/cert.pem" && -f "${external_alias}" ]]
+  headers=$(jq -cn --arg old "${SB_LEGACY_PROJECT_DIR}" \
+    '{certificate_path:($old+"/opaque-header"),key_path:"relative-header",data_directory:($old+"/../opaque"),
+      masquerade:"file:relative-header",type:"tailscale",state_directory:"",path:"/ws/opaque"}')
+  jq --arg owned "${owned_alias}/cert.pem" --arg external "${external_alias}" --arg old "${SB_LEGACY_PROJECT_DIR}" --argjson headers "${headers}" '
+    .tls.certificate_path=$owned | .tls.key_path=$external |
+    .outbounds=[{type:"vmess",transport:{type:"ws",path:"/ws",headers:$headers}},
+      {type:"http",headers:$headers},{type:"naive",extra_headers:$headers},
+      {type:"tor",data_directory:($old+"/tor"),torrc:{key_path:"relative-torrc",data_directory:($old+"/../opaque-torrc")}}] |
+    .dns={servers:[{type:"hosts",predefined:{certificate_path:["192.0.2.1"],data_directory:["198.51.100.1"]}},
+      {type:"https",headers:$headers}]} |
+    .services=[{type:"ssm-api",servers:{certificate_path:"relative-server-tag",key_path:($old+"/opaque-tag")},cache_path:($old+"/cache")} ] |
+    .route.rules=[{interface_address:{certificate_path:["192.0.2.0/24"]},network_interface_address:{wifi:["198.51.100.0/24"]}}] |
+    .inbounds=[{type:"trojan",fallback_for_alpn:{certificate_path:{server:"example.invalid",server_port:443}}},
+      {type:"shadowtls",handshake_for_server_name:{certificate_path:{server:"example.invalid",server_port:443,protect_path:($old+"/protect.sock")},
+        headers:{server:"example.invalid",server_port:443,protect_path:($old+"/header-name.sock")}}}]' \
+    "${SB_LEGACY_PROJECT_DIR}/config.json" > "${STORAGE_CASE_DIR}/opaque-config.json"
+  storage_migration_explicit_paths "${STORAGE_CASE_DIR}/opaque-config.json"
+  jq '.tls.certificate_path="relative-certificate"' "${STORAGE_CASE_DIR}/opaque-config.json" > "${STORAGE_CASE_DIR}/relative-certificate.json"
+  expect_failure storage_migration_explicit_paths "${STORAGE_CASE_DIR}/relative-certificate.json"
+  jq --arg old "${SB_LEGACY_PROJECT_DIR}" '.tls.certificate_path=($old+"/../certificate")' "${STORAGE_CASE_DIR}/opaque-config.json" > "${STORAGE_CASE_DIR}/dot-certificate.json"
+  expect_failure storage_migration_explicit_paths "${STORAGE_CASE_DIR}/dot-certificate.json"
+  cp "${STORAGE_CASE_DIR}/opaque-config.json" "${SB_LEGACY_PROJECT_DIR}/config.json"
+  cp "${STORAGE_CASE_DIR}/opaque-config.json" "${SB_LEGACY_PROJECT_DIR}/managed-config.generated.json"
+  printf 'CERT_PATH=%q\n' "${owned_alias}/cert.pem" > "${SB_LEGACY_PROJECT_DIR}/protocols/anytls.env"
+  storage_migrate
+  [[ ! -e "${SB_LEGACY_PROJECT_DIR}" && -f "${SB_PROJECT_DIR}/cert.pem" ]]
+  jq -e --arg new "${SB_PROJECT_DIR}" --arg external "${external_alias}" --argjson headers "${headers}" '
+    .tls.certificate_path==($new+"/cert.pem") and .tls.key_path==$external and
+    .outbounds[0].transport.headers==$headers and .outbounds[1].headers==$headers and
+    .outbounds[2].extra_headers==$headers and .dns.servers[1].headers==$headers and
+    .outbounds[3].data_directory==($new+"/tor") and .services[0].cache_path==($new+"/cache") and
+    .inbounds[1].handshake_for_server_name.certificate_path.protect_path==($new+"/protect.sock") and
+    .inbounds[1].handshake_for_server_name.headers.protect_path==($new+"/header-name.sock")' "${SINGBOX_CONFIG_FILE}" >/dev/null
+  jq -e --slurpfile before "${STORAGE_CASE_DIR}/opaque-config.json" '
+    .outbounds[3].torrc==$before[0].outbounds[3].torrc and .dns.servers[0].predefined==$before[0].dns.servers[0].predefined and
+    .services[0].servers==$before[0].services[0].servers and .route.rules==$before[0].route.rules and
+    .inbounds[0].fallback_for_alpn==$before[0].inbounds[0].fallback_for_alpn' "${SINGBOX_CONFIG_FILE}" >/dev/null
+  value=$(storage_decode_env_literal "$(sed -n 's/^CERT_PATH=//p' "${SB_PROJECT_DIR}/protocols/anytls.env")")
+  [[ "${value}" == "${SB_PROJECT_DIR}/cert.pem" ]]
+  printf '{"certificate_path":"/outside//unchanged/cert.pem"}\n' | storage_rewrite_path_json | jq -e '.certificate_path=="/outside//unchanged/cert.pem"' >/dev/null
+}
+
+for case_name in status_read_only migrate_active migrate_stopped_and_history conflict pending untrusted env_no_execution env_literal_roundtrip implicit_module_state check_failure_rollback service_failure_rollback lock_and_handoff library cli_confirmation recover_interrupted recover_after_archive recovery_ownership_conflict precise_path_contexts custom_service_directory manager_only_migration sidecar_ownership stale_unit_references relative_runtime_source dns_hosts_paths object_masquerade_and_option_paths instance_archive_bytes separator_alias_and_opaque_maps; do
   CASE_NUMBER=$((CASE_NUMBER+1))
   printf 'storage_migration_case=%s\n' "${case_name}"
   (fixture; "case_${case_name}")
