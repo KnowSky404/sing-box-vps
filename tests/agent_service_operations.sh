@@ -148,4 +148,3 @@ for pending in "${SB_PROJECT_DIR}.instance-write.lock" "${SB_COMPONENT_TRANSACTI
   rm -- "${pending}"
 done
 printf '%s\n' 'agent service operations passed'
-

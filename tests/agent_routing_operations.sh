@@ -7,6 +7,7 @@ setup_menu_test_env 120
 source_testable_install
 trap 'printf "agent routing test failed at line %s\n" "${LINENO}" >&2' ERR
 
+original_routing_nodes=$(declare -f routing_nodes_json)
 FP_FILE="${TMP_DIR}/fingerprint"
 FIXTURE="${TMP_DIR}/draft.json"
 CALLS="${TMP_DIR}/calls"
@@ -195,4 +196,28 @@ json=$(failed routing view --json)
 jq -e '.error=="root_required"' <<< "${json}" >/dev/null
 json=$(request commands --json)
 jq -e '.ok' <<< "${json}" >/dev/null
+# A valid maximum-size typed inventory exceeds Linux's 128 KiB single-argv
+# limit. Exercise the real collector and both canonical readers, preserving the
+# redaction allowlist and complete envelope rather than accepting partial data.
+(
+  eval "${original_routing_nodes}"
+  agent_current_user_is_root() { return 0; }
+  jq -n '{schema_version:1,protocol:"socks",revision:1,default_instance_id:"node0",
+    instances:[range(0;128) as $i | {id:("node"+($i|tostring)),name:("n"*1024),
+      tag:("socks-in-node"+($i|tostring)),listen:{address:"127.0.0.1",port:(20000+$i)},
+      authentication:{enabled:false,username:"",password:""},outbound_policy:"default",dependencies:[]}]}' \
+    > "${TMP_DIR}/large-store.json"
+  validate_structured_instance_store socks "${TMP_DIR}/large-store.json"
+  printf '{}\n' > "${SINGBOX_CONFIG_FILE}"
+  list_installed_protocols_read_only() { printf 'socks\n'; }
+  plain_proxy_structured_state_active() { return 0; }
+  plain_proxy_structured_store_file() { printf '%s\n' "${TMP_DIR}/large-store.json"; }
+  routing_nodes_json > "${TMP_DIR}/large-nodes.json"
+  [[ "$(wc -c < "${TMP_DIR}/large-nodes.json")" -gt 131072 ]]
+  for operation in nodes view; do
+    result=$(main routing "${operation}" --json)
+    jq -e '.ok and (.data.nodes|length)==128 and
+      all(.data.nodes[]; (.name|length)==1024 and (has("password")|not))' <<< "${result}" >/dev/null
+  done
+)
 printf '%s\n' 'Agent routing operations passed'

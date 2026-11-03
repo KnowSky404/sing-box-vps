@@ -150,6 +150,13 @@ investigate slow prerequisites rather than restarting a broad suite.
   The later changes add service dangling-symlink refusals and catalog/help
   metadata only; real service/routing behavior is unchanged, so this success-path
   evidence is reused under AGENTS section 4.2. New rejection paths have host tests.
+- Local review found a Linux single-argument limit in routing view/nodes with a
+  valid 128-instance inventory and 1024-byte names. Node JSON now travels through
+  a private file and `jq --slurpfile`; both canonical readers pass a regression
+  exceeding 128 KiB with the real store validator/collector. Legacy menu metadata
+  and service impacts were corrected, and media-probe executable/cache effects
+  are explicit. These fixes do not alter routing publication or service actions;
+  the isolated runtime success-path evidence above is reused.
 - No real WARP/SubMan write, public connectivity or production change was
   performed. Exact-head reviews/merge and Wiki publication are separate delivery
   records in the implementation PR; this SPEC does not assert them in advance.

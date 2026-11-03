@@ -1324,18 +1324,18 @@ sbv subman sync --json --yes
 下列遗留操作尚无结构化写入口。使用所列菜单并遵守目标环境的操作授权；
 不要通过拼接提示答案或直接改状态文件绕过这些边界。
 
-| 操作 ID | 操作 | 菜单 / 手工入口 | 限制原因 |
-| --- | --- | --- | --- |
-| `install` | 安装新协议 | `1` | fresh install requires dependency, TLS and credential prompts |
-| `reality.write` | REALITY 实例、名称与 QoS 写操作 | `2` | legacy REALITY writes do not implement typed revision/CAS transactions |
-| `protocol.remove` | 按协议批量移除 | `3` | use typed instance delete when supported; bulk legacy removal remains interactive |
-| `core.uninstall` | 卸载 sing-box | `5` | destructive removal has no stable structured result contract |
-| `node.qr` | 显示节点二维码 | `11` | terminal rendering; use sensitive links for machine connection material |
-| `subman.settings` | SubMan 配置管理 | `11` | settings currently use interactive secret input |
-| `system.stack` | 入站/出站协议栈设置 | `13` | host and listener changes lack a unified persistent rollback contract |
-| `system.bbr` | BBR 设置 | `13` | host sysctl mutation has no structured transaction interface |
-| `system.media` | 媒体解锁测试 | `13` | external executable probe has no stable structured result contract |
-| `script.uninstall` | 卸载管理脚本 | `15` | destructive self-removal remains interactive |
+| 操作 ID | 操作 | 菜单 / 手工入口 | 副作用 / 服务影响 | 限制原因 |
+| --- | --- | --- | --- | --- |
+| `install` | 安装新协议 | `1` | `{"mutation":true,"sensitive":true,"service_impact":"start_or_restart"}` | fresh install requires dependency, TLS and credential prompts |
+| `reality.write` | REALITY 实例、名称与 QoS 写操作 | `2` | `{"mutation":true,"sensitive":true,"service_impact":"restart_possible"}` | legacy REALITY writes do not implement typed revision/CAS transactions |
+| `protocol.remove` | 按协议批量移除 | `3` | `{"mutation":true,"sensitive":false,"service_impact":"restart_or_stop"}` | use typed instance delete when supported; bulk legacy removal remains interactive |
+| `core.uninstall` | 卸载 sing-box | `5` | `{"mutation":true,"sensitive":false,"service_impact":"stop_and_remove"}` | destructive removal has no stable structured result contract |
+| `node.qr` | 显示节点二维码 | `11` | `{"mutation":false,"sensitive":true,"service_impact":"none"}` | terminal rendering; use sensitive links for machine connection material |
+| `subman.settings` | SubMan 配置管理 | `11` | `{"mutation":true,"sensitive":true,"service_impact":"none"}` | settings currently use interactive secret input |
+| `system.stack` | 入站/出站协议栈设置 | `13` | `{"mutation":true,"sensitive":false,"service_impact":"restart"}` | host and listener changes lack a unified persistent rollback contract |
+| `system.bbr` | BBR 设置 | `13` | `{"mutation":true,"sensitive":false,"service_impact":"host_network"}` | host sysctl mutation has no structured transaction interface |
+| `system.media` | 媒体解锁测试 | `12 -> 4` | `{"mutation":true,"sensitive":false,"service_impact":"none"}` | external executable probe may download/update its local backend and launch temporary processes; no stable structured result |
+| `script.uninstall` | 卸载管理脚本 | `15` | `{"mutation":true,"sensitive":false,"service_impact":"configuration_removal_possible"}` | destructive self-removal remains interactive |
 
 ## 既有文本命令
 
