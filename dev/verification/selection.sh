@@ -27,6 +27,7 @@ verification_full_test_manifest() {
   cat <<'EOF_TESTS'
 tests/install_build.sh
 tests/storage_layout.sh
+tests/storage_selinux.sh
 tests/module_storage.sh
 tests/storage_migration.sh
 tests/server_only_node_sharing.sh

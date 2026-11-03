@@ -373,6 +373,11 @@ prepare_sbv_update() {
       '私有存储目录无法安全初始化' '目录权限或所有者不可信' 1 '检查统一根目录；目标未发生变更'
     return 1
   }
+  storage_selinux_prepare || {
+    set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'precheck' 'selinux_setup_failed' \
+      'SELinux 文件上下文无法安全准备' '已保留管理员规则，未发布候选脚本' 1 '检查 SELinux 工具、规则和目录标签'
+    return 1
+  }
   target_dir=$(dirname -- "${SBV_BIN_PATH}")
   SBV_UPDATE_LOCK_PATH="${target_dir}/.sbv-update.lock"
 
@@ -653,6 +658,11 @@ prepare_sbv_candidate_for_commit() {
       '检查 chown 权限；原脚本未发生变更'
     return 1
   fi
+  storage_selinux_label "${SBV_UPDATE_CANDIDATE_PATH}" "${SBV_BIN_PATH}" || {
+    set_sbv_update_error "${SBV_UPDATE_OPERATION:-sbv_update}" 'commit' 'selinux_label_failed' \
+      '候选脚本的 SELinux 标签校验失败' '原脚本未发生变更' 1 '检查项目文件上下文规则'
+    return 1
+  }
   return 0
 }
 
@@ -769,6 +779,7 @@ restore_sbv_backup() {
     rm -f -- "${restore_path}" || true
     return 1
   fi
+  storage_selinux_label "${restore_path}" "${SBV_BIN_PATH}" || return 1
   if ! mv -f -- "${restore_path}" "${SBV_BIN_PATH}"; then
     rm -f -- "${restore_path}" || true
     return 1
@@ -1494,6 +1505,7 @@ ensure_sbv_command_installed() {
   local source_file=$0
   local result_status=0
   storage_initialize || return 1
+  storage_selinux_prepare || return 1
 
   if [[ "${source_file}" == "${SBV_LINK_PATH}" && -L "${source_file}" &&
         "$(readlink -- "${source_file}")" == "${SBV_BIN_PATH}" ]]; then

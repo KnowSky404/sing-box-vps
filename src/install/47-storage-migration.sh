@@ -267,7 +267,11 @@ storage_migration_rewrite() {
     case "${file#"${tree}/"}" in
       config.json|managed-config.generated.json|components.json|routing-policy.json|protocols/instances/*.json)
         if [[ "${file#"${tree}/"}" == protocols/instances/* ]]; then
-          protocol=${file##*/}; protocol=${protocol%.json}
+          protocol=${file#"${tree}/protocols/instances/"}
+          # Bash case wildcards cross directory separators. Historical nested
+          # files are opaque bytes, even when their basename is a known store.
+          [[ "${protocol}" != */* ]] || continue
+          protocol=${protocol%.json}
           case "${protocol}" in mixed|socks|http|shadowsocks|trojan|vmess|vless-plain|hy2|anytls|snell|tuic|hysteria|naive|shadowtls) ;; *) continue ;; esac
         fi
         candidate=$(mktemp "${file}.storage-next.XXXXXXXX") || return 1
@@ -459,6 +463,7 @@ storage_migration_restore() {
     }
   fi
   storage_migration_phase rollback || return 1
+  storage_selinux_prepare || { storage_migration_phase rollback_failed; return 1; }
   # Stop any newly started service before restoring files; inability to stop
   # leaves all recovery material intact instead of deleting live artifacts.
   if jq -e '.touched.service_stop==true or .touched.links==true' "${directory}/journal.json" >/dev/null; then
@@ -562,10 +567,14 @@ storage_migration_restore_file() {
   storage_migration_trusted_path "$(dirname "${target}")" || return 1
   [[ "$(stat -c %d "$(dirname "${target}")")" == "$(stat -c %d "${SB_DATA_ROOT}/tmp")" ]] || return 1
   staged=$(mktemp "${SB_DATA_ROOT}/tmp/.storage-restore.XXXXXXXX") || return 1
-  if ! cp -p -- "${source}" "${staged}" || ! mv -f -- "${staged}" "${target}"; then
+  if ! cp -p -- "${source}" "${staged}" || ! storage_selinux_label "${staged}" "${target}" || ! mv -f -- "${staged}" "${target}"; then
     rm -f -- "${staged}"
     return 1
   fi
+  case "${target}" in
+    "${SB_DATA_ROOT}/"*) storage_selinux_label "${target}" ;;
+    *) storage_selinux_restore_system_path "${target}" ;;
+  esac
 }
 
 storage_recover() (
@@ -713,6 +722,9 @@ storage_migrate() (
   [[ "${bytes}" =~ ^[0-9]+$ && "${available}" =~ ^[0-9]+$ ]] && (( available > bytes )) || {
     storage_migration_error insufficient_staging_space; return 1;
   }
+  # Establish persistent labels before stopping the legacy service. A missing
+  # SELinux tool or policy conflict must leave the original service untouched.
+  storage_selinux_prepare || return 1
   mkdir -p -m 700 "${SB_DATA_ROOT}/backups/migrations" || return 1
   backup=$(mktemp -d "${SB_DATA_ROOT}/backups/migrations/migration-XXXXXXXX") || return 1
   journal_prepare=$(mktemp -d "${SB_DATA_ROOT}/migrations/.prepare-XXXXXXXX") || return 1
@@ -788,9 +800,13 @@ storage_migrate() (
       media) item="${SB_PROJECT_DIR}/media-check"; destination=${SB_MEDIA_CHECK_DIR} ;;
     esac
     [[ -e "${item}" ]] || continue
+    storage_selinux_label "${item}" "${destination}" || return 1
     storage_migration_mark "${name}" || return 1
     if [[ -d "${destination}" ]]; then rmdir -- "${destination}" || return 1; fi
     mv -- "${item}" "${destination}" || return 1
+    # cp -a retains the legacy tree labels; reapply the destination policy to
+    # every runtime entry before any core validation or service activation.
+    [[ "${name}" != runtime ]] || storage_selinux_label "${destination}" || return 1
   done
   storage_publish_library_link || return 1
   storage_migration_validate_state "${SB_PROJECT_DIR}" > "${directory}/state-check.log" 2>&1 || {

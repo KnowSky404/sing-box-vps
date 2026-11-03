@@ -29,6 +29,8 @@
 
 统一根及私有目录使用 root 所有、0700；秘密文件和迁移记录使用 0600。拒绝不可信所有权、可被非 root 写入的父目录和目标符号链接。运行时不从仓库下载维护源码；`install.sh` 仍是单文件分发产物。
 
+启用 SELinux 的系统还需要项目专属的持久文件上下文规则，使私有目录下的核心、管理脚本、库与 systemd 单元能被正确访问。规则元数据由系统 SELinux 存储管理，实际 payload 仍只有统一根中的一份。不得关闭 SELinux、放宽 `/root` 整体或覆盖管理员冲突规则；安装、迁移、更新与恢复须在执行/激活前应用并校验相应标签，缺失工具或失败时明确拒绝。
+
 全局入口独立于实际 artifact：更新器原子替换内部普通文件；全局符号链接保持为入口，内部目标若被替换成符号链接则拒绝写入；系统入口仅在确认是本项目所有后发布或清理。服务使用新的核心和配置绝对路径，设置工作目录及私有临时/库搜索环境。核心组件的默认状态/缓存通过服务 HOME、XDG、WorkingDirectory、TMPDIR 收入统一根：例如 Tailscale 默认位于 runtime/tailscale，Tor 的缺省临时状态位于 tmp。辅助检查器还使用私有模块 HOME、XDG 目录和工作目录，避免相对 Cookie/缓存写入操作者目录；明确配置的外部路径保留。
 
 ## 3. 升级入口和操作面
@@ -66,7 +68,7 @@ help、commands、schema 等发现操作保持只读可用。普通操作遇旧�
 
 新安装不创建旧根、旧备份根或系统目录中的 artifact 临时文件。Bootstrap 与内部探测使用统一 tmp，下载继续完整校验后原子发布。模块和核心实际文件均在统一根内。
 
-核心卸载仍保留管理命令及恢复备份；彻底卸载按明确确认删除受管运行时与命令，迁移/升级备份的保留或删除必须明确报告，不能删除外部文件或非受管入口。单独卸载管理脚本不得隐式删除仍在服务使用的核心/配置。
+核心卸载仍保留管理命令及恢复备份；彻底卸载按明确确认删除受管运行时与命令，保留恢复目录时对应项目 SELinux 规则也保留，供重装幂等复用；迁移/升级备份的保留或删除必须明确报告，不能删除外部文件或非受管入口。单独卸载管理脚本不得隐式删除仍在服务使用的核心/配置。
 
 ## 6. 实施顺序与验收
 
@@ -82,6 +84,8 @@ help、commands、schema 等发现操作保持只读可用。普通操作遇旧�
 
 ## 7. 默认目录依据
 
+SELinux 持久映射及应用依据 [RHEL Using SELinux](https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/9/epub/using_selinux/proc_creating-a-local-selinux-policy-module_writing-a-custom-selinux-policy)、[semanage fcontext](https://github.com/SELinuxProject/selinux/blob/main/python/semanage/semanage-fcontext.8) 和 [restorecon](https://github.com/SELinuxProject/selinux/blob/main/policycoreutils/setfiles/restorecon.8)。
+
 文件字段审计采用固定 [1.14.2 option 结构](https://github.com/SagerNet/sing-box/tree/v1.14.2/option) 及对应运行实现；namespace 的逻辑名与路径区分见 [namespace manager](https://github.com/SagerNet/sing-box/blob/v1.14.2/common/netns/manager_linux.go)。
 
 Tailscale 的默认 state_directory 为相对的 tailscale，官方配置见 [Tailscale endpoint](https://github.com/SagerNet/sing-box/blob/v1.14.2/docs/configuration/endpoint/tailscale.md)。Tor 的目录结论来自固定 1.14.2 源码链：[sing-box Tor outbound](https://github.com/SagerNet/sing-box/blob/v1.14.2/protocol/tor/outbound.go)、锁定 sing 的 [filemanager](https://github.com/SagerNet/sing/blob/87c33f17688f/service/filemanager/manager.go) 和 bine 的 [Tor startup](https://github.com/cretz/bine/blob/v0.2.0/tor/tor.go)。未显式配置 DataDir 时，其临时目录跟随 os.TempDir，因此服务 TMPDIR 将其约束在统一根的 tmp；这是源码推导，不能替代真实 Tor 网络验收。
@@ -92,8 +96,9 @@ Tailscale 的默认 state_directory 为相对的 tailscale，官方配置见 [Ta
 
 | 验证边界 | 已确认结果 |
 | --- | --- |
-| 迁移隔离测试 | 25 个场景通过：路径字段、密钥/摘要保留、冲突与权限、双锁/继承 FD、恢复入口 CAS、管理器残留、相对入口、DNS hosts、对象/URI 伪装目录、完整文件路径审计及故障恢复。 |
+| 迁移隔离测试 | 26 个场景通过：路径字段、密钥/摘要保留、冲突与权限、双锁/继承 FD、恢复入口 CAS、管理器残留、相对入口、DNS hosts、对象/URI 伪装目录、完整文件路径审计及故障恢复。 |
 | 迁移专用 Docker | 真实旧更新器交接、活动/停止服务、HY2 本地 file URI、真实 systemd 203/EXEC 故障回滚均通过；另有当前迁移模块的管理器残留与自定义 ExecStartPre 拒绝验证。 |
+| SELinux | AlmaLinux 9.5 独立内核 Enforcing 下复现未标记核心的 203/EXEC；项目标签修复后新服务、原子更新、失败回滚、标签漂移修复及活动旧布局迁移/归档后重启通过。最终入口与管理员规则保护的证据在交付 PR 单独记录。 |
 | 独立运行态 | Agent 操作、三组路由策略、组件 shared/resolved/default/unshare 通过；兼容构建差异单独记录。 |
 | 模块目录与网络 | 媒体工具 HOME/cwd/XDG/TMPDIR 隔离测试通过；受控 Tailscale/OpenConnect 存储与重启身份通过；HTTP TCP/HY2 UDP 双栈通过；真实 REALITY checker/TLS/DNS/握手和信号清理通过。 |
 | 构建与目录契约 | install 源码/生成产物、命令目录生成、操作契约、Bootstrap 和版本一致性通过。 |

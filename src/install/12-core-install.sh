@@ -1,6 +1,7 @@
 
 # --- System Check & Dependencies ---
 install_dependencies() {
+  local selinux_package=''
   log_info "正在安装必要的基础依赖..."
   case "${OS_NAME}" in
     debian|ubuntu)
@@ -8,6 +9,12 @@ install_dependencies() {
       run_with_progress "安装基础依赖" apt-get install -y curl wget jq tar openssl uuid-runtime qrencode iproute2 dnsutils ca-certificates || return $?
       ;;
     centos|almalinux|rocky)
+      if storage_selinux_active; then
+        if [[ "${OS_VERSION%%.*}" == 7 ]]; then selinux_package=policycoreutils-python
+        else selinux_package=policycoreutils-python-utils
+        fi
+        run_with_progress "安装 SELinux 文件上下文工具" yum install -y policycoreutils "${selinux_package}" || return $?
+      fi
       run_with_progress "安装基础依赖" yum install -y curl wget jq tar openssl util-linux qrencode iproute bind-utils ca-certificates || return $?
       ;;
   esac
@@ -95,7 +102,9 @@ singbox_atomic_file_copy() (
   trap '[[ -z "${staged}" ]] || rm -f -- "${staged}"' EXIT
   cp -p -- "${source_file}" "${staged}" || return $?
   chmod "${mode}" "${staged}" || return $?
+  storage_selinux_label "${staged}" "${target_file}" || return 1
   mv -f -- "${staged}" "${target_file}" || return $?
+  storage_selinux_label "${target_file}" || return 1
   staged=''
 )
 
@@ -203,7 +212,7 @@ singbox_candidate_namespace_runtime_safe() {
 
 install_binary() (
   umask 077
-  storage_initialize || return 1
+  storage_initialize && storage_selinux_prepare || return 1
   local expected_version=${SB_VERSION#v} root download_url target_dir temp_dir=''
   local staged_binary='' staged_lib='' staged_marker='' lib_path='' lib_dir=''
   local binary_before=n lib_before=n marker_before=n manage_library=n publish_started=n changed=false
@@ -324,6 +333,8 @@ install_binary() (
   staged_binary=$(storage_mktemp "${target_dir}/.sing-box.restore.XXXXXXXX") || return 1
   cp -- "${temp_dir}/extract/${root}/sing-box" "${staged_binary}" || return 1
   chmod 0755 "${staged_binary}" || return 1
+  failure_code=selinux_label_failed
+  storage_selinux_label "${staged_binary}" "${SINGBOX_BIN_PATH}" || return 1
   failure_code=unexpected_binary_version
   singbox_binary_version_matches "${staged_binary}" "${expected_version}" || return 1
   singbox_candidate_namespace_runtime_safe "${staged_binary}" "${expected_version}" || namespace_status=$?
@@ -355,6 +366,7 @@ install_binary() (
       staged_lib=$(storage_mktemp "${lib_dir}/.libcronet.install.XXXXXXXX") || return 1
       cp -- "${temp_dir}/extract/${root}/libcronet.so" "${staged_lib}" || return 1
       chmod 0644 "${staged_lib}" || return 1
+      storage_selinux_label "${staged_lib}" "${lib_path}" || return 1
       library_hash=$(sha256sum "${staged_lib}") || return 1
       library_hash=${library_hash%% *}
       staged_marker=$(storage_mktemp "${SB_PROJECT_DIR}/.libcronet-marker.install.XXXXXXXX") || return 1
@@ -424,7 +436,7 @@ install_binary() (
 setup_service() {
   local candidate=''
   log_info "配置 systemd 服务..."
-  storage_initialize || return 1
+  storage_initialize && storage_selinux_prepare || return 1
   [[ ! -L "${SINGBOX_SERVICE_FILE}" &&
      ( ! -e "${SINGBOX_SERVICE_FILE}" || -f "${SINGBOX_SERVICE_FILE}" ) ]] || return 1
   candidate=$(storage_mktemp "${SB_DATA_ROOT}/systemd/.sing-box.service.XXXXXXXX") || return 1
@@ -455,6 +467,7 @@ EOF
     rm -f -- "${candidate}" || return 1
     return 1
   fi
+  storage_selinux_label "${candidate}" "${SINGBOX_SERVICE_FILE}" || { rm -f -- "${candidate}"; return 1; }
   if ! mv -f -- "${candidate}" "${SINGBOX_SERVICE_FILE}"; then
     rm -f -- "${candidate}" || return 1
     return 1
