@@ -74,6 +74,7 @@ storage_enter_module_workspace() {
   export XDG_CACHE_HOME="${workspace}/.cache"
   export XDG_CONFIG_HOME="${workspace}/.config"
   export XDG_STATE_HOME="${workspace}/.local/state"
+  export XDG_DATA_HOME="${workspace}/.local/share"
   cd -- "${workspace}" || return 1
 }
 

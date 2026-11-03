@@ -371,7 +371,7 @@ run_reality_target_discovery() (
     trap - EXIT ERR RETURN DEBUG INT TERM HUP
     local elapsed=0
     while kill -0 "${checker_pid}" 2>/dev/null; do
-      sleep 1
+      if ! sleep 1; then break; fi
       elapsed=$((elapsed + 1))
       if (( elapsed % 10 == 0 )) && kill -0 "${checker_pid}" 2>/dev/null; then
         log_info "候选发现仍在执行，已等待 ${elapsed} 秒。" >&2

@@ -437,6 +437,7 @@ CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
 WorkingDirectory=${SB_PROJECT_DIR}
 Environment="HOME=${SB_PROJECT_DIR}" "TMPDIR=${SB_DATA_ROOT}/tmp" "LD_LIBRARY_PATH=${SB_DATA_ROOT}/lib"
+Environment="XDG_CACHE_HOME=${SB_PROJECT_DIR}/.cache" "XDG_CONFIG_HOME=${SB_PROJECT_DIR}/.config" "XDG_STATE_HOME=${SB_PROJECT_DIR}/.local/state" "XDG_DATA_HOME=${SB_PROJECT_DIR}/.local/share"
 ExecStart="${SINGBOX_BIN_PATH}" run -c "${SINGBOX_CONFIG_FILE}"
 Restart=on-failure
 RestartSec=10s

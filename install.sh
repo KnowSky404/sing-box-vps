@@ -4826,7 +4826,7 @@ run_reality_target_discovery() (
     trap - EXIT ERR RETURN DEBUG INT TERM HUP
     local elapsed=0
     while kill -0 "${checker_pid}" 2>/dev/null; do
-      sleep 1
+      if ! sleep 1; then break; fi
       elapsed=$((elapsed + 1))
       if (( elapsed % 10 == 0 )) && kill -0 "${checker_pid}" 2>/dev/null; then
         log_info "候选发现仍在执行，已等待 ${elapsed} 秒。" >&2
@@ -13114,6 +13114,7 @@ CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
 WorkingDirectory=${SB_PROJECT_DIR}
 Environment="HOME=${SB_PROJECT_DIR}" "TMPDIR=${SB_DATA_ROOT}/tmp" "LD_LIBRARY_PATH=${SB_DATA_ROOT}/lib"
+Environment="XDG_CACHE_HOME=${SB_PROJECT_DIR}/.cache" "XDG_CONFIG_HOME=${SB_PROJECT_DIR}/.config" "XDG_STATE_HOME=${SB_PROJECT_DIR}/.local/state" "XDG_DATA_HOME=${SB_PROJECT_DIR}/.local/share"
 ExecStart="${SINGBOX_BIN_PATH}" run -c "${SINGBOX_CONFIG_FILE}"
 Restart=on-failure
 RestartSec=10s
@@ -43797,6 +43798,7 @@ storage_enter_module_workspace() {
   export XDG_CACHE_HOME="${workspace}/.cache"
   export XDG_CONFIG_HOME="${workspace}/.config"
   export XDG_STATE_HOME="${workspace}/.local/state"
+  export XDG_DATA_HOME="${workspace}/.local/share"
   cd -- "${workspace}" || return 1
 }
 
@@ -44094,7 +44096,8 @@ storage_decode_env_literal() {
 storage_rewrite_path_json() {
   jq --arg old "${SB_LEGACY_PROJECT_DIR}" --arg new "${SB_PROJECT_DIR}" --arg log "${SBV_LOG_FILE}" --arg media "${SB_MEDIA_CHECK_DIR}" '
     def relocated:
-      if type=="string" and .==($old+"/sbv.log") then $log
+      if type=="string" and startswith("/") and test("(^|/)\\.\\.?(/|$)") then error("legacy_ambiguous_material_path")
+      elif type=="string" and .==($old+"/sbv.log") then $log
       elif type=="string" and (.==($old+"/media-check") or startswith($old+"/media-check/")) then $media+.[(($old+"/media-check")|length):]
       elif type=="string" and (.==$old or startswith($old+"/")) then $new+.[($old|length):]
       elif type=="array" then map(relocated) else . end;
@@ -44104,7 +44107,10 @@ storage_rewrite_path_json() {
         if $part=="" or $part=="." then .
         elif $part==".." then .[0:([length-1,0]|max)] else .+[$part] end) | "/"+join("/");
     def file_masquerade:
-      if type!="string" or (test("^file:";"i")|not) then . else
+      if type=="object" and .type=="file" then
+        if (.directory|type)=="string" and (.directory|startswith("/")) then .directory |= relocated
+        else error("legacy_implicit_or_relative_file_masquerade_directory") end
+      elif type!="string" or (test("^file:";"i")|not) then . else
         . as $original | capture("^(?<scheme>[Ff][Ii][Ll][Ee]:)(?<rest>.*)$";"s") as $parts |
         ($parts.rest | capture("^(?<base>[^?#]*)(?<suffix>[?#].*)?$";"s")) as $tail |
         (if ($tail.base|startswith("//")) then
@@ -44113,22 +44119,33 @@ storage_rewrite_path_json() {
          else {prefix:$parts.scheme,authority:null,path:$tail.base} end) as $url |
         ($url.path | gsub("%(?<hex>[0-9A-Fa-f]{2})";("\"\\u00"+.hex+"\""|fromjson))) as $decoded |
         ([$url.path,$decoded,($url.path|normalized_path),($decoded|normalized_path)] | any(.[];old_related)) as $related |
-        if ($related|not) then $original
+        if ($url.path|startswith("/")|not) then error("legacy_implicit_or_relative_file_masquerade_directory")
+        elif ($related|not) then $original
         elif ($url.authority!=null and $url.authority!="" and ($url.authority|ascii_downcase)!="localhost") or
              ($url.path|contains("%") or contains("//") or test("(^|/)\\.\\.?(/|$)")) then
           error("unsupported_legacy_file_masquerade_uri")
         else $url.prefix+($url.path|relocated)+($tail.suffix // "") end
       end;
+    def dashboard_path:
+      if type=="string" then relocated
+      elif type=="object" and has("path") then .path |= relocated else . end;
+    ([.network_namespaces[]?.tag, (.components[]? | select(.role=="network_namespace") | .tag)] | map(select(type=="string"))) as $namespace_tags |
     walk(if type=="object" then
       . as $object | with_entries(.key as $key | if
-        (["data_directory","state_directory","certificate_path","key_path","config_path","private_key_path","client_certificate_path","client_key_path","mca_certificate_path","mca_key_path","static_key_path","certificate_authority_path","crl_path","secret_path","taildrop_directory","executable_path","wrapper_path","initial_path","protect_path"] | index($key)) != null
+        (["data_directory","state_directory","certificate_path","key_path","config_path","private_key_path","client_certificate_path","client_key_path","mca_certificate_path","mca_key_path","static_key_path","certificate_authority_path","crl_path","secret_path","taildrop_directory","executable_path","wrapper_path","initial_path","protect_path","certificate_directory_path","dhcp_lease_files","mesh_psk_file","cache_path","credential_path","usages_path","pid_file"] | index($key)) != null
         then .value |= relocated
         elif .key=="masquerade" then .value |= file_masquerade
+        elif .key=="netns" and (.value|type)=="string" then
+          .value as $namespace | if ($namespace_tags|index($namespace))==null then .value |= relocated else . end
         elif .key=="path" and ($object.type=="local" or $object.type=="hosts") then .value |= relocated else . end) |
         if (.role=="rule_set" and .type=="local") or (.role=="network_namespace" and .type=="default")
-          then .config.path |= relocated else . end
+          then .config.path |= relocated else . end |
+        if .type=="api" then
+          if (.config|type)=="object" and (.config|has("dashboard")) then .config.dashboard |= dashboard_path
+          elif has("dashboard") then .dashboard |= dashboard_path else . end
+        else . end
       else . end) |
-    if (.network_namespaces? | type)=="array" then .network_namespaces |= map(if .type=="default" then .path |= relocated else . end) else . end |
+    if (.network_namespaces? | type)=="array" then .network_namespaces |= map(if (.type // "")=="" or .type=="default" then .path |= relocated else . end) else . end |
     if (.experimental.cache_file.path? | type)=="string" then .experimental.cache_file.path |= relocated else . end |
     if (.log.output? | type)=="string" and .log.output!="stdout" and .log.output!="stderr" then .log.output |= relocated else . end |
     if (.experimental.clash_api.external_ui? | type)=="string" then .experimental.clash_api.external_ui |= relocated else . end'
@@ -44206,19 +44223,33 @@ storage_migration_explicit_paths() {
   # Changing systemd's working directory must not create a second Tailscale
   # identity or Tor data directory, or reinterpret relative material paths.
   jq -e '
+    # Disabled project components and disabled TLS do not open their implicit
+    # stores. This temporary view must not change the retained source state.
+    walk(if type=="object" then
+      (if (.components|type)=="array" then .components |= map(select(.enabled!=false)) else . end) |
+      if (.tls|type)=="object" and .tls.enabled!=true then del(.tls) else . end
+      else . end) |
     [.. | objects |
-      select((.type=="tailscale" and (((.config // .).state_directory // "")|length)==0) or
-             (.type=="tor" and (((.config // .).data_directory // "")|length)==0))] | length==0
+      select((.type=="tailscale" and ((((.config // .).state_directory // "")|length)==0 or (((.config // .).taildrop_directory // "")|length)==0)) or
+             ((.type=="tor" or .type=="acme" or .type=="cloudflare-origin-ca") and (((.config // .).data_directory // "")|length)==0) or
+             (.enabled==true and (.acme|type)=="object" and ((.acme.domain // [])|length)>0 and ((.acme.data_directory // "")|length)==0) or
+             (.type=="api" and ((.config // .).dashboard as $dashboard |
+               $dashboard==true or ($dashboard|type)=="string" and ($dashboard|length)==0 or
+               ($dashboard|type)=="object" and $dashboard.enabled==true and (($dashboard.path // "")|length)==0)))] | length==0
   ' "${file}" >/dev/null || return 1
   jq -e '
     [.. | objects | to_entries[] |
-      .key as $key | select((["data_directory","state_directory","certificate_path","key_path","config_path","private_key_path","client_certificate_path","client_key_path","mca_certificate_path","mca_key_path","static_key_path","certificate_authority_path","crl_path","secret_path","taildrop_directory","executable_path","wrapper_path","initial_path","protect_path"]|index($key))!=null) |
+      .key as $key | select((["data_directory","state_directory","certificate_path","key_path","config_path","private_key_path","client_certificate_path","client_key_path","mca_certificate_path","mca_key_path","static_key_path","certificate_authority_path","crl_path","secret_path","taildrop_directory","executable_path","wrapper_path","initial_path","protect_path","certificate_directory_path","dhcp_lease_files","mesh_psk_file","cache_path","credential_path","usages_path","pid_file"]|index($key))!=null) |
       .value | if type=="array" then .[] else . end |
       select(type=="string" and length>0 and (startswith("/")|not))] | length==0
   ' "${file}" >/dev/null || return 1
   jq -e '[..|objects|select(.type=="local" or .type=="hosts")|.path?|if type=="array" then .[] else . end|select(type=="string" and length>0 and (startswith("/")|not))]|length==0' "${file}" >/dev/null || return 1
-  jq -e '[..|objects|select((.role=="rule_set" and .type=="local") or (.role=="network_namespace" and .type=="default"))|.config.path|select(type=="string" and length>0 and (startswith("/")|not))]|length==0' "${file}" >/dev/null || return 1
-  jq -e '[.network_namespaces[]?|select(.type=="default")|.path|select(type=="string" and length>0 and (startswith("/")|not))]|length==0' "${file}" >/dev/null || return 1
+  jq -e '[..|objects|select(.role=="rule_set" and .type=="local")|.config.path|select(type=="string" and length>0 and (startswith("/")|not))]|length==0' "${file}" >/dev/null || return 1
+  # Default netns names resolve under /run/netns in the core, independent of
+  # cwd. Preserve those names; only absolute managed paths are relocated.
+  jq -e '[..|objects|select(.type=="api")|(.config // .).dashboard|
+    if type=="string" then . elif type=="object" and .enabled==true then .path else empty end|
+    select(type=="string" and length>0 and (startswith("/")|not))]|length==0' "${file}" >/dev/null || return 1
   jq -e '(.log.output? // "") as $output | $output=="" or $output=="stdout" or $output=="stderr" or ($output|startswith("/"))' "${file}" >/dev/null || return 1
   jq -e '(.experimental.clash_api.external_ui? // "") as $ui | $ui=="" or ($ui|startswith("/"))' "${file}" >/dev/null || return 1
   jq -e 'if .experimental.cache_file.enabled?==true then (.experimental.cache_file.path|type)=="string" and (.experimental.cache_file.path|startswith("/")) else true end' "${file}" >/dev/null || return 1
@@ -44625,7 +44656,9 @@ storage_migrate() (
     while IFS= read -r item || [[ -n "${item}" ]]; do
       case "${item}" in
         ExecStart=*) printf 'ExecStart="%s" run -c "%s"\n' "${SINGBOX_BIN_PATH}" "${SINGBOX_CONFIG_FILE}" ;;
-        '[Service]') printf '[Service]\nWorkingDirectory=%s\nEnvironment="HOME=%s" "TMPDIR=%s/tmp" "LD_LIBRARY_PATH=%s/lib"\n' "${SB_PROJECT_DIR}" "${SB_PROJECT_DIR}" "${SB_DATA_ROOT}" "${SB_DATA_ROOT}" ;;
+        '[Service]')
+          printf '[Service]\nWorkingDirectory=%s\nEnvironment="HOME=%s" "TMPDIR=%s/tmp" "LD_LIBRARY_PATH=%s/lib"\n' "${SB_PROJECT_DIR}" "${SB_PROJECT_DIR}" "${SB_DATA_ROOT}" "${SB_DATA_ROOT}"
+          printf 'Environment="XDG_CACHE_HOME=%s/.cache" "XDG_CONFIG_HOME=%s/.config" "XDG_STATE_HOME=%s/.local/state" "XDG_DATA_HOME=%s/.local/share"\n' "${SB_PROJECT_DIR}" "${SB_PROJECT_DIR}" "${SB_PROJECT_DIR}" "${SB_PROJECT_DIR}" ;;
         *) printf '%s\n' "${item}" ;;
       esac
     done < "${SINGBOX_SERVICE_LINK_PATH}" > "${stage}/service" || return 1
