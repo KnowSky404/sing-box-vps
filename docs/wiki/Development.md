@@ -26,7 +26,7 @@
 
 优先选择精确的 `--test tests/<名称>.sh`，需要整组覆盖时才使用 `--group`。单测试参数可重复，去重后执行；只接受已有独立宿主 Shell 测试的精确路径，拒绝 helper、容器专用 fixture、符号链接及越界路径，不展开通配符。它与 `--base` 组合时保留所有分支/工作区差异的自动检查，不能用来排除其他改动。显式测试和显式组一样代表操作者的影响判断，不能把一个任意测试当作完整覆盖；运行态变化仍需对应 Docker 场景。
 
-普通文档只自动选择 `wiki_documentation.sh`，Agent 手册追加能力说明检查，生成命令目录追加命令契约；显式 `--group docs` 仍保留整组。安装器/模块的日常修改选择 `install_build_sync.sh` 检查生成字节及语法，构建器/清单变化才追加 `install_build.sh` 的故障注入。计划器和选择器变化只自动选择 `verification_planner.sh`、`verification_trigger_rules.sh`、`verification_scenario_mapping.sh`；执行器/传输变化仍按相应范围验证。
+普通文档只自动选择 `wiki_documentation.sh`，Agent 手册及升级手册追加能力说明检查，嵌入式/生成命令目录追加命令契约；显式 `--group docs` 仍保留整组。安装器/模块的日常修改选择 `install_build_sync.sh` 检查生成字节及语法，构建器/清单变化才追加 `install_build.sh` 的故障注入。计划器和选择器变化只自动选择 `verification_planner.sh`、`verification_trigger_rules.sh`、`verification_scenario_mapping.sh`；执行器/传输变化仍按相应范围验证。
 
 2026-11-04 优化前清单审视：342 个 Shell 文件中，注册全量选择 199 项宿主测试及 17 种 Docker 场景；`menu` 有 28 项，`protocol:vless` 有 35 项，`protocol:hy2` 有 29 项。它们包含同协议下不同功能及一些跨模块文件名匹配，不是修改一处菜单/分享文案的默认单位。`multi_protocol_coexistence` 超过 3,500 行，混合多协议、组件、UDP、透明代理及真实 Tor 网络访问；`fresh_install_http` 也包含删除最后实例、取消和重建。只有大型场景能覆盖时，明确额外覆盖和预计耗时，不把它默认为轻量 smoke。后续拆分需要保留前置与数据面断言；本轮优化宿主选测，没有消除这些运行态成本。历史耗时日志当前不可用，不能据此声称已经复现或消除了两小时耗时。
 

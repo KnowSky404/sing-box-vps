@@ -207,6 +207,13 @@ plan=$(fixture_run --plan --changed-file docs/wiki/Command-Catalog.md)
 assert_line 'test=tests/command_catalog_contract.sh' "${plan}"
 plan=$(fixture_run --plan --changed-file docs/wiki/Agent-CLI.md)
 assert_line 'test=tests/agent_docs_cover_capabilities.sh' "${plan}"
+plan=$(fixture_run --plan --changed-file docs/wiki/Upgrade-Rehearsal.md)
+assert_line 'test=tests/agent_docs_cover_capabilities.sh' "${plan}"
+assert_line 'local_test_count=2' "${plan}"
+plan=$(fixture_run --plan --changed-file src/install/44-command-catalog.sh \
+  --test tests/fixture_requested.sh)
+assert_line 'test=tests/install_build_sync.sh' "${plan}"
+assert_line 'test=tests/command_catalog_contract.sh' "${plan}"
 plan=$(fixture_run --plan --changed-file dev/verification/planner.sh)
 assert_line 'local_test_count=3' "${plan}"
 assert_line 'test=tests/verification_planner.sh' "${plan}"
@@ -363,6 +370,11 @@ grep -Fqx 'requested' "${VERIFY_PLANNER_EXECUTION_LOG}"
 [[ ! -e "${VERIFY_PLANNER_DOCKER_LOG}" ]]
 
 # A stale generated artifact must still fail even for a single explicit test.
+# Remove the deliberate version-literal drift from this fixture first, proving
+# the baseline really passes before introducing a new source-only difference.
+bash "${FIXTURE}/scripts/build-install.sh" > "${TMP_DIR}/build.stdout"
+VERIFY_PLANNER_ALLOW_TESTS=1 fixture_run --changed-file "${SOURCE_MODULE}" > "${TMP_DIR}/synced.stdout"
+grep -Fq 'local_test_passed=tests/install_build_sync.sh' "${TMP_DIR}/synced.stdout"
 printf '# source-only fixture edit\n' >> "${FIXTURE}/${SOURCE_MODULE}"
 if VERIFY_PLANNER_ALLOW_TESTS=1 fixture_run --changed-file "${SOURCE_MODULE}" \
   --test tests/fixture_requested.sh > "${TMP_DIR}/stale.stdout" 2> "${TMP_DIR}/stale.stderr"; then
