@@ -17,3 +17,16 @@ The configuration/state migration requires the registered full suite under AGENT
 Recorded acceptance on 2026-11-03 includes 27 isolated migration cases; real old-updater handoff, active/stopped migration, HY2 local file URI and systemd 203/EXEC rollback; manager-only/relative-entry migration, DNS hosts and object/URI masquerade preservation, complete material-path auditing and custom-unit rejection; isolated Agent/routing/component runtime fixtures; controlled VPN storage/restart identity; HTTP/HY2 IPv4+IPv6; and actual REALITY checker/handshake/cancellation. Build, operation catalog, Bootstrap and version checks pass. The complete registered host/Docker inventory, corrected-test results, content hashes and current-head reviews are recorded in the delivery PR. See the Chinese contract's acceptance table for boundaries. No provider writes, public reachability, external SubMan synchronization or production migration are claimed. Private bundles can contain fixture secrets and are not public Wiki attachments.
 
 SELinux acceptance uses a separate AlmaLinux 9.5 kernel in Enforcing mode: reproduce the unlabeled 203/EXEC failure, then verify service activation, atomic publication/rollback, label repair and active legacy migration followed by restart after archival. Final entrypoint and administrator-rule protection evidence remains separately recorded in the delivery PR. Mock policy checks and a disabled Docker host do not establish Enforcing acceptance.
+
+## Ownership diagnostics correction (2026-11-04)
+
+Legacy system entries must remain root-owned regular files with trusted parents.
+Status and migration share the same check; status adds `blocker_details` records
+with `code`, `entry`, `path` and `reason`, and corresponding unique codes in
+`blockers`. Status success still means the read succeeded, not migration readiness.
+Migration retains `migration_failed` and reports the precise rejected path on stderr.
+Checks are read-only and never repair ownership or accept source symlinks.
+Validated new core/library/marker candidates are published as root:root; rollback
+preserves the original bytes and metadata. Unmanaged external libraries remain
+outside this repair. Production recovery first requires a trusted-release byte
+comparison, a private backup, explicit approval and separate service verification.

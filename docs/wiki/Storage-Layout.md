@@ -30,6 +30,15 @@ sbv storage migrate --json --yes
 
 辅助检查模块使用私有 HOME/XDG/工作目录和临时目录；流媒体 Cookie 不会落在调用者当前目录。
 
+
+旧系统入口归属异常时，`blockers` 包含 `untrusted_system_entry`，
+`blocker_details` 给出 `code`、`entry`、`path` 和 `reason`。`path` 可以是
+异常父目录；常见原因是 `non_root_owner`、`symlink`、`writable_path` 或
+`not_regular_file`。status 的 `ok:true` 只表示查询成功，不代表迁移已就绪。
+不要用递归 chown 或放宽迁移校验绕过检查；先核验产物来源、备份并按具体路径处理。
+核心更新发布经过校验的 root:root 新文件，失败则恢复旧字节及原始属主；
+未受管外部库不自动接管。
+
 ## SELinux 系统
 
 CentOS、AlmaLinux、Rocky Linux 等启用 SELinux 时，私有目录中的可执行文件需要正确的持久标签。安装器应使用项目专属规则并校验实际标签，保持 SELinux 启用；缺失依赖或管理员规则冲突时按具体提示处理后重试。不要通过关闭 SELinux 绕过启动失败。

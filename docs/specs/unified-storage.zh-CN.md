@@ -105,3 +105,13 @@ Tailscale 的默认 state_directory 为相对的 tailscale，官方配置见 [Ta
 | 外部与生产 | 未执行真实 Cloudflared 资源写入、外部 SubMan 同步、公网可达性或生产迁移；受控 VPN 存储验证不表示完整 VPN 矩阵通过。 |
 
 测试容器和本地 mock 使用隔离数据与虚构凭证。固定下载经过现有摘要验证；离线缓存只替代传输，不替代真实核心、systemd 或探针。由于根目录包含密钥、Token 和配置，测试的完整 artifact bundle 保留在私有开发路径，不作为公共 Wiki 附件发布。
+
+## 9. 旧核心属主与阻塞诊断修正（2026-11-04）
+
+旧系统入口仍须为 root 所有的普通文件，父目录须可信。status 与 migrate 共用检查；
+status 新增 `blocker_details`，每项包含 `code`、`entry`、`path`、`reason`，
+`blockers` 同步列出唯一错误码。status 的成功仅表示读取成功，不表示可以迁移。
+migrate 保留 `migration_failed`，stderr 报告具体拒绝路径。检查不修改属主，
+不接受源符号链接。经过校验的新核心、受管库和标记发布为 root:root，失败回滚
+仍保留旧字节与元数据；未受管外部库不在修复范围。生产修复须先与可信发布产物
+逐字节核验、私有备份并获得授权，服务恢复与公网验收分别记录。

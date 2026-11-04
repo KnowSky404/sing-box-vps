@@ -9,6 +9,15 @@ The additive `protocol_registry` in `sbv agent capabilities --json` describes ea
 
 运维入口：[命令参考](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-CLI) · [高级组件](https://github.com/KnowSky404/sing-box-vps/wiki/Advanced-Components) · [协议实例](https://github.com/KnowSky404/sing-box-vps/wiki/Protocol-Instances) · [数据面证据](https://github.com/KnowSky404/sing-box-vps/wiki/Data-Plane-Verification)
 
+
+旧系统入口归属异常时，`blockers` 包含 `untrusted_system_entry`，
+`blocker_details` 给出 `code`、`entry`、`path` 和 `reason`。`path` 可以是
+异常父目录；常见原因是 `non_root_owner`、`symlink`、`writable_path` 或
+`not_regular_file`。status 的 `ok:true` 只表示查询成功，不代表迁移已就绪。
+不要用递归 chown 或放宽迁移校验绕过检查；先核验产物来源、备份并按具体路径处理。
+核心更新发布经过校验的 root:root 新文件，失败则恢复旧字节及原始属主；
+未受管外部库不自动接管。
+
 ## Operation Discovery
 
 Start each task with `sbv commands --json`, then inspect one stable operation ID

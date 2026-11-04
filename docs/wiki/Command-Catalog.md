@@ -14,7 +14,7 @@
 
 ### storage.status
 
-存储布局、迁移状态与阻塞信息
+存储布局、迁移状态与系统入口阻塞路径
 
 ```bash
 sbv storage status --json
@@ -42,7 +42,7 @@ sbv storage status --json
 
 ### storage.migrate
 
-迁移旧布局至统一私有目录
+检查可信系统入口并迁移旧布局至统一私有目录
 
 ```bash
 sbv storage migrate --json --yes

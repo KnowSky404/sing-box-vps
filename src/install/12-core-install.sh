@@ -382,7 +382,6 @@ install_binary() (
   if [[ -f "${SINGBOX_BIN_PATH}" ]]; then
     cp -p -- "${SINGBOX_BIN_PATH}" "${temp_dir}/binary.before" || return 1
     singbox_file_matches_backup "${SINGBOX_BIN_PATH}" "${temp_dir}/binary.before" || return 1
-    chown --reference="${temp_dir}/binary.before" "${staged_binary}" || return 1
     binary_identity=$(stat -c '%d:%i' "${SINGBOX_BIN_PATH}") || return 1
     binary_before=y
   fi
@@ -390,18 +389,20 @@ install_binary() (
     if [[ -f "${lib_path}" ]]; then
       cp -p -- "${lib_path}" "${temp_dir}/library.before" || return 1
       singbox_file_matches_backup "${lib_path}" "${temp_dir}/library.before" || return 1
-      chown --reference="${temp_dir}/library.before" "${staged_lib}" || return 1
       lib_before=y
     fi
     if [[ -f "${SB_NAIVE_LIBRARY_MARKER}" ]]; then
       cp -p -- "${SB_NAIVE_LIBRARY_MARKER}" "${temp_dir}/marker.before" || return 1
       singbox_file_matches_backup "${SB_NAIVE_LIBRARY_MARKER}" "${temp_dir}/marker.before" || return 1
-      chown --reference="${temp_dir}/marker.before" "${staged_marker}" || return 1
       marker_before=y
     fi
+    # New verified payloads never inherit an unsafe historical owner. Backups
+    # retain the original metadata for exact rollback.
+    chown 0:0 "${staged_lib}" "${staged_marker}" || return 1
     library_metadata=$(stat -c '%a:%u:%g' "${staged_lib}") || return 1
     marker_metadata=$(stat -c '%a:%u:%g' "${staged_marker}") || return 1
   fi
+  chown 0:0 "${staged_binary}" || return 1
   binary_metadata=$(stat -c '%a:%u:%g' "${staged_binary}") || return 1
   stage=commit
   failure_code=publish_failed

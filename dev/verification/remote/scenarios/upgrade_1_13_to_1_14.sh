@@ -67,7 +67,9 @@ EOF
   verification_mark_step upgrade_preflight_ready
 
   upgrade_path=$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/upgrade.json")
+  chown 1001:1001 /root/.sing-box-vps/bin/sing-box
   sbv agent upgrade --json 1.14.2 --yes > "${upgrade_path}"
+  [[ "$(stat -c '%u:%g' /root/.sing-box-vps/bin/sing-box)" == 0:0 ]]
   jq -e '
     .ok == true
     and .changed == true

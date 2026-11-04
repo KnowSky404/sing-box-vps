@@ -54,11 +54,13 @@ EOF_DROPIN
 
   upgrade_path=$(verification_artifact_path \
     "${VERIFY_CURRENT_SCENARIO_DIR}/upgrade.json")
+  chown 1001:1001 /root/.sing-box-vps/bin/sing-box
   set +e
   sbv agent upgrade --json 1.14.2 --yes > "${upgrade_path}"
   upgrade_status=$?
   set -e
   [[ "${upgrade_status}" != "0" ]]
+  [[ "$(stat -c '%u:%g' /root/.sing-box-vps/bin/sing-box)" == 1001:1001 ]]
   jq -e '
     .schema_version == "1.0" and
     .ok == false and

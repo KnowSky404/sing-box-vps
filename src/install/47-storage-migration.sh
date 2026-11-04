@@ -50,20 +50,68 @@ storage_migration_error() {
 # supplied through a less trusted account.
 storage_migration_trusted_path() {
   local path=$1 node owner mode
+  SB_STORAGE_UNTRUSTED_PATH=${path}
+  SB_STORAGE_UNTRUSTED_REASON=invalid_path
   [[ "${path}" == /* && "${path}" != *$'\n'* && "${path}" != *'/../'* &&
      "${path}" != *'/./'* ]] || return 1
   node=${path}
   while [[ "${node}" != / ]]; do
+    SB_STORAGE_UNTRUSTED_PATH=${node}
+    SB_STORAGE_UNTRUSTED_REASON=symlink
     [[ ! -L "${node}" ]] || return 1
     if [[ -e "${node}" ]]; then
+      SB_STORAGE_UNTRUSTED_REASON=metadata_unavailable
       owner=$(stat -c %u -- "${node}") || return 1
       mode=$(stat -c %a -- "${node}") || return 1
-      [[ "${owner}" == 0 && "${mode}" =~ ^[0-7]+$ ]] || return 1
+      [[ "${mode}" =~ ^[0-7]+$ ]] || return 1
+      SB_STORAGE_UNTRUSTED_REASON=non_root_owner
+      [[ "${owner}" == 0 ]] || return 1
       if (( (8#${mode} & 0022) != 0 )); then
+        SB_STORAGE_UNTRUSTED_REASON=writable_path
         [[ "${node}" != "${path}" && -d "${node}" ]] && (( (8#${mode} & 01000) != 0 )) || return 1
       fi
     fi
     node=$(dirname -- "${node}") || return 1
+  done
+  SB_STORAGE_UNTRUSTED_PATH=''
+  SB_STORAGE_UNTRUSTED_REASON=''
+}
+
+# One read-only predicate for status and both migration preflight barriers.
+storage_migration_system_entry_trusted() {
+  local entry=$1
+  storage_migration_trusted_path "${entry}" || return 1
+  if [[ -e "${entry}" && ! -f "${entry}" ]]; then
+    SB_STORAGE_UNTRUSTED_PATH=${entry}
+    SB_STORAGE_UNTRUSTED_REASON=not_regular_file
+    return 1
+  fi
+}
+
+storage_migration_system_blockers_json() {
+  local entry detail details='[]'
+  for entry in "${SBV_LINK_PATH}" "${SINGBOX_LINK_PATH}" "${SINGBOX_SERVICE_LINK_PATH}"; do
+    if ! storage_migration_system_entry_trusted "${entry}"; then
+      detail=$(jq -n --arg entry "${entry}" --arg path "${SB_STORAGE_UNTRUSTED_PATH}" \
+        --arg reason "${SB_STORAGE_UNTRUSTED_REASON}" \
+        '{code:"untrusted_system_entry",entry:$entry,path:$path,reason:$reason}') || return 1
+      details=$(jq --argjson detail "${detail}" '. + [$detail]' <<< "${details}") || return 1
+    fi
+  done
+  printf '%s\n' "${details}"
+}
+
+storage_migration_require_system_entries() {
+  local entry
+  for entry in "${SBV_LINK_PATH}" "${SINGBOX_LINK_PATH}" "${SINGBOX_SERVICE_LINK_PATH}"; do
+    if ! storage_migration_system_entry_trusted "${entry}"; then
+      # JSON quoting prevents control characters in filesystem names from
+      # becoming terminal control sequences; only fixed system paths are read.
+      jq -nr --arg entry "${entry}" --arg path "${SB_STORAGE_UNTRUSTED_PATH}" \
+        --arg reason "${SB_STORAGE_UNTRUSTED_REASON}" \
+        '"[ERROR] storage: untrusted_system_entry entry=\($entry|tojson) path=\($path|tojson) reason=\($reason)"' >&2
+      return 1
+    fi
   done
 }
 
@@ -91,7 +139,7 @@ storage_migration_mark() {
 }
 
 storage_status_json() {
-  local legacy=false recovery=false phase=none backup='' pending=false conflict=false unsafe=false item
+  local legacy=false recovery=false phase=none backup='' pending=false conflict=false unsafe=false item details='[]'
   storage_needs_migration && legacy=true
   if storage_needs_recovery; then
     recovery=true
@@ -119,10 +167,13 @@ storage_status_json() {
       [[ ! -e "${item}" && ! -L "${item}" ]] || storage_migration_trusted_tree "${item}" || unsafe=true
     done
   fi
-  jq -n --arg root "${SB_DATA_ROOT}" --arg legacy_root "${SB_LEGACY_PROJECT_DIR}" \
+  if [[ "${legacy}" == true && "${recovery}" == false ]]; then
+    details=$(storage_migration_system_blockers_json) || return 1
+  fi
+  jq -n --argjson details "${details}" --arg root "${SB_DATA_ROOT}" --arg legacy_root "${SB_LEGACY_PROJECT_DIR}" \
     --arg phase "${phase}" --arg backup "${backup}" --argjson legacy "${legacy}" \
     --argjson recovery "${recovery}" --argjson pending "${pending}" --argjson conflict "${conflict}" --argjson unsafe "${unsafe}" \
-    '{layout_version:1,root:$root,legacy_root:$legacy_root,migration_required:$legacy,recovery_required:$recovery,phase:$phase,backup:$backup,legacy_pending:$pending,target_conflict:$conflict,blockers:[if $recovery then "storage_recovery_required" else empty end,if $pending then "legacy_transaction_requires_old_runtime_recovery" else empty end,if $conflict then "target_conflict" else empty end,if $unsafe then "untrusted_legacy_tree" else empty end]}'
+    '{layout_version:1,root:$root,legacy_root:$legacy_root,migration_required:$legacy,recovery_required:$recovery,phase:$phase,backup:$backup,legacy_pending:$pending,target_conflict:$conflict,blockers:([if $recovery then "storage_recovery_required" else empty end,if $pending then "legacy_transaction_requires_old_runtime_recovery" else empty end,if $conflict then "target_conflict" else empty end,if $unsafe then "untrusted_legacy_tree" else empty end] + ($details | map(.code) | unique)),blocker_details:$details}'
 }
 
 storage_legacy_pending() {
@@ -647,10 +698,7 @@ storage_migrate() (
     [[ ! -e "${item}" && ! -L "${item}" ]] || { storage_migration_error target_artifact_conflict; return 1; }
   done
   [[ ! -L "${SB_DATA_ROOT}/migrations/completed.json" ]] || { storage_migration_error untrusted_completion_record; return 1; }
-  for item in "${SBV_LINK_PATH}" "${SINGBOX_LINK_PATH}" "${SINGBOX_SERVICE_LINK_PATH}"; do
-    storage_migration_trusted_path "${item}" || { storage_migration_error untrusted_system_entry; return 1; }
-    [[ ! -e "${item}" || -f "${item}" ]] || return 1
-  done
+  storage_migration_require_system_entries || return 1
   if [[ -f "${SBV_LINK_PATH}" ]]; then
     bash -n "${SBV_LINK_PATH}" && grep -Fqx "readonly PROJECT_AUTHOR=\"${PROJECT_AUTHOR}\"" "${SBV_LINK_PATH}" &&
       grep -Fqx "readonly PROJECT_URL=\"${PROJECT_URL}\"" "${SBV_LINK_PATH}" || { storage_migration_error unmanaged_sbv_entry; return 1; }
@@ -726,9 +774,7 @@ storage_migrate() (
   for item in "${SBV_BIN_PATH}" "${SINGBOX_BIN_PATH}" "${SINGBOX_SERVICE_FILE}" "${SB_DATA_ROOT}/lib/libcronet.so" "${SB_DATA_ROOT}/bin/libcronet.so" "${SBV_LOG_FILE}"; do
     [[ ! -e "${item}" && ! -L "${item}" ]] || return 1
   done
-  for item in "${SBV_LINK_PATH}" "${SINGBOX_LINK_PATH}" "${SINGBOX_SERVICE_LINK_PATH}"; do
-    storage_migration_trusted_path "${item}" && [[ ! -e "${item}" || -f "${item}" ]] || return 1
-  done
+  storage_migration_require_system_entries || return 1
   if [[ "${had_unit}" == true ]]; then
     grep -Fqx "ExecStart=${core} run -c ${SB_LEGACY_PROJECT_DIR}/config.json" "${SINGBOX_SERVICE_LINK_PATH}" || return 1
     storage_migration_legacy_service_is_supported || return 1
