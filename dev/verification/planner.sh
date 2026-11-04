@@ -16,7 +16,7 @@ Usage: bash dev/verification/run.sh [options]
   --group NAME           Add a local regression group; repeatable.
   --test PATH            Add one standalone host test (tests/<name>.sh); repeatable.
   --scenario NAME        Add a Docker scenario and its prerequisites; repeatable.
-  --full                 Explicitly select all registered host tests and scenarios.
+  --full                 Select the full host manifest and aggregate Docker suite.
   --help                 Show this help and supported groups/scenarios.
 
 Without --base, inspect working-tree changes against HEAD. Unknown runtime impact
