@@ -174,4 +174,20 @@ install_binary >/dev/null
 [[ "$(cat "$(singbox_library_path)")" == new-library ]]
 [[ "$(cat "${SB_NAIVE_LIBRARY_MARKER}")" == "$(sha256sum "$(singbox_library_path)" | awk '{print $1}')" ]]
 [[ -z "$(find "${TMP_DIR}/bin" -maxdepth 1 -name '.sing-box-*' -print -quit)" ]]
+# A verified replacement must not inherit a historical archive owner's UID.
+# Failure still restores that owner's exact original metadata.
+reset_old_state
+chown 1001:1001 "${SINGBOX_BIN_PATH}" "$(singbox_library_path)" "${SB_NAIVE_LIBRARY_MARKER}"
+command cp -p "${SINGBOX_BIN_PATH}" "${TMP_DIR}/binary.before"
+command cp -p "$(singbox_library_path)" "${TMP_DIR}/library.before"
+command cp -p "${SB_NAIVE_LIBRARY_MARKER}" "${TMP_DIR}/marker.before"
+fault=postcheck
+expect_failure historical_owner_rollback
+assert_old_state
+[[ "$(stat -c '%u:%g' "${SINGBOX_BIN_PATH}")" == 1001:1001 ]]
+fault=''
+install_binary >/dev/null
+for owned in "${SINGBOX_BIN_PATH}" "$(singbox_library_path)" "${SB_NAIVE_LIBRARY_MARKER}"; do
+  [[ "$(stat -c '%u:%g' "${owned}")" == 0:0 ]]
+done
 printf 'binary install: transport/archive validation, prepare/publish/postcheck failure, signal and verified rollback passed\n'

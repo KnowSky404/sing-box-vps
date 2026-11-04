@@ -94,6 +94,17 @@ CURL
     bash /usr/local/bin/sbv storage status --json > "${artifact_dir}/${mode}-before.json"
     jq -se 'length==1 and .[0].ok==true and .[0].data.migration_required==true' \
       "${artifact_dir}/${mode}-before.json" >/dev/null
+    # Reproduce the production legacy UID 1001 failure without stopping service.
+    chown 1001:1001 /usr/local/bin/sing-box
+    bash /usr/local/bin/sbv storage status --json > "${artifact_dir}/${mode}-unsafe-owner-status.json"
+    jq -e '.ok and .data.blockers==["untrusted_system_entry"] and
+      any(.data.blocker_details[]; .entry=="/usr/local/bin/sing-box" and .reason=="non_root_owner")' \
+      "${artifact_dir}/${mode}-unsafe-owner-status.json" >/dev/null
+    if bash /usr/local/bin/sbv storage migrate --json --yes \
+      > "${artifact_dir}/${mode}-unsafe-owner-migrate.json" 2> "${artifact_dir}/${mode}-unsafe-owner.stderr"; then return 1; fi
+    [[ ! -e /root/.sing-box-vps/migrations/pending ]]
+    verification_wait_for_service_active sing-box
+    chown 0:0 /usr/local/bin/sing-box
     if [[ "${mode}" == stopped ]]; then
       systemctl stop sing-box
     else

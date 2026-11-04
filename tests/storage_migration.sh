@@ -217,6 +217,57 @@ case_untrusted() {
   expect_failure storage_migrate
 }
 
+case_system_entry_diagnostics() {
+  local entry node reason
+  legacy_fixture
+  touch "${STORAGE_CASE_DIR}/active"
+  # The production ownership boundary is exercised with real filesystem metadata.
+  chown 1001:1001 "${SINGBOX_LINK_PATH}"
+  storage_cli status --json > "${STORAGE_CASE_DIR}/status.json"
+  jq -e --arg entry "${SINGBOX_LINK_PATH}" '.ok and .data.blockers==["untrusted_system_entry"] and
+    .data.blocker_details==[{code:"untrusted_system_entry",entry:$entry,path:$entry,reason:"non_root_owner"}]' \
+    "${STORAGE_CASE_DIR}/status.json" >/dev/null
+  expect_failure storage_cli migrate --json --yes
+  jq -se --slurpfile before "${STORAGE_CASE_DIR}/status.json" 'length==1 and .[0].error=="migration_failed" and
+    .[0].data.blocker_details==$before[0].data.blocker_details' "${STORAGE_CASE_DIR}/unexpected-stdout" >/dev/null
+  grep -Fq "${SINGBOX_LINK_PATH}" "${STORAGE_CASE_DIR}/failure.log"
+  grep -Fq 'reason=non_root_owner' "${STORAGE_CASE_DIR}/failure.log"
+  [[ "$(stat -c %u "${SINGBOX_LINK_PATH}")" == 1001 && ! -e "${SB_DATA_ROOT}" && -f "${STORAGE_CASE_DIR}/active" ]]
+  [[ ! -e "${STORAGE_CASE_DIR}/systemctl.log" ]]
+  chown 0:0 "${SINGBOX_LINK_PATH}"
+  # Each entry, unsafe ancestor, leaf mode, and regular-file requirement uses
+  # the same predicate in the read-only report and the migration guard.
+  for entry in "${SBV_LINK_PATH}" "${SINGBOX_LINK_PATH}" "${SINGBOX_SERVICE_LINK_PATH}"; do
+    mv "${entry}" "${entry}.saved"
+    ln -s "${entry}.saved" "${entry}"
+    storage_status_json | jq -e --arg entry "${entry}" 'any(.blocker_details[]; .entry==$entry and .path==$entry and .reason=="symlink")' >/dev/null
+    expect_failure storage_migration_require_system_entries
+    rm "${entry}"; mv "${entry}.saved" "${entry}"
+  done
+  node=$(dirname "${SINGBOX_LINK_PATH}")
+  chmod 777 "${node}"
+  storage_status_json | jq -e --arg node "${node}" 'any(.blocker_details[]; .path==$node and .reason=="writable_path")' >/dev/null
+  expect_failure storage_migrate
+  chmod 700 "${node}"
+  chown 1001:1001 "${node}"
+  storage_status_json | jq -e --arg node "${node}" 'any(.blocker_details[]; .path==$node and .reason=="non_root_owner")' >/dev/null
+  expect_failure storage_migrate
+  chown 0:0 "${node}"
+  chmod 777 "${SINGBOX_LINK_PATH}"
+  storage_status_json | jq -e 'any(.blocker_details[]; .reason=="writable_path")' >/dev/null
+  expect_failure storage_migrate
+  chmod 700 "${SINGBOX_LINK_PATH}"
+  mv "${SINGBOX_LINK_PATH}" "${SINGBOX_LINK_PATH}.saved"
+  mkdir -m 700 "${SINGBOX_LINK_PATH}"
+  storage_status_json | jq -e 'any(.blocker_details[]; .reason=="not_regular_file")' >/dev/null
+  expect_failure storage_migrate
+  rmdir "${SINGBOX_LINK_PATH}"; mv "${SINGBOX_LINK_PATH}.saved" "${SINGBOX_LINK_PATH}"
+  storage_status_json | jq -e '.blockers==[] and .blocker_details==[]' >/dev/null
+  [[ ! -e "${SB_DATA_ROOT}" && ! -e "${STORAGE_CASE_DIR}/systemctl.log" ]]
+  storage_migrate
+  storage_status_json | jq -e '(.migration_required|not) and .blocker_details==[]' >/dev/null
+}
+
 case_env_no_execution() {
   legacy_fixture
   printf 'CERT_PATH=$(touch %s)\n' "${STORAGE_CASE_DIR}/executed" > "${SB_LEGACY_PROJECT_DIR}/protocols/anytls.env"
@@ -760,7 +811,7 @@ case_separator_alias_and_opaque_maps() {
   printf '{"certificate_path":"/outside//unchanged/cert.pem"}\n' | storage_rewrite_path_json | jq -e '.certificate_path=="/outside//unchanged/cert.pem"' >/dev/null
 }
 
-for case_name in status_read_only migrate_active migrate_stopped_and_history conflict pending untrusted env_no_execution env_literal_roundtrip implicit_module_state check_failure_rollback service_failure_rollback lock_and_handoff library cli_confirmation recover_interrupted recover_after_archive recovery_ownership_conflict precise_path_contexts custom_service_directory manager_only_migration sidecar_ownership stale_unit_references relative_runtime_source dns_hosts_paths object_masquerade_and_option_paths instance_archive_bytes separator_alias_and_opaque_maps; do
+for case_name in status_read_only migrate_active migrate_stopped_and_history conflict pending untrusted system_entry_diagnostics env_no_execution env_literal_roundtrip implicit_module_state check_failure_rollback service_failure_rollback lock_and_handoff library cli_confirmation recover_interrupted recover_after_archive recovery_ownership_conflict precise_path_contexts custom_service_directory manager_only_migration sidecar_ownership stale_unit_references relative_runtime_source dns_hosts_paths object_masquerade_and_option_paths instance_archive_bytes separator_alias_and_opaque_maps; do
   CASE_NUMBER=$((CASE_NUMBER+1))
   printf 'storage_migration_case=%s\n' "${case_name}"
   (fixture; "case_${case_name}")
