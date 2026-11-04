@@ -26,6 +26,19 @@ for file in coexistence_cases multi_protocol_coexistence; do
   grep -Fqx 'plan_status=ready' <<<"${out}"
   ! grep -q '^scenario=' <<<"${out}"
 done
+# Leaf-body changes need their own contracts, not transport/artifact mocks.
+for leaf in component_http_outbound component_rule_sets; do
+  out=$(bash "${REPO_ROOT}/dev/verification/run.sh" --plan --changed-file "dev/verification/remote/scenarios/${leaf}.sh")
+  grep -Fqx "scenario=${leaf}" <<<"${out}"
+  ! grep -Fqx 'group=verification' <<<"${out}"
+  ! grep -Fqx 'test=tests/verification_runtime_smoke_artifacts.sh' <<<"${out}"
+  if [[ "${leaf}" == component_http_outbound ]]; then
+    grep -Fqx 'test=tests/verification_atomic_http_outbound.sh' <<<"${out}"
+  fi
+done
+out=$(plan --full --changed-file dev/verification/remote/scenarios/component_http_outbound.sh \
+  --changed-file dev/verification/remote/scenarios/component_rule_sets.sh)
+! grep -E '^scenario=component_(http_outbound|rule_sets|tor_outbound)$' <<<"${out}"
 # Missing prerequisites must fail during planning rather than run a partial case.
 mkdir -p "${TMP_DIR}/repo/dev/verification/remote"
 cp -R "${REPO_ROOT}/dev/verification/remote/scenarios" "${TMP_DIR}/repo/dev/verification/remote/"

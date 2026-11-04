@@ -326,6 +326,17 @@ verification_classify_file() {
       verification_plan_append VERIFY_PLAN_TESTS tests/verification_atomic_scenarios.sh
       verification_plan_append VERIFY_PLAN_UNRESOLVED "${file}: shared/aggregate cases require explicit impact scope"
       ;;
+    dev/verification/remote/scenarios/component_http_outbound.sh|dev/verification/remote/scenarios/component_rule_sets.sh)
+      verification_plan_append VERIFY_PLAN_SYNTAX "${file}"
+      verification_plan_append VERIFY_PLAN_TESTS tests/verification_atomic_scenarios.sh
+      if [[ "${file}" == */component_http_outbound.sh ]]; then
+        verification_plan_append VERIFY_PLAN_TESTS tests/verification_atomic_http_outbound.sh
+      fi
+      scenario=${file##*/}
+      if [[ "${VERIFY_PLAN_FULL}" == 0 ]]; then
+        verification_plan_append VERIFY_REQUESTED_SCENARIOS "${scenario%.sh}"
+      fi
+      ;;
     dev/verification/remote/scenarios/*.sh)
       scenario=${file##*/}
       verification_plan_append VERIFY_REQUESTED_SCENARIOS "${scenario%.sh}"
