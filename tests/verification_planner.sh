@@ -265,7 +265,9 @@ assert_no_planning_side_effects
 # Container-only fixtures must not reach the host through any selector.
 for fixture in tests/agent_operations_runtime.sh tests/routing_policy_runtime.sh tests/routing_policy_legacy_runtime.sh tests/routing_policy_manual_references_runtime.sh tests/default_dual_stack_runtime.sh tests/hy2_instance_acme_runtime.sh tests/component_runtime_acceptance.sh \
   tests/selector_urltest_runtime.sh tests/acme_component_runtime.sh \
-  tests/cloudflared_runtime.sh tests/tailscale_openconnect_runtime.sh tests/namespace_core_runtime.sh; do
+  tests/cloudflared_runtime.sh tests/tailscale_openconnect_runtime.sh tests/namespace_core_runtime.sh \
+  tests/reality_target_checker_runtime.sh; do
+  assert_error_2 --plan --test "${fixture}"
   plan=$(fixture_run --plan --changed-file "${fixture}" --group docs)
   assert_line 'plan_status=needs_scope' "${plan}"
   ! grep -Fqx "test=${fixture}" <<<"${plan}"
