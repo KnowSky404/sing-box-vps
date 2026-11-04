@@ -6,6 +6,7 @@
 
 | 契约或目标 | 实现状态 | 证据与剩余边界 |
 | --- | --- | --- |
+| [Docker 定点验证](scoped-docker-verification.zh-CN.md)（[English](scoped-docker-verification.md)） | 第一阶段已实现；定向验收通过 | 三个显式 HTTP 出站、规则集和 Tor 叶子使用全新 SOCKS 前置，原聚合/全量范围保持独立；本地/mock、真实 Docker、外网 Tor 和未实施路线图单元分别记录。 |
 | [统一存储与迁移](unified-storage.zh-CN.md)（[English](unified-storage.md)） | 已实现 | 私有统一根、旧布局迁移/恢复及专用运行态验收；不代表生产已迁移。 |
 | [AI Native 操作架构](ai-native-operations.zh-CN.md)（[English](ai-native-operations.md)） | 统一操作目录与安全接口已实现；定向验收通过 | 结构化分流/服务入口、生成命令参考与开发同步门禁；定向本地/运行态证据在契约中记录，审查、Wiki 和生产状态分别核对。 |
 | [服务端网络管理精简](server-only-network.zh-CN.md)（[English](server-only-network.md)） | 已实现；分范围记录证据 | 199 项宿主检查及三组隔离服务/核心验收通过；完整注册 Docker、当前 head 审查及交付状态在实施 PR 分别记录。 |

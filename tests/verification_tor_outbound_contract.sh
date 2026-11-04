@@ -3,7 +3,7 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-SCENARIO_FILE="${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
+SCENARIO_FILE="${REPO_ROOT}/dev/verification/remote/scenarios/coexistence_cases.sh"
 
 test -r "${SCENARIO_FILE}"
 bash -n "${SCENARIO_FILE}"
@@ -21,9 +21,9 @@ grep -Fq 'for _ in {1..120}; do' "${SCENARIO_FILE}"
 grep -Fq 'verification_port_is_listening 1081' "${SCENARIO_FILE}"
 grep -Fq 'tor-socks-listener-ready' "${SCENARIO_FILE}"
 grep -Fq 'tor-socks-listener.ss-lntp.txt' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 25 --file "${tor_outbound_record}"' \
+grep -Fq -- '--expected-revision "${base_revision}" --file "${tor_outbound_record}"' \
   "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 26 --id tor-outbound-verification' \
+grep -Fq -- '--expected-revision "$((base_revision + 1))" --id tor-outbound-verification' \
   "${SCENARIO_FILE}"
 grep -Fq '.torrc.ClientOnly == "1"' "${SCENARIO_FILE}"
 

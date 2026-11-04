@@ -24,11 +24,28 @@
 
 ### 调度器命令与计划
 
+Docker 场景拆分的第一阶段提供 `component_http_outbound`、`component_rule_sets`、`component_tor_outbound` 三个定点入口；契约、后续协议/TLS、共享 marker、透明代理/namespace 和各出站拆分路线见 [Docker 定点验证 SPEC](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/scoped-docker-verification.zh-CN.md)（[English](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/scoped-docker-verification.md)）。第一阶段不表示全部拆分或验收已完成，实际证据按 SPEC 的边界分别记录。
+
+```bash
+# HTTP 出站本地 proxy/marker 数据面
+bash dev/verification/run.sh --plan --base origin/main --scenario component_http_outbound
+
+# inline/local/remote 规则集创建、替换、拉取及删除
+bash dev/verification/run.sh --plan --base origin/main --scenario component_rule_sets
+
+# 显式真实 Tor 外网验收，不作为普通组件验证的隐式依赖
+bash dev/verification/run.sh --plan --base origin/main --scenario component_tor_outbound
+```
+
+每个组件叶子前都重建 `fresh_install_socks`，组合请求也保留每次重置，最终只追加一次 `runtime_smoke`。删除最后组件留下的空 store 仍有单调增加的 revision，不能将 HTTP 删除后的 revision 2 或规则集删除后的 revision 7 当成新的 revision 0。可选场景目录与默认全量清单分开；`--full` 保持原 17 场景，通过原 aggregate 覆盖这些断言，不再重复执行新增叶子。
+
+共享 helper、aggregate、dispatcher，以及外部 Tor 场景变化保持 `needs_scope`，操作者必须按实际影响明确分配本地 `--test`/`--group` 与必要的 `--scenario`，或确实必要的 `--full`；不能仅因路径变化隐式启动完整共存或真实外网。普通叶子改动可映射对应场景及必要前置。Tor 的成功必须来自显式真实联网，mock、端口监听或本地 marker 均不能代替；HTTP/规则集的本地 Docker 结果也不代表 Tor 或全协议验收。
+
 优先选择精确的 `--test tests/<名称>.sh`，需要整组覆盖时才使用 `--group`。单测试参数可重复，去重后执行；只接受已有独立宿主 Shell 测试的精确路径，拒绝 helper、容器专用 fixture、符号链接及越界路径，不展开通配符。它与 `--base` 组合时保留所有分支/工作区差异的自动检查，不能用来排除其他改动。显式测试和显式组一样代表操作者的影响判断，不能把一个任意测试当作完整覆盖；运行态变化仍需对应 Docker 场景。
 
 普通文档只自动选择 `wiki_documentation.sh`，Agent 手册及升级手册追加能力说明检查，嵌入式/生成命令目录追加命令契约；显式 `--group docs` 仍保留整组。安装器/模块的日常修改选择 `install_build_sync.sh` 检查生成字节及语法，构建器/清单变化才追加 `install_build.sh` 的故障注入。计划器和选择器变化只自动选择 `verification_planner.sh`、`verification_trigger_rules.sh`、`verification_scenario_mapping.sh`；执行器/传输变化仍按相应范围验证。
 
-2026-11-04 优化前清单审视：342 个 Shell 文件中，注册全量选择 199 项宿主测试及 17 种 Docker 场景；`menu` 有 28 项，`protocol:vless` 有 35 项，`protocol:hy2` 有 29 项。它们包含同协议下不同功能及一些跨模块文件名匹配，不是修改一处菜单/分享文案的默认单位。`multi_protocol_coexistence` 超过 3,500 行，混合多协议、组件、UDP、透明代理及真实 Tor 网络访问；`fresh_install_http` 也包含删除最后实例、取消和重建。只有大型场景能覆盖时，明确额外覆盖和预计耗时，不把它默认为轻量 smoke。后续拆分需要保留前置与数据面断言；本轮优化宿主选测，没有消除这些运行态成本。历史耗时日志当前不可用，不能据此声称已经复现或消除了两小时耗时。
+2026-11-04 优化前清单审视：342 个 Shell 文件中，注册全量选择 199 项宿主测试及 17 种 Docker 场景；`menu` 有 28 项，`protocol:vless` 有 35 项，`protocol:hy2` 有 29 项。它们包含同协议下不同功能及一些跨模块文件名匹配，不是修改一处菜单/分享文案的默认单位。`multi_protocol_coexistence` 超过 3,500 行，混合多协议、组件、UDP、透明代理及真实 Tor 网络访问；`fresh_install_http` 也包含删除最后实例、取消和重建。只有大型场景能覆盖时，明确额外覆盖和预计耗时，不把它默认为轻量 smoke。后续拆分需要保留前置与数据面断言；上一轮宿主选测优化没有消除这些运行态成本。历史耗时日志当前不可用，不能据此声称已经复现或消除了两小时耗时。
 
 在仓库根目录运行。先预览，确认测试和场景满足本次影响，再去掉 `--plan` 执行同一组参数：
 
@@ -60,9 +77,9 @@ bash dev/verification/run.sh --plan --base origin/main --full
 
 计划输出 `base`、`file`、`group`、`syntax`、`test`、`scenario` 和选择理由/未映射影响。`plan_status=needs_scope` 时预览仍成功，实际执行返回 2，且不运行任何测试或 Docker；错误参数、无效 ref 或未知组/场景同样在执行前返回 2。`--plan` 不运行测试、不探测 Docker、不创建结果目录。执行后保存 `dev/verification-runs/<时间>/plan.txt`、逐测试日志/耗时以及场景产物，首个失败立即返回，不自动重复全套。
 
-场景根据本次运行已建立的状态补齐前置：独立 `runtime_smoke` 使用较轻的 `fresh_install_http`；VLESS 重配置需要 `fresh_install_vless` 基线；卸载验证先建立可核对旧 UUID 的 VLESS 安装；最终 smoke 在所有变更场景之后。若中途其他场景替换了安装，会重新准备必要基线，计划可能包含重复安装。现有大型场景尚未拆分，需在计划中确认额外覆盖，不能仅凭名称推断耗时很短。
+场景根据本次运行已建立的状态补齐前置：独立 `runtime_smoke` 使用较轻的 `fresh_install_http`；VLESS 重配置需要 `fresh_install_vless` 基线；卸载验证先建立可核对旧 UUID 的 VLESS 安装；最终 smoke 在所有变更场景之后。若中途其他场景替换了安装，会重新准备必要基线，计划可能包含重复安装。第一阶段新增三个组件叶子，其他大型协议/组件场景仍需后续拆分；需在计划中确认额外覆盖，不能仅凭名称推断耗时很短。
 
-`--full` 运行的是 `selection.sh` 中的显式宿主安全清单和已注册场景，不等同于执行 `tests/` 下所有脚本，也不自动证明公网或外部服务行为。独立 `hy2_instance_acme_runtime.sh` 是 Pebble/私有 CA 容器 fixture，现有注册场景不调用它；直接修改它或静态引用它的 helper 时，调度器保持 `needs_scope`，即使 `--full` 也不能代替其独立隔离运行。保留该未完成边界并按专属容器流程验证，不要在宿主执行它。
+`--full` 运行的是 `selection.sh` 中的显式宿主安全清单和默认全量场景清单，不等同于执行 `tests/` 下所有脚本，也不自动证明公网或外部服务行为。独立 `hy2_instance_acme_runtime.sh` 是 Pebble/私有 CA 容器 fixture，现有注册场景不调用它；直接修改它或静态引用它的 helper 时，调度器保持 `needs_scope`，即使 `--full` 也不能代替其独立隔离运行。保留该未完成边界并按专属容器流程验证，不要在宿主执行它。
 
 同样的宿主保护适用于 `routing_policy_runtime.sh`、`routing_policy_legacy_runtime.sh`、`routing_policy_manual_references_runtime.sh`、`component_runtime_acceptance.sh`、`selector_urltest_runtime.sh`、`acme_component_runtime.sh`、`namespace_core_runtime.sh`、`tailscale_openconnect_runtime.sh` 和 `cloudflared_runtime.sh`。它们要求新的可丢弃 Docker、显式标志及各自对端；生产 Cloudflared 还需要事先授权的专用临时资源和私密凭据文件。脚本或其 helper 发生变化时，计划保留独立隔离运行要求，普通组及 `--full` 均不能把它们当作宿主测试。具体范围、证据和条件见 [协议完成契约](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/full-protocol-completion.zh-CN.md)。
 

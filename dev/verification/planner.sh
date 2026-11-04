@@ -321,6 +321,11 @@ verification_classify_file() {
     dev/verification/run.sh)
       verification_add_group verification || return 2
       ;;
+    dev/verification/remote/scenarios/coexistence_cases.sh|dev/verification/remote/scenarios/multi_protocol_coexistence.sh|dev/verification/remote/scenarios/component_tor_outbound.sh)
+      verification_plan_append VERIFY_PLAN_SYNTAX "${file}"
+      verification_plan_append VERIFY_PLAN_TESTS tests/verification_atomic_scenarios.sh
+      verification_plan_append VERIFY_PLAN_UNRESOLVED "${file}: shared/aggregate cases require explicit impact scope"
+      ;;
     dev/verification/remote/scenarios/*.sh)
       scenario=${file##*/}
       verification_plan_append VERIFY_REQUESTED_SCENARIOS "${scenario%.sh}"
@@ -366,7 +371,7 @@ verification_build_plan() {
   if [[ "${VERIFY_PLAN_FULL}" == 1 ]]; then
     while IFS= read -r scenario; do
       verification_plan_append VERIFY_REQUESTED_SCENARIOS "${scenario}"
-    done < <(verification_list_scenarios)
+    done < <(verification_full_scenarios)
   fi
   if [[ "${#VERIFY_REQUESTED_SCENARIOS[@]}" -gt 0 ]]; then
     if ! scenarios=$(verification_expand_scenarios "${VERIFY_REQUESTED_SCENARIOS[@]}"); then
