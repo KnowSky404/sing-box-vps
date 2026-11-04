@@ -22,12 +22,13 @@ expected_domains() {
     US-LAX) printf '%s\n' www.cnb.com www.preferredbank.com lacity.gov www.ucla.edu www.usc.edu ;;
     DE-FRA) printf '%s\n' www.frankfurter-sparkasse.de www.frankfurter-volksbank.de frankfurt.de www.uni-frankfurt.de www.frankfurt-university.de ;;
     JP-TYO) printf '%s\n' www.smbc.co.jp www.mizuhobank.co.jp www.metro.tokyo.lg.jp www.u-tokyo.ac.jp www.waseda.jp ;;
+    KR-SEL) printf '%s\n' www.kbstar.com www.shinhan.com www.seoul.go.kr www.snu.ac.kr www.yonsei.ac.kr ;;
     *) return 1 ;;
   esac
 }
 
-[[ ${#SB_REALITY_REGION_CANDIDATES[@]} == 20 ]] || fail 'expected four bounded five-domain pools'
-for region in HK US-LAX DE-FRA JP-TYO; do
+[[ ${#SB_REALITY_REGION_CANDIDATES[@]} == 25 ]] || fail 'expected five bounded five-domain pools'
+for region in HK US-LAX DE-FRA JP-TYO KR-SEL; do
   records=$(reality_region_candidate_records "${region}") || fail "missing regional pool: ${region}"
   actual_domains=''
   bank_count=0
@@ -50,7 +51,7 @@ for region in HK US-LAX DE-FRA JP-TYO; do
   [[ "${actual_domains%$'\n'}" == "$(expected_domains "${region}")" ]] || fail "regional domain identity/order mismatch: ${region}"
   [[ "$(printf '%s' "${actual_domains}" | sort -u | wc -l)" == 5 ]] || fail "duplicate preset domain: ${region}"
 done
-for unknown in '' hk US DE JP UNKNOWN 'HK US-LAX' 'HK;false'; do
+for unknown in '' hk US DE JP KR kr-sel UNKNOWN 'HK US-LAX' 'HK;false'; do
   returned=''
   if returned=$(reality_region_candidate_records "${unknown}"); then
     fail "unknown region accepted: ${unknown}"
@@ -68,7 +69,7 @@ select_reality_sni_candidate() {
   return "${CHECKER_STATUS}"
 }
 region_choice=0
-for region in HK US-LAX DE-FRA JP-TYO; do
+for region in HK US-LAX DE-FRA JP-TYO KR-SEL; do
   region_choice=$((region_choice + 1))
   SB_SNI=unchanged.example.test
   prompt_reality_region_candidates <<< "${region_choice}" > "${TMP_DIR}/region-output" || fail "region prompt failed: ${region}"
@@ -81,6 +82,7 @@ for region in HK US-LAX DE-FRA JP-TYO; do
     grep -Fq -- "${institution}" "${TMP_DIR}/region-output" || fail 'preview omitted an institution identity'
   done <<< "${records}"
   grep -Fq CDN "${TMP_DIR}/region-output" || fail 'regional preview omitted the hosting-location caveat'
+  grep -Fq '5. KR-SEL 韩国首尔' "${TMP_DIR}/region-output" || fail 'regional menu omitted Seoul option 5'
 done
 
 for input in '' 0 $'9\n0'; do
@@ -103,7 +105,7 @@ for checker_status in 1 2 3 124 130 143; do
   CHECKER_STATUS=${checker_status}
   SB_SNI=unchanged.example.test
   result=0
-  prompt_reality_region_candidates <<< 1 > "${TMP_DIR}/region-output" || result=$?
+  prompt_reality_region_candidates <<< 5 > "${TMP_DIR}/region-output" || result=$?
   [[ "${result}" == "${checker_status}" ]] || fail 'regional prompt lost the checker failure/interruption status'
   [[ "${SB_SNI}" == unchanged.example.test ]] || fail 'failed checker stdout bypassed acceptance'
 done
@@ -121,6 +123,20 @@ SB_SNI=unchanged.example.test
 prompt_reality_sni_for_new_instance existing.example.test <<< $'5\n3' > "${TMP_DIR}/menu-output"
 [[ "${SB_SNI}" == www.frankfurt-university.de ]] || fail 'new-instance SNI menu did not route to DE-FRA candidates'
 
+# Seoul is available from every existing regional entry, including an empty
+# new-instance default that delegates to the installation SNI menu.
+for menu in install update new_instance empty_new_instance; do
+  SB_SNI=unchanged.example.test
+  case "${menu}" in
+    install) prompt_reality_sni_install <<< $'4\n5' > "${TMP_DIR}/menu-output" ;;
+    update) prompt_reality_sni_update <<< $'5\n5' > "${TMP_DIR}/menu-output" ;;
+    new_instance) prompt_reality_sni_for_new_instance existing.example.test <<< $'5\n5' > "${TMP_DIR}/menu-output" ;;
+    empty_new_instance) prompt_reality_sni_for_new_instance '' <<< $'4\n5' > "${TMP_DIR}/menu-output" ;;
+  esac
+  [[ "${SB_SNI}" == www.yonsei.ac.kr ]] || fail "${menu} did not adopt the checker-selected Seoul candidate"
+  [[ "$(cat "${TMP_DIR}/checker-candidates")" == "$(expected_domains KR-SEL)" ]] || fail "${menu} passed incorrect Seoul candidates"
+done
+
 rm -f -- "${TMP_DIR}/checker-candidates"
 SB_SNI=existing.example.test
 prompt_reality_sni_update <<< '' > "${TMP_DIR}/menu-output"
@@ -134,10 +150,10 @@ for checker_status in 1 130 143; do
     SB_SNI=unchanged.example.test
     result=0
     case "${menu}" in
-      install) prompt_reality_sni_install <<< $'4\n1' > "${TMP_DIR}/menu-output" || result=$? ;;
-      update) prompt_reality_sni_update <<< $'5\n1' > "${TMP_DIR}/menu-output" || result=$? ;;
-      new_instance) prompt_reality_sni_for_new_instance existing.example.test <<< $'5\n1' > "${TMP_DIR}/menu-output" || result=$? ;;
-      empty_new_instance) prompt_reality_sni_for_new_instance '' <<< $'4\n1' > "${TMP_DIR}/menu-output" || result=$? ;;
+      install) prompt_reality_sni_install <<< $'4\n5' > "${TMP_DIR}/menu-output" || result=$? ;;
+      update) prompt_reality_sni_update <<< $'5\n5' > "${TMP_DIR}/menu-output" || result=$? ;;
+      new_instance) prompt_reality_sni_for_new_instance existing.example.test <<< $'5\n5' > "${TMP_DIR}/menu-output" || result=$? ;;
+      empty_new_instance) prompt_reality_sni_for_new_instance '' <<< $'4\n5' > "${TMP_DIR}/menu-output" || result=$? ;;
     esac
     [[ "${result}" == "${checker_status}" ]] || fail "${menu} lost regional failure/interruption status"
     [[ "${SB_SNI}" == unchanged.example.test ]] || fail "${menu} changed SNI after regional failure/interruption"

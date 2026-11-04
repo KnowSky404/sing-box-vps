@@ -20,11 +20,11 @@ bash -c 'set -euo pipefail; umask 077; [[ $EUID -eq 0 ]]; h=$(getent passwd 0 | 
 
 ### 内置地区候选
 
-选择内置地区候选后，子菜单提供 `1. HK`、`2. US-LAX`、`3. DE-FRA`、`4. JP-TYO`，默认 `0` 取消。每区共 5 个域名，覆盖银行、政府和学校官网，按下表顺序交给现有 DNS checker，选择首个通过检查且获接受的域名。基础条件返回 FAIL/UNKNOWN 时跳过；WARN 仍须明确确认，默认拒绝。全部失败、拒绝或取消时不选用固定域名，已有 SNI 保持不变。
+选择内置地区候选后，子菜单提供 `1. HK`、`2. US-LAX`、`3. DE-FRA`、`4. JP-TYO`、`5. KR-SEL 韩国首尔`，默认 `0` 取消。每区共 5 个域名，覆盖银行、政府和学校官网，按下表顺序交给现有 DNS checker，选择首个通过检查且获接受的域名。基础条件返回 FAIL/UNKNOWN 时跳过；WARN 仍须明确确认，默认拒绝。全部失败、拒绝或取消时不选用固定域名，已有 SNI 保持不变。
 
 地区标签按机构所在地归类；站点可能使用 CDN 或其他地区的托管服务，因此标签不保证连接 IP、ASN、机房或延迟属于该地区。官方身份与学校、银行、政府类别不能证明 REALITY 适用性，也不能代替从实际 VPS 网络运行 checker。此入口只检测域名，不扫描网段、不查询 ASN，也不需要 Python。
 
-以下官方来源用于核实机构身份与所在地；候选表于 2026-10-30 核对。表中域名不表示已经通过公网 checker 验收。
+以下官方来源用于核实机构身份与所在地；原四区候选于 2026-10-30 核对，KR-SEL 韩国首尔候选于 2026-11-04 核对。表中域名不表示已经通过公网 checker 验收。
 
 | 地区 | 类别 | 机构 | 候选域名 | 官方来源 |
 | --- | --- | --- | --- | --- |
@@ -48,6 +48,11 @@ bash -c 'set -euo pipefail; umask 077; [[ $EUID -eq 0 ]]; h=$(getent passwd 0 | 
 | JP-TYO | 政府 | 东京都政府 | `www.metro.tokyo.lg.jp` | [东京都政府官网](https://www.metro.tokyo.lg.jp/) |
 | JP-TYO | 学校 | 东京大学 | `www.u-tokyo.ac.jp` | [校区位置](https://www.u-tokyo.ac.jp/en/about/access.html) |
 | JP-TYO | 学校 | 早稻田大学 | `www.waseda.jp` | [校区位置](https://www.waseda.jp/top/en/access) |
+| KR-SEL | 银行 | KB国民银行 | `www.kbstar.com` | [银行总部地址](https://omoney.kbstar.com/quics?page=C021241) |
+| KR-SEL | 银行 | 新韩银行 | `www.shinhan.com` | [韩国金融研修院成员名录与地址](https://www.kbi.or.kr/platformWeb/engkbi.do?cmd=about&sub=13) |
+| KR-SEL | 政府 | 首尔特别市政府 | `www.seoul.go.kr` | [首尔市政府官网与地址](https://www.seoul.go.kr/main/indexM.jsp) |
+| KR-SEL | 学校 | 首尔大学 | `www.snu.ac.kr` | [观岳校区地址](https://en.snu.ac.kr/about/campus/gwanak/address) |
+| KR-SEL | 学校 | 延世大学 | `www.yonsei.ac.kr` | [新村校区指南与地址](https://www.yonsei.ac.kr/sc/242/subview.do) |
 
 ### 网段 / ASN 发现
 

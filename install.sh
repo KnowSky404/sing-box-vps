@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026110405
+# Version: 2026110406
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026110405"
+readonly SCRIPT_VERSION="2026110406"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 # A single IPv6 wildcard socket accepts IPv4 and IPv6 in sing-box on Linux.
 readonly SB_DEFAULT_LISTEN_ADDRESS="::"
@@ -107,6 +107,11 @@ readonly SB_REALITY_REGION_CANDIDATES=(
   'JP-TYO|government|东京都政府|www.metro.tokyo.lg.jp'
   'JP-TYO|university|东京大学|www.u-tokyo.ac.jp'
   'JP-TYO|university|早稻田大学|www.waseda.jp'
+  'KR-SEL|bank|KB国民银行|www.kbstar.com'
+  'KR-SEL|bank|新韩银行|www.shinhan.com'
+  'KR-SEL|government|首尔特别市政府|www.seoul.go.kr'
+  'KR-SEL|university|首尔大学|www.snu.ac.kr'
+  'KR-SEL|university|延世大学|www.yonsei.ac.kr'
 )
 # Runtime capability source of truth. Fields are decoded by protocol_registry_json.
 # IDs/aliases are data; dispatch below always calls explicit, literal handlers.
@@ -5154,7 +5159,7 @@ prompt_reality_target_discovery() {
 
 reality_region_candidate_records() {
   local region=${1:-} record
-  case "${region}" in HK|US-LAX|DE-FRA|JP-TYO) ;; *) return 1 ;; esac
+  case "${region}" in HK|US-LAX|DE-FRA|JP-TYO|KR-SEL) ;; *) return 1 ;; esac
   for record in "${SB_REALITY_REGION_CANDIDATES[@]}"; do
     if [[ "${record}" == "${region}|"* ]]; then
       printf '%s\n' "${record}"
@@ -5170,13 +5175,15 @@ prompt_reality_region_candidates() {
   echo "2. US-LAX 洛杉矶"
   echo "3. DE-FRA 法兰克福"
   echo "4. JP-TYO 东京"
+  echo "5. KR-SEL 韩国首尔"
   echo "0. 返回"
-  choice=$(prompt_choice "请选择地区 [0-4] (默认 0): " 0 4 0) || return 1
+  choice=$(prompt_choice "请选择地区 [0-5] (默认 0): " 0 5 0) || return 1
   case "${choice}" in
     1) region=HK ;;
     2) region=US-LAX ;;
     3) region=DE-FRA ;;
     4) region=JP-TYO ;;
+    5) region=KR-SEL ;;
     *) return 1 ;;
   esac
   records=$(reality_region_candidate_records "${region}") || return 1
