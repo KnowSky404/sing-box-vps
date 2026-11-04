@@ -636,3 +636,9 @@ readlink /etc/systemd/system/sing-box.service
 The restore plan must target the actual internal artifacts: `${data_root}/bin/sing-box`, `${data_root}/systemd/sing-box.service`, and `${data_root}/runtime/`. Preserve the global links to those files; copying a binary over `/usr/local/bin/sing-box` would replace the link while systemd continues executing the internal binary. Include the manifest's other runtime files and optional `${data_root}/lib/libcronet.so`, its ownership marker and internal library link when applicable. Historical pre-layout backups remain offline recovery material and require path reconciliation.
 
 On production, present exact mutations, service impact, rollback and verification commands in a new plan and wait for approval. The approved procedure must prepare private staging, verify the manifest and affected configuration with the restored core and its matching libraries, retain `.bak` copies before replacement, stop an active service before committing, and atomically publish internal artifacts. Then reload systemd, check the final configuration with `${data_root}/bin/sing-box`, restore the intended service activity and verify the actual data plane. Retain recovery material if any postcheck fails; do not report a file copy as successful service recovery.
+
+历史升级备份根须为 root 私有目录；其中普通文件可保留归档 UID，但目录、
+活动配置和系统入口仍严格检查 root 所有权。历史备份不执行、不作为升级恢复
+输入，字节与元数据原样归档；仍拒绝链接、特殊文件、可由其他账户写入的内容。
+`blocker_details` 同时覆盖旧活动目录与历史备份，后者使用
+`untrusted_legacy_backups`，并指出具体 `path` 和 `reason`。

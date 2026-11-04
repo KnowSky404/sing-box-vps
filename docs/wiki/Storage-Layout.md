@@ -54,3 +54,9 @@ sbv storage recover --json --yes
 恢复目标是旧布局和原服务活动状态。`rollback_failed` 表示仍需保留备份和 journal；目录恢复不代表服务恢复。管理员在中断后替换的外部命令或库遇到 ownership_conflict 会被保留，迁移 journal 也会保留，不能强行覆盖。完成后重新检查 status，再决定是否迁移。
 
 核心卸载保留管理入口和备份；彻底卸载明确报告保留的恢复材料。外部输入不删除。完整设计见 [统一存储 SPEC](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/unified-storage.zh-CN.md)。仓库与 Docker 验证不表示生产主机已迁移。
+
+历史升级备份根须为 root 私有目录；其中普通文件可保留归档 UID，但目录、
+活动配置和系统入口仍严格检查 root 所有权。历史备份不执行、不作为升级恢复
+输入，字节与元数据原样归档；仍拒绝链接、特殊文件、可由其他账户写入的内容。
+`blocker_details` 同时覆盖旧活动目录与历史备份，后者使用
+`untrusted_legacy_backups`，并指出具体 `path` 和 `reason`。
