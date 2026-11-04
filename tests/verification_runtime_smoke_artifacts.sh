@@ -1711,14 +1711,22 @@ grep -Fq 'verification_execute_redirect_probe' \
   "${REPO_ROOT}/dev/verification/remote/entrypoint.sh"
 grep -Fq 'verification_execute_tproxy_probe' \
   "${REPO_ROOT}/dev/verification/remote/entrypoint.sh"
-grep -Fq 'verification_execute_protocol_udp_probe naive /root/.sing-box-vps/runtime/config.json' \
-  "${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
+aggregate_scenario="${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
+protocol_cases="${REPO_ROOT}/dev/verification/remote/scenarios/protocol_cases.sh"
+policy_cases="${REPO_ROOT}/dev/verification/remote/scenarios/policy_cases.sh"
+grep -Fq 'verification_execute_protocol_udp_probe "${protocol}" "${config}"' \
+  "${protocol_cases}"
+grep -Fq 'verification_protocol_udp_probe naive' "${aggregate_scenario}"
+grep -Fq 'verification_protocol_naive_transition' "${aggregate_scenario}"
+grep -Fq 'verification_protocol_snell_transition' "${aggregate_scenario}"
 grep -Fq 'DATA_PLANE=naive_http3_tcp_loopback' \
-  "${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
+  "${protocol_cases}"
 grep -Fq 'verification_execute_redirect_probe /root/.sing-box-vps/runtime/config.json 1094' \
-  "${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
+  "${policy_cases}"
 grep -Fq 'verification_execute_tproxy_probe /root/.sing-box-vps/runtime/config.json 1095' \
-  "${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
+  "${policy_cases}"
+grep -Eq '^  verification_case_direct_inbound [0-9]+ retain$' "${aggregate_scenario}"
+grep -Eq '^  verification_case_transparent_policy [0-9]+$' "${aggregate_scenario}"
 ! grep -Fq 'verification_execute_single_protocol_probe vless-reality /root/.sing-box-vps/runtime/config.json' "${TMP_DIR}/remote-script.sh"
 grep -Fqx 'fresh_install_vless' "${REMOTE_DISPATCH_LOG_FILE}"
 grep -Fqx 'reconfigure_existing_install' "${REMOTE_DISPATCH_LOG_FILE}"

@@ -321,17 +321,26 @@ verification_classify_file() {
     dev/verification/run.sh)
       verification_add_group verification || return 2
       ;;
-    dev/verification/remote/scenarios/coexistence_cases.sh|dev/verification/remote/scenarios/multi_protocol_coexistence.sh|dev/verification/remote/scenarios/component_tor_outbound.sh)
+    dev/verification/remote/scenarios/*_cases.sh|dev/verification/remote/scenarios/runtime_fixtures.sh|dev/verification/remote/scenarios/multi_protocol_coexistence.sh|dev/verification/remote/scenarios/component_tor_outbound.sh|dev/verification/remote/scenarios/protocol_probe_vless_reality.sh|dev/verification/remote/scenarios/protocol_coexistence.sh)
       verification_plan_append VERIFY_PLAN_SYNTAX "${file}"
       verification_plan_append VERIFY_PLAN_TESTS tests/verification_atomic_scenarios.sh
-      verification_plan_append VERIFY_PLAN_UNRESOLVED "${file}: shared/aggregate cases require explicit impact scope"
+      case "${file}" in
+        */runtime_fixtures.sh) verification_plan_append VERIFY_PLAN_TESTS tests/verification_runtime_fixtures.sh ;;
+        */outbound_cases.sh) verification_plan_append VERIFY_PLAN_TESTS tests/verification_outbound_leaf_contract.sh ;;
+        */policy_cases.sh) verification_plan_append VERIFY_PLAN_TESTS tests/verification_policy_leaf_contract.sh ;;
+        */protocol_cases.sh) verification_plan_append VERIFY_PLAN_TESTS tests/verification_protocol_leaf_contract.sh ;;
+      esac
+      verification_plan_append VERIFY_PLAN_UNRESOLVED "${file}: shared/aggregate/external cases require explicit impact scope"
       ;;
-    dev/verification/remote/scenarios/component_http_outbound.sh|dev/verification/remote/scenarios/component_rule_sets.sh)
+    dev/verification/remote/scenarios/component_*.sh|dev/verification/remote/scenarios/protocol_*.sh)
       verification_plan_append VERIFY_PLAN_SYNTAX "${file}"
       verification_plan_append VERIFY_PLAN_TESTS tests/verification_atomic_scenarios.sh
-      if [[ "${file}" == */component_http_outbound.sh ]]; then
-        verification_plan_append VERIFY_PLAN_TESTS tests/verification_atomic_http_outbound.sh
-      fi
+      case "${file}" in
+        */component_http_outbound.sh) verification_plan_append VERIFY_PLAN_TESTS tests/verification_atomic_http_outbound.sh ;;
+        */component_*_outbound.sh) verification_plan_append VERIFY_PLAN_TESTS tests/verification_outbound_leaf_contract.sh ;;
+        */component_*_inbound.sh|*/component_transparent_policy.sh) verification_plan_append VERIFY_PLAN_TESTS tests/verification_policy_leaf_contract.sh ;;
+        */protocol_*.sh) verification_plan_append VERIFY_PLAN_TESTS tests/verification_protocol_leaf_contract.sh ;;
+      esac
       scenario=${file##*/}
       if [[ "${VERIFY_PLAN_FULL}" == 0 ]]; then
         verification_plan_append VERIFY_REQUESTED_SCENARIOS "${scenario%.sh}"

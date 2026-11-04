@@ -142,19 +142,40 @@ byte/syntax consistency; build-tool/manifest edits also select build fault tests
 Planner/selection changes select the three planning contracts rather than the
 large transport/artifact mocks. See [Development](https://github.com/KnowSky404/sing-box-vps/wiki/Development#调度器命令与计划).
 
-Stage 1 of [scoped Docker verification](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/scoped-docker-verification.md)
-adds explicit `--scenario component_http_outbound`, `--scenario component_rule_sets`
-and `--scenario component_tor_outbound` choices. Preview them with `--plan --base
-origin/main`. Every leaf receives a new `fresh_install_socks`, even in a combined
-request: deleting the last component retains an increased registry revision,
-not a reusable revision-0 baseline. Final smoke follows all mutations. The
-selectable catalog is broader than the default `--full` list, which preserves
-its original 17 scenarios without executing these leaves again. Shared helper,
-aggregate, dispatcher and external Tor changes require explicit scope rather
-than automatically selecting a large matrix. Ordinary component choices do not
-implicitly run Tor; real-network Tor evidence cannot be replaced by mocks or
-local markers. This is Stage 1, not a claim that the complete protocol/component
-roadmap or acceptance is finished; record evidence in the SPEC separately.
+The complete [scoped Docker verification](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/scoped-docker-verification.md)
+roadmap is implemented; all 31 new leaves and the refactored HTTP leaf passed
+independent real Docker acceptance. Aggregate compatibility also passed, closing
+the SPEC runtime scope at 33/33. The SPEC records run IDs and scene timings,
+including internal installations and excluding only separately scheduled baselines,
+final smoke and transfer; the original 17-scenario full set remains distinct.
+Choose a component leaf such as `component_vless_outbound` or
+`component_tproxy_inbound`, a single `protocol_probe_hy2`, or a focused
+`protocol_naive_transition` / `protocol_snell_transition`. The SPEC lists all
+outbound/policy leaves, 13 normalized protocol probe IDs and
+`protocol_coexistence`, alongside the original HTTP/rule-set/Tor leaves.
+Preview with `--plan --base origin/main`. Every leaf receives a new
+`fresh_install_socks`, even in combined requests; protocol probes install only
+the target protocol in addition to SOCKS. An empty post-deletion registry has
+an increased revision, not a reusable revision-0 baseline. Final smoke runs once
+after all mutations and probes the final installed state.
+
+The selectable catalog is broader than default `--full`, which preserves its
+original 17 scenarios through shared aggregate assertions without repeating
+leaves. Shared fixture/assertion, aggregate, dispatcher and external REALITY/Tor
+changes retain `needs_scope` until explicitly classified. They must not silently
+select every caller, complete coexistence or real external traffic. REALITY
+probes and protocol coexistence use an external TLS cover; select these and Tor
+explicitly. Mocks, listeners and local markers cannot establish their external
+acceptance. HTTP and ShadowTLS protocol probes are TCP-only; native UDP, XUDP,
+UoT and HTTP3 assertions remain distinct.
+
+Complete decomposition acceptance needs actual Docker results for every new
+leaf and the original `multi_protocol_coexistence` compatibility path, retaining
+the original CAS sequence and combination checks. This does not require unrelated
+upgrade/uninstall scenarios or imply a full-suite pass. Preserve Stage 1's
+historical 601-second three-leaf result separately from current scene-only
+measurements. Current leaf passes, actual aggregate compatibility, full-suite and
+production acceptance remain separate evidence boundaries.
 
 For code or script changes:
 
