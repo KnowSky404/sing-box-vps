@@ -11,6 +11,7 @@ here.
 
 | Contract or goal | Implementation status | Evidence and remaining boundary |
 | --- | --- | --- |
+| [Scoped Docker verification](scoped-docker-verification.md) ([中文](scoped-docker-verification.zh-CN.md)) | Stage 1 implemented; scoped acceptance passed | Three explicit HTTP outbound, rule-set and Tor leaves with fresh SOCKS prerequisites; the existing aggregate/full scope remains distinct. Local/mock, real Docker, external Tor and unexecuted roadmap units must be recorded separately. |
 | [Unified storage](unified-storage.md) ([中文](unified-storage.zh-CN.md)) | Implemented | Private root, guarded legacy migration/recovery and dedicated runtime acceptance; no production migration claimed. |
 | [AI Native operations](ai-native-operations.md) ([中文](ai-native-operations.zh-CN.md)) | Unified operation catalog and safe adapters implemented; scoped acceptance passed | Structured routing/service entrypoints, generated reference and development synchronization gate; focused host/runtime evidence is recorded in the contract separately from review, Wiki and production status. |
 | [Server-only network management](server-only-network.md) ([中文](server-only-network.zh-CN.md)) | Implemented; per-scope evidence recorded | 199 host checks and three isolated server/core acceptance fixtures pass. Full registered Docker, exact-head reviews and delivery status are recorded separately in the implementation PR. |

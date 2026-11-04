@@ -133,6 +133,20 @@ byte/syntax consistency; build-tool/manifest edits also select build fault tests
 Planner/selection changes select the three planning contracts rather than the
 large transport/artifact mocks. See [Development](https://github.com/KnowSky404/sing-box-vps/wiki/Development#调度器命令与计划).
 
+Stage 1 of [scoped Docker verification](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/scoped-docker-verification.md)
+adds explicit `--scenario component_http_outbound`, `--scenario component_rule_sets`
+and `--scenario component_tor_outbound` choices. Preview them with `--plan --base
+origin/main`. Every leaf receives a new `fresh_install_socks`, even in a combined
+request: deleting the last component retains an increased registry revision,
+not a reusable revision-0 baseline. Final smoke follows all mutations. The
+selectable catalog is broader than the default `--full` list, which preserves
+its original 17 scenarios without executing these leaves again. Shared helper,
+aggregate, dispatcher and external Tor changes require explicit scope rather
+than automatically selecting a large matrix. Ordinary component choices do not
+implicitly run Tor; real-network Tor evidence cannot be replaced by mocks or
+local markers. This is Stage 1, not a claim that the complete protocol/component
+roadmap or acceptance is finished; record evidence in the SPEC separately.
+
 For code or script changes:
 
 1. Inspect the current repository state with `git status --short`.

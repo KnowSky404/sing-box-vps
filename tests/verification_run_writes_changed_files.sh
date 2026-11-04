@@ -654,7 +654,12 @@ grep -Fqx 'tests/hysteria_instance_lifecycle.sh|1' "${TMP_DIR}/local-tests.log"
 grep -Fqx 'tests/naive_instance_lifecycle.sh|1' "${TMP_DIR}/local-tests.log"
 
 default_local_test_count=$(wc -l < "${TMP_DIR}/local-tests.log")
-expected_local_test_count=$(bash -c 'source "$1"; source "$2"; verification_group_tests full | wc -l' _ "${REPO_ROOT}/dev/verification/common.sh" "${REPO_ROOT}/dev/verification/selection.sh")
+# Full manifest plus automatic checks for the selected changed files is the
+# executable union; it may include the cheap build-sync gate outside full.
+expected_local_test_count=$(sed -n 's/^local_test_count=//p' "${TMP_DIR}/stdout.txt")
+sed -n 's/^test=//p' "${TMP_DIR}/stdout.txt" | LC_ALL=C sort > "${TMP_DIR}/planned-tests.txt"
+cut -d '|' -f 1 "${TMP_DIR}/local-tests.log" | LC_ALL=C sort > "${TMP_DIR}/executed-tests.txt"
+cmp "${TMP_DIR}/planned-tests.txt" "${TMP_DIR}/executed-tests.txt"
 [[ "${default_local_test_count}" -eq "${expected_local_test_count}" ]] || {
   printf 'expected %d local tests, got %d\n' "${expected_local_test_count}" "${default_local_test_count}" >&2; exit 1
 }

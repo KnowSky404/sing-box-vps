@@ -3230,6 +3230,15 @@ for scenario in "$@"; do
     fresh_install_vless_plain)
       run_verification_scenario fresh_install_vless_plain verification_scenario_fresh_install_vless_plain
       ;;
+    component_http_outbound)
+      run_verification_scenario component_http_outbound verification_scenario_component_http_outbound
+      ;;
+    component_rule_sets)
+      run_verification_scenario component_rule_sets verification_scenario_component_rule_sets
+      ;;
+    component_tor_outbound)
+      run_verification_scenario component_tor_outbound verification_scenario_component_tor_outbound
+      ;;
     multi_protocol_coexistence)
       run_verification_scenario multi_protocol_coexistence verification_scenario_multi_protocol_coexistence
       ;;

@@ -254,7 +254,9 @@ verification_group_test_candidates() {
         tests/verification_tests_only_stays_local.sh \
         tests/verification_runtime_smoke_artifacts.sh \
         tests/verification_remote_scenario_dispatch.sh \
-        tests/verification_planner.sh
+        tests/verification_planner.sh \
+        tests/verification_atomic_scenarios.sh \
+        tests/verification_atomic_http_outbound.sh
       ;;
     protocol:hy2|protocol:hysteria2)
       patterns=('tests/*hy2*.sh')
@@ -323,7 +325,7 @@ verification_group_tests() {
   fi
 }
 
-verification_list_scenarios() {
+verification_full_scenarios() {
   printf '%s\n' \
     fresh_install_vless \
     reconfigure_existing_install \
@@ -344,6 +346,11 @@ verification_list_scenarios() {
     runtime_smoke
 }
 
+verification_list_scenarios() {
+  verification_full_scenarios
+  printf '%s\n' component_http_outbound component_rule_sets component_tor_outbound
+}
+
 verification_expand_scenarios() {
   local scenario root
   local baseline=''
@@ -353,7 +360,7 @@ verification_expand_scenarios() {
   # Validate the entire request before emitting a partial executable plan.
   for scenario in "${requested_scenarios[@]}"; do
     case "${scenario}" in
-      fresh_install_vless|reconfigure_existing_install|legacy_takeover_export|fresh_install_anytls|fresh_install_socks|fresh_install_http|fresh_install_shadowsocks|fresh_install_trojan|fresh_install_vmess|fresh_install_hysteria|fresh_install_vless_plain|multi_protocol_coexistence|upgrade_1_13_to_1_14|upgrade_rollback_1_13_to_1_14|uninstall_and_reinstall|storage_migration|runtime_smoke)
+      fresh_install_vless|reconfigure_existing_install|legacy_takeover_export|fresh_install_anytls|fresh_install_socks|fresh_install_http|fresh_install_shadowsocks|fresh_install_trojan|fresh_install_vmess|fresh_install_hysteria|fresh_install_vless_plain|multi_protocol_coexistence|upgrade_1_13_to_1_14|upgrade_rollback_1_13_to_1_14|uninstall_and_reinstall|storage_migration|runtime_smoke|component_http_outbound|component_rule_sets|component_tor_outbound)
         if [[ ! -f "${root}/dev/verification/remote/scenarios/${scenario}.sh" ]]; then
           printf 'verification scenario file is missing: %s\n' "${scenario}" >&2
           return 2
@@ -366,12 +373,36 @@ verification_expand_scenarios() {
     esac
   done
 
+  for scenario in "${requested_scenarios[@]}"; do
+    case "${scenario}" in
+      component_http_outbound|component_rule_sets|component_tor_outbound|multi_protocol_coexistence)
+        if [[ ! -f "${root}/dev/verification/remote/scenarios/coexistence_cases.sh" ]]; then
+          printf 'verification shared cases are missing\n' >&2
+          return 2
+        fi
+        ;;
+    esac
+    case "${scenario}" in
+      component_http_outbound|component_rule_sets|component_tor_outbound)
+        [[ -f "${root}/dev/verification/remote/scenarios/fresh_install_socks.sh" ]] || {
+          printf 'verification SOCKS baseline is missing\n' >&2; return 2;
+        }
+        ;;
+    esac
+  done
+
   [[ "${#requested_scenarios[@]}" -gt 0 ]] || return 0
   for scenario in "${requested_scenarios[@]}"; do
     case "${scenario}" in
       runtime_smoke)
         # Always inspect the final configured state, after all mutations.
         continue
+        ;;
+      component_http_outbound|component_rule_sets|component_tor_outbound)
+        # A deleted component still advances its CAS revision. Reset for every
+        # leaf; do not reuse a previous case's store or multi-protocol install.
+        printf '%s\n' fresh_install_socks "${scenario}"
+        baseline=other_install
         ;;
       reconfigure_existing_install)
         # The scenario needs the default REALITY instance at its original port.
