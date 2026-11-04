@@ -10,15 +10,16 @@ assert_scenarios() {
   actual=$(plan "$@" | sed -n 's/^scenario=//p' | paste -sd, -)
   [[ "${actual}" == "${expected}" ]] || { printf 'expected %s got %s\n' "${expected}" "${actual}" >&2; exit 1; }
 }
-for leaf in component_http_outbound component_rule_sets component_tor_outbound; do
+source "${REPO_ROOT}/dev/verification/selection.sh"
+while IFS= read -r leaf; do
   assert_scenarios "fresh_install_socks,${leaf},runtime_smoke" --scenario "${leaf}" --scenario "${leaf}"
-done
+done < <(verification_leaf_scenarios)
 assert_scenarios 'fresh_install_socks,component_rule_sets,fresh_install_socks,component_http_outbound,runtime_smoke' \
   --scenario component_rule_sets --scenario component_http_outbound
 full=$(plan --full)
-if grep -E '^scenario=component_(http_outbound|rule_sets|tor_outbound)$' <<<"${full}"; then printf 'forbidden plan entry detected\n' >&2; exit 1; fi
+if grep -E '^scenario=(component_|protocol_)' <<<"${full}"; then printf 'forbidden plan entry detected\n' >&2; exit 1; fi
 [[ $(grep -Fxc 'scenario=multi_protocol_coexistence' <<<"${full}") == 1 ]]
-for file in coexistence_cases multi_protocol_coexistence; do
+for file in coexistence_cases runtime_fixtures outbound_cases protocol_cases policy_cases multi_protocol_coexistence; do
   out=$(bash "${REPO_ROOT}/dev/verification/run.sh" --plan --changed-file "dev/verification/remote/scenarios/${file}.sh")
   grep -Fqx 'plan_status=needs_scope' <<<"${out}"
   if grep -q '^scenario=' <<<"${out}"; then printf 'forbidden plan entry detected\n' >&2; exit 1; fi
@@ -38,7 +39,7 @@ for leaf in component_http_outbound component_rule_sets; do
 done
 out=$(plan --full --changed-file dev/verification/remote/scenarios/component_http_outbound.sh \
   --changed-file dev/verification/remote/scenarios/component_rule_sets.sh)
-if grep -E '^scenario=component_(http_outbound|rule_sets|tor_outbound)$' <<<"${out}"; then printf 'forbidden plan entry detected\n' >&2; exit 1; fi
+if grep -E '^scenario=(component_|protocol_)' <<<"${out}"; then printf 'forbidden plan entry detected\n' >&2; exit 1; fi
 # Missing prerequisites must fail during planning rather than run a partial case.
 mkdir -p "${TMP_DIR}/repo/dev/verification/remote"
 cp -R "${REPO_ROOT}/dev/verification/remote/scenarios" "${TMP_DIR}/repo/dev/verification/remote/"

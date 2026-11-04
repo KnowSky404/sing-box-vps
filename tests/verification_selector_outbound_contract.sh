@@ -3,10 +3,16 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-SCENARIO_FILE="${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
+SCENARIO_FILE="${REPO_ROOT}/dev/verification/remote/scenarios/outbound_cases.sh"
+AGGREGATE_FILE="${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
 
 test -r "${SCENARIO_FILE}"
+test -r "${AGGREGATE_FILE}"
 bash -n "${SCENARIO_FILE}"
+bash -n "${AGGREGATE_FILE}"
+
+# The retained aggregate invokes this same proof at its original CAS base.
+grep -Fq 'verification_case_selector_outbound 13' "${AGGREGATE_FILE}"
 
 # A selector proof must resolve a real member, route a marker and delete the
 # group through CAS; parsing a group record alone is not runtime evidence.
@@ -14,8 +20,8 @@ grep -Fq 'selector-outbound-verification' "${SCENARIO_FILE}"
 grep -Fq 'outbounds:["direct"]' "${SCENARIO_FILE}"
 grep -Fq 'DATA_PLANE=selector_direct_loopback' "${SCENARIO_FILE}"
 grep -Fq 'selector-outbound.result.env' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 13 --file "${selector_record}"' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 14 --id selector-outbound-verification' "${SCENARIO_FILE}"
+grep -Fq -- '--expected-revision "$((base_revision + 0))" --file "${selector_record}"' "${SCENARIO_FILE}"
+grep -Fq -- '--expected-revision "$((base_revision + 1))" --id selector-outbound-verification' "${SCENARIO_FILE}"
 
 if grep -Fq 'POLICY_OWNERSHIP=managed' "${SCENARIO_FILE}"; then
   printf 'selector verification must not claim managed host policy ownership\n' >&2

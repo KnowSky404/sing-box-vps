@@ -3,10 +3,17 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-SCENARIO_FILE="${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
+SCENARIO_FILE="${REPO_ROOT}/dev/verification/remote/scenarios/outbound_cases.sh"
+AGGREGATE_FILE="${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
 
 test -r "${SCENARIO_FILE}"
+test -r "${AGGREGATE_FILE}"
 bash -n "${SCENARIO_FILE}"
+bash -n "${AGGREGATE_FILE}"
+
+# The retained aggregate invokes this same proof at its original CAS base.
+grep -Fq 'verification_case_shadowsocks_outbound 17' "${AGGREGATE_FILE}"
+grep -Fq 'verification_case_shadowsocks_udp_outbound 31' "${AGGREGATE_FILE}"
 
 # The managed outbound must prove a real SS2022 path, constrain the route to
 # the ingress that owns it, and remove both component-owned rules via CAS.
@@ -15,9 +22,9 @@ grep -Fq '2022-blake3-aes-128-gcm' "${SCENARIO_FILE}"
 grep -Fq 'DATA_PLANE=shadowsocks2022_connect_loopback' "${SCENARIO_FILE}"
 grep -Fq 'AUTHENTICATION=ss2022_psk' "${SCENARIO_FILE}"
 grep -Fq 'shadowsocks-outbound.result.env' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 17 --file "${shadowsocks_outbound_record}"' \
+grep -Fq -- '--expected-revision "$((base_revision + 0))" --file "${shadowsocks_outbound_record}"' \
   "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 18 --id shadowsocks-outbound-verification' \
+grep -Fq -- '--expected-revision "$((base_revision + 1))" --id shadowsocks-outbound-verification' \
   "${SCENARIO_FILE}"
 grep -Fq 'inbound:["socks-in"]' "${SCENARIO_FILE}"
 grep -Fq 'inbound:["ss-in"]' "${SCENARIO_FILE}"
@@ -30,9 +37,9 @@ grep -Fq 'shadowsocks-outbound-udp-response.txt' "${SCENARIO_FILE}"
 grep -Fq 'shadowsocks-outbound-udp-journal.txt' "${SCENARIO_FILE}"
 grep -Fq 'network:["udp"]' "${SCENARIO_FILE}"
 grep -Fq 'network == ["udp"]' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 31 --file "${shadowsocks_outbound_udp_record}"' \
+grep -Fq -- '--expected-revision "$((base_revision + 0))" --file "${shadowsocks_outbound_udp_record}"' \
   "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 32 --id shadowsocks-outbound-udp-verification' \
+grep -Fq -- '--expected-revision "$((base_revision + 1))" --id shadowsocks-outbound-udp-verification' \
   "${SCENARIO_FILE}"
 grep -Fq 'network:["udp"],port:$marker_port' "${SCENARIO_FILE}"
 

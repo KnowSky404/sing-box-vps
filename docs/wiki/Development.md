@@ -24,28 +24,37 @@
 
 ### 调度器命令与计划
 
-Docker 场景拆分的第一阶段提供 `component_http_outbound`、`component_rule_sets`、`component_tor_outbound` 三个定点入口；契约、后续协议/TLS、共享 marker、透明代理/namespace 和各出站拆分路线见 [Docker 定点验证 SPEC](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/scoped-docker-verification.zh-CN.md)（[English](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/scoped-docker-verification.md)）。第一阶段不表示全部拆分或验收已完成，实际证据按 SPEC 的边界分别记录。
+Docker 定点场景已覆盖完整拆分路线图：原 HTTP 出站、规则集、Tor 三个叶子，新增 SSH/SOCKS/Selector/URLTest/Shadowsocks/Direct/Block/VLESS/ShadowTLS/SOCKS UDP 出站、Direct/Redirect/TProxy/透明策略，以及 13 个单协议探针、Naive/Snell 转换和纯协议共存。精确 ID、保留断言与分阶段证据见 [Docker 定点验证 SPEC](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/scoped-docker-verification.zh-CN.md)（[English](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/scoped-docker-verification.md)）。第二阶段 31 个新增叶子及重构 HTTP 共 32 个独立场景和聚合兼容均通过真实 Docker，SPEC 运行态验收为 33/33；逐项记录运行 ID 和耗时，计入场景内部安装，仅排除独立调度基线、最终 smoke 和传输，不声明原 17 场景全量通过。
 
 ```bash
-# HTTP 出站本地 proxy/marker 数据面
-bash dev/verification/run.sh --plan --base origin/main --scenario component_http_outbound
+# 单个出站：本地 upstream/marker 和创建/删除
+bash dev/verification/run.sh --plan --base origin/main --scenario component_vless_outbound
 
-# inline/local/remote 规则集创建、替换、拉取及删除
-bash dev/verification/run.sh --plan --base origin/main --scenario component_rule_sets
+# 单协议的真实 TCP/UDP，不安装其他十二个协议
+bash dev/verification/run.sh --plan --base origin/main --scenario protocol_probe_hy2
 
-# 显式真实 Tor 外网验收，不作为普通组件验证的隐式依赖
+# namespace / managed replace / policy route 清理
+bash dev/verification/run.sh --plan --base origin/main --scenario component_tproxy_inbound
+
+# 独立模式转换，不必选择完整协议共存
+bash dev/verification/run.sh --plan --base origin/main --scenario protocol_naive_transition
+
+# 显式外网边界，不作为普通组件或协议验证的隐式依赖
+bash dev/verification/run.sh --plan --base origin/main --scenario protocol_probe_vless_reality
 bash dev/verification/run.sh --plan --base origin/main --scenario component_tor_outbound
 ```
 
-每个组件叶子前都重建 `fresh_install_socks`，组合请求也保留每次重置，最终只追加一次 `runtime_smoke`。删除最后组件留下的空 store 仍有单调增加的 revision，不能将 HTTP 删除后的 revision 2 或规则集删除后的 revision 7 当成新的 revision 0。可选场景目录与默认全量清单分开；`--full` 保持原 17 场景，通过原 aggregate 覆盖这些断言，不再重复执行新增叶子。
+每个叶子前都重建 `fresh_install_socks`，组合请求也保留每次重置；协议叶子额外只安装目标协议，SOCKS 探针使用基线实例。最终只追加一次 `runtime_smoke`，探测最后安装状态。删除最后组件留下的空 store 仍有单调增加的 revision，不能将 HTTP 删除后的 revision 2 或规则集删除后的 revision 7 当成新的 revision 0。可选场景目录与默认全量清单分开；`--full` 保持原 17 场景，通过 aggregate 的共享断言覆盖协议/组件，不重复执行新叶子。
 
-共享 helper、aggregate、dispatcher，以及外部 Tor 场景变化保持 `needs_scope`，操作者必须按实际影响明确分配本地 `--test`/`--group` 与必要的 `--scenario`，或确实必要的 `--full`；不能仅因路径变化隐式启动完整共存或真实外网。普通叶子改动可映射对应场景及必要前置。Tor 的成功必须来自显式真实联网，mock、端口监听或本地 marker 均不能代替；HTTP/规则集的本地 Docker 结果也不代表 Tor 或全协议验收。
+共享 fixture/断言、aggregate、dispatcher，以及外部 REALITY/Tor 场景变化保持 `needs_scope`，操作者按实际影响明确分配本地 `--test`/`--group` 与必要的 `--scenario`，或确实必要的 `--full`；不能仅因路径变化隐式启动全部调用方、完整共存或真实外网。普通本地叶子可映射对应场景和前置。REALITY 探针与 `protocol_coexistence` 使用外部 TLS cover，Tor 使用真实公网 circuit；mock、监听或本地 marker 均不能代替外网证据。HTTP/ShadowTLS 协议探针只声明 TCP，其他协议分别保留原生 UDP、XUDP 或 UoT 边界。
+
+本次完整拆分验收需要每个新增叶子和 `multi_protocol_coexistence` 兼容路径的真实 Docker 结果，保留原 CAS 链及跨协议/组件断言；不因此重跑升级、卸载等无关原 17 场景。本轮 aggregate 实测 6164 秒，包含其内部 13 协议安装；随后 final smoke 50 秒通过。第一阶段三叶子约 601 秒保留为历史记录，不能将不同范围的单叶子、聚合和原 17 场景全量当作性能对照。
 
 优先选择精确的 `--test tests/<名称>.sh`，需要整组覆盖时才使用 `--group`。单测试参数可重复，去重后执行；只接受已有独立宿主 Shell 测试的精确路径，拒绝 helper、容器专用 fixture、符号链接及越界路径，不展开通配符。它与 `--base` 组合时保留所有分支/工作区差异的自动检查，不能用来排除其他改动。显式测试和显式组一样代表操作者的影响判断，不能把一个任意测试当作完整覆盖；运行态变化仍需对应 Docker 场景。
 
 普通文档只自动选择 `wiki_documentation.sh`，Agent 手册及升级手册追加能力说明检查，嵌入式/生成命令目录追加命令契约；显式 `--group docs` 仍保留整组。安装器/模块的日常修改选择 `install_build_sync.sh` 检查生成字节及语法，构建器/清单变化才追加 `install_build.sh` 的故障注入。计划器和选择器变化只自动选择 `verification_planner.sh`、`verification_trigger_rules.sh`、`verification_scenario_mapping.sh`；执行器/传输变化仍按相应范围验证。
 
-2026-11-04 优化前清单审视：342 个 Shell 文件中，注册全量选择 199 项宿主测试及 17 种 Docker 场景；`menu` 有 28 项，`protocol:vless` 有 35 项，`protocol:hy2` 有 29 项。它们包含同协议下不同功能及一些跨模块文件名匹配，不是修改一处菜单/分享文案的默认单位。`multi_protocol_coexistence` 超过 3,500 行，混合多协议、组件、UDP、透明代理及真实 Tor 网络访问；`fresh_install_http` 也包含删除最后实例、取消和重建。只有大型场景能覆盖时，明确额外覆盖和预计耗时，不把它默认为轻量 smoke。后续拆分需要保留前置与数据面断言；上一轮宿主选测优化没有消除这些运行态成本。历史耗时日志当前不可用，不能据此声称已经复现或消除了两小时耗时。
+2026-11-04 优化前清单审视：342 个 Shell 文件中，注册全量选择 199 项宿主测试及 17 种 Docker 场景；`menu` 有 28 项，`protocol:vless` 有 35 项，`protocol:hy2` 有 29 项。它们包含同协议下不同功能及一些跨模块文件名匹配，不是修改一处菜单/分享文案的默认单位。`multi_protocol_coexistence` 超过 3,500 行，混合多协议、组件、UDP、透明代理及真实 Tor 网络访问；`fresh_install_http` 也包含删除最后实例、取消和重建。只有大型场景能覆盖时，明确额外覆盖和预计耗时，不把它默认为轻量 smoke。这些原有成本是本次完整拆分的设计基线；共享断言、必要前置与数据面边界均继续保留。原两小时任务的耗时日志不可用，不能声称已复现该任务；SPEC 中的定向实测也不是与旧全量的对照基准。
 
 在仓库根目录运行。先预览，确认测试和场景满足本次影响，再去掉 `--plan` 执行同一组参数：
 
@@ -60,7 +69,7 @@ bash dev/verification/run.sh --plan --base origin/main --test tests/main_menu_re
 bash dev/verification/run.sh --plan --base origin/main --group self-update
 
 # 单协议本地检查；若改动影响运行态，再显式追加对应场景
-bash dev/verification/run.sh --plan --base origin/main --group protocol:http --scenario fresh_install_http
+bash dev/verification/run.sh --plan --base origin/main --group protocol:http --scenario protocol_probe_http
 
 # 传输/容器执行变更：框架回归 + 真实 Docker 安装与最终 smoke
 bash dev/verification/run.sh --plan --base origin/main --group verification --scenario fresh_install_http
@@ -77,7 +86,7 @@ bash dev/verification/run.sh --plan --base origin/main --full
 
 计划输出 `base`、`file`、`group`、`syntax`、`test`、`scenario` 和选择理由/未映射影响。`plan_status=needs_scope` 时预览仍成功，实际执行返回 2，且不运行任何测试或 Docker；错误参数、无效 ref 或未知组/场景同样在执行前返回 2。`--plan` 不运行测试、不探测 Docker、不创建结果目录。执行后保存 `dev/verification-runs/<时间>/plan.txt`、逐测试日志/耗时以及场景产物，首个失败立即返回，不自动重复全套。
 
-场景根据本次运行已建立的状态补齐前置：独立 `runtime_smoke` 使用较轻的 `fresh_install_http`；VLESS 重配置需要 `fresh_install_vless` 基线；卸载验证先建立可核对旧 UUID 的 VLESS 安装；最终 smoke 在所有变更场景之后。若中途其他场景替换了安装，会重新准备必要基线，计划可能包含重复安装。第一阶段新增三个组件叶子，其他大型协议/组件场景仍需后续拆分；需在计划中确认额外覆盖，不能仅凭名称推断耗时很短。
+场景根据本次运行已建立的状态补齐前置：独立 `runtime_smoke` 使用较轻的 `fresh_install_http`；VLESS 重配置需要 `fresh_install_vless` 基线；卸载验证先建立可核对旧 UUID 的 VLESS 安装；最终 smoke 在所有变更场景之后。若中途其他场景替换了安装，会重新准备必要基线，计划可能包含重复安装。定点叶子已覆盖各出站、宿主策略、单协议及模式转换；纯协议共存与原完整 aggregate 仍供确有组合影响时显式选择。需确认计划中的额外覆盖，不能仅凭名称推断耗时很短。
 
 `--full` 运行的是 `selection.sh` 中的显式宿主安全清单和默认全量场景清单，不等同于执行 `tests/` 下所有脚本，也不自动证明公网或外部服务行为。独立 `hy2_instance_acme_runtime.sh` 是 Pebble/私有 CA 容器 fixture，现有注册场景不调用它；直接修改它或静态引用它的 helper 时，调度器保持 `needs_scope`，即使 `--full` 也不能代替其独立隔离运行。保留该未完成边界并按专属容器流程验证，不要在宿主执行它。
 

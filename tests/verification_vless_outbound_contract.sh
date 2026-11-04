@@ -3,10 +3,16 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-SCENARIO_FILE="${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
+SCENARIO_FILE="${REPO_ROOT}/dev/verification/remote/scenarios/outbound_cases.sh"
+AGGREGATE_FILE="${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
 
 test -r "${SCENARIO_FILE}"
+test -r "${AGGREGATE_FILE}"
 bash -n "${SCENARIO_FILE}"
+bash -n "${AGGREGATE_FILE}"
+
+# The retained aggregate invokes this same proof at its original CAS base.
+grep -Fq 'verification_case_vless_outbound 23' "${AGGREGATE_FILE}"
 
 # VLESS must exercise a real local VLESS upstream, preserve the typed TCP
 # network, and remove the component-owned route through the revision CAS.
@@ -15,9 +21,9 @@ grep -Fq 'vless-outbound-upstream' "${SCENARIO_FILE}"
 grep -Fq 'DATA_PLANE=vless_tcp_loopback' "${SCENARIO_FILE}"
 grep -Fq 'UPSTREAM=vless_loopback_server' "${SCENARIO_FILE}"
 grep -Fq 'vless-outbound.result.env' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 23 --file "${vless_outbound_record}"' \
+grep -Fq -- '--expected-revision "$((base_revision + 0))" --file "${vless_outbound_record}"' \
   "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 24 --id vless-outbound-verification' \
+grep -Fq -- '--expected-revision "$((base_revision + 1))" --id vless-outbound-verification' \
   "${SCENARIO_FILE}"
 grep -Fq 'config:{server:"127.0.0.1",server_port:$server_port,uuid:$uuid,' \
   "${SCENARIO_FILE}"

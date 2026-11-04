@@ -435,6 +435,58 @@ verification_load_mixed_probe_state() {
   printf -v "${password_var}" '%s' "${PASSWORD-}"
 }
 
+verification_generate_structured_basic_probe_client() (
+  set -euo pipefail
+  umask 077
+  local protocol=$1 config_file=$2 output_path=$3 installer temp_dir snapshot selected_tag selected_id
+  local inbound_type=${protocol}
+  case "${protocol}" in mixed|hy2|anytls) ;; *) return 2 ;; esac
+  [[ "${protocol}" != hy2 ]] || inbound_type=hysteria2
+  installer=${VERIFY_REMOTE_INSTALL_SCRIPT:-/usr/local/bin/sbv}
+  [[ -f "${installer}" ]] || return 1
+  temp_dir=$(mktemp -d "${output_path}.${protocol}.XXXXXX") || return 1
+  trap 'rm -rf -- "${temp_dir}"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  # Schema-2 env files are markers. Read credentials and trust through the
+  # exact runtime's validated store/exporter, never legacy env defaults.
+  source "${installer}"
+  plain_proxy_structured_state_active "${protocol}" || return 1
+  snapshot=$(structured_instance_store_snapshot_json "${protocol}" \
+    "$(plain_proxy_structured_store_file "${protocol}")") || return 1
+  selected_tag=$(jq -er --arg type "${inbound_type}" '
+    [.inbounds[] | select(.type==$type and
+      ($type!="mixed" or ((.tag // "")|startswith("shadowtls-inner-")|not)))][0].tag
+  ' "${config_file}") || return 1
+  jq -e --arg tag "${selected_tag}" '
+    .instances |= map(select(.tag==$tag)) |
+    if (.instances|length)==1 then .default_instance_id=.instances[0].id
+    else error("invalid probe inventory") end
+  ' <<< "${snapshot}" > "${temp_dir}/store.json" || return 1
+  case "${protocol}" in
+    mixed)
+      selected_id=$(jq -er '.default_instance_id' "${temp_dir}/store.json") || return 1
+      load_plain_proxy_structured_instance mixed "${selected_id}" || return 1
+      build_client_mixed_outbound 127.0.0.1 proxy > "${temp_dir}/outbounds.jsonl" || return 1
+      ;;
+    hy2)
+      build_client_hy2_outbounds 127.0.0.1 "${temp_dir}/store.json" > "${temp_dir}/outbounds.jsonl" || return 1
+      ;;
+    anytls)
+      build_anytls_client_outbounds_from_store "${temp_dir}/store.json" 127.0.0.1 > "${temp_dir}/outbounds.jsonl" || return 1
+      ;;
+  esac
+  jq -se '
+    if length>0 then
+      {log:{disabled:true},
+       inbounds:[{type:"socks",tag:"local-socks",listen:"127.0.0.1",listen_port:19080}],
+       outbounds:[(.[0] | .tag="proxy")],route:{final:"proxy"}}
+    else error("empty probe export") end
+  ' "${temp_dir}/outbounds.jsonl" > "${temp_dir}/client.json" || return 1
+  chmod 600 "${temp_dir}/client.json" || return 1
+  mv -f -- "${temp_dir}/client.json" "${output_path}" || return 1
+)
+
 verification_generate_trojan_probe_client() (
   set -euo pipefail
   umask 077
@@ -1430,6 +1482,11 @@ verification_generate_protocol_probe_client_config() {
         printf 'missing protocol state file for protocol generator: %s\n' "${protocol}" >&2
         return 1
       fi
+      if grep -Eq '^CONFIG_SCHEMA_VERSION=2[[:space:]]*$' "${state_file}"; then
+        verification_generate_structured_basic_probe_client "${protocol}" "${config_file}" "${output_path}" || return 1
+        printf '%s\n' "${output_path}"
+        return 0
+      fi
       verification_load_hy2_probe_state \
         "${state_file}" \
         password \
@@ -1757,6 +1814,11 @@ verification_generate_protocol_probe_client_config() {
         printf 'missing protocol state file for protocol generator: %s\n' "${protocol}" >&2
         return 1
       fi
+      if grep -Eq '^CONFIG_SCHEMA_VERSION=2[[:space:]]*$' "${state_file}"; then
+        verification_generate_structured_basic_probe_client "${protocol}" "${config_file}" "${output_path}" || return 1
+        printf '%s\n' "${output_path}"
+        return 0
+      fi
       verification_load_mixed_probe_state \
         "${state_file}" \
         auth_enabled \
@@ -1830,6 +1892,11 @@ verification_generate_protocol_probe_client_config() {
       if [[ ! -f "${state_file}" ]]; then
         printf 'missing protocol state file for protocol generator: %s\n' "${protocol}" >&2
         return 1
+      fi
+      if grep -Eq '^CONFIG_SCHEMA_VERSION=2[[:space:]]*$' "${state_file}"; then
+        verification_generate_structured_basic_probe_client "${protocol}" "${config_file}" "${output_path}" || return 1
+        printf '%s\n' "${output_path}"
+        return 0
       fi
       verification_load_anytls_probe_state \
         "${state_file}" \
@@ -2075,23 +2142,28 @@ verification_prepare_redirect_policy_fixture() {
   local probe_response
 
   [[ -n "${pid_variable}" ]] || return 1
-  command -v iptables >/dev/null 2>&1
-  command -v iptables-save >/dev/null 2>&1
+  command -v iptables >/dev/null 2>&1 || return 1
+  command -v iptables-save >/dev/null 2>&1 || return 1
   if ip link show dev "${host_veth}" >/dev/null 2>&1 ||
      ip netns list | awk -v name="${netns}" '$1 == name { found=1 } END { exit !found }'; then
     printf '[ERROR] Redirect policy verification fixture names already exist.\n' >&2
     return 1
   fi
-  mkdir -p "${probe_dir}"
-  verification_capture_command "${probe_dir}/iptables.before.txt" iptables-save -t nat
-  ip netns add "${netns}"
-  ip link add "${host_veth}" type veth peer name "${peer_veth}"
-  ip link set "${peer_veth}" netns "${netns}"
-  ip addr add "${host_address}/30" dev "${host_veth}"
-  ip link set "${host_veth}" up
-  ip netns exec "${netns}" ip addr add "${peer_address}/30" dev "${peer_veth}"
-  ip netns exec "${netns}" ip link set lo up
-  ip netns exec "${netns}" ip link set "${peer_veth}" up
+  mkdir -p "${probe_dir}" || return $?
+  verification_capture_command "${probe_dir}/iptables.before.txt" iptables-save -t nat || return $?
+  ip netns add "${netns}" || return $?
+  VERIFY_REDIRECT_NETNS=${netns}
+  VERIFY_REDIRECT_NETNS_CREATED=1
+  VERIFY_REDIRECT_FIXTURE_OWNED=1
+  ip link add "${host_veth}" type veth peer name "${peer_veth}" || return $?
+  VERIFY_REDIRECT_HOST_VETH=${host_veth}
+  VERIFY_REDIRECT_VETH_CREATED=1
+  ip link set "${peer_veth}" netns "${netns}" || return $?
+  ip addr add "${host_address}/30" dev "${host_veth}" || return $?
+  ip link set "${host_veth}" up || return $?
+  ip netns exec "${netns}" ip addr add "${peer_address}/30" dev "${peer_veth}" || return $?
+  ip netns exec "${netns}" ip link set lo up || return $?
+  ip netns exec "${netns}" ip link set "${peer_veth}" up || return $?
 
   python3 - "${host_address}" "${marker_port}" "${marker}" \
     > "${probe_dir}/marker.stdout.txt" 2> "${probe_dir}/marker.stderr.txt" <<'PY' &
@@ -2130,7 +2202,7 @@ PY
     kill -0 "${VERIFY_REDIRECT_MARKER_PID}" 2>/dev/null || return 1
     sleep 0.1
   done
-  grep -Fqx "${marker}" "${probe_response}"
+  grep -Fqx "${marker}" "${probe_response}" || return $?
   VERIFY_REDIRECT_HOST_VETH=${host_veth}
   VERIFY_REDIRECT_NETNS=${netns}
   VERIFY_REDIRECT_HOST_ADDRESS=${host_address}
@@ -2141,8 +2213,11 @@ PY
 verification_cleanup_redirect_policy_fixture() {
   local status=0 component_state_file=/root/.sing-box-vps/runtime/components.json revision delete_status
   local delete_artifact="${VERIFY_CURRENT_SCENARIO_DIR}/redirect-cleanup-delete.json"
-  local state_valid=false redirect_record_present=false
+  local state_valid=false redirect_record_present=false namespaces
   local restore_errexit=false
+  # A collision or failed namespace creation gives this run no ownership.
+  # Never remove a fixed-name fixture merely because that name exists.
+  [[ "${VERIFY_REDIRECT_FIXTURE_OWNED:-0}" == 1 ]] || return 0
   if [[ -f "${component_state_file}" && ! -L "${component_state_file}" ]]; then
     if jq -e 'type == "object" and (.revision | type == "number" and . == floor and . >= 0) and
       (.components | type == "array")' "${component_state_file}" >/dev/null 2>&1; then
@@ -2196,11 +2271,31 @@ verification_cleanup_redirect_policy_fixture() {
     VERIFY_REDIRECT_MARKER_PID=''
   fi
   if command -v ip >/dev/null 2>&1; then
-    if ip netns list | awk '$1 == "sbv-rpc" { found=1 } END { exit !found }'; then
-      ip netns del sbv-rpc || status=1
+    if [[ "${VERIFY_REDIRECT_VETH_CREATED:-0}" == 1 ]]; then
+      if [[ "${VERIFY_REDIRECT_HOST_VETH:-}" != sbv-rph0 ]]; then
+        printf '[ERROR] Redirect fixture cleanup rejected its owned veth identity.\n' >&2
+        status=1
+      elif ip link show dev sbv-rph0 >/dev/null 2>&1 && ! ip link del sbv-rph0; then
+        status=1
+      else
+        VERIFY_REDIRECT_VETH_CREATED=0
+      fi
     fi
-    if ip link show dev sbv-rph0 >/dev/null 2>&1; then
-      ip link del sbv-rph0 || status=1
+    if [[ "${VERIFY_REDIRECT_NETNS_CREATED:-0}" == 1 ]]; then
+      if [[ "${VERIFY_REDIRECT_NETNS:-}" != sbv-rpc ]]; then
+        printf '[ERROR] Redirect fixture cleanup rejected its owned namespace identity.\n' >&2
+        status=1
+      elif ! namespaces=$(ip netns list); then
+        status=1
+      elif awk '$1 == "sbv-rpc" { found=1 } END { exit !found }' <<< "${namespaces}"; then
+        if ip netns del sbv-rpc; then
+          VERIFY_REDIRECT_NETNS_CREATED=0
+        else
+          status=1
+        fi
+      else
+        VERIFY_REDIRECT_NETNS_CREATED=0
+      fi
     fi
   else
     status=1
@@ -2210,6 +2305,9 @@ verification_cleanup_redirect_policy_fixture() {
     status=1
   fi
   if [[ "${status}" == 0 ]]; then
+    VERIFY_REDIRECT_FIXTURE_OWNED=0
+    VERIFY_REDIRECT_HOST_VETH=''
+    VERIFY_REDIRECT_NETNS=''
     verification_write_artifact \
       "${VERIFY_CURRENT_SCENARIO_DIR}/cleanup.result.env" \
       'RESULT=success' 'COMPONENT_STATE=absent' 'OWNED_POLICY=absent' \
@@ -3230,14 +3328,8 @@ for scenario in "$@"; do
     fresh_install_vless_plain)
       run_verification_scenario fresh_install_vless_plain verification_scenario_fresh_install_vless_plain
       ;;
-    component_http_outbound)
-      run_verification_scenario component_http_outbound verification_scenario_component_http_outbound
-      ;;
-    component_rule_sets)
-      run_verification_scenario component_rule_sets verification_scenario_component_rule_sets
-      ;;
-    component_tor_outbound)
-      run_verification_scenario component_tor_outbound verification_scenario_component_tor_outbound
+    component_http_outbound|component_rule_sets|component_tor_outbound|component_ssh_outbound|component_socks_outbound|component_selector_outbound|component_urltest_outbound|component_shadowsocks_outbound|component_direct_outbound|component_block_outbound|component_vless_outbound|component_shadowtls_outbound|component_socks_udp_outbound|component_shadowsocks_udp_outbound|component_direct_inbound|component_redirect_inbound|component_tproxy_inbound|component_transparent_policy|protocol_probe_vless_reality|protocol_probe_mixed|protocol_probe_hy2|protocol_probe_anytls|protocol_probe_socks|protocol_probe_http|protocol_probe_shadowsocks|protocol_probe_trojan|protocol_probe_tuic|protocol_probe_vmess|protocol_probe_snell|protocol_probe_shadowtls|protocol_probe_naive|protocol_coexistence|protocol_naive_transition|protocol_snell_transition)
+      run_verification_scenario "${scenario}" "verification_scenario_${scenario}"
       ;;
     multi_protocol_coexistence)
       run_verification_scenario multi_protocol_coexistence verification_scenario_multi_protocol_coexistence

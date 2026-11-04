@@ -256,7 +256,12 @@ verification_group_test_candidates() {
         tests/verification_remote_scenario_dispatch.sh \
         tests/verification_planner.sh \
         tests/verification_atomic_scenarios.sh \
-        tests/verification_atomic_http_outbound.sh
+        tests/verification_atomic_http_outbound.sh \
+        tests/verification_runtime_fixtures.sh \
+        tests/verification_protocol_leaf_contract.sh \
+        tests/verification_protocol_probe_structured_basics.sh \
+        tests/verification_outbound_leaf_contract.sh \
+        tests/verification_policy_leaf_contract.sh
       ;;
     protocol:hy2|protocol:hysteria2)
       patterns=('tests/*hy2*.sh')
@@ -346,9 +351,55 @@ verification_full_scenarios() {
     runtime_smoke
 }
 
+verification_leaf_scenarios() {
+  printf '%s\n' \
+    component_http_outbound \
+    component_rule_sets \
+    component_tor_outbound \
+    component_ssh_outbound \
+    component_socks_outbound \
+    component_selector_outbound \
+    component_urltest_outbound \
+    component_shadowsocks_outbound \
+    component_direct_outbound \
+    component_block_outbound \
+    component_vless_outbound \
+    component_shadowtls_outbound \
+    component_socks_udp_outbound \
+    component_shadowsocks_udp_outbound \
+    component_direct_inbound \
+    component_redirect_inbound \
+    component_tproxy_inbound \
+    component_transparent_policy \
+    protocol_probe_vless_reality \
+    protocol_probe_mixed \
+    protocol_probe_hy2 \
+    protocol_probe_anytls \
+    protocol_probe_socks \
+    protocol_probe_http \
+    protocol_probe_shadowsocks \
+    protocol_probe_trojan \
+    protocol_probe_tuic \
+    protocol_probe_vmess \
+    protocol_probe_snell \
+    protocol_probe_shadowtls \
+    protocol_probe_naive \
+    protocol_coexistence \
+    protocol_naive_transition \
+    protocol_snell_transition
+}
+
 verification_list_scenarios() {
   verification_full_scenarios
-  printf '%s\n' component_http_outbound component_rule_sets component_tor_outbound
+  verification_leaf_scenarios
+}
+
+verification_is_leaf_scenario() {
+  local leaf found=1
+  while IFS= read -r leaf; do
+    [[ "${leaf}" != "$1" ]] || found=0
+  done < <(verification_leaf_scenarios)
+  return "${found}"
 }
 
 verification_expand_scenarios() {
@@ -360,7 +411,7 @@ verification_expand_scenarios() {
   # Validate the entire request before emitting a partial executable plan.
   for scenario in "${requested_scenarios[@]}"; do
     case "${scenario}" in
-      fresh_install_vless|reconfigure_existing_install|legacy_takeover_export|fresh_install_anytls|fresh_install_socks|fresh_install_http|fresh_install_shadowsocks|fresh_install_trojan|fresh_install_vmess|fresh_install_hysteria|fresh_install_vless_plain|multi_protocol_coexistence|upgrade_1_13_to_1_14|upgrade_rollback_1_13_to_1_14|uninstall_and_reinstall|storage_migration|runtime_smoke|component_http_outbound|component_rule_sets|component_tor_outbound)
+      fresh_install_vless|reconfigure_existing_install|legacy_takeover_export|fresh_install_anytls|fresh_install_socks|fresh_install_http|fresh_install_shadowsocks|fresh_install_trojan|fresh_install_vmess|fresh_install_hysteria|fresh_install_vless_plain|multi_protocol_coexistence|upgrade_1_13_to_1_14|upgrade_rollback_1_13_to_1_14|uninstall_and_reinstall|storage_migration|runtime_smoke|component_http_outbound|component_rule_sets|component_tor_outbound|component_ssh_outbound|component_socks_outbound|component_selector_outbound|component_urltest_outbound|component_shadowsocks_outbound|component_direct_outbound|component_block_outbound|component_vless_outbound|component_shadowtls_outbound|component_socks_udp_outbound|component_shadowsocks_udp_outbound|component_direct_inbound|component_redirect_inbound|component_tproxy_inbound|component_transparent_policy|protocol_probe_vless_reality|protocol_probe_mixed|protocol_probe_hy2|protocol_probe_anytls|protocol_probe_socks|protocol_probe_http|protocol_probe_shadowsocks|protocol_probe_trojan|protocol_probe_tuic|protocol_probe_vmess|protocol_probe_snell|protocol_probe_shadowtls|protocol_probe_naive|protocol_coexistence|protocol_naive_transition|protocol_snell_transition)
         if [[ ! -f "${root}/dev/verification/remote/scenarios/${scenario}.sh" ]]; then
           printf 'verification scenario file is missing: %s\n' "${scenario}" >&2
           return 2
@@ -374,21 +425,19 @@ verification_expand_scenarios() {
   done
 
   for scenario in "${requested_scenarios[@]}"; do
-    case "${scenario}" in
-      component_http_outbound|component_rule_sets|component_tor_outbound|multi_protocol_coexistence)
-        if [[ ! -f "${root}/dev/verification/remote/scenarios/coexistence_cases.sh" ]]; then
-          printf 'verification shared cases are missing\n' >&2
-          return 2
-        fi
-        ;;
-    esac
-    case "${scenario}" in
-      component_http_outbound|component_rule_sets|component_tor_outbound)
-        [[ -f "${root}/dev/verification/remote/scenarios/fresh_install_socks.sh" ]] || {
-          printf 'verification SOCKS baseline is missing\n' >&2; return 2;
+    if verification_is_leaf_scenario "${scenario}" || [[ "${scenario}" == multi_protocol_coexistence ]]; then
+      local helper
+      for helper in coexistence_cases runtime_fixtures outbound_cases policy_cases protocol_cases; do
+        [[ -f "${root}/dev/verification/remote/scenarios/${helper}.sh" ]] || {
+          printf 'verification shared case is missing: %s\n' "${helper}" >&2; return 2;
         }
-        ;;
-    esac
+      done
+    fi
+    if verification_is_leaf_scenario "${scenario}"; then
+      [[ -f "${root}/dev/verification/remote/scenarios/fresh_install_socks.sh" ]] || {
+        printf 'verification SOCKS baseline is missing\n' >&2; return 2;
+      }
+    fi
   done
 
   [[ "${#requested_scenarios[@]}" -gt 0 ]] || return 0
@@ -398,7 +447,7 @@ verification_expand_scenarios() {
         # Always inspect the final configured state, after all mutations.
         continue
         ;;
-      component_http_outbound|component_rule_sets|component_tor_outbound)
+      component_http_outbound|component_rule_sets|component_tor_outbound|component_ssh_outbound|component_socks_outbound|component_selector_outbound|component_urltest_outbound|component_shadowsocks_outbound|component_direct_outbound|component_block_outbound|component_vless_outbound|component_shadowtls_outbound|component_socks_udp_outbound|component_shadowsocks_udp_outbound|component_direct_inbound|component_redirect_inbound|component_tproxy_inbound|component_transparent_policy|protocol_probe_vless_reality|protocol_probe_mixed|protocol_probe_hy2|protocol_probe_anytls|protocol_probe_socks|protocol_probe_http|protocol_probe_shadowsocks|protocol_probe_trojan|protocol_probe_tuic|protocol_probe_vmess|protocol_probe_snell|protocol_probe_shadowtls|protocol_probe_naive|protocol_coexistence|protocol_naive_transition|protocol_snell_transition)
         # A deleted component still advances its CAS revision. Reset for every
         # leaf; do not reuse a previous case's store or multi-protocol install.
         printf '%s\n' fresh_install_socks "${scenario}"

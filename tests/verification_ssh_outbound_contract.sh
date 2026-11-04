@@ -3,12 +3,18 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-SCENARIO_FILE="${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
+SCENARIO_FILE="${REPO_ROOT}/dev/verification/remote/scenarios/outbound_cases.sh"
+AGGREGATE_FILE="${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
 DOCKERFILE="${REPO_ROOT}/dev/verification/docker/Dockerfile"
 
 test -r "${SCENARIO_FILE}"
+test -r "${AGGREGATE_FILE}"
 test -r "${DOCKERFILE}"
 bash -n "${SCENARIO_FILE}"
+bash -n "${AGGREGATE_FILE}"
+
+# The retained aggregate invokes this same proof at its original CAS base.
+grep -Fq 'verification_case_ssh_outbound 9' "${AGGREGATE_FILE}"
 grep -Eq '(^|[[:space:]])openssh-server([[:space:]]|\\|$)' "${DOCKERFILE}"
 
 # Keep the remote proof fail-closed and explicit: it must create a typed SSH
@@ -21,8 +27,8 @@ grep -Fq 'socks5h://socks-user:socks-pass@127.0.0.1:1081' "${SCENARIO_FILE}"
 grep -Fq 'ssh-outbound.result.env' "${SCENARIO_FILE}"
 grep -Fq "'DATA_PLANE=ssh_direct_tcpip_loopback'" "${SCENARIO_FILE}"
 grep -Fq "'HOST_KEY_VERIFICATION=pinned'" "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 9 --file "${ssh_record}"' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 10 --id ssh-outbound-verification' "${SCENARIO_FILE}"
+grep -Fq -- '--expected-revision "$((base_revision + 0))" --file "${ssh_record}"' "${SCENARIO_FILE}"
+grep -Fq -- '--expected-revision "$((base_revision + 1))" --id ssh-outbound-verification' "${SCENARIO_FILE}"
 
 # The marker is intentionally loopback-only and the scenario does not mutate
 # the installer firewall ledger or claim public/production reachability.

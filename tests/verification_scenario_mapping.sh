@@ -90,16 +90,25 @@ grep -Fq 'MARKER_NETWORK=disposable_netns_veth' "${wireguard_scenario}"
 grep -Fq 'fresh_install_vless_openvpn_endpoint_system_payload_success' "${wireguard_scenario}"
 
 vless_scenario="${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
+vless_cases="${REPO_ROOT}/dev/verification/remote/scenarios/outbound_cases.sh"
+protocol_cases="${REPO_ROOT}/dev/verification/remote/scenarios/protocol_cases.sh"
 test -r "${vless_scenario}"
+test -r "${vless_cases}"
+test -r "${protocol_cases}"
 bash -n "${vless_scenario}"
-grep -Fq 'vless-outbound-udp-probe-complete' "${vless_scenario}"
-grep -Fq '.network == ["tcp","udp"]' "${vless_scenario}"
-grep -Fq 'has("packet_encoding") | not' "${vless_scenario}"
-grep -Fq 'DATA_PLANE=vless_udp_xudp_loopback' "${vless_scenario}"
-grep -Fq 'CLIENT_TRANSPORT=xudp' "${vless_scenario}"
-grep -Fq 'verification_execute_protocol_udp_probe vless-reality /root/.sing-box-vps/runtime/config.json' "${vless_scenario}"
-grep -Fq 'verification_execute_protocol_udp_probe mixed /root/.sing-box-vps/runtime/config.json' "${vless_scenario}"
-grep -Fq 'verification_execute_protocol_udp_probe socks /root/.sing-box-vps/runtime/config.json' "${vless_scenario}"
+bash -n "${vless_cases}"
+bash -n "${protocol_cases}"
+grep -Fq 'vless-outbound-udp-probe-complete' "${vless_cases}"
+grep -Fq '.network == ["tcp","udp"]' "${vless_cases}"
+grep -Fq 'has("packet_encoding") | not' "${vless_cases}"
+grep -Fq 'DATA_PLANE=vless_udp_xudp_loopback' "${vless_cases}"
+grep -Fq 'CLIENT_TRANSPORT=xudp' "${vless_cases}"
+grep -Eq '^  verification_case_vless_outbound [0-9]+$' "${vless_scenario}"
+grep -Fq 'verification_execute_protocol_udp_probe "${protocol}" "${config}"' "${protocol_cases}"
+for protocol in vless-reality mixed socks; do
+  grep -Eq "^  for protocol in ([[:alnum:]-]+ )*${protocol}( [[:alnum:]-]+)*; do verification_protocol_udp_probe " "${vless_scenario}"
+  grep -Eq "^    ([[:alnum:]-]+\\|)*${protocol}(\\|[[:alnum:]-]+)*\\)" "${protocol_cases}"
+done
 
 assert_scenarios() {
   local expected=$1

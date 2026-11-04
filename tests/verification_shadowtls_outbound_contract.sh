@@ -3,10 +3,16 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-SCENARIO_FILE="${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
+SCENARIO_FILE="${REPO_ROOT}/dev/verification/remote/scenarios/outbound_cases.sh"
+AGGREGATE_FILE="${REPO_ROOT}/dev/verification/remote/scenarios/multi_protocol_coexistence.sh"
 
 test -r "${SCENARIO_FILE}"
+test -r "${AGGREGATE_FILE}"
 bash -n "${SCENARIO_FILE}"
+bash -n "${AGGREGATE_FILE}"
+
+# The retained aggregate invokes this same proof at its original CAS base.
+grep -Fq 'verification_case_shadowtls_outbound 27' "${AGGREGATE_FILE}"
 
 # ShadowTLS is a transport: require a real v3 server, an HTTP detour carrying
 # the application stream, the loopback marker, and ordered CAS cleanup.
@@ -19,13 +25,13 @@ grep -Fq 'shadowtls_v3_loopback' "${SCENARIO_FILE}"
 grep -Fq 'shadowtls-outbound-response.txt' "${SCENARIO_FILE}"
 grep -Fq 'shadowtls_outbound_server_stderr' "${SCENARIO_FILE}"
 grep -Fq 'outbound/http[shadowtls-outbound-http]' "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 27 --file "${shadowtls_outbound_record}"' \
+grep -Fq -- '--expected-revision "$((base_revision + 0))" --file "${shadowtls_outbound_record}"' \
   "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 28 --file "${shadowtls_outbound_http_record}"' \
+grep -Fq -- '--expected-revision "$((base_revision + 1))" --file "${shadowtls_outbound_http_record}"' \
   "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 29 --id shadowtls-outbound-http' \
+grep -Fq -- '--expected-revision "$((base_revision + 2))" --id shadowtls-outbound-http' \
   "${SCENARIO_FILE}"
-grep -Fq -- '--expected-revision 30 --id shadowtls-outbound-verification' \
+grep -Fq -- '--expected-revision "$((base_revision + 3))" --id shadowtls-outbound-verification' \
   "${SCENARIO_FILE}"
 grep -Fq '.server_port == 1095 and .version == 3' "${SCENARIO_FILE}"
 grep -Fq '.detour == "shadowtls-outbound-verification"' "${SCENARIO_FILE}"
