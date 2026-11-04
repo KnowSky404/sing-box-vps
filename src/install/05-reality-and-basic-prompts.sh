@@ -699,7 +699,7 @@ prompt_reality_target_discovery() {
 
 reality_region_candidate_records() {
   local region=${1:-} record
-  case "${region}" in HK|US-LAX|DE-FRA|JP-TYO) ;; *) return 1 ;; esac
+  case "${region}" in HK|US-LAX|DE-FRA|JP-TYO|KR-SEL) ;; *) return 1 ;; esac
   for record in "${SB_REALITY_REGION_CANDIDATES[@]}"; do
     if [[ "${record}" == "${region}|"* ]]; then
       printf '%s\n' "${record}"
@@ -715,13 +715,15 @@ prompt_reality_region_candidates() {
   echo "2. US-LAX 洛杉矶"
   echo "3. DE-FRA 法兰克福"
   echo "4. JP-TYO 东京"
+  echo "5. KR-SEL 韩国首尔"
   echo "0. 返回"
-  choice=$(prompt_choice "请选择地区 [0-4] (默认 0): " 0 4 0) || return 1
+  choice=$(prompt_choice "请选择地区 [0-5] (默认 0): " 0 5 0) || return 1
   case "${choice}" in
     1) region=HK ;;
     2) region=US-LAX ;;
     3) region=DE-FRA ;;
     4) region=JP-TYO ;;
+    5) region=KR-SEL ;;
     *) return 1 ;;
   esac
   records=$(reality_region_candidate_records "${region}") || return 1

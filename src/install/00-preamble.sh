@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026110405
+# Version: 2026110406
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026110405"
+readonly SCRIPT_VERSION="2026110406"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 # A single IPv6 wildcard socket accepts IPv4 and IPv6 in sing-box on Linux.
 readonly SB_DEFAULT_LISTEN_ADDRESS="::"
@@ -107,6 +107,11 @@ readonly SB_REALITY_REGION_CANDIDATES=(
   'JP-TYO|government|东京都政府|www.metro.tokyo.lg.jp'
   'JP-TYO|university|东京大学|www.u-tokyo.ac.jp'
   'JP-TYO|university|早稻田大学|www.waseda.jp'
+  'KR-SEL|bank|KB国民银行|www.kbstar.com'
+  'KR-SEL|bank|新韩银行|www.shinhan.com'
+  'KR-SEL|government|首尔特别市政府|www.seoul.go.kr'
+  'KR-SEL|university|首尔大学|www.snu.ac.kr'
+  'KR-SEL|university|延世大学|www.yonsei.ac.kr'
 )
 # Runtime capability source of truth. Fields are decoded by protocol_registry_json.
 # IDs/aliases are data; dispatch below always calls explicit, literal handlers.
