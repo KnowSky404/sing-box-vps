@@ -22,9 +22,9 @@ Documentation sources (also available offline):
 - docs/wiki/Protocol-Coverage.md: implementation and evidence boundaries.
 - docs/wiki/HY2-ACME.md: automatic certificates and focused verification.
 - docs/wiki/Upgrade-Rehearsal.md: fixed-version upgrade rehearsal.
-- docs/wiki/Development.md: contribution, validation and Wiki publication.
+- docs/wiki/Development.md: contribution, atomic --test selection with full --base diff checks, runtime scope and Wiki publication.
 - docs/specs/README.md: implementation contracts, completion evidence and outstanding acceptance boundaries.
 
-Each added/changed feature must update its noninteractive command, embedded descriptor, focused tests, generated command reference and affected runbooks/Agent navigation. Build install.sh, generate the reference with scripts/build-command-docs.sh, and check both with --check plus tests/command_catalog_contract.sh. Do not automate prompt answers. Routing export input is the private raw .data.draft object, not the response envelope; preserve fingerprint CAS. Service logs and full routing drafts are sensitive.
+Each added/changed runtime operation must update its noninteractive command, embedded descriptor, focused tests, generated command reference and affected runbooks/Agent navigation. Build install.sh, generate the reference with scripts/build-command-docs.sh, and check both with --check plus tests/command_catalog_contract.sh. Do not automate prompt answers. Routing export input is the private raw .data.draft object, not the response envelope; preserve fingerprint CAS. Service logs and full routing drafts are sensitive.
 
 Never print credentials or full links in shared logs. Config changes require sing-box check. Local/mock, Docker, public, external-provider and production evidence are independent.

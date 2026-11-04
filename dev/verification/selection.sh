@@ -24,6 +24,7 @@ verification_list_groups() {
 }
 
 verification_full_test_manifest() {
+  # Build sync is included in the full build-tool regression below.
   cat <<'EOF_TESTS'
 tests/install_build.sh
 tests/storage_layout.sh
@@ -188,6 +189,14 @@ tests/subman_sync_orchestration.sh
 EOF_TESTS
 }
 
+verification_test_is_container_only() {
+  case "${1}" in
+    tests/agent_operations_runtime.sh|tests/routing_policy_runtime.sh|tests/routing_policy_legacy_runtime.sh|tests/routing_policy_manual_references_runtime.sh|tests/default_dual_stack_runtime.sh|tests/hy2_instance_acme_runtime.sh|tests/component_runtime_acceptance.sh|tests/selector_urltest_runtime.sh|tests/acme_component_runtime.sh|tests/cloudflared_runtime.sh|tests/tailscale_openconnect_runtime.sh|tests/namespace_core_runtime.sh)
+      return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 verification_group_test_candidates() {
   local group=${1:-}
   local root pattern file
@@ -291,8 +300,9 @@ verification_group_tests() {
   while IFS= read -r file; do
     [[ -n "${file}" ]] || continue
     case "${file}" in
-      tests/*_helper.sh|tests/default_dual_stack_runtime.sh|tests/hy2_instance_acme_runtime.sh|tests/component_runtime_acceptance.sh|tests/selector_urltest_runtime.sh|tests/acme_component_runtime.sh|tests/cloudflared_runtime.sh|tests/tailscale_openconnect_runtime.sh|tests/namespace_core_runtime.sh) continue ;;
+      tests/*_helper.sh) continue ;;
     esac
+    if verification_test_is_container_only "${file}"; then continue; fi
     case "${group}:${file}" in
       protocol:vless:tests/*vless_plain*|protocol:vless-reality:tests/*vless_plain*) continue ;;
     esac
