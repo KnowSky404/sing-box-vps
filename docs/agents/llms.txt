@@ -31,3 +31,5 @@ Each added/changed runtime operation must update its noninteractive command, emb
 Never print credentials or full links in shared logs. Config changes require sing-box check. Local/mock, Docker, public, external-provider and production evidence are independent.
 
 Storage preflight: read storage status blockers and blocker_details (entry/path/reason); ok=true only confirms a successful read. Verify source integrity before repairing a historical owner; preserve unmanaged libraries.
+
+Legacy backup archives: private root-owned directories may contain historical foreign-UID regular files; never execute archive contents. Live runtime and recovery control files remain root-owned. Diagnose untrusted_legacy_backups via blocker_details; cleanup needs separate authorization and completed migration verification.

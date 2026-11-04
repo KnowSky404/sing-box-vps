@@ -30,3 +30,17 @@ Validated new core/library/marker candidates are published as root:root; rollbac
 preserves the original bytes and metadata. Unmanaged external libraries remain
 outside this repair. Production recovery first requires a trusted-release byte
 comparison, a private backup, explicit approval and separate service verification.
+
+## Historical backup ownership compatibility (2026-11-04)
+
+Old upgrade snapshots are opaque offline archives, never runtime inputs. Their
+root must be root-owned and private when containing foreign-UID files (no group/other access); all directories must
+remain root-owned and non-writable by other accounts. Regular archive files may
+retain historical UIDs, but links, special files, hard-linked files and group/world
+writes remain rejected. Live runtime trees, system entries and journal control
+files keep their strict root-ownership rules. The same exception applies only to
+the exact `legacy-backups` child during journal recovery, preserving rollback.
+Status and stderr identify the actual rejected tree entry and distinguish runtime
+from historical backups. No ownership normalization or automatic deletion occurs
+in migration; separately authorized cleanup follows completed migration and
+verified backup/live-state integrity. Config/state rewrite formats are unchanged.

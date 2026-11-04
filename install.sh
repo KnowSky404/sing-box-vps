@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026110403
+# Version: 2026110404
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026110403"
+readonly SCRIPT_VERSION="2026110404"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 # A single IPv6 wildcard socket accepts IPv4 and IPv6 in sing-box on Linux.
 readonly SB_DEFAULT_LISTEN_ADDRESS="::"
@@ -34674,7 +34674,7 @@ command_catalog_json() {
       "command": "storage status",
       "agent_command": "storage status",
       "usage": "sbv storage status --json",
-      "summary": "存储布局、迁移状态与系统入口阻塞路径",
+      "summary": "存储布局、迁移状态与系统入口及旧目录阻塞路径",
       "automation": "structured",
       "mutation": false,
       "sensitive": false,
@@ -34707,7 +34707,7 @@ command_catalog_json() {
       "command": "storage migrate",
       "agent_command": "storage migrate",
       "usage": "sbv storage migrate --json --yes",
-      "summary": "检查可信系统入口并迁移旧布局至统一私有目录",
+      "summary": "检查活动文件与离线历史备份并迁移至统一私有目录",
       "automation": "structured",
       "mutation": true,
       "sensitive": false,
@@ -44188,12 +44188,91 @@ storage_migration_require_system_entries() {
   done
 }
 
-storage_migration_trusted_tree() {
-  local root=$1 invalid
+# Failure metadata is shared by the read-only report and mutation barriers.
+storage_migration_invalid_tree_node() {
+  local node=$1
+  SB_STORAGE_UNTRUSTED_PATH=${node}
+  SB_STORAGE_UNTRUSTED_REASON=unsupported_file_type
+  if [[ -L "${node}" ]]; then SB_STORAGE_UNTRUSTED_REASON=symlink
+  elif [[ "$(stat -c %h -- "${node}")" != 1 && -f "${node}" ]]; then SB_STORAGE_UNTRUSTED_REASON=hardlinked_archive_file
+  elif [[ "$(stat -c %u -- "${node}")" != 0 ]]; then SB_STORAGE_UNTRUSTED_REASON=non_root_owner
+  elif [[ -f "${node}" || -d "${node}" ]]; then SB_STORAGE_UNTRUSTED_REASON=writable_path
+  fi
+  return 1
+}
+
+storage_migration_tree_check() {
+  local root=$1 kind=$2 invalid mode foreign
   storage_migration_trusted_path "${root}" || return 1
-  [[ -d "${root}" ]] || return 1
-  invalid=$(find "${root}" \( -type l -o ! -uid 0 -o -perm /022 -o \( ! -type d -a ! -type f \) \) -print -quit) || return 1
-  [[ -z "${invalid}" ]]
+  if [[ ! -d "${root}" ]]; then
+    SB_STORAGE_UNTRUSTED_PATH=${root}; SB_STORAGE_UNTRUSTED_REASON=not_directory
+    return 1
+  fi
+  SB_STORAGE_UNTRUSTED_PATH=${root}; SB_STORAGE_UNTRUSTED_REASON=metadata_unavailable
+  if [[ "${kind}" == archive ]]; then
+    mode=$(stat -c %a -- "${root}") || return 1
+    foreign=$(find "${root}" -type f ! -uid 0 -print -quit) || return 1
+    if [[ -n "${foreign}" ]] && (( (8#${mode} & 0077) != 0 )); then
+      SB_STORAGE_UNTRUSTED_REASON=archive_not_private
+      return 1
+    fi
+    # Archive contents are never sourced or executed. A private root and owned
+    # directories isolate historical foreign-UID regular files; reject aliases.
+    invalid=$(find "${root}" \( -type l -o -perm /022 -o \( -type d -a ! -uid 0 \) -o \( -type f -a -links +1 \) -o \( ! -type d -a ! -type f \) \) -print -quit) || return 1
+  else
+    invalid=$(find "${root}" \( -type l -o ! -uid 0 -o -perm /022 -o \( ! -type d -a ! -type f \) \) -print -quit) || return 1
+  fi
+  [[ -z "${invalid}" ]] || { storage_migration_invalid_tree_node "${invalid}"; return 1; }
+  SB_STORAGE_UNTRUSTED_PATH=''; SB_STORAGE_UNTRUSTED_REASON=''
+}
+
+storage_migration_trusted_tree() { storage_migration_tree_check "$1" live; }
+storage_migration_trusted_archive_tree() { storage_migration_tree_check "$1" archive; }
+
+storage_migration_trusted_backup_tree() {
+  local root=$1 invalid
+  storage_migration_trusted_path "${root}" && [[ -d "${root}" ]] || return 1
+  if [[ -e "${root}/legacy-backups" || -L "${root}/legacy-backups" ]]; then
+    storage_migration_trusted_archive_tree "${root}/legacy-backups" || return 1
+  fi
+  # Only the exact opaque legacy archive is exempt; journals, originals and
+  # live-runtime snapshots still require root ownership throughout.
+  invalid=$(find "${root}" -path "${root}/legacy-backups" -prune -o \( -type l -o ! -uid 0 -o -perm /022 -o \( ! -type d -a ! -type f \) \) -print -quit) || return 1
+  [[ -z "${invalid}" ]] || { storage_migration_invalid_tree_node "${invalid}"; return 1; }
+}
+
+storage_migration_legacy_tree_check() {
+  local entry=$1
+  if [[ "${entry}" == "${SB_LEGACY_BACKUP_DIR}" ]]; then
+    storage_migration_trusted_archive_tree "${entry}"
+  else
+    storage_migration_trusted_tree "${entry}"
+  fi
+}
+
+storage_migration_tree_blockers_json() {
+  local entry code detail details='[]'
+  for entry in "${SB_LEGACY_PROJECT_DIR}" "${SB_LEGACY_BACKUP_DIR}"; do
+    [[ -e "${entry}" || -L "${entry}" ]] || continue
+    if ! storage_migration_legacy_tree_check "${entry}"; then
+      code=untrusted_legacy_tree
+      [[ "${entry}" != "${SB_LEGACY_BACKUP_DIR}" ]] || code=untrusted_legacy_backups
+      detail=$(jq -n --arg code "${code}" --arg entry "${entry}" --arg path "${SB_STORAGE_UNTRUSTED_PATH}" \
+        --arg reason "${SB_STORAGE_UNTRUSTED_REASON}" '{code:$code,entry:$entry,path:$path,reason:$reason}') || return 1
+      details=$(jq --argjson detail "${detail}" '.+[$detail]' <<< "${details}") || return 1
+    fi
+  done
+  printf '%s\n' "${details}"
+}
+
+storage_migration_require_legacy_tree() {
+  local entry=$1 code=$2
+  if ! storage_migration_legacy_tree_check "${entry}"; then
+    jq -nr --arg code "${code}" --arg entry "${entry}" --arg path "${SB_STORAGE_UNTRUSTED_PATH}" \
+      --arg reason "${SB_STORAGE_UNTRUSTED_REASON}" \
+      '"[ERROR] storage: \($code) entry=\($entry|tojson) path=\($path|tojson) reason=\($reason)"' >&2
+    return 1
+  fi
 }
 
 storage_migration_phase() {
@@ -44212,7 +44291,7 @@ storage_migration_mark() {
 }
 
 storage_status_json() {
-  local legacy=false recovery=false phase=none backup='' pending=false conflict=false unsafe=false item details='[]'
+  local legacy=false recovery=false phase=none backup='' pending=false conflict=false item details='[]' tree_details='[]'
   storage_needs_migration && legacy=true
   if storage_needs_recovery; then
     recovery=true
@@ -44236,17 +44315,16 @@ storage_status_json() {
     for item in "${SBV_BIN_PATH}" "${SINGBOX_BIN_PATH}" "${SINGBOX_SERVICE_FILE}" "${SB_DATA_ROOT}/lib/libcronet.so" "${SBV_LOG_FILE}"; do
       [[ ! -e "${item}" && ! -L "${item}" ]] || conflict=true
     done
-    for item in "${SB_LEGACY_PROJECT_DIR}" "${SB_LEGACY_BACKUP_DIR}"; do
-      [[ ! -e "${item}" && ! -L "${item}" ]] || storage_migration_trusted_tree "${item}" || unsafe=true
-    done
   fi
   if [[ "${legacy}" == true && "${recovery}" == false ]]; then
     details=$(storage_migration_system_blockers_json) || return 1
+    tree_details=$(storage_migration_tree_blockers_json) || return 1
+    details=$(jq --argjson trees "${tree_details}" '.+$trees' <<< "${details}") || return 1
   fi
   jq -n --argjson details "${details}" --arg root "${SB_DATA_ROOT}" --arg legacy_root "${SB_LEGACY_PROJECT_DIR}" \
     --arg phase "${phase}" --arg backup "${backup}" --argjson legacy "${legacy}" \
-    --argjson recovery "${recovery}" --argjson pending "${pending}" --argjson conflict "${conflict}" --argjson unsafe "${unsafe}" \
-    '{layout_version:1,root:$root,legacy_root:$legacy_root,migration_required:$legacy,recovery_required:$recovery,phase:$phase,backup:$backup,legacy_pending:$pending,target_conflict:$conflict,blockers:([if $recovery then "storage_recovery_required" else empty end,if $pending then "legacy_transaction_requires_old_runtime_recovery" else empty end,if $conflict then "target_conflict" else empty end,if $unsafe then "untrusted_legacy_tree" else empty end] + ($details | map(.code) | unique)),blocker_details:$details}'
+    --argjson recovery "${recovery}" --argjson pending "${pending}" --argjson conflict "${conflict}" \
+    '{layout_version:1,root:$root,legacy_root:$legacy_root,migration_required:$legacy,recovery_required:$recovery,phase:$phase,backup:$backup,legacy_pending:$pending,target_conflict:$conflict,blockers:([if $recovery then "storage_recovery_required" else empty end,if $pending then "legacy_transaction_requires_old_runtime_recovery" else empty end,if $conflict then "target_conflict" else empty end] + ($details | map(.code) | unique)),blocker_details:$details}'
 }
 
 storage_legacy_pending() {
@@ -44586,7 +44664,7 @@ storage_migration_journal_valid() {
     .backup==($root+"/backups/migrations/"+.id)
   ' "${directory}/journal.json" >/dev/null || return 1
   backup=$(jq -r .backup "${directory}/journal.json") || return 1
-  storage_migration_trusted_tree "${backup}" || return 1
+  storage_migration_trusted_backup_tree "${backup}" || return 1
 }
 
 storage_migration_restore() {
@@ -44749,10 +44827,10 @@ storage_migrate() (
   storage_needs_migration || return 0
   command -v jq >/dev/null && command -v flock >/dev/null || return 1
   if [[ -e "${SB_LEGACY_PROJECT_DIR}" || -L "${SB_LEGACY_PROJECT_DIR}" ]]; then
-    storage_migration_trusted_tree "${SB_LEGACY_PROJECT_DIR}" || { storage_migration_error untrusted_legacy_tree; return 1; }
+    storage_migration_require_legacy_tree "${SB_LEGACY_PROJECT_DIR}" untrusted_legacy_tree || return 1
   fi
   if [[ -e "${SB_LEGACY_BACKUP_DIR}" || -L "${SB_LEGACY_BACKUP_DIR}" ]]; then
-    storage_migration_trusted_tree "${SB_LEGACY_BACKUP_DIR}" || { storage_migration_error untrusted_legacy_backups; return 1; }
+    storage_migration_require_legacy_tree "${SB_LEGACY_BACKUP_DIR}" untrusted_legacy_backups || return 1
   fi
   storage_legacy_pending && { storage_migration_error legacy_transaction_requires_old_runtime_recovery; return 1; }
   if [[ -e "${SB_LEGACY_PROJECT_DIR}.rules-previous" ]]; then
@@ -44824,7 +44902,8 @@ storage_migrate() (
   # Repeat conflict/legacy barriers while holding both old and new locks.
   storage_needs_recovery && return 1
   storage_legacy_pending && return 1
-  [[ ! -d "${SB_LEGACY_PROJECT_DIR}" ]] || storage_migration_trusted_tree "${SB_LEGACY_PROJECT_DIR}" || return 1
+  [[ ! -d "${SB_LEGACY_PROJECT_DIR}" ]] || storage_migration_require_legacy_tree "${SB_LEGACY_PROJECT_DIR}" untrusted_legacy_tree || return 1
+  [[ ! -e "${SB_LEGACY_BACKUP_DIR}" && ! -L "${SB_LEGACY_BACKUP_DIR}" ]] || storage_migration_require_legacy_tree "${SB_LEGACY_BACKUP_DIR}" untrusted_legacy_backups || return 1
   while IFS= read -r -d '' item; do
     if [[ -d "${item}" && ! -L "${item}" ]]; then storage_migration_trusted_tree "${item}" || return 1
     else storage_migration_trusted_path "${item}" && [[ -f "${item}" && ! -L "${item}" ]] || return 1

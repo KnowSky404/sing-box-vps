@@ -12,7 +12,9 @@ Real: fixed pre-layout runtime c281649d5bd4150810455151b85ecbfe678fea87,
 legacy sbv update sbv transaction, new runtime's first CLI start, migration,
 real core checks of HTTP plus loopback HY2 file-URI/manual-TLS material, systemd active/stopped preservation and failed
 service activation rollback, system command/service symlinks, historical bytes.
-Prepared: local curl returns the current candidate only for the script-update
+Prepared: the archived-owner recovery copies a completed record into pending to
+exercise real restoration; SIGKILL interruption is separately covered by host
+fixtures. Local curl returns the current candidate only for the script-update
 URL; core release downloads use the normal verified installer. A private systemctl
 shim removes the owned candidate core execute bit immediately before real systemd
 start, exercising an actual activation failure and old-service rollback. Dummy secrets
@@ -62,6 +64,9 @@ ANSWERS
     sing-box check -c /root/sing-box-vps/config.json
     printf 'historical upgrade bytes\n' > /root/sing-box-vps-backups/upgrade-fixture/metadata.json
     (cd /root/sing-box-vps-backups/upgrade-fixture && sha256sum metadata.json > SHA256SUMS)
+    # Historical foreign ownership is archive metadata, never runtime input.
+    chmod 700 /root/sing-box-vps-backups
+    chown 1001:1001 /root/sing-box-vps-backups/upgrade-fixture/metadata.json
     history_hash=$(sha256sum /root/sing-box-vps-backups/upgrade-fixture/metadata.json | awk '{print $1}')
     before_config_hash=$(sha256sum /root/sing-box-vps/config.json | awk '{print $1}')
     # Intercept only the update URL, leaving release downloads and validation real.
@@ -169,12 +174,24 @@ ACTIVATION_SYSTEMCTL
     printf 'target_core_check=passed\nhy2_file_uri_tls_material_paths=passed\n' > "${artifact_dir}/${mode}-config-check.env"
     backup=$(jq -r .backup /root/.sing-box-vps/migrations/completed.json)
     [[ "$(sha256sum "${backup}/legacy-backups/upgrade-fixture/metadata.json" | awk '{print $1}')" == "${history_hash}" ]]
+    [[ "$(stat -c '%u:%g' "${backup}/legacy-backups/upgrade-fixture/metadata.json")" == 1001:1001 ]]
     (cd "${backup}/legacy-backups/upgrade-fixture" && sha256sum -c SHA256SUMS)
     if [[ "${mode}" == active ]]; then
       verification_wait_for_service_active sing-box
       verification_assert_port_listening 19082 "${VERIFY_CURRENT_SCENARIO_DIR}/active-listeners.txt"
     else
       if systemctl is-active --quiet sing-box; then return 1; fi
+    fi
+    if [[ "${mode}" == active ]]; then
+      # Copy the fully completed record back to pending to exercise the same
+      # archived-tree recovery validator with real systemd and foreign UID data.
+      mkdir -m 700 /root/.sing-box-vps/migrations/pending
+      cp -p /root/.sing-box-vps/migrations/completed.json /root/.sing-box-vps/migrations/pending/journal.json
+      bash /usr/local/bin/sbv storage recover --json --yes > "${artifact_dir}/archived-owner-recover.json"
+      verification_wait_for_service_active sing-box
+      [[ "$(stat -c '%u:%g' /root/sing-box-vps-backups/upgrade-fixture/metadata.json)" == 1001:1001 ]]
+      bash /usr/local/bin/sbv storage migrate --json --yes > "${artifact_dir}/archived-owner-remigrate.json"
+      verification_wait_for_service_active sing-box
     fi
     # Repetition is a no-op even after old paths have been archived.
     bash /usr/local/bin/sbv storage migrate --json --yes > "${artifact_dir}/${mode}-repeat.json"

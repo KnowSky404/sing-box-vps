@@ -81,6 +81,7 @@ EOF
 
 legacy_fixture() {
   mkdir -p -m 700 "${SB_LEGACY_PROJECT_DIR}/protocols/instances" "${SB_LEGACY_PROJECT_DIR}/media-check" "${SB_LEGACY_PROJECT_DIR}/rule-set/warp" "${SB_LEGACY_BACKUP_DIR}/upgrade-old"
+  chmod 700 "${SB_LEGACY_BACKUP_DIR}"
   printf 'certificate\n' > "${SB_LEGACY_PROJECT_DIR}/cert.pem"
   printf 'external key\n' > "${STORAGE_CASE_DIR}/external/key.pem"
   jq -n --arg old "${SB_LEGACY_PROJECT_DIR}" --arg external "${STORAGE_CASE_DIR}/external/key.pem" \
@@ -215,6 +216,70 @@ case_untrusted() {
   chmod 600 "${SB_LEGACY_PROJECT_DIR}/config.json"
   chmod 777 "${SB_LEGACY_PROJECT_DIR}"
   expect_failure storage_migrate
+}
+
+case_historical_archive_owner() {
+  local backup entry original_hash
+  legacy_fixture
+  entry="${SB_LEGACY_BACKUP_DIR}/upgrade-old/sing-box"
+  printf '#!/usr/bin/env bash\ntouch %s\n' "${STORAGE_CASE_DIR}/archive-executed" > "${entry}"
+  chmod 700 "${entry}"
+  chown 1001:1001 "${entry}"
+  original_hash=$(sha256sum "${entry}" | cut -d' ' -f1)
+  storage_status_json | jq -e '.blockers==[] and .blocker_details==[]' >/dev/null
+  storage_migrate
+  backup=$(completed_backup)
+  [[ "$(stat -c '%u:%g:%a' "${backup}/legacy-backups/upgrade-old/sing-box")" == 1001:1001:700 ]]
+  [[ "$(sha256sum "${backup}/legacy-backups/upgrade-old/sing-box" | cut -d' ' -f1)" == "${original_hash}" ]]
+  [[ ! -e "${STORAGE_CASE_DIR}/archive-executed" ]]
+  storage_migration_trusted_backup_tree "${backup}"
+  # A foreign-owned live snapshot or journal original is never grandfathered.
+  chown 1001:1001 "${backup}/original-sing-box"
+  expect_failure storage_migration_trusted_backup_tree "${backup}"
+  chown 0:0 "${backup}/original-sing-box"
+  chown 1001:1001 "${backup}/legacy-runtime/config.json"
+  expect_failure storage_migration_trusted_backup_tree "${backup}"
+}
+
+case_archive_and_tree_diagnostics() {
+  local entry node
+  legacy_fixture
+  entry="${SB_LEGACY_PROJECT_DIR}/config.json"
+  chmod 666 "${entry}"
+  storage_cli status --json | jq -e --arg entry "${entry}" '.ok and .data.blockers==["untrusted_legacy_tree"] and any(.data.blocker_details[]; .path==$entry and .reason=="writable_path")' >/dev/null
+  expect_failure storage_cli migrate --json --yes
+  grep -Fq "${entry}" "${STORAGE_CASE_DIR}/failure.log"
+  chmod 600 "${entry}"
+  entry="${SB_LEGACY_BACKUP_DIR}/upgrade-old/unsafe"
+  ln -s "${STORAGE_CASE_DIR}/external/key.pem" "${entry}"
+  storage_status_json | jq -e --arg entry "${entry}" '.blockers==["untrusted_legacy_backups"] and any(.blocker_details[]; .path==$entry and .reason=="symlink")' >/dev/null
+  expect_failure storage_migrate
+  grep -Fq "${entry}" "${STORAGE_CASE_DIR}/failure.log"
+  rm "${entry}"
+  mkfifo "${entry}"
+  expect_failure storage_migrate
+  rm "${entry}"
+  printf 'archive only\n' > "${entry}"
+  ln "${entry}" "${entry}.alias"
+  storage_status_json | jq -e 'any(.blocker_details[]; .reason=="hardlinked_archive_file")' >/dev/null
+  expect_failure storage_migrate
+  rm "${entry}.alias"
+  chmod 666 "${entry}"
+  expect_failure storage_migrate
+  chmod 600 "${entry}"
+  chown 1001:1001 "${entry}"
+  chmod 755 "${SB_LEGACY_BACKUP_DIR}"
+  storage_status_json | jq -e 'any(.blocker_details[]; .reason=="archive_not_private")' >/dev/null
+  expect_failure storage_migrate
+  chown 0:0 "${entry}"
+  storage_status_json | jq -e '.blockers==[]' >/dev/null
+  chmod 700 "${SB_LEGACY_BACKUP_DIR}"
+  node="${SB_LEGACY_BACKUP_DIR}/upgrade-old"
+  chown 1001:1001 "${node}"
+  expect_failure storage_migrate
+  chown 0:0 "${node}"
+  [[ ! -e "${SB_DATA_ROOT}" && ! -e "${STORAGE_CASE_DIR}/systemctl.log" ]]
+  storage_status_json | jq -e '.blockers==[] and .blocker_details==[]' >/dev/null
 }
 
 case_system_entry_diagnostics() {
@@ -404,6 +469,8 @@ case_recover_interrupted() {
 case_recover_after_archive() {
   local backup
   legacy_fixture
+  printf 'historic foreign-owned core\n' > "${SB_LEGACY_BACKUP_DIR}/upgrade-old/sing-box"
+  chown 1001:1001 "${SB_LEGACY_BACKUP_DIR}/upgrade-old/sing-box"
   printf 'managed library\n' > "${STORAGE_CASE_DIR}/system/lib/libcronet.so"
   sha256sum "${STORAGE_CASE_DIR}/system/lib/libcronet.so" | cut -d' ' -f1 > "${SB_LEGACY_PROJECT_DIR}/libcronet.sha256"
   touch "${STORAGE_CASE_DIR}/active"
@@ -420,6 +487,7 @@ case_recover_after_archive() {
   storage_recover
   [[ ! -e "${SB_STORAGE_MIGRATION_DIR}" && -f "${SB_LEGACY_PROJECT_DIR}/config.json" && -f "${STORAGE_CASE_DIR}/active" ]]
   [[ -f "${STORAGE_CASE_DIR}/system/lib/libcronet.so" && ! -e "${SB_DATA_ROOT}/lib/libcronet.so" && ! -L "${SB_DATA_ROOT}/bin/libcronet.so" ]]
+  [[ "$(stat -c '%u:%g' "${SB_LEGACY_BACKUP_DIR}/upgrade-old/sing-box")" == 1001:1001 ]]
 }
 
 case_recovery_ownership_conflict() {
@@ -811,7 +879,7 @@ case_separator_alias_and_opaque_maps() {
   printf '{"certificate_path":"/outside//unchanged/cert.pem"}\n' | storage_rewrite_path_json | jq -e '.certificate_path=="/outside//unchanged/cert.pem"' >/dev/null
 }
 
-for case_name in status_read_only migrate_active migrate_stopped_and_history conflict pending untrusted system_entry_diagnostics env_no_execution env_literal_roundtrip implicit_module_state check_failure_rollback service_failure_rollback lock_and_handoff library cli_confirmation recover_interrupted recover_after_archive recovery_ownership_conflict precise_path_contexts custom_service_directory manager_only_migration sidecar_ownership stale_unit_references relative_runtime_source dns_hosts_paths object_masquerade_and_option_paths instance_archive_bytes separator_alias_and_opaque_maps; do
+for case_name in status_read_only migrate_active migrate_stopped_and_history conflict pending untrusted historical_archive_owner archive_and_tree_diagnostics system_entry_diagnostics env_no_execution env_literal_roundtrip implicit_module_state check_failure_rollback service_failure_rollback lock_and_handoff library cli_confirmation recover_interrupted recover_after_archive recovery_ownership_conflict precise_path_contexts custom_service_directory manager_only_migration sidecar_ownership stale_unit_references relative_runtime_source dns_hosts_paths object_masquerade_and_option_paths instance_archive_bytes separator_alias_and_opaque_maps; do
   CASE_NUMBER=$((CASE_NUMBER+1))
   printf 'storage_migration_case=%s\n' "${case_name}"
   (fixture; "case_${case_name}")
