@@ -14,12 +14,14 @@ Usage: bash dev/verification/run.sh [options]
                          staged/unstaged changes and untracked files.
   --changed-file PATH...  Explicit paths; repeatable, cannot combine with --base.
   --group NAME           Add a local regression group; repeatable.
+  --test PATH            Add one standalone host test (tests/<name>.sh); repeatable.
   --scenario NAME        Add a Docker scenario and its prerequisites; repeatable.
   --full                 Explicitly select all registered host tests and scenarios.
   --help                 Show this help and supported groups/scenarios.
 
 Without --base, inspect working-tree changes against HEAD. Unknown runtime impact
-requires an explicit group/scenario or --full before execution. Groups select
+requires an explicit test/group/scenario or --full before execution. Tests are
+additive: automatic checks for the complete diff remain selected. Groups select
 local checks; choose scenarios separately when runtime verification is required.
 VERIFY_SKIP_REMOTE=1 skips Docker only, not the selected local tests.
 EOF
@@ -56,6 +58,7 @@ verification_plan_reset() {
   VERIFY_PLAN_STATUS=ready
   VERIFY_CHANGED_FILES=()
   VERIFY_REQUESTED_GROUPS=()
+  VERIFY_REQUESTED_TESTS=()
   VERIFY_REQUESTED_SCENARIOS=()
   VERIFY_PLAN_GROUPS=()
   VERIFY_PLAN_TESTS=()
@@ -79,7 +82,7 @@ verification_parse_options() {
         VERIFY_PLAN_EXPLICIT_SCOPE=1
         verification_plan_append VERIFY_REQUESTED_GROUPS full
         ;;
-      --base|--group|--scenario)
+      --base|--group|--test|--scenario)
         if [[ "$#" -eq 0 || -z "$1" || "$1" == --* ]]; then
           verification_plan_error "${option} requires a value"
           return 2
@@ -88,6 +91,10 @@ verification_parse_options() {
           --base) VERIFY_PLAN_BASE_REF=$1 ;;
           --group)
             verification_plan_append VERIFY_REQUESTED_GROUPS "$1"
+            VERIFY_PLAN_EXPLICIT_SCOPE=1
+            ;;
+          --test)
+            verification_plan_append VERIFY_REQUESTED_TESTS "$1"
             VERIFY_PLAN_EXPLICIT_SCOPE=1
             ;;
           --scenario)
@@ -196,6 +203,19 @@ verification_add_group() {
   esac
 }
 
+verification_add_requested_test() {
+  local test=$1
+  verification_validate_path "${test}" || return 2
+  if [[ "${test}" != tests/"${test##*/}" || "${test}" != *.sh || "${test}" == *_helper.sh ]] ||
+    [[ ! -f "${REPO_ROOT}/${test}" || -L "${REPO_ROOT}/${test}" ]] ||
+    verification_test_is_container_only "${test}"; then
+    verification_plan_error "--test requires an existing standalone host test, not a helper or container fixture: ${test}"
+    return 2
+  fi
+  verification_plan_append VERIFY_PLAN_TESTS "${test}"
+  verification_plan_append VERIFY_PLAN_REASONS "${test}: explicit standalone host test; automatic checks retained"
+}
+
 verification_install_metadata_only() {
   [[ -f "${REPO_ROOT}/install.sh" ]] || return 1
   git cat-file -e "${VERIFY_PLAN_BASE}:install.sh" 2>/dev/null || return 1
@@ -224,14 +244,15 @@ verification_add_test_callers() {
       [[ "${content}" == *"${current##*/}"* ]] || continue
       candidate=${candidate#"${REPO_ROOT}/"}
       [[ "${candidate}" != "${current}" ]] || continue
-      case "${candidate}" in
-        *_helper.sh) pending+=("${candidate}") ;;
-        tests/agent_operations_runtime.sh|tests/routing_policy_runtime.sh|tests/routing_policy_legacy_runtime.sh|tests/routing_policy_manual_references_runtime.sh|tests/default_dual_stack_runtime.sh|tests/hy2_instance_acme_runtime.sh|tests/component_runtime_acceptance.sh|tests/selector_urltest_runtime.sh|tests/acme_component_runtime.sh|tests/cloudflared_runtime.sh|tests/tailscale_openconnect_runtime.sh|tests/namespace_core_runtime.sh)
-          verification_plan_append VERIFY_PLAN_REASONS "container-only fixture ${candidate} requires a separate isolated run"
-          VERIFY_PLAN_RUNTIME_REQUIRED=1
-          ;;
-        *) verification_plan_append VERIFY_PLAN_TESTS "${candidate}"; found=1 ;;
-      esac
+      if [[ "${candidate}" == *_helper.sh ]]; then
+        pending+=("${candidate}")
+      elif verification_test_is_container_only "${candidate}"; then
+        verification_plan_append VERIFY_PLAN_REASONS "container-only fixture ${candidate} requires a separate isolated run"
+        VERIFY_PLAN_RUNTIME_REQUIRED=1
+      else
+        verification_plan_append VERIFY_PLAN_TESTS "${candidate}"
+        found=1
+      fi
     done
   done
   [[ "${found}" == 1 ]] || verification_plan_append VERIFY_PLAN_UNRESOLVED "no host test caller found for ${helper}"
@@ -243,22 +264,27 @@ verification_classify_file() {
     install.sh)
       verification_plan_append VERIFY_PLAN_SYNTAX install.sh
       verification_plan_append VERIFY_PLAN_SYNTAX scripts/build-install.sh
-      verification_plan_append VERIFY_PLAN_TESTS tests/install_build.sh
+      verification_plan_append VERIFY_PLAN_TESTS tests/install_build_sync.sh
       if verification_install_metadata_only; then
         verification_add_group version || return 2
         verification_plan_append VERIFY_PLAN_REASONS 'install.sh: only script-version metadata changed'
       else
-        verification_plan_append VERIFY_PLAN_UNRESOLVED 'install.sh: choose --group and/or --scenario for the affected behavior, or --full'
+        verification_plan_append VERIFY_PLAN_UNRESOLVED 'install.sh: choose --test, --group and/or --scenario for the affected behavior, or --full'
       fi
       ;;
     scripts/build-command-docs.sh)
       verification_plan_append VERIFY_PLAN_SYNTAX scripts/build-command-docs.sh
       verification_add_group docs || return 2
       ;;
-    scripts/build-install.sh|src/install/manifest.txt|src/install/*.sh)
+    scripts/build-install.sh|src/install/manifest.txt)
       verification_plan_append VERIFY_PLAN_SYNTAX scripts/build-install.sh
       verification_plan_append VERIFY_PLAN_TESTS tests/install_build.sh
       verification_plan_append VERIFY_PLAN_REASONS "${file}: verify the standalone installer matches its modular sources"
+      ;;
+    src/install/*.sh)
+      verification_plan_append VERIFY_PLAN_SYNTAX scripts/build-install.sh
+      verification_plan_append VERIFY_PLAN_TESTS tests/install_build_sync.sh
+      verification_plan_append VERIFY_PLAN_REASONS "${file}: check generated bytes; builder failure regressions are separate"
       ;;
     bootstrap.sh) verification_add_group bootstrap || return 2 ;;
     tests/routing_policy_private_runtime.py)
@@ -276,7 +302,13 @@ verification_classify_file() {
         verification_plan_append VERIFY_PLAN_UNRESOLVED "removed test: ${file}; choose affected regression group"
       fi
       ;;
-    dev/verification/run.sh|dev/verification/planner.sh|dev/verification/selection.sh)
+    dev/verification/planner.sh|dev/verification/selection.sh)
+      verification_plan_append VERIFY_PLAN_SYNTAX "${file}"
+      verification_plan_append VERIFY_PLAN_TESTS tests/verification_planner.sh
+      verification_plan_append VERIFY_PLAN_TESTS tests/verification_trigger_rules.sh
+      verification_plan_append VERIFY_PLAN_TESTS tests/verification_scenario_mapping.sh
+      ;;
+    dev/verification/run.sh)
       verification_add_group verification || return 2
       ;;
     dev/verification/remote/scenarios/*.sh)
@@ -289,7 +321,7 @@ verification_classify_file() {
       verification_plan_append VERIFY_PLAN_UNRESOLVED "${file}: classify host/transport impact with an explicit group/scenario"
       ;;
     README*.md|AGENTS.md|SECURITY.md|src/install/README.md|docs/*.md|docs/*.txt|skills/*.md|LICENSE|LICENSE.*)
-      verification_add_group docs || return 2
+      verification_plan_append VERIFY_PLAN_TESTS tests/wiki_documentation.sh
       case "${file}" in
         README*.md) verification_add_group version || return 2 ;;
         docs/wiki/Agent-CLI.md|docs/wiki/Agent-Runbook.md)
@@ -297,6 +329,9 @@ verification_classify_file() {
           ;;
         docs/wiki/Protocol-Coverage.md)
           verification_plan_append VERIFY_PLAN_TESTS tests/protocol_coverage_contract.sh
+          ;;
+        docs/wiki/Command-Catalog.md)
+          verification_plan_append VERIFY_PLAN_TESTS tests/command_catalog_contract.sh
           ;;
         docs/wiki/Getting-Started.md) verification_add_group bootstrap || return 2 ;;
       esac
@@ -311,6 +346,9 @@ verification_build_plan() {
   verification_collect_changes || return 2
   for group in "${VERIFY_REQUESTED_GROUPS[@]}"; do
     verification_add_group "${group}" || return 2
+  done
+  for file in "${VERIFY_REQUESTED_TESTS[@]}"; do
+    verification_add_requested_test "${file}" || return 2
   done
   for file in "${VERIFY_CHANGED_FILES[@]}"; do
     verification_classify_file "${file}" || return 2

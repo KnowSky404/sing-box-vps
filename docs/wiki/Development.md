@@ -24,19 +24,28 @@
 
 ### 调度器命令与计划
 
+优先选择精确的 `--test tests/<名称>.sh`，需要整组覆盖时才使用 `--group`。单测试参数可重复，去重后执行；只接受已有独立宿主 Shell 测试的精确路径，拒绝 helper、容器专用 fixture、符号链接及越界路径，不展开通配符。它与 `--base` 组合时保留所有分支/工作区差异的自动检查，不能用来排除其他改动。显式测试和显式组一样代表操作者的影响判断，不能把一个任意测试当作完整覆盖；运行态变化仍需对应 Docker 场景。
+
+普通文档只自动选择 `wiki_documentation.sh`，Agent 手册追加能力说明检查，生成命令目录追加命令契约；显式 `--group docs` 仍保留整组。安装器/模块的日常修改选择 `install_build_sync.sh` 检查生成字节及语法，构建器/清单变化才追加 `install_build.sh` 的故障注入。计划器和选择器变化只自动选择 `verification_planner.sh`、`verification_trigger_rules.sh`、`verification_scenario_mapping.sh`；执行器/传输变化仍按相应范围验证。
+
+2026-11-04 优化前清单审视：342 个 Shell 文件中，注册全量选择 199 项宿主测试及 17 种 Docker 场景；`menu` 有 28 项，`protocol:vless` 有 35 项，`protocol:hy2` 有 29 项。它们包含同协议下不同功能及一些跨模块文件名匹配，不是修改一处菜单/分享文案的默认单位。`multi_protocol_coexistence` 超过 3,500 行，混合多协议、组件、UDP、透明代理及真实 Tor 网络访问；`fresh_install_http` 也包含删除最后实例、取消和重建。只有大型场景能覆盖时，明确额外覆盖和预计耗时，不把它默认为轻量 smoke。后续拆分需要保留前置与数据面断言；本轮优化宿主选测，没有消除这些运行态成本。历史耗时日志当前不可用，不能据此声称已经复现或消除了两小时耗时。
+
 在仓库根目录运行。先预览，确认测试和场景满足本次影响，再去掉 `--plan` 执行同一组参数：
 
 ```bash
 # 分支全部已提交改动 + 暂存/未暂存修改 + 未跟踪文件，只预览
 bash dev/verification/run.sh --plan --base origin/main
 
-# 菜单或自更新：明确本地回归组，按实际影响追加场景
-bash dev/verification/run.sh --plan --base origin/main --group menu --group self-update
+# 只改菜单布局：精确指定相关测试，保留分支自动检查
+bash dev/verification/run.sh --plan --base origin/main --test tests/main_menu_renders_sectioned_layout.sh
+
+# 自更新事务确有影响时才选对应组，按实际影响追加场景
+bash dev/verification/run.sh --plan --base origin/main --group self-update
 
 # 单协议本地检查；若改动影响运行态，再显式追加对应场景
 bash dev/verification/run.sh --plan --base origin/main --group protocol:http --scenario fresh_install_http
 
-# 调度器/传输变更：框架回归 + 轻量真实 Docker 安装与最终 smoke
+# 传输/容器执行变更：框架回归 + 真实 Docker 安装与最终 smoke
 bash dev/verification/run.sh --plan --base origin/main --group verification --scenario fresh_install_http
 
 # 明确需要完整验收时才选已注册的全量集合
@@ -94,7 +103,7 @@ bash scripts/build-install.sh
 # 只读检查：源码与提交的 install.sh 必须完全一致
 bash scripts/build-install.sh --check
 
-# 构建失败保护、清单校验及发布行为的隔离回归
+# 仅构建器或清单变化时：构建失败保护、清单校验及发布行为回归
 bash tests/install_build.sh
 
 # 确认本次分支影响及必要行为验证范围
@@ -103,7 +112,7 @@ bash dev/verification/run.sh --plan --base origin/main
 
 版本在 `src/install/00-preamble.sh` 的文件头和 `SCRIPT_VERSION` 中更新，与根 README 同步；构建脚本原样复制到 `install.sh`。同一轮交付仍只递增一次。提交时包含模块和生成产物；新增或拆分片段时同时更新清单。构建检查会拒绝缺失、重复、遗漏或越界的模块路径及符号链接，不执行源码或清单中的内容。完整语法检查通过后才同目录原子替换产物，失败保持原文件，相同产物不重复写入；`--check` 不写工作区。
 
-验证调度器在根安装器、源码模块、清单或构建脚本变化时选择构建一致性回归。源码改变但遗漏重新生成会失败；生成文件存在实际运行逻辑差异时，仍需按第 4.2 节明确选择受影响测试和必要 Docker 场景，不因拆分源码自动全量。首次纯拆分以归一化版本后的字节等价确认运行代码未变，再验证构建、入口、自更新、菜单、文档和调度兼容性；这不代表新取得协议、公网或生产验收。
+验证调度器在根安装器或源码模块变化时选择生成同步检查，构建器/清单变化才追加构建器隔离回归。源码改变但遗漏重新生成会失败；生成文件存在实际运行逻辑差异时，仍需按第 4.2 节明确选择受影响测试和必要 Docker 场景，不因拆分源码自动全量。首次纯拆分以归一化版本后的字节等价确认运行代码未变，再验证构建、入口、自更新、菜单、文档和调度兼容性；这不代表新取得协议、公网或生产验收。
 
 ## 文档维护与 Wiki 发布
 

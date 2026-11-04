@@ -34,13 +34,15 @@ menu entry in the catalog. For routing, save only `.data.draft` from sensitive
 fingerprint, validate it and use the guarded apply/recovery path. Service logs
 are bounded but sensitive.
 
-For repository changes, ship each added/adjusted feature with its noninteractive
+For added/adjusted runtime operations, ship each feature with its noninteractive
 command, embedded descriptor, focused test, generated reference and affected
 Agent runbooks/navigation. Build install.sh, run
 `bash scripts/build-command-docs.sh`, check both builds with `--check`, and run
 `tests/command_catalog_contract.sh`. New interactive-only exceptions need an
 explicit SPEC rationale and review. Follow AGENTS.md section 4.2 for the remaining
 behavior verification; this contract does not require unrelated full regression.
+Development tooling and ordinary prose changes follow section 4.2 without
+automatically rerunning the runtime operation catalog contract.
 
 ## Storage Layout
 
@@ -96,12 +98,14 @@ No production-changing commands will be executed until approved.
 
 ## Verification Rules
 
+- Prefer repeatable `--test tests/<name>.sh` for exact standalone host tests, combined with `--base origin/main` to retain automatic checks for the entire diff. It rejects helpers, symlinks and container-only fixtures. Use groups only when their whole scope is needed; choose runtime scenarios separately. Ordinary docs select links, source/version edits select build sync, and planner/selection edits select their three focused contracts. Do not add broad docs/verification groups by habit.
+
 - Follow the impact-based test boundaries in [AGENTS.md](../../AGENTS.md), section 4.2. Explain the selected scope before running tests; do not select a broad suite solely because `install.sh` or another runtime file changed.
 - Section 4.2 is the single authority for test scope. Record a short plan with affected behavior, required checks/prerequisites, exclusions and expected duration. Investigate local runs expected to exceed 10 minutes or Docker runs expected to exceed 20 minutes before proceeding; these are planning thresholds, not permission to skip required checks. Stop when the required checks pass unless new evidence changes the scope.
 - Run `sing-box check` on affected generated or modified server and protocol-probe configurations. Run related real Docker scenarios for service, network or lifecycle behavior changes, with their prerequisites prepared.
 - Documentation, version-display and menu-only changes need their focused checks. Run changed standalone tests and callers of changed helpers; Bootstrap changes need the download/validation tests.
 - Require full regression for core-version adaptation or config/state migrations, broadly affected shared logic or uncertain impact, or an explicit full-test/release-acceptance requirement. Reuse passing results only when the tested code, configuration, tests, dependencies, core version and relevant environment are unchanged; record the original evidence and reason. After a fix, rerun failed and affected checks.
-- Preview `bash dev/verification/run.sh --plan --base origin/main`. Base mode uses the merge base and includes committed, staged, unstaged and untracked changes. Without `--base`, only working-tree differences against HEAD are considered. Docs, version metadata, Bootstrap and changed host tests map automatically; unmapped runtime impact needs an explicit local `--group`, Docker `--scenario`, or `--full` before execution. Groups and scenarios are repeatable; choose runtime coverage separately when required. Full means the registered host-safe manifest and scenario set, not every script in tests/. Container-only fixtures stay out of host selection. See Development.md for examples and prerequisites.
+- Preview `bash dev/verification/run.sh --plan --base origin/main`. Base mode uses the merge base and includes committed, staged, unstaged and untracked changes. Without `--base`, only working-tree differences against HEAD are considered. Docs, version metadata, Bootstrap and changed host tests map automatically; unmapped runtime impact needs an explicit local `--test`, `--group`, Docker `--scenario`, or `--full` before execution. Groups and scenarios are repeatable; choose runtime coverage separately when required. Full means the registered host-safe manifest and scenario set, not every script in tests/. Container-only fixtures stay out of host selection. See Development.md for examples and prerequisites.
 - Remote verification runs in Docker locally, auto-building sing-box-vps-verify image. No external SSH target required.
 - Use `sing-box-test` for test validation and `sing-box-prod` only after the production gate.
 

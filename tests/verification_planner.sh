@@ -28,6 +28,11 @@ FIXTURE_VERSION_LITERAL
 for name in committed staged unstaged; do
   printf '#!/usr/bin/env bash\n: fixture-%s\n' "${name}" > "${FIXTURE}/tests/fixture_${name}.sh"
 done
+cat > "${FIXTURE}/tests/fixture_requested.sh" <<'FIXTURE_TEST'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'requested\n' >> "${VERIFY_PLANNER_EXECUTION_LOG:?}"
+FIXTURE_TEST
 
 printf '#!/usr/bin/env bash\n: helper baseline\n' > "${FIXTURE}/tests/fixture_helper.sh"
 cat > "${FIXTURE}/tests/fixture_source_test.sh" <<'FIXTURE_CALLER'
@@ -125,7 +130,7 @@ assert_line 'mode=local' "${plan}"
 assert_line 'plan_status=ready' "${plan}"
 assert_line 'syntax=install.sh' "${plan}"
 assert_line 'syntax=scripts/build-install.sh' "${plan}"
-assert_line 'test=tests/install_build.sh' "${plan}"
+assert_line 'test=tests/install_build_sync.sh' "${plan}"
 assert_line 'test=tests/version_metadata_is_consistent.sh' "${plan}"
 assert_line 'local_test_count=3' "${plan}"
 ! grep -q '^scenario=' <<<"${plan}"
@@ -136,12 +141,12 @@ assert_no_planning_side_effects
 sed -i 's/2000010101/2000010102/g' "${FIXTURE}/install.sh"
 plan=$(fixture_run --plan --base "${BASE}")
 assert_line 'plan_status=needs_scope' "${plan}"
-assert_line 'test=tests/install_build.sh' "${plan}"
+assert_line 'test=tests/install_build_sync.sh' "${plan}"
 assert_error_2 --base "${BASE}"
 assert_no_planning_side_effects
 plan=$(fixture_run --plan --changed-file install.sh --changed-file "${SOURCE_MODULE}")
 assert_line 'plan_status=needs_scope' "${plan}"
-[[ $(grep -Fxc 'test=tests/install_build.sh' <<<"${plan}") -eq 1 ]]
+[[ $(grep -Fxc 'test=tests/install_build_sync.sh' <<<"${plan}") -eq 1 ]]
 assert_no_planning_side_effects
 plan=$(fixture_run --plan --base "${BASE}" --group menu)
 assert_line 'plan_status=ready' "${plan}"
@@ -153,7 +158,7 @@ git -C "${FIXTURE}" show "${BASE}:install.sh" > "${FIXTURE}/install.sh"
 
 # Modular edits require a fresh standalone artifact, without selecting unrelated
 # protocol regressions or running a build during a read-only plan.
-for file in scripts/build-install.sh src/install/manifest.txt "${SOURCE_MODULE}"; do
+for file in scripts/build-install.sh src/install/manifest.txt; do
   plan=$(fixture_run --plan --changed-file "${file}")
   assert_line 'mode=local' "${plan}"
   assert_line 'plan_status=ready' "${plan}"
@@ -173,27 +178,39 @@ assert_no_planning_side_effects
 printf '# source-only fixture edit\n' >> "${FIXTURE}/${SOURCE_MODULE}"
 plan=$(fixture_run --plan --base "${BASE}")
 assert_line "file=${SOURCE_MODULE}" "${plan}"
+# Source-only edits still fail the sync check at execution; no behavior scope is
+# inferred solely from module names.
 assert_line 'plan_status=ready' "${plan}"
 assert_line 'local_test_count=1' "${plan}"
-assert_line 'test=tests/install_build.sh' "${plan}"
+assert_line 'test=tests/install_build_sync.sh' "${plan}"
 assert_no_planning_side_effects
 git -C "${FIXTURE}" show "${BASE}:${SOURCE_MODULE}" > "${FIXTURE}/${SOURCE_MODULE}"
 
 # The generated command reference builder and source guide select only their
 # documentation contracts; neither requires protocol or container execution.
-for file in scripts/build-command-docs.sh src/install/README.md; do
+for file in scripts/build-command-docs.sh src/install/README.md docs/wiki/Development.md AGENTS.md; do
   plan=$(fixture_run --plan --changed-file "${file}")
   assert_line 'mode=local' "${plan}"
   assert_line 'plan_status=ready' "${plan}"
-  assert_line 'group=docs' "${plan}"
-  assert_line 'test=tests/command_catalog_contract.sh' "${plan}"
   assert_line 'test=tests/wiki_documentation.sh' "${plan}"
   if [[ "${file}" == scripts/build-command-docs.sh ]]; then
+    assert_line 'group=docs' "${plan}"
+    assert_line 'test=tests/command_catalog_contract.sh' "${plan}"
     assert_line 'syntax=scripts/build-command-docs.sh' "${plan}"
+  else
+    assert_line 'local_test_count=1' "${plan}"
   fi
   ! grep -q '^scenario=' <<<"${plan}"
   assert_no_planning_side_effects
 done
+plan=$(fixture_run --plan --changed-file docs/wiki/Command-Catalog.md)
+assert_line 'test=tests/command_catalog_contract.sh' "${plan}"
+plan=$(fixture_run --plan --changed-file docs/wiki/Agent-CLI.md)
+assert_line 'test=tests/agent_docs_cover_capabilities.sh' "${plan}"
+plan=$(fixture_run --plan --changed-file dev/verification/planner.sh)
+assert_line 'local_test_count=3' "${plan}"
+assert_line 'test=tests/verification_planner.sh' "${plan}"
+! grep -Fqx 'test=tests/verification_runtime_smoke_artifacts.sh' <<<"${plan}"
 
 plan=$(fixture_run --plan --changed-file bootstrap.sh)
 assert_line 'test=tests/bootstrap_download.sh' "${plan}"
@@ -286,6 +303,16 @@ assert_error_2 --plan --unknown-option
 assert_error_2 --plan --group no-such-planner-group
 assert_error_2 --plan --scenario no-such-planner-scenario
 assert_error_2 --plan --base "${BASE}" --changed-file README.md
+# Exact test selection rejects unsafe/unsupported paths before any execution.
+assert_error_2 --plan --test
+for file in ../tests/fixture_requested.sh /tmp/test.sh tests/../bootstrap.sh \
+  bootstrap.sh tests/absent.sh tests/menu_test_helper.sh \
+  tests/hy2_instance_acme_runtime.sh tests/agent_operations_runtime.sh; do
+  assert_error_2 --plan --test "${file}"
+done
+ln -s fixture_requested.sh "${FIXTURE}/tests/fixture_symlink.sh"
+assert_error_2 --plan --test tests/fixture_symlink.sh
+rm "${FIXTURE}/tests/fixture_symlink.sh"
 assert_no_planning_side_effects
 
 # A stale explicit manifest must fail rather than silently omit its required test.
@@ -314,10 +341,34 @@ assert_line 'syntax=scripts/build-install.sh' "${plan}"
 ! grep -Fqx 'test=tests/hy2_instance_acme_runtime.sh' <<<"${plan}"
 assert_no_planning_side_effects
 
-# A newly added standalone test must actually run exactly once, with no Docker.
-VERIFY_PLANNER_ALLOW_TESTS=1 fixture_run --changed-file tests/fixture_untracked.sh > "${TMP_DIR}/execution.stdout"
+# Exact selection retains all automatic diff checks and deduplicates requests.
+plan=$(fixture_run --plan --base "${BASE}" --test tests/fixture_requested.sh \
+  --test tests/fixture_requested.sh)
+for name in requested committed staged unstaged untracked; do
+  [[ $(grep -Fxc "test=tests/fixture_${name}.sh" <<<"${plan}") -eq 1 ]]
+done
+plan=$(fixture_run --plan --changed-file install.sh --test tests/fixture_requested.sh)
+assert_line 'test=tests/install_build_sync.sh' "${plan}"
+plan=$(fixture_run --plan --changed-file tests/hy2_instance_acme_runtime.sh --test tests/fixture_requested.sh)
+assert_line 'plan_status=needs_scope' "${plan}"
+assert_no_planning_side_effects
+
+# Both the exact request and the changed standalone test execute once, without Docker.
+VERIFY_PLANNER_ALLOW_TESTS=1 fixture_run --changed-file tests/fixture_untracked.sh \
+  --test tests/fixture_requested.sh --test tests/fixture_requested.sh > "${TMP_DIR}/execution.stdout"
 grep -Fqx 'selected' "${VERIFY_PLANNER_EXECUTION_LOG}"
-[[ $(wc -l < "${VERIFY_PLANNER_EXECUTION_LOG}") -eq 1 ]]
-[[ $(wc -l < "${VERIFY_PLANNER_TEST_LOG}") -eq 1 ]]
+grep -Fqx 'requested' "${VERIFY_PLANNER_EXECUTION_LOG}"
+[[ $(wc -l < "${VERIFY_PLANNER_EXECUTION_LOG}") -eq 2 ]]
+[[ $(wc -l < "${VERIFY_PLANNER_TEST_LOG}") -eq 2 ]]
+[[ ! -e "${VERIFY_PLANNER_DOCKER_LOG}" ]]
+
+# A stale generated artifact must still fail even for a single explicit test.
+printf '# source-only fixture edit\n' >> "${FIXTURE}/${SOURCE_MODULE}"
+if VERIFY_PLANNER_ALLOW_TESTS=1 fixture_run --changed-file "${SOURCE_MODULE}" \
+  --test tests/fixture_requested.sh > "${TMP_DIR}/stale.stdout" 2> "${TMP_DIR}/stale.stderr"; then
+  printf 'stale generated runtime unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -Fq 'local_test_failed=tests/install_build_sync.sh' "${TMP_DIR}/stale.stderr"
 [[ ! -e "${VERIFY_PLANNER_DOCKER_LOG}" ]]
 printf 'Verification planner regression checks passed\n'

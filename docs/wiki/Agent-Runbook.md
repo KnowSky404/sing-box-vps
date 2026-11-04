@@ -124,6 +124,15 @@ No production-changing commands will be executed until approved.
 
 ## Local Repository Workflow
 
+Prefer repeatable `--test tests/<name>.sh` with `--base origin/main` for exact
+standalone host checks. Automatic checks for the full branch difference remain
+selected; helpers, symlinks and container-only fixtures are rejected. Use a group
+only when its entire scope is needed, and select runtime scenarios separately.
+Ordinary documentation selects link checks; source/version edits select generated
+byte/syntax consistency; build-tool/manifest edits also select build fault tests.
+Planner/selection changes select the three planning contracts rather than the
+large transport/artifact mocks. See [Development](https://github.com/KnowSky404/sing-box-vps/wiki/Development#调度器命令与计划).
+
 For code or script changes:
 
 1. Inspect the current repository state with `git status --short`.
@@ -131,7 +140,7 @@ For code or script changes:
 3. Keep edits scoped to the task. For each added or changed operation, update its noninteractive command, embedded operation descriptor, focused tests, generated command reference and affected runbooks/Agent navigation together. Build `install.sh`, then run `bash scripts/build-command-docs.sh`; check both builds with `--check` and run `tests/command_catalog_contract.sh`. Document any retained interactive-only limitation and reason in the SPEC and catalog; do not automate prompt answers.
 4. Select the smallest sufficient verification set using [AGENTS.md](https://github.com/KnowSky404/sing-box-vps/blob/main/AGENTS.md), section 4.2, and explain the actual behavioral impact. Documentation, version-display and menu-only edits do not require broad regression because of their file path. Configuration changes require `sing-box check` on affected outputs; service, network and lifecycle changes require corresponding real Docker scenarios.
 5. Run changed standalone tests and callers of changed helpers. Include Bootstrap download/validation tests when affected. Full regression is required for core-version adaptation or config/state migrations, broadly affected shared logic or uncertain impact, or an explicit full-test/release-acceptance requirement. Reuse prior passing results only under section 4.2's unchanged-input conditions, with the original evidence and reason recorded; after fixes, rerun failed and affected checks.
-6. Preview the dispatcher with `bash dev/verification/run.sh --plan --base origin/main`. Use explicit local `--group` and Docker `--scenario` selections for unmapped runtime changes, or request the registered full set with `--full`. Review their scope under section 4.2; groups do not automatically request runtime coverage. The planner supplies scenario baselines and final smoke. Base mode includes committed and working-tree changes; the default without `--base` only sees working-tree differences against HEAD. `VERIFY_SKIP_REMOTE=1` only skips Docker and does not prove runtime validation.
+6. Preview the dispatcher with `bash dev/verification/run.sh --plan --base origin/main`. Use explicit local `--test`/`--group` and Docker `--scenario` selections for unmapped runtime changes, or request the registered full set with `--full`. Review their scope under section 4.2; groups do not automatically request runtime coverage. The planner supplies scenario baselines and final smoke. Base mode includes committed and working-tree changes; the default without `--base` only sees working-tree differences against HEAD. `VERIFY_SKIP_REMOTE=1` only skips Docker and does not prove runtime validation.
 7. For code or script changes, update `SCRIPT_VERSION` and the README version once per conversation turn as required by AGENTS.md.
 8. Commit atomically with a conventional commit message after verification and follow the worktree/PR review and merge workflow.
 
@@ -151,7 +160,7 @@ Preview the complete task-branch difference before selecting tests:
 bash dev/verification/run.sh --plan --base origin/main
 ```
 
-The planner maps documentation, version metadata, Bootstrap and changed standalone tests; unmapped runtime changes require an explicit local `--group`, Docker `--scenario`, or `--full` selection under section 4.2. Groups do not request Docker by themselves. Review the plan, then remove `--plan` to execute the same selection, or run the necessary tests directly. See [Development](https://github.com/KnowSky404/sing-box-vps/wiki/Development#调度器命令与计划) for scope and prerequisites. Execution writes artifacts under the run directory printed as `run_dir=...`; preserve the actual scope and results. A successful exit does not establish full regression, public reachability, real external-provider behavior or production acceptance.
+The planner maps documentation, version metadata, Bootstrap and changed standalone tests; unmapped runtime changes require an explicit local `--test`, `--group`, Docker `--scenario`, or `--full` selection under section 4.2. Groups do not request Docker by themselves. Review the plan, then remove `--plan` to execute the same selection, or run the necessary tests directly. See [Development](https://github.com/KnowSky404/sing-box-vps/wiki/Development#调度器命令与计划) for scope and prerequisites. Execution writes artifacts under the run directory printed as `run_dir=...`; preserve the actual scope and results. A successful exit does not establish full regression, public reachability, real external-provider behavior or production acceptance.
 
 When remote validation fails:
 
