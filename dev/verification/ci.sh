@@ -61,7 +61,7 @@ main() {
   bash scripts/build-install.sh --check
   bash scripts/build-command-docs.sh --check
   printf 'CI proof boundary: host tests only; Docker scenarios are not executed.\n'
-  VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh --base "${base}" "${selectors[@]}"
+  VERIFY_SKIP_LOCAL_TESTS=0 VERIFY_SKIP_REMOTE=1 bash dev/verification/run.sh --base "${base}" "${selectors[@]}"
 }
 
 main "$@"

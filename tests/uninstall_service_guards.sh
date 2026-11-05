@@ -54,6 +54,21 @@ for STOP_MODE_CASE in fail noop unavailable disable-fail; do
 done
 
 reset_fixture
+systemctl_function=$(declare -f systemctl)
+systemctl() {
+  if [[ "$1" == stop ]]; then kill -TERM "${BASHPID}"; return 143; fi
+  return 99
+}
+uninstall_exit=0
+perform_singbox_runtime_uninstall > "${TMP_DIR}/interrupted" 2>&1 || uninstall_exit=$?
+[[ "${uninstall_exit}" == 143 && -f "${SINGBOX_CONFIG_FILE}" && -f "${SINGBOX_BIN_PATH}" ]]
+grep -q '卸载已中断' "${TMP_DIR}/interrupted" || {
+  printf 'uninstall interruption did not report the uncertain final state\n' >&2
+  exit 1
+}
+eval "${systemctl_function}"
+
+reset_fixture
 printf 'invalid-ledger' > "${INSTANCE_FIREWALL_LEDGER_FILE}"
 chmod 600 "${INSTANCE_FIREWALL_LEDGER_FILE}"
 if perform_singbox_runtime_uninstall > "${TMP_DIR}/output" 2>&1; then exit 1; fi

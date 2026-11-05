@@ -28,6 +28,7 @@ verification_parse_options "$@"
 verification_build_plan
 verification_print_plan > "${CI_SCOPE_EXECUTION_LOG}"
 printf 'skip_remote=%s\n' "${VERIFY_SKIP_REMOTE:-0}" >> "${CI_SCOPE_EXECUTION_LOG}"
+printf 'skip_local=%s\n' "${VERIFY_SKIP_LOCAL_TESTS:-0}" >> "${CI_SCOPE_EXECUTION_LOG}"
 RUNNER
 git -C "${FIXTURE}" init -q
 git -C "${FIXTURE}" config user.name 'CI fixture'
@@ -36,6 +37,7 @@ git -C "${FIXTURE}" add .
 git -C "${FIXTURE}" commit -qm baseline
 BASE=$(git -C "${FIXTURE}" rev-parse HEAD)
 export CI_SCOPE_EXECUTION_LOG="${TMP_DIR}/executed-plan"
+export VERIFY_SKIP_LOCAL_TESTS=1
 run_ci() { bash "${FIXTURE}/dev/verification/ci.sh" "${BASE}" > "${TMP_DIR}/output" 2>&1; }
 assert_rejected() {
   rm -f "${CI_SCOPE_EXECUTION_LOG}"
@@ -49,6 +51,7 @@ run_ci || { cat "${TMP_DIR}/output" >&2; exit 1; }
 grep -Fxq 'test=tests/fixture_changed.sh' "${CI_SCOPE_EXECUTION_LOG}"
 grep -Fxq 'test=tests/wiki_documentation.sh' "${CI_SCOPE_EXECUTION_LOG}"
 grep -Fxq skip_remote=1 "${CI_SCOPE_EXECUTION_LOG}"
+grep -Fxq skip_local=0 "${CI_SCOPE_EXECUTION_LOG}"
 
 printf ': runtime-change\n' >> "${FIXTURE}/install.sh"
 assert_rejected

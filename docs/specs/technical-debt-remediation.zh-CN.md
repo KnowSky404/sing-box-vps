@@ -81,7 +81,7 @@ CI 只执行宿主检查，选中的 Docker 场景明确记录未执行，绿色
   `dev/verification-runs/20261105045921/local-tests/results.tsv`。后来增加的
   补偿失败日志保留、dispatcher 范围断言分别通过对应单项重测；文档检查更新。
   受测内容与依赖未变的其他结果复用。
-- Docker `dev/verification-runs/20261105050314` 退出 0，
+- 最终 Docker `dev/verification-runs/20261105051913` 退出 0，
   `fresh_install_socks`、`lifecycle_safety`、`runtime_smoke` 三项均成功。
   真实 systemd、菜单/CLI 保护、IPv4/IPv6 归属规则清理、无关规则保留、
   重装及最终代理 smoke 通过；fixture 配置经 `sing-box check`。
@@ -93,6 +93,10 @@ CI 只执行宿主检查，选中的 Docker 场景明确记录未执行，绿色
   响应全局字段及不确定写入；未执行真实请求或生产操作。
 - CI 保留原契约门禁，追加差异选测并上传计划/日志/耗时；Docker 明确 skipped，
   不能作为运行态通过证据。
-- 受测生成安装器 SHA-256：`082613f520ec7cdb84f95a724f49a7094be1f2c0184ce0ebb2901c52c4447af5`。
+- 后续独立复核复现并修正 CI 继承 `VERIFY_SKIP_LOCAL_TESTS=1` 可跳过检查、
+  卸载中断提示被 stderr 重定向吞掉的问题；加强防火墙快照失败校验。
+  7 项受影响宿主用例（55 秒）及上述最终三项 Docker 重新通过。
+  其他未改变的业务函数和测试复用首轮结果；不追加无关全量。
+- 受测生成安装器 SHA-256：`80eef907e07b1f6419ef8e0704606d5a17291681583cb9c97efa6204e8f8d39e`。
 - 当前 head 本地审查、PR/远程审查/合并及 Wiki 发布在实施 PR 单独记录，
   不能从上述测试结果推断。

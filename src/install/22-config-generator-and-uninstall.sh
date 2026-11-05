@@ -488,7 +488,7 @@ managed_uninstall_acquire_guard() {
 
 managed_uninstall_stop_service() {
   local stop_status=0 load_state
-  if systemctl stop sing-box >/dev/null 2>&1; then
+  if systemctl stop sing-box >/dev/null; then
     singbox_service_confirmed_stopped || return 1
   else
     stop_status=$?
@@ -499,7 +499,7 @@ managed_uninstall_stop_service() {
     managed_uninstall_report_error "停止服务失败（状态 ${stop_status}）；未删除运行文件，请检查服务后重试。"
     return "${stop_status}"
   fi
-  if ! systemctl disable sing-box >/dev/null 2>&1; then
+  if ! systemctl disable sing-box >/dev/null; then
     managed_uninstall_report_error '服务已停止，但禁用失败；运行文件和恢复材料已保留。'
     return 1
   fi
@@ -511,6 +511,10 @@ perform_singbox_runtime_uninstall() (
   local ledger workspace='' keep_workspace=n firewall_journal=''
 
   uninstall_cleanup() {
+    local uninstall_exit=$?
+    if [[ "${uninstall_exit}" == 130 || "${uninstall_exit}" == 143 || "${uninstall_exit}" == 129 ]]; then
+      managed_uninstall_report_error '卸载已中断；服务、主机规则或运行文件可能已部分变更，请保留恢复材料并检查最终状态，不要假设已回滚。'
+    fi
     if [[ -n "${workspace}" ]]; then
       if [[ "${keep_workspace}" == y ]]; then
         managed_uninstall_report_error "卸载未完成；服务已停止，受管资源可能已部分清理，防火墙恢复日志保留在 ${workspace}。"

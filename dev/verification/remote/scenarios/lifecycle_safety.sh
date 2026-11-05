@@ -79,8 +79,10 @@ STOP_FAILURE
   [[ ! -e "${config}" && ! -e /usr/local/bin/sbv && ! -e /usr/local/bin/sing-box ]]
   [[ "$(systemctl show sing-box --property=ActiveState --value)" == inactive ]]
   iptables -C INPUT -p tcp --dport 39997 -j ACCEPT
-  if iptables-save | grep sbv-instance- >/dev/null; then return 1; fi
-  if ip6tables-save | grep sbv-instance- >/dev/null; then return 1; fi
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/iptables-after-uninstall.txt" iptables-save || return 1
+  verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/ip6tables-after-uninstall.txt" ip6tables-save || return 1
+  if grep -q sbv-instance- "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/iptables-after-uninstall.txt")"; then return 1; fi
+  if grep -q sbv-instance- "$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/ip6tables-after-uninstall.txt")"; then return 1; fi
   iptables -D INPUT -p tcp --dport 39997 -j ACCEPT
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/uninstall-inactive.txt" \
     systemctl show sing-box --property=ActiveState --value
