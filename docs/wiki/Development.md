@@ -140,6 +140,25 @@ bash dev/verification/run.sh --plan --base origin/main
 
 验证调度器在根安装器或源码模块变化时选择生成同步检查，构建器/清单变化才追加构建器隔离回归。源码改变但遗漏重新生成会失败；生成文件存在实际运行逻辑差异时，仍需按第 4.2 节明确选择受影响测试和必要 Docker 场景，不因拆分源码自动全量。首次纯拆分以归一化版本后的字节等价确认运行代码未变，再验证构建、入口、自更新、菜单、文档和调度兼容性；这不代表新取得协议、公网或生产验收。
 
+## REALITY 地区候选的开发门槛
+
+地区文案统一为“国家或地区-城市”（例如 `美国-洛杉矶`、`韩国-首尔`），地区 ID 和菜单编号保持稳定。候选池每区最多 5 个，不要求为类别或数量补入不合格域名。修改 `SB_REALITY_REGION_CANDIDATES` 后，必须从开发网络实际运行固定版本 checker；机构官网来源或菜单 mock 不能代替公网 TLS 证据。
+
+准备 Bash >= 4.3、curl、OpenSSL、dig、jq 和 GNU coreutils；此开发工具无需 root，不安装依赖、不操作 sing-box 服务或配置。输出目录必须尚不存在；脚本验证 checker 的固定 commit、SHA-256 和语法后，逐域名执行与安装路径相同的 `check <domain> --json --timeout 3`，每域名总时限 90 秒，检查完整 DNS A/AAAA 集合。全部端点的 TCP 443、TLS 1.3、证书链/SAN/有效期、h2、X25519 必须 PASS，任何基础 FAIL/UNKNOWN、不完整报告或超时均使脚本非零退出。
+
+```bash
+candidate_report_dir="/tmp/sbv-reality-candidates-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+bash scripts/check-reality-region-candidates.sh "$candidate_report_dir" &&
+  cp "$candidate_report_dir/summary.json" docs/verification/reality-region-candidates.json &&
+  bash tests/reality_region_candidate_evidence.sh
+bash tests/reality_region_candidate_evidence_contract.sh
+bash tests/reality_region_candidates.sh
+```
+
+`summary.json` 保留逐域名观测时间、完整原报告 SHA-256、checker 身份、端点检查和附加风险的投影；原始 JSON/stderr 留在输出目录。仓库中的[证据快照](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/verification/reality-region-candidates.json)只证明记录时间的开发网络观测，没有未来可用性承诺。`WARN` 表示基础 TLS/兼容性已通过但仍有附加风险或未知项，必须保留，不得改写成总状态 PASS；收录不表示用户接受风险，安装时仍重新检测且默认拒绝附加风险。
+
+CI 使用离线证据检查，核对候选身份和 checker 固定版本，并复用安装器的报告校验函数；新增、替换或变更 checker 后缺少相符证据会失败。这里不自动发起公网检查，也不将已提交快照作为安装许可。2026-11-05 的 23 个候选均通过基础门槛、总状态均为 WARN；首尔原 KB国民银行、新韩银行未取得充分握手证据，首尔市政府、延世大学未协商 h2，均已移出当前列表。真实 REALITY 握手和生产验收仍是独立边界。
+
 ## 文档维护与 Wiki 发布
 
 `docs/wiki/*.md` 是 Wiki 的维护源。README 只保留项目简介、版本、主要能力、文档导航和许可证；安装命令、操作步骤、协议契约及验证边界写入对应 Wiki 页面。`AGENTS.md` 和 Operator Skill 保留自动化约束，`docs/agents/llms.txt` 只提供索引。历史计划、设计稿和提示词流水可通过 Git 历史查询，不再作为当前操作手册维护。

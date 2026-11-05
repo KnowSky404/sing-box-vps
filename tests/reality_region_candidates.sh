@@ -18,16 +18,16 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
 expected_domains() {
   case "$1" in
-    HK) printf '%s\n' www.bochk.com www.hkbea.com www.gov.hk www.hku.hk www.cuhk.edu.hk ;;
+    HK) printf '%s\n' www.hsbc.com.hk www.hkbea.com www.gov.hk www.hku.hk www.cityu.edu.hk ;;
     US-LAX) printf '%s\n' www.cnb.com www.preferredbank.com lacity.gov www.ucla.edu www.usc.edu ;;
-    DE-FRA) printf '%s\n' www.frankfurter-sparkasse.de www.frankfurter-volksbank.de frankfurt.de www.uni-frankfurt.de www.frankfurt-university.de ;;
-    JP-TYO) printf '%s\n' www.smbc.co.jp www.mizuhobank.co.jp www.metro.tokyo.lg.jp www.u-tokyo.ac.jp www.waseda.jp ;;
-    KR-SEL) printf '%s\n' www.kbstar.com www.shinhan.com www.seoul.go.kr www.snu.ac.kr www.yonsei.ac.kr ;;
+    DE-FRA) printf '%s\n' www.db.com www.frankfurter-volksbank.de frankfurt.de www.uni-frankfurt.de www.frankfurt-school.de ;;
+    JP-TYO) printf '%s\n' www.smbctb.co.jp www.sbishinseibank.co.jp www.metro.tokyo.lg.jp www.keio.ac.jp www.waseda.jp ;;
+    KR-SEL) printf '%s\n' www.sc.co.kr www.snu.ac.kr www.hanyang.ac.kr ;;
     *) return 1 ;;
   esac
 }
 
-[[ ${#SB_REALITY_REGION_CANDIDATES[@]} == 25 ]] || fail 'expected five bounded five-domain pools'
+[[ ${#SB_REALITY_REGION_CANDIDATES[@]} == 23 ]] || fail 'expected only checker-eligible regional candidates'
 for region in HK US-LAX DE-FRA JP-TYO KR-SEL; do
   records=$(reality_region_candidate_records "${region}") || fail "missing regional pool: ${region}"
   actual_domains=''
@@ -47,9 +47,17 @@ for region in HK US-LAX DE-FRA JP-TYO KR-SEL; do
     record_count=$((record_count + 1))
     actual_domains+="${domain}"$'\n'
   done <<< "${records}"
-  [[ "${record_count}" == 5 && "${bank_count}" == 2 && "${government_count}" == 1 && "${university_count}" == 2 ]] || fail "unbounded or incomplete category coverage: ${region}"
+  expected_count=5
+  expected_banks=2
+  expected_government=1
+  if [[ "${region}" == KR-SEL ]]; then
+    expected_count=3
+    expected_banks=1
+    expected_government=0
+  fi
+  [[ "${record_count}" == "${expected_count}" && "${bank_count}" == "${expected_banks}" && "${government_count}" == "${expected_government}" && "${university_count}" == 2 ]] || fail "unbounded or incorrect category coverage: ${region}"
   [[ "${actual_domains%$'\n'}" == "$(expected_domains "${region}")" ]] || fail "regional domain identity/order mismatch: ${region}"
-  [[ "$(printf '%s' "${actual_domains}" | sort -u | wc -l)" == 5 ]] || fail "duplicate preset domain: ${region}"
+  [[ "$(printf '%s' "${actual_domains}" | sort -u | wc -l)" == "${expected_count}" ]] || fail "duplicate preset domain: ${region}"
 done
 for unknown in '' hk US DE JP KR kr-sel UNKNOWN 'HK US-LAX' 'HK;false'; do
   returned=''
@@ -74,7 +82,8 @@ for region in HK US-LAX DE-FRA JP-TYO KR-SEL; do
   SB_SNI=unchanged.example.test
   prompt_reality_region_candidates <<< "${region_choice}" > "${TMP_DIR}/region-output" || fail "region prompt failed: ${region}"
   [[ "$(cat "${TMP_DIR}/checker-candidates")" == "$(expected_domains "${region}")" ]] || fail "wrong checker arguments: ${region}"
-  [[ "$(cat "${TMP_DIR}/checker-count")" == 5 ]] || fail 'regional prompt bypassed the five-candidate budget'
+  expected_count=$(expected_domains "${region}" | wc -l)
+  [[ "$(cat "${TMP_DIR}/checker-count")" == "${expected_count}" ]] || fail 'regional prompt padded or truncated the verified candidate pool'
   [[ "${SB_SNI}" == "$(expected_domains "${region}" | tail -1)" ]] || fail 'region prompt did not adopt the checker-selected SNI'
   records=$(reality_region_candidate_records "${region}")
   while IFS='|' read -r record_region category institution domain; do
@@ -82,7 +91,9 @@ for region in HK US-LAX DE-FRA JP-TYO KR-SEL; do
     grep -Fq -- "${institution}" "${TMP_DIR}/region-output" || fail 'preview omitted an institution identity'
   done <<< "${records}"
   grep -Fq CDN "${TMP_DIR}/region-output" || fail 'regional preview omitted the hosting-location caveat'
-  grep -Fq '5. KR-SEL 韩国首尔' "${TMP_DIR}/region-output" || fail 'regional menu omitted Seoul option 5'
+  for label in '1. HK 中国-香港' '2. US-LAX 美国-洛杉矶' '3. DE-FRA 德国-法兰克福' '4. JP-TYO 日本-东京' '5. KR-SEL 韩国-首尔'; do
+    grep -Fxq "${label}" "${TMP_DIR}/region-output" || fail "inconsistent regional label: ${label}"
+  done
 done
 
 for input in '' 0 $'9\n0'; do
@@ -115,13 +126,13 @@ done
 CHECKER_STATUS=0
 SB_SNI=unchanged.example.test
 prompt_reality_sni_install <<< $'4\n1' > "${TMP_DIR}/menu-output"
-[[ "${SB_SNI}" == www.cuhk.edu.hk ]] || fail 'installation SNI menu did not route to HK candidates'
+[[ "${SB_SNI}" == www.cityu.edu.hk ]] || fail 'installation SNI menu did not route to HK candidates'
 SB_SNI=unchanged.example.test
 prompt_reality_sni_update <<< $'5\n2' > "${TMP_DIR}/menu-output"
 [[ "${SB_SNI}" == www.usc.edu ]] || fail 'update SNI menu did not route to US-LAX candidates'
 SB_SNI=unchanged.example.test
 prompt_reality_sni_for_new_instance existing.example.test <<< $'5\n3' > "${TMP_DIR}/menu-output"
-[[ "${SB_SNI}" == www.frankfurt-university.de ]] || fail 'new-instance SNI menu did not route to DE-FRA candidates'
+[[ "${SB_SNI}" == www.frankfurt-school.de ]] || fail 'new-instance SNI menu did not route to DE-FRA candidates'
 
 # Seoul is available from every existing regional entry, including an empty
 # new-instance default that delegates to the installation SNI menu.
@@ -133,7 +144,7 @@ for menu in install update new_instance empty_new_instance; do
     new_instance) prompt_reality_sni_for_new_instance existing.example.test <<< $'5\n5' > "${TMP_DIR}/menu-output" ;;
     empty_new_instance) prompt_reality_sni_for_new_instance '' <<< $'4\n5' > "${TMP_DIR}/menu-output" ;;
   esac
-  [[ "${SB_SNI}" == www.yonsei.ac.kr ]] || fail "${menu} did not adopt the checker-selected Seoul candidate"
+  [[ "${SB_SNI}" == www.hanyang.ac.kr ]] || fail "${menu} did not adopt the checker-selected Seoul candidate"
   [[ "$(cat "${TMP_DIR}/checker-candidates")" == "$(expected_domains KR-SEL)" ]] || fail "${menu} passed incorrect Seoul candidates"
 done
 

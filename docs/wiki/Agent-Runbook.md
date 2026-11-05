@@ -356,6 +356,17 @@ read `--expected-revision` from the same state snapshot before a write.
 except `vless-reality`; only `mixed` supports `migrate`. `view` and `diagnose`
 are redacted reads, while `export` and component export are sensitive.
 
+REALITY regional SNI seeds have development-time public DNS/TLS evidence in
+`docs/verification/reality-region-candidates.json`; refresh it with
+`bash scripts/check-reality-region-candidates.sh NEW_OUTPUT_DIRECTORY` whenever
+changing the candidates or pinned checker. Require complete DNS endpoint coverage
+and passing basic TLS/compatibility checks; preserve ancillary WARN/unknown risks.
+The current pools contain 5/5/5/5/3 seeds for HK/US-LAX/DE-FRA/JP-TYO/KR-SEL.
+Development eligibility does not accept warnings for the user or bypass the fresh
+installation-time checker. REALITY writes remain catalogued as interactive-only;
+do not synthesize prompt answers. See [Getting Started](https://github.com/KnowSky404/sing-box-vps/wiki/Getting-Started#内置地区候选)
+and [Development](https://github.com/KnowSky404/sing-box-vps/wiki/Development#reality-地区候选的开发门槛).
+
 - `status --json` is safe for routine diagnostics. It reports script/core/service/path/protocol state plus inbound/outbound stack modes, BBR, REALITY instance/QoS counts, and whether SubMan is configured; it does not return credentials.
 - `capabilities --json` is read-only and returns the supported protocol/feature matrix plus safety labels. `upgrade-check --json 1.14.0` is read-only and must precede an upgrade; require `ready=true` and `blockers=[]`. Its `target_binary_validation.performed=false` means target validation is deferred to the guarded apply transaction, not that compatibility was already proven.
 - `nodes --json` is safe for ordinary logs. It reports every protocol and every REALITY/Mixed/SOCKS/HTTP/Shadowsocks/Trojan/VMess/Hysteria2/Hysteria v1/AnyTLS/Snell/TUIC/NaiveProxy/ShadowTLS instance, including names, ports, instance revisions, server names, rate limits, outbound policy, and shareability without UUIDs, keys, full share links, or passwords. For Shadowsocks, VMess, Hysteria2, Hysteria v1, AnyTLS, Snell, TUIC, NaiveProxy, and ShadowTLS, authentication/network-specific summaries expose only bounded metadata; server PSKs, UUIDs, `auth_str`, AnyTLS passwords, Snell PSKs/user keys, TUIC UUIDs, Naive usernames/passwords, ShadowTLS passwords, and user passwords never appear.

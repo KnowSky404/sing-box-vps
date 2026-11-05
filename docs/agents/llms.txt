@@ -13,7 +13,7 @@ Documentation sources (also available offline):
 - docs/wiki/Home.md: navigation.
 - docs/wiki/Management.md: server network menu, draft application/recovery and node-sharing scope.
 - docs/wiki/Storage-Layout.md: unified private root, legacy storage status/migrate/recover and service/backup boundaries.
-- docs/wiki/Getting-Started.md: staged installation and uninstallation.
+- docs/wiki/Getting-Started.md: staged installation/uninstallation and country-city REALITY candidates with development checker evidence; always recheck from the installing VPS.
 - docs/wiki/Command-Catalog.md: generated operation reference, exact usage, safety boundaries and explicit interactive-only limitations.
 - docs/wiki/Agent-CLI.md: commands, confirmation, revision/CAS and sensitive output.
 - docs/wiki/Agent-Runbook.md: operations, upgrade, troubleshooting and recovery.
@@ -22,7 +22,7 @@ Documentation sources (also available offline):
 - docs/wiki/Protocol-Coverage.md: implementation and evidence boundaries.
 - docs/wiki/HY2-ACME.md: automatic certificates and focused verification.
 - docs/wiki/Upgrade-Rehearsal.md: fixed-version upgrade rehearsal.
-- docs/wiki/Development.md: contribution, atomic --test selection with full --base diff checks, runtime scope and Wiki publication.
+- docs/wiki/Development.md: contribution, atomic --test selection with full --base diff checks, runtime scope, REALITY candidate public-checker/evidence gate and Wiki publication.
 - docs/specs/README.md: implementation contracts, completion evidence and outstanding acceptance boundaries.
 - docs/specs/scoped-docker-verification.md: complete outbound/policy decomposition, 13 protocol_probe_* leaves, Naive/Snell transitions and protocol_coexistence; fresh SOCKS/CAS/owned-fixture prerequisites, explicit REALITY/Tor external boundaries, original 17-scenario full compatibility, Stage 1 history and the accepted 32 independent real-Docker scenes plus aggregate compatibility (33/33), with timing boundaries distinguishing internal installations from separately scheduled baselines (Chinese counterpart: docs/specs/scoped-docker-verification.zh-CN.md).
 

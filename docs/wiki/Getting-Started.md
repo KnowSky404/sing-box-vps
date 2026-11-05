@@ -20,39 +20,41 @@ bash -c 'set -euo pipefail; umask 077; [[ $EUID -eq 0 ]]; h=$(getent passwd 0 | 
 
 ### 内置地区候选
 
-选择内置地区候选后，子菜单提供 `1. HK`、`2. US-LAX`、`3. DE-FRA`、`4. JP-TYO`、`5. KR-SEL 韩国首尔`，默认 `0` 取消。每区共 5 个域名，覆盖银行、政府和学校官网，按下表顺序交给现有 DNS checker，选择首个通过检查且获接受的域名。基础条件返回 FAIL/UNKNOWN 时跳过；WARN 仍须明确确认，默认拒绝。全部失败、拒绝或取消时不选用固定域名，已有 SNI 保持不变。
+选择内置地区候选后，子菜单提供 `1. HK 中国-香港`、`2. US-LAX 美国-洛杉矶`、`3. DE-FRA 德国-法兰克福`、`4. JP-TYO 日本-东京`、`5. KR-SEL 韩国-首尔`，默认 `0` 取消。每区最多 5 个域名，覆盖已验证的银行、政府或学校官网；当前前四区各 5 个，首尔 3 个，共 23 个，按下表顺序交给现有 DNS checker，选择首个通过检查且获接受的域名。基础条件返回 FAIL/UNKNOWN 时跳过；WARN 仍须明确确认，默认拒绝。全部失败、拒绝或取消时不选用固定域名，已有 SNI 保持不变。
 
 地区标签按机构所在地归类；站点可能使用 CDN 或其他地区的托管服务，因此标签不保证连接 IP、ASN、机房或延迟属于该地区。官方身份与学校、银行、政府类别不能证明 REALITY 适用性，也不能代替从实际 VPS 网络运行 checker。此入口只检测域名，不扫描网段、不查询 ASN，也不需要 Python。
 
-以下官方来源用于核实机构身份与所在地；原四区候选于 2026-10-30 核对，KR-SEL 韩国首尔候选于 2026-11-04 核对。表中域名不表示已经通过公网 checker 验收。
+当前列表于 **2026-11-05** 从开发 VPS 的真实公网 DNS/TLS 网络复核，23 个域名的完整 A/AAAA 端点均通过基础 TLS 与兼容性检查。checker 的总状态均为 **WARN**（附加 ASN/CDN、重定向等风险或未知项），不是无风险的 PASS；安装时仍重新检测并逐项要求确认，默认拒绝。开发结果不能证明用户 VPS、真实 REALITY 认证转发或未来可用性。
+
+候选维护必须运行[开发校验脚本](https://github.com/KnowSky404/sing-box-vps/blob/main/scripts/check-reality-region-candidates.sh)，保留真实报告并更新[校验证据](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/verification/reality-region-candidates.json)；CI 离线核对每个域名、固定 checker 版本及端点检查，新增域名没有对应合格证据时拒绝通过。失败、UNKNOWN、超时或 DNS 集合不完整的候选不收录，也不为补足数量保留。首尔原银行和政府候选未满足条件，因此当前仅保留渣打银行韩国、首尔大学、汉阳大学。
+
+以下官方来源用于核实机构身份与所在地，不能代替 checker 证据：
 
 | 地区 | 类别 | 机构 | 候选域名 | 官方来源 |
 | --- | --- | --- | --- | --- |
-| HK | 银行 | 中银香港（BOCHK） | `www.bochk.com` | [联系地址](https://www.bochk.com/en/aboutus/ir/contact.html) |
-| HK | 银行 | 东亚银行（BEA） | `www.hkbea.com` | [公司简介](https://www.hkbea.com/html/en/bea-about-bea-company-profile.html) |
-| HK | 政府 | GovHK 香港政府一站通 | `www.gov.hk` | [政府对 GovHK 的介绍](https://www.digitalpolicy.gov.hk/en/our_work/data_governance/common_data_platforms/govhk/) |
-| HK | 学校 | 香港大学 | `www.hku.hk` | [联系资料](https://www.hku.hk/en/contact-us) |
-| HK | 学校 | 香港中文大学 | `www.cuhk.edu.hk` | [联系资料](https://www.cuhk.edu.hk/english/contact.html) |
-| US-LAX | 银行 | City National Bank | `www.cnb.com` | [官方新闻：洛杉矶总部](https://www.cnb.com/about-us/media/press-releases/2025/la-galaxy-soccer-jersey-partnership-founding-sports-park.html) |
-| US-LAX | 银行 | Preferred Bank | `www.preferredbank.com` | [银行历史与总部](https://www.preferredbank.com/about-us/our-history) |
-| US-LAX | 政府 | City of Los Angeles | `lacity.gov` | [洛杉矶市政府官网](https://lacity.gov/) |
-| US-LAX | 学校 | University of California, Los Angeles（UCLA） | `www.ucla.edu` | [学校介绍](https://www.ucla.edu/about) |
-| US-LAX | 学校 | University of Southern California（USC） | `www.usc.edu` | [学校联系地址](https://arr.usc.edu/contact-us/) |
-| DE-FRA | 银行 | Frankfurter Sparkasse | `www.frankfurter-sparkasse.de` | [机构与地址](https://www.frankfurter-sparkasse.de/de/home/toolbar/impressum.html) |
-| DE-FRA | 银行 | Frankfurter Volksbank Rhein/Main | `www.frankfurter-volksbank.de` | [机构与地址](https://www.frankfurter-volksbank.de/rechtliches/impressum.html) |
-| DE-FRA | 政府 | Stadt Frankfurt am Main | `frankfurt.de` | [法兰克福市政府官网](https://frankfurt.de/) |
-| DE-FRA | 学校 | Goethe University Frankfurt | `www.uni-frankfurt.de` | [学校与地址](https://www.uni-frankfurt.de/de/impressum) |
-| DE-FRA | 学校 | Frankfurt University of Applied Sciences | `www.frankfurt-university.de` | [校区位置与地址](https://www.frankfurt-university.de/de/hochschule/lageplan-und-anfahrt/) |
-| JP-TYO | 银行 | 三井住友银行（SMBC） | `www.smbc.co.jp` | [银行简介与总部](https://www.smbc.co.jp/global/aboutus/profile/company.html) |
-| JP-TYO | 银行 | 瑞穗银行（Mizuho Bank） | `www.mizuhobank.co.jp` | [银行简介与总部](https://www.mizuhobank.co.jp/company/info/profile/index.html) |
-| JP-TYO | 政府 | 东京都政府 | `www.metro.tokyo.lg.jp` | [东京都政府官网](https://www.metro.tokyo.lg.jp/) |
-| JP-TYO | 学校 | 东京大学 | `www.u-tokyo.ac.jp` | [校区位置](https://www.u-tokyo.ac.jp/en/about/access.html) |
-| JP-TYO | 学校 | 早稻田大学 | `www.waseda.jp` | [校区位置](https://www.waseda.jp/top/en/access) |
-| KR-SEL | 银行 | KB国民银行 | `www.kbstar.com` | [银行总部地址](https://omoney.kbstar.com/quics?page=C021241) |
-| KR-SEL | 银行 | 新韩银行 | `www.shinhan.com` | [韩国金融研修院成员名录与地址](https://www.kbi.or.kr/platformWeb/engkbi.do?cmd=about&sub=13) |
-| KR-SEL | 政府 | 首尔特别市政府 | `www.seoul.go.kr` | [首尔市政府官网与地址](https://www.seoul.go.kr/main/indexM.jsp) |
-| KR-SEL | 学校 | 首尔大学 | `www.snu.ac.kr` | [观岳校区地址](https://en.snu.ac.kr/about/campus/gwanak/address) |
-| KR-SEL | 学校 | 延世大学 | `www.yonsei.ac.kr` | [新村校区指南与地址](https://www.yonsei.ac.kr/sc/242/subview.do) |
+| HK 中国-香港 | 银行 | 汇丰香港 | `www.hsbc.com.hk` | [香港总行地址](https://www.hsbc.com.hk/branch-list/hong-kong-office/) |
+| HK 中国-香港 | 银行 | 东亚银行（BEA） | `www.hkbea.com` | [公司简介](https://www.hkbea.com/html/en/bea-about-bea-company-profile.html) |
+| HK 中国-香港 | 政府 | GovHK 香港政府一站通 | `www.gov.hk` | [政府对 GovHK 的介绍](https://www.digitalpolicy.gov.hk/en/our_work/data_governance/common_data_platforms/govhk/) |
+| HK 中国-香港 | 学校 | 香港大学 | `www.hku.hk` | [联系资料](https://www.hku.hk/en/contact-us) |
+| HK 中国-香港 | 学校 | 香港城市大学 | `www.cityu.edu.hk` | [联系资料](https://www.cityu.edu.hk/directories/contact) |
+| US-LAX 美国-洛杉矶 | 银行 | City National Bank | `www.cnb.com` | [官方新闻：洛杉矶总部](https://www.cnb.com/about-us/media/press-releases/2025/la-galaxy-soccer-jersey-partnership-founding-sports-park.html) |
+| US-LAX 美国-洛杉矶 | 银行 | Preferred Bank | `www.preferredbank.com` | [银行历史与总部](https://www.preferredbank.com/about-us/our-history) |
+| US-LAX 美国-洛杉矶 | 政府 | City of Los Angeles | `lacity.gov` | [洛杉矶市政府官网](https://lacity.gov/) |
+| US-LAX 美国-洛杉矶 | 学校 | University of California, Los Angeles（UCLA） | `www.ucla.edu` | [学校介绍](https://www.ucla.edu/about) |
+| US-LAX 美国-洛杉矶 | 学校 | University of Southern California（USC） | `www.usc.edu` | [学校联系地址](https://arr.usc.edu/contact-us/) |
+| DE-FRA 德国-法兰克福 | 银行 | Deutsche Bank | `www.db.com` | [机构与地址](https://www.db.com/imprint?language_id=1) |
+| DE-FRA 德国-法兰克福 | 银行 | Frankfurter Volksbank Rhein/Main | `www.frankfurter-volksbank.de` | [机构与地址](https://www.frankfurter-volksbank.de/rechtliches/impressum.html) |
+| DE-FRA 德国-法兰克福 | 政府 | Stadt Frankfurt am Main | `frankfurt.de` | [法兰克福市政府官网](https://frankfurt.de/) |
+| DE-FRA 德国-法兰克福 | 学校 | Goethe University Frankfurt | `www.uni-frankfurt.de` | [学校与地址](https://www.uni-frankfurt.de/de/impressum) |
+| DE-FRA 德国-法兰克福 | 学校 | Frankfurt School of Finance & Management | `www.frankfurt-school.de` | [校区位置与地址](https://www.frankfurt-school.de/en/home/about/campus) |
+| JP-TYO 日本-东京 | 银行 | SMBC信托银行 | `www.smbctb.co.jp` | [银行简介与总部](https://www.smbctb.co.jp/en/aboutus/information/) |
+| JP-TYO 日本-东京 | 银行 | SBI新生银行 | `www.sbishinseibank.co.jp` | [银行简介与总部](https://corp.sbishinseibank.co.jp/en/about/corporate/profile.html) |
+| JP-TYO 日本-东京 | 政府 | 东京都政府 | `www.metro.tokyo.lg.jp` | [东京都政府官网](https://www.metro.tokyo.lg.jp/) |
+| JP-TYO 日本-东京 | 学校 | 庆应义塾大学 | `www.keio.ac.jp` | [三田校区位置](https://www.keio.ac.jp/en/about/campus/mita/) |
+| JP-TYO 日本-东京 | 学校 | 早稻田大学 | `www.waseda.jp` | [校区位置](https://www.waseda.jp/top/en/access) |
+| KR-SEL 韩国-首尔 | 银行 | 渣打银行韩国 | `www.sc.co.kr` | [集团公布的首尔总部地址](https://www.sc.com/en/our-locations/) |
+| KR-SEL 韩国-首尔 | 学校 | 首尔大学 | `www.snu.ac.kr` | [观岳校区地址](https://en.snu.ac.kr/about/campus/gwanak/address) |
+| KR-SEL 韩国-首尔 | 学校 | 汉阳大学 | `www.hanyang.ac.kr` | [首尔校区地址](https://www.hanyang.ac.kr/web/eng/university-at-a-glance) |
 
 ### 网段 / ASN 发现
 
