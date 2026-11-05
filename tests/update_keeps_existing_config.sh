@@ -66,7 +66,7 @@ install_binary() {
 
 case "${1:-}" in
   version)
-    printf 'sing-box version 1.14.2\n'
+    printf 'sing-box version 1.14.4\n'
     ;;
   check)
     exit 0
