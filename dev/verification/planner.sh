@@ -319,7 +319,10 @@ verification_classify_file() {
       verification_plan_append VERIFY_PLAN_TESTS tests/verification_scenario_mapping.sh
       ;;
     dev/verification/run.sh)
-      verification_add_group verification || return 2
+      verification_plan_append VERIFY_PLAN_SYNTAX "${file}"
+      verification_plan_append VERIFY_PLAN_TESTS tests/verification_ci_scope.sh
+      verification_plan_append VERIFY_PLAN_TESTS tests/verification_planner.sh
+      verification_plan_append VERIFY_PLAN_UNRESOLVED "${file}: shared executor needs explicit host/transport impact scope"
       ;;
     dev/verification/remote/scenarios/lifecycle_safety.sh)
       verification_plan_append VERIFY_PLAN_SYNTAX "${file}"
