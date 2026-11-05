@@ -18,6 +18,21 @@ The additive `protocol_registry` in `sbv agent capabilities --json` describes ea
 核心更新发布经过校验的 root:root 新文件，失败则恢复旧字节及原始属主；
 未受管外部库不自动接管。
 
+## Repository Review And Merge
+
+Complete local review of the current HEAD and full branch diff before every push
+or PR. Remote GPT/Codex reviews are automatic only: do not post review requests or
+use draft/ready transitions, empty commits or other actions to retrigger a bot.
+Wait only for a Security Review automatically started for the current head, and
+resolve its findings. An automatic code review adds no waiting gate; handle any
+issues it has already reported. If no bot was automatically triggered, record
+`not_triggered` and directly rebase merge after local review, necessary validation
+and required GitHub checks pass. An automatic code review without an automatic
+Security Review likewise adds no remote wait. Never label absent review as passed,
+or treat running, failed, cancelled or unreadable state as no trigger. Recheck the
+same conditions after a head change without manually requesting another review.
+See [Development](https://github.com/KnowSky404/sing-box-vps/wiki/Development).
+
 ## Operation Discovery
 
 Start each task with `sbv commands --json`, then inspect one stable operation ID

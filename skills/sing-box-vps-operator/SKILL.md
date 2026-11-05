@@ -44,6 +44,20 @@ behavior verification; this contract does not require unrelated full regression.
 Development tooling and ordinary prose changes follow section 4.2 without
 automatically rerunning the runtime operation catalog contract.
 
+## Repository Review And Merge
+
+Local current-HEAD/full-diff review remains mandatory before every push or PR.
+Remote GPT/Codex review is automatic only. Never manually request code/security
+review or retrigger through draft/ready transitions, empty commits or similar
+actions. Wait for a Security Review only when automatically triggered for the
+current head; it must complete without unresolved findings. Automatic code review
+is not a waiting gate, though reported issues require handling. If no bot was
+automatically triggered, record `not_triggered` and directly rebase merge after
+local review, necessary validation and required GitHub checks pass. Automatic code
+review alone adds no remote wait. Absence is not review success; running, failed,
+cancelled or unreadable state is not absence. Recheck a new head under this same
+policy without manually triggering review. Follow AGENTS.md section 6.
+
 ## Storage Layout
 
 Project payloads live under the root account home `.sing-box-vps`. Before operating an upgraded legacy host, use `sbv storage status --json`. Migration and recovery are explicit `sbv storage migrate|recover --json --yes` operations and may restart an active service. Pending migrations block ordinary operations. Read [Storage Layout](../../docs/wiki/Storage-Layout.md); production migrations still require the production gate.
