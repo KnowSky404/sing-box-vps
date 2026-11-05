@@ -5,6 +5,15 @@ is not a security certification, deployment approval or cloud-task configuration
 Read [AGENTS.md](AGENTS.md) for verification and review gates; the Chinese workflow
 summary is in [Development](docs/wiki/Development.md#云端安全审查上下文).
 
+Remote GPT/Codex review is automatic only. Do not manually request code or
+security reviews through comments, draft/ready transitions, empty commits or
+other retriggering actions. Await a Security Review only when it was automatically
+started for the current head. If no bot was automatically triggered, record
+`not_triggered` and merge after local review, necessary validation and required
+GitHub checks pass; an automatic code review alone adds no waiting gate. Missing
+review evidence is not a passed security review. Running, failed or unreadable
+review state is not absence; address any reported findings. See AGENTS.md section 6.
+
 ## Scope and trust model
 
 sing-box-vps is a root-operated Linux installer and manager. Intended operations
