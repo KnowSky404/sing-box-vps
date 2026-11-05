@@ -38,13 +38,25 @@ jobs:
         env:
           VERIFY_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
+          set -euo pipefail
+          CI_RUN_LOG="${RUNNER_TEMP}/scoped-host-verification.log"
+          CI_STATUS=0
           sudo -n env TMPDIR=/tmp GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory \
             GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE" GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" \
             GITHUB_REF="$GITHUB_REF" SINGBOX_BINARY_114="$SINGBOX_BINARY_114" \
-            bash dev/verification/ci.sh "$VERIFY_BASE_REF"
+            bash dev/verification/ci.sh "$VERIFY_BASE_REF" | tee "$CI_RUN_LOG" || CI_STATUS=$?
+          CI_HOST_RUN_DIR=$(sed -n 's/^run_dir=//p' "$CI_RUN_LOG")
+          if [[ -n "$CI_HOST_RUN_DIR" ]]; then
+            [[ "$CI_HOST_RUN_DIR" == "$GITHUB_WORKSPACE"/dev/verification-runs/* && "$CI_HOST_RUN_DIR" != *$'\n'* ]]
+            [[ -f "$CI_HOST_RUN_DIR/plan.txt" && -f "$CI_HOST_RUN_DIR/summary.log" ]]
+            printf 'CI_HOST_RUN_DIR=%s\n' "$CI_HOST_RUN_DIR" >> "$GITHUB_ENV"
+          fi
+          exit "$CI_STATUS"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: scoped-host-verification
-          path: dev/verification-runs/
+          path: |
+            dev/verification-runs/ci/
+            ${{ env.CI_HOST_RUN_DIR }}
           if-no-files-found: ignore
