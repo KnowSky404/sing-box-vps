@@ -12,7 +12,7 @@ printf 'dev/verification-runs/\n' > "${FIXTURE}/.gitignore"
 printf '#!/usr/bin/env bash\n: baseline\n' > "${FIXTURE}/install.sh"
 printf 'fixture readme\n' > "${FIXTURE}/README.md"
 printf 'base initial\n' > "${FIXTURE}/.github/verification-scope.txt"
-for test in $(rg -o 'tests/[a-zA-Z0-9_]+\.sh' "${REPO_ROOT}/dev/verification/ci.sh") tests/fixture_changed.sh tests/fixture_requested.sh tests/install_build_sync.sh tests/readme_mentions_current_versions.sh tests/default_dual_stack_runtime.sh; do
+for test in $(grep -oE 'tests/[a-zA-Z0-9_]+\.sh' "${REPO_ROOT}/dev/verification/ci.sh") tests/fixture_changed.sh tests/fixture_requested.sh tests/install_build_sync.sh tests/readme_mentions_current_versions.sh tests/default_dual_stack_runtime.sh; do
   cat <<'TEST' > "${FIXTURE}/${test}"
 #!/usr/bin/env bash
 set -euo pipefail
