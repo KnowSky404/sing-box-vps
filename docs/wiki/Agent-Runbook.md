@@ -49,6 +49,14 @@ fail without opening a menu. Discovery remains available on a fresh host and
 while a transaction needs recovery. A descriptor explains an operation; it is
 not a generic JSON Schema validator for every protocol record.
 
+## Lifecycle Safety
+
+Main-menu service controls use the same guarded handlers as `sbv service start|stop|restart --json --yes`. Recover pending instance/component/routing journals before service mutations. An invalid config must not stop a currently active service through restart.
+
+Core/full uninstall confirms the unit is stopped, reports disable failure, and removes only ledger-owned instance firewall rules before deleting runtime state. Stop, disable or resource-cleanup failure retains runtime/recovery material; a retained uninstall firewall journal means resources may be partial and the service stays stopped. Unmarked legacy rules remain untouched because their ownership is unknown. Inspect the reported private journal before retrying; do not infer whole-uninstall rollback. Uninstall remains explicitly interactive-only.
+
+SubMan requests clean private credential files on INT/TERM/HUP and restore caller signal handlers. A remote write interrupted after submission can have an unknown outcome: read back and reconcile before retrying. SIGKILL/power-loss cleanup is outside this guarantee.
+
 ## First Principles
 
 Creation and additional-install menus default new structured proxy instances to one `::` listener across all 14 supported instance protocols. On Linux the sing-box TCP/UDP dual-stack socket accepts IPv4 and IPv6; do not add a second `0.0.0.0` listener on the same port. Fresh defaults for the 15 presets use the same address, while REALITY and legacy singleton rendering retain global inbound-mode settings and single-stack fallback. Existing addresses, explicit Agent records, public-exposure confirmation, ShadowTLS inner detours and client-local loopback listeners keep their existing semantics. See the [default-listener contract](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/default-dual-stack-listeners.md).

@@ -13,6 +13,14 @@
 
 验证入口支持计划预览、分支基线差异、本地测试组和显式 Docker 场景。选测仍以第 4.2 节的实际行为影响为准；自动映射无法判定的运行时改动必须先明确范围。提交后的任务使用 `--base` 并核对完整分支差异。失败后只重跑失败项和受修复影响的范围。
 
+### CI 定点验证范围
+
+`command-contract` 保留原契约门禁，并通过 `dev/verification/ci.sh BASE` 复用完整差异计划器，追加本次变更的宿主测试。CI 检出 PR head，并保留完整 Git 历史；计划、逐项日志和耗时上传为 `scoped-host-verification`。
+
+未知影响需要本分支修改 `.github/verification-scope.txt`。第一行是 `base <merge-base SHA>`，后续每行只接受一个 `--test tests/<name>.sh` 或 `--scenario <name>`；SHA 可用 `git merge-base origin/main HEAD` 获取。旧任务未修改的范围、过期基线、helper/容器 fixture、越界路径和任意命令均不能作为有效宿主范围。自动检查继续追加；固定契约列表不能代替作者的影响判断。
+
+在仓库根目录以具备 fixture 所需 root 权限的环境执行 `bash dev/verification/ci.sh origin/main` 可复现同一入口。CI 仅执行宿主检查，明确记录选中的 Docker 未执行；运行态仍须另行执行对应场景并记录证据。`lifecycle_safety` 使用全新 SOCKS 基线，覆盖菜单/CLI 服务保护、真实停服和受管防火墙卸载，恢复安装后执行最终 smoke；原默认 17 场景集合不变。dispatcher 改动自动选分派测试并保留 `needs_scope`，其他探针/产物影响按实际追加。
+
 ### 小改动的执行与停止条件
 
 测试范围以 `AGENTS.md` 第 4.2 节为单一规则源。开始前简短说明“行为变化 → 必要检查/场景与前置依赖 → 不执行范围及理由 → 预计耗时”。文档和版本变更以数分钟内完成为目标；本地测试预计超过 10 分钟、Docker 预计超过 20 分钟时先说明慢项和必要性。这些是调整计划的软预算，必要验证未完成仍需明确报告。

@@ -102,7 +102,7 @@ EOF
 write_runtime_artifacts
 write_legacy_multi_protocol_config
 
-if ! TAKEOVER_OUTPUT=$(printf '1\n' | install_or_update_singbox 2>&1); then
+if ! TAKEOVER_OUTPUT=$(printf '1\n' | update_singbox_version_menu 2>&1); then
   printf 'expected takeover flow to succeed for hy2 acme rebuild, got:\n%s\n' "${TAKEOVER_OUTPUT}" >&2
   exit 1
 fi

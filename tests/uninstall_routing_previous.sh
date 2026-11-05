@@ -16,7 +16,10 @@ source "${TESTS_DIR}/uninstall_routing_previous_helper.sh"
    "${SINGBOX_SERVICE_FILE}" == "${TMP_DIR}/sing-box.service" ]]
 SIDE_EFFECTS="${TMP_DIR}/side-effects"
 UNRELATED_SIBLING="${SB_PROJECT_DIR}.rules-previous-other"
-systemctl() { printf 'systemctl:%s\n' "$*" >> "${SIDE_EFFECTS}"; }
+systemctl() {
+  printf 'systemctl:%s\n' "$*" >> "${SIDE_EFFECTS}"
+  [[ "${1:-}" != show ]] || printf 'inactive\n'
+}
 clear_vless_reality_qos_rules() { printf 'qos\n' >> "${SIDE_EFFECTS}"; }
 managed_component_redirect_policy_uninstall() { printf 'redirect\n' >> "${SIDE_EFFECTS}"; }
 managed_component_tproxy_policy_uninstall() { printf 'tproxy\n' >> "${SIDE_EFFECTS}"; }

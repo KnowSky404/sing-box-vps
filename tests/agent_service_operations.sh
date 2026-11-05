@@ -145,6 +145,20 @@ for pending in "${SB_PROJECT_DIR}.instance-write.lock" "${SB_COMPONENT_TRANSACTI
   ln -s "${TMP_DIR}/missing-journal" "${pending}"
   if response=$(main service start --json --yes); then exit 1; fi
   jq -e '.error=="transaction_pending"' <<< "${response}" >/dev/null
+  calls_before=$(wc -l < "${SERVICE_TEST_CALLS}")
+  if service_menu_action start > "${TMP_DIR}/menu-output"; then exit 1; fi
+  [[ "$(wc -l < "${SERVICE_TEST_CALLS}")" == "${calls_before}" ]]
+  ! grep -q '"schema"' "${TMP_DIR}/menu-output"
   rm -- "${pending}"
 done
+
+export SERVICE_TEST_CHECK_FAIL=y
+calls_before=$(wc -l < "${SERVICE_TEST_CALLS}")
+if service_menu_action restart > "${TMP_DIR}/menu-output"; then exit 1; fi
+[[ "$(wc -l < "${SERVICE_TEST_CALLS}")" == "${calls_before}" ]]
+grep -q config_check_failed "${TMP_DIR}/menu-output"
+unset SERVICE_TEST_CHECK_FAIL
+service_menu_action restart > "${TMP_DIR}/menu-output"
+grep -q '服务已重启' "${TMP_DIR}/menu-output"
+! grep -q '"schema"' "${TMP_DIR}/menu-output"
 printf '%s\n' 'agent service operations passed'

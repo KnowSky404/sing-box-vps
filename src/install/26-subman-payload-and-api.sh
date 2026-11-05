@@ -1444,12 +1444,60 @@ subman_curl_private() {
   curl "$@" 2> "${error_file}"
 }
 
+subman_api_request_cleanup() {
+  [[ -n "${request_dir}" ]] || return 0
+  if ! rm -rf -- "${request_dir}"; then
+    printf '[ERROR] SubMan 请求临时文件清理失败；请保留私有目录权限并人工处理。\n' >&2
+    return 1
+  fi
+  request_dir=''
+}
+
+subman_api_request_restore_traps() {
+  trap - INT TERM HUP
+  [[ -z "${request_traps}" ]] || eval "${request_traps}"
+}
+
+subman_api_request_signal() {
+  local signal=$1 code=$2
+  request_interrupted=${code}
+  subman_api_request_cleanup || request_cleanup_failed=y
+  subman_api_request_restore_traps
+  printf '[WARN] SubMan 请求已中断；变更请求的远端结果可能不确定，请先读回确认。\n' >&2
+  kill -s "${signal}" "${BASHPID:-$$}"
+}
+
 subman_api_request() {
+  local request_dir='' request_traps request_interrupted=0 request_cleanup_failed=n request_status=0
+  request_traps=$(trap -p INT TERM HUP)
+  trap 'subman_api_request_signal INT 130' INT
+  trap 'subman_api_request_signal TERM 143' TERM
+  trap 'subman_api_request_signal HUP 129' HUP
+  if subman_api_request_body "$@"; then :; else request_status=$?; fi
+  if ! subman_api_request_cleanup || [[ "${request_cleanup_failed}" == y ]]; then
+    subman_set_client_error temporary_cleanup_failed operator-repair
+    [[ "$1" == GET ]] || SUBMAN_LAST_OUTCOME=unknown-outcome
+    request_status=1
+  fi
+  subman_api_request_restore_traps
+  if [[ "${request_interrupted}" != 0 ]]; then
+    if [[ "$1" == GET ]]; then
+      subman_set_client_error signal_interrupted retryable-upstream
+    else
+      subman_set_client_error signal_interrupted unknown-outcome
+      SUBMAN_LAST_OUTCOME=unknown-outcome
+    fi
+    return "${request_interrupted}"
+  fi
+  return "${request_status}"
+}
+
+subman_api_request_body() {
   local method=$1
   local path=$2
   local payload_json=${3:-}
   local if_match=${4:-}
-  local api_url endpoint tmp_dir request_dir config_file payload_file headers_file body_file stderr_file
+  local api_url endpoint tmp_dir config_file payload_file headers_file body_file stderr_file
   local escaped_token escaped_if_match http_status curl_status
 
   reset_subman_api_result
@@ -1475,7 +1523,6 @@ subman_api_request() {
     return 1
   fi
   if ! chmod 700 "${request_dir}"; then
-    rm -rf -- "${request_dir}" || true
     subman_set_client_error "temporary_file_failed" "operator-repair"
     return 1
   fi
@@ -1490,7 +1537,6 @@ subman_api_request() {
     : > "${stderr_file}"
     chmod 600 "${headers_file}" "${body_file}" "${stderr_file}"
   }; then
-    rm -rf -- "${request_dir}" || true
     subman_set_client_error "temporary_file_failed" "operator-repair"
     return 1
   fi
@@ -1508,14 +1554,12 @@ subman_api_request() {
       printf 'header = "If-Match: %s"\n' "${escaped_if_match}"
     fi
   } > "${config_file}" || ! chmod 600 "${config_file}"; then
-    rm -rf -- "${request_dir}" || true
     subman_set_client_error "temporary_file_failed" "operator-repair"
     return 1
   fi
 
   if [[ -n "${payload_json}" ]]; then
     if ! printf '%s' "${payload_json}" > "${payload_file}" || ! chmod 600 "${payload_file}"; then
-      rm -rf -- "${request_dir}" || true
       subman_set_client_error "temporary_file_failed" "operator-repair"
       return 1
     fi
@@ -1538,6 +1582,7 @@ subman_api_request() {
     fi
   fi
 
+  [[ "${request_interrupted}" == 0 ]] || return "${request_interrupted}"
   SUBMAN_LAST_HTTP_STATUS=${http_status:-000}
   SUBMAN_LAST_RESPONSE_BODY=$(cat "${body_file}")
   SUBMAN_LAST_RESPONSE_ETAG=$(subman_response_header "${headers_file}" etag)
@@ -1545,12 +1590,6 @@ subman_api_request() {
   SUBMAN_LAST_RETRY_AFTER=$(subman_response_header "${headers_file}" retry-after)
   SUBMAN_LAST_RESPONSE_CACHE_CONTROL=$(subman_response_header "${headers_file}" cache-control)
   [[ "${SUBMAN_LAST_RETRY_AFTER}" =~ ^[0-9]+$ ]] || SUBMAN_LAST_RETRY_AFTER=""
-  if ! rm -rf -- "${request_dir}"; then
-    subman_set_client_error "temporary_cleanup_failed" "operator-repair"
-    [[ "${method}" == "GET" ]] || SUBMAN_LAST_OUTCOME="unknown-outcome"
-    return 1
-  fi
-
   if [[ "${curl_status}" -ne 0 ]]; then
     if [[ "${method}" == "GET" ]]; then
       subman_set_client_error "transport_error" "retryable-upstream"

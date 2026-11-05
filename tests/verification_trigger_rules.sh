@@ -34,4 +34,9 @@ assert_mode local --changed-file tests/http_instance_lifecycle.sh
 assert_mode remote --scenario fresh_install_http
 assert_mode remote --scenario reconfigure_existing_install
 
+plan=$(bash "${REPO_ROOT}/dev/verification/run.sh" --plan --changed-file dev/verification/remote/entrypoint.sh)
+grep -Fxq plan_status=needs_scope <<< "${plan}"
+grep -Fxq test=tests/verification_remote_scenario_dispatch.sh <<< "${plan}"
+! grep -Fxq group=verification <<< "${plan}"
+
 printf 'Verification mode selection passed\n'

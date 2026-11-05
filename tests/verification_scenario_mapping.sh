@@ -128,6 +128,7 @@ assert_scenarios 'fresh_install_http,runtime_smoke' --scenario fresh_install_htt
 assert_scenarios 'fresh_install_vless,reconfigure_existing_install,runtime_smoke' --scenario reconfigure_existing_install
 assert_scenarios 'fresh_install_http,runtime_smoke' --scenario runtime_smoke
 assert_scenarios 'fresh_install_socks,runtime_smoke' --scenario fresh_install_socks
+assert_scenarios 'fresh_install_socks,lifecycle_safety,runtime_smoke' --scenario lifecycle_safety
 assert_scenarios 'fresh_install_shadowsocks,runtime_smoke' --scenario fresh_install_shadowsocks
 assert_scenarios 'fresh_install_trojan,runtime_smoke' --scenario fresh_install_trojan
 assert_scenarios 'fresh_install_vmess,runtime_smoke' --scenario fresh_install_vmess

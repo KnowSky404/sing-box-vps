@@ -392,6 +392,7 @@ verification_leaf_scenarios() {
 verification_list_scenarios() {
   verification_full_scenarios
   verification_leaf_scenarios
+  printf '%s\n' lifecycle_safety
 }
 
 verification_is_leaf_scenario() {
@@ -411,7 +412,7 @@ verification_expand_scenarios() {
   # Validate the entire request before emitting a partial executable plan.
   for scenario in "${requested_scenarios[@]}"; do
     case "${scenario}" in
-      fresh_install_vless|reconfigure_existing_install|legacy_takeover_export|fresh_install_anytls|fresh_install_socks|fresh_install_http|fresh_install_shadowsocks|fresh_install_trojan|fresh_install_vmess|fresh_install_hysteria|fresh_install_vless_plain|multi_protocol_coexistence|upgrade_1_13_to_1_14|upgrade_rollback_1_13_to_1_14|uninstall_and_reinstall|storage_migration|runtime_smoke|component_http_outbound|component_rule_sets|component_tor_outbound|component_ssh_outbound|component_socks_outbound|component_selector_outbound|component_urltest_outbound|component_shadowsocks_outbound|component_direct_outbound|component_block_outbound|component_vless_outbound|component_shadowtls_outbound|component_socks_udp_outbound|component_shadowsocks_udp_outbound|component_direct_inbound|component_redirect_inbound|component_tproxy_inbound|component_transparent_policy|protocol_probe_vless_reality|protocol_probe_mixed|protocol_probe_hy2|protocol_probe_anytls|protocol_probe_socks|protocol_probe_http|protocol_probe_shadowsocks|protocol_probe_trojan|protocol_probe_tuic|protocol_probe_vmess|protocol_probe_snell|protocol_probe_shadowtls|protocol_probe_naive|protocol_coexistence|protocol_naive_transition|protocol_snell_transition)
+      lifecycle_safety|fresh_install_vless|reconfigure_existing_install|legacy_takeover_export|fresh_install_anytls|fresh_install_socks|fresh_install_http|fresh_install_shadowsocks|fresh_install_trojan|fresh_install_vmess|fresh_install_hysteria|fresh_install_vless_plain|multi_protocol_coexistence|upgrade_1_13_to_1_14|upgrade_rollback_1_13_to_1_14|uninstall_and_reinstall|storage_migration|runtime_smoke|component_http_outbound|component_rule_sets|component_tor_outbound|component_ssh_outbound|component_socks_outbound|component_selector_outbound|component_urltest_outbound|component_shadowsocks_outbound|component_direct_outbound|component_block_outbound|component_vless_outbound|component_shadowtls_outbound|component_socks_udp_outbound|component_shadowsocks_udp_outbound|component_direct_inbound|component_redirect_inbound|component_tproxy_inbound|component_transparent_policy|protocol_probe_vless_reality|protocol_probe_mixed|protocol_probe_hy2|protocol_probe_anytls|protocol_probe_socks|protocol_probe_http|protocol_probe_shadowsocks|protocol_probe_trojan|protocol_probe_tuic|protocol_probe_vmess|protocol_probe_snell|protocol_probe_shadowtls|protocol_probe_naive|protocol_coexistence|protocol_naive_transition|protocol_snell_transition)
         if [[ ! -f "${root}/dev/verification/remote/scenarios/${scenario}.sh" ]]; then
           printf 'verification scenario file is missing: %s\n' "${scenario}" >&2
           return 2
@@ -451,6 +452,10 @@ verification_expand_scenarios() {
         # A deleted component still advances its CAS revision. Reset for every
         # leaf; do not reuse a previous case's store or multi-protocol install.
         printf '%s\n' fresh_install_socks "${scenario}"
+        baseline=other_install
+        ;;
+      lifecycle_safety)
+        printf '%s\n' fresh_install_socks lifecycle_safety
         baseline=other_install
         ;;
       reconfigure_existing_install)

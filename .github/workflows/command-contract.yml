@@ -13,19 +13,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check runtime and generated operation reference
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Run contract and scoped host regressions
+        env:
+          VERIFY_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          bash scripts/build-install.sh --check
-          bash scripts/build-command-docs.sh --check
-          # Ownership fixtures retain the real root boundary in isolated /tmp trees.
-          sudo -n env TMPDIR=/tmp bash tests/command_catalog_contract.sh
-          sudo -n env TMPDIR=/tmp bash tests/storage_selinux.sh
-          sudo -n env TMPDIR=/tmp bash tests/agent_service_operations.sh
-          sudo -n env TMPDIR=/tmp bash tests/agent_routing_operations.sh
-          sudo -n env TMPDIR=/tmp bash tests/agent_cli_ops_commands.sh
-          bash tests/agent_docs_cover_capabilities.sh
-          bash tests/wiki_documentation.sh
-          bash tests/version_metadata_is_consistent.sh
-          sudo -n env TMPDIR=/tmp bash tests/reality_region_candidates.sh
-          bash tests/reality_region_candidate_evidence.sh
-          bash tests/reality_region_candidate_evidence_contract.sh
+          sudo -n env TMPDIR=/tmp GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory \
+            GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE" bash dev/verification/ci.sh "$VERIFY_BASE_REF"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scoped-host-verification
+          path: dev/verification-runs/
+          if-no-files-found: ignore

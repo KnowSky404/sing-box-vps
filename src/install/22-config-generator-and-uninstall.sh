@@ -486,8 +486,44 @@ managed_uninstall_acquire_guard() {
   return 0
 }
 
-perform_singbox_runtime_uninstall() {
+managed_uninstall_stop_service() {
+  local stop_status=0 load_state
+  if systemctl stop sing-box >/dev/null 2>&1; then
+    singbox_service_confirmed_stopped || return 1
+  else
+    stop_status=$?
+    load_state=$(systemctl show sing-box --property=LoadState --value) || return 1
+    if [[ "${load_state}" == not-found ]] && singbox_service_confirmed_stopped; then
+      return 0
+    fi
+    managed_uninstall_report_error "停止服务失败（状态 ${stop_status}）；未删除运行文件，请检查服务后重试。"
+    return "${stop_status}"
+  fi
+  if ! systemctl disable sing-box >/dev/null 2>&1; then
+    managed_uninstall_report_error '服务已停止，但禁用失败；运行文件和恢复材料已保留。'
+    return 1
+  fi
+}
+
+perform_singbox_runtime_uninstall() (
+  trap - EXIT ERR RETURN DEBUG
   local lib_path expected_hash actual_hash component_state redirect_policy_plan tproxy_policy_plan
+  local ledger workspace='' keep_workspace=n firewall_journal=''
+
+  uninstall_cleanup() {
+    if [[ -n "${workspace}" ]]; then
+      if [[ "${keep_workspace}" == y ]]; then
+        managed_uninstall_report_error "卸载未完成；服务已停止，受管资源可能已部分清理，防火墙恢复日志保留在 ${workspace}。"
+      elif ! rm -rf -- "${workspace}"; then
+        managed_uninstall_report_error "卸载临时文件未能清理：${workspace}。"
+        return 1
+      fi
+    fi
+  }
+  trap uninstall_cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
 
   managed_uninstall_acquire_guard || return 1
   storage_system_link_is_owned "${SINGBOX_LINK_PATH}" "${SINGBOX_BIN_PATH}" &&
@@ -500,34 +536,60 @@ perform_singbox_runtime_uninstall() {
     managed_uninstall_report_error "高级组件 state 无法安全读取，未开始卸载；请先检查 ${SB_COMPONENT_STATE_FILE}。"
     return 1
   }
+  ledger=$(instance_firewall_read_ledger) || {
+    managed_uninstall_report_error '实例防火墙账本不可信；未开始卸载，请保留现场检查。'
+    return 1
+  }
+  if [[ "$(jq '.rules | length' <<< "${ledger}")" != 0 ]]; then
+    workspace=$(storage_mktemp -d "${SB_DATA_ROOT}/tmp/sbv-uninstall.XXXXXXXX") || return 1
+    firewall_journal="${workspace}/firewall.json"
+    # This is a listener inventory for removal, never an activated configuration.
+    printf '{"inbounds":[],"outbounds":[],"route":{"rules":[]}}\n' > "${workspace}/empty.json" || return 1
+    chmod 600 "${workspace}/empty.json" || return 1
+    if ! instance_firewall_prepare '' "${workspace}/empty.json" "${firewall_journal}"; then
+      managed_uninstall_report_error '无法准备实例防火墙回收；未停止服务或删除运行文件。'
+      return 1
+    fi
+  fi
   redirect_policy_plan=$(managed_component_redirect_host_policy_plan_json "${component_state}") || {
     managed_uninstall_report_error "Redirect 主机策略计划无法安全读取，未开始卸载。"
     return 1
   }
-  if ! managed_component_redirect_policy_uninstall "${redirect_policy_plan}"; then
-    managed_uninstall_report_error "Redirect 主机策略清理无法确认；服务、二进制和配置目录未改动，已清理的精确受管规则可能是部分状态，请先运行组件诊断。"
-    return 1
-  fi
   tproxy_policy_plan=$(managed_component_tproxy_host_policy_plan_json "${component_state}") || {
     managed_uninstall_report_error "TProxy 主机策略计划无法安全读取，未开始卸载。"
     return 1
   }
+  managed_uninstall_stop_service || return $?
+  if [[ -n "${firewall_journal}" ]]; then
+    keep_workspace=y
+    if ! instance_firewall_apply "${firewall_journal}" || ! instance_firewall_commit "${firewall_journal}"; then
+      if instance_firewall_rollback "${firewall_journal}"; then
+        keep_workspace=n
+        managed_uninstall_report_error '实例防火墙清理失败并已补偿；服务保持停止，运行文件和账本已保留。'
+      else
+        managed_uninstall_report_error '实例防火墙清理及补偿无法确认；未删除运行文件或恢复日志。'
+      fi
+      return 1
+    fi
+  fi
+  if ! managed_component_redirect_policy_uninstall "${redirect_policy_plan}"; then
+    managed_uninstall_report_error 'Redirect 主机策略清理无法确认；服务已停止，运行文件已保留，规则可能是部分状态，请先运行组件诊断。'
+    return 1
+  fi
   if ! managed_component_tproxy_policy_uninstall "${tproxy_policy_plan}"; then
-    managed_uninstall_report_error "TProxy 主机策略清理无法确认；服务、二进制和配置目录未改动，已清理的精确受管规则可能是部分状态，请先运行组件诊断。"
+    managed_uninstall_report_error 'TProxy 主机策略清理无法确认；服务已停止，运行文件已保留，规则可能是部分状态，请先运行组件诊断。'
     return 1
   fi
   log_info "正在彻底卸载 sing-box 环境..."
   if command -v tc >/dev/null 2>&1; then
-    clear_vless_reality_qos_rules
+    clear_vless_reality_qos_rules || return $?
   fi
-  systemctl stop sing-box &>/dev/null || true
-  systemctl disable sing-box &>/dev/null || true
   storage_remove_system_link "${SINGBOX_SERVICE_LINK_PATH}" "${SINGBOX_SERVICE_FILE}" || return 1
   storage_remove_system_link "${SINGBOX_LINK_PATH}" "${SINGBOX_BIN_PATH}" || return 1
   storage_remove_system_link "${SB_DATA_ROOT}/bin/libcronet.so" "${SB_DATA_ROOT}/lib/libcronet.so" || return 1
-  rm -f "${SINGBOX_SERVICE_FILE}"
-  systemctl daemon-reload
-  rm -f "${SINGBOX_BIN_PATH}"
+  rm -f "${SINGBOX_SERVICE_FILE}" || return 1
+  systemctl daemon-reload || return 1
+  rm -f "${SINGBOX_BIN_PATH}" || return 1
   lib_path=$(singbox_library_path || printf '')
   if [[ -n "${lib_path}" && -f "${SB_NAIVE_LIBRARY_MARKER}" ]]; then
     expected_hash=$(tr -d '[:space:]' < "${SB_NAIVE_LIBRARY_MARKER}")
@@ -536,7 +598,7 @@ perform_singbox_runtime_uninstall() {
       actual_hash=$(sha256sum "${lib_path}" | awk '{print $1}')
     fi
     if [[ -n "${expected_hash}" && "${expected_hash}" == "${actual_hash}" ]]; then
-      rm -f "${lib_path}"
+      rm -f "${lib_path}" || return 1
       if [[ "$(dirname "${lib_path}")" == "/usr/local/lib" ]] &&
          command -v ldconfig >/dev/null 2>&1; then
         ldconfig || log_warn "libcronet.so 已删除，但 ldconfig 缓存刷新失败。"
@@ -548,9 +610,12 @@ perform_singbox_runtime_uninstall() {
   managed_uninstall_remove_project_state || return 1
   [[ ! -L "${SB_DATA_ROOT}/modules" ]] || return 1
   rm -rf -- "${SB_DATA_ROOT}/modules" || return 1
+  [[ ! -e "${SINGBOX_SERVICE_FILE}" && ! -L "${SINGBOX_SERVICE_FILE}" &&
+     ! -e "${SINGBOX_BIN_PATH}" && ! -L "${SINGBOX_BIN_PATH}" ]] || return 1
+  keep_workspace=n
   print_success "sing-box 服务、二进制和配置目录已彻底删除。"
   print_info "管理命令、日志及恢复备份仍保留在 ${SB_DATA_ROOT}。"
-}
+)
 
 perform_full_uninstall() {
   managed_uninstall_acquire_guard || return 1
@@ -560,7 +625,8 @@ perform_full_uninstall() {
   }
   perform_singbox_runtime_uninstall || return 1
   storage_remove_system_link "${SBV_LINK_PATH}" "${SBV_BIN_PATH}" || return 1
-  rm -f "${SBV_BIN_PATH}"
+  rm -f "${SBV_BIN_PATH}" || return 1
+  [[ ! -e "${SBV_BIN_PATH}" && ! -L "${SBV_BIN_PATH}" ]] || return 1
   print_success "全局命令 sbv 已删除。"
   print_info "迁移记录、日志与恢复备份保留在 ${SB_DATA_ROOT}；需要时可人工归档后删除。"
 }
@@ -621,7 +687,7 @@ uninstall_script() {
     log_info "正在删除全局命令 sbv..."
   fi
   storage_remove_system_link "${SBV_LINK_PATH}" "${SBV_BIN_PATH}" || return 1
-  rm -f "${SBV_BIN_PATH}"
+  rm -f "${SBV_BIN_PATH}" || return 1
   if [[ "${deleted_cfg}" == "y" ]]; then
     print_success "管理脚本已卸载。"
   else

@@ -3334,6 +3334,9 @@ for scenario in "$@"; do
     multi_protocol_coexistence)
       run_verification_scenario multi_protocol_coexistence verification_scenario_multi_protocol_coexistence
       ;;
+    lifecycle_safety)
+      run_verification_scenario lifecycle_safety verification_scenario_lifecycle_safety
+      ;;
     uninstall_and_reinstall)
       run_verification_scenario uninstall_and_reinstall verification_scenario_uninstall_and_reinstall
       ;;

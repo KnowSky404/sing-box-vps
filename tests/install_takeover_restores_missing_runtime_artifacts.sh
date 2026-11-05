@@ -193,7 +193,7 @@ reset_runtime_stub_counters() {
 }
 
 run_takeover_from_incomplete_menu() {
-  if ! TAKEOVER_OUTPUT=$(printf '1\n' | install_or_update_singbox 2>&1); then
+  if ! TAKEOVER_OUTPUT=$(printf '1\n' | update_singbox_version_menu 2>&1); then
     printf 'expected takeover flow to succeed, got:\n%s\n' "${TAKEOVER_OUTPUT}" >&2
     exit 1
   fi
@@ -386,7 +386,7 @@ scenario_missing_only_sbv_stays_on_healthy_menu() {
   write_service_file
   write_protocol_state "1.13.5"
 
-  if ! TAKEOVER_OUTPUT=$(printf '0\n' | install_or_update_singbox 2>&1); then
+  if ! TAKEOVER_OUTPUT=$(printf '0\n' | install_new_protocols_menu 2>&1); then
     printf 'expected healthy-instance flow without sbv to succeed, got:\n%s\n' "${TAKEOVER_OUTPUT}" >&2
     exit 1
   fi
@@ -398,7 +398,7 @@ scenario_missing_only_sbv_stays_on_healthy_menu() {
     exit 1
   fi
 
-  if [[ "${TAKEOVER_OUTPUT}" != *"更新 sing-box 二进制并保留当前配置"* ]]; then
+  if [[ "${TAKEOVER_OUTPUT}" != *"协议安装"* ]]; then
     printf 'expected installed instance missing only sbv to land on healthy-instance menu, got:\n%s\n' "${TAKEOVER_OUTPUT}" >&2
     exit 1
   fi
@@ -413,7 +413,7 @@ scenario_missing_config_stops_before_runtime_repair() {
   reset_runtime_stub_counters
   write_protocol_state "1.13.5"
 
-  if TAKEOVER_OUTPUT=$(printf '1\n' | install_or_update_singbox 2>&1); then
+  if TAKEOVER_OUTPUT=$(printf '1\n' | update_singbox_version_menu 2>&1); then
     printf 'expected takeover flow without config.json to fail clearly, got:\n%s\n' "${TAKEOVER_OUTPUT}" >&2
     exit 1
   fi

@@ -291,7 +291,7 @@ reset_protocol_state_artifacts() {
 }
 
 run_takeover_from_incomplete_menu() {
-  if ! TAKEOVER_OUTPUT=$(printf '1\n' | install_or_update_singbox 2>&1); then
+  if ! TAKEOVER_OUTPUT=$(printf '1\n' | update_singbox_version_menu 2>&1); then
     printf 'expected option 1 takeover flow to succeed, got:\n%s\n' "${TAKEOVER_OUTPUT}" >&2
     exit 1
   fi

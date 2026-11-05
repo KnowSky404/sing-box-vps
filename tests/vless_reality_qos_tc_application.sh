@@ -159,6 +159,7 @@ fi
 
 cat > "${TMP_DIR}/bin/systemctl" <<'EOF'
 #!/usr/bin/env bash
+[[ "${1:-}" != show ]] || printf 'inactive\n'
 exit 0
 EOF
 chmod +x "${TMP_DIR}/bin/systemctl"
