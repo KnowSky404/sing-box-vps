@@ -69,10 +69,14 @@ data, never shell code.
 
 An explicit repository scope is bound to the actual merge base. Reusing an
 unchanged scope from another branch must not silently resolve `needs_scope`.
-Only validated planner selectors are accepted; no shell evaluation or arbitrary
-commands. Automatically selected checks are additive. Unknown or stale scope
-fails before tests. CI runs host checks only and explicitly records any selected
-Docker scenarios as unexecuted; a green CI result is not runtime acceptance.
+PR scope must match its actual merge base. On a protected `main` push after
+GitHub rebase merge, a changed scope may name an ancestor of the push-before
+revision; unchanged scopes remain rejected. Only validated planner selectors are
+accepted; no shell evaluation or arbitrary commands. Automatically selected checks are additive. Unknown or stale scope
+fails before tests. CI reuses the host executor directly. A dedicated container fixture may leave
+the full plan at `needs_scope` while host checks pass; its separate runtime
+requirement is recorded as `required_not_run`. CI never executes container
+fixtures as host tests and records selected Docker scenes as unexecuted; a green CI result is not runtime acceptance.
 
 Preserve the `command-contract` job name, read-only GitHub permissions and safe
 `pull_request` event. Upload the plan, per-test logs and elapsed times even after
@@ -103,7 +107,7 @@ test failure. Do not require a full suite for ordinary changes.
   compensation-failure journal assertion and dispatcher-scope assertion were
   rechecked through their exact tests; documentation checks were refreshed.
   Unchanged test/runtime content reused its passing result.
-- Final Docker: `dev/verification-runs/20261105051913` reports exit 0 and all three
+- Final Docker: `dev/verification-runs/20261105054049` reports exit 0 and all three
   registered scenes successful: `fresh_install_socks`, `lifecycle_safety`,
   `runtime_smoke`. Real systemd/menu/CLI guards, both families' owned-rule
   cleanup, unrelated-rule preservation, reinstall and final proxy smoke pass.
@@ -117,13 +121,18 @@ test failure. Do not require a full suite for ordinary changes.
   caller traps, response globals and uncertain-write handling. No real request
   or production operation is included.
 - CI keeps its original contract gates, adds diff-selected tests and uploads
-  plans/logs/timings. Its Docker result is explicitly skipped, not passed.
+  plans/logs/timings. Its Docker/dedicated-runtime result is required_not_run, not passed.
 - Follow-up isolated checks reproduced an inherited skip-local flag bypass
   and suppressed uninstall signal diagnostics. CI now forces host execution;
   uninstall reports uncertain interruption state; firewall snapshot failures
   fail the scene. All seven affected host checks (55 seconds) and the final
   three Docker scenes were rerun successfully. Unchanged business functions
   and tests reused their original results without unrelated full regression.
-- Tested generated runtime SHA-256: `80eef907e07b1f6419ef8e0704606d5a17291681583cb9c97efa6204e8f8d39e`.
+- Current-head review findings were fixed: early-signal private-path
+  protection, ancestor scope handling for rebased main pushes, and host
+  readiness separate from dedicated container acceptance. Seven exact
+  regressions (59 seconds) and the final three Docker scenes passed. PR
+  scope matching remains strict; standard runtime `needs_scope` is retained.
+- Tested generated runtime SHA-256: `6f0ddf69c5dd902f48d9ae27e0f01219db1cc345d0693b1080f68b1b7a215e08`.
 - Local/current-head review, PR/remote review/merge and Wiki publication are
   recorded in the implementation PR, not inferred from the above test results.

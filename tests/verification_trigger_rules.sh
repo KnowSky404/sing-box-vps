@@ -38,5 +38,9 @@ plan=$(bash "${REPO_ROOT}/dev/verification/run.sh" --plan --changed-file dev/ver
 grep -Fxq plan_status=needs_scope <<< "${plan}"
 grep -Fxq test=tests/verification_remote_scenario_dispatch.sh <<< "${plan}"
 ! grep -Fxq group=verification <<< "${plan}"
+plan=$(bash "${REPO_ROOT}/dev/verification/run.sh" --plan --changed-file dev/verification/run.sh)
+grep -Fxq plan_status=needs_scope <<< "${plan}"
+grep -Fxq test=tests/verification_ci_scope.sh <<< "${plan}"
+! grep -Fxq group=verification <<< "${plan}"
 
 printf 'Verification mode selection passed\n'

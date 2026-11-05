@@ -1450,7 +1450,6 @@ subman_api_request_cleanup() {
     printf '[ERROR] SubMan 请求临时文件清理失败；请保留私有目录权限并人工处理。\n' >&2
     return 1
   fi
-  request_dir=''
 }
 
 subman_api_request_restore_traps() {
@@ -1522,10 +1521,12 @@ subman_api_request_body() {
     subman_set_client_error "temporary_file_failed" "operator-repair"
     return 1
   fi
+  [[ "${request_interrupted}" == 0 ]] || return "${request_interrupted}"
   if ! chmod 700 "${request_dir}"; then
     subman_set_client_error "temporary_file_failed" "operator-repair"
     return 1
   fi
+  [[ "${request_interrupted}" == 0 ]] || return "${request_interrupted}"
   config_file="${request_dir}/curl.conf"
   payload_file="${request_dir}/payload.json"
   headers_file="${request_dir}/headers.txt"
@@ -1565,6 +1566,7 @@ subman_api_request_body() {
     fi
   fi
 
+  [[ "${request_interrupted}" == 0 ]] || return "${request_interrupted}"
   if [[ -n "${payload_json}" ]]; then
     if http_status=$(subman_curl_with_progress "${stderr_file}" -sS --connect-timeout 15 --max-time 60 --config "${config_file}" -X "${method}" "${endpoint}" \
       --data-binary "@${payload_file}" -D "${headers_file}" -o "${body_file}" \

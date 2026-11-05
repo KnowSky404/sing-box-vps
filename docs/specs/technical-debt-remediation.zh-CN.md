@@ -53,9 +53,13 @@ CI 检出受测 head 并获取足够历史；PR base / push-before revision 作�
 不得当作 shell 代码执行。
 
 显式仓库范围绑定实际 merge-base。不得复用其他分支留下的未修改范围消除
-`needs_scope`。只接受经计划器校验的 selector，不执行任意命令或 shell 文本。
+`needs_scope`。PR 基线严格匹配；GitHub rebase 后受保护 main 的 push 仅允许本次发生修改的范围
+引用 push-before 的祖先，旧任务未修改范围仍拒绝。只接受经计划器校验的 selector，
+不执行任意命令或 shell 文本。
 自动检查始终追加；缺失、过期或无效范围在测试前失败。
-CI 只执行宿主检查，选中的 Docker 场景明确记录未执行，绿色 CI 不表示运行态验收通过。
+CI 直接复用宿主执行器；专用容器 fixture 使完整计划保持 `needs_scope`，
+宿主检查可以独立通过，运行态要求记录 `required_not_run`，不得作为宿主执行。
+选中的 Docker 场景同样记录未执行，绿色 CI 不表示运行态验收通过。
 
 保留 `command-contract` job 名、只读 GitHub 权限及 `pull_request` 事件。
 失败时也上传计划、逐项测试日志和耗时；普通改动不强制全套。
@@ -81,7 +85,7 @@ CI 只执行宿主检查，选中的 Docker 场景明确记录未执行，绿色
   `dev/verification-runs/20261105045921/local-tests/results.tsv`。后来增加的
   补偿失败日志保留、dispatcher 范围断言分别通过对应单项重测；文档检查更新。
   受测内容与依赖未变的其他结果复用。
-- 最终 Docker `dev/verification-runs/20261105051913` 退出 0，
+- 最终 Docker `dev/verification-runs/20261105054049` 退出 0，
   `fresh_install_socks`、`lifecycle_safety`、`runtime_smoke` 三项均成功。
   真实 systemd、菜单/CLI 保护、IPv4/IPv6 归属规则清理、无关规则保留、
   重装及最终代理 smoke 通过；fixture 配置经 `sing-box check`。
@@ -91,12 +95,16 @@ CI 只执行宿主检查，选中的 Docker 场景明确记录未执行，绿色
   不构成归属/状态迁移。
 - SubMan 使用虚拟凭证和 HTTP mock，覆盖 INT/TERM/HUP、调用方 trap、
   响应全局字段及不确定写入；未执行真实请求或生产操作。
-- CI 保留原契约门禁，追加差异选测并上传计划/日志/耗时；Docker 明确 skipped，
+- CI 保留原契约门禁，追加差异选测并上传计划/日志/耗时；Docker/专用运行态明确 required_not_run，
   不能作为运行态通过证据。
 - 后续独立复核复现并修正 CI 继承 `VERIFY_SKIP_LOCAL_TESTS=1` 可跳过检查、
   卸载中断提示被 stderr 重定向吞掉的问题；加强防火墙快照失败校验。
   7 项受影响宿主用例（55 秒）及上述最终三项 Docker 重新通过。
   其他未改变的业务函数和测试复用首轮结果；不追加无关全量。
-- 受测生成安装器 SHA-256：`80eef907e07b1f6419ef8e0704606d5a17291681583cb9c97efa6204e8f8d39e`。
+- 当前 head 审查发现的三项边界已修复：过早信号清理后继续执行的私有路径保护、
+  GitHub rebase 后 main push 的祖先基线、专用容器 fixture 与宿主 readiness 分离。
+  对应 7 项回归（59 秒）及最终三项 Docker 通过；PR 基线仍严格匹配，
+  标准调度器的专用运行态 `needs_scope` 不降级为通过。
+- 受测生成安装器 SHA-256：`6f0ddf69c5dd902f48d9ae27e0f01219db1cc345d0693b1080f68b1b7a215e08`。
 - 当前 head 本地审查、PR/远程审查/合并及 Wiki 发布在实施 PR 单独记录，
   不能从上述测试结果推断。

@@ -188,4 +188,4 @@ main() {
   printf 'remote_status=not_required\n' >> "${run_dir}/summary.log"
 }
 
-main "$@"
+[[ "${BASH_SOURCE[0]}" != "$0" ]] || main "$@"
