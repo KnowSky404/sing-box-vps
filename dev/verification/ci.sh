@@ -7,7 +7,7 @@ source "${CI_VERIFICATION_ROOT}/run.sh"
 
 main() {
   local base=${1:?base revision required} scope_file=.github/verification-scope.txt
-  local scope_changed=n file scope_base option value extra line run_dir
+  local scope_changed=n merged_push=n file scope_base option value extra line run_dir
   local -a selectors=() contracts=(
     tests/command_catalog_contract.sh tests/storage_selinux.sh
     tests/agent_service_operations.sh tests/agent_routing_operations.sh
@@ -17,6 +17,7 @@ main() {
     tests/reality_region_candidate_evidence_contract.sh
   )
   [[ $# == 1 ]] || return 2
+  if [[ "${GITHUB_EVENT_NAME:-}" == push && "${GITHUB_REF:-}" == refs/heads/main ]]; then merged_push=y; fi
   cd "${REPO_ROOT}"
   verification_parse_options --base "${base}"
   verification_build_plan
@@ -26,7 +27,7 @@ main() {
     [[ "${file}" != "${scope_file}" ]] || scope_changed=y
   done
   if [[ "${VERIFY_PLAN_STATUS}" == needs_scope || "${scope_changed}" == y ]]; then
-    if [[ "${scope_changed}" != y || ! -f "${scope_file}" || -L "${scope_file}" ]]; then
+    if [[ ( "${scope_changed}" != y && "${merged_push}" != y ) || ! -f "${scope_file}" || -L "${scope_file}" ]]; then
       verification_plan_error 'CI needs a changed .github/verification-scope.txt bound to this merge base'
       return 2
     fi
@@ -37,7 +38,7 @@ main() {
         return 2
       fi
       if [[ "${scope_base}" != "${VERIFY_PLAN_BASE}" ]] &&
-         ! { [[ "${GITHUB_EVENT_NAME:-}" == push && "${GITHUB_REF:-}" == refs/heads/main ]] &&
+         ! { [[ "${merged_push}" == y ]] &&
              git merge-base --is-ancestor "${scope_base}" "${VERIFY_PLAN_BASE}"; }; then
         verification_plan_error 'CI scope base is stale or invalid; use the actual merge-base revision'
         return 2
