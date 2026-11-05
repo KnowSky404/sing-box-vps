@@ -711,11 +711,11 @@ prompt_reality_region_candidates() {
   local choice region records record_region category institution domain category_label selected_sni
   local candidates=()
   echo "地区按机构所在地分组；实际解析 IP / ASN 或 CDN 节点可能位于其他地区。"
-  echo "1. HK 香港"
-  echo "2. US-LAX 洛杉矶"
-  echo "3. DE-FRA 法兰克福"
-  echo "4. JP-TYO 东京"
-  echo "5. KR-SEL 韩国首尔"
+  echo "1. HK 中国-香港"
+  echo "2. US-LAX 美国-洛杉矶"
+  echo "3. DE-FRA 德国-法兰克福"
+  echo "4. JP-TYO 日本-东京"
+  echo "5. KR-SEL 韩国-首尔"
   echo "0. 返回"
   choice=$(prompt_choice "请选择地区 [0-5] (默认 0): " 0 5 0) || return 1
   case "${choice}" in

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026110406
+# Version: 2026110501
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026110406"
+readonly SCRIPT_VERSION="2026110501"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 # A single IPv6 wildcard socket accepts IPv4 and IPv6 in sing-box on Linux.
 readonly SB_DEFAULT_LISTEN_ADDRESS="::"
@@ -85,33 +85,33 @@ readonly SB_REALITY_DISCOVER_SHA256="f806106efff7f3cbe219175d4f0c09f388d5304158d
 readonly SB_REALITY_SOURCES_SHA256="de028f4eec658eba6f789b30a51d558d9565337fccb02c2358ae76643f0ff33c"
 # Institution locations, not hosting/IP guarantees. Every candidate still needs
 # a fresh DNS-scoped checker result and explicit consent for ancillary warnings.
+# Development evidence: docs/verification/reality-region-candidates.json.
+# Pools contain at most five verified seeds; never pad them with failing sites.
 # Fields: region|category|institution|domain. Official sources live in the Wiki.
 readonly SB_REALITY_REGION_CANDIDATES=(
-  'HK|bank|中国银行（香港）|www.bochk.com'
+  'HK|bank|汇丰香港|www.hsbc.com.hk'
   'HK|bank|东亚银行|www.hkbea.com'
   'HK|government|香港政府一站通|www.gov.hk'
   'HK|university|香港大学|www.hku.hk'
-  'HK|university|香港中文大学|www.cuhk.edu.hk'
+  'HK|university|香港城市大学|www.cityu.edu.hk'
   'US-LAX|bank|City National Bank|www.cnb.com'
   'US-LAX|bank|Preferred Bank|www.preferredbank.com'
   'US-LAX|government|City of Los Angeles|lacity.gov'
   'US-LAX|university|UCLA|www.ucla.edu'
   'US-LAX|university|University of Southern California|www.usc.edu'
-  'DE-FRA|bank|Frankfurter Sparkasse|www.frankfurter-sparkasse.de'
+  'DE-FRA|bank|Deutsche Bank|www.db.com'
   'DE-FRA|bank|Frankfurter Volksbank Rhein/Main|www.frankfurter-volksbank.de'
   'DE-FRA|government|Stadt Frankfurt am Main|frankfurt.de'
   'DE-FRA|university|Goethe University Frankfurt|www.uni-frankfurt.de'
-  'DE-FRA|university|Frankfurt University of Applied Sciences|www.frankfurt-university.de'
-  'JP-TYO|bank|三井住友银行|www.smbc.co.jp'
-  'JP-TYO|bank|瑞穗银行|www.mizuhobank.co.jp'
+  'DE-FRA|university|Frankfurt School of Finance & Management|www.frankfurt-school.de'
+  'JP-TYO|bank|SMBC信托银行|www.smbctb.co.jp'
+  'JP-TYO|bank|SBI新生银行|www.sbishinseibank.co.jp'
   'JP-TYO|government|东京都政府|www.metro.tokyo.lg.jp'
-  'JP-TYO|university|东京大学|www.u-tokyo.ac.jp'
+  'JP-TYO|university|庆应义塾大学|www.keio.ac.jp'
   'JP-TYO|university|早稻田大学|www.waseda.jp'
-  'KR-SEL|bank|KB国民银行|www.kbstar.com'
-  'KR-SEL|bank|新韩银行|www.shinhan.com'
-  'KR-SEL|government|首尔特别市政府|www.seoul.go.kr'
+  'KR-SEL|bank|渣打银行韩国|www.sc.co.kr'
   'KR-SEL|university|首尔大学|www.snu.ac.kr'
-  'KR-SEL|university|延世大学|www.yonsei.ac.kr'
+  'KR-SEL|university|汉阳大学|www.hanyang.ac.kr'
 )
 # Runtime capability source of truth. Fields are decoded by protocol_registry_json.
 # IDs/aliases are data; dispatch below always calls explicit, literal handlers.
@@ -5171,11 +5171,11 @@ prompt_reality_region_candidates() {
   local choice region records record_region category institution domain category_label selected_sni
   local candidates=()
   echo "地区按机构所在地分组；实际解析 IP / ASN 或 CDN 节点可能位于其他地区。"
-  echo "1. HK 香港"
-  echo "2. US-LAX 洛杉矶"
-  echo "3. DE-FRA 法兰克福"
-  echo "4. JP-TYO 东京"
-  echo "5. KR-SEL 韩国首尔"
+  echo "1. HK 中国-香港"
+  echo "2. US-LAX 美国-洛杉矶"
+  echo "3. DE-FRA 德国-法兰克福"
+  echo "4. JP-TYO 日本-东京"
+  echo "5. KR-SEL 韩国-首尔"
   echo "0. 返回"
   choice=$(prompt_choice "请选择地区 [0-5] (默认 0): " 0 5 0) || return 1
   case "${choice}" in
