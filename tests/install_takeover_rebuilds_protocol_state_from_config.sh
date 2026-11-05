@@ -9,6 +9,11 @@ source "${TESTS_DIR}/menu_test_helper.sh"
 setup_menu_test_env 120
 source_testable_install
 
+# Keep this legacy :: singleton fixture independent of the runner's NICs.
+detect_host_ip_stack() {
+  printf 'dual'
+}
+
 restart_service_after_takeover() {
   :
 }
@@ -304,6 +309,7 @@ run_takeover_from_incomplete_menu() {
 }
 
 assert_rebuilt_multi_protocol_state() {
+  grep -Fxq 'CONFIG_SCHEMA_VERSION=1' "$(protocol_state_file mixed)"
   if [[ ! -f "${SB_PROTOCOL_INDEX_FILE}" ]]; then
     printf 'expected takeover flow to rebuild protocol index file: %s\n' "${SB_PROTOCOL_INDEX_FILE}" >&2
     exit 1
