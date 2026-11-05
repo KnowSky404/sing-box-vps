@@ -116,7 +116,7 @@ expect_failure service_state_unavailable start --json --yes
 response=$(service_json logs --json)
 jq -se 'length==1 and .[0].ok and .[0].sensitive and .[0].lines==100 and (.[0].logs|contains("dummy credential"))' <<< "${response}" >/dev/null
 [[ "$(sed -n '6p' "${SERVICE_TEST_JOURNAL}")" == 100 ]]
-! rg -q -- '--follow|^-f$' "${SERVICE_TEST_JOURNAL}"
+! grep -Eq -- '--follow|^-f$' "${SERVICE_TEST_JOURNAL}"
 response=$(service_json logs --lines 1000 --json)
 jq -e '.ok and .lines==1000' <<< "${response}" >/dev/null
 for value in 0 1001 -1 01 invalid '1;touch /tmp/never-service-test'; do
@@ -127,7 +127,7 @@ expect_failure invalid_arguments logs --json --yes
 export SERVICE_TEST_LOG_FAIL=y
 expect_failure service_logs_unavailable logs --json
 jq -e '.sensitive and .logs=="" and .journal_exit_code==2' <<< "${response}" >/dev/null
-! rg -q 'dummy-secret' "${TMP_DIR}/stderr"
+! grep -Fq 'dummy-secret' "${TMP_DIR}/stderr"
 unset SERVICE_TEST_LOG_FAIL
 export SERVICE_TEST_LOG_LARGE=y
 response=$(service_json logs --json)
