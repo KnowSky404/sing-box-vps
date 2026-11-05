@@ -105,5 +105,5 @@ jq -e '
   any(.inbounds[]; .tag == "vless-reality-limited-10m" and .tcp_fast_open == true and .tls.alpn == ["h2", "http/1.1"]) and
   any(.inbounds[]; .tag == "vless-in" and (.tcp_fast_open | not) and (.tls | has("alpn") | not)) and
   ([.route.rules[] | select(.action == "sniff") | .inbound] | sort) == ["vless-in", "vless-reality-limited-10m"] and
-  ([.route.rules[] | select(.action == "direct") | .domain[0]] | sort) == ["apple.com", "www.cloudflare.com"]
+  ([.route.rules[] | select(.action == "route" and .outbound == "direct") | .domain[0]] | sort) == ["apple.com", "www.cloudflare.com"]
 ' "${SINGBOX_CONFIG_FILE}" >/dev/null

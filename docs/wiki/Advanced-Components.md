@@ -25,7 +25,7 @@ SubMan surface; full configuration, including remote URLs, is available only
 from the explicitly sensitive component export, never list/diagnose.
 
 Component state uses schema version `1` and the current runtime baseline is
-the version shown in the repository README, with sing-box support through `1.14.2`; there is no separate
+the version shown in the repository README, with sing-box support through `1.14.4`; there is no separate
 manual component contract revision. Component-owned `route_rules` use a typed sing-box 1.14 default/logical matcher and
 route-action allowlist; nested rules are match-only and unknown fields/actions
 are rejected before state/CAS or takeover. This closes the arbitrary route JSON
@@ -60,10 +60,21 @@ service. Typed/offline state validation remains separate. Removing a broken
 record is allowed when the remaining candidate has no inaccessible namespace.
 The component never creates or deletes the operator-owned namespace path.
 
-The reproduced **Linux ARM64 / sing-box 1.14.2 / `with_purego`** build crashes
+With sing-box 1.14.4, route rules use `action:"route",outbound:"direct"` for
+direct egress. The removed `action:"direct"` is rejected by component validation
+before publication; manual rules require operator review before a core upgrade.
+The generator uses the supported form, and protected baseline ownership reads
+both historical forms without adopting rules with additional match fields.
+Existing managed REALITY configurations containing the old action need a rebuild
+with the updated script and current core before upgrading the core: use
+`sbv agent component rebuild --json --yes --expected-revision N` with the actual
+component revision. Rebuild validates, backs up and restarts an active service;
+resolve manual-rule conflicts first. The core upgrade itself preserves config.
+
+The reproduced **Linux ARM64 / sing-box 1.14.2 or 1.14.4 / `with_purego`** build crashes
 in namespace thread handling. Namespace records and component `netns` references
-are refused before publication with `namespace_runtime_unsafe_build` on that
-exact combination. Missing build tags on that platform/version remain
+are refused before publication with `namespace_runtime_unsafe_build` on those
+exact combinations. Missing build tags on that platform/version remain
 `not_assessed` in inventory and refuse writes as
 `namespace_runtime_build_not_assessed`; they are not labeled a confirmed crash.
 The official same-version glibc build passed isolated namespace data and lifecycle
@@ -72,6 +83,9 @@ build; the installer does not silently switch its default core asset. Rocky 8's
 glibc 2.28 is outside this result. See the
 [completion contract](https://github.com/KnowSky404/sing-box-vps/blob/main/docs/specs/full-protocol-completion.md)
 for exact build hashes, positive/negative cases and cleanup evidence.
+The 1.14.4 default and glibc package hashes and current default/unshare TCP,
+negative-control and cleanup results are recorded in
+[Protocol Coverage](Protocol-Coverage).
 Core installation/update also checks the staged candidate's bounded version/build
 metadata when the existing server config uses namespace declarations or known
 namespace Dial fields. Known-unsafe and exact-platform unassessed candidates are

@@ -17,6 +17,13 @@ Before operational work, read:
 
 For `sing-box` configuration syntax, version compatibility, migration notes, or official examples, use Context7 first.
 
+The supported core baseline is 1.14.4. Before upgrading, inspect `agent upgrade-check`
+and existing manual rules: use `action:"route",outbound:"direct"` instead of the
+removed `action:"direct"`. Linux ARM64 1.14.2/1.14.4 `with_purego` namespace builds
+are refused before config publication or core replacement; use a verified compatible
+build. See [Protocol Coverage](../../docs/wiki/Protocol-Coverage.md) and
+[Advanced Components](../../docs/wiki/Advanced-Components.md) for the actual evidence.
+
 ## Discover And Maintain Operations
 
 Run `sbv commands --json`, then `sbv schema <operation-id> --json` before choosing

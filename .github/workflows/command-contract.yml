@@ -16,13 +16,32 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Prepare verified target core for host configuration tests
+        run: |
+          set -euo pipefail
+          CORE_VERSION=$(sed -n 's/^readonly SB_SUPPORT_MAX_VERSION="\([^"]*\)"$/\1/p' install.sh)
+          case "$(uname -m)" in x86_64) CORE_ARCH=amd64 ;; aarch64) CORE_ARCH=arm64 ;; *) exit 1 ;; esac
+          CORE_ASSET="sing-box-${CORE_VERSION}-linux-${CORE_ARCH}.tar.gz"
+          CORE_STAGE_DIR=$(mktemp -d "${RUNNER_TEMP}/sing-box.XXXXXXXX")
+          curl -fsSL --connect-timeout 15 --max-time 120 --retry 2 \
+            "https://api.github.com/repos/SagerNet/sing-box/releases/tags/v${CORE_VERSION}" > "${CORE_STAGE_DIR}/release.json"
+          CORE_DIGEST=$(jq -er --arg name "$CORE_ASSET" '.assets[] | select(.name == $name) | .digest' "${CORE_STAGE_DIR}/release.json")
+          [[ "$CORE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          curl -fsSL --connect-timeout 15 --max-time 180 --retry 2 \
+            "https://github.com/SagerNet/sing-box/releases/download/v${CORE_VERSION}/${CORE_ASSET}" -o "${CORE_STAGE_DIR}/${CORE_ASSET}"
+          printf '%s  %s\n' "${CORE_DIGEST#sha256:}" "${CORE_STAGE_DIR}/${CORE_ASSET}" | sha256sum -c -
+          tar --no-same-owner -xzf "${CORE_STAGE_DIR}/${CORE_ASSET}" -C "${CORE_STAGE_DIR}"
+          VALIDATION_CORE="${CORE_STAGE_DIR}/sing-box-${CORE_VERSION}-linux-${CORE_ARCH}/sing-box"
+          [[ "$("$VALIDATION_CORE" version | sed -n '1p')" == "sing-box version ${CORE_VERSION}" ]]
+          printf 'SINGBOX_BINARY_114=%s\n' "$VALIDATION_CORE" >> "$GITHUB_ENV"
       - name: Run contract and scoped host regressions
         env:
           VERIFY_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           sudo -n env TMPDIR=/tmp GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory \
             GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE" GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" \
-            GITHUB_REF="$GITHUB_REF" bash dev/verification/ci.sh "$VERIFY_BASE_REF"
+            GITHUB_REF="$GITHUB_REF" SINGBOX_BINARY_114="$SINGBOX_BINARY_114" \
+            bash dev/verification/ci.sh "$VERIFY_BASE_REF"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

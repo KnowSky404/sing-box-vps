@@ -69,7 +69,7 @@ sbv agent check --json
 sbv agent doctor --json
 ```
 
-预检必须确认：实例 healthy、当前为 1.13.x、目标为固定演练版本 1.14.0、`ready=true`、`blockers=[]`、当前配置 check 通过、没有未处理的残缺状态，并记录完整 JSON 输出。当前脚本支持到 1.14.2，但本文件固定使用 1.14.0 复现升级路径。`upgrade-check` 不下载目标二进制，所以此时 `target_binary_validation.performed=false` 是预期值；目标 1.14 校验在有备份的升级事务中、重启服务前完成。若命令不存在、输出不是合法 JSON、服务非 active、当前 check 失败或出现 blocker，立即终止。
+预检必须确认：实例 healthy、当前为 1.13.x、目标为固定演练版本 1.14.0、`ready=true`、`blockers=[]`、当前配置 check 通过、没有未处理的残缺状态，并记录完整 JSON 输出。当前脚本支持到 1.14.4，但本文件固定使用 1.14.0 复现升级路径。`upgrade-check` 不下载目标二进制，所以此时 `target_binary_validation.performed=false` 是预期值；目标 1.14 校验在有备份的升级事务中、重启服务前完成。若命令不存在、输出不是合法 JSON、服务非 active、当前 check 失败或出现 blocker，立即终止。
 
 ## 2. 升级前证据与批准门
 

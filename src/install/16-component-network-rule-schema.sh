@@ -932,7 +932,7 @@ managed_component_route_rules_validate_json() {
         (has("mode") | not) and (has("rules") | not) and
         optional_match_fields and
         ((has("action") | not) or (.action | type == "string" and
-          IN("route","route-options","direct","bypass","reject","hijack-dns","sniff","resolve"))) and
+          IN("route","route-options","bypass","reject","hijack-dns","sniff","resolve"))) and
         (if ((.action // "route") | IN("route","bypass")) then
            optional_route_action_fields and
            ((has("method") | not) and (has("no_drop") | not) and (has("sniffer") | not)) and
@@ -994,16 +994,6 @@ managed_component_route_rules_validate_json() {
              "network_interface_address","default_interface_address","source_mac_address","source_hostname",
              "preferred_by","rule_set","rule_set_ip_cidr_match_source","invert","action","server","timeout",
              "strategy","disable_cache","disable_optimistic_cache","rewrite_ttl","client_subnet"])
-             | length == 0)
-         elif .action == "direct" then
-           ((keys - ["type","inbound","ip_version","network","auth_user","protocol","client",
-             "domain","domain_suffix","domain_keyword","domain_regex","geosite","source_geoip",
-             "geoip","source_ip_cidr","source_ip_is_private","ip_cidr","ip_is_private","source_port",
-             "source_port_range","port","port_range","process_name","process_path","process_path_regex",
-             "package_name","package_name_regex","user","user_id","clash_mode","network_type",
-             "network_is_expensive","network_is_constrained","wifi_ssid","wifi_bssid","interface_address",
-             "network_interface_address","default_interface_address","source_mac_address","source_hostname",
-             "preferred_by","rule_set","rule_set_ip_cidr_match_source","invert","action"])
              | length == 0)
          else false end)
       else false end;

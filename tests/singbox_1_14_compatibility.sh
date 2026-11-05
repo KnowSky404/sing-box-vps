@@ -24,6 +24,42 @@ detect_installed_singbox_version() { printf 'unexpected-version-output'; }
 [[ "$(resolve_config_target_singbox_version)" == 1.13.18 ]] || fail 'invalid installed version output should fall back to requested version'
 detect_installed_singbox_version() { :; }
 
+managed_component_route_rules_validate_json '[{"domain":["example.invalid"],"action":"route","outbound":"direct"}]' || fail 'direct outbound route should remain valid'
+if managed_component_route_rules_validate_json '[{"domain":["example.invalid"],"action":"direct"}]'; then
+  fail 'removed direct rule action must be rejected before publication'
+fi
+for rule in '{"domain":["example.invalid"],"action":"direct"}' '{"domain":["example.invalid"],"action":"route","outbound":"direct"}'; do
+  jq -n --argjson rule "${rule}" '{route:{rules:[$rule,
+    {domain:["manual.invalid"],port:443,action:"route",outbound:"direct"}]}}' > "${SB_PROJECT_DIR}/managed-config.generated.json"
+  chmod 600 "${SB_PROJECT_DIR}/managed-config.generated.json"
+  [[ "$(routing_policy_baseline_protocol_rules_json)" == "[$(jq -c . <<< "${rule}")]" ]] || fail 'baseline must recognize both direct rule forms without adopting other rules'
+done
+rm "${SB_PROJECT_DIR}/managed-config.generated.json"
+(
+  load_vless_reality_protocol_state() { :; }
+  list_vless_reality_instance_ids() { printf 'main\n'; }
+  load_vless_reality_instance_state() { SB_SNI=example.invalid; }
+  build_vless_reality_route_rules_json
+) > "${TMP_DIR}/reality-route-rules.json"
+jq -e 'any(.[]; .action=="route" and .outbound=="direct" and .domain==["example.invalid"]) and all(.[]; .action!="direct")' \
+  "${TMP_DIR}/reality-route-rules.json" >/dev/null || fail 'REALITY routes must use the direct outbound'
+if [[ -n "${SINGBOX_BINARY_114:-}" ]]; then
+  jq -n --slurpfile rules "${TMP_DIR}/reality-route-rules.json" \
+    '{inbounds:[{type:"mixed",tag:"vless-in",listen:"127.0.0.1",listen_port:18080}],
+      outbounds:[{type:"direct",tag:"direct"}],route:{rules:$rules[0]}}' > "${TMP_DIR}/reality-route-config.json"
+  "${SINGBOX_BINARY_114}" check -c "${TMP_DIR}/reality-route-config.json" || fail 'target core rejected generated REALITY route rules'
+  jq '.route.rules |= map(if .action=="route" and .outbound=="direct" then .action="direct" | del(.outbound) else . end)' \
+    "${TMP_DIR}/reality-route-config.json" > "${TMP_DIR}/legacy-base.json"
+  chmod 600 "${TMP_DIR}/legacy-base.json"
+  jq '.route.rules += [{domain:["manual.invalid"],action:"route",outbound:"direct"}]' \
+    "${TMP_DIR}/legacy-base.json" > "${TMP_DIR}/legacy-live.json"
+  merge_generated_config_with_live "${TMP_DIR}/reality-route-config.json" "${TMP_DIR}/legacy-live.json" \
+    "${TMP_DIR}/legacy-base.json" > "${TMP_DIR}/rebuilt.json" || fail 'managed legacy REALITY rules could not be rebuilt'
+  jq -e 'all(.route.rules[]; .action!="direct") and any(.route.rules[]; .domain==["manual.invalid"] and .outbound=="direct")' \
+    "${TMP_DIR}/rebuilt.json" >/dev/null || fail 'rebuild must replace owned legacy rules and preserve manual rules'
+  "${SINGBOX_BINARY_114}" check -c "${TMP_DIR}/rebuilt.json" || fail 'target core rejected rebuilt legacy REALITY rules'
+fi
+
 SB_VERSION=1.14.0
 set_protocol_defaults hy2
 SB_PORT=443 SB_HY2_DOMAIN=hy2.example.com SB_HY2_PASSWORD=pass SB_HY2_USER_NAME=user

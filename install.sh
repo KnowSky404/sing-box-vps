@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026110502
+# Version: 2026110503
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026110502"
-readonly SB_SUPPORT_MAX_VERSION="1.14.2"
+readonly SCRIPT_VERSION="2026110503"
+readonly SB_SUPPORT_MAX_VERSION="1.14.4"
 # A single IPv6 wildcard socket accepts IPv4 and IPv6 in sing-box on Linux.
 readonly SB_DEFAULT_LISTEN_ADDRESS="::"
 readonly SB_CONFIG_SCHEMA_1_14_MIN_VERSION="1.14.0"
@@ -1673,9 +1673,10 @@ component_environment_dependency_json() {
 namespace_runtime_build_dependency_json() {
   local platform=${1:-} architecture=${2:-} version=${3:-} tags_status=${4:-} tags=${5:-'[]'}
   local status=available reason=''
-  # This is the exact build reproduced with SIGSEGV on locked-thread exit.
+  # These exact builds reproduce SIGSEGV on locked-thread exit.
   # Unknown tags remain unassessed; do not infer the purego tag from CGO alone.
-  if [[ "${platform}" == Linux && ( "${architecture}" == aarch64 || "${architecture}" == arm64 ) && "${version}" == 1.14.2 ]]; then
+  if [[ "${platform}" == Linux && ( "${architecture}" == aarch64 || "${architecture}" == arm64 ) &&
+        ( "${version}" == 1.14.2 || "${version}" == 1.14.4 ) ]]; then
     if [[ "${tags_status}" != available ]]; then
       status=not_assessed; reason=namespace_runtime_build_not_assessed
     elif jq -en --argjson tags "${tags}" '$tags | index("with_purego") != null' >/dev/null; then
@@ -12885,7 +12886,8 @@ singbox_candidate_namespace_runtime_safe() {
          type == "string" and length > 0))) end' \
     "${SINGBOX_CONFIG_FILE}" 2>/dev/null) || return 3
   [[ "${namespace_use}" == true ]] || return 0
-  [[ "$(uname -s)" == Linux && ( "$(uname -m)" == aarch64 || "$(uname -m)" == arm64 ) && "${version}" == 1.14.2 ]] || return 0
+  [[ "$(uname -s)" == Linux && ( "$(uname -m)" == aarch64 || "$(uname -m)" == arm64 ) &&
+     ( "${version}" == 1.14.2 || "${version}" == 1.14.4 ) ]] || return 0
   output=$(timeout 10 "${binary}" version 2>/dev/null) || probe_status=$?
   case "${probe_status}" in 129|130|143) return "${probe_status}" ;; esac
   if [[ "${probe_status}" == 0 ]]; then
@@ -14377,7 +14379,7 @@ build_vless_reality_route_rules_json() {
 
   while IFS= read -r sni; do
     [[ -z "${sni}" ]] && continue
-    if ! jq -n --arg sni "${sni}" '{ "domain": [ $sni ], "action": "direct" }' >> "${tmp_rules}"; then
+    if ! jq -n --arg sni "${sni}" '{ "domain": [ $sni ], "action": "route", "outbound": "direct" }' >> "${tmp_rules}"; then
       rm -f "${tmp_rules}" "${tmp_snis}"
       return 1
     fi
@@ -18410,7 +18412,7 @@ managed_component_route_rules_validate_json() {
         (has("mode") | not) and (has("rules") | not) and
         optional_match_fields and
         ((has("action") | not) or (.action | type == "string" and
-          IN("route","route-options","direct","bypass","reject","hijack-dns","sniff","resolve"))) and
+          IN("route","route-options","bypass","reject","hijack-dns","sniff","resolve"))) and
         (if ((.action // "route") | IN("route","bypass")) then
            optional_route_action_fields and
            ((has("method") | not) and (has("no_drop") | not) and (has("sniffer") | not)) and
@@ -18472,16 +18474,6 @@ managed_component_route_rules_validate_json() {
              "network_interface_address","default_interface_address","source_mac_address","source_hostname",
              "preferred_by","rule_set","rule_set_ip_cidr_match_source","invert","action","server","timeout",
              "strategy","disable_cache","disable_optimistic_cache","rewrite_ttl","client_subnet"])
-             | length == 0)
-         elif .action == "direct" then
-           ((keys - ["type","inbound","ip_version","network","auth_user","protocol","client",
-             "domain","domain_suffix","domain_keyword","domain_regex","geosite","source_geoip",
-             "geoip","source_ip_cidr","source_ip_is_private","ip_cidr","ip_is_private","source_port",
-             "source_port_range","port","port_range","process_name","process_path","process_path_regex",
-             "package_name","package_name_regex","user","user_id","clash_mode","network_type",
-             "network_is_expensive","network_is_constrained","wifi_ssid","wifi_bssid","interface_address",
-             "network_interface_address","default_interface_address","source_mac_address","source_hostname",
-             "preferred_by","rule_set","rule_set_ip_cidr_match_source","invert","action"])
              | length == 0)
          else false end)
       else false end;
@@ -42500,7 +42492,9 @@ routing_policy_baseline_protocol_rules_json() {
   local baseline="${SB_PROJECT_DIR}/managed-config.generated.json"
   if [[ ! -e "${baseline}" && ! -L "${baseline}" ]]; then printf '[]\n'; return 0; fi
   [[ -f "${baseline}" && ! -L "${baseline}" && "$(stat -c %a "${baseline}")" == 600 ]] || return 1
-  jq -c '[.route.rules[]? | select(.action == "direct" and (keys | sort) == ["action","domain"])]' "${baseline}"
+  jq -c '[.route.rules[]? | select(
+    (.action == "direct" and (keys | sort) == ["action","domain"]) or
+    (.action == "route" and .outbound == "direct" and (keys | sort) == ["action","domain","outbound"]))]' "${baseline}"
 }
 
 # Tag labels enumerate generated rules; they do not prove an arbitrary manual

@@ -189,7 +189,8 @@ singbox_candidate_namespace_runtime_safe() {
          type == "string" and length > 0))) end' \
     "${SINGBOX_CONFIG_FILE}" 2>/dev/null) || return 3
   [[ "${namespace_use}" == true ]] || return 0
-  [[ "$(uname -s)" == Linux && ( "$(uname -m)" == aarch64 || "$(uname -m)" == arm64 ) && "${version}" == 1.14.2 ]] || return 0
+  [[ "$(uname -s)" == Linux && ( "$(uname -m)" == aarch64 || "$(uname -m)" == arm64 ) &&
+     ( "${version}" == 1.14.2 || "${version}" == 1.14.4 ) ]] || return 0
   output=$(timeout 10 "${binary}" version 2>/dev/null) || probe_status=$?
   case "${probe_status}" in 129|130|143) return "${probe_status}" ;; esac
   if [[ "${probe_status}" == 0 ]]; then
