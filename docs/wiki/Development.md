@@ -17,9 +17,9 @@
 
 `command-contract` 保留原契约门禁，并通过 `dev/verification/ci.sh BASE` 复用完整差异计划器，追加本次变更的宿主测试。CI 检出 PR head，并保留完整 Git 历史；计划、逐项日志和耗时上传为 `scoped-host-verification`。
 
-未知影响需要本分支修改 `.github/verification-scope.txt`。第一行是 `base <merge-base SHA>`，后续每行只接受一个 `--test tests/<name>.sh` 或 `--scenario <name>`；SHA 可用 `git merge-base origin/main HEAD` 获取。旧任务未修改的范围、过期基线、helper/容器 fixture、越界路径和任意命令均不能作为有效宿主范围。自动检查继续追加；固定契约列表不能代替作者的影响判断。
+未知影响需要本分支修改 `.github/verification-scope.txt`。第一行是 `base <merge-base SHA>`，后续每行只接受一个 `--test tests/<name>.sh` 或 `--scenario <name>`；SHA 可用 `git merge-base origin/main HEAD` 获取。PR/本地不接受旧任务未修改的范围、过期基线、helper/容器 fixture、越界路径或任意命令。自动检查继续追加；固定契约列表不能代替作者的影响判断。
 
-PR 严格校验 merge-base；GitHub rebase 合并后的受保护 main push，仅允许本次已修改范围的旧基线为 push-before 的祖先。专用容器 fixture 仍让完整计划保持 `needs_scope`，CI 独立运行宿主检查并记录 `remote_status=required_not_run`，不能因此宣称专用运行态通过。标准 `run.sh` 的拒绝边界不变。
+PR 严格校验 merge-base；GitHub rebase 合并后的受保护 main push，允许已合并范围的旧基线为 push-before 的祖先；并行 PR 已发布相同范围时同样执行。非祖先或无效基线拒绝。专用容器 fixture 仍让完整计划保持 `needs_scope`，CI 独立运行宿主检查并记录 `remote_status=required_not_run`，不能因此宣称专用运行态通过。标准 `run.sh` 的拒绝边界不变。
 
 在仓库根目录以具备 fixture 所需 root 权限的环境执行 `bash dev/verification/ci.sh origin/main` 可复现同一入口。CI 强制执行宿主检查，不接受继承的 `VERIFY_SKIP_LOCAL_TESTS` 跳过；明确记录选中的 Docker 未执行；运行态仍须另行执行对应场景并记录证据。`lifecycle_safety` 使用全新 SOCKS 基线，覆盖菜单/CLI 服务保护、真实停服和受管防火墙卸载，恢复安装后执行最终 smoke；原默认 17 场景集合不变。dispatcher 改动自动选分派测试并保留 `needs_scope`，其他探针/产物影响按实际追加。
 

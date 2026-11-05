@@ -70,8 +70,9 @@ data, never shell code.
 An explicit repository scope is bound to the actual merge base. Reusing an
 unchanged scope from another branch must not silently resolve `needs_scope`.
 PR scope must match its actual merge base. On a protected `main` push after
-GitHub rebase merge, a changed scope may name an ancestor of the push-before
-revision; unchanged scopes remain rejected. Only validated planner selectors are
+GitHub rebase merge, the accepted scope may name an ancestor of the push-before
+revision, including identical scope already published by a parallel PR. PR/local
+modes still reject unchanged scopes; non-ancestor/invalid bases always fail. Only validated planner selectors are
 accepted; no shell evaluation or arbitrary commands. Automatically selected checks are additive. Unknown or stale scope
 fails before tests. CI reuses the host executor directly. A dedicated container fixture may leave
 the full plan at `needs_scope` while host checks pass; its separate runtime
@@ -133,6 +134,9 @@ test failure. Do not require a full suite for ordinary changes.
   readiness separate from dedicated container acceptance. Seven exact
   regressions (59 seconds) and the final three Docker scenes passed. PR
   scope matching remains strict; standard runtime `needs_scope` is retained.
+- A further Git fixture covers parallel PRs publishing identical scope.
+  Only protected-main post-merge mode permits this accepted scope reuse;
+  PR/local stale-scope rejection remains strict.
 - Tested generated runtime SHA-256: `6f0ddf69c5dd902f48d9ae27e0f01219db1cc345d0693b1080f68b1b7a215e08`.
 - Local/current-head review, PR/remote review/merge and Wiki publication are
   recorded in the implementation PR, not inferred from the above test results.

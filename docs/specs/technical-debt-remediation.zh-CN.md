@@ -53,8 +53,9 @@ CI 检出受测 head 并获取足够历史；PR base / push-before revision 作�
 不得当作 shell 代码执行。
 
 显式仓库范围绑定实际 merge-base。不得复用其他分支留下的未修改范围消除
-`needs_scope`。PR 基线严格匹配；GitHub rebase 后受保护 main 的 push 仅允许本次发生修改的范围
-引用 push-before 的祖先，旧任务未修改范围仍拒绝。只接受经计划器校验的 selector，
+`needs_scope`。PR 基线严格匹配；GitHub rebase 后受保护 main 的 push 允许已合并范围
+引用 push-before 的祖先；并行 PR 已发布相同范围时也继续执行。PR/本地
+模式仍拒绝未修改范围，非祖先及无效基线始终拒绝。只接受经计划器校验的 selector，
 不执行任意命令或 shell 文本。
 自动检查始终追加；缺失、过期或无效范围在测试前失败。
 CI 直接复用宿主执行器；专用容器 fixture 使完整计划保持 `needs_scope`，
@@ -105,6 +106,8 @@ CI 直接复用宿主执行器；专用容器 fixture 使完整计划保持 `nee
   GitHub rebase 后 main push 的祖先基线、专用容器 fixture 与宿主 readiness 分离。
   对应 7 项回归（59 秒）及最终三项 Docker 通过；PR 基线仍严格匹配，
   标准调度器的专用运行态 `needs_scope` 不降级为通过。
+- 另补并行 PR 已发布相同范围的 main push 回归；仅受保护 main 的
+  post-merge 模式允许该已合并范围复用，PR/本地仍严格拒绝旧范围。
 - 受测生成安装器 SHA-256：`6f0ddf69c5dd902f48d9ae27e0f01219db1cc345d0693b1080f68b1b7a215e08`。
 - 当前 head 本地审查、PR/远程审查/合并及 Wiki 发布在实施 PR 单独记录，
   不能从上述测试结果推断。

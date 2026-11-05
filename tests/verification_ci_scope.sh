@@ -97,4 +97,17 @@ assert_rejected
 GITHUB_EVENT_NAME=push GITHUB_REF=refs/heads/main expect_success
 grep -Fxq local_status=passed "${TMP_DIR}/last-summary"
 grep -Fxq fixture_requested.sh "${CI_SCOPE_EXECUTION_LOG}"
+
+# Another accepted PR may have already published this exact scope content.
+git -C "${FIXTURE}" checkout -qb identical-scope-main "${ORIGINAL_BASE}"
+git -C "${FIXTURE}" show "${TASK_COMMIT}:.github/verification-scope.txt" > "${FIXTURE}/.github/verification-scope.txt"
+printf 'upstream\n' > "${FIXTURE}/upstream-note.md"
+git -C "${FIXTURE}" add .github/verification-scope.txt upstream-note.md
+git -C "${FIXTURE}" commit -qm identical-scope-upstream
+BASE=$(git -C "${FIXTURE}" rev-parse HEAD)
+git -C "${FIXTURE}" cherry-pick "${TASK_COMMIT}" >/dev/null
+assert_rejected
+GITHUB_EVENT_NAME=push GITHUB_REF=refs/heads/main expect_success
+printf 'base %s\n--test tests/fixture_requested.sh\n' "${TASK_COMMIT}" > "${FIXTURE}/.github/verification-scope.txt"
+GITHUB_EVENT_NAME=push GITHUB_REF=refs/heads/main assert_rejected
 printf 'CI strict PR scope, rebase push and dedicated-runtime host boundary passed\n'
