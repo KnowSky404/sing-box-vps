@@ -26,6 +26,6 @@ jobs:
           bash tests/agent_docs_cover_capabilities.sh
           bash tests/wiki_documentation.sh
           bash tests/version_metadata_is_consistent.sh
-          bash tests/reality_region_candidates.sh
+          sudo -n env TMPDIR=/tmp bash tests/reality_region_candidates.sh
           bash tests/reality_region_candidate_evidence.sh
           bash tests/reality_region_candidate_evidence_contract.sh
