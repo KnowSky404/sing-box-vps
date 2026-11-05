@@ -103,7 +103,7 @@ test failure. Do not require a full suite for ordinary changes.
   compensation-failure journal assertion and dispatcher-scope assertion were
   rechecked through their exact tests; documentation checks were refreshed.
   Unchanged test/runtime content reused its passing result.
-- Docker: `dev/verification-runs/20261105050314` reports exit 0 and all three
+- Final Docker: `dev/verification-runs/20261105051913` reports exit 0 and all three
   registered scenes successful: `fresh_install_socks`, `lifecycle_safety`,
   `runtime_smoke`. Real systemd/menu/CLI guards, both families' owned-rule
   cleanup, unrelated-rule preservation, reinstall and final proxy smoke pass.
@@ -118,6 +118,12 @@ test failure. Do not require a full suite for ordinary changes.
   or production operation is included.
 - CI keeps its original contract gates, adds diff-selected tests and uploads
   plans/logs/timings. Its Docker result is explicitly skipped, not passed.
-- Tested generated runtime SHA-256: `082613f520ec7cdb84f95a724f49a7094be1f2c0184ce0ebb2901c52c4447af5`.
+- Follow-up isolated checks reproduced an inherited skip-local flag bypass
+  and suppressed uninstall signal diagnostics. CI now forces host execution;
+  uninstall reports uncertain interruption state; firewall snapshot failures
+  fail the scene. All seven affected host checks (55 seconds) and the final
+  three Docker scenes were rerun successfully. Unchanged business functions
+  and tests reused their original results without unrelated full regression.
+- Tested generated runtime SHA-256: `80eef907e07b1f6419ef8e0704606d5a17291681583cb9c97efa6204e8f8d39e`.
 - Local/current-head review, PR/remote review/merge and Wiki publication are
   recorded in the implementation PR, not inferred from the above test results.

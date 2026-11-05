@@ -19,7 +19,7 @@
 
 未知影响需要本分支修改 `.github/verification-scope.txt`。第一行是 `base <merge-base SHA>`，后续每行只接受一个 `--test tests/<name>.sh` 或 `--scenario <name>`；SHA 可用 `git merge-base origin/main HEAD` 获取。旧任务未修改的范围、过期基线、helper/容器 fixture、越界路径和任意命令均不能作为有效宿主范围。自动检查继续追加；固定契约列表不能代替作者的影响判断。
 
-在仓库根目录以具备 fixture 所需 root 权限的环境执行 `bash dev/verification/ci.sh origin/main` 可复现同一入口。CI 仅执行宿主检查，明确记录选中的 Docker 未执行；运行态仍须另行执行对应场景并记录证据。`lifecycle_safety` 使用全新 SOCKS 基线，覆盖菜单/CLI 服务保护、真实停服和受管防火墙卸载，恢复安装后执行最终 smoke；原默认 17 场景集合不变。dispatcher 改动自动选分派测试并保留 `needs_scope`，其他探针/产物影响按实际追加。
+在仓库根目录以具备 fixture 所需 root 权限的环境执行 `bash dev/verification/ci.sh origin/main` 可复现同一入口。CI 强制执行宿主检查，不接受继承的 `VERIFY_SKIP_LOCAL_TESTS` 跳过；明确记录选中的 Docker 未执行；运行态仍须另行执行对应场景并记录证据。`lifecycle_safety` 使用全新 SOCKS 基线，覆盖菜单/CLI 服务保护、真实停服和受管防火墙卸载，恢复安装后执行最终 smoke；原默认 17 场景集合不变。dispatcher 改动自动选分派测试并保留 `needs_scope`，其他探针/产物影响按实际追加。
 
 ### 小改动的执行与停止条件
 
