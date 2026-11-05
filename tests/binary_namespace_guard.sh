@@ -4,7 +4,7 @@ TESTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${TESTS_DIR}/menu_test_helper.sh"
 setup_menu_test_env 120
 source "${TESTABLE_INSTALL}"
-SB_VERSION=1.14.2
+SB_VERSION=1.14.4
 ARCH=arm64
 uname() { case "${1:-}" in -m) printf 'aarch64\n' ;; -s) printf 'Linux\n' ;; *) command uname "$@" ;; esac; }
 ldconfig() { :; }
@@ -13,12 +13,12 @@ curl() {
   while [[ $# -gt 0 ]]; do case $1 in -o) destination=$2; shift 2 ;; *) shift ;; esac; done
   command cp "${TMP_DIR}/candidate.tar.gz" "${destination}"
 }
-release_root=sing-box-1.14.2-linux-arm64
+release_root=sing-box-1.14.4-linux-arm64
 mkdir -p "${TMP_DIR}/release/${release_root}"
 printf 'new-library\n' > "${TMP_DIR}/release/${release_root}/libcronet.so"
 prepare_candidate() {
   local tag_line=$1
-  printf '#!/usr/bin/env bash\nif [[ $1 == version ]]; then printf "sing-box version 1.14.2\\n%s\\n"; else printf "new\\n"; fi\n' "${tag_line}" > "${TMP_DIR}/release/${release_root}/sing-box"
+  printf '#!/usr/bin/env bash\nif [[ $1 == version ]]; then printf "sing-box version 1.14.4\\n%s\\n"; else printf "new\\n"; fi\n' "${tag_line}" > "${TMP_DIR}/release/${release_root}/sing-box"
   tar -czf "${TMP_DIR}/candidate.tar.gz" -C "${TMP_DIR}/release" "${release_root}"
 }
 restore_old() {

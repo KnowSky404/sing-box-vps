@@ -6,8 +6,8 @@ TESTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${TESTS_DIR}/menu_test_helper.sh"
 setup_menu_test_env 120
 core=${ROUTING_POLICY_TEST_REAL_CORE:-${SINGBOX_BINARY_114:-/usr/local/bin/sing-box}}
-[[ "$("${core}" version | head -n1)" == 'sing-box version 1.14.2' ]] || {
-  printf 'Set ROUTING_POLICY_TEST_REAL_CORE to the real sing-box 1.14.2 executable\n' >&2
+[[ "$("${core}" version | head -n1)" == 'sing-box version 1.14.4' ]] || {
+  printf 'Set ROUTING_POLICY_TEST_REAL_CORE to the real sing-box 1.14.4 executable\n' >&2
   exit 1
 }
 ln -s "${core}" "${TMP_DIR}/bin/sing-box"

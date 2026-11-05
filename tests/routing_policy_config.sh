@@ -206,7 +206,7 @@ routing_policy_component_precedence_test() (
   generate_config >/dev/null
   cp -p -- "${SINGBOX_CONFIG_FILE}" "${workspace}/base-config.json"
   cp -p -- "${SB_PROJECT_DIR}/managed-config.generated.json" "${workspace}/base-generated.json"
-  for action in route direct bypass reject hijack-dns; do
+  for action in route bypass reject hijack-dns; do
     for target in mixed-in component-in; do
       cp -p -- "${workspace}/base-config.json" "${SINGBOX_CONFIG_FILE}"
       cp -p -- "${workspace}/base-generated.json" "${SB_PROJECT_DIR}/managed-config.generated.json"
@@ -214,14 +214,14 @@ routing_policy_component_precedence_test() (
         {inbound:["component-in"],domain:["keep.fixture.invalid"],action:"reject"},
         ({inbound:[$target],action:$action} +
           (if $action == "hijack-dns" then {protocol:["dns"]}
-           elif $action == "direct" or $action == "bypass" then {ip_cidr:["127.0.0.0/8"]}
+           elif $action == "bypass" then {ip_cidr:["127.0.0.0/8"]}
            else {domain_suffix:["localhost"]} end) +
           (if $action == "route" or $action == "bypass" then {outbound:"direct"} else {} end))]')
       state=$(jq -c --argjson rules "${rules}" '.components[1].route_rules=$rules' <<< "${base_state}")
       managed_component_state_validate_json "${state}"
       printf '%s\n' "${state}" > "${SB_COMPONENT_STATE_FILE}"
       name="${action}-${target}"
-      if [[ "${target}" == mixed-in && "${action}" =~ ^(route|direct|bypass)$ ]]; then
+      if [[ "${target}" == mixed-in && "${action}" =~ ^(route|bypass)$ ]]; then
         # The exact component-generated rule really is core-valid. Owning the
         # record must not grant it priority over private/address ad protection.
         jq --argjson rules "${rules}" '.route.rules=$rules + .route.rules' \

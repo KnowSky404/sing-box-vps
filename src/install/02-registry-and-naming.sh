@@ -522,9 +522,10 @@ component_environment_dependency_json() {
 namespace_runtime_build_dependency_json() {
   local platform=${1:-} architecture=${2:-} version=${3:-} tags_status=${4:-} tags=${5:-'[]'}
   local status=available reason=''
-  # This is the exact build reproduced with SIGSEGV on locked-thread exit.
+  # These exact builds reproduce SIGSEGV on locked-thread exit.
   # Unknown tags remain unassessed; do not infer the purego tag from CGO alone.
-  if [[ "${platform}" == Linux && ( "${architecture}" == aarch64 || "${architecture}" == arm64 ) && "${version}" == 1.14.2 ]]; then
+  if [[ "${platform}" == Linux && ( "${architecture}" == aarch64 || "${architecture}" == arm64 ) &&
+        ( "${version}" == 1.14.2 || "${version}" == 1.14.4 ) ]]; then
     if [[ "${tags_status}" != available ]]; then
       status=not_assessed; reason=namespace_runtime_build_not_assessed
     elif jq -en --argjson tags "${tags}" '$tags | index("with_purego") != null' >/dev/null; then

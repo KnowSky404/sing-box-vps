@@ -21,12 +21,14 @@
 2. 官方 release 归档下载设置连接/总时限、有限重试和重试预算；持续消费 stderr，仅保留配置上限内的诊断，不输出远程响应或含凭据的原始错误。
 3. 解压前检查完整 manifest：只接受预期版本/架构目录、唯一普通文件 `sing-box`、最多一个普通文件 `libcronet.so`、安全相对路径和普通文件/目录类型。拒绝路径穿越、符号链接、硬链接、重复核心和无效归档。
 4. 只将选定成员解压到私有目录；使用有界 `version` 命令确认候选可执行文件的精确版本，再允许发布。信任边界仍为官方 release 来源；本地 hash 不是发布者签名。
-   既有服务端配置含 namespace 声明或已知 namespace Dial 字段时，另行读取 staging 二进制构建元数据；在替换二进制、运行库或 marker 前，拒绝已复现的 Linux ARM64/1.14.2/`with_purego` 组合，以及该准确平台/版本下无法确认的构建。名为 `netns` 的普通 header 不算 namespace 使用。该门禁保护操作员已安装的兼容核心，覆盖更新或修复路径；见 [namespace 完成记录](full-protocol-completion.zh-CN.md)。
+   既有服务端配置含 namespace 声明或已知 namespace Dial 字段时，另行读取 staging 二进制构建元数据；在替换二进制、运行库或 marker 前，拒绝已复现的 Linux ARM64/1.14.2 或 1.14.4/`with_purego` 组合，以及这些准确平台/版本下无法确认的构建。名为 `netns` 的普通 header 不算 namespace 使用。该门禁保护操作员已安装的兼容核心，覆盖更新或修复路径；见 [namespace 完成记录](full-protocol-completion.zh-CN.md)。
 5. 先准备二进制、可选受管运行库和 hash marker，再提交任何二进制；保留未由 sbv 管理的现有运行库。备份旧文件及元数据，保留原 owner，并设置候选目标权限。
 6. 每个文件通过同文件系统原子 rename 发布。三个文件构成操作级回滚组，不代表整个文件系统的一次原子 rename。发布后检查二进制版本/hash/元数据及运行库/marker 的 hash/元数据。
 7. 失败或 INT/TERM/HUP 清理候选；已发布时恢复并验证旧文件，包括旧运行库/marker 不存在的情况。处理 rename 已成功、内存 commit 标志尚未更新时的信号窗口。回滚失败保留私有恢复材料并要求人工介入；已校验提交后的清理失败明确报告已提交状态和恢复路径，不宣称清理成功。
 
 namespace 候选门禁另以真实官方 1.14.2 ARM64 二进制核对：既有服务端配置含 namespace 时，拒绝 `with_purego` 候选并允许兼容的 glibc 候选。该证据只是有界候选元数据检查，没有安装或激活运行时；结果和核心 hash 保留于 `/tmp/sbv-binary-namespace-actual.env` 与 `.sha256`。`binary_namespace_guard.sh` 另覆盖完整安装路径中不安全/未知候选的拒绝与产物不变、安全候选及普通 header 不误判。
+
+1.14.4 适配保留原 1.14.2 拦截，并增加默认构建崩溃复现与 glibc default/unshare 运行态证据，见[协议能力核对矩阵](../wiki/Protocol-Coverage.md)。
 
 ## RT-02：受管核心升级
 

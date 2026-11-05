@@ -7,7 +7,7 @@ source "${TESTS_DIR}/menu_test_helper.sh"
 setup_menu_test_env 120
 core=${SINGBOX_BINARY_114:-/usr/local/bin/sing-box}
 [[ -x "${core}" ]]
-[[ "$("${core}" version | head -n 1)" == 'sing-box version 1.14.2' ]]
+[[ "$("${core}" version | head -n 1)" == 'sing-box version 1.14.4' ]]
 ln -s "${core}" "${TMP_DIR}/bin/sing-box"
 source_testable_install
 trap 'printf "component generation inventory context failed at line %s\n" "${LINENO}" >&2' ERR
@@ -115,4 +115,4 @@ sha256sum "${SINGBOX_CONFIG_FILE}" "${SB_COMPONENT_STATE_FILE}" \
   "${SB_PROJECT_DIR}/managed-config.generated.json" "${SB_WARP_KEY_FILE}" > "${TMP_DIR}/drift.after"
 cmp "${TMP_DIR}/drift.before" "${TMP_DIR}/drift.after"
 [[ ! -e "${SB_COMPONENT_TRANSACTION_DIR}" ]]
-printf 'Component inline create/body replacement retains REALITY per-node WARP with global WARP off; live drift remains refused (sing-box 1.14.2)\n'
+printf 'Component inline create/body replacement retains REALITY per-node WARP with global WARP off; live drift remains refused (sing-box 1.14.4)\n'

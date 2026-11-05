@@ -4,8 +4,8 @@ TESTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${TESTS_DIR}/menu_test_helper.sh"
 setup_menu_test_env 120
 core=${ROUTING_POLICY_TEST_REAL_CORE:-${SINGBOX_BINARY_114:-/usr/local/bin/sing-box}}
-[[ -x "${core}" && "$("${core}" version | head -n1)" == 'sing-box version 1.14.2' ]] || {
-  printf 'Set ROUTING_POLICY_TEST_REAL_CORE to real sing-box 1.14.2\n' >&2; exit 1;
+[[ -x "${core}" && "$("${core}" version | head -n1)" == 'sing-box version 1.14.4' ]] || {
+  printf 'Set ROUTING_POLICY_TEST_REAL_CORE to real sing-box 1.14.4\n' >&2; exit 1;
 }
 ln -s "${core}" "${TMP_DIR}/bin/sing-box"
 source_testable_install
@@ -57,7 +57,7 @@ reset_legacy_fixture() {
   : > "${TMP_DIR}/service-calls"
   printf 'INSTALLED_PROTOCOLS=mixed\nPROTOCOL_STATE_VERSION=1\n' > "${SB_PROTOCOL_INDEX_FILE}"
   printf 'INSTALLED=1\nCONFIG_SCHEMA_VERSION=1\nNODE_NAME=Legacy\nPORT=13090\nAUTH_ENABLED=n\nUSERNAME=\nPASSWORD=\n' > "${SB_PROTOCOL_STATE_DIR}/mixed.env"
-  SB_VERSION=1.14.2 SB_ENABLE_WARP=y SB_ADVANCED_ROUTE=n SB_WARP_ROUTE_MODE=all
+  SB_VERSION=1.14.4 SB_ENABLE_WARP=y SB_ADVANCED_ROUTE=n SB_WARP_ROUTE_MODE=all
   SB_INBOUND_STACK_MODE=ipv4_only SB_OUTBOUND_STACK_MODE=prefer_ipv4
   save_stack_mode_state
   save_warp_route_settings

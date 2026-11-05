@@ -6,8 +6,8 @@ TESTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${TESTS_DIR}/menu_test_helper.sh"
 setup_menu_test_env 120
 core=${ROUTING_POLICY_TEST_REAL_CORE:-${SINGBOX_BINARY_114:-/usr/local/bin/sing-box}}
-[[ "$("${core}" version | head -n1)" == 'sing-box version 1.14.2' ]] || {
-  printf 'Set ROUTING_POLICY_TEST_REAL_CORE to the real sing-box 1.14.2 executable\n' >&2; exit 1;
+[[ "$("${core}" version | head -n1)" == 'sing-box version 1.14.4' ]] || {
+  printf 'Set ROUTING_POLICY_TEST_REAL_CORE to the real sing-box 1.14.4 executable\n' >&2; exit 1;
 }
 ln -s "${core}" "${TMP_DIR}/bin/sing-box"
 source "${TESTABLE_INSTALL}"
@@ -190,4 +190,4 @@ fi
 grep -Fq '已回滚配置及原服务状态' "${TMP_DIR}/backup-failure.log"
 "${core}" check -c "${SINGBOX_CONFIG_FILE}"
 
-printf 'Legacy REALITY schema1 and config-protocol-state with existing key sidecar: read-only, journal backup, apply and rollback passed with real sing-box 1.14.2\n'
+printf 'Legacy REALITY schema1 and config-protocol-state with existing key sidecar: read-only, journal backup, apply and rollback passed with real sing-box 1.14.4\n'

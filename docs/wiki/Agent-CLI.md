@@ -100,7 +100,7 @@ sbv agent instance migrate mixed --json --yes --expected-revision N
 sbv agent instance recover <protocol> --json --yes --expected-revision N
 sbv update sbv
 sbv update sing-box latest
-sbv update sing-box 1.14.2
+sbv update sing-box 1.14.4
 ```
 
 代码块中的 `create|replace`、`delete|default` 只是二选一记法，实际执行时

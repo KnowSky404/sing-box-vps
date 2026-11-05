@@ -6,8 +6,8 @@ TESTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${TESTS_DIR}/menu_test_helper.sh"
 setup_menu_test_env 120
 core=${ROUTING_POLICY_TEST_REAL_CORE:-${SINGBOX_BINARY_114:-/usr/local/bin/sing-box}}
-[[ -x "${core}" ]] || { printf 'real sing-box 1.14.2 core required\n' >&2; exit 1; }
-[[ "$("${core}" version | head -n 1)" == 'sing-box version 1.14.2' ]]
+[[ -x "${core}" ]] || { printf 'real sing-box 1.14.4 core required\n' >&2; exit 1; }
+[[ "$("${core}" version | head -n 1)" == 'sing-box version 1.14.4' ]]
 ln -s "${core}" "${TMP_DIR}/bin/sing-box"
 cat > "${TMP_DIR}/bin/systemctl" <<'SYSTEMCTL'
 #!/usr/bin/env bash
@@ -110,4 +110,4 @@ jq '.route.rules += [{ip_is_private:true,action:"reject"}]' "${SINGBOX_CONFIG_FI
 "${core}" check -c "${TMP_DIR}/legacy-private.json"
 load_config_generation_settings "${TMP_DIR}/legacy-private.json"
 [[ "${SB_ADVANCED_ROUTE}" == y ]]
-printf 'Fresh Agent neutral/retained-private rebuild passed sing-box 1.14.2 check; old-default regression reproduced; explicit legacy setting retained\n'
+printf 'Fresh Agent neutral/retained-private rebuild passed sing-box 1.14.4 check; old-default regression reproduced; explicit legacy setting retained\n'

@@ -48,7 +48,7 @@ EOF
   cat > "${dropin_path}" <<'EOF_DROPIN'
 [Service]
 ExecStartPre=
-ExecStartPre=/bin/sh -c 'case "$(/usr/local/bin/sing-box version 2>/dev/null)" in *1.14.2*) exit 1 ;; *) exit 0 ;; esac'
+ExecStartPre=/bin/sh -c 'case "$(/usr/local/bin/sing-box version 2>/dev/null)" in *1.14.4*) exit 1 ;; *) exit 0 ;; esac'
 EOF_DROPIN
   systemctl daemon-reload
 
@@ -56,7 +56,7 @@ EOF_DROPIN
     "${VERIFY_CURRENT_SCENARIO_DIR}/upgrade.json")
   chown 1001:1001 /root/.sing-box-vps/bin/sing-box
   set +e
-  sbv agent upgrade --json 1.14.2 --yes > "${upgrade_path}"
+  sbv agent upgrade --json 1.14.4 --yes > "${upgrade_path}"
   upgrade_status=$?
   set -e
   [[ "${upgrade_status}" != "0" ]]
@@ -82,7 +82,7 @@ EOF_DROPIN
     .schema_version == "1.0" and
     .status == "rolled_back" and
     .old_version == "1.13.18" and
-    .new_version == "1.14.2" and
+    .new_version == "1.14.4" and
     .rollback.attempted == true and
     .rollback.result == "success" and
     .failure_reason == "service_not_active" and

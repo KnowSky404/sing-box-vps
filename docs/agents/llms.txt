@@ -4,6 +4,7 @@ Project: https://github.com/KnowSky404/sing-box-vps
 Wiki: https://github.com/KnowSky404/sing-box-vps/wiki
 Runtime authority: install.sh; sbv commands --json for the versioned operation catalog, sbv schema <operation-id> --json for argument/safety/input contracts, and sbv agent capabilities --json for compatible product capabilities.
 Installer authoring: src/install/manifest.txt and source fragments; generate install.sh with bash scripts/build-install.sh, then check with --check.
+Core baseline: sing-box 1.14.4. Use route/outbound direct rules; action:direct is removed. Linux ARM64 1.14.2 and 1.14.4 with_purego namespace use is refused. See docs/wiki/Protocol-Coverage.md and Advanced-Components.md for build/evidence boundaries.
 
 Read AGENTS.md and skills/sing-box-vps-operator/SKILL.md before repository or VPS operations.
 Security reviewers: read SECURITY.md for the threat model, review priorities and finding format. Read-only review does not trigger implementation or broad testing. Local current-HEAD/full-diff review is required before push/PR. Remote reviews are automatic only: never manually trigger Code Review or Security Review. Wait only for automatically triggered current-head Security Review; if none triggered, record not_triggered and merge after local review, validation and required GitHub checks pass. Unreadable/running/failed review state is not absence; handle reported findings.

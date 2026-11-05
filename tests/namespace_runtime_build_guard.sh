@@ -23,12 +23,22 @@ namespace_record() {
   jq -cn --arg type "${type}" '{id:"fixture-ns",role:"network_namespace",type:$type,tag:"fixture-ns",enabled:true,config:(if $type=="default" then {path:"/proc/self/ns/net"} else {} end),route_rules:[]}'
 }
 state_for() { managed_component_state_candidate "$(managed_component_state_default_json)" create "$1"; }
-for type in default unshare; do
-  record=$(namespace_record "${type}")
-  state=$(state_for "${record}")
-  if managed_component_namespace_runtime_safe "${state}" > "${TEST_DIR}/out" 2> "${TEST_DIR}/err"; then exit 1; fi
-  grep -Fq namespace_runtime_unsafe_build "${TEST_DIR}/err"
+for NAMESPACE_TEST_VERSION in 1.14.2 1.14.4; do
+  export NAMESPACE_TEST_VERSION
+  for type in default unshare; do
+    record=$(namespace_record "${type}")
+    state=$(state_for "${record}")
+    if managed_component_namespace_runtime_safe "${state}" > "${TEST_DIR}/out" 2> "${TEST_DIR}/err"; then exit 1; fi
+    grep -Fq namespace_runtime_unsafe_build "${TEST_DIR}/err"
+  done
+  export NAMESPACE_TEST_TAGS_MODE=omitted
+  status=0
+  managed_component_namespace_runtime_safe "${state}" > "${TEST_DIR}/out" 2> "${TEST_DIR}/err" || status=$?
+  [[ "${status}" == 3 ]]
+  grep -Fq namespace_runtime_build_not_assessed "${TEST_DIR}/err"
+  unset NAMESPACE_TEST_TAGS_MODE
 done
+unset NAMESPACE_TEST_VERSION
 # Same namespace API with different versions/architectures/platforms is not
 # disabled by inference from the tested ARM64 purego build.
 for scenario in glibc other-version other-architecture other-platform missing-tags empty-tags; do

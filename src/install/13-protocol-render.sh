@@ -1189,7 +1189,7 @@ build_vless_reality_route_rules_json() {
 
   while IFS= read -r sni; do
     [[ -z "${sni}" ]] && continue
-    if ! jq -n --arg sni "${sni}" '{ "domain": [ $sni ], "action": "direct" }' >> "${tmp_rules}"; then
+    if ! jq -n --arg sni "${sni}" '{ "domain": [ $sni ], "action": "route", "outbound": "direct" }' >> "${tmp_rules}"; then
       rm -f "${tmp_rules}" "${tmp_snis}"
       return 1
     fi

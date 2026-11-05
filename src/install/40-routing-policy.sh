@@ -410,7 +410,9 @@ routing_policy_baseline_protocol_rules_json() {
   local baseline="${SB_PROJECT_DIR}/managed-config.generated.json"
   if [[ ! -e "${baseline}" && ! -L "${baseline}" ]]; then printf '[]\n'; return 0; fi
   [[ -f "${baseline}" && ! -L "${baseline}" && "$(stat -c %a "${baseline}")" == 600 ]] || return 1
-  jq -c '[.route.rules[]? | select(.action == "direct" and (keys | sort) == ["action","domain"])]' "${baseline}"
+  jq -c '[.route.rules[]? | select(
+    (.action == "direct" and (keys | sort) == ["action","domain"]) or
+    (.action == "route" and .outbound == "direct" and (keys | sort) == ["action","domain","outbound"]))]' "${baseline}"
 }
 
 # Tag labels enumerate generated rules; they do not prove an arbitrary manual

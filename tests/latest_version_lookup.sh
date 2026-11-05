@@ -37,11 +37,11 @@ SB_VERSION=latest
 get_latest_version > "${TMP_DIR}/query.log"
 [[ ${SB_LATEST_VERSION_LOOKUP_CODE} == http_503 ]]
 QUERY_HTTP=200
-for version in 1.13.18 1.14.2 1.14.3; do
+for version in 1.13.18 1.14.2 1.14.4 1.14.5; do
   QUERY_BODY="{\"tag_name\":\"v${version}\"}"
   SB_VERSION=latest
   get_latest_version > "${TMP_DIR}/query.log"
   [[ ${SB_VERSION} == "${version}" && ${SB_LATEST_VERSION_LOOKUP_STATUS} == available ]]
-  if [[ ${version} == 1.14.3 ]]; then grep -Fq 高于适配版本 "${TMP_DIR}/query.log"; else ! grep -Fq 高于适配版本 "${TMP_DIR}/query.log"; fi
+  if [[ ${version} == 1.14.5 ]]; then grep -Fq 高于适配版本 "${TMP_DIR}/query.log"; else ! grep -Fq 高于适配版本 "${TMP_DIR}/query.log"; fi
 done
 printf 'Latest-version HTTP/JSON/transport classification and bounded fallback passed\n'

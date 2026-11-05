@@ -39,8 +39,8 @@ It does not introduce a global replacement for every historical `log_error`,
    locally computed hashes are not publisher signatures.
    When the existing server configuration uses a namespace declaration or a known
    namespace Dial field, inspect the staged binary's build metadata as well.
-   Reject the reproduced Linux ARM64/1.14.2/`with_purego` combination and the
-   exact platform/version with unknown build metadata before replacing any
+   Reject the reproduced Linux ARM64/1.14.2 or 1.14.4/`with_purego` combinations and
+   those exact platform/versions with unknown build metadata before replacing any
    binary, library or marker. Unrelated header keys named `netns` are not namespace
    use. This protects an operator-installed compatible core during updates or
    repairs; see the [namespace completion record](full-protocol-completion.md).
@@ -64,6 +64,9 @@ bounded candidate metadata validation with no installation or runtime activation
 `/tmp/sbv-binary-namespace-actual.env` and `.sha256` preserve that evidence.
 `binary_namespace_guard.sh` separately covers full-install failure/no-write
 behavior for unsafe/unknown candidates, a safe candidate and unrelated headers.
+The 1.14.4 extension preserves the 1.14.2 guard and adds the reproduced default
+build crash and compatible glibc default/unshare runtime evidence described in
+[Protocol Coverage](../wiki/Protocol-Coverage.md).
 
 ## RT-02: managed core upgrade
 

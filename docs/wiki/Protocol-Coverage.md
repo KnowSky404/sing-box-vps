@@ -15,7 +15,28 @@
 
 矩阵基线稳定版：`v1.14.0`
 
-当前项目支持上限：`v1.14.2`（版本信息以仓库为准，本文不跟踪上游最新版本）
+当前项目支持上限：`v1.14.4`（版本信息以仓库为准，本文不跟踪上游最新版本）
+
+2026-11-05 稳定版适配：官方最新正式版为
+[v1.14.4](https://github.com/SagerNet/sing-box/releases/tag/v1.14.4)（2026-10-24 发布）。
+先查询 Context7，再核对 [1.14.2…1.14.4 源码差异](https://github.com/SagerNet/sing-box/compare/v1.14.2...v1.14.4)
+及迁移文档。上游删除未实现的 `action: direct`；REALITY 的 SNI 规则改为
+`action: route` / `outbound: direct`，结构化组件规则在发布前拒绝旧动作，所有权读取兼容两种历史规则形态。
+手工配置中的旧动作须由操作者检查；核心升级继续校验候选配置并在失败时保留原核心，不擅自改写手工规则。
+既有受管 REALITY 配置若仍含旧动作，先使用新版脚本、当前核心及实际组件 revision 执行
+`sbv agent component rebuild --json --yes --expected-revision N`，检查结果后再升级核心。
+该重建会校验、备份并按需重启服务；手工规则冲突仍须先解决，不能用核心升级绕过。
+`sbv update sing-box 1.14.4`、`sbv agent upgrade-check --json 1.14.4` 与
+`sbv agent upgrade --json 1.14.4 --yes` 使用现有事务与回滚入口。
+
+官方 Linux ARM64 默认包 SHA-256 为
+`436441f76ee2f7fe21b5b2d426d3cb261a480455a704865789ad533e4273ec26`，
+glibc 包为 `241cb4ccbf1a003235f8a969cc25d28cc74487df52721f6de28be7e37eae2ae9`，
+均按官方资产 digest 校验。默认 `with_purego` 包在隔离 Debian 12 Docker 的 namespace
+TCP 路径仍以 139 崩溃，因此新增精确 1.14.4 构建拦截；glibc 包的 default/unshare
+两种 namespace 均完成精确 TCP marker、关闭端口拒绝、核心存活与清理检查。
+证据目录为 `/tmp/sbv-1144-namespace/`；该结果不扩展至其他平台、libc 或版本。
+完整开发回归与默认 Docker 场景的结果在本次 PR 中记录；历史验收记录仍属于各自旧版本。
 
 源码提交：`0b8995879f29a9b98ee027bc17b75e101445b238`
 
