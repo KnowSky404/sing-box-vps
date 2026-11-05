@@ -85,7 +85,7 @@ glibc 2.28 is outside this result. See the
 for exact build hashes, positive/negative cases and cleanup evidence.
 The 1.14.4 default and glibc package hashes and current default/unshare TCP,
 negative-control and cleanup results are recorded in
-[Protocol Coverage](Protocol-Coverage).
+[Protocol Coverage](https://github.com/KnowSky404/sing-box-vps/wiki/Protocol-Coverage).
 Core installation/update also checks the staged candidate's bounded version/build
 metadata when the existing server config uses namespace declarations or known
 namespace Dial fields. Known-unsafe and exact-platform unassessed candidates are
