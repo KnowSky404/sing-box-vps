@@ -111,6 +111,21 @@ agent_collect_nodes_json() {
   return 0
 }
 
+service_menu_action() {
+  local command=$1 response error
+  if response=$(agent_dispatch service "${command}" --json --yes); then
+    case "${command}" in
+      start) log_success '服务已启动。' ;;
+      stop) log_success '服务已停止。' ;;
+      restart) log_success '服务已重启。' ;;
+    esac
+  else
+    error=$(jq -r '.error // "service_operation_failed"' <<< "${response}") || error=service_operation_failed
+    log_warn "服务操作未完成（${error}）；请检查配置、服务状态或待恢复事务。"
+    return 1
+  fi
+}
+
 agent_service_cli() {
   local command=${1:-} json=n confirmed=n lines=100 lines_set=n
   local before_state after_state check_json='null' operation_status=0 logs=''

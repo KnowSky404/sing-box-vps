@@ -321,6 +321,11 @@ verification_classify_file() {
     dev/verification/run.sh)
       verification_add_group verification || return 2
       ;;
+    dev/verification/remote/scenarios/lifecycle_safety.sh)
+      verification_plan_append VERIFY_PLAN_SYNTAX "${file}"
+      verification_plan_append VERIFY_PLAN_TESTS tests/verification_scenario_mapping.sh
+      verification_plan_append VERIFY_REQUESTED_SCENARIOS lifecycle_safety
+      ;;
     dev/verification/remote/scenarios/*_cases.sh|dev/verification/remote/scenarios/runtime_fixtures.sh|dev/verification/remote/scenarios/multi_protocol_coexistence.sh|dev/verification/remote/scenarios/component_tor_outbound.sh|dev/verification/remote/scenarios/protocol_probe_vless_reality.sh|dev/verification/remote/scenarios/protocol_coexistence.sh)
       verification_plan_append VERIFY_PLAN_SYNTAX "${file}"
       verification_plan_append VERIFY_PLAN_TESTS tests/verification_atomic_scenarios.sh
@@ -350,6 +355,11 @@ verification_classify_file() {
       scenario=${file##*/}
       verification_plan_append VERIFY_REQUESTED_SCENARIOS "${scenario%.sh}"
       verification_add_group verification || return 2
+      ;;
+    dev/verification/remote/entrypoint.sh)
+      verification_plan_append VERIFY_PLAN_SYNTAX "${file}"
+      verification_plan_append VERIFY_PLAN_TESTS tests/verification_remote_scenario_dispatch.sh
+      verification_plan_append VERIFY_PLAN_UNRESOLVED "${file}: shared dispatcher/probes need explicit impact scope; select additional artifact/transport checks when affected"
       ;;
     dev/verification/common.sh|dev/verification/remote/*|dev/verification/docker/*)
       verification_add_group verification || return 2

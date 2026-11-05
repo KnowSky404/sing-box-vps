@@ -58,6 +58,12 @@ review alone adds no remote wait. Absence is not review success; running, failed
 cancelled or unreadable state is not absence. Recheck a new head under this same
 policy without manually triggering review. Follow AGENTS.md section 6.
 
+## Lifecycle And CI Boundaries
+
+Menu service controls share the guarded Agent handlers. Recover pending journals before mutations; start/restart require a checked config. Uninstall confirms stopped state before file deletion and reclaims only ledger-owned firewall rules. On failure preserve reported recovery material; whole-uninstall rollback is not claimed. SubMan request files are cleaned on catchable signals, but an interrupted remote write still needs readback reconciliation.
+
+CI uses the complete branch diff plus a changed `.github/verification-scope.txt` bound to its merge-base when impact is unmapped. It runs host tests and preserves plans/logs/timings; selected Docker scenes remain a separate acceptance boundary. See [the debt remediation contract](../../docs/specs/technical-debt-remediation.md).
+
 ## Storage Layout
 
 Project payloads live under the root account home `.sing-box-vps`. Before operating an upgraded legacy host, use `sbv storage status --json`. Migration and recovery are explicit `sbv storage migrate|recover --json --yes` operations and may restart an active service. Pending migrations block ordinary operations. Read [Storage Layout](../../docs/wiki/Storage-Layout.md); production migrations still require the production gate.

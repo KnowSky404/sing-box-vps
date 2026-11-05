@@ -1,0 +1,9 @@
+base efd8166dd1e7d9ce7d34407c6efb9b25cfdc86b2
+--test tests/uninstall_service_guards.sh
+--test tests/instance_firewall_ledger.sh
+--test tests/main_menu_renders_sectioned_layout.sh
+--test tests/subman_api_push.sh
+--test tests/subman_sync_orchestration.sh
+--test tests/subman_signal_cleanup.sh
+--test tests/verification_ci_scope.sh
+--scenario lifecycle_safety

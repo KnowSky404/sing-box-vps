@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026110501
+# Version: 2026110502
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026110501"
+readonly SCRIPT_VERSION="2026110502"
 readonly SB_SUPPORT_MAX_VERSION="1.14.2"
 # A single IPv6 wildcard socket accepts IPv4 and IPv6 in sing-box on Linux.
 readonly SB_DEFAULT_LISTEN_ADDRESS="::"
@@ -23550,8 +23550,44 @@ managed_uninstall_acquire_guard() {
   return 0
 }
 
-perform_singbox_runtime_uninstall() {
+managed_uninstall_stop_service() {
+  local stop_status=0 load_state
+  if systemctl stop sing-box >/dev/null 2>&1; then
+    singbox_service_confirmed_stopped || return 1
+  else
+    stop_status=$?
+    load_state=$(systemctl show sing-box --property=LoadState --value) || return 1
+    if [[ "${load_state}" == not-found ]] && singbox_service_confirmed_stopped; then
+      return 0
+    fi
+    managed_uninstall_report_error "停止服务失败（状态 ${stop_status}）；未删除运行文件，请检查服务后重试。"
+    return "${stop_status}"
+  fi
+  if ! systemctl disable sing-box >/dev/null 2>&1; then
+    managed_uninstall_report_error '服务已停止，但禁用失败；运行文件和恢复材料已保留。'
+    return 1
+  fi
+}
+
+perform_singbox_runtime_uninstall() (
+  trap - EXIT ERR RETURN DEBUG
   local lib_path expected_hash actual_hash component_state redirect_policy_plan tproxy_policy_plan
+  local ledger workspace='' keep_workspace=n firewall_journal=''
+
+  uninstall_cleanup() {
+    if [[ -n "${workspace}" ]]; then
+      if [[ "${keep_workspace}" == y ]]; then
+        managed_uninstall_report_error "卸载未完成；服务已停止，受管资源可能已部分清理，防火墙恢复日志保留在 ${workspace}。"
+      elif ! rm -rf -- "${workspace}"; then
+        managed_uninstall_report_error "卸载临时文件未能清理：${workspace}。"
+        return 1
+      fi
+    fi
+  }
+  trap uninstall_cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
 
   managed_uninstall_acquire_guard || return 1
   storage_system_link_is_owned "${SINGBOX_LINK_PATH}" "${SINGBOX_BIN_PATH}" &&
@@ -23564,34 +23600,60 @@ perform_singbox_runtime_uninstall() {
     managed_uninstall_report_error "高级组件 state 无法安全读取，未开始卸载；请先检查 ${SB_COMPONENT_STATE_FILE}。"
     return 1
   }
+  ledger=$(instance_firewall_read_ledger) || {
+    managed_uninstall_report_error '实例防火墙账本不可信；未开始卸载，请保留现场检查。'
+    return 1
+  }
+  if [[ "$(jq '.rules | length' <<< "${ledger}")" != 0 ]]; then
+    workspace=$(storage_mktemp -d "${SB_DATA_ROOT}/tmp/sbv-uninstall.XXXXXXXX") || return 1
+    firewall_journal="${workspace}/firewall.json"
+    # This is a listener inventory for removal, never an activated configuration.
+    printf '{"inbounds":[],"outbounds":[],"route":{"rules":[]}}\n' > "${workspace}/empty.json" || return 1
+    chmod 600 "${workspace}/empty.json" || return 1
+    if ! instance_firewall_prepare '' "${workspace}/empty.json" "${firewall_journal}"; then
+      managed_uninstall_report_error '无法准备实例防火墙回收；未停止服务或删除运行文件。'
+      return 1
+    fi
+  fi
   redirect_policy_plan=$(managed_component_redirect_host_policy_plan_json "${component_state}") || {
     managed_uninstall_report_error "Redirect 主机策略计划无法安全读取，未开始卸载。"
     return 1
   }
-  if ! managed_component_redirect_policy_uninstall "${redirect_policy_plan}"; then
-    managed_uninstall_report_error "Redirect 主机策略清理无法确认；服务、二进制和配置目录未改动，已清理的精确受管规则可能是部分状态，请先运行组件诊断。"
-    return 1
-  fi
   tproxy_policy_plan=$(managed_component_tproxy_host_policy_plan_json "${component_state}") || {
     managed_uninstall_report_error "TProxy 主机策略计划无法安全读取，未开始卸载。"
     return 1
   }
+  managed_uninstall_stop_service || return $?
+  if [[ -n "${firewall_journal}" ]]; then
+    keep_workspace=y
+    if ! instance_firewall_apply "${firewall_journal}" || ! instance_firewall_commit "${firewall_journal}"; then
+      if instance_firewall_rollback "${firewall_journal}"; then
+        keep_workspace=n
+        managed_uninstall_report_error '实例防火墙清理失败并已补偿；服务保持停止，运行文件和账本已保留。'
+      else
+        managed_uninstall_report_error '实例防火墙清理及补偿无法确认；未删除运行文件或恢复日志。'
+      fi
+      return 1
+    fi
+  fi
+  if ! managed_component_redirect_policy_uninstall "${redirect_policy_plan}"; then
+    managed_uninstall_report_error 'Redirect 主机策略清理无法确认；服务已停止，运行文件已保留，规则可能是部分状态，请先运行组件诊断。'
+    return 1
+  fi
   if ! managed_component_tproxy_policy_uninstall "${tproxy_policy_plan}"; then
-    managed_uninstall_report_error "TProxy 主机策略清理无法确认；服务、二进制和配置目录未改动，已清理的精确受管规则可能是部分状态，请先运行组件诊断。"
+    managed_uninstall_report_error 'TProxy 主机策略清理无法确认；服务已停止，运行文件已保留，规则可能是部分状态，请先运行组件诊断。'
     return 1
   fi
   log_info "正在彻底卸载 sing-box 环境..."
   if command -v tc >/dev/null 2>&1; then
-    clear_vless_reality_qos_rules
+    clear_vless_reality_qos_rules || return $?
   fi
-  systemctl stop sing-box &>/dev/null || true
-  systemctl disable sing-box &>/dev/null || true
   storage_remove_system_link "${SINGBOX_SERVICE_LINK_PATH}" "${SINGBOX_SERVICE_FILE}" || return 1
   storage_remove_system_link "${SINGBOX_LINK_PATH}" "${SINGBOX_BIN_PATH}" || return 1
   storage_remove_system_link "${SB_DATA_ROOT}/bin/libcronet.so" "${SB_DATA_ROOT}/lib/libcronet.so" || return 1
-  rm -f "${SINGBOX_SERVICE_FILE}"
-  systemctl daemon-reload
-  rm -f "${SINGBOX_BIN_PATH}"
+  rm -f "${SINGBOX_SERVICE_FILE}" || return 1
+  systemctl daemon-reload || return 1
+  rm -f "${SINGBOX_BIN_PATH}" || return 1
   lib_path=$(singbox_library_path || printf '')
   if [[ -n "${lib_path}" && -f "${SB_NAIVE_LIBRARY_MARKER}" ]]; then
     expected_hash=$(tr -d '[:space:]' < "${SB_NAIVE_LIBRARY_MARKER}")
@@ -23600,7 +23662,7 @@ perform_singbox_runtime_uninstall() {
       actual_hash=$(sha256sum "${lib_path}" | awk '{print $1}')
     fi
     if [[ -n "${expected_hash}" && "${expected_hash}" == "${actual_hash}" ]]; then
-      rm -f "${lib_path}"
+      rm -f "${lib_path}" || return 1
       if [[ "$(dirname "${lib_path}")" == "/usr/local/lib" ]] &&
          command -v ldconfig >/dev/null 2>&1; then
         ldconfig || log_warn "libcronet.so 已删除，但 ldconfig 缓存刷新失败。"
@@ -23612,9 +23674,12 @@ perform_singbox_runtime_uninstall() {
   managed_uninstall_remove_project_state || return 1
   [[ ! -L "${SB_DATA_ROOT}/modules" ]] || return 1
   rm -rf -- "${SB_DATA_ROOT}/modules" || return 1
+  [[ ! -e "${SINGBOX_SERVICE_FILE}" && ! -L "${SINGBOX_SERVICE_FILE}" &&
+     ! -e "${SINGBOX_BIN_PATH}" && ! -L "${SINGBOX_BIN_PATH}" ]] || return 1
+  keep_workspace=n
   print_success "sing-box 服务、二进制和配置目录已彻底删除。"
   print_info "管理命令、日志及恢复备份仍保留在 ${SB_DATA_ROOT}。"
-}
+)
 
 perform_full_uninstall() {
   managed_uninstall_acquire_guard || return 1
@@ -23624,7 +23689,8 @@ perform_full_uninstall() {
   }
   perform_singbox_runtime_uninstall || return 1
   storage_remove_system_link "${SBV_LINK_PATH}" "${SBV_BIN_PATH}" || return 1
-  rm -f "${SBV_BIN_PATH}"
+  rm -f "${SBV_BIN_PATH}" || return 1
+  [[ ! -e "${SBV_BIN_PATH}" && ! -L "${SBV_BIN_PATH}" ]] || return 1
   print_success "全局命令 sbv 已删除。"
   print_info "迁移记录、日志与恢复备份保留在 ${SB_DATA_ROOT}；需要时可人工归档后删除。"
 }
@@ -23685,7 +23751,7 @@ uninstall_script() {
     log_info "正在删除全局命令 sbv..."
   fi
   storage_remove_system_link "${SBV_LINK_PATH}" "${SBV_BIN_PATH}" || return 1
-  rm -f "${SBV_BIN_PATH}"
+  rm -f "${SBV_BIN_PATH}" || return 1
   if [[ "${deleted_cfg}" == "y" ]]; then
     print_success "管理脚本已卸载。"
   else
@@ -27345,12 +27411,60 @@ subman_curl_private() {
   curl "$@" 2> "${error_file}"
 }
 
+subman_api_request_cleanup() {
+  [[ -n "${request_dir}" ]] || return 0
+  if ! rm -rf -- "${request_dir}"; then
+    printf '[ERROR] SubMan 请求临时文件清理失败；请保留私有目录权限并人工处理。\n' >&2
+    return 1
+  fi
+  request_dir=''
+}
+
+subman_api_request_restore_traps() {
+  trap - INT TERM HUP
+  [[ -z "${request_traps}" ]] || eval "${request_traps}"
+}
+
+subman_api_request_signal() {
+  local signal=$1 code=$2
+  request_interrupted=${code}
+  subman_api_request_cleanup || request_cleanup_failed=y
+  subman_api_request_restore_traps
+  printf '[WARN] SubMan 请求已中断；变更请求的远端结果可能不确定，请先读回确认。\n' >&2
+  kill -s "${signal}" "${BASHPID:-$$}"
+}
+
 subman_api_request() {
+  local request_dir='' request_traps request_interrupted=0 request_cleanup_failed=n request_status=0
+  request_traps=$(trap -p INT TERM HUP)
+  trap 'subman_api_request_signal INT 130' INT
+  trap 'subman_api_request_signal TERM 143' TERM
+  trap 'subman_api_request_signal HUP 129' HUP
+  if subman_api_request_body "$@"; then :; else request_status=$?; fi
+  if ! subman_api_request_cleanup || [[ "${request_cleanup_failed}" == y ]]; then
+    subman_set_client_error temporary_cleanup_failed operator-repair
+    [[ "$1" == GET ]] || SUBMAN_LAST_OUTCOME=unknown-outcome
+    request_status=1
+  fi
+  subman_api_request_restore_traps
+  if [[ "${request_interrupted}" != 0 ]]; then
+    if [[ "$1" == GET ]]; then
+      subman_set_client_error signal_interrupted retryable-upstream
+    else
+      subman_set_client_error signal_interrupted unknown-outcome
+      SUBMAN_LAST_OUTCOME=unknown-outcome
+    fi
+    return "${request_interrupted}"
+  fi
+  return "${request_status}"
+}
+
+subman_api_request_body() {
   local method=$1
   local path=$2
   local payload_json=${3:-}
   local if_match=${4:-}
-  local api_url endpoint tmp_dir request_dir config_file payload_file headers_file body_file stderr_file
+  local api_url endpoint tmp_dir config_file payload_file headers_file body_file stderr_file
   local escaped_token escaped_if_match http_status curl_status
 
   reset_subman_api_result
@@ -27376,7 +27490,6 @@ subman_api_request() {
     return 1
   fi
   if ! chmod 700 "${request_dir}"; then
-    rm -rf -- "${request_dir}" || true
     subman_set_client_error "temporary_file_failed" "operator-repair"
     return 1
   fi
@@ -27391,7 +27504,6 @@ subman_api_request() {
     : > "${stderr_file}"
     chmod 600 "${headers_file}" "${body_file}" "${stderr_file}"
   }; then
-    rm -rf -- "${request_dir}" || true
     subman_set_client_error "temporary_file_failed" "operator-repair"
     return 1
   fi
@@ -27409,14 +27521,12 @@ subman_api_request() {
       printf 'header = "If-Match: %s"\n' "${escaped_if_match}"
     fi
   } > "${config_file}" || ! chmod 600 "${config_file}"; then
-    rm -rf -- "${request_dir}" || true
     subman_set_client_error "temporary_file_failed" "operator-repair"
     return 1
   fi
 
   if [[ -n "${payload_json}" ]]; then
     if ! printf '%s' "${payload_json}" > "${payload_file}" || ! chmod 600 "${payload_file}"; then
-      rm -rf -- "${request_dir}" || true
       subman_set_client_error "temporary_file_failed" "operator-repair"
       return 1
     fi
@@ -27439,6 +27549,7 @@ subman_api_request() {
     fi
   fi
 
+  [[ "${request_interrupted}" == 0 ]] || return "${request_interrupted}"
   SUBMAN_LAST_HTTP_STATUS=${http_status:-000}
   SUBMAN_LAST_RESPONSE_BODY=$(cat "${body_file}")
   SUBMAN_LAST_RESPONSE_ETAG=$(subman_response_header "${headers_file}" etag)
@@ -27446,12 +27557,6 @@ subman_api_request() {
   SUBMAN_LAST_RETRY_AFTER=$(subman_response_header "${headers_file}" retry-after)
   SUBMAN_LAST_RESPONSE_CACHE_CONTROL=$(subman_response_header "${headers_file}" cache-control)
   [[ "${SUBMAN_LAST_RETRY_AFTER}" =~ ^[0-9]+$ ]] || SUBMAN_LAST_RETRY_AFTER=""
-  if ! rm -rf -- "${request_dir}"; then
-    subman_set_client_error "temporary_cleanup_failed" "operator-repair"
-    [[ "${method}" == "GET" ]] || SUBMAN_LAST_OUTCOME="unknown-outcome"
-    return 1
-  fi
-
   if [[ "${curl_status}" -ne 0 ]]; then
     if [[ "${method}" == "GET" ]]; then
       subman_set_client_error "transport_error" "retryable-upstream"
@@ -32886,6 +32991,21 @@ agent_collect_nodes_json() {
   return 0
 }
 
+service_menu_action() {
+  local command=$1 response error
+  if response=$(agent_dispatch service "${command}" --json --yes); then
+    case "${command}" in
+      start) log_success '服务已启动。' ;;
+      stop) log_success '服务已停止。' ;;
+      restart) log_success '服务已重启。' ;;
+    esac
+  else
+    error=$(jq -r '.error // "service_operation_failed"' <<< "${response}") || error=service_operation_failed
+    log_warn "服务操作未完成（${error}）；请检查配置、服务状态或待恢复事务。"
+    return 1
+  fi
+}
+
 agent_service_cli() {
   local command=${1:-} json=n confirmed=n lines=100 lines_set=n
   local before_state after_state check_json='null' operation_status=0 logs=''
@@ -35630,11 +35750,11 @@ command_catalog_json() {
       "sensitive": false,
       "confirmation": "--yes",
       "concurrency": "exclusive",
-      "input_contract": null,
+      "input_contract": "no pending instance/component/routing journal; known service state; current config must pass sing-box check",
       "service_impact": "start",
       "docs": "Agent-CLI.md#操作目录",
       "reason": null,
-      "menu": null,
+      "menu": "6",
       "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"}],
       "cas": "none",
       "output": {
@@ -35656,11 +35776,11 @@ command_catalog_json() {
       "sensitive": false,
       "confirmation": "--yes",
       "concurrency": "exclusive",
-      "input_contract": null,
+      "input_contract": "no pending instance/component/routing journal; known service state",
       "service_impact": "stop",
       "docs": "Agent-CLI.md#操作目录",
       "reason": null,
-      "menu": null,
+      "menu": "7",
       "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"}],
       "cas": "none",
       "output": {
@@ -35682,11 +35802,11 @@ command_catalog_json() {
       "sensitive": false,
       "confirmation": "--yes",
       "concurrency": "exclusive",
-      "input_contract": null,
+      "input_contract": "no pending instance/component/routing journal; known service state; current config must pass sing-box check",
       "service_impact": "restart",
       "docs": "Agent-CLI.md#操作目录",
       "reason": null,
-      "menu": null,
+      "menu": "8",
       "parameters": [{"name":"--json","type":"boolean","required":true,"description":"exactly one JSON envelope on stdout"},{"name":"--yes","type":"boolean","required":true,"description":"explicit mutation confirmation"}],
       "cas": "none",
       "output": {
@@ -36083,7 +36203,7 @@ command_catalog_json() {
       "input_contract": null,
       "service_impact": "stop_and_remove",
       "docs": "Agent-CLI.md#操作目录",
-      "reason": "destructive removal has no stable structured result contract",
+      "reason": "stopped-state and owned-firewall checks are enforced; whole-uninstall rollback and structured result are not implemented",
       "menu": "5",
       "parameters": [],
       "cas": "none",
@@ -41746,51 +41866,6 @@ update_singbox_version_menu() {
   esac
 }
 
-install_or_update_singbox() {
-  local existing_instance_state
-  local install_choice
-  local installed_ver
-
-  existing_instance_state=$(detect_existing_instance_state)
-
-  if [[ "${existing_instance_state}" == "healthy" ]]; then
-    installed_ver=$("${SINGBOX_BIN_PATH}" version | head -n1 | awk '{print $3}')
-    load_current_config_state
-
-    echo
-    render_left_aligned_page_header "部署管理" "维护 sing-box 核心与已安装协议"
-    render_section_title "安装摘要"
-    render_summary_item "当前版本" "${installed_ver}"
-    render_summary_item "当前协议" "$(protocol_display_name "${SB_PROTOCOL}")"
-    render_summary_item "当前端口" "${SB_PORT}"
-    render_section_title "操作选项"
-    render_menu_item "1" "更新 sing-box 二进制并保留当前配置"
-    render_menu_item "2" "安装新增协议"
-    render_menu_item "3" "修改已安装协议配置"
-    render_menu_item "4" "移除已安装协议"
-    render_menu_item "5" "卸载 sing-box"
-    echo "0. 返回"
-    install_choice=$(prompt_choice "请选择 [0-5] (默认 1): " 0 5 1)
-
-    case "${install_choice}" in
-      2) install_new_protocols_menu ;;
-      3) update_config_only ;;
-      4) remove_protocol_menu ;;
-      5) uninstall_singbox ;;
-      0) return 0 ;;
-      *) update_singbox_version_menu ;;
-    esac
-    return
-  fi
-
-  if [[ "${existing_instance_state}" == "incomplete" ]]; then
-    prompt_incomplete_instance_action
-    return
-  fi
-
-  install_or_reconfigure_singbox
-}
-
 main() {
   local update_status=0
 
@@ -41980,9 +42055,9 @@ main() {
       3) remove_protocol_menu ;;
       4) update_singbox_version_menu ;;
       5) uninstall_singbox ;;
-      6) run_with_progress "启动 sing-box" systemctl start sing-box && log_success "服务已启动。" ;;
-      7) systemctl stop sing-box && log_success "服务已停止。" ;;
-      8) run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box && log_success "服务已重启。" ;;
+      6) service_menu_action start || : ;;
+      7) service_menu_action stop || : ;;
+      8) service_menu_action restart || : ;;
       9) view_status ;;
       10) journalctl -u sing-box -f || true ;;
       11) view_node_info ;;

@@ -32,6 +32,7 @@ cat > "${TMP_DIR}/stub-bin/systemctl" <<EOF
 #!/usr/bin/env bash
 
 printf '%s\n' "\$*" >> "${TMP_DIR}/systemctl.log"
+[[ "\${1:-}" != show ]] || printf 'inactive\n'
 EOF
 chmod +x "${TMP_DIR}/stub-bin/systemctl"
 

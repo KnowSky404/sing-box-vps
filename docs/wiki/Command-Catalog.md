@@ -1075,7 +1075,7 @@ sbv service start --json --yes
 | 确认 | `--yes` |
 | 并发条件 | `exclusive` |
 | CAS | `none` |
-| 输入契约 | `—` |
+| 输入契约 | `no pending instance/component/routing journal; known service state; current config must pass sing-box check` |
 | 服务影响 | `start` |
 | 外部写入 | `false` |
 | 可能涉及外部写入 | `false` |
@@ -1104,7 +1104,7 @@ sbv service stop --json --yes
 | 确认 | `--yes` |
 | 并发条件 | `exclusive` |
 | CAS | `none` |
-| 输入契约 | `—` |
+| 输入契约 | `no pending instance/component/routing journal; known service state` |
 | 服务影响 | `stop` |
 | 外部写入 | `false` |
 | 可能涉及外部写入 | `false` |
@@ -1133,7 +1133,7 @@ sbv service restart --json --yes
 | 确认 | `--yes` |
 | 并发条件 | `exclusive` |
 | CAS | `none` |
-| 输入契约 | `—` |
+| 输入契约 | `no pending instance/component/routing journal; known service state; current config must pass sing-box check` |
 | 服务影响 | `restart` |
 | 外部写入 | `false` |
 | 可能涉及外部写入 | `false` |
@@ -1415,7 +1415,7 @@ sbv subman sync --json --yes
 | `install` | 安装新协议 | `1` | `{"mutation":true,"sensitive":true,"service_impact":"start_or_restart"}` | fresh install requires dependency, TLS and credential prompts |
 | `reality.write` | REALITY 实例、名称与 QoS 写操作 | `2` | `{"mutation":true,"sensitive":true,"service_impact":"restart_possible"}` | legacy REALITY writes do not implement typed revision/CAS transactions |
 | `protocol.remove` | 按协议批量移除 | `3` | `{"mutation":true,"sensitive":false,"service_impact":"restart_or_stop"}` | use typed instance delete when supported; bulk legacy removal remains interactive |
-| `core.uninstall` | 卸载 sing-box | `5` | `{"mutation":true,"sensitive":false,"service_impact":"stop_and_remove"}` | destructive removal has no stable structured result contract |
+| `core.uninstall` | 卸载 sing-box | `5` | `{"mutation":true,"sensitive":false,"service_impact":"stop_and_remove"}` | stopped-state and owned-firewall checks are enforced; whole-uninstall rollback and structured result are not implemented |
 | `node.qr` | 显示节点二维码 | `11` | `{"mutation":false,"sensitive":true,"service_impact":"none"}` | terminal rendering; use sensitive links for machine connection material |
 | `subman.settings` | SubMan 配置管理 | `11` | `{"mutation":true,"sensitive":true,"service_impact":"none"}` | settings currently use interactive secret input |
 | `system.stack` | 入站/出站协议栈设置 | `13` | `{"mutation":true,"sensitive":false,"service_impact":"restart"}` | host and listener changes lack a unified persistent rollback contract |

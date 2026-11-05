@@ -538,4 +538,51 @@ fi
 cmp -s -- "${SB_PROJECT_DIR}/managed-firewall.json" "${TMP_DIR}/ledger.before-malformed"
 jq -e '.schema_version == 1 and (.operations | length == 0) and (.before_ledger | type == "object" and (has("rules") | not))' "${journal}" >/dev/null
 
+# Uninstall consumes the real ledger transition, preserves unrelated rules and
+# refuses artifact deletion if an owned-rule removal cannot be confirmed.
+rm -f -- "${journal}" "${INSTANCE_FIREWALL_LEDGER_FILE}"
+: > "${IPTABLES_RULES}"
+: > "${IP6TABLES_RULES}"
+ufw() { [[ "${1:-}" == status ]] && printf 'Status: inactive\n'; }
+FIREWALLD_MOCK_INACTIVE=1
+jq -n '{inbounds:[]}' > "${old_config}"
+jq -n '{inbounds:[{type:"mixed",tag:"uninstall-owned",listen:"0.0.0.0",listen_port:32122}]}' > "${new_config}"
+cp "${new_config}" "${SINGBOX_CONFIG_FILE}"
+managed_firewall_owners_json() { printf '[{"role":"inbound","tag":"uninstall-owned"}]'; }
+instance_firewall_prepare "${old_config}" "${new_config}" "${journal}"
+instance_firewall_apply "${journal}"
+instance_firewall_commit "${journal}"
+record_rule "${IPTABLES_RULES}" 'INPUT -p tcp --dport 39998 -j ACCEPT'
+printf binary > "${SINGBOX_BIN_PATH}"
+printf unit > "${SINGBOX_SERVICE_FILE}"
+systemctl() { [[ "${1:-}" != show ]] || printf 'inactive\n'; return 0; }
+managed_component_redirect_policy_uninstall() { :; }
+managed_component_tproxy_policy_uninstall() { :; }
+clear_vless_reality_qos_rules() { :; }
+iptables() {
+  if [[ "${UNINSTALL_DELETE_FAIL:-n}" == y && "${1:-}" == -D ]]; then return 7; fi
+  iptables_mock "${IPTABLES_RULES}" "$@"
+}
+UNINSTALL_DELETE_FAIL=y
+if perform_singbox_runtime_uninstall > "${TMP_DIR}/uninstall-failure" 2>&1; then exit 1; fi
+grep -q '已补偿' "${TMP_DIR}/uninstall-failure"
+[[ -f "${SINGBOX_CONFIG_FILE}" && -f "${SINGBOX_BIN_PATH}" && -f "${SINGBOX_SERVICE_FILE}" ]]
+jq -e '.rules | length==1' "${INSTANCE_FIREWALL_LEDGER_FILE}" >/dev/null
+grep -q sbv-instance- "${IPTABLES_RULES}"
+rollback_function=$(declare -f instance_firewall_rollback)
+instance_firewall_rollback() { return 1; }
+if perform_singbox_runtime_uninstall > "${TMP_DIR}/uninstall-uncertain" 2>&1; then exit 1; fi
+[[ -f "${SINGBOX_CONFIG_FILE}" && -f "${INSTANCE_FIREWALL_LEDGER_FILE}" ]]
+recovery_journal=$(find "${SB_DATA_ROOT}/tmp" -path '*/sbv-uninstall.*/firewall.json' -print -quit)
+[[ -n "${recovery_journal}" && "$(stat -c %a "${recovery_journal}")" == 600 ]]
+jq -e '.before_ledger.rules | length==1' "${recovery_journal}" >/dev/null
+grep -q '恢复日志保留' "${TMP_DIR}/uninstall-uncertain"
+eval "${rollback_function}"
+UNINSTALL_DELETE_FAIL=n
+perform_singbox_runtime_uninstall > "${TMP_DIR}/uninstall-success" 2>&1 || {
+  cat "${TMP_DIR}/uninstall-success" >&2
+  exit 1
+}
+[[ ! -e "${SB_PROJECT_DIR}" && ! -e "${SINGBOX_BIN_PATH}" && ! -e "${SINGBOX_SERVICE_FILE}" ]]
+[[ "$(cat "${IPTABLES_RULES}")" == 'INPUT -p tcp --dport 39998 -j ACCEPT' ]]
 printf 'instance firewall ledger checks passed (mock backends only)\n'

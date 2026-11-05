@@ -225,51 +225,6 @@ update_singbox_version_menu() {
   esac
 }
 
-install_or_update_singbox() {
-  local existing_instance_state
-  local install_choice
-  local installed_ver
-
-  existing_instance_state=$(detect_existing_instance_state)
-
-  if [[ "${existing_instance_state}" == "healthy" ]]; then
-    installed_ver=$("${SINGBOX_BIN_PATH}" version | head -n1 | awk '{print $3}')
-    load_current_config_state
-
-    echo
-    render_left_aligned_page_header "部署管理" "维护 sing-box 核心与已安装协议"
-    render_section_title "安装摘要"
-    render_summary_item "当前版本" "${installed_ver}"
-    render_summary_item "当前协议" "$(protocol_display_name "${SB_PROTOCOL}")"
-    render_summary_item "当前端口" "${SB_PORT}"
-    render_section_title "操作选项"
-    render_menu_item "1" "更新 sing-box 二进制并保留当前配置"
-    render_menu_item "2" "安装新增协议"
-    render_menu_item "3" "修改已安装协议配置"
-    render_menu_item "4" "移除已安装协议"
-    render_menu_item "5" "卸载 sing-box"
-    echo "0. 返回"
-    install_choice=$(prompt_choice "请选择 [0-5] (默认 1): " 0 5 1)
-
-    case "${install_choice}" in
-      2) install_new_protocols_menu ;;
-      3) update_config_only ;;
-      4) remove_protocol_menu ;;
-      5) uninstall_singbox ;;
-      0) return 0 ;;
-      *) update_singbox_version_menu ;;
-    esac
-    return
-  fi
-
-  if [[ "${existing_instance_state}" == "incomplete" ]]; then
-    prompt_incomplete_instance_action
-    return
-  fi
-
-  install_or_reconfigure_singbox
-}
-
 main() {
   local update_status=0
 
@@ -459,9 +414,9 @@ main() {
       3) remove_protocol_menu ;;
       4) update_singbox_version_menu ;;
       5) uninstall_singbox ;;
-      6) run_with_progress "启动 sing-box" systemctl start sing-box && log_success "服务已启动。" ;;
-      7) systemctl stop sing-box && log_success "服务已停止。" ;;
-      8) run_with_progress "重启 sing-box（ACME 签发或 DNS 验证可能需要较长时间）" systemctl restart sing-box && log_success "服务已重启。" ;;
+      6) service_menu_action start || : ;;
+      7) service_menu_action stop || : ;;
+      8) service_menu_action restart || : ;;
       9) view_status ;;
       10) journalctl -u sing-box -f || true ;;
       11) view_node_info ;;

@@ -109,7 +109,7 @@ EOF
 }
 
 run_takeover() {
-  if ! TAKEOVER_OUTPUT=$(printf '1\n' | install_or_update_singbox 2>&1); then
+  if ! TAKEOVER_OUTPUT=$(printf '1\n' | update_singbox_version_menu 2>&1); then
     printf 'expected takeover flow to succeed, got:\n%s\n' "${TAKEOVER_OUTPUT}" >&2
     exit 1
   fi
@@ -122,7 +122,7 @@ run_takeover() {
 }
 
 run_reentry_check() {
-  if ! REENTRY_OUTPUT=$(printf '0\n' | install_or_update_singbox 2>&1); then
+  if ! REENTRY_OUTPUT=$(printf '0\n' | install_new_protocols_menu 2>&1); then
     printf 'expected reentry flow to succeed, got:\n%s\n' "${REENTRY_OUTPUT}" >&2
     exit 1
   fi
@@ -134,7 +134,7 @@ run_reentry_check() {
     exit 1
   fi
 
-  if [[ "${REENTRY_OUTPUT}" != *"更新 sing-box 二进制并保留当前配置"* ]]; then
+  if [[ "${REENTRY_OUTPUT}" != *"协议安装"* ]]; then
     printf 'expected post-takeover reentry without sbv to land on healthy-instance menu, got:\n%s\n' "${REENTRY_OUTPUT}" >&2
     exit 1
   fi

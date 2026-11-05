@@ -33,3 +33,5 @@ Never print credentials or full links in shared logs. Config changes require sin
 Storage preflight: read storage status blockers and blocker_details (entry/path/reason); ok=true only confirms a successful read. Verify source integrity before repairing a historical owner; preserve unmanaged libraries.
 
 Legacy backup archives: private root-owned directories may contain historical foreign-UID regular files; never execute archive contents. Live runtime and recovery control files remain root-owned. Diagnose untrusted_legacy_backups via blocker_details; cleanup needs separate authorization and completed migration verification.
+
+Lifecycle debt contract: docs/specs/technical-debt-remediation.md (Chinese: docs/specs/technical-debt-remediation.zh-CN.md). Menu service controls share Agent guards; uninstall must confirm stopped state and reclaim ledger-owned firewall rules before deleting runtime. Interrupted SubMan writes need readback reconciliation. CI scope is baseline-bound and host-only, never Docker/production proof.

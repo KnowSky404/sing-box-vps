@@ -42,6 +42,8 @@ sbv routing restore --json --yes --expected-fingerprint HASH
 sbv routing recover --json --yes
 ```
 
+主菜单服务控制与这些命令共用实现；实例、组件或规则待恢复事务会拒绝服务变更。
+
 服务 start/restart 先校验配置并核对最终活动状态，stop 核对最终 inactive；
 日志读取非 follow，默认 100 行，允许 1–1000 行，是敏感输出。
 `routing view` 是脱敏摘要；`export` 返回敏感完整草稿，须从 `.data.draft`

@@ -92,8 +92,8 @@ install_or_reconfigure_singbox() {
 run_install_flow() {
   local input=$1
 
-  if ! printf '%s\n' "${input}" | install_or_update_singbox 2>&1; then
-    printf 'install_or_update_singbox unexpectedly failed for input %s\n' "${input}" >&2
+  if ! printf '%s\n' "${input}" | update_singbox_version_menu 2>&1; then
+    printf 'update_singbox_version_menu unexpectedly failed for input %s\n' "${input}" >&2
     return 1
   fi
 }
@@ -177,7 +177,7 @@ cat > "${SINGBOX_SERVICE_FILE}" <<'EOF'
 Description=sing-box
 EOF
 
-missing_sbv_output=$(run_install_flow '0')
+missing_sbv_output=$(printf '0\n' | install_new_protocols_menu 2>&1)
 missing_sbv_plain_output=$(strip_ansi "${missing_sbv_output}")
 
 if [[ "${missing_sbv_plain_output}" == *"检测到残缺的现有实例"* ]]; then
@@ -185,7 +185,7 @@ if [[ "${missing_sbv_plain_output}" == *"检测到残缺的现有实例"* ]]; th
   exit 1
 fi
 
-if [[ "${missing_sbv_plain_output}" != *"更新 sing-box 二进制并保留当前配置"* ]]; then
+if [[ "${missing_sbv_plain_output}" != *"协议安装"* ]]; then
   printf 'expected installed instance missing only sbv to stay on healthy-instance menu, got:\n%s\n' "${missing_sbv_output}" >&2
   exit 1
 fi
