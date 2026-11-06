@@ -6,8 +6,8 @@ verification_scenario_fresh_install_vmess() {
 
   verification_prepare_remote_local_tree
   trap 'verification_cleanup_remote_local_tree; trap - RETURN' RETURN
-  cert_path="${VERIFY_REMOTE_LOCAL_TREE_DIR}/vmess.crt"
-  key_path="${VERIFY_REMOTE_LOCAL_TREE_DIR}/vmess.key"
+  cert_path="$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/tls/vmess.crt")"
+  key_path="$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/tls/vmess.key")"
   openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
     -subj '/CN=vmess.verification.invalid' \
     -addext 'subjectAltName=DNS:vmess.verification.invalid' \
@@ -46,7 +46,7 @@ EOF
   jq -e --argjson port "${expected_port}" '
     .protocol=="vmess" and .revision==1 and (.instances|length)==1 and
     .instances[0].id=="main" and .instances[0].tag=="vmess-in" and
-    .instances[0].listen=={address:"::",port:$port} and
+    .instances[0].listen=={address:"::",port:$port,tcp_fast_open:true} and
     (.instances[0].authentication.users|length)==2 and
     all(.instances[0].authentication.users[];
       (.name|type=="string" and length>0) and

@@ -49,7 +49,7 @@ structured_instance_store_revision_arg() {
 
 structured_instance_store_candidate() (
   umask 077
-  local protocol current_file operation argument expected_revision temp_dir candidate_json status
+  local protocol current_file operation argument expected_revision temp_dir candidate_json status filter
   protocol=$(structured_instance_store_protocol "${1:-}") || {
     structured_instance_store_error candidate unsupported_protocol; return 1;
   }
@@ -90,9 +90,23 @@ structured_instance_store_candidate() (
       ;;
     *) structured_instance_store_error candidate invalid_operation; return 1 ;;
   esac
-  if candidate_json=$(jq -cS --arg op "${operation}" --arg id "${argument}" \
-      --slurpfile record "${temp_dir}/instance.json" '
-    . as $old | $record[0] as $instance |
+  filter=$(structured_instance_record_jq_filter) || return 1
+  if candidate_json=$(jq -cS --arg protocol "${protocol}" --arg op "${operation}" --arg id "${argument}" \
+      --slurpfile record "${temp_dir}/instance.json" "${filter}"'
+    . as $old |
+    ($record[0] |
+      if $op == "create" and instance_supports_tcp_fast_open($protocol) then
+        if .listen | has("tcp_fast_open") then . else .listen.tcp_fast_open=true end |
+        if $protocol == "shadowtls" and (.detour.listen | has("tcp_fast_open") | not) then .detour.listen.tcp_fast_open=true else . end
+      elif $op == "replace" then
+        . as $new | first($old.instances[] | select(.id == $new.id)) as $previous |
+        if (.listen | has("tcp_fast_open") | not) and instance_supports_tcp_fast_open($protocol) then
+          .listen += ($previous.listen | with_entries(select(.key == "tcp_fast_open")))
+        else . end |
+        if $protocol == "shadowtls" and (.detour.listen | has("tcp_fast_open") | not) then
+          .detour.listen += ($previous.detour.listen | with_entries(select(.key == "tcp_fast_open")))
+        else . end
+      else . end) as $instance |
     if $op == "create" then
       if any(.instances[]; .id == $instance.id) then error("exists") else
         .instances += [$instance] |
@@ -327,12 +341,14 @@ render_structured_instance_inbounds() {
   if [[ "${protocol}" == shadowtls ]]; then
     jq -c '.instances[] | [
       ({type:"shadowtls",tag:.tag,listen:.listen.address,listen_port:.listen.port,detour:.detour.tag,version:.version,handshake:.handshake} +
+       (.listen | with_entries(select(.key == "tcp_fast_open"))) +
        (if .version == 2 then {password:.authentication.password}
         elif .version == 3 then {users:.authentication.users}
         else {} end) +
        (if (.handshake_for_server_name | length) > 0 then {handshake_for_server_name:.handshake_for_server_name} else {} end) +
        (if .version == 3 then {strict_mode:.strict_mode,wildcard_sni:.wildcard_sni} else {} end)),
-      {type:"mixed",tag:.detour.tag,listen:.detour.listen.address,listen_port:.detour.listen.port}
+      ({type:"mixed",tag:.detour.tag,listen:.detour.listen.address,listen_port:.detour.listen.port} +
+       (.detour.listen | with_entries(select(.key == "tcp_fast_open"))))
     ] | .[]' <<< "${snapshot}" 2>/dev/null || { structured_instance_store_error render_inbounds render_failed; return 1; }
     return 0
   fi
@@ -356,6 +372,7 @@ render_structured_instance_inbounds() {
   jq -c --arg protocol "${protocol}" --arg use_certificate_provider "${use_certificate_provider}" '
     .instances[] |
     ({type:(if $protocol == "vless-plain" then "vless" elif $protocol == "hy2" then "hysteria2" else $protocol end),tag:.tag,listen:.listen.address,listen_port:.listen.port} +
+      (.listen | with_entries(select(.key == "tcp_fast_open"))) +
       (if $protocol == "shadowsocks" then
          {method:.authentication.method,password:.authentication.password,
           users:.authentication.users,network:.listen.network}

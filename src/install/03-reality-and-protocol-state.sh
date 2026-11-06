@@ -94,24 +94,81 @@ validate_http_url() {
   [[ "${value}" =~ ^https?://[^[:space:]/$.?#][^[:space:]]*$ ]]
 }
 
-prompt_hy2_masquerade_url() {
-  local prompt=$1 current=${2:-} value
+hy2_reality_masquerade_candidates() (
+  local instance_id sni ids
+  {
+    if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
+      jq -r '.inbounds[]? | select(.type == "vless" and .tls.reality.enabled == true) |
+        .tls.server_name // .tls.reality.handshake.server // empty' "${SINGBOX_CONFIG_FILE}" || return 1
+    fi
+    ids=$(list_vless_reality_instance_ids) || return 1
+    while IFS= read -r instance_id; do
+      [[ -n "${instance_id}" ]] || continue
+      load_vless_reality_instance_state "${instance_id}" || return 1
+      printf '%s\n' "${SB_SNI}"
+    done <<< "${ids}"
+  } | sort -u | while IFS= read -r sni; do
+    if validate_reality_sni_syntax "${sni}"; then printf 'https://%s\n' "${sni}"; fi
+  done
+)
 
+probe_hy2_masquerade_url() {
+  local url=$1 status escaped_url
+  [[ "${url}" != *[[:cntrl:]]* ]] || return 1
+  escaped_url=${url//\\/\\\\}
+  escaped_url=${escaped_url//\"/\\\"}
+  # Keep URL credentials and query values out of curl's process arguments.
+  status=$(printf 'url = "%s"\n' "${escaped_url}" | \
+    curl --silent --globoff --head --location --max-redirs 3 --output /dev/null \
+      --write-out '%{http_code}' --connect-timeout 5 --max-time 10 \
+      --proto '=http,https' --proto-redir '=http,https' --config - 2>/dev/null) || return 1
+  [[ "${status}" =~ ^[23][0-9][0-9]$ ]]
+}
+
+prompt_hy2_masquerade_url() {
+  local prompt=$1 current=${2:-} operation=${3:-replace} value candidate_text index
+  local candidates=()
+  if candidate_text=$(hy2_reality_masquerade_candidates); then
+    if [[ -n "${candidate_text}" ]]; then mapfile -t candidates <<< "${candidate_text}"; fi
+  else
+    log_warn '无法读取 REALITY SNI 候选，可直接输入伪装 URL。' >&2
+  fi
+  for ((index=0; index<${#candidates[@]}; index++)); do
+    printf '[Hysteria2] r%s: %s（REALITY SNI 候选，仅作伪装网站，不替代 HY2 证书域名）\n' \
+      "$((index + 1))" "${candidates[index]}" >&2
+  done
+  [[ ${#candidates[@]} -eq 0 ]] || echo '[Hysteria2] 可输入 r1 等编号选择候选，选择后单独检测 HTTP(S) 可用性。' >&2
   while true; do
     read -rp "${prompt}" value || return 1
     value=$(trim_whitespace "${value}")
     if [[ -z "${value}" ]]; then
-      printf '%s' "${current}"
-      return 0
+      if [[ "${operation}" != create || -z "${current}" ]]; then
+        printf '%s' "${current}"
+        return 0
+      fi
+      value=${current}
     fi
-    # Schemes are case-insensitive. Normalize only the validation input;
-    # preserve the administrator's URL, including case-sensitive paths.
-    if validate_http_url "${value,,}" ||
-      [[ "${value,,}" == file:* && "${value}" != *[[:cntrl:]]* ]]; then
+    if [[ "${value}" =~ ^r([1-9][0-9]{0,2})$ ]]; then
+      index=$((10#${BASH_REMATCH[1]} - 1))
+      if (( index >= ${#candidates[@]} )); then
+        log_warn '无此 REALITY SNI 候选编号，请重新输入。' >&2
+        continue
+      fi
+      value=${candidates[index]}
+    fi
+    # Preserve the administrator's URL, including case-sensitive paths.
+    if [[ "${value,,}" == file:* && "${value}" != *[[:cntrl:]]* ]]; then
       printf '%s' "${value}"
       return 0
     fi
-    log_warn '伪装网站 URL 必须包含 http:// 或 https://，例如 https://www.cloudflare.com；本地目录使用 file:///绝对路径。请重新输入。' >&2
+    if ! validate_http_url "${value,,}" || [[ "${value}" == *[[:cntrl:]]* ]]; then
+      log_warn '伪装网站 URL 必须包含 http:// 或 https://，例如 https://www.cloudflare.com；本地目录使用 file:///绝对路径。请重新输入。' >&2
+    elif probe_hy2_masquerade_url "${value}"; then
+      printf '%s' "${value}"
+      return 0
+    else
+      log_warn '伪装网站 HTTP(S) 检测失败（DNS、TLS、超时或非 2xx/3xx 响应），请重新输入；修改时留空保留原地址。' >&2
+    fi
   done
 }
 

@@ -26,6 +26,11 @@ jq -n --arg cert "${TMP_DIR}/shadowtls.crt" '
      client_tls:{server_name:"shadowtls.test",certificate_path:$cert},
      outbound_policy:"default"}]}
 ' > "${TMP_DIR}/project/protocols/instances/shadowtls.json"
+jq '.instances[0].listen.tcp_fast_open=true |
+  if .protocol == "shadowtls" then .instances[0].detour.listen.tcp_fast_open=true else . end' \
+  "${TMP_DIR}/project/protocols/instances/shadowtls.json" > "${TMP_DIR}/tfo.json"
+mv "${TMP_DIR}/tfo.json" "${TMP_DIR}/project/protocols/instances/shadowtls.json"
+
 jq -n '{inbounds:[
   {type:"shadowtls",tag:"shadowtls-in",listen:"127.0.0.1",listen_port:18444,
    detour:"shadowtls-inner-main",version:3,users:[{name:"shadow-user",password:"shadow-password"}],
@@ -72,4 +77,5 @@ jq -e '
 [[ "$(stat -c '%a' "${client_file}")" == 600 ]]
 ! grep -Fq 'PRIVATE KEY' "${client_file}"
 ! grep -Fq 'shadowtls.json' "${client_file}"
+jq -e 'all(.outbounds[]; .tcp_fast_open==true)' "${client_file}" >/dev/null
 printf 'ShadowTLS verification probe generator proves the composite transport chain\n'

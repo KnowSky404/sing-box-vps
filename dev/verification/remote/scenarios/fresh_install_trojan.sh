@@ -5,8 +5,8 @@ verification_scenario_fresh_install_trojan() {
   local store_file=/root/.sing-box-vps/runtime/protocols/instances/trojan.json
   verification_prepare_remote_local_tree
   trap 'verification_cleanup_remote_local_tree; trap - RETURN' RETURN
-  cert_path="${VERIFY_REMOTE_LOCAL_TREE_DIR}/trojan.crt"
-  key_path="${VERIFY_REMOTE_LOCAL_TREE_DIR}/trojan.key"
+  cert_path="$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/tls/trojan.crt")"
+  key_path="$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/tls/trojan.key")"
   openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
     -subj '/CN=trojan.verification.invalid' \
     -addext 'subjectAltName=DNS:trojan.verification.invalid' \
@@ -40,7 +40,7 @@ EOF
   grep -Fqx 'INSTALLED_PROTOCOLS=trojan' /root/.sing-box-vps/runtime/protocols/index.env
   jq -e '.protocol=="trojan" and .revision==1 and (.instances|length)==1 and
     .instances[0].id=="main" and .instances[0].tag=="trojan-in" and
-    .instances[0].listen=={address:"::",port:1084} and
+    .instances[0].listen=={address:"::",port:1084,tcp_fast_open:true} and
     .instances[0].authentication.users==[
       {name:"first",password:"trojan-first-password"},{name:"second",password:"trojan-second-password"}] and
     .instances[0].tls.enabled==true and .instances[0].client_trust=="certificate" and

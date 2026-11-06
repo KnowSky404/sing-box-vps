@@ -1093,7 +1093,7 @@ prompt_vless_reality_instance_create() {
   SB_VLESS_RATE_LIMIT_UP_MBPS=""
   SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
   SB_VLESS_ALPN_MODE="off"
-  SB_VLESS_TCP_FAST_OPEN="n"
+  SB_VLESS_TCP_FAST_OPEN="y"
   prompt_vless_reality_rate_limit_fields || return 1
   prompt_vless_reality_advanced_update_fields || return 1
   validate_current_reality_sni_alpn_or_warn
@@ -1167,7 +1167,7 @@ prompt_hy2_install() {
   SB_HY2_UP_MBPS=$(prompt_optional_positive_integer "[Hysteria2] 上行带宽 Mbps (留空表示不限制): " "" "上行带宽")
   SB_HY2_DOWN_MBPS=$(prompt_optional_positive_integer "[Hysteria2] 下行带宽 Mbps (留空表示不限制): " "" "下行带宽")
 
-  echo '[Hysteria2] Salamander 混淆为可选项；启用后，客户端也必须启用并填写相同的混淆密码。' >&2
+  echo '[Hysteria2] Salamander 混淆默认开启；客户端须使用相同的混淆密码。启用后普通 HTTP/3 客户端无法访问伪装网站。' >&2
   SB_HY2_OBFS_ENABLED=$(prompt_yes_no "[Hysteria2] 是否启用 obfs / Salamander 混淆 [y/n] (默认 y): " "y")
   if [[ "${SB_HY2_OBFS_ENABLED}" == "y" ]]; then
     SB_HY2_OBFS_TYPE="salamander"
@@ -1212,7 +1212,7 @@ prompt_hy2_install() {
   fi
 
   echo '[Hysteria2] 伪装地址是未通过认证的 HTTP/3 请求所看到的网站，须填写完整 URL（如 https://www.cloudflare.com），可留空使用默认地址。' >&2
-  in_masquerade=$(prompt_hy2_masquerade_url "[Hysteria2] 伪装地址 (默认 ${SB_HY2_MASQUERADE}，留空使用默认): " "${SB_HY2_MASQUERADE}") || return 1
+  in_masquerade=$(prompt_hy2_masquerade_url "[Hysteria2] 伪装地址 (默认 ${SB_HY2_MASQUERADE}，留空使用默认): " "${SB_HY2_MASQUERADE}" create) || return 1
   SB_HY2_MASQUERADE=${in_masquerade}
 
   ensure_hy2_materials

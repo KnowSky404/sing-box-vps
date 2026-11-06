@@ -991,7 +991,8 @@ verification_load_snell_probe_record() {
        ([.instances[] | select(.tag == $tag)] | length) == 1 then
       ([.instances[] | select(.tag == $tag)][0] |
         select(
-          (.listen | type == "object" and (keys | sort) == ["address","port"] and
+          (.listen | type == "object" and
+            ((has("tcp_fast_open") | not) or (.tcp_fast_open | type == "boolean")) and ((keys - ["tcp_fast_open"]) | sort) == ["address","port"] and
             (.address | safe_address) and
             (.port | type == "number" and floor == . and . >= 1 and . <= 65535)) and
           (.authentication | type == "object" and (keys | sort) == ["psk","users"] and
@@ -1053,7 +1054,8 @@ verification_load_shadowtls_probe_record() {
        ([.instances[] | select(.tag == $tag)] | length) == 1 then
       ([.instances[] | select(.tag == $tag)][0] | . as $instance |
         select(
-          (.listen | type == "object" and (keys | sort) == ["address","port"] and
+          (.listen | type == "object" and
+            ((has("tcp_fast_open") | not) or (.tcp_fast_open | type == "boolean")) and ((keys - ["tcp_fast_open"]) | sort) == ["address","port"] and
             (.address | safe_address) and
             (.port | type == "number" and floor == . and . >= 1 and . <= 65535)) and
           (.version | type == "number" and floor == . and IN(1,2,3)) and
@@ -1073,7 +1075,8 @@ verification_load_shadowtls_probe_record() {
             (.server_port | type == "number" and floor == . and . >= 1 and . <= 65535)) and
           (.detour | type == "object" and (keys | sort) == ["listen","tag"] and
             .tag == ("shadowtls-inner-" + $instance.id) and
-            (.listen | type == "object" and (keys | sort) == ["address","port"] and
+            (.listen | type == "object" and
+            ((has("tcp_fast_open") | not) or (.tcp_fast_open | type == "boolean")) and ((keys - ["tcp_fast_open"]) | sort) == ["address","port"] and
               .address == "127.0.0.1" and
               (.port | type == "number" and floor == . and . >= 1 and . <= 65535))) and
           (.client_trust | type == "string" and IN("certificate","system")) and
@@ -1128,7 +1131,8 @@ verification_load_naive_probe_record() {
       ([.instances[] | select(.tag == $tag)][0] | . as $instance |
         select(
           (.id | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and
-          (.listen | type == "object" and (keys | sort) == ["address","network","port"] and
+          (.listen | type == "object" and
+            ((has("tcp_fast_open") | not) or (.tcp_fast_open | type == "boolean")) and ((keys - ["tcp_fast_open"]) | sort) == ["address","network","port"] and
             (.address | safe_address) and
             (.port | type == "number" and floor == . and . >= 1 and . <= 65535) and
             (.network | type == "array" and . == [$expected_network])) and

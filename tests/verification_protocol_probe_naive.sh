@@ -26,6 +26,11 @@ jq -n --arg cert "${TMP_DIR}/naive.crt" --arg key "${TMP_DIR}/naive.key" '
        quic_congestion_control:"bbr",quic_session_receive_window:"",stream_receive_window:""},
      outbound_policy:"default",dependencies:[]}]}
 ' > "${TMP_DIR}/project/protocols/instances/naive.json"
+jq '.instances[0].listen.tcp_fast_open=true |
+  if .protocol == "shadowtls" then .instances[0].detour.listen.tcp_fast_open=true else . end' \
+  "${TMP_DIR}/project/protocols/instances/naive.json" > "${TMP_DIR}/tfo.json"
+mv "${TMP_DIR}/tfo.json" "${TMP_DIR}/project/protocols/instances/naive.json"
+
 jq -n --arg cert "${TMP_DIR}/naive.crt" --arg key "${TMP_DIR}/naive.key" '{inbounds:[
   {type:"naive",tag:"naive-in",listen:"127.0.0.1",listen_port:18446,
    network:"tcp",users:[{username:"naive-user",password:"naive-password"}],
@@ -103,4 +108,5 @@ jq -e '
   (.outbounds[0] | has("udp_over_tcp") | not) and
   .outbounds[0].server_port == 18446
 ' "${udp_client_file}" >/dev/null
+jq -e 'all(.outbounds[]; .tcp_fast_open==true)' "${client_file}" >/dev/null
 printf 'NaiveProxy UDP probe generator selects QUIC/HTTP3 and avoids TCP-only UoT\n'

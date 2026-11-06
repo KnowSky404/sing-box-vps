@@ -55,7 +55,7 @@ verification_protocol_record() {
         quic_congestion_control:"bbr",quic_session_receive_window:"",stream_receive_window:""}}
     elif $protocol=="hy2" then
       $base+{authentication:{users:[{name:"hy2-user",password:"hy2-pass"}]},tls:$tls,client_trust:"certificate",
-        bandwidth:{up_mbps:null,down_mbps:null},obfs:{enabled:false,type:"",password:""},masquerade:""}
+        bandwidth:{up_mbps:null,down_mbps:null},obfs:{enabled:true,type:"salamander",password:"hy2-verification-obfs"},masquerade:""}
     elif $protocol=="anytls" then
       $base+{authentication:{users:[{name:"anytls-user",password:"anytls-pass"}]},tls:$tls,client_trust:"certificate"}
     else error("unsupported fixture") end'
@@ -83,7 +83,7 @@ verification_protocol_prepare() {
 www.cloudflare.com
 n
 1
-n
+
 0
 REALITY_MENU
       jq -e 'any(.inbounds[]; .type=="vless" and .tls.reality.enabled==true and .listen_port==443)' "${config}" >/dev/null

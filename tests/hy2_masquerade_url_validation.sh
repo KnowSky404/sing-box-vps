@@ -7,6 +7,7 @@ source "${TESTS_DIR}/menu_test_helper.sh"
 setup_menu_test_env 120
 source "${TESTABLE_INSTALL}"
 trap 'printf "HY2 masquerade regression failed at line %s\n" "${LINENO}" >&2' ERR
+probe_hy2_masquerade_url() { :; }
 core=${SINGBOX_BINARY_114:-/usr/local/bin/sing-box}
 mkdir -p "${SB_PROTOCOL_STATE_DIR}" "${TMP_DIR}/website with spaces"
 ln -s "${core}" "${SINGBOX_BIN_PATH}"

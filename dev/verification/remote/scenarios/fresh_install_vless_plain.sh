@@ -31,7 +31,7 @@ EOF
   jq -e --argjson port "${expected_port}" '
     .protocol=="vless-plain" and .revision==1 and (.instances|length)==1 and
     .instances[0].id=="main" and .instances[0].tag=="vless-plain-in" and
-    .instances[0].listen=={address:"::",port:$port} and
+    .instances[0].listen=={address:"::",port:$port,tcp_fast_open:true} and
     .instances[0].authentication.users==[
       {name:"probe",uuid:"11111111-1111-4111-8111-111111111111",flow:""}] and
     .instances[0].tls=={enabled:false} and .instances[0].client_trust=="system" and
@@ -53,8 +53,8 @@ EOF
   # Reconfigure the same managed instance to QUIC with a temporary test
   # certificate.  This keeps the ordinary TCP install coverage while proving
   # that VLESS plain QUIC renders as a UDP listener and carries UDP payloads.
-  cert_path="${VERIFY_REMOTE_LOCAL_TREE_DIR}/vless-plain.crt"
-  key_path="${VERIFY_REMOTE_LOCAL_TREE_DIR}/vless-plain.key"
+  cert_path="$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/tls/vless-plain.crt")"
+  key_path="$(verification_artifact_path "${VERIFY_CURRENT_SCENARIO_DIR}/tls/vless-plain.key")"
   openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
     -subj '/CN=vless-plain.verification.invalid' \
     -addext 'subjectAltName=DNS:vless-plain.verification.invalid' \

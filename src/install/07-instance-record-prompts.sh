@@ -488,7 +488,7 @@ hy2_management_build_record() {
     id=$(plain_proxy_management_next_id hy2 "${snapshot}") || return 1
     name=$(default_instance_node_name_from_file hy2 "${snapshot}") || return 1; tag=$(plain_proxy_management_next_tag hy2 "${snapshot}") || return 1
     address=${SB_DEFAULT_LISTEN_ADDRESS}; port=443; users='[]'; tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'
-    trust=system; up_mbps=""; down_mbps=""; obfs='{"enabled":false,"type":"","password":""}'; masquerade=""; policy=default
+    trust=system; up_mbps=""; down_mbps=""; obfs='{"enabled":true,"type":"salamander","password":""}'; masquerade=""; policy=default
   fi
   echo '[Hysteria2] 实例名称用于显示；ID 用于区分实例，tag 用于配置中的入口标识，均可留空使用当前值或默认值。' >&2
   echo '[Hysteria2] 新建默认监听 ::，同时接受外部 IPv4 / IPv6 连接；可填写 0.0.0.0 仅使用 IPv4，或 127.0.0.1 仅允许本机连接。修改时留空保留原地址。' >&2
@@ -558,7 +558,7 @@ hy2_management_build_record() {
   up_mbps=$(prompt_update_optional_positive_integer "[Hysteria2] 上行带宽 Mbps（当前: ${up_mbps:-未限制}，留空清空）: " "上行带宽") || return 1
   down_mbps=$(prompt_update_optional_positive_integer "[Hysteria2] 下行带宽 Mbps（当前: ${down_mbps:-未限制}，留空清空）: " "下行带宽") || return 1
   enabled=$(jq -r '.enabled' <<< "${obfs}") || return 1
-  echo '[Hysteria2] Salamander 混淆为可选项，新建默认关闭；启用后客户端须使用相同的混淆密码，密码留空可自动生成。' >&2
+  echo '[Hysteria2] Salamander 混淆新建默认开启；客户端须使用相同的混淆密码，密码留空可自动生成。启用后普通 HTTP/3 客户端无法访问伪装网站。' >&2
   enabled=$(prompt_yes_no "[Hysteria2] 是否启用 Salamander obfs [y/n]（当前: ${enabled}，默认保持）: " "$([[ "${enabled}" == true ]] && printf y || printf n)") || return 1
   if [[ "${enabled}" == y ]]; then
     obfs_type=salamander; obfs_password=$(jq -r '.password // empty' <<< "${obfs}") || return 1
@@ -567,7 +567,7 @@ hy2_management_build_record() {
     obfs=$(jq -cn --arg password "${obfs_password}" '{enabled:true,type:"salamander",password:$password}') || return 1
   else obfs='{"enabled":false,"type":"","password":""}'; fi
   echo '[Hysteria2] masquerade 为可选的伪装网站 URL，须包含 http:// 或 https://，如 https://www.cloudflare.com，用于未通过认证的 HTTP/3 请求；新建留空则不启用，修改留空保持。' >&2
-  masquerade=$(prompt_hy2_masquerade_url "[Hysteria2] 伪装网站 URL（当前: ${masquerade:-未启用}，留空保持）: " "${masquerade}") || return 1
+  masquerade=$(prompt_hy2_masquerade_url "[Hysteria2] 伪装网站 URL（当前: ${masquerade:-未启用}，留空保持）: " "${masquerade}" "${operation}") || return 1
   answer=$(plain_proxy_management_prompt_public_consent hy2 "${address}" "${tls}") || return 1
   if [[ "${address}" != 127.* && "${address}" != ::1 && "${answer}" != y ]]; then log_info '未确认公网暴露，已取消 Hysteria2 实例变更。'; return 2; fi
   PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC=${answer}; MIXED_MANAGEMENT_ALLOW_PUBLIC=${answer}

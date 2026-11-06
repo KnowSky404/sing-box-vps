@@ -6,6 +6,7 @@
 
 | 契约或目标 | 实现状态 | 证据与剩余边界 |
 | --- | --- | --- |
+| [TCP Fast Open 与 HY2 默认值](protocol-network-defaults.zh-CN.md) | 已实现；定向验证随 PR 记录 | TFO 兼容可选字段、已有值保护、HY2 默认 Salamander 和共享伪装网站检测；不表示生产或性能验收。 |
 | [生命周期与验证技术债治理](technical-debt-remediation.zh-CN.md)（[English](technical-debt-remediation.md)） | TD-01–TD-06 已实现；定向宿主/Docker 验收通过 | TD-01–TD-06 覆盖卸载/服务保护、防火墙归属回收、SubMan 中断、定点 CI 和真实接管测试入口；本地、Docker 与交付证据分别记录。 |
 | [Docker 定点验证](scoped-docker-verification.zh-CN.md)（[English](scoped-docker-verification.md)） | 已实现并验收：第二阶段 32 个独立场景及聚合兼容通过 | 独立出站/策略叶子、13 协议探针、Naive/Snell 转换及纯协议共存使用全新 SOCKS 前置。SPEC 记录 33 项运行态成功结果及场景耗时，计入内部安装，仅排除独立调度基线、最终 smoke 和传输；第一阶段历史、显式 REALITY/Tor、原默认全量及生产保持独立边界。 |
 | [统一存储与迁移](unified-storage.zh-CN.md)（[English](unified-storage.md)） | 已实现 | 私有统一根、旧布局迁移/恢复及专用运行态验收；不代表生产已迁移。 |

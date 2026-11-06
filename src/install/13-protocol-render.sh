@@ -647,6 +647,18 @@ build_vless_inbound_json() {
   done
 }
 
+legacy_inbound_tcp_fast_open_json() {
+  local type=$1 tag=$2
+  if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    jq -c --arg type "${type}" --arg tag "${tag}" '
+      (first(.inbounds[]? | select(.type == $type and .tag == $tag)) // {tcp_fast_open:true}) |
+      with_entries(select(.key == "tcp_fast_open"))
+    ' "${SINGBOX_CONFIG_FILE}"
+  else
+    printf '{"tcp_fast_open":true}\n'
+  fi
+}
+
 build_mixed_inbound_json() {
   local state_file
   state_file=$(protocol_state_file "mixed") || return 1
@@ -660,6 +672,7 @@ build_mixed_inbound_json() {
 
   jq -n \
     --arg tag "mixed-in" \
+    --argjson tfo "$(legacy_inbound_tcp_fast_open_json mixed mixed-in)" \
     --arg listen "$(stack_inbound_listen_address)" \
     --arg port "${SB_PORT}" \
     --arg mixed_auth_enabled "${SB_MIXED_AUTH_ENABLED}" \
@@ -670,7 +683,7 @@ build_mixed_inbound_json() {
       "tag": $tag,
       "listen": $listen,
       "listen_port": ($port | tonumber)
-    } + (
+    } + $tfo + (
       if $mixed_auth_enabled == "y" then
         {
           "users": [
@@ -1075,6 +1088,7 @@ build_anytls_inbound_json() {
 
   jq -n \
     --arg tag "anytls-in" \
+    --argjson tfo "$(legacy_inbound_tcp_fast_open_json anytls anytls-in)" \
     --arg listen "$(stack_inbound_listen_address)" \
     --arg port "${SB_PORT}" \
     --arg user_name "${SB_ANYTLS_USER_NAME}" \
@@ -1118,7 +1132,7 @@ build_anytls_inbound_json() {
           end
         )
       )
-    }'
+    } + $tfo'
 }
 
 build_certificate_provider_for_protocol() {
