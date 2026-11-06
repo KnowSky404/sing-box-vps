@@ -33,7 +33,7 @@ EOF
     .schema_version==1 and .protocol=="shadowsocks" and .revision==1 and
     (.instances|length)==1 and .instances[0].id=="main" and
     .instances[0].tag=="ss-in" and
-    .instances[0].listen=={address:"::",port:1083,network:["tcp","udp"]} and
+    .instances[0].listen=={address:"::",port:1083,network:["tcp","udp"],tcp_fast_open:true} and
     .instances[0].authentication=={
       method:"2022-blake3-aes-128-gcm",password:$key,users:[]}
   ' "${store_file}" >/dev/null

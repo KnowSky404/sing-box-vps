@@ -28,7 +28,7 @@ EOF
   grep -Fqx 'CONFIG_SCHEMA_VERSION=2' "${state_file}"
   jq -e '.protocol=="http" and .revision==1 and (.instances|length)==1 and
     .instances[0].id=="main" and .instances[0].tag=="http-in" and
-    .instances[0].listen=={address:"::",port:1082} and
+    .instances[0].listen=={address:"::",port:1082,tcp_fast_open:true} and
     .instances[0].authentication=={enabled:true,username:"http-user",password:"http-pass"} and
     .instances[0].tls=={enabled:false}' "${store_file}" >/dev/null
   jq -e --argjson port "${expected_port}" '
