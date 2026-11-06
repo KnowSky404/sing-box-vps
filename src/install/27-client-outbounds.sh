@@ -1,3 +1,14 @@
+client_tcp_fast_open_defaults() {
+  jq -c '
+    def enable_tfo:
+      if (.type | IN("socks","http","shadowsocks","trojan","vmess","vless","snell","shadowtls","naive")) and
+         ((.transport.type // "none") != "quic") and (.quic != true) and
+         ((.network // ["tcp"]) | if type == "array" then index("tcp") != null else . != "udp" end) and
+         (has("tcp_fast_open") | not)
+      then .tcp_fast_open=true else . end;
+    if has("outbounds") then .outbounds |= map(enable_tfo) else enable_tfo end'
+}
+
 
 build_anytls_outbound_example() {
   local public_ip=$1
@@ -569,7 +580,7 @@ build_client_plain_proxy_outbound() {
     '{type:$type, tag:$tag, server:$server, server_port:($port|tonumber)}
     + (if $type == "socks" then {version:"5", udp_over_tcp:{enabled:true, version:2}} else {} end)
     + (if $auth_enabled == "y" then {username:$username, password:$password} else {} end)
-    + (if $type == "http" and ($tls | length) > 0 then {tls:$tls} else {} end)'
+    + (if $type == "http" and ($tls | length) > 0 then {tls:$tls} else {} end)' | client_tcp_fast_open_defaults
 }
 
 build_client_mixed_outbound() (
@@ -754,7 +765,7 @@ build_trojan_client_outbounds_from_store() (
   output_count=$(jq -s 'length' "${output_file}") || return 1
   [[ "${expected_count}" =~ ^[0-9]+$ && "${output_count}" == "${expected_count}" && "${output_count}" -gt 0 ]] || return 1
   jq -es 'length > 0 and (map(.tag) | unique | length) == length' "${output_file}" >/dev/null || return 1
-  cat "${output_file}"
+  cat "${output_file}" | client_tcp_fast_open_defaults
 )
 
 build_client_vmess_outbounds() (
@@ -827,7 +838,7 @@ build_vmess_client_outbounds_from_store() (
   expected_count=$(jq -r '[.instances[].authentication.users | length] | add // 0' <<< "${snapshot}") || return 1
   [[ "${output_count}" == "${expected_count}" && "${output_count}" -gt 0 ]] || return 1
   jq -es 'length > 0 and (map(.tag) | unique | length) == length' "${output_file}" >/dev/null || return 1
-  cat "${output_file}"
+  cat "${output_file}" | client_tcp_fast_open_defaults
 )
 
 build_client_vless_plain_outbounds() (
@@ -905,7 +916,7 @@ build_vless_plain_client_outbounds_from_store() (
   expected_count=$(jq -r '[.instances[].authentication.users | length] | add // 0' <<< "${snapshot}") || return 1
   [[ "${output_count}" == "${expected_count}" && "${output_count}" -gt 0 ]] || return 1
   jq -es 'length > 0 and (map(.tag) | unique | length) == length' "${output_file}" >/dev/null || return 1
-  cat "${output_file}"
+  cat "${output_file}" | client_tcp_fast_open_defaults
 )
 
 build_vless_plain_uri_from_outbound() {
@@ -1154,7 +1165,7 @@ build_shadowsocks_client_outbounds_from_store() (
   output_count=$(jq -s 'length' "${output_file}") || return 1
   [[ "${expected_count}" =~ ^[0-9]+$ && "${output_count}" == "${expected_count}" ]] || return 1
   jq -es 'length > 0 and (map(.tag) | unique | length) == length' "${output_file}" >/dev/null || return 1
-  cat "${output_file}"
+  cat "${output_file}" | client_tcp_fast_open_defaults
 )
 
 build_client_snell_outbounds() (
@@ -1207,7 +1218,7 @@ build_client_snell_outbounds() (
   output_count=$(jq -s 'length' "${output_file}") || return 1
   [[ "${expected_count}" =~ ^[0-9]+$ && "${output_count}" == "${expected_count}" && "${output_count}" -gt 0 ]] || return 1
   jq -es 'length > 0 and (map(.tag) | unique | length) == length' "${output_file}" >/dev/null || return 1
-  cat "${output_file}"
+  cat "${output_file}" | client_tcp_fast_open_defaults
 )
 
 build_client_tuic_outbounds() (
@@ -1455,7 +1466,7 @@ build_client_naive_outbounds() (
   output_count=$(jq -s 'length' "${output_file}") || return 1
   [[ "${expected_count}" =~ ^[0-9]+$ && "${output_count}" == "${expected_count}" && "${output_count}" -gt 0 ]] || return 1
   jq -es 'length > 0 and (map(.tag) | unique | length) == length' "${output_file}" >/dev/null || return 1
-  cat "${output_file}"
+  cat "${output_file}" | client_tcp_fast_open_defaults
 )
 
 build_client_shadowtls_bundle_json() (
@@ -1519,7 +1530,7 @@ build_client_shadowtls_bundle_json() (
                               elif .type == "http" then (.detour | type == "string" and endswith("-transport"))
                               else false end))
     ' "${bundle_file}" >/dev/null || return 1
-  cat "${bundle_file}"
+  cat "${bundle_file}" | client_tcp_fast_open_defaults
 )
 
 build_client_shadowtls_outbounds() (

@@ -16,6 +16,11 @@ jq -n '
      version:6,obfs_mode:"",obfs_host:"",mode:"default",
      outbound_policy:"default",dependencies:[]}]}
 ' > "${TMP_DIR}/project/protocols/instances/snell.json"
+jq '.instances[0].listen.tcp_fast_open=true |
+  if .protocol == "shadowtls" then .instances[0].detour.listen.tcp_fast_open=true else . end' \
+  "${TMP_DIR}/project/protocols/instances/snell.json" > "${TMP_DIR}/tfo.json"
+mv "${TMP_DIR}/tfo.json" "${TMP_DIR}/project/protocols/instances/snell.json"
+
 jq -n '{inbounds:[{type:"snell",tag:"snell-in",listen:"127.0.0.1",listen_port:18086,version:6,psk:"snell-v6-psk-123456",users:[{name:"snell-user",userkey:"snell-user-key"}],mode:"default"}]}' \
   > "${TMP_DIR}/config.json"
 awk '/^if ! mkdir "\$\{LOCK_DIR\}" 2>\/dev\/null; then$/ {exit} {print}' \
@@ -49,6 +54,7 @@ jq -e '
   .route.final == "proxy" and
   ([.inbounds[] | select(.tag == "local-socks" and .listen_port == 19080)] | length) == 1
 ' "${client_file}" >/dev/null
+jq -e 'all(.outbounds[]; .tcp_fast_open==true)' "${client_file}" >/dev/null
 [[ $(stat -c '%a' "${client_file}") == 600 ]]
 ! grep -Fq 'snell.json' "${client_file}"
 printf 'Snell verification probe generator uses managed v6 state and TCP+UDP packet-api exporter\n'

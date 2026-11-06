@@ -12,6 +12,35 @@
 完整用法中的占位符需要替换为实际值；`--json` 的 stdout 只返回一个 JSON 对象。
 命令具体输入、并发和服务影响与同一操作描述共同维护。
 
+### hy2.masquerade-check
+
+列出 REALITY 伪装候选并检测 HTTP(S) 可用性
+
+```bash
+sbv hy2 masquerade-check --json [--url HTTP(S)_URL]
+```
+
+| 契约 | 值 |
+| --- | --- |
+| 命令 | `sbv hy2 masquerade-check` |
+| Agent 兼容入口 | `sbv agent hy2 masquerade-check` |
+| 变更状态 | `false` |
+| 敏感输出 | `false` |
+| 确认 | `—` |
+| 并发条件 | `none` |
+| CAS | `none` |
+| 输入契约 | `optional public HTTP(S) URL; HEAD, DNS and TLS verification; 5s connect/10s total, at most 3 redirects; no HY2 TLS identity change` |
+| 服务影响 | `none` |
+| 外部写入 | `false` |
+| 可能涉及外部写入 | `false` |
+
+| 参数 | 类型 | 必需 | 说明与约束 |
+| --- | --- | --- | --- |
+| `--json` | `boolean` | `true` | `{"description":"single JSON envelope"}` |
+| `--url` | `string` | `false` | `{"description":"public HTTP(S) URL; omit to list REALITY candidates without network access"}` |
+
+[操作说明](Protocol-Instances.md#tcp-fast-open-and-hy2-defaults)
+
 ### storage.status
 
 存储布局、迁移状态与系统入口及旧目录阻塞路径
@@ -520,7 +549,7 @@ sbv instance create <protocol> --json --yes --expected-revision N --file record.
 | 确认 | `--yes` |
 | 并发条件 | `exclusive` |
 | CAS | `revision` |
-| 输入契约 | `typed protocol record; see Protocol-Instances.md; writes exclude vless-reality; migrate only mixed` |
+| 输入契约 | `typed protocol record; optional listen.tcp_fast_open defaults true on TCP create, omitted on replace preserves prior value; explicit HY2 obfs/masquerade; see Protocol-Instances.md; writes exclude vless-reality` |
 | 服务影响 | `restart_if_active` |
 | 外部写入 | `false` |
 | 可能涉及外部写入 | `false` |
@@ -553,7 +582,7 @@ sbv instance replace <protocol> --json --yes --expected-revision N --file record
 | 确认 | `--yes` |
 | 并发条件 | `exclusive` |
 | CAS | `revision` |
-| 输入契约 | `typed protocol record; see Protocol-Instances.md; writes exclude vless-reality; migrate only mixed` |
+| 输入契约 | `typed protocol record; optional listen.tcp_fast_open defaults true on TCP create, omitted on replace preserves prior value; explicit HY2 obfs/masquerade; see Protocol-Instances.md; writes exclude vless-reality` |
 | 服务影响 | `restart_if_active` |
 | 外部写入 | `false` |
 | 可能涉及外部写入 | `false` |

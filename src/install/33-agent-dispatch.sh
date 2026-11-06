@@ -1,3 +1,33 @@
+agent_hy2_masquerade_cli() {
+  local operation=${1:-} json=n url="" url_set=n candidates available=null status=0
+  [[ $# -eq 0 ]] || shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) [[ "${json}" == n ]] || break; json=y; shift ;;
+      --url) [[ $# -ge 2 && "${url_set}" == n && -n "$2" ]] || break; url=$2; url_set=y; shift 2 ;;
+      *) break ;;
+    esac
+  done
+  if [[ "${operation}" != masquerade-check || "${json}" != y || $# -ne 0 ]]; then
+    agent_json_error invalid_arguments '用法: sbv hy2 masquerade-check --json [--url HTTP(S)_URL]'; return 1
+  fi
+  candidates=$(hy2_reality_masquerade_candidates) || {
+    agent_json_error reality_candidates_unavailable '无法完整读取 REALITY 候选。'; return 1;
+  }
+  if [[ -n "${url}" ]]; then
+    if ! validate_http_url "${url,,}" || [[ "${url}" == *[[:cntrl:]]* ]]; then
+      agent_json_error invalid_masquerade_url '检测需要有效 HTTP(S) URL。'; return 1
+    fi
+    if probe_hy2_masquerade_url "${url}"; then available=true; else available=false; status=1; fi
+  fi
+  jq -cn --arg candidates "${candidates}" --argjson available "${available}" --argjson status "${status}" '
+    {ok:($status == 0),
+     reality_candidates:($candidates|split("\n")|map(select(length>0))),http_available:$available,
+     tls_server_name_reused:false,
+     error:(if $status == 0 then null else "masquerade_probe_failed" end)}'
+  return "${status}"
+}
+
 
 agent_component_cli() {
   local operation=${1:-} expected="" input="" component_id="" json=n confirmed=n allow_public=n
@@ -497,6 +527,9 @@ agent_cli() {
     schema)
       agent_cli_run schema agent_schema_cli "$@"
       ;;
+    hy2)
+      agent_cli_run hy2.masquerade-check agent_hy2_masquerade_cli "$@"
+      ;;
     routing)
       agent_cli_run routing agent_routing_cli "$@"
       ;;
@@ -626,6 +659,7 @@ agent_dispatch() {
   fi
 
   case "${1:-}" in
+    hy2) agent_cli "$@" ;;
     routing)
       (
         if [[ "${2:-}" == recover ]]; then

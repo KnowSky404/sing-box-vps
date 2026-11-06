@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026110601
+# Version: 2026110602
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026110601"
+readonly SCRIPT_VERSION="2026110602"
 readonly SB_SUPPORT_MAX_VERSION="1.14.4"
 # A single IPv6 wildcard socket accepts IPv4 and IPv6 in sing-box on Linux.
 readonly SB_DEFAULT_LISTEN_ADDRESS="::"
@@ -2592,24 +2592,81 @@ validate_http_url() {
   [[ "${value}" =~ ^https?://[^[:space:]/$.?#][^[:space:]]*$ ]]
 }
 
-prompt_hy2_masquerade_url() {
-  local prompt=$1 current=${2:-} value
+hy2_reality_masquerade_candidates() (
+  local instance_id sni ids
+  {
+    if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
+      jq -r '.inbounds[]? | select(.type == "vless" and .tls.reality.enabled == true) |
+        .tls.server_name // .tls.reality.handshake.server // empty' "${SINGBOX_CONFIG_FILE}" || return 1
+    fi
+    ids=$(list_vless_reality_instance_ids) || return 1
+    while IFS= read -r instance_id; do
+      [[ -n "${instance_id}" ]] || continue
+      load_vless_reality_instance_state "${instance_id}" || return 1
+      printf '%s\n' "${SB_SNI}"
+    done <<< "${ids}"
+  } | sort -u | while IFS= read -r sni; do
+    if validate_reality_sni_syntax "${sni}"; then printf 'https://%s\n' "${sni}"; fi
+  done
+)
 
+probe_hy2_masquerade_url() {
+  local url=$1 status escaped_url
+  [[ "${url}" != *[[:cntrl:]]* ]] || return 1
+  escaped_url=${url//\\/\\\\}
+  escaped_url=${escaped_url//\"/\\\"}
+  # Keep URL credentials and query values out of curl's process arguments.
+  status=$(printf 'url = "%s"\n' "${escaped_url}" | \
+    curl --silent --globoff --head --location --max-redirs 3 --output /dev/null \
+      --write-out '%{http_code}' --connect-timeout 5 --max-time 10 \
+      --proto '=http,https' --proto-redir '=http,https' --config - 2>/dev/null) || return 1
+  [[ "${status}" =~ ^[23][0-9][0-9]$ ]]
+}
+
+prompt_hy2_masquerade_url() {
+  local prompt=$1 current=${2:-} operation=${3:-replace} value candidate_text index
+  local candidates=()
+  if candidate_text=$(hy2_reality_masquerade_candidates); then
+    if [[ -n "${candidate_text}" ]]; then mapfile -t candidates <<< "${candidate_text}"; fi
+  else
+    log_warn '无法读取 REALITY SNI 候选，可直接输入伪装 URL。' >&2
+  fi
+  for ((index=0; index<${#candidates[@]}; index++)); do
+    printf '[Hysteria2] r%s: %s（REALITY SNI 候选，仅作伪装网站，不替代 HY2 证书域名）\n' \
+      "$((index + 1))" "${candidates[index]}" >&2
+  done
+  [[ ${#candidates[@]} -eq 0 ]] || echo '[Hysteria2] 可输入 r1 等编号选择候选，选择后单独检测 HTTP(S) 可用性。' >&2
   while true; do
     read -rp "${prompt}" value || return 1
     value=$(trim_whitespace "${value}")
     if [[ -z "${value}" ]]; then
-      printf '%s' "${current}"
-      return 0
+      if [[ "${operation}" != create || -z "${current}" ]]; then
+        printf '%s' "${current}"
+        return 0
+      fi
+      value=${current}
     fi
-    # Schemes are case-insensitive. Normalize only the validation input;
-    # preserve the administrator's URL, including case-sensitive paths.
-    if validate_http_url "${value,,}" ||
-      [[ "${value,,}" == file:* && "${value}" != *[[:cntrl:]]* ]]; then
+    if [[ "${value}" =~ ^r([1-9][0-9]{0,2})$ ]]; then
+      index=$((10#${BASH_REMATCH[1]} - 1))
+      if (( index >= ${#candidates[@]} )); then
+        log_warn '无此 REALITY SNI 候选编号，请重新输入。' >&2
+        continue
+      fi
+      value=${candidates[index]}
+    fi
+    # Preserve the administrator's URL, including case-sensitive paths.
+    if [[ "${value,,}" == file:* && "${value}" != *[[:cntrl:]]* ]]; then
       printf '%s' "${value}"
       return 0
     fi
-    log_warn '伪装网站 URL 必须包含 http:// 或 https://，例如 https://www.cloudflare.com；本地目录使用 file:///绝对路径。请重新输入。' >&2
+    if ! validate_http_url "${value,,}" || [[ "${value}" == *[[:cntrl:]]* ]]; then
+      log_warn '伪装网站 URL 必须包含 http:// 或 https://，例如 https://www.cloudflare.com；本地目录使用 file:///绝对路径。请重新输入。' >&2
+    elif probe_hy2_masquerade_url "${value}"; then
+      printf '%s' "${value}"
+      return 0
+    else
+      log_warn '伪装网站 HTTP(S) 检测失败（DNS、TLS、超时或非 2xx/3xx 响应），请重新输入；修改时留空保留原地址。' >&2
+    fi
   done
 }
 
@@ -7046,7 +7103,7 @@ prompt_vless_reality_instance_create() {
   SB_VLESS_RATE_LIMIT_UP_MBPS=""
   SB_VLESS_RATE_LIMIT_DOWN_MBPS=""
   SB_VLESS_ALPN_MODE="off"
-  SB_VLESS_TCP_FAST_OPEN="n"
+  SB_VLESS_TCP_FAST_OPEN="y"
   prompt_vless_reality_rate_limit_fields || return 1
   prompt_vless_reality_advanced_update_fields || return 1
   validate_current_reality_sni_alpn_or_warn
@@ -7120,7 +7177,7 @@ prompt_hy2_install() {
   SB_HY2_UP_MBPS=$(prompt_optional_positive_integer "[Hysteria2] 上行带宽 Mbps (留空表示不限制): " "" "上行带宽")
   SB_HY2_DOWN_MBPS=$(prompt_optional_positive_integer "[Hysteria2] 下行带宽 Mbps (留空表示不限制): " "" "下行带宽")
 
-  echo '[Hysteria2] Salamander 混淆为可选项；启用后，客户端也必须启用并填写相同的混淆密码。' >&2
+  echo '[Hysteria2] Salamander 混淆默认开启；客户端须使用相同的混淆密码。启用后普通 HTTP/3 客户端无法访问伪装网站。' >&2
   SB_HY2_OBFS_ENABLED=$(prompt_yes_no "[Hysteria2] 是否启用 obfs / Salamander 混淆 [y/n] (默认 y): " "y")
   if [[ "${SB_HY2_OBFS_ENABLED}" == "y" ]]; then
     SB_HY2_OBFS_TYPE="salamander"
@@ -7165,7 +7222,7 @@ prompt_hy2_install() {
   fi
 
   echo '[Hysteria2] 伪装地址是未通过认证的 HTTP/3 请求所看到的网站，须填写完整 URL（如 https://www.cloudflare.com），可留空使用默认地址。' >&2
-  in_masquerade=$(prompt_hy2_masquerade_url "[Hysteria2] 伪装地址 (默认 ${SB_HY2_MASQUERADE}，留空使用默认): " "${SB_HY2_MASQUERADE}") || return 1
+  in_masquerade=$(prompt_hy2_masquerade_url "[Hysteria2] 伪装地址 (默认 ${SB_HY2_MASQUERADE}，留空使用默认): " "${SB_HY2_MASQUERADE}" create) || return 1
   SB_HY2_MASQUERADE=${in_masquerade}
 
   ensure_hy2_materials
@@ -7754,7 +7811,7 @@ hy2_management_build_record() {
     id=$(plain_proxy_management_next_id hy2 "${snapshot}") || return 1
     name=$(default_instance_node_name_from_file hy2 "${snapshot}") || return 1; tag=$(plain_proxy_management_next_tag hy2 "${snapshot}") || return 1
     address=${SB_DEFAULT_LISTEN_ADDRESS}; port=443; users='[]'; tls='{"enabled":true,"server_name":"","certificate_path":"","key_path":""}'
-    trust=system; up_mbps=""; down_mbps=""; obfs='{"enabled":false,"type":"","password":""}'; masquerade=""; policy=default
+    trust=system; up_mbps=""; down_mbps=""; obfs='{"enabled":true,"type":"salamander","password":""}'; masquerade=""; policy=default
   fi
   echo '[Hysteria2] 实例名称用于显示；ID 用于区分实例，tag 用于配置中的入口标识，均可留空使用当前值或默认值。' >&2
   echo '[Hysteria2] 新建默认监听 ::，同时接受外部 IPv4 / IPv6 连接；可填写 0.0.0.0 仅使用 IPv4，或 127.0.0.1 仅允许本机连接。修改时留空保留原地址。' >&2
@@ -7824,7 +7881,7 @@ hy2_management_build_record() {
   up_mbps=$(prompt_update_optional_positive_integer "[Hysteria2] 上行带宽 Mbps（当前: ${up_mbps:-未限制}，留空清空）: " "上行带宽") || return 1
   down_mbps=$(prompt_update_optional_positive_integer "[Hysteria2] 下行带宽 Mbps（当前: ${down_mbps:-未限制}，留空清空）: " "下行带宽") || return 1
   enabled=$(jq -r '.enabled' <<< "${obfs}") || return 1
-  echo '[Hysteria2] Salamander 混淆为可选项，新建默认关闭；启用后客户端须使用相同的混淆密码，密码留空可自动生成。' >&2
+  echo '[Hysteria2] Salamander 混淆新建默认开启；客户端须使用相同的混淆密码，密码留空可自动生成。启用后普通 HTTP/3 客户端无法访问伪装网站。' >&2
   enabled=$(prompt_yes_no "[Hysteria2] 是否启用 Salamander obfs [y/n]（当前: ${enabled}，默认保持）: " "$([[ "${enabled}" == true ]] && printf y || printf n)") || return 1
   if [[ "${enabled}" == y ]]; then
     obfs_type=salamander; obfs_password=$(jq -r '.password // empty' <<< "${obfs}") || return 1
@@ -7833,7 +7890,7 @@ hy2_management_build_record() {
     obfs=$(jq -cn --arg password "${obfs_password}" '{enabled:true,type:"salamander",password:$password}') || return 1
   else obfs='{"enabled":false,"type":"","password":""}'; fi
   echo '[Hysteria2] masquerade 为可选的伪装网站 URL，须包含 http:// 或 https://，如 https://www.cloudflare.com，用于未通过认证的 HTTP/3 请求；新建留空则不启用，修改留空保持。' >&2
-  masquerade=$(prompt_hy2_masquerade_url "[Hysteria2] 伪装网站 URL（当前: ${masquerade:-未启用}，留空保持）: " "${masquerade}") || return 1
+  masquerade=$(prompt_hy2_masquerade_url "[Hysteria2] 伪装网站 URL（当前: ${masquerade:-未启用}，留空保持）: " "${masquerade}" "${operation}") || return 1
   answer=$(plain_proxy_management_prompt_public_consent hy2 "${address}" "${tls}") || return 1
   if [[ "${address}" != 127.* && "${address}" != ::1 && "${answer}" != y ]]; then log_info '未确认公网暴露，已取消 Hysteria2 实例变更。'; return 2; fi
   PLAIN_PROXY_MANAGEMENT_ALLOW_PUBLIC=${answer}; MIXED_MANAGEMENT_ALLOW_PUBLIC=${answer}
@@ -9346,7 +9403,7 @@ set_protocol_defaults() {
       SB_PORT="443"
       SB_SNI=""
       SB_VLESS_ALPN_MODE="off"
-      SB_VLESS_TCP_FAST_OPEN="n"
+      SB_VLESS_TCP_FAST_OPEN="y"
       SB_MIXED_AUTH_ENABLED="y"
       SB_MIXED_USERNAME=""
       SB_MIXED_PASSWORD=""
@@ -13837,6 +13894,18 @@ build_vless_inbound_json() {
   done
 }
 
+legacy_inbound_tcp_fast_open_json() {
+  local type=$1 tag=$2
+  if [[ -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    jq -c --arg type "${type}" --arg tag "${tag}" '
+      (first(.inbounds[]? | select(.type == $type and .tag == $tag)) // {tcp_fast_open:true}) |
+      with_entries(select(.key == "tcp_fast_open"))
+    ' "${SINGBOX_CONFIG_FILE}"
+  else
+    printf '{"tcp_fast_open":true}\n'
+  fi
+}
+
 build_mixed_inbound_json() {
   local state_file
   state_file=$(protocol_state_file "mixed") || return 1
@@ -13850,6 +13919,7 @@ build_mixed_inbound_json() {
 
   jq -n \
     --arg tag "mixed-in" \
+    --argjson tfo "$(legacy_inbound_tcp_fast_open_json mixed mixed-in)" \
     --arg listen "$(stack_inbound_listen_address)" \
     --arg port "${SB_PORT}" \
     --arg mixed_auth_enabled "${SB_MIXED_AUTH_ENABLED}" \
@@ -13860,7 +13930,7 @@ build_mixed_inbound_json() {
       "tag": $tag,
       "listen": $listen,
       "listen_port": ($port | tonumber)
-    } + (
+    } + $tfo + (
       if $mixed_auth_enabled == "y" then
         {
           "users": [
@@ -14265,6 +14335,7 @@ build_anytls_inbound_json() {
 
   jq -n \
     --arg tag "anytls-in" \
+    --argjson tfo "$(legacy_inbound_tcp_fast_open_json anytls anytls-in)" \
     --arg listen "$(stack_inbound_listen_address)" \
     --arg port "${SB_PORT}" \
     --arg user_name "${SB_ANYTLS_USER_NAME}" \
@@ -14308,7 +14379,7 @@ build_anytls_inbound_json() {
           end
         )
       )
-    }'
+    } + $tfo'
 }
 
 build_certificate_provider_for_protocol() {
@@ -27890,6 +27961,17 @@ subman_instance_ready_for_legacy_cleanup() {
 
   (( attempted > 0 && synced == attempted && stacked_synced == attempted ))
 }
+client_tcp_fast_open_defaults() {
+  jq -c '
+    def enable_tfo:
+      if (.type | IN("socks","http","shadowsocks","trojan","vmess","vless","snell","shadowtls","naive")) and
+         ((.transport.type // "none") != "quic") and (.quic != true) and
+         ((.network // ["tcp"]) | if type == "array" then index("tcp") != null else . != "udp" end) and
+         (has("tcp_fast_open") | not)
+      then .tcp_fast_open=true else . end;
+    if has("outbounds") then .outbounds |= map(enable_tfo) else enable_tfo end'
+}
+
 
 build_anytls_outbound_example() {
   local public_ip=$1
@@ -28461,7 +28543,7 @@ build_client_plain_proxy_outbound() {
     '{type:$type, tag:$tag, server:$server, server_port:($port|tonumber)}
     + (if $type == "socks" then {version:"5", udp_over_tcp:{enabled:true, version:2}} else {} end)
     + (if $auth_enabled == "y" then {username:$username, password:$password} else {} end)
-    + (if $type == "http" and ($tls | length) > 0 then {tls:$tls} else {} end)'
+    + (if $type == "http" and ($tls | length) > 0 then {tls:$tls} else {} end)' | client_tcp_fast_open_defaults
 }
 
 build_client_mixed_outbound() (
@@ -28646,7 +28728,7 @@ build_trojan_client_outbounds_from_store() (
   output_count=$(jq -s 'length' "${output_file}") || return 1
   [[ "${expected_count}" =~ ^[0-9]+$ && "${output_count}" == "${expected_count}" && "${output_count}" -gt 0 ]] || return 1
   jq -es 'length > 0 and (map(.tag) | unique | length) == length' "${output_file}" >/dev/null || return 1
-  cat "${output_file}"
+  cat "${output_file}" | client_tcp_fast_open_defaults
 )
 
 build_client_vmess_outbounds() (
@@ -28719,7 +28801,7 @@ build_vmess_client_outbounds_from_store() (
   expected_count=$(jq -r '[.instances[].authentication.users | length] | add // 0' <<< "${snapshot}") || return 1
   [[ "${output_count}" == "${expected_count}" && "${output_count}" -gt 0 ]] || return 1
   jq -es 'length > 0 and (map(.tag) | unique | length) == length' "${output_file}" >/dev/null || return 1
-  cat "${output_file}"
+  cat "${output_file}" | client_tcp_fast_open_defaults
 )
 
 build_client_vless_plain_outbounds() (
@@ -28797,7 +28879,7 @@ build_vless_plain_client_outbounds_from_store() (
   expected_count=$(jq -r '[.instances[].authentication.users | length] | add // 0' <<< "${snapshot}") || return 1
   [[ "${output_count}" == "${expected_count}" && "${output_count}" -gt 0 ]] || return 1
   jq -es 'length > 0 and (map(.tag) | unique | length) == length' "${output_file}" >/dev/null || return 1
-  cat "${output_file}"
+  cat "${output_file}" | client_tcp_fast_open_defaults
 )
 
 build_vless_plain_uri_from_outbound() {
@@ -29046,7 +29128,7 @@ build_shadowsocks_client_outbounds_from_store() (
   output_count=$(jq -s 'length' "${output_file}") || return 1
   [[ "${expected_count}" =~ ^[0-9]+$ && "${output_count}" == "${expected_count}" ]] || return 1
   jq -es 'length > 0 and (map(.tag) | unique | length) == length' "${output_file}" >/dev/null || return 1
-  cat "${output_file}"
+  cat "${output_file}" | client_tcp_fast_open_defaults
 )
 
 build_client_snell_outbounds() (
@@ -29099,7 +29181,7 @@ build_client_snell_outbounds() (
   output_count=$(jq -s 'length' "${output_file}") || return 1
   [[ "${expected_count}" =~ ^[0-9]+$ && "${output_count}" == "${expected_count}" && "${output_count}" -gt 0 ]] || return 1
   jq -es 'length > 0 and (map(.tag) | unique | length) == length' "${output_file}" >/dev/null || return 1
-  cat "${output_file}"
+  cat "${output_file}" | client_tcp_fast_open_defaults
 )
 
 build_client_tuic_outbounds() (
@@ -29347,7 +29429,7 @@ build_client_naive_outbounds() (
   output_count=$(jq -s 'length' "${output_file}") || return 1
   [[ "${expected_count}" =~ ^[0-9]+$ && "${output_count}" == "${expected_count}" && "${output_count}" -gt 0 ]] || return 1
   jq -es 'length > 0 and (map(.tag) | unique | length) == length' "${output_file}" >/dev/null || return 1
-  cat "${output_file}"
+  cat "${output_file}" | client_tcp_fast_open_defaults
 )
 
 build_client_shadowtls_bundle_json() (
@@ -29411,7 +29493,7 @@ build_client_shadowtls_bundle_json() (
                               elif .type == "http" then (.detour | type == "string" and endswith("-transport"))
                               else false end))
     ' "${bundle_file}" >/dev/null || return 1
-  cat "${bundle_file}"
+  cat "${bundle_file}" | client_tcp_fast_open_defaults
 )
 
 build_client_shadowtls_outbounds() (
@@ -34038,6 +34120,36 @@ apply_plain_proxy_instance_change() (
   completed=y
   return 0
 )
+agent_hy2_masquerade_cli() {
+  local operation=${1:-} json=n url="" url_set=n candidates available=null status=0
+  [[ $# -eq 0 ]] || shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) [[ "${json}" == n ]] || break; json=y; shift ;;
+      --url) [[ $# -ge 2 && "${url_set}" == n && -n "$2" ]] || break; url=$2; url_set=y; shift 2 ;;
+      *) break ;;
+    esac
+  done
+  if [[ "${operation}" != masquerade-check || "${json}" != y || $# -ne 0 ]]; then
+    agent_json_error invalid_arguments '用法: sbv hy2 masquerade-check --json [--url HTTP(S)_URL]'; return 1
+  fi
+  candidates=$(hy2_reality_masquerade_candidates) || {
+    agent_json_error reality_candidates_unavailable '无法完整读取 REALITY 候选。'; return 1;
+  }
+  if [[ -n "${url}" ]]; then
+    if ! validate_http_url "${url,,}" || [[ "${url}" == *[[:cntrl:]]* ]]; then
+      agent_json_error invalid_masquerade_url '检测需要有效 HTTP(S) URL。'; return 1
+    fi
+    if probe_hy2_masquerade_url "${url}"; then available=true; else available=false; status=1; fi
+  fi
+  jq -cn --arg candidates "${candidates}" --argjson available "${available}" --argjson status "${status}" '
+    {ok:($status == 0),
+     reality_candidates:($candidates|split("\n")|map(select(length>0))),http_available:$available,
+     tls_server_name_reused:false,
+     error:(if $status == 0 then null else "masquerade_probe_failed" end)}'
+  return "${status}"
+}
+
 
 agent_component_cli() {
   local operation=${1:-} expected="" input="" component_id="" json=n confirmed=n allow_public=n
@@ -34537,6 +34649,9 @@ agent_cli() {
     schema)
       agent_cli_run schema agent_schema_cli "$@"
       ;;
+    hy2)
+      agent_cli_run hy2.masquerade-check agent_hy2_masquerade_cli "$@"
+      ;;
     routing)
       agent_cli_run routing agent_routing_cli "$@"
       ;;
@@ -34666,6 +34781,7 @@ agent_dispatch() {
   fi
 
   case "${1:-}" in
+    hy2) agent_cli "$@" ;;
     routing)
       (
         if [[ "${2:-}" == recover ]]; then
@@ -34794,6 +34910,32 @@ command_catalog_json() {
 {
   "schema_version": 1,
   "operations": [
+    {
+      "id": "hy2.masquerade-check",
+      "command": "hy2 masquerade-check",
+      "agent_command": "hy2 masquerade-check",
+      "usage": "sbv hy2 masquerade-check --json [--url HTTP(S)_URL]",
+      "summary": "列出 REALITY 伪装候选并检测 HTTP(S) 可用性",
+      "automation": "structured",
+      "mutation": false,
+      "sensitive": false,
+      "confirmation": null,
+      "concurrency": "none",
+      "input_contract": "optional public HTTP(S) URL; HEAD, DNS and TLS verification; 5s connect/10s total, at most 3 redirects; no HY2 TLS identity change",
+      "service_impact": "none",
+      "docs": "Protocol-Instances.md#tcp-fast-open-and-hy2-defaults",
+      "reason": null,
+      "menu": "Hysteria2 伪装 URL 输入",
+      "parameters": [
+        {"name":"--json","type":"boolean","required":true,"description":"single JSON envelope"},
+        {"name":"--url","type":"string","required":false,"description":"public HTTP(S) URL; omit to list REALITY candidates without network access"}
+      ],
+      "cas": "none",
+      "output": {"format":"json_envelope","sensitive":false},
+      "external_write": false,
+      "external_write_possible": false,
+      "aliases": []
+    },
     {
       "id": "storage.status",
       "command": "storage status",
@@ -35280,7 +35422,7 @@ command_catalog_json() {
       "sensitive": false,
       "confirmation": "--yes",
       "concurrency": "exclusive",
-      "input_contract": "typed protocol record; see Protocol-Instances.md; writes exclude vless-reality; migrate only mixed",
+      "input_contract": "typed protocol record; optional listen.tcp_fast_open defaults true on TCP create, omitted on replace preserves prior value; explicit HY2 obfs/masquerade; see Protocol-Instances.md; writes exclude vless-reality",
       "service_impact": "restart_if_active",
       "docs": "Agent-CLI.md#操作目录",
       "reason": null,
@@ -35306,7 +35448,7 @@ command_catalog_json() {
       "sensitive": false,
       "confirmation": "--yes",
       "concurrency": "exclusive",
-      "input_contract": "typed protocol record; see Protocol-Instances.md; writes exclude vless-reality; migrate only mixed",
+      "input_contract": "typed protocol record; optional listen.tcp_fast_open defaults true on TCP create, omitted on replace preserves prior value; explicit HY2 obfs/masquerade; see Protocol-Instances.md; writes exclude vless-reality",
       "service_impact": "restart_if_active",
       "docs": "Agent-CLI.md#操作目录",
       "reason": null,
@@ -37097,6 +37239,12 @@ structured_instance_record_jq_filter() {
       else type == "string" and length > 0 and utf8bytelength <= 255 and
         (test("[\u0000-\u001F\u007F]") | not)
       end;
+    def instance_supports_tcp_fast_open($protocol):
+      ($protocol | IN("mixed","socks","http","shadowsocks","trojan","vmess","vless-plain","anytls","snell","naive","shadowtls")) and
+      ((.transport.type // "none") != "quic") and
+      ((.listen.network // ["tcp"]) | index("tcp") != null);
+    def optional_tcp_fast_open:
+      (has("tcp_fast_open") | not) or (.tcp_fast_open | type == "boolean");
     def valid_plain_instance($protocol):
       type == "object" and
       ((keys | sort) == ((["authentication","dependencies","id","listen","name","outbound_policy","tag"] +
@@ -37113,7 +37261,8 @@ structured_instance_record_jq_filter() {
       (.name | type == "string" and length > 0 and index("\u0000") == null) and
       (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]")|not)) and
       (.listen | type == "object" and
-        ((keys|sort) == (if $protocol == "shadowsocks" or $protocol == "naive" then ["address","network","port"] else ["address","port"] end)) and
+        (((keys - ["tcp_fast_open"])|sort) == (if $protocol == "shadowsocks" or $protocol == "naive" then ["address","network","port"] else ["address","port"] end)) and
+        optional_tcp_fast_open and
         (.address | type == "string" and length > 0 and (test("[\u0000-\u0020\u007F]")|not)) and
         (.port | type == "number" and floor == . and . >= 1 and . <= 65535) and
         (if $protocol == "shadowsocks" or $protocol == "naive" then
@@ -37279,7 +37428,7 @@ structured_instance_record_jq_filter() {
       (.id | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and
       (.name | type == "string" and length > 0 and index("\u0000") == null) and
       (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]")|not)) and
-      (.listen | type == "object" and (keys|sort) == ["address","port"] and
+      (.listen | type == "object" and ((keys - ["tcp_fast_open"])|sort) == ["address","port"] and optional_tcp_fast_open and
         (.address | type == "string" and length > 0 and (test("[\u0000-\u0020\u007F]")|not)) and
         (.port | type == "number" and floor == . and . >= 1 and . <= 65535)) and
       (.version | type == "number" and floor == . and IN(1,2,3)) and
@@ -37309,7 +37458,7 @@ structured_instance_record_jq_filter() {
        else true end) and
       (.detour | type == "object" and (keys|sort) == ["listen","tag"] and
         (.tag | type == "string" and . == ("shadowtls-inner-" + $instance.id)) and
-        (.listen | type == "object" and (keys|sort) == ["address","port"] and
+        (.listen | type == "object" and ((keys - ["tcp_fast_open"])|sort) == ["address","port"] and optional_tcp_fast_open and
           .address == "127.0.0.1" and (.port | type == "number" and floor == . and . >= 1 and . <= 65535) and
           .port != $instance.listen.port)) and
       (.dependencies | type == "array") and (.dependencies == [$instance.detour.tag]) and
@@ -37552,7 +37701,7 @@ plain_proxy_config_store_candidate() (
     (.inbounds // []) | all(.[];
       if (target | not) then true
       else
-        ((keys_unsorted - (["type", "tag", "listen", "listen_port", "users", "set_system_proxy"] +
+        ((keys_unsorted - (["type", "tag", "listen", "listen_port", "tcp_fast_open", "users", "set_system_proxy"] +
           (if $protocol == "http" then ["tls"]
            elif $protocol == "shadowsocks" then ["network", "method", "password"]
            elif $protocol == "trojan" or $protocol == "vmess" or $protocol == "vless-plain" then ["tls", "transport"]
@@ -37565,6 +37714,7 @@ plain_proxy_config_store_candidate() (
            else [] end)) | length == 0))
         and (if has("tag") then (.tag | type == "string" and length > 0 and (test("[\u0000-\u001F\u007F]") | not)) else true end)
         and (if has("listen") then (.listen | type == "string" and length > 0) else true end)
+        and (if has("tcp_fast_open") then (.tcp_fast_open | type == "boolean") else true end)
         and (if has("listen_port") then (.listen_port | type == "number" and floor == . and . >= 1 and . <= 65535) else true end)
         and (if $protocol == "shadowsocks" then
               (has("method") and (.method | type == "string" and
@@ -38110,7 +38260,7 @@ plain_proxy_config_store_candidate() (
       --argjson auth_enabled "${auth_enabled}" --arg username "${username}" --arg password "${password}" \
       --arg policy "${policy}" --argjson tls "${tls_json}" \
       '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$auth_enabled,username:$username,password:$password},outbound_policy:$policy,tls:$tls,dependencies:[]}' \
-      >> "${temp_dir}/instances.jsonl" || return 1
+      > "${temp_dir}/instance.json" || return 1
     elif [[ "${protocol}" == "trojan" ]]; then
       jq -n -cS \
       --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
@@ -38118,7 +38268,7 @@ plain_proxy_config_store_candidate() (
       --arg policy "${policy}" --argjson tls "${tls_json}" --argjson transport "${trojan_transport_json}" \
       --arg client_trust "${trojan_client_trust}" \
       '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{users:$users},tls:$tls,transport:$transport,client_trust:$client_trust,outbound_policy:$policy,dependencies:[]}' \
-      >> "${temp_dir}/instances.jsonl" || return 1
+      > "${temp_dir}/instance.json" || return 1
     elif [[ "${protocol}" == "vmess" ]]; then
       jq -n -cS \
       --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
@@ -38126,7 +38276,7 @@ plain_proxy_config_store_candidate() (
       --arg policy "${policy}" --argjson tls "${tls_json}" --argjson transport "${vmess_transport_json}" \
       --arg client_trust "${vmess_client_trust}" \
       '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{users:$users},tls:$tls,transport:$transport,client_trust:$client_trust,outbound_policy:$policy,dependencies:[]}' \
-      >> "${temp_dir}/instances.jsonl" || return 1
+      > "${temp_dir}/instance.json" || return 1
     elif [[ "${protocol}" == "vless-plain" ]]; then
       jq -n -cS \
       --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
@@ -38134,14 +38284,14 @@ plain_proxy_config_store_candidate() (
       --arg policy "${policy}" --argjson tls "${tls_json}" --argjson transport "${vless_transport_json}" \
       --arg client_trust "${vless_client_trust}" \
       '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{users:$users},tls:$tls,transport:$transport,client_trust:$client_trust,outbound_policy:$policy,dependencies:[]}' \
-      >> "${temp_dir}/instances.jsonl" || return 1
+      > "${temp_dir}/instance.json" || return 1
     elif [[ "${protocol}" == "anytls" ]]; then
       jq -n -cS \
       --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
       --arg address "${address}" --argjson port "${port}" --argjson users "${anytls_users_json}" \
       --argjson tls "${anytls_tls_json}" --arg client_trust "${anytls_client_trust}" --arg policy "${policy}" \
       '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{users:$users},tls:$tls,client_trust:$client_trust,outbound_policy:$policy,dependencies:[]}' \
-      >> "${temp_dir}/instances.jsonl" || return 1
+      > "${temp_dir}/instance.json" || return 1
     elif [[ "${protocol}" == "hy2" ]]; then
       jq -n -cS \
       --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
@@ -38150,7 +38300,7 @@ plain_proxy_config_store_candidate() (
       --argjson bandwidth "${hy2_bandwidth_json}" --argjson obfs "${hy2_obfs_json}" \
       --arg masquerade "${hy2_masquerade}" --arg policy "${policy}" \
       '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{users:$users},tls:$tls,client_trust:$client_trust,bandwidth:$bandwidth,obfs:$obfs,masquerade:$masquerade,outbound_policy:$policy,dependencies:[]}' \
-      >> "${temp_dir}/instances.jsonl" || return 1
+      > "${temp_dir}/instance.json" || return 1
     elif [[ "${protocol}" == "snell" ]]; then
       jq -n -cS \
       --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
@@ -38159,7 +38309,7 @@ plain_proxy_config_store_candidate() (
       --arg obfs_mode "${snell_obfs_mode}" --arg obfs_host "${snell_obfs_host}" --arg mode "${snell_mode}" \
       --arg policy "${policy}" \
       '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{psk:$psk,users:$users},version:$version,obfs_mode:$obfs_mode,obfs_host:$obfs_host,mode:$mode,outbound_policy:$policy,dependencies:[]}' \
-      >> "${temp_dir}/instances.jsonl" || return 1
+      > "${temp_dir}/instance.json" || return 1
     elif [[ "${protocol}" == "tuic" ]]; then
       jq -n -cS \
       --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
@@ -38169,7 +38319,7 @@ plain_proxy_config_store_candidate() (
       --argjson heartbeat_seconds "${tuic_heartbeat_seconds}" --argjson zero_rtt_handshake "${tuic_zero_rtt_handshake}" \
       --arg udp_relay_mode "${tuic_udp_relay_mode}" --argjson udp_over_stream "${tuic_udp_over_stream}" --arg policy "${policy}" \
       '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{users:$users},tls:$tls,client_trust:$trust,tuic:{auth_timeout_seconds:$auth_timeout_seconds,congestion_control:$congestion_control,heartbeat_seconds:$heartbeat_seconds,udp_over_stream:$udp_over_stream,udp_relay_mode:$udp_relay_mode,zero_rtt_handshake:$zero_rtt_handshake},outbound_policy:$policy,dependencies:[]}' \
-      >> "${temp_dir}/instances.jsonl" || return 1
+      > "${temp_dir}/instance.json" || return 1
     elif [[ "${protocol}" == "hysteria" ]]; then
       jq -n -cS \
       --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
@@ -38177,7 +38327,7 @@ plain_proxy_config_store_candidate() (
       --argjson tls "${hysteria_tls_json}" --arg trust "${hysteria_client_trust}" \
       --argjson bandwidth "${hysteria_bandwidth_json}" --argjson obfs "${hysteria_obfs_json}" --argjson hysteria "${hysteria_quic_json}" --arg policy "${policy}" \
       '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{users:$users},tls:$tls,client_trust:$trust,bandwidth:$bandwidth,obfs:$obfs,hysteria:$hysteria,outbound_policy:$policy,dependencies:[]}' \
-      >> "${temp_dir}/instances.jsonl" || return 1
+      > "${temp_dir}/instance.json" || return 1
     elif [[ "${protocol}" == "naive" ]]; then
       jq -n -cS \
       --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
@@ -38187,7 +38337,7 @@ plain_proxy_config_store_candidate() (
       --arg stream_receive_window "${naive_stream_receive_window}" --arg quic_session_receive_window "${naive_quic_session_receive_window}" \
       --argjson extra_headers "${naive_extra_headers_json}" --arg policy "${policy}" \
       '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port,network:$network},authentication:{users:$users},tls:$tls,client_trust:$trust,naive:{extra_headers:$extra_headers,insecure_concurrency:$insecure_concurrency,quic:$quic,quic_congestion_control:$cc,quic_session_receive_window:$quic_session_receive_window,stream_receive_window:$stream_receive_window},outbound_policy:$policy,dependencies:[]}' \
-      >> "${temp_dir}/instances.jsonl" || return 1
+      > "${temp_dir}/instance.json" || return 1
     elif [[ "${protocol}" == "shadowsocks" ]]; then
       jq -n -cS \
       --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
@@ -38195,7 +38345,7 @@ plain_proxy_config_store_candidate() (
       --arg method "${ss_method}" --arg password "${ss_password}" --argjson users "${ss_users_json}" \
       --arg policy "${policy}" \
       '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port,network:$network},authentication:{method:$method,password:$password,users:$users},outbound_policy:$policy,dependencies:[]}' \
-      >> "${temp_dir}/instances.jsonl" || return 1
+      > "${temp_dir}/instance.json" || return 1
     else
       jq -n -cS \
       --arg id "${id}" --arg name "${name}" --arg tag "${tag}" \
@@ -38203,8 +38353,11 @@ plain_proxy_config_store_candidate() (
       --argjson auth_enabled "${auth_enabled}" --arg username "${username}" --arg password "${password}" \
       --arg policy "${policy}" \
       '{id:$id,name:$name,tag:$tag,listen:{address:$address,port:$port},authentication:{enabled:$auth_enabled,username:$username,password:$password},outbound_policy:$policy,dependencies:[]}' \
-      >> "${temp_dir}/instances.jsonl" || return 1
+      > "${temp_dir}/instance.json" || return 1
     fi
+    jq -c --argjson inbound "${inbound_json}" '
+      if $inbound | has("tcp_fast_open") then .listen.tcp_fast_open=$inbound.tcp_fast_open else . end
+    ' "${temp_dir}/instance.json" >> "${temp_dir}/instances.jsonl" || return 1
   done
 
   default_id=""
@@ -38282,7 +38435,8 @@ shadowtls_config_store_candidate() (
   if ! jq -e '
     (.inbounds // []) | all(.[]?;
       if .type != "shadowtls" then true else
-        ((keys_unsorted - ["type","tag","listen","listen_port","detour","version","password","users","handshake","handshake_for_server_name","strict_mode","wildcard_sni"]) | length == 0) and
+        ((keys_unsorted - ["type","tag","listen","listen_port","tcp_fast_open","detour","version","password","users","handshake","handshake_for_server_name","strict_mode","wildcard_sni"]) | length == 0) and
+        (if has("tcp_fast_open") then (.tcp_fast_open | type == "boolean") else true end) and
         (.tag | type == "string" and length > 0) and (.listen | type == "string" and length > 0) and
         (.listen_port | type == "number" and floor == . and . >= 1 and . <= 65535) and
         (.version | type == "number" and floor == . and IN(1,2,3)) and
@@ -38344,8 +38498,10 @@ shadowtls_config_store_candidate() (
     cert_path=$(jq -r '.[0].client_tls.certificate_path // ""' <<< "${existing_match}") || return 1
     client_server_name=$(jq -r '.[0].client_tls.server_name // empty' <<< "${existing_match}") || return 1
     [[ -n "${client_server_name}" ]] || client_server_name=$(jq -r '.handshake.server' <<< "${inbound_json}") || return 1
-    if ! jq -n -cS --arg id "${id}" --arg name "${name}" --arg tag "${tag}" --argjson inbound "${inbound_json}" --argjson detour_port "${detour_port}" --arg policy "${policy}" --arg trust "${trust}" --arg server_name "${client_server_name}" --arg cert_path "${cert_path}" '
-      {id:$id,name:$name,tag:$tag,listen:{address:$inbound.listen,port:$inbound.listen_port},version:$inbound.version,authentication:{password:($inbound.password // ""),users:($inbound.users // [])},handshake:$inbound.handshake,handshake_for_server_name:($inbound.handshake_for_server_name // {}),strict_mode:($inbound.strict_mode // false),wildcard_sni:($inbound.wildcard_sni // "off"),detour:{tag:$inbound.detour,listen:{address:"127.0.0.1",port:$detour_port}},dependencies:[$inbound.detour],client_trust:$trust,client_tls:{server_name:$server_name,certificate_path:$cert_path},outbound_policy:$policy}' >> "${temp_dir}/instances.jsonl"; then
+    if ! jq -n -cS --arg id "${id}" --arg name "${name}" --arg tag "${tag}" --argjson inbound "${inbound_json}" --argjson detour_port "${detour_port}" --argjson detour_tfo "$(jq -c --arg tag "${detour}" 'first(.inbounds[] | select(.tag == $tag)) | with_entries(select(.key == "tcp_fast_open"))' "${config_file}")" --arg policy "${policy}" --arg trust "${trust}" --arg server_name "${client_server_name}" --arg cert_path "${cert_path}" '
+      {id:$id,name:$name,tag:$tag,listen:{address:$inbound.listen,port:$inbound.listen_port},version:$inbound.version,authentication:{password:($inbound.password // ""),users:($inbound.users // [])},handshake:$inbound.handshake,handshake_for_server_name:($inbound.handshake_for_server_name // {}),strict_mode:($inbound.strict_mode // false),wildcard_sni:($inbound.wildcard_sni // "off"),detour:{tag:$inbound.detour,listen:{address:"127.0.0.1",port:$detour_port}},dependencies:[$inbound.detour],client_trust:$trust,client_tls:{server_name:$server_name,certificate_path:$cert_path},outbound_policy:$policy} |
+      .listen += ($inbound | with_entries(select(.key == "tcp_fast_open"))) |
+      .detour.listen += $detour_tfo' >> "${temp_dir}/instances.jsonl"; then
       return 1
     fi
   done < <(config_protocol_inbounds_jsonl shadowtls "${config_file}")
@@ -38483,7 +38639,7 @@ structured_instance_store_revision_arg() {
 
 structured_instance_store_candidate() (
   umask 077
-  local protocol current_file operation argument expected_revision temp_dir candidate_json status
+  local protocol current_file operation argument expected_revision temp_dir candidate_json status filter
   protocol=$(structured_instance_store_protocol "${1:-}") || {
     structured_instance_store_error candidate unsupported_protocol; return 1;
   }
@@ -38524,9 +38680,23 @@ structured_instance_store_candidate() (
       ;;
     *) structured_instance_store_error candidate invalid_operation; return 1 ;;
   esac
-  if candidate_json=$(jq -cS --arg op "${operation}" --arg id "${argument}" \
-      --slurpfile record "${temp_dir}/instance.json" '
-    . as $old | $record[0] as $instance |
+  filter=$(structured_instance_record_jq_filter) || return 1
+  if candidate_json=$(jq -cS --arg protocol "${protocol}" --arg op "${operation}" --arg id "${argument}" \
+      --slurpfile record "${temp_dir}/instance.json" "${filter}"'
+    . as $old |
+    ($record[0] |
+      if $op == "create" and instance_supports_tcp_fast_open($protocol) then
+        if .listen | has("tcp_fast_open") then . else .listen.tcp_fast_open=true end |
+        if $protocol == "shadowtls" and (.detour.listen | has("tcp_fast_open") | not) then .detour.listen.tcp_fast_open=true else . end
+      elif $op == "replace" then
+        . as $new | first($old.instances[] | select(.id == $new.id)) as $previous |
+        if (.listen | has("tcp_fast_open") | not) and instance_supports_tcp_fast_open($protocol) then
+          .listen += ($previous.listen | with_entries(select(.key == "tcp_fast_open")))
+        else . end |
+        if $protocol == "shadowtls" and (.detour.listen | has("tcp_fast_open") | not) then
+          .detour.listen += ($previous.detour.listen | with_entries(select(.key == "tcp_fast_open")))
+        else . end
+      else . end) as $instance |
     if $op == "create" then
       if any(.instances[]; .id == $instance.id) then error("exists") else
         .instances += [$instance] |
@@ -38761,12 +38931,14 @@ render_structured_instance_inbounds() {
   if [[ "${protocol}" == shadowtls ]]; then
     jq -c '.instances[] | [
       ({type:"shadowtls",tag:.tag,listen:.listen.address,listen_port:.listen.port,detour:.detour.tag,version:.version,handshake:.handshake} +
+       (.listen | with_entries(select(.key == "tcp_fast_open"))) +
        (if .version == 2 then {password:.authentication.password}
         elif .version == 3 then {users:.authentication.users}
         else {} end) +
        (if (.handshake_for_server_name | length) > 0 then {handshake_for_server_name:.handshake_for_server_name} else {} end) +
        (if .version == 3 then {strict_mode:.strict_mode,wildcard_sni:.wildcard_sni} else {} end)),
-      {type:"mixed",tag:.detour.tag,listen:.detour.listen.address,listen_port:.detour.listen.port}
+      ({type:"mixed",tag:.detour.tag,listen:.detour.listen.address,listen_port:.detour.listen.port} +
+       (.detour.listen | with_entries(select(.key == "tcp_fast_open"))))
     ] | .[]' <<< "${snapshot}" 2>/dev/null || { structured_instance_store_error render_inbounds render_failed; return 1; }
     return 0
   fi
@@ -38790,6 +38962,7 @@ render_structured_instance_inbounds() {
   jq -c --arg protocol "${protocol}" --arg use_certificate_provider "${use_certificate_provider}" '
     .instances[] |
     ({type:(if $protocol == "vless-plain" then "vless" elif $protocol == "hy2" then "hysteria2" else $protocol end),tag:.tag,listen:.listen.address,listen_port:.listen.port} +
+      (.listen | with_entries(select(.key == "tcp_fast_open"))) +
       (if $protocol == "shadowsocks" then
          {method:.authentication.method,password:.authentication.password,
           users:.authentication.users,network:.listen.network}

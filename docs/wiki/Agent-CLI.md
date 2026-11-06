@@ -25,6 +25,18 @@
 所有机器命令显式带 `--json`，stdout 只输出一个 JSON 对象，进度写 stderr。
 应检查退出码及 `.ok`；敏感结果不得写入共享日志。生产变更仍按运维手册的目标授权执行。
 
+## 协议默认值与 HY2 伪装检测
+
+新建支持 TCP 的协议实例默认开启 TFO；JSON 可用 `listen.tcp_fast_open:false`
+显式关闭，替换时省略保留当前值，接管保留实际配置。AnyTLS 客户端不支持 TFO。
+HY2 菜单新建默认开启 Salamander，JSON 写入保留显式 `obfs` 设置。
+
+先执行 `sbv hy2 masquerade-check --json` 读取 REALITY SNI 候选；
+用 `--url https://目标域名` 单独检测 HTTP(S) 可用性，再把选定 URL 写入私有
+HY2 record。此命令只读，无需确认；不更改 HY2 证书域名，也不替代协议运行态验证。
+Salamander 开启后普通 HTTP/3 客户端无法访问伪装站点。
+详见[协议默认值](https://github.com/KnowSky404/sing-box-vps/wiki/Protocol-Instances#tcp-fast-open-and-hy2-defaults)。
+
 ## 服务与分流命令
 
 ```bash

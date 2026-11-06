@@ -17,7 +17,7 @@ prompt_instance_outbound_policy() {
 }
 
 # The default is HTTP-01; no certificate path is requested or pre-created.
-printf '%s\n' '' '' '' '' 48443 '' '' '' '' hy2.example.com '' '' '' '' '' '' y > "${TMP_DIR}/http.input"
+printf '%s\n' '' '' '' '' 48443 '' '' '' '' hy2.example.com '' '' '' '' n '' y > "${TMP_DIR}/http.input"
 hy2_management_build_record "${snapshot}" create '' "${record}" < "${TMP_DIR}/http.input" > "${TMP_DIR}/stdout" 2> "${TMP_DIR}/guidance"
 [[ ! -s "${TMP_DIR}/stdout" ]]
 jq -e '.outbound_policy=="default" and .listen.address=="::" and .tls.acme.domain==["hy2.example.com"] and .client_trust=="system" and
@@ -27,7 +27,7 @@ grep -Fxq hy2.example.com "${TMP_DIR}/http-domain-checks"
 # DNS-01 accepts a domain without requiring its A/AAAA records to point here,
 # rejects a missing token, and never writes the token to prompt output.
 : > "${TMP_DIR}/http-domain-checks"
-printf '%s\n' '' '' '' '' 48444 '' '' '' 1 dns.example.com 2 '' '' fixture-menu-token '' '' '' '' y > "${TMP_DIR}/dns.input"
+printf '%s\n' '' '' '' '' 48444 '' '' '' 1 dns.example.com 2 '' '' fixture-menu-token '' '' n '' y > "${TMP_DIR}/dns.input"
 hy2_management_build_record "${snapshot}" create '' "${record}" < "${TMP_DIR}/dns.input" > "${TMP_DIR}/stdout" 2> "${TMP_DIR}/guidance"
 jq -e '.tls.acme.domain==["dns.example.com"] and .tls.acme.dns01_challenge=={provider:"cloudflare",api_token:"fixture-menu-token"} and
   .client_trust=="system" and (.tls|has("key_path")|not)' "${record}" >/dev/null

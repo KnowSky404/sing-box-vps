@@ -364,7 +364,7 @@ write_trojan_state() {
     "id": "main",
     "name": "Trojan verification",
     "tag": "trojan-in",
-    "listen": {"address": "::", "port": 1084},
+    "listen": {"address": "::", "port": 1084, "tcp_fast_open": true},
     "authentication": {"users": [
       {"name": "first", "password": "trojan-first-password"},
       {"name": "second", "password": "trojan-second-password"}

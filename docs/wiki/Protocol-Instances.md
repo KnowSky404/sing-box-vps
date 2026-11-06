@@ -390,3 +390,62 @@ The private record contains the common `id`, `name`, `tag`, `listen`, `outbound_
 ```
 
 `version` is `5` or `6`. Version 5 uses `obfs_mode:"none"` or `"http"`; HTTP mode keeps an `obfs_host` hint for node connection materials, while the inbound renderer emits only fields accepted by the Snell server. Version 6 clears v5 fields and uses `mode:"default"`, `"unshaped"` or `"unsafe-raw"`; its PSK must be 12–255 UTF-8 bytes. Authentication accepts zero to 128 unique `name`/`userkey` pairs; with no users, the PSK itself is used by the exported client. Node connection materials maps inbound v5 to outbound v4 and inbound v6 to outbound v6, emits explicit `network:["tcp","udp"]` and preserves each user key. `nodes` never exposes PSKs or user keys. Snell has no lossless standard share URI, so `links` returns `links:{}`, full outbound JSON and `warnings[].code=snell_standard_uri_unavailable`; SubMan deliberately does not advertise Snell as `other`. Non-loopback writes require `--allow-public`. The focused lifecycle test uses mock service/firewall boundaries and an optional target-core `check`; Docker now separately exercises both v6 and v5 UDP packet API paths through the authenticated TCP session, but neither path proves public reachability or real SubMan synchronization.
+
+
+## TCP Fast Open and HY2 defaults
+
+New TCP-capable protocol instances enable TCP Fast Open (TFO) by default:
+Mixed, SOCKS, HTTP, Shadowsocks with TCP, Trojan/VMess/plain VLESS with a TCP
+transport, VLESS REALITY, AnyTLS inbound, Snell, Naive inbound with TCP, and
+ShadowTLS including its internal Mixed listener. UDP-only listeners, QUIC
+transports, HY2, TUIC and Hysteria v1 do not receive a TFO default.
+The generated sing-box client materials enable TFO on supported TCP adapters;
+AnyTLS outbound is excluded because the core explicitly rejects it. Naive
+QUIC materials remain unchanged.
+
+Typed records accept optional boolean `listen.tcp_fast_open`; ShadowTLS also
+accepts `detour.listen.tcp_fast_open`. On `instance create`, omission enables
+TFO only for a TCP-capable listener. Explicit `false` is honored. On replace,
+omission preserves the prior value, including legacy absence. Takeover/import
+preserves the live field exactly; existing records are not migrated merely by
+updating the script. VLESS REALITY keeps its existing per-instance switch.
+TFO depends on kernel and peer support; this default does not modify host sysctl
+settings or prove latency improvements.
+
+Both HY2 installation and interactive instance creation default to Salamander
+obfuscation and generate a password when blank. Replacement preserves the current
+obfs state. Structured HY2 records retain their explicit `obfs` object and
+`masquerade` string; operators can explicitly disable obfs. Use
+`{"enabled":true,"type":"salamander","password":"<private-random-password>"}`
+to match the menu default.
+
+The existing URL prompt accepts `r1`, `r2`, etc. for installed or already
+configured REALITY SNI candidates. A selected candidate becomes
+`https://<SNI>`; it does not change HY2 TLS `server_name`, certificate or ACME
+domain. New HTTP(S) input (and a fresh installation's default URL) is checked
+with a bounded HEAD request: normal DNS resolution and certificate verification,
+5-second connection timeout, 10-second total timeout, at most three redirects,
+and a final 2xx/3xx response. Failure retries without writing configuration.
+Replacement with blank input preserves the current URL without a network request.
+Existing `file:` masquerade support is retained and bypasses HTTP checking.
+This check establishes HTTP(S) reachability only; it does not prove HTTP/3
+support, content suitability or a working HY2 data plane.
+
+The equivalent read-only structured preflight is:
+
+```bash
+sbv hy2 masquerade-check --json
+sbv hy2 masquerade-check --json --url https://www.example.com
+```
+
+The first command lists `.data.reality_candidates` without making network
+requests. The second also reports `.data.http_available`; a failed probe returns
+`.ok=false` and a nonzero exit code. Put the explicitly selected URL into the
+private HY2 record's `masquerade` field before normal CAS-protected create/replace.
+Those write commands do not make an implicit external probe.
+
+[Upstream Hysteria documentation](https://v2.hysteria.network/docs/advanced/Full-Server-Config/#obfuscation)
+states that enabling obfs prevents standard QUIC/HTTP/3 connections. A masquerade
+URL can remain configured, but ordinary HTTP/3 browsers cannot reach that facade
+while Salamander is enabled. HY2's certificate must still cover its own TLS name;
+using a REALITY SNI as a website candidate supplies no certificate for that name.

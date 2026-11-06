@@ -320,7 +320,7 @@ set_protocol_defaults() {
       SB_PORT="443"
       SB_SNI=""
       SB_VLESS_ALPN_MODE="off"
-      SB_VLESS_TCP_FAST_OPEN="n"
+      SB_VLESS_TCP_FAST_OPEN="y"
       SB_MIXED_AUTH_ENABLED="y"
       SB_MIXED_USERNAME=""
       SB_MIXED_PASSWORD=""
