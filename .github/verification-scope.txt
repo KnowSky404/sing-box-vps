@@ -1,24 +1,3 @@
-base 2e2a5a00f51cf020bd5c91ef7cd36eacd57396be
---test tests/singbox_1_14_compatibility.sh
---test tests/namespace_runtime_build_guard.sh
---test tests/binary_namespace_guard.sh
---test tests/managed_components_contract.sh
---test tests/protocol_registry_contract.sh
---test tests/agent_upgrade_commands.sh
---scenario fresh_install_vless
---scenario reconfigure_existing_install
---scenario legacy_takeover_export
---scenario fresh_install_anytls
---scenario fresh_install_socks
---scenario fresh_install_http
---scenario fresh_install_shadowsocks
---scenario fresh_install_trojan
---scenario fresh_install_vmess
---scenario fresh_install_hysteria
---scenario fresh_install_vless_plain
---scenario multi_protocol_coexistence
---scenario upgrade_1_13_to_1_14
---scenario upgrade_rollback_1_13_to_1_14
---scenario uninstall_and_reinstall
---scenario storage_migration
---scenario runtime_smoke
+base c0603984340f3b2af553cba6f62e1c2beacda7ad
+# Remove unused instruction symlinks; documentation and version metadata only.
+--test tests/wiki_documentation.sh
