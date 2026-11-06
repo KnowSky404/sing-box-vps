@@ -29,6 +29,7 @@ export PATH="${TMP_DIR}/bin:${PATH}"
 
 # shellcheck disable=SC1090
 source "${TESTABLE_INSTALL}"
+probe_hy2_masquerade_url() { return 0; }
 
 PORT_PROMPTS_FILE="${TMP_DIR}/port-prompts.log"
 : > "${PORT_PROMPTS_FILE}"

@@ -277,7 +277,7 @@ STATE_EOF
     "id": "main",
     "name": "HTTP verification",
     "tag": "http-in",
-    "listen": {"address": "::", "port": 1082},
+    "listen": {"address": "::", "port": 1082, "tcp_fast_open": true},
     "authentication": {"enabled": true, "username": "http-user", "password": "http-pass"},
     "outbound_policy": "default",
     "tls": {"enabled": false},
@@ -303,7 +303,7 @@ STATE_EOF
     "id": "main",
     "name": "Shadowsocks verification",
     "tag": "ss-in",
-    "listen": {"address": "::", "port": 1083, "network": ["tcp", "udp"]},
+    "listen": {"address": "::", "port": 1083, "network": ["tcp", "udp"], "tcp_fast_open": true},
     "authentication": {"method": "2022-blake3-aes-128-gcm", "password": "MDEyMzQ1Njc4OWFiY2RlZg==", "users": []},
     "outbound_policy": "default",
     "dependencies": []

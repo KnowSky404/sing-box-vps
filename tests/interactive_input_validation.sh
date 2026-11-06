@@ -29,6 +29,7 @@ export PATH="${TMP_DIR}/bin:${PATH}"
 
 # shellcheck disable=SC1090
 source "${TESTABLE_INSTALL}"
+probe_hy2_masquerade_url() { return 0; }
 
 check_port_conflict() { :; }
 validate_tls_domain_points_to_server() { return 0; }

@@ -29,6 +29,7 @@ export PATH="${TMP_DIR}/bin:${PATH}"
 
 # shellcheck disable=SC1090
 source "${TESTABLE_INSTALL}"
+probe_hy2_masquerade_url() { return 0; }
 
 GENERATE_CONFIG_COUNT_FILE="${TMP_DIR}/generate_config.count"
 printf '0\n' > "${GENERATE_CONFIG_COUNT_FILE}"

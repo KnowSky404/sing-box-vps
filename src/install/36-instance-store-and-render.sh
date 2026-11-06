@@ -100,7 +100,7 @@ structured_instance_store_candidate() (
         if $protocol == "shadowtls" and (.detour.listen | has("tcp_fast_open") | not) then .detour.listen.tcp_fast_open=true else . end
       elif $op == "replace" then
         . as $new | first($old.instances[] | select(.id == $new.id)) as $previous |
-        if (.listen | has("tcp_fast_open") | not) and instance_supports_tcp_fast_open($protocol) then
+        if .listen | has("tcp_fast_open") | not then
           .listen += ($previous.listen | with_entries(select(.key == "tcp_fast_open")))
         else . end |
         if $protocol == "shadowtls" and (.detour.listen | has("tcp_fast_open") | not) then

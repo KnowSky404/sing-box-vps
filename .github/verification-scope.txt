@@ -29,7 +29,16 @@ base f994099332261ea0d6052b93abf0294921b059fd
 --test tests/verification_protocol_probe_snell.sh
 --test tests/verification_protocol_probe_naive.sh
 --test tests/verification_protocol_probe_shadowtls.sh
+--test tests/tcp_fast_open_transport_preservation.sh
+--test tests/hy2_install_auto_generates_password_when_blank.sh
+--test tests/install_hy2_protocol_creates_state.sh
+--test tests/install_hy2_anytls_reuses_domain_default.sh
+--test tests/hy2_anytls_domain_ip_validation.sh
+--test tests/install_prompts_include_protocol_name.sh
+--test tests/interactive_input_validation.sh
 --scenario protocol_coexistence
 --scenario fresh_install_trojan
 --scenario fresh_install_vmess
 --scenario fresh_install_vless_plain
+--scenario fresh_install_http
+--scenario fresh_install_shadowsocks
