@@ -198,6 +198,12 @@ exec /usr/bin/curl "${args[@]}"
         observed = requests[count:]
         assert [x[0] for x in observed] == ['/cdn-cgi/trace', '/media']
         assert all(x[1] == '10.77.0.2' for x in observed), 'DIRECT path observed'
+        if protocol == 'socks':
+            calls = (root / 'called').read_bytes()
+            run('ip', 'link', 'set', 'wg-lab', 'down')
+            outage = subprocess.run(['bash', '-c', command], env=env, capture_output=True, timeout=8)
+            assert outage.returncode != 0 and (root / 'called').read_bytes() == calls
+            run('ip', 'link', 'set', 'wg-lab', 'up')
         # On-disk routing written after service start is not trusted as loaded.
         original_stat = service_config.stat()
         time.sleep(.02)
@@ -205,12 +211,9 @@ exec /usr/bin/curl "${args[@]}"
         stale = subprocess.run(['bash', '-c', command], env=env, capture_output=True, timeout=5)
         assert stale.returncode != 0
         os.utime(service_config, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
-        if protocol == 'socks':
-            calls = (root / 'called').read_bytes()
-            run('ip', 'link', 'set', 'wg-lab', 'down')
-            outage = subprocess.run(['bash', '-c', command], env=env, capture_output=True, timeout=8)
-            assert outage.returncode != 0 and (root / 'called').read_bytes() == calls
-            run('ip', 'link', 'set', 'wg-lab', 'up')
+        # Restoring the prior mtime does not make a later replacement loaded.
+        preserved_time = subprocess.run(['bash', '-c', command], env=env, capture_output=True, timeout=5)
+        assert preserved_time.returncode != 0
         print(f'{protocol}: real authenticated ingress -> existing WireGuard, no second core/listener, '
               'config/key unchanged; stale config rejected', flush=True)
         stop(p)
