@@ -77,10 +77,11 @@ reset_legacy_fixture
 before=$(routing_state_fingerprint)
 # Ordinary node generation, Block CN edits and diagnostic proxies may not repair
 # invalid credentials or silently opt into the explicit migration fallback.
+# The unauthenticated fixture ingress is not usable for media diagnostics.
 if generate_config > "${TMP_DIR}/node.log" 2>&1; then fail 'node generation accepted an invalid sidecar'; fi
 [[ "$(routing_state_fingerprint)" == "${before}" && ! -e "${TMP_DIR}/provider-calls" ]]
-if create_media_check_warp_proxy_config "${TMP_DIR}/media.json" 19081 > "${TMP_DIR}/media.log" 2>&1; then
-  fail 'media probe accepted an invalid sidecar'
+if create_media_check_warp_curl_config "${TMP_DIR}/media.json" > "${TMP_DIR}/media.log" 2>&1; then
+  fail 'media probe accepted an unauthenticated ingress'
 fi
 [[ "$(routing_state_fingerprint)" == "${before}" && ! -e "${TMP_DIR}/provider-calls" ]]
 routing_draft_create "${TMP_DIR}/block-draft.json"
@@ -129,8 +130,8 @@ rm -- "${SB_WARP_KEY_FILE}"
 before=$(routing_state_fingerprint)
 if generate_config > "${TMP_DIR}/missing-key-node.log" 2>&1; then fail 'node generation adopted a live endpoint'; fi
 [[ "$(routing_state_fingerprint)" == "${before}" && ! -e "${TMP_DIR}/provider-calls" ]]
-if create_media_check_warp_proxy_config "${TMP_DIR}/readonly-mtu.json" 19082 > "${TMP_DIR}/readonly-mtu.log" 2>&1; then
-  fail 'missing credentials were reused by diagnostics'
+if create_media_check_warp_curl_config "${TMP_DIR}/readonly-mtu.json" > "${TMP_DIR}/readonly-mtu.log" 2>&1; then
+  fail 'diagnostics accepted an unauthenticated ingress'
 fi
 [[ ! -e "${TMP_DIR}/readonly-mtu.json" && "$(routing_state_fingerprint)" == "${before}" &&
    ! -e "${TMP_DIR}/provider-calls" ]]

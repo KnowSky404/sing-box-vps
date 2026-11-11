@@ -197,3 +197,5 @@ Agent/Hermes 文档入口：
 ## 升级事务验收
 
 升级前在 `/root/.sing-box-vps/backups/upgrades/` 创建仅 root 可读的持久备份。实际升级只有 `transaction.result_persisted=true` 且 `transaction.status=success` 才能接受成功。目标已安装时是无变更结果：`transaction.status=not_attempted`、`transaction.reason=already_installed`，不要求不存在的事务文件。失败时按 `rolled_back` 与 `rollback_ok` 判断恢复结果，不以退出码代替回读。
+
+媒体检测 `system.media` 仍为交互操作；WARP 模式仅复用正式服务已有且固定走 WARP 的认证入口，不能通过复制生产凭据建立检测隧道。前提和清理边界见[管理菜单](https://github.com/KnowSky404/sing-box-vps/wiki/Management#流媒体与出口检测)。

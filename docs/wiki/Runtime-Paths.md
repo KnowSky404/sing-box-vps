@@ -34,5 +34,5 @@
 - **内部脚本与核心**: `/root/.sing-box-vps/bin/sbv`、`/root/.sing-box-vps/bin/sing-box`
 - **内部服务单元**: `/root/.sing-box-vps/systemd/sing-box.service`
 - **管理日志**: `/root/.sing-box-vps/logs/sbv.log`
-- **辅助模块默认 HOME/工作目录**: `/root/.sing-box-vps/modules/media-check/`；临时 REALITY 检查器位于统一 `tmp/` 工作区
+- **辅助模块默认 HOME/工作目录**: 每次媒体检测独立使用 `/root/.sing-box-vps/tmp/` 下的私有工作区，Cookie/缓存随检测清理；后端脚本仍持久缓存于 `modules/media-check/`。临时 REALITY 检查器也位于统一 `tmp/` 工作区
 - **全局命令**: `/usr/local/bin/sbv`（仅链接），核心和系统服务入口也链接至统一根
