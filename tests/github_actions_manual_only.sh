@@ -29,5 +29,18 @@ if printf 'on: [push, workflow_dispatch]\n' | assert_manual_trigger; then exit 1
 workflow="${REPO_ROOT}/.github/workflows/command-contract.yml"
 grep -Fq 'ref: ${{ github.sha }}' "${workflow}"
 grep -Fq 'VERIFY_BASE_REF: ${{ inputs.base_ref }}' "${workflow}"
-grep -Fq 'not_run_not_authorized' "${REPO_ROOT}/AGENTS.md"
+# Actions checks out a SHA: only remote-tracking main is guaranteed to exist.
+fixture=$(mktemp -d)
+trap 'rm -rf -- "${fixture}"' EXIT
+git -C "${fixture}" init -q
+git -C "${fixture}" symbolic-ref HEAD refs/heads/fixture
+printf 'fixture\n' > "${fixture}/README.md"
+git -C "${fixture}" add README.md
+git -C "${fixture}" -c user.name=fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit -qm fixture
+git -C "${fixture}" update-ref refs/remotes/origin/main HEAD
+git -C "${fixture}" checkout -q --detach HEAD
+if git -C "${fixture}" show-ref --verify --quiet refs/heads/main; then exit 1; fi
+default_base=$(sed -n 's/^        default: //p' "${workflow}")
+[[ "$(git -C "${fixture}" rev-parse --verify "${default_base}^{commit}")" == "$(git -C "${fixture}" rev-parse HEAD)" ]]
+grep -Fq 'not_run_not_authorized'  "${REPO_ROOT}/AGENTS.md"
 printf 'All %s workflows require manual dispatch; automatic events rejected; no Actions run started\n' "${count}"
