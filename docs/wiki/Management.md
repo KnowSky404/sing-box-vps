@@ -84,7 +84,7 @@ Hysteria2 新增协议和创建实例默认提供 ACME 自动签发，也可选�
 已有的认证 SOCKS/HTTP/Mixed 入口，经 loopback 转发；不启动第二个 sing-box 运行实例、
 不读取或复制保存的 WARP 私钥、不改正式配置和路由，也不注册账户。
 
-必须能确认正式服务已加载当前配置，并证明所选入口所有允许通过的流量固定
+必须能确认正式服务已加载当前配置（mtime/ctime 均早于服务启动），并证明所选入口所有允许通过的流量固定
 走 `warp-ep`。全局默认 WARP 或入口无条件 WARP 路由可以满足条件；此前可能
 命中的 DIRECT、条件分流、selector 或未知路由动作均拒绝。然后通过该入口访问
 HTTPS Cloudflare trace，只有 `warp=on/plus` 才运行后端。每次 curl 检查服务 PID

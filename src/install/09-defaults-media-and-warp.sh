@@ -495,7 +495,7 @@ warp_endpoint_json_for_generation() {
 # Return a non-sensitive identity for the service/config pair. Refuse a config
 # written after service start: its routing is not evidence of the loaded policy.
 media_check_service_snapshot() {
-  local pid started modified command_line checksum
+  local pid started modified timestamp_field command_line checksum
   systemctl is-active --quiet sing-box || return 1
   pid=$(systemctl show sing-box -p MainPID) || return 1
   pid=${pid#MainPID=}
@@ -511,8 +511,11 @@ media_check_service_snapshot() {
   started=${BASH_REMATCH[1]}
   [[ "${started}" -le 9223372036854775 ]] || return 1
   started=$((started * 1000))
-  modified=$(date -d "$(stat -c %y -- "${SINGBOX_CONFIG_FILE}")" +%s%N) || return 1
-  [[ "${modified}" -le "${started}" ]] || return 1
+  # cp -p can preserve an old mtime on a replacement; ctime must also predate start.
+  for timestamp_field in %y %z; do
+    modified=$(date -d "$(stat -c "${timestamp_field}" -- "${SINGBOX_CONFIG_FILE}")" +%s%N) || return 1
+    [[ "${modified}" -le "${started}" ]] || return 1
+  done
   checksum=$(sha256sum -- "${SINGBOX_CONFIG_FILE}" | cut -d ' ' -f1) || return 1
   printf '%s:%s' "${pid}" "${checksum}"
 }

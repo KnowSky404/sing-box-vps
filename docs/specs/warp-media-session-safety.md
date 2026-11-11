@@ -22,7 +22,7 @@ WireGuard 按公钥识别 peer，并从认证包更新其 endpoint。隔离 Linu
 - 只复用正式服务的已有认证 SOCKS/HTTP/Mixed 入口，访问地址限定 loopback。
   TLS HTTP 入口及其他协议本轮不适配；没有合适入口就明确拒绝。
 - 正式服务必须 active，MainPID 的启动命令须匹配受管二进制及配置路径；配置
-  修改时间不得晚于服务启动时间（使用 systemd D-Bus 微秒属性，兼容旧版 systemd）。未知/不可读元数据不能代替已加载配置证据。
+  mtime/ctime 均不得晚于服务启动时间（使用 systemd D-Bus 微秒属性，兼容旧版 systemd）。未知/不可读元数据不能代替已加载配置证据。
 - 保守解析路由：排除可证明不匹配该入口的规则，允许 sniff/reject，首个可能
   路由必须为入口或全局无条件 `warp-ep`；否则只在没有其他可能路由且 final
   为 `warp-ep` 时接受。空 inbound 列表按不限入口处理；DIRECT、条件匹配、invert、logical、selector 或未知动作
@@ -65,7 +65,7 @@ WireGuard 按公钥识别 peer，并从认证包更新其 endpoint。隔离 Linu
   第二客户端请求成功、对端 endpoint 改变，原流 `14000` 字节后超时，curl `28`。
 - 修复后 SOCKS、Mixed、HTTP 认证入口均在同一真实核心中复用已有隧道；测试服务
   收到的 trace 与媒体请求来源均为隧道地址。无第二核心/新增监听，配置与保存的
-  sidecar 摘要不变；隧道失效、服务配置过期均拒绝。HTTP 使用 CONNECT。
+  sidecar 摘要不变；隧道失效、服务配置过期（包括保留 mtime 的替换）均拒绝。HTTP 使用 CONNECT。
 - 生命周期 fixture 覆盖成功、启动失败、后端失败、trace off、服务不可用/PID
   变化、原生检测、INT/TERM/HUP、父进程退出、owner SIGKILL、超时及并发隔离；
   检查无存活后代/工作区，认证不出现在输出或参数，普通 curl 与 `-C` 均受保护。
