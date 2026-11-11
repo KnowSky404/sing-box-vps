@@ -572,9 +572,9 @@ routing_policy_validate_merged_order() {
       any($sets[]; startswith("sbv-adblock-") or startswith("sbv-block-")) or any(.rules[]?; ad_match);
     [$expected[0].route.rules[]? | select(scoped)] as $owned |
     def owned: . as $rule | ($owned | index($rule)) != null;
-    [.route.rules[]? | select(owned)] == $owned and
     (.route.rules // [] | to_entries) as $entries |
     ([$entries[] | select(.value | owned and .action == "reject" and (.ip_is_private == true or ad_match)) | .key] | max // -1) as $last_filter |
+    [.route.rules[]? | select(owned)] == $owned and
     all($entries[] | select(.key < $last_filter);
       .value as $rule |
       (($rule | terminal) | not) or

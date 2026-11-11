@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026111101
+# Version: 2026111102
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026111101"
+readonly SCRIPT_VERSION="2026111102"
 readonly SB_SUPPORT_MAX_VERSION="1.14.4"
 # A single IPv6 wildcard socket accepts IPv4 and IPv6 in sing-box on Linux.
 readonly SB_DEFAULT_LISTEN_ADDRESS="::"
@@ -21065,11 +21065,11 @@ managed_component_live_route_rule_sets_match_state() {
           (($set.tag | startswith("warp-") | not) or ($set.tag | startswith("warp-remote-"))) and
           (any($state.components[]?;
             .role == "rule_set" and .enabled == true and .tag == $set.tag) | not)));
+    (.route // {}) as $route |
+    ($route.rule_set // []) as $sets |
     type == "object" and
     ((has("route") | not) or (.route | type == "object")) and
-    (.route // {}) as $route |
     ($route | ((has("rule_set") | not) or (.rule_set | type == "array"))) and
-    ($route.rule_set // []) as $sets |
     ($sets | type == "array" and length <= 128) and
     ([ $sets[] | select((legacy_download_detour(.) | not) or ((.tag // "") != "")) | .tag ] | unique | length) ==
       ([ $sets[] | select((legacy_download_detour(.) | not) or ((.tag // "") != "")) ] | length) and
@@ -42881,9 +42881,9 @@ routing_policy_validate_merged_order() {
       any($sets[]; startswith("sbv-adblock-") or startswith("sbv-block-")) or any(.rules[]?; ad_match);
     [$expected[0].route.rules[]? | select(scoped)] as $owned |
     def owned: . as $rule | ($owned | index($rule)) != null;
-    [.route.rules[]? | select(owned)] == $owned and
     (.route.rules // [] | to_entries) as $entries |
     ([$entries[] | select(.value | owned and .action == "reject" and (.ip_is_private == true or ad_match)) | .key] | max // -1) as $last_filter |
+    [.route.rules[]? | select(owned)] == $owned and
     all($entries[] | select(.key < $last_filter);
       .value as $rule |
       (($rule | terminal) | not) or
