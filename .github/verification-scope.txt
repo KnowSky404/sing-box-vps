@@ -1,3 +1,9 @@
-base 55b599ca9f3d88a1cacbc4a47447c062ac25809d
-# Manual-only Actions policy; this scope file does not authorize a GitHub run.
+base 26d6714fb9704962f6688b75749dbfd705d3af68
+# Local verification selectors only; this file does not authorize GitHub Actions.
+# WireGuard runtime acceptance uses dev/verification/media-warp-runtime.sh separately.
 --test tests/github_actions_manual_only.sh
+--test tests/media_warp_safety.sh
+--test tests/module_storage.sh
+--test tests/node_network_independence.sh
+--test tests/routing_warp_legacy_baseline_repair.sh
+--test tests/routing_media_draft_independence.sh

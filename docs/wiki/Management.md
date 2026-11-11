@@ -81,7 +81,7 @@ Hysteria2 新增协议和创建实例默认提供 ACME 自动签发，也可选�
 ### 流媒体与出口检测
 
 菜单 `12 → 4` 保留本机直出与 WARP 检测。WARP 检测复用正式 sing-box
-已有的认证 SOCKS/HTTP/Mixed 入口，经 loopback 转发；不启动第二个 sing-box、
+已有的认证 SOCKS/HTTP/Mixed 入口，经 loopback 转发；不启动第二个 sing-box 运行实例、
 不读取或复制保存的 WARP 私钥、不改正式配置和路由，也不注册账户。
 
 必须能确认正式服务已加载当前配置，并证明所选入口所有允许通过的流量固定
