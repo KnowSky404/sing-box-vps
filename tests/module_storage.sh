@@ -29,10 +29,10 @@ ensure_media_check_backend() { return 0; }
 show_media_check_backend_info() { :; }
 log_info() { :; }
 run_media_check_backend
-jq -e --arg root "${SB_DATA_ROOT}" --arg module "${SB_MEDIA_CHECK_DIR}" \
-  '.home==$module and .cwd==$module and (.tmp|startswith($root+"/tmp/")) and .cache==($module+"/.cache") and .data==($module+"/.local/share")' \
-  "${MODULE_PROBE_LOG}" >/dev/null
-[[ -f "${SB_MEDIA_CHECK_DIR}/.cache/probe" && -f "${SB_MEDIA_CHECK_DIR}/.local/share/probe" ]]
+jq -e --arg root "${SB_DATA_ROOT}" \
+  '. as $probe | (.home|startswith($root+"/tmp/")) and .cwd==.home and (.tmp|startswith($probe.home+"/")) and
+   .cache==(.home+"/.cache") and .data==(.home+"/.local/share")' "${MODULE_PROBE_LOG}" >/dev/null
+[[ ! -e "$(jq -r .home "${MODULE_PROBE_LOG}")" ]]
 [[ "${HOME}" == "${original_home}" && "${PWD}" == "${original_directory}" ]]
 
 workspace=$(storage_mktemp -d)

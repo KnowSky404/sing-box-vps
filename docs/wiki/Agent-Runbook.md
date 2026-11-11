@@ -697,3 +697,5 @@ On production, present exact mutations, service impact, rollback and verificatio
 输入，字节与元数据原样归档；仍拒绝链接、特殊文件、可由其他账户写入的内容。
 `blocker_details` 同时覆盖旧活动目录与历史备份，后者使用
 `untrusted_legacy_backups`，并指出具体 `path` 和 `reason`。
+
+WARP media checks (`system.media`, menu 12 → 4) require an existing authenticated SOCKS/HTTP/Mixed ingress whose permitted traffic is provably pinned to `warp-ep` in the running service. Unsupported ingress, ambiguous routing, inactive service or a non-WARP trace must refuse. Never copy the production WireGuard identity into a second process, simulate menu input, or create/change an ingress as a diagnostic side effect. Each check has its own workspace/process group and a 15-minute bound. See [Management](https://github.com/KnowSky404/sing-box-vps/wiki/Management#流媒体与出口检测).

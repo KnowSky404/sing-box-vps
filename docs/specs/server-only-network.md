@@ -47,7 +47,10 @@ and status fields, and obsolete full-export tests. Existing exported files are
 not deleted as a side effect of upgrading the script.
 
 Media checks must not register/re-register WARP, change routes, or modify node
-credentials. WARP checks require already prepared valid account material. The next
+credentials. WARP checks reuse a provably WARP-pinned authenticated SOCKS/HTTP/Mixed
+ingress in the running service; they never copy saved WARP identity into another
+endpoint. Unsupported or ambiguous ingress/routing fails closed. See
+[media session safety](warp-media-session-safety.md). The next
 edit reads current state after diagnostics, including any updated diagnostic
 cache; there is no pending edit to reconcile. Every individual application still
 rejects a stale candidate or an unrelated concurrent change through normal CAS.

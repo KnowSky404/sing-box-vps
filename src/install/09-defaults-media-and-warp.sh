@@ -431,19 +431,6 @@ ensure_media_check_backend() {
   return "${result_status}"
 }
 
-pick_free_local_port() {
-  local port
-
-  for port in $(seq 20080 20120); do
-    if ! ss -ltn 2>/dev/null | grep -q ":${port} "; then
-      printf '%s' "${port}"
-      return 0
-    fi
-  done
-
-  return 1
-}
-
 warp_endpoint_json_from_saved_credentials() {
   local w_key w_v4 w_v6 w_client_id w_reserved='[]'
   [[ -f "${SB_WARP_KEY_FILE}" && ! -L "${SB_WARP_KEY_FILE}" &&
@@ -505,113 +492,170 @@ warp_endpoint_json_for_generation() {
   }
 }
 
-create_media_check_warp_proxy_config() {
-  local output_file=$1 proxy_port=$2 warp_endpoint
-  warp_endpoint=$(warp_endpoint_json_from_saved_credentials) || {
-    log_warn 'WARP 凭据缺失或无效；请先在网络设置中配置 WARP，检测未修改账户。'
+# Return a non-sensitive identity for the service/config pair. Refuse a config
+# written after service start: its routing is not evidence of the loaded policy.
+media_check_service_snapshot() {
+  local pid started modified command_line checksum
+  systemctl is-active --quiet sing-box || return 1
+  pid=$(systemctl show sing-box -p MainPID --value) || return 1
+  [[ "${pid}" =~ ^[1-9][0-9]*$ && -r "/proc/${pid}/cmdline" &&
+     -f "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" ]] || return 1
+  command_line=$(tr '\0' '\n' < "/proc/${pid}/cmdline") || return 1
+  [[ "${command_line}" == "$(printf '%s\nrun\n-c\n%s' "${SINGBOX_BIN_PATH}" "${SINGBOX_CONFIG_FILE}")" ]] || return 1
+  started=$(systemctl --timestamp=us show sing-box -p ExecMainStartTimestamp --value) || return 1
+  started=$(date -d "${started}" +%s%N) || return 1
+  modified=$(date -d "$(stat -c %y -- "${SINGBOX_CONFIG_FILE}")" +%s%N) || return 1
+  [[ "${modified}" -le "${started}" ]] || return 1
+  checksum=$(sha256sum -- "${SINGBOX_CONFIG_FILE}" | cut -d ' ' -f1) || return 1
+  printf '%s:%s' "${pid}" "${checksum}"
+}
+
+# Only an authenticated existing ingress whose entire route is provably WARP
+# qualifies. Selective domain rules and selectors cannot prove this property.
+create_media_check_warp_curl_config() {
+  local output_file=$1
+  if ! "${SINGBOX_BIN_PATH}" check -c "${SINGBOX_CONFIG_FILE}" >/dev/null 2>&1; then
+    log_warn '正式配置校验失败；拒绝 WARP 检测。'; return 1
+  fi
+  jq -er '
+    def list: if type == "array" then . else [.] end;
+    . as $config |
+    [.endpoints[]? | select(.tag == "warp-ep" and .type == "wireguard")] |
+    select(length == 1) |
+    [$config.inbounds[]? |
+      select(.type == "socks" or .type == "mixed" or .type == "http") |
+      select(.tls.enabled != true and .detour == null and
+        (.listen | IN("127.0.0.1","0.0.0.0","::","::1")) and
+        (.listen_port | type == "number" and . > 0 and . <= 65535)) |
+      . as $in |
+      [$config.route.rules[]? |
+        select(.inbound == null or .type == "logical" or .invert == true or
+          ((.inbound | list | index($in.tag)) != null)) |
+        select(.action != "sniff" and .action != "reject")] as $rules |
+      select(if ($rules | length) == 0 then $config.route.final == "warp-ep"
+        else ($rules[0] | ((keys - ["inbound","action","outbound"]) | length) == 0 and
+          (.action // "route") == "route" and .outbound == "warp-ep") end) |
+      .users[]? |
+      select((.username | type == "string" and length > 0 and (contains(":") | not)) and
+        (.password | type == "string" and length > 0)) |
+      {proxy:((if $in.type == "http" then "http://" else "socks5h://" end) +
+        (if $in.listen == "::1" then "[::1]" else "127.0.0.1" end) + ":" + ($in.listen_port|tostring)),
+       user:(.username + ":" + .password),tunnel:($in.type == "http")}] | select(length > 0) | .[0] |
+    "proxy = " + (.proxy|@json) + "\nproxy-user = " + (.user|@json) + "\nnoproxy = \"\"" +
+    (if .tunnel then "\nproxytunnel = true" else "" end)
+  ' "${SINGBOX_CONFIG_FILE}" > "${output_file}" 2>/dev/null || {
+    rm -f -- "${output_file}"
+    log_warn '无法证明已有认证 SOCKS/HTTP/Mixed 入口全程固定走 WARP；拒绝检测。选择性分流或仅有其他协议入口不满足前提。'
     return 1
   }
-
-  jq -n \
-    --arg proxy_port "${proxy_port}" \
-    --argjson warp_endpoint "${warp_endpoint}" \
-    '{
-      "log": { "level": "warn", "timestamp": true },
-      "endpoints": [$warp_endpoint],
-      "inbounds": [
-        {
-          "type": "socks",
-          "tag": "media-check-socks",
-          "listen": "127.0.0.1",
-          "listen_port": ($proxy_port | tonumber)
-        }
-      ],
-      "outbounds": [
-        { "type": "direct", "tag": "direct" }
-      ],
-      "route": {
-        "rules": [
-          { "inbound": "media-check-socks", "action": "sniff" }
-        ],
-        "final": "warp-ep"
-      }
-    }' > "${output_file}" || return 1
-  "${SINGBOX_BIN_PATH}" check -c "${output_file}" >&2
 }
 
 run_media_check_backend() (
-  local proxy_url=${1:-}
-  local result_status=0
+  local mode=${1:-native} workspace='' worker_pid='' snapshot='' owner_pid=${BASHPID}
+  local curl_path curl_command result_status=0
+  local -a backend_args=()
+  umask 077
+  set +m
 
-  if ensure_media_check_backend; then
-    :
-  else
-    result_status=$?
-    return "${result_status}"
+  media_check_cleanup() {
+    trap - EXIT INT TERM HUP
+    if [[ -n "${worker_pid}" ]]; then
+      # The worker and all backend descendants own a separate process group.
+      if kill -0 -- "-${worker_pid}" 2>/dev/null; then
+        kill -TERM -- "-${worker_pid}" || log_warn '检测进程组 TERM 清理失败。'
+        sleep 0.2
+        if kill -0 -- "-${worker_pid}" 2>/dev/null; then
+          kill -KILL -- "-${worker_pid}" || log_warn '检测进程组 KILL 清理失败。'
+        fi
+      elif kill -0 "${worker_pid}" 2>/dev/null; then
+        kill -TERM "${worker_pid}" || log_warn '检测启动进程清理失败。'
+      fi
+      if wait "${worker_pid}" 2>/dev/null; then :; fi
+    fi
+    if [[ -n "${workspace}" ]]; then rm -rf -- "${workspace}"; fi
+  }
+  trap media_check_cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+
+  command -v setsid >/dev/null || { log_warn '缺少 setsid，无法隔离检测进程。'; return 1; }
+  if [[ "${mode}" == warp ]]; then
+    snapshot=$(media_check_service_snapshot) || {
+      log_warn '正式 sing-box 不可用或无法确认其已加载当前配置；拒绝 WARP 检测。'; return 1;
+    }
   fi
+  ensure_media_check_backend || return $?
   show_media_check_backend_info
-  storage_prepare_tmp || return 1
-  storage_enter_module_workspace "${SB_MEDIA_CHECK_DIR}" || return 1
-  export TMPDIR="${SB_DATA_ROOT}/tmp"
+  workspace=$(storage_mktemp -d) || return 1
+  storage_enter_module_workspace "${workspace}" || return 1
+  export TMPDIR="${workspace}" TMP="${workspace}" TEMP="${workspace}"
 
-  if [[ -n "${proxy_url}" ]]; then
-    log_info "正在通过代理执行流媒体验证: ${proxy_url}"
-    bash "${SB_MEDIA_CHECK_SCRIPT}" -P "${proxy_url}"
+  if [[ "${mode}" == warp ]]; then
+    create_media_check_warp_curl_config "${workspace}/proxy.conf" || return 1
+    [[ "$(media_check_service_snapshot)" == "${snapshot}" ]] || return 1
+    curl_path=$(command -v curl) || return 1
+    # No credentials enter argv, output or environment. Every curl, including
+    # backend auxiliary downloads, uses this final proxy config and no NO_PROXY.
+    {
+      printf '#!/usr/bin/env bash\nset -euo pipefail\n'
+      printf 'expected=%q\nconfig=%q\npid=%q\n' "${snapshot#*:}" "${SINGBOX_CONFIG_FILE}" "${snapshot%%:*}"
+      cat <<'EOF_CURL_GUARD'
+systemctl is-active --quiet sing-box || exit 1
+[[ "$(systemctl show sing-box -p MainPID --value)" == "${pid}" &&
+   "$(sha256sum -- "${config}" | cut -d ' ' -f1)" == "${expected}" ]] || exit 1
+EOF_CURL_GUARD
+      printf 'exec %q -q "$@" --config %q\n' "${curl_path}" "${workspace}/proxy.conf"
+    } > "${workspace}/curl" || return 1
+    chmod 700 "${workspace}/curl" || return 1
+    export PATH="${workspace}:${PATH}"
+    printf -v curl_command '%q' "${workspace}/curl"
+    backend_args=(-P 'socks5h://127.0.0.1:1' -C "${curl_command}")
+    log_info '通过正式服务已有认证入口执行 WARP 检测（不建立第二条 WireGuard 隧道）。'
   else
-    log_info "正在使用本机直出执行流媒体验证..."
-    bash "${SB_MEDIA_CHECK_SCRIPT}"
+    log_info '正在使用本机直出执行流媒体验证...'
   fi
+
+  cat > "${workspace}/runner.sh" <<'EOF_MEDIA_RUNNER' || return 1
+#!/usr/bin/env bash
+set -euo pipefail
+owner=$1 caller=$2 workspace=$3 backend=$4
+shift 4
+# This watchdog survives loss of the caller, including an untrappable exit.
+(
+  trap '' INT TERM HUP
+  for ((elapsed=0; elapsed<900; elapsed++)); do
+    if ! kill -0 "${owner}" 2>/dev/null || ! kill -0 "${caller}" 2>/dev/null; then break; fi
+    sleep 1
+  done
+  printf '[WARN] 检测父进程已退出或达到 15 分钟上限，正在清理。\n' >&2
+  kill -TERM -- "-$$"
+  sleep 0.2
+  rm -rf -- "${workspace}"
+  kill -KILL -- "-$$"
+) &
+if [[ -x "${workspace}/curl" ]]; then
+  if ! "${workspace}/curl" --silent --show-error --fail --connect-timeout 5 --max-time 15 \
+    https://www.cloudflare.com/cdn-cgi/trace | grep -Eq '^warp=(on|plus)\r?$'; then
+    printf '[WARN] 指定入口未验证为 WARP 出口；检测已拒绝，未回退原生出口。\n' >&2
+    exit 1
+  fi
+fi
+bash "${backend}" "$@" <&0 &
+wait "$!"
+EOF_MEDIA_RUNNER
+  setsid bash "${workspace}/runner.sh" "${owner_pid}" "$$" "${workspace}" "${SB_MEDIA_CHECK_SCRIPT}" \
+    "${backend_args[@]}" <&0 &
+  worker_pid=$!
+  if wait "${worker_pid}"; then :; else result_status=$?; fi
+  if [[ "${mode}" == warp && "$(media_check_service_snapshot)" != "${snapshot}" ]]; then
+    log_warn '检测期间正式服务或配置发生变化，结果无效。'; return 1
+  fi
+  return "${result_status}"
 )
 
 run_media_check_via_warp() {
-  local temp_dir proxy_config proxy_log proxy_port proxy_pid proxy_url ready="n"
-
-  if ! command -v jq &>/dev/null; then
-    log_warn "未检测到 jq，正在尝试自动安装以支持流媒体验证..."
-    get_os_info && install_dependencies
-  fi
-
-  proxy_port=$(pick_free_local_port) || log_error "未找到可用的本地临时代理端口。"
-  temp_dir=$(storage_mktemp -d)
-  proxy_config="${temp_dir}/media-check-warp.json"
-  proxy_log="${temp_dir}/media-check-warp.log"
-  proxy_url="socks5h://127.0.0.1:${proxy_port}"
-
-  if ! create_media_check_warp_proxy_config "${proxy_config}" "${proxy_port}"; then
-    rm -rf -- "${temp_dir}"
-    return 1
-  fi
-
-  "${SINGBOX_BIN_PATH}" run -c "${proxy_config}" > "${proxy_log}" 2>&1 &
-  proxy_pid=$!
-
-  for _ in $(seq 1 20); do
-    if ss -ltn 2>/dev/null | grep -q ":${proxy_port} "; then
-      ready="y"
-      break
-    fi
-    sleep 0.3
-  done
-
-  if [[ "${ready}" != "y" ]]; then
-    kill "${proxy_pid}" 2>/dev/null || true
-    wait "${proxy_pid}" 2>/dev/null || true
-    cat "${proxy_log}" >&2 || true
-    rm -rf "${temp_dir}"
-    log_error "Warp 临时代理启动失败，请检查 Warp 配置。"
-  fi
-
-  run_media_check_backend "${proxy_url}" || {
-    local exit_code=$?
-    kill "${proxy_pid}" 2>/dev/null || true
-    wait "${proxy_pid}" 2>/dev/null || true
-    rm -rf "${temp_dir}"
-    return "${exit_code}"
-  }
-
-  kill "${proxy_pid}" 2>/dev/null || true
-  wait "${proxy_pid}" 2>/dev/null || true
-  rm -rf "${temp_dir}"
+  run_media_check_backend warp
 }
 
 media_check_menu() {
@@ -624,7 +668,7 @@ media_check_menu() {
     render_summary_item "项目地址" "${MEDIA_CHECK_BACKEND_REPO_URL}"
     render_menu_group_start "操作选项"
     render_menu_item "1" "本机直出检测"
-    render_menu_item "2" "Warp 出口检测"
+    render_menu_item "2" "Warp 出口检测（复用正式通道）"
     echo "0. 返回主菜单"
     media_choice=$(prompt_choice "请选择 [0-2]: " 0 2 "")
 

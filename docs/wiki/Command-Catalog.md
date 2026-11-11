@@ -1449,7 +1449,7 @@ sbv subman sync --json --yes
 | `subman.settings` | SubMan 配置管理 | `11` | `{"mutation":true,"sensitive":true,"service_impact":"none"}` | settings currently use interactive secret input |
 | `system.stack` | 入站/出站协议栈设置 | `13` | `{"mutation":true,"sensitive":false,"service_impact":"restart"}` | host and listener changes lack a unified persistent rollback contract |
 | `system.bbr` | BBR 设置 | `13` | `{"mutation":true,"sensitive":false,"service_impact":"host_network"}` | host sysctl mutation has no structured transaction interface |
-| `system.media` | 媒体解锁测试 | `12 -> 4` | `{"mutation":true,"sensitive":false,"service_impact":"none"}` | external executable probe may download/update its local backend and launch temporary processes; no stable structured result |
+| `system.media` | 媒体解锁测试 | `12 -> 4` | `{"mutation":true,"sensitive":false,"service_impact":"none"}` | external backend has no stable structured result; terminal-only execution with bounded process cleanup; never creates another WireGuard endpoint |
 | `script.uninstall` | 卸载管理脚本 | `15` | `{"mutation":true,"sensitive":false,"service_impact":"configuration_removal_possible"}` | destructive self-removal remains interactive |
 
 ## 既有文本命令
