@@ -22,10 +22,10 @@ WireGuard 按公钥识别 peer，并从认证包更新其 endpoint。隔离 Linu
 - 只复用正式服务的已有认证 SOCKS/HTTP/Mixed 入口，访问地址限定 loopback。
   TLS HTTP 入口及其他协议本轮不适配；没有合适入口就明确拒绝。
 - 正式服务必须 active，MainPID 的启动命令须匹配受管二进制及配置路径；配置
-  修改时间不得晚于服务启动时间。未知/不可读元数据不能代替已加载配置证据。
+  修改时间不得晚于服务启动时间（使用 systemd D-Bus 微秒属性，兼容旧版 systemd）。未知/不可读元数据不能代替已加载配置证据。
 - 保守解析路由：排除可证明不匹配该入口的规则，允许 sniff/reject，首个可能
   路由必须为入口或全局无条件 `warp-ep`；否则只在没有其他可能路由且 final
-  为 `warp-ep` 时接受。DIRECT、条件匹配、invert、logical、selector 或未知动作
+  为 `warp-ep` 时接受。空 inbound 列表按不限入口处理；DIRECT、条件匹配、invert、logical、selector 或未知动作
   不得被忽略。正式配置先通过 `sing-box check`，拒绝时不打印解析或凭据内容。
 - 经私有 curl 配置携带认证，最后应用代理和空 noproxy，覆盖环境代理绕过。
   使用私有 PATH 包装器和后端 `-C` 扩展统一覆盖其 curl（包括没有使用 `$curlArgs` 的辅助请求）；
@@ -49,7 +49,7 @@ WireGuard 按公钥识别 peer，并从认证包更新其 endpoint。隔离 Linu
 
 - `tests/media_warp_safety.sh` + Python fixture：路由拒绝、trace off、服务缺失、
   后端失败、正常/原生、INT/TERM/HUP、父进程退出、owner 被杀、超时和并发。
-- `tests/media_warp_runtime.sh`：`--network none` 容器内真实 WireGuard 对端，
+- `dev/verification/media-warp-runtime.sh`：`--network none` 容器内真实 WireGuard 对端，
   同身份争用复现，以及真实 SOCKS/Mixed/HTTP 认证入口经正式核心现有隧道；
   检查请求源地址、核心数量、监听端口、配置/保存密钥不变、stale 配置和隧道失效。
   systemd 元数据、Cloudflare trace 与媒体后端使用本地 fixture，不冒充真实供应商验收。

@@ -9580,13 +9580,20 @@ warp_endpoint_json_for_generation() {
 media_check_service_snapshot() {
   local pid started modified command_line checksum
   systemctl is-active --quiet sing-box || return 1
-  pid=$(systemctl show sing-box -p MainPID --value) || return 1
+  pid=$(systemctl show sing-box -p MainPID) || return 1
+  pid=${pid#MainPID=}
   [[ "${pid}" =~ ^[1-9][0-9]*$ && -r "/proc/${pid}/cmdline" &&
      -f "${SINGBOX_CONFIG_FILE}" && ! -L "${SINGBOX_CONFIG_FILE}" ]] || return 1
   command_line=$(tr '\0' '\n' < "/proc/${pid}/cmdline") || return 1
   [[ "${command_line}" == "$(printf '%s\nrun\n-c\n%s' "${SINGBOX_BIN_PATH}" "${SINGBOX_CONFIG_FILE}")" ]] || return 1
-  started=$(systemctl --timestamp=us show sing-box -p ExecMainStartTimestamp --value) || return 1
-  started=$(date -d "${started}" +%s%N) || return 1
+  # D-Bus exposes microseconds even on systemd 219, without pretty-date rounding.
+  started=$(busctl get-property org.freedesktop.systemd1 \
+    /org/freedesktop/systemd1/unit/sing_2dbox_2eservice \
+    org.freedesktop.systemd1.Service ExecMainStartTimestamp) || return 1
+  [[ "${started}" =~ ^t[[:space:]]([1-9][0-9]{0,15})$ ]] || return 1
+  started=${BASH_REMATCH[1]}
+  [[ "${started}" -le 9223372036854775 ]] || return 1
+  started=$((started * 1000))
   modified=$(date -d "$(stat -c %y -- "${SINGBOX_CONFIG_FILE}")" +%s%N) || return 1
   [[ "${modified}" -le "${started}" ]] || return 1
   checksum=$(sha256sum -- "${SINGBOX_CONFIG_FILE}" | cut -d ' ' -f1) || return 1
@@ -9612,7 +9619,7 @@ create_media_check_warp_curl_config() {
         (.listen_port | type == "number" and . > 0 and . <= 65535)) |
       . as $in |
       [$config.route.rules[]? |
-        select(.inbound == null or .type == "logical" or .invert == true or
+        select(.inbound == null or .inbound == [] or .type == "logical" or .invert == true or
           ((.inbound | list | index($in.tag)) != null)) |
         select(.action != "sniff" and .action != "reject")] as $rules |
       select(if ($rules | length) == 0 then $config.route.final == "warp-ep"
@@ -9685,7 +9692,7 @@ run_media_check_backend() (
       printf 'expected=%q\nconfig=%q\npid=%q\n' "${snapshot#*:}" "${SINGBOX_CONFIG_FILE}" "${snapshot%%:*}"
       cat <<'EOF_CURL_GUARD'
 systemctl is-active --quiet sing-box || exit 1
-[[ "$(systemctl show sing-box -p MainPID --value)" == "${pid}" &&
+[[ "$(systemctl show sing-box -p MainPID)" == "MainPID=${pid}" &&
    "$(sha256sum -- "${config}" | cut -d ' ' -f1)" == "${expected}" ]] || exit 1
 EOF_CURL_GUARD
       printf 'exec %q -q "$@" --config %q\n' "${curl_path}" "${workspace}/proxy.conf"

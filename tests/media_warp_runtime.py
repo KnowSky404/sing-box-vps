@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Real WireGuard/core probes in a container with no external network or keys."""
-import datetime
 import hashlib
 import http.server
 import json
@@ -140,14 +139,20 @@ printf 'backend-called\\n' >> "$CASE_BACKEND"
     backend.chmod(0o700)
     (fixture / 'bin/systemctl').write_text('''#!/usr/bin/env bash
 set -euo pipefail
+[[ "$*" != *--timestamp* && "$*" != *--value* ]] || exit 98
 case "$*" in
  *is-active*) kill -0 "$(cat "$FIXTURE/pid")" ;;
- *MainPID*) cat "$FIXTURE/pid" ;;
- *ExecMainStartTimestamp*) cat "$FIXTURE/started" ;;
+ *MainPID*) printf 'MainPID=%s\\n' "$(cat "$FIXTURE/pid")" ;;
  *) exit 1 ;;
 esac
 ''')
     # Substitute only test URLs/timeouts. All proxy, auth and routing are real.
+    # Model the systemd 219 D-Bus property (no --value/--timestamp flags).
+    (fixture / 'bin/busctl').write_text('''#!/usr/bin/env bash
+set -euo pipefail
+[[ "$*" == 'get-property org.freedesktop.systemd1 /org/freedesktop/systemd1/unit/sing_2dbox_2eservice org.freedesktop.systemd1.Service ExecMainStartTimestamp' ]]
+printf 't %s\\n' "$(cat "$FIXTURE/started")"
+''')
     (fixture / 'bin/curl').write_text('''#!/usr/bin/env bash
 set -euo pipefail
 args=()
@@ -161,7 +166,7 @@ for value; do
 done
 exec /usr/bin/curl "${args[@]}"
 ''')
-    for name in ['systemctl', 'curl']:
+    for name in ['systemctl', 'busctl', 'curl']:
         (fixture / 'bin' / name).chmod(0o700)
     # Diagnostics must not read or repair the saved account sidecar.
     (runtime / 'warp.key').write_text('deliberately-invalid-saved-credentials\n')
@@ -175,8 +180,13 @@ exec /usr/bin/curl "${args[@]}"
         cfg['log'] = dict(level='warn')
         p = start(cfg, service_config, str(fixture / 'bin/sing-box'))
         (fixture / 'pid').write_text(str(p.pid))
-        (fixture / 'started').write_text(datetime.datetime.now(datetime.timezone.utc).isoformat())
+        (fixture / 'started').write_text(str(time.time_ns() // 1000))
         before = sha(service_config)
+        started = (fixture / 'started').read_text()
+        (fixture / 'started').write_text('invalid')
+        bad_time = subprocess.run(['bash', '-c', command], env=env, capture_output=True, timeout=5)
+        assert bad_time.returncode != 0
+        (fixture / 'started').write_text(started)
         listeners = run('ss', '-Hltn')
         count = len(requests)
         completed = subprocess.run(['bash', '-c', command], env=env, capture_output=True, text=True, timeout=10)

@@ -17,7 +17,7 @@ cat > "${TMP_DIR}/bin/systemctl" <<'EOF_SYSTEMCTL'
 set -euo pipefail
 case "$*" in
   *is-active*) [[ ! -f "${MEDIA_FIXTURE_ROOT}/stopped" ]] ;;
-  *MainPID*) cat "${MEDIA_FIXTURE_ROOT}/pid" ;;
+  *MainPID*) printf 'MainPID=%s\n' "$(cat "${MEDIA_FIXTURE_ROOT}/pid")" ;;
   *) exit 1 ;;
 esac
 EOF_SYSTEMCTL
@@ -88,6 +88,7 @@ for filter in \
   '.inbounds[0].users=[]' \
   '.route.rules=[{domain:["www.cloudflare.com"],action:"route",outbound:"warp-ep"}] | .route.final="direct"' \
   '.route.rules=[{inbound:["probe"],domain:["media.fixture.invalid"],action:"route",outbound:"direct"}]' \
+  '.route.rules=[{inbound:[],domain_suffix:["netflix.com"],action:"route",outbound:"direct"}]' \
   '.route.rules=[{inbound:["other"],invert:true,action:"route",outbound:"direct"}]' \
   '.route.rules=[{type:"logical",mode:"or",rules:[{domain_suffix:["invalid"]}],action:"route",outbound:"direct"}]' \
   '.route.rules=[{action:"route-options",override_address:"127.0.0.1"}]'; do
