@@ -7,7 +7,7 @@ on:
       base_ref:
         description: Comparison base (Git ref or commit SHA)
         required: true
-        default: main
+        default: origin/main
         type: string
 
 permissions:

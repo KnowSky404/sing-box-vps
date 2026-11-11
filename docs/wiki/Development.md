@@ -25,7 +25,7 @@ Actions 已关闭，该工作流也已手动禁用。未来获得明确授权后
 及该工作流；启用授权本身不等于运行授权。运行时只选择授权的 ref 和
 `base_ref`（Git ref 或提交 SHA）。工作流检出该次 dispatch 的 `github.sha`，通过
 `dev/verification/ci.sh BASE` 执行完整差异计划与宿主契约检查，保留日志和耗时。
-不要为了验证手动入口而实际启动 Actions。默认 `base_ref=main`；在 main 上与 main
+不要为了验证手动入口而实际启动 Actions。默认 `base_ref=origin/main`（SHA 检出时不依赖本地 main 分支）；在 main 上与 origin/main
 比较没有分支差异，只能证明所选契约检查，不是完整发布或运行态验收。
 
 未知影响仍须在分支内更新 `.github/verification-scope.txt`：首行为
