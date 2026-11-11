@@ -69,7 +69,9 @@ policy without manually triggering review. Follow AGENTS.md section 6.
 
 Menu service controls share the guarded Agent handlers. Recover pending journals before mutations; start/restart require a checked config. Uninstall confirms stopped state before file deletion and reclaims only ledger-owned firewall rules. On failure preserve reported recovery material; whole-uninstall rollback is not claimed. SubMan request files are cleaned on catchable signals, but an interrupted remote write still needs readback reconciliation.
 
-CI uses the complete branch diff plus a changed `.github/verification-scope.txt` bound to its merge-base when impact is unmapped. It runs host tests and preserves plans/logs/timings; selected Docker scenes remain a separate acceptance boundary. See [the debt remediation contract](../../docs/specs/technical-debt-remediation.md).
+GitHub Actions requires explicit user authorization for the workflow, ref and scope. Development, push, PR and merge authorization does not authorize CI. Never dispatch, rerun or indirectly trigger Actions without it; inspect enabled workflows/events before GitHub writes. Repository Actions and existing workflows default to disabled; enabling requires explicit authorization and does not authorize a run. Workflows default to workflow_dispatch only. Record unauthorized CI as not_run_not_authorized, not passed; retain any earlier failure and required-check blocker.
+
+Authorized CI uses the complete branch diff plus a changed `.github/verification-scope.txt` bound to its merge-base when impact is unmapped. It runs host tests and preserves plans/logs/timings; selected Docker scenes remain a separate acceptance boundary. See [the debt remediation contract](../../docs/specs/technical-debt-remediation.md).
 
 ## Storage Layout
 
