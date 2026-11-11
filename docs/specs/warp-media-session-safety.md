@@ -75,3 +75,21 @@ WireGuard 按公钥识别 peer，并从认证包更新其 endpoint。隔离 Linu
   默认接口，不提供外网。HTTP 本地 fixture 以 CONNECT 验证实际隧道转发。
 - 未部署生产、未重跑旧检测、未重启正式服务、未做真实 Cloudflare/流媒体或生产
   资源压力验收。旧控制机报告/备份在当前环境不可访问，不作为已读取证据。
+
+## 本地校验兼容性收尾（2026-11-11）
+
+本地独立复现发现：同一配置在 jq 1.7 通过，在 jq 1.8.1 进入组件归属检查时
+报 `Cannot check whether boolean has a string key`。最小表达式也能复现：
+布尔运算后紧接 `as` 绑定会使后续管道读取布尔值。
+
+`managed_component_live_route_rule_sets_match_state` 与
+`routing_policy_validate_merged_order` 将数据绑定移到布尔判断前，保留原有归属、
+重复标签和路由保护顺序条件。`tests/jq_guard_binding_compatibility.sh` 在两版 jq
+覆盖正常规则集、未知/重复规则集、非法类型、正常顺序和绕过保护的顺序。
+节点/网络独立性及配置共存用例使用真实 sing-box 1.14.4 和 jq 1.8.1 通过；
+媒体检测生命周期与菜单草稿隔离用例也通过。
+
+本轮验收仅使用本地复现、定向测试与本地审查，不读取、重跑或采用远程 CI 结果
+作为门禁。Actions 保持关闭。媒体通道源码、运行态 fixture 与原已验证版本字节
+相同，复用此前隔离 WireGuard/真实核心证据；该复用不扩大为新供应商或生产验收。
+脚本、README 和生成入口版本统一为 `2026111102`。

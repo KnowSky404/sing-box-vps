@@ -45,11 +45,11 @@ managed_component_live_route_rule_sets_match_state() {
           (($set.tag | startswith("warp-") | not) or ($set.tag | startswith("warp-remote-"))) and
           (any($state.components[]?;
             .role == "rule_set" and .enabled == true and .tag == $set.tag) | not)));
+    (.route // {}) as $route |
+    ($route.rule_set // []) as $sets |
     type == "object" and
     ((has("route") | not) or (.route | type == "object")) and
-    (.route // {}) as $route |
     ($route | ((has("rule_set") | not) or (.rule_set | type == "array"))) and
-    ($route.rule_set // []) as $sets |
     ($sets | type == "array" and length <= 128) and
     ([ $sets[] | select((legacy_download_detour(.) | not) or ((.tag // "") != "")) | .tag ] | unique | length) ==
       ([ $sets[] | select((legacy_download_detour(.) | not) or ((.tag // "") != "")) ] | length) and

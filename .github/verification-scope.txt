@@ -7,3 +7,5 @@ base 26d6714fb9704962f6688b75749dbfd705d3af68
 --test tests/node_network_independence.sh
 --test tests/routing_warp_legacy_baseline_repair.sh
 --test tests/routing_media_draft_independence.sh
+--test tests/jq_guard_binding_compatibility.sh
+--test tests/managed_config_coexistence.sh
