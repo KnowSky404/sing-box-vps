@@ -1,7 +1,21 @@
 
 # --- System Check & Dependencies ---
 install_dependencies() {
-  local selinux_package=''
+  local selinux_package='' dependency missing=n
+  if [[ "${1:-}" == missing_only ]]; then
+    for dependency in curl wget jq tar openssl uuidgen qrencode ip dig; do
+      command -v "${dependency}" >/dev/null 2>&1 || missing=y
+    done
+    if storage_selinux_active; then
+      for dependency in semanage restorecon; do
+        command -v "${dependency}" >/dev/null 2>&1 || missing=y
+      done
+    fi
+    if [[ "${missing}" == n && ( -s /etc/ssl/certs/ca-certificates.crt || -s /etc/pki/tls/certs/ca-bundle.crt ) ]]; then
+      log_info "基础依赖已齐全，跳过软件源刷新和重复安装。"
+      return 0
+    fi
+  fi
   log_info "正在安装必要的基础依赖..."
   case "${OS_NAME}" in
     debian|ubuntu)
@@ -19,6 +33,10 @@ install_dependencies() {
       ;;
   esac
   log_success "基础依赖安装完成。"
+}
+
+singbox_legacy_direct_action_count() {
+  jq '[.route.rules[]? | .. | objects | select(.action? == "direct")] | length' "${SINGBOX_CONFIG_FILE}"
 }
 
 # --- Sing-box Manager ---

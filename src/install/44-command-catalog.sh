@@ -1326,7 +1326,7 @@ command_catalog_json() {
       "sensitive": false,
       "confirmation": null,
       "concurrency": "exclusive",
-      "input_contract": "legacy optional latest or exact version; textual output",
+      "input_contract": "legacy optional latest or exact version; core config precheck without protocol state repair; blocks legacy direct actions for 1.14.4+; textual output",
       "service_impact": "restart",
       "docs": "Agent-CLI.md#操作目录",
       "reason": "legacy updater supports implicit/latest version and human output; use core.upgrade for structured automation",

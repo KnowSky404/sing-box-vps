@@ -24,6 +24,12 @@ are refused before config publication or core replacement; use a verified compat
 build. See [Protocol Coverage](../../docs/wiki/Protocol-Coverage.md) and
 [Advanced Components](../../docs/wiki/Advanced-Components.md) for the actual evidence.
 
+For 1.14.4+ targets, `legacy_direct_action` blocks updates before download. Read
+the component revision, back up, and separately approve `component rebuild` for
+baseline-owned rules; verify manual differences survive. Binary-only updates
+never migrate config. The ordinary updater checks core/config/service files and
+the live core config without reconstructing or repairing protocol state.
+
 ## Discover And Maintain Operations
 
 Run `sbv commands --json`, then `sbv schema <operation-id> --json` before choosing

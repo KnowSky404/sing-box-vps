@@ -51,7 +51,7 @@ fi
 output=$(timeout 5 bash -c "
   source '${TESTABLE_INSTALL}'
   check_root() { :; }
-  detect_existing_instance_state() { printf '%s\n' healthy; }
+  detect_existing_binary_update_state() { printf '%s\n' healthy; }
   update_singbox_binary_preserving_config() {
     printf '%s\n' \"update_singbox_version=\${SB_VERSION}\"
   }
@@ -65,7 +65,7 @@ fi
 output=$(timeout 5 bash -c "
   source '${TESTABLE_INSTALL}'
   check_root() { :; }
-  detect_existing_instance_state() { printf '%s\n' healthy; }
+  detect_existing_binary_update_state() { printf '%s\n' healthy; }
   update_singbox_binary_preserving_config() {
     printf '%s\n' \"update_singbox_version=\${SB_VERSION}\"
   }
@@ -76,7 +76,7 @@ if [[ "${output}" != *"update_singbox_version=latest"* ]]; then
   exit 1
 fi
 
-if timeout 5 bash -c "source '${TESTABLE_INSTALL}'; check_root() { :; }; detect_existing_instance_state() { printf '%s\n' healthy; }; main update sing-box 1" >/tmp/sbv-cli-update-invalid.out 2>&1; then
+if timeout 5 bash -c "source '${TESTABLE_INSTALL}'; check_root() { :; }; detect_existing_binary_update_state() { printf '%s\n' healthy; }; main update sing-box 1" >/tmp/sbv-cli-update-invalid.out 2>&1; then
   printf 'expected invalid sing-box version argument to fail\n' >&2
   exit 1
 fi
@@ -86,7 +86,7 @@ if ! grep -Fq '无效版本号' /tmp/sbv-cli-update-invalid.out; then
   exit 1
 fi
 
-if timeout 5 bash -c "source '${TESTABLE_INSTALL}'; check_root() { :; }; detect_existing_instance_state() { printf '%s\n' incomplete; }; main update sing-box 1.14.0" >/tmp/sbv-cli-update-incomplete.out 2>&1; then
+if timeout 5 bash -c "source '${TESTABLE_INSTALL}'; check_root() { :; }; detect_existing_binary_update_state() { printf '%s\n' incomplete; }; main update sing-box 1.14.0" >/tmp/sbv-cli-update-incomplete.out 2>&1; then
   printf 'expected incomplete sing-box instance update to fail\n' >&2
   exit 1
 fi
