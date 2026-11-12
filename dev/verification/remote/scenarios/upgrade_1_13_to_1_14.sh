@@ -94,6 +94,9 @@ EOF
   grep -Fqx 'sing-box version 1.14.4' <(sing-box version)
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/after.check.txt" sing-box check -c /root/.sing-box-vps/runtime/config.json
   verification_wait_for_service_active sing-box
+  # The ordinary updater checks the live core config without rebuilding state.
+  [[ "$(source /root/.sing-box-vps/bin/sbv; detect_existing_binary_update_state)" == healthy ]]
+  printf 'n\n' | sbv update sing-box 1.14.4
   verification_capture_command "${VERIFY_CURRENT_SCENARIO_DIR}/systemctl.status.txt" systemctl status sing-box --no-pager
   backup_path=$(jq -r '.backup' "${upgrade_path}")
   case "${backup_path}" in

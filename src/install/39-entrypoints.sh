@@ -3,6 +3,19 @@ install_or_reconfigure_singbox() {
   install_protocols_interactive "fresh"
 }
 
+# Binary-only updates do not render or repair protocol state. The core checks
+# the live config here and again after replacement, before restarting service.
+detect_existing_binary_update_state() {
+  if [[ -x "${SINGBOX_BIN_PATH}" && -f "${SINGBOX_SERVICE_FILE}" && -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    if validate_config_file >/dev/null 2>&1; then printf healthy; else printf incomplete; fi
+  elif [[ ! -e "${SINGBOX_BIN_PATH}" && ! -e "${SINGBOX_SERVICE_FILE}" && ! -e "${SINGBOX_CONFIG_FILE}" &&
+          ! -e "${SB_PROTOCOL_INDEX_FILE}" && ! -d "${SB_PROTOCOL_STATE_DIR}" ]]; then
+    printf fresh
+  else
+    printf incomplete
+  fi
+}
+
 update_singbox_binary_preserving_config() {
   local installed_ver installed_target_ver reinstall_choice before_service_state
   local backup_dir='' binary_backup='' library_backup_dir='' status=0 rollback_status=0
@@ -13,13 +26,19 @@ update_singbox_binary_preserving_config() {
   [[ "${installed_ver}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
   get_os_info || return $?
   get_arch || return $?
-  install_dependencies || return $?
+  install_dependencies missing_only || return $?
   if config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; then SB_ENABLE_WARP=y; else SB_ENABLE_WARP=n; fi
   load_warp_route_settings || return $?
   log_info "检测到现有安装，默认仅更新 sing-box 二进制并保留当前配置。"
   printf '当前版本: %s\n' "${installed_ver}"
   if [[ -z "${SB_VERSION:-}" ]]; then prompt_singbox_version || return $?; fi
   get_latest_version || return $?
+  local legacy_direct_count
+  legacy_direct_count=$(singbox_legacy_direct_action_count) || return 1
+  if (( legacy_direct_count > 0 )) && singbox_version_at_least "${SB_VERSION#v}" 1.14.4; then
+    log_warn 'operation=sing_box_update stage=prepare code=legacy_direct_action changed=false；旧 action: direct 不兼容目标核心。先备份并通过 sbv agent component rebuild --json --yes --expected-revision N 重建托管配置；手工规则须单独迁移为 action: route + outbound: direct。'
+    return 1
+  fi
   if [[ "${SB_VERSION#v}" == "${installed_ver}" ]]; then
     read -rp "目标版本与当前版本一致 (${installed_ver})，是否仍重新安装二进制? [y/N]: " reinstall_choice || return 1
     [[ "${reinstall_choice}" =~ ^[Yy]$ ]] || return 0
@@ -126,7 +145,7 @@ cli_update_singbox() {
     return 1
   fi
 
-  existing_instance_state=$(detect_existing_instance_state)
+  existing_instance_state=$(detect_existing_binary_update_state)
   case "${existing_instance_state}" in
     healthy)
       ;;
@@ -209,7 +228,7 @@ install_new_protocols_menu() {
 update_singbox_version_menu() {
   local existing_instance_state
 
-  existing_instance_state=$(detect_existing_instance_state)
+  existing_instance_state=$(detect_existing_binary_update_state)
 
   case "${existing_instance_state}" in
     healthy)

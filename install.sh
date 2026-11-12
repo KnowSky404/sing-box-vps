@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 # sing-box-vps 一键安装管理脚本 (All-in-One Standalone)
-# Version: 2026111102
+# Version: 2026111201
 # GitHub: https://github.com/KnowSky404/sing-box-vps
 # License: AGPL-3.0
 
 set -euo pipefail
 
 # --- Constants and File Paths ---
-readonly SCRIPT_VERSION="2026111102"
+readonly SCRIPT_VERSION="2026111201"
 readonly SB_SUPPORT_MAX_VERSION="1.14.4"
 # A single IPv6 wildcard socket accepts IPv4 and IPv6 in sing-box on Linux.
 readonly SB_DEFAULT_LISTEN_ADDRESS="::"
@@ -12809,7 +12809,21 @@ get_arch() {
 
 # --- System Check & Dependencies ---
 install_dependencies() {
-  local selinux_package=''
+  local selinux_package='' dependency missing=n
+  if [[ "${1:-}" == missing_only ]]; then
+    for dependency in curl wget jq tar openssl uuidgen qrencode ip dig; do
+      command -v "${dependency}" >/dev/null 2>&1 || missing=y
+    done
+    if storage_selinux_active; then
+      for dependency in semanage restorecon; do
+        command -v "${dependency}" >/dev/null 2>&1 || missing=y
+      done
+    fi
+    if [[ "${missing}" == n && ( -s /etc/ssl/certs/ca-certificates.crt || -s /etc/pki/tls/certs/ca-bundle.crt ) ]]; then
+      log_info "基础依赖已齐全，跳过软件源刷新和重复安装。"
+      return 0
+    fi
+  fi
   log_info "正在安装必要的基础依赖..."
   case "${OS_NAME}" in
     debian|ubuntu)
@@ -12827,6 +12841,10 @@ install_dependencies() {
       ;;
   esac
   log_success "基础依赖安装完成。"
+}
+
+singbox_legacy_direct_action_count() {
+  jq '[.route.rules[]? | .. | objects | select(.action? == "direct")] | length' "${SINGBOX_CONFIG_FILE}"
 }
 
 # --- Sing-box Manager ---
@@ -30645,13 +30663,14 @@ agent_config_compatibility_json() {
   local classification="neutral"
   local warnings_json='[]'
   local hy2_warnings_json='[]'
+  local legacy_direct_count=0
 
   if [[ ! -f "${SINGBOX_CONFIG_FILE}" ]] || ! jq -e '.' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
     jq -n \
       --arg classification "unreadable" \
       '{
         schema: {classification: $classification, legacy: false, modern_1_14: false},
-        legacy: {tls_acme_count: 0, download_detour_count: 0},
+        legacy: {tls_acme_count: 0, download_detour_count: 0, direct_action_count: 0},
         modern: {certificate_provider_count: 0, http_client_count: 0},
         warnings: [{code: "config_json_unreadable", message: "配置文件不存在或不是有效 JSON。"}]
       }'
@@ -30659,6 +30678,7 @@ agent_config_compatibility_json() {
   fi
 
   inline_acme_count=$(jq -r '[(.inbounds // [])[] | select(.tls.acme? != null)] | length' "${SINGBOX_CONFIG_FILE}")
+  legacy_direct_count=$(singbox_legacy_direct_action_count) || return 1
   download_detour_count=$(jq -r '[(.route.rule_set // [])[] | select(.download_detour? != null)] | length' "${SINGBOX_CONFIG_FILE}")
   certificate_provider_count=$(jq -r '(.certificate_providers // []) | length' "${SINGBOX_CONFIG_FILE}")
   http_client_count=$(jq -r '
@@ -30703,6 +30723,7 @@ agent_config_compatibility_json() {
 
   jq -n \
     --arg classification "${classification}" \
+    --argjson legacy_direct_count "${legacy_direct_count}" \
     --argjson inline_acme_count "${inline_acme_count}" \
     --argjson download_detour_count "${download_detour_count}" \
     --argjson certificate_provider_count "${certificate_provider_count}" \
@@ -30715,6 +30736,7 @@ agent_config_compatibility_json() {
         modern_1_14: ($classification == "modern_1_14" or $classification == "mixed")
       },
       legacy: {
+        direct_action_count: $legacy_direct_count,
         tls_acme_count: $inline_acme_count,
         download_detour_count: $download_detour_count
       },
@@ -30740,6 +30762,7 @@ agent_upgrade_check_json() {
   local direction="unknown"
   local target_supported=false
   local ready=false
+  local legacy_direct_blocked=false
 
   if ! target_version=$(normalize_singbox_version_input "${target_input}") || [[ "${target_version}" == "latest" ]]; then
     agent_json_error "invalid_version" "upgrade-check 需要完整版本号，例如 ${SB_SUPPORT_MAX_VERSION}。"
@@ -30751,7 +30774,11 @@ agent_upgrade_check_json() {
   active_state=$(systemctl is-active sing-box 2>/dev/null || true)
   managed_instance_state=$(detect_existing_instance_state_read_only)
   config_sha256=$(agent_file_sha256 "${SINGBOX_CONFIG_FILE}")
-  compatibility_json=$(agent_config_compatibility_json "${target_version}")
+  compatibility_json=$(agent_config_compatibility_json "${target_version}") || return 1
+  if [[ "$(jq -r '.legacy.direct_action_count // 0' <<< "${compatibility_json}")" -gt 0 ]] &&
+     singbox_version_at_least "${target_version}" 1.14.4; then
+    legacy_direct_blocked=true
+  fi
 
   if check_json=$(agent_singbox_check_json); then
     check_status=0
@@ -30774,6 +30801,7 @@ agent_upgrade_check_json() {
   fi
 
   blockers_json=$(jq -n \
+    --argjson legacy_direct_blocked "${legacy_direct_blocked}" \
     --arg current "${current_version}" \
     --arg direction "${direction}" \
     --arg managed_instance_state "${managed_instance_state}" \
@@ -30781,6 +30809,7 @@ agent_upgrade_check_json() {
     --argjson target_supported "${target_supported}" \
     --argjson current_check_ok "$([[ "${check_status}" == "0" ]] && printf 'true' || printf 'false')" \
     '[
+      if $legacy_direct_blocked then "legacy_direct_action" else empty end,
       if $target_supported != true then "target_unsupported" else empty end,
       if ($current | test("^[0-9]+\\.[0-9]+\\.[0-9]+$") | not) then "current_version_unknown" else empty end,
       if $direction == "downgrade" then "downgrade_not_allowed" else empty end,
@@ -36286,7 +36315,7 @@ command_catalog_json() {
       "sensitive": false,
       "confirmation": null,
       "concurrency": "exclusive",
-      "input_contract": "legacy optional latest or exact version; textual output",
+      "input_contract": "legacy optional latest or exact version; core config precheck without protocol state repair; blocks legacy direct actions for 1.14.4+; textual output",
       "service_impact": "restart",
       "docs": "Agent-CLI.md#操作目录",
       "reason": "legacy updater supports implicit/latest version and human output; use core.upgrade for structured automation",
@@ -41869,6 +41898,19 @@ install_or_reconfigure_singbox() {
   install_protocols_interactive "fresh"
 }
 
+# Binary-only updates do not render or repair protocol state. The core checks
+# the live config here and again after replacement, before restarting service.
+detect_existing_binary_update_state() {
+  if [[ -x "${SINGBOX_BIN_PATH}" && -f "${SINGBOX_SERVICE_FILE}" && -f "${SINGBOX_CONFIG_FILE}" ]]; then
+    if validate_config_file >/dev/null 2>&1; then printf healthy; else printf incomplete; fi
+  elif [[ ! -e "${SINGBOX_BIN_PATH}" && ! -e "${SINGBOX_SERVICE_FILE}" && ! -e "${SINGBOX_CONFIG_FILE}" &&
+          ! -e "${SB_PROTOCOL_INDEX_FILE}" && ! -d "${SB_PROTOCOL_STATE_DIR}" ]]; then
+    printf fresh
+  else
+    printf incomplete
+  fi
+}
+
 update_singbox_binary_preserving_config() {
   local installed_ver installed_target_ver reinstall_choice before_service_state
   local backup_dir='' binary_backup='' library_backup_dir='' status=0 rollback_status=0
@@ -41879,13 +41921,19 @@ update_singbox_binary_preserving_config() {
   [[ "${installed_ver}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
   get_os_info || return $?
   get_arch || return $?
-  install_dependencies || return $?
+  install_dependencies missing_only || return $?
   if config_has_warp_enabled "${SINGBOX_CONFIG_FILE}"; then SB_ENABLE_WARP=y; else SB_ENABLE_WARP=n; fi
   load_warp_route_settings || return $?
   log_info "检测到现有安装，默认仅更新 sing-box 二进制并保留当前配置。"
   printf '当前版本: %s\n' "${installed_ver}"
   if [[ -z "${SB_VERSION:-}" ]]; then prompt_singbox_version || return $?; fi
   get_latest_version || return $?
+  local legacy_direct_count
+  legacy_direct_count=$(singbox_legacy_direct_action_count) || return 1
+  if (( legacy_direct_count > 0 )) && singbox_version_at_least "${SB_VERSION#v}" 1.14.4; then
+    log_warn 'operation=sing_box_update stage=prepare code=legacy_direct_action changed=false；旧 action: direct 不兼容目标核心。先备份并通过 sbv agent component rebuild --json --yes --expected-revision N 重建托管配置；手工规则须单独迁移为 action: route + outbound: direct。'
+    return 1
+  fi
   if [[ "${SB_VERSION#v}" == "${installed_ver}" ]]; then
     read -rp "目标版本与当前版本一致 (${installed_ver})，是否仍重新安装二进制? [y/N]: " reinstall_choice || return 1
     [[ "${reinstall_choice}" =~ ^[Yy]$ ]] || return 0
@@ -41992,7 +42040,7 @@ cli_update_singbox() {
     return 1
   fi
 
-  existing_instance_state=$(detect_existing_instance_state)
+  existing_instance_state=$(detect_existing_binary_update_state)
   case "${existing_instance_state}" in
     healthy)
       ;;
@@ -42075,7 +42123,7 @@ install_new_protocols_menu() {
 update_singbox_version_menu() {
   local existing_instance_state
 
-  existing_instance_state=$(detect_existing_instance_state)
+  existing_instance_state=$(detect_existing_binary_update_state)
 
   case "${existing_instance_state}" in
     healthy)

@@ -337,13 +337,14 @@ agent_config_compatibility_json() {
   local classification="neutral"
   local warnings_json='[]'
   local hy2_warnings_json='[]'
+  local legacy_direct_count=0
 
   if [[ ! -f "${SINGBOX_CONFIG_FILE}" ]] || ! jq -e '.' "${SINGBOX_CONFIG_FILE}" &>/dev/null; then
     jq -n \
       --arg classification "unreadable" \
       '{
         schema: {classification: $classification, legacy: false, modern_1_14: false},
-        legacy: {tls_acme_count: 0, download_detour_count: 0},
+        legacy: {tls_acme_count: 0, download_detour_count: 0, direct_action_count: 0},
         modern: {certificate_provider_count: 0, http_client_count: 0},
         warnings: [{code: "config_json_unreadable", message: "配置文件不存在或不是有效 JSON。"}]
       }'
@@ -351,6 +352,7 @@ agent_config_compatibility_json() {
   fi
 
   inline_acme_count=$(jq -r '[(.inbounds // [])[] | select(.tls.acme? != null)] | length' "${SINGBOX_CONFIG_FILE}")
+  legacy_direct_count=$(singbox_legacy_direct_action_count) || return 1
   download_detour_count=$(jq -r '[(.route.rule_set // [])[] | select(.download_detour? != null)] | length' "${SINGBOX_CONFIG_FILE}")
   certificate_provider_count=$(jq -r '(.certificate_providers // []) | length' "${SINGBOX_CONFIG_FILE}")
   http_client_count=$(jq -r '
@@ -395,6 +397,7 @@ agent_config_compatibility_json() {
 
   jq -n \
     --arg classification "${classification}" \
+    --argjson legacy_direct_count "${legacy_direct_count}" \
     --argjson inline_acme_count "${inline_acme_count}" \
     --argjson download_detour_count "${download_detour_count}" \
     --argjson certificate_provider_count "${certificate_provider_count}" \
@@ -407,6 +410,7 @@ agent_config_compatibility_json() {
         modern_1_14: ($classification == "modern_1_14" or $classification == "mixed")
       },
       legacy: {
+        direct_action_count: $legacy_direct_count,
         tls_acme_count: $inline_acme_count,
         download_detour_count: $download_detour_count
       },
@@ -432,6 +436,7 @@ agent_upgrade_check_json() {
   local direction="unknown"
   local target_supported=false
   local ready=false
+  local legacy_direct_blocked=false
 
   if ! target_version=$(normalize_singbox_version_input "${target_input}") || [[ "${target_version}" == "latest" ]]; then
     agent_json_error "invalid_version" "upgrade-check 需要完整版本号，例如 ${SB_SUPPORT_MAX_VERSION}。"
@@ -443,7 +448,11 @@ agent_upgrade_check_json() {
   active_state=$(systemctl is-active sing-box 2>/dev/null || true)
   managed_instance_state=$(detect_existing_instance_state_read_only)
   config_sha256=$(agent_file_sha256 "${SINGBOX_CONFIG_FILE}")
-  compatibility_json=$(agent_config_compatibility_json "${target_version}")
+  compatibility_json=$(agent_config_compatibility_json "${target_version}") || return 1
+  if [[ "$(jq -r '.legacy.direct_action_count // 0' <<< "${compatibility_json}")" -gt 0 ]] &&
+     singbox_version_at_least "${target_version}" 1.14.4; then
+    legacy_direct_blocked=true
+  fi
 
   if check_json=$(agent_singbox_check_json); then
     check_status=0
@@ -466,6 +475,7 @@ agent_upgrade_check_json() {
   fi
 
   blockers_json=$(jq -n \
+    --argjson legacy_direct_blocked "${legacy_direct_blocked}" \
     --arg current "${current_version}" \
     --arg direction "${direction}" \
     --arg managed_instance_state "${managed_instance_state}" \
@@ -473,6 +483,7 @@ agent_upgrade_check_json() {
     --argjson target_supported "${target_supported}" \
     --argjson current_check_ok "$([[ "${check_status}" == "0" ]] && printf 'true' || printf 'false')" \
     '[
+      if $legacy_direct_blocked then "legacy_direct_action" else empty end,
       if $target_supported != true then "target_unsupported" else empty end,
       if ($current | test("^[0-9]+\\.[0-9]+\\.[0-9]+$") | not) then "current_version_unknown" else empty end,
       if $direction == "downgrade" then "downgrade_not_allowed" else empty end,

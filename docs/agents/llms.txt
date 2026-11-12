@@ -41,3 +41,5 @@ Protocol defaults and HY2 preflight: docs/wiki/Protocol-Instances.md#tcp-fast-op
 
 GitHub Actions authorization: AGENTS.md section 4.2.1 and docs/wiki/Development.md. No CI dispatch/rerun or indirect Actions trigger without explicit user authorization for the workflow/ref/scope. Push/PR/merge authorization does not include CI. Workflows are manual-only; unauthorized CI is not_run_not_authorized, never passed.
 WARP media safety: docs/specs/warp-media-session-safety.md; menu 12 -> 4 reuses an existing authenticated SOCKS/HTTP/Mixed ingress pinned to warp-ep, verifies WARP trace, and refuses ambiguous routes. Never launch a second endpoint with production WARP identity. Other ingress protocols require a separately approved solution; diagnostics never add listeners or change routing.
+
+Core updates: see Agent-CLI and Agent-Runbook for legacy_direct_action preflight and the separate, approved component rebuild before a 1.14.4+ binary update.
