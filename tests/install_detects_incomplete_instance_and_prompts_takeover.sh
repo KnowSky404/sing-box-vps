@@ -90,10 +90,19 @@ install_or_reconfigure_singbox() {
 }
 
 run_install_flow() {
-  local input=$1
+  local input=$1 expected_state=${2:-incomplete} actual_state
+  actual_state=$(detect_existing_instance_state)
+  if [[ "${actual_state}" != "${expected_state}" ]]; then
+    printf 'expected %s instance, got %s\n' "${expected_state}" "${actual_state}" >&2
+    return 1
+  fi
+  if [[ "${actual_state}" == fresh ]]; then
+    install_or_reconfigure_singbox
+    return $?
+  fi
 
-  if ! printf '%s\n' "${input}" | update_singbox_version_menu 2>&1; then
-    printf 'update_singbox_version_menu unexpectedly failed for input %s\n' "${input}" >&2
+  if ! printf '%s\n' "${input}" | prompt_incomplete_instance_action 2>&1; then
+    printf 'takeover menu unexpectedly failed for input %s\n' "${input}" >&2
     return 1
   fi
 }
@@ -106,7 +115,7 @@ exit 0
 EOF
 chmod +x "${SBV_BIN_PATH}"
 
-fresh_output=$(run_install_flow '0')
+fresh_output=$(run_install_flow '0' fresh)
 fresh_plain_output=$(strip_ansi "${fresh_output}")
 
 if [[ "${fresh_plain_output}" != *"INSTALL_OR_RECONFIGURE_CALLED"* ]]; then

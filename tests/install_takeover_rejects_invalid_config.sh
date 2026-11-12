@@ -124,7 +124,7 @@ EOF
 
 run_takeover_expecting_invalid_config_failure() {
   set +e
-  TAKEOVER_OUTPUT=$(printf '1\n' | update_singbox_version_menu 2>&1)
+  TAKEOVER_OUTPUT=$(printf '1\n' | prompt_incomplete_instance_action 2>&1)
   local status=$?
   set -e
 

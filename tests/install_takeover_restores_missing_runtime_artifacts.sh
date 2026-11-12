@@ -193,7 +193,7 @@ reset_runtime_stub_counters() {
 }
 
 run_takeover_from_incomplete_menu() {
-  if ! TAKEOVER_OUTPUT=$(printf '1\n' | update_singbox_version_menu 2>&1); then
+  if ! TAKEOVER_OUTPUT=$(printf '1\n' | prompt_incomplete_instance_action 2>&1); then
     printf 'expected takeover flow to succeed, got:\n%s\n' "${TAKEOVER_OUTPUT}" >&2
     exit 1
   fi
@@ -413,7 +413,7 @@ scenario_missing_config_stops_before_runtime_repair() {
   reset_runtime_stub_counters
   write_protocol_state "1.13.5"
 
-  if TAKEOVER_OUTPUT=$(printf '1\n' | update_singbox_version_menu 2>&1); then
+  if TAKEOVER_OUTPUT=$(printf '1\n' | prompt_incomplete_instance_action 2>&1); then
     printf 'expected takeover flow without config.json to fail clearly, got:\n%s\n' "${TAKEOVER_OUTPUT}" >&2
     exit 1
   fi
