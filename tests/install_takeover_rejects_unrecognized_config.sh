@@ -67,7 +67,7 @@ write_service_file
 write_unknown_protocol_config
 
 set +e
-TAKEOVER_OUTPUT=$(printf '1\n' | update_singbox_version_menu 2>&1)
+TAKEOVER_OUTPUT=$(printf '1\n' | prompt_incomplete_instance_action 2>&1)
 TAKEOVER_STATUS=$?
 set -e
 

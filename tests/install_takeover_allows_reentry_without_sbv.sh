@@ -109,7 +109,7 @@ EOF
 }
 
 run_takeover() {
-  if ! TAKEOVER_OUTPUT=$(printf '1\n' | update_singbox_version_menu 2>&1); then
+  if ! TAKEOVER_OUTPUT=$(printf '1\n' | prompt_incomplete_instance_action 2>&1); then
     printf 'expected takeover flow to succeed, got:\n%s\n' "${TAKEOVER_OUTPUT}" >&2
     exit 1
   fi
