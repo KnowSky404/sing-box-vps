@@ -67,6 +67,27 @@ ci_core_version() {
   printf '%s\n' "${version}"
 }
 
+ci_check_core_scope() {
+  local test_file
+  for test_file in "${VERIFY_PLAN_TESTS[@]}"; do
+    # Paired compatibility checks also need legacy input on older candidates.
+    case "${test_file}" in
+      tests/singbox_1_14_compatibility.sh|tests/shadowsocks_export_client.sh)
+        if [[ -z "${SINGBOX_BINARY_113:-}" || -z "${SINGBOX_BINARY_114:-}" ]]; then
+          verification_plan_error "Selected check requires SINGBOX_BINARY_113 and SINGBOX_BINARY_114: ${test_file}"
+          return 2
+        fi
+        ;;
+    esac
+    # The existing fixtures read the core directly or through a named loop.
+    if [[ -z "${SINGBOX_BINARY_114:-}" ]] &&
+      grep -Eq '\$\{?SINGBOX_BINARY_114\b|^[[:space:]]*for [[:alnum:]_]+ in SINGBOX_BINARY_113 SINGBOX_BINARY_114\b' "${test_file}"; then
+      verification_plan_error "Selected check requires SINGBOX_BINARY_114: ${test_file}"
+      return 2
+    fi
+  done
+}
+
 main() {
   local base=${1:?base revision required} scope_file=.github/verification-scope.txt
   local scope_changed=n file scope_base option value extra line run_dir summary provenance
@@ -173,6 +194,10 @@ main() {
     fi
   )
   printf '%s\n' "${provenance}" > "${summary}"
+  if ! ci_check_core_scope; then
+    printf 'local_status=required_not_run\nhost_gate=failed\n' >> "${summary}"
+    return 2
+  fi
   VERIFY_SKIP_LOCAL_TESTS=0 run_local_tests "${run_dir}" 1 || status=$?
   if [[ ! -f "${summary}" || -L "${summary}" ]]; then
     verification_plan_error 'CI summary is missing or invalid'
