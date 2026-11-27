@@ -69,7 +69,11 @@ jobs:
             printf 'The comparison base must be in protected main history.\n' >&2
             exit 2
           fi
-          ACTUAL_BASE=$(git merge-base "$TRUSTED_MAIN_SHA" "$EXPECTED_HEAD")
+          if git merge-base --is-ancestor "$EXPECTED_HEAD" "$TRUSTED_MAIN_SHA"; then
+            ACTUAL_BASE=$(git merge-base "$EXPECTED_BASE" "$EXPECTED_HEAD")
+          else
+            ACTUAL_BASE=$(git merge-base "$TRUSTED_MAIN_SHA" "$EXPECTED_HEAD")
+          fi
           if [[ "$ACTUAL_BASE" != "$EXPECTED_BASE" ]]; then
             printf 'The authorized base differs from the candidate merge base %s.\n' "$ACTUAL_BASE" >&2
             exit 2
