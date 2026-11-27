@@ -69,14 +69,15 @@ ci_core_version() {
 
 ci_check_core_scope() {
   local test_file
-  if [[ " ${VERIFY_CHANGED_FILES[*]} " == *' tests/routing_policy_private_runtime.py '* &&
-    -z "${SINGBOX_BINARY_114:-}" ]]; then
-    verification_plan_error 'Changed routing probe requires SINGBOX_BINARY_114'
-    return 2
-  fi
   for test_file in "${VERIFY_PLAN_TESTS[@]}"; do
     # Paired compatibility checks also need legacy input on older candidates.
     case "${test_file}" in
+      tests/routing_policy_config.sh|tests/routing_policy_instance_baseline.sh)
+        if [[ -z "${SINGBOX_BINARY_114:-}" ]]; then
+          verification_plan_error "Selected routing check requires SINGBOX_BINARY_114: ${test_file}"
+          return 2
+        fi
+        ;;
       tests/managed_openvpn_endpoint_runtime.sh)
         if [[ -c /dev/net/tun ]] && ! grep -Fq '${SBV_CI_HOST_ONLY:-0}' "${test_file}"; then
           verification_plan_error 'Selected OpenVPN fixture lacks host-only TUN isolation'
@@ -217,7 +218,8 @@ main() {
     printf 'local_status=required_not_run\nhost_gate=failed\n' >> "${summary}"
     return 2
   fi
-  if [[ " ${VERIFY_CHANGED_FILES[*]} " == *' tests/routing_policy_private_runtime.py '* ]]; then
+  if [[ " ${VERIFY_PLAN_TESTS[*]} " == *' tests/routing_policy_config.sh '* ||
+    " ${VERIFY_PLAN_TESTS[*]} " == *' tests/routing_policy_instance_baseline.sh '* ]]; then
     export ROUTING_POLICY_TEST_REAL_CORE="${SINGBOX_BINARY_114}"
   fi
   VERIFY_SKIP_LOCAL_TESTS=0 SBV_CI_HOST_ONLY=1 SBV_TEST_ISOLATED_LISTENER_WILDCARD=0 \
