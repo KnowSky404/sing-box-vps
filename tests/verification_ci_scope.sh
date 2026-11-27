@@ -12,7 +12,7 @@ printf 'dev/verification-runs/\n' > "${FIXTURE}/.gitignore"
 printf '#!/usr/bin/env bash\n: baseline\n' > "${FIXTURE}/install.sh"
 printf 'fixture readme\n' > "${FIXTURE}/README.md"
 printf 'base initial\n' > "${FIXTURE}/.github/verification-scope.txt"
-for test in $(grep -oE 'tests/[a-zA-Z0-9_]+\.sh' "${REPO_ROOT}/dev/verification/ci.sh") tests/fixture_changed.sh tests/fixture_requested.sh tests/install_build_sync.sh tests/readme_mentions_current_versions.sh tests/default_dual_stack_runtime.sh tests/bootstrap_download.sh; do
+for test in $(grep -oE 'tests/[a-zA-Z0-9_]+\.sh' "${REPO_ROOT}/dev/verification/ci.sh") tests/fixture_changed.sh tests/fixture_requested.sh tests/install_build_sync.sh tests/readme_mentions_current_versions.sh tests/default_dual_stack_runtime.sh tests/bootstrap_download.sh tests/http_structured_takeover.sh; do
   cat <<'TEST' > "${FIXTURE}/${test}"
 #!/usr/bin/env bash
 set -euo pipefail
@@ -49,6 +49,10 @@ if [[ -n "${CI_SKIP_HOST_TEST:-}" && "${BASH_SOURCE[0]##*/}" == wiki_documentati
 fi
 if [[ "${BASH_SOURCE[0]##*/}" == managed_listener_resources.sh ]]; then
   printf 'SKIP isolated IPv6 wildcard startup contrast: Docker only\n'
+fi
+if [[ -n "${CI_OLDER_TAKEOVER:-}" && "${BASH_SOURCE[0]##*/}" == http_structured_takeover.sh ]]; then
+  printf 'SKIP HTTP real-core check: binary unavailable\n'
+  printf 'HTTP structured takeover checks passed; real core checks=%s\n' "${CI_OLDER_TAKEOVER}"
 fi
 TEST
 done
@@ -171,6 +175,26 @@ if SINGBOX_BINARY_114="${TMP_DIR}/core" CI_SKIP_HOST_TEST='SKIP HTTP real-core c
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Fxq local_status=required_not_run "${run_dir}/summary.log"
 grep -Fxq host_gate=failed "${run_dir}/summary.log"
+
+printf ': select older takeover test\n' >> "${FIXTURE}/tests/http_structured_takeover.sh"
+SINGBOX_BINARY_114="${TMP_DIR}/core" CI_OLDER_TAKEOVER=1 expect_success
+if SINGBOX_BINARY_114="${TMP_DIR}/core" CI_OLDER_TAKEOVER=0 run_ci; then exit 1; fi
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq local_status=required_not_run "${run_dir}/summary.log"
+git -C "${FIXTURE}" restore tests/http_structured_takeover.sh
+
+# A scanner failure is distinct from a report with no skipped checks.
+mkdir "${TMP_DIR}/bad-scanner"
+cat > "${TMP_DIR}/bad-scanner/awk" <<'TEST'
+#!/usr/bin/env bash
+[[ "${*: -1}" != */local-tests/*.log ]] || exit 2
+exec "${CI_REAL_AWK}" "$@"
+TEST
+chmod +x "${TMP_DIR}/bad-scanner/awk"
+if CI_REAL_AWK=$(command -v awk) PATH="${TMP_DIR}/bad-scanner:${PATH}" run_ci; then exit 1; fi
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq host_gate=failed "${run_dir}/summary.log"
+if grep -Fxq host_gate=passed "${run_dir}/summary.log"; then exit 1; fi
 
 printf ': select listener test\n' >> "${FIXTURE}/tests/managed_listener_resources.sh"
 expect_success
