@@ -55,7 +55,9 @@ gh workflow run command-contract.yml --ref main -f head_sha="$task_head" -f base
 `command-contract` 检查且取消/跳过/失败无法通过，再在 main 的 Rules/Protection 中选择
 该检查，保留 PR、线性历史、审查对话和管理员门禁。
 
-未集成候选的范围基线须与实际 merge-base 一致。已集成提交的实际集成差异若包含修改后的范围文件，可沿用文件声明的受保护祖先，并记录范围原基线与实际验证基线。
+未集成候选的范围基线须与实际 merge-base 一致。已集成范围若依赖显式选测，须使用干净
+候选和范围内唯一的已提交选测声明。可沿用该声明的受保护祖先，报告同时记录原声明基线及
+实际验证基线。跨多个选测声明时，分别按各 PR 的集成范围验证。
 
 未知影响仍须在分支内更新 `.github/verification-scope.txt`：首行为
 `base <merge-base SHA>`，后续每行一个 `--test tests/<name>.sh` 或 `--scenario <name>`。

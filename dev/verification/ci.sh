@@ -114,7 +114,7 @@ ci_check_core_scope() {
 
 main() {
   local base=${1:?base revision required} scope_file=.github/verification-scope.txt
-  local scope_changed=n integrated=n file scope_base='' option value extra line run_dir summary provenance local_status
+  local scope_changed=n integrated=n scope_updates file scope_base='' option value extra line run_dir summary provenance local_status
   local core_113_version core_114_version core_113_digest core_114_digest
   local head head_tree expected_base start_snapshot worktree_status worktree_state=clean status=0
   local -a selectors=() selected_tests tested_log_digests=() contracts=(
@@ -185,6 +185,13 @@ main() {
     if [[ "${scope_changed}" != y || ! -f "${scope_file}" || -L "${scope_file}" ]]; then
       verification_plan_error 'CI needs a changed .github/verification-scope.txt bound to this merge base'
       return 2
+    fi
+    if [[ "${integrated}" == y ]]; then
+      scope_updates=$(git rev-list --count --first-parent "${VERIFY_PLAN_BASE}..${head}" -- "${scope_file}")
+      if [[ "${worktree_state}" != clean || "${scope_updates}" != 1 ]]; then
+        verification_plan_error 'Integrated CI requires one committed scope declaration in the approved range'
+        return 2
+      fi
     fi
     {
       IFS=' ' read -r option scope_base extra
