@@ -10,7 +10,7 @@ source "${SCRIPT_DIR}/common.sh"
 source "${SCRIPT_DIR}/planner.sh"
 
 run_local_tests() {
-  local run_dir=$1 require_checks=${2:-0} test_file test_log syntax_file status started legacy_unselected=0
+  local run_dir=$1 require_checks=${2:-0} test_file test_log test_result syntax_file status started legacy_unselected=0
   if [[ -z "${SINGBOX_BINARY_113:-}" && -x "${SINGBOX_BINARY_114:-}" ]]; then
     legacy_unselected=1
   fi
@@ -30,18 +30,24 @@ run_local_tests() {
     if env -u VERIFY_SKIP_REMOTE VERIFY_SKIP_LOCAL_TESTS=1 bash "${test_file}" \
       > "${test_log}" 2>&1; then
       [[ -f "${test_log}" && ! -L "${test_log}" ]] || return 2
-      if [[ "${require_checks}" == 1 ]] && awk -v test="${test_file}" -v legacy="${legacy_unselected}" '
-        test == "tests/managed_listener_resources.sh" && /^SKIP isolated IPv6 wildcard startup contrast:/ { next }
-        legacy && /^SKIP [^:]+: SINGBOX_BINARY_113 (is )?unavailable$/ { next }
-        /^SKIP([ :]|$)|^[^:]+ (skipped|not run)(:|$)/ { found=1 }
-        END { exit !found }
-      ' "${test_log}"; then
-        printf '%s\tskipped\t%s\n' "${test_file}" "$((SECONDS - started))" >> "${run_dir}/local-tests/results.tsv" || return $?
+      test_result=passed
+      if [[ "${require_checks}" == 1 ]]; then
+        test_result=$(awk -v test="${test_file}" -v legacy="${legacy_unselected}" '
+          test == "tests/managed_listener_resources.sh" && /^SKIP isolated IPv6 wildcard startup contrast:/ { next }
+          legacy && /^SKIP [^:]+: SINGBOX_BINARY_113 (is )?unavailable$/ { next }
+          legacy && test ~ /^tests\/(http|shadowsocks|socks)_structured_takeover\.sh$/ &&
+            /^SKIP (HTTP|Shadowsocks|SOCKS) real-core check: binary unavailable$/ { older_takeover=1; next }
+          / structured takeover checks passed; real core checks=1$/ { verified_core=1 }
+          /^SKIP([ :]|$)|^[^:]+ (skipped|not run)(:|$)/ { missing=1 }
+          END { print missing || (older_takeover && !verified_core) ? "skipped" : "passed" }
+        ' "${test_log}") || return 2
+      fi
+      printf '%s\t%s\t%s\n' "${test_file}" "${test_result}" "$((SECONDS - started))" >> "${run_dir}/local-tests/results.tsv" || return $?
+      if [[ "${test_result}" == skipped ]]; then
         printf 'local_status=required_not_run\n' >> "${run_dir}/summary.log"
         printf 'Required host check skipped: %s\n' "${test_file}" >&2
         return 2
       fi
-      printf '%s\tpassed\t%s\n' "${test_file}" "$((SECONDS - started))" >> "${run_dir}/local-tests/results.tsv" || return $?
       printf 'local_test_passed=%s elapsed_seconds=%s\n' "${test_file}" "$((SECONDS - started))"
     else
       status=$?
