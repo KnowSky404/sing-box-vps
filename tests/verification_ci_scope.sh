@@ -46,10 +46,11 @@ if [[ -n "${CI_DAMAGE_EARLIER_LOG:-}" && "${BASH_SOURCE[0]##*/}" == wiki_documen
     esac
   done
 fi
-if [[ "${CI_REMOVE_SUMMARY:-}" == 1 && "${BASH_SOURCE[0]##*/}" == wiki_documentation.sh ]]; then
+if [[ -n "${CI_REMOVE_SUMMARY:-}" && "${BASH_SOURCE[0]##*/}" == wiki_documentation.sh ]]; then
   for summary in dev/verification-runs/*/summary.log; do
     [[ ! -f "${summary}" ]] || rm -- "${summary}"
   done
+  if [[ "${CI_REMOVE_SUMMARY}" == fail ]]; then exit 42; fi
 fi
 if [[ "${CI_DAMAGE_PLAN:-}" == 1 && "${BASH_SOURCE[0]##*/}" == wiki_documentation.sh ]]; then
   for plan in dev/verification-runs/*/plan.txt; do
@@ -173,6 +174,15 @@ run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Fxq evidence=results_incomplete "${run_dir}/summary.log"
 grep -Fxq "head=${BASE}" "${run_dir}/summary.log"
 if grep -Fxq host_gate=passed "${run_dir}/summary.log"; then exit 1; fi
+
+status=0
+CI_REMOVE_SUMMARY=fail run_ci || status=$?
+[[ "${status}" == 42 ]]
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq "head=${BASE}" "${run_dir}/summary.log"
+grep -Fxq "base=${BASE}" "${run_dir}/summary.log"
+grep -Fxq local_status=failed "${run_dir}/summary.log"
+grep -Fxq host_gate=failed "${run_dir}/summary.log"
 
 printf '#!/usr/bin/env bash\nprintf "sing-box version 1.14.4\\n"\n' > "${TMP_DIR}/core"
 printf '#!/usr/bin/env bash\nprintf "sing-box version 1.13.18\\n"\n' > "${TMP_DIR}/core113"
@@ -407,7 +417,13 @@ git -C "${FIXTURE}" cherry-pick "${TASK_COMMIT}" >/dev/null
 assert_rejected
 GITHUB_EVENT_NAME=push GITHUB_REF=refs/heads/main assert_rejected
 INTEGRATED_HEAD=$(git -C "${FIXTURE}" rev-parse HEAD)
-bash "${REPO_ROOT}/dev/verification/ci.sh" "${BASE}" "${FIXTURE}" "${INTEGRATED_HEAD}" > "${TMP_DIR}/output" 2>&1
+git -C "${FIXTURE}" update-ref refs/remotes/origin/main "${INTEGRATED_HEAD}"
+DRIVER_FIXTURE="${TMP_DIR}/protected-driver"
+git clone --quiet --no-hardlinks "${FIXTURE}" "${DRIVER_FIXTURE}"
+git -C "${DRIVER_FIXTURE}" checkout --quiet --detach "${INTEGRATED_HEAD}"
+if bash "${DRIVER_FIXTURE}/dev/verification/ci.sh" "${BASE}" "${FIXTURE}" "${BASE}" > "${TMP_DIR}/output" 2>&1; then exit 1; fi
+grep -Fq 'Protected main revision does not match the verifier checkout' "${TMP_DIR}/output"
+bash "${DRIVER_FIXTURE}/dev/verification/ci.sh" "${BASE}" "${FIXTURE}" "${INTEGRATED_HEAD}" > "${TMP_DIR}/output" 2>&1
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Fxq "base=${BASE}" "${run_dir}/summary.log"
 grep -Fxq "scope_base=${ORIGINAL_BASE}" "${run_dir}/summary.log"

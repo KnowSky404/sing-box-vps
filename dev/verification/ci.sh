@@ -114,7 +114,7 @@ ci_check_core_scope() {
 
 main() {
   local base=${1:?base revision required} scope_file=.github/verification-scope.txt
-  local scope_changed=n integrated=n file scope_base='' option value extra line run_dir summary provenance
+  local scope_changed=n integrated=n file scope_base='' option value extra line run_dir summary provenance local_status
   local core_113_version core_114_version core_113_digest core_114_digest
   local head head_tree expected_base start_snapshot worktree_status worktree_state=clean status=0
   local -a selectors=() selected_tests tested_log_digests=() contracts=(
@@ -145,8 +145,11 @@ main() {
   head=$(git rev-parse --verify HEAD)
   head_tree=$(git rev-parse "${head}^{tree}")
   if [[ -n "${3:-}" ]]; then
-    if [[ ! "$3" =~ ^[0-9a-f]{40}$ ]] || ! git cat-file -e "$3^{commit}"; then
-      verification_plan_error 'Invalid protected main revision'
+    if [[ ! "$3" =~ ^[0-9a-f]{40}$ ||
+      "$(git -C "${CI_VERIFICATION_ROOT}" rev-parse --verify HEAD)" != "$3" ]] ||
+      ! git -C "${CI_VERIFICATION_ROOT}" diff --no-ext-diff --quiet "$3" -- ci.sh common.sh run.sh planner.sh selection.sh ||
+      ! git merge-base --is-ancestor "$3" refs/remotes/origin/main; then
+      verification_plan_error 'Protected main revision does not match the verifier checkout'
       return 2
     fi
     if git merge-base --is-ancestor "${head}" "$3"; then integrated=y; fi
@@ -246,23 +249,27 @@ main() {
   fi
   VERIFY_SKIP_LOCAL_TESTS=0 SBV_CI_HOST_ONLY=1 SBV_TEST_ISOLATED_LISTENER_WILDCARD=0 \
     run_local_tests "${run_dir}" tested_log_digests || status=$?
-  if [[ ! -f "${summary}" || -L "${summary}" ]]; then
+  if [[ -L "${summary}" || ( -e "${summary}" && ! -f "${summary}" ) ]]; then
     verification_plan_error 'CI summary is missing or invalid'
     return 2
   fi
   if ! ci_inputs_match "${head}" "${start_snapshot}" ||
     [[ "$(ci_core_digest "${SINGBOX_BINARY_113:-}")" != "${core_113_digest}" ||
        "$(ci_core_digest "${SINGBOX_BINARY_114:-}")" != "${core_114_digest}" ]]; then
-    printf 'evidence=inputs_changed\nhost_gate=failed\n' >> "${summary}"
+    printf '%s\nevidence=inputs_changed\nhost_gate=failed\n' "${provenance}" > "${summary}"
     verification_plan_error 'CI inputs changed during host verification'
     return 2
   fi
   if [[ "${status}" != 0 ]]; then
-    printf 'host_gate=failed\n' >> "${summary}"
+    local_status=failed
+    if [[ -f "${summary}" && "$(tail -n 1 "${summary}")" == "local_status=required_not_run" ]]; then
+      local_status=required_not_run
+    fi
+    printf '%s\nlocal_status=%s\nhost_gate=failed\n' "${provenance}" "${local_status}" > "${summary}"
     return "${status}"
   fi
   if ! ci_results_match "${run_dir}" tested_log_digests ||
-    [[ ! -f "${run_dir}/plan.txt" || -L "${run_dir}/plan.txt" ||
+    [[ ! -f "${summary}" || ! -f "${run_dir}/plan.txt" || -L "${run_dir}/plan.txt" ||
       "$(< "${run_dir}/plan.txt")" != "$(verification_print_plan)" ||
       "$(< "${summary}")" != "${provenance}"$'\nlocal_status=passed' ]]; then
     printf '%s\nevidence=results_incomplete\nhost_gate=failed\n' "${provenance}" > "${summary}"
