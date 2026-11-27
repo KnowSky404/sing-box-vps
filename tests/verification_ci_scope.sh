@@ -48,9 +48,11 @@ if [[ -n "${CI_SKIP_HOST_TEST:-}" && "${BASH_SOURCE[0]##*/}" == wiki_documentati
   printf '%s\n' "${CI_SKIP_HOST_TEST}"
 fi
 if [[ "${BASH_SOURCE[0]##*/}" == managed_listener_resources.sh ]]; then
+  [[ "${SBV_TEST_ISOLATED_LISTENER_WILDCARD:-1}" == 0 ]]
   printf 'SKIP isolated IPv6 wildcard startup contrast: Docker only\n'
 fi
 if [[ "${BASH_SOURCE[0]##*/}" == managed_openvpn_endpoint_runtime.sh ]]; then
+  [[ "${SBV_CI_HOST_ONLY:-0}" == 1 ]]
   printf 'SKIP OpenVPN system endpoint runtime: TUN unavailable\n'
 fi
 if [[ "${BASH_SOURCE[0]##*/}" == routing_policy_config.sh && -n "${CI_EXPECT_ROUTING_CORE:-}" ]]; then
