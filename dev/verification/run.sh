@@ -10,7 +10,7 @@ source "${SCRIPT_DIR}/common.sh"
 source "${SCRIPT_DIR}/planner.sh"
 
 run_local_tests() {
-  local run_dir=$1 test_file syntax_file status started
+  local run_dir=$1 require_checks=${2:-0} test_file test_log syntax_file status started
   for syntax_file in "${VERIFY_PLAN_SYNTAX[@]}"; do
     bash -n "${REPO_ROOT}/${syntax_file}" || return $?
   done
@@ -22,16 +22,24 @@ run_local_tests() {
   printf 'test\tstatus\telapsed_seconds\n' > "${run_dir}/local-tests/results.tsv" || return $?
   for test_file in "${VERIFY_PLAN_TESTS[@]}"; do
     started=${SECONDS}
+    test_log="${run_dir}/local-tests/${test_file##*/}.log"
     printf 'local_test=%s\n' "${test_file}"
     if env -u VERIFY_SKIP_REMOTE VERIFY_SKIP_LOCAL_TESTS=1 bash "${test_file}" \
-      > "${run_dir}/local-tests/${test_file##*/}.log" 2>&1; then
+      > "${test_log}" 2>&1; then
+      [[ -f "${test_log}" && ! -L "${test_log}" ]] || return 2
+      if [[ "${require_checks}" == 1 ]] && grep -Eq '^SKIP([ :]|$)|^[^:]+ skipped:' "${test_log}"; then
+        printf '%s\tskipped\t%s\n' "${test_file}" "$((SECONDS - started))" >> "${run_dir}/local-tests/results.tsv" || return $?
+        printf 'local_status=required_not_run\n' >> "${run_dir}/summary.log"
+        printf 'Required host check skipped: %s\n' "${test_file}" >&2
+        return 2
+      fi
       printf '%s\tpassed\t%s\n' "${test_file}" "$((SECONDS - started))" >> "${run_dir}/local-tests/results.tsv" || return $?
       printf 'local_test_passed=%s elapsed_seconds=%s\n' "${test_file}" "$((SECONDS - started))"
     else
       status=$?
       printf '%s\tfailed:%s\t%s\n' "${test_file}" "${status}" "$((SECONDS - started))" >> "${run_dir}/local-tests/results.tsv"
       printf 'local_test_failed=%s status=%s\n' "${test_file}" "${status}" >&2
-      tail -n 40 "${run_dir}/local-tests/${test_file##*/}.log" >&2
+      tail -n 40 "${test_log}" >&2
       printf 'local_status=failed\n' >> "${run_dir}/summary.log"
       return "${status}"
     fi

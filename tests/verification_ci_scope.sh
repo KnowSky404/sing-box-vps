@@ -41,8 +41,11 @@ if [[ "${CI_DAMAGE_PLAN:-}" == 1 && "${BASH_SOURCE[0]##*/}" == wiki_documentatio
     [[ ! -f "${plan}" ]] || : > "${plan}"
   done
 fi
-if [[ "${CI_DRIFT_CORE:-}" == 1 && "${BASH_SOURCE[0]##*/}" == install_build_sync.sh ]]; then
-  printf '# changed bytes, same version\n' >> "${SINGBOX_BINARY_114}"
+if [[ -n "${CI_DRIFT_CORE:-}" && "${BASH_SOURCE[0]##*/}" == install_build_sync.sh ]]; then
+  printf '# changed bytes, same version\n' >> "${CI_DRIFT_CORE}"
+fi
+if [[ "${CI_SKIP_HOST_TEST:-}" == 1 && "${BASH_SOURCE[0]##*/}" == wiki_documentation.sh ]]; then
+  printf 'SKIP fixture: missing dependency\n'
 fi
 TEST
 done
@@ -58,7 +61,7 @@ BASE=$(git -C "${FIXTURE}" rev-parse HEAD)
 ORIGINAL_BASE=${BASE}
 export CI_SCOPE_EXECUTION_LOG="${TMP_DIR}/executed-tests"
 export VERIFY_SKIP_LOCAL_TESTS=1
-unset SINGBOX_BINARY_114
+unset SINGBOX_BINARY_113 SINGBOX_BINARY_114
 run_ci() {
   local run_dir
   rm -f "${CI_SCOPE_EXECUTION_LOG}"
@@ -134,10 +137,20 @@ if grep -Fxq host_gate=passed "${run_dir}/summary.log"; then exit 1; fi
 
 printf '#!/usr/bin/env bash\nprintf "mock 1.14.4\\n"\n' > "${TMP_DIR}/core"
 chmod +x "${TMP_DIR}/core"
-if SINGBOX_BINARY_114="${TMP_DIR}/core" CI_DRIFT_CORE=1 run_ci; then exit 1; fi
+if SINGBOX_BINARY_114="${TMP_DIR}/core" CI_DRIFT_CORE="${TMP_DIR}/core" run_ci; then exit 1; fi
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Fxq evidence=inputs_changed "${run_dir}/summary.log"
 grep -Fxq host_gate=failed "${run_dir}/summary.log"
+if SINGBOX_BINARY_113="${TMP_DIR}/core" CI_DRIFT_CORE="${TMP_DIR}/core" run_ci; then exit 1; fi
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Eq '^validation_core_113_sha256=[0-9a-f]{64}$' "${run_dir}/summary.log"
+grep -Fxq evidence=inputs_changed "${run_dir}/summary.log"
+
+if CI_SKIP_HOST_TEST=1 run_ci; then exit 1; fi
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq local_status=required_not_run "${run_dir}/summary.log"
+grep -Fxq host_gate=failed "${run_dir}/summary.log"
+grep -Eq '^tests/wiki_documentation\.sh[[:space:]]+skipped[[:space:]]+[0-9]+$' "${run_dir}/local-tests/results.tsv"
 
 # Local status configuration must not hide a selected untracked input.
 git -C "${FIXTURE}" config status.showUntrackedFiles no
@@ -268,4 +281,9 @@ bash "${REPO_ROOT}/dev/verification/ci.sh" "${BASE}" "${FIXTURE}" > "${TMP_DIR}/
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Fxq "head=${BASE}" "${run_dir}/summary.log"
 grep -Fxq host_gate=passed "${run_dir}/summary.log"
+printf '# new candidate inventory\n' >> "${FIXTURE}/dev/verification/selection.sh"
+rm -f "${CI_SCOPE_EXECUTION_LOG}"
+if bash "${REPO_ROOT}/dev/verification/ci.sh" "${BASE}" "${FIXTURE}" > "${TMP_DIR}/output" 2>&1; then exit 1; fi
+grep -Fq 'Candidate planning rules differ from the trusted driver' "${TMP_DIR}/output"
+[[ ! -e "${CI_SCOPE_EXECUTION_LOG}" ]]
 printf 'CI strict scope, final host result, and dedicated-runtime boundary passed\n'
