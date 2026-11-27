@@ -132,7 +132,18 @@ main() {
       verification_plan_error 'Routing probe core conflicts with SINGBOX_BINARY_114'
       return 2
     fi
-    export SINGBOX_BINARY_114="${ROUTING_POLICY_TEST_REAL_CORE}"
+    SINGBOX_BINARY_114="${ROUTING_POLICY_TEST_REAL_CORE}"
+  fi
+  if [[ -n "${SINGBOX_BINARY_113:-}" ]]; then
+    SINGBOX_BINARY_113=$(realpath -e -- "${SINGBOX_BINARY_113}") || return 2
+    export SINGBOX_BINARY_113
+  fi
+  if [[ -n "${SINGBOX_BINARY_114:-}" ]]; then
+    SINGBOX_BINARY_114=$(realpath -e -- "${SINGBOX_BINARY_114}") || return 2
+    export SINGBOX_BINARY_114
+  fi
+  if [[ -n "${ROUTING_POLICY_TEST_REAL_CORE:-}" ]]; then
+    export ROUTING_POLICY_TEST_REAL_CORE="${SINGBOX_BINARY_114}"
   fi
   if [[ -n "${CI_CANDIDATE_ROOT:-}" ]]; then
     for file in planner.sh selection.sh; do

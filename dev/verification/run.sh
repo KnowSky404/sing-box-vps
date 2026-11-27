@@ -15,15 +15,21 @@ observe_host_test_log() (
   trap 'rm -- "${snapshot}"' EXIT
   cp -- "${test_log}" "${snapshot}" || return 2
   awk -v test="${test_file}" -v legacy="${legacy}" '
+    BEGIN {
+      takeover = test ~ /^tests\/(http|shadowsocks|socks)_structured_takeover\.sh$/
+      dual_runtime = test ~ /^tests\/(http_export_runtime|plain_proxy_share_runtime|socks_instance_lifecycle_runtime|mixed_instance_lifecycle_runtime)\.sh$/
+    }
     test == "tests/managed_listener_resources.sh" && /^SKIP isolated IPv6 wildcard startup contrast:/ { next }
     test == "tests/managed_openvpn_endpoint_runtime.sh" && /^SKIP OpenVPN system endpoint runtime:/ { next }
-    legacy && /^SKIP [^:]+: SINGBOX_BINARY_113 (is )?unavailable$/ { next }
-    legacy && test ~ /^tests\/(http|shadowsocks|socks)_structured_takeover\.sh$/ &&
-      /^SKIP (HTTP|Shadowsocks|SOCKS) real-core check: binary unavailable$/ { older_takeover=1; next }
-    / structured takeover checks passed; real core checks=1$/ { verified_core=1 }
+    legacy && (takeover || dual_runtime) &&
+      /^SKIP [^:]+: SINGBOX_BINARY_113 (is )?unavailable$/ { omitted_legacy=1; next }
+    legacy && takeover &&
+      /^SKIP (HTTP|Shadowsocks|SOCKS) real-core check: binary unavailable$/ { omitted_legacy=1; next }
+    takeover && / structured takeover checks passed; real core checks=1$/ { verified_core=1 }
+    dual_runtime && / runtime passed: core=1\.14\.[0-9]+ / { verified_core=1 }
     / real core checks=0([; ,]|$)/ { missing=1 }
     /^SKIP([ :]|$)|^[^:]+ (skipped|not run)(:|$)/ { missing=1 }
-    END { print missing || (older_takeover && !verified_core) ? "skipped" : "passed" }
+    END { print missing || (omitted_legacy && !verified_core) ? "skipped" : "passed" }
   ' "${snapshot}" || return 2
   sha256sum < "${snapshot}"
 )

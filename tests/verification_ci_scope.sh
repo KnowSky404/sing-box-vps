@@ -12,7 +12,7 @@ printf 'dev/verification-runs/\n' > "${FIXTURE}/.gitignore"
 printf '#!/usr/bin/env bash\n: baseline\n' > "${FIXTURE}/install.sh"
 printf 'fixture readme\n' > "${FIXTURE}/README.md"
 printf 'base initial\n' > "${FIXTURE}/.github/verification-scope.txt"
-for test in $(grep -oE 'tests/[a-zA-Z0-9_]+\.sh' "${REPO_ROOT}/dev/verification/ci.sh") tests/fixture_changed.sh tests/fixture_requested.sh tests/install_build_sync.sh tests/readme_mentions_current_versions.sh tests/default_dual_stack_runtime.sh tests/bootstrap_download.sh tests/http_structured_takeover.sh tests/managed_component_graph.sh tests/routing_policy_config.sh; do
+for test in $(grep -oE 'tests/[a-zA-Z0-9_]+\.sh' "${REPO_ROOT}/dev/verification/ci.sh") tests/fixture_changed.sh tests/fixture_requested.sh tests/install_build_sync.sh tests/readme_mentions_current_versions.sh tests/default_dual_stack_runtime.sh tests/bootstrap_download.sh tests/http_structured_takeover.sh tests/http_export_runtime.sh tests/managed_component_graph.sh tests/routing_policy_config.sh; do
   cat <<'TEST' > "${FIXTURE}/${test}"
 #!/usr/bin/env bash
 set -euo pipefail
@@ -60,8 +60,9 @@ fi
 if [[ -n "${CI_DRIFT_CORE:-}" && "${BASH_SOURCE[0]##*/}" == install_build_sync.sh ]]; then
   printf '# changed bytes, same version\n' >> "${CI_DRIFT_CORE}"
 fi
-if [[ -n "${CI_SKIP_HOST_TEST:-}" && "${BASH_SOURCE[0]##*/}" == wiki_documentation.sh ]]; then
+if [[ -n "${CI_SKIP_HOST_TEST:-}" && "${BASH_SOURCE[0]##*/}" == "${CI_SKIP_TEST_FILE:-wiki_documentation.sh}" ]]; then
   printf '%s\n' "${CI_SKIP_HOST_TEST}"
+  if [[ -n "${CI_CORE_PROOF:-}" ]]; then printf '%s\n' "${CI_CORE_PROOF}"; fi
 fi
 if [[ "${BASH_SOURCE[0]##*/}" == managed_listener_resources.sh ]]; then
   [[ "${SBV_TEST_ISOLATED_LISTENER_WILDCARD:-1}" == 0 ]]
@@ -187,6 +188,12 @@ grep -Fxq host_gate=failed "${run_dir}/summary.log"
 printf '#!/usr/bin/env bash\nprintf "sing-box version 1.14.4\\n"\n' > "${TMP_DIR}/core"
 printf '#!/usr/bin/env bash\nprintf "sing-box version 1.13.18\\n"\n' > "${TMP_DIR}/core113"
 chmod +x "${TMP_DIR}/core" "${TMP_DIR}/core113"
+mkdir "${TMP_DIR}/shadow-bin"
+cp -p "${TMP_DIR}/core113" "${TMP_DIR}/shadow-bin/candidate-core"
+cp -p "${TMP_DIR}/core" "${FIXTURE}/candidate-core"
+printf '\n/candidate-core\n' >> "${FIXTURE}/.git/info/exclude"
+SINGBOX_BINARY_114=candidate-core PATH="${TMP_DIR}/shadow-bin:${PATH}" expect_success
+grep -Fxq 'validation_core=sing-box version 1.14.4' "${TMP_DIR}/last-summary"
 printf 'not executable\n' > "${TMP_DIR}/bad-core"
 for core in "${TMP_DIR}/bad-core" "${TMP_DIR}/core"; do
   SINGBOX_BINARY_113="${core}" assert_rejected
@@ -243,21 +250,31 @@ for skip in 'SKIP fixture: missing dependency' 'sing-box check not run: set SING
 done
 
 legacy_skip='SKIP HTTP export runtime: SINGBOX_BINARY_113 unavailable'
-SINGBOX_BINARY_114="${TMP_DIR}/core" CI_SKIP_HOST_TEST="${legacy_skip}" expect_success
+if SINGBOX_BINARY_114="${TMP_DIR}/core" CI_SKIP_HOST_TEST="${legacy_skip}" run_ci; then exit 1; fi
+printf ': select HTTP runtime test\n' >> "${FIXTURE}/tests/http_export_runtime.sh"
+runtime_proof='HTTP export runtime passed: core=1.14.4 (fixture)'
+SINGBOX_BINARY_114="${TMP_DIR}/core" CI_SKIP_TEST_FILE=http_export_runtime.sh \
+  CI_SKIP_HOST_TEST="${legacy_skip}" CI_CORE_PROOF="${runtime_proof}" expect_success
 grep -Fxq validation_core_113_sha256=not_supplied "${TMP_DIR}/last-summary"
 grep -Fxq host_gate=passed "${TMP_DIR}/last-summary"
-if SINGBOX_BINARY_113="${TMP_DIR}/core113" SINGBOX_BINARY_114="${TMP_DIR}/core" CI_SKIP_HOST_TEST="${legacy_skip}" run_ci; then exit 1; fi
+if SINGBOX_BINARY_114="${TMP_DIR}/core" CI_SKIP_TEST_FILE=http_export_runtime.sh CI_SKIP_HOST_TEST="${legacy_skip}" run_ci; then exit 1; fi
+if SINGBOX_BINARY_113="${TMP_DIR}/core113" SINGBOX_BINARY_114="${TMP_DIR}/core" CI_SKIP_TEST_FILE=http_export_runtime.sh \
+  CI_SKIP_HOST_TEST="${legacy_skip}" CI_CORE_PROOF="${runtime_proof}" run_ci; then exit 1; fi
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq local_status=required_not_run "${run_dir}/summary.log"
+grep -Fxq host_gate=failed "${run_dir}/summary.log"
+git -C "${FIXTURE}" restore tests/http_export_runtime.sh
+
+printf ': select takeover test\n' >> "${FIXTURE}/tests/http_structured_takeover.sh"
+SINGBOX_BINARY_114="${TMP_DIR}/core" CI_SKIP_TEST_FILE=http_structured_takeover.sh \
+  CI_SKIP_HOST_TEST='SKIP HTTP real-core check: SINGBOX_BINARY_113 unavailable' \
+  CI_CORE_PROOF='HTTP structured takeover checks passed; real core checks=1' expect_success
+if SINGBOX_BINARY_114="${TMP_DIR}/core" CI_SKIP_TEST_FILE=http_structured_takeover.sh \
+  CI_SKIP_HOST_TEST='SKIP HTTP real-core check: SINGBOX_BINARY_114 unavailable' run_ci; then exit 1; fi
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Fxq local_status=required_not_run "${run_dir}/summary.log"
 grep -Fxq host_gate=failed "${run_dir}/summary.log"
 
-SINGBOX_BINARY_114="${TMP_DIR}/core" CI_SKIP_HOST_TEST='SKIP HTTP real-core check: SINGBOX_BINARY_113 unavailable' expect_success
-if SINGBOX_BINARY_114="${TMP_DIR}/core" CI_SKIP_HOST_TEST='SKIP HTTP real-core check: SINGBOX_BINARY_114 unavailable' run_ci; then exit 1; fi
-run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
-grep -Fxq local_status=required_not_run "${run_dir}/summary.log"
-grep -Fxq host_gate=failed "${run_dir}/summary.log"
-
-printf ': select older takeover test\n' >> "${FIXTURE}/tests/http_structured_takeover.sh"
 SINGBOX_BINARY_114="${TMP_DIR}/core" CI_OLDER_TAKEOVER=1 expect_success
 if SINGBOX_BINARY_114="${TMP_DIR}/core" CI_OLDER_TAKEOVER=0 run_ci; then exit 1; fi
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
