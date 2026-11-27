@@ -36,6 +36,11 @@ if [[ "${CI_REMOVE_SUMMARY:-}" == 1 && "${BASH_SOURCE[0]##*/}" == wiki_documenta
     [[ ! -f "${summary}" ]] || rm -- "${summary}"
   done
 fi
+if [[ "${CI_DAMAGE_PLAN:-}" == 1 && "${BASH_SOURCE[0]##*/}" == wiki_documentation.sh ]]; then
+  for plan in dev/verification-runs/*/plan.txt; do
+    [[ ! -f "${plan}" ]] || : > "${plan}"
+  done
+fi
 if [[ "${CI_DRIFT_CORE:-}" == 1 && "${BASH_SOURCE[0]##*/}" == install_build_sync.sh ]]; then
   printf '# changed bytes, same version\n' >> "${SINGBOX_BINARY_114}"
 fi
@@ -115,6 +120,11 @@ run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Fxq evidence=results_incomplete "${run_dir}/summary.log"
 grep -Fxq host_gate=failed "${run_dir}/summary.log"
 if grep -Fxq host_gate=passed "${run_dir}/summary.log"; then exit 1; fi
+
+if CI_DAMAGE_PLAN=1 run_ci; then exit 1; fi
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq evidence=results_incomplete "${run_dir}/summary.log"
+grep -Fxq host_gate=failed "${run_dir}/summary.log"
 
 if CI_REMOVE_SUMMARY=1 run_ci; then exit 1; fi
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
@@ -246,4 +256,16 @@ assert_rejected
 GITHUB_EVENT_NAME=push GITHUB_REF=refs/heads/main assert_rejected
 printf 'base %s\n--test tests/fixture_requested.sh\n' "${TASK_COMMIT}" > "${FIXTURE}/.github/verification-scope.txt"
 GITHUB_EVENT_NAME=push GITHUB_REF=refs/heads/main assert_rejected
+
+# A protected driver can verify a candidate that has no compatible CI entry.
+git -C "${FIXTURE}" restore .github/verification-scope.txt
+git -C "${FIXTURE}" switch -qc older-ci "${ORIGINAL_BASE}"
+printf '#!/usr/bin/env bash\nexit 99\n' > "${FIXTURE}/dev/verification/ci.sh"
+git -C "${FIXTURE}" add dev/verification/ci.sh
+git -C "${FIXTURE}" commit -qm older-ci
+BASE=$(git -C "${FIXTURE}" rev-parse HEAD)
+bash "${REPO_ROOT}/dev/verification/ci.sh" "${BASE}" "${FIXTURE}" > "${TMP_DIR}/output" 2>&1
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq "head=${BASE}" "${run_dir}/summary.log"
+grep -Fxq host_gate=passed "${run_dir}/summary.log"
 printf 'CI strict scope, final host result, and dedicated-runtime boundary passed\n'
