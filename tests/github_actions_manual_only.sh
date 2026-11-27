@@ -27,7 +27,7 @@ for trigger in push pull_request pull_request_target release schedule workflow_r
 done
 if printf 'on: [push, workflow_dispatch]\n' | assert_manual_trigger; then exit 1; fi
 workflow="${REPO_ROOT}/.github/workflows/command-contract.yml"
-grep -Fq 'ref: ${{ github.sha }}' "${workflow}"
+grep -Fq 'ref: ${{ inputs.head_sha }}' "${workflow}"
 grep -Fq 'EXPECTED_HEAD: ${{ inputs.head_sha }}' "${workflow}"
 # Cancel obsolete work only after the authorization job has passed.
 awk '
@@ -38,7 +38,7 @@ awk '
   host_job && /^    concurrency:$/ { gated=1 }
   END { if (!authorized || !gated) exit 1 }
 ' "${workflow}"
-grep -Fq 'group: command-contract-${{ github.ref }}-${{ github.sha }}-${{ inputs.base_ref }}' "${workflow}"
+grep -Fq 'group: command-contract-${{ inputs.head_sha }}-${{ inputs.base_ref }}' "${workflow}"
 grep -Fq 'persist-credentials: false' "${workflow}"
 grep -Fq 'contents: read' "${workflow}"
 grep -Fq 'retention-days: 14' "${workflow}"
@@ -46,18 +46,17 @@ grep -Fq 'sudo -n env TMPDIR=/tmp' "${workflow}"
 grep -Fq "grep -Fxq 'host_gate=passed'" "${workflow}"
 if grep -E 'uses:[[:space:]]+actions/[^@[:space:]]+@' "${workflow}" | grep -Ev '@[0-9a-f]{40}([[:space:]]|$)'; then exit 1; fi
 grep -Fq 'VERIFY_BASE_REF: ${{ inputs.base_ref }}' "${workflow}"
-# Actions checks out a SHA: only remote-tracking main is guaranteed to exist.
 fixture=$(mktemp -d)
 trap 'rm -rf -- "${fixture}"' EXIT
-git -C "${fixture}" init -q
-git -C "${fixture}" symbolic-ref HEAD refs/heads/fixture
-printf 'fixture\n' > "${fixture}/README.md"
-git -C "${fixture}" add README.md
-git -C "${fixture}" -c user.name=fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit -qm fixture
-git -C "${fixture}" update-ref refs/remotes/origin/main HEAD
-git -C "${fixture}" checkout -q --detach HEAD
-if git -C "${fixture}" show-ref --verify --quiet refs/heads/main; then exit 1; fi
-default_base=$(sed -n 's/^        default: //p' "${workflow}")
-[[ "$(git -C "${fixture}" rev-parse --verify "${default_base}^{commit}")" == "$(git -C "${fixture}" rev-parse HEAD)" ]]
+awk '
+  /^      - name: Validate inputs in the protected main workflow$/ { step=1 }
+  step && /^        run: \|$/ { body=1; next }
+  body && /^[^ ]|^  [^ ]/ { exit }
+  body && /^          / { print substr($0,11) }
+' "${workflow}" > "${fixture}/authorize.sh"
+revision=0123456789abcdef0123456789abcdef01234567
+GITHUB_REF=refs/heads/main EXPECTED_HEAD="${revision}" EXPECTED_BASE="${revision}" bash "${fixture}/authorize.sh"
+if GITHUB_REF=refs/heads/main EXPECTED_HEAD="${revision}" EXPECTED_BASE=origin/main bash "${fixture}/authorize.sh" 2>/dev/null; then exit 1; fi
+if GITHUB_REF=refs/heads/topic EXPECTED_HEAD="${revision}" EXPECTED_BASE="${revision}" bash "${fixture}/authorize.sh" 2>/dev/null; then exit 1; fi
 grep -Fq 'not_run_not_authorized'  "${REPO_ROOT}/AGENTS.md"
 printf 'All %s workflows require manual dispatch; automatic events rejected; no Actions run started\n' "${count}"

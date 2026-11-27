@@ -39,9 +39,17 @@ ci_results_match() {
   [[ "${actual}" == "$(printf '%s\n' "${VERIFY_PLAN_TESTS[@]}")" ]]
 }
 
+ci_core_digest() {
+  if [[ -n "${SINGBOX_BINARY_114:-}" ]]; then
+    sha256sum < "${SINGBOX_BINARY_114}" | cut -d ' ' -f 1
+  else
+    printf 'not_supplied\n'
+  fi
+}
+
 main() {
   local base=${1:?base revision required} scope_file=.github/verification-scope.txt
-  local scope_changed=n file scope_base option value extra line run_dir core_version
+  local scope_changed=n file scope_base option value extra line run_dir summary core_version core_digest provenance
   local head head_tree expected_base start_snapshot worktree_status worktree_state=clean status=0
   local -a selectors=() selected_tests contracts=(
     tests/command_catalog_contract.sh tests/storage_selinux.sh
@@ -57,6 +65,7 @@ main() {
   head_tree=$(git rev-parse "${head}^{tree}")
   worktree_status=$(git status --porcelain --untracked-files=all)
   start_snapshot=$(ci_worktree_snapshot)
+  core_digest=$(ci_core_digest)
   [[ -z "${worktree_status}" ]] || worktree_state=dirty
   base=$(git rev-parse --verify --end-of-options "${base}^{commit}")
   expected_base=$(git merge-base "${base}" "${head}")
@@ -116,39 +125,45 @@ main() {
   for file in "${selected_tests[@]}"; do verification_plan_append VERIFY_PLAN_TESTS "${file}"; done
   for file in "${contracts[@]}"; do verification_add_requested_test "${file}"; done
   run_dir=$(create_run_dir)
+  summary="${run_dir}/summary.log"
   verification_print_plan > "${run_dir}/plan.txt"
   printf 'run_dir=%s\nCI proof boundary: host tests only; Docker and dedicated container fixtures are not executed.\n' "${run_dir}"
   core_version=not_supplied
   if [[ -n "${SINGBOX_BINARY_114:-}" ]]; then
     core_version=$("${SINGBOX_BINARY_114}" version | sed -n '1p')
   fi
-  {
-    printf 'mode=host_ci\nhead=%s\nhead_tree=%s\nbase=%s\nworktree=%s\nworktree_sha256=%s\n' \
-      "${head}" "${head_tree}" "${expected_base}" "${worktree_state}" "${start_snapshot%% *}"
-    printf 'environment=%s\nbash=%s\njq=%s\nvalidation_core=%s\n' \
-      "$(uname -sm)" "${BASH_VERSION}" "$(jq --version)" "${core_version}"
-  } > "${run_dir}/summary.log"
-  if [[ "${VERIFY_PLAN_RUNTIME_REQUIRED}" == 1 || ${#VERIFY_PLAN_SCENARIOS[@]} -gt 0 ]]; then
-    printf 'remote_status=required_not_run\n' >> "${run_dir}/summary.log"
-  else
-    printf 'remote_status=not_required\n' >> "${run_dir}/summary.log"
-  fi
+  provenance=$(
+    printf 'mode=host_ci\nhead=%s\nhead_tree=%s\nbase_ref_sha=%s\nbase=%s\nworktree=%s\nworktree_sha256=%s\n' \
+      "${head}" "${head_tree}" "${base}" "${expected_base}" "${worktree_state}" "${start_snapshot%% *}"
+    printf 'environment=%s\nbash=%s\njq=%s\nvalidation_core=%s\nvalidation_core_sha256=%s\n' \
+      "$(uname -sm)" "${BASH_VERSION}" "$(jq --version)" "${core_version}" "${core_digest}"
+    if [[ "${VERIFY_PLAN_RUNTIME_REQUIRED}" == 1 || ${#VERIFY_PLAN_SCENARIOS[@]} -gt 0 ]]; then
+      printf 'remote_status=required_not_run\n'
+    else
+      printf 'remote_status=not_required\n'
+    fi
+  )
+  printf '%s\n' "${provenance}" > "${summary}"
   VERIFY_SKIP_LOCAL_TESTS=0 run_local_tests "${run_dir}" || status=$?
-  if ! ci_inputs_match "${head}" "${start_snapshot}"; then
-    printf 'evidence=inputs_changed\nhost_gate=failed\n' >> "${run_dir}/summary.log"
+  if [[ ! -f "${summary}" || -L "${summary}" ]]; then
+    verification_plan_error 'CI summary is missing or invalid'
+    return 2
+  fi
+  if ! ci_inputs_match "${head}" "${start_snapshot}" || [[ "$(ci_core_digest)" != "${core_digest}" ]]; then
+    printf 'evidence=inputs_changed\nhost_gate=failed\n' >> "${summary}"
     verification_plan_error 'CI inputs changed during host verification'
     return 2
   fi
   if [[ "${status}" != 0 ]]; then
-    printf 'host_gate=failed\n' >> "${run_dir}/summary.log"
+    printf 'host_gate=failed\n' >> "${summary}"
     return "${status}"
   fi
-  if ! ci_results_match "${run_dir}"; then
-    printf 'evidence=results_incomplete\nhost_gate=failed\n' >> "${run_dir}/summary.log"
-    verification_plan_error 'CI results do not match the planned host tests'
+  if ! ci_results_match "${run_dir}" || [[ "$(cat "${summary}")" != "${provenance}"$'\nlocal_status=passed' ]]; then
+    printf '%s\nevidence=results_incomplete\nhost_gate=failed\n' "${provenance}" > "${summary}"
+    verification_plan_error 'CI evidence does not match the planned host tests and inputs'
     return 2
   fi
-  printf 'host_gate=passed\n' >> "${run_dir}/summary.log"
+  printf 'host_gate=passed\n' >> "${summary}"
 }
 
 main "$@"
