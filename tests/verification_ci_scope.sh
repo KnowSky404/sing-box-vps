@@ -31,6 +31,9 @@ if [[ "${CI_REMOVE_RESULTS:-}" == 1 && "${BASH_SOURCE[0]##*/}" == wiki_documenta
     [[ ! -f "${results}" ]] || rm -- "${results}"
   done
 fi
+if [[ "${CI_REMOVE_EARLIER_LOG:-}" == 1 && "${BASH_SOURCE[0]##*/}" == wiki_documentation.sh ]]; then
+  rm -- dev/verification-runs/*/local-tests/install_build_sync.sh.log
+fi
 if [[ "${CI_REMOVE_SUMMARY:-}" == 1 && "${BASH_SOURCE[0]##*/}" == wiki_documentation.sh ]]; then
   for summary in dev/verification-runs/*/summary.log; do
     [[ ! -f "${summary}" ]] || rm -- "${summary}"
@@ -139,6 +142,13 @@ run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Fxq evidence=results_incomplete "${run_dir}/summary.log"
 grep -Fxq host_gate=failed "${run_dir}/summary.log"
 if grep -Fxq host_gate=passed "${run_dir}/summary.log"; then exit 1; fi
+
+if CI_REMOVE_EARLIER_LOG=1 run_ci; then exit 1; fi
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq evidence=results_incomplete "${run_dir}/summary.log"
+grep -Fxq host_gate=failed "${run_dir}/summary.log"
+grep -Eq '^tests/install_build_sync\.sh[[:space:]]+passed[[:space:]]' "${run_dir}/local-tests/results.tsv"
+[[ ! -e "${run_dir}/local-tests/install_build_sync.sh.log" ]]
 
 if CI_DAMAGE_PLAN=1 run_ci; then exit 1; fi
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")

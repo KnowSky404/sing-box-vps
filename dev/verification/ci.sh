@@ -34,14 +34,18 @@ ci_inputs_match() {
 }
 
 ci_results_match() {
-  local actual results="$1/local-tests/results.tsv"
+  local actual test_file log results="$1/local-tests/results.tsv"
   [[ -f "${results}" && ! -L "${results}" ]] || return 1
   actual=$(awk -F '\t' '
     NR == 1 { if ($0 != "test\tstatus\telapsed_seconds") exit 1; next }
     NF != 3 || $2 != "passed" || $3 !~ /^[0-9]+$/ { exit 1 }
     { print $1 }
   ' "${results}") || return 1
-  [[ "${actual}" == "$(printf '%s\n' "${VERIFY_PLAN_TESTS[@]}")" ]]
+  [[ "${actual}" == "$(printf '%s\n' "${VERIFY_PLAN_TESTS[@]}")" ]] || return 1
+  for test_file in "${VERIFY_PLAN_TESTS[@]}"; do
+    log="$1/local-tests/${test_file##*/}.log"
+    [[ -f "${log}" && ! -L "${log}" && -r "${log}" ]] || return 1
+  done
 }
 
 ci_core_digest() {
