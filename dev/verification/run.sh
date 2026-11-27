@@ -38,7 +38,7 @@ run_local_tests() {
           legacy && test ~ /^tests\/(http|shadowsocks|socks)_structured_takeover\.sh$/ &&
             /^SKIP (HTTP|Shadowsocks|SOCKS) real-core check: binary unavailable$/ { older_takeover=1; next }
           / structured takeover checks passed; real core checks=1$/ { verified_core=1 }
-          / real core checks=0$/ { missing=1 }
+          / real core checks=0([; ,]|$)/ { missing=1 }
           /^SKIP([ :]|$)|^[^:]+ (skipped|not run)(:|$)/ { missing=1 }
           END { print missing || (older_takeover && !verified_core) ? "skipped" : "passed" }
         ' "${test_log}") || return 2
