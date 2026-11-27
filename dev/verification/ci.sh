@@ -6,24 +6,18 @@ CI_VERIFICATION_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${CI_VERIFICATION_ROOT}/run.sh"
 
 ci_worktree_snapshot() {
-  local status file
-  status=$(git status --porcelain --untracked-files=all) || return 1
-  [[ -n "${status}" ]] || return 0
-  printf '%s\n' "${status}"
+  local file
+  # Hash the bytes read by tests, independent of Git's content normalization.
   {
-    git diff --no-ext-diff --no-textconv --binary HEAD -- || return 1
-    git ls-files --others --exclude-standard -z | while IFS= read -r -d '' file; do
-      printf '\0%s\0' "${file}"
-      if [[ -L "${file}" ]]; then
-        printf 'link\0'
-        readlink -z -- "${file}" || return 1
-      elif [[ -f "${file}" ]]; then
-        stat -c '%a' -- "${file}" || return 1
-        git hash-object --no-filters -- "${file}" || return 1
-      else
-        return 1
-      fi
-    done || return 1
+    git ls-files --stage -z || return 1
+    git ls-files --cached --others --exclude-standard -z | sort -zu |
+      while IFS= read -r -d '' file; do
+        if [[ -L "${file}" || -f "${file}" ]]; then
+          printf '%s\0' "${file}"
+        elif [[ -e "${file}" ]]; then
+          return 1
+        fi
+      done | tar --null --no-recursion --format=gnu --mtime=@0 --owner=0 --group=0 -cf - -T - || return 1
   } | sha256sum
 }
 
@@ -34,10 +28,21 @@ ci_inputs_match() {
   [[ "${current_head}" == "$1" && "${current_snapshot}" == "$2" ]]
 }
 
+ci_results_match() {
+  local actual results="$1/local-tests/results.tsv"
+  [[ -f "${results}" && ! -L "${results}" ]] || return 1
+  actual=$(awk -F '\t' '
+    NR == 1 { if ($0 != "test\tstatus\telapsed_seconds") exit 1; next }
+    NF != 3 || $2 != "passed" || $3 !~ /^[0-9]+$/ { exit 1 }
+    { print $1 }
+  ' "${results}") || return 1
+  [[ "${actual}" == "$(printf '%s\n' "${VERIFY_PLAN_TESTS[@]}")" ]]
+}
+
 main() {
   local base=${1:?base revision required} scope_file=.github/verification-scope.txt
   local scope_changed=n file scope_base option value extra line run_dir core_version
-  local head head_tree expected_base start_snapshot worktree_state=clean status=0
+  local head head_tree expected_base start_snapshot worktree_status worktree_state=clean status=0
   local -a selectors=() selected_tests contracts=(
     tests/command_catalog_contract.sh tests/storage_selinux.sh
     tests/agent_service_operations.sh tests/agent_routing_operations.sh
@@ -50,8 +55,9 @@ main() {
   cd "${REPO_ROOT}"
   head=$(git rev-parse --verify HEAD)
   head_tree=$(git rev-parse "${head}^{tree}")
+  worktree_status=$(git status --porcelain --untracked-files=all)
   start_snapshot=$(ci_worktree_snapshot)
-  [[ -z "${start_snapshot}" ]] || worktree_state=dirty
+  [[ -z "${worktree_status}" ]] || worktree_state=dirty
   base=$(git rev-parse --verify --end-of-options "${base}^{commit}")
   expected_base=$(git merge-base "${base}" "${head}")
   verification_parse_options --base "${base}"
@@ -117,8 +123,8 @@ main() {
     core_version=$("${SINGBOX_BINARY_114}" version | sed -n '1p')
   fi
   {
-    printf 'mode=host_ci\nhead=%s\nhead_tree=%s\nbase=%s\nworktree=%s\n' \
-      "${head}" "${head_tree}" "${expected_base}" "${worktree_state}"
+    printf 'mode=host_ci\nhead=%s\nhead_tree=%s\nbase=%s\nworktree=%s\nworktree_sha256=%s\n' \
+      "${head}" "${head_tree}" "${expected_base}" "${worktree_state}" "${start_snapshot%% *}"
     printf 'environment=%s\nbash=%s\njq=%s\nvalidation_core=%s\n' \
       "$(uname -sm)" "${BASH_VERSION}" "$(jq --version)" "${core_version}"
   } > "${run_dir}/summary.log"
@@ -136,6 +142,11 @@ main() {
   if [[ "${status}" != 0 ]]; then
     printf 'host_gate=failed\n' >> "${run_dir}/summary.log"
     return "${status}"
+  fi
+  if ! ci_results_match "${run_dir}"; then
+    printf 'evidence=results_incomplete\nhost_gate=failed\n' >> "${run_dir}/summary.log"
+    verification_plan_error 'CI results do not match the planned host tests'
+    return 2
   fi
   printf 'host_gate=passed\n' >> "${run_dir}/summary.log"
 }

@@ -43,8 +43,8 @@ fixture、越界路径或任意命令。固定契约列表不能代替影响判�
 独立验收，宿主 CI 用 `required_not_run` 标识。计划和摘要记录 host gate、head/tree、基线、工具版本及逐项结果。
 本地可直接执行
 `bash dev/verification/ci.sh origin/main`，不会调用 GitHub Actions。本地运行应独占 worktree。
-选测或执行期间检测到提交或工作区内容变化时，本轮宿主门禁失败。可复用的证据限于干净
-worktree 和等价工具链。
+选测或执行期间检测到提交或工作区字节变化，或逐项结果与计划不符时，本轮宿主门禁失败。
+可复用的证据限于干净 worktree、相同的工作区摘要和等价工具链。
 
 未授权的 CI 标记 `not_run_not_authorized`，不称为通过。分支保护若要求未运行的
 Actions 检查，保留 PR 并说明所需授权；不得自动运行或移除必需检查。既有失败与
