@@ -12,7 +12,7 @@ printf 'dev/verification-runs/\n' > "${FIXTURE}/.gitignore"
 printf '#!/usr/bin/env bash\n: baseline\n' > "${FIXTURE}/install.sh"
 printf 'fixture readme\n' > "${FIXTURE}/README.md"
 printf 'base initial\n' > "${FIXTURE}/.github/verification-scope.txt"
-for test in $(grep -oE 'tests/[a-zA-Z0-9_]+\.sh' "${REPO_ROOT}/dev/verification/ci.sh") tests/fixture_changed.sh tests/fixture_requested.sh tests/install_build_sync.sh tests/readme_mentions_current_versions.sh tests/default_dual_stack_runtime.sh tests/bootstrap_download.sh tests/http_structured_takeover.sh; do
+for test in $(grep -oE 'tests/[a-zA-Z0-9_]+\.sh' "${REPO_ROOT}/dev/verification/ci.sh") tests/fixture_changed.sh tests/fixture_requested.sh tests/install_build_sync.sh tests/readme_mentions_current_versions.sh tests/default_dual_stack_runtime.sh tests/bootstrap_download.sh tests/http_structured_takeover.sh tests/managed_component_graph.sh; do
   cat <<'TEST' > "${FIXTURE}/${test}"
 #!/usr/bin/env bash
 set -euo pipefail
@@ -150,6 +150,19 @@ for core in "${TMP_DIR}/bad-core" "${TMP_DIR}/core"; do
   SINGBOX_BINARY_113="${core}" assert_rejected
   grep -Fq 'Configured sing-box 1.13 validation core is unusable' "${TMP_DIR}/output"
 done
+
+# Existing candidates may omit their core checks without printing a marker.
+printf 'for binary_var in SINGBOX_BINARY_113 SINGBOX_BINARY_114; do :; done\n' >> "${FIXTURE}/tests/managed_component_graph.sh"
+assert_rejected
+grep -Fq 'Selected check requires SINGBOX_BINARY_114: tests/managed_component_graph.sh' "${TMP_DIR}/output"
+SINGBOX_BINARY_114="${TMP_DIR}/core" expect_success
+git -C "${FIXTURE}" restore tests/managed_component_graph.sh
+printf ': select older compatibility fixture\n' >> "${FIXTURE}/tests/singbox_1_14_compatibility.sh"
+SINGBOX_BINARY_114="${TMP_DIR}/core" assert_rejected
+grep -Fq 'Selected check requires SINGBOX_BINARY_113 and SINGBOX_BINARY_114:' "${TMP_DIR}/output"
+SINGBOX_BINARY_113="${TMP_DIR}/core113" SINGBOX_BINARY_114="${TMP_DIR}/core" expect_success
+git -C "${FIXTURE}" restore tests/singbox_1_14_compatibility.sh
+
 if SINGBOX_BINARY_114="${TMP_DIR}/core" CI_DRIFT_CORE="${TMP_DIR}/core" run_ci; then exit 1; fi
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Fxq evidence=inputs_changed "${run_dir}/summary.log"

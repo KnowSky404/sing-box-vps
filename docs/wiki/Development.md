@@ -50,6 +50,8 @@ fixture、越界路径或任意命令。固定契约列表不能代替影响判�
 独立验收，宿主 CI 用 `required_not_run` 标识。计划和摘要记录 host gate、head/tree、基线、工具版本及逐项结果。
 本地可直接执行
 `bash dev/verification/ci.sh origin/main`，不会调用 GitHub Actions。本地运行应独占 worktree。
+选到读取真实核心的宿主测试时，先配置 `SINGBOX_BINARY_114`。双版本兼容性测试还须配置
+`SINGBOX_BINARY_113`，使结果可以绑定实际核心字节。
 选测或执行期间检测到提交或工作区字节变化，或逐项结果与计划不符时，本轮宿主门禁失败。
 可复用的证据限于干净 worktree、相同的工作区摘要和等价工具链。
 
