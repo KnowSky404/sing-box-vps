@@ -151,7 +151,8 @@ main() {
       "${head}" "${head_tree}" "${base}" "${expected_base}" "${worktree_state}" "${start_snapshot%% *}"
     printf 'environment=%s\nbash=%s\njq=%s\nvalidation_core=%s\nvalidation_core_113_sha256=%s\nvalidation_core_114_sha256=%s\n' \
       "$(uname -sm)" "${BASH_VERSION}" "$(jq --version)" "${core_version}" "${core_113_digest}" "${core_114_digest}"
-    if [[ "${VERIFY_PLAN_RUNTIME_REQUIRED}" == 1 || ${#VERIFY_PLAN_SCENARIOS[@]} -gt 0 ]]; then
+    if [[ "${VERIFY_PLAN_RUNTIME_REQUIRED}" == 1 || ${#VERIFY_PLAN_SCENARIOS[@]} -gt 0 ||
+      " ${VERIFY_PLAN_TESTS[*]} " == *' tests/managed_listener_resources.sh '* ]]; then
       printf 'remote_status=required_not_run\n'
     else
       printf 'remote_status=not_required\n'

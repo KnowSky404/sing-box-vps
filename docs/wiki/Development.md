@@ -20,7 +20,7 @@ rerun 或任何间接启动 CI 的操作。推送/PR/合并前只读核对工作
 获分别明确授权后，由有权限的维护者在 Settings → Actions → General 启用仓库 Actions，
 再在 Actions → Command contract 选择 Enable workflow。运行仍须单独授权，只从受保护的
 `main` 加载可信工作流定义，传入获准的完整候选 head 和比较基线 SHA。通过输入校验的
-宿主运行可取代同 head 和 base SHA 的运行，日志保留 14 天。GitHub 宿主 runner 使用只读权限，无部署凭据；
+宿主运行可取代同 head、base 和核心选项的运行，日志保留 14 天。GitHub 宿主 runner 使用只读权限，无部署凭据；
 确需新增自动入口或改变必需检查须由 Owner 明确授权。
 
 ```bash
@@ -28,9 +28,12 @@ rerun 或任何间接启动 CI 的操作。推送/PR/合并前只读核对工作
 gh workflow run command-contract.yml --ref main -f head_sha="$task_head" -f base_ref="$task_base"
 ```
 
+选择需要 1.13 和 1.14 的兼容测试时，在获准范围内追加 `-f legacy_core=true`。
+
 输入校验通过后分别检出受保护的工作流提交和候选 SHA，并复核候选 HEAD。受保护提交中的
 `ci.sh` 和计划器验证候选目录。候选选测规则若与受保护版本不同，宿主门禁在执行前退出，
 按变更影响在隔离环境验证新规则和场景。选中的检查若因依赖缺失而跳过，记录为未完成。
+监听资源测试的 IPv6 通配启动对照属于独立 Docker 验收。
 候选测试在一次性 runner 内执行，要求事先审查及授权，
 该运行不用于验证不可信候选或充当 PR 必需检查。回读获准的 head、base、
 `command-contract` 终态与宿主结论。手动运行关联加载工作流的 main 提交，候选 SHA 以报告为准。

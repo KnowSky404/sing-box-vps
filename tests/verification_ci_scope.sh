@@ -47,6 +47,9 @@ fi
 if [[ "${CI_SKIP_HOST_TEST:-}" == 1 && "${BASH_SOURCE[0]##*/}" == wiki_documentation.sh ]]; then
   printf 'SKIP fixture: missing dependency\n'
 fi
+if [[ "${BASH_SOURCE[0]##*/}" == managed_listener_resources.sh ]]; then
+  printf 'SKIP isolated IPv6 wildcard startup contrast: Docker only\n'
+fi
 TEST
 done
 for script in build-install build-command-docs; do
@@ -151,6 +154,12 @@ run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Fxq local_status=required_not_run "${run_dir}/summary.log"
 grep -Fxq host_gate=failed "${run_dir}/summary.log"
 grep -Eq '^tests/wiki_documentation\.sh[[:space:]]+skipped[[:space:]]+[0-9]+$' "${run_dir}/local-tests/results.tsv"
+
+printf ': select listener test\n' >> "${FIXTURE}/tests/managed_listener_resources.sh"
+expect_success
+grep -Fxq remote_status=required_not_run "${TMP_DIR}/last-summary"
+grep -Fxq host_gate=passed "${TMP_DIR}/last-summary"
+git -C "${FIXTURE}" restore tests/managed_listener_resources.sh
 
 # Local status configuration must not hide a selected untracked input.
 git -C "${FIXTURE}" config status.showUntrackedFiles no

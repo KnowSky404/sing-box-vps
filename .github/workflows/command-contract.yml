@@ -12,6 +12,10 @@ on:
         description: Authorized full comparison base commit SHA
         required: true
         type: string
+      legacy_core:
+        description: Include sing-box 1.13.18 for selected compatibility checks
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -34,7 +38,7 @@ jobs:
   command-contract:
     needs: authorize-head
     concurrency:
-      group: command-contract-${{ inputs.head_sha }}-${{ inputs.base_ref }}
+      group: command-contract-${{ inputs.head_sha }}-${{ inputs.base_ref }}-${{ inputs.legacy_core }}
       cancel-in-progress: true
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -55,25 +59,33 @@ jobs:
         env:
           EXPECTED_HEAD: ${{ inputs.head_sha }}
           EXPECTED_BASE: ${{ inputs.base_ref }}
+          LEGACY_CORE: ${{ inputs.legacy_core }}
         run: |
           set -euo pipefail
           [[ "$(git rev-parse --verify HEAD)" == "$EXPECTED_HEAD" ]]
           [[ "$(git rev-parse --verify --end-of-options "${EXPECTED_BASE}^{commit}")" == "$EXPECTED_BASE" ]]
           CORE_VERSION=$(sed -n 's/^readonly SB_SUPPORT_MAX_VERSION="\([^"]*\)"$/\1/p' install.sh)
           case "$(uname -m)" in x86_64) CORE_ARCH=amd64 ;; aarch64) CORE_ARCH=arm64 ;; *) exit 1 ;; esac
-          CORE_ASSET="sing-box-${CORE_VERSION}-linux-${CORE_ARCH}.tar.gz"
-          CORE_STAGE_DIR=$(mktemp -d "${RUNNER_TEMP}/sing-box.XXXXXXXX")
-          curl -fsSL --connect-timeout 15 --max-time 120 --retry 2 \
-            "https://api.github.com/repos/SagerNet/sing-box/releases/tags/v${CORE_VERSION}" > "${CORE_STAGE_DIR}/release.json"
-          CORE_DIGEST=$(jq -er --arg name "$CORE_ASSET" '.assets[] | select(.name == $name) | .digest' "${CORE_STAGE_DIR}/release.json")
-          [[ "$CORE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
-          curl -fsSL --connect-timeout 15 --max-time 180 --retry 2 \
-            "https://github.com/SagerNet/sing-box/releases/download/v${CORE_VERSION}/${CORE_ASSET}" -o "${CORE_STAGE_DIR}/${CORE_ASSET}"
-          printf '%s  %s\n' "${CORE_DIGEST#sha256:}" "${CORE_STAGE_DIR}/${CORE_ASSET}" | sha256sum -c -
-          tar --no-same-owner -xzf "${CORE_STAGE_DIR}/${CORE_ASSET}" -C "${CORE_STAGE_DIR}"
-          VALIDATION_CORE="${CORE_STAGE_DIR}/sing-box-${CORE_VERSION}-linux-${CORE_ARCH}/sing-box"
-          [[ "$("$VALIDATION_CORE" version | sed -n '1p')" == "sing-box version ${CORE_VERSION}" ]]
-          printf 'SINGBOX_BINARY_114=%s\n' "$VALIDATION_CORE" >> "$GITHUB_ENV"
+          prepare_core() {
+            local version=$1 variable=$2 asset stage digest binary
+            asset="sing-box-${version}-linux-${CORE_ARCH}.tar.gz"
+            stage=$(mktemp -d "${RUNNER_TEMP}/sing-box.XXXXXXXX")
+            curl -fsSL --connect-timeout 15 --max-time 120 --retry 2 \
+              "https://api.github.com/repos/SagerNet/sing-box/releases/tags/v${version}" > "${stage}/release.json"
+            digest=$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .digest' "${stage}/release.json")
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            curl -fsSL --connect-timeout 15 --max-time 180 --retry 2 \
+              "https://github.com/SagerNet/sing-box/releases/download/v${version}/${asset}" -o "${stage}/${asset}"
+            printf '%s  %s\n' "${digest#sha256:}" "${stage}/${asset}" | sha256sum -c -
+            tar --no-same-owner -xzf "${stage}/${asset}" -C "${stage}"
+            binary="${stage}/sing-box-${version}-linux-${CORE_ARCH}/sing-box"
+            [[ "$("$binary" version | sed -n '1p')" == "sing-box version ${version}" ]]
+            printf '%s=%s\n' "$variable" "$binary" >> "$GITHUB_ENV"
+          }
+          prepare_core "$CORE_VERSION" SINGBOX_BINARY_114
+          if [[ "$LEGACY_CORE" == true ]]; then
+            prepare_core 1.13.18 SINGBOX_BINARY_113
+          fi
       - name: Run contract and scoped host regressions
         working-directory: candidate
         env:
@@ -85,6 +97,7 @@ jobs:
           # Root-owned storage fixtures reject runner-owned ancestors.
           sudo -n env TMPDIR=/tmp GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory \
             GIT_CONFIG_VALUE_0="$PWD" SINGBOX_BINARY_114="$SINGBOX_BINARY_114" \
+            SINGBOX_BINARY_113="${SINGBOX_BINARY_113:-}" \
             bash "$GITHUB_WORKSPACE/trusted/dev/verification/ci.sh" "$VERIFY_BASE_REF" "$PWD" 2>&1 | tee "$CI_RUN_LOG" || CI_STATUS=$?
           # The parent emits its directory before any nested test diagnostics.
           CI_HOST_RUN_DIR=$(sed -n '/^run_dir=/{s/^run_dir=//;p;q;}' "$CI_RUN_LOG")
