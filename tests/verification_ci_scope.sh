@@ -45,6 +45,16 @@ assert_rejected() {
 }
 expect_success() { run_ci || { cat "${TMP_DIR}/output" >&2; exit 1; }; }
 
+# Local status configuration must not hide a selected untracked input.
+git -C "${FIXTURE}" config status.showUntrackedFiles no
+mkdir "${FIXTURE}/docs"
+printf 'untracked document\n' > "${FIXTURE}/docs/task.md"
+expect_success
+grep -Fxq 'file=docs/task.md' "${TMP_DIR}/last-plan"
+grep -Fxq 'worktree=dirty' "${TMP_DIR}/last-summary"
+rm -- "${FIXTURE}/docs/task.md"
+git -C "${FIXTURE}" config --unset status.showUntrackedFiles
+
 printf 'changed\n' >> "${FIXTURE}/README.md"
 printf ': changed\n' >> "${FIXTURE}/tests/fixture_changed.sh"
 expect_success

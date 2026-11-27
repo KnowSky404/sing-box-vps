@@ -72,7 +72,7 @@ main() {
   if [[ -n "${SINGBOX_BINARY_114:-}" ]]; then
     core_version=$("${SINGBOX_BINARY_114}" version | sed -n '1p')
   fi
-  worktree_diff=$(git status --porcelain)
+  worktree_diff=$(git status --porcelain --untracked-files=all)
   [[ -z "${worktree_diff}" ]] && worktree_diff=clean || worktree_diff=dirty
   {
     printf 'mode=host_ci\nhead=%s\nhead_tree=%s\nbase=%s\nworktree=%s\n' \

@@ -31,6 +31,7 @@ grep -Fq 'ref: ${{ github.sha }}' "${workflow}"
 grep -Fq 'persist-credentials: false' "${workflow}"
 grep -Fq 'contents: read' "${workflow}"
 grep -Fq 'retention-days: 14' "${workflow}"
+grep -Fq 'sudo -n env TMPDIR=/tmp' "${workflow}"
 grep -Fq "grep -Fxq 'host_gate=passed'" "${workflow}"
 if grep -E 'uses:[[:space:]]+actions/[^@[:space:]]+@' "${workflow}" | grep -Ev '@[0-9a-f]{40}([[:space:]]|$)'; then exit 1; fi
 grep -Fq 'VERIFY_BASE_REF: ${{ inputs.base_ref }}' "${workflow}"
