@@ -447,6 +447,20 @@ grep -Fxq "scope_base=${ORIGINAL_BASE}" "${run_dir}/summary.log"
 grep -Fxq "trusted_driver_sha=${INTEGRATED_HEAD}" "${run_dir}/summary.log"
 grep -Fxq host_gate=passed "${run_dir}/summary.log"
 grep -Fxq fixture_requested.sh "${CI_SCOPE_EXECUTION_LOG}"
+
+# A later scope declaration cannot stand in for a second integrated PR.
+git -C "${FIXTURE}" switch --quiet -c multiple-scopes
+printf 'base %s\n--test tests/fixture_changed.sh\n' "${BASE}" > "${FIXTURE}/.github/verification-scope.txt"
+git -C "${FIXTURE}" add .github/verification-scope.txt
+git -C "${FIXTURE}" commit -qm 'second scope'
+MULTIPLE_HEAD=$(git -C "${FIXTURE}" rev-parse HEAD)
+git -C "${FIXTURE}" update-ref refs/remotes/origin/main "${MULTIPLE_HEAD}"
+git -C "${DRIVER_FIXTURE}" fetch --quiet "${FIXTURE}" "${MULTIPLE_HEAD}"
+git -C "${DRIVER_FIXTURE}" switch --quiet --detach "${MULTIPLE_HEAD}"
+if bash "${DRIVER_FIXTURE}/dev/verification/ci.sh" "${BASE}" "${FIXTURE}" "${MULTIPLE_HEAD}" > "${TMP_DIR}/output" 2>&1; then exit 1; fi
+grep -Fq 'Integrated CI requires one committed scope declaration' "${TMP_DIR}/output"
+git -C "${FIXTURE}" switch --quiet newer-main
+
 printf 'base %s\n--test tests/fixture_requested.sh\n' "${BASE}" > "${FIXTURE}/.github/verification-scope.txt"
 expect_success
 grep -Fxq host_gate=passed "${TMP_DIR}/last-summary"
