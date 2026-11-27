@@ -41,10 +41,17 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ github.sha }}
+          path: trusted
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
           fetch-depth: 0
           ref: ${{ inputs.head_sha }}
+          path: candidate
           persist-credentials: false
       - name: Prepare verified target core for host configuration tests
+        working-directory: candidate
         env:
           EXPECTED_HEAD: ${{ inputs.head_sha }}
           EXPECTED_BASE: ${{ inputs.base_ref }}
@@ -68,6 +75,7 @@ jobs:
           [[ "$("$VALIDATION_CORE" version | sed -n '1p')" == "sing-box version ${CORE_VERSION}" ]]
           printf 'SINGBOX_BINARY_114=%s\n' "$VALIDATION_CORE" >> "$GITHUB_ENV"
       - name: Run contract and scoped host regressions
+        working-directory: candidate
         env:
           VERIFY_BASE_REF: ${{ inputs.base_ref }}
         run: |
@@ -76,12 +84,12 @@ jobs:
           CI_STATUS=0
           # Root-owned storage fixtures reject runner-owned ancestors.
           sudo -n env TMPDIR=/tmp GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory \
-            GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE" SINGBOX_BINARY_114="$SINGBOX_BINARY_114" \
-            bash dev/verification/ci.sh "$VERIFY_BASE_REF" 2>&1 | tee "$CI_RUN_LOG" || CI_STATUS=$?
+            GIT_CONFIG_VALUE_0="$PWD" SINGBOX_BINARY_114="$SINGBOX_BINARY_114" \
+            bash "$GITHUB_WORKSPACE/trusted/dev/verification/ci.sh" "$VERIFY_BASE_REF" "$PWD" 2>&1 | tee "$CI_RUN_LOG" || CI_STATUS=$?
           # The parent emits its directory before any nested test diagnostics.
           CI_HOST_RUN_DIR=$(sed -n '/^run_dir=/{s/^run_dir=//;p;q;}' "$CI_RUN_LOG")
           if [[ -n "$CI_HOST_RUN_DIR" ]]; then
-            [[ "$CI_HOST_RUN_DIR" == "$GITHUB_WORKSPACE"/dev/verification-runs/* && "$CI_HOST_RUN_DIR" != *$'\n'* ]]
+            [[ "$CI_HOST_RUN_DIR" == "$PWD"/dev/verification-runs/* && "$CI_HOST_RUN_DIR" != *$'\n'* ]]
             [[ -f "$CI_HOST_RUN_DIR/plan.txt" && -f "$CI_HOST_RUN_DIR/summary.log" ]]
             printf 'CI_HOST_RUN_DIR=%s\n' "$CI_HOST_RUN_DIR" >> "$GITHUB_ENV"
             cat "$CI_HOST_RUN_DIR/summary.log" >> "$GITHUB_STEP_SUMMARY"
@@ -96,7 +104,7 @@ jobs:
         with:
           name: scoped-host-verification
           path: |
-            dev/verification-runs/ci/
+            candidate/dev/verification-runs/ci/
             ${{ env.CI_HOST_RUN_DIR }}
             ${{ runner.temp }}/scoped-host-verification.log
           retention-days: 14

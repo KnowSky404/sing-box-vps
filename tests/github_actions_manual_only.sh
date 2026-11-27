@@ -28,6 +28,8 @@ done
 if printf 'on: [push, workflow_dispatch]\n' | assert_manual_trigger; then exit 1; fi
 workflow="${REPO_ROOT}/.github/workflows/command-contract.yml"
 grep -Fq 'ref: ${{ inputs.head_sha }}' "${workflow}"
+grep -Fq 'ref: ${{ github.sha }}' "${workflow}"
+grep -Fq 'bash "$GITHUB_WORKSPACE/trusted/dev/verification/ci.sh" "$VERIFY_BASE_REF" "$PWD"' "${workflow}"
 grep -Fq 'EXPECTED_HEAD: ${{ inputs.head_sha }}' "${workflow}"
 # Cancel obsolete work only after the authorization job has passed.
 awk '

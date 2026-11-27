@@ -28,9 +28,10 @@ rerun 或任何间接启动 CI 的操作。推送/PR/合并前只读核对工作
 gh workflow run command-contract.yml --ref main -f head_sha="$task_head" -f base_ref="$task_base"
 ```
 
-输入校验通过后按完整候选 SHA 检出，并在执行前复核 HEAD。随后运行
-`dev/verification/ci.sh BASE`，回读记录并核对获准的 head、base、`command-contract`
-终态与宿主结论。手动运行关联加载工作流的 main 提交，候选 SHA 以报告为准。
+输入校验通过后分别检出受保护的工作流提交和候选 SHA，并复核候选 HEAD。受保护提交中的
+`ci.sh` 和计划器验证候选目录。候选测试在一次性 runner 内执行，要求事先审查及授权，
+该运行不用于验证不可信候选或充当 PR 必需检查。回读获准的 head、base、
+`command-contract` 终态与宿主结论。手动运行关联加载工作流的 main 提交，候选 SHA 以报告为准。
 在 main 以自身为基线只能跑固定契约。启用前保持现有分支保护。将来若授权自动 PR CI，先验证每个 PR 都会产生稳定的
 `command-contract` 检查且取消/跳过/失败无法通过，再在 main 的 Rules/Protection 中选择
 该检查，保留 PR、线性历史、审查对话和管理员门禁。

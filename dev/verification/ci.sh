@@ -3,6 +3,11 @@
 set -euo pipefail
 
 CI_VERIFICATION_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+unset CI_CANDIDATE_ROOT
+if [[ $# == 2 ]]; then
+  [[ -n "$2" ]] || exit 2
+  CI_CANDIDATE_ROOT=$(cd -- "$2" && pwd -P) || exit 2
+fi
 source "${CI_VERIFICATION_ROOT}/run.sh"
 
 ci_worktree_snapshot() {
@@ -59,7 +64,7 @@ main() {
     tests/reality_region_candidates.sh tests/reality_region_candidate_evidence.sh
     tests/reality_region_candidate_evidence_contract.sh
   )
-  [[ $# == 1 ]] || return 2
+  [[ $# == 1 || $# == 2 ]] || return 2
   cd "${REPO_ROOT}"
   head=$(git rev-parse --verify HEAD)
   head_tree=$(git rev-parse "${head}^{tree}")
@@ -158,7 +163,10 @@ main() {
     printf 'host_gate=failed\n' >> "${summary}"
     return "${status}"
   fi
-  if ! ci_results_match "${run_dir}" || [[ "$(cat "${summary}")" != "${provenance}"$'\nlocal_status=passed' ]]; then
+  if ! ci_results_match "${run_dir}" ||
+    [[ ! -f "${run_dir}/plan.txt" || -L "${run_dir}/plan.txt" ||
+      "$(< "${run_dir}/plan.txt")" != "$(verification_print_plan)" ||
+      "$(< "${summary}")" != "${provenance}"$'\nlocal_status=passed' ]]; then
     printf '%s\nevidence=results_incomplete\nhost_gate=failed\n' "${provenance}" > "${summary}"
     verification_plan_error 'CI evidence does not match the planned host tests and inputs'
     return 2
