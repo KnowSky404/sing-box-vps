@@ -12,7 +12,7 @@ printf 'dev/verification-runs/\n' > "${FIXTURE}/.gitignore"
 printf '#!/usr/bin/env bash\n: baseline\n' > "${FIXTURE}/install.sh"
 printf 'fixture readme\n' > "${FIXTURE}/README.md"
 printf 'base initial\n' > "${FIXTURE}/.github/verification-scope.txt"
-for test in $(grep -oE 'tests/[a-zA-Z0-9_]+\.sh' "${REPO_ROOT}/dev/verification/ci.sh") tests/fixture_changed.sh tests/fixture_requested.sh tests/install_build_sync.sh tests/readme_mentions_current_versions.sh tests/default_dual_stack_runtime.sh tests/bootstrap_download.sh tests/http_structured_takeover.sh tests/managed_component_graph.sh; do
+for test in $(grep -oE 'tests/[a-zA-Z0-9_]+\.sh' "${REPO_ROOT}/dev/verification/ci.sh") tests/fixture_changed.sh tests/fixture_requested.sh tests/install_build_sync.sh tests/readme_mentions_current_versions.sh tests/default_dual_stack_runtime.sh tests/bootstrap_download.sh tests/http_structured_takeover.sh tests/managed_component_graph.sh tests/routing_policy_config.sh; do
   cat <<'TEST' > "${FIXTURE}/${test}"
 #!/usr/bin/env bash
 set -euo pipefail
@@ -50,6 +50,12 @@ fi
 if [[ "${BASH_SOURCE[0]##*/}" == managed_listener_resources.sh ]]; then
   printf 'SKIP isolated IPv6 wildcard startup contrast: Docker only\n'
 fi
+if [[ "${BASH_SOURCE[0]##*/}" == managed_openvpn_endpoint_runtime.sh ]]; then
+  printf 'SKIP OpenVPN system endpoint runtime: TUN unavailable\n'
+fi
+if [[ "${BASH_SOURCE[0]##*/}" == routing_policy_config.sh && -n "${CI_EXPECT_ROUTING_CORE:-}" ]]; then
+  [[ "${ROUTING_POLICY_TEST_REAL_CORE:-}" == "${CI_EXPECT_ROUTING_CORE}" ]]
+fi
 if [[ -n "${CI_OLDER_TAKEOVER:-}" && "${BASH_SOURCE[0]##*/}" == http_structured_takeover.sh ]]; then
   printf 'SKIP HTTP real-core check: binary unavailable\n'
   printf 'HTTP structured takeover checks passed; real core checks=%s\n' "${CI_OLDER_TAKEOVER}"
@@ -68,7 +74,7 @@ BASE=$(git -C "${FIXTURE}" rev-parse HEAD)
 ORIGINAL_BASE=${BASE}
 export CI_SCOPE_EXECUTION_LOG="${TMP_DIR}/executed-tests"
 export VERIFY_SKIP_LOCAL_TESTS=1
-unset SINGBOX_BINARY_113 SINGBOX_BINARY_114
+unset SINGBOX_BINARY_113 SINGBOX_BINARY_114 ROUTING_POLICY_TEST_REAL_CORE
 run_ci() {
   local run_dir
   rm -f "${CI_SCOPE_EXECUTION_LOG}"
@@ -163,6 +169,16 @@ grep -Fq 'Selected check requires SINGBOX_BINARY_113 and SINGBOX_BINARY_114:' "$
 SINGBOX_BINARY_113="${TMP_DIR}/core113" SINGBOX_BINARY_114="${TMP_DIR}/core" expect_success
 git -C "${FIXTURE}" restore tests/singbox_1_14_compatibility.sh
 
+printf '# changed routing probe\n' > "${FIXTURE}/tests/routing_policy_private_runtime.py"
+assert_rejected
+grep -Fq 'Changed routing probe requires SINGBOX_BINARY_114' "${TMP_DIR}/output"
+SINGBOX_BINARY_114="${TMP_DIR}/core" CI_EXPECT_ROUTING_CORE="${TMP_DIR}/core" expect_success
+grep -Fxq routing_policy_config.sh "${CI_SCOPE_EXECUTION_LOG}"
+cp "${TMP_DIR}/core" "${TMP_DIR}/other-core"
+SINGBOX_BINARY_114="${TMP_DIR}/core" ROUTING_POLICY_TEST_REAL_CORE="${TMP_DIR}/other-core" assert_rejected
+grep -Fq 'Routing probe core conflicts with SINGBOX_BINARY_114' "${TMP_DIR}/output"
+rm -- "${FIXTURE}/tests/routing_policy_private_runtime.py"
+
 if SINGBOX_BINARY_114="${TMP_DIR}/core" CI_DRIFT_CORE="${TMP_DIR}/core" run_ci; then exit 1; fi
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Fxq evidence=inputs_changed "${run_dir}/summary.log"
@@ -224,6 +240,12 @@ expect_success
 grep -Fxq remote_status=required_not_run "${TMP_DIR}/last-summary"
 grep -Fxq host_gate=passed "${TMP_DIR}/last-summary"
 git -C "${FIXTURE}" restore tests/managed_listener_resources.sh
+
+printf ': select OpenVPN test\n' >> "${FIXTURE}/tests/managed_openvpn_endpoint_runtime.sh"
+expect_success
+grep -Fxq remote_status=required_not_run "${TMP_DIR}/last-summary"
+grep -Fxq host_gate=passed "${TMP_DIR}/last-summary"
+git -C "${FIXTURE}" restore tests/managed_openvpn_endpoint_runtime.sh
 
 # Local status configuration must not hide a selected untracked input.
 git -C "${FIXTURE}" config status.showUntrackedFiles no

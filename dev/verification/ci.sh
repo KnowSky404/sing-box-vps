@@ -69,6 +69,11 @@ ci_core_version() {
 
 ci_check_core_scope() {
   local test_file
+  if [[ " ${VERIFY_CHANGED_FILES[*]} " == *' tests/routing_policy_private_runtime.py '* &&
+    -z "${SINGBOX_BINARY_114:-}" ]]; then
+    verification_plan_error 'Changed routing probe requires SINGBOX_BINARY_114'
+    return 2
+  fi
   for test_file in "${VERIFY_PLAN_TESTS[@]}"; do
     # Paired compatibility checks also need legacy input on older candidates.
     case "${test_file}" in
@@ -103,6 +108,13 @@ main() {
   )
   [[ $# == 1 || $# == 2 ]] || return 2
   cd "${REPO_ROOT}"
+  if [[ -n "${ROUTING_POLICY_TEST_REAL_CORE:-}" ]]; then
+    if [[ -n "${SINGBOX_BINARY_114:-}" && ! "${ROUTING_POLICY_TEST_REAL_CORE}" -ef "${SINGBOX_BINARY_114}" ]]; then
+      verification_plan_error 'Routing probe core conflicts with SINGBOX_BINARY_114'
+      return 2
+    fi
+    export SINGBOX_BINARY_114="${ROUTING_POLICY_TEST_REAL_CORE}"
+  fi
   if [[ -n "${CI_CANDIDATE_ROOT:-}" ]]; then
     for file in planner.sh selection.sh; do
       if ! cmp -s "${CI_VERIFICATION_ROOT}/${file}" "dev/verification/${file}"; then
@@ -187,7 +199,8 @@ main() {
     printf 'environment=%s\nbash=%s\njq=%s\nvalidation_core=%s\nvalidation_core_113=%s\nvalidation_core_113_sha256=%s\nvalidation_core_114_sha256=%s\n' \
       "$(uname -sm)" "${BASH_VERSION}" "$(jq --version)" "${core_114_version}" "${core_113_version}" "${core_113_digest}" "${core_114_digest}"
     if [[ "${VERIFY_PLAN_RUNTIME_REQUIRED}" == 1 || ${#VERIFY_PLAN_SCENARIOS[@]} -gt 0 ||
-      " ${VERIFY_PLAN_TESTS[*]} " == *' tests/managed_listener_resources.sh '* ]]; then
+      " ${VERIFY_PLAN_TESTS[*]} " == *' tests/managed_listener_resources.sh '* ||
+      " ${VERIFY_PLAN_TESTS[*]} " == *' tests/managed_openvpn_endpoint_runtime.sh '* ]]; then
       printf 'remote_status=required_not_run\n'
     else
       printf 'remote_status=not_required\n'
@@ -197,6 +210,9 @@ main() {
   if ! ci_check_core_scope; then
     printf 'local_status=required_not_run\nhost_gate=failed\n' >> "${summary}"
     return 2
+  fi
+  if [[ " ${VERIFY_CHANGED_FILES[*]} " == *' tests/routing_policy_private_runtime.py '* ]]; then
+    export ROUTING_POLICY_TEST_REAL_CORE="${SINGBOX_BINARY_114}"
   fi
   VERIFY_SKIP_LOCAL_TESTS=0 run_local_tests "${run_dir}" 1 || status=$?
   if [[ ! -f "${summary}" || -L "${summary}" ]]; then
