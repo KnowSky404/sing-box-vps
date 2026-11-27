@@ -38,6 +38,7 @@ awk '
   host_job && /^    concurrency:$/ { gated=1 }
   END { if (!authorized || !gated) exit 1 }
 ' "${workflow}"
+grep -Fq 'group: command-contract-${{ github.ref }}-${{ github.sha }}-${{ inputs.base_ref }}' "${workflow}"
 grep -Fq 'persist-credentials: false' "${workflow}"
 grep -Fq 'contents: read' "${workflow}"
 grep -Fq 'retention-days: 14' "${workflow}"

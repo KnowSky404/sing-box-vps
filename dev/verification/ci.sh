@@ -5,17 +5,39 @@ set -euo pipefail
 CI_VERIFICATION_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${CI_VERIFICATION_ROOT}/run.sh"
 
+ci_worktree_snapshot() {
+  local status file
+  status=$(git status --porcelain --untracked-files=all) || return 1
+  [[ -n "${status}" ]] || return 0
+  printf '%s\n' "${status}"
+  {
+    git diff --no-ext-diff --no-textconv --binary HEAD -- || return 1
+    git ls-files --others --exclude-standard -z | while IFS= read -r -d '' file; do
+      printf '\0%s\0' "${file}"
+      if [[ -L "${file}" ]]; then
+        printf 'link\0'
+        readlink -z -- "${file}" || return 1
+      elif [[ -f "${file}" ]]; then
+        stat -c '%a' -- "${file}" || return 1
+        git hash-object --no-filters -- "${file}" || return 1
+      else
+        return 1
+      fi
+    done || return 1
+  } | sha256sum
+}
+
 ci_inputs_match() {
-  local current_head current_status
+  local current_head current_snapshot
   current_head=$(git rev-parse --verify HEAD) || return 1
-  current_status=$(git status --porcelain --untracked-files=all) || return 1
-  [[ "${current_head}" == "$1" && "${current_status}" == "$2" ]]
+  current_snapshot=$(ci_worktree_snapshot) || return 1
+  [[ "${current_head}" == "$1" && "${current_snapshot}" == "$2" ]]
 }
 
 main() {
   local base=${1:?base revision required} scope_file=.github/verification-scope.txt
   local scope_changed=n file scope_base option value extra line run_dir core_version
-  local head head_tree expected_base start_status worktree_state=clean status=0
+  local head head_tree expected_base start_snapshot worktree_state=clean status=0
   local -a selectors=() selected_tests contracts=(
     tests/command_catalog_contract.sh tests/storage_selinux.sh
     tests/agent_service_operations.sh tests/agent_routing_operations.sh
@@ -28,8 +50,8 @@ main() {
   cd "${REPO_ROOT}"
   head=$(git rev-parse --verify HEAD)
   head_tree=$(git rev-parse "${head}^{tree}")
-  start_status=$(git status --porcelain --untracked-files=all)
-  [[ -z "${start_status}" ]] || worktree_state=dirty
+  start_snapshot=$(ci_worktree_snapshot)
+  [[ -z "${start_snapshot}" ]] || worktree_state=dirty
   base=$(git rev-parse --verify --end-of-options "${base}^{commit}")
   expected_base=$(git merge-base "${base}" "${head}")
   verification_parse_options --base "${base}"
@@ -77,7 +99,7 @@ main() {
     verification_plan_error 'CI host impact still needs scope'
     return 2
   fi
-  if [[ "${VERIFY_PLAN_BASE}" != "${expected_base}" ]] || ! ci_inputs_match "${head}" "${start_status}"; then
+  if [[ "${VERIFY_PLAN_BASE}" != "${expected_base}" ]] || ! ci_inputs_match "${head}" "${start_snapshot}"; then
     verification_plan_error 'CI inputs changed during planning'
     return 2
   fi
@@ -106,7 +128,7 @@ main() {
     printf 'remote_status=not_required\n' >> "${run_dir}/summary.log"
   fi
   VERIFY_SKIP_LOCAL_TESTS=0 run_local_tests "${run_dir}" || status=$?
-  if ! ci_inputs_match "${head}" "${start_status}"; then
+  if ! ci_inputs_match "${head}" "${start_snapshot}"; then
     printf 'evidence=inputs_changed\nhost_gate=failed\n' >> "${run_dir}/summary.log"
     verification_plan_error 'CI inputs changed during host verification'
     return 2

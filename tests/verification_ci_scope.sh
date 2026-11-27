@@ -20,6 +20,9 @@ printf '%s\n' "${BASH_SOURCE[0]##*/}" >> "${CI_SCOPE_EXECUTION_LOG}"
 if [[ -n "${CI_DRIFT_IN_TEST:-}" && "${BASH_SOURCE[0]##*/}" == install_build_sync.sh ]]; then
   git switch -q --detach "${CI_DRIFT_IN_TEST}"
 fi
+if [[ "${CI_DIRTY_DRIFT:-}" == 1 && "${BASH_SOURCE[0]##*/}" == install_build_sync.sh ]]; then
+  printf '# changed during host verification\n' >> .github/verification-scope.txt
+fi
 TEST
 done
 for script in build-install build-command-docs; do
@@ -120,6 +123,15 @@ grep -Fxq fixture_requested.sh "${CI_SCOPE_EXECUTION_LOG}"
 grep -Fxq remote_status=required_not_run "${TMP_DIR}/last-summary"
 [[ $(grep -Fxc install_build_sync.sh "${CI_SCOPE_EXECUTION_LOG}") == 1 ]]
 [[ $(head -n 1 "${CI_SCOPE_EXECUTION_LOG}") == install_build_sync.sh ]]
+
+# Changing an already-dirty file cannot pass just because porcelain is unchanged.
+scope_status=$(git -C "${FIXTURE}" status --porcelain)
+if CI_DIRTY_DRIFT=1 run_ci; then exit 1; fi
+[[ "$(git -C "${FIXTURE}" status --porcelain)" == "${scope_status}" ]]
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq evidence=inputs_changed "${run_dir}/summary.log"
+grep -Fxq host_gate=failed "${run_dir}/summary.log"
+if grep -Fxq host_gate=passed "${run_dir}/summary.log"; then exit 1; fi
 
 # Host failure is terminal, even though the CI artifact directory exists.
 printf 'exit 42\n' >> "${FIXTURE}/tests/fixture_requested.sh"
