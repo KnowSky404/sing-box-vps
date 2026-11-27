@@ -103,8 +103,9 @@ jobs:
           CI_HOST_RUN_DIR=$(sed -n '/^run_dir=/{s/^run_dir=//;p;q;}' "$CI_RUN_LOG")
           if [[ -n "$CI_HOST_RUN_DIR" ]]; then
             [[ "$CI_HOST_RUN_DIR" == "$PWD"/dev/verification-runs/* && "$CI_HOST_RUN_DIR" != *$'\n'* ]]
-            [[ -f "$CI_HOST_RUN_DIR/plan.txt" && -f "$CI_HOST_RUN_DIR/summary.log" ]]
+            [[ -d "$CI_HOST_RUN_DIR" && ! -L "$CI_HOST_RUN_DIR" ]]
             printf 'CI_HOST_RUN_DIR=%s\n' "$CI_HOST_RUN_DIR" >> "$GITHUB_ENV"
+            [[ -f "$CI_HOST_RUN_DIR/plan.txt" && -f "$CI_HOST_RUN_DIR/summary.log" ]]
             cat "$CI_HOST_RUN_DIR/summary.log" >> "$GITHUB_STEP_SUMMARY"
           fi
           if [[ "$CI_STATUS" == 0 ]]; then

@@ -52,9 +52,25 @@ ci_core_digest() {
   fi
 }
 
+ci_core_version() {
+  local binary=$1 family=$2 version
+  if [[ -z "${binary}" ]]; then
+    printf 'not_supplied\n'
+    return 0
+  fi
+  if [[ ! -f "${binary}" || ! -x "${binary}" ]] ||
+    ! version=$("${binary}" version | sed -n '1p') ||
+    [[ "${version}" != "sing-box version ${family}."* ]]; then
+    verification_plan_error "Configured sing-box ${family} validation core is unusable"
+    return 2
+  fi
+  printf '%s\n' "${version}"
+}
+
 main() {
   local base=${1:?base revision required} scope_file=.github/verification-scope.txt
-  local scope_changed=n file scope_base option value extra line run_dir summary core_version core_113_digest core_114_digest provenance
+  local scope_changed=n file scope_base option value extra line run_dir summary provenance
+  local core_113_version core_114_version core_113_digest core_114_digest
   local head head_tree expected_base start_snapshot worktree_status worktree_state=clean status=0
   local -a selectors=() selected_tests contracts=(
     tests/command_catalog_contract.sh tests/storage_selinux.sh
@@ -78,6 +94,8 @@ main() {
   head_tree=$(git rev-parse "${head}^{tree}")
   worktree_status=$(git status --porcelain --untracked-files=all)
   start_snapshot=$(ci_worktree_snapshot)
+  core_113_version=$(ci_core_version "${SINGBOX_BINARY_113:-}" 1.13)
+  core_114_version=$(ci_core_version "${SINGBOX_BINARY_114:-}" 1.14)
   core_113_digest=$(ci_core_digest "${SINGBOX_BINARY_113:-}")
   core_114_digest=$(ci_core_digest "${SINGBOX_BINARY_114:-}")
   [[ -z "${worktree_status}" ]] || worktree_state=dirty
@@ -142,15 +160,11 @@ main() {
   summary="${run_dir}/summary.log"
   verification_print_plan > "${run_dir}/plan.txt"
   printf 'run_dir=%s\nCI proof boundary: host tests only; Docker and dedicated container fixtures are not executed.\n' "${run_dir}"
-  core_version=not_supplied
-  if [[ -n "${SINGBOX_BINARY_114:-}" ]]; then
-    core_version=$("${SINGBOX_BINARY_114}" version | sed -n '1p')
-  fi
   provenance=$(
     printf 'mode=host_ci\nhead=%s\nhead_tree=%s\nbase_ref_sha=%s\nbase=%s\nworktree=%s\nworktree_sha256=%s\n' \
       "${head}" "${head_tree}" "${base}" "${expected_base}" "${worktree_state}" "${start_snapshot%% *}"
-    printf 'environment=%s\nbash=%s\njq=%s\nvalidation_core=%s\nvalidation_core_113_sha256=%s\nvalidation_core_114_sha256=%s\n' \
-      "$(uname -sm)" "${BASH_VERSION}" "$(jq --version)" "${core_version}" "${core_113_digest}" "${core_114_digest}"
+    printf 'environment=%s\nbash=%s\njq=%s\nvalidation_core=%s\nvalidation_core_113=%s\nvalidation_core_113_sha256=%s\nvalidation_core_114_sha256=%s\n' \
+      "$(uname -sm)" "${BASH_VERSION}" "$(jq --version)" "${core_114_version}" "${core_113_version}" "${core_113_digest}" "${core_114_digest}"
     if [[ "${VERIFY_PLAN_RUNTIME_REQUIRED}" == 1 || ${#VERIFY_PLAN_SCENARIOS[@]} -gt 0 ||
       " ${VERIFY_PLAN_TESTS[*]} " == *' tests/managed_listener_resources.sh '* ]]; then
       printf 'remote_status=required_not_run\n'
