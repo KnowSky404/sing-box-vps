@@ -55,7 +55,8 @@ if [[ "${BASH_SOURCE[0]##*/}" == managed_openvpn_endpoint_runtime.sh ]]; then
   [[ "${SBV_CI_HOST_ONLY:-0}" == 1 ]]
   printf 'SKIP OpenVPN system endpoint runtime: TUN unavailable\n'
 fi
-if [[ "${BASH_SOURCE[0]##*/}" == routing_policy_config.sh && -n "${CI_EXPECT_ROUTING_CORE:-}" ]]; then
+if [[ -n "${CI_EXPECT_ROUTING_CORE:-}" && ( "${BASH_SOURCE[0]##*/}" == routing_policy_config.sh ||
+    "${BASH_SOURCE[0]##*/}" == routing_policy_instance_baseline.sh ) ]]; then
   [[ "${ROUTING_POLICY_TEST_REAL_CORE:-}" == "${CI_EXPECT_ROUTING_CORE}" ]]
 fi
 if [[ -n "${CI_OLDER_TAKEOVER:-}" && "${BASH_SOURCE[0]##*/}" == http_structured_takeover.sh ]]; then
@@ -173,13 +174,19 @@ git -C "${FIXTURE}" restore tests/singbox_1_14_compatibility.sh
 
 printf '# changed routing probe\n' > "${FIXTURE}/tests/routing_policy_private_runtime.py"
 assert_rejected
-grep -Fq 'Changed routing probe requires SINGBOX_BINARY_114' "${TMP_DIR}/output"
+grep -Fq 'Selected routing check requires SINGBOX_BINARY_114: tests/routing_policy_config.sh' "${TMP_DIR}/output"
 SINGBOX_BINARY_114="${TMP_DIR}/core" CI_EXPECT_ROUTING_CORE="${TMP_DIR}/core" expect_success
 grep -Fxq routing_policy_config.sh "${CI_SCOPE_EXECUTION_LOG}"
 cp "${TMP_DIR}/core" "${TMP_DIR}/other-core"
 SINGBOX_BINARY_114="${TMP_DIR}/core" ROUTING_POLICY_TEST_REAL_CORE="${TMP_DIR}/other-core" assert_rejected
 grep -Fq 'Routing probe core conflicts with SINGBOX_BINARY_114' "${TMP_DIR}/output"
 rm -- "${FIXTURE}/tests/routing_policy_private_runtime.py"
+printf ': select standalone routing baseline\n' >> "${FIXTURE}/tests/routing_policy_instance_baseline.sh"
+assert_rejected
+grep -Fq 'Selected routing check requires SINGBOX_BINARY_114: tests/routing_policy_instance_baseline.sh' "${TMP_DIR}/output"
+SINGBOX_BINARY_114="${TMP_DIR}/core" CI_EXPECT_ROUTING_CORE="${TMP_DIR}/core" expect_success
+grep -Fxq routing_policy_instance_baseline.sh "${CI_SCOPE_EXECUTION_LOG}"
+git -C "${FIXTURE}" restore tests/routing_policy_instance_baseline.sh
 
 if SINGBOX_BINARY_114="${TMP_DIR}/core" CI_DRIFT_CORE="${TMP_DIR}/core" run_ci; then exit 1; fi
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
