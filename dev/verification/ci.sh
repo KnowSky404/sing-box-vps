@@ -4,7 +4,7 @@ set -euo pipefail
 
 CI_VERIFICATION_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 unset CI_CANDIDATE_ROOT
-if [[ $# == 2 ]]; then
+if [[ $# -ge 2 ]]; then
   [[ -n "$2" ]] || exit 2
   CI_CANDIDATE_ROOT=$(cd -- "$2" && pwd -P) || exit 2
 fi
@@ -111,7 +111,7 @@ ci_check_core_scope() {
 
 main() {
   local base=${1:?base revision required} scope_file=.github/verification-scope.txt
-  local scope_changed=n file scope_base option value extra line run_dir summary provenance
+  local scope_changed=n integrated=n file scope_base='' option value extra line run_dir summary provenance
   local core_113_version core_114_version core_113_digest core_114_digest
   local head head_tree expected_base start_snapshot worktree_status worktree_state=clean status=0
   local -a selectors=() selected_tests tested_log_digests=() contracts=(
@@ -122,7 +122,7 @@ main() {
     tests/reality_region_candidates.sh tests/reality_region_candidate_evidence.sh
     tests/reality_region_candidate_evidence_contract.sh
   )
-  [[ $# == 1 || $# == 2 ]] || return 2
+  [[ $# -le 3 ]] || return 2
   cd "${REPO_ROOT}"
   if [[ -n "${ROUTING_POLICY_TEST_REAL_CORE:-}" ]]; then
     if [[ -n "${SINGBOX_BINARY_114:-}" && ! "${ROUTING_POLICY_TEST_REAL_CORE}" -ef "${SINGBOX_BINARY_114}" ]]; then
@@ -141,6 +141,13 @@ main() {
   fi
   head=$(git rev-parse --verify HEAD)
   head_tree=$(git rev-parse "${head}^{tree}")
+  if [[ -n "${3:-}" ]]; then
+    if [[ ! "$3" =~ ^[0-9a-f]{40}$ ]] || ! git cat-file -e "$3^{commit}"; then
+      verification_plan_error 'Invalid protected main revision'
+      return 2
+    fi
+    if git merge-base --is-ancestor "${head}" "$3"; then integrated=y; fi
+  fi
   worktree_status=$(git status --porcelain --untracked-files=all)
   start_snapshot=$(ci_worktree_snapshot)
   core_113_digest=$(ci_core_digest "${SINGBOX_BINARY_113:-}")
@@ -168,7 +175,9 @@ main() {
         verification_plan_error 'CI scope header must contain its full merge-base SHA'
         return 2
       fi
-      if [[ "${scope_base}" != "${VERIFY_PLAN_BASE}" ]]; then
+      if [[ "${scope_base}" != "${VERIFY_PLAN_BASE}" ]] &&
+        ! { [[ "${integrated}" == y ]] &&
+          git merge-base --is-ancestor "${scope_base}" "${VERIFY_PLAN_BASE}"; }; then
         verification_plan_error 'CI scope base is stale or invalid; use the actual merge-base revision'
         return 2
       fi
@@ -210,8 +219,8 @@ main() {
   verification_print_plan > "${run_dir}/plan.txt"
   printf 'run_dir=%s\nCI proof boundary: host tests only; Docker and dedicated container fixtures are not executed.\n' "${run_dir}"
   provenance=$(
-    printf 'mode=host_ci\nhead=%s\nhead_tree=%s\nbase_ref_sha=%s\nbase=%s\nworktree=%s\nworktree_sha256=%s\n' \
-      "${head}" "${head_tree}" "${base}" "${expected_base}" "${worktree_state}" "${start_snapshot%% *}"
+    printf 'mode=host_ci\nhead=%s\nhead_tree=%s\nbase_ref_sha=%s\nbase=%s\nscope_base=%s\nworktree=%s\nworktree_sha256=%s\n' \
+      "${head}" "${head_tree}" "${base}" "${expected_base}" "${scope_base:-not_used}" "${worktree_state}" "${start_snapshot%% *}"
     printf 'environment=%s\nbash=%s\njq=%s\nvalidation_core=%s\nvalidation_core_113=%s\nvalidation_core_113_sha256=%s\nvalidation_core_114_sha256=%s\n' \
       "$(uname -sm)" "${BASH_VERSION}" "$(jq --version)" "${core_114_version}" "${core_113_version}" "${core_113_digest}" "${core_114_digest}"
     if [[ "${VERIFY_PLAN_RUNTIME_REQUIRED}" == 1 || ${#VERIFY_PLAN_SCENARIOS[@]} -gt 0 ||

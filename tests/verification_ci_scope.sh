@@ -392,6 +392,13 @@ BASE=$(git -C "${FIXTURE}" rev-parse HEAD)
 git -C "${FIXTURE}" cherry-pick "${TASK_COMMIT}" >/dev/null
 assert_rejected
 GITHUB_EVENT_NAME=push GITHUB_REF=refs/heads/main assert_rejected
+INTEGRATED_HEAD=$(git -C "${FIXTURE}" rev-parse HEAD)
+bash "${REPO_ROOT}/dev/verification/ci.sh" "${BASE}" "${FIXTURE}" "${INTEGRATED_HEAD}" > "${TMP_DIR}/output" 2>&1
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq "base=${BASE}" "${run_dir}/summary.log"
+grep -Fxq "scope_base=${ORIGINAL_BASE}" "${run_dir}/summary.log"
+grep -Fxq host_gate=passed "${run_dir}/summary.log"
+grep -Fxq fixture_requested.sh "${CI_SCOPE_EXECUTION_LOG}"
 printf 'base %s\n--test tests/fixture_requested.sh\n' "${BASE}" > "${FIXTURE}/.github/verification-scope.txt"
 expect_success
 grep -Fxq host_gate=passed "${TMP_DIR}/last-summary"
