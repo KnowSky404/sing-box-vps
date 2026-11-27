@@ -142,13 +142,19 @@ grep -Fxq evidence=results_incomplete "${run_dir}/summary.log"
 grep -Fxq "head=${BASE}" "${run_dir}/summary.log"
 if grep -Fxq host_gate=passed "${run_dir}/summary.log"; then exit 1; fi
 
-printf '#!/usr/bin/env bash\nprintf "mock 1.14.4\\n"\n' > "${TMP_DIR}/core"
-chmod +x "${TMP_DIR}/core"
+printf '#!/usr/bin/env bash\nprintf "sing-box version 1.14.4\\n"\n' > "${TMP_DIR}/core"
+printf '#!/usr/bin/env bash\nprintf "sing-box version 1.13.18\\n"\n' > "${TMP_DIR}/core113"
+chmod +x "${TMP_DIR}/core" "${TMP_DIR}/core113"
+printf 'not executable\n' > "${TMP_DIR}/bad-core"
+for core in "${TMP_DIR}/bad-core" "${TMP_DIR}/core"; do
+  SINGBOX_BINARY_113="${core}" assert_rejected
+  grep -Fq 'Configured sing-box 1.13 validation core is unusable' "${TMP_DIR}/output"
+done
 if SINGBOX_BINARY_114="${TMP_DIR}/core" CI_DRIFT_CORE="${TMP_DIR}/core" run_ci; then exit 1; fi
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Fxq evidence=inputs_changed "${run_dir}/summary.log"
 grep -Fxq host_gate=failed "${run_dir}/summary.log"
-if SINGBOX_BINARY_113="${TMP_DIR}/core" CI_DRIFT_CORE="${TMP_DIR}/core" run_ci; then exit 1; fi
+if SINGBOX_BINARY_113="${TMP_DIR}/core113" CI_DRIFT_CORE="${TMP_DIR}/core113" run_ci; then exit 1; fi
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Eq '^validation_core_113_sha256=[0-9a-f]{64}$' "${run_dir}/summary.log"
 grep -Fxq evidence=inputs_changed "${run_dir}/summary.log"
@@ -169,7 +175,7 @@ legacy_skip='SKIP HTTP export runtime: SINGBOX_BINARY_113 unavailable'
 SINGBOX_BINARY_114="${TMP_DIR}/core" CI_SKIP_HOST_TEST="${legacy_skip}" expect_success
 grep -Fxq validation_core_113_sha256=not_supplied "${TMP_DIR}/last-summary"
 grep -Fxq host_gate=passed "${TMP_DIR}/last-summary"
-if SINGBOX_BINARY_113="${TMP_DIR}/core" SINGBOX_BINARY_114="${TMP_DIR}/core" CI_SKIP_HOST_TEST="${legacy_skip}" run_ci; then exit 1; fi
+if SINGBOX_BINARY_113="${TMP_DIR}/core113" SINGBOX_BINARY_114="${TMP_DIR}/core" CI_SKIP_HOST_TEST="${legacy_skip}" run_ci; then exit 1; fi
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Fxq local_status=required_not_run "${run_dir}/summary.log"
 grep -Fxq host_gate=failed "${run_dir}/summary.log"
