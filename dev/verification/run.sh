@@ -47,7 +47,8 @@ run_local_tests() {
   printf 'test\tstatus\telapsed_seconds\n' > "${run_dir}/local-tests/results.tsv" || return $?
   for test_file in "${VERIFY_PLAN_TESTS[@]}"; do
     started=${SECONDS}
-    test_log="${run_dir}/local-tests/${test_file##*/}.log"
+    test_log="${run_dir}/local-tests/${test_file#tests/}.log"
+    mkdir -p -- "${test_log%/*}" || return $?
     printf 'local_test=%s\n' "${test_file}"
     if env -u VERIFY_SKIP_REMOTE VERIFY_SKIP_LOCAL_TESTS=1 bash "${test_file}" \
       > "${test_log}" 2>&1; then

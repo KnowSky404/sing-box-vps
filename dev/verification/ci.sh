@@ -17,7 +17,10 @@ ci_worktree_snapshot() {
     git ls-files --stage -z || return 1
     git ls-files --cached --others --exclude-standard -z | sort -zu |
       while IFS= read -r -d '' file; do
-        if [[ -L "${file}" || -f "${file}" ]]; then
+        if [[ -L "${file}" ]]; then
+          verification_plan_error "CI cannot bind symlinked worktree input: $(printf '%q' "${file}")"
+          return 1
+        elif [[ -f "${file}" ]]; then
           printf '%s\0' "${file}"
         elif [[ -e "${file}" ]]; then
           return 1
@@ -45,7 +48,7 @@ ci_results_match() {
   [[ "${actual}" == "$(printf '%s\n' "${VERIFY_PLAN_TESTS[@]}")" ]] || return 1
   [[ ${#log_digests[@]} == ${#VERIFY_PLAN_TESTS[@]} ]] || return 1
   for test_file in "${VERIFY_PLAN_TESTS[@]}"; do
-    log="$1/local-tests/${test_file##*/}.log"
+    log="$1/local-tests/${test_file#tests/}.log"
     [[ -f "${log}" && ! -L "${log}" && -r "${log}" ]] || return 1
     digest=$(sha256sum < "${log}") || return 1
     [[ "${digest}" == "${log_digests[index]}" ]] || return 1
