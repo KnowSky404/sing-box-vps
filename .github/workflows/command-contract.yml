@@ -55,7 +55,8 @@ jobs:
           sudo -n env TMPDIR="$RUNNER_TEMP" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory \
             GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE" SINGBOX_BINARY_114="$SINGBOX_BINARY_114" \
             bash dev/verification/ci.sh "$VERIFY_BASE_REF" 2>&1 | tee "$CI_RUN_LOG" || CI_STATUS=$?
-          CI_HOST_RUN_DIR=$(sed -n 's/^run_dir=//p' "$CI_RUN_LOG")
+          # The parent emits its directory before any nested test diagnostics.
+          CI_HOST_RUN_DIR=$(sed -n '/^run_dir=/{s/^run_dir=//;p;q;}' "$CI_RUN_LOG")
           if [[ -n "$CI_HOST_RUN_DIR" ]]; then
             [[ "$CI_HOST_RUN_DIR" == "$GITHUB_WORKSPACE"/dev/verification-runs/* && "$CI_HOST_RUN_DIR" != *$'\n'* ]]
             [[ -f "$CI_HOST_RUN_DIR/plan.txt" && -f "$CI_HOST_RUN_DIR/summary.log" ]]

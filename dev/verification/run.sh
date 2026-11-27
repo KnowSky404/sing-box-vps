@@ -25,7 +25,7 @@ run_local_tests() {
     printf 'local_test=%s\n' "${test_file}"
     if env -u VERIFY_SKIP_REMOTE VERIFY_SKIP_LOCAL_TESTS=1 bash "${test_file}" \
       > "${run_dir}/local-tests/${test_file##*/}.log" 2>&1; then
-      printf '%s\tpassed\t%s\n' "${test_file}" "$((SECONDS - started))" >> "${run_dir}/local-tests/results.tsv"
+      printf '%s\tpassed\t%s\n' "${test_file}" "$((SECONDS - started))" >> "${run_dir}/local-tests/results.tsv" || return $?
       printf 'local_test_passed=%s elapsed_seconds=%s\n' "${test_file}" "$((SECONDS - started))"
     else
       status=$?
