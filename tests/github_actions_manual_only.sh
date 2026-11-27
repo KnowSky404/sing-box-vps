@@ -29,6 +29,15 @@ if printf 'on: [push, workflow_dispatch]\n' | assert_manual_trigger; then exit 1
 workflow="${REPO_ROOT}/.github/workflows/command-contract.yml"
 grep -Fq 'ref: ${{ github.sha }}' "${workflow}"
 grep -Fq 'EXPECTED_HEAD: ${{ inputs.head_sha }}' "${workflow}"
+# Cancel obsolete work only after the authorization job has passed.
+awk '
+  /^concurrency:/ { exit 1 }
+  /^  command-contract:$/ { host_job=1; next }
+  /^  [^[:space:]#]/ { host_job=0 }
+  host_job && /^    needs: authorize-head$/ { authorized=1 }
+  host_job && /^    concurrency:$/ { gated=1 }
+  END { if (!authorized || !gated) exit 1 }
+' "${workflow}"
 grep -Fq 'persist-credentials: false' "${workflow}"
 grep -Fq 'contents: read' "${workflow}"
 grep -Fq 'retention-days: 14' "${workflow}"
