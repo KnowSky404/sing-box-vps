@@ -10,7 +10,10 @@ source "${SCRIPT_DIR}/common.sh"
 source "${SCRIPT_DIR}/planner.sh"
 
 run_local_tests() {
-  local run_dir=$1 require_checks=${2:-0} test_file test_log syntax_file status started
+  local run_dir=$1 require_checks=${2:-0} test_file test_log syntax_file status started legacy_unselected=0
+  if [[ -z "${SINGBOX_BINARY_113:-}" && -x "${SINGBOX_BINARY_114:-}" ]]; then
+    legacy_unselected=1
+  fi
   for syntax_file in "${VERIFY_PLAN_SYNTAX[@]}"; do
     bash -n "${REPO_ROOT}/${syntax_file}" || return $?
   done
@@ -27,8 +30,9 @@ run_local_tests() {
     if env -u VERIFY_SKIP_REMOTE VERIFY_SKIP_LOCAL_TESTS=1 bash "${test_file}" \
       > "${test_log}" 2>&1; then
       [[ -f "${test_log}" && ! -L "${test_log}" ]] || return 2
-      if [[ "${require_checks}" == 1 ]] && awk -v test="${test_file}" '
+      if [[ "${require_checks}" == 1 ]] && awk -v test="${test_file}" -v legacy="${legacy_unselected}" '
         test == "tests/managed_listener_resources.sh" && /^SKIP isolated IPv6 wildcard startup contrast:/ { next }
+        legacy && /^SKIP [^:]+: SINGBOX_BINARY_113 (is )?unavailable$/ { next }
         /^SKIP([ :]|$)|^[^:]+ (skipped|not run)(:|$)/ { found=1 }
         END { exit !found }
       ' "${test_log}"; then
