@@ -45,8 +45,8 @@ ci_results_match() {
 }
 
 ci_core_digest() {
-  if [[ -n "${SINGBOX_BINARY_114:-}" ]]; then
-    sha256sum < "${SINGBOX_BINARY_114}" | cut -d ' ' -f 1
+  if [[ -n "$1" ]]; then
+    sha256sum < "$1" | cut -d ' ' -f 1
   else
     printf 'not_supplied\n'
   fi
@@ -54,7 +54,7 @@ ci_core_digest() {
 
 main() {
   local base=${1:?base revision required} scope_file=.github/verification-scope.txt
-  local scope_changed=n file scope_base option value extra line run_dir summary core_version core_digest provenance
+  local scope_changed=n file scope_base option value extra line run_dir summary core_version core_113_digest core_114_digest provenance
   local head head_tree expected_base start_snapshot worktree_status worktree_state=clean status=0
   local -a selectors=() selected_tests contracts=(
     tests/command_catalog_contract.sh tests/storage_selinux.sh
@@ -66,11 +66,20 @@ main() {
   )
   [[ $# == 1 || $# == 2 ]] || return 2
   cd "${REPO_ROOT}"
+  if [[ -n "${CI_CANDIDATE_ROOT:-}" ]]; then
+    for file in planner.sh selection.sh; do
+      if ! cmp -s "${CI_VERIFICATION_ROOT}/${file}" "dev/verification/${file}"; then
+        verification_plan_error 'Candidate planning rules differ from the trusted driver; use scoped isolated validation'
+        return 2
+      fi
+    done
+  fi
   head=$(git rev-parse --verify HEAD)
   head_tree=$(git rev-parse "${head}^{tree}")
   worktree_status=$(git status --porcelain --untracked-files=all)
   start_snapshot=$(ci_worktree_snapshot)
-  core_digest=$(ci_core_digest)
+  core_113_digest=$(ci_core_digest "${SINGBOX_BINARY_113:-}")
+  core_114_digest=$(ci_core_digest "${SINGBOX_BINARY_114:-}")
   [[ -z "${worktree_status}" ]] || worktree_state=dirty
   base=$(git rev-parse --verify --end-of-options "${base}^{commit}")
   expected_base=$(git merge-base "${base}" "${head}")
@@ -140,8 +149,8 @@ main() {
   provenance=$(
     printf 'mode=host_ci\nhead=%s\nhead_tree=%s\nbase_ref_sha=%s\nbase=%s\nworktree=%s\nworktree_sha256=%s\n' \
       "${head}" "${head_tree}" "${base}" "${expected_base}" "${worktree_state}" "${start_snapshot%% *}"
-    printf 'environment=%s\nbash=%s\njq=%s\nvalidation_core=%s\nvalidation_core_sha256=%s\n' \
-      "$(uname -sm)" "${BASH_VERSION}" "$(jq --version)" "${core_version}" "${core_digest}"
+    printf 'environment=%s\nbash=%s\njq=%s\nvalidation_core=%s\nvalidation_core_113_sha256=%s\nvalidation_core_114_sha256=%s\n' \
+      "$(uname -sm)" "${BASH_VERSION}" "$(jq --version)" "${core_version}" "${core_113_digest}" "${core_114_digest}"
     if [[ "${VERIFY_PLAN_RUNTIME_REQUIRED}" == 1 || ${#VERIFY_PLAN_SCENARIOS[@]} -gt 0 ]]; then
       printf 'remote_status=required_not_run\n'
     else
@@ -149,12 +158,14 @@ main() {
     fi
   )
   printf '%s\n' "${provenance}" > "${summary}"
-  VERIFY_SKIP_LOCAL_TESTS=0 run_local_tests "${run_dir}" || status=$?
+  VERIFY_SKIP_LOCAL_TESTS=0 run_local_tests "${run_dir}" 1 || status=$?
   if [[ ! -f "${summary}" || -L "${summary}" ]]; then
     verification_plan_error 'CI summary is missing or invalid'
     return 2
   fi
-  if ! ci_inputs_match "${head}" "${start_snapshot}" || [[ "$(ci_core_digest)" != "${core_digest}" ]]; then
+  if ! ci_inputs_match "${head}" "${start_snapshot}" ||
+    [[ "$(ci_core_digest "${SINGBOX_BINARY_113:-}")" != "${core_113_digest}" ||
+       "$(ci_core_digest "${SINGBOX_BINARY_114:-}")" != "${core_114_digest}" ]]; then
     printf 'evidence=inputs_changed\nhost_gate=failed\n' >> "${summary}"
     verification_plan_error 'CI inputs changed during host verification'
     return 2
