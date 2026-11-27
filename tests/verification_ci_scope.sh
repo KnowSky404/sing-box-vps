@@ -84,7 +84,21 @@ run_ci || status=$?
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Fxq host_gate=failed "${run_dir}/summary.log"
 grep -Fxq local_status=failed "${run_dir}/summary.log"
-! grep -Fxq host_gate=passed "${run_dir}/summary.log"
+if grep -Fxq host_gate=passed "${run_dir}/summary.log"; then exit 1; fi
+git -C "${FIXTURE}" restore tests/fixture_requested.sh
+
+# An otherwise successful test cannot leave an unwritable results path and pass.
+cat >> "${FIXTURE}/tests/fixture_requested.sh" <<'TEST'
+for results in dev/verification-runs/*/local-tests/results.tsv; do
+  [[ -f "${results}" ]] || continue
+  rm -- "${results}"
+  mkdir -- "${results}"
+done
+TEST
+if run_ci; then exit 1; fi
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq host_gate=failed "${run_dir}/summary.log"
+if grep -Fxq host_gate=passed "${run_dir}/summary.log"; then exit 1; fi
 git -C "${FIXTURE}" restore tests/fixture_requested.sh
 
 # A dedicated container fixture stays unexecuted while actual host checks run.
@@ -92,7 +106,7 @@ printf ': container-change\n' >> "${FIXTURE}/tests/default_dual_stack_runtime.sh
 expect_success
 grep -Fxq plan_status=needs_scope "${TMP_DIR}/last-plan"
 grep -Fxq local_status=passed "${TMP_DIR}/last-summary"
-! grep -Fxq default_dual_stack_runtime.sh "${CI_SCOPE_EXECUTION_LOG}"
+if grep -Fxq default_dual_stack_runtime.sh "${CI_SCOPE_EXECUTION_LOG}"; then exit 1; fi
 
 git -C "${FIXTURE}" add .
 git -C "${FIXTURE}" commit -qm delivered
