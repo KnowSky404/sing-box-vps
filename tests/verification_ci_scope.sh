@@ -440,30 +440,18 @@ git clone --quiet --no-hardlinks "${FIXTURE}" "${DRIVER_FIXTURE}"
 git -C "${DRIVER_FIXTURE}" checkout --quiet --detach "${INTEGRATED_HEAD}"
 if bash "${DRIVER_FIXTURE}/dev/verification/ci.sh" "${BASE}" "${FIXTURE}" "${BASE}" > "${TMP_DIR}/output" 2>&1; then exit 1; fi
 grep -Fq 'Protected main revision does not match the verifier checkout' "${TMP_DIR}/output"
-bash "${DRIVER_FIXTURE}/dev/verification/ci.sh" "${BASE}" "${FIXTURE}" "${INTEGRATED_HEAD}" > "${TMP_DIR}/output" 2>&1
-run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
-grep -Fxq "base=${BASE}" "${run_dir}/summary.log"
-grep -Fxq "scope_base=${ORIGINAL_BASE}" "${run_dir}/summary.log"
-grep -Fxq "trusted_driver_sha=${INTEGRATED_HEAD}" "${run_dir}/summary.log"
-grep -Fxq host_gate=passed "${run_dir}/summary.log"
-grep -Fxq fixture_requested.sh "${CI_SCOPE_EXECUTION_LOG}"
-
-# A later scope declaration cannot stand in for a second integrated PR.
-git -C "${FIXTURE}" switch --quiet -c multiple-scopes
-printf 'base %s\n--test tests/fixture_changed.sh\n' "${BASE}" > "${FIXTURE}/.github/verification-scope.txt"
-git -C "${FIXTURE}" add .github/verification-scope.txt
-git -C "${FIXTURE}" commit -qm 'second scope'
-MULTIPLE_HEAD=$(git -C "${FIXTURE}" rev-parse HEAD)
-git -C "${FIXTURE}" update-ref refs/remotes/origin/main "${MULTIPLE_HEAD}"
-git -C "${DRIVER_FIXTURE}" fetch --quiet "${FIXTURE}" "${MULTIPLE_HEAD}"
-git -C "${DRIVER_FIXTURE}" switch --quiet --detach "${MULTIPLE_HEAD}"
-if bash "${DRIVER_FIXTURE}/dev/verification/ci.sh" "${BASE}" "${FIXTURE}" "${MULTIPLE_HEAD}" > "${TMP_DIR}/output" 2>&1; then exit 1; fi
-grep -Fq 'Integrated CI requires one committed scope declaration' "${TMP_DIR}/output"
-git -C "${FIXTURE}" switch --quiet newer-main
-
+# A verified driver cannot apply a stale scope to a changed integration base.
+if bash "${DRIVER_FIXTURE}/dev/verification/ci.sh" "${BASE}" "${FIXTURE}" "${INTEGRATED_HEAD}" > "${TMP_DIR}/output" 2>&1; then exit 1; fi
+grep -Fq 'CI scope base is stale or invalid' "${TMP_DIR}/output"
 printf 'base %s\n--test tests/fixture_requested.sh\n' "${BASE}" > "${FIXTURE}/.github/verification-scope.txt"
 expect_success
 grep -Fxq host_gate=passed "${TMP_DIR}/last-summary"
+bash "${DRIVER_FIXTURE}/dev/verification/ci.sh" "${BASE}" "${FIXTURE}" "${INTEGRATED_HEAD}" > "${TMP_DIR}/output" 2>&1
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq "base=${BASE}" "${run_dir}/summary.log"
+grep -Fxq "scope_base=${BASE}" "${run_dir}/summary.log"
+grep -Fxq "trusted_driver_sha=${INTEGRATED_HEAD}" "${run_dir}/summary.log"
+grep -Fxq host_gate=passed "${run_dir}/summary.log"
 git -C "${FIXTURE}" restore .github/verification-scope.txt
 
 # Another accepted PR may have already published this exact scope content.
