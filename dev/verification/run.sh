@@ -34,6 +34,7 @@ run_local_tests() {
       if [[ "${require_checks}" == 1 ]]; then
         test_result=$(awk -v test="${test_file}" -v legacy="${legacy_unselected}" '
           test == "tests/managed_listener_resources.sh" && /^SKIP isolated IPv6 wildcard startup contrast:/ { next }
+          test == "tests/managed_openvpn_endpoint_runtime.sh" && /^SKIP OpenVPN system endpoint runtime:/ { next }
           legacy && /^SKIP [^:]+: SINGBOX_BINARY_113 (is )?unavailable$/ { next }
           legacy && test ~ /^tests\/(http|shadowsocks|socks)_structured_takeover\.sh$/ &&
             /^SKIP (HTTP|Shadowsocks|SOCKS) real-core check: binary unavailable$/ { older_takeover=1; next }
