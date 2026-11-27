@@ -62,26 +62,7 @@ readback reconciliation checks stay in force.
 
 ## CI scope contract
 
-Use the existing planner and standalone-test validation, including all committed,
-staged/unstaged and untracked changes supported by `--base`. CI checks out the
-tested head with enough history and passes the PR base/push-before revision as
-data, never shell code.
-
-An explicit repository scope is bound to the actual merge base. Reusing an
-unchanged scope from another branch must not silently resolve `needs_scope`.
-PR scope must match its actual merge base. On a protected `main` push after
-GitHub rebase merge, the accepted scope may name an ancestor of the push-before
-revision, including identical scope already published by a parallel PR. PR/local
-modes still reject unchanged scopes; non-ancestor/invalid bases always fail. Only validated planner selectors are
-accepted; no shell evaluation or arbitrary commands. Automatically selected checks are additive. Unknown or stale scope
-fails before tests. CI reuses the host executor directly. A dedicated container fixture may leave
-the full plan at `needs_scope` while host checks pass; its separate runtime
-requirement is recorded as `required_not_run`. CI never executes container
-fixtures as host tests and records selected Docker scenes as unexecuted; a green CI result is not runtime acceptance.
-
-Preserve the `command-contract` job name, read-only GitHub permissions and safe
-`pull_request` event. Upload the plan, per-test logs and elapsed times even after
-test failure. Do not require a full suite for ordinary changes.
+The current authorization and CI scope contract is in [AGENTS.md](../../AGENTS.md#421-github-actions-显式授权门禁) and the [Development guide](../wiki/Development.md#github-actions-授权与定点验证). It supersedes the historical automatic PR/push workflow used during this remediation. CI reuses the scoped host executor and records dedicated runtime fixtures and selected Docker scenarios separately as `required_not_run`.
 
 ## Verification and delivery
 

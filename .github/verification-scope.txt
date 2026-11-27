@@ -1,11 +1,4 @@
-base 26d6714fb9704962f6688b75749dbfd705d3af68
-# Local verification selectors only; this file does not authorize GitHub Actions.
-# WireGuard runtime acceptance uses dev/verification/media-warp-runtime.sh separately.
+base b7421b484eb114a47b8a97ccf593512d025c55d3
+# CI authorization, host scope and final-result regressions.
 --test tests/github_actions_manual_only.sh
---test tests/media_warp_safety.sh
---test tests/module_storage.sh
---test tests/node_network_independence.sh
---test tests/routing_warp_legacy_baseline_repair.sh
---test tests/routing_media_draft_independence.sh
---test tests/jq_guard_binding_compatibility.sh
---test tests/managed_config_coexistence.sh
+--test tests/verification_ci_scope.sh
