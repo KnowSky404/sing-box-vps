@@ -156,6 +156,7 @@ grep -Fxq evidence=inputs_changed "${run_dir}/summary.log"
 for skip in 'SKIP fixture: missing dependency' 'sing-box check not run: set SINGBOX_BINARY_114' \
   'real startup comparisons not run: configured cores missing' \
   'Trojan structured takeover checks passed; real core checks=0' \
+  'structured instance store checks passed; real core checks=0; HTTP/SOCKS TCP probes=0' \
   'SKIP cross-version server compatibility: both validation cores are required'; do
   if CI_SKIP_HOST_TEST="${skip}" run_ci; then exit 1; fi
   run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
