@@ -9,8 +9,27 @@ source "${SCRIPT_DIR}/common.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/planner.sh"
 
+observe_host_test_log() (
+  local test_file=$1 test_log=$2 legacy=$3 snapshot
+  snapshot=$(mktemp "${TMPDIR:-/tmp}/sbv-host-log.XXXXXXXX") || return 2
+  trap 'rm -- "${snapshot}"' EXIT
+  cp -- "${test_log}" "${snapshot}" || return 2
+  awk -v test="${test_file}" -v legacy="${legacy}" '
+    test == "tests/managed_listener_resources.sh" && /^SKIP isolated IPv6 wildcard startup contrast:/ { next }
+    test == "tests/managed_openvpn_endpoint_runtime.sh" && /^SKIP OpenVPN system endpoint runtime:/ { next }
+    legacy && /^SKIP [^:]+: SINGBOX_BINARY_113 (is )?unavailable$/ { next }
+    legacy && test ~ /^tests\/(http|shadowsocks|socks)_structured_takeover\.sh$/ &&
+      /^SKIP (HTTP|Shadowsocks|SOCKS) real-core check: binary unavailable$/ { older_takeover=1; next }
+    / structured takeover checks passed; real core checks=1$/ { verified_core=1 }
+    / real core checks=0([; ,]|$)/ { missing=1 }
+    /^SKIP([ :]|$)|^[^:]+ (skipped|not run)(:|$)/ { missing=1 }
+    END { print missing || (older_takeover && !verified_core) ? "skipped" : "passed" }
+  ' "${snapshot}" || return 2
+  sha256sum < "${snapshot}"
+)
+
 run_local_tests() {
-  local run_dir=$1 digest_array=${2:-} test_file test_log test_result log_digest syntax_file status started legacy_unselected=0
+  local run_dir=$1 digest_array=${2:-} test_file test_log test_result observed syntax_file status started legacy_unselected=0
   if [[ -n "${digest_array}" ]]; then
     local -n log_digests="${digest_array}"
   fi
@@ -35,19 +54,9 @@ run_local_tests() {
       [[ -f "${test_log}" && ! -L "${test_log}" ]] || return 2
       test_result=passed
       if [[ -n "${digest_array}" ]]; then
-        log_digest=$(sha256sum < "${test_log}") || return 2
-        test_result=$(awk -v test="${test_file}" -v legacy="${legacy_unselected}" '
-          test == "tests/managed_listener_resources.sh" && /^SKIP isolated IPv6 wildcard startup contrast:/ { next }
-          test == "tests/managed_openvpn_endpoint_runtime.sh" && /^SKIP OpenVPN system endpoint runtime:/ { next }
-          legacy && /^SKIP [^:]+: SINGBOX_BINARY_113 (is )?unavailable$/ { next }
-          legacy && test ~ /^tests\/(http|shadowsocks|socks)_structured_takeover\.sh$/ &&
-            /^SKIP (HTTP|Shadowsocks|SOCKS) real-core check: binary unavailable$/ { older_takeover=1; next }
-          / structured takeover checks passed; real core checks=1$/ { verified_core=1 }
-          / real core checks=0([; ,]|$)/ { missing=1 }
-          /^SKIP([ :]|$)|^[^:]+ (skipped|not run)(:|$)/ { missing=1 }
-          END { print missing || (older_takeover && !verified_core) ? "skipped" : "passed" }
-        ' "${test_log}") || return 2
-        log_digests+=("${log_digest}")
+        observed=$(observe_host_test_log "${test_file}" "${test_log}" "${legacy_unselected}") || return 2
+        test_result=${observed%%$'\n'*}
+        log_digests+=("${observed#*$'\n'}")
       fi
       printf '%s\t%s\t%s\n' "${test_file}" "${test_result}" "$((SECONDS - started))" >> "${run_dir}/local-tests/results.tsv" || return $?
       if [[ "${test_result}" == skipped ]]; then
