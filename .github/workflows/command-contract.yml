@@ -110,8 +110,9 @@ jobs:
           CI_RUN_LOG="${RUNNER_TEMP}/scoped-host-verification.log"
           CI_STATUS=0
           # Root-owned storage fixtures reject runner-owned ancestors.
-          sudo -n env TMPDIR=/tmp GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory \
+          sudo -n env TMPDIR=/tmp GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=safe.directory \
             GIT_CONFIG_VALUE_0="$PWD" SINGBOX_BINARY_114="$SINGBOX_BINARY_114" \
+            GIT_CONFIG_KEY_1=safe.directory GIT_CONFIG_VALUE_1="$GITHUB_WORKSPACE/trusted" \
             SINGBOX_BINARY_113="${SINGBOX_BINARY_113:-}" \
             bash "$GITHUB_WORKSPACE/trusted/dev/verification/ci.sh" "$VERIFY_BASE_REF" "$PWD" "$TRUSTED_MAIN_SHA" 2>&1 | tee "$CI_RUN_LOG" || CI_STATUS=$?
           # The parent emits its directory before any nested test diagnostics.
