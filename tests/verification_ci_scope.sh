@@ -302,6 +302,20 @@ grep -Fxq 'worktree=dirty' "${TMP_DIR}/last-summary"
 rm -- "${FIXTURE}/docs/task.md"
 git -C "${FIXTURE}" config --unset status.showUntrackedFiles
 
+ln -s "${TMP_DIR}/core" "${FIXTURE}/docs/link"
+assert_rejected
+grep -Fq 'CI cannot bind symlinked worktree input: docs/link' "${TMP_DIR}/output"
+rm -- "${FIXTURE}/docs/link"
+
+mkdir -p "${FIXTURE}/tests/first" "${FIXTURE}/tests/second"
+printf '#!/usr/bin/env bash\nprintf "first log\\n"\n' > "${FIXTURE}/tests/first/same.sh"
+printf '#!/usr/bin/env bash\nprintf "second log\\n"\n' > "${FIXTURE}/tests/second/same.sh"
+expect_success
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq 'first log' "${run_dir}/local-tests/first/same.sh.log"
+grep -Fxq 'second log' "${run_dir}/local-tests/second/same.sh.log"
+rm -- "${FIXTURE}/tests/first/same.sh" "${FIXTURE}/tests/second/same.sh"
+
 printf 'changed\n' >> "${FIXTURE}/README.md"
 printf ': changed\n' >> "${FIXTURE}/tests/fixture_changed.sh"
 expect_success
