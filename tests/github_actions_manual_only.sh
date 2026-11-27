@@ -40,7 +40,7 @@ awk '
   host_job && /^    concurrency:$/ { gated=1 }
   END { if (!authorized || !gated) exit 1 }
 ' "${workflow}"
-grep -Fq 'group: command-contract-${{ inputs.head_sha }}-${{ inputs.base_ref }}-${{ inputs.legacy_core }}' "${workflow}"
+grep -Fq 'group: command-contract-${{ github.sha }}-${{ inputs.head_sha }}-${{ inputs.base_ref }}-${{ inputs.legacy_core }}' "${workflow}"
 grep -Fq 'prepare_core 1.13.18 SINGBOX_BINARY_113' "${workflow}"
 grep -Fq 'git merge-base --is-ancestor "$EXPECTED_BASE" "$TRUSTED_MAIN_SHA"' "${workflow}"
 grep -Fq 'ACTUAL_BASE=$(git merge-base "$TRUSTED_MAIN_SHA" "$EXPECTED_HEAD")' "${workflow}"

@@ -38,7 +38,7 @@ jobs:
   command-contract:
     needs: authorize-head
     concurrency:
-      group: command-contract-${{ inputs.head_sha }}-${{ inputs.base_ref }}-${{ inputs.legacy_core }}
+      group: command-contract-${{ github.sha }}-${{ inputs.head_sha }}-${{ inputs.base_ref }}-${{ inputs.legacy_core }}
       cancel-in-progress: true
     runs-on: ubuntu-24.04
     timeout-minutes: 30

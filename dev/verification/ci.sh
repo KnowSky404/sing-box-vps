@@ -224,6 +224,7 @@ main() {
   provenance=$(
     printf 'mode=host_ci\nhead=%s\nhead_tree=%s\nbase_ref_sha=%s\nbase=%s\nscope_base=%s\nworktree=%s\nworktree_sha256=%s\n' \
       "${head}" "${head_tree}" "${base}" "${expected_base}" "${scope_base:-not_used}" "${worktree_state}" "${start_snapshot%% *}"
+    printf 'trusted_driver_sha=%s\n' "${3:-not_supplied}"
     printf 'environment=%s\nbash=%s\njq=%s\nvalidation_core=%s\nvalidation_core_113=%s\nvalidation_core_113_sha256=%s\nvalidation_core_114_sha256=%s\n' \
       "$(uname -sm)" "${BASH_VERSION}" "$(jq --version)" "${core_114_version}" "${core_113_version}" "${core_113_digest}" "${core_114_digest}"
     if [[ "${VERIFY_PLAN_RUNTIME_REQUIRED}" == 1 || ${#VERIFY_PLAN_SCENARIOS[@]} -gt 0 ||
