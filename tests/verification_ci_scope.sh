@@ -411,6 +411,7 @@ bash "${REPO_ROOT}/dev/verification/ci.sh" "${BASE}" "${FIXTURE}" "${INTEGRATED_
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Fxq "base=${BASE}" "${run_dir}/summary.log"
 grep -Fxq "scope_base=${ORIGINAL_BASE}" "${run_dir}/summary.log"
+grep -Fxq "trusted_driver_sha=${INTEGRATED_HEAD}" "${run_dir}/summary.log"
 grep -Fxq host_gate=passed "${run_dir}/summary.log"
 grep -Fxq fixture_requested.sh "${CI_SCOPE_EXECUTION_LOG}"
 printf 'base %s\n--test tests/fixture_requested.sh\n' "${BASE}" > "${FIXTURE}/.github/verification-scope.txt"

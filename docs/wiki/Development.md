@@ -23,10 +23,12 @@ rerun 或任何间接启动 CI 的操作。推送、创建或更新 PR、合并�
 确认不会触发 Actions。无法保证时先停下说明，不先触发再取消。
 
 `command-contract.yml` 只保留 `workflow_dispatch`。仓库级 Actions 和此工作流均禁用。
+以下手动运行步骤以受保护的 main 已合入与本页对应的工作流为前置条件。
 获分别明确授权后，由有权限的维护者在 Settings → Actions → General 启用仓库 Actions，
 再在 Actions → Command contract 选择 Enable workflow。运行仍须单独授权，只从受保护的
 `main` 加载可信工作流定义，传入获准的完整候选 head 和比较基线 SHA。通过输入校验的
-宿主运行可取代同 head、base 和核心选项的运行，日志保留 14 天。GitHub 宿主 runner 使用只读权限，无部署凭据；
+宿主运行可取代同驱动、head、base 和核心选项的运行。`scoped-host-verification` 产物
+保留计划、逐项日志、耗时和概要 14 天。GitHub 宿主 runner 使用只读权限，无部署凭据；
 确需新增自动入口或改变必需检查须由 Owner 明确授权。
 
 ```bash
@@ -62,11 +64,12 @@ fixture、越界路径或任意命令。固定契约列表不能代替影响判�
 独立验收，宿主 CI 用 `required_not_run` 标识。计划和摘要记录 host gate、head/tree、基线、工具版本及逐项结果。
 本地可直接执行
 `bash dev/verification/ci.sh origin/main`，不会调用 GitHub Actions。本地运行应独占 worktree。
+选到需要 UID 0 的存储、安全或系统 fixture 时，使用具备 root 权限的隔离环境。
 选到读取真实核心的宿主测试时，先配置 `SINGBOX_BINARY_114`。双版本兼容性测试还须配置
 `SINGBOX_BINARY_113`，使结果可以绑定实际核心字节。
 选中路由配置或实例基线测试时，使用该 1.14 核心检查生成配置并执行适用的私有路由探针。
 既有路由核心变量可以指定同一个 1.14 核心，冲突的配置会拒绝执行。
-选测或执行期间检测到提交或工作区字节变化，或逐项结果与计划不符时，本轮宿主门禁失败。
+报告记录托管运行的受保护驱动 SHA。选测或执行期间检测到提交或工作区字节变化，或逐项结果与计划不符时，本轮宿主门禁失败。
 工作区的已跟踪和未忽略输入不接受符号链接，避免遗漏链接目标字节。
 可复用的证据限于干净 worktree、相同的工作区摘要和等价工具链。
 
