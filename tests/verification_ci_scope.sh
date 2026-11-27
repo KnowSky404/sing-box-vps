@@ -31,8 +31,17 @@ if [[ "${CI_REMOVE_RESULTS:-}" == 1 && "${BASH_SOURCE[0]##*/}" == wiki_documenta
     [[ ! -f "${results}" ]] || rm -- "${results}"
   done
 fi
-if [[ "${CI_REMOVE_EARLIER_LOG:-}" == 1 && "${BASH_SOURCE[0]##*/}" == wiki_documentation.sh ]]; then
-  rm -- dev/verification-runs/*/local-tests/install_build_sync.sh.log
+if [[ "${BASH_SOURCE[0]##*/}" == install_build_sync.sh ]]; then
+  printf 'fixture build output\n'
+fi
+if [[ -n "${CI_DAMAGE_EARLIER_LOG:-}" && "${BASH_SOURCE[0]##*/}" == wiki_documentation.sh ]]; then
+  for log in dev/verification-runs/*/local-tests/install_build_sync.sh.log; do
+    case "${CI_DAMAGE_EARLIER_LOG}" in
+      remove) rm -- "${log}" ;;
+      truncate) : > "${log}" ;;
+      replace) printf 'different output\n' > "${log}" ;;
+    esac
+  done
 fi
 if [[ "${CI_REMOVE_SUMMARY:-}" == 1 && "${BASH_SOURCE[0]##*/}" == wiki_documentation.sh ]]; then
   for summary in dev/verification-runs/*/summary.log; do
@@ -143,12 +152,13 @@ grep -Fxq evidence=results_incomplete "${run_dir}/summary.log"
 grep -Fxq host_gate=failed "${run_dir}/summary.log"
 if grep -Fxq host_gate=passed "${run_dir}/summary.log"; then exit 1; fi
 
-if CI_REMOVE_EARLIER_LOG=1 run_ci; then exit 1; fi
-run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
-grep -Fxq evidence=results_incomplete "${run_dir}/summary.log"
-grep -Fxq host_gate=failed "${run_dir}/summary.log"
-grep -Eq '^tests/install_build_sync\.sh[[:space:]]+passed[[:space:]]' "${run_dir}/local-tests/results.tsv"
-[[ ! -e "${run_dir}/local-tests/install_build_sync.sh.log" ]]
+for damage in remove truncate replace; do
+  if CI_DAMAGE_EARLIER_LOG="${damage}" run_ci; then exit 1; fi
+  run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+  grep -Fxq evidence=results_incomplete "${run_dir}/summary.log"
+  grep -Fxq host_gate=failed "${run_dir}/summary.log"
+  grep -Eq '^tests/install_build_sync\.sh[[:space:]]+passed[[:space:]]' "${run_dir}/local-tests/results.tsv"
+done
 
 if CI_DAMAGE_PLAN=1 run_ci; then exit 1; fi
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
