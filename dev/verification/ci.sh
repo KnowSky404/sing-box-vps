@@ -34,7 +34,8 @@ ci_inputs_match() {
 }
 
 ci_results_match() {
-  local actual test_file log results="$1/local-tests/results.tsv"
+  local actual test_file log digest index=0 results="$1/local-tests/results.tsv"
+  local -n log_digests="$2"
   [[ -f "${results}" && ! -L "${results}" ]] || return 1
   actual=$(awk -F '\t' '
     NR == 1 { if ($0 != "test\tstatus\telapsed_seconds") exit 1; next }
@@ -42,9 +43,13 @@ ci_results_match() {
     { print $1 }
   ' "${results}") || return 1
   [[ "${actual}" == "$(printf '%s\n' "${VERIFY_PLAN_TESTS[@]}")" ]] || return 1
+  [[ ${#log_digests[@]} == ${#VERIFY_PLAN_TESTS[@]} ]] || return 1
   for test_file in "${VERIFY_PLAN_TESTS[@]}"; do
     log="$1/local-tests/${test_file##*/}.log"
     [[ -f "${log}" && ! -L "${log}" && -r "${log}" ]] || return 1
+    digest=$(sha256sum < "${log}") || return 1
+    [[ "${digest}" == "${log_digests[index]}" ]] || return 1
+    index=$((index + 1))
   done
 }
 
@@ -109,7 +114,7 @@ main() {
   local scope_changed=n file scope_base option value extra line run_dir summary provenance
   local core_113_version core_114_version core_113_digest core_114_digest
   local head head_tree expected_base start_snapshot worktree_status worktree_state=clean status=0
-  local -a selectors=() selected_tests contracts=(
+  local -a selectors=() selected_tests tested_log_digests=() contracts=(
     tests/command_catalog_contract.sh tests/storage_selinux.sh
     tests/agent_service_operations.sh tests/agent_routing_operations.sh
     tests/agent_cli_ops_commands.sh tests/agent_docs_cover_capabilities.sh
@@ -138,10 +143,10 @@ main() {
   head_tree=$(git rev-parse "${head}^{tree}")
   worktree_status=$(git status --porcelain --untracked-files=all)
   start_snapshot=$(ci_worktree_snapshot)
-  core_113_version=$(ci_core_version "${SINGBOX_BINARY_113:-}" 1.13)
-  core_114_version=$(ci_core_version "${SINGBOX_BINARY_114:-}" 1.14)
   core_113_digest=$(ci_core_digest "${SINGBOX_BINARY_113:-}")
   core_114_digest=$(ci_core_digest "${SINGBOX_BINARY_114:-}")
+  core_113_version=$(ci_core_version "${SINGBOX_BINARY_113:-}" 1.13)
+  core_114_version=$(ci_core_version "${SINGBOX_BINARY_114:-}" 1.14)
   [[ -z "${worktree_status}" ]] || worktree_state=dirty
   base=$(git rev-parse --verify --end-of-options "${base}^{commit}")
   expected_base=$(git merge-base "${base}" "${head}")
@@ -227,7 +232,7 @@ main() {
     export ROUTING_POLICY_TEST_REAL_CORE="${SINGBOX_BINARY_114}"
   fi
   VERIFY_SKIP_LOCAL_TESTS=0 SBV_CI_HOST_ONLY=1 SBV_TEST_ISOLATED_LISTENER_WILDCARD=0 \
-    run_local_tests "${run_dir}" 1 || status=$?
+    run_local_tests "${run_dir}" tested_log_digests || status=$?
   if [[ ! -f "${summary}" || -L "${summary}" ]]; then
     verification_plan_error 'CI summary is missing or invalid'
     return 2
@@ -243,7 +248,7 @@ main() {
     printf 'host_gate=failed\n' >> "${summary}"
     return "${status}"
   fi
-  if ! ci_results_match "${run_dir}" ||
+  if ! ci_results_match "${run_dir}" tested_log_digests ||
     [[ ! -f "${run_dir}/plan.txt" || -L "${run_dir}/plan.txt" ||
       "$(< "${run_dir}/plan.txt")" != "$(verification_print_plan)" ||
       "$(< "${summary}")" != "${provenance}"$'\nlocal_status=passed' ]]; then

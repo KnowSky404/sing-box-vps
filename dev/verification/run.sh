@@ -10,7 +10,10 @@ source "${SCRIPT_DIR}/common.sh"
 source "${SCRIPT_DIR}/planner.sh"
 
 run_local_tests() {
-  local run_dir=$1 require_checks=${2:-0} test_file test_log test_result syntax_file status started legacy_unselected=0
+  local run_dir=$1 digest_array=${2:-} test_file test_log test_result log_digest syntax_file status started legacy_unselected=0
+  if [[ -n "${digest_array}" ]]; then
+    local -n log_digests="${digest_array}"
+  fi
   if [[ -z "${SINGBOX_BINARY_113:-}" && -x "${SINGBOX_BINARY_114:-}" ]]; then
     legacy_unselected=1
   fi
@@ -31,7 +34,8 @@ run_local_tests() {
       > "${test_log}" 2>&1; then
       [[ -f "${test_log}" && ! -L "${test_log}" ]] || return 2
       test_result=passed
-      if [[ "${require_checks}" == 1 ]]; then
+      if [[ -n "${digest_array}" ]]; then
+        log_digest=$(sha256sum < "${test_log}") || return 2
         test_result=$(awk -v test="${test_file}" -v legacy="${legacy_unselected}" '
           test == "tests/managed_listener_resources.sh" && /^SKIP isolated IPv6 wildcard startup contrast:/ { next }
           test == "tests/managed_openvpn_endpoint_runtime.sh" && /^SKIP OpenVPN system endpoint runtime:/ { next }
@@ -43,6 +47,7 @@ run_local_tests() {
           /^SKIP([ :]|$)|^[^:]+ (skipped|not run)(:|$)/ { missing=1 }
           END { print missing || (older_takeover && !verified_core) ? "skipped" : "passed" }
         ' "${test_log}") || return 2
+        log_digests+=("${log_digest}")
       fi
       printf '%s\t%s\t%s\n' "${test_file}" "${test_result}" "$((SECONDS - started))" >> "${run_dir}/local-tests/results.tsv" || return $?
       if [[ "${test_result}" == skipped ]]; then
