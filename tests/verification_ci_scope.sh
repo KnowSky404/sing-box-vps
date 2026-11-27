@@ -12,11 +12,14 @@ printf 'dev/verification-runs/\n' > "${FIXTURE}/.gitignore"
 printf '#!/usr/bin/env bash\n: baseline\n' > "${FIXTURE}/install.sh"
 printf 'fixture readme\n' > "${FIXTURE}/README.md"
 printf 'base initial\n' > "${FIXTURE}/.github/verification-scope.txt"
-for test in $(grep -oE 'tests/[a-zA-Z0-9_]+\.sh' "${REPO_ROOT}/dev/verification/ci.sh") tests/fixture_changed.sh tests/fixture_requested.sh tests/install_build_sync.sh tests/readme_mentions_current_versions.sh tests/default_dual_stack_runtime.sh; do
+for test in $(grep -oE 'tests/[a-zA-Z0-9_]+\.sh' "${REPO_ROOT}/dev/verification/ci.sh") tests/fixture_changed.sh tests/fixture_requested.sh tests/install_build_sync.sh tests/readme_mentions_current_versions.sh tests/default_dual_stack_runtime.sh tests/bootstrap_download.sh; do
   cat <<'TEST' > "${FIXTURE}/${test}"
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "${BASH_SOURCE[0]##*/}" >> "${CI_SCOPE_EXECUTION_LOG}"
+if [[ -n "${CI_DRIFT_IN_TEST:-}" && "${BASH_SOURCE[0]##*/}" == install_build_sync.sh ]]; then
+  git switch -q --detach "${CI_DRIFT_IN_TEST}"
+fi
 TEST
 done
 for script in build-install build-command-docs; do
@@ -45,6 +48,36 @@ assert_rejected() {
   [[ ! -e "${CI_SCOPE_EXECUTION_LOG}" ]]
 }
 expect_success() { run_ci || { cat "${TMP_DIR}/output" >&2; exit 1; }; }
+
+# A second clean revision can require a different plan.
+git -C "${FIXTURE}" switch -qc drift
+printf '#!/usr/bin/env bash\n: fixture\n' > "${FIXTURE}/bootstrap.sh"
+git -C "${FIXTURE}" add bootstrap.sh
+git -C "${FIXTURE}" commit -qm drift
+DRIFT_HEAD=$(git -C "${FIXTURE}" rev-parse HEAD)
+git -C "${FIXTURE}" switch -q --detach "${BASE}"
+mkdir "${TMP_DIR}/bin"
+cat > "${TMP_DIR}/bin/git" <<'TEST'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == merge-base && "$3" == HEAD ]]; then
+  "${CI_REAL_GIT}" switch -q --detach "${CI_DRIFT_HEAD}"
+fi
+exec "${CI_REAL_GIT}" "$@"
+TEST
+chmod +x "${TMP_DIR}/bin/git"
+CI_REAL_GIT=$(command -v git) CI_DRIFT_HEAD="${DRIFT_HEAD}" PATH="${TMP_DIR}/bin:${PATH}" assert_rejected
+grep -Fq 'CI inputs changed during planning' "${TMP_DIR}/output"
+[[ $(git -C "${FIXTURE}" rev-parse HEAD) == "${DRIFT_HEAD}" ]]
+git -C "${FIXTURE}" switch -q --detach "${BASE}"
+
+if CI_DRIFT_IN_TEST="${DRIFT_HEAD}" run_ci; then exit 1; fi
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq "head=${BASE}" "${run_dir}/summary.log"
+grep -Fxq evidence=inputs_changed "${run_dir}/summary.log"
+grep -Fxq host_gate=failed "${run_dir}/summary.log"
+if grep -Fxq host_gate=passed "${run_dir}/summary.log"; then exit 1; fi
+git -C "${FIXTURE}" switch -q --detach "${BASE}"
 
 # Local status configuration must not hide a selected untracked input.
 git -C "${FIXTURE}" config status.showUntrackedFiles no

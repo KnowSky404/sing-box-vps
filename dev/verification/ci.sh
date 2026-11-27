@@ -5,9 +5,17 @@ set -euo pipefail
 CI_VERIFICATION_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${CI_VERIFICATION_ROOT}/run.sh"
 
+ci_inputs_match() {
+  local current_head current_status
+  current_head=$(git rev-parse --verify HEAD) || return 1
+  current_status=$(git status --porcelain --untracked-files=all) || return 1
+  [[ "${current_head}" == "$1" && "${current_status}" == "$2" ]]
+}
+
 main() {
   local base=${1:?base revision required} scope_file=.github/verification-scope.txt
-  local scope_changed=n file scope_base option value extra line run_dir core_version worktree_diff status
+  local scope_changed=n file scope_base option value extra line run_dir core_version
+  local head head_tree expected_base start_status worktree_state=clean status=0
   local -a selectors=() selected_tests contracts=(
     tests/command_catalog_contract.sh tests/storage_selinux.sh
     tests/agent_service_operations.sh tests/agent_routing_operations.sh
@@ -18,6 +26,12 @@ main() {
   )
   [[ $# == 1 ]] || return 2
   cd "${REPO_ROOT}"
+  head=$(git rev-parse --verify HEAD)
+  head_tree=$(git rev-parse "${head}^{tree}")
+  start_status=$(git status --porcelain --untracked-files=all)
+  [[ -z "${start_status}" ]] || worktree_state=dirty
+  base=$(git rev-parse --verify --end-of-options "${base}^{commit}")
+  expected_base=$(git merge-base "${base}" "${head}")
   verification_parse_options --base "${base}"
   verification_build_plan
   mkdir -p dev/verification-runs/ci
@@ -63,6 +77,10 @@ main() {
     verification_plan_error 'CI host impact still needs scope'
     return 2
   fi
+  if [[ "${VERIFY_PLAN_BASE}" != "${expected_base}" ]] || ! ci_inputs_match "${head}" "${start_status}"; then
+    verification_plan_error 'CI inputs changed during planning'
+    return 2
+  fi
   # Check generated installer bytes before any selected test sources the installer.
   selected_tests=("${VERIFY_PLAN_TESTS[@]}")
   VERIFY_PLAN_TESTS=()
@@ -76,11 +94,9 @@ main() {
   if [[ -n "${SINGBOX_BINARY_114:-}" ]]; then
     core_version=$("${SINGBOX_BINARY_114}" version | sed -n '1p')
   fi
-  worktree_diff=$(git status --porcelain --untracked-files=all)
-  [[ -z "${worktree_diff}" ]] && worktree_diff=clean || worktree_diff=dirty
   {
     printf 'mode=host_ci\nhead=%s\nhead_tree=%s\nbase=%s\nworktree=%s\n' \
-      "$(git rev-parse HEAD)" "$(git rev-parse 'HEAD^{tree}')" "${VERIFY_PLAN_BASE}" "${worktree_diff}"
+      "${head}" "${head_tree}" "${expected_base}" "${worktree_state}"
     printf 'environment=%s\nbash=%s\njq=%s\nvalidation_core=%s\n' \
       "$(uname -sm)" "${BASH_VERSION}" "$(jq --version)" "${core_version}"
   } > "${run_dir}/summary.log"
@@ -89,13 +105,17 @@ main() {
   else
     printf 'remote_status=not_required\n' >> "${run_dir}/summary.log"
   fi
-  if VERIFY_SKIP_LOCAL_TESTS=0 run_local_tests "${run_dir}"; then
-    printf 'host_gate=passed\n' >> "${run_dir}/summary.log"
-  else
-    status=$?
+  VERIFY_SKIP_LOCAL_TESTS=0 run_local_tests "${run_dir}" || status=$?
+  if ! ci_inputs_match "${head}" "${start_status}"; then
+    printf 'evidence=inputs_changed\nhost_gate=failed\n' >> "${run_dir}/summary.log"
+    verification_plan_error 'CI inputs changed during host verification'
+    return 2
+  fi
+  if [[ "${status}" != 0 ]]; then
     printf 'host_gate=failed\n' >> "${run_dir}/summary.log"
     return "${status}"
   fi
+  printf 'host_gate=passed\n' >> "${run_dir}/summary.log"
 }
 
 main "$@"

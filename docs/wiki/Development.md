@@ -19,8 +19,8 @@ rerun 或任何间接启动 CI 的操作。推送/PR/合并前只读核对工作
 `command-contract.yml` 只保留 `workflow_dispatch`。仓库级 Actions 和此工作流均禁用。
 获分别明确授权后，由有权限的维护者在 Settings → Actions → General 启用仓库 Actions，
 再在 Actions → Command contract 选择 Enable workflow。运行仍须单独授权，选择已审
-ref，传入获准的完整 head SHA 和比较基线。同 ref 和 base 输入的宿主运行可以由后续
-执行取代，日志保留 14 天。GitHub 宿主 runner 使用只读权限，无部署凭据；
+ref，传入获准的完整 head SHA 和比较基线。通过 head 校验的宿主运行可取代同 ref 和
+base 输入的旧宿主运行，日志保留 14 天。GitHub 宿主 runner 使用只读权限，无部署凭据；
 确需新增自动入口或改变必需检查须由 Owner 明确授权。
 
 ```bash
@@ -42,7 +42,9 @@ gh workflow run command-contract.yml --ref "$task_branch" -f head_sha="$task_hea
 fixture、越界路径或任意命令。固定契约列表不能代替影响判断；选择的 Docker 仍是
 独立验收，宿主 CI 用 `required_not_run` 标识。计划和摘要记录 host gate、head/tree、基线、工具版本及逐项结果。
 本地可直接执行
-`bash dev/verification/ci.sh origin/main`，不会调用 GitHub Actions。用干净 worktree 和等价工具链执行时可复用对应宿主证据。
+`bash dev/verification/ci.sh origin/main`，不会调用 GitHub Actions。本地运行应独占 worktree。
+选测或执行期间检测到提交或工作区状态变化时，本轮宿主门禁失败。可复用的证据限于干净
+worktree 和等价工具链。
 
 未授权的 CI 标记 `not_run_not_authorized`，不称为通过。分支保护若要求未运行的
 Actions 检查，保留 PR 并说明所需授权；不得自动运行或移除必需检查。既有失败与

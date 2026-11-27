@@ -17,14 +17,11 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: command-contract-${{ github.ref }}-${{ inputs.base_ref }}
-  cancel-in-progress: true
-
 jobs:
-  command-contract:
+  authorize-head:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 5
+    permissions: {}
     steps:
       - name: Require the authorized head before checkout
         env:
@@ -34,6 +31,14 @@ jobs:
             printf 'The selected ref no longer matches the authorized head.\n' >&2
             exit 2
           fi
+  command-contract:
+    needs: authorize-head
+    concurrency:
+      group: command-contract-${{ github.ref }}-${{ inputs.base_ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
