@@ -157,6 +157,15 @@ for skip in 'SKIP fixture: missing dependency' 'sing-box check not run: set SING
   grep -Eq '^tests/wiki_documentation\.sh[[:space:]]+skipped[[:space:]]+[0-9]+$' "${run_dir}/local-tests/results.tsv"
 done
 
+legacy_skip='SKIP HTTP export runtime: SINGBOX_BINARY_113 unavailable'
+SINGBOX_BINARY_114="${TMP_DIR}/core" CI_SKIP_HOST_TEST="${legacy_skip}" expect_success
+grep -Fxq validation_core_113_sha256=not_supplied "${TMP_DIR}/last-summary"
+grep -Fxq host_gate=passed "${TMP_DIR}/last-summary"
+if SINGBOX_BINARY_113="${TMP_DIR}/core" SINGBOX_BINARY_114="${TMP_DIR}/core" CI_SKIP_HOST_TEST="${legacy_skip}" run_ci; then exit 1; fi
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq local_status=required_not_run "${run_dir}/summary.log"
+grep -Fxq host_gate=failed "${run_dir}/summary.log"
+
 printf ': select listener test\n' >> "${FIXTURE}/tests/managed_listener_resources.sh"
 expect_success
 grep -Fxq remote_status=required_not_run "${TMP_DIR}/last-summary"
