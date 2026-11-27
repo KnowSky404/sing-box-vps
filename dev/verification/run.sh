@@ -29,7 +29,7 @@ run_local_tests() {
       [[ -f "${test_log}" && ! -L "${test_log}" ]] || return 2
       if [[ "${require_checks}" == 1 ]] && awk -v test="${test_file}" '
         test == "tests/managed_listener_resources.sh" && /^SKIP isolated IPv6 wildcard startup contrast:/ { next }
-        /^SKIP([ :]|$)|^[^:]+ skipped:/ { found=1 }
+        /^SKIP([ :]|$)|^[^:]+ (skipped|not run)(:|$)/ { found=1 }
         END { exit !found }
       ' "${test_log}"; then
         printf '%s\tskipped\t%s\n' "${test_file}" "$((SECONDS - started))" >> "${run_dir}/local-tests/results.tsv" || return $?

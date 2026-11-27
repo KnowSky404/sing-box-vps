@@ -44,8 +44,8 @@ fi
 if [[ -n "${CI_DRIFT_CORE:-}" && "${BASH_SOURCE[0]##*/}" == install_build_sync.sh ]]; then
   printf '# changed bytes, same version\n' >> "${CI_DRIFT_CORE}"
 fi
-if [[ "${CI_SKIP_HOST_TEST:-}" == 1 && "${BASH_SOURCE[0]##*/}" == wiki_documentation.sh ]]; then
-  printf 'SKIP fixture: missing dependency\n'
+if [[ -n "${CI_SKIP_HOST_TEST:-}" && "${BASH_SOURCE[0]##*/}" == wiki_documentation.sh ]]; then
+  printf '%s\n' "${CI_SKIP_HOST_TEST}"
 fi
 if [[ "${BASH_SOURCE[0]##*/}" == managed_listener_resources.sh ]]; then
   printf 'SKIP isolated IPv6 wildcard startup contrast: Docker only\n'
@@ -149,11 +149,13 @@ run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Eq '^validation_core_113_sha256=[0-9a-f]{64}$' "${run_dir}/summary.log"
 grep -Fxq evidence=inputs_changed "${run_dir}/summary.log"
 
-if CI_SKIP_HOST_TEST=1 run_ci; then exit 1; fi
-run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
-grep -Fxq local_status=required_not_run "${run_dir}/summary.log"
-grep -Fxq host_gate=failed "${run_dir}/summary.log"
-grep -Eq '^tests/wiki_documentation\.sh[[:space:]]+skipped[[:space:]]+[0-9]+$' "${run_dir}/local-tests/results.tsv"
+for skip in 'SKIP fixture: missing dependency' 'sing-box check not run: set SINGBOX_BINARY_114' 'real startup comparisons not run: configured cores missing'; do
+  if CI_SKIP_HOST_TEST="${skip}" run_ci; then exit 1; fi
+  run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+  grep -Fxq local_status=required_not_run "${run_dir}/summary.log"
+  grep -Fxq host_gate=failed "${run_dir}/summary.log"
+  grep -Eq '^tests/wiki_documentation\.sh[[:space:]]+skipped[[:space:]]+[0-9]+$' "${run_dir}/local-tests/results.tsv"
+done
 
 printf ': select listener test\n' >> "${FIXTURE}/tests/managed_listener_resources.sh"
 expect_success
