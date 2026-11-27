@@ -166,6 +166,12 @@ run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Fxq local_status=required_not_run "${run_dir}/summary.log"
 grep -Fxq host_gate=failed "${run_dir}/summary.log"
 
+SINGBOX_BINARY_114="${TMP_DIR}/core" CI_SKIP_HOST_TEST='SKIP HTTP real-core check: SINGBOX_BINARY_113 unavailable' expect_success
+if SINGBOX_BINARY_114="${TMP_DIR}/core" CI_SKIP_HOST_TEST='SKIP HTTP real-core check: SINGBOX_BINARY_114 unavailable' run_ci; then exit 1; fi
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq local_status=required_not_run "${run_dir}/summary.log"
+grep -Fxq host_gate=failed "${run_dir}/summary.log"
+
 printf ': select listener test\n' >> "${FIXTURE}/tests/managed_listener_resources.sh"
 expect_success
 grep -Fxq remote_status=required_not_run "${TMP_DIR}/last-summary"

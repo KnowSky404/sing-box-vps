@@ -84,13 +84,14 @@ mv "${TMP_DIR}/store-before-warp.json" "${store_file}"
 rendered_config="${TMP_DIR}/rendered.json"
 jq --argjson inbounds "${inbounds}" '.inbounds = $inbounds' "${SINGBOX_CONFIG_FILE}" > "${rendered_config}"
 core_checks=0
-for core_binary in "${SINGBOX_BINARY_113:-}" "${SINGBOX_BINARY_114:-}"; do
+for core_variable in SINGBOX_BINARY_113 SINGBOX_BINARY_114; do
+  core_binary=${!core_variable:-}
   if [[ -n "${core_binary}" && -x "${core_binary}" ]]; then
     "${core_binary}" check -c "${SINGBOX_CONFIG_FILE}"
     "${core_binary}" check -c "${rendered_config}"
     core_checks=$((core_checks + 1))
   else
-    printf 'SKIP SOCKS real-core check: binary unavailable\n'
+    printf 'SKIP SOCKS real-core check: %s unavailable\n' "${core_variable}"
   fi
 done
 

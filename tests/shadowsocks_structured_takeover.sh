@@ -112,12 +112,13 @@ fi
 rendered_inbounds=$(render_structured_instance_inbounds shadowsocks "${store_file}" | jq -s .)
 jq --argjson inbounds "${rendered_inbounds}" '.inbounds=$inbounds' "${SINGBOX_CONFIG_FILE}" > "${TMP_DIR}/rendered.json"
 core_checks=0
-for core_binary in "${SINGBOX_BINARY_113:-}" "${SINGBOX_BINARY_114:-}"; do
+for core_variable in SINGBOX_BINARY_113 SINGBOX_BINARY_114; do
+  core_binary=${!core_variable:-}
   if [[ -n "${core_binary}" && -x "${core_binary}" ]]; then
     "${core_binary}" check -c "${TMP_DIR}/rendered.json"
     core_checks=$((core_checks + 1))
   else
-    printf 'SKIP Shadowsocks real-core check: binary unavailable\n'
+    printf 'SKIP Shadowsocks real-core check: %s unavailable\n' "${core_variable}"
   fi
 done
 
