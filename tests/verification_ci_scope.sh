@@ -31,6 +31,14 @@ if [[ "${CI_REMOVE_RESULTS:-}" == 1 && "${BASH_SOURCE[0]##*/}" == wiki_documenta
     [[ ! -f "${results}" ]] || rm -- "${results}"
   done
 fi
+if [[ "${CI_REMOVE_SUMMARY:-}" == 1 && "${BASH_SOURCE[0]##*/}" == wiki_documentation.sh ]]; then
+  for summary in dev/verification-runs/*/summary.log; do
+    [[ ! -f "${summary}" ]] || rm -- "${summary}"
+  done
+fi
+if [[ "${CI_DRIFT_CORE:-}" == 1 && "${BASH_SOURCE[0]##*/}" == install_build_sync.sh ]]; then
+  printf '# changed bytes, same version\n' >> "${SINGBOX_BINARY_114}"
+fi
 TEST
 done
 for script in build-install build-command-docs; do
@@ -107,6 +115,19 @@ run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Fxq evidence=results_incomplete "${run_dir}/summary.log"
 grep -Fxq host_gate=failed "${run_dir}/summary.log"
 if grep -Fxq host_gate=passed "${run_dir}/summary.log"; then exit 1; fi
+
+if CI_REMOVE_SUMMARY=1 run_ci; then exit 1; fi
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq evidence=results_incomplete "${run_dir}/summary.log"
+grep -Fxq "head=${BASE}" "${run_dir}/summary.log"
+if grep -Fxq host_gate=passed "${run_dir}/summary.log"; then exit 1; fi
+
+printf '#!/usr/bin/env bash\nprintf "mock 1.14.4\\n"\n' > "${TMP_DIR}/core"
+chmod +x "${TMP_DIR}/core"
+if SINGBOX_BINARY_114="${TMP_DIR}/core" CI_DRIFT_CORE=1 run_ci; then exit 1; fi
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq evidence=inputs_changed "${run_dir}/summary.log"
+grep -Fxq host_gate=failed "${run_dir}/summary.log"
 
 # Local status configuration must not hide a selected untracked input.
 git -C "${FIXTURE}" config status.showUntrackedFiles no

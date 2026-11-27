@@ -5,13 +5,12 @@ on:
   workflow_dispatch:
     inputs:
       head_sha:
-        description: Authorized full commit SHA for the selected ref
+        description: Authorized full candidate commit SHA
         required: true
         type: string
       base_ref:
-        description: Comparison base (Git ref or commit SHA)
+        description: Authorized full comparison base commit SHA
         required: true
-        default: origin/main
         type: string
 
 permissions:
@@ -23,18 +22,19 @@ jobs:
     timeout-minutes: 5
     permissions: {}
     steps:
-      - name: Require the authorized head before checkout
+      - name: Validate inputs in the protected main workflow
         env:
           EXPECTED_HEAD: ${{ inputs.head_sha }}
+          EXPECTED_BASE: ${{ inputs.base_ref }}
         run: |
-          if [[ ! "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ || "$EXPECTED_HEAD" != "$GITHUB_SHA" ]]; then
-            printf 'The selected ref no longer matches the authorized head.\n' >&2
+          if [[ "$GITHUB_REF" != refs/heads/main || ! "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ || ! "$EXPECTED_BASE" =~ ^[0-9a-f]{40}$ ]]; then
+            printf 'Dispatch from protected main with the authorized full head and base SHAs.\n' >&2
             exit 2
           fi
   command-contract:
     needs: authorize-head
     concurrency:
-      group: command-contract-${{ github.ref }}-${{ github.sha }}-${{ inputs.base_ref }}
+      group: command-contract-${{ inputs.head_sha }}-${{ inputs.base_ref }}
       cancel-in-progress: true
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -42,11 +42,16 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.head_sha }}
           persist-credentials: false
       - name: Prepare verified target core for host configuration tests
+        env:
+          EXPECTED_HEAD: ${{ inputs.head_sha }}
+          EXPECTED_BASE: ${{ inputs.base_ref }}
         run: |
           set -euo pipefail
+          [[ "$(git rev-parse --verify HEAD)" == "$EXPECTED_HEAD" ]]
+          [[ "$(git rev-parse --verify --end-of-options "${EXPECTED_BASE}^{commit}")" == "$EXPECTED_BASE" ]]
           CORE_VERSION=$(sed -n 's/^readonly SB_SUPPORT_MAX_VERSION="\([^"]*\)"$/\1/p' install.sh)
           case "$(uname -m)" in x86_64) CORE_ARCH=amd64 ;; aarch64) CORE_ARCH=arm64 ;; *) exit 1 ;; esac
           CORE_ASSET="sing-box-${CORE_VERSION}-linux-${CORE_ARCH}.tar.gz"
