@@ -1,15 +1,11 @@
 # 开发工作流
 
-本流程适用于所有功能迭代和 Bug 修复。项目规约以 [AGENTS.md](https://github.com/KnowSky404/sing-box-vps/blob/main/AGENTS.md) 为准；纯文档等其他改动也可使用相同流程。
+[AGENTS.md](https://github.com/KnowSky404/sing-box-vps/blob/main/AGENTS.md) 第 4.2、4.2.1 和 6 节定义风险、验证、授权及交付门禁。采用 [Manifest 工程规范](https://github.com/KnowSky404/Manifest/blob/6f387de5065b6ffc475908880362939185ff89d7/docs/AI_NATIVE_DEVELOPMENT_WORKFLOW.md)，版本由仓库固定。
 
-1. **准备**：检查当前工作区、已有 worktree 和分支，保留其他工作。获取远程默认分支的最新状态，从该基线为本次任务创建独立分支和 worktree；不要在默认分支直接开发或推送。
-2. **实现与验证**：在任务 worktree 中完成修改，按 [AGENTS.md](https://github.com/KnowSky404/sing-box-vps/blob/main/AGENTS.md) 第 4.2 节的测试边界，根据实际行为影响选择最小充分验证集合，先说明选择依据。普通文档、版本展示和菜单文案不因位于安装器内就触发大范围回归；配置变化必须对受影响配置执行 `sing-box check`，服务、网络和生命周期变化必须覆盖对应真实运行态。仅在核心版本或格式迁移、共享逻辑广泛影响或范围无法可靠界定、明确要求全量或完整发布验收时执行全量。记录实际命令、通过、失败、未执行项及原因；符合复用条件的既有结果可复用。
-3. **提交与本地审查**：只提交本次任务相关内容，使用原子的 Conventional Commits。每次原子提交后立即在本地运行 `/review`，记录审查范围、提交 SHA、结果和问题处理情况；如果当前环境没有该入口，审查对应提交的实际差异并记录这是等效本地审查。发现问题时，先修复、完成受影响验证并重新提交，再次本地审查，直到没有未解决问题。脚本版本和 README 版本按项目规约同步。
-4. **推送、创建 PR 与远程审查**：每次推送（包括首次推送和修复后的追加推送）或创建 PR 前，必须先通过本地 `/review` 门禁：覆盖本次待推送的全部提交和任务分支相对基线的完整差异，结果对应当前 HEAD，且没有未解决问题。审查未完成或失败时不得推送或创建 PR；审查后产生新提交或差异变化时，先重新本地审查。推送与随后创建 PR 之间若 HEAD 和差异未变，可复用同一次已完成的本地审查；无 `/review` 入口时按上一步完成等效本地审查。门禁通过后，先按下方 Actions 授权规则确认推送/PR 不会启动未授权工作流，再推送任务分支，创建面向默认分支的 PR，说明变更、验证结果和本地审查证据。只读核对当前 PR head 的必要检查、自动审查记录和未解决意见。远程只保留仓库自动触发的 GPT/Codex Security Review，不手动评论召唤 Code Review 或 Security Review，不通过切换草稿/可审查状态、空提交等方式人为重触发。已自动触发的当前 head Security Review 必须完成且没有未解决问题；排队、运行中、失败、取消或查询失败不能归类为未触发。远程 Code Review 不主动触发、不作为等待条件，已报告的问题仍须核实并处理。明确没有自动触发任何机器人审查时记录 `not_triggered`，本地审查、必要验证及 GitHub 必需检查通过后直接 rebase 合并；只有自动 Code Review 而无自动 Security Review 时，也不增加远程等待门禁。未触发不是安全审查通过，不能将旧 head 的报告冒充当前 head 证据。
-5. **更新与合并**：解决必要的审查意见和检查失败；如果产生新提交，重新验证受影响内容，先通过本地审查门禁再推送，随后核对最新 head 的必要检查及自动审查状态。只等待实际自动触发的当前 head Security Review；没有自动触发机器人时按上一步直接合并，不补发手动审查请求。门禁满足后直接使用 GitHub 的 rebase 合并，无需再次请求合并确认。若默认分支变化造成冲突或要求更新，先安全解决，再重新验证和确认相应门禁。
-6. **核对与清理**：确认 PR 已合并且远程默认分支包含合并结果，核实远程任务分支已自动删除；若未删除则删除它。检查任务 worktree 的未提交、未跟踪和需要保留的产物；确认安全后移除 worktree 和本地任务分支。不要删除其他工作区或用户数据，清理失败时报告剩余内容。
-
-本地提交审查、PR 机器人审查、测试和实际部署是不同的证据；其中某项未执行或未完成时，不能用其他项代替。若权限、检查或审查阻塞合并，保留 PR 和工作区并说明阻塞原因。
+1. 以最新远程默认分支创建任务 worktree。用 PR 模板或本地 .task/task.md 记录需求、验收条件、风险、授权和基线。R0 文档、R1 隔离交互、R2 运行时及 R3 信任边界示例见第 4.2 节。
+2. 预览完整差异计划，补齐必要验证，原子提交。以一次当前 HEAD 的本地审查覆盖本次提交和完整分支差异，复用于同一候选的推送和 PR。
+3. 核对 Actions 授权边界后推送和开 PR。汇总检查与自动审查反馈，按风险预算批量修复，只复验受影响范围。已触发的当前 head Security Review 完成并清理实际阻塞后才合并。未触发按第 6 节记录。达到反馈预算仍有阻塞时，由 Owner 决定后续。
+4. 必要时验收稳定候选，再 rebase 合并。记录合并的集成 tree 并核对证据适用性。清理已确认安全的任务分支和 worktree。发布按独立授权执行。
 
 验证入口支持计划预览、分支基线差异、本地测试组和显式 Docker 场景。选测仍以第 4.2 节的实际行为影响为准；自动映射无法判定的运行时改动必须先明确范围。提交后的任务使用 `--base` 并核对完整分支差异。失败后只重跑失败项和受修复影响的范围。
 
@@ -20,20 +16,32 @@ CI 运行授权；没有用户对本次 workflow、ref 和范围的明确授权�
 rerun 或任何间接启动 CI 的操作。推送/PR/合并前只读核对工作流启用状态和事件，
 确认不会触发 Actions。无法保证时先停下说明，不先触发再取消。
 
-`command-contract.yml` 只保留 `workflow_dispatch`，移除 push/PR 自动入口；仓库级
-Actions 已关闭，该工作流也已手动禁用。未来获得明确授权后，必要时启用仓库 Actions
-及该工作流；启用授权本身不等于运行授权。运行时只选择授权的 ref 和
-`base_ref`（Git ref 或提交 SHA）。工作流检出该次 dispatch 的 `github.sha`，通过
-`dev/verification/ci.sh BASE` 执行完整差异计划与宿主契约检查，保留日志和耗时。
-不要为了验证手动入口而实际启动 Actions。默认 `base_ref=origin/main`（SHA 检出时不依赖本地 main 分支）；在 main 上与 origin/main
-比较没有分支差异，只能证明所选契约检查，不是完整发布或运行态验收。
+`command-contract.yml` 只保留 `workflow_dispatch`。仓库级 Actions 和此工作流均禁用。
+获分别明确授权后，由有权限的维护者在 Settings → Actions → General 启用仓库 Actions，
+再在 Actions → Command contract 选择 Enable workflow。运行仍须单独授权，选择已审
+ref、完整 head SHA 对应的分支及比较基线。同 ref 和 base 输入的宿主运行可以由后续
+执行取代，日志保留 14 天。GitHub 宿主 runner 使用只读权限，无部署凭据；
+确需新增自动入口或改变必需检查须由 Owner 明确授权。
+
+```bash
+# 仅在获准运行时，以已授权分支名和基线完整 SHA 替换两个变量
+gh workflow run command-contract.yml --ref "$task_branch" -f base_ref="$task_base"
+```
+
+检出时固定 dispatch 的 `github.sha`，使用 `dev/verification/ci.sh BASE`，回读运行记录
+核对授权的 head、base、`command-contract` 的终态与宿主结论。默认基线为
+`origin/main`，运行前应优先记录并传入不可变 SHA。在 main 以自身为基线只能跑固定
+契约。启用前保持现有分支保护。将来若授权自动 PR CI，先验证每个 PR 都会产生稳定的
+`command-contract` 检查且取消/跳过/失败无法通过，再在 main 的 Rules/Protection 中选择
+该检查，保留 PR、线性历史、审查对话和管理员门禁。
 
 未知影响仍须在分支内更新 `.github/verification-scope.txt`：首行为
 `base <merge-base SHA>`，后续每行一个 `--test tests/<name>.sh` 或 `--scenario <name>`。
 可用 `git merge-base origin/main HEAD` 取得基线。不接受过期范围、helper、容器专用
 fixture、越界路径或任意命令。固定契约列表不能代替影响判断；选择的 Docker 仍是
-独立验收，宿主 CI 不能报告其通过。本地可直接执行
-`bash dev/verification/ci.sh origin/main`，不会调用 GitHub Actions。
+独立验收，宿主 CI 用 `required_not_run` 标识。计划和摘要记录 host gate、head/tree、基线、工具版本及逐项结果。
+本地可直接执行
+`bash dev/verification/ci.sh origin/main`，不会调用 GitHub Actions。用干净 worktree 和等价工具链执行时可复用对应宿主证据。
 
 未授权的 CI 标记 `not_run_not_authorized`，不称为通过。分支保护若要求未运行的
 Actions 检查，保留 PR 并说明所需授权；不得自动运行或移除必需检查。既有失败与
@@ -48,6 +56,29 @@ Actions 检查，保留 PR 并说明所需授权；不得自动运行或移除�
 
 选定检查通过、完整差异已核对且无新增风险证据后，停止测试并进入提交/审查；同一 HEAD 的一次本地审查可以同时记录原子提交和分支完整差异，无需重复启动。提交号变化、仅追加文档或进入 PR 审查，不使未改变的受测内容自动失效。慢项先定位，不盲目重启全套。安全审查等待单独记录；待审时保留 PR 并报告，不反复跑测试，也不绕过合并门禁。
 
+
+### 稳定候选、完成与交接
+
+日常 DEV 使用隔离数据和模拟对端。运行时变更按风险选择 PRE 等效 Docker 场景或
+经授权的 `sing-box-test`，等候审查和必要检查收敛后只部署稳定候选。共享环境一次
+验收一个候选。用 Git tree、核心版本、构建配置、产物及部署标识绑定验收，核对
+前后实际运行版本并执行受影响行为检查。仓库工作流变更以宿主验证、失败 fixture
+和触发器检查作为隔离验收。
+
+合并前检查默认分支是否推进。若基线增加了影响本次验证或审查的变化，先取得集成
+候选并复验影响范围。rebase 可能只改 SHA；若旧基线仍是候选祖先且默认分支未推进，
+用 `git diff --exit-code <候选head> <合并SHA>` 核对 tree。若默认分支已有独立改动，
+核对实际集成差异及依赖后再确认仍适用的证据。核心、构建输入、受测代码、验证环境
+变化使相应证据失效。仅文档变化且可证明运行和构建输入等价时复用原候选。
+
+发布由另行授权触发，从集成 revision 取用可验证产物，沿用既有生产预检、备份、确认
+和回滚约束。按目标及配置证明候选与发布产物等价。数据迁移需独立恢复点和许可。
+发布后记录实际版本、行为验收及恢复结果。用 PR 分别说明合并和发布状态。收工前以
+Git、检查和环境状态验证交接记录，删除已用完的临时文件。
+
+使用 PR 时间线和本地结果表记录总耗时、PR 开合时间、检查时长、复审轮次、PRE 部署
+次数、上下文恢复，以及适用的生产失败/恢复时间。以同范围的历史记录对照。授权关闭的
+Actions 和未发生的部署分开记，避免计为耗时优化收益。
 
 ### 调度器命令与计划
 
@@ -133,7 +164,6 @@ GitHub 对 `main` 启用 PR、线性历史和已解决审查对话保护，并�
 bash scripts/build-install.sh
 bash scripts/build-command-docs.sh
 bash scripts/build-install.sh --check
-bash scripts/build-command-docs.sh --check
 bash tests/command_catalog_contract.sh
 bash tests/agent_docs_cover_capabilities.sh
 bash tests/wiki_documentation.sh

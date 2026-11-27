@@ -48,22 +48,7 @@
 
 ## CI 范围契约
 
-复用现有计划器和独立宿主测试校验，`--base` 保留其完整分支及工作区差异语义。
-CI 检出受测 head 并获取足够历史；PR base / push-before revision 作为数据传入，
-不得当作 shell 代码执行。
-
-显式仓库范围绑定实际 merge-base。不得复用其他分支留下的未修改范围消除
-`needs_scope`。PR 基线严格匹配；GitHub rebase 后受保护 main 的 push 允许已合并范围
-引用 push-before 的祖先；并行 PR 已发布相同范围时也继续执行。PR/本地
-模式仍拒绝未修改范围，非祖先及无效基线始终拒绝。只接受经计划器校验的 selector，
-不执行任意命令或 shell 文本。
-自动检查始终追加；缺失、过期或无效范围在测试前失败。
-CI 直接复用宿主执行器；专用容器 fixture 使完整计划保持 `needs_scope`，
-宿主检查可以独立通过，运行态要求记录 `required_not_run`，不得作为宿主执行。
-选中的 Docker 场景同样记录未执行，绿色 CI 不表示运行态验收通过。
-
-保留 `command-contract` job 名、只读 GitHub 权限及 `pull_request` 事件。
-失败时也上传计划、逐项测试日志和耗时；普通改动不强制全套。
+当前 CI 授权和范围契约见 [AGENTS.md](../../AGENTS.md#421-github-actions-显式授权门禁)及[开发工作流](../wiki/Development.md#github-actions-授权与定点验证)。整改时的 PR/push 自动入口已由当前规则取代。CI 复用定点宿主执行器，另行记录专用运行态 fixture 和 Docker 场景为 `required_not_run`。
 
 ## 验证与交付
 

@@ -13,14 +13,20 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: command-contract-${{ github.ref }}-${{ inputs.base_ref }}
+  cancel-in-progress: true
+
 jobs:
   command-contract:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Prepare verified target core for host configuration tests
         run: |
           set -euo pipefail
@@ -46,22 +52,28 @@ jobs:
           set -euo pipefail
           CI_RUN_LOG="${RUNNER_TEMP}/scoped-host-verification.log"
           CI_STATUS=0
-          sudo -n env TMPDIR=/tmp GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory \
-            GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE" GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" \
-            GITHUB_REF="$GITHUB_REF" SINGBOX_BINARY_114="$SINGBOX_BINARY_114" \
-            bash dev/verification/ci.sh "$VERIFY_BASE_REF" | tee "$CI_RUN_LOG" || CI_STATUS=$?
+          sudo -n env TMPDIR="$RUNNER_TEMP" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory \
+            GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE" SINGBOX_BINARY_114="$SINGBOX_BINARY_114" \
+            bash dev/verification/ci.sh "$VERIFY_BASE_REF" 2>&1 | tee "$CI_RUN_LOG" || CI_STATUS=$?
           CI_HOST_RUN_DIR=$(sed -n 's/^run_dir=//p' "$CI_RUN_LOG")
           if [[ -n "$CI_HOST_RUN_DIR" ]]; then
             [[ "$CI_HOST_RUN_DIR" == "$GITHUB_WORKSPACE"/dev/verification-runs/* && "$CI_HOST_RUN_DIR" != *$'\n'* ]]
             [[ -f "$CI_HOST_RUN_DIR/plan.txt" && -f "$CI_HOST_RUN_DIR/summary.log" ]]
             printf 'CI_HOST_RUN_DIR=%s\n' "$CI_HOST_RUN_DIR" >> "$GITHUB_ENV"
+            cat "$CI_HOST_RUN_DIR/summary.log" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [[ "$CI_STATUS" == 0 ]]; then
+            [[ -n "$CI_HOST_RUN_DIR" ]]
+            grep -Fxq 'host_gate=passed' "$CI_HOST_RUN_DIR/summary.log"
           fi
           exit "$CI_STATUS"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: scoped-host-verification
           path: |
             dev/verification-runs/ci/
             ${{ env.CI_HOST_RUN_DIR }}
+            ${{ runner.temp }}/scoped-host-verification.log
+          retention-days: 14
           if-no-files-found: ignore

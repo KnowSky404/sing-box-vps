@@ -28,6 +28,11 @@ done
 if printf 'on: [push, workflow_dispatch]\n' | assert_manual_trigger; then exit 1; fi
 workflow="${REPO_ROOT}/.github/workflows/command-contract.yml"
 grep -Fq 'ref: ${{ github.sha }}' "${workflow}"
+grep -Fq 'persist-credentials: false' "${workflow}"
+grep -Fq 'contents: read' "${workflow}"
+grep -Fq 'retention-days: 14' "${workflow}"
+grep -Fq "grep -Fxq 'host_gate=passed'" "${workflow}"
+if grep -E 'uses:[[:space:]]+actions/[^@[:space:]]+@' "${workflow}" | grep -Ev '@[0-9a-f]{40}([[:space:]]|$)'; then exit 1; fi
 grep -Fq 'VERIFY_BASE_REF: ${{ inputs.base_ref }}' "${workflow}"
 # Actions checks out a SHA: only remote-tracking main is guaranteed to exist.
 fixture=$(mktemp -d)
