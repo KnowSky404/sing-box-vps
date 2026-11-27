@@ -23,6 +23,14 @@ fi
 if [[ "${CI_DIRTY_DRIFT:-}" == 1 && "${BASH_SOURCE[0]##*/}" == install_build_sync.sh ]]; then
   printf '# changed during host verification\n' >> .github/verification-scope.txt
 fi
+if [[ "${CI_CRLF_DRIFT:-}" == 1 && "${BASH_SOURCE[0]##*/}" == install_build_sync.sh ]]; then
+  printf 'local readme\r\n' > README.md
+fi
+if [[ "${CI_REMOVE_RESULTS:-}" == 1 && "${BASH_SOURCE[0]##*/}" == wiki_documentation.sh ]]; then
+  for results in dev/verification-runs/*/local-tests/results.tsv; do
+    [[ ! -f "${results}" ]] || rm -- "${results}"
+  done
+fi
 TEST
 done
 for script in build-install build-command-docs; do
@@ -81,6 +89,24 @@ grep -Fxq evidence=inputs_changed "${run_dir}/summary.log"
 grep -Fxq host_gate=failed "${run_dir}/summary.log"
 if grep -Fxq host_gate=passed "${run_dir}/summary.log"; then exit 1; fi
 git -C "${FIXTURE}" switch -q --detach "${BASE}"
+
+# Git can normalize away changes to the actual bytes a host test reads.
+git -C "${FIXTURE}" config core.autocrlf true
+printf 'local readme\n' > "${FIXTURE}/README.md"
+before=$(git -C "${FIXTURE}" diff -- README.md)
+if CI_CRLF_DRIFT=1 run_ci; then exit 1; fi
+[[ "$(git -C "${FIXTURE}" diff -- README.md)" == "${before}" ]]
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq evidence=inputs_changed "${run_dir}/summary.log"
+git -C "${FIXTURE}" config --unset core.autocrlf
+git -C "${FIXTURE}" restore README.md
+
+# Successful test processes must leave a complete result for every planned test.
+if CI_REMOVE_RESULTS=1 run_ci; then exit 1; fi
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq evidence=results_incomplete "${run_dir}/summary.log"
+grep -Fxq host_gate=failed "${run_dir}/summary.log"
+if grep -Fxq host_gate=passed "${run_dir}/summary.log"; then exit 1; fi
 
 # Local status configuration must not hide a selected untracked input.
 git -C "${FIXTURE}" config status.showUntrackedFiles no
