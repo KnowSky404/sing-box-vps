@@ -31,6 +31,7 @@ BASE=$(git -C "${FIXTURE}" rev-parse HEAD)
 ORIGINAL_BASE=${BASE}
 export CI_SCOPE_EXECUTION_LOG="${TMP_DIR}/executed-tests"
 export VERIFY_SKIP_LOCAL_TESTS=1
+unset SINGBOX_BINARY_114
 run_ci() {
   local run_dir
   rm -f "${CI_SCOPE_EXECUTION_LOG}"
@@ -85,6 +86,7 @@ grep -Fxq 'scenario=fresh_install_socks' "${TMP_DIR}/last-plan"
 grep -Fxq fixture_requested.sh "${CI_SCOPE_EXECUTION_LOG}"
 grep -Fxq remote_status=required_not_run "${TMP_DIR}/last-summary"
 [[ $(grep -Fxc install_build_sync.sh "${CI_SCOPE_EXECUTION_LOG}") == 1 ]]
+[[ $(head -n 1 "${CI_SCOPE_EXECUTION_LOG}") == install_build_sync.sh ]]
 
 # Host failure is terminal, even though the CI artifact directory exists.
 printf 'exit 42\n' >> "${FIXTURE}/tests/fixture_requested.sh"

@@ -28,6 +28,7 @@ done
 if printf 'on: [push, workflow_dispatch]\n' | assert_manual_trigger; then exit 1; fi
 workflow="${REPO_ROOT}/.github/workflows/command-contract.yml"
 grep -Fq 'ref: ${{ github.sha }}' "${workflow}"
+grep -Fq 'EXPECTED_HEAD: ${{ inputs.head_sha }}' "${workflow}"
 grep -Fq 'persist-credentials: false' "${workflow}"
 grep -Fq 'contents: read' "${workflow}"
 grep -Fq 'retention-days: 14' "${workflow}"
