@@ -171,6 +171,8 @@ fi
 
 if [[ -n "${SINGBOX_BINARY_114:-}" && -f "${TMP_DIR}/server-113.json" ]]; then
   "${SINGBOX_BINARY_114}" check -c "${TMP_DIR}/server-113.json" || fail 'sing-box 1.14.0 rejected the preserved 1.13 server configuration'
+else
+  printf 'SKIP cross-version server compatibility: both validation cores are required\n'
 fi
 
 printf '%s\n' '1.14 compatibility checks passed'

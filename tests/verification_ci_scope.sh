@@ -153,7 +153,10 @@ run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Eq '^validation_core_113_sha256=[0-9a-f]{64}$' "${run_dir}/summary.log"
 grep -Fxq evidence=inputs_changed "${run_dir}/summary.log"
 
-for skip in 'SKIP fixture: missing dependency' 'sing-box check not run: set SINGBOX_BINARY_114' 'real startup comparisons not run: configured cores missing'; do
+for skip in 'SKIP fixture: missing dependency' 'sing-box check not run: set SINGBOX_BINARY_114' \
+  'real startup comparisons not run: configured cores missing' \
+  'Trojan structured takeover checks passed; real core checks=0' \
+  'SKIP cross-version server compatibility: both validation cores are required'; do
   if CI_SKIP_HOST_TEST="${skip}" run_ci; then exit 1; fi
   run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
   grep -Fxq local_status=required_not_run "${run_dir}/summary.log"
