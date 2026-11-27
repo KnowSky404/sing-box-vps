@@ -4,6 +4,10 @@ name: Command contract
 on:
   workflow_dispatch:
     inputs:
+      head_sha:
+        description: Authorized full commit SHA for the selected ref
+        required: true
+        type: string
       base_ref:
         description: Comparison base (Git ref or commit SHA)
         required: true
@@ -22,6 +26,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      - name: Require the authorized head before checkout
+        env:
+          EXPECTED_HEAD: ${{ inputs.head_sha }}
+        run: |
+          if [[ ! "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ || "$EXPECTED_HEAD" != "$GITHUB_SHA" ]]; then
+            printf 'The selected ref no longer matches the authorized head.\n' >&2
+            exit 2
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0

@@ -8,8 +8,8 @@ source "${CI_VERIFICATION_ROOT}/run.sh"
 main() {
   local base=${1:?base revision required} scope_file=.github/verification-scope.txt
   local scope_changed=n file scope_base option value extra line run_dir core_version worktree_diff status
-  local -a selectors=() contracts=(
-    tests/install_build_sync.sh tests/command_catalog_contract.sh tests/storage_selinux.sh
+  local -a selectors=() selected_tests contracts=(
+    tests/command_catalog_contract.sh tests/storage_selinux.sh
     tests/agent_service_operations.sh tests/agent_routing_operations.sh
     tests/agent_cli_ops_commands.sh tests/agent_docs_cover_capabilities.sh
     tests/wiki_documentation.sh tests/version_metadata_is_consistent.sh
@@ -63,7 +63,11 @@ main() {
     verification_plan_error 'CI host impact still needs scope'
     return 2
   fi
-  # These tests include both generated-file checks and deduplicate with the plan.
+  # Check generated installer bytes before any selected test sources the installer.
+  selected_tests=("${VERIFY_PLAN_TESTS[@]}")
+  VERIFY_PLAN_TESTS=()
+  verification_add_requested_test tests/install_build_sync.sh
+  for file in "${selected_tests[@]}"; do verification_plan_append VERIFY_PLAN_TESTS "${file}"; done
   for file in "${contracts[@]}"; do verification_add_requested_test "${file}"; done
   run_dir=$(create_run_dir)
   verification_print_plan > "${run_dir}/plan.txt"

@@ -19,16 +19,17 @@ rerun 或任何间接启动 CI 的操作。推送/PR/合并前只读核对工作
 `command-contract.yml` 只保留 `workflow_dispatch`。仓库级 Actions 和此工作流均禁用。
 获分别明确授权后，由有权限的维护者在 Settings → Actions → General 启用仓库 Actions，
 再在 Actions → Command contract 选择 Enable workflow。运行仍须单独授权，选择已审
-ref、完整 head SHA 对应的分支及比较基线。同 ref 和 base 输入的宿主运行可以由后续
+ref，传入获准的完整 head SHA 和比较基线。同 ref 和 base 输入的宿主运行可以由后续
 执行取代，日志保留 14 天。GitHub 宿主 runner 使用只读权限，无部署凭据；
 确需新增自动入口或改变必需检查须由 Owner 明确授权。
 
 ```bash
-# 仅在获准运行时，以已授权分支名和基线完整 SHA 替换两个变量
-gh workflow run command-contract.yml --ref "$task_branch" -f base_ref="$task_base"
+# 仅在获准运行时指定已授权 ref、head 及基线完整 SHA
+gh workflow run command-contract.yml --ref "$task_branch" -f head_sha="$task_head" -f base_ref="$task_base"
 ```
 
-检出时固定 dispatch 的 `github.sha`，使用 `dev/verification/ci.sh BASE`，回读运行记录
+检出前拒绝与获准 `head_sha` 不同的 dispatch，检出时固定 `github.sha`。随后运行
+`dev/verification/ci.sh BASE`，回读运行记录
 核对授权的 head、base、`command-contract` 的终态与宿主结论。默认基线为
 `origin/main`，运行前应优先记录并传入不可变 SHA。在 main 以自身为基线只能跑固定
 契约。启用前保持现有分支保护。将来若授权自动 PR CI，先验证每个 PR 都会产生稳定的
