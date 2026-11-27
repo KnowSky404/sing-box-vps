@@ -33,6 +33,9 @@ if [[ "${CI_REMOVE_RESULTS:-}" == 1 && "${BASH_SOURCE[0]##*/}" == wiki_documenta
 fi
 if [[ "${BASH_SOURCE[0]##*/}" == install_build_sync.sh ]]; then
   printf 'fixture build output\n'
+  if [[ "${CI_REWRITE_AT_SCAN:-0}" == 1 ]]; then
+    printf 'SKIP fixture: missing dependency\n'
+  fi
 fi
 if [[ -n "${CI_DAMAGE_EARLIER_LOG:-}" && "${BASH_SOURCE[0]##*/}" == wiki_documentation.sh ]]; then
   for log in dev/verification-runs/*/local-tests/install_build_sync.sh.log; do
@@ -255,13 +258,26 @@ git -C "${FIXTURE}" restore tests/http_structured_takeover.sh
 mkdir "${TMP_DIR}/bad-scanner"
 cat > "${TMP_DIR}/bad-scanner/awk" <<'TEST'
 #!/usr/bin/env bash
-[[ "${*: -1}" != */local-tests/*.log ]] || exit 2
+if [[ "${*: -1}" == */sbv-host-log.* ]]; then
+  if [[ "${CI_REWRITE_AT_SCAN:-0}" != 1 ]]; then
+    exit 2
+  fi
+  for log in dev/verification-runs/*/local-tests/install_build_sync.sh.log; do
+    printf 'rewritten live log\n' > "${log}"
+  done
+fi
 exec "${CI_REAL_AWK}" "$@"
 TEST
 chmod +x "${TMP_DIR}/bad-scanner/awk"
 if CI_REAL_AWK=$(command -v awk) PATH="${TMP_DIR}/bad-scanner:${PATH}" run_ci; then exit 1; fi
 run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
 grep -Fxq host_gate=failed "${run_dir}/summary.log"
+if grep -Fxq host_gate=passed "${run_dir}/summary.log"; then exit 1; fi
+
+if CI_REWRITE_AT_SCAN=1 CI_REAL_AWK=$(command -v awk) PATH="${TMP_DIR}/bad-scanner:${PATH}" run_ci; then exit 1; fi
+run_dir=$(sed -n 's/^run_dir=//p' "${TMP_DIR}/output")
+grep -Fxq local_status=required_not_run "${run_dir}/summary.log"
+grep -Fxq 'rewritten live log' "${run_dir}/local-tests/install_build_sync.sh.log"
 if grep -Fxq host_gate=passed "${run_dir}/summary.log"; then exit 1; fi
 
 printf ': select listener test\n' >> "${FIXTURE}/tests/managed_listener_resources.sh"
