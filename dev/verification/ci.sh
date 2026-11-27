@@ -77,6 +77,12 @@ ci_check_core_scope() {
   for test_file in "${VERIFY_PLAN_TESTS[@]}"; do
     # Paired compatibility checks also need legacy input on older candidates.
     case "${test_file}" in
+      tests/managed_openvpn_endpoint_runtime.sh)
+        if [[ -c /dev/net/tun ]] && ! grep -Fq '${SBV_CI_HOST_ONLY:-0}' "${test_file}"; then
+          verification_plan_error 'Selected OpenVPN fixture lacks host-only TUN isolation'
+          return 2
+        fi
+        ;;
       tests/singbox_1_14_compatibility.sh|tests/shadowsocks_export_client.sh)
         if [[ -z "${SINGBOX_BINARY_113:-}" || -z "${SINGBOX_BINARY_114:-}" ]]; then
           verification_plan_error "Selected check requires SINGBOX_BINARY_113 and SINGBOX_BINARY_114: ${test_file}"
@@ -214,7 +220,8 @@ main() {
   if [[ " ${VERIFY_CHANGED_FILES[*]} " == *' tests/routing_policy_private_runtime.py '* ]]; then
     export ROUTING_POLICY_TEST_REAL_CORE="${SINGBOX_BINARY_114}"
   fi
-  VERIFY_SKIP_LOCAL_TESTS=0 run_local_tests "${run_dir}" 1 || status=$?
+  VERIFY_SKIP_LOCAL_TESTS=0 SBV_CI_HOST_ONLY=1 SBV_TEST_ISOLATED_LISTENER_WILDCARD=0 \
+    run_local_tests "${run_dir}" 1 || status=$?
   if [[ ! -f "${summary}" || -L "${summary}" ]]; then
     verification_plan_error 'CI summary is missing or invalid'
     return 2

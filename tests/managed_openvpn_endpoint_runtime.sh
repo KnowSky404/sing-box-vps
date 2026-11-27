@@ -257,8 +257,8 @@ run_openvpn_transport tcp 11994 15091 10.77.0.1/24
 run_openvpn_transport udp 11995 15092 10.78.0.1/24
 
 SYSTEM_RUNTIME_RESULT=skipped
-if [[ "$(id -u)" -ne 0 || ! -c /dev/net/tun ]]; then
-  printf 'SKIP OpenVPN system endpoint runtime: root or /dev/net/tun unavailable\n'
+if [[ "${SBV_CI_HOST_ONLY:-0}" == 1 || "$(id -u)" -ne 0 || ! -c /dev/net/tun ]]; then
+  printf 'SKIP OpenVPN system endpoint runtime: run separately with root and /dev/net/tun in an isolated environment\n'
 else
   run_openvpn_system_transport() {
     local server_port=11996

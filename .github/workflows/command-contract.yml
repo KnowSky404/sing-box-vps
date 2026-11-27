@@ -60,10 +60,15 @@ jobs:
           EXPECTED_HEAD: ${{ inputs.head_sha }}
           EXPECTED_BASE: ${{ inputs.base_ref }}
           LEGACY_CORE: ${{ inputs.legacy_core }}
+          TRUSTED_MAIN_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           [[ "$(git rev-parse --verify HEAD)" == "$EXPECTED_HEAD" ]]
           [[ "$(git rev-parse --verify --end-of-options "${EXPECTED_BASE}^{commit}")" == "$EXPECTED_BASE" ]]
+          if ! git merge-base --is-ancestor "$EXPECTED_BASE" "$TRUSTED_MAIN_SHA"; then
+            printf 'The comparison base must be in protected main history.\n' >&2
+            exit 2
+          fi
           CORE_VERSION=$(sed -n 's/^readonly SB_SUPPORT_MAX_VERSION="\([^"]*\)"$/\1/p' install.sh)
           case "$(uname -m)" in x86_64) CORE_ARCH=amd64 ;; aarch64) CORE_ARCH=arm64 ;; *) exit 1 ;; esac
           prepare_core() {

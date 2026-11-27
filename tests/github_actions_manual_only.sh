@@ -42,6 +42,7 @@ awk '
 ' "${workflow}"
 grep -Fq 'group: command-contract-${{ inputs.head_sha }}-${{ inputs.base_ref }}-${{ inputs.legacy_core }}' "${workflow}"
 grep -Fq 'prepare_core 1.13.18 SINGBOX_BINARY_113' "${workflow}"
+grep -Fq 'git merge-base --is-ancestor "$EXPECTED_BASE" "$TRUSTED_MAIN_SHA"' "${workflow}"
 grep -Fq 'persist-credentials: false' "${workflow}"
 grep -Fq 'contents: read' "${workflow}"
 grep -Fq 'retention-days: 14' "${workflow}"
