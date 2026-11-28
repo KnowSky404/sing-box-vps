@@ -2,17 +2,28 @@
 
 Repository-specific context for local and cloud Codex security reviews. This guide
 is not a security certification, deployment approval or cloud-task configuration.
-Read [AGENTS.md](AGENTS.md) for verification and review gates; the Chinese workflow
-summary is in [Development](docs/wiki/Development.md#云端安全审查上下文).
+Read this guide before any local or cloud Codex security review. Establish the
+base and current head SHA and inspect the complete diff and affected callers.
+For PR review and remote automation, follow the local
+[review and merge gates](docs/wiki/Development.md#审查与合并).
 
-Remote GPT/Codex review is automatic only. Do not manually request code or
-security reviews through comments, draft/ready transitions, empty commits or
-other retriggering actions. Await a Security Review only when it was automatically
-started for the current head. If no bot was automatically triggered, record
-`not_triggered` and merge after local review, necessary validation and required
-GitHub checks pass; an automatic code review alone adds no waiting gate. Missing
-review evidence is not a passed security review. Running, failed or unreadable
-review state is not absence; address any reported findings. See AGENTS.md section 6.
+## Required runtime safeguards
+
+- Keep remote content away from live or future executable paths. Download it in
+  full, validate it in a same-directory staging file and replace the target
+  atomically on the same filesystem. Make a `.bak` backup before modifying
+  critical system files or existing configurations.
+- Critical changes must cover prepare, validate, backup, commit, postcheck,
+  rollback and cleanup. Report the final state on failure. Low-level download,
+  file and validation functions return status. Only entry points or the
+  outermost unrecoverable boundary may exit.
+- Never hide mutation errors with `2>/dev/null || true`. Read-only best-effort
+  checks may degrade and must report `unavailable` or an equivalent diagnostic.
+  On interruption clean up temporary files and report whether the target changed.
+- Redact tokens, passwords, complete Authorization headers and complete share
+  links in routine output, diagnostics, logs and shared evidence, including error
+  paths. Preserve explicitly authorized sensitive exports in their designated
+  output and handle them as private data.
 
 ## Scope and trust model
 
@@ -99,8 +110,11 @@ need inspection for unsafe executable examples, leaked secrets or weakened gates
 
 Start with static inspection. A read-only review does not require implementation,
 version changes, commits, the full local suite or a Docker matrix. Follow
-[AGENTS.md section 4.2](AGENTS.md#42-测试边界与执行策略) for any necessary tests; use
-isolated fixtures and targeted reproductions when static evidence is insufficient.
+[risk and verification rules](docs/wiki/Development.md#风险与验证范围) for any
+necessary tests. Use a minimal isolated reproduction only to verify a concrete
+risk when static evidence is insufficient. Keep reporting and remediation
+separate from read-only review. Do not expand to repository-wide refactoring or
+full regression based on speculation.
 
 Configuration changes require `sing-box check` on affected outputs. Service,
 network and lifecycle changes need corresponding runtime evidence when delivering

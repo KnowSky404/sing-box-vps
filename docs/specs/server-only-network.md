@@ -140,7 +140,7 @@ registration receipts and unavoidable external side effects remain documented.
 
 ## 6. Test plan
 
-Select the smallest sufficient scope under AGENTS.md section 4.2. The initial
+Select the smallest sufficient scope under the [risk and verification rules](../wiki/Development.md#风险与验证范围). The initial
 server-only implementation changed persisted policy format and shared rendering,
 so its historical acceptance included the explicit full host manifest and
 registered Docker scenarios. The immediate-application menu follow-up changes no

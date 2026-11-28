@@ -42,7 +42,7 @@ additional. This is a static cost analysis, not a measured successful-run time.
   remain local disposable-container checks; they do not authorize production
   changes, real SubMan writes or unrelated host operations.
 - Passing scoped checks does not establish complete protocol acceptance. Follow
-  [AGENTS.md section 4.2](../../AGENTS.md#42-测试边界与执行策略) for the required scope.
+  [risk and verification rules](../wiki/Development.md#风险与验证范围) for the required scope.
 
 ## Stage 1: original component leaves
 

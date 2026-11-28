@@ -106,7 +106,7 @@ For each completed row, record the tested code/core version or hash, exact
 command, configuration-check result, observed marker or expected rejection,
 relevant CAS/rollback checks, artifact location and cleanup result. Sanitize
 credentials and keep sensitive configuration private. Reuse unchanged prior
-results under AGENTS.md section 4.2; this contract does not require rerunning every
+results under the [risk and verification rules](../wiki/Development.md#风险与验证范围); this contract does not require rerunning every
 existing protocol or platform. Add only the tests and scenarios needed by each
 actual change, and never substitute an empty, skipped or cancelled run for proof.
 

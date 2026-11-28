@@ -149,7 +149,7 @@ investigate slow prerequisites rather than restarting a broad suite.
   `46082f5deeff5893a5986521ab36e6c6f74962b0cabff539ec76abb75cd1135b`.
   The later changes add service dangling-symlink refusals and catalog/help
   metadata only; real service/routing behavior is unchanged, so this success-path
-  evidence is reused under AGENTS section 4.2. New rejection paths have host tests.
+  evidence is reused under the [risk and verification rules](../wiki/Development.md#风险与验证范围). New rejection paths have host tests.
 - Local review found a Linux single-argument limit in routing view/nodes with a
   valid 128-instance inventory and 1024-byte names. Node JSON now travels through
   a private file and `jq --slurpfile`; both canonical readers pass a regression

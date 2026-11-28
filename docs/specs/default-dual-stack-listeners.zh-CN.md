@@ -18,4 +18,4 @@ ShadowTLS 内部 Mixed detour、客户端本地代理监听、本地管理 API �
 
 [SubMan 地址选择](../wiki/SubMan-Address-Selection.md)继续遵循各实例的实际监听。对已支持的协议，`::` 在两族探测分别成功时可生成独立 IPv4、IPv6 候选；显式 `0.0.0.0` 仍仅发布 IPv4。HY2 连接选定 IP，同时保留配置域名作为 SNI。监听默认值不新增 SubMan 协议支持，不删除远端节点，也不证明公网可达。
 
-验收必须覆盖全部结构化协议的新建默认值与首次安装预设默认值、显式地址和 replace 保留、能力元数据、SubMan 地址族选择、ShadowTLS 内层及客户端回环保留。生成的服务端和客户端输出必须通过目标核心 `sing-box check`；隔离 Linux 运行态探针必须覆盖代表性 TCP、UDP 监听的 IPv4 与 IPv6 连接。按 AGENTS.md 第 4.2 节选择最小充分本地与 Docker 范围。本地/mock、核心检查、Docker、真实 SubMan、公网及生产证据分别记录；本次不授权生产修改。
+验收必须覆盖全部结构化协议的新建默认值与首次安装预设默认值、显式地址和 replace 保留、能力元数据、SubMan 地址族选择、ShadowTLS 内层及客户端回环保留。生成的服务端和客户端输出必须通过目标核心 `sing-box check`；隔离 Linux 运行态探针必须覆盖代表性 TCP、UDP 监听的 IPv4 与 IPv6 连接。按 [风险与验证范围](../wiki/Development.md#风险与验证范围)选择最小充分本地与 Docker 范围。本地/mock、核心检查、Docker、真实 SubMan、公网及生产证据分别记录；本次不授权生产修改。

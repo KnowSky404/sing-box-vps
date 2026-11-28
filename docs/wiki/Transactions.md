@@ -134,7 +134,7 @@ Agent upgrade 保留预检、私有 manifest 与持久化事务结果：成功�
 - 每个提交后失败分支都有验证过的 rollback；rollback 失败保留人工恢复材料。
 - INT/TERM/HUP 不会留下锁或无用候选，不会把未完成变更报告成成功。
 - CLI 返回非零，交互动作返回菜单；没有用 `2>/dev/null || true` 隐藏变更错误。
-- 按 [AGENTS.md 第 4.2 节](https://github.com/KnowSky404/sing-box-vps/blob/main/AGENTS.md) 运行语法检查及受影响事务的离线故障注入测试；仅在服务、网络或生命周期行为变化时追加对应真实 Docker 场景。该清单不要求固定运行粗粒度 `run.sh` 或无关协议回归。
+- 按 [风险与验证范围](https://github.com/KnowSky404/sing-box-vps/wiki/Development#风险与验证范围) 运行语法检查及受影响事务的离线故障注入测试；仅在服务、网络或生命周期行为变化时追加对应真实 Docker 场景。该清单不要求固定运行粗粒度 `run.sh` 或无关协议回归。
 
 ## 已完成验收与持续维护
 
@@ -152,7 +152,7 @@ Agent upgrade 保留预检、私有 manifest 与持久化事务结果：成功�
 
 真实 WARP 账户写入、生产升级、公网效果、主仓库审查/合并和 Wiki 发布保持独立，不能由 mock、容器成功或本页状态代替。此有限事务契约不要求执行真实账户注册或生产变更。
 
-持续维护按影响选择：改动服务、防火墙、QoS、ACME、Warp、SubMan 或配置时，保留其已有操作事务，补足实际新增分支及调用方验证；不要把完成状态扩张成“全仓 systemctl 已全局重构”的承诺，也不要全局替换旧 `log_error`。卸载脚本目前没有远程 fallback，若以后增加，必须复用 Bootstrap 的完整下载与身份校验。版本元数据或文档变更只有满足 AGENTS.md 第 4.2 节才可复用先前证据。
+持续维护按影响选择：改动服务、防火墙、QoS、ACME、Warp、SubMan 或配置时，保留其已有操作事务，补足实际新增分支及调用方验证；不要把完成状态扩张成“全仓 systemctl 已全局重构”的承诺，也不要全局替换旧 `log_error`。卸载脚本目前没有远程 fallback，若以后增加，必须复用 Bootstrap 的完整下载与身份校验。版本元数据或文档变更只有满足 [风险与验证范围](https://github.com/KnowSky404/sing-box-vps/wiki/Development#风险与验证范围)才可复用先前证据。
 
 ## 生成基线与手工扩展
 

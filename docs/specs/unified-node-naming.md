@@ -227,7 +227,7 @@ structured share entrypoint tests, bounded SubMan payload/API/orchestration test
 and documentation/version/syntax checks. If affected generated configuration content
 changes, execute the target `sing-box check` on those outputs. If implementation
 changes installation control flow, service/network or lifecycle behavior, add the
-corresponding Docker scenario under AGENTS.md section 4.2. Naming alone does not
+corresponding Docker scenario under the [risk and verification rules](../wiki/Development.md#风险与验证范围). Naming alone does not
 require an unrelated protocol matrix or full release acceptance.
 
 Record local/mock results, real core checks, Docker, real SubMan integration,
@@ -358,7 +358,7 @@ Both integrations used frozen runtime SHA-256
 `657ea370f56523445d4be5ecd8ce22d98b7864e3949fb8153a384d4ab87efaac`.
 Subsequent transaction and namespace changes do not alter the tested naming,
 address selection or synchronization functions, so their results are reused under
-AGENTS.md section 4.2. Private acceptance reports are retained at
+the [risk and verification rules](../wiki/Development.md#风险与验证范围). Private acceptance reports are retained at
 `/tmp/sbv-subman-app-acceptance-20261030-final/acceptance.json` and
 `/tmp/sbv-subman-production-acceptance-20261030/acceptance.json`; credentials and
 complete share material are not publication artifacts. The production helper is

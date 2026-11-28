@@ -48,7 +48,7 @@ fresh preset defaults, explicit-address and replacement preservation, capability
 metadata, SubMan family selection, ShadowTLS detour and client-loopback
 preservation. Generated server/client outputs must pass target-core
 `sing-box check`. Isolated Linux runtime probes must cover IPv4 and IPv6 against
-representative TCP and UDP listeners. Follow AGENTS.md section 4.2 for the
+representative TCP and UDP listeners. Follow the [risk and verification rules](../wiki/Development.md#风险与验证范围) for the
 smallest sufficient local and Docker scope. Record local/mock, core check, Docker,
 real SubMan, public-network and production evidence separately; this change does
 not authorize production mutation.

@@ -9,11 +9,19 @@ Use this skill for repository maintenance and VPS operations for `sing-box-vps`.
 
 ## Required Reading
 
-Before operational work, read:
+When invoked from an installed copy, locate the local sing-box-vps checkout for
+the task's revision. If needed, obtain that revision from the
+[project repository](https://github.com/KnowSky404/sing-box-vps) in a local
+checkout. Open that checkout's `skills/sing-box-vps-operator/SKILL.md` and follow
+its rules. For required reading, resolve this project's published Wiki pages to
+`docs/wiki/<Page>.md` and `blob/main` links to their repository paths in the same
+checkout. Stop the corresponding stage if the Skill or required local reading
+is unavailable.
 
-1. `AGENTS.md`
-2. `README.md`
-3. [Wiki Agent Runbook](https://github.com/KnowSky404/sing-box-vps/wiki/Agent-Runbook) (source: `docs/wiki/Agent-Runbook.md`)
+Start with the checkout's `AGENTS.md` and follow its required reading routes.
+Before operational work, also read `README.md` and `docs/wiki/Agent-Runbook.md`
+from the checkout root. Stop the corresponding stage if required reading is
+unavailable.
 
 For `sing-box` configuration syntax, version compatibility, migration notes, or official examples, use Context7 first.
 
@@ -47,37 +55,17 @@ menu entry in the catalog. For routing, save only `.data.draft` from sensitive
 fingerprint, validate it and use the guarded apply/recovery path. Service logs
 are bounded but sensitive.
 
-For added/adjusted runtime operations, ship each feature with its noninteractive
-command, embedded descriptor, focused test, generated reference and affected
-Agent runbooks/navigation. Build install.sh, run
-`bash scripts/build-command-docs.sh`, check both builds with `--check`, and run
-`tests/command_catalog_contract.sh`. New interactive-only exceptions need an
-explicit SPEC rationale and review. Follow AGENTS.md section 4.2 for the remaining
-behavior verification; this contract does not require unrelated full regression.
-Development tooling and ordinary prose changes follow section 4.2 without
-automatically rerunning the runtime operation catalog contract.
+For runtime operation changes follow the
+[AI Native delivery contract](../../docs/wiki/Development.md#ai-native-命令与手册同步)
+and the affected SPEC. For commit review, push, PR and merge follow the local
+[review and merge gates](../../docs/wiki/Development.md#审查与合并).
 
-## Repository Review And Merge
-
-Local current-HEAD/full-diff review remains mandatory before every push or PR.
-Remote GPT/Codex review is automatic only. Never manually request code/security
-review or retrigger through draft/ready transitions, empty commits or similar
-actions. Wait for a Security Review only when automatically triggered for the
-current head; it must complete without unresolved findings. Automatic code review
-is not a waiting gate, though reported issues require handling. If no bot was
-automatically triggered, record `not_triggered` and directly rebase merge after
-local review, necessary validation and required GitHub checks pass. Automatic code
-review alone adds no remote wait. Absence is not review success; running, failed,
-cancelled or unreadable state is not absence. Recheck a new head under this same
-policy without manually triggering review. Follow AGENTS.md section 6.
-
-## Lifecycle And CI Boundaries
+## Lifecycle And GitHub Boundaries
 
 Menu service controls share the guarded Agent handlers. Recover pending journals before mutations; start/restart require a checked config. Uninstall confirms stopped state before file deletion and reclaims only ledger-owned firewall rules. On failure preserve reported recovery material; whole-uninstall rollback is not claimed. SubMan request files are cleaned on catchable signals, but an interrupted remote write still needs readback reconciliation.
 
-GitHub Actions requires explicit user authorization for the workflow, ref and scope. Development, push, PR and merge authorization does not authorize CI. Never dispatch, rerun or indirectly trigger Actions without it; inspect enabled workflows/events before GitHub writes. Repository Actions and existing workflows default to disabled; enabling requires explicit authorization and does not authorize a run. Workflows default to workflow_dispatch only. Record unauthorized CI as not_run_not_authorized, not passed; retain any earlier failure and required-check blocker.
-
-Authorized CI uses the complete branch diff plus a changed `.github/verification-scope.txt` bound to its merge-base when impact is unmapped. It runs host tests and preserves plans/logs/timings; selected Docker scenes remain a separate acceptance boundary. See [the debt remediation contract](../../docs/specs/technical-debt-remediation.md).
+Read the local [Actions authorization and verification rules](../../docs/wiki/Development.md#github-actions-授权与定点验证)
+before GitHub writes or any authorized workflow run.
 
 ## Storage Layout
 
@@ -131,25 +119,24 @@ Use this template:
 No production-changing commands will be executed until approved.
 ```
 
-## Verification Rules
+## Verification
 
-- Prefer repeatable `--test tests/<name>.sh` for exact standalone host tests, combined with `--base origin/main` to retain automatic checks for the entire diff. It rejects helpers, symlinks and container-only fixtures. Use groups only when their whole scope is needed; choose runtime scenarios separately. Ordinary docs select links, source/version edits select build sync, and planner/selection edits select their three focused contracts. Do not add broad docs/verification groups by habit.
+Use the local [risk and verification rules](../../docs/wiki/Development.md#风险与验证范围)
+to plan checks, then read the [scheduler procedure](../../docs/wiki/Development.md#调度器命令与计划)
+when using the dispatcher. For real Docker scenarios keep the isolated baseline,
+CAS and external-evidence boundaries in the [scoped Docker SPEC](../../docs/specs/scoped-docker-verification.md).
+For changes to REALITY regional candidates or their checker pin, follow the
+[development-network evidence procedure](../../docs/wiki/Development.md#reality-地区候选的开发门槛).
 
-- Follow the impact-based test boundaries in [AGENTS.md](../../AGENTS.md), section 4.2. Explain the selected scope before running tests; do not select a broad suite solely because `install.sh` or another runtime file changed.
-- Section 4.2 is the single authority for test scope. Record a short plan with affected behavior, required checks/prerequisites, exclusions and expected duration. Investigate local runs expected to exceed 10 minutes or Docker runs expected to exceed 20 minutes before proceeding; these are planning thresholds, not permission to skip required checks. Stop when the required checks pass unless new evidence changes the scope.
-- Run `sing-box check` on affected generated or modified server and protocol-probe configurations. Run related real Docker scenarios for service, network or lifecycle behavior changes, with their prerequisites prepared.
-- Documentation, version-display and menu-only changes need their focused checks. Run changed standalone tests and callers of changed helpers; Bootstrap changes need the download/validation tests.
-- REALITY regional seeds require actual development-network DNS/TLS evidence. After changing the pool or checker pin, run `bash scripts/check-reality-region-candidates.sh NEW_OUTPUT_DIRECTORY`, retain the raw reports, and update `docs/verification/reality-region-candidates.json` only after exit 0. Run `tests/reality_region_candidate_evidence.sh` and its `_contract.sh` regression. Every DNS endpoint must pass basic TLS/compatibility; ancillary WARN remains subject to fresh installation-time consent. Never pad a regional pool with failing/unknown candidates. See Development.md for the exact evidence and runtime boundaries.
-- Require full regression for core-version adaptation or config/state migrations, broadly affected shared logic or uncertain impact, or an explicit full-test/release-acceptance requirement. Reuse passing results only when the tested code, configuration, tests, dependencies, core version and relevant environment are unchanged; record the original evidence and reason. After a fix, rerun failed and affected checks.
-- Preview `bash dev/verification/run.sh --plan --base origin/main`. Base mode uses the merge base and includes committed, staged, unstaged and untracked changes. Without `--base`, only working-tree differences against HEAD are considered. Docs, version metadata, Bootstrap and changed host tests map automatically; unmapped runtime impact needs an explicit local `--test`, `--group`, Docker `--scenario`, or `--full` before execution. Groups and scenarios are repeatable; choose runtime coverage separately when required. Full means the registered host-safe manifest and scenario set, not every script in tests/. Container-only fixtures stay out of host selection. See Development.md for examples and prerequisites.
-- Choose the exact runtime leaf: outbound/policy components such as `component_vless_outbound` / `component_tproxy_inbound`, a single `protocol_probe_hy2`, or `protocol_naive_transition` / `protocol_snell_transition`. All leaves receive their own fresh SOCKS baseline; protocol leaves add only the target protocol, and final smoke follows all mutations once. An empty post-deletion component store retains an increased revision, not revision 0. The selectable catalog includes all decomposed units, while default `--full` remains the original 17 scenarios through shared aggregate assertions without repeating leaves. Shared fixture/assertion/aggregate/dispatcher and external REALITY/Tor changes retain `needs_scope` for explicit impact classification. REALITY probes / `protocol_coexistence` use an external TLS cover; Tor needs a real circuit. Neither is an implicit dependency of ordinary leaves, and mocks cannot substitute for external evidence. See [the scoped Docker SPEC](../../docs/specs/scoped-docker-verification.md) for exact IDs, the accepted 32 independent Stage 2 scenes plus aggregate compatibility (33/33), and their timings. Timings include internal installation work and exclude separately scheduled baselines, final smoke and transfer. This finite acceptance did not rerun unrelated upgrade/uninstall scenes. Stage 1 historical acceptance, implementation, current Docker and production evidence remain distinct.
-- Remote verification runs in Docker locally, auto-building sing-box-vps-verify image. No external SSH target required.
-- Use `sing-box-test` for test validation and `sing-box-prod` only after the production gate.
+Local verification auto-builds the disposable Docker image. Use `sing-box-test`
+for authorized test VPS work and `sing-box-prod` only after the production gate.
 
 ## Documentation
 
-For read-only security reviews, start with [SECURITY.md](../../SECURITY.md). Review the full change and relevant callers statically; use only a necessary, isolated reproduction. A review alone does not require tests, version changes, commits or production operations. Security-review waiting time is separate from test time and does not justify rerunning tests or bypassing the merge gate.
-
-Detailed commands, install steps, recovery procedures and capability boundaries live in the [Wiki](https://github.com/KnowSky404/sing-box-vps/wiki). Repository sources are under `docs/wiki/`; read those files when offline. Start with `Agent-Runbook.md`, then follow `Agent-CLI.md`, `Protocol-Instances.md`, `Advanced-Components.md` or `Upgrade-Rehearsal.md` as needed. Use the staged Bootstrap command in `Getting-Started.md` without replacing it with a download-and-execute pipe.
+For read-only security review follow the local [security guide](../../SECURITY.md).
+For commands, installation and recovery use the [Agent Runbook](../../docs/wiki/Agent-Runbook.md)
+and [Agent CLI](../../docs/wiki/Agent-CLI.md), then the relevant protocol or
+component pages. Use the staged Bootstrap command in
+[Getting Started](../../docs/wiki/Getting-Started.md).
 
 The runtime operation authority is `sbv commands --json` and `sbv schema <operation-id> --json`; compatible product capabilities remain available through `sbv agent capabilities --json`. Documentation publishing changes the separate Wiki Git repository and must preserve unrelated user pages. Follow `Development.md` for validation and publishing.

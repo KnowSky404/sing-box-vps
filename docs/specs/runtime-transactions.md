@@ -174,7 +174,7 @@ or explicitly authorized host evidence.
 The final real-core Docker lifecycle used runtime SHA-256
 `420ea43d54daa0001dac04bacd917fb7beaadd53e8d32572ffbfe27dedeb81d1`,
 which matched the worktree byte-for-byte when checked. Later version-metadata or
-documentation changes can reuse these results only under AGENTS.md section 4.2.
+documentation changes can reuse these results only under the [risk and verification rules](../wiki/Development.md#风险与验证范围).
 
 | Evidence | Observed result | Local evidence / reproducible checks |
 | --- | --- | --- |
@@ -194,7 +194,7 @@ account write or production change.
 ## Maintenance rule
 
 Keep these assertions when changing affected operations. Select additional tests
-from the changed callers and side effects under AGENTS.md section 4.2. New service,
+from the changed callers and side effects under the [risk and verification rules](../wiki/Development.md#风险与验证范围). New service,
 network, configuration or external-write behavior needs its own corresponding
 acceptance; do not turn this completed checklist into an unbounded global rewrite
 or rerun unrelated protocols merely because `install.sh` changed.

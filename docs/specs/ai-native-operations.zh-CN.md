@@ -47,7 +47,7 @@ REALITY 实例/QoS 写操作、首装、协议批量移除、完整卸载、SubM
 
 新增或调整功能时，同一变更更新业务实现、对应非交互命令、操作描述、定向测试、生成参考和受影响的 Agent 手册/SPEC/导航。新功能默认必须提供非交互入口；新增例外必须在 SPEC 和审查中明确理由。
 
-先运行 `bash scripts/build-install.sh`，再运行 `bash scripts/build-command-docs.sh`。两项 `--check` 和 `tests/command_catalog_contract.sh` 检查目录、真实路由、参数拒绝及生成文档；docs 验证组与轻量 GitHub 工作流执行相应门禁。运行态与协议测试仍按 AGENTS 4.2 的实际影响选择。
+先运行 `bash scripts/build-install.sh`，再运行 `bash scripts/build-command-docs.sh`。两项 `--check` 和 `tests/command_catalog_contract.sh` 检查目录、真实路由、参数拒绝及生成文档；docs 验证组与轻量 GitHub 工作流执行相应门禁。运行态与协议测试仍按[风险与验证范围](../wiki/Development.md#风险与验证范围)的实际影响选择。
 
 ## 验证与交付边界
 
