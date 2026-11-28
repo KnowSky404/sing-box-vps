@@ -120,7 +120,7 @@ snapshot 为调用方已经捕获、校验的不可变清单；不得逐用户�
 - 同一捕获候选的 URI 备注、VMess `ps` 与 payload 名称一致。
 - 分享信任、跳过条件、API 失败处理和 snapshot 一致性继续由现有回归覆盖。
 
-执行新格式化器、默认名、设置测试，修改的交互测试，实际结构化分享入口测试，定向 SubMan payload、API、编排测试，以及文档、版本和语法检查。若受影响生成配置内容发生变化，对相应输出执行目标 `sing-box check`；若实现改变安装控制流、服务、网络或生命周期行为，按 AGENTS.md 第 4.2 节追加对应 Docker 场景。仅命名不要求无关协议矩阵或完整发布验收。
+执行新格式化器、默认名、设置测试，修改的交互测试，实际结构化分享入口测试，定向 SubMan payload、API、编排测试，以及文档、版本和语法检查。若受影响生成配置内容发生变化，对相应输出执行目标 `sing-box check`；若实现改变安装控制流、服务、网络或生命周期行为，按 [风险与验证范围](../wiki/Development.md#风险与验证范围)追加对应 Docker 场景。仅命名不要求无关协议矩阵或完整发布验收。
 
 本地、mock、真实核心校验、Docker、真实 SubMan 联调、生产验收及 Wiki 发布分别记录。本文本身不证明这些检查或远端操作已经完成。
 
@@ -208,7 +208,7 @@ VPS 部署，也不声称所有协议公网连接已通过。
 
 两个联调使用的冻结运行时 SHA-256 为
 `657ea370f56523445d4be5ecd8ce22d98b7864e3949fb8153a384d4ab87efaac`。
-之后的事务及 namespace 修改未改变命名、地址选择和同步函数，按 AGENTS.md 第 4.2 节
+之后的事务及 namespace 修改未改变命名、地址选择和同步函数，按 [风险与验证范围](../wiki/Development.md#风险与验证范围)
 复用这些结果。私密验收报告保留在
 `/tmp/sbv-subman-app-acceptance-20261030-final/acceptance.json` 与
 `/tmp/sbv-subman-production-acceptance-20261030/acceptance.json`；凭据和完整分享材料

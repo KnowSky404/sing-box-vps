@@ -48,7 +48,7 @@
 
 ## CI 范围契约
 
-当前 CI 授权和范围契约见 [AGENTS.md](../../AGENTS.md#421-github-actions-显式授权门禁)及[开发工作流](../wiki/Development.md#github-actions-授权与定点验证)。整改时的 PR/push 自动入口已由当前规则取代。CI 复用定点宿主执行器，另行记录专用运行态 fixture 和 Docker 场景为 `required_not_run`。
+当前 CI 授权和范围契约见 [Actions 授权与定点验证](../wiki/Development.md#github-actions-授权与定点验证)。整改时的 PR/push 自动入口已由当前规则取代。CI 复用定点宿主执行器，另行记录专用运行态 fixture 和 Docker 场景为 `required_not_run`。
 
 ## 验证与交付
 
@@ -63,7 +63,7 @@
   新证据仅扩大必要的定向覆盖。
 - 交付：原子 Conventional Commit、当前 HEAD 完整差异本地审查、PR 必要检查及实际
   自动触发的当前 head Security Review、rebase 合并及干净任务分支/worktree 清理，
-  遵循 AGENTS.md 第 6 节。
+  遵循 [审查与合并](../wiki/Development.md#审查与合并)。
 
 ## 验收记录
 

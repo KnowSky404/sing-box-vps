@@ -68,4 +68,5 @@ This first split intentionally preserves byte order and behavior. Functions may
 still call helpers in later modules; all definitions are assembled before the
 final entrypoint runs. It introduces no dynamic module loader or new config/state
 format. Future behavior changes still need the focused checks required by
-AGENTS.md section 4.2, including configuration or runtime validation when affected.
+[risk and verification rules](../../docs/wiki/Development.md#风险与验证范围), including
+configuration or runtime validation when affected.

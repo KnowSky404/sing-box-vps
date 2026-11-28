@@ -62,7 +62,7 @@ readback reconciliation checks stay in force.
 
 ## CI scope contract
 
-The current authorization and CI scope contract is in [AGENTS.md](../../AGENTS.md#421-github-actions-显式授权门禁) and the [Development guide](../wiki/Development.md#github-actions-授权与定点验证). It supersedes the historical automatic PR/push workflow used during this remediation. CI reuses the scoped host executor and records dedicated runtime fixtures and selected Docker scenarios separately as `required_not_run`.
+The current authorization and CI scope contract is in [Actions authorization and scoped verification](../wiki/Development.md#github-actions-授权与定点验证). It supersedes the historical automatic PR/push workflow used during this remediation. CI reuses the scoped host executor and records dedicated runtime fixtures and selected Docker scenarios separately as `required_not_run`.
 
 ## Verification and delivery
 
@@ -80,7 +80,7 @@ The current authorization and CI scope contract is in [AGENTS.md](../../AGENTS.m
   public connectivity and production. New evidence may justify focused additions.
 - Delivery: atomic Conventional Commit(s), current-HEAD local complete-diff
   review, PR checks and automatically triggered current-head Security Review,
-  rebase merge and clean worktree/branch cleanup under AGENTS.md section 6.
+  rebase merge and clean worktree/branch cleanup under the [review and merge rules](../wiki/Development.md#审查与合并).
 
 ## Acceptance record
 

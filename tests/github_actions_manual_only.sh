@@ -63,5 +63,6 @@ revision=0123456789abcdef0123456789abcdef01234567
 GITHUB_REF=refs/heads/main EXPECTED_HEAD="${revision}" EXPECTED_BASE="${revision}" bash "${fixture}/authorize.sh"
 if GITHUB_REF=refs/heads/main EXPECTED_HEAD="${revision}" EXPECTED_BASE=origin/main bash "${fixture}/authorize.sh" 2>/dev/null; then exit 1; fi
 if GITHUB_REF=refs/heads/topic EXPECTED_HEAD="${revision}" EXPECTED_BASE="${revision}" bash "${fixture}/authorize.sh" 2>/dev/null; then exit 1; fi
-grep -Fq 'not_run_not_authorized'  "${REPO_ROOT}/AGENTS.md"
+grep -Fq 'not_run_not_authorized' "${REPO_ROOT}/AGENTS.md"
+grep -Fq 'not_run_not_authorized' "${REPO_ROOT}/docs/wiki/Development.md"
 printf 'All %s workflows require manual dispatch; automatic events rejected; no Actions run started\n' "${count}"

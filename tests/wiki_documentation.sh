@@ -10,11 +10,11 @@ import re
 import sys
 import unicodedata
 
-root = Path(sys.argv[1])
+root = Path(sys.argv[1]).resolve()
 wiki = root / 'docs/wiki'
 base = 'https://github.com/KnowSky404/sing-box-vps/'
 files = [root / 'README.md', root / 'AGENTS.md', root / 'SECURITY.md',
-         root / 'skills/sing-box-vps-operator/SKILL.md',
+         root / 'skills/sing-box-vps-operator/SKILL.md', root / 'src/install/README.md',
          *sorted((root / 'docs/specs').glob('*.md')), *sorted(wiki.glob('*.md'))]
 errors = []
 
@@ -35,9 +35,13 @@ def anchors(path):
         counts[title] = count + 1
     return result
 
+markdown_link = re.compile(
+    r'\[(?:\\.|[^\[\]\\\n]|\[(?:\\.|[^\]\\\n])*\])*\]\([ \t]*(<[^<>\n]*>|[^\s)]+)'
+    r"""(?:[ \t]+(?:"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|\((?:\\.|[^)\\\n])*\)))?[ \t]*\)""")
+
 for page in files:
     content = prose(page.read_text())
-    for url in re.findall(r'\[[^\]\n]*\]\(([^\s)]+)\)', content):
+    for url in markdown_link.findall(content):
         url = unquote(url.strip('<>'))
         link = urlsplit(url)
         if url.startswith(base + 'wiki'):
@@ -54,11 +58,56 @@ for page in files:
         elif link.fragment and target.suffix == '.md' and link.fragment not in anchors(target):
             errors.append(f'{page.relative_to(root)}: missing anchor {url}')
 
-# Keep the offline Agent index tied to files that still exist.
-for path in re.findall(r'docs/(?:wiki|specs)/[A-Za-z0-9_.-]+\.md',
-                       (root / 'docs/agents/llms.txt').read_text()):
-    if not (root / path).is_file():
+# Bare index paths are checkout-relative; explicit Markdown links use the index directory.
+index_path = root / 'docs/agents/llms.txt'
+index = prose(index_path.read_text())
+source_prefix = base + 'blob/main/'
+wiki_prefix = base + 'wiki'
+repository_url = re.escape(source_prefix) + '|' + re.escape(wiki_prefix)
+references = {(url.strip('<>'), True) for url in markdown_link.findall(index)}
+link_delimiters = r"""\s<>()\[\]\x60"'*，。；：、！？（）【】《》“”‘’「」『』–—…"""
+bare_references = re.findall(
+    rf'(?<![A-Za-z0-9_/.])(_{{1,3}})?((?:{repository_url})[^{link_delimiters}]*|'
+    r'(?:(?:\.\./)+|(?:\./|/)?(?:AGENTS\.md|SECURITY\.md|README\.md|(?:docs|skills)/))'
+    rf'[^{link_delimiters}:;,?#]*(?:[?#][^{link_delimiters}]*)?)',
+    markdown_link.sub('', index))
+for emphasis, reference in bare_references:
+    reference = reference.rstrip('.:;,')
+    if emphasis and reference.endswith(emphasis):
+        reference = reference[:-len(emphasis)]
+    references.add((reference, False))
+
+for reference, explicit_link in sorted(references):
+    source_url = reference.startswith(source_prefix)
+    relative = reference[len(source_prefix):] if source_url else reference
+    link = urlsplit(relative)
+    if reference == wiki_prefix or reference.startswith((wiki_prefix + '/', wiki_prefix + '?', wiki_prefix + '#')):
+        page_name = unquote(link.path.split('/wiki', 1)[1]).strip('/') or 'Home'
+        path = f'docs/wiki/{page_name}.md'
+        target = (root / path).resolve()
+    elif link.scheme or link.netloc:
+        continue
+    else:
+        from_index = not (source_url or link.path.startswith('/')) and (
+            explicit_link or link.path.startswith('../'))
+        relative_root = index_path.parent if from_index else root
+        path = unquote(link.path.lstrip('/') if not source_url else link.path)
+        target = (relative_root / path).resolve() if link.path or source_url else index_path
+    fragment = unquote(link.fragment)
+    if (target != root and root not in target.parents) or not target.exists():
         errors.append(f'llms.txt: missing target {path}')
+    elif fragment and not target.is_file():
+        errors.append(f'llms.txt: missing anchor {path}#{fragment}')
+    elif fragment:
+        lines = re.fullmatch(r'L([1-9][0-9]*)(?:-L([1-9][0-9]*))?', fragment) if source_url else None
+        if lines:
+            start = int(lines[1])
+            end = int(lines[2] or lines[1])
+            valid = start <= end <= len(target.read_bytes().splitlines())
+        else:
+            valid = fragment in anchors(target)
+        if not valid:
+            errors.append(f'llms.txt: missing anchor {path}#{fragment}')
 
 # Every content page must remain reachable from both navigation surfaces.
 for page in wiki.glob('*.md'):
