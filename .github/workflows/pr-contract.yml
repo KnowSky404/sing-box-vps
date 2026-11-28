@@ -1,0 +1,49 @@
+name: PR contract
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-contract-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-contract:
+    name: PR contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify the PR integration revision
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ||
+                "$(git rev-parse HEAD^2)" != "$PR_HEAD" ]]; then
+            printf 'The checked-out merge revision does not match the PR event.\n' >&2
+            exit 1
+          fi
+          tested_base=$(git rev-parse --verify HEAD^1)
+          printf 'pr_head=%s\npr_base=%s\nmerge_commit=%s\nmerge_tree=%s\n' \
+            "$PR_HEAD" "$tested_base" "$GITHUB_SHA" "$(git rev-parse HEAD^{tree})" | tee -a "$GITHUB_STEP_SUMMARY"
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab diff --check "$tested_base" HEAD
+      - name: Run lightweight repository checks
+        run: |
+          set -euo pipefail
+          bash -n bootstrap.sh
+          bash -n uninstall.sh
+          bash tests/install_build_sync.sh
+          bash tests/version_metadata_is_consistent.sh
+          bash tests/readme_mentions_current_versions.sh
+          bash tests/wiki_documentation.sh
+          bash tests/github_actions_manual_only.sh

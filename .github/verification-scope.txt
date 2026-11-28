@@ -1,4 +1,4 @@
-base b7421b484eb114a47b8a97ccf593512d025c55d3
-# CI authorization, host scope and final-result regressions.
+base fa67817786d663786351a472143ce08c0a6809f7
+# PR trigger/identity guard and trusted manual host verification boundaries.
 --test tests/github_actions_manual_only.sh
 --test tests/verification_ci_scope.sh

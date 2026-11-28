@@ -62,7 +62,7 @@ readback reconciliation checks stay in force.
 
 ## CI scope contract
 
-The current authorization and CI scope contract is in [Actions authorization and scoped verification](../wiki/Development.md#github-actions-授权与定点验证). It supersedes the historical automatic PR/push workflow used during this remediation. CI reuses the scoped host executor and records dedicated runtime fixtures and selected Docker scenarios separately as `required_not_run`.
+The current authorization and CI scope contract is in [Actions authorization and scoped verification](../wiki/Development.md#github-actions-授权与定点验证). The lightweight PR check and the separately authorized manual host workflow supersede the historical combined PR/push workflow. The manual workflow reuses the scoped host executor and records dedicated runtime fixtures and selected Docker scenarios separately as `required_not_run`.
 
 ## Verification and delivery
 

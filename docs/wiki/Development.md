@@ -132,21 +132,19 @@ bash dev/verification/run.sh --plan --base origin/main --full
 
 ### GitHub Actions 授权与定点验证
 
-- **默认不运行 GitHub Actions/CI**。除非用户明确授权本次工作流及其运行范围，否则任何情况下都不得触发运行或重跑；功能开发、修复、验证、提交、推送、创建/更新 PR、合并或发布的授权，均不自动包含 Actions 授权。
-- 仓库 Actions 默认关闭，现有工作流保持禁用；启用或恢复须有明确授权，启用授权本身不等于运行授权。仓库工作流默认只保留 `workflow_dispatch`。未经明确授权，不得新增或恢复 `push`、`pull_request`、`pull_request_target`、`release`、`schedule`、`workflow_run`、`workflow_call`、`repository_dispatch`、评论命令等自动或间接触发入口，也不得执行 dispatch、rerun、恢复任务或调用会启动 CI 的机器人命令。
-- 推送、PR、合并、打标签或其他 GitHub 写操作前，先只读核对相关工作流的启用状态和触发条件，确认该操作不会间接启动 Actions。仍存在自动触发器时，先按已授权的配置变更范围禁用或移除；无法安全排除触发时暂停该 GitHub 操作并说明原因，不得先触发再取消。
-- 未获运行授权时，按[风险与验证范围](#风险与验证范围)完成必要本地检查，CI 记录为 `not_run_not_authorized`，不得称为通过。若分支保护确实要求未运行的 Actions 检查，则保留 PR 并说明需要的授权，不得擅自运行、删除必需检查或绕过保护。已经出现的失败与未解决问题仍须如实记录，禁用工作流不将失败转为通过。
-- 获授权后只运行指定 workflow、ref 和基线/测试范围；一次运行授权不扩大为后续无关任务的长期授权。仅查看已有运行、日志、产物或检查状态不触发新运行。
-- `command-contract` 复用本地宿主验证，按完整差异选测并保留固定契约。未知影响需要分支更新绑定实际 merge-base 的 `.github/verification-scope.txt`。宿主结果、专属 Docker/运行态结果分别记录。若未授权或不可用，记录对应状态和影响，继续执行适用的本地门禁。
+**自动 PR CI**
 
-`command-contract.yml` 只保留 `workflow_dispatch`。仓库级 Actions 和此工作流均禁用。
-以下手动运行步骤以受保护的 main 已合入与本页对应的工作流为前置条件。
-获分别明确授权后，由有权限的维护者在 Settings → Actions → General 启用仓库 Actions，
-再在 Actions → Command contract 选择 Enable workflow。运行仍须单独授权，只从受保护的
-`main` 加载可信工作流定义，传入获准的完整候选 head 和比较基线 SHA。通过输入校验的
-宿主运行可取代同驱动、head、base 和核心选项的运行。`scoped-host-verification` 产物
-保留计划、逐项日志、耗时和概要 14 天。GitHub 宿主 runner 使用只读权限，无部署凭据；
-确需新增自动入口或改变必需检查须由 Owner 明确授权。
+- Owner 授权启用仓库 Actions 并运行 `pr-contract.yml`。唯一的自动入口是指向 `main` 的 `pull_request`，只响应 `opened`、`synchronize`、`reopened`。同一 PR 的新运行取消旧运行。无路径过滤，文档及工作流改动也会产生同名 `PR contract` 检查。提交时直接以 `main` 为目标；旧 PR 仅变更目标但没有当前检查时，等待实际提交同步，或新建一个面向 `main` 的 PR 取代旧 PR。
+- 一次性 GitHub 托管 runner 核对事件的合成合并 SHA 与 PR head，再检查差异空白、脚本语法、生成一致性、版本、文档链接和触发器契约。日志记录 head、实际基线、merge SHA 与 tree。流水线没有部署环境、密钥、写权限、自托管 runner 或持久 checkout 凭据。启用前须将公共 fork 设置为所有外部贡献者都需审批。维护者对实际 head 核对 workflow、触发器及权限后才可批准；候选更新仍按此核对。Fork 等待审批或 PR 有冲突时，记录为未取得托管证据。
+- 每次 GitHub 写操作前只读核对启用状态和直接/间接触发。只有上述自动路径获得长期授权；新增/恢复其他自动入口、启用其他工作流、手动运行和重跑仍各需明确授权。开发、推送、PR、合并或发布授权不包含额外 Actions。无法排除未授权触发时，先暂停对应写操作。
+- 推送前完成必要本地验证及当前 HEAD 审查。PR 创建后观察快速 CI 和自动安全审查，收齐适用反馈后批量修复。CI 记录合成合并提交的第一父提交作为实际验证基线。合并前核对 `PR contract` 成功结果中的 head、基线及集成 tree 与当前候选相符；缺失、取消、跳过、失败或过期均不得当成通过。基线推进时按[集成复验](#候选发布与交接)核对证据，等价才复用。合并不会通过 `push` 再运行一次，也不触发部署。
+- 初次上线先检查现有分支的工作流和打开的 PR，确认手动工作流仍禁用且没有其他待触发入口。将 fork 审批设为 Require approval for all external contributors 并回读。启用 Actions 时在同一次设置中选择受限策略（API 同时设置 `enabled=true` 与 `allowed_actions=selected`）。外部 Actions 仅允许 GitHub 自有 Actions。API 单独提交允许列表时，回读名单、默认只读令牌及手动工作流状态后再推送候选或创建 PR。
+- `PR contract` 是项目合并门禁，初次上线保留现有分支保护。要求上升为 GitHub 强制检查时，先核实稳定的检查名、每种 PR 状态的结果和失败/取消边界，再取得 Owner 对分支保护变更的明确授权。若授权范围无法保持，先停用新增工作流或恢复仓库 Actions 关闭状态。
+
+**按需宿主验证**
+
+- `command-contract.yml` 保留 `workflow_dispatch`，初次启用自动 CI 时继续禁用。需要较重的候选宿主验证时，分别取得启用和指定 workflow、ref、基线、测试范围的运行授权。未获授权记 `not_run_not_authorized`；本地必要验证和复审照常执行。禁用、取消或未授权的检查不算通过，已有失败单独记录。
+- 获准后从受保护的 `main` 加载可信定义，传入完整候选 head 和基线 SHA。`command-contract` 复用宿主执行器，按完整差异选测并保留固定契约。未知影响需要分支更新绑定实际 merge-base 的 `.github/verification-scope.txt`。`scoped-host-verification` 产物保留计划、逐项日志、耗时和概要 14 天。运行态、外部服务和生产结果各自记录。
 
 ```bash
 # 主分支须已包含本页对应工作流，获准后指定候选和基线完整 SHA
@@ -168,9 +166,7 @@ gh workflow run command-contract.yml --ref main -f head_sha="$task_head" -f base
 候选测试在一次性 runner 内执行，要求事先审查及授权，
 该运行不用于验证不可信候选或充当 PR 必需检查。回读获准的 head、base、
 `command-contract` 终态与宿主结论。手动运行关联加载工作流的 main 提交，候选 SHA 以报告为准。
-在 main 以自身为基线只能跑固定契约。启用前保持现有分支保护。将来若授权自动 PR CI，先验证每个 PR 都会产生稳定的
-`command-contract` 检查且取消/跳过/失败无法通过，再在 main 的 Rules/Protection 中选择
-该检查，保留 PR、线性历史、审查对话和管理员门禁。
+在 main 以自身为基线只运行固定契约。较重验证仅按风险和候选证据缺口执行一次；同一组有效输入可复用结果。
 
 选测声明的基线始终与实际比较基线一致，且声明覆盖完整差异。若 rebase 改变了集成基线，
 旧声明不会自动沿用。集成验收可在隔离环境用 `dev/verification/run.sh --base` 和
