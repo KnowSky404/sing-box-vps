@@ -51,6 +51,14 @@ as needed to establish reachability, existing defenses or shared impact.
 - The Agent interface is a local CLI. Confirmation flags, revisions and locks
   protect operations and concurrency; they are not remote authentication.
 
+PR contract runs on a disposable GitHub-hosted runner with read-only contents
+access. PR code supplies the candidate workflow and tests, so these jobs must
+stay free of repository secrets, writable tokens, deployment environments and
+shared privileged runners. Require approval for every external fork contributor
+before enabling the workflow. Inspect the exact candidate workflow and
+permissions before approving an external run or relying on a green check. The manually authorized host workflow and
+production controls use their own trust boundaries.
+
 ## Review priorities
 
 1. **Input to execution:** quoting, option injection, dynamic dispatch, unsafe

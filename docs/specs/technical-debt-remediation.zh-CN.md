@@ -48,7 +48,7 @@
 
 ## CI 范围契约
 
-当前 CI 授权和范围契约见 [Actions 授权与定点验证](../wiki/Development.md#github-actions-授权与定点验证)。整改时的 PR/push 自动入口已由当前规则取代。CI 复用定点宿主执行器，另行记录专用运行态 fixture 和 Docker 场景为 `required_not_run`。
+当前 CI 授权和范围契约见 [Actions 授权与定点验证](../wiki/Development.md#github-actions-授权与定点验证)。当前轻量 PR 检查和独立授权的手动宿主执行取代了当时统一的 PR/push 入口。手动工作流复用定点宿主执行器，另行记录专用运行态 fixture 和 Docker 场景为 `required_not_run`。
 
 ## 验证与交付
 
